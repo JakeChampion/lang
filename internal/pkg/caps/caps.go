@@ -1,0 +1,334 @@
+// Package caps hosts the builtin→capability inventory and the
+// per-package capability report behind the capability-grant design
+// (docs/PACKAGE-CAPABILITIES-BRIEF.md; tracking issue #5361).
+//
+// The table below tags every capability-relevant runtime builtin with
+// the v1 vocabulary (`net`, `fs`, `env`, `subprocess`, `time`,
+// `random`). Analyze (report.go) computes each package's transitive
+// reach into the table — `fern -capabilities` prints it (phase 1), and
+// Enforce (enforce.go) checks the same rows against the manifests'
+// `capabilities` grants (phase 2): a governed package reaching outside
+// its grant is an E070 error, an ungoverned one a warn-and-allow
+// diagnostic, and the root package is exempt.
+//
+// The inventory's completeness contract: every user-callable builtin
+// registered by the checker (Info.FuncSigs) or the interpreter
+// (Interp.Builtins) must appear in exactly one of BuiltinCaps or
+// Ungated, or carry the `__` compiler-internal prefix. The tests in
+// this package enumerate both registries and fail when a new builtin
+// lands unclassified, so an I/O-shaped addition can't silently dodge
+// the table.
+package caps
+
+// Capabilities is the v1 capability vocabulary, sorted. Deliberately
+// coarse (see the brief): path- or host-level filtering is out of
+// scope for v1.
+var Capabilities = []string{"env", "fs", "net", "random", "subprocess", "time"}
+
+// BuiltinCaps maps each capability-relevant runtime builtin to its v1
+// capability. Notes on the boundary cases:
+//
+//   - `poll` is NOT tagged: it waits on pollables from both sockets
+//     (tcp_pollable) and timers (timer_fd / wasm_timer_pollable), so
+//     the capability lives on the pollable *constructors* — the tcp
+//     family under `net`, the timer family under `time` — not on the
+//     wait itself. Same for the generic wasm_block / wasm_poll /
+//     wasm_pollable_drop readiness helpers.
+//   - `time` covers observing clocks (now_unix_ms / now_ns /
+//     monotonic_ns) and creating time-driven wakeups (sleep_ms /
+//     timer_fd / wasm_timer_pollable) — the surface a "package is
+//     sim-pure" property would need to gate.
+//   - stdio (print / eprint / read_line / stdin / stdout / stderr /
+//     putchar / write) and argv (`args`) have no v1 capability; they
+//     are host-mediated channels the invoker already handed the
+//     process, not ambient authority a dependency escalates through.
+var BuiltinCaps = map[string]string{
+	"tcp_listen":       "net",
+	"tcp_accept":       "net",
+	"tcp_local_port":   "net",
+	"tcp_connect":      "net",
+	"tcp_recv":         "net",
+	"tcp_send":         "net",
+	"tcp_send_bytes":   "net",
+	"tcp_close":        "net",
+	"tcp_pollable":     "net",
+	"udp_send":         "net",
+	"udp_send_bytes":   "net",
+	"udp_bind":         "net",
+	"udp_connect":      "net",
+	"udp_sendto":       "net",
+	"udp_sendto_bytes": "net",
+	"udp_recvfrom":     "net",
+	"tcp_listen_with":  "net",
+	"tcp_socket_ctl":   "net",
+	"tcp_sendfile":     "net",
+	"tcp_send_buf":     "net",
+	"tcp_connect_with": "net",
+	"unix_listen":      "net",
+	"unix_connect":     "net",
+	"tcp_recv_into":    "net",
+
+	"read_file":        "fs",
+	"read_file_bytes":  "fs",
+	"write_file":       "fs",
+	"write_file_bytes": "fs",
+	"write_file_exec":  "fs",
+	"open_reader":      "fs",
+	"open_writer":      "fs",
+	"open_appender":    "fs",
+	"open_exclusive":   "fs",
+	"open_reader_with": "fs",
+	"open_writer_with": "fs",
+	"stat":             "fs",
+	"getcwd":           "fs",
+	"chdir":            "fs",
+	"lstat":            "fs",
+	"access":           "fs",
+	"read_dir":         "fs",
+	"read_dir_all":     "fs",
+	"remove_file":      "fs",
+	"remove_dir_all":   "fs",
+	"create_dir_all":   "fs",
+	"create_dir":       "fs",
+	"remove_dir":       "fs",
+	"create_link":      "fs",
+	"create_symlink":   "fs",
+	"read_link":        "fs",
+	"getxattr":         "fs",
+	"getxattr_bytes":   "fs",
+	"lgetxattr":        "fs",
+	"lgetxattr_bytes":  "fs",
+	"setxattr":         "fs",
+	"setxattr_bytes":   "fs",
+	"lsetxattr":        "fs",
+	"lsetxattr_bytes":  "fs",
+	"rename":           "fs",
+	"rename_noreplace": "fs",
+	"rename_exchange":  "fs",
+	"chmod":            "fs",
+	"chmod_at":         "fs",
+	"set_file_times":   "fs",
+	"truncate":         "fs",
+	// Creating a FIFO or a device node creates a filesystem entry, so the
+	// package question has none of the target question's subtlety here:
+	// it is filesystem reach.
+	"mknod": "fs",
+	// Flushing the machine's dirty buffers writes to every filesystem
+	// mounted on it. The package question is the same one the rest of
+	// this group asks — may this package reach the filesystem at all —
+	// so it needs no capability of its own here, unlike the TARGET
+	// question, where no wasm world can do it.
+	"sync": "fs",
+	// Setting an entry's owner or group rewrites who may reach it, and
+	// the entry is a filesystem one. For the PACKAGE question the only
+	// thing that matters is whether filesystem reach should be visible,
+	// so this sits with `chmod` rather than getting a split of its own.
+	"chown_at": "fs",
+	// The process file-mode creation mask. Reading it is ambient
+	// information about the process, but SETTING it changes the mode of
+	// every file and directory anything creates afterwards — a
+	// dependency that reaches it reaches every later creation, so it
+	// sits with the rest of the filesystem surface rather than beside
+	// `geteuid` in Ungated.
+	"umask": "fs",
+	// Reading the geometry of a filesystem is filesystem reach; the
+	// package question has none of the target question's subtlety here.
+	"statfs":   "fs",
+	"temp_dir": "fs",
+	// Changing what every later path resolves against — strictly more
+	// than `umask` above, which only changes the mode of what gets
+	// created. A dependency that reaches this reaches the whole
+	// filesystem view of everything after it.
+	"chroot": "fs",
+	// SETTING the process's identity, where reading it is Ungated below.
+	// This is the `umask` split one level up: the ids were chosen by
+	// whoever exec'd the program and learning them confers nothing, but
+	// changing them changes the outcome of every later access decision.
+	//
+	// `fs` undersells it — a credential is also what a low port bind and
+	// a signal to another process are checked against, so the honest
+	// answer spans `fs`, `net` and `subprocess` at once. The v1
+	// vocabulary is deliberately coarse and a builtin gets exactly one
+	// row, so these sit in the bucket that covers the dominant effect,
+	// by the same argument `umask` and `chown_at` sit there. Splitting
+	// them properly is a change to the vocabulary, which
+	// docs/PACKAGE-CAPABILITIES-BRIEF.md owns.
+	"setuid":    "fs",
+	"setgid":    "fs",
+	"setgroups": "fs",
+
+	"env":     "env",
+	"environ": "env",
+	// Deploy-time configuration reads what the deployment put in the
+	// environment, or its proxy-world equivalent: the same reach.
+	"config_get": "env",
+	// The machine's name is ambient information about where the
+	// process runs, in the same way its environment is: a dependency
+	// that reads it should be seen to.
+	"hostname": "env",
+	// The kernel's utsname record and the machine's usable processor
+	// count are the same kind of ambient fact about where the process
+	// runs, and are seen to the same way.
+	"uname_field": "env",
+	"cpu_count":   "env",
+
+	"subprocess":          "subprocess",
+	"proc_fork":           "subprocess",
+	"proc_waitpid":        "subprocess",
+	"proc_waitpid_nohang": "subprocess",
+	"proc_exec":           "subprocess",
+	"proc_exec_as":        "subprocess",
+	// Not spawning, but reaching outside this process all the same: the
+	// pid asked about is someone else's.
+	"process_alive": "subprocess",
+	// Reaching outside this process to ACT on it, which is strictly more
+	// than asking whether it is there.
+	"signal_send":       "subprocess",
+	"set_process_group": "subprocess",
+
+	"now_unix_ms":         "time",
+	"now_ns":              "time",
+	"monotonic_ns":        "time",
+	"sleep_ms":            "time",
+	"sleep_ns":            "time",
+	"timer_fd":            "time",
+	"wasm_timer_pollable": "time",
+
+	"random_bytes": "random",
+	"random_i32":   "random",
+}
+
+// Ungated lists every user-callable builtin known to require NO
+// capability: stdio (including `isatty`, which reads one bit about a
+// stream the invoker already handed the process), argv, process exit,
+// the compile target's name (`target_os`, a literal once compiled),
+// pure math / bit casts, the
+// strbuf scratch buffer, in-heap constructors (map_new / cell_new /
+// string_from_bytes_unchecked), the readiness helpers whose authority lives on
+// the pollable constructors instead, and the interp's pure stdlib
+// overrides. A builtin absent from both this set and BuiltinCaps
+// fails the inventory-completeness tests.
+var Ungated = map[string]bool{
+	"__outer_mul_f64":     true,
+	"__inner_mul_add_f64": true,
+	"putchar":             true,
+	"print":               true,
+	"write":               true,
+	"eprint":              true,
+	"read_line":           true,
+	"stdin":               true,
+	"stdout":              true,
+	"stderr":              true,
+	"isatty":              true,
+	// How large the terminal on the other end of a descriptor is. The
+	// descriptor was handed to the process by whoever started it and
+	// its geometry is one more fact about it, so a dependency that asks
+	// reaches nothing `isatty` did not already let it reach.
+	"window_size": true,
+	// The line settings of the same descriptor, read and written. Ungated
+	// for the reason `window_size` is — the descriptor was handed to the
+	// process and its configuration is one more fact about it — and the
+	// WRITE is no different: a dependency that turns off echo on a
+	// terminal the invoker attached reaches nothing it could not already
+	// reach by writing escape sequences to it.
+	"termios_get": true,
+	"termios_set": true,
+	// Its geometry, written. Same reason again, and a resize is the
+	// tamest of the three: a dependency that sets the row count changes
+	// what a full-screen program lays out against and nothing else.
+	"set_window_size": true,
+	// The process's own ids — effective, real, and the supplementary
+	// group set. Reading them reaches nothing:
+	// the identity was chosen by whoever exec'd the program, and a
+	// dependency that learns it gains no authority it did not have —
+	// the same argument that leaves `isatty` ungated. Note this is
+	// where the two capability systems part company: `internal/
+	// platforms` DOES gate these, because there the question is
+	// whether the target can answer at all (WASI cannot), not
+	// whether a dependency should be allowed to ask.
+	// The limits the kernel enforces on this process (`rlimit_nofile`)
+	// join them by the same argument: the ceiling was chosen by whoever
+	// exec'd the program, and a dependency that learns how many
+	// descriptors it may open reaches nothing it could not already
+	// reach. `internal/pkg/platforms` gates that one too, because there the
+	// question is whether the target has resource limits at all.
+	"geteuid": true,
+	"getegid": true,
+	"getuid":  true,
+	// The account database's name for a uid: the same question /etc/passwd
+	// answers, asked of Directory Services on Darwin (#9815).
+	"__getpwuid_name": true,
+	"getgid":          true,
+	"getgroups":       true,
+	"rlimit_nofile":   true,
+	"target_os":       true,
+	"target_arch":     true,
+	"args":            true,
+	"exit":            true,
+	// A signal disposition reconfigures how THIS process reacts to
+	// something delivered to it. It reaches nothing outside the
+	// process and confers no authority a dependency could escalate
+	// through — the same argument that leaves `exit` here, which is
+	// also process-wide and also irreversible from a caller's view.
+	// `internal/pkg/platforms` DOES gate these, because there the
+	// question is whether the target has signals at all.
+	"signal_ignore":  true,
+	"signal_default": true,
+	// Scheduling priority is the same shape as a signal disposition:
+	// reading it reports this process's own state, and setting it
+	// changes how this process — and, since niceness is inherited
+	// across fork and exec, anything it starts — competes for the CPU.
+	// The consequence is timing rather than reach, and no v1
+	// capability names timing. `internal/pkg/platforms` gates both,
+	// because there the question is whether the target has a scheduler
+	// knob at all.
+	"priority":     true,
+	"set_priority": true,
+	// Reading a disposition or the blocked mask reaches even less far
+	// than setting one does: it reports this process's own state and
+	// changes nothing. signal_mask writes as well, and to the same
+	// process-wide state the two setters already reach.
+	"signal_mask":        true,
+	"signal_disposition": true,
+	"strbuf_reset":       true,
+	"strbuf_append":      true,
+	"strbuf_take":        true,
+	// The capacity-carrying builder (#8773). Bytes into a block this
+	// process allocated, and back out as a string: the same reach as
+	// the strbuf above, with the singleton removed.
+	"buf_new":                     true,
+	"buf_push":                    true,
+	"buf_push_range":              true,
+	"buf_push_mapped":             true,
+	"buf_push_bytes_mapped":       true,
+	"buf_push_bytes_filtered":     true,
+	"buf_push_bytes_expanded":     true,
+	"buf_push_filtered":           true,
+	"buf_push_expanded":           true,
+	"buf_push_byte":               true,
+	"buf_push_u64":                true,
+	"buf_len":                     true,
+	"buf_take":                    true,
+	"buf_take_bytes":              true,
+	"buf_push_bytes_range":        true,
+	"buf_free":                    true,
+	"buf_clear":                   true,
+	"f32_bits":                    true,
+	"f32_from_bits":               true,
+	"f64_bits":                    true,
+	"f64_from_bits":               true,
+	"poll":                        true,
+	"reactor_new":                 true,
+	"reactor_ctl":                 true,
+	"reactor_wait":                true,
+	"wasm_block":                  true,
+	"wasm_poll":                   true,
+	"wasm_pollable_drop":          true,
+	"map_new":                     true,
+	"cell_new":                    true,
+	"string_from_bytes_unchecked": true,
+	"slice_unchecked":             true,
+	"int_to_string":               true,
+
+	"string_from_bytes_range_unchecked": true,
+}

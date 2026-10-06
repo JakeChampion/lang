@@ -201,7 +201,7 @@ instructive about what Fern actually wants from an arena. A **one-level
 checkpoint** — `__heap_mark` / `__heap_release_to`, which rewinds
 `__fern_heap_ptr` and snapshots the freelist heads into a `.bss` shadow —
 exists today, native-only, gated behind an `arena` capability in the platform
-descriptors (`internal/platforms/enforce.go:47`, `platforms.go:85`). It is
+descriptors (`internal/pkg/platforms/enforce.go:47`, `platforms.go:85`). It is
 native-only because wasm's linear-memory allocator has no room for the shadow
 below its head table, and gating it turns an internal "unknown callee
 `__fern_heap_mark`" mid-build failure into an E066 at check time.
@@ -226,10 +226,10 @@ does not address at all and which is where Fern's actual memory bugs are. #6127
 measured that case — seven unbounded self-host-vs-native reclaim leaks under
 `FERN_LEAKCHECK=1` — and is closed, as is its successor #6360; the
 self-host-versus-native grid
-(`internal/e2eselfhost/testdata/selfhost-leak-matrix.txt`) now reads clean on
+(`internal/testing/e2ecompiler/testdata/selfhost-leak-matrix.txt`) now reads clean on
 x86-64. Both leak pins now measure the self-host and are clean: one row of
-`internal/e2e/testdata/conformance-leak-census.txt` is non-zero, a block live
-when a bounds check aborts, and `internal/e2e/rc_leak_gate_test.go` pins no
+`internal/testing/e2e/testdata/conformance-leak-census.txt` is non-zero, a block live
+when a bounds check aborts, and `internal/testing/e2e/rc_leak_gate_test.go` pins no
 rc-corpus case.
 
 **Verdict:** Phase 1 is closed as written, and so is the cycle question. The
@@ -337,7 +337,7 @@ order of value:
 
 3. **`byteswap` / `rotate` intrinsics** — the two remaining Phase 2 rows, the
    same `bitCountBuiltin` shape as the landed `clz`/`ctz`/`popcount`
-   (`internal/ir/ir.go:18190`). The rest of Phase 2 is already shipped:
+   (`internal/oracle/ir/ir.go:18190`). The rest of Phase 2 is already shipped:
    `popcount`/`clz`/`ctz` are real intrinsics on every backend, and the
    overflow/saturating rows are a *decided semantics* rather than a gap —
    wrapping is the default with no trap, and `+|` `-|` `*|` `<<|` are the
@@ -474,7 +474,7 @@ replaces the type system's portability guarantee.
 
 Kernels enter the language the same way the bit-count intrinsics do — as
 `__`-prefixed compiler builtins that a readable stdlib function wraps, never as
-surface syntax users are asked to write (`internal/ir/ir.go:18190`, and the
+surface syntax users are asked to write (`internal/oracle/ir/ir.go:18190`, and the
 `std/i32.count_ones()` wrapper pattern). The threading is: a name in the
 builtin table → an `OpKind` → a lowering in each backend → an interpreter
 implementation → a stdlib wrapper → tests.
@@ -1340,7 +1340,7 @@ A kernel wrapped by a stdlib function only helps the caller who reaches for
 that function. `xs.map((x: f64): f64 => x * 2.0)` is the same computation
 spelled the way a reader writes it first, and it ran the scalar loop —
 worse than the scalar loop, in fact, since `map` pays an indirect call per
-element. `internal/ir/array_scale.go` rewrites that shape to the kernel:
+element. `internal/oracle/ir/array_scale.go` rewrites that shape to the kernel:
 the constant is read out of the element function's body at compile time and
 the closure never exists.
 
@@ -1626,7 +1626,7 @@ into an ordinary build item:
   only mechanism that doc's proof relies on), its subscript counterpart does the
   same for elements, and **E057** restricts `Cell[T]` to scalars and `string`
   *explicitly* so a cell cannot reconstruct a cycle
-  (`internal/checker/checker.go:635`). Verified 2026-08-06: the proof program
+  (`internal/check/checker/checker.go:635`). Verified 2026-08-06: the proof program
   now fails `-check`; `Cell[Node]` and `Cell[fn]` are rejected; a struct rebuild
   captures a snapshot rather than a back-edge.
 

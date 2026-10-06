@@ -20,7 +20,7 @@
 // `eprint` / `now_unix_ms` directly and always will.
 //
 // Each method needs the target capability named in its comment
-// (`internal/platforms`): a target whose profile lacks it fails the build
+// (`internal/pkg/platforms`): a target whose profile lacks it fails the build
 // with E066 rather than at run time. What a handler can call is therefore a
 // property of where it is going — the `wasi-http` proxy world grants log /
 // now / random / fetch / config and nothing else, so `.env` is a build error

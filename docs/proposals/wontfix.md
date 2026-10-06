@@ -97,7 +97,7 @@ have paid.
 
 **The fixpoint is not the primary gate for a lowering change.** It proves the
 compiler reproduces itself and is structurally blind to a *stable* miscompile.
-`internal/e2eselfhost` is primary; see `docs/TEST-GATES.md`. #6018 passed the
+`internal/testing/e2ecompiler` is primary; see `docs/TEST-GATES.md`. #6018 passed the
 per-module fixpoint, all fixtures and the native suite while segfaulting the
 driver.
 

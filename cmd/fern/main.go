@@ -69,21 +69,21 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/jakechampion/lang/internal/ast"
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/diag"
-	"github.com/jakechampion/lang/internal/embed"
-	"github.com/jakechampion/lang/internal/fmtsource"
-	"github.com/jakechampion/lang/internal/gates"
-	"github.com/jakechampion/lang/internal/interp"
-	"github.com/jakechampion/lang/internal/literate"
-	"github.com/jakechampion/lang/internal/modload"
-	"github.com/jakechampion/lang/internal/monomorph"
-	"github.com/jakechampion/lang/internal/parser"
-	"github.com/jakechampion/lang/internal/platforms"
-	"github.com/jakechampion/lang/internal/printer"
-	"github.com/jakechampion/lang/internal/tty"
+	"github.com/jakechampion/lang/internal/check/checker"
+	"github.com/jakechampion/lang/internal/check/constfold"
+	"github.com/jakechampion/lang/internal/oracle/interp"
+	"github.com/jakechampion/lang/internal/oracle/monomorph"
+	"github.com/jakechampion/lang/internal/pkg/embed"
+	"github.com/jakechampion/lang/internal/pkg/modload"
+	"github.com/jakechampion/lang/internal/pkg/platforms"
+	"github.com/jakechampion/lang/internal/syntax/ast"
+	"github.com/jakechampion/lang/internal/syntax/diag"
+	"github.com/jakechampion/lang/internal/syntax/fmtsource"
+	"github.com/jakechampion/lang/internal/syntax/parser"
+	"github.com/jakechampion/lang/internal/syntax/printer"
+	"github.com/jakechampion/lang/internal/tools/gates"
+	"github.com/jakechampion/lang/internal/tools/literate"
+	"github.com/jakechampion/lang/internal/tools/tty"
 )
 
 // absPath returns the canonical absolute form of p, or p itself if
@@ -628,7 +628,7 @@ func main() {
 	tangleChunk := flag.String("chunk", "", "with -tangle, expand and print only the named chunk (e.g. -chunk 'the main loop') instead of the <<*>> root — for inspecting or extracting one chunk. Works on single- and multi-file documents.")
 	doDoctest := flag.Bool("doctest", false, "run the `test`-directive example blocks in a literate FILE.fern.md. Each ```fern test block is tangled (its `<<refs>>` expand against the document's chunks) into a standalone program, compiled, and run; exit 0 = pass. Results print as TAP; the command exits non-zero if any example fails.")
 	showVersion := flag.Bool("version", false, "print the commit this binary was built from (plus the Go version and platform) and exit — the nightly tag rolls, so this is how to say which build you have")
-	listTargets := flag.Bool("targets", false, "list the supported -target= values with their descriptions + capability surface, then exit. Surfaces the Platform-descriptor table (internal/platforms) as the canonical source of truth for what each target accepts.")
+	listTargets := flag.Bool("targets", false, "list the supported -target= values with their descriptions + capability surface, then exit. Surfaces the Platform-descriptor table (internal/pkg/platforms) as the canonical source of truth for what each target accepts.")
 	explain := flag.String("explain", "", "print the long-form explanation for an error code (e.g. -explain E001) and exit. Pass an empty string with no other args to list the available codes.")
 	colorMode := flag.String("color", "auto", "colourise diagnostics: auto (default — colour only when stderr is a terminal and NO_COLOR is unset), always, or never.")
 	asciiBoxes := flag.Bool("ascii", false, "with coloured diagnostics, draw the gutter with a plain `|` instead of the box-drawing `│` (also selected automatically when the locale isn't UTF-8).")

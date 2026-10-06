@@ -88,7 +88,7 @@ this checkout at `/work`, with the usual Go build/module cache volumes:
 
 ```sh
 go test ./internal/codegen/x86_64ssa -run 'Test(Slice|RuntimeHelper)' -count=1 -v
-go test ./internal/e2e -run '^TestX86_64SSASlices$' -count=1 -v
+go test ./internal/testing/e2e -run '^TestX86_64SSASlices$' -count=1 -v
 ```
 
 Reproduce the remaining coverage diagnostic, which is expected to exit 1:

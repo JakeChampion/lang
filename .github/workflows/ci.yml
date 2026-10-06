@@ -65,14 +65,14 @@ jobs:
           # each allowlist to the packages its lane is built from.
           #
           # test-fernsmith also skips a change that touches only the self-host
-          # compiler (compiler, internal/e2eselfhost): its tests
+          # compiler (compiler, internal/testing/e2ecompiler): its tests
           # never read those trees, and each of its jobs deletes both right
           # after checkout (.github/actions/drop-selfhost-sources) so that
           # stays true. A lane whose tests do read them keeps the doc-only
-          # block; every internal/e2e lane, and examples through `fern`,
+          # block; every internal/testing/e2e lane, and examples through `fern`,
           # compiles its programs with the self-host and so reads them.
           #
-          # internal/sourcelint reads this table (TestPRLanesShareOneDocOnlyFilter,
+          # internal/testing/sourcelint reads this table (TestPRLanesShareOneDocOnlyFilter,
           # TestWorkflowPathFiltersHaveNoDeadEntries, ...).
           LANES: |
             {
@@ -84,7 +84,7 @@ jobs:
               "test-e2e-other":        { "paths-ignore": ["docs/**", "*.md"] },
               "test-e2e-differential": { "paths-ignore": ["docs/**", "*.md"] },
               "test-e2e-selfhost":     { "paths-ignore": ["docs/**", "*.md"] },
-              "test-fernsmith":        { "paths-ignore": ["docs/**", "*.md", "compiler/**", "internal/e2eselfhost/**"] },
+              "test-fernsmith":        { "paths-ignore": ["docs/**", "*.md", "compiler/**", "internal/testing/e2ecompiler/**"] },
               "fuzz-diff":             { "paths-ignore": ["docs/**", "*.md"] },
               "examples":              { "paths-ignore": ["docs/**", "*.md"] },
               "perf":                  { "paths-ignore": ["docs/**", "*.md"] },
@@ -160,7 +160,7 @@ jobs:
             // Without a parsable table the lane names are unknown, so this one
             // failure cannot run everything: it fails loudly, and every filtered
             // lane skips until the table is fixed. laneTable in
-            // internal/sourcelint rejects the same edit locally.
+            // internal/testing/sourcelint rejects the same edit locally.
             let lanes;
             try {
               lanes = JSON.parse(process.env.LANES);

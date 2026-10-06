@@ -17,7 +17,7 @@ Fern accidentally grew **two** async systems:
    future/stream result elems). Colorless, platform-native, clean. This
    is the WASI-Preview-3 path.
 2. **The `concurrent` / `await` / `race` desugar** — ~318 lines of
-   source-to-source CPS in `internal/parser/parser.go` (~5% of the
+   source-to-source CPS in `internal/syntax/parser/parser.go` (~5% of the
    file), splitting task-function bodies at every `await` into
    continuation closures over `std/task`. No IR representation; not
    mirrored in the self-host parser; the most regression-prone surface
@@ -54,7 +54,7 @@ async on MIR (a CFG); C# builds a state machine over a CFG; Kotlin does
 CPS over an IR. On a CFG, "loops/branches/breaks" are already just
 edges, so "assign a state to each suspend point and switch on state" is
 *one uniform transform*, not N special cases. **If we ever want
-transparent `await`-anywhere again, it belongs in `internal/ir`, never
+transparent `await`-anywhere again, it belongs in `internal/oracle/ir`, never
 the parser.**
 
 ## Do we even need await-anywhere?

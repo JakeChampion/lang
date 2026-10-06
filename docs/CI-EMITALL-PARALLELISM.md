@@ -92,7 +92,7 @@ On a native Linux x86-64 host, run:
 
 ```sh
 GOMAXPROCS=4 FERN_BUILD_MEM_BUDGET_MB=12000 \
-  go test ./internal/e2eselfhost \
+  go test ./internal/testing/e2ecompiler \
   -run '^TestSelfHostPerModuleEmitAllFixpointX86_64$' \
   -race -count=1 -v -timeout 30m
 ```

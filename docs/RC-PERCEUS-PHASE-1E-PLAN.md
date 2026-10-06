@@ -30,7 +30,7 @@ are *runtime opaque structs* — Reader, Writer, Map, MapIter,
 Stream, BytesWriter, HttpRequest, HttpResponse, FileStat,
 Span, ProcessResult, TestRunner, MockPlatform, Platform,
 TimeZone, Url, HeaderMap, MockCall, `__JsonParser` — all
-declared in `internal/checker/checker.go:builtinStructDecls`
+declared in `internal/check/checker/checker.go:builtinStructDecls`
 or its equivalents and allocated by hand-rolled assembly in
 `internal/codegen/{arm64,x86_64,wasmbin}`.
 
@@ -326,7 +326,7 @@ unchanged, new tests prove the new alias / dec path works".
   - `internal/codegen/arm64/arm64.go:emitRcIncRuntime` /
     `emitRcDecRuntime` — the rc helper assembly with the
     sentinel short-circuit.
-  - `internal/ir/ir.go:emitRcDecLocalsAtExit` — Phase 1d-v
+  - `internal/oracle/ir/ir.go:emitRcDecLocalsAtExit` — Phase 1d-v
     array dec sweep (template for the struct version).
-  - `internal/ir/ir.go:needsRcIncOnAlias` — the predicate
+  - `internal/oracle/ir/ir.go:needsRcIncOnAlias` — the predicate
     everyone shares.

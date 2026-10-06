@@ -53,7 +53,7 @@ Implemented locally and verified to typecheck + emit a core module
 - `wasmbin.go` `CallDirectAliases`: `wasm_timer_pollable` /
   `wasm_block` / `wasm_poll` → their `__fern_*`.
 - `wasi.go` `scanImports`: add the imports when the helpers are used.
-- `internal/checker/checker.go`: `FuncSigs` for the builtins.
+- `internal/check/checker/checker.go`: `FuncSigs` for the builtins.
 
 ## STATUS UPDATE — timer pollable lands end-to-end (composer blocker solved)
 
@@ -69,14 +69,14 @@ needed.
   `wasm_block(pollable: i32): i32` (→ `pollable.block`). Wired in
   `internal/codegen/wasmbin/` (import spec `wasi_clocks_subscribe_duration`,
   helpers `__fern_wasm_timer_pollable` / `__fern_wasm_block`, scanImports,
-  CallDirectAliases) + `internal/checker` FuncSigs.
+  CallDirectAliases) + `internal/check/checker` FuncSigs.
 - Composer (Layer 2): `ComposeRequest.Timer`, `ensureMonotonicTimer`
   (pulls in `ensureIoPoll`, outer-aliases the surfaced `pollable` into
   the clock instance so `subscribe-duration`'s `own<pollable>` is the
   SAME resource `pollable.block` consumes), and
   `WasiClocksMonotonicTimerInstanceTypeBody`. `classify.go` maps the
   `subscribe-duration` import → `req.Timer`.
-- Tests: `internal/e2e/wasm_reactor_test.go` (compile → component →
+- Tests: `internal/testing/e2e/wasm_reactor_test.go` (compile → component →
   wasmtime, timer block + timer-with-stdout), component bytes/validate,
   checker sig test. Verified a 500ms timer actually blocks ~500ms.
 
@@ -117,7 +117,7 @@ the wasm edge target. (`sleep_pollable` is sugar over
 counterpart of native-only `std/reactor` — import whichever matches the
 target.
 
-Verified end-to-end on wasmtime (`internal/e2e/wasm_reactor_test.go`):
+Verified end-to-end on wasmtime (`internal/testing/e2e/wasm_reactor_test.go`):
 two overlapped timer tasks resume and return their values in task order
 (not completion order) for both `Step[i32]` and `Step[string]` (the
 string case exercises the generic-variant inference through the

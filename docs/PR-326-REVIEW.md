@@ -32,15 +32,15 @@ is "edge handlers don't allocate on the happy path of
 
 - **Zero prelude functions use `Result[i32, i32]`.** Every
   prelude `Result` signature in
-  `internal/checker/checker.go:586-624` is
+  `internal/check/checker/checker.go:586-624` is
   `Result[string, IoError]` / `Result[Reader, IoError]` /
   `Result[Writer, IoError]`. None pass `isI32StackShape`
-  (`internal/ir/ir.go:778-790`).
+  (`internal/oracle/ir/ir.go:778-790`).
 - **Edge handler examples use `Option`, not `Result`.**
   `examples/wasm/todo_api.fern`, `examples/native_http_handler.fern`.
 - **The only `Result[i32, i32]` in the repo is the test code
-  this PR adds.** `internal/e2e/x86_64_test.go:1061-1095`,
-  `internal/e2e/arm64_test.go:1435-1467`.
+  this PR adds.** `internal/testing/e2e/x86_64_test.go:1061-1095`,
+  `internal/testing/e2e/arm64_test.go:1435-1467`.
 - **The pointer-shaped follow-up is what would actually deliver
   the goal** — per the PR's own docstring at `ir.go:716-724`:
   "Other shapes (pointer-typed payloads… mixed-shape Result)
@@ -61,7 +61,7 @@ pair-form payloads is the next high-leverage piece of this arc.
 
 ### 2.1 Variant-order trust on shadowed builtin enum (med) **[open question]**
 
-`pairFormVariantsFor` (`internal/ir/ir.go:748-762`) matches solely
+`pairFormVariantsFor` (`internal/oracle/ir/ir.go:748-762`) matches solely
 on the type-name `"Option"` / `"Result"` and on
 `isI32StackShape` of the type arguments. It never consults
 `info.Enums[name]` to confirm the variant decl is in canonical
@@ -345,12 +345,12 @@ dependency.
 The Security and Correctness reviews disagreed. Resolve by
 reading:
 
-- `internal/checker/checker.go:86-88` — does this reserve the
+- `internal/check/checker/checker.go:86-88` — does this reserve the
   *type names* `Option` / `Result`?
-- `internal/checker/checker.go:431` — does this enforce
+- `internal/check/checker/checker.go:431` — does this enforce
   global-uniqueness of *variant names* `Some` / `None` /
   `Ok` / `Err`?
-- `internal/checker/checker.go:333-340` — the security review
+- `internal/check/checker/checker.go:333-340` — the security review
   cited this as "skips injecting the builtin when the user has
   declared the name first."
 

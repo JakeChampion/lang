@@ -201,7 +201,7 @@ findings. Ranked by leverage.
   `parse_lock` compares a line for exact equality against `"[[package]]"`, so
   that header never matched, `have` never went true, and **a CRLF `fern.lock`
   parsed to zero packages**: the loader saw an empty lock rather than an error.
-  Native does not have this bug — `internal/mvs/lock.go:66` makes the identical
+  Native does not have this bug — `internal/pkg/mvs/lock.go:66` makes the identical
   comparison but trims with `strings.TrimSpace`, which strips `\r` — so this
   was a self-host-only divergence from the reference it mirrors. One
   CRLF-aware `util.trim` now serves `fern_toml` and `mvs`, pinned by
@@ -819,7 +819,7 @@ findings. Ranked by leverage.
   `wrote` flag replaces them and the precondition holds.
 
   Verified by the row's own method: **14 appended expressions before, 14 after,
-  identical sequence**, then the byte gates — `internal/printer` full corpus
+  identical sequence**, then the byte gates — `internal/syntax/printer` full corpus
   (114s) and the self-host `Fmt|Print` parity suites (291s), both green.
 
   Still not worth converting: `escape_fstring_lit` and `indent_str`, the two the
@@ -1291,7 +1291,7 @@ appendix §6.)
 
 Keep the engineering bar from `CLAUDE.md`: every change re-runs the relevant
 suite (x86-64 + WASM locally; CI for arm64/qemu), and each fix ships with the
-test at the layer it touches. `internal/e2eselfhost` is primary on self-host
+test at the layer it touches. `internal/testing/e2ecompiler` is primary on self-host
 lowering changes; the fixpoint is self-referential and blind to a stable
 miscompile.
 

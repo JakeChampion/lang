@@ -75,11 +75,11 @@ diagnostics and keeps the combined stack within the repository's unchanged
 complexity limit. Type admission accepts only the representations with defined
 counted contracts, without a wildcard source arm.
 
-Validation uses `scripts/devbox go test ./internal/e2eselfhost
+Validation uses `scripts/devbox go test ./internal/testing/e2ecompiler
 -run '^TestSelfHostSSAUnits' -count=1 -v` for the unit-plan corpus and its
 parameter-mode and unsupported-layout rejection checks. The same corpus is
 compiled by the self-host CLI for each target. Repository checks are
-`scripts/devbox make lint-all` and `scripts/devbox go test ./internal/lint`.
+`scripts/devbox make lint-all` and `scripts/devbox go test ./internal/tools/lint`.
 Full current-head CI and review remain required before merging.
 
 ## Remaining production work

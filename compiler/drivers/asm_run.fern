@@ -15,7 +15,7 @@
 // module the IR gate declines is a hard error here instead of a silent fall
 // back to the legacy AST emitter. That is what made the AST emitter
 // deletable — and this is the driver with the widest reach, built by ~390 test
-// files across internal/e2eselfhost and internal/e2e, so it is also the reroute
+// files across internal/testing/e2ecompiler and internal/testing/e2e, so it is also the reroute
 // that proves the per-function IR subset covers the corpus rather than the
 // curated part of it. A decline names its bail site under FERN_STRICT_IR=1.
 //

@@ -149,7 +149,7 @@ the std/test runner — happy path, empty-array semantics,
 type-changing map, accumulator-type-differing fold, a
 captured-variable closure, both Option arms of find) gated by
 `TestRunnerArrayCombinatorsExample`; plus `TestStdArrayCombinators`
-in `internal/e2e/generic_array_combinators_test.go` pins the
+in `internal/testing/e2e/generic_array_combinators_test.go` pins the
 qualified stdlib calls across interp + x86-64 + wasm-bin. The
 enabling monomorph substitution fix (the `*ast.Assign` walker
 gap that blocked `out = out.push(f(x))`) is documented at #1758
@@ -250,7 +250,7 @@ group_by) currently takes 4 lines.
 **Status**: all shipped in `internal/stdlib/core/map.fern` (#2685).
 `entries` / `merge` / `extend` / `from` / `get_or_insert` landed
 first; `update` (one-pass insert-or-modify) and `contains_value`
-complete the set. Covered by `internal/e2e/map_verbs_test.go`
+complete the set. Covered by `internal/testing/e2e/map_verbs_test.go`
 (interp + wasm) and `tests/stdlib/map_verbs_test.fern` (the
 pure-Fern runner). `from_entries` is spelled `map.from(pairs)`.
 
@@ -414,7 +414,7 @@ receiver once compiled (the copy-on-write aliasing hazard), so
 the copy is load-bearing, not incidental. Covered by
 `tests/stdlib/set_test.fern` (pure-Fern runner, `add is pure`
 being the value-semantics guard) and
-`internal/e2e/set_module_test.go` (differential across interp /
+`internal/testing/e2e/set_module_test.go` (differential across interp /
 x86-64 / wasm / arm64). **Complexity**: linear-scan store, so
 `contains` / `add` are O(n) and an n-element build is O(n²) —
 right-sized for CLI-scale sets, a trap past ~10⁴ elements. The
@@ -449,9 +449,9 @@ whole-string `to_upper` / `to_lower` do **full (1→N)** mapping (`ß` →
 `SS`, #5630); the per-scalar `char` methods stay simple, since a 1→N
 expansion has no single code point to return. Not locale-aware, by
 design. Covered by `tests/stdlib/unicode_test.fern`,
-`internal/e2e/unicode_case_test.go`,
-`internal/e2e/string_graphemes_test.go` and
-`internal/e2e/string_words_test.go` (each differential across interp /
+`internal/testing/e2e/unicode_case_test.go`,
+`internal/testing/e2e/string_graphemes_test.go` and
+`internal/testing/e2e/string_words_test.go` (each differential across interp /
 x86-64 / wasm / arm64), and `cmd/unicodegen/main_test.go`.
 
 **Representation (#5627)**: the tables were once `i32[]` literals —
@@ -481,7 +481,7 @@ think they're free additions to make.
   combination Fern's immutable values + Perceus make possible and
   no GC'd or ownership-typed library can offer. Covered by
   `tests/stdlib/{ordmap,ordset,pmap,pset,pvec}_test.fern` and
-  `internal/e2e/persistent_collections_test.go` (interp / x86-64 /
+  `internal/testing/e2e/persistent_collections_test.go` (interp / x86-64 /
   wasm / arm64). Design and measurements:
   `docs/PERSISTENT-COLLECTIONS.md`.
 - **i32[] math**: `arr.sum()` / `arr.max()` / `arr.min()`.
@@ -838,7 +838,7 @@ think they're free additions to make.
     called an Array method on a `T[]` receiver
     (`function map[T,U](xs: T[], f) { … out = out.push(f(x)); … }`)
     failed the post-monomorph re-check with "expected `T[]`, got
-    `i32[]`". Root cause was in `internal/monomorph` rather than
+    `i32[]`". Root cause was in `internal/oracle/monomorph` rather than
     the checker: the substitution walk (a hand-written switch over
     the expression union, since replaced) had no `*ast.Assign` case,
     so the `push` call buried in `out = out.push(x)` (typically
@@ -852,8 +852,8 @@ think they're free additions to make.
     combinators)** — `map` / `filter` / `fold` over `T[]` now
     compile + run on interp, x86-64, and wasm. Guarded by
     `TestRunSubstitutesMethodCallTypeArgsInGenericBody`
-    (`internal/monomorph`) and `TestGenericArrayCombinators`
-    (`internal/e2e`).
+    (`internal/oracle/monomorph`) and `TestGenericArrayCombinators`
+    (`internal/testing/e2e`).
 - **arm64 / x86-64 i64 comparison across the i32::MAX
   boundary returns wrong result**. The expression
   `(la + lb) > 2147483647 as i64` where `la = 2147483647 as

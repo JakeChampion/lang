@@ -323,7 +323,7 @@ one is refused by name before emit — `wasm_ir.wasm_unsupported_builtin` (#6946
 | `__raw_load8(ptr: usize, off: i32): i32` | `movzbl (%ptr,%off), %eax` | zero-extended byte read (also expressible as `s[i]`, included for symmetry) |
 | `__raw_store_ptr(ptr: usize, off: i32, v: usize)` | `mov %v, (%ptr,%off*W)` | store a word-sized slot (W = pointer width); for writing box `{data,len}` fields and array slots |
 | `__raw_load_ptr(ptr: usize, off: i32): usize` | `mov (%ptr,%off*W), %rax` | word-sized slot read |
-| `__raw_string(data: usize, len: i32): string` | stamp `{rc, data, len}` into the 24 bytes at `data-24`; the box is `data-16` | the *one* intrinsic that produces a typed `string`; the bridge from raw bytes back to the surface. Allocates NOTHING, and so **requires `data` to be an unadjusted `__raw_alloc` result** — that is the only pointer with the header reserved in front of it. A scratch buffer, an argv entry or an `__raw_addr` interior address writes the box over 24 bytes belonging to something else, which nothing reports at run time; `internal/sourcelint`'s `TestRawStringPointerComesFromRawAlloc` holds the rule |
+| `__raw_string(data: usize, len: i32): string` | stamp `{rc, data, len}` into the 24 bytes at `data-24`; the box is `data-16` | the *one* intrinsic that produces a typed `string`; the bridge from raw bytes back to the surface. Allocates NOTHING, and so **requires `data` to be an unadjusted `__raw_alloc` result** — that is the only pointer with the header reserved in front of it. A scratch buffer, an argv entry or an `__raw_addr` interior address writes the box over 24 bytes belonging to something else, which nothing reports at run time; `internal/testing/sourcelint`'s `TestRawStringPointerComesFromRawAlloc` holds the rule |
 | `__syscall3(nr: i32, a1: i64, a2: i64, a3: i64): i64` | `mov nr→%rax; a1→%rdi; a2→%rsi; a3→%rdx; syscall` → result in `%rax` | the I/O sub-floor for the syscall leaves; a single `syscall`/`svc`, no runtime symbol. Native-syscall backends only (x86-64 / arm64 Linux); wasm has no generic syscall |
 | `__raw_scratch(n: i32): usize` | `leaq __fern_scratch(%rip), %rax` | a fixed static (.bss) scratch buffer the syscall leaves hand the kernel to write into (`timespec`, `stat`) — reused, never freed, so no per-call leak. `n` is a size hint; the buffer is fixed. **Non-reentrant** (one leaf reads it fully before another runs) |
 | `__syscall4(nr, a1, a2, a3, a4): i64` | like `__syscall3` plus `a4→%r10; syscall` | the 4-arg sub-floor sibling, for syscalls whose 4th arg is meaningful (`openat`'s `mode` with `O_CREAT`, `newfstatat`'s `flags`) |
@@ -342,7 +342,7 @@ op was added for that. It and its siblings `__load_i32` / `__load_ptr` take an
 address and nothing else, so there is no offset to fold: a field read spells its
 offset `__load_i64(__raw_addr(buf, 96))`, never `__load_i64(buf + 96)`. #6386 was
 the latter — `stat` faulting on arm64-darwin, the one target whose image sits
-above 4 GiB. `internal/sourcelint`'s
+above 4 GiB. `internal/testing/sourcelint`'s
 `TestAsmcoreAddressesAvoidI32Arithmetic` holds the rule for every
 address-taking intrinsic in `asmcore.fern`.
 

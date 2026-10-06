@@ -76,8 +76,8 @@ up.
 
 1. **The gate.** A per-request allocation census of the framing path: the
    parse and the serialize of the request in §1, counted separately. It runs
-   on both compilers, in `internal/e2eselfhost` with a twin in
-   `internal/e2e`, and pins today's counts as a ratchet that may only fall.
+   on both compilers, in `internal/testing/e2ecompiler` with a twin in
+   `internal/testing/e2e`, and pins today's counts as a ratchet that may only fall.
 2. **Native: a `const` array is static.** A read of a `const` array reads one
    immortal copy instead of building a new one. This is a native bugfix,
    referenced on #4451, with its own issue, allocation-count test and PR.
@@ -331,30 +331,31 @@ Between two counts, 2,000 hello requests cost 30 allocations each on
 x86-64 at `origin/main` ac29eede9, and the gate was pinned there as a
 ratchet. Each slice moves the pin, and §6.2 records each move.
 
-The rows below are attributed from a `FERN_RC_TRACE` trace of a `-g`
-build, the one build whose return addresses resolve to functions, and
-then corrected by hand. Under `-g` the semantic passes keep every value
-a source variable names whole so a debugger can show it (`seminline`,
-`semoption`, `sempair` all skip `dbg_vals`). The same server then
-allocates 43 times per request, and the framing probe's parse allocates 5
-instead of 0. The 13 the `-g` build adds were struck from the parse's
-rows and the helpers' named tuples by judgement, not by a matched diff:
-a trace row is an allocation site that can fire more than once per
-request, and `-g` also changes what the passes rewrite, so the two
-builds' traces do not pair line for line. The totals 30, 43 and 5 are
-measured; the split of the 30 between rows is provisional, and each
-slice's gate reading settles it.
+The rows below are attributed from a `FERN_RC_TRACE` trace of a plain
+build, 1,200 keep-alive requests after 200 warm ones, each allocation's
+site and caller resolved against the linked binary's symbol table (`nm -n`),
+at `origin/main` 5001ec0 with the gate at 15. Every row fires exactly once
+per request, so the attribution is a count, not a judgement. (A `-g` build
+is not the one to attribute with: the semantic passes keep every value a
+source variable names whole for the debugger, so `seminline`, `semoption`
+and `sempair` all skip `dbg_vals`, and the same server allocates 43 times
+per request there.)
 
 | Allocations | Where |
 | ---: | --- |
-| 7 | `RealDriver.wait` builds its events array by appending, then takes the first `n` pairs of it |
-| 6 | `__serve_read` appends what each read took: `scratch.take(n)` and `buf.concat(...)`, each built by pushes |
-| 3 | `__serve_compact` copies the unanswered bytes into a fresh array through a builder (`__bytes_from`), every request, even when there are none |
-| 4 | `.with(at, …)` on `__Conns`' per-connection arrays copies an array its holder does not own uniquely (`__serve_respond`, `__serve_next`) |
-| 3 | `run_task` for a handler that never parks: the `Task`, its closure and the `Done` |
-| about 4 | tuples and records returned between the loop's helpers: `(conns, sent)`, `(conns, boolean)`, `__Wire`, `__serve_took`'s triple, the event triple |
-| 1 | the parse's `Framed`, which the loop keeps whole (§5.3's slice 7) |
-| 2 | the handler's `http.ok`: the `HttpResponse` and a header map |
+| 1 | `__fern_reactor_wait` builds its kernel-facing events scratch, 792 bytes for 64 `epoll_event`s and a header, and frees it per wait |
+| 1 | `__serve_read`'s `(conns, eof)` tuple |
+| 1 | the read's one copy of what it took (`__bytes_range`) |
+| 3 | the parse: the `Framed` box the loop keeps whole (§5.3's slice 7), and two in `__request_head`, its head record among them. A server calls three parse entry points, so `__request_head` has three callers and stays a function, where the framing probe's one caller has it spliced and read apart |
+| 3 | `__serve_start`: the `Task`, its closure and `run_task`'s `Done`, for a handler that never parks |
+| 1 | `__serve_wire`'s `__Wire` record |
+| 3 | `__serve_send_out`'s, `__serve_produce`'s and `__serve_ready`'s `(conns, sent)` and `(conns, more)` tuples: each has several callers, so it is not spliced, and each caller takes the tuple apart at once |
+| 2 | the handler's `http.ok`: the `HttpResponse` and its header map |
+
+The trace shows no `.with` copying a connection array: every update of
+`__Conns` writes its arrays in place, as the Go compiler does. The earlier
+reading of the `-g` trace put four allocations there; they were the
+debugger's.
 
 ### 6.2 Slices
 
@@ -376,14 +377,23 @@ is preferred where it covers a case, since every program gains.
    -1 ends the pairs when fewer arrive than fit. The loop makes its array
    once, with `async.event_room(64)`. `wait(max, timeout_ms)` stays, as the
    trait's default over a fresh array. 22 to 15.
-4. **The per-connection arrays are updated in place.** The loop holds
-   `__Conns` uniquely, so `.with` should reuse each array. Find why it
-   copies and fix that in the compiler.
+4. **The per-connection arrays are updated in place.** Nothing to do: the
+   §6.1 trace, resolved by symbol, shows every `.with` on a `__Conns`
+   field writing in place. The row came from the `-g` build.
 5. **A handler that answers at once costs no task.** Start the handler as
    a plain call and make the task only when it parks.
 6. **The helpers' tuples and records.** By the compiler where a pairing
    or a splice covers them, otherwise by threading state the way the
-   parse does.
+   parse does. Partly done: a tuple of two values that each fit a word,
+   returned by a function whose every caller takes it apart,
+   returns in two words as a variant does (`sempair`,
+   `docs/SELFHOST-SSA-BACKEND.md`), so `__serve_read` and
+   `__serve_send_out` lose their boxes: 15 to 13. `__serve_produce` and
+   `__serve_ready` keep theirs: each reaches an indirect call (a chunk
+   producer, the stop callback), which the suspension classifier counts as
+   able to park once a program has a park in it, and a function that may
+   suspend is never paired. The three-word tuples and `__Wire` are left
+   for a splice or for threading.
 7. **The handler's response.** What is left is the response, once the
    loop's own allocations are gone. A constant response is a static
    record, and the donor of §5.3's slice 6 is the model for one built per

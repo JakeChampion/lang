@@ -2,19 +2,19 @@
 
 Status: normative index. Every rejection the front-end can report has a
 stable code, an explanation (`fern explain E0NN`, sourced from
-`internal/diag/explanations/`), and — where one exists — a conformance
+`internal/syntax/diag/explanations/`), and — where one exists — a conformance
 case that pins it.
 
 The codes are the closest thing Fern has to a written statement of its
 static semantics. The *rules* they enforce still live only in
-`internal/checker`; this index says which rules exist and which are
+`internal/check/checker`; this index says which rules exist and which are
 pinned by something an independent implementation could be measured
 against, not what each rule is.
 
 ## Why conformance coverage, when the Go tests already pass
 
 Almost every code here is exercised by a Go test under
-`internal/checker` or `internal/parser`. That is good coverage of
+`internal/check/checker` or `internal/syntax/parser`. That is good coverage of
 `internal/`, and **none of it survives the native freeze.**
 
 `docs/NATIVE-CONVERGENCE.md` makes the self-host compiler the

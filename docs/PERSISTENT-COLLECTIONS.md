@@ -119,7 +119,7 @@ at their source with tests:
    (`Br(H[T][])`) failed the re-check with "expected H[i32][], got H__i32[]".
    The clone pass substituted `Call.TypeArgs` / `ArrayLit.ElemType` but the
    mangling pass never rewrote those slots to the enum clone.
-   `internal/monomorph/monomorph.go` `rewriteBlockTypes`; pinned by
+   `internal/oracle/monomorph/monomorph.go` `rewriteBlockTypes`; pinned by
    `TestRunRewritesSubstitutedCallTypeArgsAgainstEnumClone`.
 2. **Checker: a bare payloadless variant of a generic enum** (`Leaf`) in a
    payload or field position of the instantiation was E036 / E043 — it
@@ -138,7 +138,7 @@ at their source with tests:
    then released the stored element (use-after-free under `-sanitize`). The
    array-write guard (`computeArraySetIncs`) now treats bindings of a
    non-consuming match as borrows, exactly like borrowed parameters.
-   `internal/ir/rc_analysis.go`; pinned by
+   `internal/oracle/ir/rc_analysis.go`; pinned by
    `TestArraySetOnBorrowedMatchBindingForcesCopy` and the
    `with_on_match_binding_of_borrowed_enum` rc-correctness corpus case.
 5. **Checker: a cast retargeted a pinned generic call** —
@@ -203,7 +203,7 @@ so every chain below `insert` dangled. Its rc lowering also returned a
 match-bound array payload without a transfer retain (a use-after-free in the
 vector's leaf descent under FERN_SANITIZE=1). Those live in
 `compiler/parser.fern` / `irlower.fern`, with rows in
-`internal/e2eselfhost/self_host_generic_ctor_ir_test.go` (x86-64 and wasm
+`internal/testing/e2ecompiler/self_host_generic_ctor_ir_test.go` (x86-64 and wasm
 legs), `self_host_stdlib_modules_ir_test.go` (all five modules through the
 self-host loader), and `self_host_arr_return_transfer_ir_test.go`. The
 self-host does not yet reclaim these structures' nodes (the RECLAIM half of

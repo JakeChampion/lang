@@ -26,7 +26,7 @@ suite (`constfold`, `cse`, `licm`, `trivialphi`, `blockmerge`,
 the repo (~469 tests). **But it is not on any production path.** The
 shipping backends — `internal/codegen/{arm64,x86_64,wasmbin}` — all consume
 the flat, structured-control-flow `ir.Program` and run only the
-peephole-grade passes in `internal/ir/` (`fold`, `dce`, `copyprop`,
+peephole-grade passes in `internal/oracle/ir/` (`fold`, `dce`, `copyprop`,
 `constprop`, `inline`, `strength`, `tco`, `defunctionalise`). Every consumer
 of the SSA layer is behind `-backend ssa`: `wasmssa`, `arm64ssa`, and — since
 2026-09-01 — `x86_64ssa`. None is the default for any target.
@@ -77,7 +77,7 @@ the experimental proving ground. Rationale:
 - `-backend ssa` (wasm) reaches feature parity with `wasmbin` and outperforms it on the
   e2e corpus by a margin that justifies making it the default wasm path
   (which would make SSA production by definition).
-- The flat-IR optimizer in `internal/ir/` grows enough ad-hoc
+- The flat-IR optimizer in `internal/oracle/ir/` grows enough ad-hoc
   cross-block analysis that we'd be reimplementing SSA badly — at which
   point doing it properly wins.
 
@@ -85,7 +85,7 @@ the experimental proving ground. Rationale:
 
 **Tripwire 4 has fired**, and two claims in this document are stale. See
 `docs/SSA-CUTOVER-PLAN.md` for the evidence: the ad-hoc control-flow analysis
-inventory in `internal/ir` (and its self-host mirrors), the measurement that
+inventory in `internal/oracle/ir` (and its self-host mirrors), the measurement that
 32% of the IR's reference-count operations act on unnamed operand-stack values,
 and the readiness of the three SSA backends.
 
@@ -134,7 +134,7 @@ Two things that bear on the choice and are easy to lose:
 - **The alternative route is further along than this document suggests.** SSA
   as an ANALYSIS representation rather than a codegen path is substantially
   built: `Op.SrcOp` provenance with a totality gate
-  (`internal/e2e/ssa_lift_provenance_test.go`), and
+  (`internal/testing/e2e/ssa_lift_provenance_test.go`), and
   `internal/ssa/{ownership,ownership_solve,ownership_returns,units,certify}.go`
   are 2,100+ lines of interprocedural ownership over the lifted form. That
   route feeds roadmap goal 2 (Perceus in the self-host) directly, where the
@@ -351,7 +351,7 @@ which computes the class again for a size it was handed in a register.
 **Constant shift counts and power-of-two divisors, the same day.** With the
 allocator out of the way `enum_match` ran 1.33e8 instructions to the flat
 build's 1.30e8 and still took 2.33x the time: three `idiv` per iteration for
-`k % 4`. `internal/ir`'s strength reduction deliberately leaves signed
+`k % 4`. `internal/oracle/ir`'s strength reduction deliberately leaves signed
 division by a power of two alone (an arithmetic shift rounds the wrong way),
 and the flat backends lower it themselves with a sign bias; the shared SSA
 emitter now does the same (`emitPow2DivRem`), for both SSA backends, and a
@@ -403,14 +403,14 @@ not defaulted but is actively measured:
 
 - Keep `internal/ssa/` building and its tests green in CI (they already run).
 - Keep the **arm64 corpus differential**
-  (`internal/e2e/arm64_ssa_differential_test.go`) green, with an empty
+  (`internal/testing/e2e/arm64_ssa_differential_test.go`) green, with an empty
   known-divergences file. This is the clause that replaces "keep
   `-target wasm32-wasi -backend ssa` in the e2e matrix": it exercises the lift
   and the register allocator over 281 programs rather than a handful of
   hand-written cases, so it is a real gate rather than a reminder that the
   layer compiles.
-- `LiftFromIR` must stay **total** over what `internal/ir` emits — the
-  provenance gate (`internal/e2e/ssa_lift_provenance_test.go`) is the one that
+- `LiftFromIR` must stay **total** over what `internal/oracle/ir` emits — the
+  provenance gate (`internal/testing/e2e/ssa_lift_provenance_test.go`) is the one that
   matters now, because an analysis that cannot see a construct silently
   under-reports rather than refusing to emit.
 - New IR ops / language features are **not** required to land in the SSA
@@ -442,14 +442,14 @@ ground on the native side, exactly as `-backend ssa` (wasm) is.
   proving ground, not a reason to ship it.
 
   On **arm64** that is now enforced by a corpus differential rather than by
-  hand-written cases: `internal/e2e/arm64_ssa_differential_test.go` runs every
+  hand-written cases: `internal/testing/e2e/arm64_ssa_differential_test.go` runs every
   `examples/**` program through both `-target arm64-linux` and
   `-target arm64-linux -backend ssa` and compares exit status and stdout, with a
   refusal counted as the documented coverage endpoint rather than as a pass.
   Its first run found four wrong answers and 56 heap SIGSEGVs; the
-  divergence file (`internal/e2e/testdata/arm64-ssa-diff-known-divergences.txt`)
+  divergence file (`internal/testing/e2e/testdata/arm64-ssa-diff-known-divergences.txt`)
   has no rows today. `x86_64ssa` has the same shape of leg
-  (`internal/e2e/x86_64_ssa_differential_test.go`) over the same corpus, but it
+  (`internal/testing/e2e/x86_64_ssa_differential_test.go`) over the same corpus, but it
   compares 30 programs to arm64's 281 — the rest are refused for missing
   helpers. **`-backend ssa` (wasm) still has no corpus differential**; its only
   cover is its own hand-written cases.

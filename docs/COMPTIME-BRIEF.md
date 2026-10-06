@@ -40,7 +40,7 @@ Four rules, each with a Fern-specific reason:
    language. Zig covers reflective printing, generic containers,
    and compile-checked format strings with `comptime` parameters
    + `inline for` + type reflection. Fern already has
-   monomorphised generics and const-folding (`internal/constfold`)
+   monomorphised generics and const-folding (`internal/check/constfold`)
    — a comptime should GROW from unifying those two, not arrive
    as a third system beside them (that unification pain is
    exactly the trigger condition LANGUAGE-DIRECTION.md names).
@@ -99,5 +99,5 @@ Design a real comptime only when at least one of:
   point, not a trigger on its own.
 
 Until then: `@derive` for API synthesis, monomorphisation for
-type-level genericity, `internal/constfold` for value folding,
+type-level genericity, `internal/check/constfold` for value folding,
 tooling for codegen.

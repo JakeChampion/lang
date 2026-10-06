@@ -6,8 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/jakechampion/lang/internal/manifest"
-	"github.com/jakechampion/lang/internal/pkgcache"
+	"github.com/jakechampion/lang/internal/pkg/manifest"
+	"github.com/jakechampion/lang/internal/pkg/pkgcache"
 )
 
 // runAdd implements `fern -add NAME SPEC [-manifest DIR]`: append a

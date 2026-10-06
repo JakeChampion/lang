@@ -65,7 +65,7 @@ The second half is a **callable sub-pair**: `drop` is the target's
 a *generic holder* free an element's captures without knowing which
 closure it holds — the IR's `__drop_arr_closure` walks an array of
 function values and dispatches each element at `element + 2*ptrW`
-(`genArrClosureDropFn` in `internal/ir/rc_insert.go`). The SSA cell was
+(`genArrClosureDropFn` in `internal/oracle/ir/rc_insert.go`). The SSA cell was
 2 slots wide for its first two years, so that walk read past the cell
 into the next heap block and called the **lambda** as the drop routine,
 with the env in the wrong register: #6144, a SIGSEGV the moment the

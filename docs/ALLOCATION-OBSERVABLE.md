@@ -109,7 +109,7 @@ hottest lowering; nothing needs it, because a scalar reading is exact on
 either order.
 
 **The interpreter does not model the arena.** Neither observable is
-available there, for one reason: `internal/interp` has no
+available there, for one reason: `internal/oracle/interp` has no
 bump allocator — it is a tree-walking evaluator over Go values — so
 `__heap_bump_bytes()` returns `0` there unconditionally, and the shape
 above is unobservable. This is a deliberate hole, not a defect: giving
@@ -166,7 +166,7 @@ All are stated over the *shape*, and all are pinned — see
   The claim is over the ORDER, not the cost. How many allocator calls a
   construct spends stays per-backend, and a tuple or single-payload
   variant small enough to be returned in registers spends none at all —
-  `internal/ir/aggregate_eval_order_test.go` pins those two on the op
+  `internal/oracle/ir/aggregate_eval_order_test.go` pins those two on the op
   stream, where there is an order to read whether or not a box is bought.
 
 ## What it found immediately

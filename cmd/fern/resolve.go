@@ -5,9 +5,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/jakechampion/lang/internal/manifest"
-	"github.com/jakechampion/lang/internal/mvs"
-	"github.com/jakechampion/lang/internal/pkgcache"
+	"github.com/jakechampion/lang/internal/pkg/manifest"
+	"github.com/jakechampion/lang/internal/pkg/mvs"
+	"github.com/jakechampion/lang/internal/pkg/pkgcache"
 )
 
 // runResolve implements `fern -resolve [DIR]`: read the manifest

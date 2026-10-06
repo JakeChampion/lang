@@ -3,7 +3,7 @@ import "std/http";
 
 // tests/stdlib/http_request_headers_migrated_test.fern —
 // Fern port of `TestInterpScriptHttpRequestHeaders` from
-// `internal/e2e/interp_script_test.go`. Pins the
+// `internal/testing/e2e/interp_script_test.go`. Pins the
 // HeaderMap → HttpRequest wiring
 // (docs/STDLIB-DESIGN-RESEARCH.md Rec §2):
 // `http_parse_request` populates `req.headers` from the

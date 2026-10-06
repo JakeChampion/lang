@@ -8,7 +8,7 @@ compiler: its register path (`-backend ssa`, `docs/SELFHOST-SSA-BACKEND.md`)
 on the native ISAs, its stack machine (`-backend flat`) on wasm. Background:
 `docs/SSA-DECISION.md`, #4112, #8822.
 
-`internal/e2e/arm64_default_string_reclaim_test.go` holds the default arm64
+`internal/testing/e2e/arm64_default_string_reclaim_test.go` holds the default arm64
 build to retention that does not grow with the input: a string passed to a
 user function is reclaimed.
 
@@ -40,7 +40,7 @@ core module, a WASI preview-1 command with a `_start` that runs main and exits
 with its value, which also exports `main` (#10768, #11408). The exit code is
 what separates them: a `wasi:cli/run` component reports ok or err and nothing
 wider, so `return 42` reaches the host as 1. A `main` that returns nothing
-exits 0 (#9233, `internal/e2e/void_main_exit_test.go`).
+exits 0 (#9233, `internal/testing/e2e/void_main_exit_test.go`).
 
 `cmd/fern` passes `-target`, `-emit` and `-backend` through to the self-host
 driver unchanged (`cmd/fern/selfhost.go`), and `fern -targets` lists the
@@ -59,7 +59,7 @@ three to six machine-word operands and return the kernel's word, negative
 errno on failure on every target. `__store_u8(addr, v)` writes the low byte
 of `v`. Every native target lowers the same names, so a socket primitive is
 one Fern body rather than assembly per target. They are runtime
-intrinsics with a `__` prefix, not public builtins: `internal/platforms`
+intrinsics with a `__` prefix, not public builtins: `internal/pkg/platforms`
 gates them under the `syscall` capability only the hosted-native profile
 grants, they carry no package capability, and networking APIs built on them
 still need their own classifications.
@@ -76,7 +76,7 @@ still need their own classifications.
 like any other syscall, and refuses a program whose number is a run-time
 operand, which the seccomp allowlist cannot cover.
 
-The syscall-floor probe (`internal/e2e/native_syscall_floor_test.go`) maps a
+The syscall-floor probe (`internal/testing/e2e/native_syscall_floor_test.go`) maps a
 file at a nonzero offset, reads distinct bytes back, unmaps and closes, pins
 the errno of a bad descriptor, and round-trips bytes through the byte store.
 The Darwin legs run in the Apple Silicon lane.
@@ -293,8 +293,8 @@ keeps.
 **The assemblers encode more than the baselines cover, on purpose.** An
 assembler that cannot spell an instruction cannot be told to gate it, so
 `x86_native.fern` and `arm64_native.fern` accept every mnemonic in the tables
-`cmd/x86tblgen` / `cmd/arm64tblgen` generate from `internal/x86tbl` /
-`internal/arm64tbl`, unconditionally; what a *code generator* may reach for is
+`cmd/x86tblgen` / `cmd/arm64tblgen` generate from `internal/tables/x86tbl` /
+`internal/tables/arm64tbl`, unconditionally; what a *code generator* may reach for is
 the baseline's question, not theirs.
 
 **What the arm64 raise cost, and what it did not buy.** The crypto extensions
@@ -395,7 +395,7 @@ The typed lowering turns a self-recursive call in tail position, and a tail
 call modulo cons, into a loop before any emitter sees the body
 (`ssasem.tail_recursion`, #9692, #10462), so self-tail recursion runs in
 constant stack depth on x86-64, arm64 and wasm
-(`internal/e2eselfhost/self_host_sem_tail_recursion_test.go`).
+(`internal/testing/e2ecompiler/self_host_sem_tail_recursion_test.go`).
 
 ### Pointer-width handling on arm64-darwin's high heap — how it works
 
@@ -406,13 +406,13 @@ the hint and relocates the mapping above 4 GiB. A pointer handled 32 bits
 wide is therefore correct on every cheap lane and wrong only on Apple
 hardware. `FERN_HIGH_HEAP=1` in the compiler's environment raises the hint to
 0x2_0000_0000 (8 GiB) at emit time (`asm_arm64_ir.fern`), and qemu-aarch64
-honours the raised hint. The gates are `internal/e2e/arm64_high_heap_test.go`
+honours the raised hint. The gates are `internal/testing/e2e/arm64_high_heap_test.go`
 (`TestArm64HighHeap*`, picked up by the ordinary `-run TestArm64` selection)
-and `internal/e2eselfhost/self_host_arm64_high_heap_test.go`
+and `internal/testing/e2ecompiler/self_host_arm64_high_heap_test.go`
 (`TestSelfHostArm64HighHeap*`). What neither reproduces: only the arena moves,
 so a truncation of a `.rodata`, image or stack address still needs the
 `macos-15` lane, where the `map_heap_string_values` case in
-`internal/e2e/arm64_darwin_native_test.go` round-trips concat-built keys and
+`internal/testing/e2e/arm64_darwin_native_test.go` round-trips concat-built keys and
 values through a `Map[string, string]`.
 
 ---

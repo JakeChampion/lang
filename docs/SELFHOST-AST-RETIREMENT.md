@@ -46,7 +46,7 @@ The sections below reason about the AST emitter's *call sites*. That is the
 wrong granularity for the x86 endgame: `asm.emit_module` is a thin shell whose
 body is reached only when `asm_ir.emit_module_ir_gated` declines, so the
 question is which PROGRAMS still make it decline. That had been re-derived by
-inspection; it is now measured directly — run `internal/e2eselfhost` with
+inspection; it is now measured directly — run `internal/testing/e2ecompiler` with
 **`FERN_STRICT_IR=1`**, and every failing test is by construction one that still
 needs the AST emitter.
 
@@ -89,7 +89,7 @@ regression: with #5642's `lower_match` fix reverted, the checked-operator case
 in `TestSelfHostStrictIRX86_64` silently emits AST asm that exits **1** instead
 of 10, and under the flag the same driver refuses with `FERN_STRICT_IR: f — the
 IR path bailed to the AST emitter`.
-`TestSelfHostStrictIR*` (`internal/e2eselfhost`) is the standing tripwire: a
+`TestSelfHostStrictIR*` (`internal/testing/e2ecompiler`) is the standing tripwire: a
 corpus that must NOT refuse, plus an over-budget program that must.
 
 ### The Option/Result recovery audit (2026-07-29, #5646 option 3)
@@ -268,7 +268,7 @@ the class of finding the flag exists for, and it is the opposite of #5642's
 class — worth keeping distinct, because a wrong-answer bail is urgent and a
 right-answer bail is only goal-1 debt.
 
-To reproduce the sweep: `FERN_STRICT_IR=1 go test ./internal/e2eselfhost -run
+To reproduce the sweep: `FERN_STRICT_IR=1 go test ./internal/testing/e2ecompiler -run
 TestSelfHostAsmIRPath`. When linking a driver's `.s` by hand to check an answer,
 use `gcc -nostdlib -static` — a plain `gcc -o` collides with `Scrt1.o`'s
 `_start` and every program then "exits 1", which reads exactly like a
@@ -282,8 +282,8 @@ flag the sweep is cheap enough to run properly, **paired with a control run**:
 
 ```
 RE=$(paste -sd'|' shard-list)
-                     go test ./internal/e2eselfhost -run "^($RE)$"   # control
-FERN_STRICT_IR=1     go test ./internal/e2eselfhost -run "^($RE)$"   # strict
+                     go test ./internal/testing/e2ecompiler -run "^($RE)$"   # control
+FERN_STRICT_IR=1     go test ./internal/testing/e2ecompiler -run "^($RE)$"   # strict
 ```
 
 The control is not optional. Six of the ten failing parents are wasm and two are
@@ -765,7 +765,7 @@ representative subset splits it three ways:
 The `ineligible-fn` row above says "No `ineligible-fn` items remain". That was
 true of the **builtin methods** it enumerates and false as a general statement:
 running the corrected probe (inside the `use_ir` branch — see above) over
-`internal/e2eselfhost` aborted **17 subtests across 7 test functions** on
+`internal/testing/e2ecompiler` aborted **17 subtests across 7 test functions** on
 2026-07-28. The count fell to **8 across 4** over #5755 / #5758 / #5790, and
 **re-measuring the remaining four under `FERN_STRICT_IR=1` on 2026-07-30 found
 only ONE that still declined** — three of the four rows had gone green without
@@ -2368,7 +2368,7 @@ tier → leak.
      been enumerated at all.
 
      **A second local round, over the WHOLE suite (2026-07-31).** The same
-     extract-and-probe trick applied to every Go literal in `internal/e2eselfhost`
+     extract-and-probe trick applied to every Go literal in `internal/testing/e2ecompiler`
      — 6815 unique programs, ~10-way parallel, minutes — reads **6136 IR / 677
      AST**. Read that 677 carefully, because most of it is not gaps:
 
@@ -2499,8 +2499,8 @@ tier → leak.
        own comment says a "closure-typed param over a generic `T[]` currently
        lowers via the AST emitter rather than the IR path on the self-host, which
        is still correct end-to-end (the legitimate fallback)". It lives in
-       **`internal/e2e`**, not `internal/e2eselfhost`, and the sweep only scanned
-       the latter. CLAUDE.md says plainly that `internal/e2e` holds ~30 residual
+       **`internal/testing/e2e`**, not `internal/testing/e2ecompiler`, and the sweep only scanned
+       the latter. CLAUDE.md says plainly that `internal/testing/e2e` holds ~30 residual
        `TestSelfHost*` legs; the sweep should have scanned both packages.
 
        **Narrowed to one line, and it is NOT the closure param (2026-07-31).** The
@@ -3220,7 +3220,7 @@ and the whole-compiler load leak is **unchanged** — 218/428/632 MB before,
 `irlower.fern` stays at 40 MB per call either way.
 
 **That candidate fix is also UNSOUND at compiler scale, and was reverted.** It
-passes `internal/ir`, `internal/e2e` (1560 s, 0 failures), and every unit suite —
+passes `internal/oracle/ir`, `internal/testing/e2e` (1560 s, 0 failures), and every unit suite —
 then breaks `TestSelfHostStdTestE2EArm64` with 7 failures whose signature is
 freed-and-reused memory inside the self-host compiler: truncated symbols
 (`unknown mnemonic '__fn_m'`, `symbol '__fn_' is already defined`), a
@@ -3368,7 +3368,7 @@ under-count fixed, an all-functions reverse sweep is behaviourally inert.)
   `own` / owned-by-default / `consumedParams`.
 
 **The e2e signature of the taint fix**, useful for recognising a repeat: it
-turns 6 `internal/e2e` tests red that pass on main —
+turns 6 `internal/testing/e2e` tests red that pass on main —
 `TestWasmSelfHostF64Coerce`, `TestWasmSelfHostF64ToI64`,
 `TestSelfHostFloatBitsIR{X86_64,Wasm}`, `TestX86_64TrmcDeepStack`,
 `TestFetchDeadlineX86_64`. Their surface (wasm float coercion, a fetch
@@ -3550,7 +3550,7 @@ the fix the same all-reversed build gives 17652 idents, a different checksum,
 and a SIGSEGV. Sweep order is no longer load-bearing.
 
 **A 40-line repro that miscompiles on `main`, no probe harness needed** —
-`internal/e2e/rc_self_reassign_field_test.go`'s `unionThreadedParamSrc`
+`internal/testing/e2e/rc_self_reassign_field_test.go`'s `unionThreadedParamSrc`
 (x86-64 / arm64 / wasm). A union-typed param rebound into a node that keeps it
 reads back a payload the interpreter gets right and the native backends do not:
 pre-fix the fixture returns its value-mismatch code 100 on x86-64 and arm64 and
@@ -3727,7 +3727,7 @@ Two reasons it was not landed, both worth inheriting:
    projection tweak, and the honest prerequisite for the 40k blocks.
 
 2. **No regression test has teeth on it.** Three attempts failed to build one: an
-   `internal/ir` drop-count assertion (the caller's local is a fresh StructLit,
+   `internal/oracle/ir` drop-count assertion (the caller's local is a fresh StructLit,
    so it is swept with or without the summary) and a `leakcheck` frees comparison
    (helper vs inline form measure identical either way). An aggregate +2% on one
    benchmark with no small program that isolates it is a change nothing would
@@ -3860,7 +3860,7 @@ see "THE 4x IS DONE" and "DONE — option 1 landed"
 below.** The chase is kept because the wrong turns in it are the point.
 Re-applying it used to fail
 `TestArrayPushProjectionSourceFreeEligible`
-(`internal/ir/push_counted_store_test.go`), whose second half is exactly this
+(`internal/oracle/ir/push_counted_store_test.go`), whose second half is exactly this
 invariant:
 
     let row: i32[] = [k, k + 1];
@@ -3930,12 +3930,12 @@ deliberately frozen tree, 369 s.
 the operational rule to take from this whole episode: the x86-64 whole-compiler
 self-compile can be green while the arm64 stdtest link is broken by the same
 change, so any RC change touching array taint must run
-`TestSelfHostStdTestE2EArm64` (arm64, `internal/e2eselfhost`, ~220 s under qemu)
+`TestSelfHostStdTestE2EArm64` (arm64, `internal/testing/e2ecompiler`, ~220 s under qemu)
 before it is believed. CLAUDE.md's "leave arm64 to CI" guidance is right for
 speed and wrong for this class.
 
 **The mechanism is FUNCTION-NAME STRINGS, and it reproduces LOCALLY in 312 s
-(2026-07-29).** `go test ./internal/e2eselfhost/ -run TestSelfHostStdTestE2EArm64`
+(2026-07-29).** `go test ./internal/testing/e2ecompiler/ -run TestSelfHostStdTestE2EArm64`
 with the arm applied fails on this host — no CI round trip needed, which is the
 first practical consequence of the rule above. The local output carries three
 symptoms CI's tail did not show, and they are one thing:
@@ -4069,7 +4069,7 @@ it because `mmc`, an x86-64 binary, is the thing that miscompiles.
 symptom-shielding `if` CLAUDE.md warns about — the next aliased pair reopens
 it). The invariant that is actually broken is `emitArrayPush`'s
 transfer-vs-retain pairing, which assumes the self-append's old buffer always
-dies. Two shapes fix it, both in `internal/ir`:
+dies. Two shapes fix it, both in `internal/oracle/ir`:
 
 - a `__fern_arr_push_grow_move_ptr` / `_move_str` that retains the copied
   elements **iff the incoming rc != 1** — "the old buffer survives this grow" is
@@ -4197,7 +4197,7 @@ allocation can strand a block.
 **Gates for that work, in order** (the first two are seconds, and the last two
 are the ones that have historically disagreed):
 `tests/probes/alias_grow_uaf.fern` (exit 0 compiled == interp, x86-64,
-arm64 and wasm) → `internal/ir` `TestArrayPushProjectionSourceFreeEligible` →
+arm64 and wasm) → `internal/oracle/ir` `TestArrayPushProjectionSourceFreeEligible` →
 `MapIntermediateReclaim` on all three backends →
 `TestSelfHostStdTestE2EArm64` (312 s local, REQUIRED) →
 `TestSelfHostLoadFixpointX86_64`.
@@ -4249,7 +4249,7 @@ cracked it are cheap and general:
 (The original question, kept for the record: **what taints `out`?**)
 It is worth answering with the rcPlan dump rather than by guessing — print
 `freeEligible` / the taint set for `lexer__tokenize` (the `RcPlanHook` in
-`internal/ir/rc_dump.go` gives it in-process; the same hook the #4482 harness
+`internal/oracle/ir/rc_dump.go` gives it in-process; the same hook the #4482 harness
 uses) and read which rule fired. Note the `Array_push` receiver-only arm is NOT
 it (one block, above), so a third taint source is in play and naming it is a
 measurement, not a design question.
@@ -4374,7 +4374,7 @@ Measured, and it splits cleanly along the doc's own prediction:
 | `scalar_thread_leak.fern` (projection-only cursor) | 3400 / **1000** | 3400 / **3400** — full reclaim |
 | the real lexer bench (200× tokenize of a mixed source) | 60200 / 8000 | 60200 / **8000** — unchanged |
 
-Green on the fast soundness gates (`internal/ir` + `internal/checker` units, the
+Green on the fast soundness gates (`internal/oracle/ir` + `internal/check/checker` units, the
 map-intermediate reclaim negatives, the full leakcheck suite). But it does **not
 touch the real lexer**, for exactly the reason the widening-list section above
 gives: the real scanners use `l` as a METHOD RECEIVER (`l.at_end()`,
@@ -4460,8 +4460,8 @@ is no longer obviously unsound, but it moves frees on a full `parser.fern` parse
 by 174230 → 177213 out of 904802 allocs (+0.3%). It is not the load leak, which
 is what the earlier attempt also concluded from RSS.
 
-**Method note for the next attempt: `internal/e2e` is not the gate for an RC
-change — `internal/e2eselfhost` is.** Compiling the whole self-host compiler is
+**Method note for the next attempt: `internal/testing/e2e` is not the gate for an RC
+change — `internal/testing/e2ecompiler` is.** Compiling the whole self-host compiler is
 what exercises RC at a scale where an over-release shows; the native e2e suite
 passed this change cleanly.
 
@@ -4541,7 +4541,7 @@ insertion for a loop-carried owned binding, not in the allocator.
 **Scope — not self-host-only.** It reproduces on the native backend, so it
 affects `fern` itself and anything that parses repeatedly in one process.
 `fern-lsp` re-loads on every edit, which is exactly the long-running,
-allocation-heavy workload CLAUDE.md now puts in scope. `internal/ir` already has
+allocation-heavy workload CLAUDE.md now puts in scope. `internal/oracle/ir` already has
 a `loop_var_drop_test.go`, so this is adjacent to analysis that exists — start
 there.
 
@@ -4792,7 +4792,7 @@ Local recipe used throughout, for the record:
 
 ```
 PATH="$HOME/.fern-wasm:$HOME/.wasmtime/bin:$PATH" FERN_SELFHOST_INTERP=1 \
-  go test ./internal/e2eselfhost/ -run '^(TestSelfHostExtern...)$' -v
+  go test ./internal/testing/e2ecompiler/ -run '^(TestSelfHostExtern...)$' -v
 ```
 
 ### Order (revised)

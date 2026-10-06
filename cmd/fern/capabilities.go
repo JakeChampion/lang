@@ -3,10 +3,10 @@ package main
 import (
 	"io"
 
-	"github.com/jakechampion/lang/internal/caps"
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/gates"
+	"github.com/jakechampion/lang/internal/check/checker"
+	"github.com/jakechampion/lang/internal/check/constfold"
+	"github.com/jakechampion/lang/internal/pkg/caps"
+	"github.com/jakechampion/lang/internal/tools/gates"
 )
 
 // runCapabilities implements `fern -capabilities FILE.fern`: load the
@@ -14,7 +14,7 @@ import (
 // vendored deps, literate entries all resolve through loadEntry),
 // type-check it (so method calls are rewritten to their hoisted
 // names), and print the per-package capability report computed by
-// internal/caps. Report mode only — the report itself never enforces
+// internal/pkg/caps. Report mode only — the report itself never enforces
 // (grants are enforced on the compile/-check/-interp paths via
 // gates.Capabilities); see docs/PACKAGE-CAPABILITIES-BRIEF.md (#5361).
 func runCapabilities(srcPath string, w io.Writer) error {

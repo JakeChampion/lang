@@ -1,0 +1,670 @@
+package e2ecompiler
+
+import (
+	"strings"
+	"testing"
+)
+
+// --- Block-local scalar-payload enum reclaim (#6127) ------------------------
+//
+// consumed_scalar_enum_frees was run by lower_func over the fn's TOP-LEVEL
+// statements only, so a scalar-payload enum declared inside a loop or an if was
+// reclaimed nowhere and leaked its box per iteration — the same top-level-only
+// gap #4357 closed for rc-payload options and rc-payload enums, never mirrored
+// for the scalar half. The fix had lower_block run the same classifier over its
+// own statement list and free at the consuming match.
+//
+// Releasing at the match rather than at a scope exit is not a preference: a
+// nested block retires its names to "!retired!" before the function-exit sweep
+// runs, so a by-name lookup there can never resolve the local. A first attempt
+// that swept at function exit reclaimed nothing for the if-block shape and only
+// 3 of every 4 boxes for the loop shape, because only the re-declaration path
+// was firing.
+//
+// The leak figures are asserted as live_bytes == 0 against a balanced churn, and
+// the double-free shapes are asserted through allocs == frees plus behaviour.
+
+const scalarEnumLoopSrc = `enum E { Box(i32, i32), Nil }
+
+function round(i: i32): i32 {
+    let acc: i32 = 0;
+    let k: i32 = 0;
+    while (k < 4) {
+        let e: E = Box(k, 2);
+        match (e) { Box(a, b) => { acc = acc + a + b; }, Nil => {} }
+        k = k + 1;
+    }
+    return acc;
+}
+
+function main(): i32 {
+    let t: i32 = 0;
+    let r: i32 = 0;
+    while (r < 100) { t = t + round(r); r = r + 1; }
+    return t / 100;
+}`
+
+// A function holding BOTH a top-level candidate and a nested one: the box
+// counts must balance exactly, or one of the two boxes is dec'd twice.
+const scalarEnumMixedSrc = `enum E { Box(i32, i32), Nil }
+
+function round(i: i32): i32 {
+    let acc: i32 = 0;
+    let top: E = Box(i, 1);
+    match (top) { Box(a, b) => { acc = a + b; }, Nil => {} }
+    let k: i32 = 0;
+    while (k < 3) {
+        let inner: E = Box(k, 2);
+        match (inner) { Box(c, d) => { acc = acc + c + d; }, Nil => {} }
+        k = k + 1;
+    }
+    return acc;
+}
+
+function main(): i32 {
+    let t: i32 = 0;
+    let r: i32 = 0;
+    while (r < 60) { t = t + round(r); r = r + 1; }
+    return t % 101;
+}`
+
+// TestSelfHostScalarEnumBlockReclaimX86_64 — a scalar enum built and matched
+// inside a nested block reclaims its box, and a function mixing a top-level and
+// a nested candidate frees exactly what it allocates.
+func TestSelfHostScalarEnumBlockReclaimX86_64(t *testing.T) {
+	boxedProbes(t)
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
+
+	counts := func(t *testing.T, name, src string, wantExit int) (int64, int64, int64) {
+		t.Helper()
+		asm := hevCompile(t, runner, driverBin, src, []string{"FERN_LEAKCHECK=1"})
+		progBin := buildBin(t, gcc, dir, name, asm)
+		stderr, exit := hevRun(t, runner, progBin)
+		if exit != wantExit {
+			t.Fatalf("%s exited %d, want %d", name, exit, wantExit)
+		}
+		summary := ""
+		for _, line := range strings.Split(stderr, "\n") {
+			if strings.HasPrefix(line, "leakcheck: ") {
+				summary = line
+			}
+		}
+		if summary == "" {
+			t.Fatalf("%s: no leakcheck summary", name)
+		}
+		var allocs, frees, live int64
+		if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
+			t.Fatalf("%s: parse %q: %v", name, summary, err)
+		}
+		if allocs == 0 {
+			t.Fatalf("%s allocated nothing — the probe is not exercising the path", name)
+		}
+		return allocs, frees, live
+	}
+
+	t.Run("loop_local", func(t *testing.T) {
+		_, _, live := counts(t, "scalar_enum_loop", scalarEnumLoopSrc, 14)
+		if live != 0 {
+			t.Errorf("live_bytes=%d, want 0 — a scalar enum built and matched inside a "+
+				"loop must reclaim its box each iteration; the leak scales with the "+
+				"iteration count, so any nonzero here is unbounded", live)
+		}
+	})
+
+	t.Run("if_block_local", func(t *testing.T) {
+		// Single bind, no rebind at all — only the consuming-match free can
+		// reclaim this one, which is exactly what a function-exit sweep missed.
+		src := `enum E { Box(i32, i32), Nil }
+function round(i: i32): i32 {
+    let acc: i32 = 0;
+    if (i > 0) {
+        let e: E = Box(i, 3);
+        match (e) { Box(a, b) => { acc = a + b; }, Nil => {} }
+    }
+    return acc;
+}
+function main(): i32 {
+    let t: i32 = 0;
+    let r: i32 = 0;
+    while (r < 60) { t = t + round(r); r = r + 1; }
+    return t % 83;
+}`
+		_, _, live := counts(t, "scalar_enum_ifblock", src, 38)
+		if live != 0 {
+			t.Errorf("live_bytes=%d, want 0 — a single-bind if-block candidate is "+
+				"reclaimed only by the consuming-match free", live)
+		}
+	})
+
+	t.Run("rebound_local", func(t *testing.T) {
+		// #6127: the candidate is REBOUND in a loop. Every assignment orphans
+		// the box the slot currently holds, so before this shape was admitted
+		// the local leaked one box per iteration AND its final value — the
+		// `reassigned` exclusion refused the candidate outright, so nothing was
+		// freed at all (measured allocs=500 frees=0). The match arms must not
+		// `return`: the consuming-match free is emitted after the match
+		// statement, which a returning arm never reaches, and that is a
+		// separate pre-existing gap this case is not about.
+		src := `enum E { Box(i32, i32), Nil }
+function round(): i32 {
+    let e: E = Nil;
+    let i: i32 = 0;
+    while (i < 4) { e = Box(i, i); i = i + 1; }
+    let t: i32 = 0;
+    match (e) { Box(a, b) => { t = a + b; }, Nil => { t = 0; } }
+    return t;
+}
+function main(): i32 {
+    let t: i32 = 0;
+    let r: i32 = 0;
+    while (r < 100) { t = t + round(); r = r + 1; }
+    return t % 7;
+}`
+		allocs, frees, live := counts(t, "scalar_enum_rebound", src, 5)
+		if allocs != frees {
+			t.Errorf("allocs=%d frees=%d — every rebind must release the box it "+
+				"overwrites and the consuming match must free the last one", allocs, frees)
+		}
+		if live != 0 {
+			t.Errorf("live_bytes=%d, want 0 — a rebound scalar-enum local leaks one "+
+				"box per assignment, so this scales with the loop count", live)
+		}
+	})
+
+	t.Run("conditional_rebind", func(t *testing.T) {
+		// Not every path through the loop reassigns, so the release has to be at
+		// the assignment rather than once per iteration.
+		src := `enum E { Box(i32, i32), Nil }
+function round(n: i32): i32 {
+    let e: E = Box(0, 0);
+    let i: i32 = 0;
+    while (i < 4) { if (i % 2 == 0) { e = Box(i, n); } i = i + 1; }
+    let t: i32 = 0;
+    match (e) { Box(a, b) => { t = a + b; }, Nil => { t = 0; } }
+    return t;
+}
+function main(): i32 {
+    let t: i32 = 0;
+    let r: i32 = 0;
+    while (r < 100) { t = t + round(r); r = r + 1; }
+    return t % 97;
+}`
+		// 9: confirmed against BOTH oracles (bin/fern -interp and native
+		// -target x86-64-linux) rather than read off the self-host run.
+		allocs, frees, live := counts(t, "scalar_enum_condrebind", src, 9)
+		if allocs != frees {
+			t.Errorf("allocs=%d frees=%d", allocs, frees)
+		}
+		if live != 0 {
+			t.Errorf("live_bytes=%d, want 0", live)
+		}
+	})
+
+	t.Run("top_level_and_nested_balance", func(t *testing.T) {
+		allocs, frees, live := counts(t, "scalar_enum_mixed", scalarEnumMixedSrc, 47)
+		if allocs != frees {
+			t.Errorf("allocs=%d frees=%d — a function holding a TOP-LEVEL and a nested "+
+				"candidate must free exactly what it allocates; frees > allocs means "+
+				"one box was released twice (double free), frees < allocs means one "+
+				"was never released", allocs, frees)
+		}
+		if live != 0 {
+			t.Errorf("live_bytes=%d, want 0", live)
+		}
+	})
+
+	// --- NO-consuming-match half (#6758 follow-up) --------------------------
+	//
+	// Every case above matches its candidate, and that is what freed it:
+	// consumed_scalar_enum_frees only ever claims a name whose own statement
+	// list also MATCHES it. A scalar-enum local that is never matched — read
+	// through a field, passed to a borrowing helper, or simply built and
+	// dropped — was therefore reclaimed NOWHERE and leaked its 40-byte box per
+	// iteration, unbounded, where native is flat at 0.
+	//
+	// This is the scalar sibling of the gap #6606 closed for the rc-payload
+	// half, and the easier one: with no rc payload there is nothing under the
+	// box to walk, so both the rebind and the scope-exit sweep release it with
+	// a plain shallow dec. It is credited "SCENUMS:".
+
+	t.Run("no_match_loop_local", func(t *testing.T) {
+		// Built and never matched. Before the credit this leaked one box per
+		// iteration; the value is read back so a release landing under a live
+		// reference shows up as a wrong exit code rather than only as bytes.
+		src := `enum M { A(i32), B(i32) }
+function tag(m: M): i32 {
+    match (m) { A(_) => { return 1; }, B(_) => { return 2; } }
+    return 0;
+}
+function round(n: i32): i32 {
+    let acc: i32 = 0;
+    let k: i32 = 0;
+    while (k < 4) {
+        let m: M = A(k + n);
+        acc = acc + tag(m);
+        k = k + 1;
+    }
+    return acc;
+}
+function main(): i32 {
+    let t: i32 = 0;
+    let r: i32 = 0;
+    while (r < 100) { t = t + round(r); r = r + 1; }
+    return t / 100;
+}`
+		allocs, frees, live := counts(t, "scalar_enum_nomatch_loop", src, 4)
+		if live != 0 {
+			t.Errorf("live_bytes=%d, want 0 — a scalar-enum local with NO consuming "+
+				"match is claimed by neither the match free nor, before this, any "+
+				"sweep; the leak scales with the iteration count", live)
+		}
+		if allocs != frees {
+			t.Errorf("allocs=%d frees=%d — must balance exactly", allocs, frees)
+		}
+	})
+
+	t.Run("no_match_never_read", func(t *testing.T) {
+		// The degenerate shape: constructed, never used at all. Nothing but a
+		// sweep can reclaim it.
+		src := `enum M { A(i32), B(i32) }
+function round(n: i32): i32 {
+    let k: i32 = 0;
+    while (k < 4) {
+        let m: M = A(k + n);
+        k = k + 1;
+    }
+    return k;
+}
+function main(): i32 {
+    let t: i32 = 0;
+    let r: i32 = 0;
+    while (r < 100) { t = t + round(r); r = r + 1; }
+    return t / 100;
+}`
+		allocs, frees, live := counts(t, "scalar_enum_nomatch_unused", src, 4)
+		if live != 0 {
+			t.Errorf("live_bytes=%d, want 0", live)
+		}
+		if allocs != frees {
+			t.Errorf("allocs=%d frees=%d", allocs, frees)
+		}
+	})
+
+	t.Run("no_match_rebound", func(t *testing.T) {
+		// Rebound with no match anywhere: the rebind must release the box it
+		// supersedes AND the sweep must take the final one. Getting only one of
+		// the two is the n-1-of-n signature.
+		//
+		// `tag` here must not BIND the payload: a callee that returns what it
+		// pulled out of the box is not borrowable, so the name is refused and
+		// the shape leaks — correct conservatism, and the reason this case reads
+		// the tag rather than the value.
+		src := `enum M { A(i32), B(i32) }
+function tag(m: M): i32 {
+    match (m) { A(_) => { return 1; }, B(_) => { return 2; } }
+    return 0;
+}
+function round(n: i32): i32 {
+    let m: M = A(n);
+    let i: i32 = 0;
+    while (i < 4) { if (i % 2 == 0) { m = B(i); } else { m = A(i); } i = i + 1; }
+    return tag(m);
+}
+function main(): i32 {
+    let t: i32 = 0;
+    let r: i32 = 0;
+    while (r < 100) { t = t + round(r); r = r + 1; }
+    return t / 100;
+}`
+		allocs, frees, live := counts(t, "scalar_enum_nomatch_rebound", src, 1)
+		if allocs != frees {
+			t.Errorf("allocs=%d frees=%d — every rebind releases the box it overwrites "+
+				"and the sweep takes the last one", allocs, frees)
+		}
+		if live != 0 {
+			t.Errorf("live_bytes=%d, want 0", live)
+		}
+	})
+
+	t.Run("escaping_local_is_refused", func(t *testing.T) {
+		// NEGATIVE: the local ESCAPES (it is returned), so it must NOT be
+		// credited — a sweep here would free a box the caller still holds. The
+		// value is read back in main, so a wrong admission is a wrong answer or
+		// an over-release, not just a byte count.
+		src := `enum M { A(i32), B(i32) }
+function mk(n: i32): M {
+    let m: M = A(n);
+    return m;
+}
+function tag(m: M): i32 {
+    match (m) { A(x) => { return x; }, B(y) => { return y + 1; } }
+    return 0;
+}
+function main(): i32 {
+    let t: i32 = 0;
+    let r: i32 = 0;
+    while (r < 100) { let e: M = mk(r); t = t + tag(e); r = r + 1; }
+    return t / 100;
+}`
+		allocs, _, _ := counts(t, "scalar_enum_escape", src, 49)
+		if allocs == 0 {
+			t.Fatal("probe allocated nothing")
+		}
+	})
+
+	// --- rc-PAYLOAD half (#6127) --------------------------------------------
+	//
+	// consumed_rcpayload_enum_frees was the last member of this family without a
+	// block-level sibling (rc-payload options got one in #4357, scalar enums in
+	// the commit above). Its failure mode differed from the scalar one and is
+	// worth keeping distinct in the tests: the RCENUM loop-rebind credit was
+	// already firing, so the nested shape freed its box on every iteration EXCEPT
+	// the last and leaked partially — 7200 bytes over 100 rounds, one arr_dec and
+	// one str_free short of the byte-identical top-level shape.
+
+	t.Run("rc_payload_loop_local", func(t *testing.T) {
+		src := `enum T { Text(string), Nil }
+function round(i: i32): i32 {
+    let acc: i32 = 0;
+    let k: i32 = 0;
+    while (k < 4) {
+        let t: T = Text("aa" + "bb");
+        match (t) { Text(s) => { acc = acc + s.len(); }, Nil => {} }
+        k = k + 1;
+    }
+    return acc;
+}
+function main(): i32 {
+    let x: i32 = 0;
+    let r: i32 = 0;
+    while (r < 100) { x = x + round(r); r = r + 1; }
+    return x / 100;
+}`
+		allocs, frees, live := counts(t, "rc_enum_loop", src, 16)
+		if live != 0 {
+			t.Errorf("live_bytes=%d, want 0 — the LAST iteration's box and its string "+
+				"payload were the leak here; the loop-rebind reclaim covered the rest, "+
+				"which is why this shape leaked partially rather than completely", live)
+		}
+		if allocs != frees {
+			t.Errorf("allocs=%d frees=%d — must balance exactly", allocs, frees)
+		}
+	})
+
+	t.Run("rc_payload_if_block_local", func(t *testing.T) {
+		// Single bind, no rebind — the loop-rebind credit cannot help at all here,
+		// so only the consuming-match free reclaims it.
+		src := `enum T { Text(string), Nil }
+function round(i: i32): i32 {
+    let acc: i32 = 0;
+    if (i > 0) {
+        let t: T = Text("pq" + "rs");
+        match (t) { Text(s) => { acc = s.len(); }, Nil => {} }
+    }
+    return acc;
+}
+function main(): i32 {
+    let x: i32 = 0;
+    let r: i32 = 0;
+    while (r < 60) { x = x + round(r); r = r + 1; }
+    return x % 89;
+}`
+		_, _, live := counts(t, "rc_enum_ifblock", src, 58)
+		if live != 0 {
+			t.Errorf("live_bytes=%d, want 0", live)
+		}
+	})
+
+	t.Run("rc_payload_top_level_and_nested_balance", func(t *testing.T) {
+		// The double-free guard for this half: a top-level and a nested
+		// candidate in one function, the nested one rebound every iteration,
+		// each released exactly once.
+		src := `enum T { Text(string), Nil }
+function round(i: i32): i32 {
+    let acc: i32 = 0;
+    let top: T = Text("xy" + "z");
+    match (top) { Text(s) => { acc = s.len(); }, Nil => {} }
+    let k: i32 = 0;
+    while (k < 3) {
+        let inner: T = Text("aa" + "bb");
+        match (inner) { Text(u) => { acc = acc + u.len(); }, Nil => {} }
+        k = k + 1;
+    }
+    return acc;
+}
+function main(): i32 {
+    let x: i32 = 0;
+    let r: i32 = 0;
+    while (r < 60) { x = x + round(r); r = r + 1; }
+    return x % 101;
+}`
+		allocs, frees, live := counts(t, "rc_enum_mixed", src, 92)
+		if allocs != frees {
+			t.Errorf("allocs=%d frees=%d — frees > allocs means both analyses claimed "+
+				"one box, or the block free and the loop-rebind reclaim both ran on it; "+
+				"frees < allocs means one went unclaimed", allocs, frees)
+		}
+		if live != 0 {
+			t.Errorf("live_bytes=%d, want 0", live)
+		}
+	})
+}
+
+// TestSelfHostScalarEnumBlockHazardsX86_64 — the block-local shapes the free must
+// still REFUSE. A wrongly-granted free releases a box something else still reads,
+// so these assert behaviour: the failure mode is a wrong answer or a crash.
+func TestSelfHostScalarEnumBlockHazardsX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
+
+	for _, tc := range []struct {
+		name string
+		src  string
+		want int
+	}{
+		{
+			// The enum ESCAPES into a call, so the callee may retain it.
+			name: "call_escape",
+			src: `enum E { Box(i32, i32), Nil }
+function take(e: E): i32 { match (e) { Box(a, b) => { return a + b; }, Nil => { return 0; } } return 0; }
+function round(i: i32): i32 {
+    let acc: i32 = 0;
+    let k: i32 = 0;
+    while (k < 3) {
+        let e: E = Box(k, i);
+        acc = acc + take(e);
+        k = k + 1;
+    }
+    return acc;
+}
+function main(): i32 {
+    let t: i32 = 0;
+    let r: i32 = 0;
+    while (r < 60) { t = t + round(r); r = r + 1; }
+    return t % 97;
+}`,
+			want: 58,
+		},
+		{
+			// #6127 rebind hazard: the value is stored into a CONTAINER before
+			// being overwritten, so the old box is still reachable through the
+			// array and releasing it at the rebind is a use-after-free. Reading
+			// the wrong answer (or crashing) here is the failure mode.
+			name: "rebound_value_escapes_to_container",
+			src: `enum E { Box(i32, i32), Nil }
+function round(): i32 {
+    let keep: E[] = [];
+    let e: E = Nil;
+    let i: i32 = 0;
+    while (i < 4) { e = Box(i, i); keep = keep.append(e); i = i + 1; }
+    let t: i32 = 0;
+    let k: i32 = 0;
+    while (k < keep.len()) { match (keep[k]) { Box(a, b) => { t = t + a + b; }, Nil => {} } k = k + 1; }
+    return t;
+}
+function main(): i32 {
+    let t: i32 = 0;
+    let r: i32 = 0;
+    while (r < 100) { t = t + round(); r = r + 1; }
+    return t % 97;
+}`,
+			want: 36,
+		},
+		{
+			// #6127 rebind hazard: passed to a call before being overwritten.
+			name: "rebound_value_passed_to_call",
+			src: `enum E { Box(i32, i32), Nil }
+function sink(x: E): i32 { match (x) { Box(a, b) => { return a + b; }, Nil => { return 0; } } return 0; }
+function round(): i32 {
+    let e: E = Nil;
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 4) { e = Box(i, i); t = t + sink(e); i = i + 1; }
+    return t;
+}
+function main(): i32 {
+    let t: i32 = 0;
+    let r: i32 = 0;
+    while (r < 100) { t = t + round(); r = r + 1; }
+    return t % 97;
+}`,
+			want: 36,
+		},
+		{
+			// #6127 rebind hazard: aliased into a second local, which still reads
+			// the old box after the rebind.
+			name: "rebound_value_aliased_to_local",
+			src: `enum E { Box(i32, i32), Nil }
+function round(): i32 {
+    let e: E = Box(1, 1);
+    let keep: E = e;
+    e = Box(2, 2);
+    let t: i32 = 0;
+    match (keep) { Box(a, b) => { t = t + a + b; }, Nil => {} }
+    match (e) { Box(a, b) => { t = t + a + b; }, Nil => {} }
+    return t;
+}
+function main(): i32 {
+    let t: i32 = 0;
+    let r: i32 = 0;
+    while (r < 100) { t = t + round(); r = r + 1; }
+    return t % 97;
+}`,
+			want: 18,
+		},
+		{
+			// Used AFTER its match — not dead, so freeing at the first match
+			// would read a released box in the second.
+			name: "used_after_match",
+			src: `enum E { Box(i32, i32), Nil }
+function round(i: i32): i32 {
+    let acc: i32 = 0;
+    let k: i32 = 0;
+    while (k < 3) {
+        let e: E = Box(k, i);
+        match (e) { Box(a, b) => { acc = acc + a + b; }, Nil => {} }
+        match (e) { Box(c, _) => { acc = acc + c; }, Nil => {} }
+        k = k + 1;
+    }
+    return acc;
+}
+function main(): i32 {
+    let t: i32 = 0;
+    let r: i32 = 0;
+    while (r < 60) { t = t + round(r); r = r + 1; }
+    return t % 89;
+}`,
+			want: 63,
+		},
+		{
+			// Returned out of the block — escapes the function entirely.
+			name: "escaping_return",
+			src: `enum E { Box(i32, i32), Nil }
+function pick(i: i32): E {
+    let k: i32 = 0;
+    while (k < 2) {
+        let e: E = Box(k, i);
+        if (k == 1) { return e; }
+        k = k + 1;
+    }
+    return Nil;
+}
+function main(): i32 {
+    let acc: i32 = 0;
+    let r: i32 = 0;
+    while (r < 60) {
+        let got: E = pick(r);
+        match (got) { Box(a, b) => { acc = acc + a + b; }, Nil => {} }
+        r = r + 1;
+    }
+    return acc % 91;
+}`,
+			want: 10,
+		},
+
+		{
+			// rc-PAYLOAD, reassigned: the classifier excludes reassigned names,
+			// so this stays refused. It must still be behaviourally correct — the
+			// value read after the loop is the last one assigned.
+			name: "rc_payload_reassigned",
+			src: `enum T { Text(string), Nil }
+function round(i: i32): i32 {
+    let acc: i32 = 0;
+    let t: T = Text("aa" + "bb");
+    let k: i32 = 0;
+    while (k < 3) { t = Text("cc" + "dd"); k = k + 1; }
+    match (t) { Text(s) => { acc = s.len(); }, Nil => {} }
+    return acc;
+}
+function main(): i32 {
+    let x: i32 = 0;
+    let r: i32 = 0;
+    while (r < 60) { x = x + round(r); r = r + 1; }
+    return x % 79;
+}`,
+			want: 3,
+		},
+		{
+			// rc-PAYLOAD escaping into a call — the callee may retain the box, so
+			// the free must not fire. This is the shape the #6127 sweep's
+			// enum_str_payload probe actually has, which is why that row stays
+			// non-zero and is a conservatism bound rather than a compiler gap.
+			name: "rc_payload_call_escape",
+			src: `enum T { Text(string), Nil }
+function len_of(t: T): i32 { match (t) { Text(s) => { return s.len(); }, Nil => { return 0; } } return 0; }
+function round(i: i32): i32 {
+    let acc: i32 = 0;
+    let k: i32 = 0;
+    while (k < 3) {
+        let t: T = Text("aa" + "bb");
+        acc = acc + len_of(t);
+        k = k + 1;
+    }
+    return acc;
+}
+function main(): i32 {
+    let x: i32 = 0;
+    let r: i32 = 0;
+    while (r < 60) { x = x + round(r); r = r + 1; }
+    return x % 73;
+}`,
+			want: 63,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := hevCompile(t, runner, driverBin, tc.src, nil)
+			progBin := buildBin(t, gcc, dir, "scalar_enum_hazard_"+tc.name, asm)
+			_, exit := hevRun(t, runner, progBin)
+			if exit != tc.want {
+				t.Errorf("exited %d, want %d — a wrong answer or a crash here means the "+
+					"consuming-match free was granted to a shape that still holds a live "+
+					"reference (use-after-free), not merely that it leaked", exit, tc.want)
+			}
+		})
+	}
+}

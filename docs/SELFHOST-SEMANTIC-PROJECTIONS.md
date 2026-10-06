@@ -49,7 +49,7 @@ Separate type checks distinguish types with identical declaration spellings
 and nested generic/callable structures.
 
 Validation on parent `213276e6b`: `scripts/devbox go test
-./internal/e2eselfhost -run '^TestSelfHostSSASemantic' -count=1 -v` passed
+./internal/testing/e2ecompiler -run '^TestSelfHostSSASemantic' -count=1 -v` passed
 in 43.424 seconds without skips. The 23 cases run individually under bootstrap
 and as one corpus per self-host target. `scripts/devbox make lint-all` passed.
 The Linux ARM64 devbox image was

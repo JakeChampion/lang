@@ -833,7 +833,7 @@ A per-target file declaring:
 - Bindings consumed (kv namespaces, service bindings,
   config dictionaries).
 
-Lives at `internal/platforms/<target>/platform.fern` (or
+Lives at `internal/pkg/platforms/<target>/platform.fern` (or
 `.toml` — see below). The compiler reads it during
 `-target=...` resolution and generates the per-target
 `Platform` struct + glue.
@@ -1045,7 +1045,7 @@ must be an UPPER bound on what the function reaches,
 since only that direction is a sound promise to a caller,
 and over-declaration must stay legal so adding an effect
 to a callee does not break every caller. And the labels
-should be `internal/caps`' v1 vocabulary rather than a
+should be `internal/pkg/caps`' v1 vocabulary rather than a
 new dotted `io.*` set: a fourth capability vocabulary is
 a cost, not a design.
 

@@ -9,7 +9,7 @@
 // `--output-error` family is SIG_IGN on SIGPIPE so a write to a vanished
 // reader returns an error the program can report instead of killing it.
 //
-// Needs the `signal` target capability (`internal/platforms`). A wasi-cli
+// Needs the `signal` target capability (`internal/pkg/platforms`). A wasi-cli
 // component grants it and both calls do nothing there: nothing in either WASI
 // world can deliver a signal, so there is no disposition to change. A
 // freestanding target has no process to deliver to and does not get it at all.

@@ -160,7 +160,7 @@ pass suite and register allocator is not thrown away — only the redundant
   register allocator, or the `ssa_*` backends. They remain, exercised through
   `-ssa` and the SSA emit test matrices.
 - This does **not** change the native (Go) compiler. Native already lowers
-  through `internal/ir` and lifts to SSA downstream; see the reconciliation
+  through `internal/oracle/ir` and lifts to SSA downstream; see the reconciliation
   note appended to `docs/SSA-DECISION.md`.
 
 ## Tripwires (any one reopens the SSA-as-production question)

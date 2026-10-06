@@ -4,7 +4,7 @@ What #9853 asked, measured: an HTTP/1.1 request parse plus a response
 serialise written as a `fip` codec over owned buffers, against the
 `http_parse_request` and `http_serialize_response` a handler goes through
 today. The programs are `examples/fip/http_baseline.fern` and
-`examples/fip/http_fip.fern`, and `internal/e2e/fip_http_test.go` keeps their
+`examples/fip/http_fip.fern`, and `internal/testing/e2e/fip_http_test.go` keeps their
 claims from rotting. Read `docs/ALLOCATION-OBSERVABLE.md` for what the
 allocation numbers mean and `docs/FIP-PACKET-PROTOCOL.md` for experiment 2,
 whose shape this one keeps: one workload spelled verbatim in both programs, a

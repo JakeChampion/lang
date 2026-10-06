@@ -45,11 +45,11 @@ jobs:
       - uses: ./.github/actions/selfhost-driver-cache
       - name: build the e2e test binary
         run: |
-          go test -c -o "$RUNNER_TEMP/e2e-x86_64.test" ./internal/e2e/
+          go test -c -o "$RUNNER_TEMP/e2e-x86_64.test" ./internal/testing/e2e/
           go build -o "$RUNNER_TEMP/ci-test-workers" ./cmd/ci-test-workers
       - name: go test (x86_64 e2e, shard ${{ matrix.shard }}/${{ matrix.nshard }}, two workers)
         id: tests
-        # `^TestX86_64` covers internal/e2e/x86_64_test.go +
+        # `^TestX86_64` covers internal/testing/e2e/x86_64_test.go +
         # cross_module_variant_test.go's X86_64 subset. The
         # trailing underscore is in the test names themselves
         # (TestX86_64ExitCode, etc) so the regex is unambiguous
@@ -65,7 +65,7 @@ jobs:
         run: |
           set -euo pipefail
           mapfile -t MINE < <(
-            go test -list '^TestX86_64' ./internal/e2e/ |
+            go test -list '^TestX86_64' ./internal/testing/e2e/ |
               grep -E '^Test' |
               sort |
               scripts/shard-tests "${{ matrix.shard }}" "${{ matrix.nshard }}" /dev/null
@@ -76,7 +76,7 @@ jobs:
           fi
           echo "shard ${{ matrix.shard }}/${{ matrix.nshard }}: ${#MINE[@]} tests"
           PAT="^($(IFS='|'; echo "${MINE[*]}"))\$"
-          cd internal/e2e
+          cd internal/testing/e2e
           "$RUNNER_TEMP/ci-test-workers" \
             -binary "$RUNNER_TEMP/e2e-x86_64.test" \
             -output "$RUNNER_TEMP/x86_64-test-results" \
@@ -110,7 +110,7 @@ jobs:
       - name: go test (fixture corpus under the seccomp filter)
         env:
           RUN_SECCOMP_CORPUS: "1"
-        run: gotestsum --format pkgname-and-test-fails -- -run '^TestSeccompFixtureCorpus$' ./internal/e2e/ -timeout 30m
+        run: gotestsum --format pkgname-and-test-fails -- -run '^TestSeccompFixtureCorpus$' ./internal/testing/e2e/ -timeout 30m
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"

@@ -104,7 +104,7 @@ Scope (current `irlower.fern`):
    it, and puts it straight into `LowerResult.ops` (no flatten needed —
    it is already a forward-order `ir.Op[]`).
 5. **Validate** (every step is meaningless until the whole thing
-   compiles): `go test ./internal/ir`, the x86-64 `rc_correctness`
+   compiles): `go test ./internal/oracle/ir`, the x86-64 `rc_correctness`
    corpus + freelist, the **self-host fixpoint**
    (`TestSelfHostModloadFixpointX86_64`), and the self-host IR e2e
    matrix. This is non-union, so it does **not** hit the #3554

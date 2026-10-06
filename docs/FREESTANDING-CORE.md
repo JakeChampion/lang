@@ -2,7 +2,7 @@
 
 Epic: #6506. This doc records **which builtins need a host and which do not**, why
 each judgement call went the way it did, and the standing rule for classifying a new
-one. The classification lives in `internal/platforms/enforce.go` as two tables —
+one. The classification lives in `internal/pkg/platforms/enforce.go` as two tables —
 `gatedBuiltins` and `coreBuiltins` — and a completeness test fails when a builtin is in
 neither.
 
@@ -13,7 +13,7 @@ reads argc/argv/envp off a Linux process stack, and a heap the runtime `mmap`s f
 itself. A target without a kernel can satisfy none of that, and reach beyond hosted
 Linux/Darwin/WASI is the point of the epic.
 
-`internal/platforms` already had the enforcement machinery — per-target
+`internal/pkg/platforms` already had the enforcement machinery — per-target
 `Descriptor.Capabilities`, checked post-tree-shake as E066, on the principle (from Roc,
 via `docs/NICHE-LANGUAGE-RESEARCH.md`) that *what a target doesn't provide should not be
 expressible in a program compiled for it*. It had simply never been pointed at the OS.
@@ -233,7 +233,7 @@ failure rather than better: a regular file where a FIFO was asked for
 reads back as the wrong KIND from `stat`, so a program that opened it
 would block forever on a read that a pipe would have answered.
 
-`internal/caps` files it under plain `fs`, beside `truncate`: for a
+`internal/pkg/caps` files it under plain `fs`, beside `truncate`: for a
 dependency grant the question is only whether filesystem reach should be
 visible, and creating an entry is filesystem reach whatever kind it is.
 
@@ -305,7 +305,7 @@ owned by the caller. A wrong answer presented as a right one is exactly what
 the capability system exists to turn into a compile-time refusal. `isatty`'s
 "no" is a fact; `geteuid`'s "0" would be a fiction.
 
-Note the second capability system disagrees, and correctly: `internal/caps`
+Note the second capability system disagrees, and correctly: `internal/pkg/caps`
 leaves `geteuid` / `getegid` UNGATED, because the question it asks is different
 — not "can this target answer" but "should a dependency be allowed to ask", and
 reading the identity the invoker already chose grants no reach.
@@ -320,7 +320,7 @@ and `""` says exactly that, the way `isatty`'s "no" does. So `wasi-cli` grants
 `args` nor `env`: a proxy component has no process identity at all. It is not
 `env`, either — envp is handed to the process by whoever exec'd it, while the
 node name is a property of the machine, and the two part company on exactly
-the proxy world. `internal/caps` files it under `env` all the same, since for a
+the proxy world. `internal/pkg/caps` files it under `env` all the same, since for a
 dependency grant the question is only whether reading ambient facts about the
 host should be visible, and it should.
 
@@ -333,7 +333,7 @@ the whole truth about it, not a stub standing in for a missing import. So
 `wasi-cli` grants `signal` on both previews, and `wasi-http` does not, for the
 same reason it has neither `args` nor `env`.
 
-`internal/caps` disagrees here too, and again correctly: it leaves both
+`internal/pkg/caps` disagrees here too, and again correctly: it leaves both
 UNGATED, next to `exit`. A disposition reconfigures how THIS process reacts to
 something delivered to it — it reaches nothing outside the process and confers
 no authority a dependency could escalate through, which is the only question
@@ -366,7 +366,7 @@ no name length and its real `pathconf(2)` answers both limits. Not
 constants on Darwin: APFS and HFS+ agree on 255, a mounted FAT or SMB
 volume does not, and `pathchk` is the caller that would notice.
 
-`internal/caps` files it under plain `fs` — for a dependency grant the
+`internal/pkg/caps` files it under plain `fs` — for a dependency grant the
 question is only whether filesystem reach should be visible, and
 measuring a volume is filesystem reach.
 
@@ -418,7 +418,7 @@ available — it is a question that cannot be asked, which is exactly what
 gets, for the same reason.
 
 Note the package-capability side disagrees about which *dependency*
-grant it needs, and correctly: `internal/caps` files it under
+grant it needs, and correctly: `internal/pkg/caps` files it under
 `subprocess`, beside fork / exec / waitpid, because the pid asked about
 belongs to someone else — reaching outside this process is reach whether
 or not a process is created.
@@ -551,7 +551,7 @@ number, so `stty -F DEVICE` could otherwise configure fds 0, 1 and 2 and
 nothing it opened itself (#9363). Each carries an `IoError`, so its refusal
 arrives as `Unsupported` AT THE CALL — `syncfs`'s shape rather than
 `window_size`'s — and that is the only shape available: the call reaches
-`internal/platforms` already rewritten to `__method_Reader_termios_get(r)`,
+`internal/pkg/platforms` already rewritten to `__method_Reader_termios_get(r)`,
 and `scanGatedCalls` inspects plain identifiers. Do not read the capability
 row above as covering the method forms; it covers the free ones.
 
@@ -696,19 +696,19 @@ parts. The partition answers a question; it does not add a gate.
 
 ## Adding a builtin
 
-Classify it in `internal/platforms/enforce.go`: a capability in `gatedBuiltins`, or
+Classify it in `internal/pkg/platforms/enforce.go`: a capability in `gatedBuiltins`, or
 `true` in `coreBuiltins`. `TestClassificationCoversCheckerRegistry` fails if you do
 neither, and fails if you do both.
 
 If it needs a **new** capability, add the name to every descriptor that provides it in
-`internal/platforms/platforms.go`. `TestGatedCapabilitiesResolvable` fails if a gate
+`internal/pkg/platforms/platforms.go`. `TestGatedCapabilitiesResolvable` fails if a gate
 names a capability no descriptor grants, which is the typo that would otherwise make a
 builtin unreachable everywhere.
 
 The self-host compiler carries its own copy of the classification —
 `compiler/platforms.fern` (#6633), since it cannot import Go — so a new
 builtin has to be classified there too. `TestSelfHostGatedBuiltinsMatch` /
-`TestSelfHostCoreBuiltinsMatch` in `internal/platforms` read that file as data and fail
+`TestSelfHostCoreBuiltinsMatch` in `internal/pkg/platforms` read that file as data and fail
 on any entry the two tables disagree about, which is the only way the drift shows up:
 neither compiler can see the other's table, and the symptom is a program one builds and
 the other refuses. The `std/` partition differential above is the second line — it
@@ -721,10 +721,10 @@ because native's answer is really about *its own codegen* — no Go backend lowe
 `subprocess` — while the self-host's x86-64 and arm64 emitters do. A capability is a
 property of the target, so an entry that encodes "my backend can't do this yet" will
 read as a target property forever after. The exception is listed in
-`profileExceptions` (`internal/platforms/selfhost_parity_test.go`) with the reason, any
+`profileExceptions` (`internal/pkg/platforms/selfhost_parity_test.go`) with the reason, any
 other difference still fails, and the entry goes the day native's backends lower it.
 
-Note the **second, independent** capability system: `internal/caps` governs what a
+Note the **second, independent** capability system: `internal/pkg/caps` governs what a
 *package* may reach (`net`, `fs`, `env`, `random`, `subprocess`, `time`) for dependency
 grants, documented in `docs/PACKAGE-CAPABILITIES-BRIEF.md`. It has its own completeness
 tests and its own vocabulary — `print` is ungated there on purpose, because stdio is a

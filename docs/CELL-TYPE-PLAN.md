@@ -27,7 +27,7 @@ rc reclamation; the self-host backends handle `Cell[string]` for free
 (single-pointer strings → the slot is one word, same as `Cell[i32]`),
 verified across every backend. §3a (migrate the `lam_ctr`/`lamdefs`
 array-cells to `Cell`, then `arr[i] = v` → E056) has **landed**: `E056`
-is live in the native checker (`internal/checker/checker.go:7090`), so
+is live in the native checker (`internal/check/checker/checker.go:7090`), so
 array-element assignment is rejected with a `arr = arr.with(i, value)`
 hint. The text below describing §3a as "remaining" is historical.
 
@@ -174,7 +174,7 @@ load/store machinery:
 
 Slot width follows the element-width rules already used for arrays
 (`WidthPtr` on native, 4/8 on wasm by `T`). Backends to touch: the Go
-reference compiler (`internal/checker` + `internal/ir`) and every
+reference compiler (`internal/check/checker` + `internal/oracle/ir`) and every
 self-host emitter (`asm.fern`, `asm_arm64.fern`, `ssa.fern` +
 `ssa_x86`/`ssa_arm64`/`ssa_wasm`, `wasm.fern`) plus the self-host
 `checker.fern` for E057 parity. The self-host heap is leak-everything

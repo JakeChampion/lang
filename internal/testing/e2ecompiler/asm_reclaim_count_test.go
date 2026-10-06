@@ -1,0 +1,92 @@
+package e2ecompiler
+
+import (
+	"bytes"
+	"testing"
+)
+
+// countUserCalls counts `call <callee>` sites in the self-host driver's
+// emitted asm, EXCLUDING the bodies of the bundled runtime helpers (label
+// prefix `__fn___fern_`). Whole-output bytes.Count breaks whenever a
+// runtime helper legitimately contains the counted call in its own body:
+// #4520 put a __fern_str_free release inside __fn___fern_str_arr_free, and
+// #4350 slice 1 (#4551) put a fresh-fallback `call __fern_arr_box` inside
+// __fn___fern_alloc_reuse — each turning exact-count assertions into a
+// uniform off-by-one for EVERY program that pulls the helper in. User
+// functions (`__fn_<name>`) cannot collide with the `__fern_` runtime
+// namespace, so scoping by label prefix keeps the positive assertions
+// meaningful while restoring the negatives.
+func countUserCalls(asm []byte, callee string) int {
+	needle := []byte("call " + callee)
+	helperPrefix := []byte("__fn___fern_")
+	count := 0
+	inHelper := false
+	for _, line := range bytes.Split(asm, []byte("\n")) {
+		trimmed := bytes.TrimSpace(line)
+		// A new FUNCTION label at column 0 switches the current-function
+		// context. Local labels (`.Lwhile_3:` etc.) also sit at column 0
+		// inside a body — they start with '.' and must not reset it.
+		if isFunctionLabel(line, trimmed) {
+			inHelper = bytes.HasPrefix(trimmed, helperPrefix)
+			continue
+		}
+		if !inHelper && bytes.Contains(line, needle) {
+			count++
+		}
+	}
+	return count
+}
+
+// isFunctionLabel reports a label that starts a function: at column 0, not a
+// local `.L` label, and not a function's own register entry `<label>.r:`,
+// which sits inside the function it names.
+func isFunctionLabel(line, trimmed []byte) bool {
+	if len(line) == 0 || line[0] == ' ' || line[0] == '\t' || line[0] == '.' {
+		return false
+	}
+	return bytes.HasSuffix(trimmed, []byte(":")) && !bytes.HasSuffix(trimmed, []byte(".r:"))
+}
+
+// countCallsInFn counts `call <callee>` sites inside ONE user function
+// `__fn_<fn>`, for a contract about where a release lands rather than whether
+// the program contains one at all. A caller-side reclaim and a callee-side one
+// are different verdicts, and a whole-output count cannot tell them apart.
+// A function the asm does not define fails the test: its count would read 0
+// whatever the contract.
+func countCallsInFn(t testing.TB, asm []byte, fn string, callee string) int {
+	t.Helper()
+	needle := []byte("call " + callee)
+	label := []byte("__fn_" + fn + ":")
+	count := 0
+	inFn, found := false, false
+	for _, line := range bytes.Split(asm, []byte("\n")) {
+		trimmed := bytes.TrimSpace(line)
+		if isFunctionLabel(line, trimmed) {
+			inFn = bytes.Equal(trimmed, label)
+			found = found || inFn
+			continue
+		}
+		if inFn && bytes.Contains(line, needle) {
+			count++
+		}
+	}
+	if !found {
+		t.Fatalf("the asm defines no __fn_%s to count calls in", fn)
+	}
+	return count
+}
+
+// countUserStrFreeReclaims counts user-code `call __fn___fern_str_free`
+// sites (see countUserCalls for the helper-body exclusion rationale).
+func countUserStrFreeReclaims(asm []byte) int {
+	return countUserCalls(asm, "__fn___fern_str_free")
+}
+
+// countUserArrBoxAllocs counts user-code `call __fern_arr_box` sites —
+// the box-allocation figure the reuse emission-contract tests pin.
+// __fn___fern_alloc_reuse's fresh-fallback arm (#4551) is runtime
+// machinery, not a construction site, and is excluded with the rest of
+// the helper bodies.
+func countUserArrBoxAllocs(asm []byte) int {
+	return countUserCalls(asm, "__fern_arr_box")
+}

@@ -3,8 +3,8 @@ package main
 import (
 	"testing"
 
-	"github.com/jakechampion/lang/internal/ast"
-	"github.com/jakechampion/lang/internal/literate"
+	"github.com/jakechampion/lang/internal/syntax/ast"
+	"github.com/jakechampion/lang/internal/tools/literate"
 )
 
 // remapFor must map a generated position outside the tangle line map to

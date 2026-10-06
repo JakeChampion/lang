@@ -150,11 +150,11 @@ that for the larger of the two.
 
 Both long poles turned out to be one package. Step-level timings from
 [35638612903](https://github.com/JakeChampion/lang/actions/runs/35638612903):
-`internal/coreutils` is **14m40s of the 15m08s** `go test (units)` step on
+`internal/testing/coreutils` is **14m40s of the 15m08s** `go test (units)` step on
 aarch64 (the job around it is 15m39s), and the same corpus is **17.4 of the
 20.3 minutes** of the macOS job. Every
-other package in the units lane finishes inside its shadow — `internal/ir`
-4m38s, `internal/ssa` 4m17s, `internal/printer` 3m43s, and the remaining
+other package in the units lane finishes inside its shadow — `internal/oracle/ir`
+4m38s, `internal/ssa` 4m17s, `internal/syntax/printer` 3m43s, and the remaining
 73 packages 0.29 minutes between them. So one package was the critical path of
 the entire suite, on two lanes at once.
 
@@ -173,7 +173,7 @@ shards are nearly free. (The per-utility increments are not linear because
 `go test` already runs subtests in parallel and the utilities differ in cost;
 what mattered here was only the intercept.)
 
-A full `go test -v ./internal/coreutils/` run gives the shape, 13m45s over 253
+A full `go test -v ./internal/testing/coreutils/` run gives the shape, 13m45s over 253
 top-level tests:
 
 | top-level test | time | subtests | largest subtest |
@@ -236,9 +236,9 @@ worth nothing as a record. Before is run
 | `test-units` aarch64 | 15m39s / 15m08s | **4m54s / 4m31s** |
 | `test-units` x86_64 | 12m19s / 11m38s | **7m56s / 7m30s** |
 
-The aarch64 leg lands where the arithmetic said it would — `internal/ir` at
+The aarch64 leg lands where the arithmetic said it would — `internal/oracle/ir` at
 4m38s is now its bound, and the step is 4m31s. The x86_64 leg does not: its step
-is 7m30s, still well above that, so something other than `internal/coreutils`
+is 7m30s, still well above that, so something other than `internal/testing/coreutils`
 dominates there. The profile behind the shard weights was taken on an
 aarch64-class machine, so it does not say what. That is the next thing to
 measure in this lane, not a number to assume.
@@ -264,7 +264,7 @@ subtests if the coreutils shards ever need to go below its 2m48s floor. Profile
 slow tests and generated programs before changing the compiler.
 
 Find what dominates `test-units` on x86_64, where the leg sits at 7.9 minutes
-against the 4m38s `internal/ir` bound the aarch64 leg reached.
+against the 4m38s `internal/oracle/ir` bound the aarch64 leg reached.
 
 Compare observed before/after runs rather than extrapolating. The coreutils
 shard timings above are now measured on CI; the two-lane figures are still
@@ -492,10 +492,10 @@ lane's floor is now the per-seed type-check cost itself.
 - Per-job setup (checkout, toolchain, `go test -c`) is 29 of the 328
   job-minutes of a suite, a mean of 28 s per job. Merging small jobs would
   not repay the longer critical path it creates.
-- `test-units-x86_64` is bounded by three serial packages, `internal/ir`
-  (392 s), `internal/ssa` (351 s) and `internal/printer` (349 s), which
+- `test-units-x86_64` is bounded by three serial packages, `internal/oracle/ir`
+  (392 s), `internal/ssa` (351 s) and `internal/syntax/printer` (349 s), which
   run concurrently with each other. None can take `t.Parallel`: `ir`'s
-  tests alone write the `internal/ast` package globals 143 times.
+  tests alone write the `internal/syntax/ast` package globals 143 times.
 - The failure reaper (`cancel-on-failure.yml`) waits for a runner like the
   stale-run reaper did: on run 35749155333 the failing shard finished at
   16:13:07, its lane concluded at 16:15:58, and the reaper was still queued
@@ -559,10 +559,10 @@ dropped before merging.
 ### Lanes a self-host-only change cannot reach
 
 26 of the 74 commits on main from 2026-09-15 to 2026-09-22 touched only
-`compiler` or `internal/e2eselfhost`, and every lane ran on each. The
+`compiler` or `internal/testing/e2ecompiler`, and every lane ran on each. The
 x86_64 e2e, differential, fernsmith, fuzz and examples lanes select no test
 that reads either tree, and nothing outside the self-host lane imports
-`internal/e2eselfhost`. Run locally with both trees deleted, all five passed:
+`internal/testing/e2ecompiler`. Run locally with both trees deleted, all five passed:
 fernsmith, a 1/32 slice of the differential sweep, the fixture corpus, the
 whole `^TestX86_64` set (813 s) and every example build. Those lanes now ignore
 both trees, and each of their jobs deletes them right after checkout so a test
@@ -676,8 +676,8 @@ driver disk cache, which is what every CI shard starts with.
 Three facts follow.
 
 **The e2e packages are safe to run in parallel.** A blanket `t.Parallel()`
-in every top-level test of `internal/e2eselfhost` (1,448 files) and
-`internal/e2e` (842 files), injected by script and excluding the thirteen
+in every top-level test of `internal/testing/e2ecompiler` (1,448 files) and
+`internal/testing/e2e` (842 files), injected by script and excluding the thirteen
 files that set an env var, change directory or assign a package global,
 ran this shard twice with no failure. The harness's caches were already built
 for it: per-key `sync.Once` builds and the RAM reservation.
@@ -694,14 +694,14 @@ shipped is worth ~1.57x on a cold shard, and switching it to in-process
 cheaper driver emit (docs/LOCAL-DEV-LOOP.md: the IR passes are 54% of a
 whole-compiler emit and GC 28%), not more parallelism.
 
-**`internal/e2e` cannot use `t.Parallel` today, and the reason is a compiler
+**`internal/testing/e2e` cannot use `t.Parallel` today, and the reason is a compiler
 design choice, not the tests.** The same blanket injection on the x86_64
 lane fails 30 top-level tests, every one of them a differential that flips
 a compiler-wide switch and compiles both ways: `ast.RcFreeEnabled` (402
 assignment sites in tests, 140 readers in the compiler), `OwnedByDefault`,
 `EnumRcPayloads`, `BorrowInferEnabled`, `RcReuseEnabled`, `LeakCheckEnabled`,
 `TwoWordOverride` and seven more, fourteen package-level variables in
-`internal/ast` read from `checker`, `monomorph`, `ir` and both backends.
+`internal/syntax/ast` read from `checker`, `monomorph`, `ir` and both backends.
 Two tests flipping the same global at once corrupt each other's
 comparison. Under `t.Parallel` that lane did use 2.9 cores (5m23s wall for
 15m45s of CPU), so the throughput is there; the correctness is not. Making
@@ -836,7 +836,7 @@ has 671 build sites in the package, `wasm_ir_run.fern` 323, `asm_run.fern`
 263, `fern.fern` 148), the three `diff-selfhost` and three
 `fixtures-selfhost` jobs run `go test` with no disk cache at all, and the
 `test-e2e-other`, `test-e2e-arm64`, `test-e2e-wasm` and macOS jobs run
-`internal/e2e` tests with 46 driver build sites, also with none.
+`internal/testing/e2e` tests with 46 driver build sites, also with none.
 
 The harness already keys a driver on its source closure, the target, the
 stage0 binary's bytes and the stdlib tree (`CachedDriverBinFor`), so the
@@ -932,7 +932,7 @@ file and checks the buckets partition the input.
 
 With the self-host shards shortened, the next long poles were single jobs:
 `test-e2e-x86_64` at 13.3 minutes (two shards now, like the arm64 gate),
-`test-units-x86_64` at 10.4 (two jobs per host: `internal/ir`, `ssa` and
+`test-units-x86_64` at 10.4 (two jobs per host: `internal/oracle/ir`, `ssa` and
 `printer`, each 350-390 s of serial tests that cannot t.Parallel, apart from
 the other 75 packages they were sharing four cores with), and the self-host
 lane's shard 0, whose `TestSelfHostAssumeEligibleByteIdenticalX86_64` is

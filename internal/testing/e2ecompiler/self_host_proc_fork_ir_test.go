@@ -1,0 +1,168 @@
+package e2ecompiler
+
+import (
+	"os/exec"
+	"strings"
+	"testing"
+)
+
+// procForkPrograms are the two shapes that pin `proc_fork()` / `proc_waitpid(pid)`
+// on the self-host IR path (#5686). Both carry their expected exit code rather
+// than asking the interpreter: its `proc_fork` never forks (it answers -ENOSYS
+// so `serve.supervise` degrades to single-process serving), so it cannot
+// judge a real fork.
+//
+//   - normal-exit: the child exits 17, the parent reaps it and checks the
+//     decoded status — the `(status >> 8) & 0xff` arm of the wait4 decode.
+//   - signal-death: the child trips the array-bounds abort, so the parent must
+//     see 128 + SIGABRT = 134 — the other arm, and the reason the decode exists
+//     (a crashing worker has to surface as its shell-convention code).
+var procForkPrograms = []struct {
+	name string
+	src  string
+	want int
+}{
+	{
+		"normal-exit",
+		`function main(): i32 {
+    let pid: i32 = proc_fork();
+    if (pid < 0) { return 91; }
+    if (pid == 0) { exit(17); }
+    let code: i32 = proc_waitpid(pid);
+    if (code != 17) { return 92; }
+    return 42;
+}`,
+		42,
+	},
+	{
+		"signal-death",
+		`function worker(): i32 {
+    let xs: i32[] = [1, 2, 3];
+    let i: i32 = 9;
+    return xs[i];
+}
+function main(): i32 {
+    let pid: i32 = proc_fork();
+    if (pid < 0) { return 91; }
+    if (pid == 0) { return worker(); }
+    return proc_waitpid(pid);
+}`,
+		134,
+	},
+}
+
+// TestSelfHostProcForkIRX86_64 pins #5686: the crash-only supervision pair
+// lowers on the self-host x86-64 IR path. Before this they had no IR op and no
+// emitter interception at all, so a call fell through to the generic user-call
+// path and emitted `call __fn_proc_fork` against a symbol nothing defines —
+// which is why `std/serve` (whose `serve.supervise` calls both) could not be
+// self-host compiled. Because they are real ops now, a fork-using module is
+// IR-ELIGIBLE rather than bailing.
+func TestSelfHostProcForkIRX86_64(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "drivers/asm_run.fern", "drivers/asm_pathprobe_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
+	probeBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_pathprobe_run.fern", "pathprobe")
+
+	for _, tc := range procForkPrograms {
+		t.Run(tc.name, func(t *testing.T) {
+			src := []byte(tc.src + "\n")
+			if path := strings.TrimSpace(string(runCapture(t, gcc, runner, probeBin, src))); path != "ir" {
+				t.Fatalf("routed through %q path, want \"ir\"", path)
+			}
+			asm := runCapture(t, gcc, runner, driverBin, src)
+			if !strings.Contains(string(asm), "__fn___fern_proc_fork:") {
+				t.Fatal("emitted asm has no Fern __fn___fern_proc_fork helper")
+			}
+			progBin := buildBin(t, gcc, dir, "procfork_"+tc.name, string(asm))
+			var cmd *exec.Cmd
+			if len(runner) == 0 {
+				cmd = exec.Command(progBin)
+			} else {
+				cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
+			}
+			_ = cmd.Run()
+			got := cmd.ProcessState.ExitCode()
+			if got != tc.want {
+				t.Errorf("self-host binary exited %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSelfHostProcForkIRArm64 is the arm64 half. arm64 Linux has no bare
+// fork(2): proc_fork is `clone(SIGCHLD, 0, 0, 0, 0)` (asm-generic 220), whose
+// return shape is already the builtin's contract. The asm-content checks pin
+// that dispatch and that real body, so a regression to a stubbed or
+// mis-numbered syscall fails here rather than hanging under qemu.
+func TestSelfHostProcForkIRArm64(t *testing.T) {
+	arm64gcc, qemu := arm64Tooling(t)
+	x86gcc, x86runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
+
+	for _, tc := range procForkPrograms {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := string(runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src+"\n"), "-target", "arm64-linux"))
+			if len(asm) == 0 {
+				t.Fatal("self-host arm64 compiler emitted 0 bytes")
+			}
+			// Both are Fern since #2649, so both carry the stack-ABI prefix and
+			// both syscall numbers arrive as ordinary pushed operands popped into
+			// x8 — hence a MOVZ into a register of the allocator's choosing rather
+			// than `mov x8, #N`. clone is the five-argument __syscall5 form; wait4
+			// is __syscall4.
+			for _, want := range []string{"bl __fn___fern_proc_fork", "bl __fn___fern_proc_waitpid"} {
+				if !strings.Contains(asm, want) {
+					t.Errorf("emitted arm64 asm missing %q", want)
+				}
+			}
+			for _, want := range []string{"220", "260"} {
+				if !arm64Imm(asm, want) {
+					t.Errorf("emitted arm64 asm does not materialise the syscall number %s", want)
+				}
+			}
+			cmd := runArm64Bin(qemu, buildBinArm64(t, arm64gcc, dir, "procfork_"+tc.name, asm))
+			_ = cmd.Run()
+			if got := cmd.ProcessState.ExitCode(); got != tc.want {
+				t.Errorf("self-host arm64 binary exited %d, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestSelfHostProcForkWasmRejected pins the wasm half: a component has no
+// process model, so fork/reap are error ENDPOINTS (like subprocess / timer_fd),
+// not deferrals — deferring them emitted a call against nothing and
+// surface as an opaque `unknown func` from the loader instead of a diagnostic
+// naming the feature.
+func TestSelfHostProcForkWasmRejected(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "drivers/wasm_run.fern", "drivers/wasm_ir_run.fern")
+	drivers := []struct {
+		name string
+		bin  string
+		args []string
+	}{
+		{"wasm_run", buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run"), nil},
+		{"wasm_ir_run", buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "wasm_ir_run"), []string{"-ir"}},
+	}
+	const src = "function main(): i32 { let pid: i32 = proc_fork(); if (pid == 0) { exit(3); } return proc_waitpid(pid); }"
+	for _, d := range drivers {
+		t.Run(d.name, func(t *testing.T) {
+			out, errOut, code := runDriverAllowFail(t, runner, d.bin, src+"\n", d.args...)
+			if code != 1 {
+				t.Errorf("driver exited %d, want 1 (reject)", code)
+			}
+			if !strings.Contains(string(errOut), "proc_fork is not supported on the wasm target") {
+				t.Errorf("stderr = %q, want the unsupported-builtin diagnostic naming proc_fork", errOut)
+			}
+			if len(out) != 0 {
+				t.Errorf("driver emitted %d bytes for an unsupported builtin, want 0", len(out))
+			}
+		})
+	}
+}

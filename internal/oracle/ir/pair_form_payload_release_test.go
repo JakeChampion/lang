@@ -1,0 +1,291 @@
+package ir_test
+
+import (
+	"testing"
+
+	"github.com/jakechampion/lang/internal/oracle/ir"
+)
+
+// A pair-form Option/Result return hands back `(tag, payload)` in registers.
+// When the payload is POINTER-shaped — isPairFormPayloadShape admits array,
+// slice, struct and tuple — that register is the ONLY reference to a value the
+// callee allocated: there is no box, so the box-reclaim path has nothing to
+// free, and the match binds the pointer as a borrow. Nobody owns it, so
+// `match (mk()) { Some(v) => { … } }` over a per-iteration-fresh `mk()` leaked
+// the whole payload every iteration.
+//
+// Measured before the fix, `__heap_bump_bytes()` over 100 / 200 / 400 rounds:
+// 3200 / 6400 / 12800 — exactly linear. After: a flat 32 at every round count,
+// on x86-64, arm64 and wasm alike.
+//
+// These assert on the emitted op stream because the runtime symptom is a leak,
+// which no suite gates (docs/TEST-GATES.md); the allocation-volume half of the
+// contract is pinned separately in internal/testing/e2e/alloc_scaling_test.go.
+
+const pairPayloadSrc = `function mk(n: i32): Option[i32[]] {
+    if (n == 0) { return None; }
+    return Some([n, n + 1, n + 2]);
+}
+`
+
+// releasesAfterMatch reports whether fn calls `helper` — the type-directed
+// release emitOwnedSlotDrop picks for the binding — anywhere in its body.
+func releasesAfterMatch(fn *ir.Func, helper string) bool {
+	for _, op := range fn.Ops {
+		if op.Kind == ir.OpCallDirect && op.Str == helper {
+			return true
+		}
+	}
+	return false
+}
+
+// releasesBoundPayload reports whether fn releases the slot holding the arm's
+// BINDING, which is the arm dropping a payload that escaped it.
+//
+// "Any release anywhere" is too coarse to express that. When the binding
+// escapes into a local, that local becomes an owner and reclaims its OWN prior
+// value at the overwrite — a release with nothing to do with the binding, in a
+// function that contains no arm release at all. Telling them apart needs the
+// operand, and both shapes carry it in the op immediately around the call:
+//
+//	local.load <binding>; rc.inc                    the escaping assignment's inc
+//	local.load <slot>; const.i32 <stride>; call     a release of <slot>
+//
+// The binding is the slot alias-inc'd as a SOURCE — the assignment incs what it
+// reads, and decs what it overwrites, so the two slots are never the same one.
+// A release of an inc'd-as-source slot is therefore the arm dropping the
+// binding; a release of any other slot is a destination reclaiming itself.
+func releasesBoundPayload(fn *ir.Func, helper string) bool {
+	bindings := map[int32]bool{}
+	for i, op := range fn.Ops {
+		if op.Kind == ir.OpRcInc && i > 0 && fn.Ops[i-1].Kind == ir.OpLoadLocal {
+			bindings[fn.Ops[i-1].I32] = true
+		}
+	}
+	for i, op := range fn.Ops {
+		if op.Kind != ir.OpCallDirect || op.Str != helper {
+			continue
+		}
+		if i < 2 || fn.Ops[i-2].Kind != ir.OpLoadLocal {
+			// Shape not recognised — report rather than pass silently.
+			return true
+		}
+		if bindings[fn.Ops[i-2].I32] {
+			return true
+		}
+	}
+	return false
+}
+
+// releasesBoundPayload is a hand-written op-stream matcher, so its own
+// discrimination is pinned here rather than assumed: a sharpened predicate that
+// answered "no" to everything would make every escape test above vacuous.
+func TestReleasesBoundPayloadDiscriminates(t *testing.T) {
+	// `local.load 6; rc.inc` marks slot 6 as the binding.
+	bind := []ir.Op{
+		{Kind: ir.OpLoadLocal, I32: 6},
+		{Kind: ir.OpRcInc, Str: "__fern_rc_inc"},
+	}
+	rel := func(slot int32) []ir.Op {
+		return []ir.Op{
+			{Kind: ir.OpLoadLocal, I32: slot},
+			{Kind: ir.OpConstI32, I32: 4},
+			{Kind: ir.OpCallDirect, Str: "__fern_arr_dec", I32: 2},
+		}
+	}
+	armReleases := &ir.Func{Ops: append(append([]ir.Op{}, bind...), rel(6)...)}
+	if !releasesBoundPayload(armReleases, "__fern_arr_dec") {
+		t.Error("a release of the bound slot must be reported — the escape tests rest on this")
+	}
+	destReleases := &ir.Func{Ops: append(append([]ir.Op{}, bind...), rel(0)...)}
+	if releasesBoundPayload(destReleases, "__fern_arr_dec") {
+		t.Error("a release of the DESTINATION slot is that local reclaiming its own prior value, not an arm release")
+	}
+	unknownShape := &ir.Func{Ops: []ir.Op{{Kind: ir.OpCallDirect, Str: "__fern_arr_dec", I32: 2}}}
+	if !releasesBoundPayload(unknownShape, "__fern_arr_dec") {
+		t.Error("an unrecognised release shape must be reported, not passed silently")
+	}
+}
+
+// The essential case: the binding is only ever read through (`a[0]`), so
+// the payload cannot outlive the arm and the arm releases it.
+func TestPairFormPayloadReleasedWhenConfined(t *testing.T) {
+	ip := lowerForTest(t, pairPayloadSrc+`
+function main(): i32 {
+    let t: i32 = 0;
+    for i in 0..4 {
+        match (mk(1)) { Some(a) => { t = t + a[0]; }, None => { }, }
+    }
+    return t;
+}
+`)
+	if !ip.PairForm["mk"] {
+		t.Fatal("mk is not pair-form; this test no longer covers the pair-form path")
+	}
+	if !releasesAfterMatch(funcByName(ip, "main"), "__fern_arr_dec") {
+		t.Error("main: the array payload of `match (mk(1))` is never released — it is the only reference to a fresh allocation, so every iteration leaks it")
+	}
+}
+
+// The binding escapes into a local, and the release HAPPENS: `kept = a` is an
+// alias site, so it incs what it reads, and the arm is releasing the reference
+// the callee handed over, not the one `kept` now holds. The payload comes out
+// of the arm at rc 1 with `kept` owning it.
+//
+// This asserted the opposite until #8003. Refusing every escape was sufficient
+// for safety but far from necessary, and the shape it refused is the ordinary
+// one — read a value out of a match, keep it — so a fresh payload was
+// abandoned per match, which is the serve loop's per-request recv buffer and the
+// unbounded growth behind it. The escapes that are genuinely unowned (a re-wrap
+// into a constructor, a callee that hands the argument back) are still refused,
+// by the tests around this one.
+//
+// This test reads the op stream, so it cannot see whether the counts actually
+// balance: internal/testing/e2e's TestEscapingMatchPayloadIsReclaimed runs this shape
+// on x86-64, arm64 and wasm and asserts allocs == frees with a zero
+// __rc_underflow_count().
+func TestPairFormPayloadReleasedWhenEscapeIsCounted(t *testing.T) {
+	ip := lowerForTest(t, pairPayloadSrc+`
+function main(): i32 {
+    let kept: i32[] = [];
+    for i in 0..4 {
+        match (mk(1)) { Some(a) => { kept = a; }, None => { }, }
+    }
+    return kept[0];
+}
+`)
+	if !ip.PairForm["mk"] {
+		t.Fatal("mk is not pair-form; this test no longer covers the pair-form path")
+	}
+	if !releasesBoundPayload(funcByName(ip, "main"), "__fern_arr_dec") {
+		t.Error("main: `kept = a` retains what it reads, so the arm must give back the reference the callee handed over — without it every match strands a fresh payload")
+	}
+}
+
+// `return a` takes the Return lowering's transfer retain, so the caller holds
+// a count of its own and the arm still owes the one the callee handed over.
+// Declining that release leaked one payload per match (#11479). On the
+// single-word string ABI Option[string] is pair-form too, which is where the
+// leak surfaced. internal/testing/e2e's TestReturnedPairFormMatchPayloadIsReleased
+// runs both shapes under the leak census.
+func TestPairFormPayloadReleasedWhenBindingReturned(t *testing.T) {
+	ip := lowerForTest(t, pairPayloadSrc+`
+function keepit(n: i32): i32[] {
+    match (mk(n)) { Some(a) => { return a; }, None => { return [0]; }, }
+}
+
+function find(values: string[], name: string): Option[string] {
+    if (values[0] == name) { return Some(values[1]); }
+    return None;
+}
+
+function lookup(values: string[]): string {
+    match (find(values, "x-echo")) { Some(v) => { return v; }, None => { return "none"; }, }
+}
+
+function main(): i32 { return keepit(7)[0] + lookup(["x-echo", "y"]).len(); }
+`)
+	if !ip.PairForm["mk"] || !ip.PairForm["find"] {
+		t.Fatal("mk / find are not pair-form; this test no longer covers the pair-form path")
+	}
+	if !releasesBoundPayload(funcByName(ip, "keepit"), "__fern_arr_dec") {
+		t.Error("keepit: `return a` retains the payload, so the arm must release the count the callee handed over")
+	}
+	if !releasesAfterMatch(funcByName(ip, "lookup"), "__fern_str_dec") {
+		t.Error("lookup: `return v` retains the string payload, so the arm must release the count the callee handed over")
+	}
+}
+
+// A callee whose payload ALIASES a parameter retains it on the way out
+// (emitPairFormPayloadRetain), so the caller owns one count of it and the
+// arm's release is a dec that never reaches zero while the parameter's
+// owner holds its own. The freshness proof this once demanded predated
+// that retain and stranded the count of every `Some(h.values[i])`
+// (#10606).
+func TestPairFormPayloadReleasedWhenCalleeAliasesParam(t *testing.T) {
+	ip := lowerForTest(t, `
+function pick(xs: i32[], n: i32): Option[i32[]] {
+    if (n == 0) { return None; }
+    return Some(xs);
+}
+
+// xs is a PARAMETER here, so it is borrowed and carries no exit-sweep drop
+// of its own — any __fern_arr_dec in this function is the arm's release.
+function consume(xs: i32[]): i32 {
+    let t: i32 = 0;
+    for i in 0..4 {
+        match (pick(xs, 1)) { Some(a) => { t = t + a[0]; }, None => { }, }
+    }
+    return t;
+}
+
+function main(): i32 {
+    let xs: i32[] = [1, 2, 3];
+    return consume(xs);
+}
+`)
+	if !releasesAfterMatch(funcByName(ip, "consume"), "__fern_arr_dec") {
+		t.Error("consume: pick retained xs for the caller, so the arm must give that count back — without it every match strands one")
+	}
+	retained := false
+	for _, op := range funcByName(ip, "pick").Ops {
+		if op.Kind == ir.OpRcInc {
+			retained = true
+		}
+	}
+	if !retained {
+		t.Error("pick: returning its parameter must retain it for the caller, or the arm's release frees the caller's array")
+	}
+}
+
+// `a.len()` is `__method_Array_len(a)` after the checker's method rewrite, so
+// the occurrence sits in an ARGUMENT list and matched neither read shape the
+// whitelist recognised (#6409). A borrowing call cannot let the pointer
+// outlive the arm, so it is excused and the payload is released.
+func TestPairFormPayloadReleasedThroughBorrowingCall(t *testing.T) {
+	ip := lowerForTest(t, pairPayloadSrc+`
+function total(a: i32[]): i32 { let s: i32 = 0; for i in 0..a.len() { s = s + a[i]; } return s; }
+
+function main(): i32 {
+    let t: i32 = 0;
+    for i in 0..4 {
+        match (mk(1)) { Some(a) => { t = t + a.len(); }, None => { }, }
+        match (mk(1)) { Some(a) => { t = t + total(a); }, None => { }, }
+        match (mk(1)) { Some(a) => { t = t + a[0] + a.len(); }, None => { }, }
+    }
+    return t;
+}
+`)
+	if !ip.PairForm["mk"] {
+		t.Fatal("mk is not pair-form; this test no longer covers the pair-form path")
+	}
+	if !releasesAfterMatch(funcByName(ip, "main"), "__fern_arr_dec") {
+		t.Error("main: an arm body that only borrows the payload through a call never releases it — every iteration leaks the whole array")
+	}
+}
+
+// The other side of the same widening: a callee that hands the argument BACK
+// is not a borrow, so the occurrence stays unexcused. `resultCannotAliasArg`
+// is what rules it out, and it is the gate whose loosening segfaulted the
+// differential oracle when the stage-(b) arg reclaim tried the same move.
+//
+// The binding escapes into `kept`, so this needs releasesBoundPayload for the
+// reason spelled out on that helper: `kept` is an owner and reclaims its own
+// prior value, and a release of the DESTINATION is not the arm dropping the
+// binding.
+func TestPairFormPayloadKeptWhenCallReturnsTheArgument(t *testing.T) {
+	ip := lowerForTest(t, pairPayloadSrc+`
+function ident(a: i32[]): i32[] { return a; }
+
+function main(): i32 {
+    let kept: i32[] = [];
+    for i in 0..4 {
+        match (mk(1)) { Some(a) => { kept = ident(a); }, None => { }, }
+    }
+    return kept[0];
+}
+`)
+	if releasesBoundPayload(funcByName(ip, "main"), "__fern_arr_dec") {
+		t.Error("main: ident hands the payload back into `kept`, but the arm releases it anyway — a use-after-free")
+	}
+}

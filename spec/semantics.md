@@ -36,7 +36,7 @@ pass on every backend it opts into.
 
 ## How the link is checked
 
-`TestSemanticsIndexIsAccurate` (`internal/e2e`) enforces, in both
+`TestSemanticsIndexIsAccurate` (`internal/testing/e2e`) enforces, in both
 directions:
 
 - every claim ID is unique, and its doc exists;
@@ -128,7 +128,7 @@ of them.
 ## Every gap this index opened with is now closed
 
 `IS-10`, `IS-11`, `ML-05`, `MC-01` and `MC-02` were all *rejections*
-exercised only by a Go test under `internal/checker`. That is coverage
+exercised only by a Go test under `internal/check/checker`. That is coverage
 of `internal/`, and `docs/NATIVE-CONVERGENCE.md` makes the self-host
 compiler the definition once the freeze preconditions (#4451) go green
 — at which point a Go test measures the wrong implementation. `E050`
@@ -136,7 +136,7 @@ and `E067` were also two of the three codes `spec/diagnostics.md`
 listed as unpinned, so those rows closed in both indexes at once.
 
 `ML-06` was the interesting one, because it was not unpinned for want
-of writing a case. `E068` is reported by `internal/ir/fip_verify.go`
+of writing a case. `E068` is reported by `internal/oracle/ir/fip_verify.go`
 during *lowering*, after the checker has already accepted the program,
 and a case with an `expected.error` file stops at the type check — so
 the format itself could not express the claim. Rather than move the

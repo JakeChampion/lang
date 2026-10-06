@@ -1,0 +1,22089 @@
+// Package checker performs name-resolution and type-checking on a Program.
+//
+// Each function is checked against an environment chain that starts at the
+// top-level (functions) and is extended for parameters and `let`
+// declarations. Errors are accumulated rather than fatally aborting on the
+// first one, so a single run reports as much as possible.
+package checker
+
+import (
+	"context"
+	"fmt"
+	"maps"
+	"slices"
+	"sort"
+	"strconv"
+	"strings"
+
+	"github.com/jakechampion/lang/internal/check/defaultargs"
+	"github.com/jakechampion/lang/internal/pkg/platforms"
+	"github.com/jakechampion/lang/internal/stdlib"
+	"github.com/jakechampion/lang/internal/syntax/ast"
+	"github.com/jakechampion/lang/internal/syntax/diag"
+)
+
+type Error struct {
+	Pos     ast.Position
+	Span    int    // optional: token length for `^~~~~` underline; 0 = caret only
+	Note    string // optional: free-text hint rendered as `note:`
+	Msg     string
+	Path    string // source file path; filled by errf from c.current.SourceModule
+	ErrCode string // optional: stable error code (E001…), surfaces in the header + `lang explain` output
+	// Fix is an optional machine-applicable suggestion rendered as a
+	// `help:` line (diag.Suggestion — span + replacement + title). Only
+	// attached when applying the replacement is guaranteed to re-parse.
+	Fix *diag.Suggestion
+}
+
+func (e *Error) Error() string          { return fmt.Sprintf("type error at %s: %s", e.Pos, e.Msg) }
+func (e *Error) Position() ast.Position { return e.Pos }
+func (e *Error) Length() int            { return e.Span }
+func (e *Error) Hint() string           { return e.Note }
+func (e *Error) File() string           { return e.Path }
+func (e *Error) SetFile(p string)       { e.Path = p }
+func (e *Error) Code() string           { return e.ErrCode }
+
+func (e *Error) Suggestion() *diag.Suggestion { return e.Fix }
+
+var _ diag.FileSetter = (*Error)(nil)
+
+// Info captures everything codegen needs that the checker discovered:
+// the inferred type of every var without an annotation, and a per-function
+// list of locals (so codegen can lay out a frame).
+type Info struct {
+	VarTypes map[*ast.Var]ast.Type
+	// Target is the -target the program was checked for ("" for the hosted
+	// default), so a pass that re-checks a rewritten program checks it for
+	// the same target.
+	Target string
+	// IntrinsicCalls records resolved semantic identities for the pre-RC IR.
+	// Nil when no supported intrinsic was checked; legacy lowering is unchanged.
+	IntrinsicCalls map[*ast.Call]IntrinsicCall
+	// StatefulHandler reports a `handle` threading process-lifetime state
+	// (state, request, platform). Monomorph drops the generic declaration, so
+	// a target that cannot serve one reads this rather than the program.
+	StatefulHandler bool
+	// BoxedCells names the locals that closureconv.BoxMutatedCaptures
+	// rewrote into 1-element array cells for by-reference scalar capture. Such a
+	// cell is a SHARED MUTABLE reference (the whole point — a closure and the
+	// outer scope observe each other's writes), so an `cell[0] = v` store must
+	// NOT go through copy-on-write (which would fork the cell when its rc > 1
+	// because a closure also holds it, breaking the sharing). The IR's index-
+	// assign CoW gate skips names in this set and stores in place. Names are
+	// unique post-shadowrename, so one program-wide set is unambiguous. Empty /
+	// nil for any program with no mutated scalar captures.
+	BoxedCells map[string]bool
+	Locals     map[*ast.FuncDecl][]*ast.Var
+	FuncSigs   map[string]*ast.FuncType
+	// OwnFuncs maps a function name to its per-parameter `own` (owned /
+	// consuming) flags, for functions that have at least one owned parameter.
+	// The IR uses it to lower ownership transfer: a callee reclaims its `own`
+	// params, and a caller moves an owned argument into them instead of
+	// dropping it. Empty when no function uses `own`.
+	OwnFuncs map[string][]bool
+	// Structs maps a struct name to its declaration (which carries the
+	// ordered field list — codegen looks up field offsets here).
+	Structs map[string]*ast.StructDecl
+	// IRTypeMemo caches the per-type verdicts the IR derives by walking the
+	// struct and enum field graph (whether a type's deep drop is fully wired,
+	// whether an enum transitively holds a Map). The answer depends only on
+	// this Info and the type's spelling, and the IR asks it once per call
+	// argument lowered. Filled lazily by internal/oracle/ir; nil until then.
+	IRTypeMemo map[string]bool
+	// Enums maps an enum name to its declaration. The variant list +
+	// payload types live there; codegen looks up the runtime tag
+	// (the variant's index in the variant slice) and the payload
+	// shapes via this map.
+	Enums map[string]*ast.EnumDecl
+	// Resources maps a `resource Name;` declaration's name to its decl —
+	// nominal WIT resource-handle types (P5 — docs/WIT-BRING-YOUR-OWN.md).
+	// resolveType reclassifies a bare resource-name reference to an owned
+	// ast.HandleType, and validateResourceHandles checks that every `own R` /
+	// `borrow R` names a registered resource. Empty for programs with no
+	// `resource` declarations.
+	Resources map[string]*ast.ResourceDecl
+	// Methods maps `<StructName>.<MethodName>` to the mangled
+	// top-level function name the receiver-rewriting pass introduces
+	// (`__method_<StructName>_<MethodName>`). Call-site rewriting
+	// uses this map to turn `p.area()` into `__method_Point_area(p)`.
+	Methods map[string]string
+	// TraitMethods is Methods split by providing trait: the key is
+	// `<Trait>.<Type>.<MethodName>` and the value the mangled top-level
+	// name, so the two traits that would collide on one flat `Methods`
+	// key stay individually addressable. Only impl-provided methods and
+	// associated functions appear — an inherent method has no trait.
+	TraitMethods map[string]string
+	// MethodOwners is the reverse index: `<Type>.<MethodName>` to the
+	// names of the traits providing it, sorted so the order does not
+	// depend on declaration or map iteration. An inherent method
+	// contributes no entry, so a missing key means "not from a trait"
+	// and a multi-entry value means the flat `Methods` key is ambiguous.
+	MethodOwners map[string][]string
+	// MethodInsts lists every function registered under one
+	// MethodDeclSites key. It holds more than one only for a generic
+	// enum, whose instantiated methods all share the unmangled receiver
+	// name (`Bag`) and differ in their receiver parameter.
+	MethodInsts map[string][]string
+	// MethodDeclSites is where each registration was written, keyed like
+	// TraitMethods (`<Trait>.<Type>.<MethodName>`) for an impl-provided
+	// method and like Methods (`<Type>.<MethodName>`) for an inherent
+	// one — so the two keyings also tell an inherent declaration apart
+	// from a trait-provided one with the same name. An ambiguity report
+	// (E074) names both declarations, so it needs both positions; a
+	// built-in registration has no source declaration and no entry.
+	MethodDeclSites map[string]ast.Position
+	// MethodSources records the canonical source-module path each
+	// registered method's body came from. Mangled-name keys mirror
+	// the values in Methods (e.g. `__method_i32_abs` →
+	// `stdlib://std/i32.fern`). Entries with an empty value are
+	// universally visible — that's the case for synthetic methods
+	// the checker registers itself (Reader / Writer / Map /
+	// MapIter, the inline-IR `Array.push`, and the built-in string
+	// methods).
+	//
+	// The dispatch path filters method resolutions against the
+	// call site's enclosing module + the program's `ModuleImports`
+	// closure so that methods declared in a module are only callable
+	// from files whose import closure reaches that module
+	// (`docs/PRELUDE-TO-MODULES.md`). Empty entries on either side
+	// skip the filter (accommodation for checker-synthesised decls
+	// and single-file programs).
+	MethodSources map[string]string
+	// ModuleImports mirrors `ast.Program.ModuleImports` — the per-
+	// module transitive import closure modload computes during
+	// loading. Copied onto Info at the start of Check so the
+	// dispatch path doesn't need a back-reference to the Program.
+	ModuleImports map[string]map[string]bool
+	// DirectImports mirrors `ast.Program.DirectImports` — the same shape
+	// as ModuleImports but without the transitive step, so a trait can be
+	// ranked by whether the calling module imported (or declared) it
+	// itself. Copied onto Info alongside ModuleImports.
+	DirectImports map[string]map[string]bool
+	// EnumConstructions preserves the checked result type, variant identity
+	// and substituted payload types of actual constructor expressions. Bare
+	// and qualified payloadless variants are included; ordinary enum-valued
+	// references and function calls are not. Nil when no constructors occur.
+	EnumConstructions map[ast.Expr]EnumConstruction
+	// GenericFuncs maps a generic function name to its declaration.
+	// Populated at the start of Check; used by the call-site
+	// inference path to detect "this is a generic call" and to
+	// look up TypeParams. The monomorphisation pass also reads
+	// this when cloning. Empty for programs without generic
+	// functions.
+	GenericFuncs map[string]*ast.FuncDecl
+	// GenericStructs is the StructDecl analogue of GenericFuncs —
+	// tracks struct decls with non-empty TypeParams for the
+	// monomorphisation pass.
+	GenericStructs map[string]*ast.StructDecl
+	// Generics is the kind-agnostic view of GenericFuncs + GenericStructs.
+	// Lets passes that just need "is this name a generic decl?" or
+	// "iterate every generic decl" (notably the monomorphisation
+	// pass's drop-loop) consult a single map instead of running
+	// parallel paths over the two type-specific maps. Always kept
+	// in sync with GenericFuncs / GenericStructs by the checker's
+	// registration code.
+	Generics map[string]ast.GenericDecl
+	// Traits maps a trait name to its declaration. Populated at the
+	// start of Check from prog.Traits. Used by the conformance
+	// check and (Phase 2) by generic bound resolution. See
+	// docs/TRAITS.md.
+	Traits map[string]*ast.TraitDecl
+	// Impls records which concrete types implement which trait:
+	// Impls[traitName][typeName] is true when a validated
+	// `impl Trait for Type` exists. Phase 2's bound checking asks
+	// "does i32 implement Display?" against this.
+	Impls map[string]map[string]bool
+	// ImplTraitArgs records the type arguments a generic-trait impl bound
+	// (`impl From[i32] for Celsius` → ImplTraitArgs["From"]["Celsius"] =
+	// [i32]). Lets a generic-trait BOUND (`T: From[i32]`) check the args
+	// match, not just that some `impl From[_] for T` exists. Empty for a
+	// non-generic trait. See docs/TRAITS.md.
+	ImplTraitArgs map[string]map[string][]ast.Type
+	// ImplForPattern records a PARAMETRIC impl-of-a-generic-trait's `for`
+	// type pattern (`impl[T] Iterator[T] for ArrayIter[T]` →
+	// ImplForPattern["Iterator"]["ArrayIter"] = ArrayIter[T], with T as a
+	// ParamType). A bound check unifies it against a concrete type
+	// (`ArrayIter[i32]`) to recover the impl's param binding (T=i32) and
+	// resolve the generic ImplTraitArgs ([T]) to concrete ([i32]). Empty for
+	// concrete impls. See docs/TRAITS.md.
+	ImplForPattern map[string]map[string]ast.Type
+	// AssocBindings records each impl's associated-type bindings:
+	// AssocBindings[typeName][assocName] = concrete type. Built during the
+	// conformance pass. resolveProj uses it to resolve a concrete-base
+	// `Foo::Item` projection to its bound type. See docs/ASSOCIATED-TYPES.md.
+	AssocBindings map[string]map[string]ast.Type
+	// TryShapes records every enum the `?` operator accepts, keyed by enum
+	// name: the two builtins plus every `@try` declaration that passed the
+	// shape check. THE single place anything asks "is this `?`-able, and
+	// what does it unwrap to" — the checker's TryOp arm, the IR's errdefer
+	// gate, and the interpreter all read it and none learns whether the
+	// answer came from a marker or from a builtin.
+	//
+	// Keeping that question behind one lookup is deliberate: if `@try` is
+	// ever replaced by a `Try` trait, only this map's population changes.
+	// See docs/TRY.md.
+	TryShapes map[string]TryShape
+	// AssocBindingPattern records, for a binding made by a PARAMETRIC impl,
+	// that impl's `for` type pattern (`impl[T] Carrier for Box[T]` with
+	// `type Ok = T;` → AssocBindingPattern["Box"]["Ok"] = Box[T], T a
+	// ParamType). The binding is then written in the impl's own type
+	// parameters, so resolveProj unifies the pattern against the concrete
+	// base (`Box[i32]`) to recover T=i32 before substituting. Keyed exactly
+	// like AssocBindings because two impls on the same type may spell their
+	// parameters differently. Absent for concrete impls, whose bindings need
+	// no substitution. See docs/ASSOCIATED-TYPES.md.
+	AssocBindingPattern map[string]map[string]ast.Type
+	// DynCoercions records every concrete→`dyn Trait` boxing site,
+	// keyed by the holder expression the checker saw flow into a `dyn`
+	// slot (var init, assignment, argument, return, array element,
+	// struct field — all route through maybeWrapForUnion). Compiled-
+	// backend IR lowering reads this to box the concrete value into the
+	// `{data, vtable}` fat pointer with the named concrete type's vtable
+	// (docs/DYN-TRAITS.md §4.2.1). The interpreter ignores it (it
+	// dispatches by the receiver's runtime type). Empty for programs
+	// with no `dyn` coercions.
+	//
+	// Keyed by the *unrewritten* holder expression pointer, which flows
+	// unchanged to the IR for non-generic code. (A coercion inside a
+	// generic body is cloned to a fresh pointer by monomorph and so is
+	// not found — out of scope for the first compiled `dyn` slice.)
+	DynCoercions map[ast.Expr]DynCoercion
+}
+
+// tryEnumWithOk rebuilds a `?` source enum with its success payload replaced
+// by `ok`, leaving every other type argument alone: `Result[i32, string]`
+// with an f32 hint becomes `Result[f32, string]`.
+//
+// Only a shape whose Ok is a bare type PARAMETER can be rewritten this way —
+// that is the position the hint names. A concrete or composite Ok has no
+// argument slot to substitute into, so the caller settles nothing.
+func (c *checker) tryEnumWithOk(t ast.EnumType, ok ast.Type) (ast.EnumType, bool) {
+	shape, isTry := c.info.TryShapes[t.Name]
+	if !isTry {
+		return t, false
+	}
+	ed, haveDecl := c.info.Enums[t.Name]
+	if !haveDecl || len(ed.TypeParams) != len(t.Args) {
+		return t, false
+	}
+	var okParam string
+	switch p := shape.Ok.(type) {
+	case ast.ParamType:
+		okParam = p.Name
+	case ast.StructType:
+		if len(p.Args) == 0 {
+			okParam = p.Name
+		}
+	}
+	if okParam == "" {
+		return t, false
+	}
+	for i, tp := range ed.TypeParams {
+		if tp != okParam {
+			continue
+		}
+		args := append([]ast.Type{}, t.Args...)
+		args[i] = ok
+		return ast.EnumType{Name: t.Name, Args: args}, true
+	}
+	return t, false
+}
+
+// tryPayloadType substitutes a TryShape's payload type — written in the
+// enum decl's own type parameters — through a concrete instantiation's type
+// arguments, so `Result[i32, string]`'s residual `E` reads as `string`.
+//
+// Reports false when the instantiation's arity does not match the decl's,
+// which is the malformed-type case rather than a payload that happens not to
+// mention a parameter.
+func (c *checker) tryPayloadType(t ast.EnumType, payload ast.Type) (ast.Type, bool) {
+	ed, ok := c.info.Enums[t.Name]
+	if !ok {
+		return nil, false
+	}
+	if len(ed.TypeParams) != len(t.Args) {
+		return nil, false
+	}
+	if len(ed.TypeParams) == 0 {
+		return payload, true
+	}
+	sub := make(map[string]ast.Type, len(ed.TypeParams))
+	for i, tp := range ed.TypeParams {
+		sub[tp] = t.Args[i]
+	}
+	return substByName(payload, sub), true
+}
+
+// notATryTypeMsg is the E042 text for a `?` on something the operator does
+// not accept. It names the marker, because that is the reader's next action:
+// the type is theirs to mark, unless it is not an enum at all.
+func (c *checker) notATryTypeMsg(t ast.Type) string {
+	if et, ok := t.(ast.EnumType); ok {
+		return fmt.Sprintf("`?` operator requires an Option, a Result, or an `@try` enum, got %s — mark it `@try` to make it one", demangle(et.Name))
+	}
+	return fmt.Sprintf("`?` operator requires an Option, a Result, or an `@try` enum, got %s", t)
+}
+
+// registerTryShape records an enum in Info.TryShapes when `?` accepts it,
+// enforcing the shape the operator's lowering requires.
+//
+// Two enums qualify: the builtins (Option / Result, which carry no marker
+// because they predate it and cannot be spelled with one), and any enum
+// declared `@try`. A marked enum that does not fit the shape is E078 at the
+// declaration — the one place an author can act on it — and is NOT recorded,
+// so `?` on it reports the ordinary "not a `?` type" rather than cascading
+// off a half-valid shape.
+func (c *checker) registerTryShape(ed *ast.EnumDecl) {
+	// Option and Result are `?`-able without a marker — but only the
+	// INJECTED decls are. A user's `enum Option { A, B }` is already E010
+	// for redeclaring a reserved name; treating it as implicitly `?`-able
+	// would pile an E078 about its shape on top of that, describing a
+	// declaration the program is not allowed to make in the first place.
+	// The injected decls are the ones with no source position.
+	builtin := (ed.Name == "Option" || ed.Name == "Result") && ed.P == (ast.Position{})
+	if !ed.Try && !builtin {
+		return
+	}
+	if len(ed.Variants) != 2 {
+		c.errfCode(ed.P, "E078",
+			"@try enum %s must have exactly two variants — a success variant then a failure variant — but has %d",
+			ed.Name, len(ed.Variants))
+		return
+	}
+	success, failure := ed.Variants[0], ed.Variants[1]
+	if len(success.Payloads) != 1 {
+		c.errfCode(ed.P, "E078",
+			"@try enum %s: the success variant %q must carry exactly one payload, but carries %d",
+			ed.Name, success.Name, len(success.Payloads))
+		return
+	}
+	if len(failure.Payloads) > 1 {
+		c.errfCode(ed.P, "E078",
+			"@try enum %s: the failure variant %q must carry at most one payload, but carries %d",
+			ed.Name, failure.Name, len(failure.Payloads))
+		return
+	}
+	shape := TryShape{Ok: success.Payloads[0]}
+	if len(failure.Payloads) == 1 {
+		shape.Residual = failure.Payloads[0]
+	}
+	c.info.TryShapes[ed.Name] = shape
+}
+
+// TryShape is what `?` needs to know about one enum: which payload it
+// unwraps to, and whether its failure variant carries one.
+//
+// Both types are written in the ENUM'S OWN type parameters, exactly as the
+// decl spells them — a caller holding a concrete `Result[i32, string]`
+// substitutes its Args before use. The variant INDICES are not recorded
+// because the shape rule fixes them: success is variant 0, failure is
+// variant 1, which is what every backend's lowering already assumes.
+type TryShape struct {
+	// Ok is variant 0's single payload — the type `expr?` evaluates to.
+	Ok ast.Type
+	// Residual is variant 1's payload, or nil when that variant is
+	// payloadless (the Option shape). nil is the signal to BUILD a fresh
+	// failure value rather than forward the source's.
+	Residual ast.Type
+}
+
+// DynCoercion identifies one concrete→`dyn …` boxing site: the trait(s)
+// being coerced to and the concrete type flowing in. The IR uses the
+// (trait, concrete) pair to select the vtable to pair with the boxed
+// value. See checker.Info.DynCoercions and docs/DYN-TRAITS.md.
+//
+// Trait is the PRIMARY (single) trait — `Traits[0]` — kept for the
+// single-trait compiled codegen path (the only one that lowers today;
+// multi-trait is compiled-rejected). Traits holds the WHOLE set, so
+// set-aware consumers (tree-shaking, which must root the impl methods of
+// EVERY trait in the set) iterate it rather than reading only Trait.
+type DynCoercion struct {
+	Trait    string
+	Traits   []string
+	Concrete string
+}
+
+// builtinEnumDecls returns the synthetic enum declarations the
+// checker injects into every program: `Option[T]` and
+// `Result[T, E]`. Variant order matters — runtime helpers
+// (`$read_line`, `$env`) hardcode the tag indices, so `Some` is
+// 0, `None` is 1, `Ok` is 0, `Err` is 1; and the IR's pair-form
+// lowering hard-codes the same `OpMakeSomeI32 → tag=0` /
+// `OpMakeOkI32 → tag=0` mapping. Letting a user redeclare
+// `Option` with the variants swapped silently miscompiles —
+// `Check` rejects any user `enum Option { … }` /
+// IsReservedName reports whether name is the name of an auto-
+// injected built-in enum or struct. User code can't redeclare
+// these — the checker rejects shadow attempts at the source
+// position of the user decl (see `shadowedEnums` /
+// `shadowedStructs` in `Check`).
+//
+// Single source of truth for the reserved-name set: external
+// callers (fernsmith's generator, IDE rename refactors,
+// documentation tooling) consult this rather than maintaining
+// their own copy.
+func IsReservedName(name string) bool {
+	for _, ed := range builtinEnumDecls() {
+		if ed.Name == name {
+			return true
+		}
+	}
+	for _, sd := range builtinStructDecls() {
+		if sd.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// `enum Result { … }` (and the other reserved names below)
+// before reaching variant registration. The decls live in the
+// AST, not just the checker info, so the formatter /
+// interpreter / IR layers see them just like user-written
+// enums.
+func builtinEnumDecls() []*ast.EnumDecl {
+	return []*ast.EnumDecl{
+		{
+			Name:       "Option",
+			TypeParams: []string{"T"},
+			Variants: []ast.EnumVariant{
+				{Name: "Some", Payloads: []ast.Type{ast.ParamType{Name: "T"}}},
+				{Name: "None"},
+			},
+		},
+		{
+			Name:       "Result",
+			TypeParams: []string{"T", "E"},
+			Variants: []ast.EnumVariant{
+				{Name: "Ok", Payloads: []ast.Type{ast.ParamType{Name: "T"}}},
+				{Name: "Err", Payloads: []ast.Type{ast.ParamType{Name: "E"}}},
+			},
+		},
+		{
+			// Roc-shaped error variants: a small set of named
+			// kinds plus a generic Other(path, message) catch-
+			// all carrying the offending path and the OS errno
+			// text. Variants that always have a path attached
+			// keep the API uniform — callers pattern-match on
+			// the kind and never have to wrap calls just to add
+			// "(while reading X)" context.
+			Name: "IoError",
+			Variants: []ast.EnumVariant{
+				{Name: "NotFound", Payloads: []ast.Type{ast.StringType{}}},
+				{Name: "PermissionDenied", Payloads: []ast.Type{ast.StringType{}}},
+				{Name: "AlreadyExists", Payloads: []ast.Type{ast.StringType{}}},
+				{Name: "InvalidUtf8", Payloads: []ast.Type{ast.StringType{}}},
+				{Name: "Interrupted"},
+				{Name: "Unsupported"},
+				{Name: "Other", Payloads: []ast.Type{ast.StringType{}, ast.StringType{}}},
+			},
+		},
+		{
+			// Body — what an HttpResponse carries (std/http): text or
+			// bytes held whole, a Stream drained to the wire, or a
+			// file the serve loop reads. Constructed through std/http's
+			// `http.ok` / `http.text` builders in ordinary code. The
+			// variants carry the enum's name, as JsonValue's do, since
+			// a builtin variant is in every module's scope and a bare
+			// `Text` would ambiguate any user enum's.
+			Name: "Body",
+			Variants: []ast.EnumVariant{
+				{Name: "BodyText", Payloads: []ast.Type{ast.StringType{}}},
+				{Name: "BodyBytes", Payloads: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}},
+				{Name: "BodyStream", Payloads: []ast.Type{ast.StructType{Name: "Stream"}}},
+				{Name: "BodyFile", Payloads: []ast.Type{ast.StringType{}}},
+				{Name: "BodyChunks", Payloads: []ast.Type{ast.StructType{Name: "ChunkProducer"}}},
+			},
+		},
+		// JsonValue — recursive AST representation for JSON
+		// documents. Numbers carry their textual representation
+		// (the JSON spec doesn't fix precision); callers that
+		// want a numeric type call `s.parse_int()` /
+		// `s.parse_float()` on the payload. Self-referential
+		// variants (JArray → JsonValue[], JObject →
+		// Map[string, JsonValue]) work because enum payloads
+		// are heap-allocated, breaking the size cycle. Pairs
+		// with the `json_encode(v)` builtin (and the future
+		// `json_parse(s) -> Option[JsonValue]`).
+		{
+			Name: "JsonValue",
+			Variants: []ast.EnumVariant{
+				{Name: "JNull"},
+				{Name: "JBool", Payloads: []ast.Type{ast.BoolType{}}},
+				{Name: "JNumber", Payloads: []ast.Type{ast.StringType{}}},
+				{Name: "JString", Payloads: []ast.Type{ast.StringType{}}},
+				{Name: "JArray", Payloads: []ast.Type{
+					ast.ArrayType{Elem: ast.EnumType{Name: "JsonValue"}},
+				}},
+				{Name: "JObject", Payloads: []ast.Type{
+					ast.StructType{
+						Name: "Map",
+						Args: []ast.Type{
+							ast.StringType{},
+							ast.EnumType{Name: "JsonValue"},
+						},
+					},
+				}},
+			},
+		},
+	}
+}
+
+// builtinStructDecls returns the synthetic struct declarations
+// the checker injects on every program: `Reader` and `Writer`.
+// Both are opaque-by-convention — the user never constructs
+// them directly; `open_reader` / `open_writer` / `open_appender` /
+// `open_exclusive`
+// (and the future `stdin()` / `stdout()` / `stderr()`) are the
+// canonical entry points. The single `fd` field is exposed
+// because we don't have opaque types yet, and because users
+// may need it for FFI escape hatches; it isn't part of the
+// stable surface.
+// BuiltinStructDecls is the exported view of builtinStructDecls, for the
+// layers that must lay one of these structs out by hand: `internal/oracle/ir`
+// derives FileStat's field offsets from it so the four backends that
+// build that struct in assembly share one source for the numbers.
+func BuiltinStructDecls() []*ast.StructDecl { return builtinStructDecls() }
+
+func builtinStructDecls() []*ast.StructDecl {
+	return []*ast.StructDecl{
+		{
+			Name:   "Reader",
+			Fields: []ast.Param{{Name: "fd", Type: ast.NumberType{}}},
+		},
+		{
+			Name:   "Writer",
+			Fields: []ast.Param{{Name: "fd", Type: ast.NumberType{}}},
+		},
+		// HttpRequest / HttpResponse back the
+		// `fern -target wasi-http` mode (step 5 of
+		// docs/WASI-PREVIEW2.md). They're always available so
+		// CLI-target programs can construct one for tests, but
+		// the wasm backend only emits the
+		// `wasi:http/incoming-handler.handle` wrapper +
+		// imports under `EmitOptions.HttpHandler`. Keep these
+		// fields minimal for now — query params, headers, and
+		// trailers are deferred follow-ups.
+		{
+			Name: "HttpRequest",
+			Fields: []ast.Param{
+				{Name: "method", Type: ast.StringType{}},
+				{Name: "path", Type: ast.StringType{}},
+				// `body` is a Stream, not a string: an upload is
+				// read incrementally through std/stream's cursor
+				// methods rather than materialised whole
+				// (docs/PLATFORM-RESEARCH.md Rec §4). Handler code
+				// reaches it through `req.body_stream()` or the
+				// whole-body shims `req.body_string()` /
+				// `body_bytes()` / `body_len()` in std/http.
+				{Name: "body", Type: ast.StructType{Name: "Stream"}},
+				// The wasi-http wrapper hardcodes these byte offsets
+				// (method@+0/+4, path@+8/+12, body@+16, headers@+20,
+				// trailers@+24; Stream and HeaderMap are each a 4-byte
+				// pointer slot on wasm32, 28 bytes in all), so a new
+				// field goes at the END. `trailers` holds a chunked
+				// body's trailer section (std/http's parser); the
+				// wasi-http wrapper leaves it empty.
+				{Name: "headers", Type: ast.StructType{Name: "HeaderMap"}},
+				{Name: "trailers", Type: ast.StructType{Name: "HeaderMap"}},
+			},
+		},
+		{
+			Name: "HttpResponse",
+			Fields: []ast.Param{
+				{Name: "status", Type: ast.NumberType{}},
+				// `body` is a Body: text or bytes held whole, a
+				// Stream, or a file the serve loop reads
+				// (std/http's `ok` / `json` / … build each).
+				{Name: "body", Type: ast.EnumType{Name: "Body"}},
+				// The wasi-http wrapper hardcodes these byte offsets
+				// (status@+0, body@+4, headers@+8) and reads the body
+				// through std/http's `body_string`; a new field goes
+				// at the END. http_serialize_response walks the map
+				// to emit the wire header block; Content-Length and
+				// Connection are auto-emitted after user headers
+				// (and de-duped against names the user already set
+				// so a manual `resp.headers.set("Connection", ...)`
+				// wins).
+				{Name: "headers", Type: ast.StructType{Name: "HeaderMap"}},
+				// `trailers` follow a chunked body's last chunk
+				// (std/serve's serve loop); a body with a length has
+				// nowhere to carry them, and the wasi-http wrapper
+				// finishes the outgoing body without them.
+				{Name: "trailers", Type: ast.StructType{Name: "HeaderMap"}},
+			},
+		},
+		// HeaderMap — case-insensitive, multi-valued, insertion-
+		// ordered header bag (docs/STDLIB-DESIGN-RESEARCH.md
+		// Rec §2). Storage is two parallel arrays — `names`
+		// holds the case-folded (lowercase) header name; `values`
+		// holds the raw value in insertion order. Lookups are
+		// linear scans through `names`, which is fine for the
+		// typical <20-header request and matches the spirit of
+		// hyper's HeaderMap without the indexing overhead.
+		// Methods (`get`, `get_all`, `set`, `append`, `len`)
+		// live in `internal/stdlib/std/headers.fern`; this PR
+		// lands the type + module only and defers the
+		// `headers: HeaderMap` integration into HttpRequest /
+		// HttpResponse to a follow-up so the wasi-http
+		// canonical-ABI fields-resource wiring can be its own
+		// reviewable unit.
+		{
+			Name: "HeaderMap",
+			Fields: []ast.Param{
+				{Name: "names", Type: ast.ArrayType{Elem: ast.StringType{}}},
+				{Name: "values", Type: ast.ArrayType{Elem: ast.StringType{}}},
+			},
+		},
+		// Stream — byte-stream value (docs/STDLIB-DESIGN-RESEARCH.md
+		// Rec §1 Phase 2), and the type of `HttpRequest.body`.
+		// Stream — std/stream's byte reader: a buffer and a cursor,
+		// and for a body that arrives as it is read (std/serve's
+		// streamed request body) a source the reads ask for the next
+		// chunk once the buffer is exhausted. `bytes` is `u8[]`
+		// throughout.
+		{
+			Name: "Stream",
+			Fields: []ast.Param{
+				{Name: "data", Type: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+				{Name: "pos", Type: ast.NumberType{}},
+				{Name: "source", Type: ast.EnumType{Name: "Option", Args: []ast.Type{ast.StructType{Name: "BodySource"}}}},
+			},
+		},
+		// BodySource — what a lazy Stream pulls from: `next` answers the
+		// next chunk, None at the end and on every call after; `fault`
+		// is why the stream ended early (an HTTP status, or
+		// async.cancelled()), 0 for a stream that reached its end.
+		{
+			Name: "BodySource",
+			Fields: []ast.Param{
+				{Name: "next", Type: &ast.FuncType{
+					Result: ast.EnumType{Name: "Option", Args: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}},
+				}},
+				{Name: "fault", Type: ast.StructType{Name: "Cell", Args: []ast.Type{ast.NumberType{}}}},
+			},
+		},
+		// ChunkProducer — the producer a `BodyChunks` carries: asked for
+		// chunk 0, 1, 2, … until it answers None. A record rather than the
+		// bare function because a closure is released as a struct member
+		// and only leaks as an enum payload (rc_insert.go's variant drop).
+		{
+			Name: "ChunkProducer",
+			Fields: []ast.Param{
+				{Name: "next", Type: &ast.FuncType{
+					Params: []ast.Type{ast.NumberType{}},
+					Result: ast.EnumType{Name: "Option", Args: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}},
+				}},
+			},
+		},
+		// BytesWriter — in-memory buffered writer
+		// (docs/STDLIB-DESIGN-RESEARCH.md Rec §5). The "Memory-
+		// Writer" the doc lists alongside Reader / Writer
+		// interfaces — collects writes into a u8[] buffer that
+		// callers `.into_string()` or `.into_bytes()` at the
+		// end. Phase 1 doesn't introduce nominal interface
+		// types; concrete BytesWriter shares the same
+		// `.write_string()` / `.write_bytes()` method shape
+		// as Writer (the fd-backed version) so callers can
+		// swap one for the other.
+		{
+			Name: "BytesWriter",
+			Fields: []ast.Param{
+				{Name: "data", Type: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+			},
+		},
+		// Date/time types (docs/STDLIB-DESIGN-RESEARCH.md
+		// Rec §4 — the jiff/NodaTime six-type shape).
+		// Phase 1: type registrations + a stub std/time
+		// module. Subsequent PRs land Instant.now() (needs
+		// clock_gettime per-target), Hinnant date arithmetic,
+		// RFC 3339 parser/formatter, IANA zone lookup, and
+		// the Span/Duration calendar-vs-absolute split.
+		//
+		// Each type is meaning-distinct:
+		//   Instant   — a point in physical time (UTC, ns).
+		//   Date      — civil (year, month, day); no zone.
+		//   Time      — civil wall-clock (h, m, s, ns); no zone.
+		//   DateTime  — pair of (Date, Time); no zone.
+		//   Zoned     — Instant + TimeZone (fully qualified).
+		//   Span      — calendar-flavoured interval (years,
+		//               months, days, …).
+		//   Duration  — absolute interval (sec + nsec).
+		//   TimeZone  — IANA name + offset cache.
+		//
+		// Conversions stay explicit per the doc: Date→Instant
+		// requires a TimeZone, Zoned→Date discards the zone,
+		// nothing coerces implicitly.
+		{
+			Name: "Instant",
+			Fields: []ast.Param{
+				{Name: "sec", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "nsec", Type: ast.NumberType{}},
+			},
+		},
+		{
+			Name: "Date",
+			Fields: []ast.Param{
+				{Name: "year", Type: ast.NumberType{}},
+				{Name: "month", Type: ast.NumberType{}},
+				{Name: "day", Type: ast.NumberType{}},
+			},
+		},
+		{
+			Name: "Time",
+			Fields: []ast.Param{
+				{Name: "hour", Type: ast.NumberType{}},
+				{Name: "minute", Type: ast.NumberType{}},
+				{Name: "second", Type: ast.NumberType{}},
+				{Name: "nsec", Type: ast.NumberType{}},
+			},
+		},
+		{
+			Name: "DateTime",
+			Fields: []ast.Param{
+				{Name: "date", Type: ast.StructType{Name: "Date"}},
+				{Name: "time", Type: ast.StructType{Name: "Time"}},
+			},
+		},
+		{
+			Name: "TimeZone",
+			Fields: []ast.Param{
+				{Name: "name", Type: ast.StringType{}},
+				// `offset_seconds` is the cached offset from
+				// UTC for the period containing `Zoned.instant`.
+				// Future PRs populate it from tzdb; for now
+				// zero-init carries the UTC convention.
+				{Name: "offset_seconds", Type: ast.NumberType{}},
+			},
+		},
+		{
+			Name: "Zoned",
+			Fields: []ast.Param{
+				{Name: "instant", Type: ast.StructType{Name: "Instant"}},
+				{Name: "zone", Type: ast.StructType{Name: "TimeZone"}},
+			},
+		},
+		{
+			Name: "Span",
+			Fields: []ast.Param{
+				{Name: "years", Type: ast.NumberType{}},
+				{Name: "months", Type: ast.NumberType{}},
+				{Name: "weeks", Type: ast.NumberType{}},
+				{Name: "days", Type: ast.NumberType{}},
+				{Name: "hours", Type: ast.NumberType{}},
+				{Name: "minutes", Type: ast.NumberType{}},
+				{Name: "seconds", Type: ast.NumberType{}},
+				{Name: "nanos", Type: ast.NumberType{}},
+			},
+		},
+		{
+			Name: "Duration",
+			Fields: []ast.Param{
+				{Name: "sec", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "nsec", Type: ast.NumberType{}},
+			},
+		},
+		// ProcessResult — the return shape of `exec(cmd, args,
+		// stdin)`. The interp's Go-side implementation populates
+		// stdout / stderr / exit_code; the wasm + native backends
+		// don't lower exec today, so the type registration is
+		// here-only for the test-runner migration path that runs
+		// the migrated suites under `fern -interp`. Spawn failures
+		// (executable missing, permission denied) surface as
+		// `exit_code = 127` (POSIX `command not found` convention)
+		// with the OS error message in `stderr`, so callers can
+		// treat "didn't run" identically to "ran and failed" for
+		// the common case while still distinguishing via the
+		// sentinel when they care.
+		{
+			Name: "ProcessResult",
+			Fields: []ast.Param{
+				{Name: "stdout", Type: ast.StringType{}},
+				{Name: "stderr", Type: ast.StringType{}},
+				{Name: "exit_code", Type: ast.NumberType{}},
+			},
+		},
+		// FileStat — `stat(path)` shape: every field `stat(2)`
+		// returns that a program can act on. `mode` carries the
+		// type bits AND the permission bits (S_IFMT included), so
+		// the kind predicates a shell `test` needs (-b -c -p -S
+		// -h/-L) read it directly; `is_file` / `is_dir` stay as
+		// the derived conveniences they always were. The four
+		// timestamps are split into whole seconds since the Unix
+		// epoch plus the sub-second nanosecond remainder, because
+		// the language has no Time type to hand back. The birth
+		// time (`btime`) is statx(2)'s on Linux and
+		// st_birthtimespec on Darwin, and zero where the
+		// filesystem records none.
+		//
+		// On wasm32-wasi the fields WASI does not report are zero:
+		// preview 1's `filestat` has no mode / uid / gid / blksize
+		// / blocks / rdev / birth time, and preview 2's
+		// `descriptor-stat` has neither those nor `dev`. See the `stat` signature below
+		// for the exact per-preview list.
+		{
+			Name: "FileStat",
+			Fields: []ast.Param{
+				{Name: "is_file", Type: ast.BoolType{}},
+				{Name: "is_dir", Type: ast.BoolType{}},
+				{Name: "size", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "mode", Type: ast.NumberType{Width: 32, Signed: false}},
+				{Name: "nlink", Type: ast.NumberType{Width: 32, Signed: false}},
+				{Name: "uid", Type: ast.NumberType{Width: 32, Signed: false}},
+				{Name: "gid", Type: ast.NumberType{Width: 32, Signed: false}},
+				{Name: "dev", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "rdev", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "ino", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "blksize", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "blocks", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "atime", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "atime_nsec", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "mtime", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "mtime_nsec", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "ctime", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "ctime_nsec", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "btime", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "btime_nsec", Type: ast.NumberType{Width: 64, Signed: true}},
+			},
+		},
+		// FsStat — `statfs(path)` shape: what a FILESYSTEM reports
+		// about itself, where FileStat reports about one entry on it.
+		// The six counts are `statfs(2)`'s, and the two limits are
+		// what a path resolving on this filesystem is held to.
+		//
+		// `blocks_free` counts every free block and `blocks_avail`
+		// only the ones an unprivileged caller may take; the
+		// difference is the superuser reserve, which is why `df`
+		// prints the second and a fullness percentage computed from
+		// the first is wrong.
+		//
+		// `name_max` and `path_max` live here rather than in a second
+		// builtin because both are properties of the filesystem the
+		// path resolves on — which is exactly what
+		// `pathconf(path, _PC_NAME_MAX)` means — and a caller that has
+		// paid for the lookup should not pay again for the other half.
+		//
+		// `fs_type` is the kernel's filesystem type number: Linux's
+		// magic (`0xef53` for ext4) or Darwin's VFS type index, which
+		// share no namespace. `fsid` is `f_fsid`'s two 32-bit words as
+		// one number, first word high, the way GNU `stat -f` prints it.
+		// `frag_size` is `f_frsize`; Darwin has none and reports
+		// `f_bsize`.
+		{
+			Name: "FsStat",
+			Fields: []ast.Param{
+				{Name: "block_size", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "blocks", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "blocks_free", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "blocks_avail", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "files", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "files_free", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "name_max", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "path_max", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "fs_type", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "fsid", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "frag_size", Type: ast.NumberType{Width: 64, Signed: true}},
+			},
+		},
+		// WinSize — `window_size(fd)` shape: how large the terminal
+		// on the other end of a descriptor is, in character cells.
+		//
+		// The kernel's `struct winsize` also carries a pixel width
+		// and height. They are absent here because they are not a
+		// second measurement of the same thing: the two cell counts
+		// are what the kernel is told on every resize, and the pixel
+		// pair is zero on most terminals, so reporting it would hand
+		// a caller a 0 it cannot tell from "this terminal is 0
+		// pixels wide". A consumer for it can add it.
+		{
+			Name: "WinSize",
+			Fields: []ast.Param{
+				{Name: "rows", Type: ast.NumberType{Width: 64, Signed: true}},
+				{Name: "cols", Type: ast.NumberType{Width: 64, Signed: true}},
+			},
+		},
+		// Map[i32, i32] — first cut of the IndexMap-shaped Map
+		// from PR 4 (docs/LANGUAGE-DIRECTION.md). Concrete-typed
+		// (i32 keys, i32 values) for now; generic K / V comes in
+		// a follow-up that replaces the runtime helpers + wires
+		// monomorphisation. Linear-search internals; fixed
+		// capacity at construction. The struct is opaque-by-
+		// convention; user code constructs via `Map.new(cap)`
+		// and reads through methods.
+		// Map[K, V] — generic IndexMap-shaped associative
+		// container. Linear search internals for now; the
+		// IndexMap fingerprint metadata table + Wyhash
+		// generalisation is the follow-up. K is restricted to
+		// i32-sized scalars or `string`; V is restricted to
+		// pointer-sized values (any 4-byte storage type — i32,
+		// string, struct / enum / array / slice ptr). i64 / u64
+		// / f64 keys + values are deferred. The runtime stores
+		// a `keyKind` tag in the buffer header so the linear
+		// scan can branch i32-eq vs strcmp without per-
+		// instantiation monomorphisation of helper code.
+		{
+			Name:       "Map",
+			TypeParams: []string{"K", "V"},
+			Fields: []ast.Param{
+				{Name: "data", Type: ast.NumberType{}},
+			},
+		},
+		// MapIter[K, V] — non-allocating cursor-style
+		// iterator over Map[K, V]. The struct holds a
+		// pointer back to the map's kv buffer plus the
+		// current entry index. `m.iter()` constructs a
+		// fresh MapIter; iteration uses
+		// `it.has_next()` / `it.key()` / `it.value()` /
+		// `it.advance()` which all stay i32-shaped on the
+		// wasm side (Key / Value are reinterpreted via the
+		// type-system substitution path). The fields spell core/map's
+		// __map_iter_impl box, [buf:8][cursor:4][pad:4][map:8] on every
+		// target, which is the size its drop frees.
+		{
+			Name:       "MapIter",
+			TypeParams: []string{"K", "V"},
+			Fields: []ast.Param{
+				{Name: "data", Type: ast.NumberType{Width: 64}},
+				{Name: "i", Type: ast.NumberType{}},
+				{Name: "pad", Type: ast.NumberType{}},
+				{Name: "map", Type: ast.NumberType{Width: 64}},
+			},
+		},
+		// Cell[T] — a single-slot mutable heap box, the sanctioned
+		// mutable-state primitive for the immutable-data world
+		// (docs/CELL-TYPE-PLAN.md). `T` is restricted to cycle-free
+		// types (E057) so a cell can never reconstruct a reference
+		// cycle. Scalars, strings and owned byte arrays are supported.
+		// The field is opaque; cell_new / get / set lower to a
+		// one-element heap box with type-aware retain and release for
+		// counted elements.
+		{
+			Name:       "Cell",
+			TypeParams: []string{"T"},
+			Fields: []ast.Param{
+				{Name: "value", Type: ast.NumberType{}},
+			},
+		},
+		// Url — return type of `url_parse(s)`. Holds the
+		// component pieces of an absolute or relative URL.
+		// `port = 0` means unspecified (parser defaults
+		// follow-up). Empty strings indicate missing
+		// sections rather than allocating Option types
+		// per-field — keeps the struct flat and the wasm
+		// emitter simple.
+		{
+			Name: "Url",
+			Fields: []ast.Param{
+				{Name: "scheme", Type: ast.StringType{}},
+				{Name: "host", Type: ast.StringType{}},
+				{Name: "port", Type: ast.NumberType{}},
+				{Name: "path", Type: ast.StringType{}},
+				{Name: "query", Type: ast.StringType{}},
+				{Name: "fragment", Type: ast.StringType{}},
+			},
+		},
+	}
+}
+
+// Check type-checks the program. It returns an aggregated error if any
+// problems were found.
+func Check(prog *ast.Program) (*Info, error) {
+	return CheckContext(context.Background(), prog)
+}
+
+// CheckTarget is Check for a program built for `target`: the main it
+// synthesises for a handler program serves under the supervisor where the
+// target has processes and single-process where it has none (wasm32-wasi).
+// An unknown or empty target is the hosted shape, as Check is.
+func CheckTarget(prog *ast.Program, target string) (*Info, error) {
+	return checkTarget(context.Background(), prog, target)
+}
+
+// CheckContext is the context-aware sibling of Check —
+// checks the context between each top-level function-body
+// pass so the LSP can cancel a long type-check mid-flight
+// when a new edit invalidates the in-progress result.
+// See docs/IDE-COMPILATION-RESEARCH.md Rec §1.
+//
+// On cancel, returns (nil, ctx.Err()) — same convention as
+// ParseContext. The body-check loop is by far the dominant
+// cost in Check; the preceding builtin registration
+// + first-pass collection runs are O(decl-count) walks with
+// no recursive descent, so a single up-front ctx check
+// suffices for them.
+func CheckContext(ctx context.Context, prog *ast.Program) (*Info, error) {
+	return checkTarget(ctx, prog, "")
+}
+
+func checkTarget(ctx context.Context, prog *ast.Program, target string) (*Info, error) {
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	// Before any signature is collected: the adapted handler is a renamed
+	// declaration and a new one, and both have to be registered by name.
+	if hasHandleDecl(prog) {
+		adaptResultHandler(prog)
+	}
+	if targetHasEnv(target) {
+		configFromEnv(prog)
+	}
+	info, err := checkImpl(ctx, prog, targetSupervises(target))
+	if info != nil {
+		info.Target = target
+	}
+	return info, err
+}
+
+// targetHasEnv reports whether `target` provides a process environment. An
+// unknown or empty target is the hosted default, which does.
+func targetHasEnv(target string) bool {
+	d := platforms.ForTarget(target)
+	return d == nil || slices.Contains(d.Capabilities, "env")
+}
+
+// configFromEnv renames every call to config_get to env: where the target
+// has an environment, that is where deploy-time configuration arrives, so
+// only the proxy world's backend implements config_get itself.
+func configFromEnv(prog *ast.Program) {
+	ast.WalkProgram(prog, func(n ast.Node) bool {
+		if call, ok := n.(*ast.Call); ok {
+			if id, ok := call.Callee.(*ast.Ident); ok && id.Name == "config_get" {
+				id.Name = "env"
+			}
+		}
+		return true
+	})
+}
+
+// targetSupervises reports whether a handler program built for `target`
+// serves under the supervisor: the target has processes to fork. An
+// unknown or empty target is the hosted default.
+func targetSupervises(target string) bool {
+	d := platforms.ForTarget(target)
+	return d == nil || slices.Contains(d.Capabilities, "proc")
+}
+
+func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, error) {
+	// Prepend the built-in Option / Result / IoError /
+	// JsonValue enums so user code (and the stdlib)
+	// can reference them without an explicit declaration.
+	// Each is injected individually if the user hasn't
+	// already declared the same name — earlier the
+	// "auto-inject only when prog.Enums[0].Name != Option"
+	// heuristic skipped EVERY builtin if the user declared
+	// their own Option, which broke the stdlib's json_encode
+	// (uses JsonValue).
+	//
+	// Builtin names are RESERVED: if the user declared one
+	// with the same name, we drop the builtin (so the user's
+	// decl is the only one in the program — avoids a noisy
+	// "redeclared" pile-on) and record the offending decl so
+	// `Check` can flag it once the error sink exists.
+	// Allowing the shadow silently would miscompile, since
+	// runtime helpers + IR pair-form lowering hard-code the
+	// builtin variant order.
+	// `Check` is re-entered by the monomorph pass on the
+	// rewritten program — at that point `prog.Enums` /
+	// `prog.Structs` already contain the builtin decls that
+	// the first pass prepended. We distinguish those from
+	// real user decls by position: parser-produced decls have
+	// non-zero `P` (the lexer numbers from line 1), so the
+	// zero-positioned entries are the previously-injected
+	// builtins and skipping re-injection is the right move
+	// (not a shadow).
+	//
+	// A name is reserved whatever kind declares it: a user `enum Span` takes
+	// the built-in struct's name as surely as a user `struct Span` does.
+	userEnums := map[string]*ast.EnumDecl{}
+	for _, ed := range prog.Enums {
+		userEnums[ed.Name] = ed
+	}
+	userStructs := map[string]*ast.StructDecl{}
+	for _, sd := range prog.Structs {
+		userStructs[sd.Name] = sd
+	}
+	var shadowedEnums []*ast.EnumDecl
+	var shadowedStructs []*ast.StructDecl
+	shadow := func(name string) bool {
+		if ed, ok := userEnums[name]; ok && ed.P != (ast.Position{}) {
+			shadowedEnums = append(shadowedEnums, ed)
+			return true
+		}
+		if sd, ok := userStructs[name]; ok && sd.P != (ast.Position{}) {
+			shadowedStructs = append(shadowedStructs, sd)
+			return true
+		}
+		return false
+	}
+	{
+		var inject []*ast.EnumDecl
+		for _, ed := range builtinEnumDecls() {
+			if existing, dup := userEnums[ed.Name]; dup && existing.P == (ast.Position{}) {
+				continue
+			}
+			if shadow(ed.Name) {
+				continue
+			}
+			inject = append(inject, ed)
+		}
+		if len(inject) > 0 {
+			prog.Enums = append(inject, prog.Enums...)
+		}
+	}
+	// Same shape for the auto-injected structs (Reader,
+	// Writer, HttpRequest, HttpResponse, HeaderMap,
+	// Stream, BytesWriter, Instant /
+	// Date / Time / DateTime / TimeZone / Zoned / Span /
+	// Duration, Map, MapIter, Url) — same shadow-is-an-error
+	// policy, same monomorph-re-entry handling.
+	{
+		var inject []*ast.StructDecl
+		for _, sd := range builtinStructDecls() {
+			if existing, dup := userStructs[sd.Name]; dup && existing.P == (ast.Position{}) {
+				continue
+			}
+			if shadow(sd.Name) {
+				continue
+			}
+			inject = append(inject, sd)
+		}
+		if len(inject) > 0 {
+			prog.Structs = append(inject, prog.Structs...)
+		}
+	}
+	c := &checker{
+		info: &Info{
+			VarTypes:            map[*ast.Var]ast.Type{},
+			Locals:              map[*ast.FuncDecl][]*ast.Var{},
+			FuncSigs:            map[string]*ast.FuncType{},
+			Structs:             map[string]*ast.StructDecl{},
+			Enums:               map[string]*ast.EnumDecl{},
+			Resources:           map[string]*ast.ResourceDecl{},
+			Methods:             map[string]string{},
+			TraitMethods:        map[string]string{},
+			MethodOwners:        map[string][]string{},
+			MethodInsts:         map[string][]string{},
+			MethodDeclSites:     map[string]ast.Position{},
+			MethodSources:       map[string]string{},
+			ModuleImports:       prog.ModuleImports,
+			DirectImports:       prog.DirectImports,
+			GenericFuncs:        map[string]*ast.FuncDecl{},
+			GenericStructs:      map[string]*ast.StructDecl{},
+			Generics:            map[string]ast.GenericDecl{},
+			Traits:              map[string]*ast.TraitDecl{},
+			Impls:               map[string]map[string]bool{},
+			ImplTraitArgs:       map[string]map[string][]ast.Type{},
+			ImplForPattern:      map[string]map[string]ast.Type{},
+			AssocBindings:       map[string]map[string]ast.Type{},
+			TryShapes:           map[string]TryShape{},
+			AssocBindingPattern: map[string]map[string]ast.Type{},
+		},
+		variantOf:            map[string][]variantRef{},
+		shadowedGenericCalls: map[*ast.Call]bool{},
+		reservedShadows:      map[string]bool{},
+	}
+	// Map operations need core/map linked. If the program came through
+	// modload (LoadedStdlibPaths populated) but didn't pull core/map
+	// into its closure, flag Map use as a clean type error instead of
+	// a codegen link failure. Programs constructed without modload
+	// (bare parser.Parse — single-file probes) can't import anything,
+	// so they're exempt.
+	if prog.LoadedStdlibPaths != nil && !prog.LoadedStdlibPaths["stdlib://core/map.fern"] {
+		c.requireMapImport = true
+	}
+	// Resolve named arguments + fill default parameter values before any
+	// type-checking, so the rest of the checker (and every later pass) sees a
+	// complete positional call. Resolution diagnostics surface as checker
+	// errors. Idempotent — safe across LSP re-checks.
+	for _, fe := range defaultargs.Fill(prog) {
+		c.errfCode(fe.Pos, fe.Code, "%s", fe.Msg)
+	}
+
+	// Surface shadow-attempts on reserved built-in type names
+	// recorded above. We report on the user's decl position so
+	// the IDE squiggle lands on the offending source, not on
+	// some synthetic builtin we never actually exposed.
+	for _, ed := range shadowedEnums {
+		c.errfCode(ed.P, "E010", "enum %q is a reserved built-in name and cannot be redeclared", ed.Name)
+		c.reservedShadows[ed.Name] = true
+	}
+	for _, sd := range shadowedStructs {
+		c.errfCode(sd.P, "E010", "struct %q is a reserved built-in name and cannot be redeclared", sd.Name)
+		c.reservedShadows[sd.Name] = true
+	}
+
+	// Register every struct declaration up front so that types
+	// referenced by name (`function f(p: Point)`) resolve when we
+	// check function signatures below.
+	for _, sd := range prog.Structs {
+		if _, dup := c.info.Structs[sd.Name]; dup {
+			c.errfCode(sd.P, "E006", "struct %q redeclared", sd.Name)
+			continue
+		}
+		seen := map[string]bool{}
+		for _, f := range sd.Fields {
+			if seen[f.Name] {
+				c.errfCode(sd.P, "E007", "duplicate field %q in struct %s", f.Name, sd.Name)
+			}
+			seen[f.Name] = true
+		}
+		c.info.Structs[sd.Name] = sd
+		if len(sd.TypeParams) > 0 && !isRuntimeGenericStruct(sd.Name) {
+			// Track generic struct decls so the monomorph pass
+			// knows which ones to clone, and post-monomorph
+			// callers can tell "we used to be generic". The
+			// auto-injected `Map[K, V]` is excluded — its
+			// runtime is parameterised by an in-buffer
+			// `keyKind` tag, so a single shared struct + helper
+			// set handles every (K, V) instantiation. Cloning
+			// it would split the methods across mangled names
+			// the dispatch path doesn't know about.
+			c.info.GenericStructs[sd.Name] = sd
+			c.info.Generics[sd.Name] = sd
+		}
+	}
+
+	// Desugar `type X = A | B | C;` unions into synthesised
+	// EnumDecls before the enum registration loop runs — that
+	// way the rest of the pipeline only ever sees enums. Each
+	// member must resolve to a non-generic StructDecl registered
+	// above. Errors at this stage (unknown member, generic
+	// member, duplicate union name) surface as type errors with
+	// the source position of the union or member; the
+	// synthesised enum is dropped on error so callers don't see
+	// a phantom registration. After desugaring, prog.Unions is
+	// nil so subsequent passes can't read it.
+	for _, ud := range prog.Unions {
+		if _, dup := c.info.Structs[ud.Name]; dup {
+			c.errfCode(ud.P, "E016", "union %q collides with a struct of the same name", ud.Name)
+			continue
+		}
+		if _, dup := c.info.Enums[ud.Name]; dup {
+			c.errfCode(ud.P, "E016", "union %q collides with an enum of the same name", ud.Name)
+			continue
+		}
+		variants := make([]ast.EnumVariant, 0, len(ud.Members))
+		seen := map[string]bool{}
+		ok := true
+		for _, member := range ud.Members {
+			if seen[member.Name] {
+				c.errfCode(ud.P, "E016", "duplicate member %q in union %s", member.Name, ud.Name)
+				ok = false
+				continue
+			}
+			seen[member.Name] = true
+			sd, isStruct := c.info.Structs[member.Name]
+			if !isStruct {
+				c.errfCode(ud.P, "E016", "union %s member %q does not name a struct in scope", ud.Name, member.Name)
+				ok = false
+				continue
+			}
+			// A generic struct has to be given its arguments here, because
+			// the variant payload is a concrete type: the union's own
+			// parameters are the only thing in scope to supply them, which
+			// is what `type Tree[T] = Leaf[T]` says and `type Tree = Leaf`
+			// leaves unanswered.
+			if len(member.Args) != len(sd.TypeParams) {
+				if len(sd.TypeParams) == 0 {
+					c.errfCode(ud.P, "E016", "union %s member %q is not generic but was given %d type argument(s)", ud.Name, member.Name, len(member.Args))
+				} else {
+					// Spell the example at the member's real arity: a
+					// one-parameter hint under a two-parameter struct is
+					// advice that does not compile.
+					params := strings.Join(sd.TypeParams, ", ")
+					c.errfCode(ud.P, "E016", "union %s member %q takes %d type argument(s), got %d; a generic struct member needs them supplied (e.g. `type %s[%s] = %s[%s] | …`)",
+						ud.Name, member.Name, len(sd.TypeParams), len(member.Args), ud.Name, params, member.Name, params)
+				}
+				ok = false
+				continue
+			}
+			variants = append(variants, ast.EnumVariant{
+				P:        ud.P,
+				Name:     member.Name,
+				Payloads: []ast.Type{member},
+			})
+		}
+		if !ok {
+			continue
+		}
+		prog.Enums = append(prog.Enums, &ast.EnumDecl{
+			P:            ud.P,
+			Name:         ud.Name,
+			TypeParams:   ud.TypeParams,
+			Variants:     variants,
+			Public:       ud.Public,
+			SourceModule: ud.SourceModule,
+		})
+	}
+	prog.Unions = nil
+
+	// Register every enum declaration. Variant names are recorded
+	// in variantOf so an unqualified `Some(x)` or `Red` can be
+	// rewritten into a typed *EnumLit during expression checking.
+	// The table spans every loaded module, so entries are filtered
+	// by declaring module at each use site (visibleVariants); two
+	// enums a single module can see that declare one variant name
+	// (`Color.Red` and `Status.Red`) make the bare `Red` ambiguous
+	// there, and the resolution helpers below say so.
+	for _, ed := range prog.Enums {
+		if _, dup := c.info.Enums[ed.Name]; dup {
+			c.errfCode(ed.P, "E006", "enum %q redeclared", ed.Name)
+			continue
+		}
+		c.info.Enums[ed.Name] = ed
+		seen := map[string]bool{}
+		for i := range ed.Variants {
+			v := &ed.Variants[i]
+			if seen[v.Name] {
+				c.errfCode(v.P, "E017", "duplicate variant %q in enum %s", v.Name, ed.Name)
+				continue
+			}
+			seen[v.Name] = true
+			c.variantOf[v.Name] = append(c.variantOf[v.Name], variantRef{
+				enumName:  ed.Name,
+				index:     i,
+				payloads:  v.Payloads,
+				srcModule: ed.SourceModule,
+			})
+		}
+		c.registerTryShape(ed)
+	}
+
+	// Register every `resource Name;` declaration (P5 WIT resource-handle
+	// types — docs/WIT-BRING-YOUR-OWN.md) before signatures resolve, so that
+	// `own Name` / `borrow Name` references and bare resource-name references
+	// resolve. A resource name shares the nominal namespace with structs and
+	// enums, so a collision is a redeclaration error.
+	for _, rd := range prog.Resources {
+		if _, dup := c.info.Resources[rd.Name]; dup {
+			c.errfCode(rd.P, "E006", "resource %q redeclared", rd.Name)
+			continue
+		}
+		if _, isStruct := c.info.Structs[rd.Name]; isStruct {
+			c.errfCode(rd.P, "E006", "resource %q conflicts with a struct of the same name", rd.Name)
+			continue
+		}
+		if _, isEnum := c.info.Enums[rd.Name]; isEnum {
+			c.errfCode(rd.P, "E006", "resource %q conflicts with an enum of the same name", rd.Name)
+			continue
+		}
+		c.info.Resources[rd.Name] = rd
+	}
+
+	c.traitNames = desugarTraitParams(prog)
+
+	// Bind receiver type-variables for generic-receiver methods. A
+	// method like `function (b: Box[T]) get(): T` introduces T as an
+	// implicit type parameter, inferred from the receiver at the call
+	// site — unless the name resolves to a concrete struct / enum /
+	// built-in. This mirrors how `@derive` methods on a generic type
+	// get their type params bound (bindDeriveTypeParams); once
+	// fn.TypeParams carries T, resolveTypeNames below rewrites T to a
+	// ParamType across the receiver / params / return / body, and the
+	// ordinary generic-method inference + monomorph path takes over.
+	// Runs before resolveTypeNames so the rewrite sees the params; the
+	// struct / enum sets are already populated above.
+	for _, fn := range prog.Funcs {
+		if fn.Receiver == nil {
+			continue
+		}
+		var vars []string
+		seen := map[string]bool{}
+		for _, tp := range fn.TypeParams {
+			seen[tp] = true
+		}
+		c.collectFreeTypeVars(fn.Receiver.Type, &vars, seen, fn.SourceModule)
+		// Receiver type-vars go FIRST: the call site seeds them
+		// positionally from the receiver's type args (a method like
+		// `(b: Box[T]) map[U](...)` gets T from the receiver and infers
+		// U from the arguments), so T must precede any post-name `[U]`.
+		fn.TypeParams = append(vars, fn.TypeParams...)
+	}
+
+	// Now that the enum set is known, walk every type position in
+	// the program and rewrite StructType{Name: X} → EnumType when
+	// X resolves to an enum. The parser doesn't know which named
+	// types are structs vs. enums; we lazily disambiguate here.
+	c.resolveTypeNames(prog)
+
+	// With every type slot resolved (parameters → ParamType, enums →
+	// EnumType, resources → HandleType), validate that each remaining
+	// nominal reference names a type that actually exists — otherwise an
+	// unknown type was silently accepted as an opaque nominal and only
+	// surfaced as a confusing downstream cascade (or not at all). See E064.
+	c.validateKnownTypes(prog)
+
+	// Pre-declare built-ins so user code can call them.
+	c.info.FuncSigs["putchar"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
+	// print(s: string): void — appends a newline (lowers to libc puts).
+	c.info.FuncSigs["print"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.VoidType{},
+	}
+	// write(s: string): void — stdout without a trailing newline.
+	// Use this when you want to format your own output (status
+	// lines, prompts, custom delimiters) instead of one line per
+	// call. Pairs with `print` the way Go's `fmt.Print` /
+	// `fmt.Println` do.
+	c.info.FuncSigs["write"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.VoidType{},
+	}
+	// eprint(s: string): void — `print` shape but routed to stderr.
+	// Useful for error / diagnostic output that shouldn't get
+	// mixed in with stdout when the program is being piped to
+	// another tool.
+	c.info.FuncSigs["eprint"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.VoidType{},
+	}
+	// args(): string[] — returns the program's command-line argv as a
+	// length-prefixed string array. The first element is conventionally
+	// the program / module path (matching argv[0] in C and os.Args[0]
+	// in Go). Building the array is one-shot and cached: the first
+	// `args()` call materialises it from libc / WASI; subsequent calls
+	// hand back the same pointer. The bytes are assumed to be UTF-8, not
+	// validated — the `read_dir` position (docs/STRINGS-SOTA.md, D9 and
+	// D10): there is no error arm to refuse into.
+	c.info.FuncSigs["args"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.ArrayType{Elem: ast.StringType{}},
+	}
+	// environ(): string[] — the whole environment in the order the
+	// process received it, each entry the raw `NAME=VALUE` bytes.
+	// `env(name)` answers one lookup; this is the list, which is a
+	// different question — printenv(1) prints it in order, and a
+	// duplicate name (which execve permits and the kernel preserves)
+	// is visible here and invisible to a lookup. Cached the way
+	// `args()` is: one materialisation, the same pointer after, and
+	// the same UTF-8 assumption.
+	c.info.FuncSigs["environ"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.ArrayType{Elem: ast.StringType{}},
+	}
+	// env(name: string): Option[string] — looks up an environment
+	// variable. `Some(value)` for a present key, `None` for
+	// missing. (POSIX distinguishes "set to empty" from "not
+	// set"; the runtime helper preserves that — `Some("")` is
+	// returned for an explicitly empty value.) The value is assumed
+	// to be UTF-8, as `args()` is.
+	c.info.FuncSigs["env"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Option", Args: []ast.Type{ast.StringType{}}},
+	}
+	// config_get(name) — one deploy-time configuration value. Where the
+	// target has an environment it is the environment (checkTarget renames
+	// the call to env); the proxy world reads wasi:config/store.
+	c.info.FuncSigs["config_get"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Option", Args: []ast.Type{ast.StringType{}}},
+	}
+	// exit(code: number): void — exits the process immediately with
+	// the given status code. Useful for `eprint(msg); exit(2)`-style
+	// error paths; the success path can just `return` from main.
+	c.info.FuncSigs["exit"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
+	// strbuf_reset() / strbuf_append(s) / strbuf_take() — global
+	// mutable string-builder primitive. There's a single growable
+	// scratch buffer; reset zeroes its length, append memcpys bytes
+	// past the current tail, take allocates a fresh string of the
+	// accumulated bytes and resets. Built for the asm self-host
+	// backend's emit_module — `s = s.out + text` per write
+	// allocates O(N²) bytes through the bump heap (~60 GB to compile
+	// asm.fern through itself). With strbuf the same loop is O(N).
+	c.info.FuncSigs["strbuf_reset"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.VoidType{},
+	}
+	c.info.FuncSigs["strbuf_append"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.VoidType{},
+	}
+	c.info.FuncSigs["strbuf_take"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.StringType{},
+	}
+	// buf_new / buf_push / buf_push_range / buf_push_byte / buf_push_u64 /
+	// buf_len / buf_take / buf_free (#8773) — the capacity-carrying string
+	// builder, the strbuf above without the singleton. A builder is a
+	// NUMBER, the address of its own control block, the way an open
+	// file is a descriptor: any number of them may be live at once and
+	// they nest. The capacity travels with the buffer, so an append is
+	// a compare, a memcpy and a length store — no refcount check (a
+	// builder's buffer is uniquely owned by construction) and no size
+	// class re-derived per call, which is what `s = s + piece` pays.
+	//
+	// buf_take returns independent UTF-8 text, replacing each malformed
+	// maximal subpart with U+FFFD. It drains the builder while retaining
+	// capacity. buf_take_bytes is the byte-exact alternative.
+	//
+	// buf_free releases the buffer and the control block. A builder is
+	// not refcounted and has no drop, so a handle that is never freed
+	// leaks, exactly as an fd that is never closed does. Programs want
+	// std/io_buffered's writers rather than these directly.
+	//
+	// The handle is `usize` rather than `number`: it is an address, so it
+	// must be pointer-width on the natives and 32 bits on wasm32, which is
+	// exactly what WidthPtr resolves to. A plain `number` is 32 bits
+	// everywhere and would truncate one.
+	bufH := ast.NumberType{Width: ast.WidthPtr, Signed: false, Spelling: "usize"}
+	c.info.FuncSigs["buf_new"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: bufH,
+	}
+	c.info.FuncSigs["buf_push"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.StringType{}},
+		Result: ast.VoidType{},
+	}
+	c.info.FuncSigs["buf_push_range"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.StringType{}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
+	c.info.FuncSigs["buf_push_bytes_range"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
+	// buf_push_mapped(h, s, table) appends table[b] for each byte b of s; a
+	// byte at or past the table's length is appended unchanged. tr's
+	// translation and dd's conv tables are one call per read.
+	c.info.FuncSigs["buf_push_mapped"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.StringType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Result: ast.VoidType{},
+	}
+	c.info.FuncSigs["buf_push_bytes_mapped"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Result: ast.VoidType{},
+	}
+	// buf_push_filtered(h, s, drop) appends each byte b of s whose entry
+	// drop[b] is zero; a byte at or past the table's length is kept. tr -d's
+	// deletion is one call per read.
+	c.info.FuncSigs["buf_push_filtered"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.StringType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Result: ast.VoidType{},
+	}
+	c.info.FuncSigs["buf_push_bytes_filtered"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Result: ast.VoidType{},
+	}
+	// buf_push_expanded(h, s, table) appends each byte b of s as the record
+	// at table[b*8]: a length byte (above 7 counts as 7), then the bytes. A
+	// byte whose record is not wholly inside the table is appended
+	// unchanged. cat -v / -T / -E is one call per read.
+	c.info.FuncSigs["buf_push_expanded"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.StringType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Result: ast.VoidType{},
+	}
+	c.info.FuncSigs["buf_push_bytes_expanded"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Result: ast.VoidType{},
+	}
+	c.info.FuncSigs["buf_push_byte"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
+	// buf_push_u64(h, v) — eight bytes at a time, LITTLE-endian, which is
+	// the byte order every target here has. It exists because a byte at a
+	// time is not fast enough to be worth having: a generator whose
+	// arithmetic costs 2.5 ms for 4 MiB of words spends 23 ms handing the
+	// bytes over one call each (#9221).
+	c.info.FuncSigs["buf_push_u64"] = &ast.FuncType{
+		Params: []ast.Type{bufH, ast.NumberType{Width: 64, Signed: false}},
+		Result: ast.VoidType{},
+	}
+	c.info.FuncSigs["buf_len"] = &ast.FuncType{
+		Params: []ast.Type{bufH},
+		Result: ast.NumberType{},
+	}
+	c.info.FuncSigs["buf_take"] = &ast.FuncType{
+		Params: []ast.Type{bufH},
+		Result: ast.StringType{},
+	}
+	// Extract arbitrary bytes as an independently owned array, resetting
+	// the builder without interpreting its contents as text.
+	c.info.FuncSigs["buf_take_bytes"] = &ast.FuncType{
+		Params: []ast.Type{bufH},
+		Result: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+	}
+	c.info.FuncSigs["buf_free"] = &ast.FuncType{
+		Params: []ast.Type{bufH},
+		Result: ast.VoidType{},
+	}
+	// buf_clear(b) empties the builder and keeps its storage for reuse.
+	c.info.FuncSigs["buf_clear"] = &ast.FuncType{
+		Params: []ast.Type{bufH},
+		Result: ast.VoidType{},
+	}
+	// __rc_inc / __rc_dec / __rc_get — direct access to the
+	// refcount machinery for debugging and Phase 1 testing.
+	// They bypass the normal alias-tracking that Phase 1c/d
+	// will introduce, so they're not meant for everyday code.
+	// __rc_inc returns the input pointer so the call can be
+	// spliced into an expression chain. __rc_get reads the rc
+	// word at `[arr - 8]`. See docs/RC-PERCEUS-PLAN.md.
+	u8ArrType := ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}
+	c.info.FuncSigs["__rc_inc"] = &ast.FuncType{
+		Params: []ast.Type{u8ArrType},
+		Result: u8ArrType,
+	}
+	c.info.FuncSigs["__rc_dec"] = &ast.FuncType{
+		Params: []ast.Type{u8ArrType},
+		Result: ast.VoidType{},
+	}
+	c.info.FuncSigs["__rc_get"] = &ast.FuncType{
+		Params: []ast.Type{u8ArrType},
+		Result: ast.NumberType{},
+	}
+	// __rc_underflow_count(): i32 — Phase 3 step 1 detector. Reads
+	// the count of rc over-releases (decrements of an already-<=0
+	// rc) the runtime has observed. WASM-only probe; see the IR
+	// lowering. Used by tests to assert a program is drift-free.
+	c.info.FuncSigs["__rc_underflow_count"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{},
+	}
+	// __arr_push_shared_count(): i32 — the rc==1 cliff counter. Returns how
+	// many appends copied the whole buffer even though it had SPARE CAPACITY,
+	// so the copy was bought by an extra reference rather than by a full
+	// buffer. __fern_arr_push_grow's in-place fast path requires rc==1; one
+	// stray retain upstream silently turns a threaded accumulator from O(n)
+	// into O(n²), and nothing reported it until this. Zero on a healthy run,
+	// which is what makes it usable as a test assertion.
+	c.info.FuncSigs["__arr_push_shared_count"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{},
+	}
+	// __arr_push_shared_bytes(): i64 — the same cliff, weighted by the bytes
+	// each crossing copied. The count says whether anything crossed; only
+	// this says whether it mattered. A whole-module self-host compile crosses
+	// 188 times and copies 812 bytes total, while one threaded accumulator
+	// over 20k appends copies 2.3 GB — indistinguishable by count, three
+	// orders of magnitude apart by weight.
+	//
+	// i64 for the same reason as __heap_bump_bytes below: the quantity being
+	// summed is arena-scale, so an i32 would wrap on exactly the runs this
+	// exists to measure.
+	c.info.FuncSigs["__arr_push_shared_bytes"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
+	// __map_hash_seed(): i32 — core/map's per-process string-hash seed
+	// (#6194). Drawn once from the same CSPRNG as random_i32, cached in a
+	// runtime word, and never zero (0 is core/map's "unseeded" sentinel).
+	//
+	// Compiler-internal rather than a user builtin, which is also what keeps
+	// it out of the capability inventory: seeding every string-keyed map
+	// would otherwise tag `core/map` — and so transitively almost every
+	// package — as reaching `random`, destroying that row's signal. The `__`
+	// prefix is the inventory's documented exemption.
+	c.info.FuncSigs["__map_hash_seed"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{},
+	}
+	// __heap_bump_bytes(): i64 — Phase 6 measurement probe. Returns the
+	// bump allocator's high-water mark (cursor − region base) in bytes; 0
+	// before the first alloc. The cursor only advances on a fresh bump,
+	// never on a freelist reuse, so a reclaiming loop keeps it flat while
+	// a leaking loop grows it — the metric for asserting reclaim/boundedness
+	// and for profiling hot allocations. See the IR lowering / per-backend
+	// runtime reader.
+	//
+	// i64 for the same reason as __heap_mark below: the arena is 16 GiB and
+	// the runtime already computes the offset in 64 bits, so an i32 result
+	// silently WRAPS past 2 GiB — a sweep once read 141 MB / 555 MB /
+	// -2.09 GB / 202 MB, where only the third reading looks wrong.
+	c.info.FuncSigs["__heap_bump_bytes"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
+	// __heap_alloc_count(): i64 — the allocator's call count (#9596).
+	// Counts every block the runtime handed out, the freelist-pop path
+	// and the bump path alike; __fern_alloc_reuse's in-place path is
+	// neither an alloc nor a free, the same accounting the leak census
+	// uses. Complements __heap_bump_bytes, which the freelist hides a
+	// recycling loop from: 100k rounds that build and drop a string read
+	// 32 fresh bytes and 200,004 allocations, so only this one can tell a
+	// `fip` steady state from a busy one.
+	//
+	// i64 for __heap_bump_bytes's reason: a long-running program passes
+	// 2^31 allocations, and a wrapped count reads as a healthy one.
+	c.info.FuncSigs["__heap_alloc_count"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
+	// Bit-counting intrinsics: __clz32 / __ctz32 / __popcount32 and their
+	// 64-bit siblings. Each takes one integer of its width and returns an
+	// i32 count. clz/ctz of 0 return the operand width (32 or 64), matching
+	// wasm's definition and the SWAR code these replace.
+	//
+	// Separate names per width rather than one overload, because the width
+	// is what the backend needs on Op.Width and the argument's static type
+	// is what fixes it. std/{i32,i64,u32,u64} wrap these in the readable
+	// count_ones() / leading_zeros() / trailing_zeros() methods; the raw
+	// names are compiler-internal.
+	for _, n := range []string{"__clz32", "__ctz32", "__popcount32"} {
+		c.info.FuncSigs[n] = &ast.FuncType{
+			Params: []ast.Type{ast.NumberType{Width: 32, Signed: false}},
+			Result: ast.NumberType{Width: 32, Signed: true},
+		}
+	}
+	for _, n := range []string{"__clz64", "__ctz64", "__popcount64"} {
+		c.info.FuncSigs[n] = &ast.FuncType{
+			Params: []ast.Type{ast.NumberType{Width: 64, Signed: false}},
+			Result: ast.NumberType{Width: 32, Signed: true},
+		}
+	}
+	// __memchr(s, byte, from): index of the first occurrence of `byte` in
+	// `s` at or after `from`, or -1. The first SIMD kernel — see
+	// docs/ATLAS-PLATFORM-PLAN.md §3.
+	//
+	// It takes a `string`, NOT a pointer and a length, and that is the
+	// design rather than a convenience. Fern has no way to express a raw
+	// pointer into a string's bytes (the blocker on SWAR hashing, #6200),
+	// so a `(ptr, len)` signature would need a new language surface first.
+	// Handing the backend a whole string instead lets IT do the extraction
+	// — it already knows the two-word SSO ABI — so no pointer ever crosses
+	// the language boundary and the vector lifetime stays entirely inside
+	// one emitted body.
+	//
+	// `byte` is taken as i32 rather than u8 so callers can pass an indexed
+	// byte (`s[i]`, itself u8) widened, or a literal, without a cast at
+	// every site. Values outside 0..255 simply never match.
+	c.info.FuncSigs["__memchr"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.NumberType{Width: 32, Signed: true},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	c.info.FuncSigs["__count_byte_bytes"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	c.info.FuncSigs["__sum_bytes_array"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	c.info.FuncSigs["__crc32_cksum_array"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}, ast.ArrayType{Elem: ast.NumberType{Width: 8}}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	c.info.FuncSigs["__bsd_sum_bytes"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	c.info.FuncSigs["__memchr_bytes"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	c.info.FuncSigs["__rmemchr_bytes"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	c.info.FuncSigs["__mismatch_bytes"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8}}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// __ascii_run(s, from) → i32: the index of the first high-bit byte at or
+	// after `from`, or len(s). Same (string, i32) shape as __memchr minus the
+	// needle — the test is the high bit itself.
+	c.info.FuncSigs["__ascii_run"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// __scan_set(s, from, set) → i32: the index of the first byte at or after
+	// `from` whose entry in `set`, a u8[] indexed by byte value, is nonzero,
+	// or len(s). A byte past the end of `set` is not in it. The byte-set scan
+	// behind cat -A's spelling.
+	c.info.FuncSigs["__scan_set"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// Raw byte-array counterpart, borrowing both arrays.
+	c.info.FuncSigs["__scan_set_bytes"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// __bsd_sum(s, sum) → i32: the BSD checksum `sum -r` keeps, carried in
+	// `sum` and continued over s: per byte, rotate the 16 bits right by one
+	// and add the byte, modulo 2^16.
+	c.info.FuncSigs["__bsd_sum"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// __count_runs(s, inside, set) → i32: how many runs of bytes whose entry
+	// in `set` is nonzero begin in s. `inside` nonzero says the byte before s
+	// was a member, so a run open at s[0] is not counted. A byte past the end
+	// of `set` is not a member. wc's word count, one call per read.
+	c.info.FuncSigs["__count_runs"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// Raw byte-array counterpart, borrowing both arrays.
+	c.info.FuncSigs["__count_runs_bytes"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// __rmemchr(s, byte, from) → i32: the index of the LAST occurrence of
+	// `byte` at or before `from`, or -1. __memchr's mirror, and the third
+	// fused SIMD kernel (docs/ATLAS-PLATFORM-PLAN.md §3.3, which nominates
+	// the backward scan as __memchr's sibling).
+	//
+	// The `from` end is the one that differs, and it has to: a forward scan
+	// clamps a low bound and a backward scan clamps a HIGH one, so `from`
+	// here means "start at this index and walk down". A caller wanting the
+	// whole string passes len(s) - 1, and an out-of-range `from` clamps to
+	// that rather than trapping — the same shape as __memchr's low clamp,
+	// mirrored.
+	//
+	// Same string-not-pointer argument as __memchr's, for the same reason:
+	// nothing that would need a raw pointer into a string's bytes crosses
+	// the language boundary.
+	c.info.FuncSigs["__rmemchr"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.NumberType{Width: 32, Signed: true},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// __count_byte(s, byte) → i32: how many bytes of `s` equal `byte`. The
+	// fourth fused SIMD kernel (docs/ATLAS-PLATFORM-PLAN.md §3.3), and the
+	// first with no early exit — where __memchr stops at the first hit, this
+	// one always reads the whole string, so its vector length is the input in
+	// the strongest sense §4's rule asks for.
+	//
+	// No `from`: a partial count is a slice-then-count, and giving it a cursor
+	// would add a clamp with no caller. The two guards it does keep are
+	// __memchr's — a byte outside 0..255 counts 0, and an empty string
+	// counts 0.
+	c.info.FuncSigs["__count_byte"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// __sum_bytes(s) → i32: the sum of every byte of `s`, wrapped to 32 bits.
+	// The sixth fused SIMD kernel (docs/ATLAS-PLATFORM-PLAN.md §3.3) and the
+	// family's first true reduction — __count_byte reduces over a predicate,
+	// where this one carries the bytes themselves into the accumulator.
+	//
+	// The result WRAPS. That is not a concession: System V `sum` is defined
+	// as a wrapping 32-bit accumulator (std/hash's SysvSum), and it is also
+	// what every target's vector sequence produces without an extra widening
+	// step. A string longer than 16 MiB overflows i32 by design and the value
+	// stays exact modulo 2^32.
+	//
+	// No `from`, for __count_byte's reason: a partial sum is a slice-then-sum
+	// and a cursor would add a clamp with no caller. An empty string sums to 0.
+	c.info.FuncSigs["__sum_bytes"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// __scale_f64(xs, k) → f64[]: every element of `xs` multiplied by `k`, as
+	// a fresh array of the same length. The eighth fused kernel
+	// (docs/ATLAS-PLATFORM-PLAN.md §3.3) and the first over an ARRAY rather
+	// than a string, with a buffer out rather than a scalar: it allocates
+	// its own result, so no sized-array primitive is needed to call it.
+	// Elementwise, so a vector body reassociates nothing
+	// (docs/ARRAY-ALGEBRA.md §3), which is what makes it the first numeric
+	// helper a kernel may replace. std/array's scale_f64 is the wrapper.
+	c.info.FuncSigs["__scale_f64"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.ArrayType{Elem: ast.FloatType{Width: 64}},
+			ast.FloatType{Width: 64},
+		},
+		Result: ast.ArrayType{Elem: ast.FloatType{Width: 64}},
+	}
+	c.info.FuncSigs["__outer_mul_f64"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.FloatType{Width: 64}}, ast.ArrayType{Elem: ast.FloatType{Width: 64}}},
+		Result: ast.ArrayType{Elem: ast.FloatType{Width: 64}},
+	}
+	c.info.FuncSigs["__inner_mul_add_f64"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.FloatType{Width: 64}}, ast.ArrayType{Elem: ast.FloatType{Width: 64}}, ast.NumberType{}, ast.NumberType{}, ast.NumberType{}, ast.FloatType{Width: 64}},
+		Result: ast.ArrayType{Elem: ast.FloatType{Width: 64}},
+	}
+	// __crc32_cksum(crc, s) → i32: `s` folded into the running CRC-32 that
+	// cksum(1) prints — polynomial 0x04C11DB7, MSB first, no reflection, and
+	// no final complement (std/hash's Cksum does the length fold and the
+	// complement in finish()). The seventh fused SIMD kernel
+	// (docs/ATLAS-PLATFORM-PLAN.md §3.3), and the first CARRIED one: every
+	// sibling starts from nothing each call, where this one threads a state
+	// word in and out so a chunked stream and a one-shot call agree.
+	//
+	// The variant is in the name on purpose. This is not CRC-32 in general —
+	// the reflected zlib/Castagnoli forms are different functions over the
+	// same-looking polynomial — and a kernel that took the polynomial as an
+	// operand could not fold, since the fold constants are derived from it at
+	// build time.
+	//
+	// An empty string returns `crc` unchanged, which makes the streaming
+	// identity hold for a zero-length chunk.
+	c.info.FuncSigs["__crc32_cksum"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.NumberType{Width: 32, Signed: true},
+			ast.StringType{},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// __mismatch(a, ao, b, bo, n) → i32: the offset of the first byte where
+	// a[ao..ao+n) and b[bo..bo+n) differ, or n when they are equal. The fifth
+	// fused SIMD kernel, and the comparison one the other four left out
+	// (#8791).
+	//
+	// ONE kernel, not two, and that is the design. `__memeq` would serve
+	// equality — `uniq` — and leave every ordering caller (`comm`, `sort`,
+	// `join`) back on an indexed byte loop, because a boolean cannot say
+	// WHERE the difference is. The first differing offset answers both: an
+	// equality test is `__mismatch(…) == n`, and an ordering is one indexed
+	// load at that offset. It is also the shape __memchr already has —
+	// "find the first position where a predicate holds".
+	//
+	// Comparing a range without this costs a copy or a walk. `slice_unchecked`
+	// is not a view: it lowers to __str_slice, which copies the bytes into a
+	// fresh string, so a comparison spelled with slices allocates once per
+	// operand even when the result never escapes. And an indexed byte is
+	// ~2.8 ns, so walking a 13-byte range by hand costs more than the copy.
+	//
+	// The offsets and the length are CLAMPED, not trusted: `ao` and `bo` into
+	// [0, len] and `n` down to whatever both ranges actually hold. A caller
+	// asking to compare more than is there gets the shorter answer rather
+	// than a read past the end, and its `== n` test correctly fails. This is
+	// the one place this family departs from `slice_unchecked`'s "unchecked"
+	// — reading two ranges at once doubles the ways a caller can be wrong,
+	// and the clamp is a handful of instructions outside the loop.
+	//
+	// Same string-not-pointer argument as __memchr's, for the same reason.
+	c.info.FuncSigs["__mismatch"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.NumberType{Width: 32, Signed: true},
+		},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// __heap_mark(): i64 / __heap_release_to(mark: i64) — one-level arena
+	// checkpoint. Mark captures the bump cursor (plus a freelist-head
+	// snapshot); release_to rewinds to it, reclaiming everything allocated
+	// since in one step. i64, not i32: the cursor is a raw address and the
+	// arena is 16 GiB, so an i32 offset would overflow on exactly the
+	// workload this exists for.
+	//
+	// Releasing is sound only when nothing allocated after the mark is still
+	// reachable — the caller owns that, as with malloc/free. Marks do not
+	// nest (one shadow buffer). Built for the self-host per-module emit,
+	// whose per-unit accumulation otherwise exhausts the arena.
+	c.info.FuncSigs["__heap_mark"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
+	c.info.FuncSigs["__heap_release_to"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.VoidType{},
+	}
+	// The task primitives (docs/NET-P3-SUSPENSION-PLAN.md §3.4): a record per
+	// task, the current task, the park that unwinds it, and the words its
+	// scheduler reads back. std/async's Task API is written over them. Only
+	// the self-host compiler suspends; here they take the blocking fallback,
+	// so no task is ever current and a park is never reached.
+	i32T := ast.NumberType{}
+	for name, sig := range map[string]*ast.FuncType{
+		"__task_new":           {Params: []ast.Type{}, Result: i32T},
+		"__task_free":          {Params: []ast.Type{i32T}, Result: ast.VoidType{}},
+		"__task_cur":           {Params: []ast.Type{}, Result: i32T},
+		"__task_enter":         {Params: []ast.Type{i32T, i32T}, Result: ast.VoidType{}},
+		"__task_leave":         {Params: []ast.Type{}, Result: i32T},
+		"__task_park":          {Params: []ast.Type{ast.ArrayType{Elem: i32T}, i32T}, Result: i32T},
+		"__task_wait":          {Params: []ast.Type{i32T}, Result: ast.ArrayType{Elem: i32T}},
+		"__task_timeout":       {Params: []ast.Type{i32T}, Result: i32T},
+		"__task_set_ready":     {Params: []ast.Type{i32T, i32T}, Result: ast.VoidType{}},
+		"__task_set_cancelled": {Params: []ast.Type{i32T}, Result: ast.VoidType{}},
+	} {
+		c.info.FuncSigs[name] = sig
+	}
+	// f32_bits(x: f32): i32 — reinterprets a 32-bit float as its
+	// IEEE-754 bit pattern. f32_from_bits is the inverse. The pair
+	// is needed by float formatting routines (extracting sign /
+	// exponent / mantissa fields) and by lossless encoding of f32
+	// values into byte buffers (JSON / wire formats). No value
+	// conversion happens — the 32 bits on the operand stack carry
+	// through unchanged; the IR lowers both calls to a no-op once
+	// the type checker accepts them.
+	c.info.FuncSigs["f32_bits"] = &ast.FuncType{
+		Params: []ast.Type{ast.FloatType{Width: 32}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	c.info.FuncSigs["f32_from_bits"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.FloatType{Width: 32},
+	}
+	// Float math primitives. These are checker builtins because
+	// the interp / native / wasm backends all have access to
+	// hardware-precise implementations (Go's `math` package
+	// for the interp; wasm's f64.{sqrt,floor,…} ops for the
+	// wasm backend; libm-style sequences on arm64 / x86 for
+	// the native backends). Wrapping each in Lang code (eg
+	// Newton iteration for sqrt) would be slower AND less
+	// precise, which is bad both for performance and for
+	// property-based tests that compare against an external
+	// reference.
+	//
+	// The user-facing surface is the receiver methods in
+	// `std/float` (`(x: f64).sqrt()`, `(x: f64).floor()`, …)
+	// which dispatch to these primitives. Every backend
+	// implements all of them.
+	f64ToF64Builtin := &ast.FuncType{
+		Params: []ast.Type{ast.FloatType{Width: 64}},
+		Result: ast.FloatType{Width: 64},
+	}
+	c.info.FuncSigs["__sqrt_f64"] = f64ToF64Builtin
+	c.info.FuncSigs["__floor_f64"] = f64ToF64Builtin
+	c.info.FuncSigs["__ceil_f64"] = f64ToF64Builtin
+	c.info.FuncSigs["__round_f64"] = f64ToF64Builtin
+	c.info.FuncSigs["__trunc_f64"] = f64ToF64Builtin
+	c.info.FuncSigs["__abs_f64"] = f64ToF64Builtin
+	c.info.FuncSigs["__log_f64"] = f64ToF64Builtin
+	c.info.FuncSigs["__exp_f64"] = f64ToF64Builtin
+	c.info.FuncSigs["__sin_f64"] = f64ToF64Builtin
+	c.info.FuncSigs["__cos_f64"] = f64ToF64Builtin
+	c.info.FuncSigs["__pow_f64"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.FloatType{Width: 64},
+			ast.FloatType{Width: 64},
+		},
+		Result: ast.FloatType{Width: 64},
+	}
+	// f64_bits / f64_from_bits — same idea for 64-bit floats.
+	// The interp owns the only implementation today; the native
+	// + wasm backends route f64 / i64 through their own
+	// reinterpret instructions and don't need a builtin helper.
+	// Exposing the signature lets pure-Lang float-formatting
+	// code (std/float's Dragonbox `__float_shortest`, future
+	// hex-float emitters) extract the IEEE-754 fields without a
+	// runtime trip.
+	c.info.FuncSigs["f64_bits"] = &ast.FuncType{
+		Params: []ast.Type{ast.FloatType{Width: 64}},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
+	c.info.FuncSigs["f64_from_bits"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.FloatType{Width: 64},
+	}
+	// random_bytes(n: number): u8[] — returns a fresh buffer
+	// of n cryptographic-quality random bytes from the
+	// kernel's CSPRNG (`getrandom(2)` on Linux,
+	// `wasi_snapshot_preview1.random_get` on WASM). Useful
+	// for session IDs, request IDs, nonce generation, etc.
+	c.info.FuncSigs["random_bytes"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+	}
+	// random_i32(): i32 — returns a single cryptographic-quality
+	// random i32. Backed by the kernel CSPRNG (or
+	// `wasi:random/random::get-random-u64` on preview-2 WASM,
+	// truncated to i32). Use when you need a single small random
+	// value without the heap-allocation overhead of random_bytes.
+	c.info.FuncSigs["random_i32"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{},
+	}
+	// TCP socket builtins. C-style API: each returns a raw
+	// fd or a negative errno. A Result-wrapped layer can sit
+	// on top in a follow-up.
+	//
+	// On WASI the host pre-opens the listening socket
+	// (`wasmtime --tcp-listen=0.0.0.0:PORT prog.wasm`); the
+	// `port` argument is currently ignored and the helper
+	// returns the first preopened socket fd (typically 3).
+	// On Linux/arm64 the helper opens the socket itself.
+	c.info.FuncSigs["tcp_listen"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	c.info.FuncSigs["tcp_accept"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	// tcp_local_port(sock): number — the port the socket is bound to,
+	// or a negative errno. The answer for `tcp_listen(0)`, where the
+	// kernel picks the port and nothing else can report which one: a
+	// server that binds an ephemeral port and then advertises it no
+	// longer has to guess a free number and hope.
+	c.info.FuncSigs["tcp_local_port"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	// The socket primitives take an address as its network-order bytes:
+	// four for IPv4, sixteen for IPv6, and any other length is refused
+	// with -EAFNOSUPPORT (#9853).
+	u8s := ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}
+	// tcp_listen_with(addr, port, backlog, reuse_port): number — a
+	// listener on addr:port with the accept queue's depth and SO_REUSEPORT
+	// chosen by the caller, so several workers can bind one port. The
+	// unspecified address of either family takes every interface. The
+	// listener, or -errno.
+	c.info.FuncSigs["tcp_listen_with"] = &ast.FuncType{
+		Params: []ast.Type{u8s, ast.NumberType{}, ast.NumberType{}, ast.BoolType{}},
+		Result: ast.NumberType{},
+	}
+	// tcp_socket_ctl(fd, op, arg): number — one control call on a socket.
+	// op 1 is TCP_NODELAY, 2 SO_KEEPALIVE and 3 O_NONBLOCK, each with arg
+	// 0 or 1; op 4 is shutdown with arg 0 (read), 1 (write) or 2 (both);
+	// op 5 is the result of a connect tcp_connect_with started: 0 once
+	// connected, -EINPROGRESS while under way, else the -errno it failed
+	// with. 0, or -errno; an op the target has no control for is -EINVAL.
+	c.info.FuncSigs["tcp_socket_ctl"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	// tcp_sendfile(fd, file, max): number — up to max bytes of the open
+	// file (a Reader's fd, from its current position) sent on the socket
+	// without a copy through user space: the bytes sent, 0 at the file's
+	// end, or -errno; -EAGAIN when a non-blocking socket took none and
+	// -ENOTSUP where the target has no sendfile, so the caller reads and
+	// sends the piece itself.
+	c.info.FuncSigs["tcp_sendfile"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	// tcp_send_buf(fd, b, from): number — one send of the builder's bytes
+	// from `from` to its end, as tcp_send_bytes sends an array: the count
+	// the kernel took, or -errno.
+	c.info.FuncSigs["tcp_send_buf"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{Width: ast.WidthPtr, Signed: false, Spelling: "usize"}, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	// tcp_connect_with(addr, port, nonblocking): number — a socket
+	// connected to addr:port, or with `nonblocking` a non-blocking socket
+	// whose connect is only started: the descriptor while it is under way
+	// (-errno if it could not start), and tcp_socket_ctl op 5 to learn how
+	// it ended (#9853).
+	c.info.FuncSigs["tcp_connect_with"] = &ast.FuncType{
+		Params: []ast.Type{u8s, ast.NumberType{}, ast.BoolType{}},
+		Result: ast.NumberType{},
+	}
+	// The Unix-domain sockets (#9853): unix_listen(path, backlog) is a
+	// stream socket listening at the filesystem path, unix_connect(path)
+	// one connected to the listener there; each a descriptor or -errno,
+	// and both -ENAMETOOLONG for a path longer than the address holds.
+	// tcp_accept, tcp_recv, tcp_send and tcp_close take the descriptors.
+	// Native only: neither WASI world has a filesystem namespace for
+	// sockets, so the `unix` capability refuses them there.
+	c.info.FuncSigs["unix_listen"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	c.info.FuncSigs["unix_connect"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.NumberType{},
+	}
+	// The reactor floor (#9853): reactor_new() is a readiness set that
+	// outlives one wait (epoll, kqueue, a wasi pollable table), or -errno;
+	// reactor_ctl(r, op, fd, arg) watches fd for the interest in arg (op
+	// 1; 1 readable, 2 writable), stops watching it (op 2) or closes the
+	// set (op 3); reactor_wait(r, events, timeout_ms) fills events with
+	// (fd, readiness) pairs and answers their count, 0 on the timeout, or
+	// -errno.
+	c.info.FuncSigs["reactor_new"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{},
+	}
+	c.info.FuncSigs["reactor_ctl"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	c.info.FuncSigs["reactor_wait"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{}}, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	// tcp_recv_into(fd, buf): number — one read into the caller's buffer,
+	// up to its length: the byte count, 0 at EOF, or -errno.
+	c.info.FuncSigs["tcp_recv_into"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Result: ast.NumberType{},
+	}
+	// tcp_recv(fd, max): u8[] — one blocking read of at most max
+	// bytes; socket data is raw bytes (D9, #5714). The empty array
+	// signals EOF / error / closed alike.
+	c.info.FuncSigs["tcp_recv"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}},
+		Result: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+	}
+	c.info.FuncSigs["tcp_send"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.StringType{}},
+		Result: ast.NumberType{},
+	}
+	c.info.FuncSigs["tcp_send_bytes"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Result: ast.NumberType{},
+	}
+	c.info.FuncSigs["tcp_close"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	// tcp_connect(host_be, port): number — outbound client connect (the
+	// upstream-fetch half of the edge-handler use case). host_be is the
+	// IPv4 in network byte order packed into an i32
+	// (a | b<<8 | c<<16 | d<<24); returns the connected fd, or -errno.
+	// x86-64 first; arm64 follows.
+	c.info.FuncSigs["tcp_connect"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	// tcp_pollable(conn): number — a wasi:io/poll pollable handle for a
+	// connection's readiness (tcp-socket.subscribe), so std/async
+	// can multiplex N connections via wasm_poll for overlapped outbound
+	// fan-out. wasm-only (Preview-2 pollables); the native reactor polls
+	// the connection fd directly.
+	c.info.FuncSigs["tcp_pollable"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	// poll(fds, timeout_ms): number — the std/task reactor's readiness
+	// multiplexer (docs/ASYNC-IMPLEMENTATION-PLAN.md Phase 1). Waits up
+	// to `timeout_ms` (negative = block indefinitely, 0 = non-blocking)
+	// for any fd in `fds` to become readable; returns the index of the
+	// first ready fd, or -1 on timeout. x86-64 first; arm64 (ppoll) +
+	// wasm (wasi:io/poll) follow.
+	c.info.FuncSigs["poll"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{}}, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	// timer_fd(ms): number — a CLOCK_MONOTONIC timerfd that becomes
+	// readable once after `ms` milliseconds; returns its fd (poll it via
+	// `poll` / std/reactor). Backs reactor timeouts + deterministic
+	// readiness tests (docs/ASYNC-IMPLEMENTATION-PLAN.md Phase 1c).
+	// x86-64 + arm64 (Linux timerfd); wasm/Darwin follow.
+	c.info.FuncSigs["timer_fd"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	// wasm_timer_pollable(duration_ns: i64): i32 — the wasm reactor's
+	// timer primitive. Returns a wasi:io/poll pollable handle that
+	// becomes ready after `duration_ns` nanoseconds (via
+	// wasi:clocks/monotonic-clock.subscribe-duration). The pollable
+	// analog of the native timer_fd; wasm-only (Preview-2). See
+	// docs/WASM-REACTOR-PLAN.md.
+	c.info.FuncSigs["wasm_timer_pollable"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// wasm_block(pollable: i32): i32 — synchronously block until the
+	// pollable handle is ready, then return 0. Wraps
+	// wasi:io/poll.pollable.block; wasm-only (Preview-2).
+	c.info.FuncSigs["wasm_block"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// wasm_poll(pollables: i32[]): i32 — the wasm reactor's readiness
+	// multiplexer. Blocks until at least one pollable in the array is
+	// ready, then returns its array index (or -1 if none). Wraps
+	// wasi:io/poll.poll(list<pollable>) -> list<u32>; wasm-only
+	// (Preview-2). The pollable analog of the native poll(fds).
+	c.info.FuncSigs["wasm_poll"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 32, Signed: true}}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// wasm_pollable_drop(pollable: i32): i32 — drop a consumed pollable
+	// handle (returns 0), so the reactor frees a fired timer pollable
+	// instead of leaking it until exit. Wraps
+	// wasi:io/poll.[resource-drop]pollable; wasm-only (Preview-2).
+	c.info.FuncSigs["wasm_pollable_drop"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// udp_send(host, port, data): number — one-shot fire-and-forget UDP
+	// datagram. host is an IPv4 literal ("a.b.c.d"); binds an ephemeral
+	// local port, connects to host:port, sends data, and tears the
+	// socket down. Returns the bytes accepted by the host, or a negative
+	// errno on failure. (Send-only / IPv4-literal v1 — for telemetry /
+	// syslog to a local agent.)
+	c.info.FuncSigs["udp_send"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.StringType{}},
+		Result: ast.NumberType{},
+	}
+	c.info.FuncSigs["udp_send_bytes"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.NumberType{}, u8s},
+		Result: ast.NumberType{},
+	}
+	// The datagram sockets (#9853). udp_bind(addr, port): a socket bound
+	// to addr:port (the unspecified address for every interface, port 0
+	// for one the kernel picks), or -errno. It is closed with tcp_close
+	// and its port read with tcp_local_port, like any socket.
+	c.info.FuncSigs["udp_bind"] = &ast.FuncType{
+		Params: []ast.Type{u8s, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	// udp_connect(fd, addr, port): fixes the peer a bound socket sends to
+	// and receives from. 0, or -errno.
+	c.info.FuncSigs["udp_connect"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, u8s, ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	// udp_sendto(fd, addr, port, data): one datagram to addr:port, or to
+	// the connected peer when addr is empty. The bytes accepted, or -errno.
+	c.info.FuncSigs["udp_sendto"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, u8s, ast.NumberType{}, ast.StringType{}},
+		Result: ast.NumberType{},
+	}
+	c.info.FuncSigs["udp_sendto_bytes"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, u8s, ast.NumberType{}, u8s},
+		Result: ast.NumberType{},
+	}
+	// udp_recvfrom(fd, buf, from): one datagram read into buf, up to its
+	// length; the datagram's byte count (0 for an empty one), or -errno.
+	// A `from` of at least nineteen bytes receives the sender: the family
+	// at 0 (4 or 6), the address's network-order bytes from 1 (four or
+	// sixteen, the rest zero), and the port at 17, high byte first.
+	c.info.FuncSigs["udp_recvfrom"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, u8s, u8s},
+		Result: ast.NumberType{},
+	}
+	// read_file(path): Result[string, IoError] — reads the entire
+	// file into a single string. WASM builds need a preopen
+	// directory (e.g. `wasmtime --dir=.`); the path is
+	// interpreted relative to the first preopen.
+	c.info.FuncSigs["read_file"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StringType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// read_file_bytes(path): Result[u8[], IoError] — reads the entire
+	// file into a fresh byte buffer, no text interpretation. The raw
+	// sibling of read_file for content that is not UTF-8 text (D9,
+	// #5714). Same preopen note as read_file on WASM.
+	c.info.FuncSigs["read_file_bytes"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// write_file(path, content): Result[void, IoError] — writes the
+	// content to the named file, truncating it first. `Ok(())` on
+	// success, `Err(e)` on failure.
+	//
+	// This was Option[IoError], with `Some` meaning FAILURE, because
+	// the language had no way to write a unit value so Result[void, E]
+	// could not be constructed. That inverted the polarity of every
+	// other Option, split the filesystem builtins across two shapes
+	// (read_file / read_dir / stat are Results), and made `?` silently
+	// wrong — on failure it yielded the error and carried on, on
+	// success it returned early. `()` (#6040) closed that.
+	c.info.FuncSigs["write_file"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	c.info.FuncSigs["write_file_bytes"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{ast.VoidType{}, ast.EnumType{Name: "IoError"}}},
+	}
+	// write_file_exec(path, content): Result[void, IoError] —
+	// write_file, but the file is created EXECUTABLE (0755 rather
+	// than 0644).
+	//
+	// It exists because a compiler that emits a finished binary has
+	// to be able to produce a runnable one, and `write_file` cannot:
+	// `bin/fern-selfhost -target arm64-linux -o out.bin` wrote 0644, where
+	// the native CLI writes 0755 and chmods. A non-executable binary
+	// run under qemu exits 1 with no output, which is indistinguishable
+	// from a program that ran and returned 1 — that cost one
+	// investigation a completely fabricated reproduction before
+	// anyone thought to check the mode (#6133).
+	c.info.FuncSigs["write_file_exec"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// Streaming I/O constructors. open_reader / open_writer /
+	// open_appender / open_exclusive all return `Result[Reader|Writer, IoError]`
+	// — the runtime helpers do the path_open / open(2) and
+	// wrap the resulting fd in a Reader or Writer struct.
+	//
+	// `open_writer` and `open_appender` CREATE with 0666 and let the
+	// process umask filter it, which is what `open(2)`'s conventional
+	// mode, Go's `os.Create` and C's `fopen` all do. A fixed 0644 would
+	// ignore the mask's group and other write policy with no way to ask
+	// for it back. `open_exclusive` is 0600 instead — see its own note.
+	readerType := ast.StructType{Name: "Reader"}
+	writerType := ast.StructType{Name: "Writer"}
+	ioErrType := ast.EnumType{Name: "IoError"}
+	optionIoErr := ast.EnumType{Name: "Option", Args: []ast.Type{ioErrType}}
+	c.info.FuncSigs["open_reader"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{readerType, ioErrType}},
+	}
+	c.info.FuncSigs["open_writer"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{writerType, ioErrType}},
+	}
+	c.info.FuncSigs["open_appender"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{writerType, ioErrType}},
+	}
+	// open_exclusive(path): Result[Writer, IoError] — O_WRONLY|O_CREAT|
+	// O_EXCL. The caller is the file's sole creator or it gets
+	// `IoError::AlreadyExists(path)` back, which is what a
+	// retry-with-a-fresh-name loop needs to tell apart from a real
+	// failure. O_TRUNC is absent by construction: with O_EXCL the file
+	// cannot already exist. This is what a temporary file at a CHOSEN
+	// path needs — `open_writer` truncates whatever name it is handed,
+	// so an attacker who plants the name turns the temporary into a
+	// clobber of their target (#8776).
+	c.info.FuncSigs["open_exclusive"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{writerType, ioErrType}},
+	}
+	// open_reader_with(path, flags) / open_writer_with(path, flags):
+	// the same two handles opened under a flags word of Fern's own,
+	// translated by each backend into the kernel's:
+	//
+	//	1    create the file when it is missing, mode 0666 through the umask
+	//	2    do not wait on the open (O_NONBLOCK)
+	//	4    fail when the file already exists (O_EXCL), with 1: the exclusive
+	//	     create at the same 0666 — `open_exclusive` keeps its 0600 for the
+	//	     temporary file it was made for, this is the one `dd conv=excl` has
+	//	8    bypass the page cache (O_DIRECT)
+	//	16   fail unless the path is a directory (O_DIRECTORY)
+	//	32   every write waits for the data to reach the device (O_DSYNC)
+	//	64   likewise, and for the metadata (O_SYNC)
+	//	128  do not update the access time (O_NOATIME)
+	//	256  never become the controlling terminal (O_NOCTTY)
+	//	512  fail when the last component is a symlink (O_NOFOLLOW)
+	//
+	// A bit the target has no spelling for is a REFUSAL, `Unsupported`,
+	// never a silent no-op: XNU has no O_DIRECT (its F_NOCACHE is a
+	// different request, made after the open) and no O_NOATIME, and WASI
+	// has neither of those nor O_NOCTTY. The caller asked for a guarantee
+	// the open cannot give, and `dd iflag=directory` that quietly opened a
+	// regular file would be worse than the error.
+	//
+	// The writer never truncates and never appends: it is the plain
+	// O_WRONLY open a `touch` or a `dd` wants, where open_writer's
+	// truncation and open_appender's positioning are both wrong. The
+	// non-blocking bit is what lets a FIFO be opened with no peer, as
+	// `sync` and `touch` do: without it a reader's open waits for a
+	// writer and a writer's open waits for a reader. A writer's
+	// non-blocking open of a FIFO with no reader is ENXIO, the kernel's
+	// own answer. WASI preview 1 spells the bit as an fdflag and preview
+	// 2 has no spelling for it — docs/FREESTANDING-CORE.md.
+	c.info.FuncSigs["open_reader_with"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{readerType, ioErrType}},
+	}
+	c.info.FuncSigs["open_writer_with"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{writerType, ioErrType}},
+	}
+	// now_unix_ms(): i64 — wall-clock milliseconds since the
+	// Unix epoch (1970-01-01 00:00:00 UTC). Wraps Go's
+	// `time.Now().UnixMilli()`. Subject to NTP adjustments
+	// and intentional clock changes — DON'T use for benchmark
+	// timing; use `monotonic_ns()` for that. The use cases
+	// for this primitive are "stamp a log line with the
+	// current time" and "compute the date for a fixture file
+	// name".
+	c.info.FuncSigs["now_unix_ms"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
+	// monotonic_ns(): i64 — nanoseconds since some fixed
+	// reference, monotonically non-decreasing. Wraps Go's
+	// `time.Now().UnixNano()` (which carries a monotonic
+	// reading on every platform Go supports). Use for
+	// benchmark timing — the elapsed time between two
+	// `monotonic_ns()` calls is the right answer regardless
+	// of wall-clock NTP jumps.
+	c.info.FuncSigs["monotonic_ns"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
+	// now_ns(): i64 — wall-clock nanoseconds since the Unix
+	// epoch. Same time source as `now_unix_ms` but at
+	// nanosecond resolution. Wraps WASI's wall-clock now
+	// (preview-1 `clock_time_get(realtime)`, preview-2
+	// `wasi:clocks/wall-clock::now`) on wasm.
+	c.info.FuncSigs["now_ns"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
+	// read_line(): Option[string] — read one line from stdin
+	// (including the trailing '\n' if present), returning
+	// Some(line) or None at end-of-file before any byte. The
+	// ergonomic stdin reader for CLI tools — the bare counterpart
+	// to `stdin().read_line()`. Implemented on every backend
+	// (native reads byte-by-byte into a scratch buffer; wasm wraps
+	// preview-1 `fd_read` / preview-2 `wasi:cli/stdin::get-stdin` +
+	// `wasi:io/streams::blocking-read`). The line is assumed to be
+	// UTF-8, not validated: `None` means end-of-file, so there is no
+	// arm to refuse a stray byte into, and `r.read_chunk(n)` is the
+	// byte reader (docs/STRINGS-SOTA.md, D9).
+	c.info.FuncSigs["read_line"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.EnumType{Name: "Option", Args: []ast.Type{ast.StringType{}}},
+	}
+	// sleep_ms(ms): void — best-effort sleep for the given
+	// duration. Useful in tests that want to wait for a
+	// timer / background process to make progress. Not
+	// designed for hard real-time guarantees — Go's runtime
+	// scheduler may delay wakeup under load.
+	c.info.FuncSigs["sleep_ms"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.VoidType{},
+	}
+	// sleep_ns(ns): void — the same pause at the resolution the
+	// underlying primitive actually has. `sleep_ms` rounds a caller's
+	// interval to a millisecond before the kernel ever sees it, which
+	// costs a sub-millisecond sleeper a full tick per step (#8528).
+	// ns <= 0 returns without entering the kernel.
+	//
+	// Like `sleep_ms` this promises only that the pause is NOT SHORTER
+	// than asked; nanosleep(2) may overshoot by any amount, and an
+	// interrupted sleep is not resumed. Two targets cannot honour the
+	// full resolution and round the request UP, which keeps that
+	// promise: Darwin has no nanosleep syscall and sleeps through
+	// `select(2)`, whose timeval is microseconds; wasm preview-1 and
+	// preview-2 both take nanoseconds, so wasm is exact.
+	c.info.FuncSigs["sleep_ns"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.VoidType{},
+	}
+	// proc_fork(): i32 — fork the process (docs/CRASH-ONLY-SERVE.md
+	// D2'). Returns 0 in the child, the child's pid in the parent,
+	// or a negative errno on failure. Capability-gated (`proc`,
+	// native targets only — E066 elsewhere). The interpreter cannot
+	// bare-fork (Go's runtime is threaded) and returns -38 (ENOSYS);
+	// callers like `serve.supervise` treat that as "supervision
+	// unavailable" and degrade to single-process serving.
+	c.info.FuncSigs["proc_fork"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{},
+	}
+	// proc_waitpid(pid): i32 — block until the child `pid` exits and
+	// return its exit code 0..255; for a signal death, 128+signal
+	// (shell convention). Negative errno on failure (interp: -10 /
+	// ECHILD — no forked children can exist there). Same `proc`
+	// capability gate as proc_fork.
+	//
+	// The pid reaches wait4 as written, so its conventions hold: -1
+	// reaps whichever child exits first, which is how a supervisor
+	// waits on several with one call. That call reports the status and
+	// not the pid; proc_waitpid_nohang below is how the identity comes
+	// back.
+	c.info.FuncSigs["proc_waitpid"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	// proc_waitpid_nohang(pid): i32 — the same reap, WITHOUT blocking:
+	// wait4's WNOHANG. Same status encoding when the child has exited,
+	// and -1 when it has not.
+	//
+	// -1 rather than 0 because 0 is a clean exit, which is what wait4
+	// itself answers "nothing to report" with. No errno wait4 can return
+	// is 1 — its set is ECHILD, EINTR, EINVAL, EFAULT — so a negative
+	// result is unambiguous: -1 is "still running" and anything lower is
+	// an error.
+	//
+	// It answers the question a blocking `proc_waitpid(-1)` loses: that
+	// call reaps whichever child exits first (wait4's own convention for
+	// a negative pid) but reports only the status, so a supervisor with
+	// several children cannot tell WHICH one it just reaped. One nohang
+	// probe per candidate recovers it — a child already reaped answers
+	// -ECHILD where a live one answers -1 — and no pid can be confused
+	// with another's, since a recycled pid is not this process's child.
+	// Same `proc` capability gate as proc_fork.
+	c.info.FuncSigs["proc_waitpid_nohang"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
+	// proc_exec(path, args): i32 — replace this process with `path`,
+	// completing the crash-only trio (fork / exec / waitpid) so a forked
+	// child can become another program. argv is [path, args...], so callers
+	// pass only the real arguments; the environment is inherited.
+	//
+	// On success it does NOT return, so the result only ever reports failure
+	// as a negative errno — the same "the syscall's return shape IS the
+	// contract" convention proc_fork uses. Shares the `proc` capability gate
+	// (native targets only). The interpreter cannot exec (it would replace
+	// the compiler process) and answers -38 / ENOSYS, matching proc_fork's
+	// degrade-at-runtime contract.
+	c.info.FuncSigs["proc_exec"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.ArrayType{Elem: ast.StringType{}}},
+		Result: ast.NumberType{},
+	}
+	// proc_exec_as(path, argv, envp): i32 — execve(2) with BOTH vectors
+	// given verbatim. `argv` is the complete vector including argv[0], and
+	// `envp` the complete `NAME=VALUE` vector; neither is derived from the
+	// caller's own process. That is the difference from `proc_exec`, which
+	// prepends `path` as argv[0] and inherits the captured environment.
+	//
+	// Both are needed together and by the same callers: `env sh -c …` runs
+	// the child as `sh` rather than `/bin/sh`, and hands it an environment it
+	// has just rebuilt. A duplicate name is legal in an environment vector
+	// and the kernel preserves it, which is why this takes the raw vector
+	// rather than a map.
+	//
+	// Same return contract as proc_exec: on success it does not return, so
+	// the i32 only ever reports failure as a negative errno. Same `proc`
+	// capability gate (native targets only — E066 on both wasm worlds, which
+	// have no process to replace), and the interpreter answers -38 / ENOSYS.
+	c.info.FuncSigs["proc_exec_as"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.ArrayType{Elem: ast.StringType{}}, ast.ArrayType{Elem: ast.StringType{}}},
+		Result: ast.NumberType{},
+	}
+	// statfs(path): Result[FsStat, IoError] — the geometry and the
+	// length limits of the filesystem `path` resolves on (#9062).
+	// `pathchk` needs the limits, `df` needs the counts, and one
+	// `statfs(2)` answers both on Linux.
+	//
+	// Err carries the errno the lookup failed with: ENOENT for a path
+	// that does not exist, EACCES for a directory the caller cannot
+	// search, ENOTDIR, ELOOP.
+	//
+	// The two kernels keep the limits in different places, and the
+	// builtin reports the same thing either way:
+	//
+	//   - Linux fills every field from `statfs(2)`; `f_namelen` is
+	//     `name_max`. There is no pathconf syscall — glibc computes it
+	//     from statfs plus constants — so `path_max` is the kernel's own
+	//     PATH_MAX, 4096, which `getconf PATH_MAX` reports for every
+	//     Linux filesystem.
+	//   - Darwin's `struct statfs` has no name-length field at all, so
+	//     both limits come from its real `pathconf(2)`. Not a constant:
+	//     APFS and HFS+ agree on 255 today, a mounted FAT or SMB volume
+	//     does not, and `pathchk` is the caller that would notice.
+	//
+	// Gated on `fsinfo`, which no wasm profile grants. Neither preview
+	// has a notion of a filesystem's size — preview 1's
+	// `path_filestat_get` is per-file and the component model has no
+	// volume interface — and a preopen is a capability handle rather
+	// than a mount, so it has no length limit to report either. A
+	// zero-filled record would be a measurement nobody took, so E066
+	// refuses it instead.
+	c.info.FuncSigs["statfs"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StructType{Name: "FsStat"},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// rlimit_nofile(): i64 — the SOFT limit the kernel is currently
+	// enforcing on this process's open file descriptors, `getrlimit(2)`
+	// on RLIMIT_NOFILE (#8819). What `ulimit -n` prints, and what
+	// `sort --batch-size` caps itself against.
+	//
+	// A plain number rather than a Result: the only errno getrlimit can
+	// answer for a resource the runtime names itself is EFAULT, which
+	// cannot happen against a stack buffer the helper owns, so there is
+	// no failure for a caller to handle. An unlimited resource reports
+	// i64 max — the two kernels spell RLIM_INFINITY differently (all
+	// ones on Linux, i64 max on Darwin) and neither spelling is a count,
+	// so both normalise to "more than any count you can hold".
+	//
+	// The HARD limit is a different question and has no builtin: only
+	// something raising the soft limit needs it, and raising is
+	// setrlimit — a different authority from reading.
+	//
+	// Gated on `rlimit`, which no wasm profile grants: neither preview
+	// has resource limits, and the constants that would stand in for
+	// them ("unlimited", or a plausible 1024) would both be fictions of
+	// the `geteuid`-answers-0 kind. E066 refuses it there.
+	c.info.FuncSigs["rlimit_nofile"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
+	// process_alive(pid): boolean — is `pid` a process that currently
+	// exists? `kill(pid, 0)` underneath: signal 0 runs every check kill(2)
+	// would and delivers nothing (#8767).
+	//
+	// The answer is deliberately two-valued rather than a Result, because
+	// the errno only ever refines "yes": success and EPERM both mean the
+	// process is there — a process owned by another user is still a
+	// process — and ESRCH means it is gone. Nothing else can come back
+	// from a zero signal.
+	//
+	// A `pid` of 0 or below is false. Those spellings name a process
+	// GROUP to kill(2), not a process, so passing one through would
+	// answer a different question than the caller asked; the argument
+	// names one process.
+	//
+	// The `proc` capability gates it, beside fork / exec / waitpid: the
+	// question needs a host with a process table and pids to ask about,
+	// and neither WASI preview has one, so E066 refuses it there. It is
+	// not on `signal` — wasi-cli GRANTS that, because ignoring a signal
+	// nothing can deliver is honestly a no-op, and there is no such
+	// correct answer here.
+	c.info.FuncSigs["process_alive"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.BoolType{},
+	}
+	// signal_send(pid, sig): Result[void, IoError] — `kill(pid, sig)`,
+	// the whole syscall of which `process_alive` is the signal-0 corner.
+	//
+	// `pid` is passed through exactly as kill(2) reads it, because the
+	// spellings the liveness query rejects are the ones a sender wants:
+	// a negative `pid` is the process GROUP `-pid`, 0 is the caller's own
+	// group, and -1 is every process the caller may signal. A sender that
+	// means one process says so by passing a positive number.
+	//
+	// `sig` of 0 delivers nothing and runs the permission and existence
+	// checks only; that is the spelling `process_alive` wraps, which stays
+	// because a boolean is the better answer to a liveness question than
+	// a Result the caller has to read an errno text out of.
+	//
+	// The error is a Result rather than a boolean because the three errnos
+	// kill(2) can return say different things and a caller acts on each:
+	// ESRCH (no such process), EPERM (it exists and is not yours), EINVAL
+	// (no such signal). None of the three is one of the errnos
+	// `__fern_io_error` gives a named variant, so all three arrive as
+	// `Other("", strerror)` — the empty path being accurate, since the
+	// primitive never saw the operand text the caller parsed the pid from.
+	// `gnu.io_error_text` is how a caller reads the three apart, the way
+	// `is_broken_pipe` already reads EPIPE.
+	//
+	// Gated on `proc`, beside fork / exec / waitpid / process_alive:
+	// signalling needs a host with a process table to name a target in,
+	// and neither WASI preview has one, so E066 refuses it there. Not on
+	// `signal`, which wasi-cli grants for the disposition calls only.
+	c.info.FuncSigs["signal_send"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.NumberType{Width: 32, Signed: true},
+			ast.NumberType{Width: 32, Signed: true},
+		},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// set_process_group(pid, pgid): Result[void, IoError] —
+	// setpgid(2). `pid` 0 means the caller and `pgid` 0 means "the
+	// pid's own value", so `set_process_group(0, 0)` is the child's
+	// half of putting itself in a fresh group of its own.
+	//
+	// The name is spelled out rather than `setpgid` because the two
+	// arguments are easy to transpose and the long name makes a call
+	// site readable; the syscall's own name is in this comment for
+	// whoever greps for it.
+	//
+	// A Result, and its failure is ordinary rather than exceptional:
+	// the parent and the child race to make the same call, and whichever
+	// loses gets EACCES once the other has exec'd. Both callers make it
+	// so that neither ordering leaves the child ungrouped, which is the
+	// shape `timeout` uses and the reason the error is worth reading
+	// rather than asserting on.
+	//
+	// Gated on `proc`, with fork / exec / waitpid / signal_send.
+	c.info.FuncSigs["set_process_group"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.NumberType{Width: 32, Signed: true},
+			ast.NumberType{Width: 32, Signed: true},
+		},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// temp_dir(prefix): Result[string, IoError] — create a
+	// fresh empty directory and return a path to it.
+	// `prefix` is appended to a random suffix so concurrent
+	// runs don't clash. Caller invokes `remove_dir_all`
+	// (or registers a cleanup hook on a TestRunner) to scrub
+	// when finished; system tmpfs scrub-on-reboot is the
+	// fallback safety net.
+	//
+	// The returned path is absolute under the temp root on
+	// interp and the natives, and preopen-relative on wasm,
+	// where a component has no absolute filesystem to name.
+	// Treat it as an opaque handle to hand back to `read_file`
+	// / `write_file` / `stat` / `remove_dir_all`, not as a
+	// string of known shape.
+	//
+	// `prefix` is a NAME, not a path: a `/` in it is rejected
+	// with `Other(prefix, "")` on every backend. Build a tree
+	// underneath the result with `create_dir_all` instead.
+	c.info.FuncSigs["temp_dir"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StringType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// read_dir(path): Result[string[], IoError] — list the
+	// non-recursive children of `path`. Entries are base names
+	// (no leading directory), unsorted. Use `std/sort` on the
+	// result if a deterministic order matters.
+	//
+	// Entries come back as `string`, so this inherits the
+	// UTF-8-path assumption std/path's header documents: on Linux
+	// and macOS a directory entry is an arbitrary byte sequence,
+	// and one that is not valid UTF-8 has no faithful `string`
+	// representation. This is the boundary where such a name
+	// enters a program, which is deliberately where the problem
+	// should surface rather than deep in path manipulation.
+	c.info.FuncSigs["read_dir"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.ArrayType{Elem: ast.StringType{}},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// read_dir_all(path): Result[string[], IoError] — read_dir
+	// without the `.` / `..` filter: every name the directory
+	// holds, in the order the kernel hands them back. The two
+	// exist separately because dropping the dot entries is what
+	// nearly every caller wants, while a listing tool needs the
+	// raw order — `ls -f` prints entries in readdir order, and
+	// synthesizing `.` and `..` at the front puts them somewhere
+	// the real directory did not.
+	//
+	// Inherits read_dir's UTF-8-path assumption. On a target
+	// whose directory reader does not report the dot entries at
+	// all (wasm32-wasi preview 2) the result is read_dir's list.
+	c.info.FuncSigs["read_dir_all"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.ArrayType{Elem: ast.StringType{}},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// stat(path): Result[FileStat, IoError] — pull file
+	// metadata. `is_file` / `is_dir` distinguish the kind;
+	// `size` carries byte size for regular files (and the
+	// directory entry size on POSIX for `is_dir == true`,
+	// which is platform-defined but useful as a non-zero
+	// signal that the directory exists). `mode` carries the
+	// full `st_mode` word — S_IFMT type bits and permission
+	// bits — and the rest of the `stat(2)` record follows it.
+	//
+	// WASI reports less than a kernel does, and the missing
+	// fields read ZERO rather than being absent from the type:
+	//
+	//   - preview 1 (`path_filestat_get`) has dev, ino, nlink,
+	//     size and three timestamps. mode, uid, gid, rdev,
+	//     blksize, blocks and the birth time are zero; `mode` therefore cannot
+	//     answer a permission question there, only `is_file` /
+	//     `is_dir`, which come from `filetype`.
+	//   - preview 2 (`descriptor.stat-at`) has nlink, size and the
+	//     timestamps, and nothing else: the 0.2 `descriptor-stat`
+	//     record dropped the device and inode pair preview 1 still
+	//     carries, so `dev` and `ino` are zero there as well. A
+	//     timestamp the host reports as absent (`none`) is zero
+	//     rather than an error.
+	//
+	// A zero `mode` is distinguishable from a real one: no
+	// existing file has an S_IFMT of 0, so `mode & 0o170000 ==
+	// 0` means "this target did not report a mode".
+	c.info.FuncSigs["stat"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StructType{Name: "FileStat"},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// lstat(path): Result[FileStat, IoError] — stat WITHOUT following a
+	// final symlink, the way POSIX lstat and Go's os.Lstat do.
+	//
+	// A symlink therefore reports `is_file == false` and `is_dir == false`,
+	// and so does a socket, a FIFO or a device node: the two flags say
+	// "regular file" and "directory", and under lstat a link is neither.
+	// That is the same three-way answer `fs.DirEntry.Type()` gives a walk,
+	// and it is what `internal/pkg/embed` keys on to decide whether to recurse,
+	// to read, or to skip — the reason this builtin exists (#7982).
+	//
+	// Use `stat` when the question is about the file at the end of the
+	// path, which is nearly always; use this one when the question is
+	// about the path itself.
+	c.info.FuncSigs["lstat"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StructType{Name: "FileStat"},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// access(path, mode): Result[void, IoError] — may the process
+	// perform `mode` on `path`? `mode` is the POSIX bitmask
+	// F_OK=0, X_OK=1, W_OK=2, R_OK=4, and the answer is computed
+	// against the EFFECTIVE user and group ids, not the real ones
+	// — `faccessat(AT_FDCWD, path, mode, AT_EACCESS)`, which is
+	// what `euidaccess(3)` is and what a shell's `test -r` / `-w`
+	// / `-x` is specified to use. `access(2)` itself asks about
+	// the REAL ids and would answer the wrong question for a
+	// set-uid process.
+	//
+	// `Ok(())` means permitted. The errno reaches the caller as
+	// the `IoError`, so a refusal (EACCES) is distinguishable
+	// from a missing path (ENOENT) — `test -r` needs exactly that
+	// distinction and would otherwise conflate them.
+	c.info.FuncSigs["access"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// geteuid() / getegid(): the process's EFFECTIVE user and
+	// group ids. The effective pair is the one every access
+	// decision is made against, which is why these and not
+	// getuid / getgid: a shell's `test -O file` asks whether the
+	// file's owner is the identity the kernel would check, and on
+	// a set-uid binary the real uid is not that identity.
+	//
+	// Neither can fail — POSIX gives them no error return — so
+	// they are plain numbers rather than a Result.
+	c.info.FuncSigs["geteuid"] = &ast.FuncType{
+		Params: nil,
+		Result: ast.NumberType{Width: 32, Signed: false},
+	}
+	c.info.FuncSigs["getegid"] = &ast.FuncType{
+		Params: nil,
+		Result: ast.NumberType{Width: 32, Signed: false},
+	}
+	// getuid() / getgid(): the process's REAL user and group ids —
+	// the identity it was started under, which a set-uid binary
+	// keeps while its effective ids change. Every access decision is
+	// made against the effective pair, so those stay the default;
+	// these answer the separate question `id -r` asks.
+	//
+	// Neither can fail, for the same reason geteuid / getegid cannot.
+	// __getpwuid_name(uid): the account database's name for `uid` as the
+	// address of a NUL-terminated C string, or 0. Only arm64-darwin asks:
+	// there regular accounts live in Directory Services, not /etc/passwd,
+	// and libSystem's getpwuid(3) is the way in (#9815). Every other
+	// target answers 0, which sends the caller to the files.
+	c.info.FuncSigs["__getpwuid_name"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: false}},
+		Result: ast.NumberType{Width: ast.WidthPtr, Signed: false, Spelling: "usize"},
+	}
+	c.info.FuncSigs["getuid"] = &ast.FuncType{
+		Params: nil,
+		Result: ast.NumberType{Width: 32, Signed: false},
+	}
+	c.info.FuncSigs["getgid"] = &ast.FuncType{
+		Params: nil,
+		Result: ast.NumberType{Width: 32, Signed: false},
+	}
+	// getgroups(): i64[] — the process's supplementary group
+	// ids, as getgroups(2) reports them, in the kernel's order.
+	// This is the set the kernel actually checks, which is not
+	// derivable from /etc/group: a process can be in groups no file
+	// names (a container's injected set) and out of ones that do
+	// (a group added since it started).
+	//
+	// The egid is NOT included here — getgroups(2) leaves whether
+	// it appears unspecified on Linux and it does not — so a caller
+	// wanting the full credential asks for both.
+	//
+	// i64 rather than u32: gid_t is 32-bit unsigned, and the widening
+	// keeps every value representable in the array's 8-byte slots
+	// without a gid past 2^31 reading as negative.
+	c.info.FuncSigs["getgroups"] = &ast.FuncType{
+		Params: nil,
+		Result: ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}},
+	}
+	// hostname(): the kernel's node name — what gethostname(2)
+	// answers: uname(2)'s nodename on Linux, kern.hostname on
+	// Darwin. A fresh string each call. Empty where the target
+	// has no host identity (WASI) or the kernel refuses to say.
+	c.info.FuncSigs["hostname"] = &ast.FuncType{
+		Params: nil,
+		Result: ast.StringType{},
+	}
+	// uname_field(i): one field of the utsname record the kernel
+	// fills, by its position in `struct utsname`: 0 sysname,
+	// 1 nodename, 2 release, 3 version, 4 machine. A fresh string
+	// each call, NUL-trimmed within its 65-byte field. Empty when
+	// the kernel refuses or `i` names no field.
+	//
+	// An index rather than five argument-free builtins, and a
+	// string rather than a record: `hostname()` beside it is the
+	// same shape, one field wide, and five copies of it would be
+	// five IR kinds and twenty classifications for one syscall.
+	// Callers name the fields (coreutils/lib/sys.fern).
+	c.info.FuncSigs["uname_field"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.StringType{},
+	}
+	// getcwd(): the absolute path of the process's working
+	// directory, as getcwd(2) reports it. A fresh string each
+	// call. EMPTY when the kernel refuses — the working directory
+	// was unlinked, or an ancestor is unreadable — which a caller
+	// can tell from a success because a real answer always begins
+	// with `/`.
+	c.info.FuncSigs["getcwd"] = &ast.FuncType{
+		Params: nil,
+		Result: ast.StringType{},
+	}
+	// chdir(path): Result[void, IoError] — change the process's
+	// working directory, the counterpart getcwd has always lacked.
+	//
+	// Process state rather than filesystem content, so it shares
+	// getcwd's `cwd` target capability rather than `fs`: WASI
+	// resolves every path against a preopened descriptor and has no
+	// process cwd to move, so E066 refuses it there. Err carries the
+	// errno the move failed with — ENOENT, ENOTDIR, EACCES for a
+	// directory with no search permission.
+	c.info.FuncSigs["chdir"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// chroot(path): Result[void, IoError] — chroot(2). The twin of
+	// `chdir` in signature and in kind: it changes what every later
+	// path resolves against without touching a file, so it is
+	// process state and shares chdir's `cwd` target capability
+	// rather than `fs`. WASI has no process root to move and E066
+	// refuses it there. Err carries the errno, which is EPERM for
+	// any caller without CAP_SYS_CHROOT — the common case, and the
+	// one `chroot: cannot change root directory to 'x'` reports.
+	c.info.FuncSigs["chroot"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// setgroups(gids) / setgid(gid) / setuid(uid): the inverses of
+	// getgroups / getgid / getuid, and the order they are written in
+	// is the order they must be CALLED in — each one drops a
+	// privilege the ones after it need, so setuid last.
+	//
+	// Three builtins rather than one indexed like `uname_field`,
+	// which takes an index precisely to avoid N kinds and 4N
+	// classifications: these are three different syscalls, not three
+	// fields of one record, and the load-bearing ordering is visible
+	// at a call site that names them and invisible at one passing 0,
+	// 1, 2.
+	//
+	// i64 for the same reason getgroups answers in i64: gid_t and
+	// uid_t are 32-bit UNSIGNED, and the widening keeps every value
+	// representable without an id past 2^31 reading as negative.
+	// Out of range is EINVAL from the kernel, not a silent truncation.
+	c.info.FuncSigs["setgroups"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	c.info.FuncSigs["setgid"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	c.info.FuncSigs["setuid"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// cpu_count(): how many processing units this process may run
+	// on — the affinity mask's population count on Linux
+	// (sched_getaffinity(2)), `hw.activecpu` on Darwin. That is
+	// what a scheduler will actually give the process, which is
+	// less than the machine holds under `taskset` or a cpuset.
+	// Zero when the target cannot say, so a caller decides its own
+	// fallback rather than being handed a fabricated 1.
+	c.info.FuncSigs["cpu_count"] = &ast.FuncType{
+		Params: nil,
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// signal_ignore(sig) / signal_default(sig): i32 — set one
+	// signal's disposition to SIG_IGN or back to SIG_DFL. No
+	// handler-installing form: a handler runs as a second context
+	// against non-atomic refcounts (docs/BARE-METAL-PLAN.md), and
+	// the two dispositions are what a utility actually needs —
+	// `tee -i` is `signal(SIGINT, SIG_IGN)` and its
+	// `--output-error` family is the same move on SIGPIPE, which
+	// turns a death into an EPIPE the write can report (#8792).
+	// The signal number is the caller's: `std/signal` names the
+	// two that are portable rather than putting a number here.
+	//
+	// 0 on success, a negative errno on failure — the sigaction
+	// return shape, the same "the syscall's return IS the contract"
+	// convention proc_fork uses. A caller that does not care drops
+	// it. SIGKILL and SIGSTOP are the failure that matters: the
+	// kernel answers EINVAL rather than silently declining, and
+	// `env --ignore-signal=KILL` has to report exactly that errno.
+	c.info.FuncSigs["signal_ignore"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	c.info.FuncSigs["signal_default"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// signal_mask(how, mask): i64 — sigprocmask(2). `mask` is a bit
+	// per signal, bit (sig-1), and `how` says what to do with it:
+	// 0 block, 1 unblock, 2 replace. The result is the mask that was
+	// blocked BEFORE the call, so `signal_mask(0, 0)` reads without
+	// changing anything.
+	//
+	// Fern's own `how` numbering rather than either kernel's: Linux
+	// spells the three 0/1/2 and XNU 1/2/3, so passing the caller's
+	// value straight through would silently mean something else on
+	// one of them.
+	//
+	// A bitmask rather than one call per signal because `env`'s
+	// three signal options each build a whole set and apply it once,
+	// and because that is the shape sigprocmask already has.
+	c.info.FuncSigs["signal_mask"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}, ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
+	// signal_disposition(sig): i32 — the READ side of the two
+	// setters above: 0 if `sig` is at its default, 1 if it is
+	// ignored, 2 if a handler is installed. A negative errno for a
+	// signal number the kernel rejects.
+	//
+	// 2 is reachable even though Fern cannot install a handler: the
+	// disposition is INHERITED across exec, so a Fern program can be
+	// started by something that installed one. Reporting what is
+	// there is the whole point — `env --list-signal-handling` prints
+	// the dispositions the child will inherit.
+	c.info.FuncSigs["signal_disposition"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// remove_file(path): Result[void, IoError] — unlink the file.
+	// `Ok(())` on success, `Err(e)` on failure (mirrors
+	// `write_file`). Removing a non-existent file is an
+	// error — callers that don't care about that distinction
+	// should ignore the return value.
+	c.info.FuncSigs["remove_file"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// create_dir_all(path): Result[void, IoError] — create `path`
+	// and every missing parent (POSIX `mkdir -p`). Named for the
+	// symmetry with `remove_dir_all`: the `_all` suffix is what
+	// says the whole chain is in scope.
+	//
+	// A path that already exists is NOT an error — the EEXIST is
+	// folded into `Ok(())` on every backend, including when the
+	// existing entry is a regular file rather than a directory.
+	// Callers that need "and it is a directory" ask `stat`; the
+	// write that follows reports ENOTDIR on its own.
+	c.info.FuncSigs["create_dir_all"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// create_dir(path, mode): Result[void, IoError] — create ONE
+	// directory, `mkdirat(AT_FDCWD, path, mode)` with nothing folded
+	// away. A missing parent is ENOENT and an existing `path` is
+	// EEXIST, both reaching the caller as the `IoError`.
+	//
+	// This is the primitive `create_dir_all` is NOT: that one walks
+	// the chain and folds every EEXIST into `Ok(())`, which cannot
+	// answer "did I create it" or "is what is there a directory" —
+	// the two questions `mkdir(1)` is entirely about.
+	//
+	// `mode` is the permission word the kernel then masks with the
+	// process umask, exactly as POSIX specifies; a caller that wants
+	// the mode applied verbatim clears the umask around the call
+	// (`umask`). WASI has no mode on `path_create_directory`, so on
+	// that target `mode` is ignored — docs/FREESTANDING-CORE.md.
+	c.info.FuncSigs["create_dir"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// remove_dir(path): Result[void, IoError] — remove ONE empty
+	// directory, `rmdir(2)`. A non-empty directory is ENOTEMPTY, a
+	// regular file ENOTDIR, and a missing one ENOENT: the errno
+	// reaches the caller rather than being folded into success, which
+	// is what separates this from `remove_dir_all`.
+	c.info.FuncSigs["remove_dir"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// create_link(target, path): Result[void, IoError] — a HARD link
+	// at `path` to the existing file `target`, `link(2)`. The final
+	// component of `target` is NOT followed if it is a symlink
+	// (`linkat` with no AT_SYMLINK_FOLLOW), which is what `link(1)`
+	// and `ln(1)` without `-L` do.
+	//
+	// Argument order is the syscall's — existing file first, new name
+	// second — so a reader of the call site reads it as `ln` writes
+	// it.
+	c.info.FuncSigs["create_link"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// create_symlink(target, path): Result[void, IoError] — a
+	// symbolic link at `path` holding the bytes `target`,
+	// `symlink(2)`. `target` is stored verbatim and is never
+	// resolved, so a link to something that does not exist is created
+	// without complaint; only `path` itself has to be creatable.
+	c.info.FuncSigs["create_symlink"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// read_link(path): Result[string, IoError] — the target a
+	// symbolic link holds, `readlink(2)`. `path` is not followed:
+	// this asks about the link itself, the way `lstat` does, and a
+	// path that is not a symlink is EINVAL rather than an empty
+	// answer.
+	//
+	// The target is a byte string the kernel stores verbatim; like
+	// `read_dir`'s entries it inherits std/path's UTF-8-path
+	// assumption, and this is the boundary where a link target that
+	// is not valid UTF-8 enters a program.
+	c.info.FuncSigs["read_link"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StringType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// getxattr(path, name): Result[string, IoError] — the value of the
+	// extended attribute `name` on `path`, `getxattr(2)`. The value is
+	// UTF-8 validated, including NUL: an SELinux context keeps the NUL
+	// the kernel stores after it. Invalid text is InvalidUtf8(path).
+	// An absent attribute is ENODATA
+	// (Darwin's ENOATTR), a filesystem without attributes EOPNOTSUPP,
+	// and the Err carries which. lgetxattr is the same question about
+	// a final symlink itself, the way `lstat` is. Native only: neither
+	// WASI preview has extended attributes (capability `xattr`).
+	c.info.FuncSigs["getxattr"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StringType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	c.info.FuncSigs["lgetxattr"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StringType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// setxattr(path, name, value): Result[void, IoError] — create or
+	// replace the extended attribute `name` on `path` with `value`'s
+	// bytes, `setxattr(2)` with no flags. lsetxattr sets it on a final
+	// symlink itself. The Err carries the kernel's answer verbatim:
+	// EOPNOTSUPP from a filesystem without attributes, EPERM from a
+	// caller who may not write a `security.` one. Native only, like
+	// getxattr (capability `xattr`).
+	for _, name := range []string{"setxattr", "lsetxattr"} {
+		c.info.FuncSigs[name] = &ast.FuncType{
+			Params: []ast.Type{ast.StringType{}, ast.StringType{}, ast.StringType{}},
+			Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+				ast.VoidType{},
+				ast.EnumType{Name: "IoError"},
+			}},
+		}
+	}
+	// Raw siblings preserve arbitrary attribute bytes. The setters borrow
+	// their byte arrays, and the getters return an independently owned array.
+	for _, name := range []string{"getxattr_bytes", "lgetxattr_bytes"} {
+		c.info.FuncSigs[name] = &ast.FuncType{
+			Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+			Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+				ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.EnumType{Name: "IoError"},
+			}},
+		}
+	}
+	for _, name := range []string{"setxattr_bytes", "lsetxattr_bytes"} {
+		c.info.FuncSigs[name] = &ast.FuncType{
+			Params: []ast.Type{ast.StringType{}, ast.StringType{}, ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+			Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+				ast.VoidType{}, ast.EnumType{Name: "IoError"},
+			}},
+		}
+	}
+	// rename(from, to): Result[void, IoError] — move the directory
+	// entry `from` to `to`, `renameat(AT_FDCWD, from, AT_FDCWD, to)`.
+	// Nothing is copied: the inode keeps its mode, its times and every
+	// other link to it, and an existing `to` of a compatible type is
+	// replaced ATOMICALLY, so no window exists in which neither name
+	// resolves.
+	//
+	// A rename across filesystems is EXDEV and stays EXDEV — the
+	// copy-then-remove `mv(1)` falls back to is the caller's, not this
+	// builtin's. Folding it in here would move the bytes where the
+	// caller asked to move the entry, and would make the fallback
+	// unobservable.
+	//
+	// The other errnos a caller has to separate: ENOENT for a missing
+	// `from`, ENOTEMPTY or EEXIST for a non-empty directory at `to`,
+	// ENOTDIR / EISDIR for a type mismatch between the two, and EINVAL
+	// when `to` is under `from`. The `IoError` names `to`, the operand
+	// the failure is about.
+	//
+	// The no-replace and exchange forms are the two builtins below,
+	// not a flag here: WASI has neither, and E066 refuses them there
+	// (capability `fsrename`) while this one stays on `fs`.
+	c.info.FuncSigs["rename"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// rename_noreplace(from, to): Result[void, IoError] — `rename`
+	// that refuses an existing `to` with EEXIST, in the same kernel
+	// call rather than a stat before it: Linux's renameat2 with
+	// RENAME_NOREPLACE, Darwin's renameatx_np with RENAME_EXCL.
+	c.info.FuncSigs["rename_noreplace"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// rename_exchange(a, b): Result[void, IoError] — swap the two
+	// names atomically; both must exist. Linux's renameat2 with
+	// RENAME_EXCHANGE, Darwin's renameatx_np with RENAME_SWAP. A
+	// filesystem without the operation answers EINVAL (Linux) or
+	// ENOTSUP (Darwin), and that is the Err. The IoError names `b`.
+	c.info.FuncSigs["rename_exchange"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// chmod(path, mode): Result[void, IoError] — set the permission
+	// bits of an EXISTING entry, `fchmodat(AT_FDCWD, path, mode, 0)`.
+	// The process umask does not apply: a mask filters a creation, and
+	// this is not one, so `mode` lands verbatim.
+	//
+	// Only the low twelve bits are meaningful — the nine rwx bits plus
+	// setuid, setgid and the sticky bit — and the rest are masked away
+	// here rather than reaching the kernel, which would answer EINVAL.
+	//
+	// A final symlink IS followed, which is what `chmod(1)` does;
+	// `chmod_at` below is the form with the choice.
+	//
+	// `write_file_exec` is the creating sibling — it sets a bit on a
+	// file it is making. This is the only way to change the mode of
+	// something already there. WASI has no permission bits at all, so
+	// E066 refuses this builtin on that target (capability `fsmode`) —
+	// docs/FREESTANDING-CORE.md.
+	c.info.FuncSigs["chmod"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// chmod_at(path, mode, follow): Result[void, IoError] — `chmod` with
+	// the follow choice `chown_at` has. `follow` true is `chmod` exactly:
+	// fchmodat(AT_FDCWD, path, mode & 0o7777). False asks for the LINK's
+	// own bits — fchmodat2(AT_FDCWD, path, mode, AT_SYMLINK_NOFOLLOW) on
+	// Linux, fchmodat with the same flag on Darwin — which is what
+	// `chmod -h`, and every `-R` walk that meets a symlink it was not
+	// told to follow, ask for.
+	//
+	// The two kernels answer that differently and the builtin reports
+	// what it got. Darwin keeps a mode on a symlink, so the link's bits
+	// change. Linux has none: the kernel answers EOPNOTSUPP, and one too
+	// old for fchmodat2 (or qemu) ENOSYS, and either reaches the caller
+	// as the Err naming it rather than a silent Ok — GNU chmod prints
+	// "neither symbolic link … nor referent has been changed" from that
+	// very errno.
+	//
+	// Same capability as `chmod` (`fsmode`): it is the same property
+	// written, with one more way to name the entry.
+	c.info.FuncSigs["chmod_at"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.NumberType{Width: 32, Signed: true}, ast.BoolType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// truncate(path, length): Result[void, IoError] — set the length of
+	// an EXISTING file, `truncate(2)`. Shrinking discards the bytes past
+	// `length`; growing extends with a hole that reads as zeros and
+	// costs no blocks.
+	//
+	// PATH-BASED rather than fd-based, and the reason is measurable
+	// rather than stylistic: `open_writer` is O_WRONLY|O_CREAT|O_TRUNC,
+	// `open_appender` creates too, and `open_exclusive` fails on a file
+	// that exists — so there is no way to obtain a writable descriptor
+	// to an existing file without first destroying its contents. An
+	// `ftruncate` form would therefore be unable to express
+	// `truncate -s +10 file`, which is the utility's commonest shape:
+	// the open would zero the file the caller asked to extend.
+	//
+	// It does NOT create. `truncate(2)` answers ENOENT for a missing
+	// path, which is what `truncate -c` wants verbatim; the creating
+	// form is `open_exclusive` (which does not truncate) followed by
+	// this.
+	//
+	// A negative `length` is EINVAL from the kernel rather than being
+	// clamped here, and a length past the filesystem's maximum is EFBIG.
+	// A final symlink IS followed, and a directory operand is EISDIR.
+	//
+	// WASI has this as `path_filestat_set_size` on preview 1 and
+	// `descriptor.set-size-at`'s file form on preview 2, so it is
+	// provided on all four targets rather than refused.
+	c.info.FuncSigs["truncate"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// mknod(path, mode, major, minor): Result[void, IoError] — create a
+	// FIFO or a device node, `mknodat(AT_FDCWD, path, mode, dev)`.
+	//
+	// One builtin, not two. `mkfifo(3)` is this call with a fixed type,
+	// so shipping a second name for it would be the duplication the
+	// erasure rule exists to prevent: `mkfifo(1)` is `mknod` with
+	// S_IFIFO and a zero device pair.
+	//
+	// `mode` is the FULL st_mode word — the S_IFMT type bits plus the
+	// permission bits — the same word `stat` reports, so a program can
+	// round-trip one entry's mode into a new node:
+	//
+	//	0o010000  S_IFIFO   a named pipe; major and minor unused
+	//	0o020000  S_IFCHR   a character device
+	//	0o060000  S_IFBLK   a block device
+	//
+	// A zero S_IFMT means a regular file, which is `mknodat`'s own
+	// reading of it. S_IFDIR and S_IFSOCK are refused by the kernel
+	// (EPERM / EINVAL) and that errno reaches the caller: a directory is
+	// `create_dir`'s and a socket is `bind`'s.
+	//
+	// Unlike `chmod`, the umask DOES apply: this is a creation, which is
+	// exactly what a mask filters, and it is what `mkfifo(1)` and
+	// `mknod(1)` both do.
+	//
+	// `major` and `minor` are Fern's own pair rather than an encoded
+	// `dev_t`, and each backend packs them into the layout its kernel
+	// wants — Linux's minor is SPLIT around the major, and Darwin's
+	// dev_t is a different shape again, so a program computing the word
+	// itself would be writing a target-specific number. Both are
+	// ignored for a FIFO. Linux's own limits, measured by creating nodes
+	// with mknod(1) and reading `st_rdev` back: major below 4096 and
+	// minor below 1048576, past which the kernel answers EINVAL.
+	//
+	// A character or block node generally needs CAP_MKNOD, so an
+	// unprivileged caller gets EPERM for those and creates a FIFO
+	// freely.
+	//
+	// Neither WASI preview can create a special file of any kind, so
+	// E066 refuses this builtin on that target (capability `fsnode`) —
+	// docs/FREESTANDING-CORE.md.
+	c.info.FuncSigs["mknod"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.NumberType{Width: 32, Signed: true},
+		},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// chown_at(path, uid, gid, follow): Result[void, IoError] — set the
+	// owner and the group of an entry, `fchownat(AT_FDCWD, path, uid,
+	// gid, follow ? 0 : AT_SYMLINK_NOFOLLOW)`.
+	//
+	// A uid or a gid of -1 leaves that half alone, which is the kernel's
+	// own convention and not a Fern one: `chgrp` is this call with the
+	// uid omitted, and `chown :group` is the same thing spelled the
+	// other way. It is why there is one builtin here rather than a
+	// `chown` and a `chgrp`.
+	//
+	// `follow` false is `lchown(2)`: the LINK's ownership changes and
+	// the target's does not. That is what `chown -h` asks for, and what
+	// every `-R` walk needs when it meets a symlink it was not told to
+	// follow. True resolves the final component, which is `chown`'s
+	// default.
+	//
+	// The `at` in the name is the syscall's, not an offer: there is no
+	// directory descriptor to pass one, and the path resolves against
+	// the process's working directory. The shape is `fchownat`'s because
+	// that is the only one of the three that expresses both follow
+	// modes.
+	//
+	// Changing an owner needs CAP_CHOWN — in practice, being root — so
+	// an unprivileged caller gets EPERM for anything but a no-op. The
+	// GROUP may be changed by the file's owner to any group they belong
+	// to, and EPERM otherwise. Both reach the caller as the errno the
+	// kernel gave.
+	//
+	// Neither WASI preview has a file owner at all — preview 1's
+	// `filestat` has no uid or gid field and the component model's
+	// `descriptor-stat` has none either — so E066 refuses this builtin
+	// on that target (capability `fsowner`); docs/FREESTANDING-CORE.md.
+	c.info.FuncSigs["chown_at"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.NumberType{Width: 32, Signed: true},
+			ast.BoolType{},
+		},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// set_file_times(path, atime_sec, atime_nsec, mtime_sec,
+	// mtime_nsec, flags): Result[void, IoError] — write the access and
+	// modification timestamps of an entry, `utimensat(AT_FDCWD, path,
+	// times, flags)`.
+	//
+	// Each timestamp is a whole second count since the Unix epoch plus
+	// a nanosecond remainder in [0, 1e9), which is the shape `stat`
+	// hands them back in: `cp -p` is a `stat` feeding this with no
+	// arithmetic in between. One nanosecond count instead would cap the
+	// range at 1678–2262, and `touch -t 300012312359` is inside GNU's
+	// and outside that.
+	//
+	// `flags` is Fern's own word, translated by each backend into the
+	// kernel's:
+	//
+	//	1  do not follow a final symlink (AT_SYMLINK_NOFOLLOW)
+	//	2  leave the access time as it is (UTIME_OMIT in atime_nsec)
+	//	4  leave the modification time as it is (UTIME_OMIT in mtime_nsec)
+	//	8  set the access time to the kernel's clock (UTIME_NOW in atime_nsec)
+	//	16 set the modification time to the kernel's clock (UTIME_NOW in mtime_nsec)
+	//
+	// The two omit bits are how `touch -a` and `touch -m` write one
+	// timestamp without disturbing the other: reading the other first
+	// and writing it back is a race, and it round-trips a value the
+	// caller never asked to set. A timestamp whose omit bit is set is
+	// not read, so passing 0 for both of its halves is fine.
+	//
+	// The two now bits are not a convenience over reading the clock:
+	// the kernel lets any writer of a file set its times to now, but
+	// only its owner set them to a value, so a plain `touch` that
+	// carried a clock reading would be refused on a file the caller
+	// can write and does not own. A now bit outranks nothing — an omit
+	// bit on the same half still wins, and that half is not read.
+	//
+	// Setting both omit bits does nothing and is not an error — that is
+	// `utimensat`'s own answer.
+	//
+	// An out-of-range `atime_nsec` / `mtime_nsec` is EINVAL from the
+	// kernel rather than being normalised here: a nanosecond field that
+	// silently carried into the seconds would write a time the caller
+	// did not name.
+	//
+	// WASI has this as `path_filestat_set_times`, but its timestamps
+	// are UNSIGNED nanoseconds, so a pre-1970 time is refused there
+	// rather than wrapped — docs/FREESTANDING-CORE.md.
+	c.info.FuncSigs["set_file_times"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+			ast.NumberType{Width: 64, Signed: true},
+			ast.NumberType{Width: 64, Signed: true},
+			ast.NumberType{Width: 64, Signed: true},
+			ast.NumberType{Width: 64, Signed: true},
+			ast.NumberType{Width: 32, Signed: true},
+		},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// umask(mask): the process file-mode creation mask — `umask(2)`,
+	// which SETS the mask and returns the previous one in a single
+	// uninterruptible step. There is no read-only form in POSIX, so
+	// reading it is `umask(umask(0))`: set zero, take the answer, put
+	// it back.
+	//
+	// It cannot fail — POSIX gives it no error return — so it is a
+	// plain number rather than a Result. Only the low twelve bits are
+	// meaningful; the kernel ignores the rest.
+	//
+	// This is process-wide state that every subsequent file and
+	// directory creation reads, so a caller that clears it to apply a
+	// mode verbatim restores it immediately afterwards.
+	c.info.FuncSigs["umask"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// priority(): the calling process's NICE value —
+	// `getpriority(PRIO_PROCESS, 0)`. The name is the syscall's; the
+	// number is the nice value, so it runs the other way round to what
+	// "priority" suggests: -20 is the most favourable to the process
+	// and 19 the least, 0 the default.
+	//
+	// It cannot fail for the caller's own process — PRIO_PROCESS is a
+	// valid `which` and pid 0 is always a process that exists — so it
+	// is a plain number rather than a Result. That matters because -1
+	// is a legal nice value as well as getpriority's error return, and
+	// a caller cannot tell them apart without errno.
+	//
+	// Gated on `sched`, not `proc`: a host can schedule processes
+	// without exposing a knob for how, which is the same argument
+	// `rlimit_nofile` gets its own capability by.
+	c.info.FuncSigs["priority"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// set_priority(nice): Result[void, IoError] —
+	// `setpriority(PRIO_PROCESS, 0, nice)`, the write of the value
+	// `priority` reads.
+	//
+	// A Result because this one really does fail, and the failure is
+	// the point rather than an edge: LOWERING the nice value needs
+	// privilege, so an unprivileged caller asking for -5 gets EACCES
+	// and has to carry on at the value it already had. That is exactly
+	// what `nice` prints as `cannot set niceness: Permission denied`
+	// before running the command anyway.
+	//
+	// The kernel clamps the value it stores to its own range rather
+	// than refusing one outside it, so a caller that needs GNU's
+	// -20..19 saturation must do its own clamping to see the same
+	// number back from `priority`.
+	c.info.FuncSigs["set_priority"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// remove_dir_all(path): Result[void, IoError] — recursively
+	// remove `path` (mirrors POSIX `rm -rf`). Used by tests
+	// to scrub `temp_dir` output. Same return shape as
+	// `remove_file` / `write_file`. Removing
+	// a non-existent directory is silently ignored — matches
+	// Go's `os.RemoveAll` semantics.
+	c.info.FuncSigs["remove_dir_all"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// subprocess(cmd, args, stdin): ProcessResult — spawn `cmd`
+	// with `args` (NOT including argv[0]), feed `stdin` to its
+	// standard input, capture stdout + stderr into the
+	// returned struct, and surface its exit code. Always
+	// returns a ProcessResult so the test-runner migration
+	// can write straight-line "expected exit / stdout" diffs;
+	// spawn failures surface as `exit_code = 127` with the
+	// OS error message in `stderr` (POSIX convention). The
+	// interp owns the only implementation today; native /
+	// wasm backends would surface their own "subprocess not
+	// supported on this target" error from codegen.
+	//
+	// Named `subprocess` rather than the obvious `exec` to
+	// stay clear of `compiler/vm.fern`'s long-
+	// standing `pub function exec(ops: Op[]): Value` and any
+	// user code that wraps an interpreter.
+	procResult := ast.StructType{Name: "ProcessResult"}
+	c.info.FuncSigs["subprocess"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.StringType{},
+			ast.ArrayType{Elem: ast.StringType{}},
+			ast.StringType{},
+		},
+		Result: procResult,
+	}
+	// stdin / stdout / stderr return Reader / Writer values
+	// wrapping the standard fds (0 / 1 / 2). They never fail
+	// — fd 0/1/2 are always present in a POSIX / WASI program
+	// — so the return is bare Reader / Writer rather than
+	// Result. Calling them is conceptually free: the runtime
+	// just allocates a 4-byte struct with the right fd.
+	c.info.FuncSigs["stdin"] = &ast.FuncType{Params: []ast.Type{}, Result: readerType}
+	c.info.FuncSigs["stdout"] = &ast.FuncType{Params: []ast.Type{}, Result: writerType}
+	c.info.FuncSigs["stderr"] = &ast.FuncType{Params: []ast.Type{}, Result: writerType}
+	// isatty(fd): boolean — is the file descriptor a terminal? The
+	// primary signal a CLI needs to decide whether to emit ANSI escapes;
+	// `std/cli`'s colour gate consults it before the NO_COLOR / TERM
+	// conventions. False on a target with no terminal to be attached to
+	// (see docs/FREESTANDING-CORE.md), which is the safe direction: no
+	// terminal means plain text.
+	c.info.FuncSigs["isatty"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.BoolType{},
+	}
+	// window_size(fd): Result[WinSize, IoError] — how many rows and
+	// columns the terminal on the other end of `fd` has,
+	// `ioctl(fd, TIOCGWINSZ, &ws)`. What `ls -C` lays its columns out
+	// against and what `stty size` prints.
+	//
+	// A Result rather than a pair of zeroes, because "this descriptor
+	// is not a terminal" is ENOTTY and a caller has to tell it from a
+	// terminal that answered: `ls` falls back to COLUMNS and then to
+	// 80 exactly when the question has no answer, and a 0x0 would send
+	// it down the one-per-line path instead.
+	//
+	// The size is the kernel's record of what the terminal last told
+	// it, so it is a fact about the descriptor and not about the
+	// process — which is why `fd` is the argument rather than an
+	// implied stdout. A descriptor that is a terminal always answers;
+	// a resize between the call and the write is the caller's race,
+	// the same one every terminal program has.
+	//
+	// Gated on `tty`, which no wasm profile grants. `isatty` stays
+	// ungated because a target with no terminal can answer it — "no" is
+	// the truth there — but there is no equivalent truthful answer to
+	// how wide a terminal that does not exist is. E066 refuses it
+	// instead (docs/FREESTANDING-CORE.md).
+	c.info.FuncSigs["window_size"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StructType{Name: "WinSize"},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// set_window_size(fd, rows, cols): Result[void, IoError] — the other
+	// half of window_size, `ioctl(fd, TIOCSWINSZ, &ws)`. `stty rows N`
+	// and `stty cols N` are the callers (#9360).
+	//
+	// A read-modify-write inside the runtime, because `struct winsize`
+	// carries a pixel pair beside the two cell counts and the kernel
+	// keeps whatever is written there. GNU preserves it, and a caller
+	// given only rows and columns could not put back what `window_size`
+	// never handed it.
+	//
+	// Both numbers reach the kernel's u16 as given: 65536 rows lands as
+	// 0 rather than an error, which is what GNU is silent about too.
+	//
+	// Gated on `tty` beside window_size and the termios pair.
+	c.info.FuncSigs["set_window_size"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.NumberType{}, ast.NumberType{}, ast.NumberType{},
+		},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{}, ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// termios_get(fd): Result[i64[], IoError] — the terminal's line
+	// settings, as the KERNEL's own words, and termios_set puts them
+	// back. What `stty` is (#8382).
+	//
+	// A flat array rather than a record, and the kernel's numbering
+	// rather than Fern's, because `stty -g` PRINTS these words in hex
+	// and its restore form reads them back:
+	//
+	//	500:5:bf:8a3b:3:1c:7f:15:4:0:1:0:11:13:1a:0:12:f:17:16:0:…
+	//
+	// so a normalised bit set — the shape `r.flags()` takes, where the
+	// caller only asks yes-or-no questions — could not reproduce the
+	// output. The flag CONSTANTS are therefore the target's, and a
+	// caller that names one branches on `target_os()`, exactly as GNU's
+	// stty gets them from the C headers.
+	//
+	// The layout, one Fern-visible shape whose LENGTH is the target's:
+	//
+	//	[0] c_iflag   [1] c_oflag   [2] c_cflag   [3] c_lflag
+	//	[4] c_line — the line discipline, 0 on a target with no such
+	//	    field (Darwin has none, and `stty -g` prints none either)
+	//	[5…] c_cc, the control characters — 19 on Linux, where the
+	//	    kernel's NCCS is 19 and glibc's wider struct is what makes
+	//	    GNU print 32 with the top 13 always zero
+	//
+	// i64 elements because Darwin's tcflag_t is an unsigned long where
+	// Linux's is 32 bits, so one element width carries both.
+	//
+	// `when` is Fern's own, and it is normalised because nothing prints
+	// it: 0 applies the change at once, 1 after the output drains, 2
+	// after draining and discarding pending input — tcsetattr's NOW /
+	// DRAIN / FLUSH, which reach the kernel as TCSETS / TCSETSW /
+	// TCSETSF. `stty` uses DRAIN.
+	//
+	// An array whose length is not the one `termios_get` answers on
+	// this target is EINVAL rather than a short read: the runtime has
+	// a fixed-size struct to fill and no way to guess the rest.
+	//
+	// A descriptor that is not a terminal answers ENOTTY, which is the
+	// whole of `stty: 'standard input': Inappropriate ioctl for
+	// device`. Gated on `tty` beside `window_size`, so E066 refuses it
+	// on both wasm worlds: there is no truthful answer to what the
+	// settings of a terminal that cannot exist are, which is the same
+	// reason a width has none there (docs/FREESTANDING-CORE.md).
+	c.info.FuncSigs["termios_get"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	c.info.FuncSigs["termios_set"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.NumberType{},
+			ast.NumberType{},
+			ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}},
+		},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{}, ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// target_os(): string — the compile target's environment ("linux",
+	// "darwin", "android", "wasi", "wasi-http", "freestanding"), never
+	// the compiler's host. A compile folds it to a string literal before
+	// the check (internal/check/constfold), so the signature is what a bare
+	// `-check` and the interpreter see; the interpreter answers with its
+	// host, which under `-interp` is the target.
+	c.info.FuncSigs["target_os"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.StringType{},
+	}
+	// target_arch(): string — the compile target's ISA ("arm64",
+	// "x86-64", "wasm32"), the other half of the `-target` name and
+	// never the compiler's host. Folded, declared and answered on the
+	// same three paths as target_os above.
+	c.info.FuncSigs["target_arch"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.StringType{},
+	}
+	// Auto-injected methods on Reader / Writer. The names are
+	// the mangled forms the existing method-call rewrite uses
+	// (`r.read_line()` → `__method_Reader_read_line(r)`); we
+	// pre-populate Methods + FuncSigs so the rewrite finds them
+	// and so codegen can resolve the call to a runtime helper
+	// emitted at the same name.
+	registerStructMethod := func(structName, methodName string, params []ast.Type, result ast.Type) {
+		mangled := "__method_" + structName + "_" + methodName
+		c.info.Methods[structName+"."+methodName] = mangled
+		// First param is the receiver (the auto-injected struct).
+		fullParams := append([]ast.Type{ast.StructType{Name: structName}}, params...)
+		c.info.FuncSigs[mangled] = &ast.FuncType{Params: fullParams, Result: result}
+	}
+	optionString := ast.EnumType{Name: "Option", Args: []ast.Type{ast.StringType{}}}
+	registerStructMethod("Reader", "read_line", nil, optionString)
+	// read_chunk validates one physical read as UTF-8, returning InvalidUtf8
+	// for malformed or incomplete scalars. It consumes the bytes even on
+	// rejection. Buffered text uses LineReader; raw input uses the byte method.
+	// Empty text means EOF (or a zero-size request); I/O failures are errors.
+	registerStructMethod("Reader", "read_chunk", []ast.Type{ast.NumberType{}},
+		ast.EnumType{Name: "Result", Args: []ast.Type{ast.StringType{}, ioErrType}})
+	// Raw reads preserve every byte, including partial UTF-8 sequences.
+	registerStructMethod("Reader", "read_chunk_bytes", []ast.Type{ast.NumberType{}},
+		ast.EnumType{Name: "Result", Args: []ast.Type{u8s, ioErrType}})
+	registerStructMethod("Reader", "close", nil, optionIoErr)
+	// stat asks fstat(2) of the handle itself — the same record `stat(path)`
+	// fills, for a stream the program did not open by name (stdin, stdout,
+	// an inherited descriptor). A method rather than an `fstat(fd)` free
+	// function because a handle is not a number everywhere: on wasi
+	// preview 2 a Reader is an input-stream plus the descriptor it was
+	// opened on, and only the descriptor can answer. A stdio handle there
+	// has no descriptor and answers the all-zero record a preview-1 host
+	// reports for the same stream (#8713, #9070).
+	fileStatResult := ast.EnumType{Name: "Result", Args: []ast.Type{
+		ast.StructType{Name: "FileStat"}, ioErrType}}
+	registerStructMethod("Reader", "stat", nil, fileStatResult)
+	registerStructMethod("Writer", "stat", nil, fileStatResult)
+	// seek(offset, whence) is lseek(2): whence 0 / 1 / 2 for SEEK_SET /
+	// SEEK_CUR / SEEK_END, the new offset back. A pipe answers ESPIPE
+	// (`Other("Illegal seek")`), which is how a utility learns it must
+	// stream rather than jump to the end. On a Writer opened for append
+	// the offset moves as lseek's does and the writes keep landing at
+	// the end, O_APPEND's rule on every target.
+	//
+	// Those three are the whole domain, and anything else is EINVAL on
+	// every target. A Linux kernel takes two more — 3 and 4 are
+	// SEEK_DATA and SEEK_HOLE — which the natives pass through and
+	// neither WASI preview can answer, so a program that wants a hole
+	// is target-specific and has to say so.
+	seekResult := ast.EnumType{Name: "Result", Args: []ast.Type{
+		ast.NumberType{Width: 64, Signed: true}, ioErrType}}
+	registerStructMethod("Reader", "seek",
+		[]ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{}}, seekResult)
+	registerStructMethod("Writer", "seek",
+		[]ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{}}, seekResult)
+	// splice_to(w, max) moves up to `max` bytes from this handle to `w`
+	// inside the kernel, splice(2) on Linux, and answers how many; 0 is
+	// the end of the input. Two handles neither of which is a pipe go
+	// through a pipe the runtime keeps for the purpose, sized to `max`, and
+	// a writer that is a pipe is grown to hold `max`, as GNU cat grows
+	// stdout's.
+	//
+	// `Unsupported` means nothing moved: the target has no splice, the
+	// pair cannot be spliced, or taking from this handle failed. The
+	// caller falls back to read_chunk and write, which then meet any real
+	// failure on the side it belongs to. Any other error is a failure
+	// writing `w` after bytes were taken, the one case a fallback cannot
+	// repair.
+	registerStructMethod("Reader", "splice_to",
+		[]ast.Type{writerType, ast.NumberType{}}, seekResult)
+	// flags() is fcntl(fd, F_GETFL) reduced to what every target can
+	// answer, as a word of Fern's own — the query side of the flags word
+	// `open_reader_with` / `open_writer_with` take:
+	//
+	//	1  the handle may be read
+	//	2  the handle may be written
+	//	4  writes land at the END of the file whatever the offset says
+	//
+	// Three bits and no more, because a fourth would have to be invented
+	// somewhere. O_NONBLOCK is the one a caller asks for next and it is
+	// the one preview 2 has no spelling for at all: its `get-flags`
+	// reports read / write / the three sync bits and nothing else, so a
+	// cleared bit there would be a claim nobody measured — the answer
+	// `geteuid` is refused for (docs/FREESTANDING-CORE.md). Append IS
+	// answerable on all three: F_GETFL on the natives, `fdstat`'s
+	// fs_flags on preview 1, and on preview 2 the Writer box's own
+	// append flag, which is where the fact lives there (a descriptor has
+	// no append bit; the STREAM was opened append-via-stream).
+	//
+	// What it exists for: a program handed a descriptor it did not open
+	// cannot otherwise tell an append-only stdout from a writable one,
+	// and the two want opposite handling — `shred -` overwrites the
+	// first and must refuse the second (#9219).
+	// The word is 64 bits wide for the same reason `seek`'s offset is:
+	// that is the payload shape every backend's Result box already
+	// carries for these handle methods (a 16-byte box, payload at +8).
+	// Three bits do not need it, and an i32 payload is a DIFFERENT box
+	// layout (8 bytes, payload at +4) that nothing else in this family
+	// emits — one hand-written helper per backend is not the place to
+	// introduce a second one.
+	flagsResult := ast.EnumType{Name: "Result", Args: []ast.Type{
+		ast.NumberType{Width: 64, Signed: true}, ioErrType}}
+	registerStructMethod("Reader", "flags", nil, flagsResult)
+	registerStructMethod("Writer", "flags", nil, flagsResult)
+	// isatty() is the free `isatty(fd)` asked of a handle instead of a
+	// descriptor number, and it exists because a handle surrenders no
+	// number: a program that opened a name can otherwise only ask the
+	// question of fds 0, 1 and 2.
+	//
+	// Boolean rather than a Result, exactly as the free form is: the
+	// question has no third answer, and "this is not a terminal" is the
+	// truthful reply on a target with no terminals at all, which is why
+	// neither form is gated (docs/FREESTANDING-CORE.md). A closed
+	// handle is not a terminal either.
+	//
+	// GNU `shred` is what wanted it — it refuses a terminal operand
+	// before writing, and the check has to happen on the handle it
+	// opened rather than on a name it could stat (#9229).
+	registerStructMethod("Reader", "isatty", nil, ast.BoolType{})
+	registerStructMethod("Writer", "isatty", nil, ast.BoolType{})
+	// dup_onto(fd) installs this handle at descriptor `fd` as well —
+	// dup3(own_fd, fd, 0). The destination is a number for the reason
+	// `isatty`'s argument is: 0, 1 and 2 are the only ones worth naming.
+	//
+	// The handle KEEPS its own descriptor, so a caller replacing one of
+	// the standard three closes the handle afterwards, which is the pair
+	// GNU `nohup` makes. The one trap: when the handle's own descriptor
+	// already IS `fd`, dup3 is a no-op and that close would close the
+	// destination. A caller replacing an inherited descriptor is safe by
+	// construction — an open cannot return a number that is still in use
+	// — but one that closed fd 1 first is not.
+	//
+	// The handle's direction and the destination's number are
+	// independent, which is the point: `nohup` puts /dev/null opened
+	// WRITE-ONLY on fd 0, so the command can neither read the terminal
+	// nor read the replacement.
+	//
+	// Neither WASI preview can do it, so it answers `Unsupported` there,
+	// the shape `syncfs` uses. Preview 1's `fd_renumber` looks like the
+	// lowering and is not: it closes the source, which leaves the handle
+	// dangling — a move rather than a duplicate.
+	registerStructMethod("Reader", "dup_onto",
+		[]ast.Type{ast.NumberType{}}, optionIoErr)
+	registerStructMethod("Writer", "dup_onto",
+		[]ast.Type{ast.NumberType{}}, optionIoErr)
+	// The four terminal questions asked of a handle instead of a
+	// descriptor number, for `isatty`'s reason: `stty -F DEVICE` opens a
+	// path and a Reader surrenders no number, so without these the
+	// utility could configure fds 0, 1 and 2 and nothing else (#9363).
+	//
+	// Reader only, and not for symmetry's sake: `stty` opens the device
+	// read-only and non-blocking — measured, `stty -F` on a FIFO with no
+	// writer answers at once rather than waiting for a peer — and a
+	// terminal's settings are a property of the DEVICE rather than of
+	// the direction a handle faces, so one side can ask all of it.
+	// `flags` and `isatty` are on both sides because callers appeared
+	// for both; when one appears here the Writer half is one more PR.
+	//
+	// Each carries an IoError, so the wasm refusal has somewhere to go
+	// and arrives as `Unsupported` at the call — `syncfs`'s shape, and
+	// the only one available: the `tty` capability that refuses the FREE
+	// forms at compile time cannot see a method at all, because the call
+	// reaches `internal/pkg/platforms` already rewritten to
+	// `__method_Reader_termios_get(r)` and the scan skips `__` names.
+	voidIoErr := ast.EnumType{Name: "Result", Args: []ast.Type{
+		ast.VoidType{}, ioErrType}}
+	registerStructMethod("Reader", "window_size", nil,
+		ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StructType{Name: "WinSize"}, ioErrType}})
+	registerStructMethod("Reader", "set_window_size",
+		[]ast.Type{ast.NumberType{}, ast.NumberType{}}, voidIoErr)
+	registerStructMethod("Reader", "termios_get", nil,
+		ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}}, ioErrType}})
+	registerStructMethod("Reader", "termios_set",
+		[]ast.Type{ast.NumberType{},
+			ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}}}, voidIoErr)
+	registerStructMethod("Writer", "write", []ast.Type{ast.StringType{}}, optionIoErr)
+	// write_some(s) is ONE write(2) and the count it returned: the write
+	// may land in full, in part, or not at all, and the caller loops.
+	// `write` above is the same syscall with the loop inside it, which
+	// is what almost every caller wants — and what makes the count
+	// unobservable, since a failure there discards how much of it
+	// landed.
+	//
+	// That count is output. GNU `shred` names the offset a failing write
+	// stopped at (`error writing at offset 262144: No space left on
+	// device`), and for ENOSPC the failure lands INSIDE a block, so no
+	// caller counting whole blocks can reconstruct it (#9231). `dd` is
+	// the other: its record counts are about what each call moved.
+	//
+	// The count is the number of BYTES written, never negative and never
+	// more than the string's length. Zero is a real answer rather than
+	// an error — a pipe with no room and a device at its end both give
+	// it — so a caller that loops on it must make progress some other
+	// way or it spins.
+	writeSomeResult := ast.EnumType{Name: "Result", Args: []ast.Type{
+		ast.NumberType{Width: 64, Signed: true}, ioErrType}}
+	registerStructMethod("Writer", "write_some", []ast.Type{ast.StringType{}}, writeSomeResult)
+	bytes := ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}}
+	registerStructMethod("Writer", "write_bytes", []ast.Type{bytes}, optionIoErr)
+	registerStructMethod("Writer", "write_some_bytes", []ast.Type{bytes}, writeSomeResult)
+	registerStructMethod("Writer", "close", nil, optionIoErr)
+	// truncate(len) is ftruncate(2) on the handle: the file's length is set
+	// to `len`, growing with a hole that reads as zeros or discarding the
+	// bytes past it.
+	//
+	// The path-based `truncate` builtin is NOT the same operation, and
+	// which one a caller wants is a question about permission rather than
+	// about style. `truncate(2)` resolves the name again and checks write
+	// permission again; this one's check happened at the open. A file
+	// created under `umask 222` is mode 0444, so `truncate -s 5 new` is
+	// EACCES by name to an unprivileged caller and succeeds through the
+	// descriptor — which is what GNU `truncate` does, and it is why this
+	// exists. Resizing through the handle also closes the window between
+	// an `fstat` and a resize computed from it.
+	//
+	// On `Writer` and not on `Reader`: ftruncate(2) requires the
+	// descriptor to be open for writing, so a read handle answers EINVAL
+	// and there is nothing to offer there.
+	//
+	// A negative `len` is EINVAL from the kernel rather than being clamped
+	// here, and a length past the filesystem's maximum is EFBIG. A
+	// descriptor that is not a regular file — a pipe, a terminal — is
+	// EINVAL.
+	//
+	// WASI has this as `fd_filestat_set_size` on preview 1 and
+	// `descriptor.set-size` on preview 2, so it is provided on all four
+	// targets rather than refused.
+	registerStructMethod("Writer", "truncate",
+		[]ast.Type{ast.NumberType{Width: 64, Signed: true}}, optionIoErr)
+	// Write-back of a handle's own data, on the handle rather than on a
+	// path, for the same reason `stat` is: the descriptor is the thing
+	// being flushed, and on wasi preview 2 it is not a number the
+	// caller could pass.
+	//
+	// A path-based form was measured against `sync(1)` and cannot
+	// express it. GNU reports the open and the flush with two different
+	// words — `sync: error opening 'f': ...` against `sync: error
+	// syncing 'f': Invalid argument`, which is what `fsync` on a FIFO
+	// answers on Linux — so a builtin that opened AND flushed would
+	// have one error where the utility needs two, and no accurate way to
+	// tell which stage failed.
+	//
+	// On both Reader and Writer because a descriptor is a descriptor:
+	// `sync(1)` flushes files it opened read-only, and a program that
+	// has just written wants the same call on the handle it wrote
+	// through.
+	//
+	// fsync flushes data AND metadata; fdatasync omits metadata not
+	// needed to read the data back, which is a real saving on a file
+	// whose size did not change. Both are `Err(Other(…, "Invalid
+	// argument"))` on a handle whose kind cannot be flushed — a pipe,
+	// a FIFO, a character device — rather than silently succeeding.
+	registerStructMethod("Reader", "fsync", nil, optionIoErr)
+	registerStructMethod("Writer", "fsync", nil, optionIoErr)
+	registerStructMethod("Reader", "fdatasync", nil, optionIoErr)
+	registerStructMethod("Writer", "fdatasync", nil, optionIoErr)
+	// syncfs flushes the whole filesystem the handle lives on, not the
+	// handle's own file. Neither WASI preview has it — preview 1's
+	// `fd_sync` is per-descriptor and a preopen is a capability handle
+	// rather than a mount — so it answers `Err(Unsupported)` there.
+	registerStructMethod("Reader", "syncfs", nil, optionIoErr)
+	registerStructMethod("Writer", "syncfs", nil, optionIoErr)
+	// drop_cache(offset, len) asks the kernel to drop the cached pages of
+	// that range of the handle's file: posix_fadvise(2) with
+	// POSIX_FADV_DONTNEED, len 0 meaning to the end. XNU has no fadvise, so
+	// arm64-darwin answers `Err(Unsupported)`; WASI's fd_advise /
+	// descriptor.advise carry the same advice and answer what the host does.
+	dropCacheArgs := []ast.Type{ast.NumberType{Width: 64, Signed: true}, ast.NumberType{Width: 64, Signed: true}}
+	registerStructMethod("Reader", "drop_cache", dropCacheArgs, optionIoErr)
+	registerStructMethod("Writer", "drop_cache", dropCacheArgs, optionIoErr)
+	// sync(): void — `sync(2)`, which schedules write-back of every
+	// dirty buffer on the machine. It returns nothing and cannot fail
+	// on either Linux or Darwin, so there is no Result to unwrap.
+	//
+	// Whole-machine rather than per-handle, which is why it is a free
+	// builtin and not a method, and why it is gated by a target
+	// capability of its own: no wasm profile has anything to flush a
+	// whole machine with, and E066 refuses it there rather than
+	// answering with a no-op nobody asked for.
+	c.info.FuncSigs["sync"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.VoidType{},
+	}
+
+	// Map[K, V] — generic IndexMap-shaped associative
+	// container per PR 4 of docs/LANGUAGE-DIRECTION.md. The
+	// runtime stores a `keyKind` tag in the buffer header
+	// alongside cap / len so the linear-search core can
+	// dispatch i32.eq vs strcmp for the comparison without
+	// per-instantiation monomorphisation.
+	keyParam := ast.ParamType{Name: "K"}
+	valueParam := ast.ParamType{Name: "V"}
+	mapKV := ast.StructType{Name: "Map", Args: []ast.Type{keyParam, valueParam}}
+	optionV := ast.EnumType{Name: "Option", Args: []ast.Type{valueParam}}
+	// `map_new(cap)` returns a Map with no Args — the call
+	// site's destination type (e.g. `let m: Map[i32, string]
+	// = map_new(8)`) drives K and V via assignable's "empty-
+	// Args generic" relaxation. The IR lowering reads
+	// `n.TypeArgs` (stamped by the Var case from the
+	// destination's Args) to inject the runtime keyKind tag.
+	c.info.FuncSigs["map_new"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.StructType{Name: "Map"},
+	}
+	registerMapMethod := func(methodName string, params []ast.Type, result ast.Type) {
+		mangled := "__method_Map_" + methodName
+		c.info.Methods["Map."+methodName] = mangled
+		fullParams := append([]ast.Type{mapKV}, params...)
+		c.info.FuncSigs[mangled] = &ast.FuncType{Params: fullParams, Result: result}
+	}
+	registerMapMethod("len", nil, ast.NumberType{})
+	registerMapMethod("has", []ast.Type{keyParam}, ast.BoolType{})
+	registerMapMethod("get", []ast.Type{keyParam}, optionV)
+	registerMapMethod("set", []ast.Type{keyParam, valueParam}, mapKV)
+	registerMapMethod("keys", nil, ast.ArrayType{Elem: keyParam})
+	registerMapMethod("values", nil, ast.ArrayType{Elem: valueParam})
+	deleteResult := ast.TupleType{Elems: []ast.Type{mapKV, ast.BoolType{}}}
+	registerMapMethod("delete", []ast.Type{keyParam}, deleteResult)
+	registerMapMethod("clear", nil, mapKV)
+	registerMapMethod("get_or", []ast.Type{keyParam, valueParam}, valueParam)
+	mapIterKV := ast.StructType{Name: "MapIter", Args: []ast.Type{keyParam, valueParam}}
+	registerMapMethod("iter", nil, mapIterKV)
+	// Value-returning aliases (docs/PURE-COLLECTION-API-PLAN.md §3a) —
+	// the immutable-looking vocabulary the pure-collection-API work is
+	// migrating onto. Each alias resolves to the SAME mangled lowering
+	// as its mutable-looking sibling, so dispatch (checker.go:6392,
+	// rewriting the call to the mangled ident) and the IR keyed on that
+	// name are reused wholesale — purely additive, zero IR change, no
+	// breakage. The mutable-looking names are registered above and then
+	// deleted below, so only these aliases resolve.
+	c.info.Methods["Map.insert"] = "__method_Map_set"     // m.insert(k, v) — value-returning set
+	c.info.Methods["Map.without"] = "__method_Map_delete" // m.without(k) — value-returning delete
+	c.info.Methods["Map.cleared"] = "__method_Map_clear"  // m.cleared() — value-returning clear
+
+	// `arr.push(v)` is the one Array method that DOESN'T have a
+	// stdlib function declaration — the IR intercepts the
+	// rewritten `__method_Array_push(arr, v)` call and emits the
+	// alloc + memcpy + width-correct tail store inline (see
+	// `emitArrayPush` in `internal/oracle/ir/ir.go`). One codepath covers
+	// every stride class — no per-stride mangled names, no
+	// per-stride stdlib functions. Because there's no source-
+	// level decl, the auto-discovery loop below can't see push:
+	// we register it manually here along with its generic
+	// signature so dispatch + type-checking work.
+	arrayElemParam := ast.ParamType{Name: "T"}
+	c.info.Methods["Array.push"] = "__method_Array_push"
+	c.info.FuncSigs["__method_Array_push"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.ArrayType{Elem: arrayElemParam},
+			arrayElemParam,
+		},
+		Result: ast.ArrayType{Elem: arrayElemParam},
+	}
+	c.intrinsicSigs = map[*ast.FuncType]IntrinsicKind{
+		c.info.FuncSigs["__method_Array_push"]: IntrinsicArrayAppend,
+	}
+	// `arr.set(i, v)` — Phase 2b's value-returning sister to
+	// `arr[i] = v`. The IR intercepts the rewritten
+	// `__method_Array_set(arr, i, v)` call and emits the
+	// `__fern_arr_cow_inplace` shape inline (see emitArraySet).
+	// Useful when callers want explicit value semantics in
+	// shapes the `arr[i] = v` desugar doesn't yet cover
+	// (parameter targets, slice writes, expression-position
+	// chaining like `m = m.set(k, v).set(k2, v2)`).
+	c.info.Methods["Array.set"] = "__method_Array_set"
+	c.info.FuncSigs["__method_Array_set"] = &ast.FuncType{
+		Params: []ast.Type{
+			ast.ArrayType{Elem: arrayElemParam},
+			ast.NumberType{},
+			arrayElemParam,
+		},
+		Result: ast.ArrayType{Elem: arrayElemParam},
+	}
+	// Value-returning aliases (docs/PURE-COLLECTION-API-PLAN.md §3a),
+	// resolving to the same mangled lowerings as `push` / `set`. See
+	// the Map alias note above — purely additive, no IR change.
+	c.info.Methods["Array.append"] = "__method_Array_push" // arr.append(x) — value-returning push
+	c.info.Methods["Array.with"] = "__method_Array_set"    // arr.with(i, v) — value-returning element set
+	// Remove the mutable-looking spellings (docs/PURE-COLLECTION-API-PLAN.md
+	// §3a, "hard removal" step). The value-returning aliases above
+	// (insert / without / cleared / with) are now the ONLY public names;
+	// the mangled lowerings (__method_Map_set / _delete / _clear /
+	// __method_Array_set) stay — the aliases resolve to them — so this
+	// only deletes the user-facing names, with zero IR change. `arr[i] = v`
+	// still lowers through __method_Array_set via the desugar; only the
+	// `arr.set(i, v)` *method* spelling is withdrawn (use `arr.with`);
+	// `arr.push(x)` is withdrawn (use `arr.append`).
+	delete(c.info.Methods, "Map.set")
+	delete(c.info.Methods, "Map.delete")
+	delete(c.info.Methods, "Map.clear")
+	delete(c.info.Methods, "Array.set")
+	delete(c.info.Methods, "Array.push")
+	// `arr.len()` — like push, the IR intercepts the rewritten
+	// `__method_Array_len(arr)` call and inlines the [ptr - 4]
+	// length-prefix load. One generic signature covers every
+	// element type.
+	c.info.Methods["Array.len"] = "__method_Array_len"
+	c.info.FuncSigs["__method_Array_len"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: arrayElemParam}},
+		Result: ast.NumberType{},
+	}
+	// `sl.len()` — slice length. The IR inlines a load of the
+	// 4-byte length field at `slice + 4` (after the data
+	// pointer). Generic over element type like Array.len.
+	sliceElemParam := ast.ParamType{Name: "T"}
+	c.info.Methods["slice.len"] = "__method_slice_len"
+	c.info.FuncSigs["__method_slice_len"] = &ast.FuncType{
+		Params: []ast.Type{ast.SliceType{Elem: sliceElemParam}},
+		Result: ast.NumberType{},
+	}
+
+	// Cell[T] — single-slot mutable box (docs/CELL-TYPE-PLAN.md).
+	// `cell_new(v)` returns a Cell with no Args (like map_new, the
+	// destination type drives T); `get` reads the slot, `set` writes
+	// it in place and returns void (so `c.set(v);` is a normal
+	// statement, not an E055 discard). All three are IR-intercepted.
+	cellParam := ast.ParamType{Name: "T"}
+	cellT := ast.StructType{Name: "Cell", Args: []ast.Type{cellParam}}
+	c.info.FuncSigs["cell_new"] = &ast.FuncType{
+		Params: []ast.Type{cellParam},
+		Result: ast.StructType{Name: "Cell"},
+	}
+	c.info.Methods["Cell.get"] = "__method_Cell_get"
+	c.info.FuncSigs["__method_Cell_get"] = &ast.FuncType{
+		Params: []ast.Type{cellT},
+		Result: cellParam,
+	}
+	c.info.Methods["Cell.set"] = "__method_Cell_set"
+	c.info.FuncSigs["__method_Cell_set"] = &ast.FuncType{
+		Params: []ast.Type{cellT, cellParam},
+		Result: ast.VoidType{},
+	}
+
+	// Auto-discover the remaining Array methods from the
+	// `__method_Array_<name>` naming convention. std/array declares its
+	// concrete-element verbs (`join` over `string[]`, `gcd_all` over
+	// `i32[]`) this way and this loop is what makes `arr.<name>(…)` reach
+	// them.
+	//
+	// It is a compiler-known name pattern, and it exists only because the
+	// receiver form that would replace it — `pub function (arr: i32[])
+	// gcd_all()`, now accepted below — does not yet lower on the
+	// self-hosted compiler: one such declaration anywhere in the bundle
+	// costs an unrelated generic its type-parameter substitution
+	// (`num.sum`'s `T.zero()` lowers to a `const_func "T"`). Migrating
+	// std/array onto receivers and deleting this loop waits on that.
+	//
+	// FuncSigs for these functions get populated by the normal
+	// FuncDecl processing in `Check` — we only need to wire the
+	// Methods map here.
+	for _, fn := range prog.Funcs {
+		if !strings.HasPrefix(fn.Name, "__method_Array_") {
+			continue
+		}
+		suffix := fn.Name[len("__method_Array_"):]
+		if suffix == "" || suffix == "push" {
+			continue
+		}
+		c.info.Methods["Array."+suffix] = fn.Name
+		c.info.MethodSources[fn.Name] = fn.SourceModule
+	}
+
+	// MapIter[K, V] — paired with Map's iter() above. The
+	// receiver has K + V from the map's TypeArgs which
+	// flow through the same dispatch-path substitution. The
+	// runtime helpers stay i32-shaped; the type system
+	// reinterprets Key / Value at the call site.
+	registerMapIterMethod := func(methodName string, params []ast.Type, result ast.Type) {
+		mangled := "__method_MapIter_" + methodName
+		c.info.Methods["MapIter."+methodName] = mangled
+		fullParams := append([]ast.Type{mapIterKV}, params...)
+		c.info.FuncSigs[mangled] = &ast.FuncType{Params: fullParams, Result: result}
+	}
+	registerMapIterMethod("has_next", nil, ast.BoolType{})
+	registerMapIterMethod("key", nil, keyParam)
+	registerMapIterMethod("value", nil, valueParam)
+	registerMapIterMethod("advance", nil, ast.VoidType{})
+
+	// Built-in string methods. The receiver type is
+	// StringType (not StructType), so we can't use
+	// `registerStructMethod` directly — that helper hardcodes
+	// `StructType{Name: structName}` as the first param.
+	// Use the same `__method_string_<name>` mangling so the
+	// dispatch path picks them up uniformly.
+	registerStringMethod := func(methodName string, params []ast.Type, result ast.Type) {
+		mangled := "__method_string_" + methodName
+		c.info.Methods["string."+methodName] = mangled
+		fullParams := append([]ast.Type{ast.StringType{}}, params...)
+		c.info.FuncSigs[mangled] = &ast.FuncType{Params: fullParams, Result: result}
+	}
+	// `s.as_bytes()` — non-copying companion to `s.bytes()`. Returns
+	// a `[u8]` slice header whose data_ptr aliases the string's
+	// payload and whose len is `len(s)`.
+	//
+	// The view borrows: it must not outlive the string it aliases.
+	// Reference counting can release the string while a view still
+	// points at it, so the escape rule is the same open question as
+	// `str`'s (#4814). Uses that keep the view local to a frame where
+	// the owner is live — the common shape — are unaffected.
+	registerStringMethod("as_bytes", nil, ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}})
+	// `s.len()` — IR intercepts the rewritten
+	// `__method_string_len(s)` call and emits OpStrLen so a
+	// future SSO pass can change the encoding in one place.
+	registerStringMethod("len", nil, ast.NumberType{})
+
+	// `string_from_bytes_unchecked(bs: u8[]): string` — build a
+	// string from bytes WITHOUT validating them. The contract is
+	// that the caller guarantees the bytes are well-formed UTF-8;
+	// nothing here checks, and an invalid `string` built this way
+	// will misbehave in every code-point-aware operation.
+	//
+	// Correct uses are the ones where validity holds by
+	// construction: digit assembly, ASCII an encoder just emitted,
+	// re-encoding an already-validated scalar, or a transform that
+	// preserves the bytes of a string it was handed. Bytes coming
+	// from outside the program go through `std/utf8.from_bytes`,
+	// which validates and returns `Option[string]` (#5634, D9).
+	//
+	// The unqualified name `string_from_bytes` deliberately no
+	// longer exists: naming is the only enforcement available
+	// here, so the unchecked constructor has to be the one that
+	// reads as unchecked at the call site.
+	c.info.FuncSigs["string_from_bytes_unchecked"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+		Result: ast.StringType{},
+	}
+	// `string_from_bytes_range_unchecked(bs, from, end)` — the same
+	// constructor over bs[from, end), copied once; traps (exit 134) on a
+	// range outside bs, like a slice.
+	c.info.FuncSigs["string_from_bytes_range_unchecked"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.StringType{},
+	}
+
+	// `slice_unchecked(s: string, a: i32, b: i32): str` — the byte
+	// slice `s[a:b]` under its accurate name: half-open, byte-indexed,
+	// traps (exit 134) on `a < 0 || b > s.len() || a > b`, and does
+	// NOT check UTF-8 char boundaries, so it can cut a code point in
+	// half. Callers guarantee both indices are boundaries — indices
+	// from `index_of`/scan results, ASCII-only data, or the
+	// `std/utf8` boundary helpers. `std/string.slice_snap` is the
+	// total sibling that clamps and snaps instead (#5634, D9).
+	c.info.FuncSigs["slice_unchecked"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.StrType{},
+	}
+
+	// `__memcpy(dst, src, n)` / `__memset(dst, b, n)` —
+	// thin lang-callable wrappers around wasm's bulk-memory
+	// `memory.copy` / `memory.fill`. The doc-roadmap calls
+	// them out as the unlock for moving the json buffer
+	// family + the Map runtime from hand-written wat into
+	// the stdlib (every growable-byte-buffer pattern
+	// needs them). All three params are i32 byte counts /
+	// pointers; the helpers return void. arm64 inlines them
+	// via plain loads/stores; wat uses memory.copy.
+	usizeT := ast.NumberType{Width: ast.WidthPtr, Signed: false, Spelling: "usize"}
+	c.info.FuncSigs["__memcpy"] = &ast.FuncType{
+		Params: []ast.Type{usizeT, usizeT, ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
+	c.info.FuncSigs["__memset"] = &ast.FuncType{
+		Params: []ast.Type{usizeT, ast.NumberType{}, ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
+	// `__alloc_u8(n)` returns a fresh `u8[]` of length n,
+	// zero-initialised.
+	c.info.FuncSigs["__alloc_u8"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+	}
+	// Raw-memory escape hatches for stdlib code that
+	// builds typed-pointer arrays (`__array_append_string`)
+	// or runtime structures (the Map runtime migration).
+	// `__alloc(n)` returns a raw n-byte block, no length
+	// prefix; `__load_i32` / `__store_i32` peek and poke a
+	// 4-byte word at any address. Out-of-bounds traps at
+	// the wasm level — the stdlib is expected to bounds-
+	// check at the lang level.
+	// `__alloc(n)` returns a fresh n-byte block on the bump heap.
+	// Returns `usize` so the full address survives on arm64-darwin
+	// where the heap lives above 4 GiB.
+	c.info.FuncSigs["__alloc"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: usizeT,
+	}
+	// `__fern_rc_inc(ptr)` bumps the rc word at [ptr-8] and
+	// returns ptr (a no-op on null / low / static-sentinel
+	// pointers). Exposed to the Map runtime so __map_get*/values
+	// can retain a pointer-shaped value before handing it out —
+	// the read side of map-value reclamation.
+	c.info.FuncSigs["__fern_rc_inc"] = &ast.FuncType{
+		Params: []ast.Type{usizeT},
+		Result: usizeT,
+	}
+	// `__fern_arr_dec(data, stride)` / `__fern_drop_arr_ptr(data,
+	// stride)` dec an array's rc and, on the last reference, free
+	// its buffer (drop_arr_ptr also recurses one level to dec
+	// pointer-shaped elements first). Exposed to the Map runtime
+	// so __map_drop_values can free array-typed values — the
+	// write/read incs (inc-on-set / inc-on-get) balance these.
+	c.info.FuncSigs["__fern_arr_dec"] = &ast.FuncType{
+		Params: []ast.Type{usizeT, ast.NumberType{}},
+		Result: usizeT,
+	}
+	c.info.FuncSigs["__fern_drop_arr_ptr"] = &ast.FuncType{
+		Params: []ast.Type{usizeT, ast.NumberType{}},
+		Result: usizeT,
+	}
+	// `__fern_str_dec(s)` decs a string's rc and, at its last reference,
+	// RETURNS the buffer to the freelist — a bare rc dec would only zero
+	// the count and strand it. It carries its own guards for the shapes
+	// that own no buffer (the SSO inline tag, the literal sentinel at
+	// data-8), so it is safe on any string a column can hold.
+	//
+	// Exposed to the Map runtime so __map_dec_value can release the string
+	// value an overwrite displaces. That release cannot live on the IR
+	// side: the lowering runs BEFORE the set's own __map_cow_inplace, where
+	// a shared buffer's value still belongs to the other handle, while
+	// __map_dec_value runs after it (#8421). The (data, len) cell a
+	// two-word target leaves behind goes back through the ordinary
+	// __free — a size the value tag carries, so no second builtin and
+	// nothing for a single-word target, which boxes no string at all.
+	c.info.FuncSigs["__fern_str_dec"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}},
+		Result: usizeT,
+	}
+	// `__free(ptr, size)` returns the `size`-byte block at `ptr` to
+	// the allocator's freelist (Phase 3 step 4). A no-op unless the
+	// freelist is enabled (ast.RcFreeEnabled). `size` must be the
+	// same value passed to the matching `__alloc`.
+	c.info.FuncSigs["__free"] = &ast.FuncType{
+		Params: []ast.Type{usizeT, ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
+	// Exposed so core/map can release its own handle (__map_drop_impl) with
+	// the runtime's guards: __fern_rc_dec counts and traps an over-release
+	// and ignores a static sentinel; __fern_box_free(data, size) frees the
+	// rc'd block at data-8 and quarantines it under FERN_RC_FREE_DEBUG.
+	c.info.FuncSigs["__fern_rc_dec"] = &ast.FuncType{
+		Params: []ast.Type{usizeT},
+		Result: usizeT,
+	}
+	c.info.FuncSigs["__fern_box_free"] = &ast.FuncType{
+		Params: []ast.Type{usizeT, ast.NumberType{}},
+		Result: usizeT,
+	}
+	// `__alloc_reuse(token, tokenSize, size)` is the Phase 5 drop-reuse
+	// (FBIP) primitive: when `token != 0` and its size class
+	// (`(tokenSize+15)&-16`) equals `size`'s class, it returns `token`
+	// in place — the dropped block's storage is reused for the new
+	// allocation, skipping the free + alloc round trip. Otherwise it
+	// returns the dropped block to the freelist (when non-null) and
+	// bump/freelist-allocates `size` bytes via `__alloc`. A `0` token,
+	// or a class mismatch, therefore degrades to a plain allocation, so
+	// a mispaired reuse is slow-not-wrong (never an overflow, never a
+	// leak). Slice 5a exposes it as a shim so the reuse-vs-alloc branch
+	// is testable before the pairing analysis (5b+) emits it. `size`
+	// must be the value that would be passed to the matching `__alloc`;
+	// `tokenSize` the size the dropped block was allocated with.
+	c.info.FuncSigs["__alloc_reuse"] = &ast.FuncType{
+		Params: []ast.Type{usizeT, ast.NumberType{}, ast.NumberType{}},
+		Result: usizeT,
+	}
+	c.info.FuncSigs["__load_i32"] = &ast.FuncType{
+		Params: []ast.Type{usizeT},
+		Result: ast.NumberType{},
+	}
+	c.info.FuncSigs["__store_i32"] = &ast.FuncType{
+		Params: []ast.Type{usizeT, ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
+	// `__load_u8(addr)` — one byte, zero-extended.
+	c.info.FuncSigs["__load_u8"] = &ast.FuncType{
+		Params: []ast.Type{usizeT},
+		Result: ast.NumberType{},
+	}
+	// `__store_u8(addr, v)` — one byte, the low eight bits of v; the
+	// sockaddr and option bytes the socket helpers write.
+	c.info.FuncSigs["__store_u8"] = &ast.FuncType{
+		Params: []ast.Type{usizeT, ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
+	// `__str_bytes(s, scratch)` — the address of a string's bytes, for the
+	// length `s.len()` reports. A heap string answers its data pointer; a
+	// string a backend carries inline in its words is copied into `scratch`,
+	// sixteen bytes the caller keeps alive as long as it reads through the
+	// result, or answers 0 when `scratch` is 0. The socket send helpers hand
+	// the kernel a string through it.
+	c.info.FuncSigs["__str_bytes"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, usizeT},
+		Result: usizeT,
+	}
+	// `__arr_set_len(a, n)` — shorten a fresh `u8[]` from `__alloc_u8` to
+	// the n bytes a read filled; its capacity is unchanged.
+	c.info.FuncSigs["__arr_set_len"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}, ast.NumberType{}},
+		Result: ast.VoidType{},
+	}
+	// `__syscall3(nr, a, b, c)` … `__syscall6(nr, a, …, f)` — the native
+	// runtime's syscall floor, the same names and shapes the self-host's
+	// asmcore helpers are written on: the number and arguments are
+	// machine words, signed so a negative errno reads as one, and the
+	// result is the kernel's word unchanged (-errno on every target; the
+	// arm64-darwin emitter negates the carry-flagged error itself). Native
+	// only: wasm has no kernel and refuses the callee; the interpreter
+	// implements every builtin in Go and never reaches it.
+	wordT := ast.NumberType{Width: 64, Signed: true}
+	for n := 3; n <= 6; n++ {
+		params := []ast.Type{ast.NumberType{}}
+		for i := 0; i < n; i++ {
+			params = append(params, wordT)
+		}
+		c.info.FuncSigs[fmt.Sprintf("__syscall%d", n)] = &ast.FuncType{Params: params, Result: wordT}
+	}
+	// `__load_ptr` / `__store_ptr` — pointer-width memory pokes.
+	// Address AND value are usize so the full 8-byte pointer
+	// shape survives on natives. On wasm32 both collapse to i32
+	// because WidthPtr resolves to 4 there.
+	c.info.FuncSigs["__load_ptr"] = &ast.FuncType{
+		Params: []ast.Type{usizeT},
+		Result: usizeT,
+	}
+	c.info.FuncSigs["__store_ptr"] = &ast.FuncType{
+		Params: []ast.Type{usizeT, usizeT},
+		Result: ast.VoidType{},
+	}
+	// `__ptr_width()` — returns the target's pointer width in
+	// bytes: 4 on wasm32, 8 on arm64. The Map runtime uses it
+	// to size per-entry key/value slots so heap pointers (string
+	// keys/values) round-trip through 8-byte slots on arm64 (and
+	// stay 4-byte on wasm32, no regression in bucket-buffer
+	// size).
+	c.info.FuncSigs["__ptr_width"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.NumberType{},
+	}
+	// `__c_call0..4(fn, args...)` — call a C-ABI function pointer `fn` with
+	// up to four integer/pointer arguments, returning its result. The
+	// arguments and result are usize (a raw machine word). This is the FFI
+	// primitive for talking to C: a JNIEnv method (loaded from the env's
+	// function table) or an NDK callback is just a function pointer invoked
+	// with the System V / AAPCS64 integer-arg convention. The codegen emits
+	// a tiny shim that re-shuffles Fern's arg registers into the C ABI and
+	// tail-calls fn.
+	for n, params := range map[string]int{"__c_call0": 1, "__c_call1": 2, "__c_call2": 3, "__c_call3": 4, "__c_call4": 5} {
+		ps := make([]ast.Type, params)
+		for i := range ps {
+			ps[i] = usizeT
+		}
+		c.info.FuncSigs[n] = &ast.FuncType{Params: ps, Result: usizeT}
+		// FP-return variants `__c_call<n>_f32` / `_f64`: same integer-arg
+		// shim, but the result is returned in an FP register (xmm0 / d0). These let
+		// std/jni read float/double JNIEnv methods (Get{Float,Double}Field,
+		// CallFloatMethod, …). FP *arguments* are not modelled — only the
+		// return crosses the FP boundary.
+		ps32 := make([]ast.Type, params)
+		ps64 := make([]ast.Type, params)
+		for i := range ps32 {
+			ps32[i] = usizeT
+			ps64[i] = usizeT
+		}
+		c.info.FuncSigs[n+"_f32"] = &ast.FuncType{Params: ps32, Result: ast.FloatType{Width: 32}}
+		c.info.FuncSigs[n+"_f64"] = &ast.FuncType{Params: ps64, Result: ast.FloatType{Width: 64}}
+	}
+	// `__load_i64` / `__store_i64` — 8-byte memory pokes. Used
+	// by the Map runtime's wide-scalar-boxed key path
+	// (keyKind=2): on wasm32 an i64 / u64 / f64 key doesn't
+	// fit a `usize` slot, so the IR boxes it into a heap cell
+	// and the runtime dereferences via these shims to hash and
+	// compare the underlying 8-byte value. Address stays usize
+	// (4 on wasm32, 8 on natives); the loaded / stored value
+	// is i64.
+	c.info.FuncSigs["__load_i64"] = &ast.FuncType{
+		Params: []ast.Type{usizeT},
+		Result: ast.NumberType{Width: 64, Signed: true},
+	}
+	c.info.FuncSigs["__store_i64"] = &ast.FuncType{
+		Params: []ast.Type{usizeT, ast.NumberType{Width: 64, Signed: true}},
+		Result: ast.VoidType{},
+	}
+	// Other wide / sub-i32 wat shims (`__load_f64` / `__store_f64`,
+	// `__load_u8` / `__store_u8`, `__load_u16` / `__store_u16`)
+	// were removed when `arr.push(v)` moved to inline IR
+	// lowering — the IR emits the typed wasm store ops
+	// directly, no callable wat shim needed. Reintroduce here
+	// next to `__store_i32` if a future stdlib helper
+	// needs them.
+
+	// Built-in numeric methods. The receiver type is `NumberType`
+	// keyed by width + signedness; the dispatch path above maps
+	// `i32` / `u32` / `i64` / `u64` value types to the
+	// corresponding `__method_<typename>_<method>` mangled name.
+
+	// Register trait declarations so the conformance check (after the
+	// receiver-hoist loop below) and Phase 2 bound resolution can look
+	// them up. Duplicate trait names are an error. See docs/TRAITS.md.
+	for _, td := range prog.Traits {
+		if _, dup := c.info.Traits[td.Name]; dup {
+			c.errfCode(td.P, "E006", "trait %q redeclared", td.Name)
+			continue
+		}
+		seenMethod := map[string]bool{}
+		for _, m := range td.Methods {
+			if seenMethod[m.Name] {
+				c.errfCode(m.P, "E006", "trait method %q redeclared in trait %q", m.Name, td.Name)
+				continue
+			}
+			seenMethod[m.Name] = true
+		}
+		c.info.Traits[td.Name] = td
+	}
+
+	// `@derive(Trait)` on a struct: synthesise a field-wise impl per
+	// derived trait (appending receiver-method FuncDecls + an ImplDecl)
+	// before the receiver-hoist and conformance passes pick them up.
+	c.synthesizeDerives(prog)
+
+	// A trait method written with a `{ … }` body is a default: any impl
+	// that omits it inherits a copy (with `Self` substituted to the impl
+	// type). Synthesise those receiver-method FuncDecls now — after
+	// derives, before the receiver-hoist — so they flow through the
+	// existing hoist + conformance + dispatch paths unchanged. See
+	// docs/TRAITS.md.
+	c.synthesizeTraitDefaults(prog)
+
+	// Colorless stream result: an `@import async function f(): stream[T]` is
+	// delivered incrementally over the wire but, under the colorless model,
+	// yields the fully-collected `T[]` at the call site (docs/STREAM-TYPE-SURFACE.md).
+	// Rewrite the effective return type to `T[]` here, before FuncSigs and every
+	// other fn.ReturnType reader.
+	for _, fn := range prog.Funcs {
+		if fn.ImportIface != "" && fn.Async {
+			if st, ok := fn.ReturnType.(ast.StreamType); ok && st.Elem != nil {
+				fn.ReturnType = ast.ArrayType{Elem: st.Elem}
+			}
+			// Colorless stream PARAMETER (the mirror of the result transform): an
+			// `@import async function f(s: stream[T])` accepts an eager `T[]` at the
+			// call site. Rewrite each `stream[T]` param to `T[]`.
+			for i := range fn.Params {
+				if st, ok := fn.Params[i].Type.(ast.StreamType); ok && st.Elem != nil {
+					fn.Params[i].Type = ast.ArrayType{Elem: st.Elem}
+				}
+			}
+		}
+	}
+
+	// First pass: gather all top-level signatures so functions can call
+	// each other in any order. Methods are hoisted to mangled
+	// top-level names (`__method_<Type>_<Name>`) with the receiver
+	// prepended to the parameter list, so codegen never has to know
+	// about methods.
+	for _, fn := range prog.Funcs {
+		if fn.AssocType != "" {
+			// Associated function (`impl … for T { function f(): Self }`):
+			// no receiver, called as `T.f(args)`. Hoist to a flat
+			// `__assoc_<T>_<f>` and register under the `T.f` key so the
+			// Call-case resolves `T.f(args)` (a FieldAccess on a *type*
+			// name) to it with no receiver argument. Stamp MethodRecv /
+			// MethodSimpleName so the monomorph re-check re-registers it
+			// from the `else if fn.MethodRecv != ""` branch below after
+			// Name has been rewritten. Then fall through to the common
+			// FuncSig / GenericFuncs registration.
+			typeName := fn.AssocType
+			switch kind, other := c.methodDeclConflict(typeName, fn.Name, fn.ImplTrait); kind {
+			case declDup:
+				c.errfCode(fn.P, "E006", "associated function %q on %s redeclared", fn.Name, typeName)
+				continue
+			case declAmbiguous:
+				c.errAmbiguousMethod(fn.P, typeName, fn.Name,
+					[]methodCand{{Trait: fn.ImplTrait, Pos: fn.P}, other})
+				continue
+			}
+			simpleName := fn.Name
+			fn.MethodRecv = typeName
+			fn.MethodSimpleName = simpleName
+			fn.Name = c.mangleMethodName("__assoc_", typeName, simpleName, fn.ImplTrait)
+			fn.AssocType = ""
+			c.registerMethod(typeName, simpleName, fn.ImplTrait, fn.Name, fn.SourceModule, fn.P)
+		} else if fn.Receiver != nil {
+			var typeName string
+			switch rt := fn.Receiver.Type.(type) {
+			case ast.StructType:
+				if _, ok := c.info.Structs[rt.Name]; !ok {
+					c.errfCode(fn.P, "E021", "method receiver references unknown struct %q", rt.Name)
+					hoistReceiver(fn)
+					continue
+				}
+				typeName = rt.Name
+			case ast.EnumType:
+				if _, ok := c.info.Enums[rt.Name]; !ok {
+					c.errfCode(fn.P, "E021", "method receiver references unknown enum %q", rt.Name)
+					hoistReceiver(fn)
+					continue
+				}
+				typeName = rt.Name
+			case ast.ArrayType:
+				// Method on an owned array, element-polymorphic
+				// (`function (xs: T[]) first(): T`) or pinned to one
+				// element type (`function (xs: i32[]) avg(): i32`).
+				// Registered under the "Array" namespace the built-in
+				// array methods + the call-site dispatch use; for the
+				// polymorphic form `collectFreeTypeVars` already bound
+				// the element type-var, making it a generic method
+				// inferred from the receiver's element type.
+				//
+				// The namespace is keyed on the method NAME and cannot
+				// distinguish element types, so a concrete-element method
+				// claims `Array.<name>` for every array and a receiver
+				// with the wrong element type fails against its signature
+				// (E043, via errArgMismatch) rather than never matching
+				// it. Two methods cannot share one name either way — the
+				// E006 guard below is what reports that.
+				if !elemDispatchable(rt.Elem) {
+					c.errfCode(fn.P, "E021", "array-receiver method cannot take a nested array/slice element (%s); make the receiver element-polymorphic (e.g. `(xs: T[])`) or take the array as a plain parameter", fn.Receiver.Type)
+					hoistReceiver(fn)
+					continue
+				}
+				typeName = "Array"
+			case ast.SliceType:
+				// Same for a slice view, `function (xs: [T]) head(): T`
+				// or `function (xs: [u8]) crc32(): u32`, under the
+				// "slice" namespace.
+				if !elemDispatchable(rt.Elem) {
+					c.errfCode(fn.P, "E021", "slice-receiver method cannot take a nested array/slice element (%s); make the receiver element-polymorphic (e.g. `(xs: [T])`) or take the slice as a plain parameter", fn.Receiver.Type)
+					hoistReceiver(fn)
+					continue
+				}
+				typeName = "slice"
+			default:
+				// Every SCALAR receiver (string / str / char / the
+				// numeric widths / float / bool) takes its surface name
+				// from methodTypeName -- the same function the call-site
+				// dispatch uses. This was a copy of that switch carrying
+				// a comment promising the two stayed "in lockstep"; they
+				// drifted the moment `u8` got its own name (#5629 slice
+				// 2), registering a u8 receiver under "u32" while calls
+				// looked it up under "u8". One function, both sites, so
+				// the next width can't reintroduce the skew.
+				n, ok := methodTypeName(fn.Receiver.Type)
+				if !ok {
+					c.errfCode(fn.P, "E021", "method receiver type must be a struct, enum, array, slice, or built-in type, got %s", fn.Receiver.Type)
+					hoistReceiver(fn)
+					continue
+				}
+				typeName = n
+			}
+			if kind, other := c.methodDeclConflict(typeName, fn.Name, fn.ImplTrait); kind != declOK {
+				if kind == declDup {
+					c.errfCode(fn.P, "E006", "method %q on %s redeclared", fn.Name, typeName)
+				} else {
+					c.errAmbiguousMethod(fn.P, typeName, fn.Name,
+						[]methodCand{{Trait: fn.ImplTrait, Pos: fn.P}, other})
+				}
+				// Hoist the receiver even though the declaration is rejected.
+				// Its BODY is still walked, and a receiver left off Params[0]
+				// makes that walk report a second `E001: undefined identifier
+				// "self"` — inside the LOSING method's source, which for a
+				// stdlib impl is a file the program never imported and cannot
+				// act on. One error per mistake; the hoist costs nothing on a
+				// path that has already failed.
+				hoistReceiver(fn)
+				continue
+			}
+			// Stamp the method identity so a later Check pass can
+			// re-register it (Receiver is about to be cleared).
+			simpleName := fn.Name
+			mangled := c.mangleMethodName("__method_", typeName, simpleName, fn.ImplTrait)
+			// Rewrite the FuncDecl so codegen sees a regular
+			// top-level function with the receiver as its first
+			// parameter.
+			fn.Name = mangled
+			fn.MethodRecv = typeName
+			fn.MethodSimpleName = simpleName
+			// Consuming methods are supported: the receiver â including an `own`
+			// one, `(own self: T)` â is hoisted to Params[0], so the method lowers
+			// like a free function with an `own` first parameter. The method-call
+			// ownership transfer (move-on-call) and the E051 call-site guard both
+			// handle method calls, so this is sound.
+			fn.Params = append([]ast.Param{*fn.Receiver}, fn.Params...)
+			fn.Receiver = nil
+			c.registerMethod(typeName, simpleName, fn.ImplTrait, mangled, fn.SourceModule, fn.P)
+		} else if fn.MethodRecv != "" {
+			// Already-hoisted method whose Receiver was consumed by a
+			// previous Check pass — this is what the monomorph
+			// re-check sees (Check rebuilds Info from scratch, but the
+			// FuncDecl no longer carries a Receiver). Re-register it
+			// from the stamped identity (robust against mangled type
+			// names like `shapes__Square` that the name alone can't be
+			// split on). Idempotent: only fills a missing key.
+			// See docs/TRAITS.md §4.
+			c.registerMethod(fn.MethodRecv, fn.MethodSimpleName, fn.ImplTrait, fn.Name, fn.SourceModule, fn.P)
+		}
+		if _, dup := c.info.FuncSigs[fn.Name]; dup {
+			c.errfCode(fn.P, "E006", "function %q redeclared", fn.Name)
+			continue
+		}
+		params := make([]ast.Type, len(fn.Params))
+		owns := make([]bool, len(fn.Params))
+		for i, p := range fn.Params {
+			params[i] = p.Type
+			owns[i] = p.Own
+		}
+		c.info.FuncSigs[fn.Name] = &ast.FuncType{Params: params, ParamOwn: ast.OwnFlags(owns, len(params)), Result: fn.ReturnType}
+		if len(fn.TypeParams) > 0 {
+			// Track generic decls so the call-site inference path
+			// can spot them and the monomorphisation pass knows
+			// which functions to clone.
+			c.info.GenericFuncs[fn.Name] = fn
+			c.info.Generics[fn.Name] = fn
+		}
+	}
+
+	// Trait conformance + coherence. By now every impl method has been
+	// hoisted into c.info.Methods under `__method_<Type>_<name>`, so an
+	// impl satisfies its trait iff every trait method is registered for
+	// the `for` type with a matching signature. We also enforce the
+	// orphan rule (the impl's module must declare the trait or the
+	// type) and reject duplicate `(Trait, Type)` impls. See docs/TRAITS.md.
+	//
+	// Per-(hoisted method) `own` flags, read straight off the FuncDecl params
+	// since c.ownFuncs / info.OwnFuncs aren't built until after this pass. The
+	// receiver-hoist above already merged each method's receiver into Params[0],
+	// so index 0 is `self`.
+	methodOwns := map[string][]bool{}
+	for _, fn := range prog.Funcs {
+		flags := make([]bool, len(fn.Params))
+		any := false
+		for i, p := range fn.Params {
+			flags[i] = p.Own
+			any = any || p.Own
+		}
+		if any {
+			methodOwns[fn.Name] = flags
+		}
+	}
+	for _, impl := range prog.Impls {
+		// Inherent impl (`impl Type { … }`, #2700): no trait, so there is
+		// nothing to check for conformance/coherence here. Its methods and
+		// associated functions were already desugared into ordinary
+		// FuncDecls (hoisted as `__method_*` / `__assoc_*`) by the parser,
+		// so they register and check through the normal paths.
+		if impl.Trait == "" {
+			continue
+		}
+		typeName, ok := methodTypeName(impl.Type)
+		if !ok {
+			c.errfCode(impl.TypePos, "E021", "`impl … for %s`: type must be a struct, enum, or built-in type", impl.Type)
+			continue
+		}
+		td, ok := c.info.Traits[impl.Trait]
+		if !ok {
+			c.errfCode(impl.TraitPos, "E021", "unknown trait %q in impl", demangle(impl.Trait))
+			continue
+		}
+		// Generic-trait arity: `impl From[i32] for T` must supply exactly
+		// one type argument per the trait's type parameters. See docs/TRAITS.md.
+		if len(impl.TraitArgs) != len(td.TypeParams) {
+			c.errfCode(impl.TraitPos, "E021", "trait %s takes %d type argument(s), %d supplied",
+				demangle(impl.Trait), len(td.TypeParams), len(impl.TraitArgs))
+			continue
+		}
+		// Orphan rule: legal only if the trait or the type is declared
+		// in the impl's own module. Single-file programs leave every
+		// SourceModule empty, so the rule is vacuous there.
+		if impl.SourceModule != "" {
+			traitLocal := td.SourceModule == impl.SourceModule
+			typeLocal := false
+			if sd, ok := c.info.Structs[typeName]; ok && sd.SourceModule == impl.SourceModule {
+				typeLocal = true
+			}
+			if ed, ok := c.info.Enums[typeName]; ok && ed.SourceModule == impl.SourceModule {
+				typeLocal = true
+			}
+			if !traitLocal && !typeLocal {
+				c.errfCode(impl.P, "E021",
+					"orphan impl: `impl %s for %s` must be declared in the module that defines the trait or the type",
+					demangle(impl.Trait), demangle(typeName))
+				continue
+			}
+		}
+		// At most one impl per (Trait, Type) across the whole program.
+		if c.info.Impls[impl.Trait] == nil {
+			c.info.Impls[impl.Trait] = map[string]bool{}
+		}
+		if c.info.Impls[impl.Trait][typeName] {
+			c.errfCode(impl.P, "E006", "duplicate impl: %s is already implemented for %s", demangle(impl.Trait), demangle(typeName))
+			continue
+		}
+		// The impl must provide exactly the trait's methods — no more.
+		traitMethods := map[string]bool{}
+		for _, m := range td.Methods {
+			traitMethods[m.Name] = true
+		}
+		for _, mn := range impl.MethodNames {
+			if !traitMethods[mn] {
+				c.errfCode(impl.P, "E021", "method %q is not a member of trait %s", mn, demangle(impl.Trait))
+			}
+		}
+		// Impl-type-param names (`impl[T] … for Box[T]`) canonicalise to
+		// ParamType so the want/got structural compare below doesn't split a
+		// StructType("T") from a ParamType("T"). Empty for concrete impls.
+		paramSub := map[string]ast.Type{}
+		for _, tp := range impl.TypeParams {
+			paramSub[tp] = ast.ParamType{Name: tp}
+		}
+		// Every trait method must be present with a matching signature.
+		conforms := true
+		for _, m := range td.Methods {
+			// Associated trait methods (no `self`) hoist to `__assoc_…`;
+			// ordinary methods to `__method_…`. The expected signature is
+			// built from m.Params directly either way — an assoc method has
+			// no leading `self`, and its hoisted form has no receiver, so
+			// they align without a prepended receiver slot.
+			prefix := "__method_"
+			if m.Assoc {
+				prefix = "__assoc_"
+			}
+			// Resolve against THIS impl's trait: the conformance
+			// verdict has to read the signature and own-flags of the
+			// method this impl block provided, not of a same-named one
+			// another trait registered for the same type. The prefix
+			// guard keeps an assoc slot from matching a receiver method
+			// (and vice versa), which stays a missing-method report.
+			mangled := prefix + typeName + "_" + m.Name
+			if got, _, found := c.resolveMethod(typeName, m.Name, []string{impl.Trait}); found && strings.HasPrefix(got, prefix) {
+				mangled = got
+			}
+			sig, ok := c.info.FuncSigs[mangled]
+			if !ok {
+				c.errfCode(impl.P, "E021", "%s does not implement %s: missing method %q", demangle(typeName), demangle(impl.Trait), m.Name)
+				conforms = false
+				continue
+			}
+			// Expected signature: the trait method with Self -> the
+			// concrete type. m.Params[0] is `self: Self`, which lines
+			// up with the hoisted method's prepended receiver.
+			// Resolve associated-type projections on both sides via the
+			// impl's own bindings, so `Self::Item` (expected, after
+			// Self→impl-type) and the impl method's `Self::Item` both
+			// collapse to the bound type before the structural compare.
+			// Generic trait: bind the trait's type parameters to this
+			// impl's TraitArgs (`impl From[i32] for …` → T=i32) before the
+			// Self substitution, so `(self: Self): T` becomes `(IntBox): i32`
+			// for the structural compare. See docs/TRAITS.md.
+			traitSub := map[string]ast.Type{}
+			if len(td.TypeParams) == len(impl.TraitArgs) {
+				for i, tp := range td.TypeParams {
+					traitSub[tp] = impl.TraitArgs[i]
+				}
+			}
+			subTrait := func(t ast.Type) ast.Type {
+				if len(traitSub) > 0 {
+					t = substByName(t, traitSub)
+				}
+				return c.resolveProjWith(c.normalizeEnumKinds(ast.SubstSelf(t, impl.Type)), impl.AssocTypeBindings)
+			}
+			want := make([]ast.Type, len(m.Params))
+			for i, p := range m.Params {
+				want[i] = subTrait(p.Type)
+			}
+			wantRet := subTrait(m.Result)
+			// Normalize the impl side to the same nominal kinds. The parser
+			// defaults every bare type name to StructType (no symbol table), so a
+			// trait signature naming an enum — `Self` on an enum impl, or a
+			// literal `E` return — arrives as StructType(E) while the impl
+			// method's real signature carries EnumType(E); without reconciling the
+			// kinds, sigMatches saw a spurious mismatch (the E021 "expected
+			// (E)=>E, got (E)=>E" that blocked every enum-returning trait method).
+			gotSig := &ast.FuncType{Params: make([]ast.Type, len(sig.Params)), Result: c.resolveProjWith(c.normalizeEnumKinds(sig.Result), impl.AssocTypeBindings)}
+			for i, pt := range sig.Params {
+				gotSig.Params[i] = c.resolveProjWith(c.normalizeEnumKinds(pt), impl.AssocTypeBindings)
+			}
+			// A parametric impl of a GENERIC trait (`impl[T] Iterator[T] for
+			// ArrayIter[T]`) binds the trait's type parameter to the impl's own
+			// type parameter. The hoisted `got` signature has those references
+			// resolved to ParamType (resolveTypeNames walks prog.Impls), but the
+			// `want` side substituted the raw TraitArgs / impl.Type, where the
+			// param is still an unresolved StructType. Both print as "T" yet
+			// ast.Equal separates ParamType from StructType, so the compare
+			// spuriously failed. Canonicalise both sides first. (Concrete impls
+			// have an empty paramSub and skip this.)
+			if len(paramSub) > 0 {
+				for i := range want {
+					want[i] = substByName(want[i], paramSub)
+				}
+				wantRet = substByName(wantRet, paramSub)
+				for i := range gotSig.Params {
+					gotSig.Params[i] = substByName(gotSig.Params[i], paramSub)
+				}
+				gotSig.Result = substByName(gotSig.Result, paramSub)
+			}
+			if !sigMatches(gotSig, want, wantRet) {
+				c.errfCode(impl.P, "E021",
+					"%s.%s has the wrong signature for trait %s: expected %s, got %s",
+					demangle(typeName), m.Name, demangle(impl.Trait),
+					(&ast.FuncType{Params: want, Result: wantRet}).String(), gotSig.String())
+				conforms = false
+			}
+			// Ownership (`own`) is part of the trait contract. A generic call
+			// `x.m()` through a `T: Trait` bound transfers (or borrows) each
+			// argument based on the TRAIT's declared own-ness — so an impl whose
+			// ownership disagrees would make that call double-free (impl consumes
+			// where the trait borrows) or leak / move-after-use (the trait
+			// consumes where the impl borrows). Require them to match
+			// position-by-position; the impl's flags live in OwnFuncs (absent ==
+			// all-borrowed).
+			implOwns := methodOwns[mangled]
+			for i, p := range m.Params {
+				implOwn := i < len(implOwns) && implOwns[i]
+				if p.Own != implOwn {
+					verb := "must take `own` on"
+					if !p.Own {
+						verb = "must not take `own` on"
+					}
+					c.errfCode(impl.P, "E021",
+						"%s.%s %s parameter %q to match trait %s",
+						demangle(typeName), m.Name, verb, p.Name, demangle(impl.Trait))
+					conforms = false
+					break
+				}
+			}
+		}
+		// Associated types: the impl must bind exactly the trait's
+		// associated types (no missing, no extras). Record the bindings so
+		// resolveProj can resolve `Foo::Item` projections. See
+		// docs/ASSOCIATED-TYPES.md.
+		if td2, ok := c.info.Traits[impl.Trait]; ok {
+			declared := map[string]bool{}
+			for _, at := range td2.AssocTypes {
+				declared[at] = true
+			}
+			for name := range impl.AssocTypeBindings {
+				if !declared[name] {
+					c.errfCode(impl.P, "E021", "impl of %s for %s binds associated type %q which the trait does not declare",
+						demangle(impl.Trait), demangle(typeName), name)
+					conforms = false
+				}
+			}
+			for _, at := range td2.AssocTypes {
+				if _, ok := impl.AssocTypeBindings[at]; !ok {
+					c.errfCode(impl.P, "E021", "impl of %s for %s must bind associated type %q (`type %s = …;`)",
+						demangle(impl.Trait), demangle(typeName), at, at)
+					conforms = false
+				}
+			}
+			if conforms && len(impl.AssocTypeBindings) > 0 {
+				if c.info.AssocBindings[typeName] == nil {
+					c.info.AssocBindings[typeName] = map[string]ast.Type{}
+				}
+				for name, bt := range impl.AssocTypeBindings {
+					c.info.AssocBindings[typeName][name] = bt
+					if len(impl.TypeParams) > 0 {
+						if c.info.AssocBindingPattern[typeName] == nil {
+							c.info.AssocBindingPattern[typeName] = map[string]ast.Type{}
+						}
+						c.info.AssocBindingPattern[typeName][name] = impl.Type
+					}
+				}
+			}
+		}
+		if conforms {
+			c.info.Impls[impl.Trait][typeName] = true
+			if len(impl.TraitArgs) > 0 {
+				if c.info.ImplTraitArgs[impl.Trait] == nil {
+					c.info.ImplTraitArgs[impl.Trait] = map[string][]ast.Type{}
+				}
+				c.info.ImplTraitArgs[impl.Trait][typeName] = impl.TraitArgs
+				// A parametric impl of this generic trait
+				// (`impl[T] Iterator[T] for ArrayIter[T]`) leaves its trait
+				// args generic. Record the `for` pattern (params canonicalised
+				// to ParamType) so a bound check can recover T=i32 from a
+				// concrete `ArrayIter[i32]` and resolve [T] to [i32].
+				if len(paramSub) > 0 {
+					if c.info.ImplForPattern[impl.Trait] == nil {
+						c.info.ImplForPattern[impl.Trait] = map[string]ast.Type{}
+					}
+					c.info.ImplForPattern[impl.Trait][typeName] = substByName(impl.Type, paramSub)
+				}
+			}
+		}
+	}
+
+	// Supertrait references must name real traits, and the supertrait
+	// graph must be acyclic (a cyclic graph would still terminate via the
+	// `seen` guard in collectTraitSupers, but it's a user error). See
+	// docs/TRAITS.md.
+	for _, td := range prog.Traits {
+		for _, sup := range td.Supertraits {
+			if _, ok := c.info.Traits[sup]; !ok {
+				c.errfCode(td.P, "E021", "unknown supertrait %q in trait %s", demangle(sup), demangle(td.Name))
+			}
+		}
+		if c.traitInItsOwnSupers(td.Name) {
+			c.errfCode(td.P, "E021", "cyclic supertrait: %s is (transitively) its own supertrait", demangle(td.Name))
+		}
+	}
+
+	// Supertrait satisfaction: an `impl Trait for T` requires T to also
+	// implement every (transitive) supertrait of Trait. Run after the loop
+	// above has registered all conforming impls, so impl order within the
+	// program doesn't matter. See docs/TRAITS.md.
+	for _, impl := range prog.Impls {
+		typeName, ok := methodTypeName(impl.Type)
+		if !ok {
+			continue
+		}
+		if !c.info.Impls[impl.Trait][typeName] {
+			continue // impl didn't conform; the missing-method error already fired
+		}
+		td, ok := c.info.Traits[impl.Trait]
+		if !ok {
+			continue
+		}
+		for _, sup := range c.expandTraits(td.Supertraits) {
+			if !c.info.Impls[sup][typeName] {
+				c.errfCode(impl.P, "E021",
+					"impl %s for %s also requires `impl %s for %s` (supertrait of %s)",
+					demangle(impl.Trait), demangle(typeName), demangle(sup), demangle(typeName), demangle(impl.Trait))
+			}
+		}
+	}
+
+	// Resolve concrete-base associated-type projections (`Foo::Item` →
+	// the impl's binding) across signatures + bodies, now that the
+	// conformance pass has recorded every impl's bindings. See
+	// docs/ASSOCIATED-TYPES.md.
+	c.resolveProjections(prog)
+
+	// Every written `Map[K, V]` gets its key type validated now that
+	// conformance has recorded each type's derived impls.
+	c.validateMapKeyTypes(prog)
+
+	// Validate that every trait named in a function's type-parameter
+	// bounds actually exists. Catches typos / unknown traits before
+	// the deferred-dispatch path silently fails to resolve. See
+	// docs/TRAITS.md.
+	for _, fn := range prog.Funcs {
+		// Normalise generic-trait bound args so a type-parameter reference
+		// (`I: Iterator[T]`) is a ParamType, not a same-named StructType —
+		// the parser can't tell them apart at parse time. This lets
+		// unifyType / substituteType and the trait-method-signature
+		// instantiation treat `T` uniformly, so bound-driven inference
+		// (#2691) and `t.0`-style element typing inside the body agree.
+		if len(fn.TypeParams) > 0 && fn.BoundArgs != nil {
+			tpSet := make(map[string]bool, len(fn.TypeParams))
+			for _, tp := range fn.TypeParams {
+				tpSet[tp] = true
+			}
+			for _, argLists := range fn.BoundArgs {
+				for i := range argLists {
+					for k := range argLists[i] {
+						argLists[i][k] = normalizeParamRefs(argLists[i][k], tpSet)
+					}
+				}
+			}
+		}
+		for tp, traits := range fn.Bounds {
+			for i, traitName := range traits {
+				td, ok := c.info.Traits[traitName]
+				if !ok {
+					c.errfCode(fn.P, "E021", "unknown trait %q in bound on type parameter %s", demangle(traitName), tp)
+					continue
+				}
+				// A generic-trait bound must supply the right number of
+				// type arguments (`T: From[i32]` for `trait From[T]`); a
+				// non-generic trait must supply none. See docs/TRAITS.md.
+				var nargs int
+				if ba := fn.BoundArgs[tp]; i < len(ba) {
+					nargs = len(ba[i])
+				}
+				if nargs != len(td.TypeParams) {
+					c.errfCode(fn.P, "E021", "trait %s takes %d type argument(s), %d supplied in bound on type parameter %s",
+						demangle(traitName), len(td.TypeParams), nargs, tp)
+				}
+			}
+		}
+	}
+
+	// Auto-main from handle: when the user defines
+	// `function handle(req: HttpRequest, plat: platform.Platform):
+	// HttpResponse` but no `main()`, synthesise a minimal main
+	// that calls `serve.supervise(port, serve.config(), handle)` after reading PORT
+	// from the environment (default 8080). The serve loop builds a
+	// `platform.Host` per worker and hands it to every request. The same
+	// source then
+	// compiles for arm64 (CLI-mode native server), wasm
+	// CLI-mode (`--invoke main`), and wasi-http (the
+	// existing handle()-export wiring is unaffected by main
+	// existing alongside it).
+	//
+	// Skipped silently when both handle() and main() are
+	// user-defined — don't surprise users who want their
+	// own main alongside the wasi-http handler.
+	// The native wasm backend's wasi-http entry wrapper, deleted with #11530,
+	// was hand-written wasm, which cannot instantiate a handler generic over
+	// its platform, so it calls a synthesised `__fern_wasi_handle(req)`
+	// that hands `handle` the host platform in Fern. Synthesised whenever a
+	// two-parameter `handle` and std/platform are present; other targets
+	// tree-shake it.
+	if h := findDecl(prog, "handle"); h != nil && h.Receiver == nil && len(h.Params) == 2 &&
+		findDecl(prog, WasiHandleName) == nil && findDecl(prog, "platform__host") != nil {
+		prog.Funcs = append(prog.Funcs, synthesiseWasiHandle())
+	}
+	if h := findDecl(prog, "handle"); h != nil && h.Receiver == nil && len(h.Params) == 3 {
+		c.info.StatefulHandler = true
+	}
+	if hasHandleDecl(prog) && !hasMainDecl(prog) {
+		// A mispaired init/handle has already been reported against the
+		// declaration that is wrong; synthesising main on top of it adds
+		// a second, positionless error about a call nobody wrote.
+		if c.checkHandlerStatePairing(prog) {
+			prog.Funcs = append(prog.Funcs, synthesiseHandleMain(prog, supervised))
+		}
+	}
+
+	// Validate `dyn Trait` type usage (trait exists + object-safe) now
+	// that Traits + Impls are populated. The sole reporter of these
+	// type-level errors — the per-call dispatch path assumes validity.
+	// See docs/DYN-TRAITS.md.
+	c.validateDynTraitTypes(prog)
+	c.validateResourceHandles(prog)
+	c.validateExports(prog)
+
+	// Second pass: check bodies. Per-function cancellation
+	// checkpoint — the LSP can cancel a long type-check
+	// mid-flight when a new edit invalidates the in-progress
+	// result (docs/IDE-COMPILATION-RESEARCH.md Rec §1).
+	// Record per-function `own` parameter flags for the call-site ownership
+	// guard (E051), before any body is checked.
+	c.ownFuncs = map[string][]bool{}
+	for _, fn := range prog.Funcs {
+		hasOwn := false
+		flags := make([]bool, len(fn.Params))
+		for i, p := range fn.Params {
+			flags[i] = p.Own
+			hasOwn = hasOwn || p.Own
+		}
+		if hasOwn {
+			c.ownFuncs[fn.Name] = flags
+		}
+	}
+	c.info.OwnFuncs = c.ownFuncs // expose to the IR for ownership-transfer lowering
+	// Needs ownFuncs and FuncSigs, and is read by the call-site guard once the
+	// bodies below are checked.
+	c.computeResultBorrows(prog)
+
+	for _, fn := range prog.Funcs {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		c.checkFunction(fn)
+	}
+
+	c.checkEscapes(prog)
+	c.checkFipFunctions(prog)
+	c.checkUnsettledWideLiterals()
+
+	if len(c.errors) > 0 {
+		return c.info, diag.Errors(c.errors)
+	}
+
+	// Composite-type `==` / `!=` was type-checked into a structural
+	// `eq` method call stashed on `Binary.EqCall`. Replace each such
+	// Binary in place with that call (`!a.eq(b)` for `!=`) so every
+	// later pass — monomorph instantiation, treeshake liveness,
+	// codegen, interp — sees an ordinary method call rather than a
+	// hidden side channel. Runs on success only; it also runs inside
+	// monomorph's re-check, so cloned generic bodies desugar too.
+	ast.RewriteProgramExprs(prog, func(e ast.Expr) ast.Expr {
+		// Error-converting `?` → its block-expr desugar (#3234).
+		if t, ok := e.(*ast.TryOp); ok && t.Lowered != nil {
+			return t.Lowered
+		}
+		// Composite unary minus: `-v` → `v.neg()`.
+		if u, ok := e.(*ast.Unary); ok {
+			if u.NegCall != nil {
+				return u.NegCall
+			}
+			return e
+		}
+		b, ok := e.(*ast.Binary)
+		if !ok {
+			return e
+		}
+		// Checked arithmetic: `a +? b` → its `Option`-yielding block-expr
+		// desugar (#5542). Built and fully checked during checkExpr.
+		if b.CheckedLowered != nil {
+			return b.CheckedLowered
+		}
+		if b.EqCall != nil {
+			if b.EqNegate {
+				return &ast.Unary{P: b.P, Op: "!", Operand: b.EqCall}
+			}
+			return b.EqCall
+		}
+		// Composite ordering: `a <op> b` → `a.cmp(b) <op> 0`. The
+		// resulting comparison is a plain signed-i32 Binary (cmp
+		// returns -1/0/1); stamp IntWidth so codegen picks i32.lt_s
+		// etc. (this node is created post-check, so the checker's
+		// width stamping never ran on it).
+		if b.CmpCall != nil {
+			return &ast.Binary{
+				P:        b.P,
+				Op:       b.Op,
+				Left:     b.CmpCall,
+				Right:    &ast.NumberLit{P: b.P, Value: 0, Width: 32},
+				IntWidth: 32,
+			}
+		}
+		// Composite arithmetic: `a <op> b` → `a.<add|sub|mul|div>(b)`.
+		if b.ArithCall != nil {
+			return b.ArithCall
+		}
+		// Default a leftover-polymorphic integer op to i32. An integer
+		// `+`/`-`/`*`/… whose operands never got pinned to a concrete
+		// width (an unannotated `let x = 2147483647; let y = x + 1`)
+		// stays `IntWidth == 0`: the inference branch skips it
+		// (`!common.Polymorphic`) and no `settleInt` hint ever reached
+		// it. The compiled backends still compute it in a 32-bit
+		// register (i32 is the default int), so it wraps; the AST
+		// interpreter is width-driven and would otherwise keep the full
+		// 64-bit value (#3581). Stamp the default i32 width here, AFTER
+		// all settling, so a genuine i64 context (which `settleInt`
+		// already set to 64) is untouched and only true defaults land at
+		// 32. A FLOAT op is excluded on `IsFloat`, not on FloatWidth: a
+		// float binary whose operands never pinned a width (both
+		// polymorphic literals passed to a generic `[A](a: A)`, where no
+		// concrete type ever reached them) has FloatWidth == 0 too, and
+		// stamping IntWidth on it makes a re-check read the node back as
+		// an integer op — which is how monomorph's post-clone re-check
+		// came to reject `one(1.5 + 2.5)` with "expected f64, got i32".
+		// String concatenation is flagged separately.
+		if b.IntWidth == 0 && !b.IsFloat && !b.IsStringConcat {
+			switch b.Op {
+			case "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "+|", "-|", "*|", "<<|":
+				b.IntWidth = 32
+			}
+		}
+		return e
+	})
+
+	return c.info, nil
+}
+
+// validScalarValue reports whether v is a Unicode scalar value: in
+// 0..0x10FFFF and not one of the UTF-16 surrogates 0xD800..0xDFFF. This is
+// `char`'s domain (#5629) — the surrogates are excluded because they only
+// mean anything as a UTF-16 pair, so a lone one is not a character.
+func validScalarValue(v int64) bool {
+	return v >= 0 && v <= 0x10FFFF && (v < 0xD800 || v > 0xDFFF)
+}
+
+// surrogateHint adds a clause naming the surrogate case, so the diagnostic
+// says which of the two rules a value broke rather than making the reader
+// compare it against both bounds.
+func surrogateHint(v int64) string {
+	if v >= 0xD800 && v <= 0xDFFF {
+		return " (this is a surrogate)"
+	}
+	return ""
+}
+
+// methodTypeName maps a type to the canonical name used in the
+// `__method_<Type>_<name>` mangling and the Info.Methods keys — the
+// same `ast.ReceiverTypeName` the receiver hoist registers under, so
+// impl-conformance lookups land on the key the hoist wrote.
+func methodTypeName(t ast.Type) (string, bool) { return ast.ReceiverTypeName(t) }
+
+// mangleMethodName picks the flat top-level name a method or associated
+// function is hoisted to. The first claimant of a `<Type>.<name>` pair
+// keeps the plain `<prefix><Type>_<name>` form — that name is also the
+// emitted symbol, and the asm goldens and the bulk of the test suite
+// spell it out. A later claimant from a *different* trait interposes the
+// trait, because the flat name doubles as the Info.FuncSigs key and two
+// traits offering the same method for one type would otherwise collide
+// there as well.
+// paramSig is the function TYPE of a declared parameter list: the declared
+// types, and the `own` flags that say which slots the callee consumes.
+// definitelyScalar reports whether t is a value with no reference identity —
+// so no refcount, and nothing for an ownership transfer to move. An unknown
+// or parametric type is NOT one: it may stand for a reference at some
+// instantiation.
+func definitelyScalar(t ast.Type) bool {
+	switch t.(type) {
+	case ast.NumberType, ast.BoolType, ast.FloatType, ast.CharType, ast.VoidType:
+		return true
+	}
+	return false
+}
+
+func paramSig(params []ast.Param, result ast.Type) *ast.FuncType {
+	types := make([]ast.Type, len(params))
+	owns := make([]bool, len(params))
+	for i, p := range params {
+		types[i] = p.Type
+		owns[i] = p.Own
+	}
+	return &ast.FuncType{Params: types, ParamOwn: ast.OwnFlags(owns, len(types)), Result: result}
+}
+
+func (c *checker) mangleMethodName(prefix, typeName, name, trait string) string {
+	key := typeName + "." + name
+	if trait != "" {
+		if _, taken := c.info.Methods[key]; taken && !slices.Contains(c.info.MethodOwners[key], trait) {
+			return prefix + typeName + "__" + trait + "__" + name
+		}
+	}
+	return prefix + typeName + "_" + name
+}
+
+// registerMethod records one hoisted method or associated function: the
+// flat `<Type>.<name>` dispatch key (first registration wins — later ones
+// are either the monomorph re-check re-stating what a previous Check pass
+// already established, or a second trait whose entry lives only in the
+// trait-keyed tables), and, when a trait provided it, the trait-aware
+// TraitMethods / MethodOwners pair. MethodOwners stays sorted so nothing
+// downstream inherits declaration or map-iteration order.
+func (c *checker) registerMethod(typeName, name, trait, mangled, srcModule string, pos ast.Position) {
+	key := typeName + "." + name
+	site := declSiteKey(typeName, name, trait)
+	if _, exists := c.info.MethodDeclSites[site]; !exists {
+		c.info.MethodDeclSites[site] = pos
+	}
+	if !slices.Contains(c.info.MethodInsts[site], mangled) {
+		c.info.MethodInsts[site] = append(c.info.MethodInsts[site], mangled)
+	}
+	if _, exists := c.info.Methods[key]; !exists {
+		c.info.Methods[key] = mangled
+		c.info.MethodSources[mangled] = srcModule
+	}
+	if trait == "" {
+		return
+	}
+	traitKey := trait + "." + key
+	if _, exists := c.info.TraitMethods[traitKey]; exists {
+		return
+	}
+	c.info.TraitMethods[traitKey] = mangled
+	c.info.MethodSources[mangled] = srcModule
+	owners := append(c.info.MethodOwners[key], trait)
+	slices.Sort(owners)
+	c.info.MethodOwners[key] = owners
+}
+
+// instForReceiver picks, among the instantiations of a generic enum's method
+// registered under one key, the one whose receiver parameter is `recv`.
+// Anything else keeps `mangled`.
+func (c *checker) instForReceiver(typeName, name, trait, mangled string, recv ast.Type) string {
+	et, ok := recv.(ast.EnumType)
+	if !ok || len(et.Args) == 0 {
+		return mangled
+	}
+	for _, inst := range c.info.MethodInsts[declSiteKey(typeName, name, trait)] {
+		if sig := c.info.FuncSigs[inst]; sig != nil && len(sig.Params) > 0 && ast.Equal(sig.Params[0], recv) {
+			return inst
+		}
+	}
+	return mangled
+}
+
+// declSiteKey is the MethodDeclSites key for one registration: the
+// TraitMethods keying for a trait-provided method, the flat Methods
+// keying for an inherent one.
+func declSiteKey(typeName, name, trait string) string {
+	if trait == "" {
+		return typeName + "." + name
+	}
+	return trait + "." + typeName + "." + name
+}
+
+// methodCand is one implementation of a `<Type>.<name>` method: the trait
+// that provided it ("" for an inherent declaration) and where it was
+// written.
+type methodCand struct {
+	Trait string
+	Pos   ast.Position
+}
+
+// How a pending method registration relates to what is already registered.
+const (
+	declOK        = iota // nothing else claims this (Type, name, trait)
+	declDup              // the SAME declaration again: E006
+	declAmbiguous        // a different provider of the same name: E074
+)
+
+// methodDeclConflict classifies a pending registration of `name` on
+// `typeName` from `trait` ("" for inherent) against what is already
+// registered, and returns the declaration it clashes with.
+//
+// Two DIFFERENT traits providing one method name for one type is not a
+// redeclaration — that is the whole point of the trait-keyed tables, and
+// the call site ranks between them. What stays E006 is a genuine repeat:
+// the same trait twice, two inherent declarations, or a declaration
+// shadowing a built-in registration (which has no source position to name
+// in an ambiguity report, and no trait to qualify a call with).
+//
+// Inherent-versus-trait is neither: it is reported as an ambiguity rather
+// than allowed to shadow silently, because a silent pick would give one
+// spelling two meanings — `p.m()` dispatching through the bound inside a
+// generic body but to the inherent method at a concrete call site.
+func (c *checker) methodDeclConflict(typeName, name, trait string) (int, methodCand) {
+	key := typeName + "." + name
+	if pos, dup := c.info.MethodDeclSites[declSiteKey(typeName, name, trait)]; dup {
+		return declDup, methodCand{Trait: trait, Pos: pos}
+	}
+	if trait == "" {
+		if owners := c.info.MethodOwners[key]; len(owners) > 0 {
+			return declAmbiguous, c.info.methodCands(typeName, name, owners[:1])[0]
+		}
+	} else if pos, inherent := c.info.MethodDeclSites[key]; inherent {
+		return declAmbiguous, methodCand{Pos: pos}
+	}
+	if _, taken := c.info.Methods[key]; taken && len(c.info.MethodOwners[key]) == 0 {
+		return declDup, methodCand{}
+	}
+	return declOK, methodCand{}
+}
+
+// errAmbiguousMethod reports E074: several visible implementations of one
+// method name on one type, with no rule that picks between them. Both
+// candidates are named with the trait that provided each (or "an inherent
+// method") and where it was declared, mirroring E062's shape for the
+// multi-trait-object case.
+func (c *checker) errAmbiguousMethod(pos ast.Position, typeName, name string, cands []methodCand) {
+	parts := make([]string, len(cands))
+	for i, cand := range cands {
+		what := "an inherent method"
+		if cand.Trait != "" {
+			what = "trait " + demangle(cand.Trait)
+		}
+		if cand.Pos == (ast.Position{}) {
+			parts[i] = what
+			continue
+		}
+		parts[i] = what + " (declared at " + cand.Pos.String() + ")"
+	}
+	c.errfCode(pos, "E074", "ambiguous method %q on %s: provided by %s",
+		name, demangle(typeName), strings.Join(parts, " and "))
+}
+
+// simpleTraitName strips a trait name's module mangling, so a caller can
+// name `Ord` without knowing it arrives as `cmp__Ord` (and pass a name it
+// already holds in mangled form unchanged).
+func simpleTraitName(name string) string {
+	if i := strings.LastIndex(name, "__"); i >= 0 {
+		return name[i+2:]
+	}
+	return name
+}
+
+// ResolveMethod finds the implementation of `name` on `typeName`.
+// `prefer` names the traits the caller already knows it wants — the
+// Display spine wants Display, the `<` desugar wants Ord, a vtable slot
+// wants the trait that declares it — matched by simple name so a mangled
+// `cmp__Ord` and a bare `Ord` both hit. An empty `prefer` means "any".
+// `owner` is the trait that provided the returned implementation, empty
+// for an inherent method or a builtin.
+//
+// A preference only ever selects among registrations that already exist,
+// so it can neither invent a lookup that would otherwise fail nor return
+// a symbol the flat `Methods` key would not have. With no preference and
+// several providing traits the answer is the flat key's — see
+// ResolveMethodFrom for the module-ranked pick a call site needs.
+func (in *Info) ResolveMethod(typeName, name string, prefer []string) (mangled, owner string, ok bool) {
+	if in == nil {
+		return "", "", false
+	}
+	key := typeName + "." + name
+	owners := in.MethodOwners[key]
+	if m, o, found := in.preferredMethod(key, owners, prefer); found {
+		return m, o, true
+	}
+	mangled, ok = in.Methods[key]
+	if !ok {
+		return "", "", false
+	}
+	// Report the owner of the implementation actually returned, so a
+	// caller that stamps it and re-resolves later lands on this exact
+	// registration again.
+	for _, o := range owners {
+		if in.TraitMethods[o+"."+key] == mangled {
+			return mangled, o, true
+		}
+	}
+	return mangled, "", true
+}
+
+// preferredMethod picks the registration belonging to the first of
+// `prefer` that actually provides `key`, matching on the simple trait
+// name so `Ord` and `cmp__Ord` both hit.
+func (in *Info) preferredMethod(key string, owners, prefer []string) (mangled, owner string, ok bool) {
+	for _, want := range prefer {
+		if want == "" {
+			continue
+		}
+		want = simpleTraitName(want)
+		for _, o := range owners {
+			if simpleTraitName(o) != want {
+				continue
+			}
+			if m, found := in.TraitMethods[o+"."+key]; found {
+				return m, o, true
+			}
+		}
+	}
+	return "", "", false
+}
+
+// traitInScope reports whether `fromModule` can name `trait` without a
+// transitive hop: the trait is declared in that same module, or the
+// module's own `import` list reaches the declaring one. DirectImports —
+// not the ModuleImports closure — is the whole point: the closure counts
+// std/num as "in scope" for a program that only ever wrote
+// `import "std/i32"`, which would tie a user's own trait with one they
+// never named.
+//
+// An unstamped module on either side passes, mirroring moduleSees: a
+// single-file program and a checker-synthesised trait are unconstrained.
+// So does stdlib-to-stdlib, whose import graph has cycles modload breaks
+// by clearing stamps rather than by recording an edge.
+func (in *Info) traitInScope(fromModule, trait string) bool {
+	td := in.Traits[trait]
+	if td == nil || fromModule == "" || td.SourceModule == "" || td.SourceModule == fromModule {
+		return true
+	}
+	if strings.HasPrefix(fromModule, "stdlib://") && strings.HasPrefix(td.SourceModule, "stdlib://") {
+		return true
+	}
+	return in.DirectImports[fromModule][td.SourceModule]
+}
+
+// ResolveMethodFrom is ResolveMethod as a call site in `fromModule` sees
+// it. When several traits provide `name` for `typeName`, the ones that
+// module can name directly outrank the rest, and exactly one candidate at
+// the best non-empty rank resolves.
+//
+// A lower-ranked trait stays a LIVE candidate, never a filtered-out one.
+// std/json's `(xs: T[]) to_json[T: Json]()` is re-checked by the
+// monomorphiser from std/json's module, where the user's module is not
+// imported; a hard visibility filter there would drop the only candidate
+// and break cross-module generic dispatch silently, at the re-check
+// rather than at the first check.
+//
+// `tied` is non-empty exactly when nothing separates two candidates at
+// the best rank — the caller reports E074. `mangled` is still filled in
+// with the first of them (MethodOwners is sorted, so that is stable) so
+// checking can carry on instead of cascading into unknown-method errors.
+func (in *Info) ResolveMethodFrom(fromModule, typeName, name string, prefer []string) (mangled, owner string, tied []string, ok bool) {
+	if in == nil {
+		return "", "", nil, false
+	}
+	key := typeName + "." + name
+	owners := in.MethodOwners[key]
+	if len(owners) < 2 {
+		mangled, owner, ok = in.ResolveMethod(typeName, name, prefer)
+		return mangled, owner, nil, ok
+	}
+	if m, o, found := in.preferredMethod(key, owners, prefer); found {
+		return m, o, nil, true
+	}
+	best := make([]string, 0, len(owners))
+	for _, o := range owners {
+		if in.traitInScope(fromModule, o) {
+			best = append(best, o)
+		}
+	}
+	if len(best) == 0 {
+		best = owners
+	}
+	m, found := in.TraitMethods[best[0]+"."+key]
+	if !found {
+		mangled, owner, ok = in.ResolveMethod(typeName, name, prefer)
+		return mangled, owner, nil, ok
+	}
+	if len(best) > 1 {
+		return m, best[0], best, true
+	}
+	return m, best[0], nil, true
+}
+
+// methodCands turns trait names into the candidate records E074 reports,
+// each with the position its impl of `typeName.name` was declared at.
+func (in *Info) methodCands(typeName, name string, traits []string) []methodCand {
+	out := make([]methodCand, len(traits))
+	for i, tr := range traits {
+		out[i] = methodCand{Trait: tr, Pos: in.MethodDeclSites[declSiteKey(typeName, name, tr)]}
+	}
+	return out
+}
+
+// resolveMethod is ResolveMethod against the checker's own Info.
+func (c *checker) resolveMethod(typeName, name string, prefer []string) (mangled, owner string, ok bool) {
+	return c.info.ResolveMethod(typeName, name, prefer)
+}
+
+// currentModule names the module whose source the checker is walking, or
+// "" outside any function (the top-level pre-checking phase that
+// registers structs / enums, and a single-file program that bypassed
+// modload). It is both the module identity visibility rules compare
+// against and the path errf stamps on every diagnostic, which the CLI
+// formatter and LSP workspace mode route per file by.
+//
+// It reads BodyModule, not SourceModule: a materialised trait default is
+// owned by the impl but its statements were written beside the trait, so
+// both the names it may reach and the file a diagnostic names are the
+// trait's.
+func (c *checker) currentModule() string {
+	if c.current == nil {
+		return ""
+	}
+	return c.current.BodyModule()
+}
+
+// setElemHintFor stamps c.elemHint with the element type of `dst` when
+// `e` is directly an array literal and `dst` is an array or view type — the
+// only shape the ArrayLit case consumes the hint for. Keeping the guard
+// tight means the hint never leaks into an array literal nested inside
+// some other expression at the same site. See docs/DYN-TRAITS.md.
+func (c *checker) setElemHintFor(e ast.Expr, dst ast.Type) {
+	c.elemHint = nil
+	if _, ok := e.(*ast.ArrayLit); !ok {
+		return
+	}
+	switch at := dst.(type) {
+	case ast.ArrayType:
+		c.elemHint = at.Elem
+	case ast.SliceType:
+		// A literal at a `[T]` parameter is lent as a view of itself
+		// (#6798), so its elements settle against T exactly as they would
+		// at a `T[]` parameter.
+		c.elemHint = at.Elem
+	}
+}
+
+// forEachDynTrait invokes fn for every `dyn Trait` nested anywhere in
+// t (directly, or inside an array / slice / tuple / func / generic
+// argument). Drives the dyn-type validation pass.
+func forEachDynTrait(t ast.Type, fn func(string)) {
+	switch x := t.(type) {
+	case ast.DynTraitType:
+		// Multi-trait-aware: validate EVERY trait in the set so
+		// `dyn Bogus + Eq` reports both the unknown and the
+		// non-object-safe trait.
+		for _, tr := range x.Traits {
+			fn(tr)
+		}
+	case ast.ArrayType:
+		forEachDynTrait(x.Elem, fn)
+	case ast.SliceType:
+		forEachDynTrait(x.Elem, fn)
+	case ast.TupleType:
+		for _, e := range x.Elems {
+			forEachDynTrait(e, fn)
+		}
+	case *ast.FuncType:
+		for _, p := range x.Params {
+			forEachDynTrait(p, fn)
+		}
+		forEachDynTrait(x.Result, fn)
+	case ast.StructType:
+		for _, a := range x.Args {
+			forEachDynTrait(a, fn)
+		}
+	case ast.EnumType:
+		for _, a := range x.Args {
+			forEachDynTrait(a, fn)
+		}
+	}
+}
+
+// forEachDynTraitObj invokes fn on every DynTraitType nested in t (itself,
+// or inside an array / slice / tuple / func / generic argument). Unlike
+// forEachDynTrait it surfaces the whole object so callers can inspect the
+// per-trait generic arguments (e.g. arity validation of `dyn Container[i32]`).
+func forEachDynTraitObj(t ast.Type, fn func(ast.DynTraitType)) {
+	switch x := t.(type) {
+	case ast.DynTraitType:
+		fn(x)
+		for _, args := range x.Args {
+			for _, a := range args {
+				forEachDynTraitObj(a, fn)
+			}
+		}
+	case ast.ArrayType:
+		forEachDynTraitObj(x.Elem, fn)
+	case ast.SliceType:
+		forEachDynTraitObj(x.Elem, fn)
+	case ast.TupleType:
+		for _, e := range x.Elems {
+			forEachDynTraitObj(e, fn)
+		}
+	case *ast.FuncType:
+		for _, p := range x.Params {
+			forEachDynTraitObj(p, fn)
+		}
+		forEachDynTraitObj(x.Result, fn)
+	case ast.StructType:
+		for _, a := range x.Args {
+			forEachDynTraitObj(a, fn)
+		}
+	case ast.EnumType:
+		for _, a := range x.Args {
+			forEachDynTraitObj(a, fn)
+		}
+	}
+}
+
+// forEachHandle invokes fn for every resource HandleType (`own R` /
+// `borrow R`) nested anywhere in t. Drives the resource-handle validation
+// pass (P5 — docs/WIT-BRING-YOUR-OWN.md).
+func forEachHandle(t ast.Type, fn func(ast.HandleType)) {
+	switch x := t.(type) {
+	case ast.HandleType:
+		fn(x)
+	case ast.ArrayType:
+		forEachHandle(x.Elem, fn)
+	case ast.SliceType:
+		forEachHandle(x.Elem, fn)
+	case ast.TupleType:
+		for _, e := range x.Elems {
+			forEachHandle(e, fn)
+		}
+	case *ast.FuncType:
+		for _, p := range x.Params {
+			forEachHandle(p, fn)
+		}
+		forEachHandle(x.Result, fn)
+	case ast.StructType:
+		for _, a := range x.Args {
+			forEachHandle(a, fn)
+		}
+	case ast.EnumType:
+		for _, a := range x.Args {
+			forEachHandle(a, fn)
+		}
+	}
+}
+
+// validateResourceHandles is the sole reporter of resource-handle type-level
+// errors: every `own R` / `borrow R` must name a declared `resource`. It walks
+// every function signature (params + return) and local var annotation, once,
+// reporting each unknown resource a single time. Mirrors validateDynTraitTypes
+// (P5 — docs/WIT-BRING-YOUR-OWN.md).
+func (c *checker) validateResourceHandles(prog *ast.Program) {
+	reported := map[string]bool{}
+	visit := func(t ast.Type, pos ast.Position) {
+		forEachHandle(t, func(h ast.HandleType) {
+			if reported[h.Resource] {
+				return
+			}
+			if _, ok := c.info.Resources[h.Resource]; !ok {
+				reported[h.Resource] = true
+				c.errfCode(pos, "E021", "unknown resource %q in handle type %q", demangle(h.Resource), h.String())
+			}
+		})
+	}
+	for _, fn := range prog.Funcs {
+		for _, p := range fn.Params {
+			visit(p.Type, fn.P)
+		}
+		visit(fn.ReturnType, fn.P)
+		if fn.Body != nil {
+			c.walkDeclaredTypes(fn.Body, visit)
+		}
+	}
+}
+
+// validateExports checks `@export` functions (P6 — bind a Fern function to a
+// WIT world export, docs/WIT-BRING-YOUR-OWN.md). A world export is lifted with
+// a single concrete canonical ABI, so it cannot be generic; and the export
+// surface is for top-level functions, not methods. The body is type-checked
+// like any function elsewhere.
+func (c *checker) validateExports(prog *ast.Program) {
+	for _, fn := range prog.Funcs {
+		if fn.ExportIface == "" {
+			continue
+		}
+		if len(fn.TypeParams) > 0 {
+			c.errfCode(fn.P, "E054", "@export function %q cannot be generic (a world export has a single concrete ABI)", fn.Name)
+		}
+		if fn.Receiver != nil || fn.MethodRecv != "" {
+			c.errfCode(fn.P, "E054", "@export cannot be applied to a method (%q); use a top-level function", fn.Name)
+		}
+	}
+}
+
+// validateDynTraitTypes is the sole reporter of `dyn Trait` type-level
+// errors: a trait named in a `dyn` type must exist and be object-safe.
+// It walks every function signature (params + return) and local var
+// annotation. Running once over type positions catches a `dyn Bogus`
+// or `dyn Eq` even when no method is ever called on the value; the
+// per-call dispatch path then assumes validity. One report per trait
+// keeps the output tidy. See docs/DYN-TRAITS.md §3.
+func (c *checker) validateDynTraitTypes(prog *ast.Program) {
+	reported := map[string]bool{}
+	visit := func(t ast.Type, pos ast.Position) {
+		forEachDynTrait(t, func(trait string) {
+			if reported[trait] {
+				return
+			}
+			if _, ok := c.info.Traits[trait]; !ok {
+				reported[trait] = true
+				c.errfCode(pos, "E021", "unknown trait %q in `dyn` type", demangle(trait))
+			}
+		})
+		// Per-object checks (object-safety + generic-arg arity), which need
+		// the dyn type's pinned arguments / associated types. A generic
+		// trait must PIN its type parameters (`dyn Container[i32]`, not bare
+		// `dyn Container`); a trait with associated types must pin every one
+		// (`dyn Producer[Item = i32]`) to be object-safe — the concrete type
+		// is erased, so an unpinned `T` / `Self::Item` can't be resolved at
+		// the call site. Reported once per trait.
+		forEachDynTraitObj(t, func(dt ast.DynTraitType) {
+			for i, trait := range dt.Traits {
+				td, ok := c.info.Traits[trait]
+				if !ok {
+					continue
+				}
+				pinned := map[string]bool{}
+				for _, b := range dt.AssocFor(i) {
+					pinned[b.Name] = true
+				}
+				if safe, reason := c.objectSafe(trait, pinned); !safe {
+					if !reported[trait] {
+						reported[trait] = true
+						c.errfCode(pos, "E021", "trait %s is not object-safe: %s, so it cannot be used as `dyn %s`",
+							demangle(trait), reason, demangle(trait))
+					}
+					continue
+				}
+				if len(td.TypeParams) > 0 {
+					if got := len(dt.ArgsFor(i)); got != len(td.TypeParams) {
+						key := trait + "!arity"
+						if reported[key] {
+							continue
+						}
+						reported[key] = true
+						c.errfCode(pos, "E021", "generic trait %s used as `dyn` must pin its type parameter(s): expected %d argument(s) (e.g. `dyn %s[...]`), got %d",
+							demangle(trait), len(td.TypeParams), demangle(trait), got)
+					}
+				}
+			}
+		})
+	}
+	for _, fn := range prog.Funcs {
+		for _, p := range fn.Params {
+			visit(p.Type, fn.P)
+		}
+		visit(fn.ReturnType, fn.P)
+		if fn.Body != nil {
+			c.walkDeclaredTypes(fn.Body, visit)
+		}
+	}
+}
+
+// walkDeclaredTypes invokes visit on every annotated type declared inside
+// a block, wherever it nests — see forEachDeclaredType for the node set.
+// The hand-rolled statement recursion this replaced descended only into
+// blocks, so it missed a `let` in an else-if chain (an *ast.If sits
+// directly in the Else slot, not a Block) and in every expression-nested
+// position — the same class of gap #6996 found in resolveTypesInBlock,
+// which is why both now walk the tree the same way.
+func (c *checker) walkDeclaredTypes(b *ast.Block, visit func(ast.Type, ast.Position)) {
+	if b == nil {
+		return
+	}
+	ast.Walk(b, func(n ast.Node) bool {
+		forEachDeclaredType(n, func(t *ast.Type, pos ast.Position) {
+			if *t != nil {
+				visit(*t, pos)
+			}
+		})
+		return true
+	})
+}
+
+// forEachDeclaredType invokes visit on every type a declaration node
+// ANNOTATES: a `let`'s type, a nested function's or a lambda's
+// parameter and return types, and the type arguments a call or a
+// struct literal writes out. The pointer is what lets the resolution
+// pass rewrite in place; the reporters just read through it.
+//
+// It exists because the three body walkers that care about annotated
+// types were each written separately and drifted: resolution covered all
+// three node kinds after #7003, while the two REPORTERS still looked at
+// `let` alone, so neither E064 nor E021 ever reached a lambda parameter
+// (#7004). Sharing the node set is what stops that recurring.
+//
+// A nested function's own type-params would shadow the outer scope's; the
+// typical inner function has none and just sees the outer params, so
+// callers pass the surrounding set, which is the conservative answer.
+func forEachDeclaredType(n ast.Node, visit func(t *ast.Type, pos ast.Position)) {
+	switch x := n.(type) {
+	case *ast.Var:
+		visit(&x.Type, x.P)
+	case *ast.FuncDecl:
+		for i := range x.Params {
+			visit(&x.Params[i].Type, paramPos(x.Params[i], x.P))
+		}
+		visit(&x.ReturnType, x.P)
+	case *ast.Lambda:
+		for i := range x.Params {
+			visit(&x.Params[i].Type, paramPos(x.Params[i], x.P))
+		}
+		visit(&x.ReturnType, x.P)
+	case *ast.Call:
+		if x.TypeArgsWritten {
+			for i := range x.TypeArgs {
+				visit(&x.TypeArgs[i], x.P)
+			}
+		}
+	case *ast.StructLit:
+		if x.TypeArgsWritten {
+			for i := range x.TypeArgs {
+				visit(&x.TypeArgs[i], x.P)
+			}
+		}
+	}
+}
+
+// mentionsSelf reports whether `Self` appears anywhere in a type —
+// directly or nested inside an array / slice / tuple / func / generic
+// argument. Drives the object-safety check.
+func mentionsSelf(t ast.Type) bool {
+	switch x := t.(type) {
+	case ast.SelfType:
+		return true
+	case ast.ArrayType:
+		return mentionsSelf(x.Elem)
+	case ast.SliceType:
+		return mentionsSelf(x.Elem)
+	case ast.TupleType:
+		for _, e := range x.Elems {
+			if mentionsSelf(e) {
+				return true
+			}
+		}
+	case *ast.FuncType:
+		for _, p := range x.Params {
+			if mentionsSelf(p) {
+				return true
+			}
+		}
+		return mentionsSelf(x.Result)
+	case ast.StructType:
+		for _, a := range x.Args {
+			if mentionsSelf(a) {
+				return true
+			}
+		}
+	case ast.EnumType:
+		for _, a := range x.Args {
+			if mentionsSelf(a) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// objectSafe reports whether a trait's methods can be dispatched
+// through a `dyn Trait` object. After the receiver `self: Self`, no
+// method may mention Self in another parameter or in its result — the
+// concrete type is erased behind the object, so the compiler can
+// neither supply nor name a second value of it. Returns the offending
+// reason for the diagnostic. See docs/DYN-TRAITS.md §3.
+func (c *checker) objectSafe(traitName string, pinned map[string]bool) (bool, string) {
+	td, ok := c.info.Traits[traitName]
+	if !ok {
+		return false, ""
+	}
+	// A trait with associated types is object-safe ONLY when the `dyn` type
+	// PINS every one (`dyn Producer[Item = i32]`): the concrete type is
+	// erased, so an unpinned associated type — and any `Self::Item`
+	// projection in a method signature — can't be resolved at the call
+	// site. See docs/ASSOCIATED-TYPES.md.
+	for _, at := range td.AssocTypes {
+		if !pinned[at] {
+			return false, fmt.Sprintf("associated type %q is not pinned — write `dyn %s[%s = ...]`", at, demangle(traitName), at)
+		}
+	}
+	for _, m := range td.Methods {
+		for i := 1; i < len(m.Params); i++ { // params[0] is self: Self
+			if mentionsSelf(m.Params[i].Type) {
+				return false, fmt.Sprintf("method %q takes Self as a non-receiver parameter", m.Name)
+			}
+		}
+		if mentionsSelf(m.Result) {
+			return false, fmt.Sprintf("method %q returns Self", m.Name)
+		}
+	}
+	return true, ""
+}
+
+// checkDynMethodCall type-checks a method call on a `dyn Trait`
+// receiver against the trait's signature and marks the call for runtime
+// dispatch (Call.DynTrait), leaving the callee a FieldAccess. Returns
+// the call's result type (nil on a hard error). See docs/DYN-TRAITS.md.
+func (c *checker) checkDynMethodCall(n *ast.Call, fa *ast.FieldAccess, dt ast.DynTraitType, s *scope) ast.Type {
+	// Method resolution searches the UNION of the traits' method sets.
+	// Each trait must be known + object-safe (validateDynTraitTypes
+	// reports those errors once over type positions; bail silently here
+	// so per-call sites don't repeat them).
+	for i, tr := range dt.Traits {
+		if _, ok := c.info.Traits[tr]; !ok {
+			return nil
+		}
+		pinned := map[string]bool{}
+		for _, b := range dt.AssocFor(i) {
+			pinned[b.Name] = true
+		}
+		if safe, _ := c.objectSafe(tr, pinned); !safe {
+			return nil
+		}
+	}
+	// Find the method across all traits in the set. Exactly one trait
+	// declaring it → use it. Two+ → an ambiguity error (disambiguation
+	// syntax is a follow-up; docs/DYN-TRAITS.md §N). None → no-method.
+	var tm *ast.TraitMethod
+	var ownerTrait string
+	var collidingTraits []string
+	for _, tr := range dt.Traits {
+		td := c.info.Traits[tr]
+		for i := range td.Methods {
+			if td.Methods[i].Name == fa.Field {
+				if tm != nil && ownerTrait != tr {
+					collidingTraits = append(collidingTraits, tr)
+				} else {
+					tm = &td.Methods[i]
+					ownerTrait = tr
+				}
+				break
+			}
+		}
+	}
+	if len(collidingTraits) > 0 {
+		all := append([]string{ownerTrait}, collidingTraits...)
+		for i := range all {
+			all[i] = demangle(all[i])
+		}
+		c.errfCode(fa.FieldPos, "E062", "ambiguous method %q on `%s`: declared by traits %s",
+			fa.Field, dt.String(), strings.Join(all, ", "))
+		return nil
+	}
+	if tm == nil {
+		c.errfCode(fa.FieldPos, "E021", "no method %q on `%s`", fa.Field, dt.String())
+		return nil
+	}
+	// An associated function has no receiver to dispatch on, so it gets no
+	// vtable slot (traitVtableSlots skips it) and the concrete type a call
+	// would name is exactly what the `dyn` erased.
+	if tm.Assoc {
+		c.errfCode(fa.FieldPos, "E021",
+			"%q is an associated function of trait %s, not a method; it has no `self` receiver, so it cannot be called through a `%s` value — call it on a concrete type",
+			fa.Field, demangle(ownerTrait), dt.String())
+		return nil
+	}
+	// Pin the owner trait's generic type parameters to the dyn object's
+	// arguments before reading the signature: `dyn Container[i32]` makes
+	// `get(): T` read as `get(): i32`. Self is still substituted to the
+	// dyn type itself (below) so the receiver keeps its object type.
+	if td := c.info.Traits[ownerTrait]; td != nil && len(td.TypeParams) > 0 {
+		var args []ast.Type
+		for i, tr := range dt.Traits {
+			if tr == ownerTrait {
+				args = dt.ArgsFor(i)
+				break
+			}
+		}
+		if len(args) == len(td.TypeParams) {
+			sub := make(map[string]ast.Type, len(args))
+			for i, tp := range td.TypeParams {
+				sub[tp] = args[i]
+			}
+			pinned := substTraitMethodTypeParams(*tm, sub)
+			tm = &pinned
+		}
+	}
+	// Resolve `Self::Item` projections in the signature to the dyn object's
+	// pinned associated types: `dyn Producer[Item = i32]` makes
+	// `get(): Self::Item` read as `get(): i32`. The bindings come from the
+	// owner trait's AssocFor; resolveProjWith rewrites every ProjType.
+	if td := c.info.Traits[ownerTrait]; td != nil && len(td.AssocTypes) > 0 {
+		var binds []ast.AssocBinding
+		for i, tr := range dt.Traits {
+			if tr == ownerTrait {
+				binds = dt.AssocFor(i)
+				break
+			}
+		}
+		if len(binds) > 0 {
+			bindings := make(map[string]ast.Type, len(binds))
+			for _, b := range binds {
+				bindings[b.Name] = b.Type
+			}
+			resolved := *tm
+			resolved.Params = make([]ast.Param, len(tm.Params))
+			for i, p := range tm.Params {
+				p.Type = c.resolveProjWith(p.Type, bindings)
+				resolved.Params[i] = p
+			}
+			resolved.Result = c.resolveProjWith(tm.Result, bindings)
+			tm = &resolved
+		}
+	}
+	// Trait method signatures are stored as written: a `self` receiver is
+	// present in Params only when the author spelled it (`function area(self:
+	// Self): i32`); the common `function area(): i32;` form has none. Strip a
+	// leading self when present so the remainder are the call arguments —
+	// indexing `Params[1:]` unconditionally panicked on the no-self form (and
+	// silently dropped the first real argument when a method had params but no
+	// explicit self).
+	wantParams := tm.Params
+	if len(wantParams) > 0 {
+		if _, isSelf := wantParams[0].Type.(ast.SelfType); isSelf || wantParams[0].Name == "self" {
+			wantParams = wantParams[1:]
+		}
+	}
+	if len(n.Args) != len(wantParams) {
+		c.errfCode(n.P, "E004", "method %q expects %d argument(s), got %d", fa.Field, len(wantParams), len(n.Args))
+		return ast.SubstSelf(tm.Result, dt)
+	}
+	for i, arg := range n.Args {
+		at := c.checkExpr(arg, s)
+		want := ast.SubstSelf(wantParams[i].Type, dt)
+		if at != nil && !c.argOK(&n.Args[i], want, at, wantParams[i].Own) {
+			c.errfCode(arg.Pos(), "E038", "argument %d to %q: expected %s, got %s", i+1, fa.Field, want, at)
+		}
+	}
+	n.Method = &ast.MethodCallSite{Field: fa.Field, FieldPos: fa.FieldPos, Receiver: dt, OwnerTrait: ownerTrait}
+	// DynTrait records the trait that OWNS the resolved method (not the
+	// whole set) — that's what the IR vtable lookup and the interp's
+	// error messages key on. Runtime dispatch is still by the receiver's
+	// concrete type, so for the single-trait case this is unchanged.
+	n.DynTrait = ownerTrait
+	return ast.SubstSelf(tm.Result, dt)
+}
+
+// normalizeEnumKinds rewrites a type so every nominal reference to an enum is an
+// ast.EnumType, recursively. The parser defaults any bare type name to
+// ast.StructType (it has no symbol table), so a name that is actually an enum
+// arrives as StructType — which then mismatches the same enum spelled EnumType
+// elsewhere. Applied to both sides of trait-conformance comparison so the kinds
+// line up; idempotent on already-correct types and a no-op when the name is a
+// real struct / generic / builtin.
+func (c *checker) normalizeEnumKinds(t ast.Type) ast.Type {
+	switch x := t.(type) {
+	case ast.StructType:
+		args := make([]ast.Type, len(x.Args))
+		for i, a := range x.Args {
+			args[i] = c.normalizeEnumKinds(a)
+		}
+		if _, isEnum := c.info.Enums[x.Name]; isEnum {
+			return ast.EnumType{Name: x.Name, Args: args}
+		}
+		return ast.StructType{Name: x.Name, Args: args}
+	case ast.EnumType:
+		args := make([]ast.Type, len(x.Args))
+		for i, a := range x.Args {
+			args[i] = c.normalizeEnumKinds(a)
+		}
+		return ast.EnumType{Name: x.Name, Args: args}
+	case ast.ArrayType:
+		return ast.ArrayType{Elem: c.normalizeEnumKinds(x.Elem)}
+	case ast.SliceType:
+		return ast.SliceType{Elem: c.normalizeEnumKinds(x.Elem)}
+	case ast.TupleType:
+		els := make([]ast.Type, len(x.Elems))
+		for i, e := range x.Elems {
+			els[i] = c.normalizeEnumKinds(e)
+		}
+		return ast.TupleType{Elems: els}
+	}
+	return t
+}
+
+// sigMatches reports whether the registered method signature sig has
+// exactly the parameter types want and result type wantRet.
+func sigMatches(sig *ast.FuncType, want []ast.Type, wantRet ast.Type) bool {
+	if len(sig.Params) != len(want) {
+		return false
+	}
+	for i := range want {
+		if !ast.Equal(sig.Params[i], want[i]) {
+			return false
+		}
+	}
+	return ast.Equal(sig.Result, wantRet)
+}
+
+// cmpImport is the import that brings core/cmp's derivable traits (Eq,
+// Ord, Hash, Display, Debug, Default) into scope. There is no prelude
+// and `@derive` / `impl` resolve a trait by the name as written, so a
+// hint that spells one of them must spell it qualified and name this
+// import too — a bare `@derive(Eq)` is E021 "unknown trait".
+const cmpImport = "`import \"core/cmp\";`"
+
+// deriveHint renders the "add `@derive(…)` (or `impl … for T`)" clause
+// the E038 / E041 / E045 hints share. `derive` is the attribute spelling
+// (`cmp.Eq`, `cmp.Eq, cmp.Hash`) and `trait` the trait for the impl form,
+// "" to offer the derive alone. `tn` is the receiver's registered name,
+// still module-mangled.
+//
+// A type from ANOTHER module takes neither route where the reader is
+// standing: `@derive` annotates the declaration, and an impl of a foreign
+// trait for a foreign type is the orphan impl this checker refuses. So
+// the hint names the declaring module rather than two spellings that both
+// fail — the E045/E041/E038 family already learned once (#6990) that a
+// hint which does not compile is worse than no hint.
+func deriveHint(tn, derive, trait string) string {
+	mod, simple, foreign := strings.Cut(tn, "__")
+	if mod == "" {
+		// A leading `__` marks a compiler-internal name, not a module
+		// prefix.
+		foreign = false
+	}
+	if !foreign {
+		simple = tn
+	}
+	routes := fmt.Sprintf("`@derive(%s)`", derive)
+	if trait != "" {
+		routes += fmt.Sprintf(" (or `impl %s for %s`)", trait, simple)
+	}
+	if !foreign {
+		return fmt.Sprintf("add %s, which requires %s", routes, cmpImport)
+	}
+	orphan := ""
+	if trait != "" {
+		orphan = " (an impl written here instead would be an orphan impl)"
+	}
+	return fmt.Sprintf("add %s in module `%s`, which declares it and needs %s there%s", routes, mod, cmpImport, orphan)
+}
+
+// typeLabel renders t the way the reader wrote it. modload mangles a
+// cross-module nominal type to `mod__Name`, which is not a spelling
+// anyone can type, so a message naming a type — above all one telling the
+// reader to write `impl cmp.Eq for <type>` — has to turn it back into
+// `mod.Name`.
+func typeLabel(t ast.Type) string { return demangleAll(t.String()) }
+
+// demangleAll applies demangle to every identifier in s, so a composite
+// type label demangles each of its parts (`(a__A, b__B)`), not just the
+// first. An identifier starting with `_` is a runtime symbol
+// (`__method_P_eq`), never a module mangling, and is left alone.
+func demangleAll(s string) string {
+	identPart := func(b byte) bool {
+		return b == '_' || b >= 'a' && b <= 'z' || b >= 'A' && b <= 'Z' || b >= '0' && b <= '9'
+	}
+	var b strings.Builder
+	for i := 0; i < len(s); {
+		if !identPart(s[i]) || s[i] >= '0' && s[i] <= '9' {
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+		j := i
+		for j < len(s) && identPart(s[j]) {
+			j++
+		}
+		if word := s[i:j]; word[0] == '_' {
+			b.WriteString(word)
+		} else {
+			b.WriteString(demangle(word))
+		}
+		i = j
+	}
+	return b.String()
+}
+
+// deriveKind classifies a (possibly module-mangled) derived-trait name
+// by its simple name: "Eq", "Display", "Ord", "Hash", "Json", "FromJson",
+// "Default", or "Debug". Returns "" for any other trait — only these are
+// derivable.
+func deriveKind(name string) string {
+	switch simple := simpleTraitName(name); simple {
+	case "Eq", "Display", "Ord", "Hash", "Json", "FromJson", "Default", "Debug":
+		return simple
+	}
+	return ""
+}
+
+// hasStdJson reports whether std/json is in the program: its parser is
+// what a derived decoder calls, so a `@derive(json.FromJson)` needs it.
+func hasStdJson(prog *ast.Program) bool {
+	for _, pf := range prog.Funcs {
+		if pf.Name == "json__json_parse" {
+			return true
+		}
+	}
+	return false
+}
+
+// fromJsonFieldTypes maps each field type of a FromJson derive to the type
+// whose decoder the synthesised body calls: an array's or an Option's
+// element, else the field type itself. A container nested in another has
+// no decoder; its index is returned with ok=false.
+func fromJsonFieldTypes(types []ast.Type) ([]ast.Type, int, bool) {
+	out := make([]ast.Type, len(types))
+	for i, t := range types {
+		e := fromJsonElem(t)
+		if _, nested := fromJsonContainer(e); nested {
+			return nil, i, false
+		}
+		switch e.(type) {
+		case ast.SliceType, ast.TupleType, *ast.FuncType:
+			return nil, i, false
+		}
+		out[i] = e
+	}
+	return out, -1, true
+}
+
+// fromJsonContainer names the container a field type is — "array" for
+// `E[]`, "option" for `Option[E]` — with ok=false for any other type.
+func fromJsonContainer(t ast.Type) (string, bool) {
+	switch x := t.(type) {
+	case ast.ArrayType:
+		return "array", true
+	case ast.EnumType:
+		if x.Name == "Option" && len(x.Args) == 1 {
+			return "option", true
+		}
+	}
+	return "", false
+}
+
+// fromJsonElem is the element type of a FromJson field's container, or the
+// field type itself.
+func fromJsonElem(t ast.Type) ast.Type {
+	switch x := t.(type) {
+	case ast.ArrayType:
+		return x.Elem
+	case ast.EnumType:
+		if x.Name == "Option" && len(x.Args) == 1 {
+			return x.Args[0]
+		}
+	}
+	return t
+}
+
+// typeImplsEqAndHash reports whether the named struct/enum implements
+// BOTH Eq and Hash — the requirement for using it as a Map key, whose
+// derived `hash` / `eq` methods drive the type-erased map runtime's
+// keyed bucket choice + key comparison (#2671). Trait names in
+// c.info.Impls may be module-mangled (`cmp__Hash`), so classify by
+// simple name via deriveKind, which already strips the prefix.
+func (c *checker) typeImplsEqAndHash(typeName string) bool {
+	hasEq, hasHash := false, false
+	for trait, types := range c.info.Impls {
+		if !types[typeName] {
+			continue
+		}
+		switch deriveKind(trait) {
+		case "Eq":
+			hasEq = true
+		case "Hash":
+			hasHash = true
+		}
+	}
+	return hasEq && hasHash
+}
+
+// mapKeyTypeError returns an E045 message describing why `k` cannot be
+// a Map key, or "" if it is a usable key. Usable keys are integers,
+// strings (owned or borrowed), booleans, struct/enum types that
+// implement both Eq and Hash (#2671), and tuples and arrays of usable
+// scalar keys (ast.StructuralMapKey, #10020). A struct/enum that lacks the
+// derives gets a message pointing at the fix; a slice or float keeps the
+// historical "not yet supported" wording. A type parameter or polymorphic
+// literal passes — it is resolved later (per monomorph instantiation) and
+// re-checked then.
+//
+// `str` and `boolean` are here because both work: a Map keyed by either
+// inserts and reads back correctly under the interpreter AND compiled.
+// The rule refused them until this was measured, which only ever showed
+// up in the literal spelling — `Map { true: 1 }` was E045 while the
+// annotated `Map[boolean, i32]` was accepted and ran.
+func (c *checker) mapKeyTypeError(k ast.Type) string {
+	switch kt := k.(type) {
+	case ast.NumberType, ast.StringType, ast.StrType, ast.BoolType, ast.ParamType:
+		return ""
+	case ast.StructType:
+		if c.typeImplsEqAndHash(kt.Name) {
+			return ""
+		}
+		return fmt.Sprintf("map key type %s is not supported — a struct used as a key must derive Eq and Hash: %s", typeLabel(k), deriveHint(kt.Name, "cmp.Eq, cmp.Hash", ""))
+	case ast.EnumType:
+		if c.typeImplsEqAndHash(kt.Name) {
+			return ""
+		}
+		return fmt.Sprintf("map key type %s is not supported — an enum used as a key must derive Eq and Hash: %s", typeLabel(k), deriveHint(kt.Name, "cmp.Eq, cmp.Hash", ""))
+	case ast.TupleType, ast.ArrayType:
+		if ast.StructuralMapKey(k) {
+			return ""
+		}
+		return fmt.Sprintf("map key type %s is not supported — a tuple or array used as a key may hold only integers, booleans, chars, strings, and such tuples and arrays", typeLabel(k))
+	}
+	return fmt.Sprintf("map key type %s is not yet supported — use i32, string, or a struct/enum with `@derive(cmp.Eq, cmp.Hash)`, which requires %s", typeLabel(k), cmpImport)
+}
+
+// deriveConf answers "does type <tn> implement trait <dn>?" at
+// derive-synthesis time — BEFORE the conformance pass fills
+// c.info.Impls. Three sources count, mirroring how the later E021
+// bound check resolves conformance: an explicit `impl dn for tn`
+// (prog.Impls, including stdlib-merged ones — primitives conform only
+// this way), a pending `@derive(dn)` on tn itself (it will synthesise
+// its own impl in this same pass, in either order), and an existing
+// receiver-method set covering every required trait method (the
+// conformance pass's "adopt the existing method" rule). Drives the
+// @derive field pre-check in synthesizeDerives.
+type deriveConf struct {
+	impls   map[string]map[string]bool // trait name -> type name
+	methods map[string]map[string]bool // type name -> receiver-method name
+}
+
+func newDeriveConf(prog *ast.Program) *deriveConf {
+	dc := &deriveConf{impls: map[string]map[string]bool{}, methods: map[string]map[string]bool{}}
+	add := func(m map[string]map[string]bool, k1, k2 string) {
+		if m[k1] == nil {
+			m[k1] = map[string]bool{}
+		}
+		m[k1][k2] = true
+	}
+	for _, im := range prog.Impls {
+		if tn, ok := methodTypeName(im.Type); ok {
+			add(dc.impls, im.Trait, tn)
+		}
+	}
+	for _, sd := range prog.Structs {
+		for _, dn := range sd.Derives {
+			add(dc.impls, dn, sd.Name)
+		}
+	}
+	for _, ed := range prog.Enums {
+		for _, dn := range ed.Derives {
+			add(dc.impls, dn, ed.Name)
+		}
+	}
+	for _, fn := range prog.Funcs {
+		if fn.Receiver == nil {
+			continue
+		}
+		if tn, ok := methodTypeName(fn.Receiver.Type); ok {
+			add(dc.methods, tn, fn.Name)
+		}
+	}
+	return dc
+}
+
+// conforms reports whether type name tn implements trait td (declared
+// under name dn): via impl/derive, or by providing every required
+// (abstract) trait method as a receiver method. A trait with no
+// required methods conforms only via an explicit impl.
+func (dc *deriveConf) conforms(td *ast.TraitDecl, dn, tn string) bool {
+	if dc.impls[dn][tn] {
+		return true
+	}
+	required := false
+	for _, m := range td.Methods {
+		if m.Body != nil {
+			continue
+		}
+		required = true
+		if !dc.methods[tn][m.Name] {
+			return false
+		}
+	}
+	return required
+}
+
+// deriveFieldGap returns the first (label, type) among the given
+// field/payload types that does NOT conform to trait td — the @derive
+// pre-check that replaces the position-less errors a broken synthesised
+// body would surface (#5392). Types the check cannot name (arrays,
+// tuples, maps, closures — methodTypeName
+// fails) and type parameters of the deriving decl are skipped: the
+// former keep their historical behaviour, the latter are bound-checked
+// per instantiation via the parametric impl.
+func (dc *deriveConf) deriveFieldGap(td *ast.TraitDecl, dn string, labels []string, types []ast.Type, typeParams []string) (string, string, bool) {
+	for i, t := range types {
+		tn, ok := methodTypeName(t)
+		if !ok || slices.Contains(typeParams, tn) {
+			continue
+		}
+		if !dc.conforms(td, dn, tn) {
+			return labels[i], tn, true
+		}
+	}
+	return "", "", false
+}
+
+// preCheckDeriveFields runs the deriveFieldGap pre-check for one derive
+// and reports the E021 at the deriving decl's position. labels[i] names
+// types[i] for the message ("field x" / "variant B payload"). Returns
+// true when the derive is broken, in which case the caller must skip
+// synthesis — no method beats an ill-typed one.
+//
+// Every derivable kind but Default synthesises an unconditional per-field
+// trait call (`self.f.eq(other.f)` / `self.f.to_string()` /
+// `self.f.to_debug()` / `self.f.to_json()`), so every one of them needs
+// the gate: without it a non-conforming field escapes into the
+// synthesised body and surfaces as a position-less E043 naming the
+// trait's method as a missing field. Default is excluded because it
+// reports its own per-field gap from synthDefault — it composes through
+// zero literals and `Type.default()`, not a call on the field value.
+func (c *checker) preCheckDeriveFields(dc *deriveConf, td *ast.TraitDecl, dn, kind, what string, p ast.Position, labels []string, types []ast.Type, typeParams []string) bool {
+	if kind == "" || kind == "Default" {
+		return false
+	}
+	label, tn, bad := dc.deriveFieldGap(td, dn, labels, types, typeParams)
+	if !bad {
+		return false
+	}
+	c.errfCode(p, "E021", "cannot @derive(%s) for %s: %s of type %s does not implement %s — add `impl %s for %s` (or remove the derive)",
+		demangle(dn), demangle(what), label, demangle(tn), demangle(dn), demangle(dn), demangle(tn))
+	return true
+}
+
+// synthesizeDerives expands every struct's `@derive(Trait, …)` into a
+// field-wise `impl Trait for Struct`: the generated method bodies call
+// the corresponding trait method on each field (`self.f.eq(other.f)`,
+// `self.f.to_string()`, `self.f.cmp(other.f)`), so derivation composes
+// — a field type only needs to itself implement the trait. The
+// synthesised receiver-methods are appended to prog.Funcs and an
+// ImplDecl to prog.Impls, ahead of the receiver-hoist + conformance
+// passes. See docs/TRAITS.md.
+func (c *checker) synthesizeDerives(prog *ast.Program) {
+	var dc *deriveConf
+	for _, sd := range prog.Structs {
+		if len(sd.Derives) > 0 {
+			dc = newDeriveConf(prog)
+			break
+		}
+	}
+	if dc == nil {
+		for _, ed := range prog.Enums {
+			if len(ed.Derives) > 0 {
+				dc = newDeriveConf(prog)
+				break
+			}
+		}
+	}
+	for _, sd := range prog.Structs {
+		if len(sd.Derives) == 0 {
+			continue
+		}
+		derives := sd.Derives
+		// Idempotent: clear so a later Check pass (the monomorph
+		// re-check rebuilds + re-checks the program) doesn't
+		// synthesise the impls a second time.
+		sd.Derives = nil
+		// Generic struct (`@derive(...) struct Box[T]`): synthesise a
+		// PARAMETRIC impl `impl[T: Trait] Trait for Box[T]`. The
+		// receiver carries `Box[T]` (ParamType args), each method is
+		// generic over the struct's type params, and each param is
+		// bound by the trait being derived — so the field-wise body
+		// (`self.v.to_string()`, where `self.v: T`) type-checks via the
+		// bound and monomorphises per instantiation. See docs/TRAITS.md.
+		recvType, implTypeParams := deriveRecvStruct(sd)
+		for _, dn := range derives {
+			td, ok := c.info.Traits[dn]
+			if !ok {
+				c.errfCode(sd.P, "E021", "@derive(%s): unknown trait", demangle(dn))
+				continue
+			}
+			kind := deriveKind(dn)
+			if kind == "" {
+				c.errfCode(sd.P, "E021", "cannot @derive(%s): only Eq, Display, Debug, Ord, Hash, Json, FromJson, and Default are derivable", demangle(dn))
+				continue
+			}
+			labels := make([]string, len(sd.Fields))
+			types := make([]ast.Type, len(sd.Fields))
+			for i, f := range sd.Fields {
+				labels[i] = "field " + f.Name
+				types[i] = f.Type
+			}
+			if kind == "FromJson" {
+				if !hasStdJson(prog) {
+					c.errfCode(sd.P, "E021", "cannot @derive(%s): the decoder is std/json's; import \"std/json\"", demangle(dn))
+					continue
+				}
+				elems, bad, ok := fromJsonFieldTypes(types)
+				if !ok {
+					c.errfCode(sd.P, "E021", "cannot @derive(%s) for %s: %s has type %s; FromJson decodes a field of a FromJson type, an array of one or an Option of one", demangle(dn), demangle(sd.Name), labels[bad], types[bad])
+					continue
+				}
+				types = elems
+			}
+			if c.preCheckDeriveFields(dc, td, dn, kind, sd.Name, sd.P, labels, types, sd.TypeParams) {
+				continue
+			}
+			var method *ast.FuncDecl
+			switch kind {
+			case "Eq":
+				method = synthEq(sd, recvType)
+			case "Display":
+				method = synthDisplay(sd, recvType)
+			case "Debug":
+				method = synthDebug(sd, recvType)
+			case "Ord":
+				method = synthOrd(sd, recvType)
+			case "Hash":
+				method = synthHash(sd, recvType)
+			case "Json":
+				method = synthJson(sd, recvType)
+			case "FromJson":
+				method = synthFromJsonValue(sd, recvType)
+				// The text-taking companion `from_json(s)` is an associated
+				// function beside the impl, not a requirement of the trait.
+				text := synthFromJsonText(sd, recvType)
+				text.SourceModule = sd.SourceModule
+				text.ImplTrait = dn
+				bindDeriveTypeParams(text, implTypeParams, dn)
+				prog.Funcs = append(prog.Funcs, text)
+			case "Default":
+				m, badField, badType := synthDefault(sd, recvType)
+				if m == nil {
+					c.errfCode(sd.P, "E021", "cannot @derive(%s) for %s: field %q has type %s, which has no default; implement %s by hand", demangle(dn), demangle(sd.Name), badField, badType, demangle(dn))
+					continue
+				}
+				method = m
+			}
+			method.SourceModule = sd.SourceModule
+			method.ImplTrait = dn
+			bindDeriveTypeParams(method, implTypeParams, dn)
+			prog.Funcs = append(prog.Funcs, method)
+			prog.Impls = append(prog.Impls, &ast.ImplDecl{
+				P: sd.P, Trait: dn, TraitPos: sd.P, Type: recvType, TypePos: sd.P,
+				MethodNames: []string{method.Name}, SourceModule: sd.SourceModule,
+				TypeParams: implTypeParams,
+			})
+		}
+	}
+	for _, ed := range prog.Enums {
+		if len(ed.Derives) == 0 {
+			continue
+		}
+		derives := ed.Derives
+		ed.Derives = nil
+		// Generic enum (`@derive(...) enum Option[T]`): same parametric-
+		// impl synthesis as generic structs above — `impl[T: Trait]
+		// Trait for Option[T]`, with the variant-wise body comparing /
+		// rendering payloads via the bound. See docs/TRAITS.md.
+		recvType, implTypeParams := deriveRecvEnum(ed)
+		for _, dn := range derives {
+			td, ok := c.info.Traits[dn]
+			if !ok {
+				c.errfCode(ed.P, "E021", "@derive(%s): unknown trait", demangle(dn))
+				continue
+			}
+			var labels []string
+			var types []ast.Type
+			for _, v := range ed.Variants {
+				for _, pt := range v.Payloads {
+					labels = append(labels, "variant "+v.Name+" payload")
+					types = append(types, pt)
+				}
+			}
+			if c.preCheckDeriveFields(dc, td, dn, deriveKind(dn), ed.Name, ed.P, labels, types, ed.TypeParams) {
+				continue
+			}
+			var method *ast.FuncDecl
+			switch deriveKind(dn) {
+			case "Eq":
+				method = synthEnumEq(ed, recvType)
+			case "Display":
+				method = synthEnumDisplay(ed, recvType)
+			case "Debug":
+				method = synthEnumDebug(ed, recvType)
+			case "Ord":
+				method = synthEnumOrd(ed, recvType)
+			case "Hash":
+				method = synthEnumHash(ed, recvType)
+			case "Json":
+				method = synthEnumJson(ed, recvType)
+			case "Default":
+				m, badType := synthEnumDefault(ed, recvType)
+				if m == nil {
+					c.errfCode(ed.P, "E021", "cannot @derive(%s) for enum %s: first variant has a payload of type %s, which has no default; implement %s by hand", demangle(dn), demangle(ed.Name), badType, demangle(dn))
+					continue
+				}
+				method = m
+			default:
+				c.errfCode(ed.P, "E021", "cannot @derive(%s): only Eq, Display, Debug, Ord, Hash, Json, and Default are derivable for enums", demangle(dn))
+				continue
+			}
+			method.SourceModule = ed.SourceModule
+			method.ImplTrait = dn
+			bindDeriveTypeParams(method, implTypeParams, dn)
+			prog.Funcs = append(prog.Funcs, method)
+			prog.Impls = append(prog.Impls, &ast.ImplDecl{
+				P: ed.P, Trait: dn, TraitPos: ed.P, Type: recvType, TypePos: ed.P,
+				MethodNames: []string{method.Name}, SourceModule: ed.SourceModule,
+				TypeParams: implTypeParams,
+			})
+		}
+	}
+}
+
+// synthesizeTraitDefaults materialises a trait's default methods for
+// every impl that omits them. A trait method written with a `{ … }`
+// body is a default: an impl that doesn't provide its own copy inherits
+// one here. We deep-clone the default body (so each impl gets an
+// isolated copy the checker can rewrite in place), substitute `Self` to
+// the impl type across the signature, build a receiver-method (or
+// associated-function) FuncDecl, append it to prog.Funcs, and record it
+// in impl.MethodNames so the conformance pass sees the method as
+// present. Idempotent across the monomorph re-check: the synthesised
+// FuncDecl is a plain method (no trait default attached) and
+// MethodNames already lists it, so a second pass adds nothing.
+//
+// The clone straddles two modules: the METHOD is the impl's, but its
+// BODY is the trait's source, already mangled there by modload. It
+// carries the trait method's position and DefiningModule so everything
+// reading the body — name resolution, the file a diagnostic names, the
+// capability walk — roots in the trait's module. See docs/TRAITS.md.
+func (c *checker) synthesizeTraitDefaults(prog *ast.Program) {
+	for _, impl := range prog.Impls {
+		td, ok := c.info.Traits[impl.Trait]
+		if !ok {
+			continue // unknown trait — the conformance pass reports it
+		}
+		provided := map[string]bool{}
+		for _, mn := range impl.MethodNames {
+			provided[mn] = true
+		}
+		for _, m := range td.Methods {
+			if m.Body == nil || provided[m.Name] {
+				continue
+			}
+			method := &ast.FuncDecl{
+				P:              m.P,
+				NamePos:        m.P,
+				Name:           m.Name,
+				ReturnType:     ast.SubstSelf(m.Result, impl.Type),
+				Body:           ast.CloneBlock(m.Body),
+				SourceModule:   impl.SourceModule,
+				DefiningModule: td.SourceModule,
+				ImplTrait:      impl.Trait,
+			}
+			if m.Assoc {
+				// Associated default (no `self`): hoists to
+				// `__assoc_<Type>_<name>`. Use methodTypeName so the hoist
+				// key matches what the conformance pass looks up.
+				method.Params = substSelfParams(m.Params, impl.Type)
+				if tn, ok := methodTypeName(impl.Type); ok {
+					method.AssocType = tn
+				} else {
+					method.AssocType = impl.Type.String()
+				}
+			} else {
+				// Ordinary default: m.Params[0] is `self: Self` → the
+				// receiver the hoist prepends as Params[0].
+				recv := m.Params[0]
+				method.Receiver = &ast.Param{Name: recv.Name, Type: impl.Type, Own: recv.Own}
+				method.Params = substSelfParams(m.Params[1:], impl.Type)
+			}
+			// A parametric impl (`impl[T: Bound] Trait for Box[T]`) makes
+			// every method generic over the impl's type params — a default
+			// body may reference T — so carry the params + bounds exactly as
+			// the parser does for written methods.
+			if len(impl.TypeParams) > 0 {
+				method.TypeParams = append([]string(nil), impl.TypeParams...)
+				method.Bounds = impl.Bounds
+			}
+			prog.Funcs = append(prog.Funcs, method)
+			impl.MethodNames = append(impl.MethodNames, m.Name)
+		}
+	}
+}
+
+// substSelfParams copies params with `Self` substituted to self in each
+// type, preserving names + `own` flags. Used when materialising a trait
+// default method for a concrete impl.
+func substSelfParams(params []ast.Param, self ast.Type) []ast.Param {
+	if len(params) == 0 {
+		return nil
+	}
+	out := make([]ast.Param, len(params))
+	for i, p := range params {
+		out[i] = p
+		out[i].Type = ast.SubstSelf(p.Type, self)
+	}
+	return out
+}
+
+// deriveRecvStruct builds the receiver type + impl type-parameter list
+// for a (possibly generic) struct's derived impl. For a plain struct
+// it's `Struct` with no params; for `struct Box[T]` it's `Box[T]`
+// (ParamType args) with type params `[T]`, driving a parametric impl.
+func deriveRecvStruct(sd *ast.StructDecl) (ast.StructType, []string) {
+	if len(sd.TypeParams) == 0 {
+		return ast.StructType{Name: sd.Name}, nil
+	}
+	args := make([]ast.Type, len(sd.TypeParams))
+	for i, tp := range sd.TypeParams {
+		args[i] = ast.ParamType{Name: tp}
+	}
+	return ast.StructType{Name: sd.Name, Args: args}, sd.TypeParams
+}
+
+// deriveRecvEnum mirrors deriveRecvStruct for enums.
+func deriveRecvEnum(ed *ast.EnumDecl) (ast.EnumType, []string) {
+	if len(ed.TypeParams) == 0 {
+		return ast.EnumType{Name: ed.Name}, nil
+	}
+	args := make([]ast.Type, len(ed.TypeParams))
+	for i, tp := range ed.TypeParams {
+		args[i] = ast.ParamType{Name: tp}
+	}
+	return ast.EnumType{Name: ed.Name, Args: args}, ed.TypeParams
+}
+
+// collectFreeTypeVars walks a method-receiver type and collects the
+// names that are NOT structs / enums visible from `src`, the module
+// that declared the method — i.e. the implicit type variables a
+// generic-receiver method binds (the `T` in `Box[T]`). Built-in scalar
+// types are NumberType / FloatType / BoolType / StringType, not named
+// StructType, so they're excluded naturally; a name that resolves to a
+// struct / enum the declaring module can reach is treated as a concrete
+// instantiation, not a variable. Dedupes via `seen`.
+//
+// Visibility matters because the merged program is flat: without it a
+// `struct V` in one module would make `core/map`'s `(m: Map[K, V])`
+// methods bind only K, and the stdlib would fail to check against a
+// type it cannot even name.
+func (c *checker) collectFreeTypeVars(t ast.Type, out *[]string, seen map[string]bool, src string) {
+	named := func(name string, args []ast.Type) {
+		if !c.nominalVisibleFrom(name, src) {
+			if !seen[name] {
+				seen[name] = true
+				*out = append(*out, name)
+			}
+			return
+		}
+		for i := range args {
+			c.collectFreeTypeVars(args[i], out, seen, src)
+		}
+	}
+	switch x := t.(type) {
+	case ast.StructType:
+		named(x.Name, x.Args)
+	case ast.EnumType:
+		named(x.Name, x.Args)
+	case ast.ArrayType:
+		c.collectFreeTypeVars(x.Elem, out, seen, src)
+	case ast.SliceType:
+		c.collectFreeTypeVars(x.Elem, out, seen, src)
+	case ast.TupleType:
+		for i := range x.Elems {
+			c.collectFreeTypeVars(x.Elems[i], out, seen, src)
+		}
+	}
+}
+
+// nominalVisibleFrom reports whether `name` denotes a struct or enum
+// that module `src` can reference. A name that is no type at all is not
+// visible as one.
+func (c *checker) nominalVisibleFrom(name, src string) bool {
+	if sd, ok := c.info.Structs[name]; ok {
+		return c.moduleSees(src, sd.SourceModule)
+	}
+	if ed, ok := c.info.Enums[name]; ok {
+		return c.moduleSees(src, ed.SourceModule)
+	}
+	return false
+}
+
+// moduleSees reports whether a declaration made in module `decl` is
+// reachable from module `from`, per the import closure modload recorded
+// during `combine`. The rule (docs/PRELUDE-TO-MODULES.md) is that a
+// declaration in module M is nameable from a file F only if M ∈ closure(F).
+//
+// An empty module on either side passes: an unstamped decl (built-in or
+// checker-synthesised) is universal, and an unstamped caller — a
+// single-file program that bypassed modload — is unconstrained.
+//
+// Same-module always passes: a module can always see its own decls.
+//
+// Stdlib-to-stdlib shortcut: a declaration in any stdlib module is
+// visible from any other stdlib module regardless of import closure. The
+// stdlib's method graph has natural cycles (std/string's bodies call
+// (i32) byte methods from std/i32; std/i32's bodies call (string) methods
+// from std/string) that modload's cycle-detector would otherwise reject;
+// modload clears `SourceModule` on every stdlib-loaded fn under
+// LoadStdlibFlat, and this shortcut covers the recursive load. Only
+// USER → stdlib visibility requires an explicit import.
+func (c *checker) moduleSees(from, decl string) bool {
+	if from == "" || decl == "" || from == decl {
+		return true
+	}
+	if strings.HasPrefix(from, "stdlib://") && strings.HasPrefix(decl, "stdlib://") {
+		return true
+	}
+	if c.info.ModuleImports == nil {
+		return true
+	}
+	return c.info.ModuleImports[from][decl]
+}
+
+// moduleSeesVariant is moduleSees without the stdlib-to-stdlib shortcut.
+//
+// That shortcut exists for the method graph's cycles, and a variant name
+// is not a method: applying it made two stdlib modules that never import
+// each other ambiguate one another, so importing both std/pmap and
+// std/pvec drew E036 on pmap's reference to its own `Empty` (#8189).
+func (c *checker) moduleSeesVariant(from, decl string) bool {
+	if from == "" || decl == "" || from == decl {
+		return true
+	}
+	if c.info.ModuleImports == nil {
+		return true
+	}
+	return c.info.ModuleImports[from][decl]
+}
+
+// bindDeriveTypeParams turns a synthesised derive method into a generic
+// method when the underlying type is generic: every type parameter is
+// bound by the trait being derived (`@derive(Display)` on `Box[T]`
+// yields `[T: Display]`), so the field-wise body type-checks through
+// the bound and the method monomorphises per instantiation. A no-op
+// for non-generic types. See docs/TRAITS.md.
+func bindDeriveTypeParams(method *ast.FuncDecl, typeParams []string, trait string) {
+	if len(typeParams) == 0 {
+		return
+	}
+	method.TypeParams = typeParams
+	method.Bounds = make(map[string][]string, len(typeParams))
+	for _, tp := range typeParams {
+		method.Bounds[tp] = []string{trait}
+	}
+}
+
+// synthEnumEq builds a variant-wise `eq`: match self, and for each
+// variant match other — same variant compares payloads field-wise,
+// any other variant is unequal.
+func synthEnumEq(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
+	arms := make([]*ast.MatchArm, 0, len(ed.Variants))
+	for _, v := range ed.Variants {
+		sBind := make([]string, len(v.Payloads))
+		oBind := make([]string, len(v.Payloads))
+		for i := range v.Payloads {
+			sBind[i] = fmt.Sprintf("__s%d", i)
+			oBind[i] = fmt.Sprintf("__o%d", i)
+		}
+		var eqExpr ast.Expr = &ast.BoolLit{Value: true}
+		for i := range v.Payloads {
+			cmp := methodCall(&ast.Ident{Name: sBind[i]}, "eq", &ast.Ident{Name: oBind[i]})
+			if i == 0 {
+				eqExpr = cmp
+			} else {
+				eqExpr = &ast.Binary{Op: "&&", Left: eqExpr, Right: cmp}
+			}
+		}
+		inner := &ast.Match{Tag: &ast.Ident{Name: "other"}, Arms: []*ast.MatchArm{
+			{VariantName: v.Name, Bindings: oBind, Body: &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: eqExpr}}}},
+			{IsWildcard: true, Body: &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: &ast.BoolLit{Value: false}}}}},
+		}}
+		arms = append(arms, &ast.MatchArm{VariantName: v.Name, Bindings: sBind, Body: &ast.Block{Stmts: []ast.Stmt{inner}}})
+	}
+	body := &ast.Block{Stmts: []ast.Stmt{
+		&ast.Match{Tag: &ast.Ident{Name: "self"}, Arms: arms},
+		&ast.Return{Value: &ast.BoolLit{Value: false}},
+	}}
+	return &ast.FuncDecl{
+		Name: "eq", Receiver: &ast.Param{Name: "self", Type: recv},
+		Params: []ast.Param{{Name: "other", Type: recv}}, ReturnType: ast.BoolType{}, Body: body,
+	}
+}
+
+// synthEnumDisplay builds `to_string` rendering `Variant(payload, …)`.
+func synthEnumDisplay(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
+	arms := make([]*ast.MatchArm, 0, len(ed.Variants))
+	for _, v := range ed.Variants {
+		bind := make([]string, len(v.Payloads))
+		for i := range v.Payloads {
+			bind[i] = fmt.Sprintf("__p%d", i)
+		}
+		var expr ast.Expr = &ast.StringLit{Value: v.Name}
+		if len(v.FieldNames) > 0 {
+			// Named-field variant renders `Rect { w: …, h: … }`.
+			add := func(e ast.Expr) { expr = &ast.Binary{Op: "+", Left: expr, Right: e} }
+			add(&ast.StringLit{Value: " { "})
+			for i, fn := range v.FieldNames {
+				if i > 0 {
+					add(&ast.StringLit{Value: ", "})
+				}
+				add(&ast.StringLit{Value: fn + ": "})
+				add(methodCall(&ast.Ident{Name: bind[i]}, "to_string"))
+			}
+			add(&ast.StringLit{Value: " }"})
+		} else if len(v.Payloads) > 0 {
+			add := func(e ast.Expr) { expr = &ast.Binary{Op: "+", Left: expr, Right: e} }
+			add(&ast.StringLit{Value: "("})
+			for i := range v.Payloads {
+				if i > 0 {
+					add(&ast.StringLit{Value: ", "})
+				}
+				add(methodCall(&ast.Ident{Name: bind[i]}, "to_string"))
+			}
+			add(&ast.StringLit{Value: ")"})
+		}
+		arms = append(arms, &ast.MatchArm{VariantName: v.Name, Bindings: bind, Body: &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: expr}}}})
+	}
+	body := &ast.Block{Stmts: []ast.Stmt{
+		&ast.Match{Tag: &ast.Ident{Name: "self"}, Arms: arms},
+		&ast.Return{Value: &ast.StringLit{Value: ""}},
+	}}
+	return &ast.FuncDecl{
+		Name: "to_string", Receiver: &ast.Param{Name: "self", Type: recv},
+		ReturnType: ast.StringType{}, Body: body,
+	}
+}
+
+// synthEnumDebug builds a variant-wise `to_debug` rendering `Variant` /
+// `Variant(<debug payload>, …)`, the Debug sibling of synthEnumDisplay —
+// each payload is rendered through its own `Debug` (so a string payload is
+// quoted). Identical shape to the derived Display otherwise.
+func synthEnumDebug(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
+	arms := make([]*ast.MatchArm, 0, len(ed.Variants))
+	for _, v := range ed.Variants {
+		bind := make([]string, len(v.Payloads))
+		for i := range v.Payloads {
+			bind[i] = fmt.Sprintf("__p%d", i)
+		}
+		var expr ast.Expr = &ast.StringLit{Value: v.Name}
+		if len(v.FieldNames) > 0 {
+			add := func(e ast.Expr) { expr = &ast.Binary{Op: "+", Left: expr, Right: e} }
+			add(&ast.StringLit{Value: " { "})
+			for i, fn := range v.FieldNames {
+				if i > 0 {
+					add(&ast.StringLit{Value: ", "})
+				}
+				add(&ast.StringLit{Value: fn + ": "})
+				add(methodCall(&ast.Ident{Name: bind[i]}, "to_debug"))
+			}
+			add(&ast.StringLit{Value: " }"})
+		} else if len(v.Payloads) > 0 {
+			add := func(e ast.Expr) { expr = &ast.Binary{Op: "+", Left: expr, Right: e} }
+			add(&ast.StringLit{Value: "("})
+			for i := range v.Payloads {
+				if i > 0 {
+					add(&ast.StringLit{Value: ", "})
+				}
+				add(methodCall(&ast.Ident{Name: bind[i]}, "to_debug"))
+			}
+			add(&ast.StringLit{Value: ")"})
+		}
+		arms = append(arms, &ast.MatchArm{VariantName: v.Name, Bindings: bind, Body: &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: expr}}}})
+	}
+	body := &ast.Block{Stmts: []ast.Stmt{
+		&ast.Match{Tag: &ast.Ident{Name: "self"}, Arms: arms},
+		&ast.Return{Value: &ast.StringLit{Value: ""}},
+	}}
+	return &ast.FuncDecl{
+		Name: "to_debug", Receiver: &ast.Param{Name: "self", Type: recv},
+		ReturnType: ast.StringType{}, Body: body,
+	}
+}
+
+// synthEnumOrd builds a variant-wise `cmp`: a variant declared earlier
+// sorts before one declared later (by tag); within the same variant,
+// payloads are compared lexicographically. `match self`, then for each
+// self-variant `match other` with one arm per other-variant returning
+// -1 / +1 by tag order, or the payload comparison when they match.
+func synthEnumOrd(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
+	negOne := func() ast.Expr {
+		return &ast.Binary{Op: "-", Left: &ast.NumberLit{Value: 0}, Right: &ast.NumberLit{Value: 1}}
+	}
+	retBlock := func(e ast.Expr) *ast.Block {
+		return &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: e}}}
+	}
+	arms := make([]*ast.MatchArm, 0, len(ed.Variants))
+	for i, vi := range ed.Variants {
+		sBind := make([]string, len(vi.Payloads))
+		for k := range vi.Payloads {
+			sBind[k] = fmt.Sprintf("__s%d", k)
+		}
+		innerArms := make([]*ast.MatchArm, 0, len(ed.Variants))
+		for j, vj := range ed.Variants {
+			oBind := make([]string, len(vj.Payloads))
+			for k := range vj.Payloads {
+				oBind[k] = fmt.Sprintf("__o%d", k)
+			}
+			var body *ast.Block
+			if j < i {
+				body = retBlock(&ast.NumberLit{Value: 1}) // self's variant is later → greater
+			} else if j > i {
+				body = retBlock(negOne())
+			} else {
+				// Same variant: lexicographic payload compare. Both
+				// sBind (outer arm) and oBind (this arm) are in scope.
+				var stmts []ast.Stmt
+				for k := range vi.Payloads {
+					cn := fmt.Sprintf("__c%d", k)
+					stmts = append(stmts, &ast.Var{
+						Name: cn, Type: ast.NumberType{},
+						Init: methodCall(&ast.Ident{Name: sBind[k]}, "cmp", &ast.Ident{Name: oBind[k]}),
+					})
+					stmts = append(stmts, &ast.If{
+						Cond: &ast.Binary{Op: "!=", Left: &ast.Ident{Name: cn}, Right: &ast.NumberLit{Value: 0}},
+						Then: retBlock(&ast.Ident{Name: cn}),
+					})
+				}
+				stmts = append(stmts, &ast.Return{Value: &ast.NumberLit{Value: 0}})
+				body = &ast.Block{Stmts: stmts}
+			}
+			innerArms = append(innerArms, &ast.MatchArm{VariantName: vj.Name, Bindings: oBind, Body: body})
+		}
+		inner := &ast.Match{Tag: &ast.Ident{Name: "other"}, Arms: innerArms}
+		arms = append(arms, &ast.MatchArm{VariantName: vi.Name, Bindings: sBind, Body: &ast.Block{Stmts: []ast.Stmt{inner}}})
+	}
+	body := &ast.Block{Stmts: []ast.Stmt{
+		&ast.Match{Tag: &ast.Ident{Name: "self"}, Arms: arms},
+		&ast.Return{Value: &ast.NumberLit{Value: 0}},
+	}}
+	return &ast.FuncDecl{
+		Name: "cmp", Receiver: &ast.Param{Name: "self", Type: recv},
+		Params: []ast.Param{{Name: "other", Type: recv}}, ReturnType: ast.NumberType{}, Body: body,
+	}
+}
+
+// selfField builds `self.<name>`; otherField builds `other.<name>`.
+func selfField(name string) ast.Expr {
+	return &ast.FieldAccess{Target: &ast.Ident{Name: "self"}, Field: name}
+}
+func otherField(name string) ast.Expr {
+	return &ast.FieldAccess{Target: &ast.Ident{Name: "other"}, Field: name}
+}
+
+// methodCall builds `recv.<m>(args…)`.
+func methodCall(recv ast.Expr, m string, args ...ast.Expr) ast.Expr {
+	return &ast.Call{Callee: &ast.FieldAccess{Target: recv, Field: m}, Args: args}
+}
+
+// synthEq builds `function eq(self, other) { return f1.eq && f2.eq && … ; }`.
+func synthEq(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
+	var expr ast.Expr = &ast.BoolLit{Value: true}
+	for i, f := range sd.Fields {
+		cmp := methodCall(selfField(f.Name), "eq", otherField(f.Name))
+		if i == 0 {
+			expr = cmp
+		} else {
+			expr = &ast.Binary{Op: "&&", Left: expr, Right: cmp}
+		}
+	}
+	return &ast.FuncDecl{
+		Name:       "eq",
+		Receiver:   &ast.Param{Name: "self", Type: recv},
+		Params:     []ast.Param{{Name: "other", Type: recv}},
+		ReturnType: ast.BoolType{},
+		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: expr}}},
+	}
+}
+
+// synthDisplay builds a `to_string` that renders `Name { f: …, … }`.
+func synthDisplay(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
+	var expr ast.Expr = &ast.StringLit{Value: demangle(sd.Name) + " {"}
+	add := func(e ast.Expr) { expr = &ast.Binary{Op: "+", Left: expr, Right: e} }
+	for i, f := range sd.Fields {
+		sep := " "
+		if i > 0 {
+			sep = ", "
+		}
+		add(&ast.StringLit{Value: sep + f.Name + ": "})
+		add(methodCall(selfField(f.Name), "to_string"))
+	}
+	if len(sd.Fields) == 0 {
+		add(&ast.StringLit{Value: "}"})
+	} else {
+		add(&ast.StringLit{Value: " }"})
+	}
+	return &ast.FuncDecl{
+		Name:       "to_string",
+		Receiver:   &ast.Param{Name: "self", Type: recv},
+		ReturnType: ast.StringType{},
+		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: expr}}},
+	}
+}
+
+// synthDebug builds a `to_debug` that renders the structural `Name { f: …,
+// … }` form, like synthDisplay, but composes through each field's `Debug`
+// (`self.f.to_debug()`) rather than `Display`. The practical difference is
+// that a string field renders QUOTED (`name: "hi"` vs Display's `name: hi`)
+// via `impl Debug for string` in core/cmp. The generated method delegates
+// to the primitive Debug impls / nested derived Debug methods, so it
+// composes exactly as the derived Display does.
+func synthDebug(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
+	var expr ast.Expr = &ast.StringLit{Value: demangle(sd.Name) + " {"}
+	add := func(e ast.Expr) { expr = &ast.Binary{Op: "+", Left: expr, Right: e} }
+	for i, f := range sd.Fields {
+		sep := " "
+		if i > 0 {
+			sep = ", "
+		}
+		add(&ast.StringLit{Value: sep + f.Name + ": "})
+		add(methodCall(selfField(f.Name), "to_debug"))
+	}
+	if len(sd.Fields) == 0 {
+		add(&ast.StringLit{Value: "}"})
+	} else {
+		add(&ast.StringLit{Value: " }"})
+	}
+	return &ast.FuncDecl{
+		Name:       "to_debug",
+		Receiver:   &ast.Param{Name: "self", Type: recv},
+		ReturnType: ast.StringType{},
+		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: expr}}},
+	}
+}
+
+// synthOrd builds a lexicographic `cmp`: compare each field in turn,
+// returning the first non-zero result, else 0.
+func synthOrd(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
+	var stmts []ast.Stmt
+	for i, f := range sd.Fields {
+		vn := fmt.Sprintf("__c%d", i)
+		// let __ci: i32 = self.f.cmp(other.f);
+		stmts = append(stmts, &ast.Var{
+			Name: vn, Type: ast.NumberType{},
+			Init: methodCall(selfField(f.Name), "cmp", otherField(f.Name)),
+		})
+		// if (__ci != 0) { return __ci; }
+		stmts = append(stmts, &ast.If{
+			Cond: &ast.Binary{Op: "!=", Left: &ast.Ident{Name: vn}, Right: &ast.NumberLit{Value: 0}},
+			Then: &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: &ast.Ident{Name: vn}}}},
+		})
+	}
+	stmts = append(stmts, &ast.Return{Value: &ast.NumberLit{Value: 0}})
+	return &ast.FuncDecl{
+		Name:       "cmp",
+		Receiver:   &ast.Param{Name: "self", Type: recv},
+		Params:     []ast.Param{{Name: "other", Type: recv}},
+		ReturnType: ast.NumberType{},
+		Body:       &ast.Block{Stmts: stmts},
+	}
+}
+
+// hashSeed is the field-wise hash combiner's starting value (a small
+// odd prime); hashMul is the per-field multiplier — the textbook
+// `h = h * 31 + field.hash()` fold. Distinct fields/variants of equal
+// content stay distinguished because the multiply rotates earlier
+// contributions into higher bits before each new field is mixed in.
+const (
+	hashSeed = 17
+	hashMul  = 31
+)
+
+// hashFold appends `h = h * 31 + <e>.hash();` to stmts, where `e` is a
+// field/payload accessor expression. The combiner is shared by the
+// struct and enum synthesizers.
+func hashFold(stmts []ast.Stmt, e ast.Expr) []ast.Stmt {
+	return append(stmts, &ast.ExprStmt{Expr: &ast.Assign{
+		Target: &ast.Ident{Name: "__h"},
+		Value: &ast.Binary{
+			Op:    "+",
+			Left:  &ast.Binary{Op: "*", Left: &ast.Ident{Name: "__h"}, Right: &ast.NumberLit{Value: hashMul}},
+			Right: methodCall(e, "hash"),
+		},
+	}})
+}
+
+// synthHash builds a field-wise `hash`: seed an accumulator, fold each
+// field's `.hash()` through `h = h * 31 + f.hash()`, and return it. The
+// seed-only result for a field-less struct is a fine constant hash. Pairs
+// with the derived `Eq` so `a == b ⇒ a.hash() == b.hash()`.
+func synthHash(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
+	stmts := []ast.Stmt{
+		&ast.Var{Name: "__h", Type: ast.NumberType{}, Init: &ast.NumberLit{Value: hashSeed}},
+	}
+	for _, f := range sd.Fields {
+		stmts = hashFold(stmts, selfField(f.Name))
+	}
+	stmts = append(stmts, &ast.Return{Value: &ast.Ident{Name: "__h"}})
+	return &ast.FuncDecl{
+		Name:       "hash",
+		Receiver:   &ast.Param{Name: "self", Type: recv},
+		ReturnType: ast.NumberType{},
+		Body:       &ast.Block{Stmts: stmts},
+	}
+}
+
+// synthEnumHash builds a variant-wise `hash`: match self, seed the
+// accumulator with the variant's tag (its declaration index) so distinct
+// variants with identical payloads hash differently, then fold each
+// payload's `.hash()` through the same combiner.
+func synthEnumHash(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
+	arms := make([]*ast.MatchArm, 0, len(ed.Variants))
+	for i, v := range ed.Variants {
+		bind := make([]string, len(v.Payloads))
+		for k := range v.Payloads {
+			bind[k] = fmt.Sprintf("__p%d", k)
+		}
+		// Seed with the tag so payload-less variants (and same-shaped
+		// payloads across variants) stay distinct.
+		stmts := []ast.Stmt{
+			&ast.Var{Name: "__h", Type: ast.NumberType{}, Init: &ast.NumberLit{Value: int64(hashSeed + i)}},
+		}
+		for k := range v.Payloads {
+			stmts = hashFold(stmts, &ast.Ident{Name: bind[k]})
+		}
+		stmts = append(stmts, &ast.Return{Value: &ast.Ident{Name: "__h"}})
+		arms = append(arms, &ast.MatchArm{VariantName: v.Name, Bindings: bind, Body: &ast.Block{Stmts: stmts}})
+	}
+	body := &ast.Block{Stmts: []ast.Stmt{
+		&ast.Match{Tag: &ast.Ident{Name: "self"}, Arms: arms},
+		&ast.Return{Value: &ast.NumberLit{Value: 0}},
+	}}
+	return &ast.FuncDecl{
+		Name: "hash", Receiver: &ast.Param{Name: "self", Type: recv},
+		ReturnType: ast.NumberType{}, Body: body,
+	}
+}
+
+// defaultDeriveExpr returns the default value for a field/payload of type
+// t, used by `@derive(Default)`. Scalars get their zero literal; a nominal
+// type (struct / enum / bound type-param) delegates to *its* `default()`
+// associated function so derivation composes. Reports false for a type
+// with no obvious default (array, map, tuple, slice, function) — the
+// caller turns that into a "implement Default by hand" diagnostic.
+func defaultDeriveExpr(t ast.Type) (ast.Expr, bool) {
+	switch ft := t.(type) {
+	case ast.NumberType:
+		return &ast.NumberLit{}, true
+	case ast.FloatType:
+		return &ast.FloatLit{}, true
+	case ast.BoolType:
+		return &ast.BoolLit{Value: false}, true
+	case ast.StringType:
+		return &ast.StringLit{Value: ""}, true
+	case ast.StructType:
+		return defaultAssocCall(ft.Name), true
+	case ast.EnumType:
+		return defaultAssocCall(ft.Name), true
+	case ast.ParamType:
+		return defaultAssocCall(ft.Name), true
+	}
+	return nil, false
+}
+
+// defaultAssocCall builds `Type.default()` — the associated-function call
+// the derived Default delegates to for a nominal field type.
+func defaultAssocCall(typeName string) ast.Expr {
+	return &ast.Call{Callee: &ast.FieldAccess{Target: &ast.Ident{Name: typeName}, Field: "default"}}
+}
+
+// synthDefault builds a struct's derived `default()` associated function:
+// `function default(): Self { return Name { f0: <zero>, f1: <zero>, … }; }`.
+// Returns (nil, fieldName, fieldType) if a field has no derivable default.
+func synthDefault(sd *ast.StructDecl, recv ast.StructType) (*ast.FuncDecl, string, ast.Type) {
+	fields := make([]ast.FieldInit, 0, len(sd.Fields))
+	for _, f := range sd.Fields {
+		dv, ok := defaultDeriveExpr(f.Type)
+		if !ok {
+			return nil, f.Name, f.Type
+		}
+		fields = append(fields, ast.FieldInit{Name: f.Name, Value: dv})
+	}
+	lit := &ast.StructLit{TypeName: recv.Name, Fields: fields, TypeArgs: recv.Args}
+	return &ast.FuncDecl{
+		Name:       "default",
+		AssocType:  recv.Name,
+		ReturnType: recv,
+		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: lit}}},
+	}, "", nil
+}
+
+// synthEnumDefault builds an enum's derived `default()` associated
+// function: the FIRST variant, with each payload defaulted. Returns
+// (nil, payloadType) if a first-variant payload has no derivable default.
+func synthEnumDefault(ed *ast.EnumDecl, recv ast.EnumType) (*ast.FuncDecl, ast.Type) {
+	if len(ed.Variants) == 0 {
+		return nil, nil
+	}
+	v0 := ed.Variants[0]
+	var value ast.Expr
+	if len(v0.Payloads) == 0 {
+		value = &ast.Ident{Name: v0.Name, EnumName: recv.Name}
+	} else {
+		args := make([]ast.Expr, len(v0.Payloads))
+		for i, pt := range v0.Payloads {
+			dv, ok := defaultDeriveExpr(pt)
+			if !ok {
+				return nil, pt
+			}
+			args[i] = dv
+		}
+		value = &ast.Call{Callee: &ast.Ident{Name: v0.Name, EnumName: recv.Name}, Args: args}
+	}
+	return &ast.FuncDecl{
+		Name:       "default",
+		AssocType:  recv.Name,
+		ReturnType: recv,
+		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: value}}},
+	}, nil
+}
+
+// synthJson builds a field-wise `to_json` rendering a struct as a JSON
+// object: `{"f1":<f1.to_json()>,"f2":<f2.to_json()>}`. Each field
+// composes through its own `Json` impl, so a type serialises as soon as
+// its fields do. Field names are identifiers, so they need no escaping
+// (string *values* are escaped by `impl Json for string`). Returns the
+// canonical JSON text directly — `json_encode` is unnecessary.
+func synthJson(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
+	var expr ast.Expr = &ast.StringLit{Value: "{"}
+	add := func(e ast.Expr) { expr = &ast.Binary{Op: "+", Left: expr, Right: e} }
+	for i, f := range sd.Fields {
+		sep := ""
+		if i > 0 {
+			sep = ","
+		}
+		add(&ast.StringLit{Value: sep + "\"" + f.Name + "\":"})
+		add(methodCall(selfField(f.Name), "to_json"))
+	}
+	add(&ast.StringLit{Value: "}"})
+	return &ast.FuncDecl{
+		Name:       "to_json",
+		Receiver:   &ast.Param{Name: "self", Type: recv},
+		ReturnType: ast.StringType{},
+		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: expr}}},
+	}
+}
+
+// synthFromJsonValue builds a struct's derived `from_json_value(v:
+// JsonValue): Result[Self, string]`: one nested match per field, reading
+// the field with std/json's `from_json_field` (`from_json_optional_field`
+// for an `Option`, which is `None` when the field is missing or null) and
+// decoding it through the field type's own `from_json_value`, an array
+// through `from_json_array[E]` and an Option through `from_json_option[E]`.
+// A field's shape error comes back prefixed with the field's name
+// (`from_json_at`); the innermost arm returns `Ok(Recv { … })`. The
+// synthesis runs after modload, so the std/json calls are spelled with
+// their flat `json__` names, as the `@derive(json.FromJson)` site's own
+// `import "std/json"` would mangle them.
+func synthFromJsonValue(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
+	jcall := func(fn string, args ...ast.Expr) ast.Expr {
+		return &ast.Call{Callee: &ast.Ident{Name: "json__" + fn}, Args: args}
+	}
+	variant := func(name string, arg ast.Expr) ast.Expr {
+		return &ast.Call{Callee: &ast.Ident{Name: name}, Args: []ast.Expr{arg}}
+	}
+	ret := func(e ast.Expr) *ast.Block {
+		return &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: e}}}
+	}
+	fis := make([]ast.FieldInit, len(sd.Fields))
+	for i, f := range sd.Fields {
+		fis[i] = ast.FieldInit{Name: f.Name, Value: &ast.Ident{Name: "__fj_" + f.Name}}
+	}
+	body := ret(variant("Ok", &ast.StructLit{TypeName: recv.Name, Fields: fis, TypeArgs: recv.Args}))
+	for i := len(sd.Fields) - 1; i >= 0; i-- {
+		f := sd.Fields[i]
+		value := "__fj_v_" + f.Name
+		errBind := "__fj_e_" + f.Name
+		getter := "from_json_field"
+		var decode ast.Expr
+		switch container, _ := fromJsonContainer(f.Type); container {
+		case "array":
+			decode = &ast.Call{Callee: &ast.Ident{Name: "json__from_json_array"}, Args: []ast.Expr{&ast.Ident{Name: value}},
+				TypeArgs: []ast.Type{fromJsonElem(f.Type)}, TypeArgsWritten: true}
+		case "option":
+			getter = "from_json_optional_field"
+			decode = &ast.Call{Callee: &ast.Ident{Name: "json__from_json_option"}, Args: []ast.Expr{&ast.Ident{Name: value}},
+				TypeArgs: []ast.Type{fromJsonElem(f.Type)}, TypeArgsWritten: true}
+		default:
+			decode = &ast.Call{Callee: &ast.FieldAccess{Target: &ast.Ident{Name: fromJsonTypeName(f.Type)}, Field: "from_json_value"},
+				Args: []ast.Expr{&ast.Ident{Name: value}}}
+		}
+		inner := &ast.Match{
+			Tag: decode,
+			Arms: []*ast.MatchArm{
+				{VariantName: "Ok", Bindings: []string{"__fj_" + f.Name}, Body: body},
+				{VariantName: "Err", Bindings: []string{errBind}, Body: ret(variant("Err",
+					jcall("from_json_at", &ast.StringLit{Value: f.Name}, &ast.Ident{Name: errBind})))},
+			},
+		}
+		outer := &ast.Match{
+			Tag: jcall(getter, &ast.Ident{Name: "v"}, &ast.StringLit{Value: f.Name}),
+			Arms: []*ast.MatchArm{
+				{VariantName: "Ok", Bindings: []string{value}, Body: &ast.Block{Stmts: []ast.Stmt{inner}}},
+				{VariantName: "Err", Bindings: []string{errBind}, Body: ret(variant("Err", &ast.Ident{Name: errBind}))},
+			},
+		}
+		body = &ast.Block{Stmts: []ast.Stmt{outer}}
+	}
+	return &ast.FuncDecl{
+		Name:       "from_json_value",
+		AssocType:  recv.Name,
+		Params:     []ast.Param{{Name: "v", Type: ast.EnumType{Name: "JsonValue"}}},
+		ReturnType: ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StringType{}}},
+		Body:       body,
+	}
+}
+
+// fromJsonTypeName spells the type a derived decoder calls
+// `from_json_value` on: a nominal or primitive by its method-receiver
+// name, a type parameter by its own.
+func fromJsonTypeName(t ast.Type) string {
+	if tn, ok := ast.ReceiverTypeName(t); ok {
+		return tn
+	}
+	if pt, ok := t.(ast.ParamType); ok {
+		return pt.Name
+	}
+	return fmt.Sprint(t)
+}
+
+// synthFromJsonText builds the derived `from_json(s: string): Result[Self,
+// string]`, `json.decode[Self](s)` under the type's own name.
+func synthFromJsonText(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
+	call := &ast.Call{Callee: &ast.Ident{Name: "json__decode"}, Args: []ast.Expr{&ast.Ident{Name: "s"}},
+		TypeArgs: []ast.Type{recv}, TypeArgsWritten: true}
+	return &ast.FuncDecl{
+		Name:       "from_json",
+		AssocType:  recv.Name,
+		Params:     []ast.Param{{Name: "s", Type: ast.StringType{}}},
+		ReturnType: ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StringType{}}},
+		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: call}}},
+	}
+}
+
+// tagged convention: a unit variant renders as the JSON string of its
+// name (`"Empty"`); a payload variant renders as a single-key object
+// (`{"Circle":<p0.to_json()>}`), with multiple payloads collected into a
+// JSON array (`{"Rect":[<p0>,<p1>]}`). Mirrors the Go synthEnumDisplay
+// shape; composes through each payload's `Json` impl.
+func synthEnumJson(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
+	arms := make([]*ast.MatchArm, 0, len(ed.Variants))
+	for _, v := range ed.Variants {
+		bind := make([]string, len(v.Payloads))
+		for k := range v.Payloads {
+			bind[k] = fmt.Sprintf("__p%d", k)
+		}
+		var expr ast.Expr
+		add := func(e ast.Expr) { expr = &ast.Binary{Op: "+", Left: expr, Right: e} }
+		if len(v.FieldNames) > 0 {
+			// Named-field variant encodes as a nested object:
+			// `{"Rect":{"w":<p0>,"h":<p1>}}`.
+			expr = &ast.StringLit{Value: "{\"" + v.Name + "\":{"}
+			for k, fn := range v.FieldNames {
+				if k > 0 {
+					add(&ast.StringLit{Value: ","})
+				}
+				add(&ast.StringLit{Value: "\"" + fn + "\":"})
+				add(methodCall(&ast.Ident{Name: bind[k]}, "to_json"))
+			}
+			add(&ast.StringLit{Value: "}}"})
+		} else {
+			switch len(v.Payloads) {
+			case 0:
+				expr = &ast.StringLit{Value: "\"" + v.Name + "\""}
+			case 1:
+				expr = &ast.StringLit{Value: "{\"" + v.Name + "\":"}
+				add(methodCall(&ast.Ident{Name: bind[0]}, "to_json"))
+				add(&ast.StringLit{Value: "}"})
+			default:
+				expr = &ast.StringLit{Value: "{\"" + v.Name + "\":["}
+				for k := range v.Payloads {
+					if k > 0 {
+						add(&ast.StringLit{Value: ","})
+					}
+					add(methodCall(&ast.Ident{Name: bind[k]}, "to_json"))
+				}
+				add(&ast.StringLit{Value: "]}"})
+			}
+		}
+		arms = append(arms, &ast.MatchArm{VariantName: v.Name, Bindings: bind, Body: &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: expr}}}})
+	}
+	body := &ast.Block{Stmts: []ast.Stmt{
+		&ast.Match{Tag: &ast.Ident{Name: "self"}, Arms: arms},
+		&ast.Return{Value: &ast.StringLit{Value: ""}},
+	}}
+	return &ast.FuncDecl{
+		Name: "to_json", Receiver: &ast.Param{Name: "self", Type: recv},
+		ReturnType: ast.StringType{}, Body: body,
+	}
+}
+
+// demangle turns the first module-mangling `__` in a name back into a
+// `.` for user-facing diagnostics, so a cross-module trait/type/func
+// reads as `mod.Name` (how the user wrote it) rather than the internal
+// `mod__Name`. A no-op for single-file / same-module names. See
+// docs/TRAITS.md (Phase 3).
+func demangle(s string) string {
+	return strings.Replace(s, "__", ".", 1)
+}
+
+// checkOpaqueAccess rejects reaching into an `opaque` struct's fields
+// (read or construction) from outside the module that declared it. The
+// type name + methods stay usable cross-module; only the representation
+// is private. `what` describes the offending access for the diagnostic.
+// See docs/TRAITS.md.
+func (c *checker) checkOpaqueAccess(sd *ast.StructDecl, pos ast.Position, what string) {
+	if sd == nil || !sd.Opaque || sd.SourceModule == "" {
+		return
+	}
+	cur := ""
+	if c.current != nil {
+		cur = c.current.BodyModule()
+	}
+	if cur != sd.SourceModule {
+		c.errfCode(pos, "E021", "cannot %s opaque type %s outside the module that defines it", what, demangle(sd.Name))
+	}
+}
+
+// containsString reports whether `xs` contains `s`.
+func containsString(xs []string, s string) bool {
+	for _, x := range xs {
+		if x == s {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveTraitMethodForParam looks up method `field` among the traits
+// bound on type parameter `paramName` in the function currently being
+// checked. Returns the matching trait-method signature and the trait
+// name. Used by the deferred-dispatch path for trait-bounded generics.
+// See docs/TRAITS.md.
+func (c *checker) resolveTraitMethodForParam(paramName, field string) (ast.TraitMethod, string, bool) {
+	decl := c.typeParamDecl(paramName)
+	if decl == nil {
+		return ast.TraitMethod{}, "", false
+	}
+	// Expand the bound traits with their supertraits: a `T: Ord` bound
+	// also exposes the methods of Ord's supertraits (e.g. Eq). See
+	// docs/TRAITS.md.
+	// A generic-trait bound (`T: From[i32]`) carries type args parallel to
+	// the direct bounds; map each direct trait to its args so the method
+	// signature can be specialised (`from(v: T)` → `from(v: i32)`).
+	direct := decl.Bounds[paramName]
+	argsFor := map[string][]ast.Type{}
+	if ba := decl.BoundArgs[paramName]; len(ba) == len(direct) {
+		for i, tn := range direct {
+			if len(ba[i]) > 0 {
+				argsFor[tn] = ba[i]
+			}
+		}
+	}
+	for _, traitName := range c.expandTraits(direct) {
+		td, ok := c.info.Traits[traitName]
+		if !ok {
+			continue
+		}
+		for _, m := range td.Methods {
+			if m.Name == field {
+				if args := argsFor[traitName]; len(args) > 0 && len(td.TypeParams) == len(args) {
+					sub := make(map[string]ast.Type, len(args))
+					for i, tp := range td.TypeParams {
+						sub[tp] = args[i]
+					}
+					m = substTraitMethodTypeParams(m, sub)
+				}
+				return m, traitName, true
+			}
+		}
+	}
+	return ast.TraitMethod{}, "", false
+}
+
+// substTraitMethodTypeParams returns a copy of trait method `m` with the
+// trait's type parameters substituted (via substByName) in its parameter
+// and result types — used to specialise a generic-trait bound's method to
+// the bound's type arguments. See docs/TRAITS.md.
+func substTraitMethodTypeParams(m ast.TraitMethod, sub map[string]ast.Type) ast.TraitMethod {
+	out := m
+	out.Params = make([]ast.Param, len(m.Params))
+	for i, p := range m.Params {
+		p.Type = substByName(p.Type, sub)
+		out.Params[i] = p
+	}
+	out.Result = substByName(m.Result, sub)
+	return out
+}
+
+// collectTraitSupers appends `name` and all its transitive supertraits to
+// *acc (deduped via seen, which also breaks cycles), following
+// TraitDecl.Supertraits.
+func (c *checker) collectTraitSupers(name string, seen map[string]bool, acc *[]string) {
+	if seen[name] {
+		return
+	}
+	seen[name] = true
+	*acc = append(*acc, name)
+	if td, ok := c.info.Traits[name]; ok {
+		for _, sup := range td.Supertraits {
+			c.collectTraitSupers(sup, seen, acc)
+		}
+	}
+}
+
+// traitInItsOwnSupers reports whether `name` is reachable from its own
+// supertraits — i.e. the supertrait graph has a cycle through `name`
+// (`trait A: A`, or `A: B` with `B: A`).
+func (c *checker) traitInItsOwnSupers(name string) bool {
+	seen := map[string]bool{}
+	var stack []string
+	if td, ok := c.info.Traits[name]; ok {
+		stack = append(stack, td.Supertraits...)
+	}
+	for len(stack) > 0 {
+		cur := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		if cur == name {
+			return true
+		}
+		if seen[cur] {
+			continue
+		}
+		seen[cur] = true
+		if td, ok := c.info.Traits[cur]; ok {
+			stack = append(stack, td.Supertraits...)
+		}
+	}
+	return false
+}
+
+// expandTraits returns `traits` plus all their transitive supertraits,
+// deduplicated. Each trait is followed by its supertraits, so the order
+// is deterministic. See docs/TRAITS.md.
+func (c *checker) expandTraits(traits []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, t := range traits {
+		c.collectTraitSupers(t, seen, &out)
+	}
+	return out
+}
+
+// methodVisibleHere reports whether `mangled` is callable from the
+// current call-site context — moduleSees applied to the method's
+// declaring module, which is what makes a checker-synthesised method
+// (Reader / Writer / Map / MapIter / the inline-IR `Array.push`, none of
+// which carry a source module) callable everywhere.
+func (c *checker) methodVisibleHere(mangled string) bool {
+	if c.current == nil {
+		return true
+	}
+	return c.moduleSees(c.current.BodyModule(), c.info.MethodSources[mangled])
+}
+
+// methodImplementsTrait reports whether calling `methodName` on receiver
+// type `typeName` resolves to a *trait-impl* method — i.e. some trait
+// declares a method of that name and `typeName` implements that trait.
+// Trait-impl methods are part of the public trait contract (coherent +
+// orphan-checked), so unlike a module's *inherent* methods (which
+// methodVisibleHere gates by the import graph) they are callable wherever
+// the receiver type flows. This is what lets a bounded generic method
+// defined in one module — e.g. std/json's `(xs: T[]) to_json[T: Json]()`
+// — dispatch `xs[i].to_json()` to a *user* type's derived impl after the
+// monomorphiser substitutes T and re-checks the clone from the defining
+// module's context (where the user module isn't imported).
+func (c *checker) methodImplementsTrait(typeName, methodName string) bool {
+	for traitName, td := range c.info.Traits {
+		if !c.info.Impls[traitName][typeName] {
+			continue
+		}
+		for _, m := range td.Methods {
+			if m.Name == methodName {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// displayDispatchTypeName maps a concrete value type to the receiver name
+// `to_string` (and other trait methods) dispatch under — the same
+// `ast.ReceiverTypeName` the method-call path resolves against, so the
+// `print` Display gate and the dispatch it enables can't disagree.
+// Returns "" for types that can't carry a `to_string` (void, tuples,
+// raw arrays, …).
+func displayDispatchTypeName(t ast.Type) string {
+	tn, _ := ast.ReceiverTypeName(t)
+	return tn
+}
+
+// typeImplementsDisplay reports whether a value of type t can be rendered via
+// the Display spine — i.e. `t.to_string(): string` resolves in the current
+// context. Drives the auto-`.to_string()` rewrite for `print` / `write` /
+// `eprint` (issue #2696): a bounded type parameter (`T: Display`), a
+// `dyn Display`-style trait object, or a concrete struct/enum/scalar with a
+// visible (or trait-impl) `to_string` method all qualify.
+func (c *checker) typeImplementsDisplay(t ast.Type) bool {
+	switch x := t.(type) {
+	case ast.ParamType:
+		_, _, found := c.resolveTraitMethodForParam(x.Name, "to_string")
+		return found
+	case ast.DynTraitType:
+		// Display via any trait in the set — `to_string` may be declared
+		// by any of the traits the object spans.
+		for _, tr := range x.Traits {
+			td, ok := c.info.Traits[tr]
+			if !ok {
+				continue
+			}
+			for _, m := range td.Methods {
+				if m.Name == "to_string" {
+					return true
+				}
+			}
+		}
+		return false
+	}
+	tn := displayDispatchTypeName(t)
+	if tn == "" {
+		return false
+	}
+	mangled, _, ok := c.resolveMethod(tn, "to_string", []string{"Display"})
+	if !ok {
+		return false
+	}
+	return c.methodVisibleHere(mangled) || c.methodImplementsTrait(tn, "to_string")
+}
+
+type checker struct {
+	// traitNames is every declared trait, as a parameter type spells it; set
+	// by desugarTraitParams so E064 can say a misplaced trait is one.
+	traitNames map[string]bool
+	info       *Info
+	errors     []error
+	// Intrinsics are registered by signature identity at their declaration
+	// site, not recognized from a call's spelling by semantic lowering.
+	intrinsicSigs map[*ast.FuncType]IntrinsicKind
+	// seenDiags drops a diagnostic identical to one already recorded at
+	// the same position — see errfCode.
+	seenDiags map[diagKey]bool
+	// seededParams names the type parameters a struct literal took from its
+	// destination or update base while its fields unify: a typed field may
+	// rebind only what the literal's own fields bound.
+	seededParams map[string]bool
+	// wideLits are the integer literals past i64 max seen so far, each once
+	// — see checkUnsettledWideLiterals.
+	wideLits []wideLit
+	wideSeen map[*ast.NumberLit]bool
+	// negatedLits records, per integer literal, whether the source wrote it
+	// under an odd number of unary minuses — see markLiteralSign.
+	negatedLits map[*ast.NumberLit]bool
+	// litLocals are the current function's unannotated integer locals whose
+	// width a later use decides — see literal_local.go.
+	litLocals  []*litLocal
+	litLocalOf map[*ast.Var]*litLocal
+	litIdents  map[*ast.Ident]*litLocal
+	// litCompositeOf holds, per unannotated generic struct or enum local, the literal
+	// local each type argument only untyped literals bound is (nil for an
+	// argument something typed bound); litFields maps a read of a field at
+	// such a parameter to it.
+	litCompositeOf    map[*ast.Var][]*litLocal
+	litFields         map[*ast.FieldAccess]*litLocal
+	litCompositeReads map[*ast.Ident]*ast.Var
+	current           *ast.FuncDecl
+	loopDepth         int
+	// tryConvN uniquifies the temp-var name in the error-converting `?`
+	// desugar (TryOp.Lowered). See #3234.
+	tryConvN int
+	// checkedN uniquifies the temp-var names in the checked-arithmetic
+	// desugar (Binary.CheckedLowered, `+?` / `-?` / `*?`). See #5542.
+	checkedN int
+	// inferReturns, when non-nil, accumulates the type of every
+	// `return EXPR` statement checked in the body of the CURRENT
+	// function — set up by checkFunction only for an unannotated
+	// function (current.ReturnUnannotated) so its return type can be
+	// inferred from the unified return-expression types. A nil entry
+	// records a bare `return;`. It is pointer-saved/restored around
+	// each checkFunction so nested function/lambda checks (which set
+	// their own current) don't cross-contaminate. See inferReturnType.
+	inferReturns *[]ast.Type
+	// loopLabels is the stack of in-scope loop labels (innermost last),
+	// pushed while checking a labeled `while`/`for`/`loop` body so a
+	// `break label` / `continue label` can be validated against it.
+	loopLabels []string
+
+	// ownFuncs maps a function name to its per-parameter `own` flags (only
+	// recorded for functions that have at least one owned parameter). Built
+	// before body checking so the call-site ownership guard (checkOwnedParams /
+	// E051) can require that arguments passed to an `own` parameter are owned
+	// values the caller can transfer.
+	ownFuncs map[string][]bool
+	// resultBorrows names the functions whose result can alias one of their
+	// borrowed pointer parameters, and resultAnalysed those whose body was
+	// available to decide it. The call-site ownership guard (E051) transfers a
+	// call's result into an `own` parameter when the callee cannot hand a
+	// borrow back (#9538); where no body was seen, signatureResultBorrows
+	// answers instead.
+	resultBorrows  map[string]bool
+	resultAnalysed map[string]bool
+	// callOwnFlags is the consuming-parameter mask at each CALL, resolved
+	// from the callee's type — the only source a call through a function
+	// value has. Read by the call-site ownership guard, which runs after
+	// the body is checked.
+	callOwnFlags map[*ast.Call][]bool
+	// scalarArgs names the argument expressions whose checked type carries
+	// no reference, so a consuming position takes nothing from the caller.
+	scalarArgs map[ast.Expr]bool
+
+	// shadowedGenericCalls records the Call nodes whose callee name
+	// matches a module-level generic function but resolves to a value
+	// binding that shadows it (#6302). `c.info.GenericFuncs` is keyed
+	// by bare name, so every pass that consults it — argument-driven
+	// inference, destination refinement, numeric settling — would
+	// otherwise rewrite a plain closure call into an instantiation of
+	// the unrelated generic. The scope is only in hand while the Call
+	// is checked; the later passes read the verdict from here.
+	shadowedGenericCalls map[*ast.Call]bool
+
+	// reservedShadows names the builtin types a program redeclared: E010
+	// flags each once, and an injected declaration's use of the name,
+	// which now finds the user's shape, is not flagged again.
+	reservedShadows map[string]bool
+
+	// elemHint carries the expected element type for an array literal
+	// being checked at a coercion site (var init / return / argument).
+	// It is set ONLY immediately around a checkExpr call whose argument
+	// is directly an `*ast.ArrayLit`, and the ArrayLit case consumes it
+	// at once — so it never leaks into unrelated literals. Today it is
+	// used to let `[Circle{}, Rect{}]` coerce its (differently-typed)
+	// elements to a `dyn Trait[]` destination. See docs/DYN-TRAITS.md.
+	elemHint ast.Type
+
+	// typedRecv is an expression the caller has already type-checked, with
+	// its type in typedRecvType, handed to the method-call dispatch that is
+	// about to take it as a receiver. Set ONLY immediately around the
+	// checkExpr of a synthetic `recv.m()` wrapper — the Display spine builds
+	// `arg.to_string()` around an argument it has just typed — and consumed
+	// at once by the receiver check. Checking an expression a second time
+	// re-reports every diagnostic its subexpressions produced.
+	typedRecv     ast.Expr
+	typedRecvType ast.Type
+
+	// expectedType is the destination/result type a generic call's
+	// return-position type parameters can be inferred from when the
+	// arguments don't pin them. Set around `checkExpr` of a `let x:
+	// T = call(...)` initializer and a `return call(...)` value;
+	// the generic-call completion seeds its substitution from this
+	// (return type ↔ expectedType) before reporting "could not
+	// infer". A call clears it before checking its own arguments so
+	// it never leaks into nested calls. Enables return-position
+	// inference like `let s: Set[i32] = set_new();` (#2668).
+	expectedType ast.Type
+
+	// requireMapImport is set when the program was loaded through
+	// modload (LoadedStdlibPaths != nil) but `core/map` isn't in the
+	// import closure. Map operations (`map_new`, a `Map { … }`
+	// literal) lower to core/map's runtime helpers (map_new_impl /
+	// __map_*_impl), so without the import the build links against
+	// undefined symbols — a failure the checker should catch up front
+	// rather than leave for codegen. mapErrReported keeps it to one
+	// diagnostic per program. Single-file callers (no modload, nil
+	// LoadedStdlibPaths) are exempt — they have no import mechanism.
+	requireMapImport bool
+	mapErrReported   bool
+
+	// variantOf maps a variant's bare name (`Some`, `Err`, `Red`) to
+	// every enum that declares it, across every loaded module. Built
+	// during the enum registration pass. Most names have exactly one
+	// entry — the IDE / IR pretend the map is `[string]variantRef`.
+	// Read it through visibleVariants, never directly: entries the
+	// referring module cannot name are not candidates there, and two
+	// entries it can name make the bare reference ambiguous.
+	variantOf map[string][]variantRef
+
+	// Closure-capture plumbing. While checking a local function body,
+	// captureSink records each outer-scope name read by the body as
+	// a capture; captureOuter is the scope of the immediately
+	// enclosing function so we can look those names up. Both are nil
+	// outside a local function.
+	captureSink  func(name string, t ast.Type)
+	captureOuter *scope
+	// captureChain stacks (sink, scope) entries for every enclosing
+	// local function — outermost first. A name resolved several
+	// levels up must be captured by every intermediate function so
+	// each closure's env block can forward it down to the deepest
+	// reader. Without this, three-level nesting (level3 captures
+	// from makeChain; level1's body references it) would error with
+	// `undefined identifier` because the lookup only walked the
+	// immediately-enclosing scope.
+	captureChain []captureEntry
+
+	// Capture-cycle plumbing (#8440). closureconv.BoxMutatedCaptures
+	// rewrites a local that is both captured and assigned into a shared
+	// one-element heap cell, and that cell is the ONE mutable heap slot in
+	// the language: struct fields (E048), array elements (E056) and
+	// `Cell[T]` payloads (E057) are all closed against reference cycles, so
+	// every constructible cycle passes through a capture cell. E049 rejects
+	// the store from INSIDE the closure; capturedVars + cellStores let
+	// checkCaptureCycleStores reject the enclosing scope's store too, which
+	// is the half that was missing. Both are reset per top-level function.
+	capturedVars map[*ast.Var]bool
+	cellStores   []cellStore
+
+	// mutualRecSiblings is the set of local FuncDecl names that
+	// form a mutual-recursion cycle in the current block (set by
+	// checkBlock's pre-pass after a Tarjan SCC walk). Only these
+	// names skip the capture path — non-cycle forward references
+	// still capture normally. closureconv consumes the same
+	// detection (via the AST walk it re-runs) to drive the
+	// null-env direct-call rewrite.
+	mutualRecSiblings map[string]bool
+}
+
+type captureEntry struct {
+	sink  func(name string, t ast.Type)
+	scope *scope
+	// The function whose body encloses this one; its type parameters
+	// stay in scope (typeParamDecl).
+	outer *ast.FuncDecl
+}
+
+// typeParamDecl is the innermost declaration in scope that binds the type
+// parameter `name`: the function being checked, else one enclosing the
+// lambda or nested function it is. Nil when no enclosing generic binds it.
+func (c *checker) typeParamDecl(name string) *ast.FuncDecl {
+	if c.current != nil && containsString(c.current.TypeParams, name) {
+		return c.current
+	}
+	for i := len(c.captureChain) - 1; i >= 0; i-- {
+		if d := c.captureChain[i].outer; d != nil && containsString(d.TypeParams, name) {
+			return d
+		}
+	}
+	return nil
+}
+
+// resolveTypeNames walks every named-type position the parser may
+// have stamped with `StructType{Name: X}` and rewrites it to
+// `EnumType{Name: X}` when X turns out to be an enum. The parser
+// can't distinguish structs from enums by name alone, so this
+// pass runs after the enum decls have been collected. Function
+// signatures, parameters, var decls, struct fields, array
+// element types, and function-type fields are all visited.
+//
+// Inside an enum decl with type parameters, payload type
+// references that match a parameter name (`T`, `U`) get
+// rewritten to ParamType instead of StructType / EnumType. The
+// parser can't tell them apart at decl time — both look like
+// bare identifiers — so we disambiguate here against the enum's
+// declared TypeParams set.
+func (c *checker) resolveTypeNames(prog *ast.Program) {
+	// A trait method's signature is read raw by the bounded-dispatch paths
+	// (`T.f(x)` on a type parameter), so an enum named there has to be an
+	// EnumType like the argument it is compared with.
+	for _, td := range prog.Traits {
+		var params map[string]bool
+		if len(td.TypeParams) > 0 {
+			params = make(map[string]bool, len(td.TypeParams))
+			for _, n := range td.TypeParams {
+				params[n] = true
+			}
+		}
+		for i := range td.Methods {
+			for j := range td.Methods[i].Params {
+				c.resolveType(&td.Methods[i].Params[j].Type, params, td.Methods[i].P)
+			}
+			c.resolveType(&td.Methods[i].Result, params, td.Methods[i].P)
+		}
+	}
+	for _, fn := range prog.Funcs {
+		// Collect the function's type parameters so occurrences
+		// of those names in the signature / body resolve to
+		// ParamType rather than dangling StructType references.
+		// Empty for non-generic functions.
+		var params map[string]bool
+		if len(fn.TypeParams) > 0 {
+			params = make(map[string]bool, len(fn.TypeParams))
+			for _, n := range fn.TypeParams {
+				params[n] = true
+			}
+		}
+		if fn.Receiver != nil {
+			c.resolveType(&fn.Receiver.Type, params, orPos(fn.Receiver.NamePos, fn.P))
+		}
+		for i := range fn.Params {
+			c.resolveType(&fn.Params[i].Type, params, orPos(fn.Params[i].NamePos, fn.P))
+		}
+		c.resolveType(&fn.ReturnType, params, fn.P)
+		if fn.Body != nil {
+			c.resolveTypesInBlock(fn.Body, params)
+		}
+	}
+	for _, sd := range prog.Structs {
+		// Same as functions / enums: register type params so
+		// occurrences in field types resolve to ParamType
+		// instead of dangling StructType references.
+		var params map[string]bool
+		if len(sd.TypeParams) > 0 {
+			params = make(map[string]bool, len(sd.TypeParams))
+			for _, n := range sd.TypeParams {
+				params[n] = true
+			}
+		}
+		for i := range sd.Fields {
+			c.resolveType(&sd.Fields[i].Type, params, orPos(sd.Fields[i].NamePos, sd.P))
+		}
+	}
+	for _, ed := range prog.Enums {
+		var params map[string]bool
+		if len(ed.TypeParams) > 0 {
+			params = make(map[string]bool, len(ed.TypeParams))
+			for _, n := range ed.TypeParams {
+				params[n] = true
+			}
+		}
+		for i := range ed.Variants {
+			for j := range ed.Variants[i].Payloads {
+				c.resolveType(&ed.Variants[i].Payloads[j], params, orPos(ed.Variants[i].P, ed.P))
+			}
+		}
+	}
+	// Parametric impls: resolve the `for` type's own type-parameter
+	// references (`Box[T]`) to ParamType so the conformance check's
+	// SubstSelf-built expected signatures line up with the generic
+	// hoisted methods (whose receiver `Box[T]` was already resolved
+	// via the method's TypeParams). See docs/TRAITS.md.
+	for _, impl := range prog.Impls {
+		if len(impl.TypeParams) == 0 {
+			continue
+		}
+		params := make(map[string]bool, len(impl.TypeParams))
+		for _, n := range impl.TypeParams {
+			params[n] = true
+		}
+		c.resolveType(&impl.Type, params, impl.P)
+		// The associated-type bindings too (`type Ok = T;`): they are the
+		// impl's own type parameters, so leaving them as StructType makes
+		// the resolved projection un-substitutable at an instantiation.
+		for name, bt := range impl.AssocTypeBindings {
+			c.resolveType(&bt, params, impl.P)
+			impl.AssocTypeBindings[name] = bt
+		}
+	}
+}
+
+// resolveTypesInBlock resolves every type a function body declares:
+// local `let` annotations, nested `function` signatures, and
+// expression-position lambdas. It walks expressions as well as
+// statements because all three nest inside expressions — a lambda in a
+// call argument, a `let` in a value block or a match-expression arm —
+// and a declaration the walk misses keeps the parser's provisional
+// `StructType{Name}` for a name that is really an enum, a union or a
+// resource. Two spellings of one type then print identically and
+// compare unequal (#6996).
+func (c *checker) resolveTypesInBlock(b *ast.Block, params map[string]bool) {
+	if b == nil {
+		return
+	}
+	// ast.Walk forbids restructuring the tree mid-traversal; rewriting
+	// a positionless Type field is not traversal state, and Walk never
+	// visits those fields itself.
+	ast.Walk(b, func(n ast.Node) bool {
+		forEachDeclaredType(n, func(t *ast.Type, pos ast.Position) {
+			c.resolveType(t, params, pos)
+		})
+		return true
+	})
+}
+
+// blockDiverges reports whether every control-flow path
+// through `b` exits via Return / Break / Continue. Used by
+// `let else` to enforce the divergent-else contract — without
+// it, fall-through would leave the pattern's bindings
+// uninitialised in the surrounding scope. Conservative: a
+// block whose last statement is itself a divergent statement
+// counts; nested ifs / matches must have ALL arms divergent.
+func blockDiverges(b *ast.Block) bool {
+	if b == nil || len(b.Stmts) == 0 {
+		return false
+	}
+	return stmtDiverges(b.Stmts[len(b.Stmts)-1])
+}
+
+// letElseDivergentArm reports whether arm i is a `let … else` else
+// branch. checkMatch requires that branch to terminate the surrounding
+// control flow and reports E022 when it doesn't, so the reachability
+// analyses take the requirement as given rather than reporting a second
+// diagnostic (a spurious E052) about the same mistake. The desugared
+// match then diverges/exits exactly when the rest of the block does —
+// which is what the analyses saw before `let … else` became a match.
+func letElseDivergentArm(m *ast.Match, i int) bool {
+	return m.Origin == ast.OriginLetElse && i == len(m.Arms)-1 && m.Arms[i].IsWildcard
+}
+
+// loopCanBreak reports whether `body` contains a `break` that targets THIS
+// loop — an unlabelled break not enclosed in a nested loop, or a labelled
+// break naming `label`. A loop that can break does not diverge, which is
+// what the reachability analyses below need to know. Treating a breakable
+// loop as divergent is not conservative: it ACCEPTS programs that fall
+// through, so a value fell off the end of a function (E052), a
+// `never`-typed block initialised a string from garbage, and a `let … else`
+// whose else arm broke out of a loop left the pattern's bindings
+// uninitialised (#8447).
+//
+// The walk covers expression position too: a block-, `if`- or
+// `match`-expression carries statements, and a `break` in one belongs to
+// this loop like any other (#8562). What it skips is decided per node: a
+// lambda or nested function body, whose `break` belongs to a loop of its
+// own; and a `defer` body, which runs at scope exit and cannot carry this
+// loop's control flow. A nested loop's header expressions (`while`
+// condition, `for` init / cond / step, `for … in` iterable) are evaluated
+// in this loop's context, so only the nested BODY counts as nested.
+func loopCanBreak(body ast.Stmt, label string) bool {
+	found := false
+	var walk func(n ast.Node, nested bool)
+	walk = func(n ast.Node, nested bool) {
+		ast.Walk(n, func(n ast.Node) bool {
+			if found {
+				return false
+			}
+			switch x := n.(type) {
+			case *ast.Break:
+				if x.Label == "" {
+					found = !nested
+				} else {
+					found = x.Label == label
+				}
+				return false
+			case *ast.Lambda, *ast.FuncDecl, *ast.Defer:
+				return false
+			case *ast.Loop:
+				walk(x.Body, true)
+				return false
+			case *ast.While:
+				walk(x.Cond, nested)
+				walk(x.Body, true)
+				return false
+			case *ast.For:
+				if x.Init != nil {
+					walk(x.Init, nested)
+				}
+				if x.Cond != nil {
+					walk(x.Cond, nested)
+				}
+				if x.Step != nil {
+					walk(x.Step, nested)
+				}
+				walk(x.Body, true)
+				return false
+			case *ast.ForEach:
+				walk(x.Iter, nested)
+				walk(x.Body, true)
+				return false
+			}
+			return true
+		})
+	}
+	walk(body, false)
+	return found
+}
+
+func stmtDiverges(s ast.Stmt) bool {
+	switch x := s.(type) {
+	case *ast.Return, *ast.Break, *ast.Continue:
+		return true
+	case *ast.Loop:
+		// `loop { … }` is unconditional by construction, so it diverges
+		// unless something breaks out of it.
+		return !loopCanBreak(x.Body, x.Label)
+	case *ast.While:
+		// A literal-true condition is the same shape as `loop`. Handled
+		// here as well as in stmtExits so the two predicates agree on
+		// it — they disagreed before, which is how the gap survived.
+		if lit, ok := x.Cond.(*ast.BoolLit); ok && lit.Value {
+			return !loopCanBreak(x.Body, x.Label)
+		}
+		return false
+	case *ast.Block:
+		return blockDiverges(x)
+	case *ast.If:
+		// Both arms must diverge (and the else arm must
+		// exist) — a one-armed if can fall through.
+		if x.Else == nil {
+			return false
+		}
+		return stmtDiverges(x.Then) && stmtDiverges(x.Else)
+	case *ast.Match:
+		// Every arm must diverge for the match itself to
+		// diverge. Wildcard arm is required for the match to
+		// be exhaustive at this point (the checker has
+		// already verified that), so we don't need a separate
+		// "did we see a wildcard" branch.
+		for i, arm := range x.Arms {
+			if letElseDivergentArm(x, i) {
+				continue
+			}
+			if !blockDiverges(arm.Body) {
+				return false
+			}
+		}
+		return len(x.Arms) > 0
+	}
+	return false
+}
+
+// funcBodyExits reports whether every path through a function body either
+// returns or never falls off the end (a loop nothing breaks out of). It is
+// the missing-return analysis behind E052 and is deliberately CONSERVATIVE:
+// it only returns false when the body can demonstrably fall through, so
+// it never rejects a valid function. See
+// docs/ADVERSARIAL-REVIEW-2026-06.md (F4).
+func funcBodyExits(b *ast.Block) bool {
+	if b == nil || len(b.Stmts) == 0 {
+		return false
+	}
+	return stmtExits(b.Stmts[len(b.Stmts)-1])
+}
+
+func stmtExits(s ast.Stmt) bool {
+	switch x := s.(type) {
+	case *ast.Return:
+		return true
+	case *ast.Block:
+		return funcBodyExits(x)
+	case *ast.If:
+		// An if on a literal takes one arm: `if (true)` exits when its then
+		// arm does (what a pruned branch on the target leaves), `if (false)`
+		// when its else arm does. Otherwise both arms must exit; a one-armed
+		// if can fall through.
+		if lit, ok := x.Cond.(*ast.BoolLit); ok {
+			if lit.Value {
+				return stmtExits(x.Then)
+			}
+			return x.Else != nil && stmtExits(x.Else)
+		}
+		return x.Else != nil && stmtExits(x.Then) && stmtExits(x.Else)
+	case *ast.Match:
+		// Exhaustiveness is checked separately; here every arm must exit
+		// for the match to guarantee the function exits.
+		if len(x.Arms) == 0 {
+			return false
+		}
+		for i, arm := range x.Arms {
+			if letElseDivergentArm(x, i) {
+				continue
+			}
+			if !funcBodyExits(arm.Body) {
+				return false
+			}
+		}
+		return true
+	case *ast.While:
+		// `while (true) { … }` never falls through — unless it breaks.
+		if lit, ok := x.Cond.(*ast.BoolLit); ok && lit.Value {
+			return !loopCanBreak(x.Body, x.Label)
+		}
+		return false
+	case *ast.Loop:
+		// `loop { … }` is unconditional by construction, so the same
+		// rule applies without pattern-matching a BoolLit condition.
+		return !loopCanBreak(x.Body, x.Label)
+	}
+	return false
+}
+
+// isVoidReturn reports whether a function's declared return type is void
+// (or unspecified), in which case it may fall off the end legitimately.
+func isVoidReturn(t ast.Type) bool {
+	if t == nil {
+		return true
+	}
+	_, ok := t.(ast.VoidType)
+	return ok
+}
+
+// resolveType rewrites a single Type slot in place. Handles
+// nominal references (StructType promoted to EnumType when
+// appropriate, or ParamType when the name matches an enclosing
+// enum's type parameter) plus recurses into composite types.
+//
+// `params` carries the type-parameter names visible at this
+// type position. It's nil outside of enum-body contexts. When
+// the name is in `params`, we always rewrite to ParamType —
+// the parameter wins over a same-named enum or struct.
+// orPos returns p unless it is unset (synthetic nodes leave positions
+// zero), in which case it falls back to `fallback`.
+func orPos(p, fallback ast.Position) ast.Position {
+	if p.Line == 0 {
+		return fallback
+	}
+	return p
+}
+
+// isCellElemType reports whether T is permitted as Cell[T] (E057). The
+// element must be cycle-free: a cell over a value that can transitively
+// hold another cell could reconstruct a reference cycle, which the
+// immutable-data model forbids so Perceus RC needs no cycle collector.
+// Scalars (i32/i64/f64/bool) hold no pointer at all; `string` is a heap
+// buffer of bytes that references no other Fern value, so a Cell[string]
+// can never close a cycle either, and its owning slot participates in
+// string rc arc. Owned scalar arrays are equally cycle-free and participate
+// in array RC. Other composite/reference types remain unsupported.
+// An unresolved generic
+// param is allowed through here (there's no v1 generic-Cell use;
+// monomorph-time checking is a follow-up) so generic signatures still
+// resolve.
+func isCellElemType(t ast.Type) bool {
+	switch t.(type) {
+	case ast.NumberType, ast.FloatType, ast.BoolType, ast.StringType, ast.ParamType:
+		return true
+	}
+	if a, ok := t.(ast.ArrayType); ok {
+		switch a.Elem.(type) {
+		case ast.NumberType, ast.FloatType, ast.BoolType:
+			return true
+		}
+	}
+	return false
+}
+
+// resolveType canonicalises a parsed type annotation in place. `pos` is
+// the closest source anchor for the annotation (the declaring name's
+// position — field / param / var / decl); annotation-position
+// diagnostics (E057) report there. Type nodes carry no positions of
+// their own, so a zero `pos` (synthetic decls) falls back to the
+// offending decl's own position at the report site.
+func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Position) {
+	if slot == nil || *slot == nil {
+		return
+	}
+	switch t := (*slot).(type) {
+	case ast.ProjType:
+		// Resolve the base so `T::Item`'s base StructType{T} becomes
+		// ParamType{T} and `Self::Item` stays SelfType. The projection
+		// itself is resolved to its binding later (resolveProjections),
+		// once impl conformance has recorded the bindings.
+		base := t.Base
+		c.resolveType(&base, params, pos)
+		*slot = ast.ProjType{Base: base, Name: t.Name}
+		return
+	case ast.StructType:
+		if params[t.Name] {
+			*slot = ast.ParamType{Name: t.Name}
+			return
+		}
+		if _, isEnum := c.info.Enums[t.Name]; isEnum {
+			*slot = ast.EnumType{Name: t.Name}
+			return
+		}
+		// A bare resource name (`Pollable`) in type position is an owned
+		// handle — reclassify so body-checking sees a HandleType (P5).
+		// `own Pollable` / `borrow Pollable` already arrive as HandleType
+		// from the parser. Resource names can't take type arguments, so a
+		// `R[...]` form falls through to the struct/enum arity path below.
+		if _, isResource := c.info.Resources[t.Name]; isResource && len(t.Args) == 0 {
+			*slot = ast.HandleType{Resource: t.Name}
+			return
+		}
+		// Already a StructType — recurse into Args (populated
+		// when the type came back through resolveType for a
+		// generic struct's instantiation).
+		if len(t.Args) > 0 {
+			args := make([]ast.Type, len(t.Args))
+			copy(args, t.Args)
+			for i := range args {
+				c.resolveType(&args[i], params, pos)
+			}
+			*slot = ast.StructType{Name: t.Name, Args: args}
+		}
+	case ast.EnumType:
+		// `Foo[A, B]` — recurse into args. Params can shadow
+		// individual arg names too (e.g. `Option[T]` inside an
+		// enum body where T is a parameter). We also enforce the
+		// arity here so a wrong-arity instantiation fails before
+		// it becomes a "no Args" enum at the assignment site.
+		//
+		// The parser optimistically wraps every `Name[…]` form as
+		// EnumType because at parse time it doesn't know which
+		// names are structs vs enums. If the name resolves to a
+		// generic struct we rewrite into a StructType with the
+		// same Args here. Same arity check.
+		args := make([]ast.Type, len(t.Args))
+		copy(args, t.Args)
+		for i := range args {
+			c.resolveType(&args[i], params, pos)
+		}
+		if sd, ok := c.info.Structs[t.Name]; ok {
+			if len(sd.TypeParams) != len(args) && !c.reservedShadows[t.Name] {
+				c.errfCode(sd.P, "E019", "struct %s has %d type parameter(s), %d supplied",
+					t.Name, len(sd.TypeParams), len(args))
+			}
+			// E057: a Cell[T] is only sound for a cycle-free T — a cell
+			// over a reference type could reconstruct a reference cycle,
+			// which is exactly what the immutable-data model forbids so
+			// Perceus RC needs no cycle collector (docs/CELL-TYPE-PLAN.md
+			// §1-2). Scalars, strings and owned byte arrays have the
+			// required owning-slot RC support; other types remain unsupported.
+			if t.Name == "Cell" && len(args) == 1 && !isCellElemType(args[0]) {
+				// Anchor at the annotation's use site. Cell's decl is
+				// synthesized (sd.P is 0:0, which diag.Format renders
+				// without the error[E057] prefix), so the fallback only
+				// fires for annotations with no source anchor of their
+				// own (synthetic decls).
+				at := pos
+				if at.Line == 0 {
+					at = sd.P
+				}
+				c.errfCode(at, "E057",
+					"Cell[%s] is not allowed: a cell's element type must be a scalar, string or owned array of scalars; other element types are not supported because cells must remain cycle-free",
+					args[0])
+			}
+			*slot = ast.StructType{Name: t.Name, Args: args}
+			return
+		}
+		if ed, ok := c.info.Enums[t.Name]; ok {
+			if len(ed.TypeParams) != len(args) && !c.reservedShadows[t.Name] {
+				c.errfCode(ed.P, "E019", "enum %s has %d type parameter(s), %d supplied",
+					t.Name, len(ed.TypeParams), len(args))
+			}
+		}
+		*slot = ast.EnumType{Name: t.Name, Args: args}
+	case ast.ArrayType:
+		elem := t.Elem
+		c.resolveType(&elem, params, pos)
+		*slot = ast.ArrayType{Elem: elem}
+	case ast.SliceType:
+		elem := t.Elem
+		c.resolveType(&elem, params, pos)
+		*slot = ast.SliceType{Elem: elem}
+	case ast.TupleType:
+		// Recurse into each element. Without this, a
+		// generic function's `(T, T)` return type kept its
+		// elements as the parser-built `StructType{Name:"T"}`
+		// (never converted to `ParamType`), while
+		// `checkExpr((x, x))` returned `TupleType` over the
+		// param's already-resolved `ParamType`. ast.Equal then
+		// compared `StructType` vs `ParamType` and returned
+		// false — the user saw "function returns (T, T) but
+		// expression is (T, T)" with identical-looking sides.
+		elems := make([]ast.Type, len(t.Elems))
+		copy(elems, t.Elems)
+		for i := range elems {
+			c.resolveType(&elems[i], params, pos)
+		}
+		*slot = ast.TupleType{Elems: elems}
+	case *ast.FuncType:
+		for i := range t.Params {
+			c.resolveType(&t.Params[i], params, pos)
+		}
+		c.resolveType(&t.Result, params, pos)
+	}
+}
+
+// validateKnownTypes reports any nominal type reference (E064) that names
+// no declared type — `let x: Wibble`, `function f(a: Wibble): Wibble`,
+// `struct S { f: Wibble }`. It runs after resolveTypeNames, so type
+// parameters are already ParamType, enums are EnumType, and resources are
+// HandleType; a leftover StructType/EnumType is therefore either a declared
+// struct/enum or genuinely undefined. The per-decl type-parameter scope
+// mirrors resolveTypeNames exactly so an in-scope `T` is never flagged. A
+// function body uses a single type-param scope throughout (Fern has no
+// nested generic scopes), so every `let` annotation inside it — at any
+// block depth — is validated against the function's own parameters.
+func (c *checker) validateKnownTypes(prog *ast.Program) {
+	for _, fn := range prog.Funcs {
+		params := typeParamSet(fn.TypeParams)
+		if fn.Receiver != nil {
+			c.checkTypeKnown(fn.Receiver.Type, params, fn.P)
+		}
+		for i := range fn.Params {
+			c.checkTypeKnown(fn.Params[i].Type, params, paramPos(fn.Params[i], fn.P))
+		}
+		c.checkTypeKnown(fn.ReturnType, params, fn.P)
+		if fn.Body != nil {
+			ast.Walk(fn.Body, func(n ast.Node) bool {
+				forEachDeclaredType(n, func(t *ast.Type, pos ast.Position) {
+					if *t != nil {
+						c.checkTypeKnown(*t, params, pos)
+					}
+				})
+				return true
+			})
+		}
+	}
+	for _, sd := range prog.Structs {
+		params := typeParamSet(sd.TypeParams)
+		for i := range sd.Fields {
+			c.checkTypeKnown(sd.Fields[i].Type, params, paramPos(sd.Fields[i], sd.P))
+		}
+	}
+	for _, ed := range prog.Enums {
+		params := typeParamSet(ed.TypeParams)
+		for i := range ed.Variants {
+			for j := range ed.Variants[i].Payloads {
+				c.checkTypeKnown(ed.Variants[i].Payloads[j], params, ed.Variants[i].P)
+			}
+		}
+	}
+	for _, impl := range prog.Impls {
+		params := typeParamSet(impl.TypeParams)
+		c.checkTypeKnown(impl.Type, params, impl.P)
+	}
+}
+
+// validateMapKeyTypes reports E045 for every WRITTEN `Map[K, V]` whose key
+// type cannot be a map key — a parameter, return type, field, enum payload,
+// impl type or `let` annotation, at any nesting depth. The map-literal paths
+// check the key they INFER; without this, the annotated spelling of the same
+// program (`let m: Map[f64, i32] = map_new(2)`) was never asked, and reached
+// codegen (#10009).
+//
+// It runs after the conformance pass because mapKeyTypeError consults
+// typeImplsEqAndHash, which reads c.info.Impls — empty at validateKnownTypes
+// time, so a derived struct key would be rejected there.
+func (c *checker) validateMapKeyTypes(prog *ast.Program) {
+	for _, fn := range prog.Funcs {
+		mod := fn.BodyModule()
+		if fn.Receiver != nil {
+			c.checkMapKeyTypes(fn.Receiver.Type, mod, fn.P)
+		}
+		for i := range fn.Params {
+			c.checkMapKeyTypes(fn.Params[i].Type, mod, paramPos(fn.Params[i], fn.P))
+		}
+		c.checkMapKeyTypes(fn.ReturnType, mod, fn.P)
+		if fn.Body == nil {
+			continue
+		}
+		ast.Walk(fn.Body, func(n ast.Node) bool {
+			// A `let` initialised by a NON-EMPTY map literal is
+			// left to the literal's own check, which reports at
+			// the offending key rather than at the annotation. An
+			// empty `Map {}` has no key to report at, so the
+			// annotation is the only place the error can land.
+			if v, ok := n.(*ast.Var); ok {
+				if lit, isLit := v.Init.(*ast.MapLit); isLit && len(lit.Entries) > 0 {
+					return true
+				}
+			}
+			forEachDeclaredType(n, func(t *ast.Type, pos ast.Position) {
+				if *t != nil {
+					c.checkMapKeyTypes(*t, mod, pos)
+				}
+			})
+			return true
+		})
+	}
+	for _, sd := range prog.Structs {
+		for i := range sd.Fields {
+			c.checkMapKeyTypes(sd.Fields[i].Type, sd.SourceModule, paramPos(sd.Fields[i], sd.P))
+		}
+	}
+	for _, ed := range prog.Enums {
+		for i := range ed.Variants {
+			for j := range ed.Variants[i].Payloads {
+				c.checkMapKeyTypes(ed.Variants[i].Payloads[j], ed.SourceModule, ed.Variants[i].P)
+			}
+		}
+	}
+	for _, impl := range prog.Impls {
+		c.checkMapKeyTypes(impl.Type, impl.SourceModule, impl.P)
+	}
+}
+
+// checkMapKeyTypes walks a resolved type tree and reports E045 for each
+// `Map[K, V]` whose K is not a usable key. Composite types recurse, so a
+// `Map[f64, i32][]` field or a `(string, Map[f64, i32])` parameter is
+// reached too.
+func (c *checker) checkMapKeyTypes(t ast.Type, mod string, pos ast.Position) {
+	switch x := t.(type) {
+	case ast.StructType:
+		if x.Name == "Map" && len(x.Args) == 2 {
+			if msg := c.mapKeyTypeError(x.Args[0]); msg != "" {
+				c.report(mod, pos, "E045", msg)
+			}
+		}
+		for _, a := range x.Args {
+			c.checkMapKeyTypes(a, mod, pos)
+		}
+	case ast.EnumType:
+		for _, a := range x.Args {
+			c.checkMapKeyTypes(a, mod, pos)
+		}
+	case ast.ArrayType:
+		c.checkMapKeyTypes(x.Elem, mod, pos)
+	case ast.SliceType:
+		c.checkMapKeyTypes(x.Elem, mod, pos)
+	case ast.TupleType:
+		for _, e := range x.Elems {
+			c.checkMapKeyTypes(e, mod, pos)
+		}
+	case *ast.FuncType:
+		for _, p := range x.Params {
+			c.checkMapKeyTypes(p, mod, pos)
+		}
+		c.checkMapKeyTypes(x.Result, mod, pos)
+	}
+}
+
+// checkTypeKnown walks a resolved type tree and reports E064 for each
+// nominal (struct / enum) name that isn't a declared type or an in-scope
+// type parameter. Composite types recurse; every other form (ParamType,
+// the scalar/string/void built-ins, Self, dyn-trait, handle, projection)
+// is intrinsically valid and skipped.
+func (c *checker) checkTypeKnown(t ast.Type, params map[string]bool, pos ast.Position) {
+	switch x := t.(type) {
+	case ast.StructType:
+		if !c.knownTypeName(x.Name, params) {
+			c.errfCode(pos, "E064", "unknown type %q%s", demangle(x.Name), c.unknownTypeHint(x.Name))
+			return
+		}
+		for _, a := range x.Args {
+			c.checkTypeKnown(a, params, pos)
+		}
+	case ast.EnumType:
+		if !c.knownTypeName(x.Name, params) {
+			c.errfCode(pos, "E064", "unknown type %q%s", demangle(x.Name), c.unknownTypeHint(x.Name))
+			return
+		}
+		for _, a := range x.Args {
+			c.checkTypeKnown(a, params, pos)
+		}
+	case ast.ArrayType:
+		c.checkTypeKnown(x.Elem, params, pos)
+	case ast.SliceType:
+		c.checkTypeKnown(x.Elem, params, pos)
+	case ast.TupleType:
+		for _, e := range x.Elems {
+			c.checkTypeKnown(e, params, pos)
+		}
+	case *ast.FuncType:
+		for _, p := range x.Params {
+			c.checkTypeKnown(p, params, pos)
+		}
+		c.checkTypeKnown(x.Result, params, pos)
+	}
+}
+
+// knownTypeName reports whether `name` is an in-scope type parameter or
+// names any declared struct / enum / trait / resource (built-in generics
+// like Map and Cell are registered structs; Option / Result are enums).
+// It deliberately accepts a name known in *any* of these roles — the goal
+// is to flag only genuinely-undefined names, not to police misuse of a
+// known name (that's other rules' job), keeping false positives out.
+func (c *checker) knownTypeName(name string, params map[string]bool) bool {
+	if params[name] {
+		return true
+	}
+	if _, ok := c.info.Structs[name]; ok {
+		return true
+	}
+	if _, ok := c.info.Enums[name]; ok {
+		return true
+	}
+	if _, ok := c.info.Traits[name]; ok {
+		return true
+	}
+	if _, ok := c.info.Resources[name]; ok {
+		return true
+	}
+	return false
+}
+
+// unknownTypeHint suggests the right spelling for a handful of common
+// cross-language slips, appended to the E064 message.
+func (c *checker) unknownTypeHint(name string) string {
+	if c.traitNames[name] {
+		return fmt.Sprintf(" (`%s` is a trait: a parameter of trait type makes the function generic over it; anywhere else write `dyn %s`)", demangle(name), demangle(name))
+	}
+	switch name {
+	case "bool":
+		return " (did you mean `boolean`?)"
+	case "int", "long":
+		return " (did you mean `i32`?)"
+	case "uint":
+		return " (did you mean `u32`?)"
+	case "double":
+		return " (did you mean `f64`?)"
+	case "String":
+		return " (did you mean `string`?)"
+	}
+	return ""
+}
+
+// typeParamSet builds a lookup set from a decl's type-parameter names, or
+// nil when there are none.
+func typeParamSet(names []string) map[string]bool {
+	if len(names) == 0 {
+		return nil
+	}
+	m := make(map[string]bool, len(names))
+	for _, n := range names {
+		m[n] = true
+	}
+	return m
+}
+
+// paramPos prefers a Param's name position (so an E064 points at the
+// offending parameter / field) and falls back to the decl position for a
+// synthetic Param that carries no source location.
+func paramPos(p ast.Param, fallback ast.Position) ast.Position {
+	if p.NamePos.Line > 0 {
+		return p.NamePos
+	}
+	return fallback
+}
+
+// variantRef is the resolution target for an unqualified variant
+// name. The checker uses it to rewrite `Circle(3.0)` /
+// `Red` into a typed *EnumLit.
+type variantRef struct {
+	enumName string
+	index    int
+	payloads []ast.Type
+	// srcModule is the declaring enum's SourceModule, mirrored here so
+	// visibleVariants can filter without a second lookup. "" for the
+	// built-in enums, which every module sees.
+	srcModule string
+}
+
+// visibleVariants narrows the whole-program variantOf entries for
+// `name` to the enums the module being checked can actually name, per
+// the import closure modload recorded (docs/PRELUDE-TO-MODULES.md).
+//
+// Every other namespace is already scoped this way — modload mangles
+// each module's types and functions to `<mod>__name`, and moduleSees
+// gates nominal and method references. Variant names are the one kind
+// modload leaves bare, so without this filter a `Kind { Text }` in any
+// loaded module made every other module's bare `Text` ambiguous, and
+// the diagnostic landed on source its author could not edit (#6951).
+//
+// The filter is the import closure alone — moduleSeesVariant, not
+// moduleSees, because the latter's stdlib-to-stdlib shortcut is for the
+// method graph and re-opened exactly the #6951 hole between two stdlib
+// modules (#8189).
+//
+// A built-in enum's SourceModule is "", treated as universal, so
+// Option / Result / IoError / JsonValue stay candidates everywhere by
+// construction.
+func (c *checker) visibleVariants(name string) []variantRef {
+	all := c.variantOf[name]
+	from := c.currentModule()
+	var out []variantRef
+	for _, vr := range all {
+		if c.moduleSeesVariant(from, vr.srcModule) {
+			out = append(out, vr)
+		}
+	}
+	return out
+}
+
+// resolveVariant looks up a variant reference by name and (optional)
+// enum qualifier among the variants visible here. Returns the matching
+// variantRef and ok=true. If `enumName` is non-empty, only the entry on
+// that specific enum matches — used for `Color.Red`-style qualified
+// references. If `enumName` is empty (the bare `Red` / `Some(x)` form),
+// there must be exactly one candidate; multiple candidates means the
+// call site has to disambiguate. multi reports whether the bare-name
+// lookup hit more than one entry — the caller uses it to produce a
+// "qualify with `<E>.<v>`" hint.
+func (c *checker) resolveVariant(name, enumName string) (variantRef, bool, bool) {
+	cands := c.visibleVariants(name)
+	if enumName != "" {
+		for _, vr := range cands {
+			if vr.enumName == enumName {
+				return vr, true, len(cands) > 1
+			}
+		}
+		return variantRef{}, false, false
+	}
+	if len(cands) == 1 {
+		return cands[0], true, false
+	}
+	return variantRef{}, false, len(cands) > 1
+}
+
+// monomorphCloneEnumName extracts, from a destination type, the name of
+// a monomorphized enum clone (#3693) it pins — or "". Used to
+// disambiguate a bare variant reference shared by clones of one generic
+// enum (E__i32.A vs E__string.A). The Monomorphized gate keeps this a
+// clone-only relaxation: user-written enums that share a variant name
+// still require qualification (the E036 rule is unchanged for them).
+func (c *checker) monomorphCloneEnumName(dest ast.Type) string {
+	et, ok := dest.(ast.EnumType)
+	if !ok {
+		return ""
+	}
+	if ed, ok := c.info.Enums[et.Name]; ok && ed.Monomorphized {
+		return et.Name
+	}
+	return ""
+}
+
+// enumHintName spells an enum the way a reader at the current site
+// would write it: bare inside the module that declared it, `mod.Enum`
+// from anywhere else. The stored `mod__Enum` is an internal name that
+// nothing can spell, and naming a private module's is a leak. A
+// monomorphized clone's `E__i32` is not a module mangle, so it stands.
+func (c *checker) enumHintName(name string) string {
+	ed, ok := c.info.Enums[name]
+	if !ok || ed.Monomorphized || ed.SourceModule == "" {
+		return name
+	}
+	if ed.SourceModule == c.currentModule() {
+		if i := strings.Index(name, "__"); i >= 0 {
+			return name[i+2:]
+		}
+		return name
+	}
+	return demangle(name)
+}
+
+// variantEnumList returns a human-readable list of the enum names that
+// declare `name` and are visible here. Used in the "ambiguous variant"
+// diagnostic so the user sees every candidate, not just the first one.
+func (c *checker) variantEnumList(name string) string {
+	cands := c.visibleVariants(name)
+	if len(cands) == 0 {
+		return ""
+	}
+	if len(cands) == 1 {
+		return c.enumHintName(cands[0].enumName)
+	}
+	var b strings.Builder
+	for i, vr := range cands {
+		if i > 0 {
+			if i == len(cands)-1 {
+				b.WriteString(" and ")
+			} else {
+				b.WriteString(", ")
+			}
+		}
+		b.WriteString(c.enumHintName(vr.enumName))
+	}
+	return b.String()
+}
+
+// variantQualifierHint picks the enum to name in the "qualify the
+// reference, e.g. `E.V`" half of the ambiguous-variant diagnostic:
+// one declared in the module being checked when there is one, so the
+// suggestion is spellable where the reader is standing, rather than
+// whichever candidate the map happened to list first.
+func (c *checker) variantQualifierHint(name, suffix string) string {
+	cands := c.visibleVariants(name)
+	var own, rest []string
+	for _, vr := range cands {
+		ed, ok := c.info.Enums[vr.enumName]
+		spelled := c.enumHintName(vr.enumName) + "." + name
+		switch {
+		case ok && ed.SourceModule != "" && ed.SourceModule == c.currentModule():
+			own = append(own, "`"+spelled+suffix+"`")
+			continue
+		case ok && ed.SourceModule != "" && !ed.Monomorphized:
+			// Another module's enum is not a qualifier its consumers can
+			// write; the module is (`mod.Variant`), and the mangle prefix
+			// is the module's import name.
+			if i := strings.Index(vr.enumName, "__"); i > 0 {
+				spelled = vr.enumName[:i] + "." + name
+			}
+		}
+		rest = append(rest, "`"+spelled+suffix+"`")
+	}
+	return strings.Join(append(own, rest...), " or ")
+}
+
+// substituteType returns t with every ParamType reference
+// replaced by the type bound to that parameter in `sub`. Unbound
+// parameters fall through unchanged so the caller can detect
+// "couldn't fully resolve" cases. Recurses into composite types
+// (arrays, function types, generic enum args) so a payload like
+// `Option[T]` resolves to `Option[number]` when T=number.
+// arithOpMethod maps a binary arithmetic / bitwise operator to the
+// conventionally-named method that overloads it on a composite type,
+// mirroring `==`→eq / `<`→cmp. See compositeOpOverload / #2706.
+var arithOpMethod = map[string]string{
+	"+": "add", "-": "sub", "*": "mul", "/": "div", "%": "rem",
+	"&": "bitand", "|": "bitor", "^": "bitxor", "<<": "shl", ">>": "shr",
+}
+
+// arithOpTrait names the std/num trait that declares each overloadable
+// arithmetic method, so the overload resolves against that trait's impl
+// rather than whichever registration happened to claim the flat name.
+// The bitwise / shift / remainder methods have no trait yet — an entry
+// appears here when one does.
+var arithOpTrait = map[string]string{
+	"add": "Add", "sub": "Sub", "mul": "Mul", "div": "Div", "neg": "Neg",
+}
+
+// compositeOpOverload handles operator overloading for a binary operator
+// whose operands are the same composite (struct / enum) type: it desugars
+// `a <op> b` to the type's conventionally-named method (`arithOpMethod`),
+// stashing the checked call on n.ArithCall (swapped in by the post-check
+// rewrite) and returning its result type. handled=false means the operands
+// aren't a matching composite pair, so the caller falls through to the
+// numeric path. A composite operand without the method is a clear E009.
+// tryConvertErrToDyn builds the desugar for an error-converting `?`: a
+// `Result[T, E]` propagated through a function returning `Result[_, dyn
+// Trait]` (E implements Trait) lowers to a block-expr that maps the error
+// to `dyn Trait` then applies an ordinary exact-match `?`:
+//
+//	{ let __t: Result[T, dyn Trait] = match (inner) {
+//	    Ok(__ok)  => Ok(__ok),
+//	    Err(__e)  => Err(__e as dyn Trait),
+//	  }; __t? }
+//
+// It type-checks the desugar so every later pass sees fully-typed nodes
+// (the cast's DynCoercion recorded, the inner `?` stamped). Returns
+// (nil, false) when the target error isn't a `dyn Trait` E implements.
+// See #3234.
+// buildCheckedLowered synthesises the desugar for a checked integer
+// operator (`+?` / `-?` / `*?`, #5542). The result is `Some(a <op> b)`
+// when the exact result fits `t`, else `None`:
+//
+//	{ let l: T = a; let r: T = b; let s: T = a <op> b;   // wrapped
+//	  if (<overflowed>) { None } else { Some(s) } }
+//
+// The overflow predicate reads back the wrapped result `s` rather than
+// comparing against MIN / MAX literals, so one shape works at every
+// width — the unsigned MAX (unrepresentable as a signed literal) never
+// appears:
+//
+//	unsigned  a +? b  ⇔ s < a                 (carry out)
+//	unsigned  a -? b  ⇔ a < b                 (borrow)
+//	unsigned  a *? b  ⇔ a != 0 && s / a != b
+//	signed    a +? b  ⇔ (a^b) >= 0 && (s^a) < 0   (same sign in, sign flip)
+//	signed    a -? b  ⇔ (a^b) <  0 && (s^a) < 0
+//	signed    a *? b  ⇔ a != 0 && (s / a != b || (a == -1 && b == MIN))
+//
+// The signed `*?` division round-trip agrees spuriously on exactly the
+// `(-1, MIN)` pair (`MIN / -1 == MIN` because Fern's division is total),
+// so that pair is added back explicitly. `MIN` / `-1` are spelled with a
+// leading `0 - …` because a bare negative literal is rejected (E047).
+//
+// The synthesised block is fully checked here, so the post-check rewrite
+// pass (RewriteProgramExprs) can splice it in and every later pass sees a
+// plain `Option[T]`-valued block-expr.
+func (c *checker) buildCheckedLowered(n *ast.Binary, t ast.NumberType, s *scope) ast.Expr {
+	c.checkedN++
+	p := n.P
+	lN := fmt.Sprintf("__chk_l_%d", c.checkedN)
+	rN := fmt.Sprintf("__chk_r_%d", c.checkedN)
+	sN := fmt.Sprintf("__chk_s_%d", c.checkedN)
+	id := func(name string) ast.Expr { return &ast.Ident{P: p, Name: name} }
+	num := func(v int64) ast.Expr { return &ast.NumberLit{P: p, Value: v} }
+	bin := func(op string, l, r ast.Expr) ast.Expr { return &ast.Binary{P: p, Op: op, Left: l, Right: r} }
+	negOne := bin("-", num(0), num(1))
+	baseOp := n.Op[:1] // "+?" -> "+", "/?" -> "/", …
+	if len(n.Op) == 3 {
+		baseOp = n.Op[:2] // "<<?" -> "<<", ">>?" -> ">>"
+	}
+	unsigned := !t.IsSigned()
+
+	var overflow ast.Expr
+	switch {
+	case n.Op == "<<?" || n.Op == ">>?":
+		// Checked shift: `None` when the shift count is out of range —
+		// negative (signed operands only) or `>= width`. `s` is Fern's
+		// masked shift (`a << (b & (width-1))`), which never traps, so it
+		// is computed up front like the other non-div cases; on the None
+		// path it just isn't read. `>=` picks the operand's signed /
+		// unsigned comparison, so an unsigned count only needs the upper
+		// bound.
+		wLit := int64(t.NormalWidth())
+		hiOOR := bin(">=", id(rN), num(wLit))
+		if unsigned {
+			overflow = hiOOR
+		} else {
+			overflow = bin("||", bin("<", id(rN), num(0)), hiOOR)
+		}
+	case baseOp == "/" || baseOp == "%":
+		// Checked divide / remainder: `None` on a zero divisor, and for
+		// signed operands also on `MIN / -1` (the one overflowing
+		// division). `s` here is Fern's total `a / b` (0 on div-by-zero,
+		// MIN on MIN/-1) — never read on the None path, so computing it is
+		// harmless.
+		zero := bin("==", id(rN), num(0))
+		if unsigned {
+			overflow = zero
+		} else {
+			maxLit := int64(2147483647)
+			if t.NormalWidth() == 64 {
+				maxLit = 9223372036854775807
+			}
+			minExpr := bin("-", bin("-", num(0), num(maxLit)), num(1)) // 0 - MAX - 1
+			overflow = bin("||", zero,
+				bin("&&", bin("==", id(lN), minExpr), bin("==", id(rN), negOne)))
+		}
+	case unsigned && baseOp == "+":
+		overflow = bin("<", id(sN), id(lN))
+	case unsigned && baseOp == "-":
+		overflow = bin("<", id(lN), id(rN))
+	case unsigned: // "*"
+		overflow = bin("&&", bin("!=", id(lN), num(0)),
+			bin("!=", bin("/", id(sN), id(lN)), id(rN)))
+	case baseOp == "+":
+		overflow = bin("&&",
+			bin(">=", bin("^", id(lN), id(rN)), num(0)),
+			bin("<", bin("^", id(sN), id(lN)), num(0)))
+	case baseOp == "-":
+		overflow = bin("&&",
+			bin("<", bin("^", id(lN), id(rN)), num(0)),
+			bin("<", bin("^", id(sN), id(lN)), num(0)))
+	default: // signed "*"
+		maxLit := int64(2147483647)
+		if t.NormalWidth() == 64 {
+			maxLit = 9223372036854775807
+		}
+		minExpr := bin("-", bin("-", num(0), num(maxLit)), num(1)) // 0 - MAX - 1
+		overflow = bin("&&", bin("!=", id(lN), num(0)),
+			bin("||",
+				bin("!=", bin("/", id(sN), id(lN)), id(rN)),
+				bin("&&", bin("==", id(lN), negOne), bin("==", id(rN), minExpr))))
+	}
+
+	block := &ast.BlockExpr{P: p, Stmts: []ast.Stmt{
+		&ast.Var{P: p, Name: lN, Type: t, Init: n.Left},
+		&ast.Var{P: p, Name: rN, Type: t, Init: n.Right},
+		&ast.Var{P: p, Name: sN, Type: t, Init: bin(baseOp, id(lN), id(rN))},
+	}, Tail: &ast.IfExpr{P: p, Cond: overflow,
+		Then: id("None"),
+		Else: &ast.Call{P: p, Callee: id("Some"), Args: []ast.Expr{id(sN)}},
+	}}
+	if c.checkExpr(block, s) == nil {
+		return nil
+	}
+	return block
+}
+
+func (c *checker) tryConvertErrToDyn(n *ast.TryOp, srcEnum, retEnum ast.EnumType, s *scope) (ast.Expr, bool) {
+	dt, ok := retEnum.Args[1].(ast.DynTraitType)
+	if !ok {
+		return nil, false
+	}
+	tn, ok := methodTypeName(srcEnum.Args[1])
+	if !ok {
+		return nil, false
+	}
+	// E must implement EVERY trait in the dyn-error set — `dyn A + B` ⇐ E iff
+	// E impls A AND B (the same impl-all gate the multi-trait coercion uses).
+	// A single-trait `dyn Error` is the 1-element case.
+	if !c.implementsAllDynTraits(dt, tn) {
+		return nil, false
+	}
+	c.tryConvN++
+	tmp := fmt.Sprintf("__try_dyn_%d", c.tryConvN)
+	okBind := fmt.Sprintf("__try_ok_%d", c.tryConvN)
+	errBind := fmt.Sprintf("__try_err_%d", c.tryConvN)
+	p := n.P
+	resultDyn := ast.EnumType{Name: "Result", Args: []ast.Type{srcEnum.Args[0], dt}}
+	mapMatch := &ast.MatchExpr{P: p, Tag: n.Inner, Arms: []*ast.MatchExprArm{
+		{P: p, VariantName: "Ok", Bindings: []string{okBind},
+			Body: &ast.Call{P: p, Callee: &ast.Ident{P: p, Name: "Ok"}, Args: []ast.Expr{&ast.Ident{P: p, Name: okBind}}}},
+		{P: p, VariantName: "Err", Bindings: []string{errBind},
+			Body: &ast.Call{P: p, Callee: &ast.Ident{P: p, Name: "Err"}, Args: []ast.Expr{
+				&ast.CastExpr{P: p, Inner: &ast.Ident{P: p, Name: errBind}, Target: dt}}}},
+	}}
+	block := &ast.BlockExpr{P: p, Stmts: []ast.Stmt{
+		&ast.Var{P: p, Name: tmp, Type: resultDyn, Init: mapMatch},
+	}, Tail: &ast.TryOp{P: p, Inner: &ast.Ident{P: p, Name: tmp}}}
+	if t := c.checkExpr(block, s); t == nil {
+		return nil, false
+	}
+	return block, true
+}
+
+// tryConvertErrViaFrom builds the desugar for a `From`-based error-converting
+// `?`: when the function's error type `E2` has an associated `from(E1): E2`
+// (i.e. `impl From[E1] for E2`), a `Result[_, E1]` propagated through it maps
+// `Err(e)` to `Err(E2.from(e))`. Structural by the `from` constructor's
+// signature (so it's module-agnostic). Returns (nil, false) when E2 isn't a
+// struct/enum with a matching `from`. See #2674.
+func (c *checker) tryConvertErrViaFrom(n *ast.TryOp, srcEnum, retEnum ast.EnumType, s *scope) (ast.Expr, bool) {
+	srcErr := srcEnum.Args[1]
+	fnErr := retEnum.Args[1]
+	tn, ok := methodTypeName(fnErr)
+	if !ok {
+		return nil, false
+	}
+	switch fnErr.(type) {
+	case ast.StructType, ast.EnumType:
+	default:
+		return nil, false
+	}
+	// E2 must have an associated `from(E1): E2`.
+	sig, ok := c.info.FuncSigs["__assoc_"+tn+"_from"]
+	if !ok || len(sig.Params) != 1 || !ast.Equal(sig.Params[0], srcErr) || !ast.Equal(sig.Result, fnErr) {
+		return nil, false
+	}
+	c.tryConvN++
+	tmp := fmt.Sprintf("__try_from_%d", c.tryConvN)
+	okBind := fmt.Sprintf("__try_ok_%d", c.tryConvN)
+	errBind := fmt.Sprintf("__try_err_%d", c.tryConvN)
+	p := n.P
+	resultConv := ast.EnumType{Name: "Result", Args: []ast.Type{srcEnum.Args[0], fnErr}}
+	// `E2.from(__e)` — an associated-function call (FieldAccess on the type name).
+	fromCall := &ast.Call{P: p,
+		Callee: &ast.FieldAccess{P: p, Target: &ast.Ident{P: p, Name: tn}, Field: "from"},
+		Args:   []ast.Expr{&ast.Ident{P: p, Name: errBind}}}
+	mapMatch := &ast.MatchExpr{P: p, Tag: n.Inner, Arms: []*ast.MatchExprArm{
+		{P: p, VariantName: "Ok", Bindings: []string{okBind},
+			Body: &ast.Call{P: p, Callee: &ast.Ident{P: p, Name: "Ok"}, Args: []ast.Expr{&ast.Ident{P: p, Name: okBind}}}},
+		{P: p, VariantName: "Err", Bindings: []string{errBind},
+			Body: &ast.Call{P: p, Callee: &ast.Ident{P: p, Name: "Err"}, Args: []ast.Expr{fromCall}}},
+	}}
+	block := &ast.BlockExpr{P: p, Stmts: []ast.Stmt{
+		&ast.Var{P: p, Name: tmp, Type: resultConv, Init: mapMatch},
+	}, Tail: &ast.TryOp{P: p, Inner: &ast.Ident{P: p, Name: tmp}}}
+	if t := c.checkExpr(block, s); t == nil {
+		return nil, false
+	}
+	return block, true
+}
+
+func (c *checker) compositeOpOverload(n *ast.Binary, lt, rt ast.Type, s *scope) (ast.Type, bool) {
+	if lt == nil || !ast.Equal(lt, rt) {
+		return nil, false
+	}
+	opMethod := arithOpMethod[n.Op]
+	// Operator overloading over a trait-bounded TYPE PARAMETER: `a <op> b`
+	// where `a`/`b` have type `T` and `T`'s bound provides the op's trait
+	// method (`+`→`Add.add`, `*`→`Mul.mul`, …) desugars to `a.add(b)` —
+	// resolved through the same deferred trait-bound dispatch as `a.cmp(b)`
+	// for `T: Ord`. This is the #2706 benefit: generic numeric code
+	// (`function sum[T: Num](xs: T[]): T { let acc = …; for x in xs { acc = acc + x } }`)
+	// reads with operators instead of explicit `.add` calls. A type param
+	// WITHOUT the matching arithmetic bound falls through (handled=false) to
+	// the numeric path, which reports the usual E009.
+	if pt, ok := lt.(ast.ParamType); ok {
+		if opMethod == "" {
+			return nil, false
+		}
+		if _, _, found := c.resolveTraitMethodForParam(pt.Name, opMethod); !found {
+			return nil, false
+		}
+		call := &ast.Call{Callee: &ast.FieldAccess{Target: n.Left, Field: opMethod}, Args: []ast.Expr{n.Right}}
+		rtt := c.checkExpr(call, s)
+		n.ArithCall = call
+		return rtt, true
+	}
+	switch lt.(type) {
+	case ast.StructType, ast.EnumType:
+	default:
+		return nil, false
+	}
+	tn, _ := methodTypeName(lt)
+	if mangled, _, ok := c.resolveMethod(tn, opMethod, []string{arithOpTrait[opMethod]}); ok && c.methodVisibleHere(mangled) {
+		call := &ast.Call{Callee: &ast.FieldAccess{Target: n.Left, Field: opMethod}, Args: []ast.Expr{n.Right}}
+		rtt := c.checkExpr(call, s)
+		n.ArithCall = call
+		return rtt, true
+	}
+	c.errfCode(n.P, "E009", "operator %q is not defined for %s — implement `function (self: %s) %s(other: %s): %s` to overload it", n.Op, lt, tn, opMethod, tn, tn)
+	return lt, true
+}
+
+// resolveProj resolves an associated-type projection whose base is a
+// concrete type (`Foo::Item`) to the type the impl binds it to, recursing
+// into composite types. A projection with an abstract base (`Self::Item`,
+// `T::Item`) is left intact (its base is still resolved) — those resolve
+// once the base becomes concrete (impl conformance / monomorph re-check).
+// Requires c.info.AssocBindings, so it's only meaningful after the
+// conformance pass. See docs/ASSOCIATED-TYPES.md.
+func (c *checker) resolveProj(t ast.Type) ast.Type {
+	switch x := t.(type) {
+	case ast.ProjType:
+		base := c.resolveProj(x.Base)
+		if tn, ok := methodTypeName(base); ok {
+			if m, ok := c.info.AssocBindings[tn]; ok {
+				if bound, ok := m[x.Name]; ok {
+					return c.resolveProj(c.substAssocBinding(tn, x.Name, bound, base))
+				}
+			}
+		}
+		return ast.ProjType{Base: base, Name: x.Name}
+	case ast.ArrayType:
+		return ast.ArrayType{Elem: c.resolveProj(x.Elem)}
+	case ast.SliceType:
+		return ast.SliceType{Elem: c.resolveProj(x.Elem)}
+	case ast.TupleType:
+		out := ast.TupleType{Elems: make([]ast.Type, len(x.Elems))}
+		for i := range x.Elems {
+			out.Elems[i] = c.resolveProj(x.Elems[i])
+		}
+		return out
+	case ast.StructType:
+		if len(x.Args) == 0 {
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			args[i] = c.resolveProj(x.Args[i])
+		}
+		return ast.StructType{Name: x.Name, Args: args}
+	case ast.EnumType:
+		if len(x.Args) == 0 {
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			args[i] = c.resolveProj(x.Args[i])
+		}
+		return ast.EnumType{Name: x.Name, Args: args}
+	case *ast.FuncType:
+		out := &ast.FuncType{Result: c.resolveProj(x.Result), ParamOwn: x.ParamOwn}
+		for _, p := range x.Params {
+			out.Params = append(out.Params, c.resolveProj(p))
+		}
+		return out
+	}
+	return t
+}
+
+// substAssocBinding rewrites a binding made by a parametric impl into the
+// base's own type arguments: `type Ok = T;` on `impl[T] Carrier for Box[T]`
+// is `i32` for a `Box[i32]` base. Unifying the recorded `for` pattern against
+// the base recovers T. A concrete impl records no pattern and is returned
+// unchanged. See docs/ASSOCIATED-TYPES.md.
+func (c *checker) substAssocBinding(typeName, assoc string, bound, base ast.Type) ast.Type {
+	pat, ok := c.info.AssocBindingPattern[typeName][assoc]
+	if !ok {
+		return bound
+	}
+	psub := map[string]ast.Type{}
+	if !c.unifyType(pat, base, psub) || len(psub) == 0 {
+		return bound
+	}
+	return substByName(bound, psub)
+}
+
+// resolveProjWithSub resolves every associated-type projection in `t` whose
+// BASE the inference map has already pinned, and leaves everything else alone.
+//
+// Only projections are rewritten. A bare `T` must stay a ParamType for
+// unifyType to bind it from this argument, so substituting the whole type
+// would break inference for every parameter not yet pinned.
+func (c *checker) resolveProjWithSub(t ast.Type, sub map[string]ast.Type) ast.Type {
+	switch x := t.(type) {
+	case ast.ProjType:
+		base := c.resolveProjWithSub(x.Base, sub)
+		if p, ok := base.(ast.ParamType); ok {
+			if bound, isBound := sub[p.Name]; isBound {
+				base = bound
+			}
+		}
+		return c.resolveProj(ast.ProjType{Base: base, Name: x.Name})
+	case ast.ArrayType:
+		return ast.ArrayType{Elem: c.resolveProjWithSub(x.Elem, sub)}
+	case ast.SliceType:
+		return ast.SliceType{Elem: c.resolveProjWithSub(x.Elem, sub)}
+	case ast.TupleType:
+		out := ast.TupleType{Elems: make([]ast.Type, len(x.Elems))}
+		for i := range x.Elems {
+			out.Elems[i] = c.resolveProjWithSub(x.Elems[i], sub)
+		}
+		return out
+	case ast.StructType:
+		if len(x.Args) == 0 {
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			args[i] = c.resolveProjWithSub(x.Args[i], sub)
+		}
+		return ast.StructType{Name: x.Name, Args: args}
+	case ast.EnumType:
+		if len(x.Args) == 0 {
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			args[i] = c.resolveProjWithSub(x.Args[i], sub)
+		}
+		return ast.EnumType{Name: x.Name, Args: args}
+	case *ast.FuncType:
+		out := &ast.FuncType{Result: c.resolveProjWithSub(x.Result, sub), ParamOwn: x.ParamOwn}
+		for _, pp := range x.Params {
+			out.Params = append(out.Params, c.resolveProjWithSub(pp, sub))
+		}
+		return out
+	}
+	return t
+}
+
+// resolveProjWith resolves associated-type projections using an explicit
+// per-impl bindings map (assoc name → type), resolving any ProjType whose
+// Name is bound regardless of base. Used in conformance comparison, where
+// every projection refers to the impl's own associated types (the trait
+// signature's `Self::Item` after Self→impl-type, and the impl method's
+// own `Self::Item`). See docs/ASSOCIATED-TYPES.md.
+func (c *checker) resolveProjWith(t ast.Type, bindings map[string]ast.Type) ast.Type {
+	switch x := t.(type) {
+	case ast.ProjType:
+		if b, ok := bindings[x.Name]; ok {
+			return c.resolveProjWith(b, bindings)
+		}
+		return ast.ProjType{Base: c.resolveProjWith(x.Base, bindings), Name: x.Name}
+	case ast.ArrayType:
+		return ast.ArrayType{Elem: c.resolveProjWith(x.Elem, bindings)}
+	case ast.SliceType:
+		return ast.SliceType{Elem: c.resolveProjWith(x.Elem, bindings)}
+	case ast.TupleType:
+		out := ast.TupleType{Elems: make([]ast.Type, len(x.Elems))}
+		for i := range x.Elems {
+			out.Elems[i] = c.resolveProjWith(x.Elems[i], bindings)
+		}
+		return out
+	case ast.StructType:
+		if len(x.Args) == 0 {
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			args[i] = c.resolveProjWith(x.Args[i], bindings)
+		}
+		return ast.StructType{Name: x.Name, Args: args}
+	case ast.EnumType:
+		if len(x.Args) == 0 {
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			args[i] = c.resolveProjWith(x.Args[i], bindings)
+		}
+		return ast.EnumType{Name: x.Name, Args: args}
+	case *ast.FuncType:
+		out := &ast.FuncType{Result: c.resolveProjWith(x.Result, bindings), ParamOwn: x.ParamOwn}
+		for _, p := range x.Params {
+			out.Params = append(out.Params, c.resolveProjWith(p, bindings))
+		}
+		return out
+	}
+	return t
+}
+
+// resolveProjections rewrites every concrete-base associated-type
+// projection in the program's function signatures + bodies to its bound
+// type, now that the conformance pass has filled c.info.AssocBindings.
+// Runs each Check (incl. the monomorph re-check, which is what resolves a
+// `T::Item` that monomorph substituted to a concrete `Foo::Item`).
+func (c *checker) resolveProjections(prog *ast.Program) {
+	if len(c.info.AssocBindings) == 0 {
+		return
+	}
+	for name, sig := range c.info.FuncSigs {
+		c.info.FuncSigs[name] = c.resolveProj(sig).(*ast.FuncType)
+	}
+	for _, fn := range prog.Funcs {
+		fn.ReturnType = c.resolveProj(fn.ReturnType)
+		for i := range fn.Params {
+			fn.Params[i].Type = c.resolveProj(fn.Params[i].Type)
+		}
+		if fn.Receiver != nil {
+			fn.Receiver.Type = c.resolveProj(fn.Receiver.Type)
+		}
+		if fn.Body != nil {
+			c.resolveProjInBlock(fn.Body)
+		}
+	}
+}
+
+// resolveProjInBlock walks a body applying resolveProj to every type
+// annotation slot (var decls, match binding types, lambda params/return,
+// cast targets) so projections written inside bodies (a generic's
+// `let x: T::Item`, concrete after monomorph) resolve too.
+func (c *checker) resolveProjInBlock(b *ast.Block) {
+	if b == nil {
+		return
+	}
+	for _, st := range b.Stmts {
+		c.resolveProjInStmt(st)
+	}
+}
+
+func (c *checker) resolveProjInStmt(s ast.Stmt) {
+	switch x := s.(type) {
+	case *ast.Var:
+		if x.Type != nil {
+			x.Type = c.resolveProj(x.Type)
+		}
+		c.resolveProjInExpr(x.Init)
+	case *ast.ExprStmt:
+		c.resolveProjInExpr(x.Expr)
+	case *ast.Return:
+		c.resolveProjInExpr(x.Value)
+	case *ast.Block:
+		c.resolveProjInBlock(x)
+	case *ast.If:
+		c.resolveProjInExpr(x.Cond)
+		c.resolveProjInStmt(x.Then)
+		if x.Else != nil {
+			c.resolveProjInStmt(x.Else)
+		}
+	case *ast.While:
+		c.resolveProjInExpr(x.Cond)
+		c.resolveProjInStmt(x.Body)
+	case *ast.Loop:
+		c.resolveProjInStmt(x.Body)
+	case *ast.For:
+		if x.Init != nil {
+			c.resolveProjInStmt(x.Init)
+		}
+		c.resolveProjInExpr(x.Cond)
+		if x.Step != nil {
+			c.resolveProjInStmt(x.Step)
+		}
+		c.resolveProjInStmt(x.Body)
+	case *ast.Match:
+		c.resolveProjInExpr(x.Tag)
+		for _, arm := range x.Arms {
+			for i := range arm.BindingTypes {
+				if arm.BindingTypes[i] != nil {
+					arm.BindingTypes[i] = c.resolveProj(arm.BindingTypes[i])
+				}
+			}
+			c.resolveProjInBlock(arm.Body)
+		}
+	}
+}
+
+func (c *checker) resolveProjInExpr(e ast.Expr) {
+	switch x := e.(type) {
+	case nil:
+		return
+	case *ast.CastExpr:
+		x.Target = c.resolveProj(x.Target)
+		c.resolveProjInExpr(x.Inner)
+	case *ast.Assign:
+		c.resolveProjInExpr(x.Target)
+		c.resolveProjInExpr(x.Value)
+	case *ast.Lambda:
+		for i := range x.Params {
+			x.Params[i].Type = c.resolveProj(x.Params[i].Type)
+		}
+		x.ReturnType = c.resolveProj(x.ReturnType)
+		c.resolveProjInBlock(x.Body)
+	case *ast.Binary:
+		c.resolveProjInExpr(x.Left)
+		c.resolveProjInExpr(x.Right)
+	case *ast.Unary:
+		c.resolveProjInExpr(x.Operand)
+	case *ast.Call:
+		c.resolveProjInExpr(x.Callee)
+		for _, a := range x.Args {
+			c.resolveProjInExpr(a)
+		}
+	case *ast.Index:
+		c.resolveProjInExpr(x.Array)
+		c.resolveProjInExpr(x.Idx)
+	case *ast.FieldAccess:
+		c.resolveProjInExpr(x.Target)
+	}
+}
+
+// substByName substitutes a type whose bare name (StructType / EnumType
+// with no args, or ParamType) is a key in `sub` — used to bind a generic
+// trait's type parameters to an impl's TraitArgs during conformance. A
+// trait method signature spells a trait param `T` as an unresolved
+// `StructType{Name:"T"}` (trait methods aren't resolved against the
+// trait's params), so plain ParamType substitution wouldn't catch it.
+func substByName(t ast.Type, sub map[string]ast.Type) ast.Type {
+	switch x := t.(type) {
+	case ast.StructType:
+		if len(x.Args) == 0 {
+			if v, ok := sub[x.Name]; ok {
+				return v
+			}
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			args[i] = substByName(x.Args[i], sub)
+		}
+		return ast.StructType{Name: x.Name, Args: args}
+	case ast.EnumType:
+		if len(x.Args) == 0 {
+			if v, ok := sub[x.Name]; ok {
+				return v
+			}
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			args[i] = substByName(x.Args[i], sub)
+		}
+		return ast.EnumType{Name: x.Name, Args: args}
+	case ast.ParamType:
+		if v, ok := sub[x.Name]; ok {
+			return v
+		}
+		return x
+	case ast.ArrayType:
+		return ast.ArrayType{Elem: substByName(x.Elem, sub)}
+	case ast.SliceType:
+		return ast.SliceType{Elem: substByName(x.Elem, sub)}
+	case ast.TupleType:
+		out := ast.TupleType{Elems: make([]ast.Type, len(x.Elems))}
+		for i := range x.Elems {
+			out.Elems[i] = substByName(x.Elems[i], sub)
+		}
+		return out
+	case *ast.FuncType:
+		out := &ast.FuncType{Result: substByName(x.Result, sub), ParamOwn: x.ParamOwn}
+		for _, p := range x.Params {
+			out.Params = append(out.Params, substByName(p, sub))
+		}
+		return out
+	case ast.ProjType:
+		return ast.ProjType{Base: substByName(x.Base, sub), Name: x.Name}
+	}
+	return t
+}
+
+// implTraitArgsFor returns the type arguments the concrete type `ct` (with
+// base name `tn`) supplies to `traitName`. For a concrete impl this is just
+// the stored ImplTraitArgs. For a PARAMETRIC impl of a generic trait
+// (`impl[T] Iterator[T] for ArrayIter[T]`) the stored args are generic ([T]):
+// unify the recorded `for` pattern (ArrayIter[T]) against `ct` (ArrayIter[i32])
+// to recover the binding (T=i32) and substitute, yielding the concrete args
+// ([i32]). See docs/TRAITS.md.
+// checkTypeArgBounds reports every trait bound `args` fails to satisfy for
+// genericFn, at pos. `sub` and `tpSet` resolve a generic-trait bound whose
+// arguments name type parameters the call inferred; both may be nil.
+//
+// A still-parametric argument is skipped, because the bound cannot be judged
+// until the type is known — that case is monomorph's, through BoundErrors,
+// once instantiation has made it concrete (#8452).
+// BoundErrors reports the trait bounds `args` fail to satisfy for fn, at pos.
+//
+// The call-site check skips an argument that is still a type parameter — a
+// generic calling a generic — because the bound cannot be judged before the
+// type is known. Nothing then judged it afterwards either: monomorph cleared
+// the clone's TypeParams, so the bound went with them and the body failed on
+// whatever the missing impl was needed for, reported as a compiler bug rather
+// than as the unsatisfied bound it is (#8452). Monomorph calls this once the
+// arguments are concrete, which is the "eventual monomorphic call" the
+// call-site check defers to.
+func BoundErrors(info *Info, fn *ast.FuncDecl, args []ast.Type, pos ast.Position) []error {
+	if info == nil || fn == nil || len(fn.Bounds) == 0 {
+		return nil
+	}
+	// A generic-trait bound names the call's own type parameters —
+	// `count[T, I: Iterator[T]]` — so the comparison against the impl's
+	// arguments needs T bound before `Iterator[T]` means anything. The
+	// call-site check builds that from the inferred arguments; here they are
+	// the instantiation's, paired with the parameters positionally.
+	sub := make(map[string]ast.Type, len(fn.TypeParams))
+	tpSet := make(map[string]bool, len(fn.TypeParams))
+	for i, name := range fn.TypeParams {
+		tpSet[name] = true
+		if i < len(args) {
+			sub[name] = args[i]
+		}
+	}
+	c := &checker{info: info}
+	c.checkTypeArgBounds(fn, args, sub, tpSet, pos)
+	return c.errors
+}
+
+func (c *checker) checkTypeArgBounds(genericFn *ast.FuncDecl, args []ast.Type, sub map[string]ast.Type, tpSet map[string]bool, pos ast.Position) {
+	// Trait-bound satisfaction: every concrete type
+	// argument must implement the traits its type
+	// parameter is bound by. A still-parametric arg
+	// (generic-into-generic) is left for the eventual
+	// monomorphic call. See docs/TRAITS.md §5.
+	for i, tp := range genericFn.TypeParams {
+		if _, isParam := args[i].(ast.ParamType); isParam {
+			continue
+		}
+		for bi, traitName := range genericFn.Bounds[tp] {
+			tn, ok := methodTypeName(args[i])
+			// Render `__method_Box_to_string` as the user-facing
+			// `Box.to_string` when the generic decl is a hoisted
+			// receiver method.
+			site := demangle(genericFn.Name)
+			if genericFn.MethodRecv != "" {
+				site = demangle(genericFn.MethodRecv) + "." + genericFn.MethodSimpleName
+			}
+			if !ok || !c.info.Impls[traitName][tn] {
+				c.errfCode(pos, "E021",
+					"type argument %s = %s does not implement trait %s required by %s",
+					tp, demangle(args[i].String()), demangle(traitName), site)
+				continue
+			}
+			// Generic-trait bound (`T: From[i32]`): the impl's
+			// trait args must match the bound's, not merely exist.
+			var boundArgs []ast.Type
+			if ba := genericFn.BoundArgs[tp]; bi < len(ba) {
+				boundArgs = ba[bi]
+			}
+			if len(boundArgs) > 0 {
+				// A bound arg may name a type param the call
+				// inferred (`I: Iterator[T]` with T pinned from the
+				// impl) — resolve those before comparing so the
+				// impl's concrete args match. See #2691.
+				resolved := make([]ast.Type, len(boundArgs))
+				for k, baT := range boundArgs {
+					resolved[k] = substBoundArg(baT, tpSet, sub)
+				}
+				boundArgs = resolved
+				implArgs := c.implTraitArgsFor(traitName, tn, args[i])
+				if !typeArgsEqual(implArgs, boundArgs) {
+					c.errfCode(pos, "E021",
+						"type argument %s = %s implements %s%s but the bound requires %s%s (in %s)",
+						tp, demangle(args[i].String()), demangle(traitName), traitArgsStr(implArgs),
+						demangle(traitName), traitArgsStr(boundArgs), site)
+				}
+			}
+		}
+	}
+}
+
+func (c *checker) implTraitArgsFor(traitName, tn string, ct ast.Type) []ast.Type {
+	implArgs := c.info.ImplTraitArgs[traitName][tn]
+	if len(implArgs) == 0 {
+		return implArgs
+	}
+	pat, ok := c.info.ImplForPattern[traitName][tn]
+	if !ok {
+		return implArgs
+	}
+	psub := map[string]ast.Type{}
+	if !c.unifyType(pat, ct, psub) || len(psub) == 0 {
+		return implArgs
+	}
+	out := make([]ast.Type, len(implArgs))
+	for k := range implArgs {
+		out[k] = substByName(implArgs[k], psub)
+	}
+	return out
+}
+
+// typeArgsEqual reports whether two type-argument lists are element-wise
+// structurally equal (used to match a generic-trait bound's args against
+// an impl's TraitArgs). See docs/TRAITS.md.
+func typeArgsEqual(a, b []ast.Type) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for i := range a {
+		if !ast.Equal(a[i], b[i]) {
+			return false
+		}
+	}
+	return true
+}
+
+// normalizeParamRefs rewrites a parsed bound type-argument so any leaf whose
+// name is a type parameter becomes a ParamType rather than a same-named
+// zero-arg StructType. The parser emits the `T` in `Iterator[T]` as a nullary
+// StructType — it can't distinguish a type-parameter reference from a nullary
+// named type at parse time — so normalising to ParamType lets unifyType /
+// substituteType, bindBoundParam, and substBoundArg treat `T` uniformly for
+// bound-driven inference (#2691). Recurses through generic type arguments;
+// non-param types pass through unchanged.
+func normalizeParamRefs(t ast.Type, tpSet map[string]bool) ast.Type {
+	switch b := t.(type) {
+	case ast.StructType:
+		if len(b.Args) == 0 {
+			if tpSet[b.Name] {
+				return ast.ParamType{Name: b.Name}
+			}
+			return t
+		}
+		na := make([]ast.Type, len(b.Args))
+		for i := range b.Args {
+			na[i] = normalizeParamRefs(b.Args[i], tpSet)
+		}
+		b.Args = na
+		return b
+	}
+	return t
+}
+
+// bindBoundParam matches a generic-trait bound's type argument `boundArg`
+// (which may reference the enclosing function's type parameters by name)
+// against the concrete `implArg` the bound resolved to, recording any
+// newly-resolved type parameter in `sub`. Returns true when it adds a
+// binding. Bound args are parsed as a named type (StructType) or ParamType,
+// so a leaf whose name is in `tpSet` is a type-parameter reference, not a
+// concrete struct — that is the lever that pins `T` in `count[T, I:
+// Iterator[T]]` from the `Iterator[i32] for RangeIter` impl. Nested generic
+// bounds (`I: Iterator[Box[T]]`) recurse positionally. See #2691.
+func bindBoundParam(boundArg, implArg ast.Type, tpSet map[string]bool, sub map[string]ast.Type) bool {
+	bind := func(name string) bool {
+		if tpSet[name] {
+			if _, done := sub[name]; !done {
+				sub[name] = implArg
+				return true
+			}
+		}
+		return false
+	}
+	switch b := boundArg.(type) {
+	case ast.ParamType:
+		return bind(b.Name)
+	case ast.StructType:
+		if len(b.Args) == 0 {
+			return bind(b.Name)
+		}
+		if it, ok := implArg.(ast.StructType); ok && len(it.Args) == len(b.Args) {
+			changed := false
+			for i := range b.Args {
+				if bindBoundParam(b.Args[i], it.Args[i], tpSet, sub) {
+					changed = true
+				}
+			}
+			return changed
+		}
+	}
+	return false
+}
+
+// substBoundArg resolves any type-parameter references inside a generic-trait
+// bound's type argument against the inferred substitution `sub`, so a bound
+// written `Iterator[T]` can be compared (#2691, E021) against the concrete
+// `Iterator[i32]` an impl provides once `T` is pinned. Type-param leaves are
+// parsed as bare-name StructType / ParamType; non-param types pass through.
+func substBoundArg(t ast.Type, tpSet map[string]bool, sub map[string]ast.Type) ast.Type {
+	switch b := t.(type) {
+	case ast.ParamType:
+		if tpSet[b.Name] {
+			if v, ok := sub[b.Name]; ok {
+				return v
+			}
+		}
+	case ast.StructType:
+		if len(b.Args) == 0 {
+			if tpSet[b.Name] {
+				if v, ok := sub[b.Name]; ok {
+					return v
+				}
+			}
+			return t
+		}
+		na := make([]ast.Type, len(b.Args))
+		for i := range b.Args {
+			na[i] = substBoundArg(b.Args[i], tpSet, sub)
+		}
+		b.Args = na
+		return b
+	}
+	return t
+}
+
+// traitArgsStr renders a trait's type-argument list as `[A, B]` (empty
+// string for none) for diagnostics like `From[i32]`.
+func traitArgsStr(args []ast.Type) string {
+	if len(args) == 0 {
+		return ""
+	}
+	parts := make([]string, len(args))
+	for i, a := range args {
+		parts[i] = demangle(a.String())
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+func substituteType(t ast.Type, sub map[string]ast.Type) ast.Type {
+	if t == nil {
+		return nil
+	}
+	switch x := t.(type) {
+	case ast.ParamType:
+		if v, ok := sub[x.Name]; ok {
+			return v
+		}
+		return x
+	case ast.EnumType:
+		if len(x.Args) == 0 {
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			args[i] = substituteType(x.Args[i], sub)
+		}
+		return ast.EnumType{Name: x.Name, Args: args}
+	case ast.StructType:
+		if len(x.Args) == 0 {
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i := range x.Args {
+			args[i] = substituteType(x.Args[i], sub)
+		}
+		return ast.StructType{Name: x.Name, Args: args}
+	case ast.ArrayType:
+		return ast.ArrayType{Elem: substituteType(x.Elem, sub)}
+	case ast.SliceType:
+		return ast.SliceType{Elem: substituteType(x.Elem, sub)}
+	case ast.TupleType:
+		out := ast.TupleType{Elems: make([]ast.Type, len(x.Elems))}
+		for i := range x.Elems {
+			out.Elems[i] = substituteType(x.Elems[i], sub)
+		}
+		return out
+	case *ast.FuncType:
+		out := &ast.FuncType{Result: substituteType(x.Result, sub), ParamOwn: x.ParamOwn}
+		for _, p := range x.Params {
+			out.Params = append(out.Params, substituteType(p, sub))
+		}
+		return out
+	case ast.ProjType:
+		// Substitute inside the base (`T::Item` → `IntBox::Item` when
+		// T→IntBox); the concrete-base projection is resolved to its
+		// binding by resolveProj. See docs/ASSOCIATED-TYPES.md.
+		return ast.ProjType{Base: substituteType(x.Base, sub), Name: x.Name}
+	}
+	return t
+}
+
+// unifyType records the substitutions that would make `expected`
+// (a type containing ParamType references) equal to `actual` (a
+// concrete type). Updates `sub` in place and returns false on
+// conflict. Concrete-vs-concrete still goes through ast.Equal,
+// so existing strict-checking behaviour is preserved for
+// monomorphic enums.
+// namedTypeArity reports a named generic type's name and how many type
+// arguments it carries. Zero is the argless "resolve me from context"
+// form, which unifyType treats as less specific than any instantiation
+// of the same name.
+func namedTypeArity(t ast.Type) (string, int, bool) {
+	switch v := t.(type) {
+	case ast.EnumType:
+		return v.Name, len(v.Args), true
+	case ast.StructType:
+		return v.Name, len(v.Args), true
+	}
+	return "", 0, false
+}
+
+func (c *checker) unifyType(expected, actual ast.Type, sub map[string]ast.Type) bool {
+	if expected == nil || actual == nil {
+		return false
+	}
+	if p, ok := expected.(ast.ParamType); ok {
+		if existing, bound := sub[p.Name]; bound {
+			if ast.Equal(existing, actual) {
+				return true
+			}
+			if e, ok := existing.(ast.EnumType); ok {
+				if a, ok := actual.(ast.EnumType); ok {
+					if merged, ok := mergeEnumInference(e, a); ok {
+						sub[p.Name] = merged
+						return true
+					}
+				}
+			}
+			// An ARGLESS named type is the deliberate "not yet resolved"
+			// form: the variant-call path returns it when the args can't be
+			// filled from the payload alone (`Ok(8)` leaves the error type
+			// free), and `map_new`'s registered result is a bare `Map` for
+			// the same reason. It is strictly LESS specific than any
+			// instantiation of the same name, so the two never conflict —
+			// the more specific side wins, whichever side it is on.
+			//
+			// Both directions occur. Argless ACTUAL against a bound
+			// instantiation is re-check idempotence: a generic call memoises
+			// its inferred TypeArgs, and a method-call receiver is checked
+			// twice (the dispatch path types it, then falls through to the
+			// generic callee check), so the second pass arrives with `sub`
+			// bound while the argument still reports its argless form.
+			// Argless EXISTING against a concrete actual is a later argument
+			// pinning what an earlier one left open: the argument loop is a
+			// single left-to-right pass, so `apply(map_new(8), bump)` bound
+			// T := bare `Map` from argument 1 and then rejected argument 2's
+			// `Map[string, i32]` (#8004).
+			// An untyped integer literal bound the parameter first; a typed
+			// integer bound later decides it, and the literal settles there
+			// (`Same { a: 1, b: y }` with `y: i64` is a Same[i64], #10453).
+			if en, ok := existing.(ast.NumberType); ok && en.Polymorphic && !c.seededParams[p.Name] {
+				if an, ok := actual.(ast.NumberType); ok {
+					if !an.Polymorphic {
+						sub[p.Name] = actual
+					}
+					return true
+				}
+			}
+			en, ea, eok := namedTypeArity(existing)
+			an, aa, aok := namedTypeArity(actual)
+			if eok && aok && en == an {
+				if aa == 0 {
+					return true
+				}
+				if ea == 0 {
+					sub[p.Name] = actual
+					return true
+				}
+			}
+			return false
+		}
+		sub[p.Name] = actual
+		return true
+	}
+	// Generic enum positions: unify pairwise. An argless actual of the same
+	// generic enum — a bare payloadless variant (`Leaf`) or a construction
+	// whose args the payloads alone cannot fill — is the "not yet resolved"
+	// form: less specific than any instantiation, so it binds nothing and
+	// conflicts with nothing.
+	if e, ok := expected.(ast.EnumType); ok {
+		a, ok := actual.(ast.EnumType)
+		if !ok || a.Name != e.Name {
+			return false
+		}
+		if len(a.Args) == 0 && len(e.Args) > 0 {
+			return true
+		}
+		if len(a.Args) != len(e.Args) {
+			return false
+		}
+		for i := range e.Args {
+			if unboundEnumArg(a.Args[i]) {
+				continue
+			}
+			if !c.unifyType(e.Args[i], a.Args[i], sub) {
+				return false
+			}
+		}
+		return true
+	}
+	// Generic struct positions: same shape as enums.
+	if e, ok := expected.(ast.StructType); ok {
+		a, ok := actual.(ast.StructType)
+		if !ok || a.Name != e.Name || len(a.Args) != len(e.Args) {
+			return false
+		}
+		for i := range e.Args {
+			if !c.unifyType(e.Args[i], a.Args[i], sub) {
+				return false
+			}
+		}
+		return true
+	}
+	// Arrays + slices + tuples + function types decompose the same way.
+	if e, ok := expected.(ast.ArrayType); ok {
+		a, ok := actual.(ast.ArrayType)
+		return ok && c.unifyType(e.Elem, a.Elem, sub)
+	}
+	if e, ok := expected.(ast.SliceType); ok {
+		a, ok := actual.(ast.SliceType)
+		return ok && c.unifyType(e.Elem, a.Elem, sub)
+	}
+	if e, ok := expected.(ast.TupleType); ok {
+		a, ok := actual.(ast.TupleType)
+		if !ok || len(e.Elems) != len(a.Elems) {
+			return false
+		}
+		for i := range e.Elems {
+			if !c.unifyType(e.Elems[i], a.Elems[i], sub) {
+				return false
+			}
+		}
+		return true
+	}
+	if e, ok := expected.(*ast.FuncType); ok {
+		a, ok := actual.(*ast.FuncType)
+		if !ok || len(e.Params) != len(a.Params) {
+			return false
+		}
+		for i := range e.Params {
+			// A consuming slot and a lending one promise opposite things of
+			// the same call, so neither stands in for the other — inference
+			// binds the type variable but never relaxes this. At a slot the
+			// argument shows to be a scalar nothing changes hands, so `own`
+			// there says nothing, as the self-host's own_flags reads it.
+			if e.OwnAt(i) != a.OwnAt(i) && !definitelyScalar(a.Params[i]) {
+				return false
+			}
+			if !c.unifyType(e.Params[i], a.Params[i], sub) {
+				return false
+			}
+		}
+		return c.unifyType(e.Result, a.Result, sub)
+	}
+	return ast.Equal(expected, actual)
+}
+
+// assignable reports whether a value of type `src` can flow into
+// a slot expecting `dst`. It's strictly equal in most cases;
+// the one relaxation is for payload-less variants on generic
+// enums where the construction site can't infer the type
+// arguments. `None` produces `EnumType{"Option", nil}` which
+// flows into `Option[number]` here without complaint.
+// unifyIfArms returns a single type representing both arms of
+// an if-expression, or nil if the two arm types are
+// incompatible. Used to allow `if (cond) { Some(x) } else
+// { None }` to type-check as `Option[i32]` — the EnumLit
+// machinery produces `EnumType{Name: "Option"}` (no Args) for
+// the bare `None` because there's no payload to infer T from,
+// and we want the specified arm's type args to flow up rather
+// than failing the strict equality check the IfExpr handler
+// was using before.
+//
+// Rules:
+//   - If either side is nil (downstream error), return the
+//     other.
+//   - If `ast.Equal`, return either.
+//   - If one is `EnumType{Name: X, Args: nil}` and the other
+//     is `EnumType{Name: X, Args: [...]}`, return the
+//     specified one (mirrors the `assignable` rule at the
+//     same enum.no-args boundary).
+//   - Otherwise nil (caller errors).
+func unifyIfArms(a, b ast.Type) ast.Type {
+	if a == nil {
+		return b
+	}
+	if b == nil {
+		return a
+	}
+	// `never` (bottom) unifies to the other arm: an `if`/`match` branch
+	// that always exits early contributes no value, so the construct's
+	// result type comes from the branch(es) that do yield one. Two
+	// never arms unify to never (the whole construct diverges). (#4522)
+	if _, ok := a.(ast.NeverType); ok {
+		return b
+	}
+	if _, ok := b.(ast.NeverType); ok {
+		return a
+	}
+	// Polymorphic numeric (an unsettled NumberLit) is
+	// compatible with any concrete numeric / float type —
+	// return the concrete side and let the surrounding
+	// settle pass stamp the literal's width. Without this,
+	// `let n: i64 = if cond { a * b } else { 0 };` fails
+	// the unify check because `0` is polymorphic while
+	// `a * b` is i64.
+	if an, aok := a.(ast.NumberType); aok && an.Polymorphic {
+		switch b.(type) {
+		case ast.NumberType, ast.FloatType:
+			return b
+		}
+	}
+	if bn, bok := b.(ast.NumberType); bok && bn.Polymorphic {
+		switch a.(type) {
+		case ast.NumberType, ast.FloatType:
+			return a
+		}
+	}
+	// Polymorphic float (an unsettled FloatLit) is
+	// compatible with any concrete FloatType — let the
+	// settle pass stamp the literal's width. Without this,
+	// `let f: f32 = if cond { n.v } else { 0.0 };` rejects
+	// because `0.0` is float-polymorphic and `n.v` is
+	// concrete f32.
+	if af, aok := a.(ast.FloatType); aok && af.Polymorphic {
+		if _, ok := b.(ast.FloatType); ok {
+			return b
+		}
+	}
+	if bf, bok := b.(ast.FloatType); bok && bf.Polymorphic {
+		if _, ok := a.(ast.FloatType); ok {
+			return a
+		}
+	}
+	ae, aok := a.(ast.EnumType)
+	be, bok := b.(ast.EnumType)
+	if aok && bok && ae.Name == be.Name {
+		if merged, ok := mergeEnumInference(ae, be); ok {
+			return merged
+		}
+	}
+	// Two instantiations of one generic struct unify argument-wise, so
+	// `[Same { a: 1, b: 2 }, Same { a: 3, b: y }]` with `y: i64` is a
+	// Same[i64][] and the literal-bound element settles there (#10453).
+	if as, aok := a.(ast.StructType); aok {
+		if bs, bok := b.(ast.StructType); bok && as.Name == bs.Name && len(as.Args) == len(bs.Args) && len(as.Args) > 0 {
+			args := make([]ast.Type, len(as.Args))
+			for i := range as.Args {
+				if ast.Equal(as.Args[i], bs.Args[i]) {
+					args[i] = as.Args[i]
+					continue
+				}
+				u := unifyIfArms(as.Args[i], bs.Args[i])
+				if u == nil {
+					return nil
+				}
+				args[i] = u
+			}
+			return ast.StructType{Name: as.Name, Args: args}
+		}
+	}
+	// Tuple types: unify element-wise. Lets polymorphic /
+	// concrete widening flow through tuple-typed if-arms
+	// like `if cond { (1234567890123, 3.14) } else { (0 as
+	// i64, 0.0) }` — both arms become `(i64, f64)` once the
+	// polymorphic-numeric / polymorphic-float rules above
+	// resolve each element pair.
+	if at, aok := a.(ast.TupleType); aok {
+		if bt, bok := b.(ast.TupleType); bok && len(at.Elems) == len(bt.Elems) {
+			out := make([]ast.Type, len(at.Elems))
+			for i := range at.Elems {
+				u := unifyIfArms(at.Elems[i], bt.Elems[i])
+				if u == nil {
+					return nil
+				}
+				out[i] = u
+			}
+			return ast.TupleType{Elems: out}
+		}
+	}
+	// Equal compares default widths, not whether a width is committed. Select
+	// concrete numeric arms (recursively for tuples) before this shortcut, or
+	// an initial literal can erase a concrete i32/f64 constraint and allow a
+	// later, incompatible concrete arm.
+	if ast.Equal(a, b) {
+		return a
+	}
+	// Empty-array / empty-slice literal vs typed array of the
+	// same shape: `[]` (Elem=nil) unifies with any concrete
+	// `T[]`. Lets a mixed array literal like
+	// `[[1, 2], [], [3]]` type-check — the empty inner array
+	// inherits the outer's element type from the first
+	// non-empty sibling.
+	if aa, aok := a.(ast.ArrayType); aok {
+		if ba, bok := b.(ast.ArrayType); bok {
+			if aa.Elem == nil {
+				return ba
+			}
+			if ba.Elem == nil {
+				return aa
+			}
+		}
+	}
+	if as_, aok := a.(ast.SliceType); aok {
+		if bs, bok := b.(ast.SliceType); bok {
+			if as_.Elem == nil {
+				return bs
+			}
+			if bs.Elem == nil {
+				return as_
+			}
+		}
+	}
+	return nil
+}
+
+// maybeWrapForUnion is the implicit-wrap sugar for union types
+// declared via `type X = A | B | C;`. When `dst` is a union enum
+// and `srcType` is one of its struct members, we rewrite
+// `*holder` from the bare struct expression `Add { l:1, r:2 }`
+// into the equivalent variant call `Add(Add { l:1, r:2 })` and
+// re-type-check it so the rest of the pipeline (variant call
+// registration, IR lowering of EnumLit, codegen) handles it
+// uniformly with the explicit form.
+//
+// Returns the (possibly rewritten) type; callers should bind
+// the return value before consulting `assignable`. No-op when
+// dst isn't a union, src isn't a struct, or the union has no
+// matching variant — leaves the holder untouched.
+//
+// Pinned to the union-desugar shape: variant name == struct
+// name AND the variant has exactly one positional payload of
+// the matching struct type. Hand-written enums whose variants
+// happen to satisfy this shape will also auto-wrap; this is
+// intentional and matches the natural reading of the variant.
+func (c *checker) maybeWrapForUnion(dst ast.Type, holder *ast.Expr, srcType ast.Type, s *scope) ast.Type {
+	if holder == nil || *holder == nil {
+		return srcType
+	}
+	// dyn-trait coercion recording. Every concrete→`dyn Trait` boxing
+	// site routes through here (this is the implicit-coercion chokepoint
+	// the assignable() callers funnel through), so recording the
+	// (trait, concrete) pair against the holder expression here covers
+	// var init / assignment / argument / return / array-element /
+	// struct-field uniformly. Recording-only — unlike the union case
+	// below it does not rewrite the holder; the IR boxes it later. The
+	// gate mirrors assignable()'s dyn branch (concrete impls the trait,
+	// src is not already dyn). See docs/DYN-TRAITS.md §4.2.1.
+	if dt, ok := dst.(ast.DynTraitType); ok {
+		if _, isDyn := srcType.(ast.DynTraitType); !isDyn {
+			// Coercion gate: the concrete must implement EVERY trait in
+			// the set (`dyn A + B` ⇐ C iff C impls A AND B). Record the
+			// whole set so tree-shaking roots all the impl methods.
+			if tn, ok := methodTypeName(srcType); ok && c.implementsAllDynTraits(dt, tn) {
+				if c.info.DynCoercions == nil {
+					c.info.DynCoercions = map[ast.Expr]DynCoercion{}
+				}
+				c.info.DynCoercions[*holder] = DynCoercion{
+					Trait:    dt.Trait0(),
+					Traits:   dt.Traits,
+					Concrete: tn,
+				}
+			}
+		}
+		return srcType
+	}
+	// Tuple literal against a tuple destination: recurse per element so
+	// a union-member element widens (wraps) inside a multi-return —
+	// `return (PatVariant { … }, p);` from a function declared
+	// `(Pattern, Par)`. The element wrap rewrites the TupleLit slot in
+	// place (same holder mechanics as every other site); the returned
+	// type carries the widened element types so the caller's
+	// assignable() check sees the post-wrap tuple.
+	if dtup, dok := dst.(ast.TupleType); dok {
+		tl, isLit := (*holder).(*ast.TupleLit)
+		stup, isTup := srcType.(ast.TupleType)
+		if isLit && isTup && len(tl.Elems) == len(dtup.Elems) && len(stup.Elems) == len(dtup.Elems) {
+			out := make([]ast.Type, len(stup.Elems))
+			copy(out, stup.Elems)
+			for i := range tl.Elems {
+				out[i] = c.maybeWrapForUnion(dtup.Elems[i], &tl.Elems[i], stup.Elems[i], s)
+			}
+			return ast.TupleType{Elems: out}
+		}
+		return srcType
+	}
+	du, dok := dst.(ast.EnumType)
+	if !dok {
+		return srcType
+	}
+	// Enum-payload dyn coercion (#3961): a variant-constructor call whose
+	// result enum is being coerced to the SAME enum with a `dyn Trait`
+	// payload — `Err(NotFound{…})` into `Result[_, dyn Error]` — must box
+	// the payload into the `[data, vtable]` fat pointer. The enum-level
+	// coercion below is otherwise a no-op (assignable permits the payload-
+	// covariant widen), so the concrete payload would be stored straight
+	// into the dyn slot and a later match-arm `e.message()` would dispatch
+	// through a garbage vtable (segfault on the compiled backends). Inject
+	// the explicit `payload as dyn Trait` cast the `?`-desugar already emits
+	// (tryConvertErrViaDyn), per payload position whose declared slot
+	// resolves to a `dyn Trait` under dst's type args, then re-check.
+	if call, ok := (*holder).(*ast.Call); ok {
+		if id, idOk := call.Callee.(*ast.Ident); idOk {
+			if dts, found := c.variantDynPayloadTypes(du, id.Name); found && len(dts) == len(call.Args) {
+				// Source payload types, so a payload that's ALREADY `dyn` is
+				// left alone: that's a no-op coercion, and casting an already-
+				// boxed `dyn` value would re-box it and over-release at drop
+				// (the `enum Box { Wrap(dyn Shape) }` + `Box.Wrap(dc)` case
+				// with `dc: dyn Shape`). Only a CONCRETE src payload widening
+				// into a `dyn` dst slot needs the boxing cast.
+				var srcPayloads []ast.Type
+				if se, seOk := srcType.(ast.EnumType); seOk {
+					srcPayloads, _ = c.variantDynPayloadTypes(se, id.Name)
+				}
+				changed := false
+				for i := range call.Args {
+					dt, isDyn := dts[i].(ast.DynTraitType)
+					if !isDyn {
+						continue
+					}
+					if i < len(srcPayloads) {
+						if _, srcDyn := srcPayloads[i].(ast.DynTraitType); srcDyn {
+							continue
+						}
+					}
+					if _, already := call.Args[i].(*ast.CastExpr); already {
+						continue
+					}
+					call.Args[i] = &ast.CastExpr{P: call.Args[i].Pos(), Inner: call.Args[i], Target: dt}
+					changed = true
+				}
+				if changed {
+					return c.checkExpr(*holder, s)
+				}
+			}
+		}
+	}
+	ss, sok := srcType.(ast.StructType)
+	if !sok {
+		return srcType
+	}
+	ed, edOk := c.info.Enums[du.Name]
+	if !edOk {
+		return srcType
+	}
+	matched := false
+	for _, v := range ed.Variants {
+		if v.Name != ss.Name || len(v.Payloads) != 1 {
+			continue
+		}
+		ps, ok := v.Payloads[0].(ast.StructType)
+		if !ok || ps.Name != ss.Name {
+			continue
+		}
+		matched = true
+		break
+	}
+	if !matched {
+		return srcType
+	}
+	src := *holder
+	wrapped := &ast.Call{
+		P:      src.Pos(),
+		Callee: &ast.Ident{P: src.Pos(), Name: ss.Name},
+		Args:   []ast.Expr{src},
+	}
+	*holder = wrapped
+	return c.checkExpr(wrapped, s)
+}
+
+// variantDynPayloadTypes resolves the payload types of `du`'s variant
+// `variantName`, substituting the enum's type parameters with `du.Args` so a
+// generic payload `E` becomes the concrete instantiation (e.g. `Result[_, dyn
+// Error]`'s `Err` payload resolves to `dyn Error`). Returns (payloads, true)
+// when the enum has such a variant, else (nil, false). Used by maybeWrapForUnion
+// to spot a `dyn Trait` payload slot that needs the concrete arg boxed (#3961);
+// a bare `ParamType` payload is substituted positionally, a concrete payload is
+// returned as-is (a composite like `Box[E]` is never a `dyn Trait`, so leaving
+// it unsubstituted is sound for this use).
+func (c *checker) variantDynPayloadTypes(du ast.EnumType, variantName string) ([]ast.Type, bool) {
+	ed, ok := c.info.Enums[du.Name]
+	if !ok {
+		return nil, false
+	}
+	for _, v := range ed.Variants {
+		if v.Name != variantName {
+			continue
+		}
+		out := make([]ast.Type, len(v.Payloads))
+		for i, p := range v.Payloads {
+			out[i] = p
+			if pt, isParam := p.(ast.ParamType); isParam {
+				for idx, tp := range ed.TypeParams {
+					if tp == pt.Name && idx < len(du.Args) {
+						out[i] = du.Args[idx]
+						break
+					}
+				}
+			}
+		}
+		return out, true
+	}
+	return nil, false
+}
+
+// inStdlibContext reports whether the checker is currently inside a
+// stdlib/stdlib function body, where the low-level usize escape-hatch
+// conversions in assignable are permitted. User code (c.current nil or a
+// non-stdlib module) must use an explicit `as` cast instead. See
+// docs/ADVERSARIAL-REVIEW-2026-06.md (F2).
+func (c *checker) inStdlibContext() bool {
+	return c.current != nil && strings.HasPrefix(c.current.BodyModule(), "stdlib://")
+}
+
+// implementsAllDynTraits reports whether the concrete type named `tn`
+// implements EVERY trait in the `dyn` set — the impl-all coercion gate
+// for `dyn A + B` (a concrete coerces in iff it impls A AND B). The
+// single-trait case is just the 1-element loop.
+func (c *checker) implementsAllDynTraits(dt ast.DynTraitType, tn string) bool {
+	for i, tr := range dt.Traits {
+		if !c.info.Impls[tr][tn] {
+			return false
+		}
+		// For a generic trait the impl must match the pinned arguments:
+		// `BoxI: Container[i32]` coerces to `dyn Container[i32]` but not
+		// to `dyn Container[string]`. ImplTraitArgs records what the
+		// impl bound; an empty dyn-arg list (non-generic trait) skips it.
+		if want := dt.ArgsFor(i); len(want) > 0 {
+			if !typeArgsEqual(c.info.ImplTraitArgs[tr][tn], want) {
+				return false
+			}
+		}
+		// Pinned associated types must match the impl's binding too:
+		// `IntBox: Producer<Item=i32>` coerces to `dyn Producer[Item = i32]`
+		// but not `dyn Producer[Item = string]`. Info.AssocBindings records
+		// what the impl bound (keyed by concrete type then assoc name).
+		for _, b := range dt.AssocFor(i) {
+			got, ok := c.info.AssocBindings[tn][b.Name]
+			if !ok || !ast.Equal(got, b.Type) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// missingDynTraits returns a human-readable description of which trait(s)
+// in the `dyn` set the concrete type `src` fails to implement — used to
+// name the offending trait(s) in coercion-failure diagnostics. Returns
+// the single trait spelling for a 1-element gap (so the single-trait
+// message reads exactly as before).
+func (c *checker) missingDynTraits(dt ast.DynTraitType, src ast.Type) string {
+	tn, ok := methodTypeName(src)
+	if !ok {
+		return demangle(dt.Trait0())
+	}
+	var missing []string
+	for _, tr := range dt.Traits {
+		if !c.info.Impls[tr][tn] {
+			missing = append(missing, demangle(tr))
+		}
+	}
+	if len(missing) == 0 {
+		// Shouldn't happen on the failure path, but fall back to the set.
+		return demangle(dt.Trait0())
+	}
+	return strings.Join(missing, " + ")
+}
+
+// argAssignable is assignable plus the two borrow rules that hold at a
+// PARAMETER and nowhere else -- params are borrowed by default
+// (OwnedByDefault), so the callee never frees its argument and lending is
+// safe. Owning sinks stay on the strict assignable.
+//
+//   - a `str` view may flow into a `string` parameter (#4813);
+//   - an owned `T[]` may flow into a borrowed `[T]` view parameter (#6798).
+//
+// The array half is a real coercion, not just a typing relaxation: an owned
+// array and a view have different runtime shapes, so an accepted argument is
+// rewritten to the full-range slice by lendArrayAsView. Use argOK at any site
+// that can perform that rewrite; the bare predicate is for the resolution
+// probes that only ask whether a call *would* apply.
+func (c *checker) argAssignable(want, got ast.Type, own bool) bool {
+	if c.assignable(want, got) {
+		return true
+	}
+	if own {
+		// An `own` (consuming) parameter takes OWNERSHIP of its argument —
+		// the callee frees it. A view must never be freed by its holder, so
+		// the borrow carve-outs below do not apply: lending a view to a
+		// consumer is exactly the #4294 corruption shape. Materialise with
+		// .to_owned() (string) / a copy (array) instead.
+		return false
+	}
+	if isArrayViewLend(want, got) {
+		return true
+	}
+	_, gotStr := got.(ast.StrType)
+	_, wantString := want.(ast.StringType)
+	return gotStr && wantString
+}
+
+// storesArgument reports whether builtin `name` keeps argument i in the value
+// it returns, which makes that position an owning sink: a `str` there would
+// outlive the bytes it views, so argAssignable's borrow carve-out is off.
+func storesArgument(name string, i int) bool {
+	switch name {
+	case "__method_Array_push":
+		return i == 1
+	case "__method_Array_set":
+		return i == 2
+	case "__method_Map_set":
+		return i == 1 || i == 2
+	case "__method_Cell_set":
+		return i == 1
+	}
+	return false
+}
+
+// argOK is argAssignable at a real argument position: it decides the argument
+// AND materialises whatever implicit borrow the lowering needs, so no accepted
+// argument reaches the IR in a shape the parameter's ABI doesn't match.
+func (c *checker) argOK(arg *ast.Expr, want, got ast.Type, own bool) bool {
+	if !c.argAssignable(want, got, own) {
+		return false
+	}
+	c.lendArrayAsView(arg, want, got, own)
+	return true
+}
+
+// isArrayViewLend reports whether an owned `T[]` may be lent as the borrowed
+// view `[T]` (#6798). Element types must match exactly: a view aliases the
+// parent's storage element-for-element, so there is no widening to be had.
+func isArrayViewLend(want, got ast.Type) bool {
+	sl, isView := want.(ast.SliceType)
+	arr, isArray := got.(ast.ArrayType)
+	return isView && isArray && arr.Elem != nil && ast.Equal(sl.Elem, arr.Elem)
+}
+
+// lendArrayAsView rewrites an accepted owned-array argument into the
+// full-range slice `xs[:]` — the spelling the caller previously had to write
+// by hand. `[T]` is a `{data_ptr, len}` pair while `T[]` is the array itself,
+// so the view has to be materialised somewhere; doing it here means every
+// backend, the interpreter, and the rc passes see the same shape they already
+// handle for an explicit slice.
+func (c *checker) lendArrayAsView(arg *ast.Expr, want, got ast.Type, own bool) {
+	if own || arg == nil || *arg == nil || !isArrayViewLend(want, got) {
+		return
+	}
+	*arg = &ast.SliceExpr{P: (*arg).Pos(), Source: *arg, ElemType: got.(ast.ArrayType).Elem, Lent: true}
+}
+
+// unifyArrayArg is unifyType at an argument position, with the same `T[]` →
+// `[T]` borrow folded in: a generic `[T]` parameter binds T from an owned
+// `T[]` argument and takes a full-range view of it, so a view-taking generic
+// is no harder for its callers than a concrete one.
+func (c *checker) unifyArrayArg(arg *ast.Expr, want, got ast.Type, sub map[string]ast.Type, own bool) bool {
+	if c.unifyType(want, got, sub) {
+		return true
+	}
+	if own {
+		return false
+	}
+	sl, isView := want.(ast.SliceType)
+	arr, isArray := got.(ast.ArrayType)
+	if !isView || !isArray || arr.Elem == nil || !c.unifyType(sl.Elem, arr.Elem, sub) {
+		return false
+	}
+	*arg = &ast.SliceExpr{P: (*arg).Pos(), Source: *arg, ElemType: arr.Elem, Lent: true}
+	return true
+}
+
+// assignHint names the remedy for an assignment the checker deliberately
+// refuses, appended to the E002 / E003 / E043 message that reports it. Empty
+// when no remedy applies.
+//
+// The `str` case: a borrowed `str` view reaching an owning sink. Refusing the
+// promotion is deliberate — see `assignable` — but the diagnostic only
+// restated the two type names, and the way out was written down in a checker
+// comment and nowhere the reader could see it. That dead-ends the most
+// ordinary string expression there is:
+//
+//	let t: string = s.trim();
+//	error[E003]: cannot assign str to variable of type string
+//
+// `.to_owned()` is the materialiser, and the stdlib already uses it at every
+// such site. Empty for any other pair, so it only fires where it applies.
+func assignHint(want, got ast.Type) string {
+	if h := dynElemHint(want, got); h != "" {
+		return h
+	}
+	if _, gotStr := got.(ast.StrType); !gotStr {
+		return ""
+	}
+	if _, wantString := want.(ast.StringType); !wantString {
+		return ""
+	}
+	return " — `str` is a borrowed view of a string; add `.to_owned()` to copy it into an owned string"
+}
+
+// dynElemHint names the remedy when the only thing separating two container
+// types is a `dyn Trait` element the compiler would have to box. Boxing is a
+// representation change and it happens only at a direct coercion site, so the
+// conversion has to be written out — otherwise the checker accepts an
+// assignment no backend lowers (#8446). Empty for any other pair.
+func dynElemHint(want, got ast.Type) string {
+	if _, direct := want.(ast.DynTraitType); direct {
+		return ""
+	}
+	pos, ok := dynElemMismatch(want, got)
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf(" — %s is a trait object, and boxing one is a representation change that only happens at a direct coercion site, "+
+		"never inside a container; rebuild it element by element (match / map the %s and coerce each payload)", pos, containerNoun(want))
+}
+
+// dynElemMismatch reports the first `dyn Trait` element position that stops
+// two same-shaped containers from assigning, and whether there was one.
+func dynElemMismatch(want, got ast.Type) (string, bool) {
+	switch w := want.(type) {
+	case ast.DynTraitType:
+		if _, gotDyn := got.(ast.DynTraitType); !gotDyn && got != nil {
+			return w.String(), true
+		}
+	case ast.EnumType:
+		g, ok := got.(ast.EnumType)
+		if !ok || g.Name != w.Name || len(g.Args) != len(w.Args) {
+			return "", false
+		}
+		for i := range w.Args {
+			if p, found := dynElemMismatch(w.Args[i], g.Args[i]); found {
+				return p, true
+			}
+		}
+	case ast.TupleType:
+		g, ok := got.(ast.TupleType)
+		if !ok || len(g.Elems) != len(w.Elems) {
+			return "", false
+		}
+		for i := range w.Elems {
+			if p, found := dynElemMismatch(w.Elems[i], g.Elems[i]); found {
+				return p, true
+			}
+		}
+	}
+	return "", false
+}
+
+// containerNoun names the shape the rebuild has to walk.
+func containerNoun(t ast.Type) string {
+	if _, ok := t.(ast.TupleType); ok {
+		return "tuple"
+	}
+	return "enum"
+}
+
+func (c *checker) assignable(dst, src ast.Type) bool {
+	return c.assignableWith(dst, src, true)
+}
+
+// assignableWith is assignable with control over whether a `dyn Trait`
+// COERCION may fire.
+//
+// Boxing is a representation change — a `dyn` value is [data, vtable] — and
+// it is materialised only at a direct coercion site. Inside a container it
+// never is: `Option[Square]` reaching an `Option[dyn Shape]` destination
+// leaves a raw Square pointer in the payload slot, and the method call then
+// dispatches through whatever the second word happens to be (SIGSEGV on the
+// natives, `indirect call type mismatch` on wasm, correct on interp). So the
+// three container hops below recurse with dynBox=false: a container assigns
+// element-wise only when no element needs boxing, which is the invariance
+// structs have always had (their branch requires an argument-free source).
+//
+// Rebuilding explicitly — match the container, coerce the payload, re-wrap —
+// still works, and is what the diagnostic's hint says to do. #8446.
+func (c *checker) assignableWith(dst, src ast.Type, dynBox bool) bool {
+	if ast.Equal(dst, src) {
+		return true
+	}
+	// `never` (bottom) is assignable to any type: it is the type of an
+	// expression that never yields a value (a value-position block whose
+	// statements always exit early), so `let x: T = { …; return … };`
+	// type-checks for every T (#4522).
+	if _, ok := src.(ast.NeverType); ok {
+		return true
+	}
+	// `str` (#4813): the borrowed-string view. An owned `string` freely
+	// borrows INTO a `str` destination; a `str` never silently promotes to
+	// an owned `string` -- an owning sink (var init, struct field, array
+	// element, return) must materialise a fresh copy via .to_owned().
+	// str==str is Equal above. Argument positions get a borrow carve-out
+	// (argAssignable) since params are borrowed by default; tightening for
+	// `own`-annotated params is part of the A2 escape slice (#4814).
+	if _, ok := dst.(ast.StrType); ok {
+		_, srcIsString := src.(ast.StringType)
+		return srcIsString
+	}
+	if _, ok := src.(ast.StrType); ok {
+		return false
+	}
+	// Trait-object coercion (boxing): a concrete value whose type
+	// implements `Trait` coerces to `dyn Trait`. This is the single
+	// gate for every `dyn` boxing site (var init, assignment, argument,
+	// array element, return) since they all route through assignable.
+	// `dyn Trait` is not assignable back to a concrete type (no
+	// downcast) and two different `dyn` types do not inter-assign. See
+	// docs/DYN-TRAITS.md §5.
+	if dt, ok := dst.(ast.DynTraitType); ok {
+		if !dynBox {
+			// Element position — nothing here will box it. See
+			// assignableWith's comment.
+			return false
+		}
+		if _, isDyn := src.(ast.DynTraitType); isDyn {
+			return false // distinct dyn types: only Equal (handled above) assigns
+		}
+		if tn, ok := methodTypeName(src); ok {
+			// Impl-ALL: a concrete coerces to `dyn A + B` iff it impls
+			// every trait in the set.
+			return c.implementsAllDynTraits(dt, tn)
+		}
+		return false
+	}
+	// WIT resource handles (P5 — docs/WIT-BRING-YOUR-OWN.md): an owned handle
+	// `own R` coerces to a borrow `borrow R` of the same resource (you may
+	// lend what you own). The reverse (a borrow flowing where an owned handle
+	// is required) and any handle ↔ non-handle conversion stay rejected — a
+	// plain i32 can't masquerade as a handle. Same-handle equality is already
+	// covered by ast.Equal above.
+	if dh, ok := dst.(ast.HandleType); ok {
+		sh, isHandle := src.(ast.HandleType)
+		return isHandle && dh.Borrowed && !sh.Borrowed && dh.Resource == sh.Resource
+	}
+	if _, ok := src.(ast.HandleType); ok {
+		// A handle never flows into a non-handle destination.
+		return false
+	}
+	// Pointer-shaped values ↔ usize, and usize ↔ i32 / i64. These
+	// implicit conversions are a low-level escape hatch the stdlib's
+	// raw-pointer helpers (__load_ptr / __store_ptr / __alloc, the Map
+	// runtime) need: they declare pointer params + result as usize so the
+	// full 8-byte address survives on arm64-darwin, and flow user-shaped
+	// pointer / integer values through without an `as` cast. Exposing this
+	// implicitly to USER code, though, turns usize into a bypass that
+	// passes i64→i32 narrowing and even string→struct reinterpretation
+	// past the type system. So gate it to stdlib context; user code must
+	// use an explicit `as` cast (the CastExpr machinery already allows the
+	// usize hop). See docs/ADVERSARIAL-REVIEW-2026-06.md (F2).
+	if c.inStdlibContext() {
+		if dn, ok := dst.(ast.NumberType); ok && dn.IsPointerWidth() {
+			switch src.(type) {
+			case ast.ArrayType, ast.SliceType, ast.StringType, ast.StructType:
+				return true
+			}
+		}
+		if sn, ok := src.(ast.NumberType); ok && sn.IsPointerWidth() {
+			switch dst.(type) {
+			case ast.ArrayType, ast.SliceType, ast.StringType, ast.StructType:
+				return true
+			}
+		}
+		if dn, ok := dst.(ast.NumberType); ok && dn.IsPointerWidth() {
+			if _, sok := src.(ast.NumberType); sok {
+				return true
+			}
+		}
+		if sn, ok := src.(ast.NumberType); ok && sn.IsPointerWidth() {
+			if _, dok := dst.(ast.NumberType); dok {
+				return true
+			}
+		}
+	}
+	// Option[usize] / Option[V] cross-assign for the codegen
+	// alias boundary. `__method_Map_get(Map[K, V]): Option[V]`
+	// (user-facing) routes to `__map_get_impl(m: usize):
+	// Option[usize]` (stdlib). The user-code Option[V] flows
+	// through the stdlib's Option[usize] return without an
+	// explicit cast — same pointer, different type-level view.
+	if de, dok := dst.(ast.EnumType); dok {
+		if se, sok := src.(ast.EnumType); sok && de.Name == se.Name && len(de.Args) == len(se.Args) {
+			allOk := true
+			for i := range de.Args {
+				if unboundEnumArg(de.Args[i]) || unboundEnumArg(se.Args[i]) {
+					continue
+				}
+				if !c.assignableWith(de.Args[i], se.Args[i], false) {
+					allOk = false
+					break
+				}
+			}
+			if allOk {
+				return true
+			}
+		}
+	}
+	// Polymorphic empty-array literal (`[]`) — its concrete
+	// element type is filled in from `dst` by settleEmptyArray.
+	// A non-empty array assigns element-wise like a tuple, so a
+	// still-polymorphic numeric element (a generic call's `T[]`
+	// result over a literal argument) reaches a concrete element
+	// destination the way a scalar or a tuple element does (#9003).
+	if da, dok := dst.(ast.ArrayType); dok {
+		if sa, sok := src.(ast.ArrayType); sok && da.Elem != nil {
+			if sa.Elem == nil {
+				return true
+			}
+			return c.assignableWith(da.Elem, sa.Elem, false)
+		}
+	}
+	d, dok := dst.(ast.EnumType)
+	s, sok := src.(ast.EnumType)
+	if dok && sok && d.Name == s.Name && len(s.Args) == 0 && len(d.Args) > 0 {
+		return true
+	}
+	// Generic enum with polymorphic-numeric type-args inferred
+	// from a literal payload — `Some(1)` returns
+	// `Option[NumberType{Polymorphic}]`, and the destination
+	// `Option[i64]` flows in here after settleNumeric stamped
+	// the literal's width. Walk pairwise: each src Arg must be
+	// assignable to its dst Arg (recursive), so nested enums
+	// like `Option[Option[i64]] = Some(Some(1))` also work.
+	if dok && sok && d.Name == s.Name && len(d.Args) == len(s.Args) && len(d.Args) > 0 {
+		for i := range d.Args {
+			if !c.assignableWith(d.Args[i], s.Args[i], false) {
+				return false
+			}
+		}
+		return true
+	}
+	// Tuples assign element-wise. Without this, the only path to
+	// a tuple assignment is the top-level `ast.Equal`, which
+	// rejects a tuple whose elements are individually assignable
+	// but not equal — e.g. `(None, s)` typed `(Option, Stream)`
+	// returned from a function declared `(Option[i32], Stream)`.
+	// The bare-return case relies on the 0-arg enum relaxation
+	// below; recursing here lets that same relaxation reach a
+	// tuple element. Cursor-idiom readers (docs/CURSOR-IDIOM.md)
+	// that return `(Option[T], Stream)` with a bare `None` arm
+	// depend on this.
+	if dt, dok := dst.(ast.TupleType); dok {
+		if st, sok := src.(ast.TupleType); sok && len(dt.Elems) == len(st.Elems) {
+			for i := range dt.Elems {
+				if !c.assignableWith(dt.Elems[i], st.Elems[i], false) {
+					return false
+				}
+			}
+			return true
+		}
+	}
+	// Same relaxation for generic struct values: a builtin like
+	// `map_new(cap)` returns `StructType{Name: "Map"}` with no
+	// Args; the destination context (e.g. `let m: Map[i32,
+	// string] = map_new(8);`) names the concrete K + V. The
+	// Var / argument-checking sites stamp the resolved args
+	// back onto the source expression so the IR lowering can
+	// see them.
+	ds, dsok := dst.(ast.StructType)
+	ss, ssok := src.(ast.StructType)
+	if dsok && ssok && ds.Name == ss.Name && len(ss.Args) == 0 && len(ds.Args) > 0 {
+		return true
+	}
+	// Polymorphic numeric literal: NumberType{Polymorphic:true}
+	// flows into any concrete integer type. The checker is
+	// expected to have stamped the resolved width onto the
+	// literal AST node already (via c.settleNumeric); this is
+	// the type-system side of that handshake.
+	if _, ok := dst.(ast.NumberType); ok {
+		if sn, ok := src.(ast.NumberType); ok && sn.Polymorphic {
+			return true
+		}
+	}
+	// Mirror behaviour for float literals.
+	if _, ok := dst.(ast.FloatType); ok {
+		if sf, ok := src.(ast.FloatType); ok && sf.Polymorphic {
+			return true
+		}
+	}
+	return false
+}
+
+// errfCode is the code-stamping sibling of errf — assigns a
+// stable error code (docs/DIAGNOSTIC-UX-RESEARCH.md Rec §4)
+// to the emission. Codes line up with the per-code catalogue
+// under `internal/syntax/diag/explanations/`; surfacing them in the
+// header lets users search for the error + look up the
+// long-form explanation via `lang explain CODE`.
+//
+// Phase 1: codes stamped on a handful of common error sites
+// (undefined identifier, type mismatches, missing struct
+// fields, wrong-arity calls). Future PRs expand coverage —
+// each stamping is mechanical, just touches the errf call.
+func (c *checker) errfCode(pos ast.Position, code, format string, args ...any) {
+	c.report(c.currentModule(), pos, code, fmt.Sprintf(format, args...))
+}
+
+// firstTryOp reports the position of the first `?` in `e`, not descending into
+// a nested function or lambda body — those replay on their own exits, not on
+// the enclosing one, so a `?` there is ordinary.
+func firstTryOp(e ast.Expr) (ast.Position, bool) {
+	var pos ast.Position
+	found := false
+	ast.Walk(e, func(n ast.Node) bool {
+		if found {
+			return false
+		}
+		switch x := n.(type) {
+		case *ast.Lambda, *ast.FuncDecl:
+			return false
+		case *ast.TryOp:
+			pos, found = x.P, true
+			return false
+		}
+		return true
+	})
+	return pos, found
+}
+
+// report records one diagnostic against the module at path.
+func (c *checker) report(path string, pos ast.Position, code, msg string) {
+	// Identical diagnostics at the same position are dropped. Several
+	// checks reach the same expression by different routes — a string
+	// `a < b` produced the same E009 twice, byte for byte — and a reader
+	// counting errors has no way to tell a repeat from two real problems.
+	// Deduping here rather than at each site keeps it true for every
+	// check, including ones added later.
+	key := diagKey{pos: pos, code: code, msg: msg, path: path}
+	if c.seenDiags == nil {
+		c.seenDiags = map[diagKey]bool{}
+	}
+	if c.seenDiags[key] {
+		return
+	}
+	c.seenDiags[key] = true
+	c.errors = append(c.errors, &Error{Pos: pos, Msg: msg, Path: path, ErrCode: code})
+}
+
+// diagKey identifies a diagnostic for the duplicate check above: same
+// place, same code, same words, same file.
+type diagKey struct {
+	pos  ast.Position
+	code string
+	msg  string
+	path string
+}
+
+// requireValue rejects a void-typed expression used where a value is
+// stored. `void` is the type of "returns nothing", and `()` — the unit
+// literal — is its one and only value; a void-returning *call* produced
+// no value to store.
+//
+// Without this, `Ok(f())` for a void `f` type-checked and then diverged
+// by backend: the interpreter and the native backends invented a zero
+// for the payload slot, while wasm emitted a store with nothing on the
+// stack and failed module verification. One spelling for the unit value
+// means no backend has to guess.
+func (c *checker) requireValue(e ast.Expr, t ast.Type) {
+	if _, isVoid := t.(ast.VoidType); !isVoid {
+		return
+	}
+	if _, isUnit := e.(*ast.UnitLit); isUnit {
+		return
+	}
+	c.errfCode(e.Pos(), "E072",
+		"a void expression is not a value here; call it as a statement, and write `()` if you meant the unit value")
+}
+
+// hasDropImpl reports whether typeName has a `core/mem.Drop` impl, i.e. a
+// finalizer the RC runtime calls from the generated drop glue. Trait names in
+// info.Impls are module-mangled (`mem__Drop`), so the match is on the simple
+// name — the same demangling ir.userDropFnName and treeshake.DropImplMethods do.
+func (c *checker) hasDropImpl(typeName string) bool {
+	for trait, types := range c.info.Impls {
+		if !types[typeName] {
+			continue
+		}
+		simple := trait
+		if i := strings.LastIndex(simple, "__"); i >= 0 {
+			simple = simple[i+2:]
+		}
+		if simple == "Drop" {
+			return true
+		}
+	}
+	return false
+}
+
+// pureCollectionMutators maps each value-returning collection mutator's
+// mangled lowering to its source-level spelling. These are the operations
+// that return a (possibly fresh) collection rather than mutating in place;
+// discarding their result is the aliasing mistake E055 closes.
+var pureCollectionMutators = map[string]string{
+	"__method_Map_set":    "insert",
+	"__method_Map_delete": "without",
+	"__method_Map_clear":  "cleared",
+	"__method_Array_set":  "with",
+	"__method_Array_push": "append",
+}
+
+// retiredCollectionSpellings maps the mutable-looking collection method
+// names that were REMOVED (docs/PURE-COLLECTION-API-PLAN.md §3a's hard
+// removal) to the value-returning name that replaced each one. They are
+// registered in Info.Methods and then deleted, so a call to one resolves
+// to nothing — and the reader is left guessing at a rename they never
+// saw. Naming the replacement is the whole difference between "that's
+// gone" and "that's gone, here's what to write".
+var retiredCollectionSpellings = map[string]string{
+	"Array.push": "append",
+	"Array.set":  "with",
+	"Map.set":    "insert",
+	"Map.delete": "without",
+	"Map.clear":  "cleared",
+}
+
+// collectionNamespace maps a composite receiver to the name its methods
+// are registered under in Info.Methods. ast.ReceiverTypeName covers the
+// nominal and scalar receivers but returns nothing for arrays and
+// slices — their methods are registered under fixed namespaces rather
+// than derived from the type — which is exactly why a bad method call on
+// one of them fell through to the bare "non-struct value" message. (A
+// Map is a StructType named "Map", so methodTypeName already finds it.)
+func collectionNamespace(t ast.Type) (string, bool) {
+	switch t.(type) {
+	case ast.ArrayType:
+		return "Array", true
+	case ast.SliceType:
+		return "slice", true
+	}
+	return methodTypeName(t)
+}
+
+// methodsOn lists the method names registered for a receiver namespace
+// (`Array`, `Map`, `String`, …), sorted so a suggestion is deterministic
+// when two candidates tie on edit distance.
+func (c *checker) methodsOn(typeName string) []string {
+	prefix := typeName + "."
+	var names []string
+	for k := range c.info.Methods {
+		if strings.HasPrefix(k, prefix) {
+			names = append(names, strings.TrimPrefix(k, prefix))
+		}
+	}
+	sort.Strings(names)
+	return names
+}
+
+// methodsFor narrows methodsOn to the methods this particular receiver can
+// actually call. A collection namespace is shared across element types —
+// `Array` holds `sum` (i32[] only), `join` (string[] only) and `len`
+// (anything) side by side — so the unfiltered list advertises, to an
+// `i32[]` receiver, most of an API it does not have. Following one of those
+// names turns an E043 into an E038, which is a worse place to be than the
+// original typo: the reader now believes the method exists.
+//
+// A method survives when its receiver parameter accepts this receiver.
+// Anything the check cannot see through — no recorded signature, no
+// parameters, a generic receiver whose bounds this receiver may satisfy —
+// is kept, so the filter only ever removes a name it can prove inapplicable.
+func (c *checker) methodsFor(typeName string, recv ast.Type) []string {
+	all := c.methodsOn(typeName)
+	if recv == nil {
+		return all
+	}
+	out := all[:0:0]
+	for _, name := range all {
+		mangled, ok := c.info.Methods[typeName+"."+name]
+		if !ok {
+			out = append(out, name)
+			continue
+		}
+		sig, ok := c.info.FuncSigs[mangled]
+		if !ok || len(sig.Params) == 0 {
+			out = append(out, name)
+			continue
+		}
+		if containsParamType(sig.Params[0]) {
+			if c.boundsAdmitReceiver(mangled, sig.Params[0], recv) {
+				out = append(out, name)
+			}
+			continue
+		}
+		if c.argAssignable(sig.Params[0], recv, false) {
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// boundsAdmitReceiver reports whether an element-polymorphic method could
+// apply to this concrete receiver, by binding its receiver parameter against
+// the receiver and testing each type parameter's bounds. `(xs: T[]) sum[T:
+// num.Add + num.Zero]()` and `(xs: T[]) max[T: cmp.Ord]()` share the `Array`
+// namespace and both accept a `T[]`, but only the second is reachable from a
+// `string[]` — listing `sum` there sends the reader from an E043 to the E021
+// that says string does not implement Add.
+//
+// It answers on the same index the instantiation check errors from
+// (`Info.Impls`, which explicit impls and `@derive` both populate), so the
+// list and the error agree. Anything it cannot resolve — no recorded
+// declaration, a receiver that will not bind, an element with no type name —
+// admits the method, keeping the filter's remove-only-what-is-proven rule.
+func (c *checker) boundsAdmitReceiver(mangled string, param, recv ast.Type) bool {
+	fn, ok := c.info.GenericFuncs[mangled]
+	if !ok || len(fn.Bounds) == 0 {
+		return true
+	}
+	sub := map[string]ast.Type{}
+	if !c.unifyType(param, recv, sub) {
+		return true
+	}
+	for tp, traits := range fn.Bounds {
+		bound, ok := sub[tp]
+		if !ok {
+			continue
+		}
+		tn, ok := methodTypeName(bound)
+		if !ok {
+			continue
+		}
+		for _, traitName := range traits {
+			if !c.info.Impls[traitName][tn] {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// unknownMethodMessage builds the E043 text for a method call whose
+// receiver is a non-struct with a method namespace of its own — an
+// array, a map, a slice. The bare "field access on non-struct value of
+// type i32[]" it replaces names neither the method nor the receiver's
+// actual API, which is the worst case for exactly the two situations
+// that produce it: a typo, and a spelling that was deliberately retired.
+func (c *checker) unknownMethodMessage(typeName, method string, recv ast.Type) string {
+	msg := fmt.Sprintf("no method %q on %s", method, recv)
+	if repl, ok := retiredCollectionSpellings[typeName+"."+method]; ok {
+		return fmt.Sprintf("%s — the in-place spelling was removed; use %q, which returns the updated %s (assign the result back)",
+			msg, repl, typeName)
+	}
+	if s := diag.Suggest(method, c.methodsFor(typeName, recv)); s != "" {
+		return fmt.Sprintf("%s — did you mean %q?", msg, s)
+	}
+	// A scalar or string receiver keeps most of its methods in a stdlib
+	// module, so the likeliest cause of an unrecognised name is a missing
+	// import rather than a wrong name. Listing the two builtins the type
+	// has without it would point the reader away from the fix.
+	if mod := scalarModuleFor(recv); mod != "" && !c.moduleAlreadyImports(mod) {
+		return fmt.Sprintf("%s — if it comes from %s, add `import %q`", msg, mod, mod)
+	}
+	if names := c.methodsFor(typeName, recv); len(names) > 0 {
+		return fmt.Sprintf("%s (it has: %s)", msg, strings.Join(names, ", "))
+	}
+	return msg
+}
+
+// hoistReceiver moves a method's receiver onto Params[0], the shape the rest
+// of the pipeline expects, and clears it. Registration does this for a method
+// it accepts; a REJECTED one needs it too, or the body walk finds no binding
+// for the receiver name and reports an `undefined identifier` at every use —
+// a cascade under the real diagnostic, in a file (for a stdlib method) the
+// program never imported and cannot act on.
+func hoistReceiver(fn *ast.FuncDecl) {
+	if fn.Receiver == nil {
+		return
+	}
+	fn.Params = append([]ast.Param{*fn.Receiver}, fn.Params...)
+	fn.Receiver = nil
+}
+
+// receiverDeclares reports whether the hoisted generic method `name` takes
+// type parameter tp from its receiver. A concrete receiver (`u8[]`,
+// `Box[i32]`) declares none, so the receiver's arguments a dispatch stamps
+// must not bind the method's own parameters. True for anything that is not
+// a generic method, which keeps the receiver stamp as it was.
+func (c *checker) receiverDeclares(name, tp string) bool {
+	fn, ok := c.info.GenericFuncs[name]
+	if !ok || fn.MethodRecv == "" || len(fn.Params) == 0 {
+		return true
+	}
+	return typeMentionsParam(fn.Params[0].Type, tp)
+}
+
+// elemDispatchable reports whether an array/slice receiver with this element
+// type can be dispatched to. Call-site dispatch binds the receiver's element
+// in one step, so a nested `T[][]` / `[T][]` element binds T to the INNER
+// array rather than to its element and the method resolves against a receiver
+// one level too deep. A type variable or any non-array element binds
+// correctly; nested receivers are refused at the declaration instead of
+// mis-resolving at every call.
+func elemDispatchable(elem ast.Type) bool {
+	switch elem.(type) {
+	case ast.ArrayType, ast.SliceType:
+		return false
+	}
+	return true
+}
+
+// errArgMismatch reports an argument that does not fit its parameter. Arg 0 of
+// a dispatch-rewritten method call is the RECEIVER, hoisted into the argument
+// list by the rewrite, so reporting it as "argument 1" describes a slot the
+// reader never wrote. It is an unresolved method on that receiver — the same
+// thing E043 reports when no method of the name exists at all — and the
+// declared receiver type is what says why, so name it. The written arguments
+// are numbered from the first one after the receiver.
+func (c *checker) errArgMismatch(n *ast.Call, i int, recvIsArg0 bool, expected, at ast.Type) {
+	if recvIsArg0 && i == 0 && n.Method != nil {
+		c.errfCode(n.Method.FieldPos, "E043", "no method %q on %s — %q is declared for %s",
+			n.Method.Field, at, n.Method.Field, expected)
+		return
+	}
+	num := i + 1
+	if recvIsArg0 {
+		num = i
+	}
+	c.errfCode(n.Args[i].Pos(), "E038", "argument %d: expected %s, got %s%s",
+		num, expected, at, assignHint(expected, at))
+}
+
+// moduleAlreadyImports reports whether the module being checked names `mod`
+// (a source spelling like "std/string") in its own `import` list. The
+// unresolved-method hint is suppressed when it does: telling a reader to add an
+// import they already have is unfollowable in the same way the u8 hint's wrong
+// module name was — doing what it says changes nothing and the identical error
+// repeats. With the import present the receiver's full method surface is known,
+// so the caller falls through to listing it, which is what a typo needs.
+//
+// DirectImports, not the ModuleImports closure: reaching a module transitively
+// does not put its methods in scope, so the closure would suppress the hint for
+// exactly the reader who still needs it. An unstamped module — a single-file
+// program that bypassed modload, or a message raised outside any function —
+// finds nothing and keeps the hint, which is the conservative direction.
+func (c *checker) moduleAlreadyImports(mod string) bool {
+	from := c.currentModule()
+	if from == "" || c.info == nil {
+		return false
+	}
+	key := stdlib.ModuleKey(mod)
+	return key != "" && c.info.DirectImports[from][key]
+}
+
+// checkUnusedCollectionResult implements E055: a bare statement whose whole
+// expression is a value-returning collection mutator (`m.insert(k, v);`,
+// `arr.append(x);`, …) silently discards the new collection. Under CoW that's
+// correct only while the receiver is uniquely held — the moment an alias
+// exists the write is lost (docs/PURE-COLLECTION-API-PLAN.md §1). Require the
+// result be threaded back (`m = m.insert(k, v)`) or explicitly dropped
+// (`let _ = m.insert(k, v)`, a declaration rather than a bare call).
+//
+// Only source-level method calls fire (Method != nil), so the `arr[i] = v`
+// desugar and other synthesised `__method_*` calls are exempt; and only the
+// outermost call of a statement is a bare ExprStmt, so a chained
+// `m.insert(a,b).insert(c,d);` reports once.
+func (c *checker) checkUnusedCollectionResult(e ast.Expr) {
+	call, ok := e.(*ast.Call)
+	if !ok || call.Method == nil {
+		return
+	}
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		return
+	}
+	if _, isMutator := pureCollectionMutators[id.Name]; !isMutator {
+		return
+	}
+	c.errfCode(call.Method.FieldPos, "E055",
+		"result of `.%s(...)` is unused; assign it back (e.g. `x = x.%s(...)`) — collection operations return a new value, they do not mutate in place (use `let _ = …` to discard intentionally)",
+		call.Method.Field, call.Method.Field)
+}
+
+// fipNonAllocMethods is the whitelist of builtin methods a `fip` function may
+// call: provably non-allocating, scalar-returning reads. Extend as more are
+// proven heap-neutral.
+var fipNonAllocMethods = map[string]bool{"len": true}
+
+// fipNonAllocBuiltins is its sibling for builtin functions: each lowers to
+// instructions or a runtime scan that allocates nothing and returns a scalar
+// (the byte-scan kernels, the bit counts, a constant, the heap counters, the
+// clock). verifyFipAllocs (E068) stays the backstop for what they emit.
+var fipNonAllocBuiltins = map[string]bool{
+	"__memchr": true, "__mismatch_bytes": true, "__count_byte_bytes": true, "__sum_bytes_array": true, "__bsd_sum_bytes": true, "__memchr_bytes": true, "__rmemchr_bytes": true, "__rmemchr": true, "__ascii_run": true, "__count_byte": true,
+	"__sum_bytes": true, "__scan_set": true, "__scan_set_bytes": true, "__bsd_sum": true, "__count_runs": true, "__count_runs_bytes": true,
+	"__crc32_cksum": true, "__crc32_cksum_array": true,
+	"__clz32": true, "__ctz32": true, "__popcount32": true,
+	"__clz64": true, "__ctz64": true, "__popcount64": true,
+	"__ptr_width": true, "__heap_bump_bytes": true, "__heap_alloc_count": true,
+	"monotonic_ns": true,
+}
+
+// checkFipFunctions verifies every `fip function` performs no heap allocation —
+// a Koka-style fully-in-place CHECKED guarantee, as a SOUND, conservative
+// subset (E053). It is verify-don't-enable: the in-place lowering (reuse, COW's
+// unique-in-place branch, TRMC) already happens; `fip` only asserts and checks
+// the result. Default-deny: any construct not proven heap-neutral is rejected.
+//
+// Allowed: scalars, arithmetic / comparison / logical ops, field & index READS,
+// control flow, (re)binding locals, in-place index/field WRITES to an `own`
+// array parameter (the COW unique-in-place branch — no copy), calls to other
+// `fip` functions and the whitelisted non-allocating builtins
+// (fipNonAllocMethods, fipNonAllocBuiltins).
+// Rejected: array / tuple / struct / payload-carrying-enum literals, string
+// concatenation / interpolation, writes to a non-`own` heap value (a copy), and
+// any call the checker can't prove allocation-free.
+//
+// Constructor expressions — struct / tuple literals and payload-carrying enum
+// variants — are allowed in EVERY tier, `fip` included, because the checker
+// cannot tell a fresh allocation from a reuse-paired one and the IR layer can:
+// verifyFipAllocs counts the sites that lowered to a real OpAlloc rather than
+// to `__alloc_reuse`, and refuses the function with E068 when they exceed the
+// allowance. Bare `fip` is the allowance-0 case, so a rebuild paired with a
+// dead uniquely-owned donor passes and an un-paired one is refused by name and
+// position.
+//
+// Rejecting the shape here instead used to make `fip` unable to carry struct
+// state at all (#9602): a field write is E048, whose remedy is the rebuild
+// `T { ...old, f: v }`, and that rebuild was E053 — each diagnostic naming
+// what the other forbade. Koka's `fip` permits constructor reuse matched with
+// a deconstruction for exactly this reason, and this walk was stricter than
+// the model it cites.
+//
+// Everything else stays rejected for every tier: array literals (no array
+// reuse pairing exists), string concat / interpolation, CoW-copy writes, and
+// unproven calls. Call rule: `fip` may only call `fip` (the stronger claim);
+// `fbip` may call `fip` or `fbip`.
+func (c *checker) checkFipFunctions(prog *ast.Program) {
+	fip := map[string]bool{}
+	fbip := map[string]bool{}
+	declared := map[string]bool{}
+	for _, fn := range prog.Funcs {
+		declared[fn.Name] = true
+		if fn.Fip {
+			fip[fn.Name] = true
+		}
+		if fn.Fbip {
+			fbip[fn.Name] = true
+		}
+	}
+	if len(fip)+len(fbip) == 0 {
+		return
+	}
+	for _, fn := range prog.Funcs {
+		if (!fn.Fip && !fn.Fbip) || fn.Body == nil {
+			continue
+		}
+		kw := "fip"
+		if fn.Fbip {
+			kw = "fbip"
+		}
+		own := map[string]bool{}
+		for _, p := range fn.Params {
+			if p.Own {
+				own[p.Name] = true
+			}
+		}
+		ast.Walk(fn.Body, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.ArrayLit:
+				c.errfCode(x.Pos(), "E053", "`%s` function %q may not allocate (array literal)", kw, fn.Name)
+			case *ast.FString:
+				c.errfCode(x.Pos(), "E053", "`%s` function %q may not allocate (string interpolation)", kw, fn.Name)
+			case *ast.Binary:
+				if x.IsStringConcat {
+					c.errfCode(x.Pos(), "E053", "`%s` function %q may not allocate (string concatenation)", kw, fn.Name)
+				}
+			case *ast.Call:
+				if x.IsVariantCall {
+					return true
+				}
+				if x.Method != nil {
+					// `recv.with(i, v)` on an `own` array is the in-place
+					// element set (no size change → the COW unique-in-place
+					// branch, no allocation). It is the method-call form of
+					// the `arr[i] = v` write already allowed below, so it
+					// carries the same `own`-root uniqueness assumption. This
+					// is what lets the value-returning collection API
+					// (`arr = arr.with(i, v)`, post-E056) stay fip — e.g. the
+					// in-place insertion sorts.
+					if x.Method.Field == "with" && len(x.Args) > 0 && own[fipRootIdent(x.Args[0])] && !fipLinkReadsRoot(x) {
+						return true
+					}
+					// `recv.map(f)` on an `own` array is the in-place map
+					// (R7, docs/REUSE-CONTRACT.md): the result is written
+					// through the donor when the receiver is the consumed
+					// parameter itself and `f` is capture-free and reaches
+					// no effect. Those are IR facts, so the checker admits
+					// the shape the way it admits constructors (#9602) and
+					// E068 counts the `map` R7 declines, naming the rule.
+					if x.Method.Field == "map" && len(x.Args) > 0 && own[fipRootIdent(x.Args[0])] {
+						return true
+					}
+					if !fipNonAllocMethods[x.Method.Field] {
+						c.errfCode(x.Pos(), "E053", "`%s` function %q may not call method %q (not proven allocation-free)", kw, fn.Name, x.Method.Field)
+					}
+					return true
+				}
+				if id, ok := x.Callee.(*ast.Ident); ok {
+					if fipNonAllocBuiltins[id.Name] && !declared[id.Name] {
+						return true
+					}
+					// `fip` is the stronger claim: it may only lean on other
+					// `fip` callees. `fbip` may also call `fbip` (the callee's
+					// own construction sites are E068-verified in turn).
+					if fn.Fbip {
+						if !fip[id.Name] && !fbip[id.Name] {
+							c.errfCode(x.Pos(), "E053", "`fbip` function %q may only call `fip` or `fbip` functions, not %q", fn.Name, id.Name)
+						}
+					} else if !fip[id.Name] {
+						c.errfCode(x.Pos(), "E053", "`fip` function %q may only call other `fip` functions, not %q", fn.Name, id.Name)
+					}
+					return true
+				}
+				c.errfCode(x.Pos(), "E053", "`%s` function %q may not make an indirect call (not proven allocation-free)", kw, fn.Name)
+			case *ast.Assign:
+				if fipWriteAllocates(x.Target, own) {
+					c.errfCode(x.Pos(), "E053", "`%s` function %q may not write to a non-`own` heap value (triggers a copy-on-write)", kw, fn.Name)
+				}
+			}
+			return true
+		})
+	}
+}
+
+// fipWriteAllocates reports whether an assignment target can trigger a heap
+// allocation. (Re)binding a local slot allocates nothing; an index/field write
+// is in-place only when its root is an `own` parameter (the COW unique branch) —
+// otherwise it copies.
+func fipWriteAllocates(target ast.Expr, own map[string]bool) bool {
+	switch t := target.(type) {
+	case *ast.Ident:
+		return false
+	case *ast.Index:
+		return !own[fipRootIdent(t.Array)]
+	case *ast.FieldAccess:
+		return !own[fipRootIdent(t.Target)]
+	}
+	return true
+}
+
+// fipRootIdent unwraps nested index / field accesses to the base identifier
+// name (the container being written through), or "" if the base isn't a bare
+// identifier.
+// fipLinkReadsRoot reports whether a `.with` link whose receiver is an
+// earlier `.with` link reads the chain's root in its own arguments. Those run
+// after the earlier link's write and must see the old elements, so the root
+// link copies and the chain allocates (#9702).
+func fipLinkReadsRoot(c *ast.Call) bool {
+	inner, ok := c.Args[0].(*ast.Call)
+	if !ok || inner.Method == nil || inner.Method.Field != "with" {
+		return false
+	}
+	root := fipRootIdent(c.Args[0])
+	for _, a := range c.Args[1:] {
+		mentioned := false
+		ast.Walk(a, func(n ast.Node) bool {
+			if id, ok := n.(*ast.Ident); ok && id.Name == root {
+				mentioned = true
+			}
+			return !mentioned
+		})
+		if mentioned {
+			return true
+		}
+	}
+	return false
+}
+
+func fipRootIdent(e ast.Expr) string {
+	for {
+		switch x := e.(type) {
+		case *ast.Ident:
+			return x.Name
+		case *ast.Index:
+			e = x.Array
+		case *ast.FieldAccess:
+			e = x.Target
+		case *ast.Call:
+			// An earlier `.with` link, whose result this link writes in place
+			// unless it reads the root (fipLinkReadsRoot).
+			if x.Method == nil || x.Method.Field != "with" || len(x.Args) == 0 {
+				return ""
+			}
+			e = x.Args[0]
+		default:
+			return ""
+		}
+	}
+}
+
+// needCoreMap flags a Map construction site (map_new / Map literal)
+// when core/map isn't imported. Reported once per program — Map's
+// runtime helpers all come from the same module, so one diagnostic
+// covers every use.
+func (c *checker) needCoreMap(pos ast.Position) {
+	if !c.requireMapImport || c.mapErrReported {
+		return
+	}
+	c.mapErrReported = true
+	c.errfCode(pos, "E001", "Map operations require `import \"core/map\";`")
+}
+
+// errIdent reports an unresolved-name error and tries to attach a
+// near-miss fix by scanning every name visible in scope (locals,
+// params, top-level functions). The error span covers the whole
+// identifier so the squiggle underlines the misspelt name; the fix is
+// MACHINE-APPLICABLE (diag.Suggestion, Rec §3) — replacing the ident
+// with the candidate always re-parses, so the renderer's `help:` line
+// doubles as the future LSP CodeAction seed.
+// retiredNames maps a name the language used to have to the
+// behaviour-preserving replacement it was renamed to, so retiring a
+// name stays a migration rather than a dead end. `diag.Suggest`'s
+// near-miss scan cannot reach these: `string_from_bytes` ->
+// `string_from_bytes_unchecked` is ten characters of edit distance,
+// far past the respelling threshold, yet it is exactly the case where
+// a caller most needs pointing somewhere.
+//
+// The mapped-to name is the MECHANICAL migration — it compiles to what
+// the old name compiled to. Where the retirement exists to make a
+// hazard visible, `retiredHints` carries the other half.
+var retiredNames = map[string]string{
+	"string_from_bytes": "string_from_bytes_unchecked",
+}
+
+// retiredHints is the "and think about which one you want" note
+// appended to a retired name's help line (#5634, D9).
+var retiredHints = map[string]string{
+	"string_from_bytes": " (or `std/utf8.from_bytes`, which validates and returns `Option[string]`)",
+}
+
+func (c *checker) errIdent(n *ast.Ident, s *scope, format string, args ...any) {
+	cands := c.collectNames(s)
+	suggestion := diag.Suggest(n.Name, cands)
+	if r, ok := retiredNames[n.Name]; ok {
+		suggestion = r
+	}
+	e := &Error{
+		Pos:     n.P,
+		Span:    len(n.Name),
+		Msg:     fmt.Sprintf(format, args...),
+		Path:    c.currentModule(),
+		ErrCode: "E001",
+	}
+	if suggestion != "" {
+		e.Fix = &diag.Suggestion{
+			Pos:         n.P,
+			Length:      len(n.Name),
+			Replacement: suggestion,
+			Title:       fmt.Sprintf("replace `%s` with `%s`%s", n.Name, suggestion, retiredHints[n.Name]),
+		}
+	}
+	c.errors = append(c.errors, e)
+}
+
+// errUnknownField reports an E043 unknown-field error (struct literal
+// or field access), attaching a machine-applicable respelling fix when
+// a declared field is a near miss — the same sound family as errIdent
+// (replacing one identifier with another always re-parses). namePos is
+// the field NAME token's own position (FieldInit.NamePos /
+// FieldAccess.FieldPos); a zero position (synthetic node) skips the fix.
+// scalarMethodModule returns the stdlib module that defines `method` on the
+// scalar type `t`, or "" when there is no such pairing. It exists so a method
+// call on a scalar whose module was not imported gets a diagnostic naming the
+// import, rather than the raw "field access on non-struct value" E043 — which
+// describes the desugared shape rather than the user's code, and is especially
+// confusing for f-strings (`f"{n}"` becomes `n.to_string()`).
+//
+// Deliberately narrow: only method names these modules actually define on the
+// scalar receivers, so a typo'd method still gets the generic error rather than
+// a confidently wrong import suggestion. Since the auto-prelude was removed
+// (Phase 5) a program sees only what it imports, which is what makes this class
+// of confusion reachable at all. #5494.
+func scalarMethodModule(t ast.Type, method string) string {
+	mod := scalarModuleFor(t)
+	if mod == "" {
+		return ""
+	}
+	// to_string is the one every scalar module defines, and the f-string
+	// desugar target — the case that motivates this. Keep the set tight.
+	switch method {
+	case "to_string", "to_string_radix", "to_string_padded", "to_string_with_sep", "to_string_prec":
+		return mod
+	}
+	return ""
+}
+
+// scalarModuleFor names the stdlib module that carries a scalar type's
+// method surface, or "" for a type whose methods aren't in one. Unlike
+// scalarMethodModule it does not check that the module actually defines
+// the method — callers that only want to say "if this method exists, it
+// comes from here" use this one.
+func scalarModuleFor(t ast.Type) string {
+	var mod string
+	switch x := t.(type) {
+	case ast.NumberType:
+		if !x.IsSigned() {
+			if x.NormalWidth() == 64 {
+				mod = "std/u64"
+			} else if x.NormalWidth() == 8 {
+				// u8's method surface lives in std/i32, not std/u32:
+				// every `pub function (b: u8) …` in the stdlib is
+				// declared there. Pointing at std/u32 made the hint
+				// unfollowable — importing it changed nothing and the
+				// identical error repeated, with no reason to try
+				// elsewhere. Bytes reach users constantly (indexing a
+				// string yields u8), so this is a common first error.
+				mod = "std/i32"
+			} else {
+				mod = "std/u32"
+			}
+		} else if x.NormalWidth() == 64 {
+			mod = "std/i64"
+		} else {
+			mod = "std/i32"
+		}
+	case ast.FloatType:
+		mod = "std/float"
+	case ast.StringType:
+		mod = "std/string"
+	case ast.StrType:
+		// A `str` view shares the `string` method surface (methodTypeName maps
+		// it to "string"), so its methods come from the same module. Without
+		// this case the message fell through to the builtin list — "it has:
+		// as_bytes, len" — which is the outcome the comment above forbids, and
+		// it is reached by FOLLOWING another diagnostic: E043/E002/E003 on a
+		// `str` in an owned position all say "add `.to_owned()`", and
+		// `.to_owned()` is one of the methods that needs the import.
+		mod = "std/string"
+	default:
+		return ""
+	}
+	return mod
+}
+
+// unknownVariantHint explains an arm name that is not a variant. Two
+// distinct mistakes reach here and the bare message serves neither:
+//
+//   - a near-miss on a real variant, which wants the name;
+//   - a CATCH-ALL written the Rust way (`other => …`), where the reader
+//     meant "everything else, bound to `other`". Fern reads a bare ident
+//     in arm position as a variant name, so they are told their variant
+//     does not exist -- true, and no help at all. There is no binding
+//     catch-all (`other @ _` is refused too), so the answer is `_` plus
+//     binding the scrutinee first.
+//
+// The catch-all reading is only offered when the name resembles no
+// variant: a near-miss is far more likely to be a typo than an attempt
+// at a wildcard.
+func unknownVariantHint(name string, ed *ast.EnumDecl) string {
+	if s := variantSpellingHint(name, ed); s != "" {
+		return s
+	}
+	return " — a bare name in arm position is a VARIANT, not a binding;" +
+		" for a catch-all use `_`, binding the scrutinee to a variable first if you need its value"
+}
+
+// variantSpellingHint suggests the nearest variant name, or "" when none is
+// close enough. It is the whole hint where the spelling already says the
+// pattern is a variant — a tuple element's `A(x)`, which cannot be read as a
+// binder, so unknownVariantHint's arm-position advice would misdirect.
+func variantSpellingHint(name string, ed *ast.EnumDecl) string {
+	best, bestD := "", 0
+	max := len(name)/3 + 1
+	for i := range ed.Variants {
+		d := editDistanceStr(name, ed.Variants[i].Name)
+		if d <= max && (best == "" || d < bestD) {
+			best, bestD = ed.Variants[i].Name, d
+		}
+	}
+	if best != "" {
+		return fmt.Sprintf(" (did you mean %q?)", best)
+	}
+	return ""
+}
+
+// editDistanceStr is Levenshtein over bytes, for the hint above.
+func editDistanceStr(a, b string) int {
+	prev := make([]int, len(b)+1)
+	cur := make([]int, len(b)+1)
+	for j := range prev {
+		prev[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		cur[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			cur[j] = prev[j] + 1
+			if cur[j-1]+1 < cur[j] {
+				cur[j] = cur[j-1] + 1
+			}
+			if prev[j-1]+cost < cur[j] {
+				cur[j] = prev[j-1] + cost
+			}
+		}
+		prev, cur = cur, prev
+	}
+	return prev[len(b)]
+}
+
+func (c *checker) errUnknownField(pos, namePos ast.Position, structName, field string, declared []string) {
+	// A retired method spelling reads as a missing FIELD here, because
+	// `m.set(k, v)` parses as a field access before it is a call — and
+	// "struct Map has no field \"set\"" tells the reader nothing about
+	// the rename that removed it. Answer the question they actually
+	// have.
+	if _, retired := retiredCollectionSpellings[structName+"."+field]; retired {
+		c.errfCode(pos, "E043", "%s", c.unknownMethodMessage(structName, field, ast.StructType{Name: structName}))
+		return
+	}
+	e := &Error{
+		Pos:     pos,
+		Msg:     fmt.Sprintf("struct %s has no field %q", structName, field),
+		Path:    c.currentModule(),
+		ErrCode: "E043",
+	}
+	if s := diag.Suggest(field, declared); s != "" && namePos.Line > 0 {
+		e.Fix = &diag.Suggestion{
+			Pos:         namePos,
+			Length:      len(field),
+			Replacement: s,
+			Title:       fmt.Sprintf("replace `%s` with `%s`", field, s),
+		}
+	}
+	c.errors = append(c.errors, e)
+}
+
+// collectNames flattens every name reachable from s, plus all top-level
+// function names, into a single slice for diag.Suggest to scan.
+func (c *checker) collectNames(s *scope) []string {
+	seen := map[string]bool{}
+	var out []string
+	for cur := s; cur != nil; cur = cur.parent {
+		for name := range cur.names {
+			if !seen[name] {
+				seen[name] = true
+				out = append(out, name)
+			}
+		}
+	}
+	for name := range c.info.FuncSigs {
+		if !seen[name] {
+			seen[name] = true
+			out = append(out, name)
+		}
+	}
+	return out
+}
+
+// isUserFuncOrLocal reports whether `name` is bound by an in-scope
+// variable or a user-declared (or checker-synthesised) function. Callers
+// use it to disambiguate bare identifiers from same-named enum
+// variants — a user-defined `Red` should win over `Color.Red`.
+func (c *checker) isUserFuncOrLocal(name string, s *scope) bool {
+	if _, ok := s.lookup(name); ok {
+		return true
+	}
+	if _, ok := c.info.FuncSigs[name]; ok {
+		return true
+	}
+	return false
+}
+
+// scope is an environment of named bindings plus a pointer to its parent.
+type scope struct {
+	parent *scope
+	names  map[string]ast.Type
+	// vars maps the subset of `names` introduced by a `let` statement to
+	// the declaration itself, so a binding can be identified by NODE
+	// rather than by name. Names are not unique until shadowrename, which
+	// runs after the checker, so the capture-cycle rule (#8440) — which
+	// has to pair a store with the declaration a closure captured — cannot
+	// match on the spelling. Nil for a scope that binds only parameters
+	// and pattern bindings.
+	vars map[string]*ast.Var
+}
+
+func newScope(parent *scope) *scope {
+	return &scope{parent: parent, names: map[string]ast.Type{}}
+}
+
+func (s *scope) lookup(name string) (ast.Type, bool) {
+	for cur := s; cur != nil; cur = cur.parent {
+		if t, ok := cur.names[name]; ok {
+			return t, true
+		}
+	}
+	return nil, false
+}
+
+// bindVar binds a `let` declaration's name, recording the declaration node
+// alongside the type.
+func (s *scope) bindVar(name string, t ast.Type, decl *ast.Var) {
+	s.names[name] = t
+	if s.vars == nil {
+		s.vars = map[string]*ast.Var{}
+	}
+	s.vars[name] = decl
+}
+
+// lookupVarDecl resolves name to the `let` statement that declares it, or nil
+// when the nearest binding is a parameter, a pattern binding, or absent. It
+// stops at the first scope that binds the name so a nearer non-`let` binding
+// correctly shadows an outer `let`.
+func (s *scope) lookupVarDecl(name string) *ast.Var {
+	for cur := s; cur != nil; cur = cur.parent {
+		if _, ok := cur.names[name]; ok {
+			return cur.vars[name]
+		}
+	}
+	return nil
+}
+
+// poison binds a name whose type could not be worked out, its
+// initialiser having already reported an error. The nil type is the
+// same "erroneous, already reported" value checkExpr returns, so every
+// later use of the name stays quiet instead of reporting a second,
+// spurious E001 apiece.
+func (s *scope) poison(name string) {
+	s.names[name] = nil
+}
+
+// poisonAll poisons every name a pattern would have bound had it
+// checked — a destructure binds several at once, and dropping the whole
+// group reports one error per name at every later use.
+func (s *scope) poisonAll(names []string) {
+	for _, n := range names {
+		s.poison(n)
+	}
+}
+
+// capturedType reports whether `name` is NOT a local of the current
+// function's scope `s` but DOES resolve in an enclosing function's
+// scope via the captureChain — i.e. it's a closure capture — and if
+// so returns its type. A local-function / lambda body gets a fresh
+// scope chain (the captureChain is the only bridge to the enclosing
+// function), so a name the current scope can't see but an enclosing
+// scope can is a capture. Used to reject capture write-back of
+// reference-shaped values (`cap = v` inside a closure), the
+// enforcement counterpart to the field-immutability rule
+// (docs/IMMUTABILITY-MIGRATION-PLAN.md §4).
+func (c *checker) capturedType(name string, s *scope) (ast.Type, bool) {
+	if _, ok := s.lookup(name); ok {
+		return nil, false // a local of the current function
+	}
+	for i := len(c.captureChain) - 1; i >= 0; i-- {
+		ent := c.captureChain[i]
+		if ent.scope == nil {
+			continue
+		}
+		if t, ok := ent.scope.lookup(name); ok {
+			return t, true
+		}
+	}
+	return nil, false
+}
+
+// identValueBinding resolves `name` to a value — a parameter, a `let`,
+// a match binding, or a captured outer local — and reports whether it
+// found one. It covers the two arms that precede `FuncSigs` in
+// checkExpr's *ast.Ident case (scope → captureChain → FuncSigs), so a
+// caller can tell which of the two a bare name came from.
+//
+// Both users are name-keyed module-level maps that a value binding of
+// the same name must shadow (#6302): `Info.GenericFuncs` on the
+// generic-call path, where `function apply(v: i32, id: (i32) => i32)`
+// calling `id(v)` resolved to a module-level `id[T]` and reported E040
+// for a type parameter the call site never mentions, and `Info.FuncSigs`
+// in inferUseParam, which read the module signature before the scope.
+func (c *checker) identValueBinding(name string, s *scope) (ast.Type, bool) {
+	if t, ok := s.lookup(name); ok {
+		return t, true
+	}
+	return c.capturedType(name, s)
+}
+
+// cellStore is one enclosing-scope `x = v` whose target is a `let`-declared
+// pointer-shaped local — a candidate boxcapture-cell store. The value's type
+// is kept because the cycle rule asks what the STORED value can reach, not
+// what the slot is declared to hold: `d: dyn Runner = Wrap { cb: f }` closes a
+// cycle through a slot whose own type says nothing about closures.
+type cellStore struct {
+	pos      ast.Position
+	name     string
+	decl     *ast.Var
+	declType ast.Type
+	valType  ast.Type
+}
+
+func (c *checker) checkFunction(fn *ast.FuncDecl) {
+	c.current = fn
+	defer func() { c.current = nil }()
+	c.capturedVars = nil
+	c.cellStores = nil
+	defer func() {
+		c.capturedVars = nil
+		c.cellStores = nil
+	}()
+
+	// A body-less `@import` function (extern WIT binding) has no body to
+	// check; its signature is still registered so call sites resolve.
+	if fn.Body == nil {
+		return
+	}
+
+	// Every named function declares its return type — `: void` when it
+	// returns nothing. Omitting it is an error rather than an inference
+	// request: a signature is the one part of a function its callers read,
+	// so it is written, not derived. (Lambdas are unaffected; they are
+	// checked through the synthesized-decl path, and the arrow form
+	// `(x: i32) => e` has no annotation slot at all.)
+	if fn.ReturnUnannotated {
+		c.errfCode(fn.P, "E070", "missing return type on function %q; declare it explicitly (use `: void` if it returns nothing)", fn.Name)
+	}
+
+	// Return-type inference: a plain (non-method, non-generic) function
+	// that wrote no `: Type` accumulates its return-expression types
+	// while the body is checked, then unifies them into a concrete
+	// return type (replacing the defaulted void).
+	//
+	// Since E070 this decides no ACCEPTED program's meaning — an
+	// unannotated function is already rejected above. It is kept as ERROR
+	// RECOVERY, and it is worth having: without it the function defaults to
+	// void and the void propagates, so one missing annotation becomes three
+	// errors, two of them pointing at innocent CALL SITES. Measured on
+	// `function greet() { return "hi"; } … greet().len()`:
+	//
+	//	with:    E070 at the declaration.
+	//	without: E070, plus "returns void but expression is string" at the
+	//	         return, plus "field access on non-struct value of type
+	//	         void" at `.len()` — which blames the caller for the
+	//	         callee's missing annotation.
+	//
+	// So do not delete this as dead code; TestUnannotatedFunctionReportsOnce
+	// pins the single-error property.
+	infer := fn.ReturnUnannotated && fn.Receiver == nil && fn.MethodRecv == "" && fn.AssocType == "" && len(fn.TypeParams) == 0
+	prevInfer := c.inferReturns
+	var rets []ast.Type
+	if infer {
+		c.inferReturns = &rets
+	} else {
+		c.inferReturns = nil
+	}
+	defer func() { c.inferReturns = prevInfer }()
+
+	root := newScope(nil)
+	for _, p := range fn.Params {
+		if _, dup := root.names[p.Name]; dup {
+			c.errfCode(fn.P, "E018", "duplicate parameter %q", p.Name)
+		}
+		root.names[p.Name] = p.Type
+	}
+	c.checkBlock(fn.Body, root)
+	c.settleLitLocals(fn.Body)
+	if infer {
+		c.inferReturnType(fn, rets)
+	}
+	c.checkOwnedParams(fn)
+	c.checkMustConsume(fn)
+	// A value-returning function must return on every path. Falling off
+	// the end leaves the result undefined (the interpreter yields Void
+	// where a real value is expected and crashes downstream; a scalar
+	// silently reads 0). Void functions may fall through. See
+	// docs/ADVERSARIAL-REVIEW-2026-06.md (F4).
+	if fn.Body != nil && !isVoidReturn(fn.ReturnType) && !funcBodyExits(fn.Body) {
+		c.errfCode(fn.P, "E052", "missing return: %q has return type %s but can fall off the end without returning a value", fn.Name, fn.ReturnType.String())
+	}
+	c.checkCaptureCycleStores()
+}
+
+// checkCaptureCycleStores is the enclosing-scope half of E049 (#8440).
+//
+// A capture is shared BY REFERENCE — closureconv.BoxMutatedCaptures gives the
+// variable a heap cell the moment it is captured and assigned anywhere — so
+// the enclosing scope writes the same slot the closure does. E049's other half
+// refuses the closure's own write-back; this one refuses the enclosing scope's
+// store, without which `g = f` where `f` captures `g` closes
+// cell -> closure -> env -> cell.
+//
+// That cell is the only mutable heap slot in the language — fields are E048,
+// elements are E056, and E057 limits Cell elements to scalars, strings and
+// owned byte arrays. Refusing the
+// stores through it that can reach a function value is what carries the
+// collector-free reference-counting invariant.
+//
+// The judgement is on the stored value's TYPE: a value whose type cannot name
+// a function can never be the closure, so `s = "b"` on a captured string and
+// `arr = arr.append(3)` on a captured `i32[]` stay legal. A closure literal is
+// the one shape read by value flow instead (freshLambdaCannotReach); every
+// other spelling is over-approximated in the conservative direction.
+//
+// It runs at the end of the function rather than at the store because the
+// capture set is not complete until then: a loop body may store the closure
+// that a later statement declares.
+func (c *checker) checkCaptureCycleStores() {
+	for _, st := range c.cellStores {
+		if !c.capturedVars[st.decl] {
+			continue
+		}
+		// A nil value type means the right-hand side already reported an
+		// error; a second diagnostic on the same statement is noise, and the
+		// program is rejected either way.
+		if st.valType == nil {
+			continue
+		}
+		if !c.typeReachesFunc(st.valType, map[string]bool{}) {
+			continue
+		}
+		c.errfCode(st.pos, "E049",
+			"cannot assign a value of type %s to captured %s %q: a captured variable is shared by reference, so storing a value that can reach a closure would close a reference cycle the runtime cannot collect; keep the closure in a variable it does not capture",
+			st.valType, st.declType, st.name)
+	}
+}
+
+// freshLambdaCannotReach reports whether v is a closure LITERAL that provably
+// cannot reach decl's capture cell, so storing it into that cell closes
+// nothing. A closure's only outward edges are its captures, so the literal is
+// safe when it captures neither decl itself nor anything whose type could hold
+// a closure that leads back to decl. Nested lambdas inside v are covered: the
+// capture chain forwards an inner body's outer-scope read into v's own capture
+// list.
+//
+// This is the one value-flow question the rule asks, and it is asked only of a
+// literal — the checker knows what a literal captures because it just built
+// it. Every other right-hand side (an identifier, a call result, a container
+// holding one) is a value from somewhere else, and is judged by its type
+// alone. It matters on the `if (flip) { g = (): T => …; }` shape, a
+// callback swapped on a flag, which the type test alone refuses.
+func (c *checker) freshLambdaCannotReach(v ast.Expr, decl *ast.Var, s *scope) bool {
+	lam, ok := v.(*ast.Lambda)
+	if !ok {
+		return false
+	}
+	for _, capture := range lam.Captures {
+		if s.lookupVarDecl(capture.Name) == decl {
+			return false
+		}
+		if c.typeReachesFunc(capture.Type, map[string]bool{}) {
+			return false
+		}
+	}
+	return true
+}
+
+// typeReachesFunc reports whether a value of type t can transitively hold a
+// function value — the only kind of value that can point back at the closure
+// environment holding a capture cell, and therefore the only kind whose store
+// into that cell can close a cycle.
+//
+// Opaque types answer yes: `dyn` erases its concrete value, an unsubstituted
+// type parameter stands for anything, and an associated-type projection is not
+// resolved here. `seen` breaks the recursion on a self-referential struct or
+// enum; the key is the nominal name, so `Node` is visited once however deeply
+// it nests.
+func (c *checker) typeReachesFunc(t ast.Type, seen map[string]bool) bool {
+	switch v := t.(type) {
+	case nil:
+		return false
+	case *ast.FuncType:
+		return true
+	case ast.DynTraitType, ast.ParamType, ast.SelfType, ast.ProjType:
+		return true
+	case ast.ArrayType:
+		return c.typeReachesFunc(v.Elem, seen)
+	case ast.SliceType:
+		return c.typeReachesFunc(v.Elem, seen)
+	case ast.StreamType:
+		return c.typeReachesFunc(v.Elem, seen)
+	case ast.TupleType:
+		for _, e := range v.Elems {
+			if c.typeReachesFunc(e, seen) {
+				return true
+			}
+		}
+		return false
+	case ast.StructType:
+		if seen[v.Name] {
+			return false
+		}
+		seen[v.Name] = true
+		// The arguments are walked whether or not the name resolves to a
+		// declaration: a builtin generic container (`Map[string, () => i32]`)
+		// has no StructDecl, and a user generic's field types still name the
+		// parameter rather than the argument until monomorphisation.
+		for _, a := range v.Args {
+			if c.typeReachesFunc(a, seen) {
+				return true
+			}
+		}
+		if sd, ok := c.info.Structs[v.Name]; ok {
+			for _, f := range sd.Fields {
+				if c.typeReachesFunc(f.Type, seen) {
+					return true
+				}
+			}
+		}
+		return false
+	case ast.EnumType:
+		if seen[v.Name] {
+			return false
+		}
+		seen[v.Name] = true
+		for _, a := range v.Args {
+			if c.typeReachesFunc(a, seen) {
+				return true
+			}
+		}
+		if ed, ok := c.info.Enums[v.Name]; ok {
+			for _, variant := range ed.Variants {
+				for _, pt := range variant.Payloads {
+					if c.typeReachesFunc(pt, seen) {
+						return true
+					}
+				}
+			}
+		}
+		return false
+	}
+	// Scalars, `string` / `str`, `char`, `void`, `never` and resource
+	// handles hold no Fern reference at all.
+	return false
+}
+
+// checkEscapes runs the two view-escape rules — E063 (`[T]` slice) and
+// E065 (`str`) — over the whole program, after every body has been
+// checked. Both are interprocedural: a view passed through a callee
+// (`return id(slice_unchecked(s, 0, 1))`) escapes exactly when the
+// argument that callee views does, so each rule needs a summary of which
+// PARAMETERS a function's return may view, and that summary needs the
+// callee's resolved locals and match-arm binding types. Running per
+// function during checkFunction could only ever see callees declared
+// earlier, which would make a diagnostic depend on declaration order.
+//
+// By this point the checker has rewritten `x.m(a)` into
+// `__method_T_m(x, a)`, so every call is an Ident callee with the
+// receiver as argument 0 and one summary keyed by function name covers
+// methods and free functions alike.
+func (c *checker) checkEscapes(prog *ast.Program) {
+	c.checkSliceEscapes(prog)
+	c.checkStrEscapes(prog)
+	c.checkCursorEscapes(prog)
+}
+
+// checkCursorEscapes is E065 for a `MapIter`: the cursor reads its map's
+// columns through a raw pointer, so returning one over a map this frame owns
+// hands the caller a view of storage reclaimed at the return (#9920). That
+// includes a cursor carried out inside an array or tuple literal. A cursor
+// over a map the caller lent, directly or through a field, stays anchored to
+// the caller's map and may be returned.
+func (c *checker) checkCursorEscapes(prog *ast.Program) {
+	envs, order := c.escapeEnvs(prog, mentionsMapIter)
+	for _, fn := range order {
+		env := envs[fn]
+		sources := bindingSources(fn)
+		forEachReturn(fn, func(ret *ast.Return) {
+			if returnsLocalCursor(ret.Value, env, sources) {
+				c.errfCode(ret.P, "E065", "returning a `MapIter` over a function-local map: the map is reclaimed when %q returns, leaving the cursor reading freed storage — return the map and iterate it in the caller, or iterate a map the caller passed in", fn.Name)
+			}
+		})
+	}
+}
+
+func mentionsMapIter(t ast.Type) bool {
+	switch x := t.(type) {
+	case ast.StructType:
+		return x.Name == "MapIter"
+	case ast.ArrayType:
+		return mentionsMapIter(x.Elem)
+	case ast.TupleType:
+		for _, e := range x.Elems {
+			if mentionsMapIter(e) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// returnsLocalCursor reports whether e is `m.iter()` over a map this frame
+// owns, a local that may hold one, or an array or tuple literal holding one.
+// A name is chased through every value the function binds or assigns to it,
+// so a shadowing declaration or a reassignment on another path cannot hide
+// the one that dangles.
+func returnsLocalCursor(e ast.Expr, env *escapeEnv, sources map[string][]ast.Expr) bool {
+	switch x := e.(type) {
+	case *ast.Call:
+		if id, ok := x.Callee.(*ast.Ident); ok && id.Name == "__method_Map_iter" && len(x.Args) == 1 {
+			return !lentPlace(x.Args[0], env)
+		}
+	case *ast.ArrayLit:
+		return anyLocalCursor(x.Elems, env, sources)
+	case *ast.TupleLit:
+		return anyLocalCursor(x.Elems, env, sources)
+	case *ast.Ident:
+		if env.visiting[x.Name] {
+			return false
+		}
+		env.visiting[x.Name] = true
+		defer delete(env.visiting, x.Name)
+		return anyLocalCursor(sources[x.Name], env, sources)
+	}
+	return false
+}
+
+func anyLocalCursor(es []ast.Expr, env *escapeEnv, sources map[string][]ast.Expr) bool {
+	for _, e := range es {
+		if returnsLocalCursor(e, env, sources) {
+			return true
+		}
+	}
+	return false
+}
+
+// bindingSources maps each name in fn's body to every value a `let` binds it
+// to or an assignment stores into it, whichever declaration of the name.
+func bindingSources(fn *ast.FuncDecl) map[string][]ast.Expr {
+	out := map[string][]ast.Expr{}
+	if fn.Body == nil {
+		return out
+	}
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.Var:
+			if x.Init != nil {
+				out[x.Name] = append(out[x.Name], x.Init)
+			}
+		case *ast.Assign:
+			if id, ok := x.Target.(*ast.Ident); ok {
+				out[id.Name] = append(out[id.Name], x.Value)
+			}
+		}
+		return true
+	})
+	return out
+}
+
+// lentPlace reports whether e names storage the caller owns: a parameter, or
+// a field chain off one.
+func lentPlace(e ast.Expr, env *escapeEnv) bool {
+	for {
+		switch x := e.(type) {
+		case *ast.FieldAccess:
+			e = x.Target
+		case *ast.Ident:
+			_, ok := env.params[x.Name]
+			return ok
+		default:
+			return false
+		}
+	}
+}
+
+// escapeEnv is the scope a returned view is resolved against: the
+// enclosing function's parameters (by declaration index, which is what a
+// summary names) and its declared locals, plus — for the `str` rule —
+// each match-arm payload binding and the expression whose storage it
+// views. The slice rule has no such binding form and ignores armViews.
+type escapeEnv struct {
+	params   map[string]int
+	locals   map[string]*ast.Var
+	armViews map[string]ast.Expr
+	visiting map[string]bool // cycle guard for the binding chase
+}
+
+// escapeEnv builds the resolution scope for one function, or nil when it
+// has no body to resolve against.
+func (c *checker) escapeEnv(fn *ast.FuncDecl) *escapeEnv {
+	if fn.Body == nil {
+		return nil
+	}
+	env := &escapeEnv{
+		params:   map[string]int{},
+		locals:   map[string]*ast.Var{},
+		armViews: map[string]ast.Expr{},
+		visiting: map[string]bool{},
+	}
+	for i, p := range fn.Params {
+		env.params[p.Name] = i
+	}
+	for _, v := range c.info.Locals[fn] {
+		env.locals[v.Name] = v
+	}
+	// A match-arm payload binding is not a declared local, so the chase
+	// cannot reach its scrutinee on its own. Record what each `str`
+	// binding views; since #5634 made `s[a:b]` an `Option[str]`,
+	// unwrapping through a match is the ONLY way to name that view, and
+	// without this the producer is invisible to the rule.
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		switch m := n.(type) {
+		case *ast.Match:
+			for _, arm := range m.Arms {
+				bindArmViews(m.Tag, arm.Bindings, arm.BindingTypes, env)
+			}
+		case *ast.MatchExpr:
+			for _, arm := range m.Arms {
+				bindArmViews(m.Tag, arm.Bindings, arm.BindingTypes, env)
+			}
+		}
+		return true
+	})
+	return env
+}
+
+// escapeEnvs builds one env per function whose return type `wants`
+// accepts, plus the declaration-ordered list of those functions so the
+// fixpoint and the reporting walk agree on order.
+func (c *checker) escapeEnvs(prog *ast.Program, wants func(ast.Type) bool) (map[*ast.FuncDecl]*escapeEnv, []*ast.FuncDecl) {
+	envs := map[*ast.FuncDecl]*escapeEnv{}
+	var order []*ast.FuncDecl
+	for _, fn := range prog.Funcs {
+		if _, dup := envs[fn]; dup || !wants(fn.ReturnType) {
+			continue
+		}
+		env := c.escapeEnv(fn)
+		if env == nil {
+			continue
+		}
+		envs[fn] = env
+		order = append(order, fn)
+	}
+	return envs, order
+}
+
+// viewRoots is where a returned view bottoms out: `local` when it views
+// storage the enclosing function owns (what E063 / E065 reject), and
+// `params` for each parameter index of that function whose storage it may
+// view (what a caller's chase needs). Both can be set at once — a
+// conditional returning a param view on one path and a local view on the
+// other. Literals are immortal and contribute neither.
+type viewRoots struct {
+	local  bool
+	params map[int]bool
+}
+
+func (r *viewRoots) merge(o viewRoots) {
+	r.local = r.local || o.local
+	for i := range o.params {
+		r.params[i] = true
+	}
+}
+
+// forEachReturn calls f for every value-carrying `return` in fn's body.
+func forEachReturn(fn *ast.FuncDecl, f func(*ast.Return)) {
+	ast.Walk(fn.Body, func(n ast.Node) bool {
+		if ret, ok := n.(*ast.Return); ok && ret.Value != nil {
+			f(ret)
+		}
+		return true
+	})
+}
+
+// viewSummary is what a CALLER needs to know about a callee's return.
+type viewSummary struct {
+	// params are the callee's parameter indices whose storage a return
+	// may view, so a caller chases the arguments it passed there.
+	params map[int]bool
+	// fresh marks a callee that hands back storage IT owns, by value — an
+	// owned `T[]` or `string` return built in its own frame. The CALLER's
+	// frame then owns that storage, so slicing the result and returning
+	// the slice dangles exactly as slicing a local does. A view-returning
+	// function in the same shape is reported against where it stands, so
+	// it is not marked: propagating it too would report one bug twice.
+	fresh bool
+}
+
+// returnViewSummaries maps each function in fns to what its returns hand
+// back, iterating rootsOf to a fixpoint. Growth is monotone — a summary
+// only ever gains parameter indices, and `fresh` only ever goes false to
+// true — and the index set is bounded by the parameter count, so this
+// terminates; recursion needs no special case, since a self-call reads
+// the partial summary and the next round picks up whatever it grew.
+//
+// A function absent from the result hands back nothing a caller can
+// dangle on — either it was not summarised, or every return is a view of
+// something that outlives the call.
+func returnViewSummaries(fns []*ast.FuncDecl, rootsOf func(*ast.FuncDecl, ast.Expr, map[string]viewSummary) viewRoots) map[string]viewSummary {
+	sums := map[string]viewSummary{}
+	for _, fn := range fns {
+		sums[fn.Name] = viewSummary{params: map[int]bool{}}
+	}
+	for changed := true; changed; {
+		changed = false
+		for _, fn := range fns {
+			cur := sums[fn.Name]
+			owned := !isViewReturn(fn.ReturnType)
+			forEachReturn(fn, func(ret *ast.Return) {
+				roots := rootsOf(fn, ret.Value, sums)
+				for i := range roots.params {
+					if !cur.params[i] {
+						cur.params[i] = true
+						changed = true
+					}
+				}
+				if roots.local && owned && !cur.fresh {
+					cur.fresh = true
+					sums[fn.Name] = cur
+					changed = true
+				}
+			})
+		}
+	}
+	return sums
+}
+
+// isViewReturn reports whether a return type is a borrowed VIEW — a `[T]`
+// slice or a `str`. Everything else hands the caller storage it owns.
+func isViewReturn(t ast.Type) bool {
+	switch t.(type) {
+	case ast.SliceType, ast.StrType:
+		return true
+	}
+	return false
+}
+
+// checkSliceEscapes implements E063: a non-owning `[T]` slice must not
+// outlive the storage it views. A slice is a `{data_ptr, len}` pair
+// pointing into an array the caller still owns; returning one that views
+// a function-LOCAL array hands back a pointer into storage the RC passes
+// reclaim at exit. Params and receivers are caller-owned, so slicing one
+// is fine; an array literal or a locally-declared owned array is not.
+//
+// Like E065 the chase runs through calls: a slice passed through a
+// callee that returns a view of one of its parameters — `return
+// id_sl(a[0:2])` — views whatever the caller passed to that parameter.
+// The summary returnViewSummaries computes says which those are.
+func (c *checker) checkSliceEscapes(prog *ast.Program) {
+	// Every function with a body is summarised, not just the ones whose
+	// declared return is a `[T]`: a `T[]`-returning function that hands
+	// back a parameter moves the CALLER's array, so slicing the result
+	// views the caller's storage — `idarr(a)[0:1]` needs idarr's summary
+	// to reach `a`. Which functions are reported against is separate;
+	// see below.
+	envs, order := c.escapeEnvs(prog, func(t ast.Type) bool { return true })
+	sums := returnViewSummaries(order, func(fn *ast.FuncDecl, ret ast.Expr, sums map[string]viewSummary) viewRoots {
+		if _, isSlice := fn.ReturnType.(ast.SliceType); isSlice {
+			// A `[T]` return IS the view, so where it points is the view
+			// question.
+			return c.sliceViewRoots(ret, envs[fn], sums)
+		}
+		// An owned return hands its STORAGE to the caller, so the question
+		// is where that storage came from — an argument the caller still
+		// owns, or the callee's own frame.
+		return c.sliceSourceRoots(ret, envs[fn], sums)
+	})
+	// Only a `[T]` return is REPORTED against, even though every function
+	// is summarised: an owned `T[]` return MOVES its storage to the
+	// caller, so it cannot dangle, and a slice does not coerce into one
+	// (that is an E002). Reporting on both flags every `T[]`-returning
+	// function that hands back a local array — a move, and legal.
+	for _, fn := range prog.Funcs {
+		env, ok := envs[fn]
+		if !ok {
+			continue
+		}
+		if _, isSlice := fn.ReturnType.(ast.SliceType); !isSlice {
+			continue
+		}
+		forEachReturn(fn, func(ret *ast.Return) {
+			if c.sliceViewRoots(ret.Value, env, sums).local {
+				c.errfCode(ret.P, "E063", "returning a `[T]` slice that views function-local storage: the backing array is reclaimed when %q returns, leaving a dangling view — return an owned array (`T[]`) or slice a parameter instead", fn.Name)
+			}
+		})
+	}
+}
+
+// sliceViewRoots reports where the `[T]` value of expr bottoms out — see
+// strViewRoots, which this mirrors for arrays: `local` is what E063
+// rejects, `params` is what the caller's chase needs.
+func (c *checker) sliceViewRoots(expr ast.Expr, env *escapeEnv, sums map[string]viewSummary) viewRoots {
+	out := viewRoots{params: map[int]bool{}}
+	switch e := expr.(type) {
+	case *ast.SliceExpr:
+		if e.IsString {
+			// String slicing yields an `Option[str]`, not a `[T]`.
+			return out
+		}
+		out.merge(c.sliceSourceRoots(e.Source, env, sums))
+	case *ast.Call:
+		// The result views the STORAGE behind each argument the callee's
+		// summary names — an array argument is that storage itself, not a
+		// slice value, so the chase goes through sliceSourceRoots.
+		if id, ok := e.Callee.(*ast.Ident); ok {
+			for i := range sums[id.Name].params {
+				if i < len(e.Args) {
+					out.merge(c.sliceSourceRoots(e.Args[i], env, sums))
+				}
+			}
+		}
+	case *ast.Ident:
+		if i, ok := env.params[e.Name]; ok {
+			out.params[i] = true
+			return out
+		}
+		v, ok := env.locals[e.Name]
+		if !ok || v.Init == nil || env.visiting[e.Name] {
+			return out
+		}
+		env.visiting[e.Name] = true
+		defer delete(env.visiting, e.Name)
+		out.merge(c.sliceViewRoots(v.Init, env, sums))
+	}
+	return out
+}
+
+// sliceSourceRoots reports where the storage a slice EXPRESSION views
+// bottoms out — an array literal and a locally-declared owned array are
+// the function's own, a parameter is the caller's, and a local slice
+// borrows whatever its initializer views.
+func (c *checker) sliceSourceRoots(src ast.Expr, env *escapeEnv, sums map[string]viewSummary) viewRoots {
+	out := viewRoots{params: map[int]bool{}}
+	switch s := src.(type) {
+	case *ast.ArrayLit:
+		out.local = true
+	case *ast.SliceExpr:
+		if s.IsString {
+			return out
+		}
+		out.merge(c.sliceSourceRoots(s.Source, env, sums))
+	case *ast.Call:
+		// A callee handing back a view of one of its parameters is
+		// slicing the caller's storage, so the slice of that result views
+		// whatever the caller passed in. A callee handing back storage it
+		// BUILT is handing this frame the owner, so slicing an unbound
+		// `mkarr()[0:1]` dangles exactly as slicing a local array does —
+		// binding it first already reported, and the temporary is the
+		// same storage without a name.
+		if id, ok := s.Callee.(*ast.Ident); ok {
+			sum := sums[id.Name]
+			out.local = out.local || sum.fresh
+			for i := range sum.params {
+				if i < len(s.Args) {
+					out.merge(c.sliceSourceRoots(s.Args[i], env, sums))
+				}
+			}
+		}
+	case *ast.Ident:
+		if i, ok := env.params[s.Name]; ok {
+			out.params[i] = true
+			return out
+		}
+		if env.visiting[s.Name] {
+			return out
+		}
+		v, ok := env.locals[s.Name]
+		if !ok {
+			return out
+		}
+		if _, isArr := v.Type.(ast.ArrayType); isArr {
+			// A locally-declared owned array is the backing storage.
+			out.local = true
+			return out
+		}
+		if _, isSlice := v.Type.(ast.SliceType); isSlice && v.Init != nil {
+			// A local slice borrows whatever its initializer views.
+			env.visiting[s.Name] = true
+			defer delete(env.visiting, s.Name)
+			out.merge(c.sliceViewRoots(v.Init, env, sums))
+		}
+	}
+	return out
+}
+
+// checkStrEscapes implements E065 — the `str` sibling of E063 (#4814 /
+// #4297 A2): a borrowed-string view must not escape via `return` unless
+// its source is a parameter (caller-owned) or a string literal ('static /
+// immortal). A `str` viewing a function-LOCAL owned `string` outlives
+// storage the RC passes may reclaim at exit — the #4294 corruption class
+// the `str` type exists to prevent.
+//
+// A returned view bottoms out at a local `string` binding through an ident
+// chain, a `slice_unchecked` call, a match-arm payload binding, or a call
+// to a function that returns a view of one of its own parameters — the
+// route the summary below carries. The match-arm one carries the slice
+// producer since #5634: `s[a:b]` is an `Option[str]`, so unwrapping it
+// through a match is the only way to name the view, and the arm binding is
+// not a declared local.
+//
+// `return` remains the only checked escape position.
+func (c *checker) checkStrEscapes(prog *ast.Program) {
+	// `string`-returning functions are summarised alongside the `str` ones:
+	// a view of the owned string one of them BUILT dangles once this frame
+	// drops it, so `slice_unchecked(mkstr(), 0, 1)` needs mkstr's summary.
+	// Only `str` returns are REPORTED against — an owned `string` return
+	// moves its storage to the caller and cannot dangle.
+	envs, order := c.escapeEnvs(prog, func(t ast.Type) bool {
+		switch t.(type) {
+		case ast.StrType, ast.StringType:
+			return true
+		}
+		return false
+	})
+	sums := returnViewSummaries(order, func(fn *ast.FuncDecl, ret ast.Expr, sums map[string]viewSummary) viewRoots {
+		if _, isStr := fn.ReturnType.(ast.StrType); isStr {
+			return c.strViewRoots(ret, envs[fn], sums)
+		}
+		return c.stringSourceRoots(ret, envs[fn], sums)
+	})
+	for _, fn := range order {
+		if _, isStr := fn.ReturnType.(ast.StrType); !isStr {
+			continue
+		}
+		forEachReturn(fn, func(ret *ast.Return) {
+			if c.strViewRoots(ret.Value, envs[fn], sums).local {
+				c.errfCode(ret.P, "E065", "returning a `str` view of a function-local string: the backing string is reclaimed when %q returns, leaving a dangling view — return an owned `string` (materialise with .to_owned()) or view a parameter instead", fn.Name)
+			}
+		})
+	}
+}
+
+// bindArmViews records, for every `str` payload binding in one arm, the
+// expression whose bytes that binding views — the scrutinee's SOURCE, not
+// the scrutinee itself, since the scrutinee is the `Option` box around it.
+//
+// Keyed by name and flat, matching the precision of the locals map beside
+// it: two sibling arms binding the same name collapse to one entry. That
+// can only widen what the rule reports, never narrow it, because every
+// entry names storage some arm really does view.
+func bindArmViews(tag ast.Expr, names []string, types []ast.Type, env *escapeEnv) {
+	src := viewedSource(tag, env, map[string]bool{})
+	if src == nil {
+		return
+	}
+	for i, name := range names {
+		if i >= len(types) {
+			break
+		}
+		if _, isStr := types[i].(ast.StrType); isStr {
+			env.armViews[name] = src
+		}
+	}
+}
+
+// viewedSource returns the expression whose storage a slice-producing
+// expression views, or nil when it produces no view of anything nameable.
+// `visiting` guards the local-initialiser chase against a cycle.
+func viewedSource(e ast.Expr, env *escapeEnv, visiting map[string]bool) ast.Expr {
+	switch x := e.(type) {
+	case *ast.SliceExpr:
+		return x.Source
+	case *ast.Call:
+		if id, ok := x.Callee.(*ast.Ident); ok && id.Name == "slice_unchecked" && len(x.Args) == 3 {
+			return x.Args[0]
+		}
+	case *ast.Ident:
+		// `let t = s[a:b]; match (t) { … }` — the scrutinee is a local
+		// holding the Option, so the view is whatever built it.
+		if visiting[x.Name] {
+			return nil
+		}
+		if v, ok := env.locals[x.Name]; ok && v.Init != nil {
+			visiting[x.Name] = true
+			defer delete(visiting, x.Name)
+			return viewedSource(v.Init, env, visiting)
+		}
+	}
+	return nil
+}
+
+// stringSourceRoots reports where the storage behind an OWNED `string`
+// value comes from: a parameter the caller still owns, or this frame. It
+// answers the question `strViewRoots` cannot, because a `string` is not a
+// view — the interesting fact is who allocated it, not what it points at.
+//
+// A string literal is immortal and contributes neither root. Anything that
+// BUILDS a string — a concat, a format, an interpolation — is this frame's.
+// So is a call the summary does not cover: the only string-returning
+// callees without a FuncDecl are the builtins, and every one of them
+// (`strbuf_take`, `string_from_bytes_unchecked`) allocates fresh.
+func (c *checker) stringSourceRoots(expr ast.Expr, env *escapeEnv, sums map[string]viewSummary) viewRoots {
+	out := viewRoots{params: map[int]bool{}}
+	switch e := expr.(type) {
+	case *ast.StringLit:
+		return out // 'static / immortal
+	case *ast.Ident:
+		if i, ok := env.params[e.Name]; ok {
+			out.params[i] = true // caller-owned, and named for the summary
+			return out
+		}
+		if v, ok := env.locals[e.Name]; ok {
+			if _, isString := v.Type.(ast.StringType); isString {
+				// A locally-declared owned `string` IS this frame's
+				// storage, whatever built it. Chasing its initialiser
+				// instead would call `let s: string = mk()` immortal
+				// whenever mk happens to return a literal, which is a
+				// precision claim neither checker makes.
+				out.local = true
+				return out
+			}
+			if v.Init != nil && !env.visiting[e.Name] {
+				env.visiting[e.Name] = true
+				defer delete(env.visiting, e.Name)
+				return c.stringSourceRoots(v.Init, env, sums)
+			}
+		}
+		out.local = true
+		return out
+	case *ast.Call:
+		if id, ok := e.Callee.(*ast.Ident); ok {
+			sum, summarised := sums[id.Name]
+			out.local = !summarised || sum.fresh
+			for i := range sum.params {
+				if i < len(e.Args) {
+					out.merge(c.stringSourceRoots(e.Args[i], env, sums))
+				}
+			}
+			return out
+		}
+	}
+	out.local = true
+	return out
+}
+
+// strViewRoots reports where the `str` value of expr bottoms out; see
+// viewRoots for what each field means.
+func (c *checker) strViewRoots(expr ast.Expr, env *escapeEnv, sums map[string]viewSummary) viewRoots {
+	out := viewRoots{params: map[int]bool{}}
+	switch e := expr.(type) {
+	case *ast.StringLit:
+		return out // 'static / immortal
+	case *ast.SliceExpr:
+		// `s[a:b]` is `Option[str]` (#5634), so it can never be the value
+		// of a `str`-returning `return` — assignability rejects it before
+		// this walk runs. The view it produces reaches a `return` only by
+		// being unwrapped into a match-arm binding, which the Ident arm
+		// resolves through env.armViews.
+		return out
+	case *ast.Call:
+		if id, ok := e.Callee.(*ast.Ident); ok {
+			// `slice_unchecked(s, a, b)` is the unchecked slice producer
+			// — the same byte view `s[a:b]` used to yield — so it escapes
+			// exactly when its source does.
+			if id.Name == "slice_unchecked" && len(e.Args) == 3 {
+				// Its source is a `string`, so who OWNS that string is
+				// the question — a param outlives the call, storage this
+				// frame holds does not.
+				out.merge(c.stringSourceRoots(e.Args[0], env, sums))
+				return out
+			}
+			// Otherwise the result views whatever the caller handed to
+			// the parameters the callee's summary names.
+			for i := range sums[id.Name].params {
+				if i < len(e.Args) {
+					out.merge(c.strViewRoots(e.Args[i], env, sums))
+				}
+			}
+		}
+		return out
+	case *ast.Ident:
+		// A match-arm binding is the innermost scope, so it is resolved
+		// before params and locals: an arm may shadow either name.
+		if src, ok := env.armViews[e.Name]; ok && !env.visiting[e.Name] {
+			env.visiting[e.Name] = true
+			defer delete(env.visiting, e.Name)
+			return c.strViewRoots(src, env, sums)
+		}
+		if i, ok := env.params[e.Name]; ok {
+			out.params[i] = true // caller-owned, and named for the summary
+			return out
+		}
+		v, ok := env.locals[e.Name]
+		if !ok || env.visiting[e.Name] {
+			return out
+		}
+		if _, isStr := v.Type.(ast.StrType); isStr && v.Init != nil {
+			// A local `str` binding views whatever its initializer views.
+			env.visiting[e.Name] = true
+			defer delete(env.visiting, e.Name)
+			return c.strViewRoots(v.Init, env, sums)
+		}
+		if _, isString := v.Type.(ast.StringType); isString {
+			// A locally-declared owned string IS the backing storage.
+			out.local = true
+		}
+		return out
+	}
+	return out
+}
+
+// inferReturnType folds the return-expression types collected while
+// checking an unannotated function's body (rets; a nil entry is a bare
+// `return;`) into a single return type and stamps it on the FuncDecl +
+// its registered signature. Only fires for functions that defaulted to
+// void, which currently error if they return a value — so this never
+// changes the meaning of already-valid code.
+func (c *checker) inferReturnType(fn *ast.FuncDecl, rets []ast.Type) {
+	var unified ast.Type
+	hasVoid := false
+	for _, t := range rets {
+		if t == nil {
+			hasVoid = true
+			continue
+		}
+		if unified == nil {
+			unified = t
+			continue
+		}
+		if u, ok := unifyReturnType(unified, t); ok {
+			unified = u
+		} else {
+			c.errfCode(fn.P, "E002", "cannot infer return type for %q: conflicting return types %s and %s; add an explicit return type", fn.Name, unified, t)
+			// Keep the first type so downstream has something concrete.
+		}
+	}
+	if unified == nil {
+		// No value returns (only bare `return;` or none): stays void.
+		return
+	}
+	if hasVoid {
+		c.errfCode(fn.P, "E012", "function %q returns a value on some paths but not others; add an explicit return type", fn.Name)
+	}
+	sig := c.info.FuncSigs[fn.Name]
+	// `return A;` inside A: a bare function name is typed as its own
+	// signature, so installing that as the result would close a cycle
+	// through sig.Result, and every later walk of the type (String,
+	// Equal) recurses without end.
+	if sig != nil && typeMentionsSig(unified, sig) {
+		c.errfCode(fn.P, "E002", "cannot infer return type for %q: it returns itself; add an explicit return type", fn.Name)
+		return
+	}
+	fn.ReturnType = unified
+	if sig != nil {
+		sig.Result = unified
+	}
+}
+
+// typeMentionsSig reports whether t is, or is built from, the signature
+// object sig — pointer identity, since that is what closes the cycle.
+func typeMentionsSig(t ast.Type, sig *ast.FuncType) bool {
+	switch x := t.(type) {
+	case *ast.FuncType:
+		if x == sig {
+			return true
+		}
+		for _, p := range x.Params {
+			if typeMentionsSig(p, sig) {
+				return true
+			}
+		}
+		return typeMentionsSig(x.Result, sig)
+	case ast.ArrayType:
+		return typeMentionsSig(x.Elem, sig)
+	case ast.SliceType:
+		return typeMentionsSig(x.Elem, sig)
+	case ast.StreamType:
+		return typeMentionsSig(x.Elem, sig)
+	case ast.TupleType:
+		for _, e := range x.Elems {
+			if typeMentionsSig(e, sig) {
+				return true
+			}
+		}
+	case ast.StructType:
+		for _, a := range x.Args {
+			if typeMentionsSig(a, sig) {
+				return true
+			}
+		}
+	case ast.EnumType:
+		for _, a := range x.Args {
+			if typeMentionsSig(a, sig) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// unifyReturnType merges two inferred return-expression types into one.
+// Beyond exact equality it bridges an under-specified enum constructor
+// against a specified one — `return None;` types as a payload-less
+// `Option`, which adopts the `Option[i32]` from a sibling `return
+// Some(n);` (and the same for `Result`). Anything else is a conflict.
+func unifyReturnType(a, b ast.Type) (ast.Type, bool) {
+	if ast.Equal(a, b) {
+		return a, true
+	}
+	// `never` is the bottom type, and ast.NeverType's own contract is that it
+	// "unifies with any type": a return whose expression cannot yield a value
+	// leaves before returning one, so it constrains the result not at all.
+	// Assignability and if / match arm unification already read it that way;
+	// this site did not, and the gap showed up on block-bodied arrow lambdas.
+	// `(x) => { return e; }` desugars to `return <block that always returns>`,
+	// so inference saw e's type from the inner return and the block's own
+	// `never` from the outer one and called them a conflict — E002 on code
+	// that is plainly fine, and the reason the form needed an explicit return
+	// type while `(x) => { return e; }` did not (#2673).
+	if _, ok := a.(ast.NeverType); ok {
+		return b, true
+	}
+	if _, ok := b.(ast.NeverType); ok {
+		return a, true
+	}
+	ea, aok := a.(ast.EnumType)
+	eb, bok := b.(ast.EnumType)
+	if aok && bok && ea.Name == eb.Name {
+		return mergeEnumInference(ea, eb)
+	}
+	return a, false
+}
+
+// methodConsumesReceiver reports whether the method named by a call's
+// MethodCallSite takes its receiver by `own` (consuming) — for both concrete
+// methods (the impl's hoisted self own-flag in c.ownFuncs) and `dyn Trait`
+// dispatch (the trait method's declared self ownership). A consuming receiver is
+// a MOVE, not a borrow, so the affine use-after-move analysis must record it as
+// a consume; otherwise `x.consume(); x.consume()` slips past E050 and
+// double-frees at runtime.
+func (c *checker) methodConsumesReceiver(m *ast.MethodCallSite) bool {
+	if m == nil {
+		return false
+	}
+	if dt, ok := m.Receiver.(ast.DynTraitType); ok {
+		// checkDynMethodCall resolved the method to exactly one trait of
+		// the set (two declaring it is E062, which never reaches here)
+		// and recorded it — read the same one back rather than
+		// re-searching the union and hoping the two agree.
+		if m.OwnerTrait != "" {
+			return c.dynMethodConsumes(m.OwnerTrait, m.Field)
+		}
+		for _, tr := range dt.Traits {
+			td, ok := c.info.Traits[tr]
+			if !ok {
+				continue
+			}
+			for i := range td.Methods {
+				if td.Methods[i].Name == m.Field {
+					return traitSelfIsOwn(td.Methods[i])
+				}
+			}
+		}
+		return false
+	}
+	typeName, ok := methodTypeName(m.Receiver)
+	if !ok {
+		return false
+	}
+	// Preferring the call site's own OwnerTrait is what keeps this
+	// answer bound to the impl dispatch picked: ResolveMethod reports an
+	// owner only for the implementation it returned, so re-resolving
+	// with that owner as the preference lands on the same registration.
+	if mangled, _, ok := c.resolveMethod(typeName, m.Field, []string{m.OwnerTrait}); ok {
+		flags := c.ownFuncs[mangled]
+		return len(flags) > 0 && flags[0]
+	}
+	return false
+}
+
+// dynMethodConsumes reports whether trait method `field` on `trait` takes its
+// receiver by `own` — the `dyn Trait` analogue of methodConsumesReceiver, read
+// straight off the trait declaration (the dispatch is dynamic, so the trait
+// signature is the contract).
+func (c *checker) dynMethodConsumes(trait, field string) bool {
+	td, ok := c.info.Traits[trait]
+	if !ok {
+		return false
+	}
+	for i := range td.Methods {
+		if td.Methods[i].Name == field {
+			return traitSelfIsOwn(td.Methods[i])
+		}
+	}
+	return false
+}
+
+// traitSelfIsOwn reports whether trait signature `m` takes its RECEIVER by
+// `own`. An associated function has no receiver, so its Params[0].Own is a
+// real argument's flag and answers a different question.
+func traitSelfIsOwn(m ast.TraitMethod) bool {
+	return !m.Assoc && len(m.Params) > 0 && m.Params[0].Own
+}
+
+// checkOwnedParams is the affine use-after-move analysis for `own` (owned /
+// consuming) parameters — the static foundation of Fern's ownership transfer.
+// An owned param may be CONSUMED at most once on every execution path; using it
+// after it's been consumed is E050. "Consume" = a whole-value use of the bare
+// parameter (matched, returned, passed as a call argument, bound to a var,
+// stored into a literal); "borrow" = a projection (`x.field`, `x[i]`, a method
+// receiver `x.m()`, a closure call `x(...)`), which reads through the value
+// without ending its life and may repeat. The classification is deliberately
+// forward-compatible with the later ownership-transfer slice: a plain `f(x)`
+// counts as a consume NOW, so code that would become a use-after-move once
+// `own` args are lowered as moves is rejected up front.
+//
+// No codegen changes here — owned params still lower as borrowed; this only
+// establishes the invariant the transfer + reuse slices rely on.
+// SelfReassignOwnMoveArg recognizes the #4873 step-0 move shape on a
+// self-reassignment `x = f(..., x, ...)`: the assign target is a bare
+// ident whose name occurs EXACTLY ONCE anywhere in the RHS (a second
+// read would observe the consumed value), and that one occurrence is a
+// direct bare-ident argument sitting in an `own` position of the
+// callee's flags. Returns that argument Ident, or nil when the shape
+// doesn't match. Exported because the checker's E051 admission and the
+// IR's move-on-call + overwrite-dec suppression must key on the
+// IDENTICAL recognition — if they drift, either a double free (rc
+// suppresses, checker rejects a shape that then re-lands via another
+// path) or a leak/UAF (checker admits, rc still exit-decs) follows.
+func SelfReassignOwnMoveArg(asn *ast.Assign, ownFuncs map[string][]bool) *ast.Ident {
+	call, ok := asn.Value.(*ast.Call)
+	if !ok {
+		return nil
+	}
+	cid, isID := call.Callee.(*ast.Ident)
+	if !isID {
+		return nil
+	}
+	return selfReassignOwnMoveArgWith(asn, ownFuncs[cid.Name])
+}
+
+// selfReassignOwnMoveArgWith is SelfReassignOwnMoveArg with the callee's
+// consuming mask already resolved, so a call through a function VALUE — whose
+// only declaration is its type — recognises the same shape a named callee
+// does. The IR's half of the agreement is callConsumesIdent, which reads that
+// mask through the same accessor.
+func selfReassignOwnMoveArgWith(asn *ast.Assign, flags []bool) *ast.Ident {
+	if len(flags) == 0 {
+		return nil
+	}
+	tid, ok := asn.Target.(*ast.Ident)
+	if !ok {
+		return nil
+	}
+	call, ok := asn.Value.(*ast.Call)
+	if !ok {
+		return nil
+	}
+	cid, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		return nil
+	}
+	// Count every occurrence of the target name in the RHS, excluding
+	// the callee ident itself (a call position, not a value read).
+	count := 0
+	ast.Walk(call, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && id != cid && id.Name == tid.Name {
+			count++
+		}
+		return true
+	})
+	if count != 1 {
+		return nil
+	}
+	for i, a := range call.Args {
+		if id, ok := a.(*ast.Ident); ok && id.Name == tid.Name {
+			if i < len(flags) && flags[i] {
+				return id
+			}
+			return nil
+		}
+	}
+	return nil
+}
+
+// selfReassignOwnMoveArg is SelfReassignOwnMoveArg with the consuming mask
+// resolved the way every other rule resolves it: from the declaration for a
+// named callee, and from the function TYPE for a call through a function
+// value.
+func (c *checker) selfReassignOwnMoveArg(asn *ast.Assign) *ast.Ident {
+	if arg := SelfReassignOwnMoveArg(asn, c.ownFuncs); arg != nil {
+		return arg
+	}
+	call, ok := asn.Value.(*ast.Call)
+	if !ok {
+		return nil
+	}
+	return selfReassignOwnMoveArgWith(asn, c.callOwnFlags[call])
+}
+
+// SupersededFieldOwnMoveArgs recognizes the #8186 field-move shape on a
+// struct self-update whose base is `target` — `target = S { ...target, f:
+// g(.., target.f, ..) }`, or the same literal returned — and returns every
+// `target.f` argument node an `own` position of g receives. The field is
+// superseded by the very store that passes it, and nothing else can read it
+// in between, so the caller transfers it. The shape is exactly:
+//
+//   - the literal's base is the bare ident `target`;
+//   - an overridden field f's value is a direct call to a named `own`
+//     function whose `own` position holds `target.f` directly;
+//   - `target.f` occurs exactly once in the whole literal;
+//   - `target` occurs BARE exactly once in the whole literal, as the base.
+//     Every other mention is the target of a field read. A bare `target`
+//     anywhere else — an argument to g, another field's initialiser — is a
+//     second route to the box whose field slot the move empties.
+//
+// Exported because the checker's E051 admission and the IR's field move
+// (computeFieldOwnMoves) must key on the IDENTICAL recognition.
+func SupersededFieldOwnMoveArgs(sl *ast.StructLit, target string, ownFuncs map[string][]bool) []*ast.FieldAccess {
+	if len(ownFuncs) == 0 {
+		return nil
+	}
+	return SupersededFieldMoves(sl, target, func(field string, value ast.Expr) *ast.FieldAccess {
+		call, ok := value.(*ast.Call)
+		if !ok || call.Method != nil {
+			return nil
+		}
+		cid, ok := call.Callee.(*ast.Ident)
+		if !ok {
+			return nil
+		}
+		flags, isOwn := ownFuncs[cid.Name]
+		if !isOwn {
+			return nil
+		}
+		for i, a := range call.Args {
+			if i >= len(flags) || !flags[i] {
+				continue
+			}
+			if fa, ok := a.(*ast.FieldAccess); ok && fa.Field == field {
+				return fa
+			}
+		}
+		return nil
+	})
+}
+
+// SupersededFieldMoves is the shape test SupersededFieldOwnMoveArgs and the
+// IR's `.with` receiver move (computeFieldOwnMoves) share: the literal's base
+// is the bare ident `target`, `target` occurs bare nowhere else in the
+// literal, and each `target.f` the returned list names is read exactly once
+// in the whole literal — by the initialiser of the very field f the literal
+// overrides. `consumed(f, value)` says which `target.f` node, if any, field
+// f's initialiser hands to a consuming position; only its identity is checked
+// here, since the shape is what makes the transfer sound.
+func SupersededFieldMoves(sl *ast.StructLit, target string, consumed func(field string, value ast.Expr) *ast.FieldAccess) []*ast.FieldAccess {
+	if sl.Base == nil {
+		return nil
+	}
+	if bid, ok := sl.Base.(*ast.Ident); !ok || bid.Name != target {
+		return nil
+	}
+	fieldTargets := map[*ast.Ident]bool{}
+	fieldReads := map[string]int{}
+	ast.Walk(sl, func(n ast.Node) bool {
+		if fa, ok := n.(*ast.FieldAccess); ok {
+			if id, ok := fa.Target.(*ast.Ident); ok && id.Name == target {
+				fieldTargets[id] = true
+				fieldReads[fa.Field]++
+			}
+		}
+		return true
+	})
+	bare := 0
+	ast.Walk(sl, func(n ast.Node) bool {
+		if id, ok := n.(*ast.Ident); ok && id.Name == target && !fieldTargets[id] {
+			bare++
+		}
+		return true
+	})
+	if bare != 1 {
+		return nil
+	}
+	var out []*ast.FieldAccess
+	for _, f := range sl.Fields {
+		if fieldReads[f.Name] != 1 {
+			continue
+		}
+		fa := consumed(f.Name, f.Value)
+		if fa == nil || fa.Field != f.Name {
+			continue
+		}
+		if id, ok := fa.Target.(*ast.Ident); ok && id.Name == target {
+			out = append(out, fa)
+		}
+	}
+	return out
+}
+
+func (c *checker) checkOwnedParams(fn *ast.FuncDecl) {
+	owned := map[string]bool{}
+	// borrowedParam names the parameters this frame does NOT own: a field
+	// moved out of one would be read back by the caller.
+	borrowedParam := map[string]bool{}
+	for _, p := range fn.Params {
+		// A scalar carries no reference, so `own` on one transfers nothing and
+		// there is no affine discipline to police. A generic `own acc: T`
+		// reaches every instantiation, and its scalar clones would otherwise
+		// report a second mention of the accumulator as a use-after-move.
+		if p.Own && !definitelyScalar(p.Type) {
+			owned[p.Name] = true
+		} else {
+			borrowedParam[p.Name] = true
+		}
+	}
+	// Run when the current function has owned params (the affine move-check) OR
+	// when the program declares ANY owned-param function (the call-site guard
+	// must check every caller, even borrowed-only ones).
+	if (len(owned) == 0 && len(c.ownFuncs) == 0) || fn.Body == nil {
+		return
+	}
+
+	// isOwnedExpr reports whether `e` is a value the caller owns and can
+	// TRANSFER into an `own` parameter: a fresh construction (struct / tuple /
+	// array / map literal, string concat, variant-constructor call), another
+	// `own` parameter of the current function, or a local at its last use
+	// (lastUseArgs). A borrowed value — a borrowed param, a field / index
+	// read, a local still read afterwards, a non-fresh call result —
+	// cannot be transferred (the caller, or someone, still owns it), so passing
+	// it to an `own` parameter is E051. Conservative: anything not provably
+	// owned is rejected.
+	// selfMoveArgs admits specific Ident NODES as owned arguments: the
+	// exactly-once occurrence of `x` inside the RHS of a self-reassign
+	// `x = f(..., x, ...)` where that occurrence is a direct argument in
+	// an `own` position (#4873 step 0). The old binding dies at the
+	// assignment — nothing can read it after the RHS evaluates — so the
+	// caller can transfer it. Keyed by node identity so the SAME name
+	// elsewhere (a second read in the RHS, a non-self-reassign call) is
+	// still rejected. Populated by walkStmts' Assign case; the IR's
+	// move-on-call + overwrite-dec suppression key on the identical
+	// syntactic shape (SelfReassignOwnMoveArg, shared with the IR) so checker and rc
+	// agree bit-for-bit on what moved.
+	//
+	// The same map admits the `x.f` FieldAccess NODES of the superseded-field
+	// move (#8186, SupersededFieldOwnMoveArgs): the store of `x = S { ...x, f:
+	// g(.., x.f, ..) }` — or the return of that literal — supersedes the one
+	// field the call consumes.
+	selfMoveArgs := map[ast.Expr]bool{}
+	lastUse := lastUseArgs(fn, c.info)
+	var isOwnedExpr func(e ast.Expr) bool
+	isOwnedExpr = func(e ast.Expr) bool {
+		if c.scalarArgs[e] {
+			return true
+		}
+		switch x := e.(type) {
+		case *ast.StructLit, *ast.TupleLit, *ast.ArrayLit, *ast.MapLit:
+			return true
+		case *ast.Binary:
+			return x.IsStringConcat
+		case *ast.Ident:
+			// A payloadless variant is an Ident where one carrying a payload is
+			// a Call, so it reaches here rather than the Call arm below; both
+			// are fresh enum values (#9517).
+			if _, vrOk, _ := c.resolveVariant(x.Name, x.EnumName); vrOk {
+				return true
+			}
+			return owned[x.Name] || selfMoveArgs[e] || lastUse[e] || c.scalarArgs[e]
+		case *ast.FieldAccess:
+			// `Span.Empty` — a qualified payload-less variant stays a
+			// FieldAccess rather than being rewritten to an Ident, so it is
+			// recognised here (#9517).
+			if _, isVariant := c.info.EnumConstructions[x]; isVariant {
+				return true
+			}
+			return selfMoveArgs[e] || c.scalarArgs[e]
+		case *ast.Call:
+			if id, ok := x.Callee.(*ast.Ident); ok {
+				if _, vrOk, _ := c.resolveVariant(id.Name, id.EnumName); vrOk {
+					return true // variant-constructor call → fresh enum value
+				}
+				// A pointer result the callee cannot have borrowed from the
+				// caller is freshly owned, so it can be transferred. Which
+				// functions those are is inferred from their returns
+				// (computeResultBorrows) rather than read off their parameter
+				// list, so a factory that takes a reference and builds
+				// something new is admitted (#9538).
+				if sig, ok := c.info.FuncSigs[id.Name]; ok && sig.Result != nil && ast.IsPointerType(sig.Result) {
+					if !c.calleeResultBorrows(x) {
+						return true
+					}
+				}
+			}
+			return false
+		}
+		return false
+	}
+	// guardCallArgs enforces the call-site ownership requirement: every argument
+	// passed to an `own` parameter of a (plain, same-module) callee must be an
+	// owned value. Method calls (receiver in Args[0]) and unresolved / mangled
+	// callees are conservatively skipped here — a later slice widens the guard.
+	guardCallArgs := func(x *ast.Call) {
+		flags, isOwn := c.callOwnFlags[x]
+		if !isOwn {
+			id, idOK := x.Callee.(*ast.Ident)
+			if !idOK {
+				return
+			}
+			if flags, isOwn = c.ownFuncs[id.Name]; !isOwn {
+				return
+			}
+		}
+		for i := 0; i < len(x.Args) && i < len(flags); i++ {
+			if flags[i] && !isOwnedExpr(x.Args[i]) {
+				c.errfCode(x.Args[i].Pos(), "E051", "argument to owned parameter must be an owned value (a fresh construction, another `own` parameter, or a local at its last use), not a borrowed one")
+			}
+		}
+	}
+
+	// moved records, per consumed owned-param name, the position of the consume
+	// (a snapshot threaded through the flow-sensitive walk; a name's presence
+	// means "already consumed on this path").
+	type movedSet = map[string]ast.Position
+
+	var walkStmt func(st ast.Stmt, moved movedSet)
+	var walkStmts func(stmts []ast.Stmt, moved movedSet)
+
+	// walkNested walks a nested function's body — a lambda or a local
+	// FuncDecl — as STATEMENTS. The self-reassign move admission, the
+	// branch joins and the loop check all live in the statement walk, so a
+	// body reached through the flat expression walk instead loses them:
+	// `a = grow(a, 1)` was accepted at top level and E051 one line deeper
+	// inside a closure (#7452).
+	//
+	// The nested parameters layer over `owned` for the body's extent: an
+	// `own` parameter is owned inside the body it belongs to, and any other
+	// parameter SHADOWS an outer owned name it repeats, so neither the
+	// shadowed name's ownership nor its consumed state crosses the
+	// boundary in either direction.
+	walkNested := func(params []ast.Param, body *ast.Block, moved movedSet) {
+		if body == nil {
+			return
+		}
+		type binding struct {
+			wasOwned    bool
+			wasBorrowed bool
+			wasMoved    ast.Position
+			hadMoved    bool
+		}
+		shadowed := map[string]binding{}
+		for _, p := range params {
+			if _, dup := shadowed[p.Name]; dup {
+				continue
+			}
+			b := binding{wasOwned: owned[p.Name], wasBorrowed: borrowedParam[p.Name]}
+			b.wasMoved, b.hadMoved = moved[p.Name]
+			shadowed[p.Name] = b
+			if p.Own && !definitelyScalar(p.Type) {
+				owned[p.Name] = true
+				delete(borrowedParam, p.Name)
+			} else {
+				delete(owned, p.Name)
+				borrowedParam[p.Name] = true
+			}
+			delete(moved, p.Name)
+		}
+		walkStmts(body.Stmts, moved)
+		for name, b := range shadowed {
+			if b.wasOwned {
+				owned[name] = true
+			} else {
+				delete(owned, name)
+			}
+			if b.wasBorrowed {
+				borrowedParam[name] = true
+			} else {
+				delete(borrowedParam, name)
+			}
+			if b.hadMoved {
+				moved[name] = b.wasMoved
+			} else {
+				delete(moved, name)
+			}
+		}
+	}
+
+	// recordExprUses classifies every owned-param occurrence in `e` and reports
+	// E050 on a use after move; a fresh consume records into `moved`. Borrows
+	// are the projection-target / call-callee idents; every other owned-ident
+	// occurrence is a consume. Occurrences are visited in source (left-to-right
+	// pre-order) order so `f(x) + x.len` flags the second use.
+	recordExprUses := func(e ast.Expr, moved movedSet) {
+		if e == nil {
+			return
+		}
+		borrow := map[*ast.Ident]bool{}
+		// dynConsumed holds receivers of `dyn Trait` calls to a CONSUMING (`own
+		// self`) trait method. The callee is a FieldAccess, so the case below
+		// would otherwise mark the receiver as a borrow; these are un-borrowed
+		// after the walk so the move is recorded.
+		dynConsumed := map[*ast.Ident]bool{}
+		// Lambda bodies are statements, not expressions: neither walk
+		// below descends into one; walkNested takes them after both, in
+		// source order.
+		var lambdas []*ast.Lambda
+		ast.Walk(e, func(n ast.Node) bool {
+			switch x := n.(type) {
+			case *ast.Lambda:
+				lambdas = append(lambdas, x)
+				return false
+			case *ast.FieldAccess:
+				if id, ok := x.Target.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+			case *ast.Index:
+				if id, ok := x.Array.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+				if id, ok := x.Idx.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+			case *ast.CastExpr:
+				// `x as T` READS x's value (e.g. pointer→usize for a runtime
+				// call) — a borrow, never a transfer.
+				if id, ok := x.Inner.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+			case *ast.DowncastExpr:
+				// `x as? T` inspects the `dyn` value's runtime tag — a READ,
+				// never a transfer.
+				if id, ok := x.Inner.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+			case *ast.Binary:
+				// Operands of `+`, `==`, `&&`, string-concat, … are READS.
+				// (`sink(x) + sink(x)` keeps the x's as call-arg consumes — those
+				// operands are Calls, not bare idents, so they aren't marked here.)
+				if id, ok := x.Left.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+				if id, ok := x.Right.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+			case *ast.Unary:
+				if id, ok := x.Operand.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+			case *ast.MatchExpr:
+				// A match no arm of which takes a pointer payload out of its
+				// scrutinee reads it: the value stays whole (#9539).
+				if id, ok := x.Tag.(*ast.Ident); ok && !ast.MatchExprTakesPointerPayload(x.Arms) {
+					borrow[id] = true
+				}
+			case *ast.SliceExpr:
+				// `s[lo:hi]` reads s (and the bounds) — a borrow.
+				if id, ok := x.Source.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+				if id, ok := x.Low.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+				if id, ok := x.High.(*ast.Ident); ok {
+					borrow[id] = true
+				}
+			case *ast.StructLit:
+				// `S { ...base, f: v }`: the spread READS base's fields (the new
+				// struct co-owns its pointer fields via the construction
+				// alias-inc) — a borrow, not a transfer. The named field VALUES
+				// below are still consumes (moved into the new struct).
+				if x.Base != nil {
+					if id, ok := x.Base.(*ast.Ident); ok {
+						borrow[id] = true
+					}
+				}
+			case *ast.Call:
+				guardCallArgs(x)
+				// The callee position is a borrow (function ref / closure call).
+				if id, ok := x.Callee.(*ast.Ident); ok {
+					borrow[id] = true
+					// An owned value is CONSUMED only when passed to an `own`
+					// parameter; an argument to a BORROWED parameter (or any param
+					// of a callee with no `own` flags) is a read — a borrow — not a
+					// move. (`contains_str(out, x)` borrows `out`, so a following
+					// `out = out.append(..)` is not a use-after-move.) Without this
+					// the affine walk over-approximates every whole-value argument
+					// as a consume, which both rejects natural `own`-threaded
+					// builder code and blocks tracking owned locals. The method
+					// receiver (Args[0] when Method is set) keeps its own
+					// consume/borrow classification below.
+					// A callee reached through a function VALUE declares its
+					// consuming slots in its type, not in the own-func registry
+					// — so a use after `f(xs)` at such a slot is a use after
+					// move, exactly as it is for a declared own-func.
+					flags, isOwn := c.callOwnFlags[x]
+					if !isOwn {
+						flags = c.ownFuncs[id.Name]
+					}
+					for ai, arg := range x.Args {
+						if x.Method != nil && ai == 0 {
+							continue
+						}
+						if ai < len(flags) && flags[ai] {
+							continue // `own` position: a genuine consume
+						}
+						if aid, ok := arg.(*ast.Ident); ok {
+							borrow[aid] = true
+						}
+					}
+				}
+				// A method call (`xs.len()`) is rewritten by the checker to a
+				// plain Call with the receiver as Args[0] and Method set; a
+				// borrowed-self receiver is BORROWED, not consumed. (A pipe
+				// `x |> f()` also puts the LHS in Args[0] but Method is nil —
+				// there it IS a real argument, so it stays a consume.) A
+				// CONSUMING (`own self`) method, by contrast, MOVES its receiver,
+				// so it is left out of `borrow` and recorded as a consume —
+				// `x.consume(); x.consume()` is then a use-after-move (E050).
+				if x.Method != nil && len(x.Args) > 0 && !c.methodConsumesReceiver(x.Method) {
+					if id, ok := x.Args[0].(*ast.Ident); ok {
+						borrow[id] = true
+					}
+				}
+				// `dyn Trait` dispatch keeps the receiver in the FieldAccess
+				// callee (no Method / Args[0]). A consuming trait method moves it.
+				if x.DynTrait != "" {
+					if fa, ok := x.Callee.(*ast.FieldAccess); ok {
+						if rid, ok := fa.Target.(*ast.Ident); ok && c.dynMethodConsumes(x.DynTrait, fa.Field) {
+							dynConsumed[rid] = true
+						}
+					}
+				}
+			}
+			return true
+		})
+		for id := range dynConsumed {
+			delete(borrow, id)
+		}
+		ast.Walk(e, func(n ast.Node) bool {
+			if _, isLam := n.(*ast.Lambda); isLam {
+				return false
+			}
+			id, ok := n.(*ast.Ident)
+			if !ok || !owned[id.Name] {
+				return true
+			}
+			if at, isMoved := moved[id.Name]; isMoved {
+				c.errfCode(id.Pos(), "E050", "use of owned parameter %q after it was consumed (moved at line %d)", id.Name, at.Line)
+				return true
+			}
+			if !borrow[id] {
+				moved[id.Name] = id.Pos() // a whole-value use consumes it
+			}
+			return true
+		})
+		for _, lam := range lambdas {
+			walkNested(lam.Params, lam.Body, moved)
+		}
+	}
+
+	// joinInto merges a branch's post-state into `dst` IFF the branch does not
+	// diverge (a diverging branch — return / break / continue — never reaches
+	// the join, so its consumes don't constrain the fall-through path).
+	joinInto := func(dst, branch movedSet, diverges bool) {
+		if diverges {
+			return
+		}
+		for k, v := range branch {
+			if _, ok := dst[k]; !ok {
+				dst[k] = v
+			}
+		}
+	}
+	cloneMoved := func(m movedSet) movedSet {
+		n := make(movedSet, len(m))
+		for k, v := range m {
+			n[k] = v
+		}
+		return n
+	}
+
+	// loopBody walks a loop body/step on a copy and flags any owned param it
+	// consumes that was still live at loop entry — a later iteration would use
+	// it after move. The loop may run zero times, so the fall-through state is
+	// unchanged (`moved` is left as-is).
+	loopBody := func(body ast.Stmt, step ast.Stmt, moved movedSet) {
+		inner := cloneMoved(moved)
+		if body != nil {
+			walkStmt(body, inner)
+		}
+		if step != nil {
+			walkStmt(step, inner)
+		}
+		for name, at := range inner {
+			if _, wasLive := moved[name]; !wasLive {
+				c.errfCode(at, "E050", "owned parameter %q is consumed inside a loop; a later iteration would use it after move", name)
+			}
+		}
+	}
+
+	walkStmt = func(st ast.Stmt, moved movedSet) {
+		switch x := st.(type) {
+		case *ast.Block:
+			walkStmts(x.Stmts, moved)
+		case *ast.FuncDecl:
+			walkNested(x.Params, x.Body, moved)
+		case *ast.Var:
+			recordExprUses(x.Init, moved)
+		case *ast.ExprStmt:
+			// `x = e` is an Assign EXPRESSION wrapped in an ExprStmt. Reassigning
+			// the bare owned param rebinds it to a fresh value, so its consumed
+			// state resets (the new value's ownership is the transfer slice's
+			// concern; here the reassign just clears the move) — distinct from a
+			// plain read, which recordExprUses would treat as a consume.
+			if asn, ok := x.Expr.(*ast.Assign); ok {
+				// Self-reassign move admission (#4873 step 0): for
+				// `x = f(..., x, ...)` with x a LOCAL passed exactly once,
+				// directly, in an `own` position, admit that occurrence
+				// (see selfMoveArgs). Checked before recordExprUses so
+				// guardCallArgs sees the admission.
+				if id, ok := asn.Target.(*ast.Ident); ok && !owned[id.Name] {
+					if arg := c.selfReassignOwnMoveArg(asn); arg != nil {
+						selfMoveArgs[arg] = true
+					}
+				}
+				// Superseded-field move admission (#8186): `x = S { ...x, f:
+				// g(..., x.f, ...) }` with x an `own` param or a local. The
+				// store supersedes the field the call consumes.
+				if id, ok := asn.Target.(*ast.Ident); ok && !borrowedParam[id.Name] {
+					if sl, isLit := asn.Value.(*ast.StructLit); isLit {
+						for _, arg := range SupersededFieldOwnMoveArgs(sl, id.Name, c.ownFuncs) {
+							selfMoveArgs[arg] = true
+						}
+					}
+				}
+				recordExprUses(asn.Value, moved)
+				if id, ok := asn.Target.(*ast.Ident); ok && owned[id.Name] {
+					delete(moved, id.Name)
+				} else {
+					recordExprUses(asn.Target, moved)
+				}
+				return
+			}
+			recordExprUses(x.Expr, moved)
+		case *ast.Return:
+			// The return form of the superseded-field move (#8186): nothing
+			// runs after the return, so the field cannot be read back.
+			if sl, isLit := x.Value.(*ast.StructLit); isLit && sl.Base != nil {
+				if bid, ok := sl.Base.(*ast.Ident); ok && !borrowedParam[bid.Name] {
+					for _, arg := range SupersededFieldOwnMoveArgs(sl, bid.Name, c.ownFuncs) {
+						selfMoveArgs[arg] = true
+					}
+				}
+			}
+			recordExprUses(x.Value, moved)
+		case *ast.If:
+			recordExprUses(x.Cond, moved)
+			thenMoved := cloneMoved(moved)
+			walkStmt(x.Then, thenMoved)
+			elseMoved := cloneMoved(moved)
+			if x.Else != nil {
+				walkStmt(x.Else, elseMoved)
+			}
+			joinInto(moved, thenMoved, stmtDiverges(x.Then))
+			joinInto(moved, elseMoved, x.Else != nil && stmtDiverges(x.Else))
+		case *ast.While:
+			recordExprUses(x.Cond, moved)
+			loopBody(x.Body, nil, moved)
+		case *ast.Loop:
+			loopBody(x.Body, nil, moved)
+		case *ast.For:
+			if x.Init != nil {
+				walkStmt(x.Init, moved)
+			}
+			recordExprUses(x.Cond, moved)
+			loopBody(x.Body, x.Step, moved)
+		case *ast.Match:
+			// Matching an OWNED scrutinee consumes it (the box is decomposed)
+			// and MOVES its pointer-typed payloads into the arm bindings — so a
+			// pointer binding of an owned scrutinee is itself owned for that
+			// arm's scope (the recursive `map(xs) -> Cons(.., map(t))` shape: `t`
+			// is owned and may be transferred onward). Scalar bindings are copied
+			// (not owned). Capture ownership BEFORE recordExprUses consumes the
+			// scrutinee.
+			scrutOwned := c.isOwnedScrutinee(x.Tag, isOwnedExpr)
+			// A bare-ident scrutinee is consumed here, unless no arm takes a
+			// pointer payload out of it: then the value stays whole.
+			if id, ok := x.Tag.(*ast.Ident); ok && !ast.MatchTakesPointerPayload(x.Arms) {
+				prev, had := moved[id.Name]
+				recordExprUses(x.Tag, moved)
+				if had {
+					moved[id.Name] = prev
+				} else {
+					delete(moved, id.Name)
+				}
+			} else {
+				recordExprUses(x.Tag, moved)
+			}
+			for _, arm := range x.Arms {
+				armMoved := cloneMoved(moved)
+				var added []string
+				if scrutOwned {
+					for i, bname := range arm.Bindings {
+						if i < len(arm.BindingTypes) && arm.BindingTypes[i] != nil &&
+							ast.IsPointerType(arm.BindingTypes[i]) && !owned[bname] {
+							owned[bname] = true
+							added = append(added, bname)
+						}
+					}
+				}
+				if arm.Body != nil {
+					walkStmts(arm.Body.Stmts, armMoved)
+				}
+				for _, bname := range added {
+					delete(owned, bname)
+					// The binding is arm-local: it does not exist outside this arm,
+					// so its consumed-state must NOT escape into the parent `moved`.
+					// Otherwise a sibling match that reuses the same binding name
+					// (`match (a) { Err(e) => ... }` then `match (b) { Err(e) => ...
+					// }`) would see a phantom use-after-move on the second `e`. Drop
+					// it before the join so only genuine own-param moves propagate.
+					delete(armMoved, bname)
+				}
+				joinInto(moved, armMoved, arm.Body != nil && blockDiverges(arm.Body))
+			}
+		default:
+			// Any other statement that carries expressions (IfLet, LetElse,
+			// Defer, …) — conservatively scan it for owned-ident uses so a
+			// consume there is still caught (over-counts as consume, never
+			// misses a use-after-move).
+			ast.Walk(st, func(n ast.Node) bool {
+				if fd, ok := n.(*ast.FuncDecl); ok {
+					walkNested(fd.Params, fd.Body, moved)
+					return false
+				}
+				if e, ok := n.(ast.Expr); ok {
+					recordExprUses(e, moved)
+					return false
+				}
+				return true
+			})
+		}
+	}
+	walkStmts = func(stmts []ast.Stmt, moved movedSet) {
+		for _, st := range stmts {
+			walkStmt(st, moved)
+		}
+	}
+
+	walkStmts(fn.Body.Stmts, movedSet{})
+}
+
+func (c *checker) checkBlock(b *ast.Block, parent *scope) {
+	s := newScope(parent)
+	// Pre-pass: detect mutual-recursion SCCs among the sibling
+	// local FuncDecls and bind the SCC members' names +
+	// signatures in the block's scope up front. Pure forward
+	// references (caller declared before callee, no callee→caller
+	// back-edge) DON'T pre-bind — they'll hit the regular
+	// source-order rule and fail with `undefined identifier`
+	// just like before this change. This keeps the runtime
+	// env-init-order semantics intact for non-cycle siblings
+	// (whose `let <name> = MakeClosure{...}` IS initialised in
+	// source order — a caller declared after the callee can
+	// still resolve a normal capture).
+	prevMutualRec := c.mutualRecSiblings
+	var localFns []*ast.FuncDecl
+	for _, st := range b.Stmts {
+		fn, ok := st.(*ast.FuncDecl)
+		if !ok || !fn.IsLocal {
+			continue
+		}
+		localFns = append(localFns, fn)
+	}
+	if len(localFns) > 1 {
+		c.mutualRecSiblings = detectMutualRecSCCs(localFns)
+		for _, fn := range localFns {
+			if c.mutualRecSiblings[fn.Name] {
+				s.names[fn.Name] = paramSig(fn.Params, fn.ReturnType)
+			}
+		}
+	} else {
+		c.mutualRecSiblings = nil
+	}
+	for i, st := range b.Stmts {
+		b.Stmts[i] = c.checkStmtLoweringForEach(st, s)
+	}
+	c.mutualRecSiblings = prevMutualRec
+}
+
+// checkBlockExpr type-checks a block-expression `{ stmts; tail }` used
+// in an `if`/`match` expression branch (slice 1). The statements run in
+// a fresh child scope so locals they bind are visible to Tail but do
+// NOT leak into the enclosing expression; the block's type is Tail's
+// type checked in that scope. A value-less block (Tail == nil — its
+// final element was a `;`-terminated statement) is `void`; the caller
+// (if/match arm-type unification) rejects `void` where a value is
+// required (see E061), so we surface the diagnostic here too.
+func (c *checker) checkBlockExpr(n *ast.BlockExpr, parent *scope) ast.Type {
+	s := newScope(parent)
+	prevMutualRec := c.mutualRecSiblings
+	c.mutualRecSiblings = nil
+	for i, st := range n.Stmts {
+		n.Stmts[i] = c.checkStmtLoweringForEach(st, s)
+	}
+	c.mutualRecSiblings = prevMutualRec
+	if n.Tail == nil {
+		// A value-less block whose statements ALWAYS exit early
+		// (`return` / `break` / `continue` on every path) never
+		// reaches a trailing value, so it has no meaningful tail. It
+		// is not `void` (which would be a type error where a value is
+		// required) — it is the bottom type `never`, which is
+		// assignable to / unifies with any type. This lets
+		// `let x: i32 = { if (c) { return 1; } return 2; };` and the
+		// `if`/`match`-arm forms type-check (#4522). Codegen lowers the
+		// statements only — the diverging terminal makes the enclosing
+		// store unreachable (the ssa lift skips it), so no tail value
+		// is produced.
+		if stmtsDiverge(n.Stmts) {
+			return ast.NeverType{}
+		}
+		c.errfCode(n.P, "E061", "block-expression has no trailing value (its last element is a `;`-terminated statement); a value is required here — drop the trailing `;` to make the final expression the block's value")
+		return ast.VoidType{}
+	}
+	return c.checkExpr(n.Tail, s)
+}
+
+// stmtsDiverge reports whether the last statement of a value-position
+// block-expression's statement list exits on every path (so the block
+// never falls through to a trailing value). Mirrors blockDiverges but
+// over a bare `[]ast.Stmt` (BlockExpr.Stmts) rather than an *ast.Block.
+func stmtsDiverge(stmts []ast.Stmt) bool {
+	if len(stmts) == 0 {
+		return false
+	}
+	return stmtDiverges(stmts[len(stmts)-1])
+}
+
+// detectMutualRecSCCs computes the names that participate in a
+// mutual-recursion SCC among `localFns`. A name is in an SCC of
+// size ≥ 2 iff there's a cycle of references through other
+// sibling names that comes back to it. Uses Tarjan's algorithm
+// to keep the work O(V + E) over the sibling-reference graph.
+//
+// Self-cycles (a single function referencing itself) are
+// excluded — recursive self-calls have a separate rewrite path
+// (#567) and don't need the env-cycle workaround.
+func detectMutualRecSCCs(fns []*ast.FuncDecl) map[string]bool {
+	siblings := map[string]*ast.FuncDecl{}
+	for _, fn := range fns {
+		siblings[fn.Name] = fn
+	}
+	// Build adjacency: fn name → set of sibling names referenced
+	// in the body.
+	adj := map[string][]string{}
+	for _, fn := range fns {
+		seen := map[string]bool{}
+		walkBodyForNames(fn.Body, fn.Name, siblings, seen)
+		out := make([]string, 0, len(seen))
+		for name := range seen {
+			out = append(out, name)
+		}
+		adj[fn.Name] = out
+	}
+	// Tarjan's SCC algorithm.
+	index := 0
+	indices := map[string]int{}
+	lowlinks := map[string]int{}
+	onStack := map[string]bool{}
+	var stack []string
+	out := map[string]bool{}
+	var strongconnect func(name string)
+	strongconnect = func(name string) {
+		indices[name] = index
+		lowlinks[name] = index
+		index++
+		stack = append(stack, name)
+		onStack[name] = true
+		for _, succ := range adj[name] {
+			if _, ok := indices[succ]; !ok {
+				strongconnect(succ)
+				if lowlinks[succ] < lowlinks[name] {
+					lowlinks[name] = lowlinks[succ]
+				}
+			} else if onStack[succ] {
+				if indices[succ] < lowlinks[name] {
+					lowlinks[name] = indices[succ]
+				}
+			}
+		}
+		if lowlinks[name] == indices[name] {
+			// Pop the SCC off the stack.
+			var scc []string
+			for {
+				top := stack[len(stack)-1]
+				stack = stack[:len(stack)-1]
+				onStack[top] = false
+				scc = append(scc, top)
+				if top == name {
+					break
+				}
+			}
+			if len(scc) >= 2 {
+				for _, n := range scc {
+					out[n] = true
+				}
+			}
+		}
+	}
+	for _, fn := range fns {
+		if _, ok := indices[fn.Name]; !ok {
+			strongconnect(fn.Name)
+		}
+	}
+	return out
+}
+
+// walkBodyForNames walks an AST body and records which sibling
+// names (in `siblings`) it references. Skips the function's own
+// name — self-references go through the recursive-self-call
+// path, not the mutual-rec SCC machinery.
+func walkBodyForNames(b *ast.Block, selfName string, siblings map[string]*ast.FuncDecl, seen map[string]bool) {
+	if b == nil {
+		return
+	}
+	for _, st := range b.Stmts {
+		walkStmtForNames(st, selfName, siblings, seen)
+	}
+}
+
+func walkStmtForNames(s ast.Stmt, selfName string, siblings map[string]*ast.FuncDecl, seen map[string]bool) {
+	switch n := s.(type) {
+	case *ast.Block:
+		walkBodyForNames(n, selfName, siblings, seen)
+	case *ast.If:
+		walkExprForNames(n.Cond, selfName, siblings, seen)
+		walkStmtForNames(n.Then, selfName, siblings, seen)
+		walkStmtForNames(n.Else, selfName, siblings, seen)
+	case *ast.While:
+		walkExprForNames(n.Cond, selfName, siblings, seen)
+		walkStmtForNames(n.Body, selfName, siblings, seen)
+	case *ast.Loop:
+		walkStmtForNames(n.Body, selfName, siblings, seen)
+	case *ast.For:
+		walkStmtForNames(n.Init, selfName, siblings, seen)
+		walkExprForNames(n.Cond, selfName, siblings, seen)
+		walkStmtForNames(n.Step, selfName, siblings, seen)
+		walkStmtForNames(n.Body, selfName, siblings, seen)
+	case *ast.Return:
+		walkExprForNames(n.Value, selfName, siblings, seen)
+	case *ast.Var:
+		walkExprForNames(n.Init, selfName, siblings, seen)
+	case *ast.Destructure:
+		walkExprForNames(n.Init, selfName, siblings, seen)
+	case *ast.ExprStmt:
+		walkExprForNames(n.Expr, selfName, siblings, seen)
+	case *ast.Match:
+		walkExprForNames(n.Tag, selfName, siblings, seen)
+		for _, arm := range n.Arms {
+			if arm.Literal != nil {
+				walkExprForNames(arm.Literal, selfName, siblings, seen)
+			}
+			walkExprForNames(arm.Guard, selfName, siblings, seen)
+			walkBodyForNames(arm.Body, selfName, siblings, seen)
+		}
+	case *ast.Defer:
+		walkExprForNames(n.Expr, selfName, siblings, seen)
+	}
+}
+
+func walkExprForNames(e ast.Expr, selfName string, siblings map[string]*ast.FuncDecl, seen map[string]bool) {
+	if e == nil {
+		return
+	}
+	switch n := e.(type) {
+	case *ast.Ident:
+		if n.Name != selfName {
+			if _, ok := siblings[n.Name]; ok {
+				seen[n.Name] = true
+			}
+		}
+	case *ast.Binary:
+		walkExprForNames(n.Left, selfName, siblings, seen)
+		walkExprForNames(n.Right, selfName, siblings, seen)
+	case *ast.Unary:
+		walkExprForNames(n.Operand, selfName, siblings, seen)
+	case *ast.CastExpr:
+		walkExprForNames(n.Inner, selfName, siblings, seen)
+	case *ast.DowncastExpr:
+		walkExprForNames(n.Inner, selfName, siblings, seen)
+	case *ast.SliceExpr:
+		walkExprForNames(n.Source, selfName, siblings, seen)
+		walkExprForNames(n.Low, selfName, siblings, seen)
+		walkExprForNames(n.High, selfName, siblings, seen)
+	case *ast.Call:
+		walkExprForNames(n.Callee, selfName, siblings, seen)
+		for _, a := range n.Args {
+			walkExprForNames(a, selfName, siblings, seen)
+		}
+	case *ast.Index:
+		walkExprForNames(n.Array, selfName, siblings, seen)
+		walkExprForNames(n.Idx, selfName, siblings, seen)
+	case *ast.ArrayLit:
+		for _, el := range n.Elems {
+			walkExprForNames(el, selfName, siblings, seen)
+		}
+	case *ast.Assign:
+		walkExprForNames(n.Target, selfName, siblings, seen)
+		walkExprForNames(n.Value, selfName, siblings, seen)
+	case *ast.IfExpr:
+		walkExprForNames(n.Cond, selfName, siblings, seen)
+		walkExprForNames(n.Then, selfName, siblings, seen)
+		walkExprForNames(n.Else, selfName, siblings, seen)
+	case *ast.TryOp:
+		walkExprForNames(n.Inner, selfName, siblings, seen)
+	case *ast.MatchExpr:
+		walkExprForNames(n.Tag, selfName, siblings, seen)
+		for _, arm := range n.Arms {
+			if arm.Literal != nil {
+				walkExprForNames(arm.Literal, selfName, siblings, seen)
+			}
+			walkExprForNames(arm.Guard, selfName, siblings, seen)
+			walkExprForNames(arm.Body, selfName, siblings, seen)
+		}
+	case *ast.BlockExpr:
+		for _, st := range n.Stmts {
+			walkStmtForNames(st, selfName, siblings, seen)
+		}
+		walkExprForNames(n.Tail, selfName, siblings, seen)
+	case *ast.StructLit:
+		if n.Base != nil {
+			walkExprForNames(n.Base, selfName, siblings, seen)
+		}
+		for _, f := range n.Fields {
+			walkExprForNames(f.Value, selfName, siblings, seen)
+		}
+	case *ast.FieldAccess:
+		walkExprForNames(n.Target, selfName, siblings, seen)
+	case *ast.FString:
+		for _, p := range n.Parts {
+			walkExprForNames(p.Expr, selfName, siblings, seen)
+		}
+		walkExprForNames(n.Desugared, selfName, siblings, seen)
+	case *ast.TupleLit:
+		for _, el := range n.Elems {
+			walkExprForNames(el, selfName, siblings, seen)
+		}
+	case *ast.MapLit:
+		for _, ent := range n.Entries {
+			walkExprForNames(ent.Key, selfName, siblings, seen)
+			walkExprForNames(ent.Value, selfName, siblings, seen)
+		}
+	case *ast.Lambda:
+		walkBodyForNames(n.Body, selfName, siblings, seen)
+	}
+}
+
+// labelInScope reports whether `label` names an enclosing labeled loop.
+func (c *checker) labelInScope(label string) bool {
+	for _, l := range c.loopLabels {
+		if l == label {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *checker) checkStmt(st ast.Stmt, s *scope) {
+	switch n := st.(type) {
+	case *ast.Block:
+		c.checkBlock(n, s)
+	case *ast.If:
+		t := c.checkExpr(n.Cond, s)
+		if t != nil && !ast.Equal(t, ast.BoolType{}) {
+			c.errfCode(n.Cond.Pos(), "E008", "if condition must be boolean, got %s", t)
+		}
+		n.Then = c.checkStmtLoweringForEach(n.Then, s)
+		if n.Else != nil {
+			n.Else = c.checkStmtLoweringForEach(n.Else, s)
+		}
+	case *ast.While:
+		t := c.checkExpr(n.Cond, s)
+		if t != nil && !ast.Equal(t, ast.BoolType{}) {
+			c.errfCode(n.Cond.Pos(), "E008", "while condition must be boolean, got %s", t)
+		}
+		c.loopDepth++
+		if n.Label != "" {
+			c.loopLabels = append(c.loopLabels, n.Label)
+		}
+		n.Body = c.checkStmtLoweringForEach(n.Body, s)
+		if n.Label != "" {
+			c.loopLabels = c.loopLabels[:len(c.loopLabels)-1]
+		}
+		c.loopDepth--
+	case *ast.Loop:
+		c.loopDepth++
+		if n.Label != "" {
+			c.loopLabels = append(c.loopLabels, n.Label)
+		}
+		n.Body = c.checkStmtLoweringForEach(n.Body, s)
+		if n.Label != "" {
+			c.loopLabels = c.loopLabels[:len(c.loopLabels)-1]
+		}
+		c.loopDepth--
+	case *ast.For:
+		// Init runs in a new scope so a `for (let i = 0; ...)` doesn't
+		// leak `i` to the surrounding block.
+		inner := newScope(s)
+		if n.Init != nil {
+			c.checkStmt(n.Init, inner)
+		}
+		ct := c.checkExpr(n.Cond, inner)
+		if ct != nil && !ast.Equal(ct, ast.BoolType{}) {
+			c.errfCode(n.Cond.Pos(), "E008", "for condition must be boolean, got %s", ct)
+		}
+		c.loopDepth++
+		if n.Label != "" {
+			c.loopLabels = append(c.loopLabels, n.Label)
+		}
+		n.Body = c.checkStmtLoweringForEach(n.Body, inner)
+		if n.Step != nil {
+			c.checkStmt(n.Step, inner)
+		}
+		if n.Label != "" {
+			c.loopLabels = c.loopLabels[:len(c.loopLabels)-1]
+		}
+		c.loopDepth--
+	case *ast.Break:
+		// `break` is legal inside a `for`/`while` (exits the loop).
+		if c.loopDepth == 0 {
+			c.errfCode(n.P, "E011", "break outside of a loop")
+		} else if n.Label != "" && !c.labelInScope(n.Label) {
+			c.errfCode(n.P, "E058", "break label %q does not match any enclosing loop", n.Label)
+		}
+	case *ast.Continue:
+		if c.loopDepth == 0 {
+			c.errfCode(n.P, "E011", "continue outside of a loop")
+		} else if n.Label != "" && !c.labelInScope(n.Label) {
+			c.errfCode(n.P, "E058", "continue label %q does not match any enclosing loop", n.Label)
+		}
+	case *ast.Return:
+		want := c.current.ReturnType
+		// Return-type inference: in an unannotated function we don't yet
+		// know `want`, so instead of checking against void we record each
+		// return's type (nil for a bare `return;`) and let checkFunction
+		// unify them into the function's return type afterward.
+		if c.inferReturns != nil && c.current.ReturnUnannotated {
+			if n.Value == nil {
+				*c.inferReturns = append(*c.inferReturns, nil)
+				return
+			}
+			got := c.checkExpr(n.Value, s)
+			got = c.postSettleType(n.Value, got)
+			*c.inferReturns = append(*c.inferReturns, got)
+			return
+		}
+		if n.Value == nil {
+			if !ast.Equal(want, ast.VoidType{}) {
+				c.errfCode(n.P, "E012", "return without value in function returning %s", want)
+			}
+			return
+		}
+		c.setElemHintFor(n.Value, want)
+		c.expectedType = want
+		got := c.checkExpr(n.Value, s)
+		c.expectedType = nil
+		c.elemHint = nil
+		c.settleNumeric(n.Value, want)
+		// Refresh `got` from the post-settle AST — the
+		// `Var` path does the same via `postSettleType`,
+		// and a tuple / numeric-literal return would
+		// otherwise compare the pre-settle width against
+		// the function's declared return type.
+		got = c.postSettleType(n.Value, got)
+		got = c.maybeWrapForUnion(want, &n.Value, got, s)
+		// Same generic-call destination refinement as the
+		// Var case — `return f(...)` from a function returning
+		// Result[i32, i32] needs f's TypeArgs to be fully
+		// concrete before monomorph runs.
+		c.refineCallTypeArgsFromDest(n.Value, want)
+		if got != nil && !c.assignable(want, got) {
+			c.errfCode(n.P, "E002", "return type mismatch: function returns %s but expression is %s%s", want, got, assignHint(want, got))
+		}
+	case *ast.Defer:
+		// `?` leaves by the failure edge, and that edge replays the deferred
+		// actions — including this one. Refused rather than lowered: E079.
+		if pos, found := firstTryOp(n.Expr); found {
+			kind := "a `defer`"
+			if n.OnError {
+				kind = "an `errdefer`"
+			}
+			c.errfCode(pos, "E079", "`?` is not allowed inside %s action: it propagates a failure to the caller, and a deferred action has no caller to propagate to", kind)
+			// That `?` has no failure edge, so it is not one of an
+			// unannotated body's returns (#9515).
+			prevInfer := c.inferReturns
+			c.inferReturns = nil
+			defer func() { c.inferReturns = prevInfer }()
+		}
+		// Just type-check the action; its result is discarded (defer is
+		// statement-shaped, not expression-shaped). The IR builder is
+		// responsible for replaying it at function exits.
+		//
+		// A block action `defer { … }` (#5153) is value-less by design, so
+		// check its statements directly rather than through checkBlockExpr —
+		// which would report E061 for the missing trailing value. Only the
+		// immediate block is exempt; any nested value-position block inside
+		// still goes through the normal value-required check.
+		if blk, ok := n.Expr.(*ast.BlockExpr); ok {
+			bs := newScope(s)
+			prevMutualRec := c.mutualRecSiblings
+			c.mutualRecSiblings = nil
+			for _, st := range blk.Stmts {
+				c.checkStmt(st, bs)
+			}
+			c.mutualRecSiblings = prevMutualRec
+			if blk.Tail != nil {
+				c.checkExpr(blk.Tail, bs)
+			}
+		} else {
+			c.checkExpr(n.Expr, s)
+		}
+	case *ast.Var:
+		if _, dup := s.names[n.Name]; dup {
+			c.errfCode(n.P, "E013", "variable %q already declared in this scope", n.Name)
+		}
+		unannotated := n.Type == nil
+		c.setElemHintFor(n.Init, n.Type)
+		c.expectedType = n.Type
+		got := c.checkExpr(n.Init, s)
+		c.expectedType = nil
+		c.elemHint = nil
+		if n.Type != nil {
+			c.settleNumeric(n.Init, n.Type)
+			got = c.postSettleType(n.Init, got)
+			// Generic-struct destination inference: a builtin
+			// like `map_new(cap)` returns `Map` with no Args;
+			// the destination's `Map[K, V]` Args propagate
+			// back so the IR lowering can stamp the runtime
+			// keyKind tag.
+			c.stampStructTypeArgs(n.Init, n.Type)
+			// Generic-call destination inference: when the
+			// init is a generic call whose TypeArgs got
+			// partially inferred (e.g. variant constructor
+			// args only pin one of Result[T, E]'s two type
+			// params), refine using the destination type. See
+			// refineCallTypeArgsFromDest for the full rule.
+			c.refineCallTypeArgsFromDest(n.Init, n.Type)
+		}
+		if n.Type == nil {
+			if got == nil {
+				s.poison(n.Name)
+				return
+			}
+			// Polymorphic empty array `[]` with no annotation
+			// to settle from — surface the original missing-
+			// annotation error here rather than silently
+			// recording a nil-elem type.
+			if at, ok := got.(ast.ArrayType); ok && at.Elem == nil {
+				c.errfCode(n.P, "E020", "empty array literal needs a type annotation")
+				s.poison(n.Name)
+				return
+			}
+			// An unannotated binding whose init is still polymorphic
+			// takes i64 here when a literal in the init has no i32 reading
+			// (#3676, #8668). Otherwise it is a literal local: its uses
+			// decide its one width, i32 when none does (#10123).
+			if call, ok := n.Init.(*ast.Call); ok {
+				if widened := c.widenGenericCallByLiterals(call); widened != nil {
+					got = widened
+				}
+			}
+			litLocal := false
+			if gn, ok := got.(ast.NumberType); ok && gn.Polymorphic {
+				if def := c.polymorphicIntDefault(n.Init); def.Width == 64 {
+					c.settleInt(n.Init, def)
+					got = def
+				} else {
+					litLocal = true
+				}
+			} else if widened := c.widenCompositeByLiterals(got, n.Init); widened != nil {
+				c.settleNumeric(n.Init, widened)
+				got = widened
+			}
+			n.Type = got
+			if litLocal {
+				s.bindVar(n.Name, n.Type, n)
+				c.info.VarTypes[n] = n.Type
+				c.info.Locals[c.current] = append(c.info.Locals[c.current], n)
+				c.beginLitLocal(n, s)
+				return
+			}
+		} else if got != nil {
+			got = c.maybeWrapForUnion(n.Type, &n.Init, got, s)
+			if !c.assignable(n.Type, got) {
+				c.errfCode(n.P, "E003", "cannot assign %s to variable of type %s%s", got, n.Type, assignHint(n.Type, got))
+			}
+		}
+		s.bindVar(n.Name, n.Type, n)
+		c.info.VarTypes[n] = n.Type
+		c.info.Locals[c.current] = append(c.info.Locals[c.current], n)
+		if st, ok := n.Type.(ast.StructType); ok && unannotated {
+			c.beginLitCompositeLocal(n, st.Args, s)
+		}
+		if et, ok := n.Type.(ast.EnumType); ok && unannotated {
+			c.beginLitCompositeLocal(n, et.Args, s)
+		}
+	case *ast.Destructure:
+		// `let (a, b, …) = expr;` — Init must produce a
+		// tuple of arity len(Names). Each name is registered
+		// as a local in the enclosing scope, plus a hidden
+		// temp local that holds the tuple pointer so the IR
+		// can do one evaluation followed by per-name field
+		// loads.
+		got := c.checkExpr(n.Init, s)
+		if n.Fields != nil {
+			c.checkStructDestructure(n, got, s)
+			return
+		}
+		tup, ok := got.(ast.TupleType)
+		if !ok {
+			if got != nil {
+				c.errfCode(n.P, "E024", "tuple destructure needs a tuple expression, got %s", got)
+			}
+			s.poisonAll(n.Names)
+			return
+		}
+		if len(tup.Elems) != len(n.Names) {
+			c.errfCode(n.P, "E024", "tuple has %d elements, but %d names given", len(tup.Elems), len(n.Names))
+			s.poisonAll(n.Names)
+			return
+		}
+		// Hidden temp holds the tuple pointer between the
+		// init's evaluation and the per-name loads. Name is
+		// uniqued by source position so multiple destructures
+		// in the same function don't collide.
+		tempName := c.destructHolderName(n, s)
+		tempVar := &ast.Var{P: n.P, Name: tempName, Type: tup}
+		s.names[tempName] = tup
+		c.info.VarTypes[tempVar] = tup
+		c.info.Locals[c.current] = append(c.info.Locals[c.current], tempVar)
+		for i, name := range n.Names {
+			if _, dup := s.names[name]; dup {
+				c.errfCode(n.P, "E013", "variable %q already declared in this scope", name)
+				continue
+			}
+			elemT := tup.Elems[i]
+			v := &ast.Var{P: n.P, Name: name, Type: elemT}
+			s.names[name] = elemT
+			c.info.VarTypes[v] = elemT
+			c.info.Locals[c.current] = append(c.info.Locals[c.current], v)
+		}
+		// A nested element's binder is now in scope, so its own Destructure
+		// — whose Init reads that binder — checks as an ordinary one. Running
+		// it in the SAME scope is what keeps the inner names visible to the
+		// rest of the block, the way the source spelling promises.
+		for i := range n.Nested {
+			if n.Nested[i] != nil {
+				c.checkStmt(n.Nested[i], s)
+			}
+		}
+	case *ast.ExprStmt:
+		c.checkExpr(n.Expr, s)
+		c.checkUnusedCollectionResult(n.Expr)
+	case *ast.Match:
+		c.checkMatch(n, s)
+	case *ast.FuncDecl:
+		c.checkLocalFunc(n, s)
+	}
+}
+
+// destructHolderName names the local that holds the value between a
+// destructure's init evaluation and its per-name loads, and stamps it onto
+// the node. An `@` binding names it — that local IS the whole value, so the
+// binding needs no slot of its own — and being a name the source wrote, it
+// takes an E013 when the scope already has one rather than being uniqued
+// out of the way like a hidden temp.
+func (c *checker) destructHolderName(n *ast.Destructure, s *scope) string {
+	if n.AtName == "" {
+		n.TempName = c.destructTempName(n.P)
+		return n.TempName
+	}
+	if _, dup := s.names[n.AtName]; dup {
+		c.errfCode(n.P, "E013", "variable %q already declared in this scope", n.AtName)
+	}
+	n.TempName = n.AtName
+	return n.AtName
+}
+
+// destructTempName names the hidden local that holds the value between a
+// destructure's init evaluation and its per-name loads. Source position is the
+// base, but not unique on its own: every level of a NESTED destructure shares
+// the statement's position, and two levels sharing one temp would leave the
+// inner level reading the outer level's layout.
+func (c *checker) destructTempName(pos ast.Position) string {
+	base := fmt.Sprintf("__destruct_%d_%d", pos.Line, pos.Col)
+	name := base
+	for n := 1; c.localDeclared(name); n++ {
+		name = fmt.Sprintf("%s_%d", base, n)
+	}
+	return name
+}
+
+// localDeclared reports whether the function being checked already has a local
+// of this name.
+func (c *checker) localDeclared(name string) bool {
+	for _, v := range c.info.Locals[c.current] {
+		if v.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+// checkStructDestructure validates `let Point { x, y } = expr;` — Init
+// (already type-checked to `got`) must be the named struct type, and each
+// field named in the pattern must exist. Names are registered in the
+// enclosing scope with their field types, plus a hidden temp holding the
+// struct pointer for the IR's one-eval-then-per-field-load lowering,
+// exactly like the tuple form.
+func (c *checker) checkStructDestructure(n *ast.Destructure, got ast.Type, s *scope) {
+	st, ok := got.(ast.StructType)
+	if !ok {
+		if got != nil {
+			c.errfCode(n.P, "E024", "struct destructure needs a struct expression, got %s", got)
+		}
+		s.poisonAll(n.Names)
+		return
+	}
+	sd := c.info.Structs[st.Name]
+	if sd == nil {
+		c.errfCode(n.P, "E043", "unknown struct type %q", st.Name)
+		s.poisonAll(n.Names)
+		return
+	}
+	if n.StructName != "" && n.StructName != st.Name {
+		c.errfCode(n.P, "E024", "struct destructure pattern names %s, but the expression is %s", n.StructName, st.Name)
+		s.poisonAll(n.Names)
+		return
+	}
+	c.checkOpaqueAccess(sd, n.P, "destructure a field of")
+	var sub map[string]ast.Type
+	if len(sd.TypeParams) > 0 && len(st.Args) == len(sd.TypeParams) {
+		sub = make(map[string]ast.Type, len(sd.TypeParams))
+		for i, tp := range sd.TypeParams {
+			sub[tp] = st.Args[i]
+		}
+	}
+	tempName := c.destructHolderName(n, s)
+	tempVar := &ast.Var{P: n.P, Name: tempName, Type: st}
+	s.names[tempName] = st
+	c.info.VarTypes[tempVar] = st
+	c.info.Locals[c.current] = append(c.info.Locals[c.current], tempVar)
+	for i, name := range n.Names {
+		field := n.Fields[i]
+		var ft ast.Type
+		found := false
+		for _, f := range sd.Fields {
+			if f.Name == field {
+				ft = f.Type
+				if sub != nil {
+					ft = substituteType(ft, sub)
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			declared := make([]string, 0, len(sd.Fields))
+			for _, df := range sd.Fields {
+				declared = append(declared, df.Name)
+			}
+			c.errUnknownField(n.P, n.P, st.Name, field, declared)
+			s.poison(name)
+			continue
+		}
+		if _, dup := s.names[name]; dup {
+			c.errfCode(n.P, "E013", "variable %q already declared in this scope", name)
+			continue
+		}
+		v := &ast.Var{P: n.P, Name: name, Type: ft}
+		s.names[name] = ft
+		c.info.VarTypes[v] = ft
+		c.info.Locals[c.current] = append(c.info.Locals[c.current], v)
+	}
+}
+
+// checkMatch type-checks a `match` statement. The scrutinee must
+// be an enum value; each arm's pattern variant must belong to
+// that enum and supply the right number of binding names; the
+// arm list must cover every variant of the enum (or end in a
+// patsCoverOneField reports whether a run of refutable sibling arms is
+// exhaustive by covering every variant of one enum-typed position.
+//
+// Before arms were flat, this question did not arise: the merge desugar
+// hoisted the sub-pattern into an inner match, so the outer arm was
+// irrefutable and the inner match answered exhaustiveness. Flat arms put the
+// question back where it belongs — `V(Ok2(a))` beside `V(Er2(a))` covers `V`
+// exactly when those two are all of the payload's variants.
+//
+// Deliberately narrow: it answers only when every refutable position across
+// the arms is the SAME index and holds a variant pattern. An arm that nests
+// deeper (`V(Ok2(0))`) still discriminates there, so it does not disqualify
+// the group — it simply does not contribute a covered variant, which is right:
+// it does not cover `Ok2` on its own. Anything the rule cannot answer falls
+// back to requiring an irrefutable arm, which is a diagnostic rather than a
+// miscompile.
+func (c *checker) patsCoverOneField(arms []structArmPat) bool {
+	field := -1
+	for _, a := range arms {
+		for k, el := range a.payloads {
+			if el == nil || !patElemRefutable(*el) {
+				continue
+			}
+			if el.VariantName == "" || el.Nested != nil {
+				return false
+			}
+			if field == -1 {
+				field = k
+			} else if field != k {
+				return false
+			}
+		}
+	}
+	if field == -1 {
+		return false
+	}
+	var ed *ast.EnumDecl
+	covered := map[string]bool{}
+	for _, a := range arms {
+		if field >= len(a.payloads) || a.payloads[field] == nil || field >= len(a.types) {
+			continue
+		}
+		et, isEnum := a.types[field].(ast.EnumType)
+		if !isEnum {
+			return false
+		}
+		d, known := c.info.Enums[et.Name]
+		if !known {
+			return false
+		}
+		ed = d
+		el := a.payloads[field]
+		// Only an UNGUARDED arm whose sub-pattern is a plain variant covers
+		// it: a guard can fall through, and a deeper pattern (`Ok2(0)`) tests
+		// more than the variant.
+		if !a.guarded && !armPayloadsRefutable(el.VariantPayloads) {
+			covered[el.VariantName] = true
+		}
+	}
+	if ed == nil {
+		return false
+	}
+	for _, v := range ed.Variants {
+		if !covered[v.Name] {
+			return false
+		}
+	}
+	return true
+}
+
+// structArmPat is the pattern half of a struct arm, as structArmsCoverField
+// needs it: the field sub-patterns, their types, and whether a guard can make
+// the arm fall through.
+type structArmPat struct {
+	payloads []*ast.TuplePatElem
+	types    []ast.Type
+	guarded  bool
+}
+
+// armPayloadsRefutable reports whether any of an arm's payload sub-patterns
+// can fail to match — a variant test, a literal, a range, or a tuple with a
+// refutable element at any depth.
+//
+// Such an arm does not COVER its variant, for exactly the reason a guarded one
+// does not: the test may fail at run time and the match then falls through to
+// the next arm. That is what lets `P(Ok2(a))` and `P(Er2(a))` sit in the same
+// match without E028, and what keeps a later `_` from being called unreachable.
+func armPayloadsRefutable(payloads []*ast.TuplePatElem) bool {
+	for _, el := range payloads {
+		if el != nil && patElemRefutable(*el) {
+			return true
+		}
+	}
+	return false
+}
+
+func patElemRefutable(el ast.TuplePatElem) bool {
+	if el.IsStruct {
+		// A struct has one shape, so the position itself never fails —
+		// only a field carrying its own sub-pattern can.
+		for _, sub := range el.VariantPayloads {
+			if sub != nil && patElemRefutable(*sub) {
+				return true
+			}
+		}
+		return false
+	}
+	if el.VariantName != "" || el.Literal != nil {
+		return true
+	}
+	for _, sub := range el.Nested {
+		if patElemRefutable(sub) {
+			return true
+		}
+	}
+	return false
+}
+
+// bindArmPayloads types an arm's payload SUB-PATTERNS and binds whatever they
+// bind into armScope. A slot carrying one has an empty Bindings entry — the
+// pattern supplies the names instead — so it must not reach the plain-binder
+// path, which would declare a nameless local and silently drop the pattern.
+//
+// A payload slot is a TuplePatElem, so it goes through checkTuplePatElem: the
+// same rules a tuple element follows, at every depth. Reports whether any slot
+// is refutable, which is what makes the arm testable rather than irrefutable.
+func (c *checker) bindArmPayloads(pos ast.Position, bindings []string, types []ast.Type, payloads []*ast.TuplePatElem, s, armScope *scope) {
+	seen := map[string]bool{}
+	for k, name := range bindings {
+		var bt ast.Type
+		if k < len(types) {
+			bt = types[k]
+		}
+		if k < len(payloads) && payloads[k] != nil {
+			slot := []ast.TuplePatElem{*payloads[k]}
+			st := []ast.Type{bt}
+			c.checkTuplePatElem(pos, slot, st, 0, bt, s, armScope, seen)
+			*payloads[k] = slot[0]
+			continue
+		}
+		if name == "" || name == "_" {
+			continue
+		}
+		seen[name] = true
+		armScope.names[name] = bt
+	}
+}
+
+// resolveVariantBindings validates a variant pattern's bindings and
+// returns them, with their (type-substituted) types, in declaration
+// (payload) order — ready to declare in a per-arm scope and to drive the
+// position-based IR lowering. For a positional pattern it checks arity
+// and pairs binding[i] with payload[i]. For a named-field pattern
+// (named=true) each binding is a field name: every field must be named
+// exactly once (any order), and the result is the variant's fields in
+// declaration order. Errors report at pos. See docs/NAMED-FIELD-VARIANTS.md.
+func (c *checker) resolveVariantBindings(pos ast.Position, variant *ast.EnumVariant, bindings []string, named bool, sub map[string]ast.Type) ([]string, []ast.Type) {
+	if named && len(variant.FieldNames) > 0 {
+		outNames := make([]string, len(variant.FieldNames))
+		outTypes := make([]ast.Type, len(variant.FieldNames))
+		copy(outNames, variant.FieldNames)
+		for i := range variant.FieldNames {
+			outTypes[i] = substituteType(variant.Payloads[i], sub)
+		}
+		seen := map[string]bool{}
+		for _, b := range bindings {
+			idx := -1
+			for i, fn := range variant.FieldNames {
+				if fn == b {
+					idx = i
+					break
+				}
+			}
+			if idx < 0 {
+				c.errfCode(pos, "E015", "variant %s has no field %q", variant.Name, b)
+				continue
+			}
+			if seen[b] {
+				c.errfCode(pos, "E015", "field %q bound more than once in pattern for %s", b, variant.Name)
+			}
+			seen[b] = true
+		}
+		if len(seen) != len(variant.FieldNames) {
+			c.errfCode(pos, "E015", "named-field pattern for %s must bind all %d field(s) (%s)",
+				variant.Name, len(variant.FieldNames), strings.Join(variant.FieldNames, ", "))
+		}
+		return outNames, outTypes
+	}
+	if named && len(variant.FieldNames) == 0 {
+		c.errfCode(pos, "E015", "variant %s has positional payloads; match it as %s(...), not %s { ... }",
+			variant.Name, variant.Name, variant.Name)
+	}
+	if len(bindings) != len(variant.Payloads) {
+		c.errfCode(pos, "E015", "variant %s has %d payload(s), got %d binding(s)",
+			variant.Name, len(variant.Payloads), len(bindings))
+	}
+	outTypes := make([]ast.Type, len(bindings))
+	for k := range bindings {
+		if k < len(variant.Payloads) {
+			outTypes[k] = substituteType(variant.Payloads[k], sub)
+			if en, clash := c.payloadlessVariantNamed(bindings[k], outTypes[k]); clash {
+				c.errPayloadlessVariantBinder(pos, bindings[k], en, "a payload slot")
+			}
+		}
+	}
+	return bindings, outTypes
+}
+
+// errPayloadlessVariantBinder reports the bare-name-is-a-binder hazard: a
+// pattern position spelled with a payload-less variant's name binds every
+// value instead of testing the variant the spelling suggests. `where` names
+// the position — a payload slot or a tuple element; both are cured the same
+// way, by writing the empty parens.
+func (c *checker) errPayloadlessVariantBinder(pos ast.Position, name, enum, where string) {
+	c.errfCode(pos, "E015", "%s is a payload-less variant of enum %s, but a bare name in %s is a binder that matches every value — write `%s()` to match the variant, or rename the binder",
+		name, enum, where, name)
+}
+
+// checkTuplePatElem types tuple-pattern element k against the scrutinee's
+// element type and binds whatever it binds into armScope. It reports whether
+// the element is REFUTABLE: a literal or variant element can make the arm fail
+// to match, a binder or `_` cannot, and a nested tuple is refutable exactly
+// when one of its own elements is. That is what decides tuple-arm
+// exhaustiveness.
+//
+// Both tuple-match forms (statement and expression) route through here so the
+// element rules are stated once. They were verbatim copies before, which is
+// the shape that let the merged-sibling half of #6923 survive its first fix.
+func (c *checker) checkTuplePatElem(pos ast.Position, elems []ast.TuplePatElem, bindingTypes []ast.Type, k int, elT ast.Type, s, armScope *scope, seen map[string]bool) bool {
+	el := &elems[k]
+	bindingTypes[k] = elT
+	if el.Nested != nil {
+		return c.checkTuplePatNestedElem(pos, el, k, elT, s, armScope, seen)
+	}
+	if el.VariantName != "" {
+		// `A(P { x })` and `A(Ok(n))` are the same spelling; only the
+		// position's type says which. A struct here projects fields.
+		if st, isStruct := elT.(ast.StructType); isStruct {
+			return c.checkTuplePatStructElem(pos, el, k, st, s, armScope, seen)
+		}
+		c.checkTuplePatVariantElem(pos, el, k, elT, s, armScope, seen)
+		return true
+	}
+	if el.Literal != nil {
+		litT := c.checkExpr(el.Literal, s)
+		if litT != nil {
+			c.settleNumeric(el.Literal, elT)
+			litT = c.postSettleType(el.Literal, litT)
+			if !c.assignable(litT, elT) {
+				c.errfCode(pos, "E035", "literal pattern of type %s does not match tuple element %d of type %s", litT, k, elT)
+			}
+		}
+		return true
+	}
+	if el.IsWildcard {
+		return false
+	}
+	if seen[el.Name] {
+		c.errfCode(pos, "E013", "variable %q already declared in this scope", el.Name)
+		return false
+	}
+	seen[el.Name] = true
+	if en, clash := c.payloadlessVariantNamed(el.Name, elT); clash {
+		c.errPayloadlessVariantBinder(pos, el.Name, en, "a tuple element")
+	}
+	armScope.names[el.Name] = elT
+	return false
+}
+
+// checkTuplePatNestedElem validates a nested tuple pattern on element k
+// (`(a, (b, c))`) and binds whatever it binds into armScope. The element type
+// must be a tuple of the same arity; each nested element then goes back
+// through checkTuplePatElem, so every element rule — including this one —
+// applies at every depth. Refutable when any nested element is.
+func (c *checker) checkTuplePatNestedElem(pos ast.Position, el *ast.TuplePatElem, k int, elT ast.Type, s, armScope *scope, seen map[string]bool) bool {
+	tup, isTuple := elT.(ast.TupleType)
+	if !isTuple {
+		c.errfCode(pos, "E035", "nested tuple pattern on tuple element %d, but the element has type %s", k, elT)
+		return true
+	}
+	if len(el.Nested) != len(tup.Elems) {
+		c.errfCode(pos, "E035", "nested tuple pattern on element %d has %d elements, but that element is a tuple of %d", k, len(el.Nested), len(tup.Elems))
+		return true
+	}
+	el.NestedTypes = make([]ast.Type, len(el.Nested))
+	refutable := false
+	for j := range el.Nested {
+		if c.checkTuplePatElem(pos, el.Nested, el.NestedTypes, j, tup.Elems[j], s, armScope, seen) {
+			refutable = true
+		}
+	}
+	return refutable
+}
+
+// checkTuplePatStructElem validates a STRUCT pattern at pattern position k
+// (`A(P { x, .. })`) and binds its fields into armScope. A struct has one
+// shape, so the position carries no test of its own: it is refutable only
+// when one of its fields carries a refutable sub-pattern.
+func (c *checker) checkTuplePatStructElem(pos ast.Position, el *ast.TuplePatElem, k int, st ast.StructType, s, armScope *scope, seen map[string]bool) bool {
+	if el.VariantFieldNames == nil {
+		c.errfCode(pos, "E035", "struct pattern on element %d must name its fields — `%s { … }`", k, st.Name)
+		return true
+	}
+	if el.VariantName != st.Name {
+		c.errfCode(pos, "E035", "struct pattern names %s, but element %d has type %s", el.VariantName, k, st.Name)
+		return true
+	}
+	sd, known := c.info.Structs[st.Name]
+	if !known {
+		c.errfCode(pos, "E043", "unknown struct type %q", st.Name)
+		return true
+	}
+	var sub map[string]ast.Type
+	if len(sd.TypeParams) > 0 && len(st.Args) == len(sd.TypeParams) {
+		sub = make(map[string]ast.Type, len(sd.TypeParams))
+		for i, tp := range sd.TypeParams {
+			sub[tp] = st.Args[i]
+		}
+	}
+	el.IsStruct = true
+	el.VariantBindingTypes = make([]ast.Type, len(el.VariantBindings))
+	refutable := false
+	for i, b := range el.VariantBindings {
+		field := b
+		if i < len(el.VariantFieldNames) && el.VariantFieldNames[i] != "" {
+			field = el.VariantFieldNames[i]
+		}
+		var ft ast.Type
+		found := false
+		for _, f := range sd.Fields {
+			if f.Name == field {
+				ft = f.Type
+				if sub != nil {
+					ft = substituteType(ft, sub)
+				}
+				found = true
+				break
+			}
+		}
+		if !found {
+			declared := make([]string, 0, len(sd.Fields))
+			for _, df := range sd.Fields {
+				declared = append(declared, df.Name)
+			}
+			c.errUnknownField(pos, pos, st.Name, field, declared)
+			refutable = true
+			continue
+		}
+		el.VariantBindingTypes[i] = ft
+		if i < len(el.VariantPayloads) && el.VariantPayloads[i] != nil {
+			slot := []ast.TuplePatElem{*el.VariantPayloads[i]}
+			types := []ast.Type{ft}
+			if c.checkTuplePatElem(pos, slot, types, 0, ft, s, armScope, seen) {
+				refutable = true
+			}
+			*el.VariantPayloads[i] = slot[0]
+			continue
+		}
+		if b == "" {
+			continue
+		}
+		if seen[b] {
+			c.errfCode(pos, "E013", "variable %q already declared in this scope", b)
+			continue
+		}
+		seen[b] = true
+		armScope.names[b] = ft
+	}
+	return refutable
+}
+
+// checkTuplePatVariantElem validates a variant sub-pattern on tuple element k
+// (`(A(x), y)`) and binds its payloads into armScope. The element type must be
+// an enum; the variant's payload arity and type-parameter substitution go
+// through resolveVariantBindings, so a payload slot follows exactly the rules
+// a top-level `A(x) => …` arm follows.
+func (c *checker) checkTuplePatVariantElem(pos ast.Position, el *ast.TuplePatElem, k int, elT ast.Type, s, armScope *scope, seen map[string]bool) {
+	et, isEnum := elT.(ast.EnumType)
+	if !isEnum {
+		c.errfCode(pos, "E035", "variant pattern on tuple element %d, but the element has type %s", k, elT)
+		return
+	}
+	ed, known := c.info.Enums[et.Name]
+	if !known {
+		c.errfCode(pos, "E043", "unknown enum type %q", et.Name)
+		return
+	}
+	c.checkVariantQualifier(pos, el.VariantModule, ed)
+	var variant *ast.EnumVariant
+	for j := range ed.Variants {
+		if ed.Variants[j].Name == el.VariantName {
+			variant = &ed.Variants[j]
+			break
+		}
+	}
+	if variant == nil {
+		c.errfCode(pos, "E014", "variant %q is not part of enum %s%s",
+			el.VariantName, ed.Name, variantSpellingHint(el.VariantName, ed))
+		return
+	}
+	var sub map[string]ast.Type
+	if len(ed.TypeParams) > 0 && len(et.Args) == len(ed.TypeParams) {
+		sub = make(map[string]ast.Type, len(ed.TypeParams))
+		for i, tp := range ed.TypeParams {
+			sub[tp] = et.Args[i]
+		}
+	}
+	el.VariantBindings, el.VariantBindingTypes = c.resolveVariantBindings(pos, variant, el.VariantBindings, false, sub)
+	for i, name := range el.VariantBindings {
+		// A slot carrying a sub-pattern binds nothing itself — its pattern
+		// does, under the same element rules, so it routes back through
+		// checkTuplePatElem. Its VariantBindings entry is the empty name, which
+		// must NOT reach the binder path below: that would declare a nameless
+		// local and silently drop the pattern.
+		if i < len(el.VariantPayloads) && el.VariantPayloads[i] != nil {
+			slot := []ast.TuplePatElem{*el.VariantPayloads[i]}
+			types := []ast.Type{el.VariantBindingTypes[i]}
+			c.checkTuplePatElem(pos, slot, types, 0, el.VariantBindingTypes[i], s, armScope, seen)
+			*el.VariantPayloads[i] = slot[0]
+			continue
+		}
+		if name == "" || name == "_" {
+			continue
+		}
+		if seen[name] {
+			c.errfCode(pos, "E013", "variable %q already declared in this scope", name)
+			continue
+		}
+		seen[name] = true
+		armScope.names[name] = el.VariantBindingTypes[i]
+	}
+}
+
+// payloadlessVariantNamed reports whether name is a payload-less variant of
+// t's enum, naming the enum. A payload slot or tuple element spelled with such
+// a name parses as a binder, so the arm matches every value of the slot instead
+// of testing the variant the spelling suggests.
+func (c *checker) payloadlessVariantNamed(name string, t ast.Type) (string, bool) {
+	et, ok := t.(ast.EnumType)
+	if !ok {
+		return "", false
+	}
+	ed, ok := c.info.Enums[et.Name]
+	if !ok {
+		return "", false
+	}
+	for i := range ed.Variants {
+		if ed.Variants[i].Name == name && len(ed.Variants[i].Payloads) == 0 {
+			return ed.Name, true
+		}
+	}
+	return "", false
+}
+
+// wildcard). Bindings are typed against the matching variant's
+// payload list and bound in a fresh per-arm scope.
+// originLabel names a pattern-binding form for its diagnostics —
+// `ast.Match.Origin` spelled the way the source spells it.
+func originLabel(origin string) string {
+	if origin == ast.OriginLetElse {
+		return "let-else"
+	}
+	return "if-let"
+}
+
+// syntheticElseArm reports whether arm i is the trailing wildcard a
+// pattern-binding desugar synthesised to hold its else branch. Nobody
+// wrote it, so the unreachable-arm diagnostics that fire when the
+// preceding pattern is irrefutable (a struct pattern, an all-binder
+// tuple pattern) must not be reported against it.
+func syntheticElseArm(n *ast.Match, i int) bool {
+	return n.Origin != "" && i == len(n.Arms)-1 && n.Arms[i].IsWildcard
+}
+
+// bindsVariantPattern reports whether every non-synthetic arm is a
+// positional variant pattern — the one pattern shape that can only mean
+// an enum destructure, and so the shape that draws E022 when the source
+// isn't an enum. Struct, tuple and literal patterns have their own
+// scrutinee kinds and are checked against those instead.
+func bindsVariantPattern(n *ast.Match) bool {
+	for i, arm := range n.Arms {
+		if syntheticElseArm(n, i) {
+			continue
+		}
+		if arm.VariantName == "" || arm.NamedFields {
+			return false
+		}
+	}
+	return true
+}
+
+// stampRemainderArm decides whether a match's LAST arm can be reached by
+// only one variant, and records the answer on the arm.
+//
+// It is the checker's job because exhaustiveness is proved here and
+// nowhere else: `trmc.go`'s `trmcArmsTotal` re-derives the same fact in
+// lowering today, which is the recovery ast.MatchArm.EnumName's own doc
+// argues against (#6964).
+//
+// Deliberately narrower than the E030 proof beside it. That proof also
+// admits a variant covered JOINTLY by a group of refutable arms
+// (`patsCoverOneField`); this does not, because a group's members each
+// test a sub-pattern and "reaches this arm" then stops being a statement
+// about tags alone. A match that is exhaustive by the wider rule simply
+// keeps its tag test, which is the conservative direction.
+//
+// The write is unconditional. The checker re-runs after monomorphisation
+// over the same nodes, so a true left from an earlier pass would outlive
+// the shape that justified it.
+//
+// Two of the refusals below are DEFENSIVE rather than reachable: the
+// checker already rejects a wildcard that is not last, and a duplicate
+// variant arm, so neither shape reaches here from source. They are kept
+// because this runs over synthesised arms too — every desugar's output
+// passes through the checker — and because false is the answer that
+// costs a tag test rather than running dead code. A test pins that the
+// checker still rejects both, so a later relaxation there cannot quietly
+// make the stamp wrong.
+func stampRemainderArm[A matchArmLike](arms []A, ed *ast.EnumDecl) {
+	for _, a := range arms {
+		a.setCoversRemainder(false)
+	}
+	if ed == nil || len(arms) == 0 {
+		return
+	}
+	last := arms[len(arms)-1]
+	if last.isWildcard() || last.enumName() == "" || last.guard() != nil ||
+		armPayloadsRefutable(last.payloads()) {
+		return
+	}
+	// What the arms BEFORE the last one irrefutably cover. A wildcard
+	// among them already terminates the chain and makes the last arm
+	// dead, so it disqualifies rather than contributes.
+	covered := map[string]bool{}
+	for _, a := range arms[:len(arms)-1] {
+		if a.isWildcard() {
+			return
+		}
+		if a.guard() == nil && !armPayloadsRefutable(a.payloads()) {
+			covered[a.variantName()] = true
+		}
+	}
+	for _, v := range ed.Variants {
+		if v.Name == last.variantName() {
+			// An earlier arm already handles this variant irrefutably,
+			// so the last arm is unreachable. Emitting it
+			// unconditionally would run code that cannot run today.
+			if covered[v.Name] {
+				return
+			}
+			continue
+		}
+		if !covered[v.Name] {
+			return
+		}
+	}
+	last.setCoversRemainder(true)
+}
+
+// matchArmLike is the little of an arm this needs, so the statement and
+// expression forms share one implementation rather than two that drift.
+type matchArmLike interface {
+	isWildcard() bool
+	enumName() string
+	variantName() string
+	guard() ast.Expr
+	payloads() []*ast.TuplePatElem
+	setCoversRemainder(bool)
+}
+
+type stmtArm struct{ a *ast.MatchArm }
+
+func (x stmtArm) isWildcard() bool              { return x.a.IsWildcard }
+func (x stmtArm) enumName() string              { return x.a.EnumName }
+func (x stmtArm) variantName() string           { return x.a.VariantName }
+func (x stmtArm) guard() ast.Expr               { return x.a.Guard }
+func (x stmtArm) payloads() []*ast.TuplePatElem { return x.a.Payloads }
+func (x stmtArm) setCoversRemainder(v bool)     { x.a.CoversRemainder = v }
+
+type exprArm struct{ a *ast.MatchExprArm }
+
+func (x exprArm) isWildcard() bool              { return x.a.IsWildcard }
+func (x exprArm) enumName() string              { return x.a.EnumName }
+func (x exprArm) variantName() string           { return x.a.VariantName }
+func (x exprArm) guard() ast.Expr               { return x.a.Guard }
+func (x exprArm) payloads() []*ast.TuplePatElem { return x.a.Payloads }
+func (x exprArm) setCoversRemainder(v bool)     { x.a.CoversRemainder = v }
+
+func stampRemainderStmtArms(arms []*ast.MatchArm, ed *ast.EnumDecl) {
+	wrapped := make([]matchArmLike, 0, len(arms))
+	for _, a := range arms {
+		wrapped = append(wrapped, stmtArm{a})
+	}
+	stampRemainderArm(wrapped, ed)
+}
+
+func stampRemainderExprArms(arms []*ast.MatchExprArm, ed *ast.EnumDecl) {
+	wrapped := make([]matchArmLike, 0, len(arms))
+	for _, a := range arms {
+		wrapped = append(wrapped, exprArm{a})
+	}
+	stampRemainderArm(wrapped, ed)
+}
+
+func (c *checker) checkMatch(n *ast.Match, s *scope) {
+	// A `let … else` binds for the rest of its block — the desugar's
+	// success arm — so the else branch (the synthesised trailing wildcard)
+	// must terminate the surrounding control flow. Without that, execution
+	// could reach the rest of the block with the bindings uninitialised.
+	if n.Origin == ast.OriginLetElse && len(n.Arms) >= 2 {
+		if els := n.Arms[len(n.Arms)-1].Body; !blockDiverges(els) {
+			c.errfCode(els.P, "E022", "let-else: else branch must diverge (return / break / continue)")
+		}
+	}
+	tagT := c.checkExpr(n.Tag, s)
+	if tagT == nil {
+		return
+	}
+	tagT = c.widenGenericScrutinee(n.Tag, tagT)
+	et, ok := tagT.(ast.EnumType)
+	if !ok {
+		// A pattern-binding desugar (`if let V(x) = e`) destructuring a
+		// non-enum source gets the binding-form diagnostic rather than
+		// the shape-based match errors the desugared form would draw.
+		if n.Origin != "" && bindsVariantPattern(n) {
+			c.errfCode(n.Tag.Pos(), "E022", "%s source must be an enum value, got %s", originLabel(n.Origin), tagT)
+			for _, arm := range n.Arms {
+				c.checkBlock(arm.Body, s)
+			}
+			return
+		}
+		// Tuple scrutinee: arms are tuple patterns `(p0, p1, …)` or
+		// the wildcard — see checkTupleMatch.
+		if tup, isTup := tagT.(ast.TupleType); isTup {
+			c.checkTupleMatch(n, tup, s)
+			return
+		}
+		// Struct scrutinee: arms are struct patterns `S { x, y }` (or
+		// `_`) — see checkStructMatch.
+		if st, isStruct := tagT.(ast.StructType); isStruct {
+			if _, known := c.info.Structs[st.Name]; known {
+				c.checkStructMatch(n, st, s)
+				return
+			}
+		}
+		// Non-enum scrutinee: every arm must be a literal pattern
+		// or the wildcard. Dispatch via the literal-pattern shape.
+		// Conventional types are number / string / bool — anything
+		// else is an error (struct / array / etc. don't have a
+		// reasonable equality match yet).
+		c.checkLiteralMatch(n, tagT, s)
+		return
+	}
+	ed, ok := c.info.Enums[et.Name]
+	if !ok {
+		c.errfCode(n.Tag.Pos(), "E023", "unknown enum %q", et.Name)
+		return
+	}
+	// For generic enums, build a substitution map from the
+	// scrutinee's concrete type arguments. `match (o: Option[number])`
+	// gives us T=number, so the arm `Some(v)` types `v` as
+	// `number` rather than the unresolved `T`.
+	sub := map[string]ast.Type{}
+	if len(ed.TypeParams) == len(et.Args) {
+		for i, p := range ed.TypeParams {
+			sub[p] = et.Args[i]
+		}
+	}
+	covered := map[string]bool{}
+	literalLocals := c.enumLiteralLocals(n.Tag, et, s)
+	refutableByVariant := map[string][]structArmPat{}
+	sawWildcard := false
+	for i, arm := range n.Arms {
+		if arm.IsWildcard {
+			if i != len(n.Arms)-1 {
+				c.errfCode(arm.P, "E026", "wildcard `_` arm must be last in the match")
+			}
+			// Wildcard with a guard doesn't satisfy exhaustiveness
+			// because the guard might be false at runtime — only
+			// an unguarded `_` is the canonical "covers
+			// everything" form.
+			if arm.Guard == nil {
+				sawWildcard = true
+			}
+			if arm.Guard != nil {
+				gt := c.checkExpr(arm.Guard, s)
+				if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+				}
+			}
+			c.checkBlock(arm.Body, s)
+			continue
+		}
+		// A tuple pattern on an enum scrutinee is a shape error —
+		// report it directly rather than letting the empty
+		// VariantName fall through to a confusing E014.
+		if arm.TupleElems != nil {
+			c.errfCode(arm.P, "E035", "tuple pattern requires a tuple scrutinee, got enum %s", ed.Name)
+			c.checkBlock(arm.Body, s)
+			continue
+		}
+		c.checkVariantQualifier(arm.P, arm.VariantModule, ed)
+		// Find the variant on this enum.
+		varIdx := -1
+		var variant *ast.EnumVariant
+		for j := range ed.Variants {
+			if ed.Variants[j].Name == arm.VariantName {
+				varIdx = j
+				variant = &ed.Variants[j]
+				break
+			}
+		}
+		if varIdx < 0 {
+			c.errfCode(arm.P, "E014", "variant %q is not part of enum %s%s",
+				arm.VariantName, ed.Name, unknownVariantHint(arm.VariantName, ed))
+			c.checkBlock(arm.Body, s)
+			continue
+		}
+		// Record the resolution on the arm. Both facts are authoritative
+		// here — `ed` IS the scrutinee's enum — and every later stage used
+		// to recover them from the scrutinee's static type instead (#6964).
+		arm.EnumName = ed.Name
+		arm.VariantIndex = varIdx
+		if covered[arm.VariantName] {
+			c.errfCode(arm.P, "E028", "variant %q already covered earlier in this match", arm.VariantName)
+		}
+		// Bind names in a fresh scope so they don't leak into
+		// sibling arms. Payload types get the type-parameter
+		// substitution applied so `Some(v)` on `Option[number]`
+		// types `v` as `number`, not the abstract `T`. A named-field
+		// pattern (`Rect { w, h }`) is validated + reordered into
+		// declaration order here.
+		if arm.NamedFields {
+			renamed := false
+			for i := range arm.Bindings {
+				if i < len(arm.FieldNames) && arm.FieldNames[i] != "" && arm.FieldNames[i] != arm.Bindings[i] {
+					if !renamed {
+						c.errfCode(arm.P, "E015", "enum named-field pattern for %s does not support renaming (`field: local`) — bind the field by name (`%s { %s }`)", variant.Name, variant.Name, arm.FieldNames[i])
+						renamed = true
+					}
+					arm.Bindings[i] = arm.FieldNames[i]
+				}
+			}
+			// Enum variant patterns never project through FieldNames (only
+			// struct matches do), and resolveVariantBindings reorders
+			// Bindings into declaration order — leaving FieldNames stale.
+			// Clear it so a re-check (post-monomorph) doesn't misfire the
+			// rename guard on a legitimately reordered shorthand pattern.
+			arm.FieldNames = nil
+		}
+		arm.Bindings, arm.BindingTypes = c.resolveVariantBindings(arm.P, variant, arm.Bindings, arm.NamedFields, sub)
+		// A refutable arm may still complete its variant's coverage together
+		// with its siblings — see patsCoverOneField, applied per variant once
+		// every arm is in. Snapshotted AFTER resolveVariantBindings, which is
+		// what fills BindingTypes.
+		refutableByVariant[arm.VariantName] = append(refutableByVariant[arm.VariantName],
+			structArmPat{payloads: arm.Payloads, types: arm.BindingTypes, guarded: arm.Guard != nil})
+		armScope := newScope(s)
+		// `@` binding: the whole matched value, bound at the scrutinee's type.
+		if arm.AtBinding != "" {
+			armScope.names[arm.AtBinding] = et
+		}
+		c.bindArmPayloads(arm.P, arm.Bindings, arm.BindingTypes, arm.Payloads, s, armScope)
+		c.bindEnumLiteralPayloads(n.Tag, ed, variant, arm.Bindings, arm.BindingTypes, armScope, literalLocals)
+		// Guarded arms don't fully cover the variant: the guard might be
+		// false at runtime, in which case the match falls through. Leaving
+		// `covered[...]` clear means a later unguarded arm for the same
+		// variant (or a wildcard) is required for exhaustiveness — and is
+		// no longer flagged as a duplicate. Decided AFTER the payloads are
+		// bound, which is what tells a struct position from a variant one.
+		if arm.Guard == nil && !armPayloadsRefutable(arm.Payloads) {
+			covered[arm.VariantName] = true
+		}
+		// Guard runs in the bindings-in-scope frame so it can
+		// reference the payload names. Required to be bool.
+		if arm.Guard != nil {
+			gt := c.checkExpr(arm.Guard, armScope)
+			if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+				c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+			}
+		}
+		c.checkBlock(arm.Body, armScope)
+	}
+	if !sawWildcard {
+		for name, group := range refutableByVariant {
+			if !covered[name] && c.patsCoverOneField(group) {
+				covered[name] = true
+			}
+		}
+		for _, v := range ed.Variants {
+			if !covered[v.Name] {
+				c.errfCode(n.P, "E030", "match is not exhaustive — variant %s of enum %s is not covered (add an arm or use `_`)",
+					v.Name, ed.Name)
+			}
+		}
+	}
+	stampRemainderStmtArms(n.Arms, ed)
+}
+
+// widenGenericScrutinee settles a generic call in scrutinee position the way
+// an unannotated `let` initialiser settles one: a type parameter bound only by
+// literal arguments, one of which has no i32 reading, takes i64
+// (widenGenericCallByLiterals). Without it `match (pick(1, 2^62))` bound `T`
+// at the i32 default and the arm's payload compared at the wrong width (#8722).
+func (c *checker) widenGenericScrutinee(tag ast.Expr, tagT ast.Type) ast.Type {
+	if call, ok := tag.(*ast.Call); ok {
+		if widened := c.widenGenericCallByLiterals(call); widened != nil {
+			return widened
+		}
+	}
+	return tagT
+}
+
+// settlePolymorphicScrutinee commits a still-polymorphic integer scrutinee to
+// the width its own literals and the arms' literal patterns select before the
+// patterns are settled against it: `match (3 - 4611686018427387904) { 3 => …
+// }` compared at the i32 default, where the truncated literal made the
+// scrutinee 3, and took the arm every wide reading of it rejects (#8722).
+func (c *checker) settlePolymorphicScrutinee(tag ast.Expr, tagT ast.Type, pats []ast.Expr) ast.Type {
+	if nt, ok := tagT.(ast.NumberType); !ok || !nt.Polymorphic {
+		return tagT
+	}
+	def := c.polymorphicIntDefault(append([]ast.Expr{tag}, pats...)...)
+	c.settleInt(tag, def)
+	return def
+}
+
+func literalPatterns(arms []*ast.MatchArm) []ast.Expr {
+	var out []ast.Expr
+	for _, arm := range arms {
+		if arm.Literal != nil {
+			out = append(out, arm.Literal)
+		}
+		if arm.RangeHi != nil {
+			out = append(out, arm.RangeHi)
+		}
+	}
+	return out
+}
+
+func literalPatternExprs(arms []*ast.MatchExprArm) []ast.Expr {
+	var out []ast.Expr
+	for _, arm := range arms {
+		if arm == nil {
+			continue
+		}
+		if arm.Literal != nil {
+			out = append(out, arm.Literal)
+		}
+		if arm.RangeHi != nil {
+			out = append(out, arm.RangeHi)
+		}
+	}
+	return out
+}
+
+// checkLiteralMatch handles `match (n) { 0 => …, _ => … }` where
+// the scrutinee is a number / string / bool. Every arm must
+// carry a literal pattern or be a wildcard; literals must
+// type-check against the scrutinee's type. Exhaustiveness:
+// a trailing unguarded `_` is required (we don't enumerate
+// integer / string domains, and bool exhaustiveness via the
+// two-literal form is intentionally NOT special-cased — the
+// `_` arm covers it more uniformly).
+func (c *checker) checkLiteralMatch(n *ast.Match, tagT ast.Type, s *scope) {
+	tagT = c.settlePolymorphicScrutinee(n.Tag, tagT, literalPatterns(n.Arms))
+	sawWildcard := false
+	for i, arm := range n.Arms {
+		if arm.IsWildcard {
+			if i != len(n.Arms)-1 {
+				c.errfCode(arm.P, "E026", "wildcard `_` arm must be last in the match")
+			}
+			if arm.Guard == nil {
+				sawWildcard = true
+			}
+			if arm.Guard != nil {
+				gt := c.checkExpr(arm.Guard, s)
+				if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+				}
+			}
+			c.checkBlock(arm.Body, s)
+			continue
+		}
+		if arm.Literal == nil {
+			c.errfCode(arm.P, "E035", "match on non-enum value `%s` only accepts literal patterns or `_`", tagT)
+			c.checkBlock(arm.Body, s)
+			continue
+		}
+		litT := c.checkExpr(arm.Literal, s)
+		if litT != nil {
+			c.settleNumeric(arm.Literal, tagT)
+			litT = c.postSettleType(arm.Literal, litT)
+			if !c.assignable(litT, tagT) {
+				c.errfCode(arm.P, "E035", "literal pattern of type %s does not match scrutinee type %s", litT, tagT)
+			}
+		}
+		if arm.RangeHi != nil {
+			// Range pattern `lo..hi`: the low bound is `Literal`, validated
+			// above; the high bound needs the same type + settle. Ranges are
+			// numeric-only — an ordered scalar scrutinee. Unsigned scrutinees
+			// are deferred (the interpreter oracle compares signed), so they
+			// are rejected here to keep native + interp in agreement.
+			tagNum, tagIsNum := tagT.(ast.NumberType)
+			_, tagIsFloat := tagT.(ast.FloatType)
+			if !tagIsNum && !tagIsFloat {
+				c.errfCode(arm.P, "E035", "range patterns require a numeric scrutinee, got %s", tagT)
+			} else if tagIsNum && !tagNum.IsSigned() {
+				c.errfCode(arm.P, "E035", "range patterns are not yet supported on an unsigned scrutinee (%s)", tagT)
+			}
+			hiT := c.checkExpr(arm.RangeHi, s)
+			if hiT != nil {
+				c.settleNumeric(arm.RangeHi, tagT)
+				hiT = c.postSettleType(arm.RangeHi, hiT)
+				if !c.assignable(hiT, tagT) {
+					c.errfCode(arm.P, "E035", "range pattern bound of type %s does not match scrutinee type %s", hiT, tagT)
+				}
+			}
+		}
+		armScope := newScope(s)
+		// `@` binding: the whole matched value, at the scrutinee's type.
+		if arm.AtBinding != "" {
+			armScope.names[arm.AtBinding] = tagT
+		}
+		if arm.Guard != nil {
+			gt := c.checkExpr(arm.Guard, armScope)
+			if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+				c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+			}
+		}
+		c.checkBlock(arm.Body, armScope)
+	}
+	if !sawWildcard {
+		c.errfCode(n.P, "E030", "match on non-enum value is not exhaustive — add an unguarded `_` arm")
+	}
+}
+
+// checkTupleMatch handles `match (pair) { (0, y) => …, (x, y) => … }`
+// where the scrutinee is a tuple. Every arm must carry a tuple pattern
+// of matching arity or be the wildcard. Literal elements type-check
+// against the scrutinee's element types; binder elements are declared
+// in a fresh per-arm scope with the element's type (BindingTypes is
+// filled parallel to TupleElems so the IR picks the right load width).
+// Exhaustiveness: an unguarded `_` OR an unguarded all-binder/wildcard
+// (irrefutable) tuple arm covers everything; any arm after such an arm
+// is unreachable (E026-family), and a match with neither is E030.
+func (c *checker) checkTupleMatch(n *ast.Match, tup ast.TupleType, s *scope) {
+	sawIrrefutable := false
+	for i, arm := range n.Arms {
+		if sawIrrefutable && !syntheticElseArm(n, i) {
+			c.errfCode(arm.P, "E026", "arm is unreachable — a preceding arm matches every value")
+		}
+		if arm.IsWildcard {
+			if arm.Guard == nil {
+				sawIrrefutable = true
+			}
+			if arm.Guard != nil {
+				gt := c.checkExpr(arm.Guard, s)
+				if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+				}
+			}
+			c.checkBlock(arm.Body, s)
+			continue
+		}
+		if arm.TupleElems == nil {
+			c.errfCode(arm.P, "E035", "match on tuple `%s` only accepts tuple patterns or `_`", tup)
+			c.checkBlock(arm.Body, s)
+			continue
+		}
+		if len(arm.TupleElems) != len(tup.Elems) {
+			c.errfCode(arm.P, "E035", "tuple pattern has %d elements, but scrutinee tuple has %d", len(arm.TupleElems), len(tup.Elems))
+			c.checkBlock(arm.Body, s)
+			continue
+		}
+		armScope := newScope(s)
+		// `@` binding: the whole matched tuple, bound at the scrutinee type.
+		if arm.AtBinding != "" {
+			armScope.names[arm.AtBinding] = tup
+		}
+		irrefutable := true
+		arm.BindingTypes = make([]ast.Type, len(arm.TupleElems))
+		seen := map[string]bool{}
+		for k := range arm.TupleElems {
+			if c.checkTuplePatElem(arm.P, arm.TupleElems, arm.BindingTypes, k, tup.Elems[k], s, armScope, seen) {
+				irrefutable = false
+			}
+		}
+		if arm.Guard != nil {
+			irrefutable = false
+			gt := c.checkExpr(arm.Guard, armScope)
+			if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+				c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+			}
+		}
+		if irrefutable {
+			sawIrrefutable = true
+		}
+		c.checkBlock(arm.Body, armScope)
+	}
+	if !sawIrrefutable {
+		c.errfCode(n.P, "E030", "match on tuple is not exhaustive — add an unguarded `_` or all-binder arm")
+	}
+}
+
+// checkStructMatch type-checks a `match` on a struct-typed scrutinee.
+// A struct has a single shape, so a struct-pattern arm `S { x, y }` is
+// irrefutable (it always matches, modulo a guard) and binds the named
+// fields into the arm scope — the match reduces to "run the first arm
+// whose guard passes". The pattern names must be the scrutinee struct's
+// fields; the pattern's leading name must be the struct type. A guardless
+// struct-pattern arm (or `_`) makes the match exhaustive.
+func (c *checker) checkStructMatch(n *ast.Match, st ast.StructType, s *scope) {
+	sd := c.info.Structs[st.Name]
+	if sd == nil {
+		c.errfCode(n.Tag.Pos(), "E043", "unknown struct type %q", st.Name)
+		return
+	}
+	n.StructMatch = st.Name
+	var sub map[string]ast.Type
+	if len(sd.TypeParams) > 0 && len(st.Args) == len(sd.TypeParams) {
+		sub = make(map[string]ast.Type, len(sd.TypeParams))
+		for i, tp := range sd.TypeParams {
+			sub[tp] = st.Args[i]
+		}
+	}
+	sawIrrefutable := false
+	var structArms []structArmPat
+	for i, arm := range n.Arms {
+		if sawIrrefutable && !syntheticElseArm(n, i) {
+			c.errfCode(arm.P, "E026", "arm is unreachable — a preceding arm matches every value")
+		}
+		if arm.IsWildcard {
+			if arm.Guard == nil {
+				sawIrrefutable = true
+			} else {
+				gt := c.checkExpr(arm.Guard, s)
+				if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+				}
+			}
+			c.checkBlock(arm.Body, s)
+			continue
+		}
+		if !arm.NamedFields {
+			c.errfCode(arm.P, "E035", "match on struct `%s` only accepts struct patterns `%s { … }` or `_`", st.Name, st.Name)
+			c.checkBlock(arm.Body, s)
+			continue
+		}
+		if arm.VariantName != st.Name {
+			c.errfCode(arm.P, "E035", "struct pattern names %s, but the scrutinee is %s", arm.VariantName, st.Name)
+			c.checkBlock(arm.Body, s)
+			continue
+		}
+		armScope := newScope(s)
+		// A struct pattern reads fields by name, so it is the same access
+		// `s.field` is — the rule was enforced on field access, construction
+		// and var-destructure but not here, leaving two paths unchecked (#8451).
+		// A bare `S { .. }` binds nothing and stays legal as an existence
+		// test.
+		if len(arm.Bindings) > 0 {
+			c.checkOpaqueAccess(sd, arm.P, "destructure")
+		}
+		// `@` binding: the whole matched struct, bound at the scrutinee type.
+		if arm.AtBinding != "" {
+			armScope.names[arm.AtBinding] = st
+		}
+		arm.BindingTypes = make([]ast.Type, len(arm.Bindings))
+		seen := map[string]bool{}
+		for k, b := range arm.Bindings {
+			// b is the LOCAL bound; the projected FIELD is FieldNames[k]
+			// (== b for the shorthand `S { x }`; a rename `S { x: nx }`
+			// projects field x into local nx).
+			field := b
+			if k < len(arm.FieldNames) && arm.FieldNames[k] != "" {
+				field = arm.FieldNames[k]
+			}
+			var ft ast.Type
+			found := false
+			for _, f := range sd.Fields {
+				if f.Name == field {
+					ft = f.Type
+					if sub != nil {
+						ft = substituteType(ft, sub)
+					}
+					found = true
+					break
+				}
+			}
+			if !found {
+				declared := make([]string, 0, len(sd.Fields))
+				for _, df := range sd.Fields {
+					declared = append(declared, df.Name)
+				}
+				c.errUnknownField(arm.P, arm.P, st.Name, field, declared)
+				continue
+			}
+			arm.BindingTypes[k] = ft
+			// A field carrying a SUB-PATTERN binds nothing itself — the
+			// pattern does, under the same element rules a tuple position
+			// follows — and its Bindings entry is the empty name.
+			if k < len(arm.Payloads) && arm.Payloads[k] != nil {
+				slot := []ast.TuplePatElem{*arm.Payloads[k]}
+				st := []ast.Type{ft}
+				c.checkTuplePatElem(arm.P, slot, st, 0, ft, s, armScope, seen)
+				*arm.Payloads[k] = slot[0]
+				continue
+			}
+			if seen[b] {
+				c.errfCode(arm.P, "E013", "variable %q already declared in this scope", b)
+				continue
+			}
+			seen[b] = true
+			armScope.names[b] = ft
+		}
+		structArms = append(structArms, structArmPat{payloads: arm.Payloads, types: arm.BindingTypes, guarded: arm.Guard != nil})
+		irrefutable := !armPayloadsRefutable(arm.Payloads)
+		if arm.Guard != nil {
+			irrefutable = false
+			gt := c.checkExpr(arm.Guard, armScope)
+			if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+				c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+			}
+		}
+		if irrefutable {
+			sawIrrefutable = true
+		}
+		c.checkBlock(arm.Body, armScope)
+	}
+	if !sawIrrefutable && !c.patsCoverOneField(structArms) {
+		c.errfCode(n.P, "E030", "match on struct is not exhaustive — add an unguarded struct-pattern or `_` arm")
+	}
+}
+
+// checkLiteralMatchExpr is the expression-form counterpart of
+// checkLiteralMatch. Each arm body is an Expr and the unified
+// arm type is returned as the match-expression's result.
+func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scope) ast.Type {
+	tagT = c.settlePolymorphicScrutinee(n.Tag, tagT, literalPatternExprs(n.Arms))
+	sawWildcard := false
+	var result ast.Type
+	unify := func(armT ast.Type, p ast.Position) {
+		if armT == nil {
+			return
+		}
+		if result == nil {
+			result = armT
+			return
+		}
+		// A `never` arm (one that always exits early) contributes no
+		// value: the match's result type comes from the arms that do
+		// yield one. If the running result is still `never`, adopt the
+		// concrete arm; if this arm is `never`, keep the result. (#4522)
+		if _, ok := result.(ast.NeverType); ok {
+			result = armT
+			return
+		}
+		if _, ok := armT.(ast.NeverType); ok {
+			return
+		}
+		if unified := unifyIfArms(result, armT); unified != nil {
+			result = unified
+			return
+		}
+		if c.assignable(armT, result) {
+			return
+		}
+		if c.assignable(result, armT) {
+			result = armT
+			return
+		}
+		c.errfCode(p, "E031", "match arms have incompatible types: %s vs %s", result, armT)
+	}
+	for i, arm := range n.Arms {
+		if arm.IsWildcard {
+			if i != len(n.Arms)-1 {
+				c.errfCode(arm.P, "E026", "wildcard `_` arm must be last in the match")
+			}
+			if arm.Guard == nil {
+				sawWildcard = true
+			}
+			if arm.Guard != nil {
+				gt := c.checkExpr(arm.Guard, s)
+				if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+				}
+			}
+			unify(c.checkExpr(arm.Body, s), arm.P)
+			continue
+		}
+		if arm.Literal == nil {
+			c.errfCode(arm.P, "E035", "match on non-enum value `%s` only accepts literal patterns or `_`", tagT)
+			continue
+		}
+		litT := c.checkExpr(arm.Literal, s)
+		if litT != nil {
+			c.settleNumeric(arm.Literal, tagT)
+			litT = c.postSettleType(arm.Literal, litT)
+			if !c.assignable(litT, tagT) {
+				c.errfCode(arm.P, "E035", "literal pattern of type %s does not match scrutinee type %s", litT, tagT)
+			}
+		}
+		if arm.RangeHi != nil {
+			// Range pattern `lo..hi`: the low bound is `Literal`, validated
+			// above; the high bound needs the same type + settle. Ranges are
+			// numeric-only — an ordered scalar scrutinee. Unsigned scrutinees
+			// are deferred (the interpreter oracle compares signed), so they
+			// are rejected here to keep native + interp in agreement.
+			tagNum, tagIsNum := tagT.(ast.NumberType)
+			_, tagIsFloat := tagT.(ast.FloatType)
+			if !tagIsNum && !tagIsFloat {
+				c.errfCode(arm.P, "E035", "range patterns require a numeric scrutinee, got %s", tagT)
+			} else if tagIsNum && !tagNum.IsSigned() {
+				c.errfCode(arm.P, "E035", "range patterns are not yet supported on an unsigned scrutinee (%s)", tagT)
+			}
+			hiT := c.checkExpr(arm.RangeHi, s)
+			if hiT != nil {
+				c.settleNumeric(arm.RangeHi, tagT)
+				hiT = c.postSettleType(arm.RangeHi, hiT)
+				if !c.assignable(hiT, tagT) {
+					c.errfCode(arm.P, "E035", "range pattern bound of type %s does not match scrutinee type %s", hiT, tagT)
+				}
+			}
+		}
+		armScope := newScope(s)
+		// `@` binding: the whole matched value, at the scrutinee's type.
+		if arm.AtBinding != "" {
+			armScope.names[arm.AtBinding] = tagT
+		}
+		if arm.Guard != nil {
+			gt := c.checkExpr(arm.Guard, armScope)
+			if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+				c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+			}
+		}
+		unify(c.checkExpr(arm.Body, armScope), arm.P)
+	}
+	if !sawWildcard {
+		c.errfCode(n.P, "E030", "match on non-enum value is not exhaustive — add an unguarded `_` arm")
+	}
+	return result
+}
+
+// checkTupleMatchExpr is the expression-form counterpart of
+// checkTupleMatch: same tuple-pattern arity / element-literal /
+// binder rules, plus the arm-type unification checkLiteralMatchExpr
+// does (each arm body is an Expr and the whole match evaluates to
+// the unified type).
+func (c *checker) checkTupleMatchExpr(n *ast.MatchExpr, tup ast.TupleType, s *scope) ast.Type {
+	sawIrrefutable := false
+	var result ast.Type
+	unify := func(armT ast.Type, p ast.Position) {
+		if armT == nil {
+			return
+		}
+		if result == nil {
+			result = armT
+			return
+		}
+		// A `never` arm (one that always exits early) contributes no
+		// value: the match's result type comes from the arms that do
+		// yield one. If the running result is still `never`, adopt the
+		// concrete arm; if this arm is `never`, keep the result. (#4522)
+		if _, ok := result.(ast.NeverType); ok {
+			result = armT
+			return
+		}
+		if _, ok := armT.(ast.NeverType); ok {
+			return
+		}
+		if unified := unifyIfArms(result, armT); unified != nil {
+			result = unified
+			return
+		}
+		if c.assignable(armT, result) {
+			return
+		}
+		if c.assignable(result, armT) {
+			result = armT
+			return
+		}
+		c.errfCode(p, "E031", "match arms have incompatible types: %s vs %s", result, armT)
+	}
+	for _, arm := range n.Arms {
+		if sawIrrefutable {
+			c.errfCode(arm.P, "E026", "arm is unreachable — a preceding arm matches every value")
+		}
+		if arm.IsWildcard {
+			if arm.Guard == nil {
+				sawIrrefutable = true
+			}
+			if arm.Guard != nil {
+				gt := c.checkExpr(arm.Guard, s)
+				if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+				}
+			}
+			unify(c.checkExpr(arm.Body, s), arm.P)
+			continue
+		}
+		if arm.TupleElems == nil {
+			c.errfCode(arm.P, "E035", "match on tuple `%s` only accepts tuple patterns or `_`", tup)
+			continue
+		}
+		if len(arm.TupleElems) != len(tup.Elems) {
+			c.errfCode(arm.P, "E035", "tuple pattern has %d elements, but scrutinee tuple has %d", len(arm.TupleElems), len(tup.Elems))
+			continue
+		}
+		armScope := newScope(s)
+		// `@` binding: the whole matched tuple, bound at the scrutinee type.
+		if arm.AtBinding != "" {
+			armScope.names[arm.AtBinding] = tup
+		}
+		irrefutable := true
+		arm.BindingTypes = make([]ast.Type, len(arm.TupleElems))
+		seen := map[string]bool{}
+		for k := range arm.TupleElems {
+			if c.checkTuplePatElem(arm.P, arm.TupleElems, arm.BindingTypes, k, tup.Elems[k], s, armScope, seen) {
+				irrefutable = false
+			}
+		}
+		if arm.Guard != nil {
+			irrefutable = false
+			gt := c.checkExpr(arm.Guard, armScope)
+			if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+				c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+			}
+		}
+		if irrefutable {
+			sawIrrefutable = true
+		}
+		unify(c.checkExpr(arm.Body, armScope), arm.P)
+	}
+	if !sawIrrefutable {
+		c.errfCode(n.P, "E030", "match on tuple is not exhaustive — add an unguarded `_` or all-binder arm")
+	}
+	return result
+}
+
+// checkStructMatchExpr is the expression-form counterpart of checkStructMatch:
+// struct-pattern arms bind fields irrefutably, each arm body is an Expr, and
+// the unified arm type is the match-expression's result.
+func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *scope) ast.Type {
+	sd := c.info.Structs[st.Name]
+	if sd == nil {
+		c.errfCode(n.Tag.Pos(), "E043", "unknown struct type %q", st.Name)
+		return nil
+	}
+	n.StructMatch = st.Name
+	var sub map[string]ast.Type
+	if len(sd.TypeParams) > 0 && len(st.Args) == len(sd.TypeParams) {
+		sub = make(map[string]ast.Type, len(sd.TypeParams))
+		for i, tp := range sd.TypeParams {
+			sub[tp] = st.Args[i]
+		}
+	}
+	sawIrrefutable := false
+	var structArms []structArmPat
+	var result ast.Type
+	unify := func(armT ast.Type, p ast.Position) {
+		if armT == nil {
+			return
+		}
+		if result == nil {
+			result = armT
+			return
+		}
+		if unified := unifyIfArms(result, armT); unified != nil {
+			result = unified
+			return
+		}
+		if !ast.Equal(result, armT) {
+			if c.assignable(armT, result) {
+				return
+			}
+			if c.assignable(result, armT) {
+				result = armT
+				return
+			}
+			c.errfCode(p, "E031", "match arms have incompatible types: %s vs %s", result, armT)
+		}
+	}
+	for _, arm := range n.Arms {
+		if sawIrrefutable {
+			c.errfCode(arm.P, "E026", "arm is unreachable — a preceding arm matches every value")
+		}
+		if arm.IsWildcard {
+			if arm.Guard == nil {
+				sawIrrefutable = true
+			} else {
+				gt := c.checkExpr(arm.Guard, s)
+				if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+				}
+			}
+			unify(c.checkExpr(arm.Body, s), arm.P)
+			continue
+		}
+		if !arm.NamedFields {
+			c.errfCode(arm.P, "E035", "match on struct `%s` only accepts struct patterns `%s { … }` or `_`", st.Name, st.Name)
+			continue
+		}
+		if arm.VariantName != st.Name {
+			c.errfCode(arm.P, "E035", "struct pattern names %s, but the scrutinee is %s", arm.VariantName, st.Name)
+			continue
+		}
+		armScope := newScope(s)
+		// A struct pattern reads fields by name, so it is the same access
+		// `s.field` is — the rule was enforced on field access, construction
+		// and var-destructure but not here, leaving two doors open (#8451).
+		// A bare `S { .. }` binds nothing and stays legal as an existence
+		// test.
+		if len(arm.Bindings) > 0 {
+			c.checkOpaqueAccess(sd, arm.P, "destructure")
+		}
+		// `@` binding: the whole matched struct, bound at the scrutinee type.
+		if arm.AtBinding != "" {
+			armScope.names[arm.AtBinding] = st
+		}
+		arm.BindingTypes = make([]ast.Type, len(arm.Bindings))
+		seen := map[string]bool{}
+		for k, b := range arm.Bindings {
+			// b is the LOCAL bound; the projected FIELD is FieldNames[k]
+			// (== b for the shorthand `S { x }`; a rename `S { x: nx }`
+			// projects field x into local nx).
+			field := b
+			if k < len(arm.FieldNames) && arm.FieldNames[k] != "" {
+				field = arm.FieldNames[k]
+			}
+			var ft ast.Type
+			found := false
+			for _, f := range sd.Fields {
+				if f.Name == field {
+					ft = f.Type
+					if sub != nil {
+						ft = substituteType(ft, sub)
+					}
+					found = true
+					break
+				}
+			}
+			if !found {
+				declared := make([]string, 0, len(sd.Fields))
+				for _, df := range sd.Fields {
+					declared = append(declared, df.Name)
+				}
+				c.errUnknownField(arm.P, arm.P, st.Name, field, declared)
+				continue
+			}
+			arm.BindingTypes[k] = ft
+			// A field carrying a SUB-PATTERN binds nothing itself — the
+			// pattern does, under the same element rules a tuple position
+			// follows — and its Bindings entry is the empty name.
+			if k < len(arm.Payloads) && arm.Payloads[k] != nil {
+				slot := []ast.TuplePatElem{*arm.Payloads[k]}
+				st := []ast.Type{ft}
+				c.checkTuplePatElem(arm.P, slot, st, 0, ft, s, armScope, seen)
+				*arm.Payloads[k] = slot[0]
+				continue
+			}
+			if seen[b] {
+				c.errfCode(arm.P, "E013", "variable %q already declared in this scope", b)
+				continue
+			}
+			seen[b] = true
+			armScope.names[b] = ft
+		}
+		structArms = append(structArms, structArmPat{payloads: arm.Payloads, types: arm.BindingTypes, guarded: arm.Guard != nil})
+		irrefutable := !armPayloadsRefutable(arm.Payloads)
+		if arm.Guard != nil {
+			irrefutable = false
+			gt := c.checkExpr(arm.Guard, armScope)
+			if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+				c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+			}
+		}
+		if irrefutable {
+			sawIrrefutable = true
+		}
+		unify(c.checkExpr(arm.Body, armScope), arm.P)
+	}
+	if !sawIrrefutable && !c.patsCoverOneField(structArms) {
+		c.errfCode(n.P, "E030", "match on struct is not exhaustive — add an unguarded struct-pattern or `_` arm")
+	}
+	if isFloat(result) {
+		n.IsFloat = true
+	}
+	return result
+}
+
+// checkMatchExpr validates an expression-position `match` and
+// returns the unified arm type. Same scrutinee, payload-binding,
+// guard, and exhaustiveness rules as checkMatch — the difference
+// is each arm body is an Expr (not a Block), and every arm body
+// must produce the same type so the construct itself has a
+// single result type.
+func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
+	tagT := c.checkExpr(n.Tag, s)
+	if tagT == nil {
+		return nil
+	}
+	tagT = c.widenGenericScrutinee(n.Tag, tagT)
+	et, ok := tagT.(ast.EnumType)
+	if !ok {
+		// Tuple scrutinee: arms are tuple patterns + a wildcard.
+		if tup, isTup := tagT.(ast.TupleType); isTup {
+			return c.checkTupleMatchExpr(n, tup, s)
+		}
+		// Struct scrutinee: arms are struct patterns `S { x, y }` + a wildcard.
+		if st, isStruct := tagT.(ast.StructType); isStruct {
+			if _, known := c.info.Structs[st.Name]; known {
+				return c.checkStructMatchExpr(n, st, s)
+			}
+		}
+		// Non-enum scrutinee: arms are literal patterns + a
+		// wildcard. Delegate to the literal-pattern branch.
+		return c.checkLiteralMatchExpr(n, tagT, s)
+	}
+	ed, ok := c.info.Enums[et.Name]
+	if !ok {
+		c.errfCode(n.Tag.Pos(), "E023", "unknown enum %q", et.Name)
+		return nil
+	}
+	sub := map[string]ast.Type{}
+	if len(ed.TypeParams) == len(et.Args) {
+		for i, p := range ed.TypeParams {
+			sub[p] = et.Args[i]
+		}
+	}
+	covered := map[string]bool{}
+	literalLocals := c.enumLiteralLocals(n.Tag, et, s)
+	refutableByVariant := map[string][]structArmPat{}
+	sawWildcard := false
+	var result ast.Type
+	unify := func(armT ast.Type, p ast.Position) {
+		if armT == nil {
+			return
+		}
+		if result == nil {
+			result = armT
+			return
+		}
+		// Reuse the same widening rules as IfExpr (covers
+		// polymorphic-numeric vs concrete-numeric and the
+		// no-payload-vs-with-payload enum match). Falling
+		// through to ast.Equal first preserves existing
+		// behaviour for already-aligned pairs.
+		if unified := unifyIfArms(result, armT); unified != nil {
+			result = unified
+			return
+		}
+		if !ast.Equal(result, armT) {
+			c.errfCode(p, "E031", "match-expression arms differ: %s vs %s", result, armT)
+		}
+	}
+	for i, arm := range n.Arms {
+		if arm.IsWildcard {
+			if i != len(n.Arms)-1 {
+				c.errfCode(arm.P, "E026", "wildcard `_` arm must be last in the match")
+			}
+			if arm.Guard == nil {
+				sawWildcard = true
+			}
+			if arm.Guard != nil {
+				gt := c.checkExpr(arm.Guard, s)
+				if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+					c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+				}
+			}
+			unify(c.checkExpr(arm.Body, s), arm.Body.Pos())
+			continue
+		}
+		// Same tuple-pattern shape guard as the stmt-form arm loop.
+		if arm.TupleElems != nil {
+			c.errfCode(arm.P, "E035", "tuple pattern requires a tuple scrutinee, got enum %s", ed.Name)
+			continue
+		}
+		c.checkVariantQualifier(arm.P, arm.VariantModule, ed)
+		varIdx := -1
+		var variant *ast.EnumVariant
+		for j := range ed.Variants {
+			if ed.Variants[j].Name == arm.VariantName {
+				varIdx = j
+				variant = &ed.Variants[j]
+				break
+			}
+		}
+		if varIdx < 0 {
+			c.errfCode(arm.P, "E014", "variant %q is not part of enum %s%s",
+				arm.VariantName, ed.Name, unknownVariantHint(arm.VariantName, ed))
+			unify(c.checkExpr(arm.Body, s), arm.Body.Pos())
+			continue
+		}
+		// Record the resolution on the arm. Both facts are authoritative
+		// here — `ed` IS the scrutinee's enum — and every later stage used
+		// to recover them from the scrutinee's static type instead (#6964).
+		arm.EnumName = ed.Name
+		arm.VariantIndex = varIdx
+		if covered[arm.VariantName] {
+			c.errfCode(arm.P, "E028", "variant %q already covered earlier in this match", arm.VariantName)
+		}
+		if arm.NamedFields {
+			renamed := false
+			for i := range arm.Bindings {
+				if i < len(arm.FieldNames) && arm.FieldNames[i] != "" && arm.FieldNames[i] != arm.Bindings[i] {
+					if !renamed {
+						c.errfCode(arm.P, "E015", "enum named-field pattern for %s does not support renaming (`field: local`) — bind the field by name (`%s { %s }`)", variant.Name, variant.Name, arm.FieldNames[i])
+						renamed = true
+					}
+					arm.Bindings[i] = arm.FieldNames[i]
+				}
+			}
+			// Enum variant patterns never project through FieldNames (only
+			// struct matches do), and resolveVariantBindings reorders
+			// Bindings into declaration order — leaving FieldNames stale.
+			// Clear it so a re-check (post-monomorph) doesn't misfire the
+			// rename guard on a legitimately reordered shorthand pattern.
+			arm.FieldNames = nil
+		}
+		arm.Bindings, arm.BindingTypes = c.resolveVariantBindings(arm.P, variant, arm.Bindings, arm.NamedFields, sub)
+		// A refutable arm may still complete its variant's coverage together
+		// with its siblings — see patsCoverOneField, applied per variant once
+		// every arm is in. Snapshotted AFTER resolveVariantBindings, which is
+		// what fills BindingTypes.
+		refutableByVariant[arm.VariantName] = append(refutableByVariant[arm.VariantName],
+			structArmPat{payloads: arm.Payloads, types: arm.BindingTypes, guarded: arm.Guard != nil})
+		armScope := newScope(s)
+		if arm.AtBinding != "" {
+			armScope.names[arm.AtBinding] = et
+		}
+		c.bindArmPayloads(arm.P, arm.Bindings, arm.BindingTypes, arm.Payloads, s, armScope)
+		c.bindEnumLiteralPayloads(n.Tag, ed, variant, arm.Bindings, arm.BindingTypes, armScope, literalLocals)
+		// Guarded arms don't fully cover the variant: the guard might be
+		// false at runtime, in which case the match falls through. Leaving
+		// `covered[...]` clear means a later unguarded arm for the same
+		// variant (or a wildcard) is required for exhaustiveness — and is
+		// no longer flagged as a duplicate. Decided AFTER the payloads are
+		// bound, which is what tells a struct position from a variant one.
+		if arm.Guard == nil && !armPayloadsRefutable(arm.Payloads) {
+			covered[arm.VariantName] = true
+		}
+		if arm.Guard != nil {
+			gt := c.checkExpr(arm.Guard, armScope)
+			if gt != nil && !ast.Equal(gt, ast.BoolType{}) {
+				c.errfCode(arm.Guard.Pos(), "E027", "match guard must be boolean, got %s", gt)
+			}
+		}
+		unify(c.checkExpr(arm.Body, armScope), arm.Body.Pos())
+	}
+	if !sawWildcard {
+		for name, group := range refutableByVariant {
+			if !covered[name] && c.patsCoverOneField(group) {
+				covered[name] = true
+			}
+		}
+		for _, v := range ed.Variants {
+			if !covered[v.Name] {
+				c.errfCode(n.P, "E030", "match-expression is not exhaustive — variant %s of enum %s is not covered (add an arm or use `_`)",
+					v.Name, ed.Name)
+			}
+		}
+	}
+	stampRemainderExprArms(n.Arms, ed)
+	if isFloat(result) {
+		n.IsFloat = true
+	}
+	return result
+}
+
+// inferUseParam fills in `fn`'s first-parameter type by reading
+// the source-call's signature. The parser left the slot nil
+// when the user wrote `use IDENT <- EXPR;` (no `: TYPE`); this
+// function looks up the call's callee, finds the trailing
+// function-typed parameter (the callback slot the callback is
+// being passed into), and stamps the callback's first parameter
+// from there.
+//
+// For a generic callee (e.g. `each[T](items: T[], cb: (T) => U)`)
+// the callback's first param references a type parameter `T`.
+// We unify each non-callback arg's checked type against the
+// corresponding sig param to build a substitution map, then
+// apply the map to the callback's first param. The args get
+// type-checked here AND again when the surrounding call is
+// visited; `checkExpr` is idempotent for the shapes that reach
+// this path (literals settle once, identifiers look up the same
+// scope each time).
+//
+// On failure (callee not a bare identifier we can resolve, the
+// receiving param isn't function-typed, or generic inference
+// couldn't pin every type parameter the callback's first param
+// references) records an error pointing at the `use` site.
+func (c *checker) inferUseParam(fn *ast.FuncDecl, outer *scope) {
+	if len(fn.Params) == 0 || fn.Params[0].Type != nil {
+		return
+	}
+	src := fn.UseSource
+	if src == nil {
+		return
+	}
+	id, ok := src.Callee.(*ast.Ident)
+	if !ok {
+		c.errfCode(fn.P, "E032", "use: cannot infer binding type for non-identifier source — add an explicit `: TYPE` annotation")
+		return
+	}
+	// A value binding — a fn-typed parameter, a `let` holding a
+	// closure, a local function — SHADOWS a module function of the
+	// same name, so it is consulted first. Reading FuncSigs first
+	// inferred the callback's parameter type from the module
+	// function while the call itself dispatched to the shadowing
+	// binding, and the mismatch surfaced as an E038 naming two
+	// signatures the source never put together (#6302).
+	var sig *ast.FuncType
+	if t, isValue := c.identValueBinding(id.Name, outer); isValue {
+		sig, _ = t.(*ast.FuncType)
+	} else {
+		sig = c.info.FuncSigs[id.Name]
+	}
+	if sig == nil || len(sig.Params) == 0 {
+		c.errfCode(fn.P, "E032", "use: callee %q has no signature; add an explicit `: TYPE` annotation", id.Name)
+		return
+	}
+	last := sig.Params[len(sig.Params)-1]
+	cbSig, isFunc := last.(*ast.FuncType)
+	if !isFunc {
+		c.errfCode(fn.P, "E032", "use: callee %q's last parameter isn't a function — add an explicit `: TYPE` annotation", id.Name)
+		return
+	}
+	if len(cbSig.Params) == 0 {
+		c.errfCode(fn.P, "E032", "use: callee %q's callback takes no arguments — there's nothing to bind", id.Name)
+		return
+	}
+	bindType := cbSig.Params[0]
+
+	// Generic callee: solve type parameters from the args the
+	// user already wrote. The callback arg is the LAST sig
+	// param (skipped — we're inferring its shape).
+	if _, isGen := c.info.GenericFuncs[id.Name]; isGen {
+		sub := map[string]ast.Type{}
+		for i, arg := range src.Args {
+			if i >= len(sig.Params)-1 {
+				break
+			}
+			argType := c.checkExpr(arg, outer)
+			if argType == nil {
+				continue
+			}
+			c.unifyType(sig.Params[i], argType, sub)
+		}
+		resolved := substituteType(bindType, sub)
+		if containsParamType(resolved) {
+			c.errfCode(fn.P, "E032", "use: could not infer binding type for %q from its arguments — add an explicit `: TYPE` annotation", id.Name)
+			return
+		}
+		bindType = resolved
+	}
+
+	fn.Params[0].Type = bindType
+}
+
+// calleeIsGenericFunc reports whether `id` in callee position names a
+// module-level generic function rather than a value.
+//
+// The shadowing case is why this is not just a GenericFuncs lookup:
+// `function apply(v: i32, id: (i32) => i32)` calling `id(v)` must reach the
+// parameter, not a module-level `id[T]` (#6302). identValueBinding is the
+// existing answer to exactly that question.
+func (c *checker) calleeIsGenericFunc(id *ast.Ident, s *scope) bool {
+	if _, isGen := c.info.GenericFuncs[id.Name]; !isGen {
+		return false
+	}
+	_, bound := c.identValueBinding(id.Name, s)
+	return !bound
+}
+
+// retagIndexAsTypeArgs turns `id[Box](b)` into a call with written type
+// arguments. The parser takes `[...]` as type arguments only when it opens with
+// a type keyword, since a bare name there is also a valid index; here the base
+// is known to name a generic function and the bracket a type, which settles it.
+func (c *checker) retagIndexAsTypeArgs(n *ast.Call, s *scope) {
+	ix, ok := n.Callee.(*ast.Index)
+	if !ok || len(n.TypeArgs) > 0 {
+		return
+	}
+	fn, ok := ix.Array.(*ast.Ident)
+	if !ok || !c.calleeIsGenericFunc(fn, s) {
+		return
+	}
+	params := c.typeParamsInScope()
+	t, ok := c.indexAsType(ix.Idx, params, s)
+	if !ok {
+		return
+	}
+	c.resolveType(&t, params, ix.Idx.Pos())
+	n.Callee = fn
+	n.TypeArgs = []ast.Type{t}
+	n.TypeArgsWritten = true
+}
+
+// indexAsType reads an index operand as the type it spells: a type name, or a
+// generic one instantiated the same way (`W[Q]`), which the parser cannot tell
+// from indexing.
+func (c *checker) indexAsType(e ast.Expr, params map[string]bool, s *scope) (ast.Type, bool) {
+	switch x := e.(type) {
+	case *ast.Ident:
+		if _, bound := c.identValueBinding(x.Name, s); bound {
+			return nil, false
+		}
+		_, isStruct := c.info.Structs[x.Name]
+		_, isEnum := c.info.Enums[x.Name]
+		_, isResource := c.info.Resources[x.Name]
+		if !params[x.Name] && !isStruct && !isEnum && !isResource {
+			return nil, false
+		}
+		return ast.StructType{Name: x.Name}, true
+	case *ast.Index:
+		head, ok := c.indexAsType(x.Array, params, s)
+		if !ok {
+			return nil, false
+		}
+		arg, ok := c.indexAsType(x.Idx, params, s)
+		if !ok {
+			return nil, false
+		}
+		st := head.(ast.StructType)
+		return ast.StructType{Name: st.Name, Args: append(st.Args, arg)}, true
+	}
+	return nil, false
+}
+
+// instantiateFuncValue types a generic function named as a value from the
+// function type the value is wanted at: each parameter and the result of the
+// generic signature unified against the expected type's. It stamps the type
+// arguments on the Ident for monomorph, which renames it to the instance, and
+// reports whether the expected type determined every type parameter. A type
+// argument may be an enclosing generic's own parameter; the clone loop
+// substitutes it as it does a call's.
+func (c *checker) instantiateFuncValue(n *ast.Ident, gf *ast.FuncDecl) (ast.Type, bool) {
+	exp, ok := c.expectedType.(*ast.FuncType)
+	if !ok {
+		return nil, false
+	}
+	sig, ok := c.info.FuncSigs[n.Name]
+	if !ok || len(sig.Params) != len(exp.Params) {
+		return nil, false
+	}
+	sub := map[string]ast.Type{}
+	for i := range sig.Params {
+		c.unifyType(sig.Params[i], exp.Params[i], sub)
+	}
+	c.unifyType(sig.Result, exp.Result, sub)
+	args := make([]ast.Type, len(gf.TypeParams))
+	for i, tp := range gf.TypeParams {
+		t, bound := sub[tp]
+		if !bound {
+			return nil, false
+		}
+		args[i] = t
+	}
+	c.checkTypeArgBounds(gf, args, sub, c.typeParamsInScope(), n.P)
+	n.TypeArgs = args
+	return substituteType(sig, sub), true
+}
+
+// errE040GenericFuncAsValue reports a generic function named where a value
+// is expected. The eta-expansion in the hint is spelled from the decl's own
+// parameters, so it is the shape the user needs rather than a generic
+// suggestion — inside a generic caller binding the same type parameter it is
+// literally the fix, and elsewhere it shows which types have to be pinned.
+func (c *checker) errE040GenericFuncAsValue(p ast.Position, name string, fn *ast.FuncDecl) {
+	tps := strings.Join(fn.TypeParams, ", ")
+	plural := ""
+	if len(fn.TypeParams) > 1 {
+		plural = "s"
+	}
+	params := make([]string, 0, len(fn.Params))
+	args := make([]string, 0, len(fn.Params))
+	for _, pa := range fn.Params {
+		params = append(params, fmt.Sprintf("%s: %s", pa.Name, pa.Type))
+		args = append(args, pa.Name)
+	}
+	c.errfCode(p, "E040", "generic function %s cannot be used as a value — nothing here determines its type parameter%s %s. Wrap it in a lambda, which does: (%s) => %s(%s)",
+		name, plural, tps, strings.Join(params, ", "), name, strings.Join(args, ", "))
+}
+
+// typeParamsInScope is the set of type-parameter names the enclosing
+// generic declarations bind at the point being checked, a lambda or nested
+// function seeing its encloser's. Nil where none does, so no ParamType can be
+// a real type.
+func (c *checker) typeParamsInScope() map[string]bool {
+	var set map[string]bool
+	add := func(d *ast.FuncDecl) {
+		if d == nil {
+			return
+		}
+		for _, tp := range d.TypeParams {
+			if set == nil {
+				set = map[string]bool{}
+			}
+			set[tp] = true
+		}
+	}
+	add(c.current)
+	for _, e := range c.captureChain {
+		add(e.outer)
+	}
+	return set
+}
+
+// errE040StructUninferred reports a generic struct literal whose type
+// parameter no field value pinned. Both spellings that fix it are
+// offered: the construction-site type args of #6812, and the binding
+// annotation that has always worked.
+func (c *checker) errE040StructUninferred(p ast.Position, tp, name string) {
+	c.errfCode(p, "E040", "could not infer type parameter %s for struct %s — supply it explicitly at the construction site (e.g. %s[i32] { ... }) or annotate the binding (e.g. let x: %s[i32] = ...)",
+		tp, name, name, name)
+}
+
+// callSiteName renders a callee for a diagnostic the way source spells it.
+// A method call arrives here rewritten onto the mangled
+// `__method_<Type>_<method>` free function, so the raw name would name a
+// symbol no program can write. spelling is what type arguments attach to:
+// `.make[i32](...)` for a method, `empty[i32](...)` for a free function.
+//
+// The split comes off the receiver hoist's own stamp rather than out of
+// the mangled name: with two traits providing one method name for one
+// type the loser is mangled `__method_<Type>__<Trait>__<name>`, and both
+// halves carry their own `__` module mangling, so no string rewriting can
+// find the seam.
+func callSiteName(fn *ast.FuncDecl) (display, spelling string) {
+	if fn.MethodRecv == "" || fn.MethodSimpleName == "" {
+		return fn.Name, fn.Name
+	}
+	display = demangle(fn.MethodRecv) + "." + fn.MethodSimpleName
+	if strings.HasPrefix(fn.Name, "__assoc_") {
+		// An associated function is called through its type —
+		// `Holder.empty[i32]()` — so the type name is part of the
+		// spelling, unlike a receiver method's `.make[i32]()`.
+		return display, display
+	}
+	return display, "." + fn.MethodSimpleName
+}
+
+// boundParams is the set of type parameters sub binds.
+func boundParams(sub map[string]ast.Type) map[string]bool {
+	out := make(map[string]bool, len(sub))
+	for name := range sub {
+		out[name] = true
+	}
+	return out
+}
+
+// containsParamType reports whether t (or any of its component
+// types) is a still-unresolved generic ParamType. Used to flag
+// failed `use`-callback inference: a substitution that leaves a
+// ParamType behind means some type-parameter wasn't pinned by
+// the args.
+func containsParamType(t ast.Type) bool {
+	_, found := paramTypeNotIn(t, nil)
+	return found
+}
+
+// paramTypeNotIn returns the name of the first type parameter in t (or
+// any of its component types) that `inScope` doesn't contain. With a nil
+// set that is the first ParamType of any kind, which is what
+// containsParamType wants.
+func paramTypeNotIn(t ast.Type, inScope map[string]bool) (string, bool) {
+	switch x := t.(type) {
+	case ast.ParamType:
+		if !inScope[x.Name] {
+			return x.Name, true
+		}
+	case ast.ArrayType:
+		return paramTypeNotIn(x.Elem, inScope)
+	case ast.SliceType:
+		return paramTypeNotIn(x.Elem, inScope)
+	case ast.TupleType:
+		for _, e := range x.Elems {
+			if name, found := paramTypeNotIn(e, inScope); found {
+				return name, true
+			}
+		}
+	case ast.EnumType:
+		for _, a := range x.Args {
+			if name, found := paramTypeNotIn(a, inScope); found {
+				return name, true
+			}
+		}
+	case ast.StructType:
+		for _, a := range x.Args {
+			if name, found := paramTypeNotIn(a, inScope); found {
+				return name, true
+			}
+		}
+	case *ast.FuncType:
+		for _, p := range x.Params {
+			if name, found := paramTypeNotIn(p, inScope); found {
+				return name, true
+			}
+		}
+		return paramTypeNotIn(x.Result, inScope)
+	}
+	return "", false
+}
+
+// checkLocalFunc type-checks a nested function and records its
+// captured outer-scope variables. The local name is bound in the
+// surrounding scope so subsequent calls (and recursion through the
+// inner name) work; the body checks under a fresh root scope with
+// its own params, plus a capture-sink that registers any outer-scope
+// name the body reads.
+func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
+	// `use IDENT <- EXPR;` synthesises a callback FuncDecl whose
+	// first parameter has no source-level type annotation. Infer
+	// it from the receiving call's signature: that call's last
+	// parameter is itself a FuncType (the callback slot we're
+	// being passed into), and its first parameter is the binding
+	// type. Generic-callee inference is a follow-up — for now we
+	// require the callee to resolve to a concrete signature.
+	if fn.UseSource != nil {
+		c.inferUseParam(fn, outer)
+	}
+	// Bind the function's name in the outer scope so subsequent code
+	// can call it.
+	sig := paramSig(fn.Params, fn.ReturnType)
+	outer.names[fn.Name] = sig
+
+	// Body scope: fresh root with the function's own params.
+	root := newScope(nil)
+	for _, p := range fn.Params {
+		if _, dup := root.names[p.Name]; dup {
+			c.errfCode(fn.P, "E018", "duplicate parameter %q", p.Name)
+		}
+		root.names[p.Name] = p.Type
+	}
+
+	captured := map[string]ast.Type{}
+	var captureOrder []string
+
+	prev := c.current
+	prevSink := c.captureSink
+	prevOuter := c.captureOuter
+	prevLoop := c.loopDepth
+	if prev != nil && fn.SourceModule == "" {
+		// A nested function is not in prog.Funcs, so modload never
+		// stamped it; errf reads SourceModule off c.current to fill
+		// Error.Path.
+		fn.SourceModule = prev.SourceModule
+	}
+	c.current = fn
+	c.loopDepth = 0
+	// Snapshot the mutual-recursion sibling set at this
+	// declaration point. Nested blocks inside `fn.Body`
+	// overwrite c.mutualRecSiblings as their own pre-pass runs,
+	// but capture analysis needs the OUTER block's set to
+	// recognise (and skip) cycle members referenced inside this
+	// body. Non-cycle forward references aren't in this set and
+	// capture normally.
+	mySiblings := c.mutualRecSiblings
+	c.captureSink = func(name string, t ast.Type) {
+		if _, ok := captured[name]; ok {
+			return
+		}
+		// Recursive self-reference shouldn't capture: the inner
+		// function's name is bound in the outer scope above so the
+		// lookup falls through here, but we don't want to treat it
+		// as a capture.
+		if name == fn.Name {
+			return
+		}
+		// Mutual-recursion sibling: handled by closureconv's
+		// null-env direct-call rewrite, not via env capture.
+		// Capturing here would create a cycle (each closure's env
+		// referencing the other's pair pointer, which exists only
+		// after BOTH pairs are built). Skipping means each SCC
+		// member hoists to a zero-capture closure and the body's
+		// sibling calls bypass the env entirely. ONLY names in a
+		// detected SCC are skipped — plain forward refs (caller
+		// references callee, callee doesn't reference back) still
+		// capture normally.
+		if mySiblings[name] {
+			return
+		}
+		// Capture eligibility. Scalars (i32 / i64 / f32 / f64 /
+		// boolean) live directly in the env block; pointer-
+		// shaped types (string, T[], [T], structs, enums,
+		// tuples, function values) store their 4-byte heap
+		// reference in the same slot — the heap object itself
+		// stays where the outer scope put it. Lifetime is
+		// "captures must outlive the closure", same rule that
+		// applies to slices, enforced socially via the bump
+		// allocator's per-arena reset.
+		//
+		// Reject only the types that genuinely have no runtime
+		// representation: VoidType (no value) and ParamType
+		// (an unresolved generic placeholder — should never
+		// surface here in practice but guard for safety).
+		switch t.(type) {
+		case ast.VoidType:
+			c.errfCode(fn.P, "E044", "captured variable %q has unsupported type %s", name, t)
+		default:
+			captured[name] = t
+			captureOrder = append(captureOrder, name)
+		}
+	}
+	c.captureOuter = outer
+	// Push (sink, scope) for the deeper-lookup chain. The order
+	// matters: outermost-first so the lookup walks from
+	// immediately-enclosing inward, capturing transitively.
+	c.captureChain = append(c.captureChain, captureEntry{sink: c.captureSink, scope: outer, outer: prev})
+	defer func() {
+		c.current = prev
+		c.captureSink = prevSink
+		c.captureOuter = prevOuter
+		c.captureChain = c.captureChain[:len(c.captureChain)-1]
+		c.loopDepth = prevLoop
+	}()
+
+	c.checkBlock(fn.Body, root)
+
+	// Build the capture list fresh: checkFunc can run more than once
+	// over the same local function (e.g. re-analysis passes), and an
+	// `append` would accumulate duplicates — which broke arm64's
+	// mixed-width capture layout (a `[string, i32]` closure became
+	// `[string, i32, string, i32]` and segfaulted).
+	fn.Captures = nil
+	for _, name := range captureOrder {
+		fn.Captures = append(fn.Captures, ast.Param{Name: name, Type: captured[name]})
+	}
+	c.restampLitCaptures(fn.Captures, outer)
+}
+
+func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
+	switch n := e.(type) {
+	case *ast.NumberLit:
+		// Integer literals are polymorphic: at the binary-op /
+		// var-init / cast-inner / arg / return layer the checker
+		// reconciles them against the surrounding expected type
+		// via `c.settleNumeric`. If the literal already has a
+		// resolved Width (set by a previous settling pass — e.g.
+		// from a re-check during monomorphisation), report that.
+		if (n.ExceedsI64 || n.ExceedsU64) && !c.wideSeen[n] {
+			if c.wideSeen == nil {
+				c.wideSeen = map[*ast.NumberLit]bool{}
+			}
+			c.wideSeen[n] = true
+			c.wideLits = append(c.wideLits, wideLit{lit: n, path: c.currentModule()})
+		}
+		if n.IsFloat {
+			return ast.FloatType{Width: n.FloatWidth}
+		}
+		if n.Width != 0 {
+			// A typed suffix pins the width in the parser, so no settling
+			// hint ever reaches this literal and nothing else would judge
+			// its range. The sign lives on the enclosing unary, recorded by
+			// markLiteralSign before the descent that got here.
+			t := ast.NumberType{Width: n.Width, Signed: !n.IsUnsigned}
+			c.checkLiteralFits(n, t, c.negatedLits[n])
+			return t
+		}
+		return ast.NumberType{Polymorphic: true}
+	case *ast.DowncastExpr:
+		// `e as? T` — fallible downcast of a `dyn Trait` value to a
+		// concrete type (docs/DYN-TRAITS.md §9). The LHS must be a
+		// `dyn Trait`; the target must be a struct/enum that implements
+		// that trait (slice 1 scope — primitive targets are a follow-up).
+		// Result type is `Option[T]`. The runtime check + Some/None
+		// construction lives in the interpreter; compiled backends reject
+		// the node until a later codegen slice.
+		inner := c.checkExpr(n.Inner, s)
+		// The parser optimistically wraps a bare type name (`as? Color`)
+		// as a StructType because it can't tell structs from enums. If the
+		// name resolves to an enum, rewrite the target to an EnumType so
+		// the result `Option[T]` matches a `let c: Option[Color]`
+		// annotation (which resolveType already canonicalised to
+		// EnumType). Without this, an enum downcast target would diverge —
+		// `Option[StructType{Color}]` vs `Option[EnumType{Color}]` — and
+		// fail an otherwise-correct assignment (E003).
+		if st, isBareStruct := n.Target.(ast.StructType); isBareStruct && len(st.Args) == 0 {
+			if _, isEnum := c.info.Enums[st.Name]; isEnum {
+				n.Target = ast.EnumType{Name: st.Name}
+			}
+		}
+		dt, ok := inner.(ast.DynTraitType)
+		if !ok {
+			c.errfCode(n.P, "E059", "'as?' downcast requires a 'dyn Trait' value on the left, got %s", inner)
+			return ast.EnumType{Name: "Option", Args: []ast.Type{n.Target}}
+		}
+		// Trait records the PRIMARY trait (the bare single-trait vtable
+		// key); Traits records the whole set. Compiled downcast codegen
+		// keys the vtable-pointer compare by the whole set (dynVtableSetKey),
+		// so a multi-trait `dyn A + B` downcast lowers via the MERGED
+		// `__vtable_<A+B>_<T>` cell (docs/DYN-TRAITS.md §10). The impl gate
+		// below checks the whole set.
+		n.Trait = dt.Trait0()
+		n.Traits = dt.Traits
+		// The target must be a struct or enum (slice 1 scope).
+		tn, hasName := methodTypeName(n.Target)
+		_, isStruct := n.Target.(ast.StructType)
+		_, isEnum := n.Target.(ast.EnumType)
+		if !hasName || !(isStruct || isEnum) {
+			c.errfCode(n.P, "E060", "'as?' downcast target must be a concrete struct or enum type (slice 1), got %s", n.Target)
+			return ast.EnumType{Name: "Option", Args: []ast.Type{n.Target}}
+		}
+		// The target must implement EVERY trait in the set — mirror the
+		// coercion gate (only a type that could have been coerced in can
+		// be recovered).
+		if !c.implementsAllDynTraits(dt, tn) {
+			c.errfCode(n.P, "E060", "%s does not implement %s, so a '%s' cannot downcast to it", n.Target, c.missingDynTraits(dt, n.Target), dt.String())
+		}
+		return ast.EnumType{Name: "Option", Args: []ast.Type{n.Target}}
+	case *ast.CastExpr:
+		// Numeric ↔ numeric is the common case. The one
+		// exception: a `[u8]` slice or `u8[]` array can cast
+		// to `i32` to recover its data-pointer for the
+		// bulk-memory primitives (__memcpy / __memset). It's
+		// an explicit low-level escape hatch — useful inside
+		// stdlib buffer-management helpers, marked by the
+		// cast at the source level.
+		inner := c.checkExpr(n.Inner, s)
+		// `1 as u64`: settle the literal at the cast target's
+		// width so the IR emits an i64.const, not an i32.const
+		// that overflows. Without this, a literal like
+		// `4611686018427387904 as u64` silently truncated to 0.
+		//
+		// Exception: a float→int cast must NOT settle its inner
+		// toward the integer target — `settleNumeric` would route
+		// a float binary/literal through `settleInt`, stamping it
+		// with an integer width. The cast then sees `srcIsInt` and
+		// lowers as an int→int identity, dropping the truncation
+		// (the raw float bit-pattern leaked into the i32 result:
+		// `(7.9 - 0.0) as i32` returned 154, the low byte of the
+		// f64, instead of 7). Settle the inner toward its own float
+		// type so polymorphic float literals still commit to the
+		// f64 default, then lower as the float→int truncation.
+		if c.holdsPendingLitLocal(n.Inner) {
+			// The cast converts the local's value; the local's own uses
+			// decide its width, and settleLitLocals re-stamps InnerType.
+		} else if ft, innerIsFloat := inner.(ast.FloatType); innerIsFloat {
+			if _, tgtIsInt := n.Target.(ast.NumberType); tgtIsInt {
+				floatHint := ast.FloatType(ft)
+				if ft.Polymorphic {
+					floatHint = ast.FloatType{Width: 64}
+				}
+				c.settleNumeric(n.Inner, floatHint)
+			} else {
+				c.settleNumeric(n.Inner, n.Target)
+			}
+		} else if _, innerIsInt := inner.(ast.NumberType); innerIsInt && isFloat(n.Target) && !isBareNumericLiteral(n.Inner) {
+			// An INT→FLOAT cast converts the RESULT, not the operands.
+			// settleFloat stamps a FloatWidth on a `+ - * /` binary and
+			// recurses into both sides, so settling `(7 / 2) as f64` at the
+			// target made it float division — 3.5 on interp, 0 on both
+			// natives, and a module wasm refused to validate (#8456). The
+			// same expression through variables was right all along, because
+			// its operands had already committed and settleFloat left them
+			// alone.
+			//
+			// A BARE literal still settles at the target, for the same reason
+			// the narrowing rule below keeps `300 as u8` an E047: `1 as f64`
+			// is a float literal, and a wide one (`4611686018427387904 as f64`)
+			// needs the target to escape the i32 default.
+			c.settleNumeric(n.Inner, c.castOperandInt(inner, n.Inner))
+		} else if _, tgtIsChar := n.Target.(ast.CharType); tgtIsChar {
+			// `65 as char`: `char` is not a NumberType, so settle the inner
+			// at its own integer type rather than handing settleNumeric a
+			// non-numeric target.
+			c.settleNumeric(n.Inner, c.castOperandInt(inner, n.Inner))
+		} else if nt, tgtNum := n.Target.(ast.NumberType); tgtNum &&
+			nt.NormalWidth() > 0 && nt.NormalWidth() < 32 &&
+			!isBareNumericLiteral(n.Inner) {
+			// A NARROWING cast must not push its target into a compound
+			// operand. `(i % 256) as u8` computes in i32 and narrows at the
+			// end — settling the whole binary at u8 range-checks the 256
+			// against u8 and rejects the canonical way to write a byte wrap.
+			//
+			// It only ever affected expressions with an UNSETTLED operand, which is
+			// what made it look arbitrary: `let x: i32 = …; (x % 256) as u8`
+			// was accepted all along, because x had already committed, while
+			// `for i in … { (i % 256) as u8 }` was rejected, because the loop
+			// variable had not. The same expression accepted or refused on
+			// whether its neighbour happened to be declared.
+			//
+			// Settling at i32 here makes the loop variable behave exactly like
+			// the declared local. A BARE literal still settles at the target,
+			// so `300 as u8` stays the E047 it should be — that is a typo, not
+			// an arithmetic intent, and it is the case the widening rule above
+			// (`4611686018427387904 as u64`) was written for.
+			c.settleNumeric(n.Inner, c.castOperandInt(inner, n.Inner))
+		} else {
+			c.settleNumeric(n.Inner, n.Target)
+		}
+		inner = c.postSettleType(n.Inner, inner)
+		n.InnerType = inner
+		_, innerIsNum := inner.(ast.NumberType)
+		_, innerIsFloat := inner.(ast.FloatType)
+		_, targetIsNum := n.Target.(ast.NumberType)
+		_, targetIsFloat := n.Target.(ast.FloatType)
+		if (innerIsNum || innerIsFloat) && (targetIsNum || targetIsFloat) {
+			return n.Target
+		}
+		// `char` (#5629) converts to and from an integer ONLY by an
+		// explicit cast — that explicitness is the type's entire purpose,
+		// since a byte and a code point sharing `i32` is what made
+		// `s[i].to_upper()` and `to_upper_char(cp)` indistinguishable.
+		// `c as i32` yields the scalar value; `n as char` reinterprets an
+		// integer as one.
+		//
+		// A LITERAL operand is validated here (#5629 slice 5): the scalar
+		// range is 0..0x10FFFF minus the D800..DFFF surrogates, and a
+		// constant outside it is a typo, not a decision. A non-constant
+		// operand stays unchecked — `as char` is the deliberate
+		// reinterpret hatch std/unicode uses on values its tables have
+		// already proven valid. The checked path for a runtime integer is
+		// utf8.char_from_i32, which returns Option[char].
+		if _, tgtIsChar := n.Target.(ast.CharType); tgtIsChar && innerIsNum {
+			if lit, ok := n.Inner.(*ast.NumberLit); ok && !validScalarValue(lit.Value) {
+				c.errfCode(n.P, "E071", "%d is not a Unicode scalar value, so it cannot be cast to `char`: the range is 0..0x10FFFF excluding the surrogates 0xD800..0xDFFF%s — use `utf8.char_from_i32` for a value that is only known at run time", lit.Value, surrogateHint(lit.Value))
+			}
+			return n.Target
+		}
+		if _, innerIsChar := inner.(ast.CharType); innerIsChar && targetIsNum {
+			return n.Target
+		}
+		// Any owned array, slice, string, or struct → i32 / usize —
+		// recover the data / wrapper pointer for the bulk-
+		// memory primitives. All four lower to a single pointer
+		// at runtime; the cast is the source-level escape hatch
+		// the stdlib uses to call __memcpy / __store_ptr against
+		// the underlying memory. i32 stays the historical hop
+		// (truncates to 32 bits on natives — fine until heap
+		// > 4 GiB); usize is the target-aware shape that
+		// preserves the full 8-byte address on arm64-darwin.
+		if nt, ok := n.Target.(ast.NumberType); ok && (nt.NormalWidth() == 32 || nt.IsPointerWidth()) {
+			switch inner.(type) {
+			case ast.ArrayType, ast.SliceType, ast.StringType, ast.StructType:
+				return n.Target
+			}
+		}
+		// Reverse direction: `i32 / usize → T[]`, `→ string`,
+		// and `→ struct` promote a raw pointer back to a typed
+		// handle. The runtime layout is identical (lang ABI for
+		// arrays/strings is "value = data pointer, length prefix
+		// at base-4"; for structs, "value = base pointer, fields
+		// at constant offsets") — only the type-level view
+		// changes. Used by the stdlib when a builtin returns a
+		// freshly allocated raw block that the caller wants to
+		// expose as a typed collection (`__array_append_string`'s
+		// rebuild loop) or as a wrapper struct (`map_new`'s
+		// Map handle).
+		if nt, ok := inner.(ast.NumberType); ok && (nt.NormalWidth() == 32 || nt.IsPointerWidth()) {
+			switch n.Target.(type) {
+			case ast.ArrayType, ast.StringType, ast.StructType:
+				// A 32-bit-only source (i32 / u32 — NOT usize) reinterpreted as
+				// a pointer-shaped handle is the #5042 truncation bug: the
+				// high 32 bits of the address were already lost when the value
+				// became i32, so `k as string` / `k as T[]` / `k as Struct`
+				// recovers a corrupt pointer once the heap crosses 4 GiB
+				// (arm64-darwin). A `usize` source carries the full width, so
+				// only the narrow case is flagged. Carry pointer-shaped values
+				// in a `usize` local/param instead.
+				if nt.NormalWidth() == 32 && !nt.IsPointerWidth() {
+					c.errfCode(n.P, "E069", "reinterpreting a 32-bit `%s` value as the pointer-shaped type `%s` via `as` truncates the address: the high 32 bits were lost when the value became `%s`, so this recovers a corrupt pointer once the heap exceeds 4 GiB — carry pointer-shaped values in a `usize` local/param instead", inner, n.Target, inner)
+				}
+				return n.Target
+			}
+		}
+		// Type ascription. The numeric-only `as` form above is a
+		// runtime conversion (truncate / sign-extend / float-round).
+		// This branch is the opposite: a zero-cost annotation that
+		// lets the user pin a type inline where the inference can't
+		// reach. The classic case is a payload-less variant —
+		// `None as Option[i32]`, `[] as i32[]` — but the rule
+		// generalises to anything the existing `let x: T = e`
+		// destination-flow already accepts. Run the same flow
+		// (settle polymorphic numerics, stamp struct args, refine
+		// generic-call type args, union-wrap), then accept when the
+		// result is `assignable` to the target. IR / interp see a
+		// CastExpr whose inner has already evaluated; nothing more
+		// to lower.
+		c.stampStructTypeArgs(n.Inner, n.Target)
+		c.refineCallTypeArgsFromDest(n.Inner, n.Target)
+		inner = c.maybeWrapForUnion(n.Target, &n.Inner, inner, s)
+		n.InnerType = inner
+		if c.assignable(n.Target, inner) {
+			return n.Target
+		}
+		// A nil inner means the operand never typed — an undefined
+		// identifier, an unknown call, a missing field — and whatever
+		// failed already reported its own diagnostic. Saying "cannot cast
+		// <nothing> to i32" on top of that stacks a second error on one
+		// typo, and formats the nil type as `%!s(<nil>)` while doing it.
+		// The cast's own target is still returned so the expression keeps
+		// a type and callers do not cascade further.
+		if inner == nil {
+			return n.Target
+		}
+		c.errfCode(n.P, "E033", "cannot cast %s to %s; only numeric casts (and [u8]/u8[]/string ↔ i32 data-pointer hops, plus i32 → T[]) are supported", inner, n.Target)
+		return n.Target
+	case *ast.BoolLit:
+		return ast.BoolType{}
+	case *ast.UnitLit:
+		return ast.VoidType{}
+	case *ast.StringLit:
+		return ast.StringType{}
+	case *ast.CharLit:
+		// Neither form is polymorphic: `'x'` is a `char` and `b'x'` a
+		// `u8`, full stop. That is what makes `s[i] == b'['` check and
+		// `s[i] == '['` an error — a numeric literal would settle to
+		// whatever the other operand is and erase the distinction.
+		if n.IsByte {
+			return ast.NumberType{Width: 8, Signed: false}
+		}
+		return ast.CharType{}
+	case *ast.FString:
+		// Build the desugared `+`-chain right here so method-call
+		// dispatch on each `.to_string()` gets resolved via the
+		// regular checker path. The IR then lowers the desugared
+		// expression rather than the FString node itself; the
+		// formatter still reads n.Parts to rebuild the f"..." form.
+		// Empty f-strings desugar to a single empty string literal.
+		if n.Desugared == nil {
+			if len(n.Parts) == 0 {
+				n.Desugared = &ast.StringLit{P: n.P, Value: ""}
+			} else {
+				var built ast.Expr
+				for _, part := range n.Parts {
+					var piece ast.Expr
+					if part.Expr != nil {
+						piece = &ast.Call{
+							P: n.P,
+							Callee: &ast.FieldAccess{
+								P:      n.P,
+								Target: part.Expr,
+								Field:  "to_string",
+							},
+						}
+					} else {
+						piece = &ast.StringLit{P: n.P, Value: part.Lit}
+					}
+					if built == nil {
+						built = piece
+					} else {
+						built = &ast.Binary{P: n.P, Op: "+", Left: built, Right: piece}
+					}
+				}
+				n.Desugared = built
+			}
+		}
+		// Recursively type-check the desugared chain. The Binary
+		// nodes get their IsStringConcat flag set the same way an
+		// ordinary `"a" + b.to_string()` would.
+		_ = c.checkExpr(n.Desugared, s)
+		return ast.StringType{}
+	case *ast.FloatLit:
+		// Float literals are polymorphic, same shape as integer
+		// literals. If a previous settling pass already locked in
+		// a width, surface it; otherwise return a Polymorphic
+		// placeholder so the surrounding context can decide.
+		if n.Width != 0 {
+			return ast.FloatType{Width: n.Width}
+		}
+		return ast.FloatType{Polymorphic: true}
+	case *ast.Ident:
+		if t, ok := s.lookup(n.Name); ok {
+			n.Local = true
+			c.noteLitIdent(n, t, s.lookupVarDecl(n.Name))
+			return t
+		}
+		// Inside a local function: a name not found in the local
+		// scope might resolve in the enclosing function's scope.
+		// Record it as a capture and return its outer type. This
+		// check fires before the FuncSigs lookup below — local
+		// FuncDecls register in FuncSigs too, and FuncSigs alone
+		// would short-circuit the capture path for a sibling
+		// local function name (`function outer() { return inner; }`
+		// where both inner and outer are local to the same outer
+		// function). The outer scope is the authoritative source
+		// for whether a sibling needs capturing.
+		//
+		// Walk the captureChain outermost-first. The deepest level
+		// (current local function) is the LAST entry; the first
+		// entry to hit is the immediately-enclosing function. When
+		// a name resolves three levels up, every intermediate
+		// function captures it so the env blocks chain the
+		// reference down to the deepest reader.
+		if len(c.captureChain) > 0 {
+			for i := len(c.captureChain) - 1; i >= 0; i-- {
+				ent := c.captureChain[i]
+				if ent.scope == nil {
+					continue
+				}
+				if t, ok := ent.scope.lookup(n.Name); ok {
+					n.Local = true
+					// Record the capture in this entry's sink AND
+					// in every deeper sink (so each intermediate
+					// closure forwards the slot through).
+					for j := i; j < len(c.captureChain); j++ {
+						if c.captureChain[j].sink != nil {
+							c.captureChain[j].sink(n.Name, t)
+						}
+					}
+					// Note the DECLARATION, not the name: a store into a
+					// captured-and-assigned `let` goes through the shared
+					// boxcapture cell, which is where a reference cycle can
+					// be closed (#8440, checkCaptureCycleStores).
+					if decl := ent.scope.lookupVarDecl(n.Name); decl != nil {
+						c.noteLitIdent(n, t, decl)
+						if c.capturedVars == nil {
+							c.capturedVars = map[*ast.Var]bool{}
+						}
+						c.capturedVars[decl] = true
+					}
+					return t
+				}
+			}
+		}
+		// A GENERIC function named in value position. FuncSigs holds a
+		// signature for generic decls too, and it still contains
+		// ast.ParamType — so returning it hands an uninstantiated type to
+		// whatever consumes the value. From a non-generic caller that
+		// failed argAssignable and produced an E038 naming a type the user
+		// never wrote (`got (i32, T) => T`); from inside a generic binding
+		// the same parameter name it unified vacuously, was accepted, and
+		// surfaced from monomorph as `re-check failed (compiler bug)` —
+		// an internal error for an unsupported construct (#7040).
+		//
+		// Instantiating from an expected function type is the feature, and
+		// it is not implemented anywhere: ast.Ident carries no TypeArgs and
+		// monomorph's collectCalls only walks *ast.Call, so a generic named
+		// outside callee position is never queued. Until it exists this is
+		// a refusal with a code, not a miscompile reported as a compiler bug.
+		if gf, isGen := c.info.GenericFuncs[n.Name]; isGen {
+			if t, ok := c.instantiateFuncValue(n, gf); ok {
+				return t
+			}
+			c.errE040GenericFuncAsValue(n.P, n.Name, gf)
+			return nil
+		}
+		if sig, ok := c.info.FuncSigs[n.Name]; ok {
+			return sig
+		}
+		// A bare name might be a payload-less enum variant.
+		// (Variants with payloads are constructed via Call and
+		// rejected here so the user gets a clearer error.) The
+		// optional `n.EnumName` qualifier (set by the FieldAccess
+		// rewrite for `Color.Red`) restricts the lookup to one
+		// specific enum.
+		// A payload-less bare variant shared by multiple enum clones
+		// (#3693) is disambiguated by the destination's expected enum.
+		if n.EnumName == "" {
+			if en := c.monomorphCloneEnumName(c.expectedType); en != "" {
+				if _, ok, _ := c.resolveVariant(n.Name, en); ok {
+					n.EnumName = en
+				}
+			}
+		}
+		if vr, ok, multi := c.resolveVariant(n.Name, n.EnumName); ok {
+			if len(vr.payloads) > 0 {
+				c.errfCode(n.P, "E036", "variant %s expects %d payload argument(s); call it as %s(...)",
+					n.Name, len(vr.payloads), n.Name)
+				return nil
+			}
+			n.EnumName = vr.enumName
+			c.recordEnumConstruction(n, vr, ast.EnumType{Name: vr.enumName}, nil, c.expectedType)
+			return ast.EnumType{Name: vr.enumName}
+		} else if multi {
+			c.errfCode(n.P, "E036", "variant %q is declared in multiple enums (%s) — qualify the reference, e.g. %s",
+				n.Name, c.variantEnumList(n.Name), c.variantQualifierHint(n.Name, ""))
+			return nil
+		} else if n.EnumName != "" {
+			c.errfCode(n.P, "E036", "enum %s has no variant %q", c.enumHintName(n.EnumName), n.Name)
+			return nil
+		}
+		c.errIdent(n, s, "undefined identifier %q", n.Name)
+		return nil
+	case *ast.ArrayLit:
+		// Consume any element-type hint set by a coercion site
+		// (var init / return / argument). For a `dyn Trait[]`
+		// destination the elements need only each implement the
+		// trait — they may be different concrete types — so we check
+		// coercibility per element rather than mutual equality.
+		hint := c.elemHint
+		c.elemHint = nil
+		// A destination reaches each element as its element type, not
+		// as the whole array type the enclosing var or return set.
+		var elemExpected ast.Type
+		if at, ok := c.expectedType.(ast.ArrayType); ok {
+			elemExpected = at.Elem
+		}
+		c.expectedType = nil
+		checkElem := func(el ast.Expr) ast.Type {
+			c.expectedType = elemExpected
+			t := c.checkExpr(el, s)
+			c.expectedType = nil
+			return t
+		}
+		if dt, ok := hint.(ast.DynTraitType); ok {
+			for i := range n.Elems {
+				t := checkElem(n.Elems[i])
+				// Record the concrete→`dyn Trait` coercion against the
+				// element holder (compiled backends box it into the
+				// `[data, vtable]` fat pointer via Info.DynCoercions —
+				// docs/DYN-TRAITS.md §4.2.1). This mirrors the per-
+				// element maybeWrapForUnion call the union-array branch
+				// below makes, and is a no-op on the interpreter.
+				t = c.maybeWrapForUnion(dt, &n.Elems[i], t, s)
+				if t != nil && !c.assignable(dt, t) {
+					c.errfCode(n.Elems[i].Pos(), "E034",
+						"array element of type %s does not implement %s, so it cannot be a `%s`",
+						t, c.missingDynTraits(dt, t), dt.String())
+				}
+			}
+			n.ElemType = dt
+			return ast.ArrayType{Elem: dt}
+		}
+		if len(n.Elems) == 0 {
+			// A producer that already knows the element type stamps
+			// ElemType, and that is authoritative — there is nothing to
+			// infer and nothing for the context to settle. constfold's
+			// `__fern_assets()` does this: an embed directory holding no
+			// files is legitimate, and without this the empty array it
+			// expands to would demand an annotation the user has no way
+			// to write, at a position pointing into the expansion.
+			if n.ElemType != nil {
+				return ast.ArrayType{Elem: n.ElemType}
+			}
+			// Polymorphic-empty marker, resolved by the
+			// surrounding context (Var annotation, function
+			// arg, return type) via settleEmptyArray below.
+			// If nothing settles it, the var-assignment site
+			// raises the missing-annotation error.
+			return ast.ArrayType{Elem: nil}
+		}
+		// Union element hint: an `N[]` literal whose elements are bare
+		// variant structs (`[A { … }, B { … }]`) needs each element wrapped
+		// into the union the same way a single `let n: N = A { … }`, a
+		// `return`, or an `arr.push(A { … })` argument is — otherwise the
+		// elements are stored as un-tagged structs and a later `match`
+		// misfires (the push path wraps via the Call-argument coercion; the
+		// array literal had no equivalent). maybeWrapForUnion is a no-op for
+		// elements that are already enum values or don't match a variant.
+		if eu, ok := hint.(ast.EnumType); ok {
+			for i := range n.Elems {
+				et := checkElem(n.Elems[i])
+				et = c.maybeWrapForUnion(eu, &n.Elems[i], et, s)
+				if et != nil && !c.assignable(eu, et) {
+					c.errfCode(n.Elems[i].Pos(), "E034", "array element type %s, expected %s", et, eu)
+				}
+			}
+			n.ElemType = eu
+			return ast.ArrayType{Elem: eu}
+		}
+		// A `str[]` destination types the literal: each element is read at
+		// `str`, so a string literal widens beside a view as it does at any
+		// other `str` destination (#10889).
+		if _, ok := elemExpected.(ast.StrType); ok {
+			for _, el := range n.Elems {
+				if t := checkElem(el); t != nil && !c.assignable(elemExpected, t) {
+					c.errfCode(el.Pos(), "E034", "array element type %s, expected %s", t, elemExpected)
+				}
+			}
+			n.ElemType = elemExpected
+			return ast.ArrayType{Elem: elemExpected}
+		}
+		elemT := checkElem(n.Elems[0])
+		for _, el := range n.Elems[1:] {
+			t := checkElem(el)
+			if t == nil || elemT == nil {
+				continue
+			}
+			if ast.Equal(t, elemT) {
+				continue
+			}
+			// Allow polymorphic-vs-concrete and the
+			// argless-enum-vs-with-args shapes that
+			// `unifyIfArms` already handles for if-expression
+			// arms. Picks the concrete side so a later
+			// `settleNumeric` walk against the destination
+			// element type still has a fixed point to land
+			// on. Mirrors the cohort of fixes that make
+			// numeric / enum widening work across the
+			// language's other "two-arm" positions.
+			if unified := unifyIfArms(elemT, t); unified != nil {
+				elemT = unified
+				continue
+			}
+			c.errfCode(el.Pos(), "E034", "array element type %s, expected %s", t, elemT)
+		}
+		if elemT == nil {
+			// The first element failed to check and reported. Return the
+			// erroneous type rather than `ArrayType{Elem: nil}` — that is
+			// the polymorphic-EMPTY marker, so handing it back here makes
+			// the var site demand an annotation for an "empty array
+			// literal" that has elements.
+			return nil
+		}
+		n.ElemType = elemT
+		// The inferred element join constrains constructors too, including
+		// payloadless variants whose type arguments are supplied by a sibling.
+		for _, el := range n.Elems {
+			c.settleNumeric(el, elemT)
+		}
+		return ast.ArrayType{Elem: elemT}
+	case *ast.Index:
+		at := c.checkExpr(n.Array, s)
+		it := c.settleIndexOperand(n.Idx, c.checkExpr(n.Idx, s))
+		if it != nil && !ast.Equal(it, ast.NumberType{}) {
+			c.errfCode(n.Idx.Pos(), "E034", "index must be i32, got %s", it)
+		}
+		if arr, ok := at.(ast.ArrayType); ok {
+			n.ElemType = arr.Elem
+			return arr.Elem
+		}
+		if sl, ok := at.(ast.SliceType); ok {
+			n.IsSlice = true
+			n.ElemType = sl.Elem
+			return sl.Elem
+		}
+		// `s[i]` on a string yields the byte at i as `u8` — the byte
+		// type, distinct from `i32` (#5629). No implicit widening: a
+		// byte reaching i32 arithmetic needs an explicit `as i32`.
+		if _, ok := at.(ast.StringType); ok {
+			n.IsString = true
+			return ast.NumberType{Width: 8, Signed: false}
+		}
+		// `v[i]` on a `str` view reads the byte too — a read-only
+		// operation, safe on a borrow (#4813). Same IsString lowering:
+		// after erasure the operand IS a string.
+		if _, ok := at.(ast.StrType); ok {
+			n.IsString = true
+			return ast.NumberType{Width: 8, Signed: false}
+		}
+		if at != nil {
+			c.errfCode(n.P, "E034", "indexing non-array value of type %s", at)
+		}
+		return nil
+	case *ast.SliceExpr:
+		st := c.checkExpr(n.Source, s)
+		if n.Low != nil {
+			lt := c.settleIndexOperand(n.Low, c.checkExpr(n.Low, s))
+			if lt != nil && !ast.Equal(lt, ast.NumberType{}) {
+				c.errfCode(n.Low.Pos(), "E037", "slice low bound must be i32, got %s", lt)
+			}
+		}
+		if n.High != nil {
+			ht := c.settleIndexOperand(n.High, c.checkExpr(n.High, s))
+			if ht != nil && !ast.Equal(ht, ast.NumberType{}) {
+				c.errfCode(n.High.Pos(), "E037", "slice high bound must be i32, got %s", ht)
+			}
+		}
+		if arr, ok := st.(ast.ArrayType); ok {
+			n.ElemType = arr.Elem
+			return ast.SliceType{Elem: arr.Elem}
+		}
+		if sl, ok := st.(ast.SliceType); ok {
+			n.SourceIsSlice = true
+			n.ElemType = sl.Elem
+			return sl
+		}
+		if _, ok := st.(ast.StringType); ok {
+			// `s[a:b]` is a CHECKED slice: it yields `None` when the
+			// bounds are out of range or either end falls inside a
+			// multi-byte code point, `Some(view)` otherwise (#5634).
+			// The unchecked, trapping form is `slice_unchecked(s, a, b)`.
+			// IsString still drives the IR's string arm — it is the
+			// source that is a string, not the result.
+			n.IsString = true
+			return ast.EnumType{Name: "Option", Args: []ast.Type{ast.StrType{}}}
+		}
+		// Slicing a `str` view is the same checked operation over the
+		// same bytes (#4813 / #5634): `Option[str]`, a sub-view when the
+		// bounds land on code-point boundaries.
+		if _, ok := st.(ast.StrType); ok {
+			n.IsString = true
+			return ast.EnumType{Name: "Option", Args: []ast.Type{ast.StrType{}}}
+		}
+		if st != nil {
+			c.errfCode(n.P, "E037", "cannot slice value of type %s", st)
+		}
+		return nil
+	case *ast.Call:
+		// Snapshot the destination type this call's result flows into
+		// (set by `let x: T = …` / `return …`) and clear the field so
+		// it can't leak into the argument sub-expressions we check
+		// below — only *this* call's generic completion may consult it
+		// for return-position inference (#2668).
+		delete(c.info.IntrinsicCalls, n)
+		callExpected := c.expectedType
+		c.expectedType = nil
+		// The type-argument list the SOURCE wrote, kept because a method
+		// dispatch below replaces n.TypeArgs with the RECEIVER's arguments —
+		// after which nothing else can tell the two apart, and a written list
+		// read as the receiver's names the wrong parameters (#9896).
+		var writtenTypeArgs []ast.Type
+		c.retagIndexAsTypeArgs(n, s)
+		// Display spine (#2696): `print` / `write` / `eprint` accept any
+		// `T: Display`, not just `string`. When the sole argument isn't
+		// already a string, rewrite it to `arg.to_string()` (the same
+		// desugar f-strings use) so the value is stringified through the
+		// Display trait before it reaches the string-only runtime helper.
+		// This removes the stringify-first step (`print(x.to_string())`)
+		// at every call site. Wrong arg counts fall through to the normal
+		// path, which reports the arity error.
+		if id, ok := n.Callee.(*ast.Ident); ok && len(n.Args) == 1 {
+			switch id.Name {
+			case "print", "write", "eprint":
+				at := c.checkExpr(n.Args[0], s)
+				at = c.postSettleType(n.Args[0], at)
+				if at == nil {
+					return ast.VoidType{}
+				}
+				switch at.(type) {
+				case ast.StringType, ast.StrType:
+					// A `str` view prints as its bytes — same box shape
+					// as string at runtime (the LowerWith erasure).
+					return ast.VoidType{}
+				}
+				if !c.typeImplementsDisplay(at) {
+					// The receiver-method route survives a foreign type
+					// where the other two do not: only a TRAIT impl is
+					// orphan-checked, so `function (x: mod.T) to_string()`
+					// is writable here. It is offered first for that reason.
+					atn, _ := methodTypeName(at)
+					c.errfCode(n.Args[0].Pos(), "E038",
+						"argument 1 to %s: %s does not implement `Display` (no `to_string(): string` in scope) — give %s a `to_string(): string` method, or %s",
+						id.Name, typeLabel(at), typeLabel(at), deriveHint(atn, "cmp.Display", "cmp.Display"))
+					return ast.VoidType{}
+				}
+				arg := n.Args[0]
+				n.Args[0] = &ast.Call{
+					P: arg.Pos(),
+					Callee: &ast.FieldAccess{
+						P:      arg.Pos(),
+						Target: arg,
+						Field:  "to_string",
+					},
+				}
+				c.typedRecv, c.typedRecvType = arg, at
+				_ = c.checkExpr(n.Args[0], s)
+				c.typedRecv, c.typedRecvType = nil, nil
+				return ast.VoidType{}
+			}
+		}
+		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "map_new" {
+			c.needCoreMap(n.P)
+		}
+		// `cell_new(v)` — the Cell[T] constructor (docs/CELL-TYPE-PLAN.md).
+		// T is inferred from the argument (no destination relaxation needed:
+		// the value drives T), stamped on n.TypeArgs for the IR, and checked
+		// cycle-free (E057). Returns Cell[T].
+		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "cell_new" {
+			if len(n.Args) != 1 {
+				c.errfCode(n.P, "E004", "cell_new expects 1 argument, got %d", len(n.Args))
+				return ast.StructType{Name: "Cell"}
+			}
+			at := c.checkExpr(n.Args[0], s)
+			at = c.postSettleType(n.Args[0], at)
+			if at == nil {
+				return ast.StructType{Name: "Cell"}
+			}
+			if !isCellElemType(at) {
+				c.errfCode(n.Args[0].Pos(), "E057",
+					"Cell[%s] is not allowed: a cell's element type must be a scalar, string or owned array of scalars; other element types are not supported because cells must remain cycle-free",
+					at)
+			}
+			n.TypeArgs = []ast.Type{at}
+			return ast.StructType{Name: "Cell", Args: []ast.Type{at}}
+		}
+		// Variant constructor: `Some(x)` / `Square(2.0, 3.0)`.
+		// Resolved purely by name so we can type the result as
+		// the owning enum and check argument count + payload
+		// types. Shadowing by a function or local is intentional —
+		// the user can re-bind the name and the variant becomes
+		// inaccessible until the shadow leaves scope.
+		//
+		// For generic enums (`Option[T]`, `Result[T, E]`), the
+		// type arguments get inferred from the actual payload arg
+		// types — `Some(42)` → `Option[number]`. Inference only
+		// works when there's at least one type-determining
+		// payload arg; payload-less variants on generic enums
+		// (like `None`) yield an EnumType with empty Args, which
+		// the assignment relaxation in `assignable` lets flow
+		// into a concretely-typed slot at the var / return site.
+		// A `Color.Red(payload)` qualified-variant call parses as
+		// Call{Callee: FieldAccess{Target: Ident{Color}, Field:
+		// "Red"}}. Detect that shape, look up the variant on the
+		// named enum, and rewrite Callee to a plain Ident with
+		// EnumName stamped so the rest of this branch (and the IR's
+		// `lookupVariantOn`) handle it uniformly with the unqualified
+		// form. Only fires when the target is a known enum name —
+		// every other FieldAccess (struct field, method call) flows
+		// down the usual path.
+		// Associated-function call: `Point.origin(args)` — a FieldAccess
+		// whose target is a known struct/enum TYPE name (not shadowed by a
+		// value) and whose field is a registered associated function
+		// (`__assoc_<T>_<f>`). Rewrite the callee to the flat assoc name so
+		// the ordinary function-call path handles it with no receiver
+		// prepended. Checked before the qualified-variant rewrite below,
+		// which would otherwise claim every `Enum.x(...)` shape.
+		if fa, ok := n.Callee.(*ast.FieldAccess); ok {
+			if tid, ok := fa.Target.(*ast.Ident); ok {
+				if _, shadowed := c.identValueBinding(tid.Name, s); !shadowed {
+					// Generic associated dispatch: `T.f(args)` where `T` is
+					// a bounded type parameter of the current function whose
+					// trait declares an associated function `f`. Type via
+					// the trait signature (`Self` -> `ParamType(T)`) but
+					// leave the Callee a FieldAccess — `T` is still abstract.
+					// Monomorph substitutes `T` -> the concrete type in the
+					// target Ident and re-check resolves the now-concrete
+					// `Concrete.f()` to `__assoc_<Concrete>_f`. Mirrors the
+					// deferred bounded-*method* path below.
+					if c.typeParamDecl(tid.Name) != nil {
+						if tm, boundTrait, found := c.resolveTraitMethodForParam(tid.Name, fa.Field); found && tm.Assoc {
+							tp := ast.ParamType{Name: tid.Name}
+							if len(n.Args) != len(tm.Params) {
+								c.errfCode(n.P, "E004", "associated function %q expects %d argument(s), got %d", fa.Field, len(tm.Params), len(n.Args))
+								return ast.SubstSelf(tm.Result, tp)
+							}
+							for i, arg := range n.Args {
+								at := c.checkExpr(arg, s)
+								want := ast.SubstSelf(tm.Params[i].Type, tp)
+								if at != nil && !c.argOK(&n.Args[i], want, at, tm.Params[i].Own) {
+									c.errfCode(arg.Pos(), "E038", "argument %d to %q: expected %s, got %s", i+1, fa.Field, want, at)
+								}
+							}
+							n.Method = &ast.MethodCallSite{Field: fa.Field, FieldPos: fa.FieldPos, Receiver: tp, OwnerTrait: boundTrait, Assoc: true}
+							return ast.SubstSelf(tm.Result, tp)
+						}
+					}
+					_, isStruct := c.info.Structs[tid.Name]
+					_, isEnum := c.info.Enums[tid.Name]
+					// A PRIMITIVE type name can be an associated-call target too
+					// (`i32.default()` -> `__assoc_i32_default`, from `impl Default
+					// for i32`) -- how a monomorphised `T.default()` with `T=i32`
+					// resolves after the type-param rewrite.
+					isPrim := isPrimitiveTypeName(tid.Name)
+					if isStruct || isEnum || isPrim {
+						if mangled, _, tied, ok := c.info.ResolveMethodFrom(c.currentModule(), tid.Name, fa.Field, nil); ok {
+							if len(tied) > 0 {
+								c.errAmbiguousMethod(fa.FieldPos, tid.Name, fa.Field, c.info.methodCands(tid.Name, fa.Field, tied))
+							}
+							if strings.HasPrefix(mangled, "__assoc_") {
+								n.Callee = &ast.Ident{P: fa.P, Name: mangled}
+							} else {
+								// A type-qualified call onto a method that
+								// takes a `self` receiver — the user meant
+								// `value.m()`, not `Type.m()`.
+								c.errfCode(n.P, "E043", "%s.%s is a method; call it on a value (`v.%s(...)`), not on the type — only associated functions (no `self`) use `%s.%s(...)`",
+									demangle(tid.Name), fa.Field, fa.Field, demangle(tid.Name), fa.Field)
+								return nil
+							}
+						}
+					}
+				}
+			}
+		}
+		if fa, ok := n.Callee.(*ast.FieldAccess); ok {
+			if tid, ok := fa.Target.(*ast.Ident); ok {
+				if _, shadowed := c.identValueBinding(tid.Name, s); !shadowed && c.info.Enums[tid.Name] != nil {
+					n.Callee = &ast.Ident{P: fa.P, Name: fa.Field, EnumName: tid.Name}
+				}
+			}
+		}
+		if id, ok := n.Callee.(*ast.Ident); ok {
+			vr, vrOk, vrMulti := c.resolveVariant(id.Name, id.EnumName)
+			// A bare variant shared by multiple enum clones (#3693) is
+			// disambiguated by the destination's expected enum, snapshotted
+			// into `callExpected` above (the live field was cleared there so
+			// it can't leak into the args).
+			if vrMulti && id.EnumName == "" {
+				if en := c.monomorphCloneEnumName(callExpected); en != "" {
+					if vr2, ok2, _ := c.resolveVariant(id.Name, en); ok2 {
+						vr, vrOk, vrMulti = vr2, true, false
+						id.EnumName = en
+					}
+				}
+			}
+			isVar := vrOk && !c.isUserFuncOrLocal(id.Name, s)
+			// Bare-name reference to a variant that lives in two
+			// or more enums — the call site has to qualify.
+			// Report once, then fall through (vrOk=false) so the
+			// usual function-call path runs and the caller still
+			// gets a follow-up "undefined identifier" diag if the
+			// name resolves to nothing else.
+			if !isVar && vrMulti && id.EnumName == "" && !c.isUserFuncOrLocal(id.Name, s) {
+				c.errfCode(n.P, "E036", "variant %q is declared in multiple enums (%s) — qualify the reference, e.g. %s",
+					id.Name, c.variantEnumList(id.Name), c.variantQualifierHint(id.Name, "(...)"))
+				return nil
+			}
+			if isVar {
+				if len(n.Args) != len(vr.payloads) {
+					c.errfCode(n.P, "E036", "variant %s expects %d argument(s), got %d",
+						id.Name, len(vr.payloads), len(n.Args))
+				}
+				id.EnumName = vr.enumName
+				ed := c.info.Enums[vr.enumName]
+				sub := map[string]ast.Type{}
+				// Pre-settle polymorphic numerics against the
+				// declared payload type so a non-generic variant
+				// like `enum Wide { W(i64, i32) }` accepts a bare
+				// literal — `W(8589934592, 7)` settles its first
+				// arg to i64 before checkExpr runs. Generic
+				// payloads containing ParamType skip this pass and rely on
+				// the destination annotation (Option[i64]) to flow
+				// in via monomorph; pre-settle is a no-op for
+				// non-numeric literal positions.
+				for i, a := range n.Args {
+					if i >= len(vr.payloads) {
+						break
+					}
+					if !containsParamType(vr.payloads[i]) {
+						c.settleNumeric(a, vr.payloads[i])
+					}
+				}
+				for i, a := range n.Args {
+					at := c.checkExpr(a, s)
+					if i < len(vr.payloads) {
+						// A declaration variable is not a destination: stamping
+						// H[T][] onto [Leaf(1)] would erase its inferred H[i32].
+						// Infer the remaining variables before contextual settlement.
+						if hint := substituteType(vr.payloads[i], sub); !containsParamType(hint) {
+							c.settleNumeric(a, hint)
+						}
+						at = c.postSettleType(a, at)
+					}
+					if i >= len(vr.payloads) || at == nil {
+						continue
+					}
+					c.requireValue(a, at)
+					// Concrete→`dyn Trait` boxing in a variant-payload position.
+					// The dyn boxing-site list (var init / assignment / argument /
+					// array element / return / struct field) omitted the user-enum
+					// variant payload, so `Wrap(Concrete{...})` for a
+					// `Wrap(dyn Trait)` variant reported a spurious E036 even though
+					// the builtin Ok/Some/Err payloads and struct fields accept it.
+					// Record the coercion (so the IR boxes it) and accept it when the
+					// concrete impls every trait in the set, as assignable()'s
+					// dyn branch decides. A non-implementing concrete, or a
+					// `str`, still errors E036.
+					dynPayloadOK := false
+					if dt, ok := substituteType(vr.payloads[i], sub).(ast.DynTraitType); ok {
+						if _, srcDyn := at.(ast.DynTraitType); !srcDyn && c.assignable(dt, at) {
+							if tn, ok2 := methodTypeName(at); ok2 {
+								dynPayloadOK = true
+								if c.info.DynCoercions == nil {
+									c.info.DynCoercions = map[ast.Expr]DynCoercion{}
+								}
+								c.info.DynCoercions[a] = DynCoercion{Trait: dt.Trait0(), Traits: dt.Traits, Concrete: tn}
+							}
+						}
+					}
+					if !c.unifyType(vr.payloads[i], at, sub) && !dynPayloadOK {
+						c.errfCode(a.Pos(), "E036", "variant %s payload %d type %s, expected %s",
+							id.Name, i, at, substituteType(vr.payloads[i], sub))
+					}
+				}
+				// Record the substituted (concrete) payload types
+				// so codegen knows whether each slot holds an
+				// f32 vs i32 even when the variant declared its
+				// payload as a type parameter. For non-generic
+				// enums substituteType is a no-op.
+				resolvedPayloads := make([]ast.Type, len(vr.payloads))
+				for i := range vr.payloads {
+					resolvedPayloads[i] = substituteType(vr.payloads[i], sub)
+				}
+				// Payload declarations constrain nested constructors even when
+				// the outer value has no annotated destination. Refine after
+				// resolution so a pre-check hint cannot invent a constructor.
+				for i, a := range n.Args {
+					if i < len(resolvedPayloads) {
+						c.settleNumeric(a, resolvedPayloads[i])
+					}
+				}
+				// Tag this Call as a variant constructor so later
+				// passes that need to gate on the variant-vs-fn
+				// distinction (postSettleType) can do so without
+				// the previous case-sensitivity heuristic.
+				n.IsVariantCall = true
+				if ed != nil && len(ed.TypeParams) > 0 {
+					args := make([]ast.Type, len(ed.TypeParams))
+					complete := true
+					// A variant fixes only the parameters its payload names:
+					// `Ok(9)` names T and says nothing about E. The rest come
+					// from where the value is going, so a destination naming
+					// this same enum fills them — its CONCRETE positions only,
+					// since a destination inside a generic signature
+					// (`other: Result[U, E]` with E already substituted) has a
+					// type parameter of its own in the position the payload
+					// was meant to pin (#9896).
+					//
+					// Not when the destination WIDENS what the payload pinned,
+					// though: `Ok(n)` with an i32 `n` returned as
+					// `Result[i64, i32]` pins T = i32 from the payload while
+					// the destination says i64, and the widening that settles
+					// that runs downstream of here — reached only because the
+					// type is still INCOMPLETE. Completing it would answer
+					// `Result[i32, i32]` and take the widening away.
+					//
+					// Only lossless same-signed Result widening is left open.
+					// Other disagreements are REPORTED by completing: the
+					// payload's own binding is kept, so `Box[i32, string]` meets
+					// the `Box[string, string]` the call wants and the mismatch
+					// is named.
+					destArgs := destEnumArgs(callExpected, vr.enumName, len(ed.TypeParams))
+					numericConflict := false
+					for i, p := range ed.TypeParams {
+						pinned, ok := sub[p]
+						if !ok || destArgs == nil {
+							continue
+						}
+						if resultPayloadWidens(vr.enumName, pinned, destArgs[i]) {
+							numericConflict = true
+							destArgs = nil
+						}
+					}
+					for i, p := range ed.TypeParams {
+						if v, ok := sub[p]; ok {
+							args[i] = v
+							continue
+						}
+						if destArgs != nil {
+							if _, isParam := destArgs[i].(ast.ParamType); !isParam {
+								args[i] = destArgs[i]
+								sub[p] = destArgs[i]
+								continue
+							}
+						}
+						complete = false
+						args[i] = ast.UnboundType{}
+					}
+					if !complete {
+						// Keep payload facts even when another position is open.
+						// A conflicting numeric destination still follows the
+						// existing contextual widening path below.
+						if len(sub) > 0 && !numericConflict {
+							result := ast.EnumType{Name: vr.enumName, Args: args}
+							c.recordEnumConstruction(n, vr, result, resolvedPayloads, callExpected)
+							return result
+						}
+						// Couldn't fill in every parameter from
+						// the args alone (typical for a
+						// payload-less variant). Leave Args nil
+						// so `assignable` flows the type into
+						// whatever the surrounding context
+						// expects.
+						c.recordEnumConstruction(n, vr, ast.EnumType{Name: vr.enumName}, resolvedPayloads, callExpected)
+						return ast.EnumType{Name: vr.enumName}
+					}
+					c.recordEnumConstruction(n, vr, ast.EnumType{Name: vr.enumName, Args: args}, resolvedPayloads, callExpected)
+					return ast.EnumType{Name: vr.enumName, Args: args}
+				}
+				c.recordEnumConstruction(n, vr, ast.EnumType{Name: vr.enumName}, resolvedPayloads, callExpected)
+				return ast.EnumType{Name: vr.enumName}
+			}
+		}
+		// Method call dispatch: `target.method(args)` where target is a
+		// struct or enum value with a method of that name. We rewrite
+		// the Call node in place to `mangledName(target, args)` so the
+		// rest of the pipeline (codegen, IR) only ever sees a regular
+		// function call.
+		//
+		// The receiver is type-checked once, here, and its type carried to
+		// whichever path consumes it below: the argument loop (the rewrite
+		// prepends the receiver to n.Args) or the callee check (no rewrite —
+		// the FieldAccess is still the callee). Checking it a second time
+		// re-runs every diagnostic its subexpressions produced, doubling them
+		// at each link of a method chain.
+		var recvFA *ast.FieldAccess
+		var recvType ast.Type
+		var recvIsArg0 bool
+		if fa, ok := n.Callee.(*ast.FieldAccess); ok {
+			tt := c.receiverType(fa.Target, s)
+			recvFA, recvType = fa, tt
+			// The receiver itself failed to type — an error is already
+			// reported on it (e.g. a chained `n.foo().bar()` whose inner
+			// `n.foo()` is invalid), and no dispatch can resolve against a
+			// type that does not exist.
+			if tt == nil {
+				return nil
+			}
+			// Trait-bounded type parameter: `x.m(...)` where `x: T`
+			// and `T: SomeTrait`. We type-check against the trait's
+			// signature here but DON'T rewrite the callee — the
+			// receiver type is still abstract. monomorph clones the
+			// body with `T` substituted by the concrete type and
+			// re-runs Check, at which point the ordinary dispatch
+			// path below resolves the now-concrete receiver to the
+			// impl's mangled method. See docs/TRAITS.md §4.
+			if pt, ok := tt.(ast.ParamType); ok {
+				tm, boundTrait, found := c.resolveTraitMethodForParam(pt.Name, fa.Field)
+				if !found {
+					c.errfCode(n.P, "E021",
+						"no method %q on type parameter %s; add a trait bound such as [%s: SomeTrait] that provides it",
+						fa.Field, pt.Name, pt.Name)
+					return nil
+				}
+				// An ASSOCIATED function has no self receiver (`trait Num {
+				// function zero(): Self; }`), so it is reached as `T.zero()`
+				// — the branch above — and never through a value. Say so
+				// rather than slicing off a `self` that is not there: that
+				// panicked on the no-argument form and swallowed the first
+				// real argument on any other.
+				if tm.Assoc {
+					c.errfCode(n.P, "E021",
+						"%q is an associated function of trait %s, not a method; call it as %s.%s(...)",
+						fa.Field, boundTrait, pt.Name, fa.Field)
+					return nil
+				}
+				// !Assoc means the parser saw a leading `self` param
+				// (assoc := len(params) == 0 || params[0].Name != "self"),
+				// so dropping it here is safe.
+				wantParams := tm.Params[1:]
+				if len(n.Args) != len(wantParams) {
+					c.errfCode(n.P, "E004", "method %q expects %d argument(s), got %d", fa.Field, len(wantParams), len(n.Args))
+					return ast.SubstSelf(tm.Result, tt)
+				}
+				for i, arg := range n.Args {
+					at := c.checkExpr(arg, s)
+					want := ast.SubstSelf(wantParams[i].Type, tt)
+					if at != nil && !c.argOK(&n.Args[i], want, at, wantParams[i].Own) {
+						c.errfCode(arg.Pos(), "E038", "argument %d to %q: expected %s, got %s", i+1, fa.Field, want, at)
+					}
+				}
+				n.Method = &ast.MethodCallSite{Field: fa.Field, FieldPos: fa.FieldPos, Receiver: tt, OwnerTrait: boundTrait}
+				return ast.SubstSelf(tm.Result, tt)
+			}
+			// Trait object: `d.m(...)` where `d: dyn Trait`. Resolve the
+			// method against the TRAIT's signature (not a concrete
+			// method table) and mark the call as dynamic — the callee
+			// stays a FieldAccess, monomorph leaves it alone, and the
+			// interpreter dispatches by the receiver value's runtime
+			// concrete type. See docs/DYN-TRAITS.md §4.1.
+			if dt, ok := tt.(ast.DynTraitType); ok {
+				return c.checkDynMethodCall(n, fa, dt, s)
+			}
+			var typeName string
+			switch t := tt.(type) {
+			case ast.StructType:
+				typeName = t.Name
+			case ast.EnumType:
+				typeName = t.Name
+			case ast.ArrayType:
+				// Generic array methods (today: `push`, `len`).
+				// Treated as if Array were a one-type-param
+				// generic struct so the receiver-TypeArgs
+				// substitution path applies — `string[].push(v)`
+				// checks `v` as string, `JsonValue[].push(v)` as
+				// JsonValue.
+				_ = t
+				typeName = "Array"
+			case ast.SliceType:
+				// Generic slice methods (today: `len`). Same
+				// one-type-param shape as Array — the element
+				// type flows through `n.TypeArgs` for any
+				// future per-T method.
+				_ = t
+				typeName = "slice"
+			default:
+				// Every SCALAR receiver (string / str / char / the
+				// numeric widths / float / bool) names its method
+				// surface through methodTypeName. This was the THIRD
+				// copy of that width/sign switch -- declaration
+				// registration and the operator-overload path had the
+				// others -- and copies drift: `u8` collapsing into
+				// "u32" here is what left a byte with no surface of its
+				// own (#5629 slice 2). methodTypeName reports !ok for a
+				// receiver with no method surface, which leaves
+				// typeName empty and falls through to the existing
+				// unknown-method diagnostics.
+				if n, ok := methodTypeName(tt); ok {
+					typeName = n
+				}
+			}
+			if typeName != "" {
+				// A call site that already resolved to a trait keeps it.
+				// The monomorphiser re-checks a bounded generic body with
+				// the receiver made concrete, from the module that DEFINED
+				// the generic — where the trait the bound named may not be
+				// the one module ranking would pick. The stamp is the
+				// bound's answer, and it outranks the module ranking.
+				var prefer []string
+				if n.Method != nil && n.Method.OwnerTrait != "" {
+					prefer = []string{n.Method.OwnerTrait}
+				}
+				if mangled, ownerTrait, tied, ok := c.info.ResolveMethodFrom(c.currentModule(), typeName, fa.Field, prefer); ok && (c.methodVisibleHere(mangled) || c.methodImplementsTrait(typeName, fa.Field)) {
+					if len(tied) > 0 {
+						c.errAmbiguousMethod(fa.FieldPos, typeName, fa.Field, c.info.methodCands(typeName, fa.Field, tied))
+					}
+					if fa.Field == "drop" && c.hasDropImpl(typeName) {
+						c.errfCode(fa.FieldPos, "E073",
+							"`drop` is a finalizer, not a method to call: the runtime runs %s's `drop` when the value's last reference goes away, so calling it here runs the body a second time on a value that will still be finalized", typeName)
+					}
+					// Preserve the source-level call site so the LSP
+					// can resolve hover / goto-def on `area` in
+					// `p.area()` after we rewrite the AST to a
+					// mangled flat call, and so the move/borrow
+					// analysis re-resolves to this same impl.
+					n.Method = &ast.MethodCallSite{
+						Field:      fa.Field,
+						FieldPos:   fa.FieldPos,
+						Receiver:   tt,
+						OwnerTrait: ownerTrait,
+					}
+					mangled = c.instForReceiver(typeName, fa.Field, ownerTrait, mangled, tt)
+					n.Callee = &ast.Ident{P: fa.P, Name: mangled}
+					n.Args = append([]ast.Expr{fa.Target}, n.Args...)
+					recvIsArg0 = true
+					// Carry the receiver's TypeArgs (if any) so
+					// the call-checking path below can substitute
+					// ParamType-typed entries in the method's
+					// registered signature against the
+					// instantiation's concrete arguments. This
+					// is what makes `(m: Map[string, i32]).set(k,
+					// v)` type-check `k` as string and `v` as
+					// i32 when the registered sig uses
+					// ParamType("K") / ParamType("V").
+					if st, ok := tt.(ast.StructType); ok && len(st.Args) > 0 {
+						writtenTypeArgs = takeWrittenTypeArgs(n, writtenTypeArgs)
+						n.TypeArgs = st.Args
+					}
+					// Array's `Args` is just the single Elem
+					// type — wrap it so the same substitution
+					// path treats it as `[T]` with T = Elem.
+					// `arr.push(v)`'s lowering happens inline at
+					// the IR layer (emitArrayPush) — no per-
+					// stride dispatch required here.
+					if at, ok := tt.(ast.ArrayType); ok {
+						writtenTypeArgs = takeWrittenTypeArgs(n, writtenTypeArgs)
+						n.TypeArgs = []ast.Type{at.Elem}
+					}
+					// Slice mirrors Array: single-element type
+					// param flows through TypeArgs.
+					if sl, ok := tt.(ast.SliceType); ok {
+						writtenTypeArgs = takeWrittenTypeArgs(n, writtenTypeArgs)
+						n.TypeArgs = []ast.Type{sl.Elem}
+					}
+					// Wide-V Map: `m.values()` is intercepted by
+					// the IR (emitMapValues) which dispatches by
+					// V stride — narrow V routes to the existing
+					// `__map_values_impl` stdlib function,
+					// wide V (i64 / u64 / f64) follows each entry's
+					// cell pointer + `__memcpy`s the 8 payload
+					// bytes into a real wide-stride result. Both
+					// share the same mangled name; the IR sees
+					// the receiver's V via `b.exprType(args[0])`.
+				}
+			}
+		}
+		var callee ast.Type
+		if fa, ok := n.Callee.(*ast.FieldAccess); ok && fa == recvFA {
+			callee = c.fieldAccessType(fa, s, recvType)
+		} else if id, ok := n.Callee.(*ast.Ident); ok && c.calleeIsGenericFunc(id, s) {
+			// CALLEE position is where a generic name belongs: this IS the
+			// instantiation site, and the argument-driven inference below is
+			// what determines its type parameters. checkExpr's Ident case
+			// refuses a generic in VALUE position (#7040) and cannot tell the
+			// two apart from where it sits, so the distinction is drawn here,
+			// by the node that knows. Same type it would have returned.
+			callee = c.info.FuncSigs[id.Name]
+		} else {
+			callee = c.checkExpr(n.Callee, s)
+			// A call in callee position has no destination of its own to
+			// settle its literals, so it takes an unannotated binding's
+			// defaults (#11488).
+			if inner, ok := n.Callee.(*ast.Call); ok {
+				if widened := c.widenGenericCallByLiterals(inner); widened != nil {
+					callee = widened
+				}
+			}
+		}
+		ft, ok := callee.(*ast.FuncType)
+		if !ok {
+			if callee != nil {
+				c.errfCode(n.P, "E038", "calling non-function value of type %s", callee)
+			}
+			return nil
+		}
+		intrinsic := IntrinsicNone
+		if id, direct := n.Callee.(*ast.Ident); direct {
+			if _, local := c.identValueBinding(id.Name, s); !local {
+				intrinsic = c.intrinsicSigs[ft]
+			}
+		}
+		// Method calls on a generic struct's instantiation: the
+		// dispatch path stamped n.TypeArgs from the receiver's
+		// concrete Args. Substitute those into the registered
+		// method signature so per-instantiation argument types
+		// (`Map[string, i32].set` taking string + i32 instead
+		// of the registered `K` + `V`) flow through the regular
+		// argument-checking + return-type path below.
+		methodSubResult := ft.Result
+		if id, ok := n.Callee.(*ast.Ident); ok && len(n.TypeArgs) > 0 &&
+			strings.HasPrefix(id.Name, "__method_") {
+			// Recover the type-param list from the owning struct
+			// (or enum) decl whose name appears between
+			// `__method_` and the trailing `_<MethodName>`.
+			rest := id.Name[len("__method_"):]
+			// Split at the FIRST underscore so multi-word
+			// method names like `Map_has_next` resolve to
+			// `Map` (not `Map_has`). Type names themselves
+			// can't contain underscores by parser rule.
+			if idx := strings.Index(rest, "_"); idx > 0 {
+				typeName := rest[:idx]
+				var typeParams []string
+				if sd := c.info.Structs[typeName]; sd != nil {
+					typeParams = sd.TypeParams
+				} else if ed := c.info.Enums[typeName]; ed != nil {
+					typeParams = ed.TypeParams
+				} else if typeName == "Array" {
+					// Array isn't an actual decl — it's the
+					// builtin `T[]` type-constructor. Synthesise
+					// the one-element type-param list so the
+					// substitution path sees `T` and substitutes
+					// against the receiver's Elem type.
+					typeParams = []string{"T"}
+				} else if typeName == "slice" {
+					// `slice` mirrors `Array` — builtin
+					// `[T]` type-constructor with one
+					// synthetic type parameter.
+					typeParams = []string{"T"}
+				}
+				if len(typeParams) == len(n.TypeArgs) {
+					sub := make(map[string]ast.Type, len(typeParams))
+					for i, tp := range typeParams {
+						if c.receiverDeclares(id.Name, tp) {
+							sub[tp] = n.TypeArgs[i]
+						}
+					}
+					substitutedParams := make([]ast.Type, len(ft.Params))
+					for i, p := range ft.Params {
+						substitutedParams[i] = substituteType(p, sub)
+					}
+					ft = &ast.FuncType{
+						Params:   substitutedParams,
+						ParamOwn: ft.ParamOwn,
+						Result:   substituteType(ft.Result, sub),
+					}
+					methodSubResult = ft.Result
+				}
+			}
+		}
+		_ = methodSubResult
+		if len(n.Args) != len(ft.Params) {
+			c.errfCode(n.P, "E004", "function expects %d arguments, got %d", len(ft.Params), len(n.Args))
+		}
+		// If the callee resolves to a generic FuncDecl, build its
+		// type-arg substitution. Two source shapes:
+		// - Explicit: `f[i32](42)` — the parser stamps `n.TypeArgs`
+		//   directly. We seed `sub` from those args, paired with
+		//   the FuncDecl's TypeParams declaration order.
+		// - Inferred: `f(42)` — `sub` starts empty and gets filled
+		//   in by walking args against the function's declared
+		//   params via unifyType below.
+		// Neither shape applies when a value binding of the same
+		// name SHADOWS the generic — `identValueBinding` covers the
+		// two arms of the resolution order `checkExpr` already used
+		// for the callee above. The verdict is recorded because the
+		// destination-refinement and numeric-settling passes see
+		// the Call without a scope and have to agree with it.
+		if id, ok := n.Callee.(*ast.Ident); ok {
+			if _, isGen := c.info.GenericFuncs[id.Name]; isGen {
+				if _, isValue := c.identValueBinding(id.Name, s); isValue {
+					c.shadowedGenericCalls[n] = true
+				}
+			}
+		}
+		var sub map[string]ast.Type
+		var genericFn *ast.FuncDecl
+		if id, ok := n.Callee.(*ast.Ident); ok && !c.shadowedGenericCalls[n] {
+			if fn, isGen := c.info.GenericFuncs[id.Name]; isGen {
+				genericFn = fn
+				sub = make(map[string]ast.Type, len(fn.TypeParams))
+				if len(n.TypeArgs) > 0 {
+					// Too MANY type args is always wrong. Too FEW is an
+					// error for an explicit call-site `f[i32](x)` (the
+					// `type-arg-too-few` contract), but ALLOWED for a
+					// method call (`n.Method != nil`): a generic-method
+					// call seeds only the receiver's type-vars here (they
+					// come first in fn.TypeParams) and the remaining
+					// method-level params are inferred from the arguments
+					// below. The "could not infer" check afterwards still
+					// catches a param that nothing binds.
+					// Two lists can arrive in n.TypeArgs and they name
+					// different parameters: the RECEIVER's arguments, which a
+					// method dispatch stamps there, and the list the source
+					// WROTE. They are the same list unless that dispatch
+					// replaced it — which is exactly what writtenTypeArgs
+					// records.
+					recvArgs, written := n.TypeArgs, writtenTypeArgs
+					if written == nil && n.TypeArgsWritten {
+						recvArgs, written = nil, n.TypeArgs
+					}
+					// Arity is the WRITTEN list's when the source wrote one:
+					// on a struct receiver n.TypeArgs is the stamp by now, so
+					// counting it measures the receiver's parameters and a
+					// surplus written argument went unreported.
+					count := len(n.TypeArgs)
+					if written != nil {
+						count = len(written)
+					}
+					tooMany := count > len(fn.TypeParams)
+					tooFew := count < len(fn.TypeParams)
+					if tooMany || (tooFew && n.Method == nil) {
+						display, _ := callSiteName(fn)
+						c.errfCode(n.P, "E040", "%s expects %d type argument(s), got %d",
+							display, len(fn.TypeParams), count)
+					}
+					// The receiver's arguments are the LEADING parameters.
+					for i, ta := range recvArgs {
+						if i < len(fn.TypeParams) && c.receiverDeclares(id.Name, fn.TypeParams[i]) {
+							sub[fn.TypeParams[i]] = ta
+						}
+					}
+					// A SHORT written list on a method call names the METHOD's
+					// own parameters, which sit after the receiver's. Read from
+					// the front it named the receiver's instead — so
+					// `r.and[i32](..)` on a `Result[i32, string]` pinned T,
+					// left U exactly as unbound as before, and E040 went on
+					// naming a remedy it then refused (#9896). A full list
+					// still means the whole list, receiver parameters first.
+					offset := 0
+					if n.Method != nil && len(written) < len(fn.TypeParams) {
+						offset = len(fn.TypeParams) - len(written)
+					}
+					for i, ta := range written {
+						if offset+i < len(fn.TypeParams) {
+							sub[fn.TypeParams[offset+i]] = ta
+						}
+					}
+				}
+			}
+		}
+		// The callee's per-parameter `own` flags (empty when the callee is
+		// not a named function or declares none) — an `own` param consumes
+		// its argument, which disables argAssignable's str-view borrow.
+		var calleeOwnFlags []bool
+		// A callee that resolves to a parameter, local or capture is a function
+		// VALUE: its consuming positions come from its TYPE, never from the
+		// global function whose name it shadows (#9532). This is the only place
+		// with a scope to tell the two apart, so the verdict is recorded below
+		// even when it is "no own positions" — the consumers must not re-derive
+		// it by name, having no scope of their own.
+		calleeIsValue := false
+		calleeName := ""
+		if cid, ok := n.Callee.(*ast.Ident); ok {
+			calleeName = cid.Name
+			if _, isValue := c.identValueBinding(cid.Name, s); isValue {
+				calleeIsValue = true
+			} else {
+				calleeOwnFlags = c.info.OwnFuncs[cid.Name]
+			}
+		}
+		// A call through a function VALUE has no declaration to read them
+		// from; the function type carries them (`(own T) => T`).
+		if len(calleeOwnFlags) == 0 && ft != nil {
+			calleeOwnFlags = ft.ParamOwn
+		}
+		// Record them for the call-site ownership guard, which runs after
+		// the body is checked and has no callee type of its own. A
+		// dispatch-rewritten method call is excluded: its receiver is held in
+		// Args[0] and the guard has never covered that shape.
+		if (len(calleeOwnFlags) > 0 || calleeIsValue) && !recvIsArg0 && n.Method == nil {
+			if c.callOwnFlags == nil {
+				c.callOwnFlags = map[*ast.Call][]bool{}
+			}
+			c.callOwnFlags[n] = calleeOwnFlags
+		}
+		// An empty array literal at a parameter still spelled with a type
+		// variable binds nothing: it is checked once the other arguments and
+		// the destination have bound the variable, as a generic struct
+		// literal's empty field is (#10499).
+		type deferredEmptyArg struct {
+			i        int
+			expected ast.Type
+			own      bool
+		}
+		var deferredArgs []deferredEmptyArg
+		for i := range n.Args {
+			if i < len(ft.Params) {
+				c.setElemHintFor(n.Args[i], ft.Params[i])
+			}
+			// Arg 0 of a dispatch-rewritten call is the receiver, typed above.
+			at := recvType
+			if !(recvIsArg0 && i == 0) {
+				// A bare variant call in argument position (`f(Leaf(h, k, v))`)
+				// is disambiguated by the parameter's monomorphised enum the
+				// same way a var / return / field destination disambiguates it.
+				if i < len(ft.Params) {
+					pt := ft.Params[i]
+					if sub != nil {
+						pt = substituteType(pt, sub)
+					}
+					if c.monomorphCloneEnumName(pt) != "" {
+						c.expectedType = pt
+					} else if _, isEnum := pt.(ast.EnumType); isEnum && sub != nil {
+						// A generic callee's enum parameter, with what the
+						// receiver already pinned substituted in
+						// (`and[U](other: Result[U, E])` on a
+						// `Result[i32, string]` receiver is `Result[U, string]`).
+						// The variant constructor needs it: `Ok(9)` pins the
+						// payload's T and nothing else, and without a
+						// destination for E it answers with a bare `Result`
+						// that binds U nowhere — E040 on a program the
+						// language accepts (#9896).
+						c.expectedType = pt
+					} else if st, isStruct := pt.(ast.StructType); isStruct && len(st.Args) > 0 {
+						// A generic struct parameter is the destination a
+						// struct literal argument is read at, as a var's is.
+						c.expectedType = pt
+					} else if _, isArray := pt.(ast.ArrayType); isArray {
+						// So is an array parameter for an array literal's elements.
+						if _, isLit := n.Args[i].(*ast.ArrayLit); isLit {
+							c.expectedType = pt
+						}
+					} else if _, isFn := pt.(*ast.FuncType); isFn {
+						// A function parameter is what a generic function named
+						// as the argument takes its type arguments from. A
+						// lambda's body must not see it: a generic call in its
+						// return would read it as that call's result.
+						if _, isName := n.Args[i].(*ast.Ident); isName {
+							c.expectedType = pt
+						}
+					}
+				}
+				at = c.checkExpr(n.Args[i], s)
+				c.expectedType = nil
+			}
+			c.elemHint = nil
+			// A scalar argument carries no reference, so handing it to a
+			// consuming parameter transfers nothing and the ownership guard
+			// has nothing to check. Recorded here, where the argument's
+			// checked type is in hand.
+			if definitelyScalar(at) {
+				if c.scalarArgs == nil {
+					c.scalarArgs = map[ast.Expr]bool{}
+				}
+				c.scalarArgs[n.Args[i]] = true
+			}
+			if i < len(ft.Params) && at != nil {
+				expected := ft.Params[i]
+				// An associated-type projection in a PARAMETER resolves
+				// once an earlier argument has pinned its base:
+				// `pick[H: Holder](h: H, d: H::Item)` called as
+				// `pick(b, 0)` knows H = IntBox by the time argument 2 is
+				// checked, so its `H::Item` is i32 — which is also what the
+				// literal has to settle against. The result type has its own
+				// resolve (resolveProj after substituteType); parameters had
+				// none, so every projection in one was compared unresolved.
+				if sub != nil {
+					expected = c.resolveProjWithSub(expected, sub)
+				}
+				// If the expected param is a bare type parameter that an
+				// earlier argument already bound to a concrete numeric /
+				// float type (e.g. `assert_eq[T](a + b, 8000000000)` where
+				// `a + b` fixed T = i64), settle this arg's polymorphic
+				// numeric literal against that bound type. Without this the
+				// literal keeps its i32 default and inference reports
+				// "expected T, got i32" for a value that should be i64.
+				if pt, ok := expected.(ast.ParamType); ok && sub != nil {
+					if bound, isBound := sub[pt.Name]; isBound {
+						switch bound.(type) {
+						case ast.NumberType, ast.FloatType:
+							c.settleNumeric(n.Args[i], bound)
+							at = c.postSettleType(n.Args[i], at)
+						}
+					}
+				}
+				// Polymorphic-literal settling: `f(1)` where f
+				// expects i64 needs the literal to lock in i64
+				// before assignable / unifyType run, otherwise
+				// the i32-default would mismatch the expected
+				// param type.
+				//
+				// Skip it when the expected param is parametric
+				// (a generic `T` / `T[]`): settling an array literal
+				// against `T[]` would stamp the literal's ElemType to
+				// the bare ParamType, which then makes inference
+				// circular (`unifyType(T[], T[])` binds nothing) and
+				// leaves a `[Box{…}]` argument with a ParamType
+				// element type — codegen then picks the wrong store
+				// width and corrupts pointer-/two-word-element arrays.
+				// Leaving the argument at its natural element type
+				// (`Box[]`) lets unifyType bind `T = Box`.
+				if !(sub != nil && containsParamType(expected)) {
+					c.settleNumeric(n.Args[i], expected)
+					at = c.postSettleType(n.Args[i], at)
+				}
+				at = c.maybeWrapForUnion(expected, &n.Args[i], at, s)
+				// If the arg is itself a generic call with
+				// partially-inferred TypeArgs (e.g. `pick(c,
+				// Ok(1), Err(2))` returning Result without
+				// inner args), refine its TypeArgs from the
+				// enclosing call's param type — same shape as
+				// the Var / Return destination refinement.
+				// Only fires when this call isn't itself
+				// generic (i.e. `sub` is nil); generic-into-
+				// generic plumbing would need bidirectional
+				// substitution we don't have yet.
+				if sub == nil {
+					c.refineCallTypeArgsFromDest(n.Args[i], expected)
+				}
+				own := i < len(calleeOwnFlags) && calleeOwnFlags[i] ||
+					!calleeIsValue && storesArgument(calleeName, i)
+				if arr, isArr := at.(ast.ArrayType); isArr && arr.Elem == nil && sub != nil && containsParamType(expected) {
+					deferredArgs = append(deferredArgs, deferredEmptyArg{i, expected, own})
+					continue
+				}
+				if sub != nil {
+					if id, isName := n.Args[i].(*ast.Ident); isName && len(id.TypeArgs) > 0 {
+						// A generic named as the argument was typed from this
+						// parameter (instantiateFuncValue): unifying the two
+						// would only bind the callee's own parameters to
+						// themselves. The other arguments pin them, and
+						// monomorph substitutes them into the value's type
+						// arguments with the call's.
+					} else if !c.unifyArrayArg(&n.Args[i], expected, at, sub, own) {
+						// Report what the parameter came to MEAN here, not how
+						// it was declared: `Box[U, E]` says nothing to a reader
+						// who wrote `.pair[string]` on a `Box[i32, string]`,
+						// where the parameter is `Box[string, string]`. What
+						// inference has not pinned stays as its own name.
+						c.errArgMismatch(n, i, recvIsArg0, substituteType(expected, sub), at)
+					}
+				} else if !c.argOK(&n.Args[i], expected, at, own) {
+					c.errArgMismatch(n, i, recvIsArg0, expected, at)
+				}
+			}
+		}
+		if genericFn != nil {
+			// Return-position inference (#2668): if the arguments
+			// didn't pin every type parameter, fold in the call's
+			// destination type. `let s: Set[i32] = set_new();` and
+			// `return set_new();` leave T unbound from the (empty)
+			// args, but the `Set[i32]` / declared-return type unifies
+			// against the function's result `Set[T]` to bind T = i32.
+			// Only the still-unbound params are filled; argument-driven
+			// bindings already in `sub` win.
+			if callExpected != nil && sub != nil {
+				c.unifyType(ft.Result, callExpected, sub)
+			}
+			tpSet := make(map[string]bool, len(genericFn.TypeParams))
+			for _, tp := range genericFn.TypeParams {
+				tpSet[tp] = true
+			}
+			// Bound-driven inference (#2691): a type parameter that
+			// appears ONLY inside another parameter's generic-trait
+			// bound — `count[T, I: Iterator[T]](it: I)` — is never
+			// pinned by an argument or the result; it is determined by
+			// the *impl* the bound resolves to. For each bound param `I`
+			// already pinned to a concrete type, unify the bound's trait
+			// args (which mention `T`) against `I`'s impl's trait args
+			// (concrete) so `T` binds. A small fixpoint loop lets one
+			// bound param feed another. See docs/TRAITS.md §4a.
+			if sub != nil {
+				for changed := true; changed; {
+					changed = false
+					for _, tp := range genericFn.TypeParams {
+						bt, ok := sub[tp]
+						if !ok {
+							continue
+						}
+						if _, isParam := bt.(ast.ParamType); isParam {
+							continue
+						}
+						tn, okTn := methodTypeName(bt)
+						if !okTn {
+							continue
+						}
+						for bi, traitName := range genericFn.Bounds[tp] {
+							ba := genericFn.BoundArgs[tp]
+							if bi >= len(ba) || len(ba[bi]) == 0 {
+								continue
+							}
+							implArgs := c.implTraitArgsFor(traitName, tn, bt)
+							if len(implArgs) != len(ba[bi]) {
+								continue
+							}
+							for k := range ba[bi] {
+								if bindBoundParam(ba[bi][k], implArgs[k], tpSet, sub) {
+									changed = true
+								}
+							}
+						}
+					}
+				}
+			}
+			// A literal argument that bound a parameter before a typed one
+			// settles at what the parameter came to.
+			for i := range n.Args {
+				if i < len(ft.Params) && containsParamType(ft.Params[i]) && !(recvIsArg0 && i == 0) {
+					if want := substituteType(ft.Params[i], sub); !containsParamType(want) {
+						c.settleNumeric(n.Args[i], want)
+					}
+				}
+			}
+			for _, d := range deferredArgs {
+				want := substituteType(d.expected, sub)
+				if containsParamType(want) {
+					continue
+				}
+				c.settleNumeric(n.Args[d.i], want)
+				if !c.argOK(&n.Args[d.i], want, c.postSettleType(n.Args[d.i], ast.ArrayType{}), d.own) {
+					c.errArgMismatch(n, d.i, recvIsArg0, want, ast.ArrayType{})
+				}
+			}
+			// Substitute the inferred sub through the result so
+			// callers see a concrete type, AND record TypeArgs in
+			// declaration order for the monomorphiser.
+			args := make([]ast.Type, len(genericFn.TypeParams))
+			complete := true
+			for i, tp := range genericFn.TypeParams {
+				if v, ok := sub[tp]; ok {
+					// A type parameter pinned ONLY by a bare polymorphic
+					// float literal (`snd(3.5, 4.5)` — T appears in no
+					// destination/result position that would settle it)
+					// stays FloatType{Polymorphic}; settle it to its
+					// natural f64 default before recording the instantiation
+					// arg, or the monomorphiser keys it as i32 and the clone
+					// takes i32 params (re-check then fails "expected i32,
+					// got f64"). Integer-polymorphic args already default to
+					// i32 downstream; this is the float mirror.
+					if ft, isF := v.(ast.FloatType); isF && ft.Polymorphic {
+						v = ast.FloatType{Width: 64}
+					}
+					args[i] = v
+				} else {
+					display, spelling := callSiteName(genericFn)
+					c.errfCode(n.P, "E040", "could not infer type parameter %s for %s — supply it explicitly at the call site (e.g. %s[i32](...)) or annotate the binding", tp, display, spelling)
+					complete = false
+				}
+			}
+			if complete {
+				c.checkTypeArgBounds(genericFn, args, sub, tpSet, n.P)
+				n.TypeArgs = args
+				// Resolve any associated-type projection the result picked up
+				// once the type args made its base concrete (`I::Item` →
+				// `IntBox::Item` → the binding). See docs/ASSOCIATED-TYPES.md.
+				return c.resolveProj(substituteType(ft.Result, sub))
+			}
+			return nil
+		}
+		if intrinsic != IntrinsicNone {
+			if c.info.IntrinsicCalls == nil {
+				c.info.IntrinsicCalls = make(map[*ast.Call]IntrinsicCall)
+			}
+			c.info.IntrinsicCalls[n] = IntrinsicCall{Kind: intrinsic, Signature: ft}
+		}
+		return ft.Result
+	case *ast.Binary:
+		lt := c.checkExpr(n.Left, s)
+		rt := c.checkExpr(n.Right, s)
+		// An operand already failed to type (its own diagnostic is
+		// reported, and its type is nil). Don't pile on a cascading
+		// operator-type error — which would additionally format the nil
+		// type into the message as the garbage `%!s(<nil>)`. Returning
+		// nil propagates the already-errored sentinel so the surrounding
+		// context (return, assignment, …) doesn't re-cascade either.
+		if lt == nil || rt == nil {
+			return nil
+		}
+		// If exactly one side is a concrete float and the other
+		// is a polymorphic numeric literal, promote the literal
+		// to that float type before requireFloat fires. Lets
+		// `r * 2` and `r <= 0` work when r is f32/f64. The same
+		// trick the polymorphic-int side does via
+		// commonIntegerWidth, generalised to cross-class
+		// (int-literal → float-context) promotion.
+		if ft, ok := lt.(ast.FloatType); ok && !ft.Polymorphic {
+			if rn, ok := rt.(ast.NumberType); ok && rn.Polymorphic {
+				c.settleNumeric(n.Right, ft)
+				rt = c.postSettleType(n.Right, rt)
+			}
+		}
+		if ft, ok := rt.(ast.FloatType); ok && !ft.Polymorphic {
+			if ln, ok := lt.(ast.NumberType); ok && ln.Polymorphic {
+				c.settleNumeric(n.Left, ft)
+				lt = c.postSettleType(n.Left, lt)
+			}
+		}
+		switch n.Op {
+		case "+":
+			// Special case: string + string is concatenation. A `str` view
+			// operand concats too (#4813) — concat READS both operands and
+			// produces a fresh OWNED string, so borrowing views in is safe
+			// and the result is a plain `string`.
+			if isStringLike(lt) && isStringLike(rt) {
+				n.IsStringConcat = true
+				return ast.StringType{}
+			}
+			fallthrough
+		case "-", "*", "/":
+			// Composite-type arithmetic operator overloading (`+`→add,
+			// `-`→sub, `*`→mul, `/`→div). See compositeOpOverload / #2706.
+			if rtt, handled := c.compositeOpOverload(n, lt, rt, s); handled {
+				return rtt
+			}
+			if isFloat(lt) || isFloat(rt) {
+				c.requireFloat(n.P, lt, n.Op)
+				c.requireFloat(n.P, rt, n.Op)
+				n.IsFloat = true
+				common, ok := commonFloatWidth(lt, rt)
+				if !ok {
+					// Only the both-are-floats-but-different-width case needs
+					// this hint; if an operand wasn't a float, requireFloat
+					// above already reported it, so suppress the redundant
+					// follow-on rather than stacking two E009s on one typo.
+					if isFloat(lt) && isFloat(rt) {
+						c.errfCode(n.P, "E009", "operator %q requires both operands to share a float type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
+					}
+					return ast.FloatType{}
+				}
+				c.settleNumeric(n.Left, common)
+				c.settleNumeric(n.Right, common)
+				if !common.Polymorphic {
+					n.FloatWidth = common.NormalWidth()
+				}
+				return common
+			}
+			c.requireInteger(n.P, lt, n.Op)
+			c.requireInteger(n.P, rt, n.Op)
+			common, ok := commonIntegerWidth(lt, rt)
+			if !ok {
+				// Only the both-are-integers-but-different-width/signedness
+				// case needs this hint; if an operand wasn't an integer,
+				// requireInteger above already reported it, so suppress the
+				// redundant follow-on rather than stacking two E009s on one
+				// typo (`i32 - "x"`).
+				if isInteger(lt) && isInteger(rt) {
+					c.errfCode(n.P, "E009", "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
+				}
+				return ast.NumberType{}
+			}
+			c.settleNumeric(n.Left, common)
+			c.settleNumeric(n.Right, common)
+			// Auto-widen the narrower operand when the two
+			// resolved sides differ in width (same signedness
+			// already enforced by commonIntegerWidth). This
+			// keeps pointer-arithmetic-style code in the
+			// stdlib — `buf64 + 16` where `buf64` is i64 and
+			// `16` is the default i32 NumberLit — type-correct
+			// without an explicit `as i64`.
+			if ln, ok := lt.(ast.NumberType); ok {
+				c.widenIntOperand(&n.Left, ln, common)
+			}
+			if rn, ok := rt.(ast.NumberType); ok {
+				c.widenIntOperand(&n.Right, rn, common)
+			}
+			if !common.Polymorphic {
+				n.IntWidth = common.NormalWidth()
+				n.IsUnsigned = !common.IsSigned()
+			}
+			return common
+		case "+|", "-|", "*|", "<<|":
+			// Saturating integer arithmetic (#5542): clamp to the
+			// operand type's [MIN, MAX] instead of wrapping. Integer
+			// only — there is no float form (floats already saturate
+			// to ±Inf), no string concat, and no composite overload.
+			// `<<|` is the shift member: like `<<` it takes its count
+			// on the right at the same integer type, and like the
+			// other three it clamps instead of wrapping.
+			c.requireInteger(n.P, lt, n.Op)
+			c.requireInteger(n.P, rt, n.Op)
+			// `usize` is target-width, so its clamp bounds aren't
+			// expressible in the target-agnostic IR. Reject rather
+			// than silently clamping at the wrong width.
+			for _, t := range []ast.Type{lt, rt} {
+				if nt, ok := t.(ast.NumberType); ok && nt.IsPointerWidth() {
+					c.errfCode(n.P, "E009", "saturating operator %q is not supported on `usize` — its clamp bounds are target-width-dependent; cast to a fixed-width integer (`as u64`) first", n.Op)
+					return ast.NumberType{}
+				}
+			}
+			common, ok := commonIntegerWidth(lt, rt)
+			if !ok {
+				if isInteger(lt) && isInteger(rt) {
+					c.errfCode(n.P, "E009", "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
+				}
+				return ast.NumberType{}
+			}
+			c.settleNumeric(n.Left, common)
+			c.settleNumeric(n.Right, common)
+			if ln, ok := lt.(ast.NumberType); ok {
+				c.widenIntOperand(&n.Left, ln, common)
+			}
+			if rn, ok := rt.(ast.NumberType); ok {
+				c.widenIntOperand(&n.Right, rn, common)
+			}
+			if !common.Polymorphic {
+				n.IntWidth = common.NormalWidth()
+				n.IsUnsigned = !common.IsSigned()
+			}
+			return common
+		case "+?", "-?", "*?", "/?", "%?", "<<?", ">>?":
+			// Checked integer arithmetic (#5542): `Some(result)` when the
+			// exact result fits the operand type, `None` on overflow —
+			// for `/?` / `%?` on a zero divisor or the signed `MIN / -1`,
+			// and for `<<?` / `>>?` on an out-of-range shift count
+			// (`< 0` or `>= width`). Integer only — no float form, no
+			// composite overload — and it desugars to a block-expr over
+			// ordinary `Option`, `if`, and arithmetic, so every backend
+			// (interp + all codegen) lowers it for free via CheckedLowered.
+			c.requireInteger(n.P, lt, n.Op)
+			c.requireInteger(n.P, rt, n.Op)
+			// `usize` is target-width, so the overflow bound isn't
+			// expressible portably. Reject rather than checking at the
+			// wrong width — mirrors the saturating operators' stance.
+			for _, t := range []ast.Type{lt, rt} {
+				if nt, ok := t.(ast.NumberType); ok && nt.IsPointerWidth() {
+					c.errfCode(n.P, "E009", "checked operator %q is not supported on `usize` — its overflow bound is target-width-dependent; cast to a fixed-width integer (`as u64`) first", n.Op)
+					return ast.NumberType{}
+				}
+			}
+			common, ok := commonIntegerWidth(lt, rt)
+			if !ok {
+				if isInteger(lt) && isInteger(rt) {
+					c.errfCode(n.P, "E009", "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
+				}
+				return ast.EnumType{Name: "Option", Args: []ast.Type{ast.NumberType{}}}
+			}
+			// A pair of unsuffixed literals (`40 +? 2`) leaves `common`
+			// polymorphic; the desugar's overflow predicate needs a
+			// concrete width, so default to i32 exactly like every other
+			// integer op (see the `b.IntWidth == 0` default below).
+			if common.Polymorphic {
+				common = ast.NumberType{Width: 32, Signed: true}
+			}
+			c.settleNumeric(n.Left, common)
+			c.settleNumeric(n.Right, common)
+			if ln, ok := lt.(ast.NumberType); ok {
+				c.widenIntOperand(&n.Left, ln, common)
+			}
+			if rn, ok := rt.(ast.NumberType); ok {
+				c.widenIntOperand(&n.Right, rn, common)
+			}
+			n.IntWidth = common.NormalWidth()
+			n.IsUnsigned = !common.IsSigned()
+			n.CheckedLowered = c.buildCheckedLowered(n, common, s)
+			return ast.EnumType{Name: "Option", Args: []ast.Type{common}}
+		case "%", "&", "|", "^", "<<", ">>":
+			// Composite-type operator overloading (`%`→rem, `&`→bitand,
+			// `|`→bitor, `^`→bitxor, `<<`→shl, `>>`→shr). See #2706.
+			if rtt, handled := c.compositeOpOverload(n, lt, rt, s); handled {
+				return rtt
+			}
+			c.requireInteger(n.P, lt, n.Op)
+			c.requireInteger(n.P, rt, n.Op)
+			common, ok := commonIntegerWidth(lt, rt)
+			if !ok {
+				// Only the both-are-integers-but-different-width/signedness
+				// case needs this hint; if an operand wasn't an integer,
+				// requireInteger above already reported it, so suppress the
+				// redundant follow-on rather than stacking two E009s on one
+				// typo (`i32 - "x"`).
+				if isInteger(lt) && isInteger(rt) {
+					c.errfCode(n.P, "E009", "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
+				}
+				return ast.NumberType{}
+			}
+			c.settleNumeric(n.Left, common)
+			c.settleNumeric(n.Right, common)
+			if ln, ok := lt.(ast.NumberType); ok {
+				c.widenIntOperand(&n.Left, ln, common)
+			}
+			if rn, ok := rt.(ast.NumberType); ok {
+				c.widenIntOperand(&n.Right, rn, common)
+			}
+			if !common.Polymorphic {
+				n.IntWidth = common.NormalWidth()
+				n.IsUnsigned = !common.IsSigned()
+			}
+			return common
+		case "<", ">", "<=", ">=":
+			// Composite-type ordering. `<` / `<=` / `>` / `>=` on a
+			// struct or enum desugars to the type's `Ord` impl —
+			// `a.cmp(b) <op> 0` (cmp returns -1/0/1). Without this the
+			// operator hit requireInteger and errored. Arrays / slices
+			// / tuples have no Ord yet.
+			if lt != nil && rt != nil && ast.Equal(lt, rt) {
+				switch lt.(type) {
+				case ast.StructType, ast.EnumType:
+					tn, _ := methodTypeName(lt)
+					if mangled, _, ok := c.resolveMethod(tn, "cmp", []string{"Ord"}); ok && c.methodVisibleHere(mangled) {
+						cmpCall := &ast.Call{Callee: &ast.FieldAccess{Target: n.Left, Field: "cmp"}, Args: []ast.Expr{n.Right}}
+						if rt2 := c.checkExpr(cmpCall, s); rt2 != nil {
+							if nt, isNum := rt2.(ast.NumberType); !isNum || nt.NormalWidth() != 32 {
+								c.errfCode(n.P, "E041", "cannot order values of type %s with %q: its `cmp` method must return i32", lt, n.Op)
+							}
+						}
+						n.CmpCall = cmpCall
+						return ast.BoolType{}
+					}
+					c.errfCode(n.P, "E041", "cannot order values of type %s with %q: type does not implement `Ord` — %s, so ordering can use structural comparison", typeLabel(lt), n.Op, deriveHint(tn, "cmp.Ord", "cmp.Ord"))
+					return ast.BoolType{}
+				case ast.ArrayType, ast.SliceType, ast.TupleType:
+					c.errfCode(n.P, "E041", "cannot order values of type %s with %q: structural ordering for arrays / slices / tuples is not supported", lt, n.Op)
+					return ast.BoolType{}
+				}
+			}
+			// String ordering is byte-wise lexicographic with a length
+			// tiebreak — the same total order `core/cmp`'s `Ord for string`
+			// exposes to generics. Primitive rather than an `Ord` dispatch:
+			// `==` on strings is primitive too, and routing `<` through the
+			// stdlib impl would make the operator depend on `core/cmp`
+			// being imported.
+			if isStringLike(lt) && isStringLike(rt) {
+				n.IsStringOrd = true
+				return ast.BoolType{}
+			}
+			if isFloat(lt) || isFloat(rt) {
+				c.requireFloat(n.P, lt, n.Op)
+				c.requireFloat(n.P, rt, n.Op)
+				n.IsFloat = true
+				common, ok := commonFloatWidth(lt, rt)
+				if !ok && isFloat(lt) && isFloat(rt) {
+					c.errfCode(n.P, "E009", "operator %q requires both operands to share a float type; got %s and %s - use `as` for explicit conversion", n.Op, lt, rt)
+				} else if ok && !common.Polymorphic {
+					c.settleNumeric(n.Left, common)
+					c.settleNumeric(n.Right, common)
+					n.FloatWidth = common.NormalWidth()
+				}
+				return ast.BoolType{}
+			}
+			c.requireInteger(n.P, lt, n.Op)
+			c.requireInteger(n.P, rt, n.Op)
+			common, ok := commonIntegerWidth(lt, rt)
+			if !ok {
+				// A cast cannot help operands that are not integers at all --
+				// `true < false` has no `as` that makes it work -- and requireInteger
+				// above has already said the true thing. Suggesting `as` there
+				// sends the reader to write a conversion that does not exist.
+				if isInteger(lt) && isInteger(rt) {
+					c.errfCode(n.P, "E009", "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
+				}
+				return ast.BoolType{}
+			}
+			// The result is a boolean, so no outer context ever reaches the
+			// operands: two polymorphic sides take the default here.
+			if common.Polymorphic {
+				if def := c.polymorphicIntDefault(n.Left, n.Right); def.Width == 64 {
+					common = def
+				}
+			}
+			c.settleNumeric(n.Left, common)
+			c.settleNumeric(n.Right, common)
+			if ln, ok := lt.(ast.NumberType); ok {
+				c.widenIntOperand(&n.Left, ln, common)
+			}
+			if rn, ok := rt.(ast.NumberType); ok {
+				c.widenIntOperand(&n.Right, rn, common)
+			}
+			if !common.Polymorphic {
+				n.IntWidth = common.NormalWidth()
+				n.IsUnsigned = !common.IsSigned()
+			}
+			return ast.BoolType{}
+		case "==", "!=":
+			// Polymorphic-literal compare: settle the literal
+			// side to the concrete side's type before the
+			// equality check fires. `(x: i64) == 0` should not
+			// error on width mismatch — the `0` is a polymorphic
+			// literal that locks in i64 here. Same for floats.
+			if common, common_ok := commonIntegerWidth(lt, rt); common_ok {
+				// Two polymorphic sides take the default here — the boolean
+				// result means no outer context ever reaches them.
+				if common.Polymorphic {
+					common = c.polymorphicIntDefault(n.Left, n.Right)
+					if common.Width != 64 {
+						common = ast.NumberType{Polymorphic: true}
+					}
+				}
+				if !common.Polymorphic {
+					c.settleNumeric(n.Left, common)
+					c.settleNumeric(n.Right, common)
+					lt = c.postSettleType(n.Left, lt)
+					rt = c.postSettleType(n.Right, rt)
+				}
+			} else if common, common_ok := commonFloatWidth(lt, rt); common_ok && !common.Polymorphic {
+				c.settleNumeric(n.Left, common)
+				c.settleNumeric(n.Right, common)
+				lt = c.postSettleType(n.Left, lt)
+				rt = c.postSettleType(n.Right, rt)
+			}
+			// A `str` view compares freely with `string` (and other
+			// views) — comparison READS both operands' bytes (#4813);
+			// after erasure both sides are the same string comparison.
+			if lt != nil && rt != nil && !ast.Equal(lt, rt) && !(isStringLike(lt) && isStringLike(rt)) {
+				c.errfCode(n.P, "E041", "cannot compare %s and %s", lt, rt)
+			}
+			// Composite-type equality. `==` / `!=` on a struct or
+			// enum is STRUCTURAL equality via the type's `Eq` impl —
+			// it desugars to `a.eq(b)` (and `!a.eq(b)` for `!=`), not
+			// heap-pointer identity. Without this, the operator
+			// silently lowered to `i32.eq` on the two pointers, so
+			// structurally-equal values compared unequal. Scalars /
+			// strings / bools keep their fast native compare below;
+			// arrays / slices / tuples have no structural eq yet.
+			if lt != nil && rt != nil && ast.Equal(lt, rt) {
+				switch lt.(type) {
+				case ast.StructType, ast.EnumType:
+					tn, _ := methodTypeName(lt)
+					if mangled, _, ok := c.resolveMethod(tn, "eq", []string{"Eq"}); ok && c.methodVisibleHere(mangled) {
+						eqCall := &ast.Call{Callee: &ast.FieldAccess{Target: n.Left, Field: "eq"}, Args: []ast.Expr{n.Right}}
+						if rt2 := c.checkExpr(eqCall, s); rt2 != nil {
+							if _, isBool := rt2.(ast.BoolType); !isBool {
+								c.errfCode(n.P, "E041", "cannot compare values of type %s with %q: its `eq` method must return boolean", lt, n.Op)
+							}
+						}
+						n.EqCall = eqCall
+						n.EqNegate = n.Op == "!="
+						return ast.BoolType{}
+					}
+					c.errfCode(n.P, "E041", "cannot compare values of type %s with %q: type does not implement `Eq` — %s, so `==` can use structural equality", typeLabel(lt), n.Op, deriveHint(tn, "cmp.Eq", "cmp.Eq"))
+					return ast.BoolType{}
+				case ast.ArrayType, ast.SliceType, ast.TupleType:
+					c.errfCode(n.P, "E041", "cannot compare values of type %s with %q: structural equality for arrays / slices / tuples is not supported — compare elements individually", lt, n.Op)
+					return ast.BoolType{}
+				}
+			}
+			// String-vs-string equality compares contents; flag so
+			// codegen lowers to a runtime call rather than i32.eq. A
+			// `str` view operand (#4813) compares contents the same way —
+			// without the flag the backends would pointer-compare the
+			// boxes and a trimmed view would never equal its literal.
+			if isStringLike(lt) && isStringLike(rt) {
+				n.IsStringCmp = true
+			}
+			// Float-vs-float equality has to lower to f32.eq /
+			// f32.ne — using i32.eq on f32 operands fails core-wasm
+			// validation. Latent bug: never hit before because the
+			// preview-1 test path observed floats via `--invoke
+			// main` and never compared them in lang.
+			if isFloat(lt) && isFloat(rt) {
+				n.IsFloat = true
+				if common, ok := commonFloatWidth(lt, rt); ok && !common.Polymorphic {
+					c.settleNumeric(n.Left, common)
+					c.settleNumeric(n.Right, common)
+					n.FloatWidth = common.NormalWidth()
+				}
+			}
+			// Track i64 equality so codegen knows to emit `i64.eq`
+			// / `i64.ne` instead of `i32.eq`/`ne`. Settling
+			// already happened above (before the equality check
+			// fired) so just record the width here.
+			if common, ok := commonIntegerWidth(lt, rt); ok && !common.Polymorphic {
+				n.IntWidth = common.NormalWidth()
+			}
+			return ast.BoolType{}
+		case "&&", "||":
+			c.requireBool(n.P, lt, n.Op)
+			c.requireBool(n.P, rt, n.Op)
+			return ast.BoolType{}
+		}
+		c.errfCode(n.P, "E041", "unknown binary operator %q", n.Op)
+		return nil
+	case *ast.Unary:
+		c.markLiteralSign(n, false)
+		t := c.checkExpr(n.Operand, s)
+		n.CheckedType = t
+		switch n.Op {
+		case "-":
+			if ft, ok := t.(ast.FloatType); ok {
+				n.IsFloat = true
+				// Propagate polymorphism — `-3.14` should still
+				// be polymorphic so it can settle to f32 / f64.
+				return ft
+			}
+			// Unary minus over a trait-bounded TYPE PARAMETER: `-a` where
+			// `a: T` and `T: Neg` desugars to `a.neg()`, resolved through the
+			// bound (mirroring the binary operator-on-type-param path). See
+			// #2706. A type param without a `Neg` bound falls through to the
+			// numeric path's E009.
+			if pt, ok := t.(ast.ParamType); ok {
+				if _, _, found := c.resolveTraitMethodForParam(pt.Name, "neg"); found {
+					call := &ast.Call{Callee: &ast.FieldAccess{Target: n.Operand, Field: "neg"}, Args: nil}
+					rtt := c.checkExpr(call, s)
+					n.NegCall = call
+					n.CheckedType = rtt
+					return rtt
+				}
+			}
+			// Composite-type unary minus: `-v` on a struct / enum with a
+			// `neg` method desugars to `v.neg()` — operator overloading,
+			// mirroring the binary `+ - * /` (add/sub/mul/div) overloads.
+			// See #2706.
+			switch t.(type) {
+			case ast.StructType, ast.EnumType:
+				tn, _ := methodTypeName(t)
+				if mangled, _, ok := c.resolveMethod(tn, "neg", []string{arithOpTrait["neg"]}); ok && c.methodVisibleHere(mangled) {
+					call := &ast.Call{Callee: &ast.FieldAccess{Target: n.Operand, Field: "neg"}, Args: nil}
+					rtt := c.checkExpr(call, s)
+					n.NegCall = call
+					n.CheckedType = rtt
+					return rtt
+				}
+				c.errfCode(n.P, "E009", "unary `-` is not defined for %s — implement `function (self: %s) neg(): %s` to overload it", t, tn, tn)
+				return t
+			}
+			// Unary minus applies to any integer width, not just
+			// i32 — `-5i64`, `-x` on an i64, etc. requireNumber
+			// only accepted the bare i32 NumberType, so negating
+			// any wider/narrower integer was wrongly rejected.
+			c.requireInteger(n.P, t, n.Op)
+			// Propagate the operand's NumberType (including its
+			// Polymorphic flag) so unary minus on a polymorphic
+			// literal stays polymorphic; otherwise `let s: i64 =
+			// -7` couldn't settle the literal.
+			if nt, ok := t.(ast.NumberType); ok {
+				return nt
+			}
+			return ast.NumberType{}
+		case "!":
+			c.requireBool(n.P, t, n.Op)
+			return ast.BoolType{}
+		}
+		return nil
+	case *ast.Assign:
+		lt := c.checkExpr(n.Target, s)
+		rt := c.checkExpr(n.Value, s)
+		// A literal local assigned a typed integer takes that type.
+		if id, ok := n.Target.(*ast.Ident); ok && c.litIdents[id] != nil {
+			if rn, ok := rt.(ast.NumberType); ok && !rn.Polymorphic {
+				c.fixLitLocal(c.litIdents[id], rn, n.P)
+				lt = c.litIdents[id].width
+			}
+		}
+		if lt != nil {
+			c.settleNumeric(n.Value, lt)
+			rt = c.postSettleType(n.Value, rt)
+			rt = c.maybeWrapForUnion(lt, &n.Value, rt, s)
+		}
+		if lt != nil && rt != nil && !ast.Equal(lt, rt) && !c.assignable(lt, rt) {
+			c.errfCode(n.P, "E003", "cannot assign %s to %s%s", rt, lt, assignHint(lt, rt))
+		}
+		// Fields are immutable after construction: a struct value
+		// can't have a field reassigned in place. This is the
+		// enforcement half of the immutable-data-structures
+		// migration (docs/IMMUTABILITY-MIGRATION-PLAN.md §4) — with
+		// no post-construction mutation, reference cycles become
+		// unconstructible, so RC stays garbage-free with no cycle
+		// collector. The fix is a functional struct-update:
+		// `p = Foo { ...p, field: v }`. (Local variable reassignment
+		// stays legal; only `*ast.FieldAccess` targets are banned.)
+		if fa, ok := n.Target.(*ast.FieldAccess); ok {
+			c.errfCode(fa.Pos(), "E048",
+				"cannot assign to field %q: fields are immutable after construction; rebuild with `T { ...old, %s: value }`",
+				fa.Field, fa.Field)
+		}
+		// Array elements are immutable after construction too (E056) —
+		// the subscript counterpart of E048, completing the immutable-
+		// data-structures surface (docs/PURE-COLLECTION-API-PLAN.md §3a).
+		// `arr[i] = v` becomes the value-returning `arr = arr.with(i, v)`,
+		// which is the CoW unique-in-place branch on an unowned/`fip`
+		// array (allocation-free — see E053's `.with`-on-`own` rule), so
+		// subscripts are read-only just like struct fields.
+		if idx, ok := n.Target.(*ast.Index); ok {
+			c.errfCode(idx.Pos(), "E056",
+				"cannot assign to an array element: subscripts are read-only after construction; use `arr = arr.with(i, value)`")
+		}
+		// A closure may not write back a REFERENCE-shaped captured
+		// variable. This is the other half of immutability
+		// enforcement (E048 bans field mutation; this bans
+		// pointer-capture write-back), closing the remaining
+		// reference-cycle vector: a closure whose env holds a
+		// pointer could be made to point back at a value that points
+		// at the closure. Scalar captures (i32 / i64 / f32 / f64)
+		// can't hold a reference, so writing them can't form a cycle
+		// — the stateful "counter closure" stays legal. Pointer-
+		// shaped captures (string / array / struct / enum / slice /
+		// tuple / closure, per ast.IsPointerType) are rejected;
+		// thread the new value out of the closure (return it).
+		if id, ok := n.Target.(*ast.Ident); ok {
+			if ct, isCap := c.capturedType(id.Name, s); isCap && ast.IsPointerType(ct) {
+				c.errfCode(id.Pos(), "E049",
+					"cannot assign to captured %s %q: a reference-typed closure capture is read-only (it could close a reference cycle); return the new value from the closure instead",
+					ct, id.Name)
+			} else if decl := s.lookupVarDecl(id.Name); decl != nil && lt != nil && ast.IsPointerType(lt) && !c.freshLambdaCannotReach(n.Value, decl, s) {
+				// An enclosing-scope store into a `let` that some closure
+				// also captures lands in the shared boxcapture cell. Whether
+				// that closes a cycle depends on the capture set, which is
+				// not complete until the whole function is checked, so the
+				// site is recorded and judged in checkCaptureCycleStores.
+				c.cellStores = append(c.cellStores, cellStore{
+					pos:      id.Pos(),
+					name:     id.Name,
+					decl:     decl,
+					declType: lt,
+					valType:  rt,
+				})
+			}
+		}
+		return lt
+	case *ast.Lambda:
+		// Anonymous function expression — mirror of checkLocalFunc
+		// but inlined here so the Lambda gets its captures filled
+		// in place. Body scope is fresh-with-params; capture
+		// analysis runs against the captureChain so the lambda's
+		// reads of outer-scope names flow into its `Captures`
+		// list. `c.current` swaps to a synthetic FuncDecl so
+		// `return` statements inside the lambda body type-check
+		// against the LAMBDA's return type, not the enclosing
+		// function's. The Lambda's type is the FuncType built
+		// from its declared params + return type. Its declared
+		// types arrived resolved from the resolveTypesInBlock
+		// pre-pass, on the same footing as every other declaration.
+		root := newScope(nil)
+		for _, p := range n.Params {
+			if _, dup := root.names[p.Name]; dup {
+				c.errfCode(n.P, "E018", "duplicate parameter %q", p.Name)
+			}
+			root.names[p.Name] = p.Type
+		}
+		captured := map[string]ast.Type{}
+		var captureOrder []string
+		prev := c.current
+		prevSink := c.captureSink
+		prevOuter := c.captureOuter
+		prevLoop := c.loopDepth
+		// Stash the synthetic FuncDecl on the Lambda so
+		// closureconv can recover the Var statements registered
+		// against it during body-checking. Without this, the
+		// hoisted FuncDecl that closureconv synthesises has no
+		// entry in `info.Locals`, and `lowerFunc` panics with
+		// "var X has no slot" when it tries to allocate slots
+		// for body-local vars.
+		synth := &ast.FuncDecl{
+			P:                 n.P,
+			Params:            n.Params,
+			ReturnType:        n.ReturnType,
+			ReturnUnannotated: n.ReturnUnannotated,
+			Body:              n.Body,
+		}
+		if prev != nil {
+			// modload stamps SourceModule on prog.Funcs only, and errf
+			// reads it off c.current to fill Error.Path.
+			synth.SourceModule = prev.SourceModule
+		}
+		n.Synthetic = synth
+		c.current = synth
+		// An unannotated arrow lambda (`(x) => expr`) infers its return type
+		// from the body, reusing the same inferReturns channel as an
+		// unannotated function. Point it at a lambda-local slice (so the
+		// returns don't leak into an enclosing unannotated function) and
+		// unify after the body check. An explicit-return lambda keeps the
+		// outer inferReturns untouched — its synth.ReturnUnannotated is
+		// false, so the return path validates against ReturnType as before.
+		prevInfer := c.inferReturns
+		var lamRets []ast.Type
+		if n.ReturnUnannotated {
+			c.inferReturns = &lamRets
+		}
+		c.loopDepth = 0
+		c.captureSink = func(name string, t ast.Type) {
+			if _, ok := captured[name]; ok {
+				return
+			}
+			switch t.(type) {
+			case ast.VoidType:
+				c.errfCode(n.P, "E044", "captured variable %q has unsupported type %s", name, t)
+			default:
+				captured[name] = t
+				captureOrder = append(captureOrder, name)
+			}
+		}
+		c.captureOuter = s
+		c.captureChain = append(c.captureChain, captureEntry{sink: c.captureSink, scope: s, outer: prev})
+		c.checkBlock(n.Body, root)
+		c.captureChain = c.captureChain[:len(c.captureChain)-1]
+		c.captureSink = prevSink
+		c.captureOuter = prevOuter
+		c.loopDepth = prevLoop
+		c.inferReturns = prevInfer
+		if n.ReturnUnannotated {
+			// Unify the body's return(s) into the lambda's return type
+			// (synth.ReturnType is updated in place; mirror it onto n).
+			c.inferReturnType(synth, lamRets)
+			c.settleLitReturns(synth)
+			n.ReturnType = synth.ReturnType
+		}
+		c.current = prev
+		// Fresh list, not append — see the matching note in checkFunc;
+		// re-analysis would otherwise duplicate captures.
+		n.Captures = nil
+		for _, name := range captureOrder {
+			n.Captures = append(n.Captures, ast.Param{Name: name, Type: captured[name]})
+		}
+		c.restampLitCaptures(n.Captures, s)
+		return paramSig(n.Params, n.ReturnType)
+	case *ast.BlockExpr:
+		return c.checkBlockExpr(n, s)
+	case *ast.IfExpr:
+		ct := c.checkExpr(n.Cond, s)
+		if ct != nil && !ast.Equal(ct, ast.BoolType{}) {
+			c.errfCode(n.Cond.Pos(), "E008", "if-expression condition must be boolean, got %s", ct)
+		}
+		tt := c.checkExpr(n.Then, s)
+		et := c.checkExpr(n.Else, s)
+		result := unifyIfArms(tt, et)
+		if tt != nil && et != nil && result == nil {
+			c.errfCode(n.P, "E031", "if-expression branches differ: %s vs %s", tt, et)
+			result = tt
+		}
+		if result == nil {
+			result = tt
+		}
+		if result == nil {
+			result = et
+		}
+		if isFloat(result) {
+			n.IsFloat = true
+		}
+		// A concrete arm constrains the other arms even without an
+		// annotated destination. Carry that resolved type into their
+		// literals so runtime widths agree with the inferred join type.
+		c.settleNumeric(n, result)
+		return result
+	case *ast.MatchExpr:
+		result := c.checkMatchExpr(n, s)
+		c.settleNumeric(n, result)
+		return result
+	case *ast.TryOp:
+		// Postfix `?` on any enum Info.TryShapes accepts — the builtins
+		// and every `@try` declaration. `expr?` yields the success
+		// payload, or early-returns the failure variant.
+		//
+		// Which enum it is does not appear here. What matters is the
+		// SHAPE: a payloadless failure variant (Option's None) has
+		// nothing to carry out, so the lowering builds a fresh one; a
+		// failure variant with a payload (Result's Err(e)) is already the
+		// value to return, so it is forwarded. See docs/TRY.md.
+		inner := c.checkExpr(n.Inner, s)
+		if inner == nil {
+			return nil
+		}
+		if c.current == nil {
+			c.errfCode(n.P, "E042", "`?` operator can only be used inside a function")
+			return nil
+		}
+		srcEnum, srcOK := inner.(ast.EnumType)
+		if !srcOK {
+			c.errfCode(n.P, "E042", "%s", c.notATryTypeMsg(inner))
+			return nil
+		}
+		srcShape, srcTry := c.info.TryShapes[srcEnum.Name]
+		if !srcTry {
+			c.errfCode(n.P, "E042", "%s", c.notATryTypeMsg(inner))
+			return nil
+		}
+		ret := c.current.ReturnType
+		if c.inferReturns != nil && c.current.ReturnUnannotated {
+			// An unannotated body's return type is still being inferred, and
+			// the failure edge is one of its returns (#9515).
+			*c.inferReturns = append(*c.inferReturns, inner)
+			ret = inner
+		}
+		retEnum, retOK := ret.(ast.EnumType)
+		if !retOK || retEnum.Name != srcEnum.Name {
+			// The failure value propagates OUT of this function, so the
+			// return type has to be the same enum. Cross-enum propagation
+			// is what Rust needs FromResidual for; `@try` deliberately
+			// does not have it, and adding it later is additive.
+			c.errfCode(n.P, "E042",
+				"`?` on %s requires the surrounding function to return %s, got %s",
+				demangle(srcEnum.Name), demangle(srcEnum.Name), ret)
+			return nil
+		}
+		srcOkT, okResolved := c.tryPayloadType(srcEnum, srcShape.Ok)
+		if !okResolved {
+			c.errfCode(n.P, "E042", "malformed %s type %s", demangle(srcEnum.Name), inner)
+			return nil
+		}
+		n.SrcEnum = srcEnum
+		n.Type = srcOkT
+		if srcShape.Residual == nil {
+			// Payloadless failure variant: nothing to match between source
+			// and return, and nothing to convert.
+			n.Kind = ast.TryKindBuild
+			return n.Type
+		}
+		n.Kind = ast.TryKindForward
+		srcRes, srcResOK := c.tryPayloadType(srcEnum, srcShape.Residual)
+		retRes, retResOK := c.tryPayloadType(retEnum, srcShape.Residual)
+		if !srcResOK || !retResOK {
+			c.errfCode(n.P, "E042", "malformed %s type %s", demangle(srcEnum.Name), inner)
+			return nil
+		}
+		if !ast.Equal(srcRes, retRes) {
+			// Error-converting `?`: a residual propagated through a
+			// function whose own residual is `dyn Trait` boxes the
+			// concrete error, provided it implements Trait (the
+			// `Box<dyn Error>` + `?` idiom). Desugar to a block-expr that
+			// maps the error then applies an ordinary `?`. See #3234.
+			if lowered, ok := c.tryConvertErrToDyn(n, srcEnum, retEnum, s); ok {
+				n.Lowered = lowered
+				return n.Type
+			}
+			// Or convert via a `from` constructor: if the function's
+			// residual `E2` has an associated `from(E1): E2` (e.g.
+			// `impl From[E1] for E2`), `?` maps the failure payload
+			// through it — the `From`-based `?` idiom. See #2674.
+			if lowered, ok := c.tryConvertErrViaFrom(n, srcEnum, retEnum, s); ok {
+				n.Lowered = lowered
+				return n.Type
+			}
+			c.errfCode(n.P, "E042", "`?` on %s carrying %s but the surrounding function carries %s; the error types must match (implement %s for a `dyn`-error, or a `from(%s)` constructor on %s for the conversion)",
+				demangle(srcEnum.Name), srcRes, retRes, srcRes, srcRes, retRes)
+			return nil
+		}
+		return n.Type
+	case *ast.StructLit:
+		sd, ok := c.info.Structs[n.TypeName]
+		if !ok {
+			c.errfCode(n.P, "E043", "unknown struct type %q", n.TypeName)
+			return nil
+		}
+		c.checkOpaqueAccess(sd, n.P, "construct")
+		// Each declared field must be initialised exactly once and
+		// have the right type. Surplus / unknown fields are an error.
+		seen := map[string]bool{}
+		fieldT := map[string]ast.Type{}
+		for _, f := range sd.Fields {
+			fieldT[f.Name] = f.Type
+		}
+		// For generic structs we infer type-args from field
+		// values via the same `unifyType` machinery used for
+		// generic function calls. Empty for non-generic structs.
+		// Type args written at the construction site
+		// (`Box[i32] { … }`) must match the decl's parameter count —
+		// including a count of zero, for a non-generic struct.
+		if n.TypeArgsWritten && len(n.TypeArgs) != len(sd.TypeParams) {
+			c.errfCode(n.P, "E040", "%s expects %d type argument(s), got %d",
+				sd.Name, len(sd.TypeParams), len(n.TypeArgs))
+			n.TypeArgs = nil
+			n.TypeArgsWritten = false
+		}
+		var sub map[string]ast.Type
+		seeded := map[string]bool{}
+		if len(sd.TypeParams) > 0 {
+			sub = make(map[string]ast.Type, len(sd.TypeParams))
+			// Seed the type-arg substitution from an explicit destination
+			// type (`let b: Box[i32] = Box { v: … }`) so each field is
+			// checked against the concrete instantiation instead of a free
+			// parameter. Without this a field mismatch (`v: "x"` for a
+			// Box[i32]) unifies the parameter to the wrong type, slips past
+			// this check, and only surfaces at monomorph re-check as a
+			// confusing "compiler bug" — the verdict monomorph already
+			// reaches, just earlier and as a proper E043.
+			if et, ok := c.expectedType.(ast.StructType); ok && et.Name == sd.Name && len(et.Args) == len(sd.TypeParams) {
+				for i, tp := range sd.TypeParams {
+					sub[tp] = et.Args[i]
+					seeded[tp] = true
+				}
+			}
+			// Construction-site type args outrank the destination: the
+			// literal names its own instantiation, and a disagreement with
+			// the destination is caught by the assignment check.
+			if n.TypeArgsWritten {
+				for i, tp := range sd.TypeParams {
+					sub[tp] = n.TypeArgs[i]
+				}
+			}
+		}
+		// Struct-update literal `Foo { ...base, field: v }`: the base
+		// must have this struct's type, and supplies every field the
+		// overrides don't — so the completeness check below is relaxed.
+		// For a generic struct the base fixes the instantiation, so
+		// seed the type-arg substitution from the base's Args.
+		var baseArgs []ast.Type
+		if n.Base != nil {
+			bt := c.checkExpr(n.Base, s)
+			if bt != nil {
+				bst, ok := bt.(ast.StructType)
+				if !ok || bst.Name != sd.Name {
+					c.errfCode(n.Base.Pos(), "E003", "struct-update base must be %s, got %s", sd.Name, bt)
+				} else {
+					baseArgs = bst.Args
+					if sub != nil {
+						for i, tp := range sd.TypeParams {
+							if i < len(bst.Args) {
+								sub[tp] = bst.Args[i]
+								seeded[tp] = true
+							}
+						}
+					}
+				}
+			}
+		}
+		// A field that contradicts the instantiation the others bound leaves
+		// the literal without one, as an unbound parameter does (E040).
+		clashed := false
+		for i := range n.Fields {
+			f := n.Fields[i]
+			expected, present := fieldT[f.Name]
+			if !present {
+				declared := make([]string, 0, len(sd.Fields))
+				for _, df := range sd.Fields {
+					declared = append(declared, df.Name)
+				}
+				c.errUnknownField(n.P, f.NamePos, sd.Name, f.Name, declared)
+				continue
+			}
+			if seen[f.Name] {
+				c.errfCode(n.P, "E007", "duplicate field %q in struct literal", f.Name)
+			}
+			seen[f.Name] = true
+			// Propagate the field's element type into a direct array-literal
+			// value so its elements coerce to the field's element type — the
+			// same hint the Var / Return / call-argument positions set. Without
+			// it, `Wrap { items: [Leaf{...}] }` (field type `Node[]`, an enum
+			// array) leaves each inline variant literal unwrapped: it lowers as a
+			// bare struct with no variant tag, and reads back as the wrong
+			// variant. maybeWrapForUnion below only widens a DIRECT variant field
+			// value, not the elements of an array field.
+			// When the instantiation is known (sub seeded from the
+			// destination, e.g. `Box[i64]`), drive hints / literal-settling
+			// with the SUBSTITUTED field type (`i64`) rather than the bare
+			// parameter (`T`): a polymorphic literal `5` must settle to the
+			// concrete `i64`, not default to i32 and then mismatch the seeded
+			// arg.
+			fieldExpected := substituteType(expected, sub)
+			c.setElemHintFor(f.Value, fieldExpected)
+			// Scope the expected-type to THIS field's destination while
+			// checking its value, then restore it. Without this, the enclosing
+			// literal's destination leaks in: a nested generic struct literal —
+			// `Box { v: Box { v: 42 } }` for a `Box[Box[i32]]` target — would
+			// seed the inner literal's type args from the OUTER `Box[Box[i32]]`
+			// instead of its own field type `Box[i32]`, mis-typing it.
+			savedExpected := c.expectedType
+			c.expectedType = fieldExpected
+			// A struct literal in a field spelled with one of this literal's
+			// parameters that nothing has bound yet infers its own arguments:
+			// `Box { v: 4 }` in `Outer { b: … }` (#10895) would otherwise take
+			// Outer's unbound `T` as one. Any other value keeps the
+			// destination, which is all a generic call returning `A[]` has to
+			// infer `A` from.
+			if _, lit := f.Value.(*ast.StructLit); lit && sub != nil {
+				if _, unbound := paramTypeNotIn(expected, boundParams(sub)); unbound {
+					c.expectedType = nil
+				}
+			}
+			vt := c.checkExpr(f.Value, s)
+			c.expectedType = savedExpected
+			if vt == nil {
+				continue
+			}
+			// A field type still naming an unbound parameter is no width to
+			// settle at: unifyType below binds the parameter from the value.
+			// An empty array at one binds nothing; it settles once the
+			// other fields have.
+			if containsParamType(fieldExpected) {
+				if at, ok := vt.(ast.ArrayType); ok && at.Elem == nil {
+					continue
+				}
+			} else {
+				c.settleNumeric(f.Value, fieldExpected)
+				vt = c.postSettleType(f.Value, vt)
+			}
+			// Implicit union-wrap: a bare variant struct literal in a
+			// field position widens to its union type, matching the
+			// `let x: Union = Variant{...}`, return, and call-argument
+			// behaviour. Mutates the real AST slot (Fields are values),
+			// so index rather than the loop copy.
+			vt = c.maybeWrapForUnion(expected, &n.Fields[i].Value, vt, s)
+			// Concrete→`dyn Trait` boxing in a struct-field position. The
+			// coercion was already recorded by maybeWrapForUnion above, but the
+			// unifyType / ast.Equal checks below don't know the dyn boxing rule
+			// — and assignable()'s boxing-site list (var init / assignment /
+			// argument / array element / return) omitted the struct field, so a
+			// direct `S { d: Concrete{...} }` reported a spurious E043 even
+			// though every other position accepts it (and the self-host checker
+			// already does). assignable()'s dyn branch decides it: a concrete
+			// that impls every trait in the set is a valid field value, and a
+			// `str` is not.
+			dynFieldOK := false
+			if _, ok := fieldExpected.(ast.DynTraitType); ok {
+				dynFieldOK = c.assignable(fieldExpected, vt)
+			}
+			if sub != nil {
+				c.seededParams = seeded
+				unified := c.unifyType(expected, vt, sub)
+				c.seededParams = nil
+				if !unified && !dynFieldOK {
+					// Show the substituted field type (`i32`) rather than the
+					// bare parameter (`T`) when the instantiation is known —
+					// e.g. seeded from a `Box[i32]` destination.
+					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s%s", f.Name, substituteType(expected, sub), vt, assignHint(substituteType(expected, sub), vt))
+					clashed = true
+				}
+			} else if !ast.Equal(vt, expected) && !dynFieldOK {
+				// Allow the polymorphic / argless-enum vs
+				// concrete widening rules from `unifyIfArms`
+				// — e.g. `struct Node { next: Option[Node] }`
+				// initialised with `next: None` (which checks
+				// to `Option` with empty Args). Same shape as
+				// the array-element widening from #541.
+				//
+				// A field is a destination like a `let`, so what a `let`
+				// accepts is accepted here too: `m: map_new(4)` takes its
+				// key and value types from the field.
+				c.stampStructTypeArgs(f.Value, expected)
+				if unifyIfArms(expected, vt) == nil && !c.assignable(expected, vt) {
+					c.errfCode(f.Value.Pos(), "E043", "field %q: expected %s, got %s%s", f.Name, expected, vt, assignHint(expected, vt))
+				}
+			}
+		}
+		// A plain literal must name every field. A struct-update
+		// literal (Base != nil) copies the un-named fields from the
+		// base, so the completeness requirement is relaxed.
+		if n.Base == nil {
+			for _, f := range sd.Fields {
+				if !seen[f.Name] {
+					c.errfCode(n.P, "E005", "struct literal missing field %q", f.Name)
+				}
+			}
+		}
+		if len(sd.TypeParams) > 0 {
+			args := make([]ast.Type, len(sd.TypeParams))
+			complete := true
+			inScope := c.typeParamsInScope()
+			for i, tp := range sd.TypeParams {
+				if v, ok := sub[tp]; ok {
+					args[i] = v
+				} else if n.Base != nil && i < len(baseArgs) {
+					// The base fixes the instantiation for any
+					// type param the (subset) overrides didn't touch.
+					args[i] = baseArgs[i]
+				} else {
+					c.errE040StructUninferred(n.P, tp, sd.Name)
+					complete = false
+					continue
+				}
+				// Unification succeeds vacuously when nothing pins a
+				// parameter: the declared field type is matched against a
+				// literal that only re-states it, binding `T` to itself.
+				// A ParamType is a real instantiation only when an
+				// enclosing generic declaration binds that name —
+				// otherwise the arg names a parameter that does not exist
+				// at the construction site, and monomorph mangles it into
+				// a struct nobody declared (`Stack__T`) and gives up with
+				// "compiler bug". The literal is simply under-inferred.
+				if _, escaped := paramTypeNotIn(args[i], inScope); escaped {
+					c.errE040StructUninferred(n.P, tp, sd.Name)
+					complete = false
+				}
+			}
+			if complete && !clashed {
+				// Every field at a parameter settles at what inference bound:
+				// an empty array, and a literal that bound before a typed field.
+				for _, f := range n.Fields {
+					if ft, ok := fieldT[f.Name]; ok && containsParamType(ft) {
+						c.settleNumeric(f.Value, substituteType(ft, sub))
+					}
+				}
+				// Stamp on the StructLit so the monomorpher
+				// can rewrite TypeName without re-running
+				// inference.
+				n.TypeArgs = args
+				return ast.StructType{Name: sd.Name, Args: args}
+			}
+			return nil
+		}
+		return ast.StructType{Name: sd.Name}
+	case *ast.TupleLit:
+		elems := make([]ast.Type, len(n.Elems))
+		for i, e := range n.Elems {
+			t := c.checkExpr(e, s)
+			if t == nil {
+				return nil
+			}
+			elems[i] = t
+		}
+		return ast.TupleType{Elems: elems}
+	case *ast.MapLit:
+		c.needCoreMap(n.P)
+		// Pick K and V from the first entry's key / value
+		// types, then check the rest against those. Empty
+		// literals fall back to `Map[i32, i32]` so that a
+		// trailing `let m: Map[i32, i32] = Map {}` (or any
+		// destination-typed empty map) keeps working without
+		// the destination-driven inference machinery.
+		var keyType ast.Type = ast.NumberType{}
+		var valueType ast.Type = ast.NumberType{}
+		if len(n.Entries) > 0 {
+			kt := c.checkExpr(n.Entries[0].Key, s)
+			vt := c.checkExpr(n.Entries[0].Value, s)
+			kt = c.postSettleType(n.Entries[0].Key, kt)
+			vt = c.postSettleType(n.Entries[0].Value, vt)
+			if kt != nil {
+				keyType = kt
+			}
+			if vt != nil {
+				valueType = vt
+			}
+			// Usable keys: integer, string, or a struct/enum that
+			// derives Eq + Hash (the keyed runtime dispatches
+			// through its hash/eq — #2671). Everything else
+			// (float, tuple, array, slice, or an underived
+			// struct/enum) is rejected with a message pointing at
+			// the fix.
+			if msg := c.mapKeyTypeError(keyType); msg != "" {
+				c.errfCode(n.Entries[0].Key.Pos(), "E045", "%s", msg)
+			}
+		}
+		// Re-check entries with the inferred K / V as the
+		// expected type so polymorphic numeric literals settle
+		// to the right width and same-type-must-be-same is
+		// enforced.
+		for i, ent := range n.Entries {
+			kt, vt := keyType, valueType
+			if i > 0 {
+				kt = c.checkExpr(ent.Key, s)
+				vt = c.checkExpr(ent.Value, s)
+			}
+			c.settleNumeric(ent.Key, keyType)
+			c.settleNumeric(ent.Value, valueType)
+			kt = c.postSettleType(ent.Key, kt)
+			vt = c.postSettleType(ent.Value, vt)
+			if kt != nil && !ast.Equal(kt, keyType) {
+				c.errfCode(ent.Key.Pos(), "E045", "map key type %s, expected %s", kt, keyType)
+			}
+			if vt != nil && !ast.Equal(vt, valueType) {
+				c.errfCode(ent.Value.Pos(), "E045", "map value type %s, expected %s", vt, valueType)
+			}
+		}
+		n.KeyType = keyType
+		n.ValueType = valueType
+		return ast.StructType{Name: "Map", Args: []ast.Type{keyType, valueType}}
+	case *ast.FieldAccess:
+		// Qualified payload-less variant: `Color.Red`. Detect
+		// before recursing into Target — the Target Ident names an
+		// enum type, not a value, so the usual `checkExpr` path
+		// would (correctly) reject it as undefined. The qualified-
+		// variant-call shape (`Color.Red(payload)`) is handled in
+		// the *ast.Call branch.
+		if tid, ok := n.Target.(*ast.Ident); ok {
+			if _, shadowed := c.identValueBinding(tid.Name, s); !shadowed && c.info.Enums[tid.Name] != nil {
+				if vr, ok, _ := c.resolveVariant(n.Field, tid.Name); ok {
+					if len(vr.payloads) > 0 {
+						en := c.enumHintName(tid.Name)
+						c.errfCode(n.P, "E036", "variant %s.%s expects %d payload argument(s); call it as %s.%s(...)",
+							en, n.Field, len(vr.payloads), en, n.Field)
+						return nil
+					}
+					c.recordEnumConstruction(n, vr, ast.EnumType{Name: vr.enumName}, nil, c.expectedType)
+					return ast.EnumType{Name: vr.enumName}
+				}
+				c.errfCode(n.P, "E036", "enum %s has no variant %q", c.enumHintName(tid.Name), n.Field)
+				return nil
+			}
+		}
+		ft := c.fieldAccessType(n, s, c.checkExpr(n.Target, s))
+		c.noteLitField(n, ft, s)
+		return ft
+	}
+	return nil
+}
+
+// receiverType types a method call's receiver, taking the type from
+// typedRecv when the caller has already checked that very expression.
+func (c *checker) receiverType(e ast.Expr, s *scope) ast.Type {
+	if c.typedRecv != nil && c.typedRecv == e {
+		t := c.typedRecvType
+		c.typedRecv, c.typedRecvType = nil, nil
+		return t
+	}
+	return c.checkExpr(e, s)
+}
+
+// fieldAccessType types `n.Field` on a target whose type is already known.
+// The method-call path in the *ast.Call case types the receiver to resolve
+// dispatch and passes the result in: type-checking an expression twice
+// re-reports every diagnostic its subexpressions produced.
+func (c *checker) fieldAccessType(n *ast.FieldAccess, s *scope, tt ast.Type) ast.Type {
+	// Tuple field access: `pair.0`, `pair.1`. The Field name
+	// is the digit string from the parser; reject anything
+	// that isn't a non-negative integer in range, but defer
+	// to the struct path otherwise so `obj.fieldName` keeps
+	// working.
+	if tup, ok := tt.(ast.TupleType); ok {
+		idx, err := strconv.Atoi(n.Field)
+		if err != nil || idx < 0 {
+			c.errfCode(n.P, "E046", "tuple field access requires a numeric index, got %q", n.Field)
+			return nil
+		}
+		if idx >= len(tup.Elems) {
+			c.errfCode(n.P, "E046", "tuple has %d elements; index %d is out of range", len(tup.Elems), idx)
+			return nil
+		}
+		return tup.Elems[idx]
+	}
+	st, ok := tt.(ast.StructType)
+	if !ok {
+		if tt != nil {
+			// A method call on a SCALAR whose defining stdlib module was not
+			// imported lands here, and the bare E043 actively misleads: it
+			// talks about struct field access on code the user may not have
+			// written at all. An f-string desugars `f"{n}"` to
+			// `n.to_string()`, so `write(f"x{n}y")` without `import "std/i32"`
+			// reports "field access on non-struct value of type i32" pointing
+			// at the f-string. Name the import instead (#5494).
+			if mod := scalarMethodModule(tt, n.Field); mod != "" {
+				// The f-string note only makes sense for to_string — it is the
+				// only method the desugar produces, and the only way a user can
+				// reach this without writing a method call themselves.
+				hint := ""
+				if n.Field == "to_string" {
+					hint = " (an f-string like `f\"{x}\"` desugars to `x.to_string()`)"
+				}
+				c.errfCode(n.P, "E043",
+					"no method %q on %s — add `import %q`%s", n.Field, tt, mod, hint)
+				return nil
+			}
+			// A receiver with a method namespace of its own — an
+			// array, a map, a slice — reaching here means the
+			// method does not exist. Say so, and say what does.
+			if tn, ok := collectionNamespace(tt); ok && len(c.methodsOn(tn)) > 0 {
+				c.errfCode(n.P, "E043", "%s", c.unknownMethodMessage(tn, n.Field, tt))
+				return nil
+			}
+			c.errfCode(n.P, "E043", "field access on non-struct value of type %s", tt)
+		}
+		return nil
+	}
+	sd := c.info.Structs[st.Name]
+	if sd == nil {
+		c.errfCode(n.P, "E043", "unknown struct type %q", st.Name)
+		return nil
+	}
+	c.checkOpaqueAccess(sd, n.P, "access a field of")
+	for _, f := range sd.Fields {
+		if f.Name == n.Field {
+			if len(sd.TypeParams) > 0 && len(st.Args) == len(sd.TypeParams) {
+				// Generic struct field: substitute the
+				// type-arg values into the field's
+				// declared type so callers see the
+				// concrete type (`Pair[i32, string].first`
+				// → i32, not `A`).
+				sub := make(map[string]ast.Type, len(sd.TypeParams))
+				for i, tp := range sd.TypeParams {
+					sub[tp] = st.Args[i]
+				}
+				return substituteType(f.Type, sub)
+			}
+			return f.Type
+		}
+	}
+	declared := make([]string, 0, len(sd.Fields))
+	for _, df := range sd.Fields {
+		declared = append(declared, df.Name)
+	}
+	// A misspelt METHOD call also lands here (`p.puzh(2)` — method
+	// resolution ran first and missed), so the struct's registered
+	// method names join the near-miss candidates: the fix then
+	// suggests `push` where the field set alone offers nothing.
+	// Sorted so map-iteration order can't flip a distance tie
+	// between runs (diagnostics must be deterministic).
+	prefix := st.Name + "."
+	var methodNames []string
+	for key := range c.info.Methods {
+		if strings.HasPrefix(key, prefix) {
+			methodNames = append(methodNames, key[len(prefix):])
+		}
+	}
+	sort.Strings(methodNames)
+	declared = append(declared, methodNames...)
+	c.errUnknownField(n.P, n.FieldPos, st.Name, n.Field, declared)
+	return nil
+}
+
+// requireInteger matches any integer type — i32, i64, eventually
+// the unsigned widths. Used by arithmetic checks that allow either
+// width as long as both sides agree.
+func (c *checker) requireInteger(p ast.Position, t ast.Type, op string) {
+	if t == nil {
+		return
+	}
+	if _, ok := t.(ast.NumberType); !ok {
+		c.errfCode(p, "E009", "operator %q requires an integer type, got %s", op, t)
+	}
+}
+
+// settleNumeric stamps the resolved integer type onto every
+// polymorphic-literal node it can reach in `e`. The hint must be
+// an ast.NumberType describing the resolved width + signedness;
+// non-integer hints are no-ops. This is invoked at every site
+// where a known-concrete type meets an expression that may
+// contain Width=0 NumberLits — variable initialisers, return
+// statements, function arguments, struct fields, cast inners,
+// assignments, and the binary-op merging path.
+//
+// The walker only descends through expressions that legitimately
+// "carry through" the type: literals, unary +/-, and arithmetic
+// / bitwise binary ops where the IntWidth isn't already set.
+// Function calls, casts, struct-lit fields, etc. set their own
+// types and shouldn't have hints leak into them.
+// isRuntimeGenericStruct names the auto-injected struct types
+// whose generic args are resolved at the type-system layer but
+// share a single concrete struct + helper set at the wasm
+// runtime. The monomorpher skips these so the helper-method
+// dispatch keeps working unchanged.
+func isRuntimeGenericStruct(name string) bool {
+	// Map / MapIter share one struct + helper set across all (K, V) via a
+	// runtime keyKind tag; Cell is IR-intercepted (a single opaque box for
+	// every T). None are monomorphised — cloning would split their
+	// dispatch across mangled names the lowering doesn't know about.
+	return name == "Map" || name == "MapIter" || name == "Cell"
+}
+
+// stampStructTypeArgs flows TypeArgs from a destination struct
+// type into a source Call expression that returned the same
+// struct without args. Only the auto-injected `map_new` builtin
+// uses this today — its return type is `Map` (no Args), and the
+// destination context (Var Type / Assign target) names the
+// concrete K + V. The IR lowering reads `Call.TypeArgs` to bake
+// in runtime tags (keyKind) at construction.
+func (c *checker) stampStructTypeArgs(e ast.Expr, dst ast.Type) {
+	dStruct, ok := dst.(ast.StructType)
+	if !ok || len(dStruct.Args) == 0 {
+		return
+	}
+	call, ok := e.(*ast.Call)
+	if !ok || len(call.TypeArgs) > 0 {
+		return
+	}
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok {
+		return
+	}
+	if sig, ok := c.info.FuncSigs[id.Name]; ok {
+		if rs, ok := sig.Result.(ast.StructType); ok && rs.Name == dStruct.Name && len(rs.Args) == 0 {
+			call.TypeArgs = dStruct.Args
+		}
+	}
+}
+
+// takeWrittenTypeArgs snapshots a call's parser-filled type arguments before a
+// method dispatch overwrites them with the receiver's. Idempotent: the first
+// snapshot wins, so a call that hits more than one of the overwrite sites keeps
+// what the source actually wrote.
+func takeWrittenTypeArgs(n *ast.Call, prior []ast.Type) []ast.Type {
+	if prior != nil || !n.TypeArgsWritten || len(n.TypeArgs) == 0 {
+		return prior
+	}
+	return append([]ast.Type(nil), n.TypeArgs...)
+}
+
+// destEnumArgs returns the type arguments a destination supplies for enum
+// `name`, or nil when the destination is some other type, names no arguments,
+// or names the wrong number of them.
+func destEnumArgs(dst ast.Type, name string, want int) []ast.Type {
+	et, ok := dst.(ast.EnumType)
+	if !ok || et.Name != name || len(et.Args) != want {
+		return nil
+	}
+	return et.Args
+}
+
+// refineCallTypeArgsFromDest pushes the destination type's
+// concrete args back into a generic call's TypeArgs when the
+// args-driven inference produced an under-specified entry.
+//
+// Background: variant constructors only fix the type
+// parameter(s) they have payloads for. `Ok(1)` sets
+// `Result.T → i32` from the payload, but leaves `E` unresolved
+// — the variant-call path returns `EnumType{Name:"Result"}`
+// (no Args). Pass that through `pick[T](c, a, b): T` and the
+// call's TypeArgs gets stamped as `[Result{no args}]`.
+// Monomorph mangles to `pick__Result`, the cloned param /
+// return types lack the inner Args, and the re-check rejects
+// with "Result has 2 type parameter(s), 0 supplied".
+//
+// The destination annotation (`let r: Result[i32, i32]`,
+// `return ...` against a typed fn return) carries the full
+// type. We walk the generic fn's declared return type against
+// the destination pairwise; wherever the declared return
+// position is a `ParamType{Name: T}`, the destination's
+// matching position becomes a refined `sub[T]` entry.
+// Re-stamping `TypeArgs` from the refined sub completes the
+// inference so monomorph sees `[Result[i32, i32]]` and clones
+// with the right shape.
+func (c *checker) refineCallTypeArgsFromDest(e ast.Expr, dst ast.Type) {
+	if e == nil || dst == nil {
+		return
+	}
+	switch x := e.(type) {
+	case *ast.Call:
+		c.refineSingleCallTypeArgs(x, dst)
+	case *ast.IfExpr:
+		// Both arms produce dst — recurse into each.
+		c.refineCallTypeArgsFromDest(x.Then, dst)
+		c.refineCallTypeArgsFromDest(x.Else, dst)
+	case *ast.MatchExpr:
+		for _, arm := range x.Arms {
+			if arm != nil {
+				c.refineCallTypeArgsFromDest(arm.Body, dst)
+			}
+		}
+	case *ast.TryOp:
+		// `expr?` — the inner expression is Option[dst] or
+		// Result[dst, E]; not the same shape as dst itself.
+		// Skip; the inner call's TypeArgs (if any) would need
+		// the wider Option / Result type, which only the
+		// enclosing function's return slot has.
+	}
+}
+
+// refineSingleCallTypeArgs is the leaf case of
+// refineCallTypeArgsFromDest — picks up a Call directly.
+// isPrimitiveTypeName reports whether `name` is a built-in scalar type that
+// can carry associated functions via `impl Trait for <prim>` (hoisted to
+// `__assoc_<prim>_<f>`).
+func isPrimitiveTypeName(name string) bool {
+	switch name {
+	case "i32", "i64", "u8", "u32", "u64", "f32", "f64", "string", "boolean":
+		return true
+	}
+	return false
+}
+
+func (c *checker) refineSingleCallTypeArgs(call *ast.Call, dst ast.Type) {
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok || c.shadowedGenericCalls[call] {
+		return
+	}
+	fn, isGen := c.info.GenericFuncs[id.Name]
+	if !isGen || len(fn.TypeParams) == 0 {
+		return
+	}
+	// A generic call with NO type args (a receiver-less associated call on a
+	// generic struct — `Box.default()` rewritten to `__assoc_Box_default()` —
+	// has no arguments to pin its type params): infer them entirely from the
+	// destination type so the monomorphiser can instantiate a concrete clone.
+	// Without this the generic `__assoc_…` body keeps its `T` and the
+	// post-monomorph re-check fails with "undefined identifier T".
+	if len(call.TypeArgs) == 0 {
+		sub := make(map[string]ast.Type, len(fn.TypeParams))
+		refineParamSubFromDest(fn.ReturnType, dst, sub)
+		args := make([]ast.Type, len(fn.TypeParams))
+		for i, tp := range fn.TypeParams {
+			v, ok := sub[tp]
+			if !ok || v == nil {
+				return // couldn't infer every param — leave the call untouched
+			}
+			args[i] = v
+		}
+		call.TypeArgs = args
+		return
+	}
+	if len(call.TypeArgs) != len(fn.TypeParams) {
+		return
+	}
+	sub := make(map[string]ast.Type, len(fn.TypeParams))
+	for i, tp := range fn.TypeParams {
+		sub[tp] = call.TypeArgs[i]
+	}
+	refineParamSubFromDest(fn.ReturnType, dst, sub)
+	for i, tp := range fn.TypeParams {
+		if v, ok := sub[tp]; ok {
+			call.TypeArgs[i] = v
+		}
+	}
+}
+
+// refineParamSubFromDest walks `src` (a generic-returning
+// function's declared return type — may contain ParamType
+// placeholders) against `dst` (the destination's fully
+// concrete type) and refines entries in `sub` that are
+// under-specified relative to the destination's same-shape
+// position.
+//
+// Conservative: only replaces a sub entry when the new value
+// strictly improves on the existing one (the existing entry
+// is nil, or is an EnumType/StructType with strictly fewer
+// Args than the destination provides). Never widens or
+// overrides a fully-resolved entry.
+func refineParamSubFromDest(src, dst ast.Type, sub map[string]ast.Type) {
+	if src == nil || dst == nil {
+		return
+	}
+	switch s := src.(type) {
+	case ast.ParamType:
+		existing, has := sub[s.Name]
+		if !has {
+			sub[s.Name] = dst
+			return
+		}
+		if betterRefinement(existing, dst) {
+			sub[s.Name] = dst
+		}
+	case ast.EnumType:
+		dEnum, dok := dst.(ast.EnumType)
+		if !dok || dEnum.Name != s.Name {
+			return
+		}
+		// Walk pairwise. Either side may have fewer args than
+		// the other (the src side can have ParamType
+		// placeholders, the dst side has concrete types).
+		n := len(s.Args)
+		if len(dEnum.Args) < n {
+			n = len(dEnum.Args)
+		}
+		for i := 0; i < n; i++ {
+			refineParamSubFromDest(s.Args[i], dEnum.Args[i], sub)
+		}
+	case ast.StructType:
+		dStruct, dok := dst.(ast.StructType)
+		if !dok || dStruct.Name != s.Name {
+			return
+		}
+		n := len(s.Args)
+		if len(dStruct.Args) < n {
+			n = len(dStruct.Args)
+		}
+		for i := 0; i < n; i++ {
+			refineParamSubFromDest(s.Args[i], dStruct.Args[i], sub)
+		}
+	case ast.ArrayType:
+		if dArr, ok := dst.(ast.ArrayType); ok {
+			refineParamSubFromDest(s.Elem, dArr.Elem, sub)
+		}
+	case ast.SliceType:
+		if dSlice, ok := dst.(ast.SliceType); ok {
+			refineParamSubFromDest(s.Elem, dSlice.Elem, sub)
+		}
+	case ast.TupleType:
+		dTup, dok := dst.(ast.TupleType)
+		if !dok || len(dTup.Elems) != len(s.Elems) {
+			return
+		}
+		for i := range s.Elems {
+			refineParamSubFromDest(s.Elems[i], dTup.Elems[i], sub)
+		}
+	case *ast.FuncType:
+		dFn, dok := dst.(*ast.FuncType)
+		if !dok || len(dFn.Params) != len(s.Params) {
+			return
+		}
+		for i := range s.Params {
+			refineParamSubFromDest(s.Params[i], dFn.Params[i], sub)
+		}
+		refineParamSubFromDest(s.Result, dFn.Result, sub)
+	}
+}
+
+// betterRefinement reports whether `candidate` is a strictly
+// more-specific version of `existing` — used to decide whether
+// the destination-driven refinement should replace what
+// args-driven inference produced.
+//
+// Today only handles the variant-constructor case: an
+// EnumType / StructType with fewer Args is improvable when a
+// candidate of the same name has more (typically the full
+// arity from the destination annotation).
+func betterRefinement(existing, candidate ast.Type) bool {
+	if existing == nil {
+		return candidate != nil
+	}
+	switch e := existing.(type) {
+	case ast.EnumType:
+		c, ok := candidate.(ast.EnumType)
+		if !ok || c.Name != e.Name {
+			return false
+		}
+		merged, ok := mergeEnumInference(e, c)
+		return ok && !ast.Equal(e, merged) && ast.Equal(c, merged)
+	case ast.StructType:
+		c, ok := candidate.(ast.StructType)
+		if !ok || c.Name != e.Name {
+			return false
+		}
+		return len(e.Args) < len(c.Args)
+	}
+	return false
+}
+
+func (c *checker) settleNumeric(e ast.Expr, hint ast.Type) {
+	// A value block contributes its tail, not its leading statements.
+	// Forward the complete hint here so composite joins receive the
+	// same contextual settlement as scalar numeric results.
+	if block, ok := e.(*ast.BlockExpr); ok {
+		if block.Tail != nil {
+			c.settleNumeric(block.Tail, hint)
+		}
+		return
+	}
+	// TryOp: `Some(EXPR)?` / `Ok(EXPR)?` — the destination's
+	// hint applies to the inner expression's payload, not
+	// to the TryOp itself. Wrap the hint in the appropriate
+	// enum (Option / Result) so the inner variant-call gets
+	// its payload settled. Without this, `let v: f32 =
+	// Some(3.14)?;` left 3.14 unsettled (defaulting to f64)
+	// and wasm rejected the f32 destination load.
+	if to, ok := e.(*ast.TryOp); ok {
+		// Re-wrap the payload hint in the SOURCE enum so the inner
+		// variant-call settles its polymorphic payload — `let v: f32 =
+		// Some(3.14)?` has to reach the 3.14. The enum comes off the node
+		// rather than being named here, so an `@try` enum settles the same
+		// way the two builtins do.
+		if src, ok := to.SrcEnum.(ast.EnumType); ok {
+			if wrapped, ok := c.tryEnumWithOk(src, hint); ok {
+				c.settleNumeric(to.Inner, wrapped)
+			}
+		}
+		// `to.Type` is the source's payload, which the IR lays the box out
+		// by: only a literal payload the hint just settled takes its width.
+		if to.Type == nil || isPolymorphicNumeric(to.Type) {
+			to.Type = hint
+		}
+	}
+	if fa, ok := e.(*ast.FieldAccess); ok {
+		if hn, ok := hint.(ast.NumberType); ok && !hn.Polymorphic {
+			if ll := c.litFields[fa]; ll != nil {
+				c.fixLitLocal(ll, hn, fa.P)
+			}
+		}
+		c.settleGenericCallByHint(fa, hint)
+		return
+	}
+	if id, ok := e.(*ast.Ident); ok {
+		c.settleLitCompositeLocal(id, hint)
+	}
+	switch hn := hint.(type) {
+	case ast.NumberType:
+		if hn.Polymorphic {
+			return
+		}
+		c.settleInt(e, hn)
+	case ast.FloatType:
+		if hn.Polymorphic {
+			return
+		}
+		c.settleFloat(e, hn)
+	case ast.ArrayType:
+		// Array-literal element-type propagation: `let x: [u8] =
+		// [1, 2, 3]` should settle each element to u8 so the IR
+		// emits 1-byte stores. Stamp the AST node's ElemType too
+		// so the IR's ArrayLit lowering picks the right stride.
+		// IfExpr / MatchExpr forms: recurse into each arm so
+		// `let arr: i64[] = if cond { [...] } else { [...] }`
+		// reaches each branch's array literal.
+		if al, ok := e.(*ast.ArrayLit); ok {
+			if c.elemSettleable(al.ElemType, hn.Elem) {
+				al.ElemType = hn.Elem
+				for _, el := range al.Elems {
+					c.settleNumeric(el, hn.Elem)
+				}
+			}
+		} else if call, ok := e.(*ast.Call); ok {
+			c.settleGenericCallByHint(call, hint)
+		} else if ie, ok := e.(*ast.IfExpr); ok {
+			if ie.Then != nil {
+				c.settleNumeric(ie.Then, hint)
+			}
+			if ie.Else != nil {
+				c.settleNumeric(ie.Else, hint)
+			}
+		} else if me, ok := e.(*ast.MatchExpr); ok {
+			for _, arm := range me.Arms {
+				if arm == nil {
+					continue
+				}
+				c.settleNumeric(arm.Body, hint)
+			}
+		}
+	case ast.SliceType:
+		if al, ok := e.(*ast.ArrayLit); ok {
+			if c.elemSettleable(al.ElemType, hn.Elem) {
+				al.ElemType = hn.Elem
+				for _, el := range al.Elems {
+					c.settleNumeric(el, hn.Elem)
+				}
+			}
+		} else if call, ok := e.(*ast.Call); ok {
+			c.settleGenericCallByHint(call, hint)
+		} else if ie, ok := e.(*ast.IfExpr); ok {
+			if ie.Then != nil {
+				c.settleNumeric(ie.Then, hint)
+			}
+			if ie.Else != nil {
+				c.settleNumeric(ie.Else, hint)
+			}
+		} else if me, ok := e.(*ast.MatchExpr); ok {
+			for _, arm := range me.Arms {
+				if arm == nil {
+					continue
+				}
+				c.settleNumeric(arm.Body, hint)
+			}
+		}
+	case ast.TupleType:
+		// Tuple-literal element-type propagation. Without
+		// this, `let p: (string, i64) = ("hi", 100)` rejects
+		// the i32-defaulted literal against the i64 slot —
+		// each element is checked in isolation by checkExpr.
+		// Walk in lockstep so element `i` settles to
+		// `hn.Elems[i]`.
+		switch tl := e.(type) {
+		case *ast.TupleLit:
+			if len(tl.Elems) == len(hn.Elems) {
+				for i, el := range tl.Elems {
+					c.settleNumeric(el, hn.Elems[i])
+				}
+			}
+		case *ast.Call:
+			// `let p: (i64, string) = pair(1234567890123, "hello")`:
+			// the destination reaches the call's type parameters
+			// through the return type.
+			c.settleGenericCallByHint(tl, hint)
+		case *ast.IfExpr:
+			// `return if cond { tup1 } else { tup2 }` — feed
+			// the destination tuple type into both arms so
+			// each arm's TupleLit settles its elements.
+			c.settleNumeric(tl.Then, hint)
+			if tl.Else != nil {
+				c.settleNumeric(tl.Else, hint)
+			}
+		case *ast.MatchExpr:
+			// `return match (e) { A => tup }` — each arm
+			// body is an expression that must produce the
+			// destination tuple type.
+			for _, arm := range tl.Arms {
+				if arm == nil {
+					continue
+				}
+				c.settleNumeric(arm.Body, hint)
+			}
+		}
+	case ast.StructType:
+		// Map literal with a destination annotation. The
+		// `Map[K, V]` struct's TypeArgs are (key-type,
+		// value-type); a `MapLit` with bare-numeric values
+		// (`Map { "a": 1234567890123 }`) needs the V to flow
+		// into each entry so polymorphic literals settle to
+		// the destination's slot width. Without this,
+		// `let m: Map[string, i64] = Map { "a": 1234567890123 };`
+		// keeps its inferred `Map[string, i32]` shape and
+		// the assignable check rejects.
+		if ml, ok := e.(*ast.MapLit); ok && hn.Name == "Map" && len(hn.Args) == 2 {
+			for _, ent := range ml.Entries {
+				c.settleNumeric(ent.Key, hn.Args[0])
+				c.settleNumeric(ent.Value, hn.Args[1])
+			}
+			// Empty `Map {}` with a destination annotation: stamp
+			// K / V from the destination so the literal's type
+			// flows the right shape into the assignable check
+			// (via postSettleType) and into the IR's runtime
+			// keyKind / valKind tags. Without this, `let m:
+			// Map[string, i32] = Map {};` keeps the
+			// checkExpr-default `Map[i32, i32]` shape and the
+			// assignment rejects.
+			if len(ml.Entries) == 0 {
+				ml.KeyType = hn.Args[0]
+				ml.ValueType = hn.Args[1]
+			}
+		} else if sl, ok := e.(*ast.StructLit); ok && len(hn.Args) > 0 && !sl.TypeArgsWritten {
+			// Generic struct literal with a destination
+			// annotation: `let b: Box[i64] = Box { v: 100 }`.
+			// A literal that names its own instantiation
+			// (`Box[i32] { v: 100 }`) has already had its fields
+			// settled against THAT one, and re-settling them here
+			// would silently retype the literal to the
+			// destination instead of reporting the mismatch.
+			// Build the type-param substitution from the hint's
+			// Args, look up each field's declared type, and
+			// settle each field value against the substituted
+			// type so polymorphic literals widen. Also stamp
+			// the literal's TypeArgs so postSettleType returns
+			// the resolved StructType shape to the assignable
+			// check.
+			if sd, ok := c.info.Structs[sl.TypeName]; ok && len(sd.TypeParams) == len(hn.Args) {
+				sub := map[string]ast.Type{}
+				for i, tp := range sd.TypeParams {
+					sub[tp] = hn.Args[i]
+				}
+				fieldT := map[string]ast.Type{}
+				for _, f := range sd.Fields {
+					fieldT[f.Name] = substituteType(f.Type, sub)
+				}
+				for _, f := range sl.Fields {
+					if expected, present := fieldT[f.Name]; present && expected != nil {
+						c.settleNumeric(f.Value, expected)
+					}
+				}
+				sl.TypeArgs = append([]ast.Type{}, hn.Args...)
+			}
+		} else if call, ok := e.(*ast.Call); ok && isCellNew(call) {
+			// `let c: Cell[i64] = cell_new(1)` reaches T through the
+			// destination, as a generic call's result does.
+			if hn.Name == "Cell" && len(hn.Args) == 1 && len(call.Args) == 1 && len(call.TypeArgs) == 1 &&
+				isPolymorphicNumeric(call.TypeArgs[0]) && unsettledNumericShape(call.Args[0]) {
+				c.settleNumeric(call.Args[0], hn.Args[0])
+				call.TypeArgs[0] = c.postSettleType(call.Args[0], call.TypeArgs[0])
+			}
+		} else if call, ok := e.(*ast.Call); ok {
+			// `let b: Box[u64] = box(1)` reaches T through the return type.
+			c.settleGenericCallByHint(call, hint)
+		} else if ie, ok := e.(*ast.IfExpr); ok {
+			// `let m: Map[K, V] = if cond { Map {...} } else
+			// { Map {...} }` — fan out the destination Map type
+			// into both arms.
+			if ie.Then != nil {
+				c.settleNumeric(ie.Then, hint)
+			}
+			if ie.Else != nil {
+				c.settleNumeric(ie.Else, hint)
+			}
+		} else if me, ok := e.(*ast.MatchExpr); ok {
+			for _, arm := range me.Arms {
+				if arm == nil {
+					continue
+				}
+				c.settleNumeric(arm.Body, hint)
+			}
+		}
+	case ast.EnumType:
+		// Variant constructor with a destination annotation:
+		// `let o: Option[i64] = Some(1);` — the literal `1`
+		// otherwise defaults to i32 and the assignment fails.
+		// Build the type-param substitution from the hint's
+		// Args, look up the variant's declared payload types,
+		// and settle each constructor arg against its
+		// substituted payload type. This is the second-pass
+		// counterpart to the variant-call's pre-settle (which
+		// only fires when payloads are non-generic). Also
+		// refines `EnumConstructions` so the IR's
+		// emitEnumNew picks the resolved (no-longer-polymorphic)
+		// payload type for slot sizing + store-op selection.
+		// IfExpr / MatchExpr forms: recurse into each arm
+		// body so `return match (e) { A => Some(...) }`
+		// against an `Option[i64]` destination reaches the
+		// inner variant constructor.
+		if ie, ok := e.(*ast.IfExpr); ok {
+			if ie.Then != nil {
+				c.settleNumeric(ie.Then, hint)
+			}
+			if ie.Else != nil {
+				c.settleNumeric(ie.Else, hint)
+			}
+			return
+		}
+		if me, ok := e.(*ast.MatchExpr); ok {
+			for _, arm := range me.Arms {
+				if arm == nil {
+					continue
+				}
+				c.settleNumeric(arm.Body, hint)
+			}
+			return
+		}
+		construction, resolved := c.refineEnumConstruction(e, hn)
+		call, ok := e.(*ast.Call)
+		if !ok {
+			return
+		}
+		if !resolved {
+			// An enum-returning GENERIC function: `let o: Option[i64] =
+			// wrap(1234567890123)` reaches T through the return type.
+			c.settleGenericCallByHint(call, hint)
+			return
+		}
+		// Only a resolved constructor carries its result context into its
+		// payloads. An enum-returning function with the same spelling does
+		// not. Pre-check hints are applied after actual payload resolution.
+		for i, a := range call.Args {
+			if i < len(construction.Payloads) {
+				c.settleNumeric(a, construction.Payloads[i])
+			}
+		}
+	}
+}
+
+func (c *checker) settleInt(e ast.Expr, hn ast.NumberType) {
+	c.settleIntSigned(e, hn, false)
+}
+
+// settleIntSigned is settleInt carrying whether the expression sits under an
+// odd number of unary minuses. A NumberLit holds its magnitude — the sign is
+// a separate Unary node — so the range check needs that bit to judge the value
+// the source actually wrote. Without it the most negative number of a width
+// had no literal spelling at all: `let x: i32 = -2147483648;` was refused for
+// a magnitude that is only out of range as a POSITIVE value. i64 never showed
+// it, because its range check returns early.
+func (c *checker) settleIntSigned(e ast.Expr, hn ast.NumberType, negated bool) {
+	width := hn.NormalWidth()
+	isUnsigned := !hn.IsSigned()
+	switch x := e.(type) {
+	case *ast.NumberLit:
+		if x.Width == 0 {
+			x.Width = width
+			x.IsUnsigned = isUnsigned
+			c.checkLiteralFits(x, hn, negated)
+		}
+	case *ast.Ident:
+		if ll := c.litIdents[x]; ll != nil {
+			c.fixLitLocal(ll, hn, x.P)
+		}
+	case *ast.Unary:
+		if x.Op == "-" {
+			c.settleIntSigned(x.Operand, hn, !negated)
+			x.CheckedType = c.postSettleType(x.Operand, x.CheckedType)
+		} else if x.Op == "+" {
+			c.settleIntSigned(x.Operand, hn, negated)
+			x.CheckedType = c.postSettleType(x.Operand, x.CheckedType)
+		}
+	case *ast.Binary:
+		switch x.Op {
+		case "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "+|", "-|", "*|", "<<|":
+			// Don't overwrite a float-typed binary's resolved
+			// FloatWidth with an int width — happens when an
+			// int-cast surrounds a float multiply, e.g.
+			// `(frac * mult) as i64`. settleInt is fed the
+			// cast's int target type as the hint; we must
+			// leave the inner float binary alone so the cast
+			// lowers to a float→int trunc op.
+			//
+			// A string concat is not arithmetic either: stamping IntWidth on
+			// it makes the next check pass type `"a" + "b"` as an integer add.
+			// Reached via the Call case below, which settles every argument
+			// bound to a bare `T` — so a `T: Eq` generic returning i32 called
+			// as `xs.index_of("a" + "b") != 1` settled a string argument.
+			// A float binary of unsettled literals has no FloatWidth yet,
+			// but it is no less a float (#10609).
+			if x.FloatWidth != 0 || x.IsFloat || x.IsStringConcat {
+				return
+			}
+			if x.IntWidth == 0 {
+				c.settleInt(x.Left, hn)
+				c.settleInt(x.Right, hn)
+				x.IntWidth = width
+				x.IsUnsigned = isUnsigned
+			}
+		}
+	case *ast.IfExpr:
+		// `let n: i64 = if cond { 1 } else { 2 }` — settle
+		// both arm bodies against the destination width.
+		// Without this, the literals stayed i32 and the i64
+		// load read garbage high bits.
+		if x.Then != nil {
+			c.settleInt(x.Then, hn)
+		}
+		if x.Else != nil {
+			c.settleInt(x.Else, hn)
+		}
+	case *ast.MatchExpr:
+		// Same fan-out for `let n: i64 = match (e) { A => 1,
+		// B => 2 }` — every arm body is an expression that
+		// must reach the destination width.
+		for _, arm := range x.Arms {
+			if arm == nil {
+				continue
+			}
+			c.settleInt(arm.Body, hn)
+		}
+	case *ast.BlockExpr:
+		// Block-expression branch (`{ …; tail }`): the value is the
+		// trailing expression, so settle it against the destination
+		// width — `let n: i64 = if (c) { let k = 1; k } else { 0 }`.
+		if x.Tail != nil {
+			c.settleInt(x.Tail, hn)
+		}
+	case *ast.Call:
+		// Generic-function call whose result type substitutes
+		// to the hint's T. The initial check ran with sub[T]
+		// = Polymorphic (every NumberLit arg returned a
+		// polymorphic NumberType, leaving T un-pinned), and
+		// the result type substituted to the same polymorphic
+		// shape. Now that the destination commits to a
+		// concrete width, walk the args that map to the
+		// generic parameter and settle them — both pins the
+		// literal widths and lets TypeArgs/monomorph pick the
+		// right clone.
+		//
+		// Gate on the existing TypeArgs entry being polymorphic:
+		// a call whose args already pinned T to a
+		// concrete width (`id(7i64)` → T=i64) should NOT have
+		// its TypeArgs overridden by an enclosing-context hint
+		// like a CastExpr's target. Without this gate,
+		// `(id(7i64) as i32)` flipped id's T to i32, monomorph
+		// produced id__i32 with i32-typed params, and the
+		// re-check rejected the i64 literal arg.
+		// Which type parameter the hint reaches is what the return
+		// type says, and only the arguments bound to THAT parameter
+		// settle: `first(1234567890123, "x"): A` binds A alone, and
+		// B's string leaves A's proof untouched (#8722).
+		c.settleGenericCallByHint(x, hn)
+	case *ast.FieldAccess:
+		if ll := c.litFields[x]; ll != nil {
+			c.fixLitLocal(ll, hn, x.P)
+		}
+		c.settleGenericCallByHint(x, hn)
+	}
+}
+
+// unsettledNumericShape reports whether `e` is an expression whose width a
+// destination hint may still decide: a bare literal (or a sign / arithmetic
+// tree of them) that no earlier settle pass stamped. Anything else — an
+// identifier, a call, a field, a typed literal — has a type of its own.
+func unsettledNumericShape(e ast.Expr) bool {
+	switch x := e.(type) {
+	case *ast.NumberLit:
+		return x.Width == 0 && !x.IsFloat
+	case *ast.FloatLit:
+		return x.Width == 0
+	case *ast.Unary:
+		return (x.Op == "-" || x.Op == "+") && unsettledNumericShape(x.Operand)
+	case *ast.Binary:
+		if x.IntWidth != 0 || x.FloatWidth != 0 || x.IsStringConcat {
+			return false
+		}
+		return unsettledNumericShape(x.Left) && unsettledNumericShape(x.Right)
+	case *ast.IfExpr:
+		return x.Then != nil && x.Else != nil && unsettledNumericShape(x.Then) && unsettledNumericShape(x.Else)
+	}
+	return false
+}
+
+// elemSettleable reports whether an array literal whose elements already
+// inferred as `have` may be re-stamped to the destination's `want`.
+//
+// Settling exists to resolve a POLYMORPHIC element — an unsuffixed integer
+// literal that should take the destination's width, or an empty literal with
+// no elements to infer from. A literal that already inferred a concrete,
+// unrelated type is not polymorphic, and stamping it anyway makes it CLAIM the
+// destination's type: postSettleType reports the stamp back as the literal's
+// type, so the assignment then compares i32[] against i32[] and passes. That is
+// how `let xs: i32[] = ["ab", "cd"]` type-checked, and why passing one to an
+// `i32[]` parameter summed strings as integers rather than reporting E038.
+func (c *checker) elemSettleable(have, want ast.Type) bool {
+	if have == nil || want == nil {
+		return true
+	}
+	// A destination element that is still a type PARAMETER (`let local: T[] =
+	// [1, 2, 3]` inside a generic) names no concrete type for the literal to
+	// contradict — what it settles to is decided at monomorph, not here.
+	if containsParamType(want) {
+		return true
+	}
+	// A NESTED literal settles element-wise: `[[1], [2]]` against `f64[][]`
+	// asks whether `[1]` may settle to `f64[]`, which asks whether 1 may
+	// settle to f64. Without this the outer literal's already-inferred
+	// `i32[]` element read as a concrete mismatch against `f64[]`.
+	if h, ok := have.(ast.ArrayType); ok {
+		if w, ok := want.(ast.ArrayType); ok {
+			return c.elemSettleable(h.Elem, w.Elem)
+		}
+	}
+	if h, ok := have.(ast.SliceType); ok {
+		if w, ok := want.(ast.SliceType); ok {
+			return c.elemSettleable(h.Elem, w.Elem)
+		}
+	}
+	// So does a generic struct whose arguments literals bound: `[Same { a:
+	// 1, b: 2^62 }]` widens to `Same[i64][]`, and `[q]` for a `let q = Same {
+	// a: 1, b: 2 }` settles to it, each element settling there (#10453).
+	if h, ok := have.(ast.StructType); ok {
+		if w, ok := want.(ast.StructType); ok && h.Name == w.Name && len(h.Args) == len(w.Args) && len(h.Args) > 0 {
+			for i := range h.Args {
+				if !c.elemSettleable(h.Args[i], w.Args[i]) {
+					return false
+				}
+			}
+			return true
+		}
+	}
+	// Which destinations a polymorphic element settles to depends on WHICH
+	// polymorphic it is, so split on `have` before looking at `want`.
+	switch h := have.(type) {
+	case ast.NumberType:
+		// A polymorphic INTEGER settles to any numeric width, float
+		// included: int-to-float is a legal promotion, and settleFloat
+		// exists for exactly it (`let xs: f64[] = [1, 2]`).
+		if h.Polymorphic {
+			switch want.(type) {
+			case ast.NumberType, ast.FloatType:
+				return true
+			}
+		}
+	case ast.FloatType:
+		// A polymorphic FLOAT settles only to a float destination. Against
+		// an integer one it is a mismatch — `let x: i64 = 1.5` is already
+		// E003 as a scalar, and the array literal must not be the one way
+		// round it.
+		if h.Polymorphic {
+			if _, ok := want.(ast.FloatType); ok {
+				return true
+			}
+		}
+	}
+	// Anything else — a concrete element type, or a polymorphic one against a
+	// destination it cannot settle to — is a plain assignability question, and
+	// `take(xs: string[])` given `[1, 2, 3]` is still a mismatch.
+	return c.assignable(want, have)
+}
+
+// isPolymorphicNumeric reports whether t is an unsettled numeric / float type
+// — one that came from a bare literal whose width no context has pinned. A
+// declared `i32` has width 0 too, so the width does not say.
+func isPolymorphicNumeric(t ast.Type) bool {
+	if n, ok := t.(ast.NumberType); ok {
+		return n.Polymorphic
+	}
+	if f, ok := t.(ast.FloatType); ok {
+		return f.Polymorphic
+	}
+	return false
+}
+
+func (c *checker) settleFloat(e ast.Expr, hf ast.FloatType) {
+	width := hf.NormalWidth()
+	switch x := e.(type) {
+	case *ast.FloatLit:
+		if x.Width == 0 {
+			x.Width = width
+		}
+	case *ast.NumberLit:
+		// Polymorphic integer literal in float context: stamp
+		// IsFloat + FloatWidth so checkExpr returns FloatType
+		// and the IR's NumberLit lowering picks the f-const
+		// path. Skip when the literal is already locked to an
+		// integer type (typed-suffix `42i64` or a previous
+		// settle pass).
+		if x.Width == 0 && !x.IsFloat {
+			if x.ExceedsU64 {
+				// Value holds nothing for a literal this wide, so there is
+				// no number to promote.
+				c.errfCode(x.P, "E047", "literal %s does not fit in any integer type; write it as a float for %s", x.Raw, hf)
+			}
+			x.IsFloat = true
+			x.FloatWidth = width
+		}
+	case *ast.Unary:
+		if x.Op == "-" || x.Op == "+" {
+			c.settleFloat(x.Operand, hf)
+			x.CheckedType = c.postSettleType(x.Operand, x.CheckedType)
+		}
+	case *ast.Binary:
+		switch x.Op {
+		case "+", "-", "*", "/":
+			// String concat is not arithmetic — same guard as settleInt's.
+			if x.FloatWidth == 0 && !x.IsStringConcat {
+				c.settleFloat(x.Left, hf)
+				c.settleFloat(x.Right, hf)
+				x.FloatWidth = width
+			}
+		}
+	case *ast.IfExpr:
+		// `let f: f64 = if cond { 3.14 } else { 0.0 }` —
+		// fan the float hint into both arms.
+		if x.Then != nil {
+			c.settleFloat(x.Then, hf)
+		}
+		if x.Else != nil {
+			c.settleFloat(x.Else, hf)
+		}
+	case *ast.MatchExpr:
+		for _, arm := range x.Arms {
+			if arm == nil {
+				continue
+			}
+			c.settleFloat(arm.Body, hf)
+		}
+	case *ast.BlockExpr:
+		// Block-expression branch: settle the trailing value.
+		if x.Tail != nil {
+			c.settleFloat(x.Tail, hf)
+		}
+	case *ast.Call:
+		// Generic-function call returning T against a float
+		// destination. Mirror the settleInt Call case so
+		// `let x: f64 = pick(true, 3.14, 0.0);` settles the
+		// arg widths and re-stamps TypeArgs for monomorph.
+		// Without this, the arg literals stayed at the f32
+		// / Polymorphic default and the f64 destination
+		// load returned garbage (observed: `0` for a
+		// `pick(true, 3.14, 0.0)` call).
+		if id, ok := x.Callee.(*ast.Ident); ok && !c.shadowedGenericCalls[x] {
+			if fn, isGen := c.info.GenericFuncs[id.Name]; isGen {
+				for i, p := range fn.Params {
+					if i >= len(x.Args) {
+						break
+					}
+					if _, ok := p.Type.(ast.ParamType); ok {
+						c.settleFloat(x.Args[i], hf)
+					}
+				}
+				if len(fn.TypeParams) == 1 && len(x.TypeArgs) == 1 {
+					x.TypeArgs[0] = hf
+				}
+			}
+		}
+	case *ast.FieldAccess:
+		c.settleGenericCallByHint(x, hf)
+	}
+}
+
+// postSettleType returns the post-settling type of `e`. After
+// `c.settleNumeric` has stamped concrete widths onto polymorphic
+// nodes, the original type returned by `checkExpr` is stale —
+// for a NumberLit it was a Polymorphic placeholder, for a
+// Binary it was Polymorphic from
+// `commonIntegerWidth(poly, poly)`. This helper recomputes the
+// type from whatever the settling pass stamped. Non-numeric
+// expressions return `prior` unchanged.
+// isVariantCall reports whether a *ast.Call resolved to a variant
+// constructor (`Some(x)`, `Ok(v)`) rather than a regular function
+// call. Reads the IsVariantCall flag the checker stamps on every
+// variant-resolved call.
+//
+// The gate exists to keep `postSettleType`'s Call branch from firing on
+// non-variant calls that happen to return Option[T] / Result[T, E]:
+// without it, `f(p: boolean[]): Option[i32]` called as `f([true])`
+// refreshes as `Option[boolean[]]`. The flag is explicit because a
+// case-sensitivity heuristic (callee Ident starts upper-case) only
+// matches the naming convention, it does not guarantee it.
+func isVariantCall(c *ast.Call) bool { return c.IsVariantCall }
+
+func (c *checker) postSettleType(e ast.Expr, prior ast.Type) ast.Type {
+	if holdsPolymorphicNumeric(prior) {
+		if t := c.settledProjectionType(e); t != nil {
+			return t
+		}
+	}
+	switch x := e.(type) {
+	case *ast.Ident:
+		// A read of a literal local that the settle just fixed.
+		if ll := c.litIdents[x]; ll != nil && ll.fixed {
+			return ll.width
+		}
+		if t := c.litCompositeType(x); t != nil {
+			return t
+		}
+	case *ast.FieldAccess:
+		if ll := c.litFields[x]; ll != nil && ll.fixed {
+			return ll.width
+		}
+	case *ast.NumberLit:
+		if x.IsFloat {
+			return ast.FloatType{Width: x.FloatWidth}
+		}
+		if x.Width != 0 {
+			return ast.NumberType{Width: x.Width, Signed: !x.IsUnsigned}
+		}
+	case *ast.FloatLit:
+		if x.Width != 0 {
+			return ast.FloatType{Width: x.Width}
+		}
+	case *ast.Binary:
+		// Comparison ops (`==`, `!=`, `<`, `<=`, `>`, `>=`)
+		// stamp IntWidth / FloatWidth on the Binary node so
+		// codegen knows whether to emit `i32.eq` vs `i64.eq`
+		// vs `f32.eq` etc. — but their RESULT type is bool,
+		// not the operand width. Without this guard a
+		// `let b: boolean = a == b;` would re-type the rhs as
+		// the operand's NumberType and fail the assignment.
+		switch x.Op {
+		case "==", "!=", "<", "<=", ">", ">=":
+			return ast.BoolType{}
+		case "+?", "-?", "*?", "/?", "%?", "<<?", ">>?":
+			// Checked arithmetic, the same shape one operator family
+			// over: `IntWidth` is the OPERAND width (the desugar's
+			// overflow predicate needs it), while the result is
+			// `Option[T]`. Re-typing it from IntWidth made `a +? b`
+			// read as a bare `i32` wherever a destination type exists
+			// — an annotated `let`, a `return`, a call argument — so
+			// the very shapes the operator is for were rejected, while
+			// an unannotated `let a = x +? 1` type-checked fine
+			// because nothing triggered the settle path.
+			return prior
+		}
+		if x.IntWidth != 0 {
+			return ast.NumberType{Width: x.IntWidth, Signed: !x.IsUnsigned}
+		}
+		if x.FloatWidth != 0 {
+			return ast.FloatType{Width: x.FloatWidth}
+		}
+	case *ast.Unary:
+		return c.postSettleType(x.Operand, prior)
+	case *ast.ArrayLit:
+		if x.ElemType != nil {
+			return ast.ArrayType{Elem: x.ElemType}
+		}
+	case *ast.TupleLit:
+		// After settleNumeric has propagated the destination's
+		// element types into the literal, recompute the tuple
+		// shape so the `assignable` check sees the resolved
+		// widths. Without this, a `let p: (string, i64) =
+		// ("hi", 1)` keeps its pre-settle `(string, i32)`
+		// type and the assignment rejects.
+		if tt, ok := prior.(ast.TupleType); ok && len(tt.Elems) == len(x.Elems) {
+			out := make([]ast.Type, len(x.Elems))
+			for i, el := range x.Elems {
+				out[i] = c.postSettleType(el, tt.Elems[i])
+			}
+			return ast.TupleType{Elems: out}
+		}
+	case *ast.IfExpr:
+		// Recurse through `if cond { … } else { … }` — after
+		// settleNumeric walked both arms with the destination
+		// type, the unified shape lives in the arm bodies.
+		// First arm whose post-settle type differs from `prior`
+		// wins; otherwise both arms agreed with `prior`.
+		if x.Then != nil {
+			if t := c.postSettleType(x.Then, prior); t != nil {
+				return t
+			}
+		}
+		if x.Else != nil {
+			if t := c.postSettleType(x.Else, prior); t != nil {
+				return t
+			}
+		}
+	case *ast.MatchExpr:
+		// `return match (e) { Variant => tupleLit, … }` —
+		// recurse into each arm body and let it refresh the
+		// type. Same shape as IfExpr.
+		for _, arm := range x.Arms {
+			if arm == nil {
+				continue
+			}
+			if t := c.postSettleType(arm.Body, prior); t != nil {
+				return t
+			}
+		}
+	case *ast.BlockExpr:
+		// Block-expression branch: the value is the trailing
+		// expression, so its post-settle type is the block's type.
+		if x.Tail != nil {
+			if t := c.postSettleType(x.Tail, prior); t != nil {
+				return t
+			}
+		}
+	case *ast.Call:
+		// Variant constructor calls (`Some(tupleLit)`,
+		// `Ok(...)`) — after settleNumeric stamped widths
+		// onto each constructor arg, the prior EnumType's
+		// Args still reflect the pre-settle widths (the
+		// type was unified before the settle pass touched
+		// the literals). Recompute the enum's type arguments
+		// by re-unifying each (now-settled) constructor arg
+		// against its declared payload type — exactly as the
+		// first checkExpr pass did, but with the widened
+		// literals. Re-unifying (rather than pairing
+		// `et.Args[i]` with `x.Args[i]` positionally) is the
+		// only correct mapping when a type parameter is
+		// determined by a payload whose position differs from
+		// the parameter's index — e.g. `enum Box[T] { Mk(i32,
+		// (i32) => T) }`, where `T` comes from the *second*
+		// (function-typed) payload, not the leading `i32`.
+		// Positional pairing there mis-bound `T` to the i32
+		// literal and produced `Box[i32]` instead of
+		// `Box[string]`. It also correctly refreshes one type
+		// param of a multi-param generic (e.g. the `T` of
+		// `Result[T, E]` from `Ok(v)`) while preserving the
+		// other from the first-pass result.
+		if isCellNew(x) && len(x.TypeArgs) == 1 {
+			return ast.StructType{Name: "Cell", Args: []ast.Type{x.TypeArgs[0]}}
+		}
+		if et, ok := prior.(ast.EnumType); ok && len(et.Args) > 0 && isVariantCall(x) {
+			if id, ok := x.Callee.(*ast.Ident); ok {
+				if vr, isVar, _ := c.resolveVariant(id.Name, id.EnumName); isVar {
+					if ed := c.info.Enums[vr.enumName]; ed != nil &&
+						len(ed.TypeParams) == len(et.Args) &&
+						len(x.Args) == len(vr.payloads) {
+						// Seed from the first-pass result so payload
+						// positions that don't pin a type param (and
+						// nested shapes) keep their resolved types.
+						priorSub := map[string]ast.Type{}
+						for i, tp := range ed.TypeParams {
+							priorSub[tp] = et.Args[i]
+						}
+						newSub := map[string]ast.Type{}
+						for i, a := range x.Args {
+							declared := vr.payloads[i]
+							actual := c.postSettleType(a, substituteType(declared, priorSub))
+							if actual != nil {
+								c.unifyType(declared, actual, newSub)
+							}
+						}
+						newArgs := make([]ast.Type, len(et.Args))
+						complete := true
+						for i, tp := range ed.TypeParams {
+							if v, ok := newSub[tp]; ok {
+								newArgs[i] = v
+							} else {
+								newArgs[i] = et.Args[i]
+							}
+							if newArgs[i] == nil {
+								complete = false
+							}
+						}
+						if complete {
+							return ast.EnumType{Name: et.Name, Args: newArgs}
+						}
+					}
+				}
+			}
+			return prior
+		}
+	case *ast.MapLit:
+		// After settleNumeric stamped widths onto each entry
+		// key / value, the prior StructType's TypeArgs may
+		// still point at the pre-settle K / V. Recompute
+		// from the (now-resolved) first entry — the entry
+		// re-check below the MapLit case in `checkExpr`
+		// already enforces same-type-across-entries.
+		// Also refresh the MapLit's own KeyType / ValueType
+		// stamps so the IR's MapLit lowering sees the
+		// resolved widths (it reads them to pick the
+		// runtime keyKind / valKind tags and the boxing
+		// path for wide V).
+		if st, ok := prior.(ast.StructType); ok && st.Name == "Map" && len(st.Args) == 2 && len(x.Entries) > 0 {
+			ent := x.Entries[0]
+			newK := c.postSettleType(ent.Key, st.Args[0])
+			newV := c.postSettleType(ent.Value, st.Args[1])
+			x.KeyType = newK
+			x.ValueType = newV
+			return ast.StructType{Name: "Map", Args: []ast.Type{newK, newV}}
+		}
+		// Empty `Map {}` whose K / V were stamped from the
+		// destination by settleNumeric. The `prior` here is the
+		// checkExpr-default `Map[i32, i32]`; surface the
+		// post-settle K / V so the assignable check sees the
+		// destination's shape.
+		if len(x.Entries) == 0 && x.KeyType != nil && x.ValueType != nil {
+			return ast.StructType{Name: "Map", Args: []ast.Type{x.KeyType, x.ValueType}}
+		}
+	case *ast.StructLit:
+		// Generic struct literal whose TypeArgs got committed
+		// to a concrete shape by settleNumeric. The settle
+		// path stamped `x.TypeArgs` directly; reading those
+		// back here lets the `assignable` check see
+		// `Box[i64]` instead of the pre-settle `Box[i32]`.
+		if len(x.TypeArgs) > 0 {
+			return ast.StructType{Name: x.TypeName, Args: append([]ast.Type{}, x.TypeArgs...)}
+		}
+	}
+	return prior
+}
+
+// polymorphicIntDefault is the width still-polymorphic integer expressions
+// settle at when no context names one: i32, or i64 when an unsuffixed literal
+// anywhere in them lies outside the i32 range (#3676). Such a constant has no
+// i32 reading, so lowering it at the default would truncate it silently — and a
+// literal inside `3 - 4611686018427387904`, an if-expression arm or a generic
+// call's `T` argument is no more readable at i32 than a bare one (#8668). The
+// walk covers the shapes settleInt descends; anything with a type of its own
+// (an identifier, a non-generic call, a suffixed literal) has already settled
+// and commits the tree itself.
+func (c *checker) polymorphicIntDefault(es ...ast.Expr) ast.NumberType {
+	for _, e := range es {
+		if c.unsettledIntLitExceedsI32(e, false) {
+			return ast.NumberType{Width: 64, Signed: true}
+		}
+	}
+	return ast.NumberType{Width: 32, Signed: true}
+}
+
+// widenCompositeByLiterals rewrites the still-polymorphic integer slots of a
+// composite type to i64 where the matching part of the init holds a literal
+// with no i32 reading. A tuple or array init is not itself a numeric
+// expression, so polymorphicIntDefault above never reaches its elements and
+// `let t = (1, 4611686018427387904)` lowered the wide element at the i32
+// default — a silent truncation (#8722). Slots whose elements all read at i32
+// are left polymorphic, so `let t = (1, 2)` settles exactly as before.
+// Returns nil when no slot changed.
+func (c *checker) widenCompositeByLiterals(t ast.Type, es ...ast.Expr) ast.Type {
+	switch tt := t.(type) {
+	case ast.NumberType:
+		if !tt.Polymorphic {
+			return nil
+		}
+		if def := c.polymorphicIntDefault(es...); def.Width == 64 {
+			return def
+		}
+	case ast.TupleType:
+		elems := append([]ast.Type(nil), tt.Elems...)
+		changed := false
+		for i := range elems {
+			if w := c.widenCompositeByLiterals(elems[i], tupleElemExprs(es, i)...); w != nil {
+				elems[i], changed = w, true
+			}
+		}
+		if changed {
+			return ast.TupleType{Elems: elems}
+		}
+	case ast.ArrayType:
+		if w := c.widenCompositeByLiterals(tt.Elem, arrayElemExprs(es)...); w != nil {
+			return ast.ArrayType{Elem: w}
+		}
+	case ast.SliceType:
+		if w := c.widenCompositeByLiterals(tt.Elem, arrayElemExprs(es)...); w != nil {
+			return ast.SliceType{Elem: w}
+		}
+	case ast.StructType:
+		// A generic struct literal whose type argument only literals bind:
+		// `Same { a: 1, b: 4611686018427387904 }` (#10453).
+		sd, ok := c.info.Structs[tt.Name]
+		if !ok || len(sd.TypeParams) != len(tt.Args) {
+			return nil
+		}
+		args := append([]ast.Type(nil), tt.Args...)
+		changed := false
+		for i, tp := range sd.TypeParams {
+			if w := c.widenCompositeByLiterals(args[i], c.structParamExprs(sd, tp, es)...); w != nil {
+				args[i], changed = w, true
+			}
+		}
+		if changed {
+			return ast.StructType{Name: tt.Name, Args: args}
+		}
+	}
+	return nil
+}
+
+// structParamExprs is the set of expressions, across the struct literals es
+// produce, that occupy the type parameter tp: a field declared `T`, an element
+// of one declared `T[]` or `(T, string)`, a field of a nested `Box[T]`. A
+// literal that wrote its own type arguments is already settled and
+// contributes nothing.
+func (c *checker) structParamExprs(sd *ast.StructDecl, tp string, es []ast.Expr) []ast.Expr {
+	var out []ast.Expr
+	for _, f := range sd.Fields {
+		var vals []ast.Expr
+		for _, e := range valueExprs(es) {
+			sl, ok := e.(*ast.StructLit)
+			if !ok || sl.TypeName != sd.Name || sl.TypeArgsWritten {
+				continue
+			}
+			for _, lf := range sl.Fields {
+				if lf.Name == f.Name {
+					vals = append(vals, lf.Value)
+				}
+			}
+		}
+		out = append(out, c.paramExprs(f.Type, tp, vals)...)
+	}
+	return out
+}
+
+// paramExprs is the set of expressions within es, values of declared type t,
+// that occupy the type parameter tp.
+func (c *checker) paramExprs(t ast.Type, tp string, es []ast.Expr) []ast.Expr {
+	if len(es) == 0 {
+		return nil
+	}
+	switch tt := t.(type) {
+	case ast.ParamType:
+		if tt.Name == tp {
+			return es
+		}
+	case ast.ArrayType:
+		return c.paramExprs(tt.Elem, tp, arrayElemExprs(es))
+	case ast.SliceType:
+		return c.paramExprs(tt.Elem, tp, arrayElemExprs(es))
+	case ast.TupleType:
+		var out []ast.Expr
+		for i, et := range tt.Elems {
+			out = append(out, c.paramExprs(et, tp, tupleElemExprs(es, i))...)
+		}
+		return out
+	case ast.StructType:
+		sd, ok := c.info.Structs[tt.Name]
+		if !ok || len(sd.TypeParams) != len(tt.Args) {
+			return nil
+		}
+		var out []ast.Expr
+		for i, inner := range sd.TypeParams {
+			out = append(out, c.paramExprs(tt.Args[i], tp, c.structParamExprs(sd, inner, es))...)
+		}
+		return out
+	}
+	return nil
+}
+
+// valueExprs expands each expression to the value-producing trees behind it —
+// an if / match arm, a block's tail — so a composite literal written inside one
+// is reached. polymorphicIntDefault does the same descent for a scalar.
+func valueExprs(es []ast.Expr) []ast.Expr {
+	var out []ast.Expr
+	for _, e := range es {
+		switch x := e.(type) {
+		case *ast.IfExpr:
+			out = append(out, valueExprs([]ast.Expr{x.Then, x.Else})...)
+		case *ast.MatchExpr:
+			for _, arm := range x.Arms {
+				if arm != nil {
+					out = append(out, valueExprs([]ast.Expr{arm.Body})...)
+				}
+			}
+		case *ast.BlockExpr:
+			out = append(out, valueExprs([]ast.Expr{x.Tail})...)
+		case nil:
+		default:
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
+// tupleElemExprs is the set of expressions occupying element i of the tuple
+// type es produce.
+func tupleElemExprs(es []ast.Expr, i int) []ast.Expr {
+	var out []ast.Expr
+	for _, e := range valueExprs(es) {
+		if tl, ok := e.(*ast.TupleLit); ok && i < len(tl.Elems) {
+			out = append(out, tl.Elems[i])
+		}
+	}
+	return out
+}
+
+// arrayElemExprs is the set of expressions occupying the (single) element type
+// of the array / slice type es produce.
+func arrayElemExprs(es []ast.Expr) []ast.Expr {
+	var out []ast.Expr
+	for _, e := range valueExprs(es) {
+		if al, ok := e.(*ast.ArrayLit); ok {
+			out = append(out, al.Elems...)
+		}
+	}
+	return out
+}
+
+// widenGenericCallByLiterals gives each type parameter of a generic call that
+// is pinned by nothing but literal-shaped arguments the default those literals
+// select: one past i32 range settles every argument bound to that parameter at
+// i64 and restamps the TypeArgs entry, and the result type is re-derived so an
+// unannotated binding sees `(i64, string)` for `pair(4611686018427387904,
+// "hello")`. Left polymorphic, the monomorphiser defaulted that T to i32 while
+// a comparison against the same literal widened its side to i64. Returns the
+// re-derived result type, or nil when no parameter changed.
+func (c *checker) widenGenericCallByLiterals(call *ast.Call) ast.Type {
+	id, ok := call.Callee.(*ast.Ident)
+	if !ok || c.shadowedGenericCalls[call] {
+		return nil
+	}
+	fn, isGen := c.info.GenericFuncs[id.Name]
+	if !isGen || len(call.TypeArgs) != len(fn.TypeParams) {
+		return nil
+	}
+	i64 := ast.NumberType{Width: 64, Signed: true}
+	changed := false
+	for i, tp := range fn.TypeParams {
+		if !isPolymorphicNumeric(call.TypeArgs[i]) {
+			continue
+		}
+		var bound []ast.Expr
+		wide, pinned := false, false
+		for j, p := range fn.Params {
+			if j >= len(call.Args) {
+				break
+			}
+			if pt, ok := p.Type.(ast.ParamType); ok && pt.Name == tp {
+				if !unsettledNumericShape(call.Args[j]) {
+					pinned = true
+				}
+				bound = append(bound, call.Args[j])
+				wide = wide || c.unsettledIntLitExceedsI32(call.Args[j], false)
+			} else if typeMentionsParam(p.Type, tp) {
+				// `T[]`, `Option[T]`: the argument pins T on its own.
+				pinned = true
+			}
+		}
+		if pinned || !wide {
+			continue
+		}
+		for _, a := range bound {
+			c.settleInt(a, i64)
+		}
+		call.TypeArgs[i] = i64
+		changed = true
+	}
+	if !changed {
+		return nil
+	}
+	sub := make(map[string]ast.Type, len(fn.TypeParams))
+	for i, tp := range fn.TypeParams {
+		sub[tp] = call.TypeArgs[i]
+	}
+	return c.resolveProj(substituteType(fn.ReturnType, sub))
+}
+
+// settleGenericCallByHint settles a generic call against the type its
+// destination gives its RESULT — `(i64, string)` for `pair(1234567890123,
+// "hello")`, `i64[]` for `wrap(1234567890123)` — by unifying the callee's
+// return type with the hint and treating each type parameter that binds to a
+// concrete number as the hint for the arguments bound to it: the
+// literal-shaped ones settle at that width and the TypeArgs entry is
+// restamped, exactly as a scalar destination does through settleInt's Call
+// case. A parameter pinned by a typed argument, or by an argument whose
+// parameter type merely mentions it (`T[]`, `Option[T]`), is left to that
+// argument (#8722). A field read of the call's result — `both(1, 2).1` —
+// settles through the declared type of the field it reads (#10176).
+// isCellNew reports whether call is the `cell_new` constructor, which the
+// checker intercepts by name.
+func isCellNew(call *ast.Call) bool {
+	id, ok := call.Callee.(*ast.Ident)
+	return ok && id.Name == "cell_new"
+}
+
+func (c *checker) settleGenericCallByHint(e ast.Expr, hint ast.Type) {
+	call, fn, declared := c.genericCallProjection(e)
+	if call == nil {
+		return
+	}
+	for i, tp := range fn.TypeParams {
+		want, ok := c.genericResultBinding(declared, hint, tp)
+		if !ok || !isPolymorphicNumeric(call.TypeArgs[i]) {
+			continue
+		}
+		var bound []ast.Expr
+		pinned := false
+		for j, p := range fn.Params {
+			if j >= len(call.Args) {
+				break
+			}
+			if pt, ok := p.Type.(ast.ParamType); ok && pt.Name == tp {
+				if !unsettledNumericShape(call.Args[j]) && !c.openGenericCall(call.Args[j]) {
+					pinned = true
+				}
+				bound = append(bound, call.Args[j])
+			} else if typeMentionsParam(p.Type, tp) {
+				pinned = true
+			}
+		}
+		if pinned {
+			continue
+		}
+		for _, a := range bound {
+			c.settleNumeric(a, want)
+		}
+		call.TypeArgs[i] = want
+	}
+}
+
+// openGenericCall reports whether e reads a generic call whose width is still
+// open — a type argument only an unsuffixed literal bound — so a hint on an
+// outer generic call reaches through it: `id(id(1))` at an i64.
+func (c *checker) openGenericCall(e ast.Expr) bool {
+	call, _, _ := c.genericCallProjection(e)
+	if call == nil {
+		return false
+	}
+	for _, ta := range call.TypeArgs {
+		if isPolymorphicNumeric(ta) {
+			return true
+		}
+	}
+	return false
+}
+
+// genericCallProjection resolves e — a generic call, or a chain of tuple or
+// struct field reads of one — to the call, its callee, and the declared type
+// of the value e reads, spelled in the callee's type parameters. The call is
+// nil when e is neither.
+func (c *checker) genericCallProjection(e ast.Expr) (*ast.Call, *ast.FuncDecl, ast.Type) {
+	switch x := e.(type) {
+	case *ast.Call:
+		id, ok := x.Callee.(*ast.Ident)
+		if !ok || c.shadowedGenericCalls[x] {
+			return nil, nil, nil
+		}
+		fn, isGen := c.info.GenericFuncs[id.Name]
+		if !isGen || len(x.TypeArgs) != len(fn.TypeParams) {
+			return nil, nil, nil
+		}
+		return x, fn, fn.ReturnType
+	case *ast.FieldAccess:
+		call, fn, t := c.genericCallProjection(x.Target)
+		if call == nil {
+			return nil, nil, nil
+		}
+		if ft := c.declaredFieldType(t, x.Field); ft != nil {
+			return call, fn, ft
+		}
+	}
+	return nil, nil, nil
+}
+
+// declaredFieldType is the type of field `field` of the declared type t: a
+// tuple element, or a struct field with the struct's arguments substituted.
+func (c *checker) declaredFieldType(t ast.Type, field string) ast.Type {
+	switch tt := t.(type) {
+	case ast.TupleType:
+		if idx, err := strconv.Atoi(field); err == nil && idx >= 0 && idx < len(tt.Elems) {
+			return tt.Elems[idx]
+		}
+	case ast.StructType:
+		sd, ok := c.info.Structs[tt.Name]
+		if !ok || len(sd.TypeParams) != len(tt.Args) {
+			return nil
+		}
+		sub := make(map[string]ast.Type, len(sd.TypeParams))
+		for i, tp := range sd.TypeParams {
+			sub[tp] = tt.Args[i]
+		}
+		for _, f := range sd.Fields {
+			if f.Name == field {
+				return substituteType(f.Type, sub)
+			}
+		}
+	}
+	return nil
+}
+
+// settledProjectionType is the type a generic call, or a field read of one,
+// has once its TypeArgs are settled; nil while a type argument it reads is
+// still polymorphic.
+func (c *checker) settledProjectionType(e ast.Expr) ast.Type {
+	call, fn, declared := c.genericCallProjection(e)
+	if call == nil {
+		return nil
+	}
+	sub := make(map[string]ast.Type, len(fn.TypeParams))
+	for i, tp := range fn.TypeParams {
+		if isPolymorphicNumeric(call.TypeArgs[i]) && typeMentionsParam(declared, tp) {
+			return nil
+		}
+		sub[tp] = call.TypeArgs[i]
+	}
+	return c.resolveProj(substituteType(declared, sub))
+}
+
+// holdsPolymorphicNumeric reports whether t is, or has an element or argument
+// that is, a numeric type no context has settled yet.
+func holdsPolymorphicNumeric(t ast.Type) bool {
+	switch tt := t.(type) {
+	case ast.TupleType:
+		return slices.ContainsFunc(tt.Elems, holdsPolymorphicNumeric)
+	case ast.ArrayType:
+		return holdsPolymorphicNumeric(tt.Elem)
+	case ast.SliceType:
+		return holdsPolymorphicNumeric(tt.Elem)
+	case ast.StructType:
+		return slices.ContainsFunc(tt.Args, holdsPolymorphicNumeric)
+	case ast.EnumType:
+		return slices.ContainsFunc(tt.Args, holdsPolymorphicNumeric)
+	}
+	return isPolymorphicNumeric(t)
+}
+
+// typeMentionsParam reports whether t names type parameter tp anywhere.
+func typeMentionsParam(t ast.Type, tp string) bool {
+	return !ast.Equal(substituteType(t, map[string]ast.Type{tp: ast.BoolType{}}), t)
+}
+
+// genericResultBinding is the concrete number type the destination `hint`
+// binds type parameter `tp` to through `declared`, the callee's type for the
+// value the destination receives, if any.
+func (c *checker) genericResultBinding(declared ast.Type, hint ast.Type, tp string) (ast.Type, bool) {
+	sub := map[string]ast.Type{}
+	if !c.unifyType(declared, hint, sub) {
+		return nil, false
+	}
+	want, ok := sub[tp]
+	if !ok || isPolymorphicNumeric(want) {
+		return nil, false
+	}
+	switch want.(type) {
+	case ast.NumberType, ast.FloatType:
+		return want, true
+	}
+	return nil, false
+}
+
+func (c *checker) unsettledIntLitExceedsI32(e ast.Expr, negated bool) bool {
+	switch x := e.(type) {
+	case *ast.NumberLit:
+		if x.IsFloat || x.Width != 0 {
+			return false
+		}
+		return ast.IntLitOutOfRange(x, negated, ast.NumberType{Width: 32, Signed: true}) != ""
+	case *ast.Unary:
+		switch x.Op {
+		case "-":
+			return c.unsettledIntLitExceedsI32(x.Operand, !negated)
+		case "+":
+			return c.unsettledIntLitExceedsI32(x.Operand, negated)
+		}
+	case *ast.Binary:
+		if x.IntWidth != 0 || x.FloatWidth != 0 || x.IsStringConcat {
+			return false
+		}
+		switch x.Op {
+		case "+", "-", "*", "/", "%", "&", "|", "^", "<<", ">>", "+|", "-|", "*|", "<<|":
+			return c.unsettledIntLitExceedsI32(x.Left, false) || c.unsettledIntLitExceedsI32(x.Right, false)
+		}
+	case *ast.IfExpr:
+		return c.unsettledIntLitExceedsI32(x.Then, false) || c.unsettledIntLitExceedsI32(x.Else, false)
+	case *ast.MatchExpr:
+		for _, arm := range x.Arms {
+			if arm != nil && c.unsettledIntLitExceedsI32(arm.Body, false) {
+				return true
+			}
+		}
+	case *ast.BlockExpr:
+		return c.unsettledIntLitExceedsI32(x.Tail, false)
+	case *ast.Call, *ast.FieldAccess:
+		// A generic call is polymorphic only while its `T` is pinned by
+		// nothing but literal-shaped arguments, so those arguments are
+		// the tree — the same ones settleInt settles through the call or
+		// a field read of its result.
+		call, fn, declared := c.genericCallProjection(x)
+		if call == nil {
+			return false
+		}
+		for i, p := range fn.Params {
+			if i >= len(call.Args) {
+				break
+			}
+			if pt, ok := p.Type.(ast.ParamType); ok && typeMentionsParam(declared, pt.Name) && c.unsettledIntLitExceedsI32(call.Args[i], false) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// markLiteralSign records the sign the source wrote for the literal at the end
+// of a `-`/`+` chain. A NumberLit holds only its magnitude, and checkExpr sees
+// it with no view of its parent, so the range check reads the bit from here.
+// The outermost unary is checked first, so an entry already present is the
+// whole chain's verdict and `- -5` stays positive.
+func (c *checker) markLiteralSign(e ast.Expr, negated bool) {
+	switch x := e.(type) {
+	case *ast.Unary:
+		switch x.Op {
+		case "-":
+			c.markLiteralSign(x.Operand, !negated)
+		case "+":
+			c.markLiteralSign(x.Operand, negated)
+		}
+	case *ast.NumberLit:
+		if c.negatedLits == nil {
+			c.negatedLits = map[*ast.NumberLit]bool{}
+		}
+		if _, seen := c.negatedLits[x]; !seen {
+			c.negatedLits[x] = negated
+		}
+	}
+}
+
+// checkLiteralFits reports E047 when the literal, as the source wrote it, is
+// outside the range of the integer type it has settled to.
+func (c *checker) checkLiteralFits(lit *ast.NumberLit, t ast.NumberType, negated bool) {
+	if msg := ast.IntLitOutOfRange(lit, negated, t); msg != "" {
+		c.errfCode(lit.P, "E047", "%s", msg)
+	}
+}
+
+// wideLit is an integer literal past i64 max the first time checkExpr saw it,
+// with the module it sits in. Only u64 (or i64, as its minimum) can hold one,
+// so it is valid only once some context has settled it: one still unsettled
+// after every body is checked would lower as the i32 default and has to be
+// refused instead — a tuple element, an array element or a comparison operand
+// gets no settling hint.
+type wideLit struct {
+	lit  *ast.NumberLit
+	path string
+}
+
+func (c *checker) checkUnsettledWideLiterals() {
+	for _, w := range c.wideLits {
+		lit := w.lit
+		if lit.Width != 0 || lit.IsFloat {
+			continue
+		}
+		if msg := ast.IntLitOutOfRange(lit, c.negatedLits[lit], ast.NumberType{Width: 32, Signed: true}); msg != "" {
+			c.report(w.path, lit.P, "E047", msg)
+		}
+	}
+}
+
+// commonFloatWidth mirrors commonIntegerWidth for FloatType. A
+// polymorphic side unifies with whichever concrete width the
+// other side has; mixed concrete widths are an error.
+func commonFloatWidth(lt, rt ast.Type) (ast.FloatType, bool) {
+	ln, lOk := lt.(ast.FloatType)
+	rn, rOk := rt.(ast.FloatType)
+	if !lOk || !rOk {
+		return ast.FloatType{}, false
+	}
+	if ln.Polymorphic && !rn.Polymorphic {
+		return rn, true
+	}
+	if rn.Polymorphic && !ln.Polymorphic {
+		return ln, true
+	}
+	if ln.NormalWidth() != rn.NormalWidth() {
+		return ast.FloatType{}, false
+	}
+	return ln, true
+}
+
+// commonIntegerWidth returns the common NumberType when both sides
+// are integers of the same width + signedness, plus a boolean
+// indicating success. Mixed widths trigger a checker error from
+// the caller — `as` is required for explicit conversion.
+//
+// Polymorphic-literal placeholders (NumberType{Polymorphic:true})
+// unify with any concrete integer type: the more-specific side
+// wins. `1 + (x: i64)` returns i64 here so the binary's IntWidth
+// gets stamped to 64; the caller is responsible for settling the
+// polymorphic literal's recorded width via c.settleNumeric.
+// Two placeholders return a placeholder, which the caller
+// eventually settles to i32 if no further hint arrives.
+// widenIntOperand wraps `*slot` in an implicit CastExpr when the
+// resolved operand type's width doesn't match `target`'s. Lang
+// requires explicit `as` casts between integer widths in user
+// code, but the checker auto-inserts them for binop operands so
+// `i64 + i32` (mixed-width pointer arithmetic in the stdlib,
+// for example) doesn't require sprinkling `as i64` everywhere.
+// Signedness must already match — see commonIntegerWidth.
+func (c *checker) widenIntOperand(slot *ast.Expr, srcT, targetT ast.NumberType) {
+	if srcT.Polymorphic || targetT.Polymorphic {
+		return
+	}
+	if srcT.NormalWidth() == targetT.NormalWidth() {
+		return
+	}
+	// usize ↔ concrete-int needs a cast too (NormalWidth = -1
+	// is never equal to 32 / 64, so the same-width fast-path
+	// above already falls through). Don't bail when one side
+	// is pointer-width — that's exactly the case where the
+	// implicit cast matters.
+	// Skip if the operand is already a typed numeric literal
+	// of the right width — settleNumeric handled it.
+	if nl, ok := (*slot).(*ast.NumberLit); ok && nl.Width == targetT.NormalWidth() {
+		return
+	}
+	pos := (*slot).Pos()
+	*slot = &ast.CastExpr{
+		P:         pos,
+		Inner:     *slot,
+		Target:    targetT,
+		InnerType: srcT,
+	}
+}
+
+func commonIntegerWidth(lt, rt ast.Type) (ast.NumberType, bool) {
+	ln, lOk := lt.(ast.NumberType)
+	rn, rOk := rt.(ast.NumberType)
+	if !lOk || !rOk {
+		return ast.NumberType{}, false
+	}
+	if ln.Polymorphic && !rn.Polymorphic {
+		return rn, true
+	}
+	if rn.Polymorphic && !ln.Polymorphic {
+		return ln, true
+	}
+	// Pointer-width arithmetic: `usize + i32` (or `i32 + usize`)
+	// auto-widens to usize so stdlib pointer math stays
+	// readable. usize is unsigned and i32 is signed, so the
+	// signedness check below would otherwise reject. The
+	// 2's-complement representation makes the result identical
+	// to what the stdlib computed before via explicit
+	// `as i64 / as usize` casts.
+	if ln.IsPointerWidth() || rn.IsPointerWidth() {
+		if ln.IsPointerWidth() {
+			return ln, true
+		}
+		return rn, true
+	}
+	if ln.IsSigned() != rn.IsSigned() {
+		// Mixed signedness needs an explicit cast — the
+		// reinterpretation isn't free of edge cases (e.g. a
+		// negative i32 + a small u32 isn't well-defined
+		// without picking a result domain), and getting it
+		// wrong silently is worse than asking the user.
+		return ast.NumberType{}, false
+	}
+	if ln.NormalWidth() == rn.NormalWidth() {
+		return ln, true
+	}
+	// Different widths, same signedness: auto-widen the
+	// narrower side to the wider type. Caller is expected to
+	// insert an implicit cast on whichever operand is
+	// narrower so the IR sees a homogeneous-width binop.
+	if ln.NormalWidth() > rn.NormalWidth() {
+		return ln, true
+	}
+	return rn, true
+}
+func (c *checker) requireFloat(p ast.Position, t ast.Type, op string) {
+	if t == nil {
+		return
+	}
+	if _, ok := t.(ast.FloatType); !ok {
+		c.errfCode(p, "E009", "operator %q requires float, got %s", op, t)
+	}
+}
+func isFloat(t ast.Type) bool {
+	_, ok := t.(ast.FloatType)
+	return ok
+}
+
+// isInteger reports whether t is an integer type (any width / signedness).
+func isInteger(t ast.Type) bool {
+	_, ok := t.(ast.NumberType)
+	return ok
+}
+
+// isStringLike reports whether t is `string` or a `str` view. The two share
+// a box shape after the LowerWith erasure (#4813), so every operator that
+// READS bytes — concat, `==`, ordering — accepts either on either side.
+func isStringLike(t ast.Type) bool {
+	switch t.(type) {
+	case ast.StringType, ast.StrType:
+		return true
+	}
+	return false
+}
+
+// hasHandleDecl reports whether the program defines a top-level
+// `function handle(req: HttpRequest, plat: platform.Platform): HttpResponse`
+// — the Platform-parameter signature shape every wasi-http
+// program targets (docs/PLATFORM-RESEARCH.md Rec §1). The check
+// is purely structural: any top-level FuncDecl named `handle`
+// counts. Mismatched signatures will surface as type errors at
+// the synthesised main() check (or the wasi-http wrapper's
+// signature check on that target).
+func hasHandleDecl(prog *ast.Program) bool {
+	for _, fn := range prog.Funcs {
+		if fn.Name == "handle" {
+			return true
+		}
+	}
+	return false
+}
+
+// hasMainDecl mirrors hasHandleDecl for `main`. Used to gate
+// auto-main synthesis: if the user defined main themselves we
+// keep their version verbatim.
+func hasMainDecl(prog *ast.Program) bool {
+	for _, fn := range prog.Funcs {
+		if fn.Name == "main" {
+			return true
+		}
+	}
+	return false
+}
+
+// checkHandlerStatePairing rejects the ways `init`, `handle` and
+// `shutdown` can disagree about process-lifetime state
+// (docs/PLATFORM-RESEARCH.md Rec §3). Either the handler takes a state
+// nothing produces, or `init` produces one nothing takes — the second
+// silently dropped the value before this check existed, which is the
+// worse of the two — and an `init` taking anything but the platform has
+// no caller to hand it that.
+//
+// Only reached when the synthesised main is what wires the three
+// together: a user-written `main` owns its own wiring, and pairing them
+// some other way is that program's business.
+// It reports whether the pair is coherent enough to synthesise a main
+// for.
+func (c *checker) checkHandlerStatePairing(prog *ast.Program) bool {
+	init := findDecl(prog, "init")
+	handle := findDecl(prog, "handle")
+	if handle == nil {
+		return true
+	}
+	if init != nil && !initTakesPlatformOnly(init) {
+		c.errfCode(init.P, "E075",
+			"`init` takes %d parameters; it takes none, or the platform alone", len(init.Params))
+		return false
+	}
+	_, initReturnsState := initReturnShape(init)
+	handleTakesState := len(handle.Params) == 3
+	switch {
+	case handleTakesState && !initReturnsState:
+		c.errfCode(handle.P, "E075",
+			"handler takes a state parameter, but no `init` produces the state to thread through it")
+		return false
+	case initReturnsState && !handleTakesState:
+		c.errfCode(init.P, "E075",
+			"`init` returns a value, but the handler takes no state parameter to thread it through")
+		return false
+	}
+	// `shutdown(reason)` or `shutdown(reason, state)`: the state parameter
+	// follows the handler's, since the loop hands the hook the state as
+	// the last request left it.
+	if shutdown := findDecl(prog, "shutdown"); shutdown != nil {
+		switch {
+		case len(shutdown.Params) == 2 && !handleTakesState:
+			c.errfCode(shutdown.P, "E075",
+				"`shutdown` takes a state parameter, but no `init` produces the state to hand it")
+			return false
+		case len(shutdown.Params) == 1 && handleTakesState:
+			c.errfCode(shutdown.P, "E075",
+				"`shutdown` takes no state parameter, but the handler threads a state it would drop")
+			return false
+		}
+	}
+	return true
+}
+
+// findDecl returns the top-level function named `name`, or nil.
+func findDecl(prog *ast.Program, name string) *ast.FuncDecl {
+	for _, fn := range prog.Funcs {
+		if fn.Name == name && fn.Receiver == nil {
+			return fn
+		}
+	}
+	return nil
+}
+
+// initTakesPlatformOnly reports whether `init` takes nothing, or the
+// platform alone.
+func initTakesPlatformOnly(init *ast.FuncDecl) bool {
+	if len(init.Params) == 0 {
+		return true
+	}
+	return len(init.Params) == 1 && IsPlatformParam(init, init.Params[0])
+}
+
+// IsPlatformParam reports whether p is fn's platform parameter: a type
+// parameter bounded by std/platform's trait, which `plat: platform.Platform`
+// desugars to, or the host platform itself.
+func IsPlatformParam(fn *ast.FuncDecl, p ast.Param) bool {
+	var name string
+	switch t := p.Type.(type) {
+	case ast.ParamType:
+		name = t.Name
+	case ast.StructType:
+		name = t.Name
+	default:
+		return false
+	}
+	if name == "platform__Host" {
+		return true
+	}
+	for _, b := range fn.Bounds[name] {
+		if b == "platform__Platform" {
+			return true
+		}
+	}
+	return false
+}
+
+// isServeConfigType reports whether `t` is std/serve's `Config`. modload
+// gives a stdlib module its bare prefix and moves a user module that
+// collides with it, so `serve__Config` names that struct and no other.
+func isServeConfigType(t ast.Type) bool {
+	st, ok := t.(ast.StructType)
+	return ok && st.Name == "serve__Config"
+}
+
+// initReturnShape reports what a handler program's `init` answers: the
+// serve config, a state for the handler to carry, both as
+// `(serve.Config, S)`, or neither.
+//
+//	function init(): S
+//	function init(plat: platform.Platform): (serve.Config, S)
+//	function handle(state: S, req: HttpRequest, plat: platform.Platform): (S, HttpResponse)
+//
+// The state pair is the two-phase lifecycle of docs/PLATFORM-RESEARCH.md
+// Rec §3 — build once at startup, thread through every request — and
+// the sanctioned answer to process-lifetime mutable state (#2679): the
+// value lives in the serve loop's frame, not in a module-level `let`
+// the language does not have.
+//
+// A void `init` stays the Phase-1 shape: run for its side effects, then
+// serve with a 2-parameter handler. The two mismatched pairings (a
+// state-taking handler with nothing producing the state, a
+// value-returning init with nothing consuming it) are rejected at the
+// synthesis site rather than lowered into a call that would not
+// type-check against a synthesised main nobody wrote.
+func initReturnShape(init *ast.FuncDecl) (opts, state bool) {
+	if init == nil || isVoidReturn(init.ReturnType) {
+		return false, false
+	}
+	if isServeConfigType(init.ReturnType) {
+		return true, false
+	}
+	if tt, ok := init.ReturnType.(ast.TupleType); ok && len(tt.Elems) == 2 && isServeConfigType(tt.Elems[0]) {
+		return true, true
+	}
+	return false, true
+}
+
+// resultHandlerName is what a handler written as a `Result[HttpResponse, E]`
+// is renamed to, so that `handle` stays the HttpResponse-shaped entry every
+// consumer (the synthesised main, the wasi-http wrapper) calls.
+const resultHandlerName = "__fern_handle_result"
+
+// resultHandlerShape reports whether `handle` answers a Result: a
+// two-parameter handler returning `Result[HttpResponse, E]`, or a
+// three-parameter one returning `(S, Result[HttpResponse, E])`.
+func resultHandlerShape(handle *ast.FuncDecl) bool {
+	isResult := func(t ast.Type) bool {
+		e, ok := t.(ast.EnumType)
+		if !ok || e.Name != "Result" || len(e.Args) != 2 {
+			return false
+		}
+		st, ok := e.Args[0].(ast.StructType)
+		return ok && st.Name == "HttpResponse" && len(st.Args) == 0
+	}
+	switch len(handle.Params) {
+	case 2:
+		return isResult(handle.ReturnType)
+	case 3:
+		tt, ok := handle.ReturnType.(ast.TupleType)
+		return ok && len(tt.Elems) == 2 && isResult(tt.Elems[1])
+	}
+	return false
+}
+
+// adaptResultHandler lets a handler fail with `?`: a `handle` answering
+// `Result[HttpResponse, E]` (or `(S, Result[HttpResponse, E])` with state)
+// is renamed to resultHandlerName and a `handle` of the plain shape is
+// synthesised over it,
+//
+//	function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+//	    return respond(__fern_handle_result(req, plat));
+//	}
+//
+// or `respond_with` for the stateful pair, std/http's answers to a Result
+// (`E: ToResponse`). A handler whose errors are `dyn error.Error` is
+// adapted with `respond_error` / `respond_error_with` instead, which take
+// the handler's platform to log each error's message. The names resolve
+// bare or under std/http's mangling as synthesiseHandleMain's do.
+func adaptResultHandler(prog *ast.Program) {
+	handle := findDecl(prog, "handle")
+	if handle == nil || !resultHandlerShape(handle) {
+		return
+	}
+	handle.Name = resultHandlerName
+	pos := handle.P
+	resolve := func(bare, mangled string) string {
+		if findDecl(prog, bare) != nil {
+			return bare
+		}
+		if findDecl(prog, mangled) != nil {
+			return mangled
+		}
+		return bare
+	}
+	adapter := "respond"
+	var ret ast.Type = ast.StructType{Name: "HttpResponse"}
+	result := handle.ReturnType
+	if len(handle.Params) == 3 {
+		adapter = "respond_with"
+		ret = ast.TupleType{Elems: []ast.Type{handle.Params[0].Type, ast.StructType{Name: "HttpResponse"}}}
+		result = handle.ReturnType.(ast.TupleType).Elems[1]
+	}
+	dynErr := isDynErrorType(result.(ast.EnumType).Args[1])
+	if dynErr {
+		adapter = strings.Replace(adapter, "respond", "respond_error", 1)
+	}
+	params := make([]ast.Param, len(handle.Params))
+	args := make([]ast.Expr, len(handle.Params))
+	for i, p := range handle.Params {
+		params[i] = ast.Param{Name: p.Name, Type: p.Type}
+		args[i] = &ast.Ident{P: pos, Name: p.Name}
+	}
+	inner := &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: resultHandlerName}, Args: args}
+	adapterArgs := []ast.Expr{inner}
+	if dynErr {
+		adapterArgs = append(adapterArgs, &ast.Ident{P: pos, Name: handle.Params[len(handle.Params)-1].Name})
+	}
+	call := &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: resolve(adapter, "http__"+adapter)}, Args: adapterArgs}
+	prog.Funcs = append(prog.Funcs, &ast.FuncDecl{
+		P:          pos,
+		Name:       "handle",
+		TypeParams: slices.Clone(handle.TypeParams),
+		Bounds:     maps.Clone(handle.Bounds),
+		BoundArgs:  maps.Clone(handle.BoundArgs),
+		Params:     params,
+		ReturnType: ret,
+		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{P: pos, Value: call}}},
+	})
+}
+
+// isDynErrorType reports whether `t` is `dyn error.Error`, std/error's
+// trait object, under its bare, qualified or mangled name.
+func isDynErrorType(t ast.Type) bool {
+	d, ok := t.(ast.DynTraitType)
+	if !ok || len(d.Traits) != 1 {
+		return false
+	}
+	// std/error's trait by its bundled identity: a program's own `trait
+	// Error` is another trait, and every import spelling of std/error's,
+	// aliased or re-exported, mangles to this one name.
+	return d.Traits[0] == "error__Error"
+}
+
+// desugarTraitParams makes a parameter whose type names a trait an anonymous
+// type parameter bounded by it: `f(d: Driver)` becomes `f[T_d: Driver](d: T_d)`
+// and is monomorphised like any generic. `dyn Driver` is the dynamic form, so a
+// bare trait in a parameter type has no other meaning. It returns the set of
+// trait names. The self-host twin is parser.desugar_trait_params.
+func desugarTraitParams(prog *ast.Program) map[string]bool {
+	traits := map[string]bool{}
+	for _, td := range prog.Traits {
+		traits[td.Name] = true
+	}
+	for _, fn := range prog.Funcs {
+		// A trait's methods are not generic, so an impl's method keeps a
+		// trait-typed parameter as written, and it is no type there (E064).
+		if fn.ImplTrait != "" {
+			continue
+		}
+		for i := range fn.Params {
+			// The parser spells a bracketed nominal (`Sink[i32]`) as an
+			// EnumType; an array or any other shape is not a trait reference.
+			var name string
+			var args []ast.Type
+			switch t := fn.Params[i].Type.(type) {
+			case ast.StructType:
+				name, args = t.Name, t.Args
+			case ast.EnumType:
+				name, args = t.Name, t.Args
+			default:
+				continue
+			}
+			if !traits[name] || slices.Contains(fn.TypeParams, name) {
+				continue
+			}
+			tp := freshTraitParam("T_"+fn.Params[i].Name, fn.TypeParams)
+			fn.TypeParams = append(fn.TypeParams, tp)
+			if fn.Bounds == nil {
+				fn.Bounds = map[string][]string{}
+			}
+			fn.Bounds[tp] = []string{name}
+			if len(args) > 0 {
+				if fn.BoundArgs == nil {
+					fn.BoundArgs = map[string][][]ast.Type{}
+				}
+				fn.BoundArgs[tp] = [][]ast.Type{args}
+			}
+			fn.Params[i].Type = ast.StructType{Name: tp}
+		}
+	}
+	return traits
+}
+
+// freshTraitParam is want, or want with a number appended, whichever no name
+// in taken already uses.
+func freshTraitParam(want string, taken []string) string {
+	name := want
+	for n := 1; slices.Contains(taken, name); n++ {
+		name = want + strconv.Itoa(n)
+	}
+	return name
+}
+
+// WasiHandleName is the entry the wasi-http wrapper calls. The `__fern_`
+// prefix is the emitted-runtime-symbol convention, and keeps the name out of
+// any namespace a program can spell.
+const WasiHandleName = "__fern_wasi_handle"
+
+// synthesiseWasiHandle builds:
+//
+//	function __fern_wasi_handle(req: HttpRequest): HttpResponse {
+//	    return handle(req, platform.host());
+//	}
+//
+// The one place a handler is called from outside Fern. The wrapper serves
+// one request per instance with no reactor, which is what `platform.host()`
+// is; the call instantiates a `handle` generic over its platform at
+// `platform.Host`, as `serve.run` does on the other targets.
+func synthesiseWasiHandle() *ast.FuncDecl {
+	pos := ast.Position{}
+	call := &ast.Call{
+		P:      pos,
+		Callee: &ast.Ident{P: pos, Name: "handle"},
+		Args: []ast.Expr{
+			&ast.Ident{P: pos, Name: "req"},
+			&ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: "platform__host"}},
+		},
+	}
+	return &ast.FuncDecl{
+		P:          pos,
+		Name:       WasiHandleName,
+		Params:     []ast.Param{{Name: "req", Type: ast.StructType{Name: "HttpRequest"}}},
+		ReturnType: ast.StructType{Name: "HttpResponse"},
+		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{P: pos, Value: call}}},
+	}
+}
+
+// synthesiseHandleMain builds the main of a handler-shaped program: the
+// handler served under the supervisor (docs/CRASH-ONLY-SERVE.md) on
+// `PORT`, with `init`'s config and state where it answers them —
+//
+//	function main(): i32 {
+//	    return serve.supervise(serve.__port_from_env("PORT", 8080), serve.config(), handle);
+//	}
+//
+// or, for `init(plat: platform.Platform): (serve.Config, S)` beside a handler
+// threading `S` and a `shutdown(reason, state)` hook:
+//
+//	function main(): i32 {
+//	    let (__fern_opts, __fern_state) = init(serve.__init_platform());
+//	    return serve.supervise_with_shutdown(serve.__port_from_env("PORT", 8080), __fern_opts, __fern_state, handle, shutdown);
+//	}
+//
+// An `init` answering only the state goes as the state argument, one
+// answering only the config as the config argument, and a void one
+// runs as a statement before the serve call. Where the target has no
+// processes (`supervised` false: wasm32-wasi) the single-process entries
+// of the same arity serve instead — `serve.run`, `serve.run_with` and
+// their `_shutdown` twins.
+//
+// The wasi-http target has its own `wasi:http/incoming-handler.handle`
+// export wrapper that invokes the user's `handle` directly and drops
+// this main before the tree-shake.
+//
+// The calls name std/serve's entries as modload mangles them; a program
+// that does not import std/serve is told they are undefined.
+func synthesiseHandleMain(prog *ast.Program, supervised bool) *ast.FuncDecl {
+	pos := ast.Position{}
+	serveRef := func(name string, args ...ast.Expr) *ast.Call {
+		return &ast.Call{P: pos, Callee: &ast.Ident{P: pos, Name: "serve__" + name}, Args: args}
+	}
+	ident := func(name string) *ast.Ident { return &ast.Ident{P: pos, Name: name} }
+	portCall := serveRef("__port_from_env", &ast.StringLit{P: pos, Value: "PORT"}, &ast.NumberLit{P: pos, Value: 8080})
+	// `init` is the BARE name; if a module import qualifies it, modload
+	// rewrites the call separately. It is handed the platform when it
+	// takes one.
+	init := findDecl(prog, "init")
+	initCall := &ast.Call{P: pos, Callee: ident("init")}
+	if init != nil && len(init.Params) == 1 {
+		initCall.Args = []ast.Expr{serveRef("__init_platform")}
+	}
+	initOpts, initState := initReturnShape(init)
+
+	var stmts []ast.Stmt
+	// The config is `init`'s when it answers one, else the defaults;
+	// the state is `init`'s value, destructured from beside the config
+	// when it answers both.
+	var opts ast.Expr = serveRef("config")
+	var state ast.Expr = initCall
+	switch {
+	case initOpts && initState:
+		stmts = append(stmts, &ast.Destructure{P: pos, Names: []string{"__fern_opts", "__fern_state"}, Init: initCall})
+		opts, state = ident("__fern_opts"), ident("__fern_state")
+	case initOpts:
+		opts = initCall
+	case init != nil && !initState:
+		// A void `init` runs for its side effects before the loop —
+		// logging "starting", reading env vars, warming a cache the
+		// handler reaches some other way.
+		stmts = append(stmts, &ast.ExprStmt{P: pos, Expr: initCall})
+	}
+	// A `shutdown` hook goes to the `_shutdown` entry, which calls the
+	// hook once a worker's loop has stopped.
+	hasShutdown := findDecl(prog, "shutdown") != nil
+	entry := func(supervisedName, singleName string) string {
+		if supervised {
+			return supervisedName
+		}
+		return singleName
+	}
+	var serveCall *ast.Call
+	switch {
+	case initState && hasShutdown:
+		serveCall = serveRef(entry("supervise_with_shutdown", "run_with_shutdown"), portCall, opts, state, ident("handle"), ident("shutdown"))
+	case initState:
+		serveCall = serveRef(entry("supervise_with", "run_with"), portCall, opts, state, ident("handle"))
+	case hasShutdown:
+		serveCall = serveRef(entry("supervise_shutdown", "run_shutdown"), portCall, opts, ident("handle"), ident("shutdown"))
+	default:
+		serveCall = serveRef(entry("supervise", "run"), portCall, opts, ident("handle"))
+	}
+	stmts = append(stmts, &ast.Return{P: pos, Value: serveCall})
+	return &ast.FuncDecl{
+		P:                        pos,
+		Name:                     "main",
+		Params:                   nil,
+		ReturnType:               ast.NumberType{Width: 32, Signed: true},
+		Body:                     &ast.Block{Stmts: stmts},
+		IsSynthesisedHandlerMain: true,
+	}
+}
+
+func (c *checker) requireBool(p ast.Position, t ast.Type, op string) {
+	if t != nil && !ast.Equal(t, ast.BoolType{}) {
+		c.errfCode(p, "E009", "operator %q requires boolean, got %s", op, t)
+	}
+}
+
+// isBareNumericLiteral reports whether `e` is a numeric literal, optionally
+// negated — the shape a narrowing cast still settles at its target so an
+// out-of-range constant stays an E047 rather than silently wrapping.
+// castOperandInt is the type a cast settles a non-bare integer operand at
+// when its target must stay out of the operand: the operand's own type, or
+// the polymorphic default while it has none — i32, or i64 when a literal in it
+// needs that (`(3 - 4611686018427387904) as f64`, #8668).
+func (c *checker) castOperandInt(inner ast.Type, e ast.Expr) ast.NumberType {
+	if in, ok := inner.(ast.NumberType); ok && !in.Polymorphic {
+		return in
+	}
+	return c.polymorphicIntDefault(e)
+}
+
+func isBareNumericLiteral(e ast.Expr) bool {
+	switch x := e.(type) {
+	case *ast.NumberLit:
+		return true
+	case *ast.Unary:
+		return x.Op == "-" && isBareNumericLiteral(x.Operand)
+	}
+	return false
+}
+
+// checkVariantQualifier validates the optional qualifier on a variant pattern,
+// for both the statement and the expression form of `match`. Two spellings are
+// legal:
+//
+//  1. Module qualifier (`mod.TokA`): modload rewrote it to the canonical module
+//     path, so comparing against the enum's SourceModule is enough.
+//  2. Enum qualifier (`Color.Red`): names the scrutinee enum directly. modload
+//     leaves these intact — it recognises the qualifier as a known enum name and
+//     suppresses its "unknown module" error.
+//
+// The two call sites used to carry their own copy, and the expression form's
+// copy was missing case 2 while its comment claimed to be the same check. So
+// `Color.Red` type-checked as a statement and was rejected as an expression —
+// one construct with two answers depending only on its position (#6576). One
+// function now, so they cannot drift again.
+func (c *checker) checkVariantQualifier(p ast.Position, qualifier string, ed *ast.EnumDecl) {
+	if qualifier == "" {
+		return
+	}
+	if _, qualIsEnum := c.info.Enums[qualifier]; qualIsEnum {
+		if qualifier != ed.Name {
+			c.errfCode(p, "E029", "variant pattern qualifier %q does not match scrutinee enum %s",
+				c.enumHintName(qualifier), c.enumHintName(ed.Name))
+		}
+		return
+	}
+	if ed.SourceModule != "" && qualifier != ed.SourceModule {
+		c.errfCode(p, "E029", "variant pattern qualifier names module %q, but enum %s lives in module %q",
+			qualifier, c.enumHintName(ed.Name), ed.SourceModule)
+	}
+}

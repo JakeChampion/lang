@@ -142,7 +142,7 @@ escape hatch today.
 
 ## Testing
 
-`internal/e2e/array_bounds_test.go` asserts that out-of-range reads,
+`internal/testing/e2e/array_bounds_test.go` asserts that out-of-range reads,
 writes, negative indices, and slice indexing all abort on every
 codegen backend, and that ordinary in-range indexing (every element
 width, reads + writes, loops, slices) is unaffected.

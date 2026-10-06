@@ -1361,7 +1361,7 @@ bridges an `IpAddr` to the packed IPv4 argument `tcp_connect` takes.
 builtin returns, negated or not, onto it using the Linux, Darwin or WASI
 numbering `target_os()` names, and `errno()` is the inverse.
 `internal/stdlib/net_errno_test.go` pins the three tables to
-`internal/strerror`.
+`internal/tables/strerror`.
 
 The socket controls are typed faces over the descriptor builtins
 `tcp_listen_with` and `tcp_socket_ctl`, on the same `i32` descriptors the
@@ -2132,7 +2132,7 @@ effects are reached as methods on the value the handler was handed, so a
 handler can only reach what it was given. The free functions
 (`eprint`, `now_unix_ms`, …) stay for programs that are not handlers;
 a function handed a platform that reaches one, directly or through a
-helper, is refused at check time (E080, `internal/ambient`, mirrored by
+helper, is refused at check time (E080, `internal/check/ambient`, mirrored by
 `compiler/ambient.fern`).
 
 A parameter typed by the trait makes the handler generic over it
@@ -2143,7 +2143,7 @@ records what a test's handler tried to do. Each keeps its own state as
 ordinary fields (`Host { reactor }`, the worker's reactor, 0 outside a
 serving worker).
 
-Each method needs its target capability (`internal/platforms`), so
+Each method needs its target capability (`internal/pkg/platforms`), so
 what a handler may call depends on where it is going: the `wasi-http`
 proxy world grants log / now / random / config / fetch, and `.env` is an
 E066 there.
@@ -2758,7 +2758,7 @@ method ↔ string-method cycle) which reaches `std/array`
 (for `sort.sort_*` qualified). Cyclic stdlib imports are
 allowed and resolve through modload's stdlib-cycle gate.
 End-to-end coverage on arm64 / x86-64 / wasm32 lands as
-the `Test*NoPreludeStdlibImports` suites in `internal/e2e`.
+the `Test*NoPreludeStdlibImports` suites in `internal/testing/e2e`.
 
 ### `core/mem`
 
@@ -2823,7 +2823,7 @@ protocol for the general case is tracked in #2686.
 ## Built-in types
 
 The following types are synthesised by the checker (declared in
-`internal/checker/checker.go`) and don't need an import:
+`internal/check/checker/checker.go`) and don't need an import:
 
 - `Option[T]` — `Some(T)` / `None`
 - `Result[T, E]` — `Ok(T)` / `Err(E)`
@@ -2841,7 +2841,7 @@ The following types are synthesised by the checker (declared in
 
 Free functions every program can call without an import — `print`, `args`,
 `read_file`, `isatty`, … — are declared by the checker
-(`internal/checker/checker.go`) and classified per target in
+(`internal/check/checker/checker.go`) and classified per target in
 `docs/FREESTANDING-CORE.md` and per package in
 `docs/PACKAGE-CAPABILITIES-BRIEF.md`. Two of them are compile-time constants
 rather than runtime calls, one per half of the `-target` name:
@@ -2856,7 +2856,7 @@ environment (a different object format and loader); the two wasm worlds are
 named as the target spells them.
 
 The compiler replaces the call with a string literal before type-checking
-(`internal/constfold`, `compiler/constfold.fern`), and the IR fold
+(`internal/check/constfold`, `compiler/constfold.fern`), and the IR fold
 turns `"linux" == "darwin"` into a constant and drops the dead arm, so a
 branch on it costs nothing at runtime and the other arm's code and strings
 never reach the binary:
@@ -2882,8 +2882,8 @@ so a builtin the target lacks is refused inside a dead arm too:
 `wasm32-wasi`. The constant selects between behaviours every target
 provides; it does not gate a capability.
 
-It needs no capability (core in `internal/platforms`, ungated in
-`internal/caps`) and has no `std/` wrapper: `std/platform` is the `Platform`
+It needs no capability (core in `internal/pkg/platforms`, ungated in
+`internal/pkg/caps`) and has no `std/` wrapper: `std/platform` is the `Platform`
 bag a handler is handed at run time, and a fact fixed at compile time does
 not belong on a value a mock can substitute.
 

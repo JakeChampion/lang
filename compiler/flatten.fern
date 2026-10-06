@@ -1,5 +1,5 @@
 // compiler/flatten.fern — module-flattening for the
-// self-host pipeline. Ports internal/modload's namespacing into the
+// self-host pipeline. Ports internal/pkg/modload's namespacing into the
 // self-host compiler so a multi-module program (the compiler itself!)
 // lowers to a single flat namespace the asm emitter understands.
 //
@@ -142,7 +142,7 @@ function declname_index_of(name: string, ctx: RewriteCtx): i32 {
 
 // is_runtime_helper_name reports whether a decl keeps its BARE name in the
 // bundle instead of taking its module's `<mod>__` prefix — native's
-// `modload.isRuntimeHelperName`, which `internal/e2eselfhost` pins entry for
+// `modload.isRuntimeHelperName`, which `internal/testing/e2ecompiler` pins entry for
 // entry.
 //
 // `core/map`'s helpers are the whole set. The language has no generic method on
@@ -1670,7 +1670,7 @@ pub function collect_decl_names(mod: parser.Module): string[] {
 // `<qual>.<name>`, and once the module is prefix-mangled neither half of
 // `E.Wrap` lines up with the mangled `lib__E` / `lib__Wrap` the decl now
 // carries unless the qualifier is recognised as a type. Native asks the same
-// question of `ownEnums` (internal/modload).
+// question of `ownEnums` (internal/pkg/modload).
 pub function collect_enum_names(mod: parser.Module): string[] {
   let names: string[] = [];
   let i: i32 = 0;
@@ -2126,7 +2126,7 @@ pub struct ReexportTable { keys: string[], targets: string[] }
 // consumer's `facade.name` first mangles to `facade__name`; this table
 // then redirects it to the original `helpers__name`, which is the symbol
 // the bundled program actually defines. Mirrors the native compiler's
-// modload.resolveReexports (see internal/modload/modload.go).
+// modload.resolveReexports (see internal/pkg/modload/modload.go).
 pub function build_reexports(imports: LoadedModule[], ids: string[], pfxs: string[]): ReexportTable {
   let keys: string[] = [];
   let targets: string[] = [];

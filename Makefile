@@ -35,7 +35,7 @@ digest-check:
 	uv run --no-project scripts/gen_digests.py --check
 	uv run --no-project python -B -m unittest discover -s scripts -p test_gen_digests.py
 
-# The same for the table-driven log's generated data: internal/fdlibm/logtab.go
+# The same for the table-driven log's generated data: internal/tables/fdlibm/logtab.go
 # and the regions the three self-host emitters carry.
 log-table-check:
 	uv run --no-project scripts/gen_log_table.py --check
@@ -93,7 +93,7 @@ fern-test-cache:
 
 # Run ci.yml's `changes` script against stubbed API responses: the JS copy of
 # GitHub's filter grammar and the job's fail-open rules, pinned the way
-# internal/sourcelint pins the Go copy. See scripts/ci-changes-selftest.mjs.
+# internal/testing/sourcelint pins the Go copy. See scripts/ci-changes-selftest.mjs.
 ci-selftest:
 	@command -v node >/dev/null 2>&1 || { \
 		echo "node is not on PATH: the lint lane runs this on the runner image" >&2; exit 1; }
@@ -116,7 +116,7 @@ freeze:
 #
 # The feature census rides along because it asks the same question — is the
 # self-host SOURCE in good shape — and answers it by reading the files as
-# text: no compiler, no qemu, 2 s. It is filed in internal/e2eselfhost, which
+# text: no compiler, no qemu, 2 s. It is filed in internal/testing/e2ecompiler, which
 # scripts/unit-test-packages excludes for costing 90 minutes unsharded, so it
 # ran only on pull requests and only against whatever base each branch was cut
 # from. Its wildcard-arm ratchet drifted 2563 to 2807 that way and stood red on
@@ -135,25 +135,25 @@ freeze:
 # the compiler's modules but are not in fern.fern's tree, so a deleted function
 # one of them still calls is clean here and red wherever its test builds it
 # (#9969 deleted semsource.modes_differ with semsource_census_run still calling
-# it, and four internal/e2eselfhost tests went red for it in CI).
+# it, and four internal/testing/e2ecompiler tests went red for it in CI).
 check-sources: bin/fern
 	./bin/fern -check compiler/fern.fern
 	./scripts/stdlib_check.sh
 	./scripts/selfhost_driver_check.sh
-	go test ./internal/e2eselfhost/ -run 'TestSelfHostFeatureCensus$$|TestSelfHostFixtureSourcesCheck$$' -count=1
+	go test ./internal/testing/e2ecompiler/ -run 'TestSelfHostFeatureCensus$$|TestSelfHostFixtureSourcesCheck$$' -count=1
 
 # Build the SELF-HOST compiler to a native binary for THIS host, so self-host
 # behaviour can be checked locally in seconds instead of only in CI.
 #
 # Why this is worth a target. The local loop for a self-host change was "push and
-# wait": internal/e2eselfhost unsharded exceeds 90 minutes, internal/e2e will not
+# wait": internal/testing/e2ecompiler unsharded exceeds 90 minutes, internal/testing/e2e will not
 # fit in 45, and on Apple Silicon every x86 leg SKIPs for want of qemu-x86_64.
 # Interpreting a driver works and is the documented fallback, but once the stdlib
 # is loaded it is minutes per program — a #5311 repro timed out at 40.
 #
 # A native build is ~15 minutes ONCE and then ~1.3s per program, which is what
 # made it practical to run the whole 335-fixture corpus through the self-host
-# compiler and find twelve divergences (see internal/e2e/testdata/
+# compiler and find twelve divergences (see internal/testing/e2e/testdata/
 # selfhost-wasm-known-divergences.txt). On Apple Silicon it needs the
 # dyld-loaded PIE Mach-O container (#6000); before that every binary this
 # produced was SIGKILLed at exec, which is why the target did not exist.

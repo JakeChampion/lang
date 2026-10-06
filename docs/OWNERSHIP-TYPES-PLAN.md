@@ -25,7 +25,7 @@ Ownership reaches the type layer today only in three narrow places; otherwise
 it is inferred into side-tables or encoded as runtime sentinels.
 
 Type-level precedents:
-- `ArrayType` vs `SliceType` — `internal/ast/ast.go:108` / `:119-128`. `[T]` is
+- `ArrayType` vs `SliceType` — `internal/syntax/ast/ast.go:108` / `:119-128`. `[T]` is
   already a documented **non-owning view** into an `Array<T>`, "distinct from
   owned `T[]` so the API surface signals 'this borrows' without a borrow
   checker." This is the template to generalise.
@@ -35,7 +35,7 @@ Type-level precedents:
   `own R` vs `borrow R` in the type (erased to i32 before backends).
 
 Inferred, stored off the type:
-- Native borrow inference `inferParamEscapes` (`internal/ir/ir.go:3173`) — a
+- Native borrow inference `inferParamEscapes` (`internal/oracle/ir/ir.go:3173`) — a
   monotone interprocedural fixpoint; result is a side-table keyed by
   fn → per-param bool, consumed as `paramBorrowable`. Rides `OwnedByDefault`
   (`ast.go:1048`).
@@ -203,7 +203,7 @@ fixpoints.
   read-side `str_expr_ownership` (ident reflects the slot fact VERBATIM, the
   native `ExprResultOwnershipWith` contract). Observable via the driver's
   `-str-own` dump (`irlower_run.fern`), pinned by
-  `TestSelfHostStrOwnDump` (`internal/e2eselfhost/self_host_strown_dump_test.go`)
+  `TestSelfHostStrOwnDump` (`internal/testing/e2ecompiler/self_host_strown_dump_test.go`)
   — the self-host analogue of native `ownership_test.go`. No codegen decision
   consults the facts yet (behaviour-identical; fixpoints + the per-module run
   gate pin that); CS3 (#4355) and the reuse-analysis slice are the consumers.
@@ -316,7 +316,7 @@ precompute shape.
 
 ## Validation discipline (learned from #4294 / the A2 attempts)
 
-- Native slices: the existing `internal/ir` + `internal/checker` + `rc_*`
+- Native slices: the existing `internal/oracle/ir` + `internal/check/checker` + `rc_*`
   differential suites, byte-identity where behaviour must not change.
 - Self-host slices: **always** the per-module run gate, not just fixpoints —
   deterministic corruption passes byte-identity fixpoints.

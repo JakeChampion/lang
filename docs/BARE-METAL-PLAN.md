@@ -88,7 +88,7 @@ hoisted out of a spin loop, a write must not be coalesced or dropped) and, later
 shared memory.
 
 **Free right now, expensive later.** There is no GVN, no load forwarding, and no
-global load elimination anywhere in `internal/ir` or the SSA backends — `dce.go`
+global load elimination anywhere in `internal/oracle/ir` or the SSA backends — `dce.go`
 is reachability-only, so it cannot drop an unused load. The raw memory ops
 survive today by accident, and `PERFORMANCE-RESEARCH.md`'s headline
 recommendation is exactly the cross-block optimisation work that ends that.
@@ -166,7 +166,7 @@ three deltas to that plan:
   the fused-intrinsic design happens to make easy, since no vector value is live
   across an op boundary.
 - Some freestanding targets have no vector unit at all, so the day a vector
-  surface exists it wants to be a **capability** in `internal/platforms`
+  surface exists it wants to be a **capability** in `internal/pkg/platforms`
   (`simd`). That would be the first time E066 gates a *CPU* feature rather than
   an OS one — a real widening of what the capability system means, and worth
   deciding deliberately rather than discovering.

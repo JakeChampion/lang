@@ -64,7 +64,7 @@ import "./irtables";
 // (slot_is_reclaimable_struct) feeds the deep field drop, the precise drop and
 // the reuse-donor paths, not just the exit sweep, and granting it for
 // block-scoped slots SEGFAULTS the gen1 self-compile — a failure
-// `internal/e2eselfhost` cannot reach and the per-module fixpoint can. That is
+// `internal/testing/e2ecompiler` cannot reach and the per-module fixpoint can. That is
 // why its retirement refusal is spelled out explicitly rather than inherited
 // from a lookup that happened to miss.
 
@@ -729,7 +729,7 @@ function desugar_lifted_lambda_returns(fd: parser.FuncDecl): parser.FuncDecl {
 // the checker did not propagate the Stmt-union element type into an array
 // literal in a struct-field position, so the inline variant lowered WITHOUT its
 // discriminant tag and the whole lifted module silently bailed IR eligibility to
-// AST. That checker bug is now fixed (internal/checker StructLit field
+// AST. That checker bug is now fixed (internal/check/checker StructLit field
 // setElemHintFor; e2e TestInlineEnumVariantInStructArrayField); the typed `let`
 // binding is retained as a robust, self-documenting way to express the move.
 function lift_stmt(st: ast.Stmt, acc: LiftAcc, gfns: string[]): LiftStmts {

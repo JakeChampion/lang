@@ -1,5 +1,5 @@
 // compiler/irfipverify.fern — the `fip` / `fbip` allocation-budget
-// verifier for the self-host IR, mirroring native's internal/ir/fip_verify.go
+// verifier for the self-host IR, mirroring native's internal/oracle/ir/fip_verify.go
 // (#6639 slice 3).
 //
 // The checker's E053 walk enforces the SHAPE rules of the two annotations.

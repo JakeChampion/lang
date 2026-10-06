@@ -33,7 +33,7 @@ form is the intended way to adopt existing behaviour.
 Fern today has no way to abstract over types. Methods are welded 1:1 to a
 concrete receiver type, and the checker rewrites every `x.m(a)` to a flat
 `__method_<Type>_m(x, a)` at compile time
-(`internal/checker/checker.go` dispatch path ~`:4514`). Three problems
+(`internal/check/checker/checker.go` dispatch path ~`:4514`). Three problems
 fall out, and the codebase already complains about all three:
 
 - **The stdlib hand-monomorphises.** `std/test` carries
@@ -353,7 +353,7 @@ docs/SELFHOST-CHECKER-PORT.md, 2026-09-22).
   2. `monomorph.Run` clones the function per instantiation, substituting
      `T → i32` etc. in the body (it already does this for `ParamType`).
   3. `monomorph` re-runs `checker.Check` on the rewritten program (it
-     already does — see the package doc at `internal/monomorph/monomorph.go:19`).
+     already does — see the package doc at `internal/oracle/monomorph/monomorph.go:19`).
      Now the receiver is concrete and the **ordinary** dispatch path
      rewrites `x.to_string()` → `__method_i32_to_string(x)`.
 
@@ -419,7 +419,7 @@ loop lets one bound parameter feed another (`[T, U, I: Map[T, U]]`).
 The lever is that bound type-arguments are normalised so a leaf whose name
 is a type parameter is a `ParamType`, not a same-named nullary `StructType`
 (the parser can't tell them apart) — see `normalizeParamRefs`,
-`bindBoundParam`, and `substBoundArg` in `internal/checker/checker.go`.
+`bindBoundParam`, and `substBoundArg` in `internal/check/checker/checker.go`.
 Trait-bound satisfaction (E021) then resolves the bound's `T` through the
 inferred substitution before comparing against the impl's concrete args.
 
@@ -508,12 +508,12 @@ mentioned. An import that introduces no second provider of the same
 ## 6. Implementation
 
 ### 6.1 Lexer
-Add `trait` and `impl` to `internal/lexer/lexer.go` `keywords`. `Self`
+Add `trait` and `impl` to `internal/syntax/lexer/lexer.go` `keywords`. `Self`
 stays a *contextual* type name (recognised in the parser inside
 trait/impl bodies); `self` is an ordinary identifier. Verified no `.fern`
 source uses `trait`/`impl`/`Self` as identifiers (only in comments).
 
-### 6.2 AST (`internal/ast/ast.go`)
+### 6.2 AST (`internal/syntax/ast/ast.go`)
 ```go
 type TraitDecl struct {
     P            Position
@@ -543,7 +543,7 @@ Add `Traits []*TraitDecl` and `Impls []*ImplDecl` to `Program`. Add a
 substitute it with the impl's concrete type before the type ever reaches
 later passes).
 
-### 6.3 Parser (`internal/parser/parser.go`)
+### 6.3 Parser (`internal/syntax/parser/parser.go`)
 Two new top-level forms alongside `struct`/`enum`/`type`:
 - `trait Name { <sig>; <sig>; }` — each `<sig>` is a function signature
   (no body). First param is required to be `self`; its type is recorded
@@ -559,7 +559,7 @@ Two new top-level forms alongside `struct`/`enum`/`type`:
 This desugaring is why no later stage needs to know traits exist at
 runtime.
 
-### 6.4 Checker (`internal/checker/checker.go`)
+### 6.4 Checker (`internal/check/checker/checker.go`)
 - **Trait registry**: new `Info.Traits map[string]*ast.TraitDecl`.
   Register each `TraitDecl`; reject duplicate trait names.
 - **Conformance** (after the receiver-hoist loop at `:1651`): for each
@@ -590,7 +590,7 @@ runtime.
 - The monomorph recheck (already present) finishes dispatch. No new
   runtime lowering.
 
-### 6.6 modload (`internal/modload/modload.go`)
+### 6.6 modload (`internal/pkg/modload/modload.go`)
 - Aggregate `Traits` / `Impls` in `combine`; stamp `SourceModule`.
 - Mangle `TraitDecl.Name` for non-entry modules exactly like struct
   names, and rewrite `ImplDecl.Trait` / the `for` type name through the
@@ -600,7 +600,7 @@ runtime.
 - Also rewrite each `FuncDecl.Bounds` trait name and the `ImplDecl.Trait`
   via `rewriteTraitNameAt` (own-module → `selfPrefix`, qualified
   `mod.Trait` → the imported module's prefix). Done in Phase 3; proven by
-  multi-file e2e tests (`internal/e2e/traits_test.go`).
+  multi-file e2e tests (`internal/testing/e2e/traits_test.go`).
 
 ### 6.7 `derive` (Phase 4)
 `@derive(Trait, …)` on a struct/enum synthesises field-/variant-wise
@@ -856,7 +856,7 @@ regressing the self-host gates. It needs traits in two slices:
   promotion clauses pull one into the monomorphised set (clause (d): a
   body that binds or reassigns a bare-var-typed value, so the ownership
   lowering has a type to work with). Tested on x86-64 + arm64
-  (`internal/e2e/self_host_traits_test.go`): primitive, struct,
+  (`internal/testing/e2e/self_host_traits_test.go`): primitive, struct,
   multi-type, and mixed-primitive-and-struct instantiations.
 
 - **Self-host slice 3 (shipped): MULTI-parameter monomorphisation.**
@@ -1091,10 +1091,10 @@ regressing the self-host gates. It needs traits in two slices:
   the same once every module is renamed (`flatten.inherit_trait_defaults`):
   each default body is renamed in the trait's module first, so it calls
   that module's functions wherever the impl is (#8484). Tested on x86-64 +
-  wasm IR (`internal/e2eselfhost/self_host_default_method_ir_test.go`):
+  wasm IR (`internal/testing/e2ecompiler/self_host_default_method_ir_test.go`):
   inherited, overridden, default-calls-abstract, and
   two-impls-inherit-independently; across modules by
-  `internal/e2e/trait_default_module_test.go`.
+  `internal/testing/e2e/trait_default_module_test.go`.
 
 ## 7b. The `std/test` collapse (landed)
 
@@ -1138,7 +1138,7 @@ touches):
 - **Checker** (`checker_test.go`): conformance pass/fail (missing
   method, signature mismatch, extra method), duplicate-impl, orphan-rule
   rejection.
-- **e2e** (`internal/e2e`): a program that declares `trait Display` +
+- **e2e** (`internal/testing/e2e`): a program that declares `trait Display` +
   `impl Display for Point`, calls `p.to_string()`, runs on the
   interpreter and prints the expected string.
 - Full suite (incl. WASM e2e) must stay green; never regress.

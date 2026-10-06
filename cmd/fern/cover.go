@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/jakechampion/lang/internal/ast"
+	"github.com/jakechampion/lang/internal/syntax/ast"
 )
 
 // Coverage reporting (#5548) — the read half of `fern -cover`.

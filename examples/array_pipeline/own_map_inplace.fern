@@ -26,7 +26,7 @@
 // `with_own` is annotated `fip`, so the E068 pass is asserting the space claim
 // at compile time rather than the measurement asserting it after the fact.
 // `map_own` is NOT annotated, though it could be on either compiler
-// (internal/e2e/array_inplace_fip_test.go is that program): the gate also
+// (internal/testing/e2e/array_inplace_fip_test.go is that program): the gate also
 // builds this file with `FERN_NO_ARRAY_INPLACE=1`, and under that switch the
 // claim is false and E068 would refuse it.
 import "core/cmp";

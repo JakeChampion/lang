@@ -261,8 +261,8 @@ pub function is_option(a: string): boolean {
 // GNU prints `strerror(3)`, so the words belong to the host libc, and
 // sixteen errnos read differently on Darwin. These are the eight a
 // utility spells out in a diagnostic of its own — the runtime's own
-// `IoError.Other` gets the same treatment from `internal/strerror`, and
-// `internal/coreutils/strerror_parity_test.go` pins these against that
+// `IoError.Other` gets the same treatment from `internal/tables/strerror`, and
+// `internal/testing/coreutils/strerror_parity_test.go` pins these against that
 // table so the two lists cannot drift apart.
 //
 // An errno whose wording is the same on both platforms needs no helper
@@ -328,7 +328,7 @@ pub function enodata_text(): string {
 // The kinds the runtime names carry no message of their own, so the
 // mapping is by errno text; `Other` carries the runtime's own string,
 // which is the host libc's strerror text for the errno on every backend
-// (internal/strerror).
+// (internal/tables/strerror).
 pub function io_error_text(e: IoError): string {
   match (e) {
     NotFound(_) => {

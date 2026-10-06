@@ -1,7 +1,7 @@
 // cmd/fern-lsp is the stdio entry point for the Fern Language Server
 // Protocol implementation. Editors / IDEs spawn this binary and speak
 // LSP over stdin/stdout per the spec; the actual server logic lives
-// in internal/lsp so the wasm playground can drive it in-process.
+// in internal/tools/lsp so the wasm playground can drive it in-process.
 //
 // It advertises full-document sync and publishes `fern -check`'s
 // diagnostics on every change; docs/LSP-INTEGRATION-PLAN.md lists the
@@ -12,7 +12,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/jakechampion/lang/internal/lsp"
+	"github.com/jakechampion/lang/internal/tools/lsp"
 )
 
 func main() {

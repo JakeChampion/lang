@@ -1,5 +1,5 @@
 // compiler/irverifyprovided.fern — the callee-resolution verifier
-// (#6639 slice 4), mirroring native's internal/ir/verifyprovided.go.
+// (#6639 slice 4), mirroring native's internal/oracle/ir/verifyprovided.go.
 //
 // Every `call_direct` names its callee by string. Three things can satisfy
 // that name: a function the program DECLARES, an `@import` extern the host

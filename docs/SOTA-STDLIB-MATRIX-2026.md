@@ -101,7 +101,7 @@ queues) and every "parallel *x*" row are downstream of a threading model that
 does not exist and has not been decided. See `docs/MULTICORE-RESEARCH.md`.
 
 **4. Six backends, so an intrinsic is never one change.** Any new primitive
-lowered as an IR op needs `internal/ir` plus x86-64, arm64 and wasm on the
+lowered as an IR op needs `internal/oracle/ir` plus x86-64, arm64 and wasm on the
 native side, *and* `asm_ir.fern` / `asm_arm64_ir.fern` / `wasm_ir.fern` on the
 self-host side, plus the interpreter, or it is a parity gap. This is why
 "just use `ROL`" is a project and `count_ones` took a whole pass. Budget
@@ -199,7 +199,7 @@ obvious:
    other because it passed through f64 first.
 3. **f64 transcendentals agree across backends and are gated on it.** Every
    backend emits the same fdlibm kernels over the same reduction, from one
-   coefficient table (`internal/fdlibm`), and
+   coefficient table (`internal/tables/fdlibm`), and
    `TestF64TranscendentalBackendsAgree` pins interp / x86-64 / arm64 / wasm
    bit for bit. What is still open is the *contract*: Fern has not said
    whether it promises correct rounding, a stated ULP bound, or agreement
@@ -385,7 +385,7 @@ per ASCII byte, and ASCII is what the ingest path mostly sees.
 | 80 | JSON number | `std/json` | Delegates to `parse_float` (Eisel–Lemire) | Eisel–Lemire | **SHIPPED** | — |
 | 81 | CSV scanner | `std/csv` | Scalar | SIMD delimiter detection | KERNEL | 5 |
 | 82 | HTTP parser | `std/http` | Scalar | SIMD classification | KERNEL | 5 |
-| 83 | Lexer classes | `internal/lexer`, self-host lexer | Branch chains in places | 256-entry lookup tables | **GAP — easy, and the compiler is the beneficiary** | 1 |
+| 83 | Lexer classes | `internal/syntax/lexer`, self-host lexer | Branch chains in places | 256-entry lookup tables | **GAP — easy, and the compiler is the beneficiary** | 1 |
 | 84 | Whitespace scan | lexers | Branch chains | SWAR / table | GAP | 1 |
 | 85 | Identifier scan | lexers | Branch chains | Table-driven ASCII fast path | GAP | 1 |
 | 86 | Quoted-string scan | `std/json`, lexers | Byte loop | SIMD quote/backslash detect | KERNEL; table-driven still the cheaper first move | 1 |
@@ -424,11 +424,11 @@ in the list at all:
 
 - **Over-retention**: measured under `FERN_LEAKCHECK=1` and pinned per case.
   The self-host-versus-native gap #6127 opened is closed — that grid
-  (`internal/e2eselfhost/testdata/selfhost-leak-matrix.txt`) reads clean on
+  (`internal/testing/e2ecompiler/testdata/selfhost-leak-matrix.txt`) reads clean on
   x86-64 and arm64. The two leak pins measure the self-host and are clean:
-  `internal/e2e/testdata/conformance-leak-census.txt` has one non-zero row (a
+  `internal/testing/e2e/testdata/conformance-leak-census.txt` has one non-zero row (a
   block live when a bounds check aborts), and
-  `internal/e2e/rc_leak_gate_test.go` pins no rc-corpus case.
+  `internal/testing/e2e/rc_leak_gate_test.go` pins no rc-corpus case.
 - **The rc==1 append cliff**: `__arr_push_shared_count()` /
   `__arr_push_shared_bytes()`. And the lesson attached to it — **rank by the
   weighted figure, never the count**. A whole-module compile crosses the cliff
@@ -592,7 +592,7 @@ audit" verdict can be closed: it was verified by reading, not assumed.
 
 Two things remain. **Timezones** are a data problem (the IANA database) more
 than an algorithm one, and the interesting design question is how the database
-ships — embedded via `internal/embed`, read from the host, or a package. And
+ships — embedded via `internal/pkg/embed`, read from the host, or a package. And
 row 158's resolution question: `Instant` is second-based, while the published
 list assumes integer nanoseconds. Widening it later is a breaking change, so it
 is cheaper to decide now than to migrate.
@@ -870,7 +870,7 @@ its entries are N/A or already shipped; what remains, reordered by
 | 5 | **Table-driven byte classification** (67, 83–86, 65, 66) | The surviving piece of the simdjson lesson; one idiom, six call sites, ingest path and compiler both benefit |
 | 6 | **The raw-load decision** (fdn. 11) | One decision, six blocked rows behind it |
 | 7 | **Float accuracy contract** (§B) | The only backend-observable *correctness* divergence in the matrix |
-| 8 | **Magic-number constant division** (8, 11, 12) | One `internal/ir` peephole every backend inherits; pays out on every constant divide, and unblocks Lemire int→string |
+| 8 | **Magic-number constant division** (8, 11, 12) | One `internal/oracle/ir` peephole every backend inherits; pays out on every constant divide, and unblocks Lemire int→string |
 | 9 | **Benchmark harness** (fdn. 12) | Makes every other row provable |
 | 10 | **The vector surface** (§R) | Highest ceiling, highest cost; deliberately not first |
 
@@ -893,7 +893,7 @@ column precisely so that check is a single `grep`.
 **Verdicts are claims, and claims get checked by reading code.** Every SHIPPED
 and N/A above was verified by reading the module, not inferred from a
 changelog: `std/time` really does use Hinnant's algorithms, `std/crypto` really
-does stop at SHA-256, `internal/ir` really has no vector type, `log2` really is
+does stop at SHA-256, `internal/oracle/ir` really has no vector type, `log2` really is
 `log(x)/ln2`, `sort_i32_inplace_asc` really is quadratic. Two rows changed
 verdict during this pass purely from reading — UTF-8 validation is a branch
 ladder rather than the DFA the blueprint records (row 67, BLOCKED → GAP), and

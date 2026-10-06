@@ -150,7 +150,7 @@ An audit of every predicate, binding mark, and lift-time resolver in irlower
 found 28 consumers re-deriving a type structurally while the stamp on the same
 node went unread — each one demonstrated as a live defect against the interp
 oracle before fixing (13 silent wrong answers, 11 bails) and pinned by
-`internal/e2eselfhost/self_host_annotate_consumers_ir_test.go` (oracle-compared,
+`internal/testing/e2ecompiler/self_host_annotate_consumers_ir_test.go` (oracle-compared,
 x86-64 + wasm, each gap with a walk-path control). The wirings follow the
 ordering rules above; the sweep's own findings, for whoever wires the next one:
 
@@ -396,7 +396,7 @@ With those, `callee_fn_sig` supplies the funcref tag at all seven sites from the
 checker's stamp on the call — the carrier answering a question that was
 otherwise a re-derivation. All four shapes now match the interp oracle on
 x86-64 and wasm, pinned per shape with its bound-local and its all-i32 control
-in `internal/e2eselfhost/self_host_fn_value_call_ir_test.go`.
+in `internal/testing/e2ecompiler/self_host_fn_value_call_ir_test.go`.
 
 ### The with-arguments half: the parameters have to be CARRIED
 
@@ -567,7 +567,7 @@ is added in one place rather than missed in three.
 
 Note how little of this the fixpoint reaches: the self-host's own sources carry
 one fn-typed parameter (`astwalk.fold_expr` / `fold_stmt`, #6993) at one arity
-and one signature, so `internal/e2eselfhost` and the fixture legs are still the
+and one signature, so `internal/testing/e2ecompiler` and the fixture legs are still the
 gates that matter.
 
 **CLOSED (the section below is the record of why it was blocked).** `fn_ret` now
@@ -764,7 +764,7 @@ parser.ExprNumber(n) => {
 
 The native compiler does something categorically different: an unsuffixed
 integer literal parses **polymorphic** (`NumberLit.Width == 0`, see
-`internal/parser/parser.go`'s suffix switch) and a later settling pass fixes its
+`internal/syntax/parser/parser.go`'s suffix switch) and a later settling pass fixes its
 width from context, so `let v: i64 = <literal>` settles the literal to 64. Only
 a typed suffix (`42i64`) pins the width at parse time. The self-host checker has
 no settling pass at all.
@@ -914,7 +914,7 @@ this — no synthetic case in the suite below reproduces it, because the shape
 needs a generic module whose clones replace the erased declaration.
 
 Pinned per shape, with its struct/scalar/bare-variant control, on x86-64 and
-wasm in `internal/e2eselfhost/self_host_annotate_enum_ir_test.go`.
+wasm in `internal/testing/e2ecompiler/self_host_annotate_enum_ir_test.go`.
 
 ## Sequencing and cost
 

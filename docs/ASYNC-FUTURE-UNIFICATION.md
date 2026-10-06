@@ -147,7 +147,7 @@ sequences the safe consolidation first.
      `resume` drops it (`wasm_pollable_drop`, given a native/interp
      **no-op** lowering) before `tcp_close`, avoiding the
      "resource has children" trap. Verified:
-     `internal/e2e/async_wasm_fetch_e2e_test.go` — two parallel
+     `internal/testing/e2e/async_wasm_fetch_e2e_test.go` — two parallel
      `fetch.fetch_future` through `async.gather` over real sockets,
      bodies returned in input order, overlapped, under stock wasmtime
      (`-S inherit-network`, Preview 2).
@@ -158,7 +158,7 @@ sequences the safe consolidation first.
      and would trap with "resource has children", and then its
      continuation is resumed with `cancelled()` and closes its socket, on
      native and wasm alike (#11599). Verified by
-     `internal/e2e/async_wasm_fetch_e2e_test.go ▸ TestAsyncWasmRaceFetchDropsLoser`
+     `internal/testing/e2e/async_wasm_fetch_e2e_test.go ▸ TestAsyncWasmRaceFetchDropsLoser`
      and `TestSelfHostRaceClosesTheLoser`.
    - **DONE — `with_deadline` host-timeout on wasm (incl. the composer
      fix).** `with_deadline` appends a deadline timer to the poll set
@@ -177,7 +177,7 @@ sequences the safe consolidation first.
      instance, since `importStructured` is a no-op once it exists).
      Verified: the combined `monotonic_ns` + `wasm_timer_pollable` +
      `poll` program now composes/validates/runs, and
-     `internal/e2e/async_wasm_e2e_test.go ▸ TestAsyncWasmWithDeadline`
+     `internal/testing/e2e/async_wasm_e2e_test.go ▸ TestAsyncWasmWithDeadline`
      (fast future beats the budget, slow one lands `on_timeout`).
    - **DONE — folded `std/wasm_reactor` into `std/async`.** Its
      `run` / `select` / `run_deadline` (over pollable-tagged `Step[T]`)

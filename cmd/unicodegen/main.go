@@ -60,7 +60,7 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/jakechampion/lang/internal/fmtsource"
+	"github.com/jakechampion/lang/internal/syntax/fmtsource"
 )
 
 // bias is added to a stored delta so negative deltas fit an unsigned

@@ -1,0 +1,690 @@
+package e2ecompiler
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"runtime"
+	"testing"
+)
+
+// TestSelfHostX86Gas exercises the self-hosted GAS (AT&T) assembly
+// front-end (compiler/x86_native.fern PART 2) — the parser that
+// turns asm.fern's text into x86_native.fern encoder calls. It concatenates
+// x86_native.fern + a self-test main() that checks the
+// operand parsers and a small assembled program, run through the self-host
+// wasm pipeline (wasm_run -> WAT -> wasmtime). Exit 0 = pass.
+func TestSelfHostX86Gas(t *testing.T) {
+	runX86GasWasmSelfTest(t, "x86_gas_selftest", x86GasSelfTestMain)
+}
+
+// runX86GasWasmSelfTest concatenates x86_native.fern with a self-test
+// main() whose exit code is 0 on success and the failing check's id
+// otherwise, then runs it through the self-host wasm pipeline
+// (wasm_run -> WAT -> wasmtime).
+//
+// Distinct from runX86GasNativeDriver below, which expects its driver to
+// WRITE an ELF to stdout and then executes it. Both exist because they
+// answer different questions: this one checks the assembler's own output
+// byte by byte, that one checks the resulting binary actually runs.
+func runX86GasWasmSelfTest(t *testing.T, name, mainSrc string) {
+	t.Helper()
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host x86 gas e2e")
+	}
+	gcc, runner := x86_64Tooling(t)
+
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
+
+	nat, err := os.ReadFile("../../../compiler/x86_native.fern")
+	if err != nil {
+		t.Fatalf("read x86_native.fern: %v", err)
+	}
+	source := string(nat) + "\n" + mainSrc
+
+	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
+	if len(wat) == 0 {
+		t.Fatalf("wasm emitter produced 0 bytes for %s", name)
+	}
+	watPath := filepath.Join(dir, name+".wat")
+	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+		t.Fatalf("write wat: %v", err)
+	}
+	cmd := exec.Command("wasmtime", "run", watPath)
+	_ = cmd.Run()
+	if code := cmd.ProcessState.ExitCode(); code != 0 {
+		t.Errorf("%s failed at check %d\n--- WAT ---\n%s", name, code, wat)
+	}
+}
+
+// TestSelfHostX86GasLoopRuns is the end-to-end proof of the GAS front-end:
+// a Fern program feeds a hand-written GAS loop (acc=0; 7×: acc += 6;
+// exit(acc)) to x86_gas_assemble, wraps the result in an ELF via elf.fern,
+// and the binary runs natively on x86-64 exiting 42 — assembly text ->
+// machine code -> ELF, no external `as` or `ld`.
+func TestSelfHostX86GasLoopRuns(t *testing.T) {
+	runX86GasNativeDriver(t, "gasloop42", x86GasLoopDriverMain, 42)
+}
+
+// TestSelfHostX86GasRodataRuns feeds a GAS program with a `.section
+// .rodata` `.quad` constant loaded via `leaq sym(%rip)`, proving the
+// front-end's directive + rip-relative path end-to-end (exits 42).
+func TestSelfHostX86GasRodataRuns(t *testing.T) {
+	runX86GasNativeDriver(t, "gasrodata42", x86GasRodataDriverMain, 42)
+}
+
+// TestSelfHostX86GasMulRuns assembles `imulq` (6 * 7 = 42) end-to-end.
+func TestSelfHostX86GasMulRuns(t *testing.T) {
+	runX86GasNativeDriver(t, "gasmul42", x86GasMulDriverMain, 42)
+}
+
+// TestSelfHostX86GasIncShlRuns assembles incq + shlq ((5+1)<<3 - 6 = 42).
+func TestSelfHostX86GasIncShlRuns(t *testing.T) {
+	runX86GasNativeDriver(t, "gasincshl42", x86GasIncShlDriverMain, 42)
+}
+
+// TestSelfHostX86GasDivRuns assembles cqto + idivq (84 / 2 = 42).
+func TestSelfHostX86GasDivRuns(t *testing.T) {
+	runX86GasNativeDriver(t, "gasdiv42", x86GasDivDriverMain, 42)
+}
+
+// TestSelfHostX86GasCarryChainRuns assembles the #7878 Payne-Hanek surface —
+// shldq %cl, one-operand mulq, adcq, sbbq — into a program whose exit code
+// (42) depends on every one of them producing the architecturally correct
+// result, carry flag included.
+func TestSelfHostX86GasCarryChainRuns(t *testing.T) {
+	runX86GasNativeDriver(t, "gascarry42", x86GasCarryChainDriverMain, 42)
+}
+
+// TestSelfHostX86GasCarryChainGroundTruth pins the shldq/mulq/adcq/sbbq
+// encodings byte-for-byte against as + objdump, with register choices
+// exercising the REX.R/.B fields. Three of these assemble cleanly when
+// wrong: shld's ModRM.reg is the SOURCE (reversed against the ALU pattern),
+// and adc/sbb sit between or (/1) and and (/4) in one opcode family, where a
+// wrong extension digit is a different instruction that drops the carry.
+// TestSelfHostX86GasVexGroundTruth pins the AVX2 forms the runtime
+// kernels emit, in the register mixes that exercise both halves of the VEX
+// prefix, against as + objdump output for this exact text.
+func TestSelfHostX86GasVexGroundTruth(t *testing.T) {
+	runX86GasWasmSelfTest(t, "x86_gas_vex_groundtruth", x86GasVexGroundTruthMain)
+}
+
+const x86GasVexGroundTruthMain = `
+function main(): i32 {
+    let src: string = "    .text\n_start:\n    vmovdqu (%rax,%rdx), %ymm0\n    vmovdqu (%r8,%r9), %ymm3\n    vmovdqu (%rdi), %ymm9\n    vmovdqu %ymm1, %ymm0\n    vpbroadcastb %xmm1, %ymm1\n    vpbroadcastb %xmm9, %ymm10\n    vpcmpeqb %ymm1, %ymm0, %ymm0\n    vpcmpeqb %ymm9, %ymm10, %ymm11\n    vpcmpeqb (%rax,%rdx), %ymm1, %ymm0\n    vpmovmskb %ymm0, %eax\n    vpmovmskb %ymm0, %r9d\n    vpmovmskb %ymm10, %r11d\n    vmovdqu %ymm0, (%rdi)\n    vmovdqu %ymm1, 32(%rdi)\n    vmovdqu %ymm9, (%r8,%r9)\n    vmovdqu %ymm3, -64(%rax,%rdx)\n    vzeroupper\n";
+    let a: X86Asm = x86_gas_assemble(src);
+    if (a.unknown.len() > 0) { return 95; }
+    let exp: i32[] = [197, 254, 111, 4, 16, 196, 129, 126, 111, 28, 8, 197, 126, 111, 15, 197, 254, 111, 193, 196, 226, 125, 120, 201, 196, 66, 125, 120, 209, 197, 253, 116, 193, 196, 65, 45, 116, 217, 197, 245, 116, 4, 16, 197, 253, 215, 192, 197, 125, 215, 200, 196, 65, 125, 215, 218, 197, 254, 127, 7, 197, 254, 127, 79, 32, 196, 1, 126, 127, 12, 8, 197, 254, 127, 92, 16, 192, 197, 248, 119];
+    if (a.text.len() != exp.len()) { return 96; }
+    let i: i32 = 0;
+    while (i < exp.len()) {
+        if (a.text[i] as i32 != exp[i]) { return 97; }
+        i = i + 1;
+    }
+    return 0;
+}
+`
+
+func TestSelfHostX86GasCarryChainGroundTruth(t *testing.T) {
+	runX86GasWasmSelfTest(t, "x86_gas_carrychain_groundtruth", x86GasCarryChainGroundTruthMain)
+}
+
+// TestSelfHostX86GasExtRegRuns exercises extended registers r8-r15 in
+// arithmetic (imulq %r13,%r12; 6*7=42) — REX.R/.B on reg-reg + B8 imm.
+func TestSelfHostX86GasExtRegRuns(t *testing.T) {
+	runX86GasNativeDriver(t, "gasext42", x86GasExtRegDriverMain, 42)
+}
+
+// TestSelfHostX86GasExtMemRuns exercises extended registers in memory ops:
+// store r8 to [rsp] (SIB) and load it into r9, exit(r9) = 42.
+func TestSelfHostX86GasExtMemRuns(t *testing.T) {
+	runX86GasNativeDriver(t, "gasextmem42", x86GasExtMemDriverMain, 42)
+}
+
+// TestSelfHostX86GasIndexRuns exercises SIB-index addressing: store 42 at
+// [rsp + rcx*8] and load it back, exit(rdi) = 42.
+func TestSelfHostX86GasIndexRuns(t *testing.T) {
+	runX86GasNativeDriver(t, "gasindex42", x86GasIndexDriverMain, 42)
+}
+
+// TestSelfHostX86GasByteImmRuns exercises movb $imm + movzbq: store byte 42
+// to [rsp], zero-extend-load it, exit 42.
+func TestSelfHostX86GasByteImmRuns(t *testing.T) {
+	runX86GasNativeDriver(t, "gasbyteimm42", x86GasByteImmDriverMain, 42)
+}
+
+// TestSelfHostX86GasByteRegRuns exercises movb %reg8 + movzbq into an
+// extended register: store %cl to [rsp], load into %r8, exit 42.
+func TestSelfHostX86GasByteRegRuns(t *testing.T) {
+	runX86GasNativeDriver(t, "gasbytereg42", x86GasByteRegDriverMain, 42)
+}
+
+// TestSelfHostX86GasRuntimeOpsRuns exercises the mnemonics asm.fern's
+// mmap-era alloc/RC runtime emits that the front-end grew for #4801:
+// unsuffixed movabs, shrq, btq + jc (the RC sentinel-bit test), incl
+// sym(%rip) + movl sym(%rip) (the rc-underflow counter), movl $imm →
+// mem (refcount zeroing), and store-form cmpq %reg, mem (the array-push
+// capacity check). Before, unknown mnemonics were silently dropped and
+// the two mis-dispatched forms encoded a WRONG instruction — the
+// assembled runtime then died in __fern_alloc's exit-137 bounds trap.
+func TestSelfHostX86GasRuntimeOpsRuns(t *testing.T) {
+	runX86GasNativeDriver(t, "gasruntimeops42", x86GasRuntimeOpsDriverMain, 42)
+}
+
+// runX86GasNativeDriver concatenates x86_native.fern +
+// elf.fern + driverMain, compiles it through the self-host wasm emitter,
+// runs the WAT under wasmtime to get the raw ELF the driver assembled and
+// wrote to stdout, then executes that ELF natively on x86-64 and asserts
+// the exit code.
+func runX86GasNativeDriver(t *testing.T, name, driverMain string, wantExit int) {
+	t.Helper()
+	if runtime.GOARCH != "amd64" {
+		t.Skip("native x86-64 run requires an amd64 host")
+	}
+	if _, err := exec.LookPath("wasmtime"); err != nil {
+		t.Skip("wasmtime not on PATH; skipping self-host x86 gas run")
+	}
+	gcc, runner := x86_64Tooling(t)
+
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
+
+	nat, err := os.ReadFile("../../../compiler/x86_native.fern")
+	if err != nil {
+		t.Fatalf("read x86_native.fern: %v", err)
+	}
+	elf, err := os.ReadFile("../../../compiler/elf.fern")
+	if err != nil {
+		t.Fatalf("read elf.fern: %v", err)
+	}
+	source := string(nat) + "\n" + string(elf) + toU8Src + driverMain
+
+	wat := runCapture(t, gcc, runner, driverBin, []byte(source))
+	if len(wat) == 0 {
+		t.Fatalf("wasm emitter produced 0 bytes for the %s driver", name)
+	}
+	watPath := filepath.Join(dir, name+"_driver.wat")
+	if err := os.WriteFile(watPath, wat, 0o644); err != nil {
+		t.Fatalf("write wat: %v", err)
+	}
+
+	bin, err := exec.Command("wasmtime", "run", watPath).Output()
+	if err != nil {
+		t.Fatalf("wasmtime run (driver): %v", err)
+	}
+	if len(bin) < 4 || bin[0] != 0x7f || bin[1] != 'E' || bin[2] != 'L' || bin[3] != 'F' {
+		t.Fatalf("output is not an ELF (bad magic): % x", bin[:min(4, len(bin))])
+	}
+
+	binPath := filepath.Join(dir, name)
+	if err := os.WriteFile(binPath, bin, 0o755); err != nil {
+		t.Fatalf("write binary: %v", err)
+	}
+	got := 0
+	if err := exec.Command(binPath).Run(); err != nil {
+		ee, ok := err.(*exec.ExitError)
+		if !ok {
+			t.Fatalf("run failed (not an exit code): %v", err)
+		}
+		got = ee.ExitCode()
+	}
+	if got != wantExit {
+		t.Fatalf("exit code = %d, want %d", got, wantExit)
+	}
+}
+
+// x86GasSelfTestMain checks the operand parsers and a small assembled
+// program. Each `return N` is a failing-check id (0 = pass). The embedded
+// GAS source uses \n / \t escapes (interpreted by the Fern lexer). 184 =
+// 0xB8 (mov eax,imm), 185 = 0xB9 (mov ecx,imm).
+// TestSelfHostX86GasGroundTruth pins every encoding the in-process x86-64
+// assembler gained when `-target x86-64-linux` stopped emitting `.s` for gcc:
+// lzcnt/tzcnt/popcnt, the f32 conversions, movd, the byte ALU, sarq %cl and
+// setp/setnp. Each is asserted byte-for-byte against `as` + objdump.
+//
+// This is the gate the corpus sweep could not be: an assembler that DROPS an
+// instruction still produces a plausible binary, and `rep stosq` — the
+// buffer-zeroing instruction and the most-emitted mnemonic in the whole
+// surface — was silently dropped for exactly that reason. Its first visible
+// symptom was a closure call through a null function pointer, four layers
+// away from the cause.
+func TestSelfHostX86GasGroundTruth(t *testing.T) {
+	runX86GasWasmSelfTest(t, "x86_gas_groundtruth", x86GasGroundTruthMain)
+}
+
+// x86GasGroundTruthMain assembles one instance of every mnemonic and
+// operand shape the in-process x86-64 assembler gained or corrected when
+// "-target x86-64-linux" stopped emitting .s for gcc, and asserts the bytes
+// against as + objdump ground truth.
+//
+// Taken FROM that ground truth rather than from a reading of the manual.
+//
+// One deliberate divergence from as, not covered here: "testq $imm, %rax"
+// uses the uniform F7 /0 form rather than as's shorter A9 accumulator
+// special case. Both are correct; the test uses %rcx, where they agree.
+//
+// "testl" must NOT carry REX.W. It did, and ZF made the substitution look
+// free — but a 32-bit rc word loaded with movl is zero-extended, so SF is
+// wrong at 64 bits and the `js` on every "negative rc = immortal, skip" arm
+// of the rc runtime fell through. The three rows cover the low-register form
+// and both REX extension bits.
+const x86GasGroundTruthMain = `
+function main(): i32 {
+    let src: string = "    .text\n_start:\n    andb %dl, %al\n    orb %dl, %al\n    setp %dl\n    setnp %dl\n    movd %eax, %xmm0\n    movd %xmm0, %eax\n    movsxd %eax, %rax\n    cvtsd2ss %xmm0, %xmm1\n    cvtss2sd %xmm0, %xmm1\n    lzcntl %eax, %eax\n    lzcntq %rax, %rax\n    tzcntl %eax, %eax\n    tzcntq %rax, %rax\n    popcntl %eax, %eax\n    popcntq %rax, %rax\n    movq $0, %rax\n    movq $-1, %rax\n    shlq %cl, %rax\n    shrq %cl, %rax\n    sarq %cl, %rax\n    shlq $3, %rax\n    shrq $3, %rcx\n    sarq $3, %rdx\n    testq $1, %rcx\n    call *%r11\n    call *%rax\n    call *-40(%rbp)\n    rep stosq\n    rep movsq\n    rep stosb\n    leaq 0(,%rcx,8), %rsi\n    leaq 16(,%rdx,8), %rsi\n    cvttsd2si %xmm0, %eax\n    cvttsd2si %xmm0, %rax\n    testl %ecx, %ecx\n    testl %r9d, %r8d\n    testl %eax, %r10d\n    addw %ax, %bx\n    movb $1, %cl\n    shlb $3, %cl\n    notw (%rdi)\n    adcq %rcx, %rax\n    sbbq $1, %rcx\n";
+    let a: X86Asm = x86_gas_assemble(src);
+    if (a.unknown.len() > 0) { return 90; }
+    let exp: i32[] = [32, 208, 8, 208, 15, 154, 194, 15, 155, 194, 102, 15, 110, 192, 102, 15, 126, 192, 72, 99, 192, 242, 15, 90, 200, 243, 15, 90, 200, 243, 15, 189, 192, 243, 72, 15, 189, 192, 243, 15, 188, 192, 243, 72, 15, 188, 192, 243, 15, 184, 192, 243, 72, 15, 184, 192, 72, 199, 192, 0, 0, 0, 0, 72, 199, 192, 255, 255, 255, 255, 72, 211, 224, 72, 211, 232, 72, 211, 248, 72, 193, 224, 3, 72, 193, 233, 3, 72, 193, 250, 3, 72, 247, 193, 1, 0, 0, 0, 65, 255, 211, 255, 208, 255, 85, 216, 243, 72, 171, 243, 72, 165, 243, 170, 72, 141, 52, 205, 0, 0, 0, 0, 72, 141, 52, 213, 16, 0, 0, 0, 242, 15, 44, 192, 242, 72, 15, 44, 192, 133, 201, 69, 133, 200, 65, 133, 194, 102, 1, 195, 177, 1, 192, 225, 3, 102, 247, 23, 72, 17, 200, 72, 131, 217, 1];
+    if (a.text.len() != exp.len()) { return 91; }
+    let i: i32 = 0;
+    while (i < exp.len()) {
+        if (a.text[i] as i32 != exp[i]) { return i + 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+`
+
+const x86GasSelfTestMain = `
+function main(): i32 {
+    if (x86_gas_reg("%rax") != 0 || x86_gas_reg("%rdi") != 7 || x86_gas_reg("rbp") != 5) { return 1; }
+    if (x86_gas_reg("%rip") != (0 - 1)) { return 2; }
+    if (x86_gas_atoi("$60") != 60 || x86_gas_atoi("42") != 42 || x86_gas_atoi("-8") != (0 - 8)) { return 3; }
+    let m: GasMem = x86_gas_parse_mem("-8(%rbp)");
+    if (m.is_rip || m.base != 5 || m.disp != (0 - 8)) { return 4; }
+    let m2: GasMem = x86_gas_parse_mem("(%rax)");
+    if (m2.is_rip || m2.base != 0 || m2.disp != 0) { return 5; }
+    let m3: GasMem = x86_gas_parse_mem("answer(%rip)");
+    if (!m3.is_rip || m3.label != "answer") { return 6; }
+    let a: X86Asm = x86_gas_assemble("\tmovq $0, %rax\n\tmovq $7, %rcx\nloop:\n\taddq $6, %rax\n\tsubq $1, %rcx\n\tcmpq $0, %rcx\n\tjne loop\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n");
+    // movq $imm, %reg SIGN-extends: REX.W C7 /0 id (48 c7 c0 …), not the
+    // zero-extending 32-bit B8+r id this used to assert — which is exactly
+    // how "movq $-1, %rax" came to load 4294967295.
+    if (a.text.len() < 14 || a.text[0] as i32 != 72 || a.text[1] as i32 != 199 || a.text[2] as i32 != 192 || a.text[3] as i32 != 0) { return 7; }
+    if (a.text[7] as i32 != 72 || a.text[8] as i32 != 199 || a.text[9] as i32 != 193 || a.text[10] as i32 != 7) { return 8; }
+    // paren-aware operand split + indexed memory parsing (slice 2j):
+    if (x86_gas_top_comma("$0, (%r12,%r15,1)") != 2) { return 9; }
+    if (x86_gas_top_comma("(%rax,%rcx,1), %rdx") != 13) { return 10; }
+    let mi: GasMem = x86_gas_parse_mem("(%r12,%r15,1)");
+    if (!mi.has_index || mi.base != 12 || mi.index != 15 || mi.scale != 1) { return 11; }
+    let mi2: GasMem = x86_gas_parse_mem("8(%rsp,%rcx,8)");
+    if (!mi2.has_index || mi2.base != 4 || mi2.index != 1 || mi2.scale != 8 || mi2.disp != 8) { return 12; }
+    // 8-bit register parsing (slice 2k):
+    if (x86_gas_reg8("%al") != 0 || x86_gas_reg8("%dl") != 2 || x86_gas_reg8("%r8b") != 8) { return 13; }
+    // SH-005: an unsupported mnemonic is RECORDED, not silently dropped —
+    // one-operand-shaped, two-operand-shaped, and the cmpb non-imm form.
+    if (a.unknown.len() != 0) { return 14; }
+    let u1: X86Asm = x86_gas_assemble("\tfrobnicate %rax\n");
+    if (u1.unknown.len() != 1) { return 15; }
+    // A width mismatch must land on the unknown list, never encode at the
+    // wrong width (the silent-widening audit, #7893).
+    let u2: X86Asm = x86_gas_assemble("\tmovw %eax, %bx\n");
+    if (u2.unknown.len() != 1) { return 16; }
+    let u3: X86Asm = x86_gas_assemble("\tfnord %xmm0, %xmm1\n");
+    if (u3.unknown.len() != 1) { return 17; }
+    if (x86_gas_reg8("%rax") != (0 - 1)) { return 14; }
+    // xmm parsing + float literal parsing (slice 2n):
+    if (x86_gas_xmm("%xmm0") != 0 || x86_gas_xmm("%xmm12") != 12) { return 15; }
+    if (!x86_gas_is_xmm("%xmm3") || x86_gas_is_xmm("%rax")) { return 16; }
+    // is_xmm is a prefix test: a symbol that carries xmm is not a register.
+    if (!x86_gas_is_xmm("xmm12") || x86_gas_is_xmm("foo_xmm(%rip)") || x86_gas_is_xmm("%xm")) { return 98; }
+    if (x86_gas_atoi("$-8") != (0 - 8) || x86_gas_atoi("$0x22") != 34 || x86_gas_atoi("$") != 0) { return 99; }
+    if (!x86_gas_has_paren("-8(%rbp)") || x86_gas_has_paren("%rax") || x86_gas_has_paren("$1")) { return 100; }
+    // split keeps empty fields, a trailing separator's empty tail, and a
+    // text with no separator; a two-byte separator matches whole.
+    let sp: string[] = x86_str_split("a\n\nbc\n", "\n");
+    if (sp.len() != 4 || sp[0] != "a" || sp[1] != "" || sp[2] != "bc" || sp[3] != "") { return 101; }
+    let sp2: string[] = x86_str_split("x, y,z", ", ");
+    if (sp2.len() != 2 || sp2[0] != "x" || sp2[1] != "y,z") { return 102; }
+    let sp3: string[] = x86_str_split("none", "\n");
+    if (sp3.len() != 1 || sp3[0] != "none") { return 103; }
+    let fv: f64 = x86_gas_parse_f64("84.5");
+    if (fv < 84.4 || fv > 84.6) { return 17; }
+    let fz: f64 = x86_gas_parse_f64("2.0");
+    if (fz < 1.9 || fz > 2.1) { return 18; }
+    // .ascii byte extraction (slice 2o): "hi!" -> 104,105,33.
+    let ab: i32[] = x86_gas_ascii([], ".ascii \"hi!\"");
+    if (ab.len() != 3 || ab[0] != 104 || ab[1] != 105 || ab[2] != 33) { return 19; }
+    // escape handling: "\n\t" -> 10, 9.
+    let ac: i32[] = x86_gas_ascii([], ".ascii \"\\n\\t\"");
+    if (ac.len() != 2 || ac[0] != 10 || ac[1] != 9) { return 20; }
+    // atoi64 (slice 2p): decimal, hex, negative.
+    let n1: i64 = x86_gas_atoi64("$4611686018427387904");
+    let ref1: i64 = 4611686018427387904;
+    if (n1 != ref1) { return 21; }
+    let n2: i64 = x86_gas_atoi64("$0x40");
+    let ref2: i64 = 64;
+    if (n2 != ref2) { return 22; }
+    let n3: i64 = x86_gas_atoi64("-5");
+    let ref3: i64 = 0 - 5;
+    if (n3 != ref3) { return 23; }
+    // exponent parsing (#4342): the pre-fix parser stopped at the 'e',
+    // so a spliced-text .double operand like 1e3 mis-assembled off by the
+    // whole power of ten.
+    let fe: f64 = x86_gas_parse_f64("1e3");
+    if (fe < 999.9 || fe > 1000.1) { return 24; }
+    let fs: f64 = x86_gas_parse_f64("1.5e-2");
+    if (fs < 0.0149 || fs > 0.0151) { return 25; }
+    let fm: f64 = x86_gas_parse_f64("-2.5e+2");
+    if (fm < (0.0 - 250.1) || fm > (0.0 - 249.9)) { return 26; }
+    // A '#' inside a string literal is DATA, not the start of a comment.
+    // Stripping from the first '#' truncated the string and shifted every
+    // .rodata symbol after it: a lone .ascii "#" emitted nothing, and the
+    // fixture URL below silently lost its fragment.
+    if (x86_gas_comment_start("    .ascii \"a#b\"") != (0 - 1)) { return 27; }
+    if (x86_gas_comment_start("    movq %rax, %rcx # note") != 20) { return 28; }
+    if (x86_gas_comment_start("    .ascii \"q\" # t") != 15) { return 29; }
+    let sh: X86Asm = x86_gas_assemble(".section .rodata\n.S0: .ascii \"p?q#f\"\n");
+    if (sh.rodata.len() != 5 || sh.rodata[3] != 35) { return 30; }
+    // A no-base SIB "disp(,%index,scale)" is its own addressing mode; the
+    // empty base field read as register -1 and was masked to a real one.
+    let nb: GasMem = x86_gas_parse_mem("0(,%rcx,8)");
+    if (!nb.no_base || !nb.has_index || nb.index != 1 || nb.scale != 8) { return 31; }
+    let wb: GasMem = x86_gas_parse_mem("8(%rsp,%rcx,8)");
+    if (wb.no_base) { return 32; }
+    // SH-005 on the DIRECTIVE side: an unrecognised directive is recorded,
+    // not silently ignored — it would shift every symbol after it.
+    let ud: X86Asm = x86_gas_assemble("    .section .rodata\n    .octa 1\n");
+    if (ud.unknown.len() != 1) { return 33; }
+    // ... while the symbol-table metadata the in-process linker has no use
+    // for stays ignorable.
+    let ok: X86Asm = x86_gas_assemble("    .globl m\n    .type m,@function\n    .size m,4\n    .weak w\n");
+    if (ok.unknown.len() != 0) { return 34; }
+    // A data directive reserves or lays down EVERY value it lists, whatever
+    // its width and section. TestSelfHostX86BssValueList pins a .bss .quad
+    // list (#11377); in .bss the other widths wrote their bytes into the
+    // data image instead of reserving, and in data a .quad list laid down
+    // only its first value.
+    let bl: X86Asm = x86_gas_assemble("    .section .bss\nls: .long 0, 0, 0\nbs: .byte 0, 0\nds: .double 0, 0\nend: .skip 1\n");
+    if (bl.bss_size != 31 || bl.rodata.len() != 0 || bl.unknown.len() != 0) { return 104; }
+    let b2: i32 = x86_label_idx(bl, "bs");
+    let b3: i32 = x86_label_idx(bl, "ds");
+    let b4: i32 = x86_label_idx(bl, "end");
+    if (b2 < 0 || bl.lab_secs[b2] != 2 || bl.lab_offs[b2] != 12) { return 105; }
+    if (b3 < 0 || bl.lab_offs[b3] != 14 || b4 < 0 || bl.lab_offs[b4] != 30) { return 106; }
+    let dl: X86Asm = x86_gas_assemble("    .section .rodata\nqs: .quad 1, -2\nls: .long 3, 4\nnext: .quad 5\n");
+    if (dl.rodata.len() != 32 || dl.rodata[0] != 1 || dl.rodata[8] != 254 || dl.rodata[15] != 255) { return 107; }
+    let dn: i32 = x86_label_idx(dl, "next");
+    if (dl.rodata[16] != 3 || dl.rodata[20] != 4 || dl.rodata[24] != 5 || dn < 0 || dl.lab_offs[dn] != 24) { return 108; }
+    // Each symbol in a .quad list is its own relocation.
+    let sl: X86Asm = x86_gas_assemble("    .section .rodata\nt: .quad t, 0, t\n");
+    if (sl.rodata.len() != 24 || sl.dfix_offs.len() != 2 || sl.dfix_offs[0] != 0 || sl.dfix_offs[1] != 16) { return 109; }
+    // The packed-SSE2 front end, assembled as the __memchr kernel emits it
+    // (docs/ATLAS-PLATFORM-PLAN.md §3): splat, load, compare, gather, scan.
+    // The expected bytes are GNU as output for this exact text — the point
+    // of pinning the whole sequence rather than each mnemonic alone is that
+    // it also proves the parser hands the operands over in the right order,
+    // which a per-encoder check cannot see.
+    let vk: X86Asm = x86_gas_assemble("\tmovd %ecx, %xmm1\n\tpunpcklbw %xmm1, %xmm1\n\tpunpcklwd %xmm1, %xmm1\n\tpshufd $0, %xmm1, %xmm1\n\tmovdqu (%rax,%rdx), %xmm0\n\tpcmpeqb %xmm1, %xmm0\n\tpmovmskb %xmm0, %r9d\n\ttestl %r9d, %r9d\n\tbsfl %r9d, %r9d\n");
+    if (vk.unknown.len() != 0) { return 35; }
+    let want: i32[] = [102, 15, 110, 201, 102, 15, 96, 201, 102, 15, 97, 201,
+        102, 15, 112, 201, 0, 243, 15, 111, 4, 16, 102, 15, 116, 193,
+        102, 68, 15, 215, 200, 69, 133, 201, 69, 15, 188, 201];
+    if (vk.text.len() != want.len()) { return 36; }
+    let vi: i32 = 0;
+    while (vi < want.len()) {
+        if (vk.text[vi] as i32 != want[vi]) { return 37; }
+        vi = vi + 1;
+    }
+    // The COMPARISON kernel's front end (#8791). It adds three shapes the
+    // three scan kernels never emit: a second movdqu into %xmm1, the
+    // cmpl-then-notl pair that reads the mask as EQUAL rather than
+    // FOUND, and the 64-bit SIB-indexed load/xor its overlapping trailing
+    // window addresses with. GNU as output for this exact text.
+    let mm: X86Asm = x86_gas_assemble("\tmovdqu (%rsi,%rdx), %xmm0\n\tmovdqu (%rcx,%rdx), %xmm1\n\tpcmpeqb %xmm1, %xmm0\n\tpmovmskb %xmm0, %eax\n\tcmpl $65535, %eax\n\tnotl %eax\n\tbsfl %eax, %eax\n\tmovq (%rsi,%rdi), %rax\n\txorq (%rcx,%rdi), %rax\n\tbsfq %rax, %rax\n\tshrq $3, %rax\n");
+    if (mm.unknown.len() != 0) { return 54; }
+    let mw: i32[] = [243, 15, 111, 4, 22, 243, 15, 111, 12, 17, 102, 15, 116, 193,
+        102, 15, 215, 192, 61, 255, 255, 0, 0, 247, 208, 15, 188, 192,
+        72, 139, 4, 62, 72, 51, 4, 57, 72, 15, 188, 192, 72, 193, 232, 3];
+    if (mm.text.len() != mw.len()) { return 55; }
+    let mi: i32 = 0;
+    while (mi < mw.len()) {
+        if (mm.text[mi] as i32 != mw[mi]) { return 56; }
+        mi = mi + 1;
+    }
+    // The backward kernel's tail differs from the forward one's by exactly one
+    // instruction, so the front end is checked on that one: bsrl, not bsfl.
+    // 0F BD C8 / 45 0F BD C9, GNU as output for this text.
+    let vb: X86Asm = x86_gas_assemble("\tbsrl %eax, %ecx\n\tbsrl %r9d, %r9d\n");
+    if (vb.unknown.len() != 0) { return 38; }
+    let bw: i32[] = [15, 189, 200, 69, 15, 189, 201];
+    if (vb.text.len() != bw.len()) { return 39; }
+    let bi: i32 = 0;
+    while (bi < bw.len()) {
+        if (vb.text[bi] as i32 != bw[bi]) { return 40; }
+        bi = bi + 1;
+    }
+    // The 32-bit ALU group over memory operands. #7351 hit this group when its
+    // encoders took register NUMBERS only: an operand x86_gas_reg32 could not
+    // name answered -1, which encoded as a well-formed instruction naming the
+    // wrong register (cmpl $1, -4(%rax) came out as cmp $1, %eax). The
+    // width-generic family encodes the memory forms outright, so the check is
+    // the encoding itself — the shape that cannot silently name a register the
+    // source did not mention.
+    //
+    // Note the immediate: gas picks 83 /7 ib for a $1 that fits signed 8 bits,
+    // at a memory and a register destination alike. The pre-#7886 encoder
+    // always widened to 81 /7 id, which assembles to the same semantics and
+    // different bytes; these are GNU as output for this exact text.
+    let am: X86Asm = x86_gas_assemble("\tcmpl $1, -4(%rax)\n\taddl %ecx, 8(%rdx)\n\tsubl (%rsi), %eax\n\tcmpl $1, %edx\n\taddl %ecx, %eax\n");
+    if (am.unknown.len() != 0) { return 41; }
+    let amw: i32[] = [131, 120, 252, 1, 1, 74, 8, 43, 6, 131, 250, 1, 1, 200];
+    if (am.text.len() != amw.len()) { return 42; }
+    let ai: i32 = 0;
+    while (ai < amw.len()) {
+        if (am.text[ai] as i32 != amw[ai]) { return 43; }
+        ai = ai + 1;
+    }
+    return 0;
+}
+`
+
+// x86GasLoopDriverMain assembles a hand-written GAS loop and writes the
+// resulting ELF to stdout. acc=0; repeat 7×: acc += 6; exit(acc) -> 42.
+const x86GasLoopDriverMain = `
+function main(): i32 {
+    let src: string = ".text\n.globl _start\n_start:\n\tmovq $0, %rax\n\tmovq $7, %rcx\nloop:\n\taddq $6, %rax\n\tsubq $1, %rcx\n\tcmpq $0, %rcx\n\tjne loop\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
+    let a: X86Asm = x86_gas_assemble(src);
+    if (a.unknown.len() > 0) { return 2; }
+    let bin: i32[] = elf_static_executable_data_x86(a.text, a.rodata);
+    write(string_from_bytes_unchecked(to_u8(bin)));
+    return 0;
+}
+`
+
+// x86GasRodataDriverMain assembles a GAS program that loads a .rodata
+// .quad via leaq sym(%rip), exercising the directive + rip path -> 42.
+const x86GasRodataDriverMain = `
+function main(): i32 {
+    let src: string = ".text\n_start:\n\tleaq answer(%rip), %rax\n\tmovq (%rax), %rax\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n.section .rodata\nanswer:\n\t.quad 42\n";
+    let a: X86Asm = x86_gas_assemble(src);
+    if (a.unknown.len() > 0) { return 2; }
+    let bin: i32[] = elf_static_executable_data_x86(a.text, a.rodata);
+    write(string_from_bytes_unchecked(to_u8(bin)));
+    return 0;
+}
+`
+
+// x86GasMulDriverMain: imulq (6 * 7 = 42).
+const x86GasMulDriverMain = `
+function main(): i32 {
+    let src: string = "\tmovq $6, %rax\n\tmovq $7, %rcx\n\timulq %rcx, %rax\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
+    let a: X86Asm = x86_gas_assemble(src);
+    if (a.unknown.len() > 0) { return 2; }
+    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.text, a.rodata))));
+    return 0;
+}
+`
+
+// x86GasIncShlDriverMain: incq + shlq ((5+1)<<3 - 6 = 48 - 6 = 42).
+const x86GasIncShlDriverMain = `
+function main(): i32 {
+    let src: string = "\tmovq $5, %rax\n\tincq %rax\n\tshlq $3, %rax\n\tsubq $6, %rax\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
+    let a: X86Asm = x86_gas_assemble(src);
+    if (a.unknown.len() > 0) { return 2; }
+    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.text, a.rodata))));
+    return 0;
+}
+`
+
+// x86GasDivDriverMain: cqto + idivq (84 / 2 = 42).
+const x86GasDivDriverMain = `
+function main(): i32 {
+    let src: string = "\tmovq $84, %rax\n\tcqto\n\tmovq $2, %rcx\n\tidivq %rcx\n\tmovq %rax, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
+    let a: X86Asm = x86_gas_assemble(src);
+    if (a.unknown.len() > 0) { return 2; }
+    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.text, a.rodata))));
+    return 0;
+}
+`
+
+// x86GasCarryChainDriverMain: shldq shifts 0x0123456789abcdef left 8 filling
+// from 0xfedcba9876543210's top byte (0x23456789abcdeffe); mulq squares
+// 2^32+1 (rdx:rax = 1 : 0x0000000200000001); adcq adds 5+7 plus the carry
+// addq -1+1 left (13); sbbq subtracts 20-6 minus the borrow 0-1 left (13).
+// Any wrong encoding — a reversed shld source, a dropped carry — exits 1.
+const x86GasCarryChainDriverMain = `
+function main(): i32 {
+    let src: string = "\tmovabs $0x0123456789abcdef, %rsi\n\tmovabs $0xfedcba9876543210, %rdi\n\tmovq $8, %rcx\n\tshldq %cl, %rdi, %rsi\n\tmovabs $0x23456789abcdeffe, %rax\n\tcmpq %rax, %rsi\n\tjne bad\n\tmovabs $0x0000000100000001, %rax\n\tmovabs $0x0000000100000001, %rcx\n\tmulq %rcx\n\tmovabs $0x0000000200000001, %rcx\n\tcmpq %rcx, %rax\n\tjne bad\n\tcmpq $1, %rdx\n\tjne bad\n\tmovq $-1, %rax\n\tmovq $1, %rcx\n\taddq %rcx, %rax\n\tmovq $5, %rax\n\tmovq $7, %rcx\n\tadcq %rcx, %rax\n\tcmpq $13, %rax\n\tjne bad\n\tmovq $0, %rax\n\tmovq $1, %rcx\n\tsubq %rcx, %rax\n\tmovq $20, %rax\n\tmovq $6, %rcx\n\tsbbq %rcx, %rax\n\tcmpq $13, %rax\n\tjne bad\n\tmovq $42, %rdi\n\tjmp out\nbad:\n\tmovq $1, %rdi\nout:\n\tmovq $60, %rax\n\tsyscall\n";
+    let a: X86Asm = x86_gas_assemble(src);
+    if (a.unknown.len() > 0) { return 2; }
+    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.text, a.rodata))));
+    return 0;
+}
+`
+
+// x86GasCarryChainGroundTruthMain: bytes from as + objdump, not the manual.
+const x86GasCarryChainGroundTruthMain = `
+function main(): i32 {
+    let src: string = "    .text\n_start:\n    shldq %cl, %rdi, %rsi\n    shldq %cl, %rax, %r11\n    shldq %cl, %r12, %r11\n    mulq %rsi\n    mulq %r11\n    adcq %r10, %rsi\n    adcq %rcx, %rax\n    sbbq %r11, %rsi\n    sbbq %rax, %rcx\n";
+    let a: X86Asm = x86_gas_assemble(src);
+    if (a.unknown.len() > 0) { return 90; }
+    let exp: i32[] = [72, 15, 165, 254, 73, 15, 165, 195, 77, 15, 165, 227, 72, 247, 230, 73, 247, 227, 76, 17, 214, 72, 17, 200, 76, 25, 222, 72, 25, 193];
+    if (a.text.len() != exp.len()) { return 91; }
+    let i: i32 = 0;
+    while (i < exp.len()) {
+        if (a.text[i] as i32 != exp[i]) { return i + 1; }
+        i = i + 1;
+    }
+    return 0;
+}
+`
+
+// x86GasExtRegDriverMain: extended-register arithmetic (imulq %r13,%r12).
+const x86GasExtRegDriverMain = `
+function main(): i32 {
+    let src: string = "\tmovq $6, %r12\n\tmovq $7, %r13\n\timulq %r13, %r12\n\tmovq %r12, %rdi\n\tmovq $60, %rax\n\tsyscall\n";
+    let a: X86Asm = x86_gas_assemble(src);
+    if (a.unknown.len() > 0) { return 2; }
+    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.text, a.rodata))));
+    return 0;
+}
+`
+
+// x86GasRuntimeOpsDriverMain: the #4801 runtime-mnemonic battery. rcx =
+// (1<<34) >> 30 = 16 (movabs + shrq); btq $4 sets CF (bit 4 of 16) so jc
+// takes the good path; counter(%rip) is incl'd twice and movl-loaded
+// (eax=2); movl $24 lands in a movq-zeroed stack slot and reloads as 24;
+// 24 + 2 + 16 = 42; store-form cmpq (24 vs 16) makes ja skip the
+// failure overwrite. Any dropped/mis-encoded instruction exits != 42.
+const x86GasRuntimeOpsDriverMain = `
+function main(): i32 {
+    let src: string = ".text\n.globl _start\n_start:\n\tmovabs $17179869184, %rcx\n\tshrq $30, %rcx\n\tbtq $4, %rcx\n\tjc bitok\n\tmovq $1, %rdi\n\tjmp done\nbitok:\n\tincl counter(%rip)\n\tincl counter(%rip)\n\tmovl counter(%rip), %eax\n\tsubq $16, %rsp\n\tmovq $0, 8(%rsp)\n\tmovl $24, 8(%rsp)\n\tmovq 8(%rsp), %rdi\n\taddq %rax, %rdi\n\taddq %rcx, %rdi\n\tcmpq %rcx, 8(%rsp)\n\tja done\n\tmovq $2, %rdi\ndone:\n\tmovq $60, %rax\n\tsyscall\n.section .bss\n.align 8\ncounter: .quad 0\n";
+    let a: X86Asm = x86_gas_assemble(src);
+    let entry: i32 = x86_label_off(a, "_start");
+    write(string_from_bytes_unchecked(elf_program_x86(a.text, [], [], a.rodata, a.bss_size, entry)));
+    return 0;
+}
+`
+
+// x86GasExtMemDriverMain: store r8 to [rsp], reload into r9, exit(r9)=42.
+const x86GasExtMemDriverMain = `
+function main(): i32 {
+    let src: string = "\tsubq $16, %rsp\n\tmovq $42, %r8\n\tmovq %r8, (%rsp)\n\tmovq (%rsp), %r9\n\tmovq %r9, %rdi\n\taddq $16, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
+    let a: X86Asm = x86_gas_assemble(src);
+    if (a.unknown.len() > 0) { return 2; }
+    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.text, a.rodata))));
+    return 0;
+}
+`
+
+// x86GasIndexDriverMain: SIB-index store/load — [rsp + rcx*8] = 42, reload.
+const x86GasIndexDriverMain = `
+function main(): i32 {
+    let src: string = "\tsubq $64, %rsp\n\tmovq $42, %rax\n\tmovq $2, %rcx\n\tmovq %rax, (%rsp,%rcx,8)\n\tmovq (%rsp,%rcx,8), %rdi\n\taddq $64, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
+    let a: X86Asm = x86_gas_assemble(src);
+    if (a.unknown.len() > 0) { return 2; }
+    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.text, a.rodata))));
+    return 0;
+}
+`
+
+// x86GasByteImmDriverMain: movb $42, (%rsp) ; movzbq (%rsp), %rdi.
+const x86GasByteImmDriverMain = `
+function main(): i32 {
+    let src: string = "\tsubq $16, %rsp\n\tmovb $42, (%rsp)\n\tmovzbq (%rsp), %rdi\n\taddq $16, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
+    let a: X86Asm = x86_gas_assemble(src);
+    if (a.unknown.len() > 0) { return 2; }
+    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.text, a.rodata))));
+    return 0;
+}
+`
+
+// x86GasByteRegDriverMain: movb %cl, (%rsp) ; movzbq (%rsp), %r8.
+const x86GasByteRegDriverMain = `
+function main(): i32 {
+    let src: string = "\tsubq $16, %rsp\n\tmovq $42, %rcx\n\tmovb %cl, (%rsp)\n\tmovzbq (%rsp), %r8\n\tmovq %r8, %rdi\n\taddq $16, %rsp\n\tmovq $60, %rax\n\tsyscall\n";
+    let a: X86Asm = x86_gas_assemble(src);
+    if (a.unknown.len() > 0) { return 2; }
+    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.text, a.rodata))));
+    return 0;
+}
+`
+
+// TestSelfHostX86GasNegativeQuadRuns pins that a `.quad` carries its full 64
+// bits. The directive was parsed with the i32 `x86_gas_atoi` and paired with a
+// hardcoded zero high half, so every negative constant landed zero-extended
+// (#6458): a const-struct `i32` field of -5 read back as 4294967291, and the
+// const-aggregate header's `.quad -1` — the runtime's immortal-rc sentinel,
+// tested with `js` — landed positive, so a const aggregate was refcounted
+// rather than skipped.
+//
+// The program compares three negative quads against sign-extended immediates
+// and exits 42 only if all three round-trip; a zero-extended one fails the
+// first compare and exits 43.
+func TestSelfHostX86GasNegativeQuadRuns(t *testing.T) {
+	runX86GasNativeDriver(t, "gasnegquad42", x86GasNegativeQuadDriverMain, 42)
+}
+
+// x86GasNegativeQuadDriverMain: three negative `.quad`s read back through
+// `leaq sym(%rip)` and compared against `cmpq $imm` (sign-extended).
+const x86GasNegativeQuadDriverMain = `
+function main(): i32 {
+    let src: string = ".text\n_start:\n\tmovq $43, %rdi\n\tleaq vals(%rip), %rax\n\tmovq (%rax), %rcx\n\tcmpq $-1, %rcx\n\tjne done\n\tmovq 8(%rax), %rcx\n\tcmpq $-5, %rcx\n\tjne done\n\tmovq 16(%rax), %rcx\n\tcmpq $-2147483648, %rcx\n\tjne done\n\tmovq $42, %rdi\ndone:\n\tmovq $60, %rax\n\tsyscall\n.section .rodata\nvals:\n\t.quad -1\n\t.quad -5\n\t.quad -2147483648\n";
+    let a: X86Asm = x86_gas_assemble(src);
+    if (a.unknown.len() > 0) { return 2; }
+    write(string_from_bytes_unchecked(to_u8(elf_static_executable_data_x86(a.text, a.rodata))));
+    return 0;
+}
+`
+
+// A `.bss` `.quad` with a value list reserves one zero-init slot per value,
+// so the symbols after it keep their own words (#11377); the arm64 twin is
+// TestSelfHostArm64BssValueList.
+const x86BssValueListMain = `
+function main(): i32 {
+    let a: X86Asm = x86_gas_assemble(".bss\nfour: .quad 0, 0, 0, 0\nnext: .quad 0\nlast: .skip 1\n");
+    if (a.bss_size != 41) { return 1; }
+    let n: i32 = x86_label_idx(a, "next");
+    if (n < 0 || a.lab_secs[n] != 2 || a.lab_offs[n] != 32) { return 2; }
+    let l: i32 = x86_label_idx(a, "last");
+    if (l < 0 || a.lab_secs[l] != 2 || a.lab_offs[l] != 40) { return 3; }
+    return 0;
+}
+`
+
+func TestSelfHostX86BssValueList(t *testing.T) {
+	runX86GasWasmSelfTest(t, "x86_bss_value_list", x86BssValueListMain)
+}

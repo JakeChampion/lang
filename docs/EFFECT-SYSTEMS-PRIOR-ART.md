@@ -11,8 +11,8 @@ four known shapes?**
 Fern's constraints are unusual for this literature and they matter throughout:
 statically typed, AOT-compiled to ARM64/x86-64/WASI, **Perceus-style reference
 counting with no tracing GC**, traits, generics, closures, and an existing
-*coarse, whole-program* capability check (`internal/platforms` E066
-post-tree-shake + `internal/caps` package capabilities). Almost every system
+*coarse, whole-program* capability check (`internal/pkg/platforms` E066
+post-tree-shake + `internal/pkg/caps` package capabilities). Almost every system
 below assumes a GC; the two that do not (Koka, Effekt) are the ones whose
 implementation notes matter most.
 
@@ -398,7 +398,7 @@ And the crisp distinction Fern needs to internalise:
 
 ### 3.4 Built-in resources = platform capabilities
 
-This is exactly Fern's `internal/platforms`, done at the type level:
+This is exactly Fern's `internal/pkg/platforms`, done at the type level:
 
 > Capture sets can contain (at least) three different kinds of elements: capabilities
 > introduced by handlers; memory regions; builtin resources.
@@ -695,7 +695,7 @@ to Rust's `const`.
 
 **Lesson for Fern**: Roc's design says platform capability control is a *linking*
 problem, not a typing problem — and Fern already does exactly this
-(`internal/platforms`, E066 post-tree-shake). The question is whether Fern wants the
+(`internal/pkg/platforms`, E066 post-tree-shake). The question is whether Fern wants the
 check to be **modular** (per-function, per-module, diagnosable at the definition site)
 rather than **whole-program** (diagnosable only after tree-shaking). That is the real
 delta a type-level row buys.
@@ -1332,7 +1332,7 @@ Modules are **first-class, statically typed capabilities**; authority is defined
 *non-transitively* so that wrappers can attenuate a powerful capability. Later work
 adds an effect system on top, because "effects are a good proxy for operations
 performed on a resource". This is the most direct academic treatment of "which module
-may reach the filesystem", i.e. Fern's `internal/caps`.
+may reach the filesystem", i.e. Fern's `internal/pkg/caps`.
 
 ### 12.11 Gordon — capabilities *are* effects
 [Gordon, *Designing with Static Capabilities and Effects: Use, Mention, and Invariants*,
@@ -1528,7 +1528,7 @@ plain subsumption. Union at joins. One effect variable when you genuinely need
 polymorphism (`map`), and — critically — Flix's finding that sub-effecting is only
 needed at **abstraction sites and trait-instance definitions**, not everywhere. This is
 enormously simpler than row unification, and set-union/subset over a *fixed, closed*
-label set (platform capabilities are enumerable and defined by `internal/platforms`) is
+label set (platform capabilities are enumerable and defined by `internal/pkg/platforms`) is
 decidable in linear time, not by Boolean unification.
 
 **What capability passing (Effekt/Scala style) buys.** No effect variables at all
@@ -1554,7 +1554,7 @@ A **closed set of primitive effect labels, with subsumption, one effect variable
 and no handlers**:
 
 1. **Labels are declared, not open.** The label set is exactly the platform capability
-   taxonomy already in `internal/platforms` / `compiler/platforms.fern`.
+   taxonomy already in `internal/pkg/platforms` / `compiler/platforms.fern`.
    A new builtin already requires four classifications (per `CLAUDE.md`); this makes it
    five, and the completeness tests already exist to catch omissions.
 2. **Default is total/pure and elided.** `fn f(x: int) -> int` means no effects. Follow
@@ -1615,7 +1615,7 @@ and no handlers**:
 
 1. Purity bit (`!` / `!{}`) + inference + `pub`-signature requirement. Immediately
    enables optimisation work and catches the coarse errors.
-2. Split the bit into the platform label set; wire to `internal/platforms`.
+2. Split the bit into the platform label set; wire to `internal/pkg/platforms`.
 3. Contextual polymorphism for non-escaping callbacks; then one effect variable.
 4. Associated effects on traits.
 5. WIT-world emission for WASI; E066 becomes definition-site.

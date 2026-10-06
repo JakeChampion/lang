@@ -298,9 +298,9 @@ transaction, subroutine), which is what lets the state machine hand a
 transaction between subroutines and keep every intermediate state for the
 log.
 
-`internal/e2e/vcl_example_test.go` runs all five TAP suites, the formatter
+`internal/testing/e2e/vcl_example_test.go` runs all five TAP suites, the formatter
 fixed-point check, the ACL matrix, the load-time rejection of a bad policy,
 the compiled-vs-interpreted differential, and a native build of a compiled
-policy. `internal/e2e/vcl_proxy_test.go` builds the proxy and the origin,
+policy. `internal/testing/e2e/vcl_proxy_test.go` builds the proxy and the origin,
 puts one in front of the other, and drives them with a real HTTP client —
 on every CI run.

@@ -1,0 +1,4432 @@
+// Package ast defines the abstract syntax tree for the lang language.
+//
+// AST kinds are split into three sealed interfaces — Expr, Stmt and Type —
+// each with an unexported tag method so foreign packages can match on them
+// with a type switch but cannot add new variants.
+package ast
+
+import (
+	"fmt"
+	"os"
+	"slices"
+	"sort"
+	"strings"
+	"sync"
+)
+
+// Position is a 1-based line/column pair used for diagnostics.
+type Position struct {
+	Line int
+	Col  int
+}
+
+func (p Position) String() string { return fmt.Sprintf("%d:%d", p.Line, p.Col) }
+
+// Comment is a `//` line comment captured by the lexer and threaded
+// through to consumers like the formatter that want to re-emit
+// human-written notes. Text excludes the leading `//` and any
+// trailing newline; Pos points at the `//` itself so the formatter
+// can decide whether the comment is leading (different line from
+// the next statement) or trailing (same line as the previous one).
+type Comment struct {
+	Pos  Position
+	Text string
+	// Trailing is set when code precedes the comment on its line.
+	Trailing bool
+}
+
+// ---------- Types ----------
+
+type Type interface {
+	String() string
+	isType()
+}
+
+// NumberType represents a fixed-width signed or unsigned integer.
+// The zero value (`NumberType{}`) is `i32`/signed for backward
+// compatibility with code written before the sized-integer
+// migration. Equality canonicalises Width=0 to 32 so
+// `NumberType{}` and `NumberType{Width: 32, Signed: true}` compare
+// equal — the source-level keywords `number` and `i32` lower to
+// the zero value (cheaper) and the explicitly-typed forms
+// respectively.
+//
+// Width must be one of 8, 16, 32, or 64. Sub-i32 widths lower to
+// i32 wasm ops with masking on store; i64 uses native i64 ops.
+// Sub-i32 widths are reserved for a follow-up PR — currently only
+// 32 and 64 are exercised end-to-end.
+//
+// Spelling carries the source-level keyword the parser saw
+// (`"number"`, `"i32"`, ...). It's purely for the formatter so
+// `fern -fmt` round-trips the user's chosen spelling instead of
+// always converging on the canonical name. Equality and codegen
+// ignore it; the zero value means "no source spelling captured,
+// use the canonical name on output".
+// WidthPtr is the sentinel value used by `NumberType.Width`
+// to mark the target-aware native-pointer-width integer
+// (`usize`). Backends resolve it to 4 bytes on wasm32 and 8
+// bytes on arm64 / x86-64. Mirrored by `ir.WidthPtr` for the
+// codegen side; kept in the ast package so type-level code
+// doesn't need to import ir.
+const WidthPtr = -1
+
+type NumberType struct {
+	Width    int
+	Signed   bool
+	Spelling string
+	// Polymorphic is set on the NumberType returned for an
+	// unsettled NumberLit ("polymorphic numeric literal" — `1`,
+	// `42`). It flows through `assignable` to any concrete
+	// integer type and through `commonIntegerWidth` so the
+	// other operand's width wins. Once the literal is settled
+	// (the surrounding context demands a concrete width), the
+	// checker stamps `Width` on the NumberLit AST node and
+	// returns the concrete NumberType from the affected call
+	// sites. ast.Equal reads it at its normal width, i32.
+	Polymorphic bool
+}
+type BoolType struct{}
+type VoidType struct{}
+type StringType struct{}
+
+// StrType is the borrowed-string VIEW type `str` (#4813 / #4297 Option A) --
+// the string sibling of the ArrayType-vs-SliceType precedent. `string` owns
+// its heap box; a `str` is a non-owning view of some string's bytes: it must
+// never be freed by its holder. In this first slice no producer yields `str`
+// yet -- the type exists so signatures can declare borrowed-string intent: an
+// owned `string` freely borrows INTO a `str` (assignable; any argument
+// position), while `str` never silently promotes to an owned `string`
+// (.to_owned() materialises a fresh copy). `str` shares the `string` method
+// surface (methodTypeName maps it to "string"). Runtime shape: identical to
+// StringType (the #4294 immortal rc=-1 view box IS the runtime `str`), so it
+// is ERASED to StringType at the LowerWith choke point (ir/erase_str.go),
+// mirroring HandleType erasure -- no backend or width classification ever
+// sees it. The escape/dangling rule is the A2 slice (#4814).
+type StrType struct{}
+
+// CharType is `char`: a single Unicode SCALAR VALUE (0..0x10FFFF, excluding
+// the surrogate range D800..DFFF) — Rust's `char`, Swift's `Unicode.Scalar`,
+// C#'s `Rune`. It exists because a byte and a code point were previously the
+// SAME type (`i32`), so `s[i].to_upper()` (an ASCII byte fold) and
+// `unicode.to_upper_char(cp)` (a Unicode mapping) had identical signatures and
+// neither the checker nor a reader could tell them apart — the root confusion
+// behind #5552, and the reason the ASCII/Unicode split can't survive as a
+// naming convention across a 144-method surface (docs/STRINGS-SOTA.md D2).
+//
+// It is written as a CharLit (`'x'`, #6991) or reached by an explicit cast.
+// Conversion is EXPLICIT in both directions (`c as i32`, `n as char`); a
+// `char` never implicitly becomes an integer or vice versa, which is the whole
+// point, and is why the byte literal `b'x'` is a separate spelling typed `u8`
+// rather than a `char` that settles from context. A literal cast to `char` is
+// range- and surrogate-checked (E071); a runtime one is not.
+//
+// Runtime shape: an i32 slot, identical to NumberType{Width:32}, so it is
+// ERASED to i32 at the LowerWith choke point (ir/erase_surface.go) exactly as
+// StrType erases to StringType — no backend or width classification ever sees
+// it.
+type CharType struct{}
+
+// NeverType is the bottom type: the type of an expression that never
+// yields a value because every control-flow path through it exits
+// early (`return` / `break` / `continue`). It arises only internally
+// — a value-position block-expression whose statements always diverge
+// has no trailing value, so instead of being `void` (which would be a
+// type error where a value is required) it is `never`, which is
+// assignable to / unifies with any type. It is never written in
+// source, so the parser and printer don't produce it; it flows out of
+// `checker.checkBlockExpr` into assignability and if/match arm-type
+// unification. See docs/BLOCK-EXPRESSIONS.md (#4522).
+type NeverType struct{}
+
+// FloatType represents an IEEE-754 binary float. Width is 32 or
+// 64; the non-polymorphic zero value is f32 (the parser spells
+// `f32` as `FloatType{Width:0, Spelling:"f32"}`, so Width=0 must
+// keep meaning f32 there). `float` is the width-unqualified
+// alias for f64 (#5363) — the parser spells it
+// `FloatType{Width:64, Spelling:"float"}`. Both widths are wired
+// through every backend. An unsettled float literal carries
+// Polymorphic=true, for which NormalWidth defaults to f64 — see
+// NormalWidth.
+//
+// Spelling matches NumberType.Spelling — captures the type name
+// the parser saw (`"float"`, `"f32"`, ...) so the formatter can
+// preserve it on round-trip.
+type FloatType struct {
+	Width    int
+	Spelling string
+	// Polymorphic flags an unsettled `*ast.FloatLit` so the
+	// checker can propagate it to the surrounding expected type
+	// the same way NumberType.Polymorphic works for ints.
+	Polymorphic bool
+}
+type ArrayType struct{ Elem Type }
+
+// StreamType is the WASI Preview-3 async data channel `stream[T]` — a sequence
+// of `T` delivered incrementally over the wire. It appears in Fern source only
+// as the result type of an async `@import` (e.g. `async function body():
+// stream[u8]`); under the colorless model the call site yields the fully
+// collected `T[]` (the compiler drives `stream.read` + the await loop to EOF —
+// see docs/STREAM-TYPE-SURFACE.md). `future[T]` is intentionally NOT a surface
+// type (colorless auto-await subsumes a single deferred value).
+type StreamType struct{ Elem Type }
+
+// SliceType is a non-owning view into an Array<T>. Spelled `[T]`
+// in source — distinct from owned `T[]` so the API surface
+// signals "this borrows" without a borrow checker. Codegen
+// lowers a slice value to a pointer to an 8-byte heap struct
+// `{data_ptr: i32, len: i32}` — `data_ptr` aliases the parent
+// array's storage, so a slice + its parent share the parent's
+// lifetime. Bump-allocator semantics make that contract trivial:
+// everything alive at the end of the arena lives until the
+// arena resets.
+type SliceType struct{ Elem Type }
+
+// TupleType is an anonymous heterogeneous tuple — `(i32, string)`,
+// `(i32, i32, bool)`, etc. Two tuples are equal when their element
+// types match pairwise. Single-element tuples (`(i32,)`) require
+// the trailing comma in source so they can't be confused with
+// grouping parentheses.
+type TupleType struct {
+	Elems []Type
+}
+type FuncType struct {
+	Params []Type
+	// ParamOwn marks the parameter slots this function type CONSUMES: a
+	// caller hands its reference over and does not release it, and the
+	// callee reclaims it. An unset (or short) slice means every slot is
+	// lent, which is what a type written without `own` means. It is part
+	// of the type: `(own i32[]) => i32` and `(i32[]) => i32` are distinct,
+	// so a consuming function cannot be reached through a lending type.
+	ParamOwn []bool
+	Result   Type
+}
+
+// OwnAt reports whether parameter i of this function type is consuming.
+func (f *FuncType) OwnAt(i int) bool {
+	return i >= 0 && i < len(f.ParamOwn) && f.ParamOwn[i]
+}
+
+// AnyOwn reports whether this function type consumes any parameter.
+func (f *FuncType) AnyOwn() bool {
+	for _, o := range f.ParamOwn {
+		if o {
+			return true
+		}
+	}
+	return false
+}
+
+// OwnFlags returns the per-parameter consuming flags padded to n, or nil
+// when no slot consumes. Constructors use it so a type that owns nothing
+// keeps a nil slice and compares equal to one built without the field.
+func OwnFlags(flags []bool, n int) []bool {
+	any := false
+	for _, o := range flags {
+		if o {
+			any = true
+			break
+		}
+	}
+	if !any {
+		return nil
+	}
+	out := make([]bool, n)
+	copy(out, flags)
+	return out
+}
+
+// StructType is a nominal reference to a top-level `struct`
+// declaration, optionally with concrete type arguments. `Args`
+// is empty for non-generic structs (`Point`); populated for
+// generic instantiations (`Pair[i32, string]` →
+// `StructType{Name: "Pair", Args: [i32, string]}`).
+//
+// Two StructTypes are equal when their names match AND their
+// type argument lists are pairwise equal — same shape as
+// EnumType. The monomorphisation pass mangles populated-Args
+// references into a flat name (`Pair__i32__string`) before any
+// later stage sees them, so codegen / interp / printer keep
+// their existing "names match" assumption.
+type StructType struct {
+	Name string
+	Args []Type
+}
+
+// EnumType is a nominal reference to a top-level `enum` declaration,
+// optionally with concrete type arguments. `Args` is empty for
+// non-generic enums (`Status`); populated for generic instantiations
+// (`Option[number]` -> `EnumType{Name: "Option", Args: [Number]}`).
+//
+// Two EnumTypes are equal when their names match AND their type
+// argument lists are pairwise equal — `Option[number]` ≠
+// `Option[string]`, even though they share the same EnumDecl.
+type EnumType struct {
+	Name string
+	Args []Type
+}
+
+// ParamType is a stand-in for an enum's type parameter inside its
+// declaration body — it appears in variant payload type lists
+// (`Some(T)` -> the payload type is `ParamType{Name: "T"}`). The
+// checker rewrites ParamType references to concrete types when
+// it instantiates `Option[number]`, so the type machinery never
+// needs to compare two parameters from different scopes.
+type ParamType struct{ Name string }
+
+// UnboundType is an inference position not determined by a constructor's
+// payload. It is not a declared generic parameter or a runtime representation;
+// surrounding enum context may supply it without discarding known arguments.
+type UnboundType struct{}
+
+// SelfType is the contextual `Self` type that appears inside a trait
+// declaration's method signatures and inside `impl Trait for Type`
+// bodies. The parser substitutes SelfType with the impl's concrete
+// `for` type when it desugars impl methods into ordinary receiver
+// methods, so SelfType never reaches the monomorph / IR / codegen
+// stages — it survives only on a trait's registered signatures (used
+// by the conformance check). See docs/TRAITS.md.
+type SelfType struct{}
+
+// ProjType is an associated-type projection `Base::Name` — `Self::Item`
+// inside a trait or impl, `T::Item` in a bounded generic, or a concrete
+// `Foo::Item`. The checker resolves a concrete-base projection to the
+// impl's `type Item = …` binding immediately; a `Self`/`ParamType`-based
+// one stays abstract until the impl method is conformance-checked or the
+// generic is monomorphised, at which point Base becomes concrete and the
+// binding is looked up. See docs/ASSOCIATED-TYPES.md.
+type ProjType struct {
+	Base Type
+	Name string
+}
+
+// DynTraitType is a runtime trait-object type, written `dyn Trait` (a
+// single trait) or `dyn A + B` (a multi-trait object) in type position.
+// A concrete value whose type implements EVERY trait in the set coerces
+// to it (the checker's assignability gate); a method call on a
+// `dyn …` value resolves the method across the UNION of the traits'
+// method sets and dispatches at runtime by the value's concrete type
+// rather than being statically rewritten. `dyn` is the open,
+// runtime-dispatched counterpart to the static `impl`/bounded-generic
+// path — see docs/DYN-TRAITS.md.
+//
+// Traits is kept SORTED and DEDUPED at construction (see NewDynTraitType)
+// so the set is canonical: `dyn A + B` ≡ `dyn B + A`, `Equal` is a plain
+// slice compare, and `String()` is deterministic. A single-trait
+// `dyn A` is the 1-element case. Use Trait0() for genuinely
+// single-trait-only contexts; multi-trait-aware code iterates Traits.
+type DynTraitType struct {
+	Traits []string
+	// Args carries the generic trait-arguments for each trait, parallel
+	// to Traits (Args[i] are the arguments for Traits[i]). It is nil for
+	// the common non-generic case, and an entry is nil/empty for any
+	// individual non-generic trait in a mixed set. `dyn Container[i32]`
+	// is Traits=["Container"], Args=[[i32]]; the runtime erases the
+	// arguments (the vtable is keyed by trait name), so Args drives only
+	// the checker's coercion gate and method-signature substitution.
+	Args [][]Type
+	// AssocBindings carries the pinned associated-type bindings for each
+	// trait, parallel to Traits (AssocBindings[i] are the `Name = Type`
+	// pins for Traits[i]). A trait with associated types is object-unsafe
+	// UNLESS the `dyn` type pins every one — `dyn Producer[Item = i32]` is
+	// Traits=["Producer"], AssocBindings=[[{Item, i32}]]. Like Args, the
+	// runtime erases them; they drive only the checker's object-safety
+	// gate, coercion gate, and the `Self::Item` projection resolution in
+	// method signatures. Each trait's bindings are kept sorted by name at
+	// construction so Equal is an elementwise compare.
+	AssocBindings [][]AssocBinding
+}
+
+// AssocBinding is one pinned associated type in a `dyn` object: `Item = i32`.
+type AssocBinding struct {
+	Name string
+	Type Type
+}
+
+// ArgsFor returns the generic trait-arguments for the i-th trait, or nil
+// when the trait is non-generic (or Args is short / absent).
+func (d DynTraitType) ArgsFor(i int) []Type {
+	if i < 0 || i >= len(d.Args) {
+		return nil
+	}
+	return d.Args[i]
+}
+
+// AssocFor returns the pinned associated-type bindings for the i-th trait, or
+// nil when the trait pins none (or AssocBindings is short / absent).
+func (d DynTraitType) AssocFor(i int) []AssocBinding {
+	if i < 0 || i >= len(d.AssocBindings) {
+		return nil
+	}
+	return d.AssocBindings[i]
+}
+
+// NewDynTraitType builds a DynTraitType from a trait-name set, normalising
+// it to the canonical sorted+deduped form. Callers (the parser, modload,
+// any code synthesising a `dyn` type) should go through this so the
+// invariant holds everywhere. Use NewDynTraitTypeFull for generic traits /
+// pinned associated types.
+func NewDynTraitType(traits ...string) DynTraitType {
+	if len(traits) <= 1 {
+		return DynTraitType{Traits: append([]string(nil), traits...)}
+	}
+	cp := append([]string(nil), traits...)
+	sort.Strings(cp)
+	out := cp[:0]
+	var prev string
+	for i, t := range cp {
+		if i == 0 || t != prev {
+			out = append(out, t)
+			prev = t
+		}
+	}
+	return DynTraitType{Traits: out}
+}
+
+// NewDynTraitTypeFull builds a DynTraitType carrying per-trait generic
+// arguments (args) and pinned associated-type bindings (assoc), both parallel
+// to traits, normalising to canonical sorted + deduped form. The (trait, args,
+// assoc) triples sort
+// together by trait name, with the args' and assoc' string forms breaking
+// ties. Each trait's assoc bindings are sorted by name so Equal is an
+// elementwise compare. When both args and assoc are all-empty this is
+// equivalent to NewDynTraitType.
+func NewDynTraitTypeFull(traits []string, args [][]Type, assoc [][]AssocBinding) DynTraitType {
+	if len(args) != len(traits) {
+		na := make([][]Type, len(traits))
+		copy(na, args)
+		args = na
+	}
+	if len(assoc) != len(traits) {
+		nb := make([][]AssocBinding, len(traits))
+		copy(nb, assoc)
+		assoc = nb
+	}
+	any := false
+	for _, a := range args {
+		if len(a) > 0 {
+			any = true
+		}
+	}
+	for i := range assoc {
+		if len(assoc[i]) > 0 {
+			// Canonicalise each trait's bindings by name.
+			sort.SliceStable(assoc[i], func(x, y int) bool { return assoc[i][x].Name < assoc[i][y].Name })
+			any = true
+		}
+	}
+	if !any {
+		return NewDynTraitType(traits...)
+	}
+	idx := make([]int, len(traits))
+	for i := range idx {
+		idx[i] = i
+	}
+	key := func(i int) string {
+		return traits[i] + "\x00" + typeArgsString(args[i]) + "\x00" + assocString(assoc[i])
+	}
+	sort.SliceStable(idx, func(a, b int) bool { return key(idx[a]) < key(idx[b]) })
+	outT := make([]string, 0, len(traits))
+	outA := make([][]Type, 0, len(traits))
+	outB := make([][]AssocBinding, 0, len(traits))
+	var prev string
+	for n, i := range idx {
+		k := key(i)
+		if n == 0 || k != prev {
+			outT = append(outT, traits[i])
+			outA = append(outA, args[i])
+			outB = append(outB, assoc[i])
+			prev = k
+		}
+	}
+	return DynTraitType{Traits: outT, Args: outA, AssocBindings: outB}
+}
+
+// assocString renders pinned associated-type bindings as `[Name = T, …]`
+// (empty string for none) — used for canonical ordering + String().
+func assocString(bs []AssocBinding) string {
+	if len(bs) == 0 {
+		return ""
+	}
+	parts := make([]string, len(bs))
+	for i, b := range bs {
+		parts[i] = b.Name + " = " + b.Type.String()
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+// typeArgsString renders a generic-argument list as `[a, b]` (empty string
+// for none) — used for the canonical ordering of dyn-trait sets.
+func typeArgsString(args []Type) string {
+	if len(args) == 0 {
+		return ""
+	}
+	parts := make([]string, len(args))
+	for i, a := range args {
+		parts[i] = a.String()
+	}
+	return "[" + strings.Join(parts, ", ") + "]"
+}
+
+// Trait0 returns the first (and, for a single-trait object, only) trait
+// name. It is for genuinely single-trait contexts (e.g. the compiled
+// backends, which currently only lower single-trait `dyn`). Multi-trait
+// aware code must iterate Traits instead. Returns "" for an empty set
+// (should never happen for a validly-parsed type).
+func (d DynTraitType) Trait0() string {
+	if len(d.Traits) == 0 {
+		return ""
+	}
+	return d.Traits[0]
+}
+
+// HandleType is a WIT resource-handle type (P5 — docs/WIT-BRING-YOUR-OWN.md),
+// written `own R` / `borrow R` in type position where R names a top-level
+// `resource` declaration. `own R` is an owned handle (consuming — dropped when
+// it goes out of scope, in a later P5 slice); `borrow R` is a non-consuming
+// view (never dropped). A bare resource name `R` in type position parses as a
+// StructType and the checker reclassifies it to an owned HandleType.
+//
+// A handle is an opaque i32 at the canonical ABI — NOT pointer-shaped — so it
+// sizes and stores like a scalar. Handle type-safety is enforced entirely in
+// the checker; the `ir.LowerWith` choke point erases HandleType to plain i32
+// (NumberType{}) before any compiled backend, the interpreter, or the
+// self-host emitter sees it (see internal/oracle/ir/erase_handles.go).
+type HandleType struct {
+	Resource string
+	Borrowed bool
+}
+
+func (NumberType) isType()   {}
+func (SelfType) isType()     {}
+func (BoolType) isType()     {}
+func (VoidType) isType()     {}
+func (NeverType) isType()    {}
+func (StringType) isType()   {}
+func (StrType) isType()      {}
+func (CharType) isType()     {}
+func (FloatType) isType()    {}
+func (ArrayType) isType()    {}
+func (StreamType) isType()   {}
+func (SliceType) isType()    {}
+func (TupleType) isType()    {}
+func (*FuncType) isType()    {}
+func (StructType) isType()   {}
+func (EnumType) isType()     {}
+func (ParamType) isType()    {}
+func (UnboundType) isType()  {}
+func (DynTraitType) isType() {}
+func (HandleType) isType()   {}
+func (ProjType) isType()     {}
+func (n NumberType) String() string {
+	if n.IsPointerWidth() {
+		return "usize"
+	}
+	if n.IsSigned() {
+		return fmt.Sprintf("i%d", n.NormalWidth())
+	}
+	return fmt.Sprintf("u%d", n.NormalWidth())
+}
+func (BoolType) String() string   { return "boolean" }
+func (VoidType) String() string   { return "void" }
+func (NeverType) String() string  { return "never" }
+func (StringType) String() string { return "string" }
+func (StrType) String() string    { return "str" }
+func (CharType) String() string   { return "char" }
+func (f FloatType) String() string {
+	return fmt.Sprintf("f%d", f.NormalWidth())
+}
+
+// typeString renders t as a postfix `[]` element. Only a FuncType needs
+// grouping: without the parens, `(i32) => i32` swallows the `[]` as its own
+// result type, turning an array of functions into a function returning an
+// array. Every other element spelling — `i32`, `(i32, string)`, `[i32]` —
+// round-trips unparenthesised, so only this one case is wrapped.
+func typeString(t Type) string {
+	if _, ok := t.(*FuncType); ok {
+		return "(" + t.String() + ")"
+	}
+	return t.String()
+}
+
+func (a ArrayType) String() string {
+	if a.Elem == nil {
+		return "[]"
+	}
+	return typeString(a.Elem) + "[]"
+}
+func (s SliceType) String() string {
+	if s.Elem == nil {
+		return "[]"
+	}
+	return "[" + s.Elem.String() + "]"
+}
+func (s StreamType) String() string {
+	if s.Elem == nil {
+		return "stream"
+	}
+	return "stream[" + s.Elem.String() + "]"
+}
+func (t TupleType) String() string {
+	out := "("
+	for i, e := range t.Elems {
+		if i > 0 {
+			out += ", "
+		}
+		out += e.String()
+	}
+	if len(t.Elems) == 1 {
+		// Trailing comma is required in source for unambiguous
+		// parsing; mirror it on the way out so re-parsing gives
+		// the same shape.
+		out += ","
+	}
+	return out + ")"
+}
+func (s StructType) String() string {
+	if len(s.Args) == 0 {
+		return s.Name
+	}
+	out := s.Name + "["
+	for i, a := range s.Args {
+		if i > 0 {
+			out += ", "
+		}
+		out += a.String()
+	}
+	return out + "]"
+}
+func (e EnumType) String() string {
+	if len(e.Args) == 0 {
+		return e.Name
+	}
+	out := e.Name + "["
+	for i, a := range e.Args {
+		if i > 0 {
+			out += ", "
+		}
+		out += a.String()
+	}
+	return out + "]"
+}
+func (p ParamType) String() string { return p.Name }
+func (UnboundType) String() string { return "_" }
+func (SelfType) String() string    { return "Self" }
+func (d DynTraitType) String() string {
+	parts := make([]string, len(d.Traits))
+	for i, t := range d.Traits {
+		// Positional generic args and pinned associated-type bindings share
+		// one bracket: `Foo[i32]`, `Producer[Item = i32]`, or both.
+		var inner []string
+		for _, a := range d.ArgsFor(i) {
+			inner = append(inner, a.String())
+		}
+		for _, b := range d.AssocFor(i) {
+			inner = append(inner, b.Name+" = "+b.Type.String())
+		}
+		if len(inner) > 0 {
+			parts[i] = t + "[" + strings.Join(inner, ", ") + "]"
+		} else {
+			parts[i] = t
+		}
+	}
+	return "dyn " + strings.Join(parts, " + ")
+}
+func (h HandleType) String() string {
+	if h.Borrowed {
+		return "borrow " + h.Resource
+	}
+	return "own " + h.Resource
+}
+func (p ProjType) String() string {
+	base := "<nil>"
+	if p.Base != nil {
+		base = p.Base.String()
+	}
+	return base + "::" + p.Name
+}
+
+// SubstSelf recursively replaces every SelfType in t with self. Used
+// when desugaring `impl Trait for Type` methods (the parser) and when
+// checking impl conformance against a trait's Self-typed signatures
+// (the checker). See docs/TRAITS.md.
+func SubstSelf(t Type, self Type) Type {
+	switch tt := t.(type) {
+	case SelfType:
+		return self
+	case ArrayType:
+		return ArrayType{Elem: SubstSelf(tt.Elem, self)}
+	case StreamType:
+		return StreamType{Elem: SubstSelf(tt.Elem, self)}
+	case SliceType:
+		return SliceType{Elem: SubstSelf(tt.Elem, self)}
+	case TupleType:
+		elems := make([]Type, len(tt.Elems))
+		for i, e := range tt.Elems {
+			elems[i] = SubstSelf(e, self)
+		}
+		return TupleType{Elems: elems}
+	case StructType:
+		if len(tt.Args) == 0 {
+			return tt
+		}
+		args := make([]Type, len(tt.Args))
+		for i, a := range tt.Args {
+			args[i] = SubstSelf(a, self)
+		}
+		return StructType{Name: tt.Name, Args: args}
+	case EnumType:
+		args := make([]Type, len(tt.Args))
+		for i, a := range tt.Args {
+			args[i] = SubstSelf(a, self)
+		}
+		return EnumType{Name: tt.Name, Args: args}
+	case *FuncType:
+		params := make([]Type, len(tt.Params))
+		for i, pt := range tt.Params {
+			params[i] = SubstSelf(pt, self)
+		}
+		return &FuncType{Params: params, ParamOwn: tt.ParamOwn, Result: SubstSelf(tt.Result, self)}
+	case ProjType:
+		return ProjType{Base: SubstSelf(tt.Base, self), Name: tt.Name}
+	default:
+		return t
+	}
+}
+
+// clonePatternNames copies a match arm's parallel binding slices. A clone that
+// shared them with its source was only safe until something renamed a binding
+// in place: shadowrename rewrites `arm.Bindings[i]` and the matching Idents in
+// the arm BODY, and the body is deep-copied while the names were not — so one
+// monomorphised instantiation's rename reached every sibling's pattern while
+// each sibling's body kept the old name. The stale reference then resolved to
+// another arm's binding of that name, and lowering read the wrong struct.
+func clonePatternNames(bindings []string, types []Type, fields []string) ([]string, []Type, []string) {
+	return append([]string(nil), bindings...),
+		append([]Type(nil), types...),
+		append([]string(nil), fields...)
+}
+
+// CloneBlock / CloneStmt / CloneExpr deep-copy a statement tree so an
+// in-place rewrite of the copy (type substitution, dispatch resolution,
+// numeric-literal settling) never leaks into the original. The checker
+// uses CloneBlock to materialise a trait's default method body once per
+// implementing type (see docs/TRAITS.md); monomorph uses all three to
+// instantiate a generic function's body per type-argument set.
+//
+// The depth they owe is set by Walk: everything Walk reaches from a node
+// must be freshly allocated here, since that is what the passes rewriting
+// a clone traverse. Anything Walk does not reach is shared by design.
+// TestCloneCopiesEverythingWalkReaches states both halves, and an
+// unhandled kind panics rather than returning its argument — sharing the
+// node silently is what #7042 and #7149 cost.
+func CloneBlock(b *Block) *Block {
+	if b == nil {
+		return nil
+	}
+	out := &Block{P: b.P, Stmts: make([]Stmt, len(b.Stmts))}
+	for i, s := range b.Stmts {
+		out.Stmts[i] = CloneStmt(s)
+	}
+	return out
+}
+
+func CloneStmt(s Stmt) Stmt {
+	switch x := s.(type) {
+	case *Var:
+		c := *x
+		c.Init = CloneExpr(x.Init)
+		return &c
+	case *Destructure:
+		c := *x
+		c.Names = append([]string(nil), x.Names...)
+		c.Fields = append([]string(nil), x.Fields...)
+		c.Init = CloneExpr(x.Init)
+		// A nested level is a Destructure of its own whose Init reads this
+		// level's synthesised binder; sharing it left every clone writing
+		// through the same node.
+		if x.Nested != nil {
+			c.Nested = make([]*Destructure, len(x.Nested))
+			for i, sub := range x.Nested {
+				if sub != nil {
+					c.Nested[i] = CloneStmt(sub).(*Destructure)
+				}
+			}
+		}
+		return &c
+	case *ExprStmt:
+		c := *x
+		c.Expr = CloneExpr(x.Expr)
+		return &c
+	case *Return:
+		c := *x
+		c.Value = CloneExpr(x.Value)
+		return &c
+	case *Block:
+		return CloneBlock(x)
+	case *If:
+		c := *x
+		c.Cond = CloneExpr(x.Cond)
+		c.Then = CloneStmt(x.Then).(*Block)
+		if x.Else != nil {
+			c.Else = CloneStmt(x.Else)
+		}
+		return &c
+	case *While:
+		c := *x
+		c.Cond = CloneExpr(x.Cond)
+		if b, ok := x.Body.(*Block); ok {
+			c.Body = CloneBlock(b)
+		} else {
+			c.Body = CloneStmt(x.Body)
+		}
+		return &c
+	case *For:
+		c := *x
+		if x.Init != nil {
+			c.Init = CloneStmt(x.Init)
+		}
+		c.Cond = CloneExpr(x.Cond)
+		if x.Step != nil {
+			c.Step = CloneStmt(x.Step)
+		}
+		if b, ok := x.Body.(*Block); ok {
+			c.Body = CloneBlock(b)
+		} else {
+			c.Body = CloneStmt(x.Body)
+		}
+		return &c
+	case *Match:
+		c := *x
+		c.Tag = CloneExpr(x.Tag)
+		c.Arms = make([]*MatchArm, len(x.Arms))
+		for i, arm := range x.Arms {
+			ac := *arm
+			ac.Guard = CloneExpr(arm.Guard)
+			ac.Body = CloneBlock(arm.Body)
+			ac.TupleElems = append([]TuplePatElem(nil), arm.TupleElems...)
+			ac.Bindings, ac.BindingTypes, ac.FieldNames = clonePatternNames(arm.Bindings, arm.BindingTypes, arm.FieldNames)
+			c.Arms[i] = &ac
+		}
+		return &c
+	case *Defer:
+		// Same pointer-sharing hazard as *FuncDecl below, one statement
+		// kind later: a `defer` in a generic body was shared across every
+		// instantiation, so substituting types into the second wrote
+		// through the first and the re-check rejected its own output.
+		c := *x
+		c.Expr = CloneExpr(x.Expr)
+		return &c
+	case *Loop:
+		// Likewise. `loop` is the one repetition form that carries no
+		// condition, which is why it sits apart from *While / *For above
+		// and was missed with them.
+		c := *x
+		if b, ok := x.Body.(*Block); ok {
+			c.Body = CloneBlock(b)
+		} else {
+			c.Body = CloneStmt(x.Body)
+		}
+		return &c
+	case *ForEach:
+		// The un-desugared `for x in xs` form. A destructuring header
+		// (`for (a, b) in xs`) keeps its ForEach until the checker swaps it
+		// during checkStmt, so a trait default method body — cloned per
+		// implementing type before that — can still hold one.
+		c := *x
+		c.Iter = CloneExpr(x.Iter)
+		c.RangeHigh = CloneExpr(x.RangeHigh)
+		if x.Pattern != nil {
+			c.Pattern = CloneStmt(x.Pattern).(*Destructure)
+		}
+		if b, ok := x.Body.(*Block); ok {
+			c.Body = CloneBlock(b)
+		} else {
+			c.Body = CloneStmt(x.Body)
+		}
+		return &c
+	case *Break:
+		c := *x
+		return &c
+	case *Continue:
+		c := *x
+		return &c
+	case *FuncDecl:
+		// A nested function declaration. Falling through to `return s`
+		// shared this node by pointer with the original — and with every
+		// other clone of it — so a caller that clones a generic body per
+		// instantiation and then substitutes types in place would have
+		// each instantiation overwrite the last (#7042).
+		c := *x
+		c.TypeParams = append([]string(nil), x.TypeParams...)
+		c.Params = append([]Param(nil), x.Params...)
+		c.Body = CloneBlock(x.Body)
+		return &c
+	}
+	panic(fmt.Sprintf("ast: CloneStmt: unhandled statement kind %T (add a case for it)", s))
+}
+
+func CloneExpr(e Expr) Expr {
+	if e == nil {
+		return nil
+	}
+	switch x := e.(type) {
+	case *UnitLit:
+		c := *x
+		return &c
+	case *CaptureRef:
+		c := *x
+		return &c
+	case *BlockExpr:
+		// The block a `defer { … }` action carries, and the tail-value
+		// block form. Falling through to `return e` shared its STATEMENTS
+		// with every clone, so a generic body cloned per instantiation had
+		// its second instantiation substitute types into the first one's
+		// nodes — the monomorpher then rejected its own output as a
+		// compiler bug (the #7042 shape, in the expression layer).
+		c := *x
+		c.Stmts = make([]Stmt, len(x.Stmts))
+		for i, st := range x.Stmts {
+			c.Stmts[i] = CloneStmt(st)
+		}
+		c.Tail = CloneExpr(x.Tail)
+		return &c
+	case *EnumLit:
+		c := *x
+		c.Args = make([]Expr, len(x.Args))
+		for i, a := range x.Args {
+			c.Args[i] = CloneExpr(a)
+		}
+		return &c
+	case *MapLit:
+		c := *x
+		c.Entries = make([]MapEntry, len(x.Entries))
+		for i, en := range x.Entries {
+			c.Entries[i] = MapEntry{Key: CloneExpr(en.Key), Value: CloneExpr(en.Value)}
+		}
+		return &c
+	case *FString:
+		c := *x
+		c.Parts = make([]FStringPart, len(x.Parts))
+		for i, pt := range x.Parts {
+			pc := pt
+			pc.Expr = CloneExpr(pt.Expr)
+			c.Parts[i] = pc
+		}
+		c.Desugared = CloneExpr(x.Desugared)
+		return &c
+	case *DowncastExpr:
+		c := *x
+		c.Inner = CloneExpr(x.Inner)
+		return &c
+	case *MakeClosure:
+		c := *x
+		c.Captures = make([]Expr, len(x.Captures))
+		for i, cp := range x.Captures {
+			c.Captures[i] = CloneExpr(cp)
+		}
+		return &c
+	case *Ident:
+		c := *x
+		c.TypeArgs = slices.Clone(x.TypeArgs)
+		return &c
+	case *NumberLit:
+		c := *x
+		return &c
+	case *FloatLit:
+		c := *x
+		return &c
+	case *BoolLit:
+		c := *x
+		return &c
+	case *StringLit:
+		c := *x
+		return &c
+	case *CharLit:
+		c := *x
+		return &c
+	case *Binary:
+		c := *x
+		c.Left = CloneExpr(x.Left)
+		c.Right = CloneExpr(x.Right)
+		return &c
+	case *Unary:
+		c := *x
+		c.Operand = CloneExpr(x.Operand)
+		return &c
+	case *Call:
+		c := *x
+		c.Callee = CloneExpr(x.Callee)
+		c.Args = make([]Expr, len(x.Args))
+		for i, a := range x.Args {
+			c.Args[i] = CloneExpr(a)
+		}
+		c.TypeArgs = append([]Type(nil), x.TypeArgs...)
+		return &c
+	case *Index:
+		c := *x
+		c.Array = CloneExpr(x.Array)
+		c.Idx = CloneExpr(x.Idx)
+		return &c
+	case *SliceExpr:
+		c := *x
+		c.Source = CloneExpr(x.Source)
+		c.Low = CloneExpr(x.Low)
+		c.High = CloneExpr(x.High)
+		return &c
+	case *FieldAccess:
+		c := *x
+		c.Target = CloneExpr(x.Target)
+		return &c
+	case *TryOp:
+		c := *x
+		c.Inner = CloneExpr(x.Inner)
+		return &c
+	case *IfExpr:
+		c := *x
+		c.Cond = CloneExpr(x.Cond)
+		c.Then = CloneExpr(x.Then)
+		c.Else = CloneExpr(x.Else)
+		return &c
+	case *MatchExpr:
+		c := *x
+		c.Tag = CloneExpr(x.Tag)
+		c.Arms = make([]*MatchExprArm, len(x.Arms))
+		for i, arm := range x.Arms {
+			a := *arm
+			if arm.Guard != nil {
+				a.Guard = CloneExpr(arm.Guard)
+			}
+			a.Body = CloneExpr(arm.Body)
+			a.TupleElems = append([]TuplePatElem(nil), arm.TupleElems...)
+			a.Bindings, a.BindingTypes, a.FieldNames = clonePatternNames(arm.Bindings, arm.BindingTypes, arm.FieldNames)
+			c.Arms[i] = &a
+		}
+		return &c
+	case *ArrayLit:
+		c := *x
+		c.Elems = make([]Expr, len(x.Elems))
+		for i, el := range x.Elems {
+			c.Elems[i] = CloneExpr(el)
+		}
+		return &c
+	case *TupleLit:
+		c := *x
+		c.Elems = make([]Expr, len(x.Elems))
+		for i, el := range x.Elems {
+			c.Elems[i] = CloneExpr(el)
+		}
+		return &c
+	case *Lambda:
+		c := *x
+		c.Params = append([]Param(nil), x.Params...)
+		c.Captures = append([]Param(nil), x.Captures...)
+		c.Body = CloneBlock(x.Body)
+		return &c
+	case *StructLit:
+		c := *x
+		c.Base = CloneExpr(x.Base)
+		c.Fields = make([]FieldInit, len(x.Fields))
+		for i, f := range x.Fields {
+			c.Fields[i] = FieldInit{Name: f.Name, Value: CloneExpr(f.Value)}
+		}
+		c.TypeArgs = append([]Type(nil), x.TypeArgs...)
+		return &c
+	case *CastExpr:
+		c := *x
+		c.Inner = CloneExpr(x.Inner)
+		return &c
+	case *Assign:
+		c := *x
+		c.Target = CloneExpr(x.Target)
+		c.Value = CloneExpr(x.Value)
+		return &c
+	}
+	panic(fmt.Sprintf("ast: CloneExpr: unhandled expression kind %T (add a case for it)", e))
+}
+
+func (f *FuncType) String() string {
+	out := "("
+	for i, p := range f.Params {
+		if i > 0 {
+			out += ", "
+		}
+		if f.OwnAt(i) {
+			out += "own "
+		}
+		// A param type can be nil when an upstream inference step
+		// bailed out (e.g. `use x <- f()` whose callback type the
+		// checker couldn't pin — see inferUseParam). Render it as
+		// `<unknown>` rather than dereferencing nil: this String is
+		// reached while formatting a diagnostic (E038), so a panic
+		// here would mask the real error.
+		if p == nil {
+			out += "<unknown>"
+			continue
+		}
+		out += p.String()
+	}
+	out += ") => "
+	if f.Result == nil {
+		return out + "<unknown>"
+	}
+	return out + f.Result.String()
+}
+
+// NormalWidth returns the canonical bit-width of a NumberType.
+// Width=0 (the zero value, used by `NumberType{}` for legacy
+// `number` callers) maps to 32 so `NumberType{}` keeps matching
+// the explicit `NumberType{Width: 32, Signed: true}` for `i32`.
+// Width=WidthPtr (-1) is the target-aware usize sentinel — it
+// has no canonical width at the AST layer; backends pick 32 or
+// 64 at codegen time. Returning -1 here lets callers detect the
+// pointer-width case without colliding with a real bit-width.
+func (n NumberType) NormalWidth() int {
+	if n.Width == 0 {
+		return 32
+	}
+	return n.Width
+}
+
+// IsPointerWidth reports whether the type is the target-aware
+// usize. Backends ask this before resolving widths; the IR's
+// equivalent on the operand side is `Op.Width == WidthPtr`.
+func (n NumberType) IsPointerWidth() bool {
+	return n.Width == WidthPtr
+}
+
+// IsSigned reports whether a NumberType is signed. The zero value
+// (Width=0) is signed by convention so legacy `NumberType{}` keeps
+// comparing equal to `i32`.
+func (n NumberType) IsSigned() bool {
+	if n.Width == 0 {
+		return true
+	}
+	return n.Signed
+}
+
+// NormalWidth returns the canonical bit-width of a FloatType.
+// An unsettled float literal (Polymorphic, Width=0) defaults to
+// f64 — the double-precision default every mainstream language
+// uses for untyped float literals, and the language's primary
+// float type. Defaulting these to f32 silently halved the
+// precision of any literal not explicitly annotated `f64` (e.g.
+// `let x = 1.0 / 3.0` or a bare `(3.14159).to_string()` receiver).
+// An explicit `f32` is spelled `FloatType{Width:0, Spelling:"f32"}`
+// by the parser (the historical zero-value-is-f32 convention), so a
+// NON-polymorphic Width=0 still maps to 32 — only the Polymorphic
+// flag promotes the default to f64.
+func (f FloatType) NormalWidth() int {
+	if f.Width == 0 {
+		if f.Polymorphic {
+			return 64
+		}
+		return 32
+	}
+	return f.Width
+}
+
+// ElemSizeBytes returns the in-memory footprint, in bytes, of a
+// single element of `t` when stored in an array / slice on
+// wasm32 (4-byte pointers). `u8` uses 1 byte, and i64 / u64 /
+// f64 use 8 bytes. Pointer-shaped types (string / Array / struct / enum
+// / tuple / slice) return 4 — they hold a heap pointer that
+// fits in i32 on wasm32. For native arm64 (where heap pointers
+// are 8 bytes), use `ElemSizeBytesFor(t, ptrW)` instead.
+func ElemSizeBytes(t Type) int {
+	return ElemSizeBytesFor(t, 4)
+}
+
+// ElemSizeBytesFor is the target-aware variant. `ptrW` is the
+// pointer width in bytes for the current target (4 on wasm32,
+// 8 on arm64). Pointer-shaped types and `usize` return `ptrW` so
+// their full heap address survives on arm64-darwin (heap >= 4 GiB).
+// Other scalar types ignore ptrW.
+//
+// `StringType` is special-cased on wasm32 (ptrW=4): a string
+// element is two i32 slots `(data, len)` under the two-word
+// ABI, so the stride is 8 — not `ptrW=4`. On natives the
+// existing LSB-tagged single-slot form stays one 8-byte
+// pointer slot, so stride is still 8 there too. Both targets
+// converge on 8-byte string-element stride; centralising the
+// decision here keeps it consistent with `payloadSlotSize`
+// in the IR.
+func ElemSizeBytesFor(t Type, ptrW int) int {
+	switch x := t.(type) {
+	case NumberType:
+		switch x.NormalWidth() {
+		case 8:
+			return 1
+		case 64:
+			return 8
+		case WidthPtr:
+			return ptrW
+		}
+		return 4
+	case FloatType:
+		if x.NormalWidth() == 64 {
+			return 8
+		}
+		return 4
+	case CharType:
+		return 4
+	case StringType:
+		if UseTwoWordStrings(ptrW) {
+			return 2 * ptrW
+		}
+		return ptrW
+	case DynTraitType:
+		// `dyn Trait` representation is target-dependent
+		// (docs/DYN-TRAITS.md §4.2.1/§4.2.2):
+		//   - wasm (ptrW==4): inline two-word `[data, vtable]` fat
+		//     pointer, so an element occupies two pointer-width slots —
+		//     same stride as a two-word string.
+		//   - natives (ptrW==8): boxed one-word — a `dyn` value is a
+		//     single heap pointer to a `{data, vtable}` cell, so it
+		//     strides one pointer width like any other pointer.
+		if ptrW == 4 {
+			return 2 * ptrW
+		}
+		return ptrW
+	}
+	return ptrW
+}
+
+// UseTwoWordStrings reports whether the target whose pointer
+// width is `ptrW` carries strings on the operand stack as a
+// `(data, len)` two-word pair (vs the legacy single LSB-tagged
+// pointer slot). Wasm32 (`ptrW == 4`) is always two-word. arm64
+// opts in by setting `TwoWordOverride` to true before lowering;
+// x86-64 never does, and stays single-word LSB-tagged. See
+// `docs/SSO-NATIVE-FLIP-STATUS.md`.
+//
+// Lives in the `ast` package because both `internal/oracle/ir` and
+// `internal/syntax/ast`'s own `ElemSizeBytesFor` need to consult it.
+// The companion `(b *builder) twoWordStrings()` method in
+// `ir.go` calls into this for builder-level checks.
+func UseTwoWordStrings(ptrW int) bool {
+	if ptrW == 4 {
+		return true
+	}
+	return TwoWordOverride
+}
+
+// TwoWordOverride opts a non-wasm target (ptrW != 4) into the
+// two-word string ABI. arm64 sets it; x86-64 does not
+// (`docs/SSO-NATIVE-FLIP-STATUS.md`). Set to true before
+// `ir.LowerWith` runs; reset after.
+//
+// Concurrent codegen — e.g. a differential sweep's
+// per-seed parallelism — must serialise its arm64 + x86_64
+// emit calls via `CodegenMu` below. Reads from this flag
+// during a backend's emit body are NOT lock-protected; the
+// design assumes only one toggling backend runs at a time,
+// which `CodegenMu` enforces.
+var TwoWordOverride bool
+
+// CaptureNeeds8 reports whether a closure capture of type t must be
+// 8-byte aligned in the env block. Only a two-word string on a
+// native (ptrW=8) target qualifies: its (data, len) pair is loaded
+// with arm64's `ldp`, which faults on an unaligned address. Every
+// other capture — i64 / f64 / pointers / single-word strings — uses
+// a plain ldr/str that tolerates any offset, so they stay packed
+// (keeping the layout, and every existing offset test, unchanged).
+func CaptureNeeds8(t Type, ptrW int) bool {
+	_, isStr := t.(StringType)
+	return isStr && UseTwoWordStrings(ptrW) && ptrW == 8
+}
+
+// CaptureAlign rounds a running env-block offset up to the alignment
+// the next capture of type t requires (8 for pointer/wide/two-word
+// captures, 4 otherwise). Every closure-env layout — the canonical
+// one in closureconv plus each backend's store loop — must apply
+// this identically so a backend's store offsets match the
+// CaptureRef load offsets. Without it, an i32 capture before a
+// string left the string at a 4-aligned offset and arm64 segfaulted
+// on the unaligned two-word load.
+func CaptureAlign(off int32, t Type, ptrW int) int32 {
+	if !CaptureNeeds8(t, ptrW) {
+		return off
+	}
+	return (off + 7) &^ 7
+}
+
+// RcFreeEnabled gates the Phase 3 freelist allocator. When true (the
+// DEFAULT, as of step 5), codegen emits a segregated freelist:
+// `__fern_free` returns a block to its size class and `__fern_alloc`
+// reuses a class's freelist before bumping, and the array dec sites
+// (__fern_drop_arr_ptr / __fern_arr_dec) return OWNED array buffers
+// to it at rc==0. When false, `__fern_alloc` is a pure bump cursor
+// and `__fern_free` is a no-op — the pre-step-5 leak-forever arena.
+//
+// FLIPPED ON. Both over-release classes are closed by the borrow-aware
+// analysis (computeFreeEligible):
+//   - borrowed-IN: excludes params + anything derived from them.
+//   - ESCAPE-OUT: a local that escapes into a container retained
+//     WITHOUT an inc — `map.set` / MapLit values, pushed array
+//     elements, enum-constructor payloads, index / field / capture
+//     assignment targets — is tainted so the owner never frees out
+//     from under the container. (StructLit / TupleLit construction inc
+//     their stored values, so escaping through those is already safe.)
+//
+// rc_correctness's escape_array_into_* entries cover each sink free-on
+// on all three backends; the differential gate
+// (Test{X86_64,Arm64,WASM}FixturesFreeMatchesNoFree) asserts free-on ==
+// free-off byte-for-byte. The flip landed after that corpus + gate went
+// green corpus-wide on all backends in CI plus owner sign-off. A
+// handful of tests pin the OFF arena via save/restore for differential
+// baselines. What LEAKS (safe — no over-release): borrowed /
+// borrowed-derived buffers, struct / enum / closure / map boxes,
+// struct/enum array fields.
+var RcFreeEnabled = true
+
+// RcReuseEnabled gates the constructor-reuse (FBIP) layer specifically — the
+// self-overwrite reuse (tryStructReuseOverwrite / tryEnumReuseOverwrite) AND
+// the general reuse token (computeReuseSources, threaded drop→alloc). It builds
+// ON top of RcFreeEnabled (reuse only makes sense when freeing), but is a
+// SEPARATE axis so the differential gate can pin reuse-on == reuse-off
+// byte-identical OUTPUT — isolating a reuse bug from a plain free bug. Default
+// on; the Test{X86_64,Arm64,WASM}ReuseMatchesNoReuse gate flips it off for the
+// baseline. Turning it off only DISABLES the optimisation (every reuse site
+// falls back to a fresh alloc + the normal drop), so it can never change
+// observable behaviour — that invariant is exactly what the gate asserts.
+// OwnedByDefault (Slice 2, docs/OWNERSHIP-INFERENCE-PLAN.md) flips parameter
+// ownership toward the Koka/Perceus model: a parameter is OWNED by the callee
+// (the caller retains it with an inc at the call site, the callee reclaims it
+// with a dec at exit) rather than borrowed, so an ordinary function can reclaim
+// its argument when it holds the last reference — no `own` annotation needed.
+// rc is invisible, so the differential gate pins on == off byte-identical
+// output; the reclaim is the only effect. Rolled out per param-type category
+// (enums first — immutable, so the inc can't disturb the in-place-mutation
+// semantics the borrow model exists for); a borrow-inference optimization that
+// keeps read-only non-escaping params borrowed is added on top in a later slice.
+// On; the differential gate pins on == off byte-identical, so the reclaim is
+// the only effect.
+var OwnedByDefault = true
+
+// BorrowInferEnabled (Slice 2 / borrow inference, docs/OWNERSHIP-INFERENCE-PLAN.md)
+// is the optimization that builds on top of OwnedByDefault: a parameter that the
+// escape analysis (inferParamEscapes) proves does NOT escape the callee is kept
+// BORROWED instead of owned — the caller skips the retain inc and the callee
+// skips the exit dec, since the value can't outlive the call frame and the
+// caller still owns it (a fresh-temp arg is reclaimed by the caller's arg-temp
+// path). This removes the inc/dec pair for the common reader (`len`/`sum`/field
+// fold) called on a live local — the step that makes `own` truly redundant. Like
+// the other rc axes it can never change observable output (a balanced inc/dec
+// pair elided on a non-escaping value), so the differential gate pins on == off
+// byte-identical. Default on.
+var BorrowInferEnabled = true
+
+var RcReuseEnabled = true
+
+// RcReuseDropGuided selects the ICFP 2022 "frame-limited / drop-guided"
+// SOURCE-SELECTION strategy inside computeReuseSources (plan item E3,
+// docs/NICHE-BORROWS-PLAN.md — an EVALUATION axis behind a flag, not a
+// default flip). It is ORTHOGONAL to RcReuseEnabled: reuse must be on for
+// either strategy to run, and with this flag OFF the selection is the
+// existing PLDI-2021-style pairing, byte-identical to before the flag
+// existed. With it ON, reuse tokens are derived from DROP POINTS: a token
+// is born where a donor D's last use ends, flows FORWARD along
+// straight-line control flow within the frame (including into a dominated,
+// non-loop if/match arm), and is claimed by the FIRST same-class
+// construction C reached; tokens die at joins they cannot soundly cross
+// and at frame exit. Every proposed pair still passes the identical gates
+// (reuseClassOf class match, freeEligible, never-reassigned, name-unique,
+// not moved / borrow-source) and the shared lowering's runtime is_unique
+// guard + degrade-to-fresh-alloc, so like the other rc axes it can never
+// change observable output — only WHICH pairs are proposed. Default off
+// (evaluation only); settable via the FERN_RC_REUSE_DROP_GUIDED=1 env var
+// so test subprocesses and the CLI can toggle it without a fork.
+var RcReuseDropGuided = os.Getenv("FERN_RC_REUSE_DROP_GUIDED") == "1"
+
+// SanitizeEnabled is the single opt-in surface for the debug
+// memory-safety runtime (#5545) — the "sanitizer build" that turns the
+// scattered, individually-named heap detectors into one coherent mode.
+// Set it and the three heap checks below turn on together:
+//
+//	LeakCheckEnabled  — leak census at exit
+//	RcUnderflowTrap   — rc over-release (double free), reported + fatal
+//	RcFreeDebug       — use-after-free quarantine, reported + fatal
+//
+// It deliberately does NOT enable RcTrace: that is per-heap-event
+// stderr output, a tool you point at a reduced repro, not something a
+// standing mode can afford. The individual flags stay settable on their
+// own for exactly that kind of narrow probe; this one is what you reach
+// for when you don't yet know which check will fire.
+//
+// The two failing checks ABORT with a named diagnostic on stderr
+// (`fern-sanitizer: …` — see the backends' sanAbort) rather than only
+// bumping a counter or dying on a bare `ud2`, so a sanitizer run says
+// what went wrong without a debugger attached; the SIGILL is still
+// there underneath for the gdb backtrace that says where.
+//
+// Integers need no sanitizer here — they are total and never-trap by
+// policy (docs/INTEGER-SEMANTICS.md), so there is no integer-UB to
+// catch. The surface is purely the heap/rc correctness that Perceus's
+// manual inc/dec makes possible to get wrong.
+//
+// Zero release cost: with the flag off every check is unemitted and the
+// asm is byte-identical to a build without the feature. Settable via
+// FERN_SANITIZE=1 (the LeakCheckEnabled precedent) or the CLI's
+// -sanitize; the CLI path assigns this var and calls ApplySanitize.
+var SanitizeEnabled = os.Getenv("FERN_SANITIZE") == "1"
+
+// ApplySanitize folds SanitizeEnabled into the component detector
+// flags. Called from this package's init for the env-var path, and
+// again by the CLI after -sanitize parses — the component flags are
+// plain vars read directly by the backends, so a late SanitizeEnabled
+// assignment has to be pushed down rather than derived.
+//
+// It only ever turns flags ON: an individual FERN_* flag already set
+// stays set, and clearing SanitizeEnabled does not un-apply.
+func ApplySanitize() {
+	if !SanitizeEnabled {
+		return
+	}
+	LeakCheckEnabled = true
+	RcUnderflowTrap = true
+	RcFreeDebug = true
+}
+
+func init() { ApplySanitize() }
+
+// LeakCheckEnabled gates the native leak detector (#5362 slice 1): a
+// compile-time build mode that counts every __fern_alloc (count +
+// 16-rounded bytes) and every __fern_free (count + identically rounded
+// bytes) in BSS quads and prints one summary line to stderr at process
+// exit — both the `_start` epilogue and the `exit()` builtin's
+// __fern_exit:
+//
+//	leakcheck: allocs=<N> frees=<M> live_bytes=<K>
+//
+// where K = alloc_bytes − free_bytes. Both sides count the SAME
+// (size+15)&-16 rounding, so a block's alloc and eventual free always
+// cancel exactly and live_bytes is exact, not approximate.
+// __fern_alloc_reuse's in-place path counts as NEITHER an alloc nor a
+// free (see the emitter comments). x86-64 + arm64 honour it; wasm
+// ignores the flag. With the flag OFF the emitted asm is byte-identical to a build
+// without the feature. Settable via FERN_LEAKCHECK=1 (the
+// RcReuseDropGuided precedent) so the CLI can toggle it without a fork,
+// or implied by SanitizeEnabled — which also adds a leak VERDICT line
+// (`fern-sanitizer: leak <K> bytes in <N> blocks`) after the summary
+// when live_bytes is non-zero, so a sanitizer run doesn't need the
+// numbers read to say whether it was clean.
+var LeakCheckEnabled = os.Getenv("FERN_LEAKCHECK") == "1"
+
+// CoverEnabled turns on line-coverage instrumentation (#5548): the
+// lowering emits an ir.OpCoverPoint at each executable source line, the
+// backend reserves one .bss counter per instrumented (file, line) and
+// increments it in place, and a report loop writes the whole table to
+// stderr at both exit seams — one line per instrumented line, hit or
+// not:
+//
+//	fern-cover: <file>:<line> <count>
+//
+// `fern -cover-report FILE` folds that stream into per-file totals, the
+// uncovered-line list, or lcov. Counters are plain non-atomic adds and
+// the report is unconditional, so this is a measurement build, not a
+// shipping one. x86-64 + arm64 natives; the wasm backend rejects it
+// rather than silently measuring nothing. With the flag OFF the emitted
+// asm is byte-identical to a build from a compiler without the feature.
+// Settable via FERN_COVER=1 (the LeakCheckEnabled precedent) so a
+// harness can instrument a child compile without a fork.
+var CoverEnabled = os.Getenv("FERN_COVER") == "1"
+
+// CoverLinePrefix opens every line of the coverage report an
+// instrumented binary writes to stderr, and is what `fern -cover-report`
+// matches on. It exists so the two natives and the reader agree on one
+// spelling: the report shares stderr with whatever the program itself
+// printed there, so the prefix is the only thing separating the two.
+const CoverLinePrefix = "fern-cover: "
+
+// CoverBranchPrefix opens every BRANCH row of the same report (#5548
+// slice 3). Its own prefix rather than a third field on a line row: the
+// two carry different shapes — a branch row names a column and an edge —
+// and a reader that had to look past the file:line to tell them apart
+// would misparse a line row for a file whose path contains a space.
+const CoverBranchPrefix = "fern-branch: "
+
+// RcFreeDebug turns the freelist into a use-after-free DETECTOR
+// (x86-64 and arm64; a diagnostic build mode, set alongside
+// RcFreeEnabled). Instead of recycling a freed array buffer, the
+// free sites poison its rc word with RcPoison and quarantine the
+// block. NOTHING is recycled in this mode — __fern_free declines the
+// freelist push outright, since a reused block would overwrite its own
+// poison — so __fern_alloc just keeps bumping.
+//
+// __fern_rc_inc / __fern_rc_dec then report and die the moment they
+// touch a poisoned block — i.e. a stale reference to an over-released
+// buffer — naming the holder the rc undercounted. Any helper that
+// INLINES an rc op rather than calling out needs its own copy of the
+// check (arm64's __fern_str_inc is the one such site: it has to
+// preserve the (data, len) pair, so it cannot tail-call the helper);
+// miss one and a stale reference walks straight past the detector.
+//
+// Settable via FERN_RC_FREE_DEBUG=1 (the LeakCheckEnabled precedent) so a
+// probe binary can be built with the detector without a fork — the leak
+// counters say a block was never freed, this says a live block was — or
+// implied by SanitizeEnabled.
+//
+// A quarantined block still counts as a FREE for the leak census: the
+// quarantine sites poison the rc word and then run the ordinary
+// reclamation path, and it is __fern_free that skips the freelist push.
+// Accounting where the release happens rather than where the memory is
+// recycled is what lets the two detectors run together — otherwise
+// every correctly-freed array reads as a leak.
+var RcFreeDebug = os.Getenv("FERN_RC_FREE_DEBUG") == "1"
+
+// SandboxEnabled installs a seccomp-bpf filter at `_start` permitting
+// exactly the syscalls the emitted binary can issue, killing the
+// process on anything else (x86-64 Linux only; #6071).
+//
+// The allowlist is the backend's recorded syscall set — see
+// x86_64.EmitWithSyscalls. Deriving it from the emitted text rather
+// than from capability declarations is the whole point: caps.Analyze
+// models user-callable builtins, not the runtime's own mmap /
+// exit_group / write / clock_gettime, so a caps-derived filter would
+// need a hand-maintained floor that silently rots the moment the
+// runtime grows a syscall. A filter derived from what was actually
+// emitted cannot omit a syscall the program can make.
+//
+// This does NOT replace the compile-time capability system, which
+// already rejects out-of-grant reach with E070. It is exploitation
+// hardening: static analysis proves what the code CAN CALL, seccomp
+// constrains what the process can do once control flow has been
+// hijacked — the case a use-after-free in the rc runtime (the class
+// RcFreeDebug exists for) could otherwise open.
+//
+// Opt-in via FERN_SANDBOX=1 (the LeakCheckEnabled precedent). Default
+// off, and the emitted asm is byte-identical to a build without the
+// feature when off. Defaulting it on waits on the whole fixture corpus
+// running clean under it — an over-tight filter is a crash, not a
+// warning, so the burden of proof sits on the feature.
+var SandboxEnabled = os.Getenv("FERN_SANDBOX") == "1"
+
+// RcTrace makes every heap event self-describing (x86-64 only; a
+// diagnostic build mode). __fern_alloc and __fern_free each write one
+// line to stderr:
+//
+//	rctrace <a|f> <ptr> <size> <site> <caller>
+//
+// and, since the refcount half of a leak is invisible without them,
+// __fern_rc_inc / __fern_rc_dec / __fern_arr_dec write:
+//
+//	rctrace <i|d> <ptr> 0000000000000000 <site> <caller>
+//
+// `caller` is one frame above `site`, read through the frame pointer.
+// It exists because `site` alone cannot tell a producer from a function
+// code was INLINED INTO: over the self-host driver it credited 133
+// allocations to a 1043-line function containing exactly one
+// construction, and named the shared allocator `__fern_alloc_rc1` for
+// 1689 blocks whose real producer is one frame further out. Where the
+// caller kept no frame pointer the field is an address that resolves to
+// nothing, so a consumer must tolerate an unresolvable value rather
+// than trust it.
+//
+// THREE THINGS ABOUT THE i/d LINES, each of which will mislead a reader
+// who assumes otherwise:
+//
+//   - The size field is always zero and carries no count. The writer
+//     rounds its size argument to a 16 multiple so an alloc and its free
+//     agree, and a refcount put through that rounding reads 16 whatever
+//     it was. Pair i against d per pointer for the imbalance instead.
+//
+//   - THE POINTERS ARE NOT IN THE SAME UNITS, AND THE OFFSET IS NOT ONE
+//     NUMBER. a/f name the block __fern_alloc returned; i/d name the
+//     object whose rc word sits at [ptr-8]. That object is the block
+//     plus a header of 16 bytes for an array (cap/rc/len, __alloc_u8's
+//     `lea rax, [rax + 16]`) but 8 for a box (__fern_alloc_box /
+//     __fern_alloc_rc1, the rc word alone). Cross-kind pairing has to
+//     add the right one per allocation; without it a block reads as
+//     "never retained" when it was, and assuming the array offset
+//     everywhere points 8 bytes past every box.
+//
+//     Beware of confirming this by looking for an i pointer that is also
+//     an a pointer: with several live blocks one object's address
+//     coincides with another block's base often enough to make that test
+//     lie in both directions. Compare within a single allocation.
+//
+//   - Coverage is partial. Only these three helpers are hooked:
+//     __fern_str_dec and the map helpers are not, and __fern_arr_dec's
+//     rc==1 branch frees rather than decrementing, so it shows as an f
+//     and not a d.
+//
+// Under this flag the OpRcInc / OpRcDec inline fast path (#4402 opt 2b)
+// falls back to calling the helpers, the same way RcFreeDebug does, so
+// the hook lives in one place rather than in the hot inline sequence.
+//
+// all three numbers fixed-width 16-digit hex, `a` = alloc, `f` = free.
+// `site` is the RETURN ADDRESS of the alloc/free call — i.e. the code
+// that asked for the memory, not the helper that handed it out — so
+// `-g` plus addr2line names the source line directly.
+//
+// This is to LeakCheckEnabled what RcUnderflowTrap is to the underflow
+// counter: the counter says a leak happened, this says WHERE. A
+// `leakcheck: ... live_bytes=4096` line is a true statement nothing can
+// act on; pairing the trace's allocs against its frees leaves exactly
+// the sites that allocated memory the program never gave back. The two
+// compose — run both and the summary tells you how much to look for.
+//
+// Fixed-width hex is deliberate: the consumer is a pairing script, and
+// a uniform record needs no field-splitting to match an `a` line to its
+// `f` line by pointer. Note the addresses are RUNTIME addresses, which
+// match a `-g` symtab directly for the default (non-PIE) x86-64 target;
+// under -pie subtract the load base first.
+//
+// Settable via FERN_RC_TRACE=1 (the RcFreeDebug precedent). With the
+// flag OFF the emitted asm is byte-identical to a build without the
+// feature — every emission site is gated, nothing is left behind.
+var RcTrace = os.Getenv("FERN_RC_TRACE") == "1"
+
+// RcUnderflowTrap turns the Phase 3 over-release COUNTER into a TRAP
+// (x86-64 and arm64; a diagnostic build mode). Every site that bumps
+// __fern_rc_underflow — the inline dec, the __fern_rc_dec /
+// __fern_arr_dec helpers — follows the bump with
+// `ud2`, so the process dies with SIGILL at the exact dec that
+// over-released and a gdb backtrace names the function.
+//
+// This is the companion RcFreeDebug is not: RcFreeDebug quarantines
+// FREED array/map blocks and traps a later touch, so it only sees an
+// over-release that went through a free. A plain __fern_rc_dec taking a
+// count 1 → 0 frees nothing, and the next dec on that block underflows
+// with no quarantined block to trip over — invisible to RcFreeDebug,
+// counted by __rc_underflow_count(), and located by nothing until this.
+//
+// The trap is a `call __fern_san_abort` carrying a fixed message, not a
+// bare `ud2`: the process still dies of SIGILL (inside the abort
+// helper, one frame above the offending dec, so the backtrace is
+// unchanged) but stderr now says WHAT died. x86-64 and arm64.
+//
+// Settable via FERN_RC_UNDERFLOW_TRAP=1 (the RcFreeDebug precedent) or
+// implied by SanitizeEnabled.
+var RcUnderflowTrap = os.Getenv("FERN_RC_UNDERFLOW_TRAP") == "1"
+
+// BacktraceEnabled gates the frame-pointer backtrace the natives print
+// under a fatal abort (#5538 slice 4). Default ON: an abort writes its
+// cause line, then walks the x29 / rbp chain and prints each return
+// address, which `-g` plus addr2line resolves to functions.
+//
+// This is a COMPILE-time switch, not a runtime one. The opt-out exists
+// for size-critical builds, and a binary that reads an env var at abort
+// time still carries the walk and the hex printer it would skip — the
+// cost the opt-out is meant to remove. With the flag off the walk, the
+// hex printer, and the "backtrace:" string are simply not emitted, and
+// __fern_report is a write-then-exit again.
+//
+// The CAUSE line stays either way: it is one write of a fixed string,
+// the abort's exit code is meaningless without it, and slice 3 (the
+// named diagnostics) is a separate feature from the backtrace this
+// suppresses. Exit codes are untouched — 134 / ExitArenaExhausted /
+// ExitSanitizer are the same with the walk gone, so ARRAY-BOUNDS.md's
+// contract holds in both modes.
+//
+// Settable via FERN_BACKTRACE=0 (the RcFreeDebug precedent) or the CLI's
+// -backtrace=false, which defaults to whatever the env var left here.
+var BacktraceEnabled = os.Getenv("FERN_BACKTRACE") != "0"
+
+// TrmcEnabled gates tail-recursion-modulo-cons. A function whose recursive
+// call sits in the LAST payload position of a constructor in tail position
+// (the canonical `map(xs) -> Cons(g(h), map(t))` shape) is normally
+// NOT tail-recursive — the constructor wraps the recursive result — so it
+// grows the stack O(n) and overflows on long lists. TRMC rewrites such a
+// function into a "hole-passing" loop: each node is allocated with its
+// recursive field left as a hole, the previous hole is filled with the new
+// node, and the hole advances to the new node's field — O(1) stack, single
+// pass, no reversal. Like RcReuseEnabled it is a SEPARATE axis from the
+// behaviour it optimises: turning it off only disables the rewrite (the
+// function lowers as ordinary recursion), so it can never change observable
+// output — the Test{X86_64,Arm64,WASM}Trmc*MatchesNoTrmc gates assert exactly
+// that byte-identical invariant. Default on.
+var TrmcEnabled = true
+
+// RcPoison is the rc-word marker a quarantined (freed) block carries
+// in RcFreeDebug mode: a large positive value that can't be a real
+// refcount and isn't the high-bit static sentinel.
+const RcPoison = 0x7EEDFACE
+
+// MapHeaderBytes is the size of a core/map kv-buffer header — the bytes
+// before the bucket array. Layout: cap+0, len+4, keyKind+8, valTag+12,
+// hashSeed+16, pad+20 (see core/map.fern's module header).
+//
+// It is the SINGLE Go-side spelling of a constant that also exists in Fern
+// as `__map_hdr_bytes`, and the two must agree exactly: the Fern runtime
+// allocates, indexes and frees the buffer, while the Go side walks its
+// entry column (the generated __drop_map_* loops in internal/oracle/ir). Disagreeing by 8 bytes
+// makes every column walk read the entry array off by two slots, which
+// presents as a SEGV in the drop path rather than as anything resembling a
+// layout bug — and it does so on arm64 first, because its 16-byte entry
+// stride puts the misread further out than wasm32's 8.
+//
+// A test pins the two spellings together (internal/testing/e2e's map header check),
+// so widening the header again means changing both and nothing else.
+const MapHeaderBytes = 24
+
+// CodegenMu serialises native codegen calls that read or
+// write `TwoWordOverride`. arm64.Emit toggles the flag during
+// its Emit body; x86_64.Emit reads it via `ir.LowerWith`.
+// Before this mutex existed, parallel arm64 emits could
+// stack their toggles such that one goroutine's defer
+// restored the flag to `false` while another goroutine was
+// still mid-emit — producing single-word `string_from_bytes_unchecked`
+// inside an arm64 program that otherwise expects two-word
+// strings. Symptom: SIGSEGV on the first f-string / string
+// concat that landed in the same diff-oracle batch as
+// another seed.
+//
+// wasmbin doesn't acquire this lock: it always passes ptrW=4
+// to `ir.LowerWith`, and `UseTwoWordStrings(4)` short-
+// circuits to `true` without reading `TwoWordOverride`.
+var CodegenMu sync.Mutex
+
+// MapKeyDispatchable reports whether the native map runtime can hash and
+// compare values of `t` BY VALUE. False for a tuple, an array or a slice: the
+// native backends have no branch for one, so the emitted code would compare
+// the pointer and every lookup would read the default (#10020). The IR
+// refuses such a key by name instead. The self-host compiles a structural
+// key (StructuralMapKey) through generated helpers.
+func MapKeyDispatchable(t Type) bool {
+	switch t.(type) {
+	case TupleType, ArrayType, SliceType:
+		return false
+	}
+	return true
+}
+
+// StructuralMapKey reports whether `t` is a tuple or array key compared and
+// hashed element by element (#10020): every element an integer, a boolean, a
+// char, a string, or another such tuple or array.
+func StructuralMapKey(t Type) bool {
+	switch x := t.(type) {
+	case TupleType:
+		if len(x.Elems) == 0 {
+			return false
+		}
+		for _, e := range x.Elems {
+			if !structuralKeyElement(e) {
+				return false
+			}
+		}
+		return true
+	case ArrayType:
+		return structuralKeyElement(x.Elem)
+	}
+	return false
+}
+
+func structuralKeyElement(t Type) bool {
+	switch t.(type) {
+	case NumberType, BoolType, CharType, StringType:
+		return true
+	}
+	return StructuralMapKey(t)
+}
+
+// IsPointerType reports whether values of `t` are represented
+// as heap pointers in the compiled code — so the slot holding
+// the value must be pointer-width (4 on wasm32, 8 on arm64).
+// Used by IR / codegen to size enum payloads, struct fields,
+// array elements, and closure captures correctly on each
+// target.
+func IsPointerType(t Type) bool {
+	switch t.(type) {
+	case StringType, StrType, ArrayType, SliceType, TupleType,
+		StructType, EnumType:
+		return true
+	case *FuncType:
+		return true
+	case DynTraitType:
+		// A trait object is pointer-shaped (a tagged value in the
+		// interpreter; a two-word fat pointer on compiled backends —
+		// see docs/DYN-TRAITS.md §4.2).
+		return true
+	}
+	return false
+}
+
+// ReceiverTypeName maps a type to the surface name its methods are
+// registered and dispatched under — struct/enum names as written, and
+// one name per scalar method surface (`string` for both `string` and a
+// `str` view, `char`, `boolean`, and the numeric widths). It backs the
+// `__method_<Type>_<name>` mangling, the call-site dispatch, the
+// `print` auto-`to_string` gate, and monomorph's `T.f()` associated-call
+// rewrite. Returns false for types that can't carry methods.
+//
+// This is the ONE copy of the width switch on purpose: add a width here
+// and every site above learns it at once. Open-coding it per site means
+// each copy has to learn each new width independently, and a copy that
+// misses one misdispatches silently (#5629).
+func ReceiverTypeName(t Type) (string, bool) {
+	switch rt := t.(type) {
+	case StructType:
+		return rt.Name, true
+	case EnumType:
+		return rt.Name, true
+	case StringType:
+		return "string", true
+	case StrType:
+		// `str` (#4813) shares the `string` method surface: every string
+		// receiver method (builtin len/as_bytes and the std/string family)
+		// dispatches on a view too -- methods borrow their receiver.
+		return "string", true
+	case CharType:
+		// `char` (#5629) has its OWN method surface -- deliberately not
+		// i32's, so the byte classifiers can never be reached through a
+		// scalar. Nothing declares a `char` receiver yet.
+		return "char", true
+	case NumberType:
+		switch {
+		case rt.NormalWidth() == 64 && rt.IsSigned():
+			return "i64", true
+		case rt.NormalWidth() == 64 && !rt.IsSigned():
+			return "u64", true
+		case rt.NormalWidth() == 8:
+			return "u8", true
+		case !rt.IsSigned():
+			return "u32", true
+		default:
+			return "i32", true
+		}
+	case FloatType:
+		if rt.NormalWidth() == 64 {
+			return "f64", true
+		}
+		return "f32", true
+	case BoolType:
+		return "boolean", true
+	default:
+		return "", false
+	}
+}
+
+// Equal reports whether two types are structurally equal.
+func Equal(a, b Type) bool {
+	switch x := a.(type) {
+	case NumberType:
+		y, ok := b.(NumberType)
+		return ok && x.NormalWidth() == y.NormalWidth() && x.IsSigned() == y.IsSigned()
+	case BoolType:
+		_, ok := b.(BoolType)
+		return ok
+	case VoidType:
+		_, ok := b.(VoidType)
+		return ok
+	case NeverType:
+		_, ok := b.(NeverType)
+		return ok
+	case StringType:
+		_, ok := b.(StringType)
+		return ok
+	case StrType:
+		_, ok := b.(StrType)
+		return ok
+	case CharType:
+		_, ok := b.(CharType)
+		return ok
+	case FloatType:
+		y, ok := b.(FloatType)
+		return ok && x.NormalWidth() == y.NormalWidth()
+	case ArrayType:
+		y, ok := b.(ArrayType)
+		return ok && Equal(x.Elem, y.Elem)
+	case StreamType:
+		y, ok := b.(StreamType)
+		return ok && Equal(x.Elem, y.Elem)
+	case SliceType:
+		y, ok := b.(SliceType)
+		return ok && Equal(x.Elem, y.Elem)
+	case TupleType:
+		y, ok := b.(TupleType)
+		if !ok || len(x.Elems) != len(y.Elems) {
+			return false
+		}
+		for i := range x.Elems {
+			if !Equal(x.Elems[i], y.Elems[i]) {
+				return false
+			}
+		}
+		return true
+	case *FuncType:
+		y, ok := b.(*FuncType)
+		if !ok || len(x.Params) != len(y.Params) || !Equal(x.Result, y.Result) {
+			return false
+		}
+		for i := range x.Params {
+			if !Equal(x.Params[i], y.Params[i]) || x.OwnAt(i) != y.OwnAt(i) {
+				return false
+			}
+		}
+		return true
+	case StructType:
+		y, ok := b.(StructType)
+		if !ok || x.Name != y.Name || len(x.Args) != len(y.Args) {
+			return false
+		}
+		for i := range x.Args {
+			if !Equal(x.Args[i], y.Args[i]) {
+				return false
+			}
+		}
+		return true
+	case EnumType:
+		y, ok := b.(EnumType)
+		if !ok || x.Name != y.Name || len(x.Args) != len(y.Args) {
+			return false
+		}
+		for i := range x.Args {
+			if !Equal(x.Args[i], y.Args[i]) {
+				return false
+			}
+		}
+		return true
+	case ParamType:
+		y, ok := b.(ParamType)
+		return ok && x.Name == y.Name
+	case UnboundType:
+		_, ok := b.(UnboundType)
+		return ok
+	case SelfType:
+		_, ok := b.(SelfType)
+		return ok
+	case DynTraitType:
+		y, ok := b.(DynTraitType)
+		if !ok || len(x.Traits) != len(y.Traits) {
+			return false
+		}
+		// Both are kept sorted+deduped at construction, so an
+		// element-wise compare is order-insensitive: `dyn A + B` ≡
+		// `dyn B + A`. Generic trait-args (parallel Args) must match
+		// too, so `dyn Container[i32]` ≠ `dyn Container[string]`.
+		for i := range x.Traits {
+			if x.Traits[i] != y.Traits[i] {
+				return false
+			}
+			xa, ya := x.ArgsFor(i), y.ArgsFor(i)
+			if len(xa) != len(ya) {
+				return false
+			}
+			for j := range xa {
+				if !Equal(xa[j], ya[j]) {
+					return false
+				}
+			}
+			// Pinned associated-type bindings (sorted by name at
+			// construction) must match too: `dyn P[Item = i32]` ≠
+			// `dyn P[Item = string]` ≠ `dyn P` (unpinned).
+			xb, yb := x.AssocFor(i), y.AssocFor(i)
+			if len(xb) != len(yb) {
+				return false
+			}
+			for j := range xb {
+				if xb[j].Name != yb[j].Name || !Equal(xb[j].Type, yb[j].Type) {
+					return false
+				}
+			}
+		}
+		return true
+	case HandleType:
+		y, ok := b.(HandleType)
+		return ok && x.Resource == y.Resource && x.Borrowed == y.Borrowed
+	case ProjType:
+		y, ok := b.(ProjType)
+		return ok && x.Name == y.Name && Equal(x.Base, y.Base)
+	}
+	return false
+}
+
+// ---------- Expressions ----------
+
+type Expr interface {
+	Pos() Position
+	isExpr()
+}
+
+type NumberLit struct {
+	P     Position
+	Value int64
+	// Raw is the literal exactly as the source spelled it, suffix
+	// excluded, and is set only when that spelling is not the decimal
+	// rendering of Value: a `0x…` hex literal, or one past u64 max
+	// (ExceedsU64), whose Value holds nothing. The formatter reads it so
+	// a literal's base survives `-fmt`, and diagnostics quote it; every
+	// other consumer works from Value.
+	Raw string
+	// Width is set by the checker once the literal's type has
+	// been resolved. 0 means "default i32" for backwards
+	// compatibility (the ir's NumberLit lowering treats 0 the
+	// same as 32). Polymorphic literals in expected-type
+	// context pick up the expected width here so the IR can
+	// emit `i64.const`/`i32.const` correctly without adding
+	// implicit widening.
+	Width int
+	// IsUnsigned tracks whether the resolved type was a `u32`
+	// or `u64` (vs `i32`/`i64`). It doesn't affect how the
+	// literal itself is emitted — bit pattern is identical —
+	// but `*ast.CastExpr.InnerType` and the checker's record
+	// of the literal's type need to know.
+	IsUnsigned bool
+	// IsFloat is set when a polymorphic integer literal got
+	// settled to a float type via settleFloat (e.g. `let r:
+	// f32 = 0`, `f32_param * 2`, `r <= 0` where r is f32).
+	// FloatWidth records the destination float width; the IR
+	// emits OpConstF32 / OpConstF64 with float64(Value) instead
+	// of the integer-const path. Only set on otherwise-
+	// polymorphic literals — a typed-suffix `42i64` is locked
+	// to its integer type and won't be promoted here.
+	IsFloat    bool
+	FloatWidth int
+	// ExceedsI64 records that the written magnitude is above i64 max, so
+	// Value holds its two's-complement bit pattern rather than the number
+	// the source spelled. A u64 literal legitimately gets here; a signed
+	// one has to be rejected, and without this flag the checker cannot
+	// tell `9223372036854775808` from the `-9223372036854775808` it wraps
+	// to. Read the magnitude back with uint64(Value).
+	ExceedsI64 bool
+	// ExceedsU64 records a magnitude no 64-bit type can hold. The parser
+	// keeps the literal (Value is 0, Raw the spelling) so the checker can
+	// refuse it as E047 against the type the context asked for, the way
+	// every other out-of-range literal is refused, instead of the parser
+	// failing on a number it merely cannot store.
+	ExceedsU64 bool
+}
+
+// CastExpr is `expr as Type`. The checker requires Target to be a
+// numeric type; it lowers to truncation/extension/sign-flip ops in
+// the IR. This is the only path between distinct numeric widths
+// (i32 ↔ i64 etc.) — implicit numeric widening is rejected per
+// docs/LANGUAGE-DIRECTION.md.
+type CastExpr struct {
+	P      Position
+	Inner  Expr
+	Target Type
+	// InnerType is the resolved type of `Inner`, set by the checker
+	// so the IR lowering pass can pick the right truncate / extend
+	// op without re-checking. Zero value means the checker didn't
+	// resolve it (treat as the legacy i32 default).
+	InnerType Type
+}
+
+// DowncastExpr is `expr as? Type` — a fallible downcast of a
+// `dyn Trait` value to a concrete type. `Inner` must be a
+// `dyn Trait`; `Target` a concrete struct/enum that implements that
+// trait. It evaluates to `Option[Target]`: `Some(v)` when `Inner`'s
+// runtime concrete type is exactly `Target`, else `None`. This is the
+// runtime-checked counterpart to coercion (docs/DYN-TRAITS.md §9), and
+// is deliberately a separate node from CastExpr (which is specialised
+// for numeric truncate/extend) so the two never share lowering paths.
+type DowncastExpr struct {
+	P      Position
+	Inner  Expr
+	Target Type
+	// Trait is the PRIMARY trait name of `Inner`'s `dyn Trait` type,
+	// filled by the checker for the single-trait (vtable-pointer-compare)
+	// codegen. Empty before checking.
+	Trait string
+	// Traits is the WHOLE trait set of `Inner`'s `dyn Trait` type (sorted,
+	// == Trait for a single-trait dyn). Compiled downcast codegen keys the
+	// vtable-pointer compare by this whole set (dynVtableSetKey): a
+	// single-trait `dyn A` selects `__vtable_<A>_<T>` (byte-identical to
+	// before), a multi-trait `dyn A + B` selects the MERGED
+	// `__vtable_<A+B>_<T>` cell a multi-trait coercion of T stores, so the
+	// compare is exact for any trait set (docs/DYN-TRAITS.md §10). The
+	// interpreter handles any set by runtime concrete-type tag.
+	Traits []string
+}
+
+// BlockExpr is a block used in value position: `{ stmt; stmt; …; tailExpr }`.
+// The statements run first, in a fresh child scope, then the trailing
+// expression `Tail` (written WITHOUT a `;`) is the block's value. A block
+// whose final element is a `;`-terminated statement has no trailing
+// expression (`Tail == nil`) and therefore no value (type `void`); using
+// such a block where a value is required is a checker error.
+//
+// Produced for `if`/`match` *expression* branches (the `{ … }` after
+// `if (cond)` / `else` / a match arm `=>`) and, since #4521, general
+// value-position `{ … }` blocks. Lowered on every native backend
+// (interp / wasm / arm64 / x86-64) via the IR. When the statements
+// always exit early (`return` / `break` / `continue`) the block has no
+// trailing value (`Tail == nil`) and its type is `never`, not `void`
+// (#4522). See docs/BLOCK-EXPRESSIONS.md.
+type BlockExpr struct {
+	P     Position
+	Stmts []Stmt
+	Tail  Expr // value expression; nil for a value-less (void) block
+}
+type BoolLit struct {
+	P     Position
+	Value bool
+}
+
+// UnitLit is `()` — the sole value of type void, and the only way to
+// write one. It exists so a type that has to name "no interesting
+// payload" can do so: `Result[(), IoError]` is the shape every fallible
+// operation with nothing to hand back returns, and `Ok(())` builds it.
+//
+// A void-returning *call* is not a value (`Ok(f())` is E072) — the
+// literal is the one spelling, so backends never have to invent a slot
+// for a value that was never pushed.
+type UnitLit struct {
+	P Position
+}
+type StringLit struct {
+	P     Position
+	Value string
+}
+
+// CharLit is a quoted scalar literal: `'x'`, one Unicode scalar value
+// typed `char`, or `b'x'`, one byte typed `u8`. IsByte selects which.
+//
+// One node for both because they differ only in the type they produce —
+// the runtime shape is an integer constant either way (`char` erases to
+// i32, `u8` is a NumberType already). Keeping them distinct at the type
+// level is the point: `s[i] == b'['` checks and `s[i] == '['` does not,
+// so a byte-level comparison cannot silently be read as a scalar one.
+//
+// Value is the scalar (0..0x10FFFF, surrogates excluded) or the byte
+// (0..255). Raw is the spelling as written, quotes and escapes
+// included, so `-fmt` re-emits the author's `'\u{1F600}'` rather than
+// normalising it to the character — the same contract NumberLit.Raw and
+// FloatLit.Raw carry.
+type CharLit struct {
+	P      Position
+	Value  int64
+	Raw    string
+	IsByte bool
+}
+
+// FString is an interpolated string literal — `f"hello {x}"`.
+// Parts alternates literal segments and interpolant expressions
+// in source order. The empty list means an empty f-string `f""`.
+//
+// The checker types FString as `string` and stamps `Desugared`
+// with the equivalent `+`-chain of string operations
+// (`<lit> + (<expr>).to_string() + …`) — that way method-call
+// dispatch info for the synthesised `.to_string()` calls gets
+// resolved alongside everything else, and the IR can lower the
+// chain via the regular Binary-on-strings path. The formatter
+// reads `Parts` directly so it can rebuild the original `f"..."`
+// syntax on round-trip.
+type FString struct {
+	P         Position
+	Parts     []FStringPart
+	Desugared Expr
+}
+
+// FStringPart is one piece of an f-string: either a literal
+// string segment (Expr is nil) or an interpolant expression
+// (Lit is empty). Empty leading / trailing literal segments
+// are not stored; an FString with N interpolants and M literal
+// segments has N+M parts.
+type FStringPart struct {
+	Lit  string
+	Expr Expr
+}
+type FloatLit struct {
+	P     Position
+	Value float64
+	// Raw is the literal AS WRITTEN, so `-fmt` re-emits the author's
+	// spelling instead of rendering Value back through %g — which
+	// rewrote `1e-6` to `1e-06`, `1e100` to `1e+100` and trimmed
+	// `0.7615941560` to `0.761594156` (#6802). Empty for a literal the
+	// compiler synthesised (constfold's folded results), which prints
+	// from Value as before.
+	Raw string
+	// Width is set by the checker once a concrete float type is
+	// known (`let x: f32 = 1.5` → 32). 0 means the literal stayed
+	// unsettled; every consumer (interp, IR lowering) defaults it
+	// to f64, the language's primary float — see
+	// FloatType.NormalWidth.
+	Width int
+}
+type Ident struct {
+	P    Position
+	Name string
+	// TypeArgs instantiates a generic function named as a value
+	// (`apply(measure, x)`, `let f: (Sq) => i32 = measure`): the
+	// checker infers them from the function type the value is wanted
+	// at, and monomorph renames the Ident to that instance and clears
+	// them. Empty on every other Ident.
+	TypeArgs []Type
+	// EnumName, when set, identifies the enum this Ident is a
+	// variant of. Stamped by the checker after resolving a
+	// qualified-variant reference (`Color.Red`) or after picking
+	// one of several same-named variants by context. Empty on all
+	// other Idents. The IR's `lookupVariantOn` resolves against it
+	// rather than walking every enum, which is the only thing that
+	// keeps variant resolution deterministic when two enums
+	// declare the same variant name.
+	EnumName string
+	// Local is set by the checker when the name resolved to a parameter,
+	// local or captured binding, so a pass that reads function references
+	// by name knows this one shadows any top-level function it spells.
+	Local bool
+}
+type ArrayLit struct {
+	P     Position
+	Elems []Expr
+	// ElemType is set by the checker once each element is typed
+	// (or settled, for polymorphic numeric literals). The IR uses
+	// it to pick a stride (1 byte for `[u8]`, 4 for `[i32]` /
+	// `[u32]` / `[f32]` / pointers, 8 for `[i64]` / `[u64]` /
+	// `[f64]`) and to choose between i32.store / i32.store8 /
+	// i64.store / f32.store / f64.store. nil falls back to the
+	// historical 4-byte-per-element layout.
+	ElemType Type
+	// Const marks a use of a `const`'s value, which constfold substitutes
+	// for the name. Nothing may write through a constant, so every
+	// evaluation can share one static array instead of building its own.
+	Const bool
+}
+type Index struct {
+	P     Position
+	Array Expr
+	Idx   Expr
+	// IsString is set by the checker when the indexed value is a
+	// string rather than an array. The two paths look identical at
+	// the AST level but lower differently: arrays read 4 bytes per
+	// slot, strings read 1 byte and zero-extend to a number.
+	IsString bool
+	// IsSlice is set by the checker when the indexed value is a
+	// slice (`[T]`) rather than an owned array. Slice indexing
+	// goes through one extra level of indirection — the slice
+	// holds a `(data_ptr, len)` struct, so accessing element i
+	// loads data_ptr first and then offsets into the parent
+	// array's storage.
+	IsSlice bool
+	// ElemType is set by the checker for array / slice indexing
+	// once the element type has been resolved. Used by the IR
+	// to pick the right stride + load width (1 byte for u8, 4
+	// for i32, etc.). nil falls back to the historical 4-byte
+	// stride.
+	ElemType Type
+	// Unchecked, when set, tells the IR to lower an ARRAY index
+	// (not string/slice) without the per-access bounds check —
+	// the caller has statically proven `0 <= Idx < len(Array)`.
+	// Currently set only by DesugarForEachArray on its synthetic
+	// `iter[idx]` element read: `idx` starts at 0, steps +1, the
+	// loop guard is `idx < iter.len()` (captured once), and both
+	// `iter` and `idx` are compiler-generated names user code
+	// cannot touch — and Fern arrays never shrink in place — so
+	// the access is provably in bounds every iteration (#4380
+	// lever 3). Honoured on the array path only; string/slice
+	// indexing ignores it and keeps its check.
+	Unchecked bool
+}
+
+// SliceExpr is `arr[a:b]`, `arr[a:]`, or `arr[:b]` — produces a
+// non-owning view that shares the parent array's storage. Either
+// bound may be nil for "use 0" (low) or "use len(arr)" (high).
+// Source-level support for unbounded forms (`arr[:]`) is reserved.
+type SliceExpr struct {
+	P      Position
+	Source Expr
+	Low    Expr // nil = 0
+	High   Expr // nil = len(Source)
+	// SourceIsSlice is set by the checker when Source is itself a
+	// slice (vs. an owned Array). Sub-slicing has to dereference
+	// the parent slice's data_ptr instead of stepping past an
+	// owned array's length prefix.
+	SourceIsSlice bool
+	// IsString is set by the checker when Source is a string. The
+	// IR lowers string slicing to a copy-into-fresh-string helper
+	// (`__str_slice`) rather than the array-style view shape — a
+	// string value is owned + length-prefixed, no separate
+	// data-pointer indirection.
+	IsString bool
+	// ElemType is set by the checker once the source's element
+	// type is known. The IR uses it to pick the stride for the
+	// `low * stride` byte offset on slice creation. Unused for
+	// IsString slices.
+	ElemType Type
+	// Lent marks the full-range slice the checker synthesises when an
+	// owned `T[]` argument is coerced to a `[T]` parameter. The header it
+	// materialises is not written by the author and cannot be named, so
+	// nothing but the call it was built for can reach it — which is what
+	// lets the IR release it once the call returns (#8502).
+	Lent bool
+}
+type Call struct {
+	P      Position
+	Callee Expr
+	Args   []Expr
+	// ArgNames, when non-nil, is parallel to Args: ArgNames[i] is the
+	// parameter name a named argument `name = expr` targets, or "" for a
+	// positional argument. nil when the call is all-positional (the common
+	// case). The internal/check/defaultargs pass reorders named arguments into
+	// positional order and fills defaults, then clears ArgNames — so the
+	// checker and every later pass only ever see a positional Args list.
+	ArgNames []string
+	// IsPipe is set by the parser when this Call was synthesised
+	// from a `LHS |> Callee(args...)` pipe expression: Args[0] is
+	// the original LHS, Args[1:] are the original explicit args.
+	// All later passes treat IsPipe-flagged calls identically to
+	// any other Call; only the formatter checks the flag so it
+	// can re-render the pipe form on the way out.
+	IsPipe bool
+	// PipeHole records where the pipe's LHS landed when the piped
+	// call used the `_` topic placeholder (`x |> f(a, _)` — LHS
+	// substitutes at the hole instead of being prepended). It is
+	// the 1-BASED index into Args of the substituted slot; 0 means
+	// "no placeholder, LHS was prepended as Args[0]" (the default
+	// data-first form). Like IsPipe, only the formatter reads it —
+	// to re-render `x |> f(a, _)` instead of the prepended form.
+	PipeHole int
+	// TypeArgs holds the callee's instantiation when it resolves to
+	// a generic function (FuncDecl with non-empty TypeParams) — one
+	// entry per type parameter, in declaration order, empty for a
+	// non-generic call. The parser fills it from an explicit
+	// `f[i32](x)` type-argument list; otherwise the checker fills it
+	// with what it inferred. The monomorphisation pass uses it to
+	// pick the right cloned function and rewrite the callee name to
+	// the mangled form.
+	TypeArgs []Type
+	// TypeArgsWritten distinguishes parser-filled TypeArgs from
+	// checker-inferred ones, so the formatter reprints only what the
+	// source actually wrote. See StructLit.TypeArgsWritten.
+	TypeArgsWritten bool
+	// Method is set by the checker when this Call was rewritten
+	// from a `target.method(args)` source-level method call. The
+	// rest of the pipeline ignores it; the LSP reads it to answer
+	// hover / definition on the original method name (which
+	// otherwise disappears once the call is rewritten to
+	// `__method_Type_name(target, args)`).
+	Method *MethodCallSite
+	// Module is set by modload when this Call was rewritten from a
+	// qualified cross-module call (`mod.fn(args)`). Same LSP-only
+	// rationale as Method.
+	Module *ModuleCallSite
+	// IsVariantCall is set by the checker when this Call resolved
+	// to a variant constructor (`Some(x)`, `Ok(v)`, `Square(2.0,
+	// 3.0)`) rather than a regular function call. Downstream
+	// passes consult this to gate variant-specific behaviour;
+	// notably `postSettleType`'s Call branch rebuilds an
+	// EnumType's Args from the call's arg widths after a
+	// `settleNumeric` pass, and that rebuild MUST NOT fire on
+	// regular function calls that happen to return an EnumType
+	// (without the flag, `f(p: boolean[]): Option[i32]` had its
+	// return type rebuilt as `Option[boolean[]]`).
+	IsVariantCall bool
+	// DynTrait is set by the checker to the trait name when this Call
+	// is a method call on a `dyn Trait` receiver (`d.area()` where
+	// `d: dyn Shape` ⊢ DynTrait = "Shape"). Such a call is dispatched
+	// at runtime by the receiver value's concrete type rather than
+	// statically rewritten to `__method_<Type>_…`; the callee stays a
+	// FieldAccess. Monomorph leaves these untouched and the interpreter
+	// resolves the concrete method from the runtime tag. Empty for
+	// ordinary (statically dispatched) calls. See docs/DYN-TRAITS.md.
+	DynTrait string
+}
+
+// MethodCallSite records the original source-level shape of a
+// method call before the checker rewrote it. Field is the
+// method name as the user wrote it, FieldPos points at that
+// name's position in the source, and Receiver is the resolved
+// owner type (e.g. ast.StructType{Name:"Point"}). The LSP locates
+// the call via FieldPos and uses Receiver to look up the
+// implementation in Info.Methods.
+type MethodCallSite struct {
+	Field    string
+	FieldPos Position
+	Receiver Type
+	// OwnerTrait is the (mangled) trait that provided the
+	// implementation dispatch resolved to, empty for an inherent
+	// method or a builtin. Every later reader that has to land on the
+	// SAME implementation — the move/borrow analysis's own-flag
+	// lookup above all — re-resolves with this as its preference
+	// rather than re-deriving one.
+	OwnerTrait string
+	// Assoc marks a generic associated dispatch `T.f(args)`, whose target
+	// names the type parameter itself rather than a value of that type.
+	Assoc bool
+}
+
+// ModuleCallSite is the cross-module analogue of MethodCallSite:
+// modload rewrites `mod.fn(args)` to a flat `mangled_fn(args)`
+// Ident and the field-name position would otherwise be lost. The
+// LSP uses FieldPos to locate hover / goto-def on the unqualified
+// function name; Mangled is the modload-rewritten target name so
+// the dispatcher can look up the FuncDecl directly.
+type ModuleCallSite struct {
+	Module    string   // local module name as the user wrote it (e.g. "util")
+	ModulePos Position // start of the module qualifier
+	Field     string   // unqualified function / const name (e.g. "foo")
+	FieldPos  Position // start of the field after the `.`
+	Mangled   string   // modload's flat name (e.g. "util__foo")
+}
+type Binary struct {
+	P           Position
+	Op          string
+	Left, Right Expr
+	// IsStringConcat is set by the checker when both operands of `+`
+	// are strings, so codegen can lower this binary to a runtime call
+	// instead of an integer add.
+	IsStringConcat bool
+	// IsStringCmp is set by the checker when both operands of `==` or
+	// `!=` are strings, so codegen can lower it to a content-comparing
+	// runtime call instead of a pointer-equality `i32.eq`.
+	IsStringCmp bool
+	// IsStringOrd is set by the checker when both operands of an
+	// ordering operator (`<` `<=` `>` `>=`) are strings, so codegen
+	// lowers it to a three-way byte compare against 0 rather than an
+	// integer compare of the two pointers.
+	IsStringOrd bool
+	// IsFloat is set by the checker when both operands are floats,
+	// so codegen knows to emit f32 instructions instead of i32.
+	IsFloat bool
+	// FloatWidth is set by the checker for float binary ops: 32 for
+	// f32 (the default), 64 for f64. Codegen uses it to pick
+	// f32.* vs f64.* instructions.
+	FloatWidth int
+	// IntWidth is set by the checker for integer binary ops: 32 for
+	// i32 (the default), 64 for i64. Sub-i32 widths fold through
+	// i32 ops for arithmetic; the integer SIZE that matters
+	// at the wasm-op level is captured here. Codegen uses it to
+	// pick i32.* vs i64.* instructions.
+	IntWidth int
+	// IsUnsigned is set by the checker when both operands of an
+	// integer binary op are unsigned (u32 / u64 / etc.). Codegen
+	// uses it to pick the `_u` variant of div / rem / shr /
+	// comparison operators.
+	IsUnsigned bool
+	// EqCall is set by the checker when `==` / `!=` is applied to a
+	// composite type (struct / enum) that implements `Eq`: the
+	// operator desugars to the type's structural `eq` method. The
+	// IR lowers this Call instead of an identity-comparing OpEq, so
+	// `a == b` means value equality, not heap-pointer equality.
+	// EqNegate is set for `!=` (lower as `!a.eq(b)`).
+	EqCall   *Call
+	EqNegate bool
+	// CmpCall is set by the checker when an ordering operator
+	// (`<` `<=` `>` `>=`) is applied to a composite type that
+	// implements `Ord`: the operator desugars to `a.cmp(b) <op> 0`
+	// (cmp returns -1/0/1). The post-check rewrite replaces the
+	// Binary with that scalar comparison; Op is preserved.
+	CmpCall *Call
+	// ArithCall is set by the checker when an arithmetic operator
+	// (`+` `-` `*` `/`) is applied to a composite type (struct / enum)
+	// whose conventionally-named method exists (`+`→add, `-`→sub,
+	// `*`→mul, `/`→div) — operator overloading. The post-check rewrite
+	// replaces the Binary with this method call, so every later pass
+	// sees an ordinary call. See #2706.
+	ArithCall *Call
+	// CheckedLowered is set by the checker for the checked integer
+	// operators (`+?` `-?` `*?`, #5542): the operator desugars to a
+	// block-expr that yields `Some(result)` when it fits the operand
+	// type and `None` on overflow. The post-check rewrite replaces
+	// the Binary with this expression, so every later pass — interp,
+	// codegen — sees an ordinary `Option[T]`-valued expression rather
+	// than a bespoke opcode. Mirrors the EqCall / ArithCall channel.
+	CheckedLowered Expr
+}
+type Unary struct {
+	P       Position
+	Op      string
+	Operand Expr
+	// CheckedType is the result's semantic type, retained by the checker and
+	// updated during contextual numeric settlement. Nil on unchecked trees.
+	// Consumers must not reconstruct integer width from a runtime value.
+	CheckedType Type
+	// IsFloat is set by the checker when the operand is a float,
+	// so codegen can pick the f32 form of the operation.
+	IsFloat bool
+	// NegCall is set by the checker when unary `-` is applied to a
+	// composite type (struct / enum) with a `neg` method — operator
+	// overloading (`-v` → `v.neg()`). The post-check rewrite replaces the
+	// Unary with this call. See #2706.
+	NegCall *Call
+}
+type Assign struct {
+	P      Position
+	Target Expr
+	Value  Expr
+}
+
+// TryKind selects how the postfix `?` operator produces the value it
+// early-returns, which follows from the SHAPE of the source enum's
+// failure variant rather than from which enum it is.
+//
+// The two names used to be TryKindOption / TryKindResult. They were
+// renamed when `?` stopped being hardwired to those two enums: an
+// `@try` enum whose failure variant is payloadless lowers exactly as
+// Option did, and one whose failure variant carries a payload exactly
+// as Result did. Naming the SHAPE is what lets the lowering serve any
+// marked enum without asking which it is. See docs/TRY.md.
+type TryKind int
+
+const (
+	// TryKindBuild: the failure variant is payloadless, so there is
+	// nothing to carry out — build a fresh tag-1 value of the enclosing
+	// function's return enum. (Option's None.)
+	TryKindBuild TryKind = iota
+	// TryKindForward: the failure variant carries a payload, so the
+	// source value is already the right answer — forward it unchanged.
+	// (Result's Err(e).)
+	TryKindForward
+)
+
+// TryOp is the postfix `?` operator: `expr?` evaluates to the
+// success payload and early-returns the failure variant when
+// the source was failed.
+//
+//   - Option[T]?  yields T; on None, returns None from the
+//     enclosing function (whose return type must be Option[_]).
+//   - Result[T, E]? yields T; on Err(e), returns the same Err
+//     value through the enclosing function (whose return type
+//     must be Result[_, E] — the E must match the source's E).
+//
+// The checker validates both constraints and fills Kind + Type;
+// the IR picks the lowering off Kind. Result's Err lowering
+// reuses the source heap object (its tag is already 1, its
+// payload at +4 is already the right E) so the early-return is
+// a single pointer move with no reallocation.
+type TryOp struct {
+	P     Position
+	Inner Expr
+	// Kind is set by the checker once the source type is known.
+	Kind TryKind
+	// Type is the unwrapped success payload type (Some(T) → T;
+	// Ok(T) → T). Lets the IR pick `OpLoad` vs `OpFLoad` for
+	// the success-path payload load.
+	Type Type
+	// SrcEnum is the source's enum type as the checker saw it
+	// (`Option[i32]`, `Result[i32, string]`, `MyOpt[i32]`). Recorded so
+	// nothing downstream has to reconstruct it from Kind by naming a
+	// builtin — settleNumeric re-wraps a polymorphic payload hint in it.
+	SrcEnum Type
+	// Lowered, when non-nil, is a desugared replacement for this `?`
+	// built + checked by the checker and swapped in by the post-check
+	// rewrite. Used for the error-converting `?` on a `Result[_, E]`
+	// inside a function returning `Result[_, dyn Trait]` (E implements
+	// Trait): it lowers to a block-expr that maps the error to
+	// `dyn Trait` then applies an ordinary `?`. See #3234.
+	Lowered Expr
+}
+
+// IfExpr is `if (cond) { then_expr } else { else_expr }` in
+// expression position. Each arm is exactly one expression (not a
+// block of statements) — the construct fills the niche the
+// ternary `cond ? then : else` used to occupy, while freeing up
+// `?` for the postfix Option-try operator. Statement-form `if
+// (cond) { stmts; }` lives on *If and is unrelated.
+type IfExpr struct {
+	P    Position
+	Cond Expr
+	Then Expr
+	Else Expr
+	// IsFloat is set by the checker when the unified arm type is
+	// `f32` so the wasm backend picks `if (result f32)`.
+	IsFloat bool
+}
+
+// StructLit constructs a struct value: `Foo { x: 1, y: 2 }`.
+// Fields may appear in any order; the checker reorders them to match
+// the declaration so codegen can use fixed offsets.
+type StructLit struct {
+	P        Position
+	TypeName string
+	Fields   []FieldInit
+	// Base is the spread source of a struct-update literal
+	// `Foo { ...base, field: v }`: nil for a plain literal (which
+	// must name every field), non-nil when the literal copies the
+	// un-named fields from `base` and overrides only the listed
+	// ones. `base` must have the same struct type as TypeName. See
+	// docs/IMMUTABILITY-MIGRATION-PLAN.md.
+	Base Expr
+	// TypeArgs holds the instantiation of a generic struct
+	// (StructDecl with non-empty TypeParams) — one entry per type
+	// parameter, in declaration order. The parser fills it from an
+	// explicit `Box[i32] { … }` type-argument list; otherwise the
+	// checker fills it with what it inferred from the field values.
+	// The monomorphisation pass uses it to mangle TypeName into
+	// `<base>__<arg1>__<arg2>` and clear the field. After
+	// monomorph runs, every StructLit has TypeArgs empty.
+	TypeArgs []Type
+	// TypeArgsWritten distinguishes the parser-filled TypeArgs
+	// above from the checker-inferred ones: a written instantiation
+	// is authoritative, so a destination type must not settle the
+	// literal's fields to a different one behind the user's back.
+	TypeArgsWritten bool
+}
+
+// TupleLit is `(e1, e2, …)`. Codegen lowers tuples to heap-allocated
+// records — same shape as a struct, but anonymous and addressed by
+// position rather than name.
+type TupleLit struct {
+	P     Position
+	Elems []Expr
+}
+
+// MapLit is `Map { k: v, k2: v2, ... }`. Distinct from StructLit
+// because the keys are arbitrary expressions, not field names.
+// Lowers to a `map_new(len(entries))` followed by per-entry
+// `m.set(k, v)` calls. The checker fills in `KeyType` /
+// `ValueType` from the entries (and reconciles them against the
+// destination's `Map[K, V]` Args when one is present); the IR
+// uses `KeyType` to inject the runtime `keyKind` tag.
+type MapLit struct {
+	P         Position
+	Entries   []MapEntry
+	KeyType   Type
+	ValueType Type
+}
+
+// MapEntry is a single `key: value` pair inside a MapLit.
+type MapEntry struct {
+	Key   Expr
+	Value Expr
+}
+
+type FieldInit struct {
+	Name string
+	// NamePos is the position of the Name token in the source (the
+	// `x` in `Point { x: 1, y: 2 }`). The parser populates it for
+	// every literal it parses; synthetic FieldInits inserted by
+	// downstream passes leave it zero. The LSP uses this for
+	// rename of struct fields — without it, occurrences inside
+	// struct literals would be unrewrittable.
+	NamePos Position
+	Value   Expr
+}
+
+// EnumLit constructs a tagged-union value: `Circle(3.0)` or bare
+// `Red`. EnumName is filled in by the checker once the variant
+// resolves; the parser leaves it empty because enum-vs-function
+// disambiguation is type-driven. VariantIndex is the runtime
+// tag (the variant's position in the EnumDecl's variant list).
+type EnumLit struct {
+	P            Position
+	EnumName     string
+	VariantName  string
+	VariantIndex int
+	Args         []Expr
+}
+
+// FieldAccess reads a field off a struct value: `p.x`. Codegen lowers
+// this to `i32.load (p + offset)` once the checker has resolved the
+// field's offset on the StructDecl.
+//
+// P is the position of the `.` token (kept for backwards-compat with
+// pre-LSP error sites that point at the access expression). FieldPos
+// is the position of the field-name identifier just past the dot —
+// what the LSP uses for hover / definition queries on `p.x` so the
+// cursor on `x` resolves rather than the cursor on the dot.
+// FieldPos is zero (Line=0) on synthetic FieldAccesses inserted by
+// downstream passes (e.g. method-call rewriting) that don't have a
+// real source location.
+type FieldAccess struct {
+	P        Position
+	Target   Expr
+	Field    string
+	FieldPos Position
+	// PathSep records that the source used the path separator `::`
+	// (`Type::method`, `mod::func`) rather than `.`. Purely cosmetic — the
+	// checker / modload treat both identically; it only lets the printer
+	// round-trip the separator the author wrote. See #2700.
+	PathSep bool
+}
+
+// Lambda is an anonymous function expression: `(x: i32): i32 => x`. It's
+// the expression-position counterpart to the FuncDecl statement form —
+// same params / return type / body shape, no Name. The checker treats it like a local FuncDecl:
+// runs capture analysis against the enclosing scope and fills
+// `Captures` with the names this lambda reads from outer-scope.
+// The closureconv pass synthesises a hoisted top-level FuncDecl
+// from the Lambda (with a fresh `__lambda_<N>` name) and replaces
+// the Lambda expression with a MakeClosure at its source location
+// — same end-shape as a named local FuncDecl declared as a stmt.
+type Lambda struct {
+	P          Position
+	Params     []Param
+	ReturnType Type
+	// ReturnUnannotated records that an arrow lambda was written without a
+	// `: R` return type (`(x) => expr`), so the checker infers ReturnType
+	// from the body expression instead of defaulting to void. Mirrors
+	// FuncDecl.ReturnUnannotated; see checker.inferReturns.
+	ReturnUnannotated bool
+	Body              *Block
+	// Captures gets filled by the checker, same shape as
+	// FuncDecl.Captures. closureconv reads it to size the env
+	// block.
+	Captures []Param
+	// Synthetic is the throwaway FuncDecl the checker swaps in
+	// as `c.current` while walking this lambda's body. Var
+	// statements inside the body append themselves to
+	// `info.Locals[Synthetic]`; closureconv re-keys those locals
+	// onto the hoisted FuncDecl it produces. Nil until the
+	// checker visits this node.
+	Synthetic *FuncDecl
+}
+
+// CaptureRef is a synthetic expression introduced by closure
+// conversion. Inside a hoisted local function's body, references to
+// captured outer-scope variables are rewritten from `*Ident` to
+// `*CaptureRef`, which codegen lowers as a load from the function's
+// hidden env parameter at the recorded offset.
+type CaptureRef struct {
+	P      Position
+	Name   string
+	Offset int  // byte offset into the env block
+	Type   Type // captured variable's static type
+}
+
+// MakeClosure is a synthetic expression introduced by closure
+// conversion. It marks the def site of a nested function: codegen
+// allocates an env block, evaluates each `Captures` expression and
+// stores it at the matching offset, allocates an 8-byte closure
+// pair `{fn_idx, env_ptr}`, and returns the closure pointer. The
+// FuncName resolves to the hoisted top-level function the
+// FuncIndex selects in the funcref table.
+type MakeClosure struct {
+	P         Position
+	FuncName  string
+	FuncIndex int
+	Captures  []Expr
+}
+
+func (e *NumberLit) Pos() Position    { return e.P }
+func (e *CastExpr) Pos() Position     { return e.P }
+func (e *DowncastExpr) Pos() Position { return e.P }
+func (e *BlockExpr) Pos() Position    { return e.P }
+func (e *BoolLit) Pos() Position      { return e.P }
+func (e *UnitLit) Pos() Position      { return e.P }
+func (e *StringLit) Pos() Position    { return e.P }
+func (e *CharLit) Pos() Position      { return e.P }
+func (e *FString) Pos() Position      { return e.P }
+func (e *FloatLit) Pos() Position     { return e.P }
+func (e *Ident) Pos() Position        { return e.P }
+func (e *ArrayLit) Pos() Position     { return e.P }
+func (e *Index) Pos() Position        { return e.P }
+func (e *SliceExpr) Pos() Position    { return e.P }
+func (e *Call) Pos() Position         { return e.P }
+func (e *Binary) Pos() Position       { return e.P }
+func (e *Unary) Pos() Position        { return e.P }
+func (e *Assign) Pos() Position       { return e.P }
+func (e *IfExpr) Pos() Position       { return e.P }
+func (e *MatchExpr) Pos() Position    { return e.P }
+func (e *TryOp) Pos() Position        { return e.P }
+func (e *StructLit) Pos() Position    { return e.P }
+func (e *TupleLit) Pos() Position     { return e.P }
+func (e *MapLit) Pos() Position       { return e.P }
+func (e *FieldAccess) Pos() Position  { return e.P }
+func (e *EnumLit) Pos() Position      { return e.P }
+func (e *CaptureRef) Pos() Position   { return e.P }
+func (e *MakeClosure) Pos() Position  { return e.P }
+func (e *Lambda) Pos() Position       { return e.P }
+
+func (*NumberLit) isExpr()    {}
+func (*CastExpr) isExpr()     {}
+func (*DowncastExpr) isExpr() {}
+
+// String renders the downcast in source form, `<inner> as? <Target>`.
+func (e *DowncastExpr) String() string {
+	return fmt.Sprintf("%v as? %s", e.Inner, e.Target)
+}
+
+func (*BlockExpr) isExpr() {}
+
+// String renders the block in source form, `{ <N stmts> <tail> }`.
+// Statements aren't Stringers, so they're summarised by count; the tail
+// (an Expr) renders in full.
+func (e *BlockExpr) String() string {
+	tail := "void"
+	if e.Tail != nil {
+		tail = fmt.Sprintf("%v", e.Tail)
+	}
+	if len(e.Stmts) == 0 {
+		return fmt.Sprintf("{ %s }", tail)
+	}
+	return fmt.Sprintf("{ <%d stmt(s)>; %s }", len(e.Stmts), tail)
+}
+func (*BoolLit) isExpr()     {}
+func (*UnitLit) isExpr()     {}
+func (*StringLit) isExpr()   {}
+func (*CharLit) isExpr()     {}
+func (*FString) isExpr()     {}
+func (*FloatLit) isExpr()    {}
+func (*Ident) isExpr()       {}
+func (*ArrayLit) isExpr()    {}
+func (*Index) isExpr()       {}
+func (*SliceExpr) isExpr()   {}
+func (*Call) isExpr()        {}
+func (*Binary) isExpr()      {}
+func (*Unary) isExpr()       {}
+func (*Assign) isExpr()      {}
+func (*IfExpr) isExpr()      {}
+func (*MatchExpr) isExpr()   {}
+func (*TryOp) isExpr()       {}
+func (*StructLit) isExpr()   {}
+func (*TupleLit) isExpr()    {}
+func (*MapLit) isExpr()      {}
+func (*FieldAccess) isExpr() {}
+func (*EnumLit) isExpr()     {}
+func (*CaptureRef) isExpr()  {}
+func (*MakeClosure) isExpr() {}
+func (*Lambda) isExpr()      {}
+
+// ---------- Statements ----------
+
+type Stmt interface {
+	Pos() Position
+	isStmt()
+}
+
+type Block struct {
+	P Position
+	// End is the closing brace's position; zero on a block no source brace
+	// closes (a desugar's).
+	End   Position
+	Stmts []Stmt
+	// Sugar records the `for … in …` loop this Block is the desugar of, so
+	// the formatter reprints the loop the user wrote instead of the lowered
+	// index loop and its synthetic bindings. Nil on every other Block, and
+	// read by the printer only — the walk deliberately skips it, since its
+	// Body is the same node the lowered loop already carries.
+	Sugar *ForEach
+}
+type If struct {
+	P    Position
+	Cond Expr
+	Then Stmt
+	Else Stmt // may be nil
+	// IsAssert marks an `assert(cond[, msg])` desugar (parseAssert), so the
+	// `-O` elision pass can drop the whole check (mirrors Loop.IsTodo's
+	// marker precedent). Asserts must be side-effect-free — elision removes
+	// the condition evaluation along with the check.
+	IsAssert bool
+}
+
+type While struct {
+	P    Position
+	Cond Expr
+	Body Stmt
+	// Label is the optional loop label (`outer: while (...) { ... }`),
+	// empty when unlabeled. A labeled `break`/`continue` names it to
+	// target this loop from a nested one.
+	Label string
+}
+
+// Loop is the canonical unconditional infinite loop (`loop { ... }`).
+// Unlike While, it carries no Cond — it is definitionally diverging:
+// every control-flow path through it either loops forever or exits via
+// `break`/`return`, never by falling off the end. That makes it the
+// vehicle divergence analyses (blockDiverges/stmtDiverges,
+// funcBodyExits) key off, instead of pattern-matching a literal-true
+// While condition. `break`/`continue` (labeled or not) work as in any
+// While loop.
+type Loop struct {
+	P    Position
+	Body Stmt
+	// Label is the optional loop label (`outer: loop { ... }`), empty
+	// when unlabeled.
+	Label string
+	// IsTodo marks a Loop synthesised by the parser's `todo;` /
+	// `todo("msg");` desugar (`loop { eprint(...); exit(101); }`).
+	// The `loop` shape gives the stub divergence for free (E052
+	// missing-return + `let else` both already treat Loop as
+	// non-falling-through), and the flag lets the formatter
+	// round-trip the sugar instead of printing the desugared body.
+	// TodoMsg holds the ORIGINAL message expression (nil for the
+	// bare `todo;` form) — the formatter re-prints it verbatim.
+	// Both fields are inert everywhere else (checker / IR / interp
+	// see an ordinary Loop).
+	IsTodo  bool
+	TodoMsg Expr
+}
+
+// For preserves the C/JS-style three-part for loop so that `continue`
+// can jump to the step *before* re-checking the condition.
+type For struct {
+	P    Position
+	Init Stmt // may be nil
+	Cond Expr // required
+	Step Stmt // may be nil
+	Body Stmt
+	// Label is the optional loop label (see While.Label).
+	Label string
+}
+
+// ForEach is the un-desugared `for IDENT in Iter Body` loop (the plain,
+// non-range form). The parser emits it instead of desugaring at parse time, so
+// a later type-aware pass can choose the lowering by Iter's type: an
+// array/string/slice → the `.len()` + index loop; a `stream[T]` → a lazy
+// per-element read loop; a `Map` under a destructuring header → the entry
+// cursor. ID gives the desugar unique helper-var names.
+// See docs/STREAM-TYPE-SURFACE.md.
+type ForEach struct {
+	P      Position
+	ID     int
+	Var    string
+	VarPos Position
+	Iter   Expr
+	Body   Stmt
+	Label  string
+	// RangeHigh marks the range form `for i in LOW..HIGH`: Iter is LOW and
+	// RangeHigh the bound, with RangeIncl selecting `..=`. That form is
+	// desugared at parse time, so a ForEach carrying it exists only as a
+	// Block's Sugar.
+	RangeHigh Expr
+	RangeIncl bool
+	// Pattern is the destructuring header `for (a, b) in xs` — the very
+	// *Destructure that `let (a, b) = e;` builds, so one pattern grammar
+	// serves both. Its Init is left nil for the lowering to fill: over an
+	// array it reads the element bound to Var, over a Map its Names take the
+	// entry's key and value directly. Nil for the plain `for x in xs` form.
+	Pattern *Destructure
+}
+
+// ForEachIterPrefix prefixes every synthetic iterand local; user code cannot
+// name one, which is what lets the rc pass treat its buffer as unreachable
+// from the loop body (the for-in element borrow keys on it).
+const ForEachIterPrefix = "__foreach_iter_"
+
+// ForEachIterName is the synthetic local a foreach's iterand is bound to. The
+// lowering evaluates the iterand once, into this slot; a type-aware caller
+// binds it first and reads its type back to choose between the lowerings below.
+func ForEachIterName(id int) string { return fmt.Sprintf("%s%d", ForEachIterPrefix, id) }
+
+// ForEachElemName is the synthetic local a destructuring foreach binds each
+// element to before the pattern reads it. An `@` binding replaces it with the
+// name the source wrote — that element IS the whole value — so a stage asking
+// whether one was written compares Var against this.
+func ForEachElemName(id int) string { return fmt.Sprintf("__foreach_elem_%d", id) }
+
+// DesugarForEachArray lowers a ForEach over an array/string/slice to the
+// `.len()` + index C-style loop — the exact shape the parser used to build at
+// parse time (moved here so a type-aware pass owns the choice of lowering).
+func DesugarForEachArray(fe *ForEach) *Block {
+	iterName := ForEachIterName(fe.ID)
+	declIter := &Var{P: fe.P, Name: iterName, Init: fe.Iter}
+	stmts := append([]Stmt{declIter}, ForEachArrayLoop(fe, iterName)...)
+	return &Block{P: fe.P, Stmts: stmts, Sugar: fe}
+}
+
+// ForEachArrayLoop builds the array lowering's statements BELOW the iterand
+// binding — the caller supplies `iterName`, already bound to the iterand. The
+// step lives on the For (not appended to the body) so `continue` still advances
+// the index; the index decls sit beside the loop so an outer loop does not
+// re-zero them. A destructuring header binds the element to the synthetic Var
+// and hands it to the pattern, which is the same *Destructure `let (a, b) = e;`
+// produces.
+func ForEachArrayLoop(fe *ForEach, iterName string) []Stmt {
+	kw := fe.P
+	idxName := fmt.Sprintf("__foreach_idx_%d", fe.ID)
+	lenName := fmt.Sprintf("__foreach_len_%d", fe.ID)
+	mkIdent := func(name string) *Ident { return &Ident{P: kw, Name: name} }
+	mkNum := func(v int64) *NumberLit { return &NumberLit{P: kw, Value: v} }
+
+	declLen := &Var{P: kw, Name: lenName, Init: &Call{P: kw, Callee: &FieldAccess{P: kw, Target: mkIdent(iterName), Field: "len", FieldPos: kw}}}
+	declIdx := &Var{P: kw, Name: idxName, Init: mkNum(0)}
+	// The element read is provably in bounds — idx starts at 0, the loop
+	// guard is `idx < len` (len captured once from iter), idx/iter are
+	// synthetic names, and Fern arrays never shrink in place — so mark it
+	// Unchecked to drop the per-iteration bounds check (#4380 lever 3).
+	// Honoured only when the checker resolves it to an ARRAY index; string
+	// iteration keeps its __str_idx check.
+	bindUser := &Var{P: fe.VarPos, Name: fe.Var, Init: &Index{P: fe.VarPos, Array: mkIdent(iterName), Idx: mkIdent(idxName), Unchecked: true}}
+	stepStmt := &ExprStmt{P: kw, Expr: &Assign{P: kw, Target: mkIdent(idxName), Value: &Binary{P: kw, Op: "+", Left: mkIdent(idxName), Right: mkNum(1)}}}
+
+	innerStmts := []Stmt{bindUser}
+	if fe.Pattern != nil {
+		fe.Pattern.Init = mkIdent(fe.Var)
+		innerStmts = append(innerStmts, fe.Pattern)
+	}
+	innerStmts = append(innerStmts, foreachBodyStmts(fe)...)
+	forLoop := &For{
+		P:     kw,
+		Cond:  &Binary{P: kw, Op: "<", Left: mkIdent(idxName), Right: mkIdent(lenName)},
+		Step:  stepStmt,
+		Body:  &Block{P: kw, Stmts: innerStmts},
+		Label: fe.Label,
+	}
+	return []Stmt{declLen, declIdx, forLoop}
+}
+
+// ForEachMapLoop builds the Map lowering's statements BELOW the iterand
+// binding, for a destructuring header over a Map. It walks the entry cursor
+// (`m.iter()` / `has_next()` / `key()` / `value()` / `advance()`), so entries
+// come out in insertion order with no per-iteration allocation. The pattern's
+// two top-level binders take the key and the value; any nested pattern below
+// them is its own Destructure reading the binder it names, exactly as in
+// `let ((a, b), v) = e;`.
+//
+//	let __foreach_iter_N = m.iter();          (the caller's binding)
+//	for (; __foreach_iter_N.has_next(); __foreach_iter_N.advance()) {
+//	  let K = __foreach_iter_N.key();
+//	  let V = __foreach_iter_N.value();
+//	  <body>
+//	}
+func ForEachMapLoop(fe *ForEach, iterName string) []Stmt {
+	kw := fe.P
+	iterIdent := func() *Ident { return &Ident{P: kw, Name: iterName} }
+	callOnIter := func(method string) *Call {
+		return &Call{P: kw, Callee: &FieldAccess{P: kw, Target: iterIdent(), Field: method, FieldPos: kw}}
+	}
+
+	innerStmts := []Stmt{
+		&Var{P: fe.Pattern.P, Name: fe.Pattern.Names[0], Init: callOnIter("key")},
+		&Var{P: fe.Pattern.P, Name: fe.Pattern.Names[1], Init: callOnIter("value")},
+	}
+	for _, sub := range fe.Pattern.Nested {
+		if sub != nil {
+			innerStmts = append(innerStmts, sub)
+		}
+	}
+	innerStmts = append(innerStmts, foreachBodyStmts(fe)...)
+
+	forLoop := &For{
+		P:     kw,
+		Cond:  callOnIter("has_next"),
+		Step:  &ExprStmt{P: kw, Expr: callOnIter("advance")},
+		Body:  &Block{P: kw, Stmts: innerStmts},
+		Label: fe.Label,
+	}
+	return []Stmt{forLoop}
+}
+
+// foreachBodyStmts flattens a loop body into the statements a lowering splices
+// after its bindings, so the user's body shares the scope those bindings live
+// in.
+func foreachBodyStmts(fe *ForEach) []Stmt {
+	if blk, ok := fe.Body.(*Block); ok {
+		return blk.Stmts
+	}
+	return []Stmt{fe.Body}
+}
+
+// Break / Continue carry an optional Label naming an enclosing labeled
+// loop to target; empty means the innermost loop (the existing behaviour).
+type Break struct {
+	P     Position
+	Label string
+}
+type Continue struct {
+	P     Position
+	Label string
+}
+
+type Return struct {
+	P     Position
+	Value Expr // may be nil
+}
+
+// Defer schedules `Expr` to be evaluated when the enclosing
+// function exits (every return path + falloff). Multiple
+// defers run in LIFO order. Each Defer node has a synthesised
+// `IsActive` local stamped on it by the IR builder; reaching
+// the defer statement at runtime sets the local to 1, and the
+// per-exit cleanup block only runs the deferred expression
+// when the local is set. That makes a defer reached inside a
+// conditional a no-op when the conditional didn't fire.
+//
+// When OnError is set the statement is an `errdefer`: the
+// cleanup runs only on an ERROR exit — the `?` operator
+// propagating a None/Err, or a `return` whose value is a
+// failure variant (None / Err) of an Option/Result-returning
+// function. A plain success return or fall-off the end does
+// NOT run it. (`errdefer` is Zig's rollback primitive: undo a
+// partially-built value when init fails partway.) Everything
+// else about the node — the active-flag machinery, LIFO order,
+// the conditional-reached no-op — is identical to `defer`.
+type Defer struct {
+	P       Position
+	Expr    Expr
+	OnError bool
+}
+
+type Var struct {
+	P    Position
+	Name string
+	Type Type // may be nil at parse time — inferred + stamped by the checker
+	Init Expr
+	// WasAnnotated records whether the source carried a `: Type`
+	// annotation after the name. Set by the parser before checker
+	// stamps an inferred type into Type, so the LSP's inlay-hint
+	// pass can tell "user wrote it" from "checker filled it in".
+	WasAnnotated bool
+}
+
+// Destructure is `let (a, b, ...) = expr;` — bind each name to the
+// corresponding element of the tuple-typed expression. The checker
+// validates Init is a tuple of arity len(Names) and registers a
+// synthetic local under TempName so the IR can keep the tuple
+// pointer in a slot for the per-name field loads.
+//
+// Struct destructure `let Point { x, y } = expr;` reuses the same node
+// with Fields non-nil (parallel to Names): Names[i] binds the struct
+// field Fields[i] instead of tuple element i. StructName is the named
+// struct type written in the pattern (checked against Init's type). For
+// the tuple form Fields is nil and StructName is empty.
+type Destructure struct {
+	P          Position
+	Names      []string
+	Fields     []string // struct destructure: field projected for Names[i]; nil = tuple mode
+	StructName string   // struct destructure: the named struct type in the pattern; "" = tuple mode
+	// RestWritten records the pattern's trailing `..`, for the printer.
+	// See MatchArm.RestWritten — it binds nothing at either site.
+	RestWritten bool
+	Init        Expr
+	// AtName is the `@` binding naming the WHOLE value beside the pattern —
+	// `w @ Point { x, y }`. Parser-set; empty when the source wrote none.
+	// The checker binds the holding local under it instead of minting a
+	// hidden name, so `w` is an ordinary local the body may read.
+	AtName   string
+	TempName string // name of the tuple/struct-holding local: AtName when the source named it, else checker-minted.
+	// Nested runs parallel to Names: a non-nil entry destructures that
+	// position AGAIN — `let (a, (b, c)) = t;`. Names[i] is then a
+	// synthesised binder holding the inner tuple and Nested[i] is a
+	// complete Destructure whose Init reads it, so every stage handles one
+	// level with the code it already had and recurses for the rest.
+	//
+	// A level per box is what the memory model requires anyway: the inner
+	// tuple is its own rc-tracked allocation, so it needs its own temp,
+	// alias-inc, loop-reclaim and exit sweep. Flattening the levels into
+	// extra offset hops off one temp would leave the inner box unowned.
+	//
+	// INVARIANT: Nested[i].Init is always an *Ident naming Names[i]. The
+	// parser is the only thing that builds these, and it always builds them
+	// that way, so a pass that only inspects Init (looking for calls, struct
+	// literals, consts, asserts) has nothing to find at a nested level and
+	// correctly stops at the top one. A pass that cares about DECLARED NAMES
+	// or about rewriting that ident — Walk, the checker, the IR, the
+	// interpreter, shadowrename, closure conversion — must recurse.
+	Nested []*Destructure
+}
+type ExprStmt struct {
+	P    Position
+	Expr Expr
+}
+
+// Match dispatches on a tagged-union value. Match arms are patterns
+// that bind payload fields into local names visible inside the arm
+// body. Exhaustiveness is checked at type-check time: every variant
+// of the scrutinee's enum type must appear, OR the arm list ends
+// with a wildcard pattern (`_`).
+// Origin values for a Match the parser synthesised from a
+// pattern-binding form. `if let` and `let … else` differ only in where
+// the success arm's body comes from — the then-block for one, the rest
+// of the enclosing block for the other — and in the extra rule the
+// checker applies (a `let … else` else branch must diverge).
+const (
+	OriginIfLet   = "if_let"
+	OriginLetElse = "let_else"
+)
+
+type Match struct {
+	P    Position
+	Tag  Expr
+	Arms []*MatchArm
+	// StructMatch is the scrutinee's struct type name when this is a
+	// match on a struct value (arms are struct patterns `S { x, y }`,
+	// which bind fields irrefutably). Empty for enum / tuple / literal
+	// matches. Stamped by the checker (checkStructMatch) so the IR and
+	// interpreter lower the arms as struct field-binds rather than
+	// enum-variant matches.
+	StructMatch string
+	// Origin marks a match the parser synthesised from a pattern-binding
+	// form rather than one the programmer wrote — OriginIfLet /
+	// OriginLetElse; empty for a real `match`. Either way the desugar is
+	// `match (E) { PAT => { success }, _ => { else } }`, so the trailing
+	// wildcard arm is the else branch, not something the source spelled —
+	// the checker skips the unreachable-arm diagnostics on it and reports
+	// the pattern-binding codes (E022 / E023) instead of the generic ones
+	// a hand-written match of this shape would draw. The formatter reads
+	// it back to re-render the original form.
+	// Mirrors the self-host parser's StmtMatch.origin.
+	Origin string
+}
+
+// TuplePatElem is one element of a tuple pattern `(p0, p1, …)` in a
+// match arm — exactly one of: a binder name (binds the element in the
+// arm's scope), the `_` wildcard (element ignored), a literal (element
+// compared by equality), a variant sub-pattern (element tested
+// against a variant tag, its payloads bound), or a nested tuple pattern
+// (element destructured recursively). See MatchArm.TupleElems.
+type TuplePatElem struct {
+	Name       string // binder; empty unless this is the binder form
+	IsWildcard bool   // `_` element
+	Literal    Expr   // literal element; nil otherwise
+	// VariantName is a variant sub-pattern on the element —
+	// `(A(x), y) => …` on a `(Enum, i32)` scrutinee. The element is
+	// tested against the variant's tag and VariantBindings names its
+	// payloads, in payload order; `A()` is the payload-less spelling
+	// (a bare `A` is a binder, which E015 rejects when it names a
+	// payload-less variant). Empty for the other element forms.
+	VariantName string
+	// VariantModule is the optional `mod.` qualifier on a variant
+	// sub-pattern — same semantics as MatchArm.VariantModule.
+	VariantModule string
+	// VariantBindings are the sub-pattern's payload binder names;
+	// VariantBindingTypes is filled by the checker with the matching
+	// (type-substituted) payload types, so the IR picks the right
+	// per-payload load width.
+	VariantBindings     []string
+	VariantBindingTypes []Type
+	// VariantFieldNames runs parallel to VariantBindings for a
+	// named-field variant sub-pattern (`Some(Rect { w, h })`): the field
+	// projected for each binding. nil for the positional form. Mirrors
+	// MatchArm.FieldNames, which is the same list at the arm position.
+	VariantFieldNames []string
+	// VariantPayloads runs parallel to VariantBindings: a non-nil entry is
+	// a SUB-PATTERN matched against that payload rather than a binder —
+	// `(A(Ok(n)), y)`. The slot's VariantBindings entry is then empty and
+	// the sub-pattern introduces the bindings instead. A payload slot is
+	// itself a TuplePatElem, so it can be a binder, `_`, a literal, a
+	// variant or a nested tuple, recursively. Nil when every slot is a
+	// plain binder, which is the shape resolveVariantBindings still types.
+	VariantPayloads []*TuplePatElem
+	// Nested is a tuple pattern on the element itself — `(a, (b, c))` on
+	// a `(i32, (i32, string))` scrutinee. The element type must be a
+	// tuple of the same arity, and each entry follows the same element
+	// rules recursively, so nesting has no depth limit. NestedTypes is
+	// filled by the checker with the nested element types (parallel to
+	// Nested, the way MatchArm.BindingTypes parallels TupleElems) so the
+	// IR picks the right per-element load width. Nil for the other forms.
+	Nested      []TuplePatElem
+	NestedTypes []Type
+	// RangeHi / RangeInclusive carry a range pattern `lo..hi` / `lo..=hi`
+	// on this position, with Literal as the low bound — see
+	// MatchArm.RangeHi. A payload slot has always accepted one; sharing the
+	// node gives a tuple element the same spelling (#7524).
+	RangeHi        Expr
+	RangeInclusive bool
+	// AtBinding is the `n` in `n @ <pattern>` at this position: the whole
+	// value here is also bound to `n`, alongside whatever the pattern binds.
+	AtBinding string
+	// IsStruct marks a VariantName that named a STRUCT rather than an enum
+	// variant — `A(P { x })` on an `A(P)` payload. The two are spelled the
+	// same, so only the position's type tells them apart; the checker
+	// resolves it and sets this, and the IR and interpreter then project
+	// fields instead of testing a tag. A struct position carries no tag
+	// test: it is refutable only through its own sub-patterns.
+	IsStruct bool
+	// RestWritten records a named-field pattern's trailing `..` at this
+	// position. It binds nothing, so it reaches only the printer — see
+	// MatchArm.RestWritten.
+	RestWritten bool
+}
+
+// MatchArm is one pattern → body pair. The Bindings are the
+// names introduced by the pattern (in declaration order, matching
+// the variant's payload positions); each binding's type is the
+// matching payload type from the EnumDecl. WildcardPattern arms
+// have an empty VariantName and Bindings.
+//
+// Guard is an optional expression of type bool that's evaluated
+// after the pattern matches and the bindings are in scope. When
+// the guard is false the arm is skipped — the match falls
+// through to the next arm. Spelled `<pattern> when <expr> => …`
+// in source. Nil for unconditional arms.
+//
+// Literal, when non-nil, marks this arm as a literal-pattern
+// arm (`0 => …`, `"yes" => …`, `true => …`). Mutually exclusive
+// with VariantName / IsWildcard — the parser sets exactly one
+// of {Literal, IsWildcard, VariantName}. Literal-pattern arms
+// dispatch via equality comparison instead of tag-based match.
+type MatchArm struct {
+	P           Position
+	VariantName string // empty when IsWildcard or Literal != nil
+	// VariantModule is the optional `mod.` qualifier on a variant
+	// pattern (`mod.TokA(x) => …`). Set by the parser when the
+	// pattern spells the module name; empty for unqualified
+	// patterns. The checker validates it matches the scrutinee
+	// enum's source module when both are known.
+	VariantModule string
+	Bindings      []string // payload binding names, in payload order
+	BindingTypes  []Type   // resolved by the checker; same length as Bindings
+	// NamedFields marks a named-field pattern (`Rect { w, h }`): each
+	// Bindings entry is a field name (the bound local takes that name).
+	// The checker validates the names against the variant's FieldNames
+	// and reorders Bindings + BindingTypes into declaration order, so
+	// every later stage treats them positionally like a `Rect(w, h)`
+	// pattern. False for the positional form.
+	NamedFields bool
+	// FieldNames runs parallel to Bindings for a named-field pattern
+	// (`S { field: local }`): FieldNames[i] is the struct/variant field
+	// projected, Bindings[i] the local it binds. For the shorthand
+	// `S { x }`, FieldNames[i] == Bindings[i]. nil for non-named patterns.
+	// (Rename is supported for struct matches; enum named-field variant
+	// patterns stay shorthand — the checker rejects a rename there.)
+	FieldNames []string
+	// RestWritten records the trailing `..` of a named-field pattern
+	// (`Rect { w, .. }`). A named-field pattern binds only the fields it
+	// lists either way, so the `..` is documentation and reaches only the
+	// printer — which has to put it back, or `-fmt -w` deletes what the
+	// author wrote.
+	RestWritten bool
+	IsWildcard  bool // `_ => …`
+	Literal     Expr // `0 => …` / `"yes" => …` / `true => …`; nil otherwise
+	// RangeHi, when non-nil, marks a range pattern `lo..hi => …` /
+	// `lo..=hi => …` on a scalar scrutinee: Literal holds the low bound,
+	// RangeHi the high bound, and RangeInclusive distinguishes `..=`
+	// (inclusive hi) from `..` (exclusive hi). Lowered to the compound
+	// bound test `scr >= lo && scr <op> hi` on the same literal-match
+	// path as `==` arms.
+	RangeHi        Expr
+	RangeInclusive bool
+	// TupleElems is a tuple pattern `(p0, p1, …) => …` on a tuple-typed
+	// scrutinee — one element per scrutinee tuple element (arity checked
+	// by the checker). Nil for non-tuple patterns; mutually exclusive
+	// with VariantName / IsWildcard / Literal. BindingTypes runs parallel
+	// to TupleElems (the checker fills it with the scrutinee's element
+	// types) so the IR picks the right per-element load width.
+	TupleElems []TuplePatElem
+	Guard      Expr // optional `when <expr>`; nil for unconditional arms
+	// AtBinding is the `n` in an `@`-pattern `n @ <pattern> => …`: the whole
+	// matched value is also bound to `n` (with the scrutinee's type) in the
+	// arm scope, alongside whatever <pattern> binds. Empty for plain patterns.
+	AtBinding string
+	// Payloads runs parallel to Bindings: a non-nil entry is the
+	// SUB-PATTERN matched against that payload slot rather than a binder —
+	// `Some(Ok(n))`. Bindings[i] is then the empty name, and the
+	// sub-pattern supplies whatever the slot binds.
+	//
+	// A payload slot is a TuplePatElem, the same recursive pattern node a
+	// tuple element is, so a slot can be a binder, `_`, a literal, a
+	// variant with its own payload sub-patterns, or a tuple, to any depth.
+	// Sharing that node is what lets the arm and tuple paths share their
+	// test/bind machinery instead of each growing a notion of nesting.
+	//
+	// Arms stay FLAT and are tried in source order, so a sub-pattern that
+	// fails falls to the NEXT ARM. That is what the parse-time merge this
+	// replaced could not express: it collapsed a run of same-variant arms
+	// into one arm plus an inner match, whose wildcard was the outer `_`,
+	// so "the next arm" did not survive (#7524).
+	// EnumName and VariantIndex are the arm's RESOLUTION: the enum the
+	// pattern's variant belongs to, and its ordinal in that enum's
+	// declaration. Stamped by the checker, which computes both while
+	// validating the arm against the scrutinee's enum and used to throw
+	// them away — every later stage then re-derived them from the
+	// scrutinee's static type instead (#6964).
+	//
+	// The checker is the SINGLE stamping point, and it runs after every
+	// desugar and again after monomorphisation, so a synthesised arm gets
+	// them too and a clone cannot carry an instantiation's stale enum name.
+	// EnumName == "" therefore means "not an enum-variant arm" — a wildcard,
+	// or a tuple / struct / literal pattern — never "not yet resolved".
+	EnumName     string
+	VariantIndex int
+	Payloads     []*TuplePatElem
+	// CoversRemainder marks an arm that matches every value still able to
+	// reach it, so nothing needs to test its tag first.
+	//
+	// True only for the LAST arm of an enum match whose earlier arms
+	// irrefutably cover every other variant, where this arm is itself
+	// irrefutable — no guard, and no payload sub-pattern that can fail.
+	// It is the same predicate the checker already uses to fill its
+	// coverage set (`Guard == nil && !armPayloadsRefutable(Payloads)`),
+	// which is in turn the same question lowering asks through
+	// `armPayloadTest`.
+	//
+	// Stamped by the checker for the reason EnumName is: exhaustiveness is
+	// proved there, and every consumer that wants it has otherwise had to
+	// re-derive it — `trmc.go`'s `trmcArmsTotal` is one such re-derivation
+	// today. FALSE IS THE CONSERVATIVE ANSWER and the zero value, so a
+	// synthesised or hand-built arm gets a tag test rather than silently
+	// running unconditionally; and like EnumName it is written on every
+	// check pass rather than only when true, because the checker re-runs
+	// after monomorphisation over the same nodes.
+	CoversRemainder bool
+	// AltCont marks an arm that continues the previous one's or-pattern
+	// alternative list: `A | B => …` parses to one arm per alternative,
+	// with the guard and body CLONED into each, and nothing else records
+	// that they were written as one arm.
+	//
+	// Read by the printer, which rejoins the alternatives; the arms
+	// themselves are independent by construction.
+	AltCont bool
+	Body    *Block
+}
+
+// MatchExpr is `match (e) { Variant(b1, …) => EXPR, _ => EXPR }`
+// in expression position. Each arm body is a single expression
+// (no statement block, no semicolon) and the whole match
+// evaluates to the unified arm type. Mirrors the MatchExpr → IfExpr
+// relationship: same parsing/checking shape as the statement-form
+// Match, but the body of each arm is an Expr and the construct
+// produces a value.
+//
+// Same exhaustiveness, binding, and guard rules as Match. Reuses
+// MatchArm's payload-binding metadata; only Body differs.
+// MatchTakesPointerPayload reports whether any arm binds a payload of pointer
+// type, or the whole value with an `@` binding. Only that takes anything out
+// of the matched value: a match that tests the tag alone leaves it whole, so it
+// does not consume an owned scrutinee (#9539).
+func MatchTakesPointerPayload(arms []*MatchArm) bool {
+	for _, a := range arms {
+		if armTakesPointer(a.Bindings, a.BindingTypes, a.AtBinding, a.TupleElems, a.Payloads) {
+			return true
+		}
+	}
+	return false
+}
+
+// MatchExprTakesPointerPayload is MatchTakesPointerPayload for the
+// expression form.
+func MatchExprTakesPointerPayload(arms []*MatchExprArm) bool {
+	for _, a := range arms {
+		if armTakesPointer(a.Bindings, a.BindingTypes, a.AtBinding, a.TupleElems, a.Payloads) {
+			return true
+		}
+	}
+	return false
+}
+
+func armTakesPointer(bindings []string, types []Type, at string, tuple []TuplePatElem, payloads []*TuplePatElem) bool {
+	if at != "" || len(tuple) > 0 {
+		return true
+	}
+	for _, sub := range payloads {
+		if sub != nil {
+			return true
+		}
+	}
+	for i, n := range bindings {
+		if n != "" && n != "_" && i < len(types) && types[i] != nil && IsPointerType(types[i]) {
+			return true
+		}
+	}
+	return false
+}
+
+type MatchExpr struct {
+	P    Position
+	Tag  Expr
+	Arms []*MatchExprArm
+	// IsFloat is set by the checker when the unified arm type is
+	// `f32` so the wasm backend picks `block (result f32)`.
+	IsFloat bool
+	// StructMatch mirrors Match.StructMatch: the scrutinee struct type
+	// name when the arms are struct patterns `S { x, y }`. Empty otherwise.
+	StructMatch string
+}
+
+// MatchExprArm is the expression-form arm. Body is an Expr; all
+// other fields mirror MatchArm exactly — including the optional
+// Literal field for literal-pattern arms (`0 => …`, `"yes" => …`).
+type MatchExprArm struct {
+	P             Position
+	VariantName   string
+	VariantModule string // optional `mod.` qualifier — same semantics as MatchArm.VariantModule
+	Bindings      []string
+	BindingTypes  []Type
+	NamedFields   bool     // named-field pattern `Rect { w, h }` — see MatchArm.NamedFields
+	FieldNames    []string // parallel to Bindings for named-field patterns — see MatchArm.FieldNames
+	RestWritten   bool     // trailing `..`, for the printer — see MatchArm.RestWritten
+	IsWildcard    bool
+	Literal       Expr // literal pattern; mutually exclusive with VariantName / IsWildcard
+	// RangeHi / RangeInclusive — range pattern `lo..hi` / `lo..=hi`; see
+	// MatchArm.RangeHi. Literal holds the low bound.
+	RangeHi        Expr
+	RangeInclusive bool
+	// TupleElems is a tuple pattern on a tuple-typed scrutinee — see
+	// MatchArm.TupleElems. BindingTypes runs parallel to it.
+	TupleElems []TuplePatElem
+	Guard      Expr
+	// AtBinding — the `n` in `n @ <pattern>`; see MatchArm.AtBinding.
+	AtBinding string
+	// EnumName / VariantIndex mirror MatchArm's — see there. Stamped by
+	// the checker on the expression form's arms for the same reason.
+	EnumName     string
+	VariantIndex int
+	// CoversRemainder mirrors MatchArm.CoversRemainder — see there.
+	CoversRemainder bool
+	// Payloads mirrors MatchArm.Payloads: the payload sub-patterns,
+	// parallel to Bindings. See there.
+	Payloads []*TuplePatElem
+	// AltCont mirrors MatchArm.AltCont: this arm continues the previous
+	// one's `|` alternative list.
+	AltCont bool
+	Body    Expr
+}
+
+// Binders lists every name the arm's pattern binds: the payload binders,
+// the `@` whole-value binder, and every binder inside a tuple pattern or a
+// payload sub-pattern, at any depth. Empty slots (a payload position held
+// by a sub-pattern, a wildcard or literal tuple element) are skipped.
+func (a *MatchArm) Binders() []string {
+	return armBinders(a.Bindings, a.AtBinding, a.TupleElems, a.Payloads)
+}
+
+// Binders mirrors MatchArm.Binders for the expression form.
+func (a *MatchExprArm) Binders() []string {
+	return armBinders(a.Bindings, a.AtBinding, a.TupleElems, a.Payloads)
+}
+
+func armBinders(bindings []string, atBinding string, tupleElems []TuplePatElem, payloads []*TuplePatElem) []string {
+	out := appendNonEmpty(nil, bindings...)
+	out = appendNonEmpty(out, atBinding)
+	out = tuplePatBinders(out, tupleElems)
+	for _, p := range payloads {
+		if p != nil {
+			out = tuplePatBinders(out, []TuplePatElem{*p})
+		}
+	}
+	return out
+}
+
+// tuplePatBinders appends every name a tuple pattern binds, recursing into
+// nested tuples and variant / struct sub-patterns.
+func tuplePatBinders(acc []string, elems []TuplePatElem) []string {
+	for _, el := range elems {
+		acc = appendNonEmpty(acc, el.Name, el.AtBinding)
+		acc = appendNonEmpty(acc, el.VariantBindings...)
+		acc = tuplePatBinders(acc, el.Nested)
+		for _, vp := range el.VariantPayloads {
+			if vp != nil {
+				acc = tuplePatBinders(acc, []TuplePatElem{*vp})
+			}
+		}
+	}
+	return acc
+}
+
+// BinderType is Binders' sibling: the type this arm binds `name` to, or nil
+// when the arm does not bind it. `scrutinee` types the `@` whole-value
+// binder, the one position no list beside the pattern can supply.
+//
+// It lives here so the two answers cannot drift: the walk that says WHICH
+// names an arm binds and the walk that says what each one HOLDS read the
+// same fields. The IR needs the second when it sizes a match expression's
+// result slot, which happens before any arm is lowered — at that point a
+// binder is not yet a local, so resolving its name against the function's
+// locals answers i32 and a wider value goes through a one-word slot.
+func (a *MatchExprArm) BinderType(name string, scrutinee Type) Type {
+	if a == nil || name == "" {
+		return nil
+	}
+	if a.AtBinding == name {
+		return scrutinee
+	}
+	for i, bn := range a.Bindings {
+		if bn == name && i < len(a.BindingTypes) {
+			return a.BindingTypes[i]
+		}
+	}
+	for i, p := range a.Payloads {
+		if t := p.binderType(name, nthType(a.BindingTypes, i)); t != nil {
+			return t
+		}
+	}
+	for i := range a.TupleElems {
+		if t := a.TupleElems[i].binderType(name, nthType(a.BindingTypes, i)); t != nil {
+			return t
+		}
+	}
+	return nil
+}
+
+// binderType is BinderType for ONE pattern position — a tuple element or a
+// payload slot, which are the same node — and everything nested inside it.
+// elT is the type of the value at that position.
+func (el *TuplePatElem) binderType(name string, elT Type) Type {
+	if el == nil {
+		return nil
+	}
+	if el.Name == name || el.AtBinding == name {
+		return elT
+	}
+	for i, bn := range el.VariantBindings {
+		if bn == name && i < len(el.VariantBindingTypes) {
+			return el.VariantBindingTypes[i]
+		}
+	}
+	for i, p := range el.VariantPayloads {
+		if t := p.binderType(name, nthType(el.VariantBindingTypes, i)); t != nil {
+			return t
+		}
+	}
+	for i := range el.Nested {
+		if t := el.Nested[i].binderType(name, nthType(el.NestedTypes, i)); t != nil {
+			return t
+		}
+	}
+	return nil
+}
+
+func nthType(ts []Type, i int) Type {
+	if i < len(ts) {
+		return ts[i]
+	}
+	return nil
+}
+
+func appendNonEmpty(acc []string, names ...string) []string {
+	for _, n := range names {
+		if n != "" {
+			acc = append(acc, n)
+		}
+	}
+	return acc
+}
+
+func (s *Block) Pos() Position                  { return s.P }
+func (s *If) Pos() Position                     { return s.P }
+func (s *While) Pos() Position                  { return s.P }
+func (s *Loop) Pos() Position                   { return s.P }
+func (s *For) Pos() Position                    { return s.P }
+func (s *ForEach) Pos() Position                { return s.P }
+func (s *Break) Pos() Position                  { return s.P }
+func (s *Continue) Pos() Position               { return s.P }
+func (s *Return) Pos() Position                 { return s.P }
+func (s *Defer) Pos() Position                  { return s.P }
+func (s *Var) Pos() Position                    { return s.P }
+func (s *Destructure) Pos() Position            { return s.P }
+func (s *ExprStmt) Pos() Position               { return s.P }
+func (s *Match) Pos() Position                  { return s.P }
+func (s *FuncDecl) Pos() Position               { return s.P }
+func (s *FuncDecl) GenericName() string         { return s.Name }
+func (s *FuncDecl) GenericTypeParams() []string { return s.TypeParams }
+
+func (*Block) isStmt()       {}
+func (*If) isStmt()          {}
+func (*While) isStmt()       {}
+func (*Loop) isStmt()        {}
+func (*For) isStmt()         {}
+func (*ForEach) isStmt()     {}
+func (*Break) isStmt()       {}
+func (*Continue) isStmt()    {}
+func (*Return) isStmt()      {}
+func (*Defer) isStmt()       {}
+func (*Var) isStmt()         {}
+func (*Destructure) isStmt() {}
+func (*ExprStmt) isStmt()    {}
+func (*Match) isStmt()       {}
+func (*FuncDecl) isStmt()    {} // legal as a stmt only when IsLocal is true
+
+// ---------- Top level ----------
+
+type Param struct {
+	Name string
+	// NamePos is the position of the Name token in the source (the
+	// `a` in `function add(a: i32, …)` or the `x` in a struct
+	// declaration `struct Point { x: i32, … }`). Synthetic Params
+	// (the receiver injected by closure conversion, generic-call
+	// rewrites) leave it zero. The LSP uses this for parameter
+	// + struct-field rename + hover; without it occurrences in
+	// declarations would be unrewrittable.
+	NamePos Position
+	Type    Type
+	// Own marks an OWNED (consuming) parameter — `function f(own x: T)`.
+	// The caller transfers ownership; the callee may consume / reclaim / reuse
+	// it (vs the default BORROWED param, where the caller keeps ownership). The
+	// checker enforces affine use (consumed at most once per path — see
+	// checkOwnedParams); the runtime ownership transfer + reuse it unlocks are
+	// later slices. Always false for struct fields / borrowed params.
+	Own bool
+	// Default is the default value for an optional parameter —
+	// `function listen(port: i32, backlog: i32 = 128)`. nil for a
+	// required parameter (the common case) and for struct fields /
+	// receivers. The `internal/check/defaultargs` pass fills it in at call
+	// sites that omit the trailing argument, so the checker and every
+	// later pass see a complete positional call. A parameter with a
+	// Default may not be followed by a required (Default == nil)
+	// parameter — the parser rejects that.
+	Default Expr
+	// Pattern retains the DESTRUCTURING pattern a parameter was written with
+	// — `((p, q): (i32, i32)) => …`, `f(Point { x: a, y }: Point)`. The parser
+	// desugars such a parameter into a holder param plus a leading `let` in the
+	// body, which loses the written form; only the formatter reads this, to put
+	// it back (#7338).
+	//
+	// Nil for an ordinary parameter. Its Init and TempName belong to the
+	// lowering, not the source: the pattern is Names / Fields / StructName /
+	// Nested.
+	Pattern *Destructure
+}
+
+// InlineHint is a source-level inlining directive on a function decl
+// (`@inline` / `@noinline` — #4412 Rec §14).
+type InlineHint int
+
+const (
+	InlineHintNone   InlineHint = iota // no attribute — heuristic decides
+	InlineHintAlways                   // @inline — lift the size cap
+	InlineHintNever                    // @noinline — never a candidate
+)
+
+type FuncDecl struct {
+	P    Position
+	Name string
+	// NamePos is the position of the Name token after the
+	// `function` keyword + any receiver clause. Synthetic decls
+	// (the auto-generated `main` for handler-shaped programs,
+	// closure-converted hoists, monomorphisation clones) leave it
+	// zero. Used by the LSP to rewrite both the decl site and
+	// every call-site reference during rename.
+	NamePos Position
+	// TypeParams names the type variables a generic function
+	// introduces — `function id[T](x: T): T` declares
+	// TypeParams=["T"]. The checker rewrites occurrences of
+	// these names in Params / ReturnType to ast.ParamType, then
+	// the monomorphisation pass clones the decl per-instantiation
+	// before IR lowering. After monomorphisation runs, every
+	// FuncDecl that survives has TypeParams empty.
+	TypeParams []string
+	// Bounds maps a type-parameter name to the traits it is
+	// constrained by — `function f[T: Display + Eq](…)` records
+	// Bounds["T"] = ["Display", "Eq"]. The checker uses bounds to
+	// (a) resolve method calls on a `T`-typed value against the
+	// trait's signature inside the generic body and (b) verify each
+	// concrete type argument implements the required traits at the
+	// call site. Nil when the function has no bounded type params.
+	// See docs/TRAITS.md.
+	Bounds map[string][]string
+	// BoundArgs carries the type arguments of a generic-trait bound,
+	// parallel to Bounds: `function f[T: From[i32]](…)` records
+	// BoundArgs["T"] = [[i32]] alongside Bounds["T"] = ["From"]. The
+	// checker substitutes them into the bound trait's method signatures
+	// (`from(v: T)` → `from(v: i32)`) when resolving a method on a
+	// `T`-typed value. Nil when no bound carries type args. See docs/TRAITS.md.
+	BoundArgs  map[string][][]Type
+	Params     []Param
+	ReturnType Type
+	// ReturnUnannotated records that the source wrote no `: Type` after
+	// the parameter list, so ReturnType was defaulted to void by the
+	// parser. The checker uses it to INFER the return type from the
+	// function's `return` expressions (when they unify to a single
+	// type) instead of forcing void — an explicit `: void` keeps
+	// ReturnUnannotated false. Synthetic decls (monomorph clones,
+	// closure hoists, derive synth) leave it false, so they are never
+	// re-inferred. See checker.inferReturns.
+	ReturnUnannotated bool
+	Body              *Block
+	// ImportIface / ImportWITName bind a body-less `function` to a WIT
+	// import via an `@import("wasi:iface@x.y.z", "wit-func-name")` attribute
+	// (bring-your-own WIT, P4 — docs/WIT-BRING-YOUR-OWN.md). ImportIface is
+	// the versioned interface; ImportWITName is the WIT function name (which
+	// may contain dashes / `[method]…` and so can't be a Fern identifier).
+	// Both empty for an ordinary function; when set, Body is nil and a call
+	// lowers to a core wasm import of (ImportIface, ImportWITName).
+	ImportIface   string
+	ImportWITName string
+	// ExportIface / ExportWITName bind a function (WITH a body) to a WIT
+	// *export* via an `@export("wasi:iface@x.y.z", "wit-name")` attribute
+	// (bring-your-own WIT, P6 — docs/WIT-BRING-YOUR-OWN.md): the component
+	// provides this function as the named world export, lifted with the WIT
+	// canonical ABI — the generalisation of the fixed `cli/run` (main) and
+	// `incoming-handler` (handle) lifts to an arbitrary world export. Both
+	// empty for an ordinary function; mutually exclusive with ImportIface.
+	ExportIface   string
+	ExportWITName string
+	// Public marks this declaration as exported from its module.
+	// Set by the parser when the source carries `pub function …`.
+	// Default false (private) — modload rejects cross-module
+	// references to non-public decls before the checker runs.
+	Public bool
+	// PackageScoped marks a `pub(package)` declaration — visible to other
+	// modules in the same package (same directory; the stdlib is one
+	// package) but not exported to outside consumers. Mutually exclusive
+	// with Public. See docs/PUB-PACKAGE.md.
+	PackageScoped bool
+	// Receiver, when non-nil, marks this declaration as a method on
+	// the struct type Receiver.Type.(StructType).Name. The checker
+	// hoists methods into top-level functions under the mangled name
+	// `__method_<Type>_<Name>` and rewrites `expr.Method(args)` call
+	// sites to `__method_<Type>_<Method>(expr, args)` so codegen
+	// never has to know about methods.
+	Receiver *Param
+	// MethodRecv / MethodSimpleName are stamped by the checker's
+	// receiver-hoist (which consumes Receiver) so a later Check pass —
+	// the monomorph re-check rebuilds Info from scratch, after Receiver
+	// is already gone — can re-register the method in Info.Methods
+	// without parsing the mangled name. MethodRecv is the canonical
+	// receiver type name (e.g. "shapes__Square", "i32"); both are
+	// empty for non-methods. See docs/TRAITS.md.
+	MethodRecv       string
+	MethodSimpleName string
+	// ImplTrait names the trait an `impl Trait for Type` block provided
+	// this method (or associated function) through, in its mangled form.
+	// Empty for an inherent method, an inherent `impl Type` block, and a
+	// plain function. The checker uses it to key Info.TraitMethods /
+	// Info.MethodOwners so two traits offering the same method name for
+	// one type stay distinguishable.
+	ImplTrait string
+	// AssocType, when non-empty, marks this as an associated function
+	// of that (mangled) type name — a receiver-less `impl` method like
+	// `function origin(): Self` in `impl … for Point`. Receiver stays
+	// nil; the checker hoists it to `__assoc_<AssocType>_<Name>` and
+	// resolves `Point.origin()` call sites (a FieldAccess on a type
+	// name) to that flat name with no receiver argument. `Self` in the
+	// signature is substituted to the impl type at parse time, exactly
+	// like an ordinary impl method.
+	AssocType string
+	// IsLocal is true for functions declared as a statement inside
+	// another function's body. Closure conversion at codegen time
+	// hoists these to top-level entries and rewrites captured-var
+	// references to read from a synthetic env argument.
+	IsLocal bool
+	// Fip marks a function the source annotated `fip function …` — a
+	// Koka-style fully-in-place CHECKED guarantee. The checker (E053)
+	// verifies the body performs no heap allocation (a sound, conservative
+	// subset: in-place index writes to `own` array params are allowed, but
+	// any allocating literal / string op / growing method / call to a
+	// non-`fip` function is rejected). It is a verify-don't-enable
+	// annotation — the in-place lowering already happens; `fip` only asserts
+	// and checks it. Default false. Set by the parser for `fip function`.
+	// The IR layer additionally verifies the claim against the ops it
+	// actually emitted (E068, verifyFipAllocs) — see docs/REUSE-CONTRACT.md.
+	Fip bool
+	// Fbip marks a function the source annotated `fbip function …` — the
+	// reuse-paired sibling of Fip, and the tier that corresponds to Koka's
+	// `fip` (Koka splits fip/fbip on borrowing, which Fern does by default;
+	// this pair splits on allocation). The checker
+	// runs the same E053 walk with a RELAXED allocation rule: constructor
+	// expressions (struct / tuple literals, payload-carrying enum variants)
+	// are allowed, because the IR layer verifies each such site is
+	// reuse-PAIRED (computeReuseSources / the self-overwrite hooks /
+	// consumingMatchReuse) or covered by FipAllowance — an un-reused site
+	// is an E068 error at lowering time (verify-and-enable, plan E2').
+	// Mutually exclusive with Fip (parse error). Default false; set by the
+	// parser for `fbip function`.
+	Fbip bool
+	// FipAllowance is the graded allowance `n` of `fip(n)` / `fbip(n)`: at
+	// most n fresh (un-reused) constructor allocations are permitted by the
+	// IR-level E068 verification. The bare forms are allowance 0. Stored by
+	// the parser; the checker only relaxes the constructor-shape rule when
+	// it is > 0 (the IR owns the count).
+	FipAllowance int
+	// Async marks a function the source annotated `async function …` —
+	// the WASI Preview-3 component-model-async export surface. On
+	// `-target wasm32-wasi -emit core-module` the driver lifts the async-marked function with
+	// the `async` canonical option (result via `canon task.return`), so
+	// the produced component exports it as `<name>: async func() ->
+	// <result>`, runnable under
+	// `wasmtime -W component-model-async,component-model-async-stackful`.
+	// Default false; set by the parser for `async function`. See
+	// docs/WASI-PREVIEW3-ASYNC-PLAN.md.
+	Async bool
+	// InlineHint carries a source-level `@inline` / `@noinline`
+	// attribute (#4412 Rec §14): Always lifts the IR inliner's size
+	// cap for this function (shape-safety exclusions still apply);
+	// Never excludes it from inlining entirely. None (the zero
+	// value) leaves the heuristic in charge.
+	InlineHint InlineHint
+	// IsSynthesisedHandlerMain marks the auto-`main()` the
+	// checker emits for handler-shaped programs (a top-level
+	// `handle(req: HttpRequest): HttpResponse` with no
+	// user-defined main). The body is `return serve.supervise(
+	// serve.__port_from_env("PORT", 8080), serve.config(), handle);` — exactly what
+	// arm64 / wasm-CLI need for a CLI HTTP server. The wasi-
+	// http codegen path uses the existing `wasi:http/incoming
+	// -handler.handle` export wrapper instead, so it drops the
+	// synthesised main (and the serve loop's transitive imports)
+	// before tree-shake runs.
+	IsSynthesisedHandlerMain bool
+	// Captures is filled by the checker for IsLocal functions: each
+	// entry names an outer-scope variable that the body reads, with
+	// the variable's static type. The closure-conversion pass uses
+	// this list to size the env block and to know how to materialise
+	// each capture at the def site.
+	Captures []Param
+	// UseSource marks a callback the parser synthesised from
+	// `use n[: T] <- CALL;` and points at CALL, whose last argument
+	// is this callback. The checker infers the first parameter's type
+	// from the callee's signature when the source wrote no annotation;
+	// the formatter reads it back to re-render the `use`. Nil for a
+	// function the source spelled.
+	UseSource *Call
+	// SourceModule is the canonical module path that declared this
+	// function. modload stamps every FuncDecl as it loads each
+	// module — disk paths get their absolute path; stdlib paths
+	// get the `stdlib://…` form modload uses internally. The
+	// checker reads this to scope method dispatch to the call
+	// site's import closure (module-scoped methods per
+	// docs/PRELUDE-TO-MODULES.md). Single-file programs and
+	// checker-synthesised decls leave this empty.
+	SourceModule string
+	// SourceFile is the path of the file this function was parsed from,
+	// stamped by modload as it loads each module and never cleared.
+	//
+	// SourceModule cannot serve: it carries method-visibility semantics,
+	// and modload deliberately blanks it on flat-loaded stdlib decls so
+	// they stay universally visible. Anything that needs to say WHERE a
+	// function came from — the coverage report's per-file totals (#5548) —
+	// needs a stamp with no second meaning attached to it. Empty on a
+	// program built straight from the parser and on synthesised decls.
+	SourceFile string
+	// DefiningModule is the module whose source WROTE this function's
+	// body, when that differs from SourceModule. Only a trait default
+	// materialised into an impl sets it: the body was written beside the
+	// trait, while the method itself belongs to the impl. Empty means
+	// the body came from SourceModule.
+	//
+	// SourceModule cannot serve: it says which module OWNS the method,
+	// which is what method visibility and the opaque-field rule need to
+	// stay keyed on. BodyModule is what everything reading the BODY —
+	// name resolution, diagnostics' file attribution, the capability and
+	// effect walks — must use instead.
+	DefiningModule string
+}
+
+// BodyModule names the module whose source wrote this function's body:
+// DefiningModule when set, else SourceModule. See DefiningModule.
+func (f *FuncDecl) BodyModule() string {
+	if f.DefiningModule != "" {
+		return f.DefiningModule
+	}
+	return f.SourceModule
+}
+
+// StructDecl is a top-level `struct` declaration. Fields are stored in
+// declaration order, which is also the layout order in memory: each
+// field occupies 4 bytes and lives at offset 4*index from the struct's
+// base pointer.
+// GenericDecl is the common shape of a top-level declaration that
+// the monomorphisation pass treats uniformly: it has a name, a
+// list of type-parameter names, and a position. Both *FuncDecl
+// and *StructDecl satisfy it, which lets monomorph drive the
+// "is this name generic?" check + "drop the generic decls" pass
+// against a single map instead of running parallel paths over
+// `info.GenericFuncs` and `info.GenericStructs`. The clone +
+// substitute logic stays per-kind (function bodies vs struct
+// fields are genuinely different work) and dispatches off the
+// concrete type.
+type GenericDecl interface {
+	Node
+	GenericName() string
+	GenericTypeParams() []string
+}
+
+type StructDecl struct {
+	P    Position
+	Name string
+	// TypeParams names the type variables a generic struct
+	// introduces — `struct Pair[A, B] { … }` declares
+	// TypeParams=["A", "B"]. The checker rewrites occurrences of
+	// these names in field types to ast.ParamType, then the
+	// monomorphisation pass clones the decl per-instantiation
+	// before IR lowering. After monomorph runs, every StructDecl
+	// has TypeParams empty.
+	TypeParams []string
+	Fields     []Param
+	// Public marks this declaration as exported from its module.
+	// Set by the parser when the source carries `pub struct …`.
+	// Same semantics as FuncDecl.Public — private structs can't be
+	// referenced from other modules.
+	Public bool
+	// PackageScoped marks a `pub(package)` declaration — visible to other
+	// modules in the same package (same directory; the stdlib is one
+	// package) but not exported to outside consumers. Mutually exclusive
+	// with Public. See docs/PUB-PACKAGE.md.
+	PackageScoped bool
+	// Opaque marks a `pub opaque struct` — the type name is exported
+	// but its fields are private outside the declaring module: other
+	// modules can hold/pass values and call methods, but cannot read
+	// fields or construct via a struct literal. The checker enforces
+	// this against the access site's SourceModule. See docs/TRAITS.md.
+	Opaque bool
+	// Derives lists the trait names from an `@derive(Trait, …)`
+	// attribute on the struct. The checker synthesises an `impl`
+	// per derived trait (field-wise) before conformance runs. See
+	// docs/TRAITS.md.
+	Derives []string
+	// MustConsume marks a `@must_consume` struct: every value of
+	// this type must be consumed (passed, returned, stored into a
+	// marked container, or destructured) on every control-flow
+	// path before its binding leaves scope — enforced by the
+	// checker's E067 walk. Zero runtime cost; RC still does the
+	// actual freeing. See docs/MUST-CONSUME.md.
+	MustConsume bool
+	// SourceModule mirrors FuncDecl.SourceModule — modload stamps
+	// the canonical module path that declared this struct. The LSP
+	// answers cross-module goto-definition queries with it (jump
+	// from `util.Point` use site to `Point`'s declaration in
+	// util.fern), and the checker scopes the nominal name by it: a
+	// struct is only a concrete type for the modules that can see
+	// it, so one module's `struct V` cannot capture another's `V`
+	// type parameter (#6118). Empty for parser-only single-file
+	// programs and checker-synthesised decls, which the checker
+	// reads as unscoped.
+	SourceModule string
+}
+
+// EnumDecl is a top-level `enum Foo { Bar, Baz(Int), … }`. Each
+// variant either has zero positional payload types (a payload-
+// less constructor like `Red`) or one or more (`Square(float,
+// float)`). Variants are stored in declaration order; the index
+// is the runtime tag.
+//
+// Generic enums declare positional type parameters in brackets
+// after the name: `enum Option[T] { Some(T), None }`. Inside a
+// variant payload list, references to `T` parse as
+// ParamType{Name: "T"}; the checker substitutes them with the
+// concrete type arguments at each instantiation. The runtime
+// representation is type-erased — payloads are uniform i32
+// slots, so generics add no per-instantiation codegen.
+type EnumDecl struct {
+	P          Position
+	Name       string
+	TypeParams []string
+	Variants   []EnumVariant
+	// Monomorphized marks a per-instantiation clone the monomorphizer
+	// emitted for a generic enum with a composite payload (#3693), e.g.
+	// `E__i32` from `enum E[U] { A(Box[U]) }`. Such clones share their
+	// variant names (`E__i32.A` vs `E__string.A`), so the checker lets a
+	// destination type disambiguate a bare variant reference among them —
+	// a relaxation that applies ONLY to clones, never to user-written
+	// enums (whose shared variant names still require qualification).
+	Monomorphized bool
+	// Derives lists the trait names from an `@derive(Trait, …)`
+	// attribute on the enum. The checker synthesises a variant-wise
+	// `impl` per derived trait. See docs/TRAITS.md.
+	Derives []string
+	// MustConsume mirrors StructDecl.MustConsume for `@must_consume`
+	// enums (E067; docs/MUST-CONSUME.md). A `match` on the value is
+	// its canonical consuming use.
+	MustConsume bool
+	// Try marks an `@try` enum: one usable with the `?` operator.
+	//
+	// The marker is an opt-in, not an inference — a two-variant enum is
+	// not silently short-circuitable. It carries a SHAPE obligation the
+	// checker enforces at the declaration (E078): exactly two variants,
+	// variant 0 carrying exactly one payload (the success value) and
+	// variant 1 carrying zero or one (the residual). That is the shape
+	// every backend's `?` lowering already assumes — success at tag 0,
+	// failure at tag 1 — so the marker makes an existing structural
+	// requirement checkable rather than inventing one.
+	//
+	// Option and Result are `?`-able without the marker: they are
+	// builtins, and Info.TryShapes records them alongside every marked
+	// enum so nothing downstream asks which it was. See docs/TRY.md.
+	Try bool
+	// Public marks the enum as exported across modules. Same
+	// semantics as FuncDecl.Public — `pub enum Foo { … }` lets
+	// other modules name `Foo`, including its variants in match
+	// patterns and constructors.
+	Public bool
+	// PackageScoped marks a `pub(package)` declaration — visible to other
+	// modules in the same package (same directory; the stdlib is one
+	// package) but not exported to outside consumers. Mutually exclusive
+	// with Public. See docs/PUB-PACKAGE.md.
+	PackageScoped bool
+	// SourceModule mirrors FuncDecl.SourceModule. See StructDecl
+	// for the cross-module-LSP rationale.
+	SourceModule string
+}
+
+// EnumVariant is one constructor in an EnumDecl. An empty Payloads
+// slice means the variant is constructed by bare name (`Red`).
+//
+// A variant is either POSITIONAL — `Square(f64, f64)`, constructed
+// `Square(2.0, 3.0)` and matched `Square(w, h)` — or NAMED-FIELD —
+// `Rect { w: f64, h: f64 }`, constructed `Rect { w: 2.0, h: 3.0 }` and
+// matched `Rect { w, h }`. FieldNames is empty for the positional form
+// and, for the named form, parallel to Payloads (FieldNames[i] is the
+// name of the field whose type is Payloads[i]). The runtime layout is
+// identical either way — payloads are laid out in declaration order — so
+// names are purely a parse/check concern; the checker reorders named
+// match bindings + constructor args into declaration order before codegen.
+type EnumVariant struct {
+	P          Position
+	Name       string
+	Payloads   []Type
+	FieldNames []string
+}
+
+// ResourceDecl is a top-level `resource Name;` — a nominal WIT resource-handle
+// type (P5 — docs/WIT-BRING-YOUR-OWN.md). An `@import("iface",
+// "wit-resource-name")` attribute binds the Fern name to its WIT resource
+// identity (ImportIface / ImportWITName); a later P5 slice uses that binding to
+// call `[resource-drop]<wit-name>` when an owned handle goes out of scope. The
+// type is referenced as `own Name` / `borrow Name` (HandleType); values are
+// opaque i32 handles. The checker registers each in Info.Resources; no later
+// pass sees ResourceDecl (handles erase to i32 before IR lowering).
+type ResourceDecl struct {
+	P             Position
+	Name          string
+	ImportIface   string
+	ImportWITName string
+	// Public marks the resource as exported across modules — same semantics
+	// as FuncDecl.Public.
+	Public bool
+	// PackageScoped marks a `pub(package)` declaration — visible to other
+	// modules in the same package (same directory; the stdlib is one
+	// package) but not exported to outside consumers. Mutually exclusive
+	// with Public. See docs/PUB-PACKAGE.md.
+	PackageScoped bool
+	// SourceModule mirrors FuncDecl.SourceModule (modload stamps the
+	// declaring module path). Empty for parser-only single-file programs.
+	SourceModule string
+}
+
+// UnionDecl is a top-level `type Expr = Binary | Unary | Call;`
+// — a closed sum over named struct types. Each member must be
+// the name of an existing StructDecl; the checker desugars the
+// union into a synthetic EnumDecl whose variants are
+// `Name(Name)` (one positional payload per member, of the
+// matching struct type) and registers it in `info.Enums`
+// alongside hand-written enums. The rest of the pipeline
+// (monomorph / IR / codegen) only ever sees the synthetic
+// enum.
+//
+// The sugar buys two ergonomic wins over the hand-written
+// equivalent:
+//
+//   - Member names don't have to be repeated:
+//     `type Expr = Binary | Unary | Call` instead of
+//     `enum Expr { Binary(Binary), Unary(Unary), Call(Call) }`.
+//   - A bare struct literal flows into the union without an
+//     explicit wrap: `let e: Expr = Binary{...}` instead of
+//     `let e: Expr = Binary(Binary{...})`. The checker's
+//     `assignable` rule recognises the (struct, union) pair
+//     and inserts the wrapping at the AST level.
+type UnionDecl struct {
+	P    Position
+	Name string
+	// TypeParams are the union's own parameters — `T` in
+	// `type Tree[T] = Leaf[T] | Node[T]`. They pass straight to the
+	// synthesised EnumDecl, which is where the existing generic-enum
+	// machinery (including the composite-payload monomorphizer) picks
+	// them up.
+	TypeParams []string
+	// Members lists the struct types that make up the union, in
+	// declaration order, each with whatever type arguments the source
+	// wrote. A member's Name must resolve to a StructDecl at desugar
+	// time, and its Args must match that struct's own parameter count.
+	// The parser preserves source order; checker rewrites preserve it
+	// too so the synthesised enum's variant tags are stable across
+	// re-checks.
+	Members []StructType
+	// MemberLines is the source line of each member, parallel to Members, so
+	// the formatter can keep a union written across lines on those lines.
+	MemberLines []int
+	// Public marks the union as exported across modules — same
+	// semantics as EnumDecl.Public.
+	Public bool
+	// PackageScoped marks a `pub(package)` declaration — visible to other
+	// modules in the same package (same directory; the stdlib is one
+	// package) but not exported to outside consumers. Mutually exclusive
+	// with Public. See docs/PUB-PACKAGE.md.
+	PackageScoped bool
+	// SourceModule is the canonical module path that declared this
+	// union. modload stamps it during loadRecursive; the checker
+	// propagates it to the synthesised EnumDecl so cross-module
+	// variant-pattern qualifier checks have a comparable target.
+	SourceModule string
+}
+
+// TraitDecl is a top-level `trait Name { <sig>; … }` declaration — a
+// named set of method signatures. Each method's first parameter is
+// `self: Self` (ast.SelfType). A type "implements" the trait via a
+// matching ImplDecl; the checker validates conformance + coherence
+// (see docs/TRAITS.md). Traits carry no runtime representation: once
+// the checker has validated impls, later stages ignore them.
+type TraitDecl struct {
+	P       Position
+	Name    string
+	NamePos Position
+	Methods []TraitMethod
+	// TypeParams names the trait's own type parameters (`trait From[T]`).
+	// A method signature refers to them; each `impl From[Arg] for Type`
+	// binds them via ImplDecl.TraitArgs, and the conformance check
+	// substitutes them when comparing the impl's methods to the trait's.
+	// Empty for a non-generic trait. See docs/TRAITS.md.
+	TypeParams []string
+	// Supertraits names the traits this trait requires (`trait Ord: Eq +
+	// Hash { … }`): an `impl Ord for T` is legal only if `T` also
+	// implements every supertrait (transitively), and a `T: Ord` bound
+	// grants access to the supertraits' methods too. Empty for a trait
+	// with no supertraits. modload mangles these names like any other
+	// trait reference. See docs/TRAITS.md.
+	Supertraits []string
+	// AssocTypes names the trait's associated types (`type Item;`), in
+	// declaration order. A method signature refers to one as
+	// `Self::Item` (a ProjType); each impl must bind it via
+	// `type Item = …`. Empty for a trait with no associated types.
+	// See docs/ASSOCIATED-TYPES.md.
+	AssocTypes []string
+	// Public marks the trait as exported — same semantics as
+	// FuncDecl.Public / StructDecl.Public.
+	Public bool
+	// PackageScoped marks a `pub(package)` declaration — visible to other
+	// modules in the same package (same directory; the stdlib is one
+	// package) but not exported to outside consumers. Mutually exclusive
+	// with Public. See docs/PUB-PACKAGE.md.
+	PackageScoped bool
+	// SourceModule mirrors StructDecl.SourceModule — modload stamps
+	// the declaring module so the coherence (orphan-rule) check can
+	// tell a local trait from an imported one. Empty for single-file
+	// programs.
+	SourceModule string
+}
+
+// TraitMethod is one signature in a TraitDecl. For an ordinary method
+// Params[0] is `self: Self` (ast.SelfType{}); the remaining params +
+// Result use SelfType wherever the source wrote `Self`. An *associated
+// function* (`Assoc` true) has no `self` receiver — it's called as
+// `Type.f(args)` rather than `value.f(args)` and typically constructs a
+// `Self` (e.g. `function default(): Self`).
+type TraitMethod struct {
+	P      Position
+	Name   string
+	Params []Param
+	Result Type
+	Assoc  bool
+	// Body, when non-nil, is a default implementation: the trait method
+	// was written `function f(self: Self): T { … }` rather than ending
+	// at a `;`. An `impl` that omits a defaulted method inherits a copy
+	// of this body (with `Self` substituted to the impl type) — see the
+	// checker's synthesizeTraitDefaults and docs/TRAITS.md. nil = an
+	// abstract signature every impl must provide.
+	Body *Block
+}
+
+// ImplDecl is a top-level `impl Trait for Type { <function>… }`. The
+// parser desugars each method into an ordinary receiver-method
+// FuncDecl (with `Self` replaced by the `for` type) and appends those
+// to Program.Funcs, so modload + the checker's existing
+// receiver-hoist + dispatch paths handle them unchanged. ImplDecl
+// itself is the record the checker uses to verify the impl satisfies
+// the trait and to enforce coherence. MethodNames lists the method
+// names provided (in source order) for the conformance diagnostics.
+type ImplDecl struct {
+	P           Position
+	Trait       string
+	TraitPos    Position
+	Type        Type
+	TypePos     Position
+	MethodNames []string
+	// TraitArgs are the type arguments applied to a generic trait in
+	// `impl From[i32] for Celsius` — bound positionally to the trait's
+	// TraitDecl.TypeParams. The conformance check substitutes them into
+	// the trait's method signatures. Empty for a non-generic trait. See
+	// docs/TRAITS.md.
+	TraitArgs []Type
+	// TypeParams names the impl's own type parameters for a parametric
+	// impl (`impl[T: Bound] Trait for Box[T]`). Empty for a plain
+	// `impl Trait for ConcreteType`. The checker resolves occurrences
+	// of these names inside Type to ParamType so the conformance
+	// signature comparison lines up with the (generic) hoisted
+	// methods. See docs/TRAITS.md.
+	TypeParams []string
+	// Bounds maps each impl type parameter to its trait bounds (from
+	// `impl[T: Bound] …`). The parser passes these straight onto each
+	// desugared method, so ImplDecl only needs them for methods the
+	// checker synthesises later — a trait's default method inherited by
+	// a parametric impl (synthesizeTraitDefaults). Nil for a plain impl.
+	Bounds map[string][]string
+	// AssocTypeBindings maps each of the trait's associated-type names to
+	// the concrete type this impl binds it to (`type Item = i32;`). The
+	// conformance check requires one entry per trait associated type; the
+	// checker/monomorph resolve `Self::Item` / `T::Item` projections
+	// through it. Nil for an impl of a trait with no associated types.
+	// See docs/ASSOCIATED-TYPES.md.
+	AssocTypeBindings map[string]Type
+	// SourceModule is the module that wrote the impl — used by the
+	// orphan-rule check (the impl is legal only if Trait or Type is
+	// declared in this same module). Empty for single-file programs.
+	SourceModule string
+	// Methods holds the same desugared *FuncDecl values the parser also
+	// appends to Program.Funcs — kept here purely so the formatter can
+	// re-emit the `impl { … }` grouping (the checker/codegen path reads
+	// them from Program.Funcs as before, unaware of this back-reference).
+	// Each is the post-desugar form: `self` peeled into Receiver (or
+	// AssocType stamped) and `Self` substituted to the impl type, so the
+	// formatter renders the concrete type where the source wrote `Self`.
+	// Empty for impls parsed before this field existed / with no methods.
+	Methods []*FuncDecl
+}
+
+func (s *TraitDecl) Pos() Position { return s.P }
+func (s *ImplDecl) Pos() Position  { return s.P }
+
+type Program struct {
+	Funcs   []*FuncDecl
+	Structs []*StructDecl
+	// TodoSites records the source position of every `todo;` /
+	// `todo("msg");` statement the parser desugared, in source
+	// order. `fern -check` prints a warning per entry so the
+	// remaining stubs stay visible. Populated only by the parse
+	// of THIS program — modload does not merge imported modules'
+	// sites (Position carries no filename, so cross-module
+	// entries could not be attributed correctly).
+	TodoSites []Position
+	// Resources lists top-level `resource Name;` declarations in source
+	// order — nominal WIT resource-handle types (P5 — see ResourceDecl and
+	// docs/WIT-BRING-YOUR-OWN.md). Referenced as `own Name` / `borrow Name`
+	// (HandleType). The checker registers them in Info.Resources; the IR
+	// never sees them (handles erase to i32 before lowering).
+	Resources []*ResourceDecl
+	// Traits lists top-level `trait` declarations in source order.
+	// Impls lists `impl Trait for Type` declarations in source
+	// order. Both are consumed by the checker (conformance +
+	// coherence) and ignored by every later pass — see TraitDecl /
+	// ImplDecl and docs/TRAITS.md.
+	Traits []*TraitDecl
+	Impls  []*ImplDecl
+	// Enums lists top-level `enum` declarations in source order.
+	// Variant constructors look like calls in the parse tree
+	// (`Some(x)`); the checker rewrites them to *EnumLit once
+	// the variant is resolved.
+	Enums []*EnumDecl
+	// Unions lists every top-level `type X = A | B | C;` declaration
+	// in source order. The checker rewrites each entry into a
+	// synthesised EnumDecl appended to Enums, then nils this slice
+	// — so monomorph / IR / codegen never see UnionDecl. See
+	// UnionDecl's doc comment for the desugaring shape.
+	Unions []*UnionDecl
+	// Consts lists top-level `const` declarations in source order.
+	// The constfold pass evaluates each initialiser, substitutes
+	// references throughout the program with the resolved literal,
+	// and clears this slice — so the checker / IR lowering / codegen
+	// pipeline never sees a ConstDecl.
+	//
+	// (`state` syntax has been removed; the field that used to
+	// carry StateDecl is gone.)
+	Consts []*ConstDecl
+	// Imports lists every top-level `import "<path>";` declaration
+	// in source order. The driver loads the referenced files,
+	// mangles their decls under each module's local name, and
+	// stitches the combined program before the checker runs.
+	// Single-file programs leave this empty.
+	Imports []*Import
+	// PubUses holds the module's `pub use "path".{…};` re-exports.
+	PubUses []*PubUse
+	// ModuleImports records each loaded module's transitive import
+	// closure. The map is keyed by module path; each entry is the
+	// set of module paths reachable via `import` chains starting
+	// from that module, including the module itself (so a method
+	// lookup for "is `<receiver-module>` visible from `<call-site-
+	// module>`" is a single map lookup). modload populates the
+	// full structure during loading; the checker uses it to scope
+	// method dispatch under module-scoped semantics (see
+	// docs/PRELUDE-TO-MODULES.md).
+	ModuleImports map[string]map[string]bool
+	// EntryModule is the entry module's path, whose declarations keep
+	// their names unmangled; "" for a program modload did not combine.
+	EntryModule string
+	// DirectImports is ModuleImports without the transitive step: each
+	// entry holds only the module paths named by that module's own
+	// `import` declarations, plus the module itself. Trait-method
+	// resolution ranks a candidate higher when the trait comes from a
+	// module the caller imported directly rather than one it merely
+	// reaches through the closure.
+	DirectImports map[string]map[string]bool
+	// LoadedStdlibPaths records every `std/…` / `core/…` canonical
+	// path modload pulled in (keyed by the `stdlib://…` path form
+	// modload uses internally — see `internal/pkg/modload/modload.go`).
+	// The checker consults this set to dedup stdlib loads — e.g. it
+	// won't re-register `core/map`'s helpers when modload already
+	// pulled the module in (directly or transitively).
+	LoadedStdlibPaths map[string]bool
+	// CapGrants records the capability grants declared in the loaded
+	// manifests (docs/PACKAGE-CAPABILITIES-BRIEF.md phase 2), keyed by
+	// the dependency package's resolved directory: for every dependency
+	// entry carrying a `capabilities` key, the granted v1 capabilities
+	// (sorted; the union when several manifests grant the same package).
+	// A key mapping to an empty slice means `capabilities = []` (nothing
+	// granted); a package directory absent from the map is ungoverned —
+	// cmd/fern's enforcement warns instead of erroring for it
+	// (warn-and-allow). modload populates this during loading; nil when
+	// no manifest grants anything.
+	CapGrants map[string][]string
+	// Comments lists every `//` line comment the lexer collected,
+	// in source order. Most consumers (checker, IR lowering,
+	// codegen) ignore this field; the formatter walks it alongside
+	// the AST to re-emit comments at their original positions.
+	Comments []Comment
+	// BlankLines lists the 1-based source line numbers that were
+	// blank (whitespace-only). Like Comments, only the formatter
+	// consumes it — to preserve an author's blank-line grouping
+	// inside blocks rather than collapsing every statement together.
+	BlankLines []int
+	// TypeRefs records every named-type reference the parser saw
+	// in a type-annotation slot (`let c: Color`, `Option[T]`,
+	// `pub function f(x: Point): Result[i32, Err]`, field type
+	// lists, etc.). Each entry is `(position, source-spelling)`
+	// for the name token alone — composite parts (`[T]`, `T[]`,
+	// `(T, U)`, `() => T`) get their own entries from the recursive
+	// parseType descent. The LSP queries this to answer
+	// "what type is at this position?" because ast.Type values are
+	// positionless; without this table, type-annotation hover
+	// (`let c: Color`) and goto-def on type names can't work.
+	// Modload merges every loaded module's entries into this one
+	// table, stamping each with its SourceModule; the checker
+	// leaves it alone.
+	TypeRefs []TypeRef
+}
+
+// TypeRef is a parser-recorded source location for one named-type
+// reference. Name carries the source spelling exactly as it
+// appeared (including any `mod.Foo` qualifier and any generic-args
+// suffix is NOT included — the args are separate TypeRef entries).
+// Consumers cross-reference Name against checker.Info.Structs /
+// .Enums to describe / locate the resolved decl.
+type TypeRef struct {
+	P    Position
+	Name string
+	// SourceModule is the canonical module path whose source
+	// carried this reference — same string modload stamps on
+	// FuncDecl / StructDecl / EnumDecl. Every module's entries
+	// merge into one table, and Position has no filename, so
+	// without it a `(line, col)` lookup cannot tell which file a
+	// type reference came from. Empty for a single-file parse.
+	SourceModule string
+}
+
+// ConstDecl is a top-level `const NAME[: T] = expr;` declaration.
+// Type is optional — if nil, the constfold pass infers it from the
+// resolved value. Value is the parsed initialiser expression: it
+// must be a constant expression (literals, references to earlier
+// consts, or arithmetic / comparison / logical operations on those).
+//
+// Public marks the const as exported from its module — same
+// semantics as FuncDecl.Public / StructDecl.Public.
+type ConstDecl struct {
+	P      Position
+	Name   string
+	Type   Type
+	Value  Expr
+	Public bool
+	// SourceModule is the path of the module that declared the const,
+	// stamped by modload like FuncDecl.SourceModule, so a diagnostic on
+	// the initialiser names the right file.
+	SourceModule string
+	// PackageScoped marks a `pub(package)` declaration — visible to other
+	// modules in the same package (same directory; the stdlib is one
+	// package) but not exported to outside consumers. Mutually exclusive
+	// with Public. See docs/PUB-PACKAGE.md.
+	PackageScoped bool
+}
+
+// Import is a top-level `import "<path>";` declaration. Path is the
+// raw string-literal text from the source (typically a relative
+// path like "./util" or "./math/vec"); LocalName is derived from
+// the path's basename and is what qualified calls use as the
+// module prefix (`util.fn(args)`).
+type Import struct {
+	P    Position
+	Path string
+	// LocalName is the qualifier used in `mod.fn(...)` / `mod.Type`
+	// references — the alias if one was given, else the path's
+	// basename. modload keys its per-module import table off this.
+	LocalName string
+	// Alias is the explicit `as <name>` binding, or "" when the
+	// import used the default basename qualifier. Kept distinct from
+	// LocalName so the printer can round-trip the `as` clause.
+	Alias string
+}
+
+// PubUse is a `pub use "path".{name1, name2};` re-export: the named
+// public symbols of the target module become part of *this* module's
+// public surface, so an importer of this module can reference them as
+// `thismod.name` and they resolve to the original module's definition
+// (no copy is made). modload loads the target like an import and records
+// a per-module re-export table; the rewriter resolves a re-exported
+// `mod.name` to the original mangled flat name. See docs/PRELUDE-TO-MODULES.md.
+type PubUse struct {
+	P     Position
+	Path  string   // import path of the module being re-exported from
+	Names []string // the public names re-exported (in source order)
+}
+
+func (d *PubUse) Pos() Position { return d.P }
+
+// Pos accessors for top-level declarations that aren't also Stmts.
+// FuncDecl already has Pos() via its Stmt role; the rest need their
+// own so they satisfy the ast.Node interface for Walk / WalkProgram.
+func (d *StructDecl) Pos() Position               { return d.P }
+func (d *StructDecl) GenericName() string         { return d.Name }
+func (d *StructDecl) GenericTypeParams() []string { return d.TypeParams }
+func (d *EnumDecl) Pos() Position                 { return d.P }
+func (d *UnionDecl) Pos() Position                { return d.P }
+func (d *ConstDecl) Pos() Position                { return d.P }
+func (d *Import) Pos() Position                   { return d.P }

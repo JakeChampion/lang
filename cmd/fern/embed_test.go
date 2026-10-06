@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/embed"
+	"github.com/jakechampion/lang/internal/pkg/embed"
 )
 
 // writeAssets materialises an asset tree and loads it the way the -embed
