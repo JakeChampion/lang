@@ -11,7 +11,7 @@
 //
 // Positions, so a future narrowing is visible:
 //   direct    — `st.run(c)`, the plain spelling.
-//   elem      — `sts[i].run(c)`, which is what examples/proposals/pipeline.fern
+//   elem      — `sts[i].run(c)`, which is what tests/proposals/pipeline.fern
 //               actually writes. It reaches the struct through an INDEX, so it
 //               depends on expr_struct_type resolving an indexed struct array to
 //               its element type; it refused identically before the fix.

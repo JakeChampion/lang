@@ -6,7 +6,7 @@ import "testing"
 // at and takes no reference: core/map's key and value columns read each cell
 // as `cellPtr as string`. Counted as a fresh owner, the view was released
 // once per cell, so every keys() call took a reference from the map that it
-// never gave, and the native ssa backend crashed on examples/proposals/cow_snapshots.fern.
+// never gave, and the native ssa backend crashed on tests/proposals/cow_snapshots.fern.
 func TestPointerCastViewIsNotReleased(t *testing.T) {
 	src := `function column(cells: usize[]): string[] {
     let out: string[] = [];

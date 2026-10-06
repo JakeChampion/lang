@@ -544,7 +544,7 @@ findings. Ranked by leverage.
     compiler surface.** The `for tr in trs` loops in `e060_e062_stmts`'s visitor
     were the first ITERAND-form `for..in` in the tree written inside a local
     function — the range form `for i in 0..n` parses straight to a `StmtFor` and
-    was never affected, which is why `examples/proposals/brackets_pda.fern` has
+    was never affected, which is why `tests/proposals/brackets_pda.fern` has
     carried such loops in nested functions all along — and neither for-in
     lowering walked one: a nested named function is
     an `*ast.FuncDecl` STATEMENT whose body is its own block, and both the

@@ -86,7 +86,7 @@ natives and to i32 on wasm32, where a pointer IS four bytes.
 Emitted wasm is byte-identical across 286 of 287 `examples/**` programs (the
 one outlier is non-deterministic on `origin/main` too, verified by compiling it
 twice with the unmodified compiler). On the natives only operand widths move:
-for `examples/proposals/trie.fern` on x86-64 the instruction histogram is
+for `tests/proposals/trie.fern` on x86-64 the instruction histogram is
 identical and exactly one `cmp %ecx,%eax` became `cmp %rcx,%rax`; for the
 `map_keys_values_header_churn_free` program on arm64 the histogram is identical
 and five `cmp w1, w0` became `cmp x1, x0` alongside the two `ldr w0, [x0]` →

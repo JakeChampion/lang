@@ -16,7 +16,7 @@ import (
 //
 // `TestConformanceLeakCensusX86_64` fails when a fixture is killed by a
 // signal, but a crash can live outside `conformance/cases`: an attempted rc
-// fix once segfaulted `examples/proposals/unidiff.fern` while that corpus
+// fix once segfaulted `tests/proposals/unidiff.fern` while that corpus
 // stayed clean. This runs the same check over the examples corpus, compiled
 // by the self-host with the heap tracer on.
 //

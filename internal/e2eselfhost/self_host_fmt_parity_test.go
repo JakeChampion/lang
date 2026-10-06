@@ -12,6 +12,7 @@ import (
 
 	"github.com/jakechampion/lang/internal/checker"
 	"github.com/jakechampion/lang/internal/constfold"
+	"github.com/jakechampion/lang/internal/corpus"
 	"github.com/jakechampion/lang/internal/modload"
 	goparser "github.com/jakechampion/lang/internal/parser"
 	goprinter "github.com/jakechampion/lang/internal/printer"
@@ -2128,55 +2129,25 @@ func TestSelfHostFmtDiffCorpusParityX86_64(t *testing.T) {
 	}
 }
 
-// repoRootFromTest finds the repository root by walking up to the go.mod.
+// repoRootFromTest returns the repository root.
 func repoRootFromTest(t *testing.T) string {
 	t.Helper()
-	dir, err := os.Getwd()
+	root, err := corpus.RepoRoot()
 	if err != nil {
 		t.Fatal(err)
 	}
-	for {
-		if _, err := os.Stat(filepath.Join(dir, "go.mod")); err == nil {
-			return dir
-		}
-		parent := filepath.Dir(dir)
-		if parent == dir {
-			t.Fatal("go.mod not found above the test's working directory")
-		}
-		dir = parent
-	}
+	return root
 }
 
-// corpusFernFiles lists every `.fern` file under compiler/, examples/, tests/,
-// bench/ and internal/stdlib, repo-relative and sorted, with slash separators so
-// the allowlist keys read the same on every platform.
+// corpusFernFiles lists every Fern source in corpus.Sources, repo-relative with
+// slash separators so the allowlist keys read the same on every platform.
 func corpusFernFiles(t *testing.T, root string) []string {
 	t.Helper()
-	var out []string
-	for _, sub := range []string{"compiler", "examples", "tests", "bench", "internal/stdlib"} {
-		err := filepath.WalkDir(filepath.Join(root, sub), func(path string, d os.DirEntry, err error) error {
-			if err != nil {
-				return err
-			}
-			if d.IsDir() || filepath.Ext(path) != ".fern" {
-				return nil
-			}
-			rel, err := filepath.Rel(root, path)
-			if err != nil {
-				return err
-			}
-			out = append(out, filepath.ToSlash(rel))
-			return nil
-		})
-		if err != nil {
-			t.Fatal(err)
-		}
+	files, err := corpus.Files(root, corpus.Sources)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if len(out) < 400 {
-		t.Fatalf("corpus walk found only %d files; the tree moved and this gate stopped covering it", len(out))
-	}
-	slices.Sort(out)
-	return out
+	return files
 }
 
 // firstDiffLines reports the first differing line of two outputs, with its

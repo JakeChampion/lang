@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/jakechampion/lang/internal/corpus"
 	"github.com/jakechampion/lang/internal/platforms"
 )
 
@@ -56,7 +57,7 @@ func TestUserFacingTargetNamesResolve(t *testing.T) {
 func userFacingFiles(t *testing.T, root string) []string {
 	t.Helper()
 	skip := map[string]bool{
-		filepath.Join(root, "examples", "proposals"): true,
+		filepath.Join(root, "tests", "proposals"): true,
 	}
 	var out []string
 	add := func(path string, d os.DirEntry, err error) error {
@@ -75,12 +76,11 @@ func userFacingFiles(t *testing.T, root string) []string {
 		}
 		return nil
 	}
-	for _, dir := range []string{
-		filepath.Join(root, "examples"),
-		filepath.Join(root, "tests"),
-		filepath.Join(root, "bench"),
-		filepath.Join(root, "internal", "diag", "explanations"),
-	} {
+	var dirs []string
+	for _, r := range corpus.Programs {
+		dirs = append(dirs, filepath.Join(root, r))
+	}
+	for _, dir := range append(dirs, filepath.Join(root, "internal", "diag", "explanations")) {
 		if err := filepath.WalkDir(dir, add); err != nil {
 			t.Fatalf("walk %s: %v", dir, err)
 		}
@@ -90,13 +90,9 @@ func userFacingFiles(t *testing.T, root string) []string {
 
 func repoRoot(t *testing.T) string {
 	t.Helper()
-	wd, err := os.Getwd()
+	root, err := corpus.RepoRoot()
 	if err != nil {
-		t.Fatalf("getwd: %v", err)
-	}
-	root := filepath.Join(wd, "..", "..")
-	if _, err := os.Stat(filepath.Join(root, "go.mod")); err != nil {
-		t.Fatalf("repo root %s has no go.mod: %v", root, err)
+		t.Fatal(err)
 	}
 	return root
 }

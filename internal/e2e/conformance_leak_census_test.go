@@ -221,7 +221,7 @@ func traceOneFixture(t *testing.T, runner []string, dir string) (int, string, er
 	//
 	// It would NOT have caught that particular one, and the check was
 	// re-run against the broken compiler to find that out rather than
-	// assumed: the crash was in examples/proposals/unidiff.fern, and this
+	// assumed: the crash was in tests/proposals/unidiff.fern, and this
 	// corpus is conformance/cases only, where nothing crashed. What caught
 	// it was the arm64 differential over examples/ (TestExamplesNoCrash* today).
 	//

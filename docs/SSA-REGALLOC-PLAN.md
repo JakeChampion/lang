@@ -934,7 +934,7 @@ holds to byte-identical behaviour:
 - **Aborts are silent.** An out-of-range index exits 134 under both, but flat
   writes `fern: array index out of range` plus a backtrace and the SSA build
   writes zero bytes. Not a missing backtrace — no cause line at all.
-- **`examples/proposals/trie.fern` allocates 6.7–32× more** under SSA on
+- **`tests/proposals/trie.fern` allocates 6.7–32× more** under SSA on
   struct-element arrays updated through `.append` / `.with`, where the
   unique-reference in-place update appears to be lost. Same values; only the
   bump high-water mark differs, and it prints to stderr.
