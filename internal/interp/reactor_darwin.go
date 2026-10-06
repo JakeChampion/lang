@@ -40,6 +40,9 @@ func (r *reactor) wait(cap int, timeoutMs int) ([]reactorEvent, error) {
 		ts = &t
 	}
 	n, err := syscall.Kevent(r.fd, nil, evs, ts)
+	for err == syscall.EINTR {
+		n, err = syscall.Kevent(r.fd, nil, evs, ts)
+	}
 	if err != nil {
 		return nil, err
 	}
