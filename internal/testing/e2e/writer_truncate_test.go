@@ -170,7 +170,7 @@ func TestInterpWriterTruncate(t *testing.T) {
 // resizes with fd_filestat_set_size, the component with descriptor.set-size:
 // two bodies, so two runs.
 func TestWASMPreview1WriterTruncate(t *testing.T) {
-	mod := buildPreview1Module(t, writerTruncateSource("", false, false))
+	mod := buildWasmCore(t, writerTruncateSource("", false, false))
 	dir := t.TempDir()
 	if got := runPreview1Module(t, mod, dir); got != 0 {
 		t.Fatalf("main = %d, want 0 — the code names the step (see writerTruncateSource)", got)

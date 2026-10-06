@@ -156,7 +156,7 @@ func TestInterpDupOnto(t *testing.T) {
 // would leave the handle the caller still holds dangling, and preview 2 has
 // no numbered table at all.
 func TestWASMPreview1DupOntoUnsupported(t *testing.T) {
-	mod := buildPreview1Module(t, dupOntoSource("", true))
+	mod := buildWasmCore(t, dupOntoSource("", true))
 	dir := t.TempDir()
 	if got := runPreview1Module(t, mod, dir); got != 0 {
 		t.Fatalf("main = %d, want 0 — the code names the step (see dupOntoSource)", got)

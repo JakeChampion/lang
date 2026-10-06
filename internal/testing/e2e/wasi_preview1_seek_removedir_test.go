@@ -54,7 +54,7 @@ func preview1RightsSource() string {
 }
 
 func TestWASMPreview1SeekAndRemoveDir(t *testing.T) {
-	mod := buildPreview1Module(t, preview1RightsSource())
+	mod := buildWasmCore(t, preview1RightsSource())
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("hello"), 0o644); err != nil {
 		t.Fatal(err)

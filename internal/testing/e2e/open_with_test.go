@@ -189,7 +189,7 @@ const openWithWasmSrc = `function main(): i32 {
 }`
 
 func TestWASMPreview1OpenWith(t *testing.T) {
-	mod := buildPreview1Module(t, openWithWasmSrc)
+	mod := buildWasmCore(t, openWithWasmSrc)
 	dir := t.TempDir()
 	if got := runPreview1Module(t, mod, dir); got != 0 {
 		t.Fatalf("main = %d, want 0 — the code names the step (see openWithWasmSrc)", got)

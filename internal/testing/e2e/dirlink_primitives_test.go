@@ -166,7 +166,7 @@ func TestInterpDirLinkPrimitives(t *testing.T) {
 // goes through the descriptor's create-directory-at, link-at, symlink-at,
 // readlink-at and remove-directory-at. Two sets of bodies, so two runs.
 func TestWASMPreview1DirLinkPrimitives(t *testing.T) {
-	mod := buildPreview1Module(t, dirLinkSource("", false))
+	mod := buildWasmCore(t, dirLinkSource("", false))
 	dir := t.TempDir()
 	if got := runPreview1Module(t, mod, dir); got != 0 {
 		t.Fatalf("main = %d, want 0 — the code names the step (see dirLinkSource)", got)

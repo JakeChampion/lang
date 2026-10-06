@@ -230,7 +230,7 @@ func statFieldsWasmSource() string {
 // Preview 1 fills the record from path_filestat_get, the component from
 // stat-at's descriptor-stat: two bodies, so two runs.
 func TestWASMPreview1StatFields(t *testing.T) {
-	mod := buildPreview1Module(t, statFieldsWasmSource())
+	mod := buildWasmCore(t, statFieldsWasmSource())
 	if got := runPreview1Module(t, mod, statProbeWasmDir(t)); got != 0 {
 		t.Errorf("main = %d, want 0 — the code names the field (see statFieldsWasmSource)", got)
 	}

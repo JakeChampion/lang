@@ -172,7 +172,7 @@ func TestInterpSpliceToUnsupported(t *testing.T) {
 }
 
 func TestWASMPreview1SpliceToUnsupported(t *testing.T) {
-	mod := buildPreview1Module(t, spliceToSource("", false))
+	mod := buildWasmCore(t, spliceToSource("", false))
 	dir := t.TempDir()
 	if got := runPreview1Module(t, mod, dir); got != 0 {
 		t.Fatalf("main = %d, want 0 — the code names the step (see spliceToSource)", got)
