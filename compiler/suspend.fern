@@ -258,8 +258,9 @@ function run(r: irtables.LowerResult, set: Set): Tx {
     let k: i32 = o.kind_tag;
     if (is_site(o, set)) {
       t = site(t, r, set, ops, i, before[i]);
-      // The site's store is part of the group.
-      i = i + 1;
+      if (t.why == "") {
+        i = group_end(ops, i) - 1;
+      }
     } else if (k == 154) {
       t = routed_if(t, r, set, ops, i);
     } else if (k == 158) {
@@ -384,10 +385,10 @@ function slot_class(t: Tx, r: irtables.LowerResult, s: i32): string {
 
 // A site: the call's arguments are the ops at the end of the segment that
 // produce its pops(call) values, each a pure value op since the rewind runs
-// them again, and the op after the call stores its result. The group runs
-// in normal mode or when it is the target; a call that comes back unwinding
-// saves this frame and returns a dummy. Values the segment holds under the
-// arguments are carried past the group.
+// them again, and the ops after the call store its result (group_end). The
+// group runs in normal mode or when it is the target; a call that comes back
+// unwinding saves this frame and returns a dummy. Values the segment holds
+// under the arguments are carried past the group.
 function site(t: Tx, r: irtables.LowerResult, set: Set, ops: ir.Op[], at: i32, k: i32): Tx {
   let call: ir.Op = ops[at];
   let start: i32 = arg_start(t.seg, ir.op_pops(call));
@@ -400,10 +401,12 @@ function site(t: Tx, r: irtables.LowerResult, set: Set, ops: ir.Op[], at: i32, k
       return Tx { ...t, why: "suspend: " + r.name + ": call site " + util.i32_to_string(k) + " computes an argument with an effect on the operand stack (" + ir.kind_name(a.kind_tag) + ")" };
     }
   }
-  if (at + 1 >= ops.len() || ops[at + 1].kind_tag != 19 && ops[at + 1].kind_tag != 159) {
+  let end: i32 = group_end(ops, at);
+  if (end < 0) {
     return Tx { ...t, why: "suspend: " + r.name + ": call site " + util.i32_to_string(k) + " is not followed by its result's store" };
   }
-  let c: Carried = carry_out(t, r, set, start, [ops[at + 1]]);
+  let stores: ir.Op[] = sub_ops(ops, at + 1, end);
+  let c: Carried = carry_out(t, r, set, start, stores);
   if (c.t.why != "") {
     return c.t;
   }
@@ -412,7 +415,7 @@ function site(t: Tx, r: irtables.LowerResult, set: Set, ops: ir.Op[], at: i32, k
   out = util.append_all(out, [ir.op_load_local(t2.ci), ir.op_const_i32(k), ir.op_bin("eq", 0, false), ir.op_bin("or", 0, false), ir.op_if(0)]);
   out = util.append_all(out, args);
   out = out.append(call);
-  out = out.append(ops[at + 1]);
+  out = util.append_all(out, stores);
   out = out.append(ir.op_const_i32(0 - 1));
   out = out.append(ir.op_store_local(t2.ci));
   out = out.append(ir.op_end());
@@ -431,6 +434,19 @@ function site(t: Tx, r: irtables.LowerResult, set: Set, ops: ir.Op[], at: i32, k
   out = out.append(ir.op_return());
   out = out.append(ir.op_end());
   return Tx { ...t2, out: out, seg: c.carried, saves: t2.saves.append(saved) };
+}
+
+// The op past a site's group: the call, its result's store and, for a call
+// to a paired function (sempair), the read of the word beside the result and
+// its store, which nothing may call ahead of; -1 where no store follows.
+function group_end(ops: ir.Op[], at: i32): i32 {
+  if (at + 1 >= ops.len() || ops[at + 1].kind_tag != 19 && ops[at + 1].kind_tag != 159) {
+    return 0 - 1;
+  }
+  if (at + 3 < ops.len() && ops[at + 2].kind_tag == 385 && ops[at + 3].kind_tag == 19) {
+    return at + 4;
+  }
+  return at + 2;
 }
 
 // site_saves is the slots a site at op `at` saves, ascending: the ones live

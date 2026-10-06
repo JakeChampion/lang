@@ -11,16 +11,15 @@
 // that each fit a word returns the first as its result and the second beside
 // it, and each call rebuilds the pair from the two, which split
 // reads the caller's projections off. A function is paired only where every
-// call to it is rewritten with it (nothing outside the bodies names it, every
-// body naming it calls it directly, and it never suspends) and every caller
-// takes the value apart, so pairing never builds a box the callee did not.
+// call to it is rewritten with it (nothing outside the bodies names it and
+// every body naming it calls it directly) and every caller takes the value
+// apart, so pairing never builds a box the callee did not.
 import "./ssa";
 import "./util";
 import "./ssasem";
 import "./typeinfo";
 import "./semtypes";
 import "./semrecords";
-import "./suspend";
 
 pub struct Paired { funcs: ssasem.Func[], changed: boolean[] }
 
@@ -64,13 +63,12 @@ pub function pair_returns(funcs: ssasem.Func[], names: string[], rewrite: boolea
 
 function pairable(funcs: ssasem.Func[], names: string[], ix: util.NameIndex, rewrite: boolean[], unnamed: boolean[]): boolean[] {
   let refs: Refs = refs_of(funcs, ix, rewrite);
-  let susp: suspend.Set = suspend.classify(names, funcs);
   let ok: boolean[] = [];
   let dead: boolean[] = [];
   let i: i32 = 0;
   while (i < funcs.len()) {
     let direct: boolean = refs.calls[i] > 0 && !refs.other[i];
-    ok = ok.append(direct && rewrite[i] && unnamed[i] && susp.rows.find(names[i]) < 0 && shaped(funcs[i]));
+    ok = ok.append(direct && rewrite[i] && unnamed[i] && shaped(funcs[i]));
     dead = dead.append(refs.calls[i] == 0 && !refs.other[i] && rewrite[i] && unnamed[i]);
     i = i + 1;
   }

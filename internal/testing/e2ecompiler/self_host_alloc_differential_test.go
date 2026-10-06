@@ -129,6 +129,29 @@ function churn(n: i32): i32 {
 		maxRatio: 8,
 	},
 	{
+		// An element appended and stored back at its index: the adjacency
+		// list every graph pass builds (`callers = callers.with(c,
+		// callers[c].append(i))`). The element read takes the slot when the
+		// outer array has no other holder, so the append grows the bucket in
+		// place; a borrowed read would hold the bucket at two counts and copy
+		// it whole on every append.
+		name: "append-into-element",
+		decls: `function churn(n: i32): i32 {
+    let out: i32[][] = [[], [], [], []];
+    let i: i32 = 0;
+    while (i < n) {
+        let b: i32 = i % 4;
+        out = out.with(b, out[b].append(i));
+        i = i + 1;
+    }
+    return out[0].len() + out[3].len();
+}`,
+		n:        400,
+		cliff:    false,
+		bumpKB:   0,
+		maxRatio: 8,
+	},
+	{
 		// `.with` through a borrowed param — a functional element update.
 		// This is the shape docs/TEST-GATES.md cites as having gone 4688 MB
 		// native / 0 MB self-host.

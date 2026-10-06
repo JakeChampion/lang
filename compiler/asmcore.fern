@@ -3797,9 +3797,10 @@ pub function wasi_socket_error_errnos(): i32[] {
 
 // rt_src_io_error is the shared errno→IoError classifier the Fern fs helpers CALL
 // (#2649) — the single definition of the mapping native's __fern_io_error carries,
-// so the fs leaves stop INLINING the five-way branch and just call it. `path` is
+// so the fs leaves stop INLINING the branch and just call it. `path` is
 // consumed (moved into the path-carrying variant, or dropped by RC on the
-// payload-less Interrupted branch), so callers hand it a FRESH string. Emitted
+// payload-less Interrupted branch), so callers hand it a FRESH string. EILSEQ
+// is InvalidUtf8, as on wasm and in the interpreter. Emitted
 // once and bundled with the fs helpers that call it (each backend's fs-helper
 // bundle), so the standard inter-procedural RC analysis threads the call-graph
 // edge — this IS the #2649 "dependencies are the call graph" end-state, in
@@ -3807,12 +3808,13 @@ pub function wasi_socket_error_errnos(): i32[] {
 // strerror's text for the errno in target t's numbering — a ladder over
 // strerror_texts — or "Unknown error N" for an errno past the table.
 pub function rt_src_io_error(t: string): string {
-  let src: string = path_copy_src() + " function __fern_io_error(e: i32, path: string): IoError { if (e == 2) { return NotFound(path); } if (e == 13) { return PermissionDenied(path); } if (e == 17) { return AlreadyExists(path); } if (e == 4) { return Interrupted; }";
   let texts: string[] = strerror_texts();
+  let eilseq: i32 = strerror_errno(t, util.index_of_str(texts, "Invalid or incomplete multibyte or wide character"));
+  let src: string = path_copy_src() + " function __fern_io_error(e: i32, path: string): IoError { if (e == 2) { return NotFound(path); } if (e == 13) { return PermissionDenied(path); } if (e == 17) { return AlreadyExists(path); } if (e == 4) { return Interrupted; } if (e == " + util.i32_to_string(eilseq) + ") { return InvalidUtf8(path); }";
   let i: i32 = 0;
   while (i < texts.len()) {
     let n: i32 = strerror_errno(t, i);
-    if (n != 0 && n != 2 && n != 13 && n != 17 && n != 4) {
+    if (n != 0 && n != 2 && n != 13 && n != 17 && n != 4 && n != eilseq) {
       src = src + " if (e == " + util.i32_to_string(n) + ") { return Other(path, \"" + strerror_text(t, i) + "\"); }";
     }
     i = i + 1;
