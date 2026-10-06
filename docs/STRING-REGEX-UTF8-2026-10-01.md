@@ -63,8 +63,7 @@ Stage 1 differs because the seed predates generator changes.
 
 The actual stage-2 compiler passes the regex, RNG and ASCII fixtures on
 Darwin, core WASM and Preview 2. The public APIs also pass in the primary
-interpreter. Legacy `chr` is a compiled-runtime entry rather than an
-interpreter API, so that fixture runs only on compiled targets.
+interpreter.
 
 | Fixture | Native allocations/frees | Core-WASM allocations/frees |
 | --- | ---: | ---: |

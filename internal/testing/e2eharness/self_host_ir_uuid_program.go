@@ -9,7 +9,7 @@ package e2eharness
 // because the self-host differential drivers parse one module without modload.
 // It builds the canonical 8-4-4-4-12 lowercase hex string from the
 // random_bytes u8[] + sliced-hex-literal + string concat, so it lowers through
-// the IR path on every backend (no chr round-trip). main returns 0 on
+// the IR path on every backend. main returns 0 on
 // success, or a small non-zero code identifying the failed invariant.
 const UuidV4Program = `
 function hexd(n: i32): string { return slice_unchecked("0123456789abcdef", n, n + 1) + ""; }

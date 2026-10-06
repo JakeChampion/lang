@@ -2292,7 +2292,7 @@ What is left, in order:
 
 1. The helper sources are rewritten against those types, which is what routes
    each one: a block or scratch pointer is a `usize`, a syscall word an `i64`,
-   and a string byte a `u8` widened with `as`. Done: `chr`, `str_concat`, the
+   and a string byte a `u8` widened with `as`. Done: `str_concat`, the
    integer `to_string` helpers, the string and string-array helpers, the
    stdio writers, the process, clock and random leaves, and the filesystem
    bundle: `io_error`, `sync`, `umask`, `priority`, the path-taking,

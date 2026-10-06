@@ -1019,12 +1019,9 @@ struct P { name: string } function go(): i32 { let s = "AB"; let p = P { name: s
 		// `.repeat(n)` field value: a fresh n-copy buffer, freed once.
 		{"strdrop-repeat-field-detector", `import "std/string";
 struct P { name: string } function go(): i32 { let s = "ab"; let p = P { name: s.repeat(3) }; return p.name.len(); } function main(): i32 { let r = go(); if (r != 6) { return 99; } return __rc_underflow_count(); }`, 0},
-		// Free-function spelling `str_to_upper(s)`: same fresh op_str_to_upper, freed.
 		// FRESH ALLOC BUILTINS (this slice) — fixed fresh-allocating semantics, no user
 		// override, so the field-drop FREES the result with no construction inc.
 		//
-		// `chr(n)`: fresh 1-char box, freed once.
-		{"strdrop-chr-field-detector", `struct P { name: string } function go(): i32 { let p = P { name: chr(65) }; return p.name.len(); } function main(): i32 { let r = go(); if (r != 1) { return 99; } return __rc_underflow_count(); }`, 0},
 		// `string_from_bytes_unchecked(arr)`: packs bytes into a fresh box, freed once.
 		{"strdrop-string-from-bytes-field-detector", `struct P { name: string } function go(): i32 { let b: u8[] = [104, 105]; let p = P { name: string_from_bytes_unchecked(b) }; return p.name.len(); } function main(): i32 { let r = go(); if (r != 2) { return 99; } return __rc_underflow_count(); }`, 0},
 		// `i32_to_string(n)` is deliberately EXCLUDED (stays inc'd → leaks): its box's

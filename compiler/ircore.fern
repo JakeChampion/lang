@@ -267,9 +267,6 @@ function is_text_helper(name: string): boolean {
     // emit_ir_runtime_fern_fn, exactly as the 32-bit pair is.
     || name == "__fern_i64_to_string"
     || name == "__fern_u64_to_string"
-    // chr(n)'s 1-char-string-box helper (stack-arg body under
-    // __fn___fern_chr; allocates, so it needs the heap runtime).
-    || name == "__fern_chr"
     // xs.join(sep)'s array-of-strings concatenator (#5328): a real Fern
     // runtime function (asmcore.rt_src_arr_str_join) that fills one
     // exact-size block, so the heap is its only runtime dep. Body under
@@ -706,7 +703,7 @@ function with_builtin_enums(lifted: parser.Module): parser.Module {
 pub function all_runtime_need_roots(): string[] {
   return [
     "alloc_u8", "args", "set_args", "arr_push", "arr_push_owned", "arr_slice",
-    "arr_str_join", "arr_inc_elems", "arr_own_elems", "str_own", "str_grow", "pwname", "arrarr_free", "chr", "env", "eprint", "heap",
+    "arr_str_join", "arr_inc_elems", "arr_own_elems", "str_own", "str_grow", "pwname", "arrarr_free", "env", "eprint", "heap",
     "i32_to_string", "u32_to_string", "maps", "monotonic_ns", "now_ns", "now_unix_ms",
     // The map roots that "maps" does NOT reach. Each is marked directly by
     // the arm64 emitter, and runtime_need_deps declares no root with any of

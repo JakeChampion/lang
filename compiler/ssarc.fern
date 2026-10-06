@@ -7134,12 +7134,9 @@ function string_method_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowere
   return Lowered { found: false, r: r };
 }
 
-// The builtins that are a call of a Fern-source runtime helper whose symbol
-// differs from the builtin's name.
+// A call of the string-equality runtime helper by name is the op that
+// helper backs.
 function runtime_helper_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
-  if (ins.str == "chr") {
-    return Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_chr", 1)) };
-  }
   if (ins.str == "__fern_str_eq") {
     return Lowered { found: true, r: emit(r, ir.op_str_eq()) };
   }

@@ -8,7 +8,7 @@ import (
 
 // TestSelfHostStrRcBoxIRX86_64 pins the #2649 Option-A change: asm heap string boxes
 // are now rc-HEADERED. Every reclaimable box (a string literal via const_str, and every
-// fresh producer via the raw_string op — concat / chr / i32 `.to_string()` / str_to_* / …) is
+// fresh producer via the raw_string op — concat / i32 `.to_string()` / str_to_* / …) is
 // built by the centralized __fern_str_box helper as [rc=1][data][len] (box = base+8, so
 // data@0 / len@8 are unchanged), and __fern_str_free is now rc-aware: it decrements the
 // rc, frees the data buffer + the 24-byte box only at rc==1, and a decrement below 1

@@ -54,7 +54,8 @@ func TestSelfHostTcpServerIRX86_64(t *testing.T) {
     let s: string = "";
     let v: i32 = n;
     while (v > 0) {
-        s = chr(48 + (v % 10)) + s;
+        let d: i32 = v % 10;
+        s = slice_unchecked("0123456789", d, d + 1) + s;
         v = v / 10;
     }
     return s;

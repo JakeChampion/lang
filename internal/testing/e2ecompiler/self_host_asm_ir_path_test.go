@@ -10,7 +10,7 @@ import (
 // also a guard that the typed path produces it whole.
 //
 // Each `want` is the native interpreter's answer, except where that
-// interpreter cannot run the program: the raw-memory intrinsics, `chr`, the
+// interpreter cannot run the program: the raw-memory intrinsics, the
 // slice traps (134, SIGABRT). There it is the answer the compiled program
 // gave when the case was pinned, checked by hand.
 func TestSelfHostAsmIRPath(t *testing.T) {
@@ -1287,17 +1287,6 @@ function main(): i32 { return "abc".replace("", "X").len(); }`, 3},
 function main(): i32 { return "axxbxxc".replace("xx", "-").len(); }`, 5},
 		{"replace-param", `import "std/string";
 function rp(s: string): i32 { return s.replace("o", "0").len(); } function main(): i32 { return rp("foobar"); }`, 6},
-		// Free-function spellings of the transform builtins (str_to_upper(s) /
-		// str_to_lower / str_trim / str_repeat(s, n) / str_replace(s, a, b)) —
-		// the receiver is the first positional arg, the rest are the method args.
-		// They lower to the SAME ops as the `.<field>()` method forms. The
-		// self-host compiler's own source uses these spellings. (str_split / the
-		// predicates have free-call cases above.)
-		// chr(n): i32 byte -> 1-char string box (asmcore.rt_src_chr). Covers len,
-		// indexed byte, and `+` concat of two chr results.
-		{"chr-len", `function main(): i32 { return chr(65).len(); }`, 1},
-		{"chr-byte", `function main(): i32 { return chr(122)[0] as i32; }`, 122},
-		{"chr-concat", `function main(): i32 { let s = chr(72) + chr(105); return s.len() * 100 + (s[0] as i32); }`, 16},
 		// String lines -> string[] split on \n with trailing-empty drop
 		// (op_str_lines), via asmcore.rt_src_str_lines.
 		{"lines-3", `import "std/string";

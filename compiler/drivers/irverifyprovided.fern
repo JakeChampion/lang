@@ -130,7 +130,6 @@ pub function provided_names(): string[] {
     "__fern_u32_to_string",
     "__fern_i64_to_string",
     "__fern_u64_to_string",
-    "__fern_chr",
     "__fern_arr_str_join",
   ];
 }

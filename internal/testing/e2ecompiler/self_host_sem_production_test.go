@@ -616,15 +616,6 @@ function total(xs: i32[]): i32 {
 }
 function main(): i32 { return total([1, 2, 3, 4, 5]); }
 `},
-	// An unannotated binding takes its type from the checker, so a builtin
-	// whose result the checker left unknown refused the body that named it.
-	{name: "a-chr-result-types-its-binding", atLeast: 1, want: "16|", wasm: "out-of-range|", src: `
-function main(): i32 {
-    let a = chr(72);
-    let s = a + chr(105);
-    return s.len() * 100 + (s[0] as i32);
-}
-`},
 	// A match whose only arm is `_` stays a match on a scalar (only a literal
 	// arm desugars it), and it tests nothing, so it needs no union. The heap
 	// string scrutinee is still released.
@@ -5598,13 +5589,15 @@ function main(): i32 {
     return t.len() + kept.len() - 8 + none.len();
 }
 `},
-	// The runtime helpers behind `chr` and string `+`, lowered by the typed
-	// path from their Fern source.
-	{name: "runtime-helpers-take-the-typed-path", atLeast: 1, want: "5|abcde!\n", reports: []string{"runtime __fern_chr: produced", "runtime __fern_str_concat: produced"}, src: `
+	// The runtime helpers behind a byte-array slice and string `+`, lowered by
+	// the typed path from their Fern source.
+	{name: "runtime-helpers-take-the-typed-path", atLeast: 1, want: "5|01234!\n", reports: []string{"runtime __fern_arr_slice_u8: produced", "runtime __fern_str_concat: produced"}, src: `
+import "std/i32";
+
 function main(): i32 {
     let s: string = "";
     let i: i32 = 0;
-    while (i < 5) { s = s + chr(97 + i); i = i + 1; }
+    while (i < 5) { s = s + i.to_string(); i = i + 1; }
     print(s + "!");
     return s.len();
 }

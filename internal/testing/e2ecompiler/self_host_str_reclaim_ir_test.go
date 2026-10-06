@@ -11,7 +11,7 @@ import (
 // data buffer (on the asm backends). Unreclaimed that leaks one box + buffer
 // per iteration, where the native backend frees it. The self-host
 // classifies `let s: string = <fresh producer>` (concat / .to_ascii_upper()/.to_ascii_lower()/
-// .repeat(n) / chr / string_from_bytes_unchecked / str_to_* / __raw_string) that
+// .repeat(n) / string_from_bytes_unchecked / str_to_* / __raw_string) that
 // never escapes (body_unsafe_for) and is never reassigned as reclaimable, then
 // frees it via __fern_str_free (box + data buffer) at the loop-rebind and at scope
 // exit. A literal / bare-ident / .trim() / .replace() binding is NOT fresh (may
@@ -44,10 +44,11 @@ var strReclaimIRCases = []struct {
 		`import "std/string";
 function main(): i32 { let base: string = "abc"; let sum: i32 = 0; let i: i32 = 0; while (i < 4) { let s: string = base.to_ascii_upper(); sum = sum + s.len(); i = i + 1; } return sum; }`,
 		12, true, ""},
-	// Loop-body chr(..)+"x" concat: chr produces a fresh 1-char string, +"x" a fresh
-	// 2-char one bound to s. s.len() = 2; sum over 4 iters = 8.
-	{"loop-chr-concat",
-		`function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 4) { let s: string = chr(65 + (i % 3)) + "x"; sum = sum + s.len(); i = i + 1; } return sum; }`,
+	// Loop-body call-result + "x" concat: the call produces a fresh 1-char string,
+	// +"x" a fresh 2-char one bound to s. s.len() = 2; sum over 4 iters = 8.
+	{"loop-call-result-concat",
+		`import "std/i32";
+function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 4) { let s: string = ((65 + (i % 3)) as u8).to_ascii_string() + "x"; sum = sum + s.len(); i = i + 1; } return sum; }`,
 		8, true, ""},
 	// Non-loop fresh string local, freed at scope exit. s = "hi" + "!" (len 3).
 	// "hi" goes through ids so the concat is built on the heap rather than folded
@@ -100,10 +101,6 @@ function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 12) { let s:
 		`import "std/i32";
 function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 12) { let s = i.to_string(); sum = sum + s.len(); i = i + 1; } return sum; }`,
 		14, true, ""},
-	// UN-ANNOTATED chr(..): reclaimed. s.len() == 1 each iter; sum over 5 = 5.
-	{"loop-unannotated-chr",
-		`function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 5) { let s = chr(65 + i); sum = sum + s.len(); i = i + 1; } return sum; }`,
-		5, true, ""},
 	// UN-ANNOTATED concat (`let s = tag + "!"`, inferred string): reclaimed too —
 	// the fresh gate is now syntax-only and the is_str type gate (set from the
 	// type-aware expr_is_str) admits the actual string concat. Same as the

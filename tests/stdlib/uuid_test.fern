@@ -9,7 +9,7 @@ import "std/string";
 // the TAP output is deterministic and the self-host differential gate
 // (which compares self-host vs interp output byte-for-byte) still
 // applies even though the bytes differ run to run. The module is built
-// from string-concat + sliced hex-digit literals (no chr / byte-array
+// from string-concat + sliced hex-digit literals (no byte-array
 // round-trip), so it lowers through the self-host IR path. The Go-side
 // suite unit-tests the bytes; this is the migration-shaped companion.
 

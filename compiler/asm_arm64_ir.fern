@@ -5248,11 +5248,6 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   if (name == "__fern_u64_to_string") {
     s = s.mark_u64_to_string();
   }
-  // chr(n)'s 1-char-box helper — gated on this need (the self-contained
-  // stack-ABI __fn___fern_chr in asm_arm64.emit_runtime).
-  if (name == "__fern_chr") {
-    s = s.mark_chr();
-  }
   // __fern_map_find's body is in the maps bundle; a call to it from
   // __fern_map_delete's Fern body must pull that bundle in, since call_direct
   // does not imply a need.
@@ -6321,7 +6316,7 @@ function emit_rt_readiness(s: asmcore.EmitState, darwin: boolean): asmcore.EmitS
 
 // emit_rt_io_and_string emits stdin/stdout helpers and the string runtime —
 // str_print, putchar, concat / eq / cmp / search, the int-to-string family,
-// chr, case folding, repeat, eprint.
+// case folding, repeat, eprint.
 function emit_rt_io_and_string(s: asmcore.EmitState): asmcore.EmitState {
   // __fern_print_str and __fern_putchar are Fern runtime functions (#2649):
   // asmcore.rt_src_print_str / rt_src_putchar, emitted with the clocks in
@@ -6388,12 +6383,6 @@ function emit_rt_io_and_string(s: asmcore.EmitState): asmcore.EmitState {
   }
   if (s.has_need("u64_to_string")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_u64_to_string(), s);
-  }
-  // __fern_chr is now a Fern runtime function (#2649): see asmcore.rt_src_chr,
-  // emitted (need-gated on chr) in the migrated-helpers section below via the
-  // raw-memory intrinsics. The single shared body serves both arm64 AST + IR.
-  if (s.has_need("chr")) {
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_chr(), s);
   }
   // __fern_str_to_upper / __fern_str_to_lower — Fern runtime functions (#2649)
   // via the raw-memory intrinsics; both gated on the single str_case need (the

@@ -53,14 +53,6 @@ function inc(n: i32): i32 { return n + 1; } function main(): i32 { let s: string
 	{"i32-multidigit",
 		`import "std/i32";
 function main(): i32 { let a: string = (100).to_string(); let b: string = (9).to_string(); if (a.len() != 3) { return 40; } if (a[0] != 49) { return 41; } if (a[1] != 48) { return 42; } if (b.len() != 1) { return 43; } return a.len() + b.len(); }`, 4},
-	// chr(n): an i32 byte to a fresh 1-char string box (the inverse of `s[0]`).
-	// len is 1, byte 0 is n; the result feeds `.len()` / `[i]` / `+` concat as a
-	// string. chr(65) == "A".
-	{"chr-basic",
-		`function main(): i32 { let a: string = chr(65); if (a.len() != 1) { return 30; } if (a[0] != 65) { return 31; } return a.len(); }`, 1},
-	// chr result feeds `+` concat: chr(72) + chr(105) == "Hi" (len 2, bytes 72,105).
-	{"chr-concat",
-		`function main(): i32 { let s: string = chr(72) + chr(105); if (s.len() != 2) { return 40; } if (s[0] != 72) { return 41; } if (s[1] != 105) { return 42; } return s.len(); }`, 2},
 }
 
 // TestSelfHostToStringIRX86_64 compiles each case through the self-hosted x86-64

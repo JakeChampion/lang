@@ -358,8 +358,8 @@ function main(): i32 {
 // TestSelfHostSemIRRuntimeHelperRefusal pins the runtime-helper half: a helper
 // source the typed lowering refuses fails the compile with exit 3, naming the
 // helper, with no FERN_ variable set. No shipped helper is refused, so the
-// driver is built from a copy whose `chr` source holds its block in an i32,
-// which does not type-check.
+// driver is built from a copy whose `str_concat` source holds its block in an
+// i32, which does not type-check.
 func TestSelfHostSemIRRuntimeHelperRefusal(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -369,9 +369,9 @@ func TestSelfHostSemIRRuntimeHelperRefusal(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	const typed = "function __fern_chr(b: i32): string { let len: i32 = 1; if (b < 0 || b > 127) { len = 0; } let p: usize = __raw_alloc(len);"
+	const typed = "function __fern_str_concat(a: string, b: string): string { let la: i32 = a.len(); let lb: i32 = b.len(); let p: usize = __raw_alloc(la + lb);"
 	if strings.Count(string(src), typed) != 1 {
-		t.Fatalf("asmcore.fern no longer spells rt_src_chr as %q", typed)
+		t.Fatalf("asmcore.fern no longer spells rt_src_str_concat as %q", typed)
 	}
 	broken := strings.Replace(string(src), typed, strings.Replace(typed, "let p: usize", "let p: i32", 1), 1)
 	if err := os.WriteFile(core, []byte(broken), 0o644); err != nil {
@@ -379,7 +379,7 @@ func TestSelfHostSemIRRuntimeHelperRefusal(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 
-	const prog = "function main(): i32 { let s: string = chr(65); return s.len(); }\n"
+	const prog = "function ids(s: string): string { return s; } function main(): i32 { let s: string = ids(\"a\") + \"b\"; return s.len(); }\n"
 	emit := func() (string, int) {
 		var cmd *exec.Cmd
 		if len(runner) == 0 {
@@ -396,8 +396,8 @@ func TestSelfHostSemIRRuntimeHelperRefusal(t *testing.T) {
 	}
 
 	stderr, code := emit()
-	if code != 3 || !strings.Contains(stderr, "FERN_SEM_IR: runtime __fern_chr: does not type-check") ||
-		!strings.Contains(stderr, "FERN_SEM_IR: the typed lowering refused runtime helper __fern_chr") {
+	if code != 3 || !strings.Contains(stderr, "FERN_SEM_IR: runtime __fern_str_concat: does not type-check") ||
+		!strings.Contains(stderr, "FERN_SEM_IR: the typed lowering refused runtime helper __fern_str_concat") {
 		t.Fatalf("exit %d, want 3 naming the refused helper\n%s", code, stderr)
 	}
 }
