@@ -121,28 +121,19 @@ pub function hash_key(s: string): string {
   return i32_to_string(a) + "_" + i32_to_string(b);
 }
 
-// hash_bucket maps a string to a bucket index in [0, n): the polynomial roll
-// `a = a * 31 + byte` over the bytes and then the length, wrapping as it goes
-// and masked to 0x3FFFFFFF once at the end so the `%` cannot return a
-// negative index. The loop is the shape the parser's bounds-check elision
-// takes (`while (i < s.len())` over `s[i]`), which is what makes a byte a
-// handful of instructions. Which bucket a name lands in reaches no emitted
-// byte: every index over it returns an equal entry whichever end of the chain
-// meets it first, and no table walks its buckets in order. It does reach the
-// per-module cache key (modloader.module_fact_hashes sums it as a checksum),
-// so a change here misses every cached unit once.
+// hash_bucket maps a string to a bucket index in [0, n): the `__str_hash`
+// kernel, which reads the string a word at a time, masked to 0x3FFFFFFF so
+// the `%` cannot return a negative index. Which bucket a name lands in
+// reaches no emitted byte: every index over it returns an equal entry
+// whichever end of the chain meets it first, and no table walks its buckets
+// in order. It does reach the per-module cache key
+// (modloader.module_fact_hashes sums it as a checksum), so a change here
+// misses every cached unit once.
 pub function hash_bucket(s: string, n: i32): i32 {
   if (n <= 1) {
     return 0;
   }
-  let a: i32 = 208357;
-  let i: i32 = 0;
-  while (i < s.len()) {
-    a = a * 31 + s[i] as i32;
-    i = i + 1;
-  }
-  a = a * 31 + s.len();
-  return (a & 1073741823) % n;
+  return (__str_hash(s, 0) & 1073741823) % n;
 }
 
 // NameIndex is a list of names with a bucket index over it: head[b] is the
