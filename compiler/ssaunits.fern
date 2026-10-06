@@ -1893,13 +1893,14 @@ function anchored_to(a: ssasem.Analysis, nvals: i32): Anchored {
 // where `s` dies. A read handed to a call beside its own array would
 // otherwise keep the array alive through the call as its anchor, so the
 // array was retained for the call instead of moved into it, and every
-// append the callee made copied the buffer.
-function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], anchored: Anchored, held: boolean[], s: i32, bi: i32, pos: i32, si: i32, args: i32[]): boolean[] {
+// append the callee made copied the buffer. A read the plan takes
+// (payload_root) is owned already and needs no hold.
+function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], anchored: Anchored, owned: boolean[], held: boolean[], s: i32, bi: i32, pos: i32, si: i32, args: i32[]): boolean[] {
   let out: boolean[] = held;
   let k: i32 = anchored.start[s];
   while (k < anchored.start[s + 1]) {
     let w: i32 = anchored.at[k];
-    if (w != s && !out[w] && retainable_element(f, defs, w)) {
+    if (w != s && !out[w] && !owned[w] && retainable_element(f, defs, w)) {
       let live: boolean = false;
       if (si >= 0) {
         live = ssalive.live_in_has(a.flow, si, w);
@@ -1935,7 +1936,7 @@ function held_elements(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], def
         let supplies: Supply[] = operation_supplies(f, ins);
         for got in supplies {
           if (owned[got.value]) {
-            out = outliving(f, a, defs, anchored, out, got.value, bi, pos, 0 - 1, ins.args);
+            out = outliving(f, a, defs, anchored, owned, out, got.value, bi, pos, 0 - 1, ins.args);
           }
         }
       }
@@ -1947,7 +1948,7 @@ function held_elements(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], def
       let along: Supply[] = edge_supplies(f, b, si, owned);
       for got in along {
         if (owned[got.value]) {
-          out = outliving(f, a, defs, anchored, out, got.value, bi, 0, si, []);
+          out = outliving(f, a, defs, anchored, owned, out, got.value, bi, 0, si, []);
         }
       }
     }
