@@ -169,11 +169,6 @@ pub struct TypeHandle { resource: string, borrowed: boolean }
 // in statement position and an invisible wildcard in value position (#6649).
 pub struct TypeVoid { tag: i32 }
 
-// An uninhabited payload after inference closes: no value can have this type.
-// Unlike void, it cannot be constructed with (). It may name an absent enum
-// payload, but never a produced value or a generic declaration's variable.
-pub struct TypeNever { tag: i32 }
-
 pub struct TypeUnknown { reason: string }
 
 // A type VARIABLE of a generic declaration, carrying the name it is written
@@ -183,7 +178,12 @@ pub struct TypeUnknown { reason: string }
 // TypeUnknown, which means the checker could not work a type out at all.
 pub struct TypeErased { name: string }
 
-pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeArray | TypeStruct | TypeTuple | TypeFunc | TypeMap | TypeUnion | TypeDyn | TypeHandle | TypeVoid | TypeNever | TypeUnknown | TypeErased;
+// An uninhabited payload after inference closes: no value can have this type.
+// Unlike void, it cannot be constructed with (). It may name an absent enum
+// payload, but never a produced value or a generic declaration's variable.
+pub struct TypeNever { tag: i32 }
+
+pub type Type = TypeI32 | TypeBool | TypeString | TypeFloat | TypeArray | TypeStruct | TypeTuple | TypeFunc | TypeMap | TypeUnion | TypeDyn | TypeHandle | TypeVoid | TypeUnknown | TypeErased | TypeNever;
 
 pub function unchecked(): Type {
   return TypeUnknown { reason: "not yet checked" };

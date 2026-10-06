@@ -17880,6 +17880,21 @@ function enum_self_ty(ty: string, name: string, recv: string): string {
   return ty;
 }
 
+// Derived methods spell their generic enum without arguments. Once retained
+// beside concrete clones, that declaration must expose its variables as a
+// template rather than offering an erased body as a concrete function.
+function enum_method_template(m: FuncDecl, ed: EnumDecl): FuncDecl {
+  if (m.receiver_type != ed.name || ed.type_params.len() == 0) {
+    return m;
+  }
+  let recv: string = ed.name + "[" + subst_ty_join(ed.type_params, ",", [], []) + "]";
+  let params: ast.ParamDecl[] = [];
+  for p in m.params {
+    params = params.append(ast.ParamDecl { ...p, type_name: enum_self_ty(p.type_name, ed.name, recv) });
+  }
+  return FuncDecl { ...m, receiver_type: recv, params: params, ret_type: enum_self_ty(m.ret_type, ed.name, recv), all_type_params: ed.type_params };
+}
+
 // The generic enums with a use the pass cannot key: a spelling `Opt[(Opt[i32],
 // i32)]` whose argument has no clone name. Such an enum is left out of the
 // pass entirely, declaration, variants and methods erased as before, because
@@ -18032,7 +18047,7 @@ pub function monomorphize_enums(mod: Module): Module {
       ret_type: fret.ty, ret_fn_ret: fret.fn_ret, ret_fn_param_types: fret.fn_params, body: rb.rstmts,
     };
     if (owner.len() > 0) {
-      held = held.append(rfn);
+      held = held.append(enum_method_template(rfn, menums[genum_index(menums, owner)]));
     } else {
       nfuncs = nfuncs.append(rfn);
     }

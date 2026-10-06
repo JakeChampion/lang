@@ -2424,6 +2424,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"iflet-bad-arity", "enum O { Has(i32), Nil }\nfunction main(): i32 { let o: O = Nil; if let Has(a, b) = o { return 0; } return 0; }\n", []string{"E015"}},
 		// Partial constructor inference keeps the payload's known type.
 		{"partial-result-inferred-return", "function main(): i32 { let f = () => { return Ok(3); }; match(f()) { Ok(v) => { return v; }, Err(_) => { return 0; } } }", nil},
+		{"partial-result-array-void-exit", `function f(c: boolean): i32 { let g = () => { if(c) { return [Ok(1)]; } return; }; return 0; }`, []string{"E012"}},
+		{"partial-result-tuple-void-exit", `function f(c: boolean): i32 { let g = () => { if(c) { return (Ok(1), 2); } return; }; return 0; }`, []string{"E012"}},
+		{"partial-result-nested-void-exit", `function f(c: boolean): i32 { let g = () => { if(c) { return [(Ok(1), 2)]; } return; }; return 0; }`, []string{"E012"}},
+		{"partial-result-struct-void-exit", `struct Box[T] { v: T } function f(c: boolean): i32 { let g = () => { if(c) { return Box { v: Ok(1) }; } return; }; return 0; }`, []string{"E012"}},
 		{"partial-result-inferred-join", "function exercise(flag: boolean): void { let f = () => { if (flag) { return Ok(3); } return Err(\"failure\"); }; match(f()) { Ok(v) => { assert(v == 3); }, Err(e) => { assert(e == \"failure\"); } } }", nil},
 		{"partial-result-inferred-conflict", "function exercise(flag: boolean): void { let f = () => { if (flag) { return Ok(3); } return Ok(\"failure\"); }; }", []string{"E002"}},
 		{"partial-result-direct-extracted", "function make(): i64 { match (Ok(3)) { Ok(v) => { return v; }, Err(_) => { return 0i64; } } } function main(): i32 { assert(make() == 3i64); return 0; }", nil},
@@ -3076,6 +3080,10 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 	checkerBin, runner, dir := buildCheckerCodesBin(t)
 
 	progs := []struct{ name, src string }{
+		{"partial-result-array-void-exit", `function f(c: boolean): i32 { let g = () => { if(c) { return [Ok(1)]; } return; }; return 0; }`},
+		{"partial-result-tuple-void-exit", `function f(c: boolean): i32 { let g = () => { if(c) { return (Ok(1), 2); } return; }; return 0; }`},
+		{"partial-result-nested-void-exit", `function f(c: boolean): i32 { let g = () => { if(c) { return [(Ok(1), 2)]; } return; }; return 0; }`},
+		{"partial-result-struct-void-exit", `struct Box[T] { v: T } function f(c: boolean): i32 { let g = () => { if(c) { return Box { v: Ok(1) }; } return; }; return 0; }`},
 		// A method's parameter or result spelling the receiver's type
 		// parameter is bound by the receiver's instantiation, on an enum
 		// receiver as on a struct one (#10014).

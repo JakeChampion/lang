@@ -9,6 +9,23 @@ import (
 func TestSelfHostPartialEnumInference(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range []struct{ name, source string }{
+		{"derived-generic-methods", `import "core/cmp";
+@derive(cmp.Display, cmp.Eq)
+enum Opt[T] { Has(T), Nil }
+function main(): i32 {
+  let a: Opt[i32] = Has(9); let b: Opt[i32] = Nil;
+  let s: Opt[string] = Has("payload"); let t: Opt[string] = Nil;
+  assert(a.to_string() == "Has(9)"); assert(b.to_string() == "Nil");
+  assert(s.to_string() == "Has(payload)"); assert(t.to_string() == "Nil");
+  let b2: Opt[i32] = Nil; let t2: Opt[string] = Nil;
+  assert(a.eq(Has(9))); assert(!a.eq(Has(10))); assert(!a.eq(b)); assert(b.eq(b2));
+  assert(s.eq(Has("payload"))); assert(!s.eq(Has("other"))); assert(!s.eq(t)); assert(t.eq(t2));
+  return 0;
+}`},
+		{"unused-derived-template", `import "core/cmp";
+@derive(cmp.Display, cmp.Eq)
+enum Unused[T] { Value(T), Empty }
+function main(): i32 { let o = Ok(3); match(o) { Ok(v) => { assert(v == 3); }, Err(_) => { assert(false); } } return 0; }`},
 		{"inferred-lambda-result", `function main(): i32 { let f = () => { return Ok(3); }; match(f()) { Ok(v) => { assert(v == 3); }, Err(_) => { assert(false); } } return 0; }`},
 		{"inferred-lambda-result-join", `function exercise(flag: boolean): void { let f = () => { if (flag) { return Ok(3); } return Err("failure"); }; match(f()) { Ok(v) => { assert(flag); assert(v == 3); }, Err(e) => { assert(!flag); assert(e == "failure"); } } } function main(): i32 { exercise(true); exercise(false); return 0; }`},
 		{"escaping-owned-closure", `import "std/string";
@@ -93,6 +110,49 @@ function main(): i32 { let o = first(Ok(4294967297i64), Err("payload" + "!")); m
 				}
 			})
 		}
+	}
+}
+
+// Lifted partial spellings must retain absent enum arguments even when the
+// receiving scope also substitutes a declaration's type variables.
+func TestSelfHostPartialEnumSubstitution(t *testing.T) {
+	gcc, runner := x86_64Tooling(t)
+	dir := t.TempDir()
+	copySelfHostFiles(t, dir, "checker.fern")
+	source := `import "./checker";
+import "./lexer";
+import "./parser";
+import "./typeinfo";
+function partial(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeUnion(u) = t {
+    return u.args.len() == 2 && checker.unbound_enum_argument(u.args[1]) && !checker.unbound_enum_argument(u.args[0]);
+  }
+  return false;
+}
+function main(): i32 {
+  let mod = parser.parse_module(lexer.tokenize("trait Mark { function mark(self: Self): i32; } struct Box[T] { value: T } enum Choice[T, E] { Pick(T), Reject(E) } function f[T: Mark](x: T): T { return x; }"));
+  let scope = checker.module_scopes(mod)[0];
+  assert(scope.tparams.len() == 1);
+  assert(partial(checker.spelled_type(scope, "Result[T, $unbound]")));
+  assert(partial(checker.spelled_type(scope, "Choice[T, $unbound]")));
+  let nested = checker.spelled_type(scope, "Result[Result[T, $unbound], $unbound]");
+  if let typeinfo.TypeUnion(u) = nested { assert(partial(u.args[0])); assert(checker.unbound_enum_argument(u.args[1])); } else { return 1; }
+  let array = checker.spelled_type(scope, "Result[T, $unbound][]");
+  if let typeinfo.TypeArray(a) = array { assert(partial(a.elem)); } else { return 2; }
+  // The internal marker is only valid in enum argument positions.
+  assert(!checker.unbound_enum_argument(checker.spelled_type(scope, "$unbound")));
+  let bad = checker.spelled_type(scope, "Box[$unbound]");
+  if let typeinfo.TypeStruct(b) = bad { assert(!checker.unbound_enum_argument(b.args[0])); } else { return 3; }
+  print("partial substitution preserved");
+  return 0;
+}`
+	if err := os.WriteFile(filepath.Join(dir, "partial_substitution.fern"), []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	bin := buildSelfHostBin(t, gcc, dir, "partial_substitution.fern", "partial_substitution")
+	out, err := runX86_64Bin(runner, bin).CombinedOutput()
+	if err != nil || string(out) != "partial substitution preserved\n" {
+		t.Fatalf("partial substitution: %v\n%s", err, out)
 	}
 }
 

@@ -1563,7 +1563,9 @@ function is_func_type(t: typeinfo.Type): boolean {
 function type_contains_unknown(t: typeinfo.Type): boolean {
   match (t) {
     typeinfo.TypeUnknown(_) => {
-      return true;
+      // An absent enum argument is fillable, not a failed inference. This
+      // distinction also holds when the enum is nested inside a container.
+      return !unbound_enum_argument(t);
     },
     typeinfo.TypeArray(ae) => {
       return type_contains_unknown(ae.elem);
@@ -8060,8 +8062,17 @@ function type_from_ref_subst(r: parser.TypeRef, tparams: string[], targs: typein
     return whole;
   }
   let sargs: typeinfo.Type[] = [];
-  for arg in r.args {
-    sargs = sargs.append(type_from_ref_subst(arg, tparams, targs, tn));
+  let decoded: typeinfo.Type[] = nominal_args(whole);
+  let ai: i32 = 0;
+  while (ai < r.args.len()) {
+    if (ai < decoded.len() && unbound_enum_argument(decoded[ai])) {
+      // Keep the enum resolver's internal marker while substituting the
+      // neighboring declaration variables. Other unknowns still recurse.
+      sargs = sargs.append(decoded[ai]);
+    } else {
+      sargs = sargs.append(type_from_ref_subst(r.args[ai], tparams, targs, tn));
+    }
+    ai = ai + 1;
   }
   return with_nominal_args(whole, sargs);
 }
