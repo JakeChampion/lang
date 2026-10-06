@@ -552,8 +552,15 @@ func TestSelfHostSyscallLeavesDarwinizedArm64(t *testing.T) {
 	if !strings.Contains(asm, "    mrs x9, cntvct_el0\n    mrs x10, cntfrq_el0\n") {
 		t.Error("Darwin monotonic_ns is not reading the architectural counter")
 	}
-	if strings.Contains(asm, "mov x8, #113") || arm64Imm(asm, "113") {
-		t.Error("a clock issued Linux's clock_gettime (113) in Mach-O output")
+	// Scoped to the clocks: 113 is also EHOSTUNREACH, which __fern_io_error
+	// carries in IoError.Other.
+	if strings.Contains(asm, "mov x8, #113") {
+		t.Error("Linux's clock_gettime (113) reached the number register in Mach-O output")
+	}
+	for _, leaf := range []string{"now_unix_ms", "now_ns", "monotonic_ns"} {
+		if arm64Imm(extractFuncBody(asm, "__fn___fern_"+leaf), "113") {
+			t.Errorf("Darwin %s issued Linux's clock_gettime (113)", leaf)
+		}
 	}
 	if body := extractFuncBody(asm, "__fn___fern_arr_slice"); body != "" {
 		if !strings.Contains(body, "bl __fern_slice_abort\n") {
