@@ -1418,7 +1418,7 @@ function cell_scalar_text(h: usize, v: Value): boolean {
 
 function cell_array_text(a: VArr): Value {
   let elem: string = a.elem;
-  if (elem != "" && elem != "u8" && elem != "i32" && elem != "u32" && elem != "i64" && elem != "u64" && elem != "usize" && elem != "f32" && elem != "f64" && elem != "boolean") {
+  if (elem != "" && elem != "u8" && elem != "i32" && elem != "u32" && elem != "i64" && elem != "u64" && elem != "usize" && elem != "f32" && elem != "f64" && elem != "float" && elem != "boolean") {
     return v_err("Cell array: expected scalar elements");
   }
   let h: usize = buf_new(a.elements.len() * 17 + elem.len() + 1);
