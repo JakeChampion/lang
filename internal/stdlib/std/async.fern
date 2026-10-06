@@ -55,8 +55,9 @@ pub enum Future[T] {
 // including the interpreter.
 //
 // The first four are the one-shot waits: `poll_ready(toks, timeout_ms)`
-// returns the index of the first ready token, or -1 on timeout / error /
-// no readiness, the contract of the `poll` builtin.
+// returns the index of the first ready token, a hung-up or failed one
+// included, or -1 when none became ready, the contract of the `poll`
+// builtin.
 //
 // The rest are the reactor (#9853): a readiness set that outlives one
 // wait. `watch(fd, interest)` registers a descriptor for the interest bits

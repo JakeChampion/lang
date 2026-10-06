@@ -2235,17 +2235,6 @@ function at(p: ssaunits.Plan, idx: i32[][], block: i32, point: i32, target: i32)
   return ssaunits.Step { block: 0 - 1, point: point, target: 0 - 1, supplies: [], drops: [], hand_roots: [], hand_fields: [] };
 }
 
-function block_index(f: ssa.SFunc, id: i32): i32 {
-  let i: i32 = 0;
-  while (i < f.blocks.len()) {
-    if (f.blocks[i].id == id) {
-      return i;
-    }
-    i = i + 1;
-  }
-  return 0 - 1;
-}
-
 function successors(t: ssa.STerm): i32[] {
   if (t.kind_tag == 2) {
     return [t.target];
@@ -2259,9 +2248,10 @@ function successors(t: ssa.STerm): i32[] {
   return [];
 }
 
-function edge(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i32[], from: i32, target: i32): irtables.LowerResult {
+// `dest_at` is the target's position in the block list.
+function edge(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i32[], from: i32, target: i32, dest_at: i32): irtables.LowerResult {
   let step: ssaunits.Step = at(p, idx, from, ssaunits.edge_point(), target);
-  let dest: ssa.SBlock = f.graph.blocks[block_index(f.graph, target)];
+  let dest: ssa.SBlock = f.graph.blocks[dest_at];
   r = supplies(r, f, p, owed_on_entry(step, dest, links), false, [], []);
   let pi: i32 = 0;
   while (dest.preds[pi] != from) {
@@ -7172,7 +7162,9 @@ function block_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
 // no_reuse is the #4350 §6.5 differential switch, which the AST path's reuse
 // layer answers too: with it set every construction allocates, so a program's
 // observable behaviour can be compared against its own reusing build.
-struct Emit { r: irtables.LowerResult, labels: i32[], why: string, steps: i32[][], links: i32[], no_reuse: boolean, uses: i32[], maps: boolean[], carry: Carry }
+// `at` is each block's position in the block list and `ranks` its position in
+// the layout order, both by id.
+struct Emit { r: irtables.LowerResult, labels: i32[], why: string, steps: i32[][], links: i32[], no_reuse: boolean, uses: i32[], maps: boolean[], carry: Carry, at: i32[], ranks: i32[] }
 
 function label_if(): i32 {
   return 0 - 1;
@@ -7205,25 +7197,28 @@ function depth(e: Emit, target: i32): i32 {
   return e.labels.len() - 1 - i;
 }
 
-function rank(f: ssa.SFunc, order: i32[], id: i32): i32 {
-  let i: i32 = 0;
-  while (i < order.len()) {
-    if (f.blocks[order[i]].id == id) {
-      return i;
-    }
-    i = i + 1;
+// Each block's first position in `order`, by id, or -1 for one not in it.
+function order_ranks(f: ssa.SFunc, order: i32[], ids: i32): i32[] {
+  let out: i32[] = [];
+  while (out.len() < ids) {
+    out = out.append(0 - 1);
   }
-  return 0 - 1;
+  let i: i32 = order.len() - 1;
+  while (i >= 0) {
+    out = out.with(f.blocks[order[i]].id, i);
+    i = i - 1;
+  }
+  return out;
 }
 
 function jump(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[], position: i32, target: i32): Emit {
   let from: i32 = f.graph.blocks[order[position]].id;
-  e = Emit { ...e, r: edge(e.r, f, p, e.steps, e.links, from, target) };
+  e = Emit { ...e, r: edge(e.r, f, p, e.steps, e.links, from, target, e.at[target]) };
   let left: i32 = carry_exit(e.carry, from, target);
   if (left >= 0) {
     e = Emit { ...e, r: drop_linked(e.r, left, e.links, f) };
   }
-  let dest: i32 = rank(f.graph, order, target);
+  let dest: i32 = e.ranks[target];
   if (dest == position + 1) {
     return e;
   }
@@ -7474,7 +7469,9 @@ pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irta
   let links: i32[] = links_of(f, p, steps);
   let no_reuse: boolean = irtables.reuse_layer_disabled();
   let maps: boolean[] = in_place_maps(f, modes, p, steps, links, pure, no_reuse);
-  let e: Emit = region(Emit { r: frame(f), labels: [], why: "", steps: steps, links: links, no_reuse: no_reuse, uses: use_counts(f), maps: maps, carry: carried_pairs(f, p, steps, links, no_reuse) }, f, p, layout, 0, layout.order.len() - 1, false, structs, grows);
+  let at: i32[] = ssa.block_positions(f.graph);
+  let ranks: i32[] = order_ranks(f.graph, layout.order, at.len());
+  let e: Emit = region(Emit { r: frame(f), labels: [], why: "", steps: steps, links: links, no_reuse: no_reuse, uses: use_counts(f), maps: maps, carry: carried_pairs(f, p, steps, links, no_reuse), at: at, ranks: ranks }, f, p, layout, 0, layout.order.len() - 1, false, structs, grows);
   if (e.why != "") {
     return empty(e.why);
   }
