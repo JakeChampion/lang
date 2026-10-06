@@ -328,7 +328,8 @@ calls them. What the loop does around them is counted by
 `TestSelfHostServeAllocsPerRequest`. It serves a hello handler on one
 keep-alive connection, with `/count` answering `__heap_alloc_count()`.
 Between two counts, 2,000 hello requests cost 30 allocations each on
-x86-64 at `origin/main` ac29eede9. The gate pins 30 as a ratchet.
+x86-64 at `origin/main` ac29eede9, and the gate was pinned there as a
+ratchet. Each slice moves the pin, and §6.2 records each move.
 
 The rows below are attributed from a `FERN_RC_TRACE` trace of a `-g`
 build, the one build whose return addresses resolve to functions, and
@@ -340,9 +341,9 @@ instead of 0. The 13 the `-g` build adds were struck from the parse's
 rows and the helpers' named tuples by judgement, not by a matched diff:
 a trace row is an allocation site that can fire more than once per
 request, and `-g` also changes what the passes rewrite, so the two
-builds' traces do not pair line for line. Only the gate's 30 is
-measured; the split between rows is provisional, and each slice's gate
-reading settles it.
+builds' traces do not pair line for line. The totals 30, 43 and 5 are
+measured; the split of the 30 between rows is provisional, and each
+slice's gate reading settles it.
 
 | Allocations | Where |
 | ---: | --- |
@@ -361,9 +362,14 @@ In this order, one PR each, each lowering the pin. A fix in the compiler
 is preferred where it covers a case, since every program gains.
 
 1. **The gate and this plan.** Done.
-2. **The read appends into the connection's buffer.** A read takes bytes
-   straight into the buffer the connection holds, and compaction moves
-   unanswered bytes to the front only when there are some.
+2. **A read copies once, and compaction copies only what is left.**
+   Done: a read into an empty buffer is one copy of the bytes it took, made by one
+   `__alloc_u8` and written in place, where `scratch.take(n)` and
+   `concat` each grew an array by appending. Compaction copies the same
+   way, and a buffer whose requests were all answered becomes the shared
+   empty array. 30 to 22. The read's one copy is left, now a per-byte
+   loop over at most one 4 KiB read where the builder pushed in bulk; a
+   read straight into the connection's buffer would remove it.
 3. **The reactor fills an events array the loop keeps.** A wait writes
    its readiness pairs into the loop's array instead of building one.
 4. **The per-connection arrays are updated in place.** The loop holds
