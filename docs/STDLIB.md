@@ -846,6 +846,19 @@ Zero-config stderr wrappers plus a leveled logger (#2683).
   `""`, otherwise the contents of a file. These byte APIs preserve malformed
   UTF-8 and encodings split across read boundaries.
 
+### `std/errno`
+
+- `of(e: IoError): i32`: the errno `e` stands for, in Linux numbering on
+  every target. `Other(path, message, errno)` carries it; each named variant
+  is the errno the runtimes classify into it (`NotFound` is `ENOENT`,
+  `PermissionDenied` `EACCES`, `AlreadyExists` `EEXIST`, `InvalidUtf8`
+  `EILSEQ`, `Interrupted` `EINTR`, `Unsupported` `EOPNOTSUPP`). An errno past
+  the runtime's strerror table carries 0.
+- `pub const` `EPERM`, `ENOENT`, … `ENOTRECOVERABLE`: one per row of
+  `internal/tables/strerror`, in Linux numbering, so `errno.of(e) ==
+  errno.ENOTDIR` holds on Darwin and WASI as well. `ENOATTR` is `ENODATA` and
+  `EOPNOTSUPP` is `ENOTSUP`, as glibc defines them.
+
 ### `std/path`
 
 POSIX path manipulation (string-level only).
@@ -2828,7 +2841,8 @@ The following types are synthesised by the checker (declared in
 - `Option[T]` — `Some(T)` / `None`
 - `Result[T, E]` — `Ok(T)` / `Err(E)`
 - `IoError` — `NotFound`, `PermissionDenied`, `AlreadyExists`,
-  `InvalidUtf8`, `Interrupted`, `Unsupported`, `Other`
+  `InvalidUtf8`, `Interrupted`, `Unsupported`, `Other(path, message,
+  errno)` (`std/errno` names the errno)
 - `JsonValue` — `JNull`, `JBool`, `JNumber`, `JString`,
   `JArray`, `JObject`
 - `Reader`, `Writer` — stdin / stdout / stderr / file

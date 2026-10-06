@@ -77,7 +77,7 @@ func TestSelfHostTempDirErrorNamesPrefix(t *testing.T) {
         Ok(d) => { print("ok"); },
         Err(e) => {
             match (e) {
-                Other(p, m) => { if (p == prefix) { print("prefix " + m); } else { print("path " + p); } },
+                Other(p, m, _) => { if (p == prefix) { print("prefix " + m); } else { print("path " + p); } },
                 _ => { print("another variant"); }
             }
         }

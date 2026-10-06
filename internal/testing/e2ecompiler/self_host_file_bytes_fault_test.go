@@ -30,7 +30,7 @@ func TestSelfHostFileBytesFaults(t *testing.T) {
   match (result) {
     Ok(_) => { return 0; },
     Err(e) => { match (e) {
-      Other(p, _) => { if (p != "ignored") { return 21; } },
+      Other(p, _, _) => { if (p != "ignored") { return 21; } },
       PermissionDenied(p) => { if (p != "ignored") { return 22; } },
       _ => { return 23; }
     } return 1; }

@@ -29,7 +29,7 @@ func clockSelfHostSource(t *testing.T) string {
         Ok(_) => { return false; },
         Err(e) => {
             match (e) {
-                Other(_, msg) => { return msg == want; },
+                Other(_, msg, _) => { return msg == want; },
                 _ => { return false; }
             }
         }

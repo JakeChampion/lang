@@ -40,7 +40,7 @@ func selfHostXattrSource(t *testing.T, dir string) string {
     }
     match (getxattr(%[2]q, "user.fern")) { Ok(v) => { if (v.len() != 11) { return 4; } }, Err(_) => { return 5; } }
     match (lgetxattr(%[2]q, "user.fern")) { Ok(_) => { return 6; }, Err(_) => {} }
-    match (getxattr(%[1]q, "user.absent")) { Ok(_) => { return 7; }, Err(Other(_, m)) => { if (m != %[4]q) { return 8; } }, Err(_) => { return 9; } }
+    match (getxattr(%[1]q, "user.absent")) { Ok(_) => { return 7; }, Err(Other(_, m, _)) => { if (m != %[4]q) { return 8; } }, Err(_) => { return 9; } }
     match (lgetxattr(%[3]q, "user.fern")) { Ok(_) => { return 10; }, Err(NotFound(_)) => {}, Err(_) => { return 11; } }
     match (setxattr(%[1]q, "user.set", "a" + "\x00" + "b")) { Ok(_) => {}, Err(_) => { return 12; } }
     match (getxattr(%[1]q, "user.set")) { Ok(v) => { if (v.len() != 3 || v[1] != 0 as u8) { return 13; } }, Err(_) => { return 14; } }

@@ -349,7 +349,7 @@ pub function io_error_text(e: IoError): string {
     Unsupported => {
       return "Operation not supported";
     },
-    Other(_, msg) => {
+    Other(_, msg, _) => {
       return msg;
     }
   }

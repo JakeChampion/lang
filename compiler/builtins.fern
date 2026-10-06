@@ -46,9 +46,9 @@ enum IoError {
   InvalidUtf8(string),
   Interrupted,
   Unsupported,
-  // Two payloads (path, message), matching native's declaration — the
-  // self-host copy carried one string (#4370).
-  Other(string, string),
+  // (path, message, errno): the errno in Linux numbering on every target,
+  // 0 for one past the strerror table; std/errno names them.
+  Other(string, string, i32),
 }
 
 // ChunkProducer — the producer a `BodyChunks` carries: asked for chunk 0,

@@ -39,13 +39,13 @@ const setProcessGroupSelfHostSource = `function main(): i32 {
 
     // 2^22 is one above the largest pid_max Linux accepts, so no process can
     // ever hold it. ESRCH has no named IoError variant, so it arrives as
-    // Other(path, strerror) with an empty path: the op took two integers and
+    // Other(path, strerror, errno) with an empty path: the op took two integers and
     // never saw a file.
     match (set_process_group(4194304, 0)) {
         Ok(_) => { return 2; },
         Err(e) => {
             match (e) {
-                Other(p, msg) => {
+                Other(p, msg, _) => {
                     if (p.len() != 0) { return 3; }
                     if (msg != "No such process") { return 4; }
                 },
@@ -60,7 +60,7 @@ const setProcessGroupSelfHostSource = `function main(): i32 {
         Ok(_) => { return 6; },
         Err(e) => {
             match (e) {
-                Other(p, msg) => {
+                Other(p, msg, _) => {
                     if (msg != "Operation not permitted") { return 7; }
                 },
                 _ => { return 8; }
@@ -73,7 +73,7 @@ const setProcessGroupSelfHostSource = `function main(): i32 {
         Ok(_) => { return 9; },
         Err(e) => {
             match (e) {
-                Other(p, msg) => {
+                Other(p, msg, _) => {
                     if (msg != "Invalid argument") { return 10; }
                 },
                 _ => { return 11; }
