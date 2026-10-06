@@ -7276,6 +7276,7 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
     ssasem.Contract { name: "tcp_listen_with", params: [bytes, t_i32(), t_i32(), t_bool()], modes: [b, v, v, v], result: t_i32() },
     ssasem.Contract { name: "tcp_socket_ctl", params: [t_i32(), t_i32(), t_i32()], modes: [v, v, v], result: t_i32() },
     ssasem.Contract { name: "tcp_sendfile", params: [t_i32(), t_i32(), t_i32()], modes: [v, v, v], result: t_i32() },
+    ssasem.Contract { name: "tcp_send_buf", params: [t_i32(), t_usize(), t_i32()], modes: [v, v, v], result: t_i32() },
     ssasem.Contract { name: "udp_bind", params: [bytes, t_i32()], modes: [b, v], result: t_i32() },
     ssasem.Contract { name: "udp_connect", params: [t_i32(), bytes, t_i32()], modes: [v, b, v], result: t_i32() },
     ssasem.Contract { name: "udp_sendto", params: [t_i32(), bytes, t_i32(), t_string()], modes: [v, b, v, b], result: t_i32() },
@@ -7678,6 +7679,7 @@ function builder_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "buf_len", params: [t_usize()], modes: handle, result: t_i32() },
     ssasem.Contract { name: "buf_take", params: [t_usize()], modes: handle, result: t_string() },
     ssasem.Contract { name: "buf_take_bytes", params: [t_usize()], modes: handle, result: typeinfo.TypeArray { elem: t_u8(), view: false } },
+    ssasem.Contract { name: "buf_clear", params: [t_usize()], modes: handle, result: t_void() },
     ssasem.Contract { name: "buf_free", params: [t_usize()], modes: handle, result: t_void() },
   ];
 }

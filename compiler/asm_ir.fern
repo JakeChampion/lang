@@ -4528,6 +4528,11 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("__fern_buf_len:\n");
     s = s.write("    movq 8(%rdi), %rax\n");
     s = s.write("    ret\n");
+    // __fern_buf_clear(%rdi = H): the builder emptied, its storage kept.
+    s = s.write("__fern_buf_clear:\n");
+    s = s.write("    movq $0, 8(%rdi)\n");
+    s = s.write("    xorl %eax, %eax\n");
+    s = s.write("    ret\n");
     // The public builder helper uses registers; the shared Fern text
     // runtime uses stack arguments. Byte-only programs omit both bodies.
     if (s.has_need("buf_text")) {
@@ -10350,7 +10355,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n");
     s = s.write("    call __fn___fern_tcp_socket_ctl\n    addq $24, %rsp\n    pushq %rax\n");
     s = s.need("tcp_socket_ctl");
-  } else if (o.kind_tag == 332 || o.kind_tag >= 334 && o.kind_tag <= 344 || o.kind_tag == 346 || o.kind_tag >= 353 && o.kind_tag <= 355) {  // socket calls, including byte sends
+  } else if (o.kind_tag == 332 || o.kind_tag >= 334 && o.kind_tag <= 344 || o.kind_tag == 346 || o.kind_tag >= 353 && o.kind_tag <= 355 || o.kind_tag == 387) {  // socket calls, including byte sends
     // [args] with the last on top; pop and re-push reversed, as udp_send
     // does. recvfrom spreads the datagram into the caller's array from a
     // raw buffer, so it needs the heap.
@@ -10682,7 +10687,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.need("heap");
     s = s.need("reader");
     s = s.need("writer_truncate");
-  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351 || o.kind_tag == 370 || o.kind_tag == 371 || o.kind_tag == 372) {  // the buf_* builder
+  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351 || o.kind_tag == 370 || o.kind_tag == 371 || o.kind_tag == 372 || o.kind_tag == 386) {  // the buf_* builder
     s = emit_ir_op_buf(o, s);
   } else if (o.kind_tag == 181) {  // sleep_ms
     // [ms] -> nanosleep(ms). Push the syscall return so the
@@ -12636,6 +12641,10 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("tcp_sendfile")) {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_sendfile("x86_64"), s);
+  }
+  if (s.has_need("tcp_send_buf")) {
+    s = s.write("    .text\n");
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send_buf("x86_64"), s);
   }
   if (s.has_need("udp_bind")) {
     s = s.write("    .text\n");

@@ -4191,7 +4191,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.need("tcp_socket_ctl");
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x2, [sp, #-16]!\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_tcp_socket_ctl\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag == 332 || o.kind_tag >= 334 && o.kind_tag <= 344 || o.kind_tag == 346 || o.kind_tag >= 353 && o.kind_tag <= 355) {  // socket calls, including byte sends
+  } else if (o.kind_tag == 332 || o.kind_tag >= 334 && o.kind_tag <= 344 || o.kind_tag == 346 || o.kind_tag >= 353 && o.kind_tag <= 355 || o.kind_tag == 387) {  // socket calls, including byte sends
     // [args] with the last on top; pop and re-push reversed, as udp_send
     // does. recvfrom spreads the datagram into the caller's array from a
     // raw buffer, so it needs the heap.
@@ -4504,7 +4504,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.need("writer_truncate");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
     s = s.write("    bl __fn___fern_writer_truncate\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
-  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351 || o.kind_tag == 370 || o.kind_tag == 371 || o.kind_tag == 372) {  // the buf_* builder
+  } else if (o.kind_tag >= 291 && o.kind_tag <= 297 || o.kind_tag == 306 || o.kind_tag == 325 || o.kind_tag == 326 || o.kind_tag == 328 || o.kind_tag == 347 || o.kind_tag == 351 || o.kind_tag == 370 || o.kind_tag == 371 || o.kind_tag == 372 || o.kind_tag == 386) {  // the buf_* builder
     s = emit_arm64_op_buf(o, s);
   } else if (o.kind_tag == 181) {  // sleep_ms
     // [ms] -> nanosleep(ms). Push x0 for the drop.
@@ -8143,6 +8143,14 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    ldr x0, [x0, #8]\n");
     s = s.write("    ret\n");
     s = s.write(".size __fern_buf_len, .-__fern_buf_len\n");
+    // __fern_buf_clear(x0 = H): the builder emptied, its storage kept.
+    s = s.write(".globl __fern_buf_clear\n");
+    s = s.write(".type __fern_buf_clear, %function\n");
+    s = s.write("__fern_buf_clear:\n");
+    s = s.write("    str xzr, [x0, #8]\n");
+    s = s.write("    mov x0, #0\n");
+    s = s.write("    ret\n");
+    s = s.write(".size __fern_buf_clear, .-__fern_buf_clear\n");
     // The public builder helper uses registers; the shared Fern text
     // runtime uses stack arguments. Byte-only programs omit both bodies.
     if (s.has_need("buf_text")) {
@@ -10934,6 +10942,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   }
   if (s.has_need("tcp_sendfile")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_sendfile(tgt), s);
+  }
+  if (s.has_need("tcp_send_buf")) {
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_tcp_send_buf(tgt), s);
   }
   if (s.has_need("udp_bind")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_udp_bind(tgt, false), s);

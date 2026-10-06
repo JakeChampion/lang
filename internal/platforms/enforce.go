@@ -146,6 +146,7 @@ var gatedBuiltins = map[string]string{
 	"tcp_send":         "tcp",
 	"tcp_send_bytes":   "tcp",
 	"tcp_sendfile":     "tcp",
+	"tcp_send_buf":     "tcp",
 	"tcp_close":        "tcp",
 	"tcp_pollable":     "tcp",
 	"udp_send":         "tcp",
@@ -427,6 +428,7 @@ var coreBuiltins = map[string]bool{
 	"buf_take_bytes":          true,
 	"buf_push_bytes_range":    true,
 	"buf_free":                true,
+	"buf_clear":               true,
 
 	"f32_bits":      true,
 	"f32_from_bits": true,

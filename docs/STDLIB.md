@@ -1114,9 +1114,10 @@ serializer.
   coding to an HTTP/1.1 client, and close-delimited (the connection ending
   with the body) to an HTTP/1.0 one, so the length need not be known up
   front. A response to HEAD, or with a 1xx, 204 or 304 status, produces no
-  body either way. `http_serialize_response_head(resp, keep_alive, framing)`
-  is the head alone, the framing line (`Content-Length` or
-  `Transfer-Encoding`) the caller's.
+  body either way. `http_serialize_response_head_into(b, resp,
+  keep_alive, fields)` pushes the head alone into the builder `b`, the
+  caller's field lines (the framing line, `Content-Length` or
+  `Transfer-Encoding`, among them) after the handler's.
 - **A chunked body as it arrives:** `chunk_decoder(limits)` is a
   `ChunkDecoder` at the start of a chunked body; `(d).feed(bytes)` answers
   `ChunkData(next, data)` — the data decoded from this feed, a chunk's
@@ -1325,8 +1326,14 @@ serializer.
   `close` as the serve loop decided; `http_serialize_response_to(method,
   resp, keep_alive)` is what the loop sends, with no body on a response
   to HEAD (its `Content-Length` kept) or a 1xx, 204 or 304 (neither),
-  whatever the handler put in the body (RFC 9112 §6.3). The loop adds a
-  `Date`, formatted once per second, unless the handler set one.
+  whatever the handler put in the body (RFC 9112 §6.3).
+  `http_serialize_response_to_bytes(method, resp, keep_alive)` is the same
+  as bytes, and `http_serialize_response_into(b, method, resp, keep_alive,
+  fields)` pushes them into a builder the caller keeps, `fields` after the
+  handler's: the loop serializes every reply into one builder, sends from
+  it with `tcp_send_buf(fd, b, from)` and empties it with `buf_clear(b)`,
+  so a reply allocates nothing once the builder has grown. The loop adds
+  a `Date`, formatted once per second, unless the handler set one.
 
 ### `std/net`
 
@@ -1931,7 +1938,8 @@ entries, and insertion-ordered iteration. Backs `HttpRequest`'s
   The parser keeps the client's spelling, and the serializer writes each
   name as the handler spelled it.
 - `(h).get(name): Option[string]` (first value) /
-  `(h).get_all(name): string[]` (every value) / `(h).len()`.
+  `(h).get_all(name): string[]` (every value) / `(h).has(name)` /
+  `(h).len()`.
 
 ### `std/stream`
 

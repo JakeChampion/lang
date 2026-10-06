@@ -4126,7 +4126,7 @@ function is_buf_builtin(name: string): boolean {
   if (name == "buf_push_byte" || name == "buf_push_u64" || name == "buf_push_bytes_mapped" || name == "buf_push_bytes_filtered" || name == "buf_push_bytes_expanded" || name == "buf_push_mapped" || name == "buf_push_filtered" || name == "buf_push_expanded") {
     return true;
   }
-  return name == "buf_len" || name == "buf_take" || name == "buf_take_bytes" || name == "buf_free";
+  return name == "buf_len" || name == "buf_take" || name == "buf_take_bytes" || name == "buf_clear" || name == "buf_free";
 }
 
 function v_buf_handle(h: usize): Value {
@@ -4706,6 +4706,12 @@ function call_buf_read(name: string, h: usize, args: Value[]): Value {
   }
   if (name == "buf_take_bytes") {
     return call_buf_take_bytes(h);
+  }
+  if (name == "buf_clear") {
+    // A take leaves the builder empty with its capacity, as a clear does;
+    // the stage0 that builds this interpreter may not have buf_clear.
+    let dropped: u8[] = buf_take_bytes(h);
+    return v_void();
   }
   if (name != "buf_free") {
     return v_err(name + ": not a builder read");
