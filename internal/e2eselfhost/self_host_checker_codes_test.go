@@ -2422,6 +2422,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"letelse-enum-ok", "enum O { Has(i32), Nil }\nfunction main(): i32 { let o: O = Nil; let Has(v) = o else { return 0; }; return v; }\n", nil},
 		{"iflet-bad-variant", "enum O { Has(i32), Nil }\nfunction main(): i32 { let o: O = Nil; if let Bogus(v) = o { return 0; } return 0; }\n", []string{"E014"}},
 		{"iflet-bad-arity", "enum O { Has(i32), Nil }\nfunction main(): i32 { let o: O = Nil; if let Has(a, b) = o { return 0; } return 0; }\n", []string{"E015"}},
+		{"qualified-constructor-shadowing", qualifiedConstructorShadowingSource, nil},
+		{"qualified-constructor-function-value-mismatch", `enum A { Value(i32) } enum B { Value(string) } function Value(n: i32): B { return B.Value("value"); } function f(): B { let call = Value; return call("wrong"); }`, []string{"E038"}},
 		// Partial constructor inference keeps the payload's known type.
 		{"result-conversion-ok-narrow", `function f(n: i64): Result[i32, string] { return Ok(n); }`, []string{"E002"}},
 		{"result-conversion-err-literal-overflow", `function f(): Result[string, u8] { return Err(300); }`, []string{"E047"}},
@@ -3133,6 +3135,8 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"result-conversion-literal-overflow", `function f(): Result[u8, string] { return Ok(300); }`},
 		{"result-conversion-option-narrow", `function f(n: i64): Option[i32] { return Some(n); }`},
 		{"result-conversion-existing-result", `function f(n: Result[i64, string]): Result[i32, string] { return n; }`},
+		{"qualified-constructor-shadowing", qualifiedConstructorShadowingSource},
+		{"qualified-constructor-function-value-mismatch", `enum A { Value(i32) } enum B { Value(string) } function Value(n: i32): B { return B.Value("value"); } function f(): B { let call = Value; return call("wrong"); }`},
 		{"partial-result-foreign-constructor-widening", `enum Other[T] { Ok(T), No } function f(n: i32): Result[i64, string] { return Other.Ok(n); } function main(): i32 { return 0; }`},
 		{"partial-result-foreign-constructor-literal", `enum Other[T] { Ok(T), No } function f(): Result[i64, string] { return Other.Ok(3); } function main(): i32 { return 0; }`},
 		{"partial-result-method-widening", `struct Factory {} impl Factory { function Ok(self: Self, n: i32): Result[i32, string] { return Result.Ok(n); } } function f(n: i32): Result[i64, string] { let x = Factory {}; return x.Ok(n); } function main(): i32 { return 0; }`},
