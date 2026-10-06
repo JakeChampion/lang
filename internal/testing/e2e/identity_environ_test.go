@@ -1,14 +1,10 @@
 package e2e
 
 import (
-	"bytes"
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 // identitySource asks for all four ids and both lists, and returns a code
@@ -102,9 +98,13 @@ func TestInterpIdentityAndEnviron(t *testing.T) {
 
 // wasm has no users — `internal/pkg/platforms` refuses getuid / getgid /
 // getgroups there with E066 — but it does have an environment, so
-// `environ()` is a real question on both previews.
-func TestWasmEnviron(t *testing.T) {
-	src := `function main(): i32 {
+// `environ()` is a real question on both previews: preview 1's
+// environ_sizes_get / environ_get pair and preview 2's get-environment are
+// separate bodies, so each gets a run.
+//
+// `seen`: an entry is missing or duplicated. `len`: the list is not the whole
+// environment.
+const wasmEnvironSrc = `function main(): i32 {
     let e: string[] = environ();
     let seen: i32 = 0;
     let i: i32 = 0;
@@ -118,48 +118,19 @@ func TestWasmEnviron(t *testing.T) {
     write("ok");
     return 0;
 }`
-	stdout, stderr, _ := runWasmStdinEnv(t, src, "",
-		[]string{"FERN_ENVIRON_PROBE=identity-slice", "FERN_ENVIRON_OTHER=two"})
-	// `seen`: an entry is missing or duplicated. `len`: the list is not
-	// the whole environment. main's return value reaches stdout under
-	// --invoke, so the tag is what distinguishes them.
-	if !strings.Contains(stdout, "ok") {
-		t.Errorf("stdout = %q, want it to contain \"ok\"\nstderr=%q", stdout, stderr)
+
+var wasmEnvironVars = []string{"FERN_ENVIRON_PROBE=identity-slice", "FERN_ENVIRON_OTHER=two"}
+
+func TestWasmEnviron(t *testing.T) {
+	stdout, stderr, ec := runCLIComponent(t, wasmEnvironSrc, runOpts{envs: wasmEnvironVars})
+	if ec != 0 || stdout != "ok" {
+		t.Errorf("exit %d, stdout = %q, want 0 and \"ok\"\nstderr=%q", ec, stdout, stderr)
 	}
 }
 
-// The preview-1 leg of the same probe. `buildWasmCore` builds with
-// Preview2WASI, so the wasm tests above only ever reach the
-// get-environment path; preview 1's environ_sizes_get / environ_get pair
-// is a different body and needs its own run. A preview-1 core module runs
-// directly under wasmtime, no adapter and no component.
 func TestWasmPreview1Environ(t *testing.T) {
-	e2eharness.Wasmtime(t)
-	src := `function main(): i32 {
-    let e: string[] = environ();
-    let seen: i32 = 0;
-    let i: i32 = 0;
-    while (i < e.len()) {
-        if (e[i] == "FERN_ENVIRON_PROBE=identity-slice") { seen = seen + 1; }
-        if (e[i] == "FERN_ENVIRON_OTHER=two") { seen = seen + 10; }
-        i = i + 1;
-    }
-    if (seen != 11) { write("seen"); return 1; }
-    if (e.len() != 2) { write("len"); return 2; }
-    write("ok");
-    return 0;
-}`
-	wasmPath := e2eharness.CompileSelfHostSource(t, e2eharness.TargetWasm32Wasi, src, nil)
-	cmd := exec.Command("wasmtime", "run",
-		"--env", "FERN_ENVIRON_PROBE=identity-slice",
-		"--env", "FERN_ENVIRON_OTHER=two",
-		"--invoke", "main", wasmPath)
-	cmd.Env = append(os.Environ(), "WASMTIME_NEW_CLI=0")
-	var so, se bytes.Buffer
-	cmd.Stdout = &so
-	cmd.Stderr = &se
-	_ = cmd.Run()
-	if !strings.Contains(so.String(), "ok") {
-		t.Errorf("stdout = %q, want it to contain \"ok\"\nstderr=%q", so.String(), se.String())
+	stdout, stderr, _ := runWasmStdinEnv(t, wasmEnvironSrc, "", wasmEnvironVars)
+	if !strings.Contains(stdout, "ok") {
+		t.Errorf("stdout = %q, want it to contain \"ok\"\nstderr=%q", stdout, stderr)
 	}
 }

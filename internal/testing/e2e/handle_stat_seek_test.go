@@ -299,7 +299,8 @@ func TestInterpHandleStatSeek(t *testing.T) {
 	}
 }
 
-// handleStatSeekWasmSource is the preview-2 half. A handle there is a
+// handleStatSeekWasmSource is the WASI half, which preview 1 answers with
+// fd_filestat_get and fd_seek on the handle's fd. On preview 2 a handle is a
 // stream plus the descriptor it was opened on: `stat` asks the
 // descriptor, `seek` reopens the stream at the target and records the
 // position, which is what makes SEEK_CUR answerable at all — on the
@@ -496,8 +497,9 @@ func handleStatSeekWasmSource() string {
         Err(_) => { return 99; },
         Ok(_) => {}
     }
-    // isatty() on a handle, which preview 2 answers without asking anyone:
-    // a component has no fd table, so nothing it holds is a terminal.
+    // isatty() on a file handle: preview 1 asks fd_fdstat_get for its
+    // filetype, and preview 2 answers without asking anyone, since a
+    // component has no fd table and nothing it holds is a terminal.
     match (open_reader("hello.txt")) {
         Err(_) => { return 100; },
         Ok(r) => {
@@ -564,7 +566,7 @@ func TestWASMPreview1HandleFlags(t *testing.T) {
 	}
 }
 
-func TestWASMHandleStatSeek(t *testing.T) {
+func TestWASMPreview1HandleStatSeek(t *testing.T) {
 	stdout, stderr, ec, _ := runWasmInDirOpts(t, handleStatSeekWasmSource(),
 		map[string]string{"hello.txt": "hello", "app.txt": "hello"}, runOpts{stdin: ""})
 	if ec != 0 {
@@ -573,5 +575,18 @@ func TestWASMHandleStatSeek(t *testing.T) {
 	if got := parseMainResult(t, stdout); got != 0 {
 		t.Errorf("main = %d, want 0 — the code names the case (see handleStatSeekWasmSource)\nstdout:\n%s\nstderr:\n%s",
 			got, stdout, stderr)
+	}
+}
+
+func TestWASMHandleStatSeek(t *testing.T) {
+	dir := t.TempDir()
+	for _, name := range []string{"hello.txt", "app.txt"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte("hello"), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := runResultStdout(t, handleStatSeekWasmSource(), runOpts{workDir: dir})
+	if got := parseMainResult(t, out); got != 0 {
+		t.Errorf("main = %d, want 0 — the code names the case (see handleStatSeekWasmSource)\nstdout:\n%s", got, out)
 	}
 }
