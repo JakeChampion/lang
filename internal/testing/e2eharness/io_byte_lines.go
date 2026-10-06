@@ -129,7 +129,7 @@ function main(): i32 {
         None => { if (LENGTH != 0) { return 4; } },
     }
     match (lr.error()) {
-        Some(e) => { match (e) { Other(_, _) => {}, _ => { return 5; } } },
+        Some(e) => { match (e) { Other(_, _, _) => {}, _ => { return 5; } } },
         None => { return 6; },
     }
     let again: (Option[u8[]], io.ByteLineReader) = lr.next_chunk_bytes();

@@ -26,6 +26,7 @@
 import "std/string";
 import "std/array";
 import "std/io_buffered";
+import "std/errno";
 import "./lib/gnu";
 import "./lib/canon";
 
@@ -194,21 +195,22 @@ function same_entry(cfg: Cfg, src: string, dest: string): boolean {
 // ---- linking ---------------------------------------------------------------
 // The errnos a hard link's destination alone explains, which are the ones
 // whose diagnostic does NOT name the target.
-function hard_link_no_arrow(text: string): boolean {
-  return text == "File exists" || text == "No space left on device" || text == "Read-only file system" || text == gnu.edquot_text();
+function hard_link_no_arrow(n: i32): boolean {
+  return n == errno.EEXIST || n == errno.ENOSPC || n == errno.EROFS || n == errno.EDQUOT;
 }
 
 // The whole `failed to create …` line for a failed link, arrow and all.
-function create_failure(cfg: Cfg, dest: string, shown_target: string, text: string): string {
+function create_failure(cfg: Cfg, dest: string, shown_target: string, e: IoError): string {
+  let text: string = gnu.io_error_text(e);
   if (cfg.symbolic) {
     let arrow: string = "";
-    if (text == "File name too long" || shown_target.len() == 0) {
+    if (errno.of(e) == errno.ENAMETOOLONG || shown_target.len() == 0) {
       arrow = " -> " + gnu.quotea(shown_target);
     }
     return "failed to create symbolic link " + gnu.quotea(dest) + arrow + ": " + text;
   }
   let harrow: string = "";
-  if (!hard_link_no_arrow(text)) {
+  if (!hard_link_no_arrow(errno.of(e))) {
     harrow = " => " + gnu.quotea(shown_target);
   }
   return "failed to create hard link " + gnu.quotea(dest) + harrow + ": " + text;
@@ -216,50 +218,50 @@ function create_failure(cfg: Cfg, dest: string, shown_target: string, text: stri
 
 // One link at `path`. `src` is the file a hard link reaches, already
 // followed for `-L`; `text` is what a symbolic link stores.
-function make_link(cfg: Cfg, src: string, text: string, path: string): string {
+function make_link(cfg: Cfg, src: string, text: string, path: string): Option[IoError] {
   if (cfg.symbolic) {
     match (create_symlink(text, path)) {
       Ok(_) => {
-        return "";
+        return None;
       },
       Err(e) => {
-        return gnu.io_error_text(e);
+        return Some(e);
       }
     }
   }
   match (create_link(src, path)) {
     Ok(_) => {
-      return "";
+      return None;
     },
     Err(e) => {
-      return gnu.io_error_text(e);
+      return Some(e);
     }
   }
 }
 
-// `TempLink` — a link made under a name of this program's choosing, ready
-// to be renamed over the destination.
-struct TempLink { ok: boolean, path: string, err: string }
-
-// GNU replaces a destination by making the new link beside it and
-// renaming it into place, so a failure leaves the old destination
-// untouched and a backup is the destination MOVED rather than copied.
-// The temporary name is never visible in the resulting tree.
-function temp_link(cfg: Cfg, src: string, text: string, dest: string): TempLink {
+// `temp_link` makes the link under a name of this program's choosing,
+// ready to be renamed over the destination. GNU replaces a destination
+// that way, so a failure leaves the old destination untouched and a backup
+// is the destination MOVED rather than copied. The temporary name is never
+// visible in the resulting tree.
+function temp_link(cfg: Cfg, src: string, text: string, dest: string): Result[string, IoError] {
   let dir: string = gnu.dir_name(dest);
   let n: i32 = 0;
   while (n < 1000) {
     let path: string = gnu.join_path(dir, ".ln-tmp" + n.to_string());
-    let err: string = make_link(cfg, src, text, path);
-    if (err.len() == 0) {
-      return TempLink { ok: true, path: path, err: "" };
-    }
-    if (err != "File exists") {
-      return TempLink { ok: false, path: "", err: err };
+    match (make_link(cfg, src, text, path)) {
+      None => {
+        return Ok(path);
+      },
+      Some(e) => {
+        if (errno.of(e) != errno.EEXIST) {
+          return Err(e);
+        }
+      }
     }
     n = n + 1;
   }
-  return TempLink { ok: false, path: "", err: "File exists" };
+  return Err(AlreadyExists(dest));
 }
 
 // `Replaced` — what the occupied-destination path answers: whether the
@@ -267,18 +269,18 @@ function temp_link(cfg: Cfg, src: string, text: string, dest: string): TempLink 
 // the stdout the caller keeps writing to.
 struct Replaced { ok: boolean, backup: string, out: io_buffered.BufWriter }
 
-// The occupied-destination path, reached when the plain link came back
-// EEXIST. `err` is that errno's text, `src` the file a hard link reaches
-// and `text` what a symbolic link stores; `shown` is the operand as typed,
-// which is what a diagnostic names.
+// The occupied-destination path, reached when the plain link failed with
+// `err` — EEXIST when there is something to replace. `src` is the file a
+// hard link reaches and `text` what a symbolic link stores; `shown` is the
+// operand as typed, which is what a diagnostic names.
 //
 // Without `-f`, `-i` or a backup there is nothing to do but report the
 // EEXIST. With one of them the destination is replaced GNU's way: make the
 // new link beside it, move the old one out, and rename the new one into
 // place — so nothing is lost if any step fails.
-function replace_existing(cfg: Cfg, target: string, src: string, text: string, shown: string, dest: string, err: string, o: io_buffered.BufWriter): Replaced {
+function replace_existing(cfg: Cfg, target: string, src: string, text: string, shown: string, dest: string, err: IoError, o: io_buffered.BufWriter): Replaced {
   let w: io_buffered.BufWriter = o;
-  if (err != "File exists" || !cfg.force && !cfg.interactive && !cfg.backups) {
+  if (errno.of(err) != errno.EEXIST || !cfg.force && !cfg.interactive && !cfg.backups) {
     w = gnu.error_out(w, create_failure(cfg, dest, shown, err));
     return Replaced { ok: false, backup: "", out: w };
   }
@@ -297,10 +299,15 @@ function replace_existing(cfg: Cfg, target: string, src: string, text: string, s
       return Replaced { ok: false, backup: "", out: w };
     }
   }
-  let tmp: TempLink = temp_link(cfg, src, text, dest);
-  if (!tmp.ok) {
-    w = gnu.error_out(w, create_failure(cfg, dest, shown, tmp.err));
-    return Replaced { ok: false, backup: "", out: w };
+  let tmp_path: string = "";
+  match (temp_link(cfg, src, text, dest)) {
+    Ok(p) => {
+      tmp_path = p;
+    },
+    Err(e) => {
+      w = gnu.error_out(w, create_failure(cfg, dest, shown, e));
+      return Replaced { ok: false, backup: "", out: w };
+    }
   }
   let backup: string = "";
   if (cfg.backups) {
@@ -309,7 +316,7 @@ function replace_existing(cfg: Cfg, target: string, src: string, text: string, s
       Ok(_) => {},
       Err(e) => {
         let why: string = gnu.io_error_text(e);
-        drop_temp(tmp.path);
+        drop_temp(tmp_path);
         w = gnu.error_out(w, "cannot backup " + gnu.quotea(dest) + ": " + why);
         return Replaced { ok: false, backup: "", out: w };
       }
@@ -323,12 +330,11 @@ function replace_existing(cfg: Cfg, target: string, src: string, text: string, s
     // between the two calls.
     drop_temp(dest);
   }
-  match (rename(tmp.path, dest)) {
+  match (rename(tmp_path, dest)) {
     Ok(_) => {},
     Err(e) => {
-      let why2: string = gnu.io_error_text(e);
-      drop_temp(tmp.path);
-      w = gnu.error_out(w, create_failure(cfg, dest, shown, why2));
+      drop_temp(tmp_path);
+      w = gnu.error_out(w, create_failure(cfg, dest, shown, e));
       return Replaced { ok: false, backup: "", out: w };
     }
   }
@@ -384,15 +390,17 @@ function do_link(cfg: Cfg, target: string, dest: string, o: io_buffered.BufWrite
     }
   }
 
-  let err: string = make_link(cfg, src, text, dest);
   let backup: string = "";
-  if (err.len() > 0) {
-    let r: Replaced = replace_existing(cfg, target, src, text, shown, dest, err, w);
-    w = r.out;
-    if (!r.ok) {
-      return LinkOut { status: 1, out: w };
+  match (make_link(cfg, src, text, dest)) {
+    None => {},
+    Some(err) => {
+      let r: Replaced = replace_existing(cfg, target, src, text, shown, dest, err, w);
+      w = r.out;
+      if (!r.ok) {
+        return LinkOut { status: 1, out: w };
+      }
+      backup = r.backup;
     }
-    backup = r.backup;
   }
   if (cfg.verbose) {
     let line: string = "";

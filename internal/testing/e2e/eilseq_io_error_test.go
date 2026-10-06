@@ -122,7 +122,7 @@ const eilseqProg = `function main(): i32 {
         Err(e) => {
             match (e) {
                 InvalidUtf8(p) => { print("InvalidUtf8 " + p); return 0; },
-                Other(_, m) => { print("Other " + m); return 2; },
+                Other(_, m, _) => { print("Other " + m); return 2; },
                 _ => { print("another variant"); return 3; }
             }
         }

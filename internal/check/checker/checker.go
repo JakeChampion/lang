@@ -461,9 +461,9 @@ func builtinEnumDecls() []*ast.EnumDecl {
 		},
 		{
 			// Roc-shaped error variants: a small set of named
-			// kinds plus a generic Other(path, message) catch-
-			// all carrying the offending path and the OS errno
-			// text. Variants that always have a path attached
+			// kinds plus a generic Other(path, message, errno)
+			// catch-all carrying the offending path, the OS errno
+			// text and the errno in Linux numbering. Variants that always have a path attached
 			// keep the API uniform — callers pattern-match on
 			// the kind and never have to wrap calls just to add
 			// "(while reading X)" context.
@@ -475,7 +475,7 @@ func builtinEnumDecls() []*ast.EnumDecl {
 				{Name: "InvalidUtf8", Payloads: []ast.Type{ast.StringType{}}},
 				{Name: "Interrupted"},
 				{Name: "Unsupported"},
-				{Name: "Other", Payloads: []ast.Type{ast.StringType{}, ast.StringType{}}},
+				{Name: "Other", Payloads: []ast.Type{ast.StringType{}, ast.StringType{}, ast.NumberType{}}},
 			},
 		},
 		{
@@ -2824,10 +2824,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// ESRCH (no such process), EPERM (it exists and is not yours), EINVAL
 	// (no such signal). None of the three is one of the errnos
 	// `__fern_io_error` gives a named variant, so all three arrive as
-	// `Other("", strerror)` — the empty path being accurate, since the
-	// primitive never saw the operand text the caller parsed the pid from.
-	// `gnu.io_error_text` is how a caller reads the three apart, the way
-	// `is_broken_pipe` already reads EPIPE.
+	// `Other("", strerror, errno)` — the empty path being accurate, since
+	// the primitive never saw the operand text the caller parsed the pid
+	// from. `errno.of` is how a caller tells the three apart.
 	//
 	// Gated on `proc`, beside fork / exec / waitpid / process_alive:
 	// signalling needs a host with a process table to name a target in,
@@ -2887,7 +2886,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// string of known shape.
 	//
 	// `prefix` is a NAME, not a path: a `/` in it is rejected
-	// with `Other(prefix, "")` on every backend. Build a tree
+	// as EINVAL, `Other(prefix, "Invalid argument", 22)`, on every
+	// backend. Build a tree
 	// underneath the result with `create_dir_all` instead.
 	c.info.FuncSigs["temp_dir"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}},

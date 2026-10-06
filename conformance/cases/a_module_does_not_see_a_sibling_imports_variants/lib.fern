@@ -1,14 +1,14 @@
 // Nothing here imports kinds, so its `Other` is not a name here: a bare
-// `Other` is IoError's, with IoError's two payloads, whatever else the
+// `Other` is IoError's, with IoError's three payloads, whatever else the
 // program loads.
 pub function describe(e: IoError): string {
     match (e) {
         NotFound(_) => { return "not found"; },
-        Other(_, msg) => { return msg; },
+        Other(_, msg, _) => { return msg; },
         _ => { return "other"; },
     }
 }
 
 pub function fail(): Result[i32, IoError] {
-    return Err(Other("what", "custom"));
+    return Err(Other("what", "custom", 0));
 }

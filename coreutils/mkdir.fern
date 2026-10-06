@@ -38,6 +38,7 @@
 // `cannot stat` instead of `cannot create directory`.
 import "std/string";
 import "std/array";
+import "std/errno";
 import "./lib/gnu";
 import "./lib/mode";
 import "./lib/selinux";
@@ -189,7 +190,7 @@ function make_ancestor(o0: Out, cfg: Cfg, prefix: string): (Out, boolean) {
     },
     Err(e) => {
       let text: string = gnu.io_error_text(e);
-      if (text != "File exists") {
+      if (errno.of(e) != errno.EEXIST) {
         return (cannot_create(o, prefix, text), false);
       }
       match (enterable(prefix)) {
@@ -201,7 +202,7 @@ function make_ancestor(o0: Out, cfg: Cfg, prefix: string): (Out, boolean) {
           // symbolic link: the chdir says ENOENT and GNU reports the
           // mkdir's own EEXIST rather than that.
           let t2: string = gnu.io_error_text(e2);
-          if (t2 == "No such file or directory") {
+          if (errno.of(e2) == errno.ENOENT) {
             t2 = text;
           }
           return (cannot_create(o, prefix, t2), false);
@@ -240,7 +241,7 @@ function make_final(o0: Out, cfg: Cfg, dir: string): Out {
     },
     Err(e) => {
       let text: string = gnu.io_error_text(e);
-      if (!cfg.parents || text != "File exists") {
+      if (!cfg.parents || errno.of(e) != errno.EEXIST) {
         return cannot_create(o, dir, text);
       }
       return existing_final(o, dir, text);
@@ -265,11 +266,11 @@ function existing_final(o: Out, dir: string, text: string): Out {
       return cannot_create(o, dir, text);
     },
     Err(e) => {
-      let t: string = gnu.io_error_text(e);
-      if (t == "No such file or directory" || t == "Not a directory") {
+      let n: i32 = errno.of(e);
+      if (n == errno.ENOENT || n == errno.ENOTDIR) {
         return cannot_create(o, dir, text);
       }
-      return report(o, "cannot stat " + gnu.quote(dir) + ": " + t);
+      return report(o, "cannot stat " + gnu.quote(dir) + ": " + gnu.io_error_text(e));
     }
   }
 }

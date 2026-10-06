@@ -64,7 +64,7 @@ func handleStatSeekSource(path, out, app string) string {
         Ok(_) => { return 15; },
         Err(e) => {
             match (e) {
-                Other(_, msg) => { if (msg != "Illegal seek") { return 16; } },
+                Other(_, msg, _) => { if (msg != "Illegal seek") { return 16; } },
                 _ => { return 17; }
             }
         }
@@ -144,7 +144,7 @@ func handleStatSeekSource(path, out, app string) string {
         Ok(_) => { return 73; },
         Err(e) => {
             match (e) {
-                Other(_, msg) => { if (msg != "Illegal seek") { return 74; } },
+                Other(_, msg, _) => { if (msg != "Illegal seek") { return 74; } },
                 _ => { return 75; }
             }
         }
@@ -157,7 +157,7 @@ func handleStatSeekSource(path, out, app string) string {
         Ok(_) => { return 80; },
         Err(e) => {
             match (e) {
-                Other(_, msg) => { if (msg != "Invalid argument") { return 81; } },
+                Other(_, msg, _) => { if (msg != "Invalid argument") { return 81; } },
                 _ => { return 82; }
             }
         }
@@ -360,7 +360,7 @@ func handleStatSeekWasmSource() string {
         Ok(_) => { return 15; },
         Err(e) => {
             match (e) {
-                Other(_, msg) => { if (msg != "Illegal seek") { return 16; } },
+                Other(_, msg, _) => { if (msg != "Illegal seek") { return 16; } },
                 _ => { return 17; }
             }
         }
@@ -437,7 +437,7 @@ func handleStatSeekWasmSource() string {
         Ok(_) => { return 73; },
         Err(e) => {
             match (e) {
-                Other(_, msg) => { if (msg != "Illegal seek") { return 74; } },
+                Other(_, msg, _) => { if (msg != "Illegal seek") { return 74; } },
                 _ => { return 75; }
             }
         }
@@ -450,7 +450,7 @@ func handleStatSeekWasmSource() string {
         Ok(_) => { return 80; },
         Err(e) => {
             match (e) {
-                Other(_, msg) => { if (msg != "Invalid argument") { return 81; } },
+                Other(_, msg, _) => { if (msg != "Invalid argument") { return 81; } },
                 _ => { return 82; }
             }
         }

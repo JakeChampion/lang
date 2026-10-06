@@ -50,7 +50,7 @@ func xattrFixture(t *testing.T, dir string) string {
     // An absent attribute carries the platform's own text.
     match (getxattr(%[1]q, "user.absent")) {
         Ok(_) => { return 9; },
-        Err(Other(_, m)) => { if (m != %[4]q) { return 10; } },
+        Err(Other(_, m, _)) => { if (m != %[4]q) { return 10; } },
         Err(_) => { return 11; }
     }
     match (lgetxattr(%[3]q, "user.fern")) { Ok(_) => { return 12; }, Err(NotFound(_)) => {}, Err(_) => { return 13; } }

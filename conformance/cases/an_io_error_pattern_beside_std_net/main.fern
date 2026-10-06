@@ -4,8 +4,8 @@ import "std/net";
 
 function classify(e: IoError): i32 {
   match (e) {
-    Other(op, msg) => {
-      return op.len() + msg.len();
+    Other(op, msg, n) => {
+      return op.len() + msg.len() + n;
     },
     NotFound(p) => {
       return 100;
@@ -18,7 +18,7 @@ function classify(e: IoError): i32 {
 
 function wrapped(r: Result[i32, IoError]): i32 {
   match (r) {
-    Err(Other(op, msg)) => {
+    Err(Other(op, msg, n)) => {
       return 20;
     },
     Err(NotFound(p)) => {
@@ -31,7 +31,7 @@ function wrapped(r: Result[i32, IoError]): i32 {
 }
 
 function main(): i32 {
-  let e: IoError = IoError.Other("open", "boom");
-  let r: Result[i32, IoError] = Err(IoError.Other("a", "b"));
+  let e: IoError = IoError.Other("open", "boom", 0);
+  let r: Result[i32, IoError] = Err(IoError.Other("a", "b", 0));
   return classify(e) + wrapped(r);
 }

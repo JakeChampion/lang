@@ -57,6 +57,7 @@
 // subtree. Nothing in the corpus renames anything under a running chmod, so
 // the two agree there; the gap is real all the same.
 import "std/array";
+import "std/errno";
 import "./lib/gnu";
 import "./lib/filetype";
 import "./lib/fts";
@@ -402,12 +403,10 @@ function change_one(st0: St, s: Settings, t: Target, path: string, info: FileSta
 
 // Whether a refused `chmod_at` on a symbolic link is the kernel saying a
 // link HAS no mode here — EOPNOTSUPP, or ENOSYS from a kernel without
-// fchmodat2 — rather than a failure to change one. An IoError carries the
-// strerror text rather than the number, so the text is what there is to
-// ask.
+// fchmodat2 — rather than a failure to change one.
 function link_has_no_mode(e: IoError): boolean {
-  let text: string = gnu.io_error_text(e);
-  return text == "Operation not supported" || text == "Function not implemented";
+  let n: i32 = errno.of(e);
+  return n == errno.EOPNOTSUPP || n == errno.ENOSYS;
 }
 
 function describe(path: string, old: i32, wanted: i32): string {
@@ -440,7 +439,7 @@ function process(st0: St, s: Settings, t: Target, path: string, top: boolean): S
         // failure — a loop, a name too long, a component that is not a
         // directory — is the plain one. `-h` has nothing to dereference, so
         // the change lands on the dangling link itself.
-        if (gnu.io_error_text(e) == "No such file or directory") {
+        if (errno.of(e) == errno.ENOENT) {
           match (link_stat(path)) {
             Some(l) => {
               if (s.deref == 0) {

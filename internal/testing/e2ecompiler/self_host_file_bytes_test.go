@@ -66,7 +66,7 @@ func TestSelfHostFileBytesFullDevice(t *testing.T) {
     match (write_file_bytes("/dev/full", bytes)) {
       Ok(_) => { return 1; },
       Err(e) => { match (e) {
-        Other(p, text) => { if (p != "/dev/full" || text != "No space left on device") { return 2; } },
+        Other(p, text, _) => { if (p != "/dev/full" || text != "No space left on device") { return 2; } },
         _ => { return 3; }
       } }
     }

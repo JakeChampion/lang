@@ -127,6 +127,36 @@ func TestNumbersUniquePerOS(t *testing.T) {
 	}
 }
 
+// Carried translates every OS's errno to Linux's number, so a program
+// compares against one constant on every target.
+func TestCarriedIsLinuxNumbering(t *testing.T) {
+	cases := []struct {
+		os    string
+		errno int
+		want  int
+	}{
+		{Linux, 20, 20},   // ENOTDIR
+		{Darwin, 66, 39},  // ENOTEMPTY
+		{Darwin, 78, 38},  // ENOSYS
+		{Wasi, 54, 20},    // ENOTDIR
+		{Wasi, 28, 22},    // EINVAL
+		{Darwin, 93, 61},  // ENOATTR is glibc's ENODATA
+		{Darwin, 102, 95}, // EOPNOTSUPP is glibc's ENOTSUP
+		{Linux, 999, 0},   // past the table
+		{Linux, 0, 0},     // no entry has Linux number 0 to match
+	}
+	for _, c := range cases {
+		if got := Carried(c.os, c.errno); got != c.want {
+			t.Errorf("Carried(%s, %d) = %d, want %d", c.os, c.errno, got, c.want)
+		}
+	}
+	for _, e := range Table {
+		if e.Carried() == 0 {
+			t.Errorf("%s carries 0: an errno Linux has no number for needs a linuxAlias entry", e.Name)
+		}
+	}
+}
+
 func TestTextAndDense(t *testing.T) {
 	if got := Text(Linux, 9); got != "Bad file descriptor" {
 		t.Errorf("Text(linux, 9) = %q", got)

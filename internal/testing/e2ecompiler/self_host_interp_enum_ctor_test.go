@@ -37,9 +37,9 @@ var interpEnumCtorCases = []struct {
 	// JsonValue and IoError are declared in no module the interpreter parses —
 	// the front end injects them — so the interpreter needs its own copy of
 	// their variant decls, the way internal/oracle/interp gets them from the checker's
-	// builtin table. `Other` is the one builtin variant carrying TWO payloads.
+	// builtin table. `Other` is the one builtin variant carrying THREE payloads.
 	{"builtin-jsonvalue", "function main(): i32 {\n  let v: JsonValue = JNumber(\"42\");\n  match (v) {\n    JNumber(s) => { if (s == \"42\") { return 7; } return 1; },\n    JNull => { return 2; },\n    _ => { return 3; }\n  }\n}\n"},
-	{"builtin-ioerror", "function main(): i32 {\n  let e: IoError = Other(\"p\", \"m\");\n  match (e) {\n    NotFound(_) => { return 1; },\n    Other(p, m) => { if (p == \"p\" && m == \"m\") { return 7; } return 2; },\n    _ => { return 3; }\n  }\n}\n"},
+	{"builtin-ioerror", "function main(): i32 {\n  let e: IoError = Other(\"p\", \"m\", 9);\n  match (e) {\n    NotFound(_) => { return 1; },\n    Other(p, m, n) => { if (p == \"p\" && m == \"m\" && n == 9) { return 7; } return 2; },\n    _ => { return 3; }\n  }\n}\n"},
 	// A constructed value has to survive being passed, returned, and stored in
 	// a collection, not just matched where it was built.
 	{"variant-through-calls", "enum Shape { Circle(i32), Square(i32) }\nfunction mk(r: i32): Shape { return Circle(r); }\nfunction area(s: Shape): i32 {\n  match (s) { Circle(r) => { return r * 2; }, Square(w) => { return w; } }\n}\nfunction main(): i32 {\n  let xs: Shape[] = [mk(2), Square(3)];\n  return area(xs[0]) + area(xs[1]);\n}\n"},

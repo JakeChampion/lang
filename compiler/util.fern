@@ -1653,7 +1653,7 @@ pub function io_error_reason(e: IoError): string {
     Unsupported => {
       return "unsupported";
     },
-    Other(_, msg) => {
+    Other(_, msg, _) => {
       return msg;
     }
   }

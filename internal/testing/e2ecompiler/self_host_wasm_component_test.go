@@ -894,7 +894,7 @@ func TestSelfHostWasmComponentReadFile(t *testing.T) {
 						InvalidUtf8(p) => { write("utf8"); return 1; },
 						Interrupted => { write("intr"); return 1; },
 						Unsupported => { write("unsup"); return 1; },
-						Other(p, m) => { write("other:"); write(p); return 1; }
+						Other(p, m, _) => { write("other:"); write(p); return 1; }
 					}
 				}
 			}
@@ -935,7 +935,7 @@ func TestSelfHostWasmComponentReadFile(t *testing.T) {
 						InvalidUtf8(p) => { write("utf8"); return 1; },
 						Interrupted => { write("intr"); return 1; },
 						Unsupported => { write("unsup"); return 1; },
-						Other(p, m) => { write("other:"); write(p); return 1; }
+						Other(p, m, _) => { write("other:"); write(p); return 1; }
 					}
 				}
 			}
