@@ -6448,11 +6448,11 @@ function check_ident_expr(id: ast.ExprIdent, s: Scope): typeinfo.Type {
   // Builtin Option/Result variants aren't registered as unions here,
   // so they stay unknown (their generic payloads are a separate
   // slice).
-  if (s.variant_ambiguous(id.name)) {
+  if (!s.has_sig(id.name) && s.variant_ambiguous(id.name)) {
     return t_unknown("ambiguous variant `" + id.name + "`");
   }
   let un: string = union_of_variant(id.name, s.unions);
-  if (un.len() > 0 && !variant_carries_payload(s, id.name)) {
+  if (un.len() > 0 && !s.has_sig(id.name) && !variant_carries_payload(s, id.name)) {
     return t_union(un);
   }
   // Builtin no-payload variants (`None`, `JNull`, the IoError set)
@@ -14572,7 +14572,7 @@ function call_diags_ident(id: ast.ExprIdent, s: Scope, out: util.Diag[]): util.D
   // no lookup at all, so it needs the shadowing test spelled out. The
   // sibling rules already gate on exactly this (the qualified-ref
   // detection and vref_expr's ambiguity rule). #6658.
-  if (is_unknown(s.lookup(id.name)) && variant_in_unions(id.name, s.unions) && variant_carries_payload(s, id.name)) {
+  if (is_unknown(s.lookup(id.name)) && !s.has_sig(id.name) && variant_in_unions(id.name, s.unions) && variant_carries_payload(s, id.name)) {
     out = out.append(dg_at("E036", "variant " + id.name + " expects a payload; call it as " + id.name + "(...)", id.line, id.col));
   } else if (is_unknown(s.lookup(id.name)) && !s.is_bound(id.name) && generic_fn_value(s.lookup_sig(id.name))) {
     out = out.append(generic_fn_value_diag(id, s.lookup_sig(id.name)));
@@ -15357,7 +15357,7 @@ function ambiguous_variants(enums: parser.EnumDecl[]): string[] {
 
 // vref_expr recurses an expression and emits E036 for a bare reference to
 // a variant name that's declared in multiple enums (so it must be
-// qualified). A name bound as a local (parameter / var) is skipped, and a
+// qualified). A local or declared function shadows the variant, and a
 // QUALIFIED reference `Enum.Variant` is an ExprFieldAccess whose field
 // isn't visited as a bare ident, so it's fine.
 // vref_expr collects the E036 diagnostics an expression contributes: a variant
@@ -15373,7 +15373,7 @@ function vref_expr(e: ast.Expr, s: Scope, ambig: string[]): util.Diag[] {
   function at(n: ast.Expr, own acc: util.Diag[]): util.Diag[] {
     match (n) {
       ast.ExprIdent(id) => {
-        if (util.has_str(ambig, id.name) && is_unknown(s.lookup(id.name)) && s.variant_ambiguous(id.name)) {
+        if (util.has_str(ambig, id.name) && is_unknown(s.lookup(id.name)) && !s.has_sig(id.name) && s.variant_ambiguous(id.name)) {
           return acc.append(dg_at("E036", "variant \"" + id.name + "\" is declared in multiple enums — qualify the reference", id.line, id.col));
         }
         return acc;

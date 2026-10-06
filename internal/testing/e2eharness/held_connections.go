@@ -26,21 +26,21 @@ const HeldConnectionsBytesPerConnection = 1024
 // HeldConnectionsBatch is N: the connections held per batch.
 const HeldConnectionsBatch = 64
 
-// HeldConnectionsServerSource is a server on `port` whose handler answers
+// HeldConnectionsServerSource is a server whose handler answers
 // the bump allocator's high-water mark in bytes.
-func HeldConnectionsServerSource(port int) string {
-	return heldConnectionsServer(port, "", `function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+func HeldConnectionsServerSource() string {
+	return heldConnectionsServer("", `function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok(__heap_bump_bytes().to_string());
 }`)
 }
 
 // heldConnectionsServer is the held-connection servers' shared shape:
-// `handler` serving on `port` under a read deadline long enough that an
+// `handler` serving under a read deadline long enough that an
 // idle held connection stays open while it is measured (a parked one
 // holds under the loop's own held deadline instead) and no per-client cap,
 // since both batches come from this host and the default cap would close
 // the second on accept.
-func heldConnectionsServer(port int, imports, handler string) string {
+func heldConnectionsServer(imports, handler string) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/time";
 import "std/serve";
@@ -50,9 +50,9 @@ import "std/platform";
 
 function main(): i32 {
     let opts: serve.Config = serve.Config { ...serve.config(), recv_deadline: time.duration_seconds(120 as i64), max_connections_per_ip: 0 };
-    return serve.run(%d, opts, handle);
+    return serve.run(0, opts, handle);
 }
-`, imports, handler, port)
+`, imports, handler)
 }
 
 // HeldSuspendedBytesPerHandler is the bound on the bump-allocator growth
@@ -70,8 +70,8 @@ const HeldSuspendedBytesPerHandler = 8192
 // request's bounds sit far above the measurement's own guards, so a
 // handler that answers early is the upstream's doing, never the client
 // giving up on the park.
-func HeldSuspendedServerSource(port int) string {
-	return heldConnectionsServer(port, `import "std/fetch";`, `function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
+func HeldSuspendedServerSource() string {
+	return heldConnectionsServer(`import "std/fetch";`, `function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     if (req.path == "/heap") {
         return http.ok(__heap_bump_bytes().to_string());
     }
@@ -245,7 +245,7 @@ func heapBumpBytes(t *testing.T, addr string) int64 {
 // answers the bump allocator's high-water mark, `__heap_bump_bytes()`,
 // with room for twice BumpPerRequestRounds requests on one connection, so
 // the warm-up CheckBumpPerRequest extends to a Date change fits.
-func BumpPerRequestServerSource(port int) string {
+func BumpPerRequestServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
 import "std/platform";
@@ -253,9 +253,9 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok(__heap_bump_bytes().to_string());
 }
 function main(): i32 {
-    return serve.run(%d, serve.Config { ...serve.config(), keep_alive_requests: %d }, handle);
+    return serve.run(0, serve.Config { ...serve.config(), keep_alive_requests: %d }, handle);
 }
-`, port, 2*BumpPerRequestRounds+1)
+`, 2*BumpPerRequestRounds+1)
 }
 
 // BumpPerRequestRounds is #9853's per-request count: 100k requests on

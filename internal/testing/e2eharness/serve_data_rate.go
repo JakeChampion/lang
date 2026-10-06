@@ -22,10 +22,10 @@ import (
 // and the drain is the peer's to pace.
 const DataRateResponseBytes = 8 << 20
 
-// DataRateServerSource is a server on `port` answering
+// DataRateServerSource is a server answering
 // DataRateResponseBytes of body under a 100 KB/s minimum response data
 // rate with a 300 ms grace.
-func DataRateServerSource(port int) string {
+func DataRateServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/string";
 import "std/serve";
@@ -36,9 +36,9 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 }
 function main(): i32 {
     let opts: serve.Config = serve.Config { ...serve.config(), response_min_data_rate: 100000, response_data_rate_grace: time.duration_millis(300 as i64) };
-    return serve.run(%d, opts, handle);
+    return serve.run(0, opts, handle);
 }
-`, DataRateResponseBytes, port)
+`, DataRateResponseBytes)
 }
 
 // dialSmallWindow connects with a 64 KiB receive buffer, so the peer's

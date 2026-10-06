@@ -66,13 +66,15 @@ function pairable(funcs: ssasem.Func[], names: string[], ix: util.NameIndex, rew
   let refs: Refs = refs_of(funcs, ix, rewrite);
   let susp: suspend.Set = suspend.classify(names, funcs);
   let ok: boolean[] = [];
+  let dead: boolean[] = [];
   let i: i32 = 0;
   while (i < funcs.len()) {
     let direct: boolean = refs.calls[i] > 0 && !refs.other[i];
     ok = ok.append(direct && rewrite[i] && unnamed[i] && susp.rows.find(names[i]) < 0 && shaped(funcs[i]));
+    dead = dead.append(refs.calls[i] == 0 && !refs.other[i] && rewrite[i] && unnamed[i]);
     i = i + 1;
   }
-  return taken_apart(funcs, ix, ok);
+  return taken_apart(funcs, ix, ok, dead);
 }
 
 // `ok` less every function some caller needs the variant of whole: kept,
@@ -80,14 +82,20 @@ function pairable(funcs: ssasem.Func[], names: string[], ix: util.NameIndex, rew
 // that takes the variant apart builds nothing, where one that keeps it would
 // build the box the callee no longer does, and could no longer build it in
 // a box the callee was releasing anyway. Dropping one candidate can make a
-// return in it a whole use of another, so this runs until nothing drops.
-function taken_apart(funcs: ssasem.Func[], ix: util.NameIndex, ok0: boolean[]): boolean[] {
+// return in it a whole use of another, so this runs until nothing drops. A
+// `dead` body, one spliced into every caller and named by nothing, is not a
+// caller: what it keeps whole is never built.
+function taken_apart(funcs: ssasem.Func[], ix: util.NameIndex, ok0: boolean[], dead: boolean[]): boolean[] {
   let ok: boolean[] = ok0;
   let changed: boolean = true;
   while (changed) {
     changed = false;
     let j: i32 = 0;
     while (j < funcs.len()) {
+      if (dead[j]) {
+        j = j + 1;
+        continue;
+      }
       let whole: boolean[] = [];
       let computed: boolean = false;
       for b in funcs[j].graph.blocks {

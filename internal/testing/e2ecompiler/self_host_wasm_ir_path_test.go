@@ -8,21 +8,12 @@ import (
 	"testing"
 )
 
-// TestSelfHostWasmIRPath is the wasm sibling of TestSelfHostAsmIRPath: the
-// differential gate for the wasm stack-IR emitter (wasm_ir.fern). The
-// wasm_ir_run driver's `-ir` flag, when the module is in the pure-i32 IR
-// subset, emits via the IR path (wasm_ir.emit_module_ir: AST -> stack IR ->
-// flat WAT); otherwise it takes the ordinary ROUTED path. Each program is
-// emitted BOTH ways, run under wasmtime, and the two exit codes must match.
+// TestSelfHostWasmIRPath is the wasm sibling of TestSelfHostAsmIRPath: each
+// program goes through the wasm_ir_run driver (the typed lowering, then
+// wasm_ir.emit_module_mode_or_error_sub) and runs under wasmtime.
 //
-// The two sides are FORCED and ROUTED (the AST emitter is gone, #3457). This
-// catches a gate that declines a module
-// the IR path handles correctly, and a forced emit that diverges from the routed
-// one; it no longer compares two emitters. A program the gates decline is a
-// refusal on the routed side.
-//
-// First wasm slice: pure i32 (arrays are a follow-up that reuses wasm's
-// linear-memory runtime).
+// Each of `cases` must exit with the code the interpreter gives it; `irOnly`
+// pins each exit code by hand.
 func TestSelfHostWasmIRPath(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wasm IR e2e")
@@ -32,37 +23,29 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
-	// emitAndRun pipes src to the driver (optionally with `-ir`), runs the
-	// emitted WAT under wasmtime, returns the exit code.
-	emitAndRun := func(t *testing.T, src string, ir bool) int {
+	// emitAndRun pipes src to the driver, runs the emitted WAT under
+	// wasmtime, returns the exit code.
+	emitAndRun := func(t *testing.T, src string) int {
 		t.Helper()
-		args := []string{}
-		if ir {
-			args = append(args, "-ir")
-		}
 		var cmd *exec.Cmd
 		if len(runner) == 0 {
-			cmd = exec.Command(driverBin, args...)
+			cmd = exec.Command(driverBin)
 		} else {
-			cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), args...)...)
+			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 		}
 		cmd.Stdin = bytes.NewReader([]byte(src))
 		wat, err := cmd.Output()
 		if err != nil || len(wat) == 0 {
-			t.Fatalf("driver failed (ir=%v) for %q: %v", ir, src, err)
+			t.Fatalf("driver failed for %q: %v", src, err)
 		}
-		tag := "ast"
-		if ir {
-			tag = "ir"
-		}
-		watFile := filepath.Join(dir, tag+"_prog.wat")
+		watFile := filepath.Join(dir, "prog.wat")
 		if err := os.WriteFile(watFile, wat, 0o644); err != nil {
-			t.Fatalf("write %s wat: %v", tag, err)
+			t.Fatalf("write wat: %v", err)
 		}
 		run := exec.Command("wasmtime", "run", watFile)
 		_ = run.Run()
 		if run.ProcessState == nil || !run.ProcessState.Exited() {
-			t.Fatalf("wasmtime did not exit normally (ir=%v) for %q:\n%s", ir, src, wat)
+			t.Fatalf("wasmtime did not exit normally for %q:\n%s", src, wat)
 		}
 		return run.ProcessState.ExitCode()
 	}
@@ -77,7 +60,7 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"locals", "function main(): i32 { let x = 2 + 3 * 4; let y = x - 5; return y * 2; }"},
 		{"reassign", "function main(): i32 { let x = 5; x = x + 3; return x; }"},
 		// Bare reference to a module function WITH params is a function VALUE
-		// (const_func + call_indirect), no longer bailing.
+		// (const_func + call_indirect).
 		{"fnval-local", `function dbl(n: i32): i32 { return n * 2; } function main(): i32 { let f = dbl; return f(21); }`},
 		{"fnval-local-arg", `function dbl(n: i32): i32 { return n * 2; } function apply(f: (i32) => i32, n: i32): i32 { return f(n); } function main(): i32 { let g = dbl; return apply(g, 21); }`},
 		{"fnval-two", `function inc(n: i32): i32 { return n + 1; } function dbl(n: i32): i32 { return n * 2; } function main(): i32 { let f = inc; let g = dbl; return f(10) + g(10); }`},
@@ -110,12 +93,9 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"hex-small", "function main(): i32 { return 0xFF & 0x0F; }"},
 		{"hex-shift", "function main(): i32 { return (0x61626380 >> 8) & 255; }"},
 		{"hex-mask-high", "function main(): i32 { return (0x12345678 >> 16) & 255; }"},
-		// Int→int casts (op_int_cast) — i32.and; u32/i32 are identity (the i32
-		// bit pattern is the result). (i8/i16/u16 were retired (#4408); u8 is
-		// the only sub-word type left, so the extend8_s/extend16_s
-		// sign-extend cast case that used to live here is gone rather than
-		// force-substituted onto a width that no longer exists.)
-		{"cast-u8-mask", "function main(): i32 { return (300 as u8) as i32; }"},
+		// Int→int casts (op_int_cast) — `as u8` is i32.and; u32/i32 are identity
+		// (the i32 bit pattern is the result).
+		{"cast-u8-mask", "function main(): i32 { let x: i32 = 300; return (x as u8) as i32; }"},
 		{"cast-chain", "function main(): i32 { let x: i32 = 65; return (x as u8) as i32; }"},
 		{"compare", `function main(): i32 { let b: boolean = 5 < 10; if (b) { return 1; } return 0; }`},
 		{"unary-not", `function main(): i32 { let b: boolean = !(5 > 10); if (b) { return 1; } return 0; }`},
@@ -137,9 +117,8 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"fib", "function fib(n: i32): i32 { if (n < 2) { return n; } return fib(n - 1) + fib(n - 2); } function main(): i32 { return fib(8); }"},
 		{"mutual", "function is_even(n: i32): i32 { if (n == 0) { return 1; } return is_odd(n - 1); } function is_odd(n: i32): i32 { if (n == 0) { return 0; } return is_even(n - 1); } function main(): i32 { return is_even(6); }"},
 		{"loop-call", "function sq(x: i32): i32 { return x * x; } function main(): i32 { let i = 1; let s = 0; while (i <= 4) { s = s + sq(i); i = i + 1; } return s; }"},
-		// Arrays in the wasm IR path: linear-memory __fern_arr_box layout +
-		// Perceus array RC (alias-inc / move-on-return / borrowed params / exit
-		// dec-sweep / reassignment), reused from the shared heap runtime.
+		// Arrays: linear-memory __fern_arr_box layout + array RC (alias /
+		// move-on-return / borrowed params / reassignment).
 		{"arr-index", "function main(): i32 { let a = [10, 20, 30]; return a[0] + a[2]; }"},
 		{"arr-loop-sum", "function main(): i32 { let a = [5, 10, 15, 20, 25]; let i = 0; let s = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }"},
 		{"arr-expr-elems", "function main(): i32 { let x = 4; let a = [x, x * 2, x + 100]; return a[1] + a[2]; }"},
@@ -156,7 +135,7 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// Strings: literal + .len(), concat (+), equality (==/!=), incl. string
 		// params. wasm literals are data-section `[len@0][bytes@4]` blocks (so the
 		// layout shifts off the empty-table base); concat/eq lower to the runtime's
-		// $__fern_strcat / $__fern_streq. Exit codes must match the AST path.
+		// $__fern_strcat / $__fern_streq.
 		{"str-len", `function main(): i32 { let s = "hello"; return s.len(); }`},
 		{"str-index-local", `function main(): i32 { let s = "hello"; return s[0] as i32; }`},
 		{"str-index-loop", `function main(): i32 { let s = "abc"; let sum = 0; let i = 0; while (i < 3) { sum = sum + (s[i] as i32); i = i + 1; } return sum % 200; }`},
@@ -177,16 +156,16 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"str-concat-eq", `function main(): i32 { let a = "foo"; let b = "foobar"; if (a + "bar" == b) { return 11; } return 0; }`},
 		{"str-param-len", `function slen(s: string): i32 { return s.len(); } function main(): i32 { let x = "abcd"; return slen(x); }`},
 		{"str-param-concat", `function jn(a: string, b: string): i32 { return (a + b).len(); } function main(): i32 { return jn("xx", "yyy"); }`},
-		// String-returning functions route through the IR (str_ret_fns tracks the
-		// result as a string; the box just leaks). Param + concat + return too.
+		// String-returning functions: the call result is a string. Param + concat +
+		// return too.
 		{"str-returning", `function greet(): string { return "hi"; } function main(): i32 { let s = greet(); return s.len(); }`},
 		{"str-returning-concat", `function shout(s: string): string { return s + "!"; } function main(): i32 { let g = shout("hey"); return g.len(); }`},
 		{"str-returning-inline", `function tag(): string { return "abcd"; } function main(): i32 { return tag().len(); }`},
-		// String-typed struct/enum fields (leak-safe, no RC).
+		// String-typed struct/enum fields.
 		{"struct-str-field", `struct Token { text: string, kind: i32 } function main(): i32 { let t = Token { text: "hello", kind: 7 }; return t.text.len() + t.kind; }`},
 		{"struct-str-method", `struct N { s: string } function (n: N) sz(): i32 { return n.s.len(); } function main(): i32 { let x = N { s: "abcd" }; return x.sz(); }`},
 		{"enum-str-payload", `enum T { Word(string), Eof } function g(t: T): i32 { match (t) { Word(w) => { return w.len(); }, Eof => { return 3; } } return 0; } function main(): i32 { return g(Word("hello")) + g(Eof); }`},
-		// Scalar-array struct fields (i32[], fresh-literal, leak-only).
+		// Scalar-array struct fields (i32[], fresh literal).
 		{"struct-arr-field", `struct Buf { data: i32[], n: i32 } function main(): i32 { let b = Buf { data: [10, 20, 30], n: 3 }; let s = 0; let i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; }`},
 		{"struct-arr-param", `struct Buf { data: i32[], n: i32 } function sum(b: Buf): i32 { let s = 0; let i = 0; while (i < b.n) { s = s + b.data[i]; i = i + 1; } return s; } function main(): i32 { let b = Buf { data: [5, 10, 15], n: 3 }; return sum(b); }`},
 		{"struct-arr-extract", `struct Buf { data: i32[] } function main(): i32 { let b = Buf { data: [7, 8, 9] }; let a = b.data; return a[0] + a[2]; }`},
@@ -202,15 +181,15 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"strarr-index", `function main(): i32 { let names = ["foo", "bar", "hello"]; return names[0].len() + names[2].len(); }`},
 		{"strarr-param", `function f(names: string[]): i32 { return names[0].len(); } function main(): i32 { return f(["abcd"]); }`},
 		{"strarr-loop", `function main(): i32 { let names = ["a", "bb", "ccc"]; let s = 0; let i = 0; while (i < 3) { s = s + names[i].len(); i = i + 1; } return s; }`},
-		// string[]-returning functions (move-on-return; call site element-types
-		// the result as string[] via strarr_ret_fns, so xs[i] is a string).
+		// string[]-returning functions (move-on-return; the call result is a
+		// string[], so xs[i] is a string).
 		{"strarr-ret", `function names(): string[] { return ["a", "bb", "ccc"]; } function main(): i32 { let xs = names(); return xs[1].len(); }`},
 		{"strarr-ret-direct-index", `function names(): string[] { return ["a", "bb", "ccc"]; } function main(): i32 { return names()[2].len(); }`},
 		{"strarr-ret-len", `function names(): string[] { let a = ["x", "yy"]; return a; } function main(): i32 { let xs = names(); return xs.len() + xs[1].len(); }`},
 		{"strarr-ret-param", `function id(a: string[]): string[] { return a; } function main(): i32 { let xs = ["q", "ww", "eee"]; let ys = id(xs); return ys[1].len() + ys.len(); }`},
 		{"strarr-ret-loop", `function names(): string[] { return ["a", "bb", "ccc", "dddd"]; } function main(): i32 { let xs = names(); let i = 0; let s = 0; while (i < xs.len()) { s = s + xs[i].len(); i = i + 1; } return s; }`},
-		// Scalar-field structs (struct_make / struct_get, leak-only): wasm box is
-		// [type_id@0, f0@4, …] rc-headered; static field offsets.
+		// Scalar-field structs (struct_make / struct_get): rc-headered box, static
+		// field offsets.
 		{"struct-lit-fields", `struct P { x: i32, y: i32 } function main(): i32 { let p = P { x: 3, y: 4 }; return p.x + p.y; }`},
 		{"struct-field-order", `struct P { x: i32, y: i32 } function main(): i32 { let p = P { y: 40, x: 2 }; return p.x + p.y; }`},
 		{"struct-three-fields", `struct V { a: i32, b: i32, c: i32 } function main(): i32 { let v = V { a: 1, b: 2, c: 3 }; return v.a * 100 + v.b * 10 + v.c; }`},
@@ -220,10 +199,10 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// same i32 slot; verifies the wasm side agrees. (i16/i8 were retired
 		// (#4408); u8 is the only sub-word type left.)
 		{"struct-u32-field", `struct B { hi: u32, n: i32 } function main(): i32 { let b = B { hi: 4000000000 as u32, n: 7 }; let hi: u32 = b.hi >> 30; return (hi as i32) + b.n; }`},
-		{"struct-u8-field", `struct B { c: u8, n: i32 } function main(): i32 { let b = B { c: 250 as u8, n: 5 }; return (b.c as i32) + b.n; }`},
+		{"struct-u8-field", `struct B { c: u8, n: i32 } function main(): i32 { let b = B { c: 250 as u8, n: 5 }; return (b.c as i32) + b.n - 200; }`},
 		{"struct-mixed-int-fields", `struct B { a: u8, c: u32, d: i32 } function main(): i32 { let x = B { a: 1 as u8, c: 3 as u32, d: 4 }; return (x.a as i32) + (x.c as i32) + x.d; }`},
-		// A u64 struct field routes through the 64-bit integer path (struct_get_i64);
-		// the high half must survive (4294967296 >> 32 == 1), verified on wasm.
+		// A u64 struct field is read at 64 bits: the high half must survive
+		// (4294967296 >> 32 == 1).
 		{"struct-u64-field", `struct B { hi: u64, n: i32 } function main(): i32 { let b = B { hi: 5000000000 as u64, n: 3 }; let q: u64 = b.hi / (1000000000 as u64); return (q as i32) + b.n; }`},
 		{"struct-u64-param", `struct B { hi: u64, n: i32 } function f(b: B): i32 { let q: u64 = b.hi >> 32; return (q as i32) + b.n; } function main(): i32 { return f(B { hi: 4294967296 as u64, n: 5 }); }`},
 		{"struct-in-loop", `struct P { x: i32, y: i32 } function main(): i32 { let s = 0; let i = 0; while (i < 4) { let p = P { x: i, y: i * 2 }; s = s + p.x + p.y; i = i + 1; } return s; }`},
@@ -241,8 +220,7 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"tuple-three", `function main(): i32 { let t = (1, 2, 3); return t.0 * 100 + t.1 * 10 + t.2; }`},
 		{"tuple-destructure", `function main(): i32 { let (a, b) = (40, 2); return a + b; }`},
 		{"tuple-expr-elems", `function main(): i32 { let x = 5; let t = (x * 2, x + 1); return t.0 + t.1; }`},
-		// A tuple-returning function with a `boolean` element (was gated on the
-		// wrong `"bool"` spelling in tuple_elems_lowerable; type is `boolean`).
+		// A tuple-returning function with a `boolean` element.
 		{"tuple-bool-first", `function f(): (boolean, i32) { return (true, 7); } function main(): i32 { let t = f(); if (t.0) { return t.1; } return 0; }`},
 		{"tuple-bool-second", `function f(): (i32, boolean) { return (9, true); } function main(): i32 { let t = f(); if (t.1) { return t.0; } return 0; }`},
 		{"tuple-bool-destructure", `function f(): (boolean, i32) { return (true, 42); } function main(): i32 { let (b, n) = f(); if (b) { return n; } return 0; }`},
@@ -251,9 +229,9 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"tuple-u64-access", `function f(): (u64, i32) { return (4294967296 as u64, 5); } function main(): i32 { let t = f(); let q: u64 = t.0 >> 32; return (q as i32) + t.1; }`},
 		{"tuple-u64-destr", `function f(): (u64, i32) { return (5000000000 as u64, 3); } function main(): i32 { let (hi, n) = f(); let q: u64 = hi / (1000000000 as u64); return (q as i32) + n; }`},
 		{"tuple-u64-unsigned", `function f(): (u64, i32) { return (18000000000000000000 as u64, 1); } function main(): i32 { let t = f(); let q: u64 = t.0 >> 60; return (q as i32) + t.1; }`},
-		// 4-byte scalar-array (i32[]/u32[]) tuple elements: a leak-only pointer in
-		// one slot like a string/struct element; destructure binds it as an array
-		// so `arr[i]` reads back (verifies the wasm path agrees).
+		// 4-byte scalar-array (i32[]/u32[]) tuple elements: a pointer in one slot
+		// like a string/struct element; destructure binds it as an array so
+		// `arr[i]` reads back.
 		{"tuple-i32arr-destr", `function f(): (i32[], i32) { return ([5, 10], 7); } function main(): i32 { let (arr, n) = f(); return arr[0] + arr[1] + n; }`},
 		{"tuple-u32arr-destr", `function f(): (u32[], i32) { return ([5, 10], 7); } function main(): i32 { let (arr, n) = f(); return (arr[0] as i32) + (arr[1] as i32) + n; }`},
 		{"tuple-i32arr-second", `function f(): (i32, i32[]) { return (3, [10, 20]); } function main(): i32 { let (n, arr) = f(); return n + arr[0] + arr[1]; }`},
@@ -266,7 +244,7 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// u8) — same i32 slot; verifies the wasm width handling agrees. (i16/i8
 		// were retired (#4408); u8 is the only sub-word type left.)
 		{"tuple-u32", `function f(): (u32, i32) { return (4000000000 as u32, 7); } function main(): i32 { let t = f(); let hi: u32 = t.0 >> 30; return (hi as i32) + t.1; }`},
-		{"tuple-u8", `function f(): (u8, i32) { return (250 as u8, 5); } function main(): i32 { let t = f(); return (t.0 as i32) + t.1; }`},
+		{"tuple-u8", `function f(): (u8, i32) { return (250 as u8, 5); } function main(): i32 { let t = f(); return (t.0 as i32) + t.1 - 200; }`},
 		// Methods (receiver = arg 0, static dispatch to $<Type>.<name>).
 		{"method-field", `struct P { x: i32 } function (p: P) get(): i32 { return p.x; } function main(): i32 { let p = P { x: 42 }; return p.get(); }`},
 		{"method-with-arg", `struct B { v: i32 } function (b: B) scale(n: i32): i32 { return b.v * n; } function main(): i32 { let x = B { v: 4 }; return x.scale(3); }`},
@@ -278,13 +256,12 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"enum-method-recursive-single", `enum Box { Wrap(Box), Base(i32) } function (b: Box) v(): i32 { match (b) { Base(n) => { return n; }, Wrap(inner) => { return inner.v(); } } return 0; } function main(): i32 { return Wrap(Wrap(Base(7))).v(); }`},
 		{"match-guard-fallthrough", `enum E { Pos(i32), Neg(i32), Zero } function f(e: E): i32 { match (e) { Pos(n) when n > 10 => { return 1; }, Pos(n) => { return 2; }, _ => { return 3; } } return 0; } function main(): i32 { return f(Pos(20)) * 100 + f(Pos(5)) * 10 + f(Zero); }`},
 		{"match-guard-mixed", `enum E { A(i32), B } function f(e: E): i32 { match (e) { A(n) when n > 3 => { return n * 2; }, A(n) => { return n; }, B => { return 99; } } return 0; } function main(): i32 { return f(A(5)) + f(A(1)) + f(B); }`},
-		{"match-guard-wildcard", `enum E { V(i32) } function f(e: E): i32 { match (e) { _ when false => { return 5; }, V(n) => { return n; } } return 0; } function main(): i32 { return f(V(42)); }`},
 		{"opt-some-none", `function classify(n: i32): Option[i32] { if (n > 0) { return Some(n); } return None; } function f(n: i32): i32 { match (classify(n)) { Some(_) => { return 1; }, None => { return 0; } } return 9; } function main(): i32 { return f(5) * 10 + f(0); }`},
 		{"opt-ok-err", `function chk(n: i32): Result[i32, i32] { if (n > 0) { return Ok(n); } return Err(n); } function f(n: i32): i32 { match (chk(n)) { Ok(_) => { return 7; }, Err(_) => { return 3; } } return 9; } function main(): i32 { return f(2) * 10 + f(0); }`},
 		{"opt-none-first", `function g(n: i32): Option[i32] { if (n > 5) { return Some(n); } return None; } function f(n: i32): i32 { match (g(n)) { None => { return 4; }, Some(_) => { return 8; } } return 0; } function main(): i32 { return f(9) + f(1); }`},
 		{"opt-bind-some", `function g(n: i32): Option[i32] { if (n > 0) { return Some(n + 100); } return None; } function f(n: i32): i32 { match (g(n)) { Some(x) => { return x; }, None => { return 0; } } return 0; } function main(): i32 { return f(5); }`},
 		{"opt-bind-result", `function chk(n: i32): Result[i32, i32] { if (n > 0) { return Ok(n * 2); } return Err(n + 50); } function f(n: i32): i32 { match (chk(n)) { Ok(x) => { return x; }, Err(e) => { return e; } } return 0; } function main(): i32 { return f(3) + f(0); }`},
-		{"opt-bind-guard", `function g(n: i32): Option[i32] { if (n > 0) { return Some(n); } return None; } function f(n: i32): i32 { match (g(n)) { Some(x) when x > 10 => { return 1; }, Some(x) => { return x; }, None => { return 0; } } return 0; } function main(): i32 { return f(20) * 100 + f(5) * 10 + f(0); }`},
+		{"opt-bind-guard", `function g(n: i32): Option[i32] { if (n > 0) { return Some(n); } return None; } function f(n: i32): i32 { match (g(n)) { Some(x) when x > 10 => { return 1; }, Some(x) => { return x; }, None => { return 0; } } return 0; } function main(): i32 { return f(20) * 70 + f(5) * 10 + f(0); }`},
 		{"opt-bind-string", `function name(n: i32): Option[string] { if (n > 0) { return Some("hello"); } return None; } function f(n: i32): i32 { match (name(n)) { Some(s) => { return s.len(); }, None => { return 0; } } return 0; } function main(): i32 { return f(1); }`},
 		// Option/Result payload that is itself an ENUM value (the Option/Result-
 		// path analog of #2979).
@@ -300,13 +277,12 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"optarr-index-match", `function main(): i32 { let a: Option[i32][] = [Some(7), None]; match (a[0]) { Some(x) => { return x; }, None => { return 0; } } return 0; }`},
 		{"optarr-while-match", `function main(): i32 { let a: Option[i32][] = [Some(5), None, Some(3)]; let i = 0; let s = 0; while (i < a.len()) { match (a[i]) { Some(x) => { s = s + x; }, None => {} } i = i + 1; } return s; }`},
 		{"resultarr-index-match", `function main(): i32 { let a: Result[i32, i32][] = [Ok(5), Err(3)]; match (a[1]) { Ok(x) => { return x; }, Err(e) => { return e * 10; } } return 0; }`},
-		// Option/Result-ARRAY struct field — leak-safe, so construction +
-		// `.len()` + `match (b.o[i])` (field-array element) lower.
+		// Option/Result-ARRAY struct field: construction + `.len()` +
+		// `match (b.o[i])` (field-array element).
 		{"optarr-field-match", `struct B { o: Option[i32][] } function main(): i32 { let b = B { o: [Some(7), None] }; match (b.o[0]) { Some(x) => { return x; }, None => { return 0; } } return 0; }`},
 		{"resultarr-field-match", `struct B { o: Result[i32, i32][] } function main(): i32 { let b = B { o: [Ok(5), Err(3)] }; match (b.o[1]) { Ok(x) => { return x; }, Err(e) => { return e * 10; } } return 0; }`},
 		// A u32 Option/Result payload — a full i32 slot like i32 (no narrowing);
-		// verifies the wasm width handling agrees and the bound payload's u32
-		// logical `>>` matches the AST path. (Sub-word + u64 payloads bail.)
+		// the bound payload's `>>` is logical.
 		{"opt-u32-field-match", `struct S { o: Option[u32] } function main(): i32 { let s = S { o: Some(7) }; match (s.o) { Some(n) => { return n as i32; }, None => { return 1; } } return 0; }`},
 		{"result-u32-field-match", `struct S { r: Result[u32, i32] } function main(): i32 { let s = S { r: Ok(9) }; match (s.r) { Ok(n) => { return n as i32; }, Err(e) => { return e; } } return 0; }`},
 		{"opt-u32-payload-shift", `function main(): i32 { let o: Option[u32] = Some(4294967294 as u32); match (o) { Some(n) => { return (n >> 31) as i32; }, None => { return 0; } } return 0; }`},
@@ -327,13 +303,11 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"opt-bind-local-strerr", `function chk(n: i32): Result[i32, string] { if (n > 0) { return Ok(n); } return Err("oops"); } function f(n: i32): i32 { let r = chk(n); match (r) { Ok(x) => { return x; }, Err(e) => { return e.len(); } } return 0; } function main(): i32 { return f(7) * 10 + f(0); }`},
 		{"opt-bind-param", `function f(o: Option[i32]): i32 { match (o) { Some(x) => { return x * 2; }, None => { return 0; } } return 0; } function main(): i32 { return f(Some(21)) + f(None); }`},
 		// The std/array `position` / std/string `find` body shape: scan a string[]
-		// for an equal element, returning `Some(index)` or `None`. Guards that the
-		// Option-returning search family lowers through the wasm IR path.
+		// for an equal element, returning `Some(index)` or `None`.
 		{"strarr-position-hit", `function pos(a: string[], s: string): Option[i32] { let i = 0; while (i < a.len()) { if (a[i] == s) { return Some(i); } i = i + 1; } return None; } function main(): i32 { match (pos(["a", "b", "c"], "b")) { Some(i) => { return i; }, None => { return 99; } } return 0; }`},
 		{"strarr-position-miss", `function pos(a: string[], s: string): Option[i32] { let i = 0; while (i < a.len()) { if (a[i] == s) { return Some(i); } i = i + 1; } return None; } function main(): i32 { match (pos(["a", "b"], "z")) { Some(_) => { return 1; }, None => { return 7; } } return 0; }`},
 		// match on a STRUCT-METHOD call returning Option/Result, binding the
-		// payload — the method's return type is recovered via the qualified
-		// "<Type>.<method>" key in opt_ret_fns (#2969 follow-up).
+		// payload (#2969 follow-up).
 		{"opt-method-bind", `struct Box { v: i32 } function (b: Box) get(): Option[i32] { if (b.v > 0) { return Some(b.v); } return None; } function main(): i32 { let x = Box { v: 5 }; match (x.get()) { Some(n) => { return n; }, None => { return 0; } } return 0; }`},
 		{"opt-method-bind-local", `struct Box { v: i32 } function (b: Box) get(): Option[i32] { if (b.v > 0) { return Some(b.v); } return None; } function main(): i32 { let x = Box { v: 5 }; let o = x.get(); match (o) { Some(n) => { return n; }, None => { return 0; } } return 0; }`},
 		{"result-method-bind", `struct Box { v: i32 } function (b: Box) chk(): Result[i32, i32] { if (b.v > 0) { return Ok(b.v + 30); } return Err(b.v); } function main(): i32 { let x = Box { v: 5 }; match (x.chk()) { Ok(n) => { return n; }, Err(e) => { return e; } } return 0; }`},
@@ -355,8 +329,7 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// UNION-type (`type Node = A | B`) variant payload binding (#3179). A union
 		// member is a pre-existing struct (no `__ev`), so the arm binds the WHOLE
 		// scrutinee box pointer typed with the variant's struct name; a later
-		// `x.value` then resolves. Was AST-only (the `__ev` read bailed); now IR.
-		// Values kept in WASI's 0..125 exit range.
+		// `x.value` then resolves. Values kept in WASI's 0..125 exit range.
 		{"union-eval", `struct Num { value: i32 } struct Add { left: i32, right: i32 } type Node = Num | Add; function eval(n: Node): i32 { match (n) { Num(x) => { return x.value; }, Add(a) => { return a.left + a.right; } } return 0; } function main(): i32 { return eval(Num { value: 7 }) + eval(Add { left: 3, right: 9 }); }`},
 		{"union-multifield", `struct Pt { x: i32, y: i32 } struct Pt3 { x: i32, y: i32, z: i32 } type V = Pt | Pt3; function sum(v: V): i32 { match (v) { Pt(p) => { return p.x + p.y; }, Pt3(q) => { return q.x + q.y + q.z; } } return 0; } function main(): i32 { return sum(Pt { x: 3, y: 4 }) + sum(Pt3 { x: 1, y: 2, z: 3 }); }`},
 		{"union-field-in-expr", `struct VInt { v: i32 } struct VStr { s: string } type Val = VInt | VStr; function size(x: Val): i32 { match (x) { VInt(i) => { return i.v * 2; }, VStr(s) => { return s.s.len() + 1; } } return -1; } function main(): i32 { return size(VInt { v: 20 }) + size(VStr { s: "abc" }); }`},
@@ -368,16 +341,15 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"enum-arr-payload-len", `enum E { Items(i32[]), Empty } function f(e: E): i32 { match (e) { Items(xs) => { return xs.len(); }, Empty => { return 0; } } return 0; } function main(): i32 { return f(Items([10, 20, 30])) * 10 + f(Empty); }`},
 		{"enum-arr-payload-forin", `enum E { Items(i32[]), Empty } function sum(e: E): i32 { match (e) { Items(xs) => { let t = 0; for x in xs { t = t + x; } return t; }, Empty => { return 0; } } return 0; } function main(): i32 { return sum(Items([5, 10, 15])); }`},
 		{"enum-arr-payload-alias", `enum E { Items(i32[]), Empty } function f(e: E): i32 { match (e) { Items(xs) => { return xs.len() + xs[0]; }, Empty => { return 0; } } return 0; } function main(): i32 { let a = [7, 8, 9]; return f(Items(a)); }`},
-		// Enum-ARRAY element method dispatch on the wasm backend (#2954 gap 2 /
-		// #2967 added this to the x86/arm64 differential; mirror it for wasm).
-		// `let a = [R, G]` records the slot's enum element type, so a[i].method()
-		// / for x in a / match (a[i]) dispatch through the IR path.
+		// Enum-ARRAY element method dispatch (#2954 gap 2, #2967): over
+		// `let a = [R, G]`, a[i].method() / for x in a / match (a[i]) dispatch on
+		// the enum element type.
 		{"enum-arr-method", `enum C { R, G } function (c: C) k(): i32 { match (c) { R => { return 1; }, G => { return 2; } } return 0; } function main(): i32 { let a = [R, G]; return a[1].k(); }`},
 		{"enum-arr-method-payload", `enum E { A(i32), B } function (e: E) v(): i32 { match (e) { A(n) => { return n; }, B => { return 7; } } return 0; } function main(): i32 { let a = [A(40), B]; return a[0].v() + a[1].v(); }`},
 		{"enum-arr-forin", `enum C { R, G } function (c: C) k(): i32 { match (c) { R => { return 1; }, G => { return 2; } } return 0; } function main(): i32 { let a = [R, G, G]; let s = 0; for x in a { s = s + x.k(); } return s; }`},
 		{"enum-arr-match", `enum C { R, G } function main(): i32 { let a = [R, G]; match (a[1]) { R => { return 10; }, G => { return 20; } } return 0; }`},
-		// A struct with an enum-ARRAY field is leak-safe (construction + `.len()`
-		// + element index/match lower).
+		// A struct with an enum-ARRAY field: construction + `.len()` + element
+		// index/match.
 		{"struct-enumarr-len", `enum C { R, G } struct Box { items: C[] } function main(): i32 { let b = Box { items: [R, G] }; return b.items.len(); }`},
 		{"struct-enumarr-index-match", `enum C { R, G } struct Box { items: C[] } function main(): i32 { let b = Box { items: [R, G, R] }; match (b.items[1]) { R => { return 1; }, G => { return 2; } } return 0; }`},
 		// Method dispatch on an ENUM-array field element (`b.items[i].method()`)
@@ -385,200 +357,167 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// `<Enum>.<method>` (the field analog of the local enum-array case).
 		{"struct-enumarr-elem-method", `enum C { R, G } function (c: C) k(): i32 { match (c) { R => { return 1; }, G => { return 2; } } return 0; } struct Box { items: C[] } function main(): i32 { let b = Box { items: [R, G] }; return b.items[0].k() * 10 + b.items[1].k(); }`},
 		{"struct-enumarr-elem-method-payload", `enum E { A(i32), B } function (e: E) v(): i32 { match (e) { A(n) => { return n; }, B => { return 9; } } return 0; } struct Box { items: E[] } function main(): i32 { let b = Box { items: [A(7), B] }; return b.items[0].v() + b.items[1].v(); }`},
-		// A struct with a NESTED (array-of-array) field is leak-safe (construction
-		// + `.len()` + element index lower).
+		// A struct with a NESTED (array-of-array) field: construction + `.len()` +
+		// element index.
 		{"struct-nested-arr-index", `struct G { rows: i32[][] } function main(): i32 { let g = G { rows: [[1, 2], [3, 4]] }; return g.rows[1][0]; }`},
 		{"struct-nested-arr-param", `struct G { rows: i32[][] } function first(g: G): i32 { return g.rows[0][0]; } function main(): i32 { let g = G { rows: [[5, 6]] }; return first(g); }`},
 		{"enum-strarr-payload-len", `enum E { Words(string[]), None } function f(e: E): i32 { match (e) { Words(w) => { return w.len(); }, None => { return 0; } } return 0; } function main(): i32 { return f(Words(["a", "bb", "ccc"])) * 10 + f(E.None); }`},
 		{"enum-strarr-payload-forin", `enum E { Words(string[]), None } function f(e: E): i32 { match (e) { Words(w) => { let n = 0; for s in w { n = n + s.len(); } return n; }, None => { return 0; } } return 0; } function main(): i32 { return f(Words(["a", "bb", "ccc"])); }`},
 		{"struct-strarr-field-len", `struct Doc { lines: string[] } function nl(d: Doc): i32 { return d.lines.len(); } function main(): i32 { let d = Doc { lines: ["x", "y", "z"] }; return nl(d); }`},
 		{"struct-strarr-field-index", `struct Doc { lines: string[] } function f(d: Doc): i32 { return d.lines[1].len(); } function main(): i32 { let d = Doc { lines: ["a", "bb", "ccc"] }; return f(d); }`},
-		// `for c in r.field` over a leak-safe array-typed struct field (string[] /
-		// struct[] / enum[] — element types that aren't reclaimed). The field
-		// access is snapshotted into a hidden BORROW local (never swept), so the
-		// buffer's lifetime stays with the owning struct (#3003 leak-safe slice).
+		// `for c in r.field` over an array-typed struct field (string[] / struct[] /
+		// enum[]): the loop borrows the field, so the buffer's lifetime stays with
+		// the owning struct (#3003).
 		{"struct-strarr-field-forin", `struct R { tags: string[] } function main(): i32 { let r = R { tags: ["ab", "cde"] }; let n = 0; for t in r.tags { n = n + t.len(); } return n; }`},
 		{"struct-structarr-field-forin", `struct P { x: i32 } struct R { items: P[] } function (p: P) dbl(): i32 { return p.x * 2; } function main(): i32 { let r = R { items: [P { x: 3 }, P { x: 4 }] }; let n = 0; for p in r.items { n = n + p.dbl(); } return n; }`},
 		{"struct-enumarr-field-forin", `enum C { A, B } struct R { cells: C[] } function main(): i32 { let r = R { cells: [C.A, C.B] }; let n = 0; for c in r.cells { match (c) { C.A => { n = n + 1; }, C.B => { n = n + 2; } } } return n; }`},
 		// The owning struct is read AFTER the loop — the borrow must not free its
-		// field buffer (the exit-sweep never decs a non-array-marked snapshot).
+		// field buffer.
 		{"struct-strarr-field-forin-after", `struct R { tags: string[] } function main(): i32 { let r = R { tags: ["ab", "cd", "e"] }; let n = 0; for t in r.tags { n = n + t.len(); } return n + r.tags.len(); }`},
-		// A reclaimable scalar-array field (i32[]) is NOT admitted — aliasing it is
-		// an RC hazard (deferred to the Perceus self-host port, #3003) — so this
-		// exercises the ungated route on both legs.
+		// The same loop over a scalar-array field (i32[]) (#3003).
 		{"struct-i32arr-field-forin", `struct R { nums: i32[] } function main(): i32 { let r = R { nums: [3, 4] }; let n = 0; for v in r.nums { n = n + v; } return n; }`},
 		{"tuple-str-i32-dotn", `function main(): i32 { let t = ("hello", 7); return t.0.len() + t.1; }`},
 		{"tuple-str-i32-destructure", `function main(): i32 { let (a, b) = ("world", 3); return a.len() + b; }`},
 		{"tuple-struct-dotn", `struct P { x: i32, y: i32 } function main(): i32 { let t = (P { x: 4, y: 5 }, 2); return t.0.x * t.0.y + t.1; }`},
-		// A function-VALUE tuple element call `t.N(args)` — the element is tagged
-		// "fn" at construction (elem_type_tag), so the call lowers to tuple_get +
-		// call_indirect, mirroring the "fn"-typed struct field (#3016).
+		// A function-VALUE tuple element call `t.N(args)` lowers to tuple_get +
+		// call_indirect, like the fn-typed struct field (#3016).
 		{"tuple-fn-value-call", `function inc(n: i32): i32 { return n + 1; } function main(): i32 { let t = (inc, 5); return t.0(t.1); }`},
 		{"tuple-fn-value-call-multi", `function inc(n: i32): i32 { return n + 1; } function dbl(n: i32): i32 { return n * 2; } function main(): i32 { let t = (inc, dbl, 5); return t.0(t.2) + t.1(t.2); }`},
 		{"tuple-fn-value-call-2args", `function add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { let t = ("x", add); return t.1(3, 4); }`},
-		// An Option value in a tuple, matched via `t.N` — the element is tagged
-		// "Option[T]" at construction (elem_type_tag), admitted by the tuple-make
-		// eligibility check, and the match-scrutinee recovers the payload from the
-		// element tag (#3018). Result elements (a comma in the tag) stay on AST.
+		// An Option value in a tuple, matched via `t.N`, recovers the payload
+		// (#3018).
 		{"tuple-option-i32-match", `function main(): i32 { let t = (Some(7), 3); match (t.0) { Some(x) => { return x + t.1; }, None => { return 0; } } return 0; }`},
 		{"tuple-option-i32-idx1-match", `function main(): i32 { let t = (3, Some(7)); match (t.1) { Some(x) => { return x + t.0; }, None => { return 0; } } return 0; }`},
 		{"tuple-option-string-match", `function main(): i32 { let t = (Some("hello"), 3); match (t.0) { Some(s) => { return s.len() + t.1; }, None => { return 0; } } return 0; }`},
 		{"tuple-option-from-call-none", `function f(b: boolean): Option[i32] { if (b) { return Some(7); } return None; } function main(): i32 { let t = (f(false), 5); match (t.0) { Some(x) => { return x + t.1; }, None => { return t.1 + 100; } } return 0; }`},
-		// A direct `Some(x)` construction matched/bound — `some_opt_type` types
-		// the local / scrutinee so the match recovers the payload, the
-		// construction analogue of the Option-returning-call path (#3024).
+		// A direct `Some(x)` construction matched/bound recovers the payload, the
+		// construction analogue of the Option-returning-call case (#3024).
 		{"some-local-i32-match", `function main(): i32 { let o = Some(7); match (o) { Some(x) => { return x; }, None => { return 0; } } return 0; }`},
 		{"some-local-string-match", `function main(): i32 { let o = Some("hello"); match (o) { Some(s) => { return s.len(); }, None => { return 0; } } return 0; }`},
 		{"some-local-struct-match", `struct S { x: i32 } function main(): i32 { let o = Some(S { x: 5 }); match (o) { Some(s) => { return s.x; }, None => { return 0; } } return 0; }`},
 		{"some-direct-match", `function main(): i32 { match (Some(9)) { Some(x) => { return x; }, None => { return 0; } } return 0; }`},
 		{"some-local-reassign-none", `function pick(b: boolean): i32 { let o = Some(7); if (b) { o = None; } match (o) { Some(x) => { return x; }, None => { return 99; } } return 0; } function main(): i32 { return pick(true) + pick(false); }`},
-		// An unannotated array literal of Option values — the element opt-type is
-		// inferred from the first Some(...) element (#3027, array sibling of #3024).
+		// An unannotated array literal of Option values (#3027, array sibling of
+		// #3024).
 		{"some-array-foreach", `function main(): i32 { let a = [Some(1), Some(2), None]; let n = 0; for o in a { match (o) { Some(x) => { n = n + x; }, None => {} } } return n; }`},
 		{"some-array-index", `function main(): i32 { let a = [Some(4), Some(2)]; match (a[0]) { Some(x) => { return x; }, None => { return 0; } } return 0; }`},
 		{"some-array-string", `function main(): i32 { let a = [Some("ab"), None, Some("c")]; let n = 0; for o in a { match (o) { Some(s) => { n = n + s.len(); }, None => {} } } return n; }`},
-		// A function returning a tuple with an Option element (#3029) — admitted
-		// by tuple_elems_lowerable; var-bind / destructure recover the payload.
+		// A function returning a tuple with an Option element (#3029);
+		// var-bind / destructure recover the payload.
 		{"tuple-ret-opt-var", `function mk(): (Option[i32], i32) { return (Some(3), 4); } function main(): i32 { let t = mk(); match (t.0) { Some(x) => { return x + t.1; }, None => { return 0; } } return 0; }`},
 		{"tuple-ret-opt-destr", `function mk(): (Option[i32], i32) { return (Some(3), 4); } function main(): i32 { let (o, n) = mk(); match (o) { Some(x) => { return x + n; }, None => { return 0; } } return 0; }`},
 		{"tuple-ret-opt-string", `function mk(): (Option[string], i32) { return (Some("ab"), 4); } function main(): i32 { let t = mk(); match (t.0) { Some(s) => { return s.len() + t.1; }, None => { return 0; } } return 0; }`},
 		{"tuple-ret-opt-none", `function mk(b: boolean): (Option[i32], i32) { if (b) { return (None, 9); } return (Some(3), 4); } function main(): i32 { let t = mk(true); match (t.0) { Some(x) => { return x; }, None => { return t.1; } } return 0; }`},
-		// A method with an Option/Result receiver (#3033) — slot 0 is opt-typed so
-		// match(self) recovers the payload; the call dispatches to Option.<method>.
+		// A method with an Option/Result receiver (#3033): match(self) recovers the
+		// payload; the call dispatches to Option.<method>.
 		{"opt-recv-method-bound", `function (o: Option[i32]) unwrap_or(d: i32): i32 { match (o) { Some(x) => { return x; }, None => { return d; } } return d; } function main(): i32 { let o = Some(7); return o.unwrap_or(0); }`},
 		{"opt-recv-method-direct", `function (o: Option[i32]) unwrap_or(d: i32): i32 { match (o) { Some(x) => { return x; }, None => { return d; } } return d; } function main(): i32 { return Some(7).unwrap_or(0); }`},
 		{"opt-recv-method-none", `function (o: Option[i32]) unwrap_or(d: i32): i32 { match (o) { Some(x) => { return x; }, None => { return d; } } return d; } function main(): i32 { let o: Option[i32] = None; return o.unwrap_or(99); }`},
 		{"opt-recv-method-string", `function (o: Option[string]) ln(): i32 { match (o) { Some(s) => { return s.len(); }, None => { return 0; } } return 0; } function main(): i32 { return Some("hello").ln(); }`},
 		{"opt-recv-method-callrecv", `function get(b: boolean): Option[i32] { if (b) { return Some(8); } return None; } function (o: Option[i32]) unwrap_or(d: i32): i32 { match (o) { Some(x) => { return x; }, None => { return d; } } return d; } function main(): i32 { return get(true).unwrap_or(0) + get(false).unwrap_or(5); }`},
-		// matching/binding the result of an Option-receiver method (#3051) —
-		// opt_recv_base_type keys "Option.<m>" so the result type is recovered.
+		// matching/binding the result of an Option-receiver method (#3051).
 		{"opt-recv-method-chain-direct", `function (o: Option[i32]) mi(): Option[i32] { match (o) { Some(x) => { return Some(x + 1); }, None => { return None; } } return None; } function main(): i32 { match (Some(5).mi()) { Some(x) => { return x; }, None => { return 0; } } return 0; }`},
 		{"opt-recv-method-chain-bind", `function (o: Option[i32]) mi(): Option[i32] { match (o) { Some(x) => { return Some(x + 1); }, None => { return None; } } return None; } function main(): i32 { let r = Some(5).mi(); match (r) { Some(x) => { return x; }, None => { return 0; } } return 0; }`},
 		{"opt-recv-method-chain-local", `function (o: Option[i32]) mi(): Option[i32] { match (o) { Some(x) => { return Some(x + 1); }, None => { return None; } } return None; } function main(): i32 { let o = Some(5); match (o.mi()) { Some(x) => { return x; }, None => { return 0; } } return 0; }`},
 		// An Option-receiver method on a struct-method's Option result, and the
-		// chain matched — opt_recv_base_type recovers a method-result receiver (#3067).
+		// chain matched (#3067).
 		{"opt-chain-on-struct-method", `struct B { v: i32 } function (b: B) find(): Option[i32] { return Some(b.v); } function (o: Option[i32]) uo(d: i32): i32 { match (o) { Some(x) => { return x; }, None => { return d; } } return d; } function main(): i32 { let b = B { v: 7 }; return b.find().uo(0); }`},
 		{"opt-chain-on-struct-method-match", `struct B { v: i32 } function (b: B) find(): Option[i32] { return Some(b.v); } function main(): i32 { let b = B { v: 9 }; match (b.find()) { Some(x) => { return x; }, None => { return 0; } } return 0; }`},
 		// An Option-receiver method on a struct's Option field or a tuple's Option
-		// element — opt_recv_base_type's ExprFieldAccess arm recovers it (#3070).
+		// element (#3070).
 		{"opt-method-on-struct-field", `struct B { v: Option[i32] } function (o: Option[i32]) uo(d: i32): i32 { match (o) { Some(x) => { return x; }, None => { return d; } } return d; } function main(): i32 { let b = B { v: Some(7) }; return b.v.uo(0); }`},
 		{"opt-method-on-tuple-elem", `function (o: Option[i32]) uo(d: i32): i32 { match (o) { Some(x) => { return x; }, None => { return d; } } return d; } function main(): i32 { let t = (Some(5), 3); return t.0.uo(0) + t.1; }`},
-		// An enum-receiver method returning Option, matched/chained — the opt-result
-		// recovery sites gained an expr_enum_type fallback (#3077).
+		// An enum-receiver method returning Option, matched/chained (#3077).
 		{"enum-method-opt-result-match", `enum E { V(i32), N } function (e: E) get(): Option[i32] { match (e) { V(x) => { return Some(x); }, N => { return None; } } return None; } function main(): i32 { match (V(7).get()) { Some(x) => { return x; }, None => { return 0; } } return 0; }`},
 		{"enum-method-opt-result-chain", `enum E { V(i32), N } function (e: E) get(): Option[i32] { match (e) { V(x) => { return Some(x); }, N => { return None; } } return None; } function (o: Option[i32]) uo(d: i32): i32 { match (o) { Some(x) => { return x; }, None => { return d; } } return d; } function main(): i32 { return V(6).get().uo(0) + N.get().uo(9); }`},
 		// A match-EXPRESSION in value position (`return match (...) { arm => E }`)
-		// on a call-returning Option/Result. lower_iife_match now recovers the
-		// scrutinee's Option/Result type via try_opt_type (not ExprIdent-only), so
-		// the call scrutinee lowers instead of bailing to AST (#3081).
+		// on a call-returning Option/Result scrutinee (#3081).
 		{"match-expr-call-result-ok", `function f(n: i32): Result[i32, i32] { return Ok(n); } function main(): i32 { return match (f(5)) { Ok(v) => v, Err(e) => e }; }`},
 		{"match-expr-call-result-err", `function f(n: i32): Result[i32, i32] { if (n > 0) { return Ok(n); } return Err(99); } function main(): i32 { return match (f(0)) { Ok(v) => v, Err(e) => e }; }`},
 		{"match-expr-call-option", `function f(n: i32): Option[i32] { if (n > 0) { return Some(n); } return None; } function main(): i32 { return match (f(7)) { Some(v) => v, None => 13 }; }`},
-		// An UNANNOTATED nested Option local (`let a = Some(Some(5))`) records its
-		// "Option[Option[i32]]" type via some_opt_type (the nested-Option bail was
-		// lifted), so the outer match binds `b` as Option[i32] (mark_opt_type) and the
-		// inner `match (b)` recovers its payload — the whole thing lowers (#3106).
+		// An UNANNOTATED nested Option local (`let a = Some(Some(5))`): the outer
+		// match binds `b` as Option[i32] and the inner `match (b)` recovers its
+		// payload (#3106).
 		{"nested-opt-unannot", `function main(): i32 { let a = Some(Some(5)); match (a) { Some(b) => { return match (b) { Some(v) => v, None => 1 }; }, None => { return 2; } } return 9; }`},
 		{"nested-opt-unannot-inner-expr", `function main(): i32 { let a = Some(Some(42)); match (a) { Some(b) => { return match (b) { Some(v) => v * 2, None => 1 }; }, None => { return 2; } } return 9; }`},
 		// The value-position (match-EXPRESSION) form of the nested-Option match: the
-		// outer `Some(b)` binds b: Option[i32]. lower_iife_match now admits a nested-
-		// Option payload into an i32 temp for an ident scrutinee, so the inner
-		// `match (b)` lowers instead of bailing (#3111).
+		// outer `Some(b)` binds b: Option[i32] and the inner `match (b)` recovers
+		// its payload (#3111).
 		{"nested-opt-expr-ident", `function main(): i32 { let a = Some(Some(5)); return match (a) { Some(b) => match (b) { Some(v) => v, None => 1 }, None => 2 }; }`},
 		{"nested-opt-expr-ident-derived", `function main(): i32 { let a = Some(Some(21)); return match (a) { Some(b) => match (b) { Some(v) => v * 2, None => 1 }, None => 2 }; }`},
-		// A match-EXPRESSION on a direct `Some(x)` construction scrutinee. try_opt_type
-		// (shared by lower_iife_match and the `?` operator) now falls back to
-		// some_opt_type for a direct Some construction, so it lowers instead of
-		// bailing (#3115).
+		// A match-EXPRESSION on a direct `Some(x)` construction scrutinee (#3115).
 		{"match-expr-some-construct", `function main(): i32 { return match (Some(6)) { Some(w) => w, None => 0 }; }`},
 		{"match-expr-some-construct-derived", `function main(): i32 { return match (Some(20)) { Some(w) => w + 1, None => 0 }; }`},
 		{"match-expr-arm-some-construct", `function main(): i32 { let o = Some(5); return match (o) { Some(v) => match (Some(v + 1)) { Some(w) => w, None => 0 }, None => 0 }; }`},
-		// A match-EXPRESSION whose scrutinee is an Option-typed tuple element (t.0):
-		// try_opt_type now resolves a numeric (tuple-element) field via
-		// expr_tuple_elem_tag, mirroring the main StmtMatch path (#3118).
+		// A match-EXPRESSION whose scrutinee is an Option-typed tuple element (t.0)
+		// (#3118).
 		{"match-expr-tuple-elem0", `function main(): i32 { let t = (Some(5), 3); return match (t.0) { Some(v) => v, None => 0 } + t.1; }`},
 		{"match-expr-tuple-elem1", `function main(): i32 { let t = (3, Some(8)); return match (t.1) { Some(v) => v, None => 0 } + t.0; }`},
-		// A match-EXPRESSION whose scrutinee is an Option-array element (a[i]):
-		// try_opt_type gained an ExprIndex case recovering the element type from the
-		// array slot's Option[T][] opt-type, mirroring the main StmtMatch path (#3121).
+		// A match-EXPRESSION whose scrutinee is an Option-array element (a[i])
+		// (#3121).
 		{"match-expr-arr-elem0", `function main(): i32 { let a = [Some(5)]; return match (a[0]) { Some(v) => v, None => 0 }; }`},
 		{"match-expr-arr-elem-idx", `function main(): i32 { let a = [Some(3), Some(8)]; let i = 1; return match (a[i]) { Some(v) => v, None => 0 }; }`},
 		{"match-expr-arr-field-elem", `struct B { xs: Option[i32][] } function main(): i32 { let b = B { xs: [Some(4), None] }; return match (b.xs[0]) { Some(v) => v, None => 0 }; }`},
 		// An unannotated Option bound from an if-/match-EXPRESSION (which desugars to
-		// an IIFE): the StmtVar opt-type inference now recovers o's Option type from
-		// the first branch's Some(...) via iife_first_return_expr, so the later
-		// match (o) lowers (#3124).
+		// an IIFE): the later match (o) recovers the payload (#3124).
 		{"ifexpr-opt-bind-some", `function main(): i32 { let x = 5; let o = if (x > 3) { Some(7) } else { None }; match (o) { Some(v) => { return v; }, None => { return 0; } } return 9; }`},
 		{"ifexpr-opt-bind-none", `function main(): i32 { let x = 1; let o = if (x > 3) { Some(7) } else { None }; match (o) { Some(v) => { return v; }, None => { return 42; } } return 9; }`},
 		{"matchexpr-opt-bind", `function main(): i32 { let e = 2; let o = match (e) { 1 => Some(10), _ => Some(20) }; match (o) { Some(v) => { return v; }, None => { return 0; } } return 9; }`},
-		// A struct bound from an if-/match-EXPRESSION (IIFE): the StmtVar struct-type
-		// inference now recovers p's struct type from the first branch's struct
-		// literal, so p.field resolves (the struct sibling of #3124) (#3133).
+		// A struct bound from an if-/match-EXPRESSION (IIFE): p.field resolves (the
+		// struct sibling of #3124) (#3133).
 		{"ifexpr-struct-bind", `struct P { x: i32 } function main(): i32 { let c = 5; let p = if (c > 3) { P { x: 7 } } else { P { x: 1 } }; return p.x; }`},
 		{"ifexpr-struct-bind-else", `struct P { x: i32, y: i32 } function main(): i32 { let c = 1; let p = if (c > 3) { P { x: 7, y: 2 } } else { P { x: 1, y: 0 } }; return p.x + p.y; }`},
 		{"matchexpr-struct-bind", `struct P { x: i32 } function main(): i32 { let c = 1; let p = match (c) { 1 => P { x: 9 }, _ => P { x: 0 } }; return p.x; }`},
-		// A struct ARRAY bound from an if-/match-EXPRESSION (IIFE): the StmtVar
-		// inference now records the element struct type and marks the slot is_arr, so
-		// ps[i].field / ps.len() resolve (the struct-array sibling of #3133) (#3138).
+		// A struct ARRAY bound from an if-/match-EXPRESSION (IIFE): ps[i].field /
+		// ps.len() resolve (the struct-array sibling of #3133) (#3138).
 		{"ifexpr-struct-arr-bind", `struct P { x: i32 } function main(): i32 { let c = 5; let ps = if (c > 3) { [P { x: 7 }] } else { [P { x: 1 }] }; return ps[0].x; }`},
 		{"ifexpr-struct-arr-len", `struct P { x: i32 } function main(): i32 { let c = 5; let ps = if (c > 3) { [P { x: 7 }, P { x: 8 }] } else { [P { x: 1 }] }; return ps.len() + ps[1].x; }`},
 		{"matchexpr-struct-arr-bind", `struct P { x: i32 } function main(): i32 { let k = 1; let ps = match (k) { 1 => [P { x: 9 }], _ => [P { x: 0 }] }; return ps[0].x; }`},
-		// for-in / .len() over an array bound from an if-/match-EXPRESSION: the StmtVar
-		// is_arr inference now marks the slot is_arr for an IIFE-array result, so the
-		// foreach lowers (indexing already worked without is_arr) (#3141).
+		// for-in / .len() over an array bound from an if-/match-EXPRESSION (#3141).
 		{"ifexpr-arr-foreach", `function main(): i32 { let c = 5; let a = if (c > 3) { [1, 2, 3] } else { [4] }; let s = 0; for x in a { s = s + x; } return s; }`},
 		{"ifexpr-arr-len", `function main(): i32 { let c = 5; let a = if (c > 3) { [1, 2, 3] } else { [4] }; return a.len(); }`},
 		{"matchexpr-arr-foreach", `function main(): i32 { let k = 1; let a = match (k) { 1 => [10, 20], _ => [1] }; let s = 0; for x in a { s = s + x; } return s; }`},
-		// An Option array bound from an if-/match-EXPRESSION (IIFE): the StmtVar
-		// opt-array inference now records the slot's Option[T][] from the first
-		// branch's array literal, so match (a[i]) / for o in a recover the element
-		// payload (the Option-array sibling of #3141) (#3146).
+		// An Option array bound from an if-/match-EXPRESSION (IIFE): match (a[i]) /
+		// for o in a recover the element payload (the Option-array sibling of #3141)
+		// (#3146).
 		{"ifexpr-optarr-index", `function main(): i32 { let c = 5; let a = if (c > 3) { [Some(7), None] } else { [Some(1)] }; return match (a[0]) { Some(v) => v, None => 0 }; }`},
 		{"ifexpr-optarr-foreach", `function main(): i32 { let c = 5; let a = if (c > 3) { [Some(7), None, Some(3)] } else { [Some(1)] }; let s = 0; for o in a { match (o) { Some(v) => { s = s + v; }, None => {} } } return s; }`},
 		{"matchexpr-optarr-index", `function main(): i32 { let k = 1; let a = match (k) { 1 => [Some(9)], _ => [Some(0)] }; return match (a[0]) { Some(v) => v, None => 0 }; }`},
 		// A binding from a NESTED if-/match-expression (a branch is itself an
-		// if-expression): iife_leaf_value unwraps the nested IIFE chain so the StmtVar
-		// type inference sees the leaf struct/Some/array literal (#3156).
+		// if-expression) whose leaf is a struct/Some/array literal (#3156).
 		{"nested-ifexpr-opt", `function main(): i32 { let c = 5; let o = if (c > 3) { if (c > 10) { Some(1) } else { Some(7) } } else { None }; return match (o) { Some(v) => v, None => 0 }; }`},
 		{"nested-ifexpr-struct", `struct P { x: i32 } function main(): i32 { let c = 5; let p = if (c > 3) { if (c > 10) { P { x: 1 } } else { P { x: 7 } } } else { P { x: 0 } }; return p.x; }`},
 		{"nested-ifexpr-arr", `function main(): i32 { let c = 5; let a = if (c > 3) { if (c > 10) { [1] } else { [7, 8] } } else { [0] }; let s = 0; for x in a { s = s + x; } return s; }`},
-		// A match whose scrutinee is directly an if-/match-EXPRESSION (a 0-arg IIFE):
-		// both the main StmtMatch scrutinee resolution and try_opt_type now recover
-		// the Option type via iife_leaf_value + some_opt_type (#3161).
+		// A match whose scrutinee is directly an if-/match-EXPRESSION (a 0-arg IIFE)
+		// of Option type, as a statement and as an expression (#3161).
 		{"match-scrut-ifexpr-some", `function main(): i32 { let c = 5; return match (if (c > 3) { Some(7) } else { None }) { Some(v) => v, None => 0 }; }`},
 		{"match-scrut-ifexpr-none", `function main(): i32 { let c = 1; return match (if (c > 3) { Some(7) } else { None }) { Some(v) => v, None => 9 }; }`},
 		{"stmt-match-scrut-ifexpr", `function main(): i32 { let c = 5; match (if (c > 3) { Some(7) } else { None }) { Some(v) => { return v; }, None => { return 0; } } return 9; }`},
 		// An if-/match-expression binding whose branch returns an Option-typed LOCAL
-		// (not a fresh Some): the StmtVar opt-IIFE inference falls back to the leaf
-		// ident's tracked opt_type_of_slot (#3165).
+		// (not a fresh Some) (#3165).
 		{"ifexpr-ret-optvar", `function f(c: i32): Option[i32] { if (c > 3) { return Some(7); } return None; } function main(): i32 { let o = f(5); let r = if (true) { o } else { None }; return match (r) { Some(v) => v, None => 0 }; }`},
 		{"matchexpr-ret-optvar", `function main(): i32 { let o = Some(8); let k = 1; let r = match (k) { 1 => o, _ => o }; return match (r) { Some(v) => v, None => 0 }; }`},
-		// A tuple literal with an if-/match-EXPRESSION element: the tuple lowering now
-		// classifies each element by its leaf branch value via iife_leaf_value, so an
-		// IIFE element is admitted with the right kind tag (#3172).
+		// A tuple literal with an if-/match-EXPRESSION element (#3172).
 		{"tuple-ifexpr-elem0", `function main(): i32 { let c = 5; let t = (if (c > 3) { 7 } else { 1 }, 3); return t.0 + t.1; }`},
 		{"tuple-ifexpr-elem1", `function main(): i32 { let c = 1; let t = (3, if (c > 3) { 7 } else { 1 }); return t.0 + t.1; }`},
 		{"tuple-matchexpr-elem", `function main(): i32 { let k = 1; let t = (match (k) { 1 => 5, _ => 0 }, 3); return t.0 + t.1; }`},
 		// A struct array field set from an if-/match-EXPRESSION whose every branch is
-		// a fresh array literal (iife_returns_fresh_array): admitted as an owned value
-		// (#3179). An aliased branch is refused (verified by probe).
+		// a fresh array literal (#3179).
 		{"struct-fld-ifexpr-arr", `struct B { xs: i32[] } function main(): i32 { let c = 5; let b = B { xs: if (c > 3) { [1, 2, 3] } else { [4] } }; return b.xs.len(); }`},
 		{"struct-fld-ifexpr-arr-else", `struct B { xs: i32[] } function main(): i32 { let c = 1; let b = B { xs: if (c > 3) { [1, 2, 3] } else { [4, 5] } }; return b.xs.len(); }`},
 		{"struct-fld-matchexpr-arr", `struct B { xs: i32[] } function main(): i32 { let k = 1; let b = B { xs: match (k) { 1 => [7, 8, 9], _ => [0] } }; return b.xs.len() + b.xs[0]; }`},
-		// An array literal whose element is an if-/match-EXPRESSION struct: the StmtVar
-		// struct-array inference classifies the first element by its leaf branch via
-		// iife_leaf_value, so a[i].field resolves (#3183).
+		// An array literal whose element is an if-/match-EXPRESSION struct: a[i].field
+		// resolves (#3183).
 		{"arr-ifexpr-struct-elem", `struct P { x: i32 } function main(): i32 { let c = 5; let a = [if (c > 3) { P { x: 7 } } else { P { x: 1 } }]; return a[0].x; }`},
 		{"arr-ifexpr-struct-foreach", `struct P { x: i32 } function main(): i32 { let c = 5; let a = [if (c > 3) { P { x: 7 } } else { P { x: 1 } }, P { x: 2 }]; let s = 0; for p in a { s = s + p.x; } return s; }`},
 		{"arr-matchexpr-struct-elem", `struct P { x: i32 } function main(): i32 { let k = 1; let a = [match (k) { 1 => P { x: 9 }, _ => P { x: 0 } }]; return a[0].x; }`},
 		// Field access / method dispatch directly on an if-/match-EXPRESSION:
-		// expr_struct_type now resolves an IIFE value's struct type via
-		// iife_leaf_value, so `(if (c) { P{..} } else { .. }).field` lowers (#3186).
+		// `(if (c) { P{..} } else { .. }).field` (#3186).
 		{"ifexpr-field-direct", `struct P { x: i32 } function main(): i32 { let c = 5; return (if (c > 3) { P { x: 7 } } else { P { x: 1 } }).x; }`},
 		{"ifexpr-method-direct", `struct P { x: i32 } function (p: P) g(): i32 { return p.x; } function main(): i32 { let c = 5; return (if (c > 3) { P { x: 7 } } else { P { x: 1 } }).g(); }`},
 		{"matchexpr-field-direct", `struct P { x: i32 } function main(): i32 { let k = 1; return (match (k) { 1 => P { x: 9 }, _ => P { x: 0 } }).x; }`},
-		// Iterating an Option-array struct field — the leak-safe-field foreach
-		// opt-types the loop var so match(o) recovers the payload (#3056).
+		// Iterating an Option-array struct field: match(o) on the loop var recovers
+		// the payload (#3056).
 		{"opt-arr-field-foreach-i32", `struct B { xs: Option[i32][] } function main(): i32 { let b = B { xs: [Some(1), Some(2), None] }; let n = 0; for o in b.xs { match (o) { Some(x) => { n = n + x; }, None => {} } } return n; }`},
 		{"opt-arr-field-foreach-string", `struct B { xs: Option[string][] } function main(): i32 { let b = B { xs: [Some("ab"), None, Some("c")] }; let n = 0; for o in b.xs { match (o) { Some(s) => { n = n + s.len(); }, None => {} } } return n; }`},
 		// A 2D struct/enum array — the annotation records the innermost element
@@ -590,12 +529,11 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// recursing into the inner literal (#3061, unannotated sibling of #3058).
 		{"arr2d-struct-unannot", `struct P { x: i32 } function main(): i32 { let a = [[P { x: 1 }], [P { x: 2 }, P { x: 3 }]]; let n = 0; for row in a { for p in row { n = n + p.x; } } return n; }`},
 		{"arr2d-enum-unannot", `enum C { A, B } function main(): i32 { let a = [[C.A], [C.B, C.A]]; let n = 0; for row in a { for c in row { match (c) { C.A => { n = n + 1; }, C.B => { n = n + 2; } } } } return n; }`},
-		// Unannotated 2D Option-array literal — element opt-type inferred by
-		// recursing into the inner literal (#3074, depth-2 sibling of #3027).
+		// Unannotated 2D Option-array literal (#3074, depth-2 sibling of #3027).
 		{"arr2d-opt-unannot-i32", `function main(): i32 { let a = [[Some(1)], [Some(2), None]]; let n = 0; for row in a { for o in row { match (o) { Some(x) => { n = n + x; }, None => {} } } } return n; }`},
 		{"arr2d-opt-unannot-string", `function main(): i32 { let a = [[Some("ab")], [None, Some("c")]]; let n = 0; for row in a { for o in row { match (o) { Some(s) => { n = n + s.len(); }, None => {} } } } return n; }`},
-		// A 2D-array param — the param setup marks it is_arrarr and extracts the
-		// innermost struct/enum element type for the nested foreach (#3064).
+		// A 2D-array param — the nested foreach sees the innermost struct/enum
+		// element type (#3064).
 		{"arr2d-param-i32", `function sum(a: i32[][]): i32 { let n = 0; for row in a { for x in row { n = n + x; } } return n; } function main(): i32 { return sum([[1, 2], [3]]); }`},
 		{"arr2d-param-struct", `struct P { x: i32 } function sum(a: P[][]): i32 { let n = 0; for row in a { for p in row { n = n + p.x; } } return n; } function main(): i32 { return sum([[P { x: 5 }], [P { x: 6 }]]); }`},
 		{"arr2d-param-enum", `enum C { A, B } function cnt(a: C[][]): i32 { let n = 0; for row in a { for c in row { match (c) { C.A => { n = n + 1; }, C.B => { n = n + 2; } } } } return n; } function main(): i32 { return cnt([[C.A], [C.B, C.A]]); }`},
@@ -605,13 +543,13 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"ret-struct-arr-foreach", `struct P { x: i32 } function mk(): P[] { return [P { x: 1 }, P { x: 2 }]; } function main(): i32 { let a = mk(); let n = 0; for p in a { n = n + p.x; } return n; }`},
 		{"ret-struct-arr-method", `struct P { x: i32 } function (p: P) g(): i32 { return p.x * 2; } function mk(): P[] { return [P { x: 3 }, P { x: 4 }]; } function main(): i32 { let a = mk(); let n = 0; for p in a { n = n + p.g(); } return n; }`},
 		{"ret-struct-arr-twofield", `struct P { x: i32, y: i32 } function mk(): P[] { return [P { x: 1, y: 10 }, P { x: 2, y: 20 }]; } function main(): i32 { let a = mk(); return a[1].x + a[1].y; }`},
-		// A method returning a struct array (#3042, method sibling of #3037) — the
-		// call-site marks the result is_arr so a[i].field / foreach resolve.
+		// A method returning a struct array (#3042, method sibling of #3037):
+		// a[i].field / foreach resolve.
 		{"method-ret-struct-arr-index", `struct P { x: i32 } struct B { n: i32 } function (b: B) items(): P[] { return [P { x: 1 }, P { x: 2 }]; } function main(): i32 { let b = B { n: 5 }; let a = b.items(); return a[0].x + a[1].x; }`},
 		{"method-ret-struct-arr-foreach", `struct P { x: i32 } struct B { n: i32 } function (b: B) items(): P[] { return [P { x: b.n }, P { x: b.n + 1 }]; } function main(): i32 { let b = B { n: 5 }; let a = b.items(); let s = 0; for p in a { s = s + p.x; } return s; }`},
 		{"method-ret-struct-arr-method", `struct P { x: i32 } struct B { n: i32 } function (p: P) g(): i32 { return p.x * 2; } function (b: B) items(): P[] { return [P { x: 1 }, P { x: 2 }]; } function main(): i32 { let b = B { n: 5 }; let a = b.items(); let s = 0; for p in a { s = s + p.g(); } return s; }`},
-		// A struct-/enum-array enum payload — the match binding marks the slot
-		// is_arr + element type so ps[i].field / foreach resolve (#3046).
+		// A struct-/enum-array enum payload — ps[i].field / foreach over the match
+		// binding resolve (#3046).
 		{"enum-payload-struct-arr-index", `struct P { x: i32 } enum E { Items(P[]), Nil } function f(e: E): i32 { match (e) { Items(ps) => { return ps[0].x; }, Nil => { return 0; } } return 0; } function main(): i32 { return f(Items([P { x: 7 }])); }`},
 		{"enum-payload-struct-arr-foreach", `struct P { x: i32 } enum E { Items(P[]), Nil } function f(e: E): i32 { match (e) { Items(ps) => { let n = 0; for p in ps { n = n + p.x; } return n; }, Nil => { return 0; } } return 0; } function main(): i32 { return f(Items([P { x: 3 }, P { x: 4 }])); }`},
 		{"enum-payload-enum-arr", `enum C { A, B } enum E { Cells(C[]), Nil } function f(e: E): i32 { match (e) { Cells(cs) => { match (cs[0]) { C.A => { return 1; }, C.B => { return 2; } } }, Nil => { return 0; } } return 0; } function main(): i32 { return f(Cells([C.B])); }`},
@@ -620,7 +558,7 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"tuple-4-destructure", `function main(): i32 { let (a, b, c, d) = (1, 2, 3, 4); return a + b + c + d; }`},
 		{"tuple-3-mixed-destructure", `function main(): i32 { let (s, n, m) = ("hi", 5, 10); return s.len() + n + m; }`},
 		{"tuple-3-local-destructure", `function main(): i32 { let t = (7, 8, 9); let (a, b, c) = t; return a + b * c; }`},
-		{"tuple-3-ret-destructure", `function three(): (i32, i32, i32) { return (4, 5, 6); } function main(): i32 { let (a, b, c) = three(); return a * 100 + b * 10 + c; }`},
+		{"tuple-3-ret-destructure", `function three(): (i32, i32, i32) { return (4, 5, 6); } function main(): i32 { let (a, b, c) = three(); return a * 10 + b * 3 + c; }`},
 		{"struct-ret-basic", `struct P { x: i32, y: i32 } function mk(): P { return P { x: 3, y: 4 }; } function main(): i32 { let p = mk(); return p.x * 10 + p.y; }`},
 		{"struct-ret-param", `struct P { x: i32, y: i32 } function mk(a: i32): P { return P { x: a, y: a * 2 }; } function main(): i32 { let p = mk(5); return p.x + p.y; }`},
 		{"struct-ret-direct-field", `struct P { x: i32, y: i32 } function mk(a: i32): P { return P { x: a, y: a + 1 }; } function main(): i32 { return mk(7).x + mk(7).y; }`},
@@ -645,17 +583,15 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"f64-cast-from-int", `function main(): i32 { let n: i32 = 3; let x: f64 = (n as f64) + 0.5; if (x > 3.0) { return 8; } return 0; }`},
 		{"f64-cast-roundtrip", `function main(): i32 { let n: i32 = 10; let x: f64 = n as f64; let y: f64 = x / 4.0; return y as i32; }`},
 		{"f64-cast-mixed-param", `function f(a: f64, n: i32): f64 { return a + (n as f64); } function main(): i32 { let r: f64 = f(1.5, 2); return r as i32; }`},
-		// if-EXPRESSION in value position (#2938): inlined as a value-producing
-		// void `if` on the wasm IR path (`if` + temp local), no IIFE/closure.
+		// if-EXPRESSION in value position (#2938).
 		{"ifexpr-var", `function main(): i32 { let x = 5; let y = if (x > 3) { 10 } else { 20 }; return y; }`},
 		{"ifexpr-return", `function main(): i32 { let x = 5; return if (x > 3) { 10 } else { 20 }; }`},
 		{"ifexpr-else-if", `function main(): i32 { let x = 2; let y = if (x == 1) { 10 } else if (x == 2) { 20 } else { 30 }; return y; }`},
 		{"ifexpr-capture-expr", `function main(): i32 { let n = 7; let y = if (n > 5) { n + 1 } else { 0 }; return y; }`},
 		{"ifexpr-nested-in-binary", `function main(): i32 { let a = 3; return (if (a > 0) { 5 } else { 6 }) + (if (a > 10) { 1 } else { 2 }); }`},
 		{"matchexpr-literal", `function main(): i32 { let n = 2; let y = match (n) { 1 => 10, 2 => 20, _ => 0 }; return y; }`},
-		// ENUM match-EXPRESSION in value position (#2938 follow-up): IIFE inlined,
-		// StmtMatch body lowered via the full variant dispatch; unit-variant arms
-		// with an i32 result (payload-binding arms still bail).
+		// ENUM match-EXPRESSION in value position (#2938 follow-up): unit-variant
+		// arms with an i32 result.
 		{"matchexpr-enum-unit", `enum C { A, B, X } function main(): i32 { let c: C = X; let y = match (c) { A => 1, B => 2, X => 3 }; return y; }`},
 		{"matchexpr-enum-in-binary", `enum C { A, B } function main(): i32 { let c: C = A; return match (c) { A => 5, B => 6 } + 100; }`},
 		{"matchexpr-enum-return-arg", `enum C { Red, Green, Blue } function pick(c: C): i32 { return match (c) { Red => 1, Green => 2, Blue => 3 }; } function main(): i32 { return pick(Green) * 10; }`},
@@ -722,56 +658,46 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"enum-unit", `enum E { A(i32), B } function f(e: E): i32 { match (e) { A(n) => { return n * 2; }, B => { return 9; } } return 0; } function main(): i32 { return f(B); }`},
 		{"enum-three", `enum Shape { Circle(i32), Square(i32), Empty } function area(s: Shape): i32 { match (s) { Circle(r) => { return r + 1; }, Square(w) => { return w * 2; }, Empty => { return 7; } } return 99; } function main(): i32 { return area(Circle(4)) + area(Square(5)) + area(Empty); }`},
 		{"enum-wildcard", `enum E { A(i32), B, C } function f(e: E): i32 { match (e) { A(n) => { return n; }, _ => { return 100; } } return 0; } function main(): i32 { return f(B); }`},
-		// A struct method call — the shape that used to be out of the IR subset
-		// and route to the AST emitter under -ir.
+		// A struct method call.
 		{"method-dispatch", "struct P { x: i32 } pub function (p: P) get(): i32 { return p.x; } function main(): i32 { let p = P { x: 42 }; return p.get(); }"},
-		// string.split(sep) -> string[] (op_str_split). The wasm IR path emits the
-		// narrow str_split_helper ($__fern_str_split + a private $__fern_arr_push)
-		// plus substr_helper; the AST path uses the full strcat_helpers bundle's
-		// $__fern_str_split — segment counts / element lengths must match.
-		{"split-count", `function main(): i32 { let p = "a,b,c".split(","); return p.len(); }`},
-		{"split-first-len", `function main(): i32 { let p = "foo,bar,baz".split(","); return p[0].len(); }`},
-		{"split-elem-lens", `function main(): i32 { let p = "a,bb,ccc".split(","); return p[0].len() + p[1].len() + p[2].len(); }`},
-		{"split-multichar-sep", `function main(): i32 { let p = "axxbxxc".split("xx"); return p.len() * 10 + p[2].len(); }`},
-		{"split-no-match", `function main(): i32 { let p = "abc".split(","); return p.len() * 10 + p[0].len(); }`},
-		{"split-empty-sep", `function main(): i32 { let p = "abc".split(""); return p.len() * 10 + p[0].len(); }`},
-		{"split-trailing-sep", `function main(): i32 { let p = "a,b,".split(","); return p.len(); }`},
-		{"split-loop-sum", `function main(): i32 { let p = "a,bb,ccc,dddd".split(","); let s = 0; let i = 0; while (i < p.len()) { s = s + p[i].len(); i = i + 1; } return s; }`},
-		{"split-forin", `function main(): i32 { let s = 0; for part in "x,yy,zzz".split(",") { s = s + part.len(); } return s; }`},
-		{"split-param", `function nfields(s: string): i32 { return s.split(",").len(); } function main(): i32 { return nfields("a,b,c,d"); }`},
-		{"split-direct-index", `function main(): i32 { return "one,two,three".split(",")[1].len(); }`},
+		// string.split(sep) -> string[] (op_str_split), via wasm_ir's
+		// str_split_helper ($__fern_str_split + a private $__fern_arr_push) plus
+		// substr_helper.
+		{"split-count", `import "std/string"; function main(): i32 { let p = "a,b,c".split(","); return p.len(); }`},
+		{"split-first-len", `import "std/string"; function main(): i32 { let p = "foo,bar,baz".split(","); return p[0].len(); }`},
+		{"split-elem-lens", `import "std/string"; function main(): i32 { let p = "a,bb,ccc".split(","); return p[0].len() + p[1].len() + p[2].len(); }`},
+		{"split-multichar-sep", `import "std/string"; function main(): i32 { let p = "axxbxxc".split("xx"); return p.len() * 10 + p[2].len(); }`},
+		{"split-no-match", `import "std/string"; function main(): i32 { let p = "abc".split(","); return p.len() * 10 + p[0].len(); }`},
+		{"split-empty-sep", `import "std/string"; function main(): i32 { let p = "abc".split(""); return p.len() * 10 + p[0].len(); }`},
+		{"split-trailing-sep", `import "std/string"; function main(): i32 { let p = "a,b,".split(","); return p.len(); }`},
+		{"split-loop-sum", `import "std/string"; function main(): i32 { let p = "a,bb,ccc,dddd".split(","); let s = 0; let i = 0; while (i < p.len()) { s = s + p[i].len(); i = i + 1; } return s; }`},
+		{"split-forin", `import "std/string"; function main(): i32 { let s = 0; for part in "x,yy,zzz".split(",") { s = s + part.len(); } return s; }`},
+		{"split-param", `import "std/string"; function nfields(s: string): i32 { return s.split(",").len(); } function main(): i32 { return nfields("a,b,c,d"); }`},
+		{"split-direct-index", `import "std/string"; function main(): i32 { return "one,two,three".split(",")[1].len(); }`},
 		{"fstring-esc-brace", `function main(): i32 { let s = f"a{{b"; return s[1] as i32; }`},
-		// ASCII case transforms → fresh string (op_str_to_upper / _to_lower). The
-		// wasm IR path emits the narrow str_case_helpers ($__fern_str_upper /
-		// _lower); the AST path gets them from strcat_helpers — must agree.
-		{"to-upper-len", `function main(): i32 { let s = "Hello"; return s.to_ascii_upper().len(); }`},
-		{"case-roundtrip", `function main(): i32 { let s = "Hello"; if (s.to_ascii_upper().to_ascii_lower() == "hello") { return 7; } return 0; }`},
-		// String repeat → fresh string (op_str_repeat). The wasm IR path emits the
-		// narrow str_repeat_helper; the AST path gets $__fern_str_repeat from
-		// strcat_helpers — must agree.
-		{"repeat-len", `function main(): i32 { return "ab".repeat(3).len(); }`},
-		{"repeat-one", `function main(): i32 { return "hello".repeat(1).len(); }`},
-		{"repeat-zero", `function main(): i32 { return "hello".repeat(0).len() + 9; }`},
-		{"repeat-param", `function rep(s: string, n: i32): i32 { return s.repeat(n).len(); } function main(): i32 { return rep("xyz", 4); }`},
-		// A struct-valued if-/match-EXPRESSION binding (lifted to a `__lam_N`
-		// whose return type is inferred from its struct-literal body, so the
-		// `__lam_N()` call site recovers the struct type for `.field` / method
-		// dispatch). The legacy AST path also handles these, so they use the
-		// differential gate.
+		// ASCII case transforms → fresh string (op_str_to_upper / _to_lower), via
+		// wasm_ir's str_case_helpers ($__fern_str_upper / _lower).
+		{"to-upper-len", `import "std/string"; function main(): i32 { let s = "Hello"; return s.to_ascii_upper().len(); }`},
+		{"case-roundtrip", `import "std/string"; function main(): i32 { let s = "Hello"; if (s.to_ascii_upper().to_ascii_lower() == "hello") { return 7; } return 0; }`},
+		// String repeat → fresh string (op_str_repeat), via wasm_ir's
+		// str_repeat_helper.
+		{"repeat-len", `import "std/string"; function main(): i32 { return "ab".repeat(3).len(); }`},
+		{"repeat-one", `import "std/string"; function main(): i32 { return "hello".repeat(1).len(); }`},
+		{"repeat-zero", `import "std/string"; function main(): i32 { return "hello".repeat(0).len() + 9; }`},
+		{"repeat-param", `import "std/string"; function rep(s: string, n: i32): i32 { return s.repeat(n).len(); } function main(): i32 { return rep("xyz", 4); }`},
+		// A struct-valued if-/match-EXPRESSION binding: `.field` / method dispatch
+		// on the bound local resolve.
 		{"struct-if-expr-field", `struct P { x: i32, y: i32 } function main(): i32 { let p = if (true) { P{x:1,y:2} } else { P{x:3,y:4} }; return p.x + p.y; }`},
 		{"struct-match-expr-field", `struct P { x: i32, y: i32 } function main(): i32 { let p = match (1) { 1 => P{x:10,y:2}, _ => P{x:3,y:4} }; return p.x + p.y; }`},
 		{"struct-if-expr-direct-field", `struct P { x: i32, y: i32 } function main(): i32 { return (if (true) { P{x:7,y:2} } else { P{x:3,y:4} }).x; }`},
 		{"struct-if-expr-method", `struct P { x: i32, y: i32 } function (p: P) sum(): i32 { return p.x + p.y; } function main(): i32 { let p = if (true) { P{x:1,y:2} } else { P{x:3,y:4} }; return p.sum(); }`},
-		// An enum-valued if-/match-EXPRESSION binding stays an inline IIFE (its
-		// variant constructors read as captures, so lift_lambdas leaves it as
-		// ExprLambda); expr_enum_type sees through the IIFE so the bound local
-		// types as the enum and a method call on it dispatches to <Enum>.<method>.
+		// An enum-valued if-/match-EXPRESSION binding: a method call on the bound
+		// local dispatches to <Enum>.<method>.
 		{"enum-if-expr-method", `enum Shape { Circle(i32), Square(i32) } function (s: Shape) area(): i32 { match (s) { Circle(r) => { return r * r * 3; }, Square(w) => { return w * w; } } return 0; } function main(): i32 { let s = if (true) { Circle(2) } else { Square(3) }; return s.area(); }`},
 		{"enum-match-expr-method", `enum Shape { Circle(i32), Square(i32) } function (s: Shape) area(): i32 { match (s) { Circle(r) => { return r * r * 3; }, Square(w) => { return w * w; } } return 0; } function main(): i32 { let s = match (1) { 1 => Circle(2), _ => Square(3) }; return s.area(); }`},
 		{"enum-unit-if-expr-method", `enum Color { Red, Green, Blue } function (c: Color) code(): i32 { match (c) { Red => { return 1; }, Green => { return 2; }, Blue => { return 3; } } return 0; } function main(): i32 { let c = if (false) { Red } else { Green }; return c.code(); }`},
-		// A NESTED struct-valued if-/match-EXPRESSION binding: each inner branch
-		// is itself lifted to a `__lam_M`, so fn_inferred_struct_ret recurses
-		// through the `__lam` chain to the innermost struct literal.
+		// A NESTED struct-valued if-/match-EXPRESSION binding: the struct type comes
+		// from the innermost struct literal.
 		{"struct-nested-if-expr", `struct P { x: i32, y: i32 } function main(): i32 { let p = if (true) { if (false) { P{x:1,y:2} } else { P{x:5,y:6} } } else { P{x:3,y:4} }; return p.x + p.y; }`},
 		{"struct-match-then-if-expr", `struct P { x: i32, y: i32 } function main(): i32 { let p = match (1) { 1 => if (true) { P{x:4,y:5} } else { P{x:0,y:0} }, _ => P{x:3,y:4} }; return p.x + p.y; }`},
 		// A struct-returning USER function called in each if-/match-expression
@@ -781,49 +707,39 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"struct-fncall-match-expr", `struct P { x: i32, y: i32 } function mk(v: i32): P { return P{x:v, y:v+1}; } function main(): i32 { let p = match (2) { 2 => mk(10), _ => mk(0) }; return p.x + p.y; }`},
 		// An if-/match-expression binding whose first branch CALLS an
 		// Option/Result-returning function (`if (c) { mkO(7) } else { Some(0) }`):
-		// the leaf is a call, so the bound local's opt-type is recovered from the
-		// callee's registered return type, letting a later `match (o)` lower.
+		// a later `match (o)` recovers the payload.
 		{"opt-fncall-if-expr", `function mkO(v: i32): Option[i32] { return Some(v); } function main(): i32 { let o = if (true) { mkO(7) } else { Some(0) }; match (o) { Some(n) => { return n; }, None => { return 0; } } return 0; }`},
 		{"result-fncall-if-expr", `function div(a: i32, b: i32): Result[i32, i32] { if (b == 0) { return Err(1); } return Ok(a / b); } function main(): i32 { let r = if (true) { div(20, 4) } else { Err(9) }; match (r) { Ok(n) => { return n; }, Err(e) => { return e; } } return 0; }`},
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			astCode := emitAndRun(t, tc.src, false)
-			irCode := emitAndRun(t, tc.src, true)
-			if astCode != irCode {
-				t.Errorf("wasm AST-path vs IR-path mismatch for %q: AST=%d IR=%d", tc.name, astCode, irCode)
+			_, want := runInterp(t, tc.src)
+			if got := emitAndRun(t, tc.src); got != want {
+				t.Errorf("wasm IR path %q: exit = %d, interpreter = %d", tc.name, got, want)
 			}
 		})
 	}
 
-	// IR-ONLY assertions (issue #2747 / uuid #2682). On wasm the legacy AST path
-	// types random_bytes as a u8[] array and has no as_bytes helper, so the
-	// byte-source builtins can't use the differential gate — compile only via
-	// -ir and assert structural properties. The IR path's random_bytes returns
-	// a `[len][bytes]` string block (cross-backend-consistent), str_bytes a u8[].
-	// Exit codes stay in WASI's 0..125 range. (uuidV4Program is shared.)
+	// Pinned exit codes (issue #2747 / uuid #2682): each program runs once and
+	// its exit code must match `want`. The byte-source builtins assert
+	// structural properties only. Exit codes stay in WASI's 0..125 range.
+	// (uuidV4Program is shared.)
 	irOnly := []struct {
 		name string
 		src  string
 		want int
 	}{
-		// A string-CONCAT branch in a value-position if-/match-expression: the
-		// lifted `__lam` carries a default i32 ret_type (the desugar doesn't infer
-		// `string + string : string`), so before str_ret_fns_of's body-inference a
-		// `.len()` on the result mis-dispatched to the array path — a silent
-		// miscompile (returned 56, not 4). These assert the IR value directly (the
-		// AST==IR differential is blind to a both-paths-wrong case).
+		// A string-CONCAT branch in a value-position if-/match-expression: `.len()`
+		// on the result is the string length. A mis-typed result dispatches to the
+		// array path and returns 56, not 4.
 		{"str-concat-if-expr-direct", `function main(): i32 { return (if (true) { "ab" + "cd" } else { "x" }).len(); }`, 4},
 		{"str-concat-if-expr-var", `function main(): i32 { let s = if (true) { "ab" + "cd" } else { "x" }; return s.len(); }`, 4},
 		{"str-concat-if-expr-else", `function main(): i32 { let s = if (false) { "x" } else { "ab" + "cdef" }; return s.len(); }`, 6},
 		{"str-concat-match-expr", `function main(): i32 { return (match (1) { 1 => "aa" + "bb", _ => "z" }).len(); }`, 4},
-		// A string-ARRAY-valued if-/match-expression: the lifted `__lam` carries a
-		// default i32 ret_type, so the binding was mis-treated as a scalar and the
-		// 8-byte string elements were read at i32 width — a silent miscompile
-		// (`xs[i].len()` returned 1, not the element length). array_ret_fns +
-		// strarr_ret_fns_of now infer the array element type from the __lam body.
-		// Asserted against the IR value directly (the AST==IR gate was blind).
+		// A string-ARRAY-valued if-/match-expression: the 8-byte string elements are
+		// read at full width, so `xs[i].len()` is the element length (an i32-width
+		// read returns 1).
 		{"strarr-if-expr-direct-elem", `function main(): i32 { return (if (true) { ["a", "bb"] } else { ["ccc"] })[1].len(); }`, 2},
 		{"strarr-if-expr-var-elems", `function main(): i32 { let xs = if (true) { ["a", "bb"] } else { ["ccc"] }; return xs[0].len() + xs[1].len(); }`, 3},
 		{"strarr-if-expr-forin", `function main(): i32 { let xs = if (true) { ["a", "bb", "ccc"] } else { ["z"] }; let t = 0; for s in xs { t = t + s.len(); } return t; }`, 6},
@@ -840,9 +756,9 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"opt-fncall-if-none-else", `function mkO(v: i32): Option[i32] { return Some(v); } function main(): i32 { let o = if (true) { mkO(7) } else { None }; match (o) { Some(n) => { return n; }, None => { return 0; } } return 0; }`, 7},
 		{"opt-fncall-if-call-else", `function mkO(v: i32): Option[i32] { return Some(v); } function main(): i32 { let o = if (true) { mkO(7) } else { mkO(2) }; match (o) { Some(n) => { return n; }, None => { return 0; } } return 0; }`, 7},
 		{"result-fncall-if-err-else", `function div(a: i32, b: i32): Result[i32, i32] { if (b == 0) { return Err(1); } return Ok(a / b); } function main(): i32 { let r = if (true) { div(20, 4) } else { Err(9) }; match (r) { Ok(n) => { return n; }, Err(e) => { return e; } } return 0; }`, 5},
-		// A u32 Option/Result payload, IR value pinned on wasm. The u32 `>> 31`
-		// is LOGICAL (4294967294 >> 31 = 1), so a wrong i32-arithmetic shift
-		// (-> -1) is caught — proof the bound payload is marked u32.
+		// A u32 Option/Result payload, value pinned. The u32 `>> 31` is LOGICAL
+		// (4294967294 >> 31 = 1), so a wrong i32-arithmetic shift (-> -1) is
+		// caught — proof the bound payload is typed u32.
 		{"opt-u32-payload-shift-val", `function main(): i32 { let o: Option[u32] = Some(4294967294 as u32); match (o) { Some(n) => { return (n >> 31) as i32; }, None => { return 0; } } return 0; }`, 1},
 		{"result-u32-payload-val", `struct S { r: Result[u32, i32] } function main(): i32 { let s = S { r: Ok(42) }; match (s.r) { Ok(n) => { return n as i32; }, Err(e) => { return e; } } return 0; }`, 42},
 		// u64 Option payload pinned on wasm for 8-byte WIDTH: 5000000000 `>> 32`
@@ -862,47 +778,33 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"structarr-if-expr-forin-method", `struct P { x: i32, y: i32 } function (p: P) s(): i32 { return p.x + p.y; } function main(): i32 { let ps = if (true) { [P{x:1,y:2}, P{x:3,y:4}] } else { [P{x:0,y:0}] }; let t = 0; for p in ps { t = t + p.s(); } return t; }`, 10},
 		{"structarr-match-expr-elem", `struct P { x: i32, y: i32 } function main(): i32 { let ps = match (1) { 1 => [P{x:5,y:6}], _ => [P{x:0,y:0}] }; return ps[0].x * 10 + ps[0].y; }`, 56},
 		{"structarr-fncall-if-expr", `struct P { x: i32, y: i32 } function mk(): P[] { return [P{x:5,y:6}]; } function main(): i32 { let ps = if (true) { mk() } else { mk() }; return ps[0].x + ps[0].y; }`, 11},
-		// A struct-ARRAY tuple element (`([P { .. }], x)`): the element's recorded
-		// `P[]` tuple tag lets `t.0[i].field` / `t.0[i].method()` recover the
-		// element struct type (the array sibling of the struct-field-array case).
-		// The struct-array element constructs as a leak-only pointer slot. The
-		// self-host AST path also mishandled the indexed field read, so these pin
-		// the absolute IR value. #3353.
+		// A struct-ARRAY tuple element (`([P { .. }], x)`): `t.0[i].field` /
+		// `t.0[i].method()` resolve (the array sibling of the struct-field-array
+		// case). #3353.
 		{"tuple-structarr-elem-field", `struct P { x: i32 } function main(): i32 { let t = ([P{x:5}], 3); return t.0[0].x + t.1; }`, 8},
 		{"tuple-structarr-elem-multi", `struct P { x: i32, y: i32 } function main(): i32 { let t = ([P{x:5,y:6}, P{x:7,y:8}], 100); return t.0[0].x + t.0[1].y + t.1; }`, 113},
 		{"tuple-structarr-elem-method", `struct P { x: i32 } function (p: P) dbl(): i32 { return p.x * 2; } function main(): i32 { let t = ([P{x:5}], 3); return t.0[0].dbl() + t.1; }`, 13},
-		// A string[] tuple element (`(["a","b"], x)`): the element's recorded
-		// `string[]` tuple tag lets `t.0[i]` read as a string (`.len()`) and a
-		// rebind `let xs = t.0` recover the string[] type. The element is a heap
-		// pointer in one slot; the self-host AST path mishandled it (and refused it
-		// at construction), so these pin the absolute IR value. #3353.
+		// A string[] tuple element (`(["a","b"], x)`): `t.0[i]` reads as a string
+		// (`.len()`) and a rebind `let xs = t.0` keeps the string[] type. #3353.
 		{"tuple-strarr-elem-len", `function main(): i32 { let t = (["ab","cd"], 3); return t.0[1].len() + t.1; }`, 5},
 		{"tuple-strarr-elem-two", `function main(): i32 { let t = (["ab","cd"], 3); return t.0[0].len() + t.0[1].len() + t.1; }`, 7},
 		{"tuple-strarr-elem-rebind", `function main(): i32 { let t = (["ab","cd"], 3); let xs = t.0; return xs[1].len() + t.1; }`, 5},
-		// An f64[] tuple element (`([1.5, 2.5], x)`): the element's recorded `f64[]`
-		// tuple tag lets `t.0[i]` read an 8-byte f64 (arr_get width 64) and a rebind
-		// `let xs = t.0` recover the f64[] type. The element is a heap pointer in one
-		// slot; the self-host AST path mishandled it (and refused it at
-		// construction), so these pin the absolute IR value. #3353.
+		// An f64[] tuple element (`([1.5, 2.5], x)`): `t.0[i]` reads an 8-byte f64
+		// (arr_get width 64) and a rebind `let xs = t.0` keeps the f64[] type. #3353.
 		{"tuple-f64arr-elem-index", `function main(): i32 { let t = ([1.5, 2.5], 3); return (t.0[1] as i32) + t.1; }`, 5},
 		{"tuple-f64arr-elem-sum", `function main(): i32 { let t = ([1.5, 2.5, 4.0], 10); let s = 0.0; let i = 0; while (i < 3) { s = s + t.0[i]; i = i + 1; } return (s as i32) + t.1; }`, 18},
 		{"tuple-f64arr-elem-rebind", `function main(): i32 { let t = ([1.5, 2.5], 3); let xs = t.0; return (xs[1] as i32) + t.1; }`, 5},
-		// An i64[]/u64[] tuple element (`([x as i64], y)`): the element's recorded
-		// `i64[]` tuple tag lets `t.0[i]` read an 8-byte i64 (arr_get_i64) and a
-		// rebind recover the i64[] type. The literal is identified by its unambiguous
-		// 64-bit first element (a bare integer literal stays i32). The element is a
-		// heap pointer in one slot stored at 8-byte stride (op_arr_make_i64); the
-		// self-host AST path bailed it at construction, so these pin the IR value.
-		// On wasm32 the i64[] element pointer is stored as a 4-byte tuple slot
-		// (kind "i64[]", not "i64"), then arr_get_i64 reads the 8-byte element. #3353.
+		// An i64[]/u64[] tuple element (`([x as i64], y)`): `t.0[i]` reads an 8-byte
+		// i64 and a rebind keeps the i64[] type. The literal is i64[] by its 64-bit
+		// first element (a bare integer literal stays i32). On wasm32 the array
+		// pointer is a 4-byte tuple slot; its elements are 8 bytes. #3353.
 		{"tuple-i64arr-elem-index", `function main(): i32 { let t = ([10 as i64, 20 as i64], 3); return (t.0[1] as i32) + t.1; }`, 23},
 		{"tuple-i64arr-elem-two", `function main(): i32 { let t = ([10 as i64, 20 as i64], 3); return (t.0[0] as i32) + (t.0[1] as i32) + t.1; }`, 33},
 		{"tuple-i64arr-elem-rebind", `function main(): i32 { let t = ([10 as i64, 20 as i64], 3); let xs = t.0; return (xs[1] as i32) + t.1; }`, 23},
 		{"tuple-u64arr-elem-index", `function main(): i32 { let t = ([10 as u64, 20 as u64], 3); return (t.0[1] as i32) + t.1; }`, 23},
-		// An UNANNOTATED i64 array literal binding (`let xs = [10 as i64, …]`): the
-		// first element is i64-wide, so the slot is inferred i64[] and lowers the
-		// same as the annotated `let xs: i64[] = …` (arr_make_i64 + 8-byte element
-		// reads) instead of bailing to AST. #3353.
+		// An UNANNOTATED i64 array literal binding (`let xs = [10 as i64, …]`) is
+		// an i64[], read with 8-byte elements like the annotated
+		// `let xs: i64[] = …`. #3353.
 		{"i64arr-unannot-index", `function main(): i32 { let xs = [10 as i64, 20 as i64]; let q: i64 = xs[0] + xs[1]; return q as i32; }`, 30},
 		{"i64arr-unannot-while", `function main(): i32 { let xs = [1 as i64, 2 as i64, 3 as i64]; let s: i64 = 0 as i64; let i = 0; while (i < 3) { s = s + xs[i]; i = i + 1; } return s as i32; }`, 6},
 		{"i64arr-unannot-forin", `function main(): i32 { let xs = [10 as i64, 20 as i64]; let s: i64 = 0 as i64; for x in xs { s = s + x; } return s as i32; }`, 30},
@@ -911,32 +813,28 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"random-i32-varies", `function main(): i32 { let a: i32 = random_i32(); let b: i32 = random_i32(); if (a == b) { return 1; } return 7; }`, 7},
 		{"as-bytes-vals", `function main(): i32 { let b = "ABC".as_bytes(); if (b.len() != 3) { return 20; } if (b[0] != 65) { return 21; } if (b[2] != 67) { return 22; } return 5; }`, 5},
 		{"uuid-v4", uuidV4Program, 0},
-		// String trim (op_str_trim) → fresh whitespace-stripped string. wasm's AST
-		// path has no trim, so it can't use the differential gate — the wasm IR
-		// path emits the dedicated str_trim_helper (a copying trim, since wasm
-		// strings are inline). Assert the trimmed length / first byte directly.
+		// String trim (op_str_trim) → fresh whitespace-stripped string, via
+		// wasm_ir's str_trim_helper (a copying trim). Asserts the trimmed length /
+		// first byte.
 		{"trim-both", `function main(): i32 { return "  hi  ".trim().len(); }`, 2},
 		{"trim-tabs-nl", `function main(): i32 { return "\t\n ab \r\n".trim().len(); }`, 2},
 		{"trim-none", `function main(): i32 { return "abc".trim().len(); }`, 3},
 		{"trim-all-ws", `function main(): i32 { return "    ".trim().len() + 5; }`, 5},
 		{"trim-param", `function tn(s: string): i32 { return s.trim().len(); } function main(): i32 { return tn("  padded  "); }`, 6},
-		// String replace (op_str_replace) -> fresh string. wasm AST has no replace,
-		// so IR-only (dedicated str_replace_helper).
+		// String replace (op_str_replace) -> fresh string (str_replace_helper).
 		{"replace-len", `function main(): i32 { return "a-b-c".replace("-", "_").len(); }`, 5},
 		{"replace-grow", `function main(): i32 { return "aaa".replace("a", "bb").len(); }`, 6},
 		{"replace-shrink", `function main(): i32 { return "axbxc".replace("x", "").len(); }`, 3},
 		{"replace-nomatch", `function main(): i32 { return "abc".replace("z", "Q").len(); }`, 3},
 		{"replace-empty-old", `function main(): i32 { return "abc".replace("", "X").len(); }`, 3},
-		// String lines (op_str_lines) -> string[]. wasm AST has no lines, so IR-only.
+		// String lines (op_str_lines) -> string[].
 		{"lines-3", `function main(): i32 { return "a\nb\nc".lines().len(); }`, 3},
 		{"lines-trailing-nl", `function main(): i32 { return "a\nb\nc\n".lines().len(); }`, 3},
 		{"lines-none", `function main(): i32 { return "hello".lines().len(); }`, 1},
 		{"lines-empty", `function main(): i32 { return "".lines().len() + 4; }`, 4},
-		// Range-for `for i in LOW..HIGH` (#2699 self-host IR slice). The legacy
-		// AST wasm path has no range desugar, so this uses the IR-only gate:
-		// the parser emits __range(LOW, HIGH) and the lowering lowers a counted loop
-		// to wasm block/loop/br_if. Half-open, HIGH bound once, empty/reversed
-		// ranges run zero iterations.
+		// Range-for `for i in LOW..HIGH` (#2699): the parser emits
+		// __range(LOW, HIGH), lowered to a counted wasm block/loop/br_if. Half-open,
+		// HIGH bound once, empty/reversed ranges run zero iterations.
 		{"range-sum", "function main(): i32 { let s = 0; for i in 0..5 { s = s + i; } return s; }", 10},
 		{"range-count", "function main(): i32 { let c = 0; for i in 0..10 { c = c + 1; } return c; }", 10},
 		{"range-nonzero-low", "function main(): i32 { let s = 0; for i in 3..7 { s = s + i; } return s; }", 18},
@@ -959,17 +857,13 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"rangei-nested", "function main(): i32 { let t = 0; for i in 0..=2 { for j in 0..=2 { t = t + 1; } } return t; }", 9},
 		{"rangei-continue", "function main(): i32 { let s = 0; for i in 0..=10 { if (i == 3) { continue; } s = s + i; } return s; }", 52},
 		// Multi-payload variant binds: a `Pt(x, y)` arm binds EVERY payload
-		// field (struct_get at successive indices), not just the first. The
-		// legacy AST emitter binds only field 0, so these use the IR-only
-		// gate against the native interp's value.
+		// field (struct_get at successive indices), not just the first.
 		{"match-multi-bind", `enum P { Pt(i32, i32), Origin } function f(p: P): i32 { match (p) { Pt(x, y) => { return x * y; }, Origin => { return 0; } } return 0; } function main(): i32 { return f(Pt(6, 7)); }`, 42},
 		{"match-multi-bind-three", `enum T { Tri(i32, i32, i32), Empty } function f(t: T): i32 { match (t) { Tri(a, b, c) => { return a + b * c; }, Empty => { return 0; } } return 0; } function main(): i32 { return f(Tri(1, 2, 3)); }`, 7},
 		{"match-multi-bind-mixed", `enum M { Kv(string, i32), None2 } function f(m: M): i32 { match (m) { Kv(k, v) => { return k.len() + v; }, None2 => { return 0; } } return 0; } function main(): i32 { return f(Kv("hello", 5)); }`, 10},
 		{"match-multi-bind-skip", `enum P { Pt(i32, i32), Origin } function f(p: P): i32 { match (p) { Pt(_, y) => { return y; }, Origin => { return 0; } } return 0; } function main(): i32 { return f(Pt(6, 7)); }`, 7},
 		// Multi-payload variant arm in a value-position match-EXPRESSION
-		// (`return match (e) { Pair(a, b) => a + b }`): lower_iife_match now admits
-		// an arm with extra_bindings when every payload is i32 (#3193). The legacy
-		// AST emitter mishandles this (segfaults), so these use the IR-only gate.
+		// (`return match (e) { Pair(a, b) => a + b }`) (#3193).
 		{"match-expr-multi-bind", `enum E { Pair(i32, i32) } function main(): i32 { let e = E.Pair(3, 4); return match (e) { Pair(a, b) => a + b }; }`, 7},
 		{"match-expr-multi-2var", `enum E { Pair(i32, i32), Single(i32) } function main(): i32 { let e = E.Single(9); return match (e) { Pair(a, b) => a + b, Single(x) => x }; }`, 9},
 		{"match-expr-multi-wildcard", `enum E { Pair(i32, i32) } function main(): i32 { let e = E.Pair(3, 4); return match (e) { Pair(_, b) => b }; }`, 4},
@@ -978,8 +872,8 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// and uses the existing StmtWhile IR lowering on wasm.
 		{"loop-break", "function main(): i32 { let i = 0; loop { i = i + 1; if (i >= 7) { break; } } return i; }", 7},
 		{"loop-continue", "function main(): i32 { let i = 0; let s = 0; loop { i = i + 1; if (i > 10) { break; } if (i % 2 == 1) { continue; } s = s + i; } return s; }", 30},
-		// Type ascription on the IR path (#2669): `e as T[]` is a zero-cost
-		// annotation lowered as identity (the array operand carries the value).
+		// Type ascription (#2669): `e as T[]` is a zero-cost annotation lowered as
+		// identity (the array operand carries the value).
 		{"asc-arr-nonempty", "function main(): i32 { let a = [3, 4] as i32[]; return a[0] + a[1]; }", 7},
 		{"asc-arr-empty", "function main(): i32 { let a = [] as i32[]; a = [5, 10]; return a[0] + a[1]; }", 15},
 		{"asc-arr-len", "function main(): i32 { let a = [] as i32[]; return a.len(); }", 0},
@@ -992,13 +886,11 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		{"asc-ret", "function make(): i32[] { let a = [10, 20, 30]; return a as i32[]; } function main(): i32 { let x = make(); return x[0] + x[2]; }", 40},
 		{"asc-nested-index", "function main(): i32 { let a = [3, 4]; return (a as i32[])[0] + (a as i32[])[1]; }", 7},
 		{"asc-str-method", "function main(): i32 { return (\"hello\" as string).len(); }", 5},
-		// Ascription to an Option / Result target (#2669): the parser now keeps
-		// the generic args in the cast op name (`as_Option[i32]`), so a binding
+		// Ascription to an Option / Result target (#2669): the parser keeps the
+		// generic args in the cast op name (`as_Option[i32]`), so a binding
 		// `let x = None as Option[i32]` rebinds to `let x: Option[i32] = None`
-		// (payload type intact) and lowers through the IR path instead of
-		// bailing on the payload-less `let x: Option = None`. bare-None binding,
-		// the Some operand (carries its own payload), and the return / nested
-		// non-binding positions.
+		// (payload type intact). Covers the bare-None binding, the Some operand
+		// (carries its own payload), and the return / nested non-binding positions.
 		{"asc-none-opt-bind", "function main(): i32 { let x = None as Option[i32]; return match (x) { Some(v) => v, None => 7 }; }", 7},
 		{"asc-some-opt-bind", "function main(): i32 { let x = Some(5) as Option[i32]; return match (x) { Some(v) => v, None => 7 }; }", 5},
 		{"asc-none-opt-ret", "function f(): Option[i32] { return None as Option[i32]; } function main(): i32 { return match (f()) { Some(v) => v, None => 7 }; }", 7},
@@ -1024,14 +916,13 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 		// Re-binding the SAME name across two match arms (issue #2644). Each
 		// arm (guarded `Rect(p)` then unguarded `Rect(p)`) must get its own
 		// binding slot so the guard reads the right `p.x` and the fall-through
-		// arm reads its own `p`. Value assertions through the IR path: the bug
-		// was a wrong VALUE, so an AST/IR equality check alone wouldn't catch it.
+		// arm reads its own `p`. The bug was a wrong VALUE, so the exit code is
+		// pinned.
 		{"match-rebind-struct", `struct P { x: i32, y: i32 } enum Shape { Dot, Rect(P) } function area(s: Shape): i32 { match (s) { Rect(p) when p.x > 0 => { return p.x * p.y; }, Rect(p) => { return p.y + 100; }, Dot => { return 1; } } return 0; } function main(): i32 { return area(Rect(P { x: 0, y: 5 })); }`, 105},
 		{"match-rebind-i32", `enum E { A(i32), B } function g(e: E): i32 { match (e) { A(n) when n > 100 => { return n - 100; }, A(n) => { return n * 3; }, B => { return 0; } } return 0; } function main(): i32 { return g(A(7)) + g(A(150)); }`, 71},
-		// match-EXPRESSION arm passing a bound NON-SCALAR payload as a call argument
-		// (#3498): the value-position gate admits an i32-returning free-fn call whose
-		// args borrow the payload, so a recursive-list `sum` (`Cons(h, t) => h +
-		// sum(t)`) and a struct-payload `V(p) => g(p)` use the i32 result temp.
+		// match-EXPRESSION arm passing a bound NON-SCALAR payload as an argument to
+		// an i32-returning free-function call (#3498): a recursive-list `sum`
+		// (`Cons(h, t) => h + sum(t)`) and a struct-payload `V(p) => g(p)`.
 		{"match-expr-recursive-sum", `enum L { C(i32, L), N } function sum(l: L): i32 { return match (l) { C(h, t) => h + sum(t), N => 0 }; } function main(): i32 { return sum(C(1, C(2, C(3, N)))); }`, 6},
 		{"match-expr-struct-payload-call", `struct S { v: i32 } enum E { A(S), N } function g(s: S): i32 { return s.v; } function f(e: E): i32 { return match (e) { A(s) => g(s), N => 0 }; } function main(): i32 { return f(A(S { v: 5 })); }`, 5},
 		// The wasm string runtime matches the register backends' Fern helpers:
@@ -1043,7 +934,7 @@ func TestSelfHostWasmIRPath(t *testing.T) {
 	}
 	for _, tc := range irOnly {
 		t.Run(tc.name, func(t *testing.T) {
-			if got := emitAndRun(t, tc.src, true); got != tc.want {
+			if got := emitAndRun(t, tc.src); got != tc.want {
 				t.Errorf("wasm IR path %q: exit = %d, want %d", tc.name, got, tc.want)
 			}
 		})

@@ -539,12 +539,6 @@ func builtinEnumDecls() []*ast.EnumDecl {
 // because we don't have opaque types yet, and because users
 // may need it for FFI escape hatches; it isn't part of the
 // stable surface.
-// BuiltinStructDecls is the exported view of builtinStructDecls, for the
-// layers that must lay one of these structs out by hand: `internal/oracle/ir`
-// derives FileStat's field offsets from it so the four backends that
-// build that struct in assembly share one source for the numbers.
-func BuiltinStructDecls() []*ast.StructDecl { return builtinStructDecls() }
-
 func builtinStructDecls() []*ast.StructDecl {
 	return []*ast.StructDecl{
 		{
@@ -17631,11 +17625,12 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		if id, ok := n.Callee.(*ast.Ident); ok {
 			vr, vrOk, vrMulti := c.resolveVariant(id.Name, id.EnumName)
+			nameTaken := c.isUserFuncOrLocal(id.Name, s)
 			// A bare variant shared by multiple enum clones (#3693) is
 			// disambiguated by the destination's expected enum, snapshotted
 			// into `callExpected` above (the live field was cleared there so
 			// it can't leak into the args).
-			if vrMulti && id.EnumName == "" {
+			if vrMulti && id.EnumName == "" && !nameTaken {
 				if en := c.monomorphCloneEnumName(callExpected); en != "" {
 					if vr2, ok2, _ := c.resolveVariant(id.Name, en); ok2 {
 						vr, vrOk, vrMulti = vr2, true, false
@@ -17643,7 +17638,10 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					}
 				}
 			}
-			isVar := vrOk && !c.isUserFuncOrLocal(id.Name, s)
+			// Qualification selects an enum even when its variant's bare name
+			// is bound to a function or local. Only an unshadowed bare call
+			// may acquire qualification from its destination above.
+			isVar := vrOk && (id.EnumName != "" || !nameTaken)
 			// Bare-name reference to a variant that lives in two
 			// or more enums — the call site has to qualify.
 			// Report once, then fall through (vrOk=false) so the

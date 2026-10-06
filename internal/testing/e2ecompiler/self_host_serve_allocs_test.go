@@ -1,7 +1,6 @@
 package e2ecompiler
 
 import (
-	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,12 +14,12 @@ import (
 // the pin.
 func TestSelfHostServeAllocsPerRequest(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	port := selfHostFreePort(t)
 	src := filepath.Join(t.TempDir(), "main.fern")
-	if err := os.WriteFile(src, []byte(e2eharness.ServeAllocsServerSource(port)), 0o644); err != nil {
+	if err := os.WriteFile(src, []byte(e2eharness.ServeAllocsServerSource()), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	bin := cli.x86Binary(t, src, "FERN_STRICT_IR=1")
-	e2eharness.StartServerProcess(t, runX86_64Bin(cli.runner, bin))
-	e2eharness.CheckServeAllocs(t, fmt.Sprintf("127.0.0.1:%d", port), 13)
+	cmd := runX86_64Bin(cli.runner, bin)
+	addr, _ := e2eharness.StartInheritedServer(t, cmd)
+	e2eharness.CheckServeAllocs(t, addr, 10)
 }

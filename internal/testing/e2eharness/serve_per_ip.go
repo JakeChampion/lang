@@ -11,7 +11,7 @@ import (
 
 // PerIPCapServerSource is a supervised server with one worker that lets a
 // client hold two connections (`max_connections_per_ip: 2`).
-func PerIPCapServerSource(port int) string {
+func PerIPCapServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
 import "std/platform";
@@ -19,9 +19,9 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return serve.supervise(%d, serve.Config { ...serve.config(), workers: 1, max_connections_per_ip: 2 }, handle);
+    return serve.supervise(0, serve.Config { ...serve.config(), workers: 1, max_connections_per_ip: 2 }, handle);
 }
-`, port)
+`)
 }
 
 // CheckPerIPCap drives PerIPCapServerSource: two idle connections from

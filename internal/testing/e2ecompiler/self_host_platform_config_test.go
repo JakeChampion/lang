@@ -1,7 +1,6 @@
 package e2ecompiler
 
 import (
-	"fmt"
 	"os/exec"
 	"testing"
 
@@ -9,12 +8,11 @@ import (
 )
 
 func TestSelfHostPlatformConfigFromEnv(t *testing.T) {
-	port := selfHostFreePort(t)
 	bin, runner := selfHostServer(t, e2eharness.ConfigHandlerSource())
 	cmd := binCmd(runner, bin)
-	cmd.Env = append(append(cmd.Environ(), fmt.Sprintf("PORT=%d", port)), e2eharness.ConfigHandlerEnv...)
-	e2eharness.StartServerProcess(t, cmd)
-	e2eharness.CheckConfigHandler(t, fmt.Sprintf("127.0.0.1:%d", port))
+	cmd.Env = append(cmd.Environ(), e2eharness.ConfigHandlerEnv...)
+	addr, _ := e2eharness.StartInheritedServer(t, cmd)
+	e2eharness.CheckConfigHandler(t, addr)
 }
 
 func TestSelfHostPlatformConfigFromWasiConfig(t *testing.T) {

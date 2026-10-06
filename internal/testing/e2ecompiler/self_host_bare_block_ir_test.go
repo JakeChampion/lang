@@ -9,8 +9,8 @@ import (
 )
 
 // TestSelfHostBareBlockIR covers a bare block statement `{ ... }` (its own
-// scope) through the self-hosted x86-64 compiler on both the AST path and
-// the IR path. The self-host Stmt union has no StmtBlock, so the parser
+// scope) through the self-hosted x86-64 compiler. The self-host Stmt union
+// has no StmtBlock, so the parser
 // desugars a statement-position `{` to `if (true) { ... }` (the same trick
 // `loop` uses for `while (true)`). Parsing it as StmtUnknown silently drops
 // its inner statements (issue #2821).
@@ -20,34 +20,26 @@ func TestSelfHostBareBlockIR(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	emitAndRun := func(t *testing.T, src string, ir bool) int {
+	emitAndRun := func(t *testing.T, src string) int {
 		t.Helper()
-		args := []string{}
-		if ir {
-			args = append(args, "-ir")
-		}
 		var cmd *exec.Cmd
 		if len(runner) == 0 {
-			cmd = exec.Command(driverBin, args...)
+			cmd = exec.Command(driverBin)
 		} else {
-			cmd = exec.Command(runner[0], append(append(append([]string{}, runner[1:]...), driverBin), args...)...)
+			cmd = exec.Command(runner[0], append(append([]string{}, runner[1:]...), driverBin)...)
 		}
 		cmd.Stdin = bytes.NewReader([]byte(src))
 		emitted, err := cmd.Output()
 		if err != nil || len(emitted) == 0 {
-			t.Fatalf("driver failed (ir=%v) for %q: %v", ir, src, err)
+			t.Fatalf("driver failed for %q: %v", src, err)
 		}
-		tag := "ast"
-		if ir {
-			tag = "ir"
-		}
-		innerAsm := filepath.Join(dir, tag+"_inner.s")
-		innerBin := filepath.Join(dir, tag+"_inner")
+		innerAsm := filepath.Join(dir, "inner.s")
+		innerBin := filepath.Join(dir, "inner")
 		if err := os.WriteFile(innerAsm, emitted, 0o644); err != nil {
 			t.Fatalf("write inner asm: %v", err)
 		}
 		if out, err := exec.Command(gcc, "-static", "-nostdlib", "-no-pie", innerAsm, "-o", innerBin).CombinedOutput(); err != nil {
-			t.Fatalf("inner gcc (ir=%v): %v\n%s", ir, err, out)
+			t.Fatalf("inner gcc: %v\n%s", err, out)
 		}
 		var inner *exec.Cmd
 		if len(runner) == 0 {
@@ -57,7 +49,7 @@ func TestSelfHostBareBlockIR(t *testing.T) {
 		}
 		_ = inner.Run()
 		if inner.ProcessState == nil || !inner.ProcessState.Exited() {
-			t.Fatalf("inner did not exit normally (ir=%v) for %q", ir, src)
+			t.Fatalf("inner did not exit normally for %q", src)
 		}
 		return inner.ProcessState.ExitCode()
 	}
@@ -74,13 +66,8 @@ func TestSelfHostBareBlockIR(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			astCode := emitAndRun(t, tc.src, false)
-			irCode := emitAndRun(t, tc.src, true)
-			if astCode != irCode {
-				t.Errorf("AST-path vs IR-path mismatch for %q: AST=%d IR=%d", tc.name, astCode, irCode)
-			}
-			if irCode != tc.want {
-				t.Errorf("self-host %q: exit = %d, want %d", tc.name, irCode, tc.want)
+			if got := emitAndRun(t, tc.src); got != tc.want {
+				t.Errorf("self-host %q: exit = %d, want %d", tc.name, got, tc.want)
 			}
 		})
 	}

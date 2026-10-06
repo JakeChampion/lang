@@ -1685,6 +1685,7 @@ func New() *Interp {
 	i.Builtins["wasm_timer_pollable"] = &Builtin{Fn: builtinWasmTimerPollable}
 	i.Builtins["wasm_block"] = &Builtin{Fn: builtinWasmBlock}
 	i.Builtins["wasm_poll"] = &Builtin{Fn: builtinWasmPoll}
+	i.inheritListener()
 	return i
 }
 
@@ -1943,6 +1944,25 @@ func negErrno(err error) Value {
 		return Number(-int64(errno))
 	}
 	return Number(-1)
+}
+
+// inheritListener takes descriptor 3 as listener handle 3 when LISTEN_FDS
+// announces one, the convention std/serve's __listener_of reads: the
+// compiled runtimes serve descriptor 3 itself, and here handle 3 names it.
+// Handles allocated afterwards are numbered past it.
+func (i *Interp) inheritListener() {
+	n, err := strconv.Atoi(os.Getenv("LISTEN_FDS"))
+	if err != nil || n < 1 {
+		return
+	}
+	f := os.NewFile(3, "LISTEN_FDS")
+	ln, err := net.FileListener(f)
+	f.Close()
+	if err != nil {
+		return
+	}
+	i.tcpListeners = map[int64]tcpListenerHandle{3: ln}
+	i.tcpNextHandle = 3
 }
 
 func builtinTcpListenWith(i *Interp, args []Value) (Value, error) {
@@ -8377,17 +8397,19 @@ func (i *Interp) evalCall(c *ast.Call, env *env) (Value, error) {
 		// disambiguated bare-name calls) and build an Enum value
 		// with the evaluated payloads.
 		if ed, idx, ok := i.findVariantOn(id.Name, id.EnumName); ok {
-			if _, shadowed := env.get(id.Name); !shadowed {
-				if _, isFn := i.Funcs[id.Name]; !isFn {
-					if got, want := len(args), len(ed.Variants[idx].Payloads); got != want {
-						return nil, fmt.Errorf("interp: variant %s expects %d argument(s), got %d",
-							id.Name, want, got)
-					}
-					for _, p := range args {
-						storeArray(p)
-					}
-					return &Enum{EnumName: ed.Name, VariantName: id.Name, Index: idx, Payloads: args}, nil
+			_, shadowed := env.get(id.Name)
+			_, isFn := i.Funcs[id.Name]
+			// Checked constructor identity survives qualification and
+			// lexical shadowing. Keep name lookup for unchecked REPL calls.
+			if c.IsVariantCall || (!shadowed && !isFn) {
+				if got, want := len(args), len(ed.Variants[idx].Payloads); got != want {
+					return nil, fmt.Errorf("interp: variant %s expects %d argument(s), got %d",
+						id.Name, want, got)
 				}
+				for _, p := range args {
+					storeArray(p)
+				}
+				return &Enum{EnumName: ed.Name, VariantName: id.Name, Index: idx, Payloads: args}, nil
 			}
 		}
 		if b, ok := i.Builtins[id.Name]; ok {

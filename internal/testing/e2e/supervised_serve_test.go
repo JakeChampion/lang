@@ -9,8 +9,6 @@
 package e2e
 
 import (
-	"fmt"
-	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -21,19 +19,6 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// freeLoopbackPort asks the kernel for a free TCP port and
-// releases it — the standard e2e probe-listener trick.
-func freeLoopbackPort(t *testing.T) int {
-	t.Helper()
-	probe, err := net.Listen("tcp", "127.0.0.1:0")
-	if err != nil {
-		t.Fatalf("no free TCP port: %v", err)
-	}
-	port := probe.Addr().(*net.TCPAddr).Port
-	probe.Close()
-	return port
-}
-
 // Design-doc "interp parity": the interpreter cannot bare-fork
 // (Go's runtime is threaded), so proc_fork answers -38 (ENOSYS)
 // and serve.supervise degrades to plain single-process
@@ -43,31 +28,11 @@ func freeLoopbackPort(t *testing.T) int {
 // host a long-running server).
 func TestSupervisedServeInterpFallback(t *testing.T) {
 	bin := buildLangBinForInterp(t)
-	port := freeLoopbackPort(t)
-
-	dir := t.TempDir()
-	srcPath := filepath.Join(dir, "srv.fern")
-	if err := os.WriteFile(srcPath, []byte(e2eharness.TrappingServerSource(port)), 0o644); err != nil {
+	srcPath := filepath.Join(t.TempDir(), "srv.fern")
+	if err := os.WriteFile(srcPath, []byte(e2eharness.TrappingServerSource(0)), 0o644); err != nil {
 		t.Fatalf("write src: %v", err)
 	}
-	cmd := exec.Command(bin, "-interp", srcPath)
-	stderrPath := filepath.Join(dir, "stderr.log")
-	errFile, err := os.Create(stderrPath)
-	if err != nil {
-		t.Fatalf("create stderr file: %v", err)
-	}
-	cmd.Stderr = errFile
-	if err := cmd.Start(); err != nil {
-		errFile.Close()
-		t.Fatalf("start interp server: %v", err)
-	}
-	t.Cleanup(func() {
-		_ = cmd.Process.Kill()
-		_, _ = cmd.Process.Wait()
-		errFile.Close()
-	})
-
-	addr := fmt.Sprintf("127.0.0.1:%d", port)
+	addr, stderrPath := e2eharness.StartInheritedServer(t, exec.Command(bin, "-interp", srcPath))
 	e2eharness.WaitServerReady(t, addr, 30*time.Second) // interp startup is slower than a native binary
 
 	if resp := e2eharness.HTTPRoundTrip(t, addr, "/ok", 10*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {

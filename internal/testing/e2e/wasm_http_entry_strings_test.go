@@ -95,3 +95,17 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 		}
 	}
 }
+
+// freeLoopbackPort asks the kernel for a free TCP port and releases it, for
+// a server such as `wasmtime serve` that binds its own address and cannot be
+// handed a listener.
+func freeLoopbackPort(t *testing.T) int {
+	t.Helper()
+	probe, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("no free TCP port: %v", err)
+	}
+	port := probe.Addr().(*net.TCPAddr).Port
+	probe.Close()
+	return port
+}

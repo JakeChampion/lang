@@ -107,6 +107,13 @@ function main(): i32 {
     let v: Result[i32, i32] = Ok(0i32);
     return (match (v) { Ok(0i32) when (f(((x: i32) => 274i32)) > 3i32) => 42i32, Ok(a) => 7i32, Err(e) => 9i32 });
 }`, 42},
+	// The guard's lambda inside an array literal argument, the shape seed 82671
+	// generated.
+	{"lambda-array-in-enum-match-guard", `function f(gs: ((i32) => i32)[]): i32 { return gs[0](1i32); }
+function main(): i32 {
+    let v: Result[i32, i32] = Ok(819i32);
+    return (match (v) { Ok(a) when (f([((x: i32) => 274i32)]) > 3i32) => 42i32, Ok(b) => 7i32, Err(e) => 9i32 });
+}`, 42},
 	// A value-position `if` of lambdas handed through a generic passthrough to
 	// a fn-typed parameter. The passthrough boxing took only a bare lambda or
 	// fn name, so the arms stayed raw. Reduced from nightly seed 78232.

@@ -11261,9 +11261,9 @@ pub function render_type_ref(t: TypeRef): string {
   return inner;
 }
 
-// split_dunder splits a joined instantiation key like `i32__string`
-// into its per-type-parameter concrete pieces. Concrete type names
-// never contain `__`, so a literal scan is unambiguous.
+// split_dunder splits a `__`-joined string into its tokens. A type name can
+// hold `__` itself, so an instantiation key is split by `split_key`, which
+// regroups the tokens.
 function split_dunder(s: string): string[] {
   let out: string[] = [];
   let start: i32 = 0;
@@ -11278,6 +11278,97 @@ function split_dunder(s: string): string[] {
     i = i + 1;
   }
   out = out.append(slice_unchecked(s, start, s.len()) + "");
+  return out;
+}
+
+// split_key splits a joined instantiation key into `n` per-parameter pieces.
+// `__` is the joiner, but a piece can hold `__` of its own: a module-qualified
+// type (`idle__Idle3`) or a nested clone (`Box__i32`). So a run of tokens is
+// one piece where it names a declared struct or enum, taking that type's own
+// arguments with it where it is generic, and every other token is a piece by
+// itself. A key whose tokens already number `n` splits as `split_dunder` does.
+function split_key(s: string, n: i32, structs: StructDecl[], enums: EnumDecl[]): string[] {
+  if (n <= 1) {
+    return [s];
+  }
+  let tokens: string[] = split_dunder(s);
+  if (tokens.len() <= n) {
+    return tokens;
+  }
+  let g: Grouped = group_tokens(tokens, 0, n, tokens.len() - n, structs, enums);
+  if (g.pieces.len() != n || g.at != tokens.len()) {
+    return tokens;
+  }
+  return g.pieces;
+}
+
+// The pieces grouped so far and the token the next one starts at.
+struct Grouped { pieces: string[], at: i32 }
+
+// `n` pieces from tokens[at..], with `spare` tokens to spend beyond one per
+// piece.
+function group_tokens(tokens: string[], at0: i32, n: i32, spare0: i32, structs: StructDecl[], enums: EnumDecl[]): Grouped {
+  let pieces: string[] = [];
+  let at: i32 = at0;
+  let spare: i32 = spare0;
+  while (pieces.len() < n && at < tokens.len()) {
+    let one: Grouped = take_piece(tokens, at, spare, structs, enums);
+    spare = spare - (one.at - at - 1);
+    pieces = pieces.append(one.pieces[0]);
+    at = one.at;
+  }
+  return Grouped { pieces: pieces, at: at };
+}
+
+// One piece from tokens[at..]: the longest run of up to `spare` tokens past
+// the first that names a declared struct or enum, with that type's arguments
+// grouped after it where it is generic; else the one token.
+function take_piece(tokens: string[], at: i32, spare: i32, structs: StructDecl[], enums: EnumDecl[]): Grouped {
+  let k: i32 = spare;
+  while (k >= 0) {
+    let end: i32 = at + k + 1;
+    let cand: string = join_dunder(tokens, at, end);
+    let params: i32 = declared_params(cand, structs, enums);
+    if (params == 0) {
+      return Grouped { pieces: [cand], at: end };
+    }
+    if (params > 0 && spare - k - params >= 0) {
+      let args: Grouped = group_tokens(tokens, end, params, spare - k - params, structs, enums);
+      if (args.pieces.len() == params) {
+        return Grouped { pieces: [cand + "__" + join_dunder(args.pieces, 0, params)], at: args.at };
+      }
+    }
+    k = k - 1;
+  }
+  return Grouped { pieces: [tokens[at]], at: at + 1 };
+}
+
+// How many type parameters the declared struct or enum `name` takes, or -1
+// when nothing declares it.
+function declared_params(name: string, structs: StructDecl[], enums: EnumDecl[]): i32 {
+  for sd in structs {
+    if (sd.name == name) {
+      return sd.type_params.len();
+    }
+  }
+  for ed in enums {
+    if (ed.name == name) {
+      return ed.type_params.len();
+    }
+  }
+  return 0 - 1;
+}
+
+function join_dunder(xs: string[], from: i32, to: i32): string {
+  let out: string = "";
+  let i: i32 = from;
+  while (i < to) {
+    if (i > from) {
+      out = out + "__";
+    }
+    out = out + xs[i];
+    i = i + 1;
+  }
   return out;
 }
 
@@ -11331,7 +11422,7 @@ function spelling_mentions_tparam(name: string, tparams: string[]): boolean {
   return false;
 }
 
-function bind_unify(pattern: string, concrete: string, tparams: string[], binds: MEnv): MEnv {
+function bind_unify(pattern: string, concrete: string, tparams: string[], binds: MEnv, funcs: MFns): MEnv {
   if (tp_index(pattern, tparams) >= 0) {
     if (binds.elook(pattern).len() == 0 && concrete.len() > 0) {
       return binds.ebind(pattern, concrete);
@@ -11339,12 +11430,12 @@ function bind_unify(pattern: string, concrete: string, tparams: string[], binds:
     return binds;
   }
   if (type_ends_arr(pattern) && type_ends_arr(concrete)) {
-    return bind_unify(slice_unchecked(pattern, 0, pattern.len() - 2), slice_unchecked(concrete, 0, concrete.len() - 2), tparams, binds);
+    return bind_unify(slice_unchecked(pattern, 0, pattern.len() - 2), slice_unchecked(concrete, 0, concrete.len() - 2), tparams, binds, funcs);
   }
   if (spelling_is_view(pattern)) {
     let elem: string = array_method_element(concrete);
     if (elem.len() > 0) {
-      return bind_unify(array_method_element(pattern), elem, tparams, binds);
+      return bind_unify(array_method_element(pattern), elem, tparams, binds, funcs);
     }
   }
   // Tuple pattern `(K, V)` vs `(i32, i32)` — destructure the parens and unify
@@ -11359,7 +11450,7 @@ function bind_unify(pattern: string, concrete: string, tparams: string[], binds:
       let tb: MEnv = binds;
       let tj: i32 = 0;
       while (tj < tpparts.len()) {
-        tb = bind_unify(tpparts[tj], tcparts[tj], tparams, tb);
+        tb = bind_unify(tpparts[tj], tcparts[tj], tparams, tb, funcs);
         tj = tj + 1;
       }
       return tb;
@@ -11375,10 +11466,10 @@ function bind_unify(pattern: string, concrete: string, tparams: string[], binds:
       let fb: MEnv = binds;
       let fj: i32 = 0;
       while (fj < fpp.len()) {
-        fb = bind_unify(fpp[fj], fcp[fj], tparams, fb);
+        fb = bind_unify(fpp[fj], fcp[fj], tparams, fb, funcs);
         fj = fj + 1;
       }
-      return bind_unify(callable_ret_spelling(pattern), callable_ret_spelling(concrete), tparams, fb);
+      return bind_unify(callable_ret_spelling(pattern), callable_ret_spelling(concrete), tparams, fb, funcs);
     }
   }
   let pb: i32 = first_bracket(pattern);
@@ -11391,7 +11482,7 @@ function bind_unify(pattern: string, concrete: string, tparams: string[], binds:
         let b: MEnv = binds;
         let j: i32 = 0;
         while (j < pparts.len()) {
-          b = bind_unify(pparts[j], cparts[j], tparams, b);
+          b = bind_unify(pparts[j], cparts[j], tparams, b, funcs);
           j = j + 1;
         }
         return b;
@@ -11402,24 +11493,20 @@ function bind_unify(pattern: string, concrete: string, tparams: string[], binds:
   // already-MANGLED clone name (`Box__i32`) — a nested generic value whose
   // literal was rewritten before this key inference (a generic struct/enum
   // field of another generic struct). Recover the concrete's type args from
-  // the `__`-mangled key and unify. A single-param pattern takes the whole
-  // key as one arg (it may itself be a mangled nested clone); a multi-param
-  // pattern splits unambiguously.
+  // the `__`-mangled key and unify, one piece per pattern argument
+  // (split_key).
   if (pb > 0 && slice_unchecked(pattern, pattern.len() - 1, pattern.len()) == "]" && cb < 0) {
     let pbase: str = slice_unchecked(pattern, 0, pb);
     let mpfx: string = pbase + "__";
     if (concrete.len() > mpfx.len() && util.str_has_prefix(concrete, mpfx)) {
       let pp: string[] = split_top_commas(slice_unchecked(pattern, pb + 1, pattern.len() - 1));
       let ckey: str = slice_unchecked(concrete, mpfx.len(), concrete.len());
-      let cp: string[] = [ckey + ""];
-      if (pp.len() != 1) {
-        cp = split_dunder(ckey);
-      }
+      let cp: string[] = split_key(ckey + "", pp.len(), funcs.structs, funcs.enums);
       if (pp.len() == cp.len()) {
         let b2: MEnv = binds;
         let j2: i32 = 0;
         while (j2 < pp.len()) {
-          b2 = bind_unify(pp[j2], cp[j2], tparams, b2);
+          b2 = bind_unify(pp[j2], cp[j2], tparams, b2, funcs);
           j2 = j2 + 1;
         }
         return b2;
@@ -11521,7 +11608,7 @@ function infer_folded_inst(fd: FuncDecl, args: ast.Expr[], type_args: string[], 
   let j: i32 = 0;
   while (skip >= 0 && j < type_args.len()) {
     if (type_args[j].len() > 0) {
-      binds = bind_unify(fd.type_params[skip + j], type_args[j], fd.type_params, binds);
+      binds = bind_unify(fd.type_params[skip + j], type_args[j], fd.type_params, binds, funcs);
     }
     j = j + 1;
   }
@@ -11603,7 +11690,7 @@ function infer_inst_ret(fd: FuncDecl, args: ast.Expr[], expected_ret: string, en
   }
   let binds: MEnv = full_ret_binds(fd, args, env, funcs, fd.type_params);
   if (expected_ret.len() > 0) {
-    binds = bind_unify(fd.ret_type, expected_ret, fd.type_params, binds);
+    binds = bind_unify(fd.ret_type, expected_ret, fd.type_params, binds, funcs);
   }
   return binds_to_key(fd.type_params, binds);
 }
@@ -11738,7 +11825,7 @@ function fn_value_spelling(e: ast.Expr, env: MEnv, funcs: MFns): string {
     }
   }
   if let ast.ExprFieldAccess(fa) = e {
-    let owner: InstStruct = inst_struct(mono_infer(fa.obj, env, funcs), funcs.structs);
+    let owner: InstStruct = inst_struct(mono_infer(fa.obj, env, funcs), funcs.structs, funcs.enums);
     if (owner.at >= 0) {
       let sd: StructDecl = funcs.structs[owner.at];
       for f in sd.fields {
@@ -11755,7 +11842,7 @@ function fn_value_spelling(e: ast.Expr, env: MEnv, funcs: MFns): string {
 // value where the callable spelling `expected` (`(A, …) => R`) is wanted: each
 // parameter unified against its counterpart and the result against `R`. ""
 // when that leaves a type parameter unbound, or `expected` is no callable.
-function fn_value_inst_key(fd: FuncDecl, expected: string): string {
+function fn_value_inst_key(fd: FuncDecl, expected: string, funcs: MFns): string {
   let ret: string = callable_ret_spelling(expected);
   let ps: string[] = callable_param_spellings(expected);
   if (ret.len() == 0 || ps.len() != fd.params.len()) {
@@ -11764,14 +11851,14 @@ function fn_value_inst_key(fd: FuncDecl, expected: string): string {
   let binds: MEnv = MEnv { mnames: [], mtypes: [] };
   let i: i32 = 0;
   while (i < ps.len()) {
-    binds = bind_unify(param_spelling(fd.params[i]), ps[i], fd.type_params, binds);
+    binds = bind_unify(param_spelling(fd.params[i]), ps[i], fd.type_params, binds, funcs);
     i = i + 1;
   }
   let fret: string = fd.ret_type;
   if (fret == "fn") {
     fret = "(" + fd.ret_fn_param_types + ") => " + fd.ret_fn_ret;
   }
-  binds = bind_unify(fret, ret, fd.type_params, binds);
+  binds = bind_unify(fret, ret, fd.type_params, binds, funcs);
   let key: string = binds_to_key(fd.type_params, binds);
   // A binding to a type variable is the enclosing template's, not a type:
   // its clone's body comes back here with the variable substituted.
@@ -11819,7 +11906,7 @@ function mono_fn_value(e: ast.Expr, expected: string, env: MEnv, funcs: MFns, in
   if (name.len() == 0 || expected.len() == 0) {
     return RExpr { rexpr: e, rins: ins };
   }
-  let key: string = fn_value_inst_key(funcs.decls[bg_find(funcs, name)], expected);
+  let key: string = fn_value_inst_key(funcs.decls[bg_find(funcs, name)], expected, funcs);
   if (key.len() == 0) {
     return RExpr { rexpr: e, rins: ins };
   }
@@ -11992,7 +12079,7 @@ function full_ret_binds(fd: FuncDecl, args: ast.Expr[], env: MEnv, funcs: MFns, 
         pattern = fn_tag_spelling(pattern, fd.params[i].fn_ret, fd.params[i].fn_param_types);
       }
       if (ct.len() > 0) {
-        binds = bind_unify(pattern, ct, vars, binds);
+        binds = bind_unify(pattern, ct, vars, binds, funcs);
       } else {
         binds = variant_arg_binds(fd.params[i].type_name, args[i], env, funcs, vars, binds);
       }
@@ -12001,7 +12088,7 @@ function full_ret_binds(fd: FuncDecl, args: ast.Expr[], env: MEnv, funcs: MFns, 
       if (fd.params[i].type_name == "fn" && spelling_mentions_tparam(fd.params[i].fn_ret, vars)) {
         let lr: string = lambda_ret_of(args[i], env, funcs);
         if (lr.len() > 0 && type_str_vars(lr, []).len() == 0) {
-          binds = bind_unify(fd.params[i].fn_ret, lr, vars, binds);
+          binds = bind_unify(fd.params[i].fn_ret, lr, vars, binds, funcs);
         }
       }
       if (fd.params[i].type_name == "fn") {
@@ -12010,7 +12097,7 @@ function full_ret_binds(fd: FuncDecl, args: ast.Expr[], env: MEnv, funcs: MFns, 
         let q: i32 = 0;
         while (q < fpts.len()) {
           if (q < lpts.len() && lpts[q].len() > 0 && spelling_mentions_tparam(fpts[q], vars) && type_str_vars(lpts[q], []).len() == 0) {
-            binds = bind_unify(fpts[q], lpts[q], vars, binds);
+            binds = bind_unify(fpts[q], lpts[q], vars, binds, funcs);
           }
           q = q + 1;
         }
@@ -12031,7 +12118,7 @@ function full_ret_binds(fd: FuncDecl, args: ast.Expr[], env: MEnv, funcs: MFns, 
 // variable only the payload names.
 function variant_arg_binds(pattern: string, arg: ast.Expr, env: MEnv, funcs: MFns, vars: string[], binds: MEnv): MEnv {
   if let ast.ExprCall(c) = arg {
-    let vname: string = ctor_variant_name(c.callee, funcs.enums);
+    let vname: string = ctor_variant_name(c.callee, funcs.enums, env, funcs);
     if (vname.len() > 0) {
       let owner: i32 = genum_owner_of_variant(funcs.enums, vname);
       if (owner < 0) {
@@ -12044,7 +12131,7 @@ function variant_arg_binds(pattern: string, arg: ast.Expr, env: MEnv, funcs: MFn
         if (whole.len() == 0) {
           return binds;
         }
-        return bind_unify(pattern, whole, vars, binds);
+        return bind_unify(pattern, whole, vars, binds, funcs);
       }
       let pb: i32 = first_bracket(pattern);
       if (pb <= 0 || slice_unchecked(pattern, pattern.len() - 1, pattern.len()) != "]") {
@@ -12062,7 +12149,7 @@ function variant_arg_binds(pattern: string, arg: ast.Expr, env: MEnv, funcs: MFn
       while (j < pargs.len()) {
         let b: string = own.elook(ed.type_params[j]);
         if (b.len() > 0) {
-          out = bind_unify(pargs[j], b, vars, out);
+          out = bind_unify(pargs[j], b, vars, out, funcs);
         }
         j = j + 1;
       }
@@ -12112,7 +12199,7 @@ function builtin_variant_arg_binds(pattern: string, c: ast.ExprCall, env: MEnv, 
   if (pt.len() == 0) {
     return binds;
   }
-  return bind_unify(strip_ws(pargs[slot]), pt, vars, binds);
+  return bind_unify(strip_ws(pargs[slot]), pt, vars, binds, funcs);
 }
 
 // func_ret_of returns the return type of a plain function by name.
@@ -12790,7 +12877,7 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
       if (mono_ty_mentions_var(ot)) {
         return "";
       }
-      let ft: string = struct_field_ty_inst(ot, fa.field, funcs.structs);
+      let ft: string = struct_field_ty_inst(ot, fa.field, funcs.structs, funcs.enums);
       if (mono_ty_mentions_var(ft)) {
         return "";
       }
@@ -13368,8 +13455,8 @@ function mono_variant_field_tys(sty: string, vname: string, fns: MFns): string[]
 // substituted from the spelling (`Split[string, i32]`) or, once the struct
 // pass has renamed the value, from its mangled clone name
 // (`Split__string__i32`). "" when the struct or field is unknown.
-function struct_field_ty_inst(ot: string, fname: string, structs: StructDecl[]): string {
-  let owner: InstStruct = inst_struct(ot, structs);
+function struct_field_ty_inst(ot: string, fname: string, structs: StructDecl[], enums: EnumDecl[]): string {
+  let owner: InstStruct = inst_struct(ot, structs, enums);
   if (owner.at < 0) {
     return "";
   }
@@ -13386,7 +13473,7 @@ function struct_field_ty_inst(ot: string, fname: string, structs: StructDecl[]):
 // when no declaration matches with that many arguments.
 struct InstStruct { at: i32, cts: string[] }
 
-function inst_struct(ot: string, structs: StructDecl[]): InstStruct {
+function inst_struct(ot: string, structs: StructDecl[], enums: EnumDecl[]): InstStruct {
   let base: string = strip_struct_base(ot);
   let cts: string[] = type_args_of(ot);
   let si: i32 = 0 - 1;
@@ -13399,10 +13486,7 @@ function inst_struct(ot: string, structs: StructDecl[]): InstStruct {
         let pfx: string = structs[i].name + "__";
         if (ot.len() > pfx.len() && util.str_has_prefix(ot, pfx)) {
           let rest: string = slice_unchecked(ot, pfx.len(), ot.len()) + "";
-          cts = [rest];
-          if (structs[i].type_params.len() != 1) {
-            cts = split_dunder(rest);
-          }
+          cts = split_key(rest, structs[i].type_params.len(), structs, enums);
           si = i;
         }
       }
@@ -15478,7 +15562,7 @@ function infer_lit_key(gd: StructDecl, fnames: string[], fvals: ast.Expr[], env:
       if (fnames[vi] == fname) {
         let ct: string = mono_infer(fvals[vi], env, funcs);
         if (ct.len() > 0) {
-          binds = bind_unify(gd.fields[fi].type_name, ct, gd.type_params, binds);
+          binds = bind_unify(gd.fields[fi].type_name, ct, gd.type_params, binds, funcs);
         }
       }
       vi = vi + 1;
@@ -15892,7 +15976,7 @@ function assoc_ctor_concrete(base: string, method: string, dest: string, funcs: 
   if (ret.len() == 0 || strip_struct_base(ret) == base) {
     return dest;
   }
-  let binds: MEnv = bind_unify(drop_type_args(ret, base), dest, [base], MEnv { mnames: [], mtypes: [] });
+  let binds: MEnv = bind_unify(drop_type_args(ret, base), dest, [base], MEnv { mnames: [], mtypes: [] }, funcs);
   return binds.elook(base);
 }
 
@@ -16164,7 +16248,7 @@ function ms_func(fn: FuncDecl, gstructs: StructDecl[], funcs: MFns, ins: Insts):
 // at the mangled clone name. The body's `let T` annotations are
 // substituted; its literal display strings (baked from the original
 // struct's name at synth time) stay intact.
-function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: StructDecl[]): FuncDecl {
+function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: StructDecl[], structs: StructDecl[], enums: EnumDecl[]): FuncDecl {
   // Substitute with the generic STRUCT's type params (not the method's, which
   // a synthesized method like default() leaves empty). The struct's params are
   // the ones a method body refers to — e.g. a derived default()'s
@@ -16176,13 +16260,7 @@ function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: S
   if (gsi >= 0) {
     tparams = gstructs[gsi].type_params;
   }
-  // A single-type-param key is the one concrete arg verbatim (a mangled
-  // nested clone like `Box__i32` must not be split on `__`); multi-param
-  // keys split unambiguously into per-param pieces.
-  let cts: string[] = [key];
-  if (tparams.len() != 1) {
-    cts = split_dunder(key);
-  }
+  let cts: string[] = split_key(key, tparams.len(), structs, enums);
   let mang: string = base + "__" + sanitize_key(key);
   // finalize_impl_method (at parse time) bakes the BARE source struct name
   // into a generic impl method's `Self` positions, but the struct is
@@ -16388,14 +16466,7 @@ function ms_module(mod: Module): Module {
     }
     if (idx >= 0) {
       let gd: StructDecl = gstructs[idx];
-      // A single-type-param struct's key IS the one concrete arg verbatim
-      // (which may itself be a mangled nested clone like `Box__i32`, so
-      // splitting on `__` would wrongly split it). A multi-param key is
-      // the `__`-join of simple nominals and splits unambiguously.
-      let cts: string[] = [key];
-      if (gd.type_params.len() != 1) {
-        cts = split_dunder(key);
-      }
+      let cts: string[] = split_key(key, gd.type_params.len(), mod.structs, mod.enums);
       let mang: string = base + "__" + sanitize_key(key);
       let cf: StructFieldDecl[] = [];
       let cfi: i32 = 0;
@@ -16413,7 +16484,7 @@ function ms_module(mod: Module): Module {
       while (mi < mod.funcs.len()) {
         let mm: FuncDecl = mod.funcs[mi];
         if (mm.receiver_type.len() > 0 && strip_struct_base(mm.receiver_type) == base) {
-          let clm: FuncDecl = clone_struct_method(mm, base, key, gstructs);
+          let clm: FuncDecl = clone_struct_method(mm, base, key, gstructs, mod.structs, mod.enums);
           let menv: MEnv = env_from_decl(clm);
           let mr: RStmts = mono_stmts(clm.body, menv, sfns, ins, fn_tag_spelling(clm.ret_type, clm.ret_fn_ret, clm.ret_fn_param_types));
           ins = mr.rins3;
@@ -16963,7 +17034,7 @@ function me_variant_binds(ed: EnumDecl, vname: string, args: ast.Expr[], env: ME
   while (fi < fields.len() && fi < args.len()) {
     let at: string = mono_infer(args[fi], env, funcs);
     if (at.len() > 0) {
-      binds = bind_unify(fields[fi].type_name, at, ed.type_params, binds);
+      binds = bind_unify(fields[fi].type_name, at, ed.type_params, binds, funcs);
     }
     fi = fi + 1;
   }
@@ -16986,7 +17057,7 @@ function struct_lit_spelling(sl: ast.ExprStructLit, env: MEnv, funcs: MFns): str
       if (f.name == sl.field_names[k]) {
         let at: string = mono_infer(sl.field_values[k], env, funcs);
         if (at.len() > 0) {
-          binds = bind_unify(f.type_name, at, sd.type_params, binds);
+          binds = bind_unify(f.type_name, at, sd.type_params, binds, funcs);
         }
       }
     }
@@ -16999,16 +17070,24 @@ function struct_lit_spelling(sl: ast.ExprStructLit, env: MEnv, funcs: MFns): str
   return whole;
 }
 
-// ctor_variant_name: the variant a call's callee constructs when it names one
-// bare (`Leaf`) or qualified by its generic enum (`Tree.Leaf`); "" otherwise.
-function ctor_variant_name(callee: ast.Expr, enums: EnumDecl[]): string {
+// Candidate name for a bare or enum-qualified construction. Callers verify
+// enum membership; bindings win over bare variants and a path's type head.
+function ctor_variant_name(callee: ast.Expr, enums: EnumDecl[], env: MEnv, funcs: MFns): string {
   match (callee) {
     ast.ExprIdent(cid) => {
+      if (str_list_contains(env.mnames, cid.name)) {
+        return "";
+      }
+      if (genum_owner_of_variant(enums, cid.name) >= 0 || cid.name == "Some" || cid.name == "Ok" || cid.name == "Err") {
+        if (fda_known_func(cid.name, funcs.decls)) {
+          return "";
+        }
+      }
       return cid.name;
     },
     ast.ExprFieldAccess(cfa) => {
       if let ast.ExprIdent(oid) = cfa.obj {
-        if (genum_index(enums, oid.name) >= 0) {
+        if (!str_list_contains(env.mnames, oid.name) && genum_index(enums, oid.name) >= 0) {
           return cfa.field;
         }
       }
@@ -17041,7 +17120,7 @@ function bound_spelling(name: string, tparams: string[], binds: MEnv): string {
 // construction `callee(args)`, its parameters bound from the payload types;
 // "" when the callee is not a variant or a parameter stays unbound.
 function variant_ctor_spelling(callee: ast.Expr, args: ast.Expr[], env: MEnv, funcs: MFns): string {
-  let vname: string = ctor_variant_name(callee, funcs.enums);
+  let vname: string = ctor_variant_name(callee, funcs.enums, env, funcs);
   if (vname.len() == 0) {
     return "";
   }
@@ -17067,16 +17146,16 @@ function me_variant_bound(ed: EnumDecl, vname: string, args: ast.Expr[], env: ME
 // declared field types with the enum's params substituted by the
 // instantiation's type arguments. Those come from the annotation's original
 // spelling when it names the enum, else from the single-param arg spelling
-// `carg`, else from the multi-param key's `__`-joined simple nominals. Empty
+// `carg`, else from the multi-param key, one piece per parameter. Empty
 // when the arguments cannot be recovered (the args then carry no expectation,
 // exactly as an unresolved construction).
-function me_variant_field_expectations(ed: EnumDecl, vname: string, expected: string, key: string, carg: string, structs: StructDecl[]): string[] {
+function me_variant_field_expectations(ed: EnumDecl, vname: string, expected: string, key: string, carg: string, structs: StructDecl[], enums: EnumDecl[]): string[] {
   let none: string[] = [];
   let cts: string[] = type_args_of(expected);
   if (cts.len() != ed.type_params.len() || strip_struct_base(expected) != ed.name) {
     cts = [carg];
     if (ed.type_params.len() != 1) {
-      cts = split_dunder(key);
+      cts = split_key(key, ed.type_params.len(), structs, enums);
     }
   }
   if (cts.len() != ed.type_params.len()) {
@@ -17138,7 +17217,7 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
       // object names a generic enum — otherwise `s.len()` (a method call,
       // structurally identical: ExprCall over ExprFieldAccess) would be
       // mis-read as constructing a variant named `len`.
-      let vname: string = ctor_variant_name(c.callee, enums);
+      let vname: string = ctor_variant_name(c.callee, enums, env, funcs);
       // A variant construction whose instantiation resolves (from the
       // annotation or the payload args) flows each payload's DECLARED
       // field type, instantiated, into the corresponding arg — so a
@@ -17170,7 +17249,7 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
           if (carg.len() == 0) {
             carg = key;
           }
-          fexps = me_variant_field_expectations(enums[owner], vname, expected, key, carg, structs);
+          fexps = me_variant_field_expectations(enums[owner], vname, expected, key, carg, structs, enums);
         }
       }
       // A plain function call `f(args)` — a callee ident that is NOT a
@@ -17182,8 +17261,12 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
       // generic `Non` struct and the dangling reference bailed the module
       // (#5247).
       let calleeFn: string = "";
-      if (vname.len() > 0 && owner < 0) {
-        calleeFn = vname;
+      if (owner < 0) {
+        if let ast.ExprIdent(cid) = c.callee {
+          if (!str_list_contains(env.mnames, cid.name)) {
+            calleeFn = cid.name;
+          }
+        }
       }
       let nargs: ast.Expr[] = [];
       let cur: Insts = ins;
@@ -17212,7 +17295,7 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
       // A bare unit-variant construction `Nn` — needs the expected
       // annotation to pin its instantiation (no payload to infer from).
       let owner: i32 = genum_owner_of_variant(enums, id.name);
-      if (owner >= 0) {
+      if (owner >= 0 && !str_list_contains(env.mnames, id.name) && !fda_known_func(id.name, funcs.decls)) {
         let key: string = genum_key_from_anno(expected, enums[owner].name, enums);
         if (key.len() > 0) {
           let nins: Insts = ins.iadd_arg(enums[owner].name, key, genum_single_arg(expected));
@@ -17295,7 +17378,7 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
       // form is a call, handled in the ExprCall arm above.
       match (fa.obj) {
         ast.ExprIdent(oid) => {
-          if (genum_index(enums, oid.name) >= 0) {
+          if (!str_list_contains(env.mnames, oid.name) && genum_index(enums, oid.name) >= 0) {
             let owner: i32 = genum_owner_of_variant(enums, fa.field);
             if (owner >= 0) {
               let key: string = genum_key_from_anno(expected, enums[owner].name, enums);
@@ -17312,7 +17395,7 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
       return RExpr { rexpr: ast.ExprFieldAccess { obj: ob.rexpr, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, rins: ob.rins };
     },
     ast.ExprLambda(lm) => {
-      let lb: RStmts = me_stmts(lm.body, env, lm.ret_type, enums, structs, funcs, ins);
+      let lb: RStmts = me_stmts(lm.body, bind_params(env, lm.params), lm.ret_type, enums, structs, funcs, ins);
       let lins: Insts = me_collect_slot(lm.ret_type, lm.ret_fn_ret, lm.ret_fn_param_types, enums, lb.rins3);
       for lp in lm.params {
         lins = me_collect_slot(lp.type_name, lp.fn_ret, lp.fn_param_types, enums, lins);
@@ -17504,7 +17587,7 @@ function me_scrutinee_type(e: ast.Expr, env: MEnv, enums: EnumDecl[], structs: S
       // original-spelling type (`Opt[(i32) => i32]`, `Pair[string, i32]`),
       // so ge_inst_of derives the same key the construction rewrite used
       // and the arms rewrite to the mangled variants (#5298 follow-up).
-      let vgn: string = ctor_variant_name(c.callee, enums);
+      let vgn: string = ctor_variant_name(c.callee, enums, env, funcs);
       let vgo: i32 = 0 - 1;
       if (vgn.len() > 0) {
         vgo = genum_owner_of_variant(enums, vgn);
@@ -17758,7 +17841,7 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
         // original-spelling type args (`Sm(n)` over `Opt[Opt[i32]]` →
         // n: `Opt[i32]`; `Bin(l, k, v, r, s)` over `OrdNode[i32,
         // string]` → l: `OrdNode[i32, string]`, k: i32, v: string).
-        let armenv: MEnv = env;
+        let armenv: MEnv = mono_arm_env(env, m.arms[i].pattern, sty, funcs);
         if (gi.ok) {
           let gidx: i32 = genum_index(enums, gi.base);
           if (gidx >= 0) {
@@ -17766,7 +17849,7 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
             cur = cur.iadd_arg(gi.base, gi.key, genum_single_arg(sty));
             let cts: string[] = type_args_of(sty);
             if (cts.len() == enums[gidx].type_params.len()) {
-              armenv = me_bind_pat_vars(m.arms[i].pattern, enums[gidx], cts, structs, env);
+              armenv = me_bind_pat_vars(m.arms[i].pattern, enums[gidx], cts, structs, armenv);
             }
           }
         }
@@ -18096,11 +18179,11 @@ pub function monomorphize_enums(mod: Module): Module {
       // clone the two coincide (`i32`, `Opt[i32]` → me_rewrite_ty gives
       // `Opt__i32` == the key), but a fn-keyed clone's key is LOSSILY
       // sanitised (`_i32_____i32`), so only iargs recovers the real field
-      // type `(i32) => i32`. A multi-param key is the `__`-join of simple
-      // nominals and splits unambiguously (iargs is unused there).
+      // type `(i32) => i32`. A multi-param key splits one piece per
+      // parameter (split_key; iargs is unused there).
       let cts: string[] = [ins.iargs[wi]];
       if (ed.type_params.len() != 1) {
-        cts = split_dunder(key);
+        cts = split_key(key, ed.type_params.len(), mod.structs, menums);
       }
       let mname: string = base + "__" + key;
       let nvn: string[] = [];

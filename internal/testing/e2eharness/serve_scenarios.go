@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -80,7 +81,7 @@ func readFileString(path string) string {
 // ThreadedStateServerSource serves with a Map threaded through the
 // handler (`serve.run_with`): the count of each path's requests, which
 // only threading can carry from one request to the next.
-func ThreadedStateServerSource(port int) string {
+func ThreadedStateServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
 import "core/int";
@@ -98,9 +99,9 @@ function handle(hits: Map[string, i32], req: HttpRequest, plat: platform.Platfor
 
 function main(): i32 {
     let init: Map[string, i32] = map_new(8);
-    return serve.run_with(%d, serve.config(), init, handle);
+    return serve.run_with(0, serve.config(), init, handle);
 }
-`, port)
+`)
 }
 
 // CheckThreadedState is the client of ThreadedStateServerSource: one
@@ -128,7 +129,7 @@ const LargeResponseBytes = 1500000
 
 // LargeResponseServerSource answers every request with LargeResponseBytes
 // of body, so the loop has to finish the write on later waits.
-func LargeResponseServerSource(port int) string {
+func LargeResponseServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/string";
 import "std/serve";
@@ -137,9 +138,9 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("x".repeat(%d));
 }
 function main(): i32 {
-    return serve.run(%d, serve.config(), handle);
+    return serve.run(0, serve.config(), handle);
 }
-`, LargeResponseBytes, port)
+`, LargeResponseBytes)
 }
 
 // CheckLargeResponse reads the whole response twice over: the client
@@ -178,7 +179,7 @@ func CheckLargeResponse(t *testing.T, addr string) {
 
 // RecvDeadlineServerSource serves under a 400 ms per-request read
 // deadline.
-func RecvDeadlineServerSource(port int) string {
+func RecvDeadlineServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/time";
 import "std/serve";
@@ -187,9 +188,9 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return serve.run(%d, serve.Config { ...serve.config(), recv_deadline: time.duration_millis(400) }, handle);
+    return serve.run(0, serve.Config { ...serve.config(), recv_deadline: time.duration_millis(400) }, handle);
 }
-`, port)
+`)
 }
 
 // CheckRecvDeadline sends a partial header and never finishes it: the
@@ -326,8 +327,13 @@ function main(): i32 {
 }
 
 // soReusePort is SO_REUSEPORT, which Go's syscall package spells only on
-// the BSDs: 15 on Linux.
-const soReusePort = 15
+// the BSDs: 15 on Linux, 0x200 on Darwin.
+var soReusePort = func() int {
+	if runtime.GOOS == "darwin" {
+		return 0x200
+	}
+	return 15
+}()
 
 // CheckReusePortReachesListener drives ReusePortServerSource: the proof
 // that the option reached the kernel is a second SO_REUSEPORT socket
@@ -358,8 +364,8 @@ func CheckReusePortReachesListener(t *testing.T, port int) {
 // worker in the handler for a minute, through the bag's clock as /slow does
 // (a handler may not reach `sleep_ms` around its bag, E080): the worker the
 // crash loop never reaches.
-func StalledSurvivorServerSource(port int) string {
-	return strings.Replace(WorkersServerSource(port), `    return http.ok("ok");`, `    if (req.path == "/stall") {
+func StalledSurvivorServerSource() string {
+	return strings.Replace(WorkersServerSource(), `    return http.ok("ok");`, `    if (req.path == "/stall") {
         if (burn(plat, 60000000000 as i64) == 0 - 1) { return http.ok("never"); }
     }
     return http.ok("ok");`, 1)
@@ -451,7 +457,7 @@ func CheckTrapThenShutdownExitsClean(t *testing.T, cmd *exec.Cmd, addr, stderrPa
 // MaxConnectionsFloorServerSource serves with `max_connections: 0`,
 // which the loop takes as 1: the listener is read whenever no
 // connection is held, so requests one at a time are answered.
-func MaxConnectionsFloorServerSource(port int) string {
+func MaxConnectionsFloorServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
 import "std/platform";
@@ -459,9 +465,9 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return serve.run(%d, serve.Config { ...serve.config(), max_connections: 0 }, handle);
+    return serve.run(0, serve.Config { ...serve.config(), max_connections: 0 }, handle);
 }
-`, port)
+`)
 }
 
 // CheckMaxConnectionsFloor drives MaxConnectionsFloorServerSource: three
@@ -480,7 +486,7 @@ func CheckMaxConnectionsFloor(t *testing.T, addr string) {
 // burns pure work until 1.5 s of the bag's monotonic clock has passed, so
 // it holds its worker that long on any runner; /boom traps, /ok answers at
 // once.
-func WorkersServerSource(port int) string {
+func WorkersServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
 import "std/platform";
@@ -511,9 +517,9 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return serve.supervise(%d, serve.Config { ...serve.config(), workers: 2 }, handle);
+    return serve.supervise(0, serve.Config { ...serve.config(), workers: 2 }, handle);
 }
-`, port)
+`)
 }
 
 // ReusePortWorkersServerSource is TrappingServerSource over two workers
@@ -575,7 +581,7 @@ func CheckWorkersServeSideBySide(t *testing.T, addr, stderrPath string) {
 // forward proxy SetFetchProxy names, since the upstream is on loopback)
 // while /ok answers at once. It is the networking plan's blocking-handler
 // conformance case (#9851 §5, #9857).
-func BlockingHandlerServerSource(port int) string {
+func BlockingHandlerServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
 import "std/platform";
@@ -590,9 +596,9 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return serve.supervise(%d, serve.Config { ...serve.config(), workers: 1 }, handle);
+    return serve.supervise(0, serve.Config { ...serve.config(), workers: 1 }, handle);
 }
-`, port)
+`)
 }
 
 // CheckHandlersOverlap drives BlockingHandlerServerSource and asserts what
@@ -988,8 +994,8 @@ func checkShutdownHookOn(t *testing.T, cmd *exec.Cmd, addr, stderrPath string, s
 
 // StallServerSource is WorkersServerSource with one worker: the shape
 // whose handler, running to completion, holds the whole worker.
-func StallServerSource(port int) string {
-	return strings.Replace(WorkersServerSource(port), "workers: 2", "workers: 1", 1)
+func StallServerSource() string {
+	return strings.Replace(WorkersServerSource(), "workers: 2", "workers: 1", 1)
 }
 
 // CheckHandlerStallsItsWorker drives StallServerSource: a request on a
@@ -1178,7 +1184,7 @@ func CheckFetchDeadline(t *testing.T, cmd *exec.Cmd) {
 
 // LimitsServerSource serves with the parser's caps lowered through
 // `serve.Config.limits`: a 16-byte body and three header fields.
-func LimitsServerSource(port int) string {
+func LimitsServerSource() string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
 import "std/platform";
@@ -1187,9 +1193,9 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 }
 function main(): i32 {
     let limits: http.HttpLimits = http.HttpLimits { ...http.http_limits(), body: 16, header_fields: 3 };
-    return serve.run(%d, serve.Config { ...serve.config(), limits: limits }, handle);
+    return serve.run(0, serve.Config { ...serve.config(), limits: limits }, handle);
 }
-`, port)
+`)
 }
 
 // CheckServeLimits drives LimitsServerSource: a request inside the caps

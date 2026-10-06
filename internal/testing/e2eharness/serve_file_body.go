@@ -9,12 +9,12 @@ import (
 	"time"
 )
 
-// FileBodyServerSource is a server on `port` whose handler answers the
+// FileBodyServerSource is a server whose handler answers the
 // file at `path` on /file and a file that does not exist on /missing,
 // both through `file`: the handler names the file and the
 // serve loop reads it as it writes the response, or answers 404 in its
 // place.
-func FileBodyServerSource(port int, path string) string {
+func FileBodyServerSource(path string) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
 import "std/platform";
@@ -24,9 +24,9 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("ok");
 }
 function main(): i32 {
-    return serve.run(%d, serve.config(), handle);
+    return serve.run(0, serve.config(), handle);
 }
-`, path, path, port)
+`, path, path)
 }
 
 // FileBodyContent is what the file FileBodyServerSource serves holds.
