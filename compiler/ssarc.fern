@@ -6290,12 +6290,16 @@ function handle_metadata_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowe
 // handle_method is the method half of a `Reader.` or `Writer.` metadata
 // contract name, "" for any other name.
 function handle_method(name: string): string {
+  if (!util.str_has_prefix(name, "Reader.") && !util.str_has_prefix(name, "Writer.")) {
+    return "";
+  }
+  let method: str = slice_unchecked(name, 7, name.len());
   let methods: string[] = [
     "stat", "flags", "seek", "fsync", "fdatasync", "syncfs", "drop_cache", "isatty", "dup_onto", "window_size",
     "set_window_size", "termios_get", "termios_set",
   ];
   for m in methods {
-    if (name == "Reader." + m || name == "Writer." + m) {
+    if (method == m) {
       return m;
     }
   }
