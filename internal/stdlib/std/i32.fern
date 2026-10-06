@@ -495,7 +495,7 @@ pub function (b: u8) to_ascii_upper(): u8 {
 //
 // `(n: i32) abs()` migrated to `std/i32` — see the
 // `import "std/i32";` at the top of this file. The checker's
-// method auto-discovery (`internal/checker/checker.go`)
+// method auto-discovery (`internal/check/checker/checker.go`)
 // registers these off the stdlib imports a program declares,
 // so an explicit `import "std/i32";` brings them into scope.
 //

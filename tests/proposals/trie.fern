@@ -868,7 +868,7 @@ function main(): i32 {
   // to recycle everything the first freed. (Reading a pair like this as if
   // it were a scaling curve is how #6425 was mis-attributed on the first
   // pass.) A real scaling claim needs one round count per process, which is
-  // what internal/e2e/alloc_scaling_test.go does.
+  // what internal/testing/e2e/alloc_scaling_test.go does.
   let base: i64 = __heap_bump_bytes();
   let a: i32 = churn(200);
   let after_n: i64 = __heap_bump_bytes();

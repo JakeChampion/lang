@@ -4,11 +4,11 @@ import (
 	"io"
 	"os"
 
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/ir"
-	"github.com/jakechampion/lang/internal/monomorph"
-	"github.com/jakechampion/lang/internal/treeshake"
+	"github.com/jakechampion/lang/internal/check/checker"
+	"github.com/jakechampion/lang/internal/check/constfold"
+	"github.com/jakechampion/lang/internal/oracle/ir"
+	"github.com/jakechampion/lang/internal/oracle/monomorph"
+	"github.com/jakechampion/lang/internal/oracle/treeshake"
 )
 
 // runArrayReport implements `fern -array-report FILE.fern`: load and

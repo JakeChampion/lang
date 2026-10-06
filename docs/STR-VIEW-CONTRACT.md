@@ -197,7 +197,7 @@ Two things follow that this section originally missed. A two-word string's
 is that shape" holds for heap-form strings and needs an answer for inline ones.
 And `as_bytes()` on an inline-packed string today "first copies the bytes into
 a bare `__fern_alloc` block the header points at; that copy has no owner"
-(`internal/ir/rcresults.go:145`, and the deleted Go backends' helpers) — an ownerless copy whose only
+(`internal/oracle/ir/rcresults.go:145`, and the deleted Go backends' helpers) — an ownerless copy whose only
 holder is the header that is being retired. **Open:** does the two-word slice
 forbid the inline-materialising path, forcing a heap-form promotion inside the
 string, or carry an inline tag of its own? The decision does not turn on the
@@ -222,9 +222,9 @@ it points into. Deleting the allocation dominates reclaiming it.
   replaced sat unowned for two weeks.
 - `__slice_make` and its `rcResultRaw` / `rcsigs` entries retire with the box,
   and so do the other slice-producing classifications an implementer will grep
-  for: `__method_string_as_bytes` (`internal/ir/rcresults.go:150`),
-  `__slice_range` (`internal/ir/rcsigs.go:377`), and `__slice_make`'s row in
-  `internal/ir/verifyprovided.go:248`. A "slice header" allocation surviving
+  for: `__method_string_as_bytes` (`internal/oracle/ir/rcresults.go:150`),
+  `__slice_range` (`internal/oracle/ir/rcsigs.go:377`), and `__slice_make`'s row in
+  `internal/oracle/ir/verifyprovided.go:248`. A "slice header" allocation surviving
   anywhere afterwards is a bug, which makes the change self-checking.
 - #8534's crypto half closes as a consequence rather than as a stdlib rewrite:
   `sha256_hex` was never the defect, and rewriting the wrappers to dodge `[u8]`

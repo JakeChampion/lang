@@ -88,7 +88,7 @@ jobs:
         # phantom seed failures next to 638 genuine passes at exactly
         # 600.035s. 20m keeps the timeout inside timeout-minutes, so the
         # lane fails as a timeout rather than as a wall of miscompiles.
-        run: gotestsum --format pkgname-and-test-fails -- -timeout 20m -run '^TestDifferential' ./internal/e2e/
+        run: gotestsum --format pkgname-and-test-fails -- -timeout 20m -run '^TestDifferential' ./internal/testing/e2e/
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"

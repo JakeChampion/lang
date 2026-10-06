@@ -46,7 +46,7 @@ The tags are injected by the IR lowering pass: every
 `map_new(cap)` call gets two extra trailing args appended
 (`OpConstI32 keyKind; OpConstI32 valKind`) using
 `mapKeyKindTag(K)` / `mapValKindTag(V)` from
-`internal/ir/ir.go`. Every hot-path helper then branches
+`internal/oracle/ir/ir.go`. Every hot-path helper then branches
 on these tags inline:
 
 - `__map_hash(k, keyKind)` — `if (keyKind == 0)` selects
@@ -85,7 +85,7 @@ Three concrete costs from runtime-tag dispatch in hot paths:
    hash path AND the string-keyed hash path in its binary
    even when only one is used.
 
-The codebase's tree-shaker (`internal/treeshake`) can't
+The codebase's tree-shaker (`internal/oracle/treeshake`) can't
 eliminate dead branches inside a function body — it only
 drops whole unreachable functions. The cost is paid in every
 binary that touches `Map[K, V]`.
@@ -93,7 +93,7 @@ binary that touches `Map[K, V]`.
 ## The proposal
 
 Compile-time specialization via the existing monomorpher
-(`internal/monomorph`). The pipeline already monomorphizes
+(`internal/oracle/monomorph`). The pipeline already monomorphizes
 generic *user-defined* functions — e.g. `function id[T](x:
 T): T { return x; }` lands as `id_i32` / `id_string` clones.
 Map helpers would join that mechanism so each `(K, V)` pair
@@ -224,7 +224,7 @@ mapspec`) so a CI matrix entry runs the generic path until
 we're confident.
 
 **Test plan**: existing Map tests cover both i32 and string
-K. A new microbenchmark (`internal/e2e` is fine — just compare
+K. A new microbenchmark (`internal/testing/e2e` is fine — just compare
 exit codes / outputs) confirms behavioural equivalence and
 no surprising codegen-size regression.
 
@@ -281,7 +281,7 @@ doesn't need re-running.
 Once specialization is the only path, the generic
 `__map_hash` / `__map_lookup` / etc. become dead — drop them.
 The IR lowering layer (`mapKeyKindTag` / `mapValKindTag` in
-`internal/ir/ir.go`) keeps existing to drive the mangling
+`internal/oracle/ir/ir.go`) keeps existing to drive the mangling
 decisions in step 1's emit rewrite.
 
 ## Risks + open questions
@@ -309,7 +309,7 @@ decisions in step 1's emit rewrite.
   pair-form return mechanism (`OpCallDirectPair`) already
   handles.
 - **Tree-shaker integration**. Specialization SHOULD play
-  nicely with `internal/treeshake` (each clone is a separate
+  nicely with `internal/oracle/treeshake` (each clone is a separate
   FuncDecl and gets pruned independently). Worth verifying
   the clones don't accidentally survive due to a transitive
   reachability bug.
@@ -328,7 +328,7 @@ without re-deriving the design each time.
 
 Instead of cloning at the AST / prelude layer, the IR could
 keep the generic bodies AND have the constant-propagation
-pass (`internal/ir/constprop.go`) discover that `keyKind` /
+pass (`internal/oracle/ir/constprop.go`) discover that `keyKind` /
 `valKind` are constants at each call site and fold the
 branches accordingly.
 

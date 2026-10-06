@@ -6,7 +6,7 @@
 // With `-bytes` it also dumps each assembled .text byte, one per line,
 // after the summary — making the assembler's ENCODINGS comparable against
 // GNU as ground truth on identical input with no wasm pipeline and no
-// execution (see internal/e2eselfhost/self_host_x86_extops_gas_test.go).
+// execution (see internal/testing/e2ecompiler/self_host_x86_extops_gas_test.go).
 // x86 instructions are variable-length, so the dump is a byte stream the
 // test walks case by case rather than fixed words.
 import "std/io";

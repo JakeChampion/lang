@@ -248,4 +248,4 @@ it. It is closed end-to-end:
   closure-local binding.
 
 Pinned self-host-side by `TestSelfHostTupleFnIR*`, native-side by
-`internal/e2e/tuple_fn_elem_test.go`.
+`internal/testing/e2e/tuple_fn_elem_test.go`.

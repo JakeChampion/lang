@@ -36,7 +36,7 @@
 // `value_size()` bytes when the status is `value`. Every variant folds every
 // response byte, in order, into one running digest; three implementations
 // answering the same 640,000 requests to the same digest is the experiment's
-// differential test, and `internal/e2e/fip_kv_test.go` holds them to it.
+// differential test, and `internal/testing/e2e/fip_kv_test.go` holds them to it.
 //
 // # The workload
 //

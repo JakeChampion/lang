@@ -41,14 +41,14 @@ unenforceable where there is no existing guarantee to not change.**
 
 **Normative.** A combinator call is *fusible* when every element
 function it is given is **statically resolved** and reaches **no
-capability-tagged builtin** under `internal/effects`' call graph. A call
+capability-tagged builtin** under `internal/check/effects`' call graph. A call
 whose element function is not statically resolved — a value from a
 parameter, a field, an array element — is not fusible, whatever it
 turns out to hold at run time.
 
 The reachability is the one the compiler already computes. `fern
 -effects` reports per-function effect sets over
-`internal/effects`' shared call graph, and `internal/caps` was already
+`internal/check/effects`' shared call graph, and `internal/pkg/caps` was already
 rebuilt on that graph rather than walking the call graph a second time.
 A fusion pass is the third consumer of the same analysis, not a new one.
 
@@ -66,7 +66,7 @@ Two consequences worth stating, because both are easy to get wrong:
 - **"Pure" is vocabulary-relative.** The brief is explicit: a function
   reaching nothing under the authority vocabulary reaches `log` under
   the host one, and "a function 'pure' under one is not pure under the
-  other." Fusion uses `internal/caps`' vocabulary — `env fs net random
+  other." Fusion uses `internal/pkg/caps`' vocabulary — `env fs net random
   subprocess time` — because that is the one with an enforcement story
   behind it (E070). Allocation and abort are **not** effects in any of
   these vocabularies, which §2 depends on.
@@ -139,7 +139,7 @@ to reassociate would produce a different result from one that did not,
 and the portability claim would be false. The claim already forbids
 this; §3 only names the consequence for reductions.
 
-The tree agrees in practice: `internal/ir/fold.go` leaves floats
+The tree agrees in practice: `internal/oracle/ir/fold.go` leaves floats
 untouched — "there's no portable way to round-trip every f32 bit-pattern
 through the IR's float ops without surprising the user" — and its
 integer reassociation is narrow and guarded (`OpAdd OpMul OpAnd OpOr
@@ -421,10 +421,10 @@ The verdicts come from the planner that performs R7's in-place rewrite
 pass writes through the `own` parameter and every refusal names the taint
 that declined it — `receiver-not-own-param`, `element-fn-captures`,
 `shape-change`, and the rest of the closed set in
-`internal/ir/array_storage.go`. A hardcoded sentence would go on being
+`internal/oracle/ir/array_storage.go`. A hardcoded sentence would go on being
 printed after the fact it describes stopped being true, which is what the
 report did about `map` for the day between R7 landing and its verdicts
-being read here. `internal/ir/array_storage_test.go` pins one verdict per
+being read here. `internal/oracle/ir/array_storage_test.go` pins one verdict per
 taint.
 
 ```
@@ -517,7 +517,7 @@ The rules in §1, §2, §5, §6 and §7 are still **not** index claims, and
 #9731 building the pass did not change that — for a reason worth stating
 rather than leaving as an omission.
 
-§1 is now enforced and tested (`internal/ir/array_fusion_test.go`), but it
+§1 is now enforced and tested (`internal/oracle/ir/array_fusion_test.go`), but it
 is enforced as a *refusal*: a chain with an effectful element function is
 left unfused. So §1 and §2 together make the fused and unfused programs
 indistinguishable, which is the point — and a conformance case can only

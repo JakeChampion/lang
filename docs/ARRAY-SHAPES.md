@@ -99,7 +99,7 @@ moved.
 This is #9727's non-goal — "no hidden copies in structural operations
 without a documented materialization rule" — discharged by writing the
 rule down where the operations are, and by holding each row to it with the
-allocation counters in `internal/e2e/ndarray_test.go`: a metadata
+allocation counters in `internal/testing/e2e/ndarray_test.go`: a metadata
 operation moves under 1 KiB against a 32 KiB element buffer, and a copying
 one moves at least the buffer. `ALLOCATION-OBSERVABLE.md` says why the
 byte counter can be fooled by recycling; the gate keeps every handle live
@@ -321,7 +321,7 @@ conjunct is decided before the program runs.
 Both predicates are decided by the metadata, and the metadata is decided
 by the chain of operations that built the handle — every one of which §2
 names. So **the layout is a property the IR carries**, derived from
-provenance: `internal/ir/ndarray_layout.go`, printed per site by
+provenance: `internal/oracle/ir/ndarray_layout.go`, printed per site by
 `fern -array-report`.
 
 | layout | what it asserts |
@@ -412,7 +412,7 @@ Recognition and both verdicts change nothing. **A verdict of `primitive`
 says the element function is not what stands in the way, and
 `kernel-candidate` says nothing this pass can see would make a planner
 decline the site — neither says that the site lowers to a kernel.**
-`internal/ir/ndarray_shapes_test.go` pins that the recogniser changes no
+`internal/oracle/ir/ndarray_shapes_test.go` pins that the recogniser changes no
 op, and the layout analysis below changes none either.
 
 One verb now has a kernel. `map` by a scalar `f64` factor over a handle
@@ -422,7 +422,7 @@ the layout analysis proves **packed** becomes
 from_flat(__fern_scale_f64(a.data, k), a.shape)
 ```
 
-— `internal/ir/ndarray_scale.go`, the std/array kernel of #9735 reached
+— `internal/oracle/ir/ndarray_scale.go`, the std/array kernel of #9735 reached
 through a shape. Packed is what licenses it: `data` IS the reading order,
 so the kernel reads the elements the scalar walk would have visited. Over
 a strided handle the same rewrite computes DIFFERENT numbers rather than
@@ -562,7 +562,7 @@ Three rules follow:
 - **`reduce_axis` is lane-sized.** It walks the input once in reading
   order and keeps one accumulator per lane (the row-major position in the
   shape with `axis` removed), so its allocation is the result, never a
-  copy of the input. `internal/e2e/ndarray_test.go` bounds it under the
+  copy of the input. `internal/testing/e2e/ndarray_test.go` bounds it under the
   element buffer where `map` is bounded above it.
 - **A shape mismatch aborts.** `zip_with` over two shapes that do not
   broadcast (§8) is a derived shape that is wrong (`ARRAY-ALGEBRA.md`

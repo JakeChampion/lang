@@ -31,7 +31,7 @@ concurrent target validation are excluded from this timing comparison.
 Reproduce on each revision with the same benchmark:
 
 ```sh
-go test ./internal/e2eharness -run '^$' \
+go test ./internal/testing/e2eharness -run '^$' \
   -bench '^BenchmarkStageSelfHostAsmProject$' -benchtime=1x -count=3 -benchmem
 ```
 

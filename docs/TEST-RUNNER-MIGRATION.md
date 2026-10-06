@@ -26,7 +26,7 @@ vs **which need other work first**.
 | **D) Self-host Fern programs**            |    13 | The `.fern` file IS the test; Go side is a cross-backend gate. Same blocker as C.                 |
 | **E) Compiler-internal Go API tests**     |    39 | Call Go-side parser / checker / IR / codegen directly. Gated on **self-hosting the compiler**.    |
 | **F) LSP + wasm-binary infrastructure**   |    22 | Test Go service code that has no Fern counterpart (LSP, raw wasm encoding). Likely stay Go.       |
-| **G) Test-runner gate itself**            |     1 | `internal/e2e/test_runner_test.go` — collapses to a shell wrapper post-self-host.                 |
+| **G) Test-runner gate itself**            |     1 | `internal/testing/e2e/test_runner_test.go` — collapses to a shell wrapper post-self-host.                 |
 |                                           |       |                                                                                                   |
 | **Total**                                 |    84 |                                                                                                   |
 
@@ -51,7 +51,7 @@ live until the wider campaign cuts over.
 
 ## B) Migratable today
 
-What's left in `internal/e2e/interp_script_test.go` after
+What's left in `internal/testing/e2e/interp_script_test.go` after
 the PoC campaign:
 
 - `TestInterpScriptFile` / `TestInterpScriptStdin` /
@@ -89,14 +89,14 @@ they agree on the result. The Fern version of this
 shape would still need to invoke multiple compiler
 backends from one test driver.
 
-- `internal/e2e/arm64_test.go`
-- `internal/e2e/x86_64_test.go`
-- `internal/e2e/cross_module_variant_test.go`
-- `internal/e2e/float_semantics_test.go`
-- `internal/e2e/diff_oracle_test.go` (differential
+- `internal/testing/e2e/arm64_test.go`
+- `internal/testing/e2e/x86_64_test.go`
+- `internal/testing/e2e/cross_module_variant_test.go`
+- `internal/testing/e2e/float_semantics_test.go`
+- `internal/testing/e2e/diff_oracle_test.go` (differential
   oracle: same source, N backends, one expected result)
-- `internal/e2e/wasm_e2e_test.go`
-- `internal/e2e/wasm_preview2_test.go`
+- `internal/testing/e2e/wasm_e2e_test.go`
+- `internal/testing/e2e/wasm_preview2_test.go`
 
 **Unblock:** add a Fern-driven multi-backend runner — a
 helper that takes a Fern source string and a list of
@@ -148,57 +148,56 @@ in Go.
 
 Parser / checker / type system:
 
-- `internal/parser/parser_test.go`
-- `internal/parser/fuzz_test.go`
-- `internal/checker/checker_test.go`
-- `internal/checker/fuzz_test.go`
-- `internal/lexer/lexer_test.go`
-- `internal/ast/walk_test.go`
+- `internal/syntax/parser/parser_test.go`
+- `internal/syntax/parser/fuzz_test.go`
+- `internal/check/checker/checker_test.go`
+- `internal/check/checker/fuzz_test.go`
+- `internal/syntax/lexer/lexer_test.go`
+- `internal/syntax/ast/walk_test.go`
 
 IR passes (each test directly constructs IR functions
 and runs a pass on them):
 
-- `internal/ir/ir_test.go`
-- `internal/ir/constprop_test.go`
-- `internal/ir/copyprop_test.go`
-- `internal/ir/dce_test.go`
-- `internal/ir/defunctionalise_test.go`
-- `internal/ir/elide_test.go`
-- `internal/ir/flatten_test.go`
-- `internal/ir/fold_test.go`
-- `internal/ir/inline_test.go`
-- `internal/ir/inline_zero_capture_test.go`
-- `internal/ir/strength_test.go`
-- `internal/ir/tco_test.go`
-- `internal/ir/tee_test.go`
+- `internal/oracle/ir/ir_test.go`
+- `internal/oracle/ir/constprop_test.go`
+- `internal/oracle/ir/copyprop_test.go`
+- `internal/oracle/ir/dce_test.go`
+- `internal/oracle/ir/defunctionalise_test.go`
+- `internal/oracle/ir/elide_test.go`
+- `internal/oracle/ir/flatten_test.go`
+- `internal/oracle/ir/fold_test.go`
+- `internal/oracle/ir/inline_test.go`
+- `internal/oracle/ir/inline_zero_capture_test.go`
+- `internal/oracle/ir/strength_test.go`
+- `internal/oracle/ir/tco_test.go`
+- `internal/oracle/ir/tee_test.go`
 
 Other Go-side passes / helpers:
 
-- `internal/constfold/constfold_test.go`
-- `internal/closureconv/closureconv_test.go`
-- `internal/treeshake/treeshake_test.go`
-- `internal/shadowrename/shadowrename_test.go`
-- `internal/monomorph/monomorph_test.go`
-- `internal/modload/modload_test.go`
-- `internal/diag/diag_test.go`
+- `internal/check/constfold/constfold_test.go`
+- `internal/oracle/closureconv/closureconv_test.go`
+- `internal/oracle/treeshake/treeshake_test.go`
+- `internal/oracle/shadowrename/shadowrename_test.go`
+- `internal/oracle/monomorph/monomorph_test.go`
+- `internal/pkg/modload/modload_test.go`
+- `internal/syntax/diag/diag_test.go`
 
 Interp + codegen + printers:
 
-- `internal/interp/interp_test.go`
-- `internal/interp/coverage_test.go`
-- `internal/printer/diff_test.go`
-- `internal/printer/format_test.go`
-- `internal/printer/roundtrip_test.go`
+- `internal/oracle/interp/interp_test.go`
+- `internal/oracle/interp/coverage_test.go`
+- `internal/syntax/printer/diff_test.go`
+- `internal/syntax/printer/format_test.go`
+- `internal/syntax/printer/roundtrip_test.go`
 - `internal/codegen/wasm/wasm_test.go`
 - `internal/codegen/wasmbin/wasmbin_test.go`
 - `internal/codegen/wasmbin/build_test.go`
 
 Stdlib + utility:
 
-- `internal/fernsmith/fernsmith_test.go`
-- `internal/fernsmith/fuzz_test.go`
-- `internal/fernsmith/gtype_internal_test.go`
-- `internal/fernstring/fernstring_test.go`
+- `internal/testing/fernsmith/fernsmith_test.go`
+- `internal/testing/fernsmith/fuzz_test.go`
+- `internal/testing/fernsmith/gtype_internal_test.go`
 - `internal/stdlib/stdlib_test.go`
 
 **Unblock:** **the compiler being self-hosted.** Once
@@ -220,18 +219,18 @@ counterpart and probably never will:
 LSP server (Go-only — the LSP runs as a Go binary
 talking JSON-RPC):
 
-- `internal/lsp/cache_test.go`
-- `internal/lsp/completion_test.go`
-- `internal/lsp/definition_test.go`
-- `internal/lsp/formatting_test.go`
-- `internal/lsp/hover_test.go`
-- `internal/lsp/inlay_test.go`
-- `internal/lsp/references_test.go`
-- `internal/lsp/semantic_tokens_test.go`
-- `internal/lsp/server_test.go`
-- `internal/lsp/signature_test.go`
-- `internal/lsp/symbols_test.go`
-- `internal/lsp/workspace_test.go`
+- `internal/tools/lsp/cache_test.go`
+- `internal/tools/lsp/completion_test.go`
+- `internal/tools/lsp/definition_test.go`
+- `internal/tools/lsp/formatting_test.go`
+- `internal/tools/lsp/hover_test.go`
+- `internal/tools/lsp/inlay_test.go`
+- `internal/tools/lsp/references_test.go`
+- `internal/tools/lsp/semantic_tokens_test.go`
+- `internal/tools/lsp/server_test.go`
+- `internal/tools/lsp/signature_test.go`
+- `internal/tools/lsp/symbols_test.go`
+- `internal/tools/lsp/workspace_test.go`
 
 Wasm binary encoding (Go-side byte-level emitter — the
 compiler invokes this from Go, not from Fern):
@@ -253,7 +252,7 @@ get rewritten in Fern, which isn't a stated goal.
 
 ## G) Test-runner gate itself
 
-`internal/e2e/test_runner_test.go` — the file that
+`internal/testing/e2e/test_runner_test.go` — the file that
 runs every `tests/stdlib/*.fern` through `Fern
 -interp` and pins TAP outputs. **Collapses to a shell
 wrapper post-self-host** (`fern test_dir/*.fern` would

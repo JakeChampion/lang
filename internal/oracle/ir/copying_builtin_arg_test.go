@@ -1,0 +1,402 @@
+package ir
+
+import (
+	"testing"
+
+	"github.com/jakechampion/lang/internal/syntax/ast"
+)
+
+// A string handed to a copying builtin — strbuf_append, print, the
+// byte scanners — is memcpy'd or written out and never retained, so
+// the parameter must be credited (#7867 slice 2). Before the credit,
+// `EmitState.write`-shaped callees left every caller's fresh concat
+// temp permanently unreclaimed, and a bound local passed to
+// strbuf_append lost its scope-exit drop via the same taint.
+func TestCopyingBuiltinArgIsCounted(t *testing.T) {
+	cases := []struct {
+		name string
+		body string
+	}{
+		{"strbuf_append", `strbuf_append(p); return 0;`},
+		{"buf_push", `let b: usize = buf_new(16); buf_push(b, p); buf_free(b); return 0;`},
+		{"buf_push_range", `let b: usize = buf_new(16); buf_push_range(b, p, 0, 1); buf_free(b); return 0;`},
+		{"buf_push_mapped", `let b: usize = buf_new(16); let t: u8[] = [1 as u8]; buf_push_mapped(b, p, t); buf_free(b); return 0;`},
+		{"buf_push_filtered", `let b: usize = buf_new(16); let t: u8[] = [1 as u8]; buf_push_filtered(b, p, t); buf_free(b); return 0;`},
+		{"count_byte", `return __count_byte(p, 97);`},
+		{"memchr", `return __memchr(p, 97, 0);`},
+		{"print", `print(p); return 0;`},
+		{"writer-write", `let w: Writer = stdout(); let e: Option[IoError] = w.write(p); return 0;`},
+		{"Writer.write", `match (stdout().write(p)) { Some(_) => { return 1; }, None => { return 0; } } return 0;`},
+		// A socket send reads the bytes and answers a count. The serve
+		// loop's serialised response is a local passed to a helper that
+		// sends it, and stayed stranded once per request without this.
+		{"tcp_send", `return tcp_send(3, p);`},
+		{"udp_send host", `return udp_send(p, 1, "x");`},
+		{"udp_send data", `return udp_send("127.0.0.1", 1, p);`},
+		{"udp_sendto data", `return udp_sendto(3, [127 as u8, 0 as u8, 0 as u8, 1 as u8], 1, p);`},
+	}
+	for _, c := range cases {
+		src := "function eat(p: string): i32 { " + c.body + " }\nfunction main(): i32 { return 0; }"
+		got := paramCountedFor(t, src, "eat")
+		if len(got) != 1 || !got[0] {
+			t.Errorf("%s: paramCountedRetain[eat] = %v, want [true] — the builtin copies "+
+				"the bytes out and retains nothing", c.name, got)
+		}
+	}
+}
+
+// buf_push_mapped and buf_push_filtered read their table and retain nothing,
+// so a table parameter is credited the way the string is.
+func TestCopyingBuiltinTableArgIsCounted(t *testing.T) {
+	for _, builtin := range []string{"buf_push_mapped", "buf_push_filtered"} {
+		src := "function eat(p: u8[]): i32 { let b: usize = buf_new(16); " + builtin + "(b, \"ab\", p); buf_free(b); return 0; }\n" +
+			"function main(): i32 { return 0; }"
+		got := paramCountedFor(t, src, "eat")
+		if len(got) != 1 || !got[0] {
+			t.Errorf("%s: paramCountedRetain[eat] = %v, want [true] — the table is read, never retained", builtin, got)
+		}
+	}
+}
+
+func TestMismatchBytesArgsAreCounted(t *testing.T) {
+	src := `function scan(a: u8[], b: u8[]): i32 { return __mismatch_bytes(a, 0, b, 0, a.len()); }
+function main(): i32 { return 0; }`
+	got := paramCountedFor(t, src, "scan")
+	if len(got) != 2 || !got[0] || !got[1] {
+		t.Fatalf("paramCountedRetain[scan] = %v, want [true true]: comparing borrows both arrays", got)
+	}
+}
+
+func TestMemchrBytesArgIsCounted(t *testing.T) {
+	src := `function scan(p: u8[]): i32 { return __memchr_bytes(p, 128, 0); }
+function main(): i32 { return 0; }`
+	got := paramCountedFor(t, src, "scan")
+	if len(got) != 1 || !got[0] {
+		t.Fatalf("paramCountedRetain[scan] = %v, want [true]: scanning borrows p", got)
+	}
+}
+
+func TestRmemchrBytesArgIsCounted(t *testing.T) {
+	src := `function scan(p: u8[]): i32 { return __rmemchr_bytes(p, 128, 0); }
+function main(): i32 { return 0; }`
+	got := paramCountedFor(t, src, "scan")
+	if len(got) != 1 || !got[0] {
+		t.Fatalf("paramCountedRetain[scan] = %v, want [true]: scanning borrows p", got)
+	}
+}
+
+func TestByteReductionArgsAreCounted(t *testing.T) {
+	for _, call := range []string{"__crc32_cksum_array(123, p)", "__sum_bytes_array(p)", "__bsd_sum_bytes(p, 123)"} {
+		t.Run(call, func(t *testing.T) {
+			src := "function scan(p: u8[]): i32 { return " + call + "; }\nfunction main(): i32 { return 0; }"
+			got := paramCountedFor(t, src, "scan")
+			if len(got) != 1 || !got[0] {
+				t.Fatalf("paramCountedRetain[scan] = %v, want [true]: reductions borrow the array", got)
+			}
+		})
+	}
+}
+
+func TestCountByteBytesArgIsCounted(t *testing.T) {
+	src := `function scan(p: u8[]): i32 { return __count_byte_bytes(p, 128); }
+function main(): i32 { return 0; }`
+	got := paramCountedFor(t, src, "scan")
+	if len(got) != 1 || !got[0] {
+		t.Fatalf("paramCountedRetain[scan] = %v, want [true]: counting borrows p", got)
+	}
+}
+
+func TestByteSetScanArgsAreCounted(t *testing.T) {
+	for _, builtin := range []string{"__scan_set_bytes", "__count_runs_bytes"} {
+		t.Run(builtin, func(t *testing.T) {
+			src := "function scan(bytes: u8[], set: u8[]): i32 { return " + builtin + "(bytes, 0, set); }\nfunction main(): i32 { return 0; }"
+			got := paramCountedFor(t, src, "scan")
+			if len(got) != 2 || !got[0] || !got[1] {
+				t.Fatalf("paramCountedRetain[scan] = %v, want [true true]: scanning borrows input and table", got)
+			}
+		})
+	}
+}
+
+func TestCopyingBuiltinStringRangeArgIsCounted(t *testing.T) {
+	src := `function eat(p: u8[]): string {
+    return string_from_bytes_range_unchecked(p, 0, p.len());
+}
+function main(): i32 { return 0; }`
+	got := paramCountedFor(t, src, "eat")
+	if len(got) != 1 || !got[0] {
+		t.Fatalf("paramCountedRetain[eat] = %v, want [true]: the string range copy borrows p", got)
+	}
+}
+
+func TestCopyingBuiltinByteRangeArgIsCounted(t *testing.T) {
+	src := `function eat(p: u8[]): i32 {
+    let b: usize = buf_new(1);
+    buf_push_bytes_range(b, p, 0, p.len());
+    buf_free(b);
+    return 0;
+}
+function main(): i32 { return 0; }`
+	got := paramCountedFor(t, src, "eat")
+	if len(got) != 1 || !got[0] {
+		t.Fatalf("paramCountedRetain[eat] = %v, want [true]: byte range append borrows p", got)
+	}
+}
+
+// A socket address is read into a sockaddr by a bind, connect or sendto
+// and never retained, so an address parameter is credited too.
+func TestCopyingSocketAddressArgIsCounted(t *testing.T) {
+	for _, c := range []struct{ name, body string }{
+		{"udp_bind", `return udp_bind(p, 0);`},
+		{"udp_connect", `return udp_connect(3, p, 1);`},
+		{"udp_sendto", `return udp_sendto(3, p, 1, "x");`},
+		{"tcp_listen_with", `return tcp_listen_with(p, 0, 16, false);`},
+		{"tcp_connect_with", `return tcp_connect_with(p, 1, false);`},
+	} {
+		src := "function eat(p: u8[]): i32 { " + c.body + " }\nfunction main(): i32 { return 0; }"
+		got := paramCountedFor(t, src, "eat")
+		if len(got) != 1 || !got[0] {
+			t.Errorf("%s: paramCountedRetain[eat] = %v, want [true] — the address is read, never retained", c.name, got)
+		}
+	}
+}
+
+// One copying use does not admit a retaining one: everyOccurrenceSafe
+// is all-or-nothing, so a parameter that is ALSO stored keeps the
+// refusal — crediting it would let the caller free a live buffer.
+func TestCopyingUseComposesWithThePushCredit(t *testing.T) {
+	// Originally this pinned the refusal: the append store was treated as
+	// uncounted retention, and the copying-builtin credit must not admit
+	// it. The #7914 push-element credit made the append a COUNTED
+	// occurrence (emitArrayPush's unconditional element retain), so both
+	// occurrences are now legitimately safe and the two credits compose —
+	// measured balanced end-to-end by the
+	// copying_builtin_composes_with_push_credit corpus case. The refusal
+	// this used to watch (an occurrence nothing counts) lives on in
+	// TestStringParamThatIsRetainedStaysUncredited.
+	src := `function keep(p: string): string[] {
+    let n: i32 = __count_byte(p, 97);
+    let out: string[] = [];
+    out = out.append(p);
+    if (n > 0) { return out; }
+    return out;
+}
+function main(): i32 { return 0; }`
+	got := paramCountedFor(t, src, "keep")
+	if len(got) != 1 || !got[0] {
+		t.Errorf("paramCountedRetain[keep] = %v, want [true] — the copying read and "+
+			"the counted push store are each safe occurrences", got)
+	}
+}
+
+// The audit interlock: every table member must be inert per the rc
+// signature registry — a member that moves a count fails here rather
+// than in a corpus run. The registry deliberately does not model the
+// RESULT axis, which is why the table is hand-audited rather than
+// derived from it; this test pins the half the registry does model.
+func TestCopyingBuiltinArgsAreInertPerTheRegistry(t *testing.T) {
+	for name := range copyingBuiltinArgs {
+		if rcInertBuiltins[name] {
+			continue
+		}
+		if alias, ok := builtinRuntimeAlias(name); ok && rcInert[alias] {
+			continue
+		}
+		t.Errorf("%s is in copyingBuiltinArgs but the rc signature registry does not "+
+			"record it inert — read the runtime body and classify it there first", name)
+	}
+}
+
+// The exclusions that would be unsound: the POSITIONS whose value the call
+// can hand back, and the count-moving container mutators. Their absence is
+// the table's whole safety argument.
+//
+// A Map read is why this is stated per position rather than per callee: its
+// KEY is hashed and compared and nothing else, while its receiver and
+// get_or's fallback are exactly what the call returns. Listing the callee
+// wholesale would credit all three; leaving it out entirely cost the key's
+// own scope-exit release (#8277).
+func TestCopyingBuiltinArgsExcludeAliasingResults(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		arg  int
+		why  string
+	}{
+		{"__method_Map_get", 0, "the receiver, whose interior the result aliases"},
+		{"__method_Map_get_or", 0, "the receiver, whose interior the result aliases"},
+		{"__method_Map_get_or", 2, "the fallback, which IS the result on a miss"},
+		{"__method_Map_has", 0, "the receiver"},
+		{"__method_Map_delete", 0, "the receiver"},
+		{"__method_Map_keys", 0, "the receiver, whose keys the result copies out"},
+		{"__method_Map_values", 0, "the receiver, whose interior the result aliases"},
+		{"__method_MapIter_key", 0, "the iterator, whose interior the result aliases"},
+		{"__method_MapIter_value", 0, "the iterator, whose interior the result aliases"},
+		{"__method_Map_set", 1, "the key, which the map retains"},
+		{"__method_Map_set", 2, "the value, which the map retains"},
+		{"__method_Array_push", 1, "the element, which the array retains"},
+		{"__method_Array_set", 2, "the element, which the array retains"},
+		{"__heap_release_to", 0, "the callee invalidates memory wholesale"},
+	} {
+		if copyingBuiltinArg(tc.name, tc.arg) {
+			t.Errorf("copyingBuiltinArg(%s, %d) is true, but that argument is %s — "+
+				"inert on its arguments is not enough when the call can hand the value back",
+				tc.name, tc.arg, tc.why)
+		}
+	}
+}
+
+// The half the exclusions above do not state: a Map read's KEY is credited,
+// which is what keeps the caller's own release of an aliased key (#8277).
+func TestCopyingBuiltinArgsCreditTheMapReadKey(t *testing.T) {
+	for _, name := range []string{
+		"__method_Map_get", "__method_Map_get_or",
+		"__method_Map_has", "__method_Map_delete",
+	} {
+		if !copyingBuiltinArg(name, 1) {
+			t.Errorf("copyingBuiltinArg(%s, 1) is false — a Map read hashes and compares "+
+				"its key and retains nothing of it, so the caller must keep its release", name)
+		}
+	}
+}
+
+// The op-level consequence for the bound-local half: a local whose only
+// escaping use is a copying builtin keeps its FREEING scope-exit drop.
+// __fern_rc_dec only decrements; the dec-only form is what an unbounded
+// leak looks like in the IR.
+func TestBoundLocalPassedToCopyingBuiltinIsFreed(t *testing.T) {
+	src := `function shout(pfx: string, body: string): i32 {
+    let msg: string = pfx + body;
+    strbuf_append(msg);
+    return msg.len();
+}
+function main(): i32 { return 0; }`
+	p := lowerSourceWith(t, src, 8)
+	fn := findFunc(p, "shout")
+	if n := countCallDirect(fn.Ops, "__fern_str_dec"); n == 0 {
+		t.Errorf("shout never calls __fern_str_dec — the concat it bound is dec'd but "+
+			"never freed, one buffer leaked per call; ops:\n%s", p)
+	}
+}
+
+// Free-off lowering is unaffected: the credit only removes a taint that
+// gates reclamation, and reclamation is compiled out here.
+func TestCopyingBuiltinCreditIsInertWithFreeOff(t *testing.T) {
+	defer func(prev bool) { ast.RcFreeEnabled = prev }(ast.RcFreeEnabled)
+	ast.RcFreeEnabled = false
+	src := `function shout(pfx: string, body: string): i32 {
+    let msg: string = pfx + body;
+    strbuf_append(msg);
+    return msg.len();
+}
+function main(): i32 { return 0; }`
+	p := lowerSourceWith(t, src, 8)
+	fn := findFunc(p, "shout")
+	if n := countCallDirect(fn.Ops, "__fern_str_dec"); n != 0 {
+		t.Errorf("shout emitted %d frees with reclamation off; ops:\n%s", n, p)
+	}
+}
+
+// The caller-side half for the method form: a string accumulator declared
+// inside a match arm and handed to `Writer.write` stays OWNED, so its
+// self-append takes the in-place path — here its fused range form, the piece
+// being a slice — and its scope-exit release frees.
+// `__method_Writer_write` writes the bytes to the fd and retains nothing;
+// without its table entry the accumulator was borrow-tainted, every
+// `out = out + piece` copied the whole prefix afresh, and the superseded copy
+// was decremented without being freed (#8394).
+func TestAccumulatorWrittenToWriterStaysInPlace(t *testing.T) {
+	src := `function main(): i32 {
+    let w: Writer = stdout();
+    match (Some("abcdefgh\n")) {
+        Some(chunk) => {
+            let out: string = "";
+            let i: i32 = 0;
+            while (i < 4) {
+                out = out + slice_unchecked(chunk, 0, chunk.len());
+                i = i + 1;
+            }
+            match (w.write(out)) { Some(_) => { return 1; }, None => {} }
+        },
+        None => { return 2; }
+    }
+    return 0;
+}`
+	dumps := map[string]string{}
+	RcPlanHook = func(fn, dump string) { dumps[fn] = dump }
+	defer func() { RcPlanHook = nil }()
+	p := lowerSourceWith(t, src, 8)
+	if !hasPlanName(dumps["main"], "freeEligible", "out") {
+		t.Errorf("out is not freeEligible — the Writer.write argument taints it; plan:\n%s", dumps["main"])
+	}
+	fn := findFunc(p, "main")
+	if n := countCallDirect(fn.Ops, "__fern_str_append_range"); n != 1 {
+		t.Errorf("main calls __fern_str_append_range %d times, want 1 — the self-append fell back to the copying concat; ops:\n%s", n, p)
+	}
+	if n := countCallDirect(fn.Ops, "__str_slice"); n != 0 {
+		t.Errorf("main materialises the slice %d times, want 0 (the append reads the range out of `chunk`); ops:\n%s", n, p)
+	}
+}
+
+// `Writer.write_some` is the same fact for the unlooped write: it hands
+// back a COUNT, so the string it wrote cannot be named by the result at
+// all. Without its table entry the accumulator was borrow-tainted exactly
+// as `write`'s was — `out = out + piece` copied the whole prefix afresh
+// every round, and the superseded copy was decremented without being
+// freed. Measured on a dd-shaped loop over 8 MiB: 67 MB of read buffers
+// live at exit under `FERN_LEAKCHECK`.
+func TestAccumulatorWrittenToWriterWriteSomeStaysInPlace(t *testing.T) {
+	src := `function main(): i32 {
+    let w: Writer = stdout();
+    match (Some("abcdefgh\n")) {
+        Some(chunk) => {
+            let out: string = "";
+            let i: i32 = 0;
+            while (i < 4) {
+                out = out + slice_unchecked(chunk, 0, chunk.len());
+                i = i + 1;
+            }
+            match (w.write_some(out)) { Ok(_) => {}, Err(_) => { return 1; } }
+        },
+        None => { return 2; }
+    }
+    return 0;
+}`
+	dumps := map[string]string{}
+	RcPlanHook = func(fn, dump string) { dumps[fn] = dump }
+	defer func() { RcPlanHook = nil }()
+	p := lowerSourceWith(t, src, 8)
+	if !hasPlanName(dumps["main"], "freeEligible", "out") {
+		t.Errorf("out is not freeEligible — the Writer.write_some argument taints it; plan:\n%s", dumps["main"])
+	}
+	fn := findFunc(p, "main")
+	if n := countCallDirect(fn.Ops, "__fern_str_append_range"); n != 1 {
+		t.Errorf("main calls __fern_str_append_range %d times, want 1 — the self-append fell back to the copying concat; ops:\n%s", n, p)
+	}
+	if n := countCallDirect(fn.Ops, "__str_slice"); n != 0 {
+		t.Errorf("main materialises the slice %d times, want 0 (the append reads the range out of `chunk`); ops:\n%s", n, p)
+	}
+}
+
+// The argument-temp half for the method form (#8413): a fresh string handed
+// straight to `Writer.write` is stashed and released after the call. The
+// call-level admission needs a scalar result and the position-wise one a
+// user callee, so the temp of `w.write(build(chunk))` was owned by nobody —
+// one whole output chunk leaked per iteration of a cat-shaped loop.
+func TestFreshStringPassedToWriterIsReleased(t *testing.T) {
+	src := `function build(n: i32): string {
+    let out: string = "";
+    let i: i32 = 0;
+    while (i < n) { out = out + "abcdefgh"; i = i + 1; }
+    return out;
+}
+function main(): i32 {
+    let w: Writer = stdout();
+    match (w.write(build(4))) { Some(_) => { return 1; }, None => {} }
+    return 0;
+}`
+	p := lowerSourceWith(t, src, 8)
+	fn := findFunc(p, "main")
+	if n := countCallDirect(fn.Ops, "__fern_str_dec"); n != 1 {
+		t.Errorf("main calls __fern_str_dec %d times, want 1 — the build() temp passed to Writer.write is not released; ops:\n%s", n, p)
+	}
+}

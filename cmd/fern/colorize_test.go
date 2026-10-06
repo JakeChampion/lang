@@ -4,7 +4,7 @@ import (
 	"os"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/tty"
+	"github.com/jakechampion/lang/internal/tools/tty"
 )
 
 // `--color=auto` (the default) decides from stderr. It used to decide with

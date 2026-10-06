@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/corpus"
+	"github.com/jakechampion/lang/internal/testing/corpus"
 )
 
 // Every example, Fern-side test and benchmark checks clean. The Examples lane

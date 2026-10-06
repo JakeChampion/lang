@@ -14,7 +14,7 @@
 #
 # Values are the program's own `main` result truncated to 8 bits, and are
 # identical on x86-64 and arm64. To add an example, add its row; the gate in
-# internal/sourcelint fails when one is missing rather than skipping it.
+# internal/testing/sourcelint fails when one is missing rather than skipping it.
 array 100
 factorial 208
 fizzbuzz 0

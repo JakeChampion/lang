@@ -1,5 +1,5 @@
 // compiler/mvs.fern — Minimum Version Selection for the
-// self-hosted compiler, the port of native's internal/mvs (#6640).
+// self-hosted compiler, the port of native's internal/pkg/mvs (#6640).
 //
 // MVS's defining property: the constraint language is minimum-version-only,
 // so a satisfying configuration always exists, the result is the unique

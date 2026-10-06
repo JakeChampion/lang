@@ -71,7 +71,7 @@ backends match it:
   only runs on operands it can't fault on. A literal divisor needs
   neither guard and takes an unguarded sequence instead — a shift for a
   power of two, otherwise the multiply-high reciprocal at either width —
-  in both compilers.
+  in the compiler.
 - **wasm** routes `div` / `rem` through guarded runtime helpers
   (`__fern_idiv_*` / `__fern_irem_*`) that sanitise the divisor before
   the trapping instruction and `select` the contract result.
@@ -110,7 +110,7 @@ holds.
 ### How it's implemented
 
 There is no saturating IR opcode. Both the native lowering
-(`internal/ir.(*builder).satBinary`) and the self-host one
+(`internal/oracle/ir.(*builder).satBinary`) and the self-host one
 (`irlower.lower_sat_binary`) expand to a clamp over ordinary IR ops, so
 every backend gets it for free. The tests are formulated as *pre*-checks
 against the type's MIN / MAX rather than as post-hoc overflow-flag
@@ -264,7 +264,7 @@ portable across backends.
 ## Testing
 
 The cross-backend differential harness
-`internal/e2e/numeric_property_test.go` generates random programs over
+`internal/testing/e2e/numeric_property_test.go` generates random programs over
 the whole integer matrix (every width × signedness × operator,
 including the division edges above) and asserts the interpreter and
 every codegen backend agree. `TestNumericProperty_Regressions` pins

@@ -3,16 +3,16 @@ name: Test units
 # Fast unit tests — everything under internal/ except the two
 # big-iron packages that get their own workflows:
 #
-#   internal/e2e + internal/e2eselfhost — split into test-e2e-*
+#   internal/testing/e2e + internal/testing/e2ecompiler — split into test-e2e-*
 #                        (arm64 / x86_64 / wasm / selfhost / other) so
 #                        the 5-minute sequential block fans out. Their
-#                        shared harness, internal/e2eharness, runs HERE:
+#                        shared harness, internal/testing/e2eharness, runs HERE:
 #                        its own 20 tests are sub-second (#8470).
-#   internal/fernsmith — its own workflow (fuzz corpus + generator
+#   internal/testing/fernsmith — its own workflow (fuzz corpus + generator
 #                        machinery; ~60s).
 #
 # Matrix per host arch so backend-tagged unit tests (e.g. the
-# internal/ir invariants) get exercised under both ABIs.
+# internal/oracle/ir invariants) get exercised under both ABIs.
 #
 # THE RUNTIMES ARE INSTALLED HERE, not assumed absent. Every wasm test in
 # these packages opens with an `exec.LookPath("wasmtime")` and every arm64
@@ -42,7 +42,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          # Two jobs per host: `heavy` is internal/ir and printer, each
+          # Two jobs per host: `heavy` is internal/oracle/ir and printer, each
           # 350-390 s of serial tests that cannot t.Parallel; `rest` is the
           # other ~75 packages. One job was 10 minutes on x86 with the
           # heavy packages sharing four cores with everything else.
@@ -87,7 +87,7 @@ jobs:
           build-cache-key: ${{ steps.day.outputs.stamp }}
           wasmtime: true
       # qemu-aarch64 for the arm64 EXECUTION tests in the unit packages, plus
-      # the aarch64 binutils/gcc that internal/e2eharness's native-linker
+      # the aarch64 binutils/gcc that internal/testing/e2eharness's native-linker
       # parity gate assembles against. Same lookup-and-skip shape as wasm:
       # without these the tests report `ok` having executed nothing.
       #
@@ -127,7 +127,7 @@ jobs:
           [ "$fail" -eq 0 ] || exit 1
           qemu-aarch64 --version | head -1
       - name: go test (units, ${{ matrix.group }} packages)
-        # internal/e2eharness's arm64 native-link parity gate runs ONLY here, so
+        # internal/testing/e2eharness's arm64 native-link parity gate runs ONLY here, so
         # a t.Skip would cover nothing: Arm64Tooling turns it into a failure.
         # Both legs satisfy it — the aarch64 runner through its native gcc.
         #
@@ -149,7 +149,7 @@ jobs:
         # nothing will remind you." Nothing did. Three rounds of drift were
         # already recorded there:
         #   - internal/{caps,literate,manifest,mvs,pkgcache,sourcelint} had
-        #     accumulated off the list, and internal/caps was RED on main for
+        #     accumulated off the list, and internal/pkg/caps was RED on main for
         #     it (a builtin added to the checker + interp with no capability
         #     classification) while CI stayed green.
         #   - ./cmd/... was never listed AT ALL — 42 tests across cmd/fern +
@@ -158,7 +158,7 @@ jobs:
         #     port and nobody could see it (#5490).
         #   - ./internal/native/... likewise, the pure-Go assemblers and
         #     linkers since retired.
-        # A fourth was live when the list was replaced: internal/embed had a
+        # A fourth was live when the list was replaced: internal/pkg/embed had a
         # test file and no lane ran it.
         #
         # `go list` cannot go stale, so the fifth round does not happen.
@@ -167,8 +167,8 @@ jobs:
         # default: a binary that default kills reports whichever cases were in
         # flight as failures with no output and an unknown elapsed, so the lane
         # names tests that did not fail and never names the wall it hit. The
-        # longest package here is now internal/ir at ~4m40s, since
-        # internal/coreutils moved to test-coreutils.yml.
+        # longest package here is now internal/oracle/ir at ~4m40s, since
+        # internal/testing/coreutils moved to test-coreutils.yml.
         run: |
           # shellcheck disable=SC2046 # the package list is deliberately word-split
           gotestsum --format pkgname-and-test-fails -- -timeout 25m \

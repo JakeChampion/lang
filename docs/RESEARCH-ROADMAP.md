@@ -280,7 +280,7 @@ Cross-doc edges (the load-bearing inter-doc dependencies):
 - **D-§2 (structured Diagnostic) → I-§8 (LSP code-actions)**:
   IDE quick-fixes need machine-applicable suggestions.
 - **B-§6 (differential oracle) ← fernsmith fuzzer**:
-  Existing infrastructure already in `internal/fernsmith/`.
+  Existing infrastructure already in `internal/testing/fernsmith/`.
 
 ## One-recommendation-per-doc, ranked by absolute leverage
 

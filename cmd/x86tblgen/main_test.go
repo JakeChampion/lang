@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/x86tbl"
+	"github.com/jakechampion/lang/internal/tables/x86tbl"
 )
 
 const x86NativeFern = "../../compiler/x86_native.fern"
@@ -109,7 +109,7 @@ func TestSSEIntHalfIsAll66Prefixed(t *testing.T) {
 // TestNamedRowsAreWellFormed guards the by-name vocabulary's own shape: a
 // duplicated AT&T spelling would dispatch to one of its two rows, and a probe
 // that does not start with its spelling probes some other row. The self-host
-// side of the same rows is internal/e2eselfhost's
+// side of the same rows is internal/testing/e2ecompiler's
 // TestSelfHostX86TableRowsMatchGas.
 func TestNamedRowsAreWellFormed(t *testing.T) {
 	seenATT := map[string]bool{}

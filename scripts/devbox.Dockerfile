@@ -43,7 +43,7 @@ RUN apt-get update \
  && [ -e /usr/bin/aarch64-linux-gnu-gcc ] || ln -sf /usr/bin/gcc /usr/bin/aarch64-linux-gnu-gcc
 
 # GNU coreutils, built, because the image's own is not an oracle the corpus
-# can be held to. internal/coreutils compares each utility against the GNU
+# can be held to. internal/testing/coreutils compares each utility against the GNU
 # binary of the same name and docs/COREUTILS.md pins that to 9.12;
 # debian:bookworm ships 9.1, so a corpus run in here was measuring a version
 # out of support and failing for reasons that were nothing to do with Fern.
@@ -124,6 +124,6 @@ RUN set -eux; \
     go version; wasmtime --version; wasm-tools --version; \
     test -f "$FERN_WASI_ADAPTER"; \
     "${FERN_GNU_COREUTILS%%:*}/yes" --version | head -1 | grep -q '(GNU coreutils)' \
-      || (echo "the corpus oracle is not GNU coreutils; internal/coreutils would have none" >&2; exit 1); \
+      || (echo "the corpus oracle is not GNU coreutils; internal/testing/coreutils would have none" >&2; exit 1); \
     "${FERN_GNU_COREUTILS%%:*}/uptime" --version | head -1; \
     "${FERN_GNU_COREUTILS%%:*}/kill" --version | head -1

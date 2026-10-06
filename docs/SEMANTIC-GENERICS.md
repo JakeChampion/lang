@@ -28,7 +28,7 @@ wide scalar. That path is unchanged by anything below.
 ## The rule: the boundary instantiates
 
 The semantic source boundary (`semsource` / `ssasem` / `ssaunits` / `ssarc`)
-produces a generic body ONCE PER INSTANTIATION, the way `internal/monomorph`
+produces a generic body ONCE PER INSTANTIATION, the way `internal/oracle/monomorph`
 does on the native pipeline. A declaration that spells type variables is a
 TEMPLATE: it has no body of its own, only a contract whose variables are
 `typeinfo.TypeErased`. A call site binds them — structurally, left to right

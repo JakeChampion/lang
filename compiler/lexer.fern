@@ -1,4 +1,4 @@
-// compiler/lexer.fern — a port of internal/lexer/lexer.go
+// compiler/lexer.fern — a port of internal/syntax/lexer/lexer.go
 // into Fern itself, exercising the language features that landed
 // in the bug-hunt + feature-gap session:
 //
@@ -9,7 +9,7 @@
 //   - pattern matching with literal patterns drives the dispatch
 //     between Number / Ident / Keyword / Punct / String / Error
 //
-// Parity with internal/lexer/lexer.go now covers: hex integer
+// Parity with internal/syntax/lexer/lexer.go now covers: hex integer
 // literals (`0x2A`, `0x10u8`), scientific-notation floats
 // (`1e3`, `1.5e-2`), the afterDot guard for chained tuple
 // access (`t.1.0`), closed-list numeric-suffix validation, and a
@@ -109,7 +109,7 @@ function hex_val(b: i32): i32 {
 }
 
 // Whitespace bytes skipped between tokens. Native uses unicode.IsSpace
-// (internal/lexer/lexer.go); at the byte level that includes the ASCII
+// (internal/syntax/lexer/lexer.go); at the byte level that includes the ASCII
 // set space/tab/LF/CR plus vertical-tab (0x0B) and form-feed (0x0C).
 // Without \v/\f a form feed lexed to TokError and tokenize STOPPED,
 // silently truncating the program (bogus E052 "missing return") (#4339).
@@ -121,7 +121,7 @@ function is_suffix_start(b: i32): boolean {  // 'i' 'u' 'f'
   return b == 105 || b == 117 || b == 102;
 }
 
-// Keyword set — mirrors `internal/lexer/lexer.go`'s `keywords` map.
+// Keyword set — mirrors `internal/syntax/lexer/lexer.go`'s `keywords` map.
 // Inlined as a string-comparison chain instead of a Map[string, bool]
 // so the lexer stays a single file with no init-order dependency.
 function is_keyword(name: string): boolean {
@@ -914,7 +914,7 @@ function closing_quote_ahead(l: Lex): boolean {
 // Everything a literal cannot mean is rejected here rather than left
 // for the parser: an empty `''`, more than one scalar / byte, a
 // non-ASCII `b'é'`, and an unterminated one. Mirrors scanQuoted in
-// internal/lexer/lexer.go.
+// internal/syntax/lexer/lexer.go.
 function scan_quoted(l: Lex, is_byte: boolean, start_line: i32, start_col: i32): NumResult {
   let begin: i32 = l.i;
   let kind_name: string = "character";

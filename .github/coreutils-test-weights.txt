@@ -1,4 +1,4 @@
-# Measured weights for the internal/coreutils shards, in seconds.
+# Measured weights for the internal/testing/coreutils shards, in seconds.
 #
 # `TestName seconds` per line; `#` comments and blanks ignored. A name with no
 # entry weighs 1, so this file steers BALANCE only — it can never drop a test
@@ -12,7 +12,7 @@
 # invocation and its slice of TestSelfHostCoreutilsParity in another.
 #
 # Weight-1 entries are omitted — the partitioner already defaults to one.
-# Source: a full `go test -v ./internal/coreutils/` run, 2026-09-21. Refresh
+# Source: a full `go test -v ./internal/testing/coreutils/` run, 2026-09-21. Refresh
 # with the same method when the spread drifts; see docs/CI-WEIGHT-REFRESH.md
 # for the multi-run rules the self-host table follows.
 

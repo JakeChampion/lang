@@ -152,7 +152,7 @@ here, the same binary measured 43 MB locally and 552 MB on CI depending on
 THP settings), `__arr_push_shared_count()` / `__arr_push_shared_bytes()` for
 the rc==1 append cliff, `FERN_CLIFF_REPORT=1`.
 
-**#17 Fast generic monomorphization caching.** `internal/monomorph` exists
+**#17 Fast generic monomorphization caching.** `internal/oracle/monomorph` exists
 (1,882 lines) and the self-host has `monomorphize_module`. Caching
 `(GenericFunction, TypeList) → MachineCode` is a compile-*time* optimization
 for a compiler whose measured bottleneck is memory, not repeated

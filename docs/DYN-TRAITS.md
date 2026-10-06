@@ -691,8 +691,8 @@ type-id compares on wasm), and a hit calls `<Enum>.<method>` with the
 variant box as the receiver (its body's `match (self)` re-reads the
 variant). Per-variant keying — unlike the AST fallback — means two enums
 implementing the same trait dispatch to their own impls. Coverage:
-`internal/e2eselfhost/self_host_dyn_enum_ir_test.go` (x86-64 + wasm +
-arm64) and the native leg `internal/e2e/dyn_enum_dispatch_native_test.go`.
+`internal/testing/e2ecompiler/self_host_dyn_enum_ir_test.go` (x86-64 + wasm +
+arm64) and the native leg `internal/testing/e2e/dyn_enum_dispatch_native_test.go`.
 
 ### 4.4 RC of trait objects (Perceus follow-up — design)
 
@@ -815,8 +815,8 @@ reference (#10073).
 The vtable-referenced drop fns are reached only by indirect call, so the
 wasm build roots them (`ip.Vtables[*].Drop` + `__drop_dyn_*`) past IR
 dead-function elimination, and the drop worklist is seeded from the
-vtable drop slots. Tests: `internal/ir/vtable_test.go`
-(`TestCollectVtablesDropSlot`) + `internal/e2e/rc_heap_bump_dyn_trait_test.go`
+vtable drop slots. Tests: `internal/oracle/ir/vtable_test.go`
+(`TestCollectVtablesDropSlot`) + `internal/testing/e2e/rc_heap_bump_dyn_trait_test.go`
 (bounded loop, no-underflow, multi-trait merged drop slot, borrowed-param
 no-drop).
 
@@ -852,7 +852,7 @@ perElem returns the i32 box ptr). The `dyn-RC` flag is threaded to
 exit-sweep / reinit / precise-drop callers carry `b.dynRcSupported`);
 the worklist regenerates `__drop_arr_dyn_*` from the name and seeds
 `__drop_dyn_*` (always emitted by `buildDynDropHelpers`). Tests:
-`internal/e2e/rc_heap_bump_dyn_trait_container_test.go` (bounded loop +
+`internal/testing/e2e/rc_heap_bump_dyn_trait_container_test.go` (bounded loop +
 no-underflow, heterogeneous `Circle`+`Rect` each owning a String, on
 x86-64 + arm64 + wasm).
 
@@ -873,7 +873,7 @@ matching the helper's argc. Both the per-iteration loop-var reinit drop
 (generated `__drop_enum_<N>` route, via `emitEnumDropViaGenFn` whose gate
 now passes `b.dynRcSupported`) and the once-per-call exit-sweep
 (`emitEnumSlotDrop`) reclaim the payload. Tests:
-`internal/e2e/rc_heap_bump_dyn_trait_nested_test.go` (bounded loop +
+`internal/testing/e2e/rc_heap_bump_dyn_trait_nested_test.go` (bounded loop +
 no-over-release, the matched-and-bound `match (b) { Wrap(s) => … }` shape
 — the double-free-sensitive case — on x86-64 + arm64).
 
@@ -899,7 +899,7 @@ destructured binding retains what it projects. So the drop releases it —
 `__drop_dyn_<set>` with one word on the natives and two on wasm. wasm needs
 no exclusion here: every read out of the slot takes its own unit, which is
 exactly what the enum match-bind does not do. Tests:
-`internal/e2e/rc_dyn_alias_test.go` (`TestDynFieldReleasedByStructDrop*`).
+`internal/testing/e2e/rc_dyn_alias_test.go` (`TestDynFieldReleasedByStructDrop*`).
 
 **§7.8 — already-reclaiming and still-FLAGGED kinds (follow-up).**
 
@@ -1002,12 +1002,12 @@ to `dyn Trait` through it. Copy the view first (`.to_owned()`) to box it.
 
 ## 6. Implementation map
 
-### 6.1 Lexer (`internal/lexer/lexer.go`)
+### 6.1 Lexer (`internal/syntax/lexer/lexer.go`)
 Add `dyn` to the keyword set. (Keyword rather than contextual to keep the
 parser simple; `dyn` was not previously an identifier anywhere in the
 stdlib or examples.)
 
-### 6.2 AST (`internal/ast/ast.go`)
+### 6.2 AST (`internal/syntax/ast/ast.go`)
 - `DynTraitType{Trait string}` implementing `isType()` + `String()`
   (`"dyn Shape"`).
 - `ast.Equal`: two `DynTraitType` are equal iff same `Trait`.
@@ -1017,12 +1017,12 @@ stdlib or examples.)
 - `Call.DynTrait string`: set by the checker to mark a dynamic method
   call; empty for ordinary calls.
 
-### 6.3 Parser (`internal/parser/parser.go`)
+### 6.3 Parser (`internal/syntax/parser/parser.go`)
 In `parseType`, a leading `dyn` keyword → parse a trait name →
 `DynTraitType{Trait}`. Postfix `[]` / `[…]` continues to apply to the
 whole `dyn Trait` (array-of). No bounds, no generic args on the trait.
 
-### 6.4 Checker (`internal/checker/checker.go`)
+### 6.4 Checker (`internal/check/checker/checker.go`)
 - **Type validity**: a `DynTraitType{Trait}` is valid iff `Trait` is a
   known trait; otherwise `E0xx unknown trait in dyn type`. Check
   object-safety (§3) at the same point; cache the per-trait result.
@@ -1039,12 +1039,12 @@ whole `dyn Trait` (array-of). No bounds, no generic args on the trait.
 - **Method-set restriction**: only trait methods are callable on a
   `dyn Trait`; field access and non-trait methods are errors.
 
-### 6.5 Monomorph (`internal/monomorph/monomorph.go`)
+### 6.5 Monomorph (`internal/oracle/monomorph/monomorph.go`)
 Skip rewriting/cloning for `Call`s with `DynTrait != ""` — they stay
 dynamic. (`DynTraitType` carries no type parameters, so nothing to
 monomorphise.)
 
-### 6.6 Interpreter (`internal/interp/interp.go`)
+### 6.6 Interpreter (`internal/oracle/interp/interp.go`)
 - A runtime-type-name helper `valueTypeName(Value) (string, bool)`
   mapping each `Value` kind to its `methodTypeName` key.
 - In `evalCall`, when `c.DynTrait != ""` and the callee is a
@@ -1072,7 +1072,7 @@ Emit a clean unsupported-feature error on encountering `DynTraitType`
      per (trait, concrete-type) where the trait is used in a `dyn` type
      and the type implements it, slots in trait declaration order. Wired
      into `LowerWith` (nil today: the reject gate still returns first for
-     `dyn` programs). Unit-tested in `internal/ir/vtable_test.go`. No
+     `dyn` programs). Unit-tested in `internal/oracle/ir/vtable_test.go`. No
      behaviour change; it's the static data every backend will emit.
    - **2b (landed): wasm codegen** — full implementation spec in §4.2.1.
      wasm leads (its `ptrW==4` gate lifts in isolation; it already has the
@@ -1148,7 +1148,7 @@ Per the engineering bar (tests at the layer each change touches):
   object-safety rejection (`dyn Eq`); coercion accepted for an impl-ing
   type and rejected for a non-impl-ing type; non-trait method on a `dyn`
   rejected; result type of a `dyn` method call.
-- **e2e** (`internal/e2e`): a heterogeneous `dyn Shape[]` with two
+- **e2e** (`internal/testing/e2e`): a heterogeneous `dyn Shape[]` with two
   concrete impls, iterated + dispatched on the interpreter, printing the
   expected per-element results; the compiled-backend gating diagnostic.
 - Full suite (incl. WASM e2e + self-host gates) stays green; the

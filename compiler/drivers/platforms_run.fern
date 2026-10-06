@@ -293,7 +293,7 @@ function main(): i32 {
 
   // ---- 7. the message ------------------------------------------------
   let m: string = first_msg(forks, "wasm32-wasi");
-  // The text tracks native's wording (internal/platforms.Violation.Message)
+  // The text tracks native's wording (internal/pkg/platforms.Violation.Message)
   // so the two are diffable by eye; the CODE is what a differential pins.
   if (!util.contains(m, "target \"wasm32-wasi\" does not provide `proc`")) {
     return 60;

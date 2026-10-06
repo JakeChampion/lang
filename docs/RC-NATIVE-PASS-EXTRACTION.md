@@ -7,7 +7,7 @@ exact layer goal 2 ports — keep it visible there).
 
 ## Why
 
-Native RC is woven through the ~20k-line `internal/ir/ir.go`
+Native RC is woven through the ~20k-line `internal/oracle/ir/ir.go`
 AST→IR builder: the decision analyses (borrow inference, consumed
 params, free eligibility, moves, precise drops, reuse) and the Op
 emission (alias incs, the exit dec sweep, drop glue) are
@@ -42,7 +42,7 @@ two separable moves:
   `wasm_ir_run.fern` → wasm component (26.2MB binary), all
   byte-identical, plus every `examples/*.fern` on all three
   targets.
-- The existing rc-placement tests (`internal/ir/*_test.go`
+- The existing rc-placement tests (`internal/oracle/ir/*_test.go`
   op-count pins), the lowering determinism guard
   (`determinism_test.go`, `Program.String()`), and the e2e
   differential suites.
@@ -51,7 +51,7 @@ two separable moves:
 
 - **Slice 1 (this one): carve the decision analyses out of the
   builder.** All Perceus decision analyses moved verbatim from
-  `ir.go` to `internal/ir/rc_analysis.go` (~1.9k lines): the
+  `ir.go` to `internal/oracle/ir/rc_analysis.go` (~1.9k lines): the
   whole-program facts (`inferParamEscapes`,
   `findReturnsNoParamEscape`, `computeReadOnlyComparators`) and
   the per-function analyses (`computeConsumedParams`,

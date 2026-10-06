@@ -36,7 +36,7 @@
 > and the ~26 `== "fn"` codegen checks are byte-identical; the modload
 > fixpoint (mmc == gen2 == gen3) holds.
 >
-> Pinned by `internal/e2eselfhost/self_host_fn_payload_variant_ir_test.go`:
+> Pinned by `internal/testing/e2ecompiler/self_host_fn_payload_variant_ir_test.go`:
 > both the x86-64 and wasm legs exercise all five shapes. The
 > `c.args.len() == 1` single-payload guard in the legacy AST emitter
 > (`asm.fern`) is unchanged, but that path is retirement-bound

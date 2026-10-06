@@ -239,7 +239,7 @@ r = await decide({ event: "push", proof: mainProof({ compare: { [`m1...${head}`]
 check("main: a self-host-only change skips the lanes that cannot see it",
   [r.lanes["test-fernsmith"], r.lanes.examples, r.lanes["test-e2e-x86_64"], r.lanes["test-e2e-differential"], r.lanes["fuzz-diff"], r.lanes["test-units"], r.lanes["test-e2e-selfhost"], r.lanes.bootstrap, r.lanes.macos],
   [false, true, true, true, true, true, true, true, true]);
-r = await decide({ event: "push", proof: mainProof({ compare: { [`m1...${head}`]: cmp(["internal/checker/x.go"]) } }) });
+r = await decide({ event: "push", proof: mainProof({ compare: { [`m1...${head}`]: cmp(["internal/check/checker/x.go"]) } }) });
 check("main: a compiler change runs the lanes it reaches", [r.lanes["test-units"], r.lanes["test-e2e-x86_64"], r.lanes.macos], [true, true, true]);
 check("main: the log names the base and what changed since", r.infos.some((m) => m.startsWith("last passed at m1 (") && m.endsWith("): 1 file(s) changed since")), true);
 r = await decide({ event: "push", proof: mainProof({
@@ -253,12 +253,12 @@ check("main: a lane with a skipped publish job still counts as passed", r.lanes.
 r = await decide({ event: "push", proof: mainProof({
   runs: [{ id: 51, head_sha: "m2" }, { id: 50, head_sha: "m1" }],
   jobs: { 51: mainJobs(laneKeys.filter((l) => l !== "test-units")), 50: mainJobs(laneKeys) },
-  compare: { [`m2...${head}`]: cmp(["docs/x.md"]), [`m1...${head}`]: cmp(["docs/x.md", "internal/checker/x.go"]) } }) });
+  compare: { [`m2...${head}`]: cmp(["docs/x.md"]), [`m1...${head}`]: cmp(["docs/x.md", "internal/check/checker/x.go"]) } }) });
 check("main: a lane skipped on the newest run is diffed from where it last ran", [r.lanes["test-units"], r.lanes["test-coreutils"]], [true, false]);
 r = await decide({ event: "push", proof: mainProof({
   runs: [{ id: 51, head_sha: "m2" }, { id: 50, head_sha: "m1" }],
   jobs: { 51: [...mainJobs(laneKeys.filter((l) => l !== "test-units"), "cancelled"), ...mainJobs(["test-units"])], 50: mainJobs(laneKeys) },
-  compare: { [`m2...${head}`]: cmp(["docs/x.md"]), [`m1...${head}`]: cmp(["docs/x.md", "internal/checker/x.go"]) } }) });
+  compare: { [`m2...${head}`]: cmp(["docs/x.md"]), [`m1...${head}`]: cmp(["docs/x.md", "internal/check/checker/x.go"]) } }) });
 check("main: a lane a later push cancelled is diffed from where it last passed", [r.lanes["test-units"], r.lanes["test-e2e-x86_64"]], [false, true]);
 r = await decide({ event: "push", proof: mainProof({ compare: { [`m1...${head}`]: cmp(["docs/x.md"], "diverged") } }) });
 check("main: a base that is not an ancestor proves nothing", all(r), true);

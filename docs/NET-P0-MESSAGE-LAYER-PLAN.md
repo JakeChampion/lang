@@ -76,8 +76,8 @@ up.
 
 1. **The gate.** A per-request allocation census of the framing path: the
    parse and the serialize of the request in §1, counted separately. It runs
-   on both compilers, in `internal/e2eselfhost` with a twin in
-   `internal/e2e`, and pins today's counts as a ratchet that may only fall.
+   on both compilers, in `internal/testing/e2ecompiler` with a twin in
+   `internal/testing/e2e`, and pins today's counts as a ratchet that may only fall.
 2. **Native: a `const` array is static.** A read of a `const` array reads one
    immortal copy instead of building a new one. This is a native bugfix,
    referenced on #4451, with its own issue, allocation-count test and PR.

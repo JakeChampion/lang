@@ -139,7 +139,7 @@ than by reimplementing the analysis:
   more entries with a different `CoverKind`, so adding branch coverage needed
   no backend change at all: the emit already knew how to bump counter `i` and
   print row `i`. `CoverSite.ReportLine` renders a row's fixed text and lives in
-  `internal/ir`, so the two natives cannot drift on the wire format.
+  `internal/oracle/ir`, so the two natives cannot drift on the wire format.
 - The eval counter is emitted **before** the condition is lowered, where the
   operand stack is in a known state and no comparison is waiting for its
   branch; the true counter goes at the top of the arm, past the conditional
@@ -168,7 +168,7 @@ input's coverage. The instrumented compiler is built by the self-host's own
 `-cover`.
 
 ```sh
-FERN_SELFHOST_COVER_FUZZ=1 FERN_SELFHOST_COVER_FUZZ_TIME=5m   go test -run '^TestSelfHostCoverageGuidedFuzz$' ./internal/e2e/
+FERN_SELFHOST_COVER_FUZZ=1 FERN_SELFHOST_COVER_FUZZ_TIME=5m   go test -run '^TestSelfHostCoverageGuidedFuzz$' ./internal/testing/e2e/
 ```
 
 The loop is AFL-shaped: mutate a corpus entry, let fernsmith turn the bytes
@@ -202,5 +202,5 @@ after the steering stopped working.
 - **arm64 Darwin and Android on the self-host** — the pass is target-neutral,
   but only the two Linux targets are tested, so the others refuse.
 - **Literate sources** — a `.fern.md` reports against the tangled `.fern`
-  line numbers, not the document's. The remap exists (`internal/literate`) but
+  line numbers, not the document's. The remap exists (`internal/tools/literate`) but
   is not wired to the report.

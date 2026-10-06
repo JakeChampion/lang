@@ -1,8 +1,8 @@
 # Closure-capture semantics — the scalar/reference asymmetry
 
 Date: 2026-07-06, revised 2026-07-20. Status: shipped and enforced
-(E049); this document writes down the contract both compilers must honour
-identically.
+(E049); this document writes down the contract the compiler and the interpreter
+must honour identically.
 
 **2026-07-20 correction.** This document originally described capture as
 by-VALUE for scalars — a snapshot taken at closure creation. That was the
@@ -138,7 +138,7 @@ and the rule does not touch them.
 ## The classification is `ast.IsPointerType`
 
 The authoritative scalar/reference split is native's
-`ast.IsPointerType` (`internal/ast`): it returns `true` for `string`,
+`ast.IsPointerType` (`internal/syntax/ast`): it returns `true` for `string`,
 array, slice, tuple, `struct`, `enum`, function, and `dyn`-trait types,
 and `false` for everything else — which is exactly the scalar set above.
 Note that every numeric width, including the unsigned ones, is a scalar;
@@ -149,10 +149,10 @@ reassignable when captured.
 
 Both the native (Go) checker and the self-host (`compiler/checker.fern`)
 checker must emit `E049` on exactly the same captures. This is pinned by
-the checker-codes differential (`internal/e2eselfhost/self_host_checker_codes_test.go`,
+the checker-codes differential (`internal/testing/e2ecompiler/self_host_checker_codes_test.go`,
 the `cap-assign-*` cases), which runs both checkers on each program and
 asserts identical diagnostic-code sets, and by the native checker's own
-`E049` cases (`internal/checker/checker_test.go`). The self-host
+`E049` cases (`internal/check/checker/checker_test.go`). The self-host
 enforcement lives in `checker.fern`'s `e049_*` pass (`e049_is_ref` is the
 type-name classifier that mirrors `ast.IsPointerType`).
 

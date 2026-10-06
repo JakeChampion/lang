@@ -265,7 +265,7 @@ all pass), with `Sim.rng_state()` available for lockstep assertions.
 See `tests/stdlib/sim_fault_test.fern`.
 
 That purity claim is itself property-tested: the harness in
-`internal/e2e/sim_property_test.go` generates random sim programs —
+`internal/testing/e2e/sim_property_test.go` generates random sim programs —
 scripted endpoints with random latencies, chunk schedules, and fault
 modes, driven through random `gather_on` / `race_on` /
 `with_deadline_on` pipelines — and requires interp, native x86-64,

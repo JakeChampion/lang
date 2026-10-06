@@ -303,11 +303,11 @@ entry, or import a specific generated `.fern` instead).
 
 ## Implementation map
 
-The engine is `internal/literate`: `Parse` → `Document`; `(*Document).Tangle`
+The engine is `internal/tools/literate`: `Parse` → `Document`; `(*Document).Tangle`
 expands the root chunk `<<*>>` and returns generated Fern source plus a per-line
 provenance map; `(*Document).Weave` renders the cross-referenced Markdown.
 
-Multi-module documents live in `internal/literate/tanglefiles.go`: `TangleFiles`
+Multi-module documents live in `internal/tools/literate/tanglefiles.go`: `TangleFiles`
 returns one `FileResult{Path, Code, LineMap, IsEntry}` per output path, and
 `EntryFile` resolves the compile entry. `expandBody` / `expandChunk` are the
 shared recursion behind both `Tangle` (root chunk) and `TangleFiles` (file-root
@@ -329,9 +329,9 @@ literate-only sibling of `diag.Format`.
 
 ## Maintaining this
 
-Coverage lives in `internal/literate/*_test.go` (including
+Coverage lives in `internal/tools/literate/*_test.go` (including
 `tanglefiles_test.go`), the `diag` `FormatRemapped` tests, and
-`internal/e2e/literate_test.go` + `literate_multifile_test.go` (interp + tangle
+`internal/testing/e2e/literate_test.go` + `literate_multifile_test.go` (interp + tangle
 + weave, plus the single- and multi-file diagnostic-remap contracts). Examples:
 `examples/literate/fizzbuzz.fern.md` (single root) and `multi_module.fern.md`
 (multi-file).

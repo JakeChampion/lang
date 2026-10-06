@@ -23,7 +23,7 @@
 // Kept as a probe rather than deleted: these three shapes are the minimal
 // discriminator between the moved and inc'd lowerings, and they are the
 // quickest way to re-check the property by hand. The regression gate is
-// TestX86_64LeakCheckLoopConstructionMove in internal/e2e/leakcheck_test.go.
+// TestX86_64LeakCheckLoopConstructionMove in internal/testing/e2e/leakcheck_test.go.
 
 function in_loop(): i32 {
   let s: i32 = 0;

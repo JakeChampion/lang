@@ -69,9 +69,9 @@ must still validate the complete bootstrap after publication.
 On Linux with the x86 toolchain and runner available:
 
 ```sh
-go test ./internal/e2eselfhost -run '^TestSelfHostPerModuleShape' -race -count=1
+go test ./internal/testing/e2ecompiler -run '^TestSelfHostPerModuleShape' -race -count=1
 GOMAXPROCS=4 FERN_BUILD_MEM_BUDGET_MB=12000 \
-  go test ./internal/e2eselfhost \
+  go test ./internal/testing/e2ecompiler \
   -run '^TestSelfHostPerModuleEmitAllFixpointX86_64$' \
   -race -count=1 -v -timeout 30m
 ```

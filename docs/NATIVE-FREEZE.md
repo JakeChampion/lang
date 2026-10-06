@@ -49,7 +49,7 @@ above is the first run of it.
 
 ## What changes
 
-- `internal/` (`internal/ir`, `internal/interp`, `internal/codegen/*`, the
+- `internal/` (`internal/oracle/ir`, `internal/oracle/interp`, `internal/codegen/*`, the
   native front end) accepts **bugfixes, oracle needs, and what the self-host
   sources require to bootstrap** — the "Go 1.4 rule" of
   `NATIVE-CONVERGENCE.md §1`. A new language feature lands in
@@ -60,7 +60,7 @@ above is the first run of it.
 
 ## What does not change
 
-- `internal/interp` stays the semantics reference every differential test
+- `internal/oracle/interp` stays the semantics reference every differential test
   anchors on, and keeps receiving bugfixes (`NATIVE-CONVERGENCE.md §3`).
 - The differential suites keep running on every push; the freeze is a policy
   on where features land, not a relaxation of any gate.
@@ -99,7 +99,7 @@ exceptions (#4451) is closed. Two things follow:
 2. **Every target self-contained on the self-host side** — closed.
 3. **The oracle decision** — made on 2026-09-28: the native backends are
    not witnesses, and they go with the next step after the freeze.
-   `internal/interp` is the oracle the differentials anchor on, and §3 keeps
+   `internal/oracle/interp` is the oracle the differentials anchor on, and §3 keeps
    it. Gates that compare self-host codegen against native codegen go with
    the backends or are re-anchored on the interpreter, in the deletion PRs.
 4. **The non-compiler consumers** — the playground runs on the self-host

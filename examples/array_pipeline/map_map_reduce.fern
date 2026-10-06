@@ -120,7 +120,7 @@ function run_closure_loop(sel: i32, xs: i64[]): i64 {
 }
 
 // The condition is spelled `i < xs.len()` because that is the syntactic shape
-// `internal/parser/bounds_elide.go` recognises: a loop bounded by a separate
+// `internal/syntax/parser/bounds_elide.go` recognises: a loop bounded by a separate
 // local keeps a bounds check on every element. Both spellings are measured in
 // docs/ARRAY-PIPELINE-BASELINE-2026-09.md and the difference is small in both
 // directions — this one is here so the baseline and the combinators' own

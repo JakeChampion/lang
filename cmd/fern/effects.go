@@ -3,11 +3,11 @@ package main
 import (
 	"io"
 
-	"github.com/jakechampion/lang/internal/caps"
-	"github.com/jakechampion/lang/internal/checker"
-	"github.com/jakechampion/lang/internal/constfold"
-	"github.com/jakechampion/lang/internal/effects"
-	"github.com/jakechampion/lang/internal/platforms"
+	"github.com/jakechampion/lang/internal/check/checker"
+	"github.com/jakechampion/lang/internal/check/constfold"
+	"github.com/jakechampion/lang/internal/check/effects"
+	"github.com/jakechampion/lang/internal/pkg/caps"
+	"github.com/jakechampion/lang/internal/pkg/platforms"
 )
 
 // runEffects implements `fern -effects FILE.fern`: the per-FUNCTION
@@ -25,14 +25,14 @@ import (
 //
 // The same call graph is printed under BOTH capability vocabularies,
 // because they answer different questions and disagree in ways that
-// matter: `authority` (internal/caps) is what a dependency could do to
-// you and deliberately excludes stdio; `host` (internal/platforms) is
+// matter: `authority` (internal/pkg/caps) is what a dependency could do to
+// you and deliberately excludes stdio; `host` (internal/pkg/platforms) is
 // what the target must provide and counts `print`. A function pure
 // under one is not necessarily pure under the other.
 //
 // Report mode only: nothing here enforces. The shipped enforcement of
 // the same reachability lives elsewhere — E070 per package
-// (internal/caps) and E066 per target (internal/platforms).
+// (internal/pkg/caps) and E066 per target (internal/pkg/platforms).
 func runEffects(srcPath string, w io.Writer) error {
 	e, err := loadEntry(srcPath)
 	if err != nil {
@@ -51,8 +51,8 @@ func runEffects(srcPath string, w io.Writer) error {
 		title string
 		table map[string]string
 	}{
-		{"authority (internal/caps) — what a dependency can reach", caps.BuiltinCaps},
-		{"host (internal/platforms) — what the target must provide", platforms.GatedBuiltins()},
+		{"authority (internal/pkg/caps) — what a dependency can reach", caps.BuiltinCaps},
+		{"host (internal/pkg/platforms) — what the target must provide", platforms.GatedBuiltins()},
 	} {
 		if _, err := io.WriteString(w, effects.Format(v.title, effects.Report(g, v.table))); err != nil {
 			return err

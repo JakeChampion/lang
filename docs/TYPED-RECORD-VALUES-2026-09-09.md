@@ -105,7 +105,7 @@ missing and unmonomorphized interfaces are rejected explicitly.
 
 Local validation on the candidate implementation passed:
 
-- Full `internal/semir`, `internal/sourcelint` and `cmd/fern` suites:
+- Full `internal/semir`, `internal/testing/sourcelint` and `cmd/fern` suites:
   1.793 s, 24.951 s and 38.892 s respectively.
 - Full `internal/ssa`: 104.006 s.
 - Strict native Linux ARM64 typed runtime and CLI suites: 2.582 s and 10.330 s.

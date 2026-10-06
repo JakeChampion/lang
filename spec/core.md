@@ -1,7 +1,7 @@
 # Fern Core — the instruction set
 
 Status: normative index, gated by `TestCoreOpsIndexIsAccurate` and
-`TestCoreOpEffectsMatchTheModel` in `internal/ir`.
+`TestCoreOpEffectsMatchTheModel` in `internal/oracle/ir`.
 
 `grammar.ebnf` says what a Fern program looks like. `diagnostics.md`
 says which programs are refused. `semantics.md` indexes the handful of
@@ -10,7 +10,7 @@ them says what a Fern program *is*.
 
 That definition, when it is written, will not be written over the
 surface language. It will be written over **Fern Core** — and Fern Core
-already exists: `internal/ir` is a target-agnostic stack machine that
+already exists: `internal/oracle/ir` is a target-agnostic stack machine that
 every backend consumes, and the surface language is defined by lowering
 into it. `docs/SPECIFICATION-RESEARCH.md` §Layer 3 lays out the three
 pieces that need to follow, in order: the op set, its typing rules, and
@@ -54,7 +54,7 @@ The IR distinguishes only these two classes, and deliberately no more:
 `WidthPtr` is resolved by the backend, and nothing anywhere separates a
 pointer from an integer of the same width. A column claiming operand
 *widths* would be describing a type system the IR does not carry — see
-`internal/ir/verifystack.go` for the same decision made in code.
+`internal/oracle/ir/verifystack.go` for the same decision made in code.
 
 ## The instructions
 
@@ -220,8 +220,8 @@ behind is its block type's shape, which `end` restores.
 
 A callee that the program does not define — a builtin, or a runtime
 helper — has its signature in the backends rather than in the IR.
-`internal/caps` is the authority on which names exist;
-`internal/ir/verifyprovided.go` is a second, independent record of their
+`internal/pkg/caps` is the authority on which names exist;
+`internal/oracle/ir/verifyprovided.go` is a second, independent record of their
 slot shapes, kept deliberately separate from the emitters' own tables so
 that the two can disagree.
 
@@ -268,7 +268,7 @@ this file does not have — see below.
 
 ## How this is kept true
 
-Two gates, in `internal/ir` so they can drive the package directly.
+Two gates, in `internal/oracle/ir` so they can drive the package directly.
 
 `TestCoreOpsIndexIsAccurate` matches the table against the `OpKind`
 enum in both directions: every op has exactly one row, every row names a

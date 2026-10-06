@@ -75,7 +75,7 @@ Three facts fall out.
 1. **No mainstream stack ships deterministic simulation.** The column is empty
    for everything people deploy; the ones that have it (TigerBeetle, Eio's
    mock, Lean's mock transport) got it by making the I/O layer a value. Fern's
-   `Platform` is that value already, and `internal/caps` plus E066 can forbid
+   `Platform` is that value already, and `internal/pkg/caps` plus E066 can forbid
    the side channels madsim had to patch back in at libc level.
 2. **The performance leaders are all one shape.** Reactor per core, owned
    buffers, zero-copy parse (the HttpArena table below). Fern's share-nothing

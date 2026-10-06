@@ -98,7 +98,7 @@ Rules:
    and it hardens the builtin→capability table before any error
    exists.
 
-   **Status: shipped (#5361).** `internal/caps` holds the table
+   **Status: shipped (#5361).** `internal/pkg/caps` holds the table
    (`BuiltinCaps` + the `Ungated` allowlist; completeness tests
    enumerate the checker and interp builtin registries and fail on an
    unclassified addition) and the reachability walk; `fern
@@ -117,7 +117,7 @@ Rules:
    **Status: shipped (#5361).** Dependency entries accept
    `capabilities = ["net", …]` on every form (path / url / workspace /
    version); an unknown name is a manifest error naming the vocabulary
-   (`internal/manifest.parseCapabilities`). modload records each
+   (`internal/pkg/manifest.parseCapabilities`). modload records each
    governed dependency's grant on `ast.Program.CapGrants` (keyed by
    the dep's resolved directory — `declaredDepDir` is shared with
    import resolution so the two can't disagree), and cmd/fern's
@@ -170,7 +170,7 @@ Three things about that copy are worth knowing before touching either
 side:
 
 - **The classification is pinned, not copied by hand.**
-  `internal/caps/selfhost_parity_test.go` reads the Fern tables as data
+  `internal/pkg/caps/selfhost_parity_test.go` reads the Fern tables as data
   and compares them with `BuiltinCaps` / `Ungated` / `Capabilities`
   entry-for-entry, so a builtin tagged on one side and not the other
   fails a fast Go test. `frontend_ungated()` is the one list with no
@@ -189,7 +189,7 @@ side:
   the dependency's lib FILE (`lib__save`) and the self-host's is the
   name the import used (`helper__save`). The severity, package,
   capability and builtin all match exactly — the differential in
-  `internal/e2eselfhost/self_host_caps_test.go` compares those and
+  `internal/testing/e2ecompiler/self_host_caps_test.go` compares those and
   normalises the chain.
 
 Phases 3 and 4 have no self-host counterpart yet: attenuation is a

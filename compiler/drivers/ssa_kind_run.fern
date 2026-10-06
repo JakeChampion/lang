@@ -11,7 +11,7 @@
 // out-of-range -> "invalid", and the STerm none sentinel (term_id("") == 0,
 // term_name(0) == "" — t_none's empty-string kind maps to tag 0).
 //
-// The companion Go test (internal/e2eselfhost/self_host_ssa_kind_test.go)
+// The companion Go test (internal/testing/e2ecompiler/self_host_ssa_kind_test.go)
 // asserts the exact stdout and an exit code of 0 (zero failures), pinning
 // the registry end-to-end through the self-host -> native pipeline.
 

@@ -14,7 +14,7 @@ import "../../coreutils/lib/ld" as ld;
 //
 // The formats are passed explicitly rather than read from `format()`,
 // so all three are exercised wherever this runs; which one a target
-// picks is pinned by internal/coreutils/longdouble_test.go.
+// picks is pinned by internal/testing/coreutils/longdouble_test.go.
 
 function none(): i64 {
   return 0 as i64 - 1 as i64;

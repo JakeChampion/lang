@@ -65,14 +65,14 @@ jobs:
       - uses: ./.github/actions/selfhost-driver-cache
       - name: build the e2e test binary
         run: |
-          go test -c -o "$RUNNER_TEMP/e2e-arm64.test" ./internal/e2e/
+          go test -c -o "$RUNNER_TEMP/e2e-arm64.test" ./internal/testing/e2e/
           go build -o "$RUNNER_TEMP/ci-test-workers" ./cmd/ci-test-workers
       - name: go test (arm64 e2e, shard ${{ matrix.shard }}/${{ matrix.nshard }}, two workers)
         id: tests
         run: |
           set -euo pipefail
           mapfile -t MINE < <(
-            go test -list '^TestArm64' ./internal/e2e/ |
+            go test -list '^TestArm64' ./internal/testing/e2e/ |
               grep -E '^Test' |
               sort |
               scripts/shard-tests "${{ matrix.shard }}" "${{ matrix.nshard }}" /dev/null
@@ -83,7 +83,7 @@ jobs:
           fi
           echo "shard ${{ matrix.shard }}/${{ matrix.nshard }}: ${#MINE[@]} tests"
           PAT="^($(IFS='|'; echo "${MINE[*]}"))\$"
-          cd internal/e2e
+          cd internal/testing/e2e
           "$RUNNER_TEMP/ci-test-workers" \
             -binary "$RUNNER_TEMP/e2e-arm64.test" \
             -output "$RUNNER_TEMP/arm64-test-results" \
@@ -129,7 +129,7 @@ jobs:
         uses: ./.github/actions/apt-cross-toolchain
         with:
           qemu-package: qemu-user
-      # internal/e2e tests that compare the two REGISTER backends against each
+      # internal/testing/e2e tests that compare the two REGISTER backends against each
       # other, so they need both toolchains on one host — the same reason this
       # job exists. TestF64TranscendentalBackendsAgree had never compared
       # anything: the catch-all `test-e2e-other` lane owns its name, and each of
@@ -139,7 +139,7 @@ jobs:
       # than skip, so this job quietly losing a cross-compiler cannot put the
       # comparison back to running nowhere.
       # standard-verbose and -count=1 are load-bearing, not taste. The default
-      # format prints one `✓ internal/e2e` line whether the test compared two
+      # format prints one `✓ internal/testing/e2e` line whether the test compared two
       # backends or skipped in 64 ms, and a cached PASS would replay without
       # running the binary at all — so the lane could not report the very thing
       # it exists to establish.
@@ -149,7 +149,7 @@ jobs:
         run: >-
           gotestsum --format standard-verbose -- -timeout 10m -count=1
           -run '^TestF64TranscendentalBackendsAgree$'
-          ./internal/e2e/
+          ./internal/testing/e2e/
       - name: name the failed tests as annotations
         if: failure()
         run: scripts/ci-annotate-failures "$GOTESTSUM_JSONFILE"

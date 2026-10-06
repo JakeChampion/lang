@@ -1,7 +1,7 @@
 // compiler/mvs_run.fern — driver for the self-host's Minimum
 // Version Selection (mvs.fern, #6640).
 //
-// Every case here is one native `internal/mvs` test restated: the same
+// Every case here is one native `internal/pkg/mvs` test restated: the same
 // index, the same demands, the same expected selection or the same error
 // text. MVS is pure computation, so the two implementations have no excuse
 // to differ, and the resolution a project gets must not depend on which

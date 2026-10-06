@@ -78,7 +78,7 @@ at the granularity of "AST of file X" → "type of symbol Y" →
   plan's PR ordering); cursor-position → AST node lookup is
   tractable.
 
-- **Compile cache exists at file granularity.** `internal/lsp/
+- **Compile cache exists at file granularity.** `internal/tools/lsp/
   cache.go`. FIFO, content-hashed. Right shape for the MVP;
   see Rec §3 for the salsa-flavoured generalisation.
 
@@ -333,7 +333,7 @@ the hash is stable.
 
 - **Re-using the same type-checker for `fern build` and
   the LSP.** Already true — both go through
-  `internal/checker`. Stay there. Resist the urge to
+  `internal/check/checker`. Stay there. Resist the urge to
   fork a "fast IDE checker."
 
 **Considered, left:**
@@ -422,7 +422,7 @@ mid-typing.
 **What translates:**
 
 - **Error-tolerant parsing is necessary for IDE-grade UX.**
-  Today's parser (per `internal/parser/parser.go`, ~2900
+  Today's parser (per `internal/syntax/parser/parser.go`, ~2900
   LOC) collects errors but I'd want to confirm: does it
   produce a usable tree past a syntax error? If a typo at
   line 5 prevents parsing line 6's function body, hover at
@@ -626,7 +626,7 @@ AST nodes carry only start positions. Hover, semantic
 tokens, go-to-def all need end positions for correct
 ranges. Listed as a gap; just blocking on it.
 
-Mechanical change to `internal/ast` (every node gets an
+Mechanical change to `internal/syntax/ast` (every node gets an
 `End() Position`); parser populates as it builds. ~1 week of
 careful editing.
 

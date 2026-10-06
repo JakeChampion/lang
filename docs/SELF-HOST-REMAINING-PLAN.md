@@ -258,7 +258,7 @@ shorter `trunc(x + copysign(0.5, x))` identity is not equivalent (#7880). Transc
 instruction, so both backends call the fdlibm bundle their emitter emits
 (`__fern_<op>_f64`, Cody-Waite reduction + domain guards, <=1 ulp). x86-64
 was on the x87 FPU until #5541's self-host half landed; the accuracy gate
-for both is `internal/e2e/f64_ulp_test.go`, with behaviour in
+for both is `internal/testing/e2e/f64_ulp_test.go`, with behaviour in
 `self_host_float_intrinsics_test.go` (x86 + CI-gated arm64); fixpoint stays
 byte-identical.
 
@@ -372,7 +372,7 @@ planned order:
   falling back to the AST emitter). The native **interpreter** had the
   matching gap (it rejected non-enum scrutinees as "expected enum
   value" while the compiled backends already lowered them) — fixed in
-  `internal/interp` so the reference oracle agrees with codegen
+  `internal/oracle/interp` so the reference oracle agrees with codegen
   (`self_host_match_literal_ir_test.go`,
   `TestInterpMatchLiteralNonEnum`). Diagnostic note: a variant pattern
   on a non-enum scrutinee still parses as a variant and draws E035, as
@@ -927,7 +927,7 @@ smallest → largest:
   `_x86` (R+X) and `elf_static_executable_data` / `_x86` (R+W+X, .text
   8-byte-padded then data). Byte buffer is the same `i32[]`-of-0..255
   convention as `leb128.fern`; 8-byte fields via `elf_le64` (i64).
-  Gated by `internal/e2e/self_host_elf_test.go` (`TestSelfHostELF`),
+  Gated by `internal/testing/e2e/self_host_elf_test.go` (`TestSelfHostELF`),
   asserting the fixed header + program-header layout (magic, class,
   `e_type`/`e_machine`, `e_entry` = 0x400078, the single PT_LOAD,
   `p_flags`, sizes, body placement + data alignment) for both the arm64
@@ -952,7 +952,7 @@ smallest → largest:
   `& 0xffffffff`) lives in the module. Big-endian for the signing blobs,
   little-endian for the Mach-O header/load-commands; the same
   `i32[]`-of-0..255 byte-buffer convention as `elf.fern`. Gated by
-  `internal/e2e/self_host_macho_emit_test.go` (`TestSelfHostMachO`),
+  `internal/testing/e2e/self_host_macho_emit_test.go` (`TestSelfHostMachO`),
   asserting the fixed header + load-command layout (magic, cputype,
   filetype, `ncmds`/`sizeofcmds`, the segment names, the `LC_UNIXTHREAD`
   entry pc, the SuperBlob + CodeDirectory magics) for both the no-data and
@@ -1163,7 +1163,7 @@ smallest → largest:
     placed the explicitly-listed `sl.Fields`, so for the spread form the un-
     overridden `sl.Base` fields were left uninitialised on the fresh-alloc
     (rc>1) branch (read back as 0 — nondeterministic, correct only when `p`
-    was unique). Fixed in `internal/ir` by deferring the spread form to the
+    was unique). Fixed in `internal/oracle/ir` by deferring the spread form to the
     general StructLit lowering; guarded by `TestStructUpdateParamSpreadReuse`
     (all three backends). The `arm64_native` local-copy workarounds are now
     removed (slice 3s) — the 15 functions take their struct parameter directly
@@ -1252,7 +1252,7 @@ smallest → largest:
     CI runner — the one place arm64-darwin execution can be verified.
   - ✅ **slice 3r — fix the struct-update FBIP-reuse miscompile (Blocker A)**:
     the param-spread bug the arm64_native local-copy workarounds were papering
-    over turned out to be a **shared `internal/ir` lowering bug**, not an x86
+    over turned out to be a **shared `internal/oracle/ir` lowering bug**, not an x86
     backend bug — it hit x86-64, arm64, AND wasm (the AST interp was correct).
     `tryStructReuseOverwrite` (FBIP self-overwrite reuse) only placed the
     explicitly-listed `sl.Fields`; for the spread form `p = T { ...p, f: v }`

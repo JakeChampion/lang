@@ -70,7 +70,7 @@ Two consequences, both fixed in #4114:
 
 The fix roots each vtable from the site that builds it, discovered by the
 same reachability walk (`dynVtableRoots` / `downcastRoots` in
-`internal/treeshake`), and drops the AST roots from the IR-level seed —
+`internal/oracle/treeshake`), and drops the AST roots from the IR-level seed —
 where `ip.Vtables`, built by lowering from the tree-shaken program, is
 already the precise root set.
 
@@ -100,12 +100,12 @@ the dead half with nothing to notice but the size gate — which fails on
 
 ## Reproducing
 
-- `internal/e2e/treeshake_backend_dce_test.go` — an unreached backend
+- `internal/testing/e2e/treeshake_backend_dce_test.go` — an unreached backend
   module, and one reachable only through a dead `dyn` dispatch, leave no
   marker in the emitted asm.
-- `internal/treeshake/treeshake_test.go` — the coercion / downcast roots
+- `internal/oracle/treeshake/treeshake_test.go` — the coercion / downcast roots
   follow reachability in both directions.
-- `internal/platforms/enforce_test.go` — the E066 contract.
+- `internal/pkg/platforms/enforce_test.go` — the E066 contract.
 - Driver sizes are tracked per-commit by `scripts/ci-check-driver-sizes`
   against `FERN_DRIVER_SIZE_REPORT`. The `driver-sizes` job compares the
   union of every measuring job's report and fails on drift or on a

@@ -20,7 +20,7 @@
 // passing for a reason the case is not about. That is why only the struct and
 // the array appear: a small tuple or single-payload variant is returned in
 // registers in some contexts and has no box to time. Those two are pinned on
-// the op stream instead, by internal/ir/aggregate_eval_order_test.go. The
+// the op stream instead, by internal/oracle/ir/aggregate_eval_order_test.go. The
 // struct is read through a call, since one only ever read field by field is
 // taken apart rather than boxed.
 import "std/i64";

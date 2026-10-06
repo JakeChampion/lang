@@ -57,8 +57,8 @@ porting effort already underway.
   fern-port can be developed without urgency.
 
 - **Per-stage cross-validation is already wired** via
-  `internal/e2e/self_host_cross_validation_test.go` and the
-  per-layer `internal/e2e/self_host_*_test.go` files. The
+  `internal/testing/e2e/self_host_cross_validation_test.go` and the
+  per-layer `internal/testing/e2e/self_host_*_test.go` files. The
   fern-implemented layer's output is compared against the
   Go-implemented layer's output for a corpus of inputs.
   This is the exact shape Wheeler's *Diverse Double
@@ -66,7 +66,7 @@ porting effort already underway.
   we formalise it.
 
 - **fernsmith differential oracle exists** (per
-  `internal/fernsmith/` and `IMPROVEMENTS.md`). Fuzzed input
+  `internal/testing/fernsmith/` and `IMPROVEMENTS.md`). Fuzzed input
   → run through both implementations → assert identical
   output. The Go reference *is* the fernsmith oracle's
   reference. This is load-bearing for the transition — see
@@ -252,7 +252,7 @@ from an older snapshot.
   in parallel, then delete the bootstrap one once parity
   hits" is exactly the path this codebase is on. Don't
   delete the Go compiler prematurely; flip when:
-  - Every `internal/e2e/` test passes when run against the
+  - Every `internal/testing/e2e/` test passes when run against the
     fern-compiled compiler.
   - The fernsmith differential oracle (which currently
     diffs interp vs codegen of one implementation) is
@@ -509,13 +509,13 @@ but unified in behaviour.
 
 - **Bug-for-bug compatibility as the parity criterion.**
   Not "both produce *correct* output," but "both produce
-  the *same* output." This is what `internal/e2e/
+  the *same* output." This is what `internal/testing/e2e/
   self_host_cross_validation_test.go` already checks, and
   fernsmith differential oracle generalises. Lock it in.
 
 - **Shared spec / test corpus.** Both impls consume the
   same source files and produce the same artifacts. Lives
-  in `examples/` + `internal/e2e/`.
+  in `examples/` + `internal/testing/e2e/`.
 
 ### Pony — a clean-room rewrite (cautionary tale)
 
@@ -537,7 +537,7 @@ port; don't take the opportunity to redesign.
 
 - **The `compiler/` approach is correct.** Each
   step mirrors a specific Go source file in the existing
-  compiler. The per-step `internal/e2e/self_host_*_test.go`
+  compiler. The per-step `internal/testing/e2e/self_host_*_test.go`
   tests verify the fern-impl matches the Go-impl on the
   same inputs. Keep doing this; resist the urge to
   redesign during the port.
@@ -615,7 +615,7 @@ designed with it in mind from the start.
 - **Don't add build-time code execution beyond constfold.**
   Zig comptime + Jai compile-time-anything would be lovely
   for perf but they make bootstrap harder. The current
-  `internal/constfold` is the right ceiling.
+  `internal/check/constfold` is the right ceiling.
 
 ## Cross-cutting themes
 
@@ -668,7 +668,7 @@ self-host port reaching feature parity first
 **Superseded for the native backends on 2026-09-28
 (`NATIVE-CONVERGENCE.md §3a.3`): they are not witnesses, and they go with
 the step after the freeze.
-It holds for `internal/interp`, the reference the differential suites anchor
+It holds for `internal/oracle/interp`, the reference the differential suites anchor
 on, which stays.**
 
 **Cost: 0 (a decision, not a change).** **Impact: high.**
@@ -735,7 +735,7 @@ outcome.**
 Parity criteria for flipping the production compiler from
 Go-impl to fern-impl:
 
-- **All `internal/e2e/*` tests pass against the fern-impl.**
+- **All `internal/testing/e2e/*` tests pass against the fern-impl.**
 - **Langsmith fuzzer**: ≥ 1M iterations with zero
   divergence on a recent run.
 - **Cross-stage test passes**: fern-impl compiled by itself

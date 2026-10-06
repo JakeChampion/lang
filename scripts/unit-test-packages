@@ -3,17 +3,17 @@
 # scripts/unit-test-packages — print the Go packages the unit-test lane runs,
 # one import path per line.
 #
-# "Unit tests" here means every Go package in the repo EXCEPT the three that
+# "Unit tests" here means every Go package in the repo EXCEPT the four that
 # have workflows of their own because they are slow:
 #
-#   internal/e2e          split into test-e2e-{arm64,x86_64,wasm,other}
-#   internal/e2eselfhost  test-e2e-selfhost (sharded; >90 min unsharded)
-#   internal/fernsmith    test-fernsmith (fuzz corpus + generator, ~60s)
-#   internal/coreutils    test-coreutils (sharded; ~14m40s unsharded, which
-#                         was the critical path of the entire CI suite —
-#                         docs/CI-PERFORMANCE.md)
+#   internal/testing/e2e          split into test-e2e-{arm64,x86_64,wasm,other}
+#   internal/testing/e2ecompiler  test-e2e-selfhost (sharded; >90 min unsharded)
+#   internal/testing/fernsmith    test-fernsmith (fuzz corpus + generator, ~60s)
+#   internal/testing/coreutils    test-coreutils (sharded; ~14m40s unsharded,
+#                                 which was the critical path of the entire CI
+#                                 suite — docs/CI-PERFORMANCE.md)
 #
-# internal/e2eharness is NOT excluded, though it once was, on the grounds
+# internal/testing/e2eharness is NOT excluded, though it once was, on the grounds
 # that it had "no tests of its own worth a lane". It has 22, including the
 # in-process linker parity gates every self-host driver build goes through
 # and TestX86StructuredMatchesText, which docs/TEST-GATES.md names as a
@@ -26,10 +26,10 @@
 # package is simply never run, silently" and recording three rounds of drift
 # already paid for (internal/{caps,literate,manifest,mvs,pkgcache,sourcelint},
 # then ./cmd/..., then ./internal/native/...). A fourth was live when this
-# script was written: internal/embed had a test file and no lane ran it.
+# script was written: internal/pkg/embed had a test file and no lane ran it.
 #
 # `go list` cannot go stale, so a new package is covered the moment it exists.
-# The exclusions are spelled as a path prefix so a future internal/e2e/foo
+# The exclusions are spelled as a path prefix so a future internal/testing/e2e/foo
 # subpackage stays excluded too.
 #
 # Consumers: .github/workflows/test-units.yml and the `units` stage of
@@ -40,13 +40,13 @@ set -euo pipefail
 cd "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/.."
 
 # FERN_CI_UNIT_PACKAGE_GROUP splits the set across two CI jobs: `heavy` is the
-# packages whose tests run 350-390 s each and cannot t.Parallel (internal/ir
+# packages whose tests run 350-390 s each and cannot t.Parallel (internal/oracle/ir
 # writes the ast package globals; printer is alike), `rest` is
 # everything else. Unset, every package, which is what the lane-coverage gate
 # and a local run read.
-heavy='/internal/(ir|printer)(/|$)'
+heavy='/internal/(oracle/ir|syntax/printer)(/|$)'
 go list ./... |
-  grep -vE '/internal/(e2e|e2eselfhost|fernsmith|coreutils)(/|$)' |
+  grep -vE '/internal/testing/(e2e|e2ecompiler|fernsmith|coreutils)(/|$)' |
   case "${FERN_CI_UNIT_PACKAGE_GROUP:-}" in
     heavy) grep -E "$heavy" ;;
     rest) grep -vE "$heavy" ;;

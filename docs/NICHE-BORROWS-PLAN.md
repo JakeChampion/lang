@@ -20,9 +20,9 @@ Grounding sweep results that adjust the shortlist:
 
 | # | Shortlist item | Reality on main |
 |---|---|---|
-| 1 | Drop-guided reuse + guaranteed-reuse contract | Native reuse is **already substantial** but implements the **PLDI 2021 pairing** (`computeReuseSources`, `internal/ir/rc_analysis.go` — "reuse token" threaded from drop to alloc), not ICFP 2022 drop-guided. Struct/enum self-overwrite reuse, pair-cancellation move family, loop-body drops all merged. Self-host port: RC basics still mid-port; reuse pairing is a later slice (`SELFHOST-PERCEUS-REUSE.md`). No written user-facing reuse contract. |
+| 1 | Drop-guided reuse + guaranteed-reuse contract | Native reuse is **already substantial** but implements the **PLDI 2021 pairing** (`computeReuseSources`, `internal/oracle/ir/rc_analysis.go` — "reuse token" threaded from drop to alloc), not ICFP 2022 drop-guided. Struct/enum self-overwrite reuse, pair-cancellation move family, loop-body drops all merged. Self-host port: RC basics still mid-port; reuse pairing is a later slice (`SELFHOST-PERCEUS-REUSE.md`). No written user-facing reuse contract. |
 | 2 | `fip`/`fbip` annotations | **`fip` already shipped natively**: contextual modifier (`fip function`, `own` param marker), checker rule E053 (no allocating constructs; fip may only call fip) — but **verify-don't-enable** (no lowering guarantee), no `fbip`, no graded `fip(n)`, **no self-host support**. |
-| 3 | Platform capability split | `internal/platforms` **Phase 1 exists**: per-target `Descriptor{Capabilities, HandlerKinds, Bindings}` for all six targets — but **enforced nowhere** (only `-targets` listing + LSP completions consume it). |
+| 3 | Platform capability split | `internal/pkg/platforms` **Phase 1 exists**: per-target `Descriptor{Capabilities, HandlerKinds, Bindings}` for all six targets — but **enforced nowhere** (only `-targets` listing + LSP completions consume it). |
 | 4 | `std/peg` | Stdlib already has `regex.fern` (553-line Thompson NFA, no captures) and `stream.fern` (eager byte reader). **No PEG/grammar module**; peg complements regex (structured formats, captures, composability). |
 | 5 | Must-consume marker types | Attribute infra exists (`@derive`/`@import`/`@export` in `parseAttribute`, parser.go:1033); allow-list rejects everything else. No consumption analysis. |
 | 6 | Iterator fusion contract | `core/iter` cursor protocol exists; no fusion pass, no contract. Standing posture: lazy chains deferred until IR can fuse. |
@@ -101,7 +101,7 @@ of callees that don't take the data first.
 - Implementation: both parsers' pipe desugar grows a scan of the
   arg list for a bare `_` ident before prepending. AST records
   the hole index (new `PipeHole int` field, default 0 == "was
-  prepended") so `internal/printer/format.go`'s IsPipe
+  prepended") so `internal/syntax/printer/format.go`'s IsPipe
   reconstruction can round-trip `x |> f(a, _)` faithfully.
 - Tests: parser (substitution, two-`_` error, nested-`_` error),
   format round-trip, e2e interp + wasm, self-host parser mirror
@@ -139,7 +139,7 @@ the agenda — "if each operator is individually non-allocating,
 the composed pipeline compiles to a single loop with no
 intermediate allocations" — the operator algebra to support
 (map/filter/take/zip/flat_map), which of those defeat naive
-fusion, and where the pass lives (`internal/ir`, over the
+fusion, and where the pass lives (`internal/oracle/ir`, over the
 cursor protocol). Records the measurement bar (hand-written loop
 parity) any implementation must clear.
 
@@ -181,7 +181,7 @@ maps + recursion).
 **D1. Capability enforcement (platforms Phase 2 slice).**
 [status: shipped]
 Shipped with two reality adjustments: (1) the gate table lives in
-`internal/platforms/enforce.go` (builtin → capability: subprocess,
+`internal/pkg/platforms/enforce.go` (builtin → capability: subprocess,
 stdin/read_line, the tcp/udp family, the fs family) and native +
 wasm descriptors were extended to declare what their runtimes
 actually wire — which surfaced that **`subprocess` is interp-only**
@@ -195,15 +195,15 @@ never trip gates and bare `-check` stays target-neutral. E066 is
 positioned for entry-module call sites and position-less-but-named
 for imported-module sites; `fern explain E066` documents it. The
 diag catalogue-completeness gate now also scans cmd/fern +
-internal/platforms. Self-host parity: not needed by construction —
+internal/pkg/platforms. Self-host parity: not needed by construction —
 E066 is emitted on the Go CLI's compile path only, never by either
 checker, so the differential checker-codes gate is unaffected.
-Make `internal/platforms.Descriptor.Capabilities` real: compiling
+Make `internal/pkg/platforms.Descriptor.Capabilities` real: compiling
 for a target rejects, at **check time**, calls to runtime
 primitives the target's descriptor doesn't grant (first concrete
 case: `subprocess` / blocking `read_line` under `wasi-http`).
 Slice plan: (a) map capability strings → the builtin/stdlib
-entry-point names they gate (table in `internal/platforms`);
+entry-point names they gate (table in `internal/pkg/platforms`);
 (b) thread the resolved target into the check pipeline (new
 optional checker input — today the checker is target-agnostic;
 keep it optional so bare `-check` stays target-neutral);
@@ -264,7 +264,7 @@ Complete: native E067 (previous slice) plus the self-host port —
 the attribute is stamped through the self-host parser's
 struct/enum decls (must_consume field, propagated through the
 flatten/bundle rewrites), the `mc_*` walk family in checker.fern
-mirrors internal/checker/mustconsume.go function-for-function
+mirrors internal/check/checker/mustconsume.go function-for-function
 (gated by mc_any_marked so unmarked modules pay nothing), and
 "E067" joined selfHostImplementedCodes with 21 mc-* fixtures in
 the differential codes gate — both checkers emit identical code
@@ -317,7 +317,7 @@ modifier (contextual, mutually exclusive with `fip`; the E053
 walk relaxes exactly the constructor rule for it, and the IR
 layer verifies every constructor site is reuse-PAIRED —
 computeReuseSources / the self-overwrite hooks /
-consumingMatchReuse — via `internal/ir/fip_verify.go`, wired
+consumingMatchReuse — via `internal/oracle/ir/fip_verify.go`, wired
 into lowerFunc against the DEFAULT pairing path per E3's
 verdict); (c) graded `fip(n)` / `fbip(n)` (`FuncDecl.FipAllowance`;
 the checker admits constructors when n > 0, the IR owns the
@@ -344,7 +344,7 @@ is the standing home for the borrow-side interactions.
 **E3. Drop-guided reuse (native evaluation).** [status: EVALUATED
 2026-07-13 — verdict: keep pairing, revisit at E4. Implemented
 behind `ast.RcReuseDropGuided` (default off) in
-`internal/ir/rc_dropguided.go`; measured numbers + verdict in
+`internal/oracle/ir/rc_dropguided.go`; measured numbers + verdict in
 `RC-PERCEUS-PLAN.md` ("E3 drop-guided reuse evaluation — verdict");
 `REUSE-CONTRACT.md`'s "Known gaps" entry updated. Headline: the
 token flow selects a strict SUPERSET of the pairing on this

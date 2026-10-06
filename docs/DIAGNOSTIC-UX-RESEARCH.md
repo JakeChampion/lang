@@ -1,6 +1,6 @@
 # Diagnostic UX research — making errors a feature
 
-`internal/diag/diag.go` already does the right things: composable
+`internal/syntax/diag/diag.go` already does the right things: composable
 error interfaces (`Positioned`, `Spanned`, `Hinted`, `Filed`),
 a single rendering point (`Format`), Levenshtein-based did-you-
 mean suggestions, source-line + caret rendering with span
@@ -243,7 +243,7 @@ errors.
   stable identifier (e.g. `E001` for "undefined identifier",
   `E002` for "type mismatch"). `fern explain E002` prints a
   paragraph with worked examples. The catalogue lives in
-  `internal/diag/codes/E002.md` (one Markdown file per
+  `internal/syntax/diag/codes/E002.md` (one Markdown file per
   code), auto-linked from rendered errors.
 
 - **Machine-applicable suggestions, structured.** Today's
@@ -650,7 +650,7 @@ Assign stable codes (e.g. `E001` for "undefined
 identifier", `E002` for "type mismatch", …). Each
 diagnostic carries its code.
 
-`fern explain E002` reads `internal/diag/codes/E002.md`
+`fern explain E002` reads `internal/syntax/diag/codes/E002.md`
 and prints it. Markdown files contain:
 
 - A paragraph explaining when the error occurs.
@@ -667,7 +667,7 @@ copy as users (well, *user*) hits each error.
 **Cost: ongoing, ~1 hour per phrase.** **Impact: high,
 compounds.**
 
-Audit `internal/checker/checker.go`'s error-construction
+Audit `internal/check/checker/checker.go`'s error-construction
 sites. For each, ask:
 
 - Does the message tell the user *what's wrong* in plain
@@ -758,7 +758,7 @@ Right now the checker tests assert that an error
 diagnostics are user-facing copy (Rec §5), regressions
 in phrasing become user-facing regressions.
 
-Add a `internal/diag/golden_test.go` that:
+Add a `internal/syntax/diag/golden_test.go` that:
 
 - Runs each fixture program through the compiler.
 - Captures the rendered diagnostic (text form).
@@ -794,14 +794,14 @@ errors from a fuzz run, frozen as golden fixtures.
   than no suggestion. Test golden suggestions for
   apply-and-re-parse soundness. This one has bitten
   twice and is now gated three ways (#6990, #7018):
-  `internal/checker/derive_hint_test.go` COMPILES the
+  `internal/check/checker/derive_hint_test.go` COMPILES the
   spelling each hint suggests (and, for a type from
   another module, pins that the routes it withholds
   are ones the checker really refuses),
-  `internal/sourcelint/diag_suggestion_spelling_test.go`
+  `internal/testing/sourcelint/diag_suggestion_spelling_test.go`
   makes a bare trait name unrepresentable in either
   compiler's sources, and
-  `internal/e2eselfhost/self_host_checker_hint_text_test.go`
+  `internal/testing/e2ecompiler/self_host_checker_hint_text_test.go`
   compares the advice the two compilers give.
 
 - **Verbose-by-default error chains.** Rust's full

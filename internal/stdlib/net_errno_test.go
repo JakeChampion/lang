@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/strerror"
+	"github.com/jakechampion/lang/internal/tables/strerror"
 )
 
 // std/net carries its own errno numbers because a Fern module cannot read
-// internal/strerror's table. This reads the module as data and pins every
+// internal/tables/strerror's table. This reads the module as data and pins every
 // row to that table on each OS, and the variant order of `NetError` to the
 // errno-name list, so neither copy can drift: a number corrected in one
 // place fails here until the other follows.
@@ -90,11 +90,11 @@ func TestNetErrnoTablesMatchStrerror(t *testing.T) {
 		for i, name := range names {
 			want := strerror.Number(os, name)
 			if want == 0 {
-				t.Errorf("%s: %s has no number in internal/strerror", os, name)
+				t.Errorf("%s: %s has no number in internal/tables/strerror", os, name)
 				continue
 			}
 			if nums[i] != want {
-				t.Errorf("%s[%d] = %d for %s, internal/strerror says %d", list, i, nums[i], name, want)
+				t.Errorf("%s[%d] = %d for %s, internal/tables/strerror says %d", list, i, nums[i], name, want)
 			}
 		}
 	}

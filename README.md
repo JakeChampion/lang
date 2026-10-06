@@ -95,7 +95,7 @@ fern -lint examples/                 # lint a tree (fern -lint-rules lists the r
 fern -repl                           # interactive session
 ```
 
-A `-target` compile runs the self-hosted compiler, which assembles, links and
+A `-target` compile runs the compiler, which assembles, links and
 (for Darwin) code-signs in-process with no external toolchain. `fern` uses
 `$FERN_SELFHOST` when set, else a `fern-selfhost` beside it (`make bootstrap`
 installs one), else it builds one on first use from the compiler sources it
@@ -148,20 +148,20 @@ ISAs. Per-backend support and known gaps: `docs/BACKEND-PARITY.md`.
   `Future[T]`, with real overlapping socket I/O on the native backends.
   `docs/ASYNC.md`.
 
-## The self-hosted compiler
+## The compiler
 
-Fern has two compilers. The Fern one under `compiler/` is where
-the language now lands: it compiles itself to a byte-identical fixpoint
-(`make distcheck`) and builds every program in `coreutils/`. `make bootstrap`
-builds it from a checkout with no Go installed, using a pinned earlier
-release (`docs/BOOTSTRAP.md`), and `make selfhost-cli` builds it with the Go
-compiler for the host you are on.
+The compiler is written in Fern and lives under `compiler/`. It compiles
+itself to a byte-identical fixpoint (`make distcheck`) and builds every
+program in `coreutils/`. `make bootstrap` builds it from a checkout with no
+Go installed, using a pinned earlier release (`docs/BOOTSTRAP.md`), and
+`make selfhost-cli` builds it with the `fern` you already have.
 
-The Go compiler under `internal/` has been frozen since 2026-09-28. It is the
-stage-0 bootstrap and the differential oracle, and accepts only bugfixes,
-oracle needs, and what the self-host sources need to build
-(`docs/NATIVE-FREEZE.md`, `docs/NATIVE-CONVERGENCE.md`). Retiring its
-backends is the next roadmap step.
+The Go code under `internal/` is the oracle, not a second compiler: a
+parser, type checker and interpreter that the differential tests run every
+program against, plus `-fmt`, the LSP and the package tools. It has had no
+backends since 2026-10-05 (`docs/NATIVE-RETIREMENT.md`), and it learns a
+language feature only after `compiler/` has it, so the differentials can
+check it.
 
 The `coreutils/` tree is GNU coreutils reimplemented in Fern, held to
 byte-for-byte output parity with GNU and benchmarked against GNU and the
@@ -189,11 +189,15 @@ in place for a fresh one of the same shape.
 compiler/             the compiler, written in Fern (fern.fern is its entry; drivers/ holds its test drivers)
 cmd/fern/             CLI driver           cmd/fern-lsp/       language server
 cmd/ferndoc/          stdlib doc generator cmd/fern-wasm/      playground bundle
-internal/lexer,parser,checker,monomorph,closureconv,ir   Go front end and IR
-internal/interp/      tree-walking interpreter and REPL
-internal/x86tbl,arm64tbl/  the compiler's assembler vocabulary tables
-internal/stdlib/std/  the standard library, written in Fern
-internal/e2e*/        end-to-end suites
+internal/syntax/      the Go oracle's lexer, parser, AST, printer and diagnostics
+internal/check/       its type checker and the rules it runs
+internal/oracle/      its interpreter and REPL, and the passes from a checked program to them
+internal/pkg/         module loading, manifests, the package store and capabilities
+internal/tools/       the LSP, linter, literate tools and the launcher
+internal/tables/      generated tables: assembler vocabularies, errno text, libm data
+internal/testing/     the end-to-end suites (e2e, e2ecompiler) and test support
+internal/wasm/        WebAssembly and component-model encoders
+internal/stdlib/      the standard library, written in Fern
 examples/             example programs
 tests/                Fern-side tests: stdlib/ (std/test suites), probes/ (leak probes), proposals/ (defect repros)
 conformance/          the conformance corpus
@@ -214,10 +218,10 @@ installs them.
 make build        # go build -> bin/fern
 make test         # go test ./...
 make examples     # compile every examples/*.fern
-make bootstrap    # build the self-host compiler without Go
+make bootstrap    # build the compiler without Go
 ```
 
-The end-to-end suites in `internal/e2e`, `internal/e2eselfhost`, and the
+The end-to-end suites in `internal/testing/e2e`, `internal/testing/e2ecompiler`, and the
 differential tests run programs under qemu-aarch64, natively on x86-64 and
 Apple Silicon, and under wasmtime. A missing runtime makes a test skip, and
 a skip is a missing dependency rather than a pass. Which suite proves what,

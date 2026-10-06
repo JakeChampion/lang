@@ -138,7 +138,7 @@ default-correct unless we have a specific reason to deviate.
   fuses them, allocation traps when it doesn't; without an
   aggressive inliner we'd ship code that looks fast but isn't, so
   eager combinators + pipe is safer until the IR can fuse. The IR
-  now fuses (#9731, `internal/ir/array_fusion.go`) — `map` and
+  now fuses (#9731, `internal/oracle/ir/array_fusion.go`) — `map` and
   `filter` stages into a `fold` or `reduce` become one loop with no
   intermediate and, because the pass runs before
   `Defunctionalise`, no per-element indirect call either. So the
@@ -416,7 +416,7 @@ What landed:
   pre-existing `unifyType` helper. No explicit `f[i32](...)`
   syntax yet (would conflict with array indexing; needs
   lookahead).
-- New `internal/monomorph` package runs after type-checking,
+- New `internal/oracle/monomorph` package runs after type-checking,
   before any IR / codegen. Walks the AST, finds every Call to
   a generic function, mangles the callee name (`id__i32`),
   records the instantiation, and clones the FuncDecl per-T.
@@ -694,7 +694,7 @@ Deferred to a follow-up:
 > now RC ownership, not an arena reset. As of #2677 a **static escape
 > check** (`E063`) backs the contract: returning a `[T]` slice that
 > views function-local storage is now a checker error, in both the
-> native compiler (`internal/checker` `checkSliceEscape`) and the
+> native compiler (`internal/check/checker` `checkSliceEscape`) and the
 > self-hosted checker (`compiler/checker.fern` `slc_walk`).
 
 - **`arena { … }` block shipped.** Sugar for `arena_save() →
@@ -789,12 +789,12 @@ Deferred to a follow-up:
   a fresh owned `string`; (b) slices of a parameter or receiver,
   whose backing array the caller owns and outlives the call; and
   (c) returning the owned array (`T[]`) itself, which is a move.
-  The rule lives in both compilers — `checkSliceEscape` in
-  `internal/checker/checker.go` and `slc_walk` /
+  The rule lives in both checkers — `checkSliceEscape` in
+  `internal/check/checker/checker.go` and `slc_walk` /
   `slice_escape_diags` in `compiler/checker.fern` —
   and the self-host port is held to byte-for-byte code parity
-  with the native checker by the differential gate in
-  `internal/e2e/self_host_checker_codes_test.go`. `fern explain
+  with the Go checker by the differential gate in
+  `internal/testing/e2e/self_host_checker_codes_test.go`. `fern explain
   E063` prints the full rationale.
 - (The `number` deprecation alias has already been dropped
   — see PR 1's status block.)
@@ -984,7 +984,7 @@ to smallest. Status pending unless marked.
   `JsonValue[].push(v)` checks it as JsonValue.
 
   Lowering happens inline at the IR layer (`emitArrayPush`
-  in `internal/ir/ir.go`) — one block of code emits the
+  in `internal/oracle/ir/ir.go`) — one block of code emits the
   alloc + memcpy + width-correct tail store for every stride
   class (1 / 2 / 4 / 8 bytes; integer + float). Earlier
   shape used 5 nearly-identical Fern-prelude functions
@@ -1070,7 +1070,7 @@ to smallest. Status pending unless marked.
 
 - ~~**Bug: formatter eats `defer r.close();`**~~ — **fixed.**
   The statement-printer switch has a `case *ast.Defer` arm
-  now (`internal/printer/format.go`); round-trip is covered
+  now (`internal/syntax/printer/format.go`); round-trip is covered
   by `TestFormatDeferRoundTrip`. The earlier comment scars
   across `wc.fern` / `word_freq.fern` should be cleared in a
   follow-up examples cleanup pass.
@@ -1082,7 +1082,7 @@ bug, literal suffixes) interleave when they unblock specific
 example cleanup. Each item lands as its own PR:
 
 1. ~~defer-on-method-call formatter fix~~ — **shipped.**
-   `internal/printer/format_test.go:TestFormatDeferRoundTrip`
+   `internal/syntax/printer/format_test.go:TestFormatDeferRoundTrip`
    covers `defer r.close()` survival.
 2. ~~String interpolation~~ — **shipped.** `f"..."` syntax
    live in the lexer; used by `echo_handler.fern`,

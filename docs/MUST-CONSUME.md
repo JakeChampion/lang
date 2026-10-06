@@ -90,7 +90,7 @@ it claims:
 **Ported (both checkers).** The native walk landed first (#4933,
 with self-host parse-tolerance so marked programs compiled), and
 the `checker.fern` port followed as its own slice (the `mc_*`
-family, mirroring `internal/checker/mustconsume.go`; deviations in
+family, mirroring `internal/check/checker/mustconsume.go`; deviations in
 `SELFHOST-CHECKER-PORT.md`). Historical note: the port originally
 targeted the gate's per-code opt-in set
 (`selfHostImplementedCodes`), but that filter was DELETED the same

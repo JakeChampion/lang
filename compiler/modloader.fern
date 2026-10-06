@@ -116,7 +116,7 @@ function res_read(dir: string, rel: string): Resolved {
 // Native has had the same thing since the prelude was retired, in two pieces:
 // `stdlib.Resolve` for the embedded std/ + core/ tree and `LoadWith`'s
 // override map for the LSP's unsaved buffers, both consulted before the
-// filesystem resolver (`internal/modload/modload.go`).
+// filesystem resolver (`internal/pkg/modload/modload.go`).
 //
 // `srcs` is parallel to `paths` — the tree's idiom for a small keyed table
 // (embed.Assets, fern.fern's VendorSet), and a linear scan over a few dozen
@@ -395,7 +395,7 @@ function load_locked(dir: string, name: string): Resolved {
 }
 
 // load_from_store resolves a url/hash dependency from the per-machine
-// content-addressed store (internal/pkgcache layout: <root>/<hex>/, with
+// content-addressed store (internal/pkg/pkgcache layout: <root>/<hex>/, with
 // root = $FERN_CACHE_DIR/pkgs when set, else <user-cache-dir>/fern/pkgs).
 // Mirrors native pkgcache.Root(): an explicit $FERN_CACHE_DIR wins and is
 // NOT fallen through on a miss; otherwise the user cache dir is
@@ -476,7 +476,7 @@ pub function report_unresolved(missing: string[], driver: string): boolean {
 // that imports `core/map` and uses the builtin Map — so it is skipped, not
 // reported. A call into it still dangles, and the call gate reports that.
 function stdlib_not_given(ov: Overlay, dir: string, path: string): boolean {
-  if (ov.sealed || ov.paths.len() > 0 || !util.is_stdlib_path(path)) {
+  if (overlay_gives_stdlib(ov) || !util.is_stdlib_path(path)) {
     return false;
   }
   let tree: string = "core";
@@ -541,10 +541,21 @@ function stamp_imports(ov: Overlay, mod: parser.Module, dir: string, root: strin
   return parser.Module { ...mod, imports: out };
 }
 
+// overlay_gives_stdlib is true when `std/` and `core/` come from the overlay,
+// so the stdlib is never looked for on disk. A sealed overlay is the whole
+// filesystem: in the browser playground a disk probe is a trap, not a miss.
+function overlay_gives_stdlib(ov: Overlay): boolean {
+  return ov.sealed || ov.paths.len() > 0;
+}
+
 // vendored_stdlib_dir is the nearest directory at or above `dir` holding a
-// `std/` or `core/` tree, or `dir` itself when none does: a driver's project
-// vendors the stdlib at its root, and the driver may sit in a sub-directory.
-function vendored_stdlib_dir(dir: string): string {
+// `std/` or `core/` tree, or `dir` itself when none does or the overlay gives
+// the stdlib: a driver's project vendors the stdlib at its root, and the driver
+// may sit in a sub-directory.
+function vendored_stdlib_dir(ov: Overlay, dir: string): string {
+  if (overlay_gives_stdlib(ov)) {
+    return dir;
+  }
   let d: string = dir;
   let steps: i32 = 0;
   while (steps < 64) {
@@ -568,11 +579,8 @@ function vendored_stdlib_dir(dir: string): string {
 pub function load_graph(ov: Overlay, entry_path: string, entry: parser.Module, root: string): Graph {
   let edir: string = dirname(entry_path);
   let sroot: string = root;
-  if (sroot.len() == 0 && ov.sealed) {
-    // A sealed overlay is the whole filesystem: there is no tree to look for.
-    sroot = edir;
-  } else if (sroot.len() == 0) {
-    sroot = vendored_stdlib_dir(edir);
+  if (sroot.len() == 0) {
+    sroot = vendored_stdlib_dir(ov, edir);
   } else if (sroot[sroot.len() - 1] != b'/') {
     sroot = sroot + "/";
   }

@@ -31,7 +31,7 @@
 // This is a hand-written list of the forms kernels have asked for, not a
 // generated table, so each new domain pays per instruction. That is the
 // distinction docs/ATLAS-PLATFORM-PLAN.md §3.4 draws against the arm64
-// assembler, whose generated tables (internal/arm64tbl) carry whole classes
+// assembler, whose generated tables (internal/tables/arm64tbl) carry whole classes
 // and so owed nothing for the same kernel.
 package simd
 
