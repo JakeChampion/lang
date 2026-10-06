@@ -75,6 +75,16 @@ function (own c: Counter) bump(): Counter {
 function (c: Counter) peek(): i32 {
   return c.n;
 }
+
+trait Consume {
+function take(own self: Self): i32;
+}
+
+impl Consume for Counter {
+function take(own self: Self): i32 {
+return self.n;
+}
+}
 `},
 	{"assert-statements", `function check(x: i32, message: string): void {
   assert(x > 0);
