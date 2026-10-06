@@ -2895,11 +2895,8 @@ pub function component_fs_shims(needs: string[], stderr: boolean): string {
   if (need_any(needs, ["stat", "lstat"]) || files && need(needs, "fd_stat")) {
     o = o + filestat_func_p2();
   }
-  if (need_read_file(needs) || files) {
-    o = o + is_dir_at_func_p2();
-  }
   if (files) {
-    o = o + path_open_shim();
+    o = o + is_dir_at_func_p2() + path_open_shim();
   }
   if (need_fd_read(needs)) {
     o = o + fd_read_shim(need(needs, "@stdin"));
@@ -4061,6 +4058,11 @@ pub function component_io_shims(needs: string[], stderr: boolean, proxy: boolean
     o = o + build_io_error_p2_func();
   }
   o = o + component_fs_shims(needs, stderr);
+  // Without a file-backed handle the path_open shim is absent, and the
+  // read_file bodies bring the directory check they share with it.
+  if (need_read_file(needs) && !need_open_file(needs)) {
+    o = o + is_dir_at_func_p2();
+  }
   if (need(needs, "read_file")) {
     o = o + readfile_func_p2();
   }
