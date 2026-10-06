@@ -1934,27 +1934,18 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         }
         let eo_insts: ssa.SInst[] = [];
         let dfrom_b: i32 = sc_dl_from[t2];
-        // An exit no edge reaches leaves the slots as they are. Else
-        // the slots written since the block opened, in slot order:
-        // each edge's value for one is what it recorded, else the
-        // value at the open, and the incoming values are gathered
-        // only when they disagree.
-        if (bidx.len() > 0 || falls_through) {
+        // An exit no edge reaches keeps the fall-through values. Else, per
+        // slot written since the block opened, each edge's value is what it
+        // recorded, else the value at the open, and a phi gathers them only
+        // when they disagree. The phis go in slot order; the rows that agree
+        // are settled as they come, since each touches only its own slot.
+        if (bidx.len() > 0) {
           let nb: i32 = dl_n - dfrom_b;
           let ne: i32 = bidx.len();
-          let lo_c: i32 = nslots;
-          let hi_c: i32 = 0 - 1;
           let matb: i32[] = [];
           let rb: i32 = 0;
           while (rb < nb) {
-            let sc_s: i32 = dl_slot[dfrom_b + rb];
-            slot_pos = slot_pos.with(sc_s, rb);
-            if (sc_s < lo_c) {
-              lo_c = sc_s;
-            }
-            if (sc_s > hi_c) {
-              hi_c = sc_s;
-            }
+            slot_pos = slot_pos.with(dl_slot[dfrom_b + rb], rb);
             let qb0: i32 = 0;
             while (qb0 < ne) {
               matb = matb.append(dl_old[dfrom_b + rb]);
@@ -1976,44 +1967,57 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
             }
             qb1 = qb1 + 1;
           }
-          let es: i32 = lo_c;
-          while (es <= hi_c) {
-            let row: i32 = slot_pos[es];
-            if (row >= 0) {
-              let first: i32 = 0;
-              if (ne > 0) {
-                first = matb[row * ne];
-              } else {
-                first = slots[es];
+          // ph_slot / ph_row are the rows that need a phi, kept ascending
+          // by slot as they are found.
+          let ph_slot: i32[] = [];
+          let ph_row: i32[] = [];
+          rb = 0;
+          while (rb < nb) {
+            let es: i32 = dl_slot[dfrom_b + rb];
+            let first: i32 = matb[rb * ne];
+            let alleq: boolean = !falls_through || slots[es] == first;
+            let qv: i32 = 1;
+            while (alleq && qv < ne) {
+              if (matb[rb * ne + qv] != first) {
+                alleq = false;
               }
-              let alleq: boolean = !falls_through || slots[es] == first;
-              let qv: i32 = 1;
-              while (alleq && qv < ne) {
-                if (matb[row * ne + qv] != first) {
-                  alleq = false;
-                }
-                qv = qv + 1;
-              }
-              if (alleq) {
-                slots = slots.with(es, first);
-              } else {
-                let vals: i32[] = [];
-                let qe: i32 = 0;
-                while (qe < ne) {
-                  vals = vals.append(matb[row * ne + qe]);
-                  qe = qe + 1;
-                }
-                if (falls_through) {
-                  vals = vals.append(slots[es]);
-                }
-                let phe: i32 = nvals;
-                nvals = nvals + 1;
-                eo_insts = eo_insts.append(ssa.SInst { kind_tag: 8, result: phe, args: vals, imm: 0, str: "" });
-                slots = slots.with(es, phe);
-              }
-              slot_pos = slot_pos.with(es, 0 - 1);
+              qv = qv + 1;
             }
-            es = es + 1;
+            if (alleq) {
+              slots = slots.with(es, first);
+            } else {
+              let at: i32 = ph_slot.len();
+              ph_slot = ph_slot.append(es);
+              ph_row = ph_row.append(rb);
+              while (at > 0 && ph_slot[at - 1] > es) {
+                ph_slot = ph_slot.with(at, ph_slot[at - 1]);
+                ph_row = ph_row.with(at, ph_row[at - 1]);
+                at = at - 1;
+              }
+              ph_slot = ph_slot.with(at, es);
+              ph_row = ph_row.with(at, rb);
+            }
+            slot_pos = slot_pos.with(es, 0 - 1);
+            rb = rb + 1;
+          }
+          let pk: i32 = 0;
+          while (pk < ph_slot.len()) {
+            let es: i32 = ph_slot[pk];
+            let row: i32 = ph_row[pk];
+            let vals: i32[] = [];
+            let qe: i32 = 0;
+            while (qe < ne) {
+              vals = vals.append(matb[row * ne + qe]);
+              qe = qe + 1;
+            }
+            if (falls_through) {
+              vals = vals.append(slots[es]);
+            }
+            let phe: i32 = nvals;
+            nvals = nvals + 1;
+            eo_insts = eo_insts.append(ssa.SInst { kind_tag: 8, result: phe, args: vals, imm: 0, str: "" });
+            slots = slots.with(es, phe);
+            pk = pk + 1;
           }
         }
         cur_id = eid;
