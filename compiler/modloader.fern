@@ -568,7 +568,10 @@ function vendored_stdlib_dir(dir: string): string {
 pub function load_graph(ov: Overlay, entry_path: string, entry: parser.Module, root: string): Graph {
   let edir: string = dirname(entry_path);
   let sroot: string = root;
-  if (sroot.len() == 0) {
+  if (sroot.len() == 0 && ov.sealed) {
+    // A sealed overlay is the whole filesystem: there is no tree to look for.
+    sroot = edir;
+  } else if (sroot.len() == 0) {
     sroot = vendored_stdlib_dir(edir);
   } else if (sroot[sroot.len() - 1] != b'/') {
     sroot = sroot + "/";
