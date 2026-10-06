@@ -34,12 +34,14 @@ func (r *reactor) watch(raw int, interest int) error {
 
 func (r *reactor) wait(cap int, timeoutMs int) ([]reactorEvent, error) {
 	evs := make([]syscall.Kevent_t, cap)
-	var ts *syscall.Timespec
-	if timeoutMs >= 0 {
-		t := syscall.NsecToTimespec(int64(timeoutMs) * 1000000)
-		ts = &t
-	}
-	n, err := syscall.Kevent(r.fd, nil, evs, ts)
+	n, err := waitRestarting(timeoutMs, func(ms int) (int, error) {
+		var ts *syscall.Timespec
+		if ms >= 0 {
+			t := syscall.NsecToTimespec(int64(ms) * 1000000)
+			ts = &t
+		}
+		return syscall.Kevent(r.fd, nil, evs, ts)
+	})
 	if err != nil {
 		return nil, err
 	}
