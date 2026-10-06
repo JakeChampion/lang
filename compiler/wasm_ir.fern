@@ -14182,10 +14182,11 @@ pub function unit_fn_counts(units: WasmUnit[]): i32[] {
   return out;
 }
 
-// kernel_helpers appends the byte-scan, f64 and checksum kernel bodies
-// the module needs, each gated by its `@uses_*` need, in the order they
-// appear in the module.
-function kernel_helpers(needs: string[], parts: string[]): string[] {
+// kernel_helper_parts(needs, parts) — `parts` with the byte-scan and
+// numeric kernels the module needs appended, each once, in the order the
+// emitter has always written them.
+function kernel_helper_parts(needs: string[], parts0: string[]): string[] {
+  let parts: string[] = parts0;
   if (need(needs, "@uses_memchr")) {
     parts = parts.append(memchr_helper());
   }
@@ -14245,18 +14246,6 @@ function kernel_helpers(needs: string[], parts: string[]): string[] {
   }
   if (need(needs, "@uses_inner_mul_add_f64")) {
     parts = parts.append(inner_mul_add_f64_helper());
-  }
-  if (need(needs, "arr_reserve")) {
-    parts = parts.append(array_reserve_helper());
-  }
-  if (need(needs, "@uses_crc32_cksum")) {
-    parts = parts.append(crc32_cksum_helper());
-  }
-  if (need(needs, "@uses_crc32_cksum_array")) {
-    parts = parts.append(crc32_cksum_helper_for(true));
-  }
-  if (need(needs, "@uses_ascii_run")) {
-    parts = parts.append(ascii_run_helper());
   }
   return parts;
 }
@@ -14888,7 +14877,19 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   if (need(needs, "@uses_str_slice") || need(needs, "str_split") || need(needs, "@uses_str_lines")) {
     parts = parts.append(substr_helper());
   }
-  parts = kernel_helpers(needs, parts);
+  parts = kernel_helper_parts(needs, parts);
+  if (need(needs, "arr_reserve")) {
+    parts = parts.append(array_reserve_helper());
+  }
+  if (need(needs, "@uses_crc32_cksum")) {
+    parts = parts.append(crc32_cksum_helper());
+  }
+  if (need(needs, "@uses_crc32_cksum_array")) {
+    parts = parts.append(crc32_cksum_helper_for(true));
+  }
+  if (need(needs, "@uses_ascii_run")) {
+    parts = parts.append(ascii_run_helper());
+  }
   // $__fern_str_split (+ its private $__fern_arr_push) for the IR path.
   if (need(needs, "str_split") || need(needs, "@uses_str_lines")) {
     parts = parts.append(str_split_helper());
