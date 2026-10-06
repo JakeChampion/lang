@@ -169,3 +169,29 @@ describe("the streams", () => {
     assert.equal(r.stderr, "err\n");
   });
 });
+
+// The page's own compiler, built as web/build.sh builds it, run through the
+// shim. Any filesystem probe it makes throws here, as it does in the browser:
+// its stdlib is an embedded overlay and the shim implements no path_open.
+describe("the playground compiler", () => {
+  it("interprets a stdlib import without touching a filesystem", async () => {
+    const outPath = join(workDir, "playground.wasm");
+    execFileSync(
+      fernBin,
+      ["-target", "wasm32-wasi", "-emit", "core-module", "-embed", "internal/stdlib", "-o", outPath,
+        join(repoRoot, "compiler/playground_run.fern"), join(repoRoot, "internal/stdlib")],
+      { cwd: repoRoot },
+    );
+    const r = await runCoreWasm(readFileSync(outPath), {
+      stdin: `import "std/i64";
+function main(): i32 {
+  print("hi");
+  return 0;
+}`,
+      args: ["playground", "-interp"],
+    });
+    assert.equal(r.stderr, "");
+    assert.equal(r.stdout, "hi\n");
+    assert.equal(r.exit, 0);
+  }, { timeout: 600000 });
+});
