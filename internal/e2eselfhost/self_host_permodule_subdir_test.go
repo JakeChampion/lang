@@ -11,13 +11,9 @@ import (
 )
 
 // TestSelfHostPerModuleSubdirCacheX86_64 guards subdir-aware source hashing in
-// the per-module incremental cache (#3451 step 6 / #3458). The bundler keys a
-// module by its basename (`import "./sub/leaf"` → ns "leaf"), so an early
-// version of module_src_hash read only the flat <dir><ns>.fern and returned "?"
-// for any module resolved from a sub-directory — disabling the cache (always
-// rebuild) for it. module_src_hash now resolves the source through the loader
-// (modloader.resolve_module_src, keyed by the original import path), so a subdir
-// module gets a real content hash and participates in the cache.
+// the per-module incremental cache (#3451 step 6 / #3458): module_src_hash reads
+// a module's source through its identity, the file it resolved to, so a module
+// in a sub-directory gets a real content hash rather than "?" (always rebuild).
 //
 // Tree: main → mid → sub/leaf. leaf lives in a sub-directory; the test asserts
 // it gets a non-"?" src_hash, is served from cache on an unchanged rebuild, and

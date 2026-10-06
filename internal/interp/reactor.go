@@ -25,6 +25,29 @@ type reactor struct {
 	signals map[int]*signalWatch
 }
 
+// waitRestarting calls wait with timeoutMs, and again after each EINTR with
+// what is left of the original deadline, as the kernel does for a compiled
+// program's poll. Go's runtime handles every signal, its preemption signal
+// among them, and an epoll or kqueue wait a handler interrupts is not
+// restarted. A negative timeoutMs waits without a bound; an interruption once
+// the deadline has passed is a timeout, with no events.
+func waitRestarting(timeoutMs int, wait func(ms int) (int, error)) (int, error) {
+	deadline := time.Now().Add(time.Duration(timeoutMs) * time.Millisecond)
+	n, err := wait(timeoutMs)
+	for err == syscall.EINTR {
+		ms := timeoutMs
+		if timeoutMs >= 0 {
+			left := time.Until(deadline)
+			if left <= 0 {
+				return 0, nil
+			}
+			ms = int((left + time.Millisecond - 1) / time.Millisecond)
+		}
+		n, err = wait(ms)
+	}
+	return n, err
+}
+
 // signalWatch is one watched signal: os/signal delivers to ch, a
 // goroutine writes a byte per delivery into the pipe, and the pipe's read
 // end sits in the set under -signal.

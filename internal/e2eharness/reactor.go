@@ -29,9 +29,9 @@ function eagain(): i32 {
     return 11;
 }
 
-// The floor exposes -errno, including an interrupted kernel wait. Keep
-// the original deadline when retrying EINTR (for example, from Go's
-// asynchronous preemption signal in the interpreter).
+// The floor exposes -errno, including a kernel wait a signal interrupts
+// where nothing restarts it. Keep the original deadline when retrying
+// EINTR.
 function wait_until(r: i32, events: i32[], timeout_ms: i32): i32 {
     let interrupted: i32 = 0 - 4;
     if (target_os() == "wasi") { interrupted = 0 - 27; }

@@ -34,7 +34,9 @@ func (r *reactor) watch(raw int, interest int) error {
 
 func (r *reactor) wait(cap int, timeoutMs int) ([]reactorEvent, error) {
 	evs := make([]syscall.EpollEvent, cap)
-	n, err := syscall.EpollWait(r.fd, evs, timeoutMs)
+	n, err := waitRestarting(timeoutMs, func(ms int) (int, error) {
+		return syscall.EpollWait(r.fd, evs, ms)
+	})
 	if err != nil {
 		return nil, err
 	}

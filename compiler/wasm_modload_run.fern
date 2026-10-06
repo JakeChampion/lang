@@ -298,11 +298,11 @@ function typed_unit(t: Typed, idx: i32, lo: i32, hi: i32): TypedUnit {
   return TypedUnit { mod: parser.Module { ...m, funcs: fs }, cache: cache };
 }
 
-function typed_file(dir: string, entry_path: string, parts: flatten.PerModule[], t: Typed, idx: i32, lo: i32, hi: i32, cache_dir: string): string {
+function typed_file(entry_path: string, parts: flatten.PerModule[], t: Typed, idx: i32, lo: i32, hi: i32, cache_dir: string): string {
   if (cache_dir.len() == 0) {
     return "";
   }
-  let src_hash: string = modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, idx);
+  let src_hash: string = modloader.module_src_hash(modloader.no_overlay(), entry_path, parts, idx);
   let key: string = ircore.unit_cache_key(parts, t.u, t.keys, idx, src_hash, [], lo, hi);
   if (key.len() == 0) {
     return "";
@@ -310,7 +310,7 @@ function typed_file(dir: string, entry_path: string, parts: flatten.PerModule[],
   return cache_dir + "/" + parts[idx].ns + unit_ns(idx, lo) + "__" + util.hash_key(key) + ".wu";
 }
 
-function run_typed(dir: string, entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], parts: flatten.PerModule[], pm_mode: string, pm_index: i32, pm_lo: i32, pm_hi: i32, cache_dir: string, plan_file: string): i32 {
+function run_typed(entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], parts: flatten.PerModule[], pm_mode: string, pm_index: i32, pm_lo: i32, pm_hi: i32, cache_dir: string, plan_file: string): i32 {
   let d: semlower.Driven = semlower.driven(flatten.bundle(entry, loaded, "wasm32-wasi"), "wasm32-wasi");
   let t: Typed = typed_units(parts, d, cache_dir);
   if (pm_mode == "func-counts") {
@@ -324,7 +324,7 @@ function run_typed(dir: string, entry_path: string, entry: parser.Module, loaded
     // so link lowers to find each object, but it builds none.
     let l: Linked = no_units();
     for u in read_plan(plan_file, parts.len()) {
-      l = add_found(l, parts, u, read_cached(typed_file(dir, entry_path, parts, t, u.idx, u.lo, u.hi, cache_dir), parts[u.idx].ns));
+      l = add_found(l, parts, u, read_cached(typed_file(entry_path, parts, t, u.idx, u.lo, u.hi, cache_dir), parts[u.idx].ns));
     }
     if (link_missing(l)) {
       return 1;
@@ -334,7 +334,7 @@ function run_typed(dir: string, entry_path: string, entry: parser.Module, loaded
   }
   if (pm_mode == "emit-all") {
     for u in read_plan(plan_file, parts.len()) {
-      typed_obj(dir, entry_path, parts, t, u, cache_dir);
+      typed_obj(entry_path, parts, t, u, cache_dir);
     }
     return 0;
   }
@@ -342,14 +342,14 @@ function run_typed(dir: string, entry_path: string, entry: parser.Module, loaded
     eprint("wasm per-module: emit index out of range");
     return 1;
   }
-  write(wasm_objfile.encode(typed_obj(dir, entry_path, parts, t, ShardRef { idx: pm_index, lo: pm_lo, hi: pm_hi }, cache_dir)));
+  write(wasm_objfile.encode(typed_obj(entry_path, parts, t, ShardRef { idx: pm_index, lo: pm_lo, hi: pm_hi }, cache_dir)));
   return 0;
 }
 
 // typed_obj is unit u's object, served from the cache when its key matches and
 // emitted, and cached, otherwise.
-function typed_obj(dir: string, entry_path: string, parts: flatten.PerModule[], t: Typed, u: ShardRef, cache_dir: string): wasm_objfile.UnitObj {
-  let cf: string = typed_file(dir, entry_path, parts, t, u.idx, u.lo, u.hi, cache_dir);
+function typed_obj(entry_path: string, parts: flatten.PerModule[], t: Typed, u: ShardRef, cache_dir: string): wasm_objfile.UnitObj {
+  let cf: string = typed_file(entry_path, parts, t, u.idx, u.lo, u.hi, cache_dir);
   let lk: wasm_objfile.MaybeUnit = read_cached(cf, parts[u.idx].ns);
   if (lk.found) {
     return lk.obj;
@@ -360,7 +360,7 @@ function typed_obj(dir: string, entry_path: string, parts: flatten.PerModule[], 
   return obj;
 }
 
-function run_per_module(dir: string, entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], pm_mode: string, pm_index: i32, pm_lo: i32, pm_hi: i32, cache_dir: string, plan_file: string): i32 {
+function run_per_module(entry_path: string, entry: parser.Module, loaded: flatten.LoadedModule[], pm_mode: string, pm_index: i32, pm_lo: i32, pm_hi: i32, cache_dir: string, plan_file: string): i32 {
   let parts: flatten.PerModule[] = flatten.bundle_per_module(entry, loaded, "wasm32-wasi");
   if (pm_mode == "count") {
     print(util.i32_to_string(parts.len()) + "\n");
@@ -370,13 +370,13 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     let infmods: parser.Module[] = whole_program_view(parts);
     let mi: i32 = 0;
     while (mi < parts.len()) {
-      print(parts[mi].ns + "|" + modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, mi)
+      print(parts[mi].ns + "|" + modloader.module_src_hash(modloader.no_overlay(), entry_path, parts, mi)
         + "|" + util.hash_key(modloader.module_sig_string(infmods[mi])) + "|" + modloader.module_dep_ns(parts, infmods, mi) + "\n");
       mi = mi + 1;
     }
     return 0;
   }
-  return run_typed(dir, entry_path, entry, loaded, parts, pm_mode, pm_index, pm_lo, pm_hi, cache_dir, plan_file);
+  return run_typed(entry_path, entry, loaded, parts, pm_mode, pm_index, pm_lo, pm_hi, cache_dir, plan_file);
 }
 
 function main(): i32 {
@@ -435,11 +435,13 @@ function main(): i32 {
     eprint("wasm_modload_run: -per-module-emit-all writes the cache, so it needs -cache-dir");
     return 2;
   }
-  let dir: string = modloader.dirname(entry_path);
   match (read_file(entry_path)) {
     Ok(src) => {
       let entry: parser.Module = parser.parse_module(lexer.tokenize(src));
-      let (loaded, missing) = modloader.load_imports(modloader.no_overlay(), entry_path, entry);
+      let g: modloader.Graph = modloader.load_graph(modloader.no_overlay(), entry_path, entry, "");
+      entry = g.entry;
+      let loaded: flatten.LoadedModule[] = g.loaded;
+      let missing: string[] = g.missing;
       if (modloader.report_unresolved(missing, "wasm_modload_run")) {
         return 1;
       }
@@ -450,7 +452,7 @@ function main(): i32 {
       if (asmcore.refuse_decl_names(parsed) || asmcore.refuse_parse_unknowns(parsed)) {
         return 1;
       }
-      return run_per_module(dir, entry_path, entry, loaded, pm_mode, pm_index, pm_lo, pm_hi, cache_dir, plan_file);
+      return run_per_module(entry_path, entry, loaded, pm_mode, pm_index, pm_lo, pm_hi, cache_dir, plan_file);
     },
     Err(e) => {
       eprint("wasm_modload_run: could not read entry file");

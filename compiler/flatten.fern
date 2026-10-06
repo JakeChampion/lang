@@ -2165,9 +2165,11 @@ pub function build_reexports(imports: LoadedModule[], ids: string[], pfxs: strin
 // PerModule is one separately-emittable translation unit of a per-module
 // build (#3451 step 4 / #3456): the mangled-but-NOT-merged module plus its
 // namespace (`ns`, used for the per-module string-literal `.rodata` labels and
-// the symbol-prefix bookkeeping) and whether it is the program entry. ns is
-// label-safe (it is the same bundle name mangle_module folds into `ns__decl`).
-pub struct PerModule { ns: string, mod: parser.Module, is_entry: boolean }
+// the symbol-prefix bookkeeping), its identity (`ident`, LoadedModule's; "" for
+// the entry) and whether it is the program entry. ns is the module's bundle
+// prefix, the one mangle_module folds into `ns__decl`: label-safe, and unique
+// even when two modules share a basename.
+pub struct PerModule { ns: string, ident: string, mod: parser.Module, is_entry: boolean }
 
 // bundle_per_module is bundle's per-module twin: it applies the SAME mangling
 // (each import's own decls → `name__decl`, every internal reference rewritten;
@@ -2231,10 +2233,10 @@ pub function bundle_per_module(entry0: parser.Module, imports0: LoadedModule[], 
   let out: PerModule[] = [];
   let j: i32 = 0;
   while (j < imports.len()) {
-    out = out.append(PerModule { ns: imports[j].name, mod: parser.lower_stream_signatures(parser.substitute_const_refs(mods[j], table)), is_entry: false });
+    out = out.append(PerModule { ns: pfxs[j], ident: imports[j].ident, mod: parser.lower_stream_signatures(parser.substitute_const_refs(mods[j], table)), is_entry: false });
     j = j + 1;
   }
-  out = out.append(PerModule { ns: "__entry", mod: parser.lower_stream_signatures(parser.substitute_const_refs(e, table)), is_entry: true });
+  out = out.append(PerModule { ns: "__entry", ident: "", mod: parser.lower_stream_signatures(parser.substitute_const_refs(e, table)), is_entry: true });
   return out;
 }
 
