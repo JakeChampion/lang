@@ -105,7 +105,7 @@ function main(): i32 { return f([1 as i64, 2 as i64]) as i32; }`},
 func TestSelfHostArrmResidualRetIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)
-	driver := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "arrmres")
+	driver := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "arrmres")
 	root, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
 		t.Fatalf("abs stdlib root: %v", err)

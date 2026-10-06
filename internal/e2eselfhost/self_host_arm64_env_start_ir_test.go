@@ -28,8 +28,8 @@ func TestSelfHostArm64EnvpSaveIR(t *testing.T) {
 		t.Skip("needs a native x86 host to run the aarch64-emitting driver")
 	}
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_load_run.fern")
-	mmc := buildSelfHostBin(t, x86gcc, dir, "asm_load_run.fern", "mmc_arm64")
+	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
+	mmc := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_load_run.fern", "mmc_arm64")
 
 	prog := "function main(): i32 {\n" +
 		"    match (env(\"PATH\")) {\n" +

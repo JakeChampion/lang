@@ -36,8 +36,8 @@ func TestSelfHostModloadPerModuleWholeCompilerArm64(t *testing.T) {
 	dir := writeSelfHostModloadProjectTyped(t)
 
 	// Build the arm64 driver as an x86 host binary (mirrors the fixpoint harness).
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_modload_run.fern", "arm64driver")
-	entry := filepath.Join(dir, "asm_modload_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_modload_run.fern", "arm64driver")
+	entry := filepath.Join(dir, "drivers/asm_modload_run.fern")
 
 	// 1. Emit every unit of the whole compiler as arm64 asm, batched — the same
 	// route (and the same batch size) `emit_per_module_spawned` drives for arm64

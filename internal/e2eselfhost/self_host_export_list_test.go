@@ -39,8 +39,8 @@ func TestSelfHostExportListResultRunsViaConsumer(t *testing.T) {
 	}
 
 	// self-host emits the exporter core (command with main + list @export).
-	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
-	driverBin := buildSelfHostBin(t, "", dir, "wasm_runio_run.fern", "wasm_runio_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
+	driverBin := buildSelfHostBin(t, "", dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 
 	exporterSrc := `@export("local:test/nums@0.1.0", "iota")
 function iota(): i32[] { return [10, 20, 30, 40]; }

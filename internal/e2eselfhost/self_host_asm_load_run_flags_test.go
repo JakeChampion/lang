@@ -32,8 +32,8 @@ func TestSelfHostAsmLoadRunStdlibRootVsFlags(t *testing.T) {
 		t.Skip("the driver takes host filesystem paths as argv; native-only")
 	}
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_load_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "asm_load_run")
+	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "asm_load_run")
 
 	// A `core/map` import is what makes the bogus root reachable: without one,
 	// nothing ever tries to open a file under it and the driver exits 0 with the

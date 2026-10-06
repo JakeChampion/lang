@@ -29,9 +29,9 @@ import (
 func TestSelfHostAsmRunX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_run.fern")
+	copySelfHostDriver(t, dir, "drivers/asm_run.fern")
 	// Build the driver once.
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 
 	// Each case: pipe source to driver, capture asm, assemble,
 	// run, verify exit code.

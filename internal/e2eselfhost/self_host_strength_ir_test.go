@@ -83,8 +83,8 @@ func TestSelfHostStrengthIR(t *testing.T) {
 func TestSelfHostStrengthShiftImmediateShape(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "asm_ir_run")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "asm_ir_run")
 	src := []byte("@noinline function shift8(x: i32): i32 { return x * 8; }\nfunction main(): i32 { return shift8(5); }\n")
 
 	for _, tc := range []struct {

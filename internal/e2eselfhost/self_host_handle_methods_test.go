@@ -164,8 +164,8 @@ func TestSelfHostHandleMethodsIR(t *testing.T) {
 		t.Skip("handle stat/seek test runs only natively (opens host paths)")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	src := selfHostHandleMethodSource(selfHostHandleProbeFile(t, dir), filepath.Join(dir, "resized.txt"),
 		filepath.Join(dir, "seeked.txt"))
@@ -194,8 +194,8 @@ func TestSelfHostHandleMethodsArm64IR(t *testing.T) {
 		t.Skip("handle stat/seek test runs only natively (opens host paths)")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	src := selfHostHandleMethodSource(selfHostHandleProbeFile(t, dir), filepath.Join(dir, "resized.txt"),
 		filepath.Join(dir, "seeked.txt"))
@@ -226,11 +226,11 @@ func TestSelfHostHandleStatSeekWasmIR(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
 	if err := os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("hello"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
 	src := `function main(): i32 {
     let minus2: i64 = (0 as i64) - (2 as i64);

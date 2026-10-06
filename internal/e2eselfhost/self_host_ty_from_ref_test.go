@@ -35,8 +35,8 @@ func TestSelfHostTyFromRef(t *testing.T) {
 		t.Skip("ty_from_ref_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "ty_from_ref_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "ty_from_ref_run.fern", "ty_from_ref_run")
+	copySelfHostDriver(t, dir, "drivers/ty_from_ref_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/ty_from_ref_run.fern", "ty_from_ref_run")
 
 	// Golden — the exact ty_tag(ty_from_name(s)) mapping the former byte scan
 	// produced, captured before the ty_from_ref migration. Byte-identical.

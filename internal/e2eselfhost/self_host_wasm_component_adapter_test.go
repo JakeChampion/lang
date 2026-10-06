@@ -41,8 +41,8 @@ func TestSelfHostWasmComponentAdapter(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
 	// The binary core assembler (read target.wat, emit_binary, print bytes)
 	// — shared with TestSelfHostWasmBinary (asmReadFileDriver).

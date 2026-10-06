@@ -10,7 +10,7 @@ import (
 
 // enumKeysDriver prints the name of every enum left after the parser's
 // monomorphisation passes, one per line.
-const enumKeysDriver = `import "./parser";
+const enumKeysDriver = `import "../parser";
 import "./rundriver";
 
 function main(): i32 {
@@ -26,10 +26,10 @@ function main(): i32 {
 func TestSelfHostGenericEnumTupleKey(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	if err := os.WriteFile(filepath.Join(dir, "enum_keys.fern"), []byte(enumKeysDriver), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "drivers", "enum_keys.fern"), []byte(enumKeysDriver), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	driver := buildSelfHostBin(t, gcc, dir, "enum_keys.fern", "enum_keys")
+	driver := buildSelfHostBin(t, gcc, dir, "drivers/enum_keys.fern", "enum_keys")
 
 	const decl = "enum Opt[T] { Sm(T), Nn }\n"
 	for _, tc := range []struct {

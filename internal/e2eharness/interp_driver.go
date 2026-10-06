@@ -77,7 +77,7 @@ func writeInterpDriverShim(t testing.TB, dir, fernName, out string) string {
 	path := filepath.Join(dir, out)
 	script := "#!/bin/sh\n" +
 		"if [ -n \"$FERN_DUMP_PROGRAMS\" ]; then\n" +
-		"  f=$(mktemp \"$FERN_DUMP_PROGRAMS/" + strings.TrimSuffix(fernName, ".fern") + ".XXXXXX\")\n" +
+		"  f=$(mktemp \"$FERN_DUMP_PROGRAMS/" + strings.TrimSuffix(filepath.Base(fernName), ".fern") + ".XXXXXX\")\n" +
 		"  cat > \"$f.fern\"; rm -f \"$f\"; exit 0\n" +
 		"fi\n" +
 		"exec " + fern + " -interp " + filepath.Join(dir, fernName) + " -- \"$@\"\n"

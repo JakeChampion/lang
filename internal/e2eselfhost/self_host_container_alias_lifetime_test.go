@@ -90,8 +90,8 @@ func TestSelfHostContainerAliasLifetimeWasm(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driver := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	driver := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 	for _, tc := range containerAliasLifetimeCases {
 		for _, shared := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/shared=%t", tc.name, shared), func(t *testing.T) {
@@ -129,8 +129,8 @@ func runContainerAliasLifetime(t *testing.T, target string, link func(*testing.T
 	t.Helper()
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driver := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driver := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 	native := buildLangBinForInterp(t)
 	for _, tc := range containerAliasLifetimeCases {
 		for _, shared := range []bool{false, true} {

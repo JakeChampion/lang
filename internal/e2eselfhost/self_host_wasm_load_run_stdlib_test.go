@@ -248,12 +248,12 @@ func newWasmStdlibLoader(t *testing.T) *wasmStdlibLoader {
 	t.Helper()
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_load_run.fern")
+	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
 	root, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &wasmStdlibLoader{runner: runner, bin: buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "asm_load_run"), root: root}
+	return &wasmStdlibLoader{runner: runner, bin: buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "asm_load_run"), root: root}
 }
 
 // emit compiles src and returns the WAT; extra flags follow the target.

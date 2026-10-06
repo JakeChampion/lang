@@ -27,8 +27,8 @@ func TestSelfHostWasmIoErrorVariantLayout(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	wasmRun := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
+	wasmRun := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
 	// A regular file, so that read_file("reg.txt/nested") fails with an errno
 	// outside the mapped five (ENOTDIR) and lands on the two-field Other arm.
@@ -124,8 +124,8 @@ function main(): i32 {
 func TestSelfHostWasmIoErrorMessageIsRcBoxed(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	wasmRun := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "wasm_ir_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	wasmRun := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "wasm_ir_run")
 
 	const prog = `function main(): i32 {
     match (read_file("nope.txt")) {

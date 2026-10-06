@@ -37,7 +37,7 @@ function main(): i32 { match (int.parse_int_radix("2a", 16)) { Some(n) => { retu
 func TestSelfHostStdlibFuncsIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)
-	driver := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "alr")
+	driver := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "alr")
 	root, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
 		t.Fatalf("abs stdlib root: %v", err)

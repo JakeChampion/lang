@@ -102,8 +102,8 @@ func TestSelfHostExternVariantResultCustomProvider(t *testing.T) {
 		t.Fatalf("DecodeWorldBytes: %v", err)
 	}
 
-	copySelfHostDriver(t, dir, "wasm_runio_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_runio_run.fern", "wasm_runio_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 
 	const want = "grade-ok"
 	prog := `enum Grade { Low(i32), Mid(i32), High(i32) }

@@ -40,7 +40,7 @@ func TestSelfHostPerModuleArm64MapDeleteLinks(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)
 
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_modload_run.fern", "mapdellinkdriver")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_modload_run.fern", "mapdellinkdriver")
 
 	proj := t.TempDir()
 	// A library module whose only unusual reach is the map delete. `without`

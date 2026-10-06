@@ -184,8 +184,8 @@ func TestSelfHostCompilePathEnforcesFipBudget(t *testing.T) {
 func TestSelfHostPerUnitEmitEnforcesFipBudget(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostFiles(t, dir, "asm_arm64_ir.fern", "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "airun")
+	copySelfHostFiles(t, dir, "asm_arm64_ir.fern", "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "airun")
 
 	// `-ir-unit entry|lib` is asm_ir.emit_module_ir_unit, the per-module emit
 	// with no gate pass in front of it; the source arrives on stdin.
@@ -217,8 +217,8 @@ func TestSelfHostPerUnitEmitEnforcesFipBudget(t *testing.T) {
 func TestSelfHostRoutingProbeAnswersWhereEmitRefuses(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostDriver(t, dir, "drivers/wasm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
 	run := func(t *testing.T, args ...string) (string, string, int) {
 		t.Helper()

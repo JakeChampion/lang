@@ -40,8 +40,8 @@ func TestSelfHostMutableScalarCaptureInterp(t *testing.T) {
 	interpBin := buildLangBinForInterp(t)
 
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "interp_run.fern")
-	interpDriver := buildSelfHostBin(t, gcc, dir, "interp_run.fern", "interp_run")
+	copySelfHostDriver(t, dir, "drivers/interp_run.fern")
+	interpDriver := buildSelfHostBin(t, gcc, dir, "drivers/interp_run.fern", "interp_run")
 
 	for _, tc := range []struct {
 		name string

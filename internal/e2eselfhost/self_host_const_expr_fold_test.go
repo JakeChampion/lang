@@ -52,8 +52,8 @@ func TestSelfHostConstExprFoldX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostDriver(t, dir, "asm_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 	for _, tc := range constExprFoldCases {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte(tc.main + "\n")
@@ -106,8 +106,8 @@ func TestSelfHostConstExprFoldWasm(t *testing.T) {
 func TestSelfHostConstExprFoldShape(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "asm_ir_run")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "asm_ir_run")
 	src := []byte("@noinline function folded(): i32 { return (1 + 2 * 3) * (4 + 5); }\n" +
 		"@noinline function opaque(x: i32): i32 { return (x + 2 * 3) * (4 + 5); }\n" +
 		"function main(): i32 { return folded() - opaque(1); }\n")

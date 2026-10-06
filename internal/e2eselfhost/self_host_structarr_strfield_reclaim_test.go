@@ -57,8 +57,8 @@ function main(): i32 {
 func TestSelfHostStructArrStrFieldReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	asm := hevCompile(t, runner, driverBin, structArrStrFieldSrc, []string{"FERN_LEAKCHECK=1"})
 	progBin := buildBin(t, gcc, dir, "structarr_strfield", asm)
@@ -102,8 +102,8 @@ func TestSelfHostStructArrStrFieldReclaimX86_64(t *testing.T) {
 func TestSelfHostStructArrStrFieldHazardsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	for _, tc := range []struct {
 		name string

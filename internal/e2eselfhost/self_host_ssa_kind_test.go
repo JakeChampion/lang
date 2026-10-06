@@ -27,8 +27,8 @@ func TestSelfHostSSAKindRegistry(t *testing.T) {
 		t.Skip("ssa_kind_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "ssa_kind_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "ssa_kind_run.fern", "ssa_kind_run")
+	copySelfHostDriver(t, dir, "drivers/ssa_kind_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/ssa_kind_run.fern", "ssa_kind_run")
 
 	const want = "kind_count=35\n" +
 		"bijection_ok=35\n" +

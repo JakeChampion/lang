@@ -204,8 +204,8 @@ func TestSelfHostIRVerifyGateRefuses(t *testing.T) {
 		t.Skip("irverify_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "irverify_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "irverify_run.fern", "irverify_run")
+	copySelfHostDriver(t, dir, "drivers/irverify_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/irverify_run.fern", "irverify_run")
 
 	// Unset: inert. A plain compile skips the gate; only a test or a bisect
 	// turns it on.
@@ -250,8 +250,8 @@ func TestSelfHostIRVerifyGateChecks(t *testing.T) {
 		t.Skip("irverify_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "irverify_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "irverify_run.fern", "irverify_run")
+	copySelfHostDriver(t, dir, "drivers/irverify_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/irverify_run.fern", "irverify_run")
 
 	out, stderr, code := runGate(t, bin, nil, "FERN_IR_VERIFY=0")
 	if code != 0 {
@@ -280,14 +280,14 @@ func TestSelfHostIRVerifyGateWholeCompiler(t *testing.T) {
 		t.Skip("modload driver runs natively; skipping under an exec runner")
 	}
 	dir := writeSelfHostModloadProjectTyped(t)
-	bin := buildSelfHostBin(t, gcc, dir, "asm_modload_run.fern", "modload_run")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/asm_modload_run.fern", "modload_run")
 
 	// asm_ir_run.fern imports the whole x86 pipeline, so its closure is the
 	// compiler: lexer, parser, ir, irtables, asmcore, asm_ir, asm_arm64_ir. The
 	// modload project stages every one of those already; only the entry itself
 	// has to be added.
-	copySelfHostFiles(t, dir, "asm_ir_run.fern")
-	entry := filepath.Join(dir, "asm_ir_run.fern")
+	copySelfHostFiles(t, dir, "drivers/asm_ir_run.fern")
+	entry := filepath.Join(dir, "drivers/asm_ir_run.fern")
 
 	cmd := exec.Command(bin, entry)
 	cmd.Dir = dir

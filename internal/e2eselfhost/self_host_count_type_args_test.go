@@ -29,8 +29,8 @@ func TestSelfHostCountTypeArgs(t *testing.T) {
 		t.Skip("count_type_args_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "count_type_args_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "count_type_args_run.fern", "count_type_args_run")
+	copySelfHostDriver(t, dir, "drivers/count_type_args_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/count_type_args_run.fern", "count_type_args_run")
 
 	const want = "Box[i32] -> 1\n" +
 		"Map[K, V] -> 2\n" +

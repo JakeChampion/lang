@@ -26,8 +26,8 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 		t.Skip("ir_strength_run driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "ir_strength_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "ir_strength_run.fern", "ir_strength_run")
+	copySelfHostDriver(t, dir, "drivers/ir_strength_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/ir_strength_run.fern", "ir_strength_run")
 
 	want := "mul_1: load_local 0\n" +
 		"mul_0: load_local 0 ; drop ; const_i32 0\n" +

@@ -33,7 +33,7 @@ const arm64ImageSpan = 1 << 27
 func TestSelfHostArm64ModloadNativeBuild(t *testing.T) {
 	fernBin := buildFernCLIBin(t)
 	dir := writeSelfHostModloadProject(t)
-	entry := filepath.Join(dir, "asm_modload_run.fern")
+	entry := filepath.Join(dir, "drivers/asm_modload_run.fern")
 	orch := filepath.Join(dir, "orch_arm64")
 
 	if err := withBuildMemoryMB(arm64ImageBuildMB, func() error {

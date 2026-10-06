@@ -3,7 +3,7 @@ package e2eselfhost
 import "testing"
 
 // TestSelfHostSSALiftAdmitsEveryOp pins the production lift's admission
-// census (compiler/ssa_lift_admits_run.fern): every registered IR
+// census (compiler/drivers/ssa_lift_admits_run.fern): every registered IR
 // op kind reaches the register path, as an instruction of the lift's own or
 // through the stack machine's arm for it, except the ones listed here: a
 // kind with a pop count ir.op_pops does not model cannot be bridged. A new
@@ -12,8 +12,8 @@ import "testing"
 func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "ssa_lift_admits_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "ssa_lift_admits_run.fern", "ssa_lift_admits_run")
+	copySelfHostDriver(t, dir, "drivers/ssa_lift_admits_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/ssa_lift_admits_run.fern", "ssa_lift_admits_run")
 
 	// load, store and call_closure_direct are registered kinds no lowering
 	// produces and no backend has an arm for; they stay unmodelled in

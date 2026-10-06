@@ -49,14 +49,14 @@ var strSplitIRCases = []struct {
 func TestSelfHostStrSplitIRPathX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../compiler/asm_pathprobe_run.fern")
+	src, err := os.ReadFile("../../compiler/drivers/asm_pathprobe_run.fern")
 	if err != nil {
 		t.Fatalf("read asm_pathprobe_run.fern: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_pathprobe_run.fern"), src, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "drivers/asm_pathprobe_run.fern"), src, 0o644); err != nil {
 		t.Fatalf("write asm_pathprobe_run.fern: %v", err)
 	}
-	probeBin := buildSelfHostBin(t, gcc, dir, "asm_pathprobe_run.fern", "pathprobe")
+	probeBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_pathprobe_run.fern", "pathprobe")
 
 	for _, tc := range strSplitIRCases {
 		t.Run(tc.name, func(t *testing.T) {

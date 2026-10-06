@@ -11,7 +11,7 @@ import (
 )
 
 // TestSelfHostSemanticSourceCensusLoadsTheStdlib pins the one property the
-// coverage census (compiler/semsource_census_run.fern) cannot be
+// coverage census (compiler/drivers/semsource_census_run.fern) cannot be
 // trusted without: that the program it measures is the WHOLE program.
 //
 // The loader drops an import it cannot resolve in silence, which is right in a
@@ -31,7 +31,7 @@ func TestSelfHostSemanticSourceCensusLoadsTheStdlib(t *testing.T) {
 		t.Skip("census driver runs natively; skipping under an exec runner")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "semsource_census_run.fern")
+	copySelfHostDriver(t, dir, "drivers/semsource_census_run.fern")
 	stdlib, err := filepath.Abs(filepath.Join("..", "stdlib"))
 	if err != nil {
 		t.Fatalf("stdlib path: %v", err)
@@ -41,7 +41,7 @@ func TestSelfHostSemanticSourceCensusLoadsTheStdlib(t *testing.T) {
 	// reason buildPlaygroundDriver gives: that path cannot pass an asset
 	// bundle, and the bundle is the whole point here.
 	build := exec.Command(buildFernCLIBin(t), "-target", "x86-64-linux",
-		"-embed", stdlib, "-o", bin, filepath.Join(dir, "semsource_census_run.fern"))
+		"-embed", stdlib, "-o", bin, filepath.Join(dir, "drivers/semsource_census_run.fern"))
 	if out, err := build.CombinedOutput(); err != nil {
 		t.Fatalf("building the census failed: %v\n%s", err, out)
 	}

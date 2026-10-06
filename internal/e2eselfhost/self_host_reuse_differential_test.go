@@ -237,14 +237,14 @@ var reuseDifferentialCases = []struct {
 func TestSelfHostReuseDifferentialX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../compiler/asm_run.fern")
+	src, err := os.ReadFile("../../compiler/drivers/asm_run.fern")
 	if err != nil {
 		t.Fatalf("read asm_run.fern: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "drivers/asm_run.fern"), src, 0o644); err != nil {
 		t.Fatalf("write asm_run.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 
 	// emitEnv runs the driver on prog with extra environment entries.
 	emitEnv := func(t *testing.T, prog string, extraEnv ...string) string {
@@ -299,14 +299,14 @@ func TestSelfHostReuseDifferentialX86_64(t *testing.T) {
 func TestSelfHostStrarrReuseExclusionX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	src, err := os.ReadFile("../../compiler/asm_run.fern")
+	src, err := os.ReadFile("../../compiler/drivers/asm_run.fern")
 	if err != nil {
 		t.Fatalf("read asm_run.fern: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(dir, "asm_run.fern"), src, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "drivers/asm_run.fern"), src, 0o644); err != nil {
 		t.Fatalf("write asm_run.fern: %v", err)
 	}
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 
 	cases := []struct {
 		name string

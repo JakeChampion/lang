@@ -38,9 +38,9 @@ import (
 func TestSelfHostWasmUnsupportedBuiltins(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "wasm_ir_run.fern", "wasm_run.fern")
-	irDriver := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
-	prodDriver := buildSelfHostBin(t, gcc, dir, "wasm_run.fern", "wasm_run")
+	copySelfHostFiles(t, dir, "util.fern", "astwalk.fern", "asmcore.fern", "lexer.fern", "parser.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", "drivers/wasm_ir_run.fern", "drivers/wasm_run.fern")
+	irDriver := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
+	prodDriver := buildSelfHostBin(t, gcc, dir, "drivers/wasm_run.fern", "wasm_run")
 
 	// run feeds src to a driver and returns (exit, stdout, stderr). extraArgs
 	// carries the differential driver's `-ir` flag; wasm_run takes none.

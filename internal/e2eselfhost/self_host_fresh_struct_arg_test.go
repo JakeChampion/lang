@@ -98,8 +98,8 @@ func TestSelfHostFreshStructArgX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	for _, tc := range freshStructArgCases() {
 		t.Run(tc.name, func(t *testing.T) {
@@ -147,8 +147,8 @@ func TestSelfHostFreshStructArgX86_64(t *testing.T) {
 func TestSelfHostFreshStructArgRefusedX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	refused := []struct{ name, body string }{
 		{"callee_returns_arg", "st = st.count(keepf(mkop(i)));"},
@@ -176,8 +176,8 @@ func TestSelfHostFreshStructArgWasmIR(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
 	for _, tc := range freshStructArgCases() {
 		t.Run(tc.name, func(t *testing.T) {

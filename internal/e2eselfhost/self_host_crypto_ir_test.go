@@ -38,7 +38,7 @@ function main(): i32 { if (crypto.hmac_sha256_hex([107 as u8, 101 as u8, 121 as 
 func TestSelfHostCryptoModuleIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)
-	driver := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "alr")
+	driver := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "alr")
 	root, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
 		t.Fatalf("abs stdlib root: %v", err)

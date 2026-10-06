@@ -22,8 +22,8 @@ import (
 func TestSelfHostRemoveDirAllIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	// Stage a nested tree: rda/{f1.txt, f2.txt, sub/{g.txt, sub2/{h.txt}}}.
 	// remove_dir_all must recurse through both subdir levels.
@@ -103,8 +103,8 @@ func TestSelfHostRemoveDirAllIRWasm(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
 	// Stage a nested tree under the preopen:
 	//   rda_dir/{f1.txt, f2.txt, sub/{g.txt, sub2/{h.txt}}}

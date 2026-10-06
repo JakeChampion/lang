@@ -25,8 +25,8 @@ import (
 func TestSelfHostTypeResolve(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "type_resolve_run.fern")
-	bin := buildSelfHostBin(t, gcc, dir, "type_resolve_run.fern", "type_resolve_run")
+	copySelfHostDriver(t, dir, "drivers/type_resolve_run.fern")
+	bin := buildSelfHostBin(t, gcc, dir, "drivers/type_resolve_run.fern", "type_resolve_run")
 
 	// Golden — the exact type_from_name_with_structs_unions resolution for a
 	// corpus spanning every decode branch.

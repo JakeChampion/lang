@@ -301,7 +301,7 @@ wraps the core module with `internal/wasm/component` (the Go composer,
 so the native path handles poll/tcp end to end (verified above).
 
 The **self-host** wasm backend is a *different composition path* and does
-NOT reach this. `compiler/wasm_ir_run.fern` emits a bare
+NOT reach this. `compiler/drivers/wasm_ir_run.fern` emits a bare
 **Preview-1 core module** (WAT text) and the driver/e2e composes it with
 `wasm-tools component new --adapt wasi_snapshot_preview1=<adapter>`. The
 scalar Preview-2 pollable ops compose on this path (verified — #4317):

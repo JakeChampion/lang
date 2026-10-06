@@ -27,7 +27,7 @@ func goFrontEndCodes(t *testing.T, src string) []string {
 
 // TestSelfHostFrontEndNumericLiteralCodes is the FRONT-END half of the
 // self-host / native diagnostic differential: the codes reported before the
-// checker ever runs. It drives compiler/checker_codes_run.fern with
+// checker ever runs. It drives compiler/drivers/checker_codes_run.fern with
 // the native interpreter — no cross toolchain, so it runs on every host — and
 // asserts the self-host code set matches what the Go front end reports for the
 // same source.
@@ -45,7 +45,7 @@ func goFrontEndCodes(t *testing.T, src string) []string {
 // (strconv returns a subnormal / ±0 with no error there).
 func TestSelfHostFrontEndNumericLiteralCodes(t *testing.T) {
 	interpBin := buildLangBinForInterp(t)
-	driver, err := filepath.Abs("../../compiler/checker_codes_run.fern")
+	driver, err := filepath.Abs("../../compiler/drivers/checker_codes_run.fern")
 	if err != nil {
 		t.Fatalf("abs driver path: %v", err)
 	}

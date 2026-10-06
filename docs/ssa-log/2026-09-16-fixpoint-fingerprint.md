@@ -7,7 +7,7 @@
 `ssa.Optimize` runs its pass list until an iteration changes nothing, and it
 told by rendering the function to text before and after each iteration and
 comparing the strings. On the x86-64 SSA build of
-`compiler/asm_ir_run.fern` (41 s wall) `(*Func).String` from
+`compiler/drivers/asm_ir_run.fern` (41 s wall) `(*Func).String` from
 `Optimize` was 2.6 s, more than SCCP, the most expensive pass it was checking.
 
 ## Change

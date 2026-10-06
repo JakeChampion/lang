@@ -72,9 +72,9 @@ func TestSelfHostNestedParamType(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interp := buildLangBinForInterp(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern", "wasm_ir_run.fern")
-	asmDriver := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "asm-driver")
-	wasmDriver := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "wasm-driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern", "drivers/wasm_ir_run.fern")
+	asmDriver := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "asm-driver")
+	wasmDriver := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "wasm-driver")
 	for _, target := range []string{"arm64-linux", "x86-64-linux", "wasm32-wasi"} {
 		t.Run(target, func(t *testing.T) {
 			for _, tc := range nestedParamTypeCases {

@@ -110,8 +110,8 @@ func TestSelfHostRlimitNofileIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	want := nofileProbeLimit(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	asm := runSelfHostDriverStdin(t, runner, driverBin, rlimitSelfHostSource(want), "-ir")
 	if !bytes.Contains(asm, []byte("call __fn___fern_rlimit_nofile")) {
@@ -138,8 +138,8 @@ func TestSelfHostRlimitNofileIRArm64(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	want := nofileProbeLimit(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	asm := runSelfHostDriverStdin(t, x86runner, driverBin, rlimitSelfHostSource(want), "-target", "arm64-linux", "-ir")
 	if !bytes.Contains(asm, []byte("bl __fn___fern_rlimit_nofile")) {
@@ -168,8 +168,8 @@ func TestSelfHostRlimitNofileIRArm64(t *testing.T) {
 func TestSelfHostRlimitNofileIRWasmRefused(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
 	cmd := runX86_64Bin(runner, driverBin, "-ir")
 	cmd.Stdin = strings.NewReader(rlimitSelfHostSource(1024))

@@ -40,8 +40,8 @@ func TestSelfHostStdTestE2E(t *testing.T) {
 	interpBin := buildLangBinForInterp(t)
 
 	dir := writeSelfHostAsmProject(t) // lexer, parser, asm
-	copySelfHostDriver(t, dir, "asm_load_run.fern")
-	mmc := buildSelfHostBin(t, gcc, dir, "asm_load_run.fern", "mmc")
+	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
+	mmc := buildSelfHostBin(t, gcc, dir, "drivers/asm_load_run.fern", "mmc")
 
 	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {
@@ -135,9 +135,9 @@ func TestSelfHostStdTestE2EArm64(t *testing.T) {
 	interpBin := buildLangBinForInterp(t)
 
 	dir := writeSelfHostAsmProject(t) // lexer, parser, asm
-	copySelfHostDriver(t, dir, "asm_load_run.fern")
+	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
 	// The x86 driver emits ARM64 assembly, independently of the host target.
-	mmc := buildSelfHostBin(t, x86gcc, dir, "asm_load_run.fern", "mmc_arm64")
+	mmc := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_load_run.fern", "mmc_arm64")
 
 	stdlibRoot, err := filepath.Abs("../../internal/stdlib")
 	if err != nil {

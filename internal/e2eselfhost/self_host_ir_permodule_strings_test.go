@@ -24,8 +24,8 @@ import (
 func TestSelfHostIRPerModuleLinkStrings(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
-	copySelfHostFiles(t, dir, "asm_arm64_ir.fern", "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "airun")
+	copySelfHostFiles(t, dir, "asm_arm64_ir.fern", "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "airun")
 
 	emit := func(t *testing.T, prog string, args ...string) string {
 		t.Helper()

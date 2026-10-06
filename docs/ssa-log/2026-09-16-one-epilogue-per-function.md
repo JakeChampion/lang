@@ -41,7 +41,7 @@ nothing jumps to.
 
 ## What it is worth
 
-The self-host driver, `compiler/asm_run.fern`:
+The self-host driver, `compiler/drivers/asm_run.fern`:
 
 | | size | `.eh_frame` | the rest |
 | --- | ---: | ---: | ---: |

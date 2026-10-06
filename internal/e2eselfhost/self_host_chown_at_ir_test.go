@@ -197,8 +197,8 @@ func TestSelfHostChownAtIR(t *testing.T) {
 		t.Skip("chown_at test runs only natively (mutates host paths)")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	work := t.TempDir()
 	ids := shMeasureChownIds(t, work)
@@ -232,8 +232,8 @@ func TestSelfHostChownAtIRArm64(t *testing.T) {
 		t.Skip("chown_at test runs only natively (mutates host paths)")
 	}
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	work := t.TempDir()
 	ids := shMeasureChownIds(t, work)

@@ -416,7 +416,7 @@ var hintTextDivergences = map[string]string{}
 // unlike its x86_64-suffixed neighbours it runs on every host.
 func TestSelfHostCheckerHintTextDifferential(t *testing.T) {
 	interpBin := buildLangBinForInterp(t)
-	driver, err := filepath.Abs("../../compiler/checker_codes_run.fern")
+	driver, err := filepath.Abs("../../compiler/drivers/checker_codes_run.fern")
 	if err != nil {
 		t.Fatalf("abs driver path: %v", err)
 	}

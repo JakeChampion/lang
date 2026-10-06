@@ -30,8 +30,8 @@ func TestSelfHostTempDirIRWasm(t *testing.T) {
 	}
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "wasm_ir_run.fern")
-	driverBin := buildSelfHostBin(t, gcc, dir, "wasm_ir_run.fern", "driver")
+	copySelfHostDriver(t, dir, "drivers/wasm_ir_run.fern")
+	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_ir_run.fern", "driver")
 
 	// "fern-td-ir" is 10 bytes; the result is "<prefix>-<ns>", so >= 12 bytes, and
 	// d[0] == 'f' (102). Exit 0 only if the path looks right.

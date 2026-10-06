@@ -51,9 +51,9 @@ func TestSelfHostTcpServerArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
-	copySelfHostDriver(t, dir, "asm_ir_run.fern")
+	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	// Build the self-host arm64 emitter driver as an x86-64 host binary.
-	driverBin := buildSelfHostBin(t, x86gcc, dir, "asm_ir_run.fern", "driver")
+	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
 	port := freeTCPPort(t)
 	serverSrc := fmt.Sprintf(tcpServerProgram, port)

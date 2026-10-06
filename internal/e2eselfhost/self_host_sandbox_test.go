@@ -196,7 +196,7 @@ func TestSelfHostSandboxRefusesRunTimeSyscallNumber(t *testing.T) {
 // syscalls its siblings issue, so the sandbox refuses that emit.
 func TestSelfHostSandboxRefusesPerModuleEmit(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
-	driverBin := buildSelfHostBin(t, x86gcc, writeSelfHostModloadProject(t), "asm_modload_run.fern", "sandboxpermoduledriver")
+	driverBin := buildSelfHostBin(t, x86gcc, writeSelfHostModloadProject(t), "drivers/asm_modload_run.fern", "sandboxpermoduledriver")
 	proj := t.TempDir()
 	mustWrite(t, proj, "leaf.fern", "pub function seven(): i32 { return 7; }\n")
 	mustWrite(t, proj, "main.fern", "import \"./leaf\";\n\nfunction main(): i32 { return leaf.seven(); }\n")
@@ -217,6 +217,8 @@ func TestSelfHostSandboxRefusesPerModuleEmit(t *testing.T) {
 // record it. A `syscall` written any other way is one the filter would kill.
 func TestSelfHostSandboxNoBareSyscallEmit(t *testing.T) {
 	files, err := filepath.Glob("../../compiler/*.fern")
+	inDrivers, _ := filepath.Glob("../../compiler/drivers/*.fern")
+	files = append(files, inDrivers...)
 	if err != nil || len(files) == 0 {
 		t.Fatalf("no self-host sources: %v", err)
 	}

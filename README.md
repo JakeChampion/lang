@@ -186,7 +186,7 @@ skip them, and an allocation whose last reference is dropped can be reused
 in place for a fresh one of the same shape.
 
 ```
-compiler/             the compiler, written in Fern (fern.fern is its entry; *_run.fern are test drivers)
+compiler/             the compiler, written in Fern (fern.fern is its entry; drivers/ holds its test drivers)
 cmd/fern/             CLI driver           cmd/fern-lsp/       language server
 cmd/ferndoc/          stdlib doc generator cmd/fern-wasm/      playground bundle
 internal/lexer,parser,checker,monomorph,closureconv,ir   Go front end and IR
