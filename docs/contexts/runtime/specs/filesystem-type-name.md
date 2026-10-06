@@ -1,6 +1,6 @@
 # Filesystem type names
 
-**Status:** Implemented locally; awaiting integration and review
+**Status:** Validated locally; awaiting predecessor merge and review
 **Contexts:** Process runtime, filesystem metadata and coreutils
 **Date:** 2026-10-06
 
@@ -40,5 +40,7 @@ table, or changing filesystem count and path-limit semantics.
 
 ## Open questions
 
-No product decisions remain. Verify kernel layout and bootstrap-compatible
-implementation details against the current repository and host SDK.
+No product decisions remain. Kernel layout was measured against the host SDK.
+Native Darwin and Linux runtime checks, GNU stat parity, allocation checks and
+full lint pass. Native bootstrap stages 2 and 3 are byte-identical. Publication
+still requires integration with the merged predecessor and the CI/review gates.
