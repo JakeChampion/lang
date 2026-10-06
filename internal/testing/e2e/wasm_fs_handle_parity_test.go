@@ -172,7 +172,7 @@ func runParityPreview1(t *testing.T, src string, o parityOpts) {
 // maxResources does not apply: preview 1 has no resource table to cap.
 func runParitySelfHostCore(t *testing.T, src string, o parityOpts) {
 	t.Helper()
-	stdout, stderr, ec := runComponent(t, buildComponent(t, src), runOpts{workDir: o.runDir(t), stdinFile: o.stdin})
+	stdout, stderr, ec := runWasmArtifact(t, buildWasmCore(t, src), runOpts{workDir: o.runDir(t), stdinFile: o.stdin})
 	if ec != 0 {
 		t.Fatalf("self-host wasm core: wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, stdout, stderr)
 	}

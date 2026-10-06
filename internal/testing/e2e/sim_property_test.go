@@ -196,7 +196,7 @@ func assertSimProgramAgrees(t *testing.T, src string) {
 	})
 	t.Run("wasm32-wasi", func(t *testing.T) {
 		comp := buildCLIComponent(t, src)
-		got, stderr, ec := runComponent(t, comp, runOpts{})
+		got, stderr, ec := runWasmArtifact(t, comp, runOpts{})
 		if ec != 0 {
 			t.Fatalf("wasmtime exit = %d\nstdout: %s\nstderr: %s\nsrc:\n%s", ec, got, stderr, src)
 		}

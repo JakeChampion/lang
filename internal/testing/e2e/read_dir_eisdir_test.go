@@ -83,7 +83,7 @@ func TestReadDirectoryIsEisdirEveryTarget(t *testing.T) {
 			return exec.Command("wasmtime", "run", "--dir", dir, core)
 		}},
 		{"wasm-component", func(t *testing.T) *exec.Cmd {
-			return exec.Command("wasmtime", "run", "--dir="+dir, buildComponent(t, readDirProg))
+			return exec.Command("wasmtime", "run", "--dir="+dir, buildWasmCore(t, readDirProg))
 		}},
 	}
 	for _, tc := range targets {

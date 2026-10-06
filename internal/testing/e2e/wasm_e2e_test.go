@@ -100,10 +100,10 @@ func skipIfPreview2Missing(t *testing.T) {
 }
 
 // runOpts bundles the per-call wasmtime knobs. Empty defaults run
-// the component with no preopened dirs, no env, and no positional
-// args.
+// the module or component with no preopened dirs, no env, and no
+// positional args.
 type runOpts struct {
-	args      []string // positional argv after the component path
+	args      []string // positional argv after the wasm path
 	stdin     string
 	stdinFile *os.File // when set, standard input in place of `stdin`
 	// stdoutFile, when set, is standard output; the returned stdout is
@@ -115,16 +115,17 @@ type runOpts struct {
 	maxResources int      // when > 0, cap the host's resource table (`-S max-resources`)
 }
 
-// buildComponent compiles src with the self-host compiler to a WASI core
-// module, which runComponent runs with `--invoke main` so main's result is
-// printed after the program's own stdout.
-func buildComponent(t *testing.T, src string) string {
+// buildWasmCore compiles src with the self-host compiler to a preview-1 WASI
+// core module, which runWasmArtifact runs with `--invoke main` so main's
+// result is printed after the program's own stdout. A test of a preview-2
+// body needs buildCLIComponent instead.
+func buildWasmCore(t *testing.T, src string) string {
 	t.Helper()
-	return buildComponentMulti(t, "main.fern", map[string]string{"main.fern": src})
+	return buildWasmCoreMulti(t, "main.fern", map[string]string{"main.fern": src})
 }
 
-// buildComponentMulti is buildComponent for an entry and its sibling modules.
-func buildComponentMulti(t *testing.T, entry string, files map[string]string) string {
+// buildWasmCoreMulti is buildWasmCore for an entry and its sibling modules.
+func buildWasmCoreMulti(t *testing.T, entry string, files map[string]string) string {
 	t.Helper()
 	skipIfPreview2Missing(t)
 	dir := t.TempDir()
@@ -175,7 +176,7 @@ func buildResultComponent(t *testing.T, src string) string {
 // runResultStdout runs src through buildResultComponent and returns its stdout.
 func runResultStdout(t *testing.T, src string) string {
 	t.Helper()
-	s, e, ec := runComponent(t, buildResultComponent(t, src), runOpts{})
+	s, e, ec := runWasmArtifact(t, buildResultComponent(t, src), runOpts{})
 	if ec != 0 {
 		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, s, e)
 	}
@@ -207,9 +208,10 @@ func isCoreModule(t *testing.T, path string) bool {
 	return bytes.Equal(head, []byte{0, 'a', 's', 'm', 1, 0, 0, 0})
 }
 
-// runComponent runs the component under wasmtime, returning the
-// program's stdout, stderr, and the wasmtime exit code.
-func runComponent(t *testing.T, componentPath string, opts runOpts) (stdout, stderr string, exitCode int) {
+// runWasmArtifact runs a core module (with `--invoke main`) or a component
+// under wasmtime, returning the program's stdout, stderr, and the wasmtime
+// exit code.
+func runWasmArtifact(t *testing.T, wasmPath string, opts runOpts) (stdout, stderr string, exitCode int) {
 	t.Helper()
 	cmdArgs := []string{"run"}
 	if opts.workDir != "" {
@@ -218,13 +220,13 @@ func runComponent(t *testing.T, componentPath string, opts runOpts) (stdout, std
 	for _, e := range opts.envs {
 		cmdArgs = append(cmdArgs, "--env", e)
 	}
-	if isCoreModule(t, componentPath) {
+	if isCoreModule(t, wasmPath) {
 		cmdArgs = append(cmdArgs, "--invoke", "main")
 	}
 	if opts.maxResources > 0 {
 		cmdArgs = append(cmdArgs, "-S", "max-resources="+strconv.Itoa(opts.maxResources))
 	}
-	cmdArgs = append(cmdArgs, componentPath)
+	cmdArgs = append(cmdArgs, wasmPath)
 	cmdArgs = append(cmdArgs, opts.args...)
 	cmd := exec.Command("wasmtime", cmdArgs...)
 	if opts.fdLimit > 0 {
@@ -290,15 +292,16 @@ func wasmRejected(stderr string) (bool, string) {
 	return false, ""
 }
 
-// invokeWasmtime compiles src to a Component Model component and
-// runs it under `wasmtime run`. Returns the program's stdout +
-// stderr; fails the test if wasmtime exits non-zero. Use
+// invokeWasmtime compiles src to a preview-1 core module and runs
+// its main under `wasmtime run --invoke`. Returns the program's stdout
+// (main's result last) + stderr; fails the test if wasmtime exits
+// non-zero. Use
 // `runWasmStdinEnv` / `runWasmInDir` if you need to script stdin
 // or env vars or expect a non-zero exit.
 func invokeWasmtime(t *testing.T, src string) (stdout, stderr string) {
 	t.Helper()
-	p := buildComponent(t, src)
-	s, e, ec := runComponent(t, p, runOpts{})
+	p := buildWasmCore(t, src)
+	s, e, ec := runWasmArtifact(t, p, runOpts{})
 	if ec != 0 {
 		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, s, e)
 	}
@@ -309,8 +312,8 @@ func invokeWasmtime(t *testing.T, src string) (stdout, stderr string) {
 // program (entry + sibling files).
 func invokeWasmtimeMultiFile(t *testing.T, entry string, files map[string]string) (stdout, stderr string) {
 	t.Helper()
-	p := buildComponentMulti(t, entry, files)
-	s, e, ec := runComponent(t, p, runOpts{})
+	p := buildWasmCoreMulti(t, entry, files)
+	s, e, ec := runWasmArtifact(t, p, runOpts{})
 	if ec != 0 {
 		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, s, e)
 	}
@@ -360,14 +363,12 @@ function main(): i32 {
 }
 
 // invokeWasmtimeWithArgs is invokeWasmtime plus extra positional
-// argv that wasmtime forwards into `wasi:cli/environment.get-arguments`.
-// Component model wasmtime puts the component path at argv[0] just
-// like preview-1 did with the module path, so the args() builtin
-// returns the same shape under both.
+// argv that wasmtime forwards into preview 1's `args_get`, with the
+// module path at argv[0].
 func invokeWasmtimeWithArgs(t *testing.T, src string, extraArgs ...string) (stdout, stderr string) {
 	t.Helper()
-	p := buildComponent(t, src)
-	s, e, _ := runComponent(t, p, runOpts{args: extraArgs})
+	p := buildWasmCore(t, src)
+	s, e, _ := runWasmArtifact(t, p, runOpts{args: extraArgs})
 	return s, e
 }
 
@@ -538,15 +539,14 @@ func TestWASMArgsBuiltinCopiesLongValue(t *testing.T) {
 	}
 }
 
-// runWasmStdinEnv runs the component under wasmtime with scripted
+// runWasmStdinEnv runs src's core module under wasmtime with scripted
 // stdin and env, returning stdout, stderr, and the exit code.
-// `--env KEY=VAL` is forwarded by wasmtime to
-// `wasi:cli/environment.get-environment` (preview-2) which is what
-// the env() builtin reads from.
+// `--env KEY=VAL` is forwarded by wasmtime to preview 1's
+// `environ_get`, which is what the env() builtin reads from.
 func runWasmStdinEnv(t *testing.T, src, stdin string, envs []string) (stdout, stderr string, exitCode int) {
 	t.Helper()
-	p := buildComponent(t, src)
-	return runComponent(t, p, runOpts{stdin: stdin, envs: envs})
+	p := buildWasmCore(t, src)
+	return runWasmArtifact(t, p, runOpts{stdin: stdin, envs: envs})
 }
 
 // runCLIComponent runs src as a wasi:cli/run component, for a test of
@@ -554,7 +554,7 @@ func runWasmStdinEnv(t *testing.T, src, stdin string, envs []string) (stdout, st
 // status is the one wasi:cli/exit carries.
 func runCLIComponent(t *testing.T, src string, opts runOpts) (stdout, stderr string, exitCode int) {
 	t.Helper()
-	return runComponent(t, buildCLIComponent(t, src), opts)
+	return runWasmArtifact(t, buildCLIComponent(t, src), opts)
 }
 
 // `read_line()` reads one line from stdin including the trailing
@@ -4056,10 +4056,9 @@ func TestWASMPrintHelloWorld(t *testing.T) {
 	}
 }
 
-// Float observation through the component pipeline: stdout only
-// carries i32 results (wasmtime's --invoke line), and
-// `wasi:cli/exit` clamps the exit code to 0/1, so neither channel
-// can carry an f32. Float tests instead express the assertion in
+// Float observation through runWasm: it reads main's result as an
+// i32 off wasmtime's --invoke line, so it cannot carry an f32.
+// Float tests instead express the assertion in
 // the lang program itself — main returns 1 when the expected
 // value matches and 0 otherwise — and we observe the integer.
 
@@ -4811,7 +4810,6 @@ func TestWASMStringConcatPreservesContent(t *testing.T) {
 	}
 }
 
-// runWasmExpectingTrap compiles src, runs the component, and
 // Empty-string sentinel: concat-of-empties, zero-width slices and
 // zero-length string_from_bytes_unchecked all return the shared static
 // sentinel rather than allocating a fresh 0-byte buffer. The test
@@ -4891,13 +4889,14 @@ func TestWASMEmptyStringSentinelRoundtrip(t *testing.T) {
 	}
 }
 
+// runWasmExpectingTrap compiles src to a core module, runs it, and
 // returns true when wasmtime exited non-zero (the trap surface).
 // Used by the array bounds-check tests where the program is
 // expected to abort.
 func runWasmExpectingTrap(t *testing.T, src string) (stdout, stderr string, ok bool) {
 	t.Helper()
-	p := buildComponent(t, src)
-	s, e, ec := runComponent(t, p, runOpts{})
+	p := buildWasmCore(t, src)
+	s, e, ec := runWasmArtifact(t, p, runOpts{})
 	return s, e, ec != 0
 }
 
@@ -6019,7 +6018,7 @@ func runWasmInDir(t *testing.T, src string, seed map[string]string) (stdout, std
 // temp dir is always the work dir.
 func runWasmInDirOpts(t *testing.T, src string, seed map[string]string, opts runOpts) (stdout, stderr string, exitCode int, dir string) {
 	t.Helper()
-	p := buildComponent(t, src)
+	p := buildWasmCore(t, src)
 	dir = t.TempDir()
 	for name, content := range seed {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
@@ -6027,7 +6026,7 @@ func runWasmInDirOpts(t *testing.T, src string, seed map[string]string, opts run
 		}
 	}
 	opts.workDir = dir
-	s, e, ec := runComponent(t, p, opts)
+	s, e, ec := runWasmArtifact(t, p, opts)
 	return s, e, ec, dir
 }
 

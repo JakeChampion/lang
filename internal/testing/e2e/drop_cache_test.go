@@ -122,9 +122,9 @@ func TestWASMPreview1DropCache(t *testing.T) {
 }
 
 func TestWASMDropCache(t *testing.T) {
-	p := buildComponent(t, dropCacheSource("", false))
+	p := buildWasmCore(t, dropCacheSource("", false))
 	dir := t.TempDir()
-	stdout, stderr, ec := runComponent(t, p, runOpts{workDir: dir})
+	stdout, stderr, ec := runWasmArtifact(t, p, runOpts{workDir: dir})
 	if ec != 0 {
 		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, stdout, stderr)
 	}

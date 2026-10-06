@@ -82,7 +82,7 @@ func TestWriterBytesCensus(t *testing.T) {
 			return runSplit(t, runArm64Bin(qemu, bin))
 		}},
 		{"wasm", func(t *testing.T, source string) (string, string, int) {
-			return runComponent(t, buildLeakCheckCLIComponent(t, source, false), runOpts{})
+			return runWasmArtifact(t, buildLeakCheckCLIComponent(t, source, false), runOpts{})
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

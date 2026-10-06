@@ -243,7 +243,7 @@ func TestWASMStatFields(t *testing.T) {
 // exits 0.
 func runWasmStatProbe(t *testing.T, src string) (stdout, stderr string) {
 	t.Helper()
-	p := buildComponent(t, src)
+	p := buildWasmCore(t, src)
 	dir := t.TempDir()
 	file := filepath.Join(dir, "probe.txt")
 	if err := os.WriteFile(file, []byte("hello"), 0o640); err != nil {
@@ -253,7 +253,7 @@ func runWasmStatProbe(t *testing.T, src string) (stdout, stderr string) {
 	if err := os.Chtimes(file, when, when); err != nil {
 		t.Fatalf("chtimes: %v", err)
 	}
-	s, e, ec := runComponent(t, p, runOpts{workDir: dir})
+	s, e, ec := runWasmArtifact(t, p, runOpts{workDir: dir})
 	if ec != 0 {
 		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, s, e)
 	}

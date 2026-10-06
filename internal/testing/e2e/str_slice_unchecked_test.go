@@ -192,7 +192,7 @@ func TestStrSliceUncheckedTrap(t *testing.T) {
 				// exit, not 134 — assert the trap, not its spelling
 				// (matching assertAborts).
 				comp := buildCLIComponent(t, c.src)
-				_, _, code := runComponent(t, comp, runOpts{})
+				_, _, code := runWasmArtifact(t, comp, runOpts{})
 				if code == 0 {
 					t.Errorf("wasm did not trap (exit 0)\nsrc:\n%s", c.src)
 				}

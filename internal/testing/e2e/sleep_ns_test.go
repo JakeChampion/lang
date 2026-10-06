@@ -74,8 +74,8 @@ func TestInterpSleepNs(t *testing.T) {
 // already nanoseconds. main's return reaches us on stdout, not as the exit
 // status — the harness runs the module with `--invoke main`.
 func TestWASMSleepNs(t *testing.T) {
-	p := buildComponent(t, sleepNsSource)
-	stdout, stderr, ec := runComponent(t, p, runOpts{})
+	p := buildWasmCore(t, sleepNsSource)
+	stdout, stderr, ec := runWasmArtifact(t, p, runOpts{})
 	if ec != 0 {
 		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, stdout, stderr)
 	}

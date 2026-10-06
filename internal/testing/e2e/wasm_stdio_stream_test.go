@@ -98,7 +98,7 @@ var stdioLegs = map[string]stdioLeg{
 		return stdioRunCmd(t, exec.Command("wasmtime", "run", "--invoke", "main", mod))
 	},
 	"self-host wasm core": func(t *testing.T, src string) (string, string, int) {
-		return runComponent(t, buildComponent(t, src), runOpts{stdin: "hello\n"})
+		return runWasmArtifact(t, buildWasmCore(t, src), runOpts{stdin: "hello\n"})
 	},
 	"self-host wasm": func(t *testing.T, src string) (string, string, int) {
 		return runCLIComponent(t, src, runOpts{stdin: "hello\n"})
@@ -281,7 +281,7 @@ func TestWASMFailedPrint(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer full.Close()
-	_, stderr, ec := runComponent(t, buildCLIComponent(t, failedPrintSource), runOpts{stdoutFile: full, maxResources: failureResourceCap})
+	_, stderr, ec := runWasmArtifact(t, buildCLIComponent(t, failedPrintSource), runOpts{stdoutFile: full, maxResources: failureResourceCap})
 	if ec != 0 {
 		t.Fatalf("wasmtime exit %d, want 0\nstderr:\n%s", ec, stderr)
 	}

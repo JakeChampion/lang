@@ -281,7 +281,7 @@ func TestWASMStringReassignFree(t *testing.T) {
 }
 
 // Wasm mirror of TestX86_64FreelistReuse. Sets ast.RcFreeEnabled
-// around runWasm (buildComponent reads it at emit time; wasm
+// around runWasm (buildWasmCore reads it at emit time; wasm
 // codegen doesn't take CodegenMu, and this test isn't parallel).
 // SKIPs without wasmtime (runs in CI). The fixtures use only the
 // `__alloc` / `__free` builtins, so they need no imports.

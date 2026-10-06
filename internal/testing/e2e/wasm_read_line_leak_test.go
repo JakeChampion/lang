@@ -35,11 +35,11 @@ var wasmReadLineSrcs = []struct{ name, src string }{
 func TestWASMReadLineLeavesNothingPerByte(t *testing.T) {
 	for _, tc := range wasmReadLineSrcs {
 		t.Run(tc.name, func(t *testing.T) {
-			component := buildLeakCheckComponent(t, tc.src, false)
+			core := buildLeakCheckWasmCore(t, tc.src, false)
 			var counts [2][3]int64
 			lines := []string{"  21 \n", "   21" + strings.Repeat(" ", 120) + "\n"}
 			for i, line := range lines {
-				stdout, stderr, exit := runComponent(t, component, runOpts{stdin: line})
+				stdout, stderr, exit := runWasmArtifact(t, core, runOpts{stdin: line})
 				if want := fmt.Sprint(len(line) % 7); exit != 0 || trimOut(stdout) != want {
 					t.Fatalf("%d-byte line: exit %d stdout %q, want 0 and %q; stderr: %s", len(line), exit, stdout, want, stderr)
 				}

@@ -163,9 +163,9 @@ func TestWASMPreview1DupOntoUnsupported(t *testing.T) {
 }
 
 func TestWASMDupOntoUnsupported(t *testing.T) {
-	p := buildComponent(t, dupOntoSource("", true))
+	p := buildWasmCore(t, dupOntoSource("", true))
 	dir := t.TempDir()
-	stdout, stderr, ec := runComponent(t, p, runOpts{workDir: dir})
+	stdout, stderr, ec := runWasmArtifact(t, p, runOpts{workDir: dir})
 	if ec != 0 {
 		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, stdout, stderr)
 	}

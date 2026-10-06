@@ -33,7 +33,7 @@ function main(): i32 {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			component := buildLeakCheckCLIComponent(t, loop(tc.call), false)
-			_, stderr, code := runComponent(t, component, runOpts{})
+			_, stderr, code := runWasmArtifact(t, component, runOpts{})
 			allocs, frees, live := leakSummaryIn(t, stderr)
 			if code != 0 || allocs != frees || live != 0 {
 				t.Fatalf("code=%d allocs=%d frees=%d live_bytes=%d", code, allocs, frees, live)
