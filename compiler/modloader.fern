@@ -544,7 +544,11 @@ function stamp_imports(ov: Overlay, mod: parser.Module, dir: string, root: strin
 // vendored_stdlib_dir is the nearest directory at or above `dir` holding a
 // `std/` or `core/` tree, or `dir` itself when none does: a driver's project
 // vendors the stdlib at its root, and the driver may sit in a sub-directory.
-function vendored_stdlib_dir(dir: string): string {
+// A sealed overlay is the whole filesystem, so it is not searched for.
+function vendored_stdlib_dir(ov: Overlay, dir: string): string {
+  if (ov.sealed) {
+    return dir;
+  }
   let d: string = dir;
   let steps: i32 = 0;
   while (steps < 64) {
@@ -569,7 +573,7 @@ pub function load_graph(ov: Overlay, entry_path: string, entry: parser.Module, r
   let edir: string = dirname(entry_path);
   let sroot: string = root;
   if (sroot.len() == 0) {
-    sroot = vendored_stdlib_dir(edir);
+    sroot = vendored_stdlib_dir(ov, edir);
   } else if (sroot[sroot.len() - 1] != b'/') {
     sroot = sroot + "/";
   }
