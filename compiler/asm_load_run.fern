@@ -19,6 +19,7 @@ import "./util";
 import "./lexer";
 import "./parser";
 import "./flatten";
+import "./modloader";
 import "./checker";
 import "./asm_arm64_ir";
 import "./asm_ir";
@@ -29,20 +30,6 @@ import "./constfold";
 import "./platforms";
 import "./ircore";
 import "./semlower";
-
-// add_imports appends each of mod's loadable import paths to paths
-// (deduped by full path), returning the grown list.
-function add_imports(paths: string[], mod: parser.Module, root: string): string[] {
-  let i: i32 = 0;
-  while (i < mod.imports.len()) {
-    let ip: string = mod.imports[i].path;
-    if (util.should_load(ip, root, []) && !util.has_str(paths, ip)) {
-      paths = paths.append(ip);
-    }
-    i = i + 1;
-  }
-  return paths;
-}
 
 // shaken_program prunes an annotated module to what main reaches when `prune`
 // is set, and returns it unchanged otherwise. Callers annotate first: the
@@ -142,7 +129,6 @@ function main(): i32 {
     return 2;
   }
   let entry_path: string = av[1];
-  let dir: string = util.dir_of(entry_path);
   // Optional stdlib root: the first non-flag arg after the entry. When given,
   // `std/…` / `core/…` imports are resolved under it (`<root>/std/foo.fern`);
   // without it those imports are skipped (the entry must be self-contained
@@ -248,40 +234,12 @@ function main(): i32 {
   }
   let entry_mod: parser.Module = parser.parse_module(lexer.tokenize(esrc));
 
-  // Worklist of import PATHS to load (seeded from the entry's
-  // imports, grown as each loaded module's imports are discovered).
-  // Tracking the full path — not just the basename — lets std/core
-  // paths resolve under the stdlib root.
-  let paths: string[] = add_imports([], entry_mod, root);
-  let loaded: flatten.LoadedModule[] = [];
-  let done: string[] = [];
-  let j: i32 = 0;
-  while (j < paths.len()) {
-    let ipath: string = paths[j];
-    j = j + 1;
-    if (!util.has_str(done, ipath)) {
-      done = done.append(ipath);
-      let mpath: string = util.resolve_path(ipath, dir, root);
-      let msrc: string = "";
-      let mok: boolean = false;
-      match (read_file(mpath)) {
-        Ok(s2) => {
-          msrc = s2;
-          mok = true;
-        },
-        Err(e) => {
-          mok = false;
-        }
-      }
-      if (!mok) {
-        eprint("asm_load_run: cannot read module: " + mpath);
-        return 1;
-      }
-      let m: parser.Module = parser.with_stdlib_origin(parser.parse_module(lexer.tokenize(msrc)), ipath);
-      loaded = loaded.append(flatten.LoadedModule { name: util.module_name(ipath), ident: "", mod: m });
-      paths = add_imports(paths, m, root);
-    }
+  let g: modloader.Graph = modloader.load_graph(modloader.no_overlay(), entry_path, entry_mod, root);
+  if (modloader.report_unresolved(g.missing, "asm_load_run")) {
+    return 1;
   }
+  entry_mod = g.entry;
+  let loaded: flatten.LoadedModule[] = g.loaded;
 
   let parsed: parser.Module[] = [entry_mod];
   for lm in loaded {

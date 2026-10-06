@@ -302,7 +302,7 @@ function typed_file(dir: string, entry_path: string, parts: flatten.PerModule[],
   if (cache_dir.len() == 0) {
     return "";
   }
-  let src_hash: string = modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, idx);
+  let src_hash: string = modloader.module_src_hash(modloader.no_overlay(), entry_path, parts, idx);
   let key: string = ircore.unit_cache_key(parts, t.u, t.keys, idx, src_hash, [], lo, hi);
   if (key.len() == 0) {
     return "";
@@ -370,7 +370,7 @@ function run_per_module(dir: string, entry_path: string, entry: parser.Module, l
     let infmods: parser.Module[] = whole_program_view(parts);
     let mi: i32 = 0;
     while (mi < parts.len()) {
-      print(parts[mi].ns + "|" + modloader.module_src_hash(modloader.no_overlay(), dir, entry_path, parts, mi)
+      print(parts[mi].ns + "|" + modloader.module_src_hash(modloader.no_overlay(), entry_path, parts, mi)
         + "|" + util.hash_key(modloader.module_sig_string(infmods[mi])) + "|" + modloader.module_dep_ns(parts, infmods, mi) + "\n");
       mi = mi + 1;
     }
@@ -439,7 +439,10 @@ function main(): i32 {
   match (read_file(entry_path)) {
     Ok(src) => {
       let entry: parser.Module = parser.parse_module(lexer.tokenize(src));
-      let (loaded, missing) = modloader.load_imports(modloader.no_overlay(), entry_path, entry);
+      let g: modloader.Graph = modloader.load_graph(modloader.no_overlay(), entry_path, entry, "");
+      entry = g.entry;
+      let loaded: flatten.LoadedModule[] = g.loaded;
+      let missing: string[] = g.missing;
       if (modloader.report_unresolved(missing, "wasm_modload_run")) {
         return 1;
       }
