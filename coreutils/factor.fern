@@ -39,6 +39,7 @@
 // a remainder that Pollard rho splits is collected and sorted first. A
 // number in bulk therefore costs no allocation of its own.
 import "core/bigint";
+import "std/errno";
 import "./lib/gnu";
 
 // The bound trial division sweeps to before Pollard rho is worth
@@ -1113,9 +1114,8 @@ function out_finish(o: Out, status: i32): i32 {
   }
   match (o.w.close()) {
     Some(e) => {
-      let text: string = gnu.io_error_text(e);
-      if (text != "Bad file descriptor") {
-        gnu.error("write error: " + text);
+      if (errno.of(e) != errno.EBADF) {
+        gnu.error("write error: " + gnu.io_error_text(e));
         return 1;
       }
     },

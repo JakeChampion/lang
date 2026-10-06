@@ -41,6 +41,7 @@
 import "std/string";
 import "std/array";
 import "std/io_buffered";
+import "std/errno";
 import "./lib/gnu";
 import "./lib/canon";
 import "./lib/copy";
@@ -206,20 +207,20 @@ struct Cfg { ask: i32, update: i32, strip: boolean, verbose: boolean, debug: boo
 
 // ---- stat ------------------------------------------------------------------
 // `StatInfo` — the four facts every caller here wants from a stat, and
-// the strerror text when there was none.
-struct StatInfo { ok: boolean, is_dir: boolean, dev: i64, ino: i64, mtime: i64, mtime_nsec: i64, err: string }
+// the errno and its strerror text when there was none.
+struct StatInfo { ok: boolean, is_dir: boolean, dev: i64, ino: i64, mtime: i64, mtime_nsec: i64, errnum: i32, err: string }
 
-function no_stat(text: string): StatInfo {
-  return StatInfo { ok: false, is_dir: false, dev: 0, ino: 0, mtime: 0, mtime_nsec: 0, err: text };
+function no_stat(e: IoError): StatInfo {
+  return StatInfo { ok: false, is_dir: false, dev: 0, ino: 0, mtime: 0, mtime_nsec: 0, errnum: errno.of(e), err: gnu.io_error_text(e) };
 }
 
 function lstat_info(path: string): StatInfo {
   match (lstat(path)) {
     Ok(st) => {
-      return StatInfo { ok: true, is_dir: st.is_dir, dev: st.dev, ino: st.ino, mtime: st.mtime, mtime_nsec: st.mtime_nsec, err: "" };
+      return StatInfo { ok: true, is_dir: st.is_dir, dev: st.dev, ino: st.ino, mtime: st.mtime, mtime_nsec: st.mtime_nsec, errnum: 0, err: "" };
     },
     Err(e) => {
-      return no_stat(gnu.io_error_text(e));
+      return no_stat(e);
     }
   }
 }
@@ -227,10 +228,10 @@ function lstat_info(path: string): StatInfo {
 function stat_info(path: string): StatInfo {
   match (stat(path)) {
     Ok(st) => {
-      return StatInfo { ok: true, is_dir: st.is_dir, dev: st.dev, ino: st.ino, mtime: st.mtime, mtime_nsec: st.mtime_nsec, err: "" };
+      return StatInfo { ok: true, is_dir: st.is_dir, dev: st.dev, ino: st.ino, mtime: st.mtime, mtime_nsec: st.mtime_nsec, errnum: 0, err: "" };
     },
     Err(e) => {
-      return no_stat(gnu.io_error_text(e));
+      return no_stat(e);
     }
   }
 }
@@ -262,7 +263,7 @@ function dest_present(dest: string): boolean {
   if (st.ok) {
     return true;
   }
-  if (st.err != "Not a directory") {
+  if (st.errnum != errno.ENOTDIR) {
     return false;
   }
   let bare: string = gnu.strip_slashes(dest);
@@ -326,15 +327,16 @@ function same_file(cfg: Cfg, src: string, dest: string, s: StatInfo, d: StatInfo
 // the caller keeps writing to.
 struct MoveOut { status: i32, out: io_buffered.BufWriter }
 
-// The whole `cannot move …` line for a failed rename. Two errnos are
-// worded as something other than their strerror: EINVAL is always a
-// destination under the source, and a directory in the way of a
-// directory is named as the overwrite it would have been.
-function move_failure(src: string, dest: string, text: string): string {
-  if (text == "Invalid argument") {
+// The whole `cannot move …` line for a failed rename, whose errno is `n`
+// and strerror `text`. Two errnos are worded as something other than
+// their strerror: EINVAL is always a destination under the source, and a
+// directory in the way of a directory is named as the overwrite it would
+// have been.
+function move_failure(src: string, dest: string, n: i32, text: string): string {
+  if (n == errno.EINVAL) {
     return "cannot move " + gnu.quotea(src) + " to a subdirectory of itself, " + gnu.quotea(dest);
   }
-  if (text == "Directory not empty" || text == "File exists") {
+  if (n == errno.ENOTEMPTY || n == errno.EEXIST) {
     return "cannot overwrite " + gnu.quotea(dest) + ": " + text;
   }
   return "cannot move " + gnu.quotea(src) + " to " + gnu.quotea(dest) + ": " + text;
@@ -377,6 +379,7 @@ function do_move(cfg: Cfg, m0: Move, allow_into: boolean, o: io_buffered.BufWrit
   // errno is kept rather than acted on: a destination that turns out to
   // exist goes through the whole replace path below and renames again,
   // and one that does not is this errno and nothing more.
+  let rename_errnum: i32 = errno.EEXIST;
   let rename_err: string = "File exists";
   if (!present) {
     // No-replace, so a destination created since `dest_present` looked
@@ -386,20 +389,23 @@ function do_move(cfg: Cfg, m0: Move, allow_into: boolean, o: io_buffered.BufWrit
         return verbose(cfg, m, "", w);
       },
       Err(e) => {
+        rename_errnum = errno.of(e);
         rename_err = gnu.io_error_text(e);
       }
     }
-    if (lacks_noreplace(rename_err)) {
+    if (lacks_noreplace(rename_errnum)) {
       match (rename(m.raw_src, m.raw_dest)) {
         Ok(_) => {
           return verbose(cfg, m, "", w);
         },
         Err(e) => {
+          rename_errnum = errno.of(e);
           rename_err = gnu.io_error_text(e);
         }
       }
     }
     if (rename_err.len() == 0) {
+      rename_errnum = errno.EEXIST;
       rename_err = "File exists";
     }
   } else {
@@ -417,16 +423,16 @@ function do_move(cfg: Cfg, m0: Move, allow_into: boolean, o: io_buffered.BufWrit
   }
   let d: StatInfo = lstat_info(dest_path(m.dest));
   if (!d.ok) {
-    if (d.err != "No such file or directory") {
+    if (d.errnum != errno.ENOENT) {
       w = gnu.error_out(w, "cannot stat " + gnu.quotea(m.dest) + ": " + d.err);
       return MoveOut { status: 1, out: w };
     }
     // Nothing is in the way, so the rename above is the whole story —
     // unless it could not happen at all, which is what the fallback is.
-    if (is_exdev(rename_err) && !cfg.no_copy) {
+    if (rename_errnum == errno.EXDEV && !cfg.no_copy) {
       return move_across(cfg, m, "", w);
     }
-    w = gnu.error_out(w, move_failure(m.src, m.dest, rename_err));
+    w = gnu.error_out(w, move_failure(m.src, m.dest, rename_errnum, rename_err));
     return MoveOut { status: 1, out: w };
   }
 
@@ -444,8 +450,8 @@ function do_move(cfg: Cfg, m0: Move, allow_into: boolean, o: io_buffered.BufWrit
 // anything about the names: a filesystem without it answers EINVAL on
 // Linux and ENOTSUP on Darwin, and a kernel without renameat2 ENOSYS.
 // gnulib's renameatu retries those as a plain rename, and so does mv.
-function lacks_noreplace(err: string): boolean {
-  return err == "Invalid argument" || err == "Operation not supported" || err == "Function not implemented";
+function lacks_noreplace(n: i32): boolean {
+  return n == errno.EINVAL || n == errno.ENOTSUP || n == errno.ENOSYS;
 }
 
 // The destination exists and the rename is going to be made over it:
@@ -490,11 +496,10 @@ function replace_dest(cfg: Cfg, m: Move, s: StatInfo, d: StatInfo, o: io_buffere
   match (rename(m.src, dest_path(m.dest))) {
     Ok(_) => {},
     Err(e2) => {
-      let text: string = gnu.io_error_text(e2);
-      if (is_exdev(text) && !cfg.no_copy) {
+      if (errno.of(e2) == errno.EXDEV && !cfg.no_copy) {
         return move_across(cfg, m, backup, w);
       }
-      w = gnu.error_out(w, move_failure(m.src, m.dest, text));
+      w = gnu.error_out(w, move_failure(m.src, m.dest, errno.of(e2), gnu.io_error_text(e2)));
       return MoveOut { status: 1, out: w };
     }
   }
@@ -502,15 +507,6 @@ function replace_dest(cfg: Cfg, m: Move, s: StatInfo, d: StatInfo, o: io_buffere
 }
 
 // ---- the cross-device fallback ---------------------------------------------
-// `is_exdev(text)` — the rename could not happen because the two names
-// are on different filesystems. Matched on the strerror text, as the
-// other two errnos this file reads are, so the text has to be the one
-// the HOST libc gives: Darwin words EXDEV differently, and a comparison
-// against glibc's words there would take the fallback off entirely.
-function is_exdev(text: string): boolean {
-  return text == gnu.exdev_text();
-}
-
 // The diagnostic for a destination that is in the way and will not go.
 // GNU words it as the move failing rather than as the removal failing,
 // and names both operands: measured, a non-empty destination directory

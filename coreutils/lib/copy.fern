@@ -23,6 +23,7 @@
 import "std/string";
 import "std/array";
 import "std/io_buffered";
+import "std/errno";
 import "./gnu";
 import "./mode";
 import "./listing";
@@ -656,7 +657,7 @@ function put_extents(r: Reader, w: Writer, punch: boolean, total: i64, bs: i32, 
         data = d;
       },
       Err(e) => {
-        if (gnu.io_error_text(e) != gnu.enxio_text()) {
+        if (errno.of(e) != errno.ENXIO) {
           if (pos == 0 as i64) {
             return None;
           }
