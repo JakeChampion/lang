@@ -26,6 +26,7 @@
 // and `./v` steps to `.` — which is EINVAL and reported as such.
 import "std/string";
 import "std/array";
+import "std/errno";
 import "./lib/gnu";
 
 function opt_parents(): i32 {
@@ -57,18 +58,15 @@ function help_text(): string {
 
 // ---- errno predicates ------------------------------------------------------
 //
-// An IoError carries strerror's TEXT and not the number (lib/gnu.fern's
-// `is_broken_pipe` reads EPIPE the same way), so the two gnulib
-// predicates below ask about the text. Both lists are the errnos
-// themselves: ENOTEMPTY and EEXIST are what a kernel returns for a
-// directory that has entries, and EACCES / EPERM / EROFS / EBUSY /
-// EEXIST are the ones where it MIGHT be the reason.
-function errno_rmdir_non_empty(text: string): boolean {
-  return text == "Directory not empty" || text == "File exists";
+// gnulib's two: ENOTEMPTY and EEXIST are what a kernel returns for a
+// directory that has entries, and EACCES / EPERM / EROFS / EBUSY / EEXIST
+// are the ones where it MIGHT be the reason.
+function errno_rmdir_non_empty(n: i32): boolean {
+  return n == errno.ENOTEMPTY || n == errno.EEXIST;
 }
 
-function errno_may_be_non_empty(text: string): boolean {
-  return text == "Permission denied" || text == "Operation not permitted" || text == "Read-only file system" || text == "File exists" || text == gnu.ebusy_text();
+function errno_may_be_non_empty(n: i32): boolean {
+  return n == errno.EACCES || n == errno.EPERM || n == errno.EROFS || n == errno.EEXIST || n == errno.EBUSY;
 }
 
 // Whether `dir` has entries. A directory that cannot be read is treated
@@ -85,14 +83,14 @@ function is_non_empty_dir(dir: string): boolean {
   }
 }
 
-function ignorable_failure(ignore: boolean, text: string, dir: string): boolean {
+function ignorable_failure(ignore: boolean, n: i32, dir: string): boolean {
   if (!ignore) {
     return false;
   }
-  if (errno_rmdir_non_empty(text)) {
+  if (errno_rmdir_non_empty(n)) {
     return true;
   }
-  return errno_may_be_non_empty(text) && is_non_empty_dir(dir);
+  return errno_may_be_non_empty(n) && is_non_empty_dir(dir);
 }
 
 // ---- the ENOTDIR that is really a symlink ----------------------------------
@@ -124,7 +122,7 @@ function is_symlink_with_slash(dir: string): boolean {
   match (stat(dir)) {
     Ok(_) => {},
     Err(e) => {
-      if (gnu.io_error_text(e) == "Not a directory") {
+      if (errno.of(e) == errno.ENOTDIR) {
         return false;
       }
     }
@@ -142,11 +140,10 @@ function is_symlink_with_slash(dir: string): boolean {
 
 // The text after the colon in a removal diagnostic.
 function failure_text(dir: string, e: IoError): string {
-  let text: string = gnu.io_error_text(e);
-  if (text == "Not a directory" && is_symlink_with_slash(dir)) {
+  if (errno.of(e) == errno.ENOTDIR && is_symlink_with_slash(dir)) {
     return "Symbolic link not followed";
   }
-  return text;
+  return gnu.io_error_text(e);
 }
 
 // ---- output ----------------------------------------------------------------
@@ -214,7 +211,7 @@ function remove_parents(o0: Out, dir0: string, verbose: boolean, ignore: boolean
       Ok(_) => {},
       Err(e) => {
         let text: string = failure_text(dir, e);
-        if (ignorable_failure(ignore, text, dir)) {
+        if (ignorable_failure(ignore, errno.of(e), dir)) {
           return o;
         }
         return report(o, "failed to remove directory " + gnu.quotea(dir) + ": " + text);
@@ -277,7 +274,7 @@ pub function main(): i32 {
       },
       Err(e) => {
         let text: string = failure_text(dir, e);
-        if (!ignorable_failure(ignore, text, dir)) {
+        if (!ignorable_failure(ignore, errno.of(e), dir)) {
           o = report(o, "failed to remove " + gnu.quotea(dir) + ": " + text);
         }
       }

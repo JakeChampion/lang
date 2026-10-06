@@ -13,6 +13,7 @@
 // policy loaded, which is what `runcon` with no operands prints.
 import "std/string";
 import "std/array";
+import "std/errno";
 import "./gnu";
 
 // `enabled()` — libselinux's is_selinux_enabled(): find the selinuxfs
@@ -117,8 +118,7 @@ pub function set_file_context(path: string, ctx: string, follow: boolean): Resul
       return Ok(());
     },
     Err(e) => {
-      // ENOTSUP arrives as its strerror text (#11296).
-      if (gnu.io_error_text(e) == "Operation not supported") {
+      if (errno.of(e) == errno.ENOTSUP) {
         match (file_context(path, follow)) {
           Ok(cur) => {
             if (cur == ctx) {

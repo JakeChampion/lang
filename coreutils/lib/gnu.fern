@@ -27,6 +27,7 @@
 import "std/string";
 import "std/array";
 import "std/io_buffered";
+import "std/errno";
 
 // `prog()` — the program name diagnostics are prefixed with: argv[0]
 // verbatim (see the header). Empty when argv is empty, which only
@@ -259,7 +260,7 @@ pub function is_option(a: string): boolean {
 // ---- errno wording ---------------------------------------------------------
 //
 // GNU prints `strerror(3)`, so the words belong to the host libc, and
-// sixteen errnos read differently on Darwin. These are the eight a
+// sixteen errnos read differently on Darwin. These are the three a
 // utility spells out in a diagnostic of its own — the runtime's own
 // `IoError.Other` gets the same treatment from `internal/tables/strerror`, and
 // `internal/testing/coreutils/strerror_parity_test.go` pins these against that
@@ -286,41 +287,6 @@ pub function eilseq_text(): string {
     return "Illegal byte sequence";
   }
   return "Invalid or incomplete multibyte or wide character";
-}
-
-pub function exdev_text(): string {
-  if (target_os() == "darwin") {
-    return "Cross-device link";
-  }
-  return "Invalid cross-device link";
-}
-
-pub function ebusy_text(): string {
-  if (target_os() == "darwin") {
-    return "Resource busy";
-  }
-  return "Device or resource busy";
-}
-
-pub function enxio_text(): string {
-  if (target_os() == "darwin") {
-    return "Device not configured";
-  }
-  return "No such device or address";
-}
-
-pub function edquot_text(): string {
-  if (target_os() == "darwin") {
-    return "Disc quota exceeded";
-  }
-  return "Disk quota exceeded";
-}
-
-pub function enodata_text(): string {
-  if (target_os() == "darwin") {
-    return "No message available on STREAM";
-  }
-  return "No data available";
 }
 
 // `io_error_text(e)` — the strerror text GNU prints for an IoError.
@@ -355,13 +321,11 @@ pub function io_error_text(e: IoError): string {
   }
 }
 
-// `is_broken_pipe(e)` — whether `e` is EPIPE. An IoError carries the
-// strerror text rather than the number, so the text is what there is
-// to ask; `close_stdout` below reads `Bad file descriptor` the same
-// way. Only reachable at all once SIGPIPE is ignored, since the
-// default disposition kills the process instead.
+// `is_broken_pipe(e)` — whether `e` is EPIPE. Only reachable at all once
+// SIGPIPE is ignored, since the default disposition kills the process
+// instead.
 pub function is_broken_pipe(e: IoError): boolean {
-  return io_error_text(e) == "Broken pipe";
+  return errno.of(e) == errno.EPIPE;
 }
 
 // `write_out(s)` — write `s` to stdout, reporting a failure the way
@@ -1230,9 +1194,8 @@ pub function close_stdout_with(o: io_buffered.BufWriter, prev_fail: boolean, sta
   }
   match (o.close()) {
     Some(e) => {
-      let text: string = io_error_text(e);
-      if (prev || some_pending || text != "Bad file descriptor") {
-        error("write error: " + text);
+      if (prev || some_pending || errno.of(e) != errno.EBADF) {
+        error("write error: " + io_error_text(e));
         exit(status);
       }
     },
@@ -1394,6 +1357,7 @@ pub function (s: Stdio) close_stdout(): void {
   }
   let fclose_fail: boolean = false;
   let text: string = "";
+  let errnum: i32 = 0;
   if (some_pending) {
     let r: Stdio = sys_write(s, s.buf);
     if (stdio_failed(r)) {
@@ -1401,6 +1365,7 @@ pub function (s: Stdio) close_stdout(): void {
       match (r.err) {
         Some(e) => {
           text = io_error_text(e);
+          errnum = errno.of(e);
         },
         None => {}
       }
@@ -1410,10 +1375,11 @@ pub function (s: Stdio) close_stdout(): void {
     Some(e) => {
       fclose_fail = true;
       text = io_error_text(e);
+      errnum = errno.of(e);
     },
     None => {}
   }
-  if (prev_fail || fclose_fail && (some_pending || text != "Bad file descriptor")) {
+  if (prev_fail || fclose_fail && (some_pending || errnum != errno.EBADF)) {
     if (fclose_fail) {
       error("write error: " + text);
     } else {
@@ -2403,7 +2369,7 @@ pub function resolve_command(cmd: string, envp: string[]): Exec {
           // EACCES anywhere on the search outranks a later ENOENT: execvp
           // reports "permission denied" when it found the name but could not
           // run it, and that is the difference between 126 and 127.
-          if (io_error_text(e) == "Permission denied") {
+          if (errno.of(e) == errno.EACCES) {
             best = 13;
           }
         }

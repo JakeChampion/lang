@@ -175,7 +175,7 @@ pub function canonicalize(name: string, mode: i32, logical: boolean): Result[str
       } else if (!logical) {
         // EINVAL is `this is not a symbolic link`, which is the
         // ordinary case and not a fault.
-        ok = gnu.io_error_text(err) == "Invalid argument";
+        ok = errno.of(err) == errno.EINVAL;
       } else if (rest.len() > 0) {
         // Nothing was read, so nothing is known about a component
         // with more of the name after it; the last one is asked
@@ -191,7 +191,7 @@ pub function canonicalize(name: string, mode: i32, logical: boolean): Result[str
           }
         }
       }
-      if (!ok && mode == all_but_last() && gnu.io_error_text(err) == enoent_text() && all_slashes(rest)) {
+      if (!ok && mode == all_but_last() && errno.of(err) == errno.ENOENT && all_slashes(rest)) {
         ok = true;
       }
     }
@@ -206,10 +206,6 @@ pub function canonicalize(name: string, mode: i32, logical: boolean): Result[str
 // than hearing from the kernel.
 function eloop_text(): string {
   return "Too many levels of symbolic links";
-}
-
-function enoent_text(): string {
-  return "No such file or directory";
 }
 
 // `relative(p, from)` — `p` written relative to `from`, both absolute

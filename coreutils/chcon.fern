@@ -52,6 +52,7 @@
 // name.
 import "std/string";
 import "std/array";
+import "std/errno";
 import "./lib/fts";
 import "./lib/gnu";
 import "./lib/selinux";
@@ -331,11 +332,10 @@ function change_one(st0: St, s: Settings, path: string, shown: string): St {
       Err(e) => {
         // ENODATA is a file with no label, which GNU will not complete
         // from a partial context.
-        let why: string = gnu.io_error_text(e);
-        if (why == gnu.enodata_text()) {
+        if (errno.of(e) == errno.ENODATA) {
           return fail(st, "can't apply partial context to unlabeled file " + gnu.quotea(shown));
         }
-        return fail(st, "failed to get security context of " + gnu.quotea(shown) + ": " + why);
+        return fail(st, "failed to get security context of " + gnu.quotea(shown) + ": " + gnu.io_error_text(e));
       }
     }
     match (selinux.merge_context(cur, s.comps, s.set)) {

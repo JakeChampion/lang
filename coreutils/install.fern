@@ -42,6 +42,7 @@
 import "std/string";
 import "std/array";
 import "std/io_buffered";
+import "std/errno";
 import "./lib/gnu";
 import "./lib/copy";
 import "./lib/mode";
@@ -708,7 +709,14 @@ function strip_failed(dest: string, w: io_buffered.BufWriter): StripOut {
 // of which is what execvp does.
 function spawnable(name: string): Option[string] {
   if (name.index_of("/") >= 0) {
-    return executable(name);
+    match (executable(name)) {
+      Some(e) => {
+        return Some(gnu.io_error_text(e));
+      },
+      None => {
+        return None;
+      }
+    }
   }
   let path: string = "";
   match (env("PATH")) {
@@ -735,8 +743,8 @@ function spawnable(name: string): Option[string] {
       Some(e) => {
         // execvp keeps looking, and remembers EACCES over ENOENT so a
         // directory holding an unreadable match is what it reports.
-        if (e == "Permission denied") {
-          why = e;
+        if (errno.of(e) == errno.EACCES) {
+          why = gnu.io_error_text(e);
         }
       },
       None => {
@@ -751,13 +759,13 @@ function spawnable(name: string): Option[string] {
   return Some(why);
 }
 
-function executable(path: string): Option[string] {
+function executable(path: string): Option[IoError] {
   match (access(path, 1)) {
     Ok(_) => {
       return None;
     },
     Err(e) => {
-      return Some(gnu.io_error_text(e));
+      return Some(e);
     }
   }
 }

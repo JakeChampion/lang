@@ -28,6 +28,7 @@
 // since 9.5 tac writes with full_write rather than fwrite, so a failed
 // write is reported where it happens, with its errno, instead of being
 // left for the close to word out of whatever stdio still had pending.
+import "std/errno";
 import "./lib/gnu";
 import "./lib/bre";
 
@@ -476,9 +477,8 @@ pub function main(): i32 {
   // for something other than a closed descriptor is reported.
   match (out.w.close()) {
     Some(e) => {
-      let text: string = gnu.io_error_text(e);
-      if (text != "Bad file descriptor") {
-        gnu.error("write error: " + text);
+      if (errno.of(e) != errno.EBADF) {
+        gnu.error("write error: " + gnu.io_error_text(e));
         exit(1);
       }
     },

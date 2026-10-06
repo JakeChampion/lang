@@ -53,6 +53,7 @@ import "std/array";
 import "std/i64";
 import "std/u64";
 import "std/io_buffered";
+import "std/errno";
 import "./lib/gnu";
 import "./lib/lines";
 
@@ -540,36 +541,6 @@ function obsolete(argv: string[], s: Settings): (boolean, Settings) {
 // `--retry`.
 struct File { name: string, pretty: string, r: Reader, has_fd: boolean, is_stdin: boolean, size: i64, mtime: i64, mtime_nsec: i64, mode: u32, dev: i64, ino: i64, errnum: i32, err_text: string, ignore: boolean, tailable: boolean, unchanged: u64 }
 
-function enoent(): i32 {
-  return 2;
-}
-
-function errno_of(e: IoError): i32 {
-  match (e) {
-    NotFound(_) => {
-      return enoent();
-    },
-    PermissionDenied(_) => {
-      return 13;
-    },
-    AlreadyExists(_) => {
-      return 17;
-    },
-    InvalidUtf8(_) => {
-      return 84;
-    },
-    Interrupted => {
-      return 4;
-    },
-    Unsupported => {
-      return 95;
-    },
-    Other(_, _, _) => {
-      return 1000;
-    }
-  }
-}
-
 // S_IFMT classes: regular, FIFO, socket and character device can be
 // followed to their end; a directory or block device cannot.
 function is_regular(mode: u32): boolean {
@@ -939,7 +910,7 @@ function tail_file(f: File, o: gnu.Stream, s: Settings, show: boolean): (File, g
       },
       Err(e) => {
         let text: string = gnu.io_error_text(e);
-        spec = File { ...spec, errnum: errno_of(e), err_text: text, tailable: false, ignore: !(s.retry && s.by_name) };
+        spec = File { ...spec, errnum: errno.of(e), err_text: text, tailable: false, ignore: !(s.retry && s.by_name) };
         return (spec, gnu.stream_fail(o, "cannot open " + gnu.quotea(spec.pretty) + " for reading: " + text));
       }
     }
@@ -983,7 +954,7 @@ function tail_file(f: File, o: gnu.Stream, s: Settings, show: boolean): (File, g
     },
     Err(e) => {
       ok = false;
-      spec = File { ...spec, errnum: errno_of(e), err_text: gnu.io_error_text(e) };
+      spec = File { ...spec, errnum: errno.of(e), err_text: gnu.io_error_text(e) };
       out = gnu.stream_fail(out, "error reading " + gnu.quotea(spec.pretty) + ": " + gnu.io_error_text(e));
     }
   }
@@ -1016,7 +987,7 @@ function recheck(f: File, s: Settings): File {
       },
       Err(e) => {
         opened = false;
-        spec = File { ...spec, errnum: errno_of(e), err_text: gnu.io_error_text(e) };
+        spec = File { ...spec, errnum: errno.of(e), err_text: gnu.io_error_text(e) };
       }
     }
   }
@@ -1030,7 +1001,7 @@ function recheck(f: File, s: Settings): File {
       },
       Err(e) => {
         stat_failed = true;
-        spec = File { ...spec, errnum: errno_of(e), err_text: gnu.io_error_text(e) };
+        spec = File { ...spec, errnum: errno.of(e), err_text: gnu.io_error_text(e) };
       }
     }
   }
@@ -1054,7 +1025,7 @@ function recheck(f: File, s: Settings): File {
     if (giving_up) {
       suffix = "; giving up on this name";
     }
-    if (spec.tailable || !(prev_errnum < 0 || prev_errnum == 21)) {
+    if (spec.tailable || !(prev_errnum < 0 || prev_errnum == errno.EISDIR)) {
       gnu.error(gnu.quotea(spec.pretty) + " has been replaced with an untailable file" + suffix);
     }
     spec = File { ...spec, errnum: 0 - 1, ignore: giving_up };
@@ -1068,12 +1039,12 @@ function recheck(f: File, s: Settings): File {
       nr.close();
     }
     spec = close_file(spec);
-  } else if (prev_errnum != 0 && prev_errnum != enoent()) {
+  } else if (prev_errnum != 0 && prev_errnum != errno.ENOENT) {
     new_file = true;
     gnu.error(gnu.quotea(spec.pretty) + " has become accessible");
   } else if (!spec.has_fd) {
     new_file = true;
-    if (prev_errnum == enoent()) {
+    if (prev_errnum == errno.ENOENT) {
       gnu.error(gnu.quotea(spec.pretty) + " has appeared;  following new file");
     } else {
       gnu.error(gnu.quotea(spec.pretty) + " has become accessible");
@@ -1178,7 +1149,7 @@ function tail_forever(files: File[], o: gnu.Stream, s: Settings, show: boolean):
           Err(e) => {
             read_it = false;
             out = note(out, gnu.quotef(f.pretty) + ": " + gnu.io_error_text(e));
-            f = File { ...close_file(f), errnum: errno_of(e), err_text: gnu.io_error_text(e) };
+            f = File { ...close_file(f), errnum: errno.of(e), err_text: gnu.io_error_text(e) };
           }
         }
       }
