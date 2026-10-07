@@ -62,7 +62,7 @@ costs a silent failure on the first target that lacks it.
 | `fsrename` | `rename_noreplace`, `rename_exchange` | a rename the kernel conditions in one step: refuse an existing destination, or swap the two names |
 | `xattr` | `getxattr`, `lgetxattr`, `setxattr`, `lsetxattr` | an entry's extended attributes |
 | `fsnode` | `mknod` | a filesystem entry that is neither a file nor a directory: a FIFO, or a character or block device node |
-| `tty` | `window_size`, `set_window_size`, `termios_get`, `termios_set` | a terminal with a size and line settings, where `isatty` only asks whether there is one |
+| `tty` | `window_size`, `set_window_size`, `termios_get`, `termios_set`, `set_extproc` | a terminal with a size and line settings, where `isatty` only asks whether there is one |
 | `userid` | `geteuid`, `getegid` | a user the process can be |
 | `host` | `hostname` | a node name: uname(2) on Linux, kern.hostname on Darwin; `""` on WASI, which has none |
 | `sysctl` | `sysctl` | the kernel's variables by MIB: Darwin's sysctl(3). Granted by Darwin's own profile, `hosted-darwin`, alone; Linux removed sysctl(2) |
@@ -591,9 +591,13 @@ It is a read-modify-write inside the runtime, because `struct winsize` carries
 a pixel pair beside the two cell counts that nothing surrenders to a caller —
 so nothing but the runtime can put it back.
 
-**All four have HANDLE forms, and the `tty` gate does not reach them.**
-`r.window_size()`, `r.set_window_size(rows, cols)`, `r.termios_get()` and
-`r.termios_set(when, words)` exist because a Reader surrenders no descriptor
+`set_extproc(fd, on)` is XNU's TIOCEXT, the one way to change EXTPROC there:
+TIOCSETA treats that bit as read only. Linux sets it through the termios
+words and has no such ioctl, so it answers ENOTTY, as its terminals do.
+
+**All five have HANDLE forms, and the `tty` gate does not reach them.**
+`r.window_size()`, `r.set_window_size(rows, cols)`, `r.termios_get()`,
+`r.termios_set(when, words)` and `r.set_extproc(on)` exist because a Reader surrenders no descriptor
 number, so `stty -F DEVICE` could otherwise configure fds 0, 1 and 2 and
 nothing it opened itself (#9363). Each carries an `IoError`, so its refusal
 arrives as `Unsupported` AT THE CALL — `syncfs`'s shape rather than

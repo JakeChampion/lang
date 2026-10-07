@@ -205,7 +205,7 @@ pub function ungated(): string[] {
     "__outer_mul_f64",
     "__inner_mul_add_f64",
     "putchar", "print", "write", "eprint", "read_line",
-    "stdin", "stdout", "stderr", "isatty", "window_size", "set_window_size", "termios_get", "termios_set", "target_os", "target_arch", "args", "set_args", "exit",
+    "stdin", "stdout", "stderr", "isatty", "window_size", "set_window_size", "termios_get", "termios_set", "set_extproc", "target_os", "target_arch", "args", "set_args", "exit",
     "signal_ignore", "signal_default",
     // Catching is a disposition too: the handler only sets a flag this
     // process later reads.

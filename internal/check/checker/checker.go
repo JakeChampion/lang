@@ -4004,6 +4004,15 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 			ast.VoidType{}, ast.EnumType{Name: "IoError"},
 		}},
 	}
+	// set_extproc(fd, on): Result[void, IoError] — XNU's TIOCEXT, the one
+	// way to change EXTPROC there, since TIOCSETA treats that bit as read
+	// only. Linux has no such ioctl and answers ENOTTY. Gated on `tty`.
+	c.info.FuncSigs["set_extproc"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}, ast.BoolType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{}, ast.EnumType{Name: "IoError"},
+		}},
+	}
 	// termios_get(fd): Result[i64[], IoError] — the terminal's line
 	// settings, as the KERNEL's own words, and termios_set puts them
 	// back. What `stty` is (#8382).
@@ -4260,6 +4269,7 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	registerStructMethod("Reader", "termios_set",
 		[]ast.Type{ast.NumberType{},
 			ast.ArrayType{Elem: ast.NumberType{Width: 64, Signed: true}}}, voidIoErr)
+	registerStructMethod("Reader", "set_extproc", []ast.Type{ast.BoolType{}}, voidIoErr)
 	registerStructMethod("Writer", "write", []ast.Type{ast.StringType{}}, optionIoErr)
 	// write_some(s) is ONE write(2) and the count it returned: the write
 	// may land in full, in part, or not at all, and the caller loops.

@@ -655,6 +655,7 @@ func New() *Interp {
 	i.Builtins["set_window_size"] = &Builtin{Fn: builtinSetWindowSize}
 	i.Builtins["termios_get"] = &Builtin{Fn: builtinTermiosGet}
 	i.Builtins["termios_set"] = &Builtin{Fn: builtinTermiosSet}
+	i.Builtins["set_extproc"] = &Builtin{Fn: builtinSetExtproc}
 	i.Builtins["target_os"] = &Builtin{Fn: builtinTargetOS}
 	i.Builtins["target_arch"] = &Builtin{Fn: builtinTargetArch}
 	// strbuf_reset() / strbuf_append(s) / strbuf_take() — the global
@@ -722,6 +723,7 @@ func New() *Interp {
 	i.Builtins["__method_Reader_set_window_size"] = &Builtin{Fn: builtinHandleSetWindowSize}
 	i.Builtins["__method_Reader_termios_get"] = &Builtin{Fn: builtinHandleTermiosGet}
 	i.Builtins["__method_Reader_termios_set"] = &Builtin{Fn: builtinHandleTermiosSet}
+	i.Builtins["__method_Reader_set_extproc"] = &Builtin{Fn: builtinHandleSetExtproc}
 	i.Builtins["__method_Writer_isatty"] = &Builtin{Fn: builtinHandleIsatty}
 	i.Builtins["__method_Writer_write"] = &Builtin{Fn: builtinWriterWrite}
 	i.Builtins["__method_Writer_write_some"] = &Builtin{Fn: builtinWriterWriteSome}
@@ -5792,6 +5794,37 @@ func builtinHandleTermiosSet(i *Interp, args []Value) (Value, error) {
 		return refusal, err
 	}
 	return builtinTermiosSet(i, []Value{Number(fd), args[1], args[2]})
+}
+
+func builtinHandleSetExtproc(i *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("set_extproc: expected 2 args, got %d", len(args))
+	}
+	fd, refusal, err := handleFd(i, args[0])
+	if refusal != nil || err != nil {
+		return refusal, err
+	}
+	return builtinSetExtproc(i, []Value{Number(fd), args[1]})
+}
+
+// builtinSetExtproc answers `set_extproc(fd, on)`: TIOCEXT on Darwin,
+// ENOTTY elsewhere, from internal/tools/tty.
+func builtinSetExtproc(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("set_extproc: expected 2 args, got %d", len(args))
+	}
+	fd, ok := args[0].(Number)
+	if !ok {
+		return nil, fmt.Errorf("set_extproc: expected number fd, got %T", args[0])
+	}
+	on, ok := args[1].(Bool)
+	if !ok {
+		return nil, fmt.Errorf("set_extproc: expected boolean, got %T", args[1])
+	}
+	if err := tty.SetExtproc(int(fd), bool(on)); err != nil {
+		return resultErr(classifyIoError("", err)), nil
+	}
+	return resultOk(unitValue()), nil
 }
 
 // stdin / stdout / stderr return Reader / Writer struct values

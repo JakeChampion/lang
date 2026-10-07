@@ -3513,6 +3513,8 @@ taken from GNU's `stty.c` with XNU's headers: no `cmspar`, `iuclc`, `olcuc`,
 `xcase` or `lcase`, `dsusp` and `status` added, and `swtch` an alias of `susp`.
 GNU's read-back comparison there is its own `eq_mode`, since Darwin's
 `tcsetattr` is the bare ioctl and synthesises no EINVAL the way glibc's does.
+TIOCSETA treats EXTPROC as read only, so `[-]extproc` there is GNU's TIOCEXT,
+through `r.set_extproc(on)`, and `sane` leaves the bit alone.
 
 The same utility's `rows N` and `cols N` needed the other half of
 `window_size`, which only ever read (#9360):

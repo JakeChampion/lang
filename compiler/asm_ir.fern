@@ -2631,7 +2631,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
     "stat", "lstat", "statfs", "mounts", "sysctl", "access", "read_file",
     "read_file_bytes", "read_file_bytes_u8", "remove_file", "create_dir_all", "create_dir",
     "remove_dir", "create_link", "clone_file", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at",
-    "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
+    "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_extproc", "set_file_times",
     "read_link", "getcwd", "chdir", "chroot", "setuid", "setgid", "setgroups", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "sync",
     "umask", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "temp_dir", "read_dir", "read_dir_all", "read_dir_ino",
     "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",
@@ -2650,7 +2650,7 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
     "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "remove_dir_all", "temp_dir",
     "read_dir", "read_dir_all", "read_dir_ino", "remove_file", "create_dir_all", "create_dir",
     "remove_dir", "create_link", "clone_file", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at",
-    "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
+    "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_extproc", "set_file_times",
     "read_link", "getcwd", "chdir", "chroot", "setuid", "setgid", "setgroups",
     "umask", "env", "environ", "raw_environ", "getgroups", "stat", "lstat", "statfs", "mounts", "sysctl",
     "access", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "subprocess",
@@ -10520,6 +10520,12 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.write("    call __fn___fern_termios_set\n    addq $24, %rsp\n    pushq %rax\n");
     s = s.need("heap");
     s = s.need("termios_set");
+  } else if (o.kind_tag == 406) {  // set_extproc
+    // [fd][on] (on on top) -> Result[void, IoError].
+    s = s.write("    popq %rsi\n    popq %rdi\n");
+    s = s.write("    pushq %rsi\n    pushq %rdi\n    call __fn___fern_set_extproc\n    addq $16, %rsp\n    pushq %rax\n");
+    s = s.need("heap");
+    s = s.need("set_extproc");
   } else if (o.kind_tag == 314) {  // set_window_size
     // [fd][rows][cols] with cols on top; the same three-operand
     // marshalling termios_set needs — param[0] (fd) LOWEST.
@@ -12635,7 +12641,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     "udp_send_bytes", "udp_send_bytes_u8", "udp_sendto_bytes", "udp_sendto_bytes_u8",
     "eprint", "udp_send", "tcp_listen_with", "tcp_socket_ctl", "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "tcp_sendfile",
     "tcp_listen_with_u8", "udp_bind_u8", "udp_connect_u8", "udp_sendto_u8", "udp_recvfrom_u8", "tcp_connect_with_u8",
-    "isatty", "window_size", "set_window_size", "termios_get", "termios_set",
+    "isatty", "window_size", "set_window_size", "termios_get", "termios_set", "set_extproc",
     "rlimit_nofile", "signal_ignore", "signal_default", "signal_catch", "signal_mask",
     "signal_disposition", "access",
     "geteuid", "getegid", "getuid", "getgid", "getgroups", "environ",
@@ -12728,6 +12734,9 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     }
     if (s.has_need("termios_set")) {
       fs_src = fs_src + " " + asmcore.rt_src_termios_set("x86_64");
+    }
+    if (s.has_need("set_extproc")) {
+      fs_src = fs_src + " " + asmcore.rt_src_set_extproc("x86_64");
     }
     if (s.has_need("access")) {
       fs_src = fs_src + " " + asmcore.rt_src_access("x86_64");

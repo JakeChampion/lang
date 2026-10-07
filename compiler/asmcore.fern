@@ -2864,6 +2864,17 @@ pub function rt_src_termios_set(t: string): string {
   return "function __fern_termios_set(fd: i32, act: i32, words: i64[]): Result[void, IoError] { if (words.len() != 24 || act < 0 || act > 2) { return Err(__fern_io_error(22, \"\")); } let buf: usize = __raw_alloc(36); let i: i32 = 0; while (i < 4) { let v: i64 = words[i]; __raw_store8(buf, i * 4, (v % 256) as i32); __raw_store8(buf, i * 4 + 1, ((v / 256) % 256) as i32); __raw_store8(buf, i * 4 + 2, ((v / 65536) % 256) as i32); __raw_store8(buf, i * 4 + 3, ((v / 16777216) % 256) as i32); i = i + 1; } __raw_store8(buf, 16, (words[4] % 256) as i32); let j: i32 = 0; while (j < 19) { __raw_store8(buf, 17 + j, (words[5 + j] % 256) as i32); j = j + 1; } let rc: i32 = __syscall3(" + sysno(t, "ioctl") + ", fd as i64, (21506 + act) as i64, buf as i64) as i32; let buf_own: string = __raw_string(buf, 36); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
 }
 
+// rt_src_set_extproc backs `set_extproc(fd, on)` -> Result[void, IoError]:
+// XNU's TIOCEXT (0x80047460) with an int, the only way to change EXTPROC
+// there. Linux has no such ioctl, and ENOTTY is what its terminals answer
+// to one they do not know.
+pub function rt_src_set_extproc(t: string): string {
+  if (t != "arm64-darwin") {
+    return "function __fern_set_extproc(fd: i32, on: boolean): Result[void, IoError] { return Err(__fern_io_error(25, \"\")); }";
+  }
+  return "function __fern_set_extproc(fd: i32, on: boolean): Result[void, IoError] { let buf: usize = __raw_scratch(16); let v: i32 = 0; if (on) { v = 1; } __raw_store8(buf, 0, v); __raw_store8(buf, 1, 0); __raw_store8(buf, 2, 0); __raw_store8(buf, 3, 0); let rc: i32 = __syscall3(" + sysno(t, "ioctl") + ", fd as i64, (2147775584 as i64), buf as i64) as i32; if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
+}
+
 // rt_src_set_window_size backs `set_window_size(fd, rows, cols)` ->
 // Result[void, IoError]: TIOCGWINSZ first, so the pixel pair the kernel keeps
 // beside the two cell counts survives, then the two counts replaced and
@@ -7074,7 +7085,7 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
   if (ty_struct_name(rt) == "Reader" && fa.field == "termios_get") {
     return ty_result(ty_array_i64());
   }
-  if (ty_struct_name(rt) == "Reader" && (fa.field == "set_window_size" || fa.field == "termios_set")) {
+  if (ty_struct_name(rt) == "Reader" && (fa.field == "set_window_size" || fa.field == "termios_set" || fa.field == "set_extproc")) {
     return ty_result(ty_unknown());
   }
   if (is_cell(rt) && fa.field == "get") {

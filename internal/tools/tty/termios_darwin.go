@@ -70,3 +70,25 @@ func SetTermios(fd, when int, words []int64) error {
 	}
 	return nil
 }
+
+// tiocExt is TIOCEXT, _IOW('t', 96, int).
+const tiocExt = 0x80047460
+
+// SetExtproc sets or clears EXTPROC on the terminal fd is open on. XNU
+// treats that bit as read only through TIOCSETA, so this ioctl is the one
+// way to change it.
+func SetExtproc(fd int, on bool) error {
+	if fd < 0 {
+		return syscall.EBADF
+	}
+	var v int32
+	if on {
+		v = 1
+	}
+	_, _, errno := syscall.Syscall6(syscall.SYS_IOCTL, uintptr(fd), tiocExt,
+		uintptr(unsafe.Pointer(&v)), 0, 0, 0)
+	if errno != 0 {
+		return errno
+	}
+	return nil
+}

@@ -342,6 +342,7 @@ var gatedBuiltins = map[string]string{
 	// claim a change nothing made. `stty` is the caller (#8382).
 	"termios_get": "tty",
 	"termios_set": "tty",
+	"set_extproc": "tty",
 
 	// The host's own name — the kernel node name gethostname(2) reports.
 	// A hosted target asks its kernel; WASI has no host identity and

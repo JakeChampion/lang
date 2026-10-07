@@ -13,10 +13,11 @@ import (
 )
 
 // TestArm64DarwinTermios checks the arm64-darwin runtime's TIOCGETA,
-// TIOCSETAW and TIOCSWINSZ against internal/tools/tty on one pseudo-terminal:
-// the words the compiled program reads are the words Go reads, and what it
-// writes back — ECHO cleared, both speeds 300, a 33x77 window — is what Go
-// finds afterwards. Off Apple Silicon the build is what is checked.
+// TIOCSETAW, TIOCSWINSZ and TIOCEXT against internal/tools/tty on one
+// pseudo-terminal: the words the compiled program reads are the words Go
+// reads, and what it writes back — ECHO cleared, both speeds 300, a 33x77
+// window, EXTPROC set through a handle — is what Go finds afterwards. Off
+// Apple Silicon the build is what is checked.
 func TestArm64DarwinTermios(t *testing.T) {
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
@@ -38,6 +39,7 @@ function main(): i32 {
       match (termios_set(0, 1, off)) { Err(_) => { return 11; }, Ok(_) => {} }
       match (termios_set(0, 1, [1 as i64])) { Ok(_) => { return 12; }, Err(_) => {} }
       match (set_window_size(0, 33, 77)) { Err(_) => { return 13; }, Ok(_) => {} }
+      match (stdin().set_extproc(true)) { Err(_) => { return 14; }, Ok(_) => {} }
       return 0;
     }
   }
@@ -81,9 +83,10 @@ function main(): i32 {
 	if err != nil {
 		t.Fatalf("Termios after the run: %v", err)
 	}
-	if after[3] != before[3]&^8 || after[24] != 300 || after[25] != 300 {
-		t.Errorf("after termios_set: lflag %#x speeds %d/%d, want %#x and 300/300",
-			after[3], after[24], after[25], before[3]&^8)
+	const echo, extproc = 0x8, 0x800
+	if want := before[3]&^echo | extproc; after[3] != want || after[24] != 300 || after[25] != 300 {
+		t.Errorf("after termios_set and set_extproc: lflag %#x speeds %d/%d, want %#x and 300/300",
+			after[3], after[24], after[25], want)
 	}
 	if rows, cols, err := tty.WindowSize(fd); err != nil || rows != 33 || cols != 77 {
 		t.Errorf("after set_window_size: %dx%d (%v), want 33x77", rows, cols, err)

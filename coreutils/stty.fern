@@ -2056,7 +2056,23 @@ function apply_token(st: Set, r: Reader, dev: string, tok: string, value: string
     base = slice_unchecked(tok, 1, tok.len()) + "";
   }
   let m: (Mode, boolean) = find_mode(base);
+  if (!m.0.setattr) {
+    apply_extproc(r, dev, !neg);
+    return st;
+  }
   return apply_mode(st, m.0, neg);
+}
+
+// Darwin's `extproc`, through its own ioctl and at once, the way the window
+// size goes in. It is no part of the settings the final tcsetattr carries.
+function apply_extproc(r: Reader, dev: string, on: boolean): void {
+  match (r.set_extproc(on)) {
+    Err(e) => {
+      gnu.error(gnu.quotef(dev) + ": error setting " + gnu.quote("extproc") + ": " + gnu.io_error_text(e));
+      exit(1);
+    },
+    Ok(_) => {}
+  }
 }
 
 // An INPUT speed of zero can never satisfy the read-back comparison, whatever
