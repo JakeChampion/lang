@@ -1800,9 +1800,9 @@ to the interpreter) by four coordinated `parser.fern` changes:
 - **Clone-time `Self`-instantiation resolution** in `clone_struct_method` —
   normalise the finalize-baked bare struct name to the module-prefixed registered
   name (`replace_struct_ident`) so `mg_ty` mangles a nested `Self` instantiation
-  in the return/param types, and **retarget** the cloned body's bare-base struct
-  literals to the concrete clone name (`retarget_self_lit_stmts`), since
-  `ms_expr` cannot infer the key for `self.xs`.
+  in the return/param types. A bare-base struct literal in the cloned body is
+  left for its destination or the typed lowering to instantiate: it need not be
+  the receiver's instantiation (`swap` builds `Pair[B, A]`, #11847).
 - **Tuple-aware `subst_ty` / `mg_ty`** — recurse into `( … )` so a struct nested
   in a tuple (`Option[(i32, ArrayIter[i32])]`) is substituted + mangled.
 - **Symbol-safe bounded-generic clone names** — `clone_bg` / the call sites

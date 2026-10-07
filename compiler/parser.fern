@@ -14111,131 +14111,6 @@ function subst_stmts(stmts: ast.Stmt[], tparams: string[], cts: string[]): ast.S
   return out;
 }
 
-// retarget_self_lit_expr rewrites every bare-base struct literal `base { .. }`
-// in a cloned struct-method body to the concrete clone name `mang`. A struct's
-// own method that constructs its struct WITHOUT explicit type arguments (the
-// `next` of an `impl[T] Iterator[T] for ArrayIter[T]`: `return Some((v,
-// ArrayIter { xs: self.xs, idx: .. }))`) is building the SAME instantiation as
-// the receiver — `Self` in value position. ms_expr can't infer that key
-// (mono_infer has no field-access / struct typing for `self.xs`), so resolve it
-// structurally here, mirroring the `Self`-in-types resolution that
-// to_concrete_struct_ty does for the return / param types. Nested values are
-// walked so a struct literal inside a tuple / call / array is retargeted too.
-function retarget_self_lit_expr(e: ast.Expr, base: string, mang: string): ast.Expr {
-  match (e) {
-    ast.ExprStructLit(sl) => {
-      let nv: ast.Expr[] = [];
-      let si: i32 = 0;
-      while (si < sl.field_values.len()) {
-        nv = nv.append(retarget_self_lit_expr(sl.field_values[si], base, mang));
-        si = si + 1;
-      }
-      let nb: ast.Expr = sl.base;
-      if (sl.has_base) {
-        nb = retarget_self_lit_expr(sl.base, base, mang);
-      }
-      let tn: string = sl.type_name;
-      if (tn == base) {
-        tn = mang;
-      }
-      return ast.ExprStructLit { type_name: tn, field_names: sl.field_names, field_values: nv, has_base: sl.has_base, base: nb, line: sl.line, col: sl.col, written: sl.written };
-    },
-    ast.ExprCall(c) => {
-      let na: ast.Expr[] = [];
-      let ci: i32 = 0;
-      while (ci < c.args.len()) {
-        na = na.append(retarget_self_lit_expr(c.args[ci], base, mang));
-        ci = ci + 1;
-      }
-      return ast.ExprCall { callee: retarget_self_lit_expr(c.callee, base, mang), args: na, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty };
-    },
-    ast.ExprTuple(t) => {
-      let ne: ast.Expr[] = [];
-      let ti: i32 = 0;
-      while (ti < t.elements.len()) {
-        ne = ne.append(retarget_self_lit_expr(t.elements[ti], base, mang));
-        ti = ti + 1;
-      }
-      return ast.ExprTuple { elements: ne, line: t.line, col: t.col };
-    },
-    ast.ExprArray(a) => {
-      let ne2: ast.Expr[] = [];
-      let ai: i32 = 0;
-      while (ai < a.elements.len()) {
-        ne2 = ne2.append(retarget_self_lit_expr(a.elements[ai], base, mang));
-        ai = ai + 1;
-      }
-      return ast.ExprArray { ...a, elements: ne2 };
-    },
-    ast.ExprBinary(b) => {
-      return ast.ExprBinary { op: b.op, left: retarget_self_lit_expr(b.left, base, mang), right: retarget_self_lit_expr(b.right, base, mang), line: b.line, col: b.col, ty: b.ty };
-    },
-    ast.ExprUnary(u) => {
-      return ast.ExprUnary { op: u.op, operand: retarget_self_lit_expr(u.operand, base, mang), line: u.line, col: u.col, ty: u.ty };
-    },
-    ast.ExprIndex(ix) => {
-      return ast.ExprIndex { array: retarget_self_lit_expr(ix.array, base, mang), index: retarget_self_lit_expr(ix.index, base, mang), unchecked: ix.unchecked, ty: ix.ty, line: ix.line, col: ix.col };
-    },
-    ast.ExprSlice(sl2) => {
-      return ast.ExprSlice { ...sl2, array: retarget_self_lit_expr(sl2.array, base, mang), start: retarget_self_lit_expr(sl2.start, base, mang), end: retarget_self_lit_expr(sl2.end, base, mang) };
-    },
-    ast.ExprFieldAccess(fa) => {
-      return ast.ExprFieldAccess { obj: retarget_self_lit_expr(fa.obj, base, mang), field: fa.field, line: fa.line, col: fa.col, ty: fa.ty };
-    },
-    _ => {
-      return e;
-    }
-  }
-  return e;
-}
-
-// retarget_self_lit_stmts walks a cloned struct-method body, applying
-// retarget_self_lit_expr to every contained expression.
-function retarget_self_lit_stmts(stmts: ast.Stmt[], base: string, mang: string): ast.Stmt[] {
-  let out: ast.Stmt[] = [];
-  let i: i32 = 0;
-  while (i < stmts.len()) {
-    let st: ast.Stmt = stmts[i];
-    match (st) {
-      ast.StmtVar(v) => {
-        out = out.append(ast.StmtVar { name: v.name, type_name: v.type_name, init: retarget_self_lit_expr(v.init, base, mang), line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types });
-      },
-      ast.StmtReturn(r) => {
-        out = out.append(ast.StmtReturn { value: retarget_self_lit_expr(r.value, base, mang), line: r.line, col: r.col });
-      },
-      ast.StmtExpr(x) => {
-        out = out.append(ast.StmtExpr { value: retarget_self_lit_expr(x.value, base, mang), line: x.line });
-      },
-      ast.StmtAssign(a) => {
-        out = out.append(ast.StmtAssign { target: a.target, value: retarget_self_lit_expr(a.value, base, mang), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col });
-      },
-      ast.StmtIf(f) => {
-        out = out.append(ast.StmtIf { ...f, cond: retarget_self_lit_expr(f.cond, base, mang), then_body: retarget_self_lit_stmts(f.then_body, base, mang), else_body: retarget_self_lit_stmts(f.else_body, base, mang) });
-      },
-      ast.StmtWhile(w) => {
-        out = out.append(ast.StmtWhile { cond: retarget_self_lit_expr(w.cond, base, mang), body: retarget_self_lit_stmts(w.body, base, mang), label: w.label, line: w.line, is_loop: w.is_loop });
-      },
-      ast.StmtFor(fr) => {
-        out = out.append(ast.StmtFor { var_name: fr.var_name, iter: retarget_self_lit_expr(fr.iter, base, mang), body: retarget_self_lit_stmts(fr.body, base, mang), label: fr.label, line: fr.line });
-      },
-      ast.StmtMatch(m) => {
-        let arms: ast.MatchArm[] = [];
-        let j: i32 = 0;
-        while (j < m.arms.len()) {
-          arms = arms.append(ast.MatchArm { pattern: m.arms[j].pattern, body: retarget_self_lit_stmts(m.arms[j].body, base, mang), line: m.arms[j].line, col: m.arms[j].col, guard: retarget_self_lit_expr(m.arms[j].guard, base, mang), has_guard: m.arms[j].has_guard, alt_cont: false });
-          j = j + 1;
-        }
-        out = out.append(ast.StmtMatch { ...m, scrutinee: retarget_self_lit_expr(m.scrutinee, base, mang), arms: arms });
-      },
-      _ => {
-        out = out.append(st);
-      }
-    }
-    i = i + 1;
-  }
-  return out;
-}
-
 // bound_substitutions extends the instantiation (tparams -> cts) with the type
 // variables a BOUND pins. For each bounded parameter already bound to a
 // concrete type, the impl of the bound's trait for that type gives the trait's
@@ -15651,28 +15526,30 @@ function mg_ty_list(list: string, gstructs: StructDecl[], ins: Insts): TyIns {
 // the concrete clone name: a bare base anywhere in it (`Box` from a @derive
 // method's `other: Box` param, or inside its `Result[Box, string]`) becomes
 // the mangled name directly; an arg form (`Box[i32]`, from a parametric
-// `impl[T]`) goes through mg_ty.
-function to_concrete_struct_ty(ty: string, base: string, mang: string, gstructs: StructDecl[]): string {
-  let fresh: Insts = Insts { inames: [], itypes: [], iargs: [] };
-  return mg_ty(replace_ident(ty, base, mang, true), gstructs, fresh).ty;
+// `impl[T]`) goes through mg_ty, which records the instantiation it names.
+function to_concrete_struct_ty(ty: string, base: string, mang: string, gstructs: StructDecl[], ins: Insts): TyIns {
+  return mg_ty(replace_ident(ty, base, mang, true), gstructs, ins);
 }
 
 // to_concrete_struct_ty over a callable's comma-separated parameter list.
-function to_concrete_struct_ty_list(list: string, base: string, mang: string, gstructs: StructDecl[]): string {
+function to_concrete_struct_ty_list(list: string, base: string, mang: string, gstructs: StructDecl[], ins: Insts): TyIns {
   if (list.len() == 0) {
-    return "";
+    return TyIns { ty: "", mins: ins };
   }
   let parts: string[] = split_top_commas(list);
   let out: string = "";
+  let cur: Insts = ins;
   let i: i32 = 0;
   while (i < parts.len()) {
     if (i > 0) {
       out = out + ",";
     }
-    out = out + to_concrete_struct_ty(parts[i], base, mang, gstructs);
+    let r: TyIns = to_concrete_struct_ty(parts[i], base, mang, gstructs, cur);
+    cur = r.mins;
+    out = out + r.ty;
     i = i + 1;
   }
-  return out;
+  return TyIns { ty: out, mins: cur };
 }
 
 // infer_lit_key infers the concrete instantiation key for a struct
@@ -16376,19 +16253,20 @@ function ms_func(fn: FuncDecl, gstructs: StructDecl[], funcs: MFns, ins: Insts):
 // at the mangled clone name. The body's `let T` annotations are
 // substituted; its literal display strings (baked from the original
 // struct's name at synth time) stay intact.
-function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: StructDecl[], structs: StructDecl[], enums: EnumDecl[]): FuncDecl {
-  // Substitute with the generic STRUCT's type params (not the method's, which
-  // a synthesized method like default() leaves empty). The struct's params are
-  // the ones a method body refers to — e.g. a derived default()'s
-  // `T.default()`; subst_stmts rewrites both `let x: T` annotations and the
-  // `T.default()` object. A parametric-impl method's own type params match the
-  // struct's, so this is equivalent for those.
+function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: StructDecl[], structs: StructDecl[], enums: EnumDecl[], ins: Insts): FRes {
+  // The variables are the receiver's own spelling (`Pair[X, Y]`) when it has
+  // one; a derived method's bare `Box` receiver falls back to the STRUCT's
+  // (not the method's, which a synthesized default() leaves empty).
   let gsi: i32 = gstruct_index(gstructs, base);
   let tparams: string[] = m.type_params;
   if (gsi >= 0) {
     tparams = gstructs[gsi].type_params;
   }
   let cts: string[] = split_key(key, tparams.len(), structs, enums);
+  let spelled: string[] = struct_receiver_typevars(m.receiver_type);
+  if (spelled.len() == cts.len()) {
+    tparams = spelled;
+  }
   let mang: string = base + "__" + sanitize_key(key);
   // finalize_impl_method (at parse time) bakes the BARE source struct name
   // into a generic impl method's `Self` positions, but the struct is
@@ -16398,18 +16276,23 @@ function clone_struct_method(m: FuncDecl, base: string, key: string, gstructs: S
   // `Option[(i32, iter__ArrayIter__i32)]`) in the clone's return / params.
   let bsegs: string[] = split_dunder(base);
   let bare_base: string = bsegs[bsegs.len() - 1];
+  let cur: Insts = ins;
   let nparams: ast.ParamDecl[] = [];
-  let i: i32 = 0;
-  while (i < m.params.len()) {
-    let psrc: string = replace_struct_ident(m.params[i].type_name, bare_base, base);
-    let pt: string = to_concrete_struct_ty(subst_ty(psrc, tparams, cts), base, mang, gstructs);
-    nparams = nparams.append(ast.ParamDecl { ...m.params[i], type_name: pt, fn_ret: to_concrete_struct_ty(subst_ty(m.params[i].fn_ret, tparams, cts), base, mang, gstructs), fn_param_types: to_concrete_struct_ty_list(subst_ty_list(m.params[i].fn_param_types, tparams, cts), base, mang, gstructs) });
-    i = i + 1;
+  for p in m.params {
+    let pt: TyIns = to_concrete_struct_ty(subst_ty(replace_struct_ident(p.type_name, bare_base, base), tparams, cts), base, mang, gstructs, cur);
+    let pr: TyIns = to_concrete_struct_ty(subst_ty(p.fn_ret, tparams, cts), base, mang, gstructs, pt.mins);
+    let pl: TyIns = to_concrete_struct_ty_list(subst_ty_list(p.fn_param_types, tparams, cts), base, mang, gstructs, pr.mins);
+    cur = pl.mins;
+    nparams = nparams.append(ast.ParamDecl { ...p, type_name: pt.ty, fn_ret: pr.ty, fn_param_types: pl.ty });
   }
-  let rsrc: string = replace_struct_ident(m.ret_type, bare_base, base);
-  let rt: string = to_concrete_struct_ty(subst_ty(rsrc, tparams, cts), base, mang, gstructs);
+  let rt: TyIns = to_concrete_struct_ty(subst_ty(replace_struct_ident(m.ret_type, bare_base, base), tparams, cts), base, mang, gstructs, cur);
+  let rr: TyIns = to_concrete_struct_ty(subst_ty(m.ret_fn_ret, tparams, cts), base, mang, gstructs, rt.mins);
+  let rl: TyIns = to_concrete_struct_ty_list(subst_ty_list(m.ret_fn_param_types, tparams, cts), base, mang, gstructs, rr.mins);
   let notp: string[] = [];
-  return FuncDecl { ...m, receiver_type: mang, type_params: notp, all_type_params: [], params: nparams, ret_type: rt, ret_fn_ret: to_concrete_struct_ty(subst_ty(m.ret_fn_ret, tparams, cts), base, mang, gstructs), ret_fn_param_types: to_concrete_struct_ty_list(subst_ty_list(m.ret_fn_param_types, tparams, cts), base, mang, gstructs), body: retarget_self_lit_stmts(subst_stmts(m.body, tparams, cts), base, mang), bound_traits: [] };
+  return FRes {
+    ffn: FuncDecl { ...m, receiver_type: mang, type_params: notp, all_type_params: [], params: nparams, ret_type: rt.ty, ret_fn_ret: rr.ty, ret_fn_param_types: rl.ty, body: subst_stmts(m.body, tparams, cts), bound_traits: [] },
+    fins: rl.mins,
+  };
 }
 
 // monomorphize_structs clones every generic struct (and its methods) per
@@ -16612,7 +16495,9 @@ function ms_module(mod: Module): Module {
       while (mi < mod.funcs.len()) {
         let mm: FuncDecl = mod.funcs[mi];
         if (mm.receiver_type.len() > 0 && strip_struct_base(mm.receiver_type) == base) {
-          let clm: FuncDecl = clone_struct_method(mm, base, key, gstructs, mod.structs, mod.enums);
+          let cr: FRes = clone_struct_method(mm, base, key, gstructs, mod.structs, mod.enums, ins);
+          ins = cr.fins;
+          let clm: FuncDecl = cr.ffn;
           let menv: MEnv = env_from_decl(clm);
           let mr: RStmts = mono_stmts(clm.body, menv, sfns, ins, fn_tag_spelling(clm.ret_type, clm.ret_fn_ret, clm.ret_fn_param_types));
           ins = mr.rins3;
