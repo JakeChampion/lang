@@ -197,10 +197,10 @@ function fmt_file(path: string, fmt_write: boolean, fmt_diff: boolean, out_path:
 struct Finding { diag: util.Diag, warning: boolean, path: string }
 
 // Checked is a check's whole answer: its findings in report order, the entry
-// path and the module files their positions index (util.pos_str), and whether
-// the program is accepted. A rejection can carry no finding at all: an
-// ill-typed module the checker has no diagnostic for.
-struct Checked { findings: Finding[], entry: string, files: string[], ok: boolean }
+// path and the module files their positions index (util.pos_str) with each
+// module's line map, and whether the program is accepted. A rejection can carry
+// no finding at all: an ill-typed module the checker has no diagnostic for.
+struct Checked { findings: Finding[], entry: string, files: string[], maps: util.LineMap[], ok: boolean }
 
 // errors_of wraps diagnostics that each reject the program.
 function errors_of(ds: util.Diag[]): Finding[] {
@@ -227,23 +227,25 @@ function has_error(fs: Finding[]): boolean {
 }
 
 // finding_text renders a finding as `-check` and native print it: the
-// position (util.pos_str, naming the entry file as the command line did) when
-// it is known, then `warning: `, or `error[…]: ` for a coded error — an
-// uncoded one (the const-grammar rule, a visibility error) has no tag.
-function finding_text(f: Finding, entry: string, files: string[]): string {
+// position (util.pos_str, naming the entry file as the command line did, and
+// moved onto the document a literate module was tangled from) when it is
+// known, then `warning: `, or `error[…]: ` for a coded error — an uncoded one
+// (the const-grammar rule, a visibility error) has no tag.
+function finding_text(f: Finding, entry: string, files: string[], maps: util.LineMap[]): string {
   let tag: string = "";
   if (f.warning) {
     tag = "warning: ";
   } else if (f.diag.code.len() > 0) {
     tag = "error[" + f.diag.code + "]: ";
   }
-  if (f.diag.line > 0 && f.path.len() > 0) {
-    return f.path + ":" + util.pos_str("", files, f.diag.line, f.diag.col) + ": " + tag + f.diag.message;
+  let d: util.Diag = util.doc_diag(maps, f.diag);
+  if (d.line > 0 && f.path.len() > 0) {
+    return f.path + ":" + util.pos_str("", files, d.line, d.col) + ": " + tag + d.message;
   }
-  if (f.diag.line > 0) {
-    return util.pos_str(entry_display(entry), files, f.diag.line, f.diag.col) + ": " + tag + f.diag.message;
+  if (d.line > 0) {
+    return util.pos_str(entry_display(entry), files, d.line, d.col) + ": " + tag + d.message;
   }
-  return tag + f.diag.message;
+  return tag + d.message;
 }
 
 // entry_display is the entry path as a diagnostic names it: the path the
@@ -258,9 +260,9 @@ function entry_display(entry_path: string): string {
 
 // eprint_findings prints each finding and reports whether any rejects the
 // program.
-function eprint_findings(fs: Finding[], entry: string, files: string[]): boolean {
+function eprint_findings(fs: Finding[], entry: string, files: string[], maps: util.LineMap[]): boolean {
   for f in fs {
-    eprint(finding_text(f, entry, files));
+    eprint(finding_text(f, entry, files, maps));
   }
   return has_error(fs);
 }
@@ -1188,28 +1190,26 @@ function governing_manifest(dir_slash: string): Governed {
 }
 
 // find_manifest_dir walks up from `dir` to the first directory holding a
-// fern.toml, or "" when nothing governs it.
+// fern.toml and names it without a trailing slash, or is "" when nothing
+// governs it.
 function find_manifest_dir(dir: string): string {
   let d: string = dir;
-  while (d.len() > 0) {
-    let found: boolean = false;
-    match (read_file(d + "/fern.toml")) {
-      Ok(s) => {
-        found = true;
-      },
-      Err(e) => {}
-    }
-    if (found) {
-      return d;
-    }
-    if (d.len() <= 1) {
+  if (d.len() > 0 && d[d.len() - 1] != b'/') {
+    d = d + "/";
+  }
+  match (modloader.find_manifest(d)) {
+    Some(m) => {
+      if (m.len() == 0) {
+        return ".";
+      }
+      if (m == "/") {
+        return m;
+      }
+      return slice_unchecked(m, 0, m.len() - 1) + "";
+    },
+    None => {
       return "";
     }
-    let up: string = util.dir_of(d);
-    if (up.len() == 0) {
-      up = "/";
-    }
-    d = up;
   }
   return "";
 }
@@ -1872,9 +1872,10 @@ function is_vendorable(name: string): boolean {
 // Bundle is a loaded program: the entry module, the modules its imports
 // pulled in, the flattened whole, and the packages the capability layers
 // attribute to. `files` names each loaded module for a diagnostic, in load
-// order, which is the order of their line bases (util.pos_str). `err` is the
-// line `-check` prints when the program could not be loaded, and is empty when
-// it was.
+// order, which is the order of their line bases (util.pos_str); `maps` is each
+// module's line map, the entry's first (util.doc_diag). `err` is the line
+// `-check` prints when the program could not be loaded, and is empty when it
+// was.
 struct Bundle {
   entry: parser.Module,
   entry_ident: string,
@@ -1883,7 +1884,113 @@ struct Bundle {
   merged: parser.Module,
   pkgs: caps.Pkg[],
   files: string[],
+  maps: util.LineMap[],
   err: string,
+}
+
+// Sources is an entry as the loader reads it: the entry module first — the
+// path its imports resolve against, its text, its line map — then, for a
+// multi-file literate document, every other module the document tangles to,
+// under the cleaned path it is written to. load_bundle reads an import from
+// here before the disk.
+struct Sources { paths: string[], srcs: string[], maps: util.LineMap[] }
+
+// is_literate reports whether `path` names a literate Fern document.
+function is_literate(path: string): boolean {
+  return util.str_has_suffix(path, ".fern.md");
+}
+
+// entry_sources reads entry `path`, holding `src`: the file itself, or the
+// modules a literate `.fern.md` tangles to. The second result is why it cannot
+// be read, empty when it can.
+function entry_sources(path: string, src: string): (Sources, string) {
+  let plain: Sources = Sources { paths: [path], srcs: [src], maps: [util.no_line_map()] };
+  if (!is_literate(path)) {
+    return (plain, "");
+  }
+  if (literate.parse_file_pieces(src).len() > 0) {
+    return multi_file_sources(path, src);
+  }
+  match (literate.tangle(src)) {
+    literate.TangleOk(o) => {
+      return (Sources { paths: [path], srcs: [o.code], maps: [util.LineMap { doc: path, lits: o.lits, shifts: o.shifts }] }, "");
+    },
+    literate.TangleErr(e) => {
+      return (plain, tangle_error(path, e.line, e.col, e.msg));
+    }
+  }
+  return (plain, "");
+}
+
+// multi_file_sources is entry_sources for a document of `file=PATH` blocks:
+// one module per path, beside the document, its entry first — the module
+// marked `entry`, the only one, or the one module that declares `main`.
+function multi_file_sources(path: string, src: string): (Sources, string) {
+  let none: Sources = Sources { paths: [], srcs: [], maps: [] };
+  let files: literate.FileResult[] = [];
+  match (literate.tangle_files(src)) {
+    literate.FileTangleOk(o) => {
+      files = o.files;
+    },
+    literate.FileTangleErr(e) => {
+      return (none, tangle_error(path, e.line, e.col, e.msg));
+    }
+  }
+  let entry: string = literate.entry_file(files);
+  if (entry.len() == 0) {
+    let marked: string[] = [];
+    let names: string = "";
+    let marked_names: string = "";
+    for f in files {
+      names = list_add(names, f.path);
+      if (f.is_entry) {
+        marked = marked.append(f.path);
+        marked_names = list_add(marked_names, f.path);
+      }
+    }
+    if (marked.len() > 1) {
+      return (none, tangle_error(path, literate.fence_line(src, marked[1]), 1, "literate: multiple files marked `entry` (" + marked_names + ") — exactly one is the compile entry"));
+    }
+    return (none, tangle_error(path, 1, 1, "literate: " + util.i32_to_string(files.len()) + " output files (" + names + ") but none marked `entry` — add `entry` to the ```fern file=… block that holds main"));
+  }
+  let out: Sources = none;
+  for f in files {
+    if (f.path == entry) {
+      out = add_generated(out, path, f);
+    }
+  }
+  for f in files {
+    if (f.path != entry) {
+      out = add_generated(out, path, f);
+    }
+  }
+  return (out, "");
+}
+
+// list_add appends `item` to a comma-separated list.
+function list_add(list: string, item: string): string {
+  if (list.len() == 0) {
+    return item;
+  }
+  return list + ", " + item;
+}
+
+// add_generated appends module `f` of document `doc`, at its path beside it.
+function add_generated(s: Sources, doc: string, f: literate.FileResult): Sources {
+  let mpath: string = f.path;
+  if (!util.str_has_prefix(mpath, "/")) {
+    mpath = modloader.dirname(doc) + mpath;
+  }
+  return Sources {
+    paths: s.paths.append(util.clean_path(mpath)),
+    srcs: s.srcs.append(f.code),
+    maps: s.maps.append(util.LineMap { doc: doc, lits: f.lits, shifts: f.shifts }),
+  };
+}
+
+// tangle_error is a literate document's refusal, at its document position.
+function tangle_error(path: string, line: i32, col: i32, msg: string): string {
+  return path + ":" + util.i32_to_string(line) + ":" + util.i32_to_string(col) + ": error: " + msg;
 }
 
 // display_path names a module file as native's diagnostics do: a stdlib module
@@ -1902,26 +2009,17 @@ function display_path(mpath: string, root: string): string {
   return "stdlib://" + slice_unchecked(mpath, at, mpath.len());
 }
 
-// read_bundle_module reads one imported module for load_bundle: the resolved
-// path first, then, only when that file is absent, the manifest resolution. The
-// directory its own `./` imports resolve against is its own — a module in lib/
-// writing `import "./gnu"` means lib/gnu.fern — unless a manifest-resolved
-// dependency moves the root to its package.
-function read_bundle_module(mpath: string, from: string, ipath: string): modloader.Resolved {
-  let mdir: string = util.dir_of(mpath);
-  if (mdir.len() > 0) {
-    mdir = mdir + "/";
+// read_bundle_module reads one imported module for load_bundle: a module the
+// entry document tangled to, then the resolved path (or its `.fern.md`), then,
+// only when that file is absent, the manifest resolution.
+function read_bundle_module(s: Sources, mpath: string, from: string, ipath: string): modloader.Resolved {
+  let gi: i32 = util.index_of_str(s.paths, mpath);
+  if (gi >= 0) {
+    return modloader.Resolved { src: s.srcs[gi], ok: true, err: "", err_path: "", shown: mpath, map: s.maps[gi] };
   }
-  match (read_file(mpath)) {
-    Ok(src) => {
-      return modloader.Resolved { src: src, dir: mdir, ok: true, err: "", err_path: "", shown: mpath };
-    },
-    Err(e) => {
-      let reason: string = modloader.read_error_reason(e);
-      if (reason.len() > 0) {
-        return modloader.Resolved { src: "", dir: mdir, ok: false, err: reason, err_path: mpath, shown: "" };
-      }
-    }
+  let r: modloader.Resolved = modloader.read_module(mpath);
+  if (r.ok || r.err.len() > 0) {
+    return r;
   }
   // Manifest fallback: a DECLARED dependency resolves through fern.toml across
   // the disk-resolvable forms (path, workspace member, lock, vendor tree,
@@ -1935,7 +2033,8 @@ function read_bundle_module(mpath: string, from: string, ipath: string): modload
 // them into one module (the import-driven scheme from asm_load_run), or says
 // why it cannot: an import that does not resolve or forms a cycle, or an entry
 // the target has nothing to call in.
-function load_bundle(entry_path: string, entry_mod: parser.Module, root: string, target: string): Bundle {
+function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target: string): Bundle {
+  let entry_path: string = s.paths[0];
   let dir: string = util.dir_of(entry_path);
   // The manifest governing the entry, when there is one: it names the
   // dependency packages, which are both a way to RESOLVE an import the
@@ -1950,9 +2049,10 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string,
   let pkgs: caps.Pkg[] = [root_pkg(gov.man)];
   let no_mods: flatten.LoadedModule[] = [];
   let no_files: string[] = [];
+  let maps: util.LineMap[] = [s.maps[0]];
   let missing: string = emitforms.http_entry_missing(entry_mod, target);
   if (missing.len() > 0) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: no_files, err: missing };
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: no_files, maps: maps, err: missing };
   }
 
   let q: ImportQueue = queue_imports(ImportQueue { paths: [], dirs: [], importers: [], unrooted: "" }, entry_mod, entry_path, dir_slash, root, deps);
@@ -1978,22 +2078,29 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string,
     // silently dropped the module (#9762).
     if (!util.has_str(done_paths, mpath)) {
       done_paths = done_paths.append(mpath);
-      let rm: modloader.Resolved = read_bundle_module(mpath, from, ipath);
+      let rm: modloader.Resolved = read_bundle_module(s, mpath, from, ipath);
       if (!rm.ok) {
         let bad: string = mpath;
         if (rm.err.len() > 0) {
           bad = rm.err_path;
         }
-        return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, err: "fern: " + modloader.unresolved_import(ipath, importer, bad, rm.err) };
+        return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, err: "fern: " + modloader.unresolved_import(ipath, importer, bad, rm.err) };
       }
-      let mdir: string = rm.dir;
+      // A module's own imports resolve beside its file — a module in lib/
+      // writing `import "./gnu"` means lib/gnu.fern — wherever it was found.
+      let mdir: string = modloader.dirname(util.clean_path(rm.shown));
       let origin: string = "";
       if (root.len() > 0 && rm.shown == mpath) {
         origin = ipath;
       }
       let m: parser.Module = parser.with_stdlib_origin(parser.parse_module(lexer.tokenize_from(rm.src, util.line_base(files.len()) + 1)), origin);
+      // A tangled module is named by its document, where its positions land.
       let shown: string = display_path(rm.shown, root);
+      if (rm.map.doc.len() > 0) {
+        shown = rm.map.doc;
+      }
       files = files.append(shown);
+      maps = maps.append(rm.map);
       // Identity is the FILE, not its basename: two modules can share a
       // basename (`std/sort` and `coreutils/sort`) and the bundler has
       // to tell them apart to give each its own prefix (#9762).
@@ -2006,12 +2113,12 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string,
     }
   }
   if (q.unrooted.len() > 0) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, err: "fern: import \"" + q.unrooted + "\" needs the stdlib root: pass its directory after the entry file" };
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, err: "fern: import \"" + q.unrooted + "\" needs the stdlib root: pass its directory after the entry file" };
   }
   let entry_r: parser.Module = flatten.resolve_imports(entry_mod, dir_slash, root);
   let cycle: i32 = flatten.import_cycle(entry_r, loaded, root);
   if (cycle >= 0) {
-    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, err: "fern: import cycle detected including " + files[cycle] };
+    return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, maps: maps, err: "fern: import cycle detected including " + files[cycle] };
   }
   let merged: parser.Module = flatten.bundle(entry_r, loaded, target);
   // Fill omitted trailing args from default parameter values up front, so the
@@ -2021,7 +2128,7 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string,
   // settle against until the bundle exists; parse_module resolved the
   // same-module ones already, and the pass is idempotent.
   merged = parser.resolve_variant_fields_module(merged);
-  return Bundle { entry: entry_r, entry_ident: flatten.module_ident(entry_path), root: root, loaded: loaded, merged: merged, pkgs: pkgs, files: files, err: "" };
+  return Bundle { entry: entry_r, entry_ident: flatten.module_ident(entry_path), root: root, loaded: loaded, merged: merged, pkgs: pkgs, files: files, maps: maps, err: "" };
 }
 
 // Loaded is a program read for checking or building, and the findings that
@@ -2039,9 +2146,9 @@ struct Loaded { b: Bundle, refused: Finding[] }
 // turned `lib.hidden` into the bare `lib__hidden`, and refuses a build as well
 // as a check: native refuses to build such a program, and accepting it here
 // would be the divergence.
-function load_checked(entry_path: string, src: string, root: string, target: string, embed_dir: string): Loaded {
-  let entry_mod: parser.Module = parser.parse_module(lexer.tokenize(emitforms.entry_source(src, target)));
-  let b: Bundle = load_bundle(entry_path, entry_mod, root, target);
+function load_checked(s: Sources, root: string, target: string, embed_dir: string): Loaded {
+  let entry_mod: parser.Module = parser.parse_module(lexer.tokenize(emitforms.entry_source(s.srcs[0], target)));
+  let b: Bundle = load_bundle(s, entry_mod, root, target);
   if (b.err.len() > 0) {
     return Loaded { b: b, refused: [refusal(b.err)] };
   }
@@ -2114,9 +2221,13 @@ function fold_embedded_assets(b: Bundle, embed_dir: string): (Bundle, Finding[])
 // check_source is `-check` on an entry's text: everything it reports, and its
 // verdict.
 function check_source(entry_path: string, src: string, root: string, target: string, target_given: boolean, embed_dir: string): Checked {
-  let ld: Loaded = load_checked(entry_path, src, root, target, embed_dir);
+  let (s, err) = entry_sources(entry_path, src);
+  if (err.len() > 0) {
+    return Checked { findings: [refusal(err)], entry: entry_path, files: [], maps: [], ok: false };
+  }
+  let ld: Loaded = load_checked(s, root, target, embed_dir);
   if (ld.refused.len() > 0) {
-    return Checked { findings: ld.refused, entry: entry_path, files: ld.b.files, ok: false };
+    return Checked { findings: ld.refused, entry: entry_path, files: ld.b.files, maps: ld.b.maps, ok: false };
   }
   return check_bundle(ld.b, entry_path, target, target_given);
 }
@@ -2124,7 +2235,7 @@ function check_source(entry_path: string, src: string, root: string, target: str
 // report_checked prints a check's findings and returns the exit code `-check`
 // answers with.
 function report_checked(c: Checked): i32 {
-  let _rejected: boolean = eprint_findings(c.findings, c.entry, c.files);
+  let _rejected: boolean = eprint_findings(c.findings, c.entry, c.files, c.maps);
   if (c.ok) {
     return 0;
   }
@@ -2140,7 +2251,7 @@ function check_bundle(b: Bundle, entry_path: string, target: string, target_give
   // anything downstream of a declaration that did not parse is noise.
   let parsed: Finding[] = parse_findings(merged);
   if (parsed.len() > 0) {
-    return Checked { findings: parsed, entry: entry_path, files: b.files, ok: false };
+    return Checked { findings: parsed, entry: entry_path, files: b.files, maps: b.maps, ok: false };
   }
   // The coded diagnostics are the same E0XX codes the Go checker emits — see
   // docs/SELFHOST-CHECKER-PORT.md.
@@ -2162,13 +2273,13 @@ function check_bundle(b: Bundle, entry_path: string, target: string, target_give
   let fs: Finding[] = util.append_all(errors_of(mt.diags), bounds);
   if (mt.all_well_typed) {
     if (has_error(bounds)) {
-      return Checked { findings: fs, entry: entry_path, files: b.files, ok: false };
+      return Checked { findings: fs, entry: entry_path, files: b.files, maps: b.maps, ok: false };
     }
     let views: Finding[] = errors_of(semlower.view_escape_diags(merged));
     if (views.len() > 0) {
-      return Checked { findings: util.append_all(fs, views), entry: entry_path, files: b.files, ok: false };
+      return Checked { findings: util.append_all(fs, views), entry: entry_path, files: b.files, maps: b.maps, ok: false };
     }
-    return Checked { findings: util.append_all(fs, todo_warnings(merged.todo_sites, entry_path)), entry: entry_path, files: b.files, ok: true };
+    return Checked { findings: util.append_all(fs, todo_warnings(merged.todo_sites, entry_path)), entry: entry_path, files: b.files, maps: b.maps, ok: true };
   }
   // The module is ill-typed but produced no coded diagnostic — an
   // expression collapsed to TypeUnknown on a type the partial checker
@@ -2177,7 +2288,7 @@ function check_bundle(b: Bundle, entry_path: string, target: string, target_give
   if (mt.diags.len() == 0) {
     fs = util.append_all(fs, errors_of(checker.ill_typed_hint(merged)));
   }
-  return Checked { findings: fs, entry: entry_path, files: b.files, ok: false };
+  return Checked { findings: fs, entry: entry_path, files: b.files, maps: b.maps, ok: false };
 }
 
 // todo_warnings lists the entry's remaining `todo` stubs, which an accepted
@@ -2248,7 +2359,7 @@ function run_tangle(path: string, out_path: string, chunk: string): i32 {
         return tangle_emit(end_with_newline(o.code), out_path);
       },
       literate.TangleErr(e) => {
-        eprint(path + ":" + util.i32_to_string(e.line) + ":1: error: " + e.msg);
+        eprint(tangle_error(path, e.line, e.col, e.msg));
         return 1;
       }
     }
@@ -2278,7 +2389,7 @@ function run_tangle(path: string, out_path: string, chunk: string): i32 {
         return tangle_emit(out, "");
       },
       literate.FileTangleErr(e) => {
-        eprint(path + ":" + util.i32_to_string(e.line) + ":1: error: " + e.msg);
+        eprint(tangle_error(path, e.line, e.col, e.msg));
         return 1;
       }
     }
@@ -2288,7 +2399,7 @@ function run_tangle(path: string, out_path: string, chunk: string): i32 {
       return tangle_emit(end_with_newline(o.code), out_path);
     },
     literate.TangleErr(e) => {
-      eprint(path + ":" + util.i32_to_string(e.line) + ":1: error: " + e.msg);
+      eprint(tangle_error(path, e.line, e.col, e.msg));
       return 1;
     }
   }
@@ -2796,8 +2907,9 @@ function lsp_diagnostics(s: Server, uri: string, src: string): string[] {
   let c: Checked = check_source(path, src, s.root, s.target, s.target_given, s.embed_dir);
   let out: string[] = [];
   for f in c.findings {
-    if (f.diag.line < util.line_base(0)) {
-      out = out.append(lsp.diagnostic(src, f.diag.line, f.diag.col, f.diag.code, lsp_message(f.diag.message), f.warning));
+    let d: util.Diag = util.doc_diag(c.maps, f.diag);
+    if (d.line < util.line_base(0)) {
+      out = out.append(lsp.diagnostic(src, d.line, d.col, d.code, lsp_message(d.message), f.warning));
     }
   }
   return out;
@@ -2871,7 +2983,7 @@ function dep_pkg_name(man: fern_toml.Manifest, dir_slash: string, dep: string): 
 // module with no entry into whichever package calls it.
 //
 // `importer` is the manifest governing the importing module; a dependency's
-// path is relative to its directory.
+// path is relative to its directory. `helper/extra` is a module of `helper`.
 function add_pkg(pkgs: caps.Pkg[], importer: Governed, import_path: string): caps.Pkg[] {
   let mod: string = util.module_name(import_path);
   let no_grants: string[] = [];
@@ -2879,15 +2991,16 @@ function add_pkg(pkgs: caps.Pkg[], importer: Governed, import_path: string): cap
     return pkgs.append(caps.Pkg { module: mod, name: pkgs[0].name, root: true, governed: false, grants: no_grants });
   }
   let man: fern_toml.Manifest = importer.man;
-  if (fern_toml.dep_kind(man, mod).len() == 0) {
+  let dep: string = util.dep_name(import_path);
+  if (fern_toml.dep_kind(man, dep).len() == 0) {
     return pkgs;
   }
   return pkgs.append(caps.Pkg {
     module: mod,
-    name: dep_pkg_name(man, importer.dir, mod),
+    name: dep_pkg_name(man, importer.dir, dep),
     root: false,
-    governed: fern_toml.dep_governed(man, mod),
-    grants: fern_toml.dep_caps(man, mod),
+    governed: fern_toml.dep_governed(man, dep),
+    grants: fern_toml.dep_caps(man, dep),
   });
 }
 
@@ -3332,8 +3445,18 @@ function run(): i32 {
   // checker, the interpreter and every backend see literals and never learn
   // that assets exist. Native folds them in the same place, ahead of
   // checker.Check.
-  let ld: Loaded = load_checked(entry_path, esrc, root, target, embed_dir);
-  if (eprint_findings(ld.refused, entry_path, ld.b.files)) {
+  if (is_literate(entry_path)) {
+    for name in literate.unused_chunks(esrc) {
+      eprint(entry_path + ": warning: chunk <<" + name + ">> is defined but never used");
+    }
+  }
+  let (srcs, serr) = entry_sources(entry_path, esrc);
+  if (serr.len() > 0) {
+    eprint(serr);
+    return 1;
+  }
+  let ld: Loaded = load_checked(srcs, root, target, embed_dir);
+  if (eprint_findings(ld.refused, entry_path, ld.b.files, ld.b.maps)) {
     return 1;
   }
   let b: Bundle = ld.b;
@@ -3357,10 +3480,10 @@ function run(): i32 {
     // Package-capability gate (E070 — caps.fern): a dependency reaching
     // past its grant is refused before the program runs, not after it has
     // already opened the socket.
-    if (eprint_findings(package_findings(merged, pkgs), entry_path, b.files)) {
+    if (eprint_findings(package_findings(merged, pkgs), entry_path, b.files, b.maps)) {
       return 1;
     }
-    if (eprint_findings(ambient_findings(merged), entry_path, b.files)) {
+    if (eprint_findings(ambient_findings(merged), entry_path, b.files, b.maps)) {
       return 1;
     }
     // Evaluate via the tree-walking interpreter; the program's
@@ -3403,7 +3526,7 @@ function run(): i32 {
   // checker gate below exists: without them a build is MORE permissive than
   // `-check`, and a keyword-named function reaches codegen as a nameless
   // declaration.
-  if (eprint_findings(parse_findings(merged), entry_path, b.files)) {
+  if (eprint_findings(parse_findings(merged), entry_path, b.files, b.maps)) {
     return 1;
   }
 
@@ -3418,7 +3541,7 @@ function run(): i32 {
   // diagnostic except the partial-port rules measured to false-positive —
   // and a hit is reported with the same `line:col: error[CODE]: message`
   // shape as `-check`.
-  if (eprint_findings(errors_of(checker.build_gate_diags(merged)), entry_path, b.files)) {
+  if (eprint_findings(errors_of(checker.build_gate_diags(merged)), entry_path, b.files, b.maps)) {
     return 1;
   }
 
@@ -3455,20 +3578,20 @@ function run(): i32 {
       merged = parser.Module { ...merged, exports: merged.exports.append(parser.ExportBinding { func_name: n, iface: "", wit: "", c_abi: true }) };
     }
   }
-  if (eprint_findings(capability_findings(merged, target), entry_path, b.files)) {
+  if (eprint_findings(capability_findings(merged, target), entry_path, b.files, b.maps)) {
     return 1;
   }
 
   // Package-capability gate (E070 — caps.fern): the other capability
   // system, gating what a DEPENDENCY may reach rather than what the target
   // provides. Without it the self-host builds a program native refuses.
-  if (eprint_findings(package_findings(merged, pkgs), entry_path, b.files)) {
+  if (eprint_findings(package_findings(merged, pkgs), entry_path, b.files, b.maps)) {
     return 1;
   }
 
   // The bag boundary (E080 — ambient.fern): a handler reaching a host
   // effect around its platform, on either compiler.
-  if (eprint_findings(ambient_findings(merged), entry_path, b.files)) {
+  if (eprint_findings(ambient_findings(merged), entry_path, b.files, b.maps)) {
     return 1;
   }
 

@@ -191,6 +191,15 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"view-custom-with-method", "function (xs: [u8]) with(s: string): string { return s; } function main(): i32 { let v: [u8] = \"abc\".as_bytes(); return v.with(\"x\").len(); }", nil},
 		{"view-custom-append-discard", "function (xs: [u8]) append(): i32 { return xs.len(); } function main(): i32 { let v: [u8] = \"abc\".as_bytes(); v.append(); return 0; }", nil},
 		{"view-custom-with-discard", "function (xs: [u8]) with(): i32 { return xs.len(); } function main(): i32 { let v: [u8] = \"abc\".as_bytes(); v.with(); return 0; }", nil},
+		// A method an enum or union does not have (#11852): Option's and
+		// Result's live in std/option and std/result, so without the import
+		// they have none. The bundle differential holds the imported side.
+		{"option-method-without-import", "function main(): i32 { let x: Option[i32] = Some(3); return x.unwrap_or(0); }\n", []string{"E043"}},
+		{"result-method-without-import", "function main(): i32 { let r: Result[i32, string] = Ok(2); return r.unwrap_or(0); }\n", []string{"E043"}},
+		{"enum-method-missing", "enum Color { Red, Green }\nfunction main(): i32 { let c: Color = Color.Red; return c.nope(); }\n", []string{"E043"}},
+		{"union-method-missing", "struct Circle { r: i32 }\nstruct Square { s: i32 }\ntype Shape = Circle | Square;\nfunction main(): i32 { let sh: Shape = Circle { r: 1 }; return sh.area(); }\n", []string{"E043"}},
+		{"enum-and-union-methods-ok", "enum Color { Red, Green }\nfunction (c: Color) n(): i32 { return 1; }\nenum Box[T] { Full(T), Empty }\nfunction (b: Box[T]) size(): i32 { return 1; }\nstruct Circle { r: i32 }\nstruct Square { s: i32 }\ntype Shape = Circle | Square;\nfunction (sh: Shape) area(): i32 { return 1; }\nfunction (o: Option[T]) mine(): i32 { return 2; }\nfunction main(): i32 { let c: Color = Color.Red; let b: Box[i32] = Full(1); let sh: Shape = Circle { r: 1 }; let x: Option[i32] = Some(3); return c.n() + b.size() + sh.area() + x.mine(); }\n", nil},
+		{"enum-trait-method-ok", "trait Named { function name(self: Self): i32; }\nenum Color { Red, Green }\nimpl Named for Color { function name(self: Self): i32 { return 3; } }\nfunction main(): i32 { let c: Color = Color.Red; return c.name(); }\n", nil},
 		// A literal local takes ONE integer type: its first width-fixing use
 		// decides it, i32 when none does (#10123). The self-host held it at i32
 		// from its binding and native let each use pick a width, so the same
@@ -969,6 +978,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// The negative for that position: an object-safe trait in the same local
 		// slot stays clean, so the new site is not just "any dyn local errors".
 		{"dyn-safe-local", "trait T { function m(self: Self, other: i32): i32; }\nstruct S { v: i32 }\nimpl T for S { function m(self: Self, other: i32): i32 { return self.v + other; } }\nfunction main(): i32 { let d: dyn T = S { v: 3 }; return 0; }\n", nil},
+		// An array suffix is not the associated-type pin list (#11848).
+		{"dyn-assoc-pinned-array-element", "trait Holder { type Item; function get(self: Self): Self::Item; }\nstruct B { v: i32 }\nimpl Holder for B { type Item = i32; function get(self: Self): Self::Item { return self.v; } }\nfunction f(hs: dyn Holder[Item = i32][]): dyn Holder[Item = i32][] { return hs; }\nfunction main(): i32 { let hs: dyn Holder[Item = i32][] = [B { v: 4 }]; return f(hs).len(); }\n", nil},
+		{"dyn-assoc-unpinned-array-element", "trait Holder { type Item; function get(self: Self): Self::Item; }\nstruct B { v: i32 }\nimpl Holder for B { type Item = i32; function get(self: Self): Self::Item { return self.v; } }\nfunction main(): i32 { let hs: dyn Holder[] = [B { v: 4 }]; return 0; }\n", []string{"E021"}},
 		// The position native deliberately does NOT flag. It is here so widening
 		// the scan cannot quietly widen it past parity: a `dyn T` STRUCT FIELD
 		// draws nothing from either checker, object-unsafe trait or not.
@@ -1949,6 +1961,17 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"try-on-unmarked-enum", "enum Flag { On(i32), Off }\nfunction pick(f: Flag): Flag { let v: i32 = f?; return On(v + 1); }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-on-union-alias", "struct A { n: i32 }\nstruct B { n: i32 }\ntype Shape = A | B;\nfunction f(x: Shape): i32 { let y: i32 = x?; return y; }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
 		{"try-on-marked-enum-ok", "@try\nenum MyOpt { Got(i32), Nope }\nfunction pick(f: MyOpt): MyOpt { let v: i32 = f?; return Got(v + 1); }\nfunction main(): i32 { return 0; }\n", nil},
+		// E042 across Result error types (#11852): the self-host let it through
+		// and the typed lowering refused it. An error type converts by its
+		// target's `from` or by boxing into a `dyn` it implements, and only so.
+		{"try-result-error-mismatch", "enum E1 { A }\nenum E2 { B }\nfunction f(): Result[i32, E1] { return Ok(1); }\nfunction g(): Result[i32, E2] { let v = f()?; return Ok(v); }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
+		{"try-result-error-to-primitive", "struct NotFound { n: i32 }\nfunction f(): Result[i32, NotFound] { return Ok(1); }\nfunction g(): Result[i32, string] { let v = f()?; return Ok(v); }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
+		{"try-result-error-from-ok", "trait From[T] { function from(value: T): Self; }\nstruct IoErr { code: i32 }\nstruct AppErr { code: i32 }\nimpl From[IoErr] for AppErr { function from(value: IoErr): Self { return AppErr { code: value.code }; } }\nfunction read(): Result[i32, IoErr] { return Err(IoErr { code: 4 }); }\nfunction run(): Result[i32, AppErr] { let v: i32 = read()?; return Ok(v); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"try-result-error-from-other-type", "trait From[T] { function from(value: T): Self; }\nstruct IoErr { code: i32 }\nstruct NetErr { code: i32 }\nstruct AppErr { code: i32 }\nimpl From[NetErr] for AppErr { function from(value: NetErr): Self { return AppErr { code: value.code }; } }\nfunction read(): Result[i32, IoErr] { return Err(IoErr { code: 4 }); }\nfunction run(): Result[i32, AppErr] { let v: i32 = read()?; return Ok(v); }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
+		{"try-result-error-dyn-ok", "trait Error { function code(self: Self): i32; }\nstruct NotFound { n: i32 }\nimpl Error for NotFound { function code(self: Self): i32 { return self.n; } }\nfunction find(): Result[i32, NotFound] { return Err(NotFound { n: 7 }); }\nfunction run(): Result[i32, dyn Error] { let v: i32 = find()?; return Ok(v); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"try-result-error-dyn-unimplemented", "trait Error { function code(self: Self): i32; }\nstruct NotFound { n: i32 }\nfunction find(): Result[i32, NotFound] { return Err(NotFound { n: 7 }); }\nfunction run(): Result[i32, dyn Error] { let v: i32 = find()?; return Ok(v); }\nfunction main(): i32 { return 0; }\n", []string{"E042"}},
+		{"try-result-same-error-ok", "enum E1 { A }\nfunction f(): Result[i32, E1] { return Ok(1); }\nfunction g(): Result[string, E1] { let v = f()?; return Ok(\"x\"); }\nfunction main(): i32 { return 0; }\n", nil},
+		{"try-result-generic-error-ok", "function g[E](r: Result[i32, E]): Result[i32, E] { let v = r?; return Ok(v); }\nfunction main(): i32 { return 0; }\n", nil},
 		// E079 through a VALUE BLOCK (#9553). A value block desugars to a
 		// zero-arg call of a zero-param lambda, and the lowering inlines it rather
 		// than lowering a function, so a `?` inside one still leaves the
@@ -2828,6 +2851,12 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e009-mixed-sign-bitand", "function main(): i32 { let n: i32 = 1; let u: u32 = 2; return (n & u) as i32; }\n", []string{"E009"}},
 		{"e009-mixed-sign-order", "function main(): i32 { let n: i32 = 1; let u: u32 = 2; if (n < u) { return 1; } return 0; }\n", []string{"E009"}},
 		{"e009-mixed-sign-saturating", "function main(): i32 { let n: i32 = 1; let u: u32 = 2; return (n +| u) as i32; }\n", []string{"E009"}},
+		// The saturating and checked operators refuse `usize`, whose bounds
+		// depend on the target (#11852); a fixed width stays clean.
+		{"e009-saturating-usize", "function main(): i32 { let a: usize = 1; let b: usize = 2; let c = a +| b; return 0; }\n", []string{"E009"}},
+		{"e009-saturating-usize-literal", "function main(): i32 { let a: usize = 1; let c = a *| 2; return 0; }\n", []string{"E009"}},
+		{"e009-checked-usize", "function main(): i32 { let a: usize = 1; let b: usize = 2; match (a +? b) { Some(v) => { return 1; }, None => { return 0; } } }\n", []string{"E009"}},
+		{"e009-saturating-u64-ok", "function main(): i32 { let a: u64 = 1 as u64; let b: u64 = 2 as u64; let c = a +| b; return 0; }\n", nil},
 		{"e009-mixed-sign-u8", "function main(): i32 { let s: string = \"abc\"; let n: i32 = 1; return n + s[0]; }\n", []string{"E009"}},
 		// The three shapes that must STAY accepted, which is what stops the
 		// rule from being a blanket "widths must match". Same signedness at
@@ -3806,6 +3835,15 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		// E064 on the annotation with E003 beside it, and E043 on the literal,
 		// never a clean pass that the lowering then refuses.
 		{"imported-struct-unqualified", "import \"std/http\";\nfunction main(): i32 {\n    let small: HttpLimits = http.http_limits();\n    let l: http.HttpLimits = HttpLimits { ...small, body: 1024 };\n    return l.body;\n}\n"},
+		// Option's and Result's methods come from their modules, so with the
+		// import they resolve and a missing one is still E043 (#11852). The
+		// derived and the convert.From-converted shapes are the false
+		// positives the enum-method and `?` error-type rules must not raise.
+		{"option-methods-imported", "import \"std/option\";\nfunction main(): i32 { let x: Option[i32] = Some(3); let y: Option[i32] = x.map((v: i32): i32 => v + 1); if (x.is_some()) { return y.unwrap_or(0); } return 0; }\n"},
+		{"result-methods-imported", "import \"std/result\";\nfunction main(): i32 { let r: Result[i32, string] = Ok(2); return r.unwrap_or(0); }\n"},
+		{"option-method-missing-imported", "import \"std/option\";\nfunction main(): i32 { let x: Option[i32] = Some(3); return x.nope(); }\n"},
+		{"derived-enum-methods", "import \"core/cmp\";\n@derive(cmp.Display, cmp.Eq)\nenum Color { Red, Green }\nfunction main(): i32 { let c: Color = Color.Red; if (c.eq(Color.Green)) { return 1; } return c.to_string().len(); }\n"},
+		{"try-error-via-imported-from", "import \"std/convert\";\nstruct IoErr { code: i32 }\nstruct AppErr { code: i32 }\nimpl convert.From[IoErr] for AppErr { function from(value: IoErr): Self { return AppErr { code: value.code + 1 }; } }\nfunction read(): Result[string, IoErr] { return Err(IoErr { code: 4 }); }\nfunction run(): Result[i32, AppErr] { let s: string = read()?; return Ok(s.len()); }\nfunction main(): i32 { match (run()) { Ok(v) => { return v; }, Err(e) => { return e.code; } } }\n"},
 		{"imported-struct-unqualified-literal", "import \"std/http\";\nfunction main(): i32 {\n    let l: http.HttpLimits = HttpLimits { request_line: 1, header_bytes: 2, header_fields: 3, body: 1024 };\n    return l.body;\n}\n"},
 		// Seven programs native accepts that the self-host checker refused (#10767),
 		// and the typed result of an inherent associated call that one of them needed.

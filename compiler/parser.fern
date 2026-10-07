@@ -25267,7 +25267,7 @@ function synth_from_json_value(sd: StructDecl): FuncDecl {
     if (cont == "option") {
       getter = "from_json_optional_field";
     }
-    let decode: ast.Expr = e_call(e_field_access(e_ident(elem), "from_json_value"), [e_ident(value)]);
+    let decode: ast.Expr = ast.ExprCall { callee: e_field_access(e_ident("json"), "from_json_elem"), args: [e_ident(value)], line: 0, col: 0, type_args: [elem], ty: "" };
     if (cont == "array") {
       decode = ast.ExprCall { callee: e_field_access(e_ident("json"), "from_json_array"), args: [e_ident(value)], line: 0, col: 0, type_args: [elem], ty: "" };
     }
@@ -28166,6 +28166,12 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
           }
           continue;
         }
+        continue;
+      }
+      let attr_name: string = probe.peek_ident();
+      if (attr_name.len() > 0 && attr_name != "derive") {
+        top_stmts = top_stmts.append(decl_sentinel(p, "unknown attribute @" + attr_name + " (only @derive, @import, @export, @must_consume, @try, @inline, and @noinline are supported)"));
+        p = probe.advance();
         continue;
       }
       let (dr_derives, dr_p) = parse_derive_attr(p);

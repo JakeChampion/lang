@@ -1746,6 +1746,14 @@ pub function decode[T: FromJson](text: string): Result[T, string] {
   return Err("");
 }
 
+// `from_json_elem[T](v)` — `v` decoded as a `T`. A derived FromJson decodes
+// each plain field through it, so the field type is named in type position,
+// where an imported module of the same name (`std/i32`, `std/string`) cannot
+// take it for a module-qualified call.
+pub function from_json_elem[T: FromJson](v: JsonValue): Result[T, string] {
+  return T.from_json_value(v);
+}
+
 // `from_json_array[T](v)` — every element of a JSON array as a `T`; an
 // element's shape error is prefixed with its index.
 pub function from_json_array[T: FromJson](v: JsonValue): Result[T[], string] {

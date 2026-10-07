@@ -143,6 +143,37 @@ function main(): i32 {
 An impl must bind every associated type the trait declares, and no
 others.
 
+Behind [`dyn`](#runtime-dispatch--dyn-trait) the concrete type is
+erased, so a `dyn` of a trait with an associated type must pin it:
+`dyn Container[Item = i32]`. Leaving it unpinned is `E021`.
+
+```fern
+import "std/i32";
+
+trait Container {
+    type Item;
+    function first(self: Self): Self::Item;
+}
+
+struct Ints { xs: i32[] }
+struct One { x: i32 }
+
+impl Container for Ints {
+    type Item = i32;
+    function first(self: Self): Self::Item { return self.xs[0]; }
+}
+impl Container for One {
+    type Item = i32;
+    function first(self: Self): Self::Item { return self.x; }
+}
+
+function main(): i32 {
+    let cs: dyn Container[Item = i32][] = [Ints { xs: [7, 8] }, One { x: 3 }];
+    for c in cs { print(c.first().to_string()); }   // 7, then 3
+    return 0;
+}
+```
+
 ### Associated functions
 
 A trait function without `self` is called on the type: `Point.default()`,

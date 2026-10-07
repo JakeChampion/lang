@@ -46,6 +46,9 @@ func TestSelfHostTangleDifferentialX86_64(t *testing.T) {
 		// A `file=PATH` document tangles to one module per path, under the
 		// `// ==> path <==` banner.
 		{"multi-file", "```fern file=lib.fern\npub function tag(): i32 { return 5; }\n```\n\n```fern file=main.fern entry\nimport \"./lib\";\nfunction main(): i32 { return lib.tag(); }\n```\n", true},
+		// An escaped marker line tangles to the literal marker, indentation
+		// kept, rather than being taken as a reference.
+		{"escaped-marker", "```fern\n<<*>>=\nfunction main(): i32 {\n    <<body>>\n}\n```\n\n```fern\n<<body>>=\n  \\<<not a ref>>\nreturn 0;\n```\n", true},
 		// A document with no root chunk is refused by both.
 		{"no-root-chunk", "just prose, no chunks at all\n", false},
 	} {

@@ -18937,7 +18937,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			for _, t := range []ast.Type{lt, rt} {
 				if nt, ok := t.(ast.NumberType); ok && nt.IsPointerWidth() {
 					c.errfCode(n.P, "E009", "checked operator %q is not supported on `usize` — its overflow bound is target-width-dependent; cast to a fixed-width integer (`as u64`) first", n.Op)
-					return ast.NumberType{}
+					return ast.EnumType{Name: "Option", Args: []ast.Type{ast.NumberType{}}}
 				}
 			}
 			common, ok := commonIntegerWidth(lt, rt)

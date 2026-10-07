@@ -14,6 +14,8 @@
 //     that wrote it, keeping its sub-path;
 //   * a module's IDENTITY is the file it resolves to, so two modules sharing
 //     a basename both load and flatten gives each its own prefix;
+//   * a `.fern` that is not there is read from its literate `.fern.md`
+//     sibling, tangled (read_module);
 //   * a `std/` or `core/` import is skipped when no stdlib was given (see
 //     stdlib_not_given); any other import that resolves to no readable file
 //     is returned as a diagnostic for the driver to report.
@@ -25,6 +27,7 @@ import "./lexer";
 import "./parser";
 import "./flatten";
 import "./fern_toml";
+import "./literate";
 import "./util";
 import "core/map";
 
@@ -78,30 +81,65 @@ pub function read_error_reason(e: IoError): string {
   }
 }
 
-// Resolved is a module's source together with the package directory it was
-// found under: the directory it was looked up in, or the dependency's own
-// root when a manifest resolved it. load_bundle resolves the module's imports
-// against that directory; load_graph resolves them beside the file instead.
-// `err` is set when a candidate was present but unreadable, and `err_path` names
-// it; it ends the search rather than letting a later candidate shadow the file
-// (#10142). `shown` names the module for a diagnostic: the file it was read
-// from, or `stdlib://<path>` for an overlay hit.
-pub struct Resolved { src: string, dir: string, ok: boolean, err: string, err_path: string, shown: string }
+// Resolved is a module's source. `err` is set when a candidate was present but
+// unreadable, and `err_path` names it; it ends the search rather than letting a
+// later candidate shadow the file (#10142). `shown` names the module: the file
+// it was read from, or `stdlib://<path>` for an overlay hit. A module's own
+// imports resolve beside the file `shown` names. `map` leads a module tangled
+// from a literate document back to it.
+pub struct Resolved { src: string, ok: boolean, err: string, err_path: string, shown: string, map: util.LineMap }
 
 function res_none(): Resolved {
-  return Resolved { src: "", dir: "", ok: false, err: "", err_path: "", shown: "" };
+  return Resolved { src: "", ok: false, err: "", err_path: "", shown: "", map: util.no_line_map() };
 }
 
-// res_read reads `<dir><rel>.fern` and reports `dir` as its package directory,
-// not the sub-directory the file sits in: `std/float` reaching
-// `<dir>std/float.fern` still resolves its own `std/string` under `<dir>`.
+// res_read reads `<dir><rel>.fern`.
 function res_read(dir: string, rel: string): Resolved {
-  match (read_file(dir + rel + ".fern")) {
+  return read_module(dir + rel + ".fern");
+}
+
+// read_module reads the module file `path`, a `.fern`, or — when there is no
+// such file — the literate document `path.md`, tangled to one module. A plain
+// `.fern` wins over a `.fern.md` of the same name.
+pub function read_module(path: string): Resolved {
+  match (read_file(path)) {
     Ok(s) => {
-      return Resolved { ...res_none(), src: s, dir: dir, ok: true, shown: dir + rel + ".fern" };
+      return Resolved { ...res_none(), src: s, ok: true, shown: path };
     },
     Err(e) => {
-      return Resolved { ...res_none(), err: read_error_reason(e), err_path: dir + rel + ".fern" };
+      let reason: string = read_error_reason(e);
+      if (reason.len() > 0) {
+        return Resolved { ...res_none(), err: reason, err_path: path };
+      }
+    }
+  }
+  let doc: string = path + ".md";
+  match (read_file(doc)) {
+    Ok(s) => {
+      return tangle_module(path, doc, s);
+    },
+    Err(e) => {
+      let reason: string = read_error_reason(e);
+      if (reason.len() > 0) {
+        return Resolved { ...res_none(), err: reason, err_path: doc };
+      }
+    }
+  }
+  return Resolved { ...res_none(), err_path: path };
+}
+
+// tangle_module is the module `path` read from the literate document `doc`
+// holding `src`. A `file=` document is several modules, so it is refused.
+function tangle_module(path: string, doc: string, src: string): Resolved {
+  if (literate.parse_file_pieces(src).len() > 0) {
+    return Resolved { ...res_none(), err: "a multi-file literate document tangles to several modules, not one importable module", err_path: doc };
+  }
+  match (literate.tangle(src)) {
+    literate.TangleOk(o) => {
+      return Resolved { ...res_none(), src: o.code, ok: true, shown: path, map: util.LineMap { doc: doc, lits: o.lits, shifts: o.shifts } };
+    },
+    literate.TangleErr(e) => {
+      return Resolved { ...res_none(), err: e.msg, err_path: doc + ":" + util.i32_to_string(e.line) + ":" + util.i32_to_string(e.col) };
     }
   }
   return res_none();
@@ -151,15 +189,13 @@ pub function no_overlay(): Overlay {
 // the line in the same place — `stdlib.ModuleKey(importPath)` runs before any
 // path join.
 //
-// An overlay hit reports `dir` unchanged, so the resolved module's own imports
-// resolve against the root its importer used. Stdlib modules import each other
-// package-root-relative (`import "std/string"`, never `./string`), so those
-// re-enter the overlay whatever `dir` is; passing it through keeps the
-// fallthrough-to-disk case byte-identical to what it was.
+// An overlay module has no directory of its own. Stdlib modules import each
+// other package-root-relative (`import "std/string"`, never `./string`), so
+// those re-enter the overlay wherever they are written.
 pub function resolve_module(ov: Overlay, dir: string, path: string, name: string): Resolved {
   let oi: i32 = util.index_of_str(ov.paths, rel_path(path));
   if (oi >= 0) {
-    return Resolved { ...res_none(), src: ov.srcs[oi], dir: dir, ok: true, shown: "stdlib://" + rel_path(path) + ".fern" };
+    return Resolved { ...res_none(), src: ov.srcs[oi], ok: true, shown: "stdlib://" + rel_path(path) + ".fern" };
   }
   if (ov.sealed) {
     return Resolved { ...res_none(), err_path: "stdlib://" + rel_path(path) + ".fern" };
@@ -177,7 +213,7 @@ pub function resolve_module(ov: Overlay, dir: string, path: string, name: string
   // deps resolved from the per-machine content-addressed store via the
   // `env` runtime builtin. Dormant when no fern.toml is present, so a
   // manifest-less build (every current compiler source) is unchanged.
-  let man: Resolved = try_manifest(dir, name);
+  let man: Resolved = try_manifest(dir, path);
   if (man.ok || man.err.len() > 0) {
     return man;
   }
@@ -185,86 +221,111 @@ pub function resolve_module(ov: Overlay, dir: string, path: string, name: string
   return direct;
 }
 
-// try_manifest resolves a DECLARED dependency `name` from the manifest governing
-// `from` (manifest_dir) across the disk-resolvable forms. Not-ok when there is
-// no manifest, `name` is not a declared dep, or the form is not disk-resolvable.
-function try_manifest(from: string, name: string): Resolved {
+// try_manifest resolves an import of a DECLARED dependency from the manifest
+// governing `from` (manifest_dir): the import's first segment names the
+// dependency, and the rest is a module inside it — `helper` is the package's
+// lib module, `helper/extra` its `extra.fern`. Not-ok when there is no
+// manifest, the segment is not a declared dep, or its form is not
+// disk-resolvable.
+function try_manifest(from: string, path: string): Resolved {
   let dir: string = manifest_dir(from);
   match (read_file(dir + "fern.toml")) {
     Ok(src) => {
-      let m: fern_toml.Manifest = fern_toml.parse(src);
-      let kind: string = fern_toml.dep_kind(m, name);
-      if (kind.len() == 0) {  // undeclared / unrecognised form
-        return res_none();
-      }
-
-      // Vendored mode: a declared dep resolves from <vendor-root>/
-      // vendor/<name>/ when that tree exists — offline, form-agnostic,
-      // taking precedence (mirrors the native vendored-mode rule).
-      let vend: Resolved = try_vendor(dir, name);
-      if (vend.ok) {
-        return vend;
-      }
-
-      if (kind == "path") {
-        match (fern_toml.dep_path(m, name)) {
-          Some(dp) => {
-            return load_lib(dir + dp + "/");
-          },
-          None => {
-            return res_none();
+      match (dep_dir(fern_toml.parse(src), dir, util.dep_name(path))) {
+        Some(dd) => {
+          let rest: string = util.dep_subpath(path);
+          if (rest.len() == 0) {
+            return load_lib(dd);
           }
-        }
+          return res_read(dd, rest);
+        },
+        None => {}
       }
-      if (kind == "workspace") {
-        return load_workspace_member(dir, name);
-      }
-      if (kind == "version") {
-        return load_locked(dir, name);
-      }
-      // url+hash dep (#4949): resolve from the content-addressed
-      // store by the manifest's declared hash. Read-only — the
-      // store is populated (and sha256-verified) by native
-      // `fern -fetch`; the loader trusts it exactly like the
-      // native loader does at build time.
-      if (kind == "url") {
-        match (fern_toml.dep_hash(m, name)) {
-          Some(h) => {
-            return load_from_store(h);
-          },
-          None => {
-            return res_none();
-          }
-        }
-      }
-      return res_none();
     },
-    Err(e) => {
-      return res_none();
-    }
+    Err(e) => {}
   }
   return res_none();
+}
+
+// dep_dir is the package directory of the dependency `name` that manifest `m`
+// (read from `dir`) declares, slash-terminated, or None when it declares no
+// such dependency or its form is not disk-resolvable.
+function dep_dir(m: fern_toml.Manifest, dir: string, name: string): Option[string] {
+  let kind: string = fern_toml.dep_kind(m, name);
+  if (kind.len() == 0) {
+    return None;
+  }
+  // Vendored mode: a declared dep resolves from <vendor-root>/vendor/<name>/
+  // when that tree exists — offline, form-agnostic, taking precedence (mirrors
+  // the native vendored-mode rule).
+  match (vendor_dir(dir, name)) {
+    Some(vd) => {
+      return Some(vd);
+    },
+    None => {}
+  }
+  if (kind == "path") {
+    match (fern_toml.dep_path(m, name)) {
+      Some(dp) => {
+        return Some(dir + dp + "/");
+      },
+      None => {}
+    }
+  } else if (kind == "workspace") {
+    return workspace_member_dir(dir, name);
+  } else if (kind == "version") {
+    return locked_dir(dir, name);
+  } else if (kind == "url") {
+    // url+hash dep (#4949): the content-addressed store, by the manifest's
+    // declared hash. Read-only — `fern -fetch` populates and sha256-verifies
+    // it; the loader trusts it as the native loader does at build time.
+    match (fern_toml.dep_hash(m, name)) {
+      Some(h) => {
+        return store_dir(h);
+      },
+      None => {}
+    }
+  }
+  return None;
 }
 
 // manifest_dir is the nearest directory at or above `dir` holding a fern.toml,
 // as native's manifest.FindForDir walks, or `dir` itself when none does.
 pub function manifest_dir(dir: string): string {
+  match (find_manifest(dir)) {
+    Some(d) => {
+      return d;
+    },
+    None => {
+      return dir;
+    }
+  }
+  return dir;
+}
+
+// find_manifest is the nearest directory at or above `dir` holding a fern.toml,
+// or None when none does.
+pub function find_manifest(dir: string): Option[string] {
   let d: string = dir;
   let steps: i32 = 0;
   while (steps < 64) {
     match (read_file(d + "fern.toml")) {
       Ok(src) => {
-        return d;
+        return Some(d);
       },
       Err(e) => {}
     }
-    if (d.len() == 0 || d == "/") {
-      return dir;
+    match (up_dir(d)) {
+      Some(u) => {
+        d = u;
+      },
+      None => {
+        return None;
+      }
     }
-    d = parent_dir(d);
     steps = steps + 1;
   }
-  return dir;
+  return None;
 }
 
 // load_lib reads a dependency directory's own fern.toml for its `lib`
@@ -280,48 +341,75 @@ function load_lib(depdir: string): Resolved {
   return res_read(depdir, strip_fern_ext(deplib));
 }
 
-// parent_dir returns `dir` with its last path segment removed (both
-// expected to end in '/'): "a/b/c/" → "a/b/", "a/" → "", "" → "".
-function parent_dir(dir: string): string {
-  if (dir.len() == 0) {
-    return "";
+// up_dir is the directory above `dir` (both end in '/', "" naming the working
+// directory), or None at the filesystem root. Past a relative path's own
+// segments it climbs on through `../`, so a walk from a relative path reaches
+// the ancestors the same walk from its absolute path does.
+pub function up_dir(dir: string): Option[string] {
+  if (dir == "/") {
+    return None;
   }
-  // Drop the trailing '/', then cut back to (and including) the prior '/'.
-  let end: i32 = dir.len() - 1;
-  let i: i32 = end - 1;
-  while (i >= 0) {
-    if (dir[i] == b'/') {
-      return slice_unchecked(dir, 0, i + 1) + "";
-    }
-    i = i - 1;
+  let up: string = util.clean_path(dir + "..");
+  if (up == "/") {
+    return Some(up);
   }
-  return "";
+  if (up == ".") {
+    return Some("");
+  }
+  up = up + "/";
+  if (util.str_has_prefix(up, "../") && same_dir(dir, up)) {
+    return None;
+  }
+  return Some(up);
 }
 
-// try_vendor resolves `name` from `<vendor-root>/vendor/<name>/` when such
-// a tree governs `dir` — either dir's own vendor/ or an ancestor's (a
-// workspace member sharing the root vendor/). Walks up reading each level.
-function try_vendor(dir: string, name: string): Resolved {
+// same_dir is true when directories `a` and `b` are one directory, or either
+// cannot be read: above the root, `../` names the root again.
+function same_dir(a: string, b: string): boolean {
+  match (stat(a + ".")) {
+    Ok(sa) => {
+      match (stat(b + ".")) {
+        Ok(sb) => {
+          return sa.dev == sb.dev && sa.ino == sb.ino;
+        },
+        Err(e) => {}
+      }
+    },
+    Err(e) => {}
+  }
+  return true;
+}
+
+// vendor_dir is `<vendor-root>/vendor/<name>/` when such a tree governs `dir`
+// — either dir's own vendor/ or an ancestor's (a workspace member sharing the
+// root vendor/). Walks up reading each level.
+function vendor_dir(dir: string, name: string): Option[string] {
   let d: string = dir;
   let steps: i32 = 0;
-  while (d.len() > 0 && steps < 64) {
-    let cand: Resolved = load_lib(d + "vendor/" + name + "/");
-    if (cand.ok) {
-      return cand;
+  while (steps < 64) {
+    if (util.is_dir(d + "vendor/" + name)) {
+      return Some(d + "vendor/" + name + "/");
     }
-    d = parent_dir(d);
+    match (up_dir(d)) {
+      Some(u) => {
+        d = u;
+      },
+      None => {
+        return None;
+      }
+    }
     steps = steps + 1;
   }
-  return res_none();
+  return None;
 }
 
-// load_workspace_member finds the enclosing [workspace] root (the nearest
-// ancestor fern.toml with a members list) and loads the member whose
-// package name == `name`.
-function load_workspace_member(dir: string, name: string): Resolved {
+// workspace_member_dir finds the enclosing [workspace] root (the nearest
+// ancestor fern.toml with a members list) and returns the directory of the
+// member whose package name == `name`.
+function workspace_member_dir(dir: string, name: string): Option[string] {
   let d: string = dir;
   let steps: i32 = 0;
-  while (d.len() > 0 && steps < 64) {
+  while (steps < 64) {
     match (read_file(d + "fern.toml")) {
       Ok(src) => {
         let wm: fern_toml.Manifest = fern_toml.parse(src);
@@ -330,19 +418,26 @@ function load_workspace_member(dir: string, name: string): Resolved {
           while (mi < wm.members.len()) {
             let memdir: string = d + wm.members[mi] + "/";
             if (member_name(memdir) == name) {
-              return load_lib(memdir);
+              return Some(memdir);
             }
             mi = mi + 1;
           }
-          return res_none();  // workspace found, no such member
+          return None;  // workspace found, no such member
         }
       },
       Err(e) => {}
     }
-    d = parent_dir(d);
+    match (up_dir(d)) {
+      Some(u) => {
+        d = u;
+      },
+      None => {
+        return None;
+      }
+    }
     steps = steps + 1;
   }
-  return res_none();
+  return None;
 }
 
 // member_name returns a package directory's declared [package] name, or ""
@@ -359,20 +454,20 @@ function member_name(memdir: string): string {
   return "";
 }
 
-// load_locked resolves a versioned dep `name` through `<dir>fern.lock`,
-// loading the pinned version's lib when its source is a local `path`. A
-// url-sourced lock entry resolves through the store.
-function load_locked(dir: string, name: string): Resolved {
+// locked_dir resolves a versioned dep `name` through `<dir>fern.lock` to the
+// pinned version's directory when its source is a local `path`. A url-sourced
+// lock entry resolves through the store.
+function locked_dir(dir: string, name: string): Option[string] {
   match (read_file(dir + "fern.lock")) {
     Ok(src) => {
       let lr: fern_toml.LockResult = fern_toml.parse_lock(src);
       if (lr.err.len() > 0) {
-        return res_none();
+        return None;
       }
       let entries: fern_toml.LockEntry[] = lr.entries;
       match (fern_toml.lock_path_of(entries, name)) {
         Some(p) => {
-          return load_lib(p + "/");
+          return Some(p + "/");
         },
         None => {}
       }
@@ -380,21 +475,17 @@ function load_locked(dir: string, name: string): Resolved {
       // the content-addressed store, keyed by the lock's hash.
       match (fern_toml.lock_hash_of(entries, name)) {
         Some(h) => {
-          return load_from_store(h);
+          return store_dir(h);
         },
-        None => {
-          return res_none();
-        }
+        None => {}
       }
     },
-    Err(e) => {
-      return res_none();
-    }
+    Err(e) => {}
   }
-  return res_none();
+  return None;
 }
 
-// load_from_store resolves a url/hash dependency from the per-machine
+// store_dir is a url/hash dependency's directory in the per-machine
 // content-addressed store (internal/pkg/pkgcache layout: <root>/<hex>/, with
 // root = $FERN_CACHE_DIR/pkgs when set, else <user-cache-dir>/fern/pkgs).
 // Mirrors native pkgcache.Root(): an explicit $FERN_CACHE_DIR wins and is
@@ -408,37 +499,35 @@ function load_locked(dir: string, name: string): Resolved {
 // The hash is re-validated here even though every parse boundary already
 // does: the hex is joined onto the store root, so a later route reaching this
 // unchecked would be a directory traversal (#8464).
-function load_from_store(hash: string): Resolved {
+function store_dir(hash: string): Option[string] {
   let hr: fern_toml.HashResult = fern_toml.validate_hash(hash);
   if (hr.err.len() > 0) {
-    return res_none();
+    return None;
   }
   let hex: string = hr.hex;
   match (env("FERN_CACHE_DIR")) {
     Some(d) => {
-      return load_lib(d + "/pkgs/" + hex + "/");
+      return Some(d + "/pkgs/" + hex + "/");
     },
     None => {}
   }
   match (env("XDG_CACHE_HOME")) {
     Some(x) => {
-      return load_lib(x + "/fern/pkgs/" + hex + "/");
+      return Some(x + "/fern/pkgs/" + hex + "/");
     },
     None => {}
   }
   match (env("HOME")) {
     Some(h) => {
-      let linux: Resolved = load_lib(h + "/.cache/fern/pkgs/" + hex + "/");
-      if (linux.ok) {
-        return linux;
+      let linux: string = h + "/.cache/fern/pkgs/" + hex + "/";
+      if (util.is_dir(linux)) {
+        return Some(linux);
       }
-      return load_lib(h + "/Library/Caches/fern/pkgs/" + hex + "/");
+      return Some(h + "/Library/Caches/fern/pkgs/" + hex + "/");
     },
-    None => {
-      return res_none();
-    }
+    None => {}
   }
-  return res_none();
+  return None;
 }
 
 // strip_fern_ext removes a trailing ".fern" so the name joins onto
@@ -562,10 +651,14 @@ function vendored_stdlib_dir(ov: Overlay, dir: string): string {
     if (util.is_dir(d + "std") || util.is_dir(d + "core")) {
       return d;
     }
-    if (d.len() == 0 || d == "/") {
-      return dir;
+    match (up_dir(d)) {
+      Some(u) => {
+        d = u;
+      },
+      None => {
+        return dir;
+      }
     }
-    d = parent_dir(d);
     steps = steps + 1;
   }
   return dir;

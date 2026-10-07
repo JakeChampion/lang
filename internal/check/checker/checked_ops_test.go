@@ -78,6 +78,10 @@ function main(): i32 { return match (f()) { Some(v) => v as i32, None => 0 }; }`
 	// usize is rejected: the overflow bound is target-width-dependent.
 	mustErr(`function main(): i32 { let a: usize = 1; let b: usize = 2; match (a +? b) { Some(v) => { return v as i32; }, None => { return 0; } } }`,
 		"not supported on `usize`")
+	// The refused operator still yields an Option, so the match on it is clean.
+	if err := checkSource(t, `function main(): i32 { let a: usize = 1; let b: usize = 2; match (a +? b) { Some(v) => { return 1; }, None => { return 0; } } }`); err == nil || strings.Contains(err.Error(), "non-enum") {
+		t.Errorf("want the usize E009 alone, got: %v", err)
+	}
 	// /? and %? are integer-only and usize-rejecting too.
 	mustErr(`function main(): i32 { let a: f64 = 1.0; let b: f64 = 2.0; let c: Option[f64] = a /? b; return 0; }`,
 		`requires an integer type`)

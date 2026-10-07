@@ -313,8 +313,19 @@ returns one `FileResult{Path, Code, LineMap, IsEntry}` per output path, and
 shared recursion behind both `Tangle` (root chunk) and `TangleFiles` (file-root
 bodies).
 
-On the CLI side (`cmd/fern/main.go`): `loadEntry` tangles a `.fern.md` entry in
-memory before the normal compile / `-check` / `-interp` pipeline, and
+The compiler does the same for every `-target` compile, and for its own
+`-check` / `-interp`: `compiler/literate.fern` is the engine's port (tangle,
+`file=` roots, the line map, the entry pick, unused-chunk warnings);
+`entry_sources` in `compiler/fern.fern` tangles a `.fern.md` entry to its
+module, or to every `file=` module with the entry first; `modloader.read_module`
+falls back to a `.fern.md` sibling for an import; and each module's
+`util.LineMap` moves a diagnostic onto its document when it is printed
+(`util.doc_diag`). Positions are remapped there rather than in the lexer
+because the compiler orders and identifies expressions by position, and a chunk
+can be expanded twice.
+
+On the Go side (`cmd/fern/main.go`): `loadEntry` tangles a `.fern.md` entry in
+memory before the `-check` / `-interp` pipeline, and
 `loadMultiFileEntry` feeds every generated module to `modload.LoadWith` as
 virtual-file overrides (keyed by path relative to the document dir), loading from
 the entry.

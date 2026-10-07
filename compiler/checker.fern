@@ -13868,6 +13868,9 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
             out = util.append_diags(out, method_type_arg_diags(c, mfa.field, umsig, un.args, s));
             out = util.append_diags(out, uninferred_method_diags(c, un.name, mfa.field, umsig));
           }
+          if (s.method_missing(recv, mfa.field)) {
+            out = out.append(dg_at("E043", s.unknown_method_advice("", mfa.field, recv), mfa.line, mfa.col));
+          }
         },
         _ => {
           // A bounded type parameter receiver: `a.f(...)` where `a: T`
@@ -14022,6 +14025,8 @@ function call_diags_binary(b: ast.ExprBinary, s: Scope, out: util.Diag[]): util.
     if (!is_unknown(qlt) && !is_unknown(qrt)) {
       if (!is_integer(qlt) || !is_integer(qrt)) {
         out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching integer operands, got " + type_label(qlt) + " and " + type_label(qrt), b.line, b.col));
+      } else if (is_usize(qlt) || is_usize(qrt)) {
+        out = out.append(dg_at("E009", "saturating operator \"" + b.op + "\" is not supported on `usize` — its clamp bounds are target-width-dependent; cast to a fixed-width integer (`as u64`) first", b.line, b.col));
       } else if (!int_operands_agree(qlt, qrt, b.left, b.right)) {
         out = out.append(mixed_int_diag(b.op, qlt, qrt, b.line, b.col));
       }
@@ -14035,6 +14040,8 @@ function call_diags_binary(b: ast.ExprBinary, s: Scope, out: util.Diag[]): util.
     if (!is_unknown(klt) && !is_unknown(krt)) {
       if (!is_integer(klt) || !is_integer(krt)) {
         out = out.append(dg_at("E009", "operator \"" + b.op + "\" requires matching integer operands, got " + type_label(klt) + " and " + type_label(krt), b.line, b.col));
+      } else if (is_usize(klt) || is_usize(krt)) {
+        out = out.append(dg_at("E009", "checked operator \"" + b.op + "\" is not supported on `usize` — its overflow bound is target-width-dependent; cast to a fixed-width integer (`as u64`) first", b.line, b.col));
       } else if (!int_operands_agree(klt, krt, b.left, b.right)) {
         out = out.append(mixed_int_diag(b.op, klt, krt, b.line, b.col));
       }
@@ -14218,6 +14225,8 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
             // slots (#9344).
             if (is_primitive_type(s.try_ret)) {
               out = out.append(dg_at("E042", "`?` on " + tu.name + " requires the surrounding function to return " + tu.name + ", got " + type_label(s.try_ret), u.line, u.col));
+            } else {
+              out = util.append_diags(out, try_residual_diags(s, trt, u));
             }
           } else {
             // E042 not-a-`?`-type (#9331). The conservatism above covers a
@@ -14238,6 +14247,56 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
   }
 
   return out;
+}
+
+// try_residual_diags: E042 for a `?` on a Result whose error type is not the
+// function's and converts to it neither way native's checker allows: boxed
+// into a `dyn` error type it implements, or through the function's error
+// type's `from(E1)` constructor. Silent unless both error types resolved.
+function try_residual_diags(s: Scope, src: typeinfo.Type, u: ast.ExprUnary): util.Diag[] {
+  let out: util.Diag[] = [];
+  let sr: typeinfo.Type = result_residual(src);
+  let rr: typeinfo.Type = result_residual(s.try_ret);
+  if (!spellable(sr) || !spellable(rr) || type_eq(sr, rr)) {
+    return out;
+  }
+  let converts: boolean = from_converts(s, sr, rr);
+  if let typeinfo.TypeDyn(_) = rr {
+    converts = dyn_conforms(sr, rr, s);
+  }
+  if (converts) {
+    return out;
+  }
+  let sl: string = type_label(sr);
+  let rl: string = type_label(rr);
+  return out.append(dg_at("E042", "`?` on Result carrying " + sl + " but the surrounding function carries " + rl + "; the error types must match (implement " + sl + " for a `dyn`-error, or a `from(" + sl + ")` constructor on " + rl + " for the conversion)", u.line, u.col));
+}
+
+// result_residual is a Result type's error argument, unknown for any other.
+function result_residual(t: typeinfo.Type): typeinfo.Type {
+  if let typeinfo.TypeUnion(tu) = t {
+    if (tu.name == "Result" && tu.args.len() == 2) {
+      return tu.args[1];
+    }
+  }
+  return t_unknown("not a Result");
+}
+
+// from_converts reports whether the nominal type `to` has an associated
+// `from` taking `from_t`. A parameter this checker could not resolve counts.
+function from_converts(s: Scope, from_t: typeinfo.Type, to: typeinfo.Type): boolean {
+  let owner: string = struct_name_of(to);
+  if let typeinfo.TypeUnion(tu) = to {
+    owner = tu.name;
+  }
+  if (owner.len() == 0) {
+    return false;
+  }
+  let sig: FuncSig = s.lookup_assoc_sig(owner, "from");
+  if (sig.name.len() == 0 || sig.param_types.len() != 1) {
+    return false;
+  }
+  return !spellable(sig.param_types[0]) || type_eq(sig.param_types[0], from_t);
 }
 
 function call_diags_array(a: ast.ExprArray, s: Scope, out: util.Diag[]): util.Diag[] {
@@ -14925,6 +14984,12 @@ function (s: Scope) method_missing(recv: typeinfo.Type, field: string): boolean 
         return false;
       }
       return true;
+    },
+    typeinfo.TypeUnion(un) => {
+      // Option and Result are declared by no module unless imported; any
+      // other union must be declared here for its method table to be whole.
+      let declared: boolean = un.name == "Option" || un.name == "Result" || s.lookup_union(un.name).name.len() > 0;
+      return declared && s.lookup_method(field, un.name).name.len() == 0 && is_unknown(builtin_method_sig(un.name, field));
     },
     _ => {
       return false;
@@ -21453,17 +21518,24 @@ function e021_dyn_target(type_name: string): string {
   if (type_name.len() < 5 || slice_unchecked(type_name, 0, 4) != "dyn ") {
     return "";
   }
-  let t: str = slice_unchecked(type_name, 4, type_name.len());
-  while (t.len() >= 2 && t[t.len() - 2] == b'[' && t[t.len() - 1] == b']') {
-    t = slice_unchecked(t, 0, t.len() - 2);
-  }
+  let t: string = e021_dyn_element(type_name);
   // An associated-type PIN list (`dyn Holder[Item = i32]`) or a generic
   // instantiation (`dyn Greet[i32]`) trails the trait name in brackets. The
   // trait NAME is what classifies, so drop it — the pins are read separately
   // by e021_dyn_pin_names. See docs/ASSOCIATED-TYPES.md.
-  let cut: i32 = e021_bracket_open(t + "");
+  let cut: i32 = e021_bracket_open(t);
   if (cut > 0) {
-    t = slice_unchecked(t, 0, cut);
+    return slice_unchecked(t, 0, cut) + "";
+  }
+  return t;
+}
+
+// e021_dyn_element returns a `dyn ` spelling's tail with every trailing `[]`
+// array suffix removed: `dyn Holder[Item = i32][]` gives `Holder[Item = i32]`.
+function e021_dyn_element(type_name: string): string {
+  let t: str = slice_unchecked(type_name, 4, type_name.len());
+  while (t.len() >= 2 && t[t.len() - 2] == b'[' && t[t.len() - 1] == b']') {
+    t = slice_unchecked(t, 0, t.len() - 2);
   }
   return t + "";
 }
@@ -21498,7 +21570,7 @@ function e021_dyn_pin_names(type_name: string): string[] {
   if (type_name.len() < 5 || slice_unchecked(type_name, 0, 4) != "dyn ") {
     return out;
   }
-  let t: string = slice_unchecked(type_name, 4, type_name.len()) + "";
+  let t: string = e021_dyn_element(type_name);
   let open: i32 = e021_bracket_open(t);
   if (open < 0) {
     return out;

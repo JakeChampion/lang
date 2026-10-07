@@ -87,6 +87,28 @@ function main(): i32 {
 }
 `
 
+// dynAssocPinArraySrc: the pinned dyn as an array ELEMENT, in a local, a
+// parameter and a return type. The self-host read the `[]` suffix as the pin
+// list and refused each as unpinned (E021, #11848).
+const dynAssocPinArraySrc = `import "std/i32";
+trait Holder { type Item; function get(self: Self): Self::Item; }
+struct B { v: i32 }
+impl Holder for B { type Item = i32; function get(self: Self): Self::Item { return self.v; } }
+function mk(): dyn Holder[Item = i32][] { return [B { v: 5 }, B { v: 6 }]; }
+function sum(hs: dyn Holder[Item = i32][]): i32 {
+    let t = 0;
+    for h in hs { t = t + h.get(); }
+    return t;
+}
+function main(): i32 {
+    let hs: dyn Holder[Item = i32][] = mk();
+    let one: dyn Holder[Item = i32][] = [B { v: 4 }];
+    for h in one { print(h.get().to_string()); }
+    print(sum(hs).to_string());
+    return 0;
+}
+`
+
 func TestSelfHostDynGenericTwoInstantiations(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {
@@ -96,6 +118,7 @@ func TestSelfHostDynGenericTwoInstantiations(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	interpBin := buildLangBinForInterp(t)
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
 	selfHostBin := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
@@ -105,9 +128,13 @@ func TestSelfHostDynGenericTwoInstantiations(t *testing.T) {
 		{"maps", dynGenericTwoInstantiationsMapsSrc, "30"},
 		{"mixed_pin", dynMixedPinSrc, "12"},
 		{"assoc_pin", dynAssocPinSrc, "17"},
+		{"assoc_pin_array", dynAssocPinArraySrc, "4\n11"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			if got := interpStdout(t, interpBin, c.src); got != c.want {
+				t.Fatalf("interpreter = %q, want %q", got, c.want)
+			}
 			for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {
 				t.Run(target, func(t *testing.T) {
 					stdout, stderr := routedMapRun(t, selfHostBin, stdlibRoot, c.src, target, "FERN_SANITIZE=1")

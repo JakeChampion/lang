@@ -74,6 +74,9 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 		{"import-alias-keyword", "import \"./lib\" as use;\nfunction main(): i32 { return 0; }", true, "malformed import alias: its name could not be read"},
 		{"pub-use-keyword", "pub use \"./lib\".{use};\nfunction main(): i32 { return 0; }", true, "malformed re-export: a name in the list could not be read"},
 		{"import-resource-nameless", "@import(\"wasi:io@0.2.0\", \"thing\") resource 123;\nfunction main(): i32 { return 0; }", true, "@import only applies to a function or resource declaration"},
+		// An attribute neither parser knows (#11852): named, not read as a
+		// statement at top level.
+		{"unknown-attribute", "@foo\nfunction f(): i32 { return 1; }\nfunction main(): i32 { return f(); }", true, "unknown attribute @foo"},
 		// A keyword where only an identifier is legal (#10292): a const name,
 		// and a trait name in `impl Trait for Type`. A built-in type name,
 		// itself a keyword, stays legal in type position.
@@ -130,6 +133,7 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 		"pub use x.{a};\nfunction main(): i32 { return 0; }",
 		"function use(): i32 { return 1; }\nfunction main(): i32 { return 0; }",
 		"function type(): i32 { return 1; }\nfunction main(): i32 { return 0; }",
+		"@foo\nfunction f(): i32 { return 1; }\nfunction main(): i32 { return f(); }",
 	} {
 		_, stderr, _ := runDeclGate(t, runner, driverBin, []byte(src+"\n"))
 		if n := strings.Count(stderr, "error["); n != 1 {
