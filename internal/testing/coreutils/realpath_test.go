@@ -305,3 +305,18 @@ func TestRealpathHelpVersion(t *testing.T) {
 	requireVersion(t, "realpath", []string{"--v"}, 0)
 	requireVersion(t, "realpath", []string{"-e", "--version"}, 0)
 }
+
+// A relative operand starts at the working directory, so a removed one
+// fails before any component is looked at, with what getcwd(2) said —
+// ENOENT — in every mode, `-m` included. An absolute operand never asks.
+func TestRealpathUnlinkedWorkingDirectory(t *testing.T) {
+	const enoent = "No such file or directory"
+	requireUnlinkedParity(t, "realpath", []unlinkedCase{
+		{[]string{"x"}, "x: " + enoent},
+		{[]string{"-e", "x"}, "x: " + enoent},
+		{[]string{"-m", "x"}, "x: " + enoent},
+		{[]string{"-s", "x"}, "x: " + enoent},
+		{[]string{"."}, ".: " + enoent},
+		{[]string{"/"}, ""},
+	})
+}

@@ -1593,7 +1593,14 @@ function canonical(path: string): string {
       if (path.len() > 0 && path[0] as i32 == 47) {
         return path;
       }
-      return gnu.join_path(getcwd(), path);
+      match (getcwd()) {
+        Ok(wd) => {
+          return gnu.join_path(wd, path);
+        },
+        Err(_) => {
+          return path;
+        }
+      }
     }
   }
 }

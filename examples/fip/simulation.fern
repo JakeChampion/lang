@@ -1,0 +1,283 @@
+// Usage: simulation persistent|fbip|fip entities ticks spread|cluster unique|shared [samples]
+// One warm-up tick precedes measurement; initial_tick is always 1.
+import "./simulation_fip";
+import "./simulation_fbip";
+import "./simulation_persistent";
+import "core/cmp";
+import "std/bench";
+import "std/i32";
+import "std/i64";
+import "std/string";
+
+struct Measurement {
+  samples: i64[],
+  wall_ns: i64,
+  allocs: i64,
+  fresh: i64,
+  startup_ns: i64,
+  startup_allocs: i64,
+  startup_fresh: i64,
+  tick: i32,
+  checksum: i64,
+  candidates: i64,
+  checks: i64,
+}
+
+// Borrowing helpers retain snapshots without moving the owned loop binding.
+function snapshot_persistent(w: simulation_persistent.World): simulation_persistent.World {
+  return w;
+}
+
+function snapshot_fbip(w: simulation_fbip.World): simulation_fbip.World {
+  return w;
+}
+
+function snapshot_fip(w: simulation_fip.World): simulation_fip.World {
+  return w;
+}
+
+function report(r: Measurement, variant: string, count: i32, ticks: i32, layout: string, sharing: string, export_samples: boolean): i32 {
+  if (export_samples) {
+    let i: i32 = 0;
+    while (i < ticks) {
+      print("sample," + i.to_string() + "," + r.samples[i].to_string());
+      i = i + 1;
+    }
+  }
+  let stats: bench.Report = bench.Report {
+    name: variant, iterations: ticks, wall_ns: r.wall_ns,
+    samples_ns: cmp.sort(r.samples), allocs: r.allocs, fresh_bytes: r.fresh,
+  };
+  print("{\"variant\":\"" + variant + "\",\"entities\":" + count.to_string()
+    + ",\"ticks\":" + ticks.to_string() + ",\"initial_tick\":1,\"final_tick\":" + r.tick.to_string()
+    + ",\"layout\":\"" + layout + "\",\"sharing\":\"" + sharing + "\""
+    + ",\"checksum\":" + r.checksum.to_string() + ",\"snapshot_checks\":" + r.checks.to_string()
+    + ",\"candidates\":" + r.candidates.to_string()
+    + ",\"startup_ns\":" + r.startup_ns.to_string() + ",\"startup_allocs\":" + r.startup_allocs.to_string()
+    + ",\"startup_fresh_bytes\":" + r.startup_fresh.to_string()
+    + ",\"wall_ns\":" + r.wall_ns.to_string() + ",\"steady_allocs\":" + r.allocs.to_string()
+    + ",\"steady_fresh_bytes\":" + r.fresh.to_string()
+    + ",\"tick_p50_ns\":" + stats.p50_ns().to_string() + ",\"tick_p95_ns\":" + stats.p95_ns().to_string()
+    + ",\"tick_p99_ns\":" + stats.p99_ns().to_string() + ",\"tick_p999_ns\":" + stats.p999_ns().to_string()
+    + ",\"tick_max_ns\":" + stats.max_ns().to_string() + "}");
+  if (r.tick != ticks + 1 || sharing == "unique" && variant != "persistent" && r.allocs != 0i64) {
+    return 1;
+  }
+  return 0;
+}
+
+function run_persistent(count: i32, ticks: i32, layout: string, sharing: string, export_samples: boolean): i32 {
+  let start_allocs: i64 = bench.alloc_count();
+  let start_fresh: i64 = bench.bump_bytes();
+  let start_ns: i64 = monotonic_ns();
+  match (simulation_persistent.new_world(count, layout == "cluster")) {
+    None => {
+      return 2;
+    },
+    Some(w) => {
+      w = simulation_persistent.step(w);
+      let samples: i64[] = __alloc_i64(ticks);
+      let startup_ns: i64 = monotonic_ns() - start_ns;
+      let startup_allocs: i64 = bench.allocs_after(start_allocs);
+      let startup_fresh: i64 = bench.fresh_bytes_after(start_fresh);
+      let mark_allocs: i64 = bench.alloc_count();
+      let mark_fresh: i64 = bench.bump_bytes();
+      let started: i64 = monotonic_ns();
+      let i: i32 = 0;
+      let candidates: i64 = 0i64;
+      let checks: i64 = 0i64;
+      while (i < ticks) {
+        let expected: i64 = w.checksum;
+        let observed: i64 = 0i64;
+        let t0: i64 = monotonic_ns();
+        if (sharing == "shared") {
+          let saved: simulation_persistent.World = snapshot_persistent(w);
+          w = simulation_persistent.step(w);
+          observed = simulation_persistent.checksum(saved);
+        } else {
+          observed = simulation_persistent.checksum(w);
+          w = simulation_persistent.step(w);
+        }
+        samples = samples.with(i, monotonic_ns() - t0);
+        if (observed != expected || w.refused != 0
+          || w.candidates < count as i64 || w.candidates > count as i64 * (count as i64)) {
+          return 1;
+        }
+        checks = (checks + observed) % 1000000007i64;
+        candidates = candidates + w.candidates;
+        i = i + 1;
+      }
+      let elapsed: i64 = monotonic_ns() - started;
+      let allocations: i64 = bench.allocs_after(mark_allocs);
+      let fresh: i64 = bench.fresh_bytes_after(mark_fresh);
+      return report(
+        Measurement {
+          samples: samples, wall_ns: elapsed, allocs: allocations, fresh: fresh,
+          startup_ns: startup_ns, startup_allocs: startup_allocs, startup_fresh: startup_fresh,
+          tick: w.tick, checksum: w.checksum, candidates: candidates, checks: checks,
+        },
+        "persistent", count, ticks, layout, sharing, export_samples,
+      );
+    }
+  }
+}
+
+function run_fbip(count: i32, ticks: i32, layout: string, sharing: string, export_samples: boolean): i32 {
+  let start_allocs: i64 = bench.alloc_count();
+  let start_fresh: i64 = bench.bump_bytes();
+  let start_ns: i64 = monotonic_ns();
+  match (simulation_fbip.new_world(count, layout == "cluster")) {
+    None => {
+      return 2;
+    },
+    Some(w) => {
+      w = simulation_fbip.step(w);
+      let samples: i64[] = __alloc_i64(ticks);
+      let startup_ns: i64 = monotonic_ns() - start_ns;
+      let startup_allocs: i64 = bench.allocs_after(start_allocs);
+      let startup_fresh: i64 = bench.fresh_bytes_after(start_fresh);
+      let mark_allocs: i64 = bench.alloc_count();
+      let mark_fresh: i64 = bench.bump_bytes();
+      let started: i64 = monotonic_ns();
+      let i: i32 = 0;
+      let candidates: i64 = 0i64;
+      let checks: i64 = 0i64;
+      while (i < ticks) {
+        let expected: i64 = w.checksum;
+        let observed: i64 = 0i64;
+        let t0: i64 = monotonic_ns();
+        if (sharing == "shared") {
+          let saved: simulation_fbip.World = snapshot_fbip(w);
+          w = simulation_fbip.step(w);
+          observed = simulation_fbip.checksum(saved);
+        } else {
+          observed = simulation_fbip.checksum(w);
+          w = simulation_fbip.step(w);
+        }
+        samples = samples.with(i, monotonic_ns() - t0);
+        if (observed != expected || w.refused != 0
+          || w.candidates < count as i64 || w.candidates > count as i64 * (count as i64)) {
+          return 1;
+        }
+        checks = (checks + observed) % 1000000007i64;
+        candidates = candidates + w.candidates;
+        i = i + 1;
+      }
+      let elapsed: i64 = monotonic_ns() - started;
+      let allocations: i64 = bench.allocs_after(mark_allocs);
+      let fresh: i64 = bench.fresh_bytes_after(mark_fresh);
+      return report(
+        Measurement {
+          samples: samples, wall_ns: elapsed, allocs: allocations, fresh: fresh,
+          startup_ns: startup_ns, startup_allocs: startup_allocs, startup_fresh: startup_fresh,
+          tick: w.tick, checksum: w.checksum, candidates: candidates, checks: checks,
+        },
+        "fbip", count, ticks, layout, sharing, export_samples,
+      );
+    }
+  }
+}
+
+function run_fip(count: i32, ticks: i32, layout: string, sharing: string, export_samples: boolean): i32 {
+  let start_allocs: i64 = bench.alloc_count();
+  let start_fresh: i64 = bench.bump_bytes();
+  let start_ns: i64 = monotonic_ns();
+  match (simulation_fip.new_world(count, layout == "cluster")) {
+    None => {
+      return 2;
+    },
+    Some(w) => {
+      w = simulation_fip.step(w);
+      let samples: i64[] = __alloc_i64(ticks);
+      let startup_ns: i64 = monotonic_ns() - start_ns;
+      let startup_allocs: i64 = bench.allocs_after(start_allocs);
+      let startup_fresh: i64 = bench.fresh_bytes_after(start_fresh);
+      let mark_allocs: i64 = bench.alloc_count();
+      let mark_fresh: i64 = bench.bump_bytes();
+      let started: i64 = monotonic_ns();
+      let i: i32 = 0;
+      let candidates: i64 = 0i64;
+      let checks: i64 = 0i64;
+      while (i < ticks) {
+        let expected: i64 = w.checksum;
+        let observed: i64 = 0i64;
+        let t0: i64 = monotonic_ns();
+        if (sharing == "shared") {
+          let saved: simulation_fip.World = snapshot_fip(w);
+          w = simulation_fip.step(w);
+          observed = simulation_fip.checksum(saved);
+        } else {
+          observed = simulation_fip.checksum(w);
+          w = simulation_fip.step(w);
+        }
+        samples = samples.with(i, monotonic_ns() - t0);
+        if (observed != expected || w.refused != 0
+          || w.candidates < count as i64 || w.candidates > count as i64 * (count as i64)) {
+          return 1;
+        }
+        checks = (checks + observed) % 1000000007i64;
+        candidates = candidates + w.candidates;
+        i = i + 1;
+      }
+      let elapsed: i64 = monotonic_ns() - started;
+      let allocations: i64 = bench.allocs_after(mark_allocs);
+      let fresh: i64 = bench.fresh_bytes_after(mark_fresh);
+      return report(
+        Measurement {
+          samples: samples, wall_ns: elapsed, allocs: allocations, fresh: fresh,
+          startup_ns: startup_ns, startup_allocs: startup_allocs, startup_fresh: startup_fresh,
+          tick: w.tick, checksum: w.checksum, candidates: candidates, checks: checks,
+        },
+        "fip", count, ticks, layout, sharing, export_samples,
+      );
+    }
+  }
+}
+
+function main(): i32 {
+  let argv: string[] = args();
+  if (argv.len() < 6 || argv.len() > 7) {
+    return 2;
+  }
+  if (argv[1] != "fip" && argv[1] != "fbip" && argv[1] != "persistent") {
+    return 2;
+  }
+  let count: i32 = -1;
+  let ticks: i32 = 0;
+  match (argv[2].parse_int()) {
+    Some(n) => {
+      count = n;
+    },
+    None => {
+      return 2;
+    }
+  }
+  match (argv[3].parse_int()) {
+    Some(n) => {
+      ticks = n;
+    },
+    None => {
+      return 2;
+    }
+  }
+  if (count < 0 || count > 4096 || ticks <= 0 || ticks > 999999) {
+    return 2;
+  }
+  if (argv[4] != "spread" && argv[4] != "cluster") {
+    return 2;
+  }
+  if (argv[5] != "unique" && argv[5] != "shared") {
+    return 2;
+  }
+  let export_samples: boolean = argv.len() == 7;
+  if (export_samples && argv[6] != "samples") {
+    return 2;
+  }
+  if (argv[1] == "persistent") {
+    return run_persistent(count, ticks, argv[4], argv[5], export_samples);
+  }
+  if (argv[1] == "fbip") {
+    return run_fbip(count, ticks, argv[4], argv[5], export_samples);
+  }
+  return run_fip(count, ticks, argv[4], argv[5], export_samples);
+}

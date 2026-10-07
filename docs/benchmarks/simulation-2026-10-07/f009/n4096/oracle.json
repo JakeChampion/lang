@@ -1,0 +1,14 @@
+{
+  "4096-spread": {
+    "checksum": 118448303,
+    "snapshot_checks": 157529878,
+    "initial_tick": 1,
+    "final_tick": 6
+  },
+  "4096-cluster": {
+    "checksum": 521586667,
+    "snapshot_checks": 771590595,
+    "initial_tick": 1,
+    "final_tick": 6
+  }
+}

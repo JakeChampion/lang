@@ -380,3 +380,19 @@ func TestReadlinkHelpVersion(t *testing.T) {
 	requireVersion(t, "readlink", []string{"--vers"}, 0)
 	requireVersion(t, "readlink", []string{"-f", "--version"}, 0)
 }
+
+// The canonicalising modes start a relative operand at the working
+// directory, so a removed one is getcwd(2)'s ENOENT under `-v` and
+// silence without it. Bare readlink asks readlink(2) about the name and
+// never needs the directory's.
+func TestReadlinkUnlinkedWorkingDirectory(t *testing.T) {
+	const enoent = "No such file or directory"
+	requireUnlinkedParity(t, "readlink", []unlinkedCase{
+		{[]string{"-fv", "x"}, "x: " + enoent},
+		{[]string{"-ev", "x"}, "x: " + enoent},
+		{[]string{"-mv", "x"}, "x: " + enoent},
+		{[]string{"-f", "x"}, ""},
+		{[]string{"-v", "x"}, "x: " + enoent},
+		{[]string{"-fv", "/"}, ""},
+	})
+}

@@ -220,11 +220,14 @@ pub function main(): i32 {
       None => {}
     }
   }
-  let wd: string = getcwd();
-  if (wd.len() > 0) {
-    gnu.write_out(wd + "\n");
-    return 0;
+  // Any refusal falls back to the walk, as GNU's does.
+  match (getcwd()) {
+    Ok(wd) => {
+      gnu.write_out(wd + "\n");
+    },
+    Err(_) => {
+      gnu.write_out(walked_cwd() + "\n");
+    }
   }
-  gnu.write_out(walked_cwd() + "\n");
   return 0;
 }

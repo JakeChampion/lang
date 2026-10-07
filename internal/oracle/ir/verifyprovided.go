@@ -391,7 +391,7 @@ var providedSigs = map[string]providedSig{
 	"environ":                          {0, rWord},
 	"hostname":                         {0, rString},
 	"uname_field":                      {1, rString},
-	"getcwd":                           {0, rString},
+	"getcwd":                           {0, rWord},
 	"cpu_count":                        {0, rWord},
 	"map_new":                          {-1, rWord},
 	"monotonic_ns":                     {-1, rWord},

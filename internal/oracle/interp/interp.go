@@ -4169,17 +4169,18 @@ func builtinUnameField(_ *Interp, args []Value) (Value, error) {
 	return String(fields[i]), nil
 }
 
-// builtinGetcwd reports the process's working directory; a kernel that
-// refuses answers the empty string, as the compiled backends do.
+// builtinGetcwd reports the process's working directory through the
+// syscall, as the compiled backends do. os.Getwd would answer $PWD
+// whenever it names `.`, which keeps the symbolic links getcwd(2) resolves.
 func builtinGetcwd(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("getcwd: expected 0 args, got %d", len(args))
 	}
-	wd, err := os.Getwd()
+	wd, err := syscall.Getwd()
 	if err != nil {
-		return String(""), nil
+		return resultErr(classifyIoError("", err)), nil
 	}
-	return String(wd), nil
+	return resultOk(String(wd)), nil
 }
 
 // builtinChdir moves the process's working directory — the move getcwd only
