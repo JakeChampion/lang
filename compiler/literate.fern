@@ -7,20 +7,19 @@
 // document order, same-name definitions concatenate, and a chunk
 // reference's indentation is prepended to its expansion.
 //
-// This is the first slice of literate support in the self-hosted
-// compiler. Tangling is a pure `string -> string` transform: it
-// slots in ahead of `lexer.tokenize` in pipeline.fern, so the rest
-// of the self-hosted pipeline needs no changes to compile a literate
-// document. (The Go implementation lives in internal/tools/literate; this
-// is the parity port that lets the feature survive the Go retirement.)
+// The compiler tangles with it for `-tangle`, and to load a `.fern.md`
+// entry or import (fern.fern entry_sources, modloader.read_module):
+// tangling slots in ahead of `lexer.tokenize`, and the line map it
+// returns moves a diagnostic back onto the document (util.doc_diag).
+// The Go implementation lives in internal/tools/literate; this is its
+// parity port.
 //
 // Parity with the Go engine covers: out-of-order chunk references,
 // same-name concatenation, indentation-preserving expansion,
-// display-only (headerless) `fern` fences, and the three structured
-// errors — missing root, undefined reference, cyclic reference.
-// Deferred (the Go side has it; not needed until the self-hosted
-// diagnostics grow line rendering): the per-line provenance map that
-// remaps tangled positions back onto the document, and Weave.
+// display-only (headerless) `fern` fences, escaped `\<<name>>` markers,
+// the three structured errors — missing root, undefined reference,
+// cyclic reference — and the per-line provenance map that remaps
+// tangled positions back onto the document. Deferred: Weave.
 //
 // Data model note: the document's chunk bodies are kept as a single
 // FLAT array of tagged Piece lines (chunk name + text + line), not as
@@ -36,11 +35,9 @@
 // the nested arrays), so this is a deliberate workaround, not a fix;
 // see the backend RC-Perceus path.
 //
-// Goal — like lexer.fern — to validate the language can express the
-// engine's logic end-to-end. `main()` runs assertions and returns 0
-// on success; a non-zero code identifies which one failed. The Go
-// build still owns the production path; this file is run from a Go
-// test that compiles + executes it on both backends.
+// `main()` runs assertions and returns 0 on success; a non-zero code
+// identifies which one failed. A Go test compiles and runs this file on
+// each target (TestSelfHostLiterate*).
 
 // ─── byte classifiers ──────────────────────────────────────────────
 
@@ -308,6 +305,17 @@ function ref_name(t: string): string {
   return trim(slice_unchecked(t, 2, t.len() - 2));
 }
 
+// de_escape strips the backslash from an escaped marker line — `\<<name>>`
+// tangles to the literal `<<name>>` — keeping its indentation. Any other
+// line is returned unchanged.
+function de_escape(text: string): string {
+  let ws: string = leading_ws(text);
+  if (starts_with(slice_unchecked(text, ws.len(), text.len()) + "", "\\<<")) {
+    return ws + slice_unchecked(text, ws.len() + 1, text.len());
+  }
+  return text;
+}
+
 // ─── document model ────────────────────────────────────────────────
 
 // Piece is one physical body line of one chunk, tagged with the chunk
@@ -403,23 +411,68 @@ function stack_has(stack: string[], name: string): boolean {
   return false;
 }
 
+// header_line is the document line of chunk `name`'s first `<<name>>=`
+// header: the line above its first body line.
+function header_line(pieces: Piece[], name: string): i32 {
+  let i: i32 = 0;
+  while (i < pieces.len()) {
+    if (pieces[i].chunk == name) {
+      return pieces[i].line - 1;
+    }
+    i = i + 1;
+  }
+  return 1;
+}
+
+function undefined_ref(name: string): string {
+  return "literate: reference to undefined chunk \"<<" + name + ">>\"";
+}
+
+// marker_col is the 1-based column of the `<<` a reference line opens with.
+function marker_col(text: string): i32 {
+  return leading_ws(text).len() + 1;
+}
+
 // ─── expansion ─────────────────────────────────────────────────────
 
-pub struct ExpandOk { lines: string[] }
+// ExpandOk is an expansion: its lines, and for each the document line it
+// came from (`lits`) and how many columns tangling moved it right
+// (`shifts`) — the indentation prepended, less a stripped escape.
+pub struct ExpandOk { lines: string[], lits: i32[], shifts: i32[] }
 
-pub struct ExpandErr { msg: string, line: i32 }
+pub struct ExpandErr { msg: string, line: i32, col: i32 }
 
 pub type ExpandResult = ExpandOk | ExpandErr;
+
+function no_lines(): ExpandOk {
+  return ExpandOk { lines: [], lits: [], shifts: [] };
+}
+
+// emit_line appends one literal body line, expanded under `indent`.
+function emit_line(o: ExpandOk, indent: string, text: string, line: i32): ExpandOk {
+  let de: string = de_escape(text);
+  return ExpandOk { lines: o.lines.append(indent + de), lits: o.lits.append(line), shifts: o.shifts.append(indent.len() - (text.len() - de.len())) };
+}
+
+function append_lines(o: ExpandOk, more: ExpandOk): ExpandOk {
+  let out: ExpandOk = o;
+  let k: i32 = 0;
+  while (k < more.lines.len()) {
+    out = ExpandOk { lines: out.lines.append(more.lines[k]), lits: out.lits.append(more.lits[k]), shifts: out.shifts.append(more.shifts[k]) };
+    k = k + 1;
+  }
+  return out;
+}
 
 // expand emits the expansion of chunk `name`, prefixing every line
 // with `indent`. `active` is the set of chunks currently being
 // expanded, for cycle detection.
 function expand(pieces: Piece[], name: string, indent: string, active: string[]): ExpandResult {
   if (stack_has(active, name)) {
-    return ExpandErr { msg: "literate: chunk <<" + name + ">> is defined in terms of itself (cyclic chunk reference)", line: 0 };
+    return ExpandErr { msg: "literate: chunk \"<<" + name + ">>\" is defined in terms of itself (cyclic chunk reference)", line: header_line(pieces, name), col: 1 };
   }
   let active2: string[] = active.append(name);
-  let out: string[] = [];
+  let out: ExpandOk = no_lines();
   let i: i32 = 0;
   while (i < pieces.len()) {
     if (pieces[i].chunk == name) {
@@ -428,35 +481,34 @@ function expand(pieces: Piece[], name: string, indent: string, active: string[])
       if (is_ref(t)) {
         let rn: string = ref_name(t);
         if (!chunk_defined(pieces, rn)) {
-          return ExpandErr { msg: "literate: reference to undefined chunk <<" + rn + ">>", line: pieces[i].line };
+          return ExpandErr { msg: undefined_ref(rn), line: pieces[i].line, col: marker_col(text) };
         }
         let sub: ExpandResult = expand(pieces, rn, indent + leading_ws(text), active2);
         match (sub) {
           ExpandOk(o) => {
-            let k: i32 = 0;
-            while (k < o.lines.len()) {
-              out = out.append(o.lines[k]);
-              k = k + 1;
-            }
+            out = append_lines(out, o);
           },
           _ => {
             return sub;
           }
         }
       } else {
-        out = out.append(indent + text);
+        out = emit_line(out, indent, text, pieces[i].line);
       }
     }
     i = i + 1;
   }
-  return ExpandOk { lines: out };
+  return ExpandOk { lines: out.lines, lits: out.lits, shifts: out.shifts };
 }
 
 // ─── tangle ────────────────────────────────────────────────────────
 
-pub struct TangleOk { code: string }
+// TangleOk is tangled source with its provenance: generated line k
+// (1-based) came from document line lits[k-1], shifted shifts[k-1]
+// columns right.
+pub struct TangleOk { code: string, lits: i32[], shifts: i32[] }
 
-pub struct TangleErr { msg: string, line: i32 }
+pub struct TangleErr { msg: string, line: i32, col: i32 }
 
 pub type TangleResult = TangleOk | TangleErr;
 
@@ -466,16 +518,16 @@ pub type TangleResult = TangleOk | TangleErr;
 pub function tangle(src: string): TangleResult {
   let pieces: Piece[] = parse_pieces(src);
   if (!chunk_defined(pieces, "*")) {
-    return TangleErr { msg: "literate: no root chunk <<*>> defined", line: 1 };
+    return TangleErr { msg: "literate: no root chunk \"<<*>>\" defined (every literate program needs a `<<*>>=` block to tangle from)", line: 1, col: 1 };
   }
   let empty: string[] = [];
   let r: ExpandResult = expand(pieces, "*", "", empty);
   match (r) {
     ExpandOk(o) => {
-      return TangleOk { code: join_lines(o.lines) };
+      return TangleOk { code: join_lines(o.lines), lits: o.lits, shifts: o.shifts };
     },
     ExpandErr(e) => {
-      return TangleErr { msg: e.msg, line: e.line };
+      return TangleErr { msg: e.msg, line: e.line, col: e.col };
     }
   }
 }
@@ -487,18 +539,91 @@ pub function tangle(src: string): TangleResult {
 pub function tangle_chunk(src: string, name: string): TangleResult {
   let pieces: Piece[] = parse_pieces(src);
   if (!chunk_defined(pieces, name)) {
-    return TangleErr { msg: "literate: no chunk \"<<" + name + ">>\" defined", line: 1 };
+    return TangleErr { msg: "literate: no chunk \"<<" + name + ">>\" defined", line: 1, col: 1 };
   }
   let empty: string[] = [];
   let r: ExpandResult = expand(pieces, name, "", empty);
   match (r) {
     ExpandOk(o) => {
-      return TangleOk { code: join_lines(o.lines) };
+      return TangleOk { code: join_lines(o.lines), lits: o.lits, shifts: o.shifts };
     },
     ExpandErr(e) => {
-      return TangleErr { msg: e.msg, line: e.line };
+      return TangleErr { msg: e.msg, line: e.line, col: e.col };
     }
   }
+}
+
+// unused_chunks names, in byte order, every chunk that neither the
+// `<<*>>` root nor a `file=PATH` root reaches.
+pub function unused_chunks(src: string): string[] {
+  let pieces: Piece[] = parse_pieces(src);
+  let todo: string[] = [];
+  if (chunk_defined(pieces, "*")) {
+    todo = todo.append("*");
+  }
+  let fp: FilePiece[] = parse_file_pieces(src);
+  let i: i32 = 0;
+  while (i < fp.len()) {
+    if (is_ref(trim(fp[i].text))) {
+      todo = todo.append(ref_name(trim(fp[i].text)));
+    }
+    i = i + 1;
+  }
+  let reached: string[] = [];
+  let qi: i32 = 0;
+  while (qi < todo.len()) {
+    let n: string = todo[qi];
+    qi = qi + 1;
+    if (!stack_has(reached, n)) {
+      reached = reached.append(n);
+      let k: i32 = 0;
+      while (k < pieces.len()) {
+        if (pieces[k].chunk == n && is_ref(trim(pieces[k].text))) {
+          todo = todo.append(ref_name(trim(pieces[k].text)));
+        }
+        k = k + 1;
+      }
+    }
+  }
+  let out: string[] = [];
+  let j: i32 = 0;
+  while (j < pieces.len()) {
+    if (!stack_has(reached, pieces[j].chunk) && !stack_has(out, pieces[j].chunk)) {
+      out = insert_sorted(out, pieces[j].chunk);
+    }
+    j = j + 1;
+  }
+  return out;
+}
+
+// insert_sorted inserts `s` into the byte-ordered `xs`.
+function insert_sorted(xs: string[], s: string): string[] {
+  let out: string[] = [];
+  let placed: boolean = false;
+  let i: i32 = 0;
+  while (i < xs.len()) {
+    if (!placed && bytes_less(s, xs[i])) {
+      out = out.append(s);
+      placed = true;
+    }
+    out = out.append(xs[i]);
+    i = i + 1;
+  }
+  if (!placed) {
+    out = out.append(s);
+  }
+  return out;
+}
+
+function bytes_less(a: string, b: string): boolean {
+  let i: i32 = 0;
+  while (i < a.len() && i < b.len()) {
+    if (a[i] != b[i]) {
+      return a[i] as i32 < b[i] as i32;
+    }
+    i = i + 1;
+  }
+  return a.len() < b.len();
 }
 
 // ─── multi-file tangle ─────────────────────────────────────────────
@@ -562,6 +687,20 @@ function file_paths(fp: FilePiece[]): string[] {
 
 // path_is_entry reports whether any block contributing to `path` carried
 // the `entry` marker.
+// fence_line is the document line of the fence opening `src`'s first
+// `file=PATH` block: the line above its first body line.
+pub function fence_line(src: string, path: string): i32 {
+  let fp: FilePiece[] = parse_file_pieces(src);
+  let i: i32 = 0;
+  while (i < fp.len()) {
+    if (fp[i].path == path) {
+      return fp[i].line - 1;
+    }
+    i = i + 1;
+  }
+  return 1;
+}
+
 function path_is_entry(fp: FilePiece[], path: string): boolean {
   let i: i32 = 0;
   while (i < fp.len()) {
@@ -577,7 +716,7 @@ function path_is_entry(fp: FilePiece[], path: string): boolean {
 // resolving `<<ref>>` lines into the shared chunk table just like the
 // `<<*>>` root.
 function expand_file(fp: FilePiece[], chunks: Piece[], path: string): ExpandResult {
-  let out: string[] = [];
+  let out: ExpandOk = no_lines();
   let i: i32 = 0;
   while (i < fp.len()) {
     if (fp[i].path == path) {
@@ -586,36 +725,34 @@ function expand_file(fp: FilePiece[], chunks: Piece[], path: string): ExpandResu
       if (is_ref(t)) {
         let rn: string = ref_name(t);
         if (!chunk_defined(chunks, rn)) {
-          return ExpandErr { msg: "literate: reference to undefined chunk <<" + rn + ">>", line: fp[i].line };
+          return ExpandErr { msg: undefined_ref(rn), line: fp[i].line, col: marker_col(text) };
         }
         let empty: string[] = [];
         let sub: ExpandResult = expand(chunks, rn, leading_ws(text), empty);
         match (sub) {
           ExpandOk(o) => {
-            let k: i32 = 0;
-            while (k < o.lines.len()) {
-              out = out.append(o.lines[k]);
-              k = k + 1;
-            }
+            out = append_lines(out, o);
           },
           _ => {
             return sub;
           }
         }
       } else {
-        out = out.append(text);
+        out = emit_line(out, "", text, fp[i].line);
       }
     }
     i = i + 1;
   }
-  return ExpandOk { lines: out };
+  return ExpandOk { lines: out.lines, lits: out.lits, shifts: out.shifts };
 }
 
-pub struct FileResult { path: string, code: string, is_entry: boolean }
+// FileResult is one module a `file=PATH` document tangles to, with its
+// provenance as TangleOk carries it.
+pub struct FileResult { path: string, code: string, is_entry: boolean, lits: i32[], shifts: i32[] }
 
 pub struct FileTangleOk { files: FileResult[] }
 
-pub struct FileTangleErr { msg: string, line: i32 }
+pub struct FileTangleErr { msg: string, line: i32, col: i32 }
 
 pub type FileTangleResult = FileTangleOk | FileTangleErr;
 
@@ -628,7 +765,7 @@ pub function tangle_files(src: string): FileTangleResult {
   let fp: FilePiece[] = parse_file_pieces(src);
   let paths: string[] = file_paths(fp);
   if (paths.len() == 0) {
-    return FileTangleErr { msg: "literate: no file=PATH blocks defined", line: 1 };
+    return FileTangleErr { msg: "literate: no `file=PATH` blocks defined (a multi-file document needs at least one ```fern file=… root)", line: 1, col: 1 };
   }
   let results: FileResult[] = [];
   let i: i32 = 0;
@@ -637,10 +774,10 @@ pub function tangle_files(src: string): FileTangleResult {
     let r: ExpandResult = expand_file(fp, chunks, p);
     match (r) {
       ExpandOk(o) => {
-        results = results.append(FileResult { path: p, code: join_lines(o.lines), is_entry: path_is_entry(fp, p) });
+        results = results.append(FileResult { path: p, code: join_lines(o.lines), is_entry: path_is_entry(fp, p), lits: o.lits, shifts: o.shifts });
       },
       ExpandErr(e) => {
-        return FileTangleErr { msg: e.msg, line: e.line };
+        return FileTangleErr { msg: e.msg, line: e.line, col: e.col };
       }
     }
     i = i + 1;
@@ -648,8 +785,8 @@ pub function tangle_files(src: string): FileTangleResult {
   return FileTangleOk { files: results };
 }
 
-// entry_file picks the compile entry among tangled modules: the file
-// marked `entry`, the sole file, or the unique module defining `main`.
+// entry_file picks the compile entry among tangled modules: the one file
+// marked `entry`, the sole file, or else the unique module defining `main`.
 // Returns "" when the choice is ambiguous.
 pub function entry_file(files: FileResult[]): string {
   let marked: string[] = [];
@@ -663,16 +800,13 @@ pub function entry_file(files: FileResult[]): string {
   if (marked.len() == 1) {
     return marked[0];
   }
-  if (marked.len() > 1) {
-    return "";
-  }
   if (files.len() == 1) {
     return files[0].path;
   }
   let mains: string[] = [];
   let j: i32 = 0;
   while (j < files.len()) {
-    if (contains(files[j].code, "function main") || contains(files[j].code, "fn main")) {
+    if (defines_main(files[j].code)) {
       mains = mains.append(files[j].path);
     }
     j = j + 1;
@@ -681,6 +815,39 @@ pub function entry_file(files: FileResult[]): string {
     return mains[0];
   }
   return "";
+}
+
+// defines_main reports whether a line of `code` declares a top-level
+// `main`: `function main` or `fn main`, optionally `pub`, as the line's
+// first words.
+function defines_main(code: string): boolean {
+  let lines: string[] = split_lines(code);
+  let i: i32 = 0;
+  while (i < lines.len()) {
+    let w: string[] = split_ws(lines[i]);
+    let k: i32 = 0;
+    if (w.len() > 0 && w[0] == "pub") {
+      k = 1;
+    }
+    if (w.len() > k + 1 && (w[k] == "function" || w[k] == "fn") && is_main_name(w[k + 1])) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// is_main_name reports whether a word is `main` ending the name — `main`,
+// `main()`, `main(): i32` — and not a longer name such as `mainloop`.
+function is_main_name(word: string): boolean {
+  if (!starts_with(word, "main")) {
+    return false;
+  }
+  if (word.len() == 4) {
+    return true;
+  }
+  let c: i32 = word[4] as i32;
+  return !(c >= 97 && c <= 122 || c >= 65 && c <= 90 || c >= 48 && c <= 57 || c == 95);
 }
 
 // ─── self-test ─────────────────────────────────────────────────────
@@ -737,6 +904,32 @@ function tf_files(src: string): FileResult[] {
       return empty;
     }
   }
+}
+
+// tangled runs tangle and returns its result, empty on error.
+function tangled(src: string): TangleOk {
+  match (tangle(src)) {
+    TangleOk(o) => {
+      return TangleOk { code: o.code, lits: o.lits, shifts: o.shifts };
+    },
+    TangleErr(e) => {}
+  }
+  return TangleOk { code: "", lits: [], shifts: [] };
+}
+
+// lines_are reports whether a line map is exactly `want`.
+function lines_are(got: i32[], want: i32[]): boolean {
+  if (got.len() != want.len()) {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i < got.len()) {
+    if (got[i] != want[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
 }
 
 // file_code returns the tangled code for `path` ("" if absent).
@@ -880,6 +1073,50 @@ function main(): i32 {
         return 22;
       }
     }
+  }
+
+  // 16. Each tangled line records its document line and the indentation
+  // its reference prepended.
+  let p4: TangleOk = tangled(s4);
+  if (!lines_are(p4.lits, [3, 9, 5]) || !lines_are(p4.shifts, [0, 4, 0])) {
+    return 23;
+  }
+
+  // 17. An escaped marker tangles to the literal marker, its column
+  // shift reduced by the stripped backslash.
+  let p17: TangleOk = tangled("```fern\n<<*>>=\n  \\<<x>>\n```\n");
+  if (p17.code != "  <<x>>" || !lines_are(p17.lits, [3]) || !lines_are(p17.shifts, [0 - 1])) {
+    return 24;
+  }
+
+  // 18. A file-root's lines, its own and a chunk's, map the same way.
+  let pm: FileResult[] = tf_files(m1);
+  if (pm.len() != 2 || pm[0].path != "main.fern" || !lines_are(pm[0].lits, [2, 10]) || !lines_are(pm[0].shifts, [0, 0])) {
+    return 25;
+  }
+
+  // 19. Two files marked `entry` is no choice; the one defining main is.
+  let m19: string = "```fern file=a.fern entry\npub fn h() {}\n```\n"
+    + "```fern file=b.fern entry\npub function main(): i32 { return 0; }\n```\n";
+  if (entry_file(tf_files(m19)) != "b.fern") {
+    return 26;
+  }
+
+  // 20. A longer name beginning `main` does not declare main.
+  let m20: string = "```fern file=a.fern\nfunction mainloop() {}\n```\n"
+    + "```fern file=b.fern\n  fn main() {}\n```\n";
+  if (entry_file(tf_files(m20)) != "b.fern") {
+    return 27;
+  }
+
+  // 21. Chunks no root reaches, in byte order; one a file-root reaches and
+  // one reached through another chunk are used.
+  let m21: string = "```fern\n<<*>>=\n<<a>>\n```\n```fern\n<<a>>=\n<<b>>\n```\n```fern\n<<b>>=\nx\n```\n"
+    + "```fern\n<<zed>>=\ny\n```\n```fern\n<<c>>=\nz\n```\n"
+    + "```fern file=f.fern\n<<d>>\n```\n```fern\n<<d>>=\nw\n```\n";
+  let un: string[] = unused_chunks(m21);
+  if (un.len() != 2 || un[0] != "c" || un[1] != "zed") {
+    return 28;
   }
 
   return 0;

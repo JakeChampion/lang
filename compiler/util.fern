@@ -1188,6 +1188,35 @@ pub function pos_str(entry: string, files: string[], line: i32, col: i32): strin
   return f + ":" + at;
 }
 
+// LineMap carries a module tangled from a literate document back to it:
+// generated line k (1-based) is line lits[k-1] of `doc`, its columns moved
+// shifts[k-1] to the right. An empty `doc` is a module that is its own source.
+pub struct LineMap { doc: string, lits: i32[], shifts: i32[] }
+
+pub function no_line_map(): LineMap {
+  return LineMap { doc: "", lits: [], shifts: [] };
+}
+
+// doc_diag moves a diagnostic's position onto the literate document its module
+// was tangled from, keeping the module's line base, or to line 0 (no position)
+// when the generated line has no document line. `maps` is indexed as
+// pos_file_index numbers modules: the entry, then files[k] at k + 1.
+pub function doc_diag(maps: LineMap[], d: Diag): Diag {
+  let m: i32 = pos_file_index(d.line);
+  if (m < 0 || m >= maps.len() || maps[m].doc.len() == 0) {
+    return d;
+  }
+  let k: i32 = pos_line(d.line);
+  if (k < 1 || k > maps[m].lits.len()) {
+    return Diag { ...d, line: 0, col: 0 };
+  }
+  let col: i32 = d.col - maps[m].shifts[k - 1];
+  if (col < 1) {
+    col = 1;
+  }
+  return Diag { ...d, line: d.line - k + maps[m].lits[k - 1], col: col };
+}
+
 // format_diags renders diagnostics one-per-line as
 // `error[CODE]: message (line:col)` — the self-host counterpart of the Go
 // driver's diag.Format. Used by the checking drivers to surface a rejection

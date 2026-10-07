@@ -6,21 +6,21 @@ import (
 )
 
 // Self-host port of internal/tools/literate: `compiler/literate.fern`
-// is the Knuth-style tangle engine re-written in Fern. Tangling is a
-// pure `string -> string` transform that slots in ahead of
-// `lexer.tokenize` (pipeline.fern), so literate support reaches the
-// self-hosted compiler without touching the rest of the pipeline.
+// is the Knuth-style tangle engine re-written in Fern, which the
+// compiler tangles `.fern.md` entries and imports with.
 //
 // The .fern file's `main()` asserts the engine against the same cases
 // as the Go unit tests (internal/tools/literate/literate_test.go): root-only
 // tangle, out-of-order references, same-name concatenation,
 // indentation-preserving expansion, display-only blocks, the three
 // structured errors (missing root, undefined reference, cyclic
-// reference), and the multi-file `file=PATH` tangle (two-module tangle
+// reference), the multi-file `file=PATH` tangle (two-module tangle
 // with a shared chunk, same-path concatenation, entry resolution, and
 // an undefined-ref error from a file-root — mirroring
-// internal/tools/literate/tanglefiles_test.go). Exit code 0 means every
-// assertion passed; a non-zero code identifies which one failed.
+// internal/tools/literate/tanglefiles_test.go), escaped markers, and the
+// line map each tangled line carries back to its document line. Exit
+// code 0 means every assertion passed; a non-zero code identifies which
+// one failed.
 func TestSelfHostLiterateX86_64(t *testing.T) {
 	runner := x86_64Runner(t)
 	dir := t.TempDir()

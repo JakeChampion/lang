@@ -14,6 +14,8 @@
 //     that wrote it, keeping its sub-path;
 //   * a module's IDENTITY is the file it resolves to, so two modules sharing
 //     a basename both load and flatten gives each its own prefix;
+//   * a `.fern` that is not there is read from its literate `.fern.md`
+//     sibling, tangled (read_module);
 //   * a `std/` or `core/` import is skipped when no stdlib was given (see
 //     stdlib_not_given); any other import that resolves to no readable file
 //     is returned as a diagnostic for the driver to report.
@@ -25,6 +27,7 @@ import "./lexer";
 import "./parser";
 import "./flatten";
 import "./fern_toml";
+import "./literate";
 import "./util";
 import "core/map";
 
@@ -80,23 +83,63 @@ pub function read_error_reason(e: IoError): string {
 
 // Resolved is a module's source. `err` is set when a candidate was present but
 // unreadable, and `err_path` names it; it ends the search rather than letting a
-// later candidate shadow the file (#10142). `shown` names the module for a
-// diagnostic: the file it was read from, or `stdlib://<path>` for an overlay
-// hit. A module's own imports resolve beside the file `shown` names.
-pub struct Resolved { src: string, ok: boolean, err: string, err_path: string, shown: string }
+// later candidate shadow the file (#10142). `shown` names the module: the file
+// it was read from, or `stdlib://<path>` for an overlay hit. A module's own
+// imports resolve beside the file `shown` names. `map` leads a module tangled
+// from a literate document back to it.
+pub struct Resolved { src: string, ok: boolean, err: string, err_path: string, shown: string, map: util.LineMap }
 
 function res_none(): Resolved {
-  return Resolved { src: "", ok: false, err: "", err_path: "", shown: "" };
+  return Resolved { src: "", ok: false, err: "", err_path: "", shown: "", map: util.no_line_map() };
 }
 
 // res_read reads `<dir><rel>.fern`.
 function res_read(dir: string, rel: string): Resolved {
-  match (read_file(dir + rel + ".fern")) {
+  return read_module(dir + rel + ".fern");
+}
+
+// read_module reads the module file `path`, a `.fern`, or — when there is no
+// such file — the literate document `path.md`, tangled to one module. A plain
+// `.fern` wins over a `.fern.md` of the same name.
+pub function read_module(path: string): Resolved {
+  match (read_file(path)) {
     Ok(s) => {
-      return Resolved { ...res_none(), src: s, ok: true, shown: dir + rel + ".fern" };
+      return Resolved { ...res_none(), src: s, ok: true, shown: path };
     },
     Err(e) => {
-      return Resolved { ...res_none(), err: read_error_reason(e), err_path: dir + rel + ".fern" };
+      let reason: string = read_error_reason(e);
+      if (reason.len() > 0) {
+        return Resolved { ...res_none(), err: reason, err_path: path };
+      }
+    }
+  }
+  let doc: string = path + ".md";
+  match (read_file(doc)) {
+    Ok(s) => {
+      return tangle_module(path, doc, s);
+    },
+    Err(e) => {
+      let reason: string = read_error_reason(e);
+      if (reason.len() > 0) {
+        return Resolved { ...res_none(), err: reason, err_path: doc };
+      }
+    }
+  }
+  return Resolved { ...res_none(), err_path: path };
+}
+
+// tangle_module is the module `path` read from the literate document `doc`
+// holding `src`. A `file=` document is several modules, so it is refused.
+function tangle_module(path: string, doc: string, src: string): Resolved {
+  if (literate.parse_file_pieces(src).len() > 0) {
+    return Resolved { ...res_none(), err: "a multi-file literate document tangles to several modules, not one importable module", err_path: doc };
+  }
+  match (literate.tangle(src)) {
+    literate.TangleOk(o) => {
+      return Resolved { ...res_none(), src: o.code, ok: true, shown: path, map: util.LineMap { doc: doc, lits: o.lits, shifts: o.shifts } };
+    },
+    literate.TangleErr(e) => {
+      return Resolved { ...res_none(), err: e.msg, err_path: doc + ":" + util.i32_to_string(e.line) + ":" + util.i32_to_string(e.col) };
     }
   }
   return res_none();
