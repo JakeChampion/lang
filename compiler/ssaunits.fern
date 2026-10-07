@@ -2245,14 +2245,14 @@ function other_slot_get(later: ssa.SInst, take: ssa.SInst): boolean {
   return other_payload_get(later, take.args[0], take.imm);
 }
 
-// A record field a take may move out: a buffer or a record, whose slot is one
-// word the take can null. A string may be a view or a literal at run time, and
-// is left to the borrow.
+// A record field a take may move out: a buffer, a map or a record, whose slot
+// is one word the take can null. A string may be a view or a literal at run
+// time, and is left to the borrow.
 function field_takeable(t: typeinfo.Type): boolean {
   if (ssasem.is_view(t) || ssasem.is_text(t)) {
     return false;
   }
-  return is_array(t) || is_record(t) && !semtypes.is_env(t);
+  return is_array(t) || ssasem.is_map(t) || is_record(t) && !semtypes.is_env(t);
 }
 
 // A projection whose read may itself be a take, and so a unit of the frame's
