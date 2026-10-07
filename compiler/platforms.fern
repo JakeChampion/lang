@@ -518,6 +518,8 @@ pub function core_builtins(): string[] {
     // The constant-time marks are valgrind client requests, a no-op
     // wherever valgrind is not running.
     "__ct_secret", "__ct_public",
+    // The AES-GCM kernels compute over bytes in memory and nothing else.
+    "__aes_expand_key", "__aes_ctr32", "__ghash",
     "map_new", "cell_new", "string_from_bytes_unchecked", "string_from_bytes_range_unchecked",
     "slice_unchecked",
     "strbuf_reset", "strbuf_append", "strbuf_take",

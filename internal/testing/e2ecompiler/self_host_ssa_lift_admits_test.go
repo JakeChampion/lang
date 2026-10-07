@@ -33,11 +33,12 @@ func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 	// clock_set, clock_resolution, str_hash, read_dir_ino, signal_catch,
 	// signal_taken, signal_catch_interrupting, signal_raise,
 	// disable_core_dumps, proc_waitpid_status and mounts are eleven more, and
-	// the constant-time gate's ct_mark and vg_request two more.
+	// the constant-time gate's ct_mark and vg_request two more, and the AES-GCM
+	// kernels aes_expand_key, aes_ctr32 and ghash three more.
 	const want = "load pops=-1 pushes=1\n" +
 		"store pops=-1 pushes=1\n" +
 		"call_closure_direct pops=-1 pushes=1\n" +
-		"registered=378 declined=3\n"
+		"registered=381 declined=3\n"
 
 	cmd := runX86_64Bin(runner, bin)
 	out, err := cmd.Output()

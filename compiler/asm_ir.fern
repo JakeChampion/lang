@@ -1659,6 +1659,217 @@ function emit_rt_sum_bytes(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
+// The AES-GCM kernels (std/crypto/aes_gcm): __fern_aes_expand_key(%rdi =
+// key), __fern_aes_ctr32(%rdi = round keys, %rsi = counter, %rdx = data) and
+// __fern_ghash(%rdi = h, %rsi = y, %rdx = data), each answering a fresh packed
+// u8[] in %rax. AES-NI and PCLMULQDQ, both in the x86-64 baseline, so nothing
+// branches on or indexes by a key or data byte; only the lengths steer.
+// Callee-saved registers are left alone.
+//
+// Each argument is a [u8] view: a packed array ([len] then the bytes at +8),
+// or a string descriptor tagged with bit 1 ([data@0, len@8] at p - 2).
+function x86_aes_view(arg: string, data: string, len: string, tag: string): string {
+  return "    movq " + arg + ", " + data + "\n    testq $2, " + data + "\n    jz " + tag + "_arr\n"
+    + "    movq 6(" + data + "), " + len + "\n    movq -2(" + data + "), " + data + "\n    jmp " + tag + "_ok\n"
+    + tag + "_arr:\n    movq (" + data + "), " + len + "\n    addq $8, " + data + "\n" + tag + "_ok:\n";
+}
+
+// x86_aes_epilogue returns the array saved at -48(%rbp).
+function x86_aes_epilogue(): string {
+  return "    movq -48(%rbp), %rax\n    movq %rbp, %rsp\n    popq %rbp\n    ret\n";
+}
+
+// x86_aes_alloc boxes a packed u8[] of the byte count in %rdi and saves it at
+// -48(%rbp).
+function x86_aes_alloc(): string {
+  return "    pushq %rdi\n    addq $7, %rdi\n    shrq $3, %rdi\n    call __fern_arr_box\n    popq %rdi\n"
+    + "    movq %rdi, (%rax)\n    movq %rax, -48(%rbp)\n";
+}
+
+// x86_aes_keygen_step is one schedule step: AESKEYGENASSIST of `src`, the
+// word `lane` selects broadcast, folded into the running key `dst` and stored
+// at off(%rdx).
+function x86_aes_keygen_step(rcon: i32, src: string, dst: string, lane: string, off: i32): string {
+  return "    aeskeygenassist $" + util.i32_to_string(rcon) + ", " + src + ", %xmm2\n    pshufd $" + lane + ", %xmm2, %xmm2\n"
+    + "    movdqa " + dst + ", %xmm4\n    pslldq $4, %xmm4\n    pxor %xmm4, " + dst + "\n    pslldq $4, %xmm4\n    pxor %xmm4, " + dst + "\n"
+    + "    pslldq $4, %xmm4\n    pxor %xmm4, " + dst + "\n    pxor %xmm2, " + dst + "\n    movdqu " + dst + ", " + util.i32_to_string(off) + "(%rdx)\n";
+}
+
+function x86_aes_schedule128(): string {
+  let o: string = ".Laesk_128:\n    movdqu (%rsi), %xmm1\n    movdqu %xmm1, (%rdx)\n";
+  let rcon: i32[] = [1, 2, 4, 8, 16, 32, 64, 128, 27, 54];
+  let i: i32 = 0;
+  while (i < 10) {
+    o = o + x86_aes_keygen_step(rcon[i], "%xmm1", "%xmm1", "255", 16 * (i + 1));
+    i = i + 1;
+  }
+  return o + "    jmp .Laesk_ret\n";
+}
+
+// AES-256 alternates the two halves: the even round key takes RotWord,
+// SubWord and the constant of the odd one before it, the odd key SubWord
+// alone of the even one.
+function x86_aes_schedule256(): string {
+  let o: string = ".Laesk_256:\n    movdqu (%rsi), %xmm1\n    movdqu 16(%rsi), %xmm3\n    movdqu %xmm1, (%rdx)\n    movdqu %xmm3, 16(%rdx)\n";
+  let rcon: i32[] = [1, 2, 4, 8, 16, 32, 64];
+  let i: i32 = 1;
+  while (i <= 7) {
+    o = o + x86_aes_keygen_step(rcon[i - 1], "%xmm3", "%xmm1", "255", 32 * i);
+    if (i < 7) {
+      o = o + x86_aes_keygen_step(0, "%xmm1", "%xmm3", "170", 32 * i + 16);
+    }
+    i = i + 1;
+  }
+  return o + "    jmp .Laesk_ret\n";
+}
+
+function x86_aes_expand_key(): string {
+  return "    .globl __fern_aes_expand_key\n    .type __fern_aes_expand_key, @function\n__fern_aes_expand_key:\n"
+    + "    pushq %rbp\n    movq %rsp, %rbp\n    subq $48, %rsp\n"
+    + x86_aes_view("%rdi", "%rsi", "%rcx", ".Laesk_key")
+    + "    movq %rsi, -8(%rbp)\n    movq %rcx, -16(%rbp)\n    xorl %edi, %edi\n"
+    + "    cmpq $16, %rcx\n    jne .Laesk_n32\n    movl $176, %edi\n.Laesk_n32:\n"
+    + "    cmpq $32, %rcx\n    jne .Laesk_box\n    movl $240, %edi\n.Laesk_box:\n"
+    + x86_aes_alloc()
+    + "    movq -8(%rbp), %rsi\n    movq -16(%rbp), %rcx\n    leaq 8(%rax), %rdx\n"
+    + "    cmpq $16, %rcx\n    je .Laesk_128\n    cmpq $32, %rcx\n    je .Laesk_256\n    jmp .Laesk_ret\n"
+    + x86_aes_schedule128() + x86_aes_schedule256()
+    + ".Laesk_ret:\n" + x86_aes_epilogue()
+    + "    .size __fern_aes_expand_key, .-__fern_aes_expand_key\n";
+}
+
+// x86_aes_rounds runs the rounds over `regs` with the keys at (%r8): the
+// whitening, nine rounds, then AES-128's last round, or four more and
+// AES-256's when %rcx is 14. A local subroutine, called.
+function x86_aes_rounds(label: string, regs: string[]): string {
+  let o: string = label + ":\n    movdqu (%r8), %xmm4\n" + x86_aes_each("pxor", regs);
+  let r: i32 = 1;
+  while (r < 14) {
+    if (r == 10) {
+      o = o + "    cmpq $14, %rcx\n    je " + label + "_256\n    movdqu 160(%r8), %xmm4\n" + x86_aes_each("aesenclast", regs) + "    ret\n" + label + "_256:\n";
+    }
+    o = o + "    movdqu " + util.i32_to_string(16 * r) + "(%r8), %xmm4\n" + x86_aes_each("aesenc", regs);
+    r = r + 1;
+  }
+  return o + "    movdqu 224(%r8), %xmm4\n" + x86_aes_each("aesenclast", regs) + "    ret\n";
+}
+
+function x86_aes_each(mnem: string, regs: string[]): string {
+  let o: string = "";
+  for reg in regs {
+    o = o + "    " + mnem + " %xmm4, " + reg + "\n";
+  }
+  return o;
+}
+
+// x86_aes_next_counter builds the next counter block in `reg`: %xmm13 holds
+// the counter with its last word little-endian, so paddd steps it modulo 2^32
+// (GCM's inc32) and the %xmm15 shuffle swaps that word back.
+function x86_aes_next_counter(reg: string): string {
+  return "    movdqa %xmm13, " + reg + "\n    pshufb %xmm15, " + reg + "\n    paddd %xmm14, %xmm13\n";
+}
+
+function x86_aes_ctr_blocks(): string {
+  let regs: string[] = ["%xmm0", "%xmm1", "%xmm2", "%xmm3"];
+  let o: string = ".Lctr_loop4:\n    cmpq $64, %rdx\n    jb .Lctr_loop1\n";
+  for reg in regs {
+    o = o + x86_aes_next_counter(reg);
+  }
+  o = o + "    call .Lctr_enc4\n";
+  let j: i32 = 0;
+  while (j < 4) {
+    let off: string = util.i32_to_string(16 * j);
+    o = o + "    movdqu " + off + "(%rsi), %xmm5\n    pxor %xmm5, " + regs[j] + "\n    movdqu " + regs[j] + ", " + off + "(%rdi)\n";
+    j = j + 1;
+  }
+  o = o + "    addq $64, %rsi\n    addq $64, %rdi\n    subq $64, %rdx\n    jmp .Lctr_loop4\n";
+  o = o + ".Lctr_loop1:\n    cmpq $16, %rdx\n    jb .Lctr_tail\n" + x86_aes_next_counter("%xmm0") + "    call .Lctr_enc1\n";
+  o = o + "    movdqu (%rsi), %xmm5\n    pxor %xmm5, %xmm0\n    movdqu %xmm0, (%rdi)\n    addq $16, %rsi\n    addq $16, %rdi\n    subq $16, %rdx\n    jmp .Lctr_loop1\n";
+  // The last partial block: its keystream goes through the frame and the
+  // bytes are combined one at a time, so nothing reads or writes past either
+  // buffer.
+  o = o + ".Lctr_tail:\n    testq %rdx, %rdx\n    jz .Lctr_ret\n" + x86_aes_next_counter("%xmm0") + "    call .Lctr_enc1\n";
+  o = o + "    movdqu %xmm0, -64(%rbp)\n    xorq %r9, %r9\n.Lctr_tailb:\n";
+  return o + "    movzbl (%rsi,%r9), %eax\n    movzbl -64(%rbp,%r9), %ecx\n    xorl %ecx, %eax\n    movb %al, (%rdi,%r9)\n"
+    + "    addq $1, %r9\n    cmpq %rdx, %r9\n    jb .Lctr_tailb\n    jmp .Lctr_ret\n";
+}
+
+function x86_aes_ctr32(): string {
+  let o: string = "    .globl __fern_aes_ctr32\n    .type __fern_aes_ctr32, @function\n__fern_aes_ctr32:\n"
+    + "    pushq %rbp\n    movq %rsp, %rbp\n    subq $64, %rsp\n"
+    + x86_aes_view("%rdx", "%r8", "%r9", ".Lctr_data") + "    movq %r8, -24(%rbp)\n    movq %r9, -32(%rbp)\n"
+    + x86_aes_view("%rsi", "%r8", "%r10", ".Lctr_ctr") + "    movq %r8, -16(%rbp)\n"
+    + x86_aes_view("%rdi", "%r8", "%r9", ".Lctr_rk") + "    movq %r8, -8(%rbp)\n";
+  // The round count from the key bytes: 14 from 240, 10 from 176, else none,
+  // and none for a short counter either; with none the answer is empty.
+  o = o + "    xorl %ecx, %ecx\n    cmpq $176, %r9\n    jb .Lctr_rounds\n    movl $10, %ecx\n    cmpq $240, %r9\n    jb .Lctr_rounds\n    movl $14, %ecx\n.Lctr_rounds:\n"
+    + "    cmpq $16, %r10\n    jae .Lctr_ctrok\n    xorl %ecx, %ecx\n.Lctr_ctrok:\n    movq %rcx, -40(%rbp)\n    movq -32(%rbp), %rdi\n"
+    + "    testq %rcx, %rcx\n    jnz .Lctr_box\n    xorl %edi, %edi\n.Lctr_box:\n" + x86_aes_alloc()
+    + "    movq %rdi, %rdx\n    leaq 8(%rax), %rdi\n    movq -24(%rbp), %rsi\n    movq -8(%rbp), %r8\n    movq -40(%rbp), %rcx\n"
+    + "    movq -16(%rbp), %r9\n    testq %rdx, %rdx\n    jz .Lctr_ret\n"
+    + "    movdqu .Laes_ctr_swap(%rip), %xmm15\n    movdqu .Laes_ctr_one(%rip), %xmm14\n    movdqu (%r9), %xmm13\n    pshufb %xmm15, %xmm13\n";
+  return o + x86_aes_ctr_blocks() + x86_aes_rounds(".Lctr_enc4", ["%xmm0", "%xmm1", "%xmm2", "%xmm3"]) + x86_aes_rounds(".Lctr_enc1", ["%xmm0"])
+    + ".Lctr_ret:\n" + x86_aes_epilogue() + "    .size __fern_aes_ctr32, .-__fern_aes_ctr32\n";
+}
+
+// x86_ghash_mul is %xmm0 = %xmm0 * %xmm1 in GF(2^128), both byte-reversed:
+// the four carry-less products, the 256-bit result shifted left one bit for
+// the reflected order, and the reduction by x^128 + x^7 + x^2 + x + 1
+// (Gueron and Kounavis, Intel's carry-less multiplication white paper,
+// algorithms 1 to 5). Clobbers %xmm2 to %xmm9.
+function x86_ghash_mul(): string {
+  return ".Lgh_mul:\n"
+    + "    movdqa %xmm0, %xmm3\n    pclmulqdq $0, %xmm1, %xmm3\n    movdqa %xmm0, %xmm4\n    pclmulqdq $16, %xmm1, %xmm4\n"
+    + "    movdqa %xmm0, %xmm5\n    pclmulqdq $1, %xmm1, %xmm5\n    movdqa %xmm0, %xmm6\n    pclmulqdq $17, %xmm1, %xmm6\n"
+    + "    pxor %xmm5, %xmm4\n    movdqa %xmm4, %xmm5\n    pslldq $8, %xmm5\n    psrldq $8, %xmm4\n    pxor %xmm5, %xmm3\n    pxor %xmm4, %xmm6\n"
+    + "    movdqa %xmm3, %xmm7\n    psrld $31, %xmm7\n    movdqa %xmm6, %xmm8\n    psrld $31, %xmm8\n    pslld $1, %xmm3\n    pslld $1, %xmm6\n"
+    + "    movdqa %xmm7, %xmm9\n    psrldq $12, %xmm9\n    pslldq $4, %xmm8\n    pslldq $4, %xmm7\n    por %xmm7, %xmm3\n    por %xmm8, %xmm6\n    por %xmm9, %xmm6\n"
+    + "    movdqa %xmm3, %xmm7\n    pslld $31, %xmm7\n    movdqa %xmm3, %xmm8\n    pslld $30, %xmm8\n    movdqa %xmm3, %xmm9\n    pslld $25, %xmm9\n"
+    + "    pxor %xmm8, %xmm7\n    pxor %xmm9, %xmm7\n    movdqa %xmm7, %xmm8\n    psrldq $4, %xmm8\n    pslldq $12, %xmm7\n    pxor %xmm7, %xmm3\n"
+    + "    movdqa %xmm3, %xmm2\n    psrld $1, %xmm2\n    movdqa %xmm3, %xmm4\n    psrld $2, %xmm4\n    movdqa %xmm3, %xmm5\n    psrld $7, %xmm5\n"
+    + "    pxor %xmm4, %xmm2\n    pxor %xmm5, %xmm2\n    pxor %xmm8, %xmm2\n    pxor %xmm2, %xmm3\n    pxor %xmm3, %xmm6\n    movdqa %xmm6, %xmm0\n    ret\n";
+}
+
+function x86_ghash(): string {
+  let o: string = "    .globl __fern_ghash\n    .type __fern_ghash, @function\n__fern_ghash:\n"
+    + "    pushq %rbp\n    movq %rsp, %rbp\n    subq $64, %rsp\n"
+    + x86_aes_view("%rdx", "%r8", "%r9", ".Lgh_data") + "    movq %r8, -24(%rbp)\n    movq %r9, -32(%rbp)\n"
+    + x86_aes_view("%rsi", "%r8", "%r10", ".Lgh_y") + "    movq %r8, -16(%rbp)\n"
+    + x86_aes_view("%rdi", "%r8", "%r9", ".Lgh_h") + "    movq %r8, -8(%rbp)\n"
+    + "    movl $16, %edi\n    cmpq $16, %r9\n    jae .Lgh_hok\n    xorl %edi, %edi\n.Lgh_hok:\n    cmpq $16, %r10\n    jae .Lgh_yok\n    xorl %edi, %edi\n.Lgh_yok:\n"
+    + x86_aes_alloc() + "    testq %rdi, %rdi\n    jz .Lgh_ret\n"
+    + "    movdqu .Laes_gh_bswap(%rip), %xmm15\n    movq -8(%rbp), %r8\n    movdqu (%r8), %xmm1\n    pshufb %xmm15, %xmm1\n"
+    + "    movq -16(%rbp), %r8\n    movdqu (%r8), %xmm0\n    pshufb %xmm15, %xmm0\n    movq -24(%rbp), %rsi\n    movq -32(%rbp), %rdx\n";
+  o = o + ".Lgh_loop:\n    cmpq $16, %rdx\n    jb .Lgh_tail\n    movdqu (%rsi), %xmm2\n    pshufb %xmm15, %xmm2\n    pxor %xmm2, %xmm0\n    call .Lgh_mul\n"
+    + "    addq $16, %rsi\n    subq $16, %rdx\n    jmp .Lgh_loop\n";
+  // A short last block is zero-padded through the frame.
+  o = o + ".Lgh_tail:\n    testq %rdx, %rdx\n    jz .Lgh_out\n    pxor %xmm2, %xmm2\n    movdqu %xmm2, -64(%rbp)\n    xorq %r9, %r9\n"
+    + ".Lgh_tailb:\n    movzbl (%rsi,%r9), %eax\n    movb %al, -64(%rbp,%r9)\n    addq $1, %r9\n    cmpq %rdx, %r9\n    jb .Lgh_tailb\n"
+    + "    movdqu -64(%rbp), %xmm2\n    pshufb %xmm15, %xmm2\n    pxor %xmm2, %xmm0\n    call .Lgh_mul\n";
+  return o + ".Lgh_out:\n    pshufb %xmm15, %xmm0\n    movq -48(%rbp), %rax\n    movdqu %xmm0, 8(%rax)\n.Lgh_ret:\n" + x86_aes_epilogue()
+    + x86_ghash_mul() + "    .size __fern_ghash, .-__fern_ghash\n";
+}
+
+// emit_aes_gcm_op calls a kernel: [key] for aes_expand_key, three views for
+// aes_ctr32 and ghash.
+function emit_aes_gcm_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+  s = s.need("aes_gcm").need("heap");
+  if (o.kind_tag == 402) {
+    return s.write("    popq %rdi\n    call __fern_aes_expand_key\n    pushq %rax\n");
+  }
+  let callee: string = "__fern_aes_ctr32";
+  if (o.kind_tag == 404) {
+    callee = "__fern_ghash";
+  }
+  return s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n    call " + callee + "\n    pushq %rax\n");
+}
+
+function emit_rt_aes_gcm(s: asmcore.EmitState): asmcore.EmitState {
+  s = s.write("    .section .rodata\n    .align 16\n.Laes_ctr_swap:\n    .byte 0,1,2,3,4,5,6,7,8,9,10,11,15,14,13,12\n");
+  s = s.write(".Laes_ctr_one:\n    .long 0,0,0,1\n.Laes_gh_bswap:\n    .byte 15,14,13,12,11,10,9,8,7,6,5,4,3,2,1,0\n    .section .text\n");
+  return s.write(x86_aes_expand_key() + x86_aes_ctr32() + x86_ghash());
+}
+
 // emit_rt_crc32_cksum emits `__fern_crc32_cksum(crc, box) -> i32`: the bytes of
 // the string box folded into the running CRC-32 that cksum(1) prints (poly
 // 0x04C11DB7, MSB first, unreflected, no final complement).
@@ -6035,6 +6246,9 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   }
   if (o.kind_tag == 382) {
     return emit_inner_mul_add_f64(s);
+  }
+  if (ir.is_aes_gcm_op(o.kind_tag)) {
+    return emit_aes_gcm_op(o, s);
   }
   if (o.kind_tag == 381) {
     return emit_outer_mul_f64(s);
@@ -12131,6 +12345,9 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // `call __fern_crc32_cksum` with no definition anywhere in the link.
   if (s.has_need("crc32_cksum")) {
     s = emit_rt_crc32_cksum(s);
+  }
+  if (s.has_need("aes_gcm")) {
+    s = emit_rt_aes_gcm(s);
   }
   if (s.has_need("sum_bytes")) {
     s = emit_rt_sum_bytes(s);

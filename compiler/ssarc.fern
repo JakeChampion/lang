@@ -7147,6 +7147,15 @@ function byte_scan_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "__outer_mul_f64") {
     return Lowered { found: true, r: emit(r, ir.op_outer_mul_f64()) };
   }
+  if (ins.str == "__aes_expand_key") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_aes_expand_key())) };
+  }
+  if (ins.str == "__aes_ctr32") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_aes_ctr32())) };
+  }
+  if (ins.str == "__ghash") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_ghash())) };
+  }
   if (ins.str == "__sum_bytes") {
     return Lowered { found: true, r: emit(r, ir.op_sum_bytes()) };
   }
