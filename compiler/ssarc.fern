@@ -6617,6 +6617,9 @@ function fs_op_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "mounts") {
     return Lowered { found: true, r: emit(r, ir.op_mounts()) };
   }
+  if (ins.str == "sysctl") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_sysctl())) };
+  }
   if (ins.str == "create_dir") {
     return Lowered { found: true, r: emit(r, ir.op_create_dir()) };
   }

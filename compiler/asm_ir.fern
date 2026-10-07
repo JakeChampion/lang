@@ -2417,7 +2417,7 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
 // errno the same way and so shares the same call graph.
 function needs_fs_runtime(s: asmcore.EmitState): boolean {
   return s.any_need([
-    "stat", "lstat", "statfs", "mounts", "access", "read_file",
+    "stat", "lstat", "statfs", "mounts", "sysctl", "access", "read_file",
     "read_file_bytes", "read_file_bytes_u8", "remove_file", "create_dir_all", "create_dir",
     "remove_dir", "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at",
     "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
@@ -2441,7 +2441,7 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
     "remove_dir", "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at",
     "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
     "read_link", "getcwd", "chdir", "chroot", "setuid", "setgid", "setgroups",
-    "umask", "env", "environ", "raw_environ", "getgroups", "stat", "lstat", "statfs", "mounts",
+    "umask", "env", "environ", "raw_environ", "getgroups", "stat", "lstat", "statfs", "mounts", "sysctl",
     "access", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "subprocess",
     "signal_send", "set_process_group", "set_priority", "clock_set",
   ]);
@@ -10776,6 +10776,11 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.write("    call __fn___fern_mounts\n    pushq %rax\n");
     s = s.need("heap");
     s = s.need("mounts");
+  } else if (o.kind_tag == 401) {  // sysctl
+    // [mib]; pushes a fresh Result[u8[], IoError].
+    s = s.write("    call __fn___fern_sysctl\n    addq $8, %rsp\n    pushq %rax\n");
+    s = s.need("heap");
+    s = s.need("sysctl");
   } else if (o.kind_tag == 299) {  // fd_fsync
     // [fd] IS param[0]; __fn___fern_fd_fsync pushes a fresh
     // Option[IoError], None once the write-back is scheduled.
@@ -12485,6 +12490,9 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     }
     if (s.has_need("mounts")) {
       fs_src = fs_src + " " + asmcore.rt_src_mounts("x86_64");
+    }
+    if (s.has_need("sysctl")) {
+      fs_src = fs_src + " " + asmcore.rt_src_sysctl("x86_64");
     }
     if (s.has_need("window_size")) {
       fs_src = fs_src + " " + asmcore.rt_src_window_size("x86_64");

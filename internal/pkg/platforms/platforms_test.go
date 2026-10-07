@@ -30,9 +30,9 @@ func TestEveryTargetComposes(t *testing.T) {
 // before they were collapsed, where adding a capability meant editing
 // the identical list four times and missing one was silent.
 //
-// Environments are deliberately NOT covered: linux, darwin and android
-// share the hosted-native profile on purpose, because they differ in
-// object format and syscall vector rather than in what the host grants.
+// Environments are deliberately NOT covered: linux and android share the
+// hosted-native profile on purpose, because they differ in object format
+// and syscall vector rather than in what the host grants.
 func TestCapabilityProfilesAreDistinct(t *testing.T) {
 	seen := map[string]string{}
 	for name, caps := range capabilityProfiles {

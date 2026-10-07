@@ -1598,6 +1598,7 @@ func New() *Interp {
 	i.Builtins["disable_core_dumps"] = &Builtin{Fn: builtinDisableCoreDumps}
 	i.Builtins["statfs"] = &Builtin{Fn: builtinStatfs}
 	i.Builtins["mounts"] = &Builtin{Fn: builtinMounts}
+	i.Builtins["sysctl"] = &Builtin{Fn: builtinSysctl}
 	i.Builtins["temp_dir"] = &Builtin{Fn: builtinTempDir}
 	i.Builtins["read_dir"] = &Builtin{Fn: builtinReadDir}
 	i.Builtins["read_dir_all"] = &Builtin{Fn: builtinReadDirAll}
@@ -4335,6 +4336,35 @@ func builtinStatfs(_ *Interp, args []Value) (Value, error) {
 // builtinMounts mirrors the native `mounts()` — the mounted filesystems in
 // the order the kernel lists them. Where the rows come from is per-OS
 // (mounts_linux.go / mounts_darwin.go).
+// builtinSysctl mirrors __fern_sysctl: the kernel's bytes for a MIB on
+// Darwin (sysctlMIB), ENOSYS everywhere else.
+func builtinSysctl(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("sysctl: expected 1 arg, got %d", len(args))
+	}
+	arr, ok := args[0].(*Array)
+	if !ok {
+		return nil, fmt.Errorf("sysctl: expected i32[] arg, got %T", args[0])
+	}
+	mib := make([]int32, len(arr.E))
+	for k, v := range arr.E {
+		n, ok := v.(Number)
+		if !ok {
+			return nil, fmt.Errorf("sysctl: expected i32 element, got %T", v)
+		}
+		mib[k] = int32(n)
+	}
+	data, err := sysctlMIB(mib)
+	if err != nil {
+		return resultErr(classifyIoError("", err)), nil
+	}
+	out := newArray(len(data))
+	for k, b := range data {
+		out.E[k] = Number(b)
+	}
+	return resultOk(out), nil
+}
+
 func builtinMounts(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 0 {
 		return nil, fmt.Errorf("mounts: expected 0 args, got %d", len(args))
