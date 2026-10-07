@@ -44,9 +44,16 @@ function max_once_insts(): i32 {
 // this many callers as well, once the functions called once have folded:
 // each caller reads the construction apart as a once-spliced one's is read,
 // so the box is never built, and the program grows by at most one copy of a
-// body under the once budget.
+// body under the shared budget.
 function max_shared_callers(): i32 {
   return 2;
+}
+
+// Unlike a once splice, a shared one keeps the original, so every copy is
+// code each later pass of every compile pays for. The serve loop's request
+// constructions are at most 75 instructions.
+function max_shared_insts(): i32 {
+  return 100;
 }
 
 function max_splices(): i32 {
@@ -133,10 +140,10 @@ function once_spliceable(f: ssasem.Func, calls: i32): boolean {
 }
 
 // Whether `f`, called `calls` times from more than one place, is spliced into
-// each: a few callers, a body under the once budget, a construction at every
+// each: a few callers, a body under the shared budget, a construction at every
 // return, and at one of them a box the pair return keeps.
 function shared_spliceable(f: ssasem.Func, calls: i32): boolean {
-  return calls > 1 && calls <= max_shared_callers() && !lends_view(f) && spliceable(f, max_once_insts()) && returns_boxes(f);
+  return calls > 1 && calls <= max_shared_callers() && !lends_view(f) && spliceable(f, max_shared_insts()) && returns_boxes(f);
 }
 
 // Whether every return of `f` returns a construction, and one of them a box

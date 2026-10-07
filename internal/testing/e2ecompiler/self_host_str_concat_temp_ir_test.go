@@ -145,8 +145,8 @@ function main(): i32 {
 }`,
 		0, -1, ""},
 	// NEGATIVE: a STRING-receiver `.to_string()` is the identity case — its
-	// result aliases the receiver, so the operand must NOT be freed. Exactly
-	// 2 sites: the inline-consumed result temp + the "x" literal operand (3
+	// result aliases the receiver, so the operand must NOT be freed. The call
+	// is inlined to its receiver, so exactly 1 site: the concat's result (2
 	// would mean the aliased identity result was mis-freed — the over-release
 	// this case exists to catch); the exit code proves s survives the concat.
 	{"tostring-string-recv-alias-safe",
@@ -157,7 +157,7 @@ function main(): i32 {
     if (s.len() != 4) { return 96; }
     return 0;
 }`,
-		0, 2, ""},
+		0, 1, ""},
 }
 
 // TestSelfHostStrConcatTempIRX86_64 compiles each case through the self-hosted
