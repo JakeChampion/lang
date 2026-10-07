@@ -41,8 +41,11 @@ type-checks standalone (`TestStdlibModulesImportStandalone`).
 5. **ML-KEM-768** (FIPS 203) over `std/crypto`'s Keccak, which needs
    SHAKE128 and SHAKE256 added beside SHA-3. Then the X25519MLKEM768
    hybrid share.
-6. **P-256 and Ed25519** for certificate signatures: P-256 in 32-bit
-   limbs, and Ed25519 over slice 3's field and SHA-512.
+6. **P-256 and Ed25519** for certificate signatures. P-256 verification
+   landed first on `core/bigint`, about 13 ms per verification, since it
+   handles only public values. Signing, for the server, needs constant-time
+   32-bit limbs, which replace the bigint path. Ed25519 goes over slice 3's
+   field and SHA-512.
 7. **RSA-PSS and PKCS#1 v1.5 verify** over `core/bigint`. Verification
    handles only public values, so it does not need to be constant time,
    and it landed ahead of slices 4 to 6 for that reason: every public
