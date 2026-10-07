@@ -126,3 +126,40 @@ func TestRenderModuleEmitsTraitsAndImpls(t *testing.T) {
 		}
 	}
 }
+
+// The module overview keeps its line structure, so a `//` blank line is a
+// paragraph break and a `- ` line is a list item, and the page description
+// is the overview's first sentence rather than boilerplate.
+func TestRenderModuleIntroAndDescription(t *testing.T) {
+	mods, err := collectModules()
+	if err != nil {
+		t.Fatalf("collectModules: %v", err)
+	}
+	page, err := renderModule(findModule(t, mods, "std", "regex"))
+	if err != nil {
+		t.Fatalf("renderModule(std/regex): %v", err)
+	}
+	for _, want := range []string{
+		`description: "A small regular-expression matcher."`,
+		"\n- `regex_match(pattern, text)`",
+	} {
+		if !strings.Contains(page, want) {
+			t.Errorf("std/regex page missing %q", want)
+		}
+	}
+}
+
+func TestModuleSummary(t *testing.T) {
+	cases := []struct{ intro, want string }{
+		{"std/csv — CSV escape / join (RFC 4180).\n\nMore.", "CSV escape / join (RFC 4180)."},
+		{"std/tz — the local time zone: a TZif file\n(RFC 8536). Second sentence.", "The local time zone: a TZif file (RFC 8536)."},
+		{"Arbitrary-precision integers.", "Arbitrary-precision integers."},
+		{"std/float — f32 / f64 to-string formatting.", "f32 / f64 to-string formatting."},
+		{"", ""},
+	}
+	for _, c := range cases {
+		if got := moduleSummary(c.intro); got != c.want {
+			t.Errorf("moduleSummary(%q) = %q, want %q", c.intro, got, c.want)
+		}
+	}
+}

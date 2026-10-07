@@ -1,4 +1,4 @@
-// std/io_buffered — in-memory buffered writers + readers,
+// std/io_buffered — in-memory buffered writers and readers.
 // Tier-C Rec §13 Phase 1 (docs/STDLIB-DESIGN-RESEARCH.md
 // Rec §5).
 //

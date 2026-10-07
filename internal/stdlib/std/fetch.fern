@@ -1,5 +1,5 @@
-// std/fetch — outbound HTTP/1.1 client (the upstream-fetch half of the
-// edge-handler use case: docs/PLATFORM-RESEARCH.md Rec §1).
+// std/fetch — an outbound HTTP/1.1 client. It is the upstream-fetch half
+// of the edge-handler use case (docs/PLATFORM-RESEARCH.md Rec §1).
 //
 // A request is a value built from a URL (`get(url)`, `request(method,
 // url)`, then `with_header`, `with_text`, `with_bytes`, `with_body`,

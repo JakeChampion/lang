@@ -1,6 +1,6 @@
 // std/ndarray — a multidimensional array as a counted handle over flat
 // storage: shape, strides and offset, with the structural operations as
-// metadata (#9734, phase 3 of #9727).
+// metadata. It is phase 3 (#9734) of #9727.
 //
 //   import "std/ndarray";
 //   let a: ndarray.NdArray[i64] = ndarray.from_flat(xs, [64, 64]);
