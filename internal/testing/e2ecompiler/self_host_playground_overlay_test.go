@@ -109,6 +109,7 @@ func TestSelfHostPlaygroundOverlay(t *testing.T) {
 	t.Run("check-accepts-a-valid-program", func(t *testing.T) { playgroundCheckAccepts(t, bin) })
 	t.Run("check-names-a-type-error", func(t *testing.T) { playgroundCheckRejects(t, bin) })
 	t.Run("interp-runs-and-prints", func(t *testing.T) { playgroundInterpRuns(t, bin) })
+	t.Run("interp-checks-first", func(t *testing.T) { playgroundInterpChecksFirst(t, bin) })
 	t.Run("interp-reaches-the-stdlib", func(t *testing.T) { playgroundInterpStdlib(t, bin) })
 	t.Run("interp-maps-the-exit-code", func(t *testing.T) { playgroundInterpExit(t, bin) })
 	t.Run("interp-dispatches-byte-methods", func(t *testing.T) { playgroundInterpByteMethods(t, bin) })
@@ -218,6 +219,23 @@ func playgroundCheckAccepts(t *testing.T, bin string) {
 	}
 	if stderr != "" {
 		t.Errorf("-check reported a diagnostic on a valid program:\n%s", stderr)
+	}
+}
+
+// The page's Run calls -interp alone, so a type error has to stop it there:
+// evaluated unchecked, `"x" + s[0:1]` (a string plus an Option[str]) ran
+// until the evaluator gave up with "+ rhs not string".
+func playgroundInterpChecksFirst(t *testing.T, bin string) {
+	out, stderr, code := runPlayground(t, bin, t.TempDir(),
+		"function main(): i32 {\n  let s: string = \"ab\";\n  print(\"x\" + s[0:1]);\n  return 0;\n}\n", "-interp")
+	if code != 1 {
+		t.Errorf("-interp on a type error exited %d, want 1", code)
+	}
+	if out != "" {
+		t.Errorf("-interp ran a program that does not type-check; it printed:\n%s", out)
+	}
+	if !strings.Contains(stderr, "E009") || strings.Contains(stderr, "fern: interp:") {
+		t.Errorf("-interp did not report the type error as a diagnostic:\n%s", stderr)
 	}
 }
 
