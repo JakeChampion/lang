@@ -487,11 +487,24 @@ function no_keep(): Site {
 // the token source, and the later select's else arm the decline release.
 function read_keep_site(ops: ir.Op[], call: i32, token_slot: i32): Site {
   let at: i32 = call + 1;
-  if (at + 3 >= ops.len() || !is_kind(ops[at], "store_local") || !is_kind(ops[at + 1], "load_local")
-    || !is_kind(ops[at + 2], "struct_set_shape") || !is_kind(ops[at + 3], "drop")) {
+  if (at >= ops.len()) {
     return no_keep();
   }
   let result: i32 = ops[at].i32_imm;
+  // Stack cleanup can fuse the result's store/load into tee_local before
+  // this verifier runs. Both forms name the same shaped allocation.
+  let shape: i32 = at + 1;
+  if (is_kind(ops[at], "store_local")) {
+    if (shape >= ops.len() || !is_kind(ops[shape], "load_local") || ops[shape].i32_imm != result) {
+      return no_keep();
+    }
+    shape = shape + 1;
+  } else if (!is_kind(ops[at], "tee_local")) {
+    return no_keep();
+  }
+  if (shape + 1 >= ops.len() || !is_kind(ops[shape], "struct_set_shape") || !is_kind(ops[shape + 1], "drop")) {
+    return no_keep();
+  }
   if (call < 6 || !is_kind(ops[call - 3], "if") || !is_kind(ops[call - 4], "eq")
     || !is_kind(ops[call - 5], "const_i32") || ops[call - 5].i32_imm != 0
     || !is_kind(ops[call - 6], "load_local") || ops[call - 6].i32_imm != token_slot) {
