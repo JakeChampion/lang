@@ -455,10 +455,8 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (o.kind_tag == 225 || o.kind_tag == 358) {  // memchr / memchr_bytes
     // operand stack [box, byte, from] (from on top) -> i32 index or -1.
     //
-    // NEON, 16 bytes an iteration, the same kernel the native arm64
-    // emitter runs: dup to splat the needle, then ld1 / cmeq / shrn /
-    // fmov / rbit+clz. §3.4 step 3 for this tier — the meaning is
-    // unchanged, only the speed.
+    // NEON, 32 bytes an iteration: dup to splat the needle, then a q-pair
+    // load / cmeq / shrn / fmov / rbit+clz. §3.4 step 3 for this tier.
     //
     // NEON has no pmovmskb, so the mask comes out as a NIBBLE per input
     // byte: cmeq gives 0x00/0xFF per lane, `shrn v0.8b, v0.8h, #4` narrows
@@ -467,13 +465,13 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     //
     // The vector load runs only with a full block left, so it never reads
     // past the string and there is no alignment prologue to pay. x5 is the
-    // cursor pointer (ld1 has no indexed form), x6 the end, x7 the mask.
+    // cursor pointer, x6 the end, x7 the mask.
     let mlo: asmcore.LabelOut = asmcore.fresh_label(s);
     let l_clamped: string = mlo.name;
     let mlo2: asmcore.LabelOut = asmcore.fresh_label(mlo.state);
     let l_vec: string = mlo2.name;
     let mlo3: asmcore.LabelOut = asmcore.fresh_label(mlo2.state);
-    let l_next: string = mlo3.name;
+    let l_v16: string = mlo3.name;
     let mlo4: asmcore.LabelOut = asmcore.fresh_label(mlo3.state);
     let l_tail: string = mlo4.name;
     let mlo5: asmcore.LabelOut = asmcore.fresh_label(mlo4.state);
@@ -482,7 +480,11 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let l_none: string = mlo6.name;
     let mlo7: asmcore.LabelOut = asmcore.fresh_label(mlo6.state);
     let l_done: string = mlo7.name;
-    s = mlo7.state;
+    let mlo8: asmcore.LabelOut = asmcore.fresh_label(mlo7.state);
+    let l_hit32: string = mlo8.name;
+    let mlo9: asmcore.LabelOut = asmcore.fresh_label(mlo8.state);
+    let l_lane: string = mlo9.name;
+    s = mlo9.state;
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     if (o.kind_tag == 358) {
       s = s.write("    ldr x3, [x0]\n    add x0, x0, #8\n");
@@ -503,16 +505,31 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
       return s.write(l_done + ":\n    str x2, [sp, #-16]!\n");
     }
     s = s.write("    cmp x2, x3\n    b.ge " + l_none + "\n");
-    s = s.write("    add x5, x0, x2\n    add x6, x0, x3\n");
+    s = s.write("    add x5, x0, x2\n    add x6, x0, x3\n    sub x8, x6, #32\n");
     s = s.write("    dup v1.16b, w1\n");
+    s = s.write("    cmp x5, x8\n    b.hi " + l_v16 + "\n");
+    // 32 bytes an iteration while x5 is at or below x8, the last address a
+    // whole block can start at: one post-indexed q pair, both compares
+    // folded by orr so a single mask test covers the block.
     s = s.write(l_vec + ":\n");
-    s = s.write("    sub x7, x6, x5\n    cmp x7, #16\n    b.lt " + l_tail + "\n");
-    s = s.write("    ld1 {v0.16b}, [x5]\n    cmeq v0.16b, v0.16b, v1.16b\n");
+    s = s.write("    ldp q0, q2, [x5], #32\n");
+    s = s.write("    cmeq v0.16b, v0.16b, v1.16b\n    cmeq v2.16b, v2.16b, v1.16b\n");
+    s = s.write("    orr v3.16b, v0.16b, v2.16b\n    shrn v3.8b, v3.8h, #4\n    fmov x7, d3\n");
+    s = s.write("    cbnz x7, " + l_hit32 + "\n");
+    s = s.write("    cmp x5, x8\n    b.ls " + l_vec + "\n");
+    // Under 32 bytes left: at most one 16-byte block, then the tail.
+    s = s.write(l_v16 + ":\n    sub x7, x6, x5\n    cmp x7, #16\n    b.lt " + l_tail + "\n");
+    s = s.write("    ldr q0, [x5], #16\n    cmeq v0.16b, v0.16b, v1.16b\n");
     s = s.write("    shrn v0.8b, v0.8h, #4\n    fmov x7, d0\n");
-    s = s.write("    cbz x7, " + l_next + "\n");
-    s = s.write("    rbit x4, x7\n    clz x4, x4\n    lsr x4, x4, #2\n");
+    s = s.write("    cbz x7, " + l_tail + "\n    sub x5, x5, #16\n    b " + l_lane + "\n");
+    // A hit in the pair: the low half holds the earlier bytes, so its mask
+    // is read first.
+    s = s.write(l_hit32 + ":\n    sub x5, x5, #32\n    shrn v0.8b, v0.8h, #4\n    fmov x7, d0\n");
+    s = s.write("    cbnz x7, " + l_lane + "\n");
+    s = s.write("    shrn v2.8b, v2.8h, #4\n    fmov x7, d2\n    add x5, x5, #16\n");
+    // x5 is the block's address and x7 its nibble mask.
+    s = s.write(l_lane + ":\n    rbit x4, x7\n    clz x4, x4\n    lsr x4, x4, #2\n");
     s = s.write("    add x5, x5, x4\n    sub x2, x5, x0\n    b " + l_done + "\n");
-    s = s.write(l_next + ":\n    add x5, x5, #16\n    b " + l_vec + "\n");
     // Scalar tail: fewer than 16 bytes left, and the whole algorithm for a
     // string shorter than one block.
     s = s.write(l_tail + ":\n");
@@ -532,8 +549,8 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // operand stack [box, byte, from] (from on top) -> the index of the
     // LAST `byte` at or before `from`, or -1.
     //
-    // NEON, 16 bytes an iteration, walking DOWN: the block ENDING at the
-    // cursor is loaded at `cursor - 15`. §3.4 step 3 for this tier.
+    // NEON, 32 bytes an iteration, walking DOWN: the block ENDING at the
+    // cursor is loaded below it. §3.4 step 3 for this tier.
     //
     // This is memchr's body read backwards, and the whole difference is
     // which end of the mask is scanned: the rightmost match is the HIGHEST
@@ -541,9 +558,6 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // and the lane is that over four (shrn gives four mask bits per input
     // byte). memchr divides the LOWEST set bit by the same four.
     //
-    // x5 is the block base INDEX and x6 its address; both are carried
-    // across iterations and stepped by 16 rather than recomputed from the
-    // cursor, which measured about a third of the loop on the x86-64 twin.
     // x3 holds len-1 for the clamp and is dead after it, so the hit path
     // borrows it for the 63.
     let rlo: asmcore.LabelOut = asmcore.fresh_label(s);
@@ -551,9 +565,9 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let rlo2: asmcore.LabelOut = asmcore.fresh_label(rlo.state);
     let r_vec: string = rlo2.name;
     let rlo3: asmcore.LabelOut = asmcore.fresh_label(rlo2.state);
-    let r_next: string = rlo3.name;
+    let r_v16: string = rlo3.name;
     let rlo4: asmcore.LabelOut = asmcore.fresh_label(rlo3.state);
-    let r_vecdone: string = rlo4.name;
+    let r_hit32: string = rlo4.name;
     let rlo5: asmcore.LabelOut = asmcore.fresh_label(rlo4.state);
     let r_tail: string = rlo5.name;
     let rlo6: asmcore.LabelOut = asmcore.fresh_label(rlo5.state);
@@ -562,7 +576,9 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     let r_none: string = rlo7.name;
     let rlo8: asmcore.LabelOut = asmcore.fresh_label(rlo7.state);
     let r_done: string = rlo8.name;
-    s = rlo8.state;
+    let rlo9: asmcore.LabelOut = asmcore.fresh_label(rlo8.state);
+    let r_lane: string = rlo9.name;
+    s = rlo9.state;
     s = s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n");
     if (o.kind_tag == 360) {
       s = s.write("    ldr x3, [x0]\n    add x0, x0, #8\n");
@@ -585,31 +601,39 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
       return s.write(r_done + ":\n    str x2, [sp, #-16]!\n");
     }
     s = s.write("    dup v1.16b, w1\n");
-    // Vector loop while a whole block still fits BELOW the cursor. That
-    // bound keeps the load in bounds at the LOW end, where memchr's
-    // "16 or more left" keeps it in bounds at the high end. A negative
-    // `from` fails this compare and lands on the tail's guard.
-    s = s.write("    cmp x2, #15\n    b.lt " + r_tail + "\n");
-    s = s.write("    sub x5, x2, #15\n    add x6, x0, x5\n");
+    // A negative `from` skips both vector tiers and lands on the tail's
+    // guard. Otherwise x6 is the address just past the unscanned window
+    // [data, data+cursor], and x8 the lowest x6 with a whole 32-byte block
+    // beneath it, which keeps every load in bounds at the LOW end.
+    s = s.write("    cmp x2, #0\n    b.lt " + r_tail + "\n");
+    s = s.write("    add x6, x0, x2\n    add x6, x6, #1\n    add x8, x0, #32\n");
+    s = s.write("    cmp x6, x8\n    b.lo " + r_v16 + "\n");
+    // 32 bytes an iteration: one pre-indexed q pair, both compares folded
+    // by orr so a single mask test covers the block, nine instructions.
     s = s.write(r_vec + ":\n");
-    s = s.write("    ld1 {v0.16b}, [x6]\n    cmeq v0.16b, v0.16b, v1.16b\n");
-    s = s.write("    shrn v0.8b, v0.8h, #4\n    fmov x7, d0\n");
-    s = s.write("    cbz x7, " + r_next + "\n");
+    s = s.write("    ldp q0, q2, [x6, #-32]!\n");
+    s = s.write("    cmeq v0.16b, v0.16b, v1.16b\n    cmeq v2.16b, v2.16b, v1.16b\n");
+    s = s.write("    orr v3.16b, v0.16b, v2.16b\n    shrn v3.8b, v3.8h, #4\n    fmov x7, d3\n");
+    s = s.write("    cbnz x7, " + r_hit32 + "\n");
+    s = s.write("    cmp x6, x8\n    b.hs " + r_vec + "\n");
+    // Under 32 bytes left: at most one 16-byte block, then the tail.
+    s = s.write(r_v16 + ":\n    sub x2, x6, x0\n    sub x2, x2, #1\n");
+    s = s.write("    cmp x2, #15\n    b.lt " + r_tail + "\n");
+    s = s.write("    ldr q0, [x6, #-16]!\n    cmeq v0.16b, v0.16b, v1.16b\n");
+    s = s.write("    shrn v0.8b, v0.8h, #4\n    fmov x7, d0\n    sub x2, x2, #16\n");
+    s = s.write("    cbz x7, " + r_tail + "\n    mov x5, x6\n    b " + r_lane + "\n");
+    // A hit in the pair: the high half [x6+16, x6+31] holds the later bytes,
+    // so its mask is read first.
+    s = s.write(r_hit32 + ":\n    shrn v2.8b, v2.8h, #4\n    fmov x7, d2\n    add x5, x6, #16\n");
+    s = s.write("    cbnz x7, " + r_lane + "\n");
+    s = s.write("    shrn v0.8b, v0.8h, #4\n    fmov x7, d0\n    mov x5, x6\n");
+    // x5 is the block's address and x7 its nibble mask.
+    s = s.write(r_lane + ":\n");
     s = s.write("    clz x4, x7\n    mov x3, #63\n    sub x4, x3, x4\n    lsr x4, x4, #2\n");
-    s = s.write("    add x2, x5, x4\n    b " + r_done + "\n");
-    s = s.write(r_next + ":\n");
-    s = s.write("    sub x5, x5, #16\n    cmp x5, #0\n    b.lt " + r_vecdone + "\n");
-    s = s.write("    sub x6, x6, #16\n    b " + r_vec + "\n");
-    // The next block would start below 0, so the untested bytes are
-    // [0, base-1] where base is the block just cleared. Restore it and
-    // hand that cursor to the scalar tail.
-    s = s.write(r_vecdone + ":\n    add x5, x5, #15\n    mov x2, x5\n");
-    // Scalar tail: the final 0..14 bytes, and the whole algorithm for a
-    // cursor that never had a full block beneath it. The guard sits HERE
-    // rather than before the vector loop because the tail has TWO entry
-    // paths, and the vector one hands over `base - 1` — which is -1 when
-    // the last block started at 0, so a guard only at the top leaves that
-    // path reading [data - 1].
+    s = s.write("    add x5, x5, x4\n    sub x2, x5, x0\n    b " + r_done + "\n");
+    // Scalar tail: the final 0..15 bytes, and the whole algorithm for a
+    // negative cursor. The guard sits HERE because the 16-byte tier hands
+    // over `base - 1`, which is -1 when its block started at 0.
     s = s.write(r_tail + ":\n    cmp x2, #0\n    b.lt " + r_none + "\n");
     s = s.write(r_loop + ":\n");
     s = s.write("    ldrb w4, [x0, x2]\n");

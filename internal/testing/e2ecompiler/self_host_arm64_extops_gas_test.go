@@ -310,6 +310,7 @@ func TestSelfHostArm64VectorGeneralGas(t *testing.T) {
 		{"and v23.8b, v9.8b, v28.8b", 0x0e3c1d37},
 		{"bic v23.16b, v9.16b, v28.16b", 0x4e7c1d37},
 		{"orr v23.8b, v9.8b, v28.8b", 0x0ebc1d37},
+		{"orr v3.16b, v0.16b, v2.16b", 0x4ea21c03},
 		{"orn v23.16b, v9.16b, v28.16b", 0x4efc1d37},
 		{"eor v23.16b, v9.16b, v28.16b", 0x6e3c1d37},
 

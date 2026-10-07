@@ -85,10 +85,10 @@ x86_64/string_build.text	3346
 x86_64/string_build.ir	98161013
 x86_64/string_count_byte.text	3029
 x86_64/string_count_byte.ir	135589612
-x86_64/string_find_byte.text	3417
-x86_64/string_find_byte.ir	68113681
-x86_64/string_rfind_byte.text	3477
-x86_64/string_rfind_byte.ir	68134563
+x86_64/string_find_byte.text	3342
+x86_64/string_find_byte.ir	43567682
+x86_64/string_rfind_byte.text	3398
+x86_64/string_rfind_byte.ir	43582563
 x86_64/string_scan.text	3428
 x86_64/string_scan.ir	53501893
 x86_64/string_slice.text	751

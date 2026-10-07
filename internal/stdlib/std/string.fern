@@ -346,11 +346,9 @@ function __str_find_from(s: string, sLen: i32, needle: string, nLen: i32, start:
   if (nLen > sLen - from) {
     return 0 - 1;
   }
-  // The single-byte case IS __memchr (docs/ATLAS-PLATFORM-PLAN.md §3): the
-  // native backends serve it with a 16-byte-per-iteration vector kernel
-  // (SSE2 / NEON / v128), the self-host ones with a byte loop identical to
-  // the one this replaces. Measured 208ms -> 5ms on 3000 scans of a 14.4 KB
-  // haystack with the needle at the very end — 0.21 GB/s to 8.64 GB/s.
+  // The single-byte case IS __memchr (docs/ATLAS-PLATFORM-PLAN.md §3), which
+  // the compiler serves with a vector kernel: 32 bytes an iteration on
+  // x86-64 (AVX2) and arm64 (NEON), 16 on wasm (v128).
   //
   // `from` is already clamped above and `needle[0]` is always 0..255, so
   // neither of __memchr's guards can fire here; they exist for direct
@@ -424,10 +422,8 @@ function __str_rfind_from(s: string, sLen: i32, needle: string, nLen: i32): i32 
     return 0 - 1;
   }
   // The single-byte case IS __rmemchr (docs/ATLAS-PLATFORM-PLAN.md §3.3),
-  // the backward sibling of the kernel __str_find_from routes to above. The
-  // native backends serve it with a 16-byte-per-iteration vector kernel
-  // walking DOWN; the self-host ones with a byte loop identical to the one
-  // this replaces.
+  // the backward sibling of the kernel __str_find_from routes to above,
+  // served by the same vector kernels walking DOWN.
   //
   // `sLen - 1` is the whole string, and it is the right end to pass: this
   // intrinsic clamps `from` DOWN where __memchr clamps UP, so a caller
