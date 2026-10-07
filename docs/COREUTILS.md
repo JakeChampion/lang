@@ -3993,20 +3993,19 @@ SIGCONT after. The first signal sent, forwarded or timed, starts `-k`'s grace
 period. SIGALRM from outside is the deadline passing. When the command then
 dies of a forwarded signal, timeout dies of it too. `timeout.fern` catches the
 same set with `signal_catch_interrupting` before it forks, so an arrival ends
-its one blocking `proc_waitpid` with EINTR and is passed on at once, and dies
-through `signal_raise`. `TestTimeoutForwardsSignals` signals both mid-run.
+its one blocking `proc_waitpid_status` with EINTR and is passed on at once,
+and dies through `signal_raise`. `TestTimeoutForwardsSignals` signals both
+mid-run.
 
-Two residues come from `proc_waitpid` collapsing a signal death into the
-shell's one number, and GNU telling the two apart with WTERMSIG; here the
-SIGNAL THIS PROCESS SENT stands in for the half the status cannot carry. A
-command KILLED reports 137 after a timeout where a command that merely timed
-out reports 124, so `-s 0` over a command that exits 137 is 124, as GNU's is,
-and a SIGKILL arriving from somewhere ELSE during the timeout reads as 124
-here and 137 there. And when a command that was not timed out dies of a
-signal, GNU's timeout dies of it too; here it does when timeout sent that
-signal, and otherwise — a command that segfaults, or is killed from
-elsewhere — exits 128 plus the signal, which a shell reports as the same
-number.
+The wait reads the raw status, so timeout asks WTERMSIG and WCOREDUMP as GNU
+does (#11765). A command that was not timed out and dies of a signal, whoever
+sent it, takes timeout with it; a command that dumped core is reported as
+"the monitored command dumped core". Before re-raising, timeout calls
+`disable_core_dumps` — `prctl(PR_SET_DUMPABLE, 0)` on Linux, a zero
+RLIMIT_CORE on Darwin — or a QUIT it relays would dump its own address space,
+reserved arena and all, which on a runner with a piped core handler did not
+finish inside the test's window. If that fails it exits 128 plus the signal
+instead, as GNU's does.
 
 **`timeout`'s deadline is a forked child, and that is visible to nothing but
 `ps`.** GNU arms a timer whose SIGALRM ends its wait. Nothing here arms one —

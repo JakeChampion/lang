@@ -178,6 +178,7 @@ var BuiltinCaps = map[string]string{
 	"proc_fork":           "subprocess",
 	"proc_waitpid":        "subprocess",
 	"proc_waitpid_nohang": "subprocess",
+	"proc_waitpid_status": "subprocess",
 	"proc_exec":           "subprocess",
 	"proc_exec_as":        "subprocess",
 	// Not spawning, but reaching outside this process all the same: the
@@ -268,10 +269,12 @@ var Ungated = map[string]bool{
 	"getgid":          true,
 	"getgroups":       true,
 	"rlimit_nofile":   true,
-	"target_os":       true,
-	"target_arch":     true,
-	"args":            true,
-	"exit":            true,
+	// Whether this process may dump core is the same kind of limit.
+	"disable_core_dumps": true,
+	"target_os":          true,
+	"target_arch":        true,
+	"args":               true,
+	"exit":               true,
 	// Rewriting the argv later args() calls report reaches nothing outside
 	// the process, the argument that leaves `args` and `exit` here.
 	"set_args": true,

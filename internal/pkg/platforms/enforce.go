@@ -41,6 +41,7 @@ var gatedBuiltins = map[string]string{
 	"proc_fork":           "proc",
 	"proc_waitpid":        "proc",
 	"proc_waitpid_nohang": "proc",
+	"proc_waitpid_status": "proc",
 	"proc_exec":           "proc",
 	"proc_exec_as":        "proc",
 	// A process table with pids in it to ask about, which is the same
@@ -57,7 +58,8 @@ var gatedBuiltins = map[string]string{
 	// capability rather than `proc`: that one is the authority to have
 	// processes at all, while this is a property a host can lack while
 	// still having them.
-	"rlimit_nofile": "rlimit",
+	"rlimit_nofile":      "rlimit",
+	"disable_core_dumps": "rlimit",
 
 	// How this process competes for the CPU (`priority` /
 	// `set_priority`). Its own capability for the same reason

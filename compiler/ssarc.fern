@@ -6480,6 +6480,9 @@ function os_query_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "rlimit_nofile") {
     return Lowered { found: true, r: emit(r, ir.op_rlimit_nofile()) };
   }
+  if (ins.str == "disable_core_dumps") {
+    return Lowered { found: true, r: emit(r, ir.op_disable_core_dumps()) };
+  }
   if (ins.str == "uname_field") {
     return Lowered { found: true, r: emit(r, ir.op_uname_field()) };
   }
@@ -6491,6 +6494,9 @@ function os_query_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   }
   if (ins.str == "proc_waitpid_nohang") {
     return Lowered { found: true, r: emit(r, ir.op_proc_waitpid_nohang()) };
+  }
+  if (ins.str == "proc_waitpid_status") {
+    return Lowered { found: true, r: emit(r, ir.op_proc_waitpid_status()) };
   }
   if (ins.str == "tcp_connect") {
     return Lowered { found: true, r: emit(r, ir.op_tcp_connect()) };
