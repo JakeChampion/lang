@@ -169,8 +169,7 @@ pub function take_doc(cs: lexer.Comment[], cursor: i32, decl_line: i32): TakeRes
 }
 
 // module_intro is the file-header block: the run of comments starting on line
-// 1, joined by SPACE rather than newline (it renders as a paragraph, where a
-// declaration's doc renders under its signature).
+// 1, one line per comment, so a blank `//` line stays a paragraph break.
 //
 // It is not an intro when it runs straight into the first declaration — then
 // it is that declaration's doc and take_doc will claim it. `first_decl_line`
@@ -201,12 +200,85 @@ pub function module_intro(cs: lexer.Comment[], first_decl_line: i32): string {
   let j: i32 = 0;
   while (j < end) {
     if (j > 0) {
-      out = out + " ";
+      out = out + "\n";
     }
     out = out + trim_space(cs[j].text);
     j = j + 1;
   }
   return out;
+}
+
+// module_summary is cmd/ferndoc's moduleSummary: the intro's first sentence,
+// without its leading "std/x — " label, for the page description. It is
+// capitalised unless its first word has an upper-case letter or a digit.
+pub function module_summary(intro: string): string {
+  let para: string = intro;
+  let gap: i32 = util.index_of_sub(intro, "\n\n");
+  if (gap >= 0) {
+    para = own(slice_unchecked(intro, 0, gap));
+  }
+  let s: string = collapse_space(para);
+  let dash: i32 = util.index_of_sub(s, " — ");
+  if (dash >= 0) {
+    s = own(slice_unchecked(s, dash + " — ".len(), s.len()));
+  }
+  let stop: i32 = util.index_of_sub(s, ". ");
+  if (stop >= 0) {
+    s = own(slice_unchecked(s, 0, stop + 1));
+  }
+  let k: i32 = 0;
+  while (k < s.len() && s[k] as i32 != 32) {
+    let c: i32 = s[k] as i32;
+    if (c >= 65 && c <= 90 || c >= 48 && c <= 57) {
+      return s;
+    }
+    k = k + 1;
+  }
+  if (k == 0 || s[0] as i32 < 97 || s[0] as i32 > 122) {
+    return s;
+  }
+  let upper: u8[] = __alloc_u8(1);
+  upper = upper.with(0, (s[0] as i32 - 32) as u8);
+  return string_from_bytes_unchecked(upper) + own(slice_unchecked(s, 1, s.len()));
+}
+
+// collapse_space is strings.Join(strings.Fields(s), " ").
+function collapse_space(s: string): string {
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < s.len()) {
+    while (i < s.len() && is_space(s[i] as i32)) {
+      i = i + 1;
+    }
+    let j: i32 = i;
+    while (j < s.len() && !is_space(s[j] as i32)) {
+      j = j + 1;
+    }
+    if (j > i) {
+      if (out.len() > 0) {
+        out = out + " ";
+      }
+      out = out + own(slice_unchecked(s, i, j));
+    }
+    i = j;
+  }
+  return out;
+}
+
+// quote is strconv.Quote for the text a summary can hold: a double-quoted
+// string with its backslashes and double quotes escaped.
+function quote(s: string): string {
+  let out: string = "\"";
+  let i: i32 = 0;
+  while (i < s.len()) {
+    let c: i32 = s[i] as i32;
+    if (c == 34 || c == 92) {
+      out = out + "\\";
+    }
+    out = out + own(slice_unchecked(s, i, i + 1));
+    i = i + 1;
+  }
+  return out + "\"";
 }
 
 // ---- declarations ------------------------------------------------------
@@ -705,9 +777,13 @@ pub function render_page(src: string, mod_path: string): string {
     return "";
   }
 
-  let out: string = "---\ntitle: " + mod_path + "\ndescription: Standard library reference for "
-    + mod_path + ".\n---\n\n# `" + mod_path + "`\n\n";
   let intro: string = module_intro(lr.comments, first_decl_line(mod));
+  let description: string = module_summary(intro);
+  if (description.len() == 0) {
+    description = "Standard library reference for " + mod_path + ".";
+  }
+  let out: string = "---\ntitle: " + mod_path + "\ndescription: " + quote(description)
+    + "\n---\n\n# `" + mod_path + "`\n\n";
   if (intro.len() > 0) {
     out = out + intro + "\n\n";
   }
