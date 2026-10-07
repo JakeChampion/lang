@@ -193,6 +193,86 @@ function main(): i32 { return g(T2.Non) + g(T2.Pr((2, 3))) * 10; }`,
 		want: 59, // 9 + 50
 	},
 	{
+		// A multi-payload sub-pattern two levels deep, in either slot, with
+		// a literal at the bottom: every slot of the inner `Add` keeps its
+		// binder (#11918).
+		name: "multi_payload_two_deep",
+		src: `enum E { Val(i32), Add(E, E), Neg(E) }
+function g(e: E): i32 {
+  match (e) {
+    Add(Add(Val(1), y), z) => { return 90; },
+    Add(Add(Val(n), y), z) => { return n; },
+    Add(z, Add(Val(n), y)) => { return n * 10; },
+    Neg(Add(x, Neg(Val(m)))) => { return m + 100; },
+    _ => { return 0; },
+  }
+  return 0 - 2;
+}
+function main(): i32 {
+  return g(Add(Add(Val(7), Val(1)), Val(2))) + g(Add(Add(Val(1), Val(0)), Val(0)))
+    + g(Add(Val(3), Add(Val(4), Val(1)))) + g(Neg(Add(Val(0), Neg(Val(5)))))
+    + g(Neg(Add(Val(0), Val(5))));
+}`,
+		want: 242, // 7 + 90 + 40 + 105 + 0
+	},
+	{
+		// The red-black tree's balance shape: a five-payload node whose
+		// child is matched on its colour and all four of its fields.
+		name: "multi_payload_balance",
+		src: `enum C { R, B }
+enum T { Leaf, Node(C, T, i32, T) }
+function g(t: T): i32 {
+  match (t) {
+    Node(B(), Node(R(), Node(R(), a, x, b), y, c), z, d) => { return x * 100 + y * 10 + z; },
+    Node(B(), Node(R(), a, x, Node(R(), b, y, c)), z, d) => { return x + y + z; },
+    _ => { return 1; },
+  }
+  return 0 - 2;
+}
+function main(): i32 {
+  let l: T = Leaf;
+  let ll: T = Node(B, Node(R, Node(R, l, 1, l), 2, l), 3, l);
+  let lr: T = Node(B, Node(R, l, 4, Node(R, l, 5, l)), 6, l);
+  return (g(ll) - 100) + g(lr) + g(l);
+}`,
+		want: 39, // 23 + 15 + 1
+	},
+	{
+		// A variant element of a tuple pattern whose own payload nests, and
+		// one nesting two variant levels below the tuple.
+		name: "multi_payload_in_tuple_element",
+		src: `enum E { Val(i32), Add(E, E) }
+function g(z: E, e: E): i32 {
+  match ((z, e)) {
+    (Val(k), Add(Val(n), y)) => { return k + n; },
+    (Add(Add(Val(n), y), q), w) => { return n * 3; },
+    _ => { return 5; },
+  }
+  return 0 - 2;
+}
+function main(): i32 {
+  return g(Val(2), Add(Val(3), Val(4))) + g(Add(Add(Val(6), Val(0)), Val(0)), Val(1))
+    + g(Val(1), Val(1));
+}`,
+		want: 28, // 5 + 18 + 5
+	},
+	{
+		// A tuple in the payload slot of a multi-payload sub-pattern.
+		name: "tuple_in_nested_multi_payload",
+		src: `enum P { Pr((i32, i32)), Non }
+enum W { Two(P, i32), One }
+function g(w: W): i32 {
+  match (w) {
+    Two(Pr((1, b)), k) => { return 50 + b + k; },
+    Two(Pr((a, b)), k) => { return a + b + k; },
+    _ => { return 9; },
+  }
+  return 0 - 2;
+}
+function main(): i32 { return g(W.Two(P.Pr((1, 2)), 3)) + g(W.Two(P.Pr((3, 4)), 5)) + g(W.Two(P.Non, 0)); }`,
+		want: 76, // 55 + 12 + 9
+	},
+	{
 		// Outer `_` fallthrough: `Some(Err(_))` matches no inner arm, so the
 		// outer wildcard body runs (rather than a non-exhaustive bail).
 		name: "wildcard_fallthrough",
@@ -243,7 +323,7 @@ func TestNestedPatternX86_64(t *testing.T) {
 // TestNestedPatternWasm confirms the desugar is backend-agnostic by
 // running the main + fallthrough cases through the wasm pipeline.
 func TestNestedPatternWasm(t *testing.T) {
-	for _, name := range []string{"some_ok_headline", "wildcard_fallthrough", "expr_form", "payloadless_inner", "tuple_in_payload"} {
+	for _, name := range []string{"some_ok_headline", "wildcard_fallthrough", "expr_form", "payloadless_inner", "tuple_in_payload", "multi_payload_two_deep", "multi_payload_in_tuple_element"} {
 		var tc = nestedPatternCasesByName(t, name)
 		t.Run(name, func(t *testing.T) {
 			if got := runWasm(t, tc.src); got != tc.want {
