@@ -1079,6 +1079,12 @@ func TestRunnerX25519ExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "x25519", "std/crypto/x25519", 8)
 }
 
+// `tests/stdlib/rsa_test.fern` covers PKCS#1 v1.5 and PSS verification
+// under a 2048-bit and a 2049-bit key, and every refusal.
+func TestRunnerRSAExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "rsa", "std/crypto/rsa", 12)
+}
+
 func TestRunnerHashChecksumsExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "hash_checksums", "std/hash checksums", 8)
 }
