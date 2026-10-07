@@ -21,9 +21,12 @@
 // does. Every phase is bounded by `Timeouts`. A 3xx with a `Location` is
 // followed, ten hops by default, the credentials dropped when a hop
 // leaves the origin; an idempotent request the peer resets before
-// answering is sent once more. No TLS where the client dials (`https`
-// fails with `Tls`). A connection whose response was framed and that the
-// peer did not ask to close is kept in the transport's `Idle` pool, and
+// answering is sent once more. Where the client dials, `https` is TLS 1.3
+// (std/tls/client): the server's certificate must chain to the system's
+// roots (`verify.system_roots`, which `SSL_CERT_FILE` overrides) and name
+// the URL's host. A connection whose response was framed and that the
+// peer did not ask to close is kept in the transport's `Idle` pool, with
+// its TLS session when it has one, and
 // the next idempotent request to the same host and port takes it rather
 // than dialling; `send` keeps a pool for the one call (so a redirect back
 // to the same origin reuses its connection) and closes it after, a caller
@@ -50,8 +53,8 @@
 // rebinds is caught too; a handler's upstream URL may have come from a
 // request, and the platform it runs on is not its to reach. `send` has no
 // such rule. Both go through the forward proxy the environment names
-// (`ProxyEnv`: the lowercase `http_proxy`, `no_proxy`, nothing under
-// `REQUEST_METHOD`); the handler's route still resolves and checks the
+// (`ProxyEnv`: the lowercase `http_proxy`, `https_proxy`, `no_proxy`,
+// nothing under `REQUEST_METHOD`); the handler's route still resolves and checks the
 // origin before handing a request to the proxy, so a deployment where
 // only the proxy can resolve names reaches it through `send`. Neither
 // route resolves an IPv4 address written as anything but four decimal
@@ -81,6 +84,9 @@ import "std/deflate";
 // std/wasi_http — the host's client a `wasm32-wasi-http` build sends
 // through, the one target with no sockets of its own.
 import "std/wasi_http";
+import "std/tls/client";
+import "std/tls/verify";
+import "std/hex";
 import "core/int";
 
 // ipv4(a, b, c, d) — pack a dotted-quad into the network-byte-order
@@ -107,7 +113,8 @@ pub enum Phase { Connecting, Inactivity, Total }
 // that did not resolve; `Connect` for
 // addresses that all failed; `Blocked` for a host that resolves to an
 // address the route may not reach (`plat.http` and `net.is_global`);
-// `Tls` for `https` (not supported yet);
+// `Tls` for a TLS connection that could not be made: no roots to trust,
+// a handshake refused, or a certificate not trusted for the host;
 // `Timeout` for a bound passed; `Protocol` for a response this client
 // cannot read, with what was wrong; `Io` for a send or read the kernel
 // refused; `Redirect` for a redirect the client would not follow: more
@@ -241,7 +248,7 @@ impl http.ToResponse for FetchError {
 // Requests
 
 // `Timeouts` — the bounds on one request: `connect` on the connect (the
-// whole address race), `inactivity` on the wait for the next byte of the
+// whole address race and any TLS handshake), `inactivity` on the wait for the next byte of the
 // response, `total` on the request from its start to the last byte read.
 pub struct Timeouts { connect: Duration, inactivity: Duration, total: Duration }
 
@@ -354,33 +361,38 @@ pub function (r: HttpResponse) ok_or_status(): Result[HttpResponse, i32] {
 // Where a request goes: the host and port to dial, the request-target
 // for the request line, the `Host` value (the origin's, whichever is
 // dialled), the `Proxy-Authorization` to write (empty for none), whether
-// the origin itself is dialled, and the origin's host either way.
-struct __Target { host: string, port: i32, target: string, host_field: string, proxy_auth: string, direct: boolean, origin: string, tls: boolean }
+// the origin itself is dialled, the origin's host and its `host:port`
+// either way, and whether the origin speaks TLS. TLS through a proxy is a
+// tunnel the proxy opens to the origin (`__tunnel`).
+struct __Target { host: string, port: i32, target: string, host_field: string, proxy_auth: string, direct: boolean, origin: string, authority: string, tls: boolean }
 
 // `__target_of(url, policy)` — the URL split for the wire, or why it
 // cannot be: through the proxy the environment names for it, as the
-// absolute-form target a proxy forwards (RFC 9112 §3.2.2), else straight
-// to the origin.
+// absolute-form target a proxy forwards (RFC 9112 §3.2.2) or, for
+// `https`, the origin-form target sent through the proxy's tunnel; else
+// straight to the origin.
 function __target_of(raw: string, policy: Policy): Result[__Target, FetchError] {
   let u: Url = __http_url(raw)?;
   let port: i32 = __effective_port(u);
   let tls: boolean = u.scheme == "https";
   let host_field: string = __host_field(u.host, port, tls);
   let target: string = __request_target(u)?;
+  let authority: string = u.host + ":" + int.int_to_string(port);
   match (policy.proxies.proxy_for(raw)) {
     Some(spec) => {
-      let p: __Proxy = __proxy_of(spec)?;
-      return Ok(__Target { host: p.host, port: p.port, target: "http://" + host_field + target, host_field: host_field, proxy_auth: p.auth, direct: false, origin: u.host, tls: tls });
+      let name: string = "http_proxy";
+      if (tls) {
+        name = "https_proxy";
+      }
+      let p: __Proxy = __proxy_of(spec, name)?;
+      if (!tls) {
+        target = "http://" + host_field + target;
+      }
+      return Ok(__Target { host: p.host, port: p.port, target: target, host_field: host_field, proxy_auth: p.auth, direct: false, origin: u.host, authority: authority, tls: tls });
     },
     None => {}
   }
-  return Ok(__Target { host: u.host, port: port, target: target, host_field: host_field, proxy_auth: "", direct: true, origin: u.host, tls: tls });
-}
-
-// `__host_tls()` — whether a host speaks TLS for this client: the
-// wasi-http host does, and no other target has TLS yet.
-function __host_tls(): boolean {
-  return target_os() == "wasi-http";
+  return Ok(__Target { host: u.host, port: port, target: target, host_field: host_field, proxy_auth: "", direct: true, origin: u.host, authority: authority, tls: tls });
 }
 
 // `__http_url(raw)` — `raw` parsed, when it is an `http` URL naming a
@@ -397,9 +409,6 @@ function __http_url(raw: string): Result[Url, FetchError] {
     None => {
       return Err(InvalidUrl(raw));
     }
-  }
-  if (u.scheme == "https" && !__host_tls()) {
-    return Err(Tls("https is not supported on this target"));
   }
   if (u.scheme.len() == 0) {
     return Err(InvalidUrl("no scheme in " + raw));
@@ -529,7 +538,7 @@ function __sent_fields(req: Request, t: __Target, body_len: i32): HeaderMap {
   if (__asks_gzip(req)) {
     out = out.append("Accept-Encoding", "gzip");
   }
-  if (t.proxy_auth.len() > 0 && !__holds(req.headers.names, "proxy-authorization")) {
+  if (t.proxy_auth.len() > 0 && !t.tls && !__holds(req.headers.names, "proxy-authorization")) {
     out = out.append("Proxy-Authorization", t.proxy_auth);
   }
   return out;
@@ -592,26 +601,32 @@ pub function idle_limited(max: i32, idle: Duration): Idle {
 pub function close_idle[T: Transport](tr: T): void {
   let pool: Idle = tr.idle();
   for row in __idle_rows(pool) {
-    tr.close(__idle_conn(row));
+    __close(tr, __idle_restored(row));
   }
   pool.rows.set("");
 }
 
 // `__pool_key(t, guard)` — where a connection reaches: the host and port
-// dialled, and whether the block list judged the addresses, so a
-// connection the open route made is never handed to the guarded one.
+// dialled, the origin a TLS connection reaches through it, and whether
+// the block list judged the
+// addresses, so a connection the open route made is never handed to the
+// guarded one.
 function __pool_key(t: __Target, guard: boolean): string {
   let route: string = "open ";
   if (guard) {
     route = "global ";
   }
-  return route + t.host + " " + int.int_to_string(t.port);
+  let key: string = route + t.host + " " + int.int_to_string(t.port);
+  if (t.tls) {
+    key = key + " tls " + t.authority;
+  }
+  return key;
 }
 
 // `__take_idle(tr, key)` — the connection to `key` kept last, taken out
-// of the pool, or -1; any connection idle past the pool's bound is closed
-// on the way.
-function __take_idle[T: Transport](tr: T, key: string): i32 {
+// of the pool, or one numbered -1; any connection idle past the pool's
+// bound is closed on the way.
+function __take_idle[T: Transport](tr: T, key: string): __Conn {
   let rows: string[] = __live_rows(tr);
   let pick: i32 = 0 - 1;
   let i: i32 = 0;
@@ -622,20 +637,38 @@ function __take_idle[T: Transport](tr: T, key: string): i32 {
     i = i + 1;
   }
   if (pick < 0) {
-    return 0 - 1;
+    return __no_conn();
   }
   tr.idle().rows.set(__idle_joined(rows, pick));
-  return __idle_conn(rows[pick]);
+  let conn: __Conn = __idle_restored(rows[pick]);
+  if (__idle_saved(rows[pick]).len() > 0 && !__has_tls(conn)) {
+    tr.close(conn.fd);
+    return __no_conn();
+  }
+  return conn;
 }
 
 // `__park(tr, key, conn)` — `conn` kept for the next request to `key`, the
 // longest-idle connections closed while the pool holds more than its
-// `max`.
-function __park[T: Transport](tr: T, key: string, conn: i32): void {
-  let rows: string[] = __live_rows(tr).append(key + "\t" + int.int_to_string(conn) + "\t" + tr.now_ns().to_string());
+// `max`. A TLS session is kept as its saved bytes, since the pool's table
+// holds only text.
+function __park[T: Transport](tr: T, key: string, conn: __Conn): void {
+  let saved: string = "";
+  if let Some(s) = conn.tls {
+    match (s.save()) {
+      Ok(b) => {
+        saved = hex.hex_encode(b);
+      },
+      Err(_) => {
+        __close(tr, conn);
+        return;
+      }
+    }
+  }
+  let rows: string[] = __live_rows(tr).append(key + "\t" + int.int_to_string(conn.fd) + "\t" + tr.now_ns().to_string() + "\t" + saved);
   let from: i32 = 0;
   while (rows.len() - from > tr.idle().max) {
-    tr.close(__idle_conn(rows[from]));
+    __close(tr, __idle_restored(rows[from]));
     from = from + 1;
   }
   let kept: string[] = [];
@@ -655,7 +688,7 @@ function __live_rows[T: Transport](tr: T): string[] {
   let out: string[] = [];
   for row in __idle_rows(pool) {
     if (now - __idle_since(row) > bound) {
-      tr.close(__idle_conn(row));
+      __close(tr, __idle_restored(row));
     } else {
       out = out.append(row);
     }
@@ -702,6 +735,36 @@ function __idle_conn(row: string): i32 {
     }
   }
   return 0 - 1;
+}
+
+// `__idle_saved(row)` — the saved TLS session a row keeps, empty for a
+// plain connection.
+function __idle_saved(row: string): string {
+  let fields: string[] = row.split("\t");
+  if (fields.len() < 4) {
+    return "";
+  }
+  return fields[3];
+}
+
+// `__idle_restored(row)` — the connection a row keeps, its TLS session
+// restored; a session that does not restore leaves it without one, which
+// `__take_idle` refuses to hand out.
+function __idle_restored(row: string): __Conn {
+  let conn: __Conn = __Conn { fd: __idle_conn(row), tls: None, closed: false };
+  let saved: string = __idle_saved(row);
+  if (saved.len() == 0) {
+    return conn;
+  }
+  match (client.restore(hex.hex_decode(saved))) {
+    Ok(s) => {
+      return __Conn { ...conn, tls: Some(s) };
+    },
+    Err(_) => {
+      return conn;
+    }
+  }
+  return conn;
 }
 
 function __idle_since(row: string): i64 {
@@ -821,7 +884,7 @@ function __send_closing(policy: Policy, req: Request): Result[HttpResponse, Fetc
 // so a wasi-http build imports no configuration store for it.
 function __proxies(): ProxyEnv {
   if (target_os() == "wasi-http") {
-    return ProxyEnv { http_proxy: "", no_proxy: "" };
+    return ProxyEnv { http_proxy: "", https_proxy: "", no_proxy: "" };
   } else {
     return proxy_env();
   }
@@ -1047,47 +1110,92 @@ function __reset(e: FetchError): boolean {
 // connection kept when the response left it reusable, closed otherwise.
 function __attempt[T: Transport](tr: T, req: Request, t: __Target, started: i64, guard: boolean, reuse: boolean): Result[HttpResponse, FetchError] {
   let key: string = __pool_key(t, guard);
-  let conn: i32 = 0 - 1;
+  let conn: __Conn = __no_conn();
   if (reuse && http.http_method_idempotent(req.method)) {
     conn = __take_idle(tr, key);
   }
-  if (conn < 0) {
+  if (conn.fd < 0) {
     conn = __connect(tr, t, req.timeouts, guard)?;
   }
   let body: u8[] = req.body.bytes();
-  let sent: Result[void, FetchError] = __send_all(tr, conn, __head(req, t, body.len()).bytes().concat(body));
-  match (sent) {
-    Ok(_) => {},
+  match (__send_all(tr, conn, __head(req, t, body.len()).bytes().concat(body))) {
+    Ok(c) => {
+      conn = c;
+    },
     Err(e) => {
-      tr.close(conn);
+      tr.close(conn.fd);
       return Err(e);
     }
   }
   match (__read_response(tr, conn, req, started)) {
     Ok(read) => {
       if (read.keep) {
-        __park(tr, key, conn);
+        __park(tr, key, read.conn);
       } else {
-        tr.close(conn);
+        __close(tr, read.conn);
       }
       return __decoded(read.response, req);
     },
     Err(e) => {
-      tr.close(conn);
+      tr.close(conn.fd);
       return Err(e);
     }
   }
   return Err(Protocol("unreachable"));
 }
 
+// `__Conn` — a connection this client opened: the transport's number for
+// it, the TLS session over it for `https`, and whether that session has
+// read the peer's close_notify.
+struct __Conn { fd: i32, tls: Option[client.Session], closed: boolean }
+
+function __has_tls(conn: __Conn): boolean {
+  match (conn.tls) {
+    Some(_) => {
+      return true;
+    },
+    None => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function __no_conn(): __Conn {
+  return __Conn { fd: 0 - 1, tls: None, closed: false };
+}
+
+// `__close(tr, conn)` — `conn` closed, after a close_notify when it speaks
+// TLS; the peer may already have gone, so a failed send is not an error.
+function __close[T: Transport](tr: T, conn: __Conn): void {
+  if let Some(s) = conn.tls {
+    if let Ok(step) = s.close() {
+      tr.write(conn.fd, step.output);
+    }
+  }
+  tr.close(conn.fd);
+}
+
 // `__connect(tr, t, timeouts, guard)` — a connection to the host,
 // resolved and raced under the connect bound; with `guard`, refused
 // before the race when any address resolved is not a global one.
-function __connect[T: Transport](tr: T, t: __Target, timeouts: Timeouts, guard: boolean): Result[i32, FetchError] {
+function __connect[T: Transport](tr: T, t: __Target, timeouts: Timeouts, guard: boolean): Result[__Conn, FetchError] {
+  let begun: i64 = tr.now_ns();
   let addrs: net.IpAddr[] = __resolve(tr, t.host, guard)?;
   match (tr.connect(addrs, t.port, __connect_bound(timeouts).as_millis() as i32)) {
-    Ok(conn) => {
-      return Ok(conn);
+    Ok(fd) => {
+      if (!t.tls) {
+        return Ok(__Conn { fd: fd, tls: None, closed: false });
+      }
+      match (__secured(tr, fd, t, begun + __connect_bound(timeouts).as_nanos())) {
+        Ok(s) => {
+          return Ok(__Conn { fd: fd, tls: Some(s), closed: false });
+        },
+        Err(e) => {
+          tr.close(fd);
+          return Err(e);
+        }
+      }
     },
     Err(e) => {
       if (e.eq(net.TimedOut)) {
@@ -1100,6 +1208,171 @@ function __connect[T: Transport](tr: T, t: __Target, timeouts: Timeouts, guard: 
     }
   }
   return Err(Timeout(Connecting));
+}
+
+// `__secured(tr, fd, t, deadline)` — a TLS session with the origin on
+// `fd`, through the proxy's tunnel when `fd` reaches a proxy, before the
+// transport's clock reaches `deadline`.
+function __secured[T: Transport](tr: T, fd: i32, t: __Target, deadline: i64): Result[client.Session, FetchError] {
+  if (!t.direct) {
+    __tunnel(tr, fd, t, deadline)?;
+  }
+  return __tls_handshake(tr, fd, t.origin, deadline);
+}
+
+// `__tunnel(tr, fd, t, deadline)` — the proxy on `fd` asked to open a
+// tunnel to the origin (RFC 9110 §9.3.6), with the credentials its URL
+// carries, and its 2xx answer read; a refusal names the status.
+function __tunnel[T: Transport](tr: T, fd: i32, t: __Target, deadline: i64): Result[void, FetchError] {
+  let ask: string = "CONNECT " + t.authority + " HTTP/1.1\r\nHost: " + t.authority + "\r\n";
+  if (t.proxy_auth.len() > 0) {
+    ask = ask + "Proxy-Authorization: " + t.proxy_auth + "\r\n";
+  }
+  __write_all(tr, fd, (ask + "\r\n").bytes())?;
+  let got: u8[] = [];
+  while (__head_end(got) < 0) {
+    if (got.len() > 16384) {
+      return Err(Protocol("the proxy's answer to CONNECT is past the header budget"));
+    }
+    let wait_ms: i64 = (deadline - tr.now_ns()) / 1000000;
+    if (wait_ms <= 0) {
+      return Err(Timeout(Connecting));
+    }
+    match (tr.read(fd, 16384, wait_ms)) {
+      Chunk(b) => {
+        if (b.len() == 0) {
+          return Err(Protocol("the proxy closed the connection instead of opening a tunnel"));
+        }
+        got = __append_bytes(got, b);
+      },
+      Elapsed => {
+        return Err(Timeout(Connecting));
+      },
+      Abandoned => {
+        return Err(FetchError.Cancelled);
+      }
+    }
+  }
+  if (__head_end(got) != got.len()) {
+    return Err(Protocol("the proxy sent bytes after its answer to CONNECT"));
+  }
+  return __tunnel_status(string_from_bytes_unchecked(got));
+}
+
+// `__head_end(b)` — where the header block in `b` ends, past its blank
+// line, or -1 while it has not.
+function __head_end(b: [u8]): i32 {
+  let i: i32 = 3;
+  while (i < b.len()) {
+    if (b[i] == 10 && b[i - 1] == 13 && b[i - 2] == 10 && b[i - 3] == 13) {
+      return i + 1;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// `__tunnel_status(head)` — the tunnel open when the status line of
+// `head` is a 2xx, else the refusal.
+function __tunnel_status(head: string): Result[void, FetchError] {
+  let line: string = head.split("\r\n")[0];
+  let parts: string[] = line.split(" ");
+  if (parts.len() < 2 || !parts[0].starts_with("HTTP/1.")) {
+    return Err(Protocol("a malformed answer to CONNECT"));
+  }
+  if (!parts[1].starts_with("2") || parts[1].len() != 3) {
+    return Err(Protocol("the proxy refused the tunnel with " + parts[1]));
+  }
+  return Ok(());
+}
+
+// `__tls_handshake(tr, fd, host, deadline)` — a TLS session on `fd` for
+// `host` before the transport's clock reaches `deadline`, the server's
+// chain checked against the system's roots.
+function __tls_handshake[T: Transport](tr: T, fd: i32, host: string, deadline: i64): Result[client.Session, FetchError] {
+  let roots: verify.Roots = __system_roots()?;
+  let step: client.Step = __tls(client.start(client.config(__tls_name(host), roots).with_alpn(["http/1.1"])))?;
+  __write_all(tr, fd, step.output)?;
+  let s: client.Session = step.session;
+  while (!s.connected()) {
+    let wait_ms: i64 = (deadline - tr.now_ns()) / 1000000;
+    if (wait_ms <= 0) {
+      return Err(Timeout(Connecting));
+    }
+    let input: u8[] = __handshake_read(tr.read(fd, 65536, wait_ms))?;
+    let next: client.Step = __tls_read(tr, fd, s, input)?;
+    __write_all(tr, fd, next.output)?;
+    s = next.session;
+  }
+  return Ok(s);
+}
+
+// `__handshake_read(got)` — bytes a handshake read off the wire, or why
+// none came.
+function __handshake_read(got: tcp.Recv): Result[u8[], FetchError] {
+  match (got) {
+    Chunk(b) => {
+      if (b.len() == 0) {
+        return Err(Tls("the server closed the connection during the handshake"));
+      }
+      return Ok(b);
+    },
+    Elapsed => {
+      return Err(Timeout(Connecting));
+    },
+    Abandoned => {
+      return Err(FetchError.Cancelled);
+    }
+  }
+  return Err(Timeout(Connecting));
+}
+
+function __system_roots(): Result[verify.Roots, FetchError] {
+  match (verify.system_roots()) {
+    Some(r) => {
+      return Ok(r);
+    },
+    None => {
+      return Err(Tls("no root certificates: none at SSL_CERT_FILE or the system's bundle paths"));
+    }
+  }
+  return Err(Tls("no root certificates"));
+}
+
+// `__tls_read(tr, fd, s, input)` — `input` read by the session, or the
+// failure, its alert sent to the server first.
+function __tls_read[T: Transport](tr: T, fd: i32, s: client.Session, input: [u8]): Result[client.Step, FetchError] {
+  match (s.read(input)) {
+    Ok(step) => {
+      return Ok(step);
+    },
+    Err(f) => {
+      tr.write(fd, f.alert);
+      return Err(Tls(f.message()));
+    }
+  }
+  return Err(Tls("unreachable"));
+}
+
+function __tls[V](r: Result[V, client.TlsError]): Result[V, FetchError] {
+  match (r) {
+    Ok(v) => {
+      return Ok(v);
+    },
+    Err(e) => {
+      return Err(Tls(e.message()));
+    }
+  }
+  return Err(Tls("unreachable"));
+}
+
+// `__tls_name(host)` — the name a certificate must carry for `host`: an
+// IPv6 address without its brackets, a trailing dot dropped.
+function __tls_name(host: string): string {
+  if (host.starts_with("[") && host.ends_with("]")) {
+    return slice_unchecked(host, 1, host.len() - 1).to_owned();
+  }
+  return __host_name(host);
 }
 
 // `__connect_bound(timeouts)` — the connect bound, never past the total.
@@ -1323,7 +1596,7 @@ function __host_late_code(code: i32): FetchError {
 // the connection outlives it: the peer did not ask to close (`Connection:
 // close`, or an HTTP/1.0 response without `keep-alive`), the body was
 // framed rather than ended by the close, and nothing followed it.
-struct __Read { response: HttpResponse, keep: boolean }
+struct __Read { response: HttpResponse, keep: boolean, conn: __Conn }
 
 // `__reusable(framed, from, read, eof)` — whether the connection outlives
 // the final response `framed`, which began at `from` of the `read` bytes.
@@ -1331,9 +1604,21 @@ function __reusable(framed: http.HttpResponseFramed, from: i32, read: i32, eof: 
   return framed.keep_alive && !eof && from + framed.len == read;
 }
 
-// `__send_all(tr, conn, payload)` — every byte of `payload` written, or
+// `__send_all(tr, conn, payload)` — `payload` written to `conn`, sealed
+// when it speaks TLS.
+function __send_all[T: Transport](tr: T, conn: __Conn, payload: u8[]): Result[__Conn, FetchError] {
+  if let Some(s) = conn.tls {
+    let step: client.Step = __tls(s.write(payload))?;
+    __write_all(tr, conn.fd, step.output)?;
+    return Ok(__Conn { ...conn, tls: Some(step.session) });
+  }
+  __write_all(tr, conn.fd, payload)?;
+  return Ok(conn);
+}
+
+// `__write_all(tr, fd, payload)` — every byte of `payload` written, or
 // the failure as the transport reported it.
-function __send_all[T: Transport](tr: T, conn: i32, payload: u8[]): Result[void, FetchError] {
+function __write_all[T: Transport](tr: T, conn: i32, payload: u8[]): Result[void, FetchError] {
   let at: i32 = 0;
   while (at < payload.len()) {
     let rest: u8[] = payload;
@@ -1361,7 +1646,7 @@ function __send_all[T: Transport](tr: T, conn: i32, payload: u8[]): Result[void,
 // Continue` for as long as the timeout allows), and handed back with its
 // hop-by-hop fields stripped. The buffer is uniquely owned and grows in
 // place, so the read stays linear in the response.
-function __read_response[T: Transport](tr: T, conn: i32, req: Request, started: i64): Result[__Read, FetchError] {
+function __read_response[T: Transport](tr: T, conn: __Conn, req: Request, started: i64): Result[__Read, FetchError] {
   let buf: u8[] = [];
   let from: i32 = 0;
   let eof: boolean = false;
@@ -1371,7 +1656,7 @@ function __read_response[T: Transport](tr: T, conn: i32, req: Request, started: 
         let next: i32 = __after_interim(framed, from, req.limits)?;
         if (next < 0) {
           let response: HttpResponse = HttpResponse { ...framed.response, headers: http.http_end_to_end(framed.response.headers) };
-          return Ok(__Read { response: response, keep: __reusable(framed, from, buf.len(), eof) });
+          return Ok(__Read { response: response, keep: __reusable(framed, from, buf.len(), eof || conn.closed), conn: conn });
         }
         from = next;
         continue;
@@ -1385,7 +1670,9 @@ function __read_response[T: Transport](tr: T, conn: i32, req: Request, started: 
         return Err(__rejected(code));
       }
     }
-    let chunk: u8[] = __recv_bounded(tr, conn, req.timeouts, started)?;
+    let got: __Got = __recv_bounded(tr, conn, req.timeouts, started)?;
+    conn = got.conn;
+    let chunk: u8[] = got.bytes;
     if (chunk.len() == 0) {
       eof = true;
     } else {
@@ -1540,11 +1827,49 @@ function __interim(status: i32): boolean {
   return status >= 100 && status < 200;
 }
 
+// `__Got` — a chunk of the response, empty at its end, and the connection
+// after reading it.
+struct __Got { conn: __Conn, bytes: u8[] }
+
 // `__recv_bounded(tr, conn, timeouts, started)` — the next chunk of the
-// response within the tighter of the inactivity bound and what is left
-// of the total, the bound that passed, or `Cancelled` when the task reading
-// was cancelled while it waited.
-function __recv_bounded[T: Transport](tr: T, conn: i32, timeouts: Timeouts, started: i64): Result[u8[], FetchError] {
+// response, opened when the connection speaks TLS: records that carry no
+// data are read past, and the peer's close_notify ends the response like
+// a close.
+function __recv_bounded[T: Transport](tr: T, conn: __Conn, timeouts: Timeouts, started: i64): Result[__Got, FetchError] {
+  if (conn.closed) {
+    return Ok(__Got { conn: conn, bytes: [] });
+  }
+  match (conn.tls) {
+    Some(s) => {
+      let session: client.Session = s;
+      while (true) {
+        let raw: u8[] = __recv_raw(tr, conn.fd, timeouts, started)?;
+        if (raw.len() == 0) {
+          if (session.held.len() > 0) {
+            return Err(Tls("the connection closed inside a record"));
+          }
+          return Ok(__Got { conn: __Conn { ...conn, tls: Some(session) }, bytes: [] });
+        }
+        let step: client.Step = __tls_read(tr, conn.fd, session, raw)?;
+        __write_all(tr, conn.fd, step.output)?;
+        session = step.session;
+        if (step.data.len() > 0 || step.closed) {
+          return Ok(__Got { conn: __Conn { ...conn, tls: Some(session), closed: step.closed }, bytes: step.data });
+        }
+      }
+    },
+    None => {
+      return Ok(__Got { conn: conn, bytes: __recv_raw(tr, conn.fd, timeouts, started)? });
+    }
+  }
+  return Ok(__Got { conn: conn, bytes: [] });
+}
+
+// `__recv_raw(tr, fd, timeouts, started)` — the next bytes off the wire
+// within the tighter of the inactivity bound and what is left of the
+// total, the bound that passed, or `Cancelled` when the task reading was
+// cancelled while it waited.
+function __recv_raw[T: Transport](tr: T, conn: i32, timeouts: Timeouts, started: i64): Result[u8[], FetchError] {
   let ns_per_ms: i64 = 1000000;
   let left_ms: i64 = timeouts.total.as_millis() - (tr.now_ns() - started) / ns_per_ms;
   if (left_ms <= 0) {
@@ -1592,57 +1917,65 @@ function __rejected(code: i32): FetchError {
 
 // `ProxyEnv` — the forward-proxy configuration an environment carries:
 // `http_proxy`, the proxy for `http` URLs as `[http://][user:password@]host[:port]`,
-// empty for none; `no_proxy`, the comma-separated hosts reached directly.
-pub struct ProxyEnv { http_proxy: string, no_proxy: string }
+// empty for none; `https_proxy`, the same for `https` URLs, which go
+// through a tunnel it opens; `no_proxy`, the comma-separated hosts reached
+// directly.
+pub struct ProxyEnv { http_proxy: string, https_proxy: string, no_proxy: string }
 
 // `proxy_env()` — the configuration as the environment sets it, read
 // through `config_get` so it arrives the same way on every target (a
 // variable where there is an environment, a binding on the proxy world);
 // `proxy_env_from` says which names.
 pub function proxy_env(): ProxyEnv {
-  return proxy_env_from(config_get("http_proxy"), config_get("no_proxy"), config_get("NO_PROXY"), config_get("REQUEST_METHOD"));
+  return proxy_env_from(config_get("http_proxy"), config_get("https_proxy"), config_get("HTTPS_PROXY"), config_get("no_proxy"), config_get("NO_PROXY"), config_get("REQUEST_METHOD"));
 }
 
-// `proxy_env_from(http_proxy, no_proxy, no_proxy_upper, request_method)` —
-// the configuration from its variables. Only the lowercase `http_proxy`
-// is read, as curl reads it: a CGI host turns a client's `Proxy:` request
-// header into the uppercase `HTTP_PROXY` (httpoxy). Under `REQUEST_METHOD`,
-// the sign of a CGI invocation, no proxy is read at all, since there even
-// the lowercase name may be the client's. `no_proxy` is read either way,
-// the lowercase name first.
-pub function proxy_env_from(http_proxy: Option[string], no_proxy: Option[string], no_proxy_upper: Option[string], request_method: Option[string]): ProxyEnv {
-  let proxy: string = "";
-  match (http_proxy) {
-    Some(p) => {
-      proxy = p;
-    },
-    None => {}
-  }
+// `proxy_env_from(http_proxy, https_proxy, https_proxy_upper, no_proxy,
+// no_proxy_upper, request_method)` — the configuration from its
+// variables, as curl reads them. Only the lowercase `http_proxy` is read:
+// a CGI host turns a client's `Proxy:` request header into the uppercase
+// `HTTP_PROXY` (httpoxy). No header becomes `HTTPS_PROXY` or `NO_PROXY`,
+// so those are read in either case, the lowercase name first. Under
+// `REQUEST_METHOD`, the sign of a CGI invocation, no proxy is read at all,
+// since there even the lowercase names may be the client's.
+pub function proxy_env_from(http_proxy: Option[string], https_proxy: Option[string], https_proxy_upper: Option[string], no_proxy: Option[string], no_proxy_upper: Option[string], request_method: Option[string]): ProxyEnv {
+  let env: ProxyEnv = ProxyEnv { http_proxy: __or_empty(http_proxy), https_proxy: __or_empty(__either(https_proxy, https_proxy_upper)), no_proxy: __or_empty(__either(no_proxy, no_proxy_upper)) };
   match (request_method) {
     Some(m) => {
-      proxy = "";
+      return ProxyEnv { ...env, http_proxy: "", https_proxy: "" };
     },
     None => {}
   }
-  let skip: string = "";
-  match (no_proxy) {
-    Some(n) => {
-      skip = n;
+  return env;
+}
+
+function __either(first: Option[string], second: Option[string]): Option[string] {
+  match (first) {
+    Some(v) => {
+      return Some(v);
     },
     None => {
-      match (no_proxy_upper) {
-        Some(n) => {
-          skip = n;
-        },
-        None => {}
-      }
+      return second;
     }
   }
-  return ProxyEnv { http_proxy: proxy, no_proxy: skip };
+  return second;
+}
+
+function __or_empty(v: Option[string]): string {
+  match (v) {
+    Some(s) => {
+      return s;
+    },
+    None => {
+      return "";
+    }
+  }
+  return "";
 }
 
 // `(p).proxy_for(url)` — the proxy a request for `url` goes through, or
-// `None` for a direct connection: no `http_proxy`; a host that is
+// `None` for a direct connection: no `http_proxy` for an `http` URL or
+// `https_proxy` for an `https` one; a host that is
 // `localhost`, under it, or a loopback address, never proxied whatever
 // `no_proxy` says; or a host `no_proxy` names. An entry of `no_proxy` is
 // `*` for every host; an address block in CIDR notation (`10.0.0.0/8`,
@@ -1653,9 +1986,6 @@ pub function proxy_env_from(http_proxy: Option[string], no_proxy: Option[string]
 // entry limits it to that port. Names compare ASCII case-folded, without
 // a trailing dot.
 pub function (p: ProxyEnv) proxy_for(target_url: string): Option[string] {
-  if (p.http_proxy.len() == 0) {
-    return None;
-  }
   let u: Url = Url { scheme: "", host: "", port: 0, path: "", query: "", fragment: "" };
   match (url.url_parse(target_url)) {
     Some(parsed) => {
@@ -1664,6 +1994,13 @@ pub function (p: ProxyEnv) proxy_for(target_url: string): Option[string] {
     None => {
       return None;
     }
+  }
+  let proxy: string = p.http_proxy;
+  if (u.scheme == "https") {
+    proxy = p.https_proxy;
+  }
+  if (proxy.len() == 0) {
+    return None;
   }
   let host: string = __host_name(u.host);
   let ip: Option[net.IpAddr] = __canonical_ip(host);
@@ -1675,7 +2012,7 @@ pub function (p: ProxyEnv) proxy_for(target_url: string): Option[string] {
       return None;
     }
   }
-  return Some(p.http_proxy);
+  return Some(proxy);
 }
 
 // `__never_proxied(host, ip)` — `localhost`, a name under it, or a
@@ -1879,13 +2216,14 @@ function __prefix_matches(a: net.IpAddr, p: net.IpAddr, bits: i32): boolean {
   return (ab[i] as i32 & mask) == (pb[i] as i32 & mask);
 }
 
-// The proxy `http_proxy` names: where to dial it and the
+// The proxy `http_proxy` or `https_proxy` names: where to dial it and the
 // `Proxy-Authorization` value its credentials make, empty for none.
 struct __Proxy { host: string, port: i32, auth: string }
 
-// `__proxy_of(spec)` — `spec` as `[http://][user:password@]host[:port]`,
-// port 80 when none, or why it names no proxy this client can use.
-function __proxy_of(spec: string): Result[__Proxy, FetchError] {
+// `__proxy_of(spec, name)` — `spec` as `[http://][user:password@]host[:port]`,
+// port 80 when none, or why the variable `name` names no proxy this client
+// can use.
+function __proxy_of(spec: string, name: string): Result[__Proxy, FetchError] {
   let full: string = spec;
   if (full.index_of("://") < 0) {
     full = "http://" + full;
@@ -1896,11 +2234,11 @@ function __proxy_of(spec: string): Result[__Proxy, FetchError] {
       u = parsed;
     },
     None => {
-      return Err(InvalidUrl("http_proxy is not a URL"));
+      return Err(InvalidUrl(name + " is not a URL"));
     }
   }
   if (u.scheme != "http" || u.host.len() == 0) {
-    return Err(InvalidUrl("http_proxy is not an http URL with a host"));
+    return Err(InvalidUrl(name + " is not an http URL with a host"));
   }
   let port: i32 = u.port;
   if (port == 0) {

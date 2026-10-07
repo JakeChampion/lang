@@ -1185,18 +1185,20 @@ per verification on x86-64.
   not verify.
 - `Ed25519Error` is `SeedLength(i32)`, with `message()`.
 
-### `std/crypto/p256`
+### `std/crypto/ecdsa`
 
-ECDSA signature verification over NIST P-256 (FIPS 186-5), the curve most TLS
-certificates and handshake signatures use. Verification handles only public
-values, so this first version is built on `core/bigint` in Jacobian
-coordinates, about 13 ms per verification on x86-64; constant-time limbs come
-with signing (#9858).
+ECDSA signature verification over NIST P-256 and P-384 (FIPS 186-5), the
+curves TLS certificates and handshake signatures use. Verification handles
+only public values, so it is built on `core/bigint` in Jacobian coordinates:
+about 7 ms per P-256 verification and 16 ms per P-384 one on x86-64.
+Constant-time limbs come with signing (#9858).
 
-- `public_key(point: [u8]): Result[PublicKey, P256Error]` — an uncompressed
-  SEC 1 point, checked to lie on the curve.
+- `public_key(curve, point: [u8]): Result[PublicKey, EcdsaError]` — `curve`
+  `P256` or `P384`, `point` an uncompressed SEC 1 point of that curve's size,
+  checked to lie on it.
 - `verify(key, hash, msg, sig): boolean` — `sig` a DER ECDSA-Sig-Value, as TLS
-  and X.509 carry it; `hash` `Sha256` or `Sha384`.
+  and X.509 carry it; `hash` `Sha256`, `Sha384` or `Sha512`, a digest longer
+  than the curve's order cut to its leftmost bytes.
 
 ### `std/crypto/rsa`
 
@@ -1212,6 +1214,40 @@ constant time. About 1 ms per verification on x86-64 under a 2048-bit key.
 - `verify_pkcs1v15(key, hash, msg, sig): boolean`,
   `verify_pss(key, hash, msg, sig): boolean`, `hash` one of `Sha256`,
   `Sha384`, `Sha512`.
+
+### `std/tls/client`
+
+A TLS 1.3 client: `std/tls/handshake`'s client with the server's certificate
+judged against a root store (`std/tls/verify`), the chain at the current time
+for the name asked for and the CertificateVerify under the leaf's key. It
+offers X25519MLKEM768 with X25519 for a HelloRetryRequest to ask for, every
+suite, and the protocols the config names by ALPN. A name that is an IP
+address is checked against the certificate's addresses and not sent as SNI
+(`tests/stdlib/tls_client_test.fern`, and Go's crypto/tls in
+`TestTLSClientAgainstGo`).
+
+- `config(server_name, roots)` and `(c).with_alpn(protocols)` make a `Config`.
+- `Session` is sans-IO, so any transport can carry it: `start(config)` draws
+  its entropy from `random_bytes` and returns a `Step { session, output,
+  data, closed }`; `(s).read(input)` takes what arrived, `(s).write(data)`
+  seals application data and `(s).close()` is the close_notify. `read`
+  passes whole records to the handshake one at a time, so on failure it
+  returns a `Failure { error, alert }` whose alert is sealed under the keys
+  in force when it failed; send it, then close. `(s).alpn()` is the
+  protocol the server chose.
+- `(s).save()` and `restore(saved)` turn a connected session into bytes
+  and back, for a pool that can keep only bytes. The bytes hold the
+  traffic secrets.
+- `Connection` is a session over a TCP socket: `connect(host, port, config,
+  timeout)` resolves, races the addresses and completes the handshake
+  within `timeout`; `over(fd, config, timeout)` does the handshake on a
+  socket already connected (after a STARTTLS, or through a proxy's tunnel).
+  `(c).send(data)`, `(c).recv(wait)`, a `Received { conn, data, ended }`
+  whose data is empty when the wait passed first, and `(c).close()`.
+- `TlsError` is `HandshakeFailed(HandshakeError)`, `Untrusted(VerifyError)`,
+  `SignatureInvalid`, `Unresolved(DnsError)`, `NetFailed(NetError)`,
+  `HandshakeTimeout`, `ClosedEarly` or `RecordCut` (closed inside a record),
+  with `message()`.
 
 ### `std/tls/der`
 
@@ -1458,7 +1494,8 @@ if (!verify.verify_signed(leaf, scheme, signed, signature)) { … }
   and macOS) that holds any, and is None when none does
   (`tests/stdlib/tls_roots_test.fern`).
 - `verify_signed(cert, scheme, signed, sig)` checks a CertificateVerify
-  (ecdsa_secp256r1_sha256, rsa_pss_rsae_sha256/384/512, ed25519).
+  (ecdsa_secp256r1_sha256 and ecdsa_secp384r1_sha384, each under a key on
+  its curve, rsa_pss_rsae_sha256/384/512, ed25519).
   `signature_ok(key, alg, msg, sig)` checks any signature this module
   knows, and `matches_name(cert, name)` is the name check alone.
 - `VerifyError` names the cause and the position up the path from the leaf,
@@ -1477,8 +1514,8 @@ X.509 certificates (RFC 5280) as TLS reads them. `parse(der)` answers a
 - `algorithm`, an `Algorithm` named by `algorithm_name`.
 - `issuer` and `subject`, each a `Name { raw, common_name }`.
 - `not_before` and `not_after`, in Unix seconds.
-- `key`: `RsaKey(n, e)`, `P256Key(point)`, `Ed25519Key(k)` or
-  `OtherKey(oid)`.
+- `key`: `RsaKey(n, e)`, `EcKey(curve, point)` on P-256 or P-384,
+  `Ed25519Key(k)` or `OtherKey(oid)`.
 - `ca`, `path_len`, `key_usage` (as `KU_*` bits) and `ext_key_usage`.
 - `permitted_dns`, `excluded_dns`, `permitted_ip` and `excluded_ip`, a CA's
   name constraints (each IP subtree an address then its mask).
@@ -2267,7 +2304,10 @@ answer is `Result[HttpResponse, FetchError]`.
   CRLF in a URL or a field cannot split the request on the wire. It
   writes `Host` and
   `Content-Length` itself and strips hop-by-hop fields from what it sends.
-  No TLS where the client dials (`https` fails with `Tls`). On
+  Where the client dials, `https` is TLS 1.3 by `std/tls/client`, offering
+  `http/1.1` by ALPN: the server's chain must reach the system's roots
+  (`verify.system_roots()`, which `SSL_CERT_FILE` overrides) and name the
+  URL's host. The handshake counts against the connect bound. On
   `wasm32-wasi-http` the client dials nothing:
   the request goes to the host's wasi:http/outgoing-handler (`std/wasi_http`),
   which resolves the name, connects, speaks TLS (so `https` works there)
@@ -2327,16 +2367,19 @@ answer is `Result[HttpResponse, FetchError]`.
   rule there, and a loopback or private address is the host's to refuse.
 - **Proxies:** both routes go through the forward proxy the environment
   names, read through `config_get` as `ProxyEnv` (`proxy_env()`,
-  `proxy_env_from(...)` for the pure form): the lowercase `http_proxy`
-  only, as curl reads it (a CGI host maps a client's `Proxy:` header onto
-  the uppercase name), and none under `REQUEST_METHOD`; `no_proxy` (or
+  `proxy_env_from(...)` for the pure form): for `http` URLs the lowercase
+  `http_proxy` only, as curl reads it (a CGI host maps a client's `Proxy:`
+  header onto the uppercase name); for `https` URLs `https_proxy` (or
+  `HTTPS_PROXY`); none under `REQUEST_METHOD`; `no_proxy` (or
   `NO_PROXY`) lists the hosts reached directly as `*`, a domain (with a
   leading dot, its subdomains only), an address, a CIDR block of either
   family, any of them with a `:port`, zones ignored. `localhost` and
   loopback are never proxied. `(p).proxy_for(url)` is the pure decision.
-  A proxied request carries the absolute-form target, the origin's
+  A proxied `http` request carries the absolute-form target, the origin's
   `Host`, and `Proxy-Authorization: Basic` from the proxy URL's
-  credentials. On the handler's route the origin is still resolved and
+  credentials. An `https` request asks the proxy for a tunnel with
+  `CONNECT host:port`, the credentials on that, and speaks TLS to the
+  origin through it; a kept connection is kept per origin. On the handler's route the origin is still resolved and
   checked before the request goes to the proxy (the proxy's own address
   is the deployment's choice and goes unchecked), so a deployment where
   only the proxy can resolve names reaches it through `send`. On
@@ -2356,8 +2399,9 @@ answer is `Result[HttpResponse, FetchError]`.
   that cannot be written as one line, or a file body; `what` names the
   rule, never the value), `Dns(DnsError)`, `Connect(NetError)`,
   `Blocked(what)` (a host the handler's route may not reach, naming the
-  address), `Tls(what)` (`https` where no host speaks TLS, or the
-  host's handshake failure),
+  address), `Tls(what)` (no roots to trust, a handshake refused
+  by either side, a certificate not trusted for the host, or the
+  wasi-http host's handshake failure),
   `Timeout(Phase)` with `Phase` one of `Connecting` / `Inactivity` /
   `Total`, `Protocol(what)` (a response the parser refuses, interim
   1xx responses past one `limits.header_bytes` between them, or a 101
@@ -2379,7 +2423,7 @@ answer is `Result[HttpResponse, FetchError]`.
   (504 / 500 / 502, under "Errors a handler answers with" above).
 - **Timeouts:** `Timeouts { connect, inactivity, total }`, each a
   `Duration`; `timeouts()` gives 10 s / 30 s / 60 s. The connect bound covers the
-  whole address race; inactivity is the longest wait for the next byte
+  whole address race, a proxy's tunnel and the TLS handshake; inactivity is the longest wait for the next byte
   of the response; total runs from the start to the last byte read.
 - **Transport:** the dialled route reaches the network only through
   `trait Transport` (`now_ns`, `lookup`, `connect`, `write`, `read` under

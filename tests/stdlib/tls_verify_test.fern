@@ -283,6 +283,34 @@ function trace_signed(): u8[] {
   return out;
 }
 
+const P384_ROOT: string = "3082018330820109a00302010202011f300a06082a8648ce3d040303301a3118301606035504030c0f4665726e20502d33383420526f6f74301e170d3236303130313030303030305a170d3237303130313030303030305a301a3118301606035504030c0f4665726e20502d33383420526f6f743076301006072a8648ce3d020106052b810400220362000413813a2ebec7d87c430be8dd61fa5e7b04144585f215dd1f9cf4ce4f5d8f28462770604c6989efd26c3ffe84f159c3a0c29ee16e71dfb00ed4e4141f04ff1a317b196b496196ddd873bcdab1e03a7aca1800b411408e0a061386b9080626a787a3233021300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106300a06082a8648ce3d04030303680030650230348ec947c661fc3f0039b7d0fd33a3e7ccf060281763d51492e756558807e50dfb2116f44c9fe8455c216e59e54092bb02310099145dbb345badbf34b49ffe0056d3d2a4d049b58c2169a696b6039df18750798f843a4da3da47d93b1b70bf2ee1aac4";
+
+const P384_LEAF: string = "308201ac30820131a003020102020120300a06082a8648ce3d040303301a3118301606035504030c0f4665726e20502d33383420526f6f74301e170d3236303130313030303030305a170d3237303130313030303030305a30173115301306035504030c0c703338342e6578616d706c653076301006072a8648ce3d020106052b8104002203620004cbc9f5de09e79458106c17e0a3993111a16cc22aa464183b4f5174edb351ad073a30df758fa11b349eff6a9a04e60a74edd18f49f0800b5ab14747e9633bc1d967bd930cb5850aecfde25b17de24b682d7ccc25f031e7adae39a66fd11c3f809a34e304c300c0603551d130101ff04023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b0601050507030130170603551d110410300e820c703338342e6578616d706c65300a06082a8648ce3d0403030369003066023100ebc44350ab4a9e484b863b7ab33c5bb880a3d3d7c275eb85a208adee98e1350e3c604566863fba5ec426c2b0d34a779d023100fa2301a58a8b9a22d1761d9280e7177283af734aec26b19bfd08027ca9f3638323b3b81f566cc796566a637531dbb36a";
+
+// The P-384 leaf's ECDSA signature over "fern p384 certificate verify" with
+// SHA-384.
+const P384_SIG: string = "3066023100bedbfc1be2135b143bd92b18c8f31a405b28e75e23b51ecc1129b74003d26862966f593eae1781a54d0de2f2428d535a0231009ab84380f4d902fddc090ebafa0a3f8909e34d6137b2501822a9d002c9bdff9dd7e4b965ade902dd79f46792749ca069";
+
+function test_p384(): test.TestOutcome {
+  if (outcome(verify.verify_server([hex.hex_decode(P384_LEAF)], verify.roots([hex.hex_decode(P384_ROOT)]), "p384.example", now())) != "ok p384.example") {
+    return test.fail("a P-384 chain");
+  }
+  match (x509.parse(hex.hex_decode(P384_LEAF))) {
+    Ok(c) => {
+      let signed: u8[] = "fern p384 certificate verify".bytes();
+      if (!verify.verify_signed(c, 0x0503, signed, hex.hex_decode(P384_SIG))) {
+        return test.fail("ecdsa_secp384r1_sha384");
+      }
+      // ecdsa_secp256r1_sha256 names the other curve.
+      return test.assert_true(!verify.verify_signed(c, 0x0403, signed, hex.hex_decode(P384_SIG)));
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
 function test_certificate_verify(): test.TestOutcome {
   match (x509.parse(rfc8448_certificate())) {
     Ok(c) => {
@@ -313,6 +341,7 @@ function test_certificate_verify(): test.TestOutcome {
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/tls/verify");
   r = r.it("valid chains", test_valid_chains);
+  r = r.it("P-384", test_p384);
   r = r.it("names", test_names);
   r = r.it("validity periods", test_time);
   r = r.it("refusals", test_refusals);

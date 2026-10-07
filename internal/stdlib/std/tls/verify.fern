@@ -17,7 +17,7 @@
 
 import "core/int";
 import "std/crypto/ed25519";
-import "std/crypto/p256";
+import "std/crypto/ecdsa";
 import "std/crypto/rsa";
 import "std/net";
 import "std/string";
@@ -184,8 +184,8 @@ pub function signature_ok(key: x509.PublicKey, alg: x509.Algorithm, msg: [u8], s
     x509.RsaKey(n, e) => {
       return __rsa(n, e, alg, msg, sig);
     },
-    x509.P256Key(point) => {
-      return __p256(point, alg, msg, sig);
+    x509.EcKey(curve, point) => {
+      return __ecdsa(curve, point, alg, msg, sig);
     },
     x509.Ed25519Key(k) => {
       if (x509.algorithm_name(alg) == "ed25519") {
@@ -228,31 +228,61 @@ function __rsa_check(key: rsa.PublicKey, alg: x509.Algorithm, msg: [u8], sig: [u
   return Err(UnsupportedAlgorithm(name + " under an RSA key"));
 }
 
-function __p256(point: u8[], alg: x509.Algorithm, msg: [u8], sig: [u8]): Result[boolean, VerifyError] {
-  match (p256.public_key(point)) {
-    Ok(k) => {
-      let name: string = x509.algorithm_name(alg);
-      if (name == "ecdsa_sha256") {
-        return Ok(p256.verify(k, p256.Sha256, msg, sig));
+// __scheme_curve is whether key is on the curve an ECDSA scheme names.
+function __scheme_curve(key: x509.PublicKey, scheme: i32): boolean {
+  match (key) {
+    x509.EcKey(curve, _) => {
+      match (curve) {
+        ecdsa.P256 => {
+          return scheme == 0x0403;
+        },
+        ecdsa.P384 => {
+          return scheme == 0x0503;
+        }
       }
-      if (name == "ecdsa_sha384") {
-        return Ok(p256.verify(k, p256.Sha384, msg, sig));
-      }
-      return Err(UnsupportedAlgorithm(name + " under a P-256 key"));
     },
-    Err(e) => {
-      return Err(UnsupportedAlgorithm("P-256 key: " + e.message()));
+    _ => {
+      return false;
     }
   }
-  return Err(UnsupportedAlgorithm("P-256 key"));
+  return false;
+}
+
+function __ecdsa(curve: ecdsa.Curve, point: u8[], alg: x509.Algorithm, msg: [u8], sig: [u8]): Result[boolean, VerifyError] {
+  match (ecdsa.public_key(curve, point)) {
+    Ok(k) => {
+      let name: string = x509.algorithm_name(alg);
+      let hashes: string[] = ["sha256", "sha384", "sha512"];
+      let hs: ecdsa.Hash[] = [ecdsa.Sha256, ecdsa.Sha384, ecdsa.Sha512];
+      let i: i32 = 0;
+      while (i < 3) {
+        if (name == "ecdsa_" + hashes[i]) {
+          return Ok(ecdsa.verify(k, hs[i], msg, sig));
+        }
+        i = i + 1;
+      }
+      return Err(UnsupportedAlgorithm(name + " under an EC key"));
+    },
+    Err(e) => {
+      return Err(UnsupportedAlgorithm("EC key: " + e.message()));
+    }
+  }
+  return Err(UnsupportedAlgorithm("EC key"));
 }
 
 // verify_signed checks a TLS 1.3 CertificateVerify signature (§4.4.3)
-// under the certificate's key, for the schemes std/tls/handshake offers.
+// under the certificate's key, for the schemes std/tls/handshake offers. An
+// ECDSA scheme names its curve, so the key must be on it.
 pub function verify_signed(cert: x509.Certificate, scheme: i32, signed: [u8], sig: [u8]): boolean {
   let alg: x509.Algorithm = x509.OtherAlgorithm("");
-  if (scheme == 0x0403) {
+  if (scheme == 0x0403 || scheme == 0x0503) {
+    if (!__scheme_curve(cert.key, scheme)) {
+      return false;
+    }
     alg = x509.EcdsaSha256;
+    if (scheme == 0x0503) {
+      alg = x509.EcdsaSha384;
+    }
   } else if (scheme == 0x0804) {
     alg = x509.RsaPssSha256;
   } else if (scheme == 0x0805) {

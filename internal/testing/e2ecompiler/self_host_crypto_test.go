@@ -17,7 +17,7 @@ func TestSelfHostCryptoSuitesWasm(t *testing.T) {
 	wasmtime := e2eharness.Wasmtime(t)
 	cli := buildSelfHostCLI(t)
 	interp := buildLangBinForInterp(t)
-	for _, suite := range []string{"chacha20poly1305", "aes_gcm", "x25519", "ed25519", "mlkem768", "rsa", "tls_der", "tls_handshake", "tls_keyschedule", "tls_keyshare", "tls_message", "tls_record", "tls_verify", "tls_x509"} {
+	for _, suite := range []string{"chacha20poly1305", "aes_gcm", "x25519", "ed25519", "mlkem768", "rsa", "tls_client", "tls_der", "tls_handshake", "tls_keyschedule", "tls_keyshare", "tls_message", "tls_record", "tls_verify", "tls_x509"} {
 		t.Run(suite, func(t *testing.T) {
 			src := langSrcAbs(t, "tests/stdlib/"+suite+"_test.fern")
 			want, err := exec.Command(interp, "-interp", src).Output()
@@ -69,16 +69,16 @@ function main(): i32 {
 	}
 }
 
-// The std/crypto/p256 suite, compiled on all three targets. Its verifications
-// run on core/bigint and take the interpreter tens of seconds, so it is not a
-// stdtest differential case; each target must pass every case instead.
-func TestSelfHostP256Suite(t *testing.T) {
+// The std/crypto/ecdsa suite, compiled on all three targets. Its verifications
+// run on core/bigint and take the interpreter minutes, so it is not a stdtest
+// differential case; each target must pass every case instead.
+func TestSelfHostECDSASuite(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	src := langSrcAbs(t, "tests/stdlib/p256_test.fern")
+	src := langSrcAbs(t, "tests/stdlib/ecdsa_test.fern")
 	check := func(t *testing.T, out []byte, err error) {
 		t.Helper()
-		if err != nil || !strings.Contains(string(out), "# pass 4\n# fail 0\n") {
-			t.Fatalf("p256 suite: %v\n%s", err, out)
+		if err != nil || !strings.Contains(string(out), "# pass 5\n# fail 0\n") {
+			t.Fatalf("ecdsa suite: %v\n%s", err, out)
 		}
 	}
 	t.Run("x86-64", func(t *testing.T) {

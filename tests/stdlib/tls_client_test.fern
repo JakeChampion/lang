@@ -1,0 +1,360 @@
+import "std/test";
+import "std/hex";
+import "std/crypto/ed25519";
+import "std/tls/client";
+import "std/tls/handshake";
+import "std/tls/message";
+import "std/tls/record";
+import "std/tls/verify";
+
+// tests/stdlib/tls_client_test.fern — std/tls/client's session against
+// std/tls/handshake's server: the chain judged against the roots for the
+// name asked for, the CertificateVerify checked, ALPN, close_notify, and a
+// session saved and restored. The certificates are Ed25519, valid from 2020
+// to 2100, made with Python's `cryptography`.
+
+const ROOT: string = "3082011b3081cea003020102020165300506032b657030243122302006035504030c194665726e20544c5320436c69656e74205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30243122302006035504030c194665726e20544c5320436c69656e74205465737420526f6f74302a300506032b6570032100d54207da194977dcf46adbfec2bc2e75b52d5a8a42184fedfdc00024f0e3e8daa3233021300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106300506032b657003410049ecb5759f87f254129a83d895dda7f57627948c65bc15a9de6034f727fc203ff87eb86fd535211cba0506d7f6f0d267cf6f55e5e9edd493b9b3122e2beeb408";
+
+const LEAF: string = "3082013d3081f0a003020102020166300506032b657030243122302006035504030c194665726e20544c5320436c69656e74205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30163114301206035504030c0b746c732e6578616d706c65302a300506032b6570032100511c34a1a2cb521df16bb246b8de8e7997ce235c7e76b22a3d7503a24819dd8aa3533051300c0603551d130101ff04023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070301301c0603551d1104153013820b746c732e6578616d706c658704c0000207300506032b65700341004d3b2dbd279de4c58e998fc45411b30ce83466c697e11a463807a1e4c8a83b5e6b146b49f2eb1b2ffc8d9ec9618e084eb9c71a9c93af3604f984f5e0d2065c08";
+
+const OTHER_ROOT: string = "3082011d3081d0a003020102020167300506032b657030253123302106035504030c1a4665726e20544c5320436c69656e74204f7468657220526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30253123302106035504030c1a4665726e20544c5320436c69656e74204f7468657220526f6f74302a300506032b657003210031debe55d37c722768b137131caa6087080b2e0b60b94bd785d14575cfa498bca3233021300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106300506032b6570034100a9d36bd35a8fc8b9f4185019799b57f15117b07297fac4c6ba2ca04dcb0ef2efcd63a0d9dea29154c6ca3073a465948eb35c2420de91445faa250ca4590e610f";
+
+function roots(der: string): verify.Roots {
+  return verify.roots([hex.hex_decode(der)]);
+}
+
+function leaf_seed(): u8[] {
+  let out: u8[] = [];
+  while (out.len() < 32) {
+    out = out.append(22 as u8);
+  }
+  return out;
+}
+
+struct Pair { session: client.Session, server: handshake.Server }
+
+// connect runs a handshake between a session and a server whose chain is
+// the test leaf; `forge` makes the server sign something else.
+function connect(cfg: client.Config, alpn: string[], forge: boolean): Result[Pair, client.TlsError] {
+  let start: client.Step = client.start(cfg)?;
+  let sc: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config([hex.hex_decode(LEAF)], [0x0807]), alpn: alpn };
+  let server: handshake.Server = srv(handshake.server_new(sc, random_bytes(96)))?;
+  let s1: handshake.ServerStep = srv(server.read(start.output))?;
+  if (s1.events.len() == 0) {
+    start = rd(start.session, s1.output)?;
+    s1 = srv(s1.server.read(start.output))?;
+  }
+  let signed: u8[] = signing(s1.events);
+  if (forge) {
+    signed = signed.append(0 as u8);
+  }
+  let sig: u8[] = [];
+  match (ed25519.sign(leaf_seed(), signed)) {
+    Ok(b) => {
+      sig = b;
+    },
+    Err(e) => {
+      return Err(client.SignatureInvalid);
+    }
+  }
+  let s2: handshake.ServerStep = srv(s1.server.signature(sig))?;
+  let c1: client.Step = rd(start.session, cat(s1.output, s2.output))?;
+  let s3: handshake.ServerStep = srv(s2.server.read(c1.output))?;
+  if (!c1.session.connected() || !s3.server.connected()) {
+    return Err(client.ClosedEarly);
+  }
+  return Ok(Pair { session: c1.session, server: s3.server });
+}
+
+function rd(s: client.Session, input: u8[]): Result[client.Step, client.TlsError] {
+  match (s.read(input)) {
+    Ok(step) => {
+      return Ok(step);
+    },
+    Err(f) => {
+      return Err(f.error);
+    }
+  }
+  return Err(client.ClosedEarly);
+}
+
+function srv[T](r: Result[T, handshake.HandshakeError]): Result[T, client.TlsError] {
+  match (r) {
+    Ok(v) => {
+      return Ok(v);
+    },
+    Err(e) => {
+      return Err(client.HandshakeFailed(e));
+    }
+  }
+  return Err(client.ClosedEarly);
+}
+
+function signing(events: handshake.Event[]): u8[] {
+  for e in events {
+    match (e) {
+      handshake.SignNeeded(s) => {
+        return s.signed;
+      },
+      _ => {}
+    }
+  }
+  return [];
+}
+
+function cat(a: u8[], b: u8[]): u8[] {
+  let out: u8[] = a;
+  for x in b {
+    out = out.append(x);
+  }
+  return out;
+}
+
+function outcome(r: Result[Pair, client.TlsError]): string {
+  match (r) {
+    Ok(p) => {
+      return "connected " + p.session.alpn();
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+// exchange sends "ping" from the session and "pong" back from the server.
+function exchange(s: client.Session, server: handshake.Server): Result[string, client.TlsError] {
+  let cw: client.Step = s.write("ping".bytes())?;
+  let sr: handshake.ServerStep = srv(server.read(cw.output))?;
+  let sw: handshake.ServerStep = srv(sr.server.write("pong".bytes()))?;
+  let cr: client.Step = rd(cw.session, sw.output)?;
+  return Ok(string_from_bytes_unchecked(sr.data) + " " + string_from_bytes_unchecked(cr.data));
+}
+
+function exchanged(s: client.Session, server: handshake.Server): string {
+  match (exchange(s, server)) {
+    Ok(t) => {
+      return t;
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function test_trusted(): test.TestOutcome {
+  let cfg: client.Config = client.config("tls.example", roots(ROOT)).with_alpn(["h2", "http/1.1"]);
+  match (connect(cfg, ["http/1.1"], false)) {
+    Ok(p) => {
+      if (p.session.alpn() != "http/1.1") {
+        return test.fail("alpn " + p.session.alpn());
+      }
+      return test.assert_eq(exchanged(p.session, p.server), "ping pong");
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+// server_name is what the ClientHello in a first flight names, "-" for
+// none.
+function server_name(first: client.Step): string {
+  match (record.deframe(first.output)) {
+    Ok(d) => {
+      match (message.decode(message.Raw { kind: message.CLIENT_HELLO, bytes: d.records[0].fragment })) {
+        Ok(message.ClientHelloMsg(h)) => {
+          match (message.find(h.extensions, message.EXT_SERVER_NAME)) {
+            Some(data) => {
+              match (message.server_name(data)) {
+                Ok(n) => {
+                  return n;
+                },
+                Err(e) => {
+                  return e.message();
+                }
+              }
+            },
+            None => {
+              return "-";
+            }
+          }
+        },
+        _ => {
+          return "not a ClientHello";
+        }
+      }
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function first_flight(name: string): string {
+  match (client.start(client.config(name, roots(ROOT)))) {
+    Ok(step) => {
+      return server_name(step);
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function test_names(): test.TestOutcome {
+  if (first_flight("tls.example") != "tls.example" || first_flight("192.0.2.7") != "-") {
+    return test.fail("SNI: " + first_flight("tls.example") + " " + first_flight("192.0.2.7"));
+  }
+  if (outcome(connect(client.config("192.0.2.7", roots(ROOT)), [], false)) != "connected ") {
+    return test.fail("an address: " + outcome(connect(client.config("192.0.2.7", roots(ROOT)), [], false)));
+  }
+  return test.assert_eq(outcome(connect(client.config("other.example", roots(ROOT)), [], false)), "the server's certificate is not trusted: tls verify: the certificate is not valid for other.example");
+}
+
+function test_untrusted(): test.TestOutcome {
+  if (outcome(connect(client.config("tls.example", roots(OTHER_ROOT)), [], false)) != "the server's certificate is not trusted: tls verify: no path from the certificate reaches a trusted root") {
+    return test.fail(outcome(connect(client.config("tls.example", roots(OTHER_ROOT)), [], false)));
+  }
+  match (refusal_alert()) {
+    Ok(t) => {
+      return test.assert_eq(t, "tls handshake: the peer sent alert 42");
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+// refusal_alert is what the server makes of the alert a refused chain
+// sends: sealed under the handshake keys, it reads as bad_certificate.
+function refusal_alert(): Result[string, client.TlsError] {
+  let start: client.Step = client.start(client.config("tls.example", roots(OTHER_ROOT)))?;
+  let sc: handshake.ServerConfig = handshake.server_config([hex.hex_decode(LEAF)], [0x0807]);
+  let s1: handshake.ServerStep = srv(srv(handshake.server_new(sc, random_bytes(96)))?.read(start.output))?;
+  let sig: u8[] = [];
+  match (ed25519.sign(leaf_seed(), signing(s1.events))) {
+    Ok(b) => {
+      sig = b;
+    },
+    Err(e) => {
+      return Err(client.SignatureInvalid);
+    }
+  }
+  let s2: handshake.ServerStep = srv(s1.server.signature(sig))?;
+  match (start.session.read(cat(s1.output, s2.output))) {
+    Ok(step) => {
+      return Ok("accepted");
+    },
+    Err(f) => {
+      match (s2.server.read(f.alert)) {
+        Ok(_) => {
+          return Ok("the server read on");
+        },
+        Err(e) => {
+          return Ok(e.message());
+        }
+      }
+    }
+  }
+  return Ok("");
+}
+
+function test_forged(): test.TestOutcome {
+  return test.assert_eq(outcome(connect(client.config("tls.example", roots(ROOT)), [], true)), "the server's CertificateVerify does not verify");
+}
+
+function test_save_restore(): test.TestOutcome {
+  match (client.start(client.config("tls.example", roots(ROOT)))) {
+    Ok(step) => {
+      match (step.session.save()) {
+        Ok(b) => {
+          return test.fail("saved before the handshake");
+        },
+        Err(e) => {}
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  match (client.restore([1 as u8, 0 as u8, 0 as u8, 19 as u8, 1 as u8, 0 as u8])) {
+    Ok(s) => {
+      return test.fail("restored from garbage");
+    },
+    Err(e) => {}
+  }
+  match (connect(client.config("tls.example", roots(ROOT)), [], false)) {
+    Ok(p) => {
+      if (exchanged(p.session, p.server) != "ping pong") {
+        return test.fail("before");
+      }
+      match (p.session.save()) {
+        Ok(saved) => {
+          match (client.restore(saved)) {
+            Ok(s) => {
+              return test.assert_eq(exchanged(s, p.server), "ping pong");
+            },
+            Err(e) => {
+              return test.fail(e.message());
+            }
+          }
+        },
+        Err(e) => {
+          return test.fail(e.message());
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+// closes is what each side sees of the other's close_notify.
+function closes(p: Pair): Result[string, client.TlsError] {
+  let sc: handshake.ServerStep = srv(p.server.close())?;
+  let seen: client.Step = rd(p.session, sc.output)?;
+  let cc: client.Step = p.session.close()?;
+  let sr: handshake.ServerStep = srv(p.server.read(cc.output))?;
+  if (seen.closed && sr.events.len() == 1) {
+    return Ok("both");
+  }
+  return Ok("missed");
+}
+
+function test_close(): test.TestOutcome {
+  match (connect(client.config("tls.example", roots(ROOT)), [], false)) {
+    Ok(p) => {
+      match (closes(p)) {
+        Ok(t) => {
+          return test.assert_eq(t, "both");
+        },
+        Err(e) => {
+          return test.fail(e.message());
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/tls/client");
+  r = r.it("a trusted server", test_trusted);
+  r = r.it("names", test_names);
+  r = r.it("an untrusted root", test_untrusted);
+  r = r.it("a forged CertificateVerify", test_forged);
+  r = r.it("save and restore", test_save_restore);
+  r = r.it("close_notify", test_close);
+  return r.finish();
+}

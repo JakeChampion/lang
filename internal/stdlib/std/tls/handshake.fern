@@ -22,6 +22,7 @@ import "std/tls/keyschedule";
 import "std/tls/keyshare";
 import "std/tls/message";
 import "std/tls/record";
+import "std/utf8";
 
 // HandshakeError — why a handshake or connection failed. `alert()` is the
 // alert to send, and `(c: Client) alert(e)` / `(s: Server) alert(e)` the
@@ -517,7 +518,7 @@ pub struct ClientConfig { server_name: string, alpn: string[], suites: keyschedu
 // client_config offers every suite, X25519MLKEM768 with X25519 named as a
 // fallback, and the signature schemes std/crypto verifies.
 pub function client_config(server_name: string): ClientConfig {
-  return ClientConfig { server_name: server_name, alpn: [], suites: [keyschedule.Aes128GcmSha256, keyschedule.Aes256GcmSha384, keyschedule.ChaCha20Poly1305Sha256], groups: [keyshare.X25519MlKem768, keyshare.X25519], schemes: [0x0403, 0x0807, 0x0804, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601] };
+  return ClientConfig { server_name: server_name, alpn: [], suites: [keyschedule.Aes128GcmSha256, keyschedule.Aes256GcmSha384, keyschedule.ChaCha20Poly1305Sha256], groups: [keyshare.X25519MlKem768, keyshare.X25519], schemes: [0x0403, 0x0503, 0x0807, 0x0804, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601] };
 }
 
 const C_WAIT_SERVER_HELLO: i32 = 0;
@@ -1157,6 +1158,113 @@ pub function (c: Client) alert(e: HandshakeError): u8[] {
 
 pub function (c: Client) connected(): boolean {
   return c.state == C_CONNECTED;
+}
+
+// The protocol the server chose by ALPN, empty when none was.
+pub function (c: Client) alpn(): string {
+  return c.alpn;
+}
+
+// save is a connected client as bytes, for a caller that keeps an idle
+// connection where only bytes can go; client_restore makes it again. It
+// holds the traffic secrets, so it is as secret as the connection.
+pub function (c: Client) save(): Result[u8[], HandshakeError] {
+  if (c.state != C_CONNECTED || c.conn.held.len() > 0) {
+    return Err(Misuse("save"));
+  }
+  let out: u8[] = __u32_to([1 as u8], c.conn.suite.code());
+  out = __saved_direction(out, c.conn.read_secret, c.conn.read.seq);
+  out = __saved_direction(out, c.conn.write_secret, c.conn.write.seq);
+  out = __saved_field(out, c.conn.inbox);
+  out = __saved_field(out, c.conn.pending);
+  return Ok(__saved_field(out, c.alpn.bytes()));
+}
+
+// client_restore is the client `save` made.
+pub function client_restore(saved: [u8]): Result[Client, HandshakeError] {
+  if (saved.len() < 5 || saved[0] != 1 as u8) {
+    return Err(Misuse("client_restore"));
+  }
+  let suite: keyschedule.CipherSuite = keyschedule.Aes128GcmSha256;
+  match (keyschedule.cipher_suite(__u32_at(saved, 1))) {
+    Some(s) => {
+      suite = s;
+    },
+    None => {
+      return Err(Misuse("client_restore"));
+    }
+  }
+  let f: u8[][] = __saved_fields(saved, 5)?;
+  let conn: Conn = Conn { ...__conn(), suite: suite, inbox: f[4], pending: f[5] };
+  conn = __with_read(conn, f[0], 2);
+  conn = __with_write(conn, f[2], 2);
+  conn = Conn { ...conn, read: record.Protection { ...conn.read, seq: __u64_of(f[1]) }, write: record.Protection { ...conn.write, seq: __u64_of(f[3]) } };
+  let none: message.ClientHello = message.ClientHello { random: [], session_id: [], cipher_suites: [], extensions: [] };
+  let hs: keyschedule.HandshakeSecret = keyschedule.HandshakeSecret { hash: suite.hash(), secret: [] };
+  let share: keyshare.ClientShare = keyshare.ClientShare { group: keyshare.X25519, public: [], scalar: [], decapsulation_key: [] };
+  let alpn: string = "";
+  match (utf8.from_bytes(f[6])) {
+    Some(p) => {
+      alpn = p;
+    },
+    None => {
+      return Err(Misuse("client_restore"));
+    }
+  }
+  return Ok(Client { conn: conn, state: C_CONNECTED, hello: none, alpn_offered: [], share: share, spare: [], retry_suite: 0, hs: hs, client_hs: [], server_hs: [], chain: [], alpn: alpn, requested: false, request_context: [] });
+}
+
+function __u32_to(own out: u8[], v: i32): u8[] {
+  return out.append((v >> 24 & 255) as u8).append((v >> 16 & 255) as u8).append((v >> 8 & 255) as u8).append((v & 255) as u8);
+}
+
+function __u32_at(b: [u8], at: i32): i32 {
+  return b[at] as i32 << 24 | b[at + 1] as i32 << 16 | b[at + 2] as i32 << 8 | b[at + 3] as i32;
+}
+
+function __saved_field(own out: u8[], b: [u8]): u8[] {
+  return __cat(__u32_to(out, b.len()), b);
+}
+
+function __saved_direction(own out: u8[], secret: [u8], seq: u64): u8[] {
+  let s: u8[] = [];
+  let i: i32 = 7;
+  while (i >= 0) {
+    s = s.append((seq >> (8 * i) as u64 & 255 as u64) as u8);
+    i = i - 1;
+  }
+  return __saved_field(__saved_field(out, secret), s);
+}
+
+function __u64_of(b: [u8]): u64 {
+  let v: u64 = 0 as u64;
+  for x in b {
+    v = v << 8 as u64 | x as u64;
+  }
+  return v;
+}
+
+// __saved_fields reads the length-prefixed fields `save` wrote after the
+// header: each direction's secret and sequence number, the inbox, the
+// pending bytes and the protocol.
+function __saved_fields(saved: [u8], from: i32): Result[u8[][], HandshakeError] {
+  let out: u8[][] = [];
+  let at: i32 = from;
+  while (at < saved.len()) {
+    if (saved.len() - at < 4) {
+      return Err(Misuse("client_restore"));
+    }
+    let n: i32 = __u32_at(saved, at);
+    if (n < 0 || n > saved.len() - at - 4) {
+      return Err(Misuse("client_restore"));
+    }
+    out = out.append(__copy(saved[at + 4:at + 4 + n]));
+    at = at + 4 + n;
+  }
+  if (out.len() != 7 || out[1].len() != 8 || out[3].len() != 8) {
+    return Err(Misuse("client_restore"));
+  }
+  return Ok(out);
 }
 
 // The server.
