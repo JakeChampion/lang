@@ -280,6 +280,51 @@ function main(): i32 {
   return 6;
 }
 `, false},
+	// Signing under a secret seed: the base-point multiplication reads every
+	// table entry and keeps one by mask. The public key and the signature
+	// are public outputs, and verification runs on them alone.
+	{"ed25519", `import "std/crypto/ed25519";
+
+function filled(n: i32, seed: i32): u8[] {
+  let b: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
+  while (i < n) {
+    b = b.with(i, ((i * 13 + seed) & 255) as u8);
+    i = i + 1;
+  }
+  return b;
+}
+
+function main(): i32 {
+  let seed: u8[] = filled(32, 5);
+  let msg: u8[] = filled(50, 9);
+  __ct_secret(seed);
+  match (ed25519.public_key(seed)) {
+    Ok(public) => {
+      __ct_public(public);
+      match (ed25519.sign(seed, msg)) {
+        Ok(sig) => {
+          __ct_public(sig);
+          if (!ed25519.verify(public, msg, sig)) {
+            return 1;
+          }
+          if (ed25519.verify(public, msg, sig.with(40, sig[40] ^ 1 as u8))) {
+            return 2;
+          }
+          return 0;
+        },
+        Err(e) => {
+          return 3;
+        }
+      }
+    },
+    Err(e) => {
+      return 4;
+    }
+  }
+  return 5;
+}
+`, false},
 }
 
 const ctUninitialised = "depends on uninitialised value"

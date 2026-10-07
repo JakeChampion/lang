@@ -1132,6 +1132,29 @@ generation, encapsulation and decapsulation together on x86-64.
   key with a coefficient not below 3329, or a decapsulation key whose stored
   hash of its encapsulation key does not match, with `message()`.
 
+### `std/crypto/ed25519`
+
+Ed25519 signatures (RFC 8032 §5.1, the pure variant), for TLS 1.3 handshake
+and certificate signatures (#9858). Points are extended twisted Edwards
+coordinates over `std/crypto/field25519`, and scalars mod the group order L
+are reduced in 8-bit digits without a branch. Signing is constant time: the
+base-point multiplication reads every table entry and keeps one by mask, and
+the constant-time gate runs it under valgrind's memcheck with the seed marked
+secret. Verified against RFC 8032 §7.1's vectors and Go's crypto/ed25519
+(`tests/stdlib/ed25519_test.fern`). About 0.54 ms per signature and 0.28 ms
+per verification on x86-64.
+
+- `public_key(seed): Result[u8[], Ed25519Error]` — the 32-byte public key of
+  a 32-byte secret seed.
+- `sign(seed, msg): Result[u8[], Ed25519Error]` — the 64-byte signature
+  R || S.
+- `verify(public_key, msg, sig): boolean` — checks [S]B = R + [k]A without
+  the cofactor, as Go's crypto/ed25519 does. It refuses an S not below L and
+  a public key or R that does not decode, including a y not below p, which
+  Go accepts in a public key. A key or signature of the wrong length does
+  not verify.
+- `Ed25519Error` is `SeedLength(i32)`, with `message()`.
+
 ### `std/crypto/p256`
 
 ECDSA signature verification over NIST P-256 (FIPS 186-5), the curve most TLS

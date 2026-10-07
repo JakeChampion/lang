@@ -1086,6 +1086,12 @@ func TestRunnerMLKEM768ExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "mlkem768", "std/crypto/mlkem768", 8)
 }
 
+// `tests/stdlib/ed25519_test.fern` covers RFC 8032's Ed25519 vectors, one
+// from Go's crypto/ed25519, and every refusal.
+func TestRunnerEd25519ExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "ed25519", "std/crypto/ed25519", 11)
+}
+
 // `tests/stdlib/rsa_test.fern` covers PKCS#1 v1.5 and PSS verification
 // under a 2048-bit and a 2049-bit key, and every refusal.
 func TestRunnerRSAExamplePasses(t *testing.T) {
