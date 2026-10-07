@@ -1042,6 +1042,31 @@ parameter with `std/string`'s `s.bytes()`.
   secret bytes, so `base32.base32_decode(secret)` feeds it directly;
   returns the code as an integer to zero-pad to `digits`.
 
+### `std/crypto/chacha20poly1305`
+
+The ChaCha20-Poly1305 AEAD of RFC 8439, the first TLS 1.3 primitive (#9858),
+and its two parts. Pure Fern and constant time by construction: the cipher is
+`u32` additions, rotations and exclusive ors, Poly1305 is 26-bit limbs
+reduced with masks, and the tag compare has no early exit. Verified against
+the RFC's vectors (`tests/stdlib/chacha20poly1305_test.fern`).
+
+```fern
+let sealed: u8[] = chacha20poly1305.seal(key, nonce, plaintext, aad)?;
+let opened: u8[] = chacha20poly1305.open(key, nonce, sealed, aad)?;
+```
+
+- `seal(key, nonce, plaintext, aad): Result[u8[], AeadError]` — the
+  ciphertext with the 16-byte tag after it. The key is 32 bytes and the
+  nonce 12; a nonce must never repeat under one key.
+- `open(key, nonce, sealed, aad): Result[u8[], AeadError]` — checks the tag
+  before decrypting; a message that does not verify, or is shorter than a
+  tag, is `Forged`.
+- `chacha20_xor(key, nonce, counter: u32, data)` — data exclusive-ored with
+  the keystream from block `counter`.
+- `poly1305(key, msg)` — the 16-byte tag under a one-time 32-byte key.
+- `AeadError` is `KeyLength(i32)`, `NonceLength(i32)` or `Forged`, with
+  `message()`.
+
 ### `std/hash`
 
 Non-cryptographic checksums, in std/crypto's streaming shape (`update` /
