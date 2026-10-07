@@ -700,8 +700,9 @@ func prCases(t *testing.T) []invocation {
 	}
 	for _, spec := range formats {
 		cases = append(cases, invocation{
-			name: "date format " + quote([]byte(spec)),
-			args: []string{"-D", spec, f},
+			name:             "date format " + quote([]byte(spec)),
+			args:             []string{"-D", spec, f},
+			darwinLibcDefect: prDarwinDefect(spec),
 		})
 	}
 	for _, format := range rawTimeFormats() {
@@ -716,15 +717,17 @@ func prCases(t *testing.T) []invocation {
 	} {
 		for _, file := range []string{epoch, pre70, y2100, nsec} {
 			cases = append(cases, invocation{
-				name: "date format " + quote([]byte(spec)) + " of " + filepath.Base(file),
-				args: []string{"-D", spec, file},
+				name:             "date format " + quote([]byte(spec)) + " of " + filepath.Base(file),
+				args:             []string{"-D", spec, file},
+				darwinLibcDefect: prDarwinDefect(spec),
 			})
 		}
 	}
 
-	// The zone is $TZ, read by `coreutils/lib/tz.fern` as glibc reads
-	// it: a TZif file under /usr/share/zoneinfo, a POSIX string when
-	// that is not one, and the footer of the file past its last
+	// The zone is $TZ, read by std/tz as the platform's tzset reads it
+	// (glibc's on Linux, tzcode's on Darwin): a TZif file under
+	// /usr/share/zoneinfo, a POSIX string when that is not one, and the
+	// footer of the file past its last
 	// transition — which is what decides a 2038 or 2100 date. `%Z` is
 	// the abbreviation that comes with the offset, so these cases are
 	// the zone's DESIGNATION table as much as its transitions.
@@ -786,4 +789,13 @@ func TestPrHelpVersion(t *testing.T) {
 	requireHelp(t, "pr", []string{"--help", "-x"}, 0)
 	requireHelp(t, "pr", []string{"-0", "--help"}, 0)
 	requireVersion(t, "pr", []string{"--version", "-x"}, 0)
+}
+
+// prDarwinDefect is the reason a header format cannot be held to GNU on
+// Darwin, if there is one: there, GNU pr's `%r` expands to nothing.
+func prDarwinDefect(spec string) string {
+	if strings.Contains(spec, "%r") {
+		return "GNU pr's %r expands to nothing against Apple's libc"
+	}
+	return ""
 }

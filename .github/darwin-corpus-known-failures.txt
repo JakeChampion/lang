@@ -97,7 +97,6 @@ TestMvParity
 TestNice
 TestNiceReadsTheNicenessItWasStartedAt
 TestPinkyParity
-TestPrParity
 TestPrintfParity
 TestPwdUnlinkedWorkingDirectory
 TestRealpathParity
