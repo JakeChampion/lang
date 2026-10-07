@@ -887,15 +887,15 @@ pub function keyed_map_key_name(k: typeinfo.Type): string {
 
 // A column whose snapshot is a fresh array owning one unit of every element:
 // a string column and a column of boxes are copied with a per-element retain,
-// and a column of narrow scalars — `i32`, `u8`, `u32`, `bool`, each an
-// i32-shaped cell — holds no references. Any other element would come back
-// aliasing the map's own.
+// and a column of narrow scalars — `i32`, `u8`, `u32`, `bool`, `usize` —
+// holds no references. Any other element would come back aliasing the map's
+// own.
 pub function retained_column(elem: typeinfo.Type): boolean {
   return is_string(elem) || narrow_column(elem) || wide_map_value(elem) || float_map_value(elem) || keyed_map_key(elem) || counted_map_value(elem);
 }
 
 function narrow_column(t: typeinfo.Type): boolean {
-  return is_i32(t) || is_u8(t) || is_u32(t) || is_bool(t);
+  return is_i32(t) || is_u8(t) || is_u32(t) || is_bool(t) || is_usize(t);
 }
 
 // A value column the map releases by freeing the buffer alone.

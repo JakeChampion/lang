@@ -1,0 +1,187 @@
+import "./kv_config_core";
+import "std/i32";
+import "std/string";
+
+pub struct Config {
+  representation: string,
+  capacity: i32,
+  key_bytes: i32,
+  value_bytes: i32,
+  batch: i32,
+  turns: i32,
+  mix: string,
+  load: i32,
+  sharing: string,
+  samples: boolean,
+}
+
+pub struct Tape { input: u8[], probes: string[], seed: u8[], seed_count: i32 }
+
+pub function universe(c: Config): i32 {
+  let n: i32 = c.capacity * c.load / 100;
+  if (n < 1) {
+    return 1;
+  }
+  return n;
+}
+
+function number(argv: string[], at: i32): i32 {
+  match (argv[at].parse_int()) {
+    Some(n) => {
+      return n;
+    },
+    None => {
+      return -1;
+    }
+  }
+}
+
+pub function parse(argv: string[]): Option[Config] {
+  if (argv.len() < 10 || argv.len() > 11) {
+    return None;
+  }
+  let capacity: i32 = number(argv, 2);
+  let key_bytes: i32 = number(argv, 3);
+  let value_bytes: i32 = number(argv, 4);
+  let batch: i32 = number(argv, 5);
+  let turns: i32 = number(argv, 6);
+  let load: i32 = number(argv, 8);
+  if (!kv_config_core.valid_config(capacity, key_bytes, value_bytes, batch) || turns < 1 || turns > 1000000 || load < 1 || load > 200) {
+    return None;
+  }
+  if (argv[1] != "fip" && argv[1] != "map" && argv[1] != "pmap" || argv[7] != "mixed" && argv[7] != "read" && argv[7] != "write" || argv[9] != "unique" && argv[9] != "shared") {
+    return None;
+  }
+  if (argv.len() == 11 && argv[10] != "samples") {
+    return None;
+  }
+  let c: Config = Config { representation: argv[1], capacity: capacity, key_bytes: key_bytes, value_bytes: value_bytes, batch: batch, turns: turns, mix: argv[7], load: load, sharing: argv[9], samples: argv.len() == 11 };
+  if (key_bytes == 1 && universe(c) > 256) {
+    return None;
+  }
+  return Some(c);
+}
+
+pub function stride(c: Config): i32 {
+  return 1 + c.key_bytes + c.value_bytes;
+}
+
+function operation(n: i32, mix: string): u8 {
+  let read: i32 = 50;
+  let put: i32 = 25;
+  let increment: i32 = 15;
+  if (mix == "read") {
+    read = 80;
+    put = 10;
+    increment = 5;
+  }
+  if (mix == "write") {
+    read = 20;
+    put = 45;
+    increment = 20;
+  }
+  let k: i32 = n * 37 % 100;
+  if (k < read) {
+    return 2 as u8;
+  }
+  if (k < read + put) {
+    return 1 as u8;
+  }
+  if (k < read + put + increment) {
+    return 4 as u8;
+  }
+  return 3 as u8;
+}
+
+function request(own bytes: u8[], c: Config, id: i32, n: i32, op: u8): u8[] {
+  bytes = bytes.append(op);
+  let j: i32 = 0;
+  while (j < c.key_bytes) {
+    let b: i32 = id * 31 + j;
+    if (j == 0) {
+      b = id & 255;
+    }
+    if (j == 1) {
+      b = id >> 8;
+    }
+    bytes = bytes.append((b & 255) as u8);
+    j = j + 1;
+  }
+  j = 0;
+  while (j < c.value_bytes) {
+    bytes = bytes.append((n * 17 + j * 13 + 7 & 255) as u8);
+    j = j + 1;
+  }
+  return bytes;
+}
+
+pub function build(c: Config): Tape {
+  let input: u8[] = [];
+  let probes: string[] = [];
+  let seed: u8[] = [];
+  let n: i32 = 0;
+  while (n < c.batch * 100) {
+    let id: i32 = ((n as i64 * 1103515245i64 + 12345i64) % 2147483647i64 % (universe(c) as i64)) as i32;
+    input = request(input, c, id, n, operation(n, c.mix));
+    n = n + 1;
+  }
+  n = 0;
+  while (n < 100) {
+    let key: u8[] = [];
+    let j: i32 = 0;
+    while (j < c.key_bytes) {
+      key = key.append(input[n * c.batch * stride(c) + 1 + j]);
+      j = j + 1;
+    }
+    probes = probes.append(string_from_bytes_unchecked(key));
+    n = n + 1;
+  }
+  let count: i32 = universe(c);
+  if (count > c.capacity) {
+    count = c.capacity;
+  }
+  count = count / 2;
+  n = 0;
+  while (n < count) {
+    seed = request(seed, c, n, n, 1 as u8);
+    n = n + 1;
+  }
+  return Tape { input: input, probes: probes, seed: seed, seed_count: count };
+}
+
+pub function fold(digest: i64, byte: i64): i64 {
+  return (digest * 1000003i64 + byte) % 2147483647i64;
+}
+
+pub function bytes_digest(digest: i64, bytes: u8[], count: i32): i64 {
+  let d: i64 = digest;
+  let i: i32 = 0;
+  while (i < count) {
+    d = fold(d, bytes[i] as i64);
+    i = i + 1;
+  }
+  return d;
+}
+
+pub function string_digest(digest: i64, value: string): i64 {
+  let d: i64 = digest;
+  let i: i32 = 0;
+  while (i < value.len()) {
+    d = fold(d, value[i] as i64);
+    i = i + 1;
+  }
+  return d;
+}
+
+pub function hex(bytes: u8[], at: i32, count: i32): string {
+  let digits: string = "0123456789abcdef";
+  let out: u8[] = [];
+  let i: i32 = 0;
+  while (i < count) {
+    let b: i32 = bytes[at + i] as i32;
+    out = out.append(digits[b >> 4]);
+    out = out.append(digits[b & 15]);
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(out);
+}

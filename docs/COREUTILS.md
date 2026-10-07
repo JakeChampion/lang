@@ -3933,16 +3933,19 @@ and flushing changes nothing there. #9089 carries the four sync calls and the
 classifications they need; #9102 was filed separately for this caller and is the
 same builtin.
 
-**`uptime` is Linux-only, and says so.** The three load averages are
-`/proc/loadavg`, which is what glibc's `getloadavg(3)` reads; Darwin answers
-the same question through `sysctl(KERN_BOOTTIME)` and `getloadavg(3)` with no
-file behind either and no primitive for it. A build for another target
-therefore REFUSES after the option scan — `the load averages are read from
-/proc/loadavg, which darwin does not have`, exit 1 — rather than printing the
-line without its load clause. That shape is one GNU also produces, when
-`getloadavg` fails, so printing it would look like an answer instead of a gap.
-`--help` and `--version` still answer everywhere, because the refusal comes
-after the scan.
+**`uptime` runs on Linux and Darwin, and refuses elsewhere.** On Linux the
+three load averages are `/proc/loadavg`, which is what glibc's `getloadavg(3)`
+reads. On Darwin they are `sysctl({CTL_VM, VM_LOADAVG})` through the
+`sysctl` builtin: three fixed-point loads and their scale, and `%.2f` of each
+ratio is rounded to nearest with ties to even, in integers. With the default
+utmpx database and no boot record in it, Darwin's boot instant is
+`sysctl({CTL_KERN, KERN_BOOTTIME})`, which is where gnulib takes it for that
+file. Any other target REFUSES after the option scan — `the load averages are
+read from /proc/loadavg, which wasi does not have`, exit 1 — rather than
+printing the line without its load clause. That shape is one GNU also
+produces, when `getloadavg` fails, so printing it would look like an answer
+instead of a gap. `--help` and `--version` still answer everywhere, because
+the refusal comes after the scan.
 
 Two things about the reference are worth writing down, because both cost a
 round of wrong work. GNU coreutils' `uptime` has **no `-p` and no `-s`** —
@@ -4602,7 +4605,7 @@ groups are the order of work. Each sub-issue names its group.
   from, are in the divergences below), `uptime` (done — no new primitive: the boot time and the
   session count are the utmp database `read_file_bytes` already reads, the
   clock is `std/tz` plus `lib/timefmt.fern`, and the load averages are
-  `read_file` of /proc/loadavg), `pathchk` (done — it needed no new primitive:
+  `read_file` of /proc/loadavg on Linux and `sysctl` on Darwin), `pathchk` (done — it needed no new primitive:
   `lstat` is the whole of the default mode and `statfs` from #9062 carries
   the per-directory `name_max` its component walk holds a name to, which is
   exactly the caller that builtin's own doc comment predicted; `pathconf` /

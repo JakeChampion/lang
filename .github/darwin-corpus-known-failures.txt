@@ -85,9 +85,7 @@ TestCpParity
 TestCpWalkOrder
 TestCsplit
 TestDateParity
-TestGroupsParity
 TestHostidParity
-TestIdParity
 TestLinkParity
 TestLnParity
 TestMknodParity
@@ -95,7 +93,6 @@ TestMktempRetryExhaustion
 TestMvParity
 TestNice
 TestNiceReadsTheNicenessItWasStartedAt
-TestPinkyParity
 TestPrintfParity
 TestPwdUnlinkedWorkingDirectory
 TestRealpathParity
@@ -106,4 +103,3 @@ TestShred
 TestStty
 TestTestParity
 TestTtyParity
-TestUptime

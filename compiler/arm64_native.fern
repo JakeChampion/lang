@@ -10298,10 +10298,14 @@ pub function arm64_gas_rebase_offs(p: Arm64GasProg): i32[] {
 }
 
 // arm64_import_sym reports whether an undefined `.quad` target names a
-// libSystem symbol: spelled `_name`. Fern's own symbols are `__`-prefixed or
-// local, so an undefined one of those stays a link error.
+// libSystem symbol: the C name with its `_` prefix, so `_name`, or `___name`
+// for a reserved C name such as `__error`. Fern's own symbols are `__` and a
+// letter, or local, so an undefined one of those stays a link error.
 function arm64_import_sym(name: string): boolean {
-  return name.len() > 1 && name[0] == b'_' && name[1] != b'_';
+  if (name.len() < 2 || name[0] != b'_') {
+    return false;
+  }
+  return name[1] != b'_' || name.len() > 3 && name[2] == b'_' && name[3] != b'_';
 }
 
 // arm64_gas_link resolves the queued @PAGE/@PAGEOFF fixups now that the

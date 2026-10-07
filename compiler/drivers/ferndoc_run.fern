@@ -154,9 +154,9 @@ function self_checks(): i32 {
   }
 
   // ---- 5. module intro -----------------------------------------------
-  // A header run followed by a blank line is the intro, joined by SPACE.
+  // A header run followed by a blank line is the intro, a line per comment.
   let hdr: lexer.Comment[] = [c(1, " Package foo."), c(2, " Second line.")];
-  if (ferndoc.module_intro(hdr, 5) != "Package foo. Second line.") {
+  if (ferndoc.module_intro(hdr, 5) != "Package foo.\nSecond line.") {
     return 40;
   }
   // Running straight into the first declaration makes it that declaration's
@@ -172,8 +172,26 @@ function self_checks(): i32 {
     return 43;
   }
   // No declarations at all: the header stands.
-  if (ferndoc.module_intro(hdr, 0) != "Package foo. Second line.") {
+  if (ferndoc.module_intro(hdr, 0) != "Package foo.\nSecond line.") {
     return 44;
+  }
+  // The page description is the intro's first sentence, as cmd/ferndoc's
+  // moduleSummary has it: label dropped, capitalised unless the first word
+  // carries an upper-case letter or a digit.
+  if (ferndoc.module_summary("std/csv — CSV escape / join (RFC 4180).\n\nMore.") != "CSV escape / join (RFC 4180).") {
+    return 45;
+  }
+  if (ferndoc.module_summary("std/tz — the local time zone: a TZif file\n(RFC 8536). Second sentence.") != "The local time zone: a TZif file (RFC 8536).") {
+    return 46;
+  }
+  if (ferndoc.module_summary("Arbitrary-precision integers.") != "Arbitrary-precision integers.") {
+    return 47;
+  }
+  if (ferndoc.module_summary("std/float — f32 / f64 to-string formatting.") != "f32 / f64 to-string formatting.") {
+    return 48;
+  }
+  if (ferndoc.module_summary("") != "") {
+    return 49;
   }
 
   // ---- 6. end to end -------------------------------------------------

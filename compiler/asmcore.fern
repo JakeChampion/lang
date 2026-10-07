@@ -1587,6 +1587,10 @@ function sysno_arm64_darwin(name: string): string {
   if (name == "getfsstat") {
     return "347";
   }
+  // __sysctl — a kernel variable by MIB. No Linux row: Linux removed sysctl(2).
+  if (name == "sysctl") {
+    return "202";
+  }
   // pathconf(2) — BSD 191. No Linux row: Linux has no pathconf syscall
   // at all (glibc computes the answers from statfs plus constants), so a
   // row there would be a number nothing could issue.
@@ -5284,6 +5288,19 @@ pub function rt_src_statfs(t: string): string {
     return head + "let nmax: i32 = 0; let pmax: i32 = 0; if (rc >= 0) { nmax = __syscall3(" + pc + ", pathz as i64, 4, 0) as i32; rc = nmax; } if (rc >= 0) { pmax = __syscall3(" + pc + ", pathz as i64, 5, 0) as i32; rc = pmax; } let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } " + name + "return Ok(FsStat { " + statfs_counts_src(t) + ", name_max: (nmax as i64), path_max: (pmax as i64), fs_type_name: type_name }); }";
   }
   return head + "let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } return Ok(FsStat { " + statfs_counts_src(t) + ", name_max: " + statfs_field_i64(t, "name_max") + ", path_max: (" + statfs_linux_path_max() + " as i64), fs_type_name: \"\" }); }";
+}
+
+// rt_src_sysctl backs `sysctl(mib)` → Result[u8[], IoError]: the kernel's
+// answer for a MIB as raw bytes, in a packed u8 box. Darwin asks __sysctl
+// twice, once for the size and once to fill a buffer of it; the MIB goes in as
+// 32-bit ints. Every other kernel answers ENOSYS, which only a program the
+// platforms gate let through could see.
+pub function rt_src_sysctl(t: string): string {
+  if (t != "arm64-darwin") {
+    return "function __fern_sysctl(mib: i32[]): Result[i32[], IoError] { return Err(__fern_io_error(38, \"\")); }";
+  }
+  let sc: string = sysno(t, "sysctl");
+  return "function __fern_sysctl(mib: i32[]): Result[i32[], IoError] { let n: i32 = mib.len(); let m: usize = __raw_alloc(n * 4 + 4); let i: i32 = 0; while (i < n) { let v: i32 = mib[i]; __raw_store8(m, i * 4, v & 255); __raw_store8(m, i * 4 + 1, (v >> 8) & 255); __raw_store8(m, i * 4 + 2, (v >> 16) & 255); __raw_store8(m, i * 4 + 3, (v >> 24) & 255); i = i + 1; } let lenp: usize = __raw_alloc(8); __store_i64(lenp, 0 as i64); let r: i32 = __syscall6(" + sc + ", m as i64, n as i64, 0, lenp as i64, 0, 0) as i32; let size: i32 = __load_i64(lenp) as i32; let buf: usize = __raw_alloc(size + 1); if (r >= 0) { r = __syscall6(" + sc + ", m as i64, n as i64, buf as i64, lenp as i64, 0, 0) as i32; } let got: i32 = __load_i64(lenp) as i32; let m_own: string = __raw_string(m, n * 4 + 4); let lenp_own: string = __raw_string(lenp, 8); if (r < 0) { let buf_own0: string = __raw_string(buf, size + 1); return Err(__fern_io_error(0 - r, \"\")); } " + packed_box("b", "got") + " __memcpy(__raw_addr(b, 8), buf, got); let buf_own: string = __raw_string(buf, size + 1); return Ok(__raw_array(b)); }";
 }
 
 // rt_src_mounts backs `mounts()` (#9104) → Result[MountEntry[], IoError]: the
