@@ -2658,7 +2658,8 @@ pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analys
   if (why != "") {
     return bad(why);
   }
-  return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: constants(f, defs), text_lens: text_lens(f), analysis: semantic, defs: defs, modes: modes, unit_analysis: analysis, unique_receivers: unique_receivers(f, defs, steps), checked_writes: checked_writes(f) };
+  let consts: string[] = constants(f, defs);
+  return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: consts, text_lens: text_lens(f), analysis: semantic, defs: defs, modes: modes, unit_analysis: analysis, unique_receivers: unique_receivers(f, steps, consts), checked_writes: checked_writes(f) };
 }
 
 // checked_writes marks, at a `with`'s result, a `with` whose index an element
@@ -2690,21 +2691,26 @@ function read_before(b: ssa.SBlock, end: i32, arr: i32, index: i32): boolean {
   return false;
 }
 
-// unique_receivers marks, at a `with`'s result, a `with` whose receiver needs
-// no uniqueness test: the receiver is moved into it and is `sole`.
-function unique_receivers(f: ssasem.Func, defs: ssa.SInst[], steps: Step[]): boolean[] {
+// unique_receivers marks, at a `with`'s or an `append`'s result, one whose
+// receiver needs no uniqueness test: the receiver is moved into it and is
+// `sole`.
+function unique_receivers(f: ssasem.Func, steps: Step[], consts: string[]): boolean[] {
   let out: boolean[] = __alloc_bool(f.graph.nvals);
-  let sole: boolean[] = sole_boxes(f, steps);
+  let sole: boolean[] = sole_boxes(f, steps, consts);
   let at: i32[] = ssa.block_positions(f.graph);
   for st in steps {
     if (st.point >= 0) {
       let ins: ssa.SInst = f.graph.blocks[at[st.block]].insts[st.point];
-      if (ins.kind_tag == ssasem.with() && sole[ins.args[0]] && moved_receiver(st, ins.args[0])) {
+      if (box_update(ins) && sole[ins.args[0]] && moved_receiver(st, ins.args[0])) {
         out = out.with(ins.result, true);
       }
     }
   }
   return out;
+}
+
+function box_update(ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssasem.with() || ins.kind_tag == ssasem.append();
 }
 
 function moved_receiver(st: Step, v: i32): boolean {
@@ -2717,16 +2723,20 @@ function moved_receiver(st: Step, v: i32): boolean {
 }
 
 // sole_boxes marks the values whose box no unit but the frame's own one ever
-// holds. A box starts that way when a `with` hands it back or a zero-filled
-// allocation makes it, and a phi keeps it when every operand does. It stops
-// at any unit retained on it, and at any use that could hand it to another
-// holder: everything but reading an element or the length, being a `with`'s
-// receiver, flowing into a phi that keeps it, and being returned.
-function sole_boxes(f: ssasem.Func, steps: Step[]): boolean[] {
+// holds. A box starts that way when a `with` hands it back, a fresh or empty
+// array is made, or an `append` takes a sole receiver by move; a phi keeps it
+// when every operand does. It stops at any unit retained on it, and at any use
+// that could hand it to another holder: everything but reading an element or
+// the length, being a `with`'s or an `append`'s receiver, flowing into a phi
+// that keeps it, and being returned.
+//
+// An empty constant is shared, but no write lands in it: a `with` on it fails
+// its bounds check, and a push onto it, having no room, copies.
+function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[]): boolean[] {
   let sole: boolean[] = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
-      if (ins.result >= 0 && (ins.kind_tag == 8 || ins.kind_tag == ssasem.with() || zero_filled(ins))) {
+      if (ins.result >= 0 && (ins.kind_tag == 8 || box_update(ins) || fresh_array(ins, consts))) {
         sole = sole.with(ins.result, true);
       }
     }
@@ -2739,7 +2749,7 @@ function sole_boxes(f: ssasem.Func, steps: Step[]): boolean[] {
       let i: i32 = 0;
       while (i < ins.args.len()) {
         let a: i32 = ins.args[i];
-        let reads: boolean = i == 0 && (ins.kind_tag == ssasem.array_get() || ins.kind_tag == ssasem.length() || ins.kind_tag == ssasem.with());
+        let reads: boolean = i == 0 && (ins.kind_tag == ssasem.array_get() || ins.kind_tag == ssasem.length() || box_update(ins));
         if (a >= 0 && !reads) {
           sole = sole.with(a, false);
         }
@@ -2747,10 +2757,17 @@ function sole_boxes(f: ssasem.Func, steps: Step[]): boolean[] {
       }
     }
   }
+  let at: i32[] = ssa.block_positions(f.graph);
   for st in steps {
     for supply in st.supplies {
       if (supply.value >= 0 && supply.mode != move_unit()) {
         sole = sole.with(supply.value, false);
+      }
+    }
+    if (st.point >= 0) {
+      let ins: ssa.SInst = f.graph.blocks[at[st.block]].insts[st.point];
+      if (ins.kind_tag == ssasem.append() && !moved_receiver(st, ins.args[0])) {
+        sole = sole.with(ins.result, false);
       }
     }
   }
@@ -2759,6 +2776,10 @@ function sole_boxes(f: ssasem.Func, steps: Step[]): boolean[] {
     changed = false;
     for b in f.graph.blocks {
       for ins in b.insts {
+        if (ins.kind_tag == ssasem.append() && sole[ins.result] && !sole[ins.args[0]]) {
+          sole = sole.with(ins.result, false);
+          changed = true;
+        }
         if (ins.kind_tag != 8) {
           continue;
         }
@@ -2774,10 +2795,16 @@ function sole_boxes(f: ssasem.Func, steps: Step[]): boolean[] {
   return sole;
 }
 
-// zero_filled is a call to a builtin that hands back a fresh array of
-// scalars, which no other holder can have seen.
-function zero_filled(ins: ssa.SInst): boolean {
-  return ins.kind_tag == ssasem.call() && (ins.str == "__alloc_i32" || ins.str == "__alloc_i64" || ins.str == "__alloc_bool" || ins.str == "__alloc_u8");
+// fresh_array is an array no other holder can have seen: a zero-filled or
+// reserved allocation, a literal built at run time, or an empty one.
+function fresh_array(ins: ssa.SInst, consts: string[]): boolean {
+  if (ins.kind_tag == ssasem.array_new()) {
+    return ins.args.len() == 0 || consts[ins.result] == "";
+  }
+  if (ins.kind_tag == ssasem.call()) {
+    return ins.str == "__alloc_i32" || ins.str == "__alloc_i64" || ins.str == "__alloc_bool" || ins.str == "__alloc_u8";
+  }
+  return ins.kind_tag == ssasem.array_reserve();
 }
 
 function entry_kept_of(f: ssasem.Func, a: ssasem.Analysis, b: ssa.SBlock, si: i32, own out: boolean[]): boolean[] {

@@ -5,8 +5,8 @@ import (
 	"testing"
 )
 
-// soleLoopWithCase is one program, the function `fn` whose `with` writes it
-// pins, and whether those writes may drop their uniqueness test: `proved`
+// soleLoopWithCase is one program, the function `fn` whose `with` writes and
+// appends it pins, and whether those may drop their uniqueness test: `proved`
 // when the array the loop writes is one only this frame ever holds, so the
 // write is in place without asking, and false where another holder may see
 // the box and the test must stay.
@@ -73,6 +73,42 @@ function main(): i32 {
     for b in s { if (b) { c = c + 1; } }
     return c;
 }`},
+	// The append loop the compiler's own lists are built with: an empty
+	// literal grown once per iteration through the loop's phi.
+	{"append-fresh", "build", true, `@noinline
+function build(n: i32): i32[] {
+    let out: i32[] = [];
+    let i: i32 = 0;
+    while (i < n) {
+        out = out.append(i * 3);
+        i = i + 1;
+    }
+    return out;
+}
+function main(): i32 {
+    let a: i32[] = build(30);
+    return (a.len() + a[29]) % 101;
+}`},
+	// A literal built at run time, grown and then written over.
+	{"append-then-with", "grow_set", true, `@noinline
+function grow_set(n: i32): i32[] {
+    let out: i32[] = [n, n + 1];
+    let i: i32 = 0;
+    while (i < n) {
+        out = out.append(i);
+        i = i + 1;
+    }
+    i = 0;
+    while (i < out.len()) {
+        out = out.with(i, out[i] * 2);
+        i = i + 1;
+    }
+    return out;
+}
+function main(): i32 {
+    let a: i32[] = grow_set(9);
+    return a[0] + a[1] + a[10];
+}`},
 	// A second name held across the write: the write must copy, and the kept
 	// name still reads the value before it.
 	{"aliased-in-loop", "alias", false, `@noinline
@@ -131,6 +167,50 @@ function store(n: i32): i32 {
 function main(): i32 {
     return store(4);
 }`},
+	// An append with a second name held across it: the kept name still
+	// reads the length before it.
+	{"append-aliased", "kept_len", false, `@noinline
+function kept_len(n: i32): i32 {
+    let out: i32[] = [];
+    let keep: i32[] = out;
+    let i: i32 = 0;
+    while (i < n) {
+        keep = out;
+        out = out.append(i);
+        i = i + 1;
+    }
+    return keep.len() * 10 + out.len();
+}
+function main(): i32 {
+    return kept_len(6);
+}`},
+	// A constant literal is one box every evaluation shares: a write to it
+	// copies, so the second call reads the constant unchanged.
+	{"constant-literal", "bump", false, `@noinline
+function bump(n: i32): i32 {
+    let a: i32[] = [1, 2, 3];
+    a = a.with(0, a[0] + n);
+    return a[0];
+}
+function main(): i32 {
+    return bump(10) + bump(10);
+}`},
+	// Appending to a parameter whose box the caller still reads.
+	{"append-parameter", "more", false, `@noinline
+function more(own xs: i32[], n: i32): i32[] {
+    let i: i32 = 0;
+    while (i < n) {
+        xs = xs.append(i);
+        i = i + 1;
+    }
+    return xs;
+}
+function main(): i32 {
+    let a: i32[] = __alloc_i32(4);
+    let b: i32[] = a;
+    let c: i32[] = more(a, 3);
+    return b.len() * 10 + c.len();
+}`},
 	// A parameter's box may have other holders in the caller.
 	{"parameter", "fill_in", false, `@noinline
 function fill_in(own xs: i32[]): i32[] {
@@ -153,10 +233,10 @@ function main(): i32 {
 // spliced into main and have no body of its own to count in.
 //
 // TestSelfHostSoleLoopWithX86_64 pins the uniqueness proof behind a `with`
-// write in a loop (ssaunits.sole_boxes): an array a zero-filled allocation or
-// a `with` makes, carried around a loop, read, written and returned but never
-// lent, stored or retained, is written in place with no test, and every other
-// shape keeps the test. Each program's exit is the interpreter's, run under
+// or an `append` in a loop (ssaunits.sole_boxes): an array a fresh or empty
+// allocation, a `with` or an `append` makes, carried around a loop, read,
+// written and returned but never lent, stored or retained, is written in
+// place with no test, and every other shape keeps the test. Each program's exit is the interpreter's, run under
 // the sanitizer, so a proof that let a shared box be written in place shows
 // up as the wrong answer as well as in the count.
 func TestSelfHostSoleLoopWithX86_64(t *testing.T) {

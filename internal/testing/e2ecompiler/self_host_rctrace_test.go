@@ -492,20 +492,24 @@ func (e errSummary) Error() string { return string(e) }
 // frames between the allocation and user code. That asymmetry is the point:
 // with both appending a local, both callers are __fern_arr_push_owned and the
 // field looks useless — a walk of fixed depth cannot reach user code through
-// every path, and this pins the depth that the leaking path needs.
-const hevTwoAppendSrc = `function grow_local(n: i32): i32[] {
+// every path, and this pins the depth that the leaking path needs. Both are
+// kept out of line so each is its own frame, and the local grows to 64,
+// filling its buffer, so the parameter's first push is the one that allocates.
+const hevTwoAppendSrc = `@noinline
+function grow_local(n: i32): i32[] {
     let xs: i32[] = [];
     let i: i32 = 0;
     while (i < n) { xs = xs.append(i); i = i + 1; }
     return xs;
 }
+@noinline
 function grow_param(ys: i32[], n: i32): i32[] {
     let j: i32 = 0;
     while (j < n) { ys = ys.append(j * 2); j = j + 1; }
     return ys;
 }
 function main(): i32 {
-    let a: i32[] = grow_local(40);
+    let a: i32[] = grow_local(64);
     let b: i32[] = grow_param(a, 40);
     exit(b.len());
     return 0;
