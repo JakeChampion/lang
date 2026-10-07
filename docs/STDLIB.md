@@ -1042,6 +1042,47 @@ parameter with `std/string`'s `s.bytes()`.
   secret bytes, so `base32.base32_decode(secret)` feeds it directly;
   returns the code as an integer to zero-pad to `digits`.
 
+### `std/crypto/chacha20poly1305`
+
+The ChaCha20-Poly1305 AEAD of RFC 8439, the first TLS 1.3 primitive (#9858),
+and its two parts. Pure Fern and constant time by construction: the cipher is
+`u32` additions, rotations and exclusive ors, Poly1305 is 26-bit limbs
+reduced with masks, and the tag compare has no early exit. Verified against
+the RFC's vectors (`tests/stdlib/chacha20poly1305_test.fern`).
+
+```fern
+let sealed: u8[] = chacha20poly1305.seal(key, nonce, plaintext, aad)?;
+let opened: u8[] = chacha20poly1305.open(key, nonce, sealed, aad)?;
+```
+
+- `seal(key, nonce, plaintext, aad): Result[u8[], AeadError]` — the
+  ciphertext with the 16-byte tag after it. The key is 32 bytes and the
+  nonce 12; a nonce must never repeat under one key.
+- `open(key, nonce, sealed, aad): Result[u8[], AeadError]` — checks the tag
+  before decrypting; a message that does not verify, or is shorter than a
+  tag, is `Forged`.
+- `chacha20_xor(key, nonce, counter: u32, data)` — data exclusive-ored with
+  the keystream from block `counter`.
+- `poly1305(key, msg)` — the 16-byte tag under a one-time 32-byte key.
+- `AeadError` is `KeyLength(i32)`, `NonceLength(i32)` or `Forged`, with
+  `message()`.
+
+### `std/crypto/x25519`
+
+The X25519 Diffie-Hellman function of RFC 7748, TLS 1.3's default key share
+(#9858). Field elements are ten signed limbs of 26 and 25 bits in `i64`; the
+ladder swaps by mask. Verified against the RFC's vectors, including the
+1,000-step iterated one (`tests/stdlib/x25519_test.fern`,
+`TestSelfHostX25519Iterated1000`). About 0.2 ms per scalar multiplication on
+x86-64.
+
+- `public_key(scalar): Result[u8[], X25519Error]` — the 32-byte public key
+  of a 32-byte secret.
+- `x25519(scalar, point): Result[u8[], X25519Error]` — the shared secret,
+  refused as `LowOrder` when it is all zeros, as TLS 1.3 requires.
+- `X25519Error` is `ScalarLength(i32)`, `PointLength(i32)` or `LowOrder`,
+  with `message()`.
+
 ### `std/hash`
 
 Non-cryptographic checksums, in std/crypto's streaming shape (`update` /

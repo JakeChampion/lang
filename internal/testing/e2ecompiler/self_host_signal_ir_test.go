@@ -101,9 +101,6 @@ func runSignalReadOps(t *testing.T, runner []string, prog string) int {
 // path, with native's shape — one i32 in, nothing a caller reads out.
 func TestSelfHostSignalDispositionIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("self-host signal-disposition test runs host-native only (needs a real SIGPIPE)")
-	}
 	dir := writeSelfHostAsmProject(t)
 	src, err := os.ReadFile(filepath.Join("../../../compiler", "drivers/asm_run.fern"))
 	if err != nil {
@@ -121,7 +118,7 @@ func TestSelfHostSignalDispositionIRX86_64(t *testing.T) {
 	progBin := buildBin(t, gcc, dir, "signal_disposition", string(asm))
 
 	for _, tc := range signalDispositionCases {
-		if got := runWithClosedStdout(t, nil, progBin, tc.argv...); got != tc.want {
+		if got := runWithClosedStdout(t, runner, progBin, tc.argv...); got != tc.want {
 			t.Errorf("%s: exit = %d, want %d (#8792)", tc.name, got, tc.want)
 		}
 	}
@@ -133,7 +130,7 @@ func TestSelfHostSignalDispositionIRX86_64(t *testing.T) {
 		t.Fatal("self-host compiler emitted 0 bytes for the signal read-ops program")
 	}
 	readBin := buildBin(t, gcc, dir, "signal_read_ops", string(readAsm))
-	if got := runSignalReadOps(t, nil, readBin); got != 0 {
+	if got := runSignalReadOps(t, runner, readBin); got != 0 {
 		t.Errorf("signal read ops: exit = %d, want 0 (the exit code names the failing step)", got)
 	}
 }
@@ -152,9 +149,6 @@ func TestSelfHostSignalDispositionIRX86_64(t *testing.T) {
 func TestSelfHostSignalDispositionIRArm64(t *testing.T) {
 	gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
-	if len(x86runner) != 0 {
-		t.Skip("needs a native x86 host to run the aarch64-emitting driver")
-	}
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")
 	mmc := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_load_run.fern", "signal_arm64_mmc")
@@ -163,7 +157,7 @@ func TestSelfHostSignalDispositionIRArm64(t *testing.T) {
 	if err := os.WriteFile(srcFile, []byte(signalDispositionProg+"\n"), 0o644); err != nil {
 		t.Fatalf("write probe: %v", err)
 	}
-	out, err := exec.Command(mmc, srcFile, "-target", "arm64-linux").Output()
+	out, err := runX86_64Bin(x86runner, mmc, srcFile, "-target", "arm64-linux").Output()
 	if err != nil {
 		t.Fatalf("self-host arm64 emit failed: %v", err)
 	}
@@ -203,7 +197,7 @@ func TestSelfHostSignalDispositionIRArm64(t *testing.T) {
 	if err := os.WriteFile(readSrc, []byte(signalReadOpsProg+"\n"), 0o644); err != nil {
 		t.Fatalf("write probe: %v", err)
 	}
-	readOut, err := exec.Command(mmc, readSrc, "-target", "arm64-linux").Output()
+	readOut, err := runX86_64Bin(x86runner, mmc, readSrc, "-target", "arm64-linux").Output()
 	if err != nil {
 		t.Fatalf("self-host arm64 emit failed for the read ops: %v", err)
 	}
