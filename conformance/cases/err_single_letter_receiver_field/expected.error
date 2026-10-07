@@ -1,1 +1,1 @@
-struct V has no field "nope"
+struct V has no field or method "nope"
