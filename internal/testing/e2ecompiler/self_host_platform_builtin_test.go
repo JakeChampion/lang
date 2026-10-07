@@ -19,30 +19,9 @@ func TestSelfHostPlatformBuiltinLowers(t *testing.T) {
 	_, runner, driverBin := buildModloadDriverX86(t)
 
 	progDir := t.TempDir()
-	for _, dir := range []string{"../../stdlib/std", "../../stdlib/core"} {
-		entries, err := os.ReadDir(dir)
-		if err != nil {
-			t.Fatalf("read %s: %v", dir, err)
-		}
-		for _, e := range entries {
-			if !strings.HasSuffix(e.Name(), ".fern") {
-				continue
-			}
-			src, err := os.ReadFile(filepath.Join(dir, e.Name()))
-			if err != nil {
-				t.Fatalf("read %s: %v", e.Name(), err)
-			}
-			// core/ and std/ share no basenames today; a collision would make
-			// the flat vendoring silently drop a module, so fail loudly.
-			dst := filepath.Join(progDir, e.Name())
-			if _, err := os.Stat(dst); err == nil {
-				continue
-			}
-			if err := os.WriteFile(dst, src, 0o644); err != nil {
-				t.Fatalf("write %s: %v", e.Name(), err)
-			}
-		}
-	}
+	// Keep nested modules such as std/tls/client in their real import paths.
+	// Flattening only top-level files drops serve's transitive dependencies.
+	copyStdlibTree(t, progDir)
 	bsrc, err := os.ReadFile("../../../compiler/builtins.fern")
 	if err != nil {
 		t.Fatalf("read builtins.fern: %v", err)
@@ -59,14 +38,8 @@ func TestSelfHostPlatformBuiltinLowers(t *testing.T) {
 	if !strings.Contains(report, "serve____serve_loop: ir") {
 		t.Errorf("std/serve's __serve_loop did not lower; probe line: %q", probeLineFor(report, "serve____serve_loop"))
 	}
-	var bails []string
-	for _, line := range strings.Split(report, "\n") {
-		if strings.Contains(line, "BAIL") {
-			bails = append(bails, line)
-		}
-	}
-	if len(bails) > 0 {
-		t.Errorf("%d function(s) of the std/serve closure bail the IR path:\n%s", len(bails), strings.Join(bails, "\n"))
+	if probeLineFor(report, "module") != "module: IR" {
+		t.Errorf("std/serve's import closure did not lower:\n%s", report)
 	}
 }
 
