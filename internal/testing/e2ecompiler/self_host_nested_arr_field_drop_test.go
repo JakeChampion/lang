@@ -21,21 +21,21 @@ var nestedArrFieldDropCases = []struct {
 	src  string
 	want int
 }{
-	{"literal", `function id(xs: i32[]): i32[] { return xs; }
+	{"literal", `@noinline function id(xs: i32[]): i32[] { return xs; }
 struct Bag { n: i32, grid: i32[][] }
 function main(): i32 {
     let r: Bag = Bag { n: 3, grid: [id([3, 1]), id([2, 3])] };
     return r.n + r.grid.len();
 }
 `, 5},
-	{"strarr_literal", `function ids(s: string): string { return s; }
+	{"strarr_literal", `@noinline function ids(s: string): string { return s; }
 struct Grid { n: i32, rows: string[][] }
 function main(): i32 {
     let r: Grid = Grid { n: 3, rows: [[ids("ab"), "c"], [ids("def")]] };
     return r.n + r.rows.len() + r.rows[1][0].len();
 }
 `, 8},
-	{"loop_built_producer", `function id(xs: i32[]): i32[] { return xs; }
+	{"loop_built_producer", `@noinline function id(xs: i32[]): i32[] { return xs; }
 struct Bag { n: i32, grid: i32[][] }
 function build(k: i32): Bag {
     let g: i32[][] = [];
@@ -59,7 +59,7 @@ function main(): i32 {
     return acc + r.n;
 }
 `, 51},
-	{"rebind_read_after_churn", `function id(xs: i32[]): i32[] { return xs; }
+	{"rebind_read_after_churn", `@noinline function id(xs: i32[]): i32[] { return xs; }
 struct Bag { n: i32, grid: i32[][] }
 function main(): i32 {
     let acc: i32 = 0;
@@ -75,7 +75,7 @@ function main(): i32 {
     return acc;
 }
 `, 68},
-	{"strarr_producer_rebind", `function ids(s: string): string { return s; }
+	{"strarr_producer_rebind", `@noinline function ids(s: string): string { return s; }
 struct Grid { n: i32, rows: string[][] }
 function mk(k: i32): Grid {
     return Grid { n: k, rows: [[ids("ab"), "c"], [ids("def"), "g"]] };
@@ -94,7 +94,7 @@ function main(): i32 {
     return acc;
 }
 `, 82},
-	{"shared_into_struct_array", `function id(xs: i32[]): i32[] { return xs; }
+	{"shared_into_struct_array", `@noinline function id(xs: i32[]): i32[] { return xs; }
 struct Bag { n: i32, grid: i32[][] }
 function main(): i32 {
     let g: i32[][] = [id([1, 2]), id([3])];
@@ -108,7 +108,7 @@ function main(): i32 {
     return t + g[1][0] + b.grid[0][1] + a.n + junk.len();
 }
 `, 27},
-	{"nested_struct", `function id(xs: i32[]): i32[] { return xs; }
+	{"nested_struct", `@noinline function id(xs: i32[]): i32[] { return xs; }
 struct Bag { n: i32, grid: i32[][] }
 struct Box2 { b: Bag, m: i32 }
 function main(): i32 {
@@ -116,7 +116,7 @@ function main(): i32 {
     return o.b.grid[1][1] + o.m;
 }
 `, 6},
-	{"tuple_holds_field", `function id(xs: i32[]): i32[] { return xs; }
+	{"tuple_holds_field", `@noinline function id(xs: i32[]): i32[] { return xs; }
 struct Bag { n: i32, grid: i32[][] }
 function main(): i32 {
     let acc: i32 = 0;
@@ -132,7 +132,7 @@ function main(): i32 {
     return acc;
 }
 `, 36},
-	{"tuple_holds_strarr_field", `function ids(s: string): string { return s; }
+	{"tuple_holds_strarr_field", `@noinline function ids(s: string): string { return s; }
 struct Grid { n: i32, rows: string[][] }
 function main(): i32 {
     let r: Grid = Grid { n: 2, rows: [[ids("ab"), "c"], [ids("def")]] };
@@ -141,7 +141,7 @@ function main(): i32 {
     return p.1[1][0].len() + p.0 + r.rows.len();
 }
 `, 6},
-	{"tuple_holds_local", `function id(xs: i32[]): i32[] { return xs; }
+	{"tuple_holds_local", `@noinline function id(xs: i32[]): i32[] { return xs; }
 function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;

@@ -89,7 +89,7 @@ function main(): i32 {
 			// aliases the live local `q`, so a release of the tuple under
 			// it would free q's box. The sanitize leg must stay silent.
 			name: "aliased_producer_refused",
-			src: `function id(s: string): string { return s; }
+			src: `@noinline function id(s: string): string { return s; }
 function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 { let q: string = w("q"); let v: (i32, string) = (1, id(q)); return v.1.len() + q.len(); }
 function main(): i32 {

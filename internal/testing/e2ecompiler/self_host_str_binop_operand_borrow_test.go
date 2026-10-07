@@ -87,7 +87,7 @@ function main(): i32 {
 	// argument at the call site frees what the caller now holds. Exits 97 under a
 	// compiler that makes every bare ident a borrow.
 	{"str-identity-return-param-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
-function keep(s: string): string { return s; }
+@noinline function keep(s: string): string { return s; }
 function round(pre: string): i32 {
     let t: string = keep(w(pre));
     let p1: string = w("ZZZZZZZZ");

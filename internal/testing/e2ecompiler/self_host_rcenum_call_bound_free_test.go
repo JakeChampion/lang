@@ -167,7 +167,7 @@ function round(i: i32): i32 {
 			// exit code and WASI rejects a status outside [0, 126).
 			name: "payload_read_back_after_churn",
 			src: `enum E { A(i32[]), B }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function mkv(): E { return E.A(id([7, 8])); }
 function round(i: i32): i32 {
     let v: E = mkv();
@@ -196,7 +196,7 @@ function main(): i32 {
 			// ungated, it freed the array under `v` (99).
 			name: "param_handback_counted",
 			src: `enum E { A(i32[]), B }
-function passthru(e: E): E { return e; }
+@noinline function passthru(e: E): E { return e; }
 function round(i: i32): i32 {
     let s: E = E.A([i, i + 1]);
     let v: E = passthru(s);

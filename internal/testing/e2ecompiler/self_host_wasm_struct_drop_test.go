@@ -49,7 +49,7 @@ func TestSelfHostStructDropWasm(t *testing.T) {
 		{
 			"scalar-array-field-reclaim",
 			"struct Bag { items: i32[] } " +
-				"function id(xs: i32[]): i32[] { return xs; } " +
+				"@noinline function id(xs: i32[]): i32[] { return xs; } " +
 				"function mk(): i32 { let b: Bag = Bag { items: id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]) }; return b.items[0] + b.items[15]; } " +
 				"function main(): i32 { let s: i32 = 0; let k: i32 = 0; while (k < 500000) { s = mk(); k = k + 1; } return s - 17; }",
 			"$__sem_drop_Bag",
@@ -62,7 +62,7 @@ func TestSelfHostStructDropWasm(t *testing.T) {
 		{
 			"struct-array-field-reclaim",
 			"struct Inner { v: i32 } struct Nest { inners: Inner[] } " +
-				"function id(xs: i32[]): i32[] { return xs; } " +
+				"@noinline function id(xs: i32[]): i32[] { return xs; } " +
 				"function mk(): i32 { let o: i32 = id([0])[0]; let nz: Nest = Nest { inners: [Inner{v:o+1},Inner{v:o+2},Inner{v:o+3},Inner{v:o+4},Inner{v:o+5},Inner{v:o+6},Inner{v:o+7},Inner{v:o+8}] }; return nz.inners[0].v + nz.inners[7].v; } " +
 				"function main(): i32 { let s: i32 = 0; let k: i32 = 0; while (k < 400000) { s = mk(); k = k + 1; } return s - 9; }",
 			"$__sem_drop_Nest",
@@ -73,7 +73,7 @@ func TestSelfHostStructDropWasm(t *testing.T) {
 		{
 			"nested-struct-field-reclaim",
 			"struct Inner { v: i32, w: i32 } struct Outer { inner: Inner, tag: i32 } " +
-				"function id(xs: i32[]): i32[] { return xs; } " +
+				"@noinline function id(xs: i32[]): i32[] { return xs; } " +
 				"function mk(): i32 { let o: Outer = Outer { inner: Inner { v: id([5])[0], w: 6 }, tag: 3 }; return o.inner.v + o.inner.w + o.tag; } " +
 				"function main(): i32 { let s: i32 = 0; let k: i32 = 0; while (k < 500000) { s = mk(); k = k + 1; } return s - 14; }",
 			"$__sem_drop_Outer",
@@ -86,7 +86,7 @@ func TestSelfHostStructDropWasm(t *testing.T) {
 		{
 			"nested-struct-field-deep-drop",
 			"struct Inner { items: i32[] } struct Outer { inner: Inner, tag: i32 } " +
-				"function id(xs: i32[]): i32[] { return xs; } " +
+				"@noinline function id(xs: i32[]): i32[] { return xs; } " +
 				"function mk(): i32 { let o: Outer = Outer { inner: Inner { items: id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]) }, tag: 7 }; return o.inner.items[0] + o.inner.items[15] + o.tag; } " +
 				"function main(): i32 { let s: i32 = 0; let k: i32 = 0; while (k < 400000) { s = mk(); k = k + 1; } return s - 24; }",
 			"$__sem_drop_Outer",
@@ -99,7 +99,7 @@ func TestSelfHostStructDropWasm(t *testing.T) {
 		{
 			"nested-struct-field-deep-drop-depth2",
 			"struct Inner { items: i32[] } struct Mid { inner: Inner, m: i32 } struct Outer { mid: Mid, tag: i32 } " +
-				"function id(xs: i32[]): i32[] { return xs; } " +
+				"@noinline function id(xs: i32[]): i32[] { return xs; } " +
 				"function mk(): i32 { let o: Outer = Outer { mid: Mid { inner: Inner { items: id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]) }, m: 2 }, tag: 7 }; return o.mid.inner.items[0] + o.mid.inner.items[15] + o.mid.m + o.tag; } " +
 				"function main(): i32 { let s: i32 = 0; let k: i32 = 0; while (k < 400000) { s = mk(); k = k + 1; } return s - 26; }",
 			"$__sem_drop_Mid",

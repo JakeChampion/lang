@@ -30,7 +30,7 @@ func TestSelfHostStructMultiLevelDropWasm(t *testing.T) {
 
 	const cap = "16777216" // 16 MiB
 	prog := `struct C { items: i32[] }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 struct B { c: C, bt: i32 }
 struct A { b: B, at: i32 }
 function mk(): i32 {

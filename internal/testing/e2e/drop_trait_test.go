@@ -173,7 +173,7 @@ func TestDropTraitLoopTemporary(t *testing.T) {
 // reuse (reuseClassOf), so `p` is finalized even though the loop below it
 // constructs the same shape.
 func TestDropTraitNotSwallowedByReuse(t *testing.T) {
-	src := dropPrelude + `function passthru(w: W): W { return w; }
+	src := dropPrelude + `@noinline function passthru(w: W): W { return w; }
 function main(): i32 {
     let p: W = passthru(W { n: 2 });
     print("p " + p.n.to_string());

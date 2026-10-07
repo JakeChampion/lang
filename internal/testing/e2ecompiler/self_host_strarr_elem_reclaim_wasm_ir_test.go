@@ -105,7 +105,7 @@ function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-
 function mk(pre: string): string[] { let out: string[] = []; let i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
 function keep(xs: string[]): Box { return Box { rows: xs }; }
 function build(pre: string): Box { let xs: string[] = mk(pre); let b: Box = keep(xs); return b; }
-function ids(s: string): string { return s; }
+@noinline function ids(s: string): string { return s; }
 function churnjunk(i: i32): i32 { let a: string[] = ["zzzz", "yyyy", ids("xxxx")]; return a[0].len() + a[2].len(); }
 function round(i: i32): i32 { let pre: string = "ab"; let b: Box = build(pre); let j: i32 = 0; let t: i32 = 0; while (j < 20) { t = t + churnjunk(j); j = j + 1; } let s: i32 = 0; let k: i32 = 0; while (k < b.rows.len()) { s = s + b.rows[k].len(); k = k + 1; } if (s != 129) { return 0 - 1; } return (t + s) % 101; }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; let bad: i32 = 0; while (i < 500) { let r: i32 = round(i); if (r < 0) { bad = bad + 1; } t = t + r; i = i + 1; } if (bad > 0) { return 100; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`, 8},

@@ -58,7 +58,7 @@ func TestSelfHostStrRcBoxIRX86_64(t *testing.T) {
 	// VALUE + underflow check on a fresh concat reclaimed at scope exit. "hi" goes
 	// through ids so the concat is built on the heap rather than folded to a
 	// constant. "hi"+"!" = len 3; underflow 0.
-	run(t, `function ids(s: string): string { return s; } function mk(): i32 { let s: string = ids("hi") + "!"; return s.len(); } function main(): i32 { let r: i32 = mk(); if (__rc_underflow_count() != 0) { return 99; } return r; }`,
+	run(t, `@noinline function ids(s: string): string { return s; } function mk(): i32 { let s: string = ids("hi") + "!"; return s.len(); } function main(): i32 { let r: i32 = mk(); if (__rc_underflow_count() != 0) { return 99; } return r; }`,
 		"rcbox-scope-exit", 3, true)
 
 	// i32 `.to_string()` churn: the digit-string box is rc-headered too; reclaimed each iter,

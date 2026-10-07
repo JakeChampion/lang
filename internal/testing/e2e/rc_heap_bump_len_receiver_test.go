@@ -140,8 +140,8 @@ function main(): i32 {
 // SOUNDNESS NEGATIVE — identity callees hand back the CALLER's value at
 // rc >= 2 (return-transfer inc), so the len-receiver drop must only dec it:
 // base / arr survive every iteration value-intact, over-release detector 0.
-const lenCallRecvAliasSrc = `function id(s: string): string { return s; }
-function idarr(xs: i32[]): i32[] { return xs; }
+const lenCallRecvAliasSrc = `@noinline function id(s: string): string { return s; }
+@noinline function idarr(xs: i32[]): i32[] { return xs; }
 function main(): i32 {
     let base: string = "0123456789abcdef" + "-suffix-to-force-heap";
     let arr: i32[] = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];

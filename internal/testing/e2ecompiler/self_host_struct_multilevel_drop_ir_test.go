@@ -65,7 +65,7 @@ func TestSelfHostStructMultiLevelDropIRX86_64(t *testing.T) {
 	// gate) is emitted, and that 150M alloc->drop cycles stay bounded (exit 0); a
 	// regression to the leaf-only drop leaks B.c + C.items every call -> SIGKILL (137).
 	run(t, `struct C { items: i32[] }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 struct B { c: C, bt: i32 }
 struct A { b: B, at: i32 }
 function mk(): i32 {
@@ -82,7 +82,7 @@ function main(): i32 {
 	// of a live buffer down the chain would corrupt the read. a.b.c.items[0..15] sum to
 	// 136, + b.bt 2 + a.at 7 = 145.
 	run(t, `struct C { items: i32[] }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 struct B { c: C, bt: i32 }
 struct A { b: B, at: i32 }
 function main(): i32 {
@@ -96,7 +96,7 @@ function main(): i32 {
 	// transitive body-emission closure (need() re-checks) chains beyond depth-2 and the
 	// runtime recursion still terminates. items sum 136 + z/y/x/w tags = 136+1+2+3+4=146.
 	run(t, `struct Z { items: i32[], zt: i32 }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 struct Y { z: Z, yt: i32 }
 struct X { y: Y, xt: i32 }
 struct W { x: X, wt: i32 }

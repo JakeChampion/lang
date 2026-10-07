@@ -85,7 +85,7 @@ function main(): i32 {
 	// its result ALIASES the caller's box — releasing it at the binding as if it were
 	// fresh would free a string the caller still holds. Reading every value back
 	// afterwards turns a wrong admission into a wrong ANSWER rather than only a byte count.
-	{"strfresh-identity-ret-safe", `function ident(s: string): string { return s; }
+	{"strfresh-identity-ret-safe", `@noinline function ident(s: string): string { return s; }
 function main(): i32 {
     let keep: string = "abcd";
     let acc: i32 = 0;

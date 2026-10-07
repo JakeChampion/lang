@@ -14,7 +14,7 @@ import (
 // position, beside an `own` array.
 const ownStringParamSrc = `import "std/i32";
 function takes(own s: string): i32 { return s.len(); }
-function back(own s: string): string { return s; }
+@noinline function back(own s: string): string { return s; }
 function fwd(own s: string): i32 { return takes(s); }
 function takea(own a: i32[]): i32 { return a.len(); }
 function main(): i32 {

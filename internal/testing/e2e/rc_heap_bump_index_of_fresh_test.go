@@ -33,7 +33,7 @@ function main(): i32 {
 // return-transfer inc). Indexing it must only DEC (is_unique false), never
 // free, so `arr` stays valid. mk[1]==arr[1]==20, +arr[0]==10, ==30 per iter,
 // x200 == 6000.
-const indexFreshAliasedSafe = `function pass(p: i32[]): i32[] { return p; }
+const indexFreshAliasedSafe = `@noinline function pass(p: i32[]): i32[] { return p; }
 function main(): i32 {
     let arr: i32[] = [10, 20, 30];
     let i: i32 = 0; let acc: i32 = 0;

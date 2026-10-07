@@ -103,7 +103,7 @@ function main(): i32 {
 	// value rather than a byte count.
 	run(t, `struct P { a: i32, b: i32 }
 function mkp(a: i32, b: i32): P { return P { a: a, b: b }; }
-function pick(p: P): P { return p; }
+@noinline function pick(p: P): P { return p; }
 function outer(a: i32, b: i32): P { return pick(mkp(a, b)); }
 function main(): i32 {
     let bad: i32 = 0;
@@ -201,7 +201,7 @@ function main(): i32 {
 }`, 0},
 		{"forwarded-through-aliasing-callee-safe-wasm", `struct P { a: i32, b: i32 }
 function mkp(a: i32, b: i32): P { return P { a: a, b: b }; }
-function pick(p: P): P { return p; }
+@noinline function pick(p: P): P { return p; }
 function outer(a: i32, b: i32): P { return pick(mkp(a, b)); }
 function main(): i32 {
     let bad: i32 = 0;

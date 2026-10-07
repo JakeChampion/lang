@@ -300,7 +300,7 @@ function main(): i32 {
 	// must keep its length and contents.
 	{"local-root-counted-call-shared", `
 struct St { ops: i32[], n: i32 }
-function mk(p: St): St { return p; }
+@noinline function mk(p: St): St { return p; }
 function take(p: St): i32 {
     let a: St = mk(p);
     let i: i32 = 0;

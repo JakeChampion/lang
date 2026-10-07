@@ -92,7 +92,7 @@ function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0
 	{"identity-callee-excluded", `trait Shape { function area(self: Self): i32; }
 struct Square { side: i32 }
 impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
-function ident(s: Square): Square { return s; }
+@noinline function ident(s: Square): Square { return s; }
 function go(k: i32): i32 { let live: Square = Square { side: k }; let d: dyn Shape = ident(live); let a: i32 = d.area(); return a + live.side; }
 function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { if (go(3) != 12) { bad = 96; } i = i + 1; } return bad; }
 function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},

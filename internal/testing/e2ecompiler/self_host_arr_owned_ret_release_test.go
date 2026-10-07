@@ -97,7 +97,7 @@ function main(): i32 {
 	// A bare BORROWED param returned (the #4357 return-transfer limb) with the
 	// result never bound. Its owner `s` is read afterwards, so the release has
 	// to give back the retain and nothing more.
-	{"arrown-borrowed-param-len-recv", `function id(a: i32[]): i32[] { return a; }
+	{"arrown-borrowed-param-len-recv", `@noinline function id(a: i32[]): i32[] { return a; }
 function churn(n: i32): i32 {
     let t: i32 = 0;
     let i: i32 = 0;
@@ -209,7 +209,7 @@ function main(): i32 {
 	// has no E051, so it lowers `id(s)` over a live local — which native rejects
 	// — and admitting the shape took that program to an rc underflow. It keeps
 	// its leak instead; only the safety property is pinned here.
-	{"arrown-own-param-refused", `function id(own a: i32[]): i32[] { return a; }
+	{"arrown-own-param-refused", `@noinline function id(own a: i32[]): i32[] { return a; }
 function churn(n: i32): i32 {
     let t: i32 = 0;
     let i: i32 = 0;

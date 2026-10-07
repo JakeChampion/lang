@@ -28,7 +28,7 @@ func TestSelfHostEnumStructPayloadDropWasm(t *testing.T) {
 
 	const cap = "16777216" // 16 MiB
 	prog := `struct Inner { items: i32[] }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 enum Box { Full(Inner), Empty }
 function mk(): i32 {
     let b: Box = Full(Inner { items: id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]) });

@@ -30,7 +30,7 @@ function grow(n: i32, piece: string): B {
 
 function lent(a: B): B { return B { ...a, buf: a.buf + "Q" }; }
 
-function mk(p: B): B { return p; }
+@noinline function mk(p: B): B { return p; }
 
 function shared(p: B): i32 {
     let a: B = mk(p);

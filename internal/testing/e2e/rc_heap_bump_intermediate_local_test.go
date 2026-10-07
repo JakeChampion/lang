@@ -31,7 +31,7 @@ function main(): i32 { let w: i32 = churn(2000); let b1: i32 = (__heap_bump_byte
 
 const intermediateLocalAliasedSafe = `struct St { xs: i32[], n: i32 }
 function build(k: i32): St { return St { xs: [k, k + 1, k + 2], n: k }; }
-function id(s: St): St { return s; }
+@noinline function id(s: St): St { return s; }
 function f(s: St): i32 { let t: St = id(s); let u: i32 = t.n + t.xs[0]; return u + s.xs[1]; }
 function churn(m: i32): i32 { let s: St = build(1); let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + f(s)) % 251; i = i + 1; } return acc; }
 function main(): i32 { let w: i32 = churn(2000); let x: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } return 0; }`

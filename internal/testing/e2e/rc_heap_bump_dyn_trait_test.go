@@ -30,7 +30,7 @@ trait Shape {
     function area(self: Self): i32;
 }
 struct Boxed { tag: string }
-function ids(s: string): string { return s; }
+@noinline function ids(s: string): string { return s; }
 impl Shape for Boxed {
     function area(self: Self): i32 { return 1; }
 }
@@ -74,7 +74,7 @@ trait Shape {
     function area(self: Self): i32;
 }
 struct Boxed { tag: string }
-function ids(s: string): string { return s; }
+@noinline function ids(s: string): string { return s; }
 impl Shape for Boxed {
     function area(self: Self): i32 { return 1; }
 }
@@ -104,7 +104,7 @@ func TestWASMDynTraitMultiTraitDrop(t *testing.T) {
 trait A { function a1(self: Self): i32; }
 trait B { function b1(self: Self): i32; function b2(self: Self): i32; }
 struct Both { tag: string }
-function ids(s: string): string { return s; }
+@noinline function ids(s: string): string { return s; }
 impl A for Both { function a1(self: Self): i32 { return 1; } }
 impl B for Both {
     function b1(self: Self): i32 { return 2; }
@@ -145,7 +145,7 @@ trait Shape {
     function area(self: Self): i32;
 }
 struct Boxed { tag: string }
-function ids(s: string): string { return s; }
+@noinline function ids(s: string): string { return s; }
 impl Shape for Boxed {
     function area(self: Self): i32 { return 7; }
 }

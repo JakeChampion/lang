@@ -59,7 +59,7 @@ function main(): i32 {
 	// retained by the binding, so it must NOT be freed at the call edge — the
 	// bound value stays readable at detector zero (the box keeps its prior
 	// sound leak).
-	run(t, `function keepit(nm: string): string { return nm; }
+	run(t, `@noinline function keepit(nm: string): string { return nm; }
 function main(): i32 {
     let bad: i32 = 0;
     let i: i32 = 0;
@@ -284,7 +284,7 @@ function main(): i32 {
 	// back rather than only counting bytes.
 	run(t, `import "std/i32";
 function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
-function pick(s: string): string { return s; }
+@noinline function pick(s: string): string { return s; }
 function main(): i32 {
     let bad: i32 = 0;
     let i: i32 = 0;
@@ -365,7 +365,7 @@ function main(): i32 {
 	// REFUSED — the callee RETURNS the array, so the result aliases the temp and
 	// is read after. Freeing at the call would be a use-after-free.
 	run(t, `function mk(n: i32): i32[] { let out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
-function pick(d: i32[]): i32[] { return d; }
+@noinline function pick(d: i32[]): i32[] { return d; }
 function main(): i32 {
     let bad: i32 = 0;
     let i: i32 = 0;

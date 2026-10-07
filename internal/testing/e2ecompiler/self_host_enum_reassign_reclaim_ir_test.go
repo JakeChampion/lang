@@ -38,7 +38,7 @@ function main(): i32 { return churn(%d); }
 // traps (exit 137). With the deep-drop it stays flat and completes. The payloads go
 // through id so they are built on the heap rather than placed as constants.
 const enumReassignFlatHeap = `enum Big { A(i32[]), B(i32[]) }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function churn(n: i32): i32 {
     let b: Big = A([0]);
     let i: i32 = 0;
@@ -58,7 +58,7 @@ function main(): i32 { return churn(3000000); }
 // buffer). acc = 10 * (7+8) = 150. The arrays go through id so they are built on
 // the heap rather than placed as constants.
 const enumReassignCorruptionProbe = `enum Bag { Keep(i32[]), Swap(i32[]) }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function churn(n: i32): i32 {
     let b: Bag = Keep([9, 9]);
     let i: i32 = 0;

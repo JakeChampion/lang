@@ -181,7 +181,7 @@ function round(i: i32): i32 {
 			name: "builder_nodeep",
 			src: `struct B { ops: i32[] }
 function (b: B) emit(x: i32): B { return B { ops: b.ops.append(x) }; }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function round(i: i32): i32 {
     let s: B = B { ops: id([1]) };
     s = s.emit(i);

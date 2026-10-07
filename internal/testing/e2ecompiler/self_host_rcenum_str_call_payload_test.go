@@ -93,7 +93,7 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			// balanced and unchanged. `ids` keeps the variant a heap box.
 			name: "ctl_literal_payload",
 			src: `enum R { Full(string), Empty }
-function ids(s: string): string { return s; }
+@noinline function ids(s: string): string { return s; }
 function round(i: i32): i32 {
     let t: i32 = 0;
     if (i % 2 == 0) { let o: R = R.Full(ids("x")); t = t + 1; }
@@ -109,7 +109,7 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			name: "refused_alias_returning_callee",
 			src: `enum R { Full(string), Empty }
 function w(a: string): string { return a + "!"; }
-function id(a: string): string { return a; }
+@noinline function id(a: string): string { return a; }
 function round(i: i32): i32 {
     let keep: string = w("base");
     let t: i32 = 0;

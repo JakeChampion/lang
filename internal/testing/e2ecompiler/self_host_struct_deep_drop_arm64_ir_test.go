@@ -56,7 +56,7 @@ function main(): i32 {
 	// leaf reads v off the heap so the tree is built on the heap rather than placed as
 	// a constant.
 	run(t, `struct Node { kids: Node[], v: i32 }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function mk(): i32 {
     let leaf: Node = Node { kids: [], v: id([5])[0] };
     let root: Node = Node { kids: [leaf], v: 3 };
