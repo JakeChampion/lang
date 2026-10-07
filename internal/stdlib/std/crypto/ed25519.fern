@@ -1,0 +1,402 @@
+// std/crypto/ed25519 — Ed25519 signatures, the pure variant of RFC 8032
+// §5.1: no context and no prehash.
+//
+//   let public: u8[] = ed25519.public_key(seed)?;
+//   let sig: u8[] = ed25519.sign(seed, message)?;
+//   if (ed25519.verify(public, message, sig)) { … }
+//
+// A seed and a public key are 32 bytes and a signature 64. `verify` checks
+// [S]B = R + [k]A without the cofactor, as Go's crypto/ed25519 does, and
+// refuses an S that is not below the group order L and a public key or R
+// that does not decode to a curve point. A key or a signature of the wrong
+// length does not verify.
+//
+// Signing is constant time by construction: points are extended twisted
+// Edwards coordinates over `std/crypto/field25519`, the base-point
+// multiplication picks every table entry by mask from all sixteen, and
+// scalars mod L are reduced in 8-bit digits without a branch. Verification
+// handles only public values, so it indexes its tables directly. The
+// valgrind gate (`__ct_secret`, docs/TEST-GATES.md) checks signing.
+
+import "core/int";
+import "std/crypto";
+import "std/crypto/field25519" as fe;
+
+// Ed25519Error — a seed of the wrong length (the length it had).
+pub enum Ed25519Error {
+  SeedLength(i32),
+}
+
+pub function (e: Ed25519Error) message(): string {
+  match (e) {
+    SeedLength(n) => {
+      return "ed25519: the seed is " + int.int_to_string(n) + " bytes, want 32";
+    }
+  }
+  return "";
+}
+
+// A point (x, y) as X:Y:Z:T, with x = X/Z, y = Y/Z and xy = T/Z.
+struct Point { x: fe.Fe, y: fe.Fe, z: fe.Fe, t: fe.Fe }
+
+// A point made ready to add: Y+X, Y-X, 2Z and 2dT.
+struct Cached { ypx: fe.Fe, ymx: fe.Fe, z2: fe.Fe, t2d: fe.Fe }
+
+// __d is the curve constant d = -121665/121666.
+function __d(): fe.Fe {
+  return fe.Fe { f0: 56195235, f1: 13857412, f2: 51736253, f3: 6949390, f4: 114729, f5: 24766616, f6: 60832955, f7: 30306712, f8: 48412415, f9: 21499315 };
+}
+
+function __d2(): fe.Fe {
+  return fe.Fe { f0: 45281625, f1: 27714825, f2: 36363642, f3: 13898781, f4: 229458, f5: 15978800, f6: 54557047, f7: 27058993, f8: 29715967, f9: 9444199 };
+}
+
+// __sqrt_m1 is 2^((p-1)/4), a square root of -1.
+function __sqrt_m1(): fe.Fe {
+  return fe.Fe { f0: 34513072, f1: 25610706, f2: 9377949, f3: 3500415, f4: 12389472, f5: 33281959, f6: 41962654, f7: 31548777, f8: 326685, f9: 11406482 };
+}
+
+// __base is the base point B: y = 4/5 and x even.
+function __base(): Point {
+  let x: fe.Fe = fe.carry(fe.Fe { f0: 52811034, f1: 25909283, f2: 16144682, f3: 17082669, f4: 27570973, f5: 30858332, f6: 40966398, f7: 8378388, f8: 20764389, f9: 8758491 });
+  let y: fe.Fe = fe.carry(fe.Fe { f0: 40265304, f1: 26843545, f2: 13421772, f3: 20132659, f4: 26843545, f5: 6710886, f6: 53687091, f7: 13421772, f8: 40265318, f9: 26843545 });
+  let t: fe.Fe = fe.carry(fe.Fe { f0: 28827043, f1: 27438313, f2: 39759291, f3: 244362, f4: 8635006, f5: 11264893, f6: 19351346, f7: 13413597, f8: 16611511, f9: 27139452 });
+  return Point { x: x, y: y, z: fe.from_i64(1), t: t };
+}
+
+function __identity(): Point {
+  return Point { x: fe.from_i64(0), y: fe.from_i64(1), z: fe.from_i64(1), t: fe.from_i64(0) };
+}
+
+function __neg(p: Point): Point {
+  return Point { x: fe.neg(p.x), y: p.y, z: p.z, t: fe.neg(p.t) };
+}
+
+function __cache(p: Point): Cached {
+  return Cached { ypx: fe.add(p.y, p.x), ymx: fe.sub(p.y, p.x), z2: fe.add(p.z, p.z), t2d: fe.mul(p.t, __d2()) };
+}
+
+// __add is p + q. The formula is complete: it also holds when p = q and
+// when either is the identity.
+function __add(p: Point, q: Cached): Point {
+  let a: fe.Fe = fe.mul(fe.sub(p.y, p.x), q.ymx);
+  let b: fe.Fe = fe.mul(fe.add(p.y, p.x), q.ypx);
+  let c: fe.Fe = fe.mul(p.t, q.t2d);
+  let d: fe.Fe = fe.mul(p.z, q.z2);
+  let e: fe.Fe = fe.sub(b, a);
+  let f: fe.Fe = fe.sub(d, c);
+  let g: fe.Fe = fe.add(d, c);
+  let h: fe.Fe = fe.add(b, a);
+  return Point { x: fe.mul(e, f), y: fe.mul(g, h), z: fe.mul(f, g), t: fe.mul(e, h) };
+}
+
+// __double is p + p, RFC 8032 §5.1.4's doubling.
+function __double(p: Point): Point {
+  let a: fe.Fe = fe.sq(p.x);
+  let b: fe.Fe = fe.sq(p.y);
+  let zz: fe.Fe = fe.sq(p.z);
+  let h: fe.Fe = fe.add(a, b);
+  let e: fe.Fe = fe.sub(h, fe.sq(fe.add(p.x, p.y)));
+  let g: fe.Fe = fe.sub(a, b);
+  let f: fe.Fe = fe.carry(fe.add(fe.add(zz, zz), g));
+  return Point { x: fe.mul(e, f), y: fe.mul(g, h), z: fe.mul(f, g), t: fe.mul(e, h) };
+}
+
+function __double4(p: Point): Point {
+  return __double(__double(__double(__double(p))));
+}
+
+// __table is 0p, 1p, …, 15p.
+function __table(p: Point): Cached[] {
+  let c: Cached = __cache(p);
+  let t: Cached[] = [__cache(__identity()), c];
+  let q: Point = p;
+  let i: i32 = 2;
+  while (i < 16) {
+    q = __add(q, c);
+    t = t.append(__cache(q));
+    i = i + 1;
+  }
+  return t;
+}
+
+// __select is t[n], read by mask from every entry so that n, which may be
+// secret, picks no address.
+function __select(t: Cached[], n: i64): Cached {
+  let r: Cached = t[0];
+  let j: i32 = 1;
+  while (j < 16) {
+    let hit: i64 = (n ^ j as i64) - 1 >> 63 & 1;
+    let e: Cached = t[j];
+    r = Cached { ypx: fe.cmov(r.ypx, e.ypx, hit), ymx: fe.cmov(r.ymx, e.ymx, hit), z2: fe.cmov(r.z2, e.z2, hit), t2d: fe.cmov(r.t2d, e.t2d, hit) };
+    j = j + 1;
+  }
+  return r;
+}
+
+// __nibble is the 4-bit digit i of the 32-byte little-endian scalar s.
+function __nibble(s: [u8], i: i32): i64 {
+  return s[i / 2] as i64 >> 4 * (i % 2) & 15;
+}
+
+// __mul_base is [s]B in constant time: a fixed 4-bit window, every digit
+// added, each table entry chosen by __select.
+function __mul_base(s: [u8]): Point {
+  let t: Cached[] = __table(__base());
+  let p: Point = __identity();
+  let i: i32 = 63;
+  while (i >= 0) {
+    p = __add(__double4(p), __select(t, __nibble(s, i)));
+    i = i - 1;
+  }
+  return p;
+}
+
+// __double_mul is [k]a + [s]B for public k and s, in variable time.
+function __double_mul(k: [u8], a: Point, s: [u8]): Point {
+  let ta: Cached[] = __table(a);
+  let tb: Cached[] = __table(__base());
+  let p: Point = __identity();
+  let i: i32 = 63;
+  while (i >= 0) {
+    p = __double4(p);
+    let m: i64 = __nibble(k, i);
+    if (m != 0) {
+      p = __add(p, ta[m as i32]);
+    }
+    let n: i64 = __nibble(s, i);
+    if (n != 0) {
+      p = __add(p, tb[n as i32]);
+    }
+    i = i - 1;
+  }
+  return p;
+}
+
+// __encode is RFC 8032 §5.1.2's encoding: y little-endian, with the low bit
+// of x in the top bit.
+function __encode(p: Point): u8[] {
+  let zi: fe.Fe = fe.invert(p.z);
+  let out: u8[] = fe.to_bytes(fe.mul(p.y, zi));
+  let x: u8[] = fe.to_bytes(fe.mul(p.x, zi));
+  return out.with(31, out[31] | (x[0] & 1 as u8) << 7 as u8);
+}
+
+function __same(a: [u8], b: [u8], n: i32): boolean {
+  let i: i32 = 0;
+  while (i < n) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function __equal(a: fe.Fe, b: fe.Fe): boolean {
+  return __same(fe.to_bytes(a), fe.to_bytes(b), 32);
+}
+
+// __decode is RFC 8032 §5.1.3's decoding of a public 32-byte b, or nothing
+// when y is not below p or no point has that y and sign.
+function __decode(b: [u8]): Option[Point] {
+  let y: fe.Fe = fe.carry(fe.from_bytes(b));
+  let yb: u8[] = fe.to_bytes(y);
+  if (!__same(yb, b, 31) || yb[31] != (b[31] & 127 as u8)) {
+    return None;
+  }
+  let one: fe.Fe = fe.from_i64(1);
+  let yy: fe.Fe = fe.sq(y);
+  let u: fe.Fe = fe.sub(yy, one);
+  let v: fe.Fe = fe.add(fe.mul(yy, __d()), one);
+  let v3: fe.Fe = fe.mul(fe.sq(v), v);
+  let x: fe.Fe = fe.mul(fe.mul(u, v3), fe.pow22523(fe.mul(u, fe.mul(fe.sq(v3), v))));
+  let vxx: fe.Fe = fe.mul(v, fe.sq(x));
+  if (!__equal(vxx, u)) {
+    if (!__equal(vxx, fe.neg(u))) {
+      return None;
+    }
+    x = fe.mul(x, __sqrt_m1());
+  }
+  let xb: u8[] = fe.to_bytes(x);
+  let sign: u8 = b[31] >> 7 as u8;
+  if (sign == 1 as u8 && __same(xb, fe.to_bytes(fe.from_i64(0)), 32)) {
+    return None;
+  }
+  if ((xb[0] & 1 as u8) != sign) {
+    x = fe.neg(x);
+  }
+  return Some(Point { x: x, y: y, z: one, t: fe.mul(x, y) });
+}
+
+// __l is the group order L = 2^252 + 27742317777372353535851937790883648493
+// in little-endian bytes.
+function __l(): i64[] {
+  return [237, 211, 245, 92, 26, 99, 18, 88, 214, 156, 247, 162, 222, 249, 222, 20, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 16];
+}
+
+// __mod_l is x mod L, x a little-endian number in 64 base-256 digits that
+// may each exceed a byte, reduced as TweetNaCl does: every digit from 32 up
+// is folded down by 2^256 = -16 (L - 2^252) mod L, then what is left at
+// 2^252 and above once more, each step taken whatever the digits.
+function __mod_l(own x: i64[]): u8[] {
+  let l: i64[] = __l();
+  let i: i32 = 63;
+  while (i >= 32) {
+    let c: i64 = 0;
+    let j: i32 = i - 32;
+    while (j < i - 12) {
+      x = x.with(j, x[j] + c - 16 * x[i] * l[j - (i - 32)]);
+      c = x[j] + 128 >> 8;
+      x = x.with(j, x[j] - (c << 8));
+      j = j + 1;
+    }
+    x = x.with(j, x[j] + c);
+    x = x.with(i, 0);
+    i = i - 1;
+  }
+  let carry: i64 = 0;
+  let k: i32 = 0;
+  while (k < 32) {
+    x = x.with(k, x[k] + carry - (x[31] >> 4) * l[k]);
+    carry = x[k] >> 8;
+    x = x.with(k, x[k] & 255);
+    k = k + 1;
+  }
+  k = 0;
+  while (k < 32) {
+    x = x.with(k, x[k] - carry * l[k]);
+    k = k + 1;
+  }
+  let out: u8[] = __alloc_u8(32);
+  k = 0;
+  while (k < 32) {
+    x = x.with(k + 1, x[k + 1] + (x[k] >> 8));
+    out = out.with(k, (x[k] & 255) as u8);
+    k = k + 1;
+  }
+  return out;
+}
+
+// __reduce is the 64-byte little-endian h mod L.
+function __reduce(h: [u8]): u8[] {
+  let x: i64[] = [];
+  let i: i32 = 0;
+  while (i < 64) {
+    x = x.append(h[i] as i64);
+    i = i + 1;
+  }
+  return __mod_l(x);
+}
+
+// __mul_add is a*b + c mod L for 32-byte little-endian a, b and c.
+function __mul_add(a: [u8], b: [u8], c: [u8]): u8[] {
+  let x: i64[] = [];
+  let i: i32 = 0;
+  while (i < 64) {
+    let v: i64 = 0;
+    if (i < 32) {
+      v = c[i] as i64;
+    }
+    x = x.append(v);
+    i = i + 1;
+  }
+  i = 0;
+  while (i < 32) {
+    let j: i32 = 0;
+    while (j < 32) {
+      x = x.with(i + j, x[i + j] + a[i] as i64 * (b[j] as i64));
+      j = j + 1;
+    }
+    i = i + 1;
+  }
+  return __mod_l(x);
+}
+
+// __below_l is whether the public 32-byte little-endian s is below L.
+function __below_l(s: [u8]): boolean {
+  let l: i64[] = __l();
+  let i: i32 = 31;
+  while (i >= 0) {
+    let v: i64 = s[i] as i64;
+    if (v != l[i]) {
+      return v < l[i];
+    }
+    i = i - 1;
+  }
+  return false;
+}
+
+// __scalar is the secret scalar a: the first half of the seed's SHA-512,
+// clamped as RFC 8032 §5.1.5 sets out.
+function __scalar(h: [u8]): u8[] {
+  let a: u8[] = __alloc_u8(32);
+  let i: i32 = 0;
+  while (i < 32) {
+    a = a.with(i, h[i]);
+    i = i + 1;
+  }
+  a = a.with(0, a[0] & 248 as u8);
+  return a.with(31, a[31] & 127 as u8 | 64 as u8);
+}
+
+function __concat(a: [u8], b: [u8]): u8[] {
+  let out: u8[] = __alloc_u8(a.len() + b.len());
+  let i: i32 = 0;
+  while (i < a.len()) {
+    out = out.with(i, a[i]);
+    i = i + 1;
+  }
+  i = 0;
+  while (i < b.len()) {
+    out = out.with(a.len() + i, b[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+// public_key(seed) — the 32-byte public key of a 32-byte secret seed.
+pub function public_key(seed: [u8]): Result[u8[], Ed25519Error] {
+  if (seed.len() != 32) {
+    return Err(SeedLength(seed.len()));
+  }
+  let h: u8[] = crypto.sha512_new().update_bytes(seed).final_bytes();
+  return Ok(__encode(__mul_base(__scalar(h))));
+}
+
+// sign(seed, msg) — the 64-byte signature R || S of msg under a 32-byte
+// secret seed.
+pub function sign(seed: [u8], msg: [u8]): Result[u8[], Ed25519Error] {
+  if (seed.len() != 32) {
+    return Err(SeedLength(seed.len()));
+  }
+  let h: u8[] = crypto.sha512_new().update_bytes(seed).final_bytes();
+  let a: u8[] = __scalar(h);
+  let public: u8[] = __encode(__mul_base(a));
+  let r: u8[] = __reduce(crypto.sha512_new().update_bytes(h[32:64]).update_bytes(msg).final_bytes());
+  let big_r: u8[] = __encode(__mul_base(r));
+  let k: u8[] = __reduce(crypto.sha512_new().update_bytes(big_r).update_bytes(public).update_bytes(msg).final_bytes());
+  return Ok(__concat(big_r, __mul_add(k, a, r)));
+}
+
+// verify(public_key, msg, sig) — whether sig is the signature of msg under
+// a 32-byte public key.
+pub function verify(public_key: [u8], msg: [u8], sig: [u8]): boolean {
+  if (public_key.len() != 32 || sig.len() != 64) {
+    return false;
+  }
+  let s: [u8] = sig[32:64];
+  if (!__below_l(s)) {
+    return false;
+  }
+  match (__decode(public_key)) {
+    Some(a) => {
+      let k: u8[] = __reduce(crypto.sha512_new().update_bytes(sig[0:32]).update_bytes(public_key).update_bytes(msg).final_bytes());
+      return __same(__encode(__double_mul(k, __neg(a), s)), sig, 32);
+    },
+    None => {
+      return false;
+    }
+  }
+  return false;
+}

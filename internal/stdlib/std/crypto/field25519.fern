@@ -1,0 +1,292 @@
+// std/crypto/field25519 — arithmetic in the integers mod p = 2^255 - 19,
+// the field X25519 and Ed25519 are both built over.
+//
+// An element is ten signed limbs of 26 and 25 bits in `i64`. `mul` and `sq`
+// answer a reduced element and take any sum or difference of up to three
+// reduced ones, so every product fits; `from_bytes` answers limbs worth two,
+// and `carry` reduces a longer sum. Nothing branches on, or indexes memory
+// with, a limb, and the exponents of `invert` and `pow22523` are public.
+
+// Fe — a field element mod 2^255 - 19: the value is the sum of fi * 2^bi, with
+// bi = 0, 26, 51, 77, 102, 128, 153, 179, 204, 230.
+pub struct Fe { f0: i64, f1: i64, f2: i64, f3: i64, f4: i64, f5: i64, f6: i64, f7: i64, f8: i64, f9: i64 }
+
+pub function add(a: Fe, b: Fe): Fe {
+  return Fe { f0: a.f0 + b.f0, f1: a.f1 + b.f1, f2: a.f2 + b.f2, f3: a.f3 + b.f3, f4: a.f4 + b.f4, f5: a.f5 + b.f5, f6: a.f6 + b.f6, f7: a.f7 + b.f7, f8: a.f8 + b.f8, f9: a.f9 + b.f9 };
+}
+
+pub function sub(a: Fe, b: Fe): Fe {
+  return Fe { f0: a.f0 - b.f0, f1: a.f1 - b.f1, f2: a.f2 - b.f2, f3: a.f3 - b.f3, f4: a.f4 - b.f4, f5: a.f5 - b.f5, f6: a.f6 - b.f6, f7: a.f7 - b.f7, f8: a.f8 - b.f8, f9: a.f9 - b.f9 };
+}
+
+// mul is a*b reduced: a product fi*gj with i+j >= 10 wraps to limb i+j-10
+// times 19 (2^255 = 19), and doubles when i and j are both odd, since those
+// limbs sit half a bit lower than the product's place.
+pub function mul(a: Fe, b: Fe): Fe {
+  let f0: i64 = a.f0;
+  let f1: i64 = a.f1;
+  let f2: i64 = a.f2;
+  let f3: i64 = a.f3;
+  let f4: i64 = a.f4;
+  let f5: i64 = a.f5;
+  let f6: i64 = a.f6;
+  let f7: i64 = a.f7;
+  let f8: i64 = a.f8;
+  let f9: i64 = a.f9;
+  let g0: i64 = b.f0;
+  let g1: i64 = b.f1;
+  let g2: i64 = b.f2;
+  let g3: i64 = b.f3;
+  let g4: i64 = b.f4;
+  let g5: i64 = b.f5;
+  let g6: i64 = b.f6;
+  let g7: i64 = b.f7;
+  let g8: i64 = b.f8;
+  let g9: i64 = b.f9;
+  let g1_19: i64 = g1 * 19;
+  let g2_19: i64 = g2 * 19;
+  let g3_19: i64 = g3 * 19;
+  let g4_19: i64 = g4 * 19;
+  let g5_19: i64 = g5 * 19;
+  let g6_19: i64 = g6 * 19;
+  let g7_19: i64 = g7 * 19;
+  let g8_19: i64 = g8 * 19;
+  let g9_19: i64 = g9 * 19;
+  let f1_2: i64 = f1 * 2;
+  let f3_2: i64 = f3 * 2;
+  let f5_2: i64 = f5 * 2;
+  let f7_2: i64 = f7 * 2;
+  let f9_2: i64 = f9 * 2;
+  let h0: i64 = f0 * g0 + f1_2 * g9_19 + f2 * g8_19 + f3_2 * g7_19 + f4 * g6_19 + f5_2 * g5_19 + f6 * g4_19 + f7_2 * g3_19 + f8 * g2_19 + f9_2 * g1_19;
+  let h1: i64 = f0 * g1 + f1 * g0 + f2 * g9_19 + f3 * g8_19 + f4 * g7_19 + f5 * g6_19 + f6 * g5_19 + f7 * g4_19 + f8 * g3_19 + f9 * g2_19;
+  let h2: i64 = f0 * g2 + f1_2 * g1 + f2 * g0 + f3_2 * g9_19 + f4 * g8_19 + f5_2 * g7_19 + f6 * g6_19 + f7_2 * g5_19 + f8 * g4_19 + f9_2 * g3_19;
+  let h3: i64 = f0 * g3 + f1 * g2 + f2 * g1 + f3 * g0 + f4 * g9_19 + f5 * g8_19 + f6 * g7_19 + f7 * g6_19 + f8 * g5_19 + f9 * g4_19;
+  let h4: i64 = f0 * g4 + f1_2 * g3 + f2 * g2 + f3_2 * g1 + f4 * g0 + f5_2 * g9_19 + f6 * g8_19 + f7_2 * g7_19 + f8 * g6_19 + f9_2 * g5_19;
+  let h5: i64 = f0 * g5 + f1 * g4 + f2 * g3 + f3 * g2 + f4 * g1 + f5 * g0 + f6 * g9_19 + f7 * g8_19 + f8 * g7_19 + f9 * g6_19;
+  let h6: i64 = f0 * g6 + f1_2 * g5 + f2 * g4 + f3_2 * g3 + f4 * g2 + f5_2 * g1 + f6 * g0 + f7_2 * g9_19 + f8 * g8_19 + f9_2 * g7_19;
+  let h7: i64 = f0 * g7 + f1 * g6 + f2 * g5 + f3 * g4 + f4 * g3 + f5 * g2 + f6 * g1 + f7 * g0 + f8 * g9_19 + f9 * g8_19;
+  let h8: i64 = f0 * g8 + f1_2 * g7 + f2 * g6 + f3_2 * g5 + f4 * g4 + f5_2 * g3 + f6 * g2 + f7_2 * g1 + f8 * g0 + f9_2 * g9_19;
+  let h9: i64 = f0 * g9 + f1 * g8 + f2 * g7 + f3 * g6 + f4 * g5 + f5 * g4 + f6 * g3 + f7 * g2 + f8 * g1 + f9 * g0;
+  return __carry(h0, h1, h2, h3, h4, h5, h6, h7, h8, h9);
+}
+
+// __carry brings every limb back to its width, rounding each carry to the
+// nearest so a limb may end slightly negative; the top carry wraps times 19.
+function __carry(h0: i64, h1: i64, h2: i64, h3: i64, h4: i64, h5: i64, h6: i64, h7: i64, h8: i64, h9: i64): Fe {
+  let c0: i64 = h0 + (1 << 25) >> 26;
+  h1 = h1 + c0;
+  h0 = h0 - (c0 << 26);
+  let c4: i64 = h4 + (1 << 25) >> 26;
+  h5 = h5 + c4;
+  h4 = h4 - (c4 << 26);
+  let c1: i64 = h1 + (1 << 24) >> 25;
+  h2 = h2 + c1;
+  h1 = h1 - (c1 << 25);
+  let c5: i64 = h5 + (1 << 24) >> 25;
+  h6 = h6 + c5;
+  h5 = h5 - (c5 << 25);
+  let c2: i64 = h2 + (1 << 25) >> 26;
+  h3 = h3 + c2;
+  h2 = h2 - (c2 << 26);
+  let c6: i64 = h6 + (1 << 25) >> 26;
+  h7 = h7 + c6;
+  h6 = h6 - (c6 << 26);
+  let c3: i64 = h3 + (1 << 24) >> 25;
+  h4 = h4 + c3;
+  h3 = h3 - (c3 << 25);
+  let c7: i64 = h7 + (1 << 24) >> 25;
+  h8 = h8 + c7;
+  h7 = h7 - (c7 << 25);
+  c4 = h4 + (1 << 25) >> 26;
+  h5 = h5 + c4;
+  h4 = h4 - (c4 << 26);
+  let c8: i64 = h8 + (1 << 25) >> 26;
+  h9 = h9 + c8;
+  h8 = h8 - (c8 << 26);
+  let c9: i64 = h9 + (1 << 24) >> 25;
+  h0 = h0 + c9 * 19;
+  h9 = h9 - (c9 << 25);
+  c0 = h0 + (1 << 25) >> 26;
+  h1 = h1 + c0;
+  h0 = h0 - (c0 << 26);
+  return Fe { f0: h0, f1: h1, f2: h2, f3: h3, f4: h4, f5: h5, f6: h6, f7: h7, f8: h8, f9: h9 };
+}
+
+// carry is a with every limb brought back to its width.
+pub function carry(a: Fe): Fe {
+  return __carry(a.f0, a.f1, a.f2, a.f3, a.f4, a.f5, a.f6, a.f7, a.f8, a.f9);
+}
+
+pub function sq(a: Fe): Fe {
+  return mul(a, a);
+}
+
+pub function from_i64(v: i64): Fe {
+  return Fe { f0: v, f1: 0, f2: 0, f3: 0, f4: 0, f5: 0, f6: 0, f7: 0, f8: 0, f9: 0 };
+}
+
+pub function neg(a: Fe): Fe {
+  return sub(from_i64(0), a);
+}
+
+// cswap swaps a and b when swap is 1 and keeps them when it is 0, by mask.
+pub function cswap(a: Fe, b: Fe, swap: i64): (Fe, Fe) {
+  let m: i64 = 0 - swap;
+  let x0: i64 = m & (a.f0 ^ b.f0);
+  let x1: i64 = m & (a.f1 ^ b.f1);
+  let x2: i64 = m & (a.f2 ^ b.f2);
+  let x3: i64 = m & (a.f3 ^ b.f3);
+  let x4: i64 = m & (a.f4 ^ b.f4);
+  let x5: i64 = m & (a.f5 ^ b.f5);
+  let x6: i64 = m & (a.f6 ^ b.f6);
+  let x7: i64 = m & (a.f7 ^ b.f7);
+  let x8: i64 = m & (a.f8 ^ b.f8);
+  let x9: i64 = m & (a.f9 ^ b.f9);
+  return (Fe { f0: a.f0 ^ x0, f1: a.f1 ^ x1, f2: a.f2 ^ x2, f3: a.f3 ^ x3, f4: a.f4 ^ x4, f5: a.f5 ^ x5, f6: a.f6 ^ x6, f7: a.f7 ^ x7, f8: a.f8 ^ x8, f9: a.f9 ^ x9 }, Fe { f0: b.f0 ^ x0, f1: b.f1 ^ x1, f2: b.f2 ^ x2, f3: b.f3 ^ x3, f4: b.f4 ^ x4, f5: b.f5 ^ x5, f6: b.f6 ^ x6, f7: b.f7 ^ x7, f8: b.f8 ^ x8, f9: b.f9 ^ x9 });
+}
+
+// cmov is b when flag is 1 and a when it is 0, by mask.
+pub function cmov(a: Fe, b: Fe, flag: i64): Fe {
+  let m: i64 = 0 - flag;
+  return Fe { f0: a.f0 ^ m & (a.f0 ^ b.f0), f1: a.f1 ^ m & (a.f1 ^ b.f1), f2: a.f2 ^ m & (a.f2 ^ b.f2), f3: a.f3 ^ m & (a.f3 ^ b.f3), f4: a.f4 ^ m & (a.f4 ^ b.f4), f5: a.f5 ^ m & (a.f5 ^ b.f5), f6: a.f6 ^ m & (a.f6 ^ b.f6), f7: a.f7 ^ m & (a.f7 ^ b.f7), f8: a.f8 ^ m & (a.f8 ^ b.f8), f9: a.f9 ^ m & (a.f9 ^ b.f9) };
+}
+
+// __bits is the `width` bits of the 32-byte little-endian b that start at
+// bit `at`, the top bit of byte 31 excluded.
+function __bits(b: [u8], at: i32, width: i32): i64 {
+  let v: i64 = 0;
+  let i: i32 = 0;
+  while (i < 5) {
+    let byte: i32 = at / 8 + i;
+    if (byte < 32) {
+      let x: i64 = b[byte] as i64;
+      if (byte == 31) {
+        x = x & 127;
+      }
+      v = v | x << 8 * i;
+    }
+    i = i + 1;
+  }
+  return v >> at % 8 & (1 << width) - 1;
+}
+
+// from_bytes reads 32 little-endian bytes, the top bit ignored.
+pub function from_bytes(b: [u8]): Fe {
+  return Fe { f0: __bits(b, 0, 26), f1: __bits(b, 26, 25), f2: __bits(b, 51, 26), f3: __bits(b, 77, 25), f4: __bits(b, 102, 26), f5: __bits(b, 128, 25), f6: __bits(b, 153, 26), f7: __bits(b, 179, 25), f8: __bits(b, 204, 26), f9: __bits(b, 230, 25) };
+}
+
+// to_bytes is the canonical encoding: a fully reduced, so 0 <= a < p,
+// packed little-endian. q is 1 exactly when a >= p, found without a branch.
+pub function to_bytes(a: Fe): u8[] {
+  let h0: i64 = a.f0;
+  let h1: i64 = a.f1;
+  let h2: i64 = a.f2;
+  let h3: i64 = a.f3;
+  let h4: i64 = a.f4;
+  let h5: i64 = a.f5;
+  let h6: i64 = a.f6;
+  let h7: i64 = a.f7;
+  let h8: i64 = a.f8;
+  let h9: i64 = a.f9;
+  let q: i64 = 19 * h9 + (1 << 24) >> 25;
+  q = h0 + q >> 26;
+  q = h1 + q >> 25;
+  q = h2 + q >> 26;
+  q = h3 + q >> 25;
+  q = h4 + q >> 26;
+  q = h5 + q >> 25;
+  q = h6 + q >> 26;
+  q = h7 + q >> 25;
+  q = h8 + q >> 26;
+  q = h9 + q >> 25;
+  h0 = h0 + 19 * q;
+  let c0: i64 = h0 >> 26;
+  h1 = h1 + c0;
+  h0 = h0 - (c0 << 26);
+  let c1: i64 = h1 >> 25;
+  h2 = h2 + c1;
+  h1 = h1 - (c1 << 25);
+  let c2: i64 = h2 >> 26;
+  h3 = h3 + c2;
+  h2 = h2 - (c2 << 26);
+  let c3: i64 = h3 >> 25;
+  h4 = h4 + c3;
+  h3 = h3 - (c3 << 25);
+  let c4: i64 = h4 >> 26;
+  h5 = h5 + c4;
+  h4 = h4 - (c4 << 26);
+  let c5: i64 = h5 >> 25;
+  h6 = h6 + c5;
+  h5 = h5 - (c5 << 25);
+  let c6: i64 = h6 >> 26;
+  h7 = h7 + c6;
+  h6 = h6 - (c6 << 26);
+  let c7: i64 = h7 >> 25;
+  h8 = h8 + c7;
+  h7 = h7 - (c7 << 25);
+  let c8: i64 = h8 >> 26;
+  h9 = h9 + c8;
+  h8 = h8 - (c8 << 26);
+  h9 = h9 & (1 << 25) - 1;
+  let out: u8[] = __alloc_u8(32);
+  let i: i32 = 0;
+  while (i < 32) {
+    out = out.with(i, 0 as u8);
+    i = i + 1;
+  }
+  out = __put_bits(out, 0, h0);
+  out = __put_bits(out, 26, h1);
+  out = __put_bits(out, 51, h2);
+  out = __put_bits(out, 77, h3);
+  out = __put_bits(out, 102, h4);
+  out = __put_bits(out, 128, h5);
+  out = __put_bits(out, 153, h6);
+  out = __put_bits(out, 179, h7);
+  out = __put_bits(out, 204, h8);
+  out = __put_bits(out, 230, h9);
+  return out;
+}
+
+// __put_bits ors v, a limb of at most 26 bits, into out at bit `at`.
+function __put_bits(own out: u8[], at: i32, v: i64): u8[] {
+  let x: i64 = v << at % 8;
+  let byte: i32 = at / 8;
+  let i: i32 = 0;
+  while (i < 5) {
+    if (byte + i < 32) {
+      out = out.with(byte + i, out[byte + i] | (x >> 8 * i & 255) as u8);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// invert is a^(p-2) = 1/a. The exponent 2^255 - 21 is public, so the
+// square-and-multiply may branch on its bits: all ones but bits 2 and 4.
+pub function invert(a: Fe): Fe {
+  let r: Fe = from_i64(1);
+  let i: i32 = 254;
+  while (i >= 0) {
+    r = sq(r);
+    if (i != 2 && i != 4) {
+      r = mul(r, a);
+    }
+    i = i - 1;
+  }
+  return r;
+}
+
+// pow22523 is a^((p-5)/8), the power a square root is built from. The
+// exponent 2^252 - 3 has every bit set but bit 1.
+pub function pow22523(a: Fe): Fe {
+  let r: Fe = from_i64(1);
+  let i: i32 = 251;
+  while (i >= 0) {
+    r = sq(r);
+    if (i != 1) {
+      r = mul(r, a);
+    }
+    i = i - 1;
+  }
+  return r;
+}
