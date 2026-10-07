@@ -1,5 +1,8 @@
 # Bounded message ownership and recycling
 
+Latest compiler measurements: [merged main11a validation](FIP-MAIN11A.md).
+The measurements below retain their original compiler and date.
+
 The broker recycles preallocated message records without allocation in its unique
 state, including fan-out to sixteen subscribers. An external message alias kept
 alive past acknowledgement causes one allocation when that slot is reused.

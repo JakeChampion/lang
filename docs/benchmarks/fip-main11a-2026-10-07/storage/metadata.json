@@ -1,0 +1,36 @@
+{
+  "host": "macOS-15.8-arm64-arm-64bit-Mach-O",
+  "machine": "arm64",
+  "compiler": "/private/tmp/fern-fip-main11a-native-compiler",
+  "compiler_sha256": "b5f886d2ee1c8e1165606426913c23648fb24b09697d62de4395cc1189ddd894",
+  "compile_command": [
+    "/private/tmp/fern-fip-main11a-native-compiler",
+    "-target",
+    "arm64-darwin",
+    "-o",
+    "/private/tmp/fern-storage-main11a-repeated/storage",
+    "/Users/jakechampion/.codex/worktrees/fip-storage-experiment/lang/examples/fip/storage.fern",
+    "/Users/jakechampion/.codex/worktrees/fip-storage-experiment/lang/internal/stdlib"
+  ],
+  "binary_sha256": "385a493774b5471df2eb5c4d7062d5008b56c8616703f2124a30e9350d5df664",
+  "sources": {
+    "examples/fip/storage.fern": "9e6a0ce98fa28739bc36a1b43629a184592891ef95e3d12cffe6cd8ddc07fcb6",
+    "examples/fip/storage_core.fern": "02107848c8be97759b346b5de18d005cd8d71c9e4fc85de43343ac8b2d3c1b56",
+    "examples/fip/storage_fip.fern": "7cbfb5998be42a41eea0d340732f12ac6f348e6bdc2f379a48824fa0a91fb9ac",
+    "scripts/bench-storage.py": "0b270f7db01740129fec87d45ae52266ba0c8829105486ed42990038ec0f59e4",
+    "bootstrap/stage0.lock": "6cbf5f6d6b13a72c6f0c271655d37468021eb428b2b163364de1d2442ca4637e",
+    "internal/stdlib/std/bench.fern": "028d73d80366813b3d51676ed83cc2d0be41be8b4bf1fa0d7172fa35fe9904b5"
+  },
+  "revision": "11a71739408e54e69ce5a3db5bf8e2136ad8316c",
+  "working_tree": "A  docs/contexts/runtime/specs/fip-storage.md\nA  examples/fip/storage.fern\nA  examples/fip/storage_core.fern\nA  examples/fip/storage_fip.fern\nA  internal/testing/e2ecompiler/self_host_fip_storage_test.go\nA  internal/testing/e2ecompiler/self_host_storage_boundaries_test.go\nA  internal/testing/e2ecompiler/self_host_storage_driver_test.go\nA  scripts/bench-storage.py\n?? AGENTS.md\n?? SPEC.md\n",
+  "depths": [
+    1,
+    3,
+    8,
+    32,
+    128
+  ],
+  "waves": 1000,
+  "repeats": 5,
+  "measurement": "No warmup exemption. Samples cover full waves, including saturation refusal and completion collection. Wall time adds equal snapshot checksum work and sample storage. Export/sorting follow marks. Process CPU/RSS/faults include startup/export/sorting. Fresh bytes are high-water growth, not requested bytes. Logical latency is simulator ticks, not physical I/O time. Page faults are not cache misses."
+}

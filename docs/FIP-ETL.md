@@ -1,5 +1,8 @@
 # Bounded telemetry ETL
 
+Latest compiler measurements: [merged main11a validation](FIP-MAIN11A.md).
+The measurements below retain their original compiler and date.
+
 This experiment for #9591 compares four Fern implementations of the same
 decode, validate, normalize, filter, aggregate and encode pipeline. On the
 measured Apple M3 Pro, the ordinary per-record baseline was fastest. The measured

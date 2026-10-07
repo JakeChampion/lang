@@ -1,0 +1,107 @@
+pub struct State {
+  pages: i32,
+  frames: i32,
+  width: i32,
+  capacity: i32,
+  batch: i32,
+  disk: i64[],
+  cache: i64[],
+  mapped: i32[],
+  dirty: i32[],
+  frame_pin: i32[],
+  page_pin: i32[],
+  touched: i64[],
+  phase: i32[],
+  kind: i32[],
+  page: i32[],
+  offset: i32[],
+  value: i64[],
+  delay: i32[],
+  fault: i32[],
+  frame: i32[],
+  ticket: i64[],
+  due: i64[],
+  completion_status: i32[],
+  completion_value: i64[],
+  serial: i64,
+  tick: i64,
+  outstanding: i32,
+  cursor: i32,
+  work: i32,
+  transitions: i32,
+  status: i32,
+  result_slot: i32,
+  result_ticket: i64,
+  result_value: i64,
+}
+
+pub fip function initial_word(page: i32, word: i32): i64 {
+  return (page as i64 + 1i64) * 10000i64 + word as i64;
+}
+
+pub function new_state(pages: i32, frames: i32, width: i32, capacity: i32, batch: i32): Option[State] {
+  if (pages < 1 || pages > 256 || frames < 1 || frames > 128 || frames > pages
+    || width < 1 || width > 256 || capacity < 1 || capacity > 128 || batch < 1 || batch > capacity) {
+    return None;
+  }
+  let disk: i64[] = __alloc_i64(pages * width);
+  let i: i32 = 0;
+  while (i < disk.len()) {
+    disk = disk.with(i, initial_word(i / width, i % width));
+    i = i + 1;
+  }
+  let mapped: i32[] = __alloc_i32(frames);
+  i = 0;
+  while (i < frames) {
+    mapped = mapped.with(i, -1);
+    i = i + 1;
+  }
+  let frame: i32[] = __alloc_i32(capacity);
+  i = 0;
+  while (i < capacity) {
+    frame = frame.with(i, -1);
+    i = i + 1;
+  }
+  return Some(State {
+    pages: pages, frames: frames, width: width, capacity: capacity, batch: batch,
+    disk: disk, cache: __alloc_i64(frames * width), mapped: mapped,
+    dirty: __alloc_i32(frames), frame_pin: __alloc_i32(frames), page_pin: __alloc_i32(pages), touched: __alloc_i64(frames),
+    phase: __alloc_i32(capacity), kind: __alloc_i32(capacity), page: __alloc_i32(capacity), offset: __alloc_i32(capacity),
+    value: __alloc_i64(capacity), delay: __alloc_i32(capacity), fault: __alloc_i32(capacity), frame: frame,
+    ticket: __alloc_i64(capacity), due: __alloc_i64(capacity), completion_status: __alloc_i32(capacity), completion_value: __alloc_i64(capacity),
+    serial: 0i64, tick: 0i64, outstanding: 0, cursor: 0, work: 0, transitions: 0,
+    status: 0, result_slot: -1, result_ticket: 0i64, result_value: 0i64,
+  });
+}
+
+pub fip function result(own s: State, status: i32, slot: i32, ticket: i64, value: i64): State {
+  return State { ...s, status: status, result_slot: slot, result_ticket: ticket, result_value: value };
+}
+
+pub fip function lookup(s: State, page: i32): i32 {
+  let i: i32 = 0;
+  while (i < s.frames) {
+    if (s.mapped[i] == page) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return -1;
+}
+
+pub fip function victim(s: State): i32 {
+  let best: i32 = -1;
+  let i: i32 = 0;
+  while (i < s.frames) {
+    if (s.frame_pin[i] == 0 && s.dirty[i] == 0) {
+      if (s.mapped[i] < 0) {
+        return i;
+      }
+      if (best < 0 || s.touched[i] < s.touched[best]) {
+        best = i;
+      }
+    }
+    i = i + 1;
+  }
+  return best;
+}

@@ -1,0 +1,219 @@
+// Usage: storage depth waves plain|delayed|faulted unique|shared [samples]
+import "./storage_core";
+import "./storage_fip";
+import "core/cmp";
+import "std/bench";
+import "std/i32";
+import "std/i64";
+import "std/string";
+
+function snapshot(s: storage_core.State): storage_core.State {
+  return s;
+}
+
+function disk_checksum(s: storage_core.State): i64 {
+  let sum: i64 = 0i64;
+  let i: i32 = 0;
+  while (i < s.disk.len()) {
+    sum = sum + (i as i64 + 1i64) * s.disk[i];
+    i = i + 1;
+  }
+  return sum;
+}
+
+function data_checksum(s: storage_core.State): i64 {
+  let sum: i64 = disk_checksum(s);
+  let i: i32 = 0;
+  while (i < s.cache.len()) {
+    sum = sum + (i as i64 + 1i64) * s.cache[i];
+    i = i + 1;
+  }
+  i = 0;
+  while (i < s.frames) {
+    sum = sum + (i as i64 + 1i64) * (s.mapped[i] as i64 * 13i64 + s.dirty[i] as i64);
+    i = i + 1;
+  }
+  return sum;
+}
+
+// Private driver summary: result_slot=error count, result_ticket=sum of
+// logical completion latencies, result_value=weighted completion checksum.
+// Reusing scalar result fields keeps instrumentation out of allocation counts.
+function wave(own s: storage_core.State, round: i32, mode: string): storage_core.State {
+  let depth: i32 = s.capacity;
+  let kind: i32 = round % 4 + 1;
+  if (round % 4 == 2) {
+    kind = 0;
+  } else if (round % 4 == 3) {
+    kind = 3;
+  }
+  let delay: i32 = 0;
+  if (mode == "delayed") {
+    delay = 17;
+  }
+  let start: i64 = s.tick;
+  let p: i32 = 0;
+  while (p < depth) {
+    let value: i64 = (round as i64 + 1i64) * 17i64 + p as i64 - 1000000i64;
+    let fault: boolean = mode == "faulted" && (round * depth + p) % 11 == 0;
+    s = storage_fip.submit(s, kind, p, round / 4 % 8, value, delay, fault);
+    if (s.status != 0 || s.result_slot != p) {
+      return storage_core.result(s, 90, -1, 0i64, 0i64);
+    }
+    p = p + 1;
+  }
+  s = storage_fip.submit(s, 0, 0, 0, 0i64, 0, false);
+  if (s.status != 2) {
+    return storage_core.result(s, 91, -1, 0i64, 0i64);
+  }
+  let remaining: i32 = depth;
+  let latency: i64 = 0i64;
+  while (remaining > 0) {
+    let slot: i32 = s.cursor;
+    let before: i32 = s.phase[slot];
+    s = storage_fip.advance(s);
+    if (s.status != 0 || s.work != 1 || s.tick - start > (delay as i64 + 2i64) * (depth as i64)) {
+      return storage_core.result(s, 92, -1, 0i64, 0i64);
+    }
+    if (before != 3 && s.phase[slot] == 3) {
+      remaining = remaining - 1;
+      latency = latency + s.tick - start;
+    }
+  }
+  let errors: i32 = 0;
+  let checks: i64 = 0i64;
+  p = 0;
+  while (p < depth) {
+    let ticket: i64 = s.ticket[p];
+    s = storage_fip.collect(s, p, ticket);
+    if (s.status != 0) {
+      errors = errors + 1;
+    }
+    checks = checks + (p as i64 + 1i64) * (s.status as i64 * 1000003i64 + s.result_value);
+    p = p + 1;
+  }
+  return storage_core.result(s, 0, errors, latency, checks);
+}
+
+function run(depth: i32, waves: i32, mode: string, sharing: string, export_samples: boolean): i32 {
+  let start_allocs: i64 = bench.alloc_count();
+  let start_bytes: i64 = bench.bump_bytes();
+  let startup: i64 = monotonic_ns();
+  let samples: i64[] = __alloc_i64(waves);
+  match (storage_core.new_state(depth, depth, 8, depth, 1)) {
+    None => {
+      return 2;
+    },
+    Some(s) => {
+      let startup_ns: i64 = monotonic_ns() - startup;
+      let startup_allocs: i64 = bench.allocs_after(start_allocs);
+      let startup_bytes: i64 = bench.fresh_bytes_after(start_bytes);
+      let mark: i64 = bench.alloc_count();
+      let fresh_mark: i64 = bench.bump_bytes();
+      let started: i64 = monotonic_ns();
+      let checks: i64 = 0i64;
+      let snapshots: i64 = 0i64;
+      let latency: i64 = 0i64;
+      let max_latency: i64 = 0i64;
+      let errors: i64 = 0i64;
+      let first_allocs: i64 = 0i64;
+      let i: i32 = 0;
+      while (i < waves) {
+        let old_tick: i64 = s.tick;
+        let duration: i64 = 0i64;
+        let observed: i64 = 0i64;
+        if (sharing == "shared") {
+          let saved: storage_core.State = snapshot(s);
+          let t0: i64 = monotonic_ns();
+          s = wave(s, i, mode);
+          duration = monotonic_ns() - t0;
+          observed = data_checksum(saved);
+        } else {
+          observed = data_checksum(s);
+          let t0: i64 = monotonic_ns();
+          s = wave(s, i, mode);
+          duration = monotonic_ns() - t0;
+        }
+        if (s.status != 0 || s.outstanding != 0) {
+          return 3;
+        }
+        snapshots = snapshots + observed;
+        checks = checks + s.result_value;
+        errors = errors + s.result_slot as i64;
+        latency = latency + s.result_ticket;
+        if (s.tick - old_tick > max_latency) {
+          max_latency = s.tick - old_tick;
+        }
+        samples = samples.with(i, duration);
+        if (i == 0) {
+          first_allocs = bench.allocs_after(mark);
+        }
+        i = i + 1;
+      }
+      let elapsed: i64 = monotonic_ns() - started;
+      let allocations: i64 = bench.allocs_after(mark);
+      let fresh: i64 = bench.fresh_bytes_after(fresh_mark);
+      if (export_samples) {
+        i = 0;
+        while (i < waves) {
+          print("sample," + i.to_string() + "," + samples[i].to_string());
+          i = i + 1;
+        }
+      }
+      let stats: bench.Report = bench.Report { name: mode, iterations: waves, wall_ns: elapsed, samples_ns: cmp.sort(samples), allocs: allocations, fresh_bytes: fresh };
+      print("{\"depth\":" + depth.to_string() + ",\"waves\":" + waves.to_string()
+        + ",\"mode\":\"" + mode + "\",\"sharing\":\"" + sharing + "\""
+        + ",\"accepted\":" + s.serial.to_string() + ",\"completed\":" + s.serial.to_string()
+        + ",\"errors\":" + errors.to_string() + ",\"refusals\":" + waves.to_string()
+        + ",\"checksum\":" + checks.to_string() + ",\"snapshot_checks\":" + snapshots.to_string()
+        + ",\"disk_checksum\":" + disk_checksum(s).to_string() + ",\"data_checksum\":" + data_checksum(s).to_string()
+        + ",\"logical_ticks\":" + s.tick.to_string() + ",\"logical_latency_sum\":" + latency.to_string()
+        + ",\"logical_latency_max\":" + max_latency.to_string() + ",\"scheduling_work\":" + s.tick.to_string()
+        + ",\"startup_ns\":" + startup_ns.to_string() + ",\"startup_allocs\":" + startup_allocs.to_string()
+        + ",\"startup_fresh_bytes\":" + startup_bytes.to_string() + ",\"wall_ns\":" + elapsed.to_string()
+        + ",\"allocs\":" + allocations.to_string() + ",\"first_wave_allocs\":" + first_allocs.to_string()
+        + ",\"fresh_bytes\":" + fresh.to_string() + ",\"wave_p50_ns\":" + stats.p50_ns().to_string()
+        + ",\"wave_p95_ns\":" + stats.p95_ns().to_string() + ",\"wave_p99_ns\":" + stats.p99_ns().to_string()
+        + ",\"wave_p999_ns\":" + stats.p999_ns().to_string() + ",\"wave_max_ns\":" + stats.max_ns().to_string() + "}");
+      if (sharing == "unique" && allocations != 0i64) {
+        return 4;
+      }
+      return 0;
+    }
+  }
+}
+
+function main(): i32 {
+  let argv: string[] = args();
+  if (argv.len() < 5 || argv.len() > 6) {
+    return 2;
+  }
+  let depth: i32 = 0;
+  let waves: i32 = 0;
+  match (argv[1].parse_int()) {
+    Some(n) => {
+      depth = n;
+    },
+    None => {
+      return 2;
+    }
+  }
+  match (argv[2].parse_int()) {
+    Some(n) => {
+      waves = n;
+    },
+    None => {
+      return 2;
+    }
+  }
+  if (depth < 1 || depth > 128 || waves < 1 || waves > 10000) {
+    return 2;
+  }
+  if (argv[3] != "plain" && argv[3] != "delayed" && argv[3] != "faulted" || argv[4] != "unique" && argv[4] != "shared") {
+    return 2;
+  }
+  if (argv.len() == 6 && argv[5] != "samples") {
+    return 2;
+  }
+  return run(depth, waves, argv[3], argv[4], argv.len() == 6);
+}

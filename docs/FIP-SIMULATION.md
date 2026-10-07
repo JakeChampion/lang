@@ -1,5 +1,8 @@
 # Bounded simulation with immutable worlds
 
+Latest compiler measurements: [merged main11a validation](FIP-MAIN11A.md).
+The measurements below retain their original compiler and date.
+
 This experiment for #9587 runs the same deterministic simulation using a
 persistent vector of entities, an FBIP entity array and FIP scalar arrays.
 Both bounded representations avoid allocation with uniquely owned state and
