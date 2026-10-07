@@ -36,9 +36,9 @@ const serveAllocsSlackPerSecond = 40
 
 // ServeAllocsServerSource is a server answering "hello" to every
 // path but /count, which answers the allocator's call count. It serves the
-// listener it inherits for `rounds` requests and the warm-up on one
-// connection.
-func ServeAllocsServerSource(rounds int) string {
+// listener it inherits, or `port` where it inherits none, for `rounds`
+// requests and the warm-up on one connection.
+func ServeAllocsServerSource(port, rounds int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
 import "std/platform";
@@ -49,9 +49,9 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     return http.ok("hello");
 }
 function main(): i32 {
-    return serve.run(0, serve.Config { ...serve.config(), keep_alive_requests: %d }, handle);
+    return serve.run(%d, serve.Config { ...serve.config(), keep_alive_requests: %d }, handle);
 }
-`, serveAllocsWarm+rounds+8)
+`, port, serveAllocsWarm+rounds+8)
 }
 
 // CheckServeAllocs drives ServeAllocsServerSource at addr for rounds hello

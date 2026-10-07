@@ -1197,8 +1197,9 @@ function __holds_request(buf: u8[]): boolean {
 // connection `fd`, brought to where its buffered requests can be answered:
 // `(conns, at, eof)`, with `at` the connection's position, or -1 when this
 // event ends with nothing to answer (an unknown descriptor, a response still
-// draining, a connection closed once it drained), and `eof` when the peer
-// has finished sending.
+// draining, a connection closed once it drained, a readiness whose read
+// brought no bytes and no backlog to answer), and `eof` when the peer has
+// finished sending.
 function __serve_event[D: async.Driver](drv: D, c: __Conns, fd: i32, scratch: u8[], opts: Config, clk: __Clock): (__Conns, i32, boolean) {
   let at: i32 = __conns_index(c, fd);
   if (at < 0) {
@@ -1207,7 +1208,12 @@ function __serve_event[D: async.Driver](drv: D, c: __Conns, fd: i32, scratch: u8
   if (__in_flight(c, at)) {
     return __serve_drain(drv, c, at, opts, clk);
   }
+  let had: i32 = c.bufs[at].len();
+  let backlog: boolean = c.backlog[at];
   let read: (__Conns, boolean) = __serve_read(c, at, scratch, opts);
+  if (!read.1 && !backlog && read.0.bufs[at].len() == had) {
+    return (read.0, -1, false);
+  }
   return (read.0, at, read.1);
 }
 
