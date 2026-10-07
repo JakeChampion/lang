@@ -265,6 +265,15 @@ function main(): i32 {
 	{name: "rotate_lookalikes_kept", fn: "notrot", exit: 170, src: rotateShapesSrc,
 		want:   map[string][]string{"x86-64-linux": {`shlq \$24,`, `sarq \$3,`}, "arm64-linux": {`lsl x\d+, x\d+, #24`, `asr x\d+, x\d+, #3`}},
 		forbid: map[string][]string{"x86-64-linux": {`\bror`}, "arm64-linux": {`\bror\b`}}},
+	// A rotate whose operand is written out twice, as std/crypto's md5 rounds
+	// spell it: the two copies merge, so it is one sum and one rotate. Halves
+	// over different sums stay two shifts.
+	{name: "rotate_of_repeated_operand", fn: "rotdup", exit: 47, src: mergedRotateSrc,
+		want:   map[string][]string{"x86-64-linux": {`rorl \$25, %e\w+`}, "arm64-linux": {`ror w\d+, w\d+, #25\b`}},
+		forbid: map[string][]string{"x86-64-linux": {`\bsh[lr]q\b`, `(?s)\badd[lq]\b.*\badd[lq]\b`}, "arm64-linux": {`\bls[lr]\b`, `(?s)\badd\b.*\badd\b`}}},
+	{name: "rotate_of_different_operands_kept", fn: "notdup", exit: 47, src: mergedRotateSrc,
+		want:   map[string][]string{"x86-64-linux": {`shrq \$25,`, `shlq \$7,`}, "arm64-linux": {`lsr \w+, \w+, #25`, `lsl \w+, \w+, #7`}},
+		forbid: map[string][]string{"x86-64-linux": {`\bror`}, "arm64-linux": {`\bror\b`}}},
 	// Spilled values whose lifetimes do not meet share a frame slot: the
 	// second phase's spills reuse the first phase's slots.
 	{name: "spill_slots_shared", fn: "two_phase", exit: 57, src: `
@@ -504,5 +513,15 @@ function main(): i32 {
     let b: u64 = rot64(81985529216486895u64);
     let c: u32 = notrot(3000000000u32, 0 - 12345, 0i64 - 9876543210i64);
     return ((a % 97u32) as i32) + ((b % 89u64) as i32) + ((c % 83u32) as i32);
+}
+`
+
+const mergedRotateSrc = `
+@noinline function rotdup(a: u32, b: u32): u32 { return (a + b >> 25u32) | (a + b << 7u32); }
+@noinline function notdup(a: u32, b: u32, c: u32): u32 { return (a + b >> 25u32) | (a + c << 7u32); }
+function main(): i32 {
+    let r: u32 = rotdup(2147483905u32, 305419896u32);
+    let n: u32 = notdup(2147483905u32, 305419896u32, 19088743u32);
+    return ((r % 97u32) as i32) + ((n % 89u32) as i32);
 }
 `

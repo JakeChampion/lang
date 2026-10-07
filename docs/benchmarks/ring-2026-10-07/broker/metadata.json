@@ -1,0 +1,71 @@
+{
+  "host": "macOS-15.8-arm64-arm-64bit-Mach-O",
+  "compiler": "/private/tmp/fern-fip-main11a-native-compiler",
+  "compiler_sha256": "b5f886d2ee1c8e1165606426913c23648fb24b09697d62de4395cc1189ddd894",
+  "revision": "11a71739408e54e69ce5a3db5bf8e2136ad8316c",
+  "working_tree": "A  docs/contexts/runtime/specs/fip-ring.md\nA  examples/fip/bounded_ring.fern\nA  examples/fip/broker_ring.fern\nA  examples/fip/event_loop_ring.fern\nA  internal/testing/e2ecompiler/broker_representation_test.go\nA  internal/testing/e2ecompiler/self_host_bounded_ring_test.go\nM  internal/testing/e2ecompiler/self_host_broker_boundaries_test.go\nM  internal/testing/e2ecompiler/self_host_broker_driver_test.go\nM  internal/testing/e2ecompiler/self_host_fip_broker_test.go\nA  internal/testing/e2ecompiler/self_host_ring_event_loop_test.go\nA  scripts/bench-ring-broker.py\n?? AGENTS.md\n?? SPEC.md\n?? scripts/__pycache__/\n",
+  "sources": {
+    "examples/fip/broker.fern": "b15e87e357cb3eee076e6988cd8978ca6cfdbdd203b680a66942a87fd05495d8",
+    "examples/fip/broker_core.fern": "118c840073c18d8542b83651277d60313b8ff78982705e8130501471f334cd64",
+    "examples/fip/broker_ring.fern": "086a0218a4ea56a6d1135407045acdf8122563184f1e66ba73f90c9e5cfd1eeb",
+    "examples/fip/bounded_ring.fern": "27b1036fc51a94469584db42915d657259129ad41cb7d9472935df3699c498a8",
+    "scripts/bench-ring-broker.py": "45bc3dc3818c0f43ca5052c28b52b02c6e3b6cbec25d480a7e3d790e2ad3fcaf",
+    "scripts/bench-broker.py": "c955ccb1b68f09000fb22655ec94f2e47c80f1de49e5418c00bb82ee217cd41d",
+    "bootstrap/stage0.lock": "6cbf5f6d6b13a72c6f0c271655d37468021eb428b2b163364de1d2442ca4637e",
+    "internal/stdlib/std/bench.fern": "028d73d80366813b3d51676ed83cc2d0be41be8b4bf1fa0d7172fa35fe9904b5"
+  },
+  "builds": {
+    "inline": {
+      "command": [
+        "/private/tmp/fern-fip-main11a-native-compiler",
+        "-target",
+        "arm64-darwin",
+        "-o",
+        "/private/tmp/fern-ring-broker-repeated/inline",
+        "/private/tmp/fern-ring-broker-repeated/source/inline/broker.fern",
+        "/Users/jakechampion/.codex/worktrees/fip-ring-experiment/lang/internal/stdlib"
+      ],
+      "binary_sha256": "f0eeeac13b9c512525e8cce426ffa8f87662465faccc733b162ea8aa3b9225c3",
+      "generated_sources": {
+        "broker_core.fern": "118c840073c18d8542b83651277d60313b8ff78982705e8130501471f334cd64",
+        "bounded_ring.fern": "27b1036fc51a94469584db42915d657259129ad41cb7d9472935df3699c498a8",
+        "broker.fern": "b15e87e357cb3eee076e6988cd8978ca6cfdbdd203b680a66942a87fd05495d8"
+      }
+    },
+    "ring": {
+      "command": [
+        "/private/tmp/fern-fip-main11a-native-compiler",
+        "-target",
+        "arm64-darwin",
+        "-o",
+        "/private/tmp/fern-ring-broker-repeated/ring",
+        "/private/tmp/fern-ring-broker-repeated/source/ring/broker.fern",
+        "/Users/jakechampion/.codex/worktrees/fip-ring-experiment/lang/internal/stdlib"
+      ],
+      "binary_sha256": "76536802fe3ae5b0fd774284daeb7fc4f82016767e78d42a04bfc251955df927",
+      "generated_sources": {
+        "broker_core.fern": "086a0218a4ea56a6d1135407045acdf8122563184f1e66ba73f90c9e5cfd1eeb",
+        "bounded_ring.fern": "27b1036fc51a94469584db42915d657259129ad41cb7d9472935df3699c498a8",
+        "broker.fern": "348974ae8036618bfa2ce6b5896ccb9764467848c4cac6db2916e62aa7cf788d"
+      }
+    }
+  },
+  "subscribers": [
+    1,
+    4
+  ],
+  "occupancies": [
+    1,
+    8,
+    64,
+    512,
+    4095
+  ],
+  "turns": 1000,
+  "repeats": 5,
+  "modes": [
+    "flow",
+    "full"
+  ],
+  "measurement": "Only queue representation and logical access differ. Identical driver and independent broker oracle. Startup includes pool, queues, sample storage and initial payload creation; fill allocations are also separate. Shared retains an external Message, not the whole Broker. Samples time turnover or refusal; wall also includes alias checks and sample storage. Export and sorting follow marks. Process CPU/RSS/faults include startup and export. Fresh bytes are high-water growth, not requested bytes; faults are not cache misses."
+}

@@ -41,6 +41,25 @@
 // So the stride and the timestamp's offset and width come from the
 // TARGET, not from the host that compiled this.
 //
+// Darwin's database is /var/run/utmpx, and its records are Libc's
+// `struct utmpx32` whatever the process's word size: 628 bytes, with no
+// ut_exit and no ut_session.
+//
+//   ut_user     [256] @0
+//   ut_id       [4]   @256
+//   ut_line     [32]  @260
+//   ut_pid      i32   @292
+//   ut_type     i16   @296
+//   ut_tv             @300  two i32: seconds, microseconds
+//   ut_host     [256] @308
+//   (reserved)  [64]  @564          628 total
+//
+// The first record is a signature, type 10 with `utmpx-1.00` as its
+// user, and getutxent(3) reads nothing from a file without one. Nor
+// will it read a file whose name does not end in `x`: utmpxname(3)
+// refuses that name, GNU ignores the refusal, and the read goes to the
+// live database instead.
+//
 // A char array is NUL-padded but NOT necessarily NUL-terminated: a name
 // exactly 32 bytes long fills the field, so a reader that stops at the
 // NUL has to stop at the field's end as well.
@@ -83,11 +102,18 @@ pub function boot_time(): i32 {
   return 2;
 }
 
+// Darwin numbers the two halves of a clock change the other way round.
 pub function new_time(): i32 {
+  if (darwin()) {
+    return 4;
+  }
   return 3;
 }
 
 pub function old_time(): i32 {
+  if (darwin()) {
+    return 3;
+  }
   return 4;
 }
 
@@ -107,6 +133,14 @@ pub function dead_process(): i32 {
   return 8;
 }
 
+function signature_type(): i32 {
+  return 10;
+}
+
+function darwin(): boolean {
+  return target_os() == "darwin";
+}
+
 // `__WORDSIZE_TIME64_COMPAT32` is 1 only on an architecture that had a
 // 32-bit predecessor sharing this file format. Of the targets that have a
 // utmp database at all, x86-64 is that one and arm64 is not.
@@ -115,6 +149,9 @@ function time64_compat32(): boolean {
 }
 
 pub function record_bytes(): i32 {
+  if (darwin()) {
+    return 628;
+  }
   if (time64_compat32()) {
     return 384;
   }
@@ -135,9 +172,22 @@ pub struct Entry { kind: i32, pid: i32, line: string, id: string, user: string, 
 
 // The default database. GNU builds against `_PATH_UTMP`, which is
 // /var/run/utmp on Linux — a symlink into /run on any system with a
-// tmpfs /run, so opening the traditional name finds the live file.
+// tmpfs /run, so opening the traditional name finds the live file — and
+// `_PATH_UTMPX` on Darwin.
 pub function default_path(): string {
+  if (darwin()) {
+    return "/var/run/utmpx";
+  }
   return "/var/run/utmp";
+}
+
+// The file a read of `path` opens: utmpxname(3)'s rule on Darwin, which
+// takes only a name shorter than MAXPATHLEN that ends in `x`.
+function opened_path(path: string): string {
+  if (!darwin() || path.len() > 0 && path.len() < 1024 && path[path.len() - 1] as i32 == 120) {
+    return path;
+  }
+  return default_path();
 }
 
 // A little-endian unsigned 16-bit field.
@@ -193,6 +243,9 @@ function field_at(bs: u8[], off: i32, width: i32): string {
 }
 
 function entry_at(bs: u8[], off: i32): Entry {
+  if (darwin()) {
+    return Entry { kind: u16_at(bs, off + 296), pid: i32_at(bs, off + 292), line: field_at(bs, off + 260, 32), id: field_at(bs, off + 256, 4), user: field_at(bs, off + 0, 256), host: field_at(bs, off + 308, 256), sec: i32_at(bs, off + 300) as i64, term: 0, exit: 0 };
+  }
   return Entry { kind: u16_at(bs, off + 0), pid: i32_at(bs, off + 4), line: field_at(bs, off + 8, 32), id: field_at(bs, off + 40, 4), user: field_at(bs, off + 44, 32), host: field_at(bs, off + 76, 256), sec: sec_at(bs, off), term: i16_at(bs, off + 332), exit: i16_at(bs, off + 334) };
 }
 
@@ -215,9 +268,15 @@ pub function read_all(path: string): Entry[] {
 // names the errno of the failed open in that diagnostic.
 pub function read_all_result(path: string): Result[Entry[], IoError] {
   let out: Entry[] = [];
-  match (read_file_bytes(path)) {
+  match (read_file_bytes(opened_path(path))) {
     Ok(bs) => {
       let off: i32 = 0;
+      if (darwin()) {
+        if (!signed(bs)) {
+          return Ok(out);
+        }
+        off = record_bytes();
+      }
       while (off + record_bytes() <= bs.len()) {
         out = out.append(entry_at(bs, off));
         off = off + record_bytes();
@@ -228,6 +287,23 @@ pub function read_all_result(path: string): Result[Entry[], IoError] {
       return Err(e);
     }
   }
+}
+
+// Whether a Darwin database opens with the signature record getutxent(3)
+// insists on.
+function signed(bs: u8[]): boolean {
+  if (bs.len() < record_bytes() || u16_at(bs, 296) != signature_type()) {
+    return false;
+  }
+  let magic: string = "utmpx-1.00";
+  let i: i32 = 0;
+  while (i < magic.len()) {
+    if (bs[i] as i32 != magic[i] as i32) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return bs[magic.len()] as i32 == 0;
 }
 
 // Whether an entry records a user who is logged in — the rule all four

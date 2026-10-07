@@ -1,6 +1,6 @@
 # Docs site browser tests
 
-Scripted Playwright regressions for the lang docs site
+Scripted Playwright regressions for the Fern docs site
 (`site/` → Astro + Starlight). Covers what the
 `docs-build` job can't: navigation, sidebar grouping, the
 embedded playground iframe loading, stdlib pages reachable,
@@ -9,12 +9,12 @@ search trigger working.
 ## Run locally
 
 ```bash
-# Build everything the docs depend on first.
-cd ..               # back to site/
-./build-deps.sh     # or run the pages.yml steps manually:
-                    #   ../web/build.sh
-                    #   mkdir -p public/playground && cp ...
-                    #   go run ../cmd/ferndoc -out src/content/docs/stdlib/
+# Build everything the docs depend on first, as pages.yml does.
+cd ../..            # back to site/
+( cd .. && ./web/build.sh )
+mkdir -p public/playground
+cp -L ../web/*.html ../web/*.js ../web/*.wasm public/playground/
+go run ../cmd/ferndoc -out src/content/docs/stdlib/
 npm install
 npm run build       # → site/dist/
 
@@ -32,16 +32,11 @@ npm test
 
 ## What's covered
 
-[`docs.spec.ts`](docs.spec.ts):
-
-1. Home page renders the hero + the "Get started" CTA.
-2. Tutorial sidebar group lists the install + first-steps pages.
-3. Reference / tooling page describes `lang-lsp`.
-4. Stdlib index sidebar lists at least string + json modules.
-5. Stdlib string page renders the `is_empty` signature.
-6. Embedded playground iframe on the first-steps tutorial loads
-   with a `/playground/#src=…` URL.
-7. Ctrl/Cmd-K opens the Starlight search dialog.
+[`docs.spec.ts`](docs.spec.ts): the landing page and its links, the
+tutorial, reference and stdlib sidebars (including the stdlib's grouping,
+with nothing left under "Other"), a generated stdlib page, the embedded
+playground loading and running, the releases page, and the search dialog.
+Each test's name says what it checks.
 
 Add a spec by dropping another `*.spec.ts`. One test = one
 feature = one assertion; the test name should read as the bug

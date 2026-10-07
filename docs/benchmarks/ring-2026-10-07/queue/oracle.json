@@ -1,0 +1,52 @@
+{
+  "1-flow": {
+    "count": 1,
+    "checksum": 1001,
+    "checks": 1001000
+  },
+  "1-full": {
+    "count": 1,
+    "checksum": 1,
+    "checks": 2000
+  },
+  "8-flow": {
+    "count": 8,
+    "checksum": 8036,
+    "checks": 1008000
+  },
+  "8-full": {
+    "count": 8,
+    "checksum": 36,
+    "checks": 9000
+  },
+  "64-flow": {
+    "count": 64,
+    "checksum": 66080,
+    "checks": 1064000
+  },
+  "64-full": {
+    "count": 64,
+    "checksum": 2080,
+    "checks": 65000
+  },
+  "512-flow": {
+    "count": 512,
+    "checksum": 643328,
+    "checks": 1512000
+  },
+  "512-full": {
+    "count": 512,
+    "checksum": 131328,
+    "checks": 513000
+  },
+  "4096-flow": {
+    "count": 4096,
+    "checksum": 12486656,
+    "checks": 5096000
+  },
+  "4096-full": {
+    "count": 4096,
+    "checksum": 8390656,
+    "checks": 4097000
+  }
+}
