@@ -159,6 +159,72 @@ function main(): i32 {
     let a: i32[] = cubes(5);
     return a[4] % 101;
 }`},
+	// A helper that takes the array owned and hands it back, written or
+	// grown, passes a sole box through: the caller's later writes ask nothing.
+	{"passed-through", "fill_put", true, `@noinline
+function put(own xs: i32[], i: i32, v: i32): i32[] {
+    if (i < xs.len()) {
+        return xs.with(i, v);
+    }
+    return xs.append(v);
+}
+@noinline
+function fill_put(n: i32): i32[] {
+    let m: i32[] = [];
+    let i: i32 = 0;
+    while (i < n) {
+        m = put(m, i, i * 2);
+        i = i + 1;
+    }
+    i = 0;
+    while (i < n) {
+        m = m.with(i, m[i] + 1);
+        i = i + 1;
+    }
+    return m;
+}
+function main(): i32 {
+    let a: i32[] = fill_put(8);
+    return a[7];
+}`},
+	// A helper whose result is always a fresh copy or a sole write, given the
+	// caller's array owned: the caller's own writes between calls ask nothing.
+	{"through-helper-with", "marks", true, `@noinline
+function set(own bits: i32[], i: i32): i32[] {
+    return bits.with(i, 1);
+}
+@noinline
+function marks(n: i32): i32[] {
+    let row: i32[] = __alloc_i32(n * 2);
+    let i: i32 = 0;
+    while (i < n) {
+        row = set(row, i);
+        row = row.with(n + i, 2);
+        i = i + 1;
+    }
+    return row;
+}
+function main(): i32 {
+    let r: i32[] = marks(4);
+    return r[3] * 10 + r[7];
+}`},
+	// The loop's array is stored into a record only by its last use, which
+	// moves it: the writes before still ask nothing.
+	{"moved-into-record", "snap_last", true, `struct Held { xs: i32[] }
+@noinline
+function snap_last(n: i32): Held {
+    let out: i32[] = __alloc_i32(n);
+    let i: i32 = 0;
+    while (i < n) {
+        out = out.with(i, i + 3);
+        i = i + 1;
+    }
+    return Held { xs: out };
+}
+function main(): i32 {
+    let h: Held = snap_last(6);
+    return h.xs[5];
+}`},
 	// A second name held across the write: the write must copy, and the kept
 	// name still reads the value before it.
 	{"aliased-in-loop", "alias", false, `@noinline
@@ -319,10 +385,11 @@ function main(): i32 {
 //
 // TestSelfHostSoleLoopWithX86_64 pins the uniqueness proof behind a `with`
 // or an `append` in a loop (ssaunits.sole_boxes): an array a fresh or empty
-// allocation, a `with`, an `append` or a call to a row that always returns
-// such an array (ssaunits.fresh_rows) makes, carried around a loop, read,
-// written and returned but never lent, stored or retained, is written in
-// place with no test, and every other shape keeps the test. Each program's exit
+// allocation, a `with`, an `append` or a call to a row whose result is sole
+// (ssaunits.fresh_rows) makes, carried around a loop, read, written and
+// handed on only by its last use, never lent, stored or retained while it is
+// still read, is written in place with no test, and every other shape keeps
+// the test. Each program's exit
 // is the interpreter's, run under
 // the sanitizer, so a proof that let a shared box be written in place shows
 // up as the wrong answer as well as in the count.
