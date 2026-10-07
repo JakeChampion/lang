@@ -7,17 +7,17 @@ import (
 )
 
 // A local bound from an enum struct field (`let g = h.e`) shares the struct's
-// enum box. The AST lowering bound it uncounted, so rebinding the struct freed
-// the box under the local and the next same-size allocation read back through
-// it (#10310): the census balanced and the answer was wrong. The bind now dups
-// the box and the local takes the release the struct gives the same field,
-// rc-gated because it is never the sole owner.
+// enum box, so the bind dups the box and the local takes the release the
+// struct gives the same field, rc-gated because it is never the sole owner. An
+// uncounted bind lets rebinding the struct free the box under the local, and
+// the next same-size allocation reads back through it (#10310): the census
+// balances and the answer is wrong.
 //
 // Every shape churns a same-size box after the struct lets go, so a stale read
-// returns the churned value. fresh_moved_into_struct and rc_shared cover the two
-// releases the counted alias exposed: the scalar-enum sweep ignored a slot a
-// construction had moved, and the struct re-declaration deep-dropped its enum
-// field without asking whether the box was shared. peek_first reads through a
+// returns the churned value. fresh_moved_into_struct and rc_shared cover the
+// two releases a counted alias has to get right: a slot a construction moved
+// must not be released again, and the struct's re-declaration must not
+// deep-drop an enum field whose box is shared. peek_first reads through a
 // method receiver, a source the plan cannot type.
 const enumFieldAliasCountSrc = `enum Sc { SA(i32), SB }
 enum Rc { RA(i32[]), RB }

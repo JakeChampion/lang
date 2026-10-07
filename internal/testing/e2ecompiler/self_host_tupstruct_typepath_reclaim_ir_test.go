@@ -7,25 +7,15 @@ import (
 	"testing"
 )
 
-// tupStructTypePathCases pin the #4365 TYPE-driven struct-element reclaim: the
-// OPTTUP / ARRTUP classes reclaim an Option[<tuple-with-array>] / (<tuple-with-array>)[]
-// whose element tuple carries a fresh scalar ARRAY, driven off the TYPE annotation
-// (emit_tuple_type_child_drops). This slice extends that type-driven drop to a
-// reclaim-STRUCT element position: `Option[(i32, P)]` / `(i32, P)[]` (P sole-owns an
-// rc-array field) now deep-drops the struct per iteration — emit_tuple_type_child_drops
-// gains a struct arm (__struct_drop_<P> — decs the struct's rc-array fields, balanced by
-// the construction alias-inc — then the struct box dec), and admission
-// (tuple_field_deep_droppable / tuple_arg_payload_fresh) admits a fresh struct-literal
-// position. Both leaked the struct's field buffers + struct box every iteration before
-// (native bounds it); the register/wasm backends share the drop via op_tuple_get /
-// __struct_drop_<P> / __fern_rc_dec.
+// tupStructTypePathCases pin the #4365 reclaim of a struct inside a tuple
+// element: `Option[(i32, P)]` / `(i32, P)[]`, where P sole-owns an rc-array
+// field, must deep-drop the struct every iteration — its rc-array fields, then
+// the struct box — along with the option box or the array buffer, on the
+// register and wasm backends alike.
 //
-// SCOPE: this is the reclaim MECHANISM. The element must be consumed SCALAR-only (the
-// consuming match reads `g.0` / `xs[i].0`, never the struct): the existing OPTTUP /
-// ARRTUP escape checkers (opttup_arm_expr_escapes / arrtup_elem_esc_expr) reject any
-// struct-field borrow (`g.1.y`) as an escape, so such a consumer is left leak-safe (not
-// credited) — widening those checkers to admit struct-field borrows is a follow-up.
-// A WHOLE struct extraction (`keep = g.1`) is likewise leak-safe (never over-released).
+// SCOPE: the element is consumed SCALAR-only (the consuming match reads `g.0` /
+// `xs[i].0`, never the struct). A WHOLE struct extraction (`keep = g.1`) must
+// never be over-released.
 var tupStructTypePathCases = []struct {
 	name string
 	src  string

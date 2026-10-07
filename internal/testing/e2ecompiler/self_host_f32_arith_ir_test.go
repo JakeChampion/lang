@@ -9,18 +9,17 @@ import (
 )
 
 // f32 shares the 8-byte f64 slot on the self-host IR path (#4366), so f32
-// arithmetic (fadd/fsub/fmul/fdiv) computes at DOUBLE precision. Native gives
-// f32 a true 4-byte slot and rounds the result after every op, so a value that
-// is not f32-representable diverged. The lowering now rounds the result of an f32
-// arithmetic op via the f32_bits/f32_from_bits round-trip (the arithmetic
-// sibling of the `as f32` cast rounding); a float COMPARISON (is_fcmp_kind)
-// yields an i32 bool and is left untouched, and f64 arithmetic keeps full
-// precision.
+// arithmetic (fadd/fsub/fmul/fdiv) would compute at DOUBLE precision, and a
+// value that is not f32-representable would diverge from true f32. The lowering
+// rounds the result of an f32 arithmetic op via the f32_bits/f32_from_bits
+// round-trip (the arithmetic sibling of the `as f32` cast rounding); a float
+// COMPARISON yields an i32 bool and is left untouched, and f64 arithmetic keeps
+// full precision.
 //
-// Pinned to the native oracle (verified separately, interp + compiled). The
-// canonical case: 16777216.0f + 1.0f = 2^24 + 1, which is not representable in
-// f32 and rounds back to 2^24 — so `(a + one) as f64 == 16777216.0` holds under
-// true f32 (returns 1) but not under f64 (which keeps 16777217.0, returns 0).
+// Expected values are the true-f32 answers. The canonical case:
+// 16777216.0f + 1.0f = 2^24 + 1, which is not representable in f32 and rounds
+// back to 2^24 — so `(a + one) as f64 == 16777216.0` holds under true f32
+// (returns 1) but not under f64 (which keeps 16777217.0, returns 0).
 var f32ArithCases = []struct {
 	name     string
 	src      string

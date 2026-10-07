@@ -6,12 +6,11 @@ import "testing"
 // recursive functions that build and return a struct (`PS`) whose field is an
 // enum (`Tok`) with an array payload (`Many(Tok[])`). Returning the nested
 // array-payload enum through the struct from the re-entrant recursive call
-// segfaulted on the self-host x86-64 / wasm IR path — the enum constructor
-// stored the `items` array buffer into the box without a Perceus retain, so the
-// exit dec-sweep freed it out from under the returned box (a UAF that `count`
-// then walked into unbounded recursion). `fern -interp` and the native compiler
-// were correct. Each case below varies only main()'s input; `count` returns the
-// number of leaf `One` tokens, oracle-checked against the interpreter.
+// needs the enum constructor to retain the `items` array buffer it stores;
+// without that retain the exit dec-sweep frees it out from under the returned
+// box (a UAF that `count` then walks into unbounded recursion). Each case below
+// varies only main()'s input; `count` returns the number of leaf `One` tokens,
+// oracle-checked against the interpreter.
 const recStructArrayEnumPrelude = `enum Tok { One(i32), Many(Tok[]) }
 struct PS { node: Tok, pos: i32 }
 

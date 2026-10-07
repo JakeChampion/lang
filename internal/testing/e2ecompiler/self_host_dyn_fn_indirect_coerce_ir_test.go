@@ -4,14 +4,13 @@ import (
 	"testing"
 )
 
-// dynFnIndirectCoerceCases exercise the shape #5276's follow-up left open (and
-// which self_host_dyn_fn_param_ir_test.go documents as the remaining gap): a
-// PRIMITIVE value coerced to `dyn Trait` AT an indirect fn-value call —
-// `f(7)` where `f: (dyn Speak) => i32`. The `(dyn Speak) => i32` fn-type spelling
-// coarsens to the flat "fn" tag, discarding the per-parameter dyn-ness, so the
-// indirect call lowered the raw i32 arg with plain lower_expr — not lower_dyn_arg
-// — and op_dyn_dispatch inside the callee read the unboxed primitive as a shape
-// pointer (SIGSEGV). The interpreter / native x86-64 are correct (107).
+// dynFnIndirectCoerceCases exercise the shape self_host_dyn_fn_param_ir_test.go
+// leaves out: a PRIMITIVE value coerced to `dyn Trait` AT an indirect fn-value
+// call — `f(7)` where `f: (dyn Speak) => i32`. The `(dyn Speak) => i32` fn-type
+// spelling coarsens to the flat "fn" tag, discarding the per-parameter
+// dyn-ness, so the call has to box the i32 argument from the callee's
+// parameter types; passed raw, op_dyn_dispatch inside the callee reads the
+// unboxed primitive as a shape pointer (SIGSEGV). The interpreter answers 107.
 //
 // Each case is oracle-checked against the interpreter, returning a
 // non-negative value <= 126.

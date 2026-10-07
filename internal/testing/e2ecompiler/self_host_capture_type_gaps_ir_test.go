@@ -8,28 +8,20 @@ import (
 	"testing"
 )
 
-// Two constructs of the enumerated mode-0 decline set (#3457), each of which
-// sent its whole module to the legacy AST emitter.
+// Two closure-lift shapes from the mode-0 decline set (#3457). Like the group in
+// self_host_mode0_gaps_ir_test.go, neither is a missing FEATURE — each is a piece
+// of type information the closure-lift has to carry one step further:
 //
-// Like the group in self_host_mode0_gaps_ir_test.go, none is a missing FEATURE —
-// each is a piece of type information the closure-lift fails to carry one step
-// further than it already does:
+//   - a method's escaping lambda capturing the RECEIVER. The receiver is an
+//     enclosing local like the params, so `a` in the lambda is a capture; lifted
+//     as capture-free, the body would land in a `<fd>$wrapN` trampoline in which
+//     the receiver name is unbound.
+//   - a capture whose UNANNOTATED local is initialised from a field access /
+//     call / index (`let b = a.base`). The lift has to type the capture from the
+//     initialiser, as it does for a for-in iter and a match scrutinee.
 //
-//   - a method's escaping lambda capturing the RECEIVER. lambda_captures built its
-//     "enclosing local" set from fd's params and body bindings and omitted the
-//     receiver, so `a` in the lambda was not a capture at all. `caps` came back
-//     EMPTY, so the NO-capture lift hoisted the body to a `<fd>$wrapN` trampoline
-//     in which the receiver name is unbound, and the module bailed on the wrapper.
-//   - a capture whose local is initialised from a field access / call / index.
-//     cap_type_expr knew literals, idents and arithmetic only, so `let b = a.base`
-//     resolved "" and cap_slot_ok declined the lift. cap_type_in_stmts already did
-//     exactly these resolutions for a for-in iter and a match scrutinee; the plain
-//     `let` init arm simply never did, which is why ANNOTATING the local was the
-//     only way through.
-//
-// Every case asserts the `-decide` route AND the answer, because a regression here
-// is silent: the AST emitter computes all of these correctly, so only the route
-// shows it.
+// Every case asserts the `-decide` route AND the answer: a regression is a
+// refused module, and the route names it.
 func TestSelfHostCaptureTypeGapsIR(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -51,9 +43,9 @@ func TestSelfHostCaptureTypeGapsIR(t *testing.T) {
 		{"escaping-captures-method-param-control", "struct A { base: i32 }\nfunction (a: A) make(n: i32): (i32) => i32 { return (x: i32): i32 => { return x + n; }; }\nfunction main(): i32 { let a = A { base: 1 }; let f = a.make(100); return f(5); }", 105},
 		{"escaping-captures-free-param-control", "function make(n: i32): (i32) => i32 { return (x: i32): i32 => { return x + n; }; }\nfunction main(): i32 { let f = make(100); return f(5); }", 105},
 
-		// A capture local the lift could not type. The annotated form is the
-		// control that always worked; the arithmetic-over-i32 form is the one
-		// cap_type_expr already covered.
+		// A capture local typed from its unannotated initialiser. The annotated
+		// form and the arithmetic-over-i32 form are the controls that always
+		// lowered.
 		{"capture-local-from-field", "struct A { base: i32 }\nfunction make(a: A): (i32) => i32 { let b = a.base; return (x: i32): i32 => { return x + b; }; }\nfunction main(): i32 { let a = A { base: 100 }; let f = make(a); return f(5); }", 105},
 		{"capture-local-from-field-annotated-control", "struct A { base: i32 }\nfunction make(a: A): (i32) => i32 { let b: i32 = a.base; return (x: i32): i32 => { return x + b; }; }\nfunction main(): i32 { let a = A { base: 100 }; let f = make(a); return f(5); }", 105},
 		{"capture-local-from-field-arith", "struct A { base: i32 }\nfunction make(a: A): (i32) => i32 { let b = a.base + 0; return (x: i32): i32 => { return x + b; }; }\nfunction main(): i32 { let a = A { base: 100 }; let f = make(a); return f(5); }", 105},

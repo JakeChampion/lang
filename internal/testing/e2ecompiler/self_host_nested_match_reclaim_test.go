@@ -7,29 +7,15 @@ import (
 
 // A consuming `match` one block deeper than the local's own statement list —
 // inside an `if` branch or a `while` body — reclaims the same as the flat
-// spelling (#6319's class).
+// spelling (#6319's class): the box and payload are freed after the ENCLOSING
+// top-level statement rather than leaked every iteration.
 //
-// `sole_top_level_match_idx` scanned only the flat statement list, so every
-// analysis built on it saw no consuming match at all and issued no credit. The
-// flat spelling was flat at 0 while the indented one leaked the whole box and
-// payload every iteration, doubling with the loop count.
-//
-// The widened lookup returns the ENCLOSING top-level statement — where the free
-// lands and what the liveness and escape checks skip — and the match itself is
-// re-derived for the arm analyses. Feeding the enclosing `if` to those instead is
-// a use-after-free rather than a missed reclaim: `match_arms_use_name` and
-// `opt_arm_binding_escapes` both answer "nothing escapes" for a statement they
-// cannot parse, which reads as a proof when it is a blind spot. That is what
-// `nested_escape_churn` below pins.
-//
-// The widening is CALL-INIT ONLY, and that boundary is what keeps two analyses
-// from freeing one box. A direct ctor consumed by a nested match is already
-// reclaimed by `precise_drop_names`, whose `is_rcopt` kind admits exactly
-// `rcpayload_option_cand != ""` and yields to this analysis only on a FLAT match.
-// Widening the lookup for the direct ctor as well issues a second credit on the
-// same box — a segfault here, and `__rc_underflow_count() == -1` in
-// TestSelfHostNestedMatchBorrowNoUnderflowX86_64, which is the gate that catches
-// it. Every source below is therefore a producer call.
+// The arm analyses must look at the match itself, not at the enclosing `if`.
+// An analysis that answers "nothing escapes" for a statement it cannot see
+// into turns a blind spot into a use-after-free; `nested_escape_churn` pins
+// that. Every source below is a producer call; a second release of one box is
+// what TestSelfHostNestedMatchBorrowNoUnderflowX86_64 catches as
+// `__rc_underflow_count() == -1`.
 
 const nmFlatArrSrc = `import "core/int";
 function make(i: i32): Result[i32[], string] {

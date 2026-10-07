@@ -13,18 +13,13 @@ import (
 // receiver position at a source-declared string method — `base.tail(4).to_owned()`,
 // where the intermediate is a view box over `base`'s bytes that nobody names.
 //
-// #7160 released a receiver is_fresh_str_temp could prove fresh. This chain is the
-// shape it must REFUSE and must keep refusing: `tail` has an identity path
-// (`if (n <= 0) { return s; }`), so on that path the "intermediate" IS the root's
-// own box and freeing it is a double free. A static predicate cannot tell the two
-// paths apart, because which one ran is a runtime fact.
-//
-// What settles it is the runtime discriminator the `.len()` site already uses: a
-// box the chain freshly allocated is never the root's pointer. So the release is
-// emitted under a pointer compare against sfrrecv_chain_root_slot's root, and the
-// identity path simply does not take it. The outer callee still has to be
-// recv_borrow proven — that is what says the CALL did not carry the receiver into
-// its own result — which is why the `.ident()` case below is refused outright.
+// `tail` has an identity path (`if (n <= 0) { return s; }`), so on that path the
+// "intermediate" IS the root's own box and freeing it is a double free. Which
+// path ran is a runtime fact, so the release must be skipped whenever the
+// intermediate is the root's box; the identity-path witness below exits 97 if
+// it is not. The outer callee must also borrow its receiver rather than carry it
+// into its own result, which is why the `.ident2()` case below is refused
+// outright.
 //
 // Thresholds are calibrated, not inherited: the leak here is 24 B/round, so the
 // 32768 the sibling suites use over 400 rounds would not catch it. Measured
@@ -69,12 +64,12 @@ var strChainReceiverCases = []struct {
 	want int
 }{
 	// The shape the divergence fixture is built on. `base.tail(4)` is a view box
-	// over base's bytes; `.to_owned2()` is recv_borrow proven, so once the call
+	// over base's bytes; `.to_owned2()` borrows its receiver, so once the call
 	// returns nothing names the view. 24 B/round before, flat after.
 	{"str-chain-receiver-view-flat", chainRecvHeap(`return base.tail(4).to_owned2().len();`), 0},
 	// The outer callee's RESULT is irrelevant to the site: `unrel2` never mentions
-	// its receiver and the intermediate leaked exactly the same. recv_borrow is what
-	// decides, not what comes back.
+	// its receiver and the intermediate leaked exactly the same. Whether the callee
+	// borrows its receiver is what decides, not what comes back.
 	{"str-chain-receiver-unrelated-result-flat", chainRecvHeap(`return base.tail(4).unrel2().len();`), 0},
 	// Two proven links past the view root; the chain-root walk has to see through
 	// both to reach `base`.
@@ -116,9 +111,9 @@ function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 
     return base.len();
 }
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 4000) { let r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
-	// REFUSED: the outer callee hands its receiver straight back, so it is not
-	// recv_borrow proven and the chain release is never emitted. The result aliases
-	// the view over base, which must survive being read after the call.
+	// REFUSED: the outer callee hands its receiver straight back, so the chain is
+	// not released. The result aliases the view over base, which must survive
+	// being read after the call.
 	{"str-chain-receiver-unproven-callee-refused", chainRecvPrelude + `function round(pre: string): i32 {
     let base: string = w(pre);
     let c: string = base.tail(4).ident2();

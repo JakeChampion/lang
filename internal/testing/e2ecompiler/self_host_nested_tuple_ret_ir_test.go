@@ -2,12 +2,10 @@ package e2ecompiler
 
 import "testing"
 
-// nestedTupleRetIRCases extend nested-tuple support to the RETURN/PARAM positions:
-// a function whose return type or a parameter type is a nested tuple
-// (`(i32, (i32, i32))`) now lowers on the IR path. Construction/access landed in
-// the prior nested-tuple change; this widens the gate `tuple_elems_lowerable` to
-// (a) split element tags depth-aware and (b) admit a nested-tuple element by
-// recursing — the same leak-only-pointer treatment a struct/Option element gets.
+// nestedTupleRetIRCases pin nested tuples in the RETURN/PARAM positions: a
+// function whose return type or a parameter type is a nested tuple
+// (`(i32, (i32, i32))`) lowers on the IR path, with the element tags split
+// depth-aware.
 //
 // Each case is oracle-checked against the interpreter and returns a value
 // <= 126 (cf. the wasmtime exit-code gap #2908).

@@ -10,36 +10,19 @@ import (
 
 // --- A CALL-bound rc-enum earns the consuming-match free too ------------------
 //
-// `let v: E = mkv(i)` followed by a sole top-level consuming match reclaimed
-// NOTHING — 200 allocs / 0 frees over 100 rounds against native's 200/200 —
-// while the byte-identical shape with the constructor written INLINE was flat.
-//
-// Two passes decide this shape and they disagreed. collect_fresh_rcenum_names
-// resolves the init with fresh_rcpayload_enum_init OR rcenum_call_init_owner (the
-// "RCE:" registry of whole-program-proven fresh rc-enum ctor fns), and grants the
-// "RCENUM:" credit — the one that SUPPRESSES the exit sweep. Its emission-side
-// twin consumed_rcpayload_enum_frees, which places the free the credit assumes,
-// resolved with fresh_rcpayload_enum_init alone. So the call bind lost its sweep
-// and never got the free that was supposed to replace it.
-//
-// The registry proof is strictly stronger than the inline test it now joins:
-// body_has_nonqualifying_rcenum_return requires EVERY return to satisfy
-// fresh_rcpayload_enum_init against the strict (empty) fresh-string set, plus
-// rcenum_ctor_payload_strings_fresh on top. A registered call therefore hands
-// over exactly the sole-owned chain an inline ctor does.
+// `let v: E = mkv(i)` followed by a sole top-level consuming match must free
+// the box and its payload every round, exactly as the byte-identical shape with
+// the constructor written INLINE does (it reclaimed nothing: 200 allocs / 0
+// frees over 100 rounds).
 //
 // This is the rc-payload user-enum analogue of #6360, which made the same
 // admission for scalar Option/Result (self_host_call_bound_enum_reclaim_test.go).
 //
-// Every want was confirmed against the native x86-64 backend. Exit 99 is
-// reserved for __rc_underflow_count().
+// Exit 99 is reserved for __rc_underflow_count().
 //
 // Counts here are ONE block per heap string: #7351 fused the box into the
-// buffer's reserved header. Every row was re-measured against the commit
-// before it, and every live_bytes is unchanged — the clean rows stayed clean
-// and each refusal-leak row leaks the same bytes — so what moved is block
-// volume, not behaviour. A pre-fusion number in a row note below is the older
-// one.
+// buffer's reserved header. A pre-fusion number in a row note below is the
+// older one.
 
 type rcenumCallFreeCase struct {
 	name   string
@@ -88,11 +71,9 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			want: 6, allocs: 200, frees: 200,
 		},
 		{
-			// A REBOUND call-bound name. consumed_rcpayload_enum_frees checked its
-			// rebind gate (all_assigns_fresh_rcenum) against an EMPTY registry while
-			// the credit side passed the real one, so every assignment from a call
-			// failed the same way the init did. Base: 400 / 200 — the rebind release
-			// fired via the credit, the final value's free did not.
+			// A REBOUND call-bound name: the rebind's release and the final
+			// value's free must both fire. Base: 400 / 200, when only the rebind
+			// released.
 			name: "call_bound_rebound",
 			src: decls + `function round(i: i32): i32 {
     let v: E = mkv(i);
@@ -122,10 +103,8 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			want: 12, allocs: 400, frees: 400,
 		},
 		{
-			// A STRING payload through a registered producer. The deep drop reaches
-			// __fern_str_free here, so this is the row that proves the registry's
-			// extra string gate (rcenum_ctor_payload_strings_fresh) is carrying the
-			// freshness the free needs. Base: 300 / 0.
+			// A STRING payload through a producer call: the deep drop must free
+			// the string payload too. Base: 300 / 0.
 			name: "call_bound_string_payload",
 			src: `enum T { W(string), N }
 function mkt(i: i32): T { return T.W("ab" + "cd"); }
@@ -139,8 +118,8 @@ function round(i: i32): i32 {
 			want: 12, allocs: 200, frees: 200,
 		},
 		{
-			// A STRUCT payload through a registered producer — the deep drop runs
-			// __struct_drop_<P> on the payload. Base: 300 / 0.
+			// A STRUCT payload through a producer call: the deep drop must free
+			// the payload struct and its array field too.
 			name: "call_bound_struct_payload",
 			src: `struct P { xs: i32[] }
 enum S { V(P), N }

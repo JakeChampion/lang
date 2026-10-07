@@ -7,27 +7,15 @@ import (
 	"testing"
 )
 
-// TestSelfHostStructFreshRetFieldIRX86_64 covers the Perceus slice-3 deep-drop
-// FOLLOW-UP: tightening the struct-construction no-inc set to fresh-RETURNING
-// calls. A nested-struct field whose value is a CALL to a strict-fresh-struct-
-// returning function (`Outer { inner: mk_inner() }`) is no longer alias-inc'd —
-// the callee handed back a fresh sole-owned box (return_fresh_struct_ret_fns), so
-// the new struct owns it outright and the field-drop reclaims the inner box,
-// instead of leaking the rc-2 alias-inc'd box that the conservative retain left.
+// TestSelfHostStructFreshRetFieldIRX86_64 covers a nested-struct field whose
+// value is a CALL returning a fresh struct (`Outer { inner: mk_inner() }`). The
+// callee hands back a sole-owned box, so the construction takes no extra count
+// and the outer struct's field drop frees the inner box. The inner struct holds
+// only scalars, so the box is all there is to free.
 //
-// SCOPE: this case's inner struct is leaf-safe (scalar fields only), so the
-// reclaim win is the inner BOX itself and soundness is trivial — a leaf-safe
-// inner owns no buffers, so the box free can never double-free a field, and the
-// only requirement, that the box is the sole owner, is exactly what the
-// strict-fresh classifier guarantees. The registry itself is not limited to that
-// shape: it also admits a scalar-array field whose value is a direct literal, or
-// (#6758) a local this frame built and never escaped elsewhere.
-//
-// The leak/reclaim signal is heap exhaustion: a long churn allocating Outer+Inner
-// each iteration leaks the Inner box per iteration under the old alias-inc (rc 2,
-// the shallow field-drop only decs to 1) → exhausts the bump heap → SIGKILL (137);
-// with the inc skipped the Inner box is freed (rc 1 → 0) so the churn stays
-// bounded (exit 0). Same differential the field-reclaim IR tests use.
+// The leak signal is heap exhaustion: a long churn allocating Outer+Inner each
+// iteration, with the Inner box retained once too often, exhausts the bump heap
+// → SIGKILL (137); released, the churn stays bounded (exit 0).
 func TestSelfHostStructFreshRetFieldIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

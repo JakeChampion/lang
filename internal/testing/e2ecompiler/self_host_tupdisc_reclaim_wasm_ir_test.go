@@ -4,12 +4,10 @@ import (
 	"testing"
 )
 
-// TestSelfHostTupDiscReclaimWasmIR is the wasm port of
-// TestSelfHostTupDiscReclaimIRX86_64: the discarded-tuple deep-drop lives in
-// shared lowering; on wasm __fern_rc_dec maps to $__fern_arr_dec
-// (wasm_helper_symbol) and op_tuple_get reads the 4-byte element slots. The
-// i64-element decline in tuple_ret_arrfree_flags exists exactly for this
-// backend's slot width. Case table shared with the x86-64 leg.
+// TestSelfHostTupDiscReclaimWasmIR is the wasm leg of
+// TestSelfHostTupDiscReclaimIRX86_64: the discarded-tuple deep-drop is decided
+// in the target-independent lowering, so wasm must give the same answers. Case
+// table shared with the x86-64 leg.
 func TestSelfHostTupDiscReclaimWasmIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range tupDiscReclaimCases {

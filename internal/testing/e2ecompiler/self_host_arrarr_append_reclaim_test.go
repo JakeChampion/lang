@@ -7,21 +7,13 @@ import (
 
 // --- Append-built arr-of-arr row reclaim (#6092) -------------------
 //
-// The lowering's "ARRARR:" credit routes a fresh, non-escaping arr-of-arr local to
-// the deep release (__fern_arrarr_free / __fern_strarrarr_free), which frees
-// the inner row buffers and then the outer one. Refusing that credit for any
-// REASSIGNED name — and `g = g.append(row)` is a reassignment — drops an
-// append-BUILT `T[][]` out of the credit entirely, so it
-// leaked one row buffer per append. Sound, but unbounded in a loop.
-//
-// The string[] class (SARR:) has validated the self-append rebind individually
-// since #4355 rather than excluding it wholesale; arrarr_unsafe_for is that
-// same treatment for the two-level class.
-//
-// Found by the self-host FERN_LEAKCHECK port (#6091) as a differential against
-// the native compiler, which frees everything on the same program. That is what
-// these tests assert: not an absolute byte count, but AGREEMENT with native,
-// which is the only reading that stays meaningful as allocation shapes change.
+// A fresh, non-escaping arr-of-arr local is deep-released
+// (__fern_arrarr_free / __fern_strarrarr_free): the inner row buffers, then the
+// outer one. `g = g.append(row)` is a reassignment, and an append-BUILT `T[][]`
+// must still get that release; without it the program leaks one row buffer per
+// append, unbounded in a loop. The churn tests assert live_bytes 0 under
+// FERN_LEAKCHECK; the hazard rows pin that the release is still refused where
+// a live reference would dangle.
 
 // arrarrAppendChurnSrc builds and drops an arr-of-arr by append, 200 times. If
 // the rows are not reclaimed the leak scales with the iteration count, so a
@@ -84,7 +76,7 @@ function main(): i32 {
 }`
 
 // TestSelfHostArrArrAppendReclaimX86_64 — an append-built arr-of-arr reclaims
-// its rows, and leaves live_bytes where native leaves it.
+// its rows, leaving live_bytes at 0.
 func TestSelfHostArrArrAppendReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

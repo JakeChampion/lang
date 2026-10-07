@@ -7,19 +7,9 @@ import (
 
 // --- Block-local scalar-payload enum reclaim (#6127) ------------------------
 //
-// consumed_scalar_enum_frees was run by lower_func over the fn's TOP-LEVEL
-// statements only, so a scalar-payload enum declared inside a loop or an if was
-// reclaimed nowhere and leaked its box per iteration — the same top-level-only
-// gap #4357 closed for rc-payload options and rc-payload enums, never mirrored
-// for the scalar half. The fix had lower_block run the same classifier over its
-// own statement list and free at the consuming match.
-//
-// Releasing at the match rather than at a scope exit is not a preference: a
-// nested block retires its names to "!retired!" before the function-exit sweep
-// runs, so a by-name lookup there can never resolve the local. A first attempt
-// that swept at function exit reclaimed nothing for the if-block shape and only
-// 3 of every 4 boxes for the loop shape, because only the re-declaration path
-// was firing.
+// A scalar-payload enum declared inside a loop or an if is released in its own
+// block rather than leaking its box per iteration — the block-level reclaim
+// #4357 gave rc-payload options and rc-payload enums, for the scalar half.
 //
 // The leak figures are asserted as live_bytes == 0 against a balanced churn, and
 // the double-free shapes are asserted through allocs == frees plus behaviour.
@@ -218,17 +208,11 @@ function main(): i32 {
 
 	// --- NO-consuming-match half (#6758 follow-up) --------------------------
 	//
-	// Every case above matches its candidate, and that is what freed it:
-	// consumed_scalar_enum_frees only ever claims a name whose own statement
-	// list also MATCHES it. A scalar-enum local that is never matched — read
-	// through a field, passed to a borrowing helper, or simply built and
-	// dropped — was therefore reclaimed NOWHERE and leaked its 40-byte box per
-	// iteration, unbounded, where native is flat at 0.
-	//
-	// This is the scalar sibling of the gap #6606 closed for the rc-payload
-	// half, and the easier one: with no rc payload there is nothing under the
-	// box to walk, so both the rebind and the scope-exit sweep release it with
-	// a plain shallow dec. It is credited "SCENUMS:".
+	// A scalar-enum local that is never matched — read through a field, passed
+	// to a borrowing helper, or simply built and dropped — is released too, at
+	// its rebind and at scope exit, with a plain shallow dec: with no rc payload
+	// there is nothing under the box to walk. This is the scalar sibling of
+	// #6606's rc-payload fix.
 
 	t.Run("no_match_loop_local", func(t *testing.T) {
 		// Built and never matched. Before the credit this leaked one box per
@@ -357,13 +341,9 @@ function main(): i32 {
 
 	// --- rc-PAYLOAD half (#6127) --------------------------------------------
 	//
-	// consumed_rcpayload_enum_frees was the last member of this family without a
-	// block-level sibling (rc-payload options got one in #4357, scalar enums in
-	// the commit above). Its failure mode differed from the scalar one and is
-	// worth keeping distinct in the tests: the RCENUM loop-rebind credit was
-	// already firing, so the nested shape freed its box on every iteration EXCEPT
-	// the last and leaked partially — 7200 bytes over 100 rounds, one arr_dec and
-	// one str_free short of the byte-identical top-level shape.
+	// A block-local rc-payload enum must be released on EVERY iteration,
+	// including the last: a partial leak that frees every box but the final
+	// one reads 7200 bytes over 100 rounds.
 
 	t.Run("rc_payload_loop_local", func(t *testing.T) {
 		src := `enum T { Text(string), Nil }

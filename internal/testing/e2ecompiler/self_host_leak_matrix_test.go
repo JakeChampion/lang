@@ -483,17 +483,14 @@ function main(): i32 {
 		// The CALLER-LOCAL half of the same question, and the instrument for
 		// the counted store itself: the struct literal storing a tuple field
 		// is in the SAME body as the tuple local, so no interprocedural
-		// verdict is involved. Both sides now count it — the self-host
-		// retains in lower_expr_struct_lit's tuple arm, releases in
-		// emit_struct_tuple_field_drops, and forgives the store in the TUPRC
-		// credit gate (rctuple_counted_field_share), all three gated on
-		// struct_has_deep_tuple_field so none can widen alone.
+		// verdict is involved. The store is counted: retained at
+		// construction and given back by the holder's field drop.
 		//
-		// Keep the two_holders shape in mind when touching any of them: with
-		// the drop alone this row still reads clean, because the second
-		// holder's __fern_rc_is_unique reads a header the first holder
-		// already freed. The row is only meaningful alongside the counted
-		// pair (docs/rc-log/2026-08-28-tuple-structfield-counted-store.md).
+		// With the release but no retain this row still reads clean: of the
+		// two holders, k and h, the second reads through __fern_rc_is_unique
+		// a header the first already freed. The row is only meaningful
+		// alongside the counted pair
+		// (docs/rc-log/2026-08-28-tuple-structfield-counted-store.md).
 		leakCell{name: "tuple_mixed__structfield__local_store", src: `struct Hold { t: (i32, i32[]), n: i32 }
 function round(i: i32): i32 {
     let k: (i32, i32[]) = (i, [i, i + 1]);
@@ -509,18 +506,10 @@ function main(): i32 {
 }
 `},
 		// The INTERPROCEDURAL half of the counted store: the callee KEEPS
-		// the tuple, in a struct literal it returns. Both sides count it —
-		// the "TCNT:" tier in param_counted_of credits the param, so the
-		// caller keeps its own deep free and the holder's field drop gives
-		// the retain back. The tier is admitted only when the callee's
-		// RESULT routes field reclaim, which Hold began doing when the
-		// same-body counted store landed; this row could not have flipped
-		// before that one.
-		//
-		// The guard on the tier is the element handout: a callee that
-		// returns `t.<i>` is outside arrparam_use_ok's credited vocabulary,
-		// so the param loses the flag and the caller keeps its refusal
-		// rather than freeing an element the callee handed out.
+		// the tuple, in a struct literal it returns. The store is counted,
+		// so the caller keeps its own deep free and the holder's field drop
+		// gives the retain back. A callee that instead returns an element
+		// (`t.<i>`) hands it out, and the caller must not free it then.
 		leakCell{name: "tuple_mixed__callarg__stored_struct", src: `struct Hold { t: (i32, i32[]), n: i32 }
 function keepit(t: (i32, i32[])): Hold { return Hold { t: t, n: 1 }; }
 function main(): i32 {
@@ -653,12 +642,10 @@ function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc =
 }
 function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc = acc + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return acc % 83; }
 `},
-		// The three SCENUMS plan-routing witnesses (promotion step 2): the
-		// escape gate for all-scalar enums is the plan's free_eligible_of
-		// verdict, which — like native's computeFreeEligible — does not taint
-		// a plain call arg. A callee that KEEPS its arg retains it through
-		// its own counted construction store, so the caller's sweep is
-		// balanced; a botched routing shows here as exit 99 / a sanitizer
+		// The three all-scalar-enum call-arg witnesses: a plain call arg is
+		// not an escape. A callee that KEEPS its arg retains it through its
+		// own counted construction store, so the caller's release is
+		// balanced; a wrong verdict shows here as exit 99 / a sanitizer
 		// trap, never as a changed leak count.
 		leakCell{name: "enum_scalar__callarg__read", src: `enum E { A(i32), B(i32) }
 function get(e: E, i: i32): i32 {
@@ -707,10 +694,8 @@ function main(): i32 {
     return acc % 83;
 }
 `},
-		// The Option-family plan-routing witnesses: the escape gate for
-		// OPTARR/OPTSTR/OPTAARR is now the plan verdict (matched locals stay
-		// refused via name_is_match_scrutinee), so a fresh option passed to a
-		// reading callee earns its sweep.
+		// The Option-family call-arg witnesses: a fresh option passed to a
+		// reading callee is still released by the caller.
 		leakCell{name: "opt_arr__callarg__read", src: `function peek(o: Option[i32[]], i: i32): i32 {
     match (o) { Some(xs) => { return xs.len() + i; }, None => { return 0; } }
 }
@@ -763,8 +748,8 @@ function main(): i32 {
 		leakCell{name: "map_struct_strfield__insert__match", src: mapStructColumnInsertMatchSrc},
 		// The same column built by a literal, with no read — the column alone.
 		leakCell{name: "map_struct_strfield__literal__len", src: mapStructColumnLiteralLenSrc},
-		// An ARRAY field in the value struct: the same walk, a different arm of
-		// __struct_drop_<T>.
+		// An ARRAY field in the value struct: the same walk, a different field kind
+		// in the struct's drop.
 		leakCell{name: "map_struct_arrfield__insert__len", src: mapStructColumnArrFieldInsertSrc},
 		// Arrays of tuples with a STRING element (#7910 (c)): the element
 		// admission reads the fresh-string registry, and an erased-generic

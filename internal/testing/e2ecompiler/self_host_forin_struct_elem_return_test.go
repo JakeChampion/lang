@@ -6,22 +6,12 @@ import (
 
 // --- A struct-array element read through a for-in body that RETURNS ---------
 //
-// Native's for-in element borrow (#6888) admits a body that returns a
-// projection of the element as of #8178 — `return sd.name`, `return
-// sd.fields.len()` — instead of retaining and deep-dropping the element every
-// iteration. This file is the self-host side of that rule, and it pins what
-// measurement found: there is nothing to port. The self-host never retains a
-// for-in binder — it is an uncounted borrow of the element the container
-// owns — and its body walkers already read `sd.f` as a borrow wherever it
-// stands (expr_unsafe_for's FieldAccess arm is position-independent), so a
-// read-only body and a scalar-returning body over a local or a param struct
-// array balance on the self-host exactly as they do on native.
-//
-// Two shapes once leaked on the AST lowering — a returned rc-typed projection
-// of a borrowed PARAM's element (`return sd.name`, and its INDEX spellings),
-// and `for sd in mks(i)` over a CALL RESULT. On the typed lowering every case
-// holds allocs == frees at live_bytes 0 and exits identically on native x86-64
-// and the self-host.
+// A for-in binder is an uncounted borrow of the element the container owns
+// (#6888), and a field read through it is a borrow wherever it stands —
+// including a body that RETURNS a projection of the element (#8178): `return
+// sd.name`, `return sd.fields.len()` and their INDEX spellings. Over a local, a
+// param or a call-result struct array (`for sd in mks(i)`), every case holds
+// allocs == frees at live_bytes 0.
 
 const forinStructElemDecl = `struct S { name: string, fields: string[] }
 function mkstr(p: string): string { return p + "-long-enough-to-heap-allocate"; }
@@ -131,8 +121,7 @@ function round(i: i32): i32 { return scan(i) % 101; }` + forinStructElemMain,
 }
 
 // TestSelfHostForInStructElemReturnX86_64 — a for-in body that returns a
-// projection of a struct-array element keeps the container's credit on the
-// self-host as native's #8178 rule keeps the element borrow.
+// projection of a struct-array element keeps the container's credit.
 func TestSelfHostForInStructElemReturnX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

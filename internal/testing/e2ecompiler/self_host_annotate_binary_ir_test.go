@@ -22,26 +22,16 @@ import (
 //	function (a: V) mul(b: V): f64 { return a.x * b.x + a.y * b.y; }
 //	let d: f64 = p * q;                       // f64, and no walk over p / q says so
 //
-// Every case below BAILED the IR path before this change ("did not lower:
-// binary `*`" under FERN_STRICT_IR), on both backends, while native compiled
-// them and the interpreter ran them. The cause was two layers deep:
+// Each case below is an overload whose result is NOT a struct. The self-host
+// checker types `p * q` through its operator-overload arm and stamps the
+// carrier; a missing arm types it unknown (E009), and a missing carrier refuses
+// it ("did not lower: binary `*`" under FERN_STRICT_IR). The struct-returning
+// overload (overload_add_struct below) is the control that the scalar carrier
+// did not displace the struct-return path.
 //
-//   - the self-host CHECKER had no operator-overload arm at all, so `p * q`
-//     typed unknown and was rejected E009 — a carrier alone would have stamped
-//     "" and changed nothing;
-//   - irlower's lowering then asked struct_ret_fns, a registry that records
-//     only STRUCT returns, and read its "" as "no such method" rather than "a
-//     return I do not record".
-//
-// So the struct-returning overload (overload_add_struct below) always worked
-// and every scalar-returning one was refused. That control is what holds the
-// line: it must keep working, and it exercises the registry path the tag does
-// not.
-//
-// The i64 rows additionally need the carrier to reach the LOAD site —
-// lower_i64's binary and unary arms — because infer_expr_width reports 64 off
-// the same tag. Wired to only one of the two, `(p + q) % 100i64` bailed at the
-// enclosing `as i32` instead.
+// The i64 rows also need the width query (infer_expr_width) and the i64 load to
+// read the same tag; wired to only one, `(p + q) % 100i64` is refused at the
+// enclosing `as i32`.
 var annotateBinaryCases = []struct {
 	name string
 	src  string
@@ -104,9 +94,8 @@ function main(): i32 {
   return 42;
 }`}, // 42
 
-	// Control: a STRUCT-returning overload. This is the shape struct_ret_fns
-	// did record, so it lowered before the carrier and must still lower —
-	// the tag must not have displaced it.
+	// Control: a STRUCT-returning overload, which lowered before the scalar
+	// carrier existed and must still lower.
 	{"overload_add_struct", `struct V { x: i32 }
 function (a: V) add(b: V): V { return V { x: a.x + b.x }; }
 function main(): i32 {

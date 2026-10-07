@@ -8,27 +8,24 @@ import (
 )
 
 // annotateIndexMonoCases pin that the ExprIndex.ty carrier (#6165) SURVIVES
-// monomorphisation. `mono_expr` / `ms_expr` / `me_expr` (parser.fern) rebuild
-// every expression when cloning a generic function; they used to rebuild an
-// ExprIndex with `ty: ""`, so a clone lost the tag and irlower's ix_type_tag
-// fell back to the structural walk — which misses exactly the shapes the tag
-// exists to cover.
+// monomorphisation: `mono_expr` / `ms_expr` / `me_expr` (parser.fern) rebuild
+// every expression when cloning a generic function, and the clone must keep
+// the index's type tag.
 //
-// That is not a missed optimisation, it is a miscompile, and it is invisible to
-// the path probe: the module still routes "ir" and the compiler still exits 0.
-// Measured before the fix, `generic_if_expr_index_f64` below emitted wasm whose
-// CLONE (`pick__i32`) the validator rejects — "type mismatch: expected f64,
-// found i32" at the f64 element read — exiting 1 against an oracle of 25.
+// Losing it is a miscompile the path probe cannot see: the module still routes
+// "ir" and the compiler still exits 0, but `generic_if_expr_index_f64` below
+// emits wasm whose CLONE (`pick__i32`) the validator rejects — "type mismatch:
+// expected f64, found i32" at the f64 element read.
 //
-// The asymmetry the fix encodes: these three sites also drop `unchecked`, and
-// that stays dropped. Losing the bounds-elide mark is conservative (the clone
-// keeps its bounds check); losing the type tag is not.
+// The same three sites drop `unchecked`, and that stays dropped: losing the
+// bounds-elide mark is conservative (the clone keeps its bounds check); losing
+// the type tag is not.
 //
 // Single instantiation per case is deliberate: instantiating one of these
-// generics TWICE trips a pre-existing native monomorph re-check bug (it binds T
-// from the return type, so a second call with a different T fails "expected
-// f64, got boolean"), which is unrelated to the carrier and would make the case
-// test the oracle rather than the compiler.
+// generics TWICE trips an oracle-side monomorph re-check bug (it binds T from
+// the return type, so a second call with a different T fails "expected f64,
+// got boolean"), which would make the case test the oracle rather than the
+// compiler.
 var annotateIndexMonoCases = []struct {
 	name string
 	src  string

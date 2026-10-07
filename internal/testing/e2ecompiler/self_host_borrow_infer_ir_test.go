@@ -7,21 +7,13 @@ import (
 	"testing"
 )
 
-// TestSelfHostBorrowInferInterprocX86_64 covers Perceus slice 2: the
-// inter-procedural borrow inference (`borrowable_params_interproc`) is now a
-// GREATEST-fixpoint from above (native `inferParamEscapes`), not the old
-// least-fixpoint from below. The from-below pass started with an empty registry
-// and grew it, so it could never bootstrap a MUTUALLY RECURSIVE borrow — a param
-// only became borrowable once its callee already was, and in a cycle neither
-// could go first. From-above starts every param optimistically borrowable and
-// only flips one off when an ACTUAL escape (return-of-derived / alias / container
-// store / slice) is proven, so a param that is merely threaded around a recursive
-// cycle (read-only) stays borrowable.
-//
-// The observable effect is downstream reclaim: a non-escaping struct LOCAL passed
-// into a mutually recursive borrow-only cycle is recognised as not-escaping, so it
-// is reclaimed at the caller's exit (__struct_drop). Under the old least-fixpoint
-// the cycle's params looked escaping, so the local "escaped" and leaked.
+// TestSelfHostBorrowInferInterprocX86_64 covers inter-procedural borrow
+// inference over a MUTUALLY RECURSIVE cycle. A param that is merely threaded
+// around the cycle (read-only) must stay borrowable even though neither callee
+// can be proven borrowable before the other; only an ACTUAL escape (return of
+// a derived value / alias / container store / slice) makes it escaping. So a
+// non-escaping struct LOCAL passed into the cycle is reclaimed at the caller's
+// exit.
 //
 // The leak/reclaim signal is heap exhaustion: a long churn that leaks one box +
 // buffer per iteration exhausts the bump heap and is SIGKILLed (exit 137); with

@@ -8,14 +8,14 @@ import (
 // iifeU32WidthIRCases pin the WIDTH a value-position `if`/`match` reports when
 // a branch is a suffixed literal past i32-max — #6400.
 //
-// iife_any_return_i64 re-derived the width from magnitude alone, so a `u32`
-// literal above i32-max reported 64. That width feeds lower_checked_binary's
-// operand kind, and a `u32` read as i64 selects the SIGNED overflow predicate
+// The width comes from the suffix, not the magnitude: a `u32` literal above
+// i32-max is 32 bits wide. That width feeds a checked operator's operand kind,
+// and a `u32` read as i64 selects the SIGNED overflow predicate
 // (`a > I64_MAX + b`), which cannot fire for operands that fit in i64 as
 // positives — `-?` then answers Some with the wrapped difference.
 //
-// Every case asserts the ANSWER. The defect was a silent miscompile on one path
-// and a bail on another, and a compile-only assertion catches neither.
+// Every case asserts the ANSWER. A wrong width is a silent miscompile on one
+// path and a bail on another, and a compile-only assertion catches neither.
 var iifeU32WidthIRCases = []struct {
 	name string
 	src  string
@@ -92,7 +92,7 @@ function main(): i32 {
     return 2i32;
 }`, 1},
 	// An Option[u32] LOCAL rather than a checked-arithmetic scrutinee, so the
-	// gate is reached through try_opt_type's annotation path too.
+	// payload's width comes from the binding's annotation.
 	{"optu32-local-scrutinee", `function main(): i32 {
     let b: boolean = true;
     let o: Option[u32] = None;

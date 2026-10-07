@@ -6,16 +6,15 @@ import (
 )
 
 // strReclaimIRCases pin the reclamation of fresh, non-escaping, non-aliased heap
-// STRING locals on the self-hosted stack-IR path (#2649 string RC). A self-host
+// STRING locals on the self-hosted IR path (#2649 string RC). A self-host
 // string is a header-less 16-byte box {data@0,len@8} + a separate __fern_alloc'd
-// data buffer (on the asm backends). Unreclaimed that leaks one box + buffer
-// per iteration, where the native backend frees it. The self-host
-// classifies `let s: string = <fresh producer>` (concat / .to_ascii_upper()/.to_ascii_lower()/
-// .repeat(n) / string_from_bytes_unchecked / str_to_* / __raw_string) that
-// never escapes (body_unsafe_for) and is never reassigned as reclaimable, then
-// frees it via __fern_str_free (box + data buffer) at the loop-rebind and at scope
-// exit. A literal / bare-ident / .trim() / .replace() binding is NOT fresh (may
-// alias) and stays leaked (sound).
+// data buffer (on the asm backends); unreclaimed that leaks one box + buffer per
+// iteration. A `let s: string = <fresh producer>` (concat /
+// .to_ascii_upper()/.to_ascii_lower()/.repeat(n) / string_from_bytes_unchecked /
+// str_to_* / __raw_string) that never escapes and is never reassigned is freed
+// via __fern_str_free (box + data buffer) at the loop-rebind and at scope exit.
+// A literal / bare-ident / .trim() / .replace() binding is NOT fresh (may alias)
+// and stays leaked (sound).
 //
 // Two contracts per case:
 //   - exit code pins VALUE correctness (a double-free would corrupt the freelist
@@ -66,13 +65,11 @@ function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 4) { let s: 
 	// An ALIASED fresh string (`let t = s`) IS reclaimed, and the alias is what
 	// makes that safe: the bind retains the box, so s and t each hold a counted
 	// reference and each releases it — the refcount frees it exactly once (#7282).
-	// Before that pairing the alias cost s its credit and NOTHING was freed, which
-	// is the leak this row used to pin as correct.
 	//
-	// The concat operands are PARAMS, which slot_is_reclaimable_str refuses at its
-	// first line, so a reclaim anywhere in `mk` can only be s or t and the
-	// aliased-RESULT contract stays isolated. Value stays correct: 3 + 3 = 6, and
-	// an over-release would show as a wrong exit rather than this count.
+	// The concat operands are borrowed PARAMS that `mk` never releases, so a
+	// reclaim there can only be s or t and the aliased-RESULT contract stays
+	// isolated. Value stays correct: 3 + 3 = 6, and an over-release would show
+	// as a wrong exit rather than this count.
 	{"aliased-reclaimed-once",
 		`@noinline function mk(a: string, b: string): i32 { let s: string = a + b; let t: string = s; return s.len() + t.len(); } function main(): i32 { return mk("ab", "c"); }`,
 		6, true, "mk"},
@@ -95,16 +92,13 @@ function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 4) { let s: 
 function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 12) { let s: string = i.to_string(); sum = sum + s.len(); i = i + 1; } return sum; }`,
 		14, true, ""},
 	// UN-ANNOTATED unambiguous producer (`let s = i.to_string()`, inferred string):
-	// reclaimed too — str_free_producer_ident admits it without the annotation, and
-	// expr_is_str marks the slot. Same value as above (14).
+	// reclaimed too. Same value as above (14).
 	{"loop-unannotated-i32-to-string",
 		`import "std/i32";
 function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 12) { let s = i.to_string(); sum = sum + s.len(); i = i + 1; } return sum; }`,
 		14, true, ""},
-	// UN-ANNOTATED concat (`let s = tag + "!"`, inferred string): reclaimed too —
-	// the fresh gate is now syntax-only and the is_str type gate (set from the
-	// type-aware expr_is_str) admits the actual string concat. Same as the
-	// annotated case: "row!" len 4 × 4 = 16.
+	// UN-ANNOTATED concat (`let s = tag + "!"`, inferred string): reclaimed too,
+	// by its inferred type. Same as the annotated case: "row!" len 4 × 4 = 16.
 	{"loop-unannotated-concat",
 		`function main(): i32 { let tag: string = "row"; let sum: i32 = 0; let i: i32 = 0; while (i < 4) { let s = tag + "!"; sum = sum + s.len(); i = i + 1; } return sum; }`,
 		16, true, ""},
@@ -114,8 +108,7 @@ function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 12) { let s 
 function main(): i32 { let base: string = "abc"; let sum: i32 = 0; let i: i32 = 0; while (i < 4) { let s = base.to_ascii_upper(); sum = sum + s.len(); i = i + 1; } return sum; }`,
 		12, true, ""},
 	// NEGATIVE: an un-annotated INT `let n = a + b` matches the concat SHAPE but is
-	// not is_str, so it is never reclaimed (no __fern_str_free) and stays correct.
-	// Ensures the syntax-only fresh gate is safely filtered by the is_str type gate.
+	// not a string, so it is never reclaimed (no __fern_str_free) and stays correct.
 	{"unannotated-int-add-not-reclaimed",
 		`function main(): i32 { let a: i32 = 3; let b: i32 = 4; let n = a + b; return n; }`,
 		7, false, ""},

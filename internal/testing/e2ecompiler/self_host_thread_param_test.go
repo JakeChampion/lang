@@ -4,9 +4,8 @@ import "testing"
 
 // A pointer-element array rebound through a threader (#10420): `acc = walk(n,
 // acc)` where every return of walk is its parameter, grown only by fresh
-// elements. The credit that walks a struct array's or a string[]'s elements at
-// exit admitted no such rebind, so the elements leaked on the AST lowering.
-// Answers are the interpreter's.
+// elements. A struct array's or a string[]'s elements must still be released
+// at exit. Answers are the interpreter's.
 
 const threadInst = "struct Inst { name: string, depth: i32 }\n"
 
@@ -170,8 +169,8 @@ function main(): i32 {
     return (t + pending.len() + mk(1).depth) % 256;
 }
 `, true},
-	// The refused rows below hold the AST census to the shallow fallback: each
-	// may leak, and must never free an element early.
+	// The rows below are not threaders: each may leak, and must never free an
+	// element early.
 	//
 	// The callee keeps the array in a struct, so it threads nothing.
 	{"callee_keeps", threadInst + `struct Holder { xs: Inst[] }

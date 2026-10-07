@@ -12,11 +12,10 @@ import (
 // clockIRCases exercise monotonic_ns() / now_unix_ms() — 0-arg i64 clock
 // readings — through the IR path. Each lowers to a dedicated IR op
 // (op_monotonic_ns / op_now_unix_ms) that the x86-64 / arm64 backends emit as a
-// call into the same __fern_* clock helper the AST path already uses, so a
-// timing program stays IR-eligible instead of bailing the whole module to the
-// AST emitter. The monotonic clock is non-decreasing, and a fresh wall-clock
-// reading is too over the handful of instructions between the two calls, so
-// `b >= a` ⇒ exit 7 (1 would mean time went backwards).
+// call into its __fern_* clock helper. The monotonic clock is non-decreasing,
+// and a fresh wall-clock reading is too over the handful of instructions
+// between the two calls, so `b >= a` ⇒ exit 7 (1 would mean time went
+// backwards).
 var clockIRCases = []struct {
 	name, src, helper string
 }{
@@ -68,11 +67,10 @@ func TestSelfHostClockIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostClockIRWasm runs the same cases through the wasm IR backend under
-// wasmtime. Each clock op now emits `call $__fern_<clock>` (wasm_ir), and
-// wasm_ir_run pulls in the preview1 wasi clock_time_get import + the clock_funcs
-// helpers (the same runtime the wasm AST path uses) when the module reads any
-// clock — so a timing module is wasm-IR-eligible instead of bailing to the AST
-// emitter. The non-decreasing-clock contract again gives exit 7.
+// wasmtime. Each clock op emits `call $__fern_<clock>` (wasm_ir), and the
+// module pulls in the preview1 wasi clock_time_get import + the clock_funcs
+// helpers when it reads any clock. The non-decreasing-clock contract again
+// gives exit 7.
 func TestSelfHostClockIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host clock wasm IR e2e")

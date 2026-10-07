@@ -35,19 +35,17 @@ const writerStdoutProg = `function main(): i32 {
 }`
 
 // writerErrProg is the OTHER arm: a failing write answers Some(IoError) carrying
-// a real variant — the same value native builds — rather than the bare -errno the
-// self-host used to push. Writing to a Writer whose fd is already closed is EBADF
-// (9), which __fern_io_error classifies as Other; a write has no path to report,
-// so the Other payload is the empty string the helper hands the classifier. Exit 5
+// a real variant rather than a bare -errno. Writing to a Writer whose fd is
+// already closed is EBADF (9), which __fern_io_error classifies as Other; a
+// write has no path to report, so the Other payload is the empty string the
+// helper hands the classifier. Exit 5
 // therefore says the Option box, the variant box and its path string are all
 // well-formed.
 //
-// Pinned to what the native COMPILER does — `fern` exits 5 on both register
-// targets. `fern -interp` is NOT an oracle here: it models a Writer as a registry
-// entry rather than a raw fd, so writing to a closed one is a hard interpreter
-// error instead of an EBADF, a native-side interp/codegen divergence that predates
-// this surface. Neither is the wasm target, whose preview2 component holds a
-// resource handle and traps.
+// Pinned to exit 5 on both register targets. `fern -interp` is NOT an oracle
+// here: it models a Writer as a registry entry rather than a raw fd, so writing
+// to a closed one is a hard interpreter error instead of an EBADF. Neither is
+// the wasm target, whose preview2 component holds a resource handle and traps.
 const writerErrProg = `function main(): i32 {
     match (open_writer("` + writerErrPath + `")) {
         Ok(w) => {

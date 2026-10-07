@@ -16,7 +16,7 @@ import (
 // `let p = P{...}`), so it is correctly left to leak (no double-free).
 //
 // The match lives in a helper whose scrutinee is a call to an Option/Result-
-// returning function (the opt-type is recovered via opt_ret_fns). main also
+// returning function, so the payload type comes from its signature. main also
 // declares a fresh, non-escaping struct temp `t` (field-read only) which the IR
 // path reclaims with a shallow box free; `t.<a> - t.<b>` pads 0 into the result.
 // A module that bails emits nothing at all, and no case uses an

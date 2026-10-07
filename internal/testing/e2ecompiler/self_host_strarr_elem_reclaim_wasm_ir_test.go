@@ -41,10 +41,10 @@ function main(): i32 { let v: i32 = churn(20000); if (__rc_underflow_count() != 
 function churn(n: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + build(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
 		// LOOP-BODY REINIT, BOUNDED HIGH-WATER (#4353 item 4): a string[]
-		// re-DECLARED each iteration is freed at the loop REBIND
-		// (emit_strarr_reclaim_store), not at a helper exit. After a 3000-iter
-		// warmup the second churn re-serves from the freelist → flat bump.
-		// Pre-fix the reinit store leaked all 3 element boxes per iteration → 98.
+		// re-DECLARED each iteration is freed at the loop REBIND, not at a
+		// helper exit. After a 3000-iter warmup the second churn re-serves
+		// from the freelist → flat bump. Leaking the 3 element boxes per
+		// iteration → 98.
 		{"strarr-elem-reinit-loop-wasm", `function churn(n: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i32 = 0; while (i < n) { let xs: string[] = ["lit", pre + "x", pre + "yy"]; acc = (acc + xs[0].len() + xs[2].len()) % 251; i = i + 1; } return acc; }
 function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
 		// ELEMENT ALIAS BINDING excludes: `let t = xs[0]` — xs keeps the shallow
@@ -52,39 +52,28 @@ function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_byte
 		{"strarr-elem-alias-excluded-wasm", `function pick(pre: string): i32 { let xs: string[] = [pre + "x", "qq"]; let t: string = xs[0]; return t.len() + xs[1].len(); }
 function churn(n: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i32 = 0; while (i < n) { if (pick(pre) != 5) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { let v: i32 = churn(1000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
-		// PRODUCER-CALL ELEMENT: the stored elements are calls to a proven
-		// fresh-string producer rather than inline concats. The credit's element
-		// proof is strarr_value_is_fresh, so the registry arm admits them; the
-		// registry-blind sibling it replaced refused any call. 43 + 3 + 43 = 89.
+		// PRODUCER-CALL ELEMENT: the stored elements are calls to a fresh-string
+		// producer rather than inline concats, and are freed with the array.
+		// 43 + 3 + 43 = 89.
 		{"strarr-elem-producer-store-wasm", `function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function build(pre: string): i32 { let xs: string[] = [w(pre), "lit"]; xs = xs.append(w(pre)); let tl: i32 = 0; let j: i32 = 0; while (j < xs.len()) { tl = tl + xs[j].len(); j = j + 1; } return tl; }
 function churn(n: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i32 = 0; while (i < n) { if (build(pre) != 89) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { let v: i32 = churn(5000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
-		// LOCAL BOUND FROM A PRODUCER: `let xs = mk(pre)` where `mk` is a
-		// "STRARR:" registry function — the frame owns every element the callee
-		// handed it, so the exit sweep may element-walk. `mk`'s own `out` escapes
-		// by return and keeps the shallow dec, so each element is freed exactly
-		// once — a second free would tick the underflow detector. 3 + 43 = 46.
+		// LOCAL BOUND FROM A PRODUCER: `let xs = mk(pre)` — the frame owns
+		// every element the callee handed it, so the exit sweep may
+		// element-walk. `mk`'s own `out` escapes by return and is not walked,
+		// so each element is freed exactly once — a second free would tick the
+		// underflow detector. 3 + 43 = 46.
 		{"strarr-local-from-producer-wasm", `function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function mk(pre: string): string[] { let out: string[] = []; let i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
 function build(pre: string): i32 { let xs: string[] = mk(pre); return xs.len() + xs[1].len(); }
 function churn(n: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i32 = 0; while (i < n) { if (build(pre) != 46) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { let v: i32 = churn(5000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
-		// STORED BY THE CALLEE is ADMITTED, and this case used to pin the
-		// opposite. Its premise was that `keep`'s parameter is not borrowable,
-		// which is still true and is no longer the whole question:
-		// param_counted_of proves every appearance of that parameter is a
-		// COUNTED store, so the construction incs the buffer and the caller's
-		// claim survives the call. The "CNT:" tier carries that verdict to the
-		// escape walker.
-		//
-		// Granting the DEEP walk on a shallow-release justification is the part
-		// that needs stating. Two rules close it from both ends:
-		// __fern_str_arr_free is rc-gated, so only the owner that finds rc 1
-		// walks the elements; and no element can be out UNCOUNTED, because the
-		// tier refuses ExprIndex for array params while the caller's own
-		// element-hazard rules still exclude `let t = xs[0]` — the alias case
-		// above. Both reads stay valid. 3 + 43 + 43 = 89.
+		// STORED BY THE CALLEE: `keep` stores its parameter in the Box it
+		// returns, and that store is COUNTED, so the caller still releases `xs`
+		// with its elements. __fern_str_arr_free is rc-gated, so only the owner
+		// that finds rc 1 walks the elements. Both reads stay valid.
+		// 3 + 43 + 43 = 89.
 		{"strarr-local-stored-by-callee-counted-wasm", `struct Box { rows: string[] }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function mk(pre: string): string[] { let out: string[] = []; let i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }

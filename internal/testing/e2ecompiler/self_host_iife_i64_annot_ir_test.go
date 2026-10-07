@@ -3,16 +3,11 @@ package e2ecompiler
 import "testing"
 
 // iifeI64AnnotIRCases pin a small-literal-branch i64/u64 if/match-EXPRESSION bound
-// to an i64/u64-annotated local to the self-host IR path on x86-64 + wasm. An
-// if/match-expression desugars to a 0-arg IIFE; the IR lowering already inlined it
-// into an i64 temp when SOME branch carried an i64 value (e.g. `{ 5000000000 }`),
-// but a fully-small-literal i64 expression — where i64-ness comes ONLY from the
-// binding annotation (`let x: i64 = if (c) { 5 } else { 9 }`) — failed the
-// branch-value width classifier and bailed the whole module to the legacy AST
-// emitter. #2691 threaded a force_i64 flag from lower_i64 (the binding context is
-// definitionally i64/u64) through lower_iife / lower_iife_match so the inline temp
-// is marked i64 and each small-literal branch is widened into it. Each case is
-// oracle-checked against the interpreter and returns <= 126. Mirrors
+// to an i64/u64-annotated local to the self-host IR path on x86-64 + wasm
+// (#2691). When i64-ness comes ONLY from the binding annotation
+// (`let x: i64 = if (c) { 5 } else { 9 }`), with no branch carrying a wide value
+// of its own, each small-literal branch must still be widened to i64. Each case
+// is oracle-checked against the interpreter and returns <= 126. Mirrors
 // self_host_structarray_call_field_ir_test.go.
 //
 // (Constant-condition forms like `if (1 < 2) { 5 } else { 9 }` take a separate

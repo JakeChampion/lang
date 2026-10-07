@@ -41,9 +41,7 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < ROUNDS) { x = 
 		{name: "str_pos_rebind_200", src: strings.Replace(repro, "ROUNDS", "200", 1), want: 62},
 		{
 			// Both writers bound before the tuple, so the var site and the rebind
-			// name two locals of the same producer. This was the recorded
-			// "string_pos_rebind_refused" hazard; the answer is unchanged and the
-			// leak is gone, so it moves here.
+			// name two locals of the same producer.
 			name: "str_pos_two_fresh_writers",
 			src: `@noinline
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }

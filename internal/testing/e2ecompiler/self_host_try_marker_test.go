@@ -15,8 +15,8 @@ import (
 // ordinary variant box carrying its shape at offset 0, so the self-host lowers
 // the same operator through `variant_is` + `struct_get` — the ops a `match` arm
 // already uses. These cases pin that second lowering against the exit codes
-// native produces for the identical sources (internal/testing/e2e/try_marker_test.go
-// is the native half), on both register backends.
+// the interpreter produces for the identical sources
+// (internal/testing/e2e/try_marker_test.go), on both register backends.
 //
 // Every case is compiled with FERN_STRICT_IR=1, so a lowering that declines
 // rather than miscompiles fails here too: the driver names its bail site

@@ -10,7 +10,7 @@ import (
 
 // TestSelfHostTrigIRWasm pins `__sin_f64(x)` / `__cos_f64(x)` (the lowering behind
 // std/float's `(x: f64) sin()` / `cos()`) on the wasm IR path — the last two libm
-// transcendentals. fsin/fcos lower to op_fsin/op_fcos ->
+// transcendentals. The fsin/fcos ops lower to calls to
 // $__fern_sin_f64 / $__fern_cos_f64, the fdlibm runtimes: reduce (Cody-Waite
 // below 2^20, Payne-Hanek at and above — #7878), quadrant q = k&3 selects
 // ±sin(r)/±cos(r) from the fdlibm kernels in r² — the wasm siblings of the

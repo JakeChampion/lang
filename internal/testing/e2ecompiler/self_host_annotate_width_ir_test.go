@@ -7,13 +7,11 @@ import (
 	"testing"
 )
 
-// annotateWidthCases extend the typed-IR annotation (#5531) to the AST lowering's
-// infer_expr_width: a checker-typed i64/u64-returning call is a 64-bit value.
-// The annotate pass stamps ExprCall.ty ("i64"/"u64"); infer_expr_width's
-// ExprCall arm reads it as a positive fast-path (→ 64) instead of re-deriving
-// via is_i64_ret_fn. Each case uses the CALL RESULT in a 64-bit op whose answer
-// a truncated-32 width would get wrong (the value exceeds 2^32), so the exit
-// code is a direct oracle on the width decision.
+// annotateWidthCases pin that a checker-typed i64/u64-returning call is a
+// 64-bit value: the annotate pass (#5531) stamps ExprCall.ty ("i64"/"u64").
+// Each case uses the CALL RESULT in a 64-bit op whose answer a truncated-32
+// width would get wrong (the value exceeds 2^32), so the exit code is a direct
+// oracle on the width decision.
 var annotateWidthCases = []struct {
 	name string
 	src  string

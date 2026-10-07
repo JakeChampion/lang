@@ -7,20 +7,16 @@ import (
 	"testing"
 )
 
-// #4357: a reclaimable struct LOOP-LOCAL carrying an rc-array field
-// (`while { let t: P = …; }`, P = `{ x: i32, xs: i32[] }`) was reclaimed by a
-// SHALLOW box-only dec at each loop-rebind (emit_arr_store), leaking its `xs`
-// buffer every iteration — the StmtVar binding path skipped the deep
-// __field_reclaim_<T> the StmtAssign consume-rebind already used. Growth scaled
-// with N (48 → 160). The fix routes a reclaimable rc-field struct loop-local
-// binding through emit_field_reclaim_store, so each rebind frees the prior box's
-// field buffers before the box. Both a struct-LITERAL source and a strict-fresh-
-// returning-CALL source are covered.
+// #4357: a struct LOOP-LOCAL carrying an rc-array field
+// (`while { let t: P = …; }`, P = `{ x: i32, xs: i32[] }`) releases the prior
+// iteration's field buffers as well as its box at each rebind, so the `xs`
+// buffer does not leak per iteration. Both a struct-LITERAL source and a
+// fresh-returning-CALL source are covered.
 //
-// Gated empirically on the self-host x86-64 IR path (asm_run):
-//   - FIXPOINT: the loop's bump growth is now BOUNDED — equal at N=50 and N=5000.
-//   - OVER-RELEASE: the deep reclaim frees only the dead prior box's buffers
-//     (cow-guarded against the live value), so the field reads stay correct and
+// Gated on the self-host x86-64 driver (asm_run):
+//   - FIXPOINT: the loop's bump growth is BOUNDED — equal at N=50 and N=5000.
+//   - OVER-RELEASE: only the dead prior value's buffers are freed, never the
+//     live value's, so the field reads stay correct and
 //     __rc_underflow_count() reports 0.
 
 func rcFieldLoopLocalLiteralSrc(n string) string {
@@ -47,10 +43,8 @@ function main(): i32 {
 }
 
 // A SCALAR-only fresh-returning-CALL struct loop-local (`let t = mk(i)`, P = {x,y}
-// no rc field) leaks its BOX every iteration if collect_fresh_ret_call_names
-// excludes it via the struct_has_reclaim_array_field gate, since it then never
-// reaches reclaimable_names. Without that gate it is admitted (reclaimed by the
-// shallow box dec, complete for a scalar struct). #4357 follow-up.
+// no rc field) releases its BOX every iteration; the box is all there is to
+// release for a scalar struct. #4357 follow-up.
 func scalarLoopLocalCallSrc(n string) string {
 	return `struct P { x: i32, y: i32 }
 function mk(v: i32): P { return P { x: v, y: v + 1 }; }

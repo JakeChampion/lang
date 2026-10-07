@@ -8,49 +8,23 @@ import (
 	"testing"
 )
 
-// --- A MATCHED Option[string] local leaks its payload (#7710) ----------------
+// --- A MATCHED Option[string] local releases its payload (#7710) -------------
 //
-// The OPTSTR family had exactly one empty quadrant of a 2x2. Every other Option
-// payload kind is reclaimed whether or not a `match` consumes the local; the
-// string payload was reclaimed only when the local was NEVER matched — and
-// matching is the ordinary way to consume an Option:
+// Every Option payload kind is reclaimed whether or not a `match` consumes the
+// local, and the string kind must be too: matching is the ordinary way to
+// consume an Option, and a matched payload left unreleased leaks 72 B/round,
+// linear in the round count. A reassigned local whose every rebind is itself
+// fresh is reclaimed as well (#7712). The `*_control` rows pin the never-matched
+// case and the array payload kinds.
 //
-//	payload           matched   native      self-host (before)
-//	Option[i32[]]     no        400/400/0   400/400/0
-//	Option[i32[]]     yes       400/400/0   400/400/0
-//	Option[i32[][]]   yes       800/800/0   800/800/0
-//	Option[string]    no        200/200/0   600/600/0
-//	Option[string]    YES       200/200/0   600/0  live 14400
+// THE REFUSALS ARE THE ESSENTIAL HALF. A string assignment BORROWS, so the arm
+// binding takes no retain — which is why freeing a payload the arm hands out
+// would be a use-after-free rather than a double-count. The `refuses_*` rows
+// exercise the handed-out shapes, an aliased rebind and an escaping reassigned
+// local; each must exit its oracle answer, and every row balances.
 //
-// Nothing at all was freed, and it was linear in the round count — 600/0 at 200
-// rounds, 1200/0 at 400 — so 72 B/round unbounded against 0 on native.
-//
-// `collect_unmatched_optstr_names` owns the never-matched quadrant by
-// construction: its escape gate reads a bare-ident match scrutinee as an escape,
-// so it refuses every match-consumed Option outright. The matched quadrant was
-// left to "both match analyses", which for the array kinds is the entire reclaim
-// and for the string kind released nothing. `collect_fresh_optstr_names` fills
-// it, disjoint from its sibling for exactly that reason.
-//
-// #7712 then fills the REBIND quadrant of the same collector: a reassigned name
-// whose every rebind is itself fresh, which its OPTARRARR and OPTSTRUCT siblings
-// already admitted via `opt_rebinds_all_fresh`. Nothing new releases it — the
-// assign path already routed an OPTSTR slot to `emit_optstr_reclaim_store`, so
-// only the credit was missing. Admitting reassignment must not weaken either
-// proof, which is what `refuses_rebind_aliasing_param` (an aliased rebind) and
-// `refuses_reassigned_escaping` (the escape gate) pin.
-//
-// THE REFUSALS ARE THE ESSENTIAL HALF. A string payload is stored UNCOUNTED
-// (`op_opt_make`) and a string assignment BORROWS, so the arm binding takes no
-// retain — which is why the credit is safe when the arm only reads, and why
-// freeing a payload the arm hands out would be a use-after-free rather than a
-// double-count. The `refuses_*` rows below exercise the handed-out shapes; each
-// must exit its oracle answer and stay sanitizer-clean. On the typed lowering
-// every row balances.
-//
-// Every want was confirmed against BOTH oracles — bin/fern -interp and the
-// native x86-64 backend agreed on each — never read off the self-host run under
-// test. All twelve rows are additionally sanitizer-clean under FERN_SANITIZE=1.
+// Every want was confirmed against bin/fern -interp, never read off the
+// self-host run under test.
 type matchedOptstrCase struct {
 	name string
 	src  string
@@ -132,12 +106,8 @@ func matchedOptstrCases() []matchedOptstrCase {
 		},
 		{
 			// THE REBIND QUADRANT (#7712): reassigned, every rebind itself fresh.
-			// Was 900/0 live 21600 — neither the superseded box at the rebind nor
-			// the final one at exit. The release machinery already existed (the
-			// assign path routes an OPTSTR slot to emit_optstr_reclaim_store); only
-			// the credit was missing, because the collector refused a reassigned
-			// name outright where its OPTARRARR and OPTSTRUCT siblings admit one
-			// whose rebinds are all fresh.
+			// Both the superseded box at the rebind and the final one at exit must
+			// be released (900/0 live 21600 when neither was).
 			name: "reassigned_all_rebinds_fresh",
 			src: matchedOptstrW + `function round(i: i32): i32 {
     let o: Option[string] = Some(w("ab"));
@@ -148,9 +118,7 @@ func matchedOptstrCases() []matchedOptstrCase {
 			want: 19,
 		},
 		{
-			// The flat-ARRAY payload reassigned: reassignment is precisely
-			// collect_fresh_optarr_names' own class, so this always worked and must
-			// stay working.
+			// The flat-ARRAY payload reassigned: the control.
 			name: "reassigned_array_control",
 			src: `function round(i: i32): i32 {
     let o: Option[i32[]] = Some([i, i + 1]);

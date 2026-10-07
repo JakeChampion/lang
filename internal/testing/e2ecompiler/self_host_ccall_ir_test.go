@@ -10,17 +10,14 @@ import (
 )
 
 // #4375 item 1: the FFI __c_call<n> family (call a C-ABI function pointer with
-// up to four integer/pointer args) now lowers on the self-hosted x86-64 IR path.
-// Before this, a module using __c_call bailed, and the AST emitter it fell to
-// emitted `call __fn___c_call0` with no body — an undefined-reference link
-// failure, so
-// std/jni was uncompilable by the self-host. The shim (emit_ccall_shim1) is
-// entered like any stack-ABI callee — the generic call_direct emit reverses the
-// args so arg0/fn is on top (param0 @ 16(%rbp), a_i @ (24+8i)(%rbp)) — and
-// marshals fn into %r11 + a0..a{n-1} into the System V arg registers, 16-aligns
-// %rsp, and `call *%r11`s the pointer. Native's register-arg shim
-// (TestSharedLibX86CCallFFI) verifies the C-ABI arg semantics with the same
-// layout; this pins the self-host emission + that every arity assembles + links.
+// up to four integer/pointer args) lowers on the self-hosted x86-64 IR path,
+// which is what makes std/jni compilable by the self-host. The shim
+// (emit_ccall_shim1) is entered like any stack-ABI callee — the generic
+// call_direct emit reverses the args so arg0/fn is on top (param0 @ 16(%rbp),
+// a_i @ (24+8i)(%rbp)) — and marshals fn into %r11 + a0..a{n-1} into the
+// System V arg registers, 16-aligns %rsp, and `call *%r11`s the pointer.
+// TestSharedLibX86CCallFFI runs real C callbacks through the primitive; this
+// pins the self-host emission + that every arity assembles + links.
 func TestSelfHostCCallIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -44,8 +41,6 @@ function main(): i32 { return 0; }`
 		t.Fatal("self-host compiler emitted 0 bytes")
 	}
 
-	// The IR path must have been taken — the AST emitter (asm.fern) has no
-	// __c_call shim, so its presence proves IR routing (eligibility fix).
 	// Each shim marshals fn @ 16(%rbp) into %r11, then a0..a{n-1} from
 	// (24+8i)(%rbp) into %rdi/%rsi/%rdx/%rcx, aligns, and `call *%r11`.
 	shimBody := func(n int) []string {

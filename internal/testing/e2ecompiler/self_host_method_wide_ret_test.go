@@ -8,24 +8,16 @@ import (
 )
 
 // TestSelfHostMethodWideReturn pins that an i64 returned from a method on a
-// PRIMITIVE receiver keeps all 64 bits.
-//
-// The AST lowering keyed a method's return width in i64_ret_fns under "<Type>.<method>",
-// and method_recv_tyname built that key. It resolved a struct receiver (via
-// expr_struct_type) and a u64/width-64 one, but returned "" for every other
-// primitive — i32, string, f64, f32, u32, boolean. With no key, the wide return
-// went untracked and the result was truncated to 32 bits:
+// PRIMITIVE receiver — i32, string, f64, f32, u32, boolean — keeps all 64 bits,
+// as it does from a free function or a struct method. Truncated to 32 bits:
 //
 //	function (n: f64) m(): i64 { return f64_bits(n / 3.0); }
 //	a.m()   ->  0x00000000_55555555   (want 0x3FD5555555555555)
 //
-// The same body as a FREE function was correct, and a struct receiver was
-// correct, which is what kept this hidden.
-//
 // Each case compares the method's result against the identical computation in a
 // free function, so it asserts agreement rather than a hard-coded constant —
 // the truncation is what differs, and a both-paths-wrong regression would still
-// be caught by the native oracle rows in the differential suites.
+// be caught by the interpreter rows in the differential suites.
 func TestSelfHostMethodWideReturn(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

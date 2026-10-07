@@ -5,32 +5,20 @@ import "testing"
 // #8240: a self-host caller freed a struct box while a live binding still
 // named it.
 //
-// `let q2: T = g(.., name, ..)` where `name` dies at that call routes through
-// release_last_use_source, whose `old == q2` arm dec'd name's box on the
-// grounds that "q2 holds its own count on it". It does not: a callee that
-// hands back a borrowed struct param returns an UNCOUNTED alias, so that count
-// was the only one. rc 1 -> 0, freed, and the next __fern_arr_box handed the
-// same block to the following literal.
+// `let q2: T = g(.., name, ..)` where `name` dies at that call and `g` hands
+// back a borrowed struct param — directly, or through a local alias
+// (`let st = s; … return st;`) — leaves q2 and name as one box. Releasing name
+// at the binding must not take the count q2 holds: a box freed at rc 1 -> 0
+// here is handed to the next literal while q2 still reads it.
 //
-// The first fix dropped that dec — the slot's count transferred to q2, whose
-// own sweep freed the box. The handback is COUNTED now (#9203): the callee's
-// return path retains a bare borrowed struct param exactly as it does an
-// array one, q2 owns the count it holds, and the source's release at the
-// binding gives back the count the handback added where the two are one box
-// (emit_handback_identity_dec). A callee that hands the box back through a
-// LOCAL alias (`let st = s; … return st;`) is outside cnt_struct_ret_fns and
-// keeps the uncounted convention, which the identity release still answers.
+// The free is at rc 1, so the underflow counter never trips, and the recycled
+// block normally comes back field-identical because the next allocation is the
+// same struct shape. Reading a DIFFERENTLY-shaped literal out of the recycled
+// block is what exposes it, and that is what the `junk` bindings are for:
+// remove them and every case here passes against a broken compiler.
 //
-// NOTHING ELSE CAUGHT THIS. The free is at rc 1, so the underflow counter
-// never trips, and the recycled block normally comes back field-identical
-// because the next allocation is the same struct shape — which is why it
-// survived every rc gate. Reading a DIFFERENTLY-shaped literal out of the
-// recycled block is what exposes it, and that is what the `junk` bindings are
-// for: remove them and every case here passes against a broken compiler.
-//
-// Differential against `fern -interp`, not a written-down number: native and
-// the interpreter both answer correctly, so the oracle is real. The leak census
-// must balance as well.
+// Differential against `fern -interp`, not a written-down number. The leak
+// census must balance as well.
 var selfHostBorrowedStructParamCases = []struct {
 	name string
 	src  string

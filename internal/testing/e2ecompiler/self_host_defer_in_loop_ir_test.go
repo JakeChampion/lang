@@ -2,19 +2,18 @@ package e2ecompiler
 
 import "testing"
 
-// deferInLoopCases pin the self-host to the same defer-in-a-loop semantics the
-// interpreter and the native backends implement (#6379, #6836): each execution
-// of the statement schedules its own run, and that run happens when the
-// iteration that executed it ends — its tail, a `break`, a `continue`, a
-// labelled edge out of several bodies at once, or a `return`/`?` leaving the
-// function from mid-iteration.
+// deferInLoopCases pin the self-host to the interpreter's defer-in-a-loop
+// semantics (#6379, #6836): each execution of the statement schedules its own
+// run, and that run happens when the iteration that executed it ends — its
+// tail, a `break`, a `continue`, a labelled edge out of several bodies at once,
+// or a `return`/`?` leaving the function from mid-iteration.
 //
 // lower_defers_func replays a loop body's actions on every edge out of the body
 // and clears the arming flag afterwards, so the count is per iteration and the
-// function-exit replay skips an iteration that already ended. These cases are
-// the ones that separate that from the previous behaviour (one run, at exit) and
-// from its two failure modes: a run that also fires again at function exit, and
-// a `break`/`continue` edge that never runs it at all.
+// function-exit replay skips an iteration that already ended. These cases
+// separate that from a single run at function exit and from its two failure
+// modes: a run that also fires again at function exit, and a `break`/`continue`
+// edge that never runs it at all.
 //
 // Each case encodes its whole contract in main's exit code through a Cell[i32]
 // the actions mutate, so one source serves the x86-64 and wasm legs. Values

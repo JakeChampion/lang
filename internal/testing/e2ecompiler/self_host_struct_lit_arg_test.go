@@ -6,50 +6,21 @@ import (
 
 // --- A struct LITERAL passed as a call argument ------------------------------
 //
-// `take(P { … })` — a temporary nothing else can reach. The ladder that
-// reclaims a DISCARDED struct literal lives in lower_stmt_inner's StmtExpr arm
-// and has no counterpart in expression position, so an argument temp leaked its
-// box and every rc field it owned. Even a SCALAR-ONLY struct, whose release in
-// statement position is a single `__fern_rc_dec`: 100 allocs / 0 frees against
-// native's 100/100, 4800 bytes over 100 rounds.
+// `take(P { … })` — a temporary nothing else can reach. Once the call returns,
+// the caller must release the argument's box and every rc field it owns, as it
+// does for a discarded struct-literal statement; even a SCALAR-ONLY struct
+// leaks 4800 bytes over 100 rounds otherwise. It leaks per EVALUATION, not
+// once, and binding the literal to `let p` first is a different position.
 //
-// It leaks per EVALUATION, not once, which is what separates it from the
-// construction-retain matrix's cells — and it is invisible to that matrix,
-// because all 35 of its cells bind the literal to `let p` first. That is the one
-// position which already worked.
+// SAFETY is borrowability: a callee that KEEPS the argument must not have it
+// freed underneath. `keep(p) -> p` and `wrap(p, i) -> Box { a: p, n: i }` both
+// stay refused and keep leaking, deliberately. Releasing them reads as a clean
+// alloc/free balance, so a census-only comparison scores that broken build
+// higher; `callee_wraps_param` checks the rc underflow counter and
+// `field_handed_out_uaf` reads a value back after churn, which is what catches
+// it.
 //
-// The mechanism was already here and only lacked a dispatch arm.
-// `lower_call_named` stashed a fresh literal argument in a scratch local and
-// frees it after the call, with arms for string literals, scalar-array
-// literals, "ARR:"/"STRARR:" producer calls and the consumed-append temp. Two
-// pieces were missing and BOTH are needed — either alone is a no-op:
-//
-//   - the stash arm itself, releasing with the discarded-statement arm's own two
-//     shapes (scalar-only -> box dec; reusable rc fields -> __struct_drop_<T>
-//     then the box dec), and
-//   - a "BORROW:" row to consult. Those rows were NARROW-SEEDED, deliberately:
-//     lower_func seeded only callees that lit_arg_callees_expr saw carrying a
-//     literal argument, so the list stays tiny. A struct literal was not in that
-//     census, so call_arg_borrowable answered false and the arm could never
-//     fire. Adding the arm without the census entry measures as no change at
-//     all, which is exactly what it did the first time.
-//
-// SAFETY is the borrowability gate the string and array arms already use. A
-// callee that KEEPS the argument must not have it freed underneath: `keep(p) ->
-// p` and `wrap(p, i) -> Box { a: p, n: i }` both stay refused and keep leaking,
-// deliberately. Removing that gate puts `callee_wraps_param` at self-host
-// exit 99 — an rc underflow — while native exits 3, at a flat 300 allocs / 300
-// frees. The same edit makes `callee_returns_param` read a clean 200/200 where
-// the correct compiler reads 200/0, so a census-only comparison again scores the
-// broken build higher; `field_handed_out_uaf` is the case that reads a value
-// back after churn and would catch it.
-//
-// String / enum / map / tuple / option fields keep struct_fields_reusable false
-// and so keep the documented safe-leak floor the statement arm states; nothing
-// here widens that.
-//
-// Every want was confirmed against BOTH oracles — bin/fern -interp and the
-// native x86-64 backend agreed on each — never read off the self-host run.
+// Each want is the `bin/fern -interp` answer.
 
 const structLitArgDecl = `struct S { a: i32, b: i32 }
 struct A { xs: i32[], k: i32 }

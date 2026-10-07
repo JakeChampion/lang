@@ -51,7 +51,7 @@ func TestSelfHostArrayMethodSyntaxX86_64(t *testing.T) {
 }
 
 // TestSelfHostArrayMethodSyntaxArm64 is the arm64 counterpart: the self-host
-// arm64 backend (asm_arm64.fern) must lower array method syntax to the same
+// arm64 backend (asm_arm64_ir.fern) must lower array method syntax to the same
 // __method_Array_ helper. Built by the x86 self-host compiler (the arm64 bundle
 // driver), linked + run under qemu.
 func TestSelfHostArrayMethodSyntaxArm64(t *testing.T) {

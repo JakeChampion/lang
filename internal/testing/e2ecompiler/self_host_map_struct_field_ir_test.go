@@ -8,17 +8,14 @@ import (
 )
 
 // TestSelfHostMapStructFieldIRX86_64 verifies that a struct with a Map field
-// (`m: Map[string, i32]`) is admitted to the IR path and that the map round-trips
-// through the field. Maps are leak-only on the IR path (the exit sweep tracks
-// local_is_arr, not local_map_type — a map box is never freed), so a map-typed
-// field leaks with the struct like a string / Option / tuple / enum field: no RC,
-// no aliasing bail. Reading the field into a `let got: Map[K, V] = c.m` local
-// re-marks the map type from the annotation so get_or dispatches as a map op.
+// (`m: Map[string, i32]`) lowers through the IR path and that the map
+// round-trips through the field. Reading the field into a
+// `let got: Map[K, V] = c.m` local keeps the map type from the annotation so
+// get_or dispatches as a map op.
 //
-// f builds mm{"a": 3}, stores it in Cache{m: mm, n: 4}, reads c.m back, and
-// returns c.m["a"] + c.n = 3 + 4 = 7. Without map-field support Cache is not
-// leaf-safe and the driver refuses the module; the exit code proves the
-// round-trip.
+// f builds mm{"a": 3}, stores it in Cache{m: mm, n: 4}, reads c.m back into
+// got, and returns got.get_or("a", 0) + c.n = 3 + 4 = 7; the exit code proves
+// the round-trip.
 func TestSelfHostMapStructFieldIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

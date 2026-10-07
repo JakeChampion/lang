@@ -186,7 +186,7 @@ func TestSelfHostIifeBodyLiftIRX86_64(t *testing.T) {
 
 // nestedIifeGateSrc nests a value-position `if` inside another one's branch.
 // lift_call_callee's in-IIFE gate is what stops the inner one being hoisted to a
-// top-level `__lam_N`, which would split one desugar across the IR and AST paths.
+// top-level `__lam_N`, so the desugar stays whole.
 const nestedIifeGateSrc = `function main(): i32 {
     let b: boolean = true;
     let w: i32 = (if (b) { (if (true) { 7i32 } else { 2i32 }) } else { (if (b) { 9i32 } else { 3i32 }) });

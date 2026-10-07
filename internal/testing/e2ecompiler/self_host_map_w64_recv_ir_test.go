@@ -6,22 +6,17 @@ import (
 
 // mapW64RecvIRCases extend the #5253 slice-1 coverage (#5289,
 // self_host_map_i64_value_ir_test.go — annotated map-typed LOCALS) to the
-// receiver / inference shapes that were still miscompiled ON the IR path:
+// receiver / inference shapes that were miscompiled ON the IR path:
 //
 //   - a Map[K, u64] STRUCT FIELD receiver (`c.m.get_or(...) >> 58`) and an
-//     UNANNOTATED map binding (`let m = Map { 1: big as u64 }`): the read-side
-//     predicates resolved the receiver via expr_map_type_tag only (a local's
-//     annotation or a map-returning call), so these shapes width-tracked 32 /
-//     signed even though the lowering site stored the column full-width —
-//     a silent wrong answer (113, want 62), NOT a bail. Fixed by
-//     get_or_recv_map_type (struct-field / tuple-element / array-element
-//     receiver resolution) + the expr_map_type_tag 64-bit value-tag inference.
+//     UNANNOTATED map binding (`let m = Map { 1: big as u64 }`): the read must
+//     see the full-width unsigned value column the store wrote. Reading it as
+//     32-bit signed was a silent wrong answer (113, want 62), NOT a bail.
 //
 // Plus shapes distinct from the #5289 suite worth pinning: an unsigned
-// COMPARE on the get_or result, a string-keyed fresh-key overwrite (the
-// kconsume flag next to the valwide flag), a NEGATIVE i64 value (sign-extend,
-// not zero-extend, through lower_i64's int_extend), and i32/string-valued
-// regression guards. Run through the CLI on x86-64 and wasm, interp-oracle-checked.
+// COMPARE on the get_or result, a string-keyed fresh-key overwrite, a NEGATIVE
+// i64 value (sign-extend, not zero-extend), and i32/string-valued regression
+// guards. Run through the CLI on x86-64 and wasm, interp-oracle-checked.
 var mapW64RecvIRCases = []struct {
 	name string
 	main string

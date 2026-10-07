@@ -22,13 +22,13 @@ var reuseDifferentialCases = []struct {
 	want int
 }{
 	// A RECIPIENT whose every field is a compile-time scalar literal is not a
-	// reuse shape at all: `reuse_recipient_ok` excludes it so the static
-	// aggregate placement (#6149) can have it instead, which allocates nothing
-	// rather than recycling a box. That is why two fixtures below multiply a
-	// field by a 1-valued variable — written as plain literals they measure zero
-	// reuse against zero and stop testing reuse. Only the cross-statement and
-	// enum-donor families are affected; a self-overwrite recipient carries a base
-	// (`{ ...d, x: 10 }`) and can never be constant.
+	// reuse shape at all: the static aggregate placement (#6149) takes it
+	// instead, which allocates nothing rather than recycling a box. That is why
+	// two fixtures below multiply a field by a 1-valued variable — written as
+	// plain literals they measure zero reuse against zero and stop testing
+	// reuse. Only the cross-statement and enum-donor families are affected; a
+	// self-overwrite recipient carries a base (`{ ...d, x: 10 }`) and can never
+	// be constant.
 	//
 	// Family 1 — functional-update self-overwrite.
 	{"self-overwrite", `struct Point { x: i32, y: i32 } function main(): i32 { let d = Point { x: 3, y: 4 }; let c = Point { ...d, x: 10 }; return c.x + c.y; }`, 14},
@@ -36,17 +36,16 @@ var reuseDifferentialCases = []struct {
 	{"cross-struct-loop", `struct P { x: i32, y: i32 } function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 4) { let a: P = P { x: i, y: i + 1 }; let s: i32 = a.x + a.y; let b: P = P { x: i * 2, y: 3 }; sum = sum + s + b.x + b.y; i = i + 1; } return sum; }`, 40},
 	// Family 2b — cross-statement struct reuse with a CALL-RESULT donor
 	// (#4356 divergence 3): `d` is bound from a STRICT fresh-returning
-	// function (return_fresh_struct_ret_fns — every return a no-base literal,
-	// sole owner of box + fields), so donor_bind_type admits it exactly like
-	// a literal-bound donor. Restricting donors to same-body literals
-	// fresh-allocates this shape every time.
+	// function (every return a no-base literal, sole owner of box + fields),
+	// so it donates its box exactly like a literal-bound donor. Restricting
+	// donors to same-body literals fresh-allocates this shape every time.
 	{"cross-struct-callret-donor", `struct P { x: i32, y: i32 } function mk(a: i32): P { return P { x: a, y: a + 1 }; } function main(): i32 { let one: i32 = 1; let d: P = mk(3); let u: i32 = d.x + d.y; let c: P = P { x: 10 * one, y: 20 }; return c.x + c.y + u; }`, 37},
 	{"cross-struct-callret-donor-detector", `struct P { x: i32, y: i32 } function mk(a: i32): P { return P { x: a, y: a + 1 }; } function main(): i32 { let one: i32 = 1; let d: P = mk(3); let u: i32 = d.x + d.y; let c: P = P { x: 10 * one, y: 20 }; let s: i32 = c.x + c.y + u; if (s != 37) { return 99; } return __rc_underflow_count(); }`, 0},
 	// Family 2h — OWN-PARAM struct donor (#4356 divergence 3): a construction in a
 	// function with an `own` struct param reuses that param's box (moved in, sole-
-	// owned, dead after its last read). Restricted to all-scalar donor+recipient
-	// (own_param_reuse_sites); the __fern_rc_is_unique guard in the emitter backstops.
-	// Same type and cross-type (A donor → B recipient, same box class).
+	// owned, dead after its last read), guarded by __fern_rc_is_unique. All-scalar
+	// donor+recipient, same type and cross-type (A donor → B recipient, same box
+	// class).
 	{"own-param-donor-same", `struct P { x: i32, y: i32 } function bump(own d: P): i32 { let u: i32 = d.x + d.y; let c = P { x: 10, y: 20 }; return c.x + c.y + u; } function main(): i32 { return bump(P { x: 3, y: 4 }); }`, 37},
 	{"own-param-donor-cross", `struct A { n: i32, m: i32 } struct B { p: i32, q: i32 } function f(own d: A): i32 { let u: i32 = d.n + d.m; let c = B { p: 10, q: 20 }; return c.p + c.q + u; } function main(): i32 { return f(A { n: 3, m: 4 }); }`, 37},
 	{"own-param-donor-detector", `struct P { x: i32, y: i32 } function bump(own d: P): i32 { let u: i32 = d.x + d.y; let c = P { x: 10, y: 20 }; let s: i32 = c.x + c.y + u; if (s != 37) { return 99; } return __rc_underflow_count(); } function main(): i32 { return bump(P { x: 3, y: 4 }); }`, 0},
@@ -57,15 +56,9 @@ var reuseDifferentialCases = []struct {
 	// going forward. Array-field and nested-struct-field donors.
 	{"own-param-donor-array", `struct H { id: i32, items: i32[] } function bump(own d: H): i32 { let u: i32 = d.id + d.items[0]; let c = H { id: 5, items: [7, 8, 9] }; return c.id + c.items[0] + c.items[2] + u; } function main(): i32 { return bump(H { id: 1, items: [10, 20] }); }`, 32},
 	{"own-param-donor-array-detector", `struct H { id: i32, items: i32[] } function bump(own d: H): i32 { let u: i32 = d.id + d.items[0]; let c = H { id: 5, items: [7, 8, 9] }; let s: i32 = c.id + c.items[0] + c.items[2] + u; if (s != 32) { return 99; } return __rc_underflow_count(); } function main(): i32 { return bump(H { id: 1, items: [10, 20] }); }`, 0},
-	// Family 2h widened (struct_fields_reusable_param): Map / leak-safe tuple /
-	// leak-safe Option fields are admitted on the own-param families — all three
-	// are leak-only boxes (released nowhere), so the reuse arm's release walk
-	// skips them and no donor-freshness proof is needed (enum / string stay
-	// excluded: their release proof reads a bind literal a param doesn't have).
-	// Map field values: both a bare ident and a map-returning CALL fire.
-	// The call-valued shape once crashed on this path (reuse on or off) and
-	// was excluded; that bug has been fixed upstream, so the -call case
-	// below pins it as a firing reuse shape.
+	// Family 2h with Map / tuple / Option fields: the own-param donor's box is
+	// reused with these fields present. Map field values: both a bare ident and
+	// a map-returning CALL.
 	{"own-param-donor-map-field", `struct C { id: i32, m: Map[i32, i32] } function f(own d: C): i32 { let u: i32 = d.id + d.m.len(); let mm: Map[i32, i32] = map_new(4); mm = mm.insert(1, 5); let c = C { id: 10, m: mm }; return c.id + c.m.len() + u; } function main(): i32 { let m0: Map[i32, i32] = map_new(4); m0 = m0.insert(1, 1); return f(C { id: 3, m: m0 }); }`, 15},
 	{"own-param-donor-map-field-call", `struct C { id: i32, m: Map[i32, i32] } function make_map(): Map[i32, i32] { let mm: Map[i32, i32] = map_new(4); mm = mm.insert(1, 5); return mm; } function f(own d: C): i32 { let u: i32 = d.id + d.m.len(); let c = C { id: 10, m: make_map() }; return c.id + c.m.len() + u; } function main(): i32 { let m0: Map[i32, i32] = map_new(4); m0 = m0.insert(1, 1); return f(C { id: 3, m: m0 }); }`, 15},
 	{"own-param-donor-tuple-field", `struct T2 { id: i32, t: (i32, i32) } function f(own d: T2): i32 { let u: i32 = d.id + d.t.0; let c = T2 { id: 10, t: (7, 8) }; return c.id + c.t.1 + u; } function main(): i32 { return f(T2 { id: 3, t: (1, 2) }); }`, 22},
@@ -75,14 +68,12 @@ var reuseDifferentialCases = []struct {
 	// moves d's tuple pointer with the reused box (leak-only, no per-field balance).
 	{"own-param-funcupdate-tuple-carried", `struct T2 { id: i32, t: (i32, i32) } function f(own d: T2): i32 { let c = T2 { ...d, id: 10 }; return c.id + c.t.0 + c.t.1; } function main(): i32 { return f(T2 { id: 3, t: (1, 2) }); }`, 13},
 	{"own-param-funcupdate-tuple-carried-detector", `struct T2 { id: i32, t: (i32, i32) } function f(own d: T2): i32 { let c = T2 { ...d, id: 10 }; let s: i32 = c.id + c.t.0 + c.t.1; if (s != 13) { return 99; } return __rc_underflow_count(); } function main(): i32 { return f(T2 { id: 3, t: (1, 2) }); }`, 0},
-	// Family 2h, STRING and ENUM fields (#5342): an own-param donor needs no bind
-	// literal to prove its old values alias-free. Its box is sole-owned (moved in),
-	// and every enum-field share is counted at construction (the ExprStructLit enum
-	// arm and the base copy both retain), as is every string-field share of a type
-	// that ROUTES field reclaim — so the reuse arm's rc-gated release of the old
-	// value only decs a shared box. The cross donor (a full construction), the
-	// var-bound self-overwrite (`let c = T { ...own_d, f }`) and the return-position
-	// update (`return T { ...own_p, f }`) all fire.
+	// Family 2h, STRING and ENUM fields (#5342): an own-param donor's box is
+	// sole-owned (moved in) and every share of its string / enum field values
+	// is counted, so the reuse arm's rc-gated release of the old value only
+	// decs a shared box. The cross donor (a full construction), the var-bound
+	// self-overwrite (`let c = T { ...d, f }`) and the return-position update
+	// (`return T { ...p, f }`) of an `own` param all fire.
 	{"own-param-donor-string-field", `struct P { s: string, n: i32 } function f(own d: P): i32 { let u: i32 = d.n + d.s.len(); let c = P { s: "fresh-literal-payload", n: u + 20 }; return c.n + c.s.len(); } function main(): i32 { return f(P { s: "abcdefghij-longer", n: 3 }); }`, 61},
 	{"own-param-donor-string-field-detector", `struct P { s: string, n: i32 } function f(own d: P): i32 { let u: i32 = d.n + d.s.len(); let c = P { s: "fresh-literal-payload", n: u + 20 }; let s: i32 = c.n + c.s.len(); if (s != 61) { return 99; } return __rc_underflow_count(); } function main(): i32 { return f(P { s: "abcdefghij-longer", n: 3 }); }`, 0},
 	{"own-param-donor-enum-field", `enum E { A(i32), B(i32) } struct Q { e: E, n: i32 } function f(own d: Q): i32 { let u: i32 = d.n; match (d.e) { A(v) => { u = u + v; }, B(v) => { u = u + v * 2; } } let c = Q { e: B(5), n: u + 20 }; let r: i32 = c.n; match (c.e) { A(v) => { r = r + v; }, B(v) => { r = r + v * 3; } } return r; } function main(): i32 { return f(Q { e: A(4), n: 3 }); }`, 42},
@@ -93,7 +84,7 @@ var reuseDifferentialCases = []struct {
 	{"own-param-return-update-enum-field", `enum E { A(i32), B(i32) } struct Q { e: E, n: i32 } function bumpq(own p: Q): Q { return Q { ...p, n: p.n + 1 }; } function main(): i32 { let q: Q = bumpq(Q { e: A(4), n: 3 }); let r: i32 = q.n; match (q.e) { A(v) => { r = r + v; }, B(v) => { r = r + v * 3; } } if (r != 8) { return 99; } return __rc_underflow_count(); }`, 0},
 	{"own-param-donor-nested-detector", `struct Inner { a: i32, b: i32 } struct Outer { id: i32, inner: Inner } function bump(own d: Outer): i32 { let u: i32 = d.id + d.inner.a; let c = Outer { id: 5, inner: Inner { a: 7, b: 8 } }; let s: i32 = c.id + c.inner.a + c.inner.b + u; if (s != 23) { return 99; } return __rc_underflow_count(); } function main(): i32 { return bump(Outer { id: 1, inner: Inner { a: 2, b: 3 } }); }`, 0},
 	// Family 1g — OWN-PARAM base in the SELF-OVERWRITE family (#4356 slice 12):
-	// `let c = T { ...own_d, f: v }` functional-update of an owned param reuses
+	// `let c = T { ...d, f: v }` functional-update of an `own d` param reuses
 	// its box in place. Scalar override, array override (fresh literal), and a
 	// CARRIED array field (moves with the reused box).
 	{"own-param-selfoverwrite-scalar", `struct P { x: i32, y: i32 } function bump(own d: P): i32 { let c = P { ...d, x: 10 }; return c.x + c.y; } function main(): i32 { return bump(P { x: 3, y: 4 }); }`, 14},
@@ -106,9 +97,9 @@ var reuseDifferentialCases = []struct {
 	{"self-overwrite-callret-base-detector", `struct P { x: i32, y: i32 } function mk(a: i32): P { return P { x: a, y: a + 1 }; } function main(): i32 { let d: P = mk(3); let c: P = P { ...d, x: 10 }; let s: i32 = c.x + c.y; if (s != 14) { return 99; } return __rc_underflow_count(); }`, 0},
 	// Family 2c — cross-statement struct reuse with an ENUM field (#4356
 	// divergence 1): both the donor's and the recipient's enum values are
-	// fresh variant ctors (donor_enum_fields_fresh + the recipient walk), so
-	// the reuse arm's flat rc-gated dec of the donor's old enum box is
-	// alias-free and the recycled box solely owns the new payload box.
+	// fresh variant ctors, so the reuse arm's flat rc-gated dec of the donor's
+	// old enum box is alias-free and the recycled box solely owns the new
+	// payload box.
 	{"cross-struct-enum-field", `enum St { On(i32), Off } struct M { tag: i32, st: St } function main(): i32 { let d = M { tag: 1, st: On(5) }; let u: i32 = 0; match (d.st) { On(v) => { u = v + d.tag; }, Off => { u = d.tag; } } let c = M { tag: 2, st: Off }; let r: i32 = 0; match (c.st) { On(v) => { r = v; }, Off => { r = c.tag + u; } } return r; }`, 8},
 	{"cross-struct-enum-field-detector", `enum St { On(i32), Off } struct M { tag: i32, st: St } function main(): i32 { let d = M { tag: 1, st: On(5) }; let u: i32 = 0; match (d.st) { On(v) => { u = v + d.tag; }, Off => { u = d.tag; } } let c = M { tag: 2, st: Off }; let r: i32 = 0; match (c.st) { On(v) => { r = v; }, Off => { r = c.tag + u; } } if (r != 8) { return 99; } return __rc_underflow_count(); }`, 0},
 	// Family 2d — CROSS-TYPE class pairing (#4356 divergence 2): donor A and
@@ -181,37 +172,30 @@ var reuseDifferentialCases = []struct {
 	{"inarm-scalar", `enum E { V(i32, i32), W(i32, i32) } function go(): i32 { let x = V(3, 4); let y = match (x) { V(a, b) => W(a + 1, b + 1), W(c, d) => V(c, d) }; let r = match (y) { V(a, b) => a + b, W(c, d) => c + d }; return r; } function main(): i32 { return go(); }`, 9},
 	{"inarm-array-move", `enum E { V(i32, i32[]), W(i32, i32[]) } function go(): i32 { let x = V(3, [10, 20, 30]); let y = match (x) { V(a, xs) => W(a + 1, xs), W(b, ys) => V(b, ys) }; let r = 0; match (y) { V(a, xs) => { r = a + xs[0] + xs[1] + xs[2]; }, W(c, ds) => { r = c + ds[0] + ds[1] + ds[2]; } } return r; } function main(): i32 { return go(); }`, 64},
 	{"inarm-array-replace-detector", `enum E { V(i32, i32[]), W(i32, i32[]) } function go(): i32 { let x = V(3, [10, 20, 30]); let y = match (x) { V(a, xs) => W(a, [7, 8]), W(b, ys) => V(b, ys) }; let r = 0; match (y) { V(a, xs) => { r = a + xs[0] + xs[1]; }, W(c, ds) => { r = c + ds[0] + ds[1]; } } if (r != 18) { return 99; } return __rc_underflow_count(); } function main(): i32 { return go(); }`, 0},
-	// string[] fields (#4356 Delta B, rc-element arrays): admitted to the
-	// cross / self-overwrite families with element-fresh array-literal values
-	// gated on BOTH sides (strarr_lit_all_elems_fresh in donor_enum_fields_fresh
-	// / cross_recipient_fields_fresh / the override walk); the reuse arm
-	// deep-frees the superseded field via __fern_str_arr_free and the
-	// self-overwrite fresh arm rc-incs carried copies. Exit codes cross-checked
-	// against native -interp (6 / 4 / 9); detectors prove no over-release.
+	// string[] fields (#4356 Delta B, rc-element arrays) in the cross /
+	// self-overwrite families, with element-fresh array-literal values on both
+	// sides: the reuse arm deep-frees the superseded field and the
+	// self-overwrite arm retains carried copies. Exit codes cross-checked
+	// against bin/fern -interp (6 / 4 / 9); detectors prove no over-release.
 	{"strarr-field-cross", `struct P { tags: string[], n: i32 } function main(): i32 { let a: P = P { tags: ["x", "y"], n: 1 }; let s1: i32 = a.tags.len() + a.n; let b: P = P { tags: ["z"], n: 2 }; if (__rc_underflow_count() != 0) { return 99; } return s1 + b.tags.len() + b.n; }`, 6},
 	{"strarr-field-self-overwrite", `struct P { tags: string[], n: i32 } function main(): i32 { let d: P = P { tags: ["x", "y"], n: 1 }; let c: P = P { ...d, tags: ["z", "w", "v"] }; if (__rc_underflow_count() != 0) { return 99; } return c.tags.len() + c.n; }`, 4},
 	{"strarr-field-carried-copy", `struct P { tags: string[], n: i32 } function main(): i32 { let d: P = P { tags: ["x", "y"], n: 1 }; let c: P = P { ...d, n: 5 }; if (__rc_underflow_count() != 0) { return 99; } return c.tags.len() + c.n + c.tags[0].len() + c.tags[1].len(); }`, 9},
 	{"strarr-field-churn-detector", `struct P { tags: string[], n: i32 } function churn(n: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < n) { let d: P = P { tags: ["x", "y"], n: i }; let c: P = P { ...d, tags: ["z"] }; if (c.tags.len() + c.n != 1 + i) { bad = 1; } i = i + 1; } return bad; } function main(): i32 { let v: i32 = churn(2000000); if (v != 0) { return 90; } return __rc_underflow_count(); }`, 0},
-	// fn (closure) fields (#4356 Delta B, native's FuncType kind): admitted to
-	// the cross / self-overwrite / enum-donor families. The coarse "fn"
-	// spelling reads as enum-like, so the freshness walks test fn BEFORE their
-	// enum arm (fn_field_value_is_fresh: a lambda literal or its lifted
-	// __mkclo$ spelling) and the enum-like release arm's shallow rc-guarded
-	// dec IS the k_clo env-box release. A donor whose own closure field is
-	// CALLED stays conservatively excluded by the general escape walk (a
-	// method-shaped receiver use) — same as every other field kind. Exit
-	// codes cross-checked against native -interp (17 / 21 / 15 / 11).
+	// fn (closure) fields (#4356 Delta B) in the cross / self-overwrite /
+	// enum-donor families: a lambda-literal field value is fresh, and the old
+	// closure's release is the shallow rc-guarded dec of its env box. A donor
+	// whose own closure field is CALLED is not reused — same as every other
+	// field kind. Exit codes cross-checked against bin/fern -interp
+	// (17 / 21 / 15 / 11).
 	{"fn-field-cross", `struct H { f: (i32) => i32, id: i32 } function main(): i32 { let a: H = H { f: (x: i32): i32 => { return x + 3; }, id: 1 }; let s1: i32 = a.id + 4; let b: H = H { f: (x: i32): i32 => { return x * 2; }, id: 2 }; return s1 + b.f(5) + b.id; }`, 17},
 	{"fn-field-self-overwrite", `struct H { f: (i32) => i32, id: i32 } function main(): i32 { let d: H = H { f: (x: i32): i32 => { return x + 3; }, id: 1 }; let c: H = H { ...d, f: (x: i32): i32 => { return x * 4; } }; if (__rc_underflow_count() != 0) { return 99; } return c.f(5) + c.id; }`, 21},
 	{"fn-field-carried-copy", `struct H { f: (i32) => i32, id: i32 } function main(): i32 { let d: H = H { f: (x: i32): i32 => { return x + 3; }, id: 1 }; let c: H = H { ...d, id: 7 }; if (__rc_underflow_count() != 0) { return 99; } return c.f(5) + c.id; }`, 15},
 	{"fn-field-churn-detector", `struct H { f: (i32) => i32, id: i32 } function churn(n: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < n) { let d: H = H { f: (x: i32): i32 => { return x + 1; }, id: i }; let c: H = H { ...d, f: (x: i32): i32 => { return x + 2; } }; if (c.f(10) + c.id != 12 + i) { bad = 1; } i = i + 1; } return bad; } function main(): i32 { let v: i32 = churn(2000000); if (v != 0) { return 90; } return __rc_underflow_count(); }`, 0},
 	{"enum-donor-fn-field-recipient", `enum D2 { P(i32, i32), Q } struct M { tag: i32, g: (i32) => i32 } function main(): i32 { let x: D2 = P(3, 4); let u: i32 = 0; match (x) { P(a, b) => { u = a + b; }, Q => { u = 0; } } let y = M { tag: 2, g: (q: i32): i32 => { return q + 1; } }; return y.g(1) + y.tag + u; }`, 11},
-	// struct[] / enum[] box-element-array fields (#4356 Delta B, the last
-	// rc-element-array kind): admitted with element-fresh array-literal
-	// values on both sides (boxarr_lit_all_elems_fresh) and released
-	// per-element via __fern_arrarr_free; struct[] restricted to
-	// scalar-field element types (nothing under the box to leak). Exit
-	// codes cross-checked against native -interp (15 / 0 / 13 / 17 / 16).
+	// struct[] / enum[] box-element-array fields (#4356 Delta B): element-fresh
+	// array-literal values on both sides, released per element; struct[] is
+	// restricted to scalar-field element types (nothing under the box to leak).
+	// Exit codes cross-checked against bin/fern -interp (15 / 0 / 13 / 17 / 16).
 	{"boxarr-struct-cross", `struct In { k: i32, n: i32 } struct W { items: In[], id: i32 } function main(): i32 { let a: W = W { items: [In { k: 1, n: 2 }, In { k: 3, n: 4 }], id: 1 }; let s1: i32 = a.items.len() + a.items[1].k + a.id; let b: W = W { items: [In { k: 5, n: 6 }], id: 2 }; if (__rc_underflow_count() != 0) { return 99; } return s1 + b.items.len() + b.items[0].n + b.id; }`, 15},
 	{"boxarr-struct-churn-detector", `struct In { k: i32, n: i32 } struct W { items: In[], id: i32 } function churn(n: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < n) { let a: W = W { items: [In { k: i, n: 2 }, In { k: 3, n: 4 }], id: i }; let t: i32 = a.items.len() + a.items[0].k + a.id; let b: W = W { items: [In { k: 5, n: i }], id: i + 1 }; if (t != 2 + i + i) { bad = 1; } if (b.items.len() + b.items[0].n + b.id != 2 + i + i) { bad = 1; } i = i + 1; } return bad; } function main(): i32 { let v: i32 = churn(1000000); if (v != 0) { return 90; } return __rc_underflow_count(); }`, 0},
 	{"boxarr-enum-cross", `enum St { On(i32), Off } struct W { sts: St[], id: i32 } function main(): i32 { let a: W = W { sts: [On(3), Off], id: 1 }; let s1: i32 = a.sts.len() + a.id; let b: W = W { sts: [On(7)], id: 2 }; let s2: i32 = b.sts.len() + b.id; match (b.sts[0]) { On(v) => { s2 = s2 + v; }, Off => {} } if (__rc_underflow_count() != 0) { return 99; } return s1 + s2; }`, 13},
@@ -318,12 +302,10 @@ func TestSelfHostStrarrReuseExclusionX86_64(t *testing.T) {
 		{"aliased-fn-donor-field", `struct H { f: (i32) => i32, id: i32 } function main(): i32 { let g = (x: i32): i32 => { return x * 2; }; let a: H = H { f: g, id: 1 }; let s1: i32 = a.f(5) + a.id; let b: H = H { f: (x: i32): i32 => { return x + 1; }, id: 2 }; let live: i32 = g(3); if (__rc_underflow_count() != 0) { return 99; } return s1 + b.f(5) + b.id + live; }`, 25},
 		{"aliased-fn-override", `struct H { f: (i32) => i32, id: i32 } function main(): i32 { let g = (x: i32): i32 => { return x * 2; }; let d: H = H { f: (x: i32): i32 => { return x + 1; }, id: 1 }; let c: H = H { ...d, f: g, id: 2 }; let live: i32 = g(3); if (__rc_underflow_count() != 0) { return 99; } return c.f(5) + c.id + live; }`, 18},
 		{"aliased-boxarr-donor-field", `struct In { k: i32, n: i32 } struct W { items: In[], id: i32 } function main(): i32 { let xs: In[] = [In { k: 1, n: 2 }]; let a: W = W { items: xs, id: 1 }; let s1: i32 = a.items.len() + a.id; let b: W = W { items: [In { k: 5, n: 6 }], id: 2 }; let live: i32 = xs[0].k + xs[0].n; if (__rc_underflow_count() != 0) { return 99; } return s1 + b.items.len() + b.id + live; }`, 8},
-		// #5342 own-param string / enum admissions: a bare local as the string
-		// override is an uncounted alias (cross_recipient_fields_fresh refuses),
-		// and a string-fielded type that does not ROUTE field reclaim (`get`
-		// returns `x.s`, which the routing scan reads as an unsafe read of every
-		// `s` field) took no retain at the caller's construction, so no family
-		// may free its old value.
+		// #5342 own-param string / enum shapes that must keep the old value
+		// alive: a bare local as the string override (an uncounted alias the
+		// program reads again), and a string-fielded type whose `get` returns
+		// `x.s`. An over-release shows as a wrong answer or an underflow.
 		{"aliased-string-own-override", `struct P { s: string, n: i32 } function f(own d: P): i32 { let t: string = "aliased-local-payload"; let c = P { ...d, s: t }; return c.n + c.s.len() + t.len(); } function main(): i32 { if (f(P { s: "abcdefghij-longer", n: 3 }) != 45) { return 98; } return __rc_underflow_count(); }`, 0},
 		{"unrouted-string-own-donor", `struct P { s: string, n: i32 } function get(x: P): string { return x.s; } function f(own d: P): i32 { let u: i32 = d.n; let c = P { ...d, s: "override-literal-payload" }; return c.n + c.s.len() + u; } function main(): i32 { let h: P = P { s: "abcdefghij-longer", n: 3 }; let r: i32 = f(P { s: h.s, n: 4 }); let g: string = get(h); if (r + g.len() != 49) { return 98; } return __rc_underflow_count(); }`, 0},
 		{"rcfield-element-type-excluded", `struct In2 { xs: i32[], k: i32 } struct W { items: In2[], id: i32 } function main(): i32 { let a: W = W { items: [In2 { xs: [1, 2], k: 3 }], id: 1 }; let s1: i32 = a.items.len() + a.items[0].k + a.id; let b: W = W { items: [In2 { xs: [4], k: 5 }], id: 2 }; if (__rc_underflow_count() != 0) { return 99; } return s1 + b.items.len() + b.items[0].xs[0] + b.id; }`, 12},

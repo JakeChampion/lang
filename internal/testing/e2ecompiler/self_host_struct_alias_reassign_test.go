@@ -8,49 +8,28 @@ import (
 	"testing"
 )
 
-// --- A struct local reassigned from an alias reclaims nothing ----------------
+// --- A struct local reassigned from an alias is reclaimed --------------------
 //
-// `let p: P = P { xs: [7,8] }; let keep: P = P { xs: [0] }; keep = p;` freed NOT
-// ONE of its four blocks — 80 allocs / 0 frees over 20 rounds against native's
-// 80/80. The BIND form (`let keep: P = p;`) has been at parity all along, so the
-// split is REASSIGN vs BIND, not struct-vs-anything.
+// `let p: P = P { xs: [7,8] }; let keep: P = P { xs: [0] }; keep = p;` must free
+// all four of its blocks, exactly as the BIND form (`let keep: P = p;`) does.
+// Unreclaimed it reads 80 allocs / 0 frees over 20 rounds.
 //
-// Two gates refused it, each deliberately and each with its reason written down:
+// The reassign retains the shared box, so `keep` and `p` each own a count.
+// Two things make that balance:
 //
-//   - reassigned_from_alias: after `keep = p` the slot's rc fields are BORROWS of
-//     memory `p` still owns, so reclaiming would free the source's live fields
-//     (#3425 stage-2).
-//   - struct_bare_assigned_src: `p` itself cannot be released either, because "a
-//     plain assignment retains nothing on the self-host, so the assignee holds the
-//     box uncounted". Its header names the precondition for lifting it: "family
-//     knowledge UNTIL ASSIGNMENTS CARRY THE CO-EXTENSIVE RETAIN."
+//  1. The release is the rc-gated field walk. A reassigned slot has two
+//     ownership regimes on different paths — its own fresh init OWNS its field
+//     buffers, the aliased value SHARES the source's — so the decision is made
+//     per VALUE at runtime: whichever owner finds rc 1 does the deep walk.
 //
-// lower_stmt_assign now carries that retain, so both premises are gone. The pair
-// is kept co-extensive by construction: the static pass emits an "ALIASSRC:" row
-// for a forgiven source, and the retain fires iff that row is present — a source
-// the escape gate rejects earns no row, so no uncounted box is ever released.
+//  2. The retain is emitted where EVERY return path passes, right after the RHS
+//     is lowered. A release without it gives exact count parity — 80/80 — with
+//     exit 99; only __rc_underflow_count() reports it.
 //
-// TWO THINGS THIS GOT WRONG FIRST, both worth keeping:
-//
-//  1. The release must be SINKSHARE: (the rc-gated field walk), not NODEEP:. A
-//     reassigned slot has two ownership regimes on different paths — its own fresh
-//     init OWNS its field buffers, the aliased value SHARES the source's — and
-//     NODEEP: is per-slot so it describes only one. The rc gate decides per VALUE
-//     at runtime: whichever owner finds rc 1 does the deep walk.
-//
-//  2. The retain has to be emitted where EVERY return path passes, right after the
-//     RHS is lowered — not via emit_arr_store's alias_inc. The struct classes
-//     return earlier (emit_field_reclaim_store and the snapshot paths take no
-//     alias_inc at all), so routing it through emit_arr_store silently dropped it
-//     while the credit was still granted. That produced exact native COUNT parity
-//     — 80/80 — with exit 99. Only __rc_underflow_count() reported it.
-//
-// The string limb this slice left open is closed by the follow-up, and its gap row
-// left with it — self_host_str_alias_reassign_test.go owns that shape now, with the
+// The string shape lives in self_host_str_alias_reassign_test.go, with the
 // accumulator and fresh-RHS controls the string class needs.
 //
-// Every want below was confirmed against the native x86-64 backend. Exit 99 is
-// reserved for __rc_underflow_count().
+// Exit 99 is reserved for __rc_underflow_count().
 //
 // Each P takes its constant array through `id`, which hides the constant from the static-box plan,
 // so the P is allocated rather than placed as a static box.
@@ -153,9 +132,8 @@ function round(i: i32): i32 {
 			want: 9, allocs: 40, frees: 40,
 		},
 		{
-			// The string-builder CONSUME-REBIND (`s = s + part`). A different path
-			// entirely — emit_str_reclaim_store, whose RHS is a fresh box and which
-			// deliberately emits no inc. Nothing here may disturb it. One box per
+			// The string-builder CONSUME-REBIND (`s = s + part`): its RHS is a
+			// fresh box, so it takes no retain. Nothing here may disturb it. One box per
 			// round: the first append onto the empty literal allocates it and the
 			// other three grow it in place (#10960).
 			name: "string_accumulator_unchanged",

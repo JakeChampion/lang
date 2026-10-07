@@ -7,10 +7,9 @@ import (
 )
 
 // An array returned through a function value takes its element width from
-// the value's declared result (#9496). iter.flat_map at f64 walked the
-// lambda's f64[] result at the 4-byte stride on the wasm AST lowering, which
-// pushed an i32 into an f64 push (an invalid module once the clone was fully
-// concrete, a wrong answer before). Each element kind is here, and a user
+// the value's declared result (#9496): iter.flat_map at f64 must walk the
+// lambda's f64[] result at the 8-byte stride, or wasm pushes an i32 into an
+// f64 push and the module is invalid. Each element kind is here, and a user
 // function iterating a `(i32) => f64[]` result directly.
 const fnValueArrayResultSrc = `import "core/iter" as iter;
 function sum_through(f: (i32) => f64[], n: i32): f64 {

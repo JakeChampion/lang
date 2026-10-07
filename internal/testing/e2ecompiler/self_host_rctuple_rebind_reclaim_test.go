@@ -91,7 +91,7 @@ func TestSelfHostRcTupleRebindHazardsX86_64(t *testing.T) {
 		{
 			// The rc element is extracted whole into a local that outlives the
 			// rebind. Deep-dropping the old chain would free the buffer `keep`
-			// still points at — rctuple_payload_escapes is what refuses this.
+			// still points at.
 			name: "rc_element_extracted_to_local",
 			src: `function round(i: i32): i32 {
     let p: (i32, i32[]) = (i, [i, i + 1]);

@@ -287,12 +287,11 @@ var interpProgs = []struct {
 	{"cast-u8-wrap", "function main(): i32 { let x = 255; return ((x + 1) as u8) as i32; }", 0},
 	{"cast-u8-inrange", "function main(): i32 { let x = 200; return (x as u8) as i32; }", 200},
 
-	// Builtin `.len()` / `.append()` methods: the interp special-cased the
-	// bare `len(x)` function but not the method forms the native compiler
-	// recognises without imports — `string.len()`, `array.len()`, and the
-	// immutable `array.append(x)`. `.len()` on both string and array, and
-	// append leaves the original array untouched (copy-loop, so the fresh
-	// buffer can't alias the shared receiver binding).
+	// Builtin `.len()` / `.append()` methods the compiler recognises without
+	// imports — `string.len()`, `array.len()`, and the immutable
+	// `array.append(x)`. `.len()` on both string and array, and append leaves
+	// the original array untouched (copy-loop, so the fresh buffer can't alias
+	// the shared receiver binding).
 	{"str-len-method", "function main(): i32 { return \"hello\".len() as i32; }", 5},
 	{"arr-len-method", "function main(): i32 { let a: i32[] = [1, 2, 3]; return a.len() as i32; }", 3},
 	{"arr-len-empty", "function main(): i32 { let a: i32[] = []; return a.len() as i32; }", 0},
@@ -301,11 +300,8 @@ var interpProgs = []struct {
 	{"arr-append-immutable", "function main(): i32 { let a: i32[] = [1, 2]; let b: i32[] = a.append(9); return a.len() as i32 * 10 + b.len() as i32; }", 23},
 
 	// Top-level `const` references: the parser desugars `const N = expr;`
-	// into a zero-arg function `N()` and the native compiler lowers a bare
-	// `N` reference to a call. The interp's ExprIdent handler only did an
-	// env lookup, so a bare const reference errored as an undefined
-	// identifier. Now a bare ident with no local binding that names a
-	// zero-arg, non-method function evaluates as a nullary call.
+	// into a zero-arg function `N()`, so a bare ident with no local binding
+	// that names a zero-arg, non-method function evaluates as a nullary call.
 	{"const-ref", "const N: i32 = 42; function main(): i32 { return N; }", 42},
 	{"const-in-expr", "const N: i32 = 10; function main(): i32 { return N + N * 2; }", 30},
 	{"const-two", "const A: i32 = 3; const B: i32 = 4; function main(): i32 { return A * B; }", 12},
@@ -357,16 +353,13 @@ var interpProgs = []struct {
 	// i64 values beyond i32 range. The interp's VInt is a 32-bit slot, so an
 	// i64 literal / arithmetic result that exceeds i32 would truncate
 	// (`5000000000` wraps). A second integer variant, VInt64, holds
-	// wide values as two i32 halves (a raw i64 union payload trips a
-	// native-backend drop fault; two i32 fields drop cleanly). A declared
+	// wide values as two i32 halves. A declared
 	// i64 type at a var/param binding promotes a compact value to VInt64 so
 	// arithmetic takes the 64-bit path even when operands fit i32
 	// (100000 * 100000 must not overflow), and an i64 operation always
 	// yields a wide result so a running accumulator keeps its width; `as
 	// i32` narrows back. Division/mod of a negative-low-word value exercises
-	// the unpack-mask path (an inline `& 4294967295` i64 literal is
-	// mis-emitted by the native backend as a sign-extended 32-bit immediate,
-	// so the mask is held in a local).
+	// the unpack-mask path.
 	{"i64-literal-div", "function main(): i32 { let x: i64 = 5000000000; return (x / 1000000000) as i32; }", 5},
 	{"i64-mul-fits-operands", "function main(): i32 { let x: i64 = 100000; let y: i64 = x * 100000; return (y / 1000000000) as i32; }", 10},
 	{"i64-accumulator", "function main(): i32 { let s: i64 = 0; let i: i32 = 0; while (i < 5) { s = s + 1000000000; i = i + 1; } return (s / 1000000000) as i32; }", 5},

@@ -117,20 +117,16 @@ func TestSelfHostIRPerModuleDriver(t *testing.T) {
 	}
 }
 
-// TestSelfHostIRPerModuleCrossStruct guards the per-module eligibility-gate
-// VIEW fix (#3451): the gate (all_eligible_view_base
-// → eligible_core_known_main_view) must lower each function against the WHOLE-
-// PROGRAM struct view (all_structs), exactly as emit_module_funcs does — not the
-// module's own structs. Without it, a module that touches a SIBLING module's
-// struct LAYOUT fails the gate and bails even though the per-module emit
-// (which already lowers against all_structs) would succeed.
+// TestSelfHostIRPerModuleCrossStruct pins that a per-module unit lowers each
+// function against the WHOLE-PROGRAM struct view (all_structs), not the module's
+// own structs (#3451), so a module that touches a SIBLING module's struct
+// LAYOUT still lowers.
 //
 // The program is the minimal trigger: `point` defines a struct + constructor,
 // the entry imports it and reads an imported-struct FIELD (`p.x + p.y`). Lowering
 // the entry's `main` needs point.Point's field layout, which lives in the point
-// module — present only in the whole-program struct view. Pre-fix, the entry unit
-// reported "module not IR-eligible" and the build could not proceed; post-fix
-// every unit is eligible, the units link, and the binary exits 3 + 4 = 7.
+// module — present only in the whole-program struct view. Every unit must
+// lower, the units link, and the binary exits 3 + 4 = 7.
 func TestSelfHostIRPerModuleCrossStruct(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

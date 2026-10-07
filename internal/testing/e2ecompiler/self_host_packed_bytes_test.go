@@ -11,12 +11,10 @@ import (
 )
 
 // A u8[] the typed lowering builds is packed a byte an element on every
-// backend (#9634, #10987), where it had an 8-byte slot per byte on the
-// register backends and a 4-byte one on wasm: every element op, push, slice
-// and allocation carries the byte stride, and each runtime helper that makes
-// or reads a u8[] works on the packed bytes. Each program below runs on all
-// three targets and must match the native compiler's output with the heap
-// balanced.
+// backend (#9634, #10987): every element op, push, slice and allocation
+// carries the byte stride, and each runtime helper that makes or reads a u8[]
+// works on the packed bytes. Each program below runs on all three targets and
+// must print its expected output with the heap balanced.
 
 // packedBytesElementsSrc: literals, pushes past a grow, `.with`, slices,
 // string bytes both ways, __alloc_u8, random_bytes, a digest over a string

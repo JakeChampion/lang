@@ -8,18 +8,12 @@ import (
 
 // --- A closure in a struct field must not leak per round (#6443) ---
 //
-// Native released a closure FIELD with the bare `__fern_rc_dec` fall-through
-// in `appendChildDrop`, which zeroes the pair's count and stops: pair block,
-// env block and every rc-tracked capture stranded, three blocks per instance.
-// The fix routes container-held closures through the same pointer-dispatched
-// release the array-of-closure path already used.
+// A closure FIELD is released with its record: the pair block, the env block
+// and every rc-tracked capture, not just the pair's count.
 //
-// This is the self-host half. It asserts the DELTA between a provider table
-// whose record carries a closure field and the identical table with a plain
-// `i32` in that slot, at two round counts — the self-host's Perceus port is
-// still in progress (docs/RC-PERCEUS-SELF-HOST-PORT.md), so an absolute byte
-// figure here would be a budget for the rest of the port rather than a gate on
-// this shape. What must hold is that the closure field costs the same per
+// This asserts the DELTA between a provider table whose record carries a
+// closure field and the identical table with a plain `i32` in that slot, at two
+// round counts. What must hold is that the closure field costs the same per
 // round at 100 rounds as at 200, i.e. nothing accumulates.
 func closureFieldChurnSrc(rounds int, closureField bool) string {
 	field, value, call := "k: i32", "k: n", "ps[j].k"
@@ -51,13 +45,9 @@ function main(): i32 {
 }
 
 func TestSelfHostClosureFieldReclaimX86_64(t *testing.T) {
-	// The self-host had its OWN version of this leak, and it was a different
-	// one (#6461): the clofld admission was granted and the `k_clo` arm was
-	// ready, but a single `fn` field took the whole `P[]` local out of the
-	// append-built struct-array reclaim class, so nothing under it — element
-	// boxes, strings, closures — was ever freed. Both halves are closed now,
-	// and the probe is not merely flat in the delta: `allocs == frees`,
-	// `live_bytes = 0`.
+	// A single `fn` field must not take the whole `P[]` local out of the
+	// append-built struct-array reclaim (#6461): the element boxes, strings
+	// and closures under it are all released.
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/asm_load_run.fern")

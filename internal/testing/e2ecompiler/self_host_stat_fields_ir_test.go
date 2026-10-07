@@ -74,8 +74,8 @@ func selfHostStatFieldsSource(file, link string, euid, egid int) string {
 `, file, link, selfHostProbeMtime, euid, egid)
 }
 
-// TestSelfHostStatFieldsIR is the self-host half of the same gate the native
-// backends carry: a known file read through the whole `stat(2)` record.
+// TestSelfHostStatFieldsIR reads a known file through the whole `stat(2)`
+// record.
 //
 // The self-host builds FileStat from a generated Fern body
 // (`asmcore.rt_src_stat`): `struct statx` read by `statx_project_src` on Linux,

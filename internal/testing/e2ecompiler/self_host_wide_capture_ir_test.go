@@ -14,24 +14,20 @@ import (
 //
 // The closure env box is an i32[], so cap_slot_ok takes pointer-shaped captures
 // (every heap and code address in the -no-pie -static binary is 32-bit) but not
-// a wide scalar. make_clo_func declined the whole closure, and since the AST
-// emitters were deleted (#3457) that decline is a hard compile error: a closure
-// over a duration, a file size or a timestamp did not compile at all.
+// a wide scalar, and make_clo_func would decline the whole closure: a closure
+// over a duration, a file size or a timestamp would not compile at all.
 //
 // box_wide_captures snapshots each wide capture into a 1-element cell before the
 // statement that builds the closure and re-binds the name inside the lambda
 // (`let $wc$n: i64[] = [n];` … `let n: i64 = $wc$n[0];`), so what the lift passes
 // see is an i64[] — pointer-shaped, which cap_slot_ok already accepted.
 //
-// Each case asserts the `-decide` route is "ir" AND the answer, because a
-// regression here would not be silent in the same way as most: with nothing
-// behind the IR path, the module fails to build. The route assertion is what
-// distinguishes "lowered on the IR path" from "lowered some other way".
+// Each case asserts the `-decide` route is "ir" AND the answer.
 //
-// The i32 controls are the same programs with a narrow capture — they lowered
-// before this change and must keep lowering, which is what isolates the width as
-// the variable. The direct-call cases guard the other direction: a lambda that
-// never reaches the env box must not be cellared.
+// The i32 controls are the same programs with a narrow capture — they must keep
+// lowering, which is what isolates the width as the variable. The direct-call
+// cases guard the other direction: a lambda that never reaches the env box must
+// not be cellared.
 func TestSelfHostWideCaptureIR(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

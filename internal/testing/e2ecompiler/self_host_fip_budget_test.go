@@ -10,25 +10,13 @@ import (
 )
 
 // The self-host COMPILE PATH enforces the `fip` / `fbip` allocation budget
-// (#9623).
+// (#9623): a claim is checked against what the lowering actually emitted, not
+// just for SHAPE (E053), so an un-paired construction is refused with E068.
 //
-// `irfipverify.fern` has implemented E068 since #6639, and until now only the
-// diagnostic drivers called it — `fern.fern` ran no IR verification at all. So
-// a claim the self-host accepted had been checked for SHAPE (E053) and never
-// for what the lowering actually emitted, and an un-paired construction
-// compiled silently where native reported E068. That is a missing diagnostic
-// rather than a miscompile, which is the right severity to fix it at and the
-// wrong one to leave it at.
-//
-// #9602 is what made it pressing: admitting the constructor shape in every
-// tier means bare `fip` now leans on this check too, exactly as `fbip` always
-// has.
-//
-// The check rides `ircore.lower_gated`, the fused gate every whole-program
-// emit path already runs, so it reads the very lowering the emit will use and
-// costs no second pass. A function carrying neither annotation returns before
-// a single op is examined, which is nearly every function in nearly every
-// module.
+// The check (`ircore.check_fip_claims`, over `irfipverify.fern`) runs from
+// each backend's emit entry on the bodies the emit reads, so it costs no
+// second pass. A function carrying neither annotation returns before a single
+// op is examined.
 const (
 	fipUnpairedFbipSrc = `struct State { count: i32, total: i64 }
 fbip function make(n: i32): State {
@@ -177,10 +165,9 @@ func TestSelfHostCompilePathEnforcesFipBudget(t *testing.T) {
 	}
 }
 
-// The per-unit and per-module emit paths re-lower outside `lower_gated`, so
-// they held a claim to no budget at all until the check moved to the emit
-// entries (#9655). These are the drivers the staged and bootstrap flows use,
-// which is exactly where an unverified claim would go unnoticed.
+// The per-unit and per-module emit entries enforce the budget themselves
+// (#9655). These are the drivers the staged and bootstrap flows use, which is
+// exactly where an unverified claim would go unnoticed.
 func TestSelfHostPerUnitEmitEnforcesFipBudget(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -209,11 +196,10 @@ func TestSelfHostPerUnitEmitEnforcesFipBudget(t *testing.T) {
 }
 
 // A routing probe lowers a module only to answer a question about it, so it
-// must not be killed by a claim it was merely asked about. Hooking the check
-// into `lower_all_gated` made `wasm_run -decide` exit(1) on a module it was
-// asked to describe, where the same driver's emit path is what should refuse
-// it (#9655). Both halves are asserted here: one driver, one program, two
-// invocations that must answer differently.
+// must not be killed by a claim it was merely asked about: `wasm_run -decide`
+// answers for a module that the same driver's emit path refuses (#9655). Both
+// halves are asserted here: one driver, one program, two invocations that must
+// answer differently.
 func TestSelfHostRoutingProbeAnswersWhereEmitRefuses(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

@@ -10,18 +10,16 @@ import (
 
 // TestSelfHostFnKeyEnumIRX86_64 pins a USER generic enum instantiated at a fn
 // type argument (`Opt[(i32) => i32]`): a closure stored in the enum payload,
-// matched out through an annotated scrutinee, and CALLED. Before #5298 the
-// monomorphiser refused a composite (fn) type-arg key (ge_targ_mangle returned
-// "" for a `(...) => R` spelling), so `Opt` stayed generic with an erased `T`
-// payload; the payload call then dispatched the closure BOX pointer as code and
-// SIGSEGV'd on both the IR and AST paths. Now ge_targ_mangle sanitises the fn
-// arg to a symbol-safe key, `Insts.iargs` threads the ORIGINAL spelling so the
-// clone's field gets the real fn type (coarsened to "fn" + fn_ret, the parser's
-// shape), and the IR match-arm binding marks it a closure local — so the chain
-// computes the native value on the IR path (`.Lssa_` asserted).
+// matched out through an annotated scrutinee, and CALLED (#5298). ge_targ_mangle
+// sanitises the fn arg to a symbol-safe key, `Insts.iargs` threads the ORIGINAL
+// spelling so the clone's field gets the real fn type (coarsened to "fn" +
+// fn_ret, the parser's shape), and the IR match-arm binding marks it a closure
+// local — so the chain computes on the IR path (`.Lssa_` asserted). Left
+// generic with an erased `T` payload, the call dispatches the closure BOX
+// pointer as code and SIGSEGVs.
 //
 // The INLINE construct-and-match shape (`match (Has(f))`, no annotation) is
-// covered too (#5298 follow-up): the StmtVar lambda encoding carries the full
+// covered too: the StmtVar lambda encoding carries the full
 // fn spelling, me_infer_variant_key sanitises an inferred fn key to the same
 // token the annotated path uses (shared clone), and me_scrutinee_type types
 // the variant construction so the arms rewrite and the payload binds as a

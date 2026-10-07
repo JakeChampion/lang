@@ -9,12 +9,10 @@ import (
 	"testing"
 )
 
-// #8224: a struct-FIELD-receiver `.append` used to clone the whole array before
-// growing the clone, so `S { ...s, xs: s.xs.append(v) }` — the state-threading
-// shape every self-host emitter is built out of — was O(n) per append and O(n^2)
-// per built array. field_append_inplace_sites_of now proves, per function, which
-// of those appends no later read can observe and lets them grow the field's own
-// buffer.
+// #8224: a struct-FIELD-receiver `.append` that no later read can observe grows
+// the field's own buffer in place instead of cloning the array, so
+// `S { ...s, xs: s.xs.append(v) }` — the state-threading shape every self-host
+// emitter is built out of — is not O(n) per append and O(n^2) per built array.
 //
 // The two halves are only sound together, so both are pinned here. The CALLEE
 // half is the admission (the shape cases below). The CALLER half is the #4873
@@ -141,7 +139,7 @@ function main(): i32 {
 	// visible rather than merely wrong — it re-clones `next` at cap == len, so
 	// the next append reallocs `next` while `rows` still has spare capacity and
 	// grows in place, and the container is left with two arrays one entry apart
-	// (#8224; the shape was the AST lowering's own `let aug = sg.struct_ret_fns`).
+	// (#8224).
 	{"field-read-alias-refuses-exemption", `
 struct Reg { rows: i32[], next: i32[] }
 struct Sigs { reg: Reg, tag: i32 }
@@ -225,7 +223,7 @@ function main(): i32 {
 	// A LOCAL root (#8556) with a SECOND NAME: `let keep = a` is a dead-alias
 	// bind that takes no count, so `__fern_rc_is_unique` would read 1 with two
 	// live names and the move-out would null a field `keep` still reads.
-	// fai_captured_roots is what refuses it, and the clone must stay.
+	// The admission must refuse a root with a second name; the clone stays.
 	{"local-root-second-name-refused", `
 struct St { ops: i32[], n: i32 }
 function main(): i32 {
@@ -397,16 +395,10 @@ function main(): i32 {
     for v in r.ops { t = t + v; }
     return r.ops.len() * 10 + (t % 97) + r.ctrl;
 }`},
-	// An `own` container root: the callee, not the caller, holds the box. What
-	// lets the grown buffer travel out uncounted is #8274's move-out — the
-	// identity arm stores NULL into the source field, so the `own` param's exit
-	// OWNREL walk finds nothing to free. It is NOT that parameters are exempt
-	// from the sweep: the params loop runs before the from-n_params loops and
-	// does emit a deep field drop under the box's rc==1 gate (#8254).
-	//
-	// This case's own route is the SPREAD base, which `moves_fields_expr` marks
-	// moved, so its row is box-only `OWNRELB:` — it does not exercise the deep
-	// walk. `own_self_reassign_move` in conformance is the case that does.
+	// An `own` container root: the callee, not the caller, holds the box, and
+	// the grown buffer travels out through the SPREAD base, which moves the
+	// fields out of `s`. The conformance case `own_self_reassign_move` covers
+	// the deep field drop of an `own` parameter that keeps its fields.
 	{"own-param-container", `
 struct St { ops: i32[], ctrl: i32 }
 function bump(own s: St, v: i32): St { return St { ...s, ops: s.ops.append(v), ctrl: s.ctrl + 1 }; }
@@ -418,9 +410,9 @@ function main(): i32 {
     for v in a.ops { t = t + v; }
     return a.ops.len() + a.ctrl + (t % 29);
 }`},
-	// A struct-ELEMENT field, whose reclaim walks each element box before the
-	// buffer (__field_reclaim_<T>'s arrarr_free arm). The cow compare that skips
-	// a pointer-equal field is what keeps that walk off the grown buffer.
+	// A struct-ELEMENT field, whose release walks each element box before the
+	// buffer. The grown buffer now belongs to the new value, so releasing the
+	// superseded one must leave that buffer and its elements alone.
 	{"struct-array-field", `
 struct Row { k: i32, v: i32 }
 struct Tab { rows: Row[], n: i32 }
@@ -480,9 +472,8 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return r.ops[0].x * 27 + r.ops[1].x * 9 + r.ops[2].x * 3 + r.ops[3].x;
 }`},
-	// An OWN parameter is released by the callee's own exit sweep, deep
-	// (own_struct_param_release_rows_of). The conformance case
-	// own_self_reassign_move hung on this shape.
+	// An OWN parameter is released, deep, by the callee's own exit sweep.
+	// The conformance case own_self_reassign_move hung on this shape.
 	{"own-param-exit-release", `
 struct P { x: i32 }
 struct S { ops: P[], n: i32 }
@@ -729,8 +720,8 @@ function main(): i32 {
 	// shared-root shapes are what make the widening gated rather than merely
 	// tested, so they come first.
 	//
-	// The measured shape (asm_ir.peep_set): a struct-element window threaded
-	// through a spread literal that overrides the stored field.
+	// The measured shape: a struct-element window threaded through a spread
+	// literal that overrides the stored field.
 	{"with-ptr-elem-threading", `
 struct L { v: i32 }
 struct W { w: L[], n: i32 }
@@ -1079,16 +1070,12 @@ function main(): i32 {
 	t.Fatalf("no bracket release in __fn_outer; body:\n%s", body)
 }
 
-// The in-place grow's result must be UNCOUNTED (#8254). The first cut retained
-// it on the identity arm — where arr_push handed the source container's own
-// buffer straight back — reasoning that the literal the value feeds becomes a
-// second owner. Nothing ever decremented that retain: `__field_reclaim_<T>`'s
-// array arm cow-SKIPS a field pointer-equal in old and new, which is exactly
-// the shape an in-place grow produces. So the buffer sat at rc >= 2 for the
-// rest of its life, the NEXT append through the field took `__fern_arr_push`'s
-// un-share copy, and the buffer that copy abandoned was reclaimed by nothing —
-// one leaked buffer per grow, which is quadratic over a threaded accumulator.
-// The whole-compiler emit paid 11.9 GB peak RSS for it against 8.0 GB without.
+// The in-place grow's result must be UNCOUNTED (#8254). On the identity arm
+// arr_push hands the source container's own buffer straight back, and nothing
+// releases a retain taken there: the buffer sits at rc >= 2 for the rest of its
+// life, the NEXT append through the field takes `__fern_arr_push`'s un-share
+// copy, and the buffer that copy abandons is reclaimed by nothing — one leaked
+// buffer per grow, which is quadratic over a threaded accumulator.
 //
 // Answers cannot see this: both forms compute the same array. `__heap_bump_bytes()`
 // can — it is the bump allocator's high-water mark, i.e. everything the freelist

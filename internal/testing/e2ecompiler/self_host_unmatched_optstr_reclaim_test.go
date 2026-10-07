@@ -7,42 +7,32 @@ import (
 
 // --- An unmatched Option[string] / Result[string, _] (#6360) -----------------
 //
-// The uncovered quadrant is a local that is NEITHER reassigned NOR consumed by a
-// match, so neither `collect_fresh_optarr_names` (which requires a reassignment)
-// nor `consumed_rcpayload_option_frees` (which requires a sole consuming match)
-// ever looks at it. #6463 closed that quadrant for ARRAY payloads. Measured with
-// the payload varied and everything else held fixed, the string dimension was
-// still open:
+// A local that is NEITHER reassigned NOR consumed by a match must still be
+// released. Bytes left behind over 100 rounds, with the payload varied and
+// everything else held fixed:
 //
-//	Option[i32[]]          0        (native leaks 6400)
+//	Option[i32[]]          0
 //	Result[i32[], i32]     0
 //	Result[i32[], string]  6400     Err strings, still open — see SCOPE
 //	Option[string]         22400    this file
 //
-// 22400 over 100 rounds, ×2.0 per doubling. The release is `__fern_str_free`
-// rather than the flat rc-dec, which is why this takes its own `"OPTSTR:"` credit
-// instead of widening `"OPTARR:"` — a string box carries a separate data buffer
-// and a different block class, so the array dec would free it wrongly.
+// ×2.0 per doubling. The string release is `__fern_str_free` rather than the
+// flat rc-dec: a string box carries a separate data buffer and a different
+// block class, so the array dec would free it wrongly.
 //
-// FRESHNESS IS ESSENTIAL HERE IN A WAY IT IS NOT FOR THE ARRAY SIBLING. That
-// one leans on the caller-side escape analysis reading an argument as an escape,
-// so an aliased buffer carries no second credit to collide with. A string gets no
-// such cover: `op_opt_make` stores its payload uncounted and a string assignment
-// is a borrow, so an aliased payload would be released under a live reference.
-// Admission therefore demands a literal or a syntactically-fresh producer inline,
-// and the registry's "f" flag for the call form.
+// FRESHNESS IS ESSENTIAL HERE. An Option stores its payload uncounted and a
+// string assignment is a borrow, so an aliased payload would be released under
+// a live reference. Admission therefore demands a literal or a
+// syntactically-fresh producer.
 //
-// THE EXIT SWEEP ALONE IS NOT ENOUGH, which is what the first cut of this got
-// wrong. A loop-declared `let v` re-stores to the SAME slot each iteration, so a
-// function-exit sweep releases only the final value and every earlier iteration
-// still leaks — 22400 improved to 18400 and looked like progress rather than a
-// half-fix. The store is where the previous value has to go, via
-// `emit_optstr_reclaim_store`, exactly as the array class already does.
+// THE EXIT SWEEP ALONE IS NOT ENOUGH. A loop-declared `let v` re-stores to the
+// SAME slot each iteration, so a function-exit sweep releases only the final
+// value and every earlier iteration still leaks (22400 improves only to
+// 18400). The store is where the previous value has to go.
 //
-// SCOPE: `Result[i32[], string]` strands its Err strings (6400) and stays open.
-// The tag guard's else-branch is empty, so an Err payload is never reached —
-// stranded, not dangled — and the "f" flag describes the SUCCESS payload only, so
-// releasing an Err string needs its own whole-body verdict.
+// SCOPE: `Result[i32[], string]` strands its Err strings (6400) and stays open:
+// an Err payload is never reached — stranded, not dangled — and releasing it
+// needs its own whole-body verdict.
 
 func TestSelfHostUnmatchedOptStrReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -83,7 +73,7 @@ func TestSelfHostUnmatchedOptStrReclaimX86_64(t *testing.T) {
 	// Reclaimed to an exact balance.
 	for _, tc := range []struct{ name, src string }{
 		{
-			// The main row: 22400 -> 0, and 0 where NATIVE still leaks 6400.
+			// The main row: 22400 -> 0.
 			// Loop-declared, so it also covers the per-iteration store path that the
 			// exit sweep alone cannot reach.
 			name: "option_string_from_a_call",
@@ -276,7 +266,7 @@ function main(): i32 {
 		},
 		{
 			// Not actually dead: the box is aliased outward and matched after the
-			// loop, so `body_unsafe_for` must keep it out of the credit entirely.
+			// loop, so it must stay out of the credit entirely.
 			name: "box_read_after_the_loop",
 			src: `function mk(i: i32): Option[string] { return Some("v" + "x"); }
 function round(r: i32): i32 {

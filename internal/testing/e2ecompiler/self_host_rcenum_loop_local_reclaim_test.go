@@ -9,18 +9,13 @@ import (
 
 // #4357 (enum sibling of the struct/tuple loop-local reclaim #4733/#4735/#4736):
 // a fresh rc-payload enum loop-local consumed by a match in the loop body
-// (`while { let b = Full([i, i+1]); match (b) { Full(xs) => xs[0], … } }`) leaked
-// its payload + box every iteration. The consuming-match reclaim
-// (consumed_rcpayload_enum_frees) scans only the TOP-LEVEL fn body, so a loop-local
-// enum was reclaimed nowhere. The fix collects such an enum "RCENUM:"
-// (collect_fresh_rcenum_names — per-block single-owner / consumed-by-one-match /
-// dead-after / non-escaping, the escape scan skipping the match scrutinee) and
-// deep-drops the prior box at the loop-rebind (emit_enum_deep_reinit_store ->
-// emit_enum_variant_drops, null-guarded for the first-iteration zeroed slot).
+// (`while { let b = Full([i, i+1]); match (b) { Full(xs) => xs[0], … } }`) has
+// its payload and box released every iteration, so the loop's heap growth is
+// the same at N=50 and N=5000.
 //
-// SOUNDNESS: an escaping enum (stored to an outer var) is rejected by
-// name_escapes_outside_stmt; an arm that MOVES an rc payload out is rejected by
-// match_arm_binds_rc_payload. Both are exercised below.
+// SOUNDNESS: an enum stored to an outer var and an arm that MOVES an rc payload
+// out must both keep their values, with __rc_underflow_count() at 0. Both are
+// exercised below.
 
 func rcEnumLoopLocalSrc(n string) string {
 	return `enum Box { Full(i32[]), Empty }

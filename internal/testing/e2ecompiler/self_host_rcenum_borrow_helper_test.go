@@ -7,39 +7,18 @@ import (
 
 // A fresh rc-payload enum LOOP-LOCAL with no consuming match in its own block —
 // passed to a helper that only matches on it, or never used at all — is reclaimed
-// (#6606).
+// (#6606). A `match (param)` scrutinee reads the tag and the payload and retains
+// neither, so the helper borrows its argument and the caller keeps the release.
 //
-// Two independent gaps kept this shape uncredited, and closing either alone leaves
-// it leaking:
-//
-//  1. `collect_fresh_rcenum_names` required a consuming `match` in the same block.
-//     A local with no match at all therefore earned nothing, so `let b = Val(…)`
-//     declared in a loop and never read grew unboundedly.
-//
-//  2. `borrowable_params_interproc` — the fixpoint the EMIT path uses, not the
-//     single-pass `borrowable_params_of` the inspection passes use — read a
-//     bare-ident `match (param)` scrutinee as an ESCAPE. So `head(b)` refused the
-//     caller-side release, and the caller could not tell a borrow from a retain.
-//     #6127 had already made the opposite argument (a match reads the tag and the
-//     payload and retains neither) and wired it into the local-reclaim analyses;
-//     it had never been applied to the borrowability verdict.
-//
-// Both compilers agreed on every exit code and on `__rc_underflow_count()`
-// throughout, which is why nothing caught this: a compiler that reclaims NOTHING
-// satisfies a value-and-underflow assertion perfectly. Only the byte counts move.
+// A compiler that reclaims NOTHING satisfies a value-and-underflow assertion
+// perfectly; only the byte counts move.
 //
 // EACH ROW IS COMPILED AT TWO ROUND COUNTS, so a per-iteration leak shows up as a
 // residue that doubles with the rounds rather than as a single number needing a
 // magic constant.
 //
-// These rows landed asserting a surviving 80-byte tail — the FINAL value, which no
-// sweep reclaimed for this class. That tail is gone: the "RCENUMS:" sweep credit
-// releases it, and the rows are now an exact balance. The tail was never visible to
-// THIS suite's scaling assertion (a constant cannot fail it); what caught it was
-// #6608's `enum-payload-still-grows`, which compares the heap mark across two
-// identical calls and so sees a per-call tail directly. That is why the rows below
-// pin `allocs == frees` outright now — the weaker scaling property would ratify a
-// regression back to the tail.
+// The rows also pin `allocs == frees` outright: the scaling property alone cannot
+// see a constant tail, such as an unreleased final value.
 
 const rcenumBorrowedSrc = `import "core/int";
 enum Box { Val(i32[]), Empty }

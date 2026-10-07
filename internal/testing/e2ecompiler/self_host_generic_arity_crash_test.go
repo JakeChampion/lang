@@ -23,29 +23,22 @@ func writeTempFern(t *testing.T, dir, name, src string) string {
 // genericArityCrashCases pin that a generic type-argument list whose length does
 // not match the declaration is REJECTED rather than aborting the compiler.
 //
-// The monomorphiser registered an instantiation straight off the annotation
-// (`mg_ty` for structs, `genum_key_from_anno` for enums) without comparing the
-// supplied argument count to the declared type-parameter count. The clone loop
-// then zipped the short key against the full parameter list, and `subst_ty`'s
-// `cts[k]` indexed past the end: the driver died with "array index out of range"
-// and exit 134 on programs the native compiler diagnoses cleanly (E019).
-//
-// Native's guard is at the same place — internal/oracle/monomorph refuses to record an
-// instantiation when `len(sl.TypeArgs) != len(gen.TypeParams)` — so the zips
-// downstream of it never see a short argument list either.
+// The monomorphiser compares the supplied argument count to the declared
+// type-parameter count where it registers an instantiation (`mg_ty` for
+// structs, `genum_key_from_anno` for enums). Unchecked, the clone loop zips the
+// short key against the full parameter list and `subst_ty`'s `cts[k]` indexes
+// past the end: the driver dies with "array index out of range" and exit 134 on
+// programs the Go front end diagnoses cleanly (E019). internal/oracle/monomorph
+// guards at the same place.
 //
 // The trigger is the UNSUPPLIED parameter being reachable, not the annotation
 // itself: `struct Pair[A, B] { first: A, second: A }` with `Pair[i32]` never
-// makes `tp_index` return 1 and so compiled fine even before the fix. That is
-// the `unused_tparam_still_rejected` case below — it must still be refused,
-// since native rejects it too, but it is the one shape that would pass a test
-// that only asserted "no crash" on the shapes that happened to be reported.
+// makes `tp_index` return 1, so it does not crash even unguarded. That is the
+// `unused_tparam_still_rejected` case below — it must still be refused, but it
+// is the one shape that would pass a test that only asserted "no crash".
 //
-// Verified by rebuilding the compiler at each stage. With neither guard,
-// ten of the eleven cases exit 134 — every one except `unused_tparam_still_
-// rejected`, which compiled to exit 0. With the `mg_ty` guard alone the six
-// struct cases pass and all four enum cases still exit 134, which is what
-// showed the enum route needed its own guard rather than sharing mg_ty's.
+// The struct and enum routes each need their own guard: with `mg_ty`'s alone,
+// the six struct cases pass and all four enum cases still exit 134.
 var genericArityCrashCases = []struct {
 	name string
 	src  string
@@ -111,9 +104,9 @@ function main(): i32 { match (f()) { Some(v) => { return v; }, None => { return 
 
 // TestSelfHostGenericArityNoCrashX86_64 asserts the driver never aborts on a
 // mismatched-arity instantiation. Refusing the module is a legitimate outcome
-// here — the programs are invalid and native rejects them — so the assertion is
-// on the FAILURE MODE, not on the exit code: a diagnostic is fine, a bounds
-// abort is not.
+// here — the programs are invalid and the interpreter rejects them — so the
+// assertion is on the FAILURE MODE, not on the exit code: a diagnostic is fine,
+// a bounds abort is not.
 func TestSelfHostGenericArityNoCrashX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -126,7 +119,7 @@ func TestSelfHostGenericArityNoCrashX86_64(t *testing.T) {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			// The interpreter is the validity check: every case here must be a
-			// program native REJECTS, else the test is pinning a crash on a
+			// program it REJECTS, else the test is pinning a crash on a
 			// legitimate program and the guard is wrong rather than the compiler.
 			if _, code := runFixtureInterp(t, writeTempFern(t, dir, tc.name, tc.src), ""); code == 0 {
 				t.Fatalf("%s: interp accepted the program — it is not an arity error, "+

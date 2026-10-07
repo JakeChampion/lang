@@ -5,10 +5,10 @@ import (
 	"testing"
 )
 
-// Lambda and closure programs the native compiler runs and the self-host CLI
-// refused in its typed lowering (FERN_SEM_IR) or answered wrongly. Each want
-// is the native interpreter's exit code. Each case goes through the production
-// CLI, because the refusals were in passes the emit drivers do not run.
+// Lambda and closure programs the self-host CLI refused in its typed lowering
+// (FERN_SEM_IR) or answered wrongly. Each want is the Go interpreter's exit
+// code. Each case goes through the production CLI, because the refusals were in
+// passes the emit drivers do not run.
 var lambdaCaptureLoweringCases = []struct {
 	name, src string
 	want      int

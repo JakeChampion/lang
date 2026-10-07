@@ -178,9 +178,9 @@ func TestSelfHostEnumCallHandbackWasm(t *testing.T) {
 	checkEnumFieldAlias(t, "wasm32-wasi", enumCallHandbackSrc, enumCallHandbackWant)
 }
 
-// A local lent to a handback callee and then returned (#10443). The AST
-// lowering credited the local's release while the returned result was the same
-// box uncounted, so the churned box was read back: 93 instead of 3.
+// A local lent to a handback callee and then returned (#10443). The returned
+// result is the same box, so it must carry a count of its own past the local's
+// release; otherwise the churned box is read back, 93 instead of 3.
 const enumHandbackReturnSrc = `enum Sc { SA(i32), SB }
 function k_of(x: i32): i32 { return x; }
 @noinline function sval(e: Sc): i32 { match (e) { SA(v) => { return v; }, SB => { return 100; } } }

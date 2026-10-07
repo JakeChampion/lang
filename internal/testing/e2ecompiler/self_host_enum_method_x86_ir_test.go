@@ -9,19 +9,11 @@ import (
 	"testing"
 )
 
-// enumMethodIRCases call a method on an enum-typed RECEIVER. Enum methods on a
-// PARAM already lowered (the param carries its declared enum type); a method on
-// an enum-valued LOCAL (`let d = Dir.N; d.code()`) or a FRESH variant
-// (`Dir.N.code()`) did not — the local's enum type was never recorded, so the
-// dispatch couldn't form the `<Enum>.<method>` label and bailed to AST.
-//
-// Two fixes land together: expr_enum_type now resolves a QUALIFIED variant
-// (`Dir.N` → `Dir`), and the unannotated-enum-binding recording (#2947) — which
-// was DEAD CODE, shadowed by an identical `else if (struct_ty == "")` guard on
-// the preceding struct-array-literal branch — is folded into that branch so it
-// actually runs. Together a `let d = <variant>` local (qualified or bare,
-// unit or payload) records its enum type, and `d.method()` / `Variant.method()`
-// dispatch through the IR path.
+// enumMethodIRCases call a method on an enum-typed RECEIVER: an enum-valued
+// LOCAL (`let d = Dir.N; d.code()`, qualified or bare, unit or payload), a
+// method's enum result, or a FRESH variant (`Dir.N.code()`). Each needs the
+// receiver's enum type to form the `<Enum>.<method>` label and dispatch
+// through the IR path.
 var enumMethodIRCases = []struct {
 	name     string
 	src      string

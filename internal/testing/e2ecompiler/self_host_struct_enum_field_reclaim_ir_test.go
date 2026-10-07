@@ -8,23 +8,19 @@ import (
 )
 
 // TestSelfHostStructEnumFieldReclaimIRX86_64 pins the #4297 A2 slice: a DIRECT
-// enum FIELD of a reclaimable, non-escaping struct local is now reclaimed when
-// the struct is dropped. A struct carrying a direct enum field is admitted to the
-// reclaim set (struct_has_reclaim_array_field's decl_is_enum clause), the struct-
-// lit construction retains (rc_inc) a NON-fresh enum field (a fresh variant ctor
-// `V(args)`/`V` is sole-owned and handed over with no inc), and the k_enum arm of
-// the per-type __struct_drop SHALLOW-frees the enum box via __fern_arr_dec (one
-// level — the variant payload leaks, matching the shallow k_struct gap; the churn
-// cases keep payloads SCALAR so the box free fully balances).
+// enum FIELD of a non-escaping struct local is released when the struct is
+// dropped. The struct-lit construction retains a NON-fresh enum field (a fresh
+// variant ctor `V(args)`/`V` is sole-owned and handed over with no inc), and the
+// struct's drop releases the enum box. The churn cases keep payloads SCALAR.
 //
 // The reclaim is proven by SCALE: an enum-field struct is built and dropped every
-// iteration. WITHOUT the k_enum arm the fresh enum box leaks each iteration and
-// millions of iterations exhaust the heap (SIGKILL 137); WITH it the heap stays
-// flat. A spurious double-free (mis-balanced construction inc) would instead tick
-// __rc_underflow_count() -> exit 99. Exit 0 proves the enum field is reclaimed
-// AND balanced (no over-release) over millions of build/drop cycles. Where the
-// shared enum's payload is a constant it is read from id([..]) so the enum is built
-// on the heap rather than placed as a constant.
+// iteration. A leaked enum box per iteration exhausts the heap over millions of
+// iterations (SIGKILL 137); released, the heap stays flat. A spurious double-free
+// (mis-balanced construction inc) would instead tick __rc_underflow_count() ->
+// exit 99. Exit 0 proves the enum field is reclaimed AND balanced (no
+// over-release) over millions of build/drop cycles. Where the shared enum's
+// payload is a constant it is read from id([..]) so the enum is built on the heap
+// rather than placed as a constant.
 func TestSelfHostStructEnumFieldReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -56,14 +52,12 @@ func TestSelfHostStructEnumFieldReclaimIRX86_64(t *testing.T) {
 		}
 	}
 
-	// GATE + ARM AT SCALE: struct `Tagged { e: Shape, n: i32 }` has ONLY a direct
-	// enum field (plus a scalar), so it is reclaimable SOLELY via the new
-	// struct_has_reclaim_array_field decl_is_enum clause — this exercises the gate
-	// (Site 2) AND the k_enum arm (Site 4). `Rect(i)` is a FRESH variant ctor
-	// (sole-owned rc=1, no construction inc) → the enum box is freed each iter; `t`
-	// never escapes, so it is swept every iteration. The payload is a SCALAR, so
-	// nothing leaks one level. 2,000,000 build/drop cycles stay flat → exit 0;
-	// without the k_enum arm the fresh enum box leaks → SIGKILL (137).
+	// AT SCALE: struct `Tagged { e: Shape, n: i32 }` has ONLY a direct enum field
+	// (plus a scalar). `Rect(i)` is a FRESH variant ctor (sole-owned rc=1, no
+	// construction inc) → the enum box is freed each iter; `t` never escapes, so it
+	// is released every iteration. The payload is a SCALAR, so nothing sits under
+	// the box. 2,000,000 build/drop cycles stay flat → exit 0; a leaked enum box per
+	// iteration → SIGKILL (137).
 	run(t, `enum Shape { Circle, Square, Rect(i32) }
 struct Tagged { e: Shape, n: i32 }
 function churn(n: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < n) { let t: Tagged = Tagged { e: Rect(i), n: i }; match (t.e) { Rect(v) => { if (v != i) { bad = 1; } }, _ => { bad = 1; } } i = i + 1; } return bad; }
@@ -71,11 +65,11 @@ function main(): i32 { let v: i32 = churn(2000000); if (__rc_underflow_count() !
 		"struct-enum-field-fresh-gate-churn", 0)
 
 	// NON-FRESH (aliased) enum field: `e` is bound from a live enum local `s`, so
-	// the struct co-owns it via the construction rc_inc (Site 3a, non-variant-ctor
-	// ident) and the k_enum drop only DECS the dup — `s` (swept at scope exit via
-	// emit_enum_variant_drops) frees it at rc 0. Balanced: no over-release
-	// (underflow 0) over 2,000,000 cycles, and no premature free (t.e still matches
-	// while s is live). Exit 0; a mis-balanced inc/dec would tick underflow → 99.
+	// the struct co-owns it via the construction retain and the struct's drop only
+	// DECS the dup — `s`'s own release at scope exit frees it at rc 0. Balanced: no
+	// over-release (underflow 0) over 2,000,000 cycles, and no premature free (t.e
+	// still matches while s is live). Exit 0; a mis-balanced inc/dec would tick
+	// underflow → 99.
 	run(t, `enum Shape { Circle, Square, Rect(i32) }
 struct Tagged { e: Shape, n: i32 }
 @noinline function id(xs: i32[]): i32[] { return xs; }

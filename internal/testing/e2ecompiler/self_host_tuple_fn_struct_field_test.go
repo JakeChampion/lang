@@ -6,19 +6,13 @@ import (
 )
 
 // tupleFnStructFieldCases pin the DIRECT call of a fn-valued TUPLE ELEMENT that
-// lives in a struct field — `s.p.N(args)`. The struct-field tuple makes the
-// enclosing function IR-ineligible, so it used to bail to the legacy AST emitter
-// (asm.fern / asm_arm64.fern). There, emit_call routed an ExprFieldAccess
-// callee straight to emit_method_call; a NUMERIC field ("N", a tuple index) is
-// not a method name, so it found no method and returned the -1 sentinel (exit
-// 255) — silently miscompiling the call. emit_call now recognises an all-digit
-// field as a tuple-element call and invokes it via the closure convention (box
-// ptr, fn_addr = box[0]), the same shape as the ExprIndex closure-value arm.
-// Reading the element first (`let g = s.p.N; g()`) already worked; this is the
-// direct-call sibling (cf. #5160 defect #1 for closure ARRAY elements).
+// lives in a struct field — `s.p.N(args)`. A NUMERIC field ("N", a tuple index)
+// is a tuple-element call through the closure convention, not a method name;
+// dispatched as a method it finds nothing and exits 255. Reading the element
+// first (`let g = s.p.N; g()`) is the control; this is the direct-call sibling
+// (cf. #5160 defect #1 for closure ARRAY elements).
 //
-// Found via differential probing (interpreter vs self-host-compiled binary).
-// Exit codes cross-checked against the interpreter and the native Go backend.
+// Exit codes cross-checked against the interpreter.
 var tupleFnStructFieldCases = []struct {
 	name string
 	src  string
@@ -38,8 +32,8 @@ var tupleFnStructFieldCases = []struct {
 	{"churn", "struct S { p: (i32, (i32) => i32) } function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 300) { let k: i32 = i % 7; let s = S { p: (k, (x: i32) => x + k) }; acc = (acc + s.p.1(2) + s.p.0) % 1000; i = i + 1; } return acc % 256; }", 138},
 }
 
-// TestSelfHostTupleFnStructFieldX86_64 — the x86-64 asm.fern fix, through the
-// production driver (asm_ir_run).
+// TestSelfHostTupleFnStructFieldX86_64 — the x86-64 leg, through the
+// asm_ir_run driver.
 func TestSelfHostTupleFnStructFieldX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -67,8 +61,7 @@ func TestSelfHostTupleFnStructFieldX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostTupleFnStructFieldArm64 — CI-gated arm64 counterpart of the
-// asm_arm64.fern fix (same numeric-callee dispatch). Mirrors
+// TestSelfHostTupleFnStructFieldArm64 — the CI-gated arm64 leg. Mirrors
 // TestSelfHostTupleFnIRArm64.
 func TestSelfHostTupleFnStructFieldArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)

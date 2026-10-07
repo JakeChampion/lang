@@ -39,7 +39,7 @@ var structArrayIRCases = []struct {
 		`struct P { v: i32 } function main(): i32 { let ps: P[] = [P { v: 1 }, P { v: 2 }, P { v: 3 }]; let t: i32 = 0; let i: i32 = 0; while (i < ps.len()) { t = t + ps[i].v; i = i + 1; } return t; }`, 6},
 	// INFERRED element type: the same forms WITHOUT the `: P[]` annotation. The
 	// element struct type is recovered from the literal's first element, so
-	// `ps[i].field` / `for x in ps` resolve instead of bailing to the AST path.
+	// `ps[i].field` / `for x in ps` resolve.
 	{"inferred-index-field",
 		`struct P { v: i32 } function main(): i32 { let ps = [P { v: 3 }, P { v: 4 }]; return ps[0].v + ps[1].v; }`, 7},
 	{"inferred-for-elem-field",

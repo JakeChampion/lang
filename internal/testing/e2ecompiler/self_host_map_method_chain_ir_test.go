@@ -11,15 +11,11 @@ import (
 // Chained ops on a map-returning BUILTIN method CALL result on the self-host IR
 // path. `m.insert(k, v).len()` / `.get_or(..)` / `.has(..)` — the receiver of the
 // outer op is itself a map-returning builtin call (insert/set/delete all return
-// Map[K, V]), often nested (`m.insert(..).insert(..)`). #4016 gave the map-method
-// dispatch an ExprCall arm, but it only knows the GENERIC verbs (merge/extend/...
-// via the map_ret_fns registry) and can't resolve a nested-call receiver, so the
-// builtin chain fell through with mtype "" and the chained `.len()` mis-dispatched
-// to op_arr_len — reading the map box's keys[] pointer slot as an array length, a
-// silent miscompile (`m.insert(1,10).len()` returned a garbage 96, not 1). The
-// arm now falls back to expr_map_type_tag (which recurses through insert/set/
-// delete) so the chained op dispatches as a map op. Each case is oracle-checked
-// against the interpreter.
+// Map[K, V]), often nested (`m.insert(..).insert(..)`). The chained op must
+// dispatch as a map op: a chained `.len()` dispatched as an array length reads
+// the map box's keys[] pointer slot instead, a silent miscompile
+// (`m.insert(1,10).len()` returning a garbage 96, not 1). Each case is
+// oracle-checked against the interpreter.
 var mapMethodChainIRCases = []struct {
 	name string
 	src  string

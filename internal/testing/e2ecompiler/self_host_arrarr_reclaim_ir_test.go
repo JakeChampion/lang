@@ -8,18 +8,11 @@ import (
 )
 
 // TestSelfHostArrArrReclaimIRX86_64 pins #4355 slice 9: an arr-of-arr local
-// (`let g = [[..], [..]]`) had NO reclaim at all on the self-host IR path —
-// the init marks is_arrarr but the slot is not is_arr, so neither the exit
-// sweep nor any rebind dec touched it: the outer buffer, every inner buffer,
-// and every string element leaked per iteration (native is flat on the same
-// shapes). The reclaim frees the WHOLE two-level structure via new runtime
-// helpers modeled on __fn___fern_str_arr_free: __fern_arrarr_free (scalar
-// inners — one rc-guarded arr_dec each) and __fern_strarrarr_free (string
-// inners — __fern_str_arr_free each), routed by the slot's type-aware
-// arrarr_elem kind. Admission: rows must be array LITERALS ("ARRARR:"), and
-// string-kind inners additionally need every element to be a fresh string
-// ("ARRARRS:"); a bare row read (`let row = g[i]`) or `for row in g` rejects
-// the candidate (the row pointer would dangle).
+// (`let g = [[..], [..]]`) is released whole per iteration — the outer buffer,
+// every inner buffer and every string element (__fern_arrarr_free for scalar
+// rows, __fern_strarrarr_free for string rows) — so the churn loops stay flat.
+// A row bound out of it (`let row = g[i]`) and a live string local stored as an
+// element must survive intact, with no underflow.
 func TestSelfHostArrArrReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

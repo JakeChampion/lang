@@ -131,8 +131,8 @@ func TestSelfHostDeriveStdlibIR(t *testing.T) {
 			}
 			// Oracle: the native interpreter's exit code.
 			_, want := runFixtureInterp(t, entry, "")
-			// Loading the stdlib auto-applies treeshake, so the merged module
-			// must route IR (decide observes the same all_eligible verdict).
+			// Loading the stdlib auto-applies treeshake; `-decide` must still
+			// report the merged module as IR.
 			if out, _ := runDriver(entry, root, "-decide"); strings.TrimSpace(out) != "ir" {
 				t.Errorf("%s decide = %q, want \"ir\"", tc.name, strings.TrimSpace(out))
 			}

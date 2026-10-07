@@ -5,18 +5,14 @@ import (
 	"testing"
 )
 
-// The OPTSTR credit learns the string-fresh registry
-// (unmatched_optstr_payload_is_fresh): `Some(mk("abc"))` with mk a
-// str_fresh_ret_fns_of-registered producer now earns the "OPTSTR:" credit the
-// plan side already granted, so the box + payload sweep runs — the
-// opt_str__callarg__read floor closes. The registry's own fixpoint keeps an
-// aliased producer (`wrap(s) { return Some(s); }` and every param/field
-// return) out, which the refused pins in
-// self_host_unmatched_optstr_reclaim_test.go continue to assert.
+// `Some(mk("abc"))` passed as a call argument, with mk a producer that always
+// returns a fresh string: the Option box and its payload are both released —
+// the opt_str__callarg__read matrix cell. An aliased producer
+// (`wrap(s) { return Some(s); }` and every param/field return) stays refused,
+// which the refused pins in self_host_unmatched_optstr_reclaim_test.go assert.
 //
-// Exits confirmed against BOTH oracles (bin/fern -interp and native x86-64).
-// Each case re-runs under FERN_SANITIZE=1 (identical exit, no over-release /
-// use-after-free).
+// Exits confirmed against `bin/fern -interp`. Each case re-runs under
+// FERN_SANITIZE=1 (identical exit, no over-release / use-after-free).
 
 func optstrCallargCases() []tupleAliasParamCase {
 	return []tupleAliasParamCase{

@@ -6,9 +6,8 @@ import "testing"
 // self-hosted compiler (parser.fern's parse_trait_decl retains a method's
 // `{ … }` body and parse_module synthesises a copy onto each impl that
 // omits it — Self-host parity with the Go checker's synthesizeTraitDefaults,
-// see docs/TRAITS.md). Each `trait` declaration is real source the native
-// compiler also honours; the self-host now inherits the default instead of
-// discarding the trait.
+// see docs/TRAITS.md). Each impl that omits a method must inherit the trait's
+// default.
 var defaultMethodIRCases = []struct {
 	name     string
 	src      string

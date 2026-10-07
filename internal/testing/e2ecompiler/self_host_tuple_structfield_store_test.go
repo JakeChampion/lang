@@ -6,25 +6,16 @@ import (
 )
 
 // The counted tuple struct-field store: `S { t: k, … }` where `t` is a direct
-// deep-droppable tuple field. Three parts, all gated on
-// struct_has_deep_tuple_field so none can widen without the others (#7253):
+// deep-droppable tuple field (#7253). The store takes a count on a non-literal
+// field value; the field drop walks the children only when it finds rc 1 and
+// decs the box once per owner; the SOURCE keeps its own deep free.
 //
-//	retain  — lower_expr_struct_lit's tuple arm incs a non-literal field value;
-//	release — emit_struct_tuple_field_drops walks the children under
-//	          __fern_rc_is_unique and decs the box once per owner;
-//	credit  — rctuple_counted_field_share forgives the store in the TUPRC gate,
-//	          so the SOURCE keeps its own deep free.
+// two_holders_balances must exercise two live holders of one box, not just
+// one: without the store's count the totals can still level and the sanitizer
+// stay silent while the second holder reads a header the first already freed.
 //
-// two_holders_balances is why all three landed together. With the release half
-// alone the matrix row still read clean and the sanitizer stayed silent — but
-// the box was MOVED, so the second holder's is_unique read a header the first
-// holder had already freed, and the totals only levelled because that read
-// happened to return false. Reading the emitted asm is what caught it: two drop
-// sequences, no inc. A future knockout of the retain reproduces it, so this case
-// must exercise two live holders of one box, not just one.
-//
-// Exits confirmed on BOTH oracles (bin/fern -interp and native x86-64), never
-// read off the self-host under test.
+// Exits confirmed against `fern -interp`, never read off the self-host under
+// test.
 
 func tupleStructFieldStoreCases() []tupleAliasParamCase {
 	return []tupleAliasParamCase{
@@ -112,11 +103,9 @@ function main(): i32 {
 		},
 		{
 			// The struct ESCAPES the frame that built it. The literal is the
-			// return value, so the store is a MOVE (moved_ident_at) and
-			// rctuple_counted_field_share refuses it: the source must not be
-			// credited a free for a box whose ownership left the frame — the
-			// shape that once segfaulted the arm64 stage-2 for the array
-			// sibling. Balances because the caller's own drop does the work.
+			// return value, so the store is a MOVE: the source must not free a
+			// box whose ownership left the frame. Balances because the caller's
+			// own drop does the work.
 			name: "returned_holder_balances",
 			src: `struct Hold { t: (i32, i32[]), n: i32 }
 function mk(i: i32): Hold {

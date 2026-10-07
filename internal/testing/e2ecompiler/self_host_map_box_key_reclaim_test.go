@@ -179,9 +179,8 @@ function main(): i32 {
     if (bad != 0) { return 88; }
     return 0;
 }`},
-	// An ALIASED key excludes the credit: the key comes from a local the frame
-	// still owns, so map_column_args_fresh reads false, no MAPKA: is issued and
-	// the key column keeps the shallow free. The local must survive the map.
+	// An ALIASED key: the key comes from a local the frame still owns, so the
+	// map must not free it. The local must survive the map.
 	{"aliased-key-excluded", `import "core/map";
 import "core/cmp";
 

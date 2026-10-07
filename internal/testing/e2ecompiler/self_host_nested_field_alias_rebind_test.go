@@ -9,29 +9,12 @@ import (
 // --- Nested-struct field ALIASED in a self-rebind literal (#6623) ------------
 //
 // `o = S { xs: o.xs.append(i), inner: o.inner, n: i }` and
-// `o = S { ...o, xs: o.xs.append(i) }` mean the same thing, and native is flat
-// on both. On the self-host the explicit spelling cost 12.7x the carried one,
-// because the whole local lost its reclaim credit rather than leaking one extra
-// box: `o.inner` in a field-value position is a bare non-scalar field READ, so
-// the NODEEP field-move scan marked `o` as having moved a field out, and
-// slot_nodeep gates the __field_reclaim_<T> the rebind would otherwise emit. No
-// reclaim was emitted at all, so the superseded ARRAY buffers leaked too — one
-// per iteration, which is why the cost grew with k rather than with the call
-// count.
-//
-// The read is not a move: the struct-literal override path retains a
-// nested-struct or enum field value unconditionally unless it is a fresh
-// literal / ctor, and a field read is neither — so the successor box holds a
-// COUNTED reference and the superseded box's deep drop decs the dup.
-//
-// The rows were EQUAL when this landed, both carrying #6605's one box per call.
-// #6620 then took the `...base` carry to an exact 0 and left the explicit
-// spelling at 800: the override's retain on `o.inner` had no counterpart,
-// because the nested-struct arm of `__field_reclaim_S` is gated on
-// `structfldok:S` and the explicit field read was what disqualified the type.
-// #6653 exempts that read from the whole-program scan — the successor box goes
-// into the slot `o` names, so it creates no owner the old box did not have —
-// which emits the arm and pairs the retain, and the rows are equal again.
+// `o = S { ...o, xs: o.xs.append(i) }` mean the same thing and must cost the
+// same. `o.inner` in a field-value position is a field READ, not a move: the
+// struct literal retains it, so the successor box holds a COUNTED reference and
+// the superseded box's deep drop decs the dup. Read as a move, `o` lost its
+// whole reclaim credit and the superseded ARRAY buffers leaked too — one per
+// iteration, 12.7x the carried spelling.
 const nestedFieldAliasExplicitSrc = `struct I { tag: i32, data: i32[] }
 struct S { xs: i32[], inner: I, n: i32 }
 
@@ -74,18 +57,12 @@ function main(): i32 {
 
 // --- The same read on an ARRAY field (#6628) ---------------------------------
 //
-// A scalar-element or array-of-struct field read is exempt for the same reason
-// the nested-struct one is: the override path's ExprFieldAccess arm incs it
-// whenever `field_access_arr_field_type` resolves, and when it does NOT resolve
-// the arm leaves `fav_ok` false and BAILS the whole lowering. There is no third
-// outcome where the successor box is handed an uncounted buffer, which is what
-// #6628 set out to rule out before exempting.
+// A scalar-element or array-of-struct field read is not a move either: the
+// struct literal retains it, so the successor box never holds an uncounted
+// buffer.
 //
 // This shape reads every carried buffer back after the loop, so an over-release
 // is a wrong answer rather than a quieter number.
-//
-// `string`, `string[]` and array-of-ENUM fields stay marked — see
-// fieldmove_selfrebind_alias.
 func nestedFieldAliasArrayFieldSrc(k int, carried bool) string {
 	update := "o = S { xs: o.xs.append(i), ys: o.ys, n: i };"
 	if carried {
@@ -119,9 +96,8 @@ func arrayFieldAliasExit(k int) int {
 	return (10 * (k + 12)) & 63
 }
 
-// The other field kind the exemption admits: an ARRAY-OF-STRUCT field. Same
-// ExprFieldAccess arm, same `field_access_arr_field_type` gate — it recognises
-// `E[]` alongside the scalar-element arrays — so it must move with them.
+// The other array field kind: an ARRAY-OF-STRUCT field, which must behave as
+// the scalar-element arrays do.
 func nestedFieldAliasStructArraySrc(k int) string {
 	return fmt.Sprintf(`struct E { a: i32, b: i32 }
 struct S { xs: i32[], es: E[], n: i32 }
@@ -164,13 +140,11 @@ function main(): i32 {
 
 // --- The same read on a direct ENUM field (#6653, enum route) ----------------
 //
-// The enum field takes the same `structfldok:` gate the nested-struct one does,
-// so the exemption admits both. Its residual needed a second fix as well: the
-// QUALIFIED variant-ctor spelling `V.A(7)` did not read as a fresh construction
-// (variant_ctor_enum_owner only knew the bare `A(7)` callee), so the field was
-// retained as if it aliased and the one box the whole shape allocates was never
-// freed — 400 B here, flat in k, and present on the `...o` carry too (#6681).
-// Either fix alone leaves that 400; both together reach 0.
+// The enum field read is not a move either. The QUALIFIED variant-ctor
+// spelling `V.A(7)` is a fresh construction just as the bare `A(7)` is, so the
+// struct takes it over without a retain (#6681); retained, the one box the
+// whole shape allocates was never freed — 400 B here, flat in k, and on the
+// `...o` carry too.
 //
 // `vv` is a `let` borrow of the carried enum, so the payload is read back after
 // the loop: an over-release is a wrong exit code before it is a byte count.

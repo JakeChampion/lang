@@ -11,18 +11,16 @@ import (
 
 // strViewBorrowReleaseCases pin the release of a SLICE TEMP standing at a string
 // BORROW POSITION — `base[a:b].len()`, `base[a:b] == x`, `base[a:b] + y`, and the
-// rest of the set lower_view_borrowed serves.
+// rest of the positions in the table below.
 //
-// The two backends reach "this temp costs nothing" by different routes, and only
-// one of them existed. On the register backends view_frame_temp_ok routes the
-// slice to lower_str_slice_frame, whose 24-byte box lives in three reserved
-// frame slots and never reaches the heap. That predicate opens with
-// `if (s.for_wasm()) { return false; }` — correctly, because wasm has no such
-// storage: op_str_slice_frame's own comment says it "ignores it, its str_slice
-// copies into a fresh inline block". So on wasm every borrow position built a
-// payload-sized heap COPY and nothing released it.
+// The backends reach "this temp costs nothing" by different routes. On the
+// register backends the slice's 24-byte box lives in reserved frame slots
+// (op_str_slice_frame) and never reaches the heap. wasm has no such storage —
+// its str_slice copies into a fresh inline block — so there every borrow
+// position builds a payload-sized heap COPY that must be released after the
+// consuming op.
 //
-// Measured, two compilers from the same commit, 400 rounds:
+// Unreleased vs released, 400 rounds:
 //
 //	position              x86-64      wasm
 //	.len() receiver         0      48000 -> 0
@@ -32,14 +30,9 @@ import (
 //	slice source            0      54400 -> 0
 //	len(x) builtin          0      48000 -> 0
 //
-// The register columns are 0 on both sides, so these gates only fail on the wasm
+// The register columns are 0 either way, so these gates only fail on the wasm
 // leg. They are still run on all three: a future change that made the register
 // path allocate would show up here, and the cost of the extra legs is a second.
-//
-// Reach is checked rather than asserted: the compiler's OWN x86-64
-// emission is byte-identical across both compilers — 1.7M lines — because a
-// parked slot is `0 - 1` on every non-wasm target and free_parked_view_after
-// then emits nothing.
 //
 // One real limit on the ORDERING. The drain lands after the consuming op, which
 // is the only correct place — the op still has to read the box. But a build that

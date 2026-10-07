@@ -7,27 +7,14 @@ import (
 
 // --- Call-bound STRING-payload Option/Result locals reclaim ------------------
 //
-// `rcpayload_option_call_ptype` admitted a call-bound Option/Result only when
-// the success payload was a leak-safe scalar array. A `string` success payload
-// was refused, so `let v: Option[string] = mk(i)` emitted no free at all and the
-// box AND its string leaked every iteration — `frees=0` — while the same shape
-// with the constructor written inline was flat at 0.
-//
-// The freshness proof already existed. opt_fresh_ret_fns_of records, per
-// producer, whether every success payload is a static literal or a
-// syntactically-fresh string producer (`str_local_binding_is_fresh`: concat,
-// the .to_upper family, a named producer) — the "f" flag. That is exactly the
-// proof `__fern_str_free` needs, because op_opt_make stores the payload
-// UNCOUNTED: a fresh payload is sole-owned, an aliased one is not. Only the
-// flag was being discarded by the two name extractors, so lower_func
-// could not see it; the fix seeded it as "OPTFRESHF:<name>" beside the existing
-// "OPTFRESH:<name>".
+// `let v: Option[string] = mk(i)` releases the box AND its string payload, the
+// same as the constructor written inline. Missed, both leaked every iteration
+// (`frees=0`).
 //
 // Freeing a non-fresh payload under a live alias does not leak less — it
 // DANGLES. So the aliased rows below are as essential as the fresh ones, and
 // each asserts the exit code against `fern -interp` so a dangle shows up as a
-// wrong answer rather than a quiet corruption. On the typed lowering every row
-// balances.
+// wrong answer rather than a quiet corruption. Every row balances.
 
 const cbsOptStrCallSrc = `function mk(i: i32): Option[string] {
     if (i < 0) { return None; }
@@ -137,8 +124,8 @@ function main(): i32 {
 
 // --- the rows that must NOT reclaim -----------------------------------------
 //
-// The producer returns a bare LOCAL, so opt_fresh_ret_fns_of flags it "a": the
-// box is fresh, the payload is not. Freeing it would dangle the local.
+// The producer wraps a bare LOCAL: the box is fresh, the payload is not.
+// Freeing it would dangle the local.
 const cbsOptStrAliasLocalSrc = `function mk(i: i32): Option[string] {
     let pre: string = "abcd";
     if (i < 0) { return None; }

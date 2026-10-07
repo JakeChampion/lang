@@ -6,20 +6,11 @@ import (
 )
 
 // tupleMethodElemCases pin a tuple literal whose element is a value-position
-// if/match with a METHOD-call arm.
-//
-// tuple_elem_ctor_eligible classifies an IIFE element by its leaf branch value
-// and admitted a CALL element in two forms: a free function with a
-// statically-known scalar result, and a tuple-element closure call (`t.0(3)`).
-// A method call — an ExprFieldAccess callee with a non-numeric field — matched
-// neither, so `(p.sum(), 165i64)` bailed the whole module to the AST path while
-// `(f(6), 165i64)` lowered. The difference was nothing but how the callee is
-// spelled (#6584).
-//
-// iife_method_ret_i32 is the sound-by-exclusion answer the free-fn side already
-// had: a method registered as returning a string / array / tuple / struct /
-// Option is rejected, and its wide sibling names an i64 / f64 result. Both are
-// the same lookups the value-position match arms use.
+// if/match with a METHOD-call arm (#6584): `(p.sum(), 165i64)` must lower as
+// `(f(6), 165i64)` does — the two differ only in how the callee is spelled. A
+// method registered as returning a string / array / tuple / struct / Option is
+// not a scalar element, and one with an i64 / f64 result is a wide one; these
+// are the same lookups the value-position match arms use.
 //
 // free-fn-elem-unchanged and literal-arms-unchanged are the guards: the two
 // forms that already lowered must still take exactly the path they did.

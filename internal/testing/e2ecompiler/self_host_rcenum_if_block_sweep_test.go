@@ -10,30 +10,20 @@ import (
 
 // --- An rc-payload enum local declared inside an `if` block (#7360) ----------
 //
-// `if (…) { let o: R = R.Full([i + 2, i + 3]); … }` earned the "RCENUMS:"
+// `if (…) { let o: R = R.Full([i + 2, i + 3]); … }` is released by the
 // function-exit sweep, whose variant dispatch begins with op_variant_is — an op
 // that DEREFERENCES the box for its tag. On a call where the branch is untaken
-// the entry-zeroed slot routes null into that dispatch, so the compiled program
-// SIGSEGVd (exit 139, native and interp both fine at 50). Two calls were the
-// boundary: one call takes the branch and sweeps a live box; the second leaves
-// the slot null and faults. The fix null-guards the sweep in the lowering, the same
-// guard emit_enum_deep_reinit_store already documents for the same op, so all
-// backends inherit it.
+// the entry-zeroed slot is null, so the sweep must be null-guarded or the
+// program SIGSEGVs (exit 139 where the interpreter answers 50). Two calls are
+// the boundary: one call takes the branch and sweeps a live box; the second
+// leaves the slot null.
 //
-// The wasm leg never crashed — an i32.load at address 0 reads linear memory
-// rather than trapping — so on wasm the same defect was a silent wrong-path
-// hazard; its exit-code rows pin that the guarded sweep frees no live box.
+// On wasm an i32.load at address 0 reads linear memory rather than trapping,
+// so there the exit-code rows pin that the guarded sweep frees no live box.
 //
-// Every want was confirmed against BOTH oracles (bin/fern -interp and the
-// native x86-64 backend agreed on each), never read off the self-host run.
-// Alloc/free counts are the self-host build's own, pinned exactly.
-//
-// Counts here are ONE block per heap string: #7351 fused the box into the
-// buffer's reserved header. Every row was re-measured against the commit
-// before it, and every live_bytes is unchanged — the clean rows stayed clean
-// and each refusal-leak row leaks the same bytes — so what moved is block
-// volume, not behaviour. A pre-fusion number in a row note below is the older
-// one.
+// Every want was confirmed against `bin/fern -interp`, never read off the
+// self-host run. Alloc/free counts are the self-host build's own, pinned
+// exactly; a heap string is ONE block (#7351).
 
 type rcEnumIfBlockCase struct {
 	name   string
@@ -115,11 +105,8 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 1, allocs: 100, frees: 100,
 		},
 		{
-			// Formerly string_payload_still_leaks, the #7364 status-quo pin:
-			// a call payload from a str_fresh_ret_fns producer is now credited,
-			// so the sweep releases string + box (150/150 with #7351's
-			// two-allocs-per-string). This is now the row that fails if that
-			// credit is ever withdrawn.
+			// A string payload from a call to a fresh-string producer (#7364):
+			// the sweep releases the string and the box.
 			name: "string_payload_swept",
 			src: `enum R { Full(string), Empty }
 function w(a: string): string { return a + "!"; }

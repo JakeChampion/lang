@@ -12,9 +12,8 @@ import (
 // VALUES on the register IR backend (the wasm sibling is TestSelfHostFnValueIR).
 // const_func loads the function's code address (no funcref table — the address
 // IS the value), and call_indirect reverses the on-stack args and dispatches
-// through it (call *%r11). all_eligible now admits such modules on the register
-// backends too. Pinned to hardcoded oracle exit codes via the asm_ir_run
-// path.
+// through it (call *%r11). Pinned to hardcoded oracle exit codes via the
+// asm_ir_run path.
 func TestSelfHostFnValueX86IR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

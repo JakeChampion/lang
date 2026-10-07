@@ -93,10 +93,8 @@ func parityCases(t *testing.T) []parityCase {
 
 // TestSelfHostParityCorpusX86_64IR is the x86-64 leg: asm_ir_run emits each
 // fixture via the IR path, the binary's stdout + exit code must match the
-// native-interp oracle. This leg also gates ROUTING for the whole corpus:
-// `-ir-probe` must report "module: IR" for every fixture, so none of the legs
-// (this one, arm64, wasm — which share the asm_ir eligibility core) can pass
-// by silently falling back to the legacy AST emitter.
+// interp oracle. This leg also gates ROUTING for the whole corpus:
+// `-ir-probe` must report "module: IR" for every fixture.
 func TestSelfHostParityCorpusX86_64IR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)

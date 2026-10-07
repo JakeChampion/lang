@@ -114,17 +114,11 @@ function __str_to_bytes(s: string): u8[] {
 `
 
 // TestSelfHostU32WrapIR proves the self-hosted x86-64 IR path computes u32
-// arithmetic with 2^32 wrapping (matching the native compiler) — the bit the
-// IR path lacked, which silently miscompiled std/crypto's SHA-256 (#2861). The
-// register backends keep values in 64-bit registers, so a u32 op (add / sub /
-// mul / shl, plus __rotr's `x << (32-n)`) must mask back to 32 bits and a u32
-// `>>` must be a LOGICAL shift; this is what local_is_u32 / op_u32_wrap drive.
-//
-// The oracle is the interpreter (runInterpExit), NOT the AST path: the legacy
-// self-host AST backend has the SAME u32-overflow bug, so the IR path now
-// intentionally diverges from (is more correct than) it. For an overflow
-// program the AST path's answer differs, so IR == interpreter also proves the
-// program took the IR path.
+// arithmetic with 2^32 wrapping — without it std/crypto's SHA-256 silently
+// miscompiles (#2861). The register backends keep values in 64-bit registers,
+// so a u32 op (add / sub / mul / shl, plus __rotr's `x << (32-n)`) must mask
+// back to 32 bits (op_u32_wrap) and a u32 `>>` must be a LOGICAL shift. The
+// oracle is the interpreter (runInterpExit).
 func TestSelfHostU32WrapIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -207,10 +201,8 @@ function main(): i32 { let a: u32 = 1; let b: u32 = a + (0xfffffffe + 1); let c:
 		{"sha256-abc-b31", shaCoreSrc + `function main(): i32 { let d: u8[] = __sha256_core(__str_to_bytes("abc")); return d[31] as i32; }`},
 		// SHA-256("") byte 0 (0xe3) — the single-block padding path.
 		{"sha256-empty-b0", shaCoreSrc + `function main(): i32 { let d: u8[] = __sha256_core(__str_to_bytes("")); return d[0] as i32; }`},
-		// __alloc_u8 + .with + u8-element read, and string_from_bytes_unchecked. (Not in the
-		// IR≡AST differential test: the legacy asm_ir_run AST fallback referenced
-		// __fern_alloc_u8 without emitting it, so its link failed there; the IR
-		// path compiles them, validated here against the interpreter.)
+		// __alloc_u8 + .with + u8-element read, and string_from_bytes_unchecked,
+		// validated against the interpreter.
 		{"alloc-u8", `function main(): i32 { let m: u8[] = __alloc_u8(3); m = m.with(0, 65); m = m.with(2, 67); return (m[0] as i32) + (m[2] as i32); }`},
 		{"str-from-bytes", `function main(): i32 { let m: u8[] = __alloc_u8(2); m = m.with(0, 72); m = m.with(1, 73); let s: string = string_from_bytes_unchecked(m); return s.len() * 100 + (s[0] as i32); }`},
 	}

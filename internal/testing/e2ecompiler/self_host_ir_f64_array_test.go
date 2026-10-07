@@ -4,18 +4,16 @@ import (
 	"testing"
 )
 
-// TestSelfHostIRF64ArrayEligible locks in that f64 arrays now lower through the
+// TestSelfHostIRF64ArrayEligible locks in that f64 arrays lower through the
 // IR. f64 array literals allocate an 8-byte-stride buffer (arr_make width 64);
 // a[i] reads/writes an 8-byte f64 (arr_get/arr_set width 64 → f64.load/store on
-// wasm; the register backends already used 8-byte slots). The slot binding
-// tracks f64-array-ness (local_is_f64arr) so a[i] types as f64. It asks the
-// path probe (semlower.verdict) and bit-packs the per-case results:
+// wasm; 8-byte slots on the register backends). It asks the path probe
+// (semlower.verdict) and bit-packs the per-case results:
 //
 //	(a) f64 array literal + indexed read  → ELIGIBLE (1)
 //	(b) f64 array element update a.with(i, v) → ELIGIBLE (1)
 //	(c) f64[] param + indexed read        → ELIGIBLE (1)
-//	(d) f64[]-RETURNING free function     → ELIGIBLE (1)  [f64arr_ret_fns lets
-//	                                         the call site recover the width]
+//	(d) f64[]-RETURNING free function     → ELIGIBLE (1)
 //
 // Expected: a*8 + b*4 + c*2 + d == 8 + 4 + 2 + 1 == 15.
 func TestSelfHostIRF64ArrayEligible(t *testing.T) {

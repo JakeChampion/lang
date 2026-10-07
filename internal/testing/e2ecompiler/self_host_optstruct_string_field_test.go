@@ -6,31 +6,16 @@ import (
 
 // --- Option[P] where P's only rc field is a `string` (#6360) -----------------
 //
-// The OPTSTRUCT class — the fresh, non-escaping `Option[<struct>]` local whose
-// exit sweep / loop-rebind deep-frees the payload's fields, its box, and the
-// option box — admitted a payload struct only when it carried an rc-ARRAY field
-// (`struct_has_reclaim_array_field`). A payload whose sole reclaimable field is a
-// bare `string` matched nothing: no credit, so no drop of any kind, so the string
-// AND both boxes leaked. 48000 bytes over 100 rounds, exactly x2.0 per doubling,
-// against 0 on native.
+// A fresh, non-escaping `Option[<struct>]` local is deep-freed at its exit
+// sweep / loop rebind: the payload's fields, its box, and the option box. That
+// holds when the payload's only reclaimable field is a bare `string`, not only
+// when it carries an rc-ARRAY field; otherwise the string AND both boxes leak,
+// exactly x2.0 per doubling of the round count.
 //
-// Nothing downstream needed widening — the leak was entirely in admission:
-//
-//   - `__struct_drop_<P>`'s k_str arm has freed string fields in all three
-//     backends since #4355, and the arm binding escape analysis
-//     (`optstruct_arm_expr_escapes`) is field-TYPE generic: a bare `p.name`
-//     extraction escapes because `string` is non-scalar, `p.name.len()` is a
-//     borrow. The same struct bound as a BARE local has been reclaimed since
-//     #4357, and a payload carrying a string field ALONGSIDE an array field was
-//     already clean — the array field alone made the whole struct admissible.
-//
-//   - The string half is gated a SECOND time at emit, by
-//     `struct_routes_field_reclaim`'s whole-program STRFLDOK verdict. A type that
-//     scan refuses emits no `__struct_drop_<P>` call at all, so the payload box
-//     and the option box are still freed and only the string is stranded. The
-//     construction-side retain reads the same verdict, so an ALIASED string field
-//     is inc'd at construction and the k_str dec is balanced rather than a
-//     double-release.
+// In the arm, a bare `p.name` extraction escapes because `string` is
+// non-scalar, while `p.name.len()` is a borrow. An ALIASED string field is
+// retained at construction, so the field's release is balanced rather than a
+// double-release.
 
 func TestSelfHostOptStructStringFieldX86_64(t *testing.T) {
 	boxedProbes(t)
@@ -128,8 +113,8 @@ function main(): i32 {
 }`, "the fn-level bind leaked the same way as the block-scoped one")
 	})
 
-	// The loop-REBIND path (emit_optstruct_reclaim_store): each rebind must
-	// deep-free the superseded box before the store.
+	// The loop-REBIND path: each rebind must deep-free the superseded box
+	// before the store.
 	t.Run("rebound_in_a_loop", func(t *testing.T) {
 		balanced(t, "oss_rebind", `struct P { name: string, n: i32 }
 function round(r: i32): i32 {
@@ -200,10 +185,10 @@ function main(): i32 {
 
 	// SOUNDNESS. The payload's string field is a bare ident aliasing a local the
 	// round keeps reading after the match, and the freed box would be recycled by
-	// the churn that follows. The construction-side retain fires under the same
-	// STRFLDOK verdict as the k_str dec, so the two balance and `shared` survives;
-	// an unbalanced release shows up as an exit-code divergence from `fern -interp`,
-	// which `counts` fails on.
+	// the churn that follows. The construction must retain the string the
+	// payload's release gives back, so `shared` survives; an unbalanced release
+	// shows up as an exit-code divergence from `fern -interp`, which `counts`
+	// fails on.
 	t.Run("aliased_string_field_payload_survives", func(t *testing.T) {
 		src := `struct P { name: string, n: i32 }
 function round(r: i32): i32 {

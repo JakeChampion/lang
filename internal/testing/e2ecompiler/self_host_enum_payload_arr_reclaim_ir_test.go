@@ -12,33 +12,20 @@ import (
 //
 //	enum N { Leaf(i32), Seq(N[]) }
 //
-// `enum_field_rc_droppable` reached `is_leaksafe_array_field`, which admits only
-// scalar-element arrays, so `N[]` made `Seq` non-droppable — and
-// `enum_all_variants_rc_droppable` bails on the first non-droppable variant, so
-// the whole enum was refused. That took the *scalar* `Leaf` variant down with
-// it: `let n: N = Leaf(i)` leaked 40 B/iteration while the byte-identical
-// `let m: M = A(i)` on a non-recursive enum was flat.
+// The recursive variant must not make the enum unreclaimable, and in
+// particular must not take the scalar `Leaf` variant down with it: `let n: N =
+// Leaf(i)` is flat, like the byte-identical `let m: M = A(i)` on a
+// non-recursive enum.
 //
 // Measured on x86-64, `__heap_bump_bytes()` delta across two identical churn
-// calls, bytes per iteration (native is 0 on all three):
+// calls, bytes per iteration before -> after #6758:
 //
 //	let n: N = Leaf(i);                              40  -> 0
 //	let n: N = Seq([Leaf(i)]);                      112  -> 0
 //	let kids: N[] = [Leaf(i), Leaf(8)]; Seq(kids);  160  -> 0
 //
-// The release is `__fern_arrarr_free`: it rc-guards the buffer, decs each
-// element BOX (rc-guarded, so a shared element only decs), then frees the
-// buffer. Reusing that runtime helper is what kept this to one file — it is
-// already need-registered by name in all three backends' call scans, unlike the
-// `__struct_arr_elems_drop_<E>` helper, whose need is recorded only inside the
-// struct-drop generator.
-//
-// DEPTH IS ONE LEVEL, deliberately. An element's own payload survives one level
-// down — `Seq([Seq([…])])` still strands the inner buffer — which is the same
-// model the struct-array path documents, and it leaks rather than dangles. The
-// nested case is not asserted flat below for that reason; it is asserted
-// CORRECT, since a wrong free there would be a use-after-free rather than a
-// byte count.
+// The nested case, `Seq([Seq([…])])`, is asserted CORRECT rather than flat,
+// since a wrong free there would be a use-after-free rather than a byte count.
 var enumPayloadArrReclaimCases = []struct {
 	name string
 	src  string

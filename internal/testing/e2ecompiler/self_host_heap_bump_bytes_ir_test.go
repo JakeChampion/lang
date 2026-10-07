@@ -9,14 +9,12 @@ import (
 
 // heapBumpBytesIRCases pin the `__heap_bump_bytes()` introspection builtin — the
 // bump allocator's high-water mark (cursor − region base; 0 before the first
-// allocation) — on the self-host IR path (#3534). Before this it had no IR
-// lowering and bailed the whole module to the legacy AST emitter; it now lowers
-// on all three IR backends (x86-64 / arm64 inline cursor−base; wasm `$heap −
-// heap_base`).
+// allocation) — on the self-host IR path (#3534), on all three backends
+// (x86-64 / arm64 inline cursor−base; wasm `$heap − heap_base`).
 //
 // The interpreter has no bump-allocator model (it always returns 0), so it
 // cannot be the oracle here — these assert the relational contract directly with
-// exact exit codes, in the rc_heap_bump_* style the native suite established.
+// exact exit codes, in the style of the e2e rc_heap_bump_* tests.
 // Every result stays ≤ 120 (wasmtime exit-code clamp #2908). Each allocating
 // literal takes a runtime element, since a literal of constants is a static box.
 var heapBumpBytesIRCases = []struct {
@@ -96,8 +94,8 @@ var heapBumpFixpointCases = []struct {
 }`
 	}},
 	// Loop-reassigned array local: each rebind releases the prior iteration's
-	// box (emit_arr_store's prior-value release) before storing the fresh one,
-	// so the loop's high-water stays one box wide.
+	// box before storing the fresh one, so the loop's high-water stays one box
+	// wide.
 	{"loop-reassign-array", func(n string) string {
 		return `function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);
@@ -109,9 +107,10 @@ var heapBumpFixpointCases = []struct {
 	}},
 	// Literal-sized owned buffer (`__alloc_u8(8)`) whose only borrowed input is
 	// the literal size arg — its fresh rc=1 buffer is reclaimed at its last use
-	// each iteration, so the high-water is flat across N (native + self-host
-	// both bounded — #4365 rc_heap_bump_literal_alloc port). The `acc` guard
-	// keeps the borrow reads live so a wrongly-freed buffer would corrupt them.
+	// each iteration, so the high-water is flat across N (#4365; the e2e twin
+	// is internal/testing/e2e/rc_heap_bump_literal_alloc_test.go). The `acc`
+	// guard keeps the borrow reads live so a wrongly-freed buffer would corrupt
+	// them.
 	{"literal-alloc", func(n string) string {
 		return `function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);

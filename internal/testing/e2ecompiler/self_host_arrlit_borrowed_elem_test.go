@@ -9,10 +9,10 @@ import (
 
 // An array literal or a self-append that stores a value another owner
 // releases — a borrowed struct or enum parameter, an indexed box — stores it
-// counted, as the clone-append already did (stored_elem_is_borrow). Stored
-// uncounted, the record's field drop freed the caller's box: the caller read it
-// back wrong. The counted-parameter tiers credit the store, so a temporary
-// argument is still released by the caller.
+// counted, as the clone-append does. Stored uncounted, the record's field drop
+// would free the caller's box and the caller would read it back wrong. The
+// counted store is credited, so a temporary argument is still released by the
+// caller.
 var arrlitBorrowedElemCases = []struct {
 	name string
 	src  string
@@ -176,8 +176,8 @@ func TestSelfHostArrlitBorrowedElemX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostArrlitBorrowedElemNative holds the native compiler to the same
-// answers, every row clean.
+// TestSelfHostArrlitBorrowedElemNative holds `fern -target x86-64-linux` to
+// the same answers, every row clean.
 func TestSelfHostArrlitBorrowedElemNative(t *testing.T) {
 	boxedProbes(t)
 	_, runner := x86_64Tooling(t)

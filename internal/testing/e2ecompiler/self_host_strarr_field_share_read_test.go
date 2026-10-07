@@ -7,49 +7,22 @@ import (
 // --- A string[] FIELD READ handed into a string[] field ------------------------
 //
 // `let p: P = P { f: q.f, n: i }` — the RewriteCtx shape, string[] flavour, and
-// the last leaking cell of the construction-retain matrix (#5338):
+// a cell of the construction-retain matrix (#5338). The construction RETAINS an
+// array field, so the new holder co-owns a COUNTED reference and its drop's dec
+// balances against it, while the SOURCE holder keeps its own release — a share
+// needs both ends alive to balance. `local_store_unchanged` is the same store
+// from a local; the hoisted spelling (`let tt = q.f; P { f: tt }`) is covered
+// with its own refusals in self_host_strarr_field_bind_share_test.go.
 //
-//	800 allocs / 300 frees, 16800 live, against native's 600/600
+// THE FAILURE MODE HERE IS AN OVER-RELEASE, not a leak: one box under two
+// rc-aware decs frees on the first and dangles on the second. So the
+// `escaping_holder*` rows are the essential cases rather than a formality: each
+// returns a holder that outlives the frame and reads every element back after
+// 200 rounds of churn have recycled the freelist. Every row balances.
 //
-// Every other field kind was already counted here — `str__fieldread` through
-// str_field_share_read, `enum_arr__fieldread` through enum_arr_field_share_read,
-// `arr_i32__fieldread` and `struct__fieldread` through their own retains.
-// `string[]` was the one left out.
-//
-// THE BLOCK WAS IN THE ADMISSION WALK, NOT AT THE SHARE POSITION. strarrfld_scan
-// marks `<T>.<field>` for any field access, so the read of `q.f` refused P's
-// string[]-field reclaim outright and NEITHER holder emitted __struct_drop_P or
-// __field_reclaim_P — the identical `E[]` program emits both.
-//
-// Admitting the inline share is sound for the reason the bare-ident store is:
-// the construction RETAINS an array field unconditionally, so the new holder
-// co-owns a COUNTED reference and its drop's dec balances against it.
-// `str_arr__local` measures that retain already working; the only difference
-// here is that the value is read out of a sibling rather than out of a local.
-// The read is also not walked as a read, so the SOURCE holder keeps its reclaim
-// — a share needs both ends alive to balance.
-//
-// The HOISTED spelling (`let tt = q.f; P { f: tt }`) was left leaking here and
-// is now closed too, by the local-BIND admission in
-// self_host_strarr_field_bind_share_test.go. It needed a proof this position
-// gets for free — that the bound local reaches nothing but the store — so it
-// lives in that file with the rows refusing every other use of the local.
-//
-// THE FAILURE MODE HERE IS AN OVER-RELEASE, not a leak, which is what separates
-// this cell from the five `__param` ones. str_field_share_read states it: "one
-// box under two rc-aware k_str decs frees on the first and dangles on the
-// second." So `escaping_holder` below is the essential case rather than a
-// formality: it returns the target holder while the source dies inside the
-// callee, then reads every element back after 200 rounds of churn have recycled
-// the freelist.
-//
-// The `escaping_holder_*` rows return a holder that outlives the frame and read
-// every element back after churn. On the typed lowering every row balances.
-//
-// Every want was confirmed against native x86-64 AND `bin/fern -interp`, which
-// agree on every exit, and every row was re-run under FERN_SANITIZE=1 with
-// FERN_RC_UNDERFLOW_TRAP=1 and FERN_RC_FREE_DEBUG=1: clean, no trap, no
-// quarantine hit.
+// Every want was confirmed against `bin/fern -interp`, and every row was run
+// under FERN_SANITIZE=1 with FERN_RC_UNDERFLOW_TRAP=1 and FERN_RC_FREE_DEBUG=1:
+// clean, no trap, no quarantine hit.
 
 const strarrShareReadDecl = `struct P { f: string[], n: i32 }
 function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }

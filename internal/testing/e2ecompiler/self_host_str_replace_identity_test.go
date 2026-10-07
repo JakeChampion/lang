@@ -10,37 +10,27 @@ import (
 	"testing"
 )
 
-// `let r: string = base.replace(old, new)` leaked its box whenever the needle
-// was present, and could not simply be credited the way `.trim()` was in #7249,
-// because replace has a genuine identity fast-path.
+// `let r: string = base.replace(old, new)` releases its result, guarded:
+// replace has a genuine identity fast-path, so the result may BE the receiver.
 //
 // Measured directly, one call each, bytes allocated:
 //
 //	needle ABSENT    x86-64 0     wasm 0     -> the receiver's own box comes back
 //	needle PRESENT   x86-64 136   wasm 120   -> a fresh box
 //
-// So the excluded-forms comment in str_local_binding_is_fresh is right about
-// replace in a way it was not about trim: the result really can BE the receiver.
 // An unguarded release frees a box the receiver still owns, and the receiver's
-// own release then double-frees.
+// own release then double-frees. Which case it is depends on the run-time
+// needle, so the release frees only under `result != receiver`.
 //
-// The analysis cannot settle which case it is — the needle is a run-time value —
-// so the credit says "this box MAY be ours" and a guard settles it where the
-// answer exists. `emit_str_slot_release` frees under `result != receiver`, the
-// same cow test `emit_str_reclaim_store` already uses, pointed at the receiver
-// slot that `LocalInfo.str_identity_src` records at the binding site.
-//
-// Measured, 400 rounds of the harness below, a pair of compilers from the same
-// commit:
+// Measured, 400 rounds of the harness below:
 //
 //	shape                       x86-64          wasm
 //	replace, needle present   54400 -> 0    48000 -> 0
 //	replace, needle absent        0 -> 0         0 -> 0
 //
 // The guard is witnessed at FAULT level, not merely by the absent-case staying
-// at zero: a compiler with the credit and the guard removed over-releases on the
-// liveness case below — exit 99 (rc underflow) on x86-64, a trap on wasm —
-// against a clean main and a clean fix.
+// at zero: without it the liveness case below over-releases — exit 99 (rc
+// underflow) on x86-64, a trap on wasm.
 
 const strReplacePrelude = strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 `

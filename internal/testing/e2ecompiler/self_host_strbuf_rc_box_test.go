@@ -6,26 +6,18 @@ import (
 	"testing"
 )
 
-// The strbuf runtime had two defects, both found while scoping #2649's
-// remaining migration targets. They are independent of whether the helpers ever
-// become Fern; these tests pin the fixes.
+// Two strbuf runtime defects, pinned below as (1) and (2):
 //
-// (1) `__fern_strbuf_take` built its result with a bare `__fern_alloc(16)`, so
-// the returned box carried NO refcount header, where every other self-host
-// string box is the 24-byte `{rc@base, data@base+8, len@base+16}` block
-// `__fern_str_box` builds. Unlike the Reader leaves of #6921 — which leaked
-// because nothing ever dec'd them — `strbuf_take()` IS treated as a fresh owned
-// string (the lowering's str-tracking), so a dropped result reaches
-// `__fn___fern_str_free`, which reads the refcount at box-8. On a headerless box
-// that is the last word of the PRECEDING allocation, which here is the tail of
-// the text just copied out of the accumulator. The native backend has built this
-// one with an rc-headered allocation since docs/RC-STRINGS-PLAN.md; the
-// self-host was the last producer left unconverted.
+// (1) `__fern_strbuf_take` must build its result with __fern_str_box, so the
+// returned box carries the refcount header every other self-host string box
+// has. `strbuf_take()` is treated as a fresh owned string, so a dropped result
+// reaches `__fn___fern_str_free`, which reads the refcount at box-8; on a
+// headerless box that is the last word of the PRECEDING allocation, here the
+// tail of the text just copied out of the accumulator.
 //
-// (2) arm64 emitted the whole bundle (the `.bss` words and all three bodies)
-// inside the bare `heap` gate, where x86-64 has always gated it on the strbuf
-// need. So every allocating arm64 program carried three bodies nothing
-// branched to.
+// (2) arm64 must gate the strbuf bundle (the `.bss` words and all three
+// bodies) on the strbuf need, as x86-64 does, not on the bare `heap` gate —
+// or every allocating arm64 program carries three bodies nothing branches to.
 
 // strbufTakeAsm compiles a strbuf program for `target` on the self-host IR path
 // and returns the emitted assembly.

@@ -137,11 +137,9 @@ func TestSelfHostLambdaFnSidecarCensus(t *testing.T) {
 	}
 }
 
-// TestSelfHostLambdaFnSidecarX86_64 checks the same three shapes still RUN
-// correctly, against the native compiler's exit codes. A module the producer
-// refuses falls back to the AST lowering and runs anyway, so this passes on
-// both sides of the fix — it guards the fix from breaking codegen, it does not
-// prove it.
+// TestSelfHostLambdaFnSidecarX86_64 checks the same three shapes compile and
+// RUN to their expected exit codes, so the census result cannot be bought with
+// a miscompile.
 func TestSelfHostLambdaFnSidecarX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 

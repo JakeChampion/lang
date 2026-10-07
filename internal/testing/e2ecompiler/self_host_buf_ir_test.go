@@ -11,7 +11,7 @@ import (
 // bufIRCases exercise the capacity-carrying string builder (#8773) on the IR
 // path. Each builtin lowers to its own IR op rather than a call_direct, the
 // way the strbuf ops beside them do, and every register backend emits it as a
-// call into the same __fern_buf_* runtime the native compiler writes.
+// call into the shared __fern_buf_* runtime.
 //
 // The cases that matter beyond "it appends": a take leaves the builder usable,
 // two builders accumulate independently (the property the singleton cannot
@@ -61,8 +61,8 @@ var bufIRCases = []struct {
 	// last of the 320 bytes, so a short grow-copy shows up.
 	{"push-u64-grow", `function main(): i32 { let b: usize = buf_new(16); let v: u64 = 0; let k: i32 = 0; while (k < 8) { v = v * 256 + 65; k = k + 1; } let i: i32 = 0; while (i < 40) { buf_push_u64(b, v); i = i + 1; } let s: string = buf_take(b); buf_free(b); return s.len() / 10 + (s[319] as i32); }`, ""},
 	// An INLINE `as u64` at the parameter, which is the shape that has to
-	// reach lower_arg_u64's widening arm: a 32-bit value cast where the
-	// call is built, rather than a wide literal or a wide slot. Answers
+	// widen at the argument: a 32-bit value cast where the call is built,
+	// rather than a wide literal or a wide slot. Answers
 	// with the byte that landed, having checked the seven zeros above it.
 	{"push-u64-cast", `function main(): i32 { let b: usize = buf_new(16); let x: i32 = 66; buf_push_u64(b, x as u64); let s: string = buf_take(b); buf_free(b); if (s.len() != 8) { return 1; } let k: i32 = 1; while (k < 8) { if (s[k] as i32 != 0) { return 2; } k = k + 1; } return s[0] as i32; }`, ""},
 }

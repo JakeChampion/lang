@@ -3,27 +3,16 @@ package e2ecompiler
 import "testing"
 
 // assocFnIRCases exercise ASSOCIATED FUNCTIONS — receiver-less impl methods
-// called as `Type.f(args)` (constructors / static methods) — through the
-// stack-IR path. The self-host parser desugars an impl method whose first
-// param isn't `self` into a FuncDecl with an empty receiver_name (so the
-// emitter labels it `Type.f` with no receiver slot); the lowering resolves a
-// `Type.f(args)` call site (object = a bare declared-struct name, not a local)
-// to `call_direct("Type.f")` with no receiver. Exit codes are the oracle.
+// called as `Type.f(args)` (constructors / static methods). The self-host
+// parser desugars an impl method whose first param isn't `self` into a
+// FuncDecl with an empty receiver_name, and a `Type.f(args)` call site (object
+// = a bare declared-struct name, not a local) becomes a direct call of
+// `Type.f` with no receiver. Exit codes are the oracle.
 //
 // Scope (issue #2779 item 1): receiver-less associated functions on both
-// structs (constructors) and enums (tag/default-style constructors). A
-// nominal-returning enum associated fn returns a leak-only variant box (a heap
-// pointer, like any value); the call site recovers the result's enum type from
-// its registered "<Enum>.<f>" return type (struct_ret_fns_of records enum
-// returns too), so it routes through the IR path rather than bailing, like
-// the struct form. The enum-* cases below pin that down across both backends.
-//
-// A non-nominal-returning enum associated fn (e.g. `E.zero(): i32`) is the one
-// case that still bails (a safe miss): recognising it would key
-// off a declared-enum check at the call site, which flips an extra self-host
-// module onto the IR emit path and inflates the self-host bootstrap binary past
-// the CI runner's memory ceiling. Not worth a bootstrap regression for an edge
-// case, so it keeps bailing until the self-host compiler's own footprint shrinks.
+// structs (constructors) and enums (tag/default-style constructors). The
+// enum-* cases pin that the call site recovers an enum associated fn's result
+// as its enum type, bound or inline, annotated or inferred.
 var assocFnIRCases = []struct {
 	name     string
 	src      string

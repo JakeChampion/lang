@@ -208,7 +208,7 @@ function main(): i32 {
 // predicate the self-host front end rejects a float literal with (#6842),
 // against the same oracle as the kernel above: a literal is out of range
 // exactly when a correctly-rounding strtod answers ±Inf, which is when
-// strconv.ParseFloat reports ErrRange and native's parser reports P002.
+// strconv.ParseFloat reports ErrRange and the Go parser reports P002.
 //
 // It runs the whole parse_f64 corpus, so it covers the rounding boundary the
 // 14 hand-written cases in self_host_front_end_codes_test.go only sample: the

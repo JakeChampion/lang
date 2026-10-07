@@ -7,26 +7,20 @@ import (
 	"testing"
 )
 
-// TestSelfHostMapKeysSnapshotIRX86_64 pins #4353's coupled foundational change
-// (slices 1+2, register x86-64): SCALAR (i32-element) map keys()/values() reads
-// SNAPSHOT-COPY the column (__fern_map_snapshot_col) instead of aliasing the
-// map's raw buffer, and — sound only together with that — an i32-key/i32-value
-// map's __fern_map_set grow path frees the superseded buffer
-// (__fern_arr_push_owned, the op_map_set `owncols` width bit), closing the
-// cap-0 grow-leak (#4877). The three legs of the old mutually-compensating
-// balance (keys() aliases the buffer / the ks result's exit-dec frees that
-// alias / the map leaks its own buffers) are flipped together:
+// TestSelfHostMapKeysSnapshotIRX86_64 pins #4353 on x86-64: SCALAR
+// (i32-element) map keys()/values() reads SNAPSHOT-COPY the column
+// (__fern_map_snapshot_col) instead of aliasing the map's raw buffer, and an
+// i32-key/i32-value map's grow path frees the superseded buffer (#4877):
 //   - `let ks = m.keys()` is an OWNED fresh copy: the exit sweep reclaims the
 //     copy, later m.insert mutations (including buffer-replacing grows) never
-//     show through it, and the map's own buffers are freed by map_free /
+//     show through it, and the map's own buffers are freed by __fern_map_free /
 //     the owned grow — no double free (__rc_underflow_count() == 0) and no leak.
 //   - `for k in m.keys()` / `for (k, v) in m` scalar columns are snapshots
 //     released right after the loop, so a body that mutates the map iterates
 //     the entry-time snapshot (matching the wasm self-host backend) instead
 //     of a buffer a growing insert may free from under it.
 //
-// String/pointer columns keep the historical alias + leak-only grow (slice 3),
-// covered by TestSelfHostMapKsReclaimIRX86_64.
+// String/pointer columns are covered by TestSelfHostMapKsReclaimIRX86_64.
 func TestSelfHostMapKeysSnapshotIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -58,11 +52,10 @@ func TestSelfHostMapKeysSnapshotIRX86_64(t *testing.T) {
 		}
 	}
 
-	// SNAPSHOT SEMANTICS (the doc's differential-oracle case, matching the
-	// native compiler): `let ks = m.keys()` must show the PRE-insert length and
-	// values after later inserts/overwrites — including inserts that GROW the
-	// map (cap 4 -> 8), which now free the superseded buffer the old aliasing
-	// read would have dangled on.
+	// SNAPSHOT SEMANTICS (the doc's differential-oracle case): `let ks =
+	// m.keys()` must show the PRE-insert length and values after later
+	// inserts/overwrites — including inserts that GROW the map (cap 4 -> 8)
+	// and free the superseded buffer, which an aliasing read would dangle on.
 	run(t, `function main(): i32 {
     let m: Map[i32, i32] = Map { 1: 10, 2: 20 };
     let ks = m.keys();
@@ -86,9 +79,8 @@ func TestSelfHostMapKeysSnapshotIRX86_64(t *testing.T) {
 
 	// GROW CHURN, no keys() taken: an i32/i32 map that grows twice per build
 	// (len 13: cap 4 -> 8 -> 16) must be FLAT — the owned grow frees each
-	// superseded buffer and map_free frees the final ones + the mapbox. This
-	// is the #4877 grow-leak (48+ B/build) closing: before the coupled change
-	// this churn grew by the abandoned cap-0/4/8 buffers every build.
+	// superseded buffer and __fern_map_free frees the final ones + the mapbox
+	// (#4877).
 	run(t, `function build(n: i32): i32 {
     let m: Map[i32, i32] = Map { 1: 2 };
     let j: i32 = 0;
@@ -111,10 +103,9 @@ function main(): i32 {
 }`, "map-i32-grow-churn-flat", 0)
 
 	// KEYS-TAKEN CHURN: build + grow + `let ks = m.keys()` per iteration must
-	// also be flat — the exit sweep frees the snapshot COPY, map_free frees
-	// the map's real buffers exactly once (no underflow), and the owned grow
-	// frees the superseded ones. Under the old alias this shape double-dec'd
-	// the live keys buffer (ks sweep + map_free) and leaked every grow.
+	// also be flat — the exit sweep frees the snapshot COPY, __fern_map_free
+	// frees the map's real buffers exactly once (no underflow), and the owned
+	// grow frees the superseded ones.
 	run(t, `function build(n: i32): i32 {
     let m: Map[i32, i32] = Map { 1: 2 };
     let j: i32 = 0;
@@ -161,7 +152,7 @@ function main(): i32 {
 	// `for (k, v) in m` CHURN: the two per-loop scalar column snapshots are
 	// released right after the loop (they are hidden, non-swept locals), so
 	// repeated iteration stays flat and does not over-release (the map's own
-	// buffers are freed exactly once, by map_free).
+	// buffers are freed exactly once, by __fern_map_free).
 	run(t, `function build(n: i32): i32 {
     let m: Map[i32, i32] = Map { 1: 2, 3: 4, 5: 6 };
     let t: i32 = 0;

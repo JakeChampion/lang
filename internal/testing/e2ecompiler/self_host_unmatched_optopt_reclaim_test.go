@@ -8,49 +8,28 @@ import (
 	"testing"
 )
 
-// --- An UNMATCHED Option[Option[T]] local leaks both boxes (#7714) -----------
+// --- An UNMATCHED Option[Option[T]] local releases both boxes (#7714) --------
 //
-// The last quadrant gap in the Option reclaim family, after #7710 (matched
-// Option[string]) and #7712 (reassigned Option[string]) — and the MIRROR IMAGE
-// of those: there `matched` was the hole and `unmatched` worked; here `matched`
-// works and `unmatched` was the hole.
+// The nested-Option member of the Option reclaim family, beside #7710 (matched
+// Option[string]) and #7712 (reassigned Option[string]). An unmatched
+// `Option[Option[i32]]` local must release both boxes as the matched one does;
+// missing it strands 80 B/round, unbounded (400/0, live 16000). The matched
+// case balances even with no arm binding at all, so the binding is never the
+// releaser.
 //
-//	Option[Option[i32]]        native      self-host (before)
-//	matched                    400/400/0   400/400/0
-//	matched via Some(_)        400/400/0   400/400/0
-//	UNMATCHED                  400/400/0   400/0  live 16000
+// For a scalar inner, the inner option box owns no pointer, so a flat dec of
+// the payload after the null and tag checks is its complete release. An rc
+// inner payload must not take that flat dec — it frees the inner box but
+// nothing the box owns — so it takes a guarded two-level walk instead (#7718,
+// the `rc_inner_*` rows). Releasing one slot both ways would free the same box
+// twice.
 //
-// 80 B/round, unbounded, both boxes. The matched case is covered by the
-// consuming-match analysis and balances even with no arm binding at all, so the
-// binding was never the releaser — which is what identified the unmatched
-// collector as the gap.
+// A REASSIGNED nested-Option local whose every rebind allocates its own inner
+// box releases each superseded box at its rebind (#7716), matched or not.
 //
-// NO NEW EMITTER. emit_optarr_deep_free releases an Option local as: null-guard,
-// then on the Some tag __fern_rc_dec the PAYLOAD, then __fern_rc_dec the BOX. For
-// Option[Option[T]] the payload IS the inner option box — an rc-headered block
-// owning no pointer — so that flat dec is already its complete release. Only the
-// credit was missing, exactly as the Result spelling already uses the same
-// emitter.
-//
-// THE SCALAR-INNER GATE IS ESSENTIAL, and it decides which RELEASE a shape
-// gets rather than whether it gets one. A flat dec frees the inner box but
-// nothing the box owns, so an rc inner payload must not use it — that one takes
-// the guarded two-level walk instead (#7718, the `rc_inner_*` rows). Crediting a
-// slot under both tags would free the same box twice, which is why the two
-// collectors are disjoint by annotation: nested_opt_inner_freefn answers
-// non-empty exactly where type_is_scalar_union answers false.
-//
-// #7716 then admits a REASSIGNED nested-Option local whose every rebind
-// allocates its own inner box, via opt_rebinds_all_fresh and an "optopt" kind —
-// the same route #7712 took for strings. That fixes the UNMATCHED half only:
-// the matched half never reaches this collector, whose escape gate reads a
-// bare-ident match scrutinee as an escape, and belongs to the consuming-match
-// family instead. `reassigned_matched_still_leaks` pins that split, so the two
-// are not mistaken for one class later.
-//
-// Every want was confirmed against BOTH oracles — bin/fern -interp and the
-// native x86-64 backend agreed on each — never read off the self-host run under
-// test, and every row is sanitizer-clean under FERN_SANITIZE=1.
+// Every want was confirmed against bin/fern -interp, never read off the
+// self-host run under test, and every row is sanitizer-clean under
+// FERN_SANITIZE=1.
 type unmatchedOptoptCase struct {
 	name string
 	src  string
@@ -167,12 +146,10 @@ func unmatchedOptoptCases() []unmatchedOptoptCase {
 			want: 63,
 		},
 		{
-			// THE rc-INNER SHAPE (#7718): what the scalar-inner gate used to refuse
-			// outright. Was 800/0 live 22400 — outer box, inner box and string data
-			// all leaked. Released now by emit_optopt_rc_deep_free, a GUARDED
-			// two-level walk: the existing emit_nested_opt_payload_drop carries "no
-			// null / tag guard" by design and runs only where the box is known live
-			// and the inner variant known, neither of which an exit sweep has.
+			// THE rc-INNER SHAPE (#7718): outer box, inner box and string data are
+			// all released by a GUARDED two-level walk, since an exit sweep knows
+			// neither that the box is live nor which inner variant it holds.
+			// Leaked, that was 800/0 live 22400.
 			name: "rc_inner_unmatched",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -228,13 +205,10 @@ function round(i: i32): i32 {
 			want: 68,
 		},
 		{
-			// The matched `Some(None)` rc-inner shape, fixed by giving the
-			// consuming-match drop the GUARDED emitter. rcpayload_option_cand used
-			// to exclude a None inner from the rc-inner kind — correctly, for the
-			// unguarded release it took, which read offset 8 unconditionally and
-			// would have handed the free fn whatever that word held. The exclusion
-			// cost both boxes (400/0) rather than saving a release, so with a tag
-			// guard in the emitter the gate widens to any direct construction.
+			// The matched `Some(None)` rc-inner shape: the consuming match releases
+			// both boxes through the GUARDED walk, whose tag check keeps it from
+			// handing the free fn the payload word of a None inner. Leaked, that
+			// was 400/0.
 			name: "rc_inner_matched_none",
 			src: `function round(i: i32): i32 {
     let o: Option[Option[string]] = Some(None);

@@ -6,38 +6,17 @@ import (
 
 // --- A string local REBOUND from a producer call ------------------------------
 //
-// `let x: string = mk("x"); x = mk("yz");` measured 400 allocs / 0 frees on the
-// self-host — not a partial sweep, nothing freed at all — and it is the
+// `let x: string = mk("x"); x = mk("yz");` frees the superseded box at the
+// reassignment and the final one at scope exit, exactly as a rebound concat
+// (`let x = "a" + b; x = "c" + d;`) does: `mk` returns a fresh box. It is the
 // `str__rebind__{read,unused}` pair of the leak matrix (#5338).
-//
-// THE REFUSAL WAS NARROWER THAN THE NOTE SAID. The matrix recorded it as "the
-// STR: credit is single-bind only", but the string-builder accumulator class
-// has released a rebound local since #2649: it frees the superseded box at each
-// reassignment and the final one at scope exit, and str_accum_reassign_ok's
-// default arm already admits a rebind RHS that does not mention the local at
-// all. `let x = "a" + b; x = "c" + d;` was clean before this change.
-//
-// What it could not see was that `mk` returns a fresh box. That proof is
-// whole-program — str_fresh_ret_fns_of's registry — and the accumulator
-// collector answered from the expression alone. So a producer-call rebind fell
-// between two collectors: this one could not tell mk was fresh, and
-// collect_str_fresh_ret_call_names, which can, skips every reassigned name by
-// construction. Neither credited it, so neither box was ever swept.
-//
-// The fix is the registry, threaded into the class that already had the
-// machinery: str_accum_value_is_fresh is the expression test OR the registry
-// lookup, and both the declaration and the rebind ask it.
 //
 // Three shapes could over-release: an alias bound before the rebind (which
 // would point at a box the rebind frees), a rebind from a non-fresh value
 // (which would alias a live box), and a store into a container. Each reads its
 // value back after 200 rounds of churn have recycled the freelist, and each
-// answers identically on native x86-64, `bin/fern -interp` and the self-host.
-// On the typed lowering every row balances.
-//
-// Every flipped row was re-run under FERN_SANITIZE=1 with
-// FERN_RC_UNDERFLOW_TRAP=1 and FERN_RC_FREE_DEBUG=1: clean, no trap, no
-// quarantine hit.
+// answers identically on `bin/fern -interp` and the self-host. Every row
+// balances.
 
 const strRebindDecl = `function mkstr(a: string): string { return a + "-long-enough-to-heap-allocate"; }
 function churn(i: i32): i32 { let a: string = mkstr("c"); let b: string = mkstr("d"); return a.len() + b.len(); }

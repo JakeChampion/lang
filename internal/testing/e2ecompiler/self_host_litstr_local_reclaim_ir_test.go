@@ -7,40 +7,20 @@ import (
 )
 
 // litStrLocalReclaimCases pin #6582: a literal-initialised string local declared INSIDE
-// a loop body leaked one box per iteration on the asm backends.
+// a loop body must free its box every iteration on the asm backends. A string literal
+// allocates a fresh box per evaluation — the DATA is .rodata but the box is not, and
+// __fern_str_free's heap-base guard skips the data and reclaims the box — so a named
+// literal binding is as fresh as any other string producer.
 //
-// str_local_binding_is_fresh admitted a concat (`a + b`) and the string producer methods
-// but not a bare literal, so `let pre: string = "ab"` earned no "STR:" credit and was
-// never freed. is_fresh_str_temp — twenty lines below it — already documents why the
-// literal IS fresh: const_str allocates a fresh box per evaluation, the DATA is .rodata
-// but the box is not, and __fern_str_free's heap-base guard skips the data and reclaims
-// the box. It admitted exactly this shape as a concat OPERAND; a named binding is no
-// different.
+// The census (FERN_LEAKCHECK=1) is what sees this; `__heap_bump_bytes()` deltas cannot
+// (#5474). wasm is unaffected: the whole literal is data-section there and arr_dec is a
+// guarded no-op.
 //
-// Measured with FERN_LEAKCHECK=1 (allocs/frees/live_bytes), 200 iterations, self-host
-// x86-64 — `__heap_bump_bytes()` deltas cannot see this, see #5474's retraction:
-//
-//	while (…) { let pre = "ab"; acc += pre.len(); }   200/0/4800    -> 200/199/24
-//	the same with an i32[] built from pre.len()       400/200/4800  -> 400/399/24
-//	pre HOISTED above the loop (control)              201/200/24    -> 201/201/0
-//
-// Flat on wasm before and after, where the whole literal is data-section and arr_dec is
-// a guarded no-op. That backend split is what made it look like a partial fix to whatever
-// class was under test — it cost this repo a full round on #5474's gate, whose churn cases
-// hoist the string for that reason.
-//
-// A literal local that is the receiver of `.to_string()` stays UNCREDITED on purpose,
-// because the alternative is an over-release: on a string receiver that call is the
-// IDENTITY, so its result aliases the receiver's box and the concat-temp machinery frees
-// that result as an inline-consumed temp; crediting the local too would release the same
-// box twice. litstr_tostring_receiver excludes it, which is what keeps
-// TestSelfHostStrConcatTemp's `tostring-string-recv-alias-safe` pinned at exactly two
-// sites.
-//
-// The credit also stays out of str_local_binding_is_fresh, whose ~20 other callers drive
-// the accumulator and concat-temp analyses: folding it in there made `s = "reset"` read
-// as a fresh rebind and admitted an accumulator TestSelfHostStrAccum pins as
-// un-reclaimable.
+// A literal local that is the receiver of `.to_string()` must NOT be freed: on a string
+// receiver that call is the IDENTITY, so its result aliases the receiver's box and is
+// freed as an inline-consumed concat temp; freeing the local too would release the same
+// box twice. TestSelfHostStrConcatTempIRX86_64's `tostring-string-recv-alias-safe` case
+// pins that.
 var litStrLocalReclaimCases = []struct {
 	name string
 	src  string
@@ -60,12 +40,8 @@ var litStrLocalReclaimCases = []struct {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// #6606: a local bound to a USER function's string result. str_local_binding_is_fresh
-	// admits a call only via str_free_producer_ident — a hardcoded list of BUILTINS — so
-	// `let t = suffix(i)` earned no credit and freed nothing at all: allocs=200 frees=0
-	// live=4800 over 200 rounds, against 200/199/24 after. The whole-program proof it
-	// needed (str_fresh_ret_fns_of) already existed and was never consulted at the
-	// binding.
+	// #6606: a local bound to a USER function's string result, not just a
+	// builtin's: `let t = suffix(i)` is freed every round.
 	{"strfresh-ret-call-loop-local", `function suffix(n: i32): string { if (n % 2 == 0) { return "even"; } return "odd"; }
 function main(): i32 {
     let acc: i32 = 0;

@@ -7,34 +7,31 @@ import (
 	"testing"
 )
 
-// A user enum may name a variant `Ok`, `Some`, `Err` or `None`. The self-host
-// match lowering used to decide "is this a builtin pattern" from the arm's NAME
-// alone (`is_builtin_pattern`), with no reference to the scrutinee's enum, so a
-// user variant sharing one of those names was routed to the Option/Result
-// tag-test shape. That failed two different ways:
+// A user enum may name a variant `Ok`, `Some`, `Err` or `None`, and the match
+// lowering must not route such an arm to the Option/Result tag-test shape on
+// its NAME alone. Routed that way it fails two different ways:
 //
-//   - PAYLOAD-carrying names (`Ok(n)` / `Some(n)` / `Err(n)`) tried to recover
-//     an Option/Result type off the scrutinee slot, found none, and bailed the
-//     whole module. With the AST emitter retired that is a hard compile error.
-//   - `None` carries no payload, so it skipped the recovery and reached a
-//     hardcoded builtin tag (`None`/`Err` => 1). A user `None` sitting at any
-//     other index then never matched: it compiled clean and returned the wrong
-//     answer, with no diagnostic at all.
+//   - PAYLOAD-carrying names (`Ok(n)` / `Some(n)` / `Err(n)`) find no
+//     Option/Result type off the scrutinee slot, and the module fails to
+//     compile.
+//   - `None` carries no payload, so it reaches a hardcoded builtin tag
+//     (`None`/`Err` => 1). A user `None` sitting at any other index then never
+//     matches: it compiles clean and returns the wrong answer, with no
+//     diagnostic at all.
 //
-// So these cases pin BOTH failure modes. runCaptureStrictIR fails the bail (a
-// silent fall-through cannot pass), and every case is checked against the
-// interpreter oracle, which is the only thing that would have caught the
-// `None` miscompile.
+// So these cases pin BOTH failure modes. runCaptureStrictIR fails a refusal,
+// and every case is checked against the interpreter oracle, which is the only
+// thing that catches the `None` miscompile.
 //
-// The genuine-builtin cases are the control in the other direction: the fix
-// separates the two by variant OWNERSHIP (the parser gives each user variant a
-// struct with `enum_owner`; the builtins have none), so a change that made
-// everything take the user-enum path would fail these instead.
+// The genuine-builtin cases are the control in the other direction: the parser
+// gives each user variant a struct with `enum_owner` and the builtins have
+// none, so a change that made everything take the user-enum path would fail
+// these instead.
 var selfHostShadowedBuiltinVariantCases = []struct {
 	name string
 	src  string
 }{
-	// Payload-carrying shadows — each bailed the module before the fix.
+	// Payload-carrying shadows.
 	{"user-ok", `enum E { Ok(i32), Bad(i32) }
 function main(): i32 { let e: E = E.Ok(9); match (e) { Ok(n) => { return n; }, _ => { return 1; } } }`},
 	{"user-some", `enum E { Some(i32), Nope }
@@ -84,16 +81,14 @@ function main(): i32 { let e: E = E.None; match (e) { E.None => { return 7; }, _
 function main(): i32 { match (f()) { Some(v) => { return v; }, None => { return 7; } } }`},
 	{"builtin-none-var-init", `function main(): i32 { let o: Option[i32] = None; match (o) { Some(v) => { return v; }, None => { return 7; } } }`},
 
-	// The control that matters most, and the one the first cut of this fix
-	// did not have: a GENUINE Option matched while a shadowing user enum is
-	// merely DECLARED elsewhere in the program.
+	// The control that matters most: a GENUINE Option matched while a
+	// shadowing user enum is merely DECLARED elsewhere in the program.
 	//
-	// Deciding the builtin-vs-user question by variant ownership alone is not
-	// enough — ownership is a property of the name across the whole module, so
-	// one `enum O2 { Some(i32), None }` anywhere sent every `Some` arm down the
-	// user path, including these, which then answered wrong with no diagnostic.
-	// The scrutinee is what settles it: a real Option/Result local carries an
-	// `opt_type` and no struct type.
+	// Variant ownership alone cannot decide builtin-vs-user — it is a property
+	// of the name across the whole module, so one `enum O2 { Some(i32), None }`
+	// anywhere would send every `Some` arm down the user path, where these
+	// answer wrong with no diagnostic. The scrutinee is what settles it: a real
+	// Option/Result local has no struct type.
 	{"genuine-option-with-shadow-declared", `enum O2 { Some(i32), None }
 function main(): i32 { let r: Option[i32] = Option.Some(3); match (r) { Some(v) => { return v; }, None => { return 99; } } }`},
 	{"genuine-option-none-with-shadow-declared", `enum O2 { Some(i32), None }

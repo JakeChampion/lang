@@ -7,7 +7,7 @@ import "testing"
 // docs/FEATURE-AUDIT.md). random_bytes is a CSPRNG, so the output isn't
 // deterministic; the program self-validates the canonical structure (length 36,
 // hyphens at 8/13/18/23, the version nibble, and an RFC-4122 variant nibble in
-// 8/9/a/b) and returns 42 on success — exactly the shape the native
+// 8/9/a/b) and returns 42 on success — exactly the shape the conformance case
 // audit_std_uuid checks.
 func TestSelfHostUuidIR(t *testing.T) {
 	cli := newStrictCLI(t)

@@ -8,46 +8,31 @@ import (
 // --- `own` struct params: released at exit, donated with string / enum fields
 // (#5342) -------------------------------------------------------------------
 //
-// Four leaks on one shape family, measured on x86-64 at 100 rounds
-// (allocs/frees/live_bytes; native was clean on every row):
+// The shape family, measured on x86-64 at 100 rounds:
 //
 //	bump(p: P): P { return P { ...p, n: p.n + 1 }; }     P { s: string, n: i32 }
-//	  called as bump(P { s: w(i), n: i })                 400/100  live 16800
-//	bump(own p: P): P { … the same … }                    300/100  live 12000
-//	bumpq(own p: Q): Q { … }, Q { e: E, n: i32 }         300/0    live 13600
-//	bump(own p: N): N { … }, N { m: i32, n: i32 }        100/100  (reuse fired)
+//	  called as bump(P { s: w(i), n: i })
+//	bump(own p: P): P { … the same … }
+//	bumpq(own p: Q): Q { … }, Q { e: E, n: i32 }
+//	bump(own p: N): N { … }, N { m: i32, n: i32 }        (reuse fires)
 //
-// Every row was the caller never releasing `q`: a call result built by a
-// functional update `T { ...base, … }` earned no strict-fresh credit, though
-// every field the spread CARRIES reaches the new box counted (the base copy
-// retains a nested-struct or enum field, and a string field where the type
-// ROUTES field reclaim; a scalar carries nothing).
-// return_value_is_strictfresh_struct now admits it on exactly that condition
-// (spread_carried_fields_counted), and a bare `return p` of an `own` param on
-// the frame-fresh terms (own_param_ret_is_frame_fresh).
+// A call result built by a functional update `T { ...base, … }` is fresh when
+// every field the spread CARRIES reaches the new box counted, so the caller
+// releases it; and an `own` struct param the frame still holds at exit is the
+// callee's to release.
 //
-// The enum row's callee never released `p` at all: reuse was refused for the
-// enum field and a param was never exit-swept. own_struct_param_release_rows_of
-// now credits an `own` struct param the frame still holds at exit ("OWNREL:" —
-// deep; "OWNRELB:" — box-only where a field may have been copied out
-// uncounted), and the own-update family admits enum fields.
+// Two hazards are pinned too:
 //
-// Two bugs surfaced under the new coverage and are pinned here too:
-//
-//   - borrowable_params_of marked an `own` param borrowable whenever the body
-//     did not "consume" it, so the caller stashed and FREED a fresh argument the
-//     callee had taken — a double ownership the scalar control masked only
-//     because `q` was never released. An `own` position is a move.
-//   - the own-update family admitted a string override on a type that does
-//     not ROUTE field reclaim; the reuse arm then freed the old string while
-//     the caller's construction — whose retain is gated on routing — had
-//     taken no share. `unrouted_string_own_update` exited 77 on the parent
-//     with allocation churn between the free and the read. FERN_SANITIZE
-//     reported nothing: the quarantine stops the recycling that exposes it.
+//   - An `own` position is a move: the caller must not stash and free a fresh
+//     argument the callee has taken.
+//   - A string override in an own-update must not free the old string where
+//     the caller's construction took no share of it.
+//     `unrouted_string_own_update_refused` reads the value back after
+//     allocation churn between the free and the read. FERN_SANITIZE cannot see
+//     this one: the quarantine stops the recycling that exposes it.
 //
 // Every row is gated on `__rc_underflow_count()` and runs a second leg under
-// FERN_SANITIZE=1. Every want was confirmed against BOTH oracles: `bin/fern
-// -interp` and the native x86-64 backend agreed on each.
+// FERN_SANITIZE=1. Each want is the `bin/fern -interp` answer.
 type ownParamReleaseCase struct {
 	name string
 	src  string
@@ -70,15 +55,13 @@ func ownParamReleaseCases() []ownParamReleaseCase {
 	return []ownParamReleaseCase{
 		{
 			// #8628: one exit returns the param bare, a sibling exit supersedes
-			// it with a spread that OVERRIDES an rc field. The bare return used
-			// to disqualify the whole param from an exit-release row
-			// (struct_returned_bare), so the superseding exit released nothing
-			// and the overridden field's old buffer leaked once per call —
-			// 10002/5000, 360,080 bytes on the issue's own reproducer.
+			// it with a spread that OVERRIDES an rc field. The superseding exit
+			// must release the param, or the overridden field's old buffer leaks
+			// once per call — 10002/5000, 360,080 bytes on the issue's own
+			// reproducer.
 			//
-			// The row is granted now and the BARE exit alone elides its release
-			// (returned_own_struct_param_slot), which is the move: there is no
-			// return-transfer retain for structs, so eliding the dec is the
+			// Only the BARE exit elides its release, which is the move: there is
+			// no return-transfer retain for structs, so eliding the dec is the
 			// whole hand-off. A LOWER free count here is that elision spreading
 			// to the superseding exit; a HIGHER one is the bare exit releasing a
 			// box it just handed the caller, which the underflow check catches
@@ -174,9 +157,8 @@ function sink_void(own p: P): void { let k: i32 = p.n; if (k < 0) { return; } }`
 			want: 53,
 		},
 		{
-			// `return p` hands the moved-in box straight back: the callee's
-			// release is refused (struct_returned_bare) and the caller's
-			// binding earns the strict-fresh credit instead.
+			// `return p` hands the moved-in box straight back, so the callee
+			// does not release it and the caller's binding does instead.
 			name: "own_returned_bare",
 			src: ownParamReleaseHead + `@noinline
 function id(own p: P): P { if (p.n < 0) { return P { ...p, n: 0 }; } return p; }` +
@@ -380,9 +362,8 @@ func TestSelfHostOwnParamReleaseIRArm64(t *testing.T) {
 //
 // A callee that does not consume a pointer-element `own` array hands an
 // identical buffer back uncounted, so `return f(xs)` is `xs = f(xs); return
-// xs`. The AST lowering's exit sweep released `xs` whatever the call returned,
-// freeing the buffer the result still held: exit 77 or a sanitizer
-// use-after-free on every row below before the fix.
+// xs`. The exit sweep must not release `xs` there: freeing the buffer the
+// result still holds shows up as exit 77 or a sanitizer use-after-free.
 //
 // The elements are static strings, and the array-of-arrays row has no rows,
 // so the only heap unit in play is the buffer the handback moves.

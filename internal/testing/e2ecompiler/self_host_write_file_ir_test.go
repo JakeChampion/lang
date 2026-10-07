@@ -86,11 +86,10 @@ func TestSelfHostWriteFileIRX86_64(t *testing.T) {
 
 // TestSelfHostWriteFileIRWasm routes write_file(path, content) through the wasm
 // IR backend under wasmtime, granting the run directory as preopen fd 3
-// (`--dir=.::/`). write_file now lowers on the wasm IR path: wasm_ir emits
-// `call $__fern_write_file` and wasm_ir_run pulls in the path_open / fd_close
-// imports (plus the fd_write import its gate now covers) + the writefile_func
-// helper. Each case writes to wf_out.txt and the test reads the bytes back from
-// the host run directory, asserting None (exit 0) and the exact content landed.
+// (`--dir=.::/`). wasm_ir emits `call $__fern_write_file` and wasm_ir_run pulls
+// in the path_open / fd_close / fd_write imports + the writefile_func helper.
+// Each case writes to wf_<name>.txt and the test reads the bytes back from the
+// host run directory, asserting Ok (exit 0) and the exact content landed.
 func TestSelfHostWriteFileIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host write_file wasm IR e2e")

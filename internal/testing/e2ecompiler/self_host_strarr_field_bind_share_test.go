@@ -7,41 +7,27 @@ import (
 // --- A string[] FIELD READ bound to a LOCAL, then stored ----------------------
 //
 // `let tt: string[] = q.f; let p: P = P { f: tt, n: i }` — the hoisted spelling
-// of the inline share self_host_strarr_field_share_read_test.go admitted, and
-// the row that file pinned as `hoisted_bind_still_leaks` while it stayed open
-// (#5338). It measured 800 allocs / 300 frees, 16800 live, against native's
-// 600/600; the emit says why, and it is the same block the inline cell had —
-// neither holder emitted __struct_drop_P or __field_reclaim_P at all, because
-// strarrfld_scan marks `<T>.<field>` for any read and the bind is a read.
+// of the inline share self_host_strarr_field_share_read_test.go pins (#5338).
+// The holders must release the shared array exactly once between them; left
+// undropped it measured 800 allocs / 300 frees, 16800 live.
 //
-// WHAT THE BIND NEEDS THAT THE INLINE POSITION DID NOT. In `P { f: q.f }` the
-// read is consumed where it is made, so admitting it proves itself: the
-// construction retains an array field unconditionally, and the new holder
-// co-owns a counted reference. Through a local that is no longer true — `tt` is
-// an ordinary string[] local the field scan sees no further uses of, and an
-// unchecked admission would let `return tt[0]` outlive the holder's deep free.
+// WHAT THE BIND NEEDS THAT THE INLINE POSITION DOES NOT. In `P { f: q.f }` the
+// read is consumed where it is made: the construction retains an array field
+// unconditionally, and the new holder co-owns a counted reference. Through a
+// local that is no longer true — `tt` is an ordinary string[] local, and an
+// unchecked release would let `return tt[0]` outlive the holder's deep free.
 //
-// So the bind is admitted only when `tt` reaches NOTHING but that store.
-// strarr_unsafe_for_alias is the proof, reused rather than rewritten: it is the
-// classifier the local "SARR:" credit already applies to the identical
-// question, and its `sfld_ok` carve-out exists for exactly the struct-literal
-// share this needs forgiven. Everything else is a hazard, which the
-// `refused_*` rows below exercise.
-//
-// THE FAILURE MODE IS AN OVER-RELEASE, not a leak, so those rows are
+// THE FAILURE MODE IS AN OVER-RELEASE, not a leak, so the `refused_*` rows are
 // essential rather than decorative: each one escapes something (an element,
 // the array, a bound element) or mutates `tt`, then reads every value back
-// after 200 rounds of churn have recycled the freelist. They answer identically
-// on native x86-64, `bin/fern -interp` and the self-host. On the typed
-// lowering every row balances.
+// after 200 rounds of churn have recycled the freelist. They answer
+// identically under `bin/fern -interp` and the self-host, and every row
+// balances.
 //
-// `escaping_holder_now_clean` is the one row that moved further than the pin
-// predicted: through the bind the returned literal's field value is a bare
-// ident, which the strict-fresh return classifier already admitted, so the
-// caller's binding earned its reclaim. The inline spelling reached the same
-// classifier as a field read and was refused there until #5338 admitted it;
-// self_host_strarr_field_share_read_test.go pins both. Both answer 8 on all
-// three engines.
+// `escaping_holder_now_clean` returns the literal holding `tt`: the returned
+// field value is a bare ident, so the caller's binding is the one that
+// releases it. self_host_strarr_field_share_read_test.go pins the inline
+// spelling; both answer 8.
 //
 // The target was re-run under FERN_SANITIZE=1 with FERN_RC_UNDERFLOW_TRAP=1 and
 // FERN_RC_FREE_DEBUG=1: clean, no trap, no quarantine hit.
@@ -162,8 +148,8 @@ function round(i: i32): i32 {
 			want: 8,
 		},
 		{
-			// An element is BOUND to a local and read after churn —
-			// the lasting element alias strarr_expr_unsafe exists to catch.
+			// An element is BOUND to a local and read after churn — a lasting
+			// element alias that must stay valid.
 			name: "refused_element_bound",
 			src: strarrBindShareDecl + `function round(i: i32): i32 {
     let want: i32 = w("a").len();
@@ -193,12 +179,10 @@ function round(i: i32): i32 {
 			want: 68,
 		},
 		{
-			// Was REFUSED, and is not any more. `for s in tt` binds an element
-			// per iteration, which the walker used to refuse outright; a
-			// transient binder no longer takes the array's credit away (see
+			// `for s in tt` binds an element per iteration. A transient binder
+			// does not take the array's credit away (see
 			// self_host_forin_strarr_binder_test.go), so the share behind it is
-			// admitted too and this balances. The exit is 43 before and after —
-			// only the accounting moved — and native and interp agree.
+			// admitted and this balances. The interpreter answers 43.
 			name: "iterated_now_clean",
 			src: strarrBindShareDecl + `function round(i: i32): i32 {
     let q: P = P { f: mkv(i), n: i };

@@ -9,9 +9,9 @@ import (
 
 // auditNumGenCases isolate sized-int / float numeric features and
 // generics / traits / closures, run through the SELF-HOSTED compiler.
-// Self-host arm of the §A audit (docs/FEATURE-AUDIT.md); the native arm
-// is the `audit_numeric_types` + `audit_generics_traits_closures`
-// fixtures (all four native backends).
+// Self-host arm of the §A audit (docs/FEATURE-AUDIT.md); the conformance
+// cases `audit_numeric_types` + `audit_generics_traits_closures` cover the
+// same features.
 var auditNumGenCases = []struct {
 	name string
 	src  string

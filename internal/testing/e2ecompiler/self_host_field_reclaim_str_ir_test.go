@@ -5,18 +5,12 @@ import (
 	"testing"
 )
 
-// TestSelfHostFieldReclaimStrIRX86_64 pins the #4355 replaced-STRING-field
-// reclaim: the per-type __field_reclaim_<T> consume-rebind helper used to free
-// replaced ARRAY fields only, so a struct threaded through `s = step(s)`
-// rebinds leaked the superseded box's string field per rebind (native is flat
-// on the same shape). The helper bodies now release a replaced string field
-// via the rc-aware __fern_str_free under the SAME cow + snap guards as the
-// array fields: a carried-over field (functional update) is pointer-equal in
-// `new` and skipped; the caller's original is protected by the snap compare.
-// Balance comes from the existing construction-side retains (a non-fresh
-// string field value is rc_inc'd into the box; a fresh one is sole-owned),
-// plus the new read-side retain for `let t = s.name` bindings (an uncounted
-// field-read alias would otherwise dangle when the rebind frees the field).
+// TestSelfHostFieldReclaimStrIRX86_64 pins the replaced-STRING-field reclaim
+// (#4355): a struct threaded through `s = step(s)` rebinds releases the
+// superseded value's string field as well as its array fields, so the bump
+// stays flat (98 = leaked). A field carried over by a functional update, the
+// caller's original passed as a parameter, and a `let t = s.name` alias all
+// stay readable across the rebinds (97 / 88), and no release underflows (99).
 func TestSelfHostFieldReclaimStrIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	l := newStdlibLoader(t)
@@ -75,9 +69,9 @@ function main(): i32 {
     return 0;
 }`, "field-reclaim-str-carried-safe", 0)
 
-	// ALIASED read: `let t = s.name` takes an uncounted copy — the new
-	// read-side retain (alias_inc on the string box) keeps t readable after
-	// the rebind frees the replaced field, at detector zero.
+	// ALIASED read: `let t = s.name` must hold its own count on the string box,
+	// so t stays readable after the rebind frees the replaced field, at
+	// detector zero.
 	run(t, `struct S { xs: i32[], name: string, n: i32 }
 function step(s: S): S { return S { xs: [s.n], name: s.name + "x", n: s.n + 1 }; }
 function main(): i32 {
@@ -116,10 +110,7 @@ function main(): i32 {
     return bad;
 }`, "field-reclaim-str-snap-safe", 0)
 
-	// ESCAPING read → type EXCLUDED by the whole-program scan
-	// (strfld_reclaim_ok_types_of): `readit(s.name)` passes the field to a call
-	// arg — an uncounted alias the free would dangle — so S keeps the
-	// arrays-only reclaim body and its strings keep the sound leak. Every
+	// ESCAPING read: `readit(s.name)` passes the field as a call arg. Every
 	// read must stay valid across rebinds, detector zero.
 	run(t, `struct S { xs: i32[], name: string, n: i32 }
 function readit(nm: string): i32 { return nm.len(); }
@@ -140,11 +131,8 @@ function main(): i32 {
     return 0;
 }`, "field-reclaim-str-escaping-read-excluded", 0)
 
-	// STRING-ONLY struct (#4355 slice 3): no rc-array field, so this type was
-	// excluded from both the construction retain and the reclaim routing —
-	// the whole box chain leaked its string per rebind. STRFLDOK admission now
-	// routes it through __field_reclaim_<B> (string arms + snapshot_dec box
-	// free) with the retain widened in lockstep — churn flat.
+	// STRING-ONLY struct (#4355): no rc-array field, so the string is the box's
+	// only reclaimable field, and the rebind churn must still stay flat.
 	run(t, `struct B { name: string, n: i32 }
 function step(b: B): B { return B { name: b.name + "x", n: b.n + 1 }; }
 function main(): i32 {

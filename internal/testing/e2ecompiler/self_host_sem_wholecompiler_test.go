@@ -21,12 +21,12 @@ import (
 //
 // Three things are pinned, in the order they are cheapest to lose:
 //
-//   - Coverage. gen1 is fern.fern compiled by the native-built driver, and
-//     its report must say every declaration and instance produced.
+//   - Coverage. gen1 is fern.fern compiled by the driver (fern.fern built by
+//     the pinned stage0), and its report must say every declaration and
+//     instance produced.
 //   - Output. gen1 compiles lexer.fern, parser.fern and checker.fern
-//     byte-identically to the driver, which the native compiler built. This
-//     is the primary gate: a fixpoint is blind to a stable miscompile, this
-//     is not.
+//     byte-identically to the driver. This is the primary gate: a fixpoint is
+//     blind to a stable miscompile, this is not.
 //   - The fixpoint. gen1 compiles the whole tree byte-identically to the
 //     driver doing the same, which is gen1's own text: the compiler the path
 //     builds reproduces itself.

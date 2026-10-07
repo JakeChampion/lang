@@ -86,8 +86,7 @@ function main(): i32 {
 	// arm, which is why the answer separates this from a pairing that merely
 	// reuses the storage. cross_wide is the third candidate and it does NOT
 	// pair — a three-slot donor against a four-slot construction — so the
-	// count of 2 over three sites is what pins that the pairing asks. The AST
-	// path pairs none of them.
+	// count of 2 over three sites is what pins that the pairing asks.
 	{"cross-type", `struct Mote { text: string, k: i32 }
 struct Glyph { xs: i32[], k: i32 }
 type Sigil = Mote | Glyph;
@@ -129,7 +128,7 @@ function main(): i32 {
 	// tuple, a record's box to a tuple, and a tuple's to a record. The two
 	// cross-form ones are a two-field record against a three-element tuple,
 	// because the pairing matches SLOTS and a record box carries a shape word
-	// the tuple's does not. The AST path pairs none of the three.
+	// the tuple's does not.
 	{"tuple-form", `struct Parcel { a: string, b: i32 }
 function tuple_step(seed: i32): (i32, string) {
     let a: (string, i32[]) = ("aa", [seed, seed + 1]);
@@ -236,8 +235,7 @@ function main(): i32 {
 }`, 32, 4, 3, 7, false, false},
 
 	// A record of scalars: pure storage, with no children to release at the
-	// token. The AST path pairs this shape too, so the count alone does not
-	// separate the layers here — the switch and the answer do.
+	// token.
 	{"scalar-fields", `struct P { x: i32, y: i32 }
 function bump(seed: i32): i32 {
     let p: P = P { x: seed, y: seed + 1 };

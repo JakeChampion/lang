@@ -8,12 +8,11 @@ import (
 	"testing"
 )
 
-// TestSelfHostFieldReclaimStrWasmIR is the wasm port of the #4355
+// TestSelfHostFieldReclaimStrWasmIR is the wasm leg of the #4355
 // replaced-STRING-field reclaim (x86 sibling:
 // TestSelfHostFieldReclaimStrIRX86_64). On wasm a heap string is one inline
-// rc-headered block, so $__fern_arr_dec IS the string free — the widened
-// $__field_reclaim_<T> body decs a replaced string field under the same
-// cow + snap guards as the array fields.
+// rc-headered block, so $__fern_arr_dec is the string free; the rebind must
+// release a replaced string field and keep a carried or aliased one readable.
 func TestSelfHostFieldReclaimStrWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host field-reclaim-str wasm IR e2e")
@@ -56,7 +55,7 @@ function main(): i32 {
     if (s.n != 1500) { return 96; }
     return 0;
 }`, 0},
-		// STRING-ONLY struct (#4355 slice 3) — routed via STRFLDOK, churn flat.
+		// STRING-ONLY struct (#4355) — churn flat.
 		{"field-reclaim-str-only-flat-wasm", `struct B { name: string, n: i32 }
 function step(b: B): B { return B { name: b.name + "x", n: b.n + 1 }; }
 function main(): i32 {

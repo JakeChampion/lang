@@ -248,12 +248,9 @@ func TestSelfHostFreestandingTargets(t *testing.T) {
 		// a freestanding program may still stop.
 		{"exit-ok", "arm64-freestanding", "function main(): i32 {\n    exit(0);\n    return 0;\n}\n"},
 		// `print` in a function nothing calls is NOT a violation: the verdict is
-		// the tree-shaken module's, and the flat pre-pass that fires first only
-		// decides whether shaking is worth paying for. capability_violations
-		// returned true unconditionally once that pre-pass fired, so this exited
-		// 1 with no diagnostic printed — which the E066-site comparison alone
-		// cannot see, since both compilers report no site. That is what the exit
-		// code below is here for.
+		// the tree-shaken module's. A refusal with no diagnostic printed would pass
+		// the E066-site comparison, since both compilers report no site, so the
+		// exit code is checked as well.
 		{"unreachable-log-ok", "x86-64-freestanding", "function never_called(): void {\n    print(\"x\");\n}\nfunction main(): i32 { return 7; }\n"},
 	} {
 		t.Run(c.name, func(t *testing.T) {

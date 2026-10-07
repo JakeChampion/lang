@@ -10,25 +10,14 @@ import (
 )
 
 // arrarrIdentRowCases pin #6527's self-host half: a `string[][]` whose ROW is a
-// bare local earned no deep reclaim at all.
-//
-// The rows-are-literals spelling was already flat — arrarr_free_helper_of picks
-// __fern_strarrarr_free by kind — so the leak was never helper SELECTION, which
-// is what the issue attributed it to. It was the freshness proof: both
-// arrarr_lit_is_fresh and its strict string sibling required every row to be an
-// array LITERAL, so `let outer: string[][] = [inner, [...]]` fell to a flat
-// __fern_arr_dec per level and every element string was stranded (120 B/round
-// for one local row, 192 with a literal row beside it).
-//
-// A row that names a local is admitted when this construction is the local's
-// last use: declared earlier in the same statement list from an array literal,
-// mentioned nowhere in between, once here, never after. That is the invariant a
-// literal row has for free — its buffer is born in the slot — so the deep
-// reclaim frees nothing anything else still reads.
+// bare local (`let outer: string[][] = [inner, [...]]`) is deep-reclaimed —
+// every element string freed, not just the buffers — exactly as the
+// rows-are-literals spelling is. A row local is admitted when this
+// construction is its last use: declared earlier in the same statement list
+// from an array literal, mentioned nowhere in between, once here, never after.
 //
 // The refusal cases carry the weight. They must keep VALUES correct and the
-// over-release counter at zero; they are deliberately not asserted flat,
-// because a refused row still leaks exactly as it did before.
+// over-release counter at zero; they are deliberately not asserted flat.
 var arrarrIdentRowCases = []struct {
 	name string
 	src  string

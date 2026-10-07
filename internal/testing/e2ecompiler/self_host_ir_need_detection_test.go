@@ -7,22 +7,16 @@ import (
 	"testing"
 )
 
-// TestSelfHostIRNeedDetectionX86_64 guards the #3425 fix: emit_module_ir's
-// runtime-need detection (does the module use maps? does it allocate?) is now
-// folded into the SINGLE per-function lowering the emit loop already performs,
-// instead of re-lowering the whole module twice in the tail (the old
-// module_uses_maps / module_uses_heap passes — each a full extra lower_func
-// pass over every function, which on the ~1000-function self-host compiler
-// retained enough per-function ops to exhaust the bump heap and OOM the IR
-// self-compile).
+// TestSelfHostIRNeedDetectionX86_64 guards the runtime-need detection (#3425):
+// whether the module uses maps or allocates is read off the ops of the one
+// lowering the emit already performs, not off extra whole-module lowering
+// passes, which on the self-host compiler held enough ops to exhaust the heap.
 //
-// The behavioural contract the fold must preserve: a program that uses a Map
-// (needs the map runtime) AND allocates on the heap (needs the allocator + RC
-// runtime) still pulls BOTH runtimes in when emitted via the IR path. If the
-// per-loop need-marking missed either, the emitted asm would reference an
-// undefined __fern_map_* / __fern_alloc and fail to link — so a successful
-// link + correct exit code proves the needs were marked off the ops the emit
-// loop lowered, with no redundant re-lowering pass.
+// The behavioural contract: a program that uses a Map (needs the map runtime)
+// AND allocates on the heap (needs the allocator + RC runtime) pulls BOTH
+// runtimes in. If the need-marking missed either, the emitted asm would
+// reference an undefined __fern_map_* / __fern_alloc and fail to link — so a
+// successful link + correct exit code proves both needs were marked.
 func TestSelfHostIRNeedDetectionX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

@@ -43,9 +43,9 @@ var fnptrArrayRebindCases = []struct {
 	{"rebind-named-to-lambda", "function seven(): i32 { return 7; }\nfunction main(): i32 { let n: i32 = 5; let a: (() => i32)[] = [seven]; a = [() => n]; return a[0](); }", 5},
 	{"rebind-lambda-to-named", "function seven(): i32 { return 7; }\nfunction main(): i32 { let n: i32 = 5; let a: (() => i32)[] = [() => n]; a = [seven]; return a[0](); }", 7},
 	{"rebind-named-to-lambda-in-branch", "function seven(): i32 { return 7; }\nfunction main(): i32 { let n: i32 = 5; let a: (() => i32)[] = [seven]; if (n > 1) { a = [() => n]; } return a[0](); }", 5},
-	// Repeated rebinds in a loop: the superseded buffer is released by
-	// emit_arr_store's cow-guarded dec, so the heap must not grow without bound
-	// and nothing may be released twice.
+	// Repeated rebinds in a loop: the superseded buffer is released at the
+	// rebind, so the heap must not grow without bound and nothing may be
+	// released twice.
 	{"rebind-rc-soundness", "function seven(): i32 { return 7; }\nfunction nine(): i32 { return 9; }\nfunction churn(n: i32): i32 { let a: (() => i32)[] = [seven]; let i: i32 = 0; let s: i32 = 0; while (i < n) { a = [nine]; s = a[0](); i = i + 1; } return s; }\nfunction main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 4096) { return 98; } if (w != x) { return 97; } return w; }", 9},
 }
 

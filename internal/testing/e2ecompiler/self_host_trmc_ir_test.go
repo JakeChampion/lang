@@ -129,8 +129,8 @@ function main(): i32 { let t: Tree = Node(Leaf(1), Node(Leaf(2), Leaf(3))); let 
 	// EXCLUDED — recursive ctors whose holes sit at different payload POSITIONS.
 	// The hole is filled by an op_struct_set at a compile-time field index, so the
 	// tail cannot sit at index 1 in one iteration and index 0 in the next; the
-	// detector bails and the self-calls stay in the asm. (Differing ARITY is fine
-	// now, as long as the hole index agrees — that is what trmc_hole_index pins.)
+	// detector bails and the self-calls stay in the asm. (Differing ARITY is fine,
+	// as long as the hole index agrees.)
 	asm := run(t, `enum List { Cons(i32, List), Wrap(List), Nil }
 function step(xs: List): List {
     match (xs) {
@@ -257,7 +257,7 @@ function main(): i32 { if (sum(drop_neg(build(200000))) != 400000) { return 1; }
 		"trmc-branch-tail-deep", 0)
 
 	// The hole in the FIRST payload rather than the last: the link's field index
-	// is trmc_hole_index's answer, not "the last field".
+	// is the self-call's payload position, not "the last field".
 	asm = run(t, `enum List { Cons(i32, List), Nil }
 enum Rev { Node(Rev, i32), End }
 @noinline function to_rev(xs: List): Rev {

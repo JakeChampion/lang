@@ -16,16 +16,12 @@ import (
 // (no offset-8 payload read), so a later field read (`Num(x) => x.value`)
 // resolves: a union member binds the box itself.
 //
-// Before the fix every one of these bailed the whole module
-// (the `__ev` read found no field, never typed the bound slot, and a later
-// `x.value` bailed at irlower expr_struct_type == ""). This gate pins them at
-// "ir" so a regression off the IR path — or a silent failure to flip — shows
-// up. Pairs with the differential `union-*` cases in TestSelfHostAsmIRPath,
+// This gate pins them at "ir" so a regression off the IR path shows up.
+// Pairs with the differential `union-*` cases in TestSelfHostAsmIRPath,
 // which prove the chosen route produces the right exit code.
 //
-// The probe reuses asm_pathprobe_run (parser.module_with_builtins ->
-// lift_lambdas -> asm_ir.all_eligible, the exact production decision) and
-// prints "ir"/"refused" without emitting assembly.
+// The probe reuses asm_pathprobe_run (semlower.verdict_ok, the production
+// decision) and prints "ir"/"refused" without emitting assembly.
 var unionIRPathCases = []struct {
 	name string
 	src  string
@@ -39,8 +35,7 @@ var unionIRPathCases = []struct {
 }
 
 // TestSelfHostUnionIRPathX86_64 asserts each union-variant payload-bind program
-// routes through the stack-IR path ("ir"), not the legacy AST emitter — the
-// observable evidence the #3179 IR-coverage gap is closed.
+// routes through the IR path ("ir") (#3179).
 func TestSelfHostUnionIRPathX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

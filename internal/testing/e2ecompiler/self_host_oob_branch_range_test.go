@@ -38,12 +38,11 @@ import (
 // fails in seconds rather than at link time in a slow lane.
 //
 // SCOPE: these two cases are the sites reachable on the IR path, and both were
-// verified to fail without the fix. asm_arm64_ir.fern's inline str_slice and
-// asm_arm64.fern's __fern_arr_slice helper carry the same `b.hi` shape and were
-// fixed alongside, but are NOT covered here: a slice with variable bounds lowers
-// to a Fern runtime helper reached by `bl` (CALL26, already veneerable), and no
-// probe program emitted the inline form. Rather than ship cases that pass
-// vacuously, they are left uncovered and called out.
+// verified to fail without the fix. asm_arm64_ir.fern's inline str_slice
+// carries the same shape but is NOT covered here: a slice with variable bounds
+// lowers to a Fern runtime helper reached by `bl` (CALL26, already
+// veneerable), and no probe program emitted the inline form. Rather than ship
+// cases that pass vacuously, it is left uncovered and called out.
 var condBranchToAbort = regexp.MustCompile(`b\.[a-z]{2}\s+__fern_oob_abort`)
 
 // anyBranchToAbort matches a branch of any kind to the symbol. A case that emits

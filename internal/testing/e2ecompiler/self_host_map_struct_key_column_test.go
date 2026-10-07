@@ -10,17 +10,13 @@ import (
 
 // A map column whose elements are COUNTED must be snapshotted by `keys()` /
 // `values()` as a copy with a per-element retain, not handed back as a raw
-// alias of the map's own buffer. `irlower.map_kv_elem_flag` returned flag 1
-// (raw alias) for every key column that was not a string or an integer, and
-// for every value column that was not a string or an i32, so the frame
-// released elements the map still held — on both sides of the same function.
+// alias of the map's own buffer — or the frame releases elements the map
+// still holds.
 //
 // The abort is invisible without the sanitizer — the freed block keeps its
-// bytes at this size, so the program answers correctly either way — and the
-// differential production rows compare the two lowerings against EACH OTHER,
-// which agree here because the typed path refuses these shapes and falls to
-// the same AST lowering. So the pins have to be absolute ones under
-// FERN_SANITIZE=1, against the answer the interpreter gives.
+// bytes at this size, so the program answers correctly either way — so the
+// pins are absolute ones under FERN_SANITIZE=1, against the answer the
+// interpreter gives.
 var mapColumnSnapshotPrograms = []struct {
 	name string
 	src  string

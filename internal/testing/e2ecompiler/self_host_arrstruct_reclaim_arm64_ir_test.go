@@ -4,12 +4,10 @@ import (
 	"testing"
 )
 
-// TestSelfHostArrStructReclaimIRArm64 is the arm64 port of
-// TestSelfHostArrStructReclaimIRX86_64: the ARRSTRUCT class (admission + the counted
-// element-walk deep-free + the element-field escape checker) lives in shared lowering
-// and lowers through backend-common IR ops (block / loop / arr_len / arr_get /
-// __fern_rc_dec + emit_struct_field_drops -> __struct_drop_<P>), all backend-complete.
-// Case table shared with the x86-64 leg.
+// TestSelfHostArrStructReclaimIRArm64 is the arm64 leg of
+// TestSelfHostArrStructReclaimIRX86_64, sharing its case table: an
+// array-of-structs local is released with its elements' fields, without
+// over-releasing an element that escapes.
 func TestSelfHostArrStructReclaimIRArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range arrStructReclaimCases {

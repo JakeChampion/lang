@@ -82,7 +82,7 @@ func TestSelfHostTypedFoldShape(t *testing.T) {
 
 // TestSelfHostTypedLICM runs licmPrograms through the CLI: the typed lowering
 // opens scopes between `loop` and the condition, and the length reads must
-// still come out of the header exactly as they do on the AST lowering.
+// still come out of the header.
 func TestSelfHostTypedLICM(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range licmPrograms {

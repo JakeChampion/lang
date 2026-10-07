@@ -12,21 +12,16 @@ import (
 // strSliceBuiltinRecvCases pin the release of a SLICE receiver at a string
 // BUILTIN method — `base[4:base.len()].to_ascii_upper()`.
 //
-// lower_str_method already stashed and drained a fresh receiver, but its gate was
-// is_fresh_str_temp, which refuses a slice (a slice aliases its source's bytes,
-// which is the question that predicate answers). str_borrowing_method is the
-// warrant that applies instead: every method in that set reads the receiver's
-// bytes and returns a scalar or a freshly allocated string, never the receiver or
-// a view of it. trim / replace / chars / lines / split sit outside it precisely
-// because they can alias, and they keep the leak.
+// A slice aliases its source's bytes, so it is not a fresh temp in its own
+// right; what lets the receiver go is the method. One that reads the
+// receiver's bytes and returns a scalar or a freshly allocated string, never
+// the receiver or a view of it, leaves the receiver dead after the call.
 //
-// The drain had a second bug on top of the gate. free_stashed_str_args emits
-// __fern_str_free, which SKIPS an immortal rc by design — so even once a slice
-// receiver was stashed, draining it through that helper released nothing on the
-// backends where a slice is a zero-copy immortal view. The receiver drain now
-// uses __fern_str_view_free, which frees the 24-byte box alone.
+// On the register backends the receiver is a zero-copy view whose rc is
+// immortal, which __fern_str_free skips by design, so it is released with
+// __fern_str_view_free, which frees the 24-byte box alone.
 //
-// Measured, two compilers from the same commit, 400 rounds:
+// Unreleased vs released, 400 rounds:
 //
 //	method                x86-64        wasm
 //	starts_with           9600 -> 0     48000 -> 0
@@ -38,12 +33,8 @@ import (
 // The two columns are different objects: a 24-byte view box on the register
 // backends, a payload-sized copy on wasm, where a slice is not zero-copy.
 //
-// NOT covered, and deliberately: `.len()`. It never reaches lower_str_method —
-// is_str_builtin_method excludes it and it has its own receiver-release path —
-// and on the register backends a slice there is a FRAME box that never touches
-// the heap, so it already measures 0. On wasm it still strands 48000. Closing
-// that means touching the path every `<expr>.len()` takes, where the register
-// lowering currently allocates nothing; that is its own slice, not part of this.
+// NOT covered here: `.len()`, which has its own receiver-release path, pinned
+// by strViewBorrowReleaseCases.
 const sliceBuiltinPrelude = `import "std/i32";
 import "std/i64";
 import "std/string";
@@ -79,9 +70,8 @@ var strSliceBuiltinRecvCases = []struct {
 	// A TRANSFORM rather than a predicate: to_ascii_upper allocates a new buffer,
 	// so the receiver is dead on a different code path through the same stash.
 	{"str-slice-recv-builtin-upper-flat", sliceBuiltinHeap(`    return slice_unchecked(base, 4, base.len()).to_ascii_upper().len();`), 0},
-	// REFUSED: trim returns a VIEW of its receiver, so releasing the receiver's box
-	// frees what the result points into. It is outside str_borrowing_method and
-	// stays outside; this case reads the result and the source afterwards.
+	// trim: the result and the source are both read afterwards, by value, under
+	// same-size-class pressure, so neither may be freed early.
 	{"str-slice-recv-builtin-trim-refused", sliceBuiltinPrelude + `function round(pre: string): i32 {
     let base: string = w(pre);
     let t: str = slice_unchecked(base, 4, base.len()).trim();
@@ -94,8 +84,8 @@ var strSliceBuiltinRecvCases = []struct {
     return t.len();
 }
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 3000) { let r: i32 = round(pre); if (r != 102) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
-	// REFUSED: split's result carries views INTO the receiver's bytes, so the box
-	// has to outlive the call. Also outside str_borrowing_method.
+	// split: the parts are read afterwards, so nothing they still name may be
+	// freed early.
 	{"str-slice-recv-builtin-split-refused", sliceBuiltinPrelude + `function round(pre: string): i32 {
     let base: string = w(pre);
     let parts: string[] = slice_unchecked(base, 4, base.len()).split("-");

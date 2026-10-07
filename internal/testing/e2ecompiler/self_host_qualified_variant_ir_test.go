@@ -10,15 +10,8 @@ import (
 // TestSelfHostQualifiedVariantIRX86_64 verifies that the QUALIFIED enum-variant
 // surface forms — qualified construction (`Color.Custom(7)`, `Color.Red`) and
 // qualified match patterns (`Color.Custom(v) =>`, `Color.Red =>`) — lower through
-// the self-host IR path and run correctly.
-//
-// The native compiler accepts both the bare (`Custom(7)` / `Custom(v) =>`) and
-// qualified spellings, and the self-host IR path must handle both: a qualified
-// construction that makes the whole module IR-ineligible falls back to the AST
-// emitter, which mis-lowers it (`# unresolved ident: Color`) and
-// produces a binary that crashes — a native-vs-self-host gap and a miscompile.
-// With qualified construction + qualified patterns lowered, the
-// module is IR-eligible and lowers correctly.
+// the self-host IR path and run correctly, alongside the bare spellings
+// (`Custom(7)` / `Custom(v) =>`).
 //
 // use_box builds Box{c: Color.Custom(7), n: 5} and matches on the field with
 // qualified patterns, returning the payload + n = 7 + 5 = 12. The exit code pins

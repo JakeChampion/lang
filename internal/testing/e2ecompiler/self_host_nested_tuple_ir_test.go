@@ -2,16 +2,11 @@ package e2ecompiler
 
 import "testing"
 
-// nestedTupleIRCases widen the self-host IR subset: a tuple element that is itself
-// a tuple — `(1, (2, 3))`, accessed `t.1.1` — now lowers on the IR path. Before,
-// the tuple-element tag encoding split on commas, so any element whose own tag
-// contained a comma (a nested tuple) was rejected and the whole module bailed.
-// The fix makes the tag decoders (`tuple_elem_tag`, `csv_nth`)
-// depth-aware — counting `(`/`[` … `)`/`]` so inner commas don't split the outer
-// tag — adds an `ExprTuple` arm to `elem_type_tag` (a nested element gets its own
-// `(t0,t1,…)` spelling), admits a tuple element at construction (it is a leak-only
-// heap-tuple pointer, one slot like a struct/string/array element), and recovers
-// the `t.N.M` element type via `expr_tuple_elem_tag`.
+// nestedTupleIRCases pin a tuple element that is itself a tuple —
+// `(1, (2, 3))`, accessed `t.1.1` — on the IR path. The tuple-element tag
+// decoders count `(`/`[` … `)`/`]` depth so an inner element's commas do not
+// split the outer tag, a nested element carries its own `(t0,t1,…)`
+// spelling, and `t.N.M` recovers the inner element's type.
 //
 // Each case is oracle-checked against the interpreter and returns a value
 // <= 126 (cf. the wasmtime exit-code gap #2908).

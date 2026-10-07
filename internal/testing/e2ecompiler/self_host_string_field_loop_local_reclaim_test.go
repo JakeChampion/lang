@@ -9,17 +9,10 @@ import (
 
 // #4357 (string-field sibling of #4733): a reclaimable struct loop-local carrying
 // a `string` field set from a FRESH string (`while { let t: S = S { x: i, name:
-// pre + "x" }; }`) leaked its string box every iteration — the loop-rebind reinit
-// freed only the box / array fields (the array-only __field_reclaim path skips
-// strings). The fix routes such a binding through __struct_drop + box dec
-// (emit_struct_deep_reinit_store), whose k_str arm frees the string field.
-//
-// SOUNDNESS: it fires ONLY when every string field of the literal is a provably
-// FRESH, sole-owned string (expr_is_fresh_str — a concat / fresh-producer call).
-// A NON-fresh (aliased bare-ident) string field is retained by its aliasing owner,
-// so freeing it would double-release (guarded by strdrop-two-alias-detector in
-// TestSelfHostRcPreciseDropX86IR); those fall through to the leak-safe path. The
-// exit sweep is deliberately NOT widened (it can't see the construction site).
+// pre + "x" }; }`) releases that string with the struct at each loop rebind, so
+// nothing leaks per iteration. An aliased bare-ident string field must not be
+// over-released; strdrop-two-alias-detector in TestSelfHostRcPreciseDropX86IR
+// covers that.
 //
 // Gated on the self-host x86-64 IR path: FIXPOINT (bump growth equal at N=50 /
 // N=5000) + OVER-RELEASE (the freshly-built string is read each iteration).

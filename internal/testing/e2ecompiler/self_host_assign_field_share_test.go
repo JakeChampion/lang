@@ -10,10 +10,10 @@ import (
 
 // A string stored into a struct by ASSIGNMENT (`r = Rec { name: s }`), or read
 // back out of a field into a string local (`keep = r.name`,
-// `let t: string = r.name`), gives its box back on the AST lowering as it does
-// on the semantic one (#10371). The holder's superseded box releases the
-// field, the reading local holds a counted share it releases itself, and a
-// reassign of the box the slot already holds gives its retain back.
+// `let t: string = r.name`), gives its box back (#10371). The holder's
+// superseded box releases the field, the reading local holds a counted share
+// it releases itself, and a reassign of the box the slot already holds gives
+// its retain back.
 // The strarr_ rows are the `string[]` field (#10379): a holder rebound by
 // assignment, a scalar's `to_string()` as a fresh element, and a field
 // element read as a comparison operand.

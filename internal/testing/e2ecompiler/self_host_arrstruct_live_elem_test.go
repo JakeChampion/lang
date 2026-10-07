@@ -10,37 +10,19 @@ import (
 
 // --- An appended struct element whose SOURCE outlives the push ---------------
 //
-// `ps = ps.append(p)` where `p` is still live afterwards used to cost the
-// CONTAINER its element walk. The append-built ARRSTRUCT credit admitted a bare
-// ident only at a site the construction-move analysis had taken over, so a
-// source that is read again, rebound, or pushed more than once made the element
-// neither a move nor a fresh literal — and the whole array then reclaimed
-// nothing but its buffer.
+// `ps = ps.append(p)` where `p` is still live afterwards: the array and `p`
+// both own the element box. Whichever owner releases last frees the element's
+// `xs` buffer and its box; the other only drops its count. That has to hold in
+// either order and for every shape below: a read after the push, a struct
+// parameter the caller owns, one box pushed several times, and the source
+// rebound while the array still holds the old box. A MOVED element (the push
+// is the source's last use) hands its single reference to the array and takes
+// no retain.
 //
-// The pairing that replaces the move requirement is the one slices 5 and 7
-// established. The credit stamps every element site it owns ("APOWNED:", issued
-// by the same pass that grants the walk, so the inc and the dec are the same set
-// of sites); the container's per-element field walk and the source's own release
-// both run under __fern_rc_is_unique; whichever owner reaches rc 1 does the deep
-// work and the other takes the box dec. That holds in either order. A MOVED
-// element is stamped too but takes no inc — it hands its single reference to the
-// buffer and its own release is elided instead, which the LOWERING site decides
-// from the move analysis. The stamp says who owns the element, not who pays.
-//
-// The source keeps its reclaim credit too: a stamped self-append is no longer a
-// counted-SINK use, which is what the struct escape gate was refusing it for.
-// Unstamped sinks — an append into an uncredited container, `with`, an array or
-// tuple element, a variant payload — still refuse.
-//
-// Its REBIND release is gated on the same predicate. __field_reclaim_<T>'s guards
-// compare the old box's fields against the new value and the caller's snapshot;
-// neither says whether a second owner holds the old box, so the whole reclaim now
-// runs for the sole owner only and a shared old box just hands back this slot's
-// count. The last two rows below are what that costs and what it buys.
-//
-// Every want below was confirmed against the native x86-64 backend. Exit 99 is
-// reserved for __rc_underflow_count(): a release that ran under a live claim
-// fails the row on the dangling direction rather than the leaking one.
+// Each row pins the exit value, and the leak-accounting leg pins allocs and
+// frees. main returns 99 when __rc_underflow_count() is non-zero, so a release
+// that runs while another owner is live fails on the dangling direction rather
+// than the leaking one.
 
 type arrstructLiveElemCase struct {
 	name   string

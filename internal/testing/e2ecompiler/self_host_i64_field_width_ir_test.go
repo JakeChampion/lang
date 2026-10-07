@@ -4,15 +4,11 @@ import "testing"
 
 // i64FieldWidthIRCases pin an i32 STRUCT FIELD or i32 TUPLE ELEMENT consumed in
 // an i64 arithmetic context (`s64 + p.x`, `s64 + t.0`) to the self-host IR path
-// on x86-64 + wasm. lower_i64's ExprFieldAccess arm must not lower only i64
-// struct fields / i64 tuple elements (8-byte struct_get_i64 / tuple_get_w) and
-// bail every other field via `return s.fail()`, dropping the whole module to
-// the legacy AST emitter. #2691 widens it: an i32/u32 struct field or tuple
-// element had its value lowered via lower_expr and sign/zero-extended to i64
-// (op_int_extend). The checker forbids i64 + u32 (E009), so a plain i32 member
-// here is signed; the u32 flag stays defensive. This is the struct/tuple sibling
-// of the i32-ident and i32-array-element widenings. Each case narrows the i64
-// result with `as i32` (valid wasm exit code in [0,126)) and is oracle-checked.
+// on x86-64 + wasm (#2691): the i32 member is sign-extended to i64. The checker
+// forbids i64 + u32 (E009), so a plain i32 member here is signed. This is the
+// struct/tuple sibling of the i32-ident and i32-array-element widenings. Each
+// case narrows the i64 result with `as i32` (valid wasm exit code in [0,126))
+// and is oracle-checked.
 var i64FieldWidthIRCases = []struct {
 	name string
 	main string

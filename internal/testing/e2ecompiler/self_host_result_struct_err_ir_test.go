@@ -6,13 +6,11 @@ import "testing"
 // error type E is a CONCRETE STRUCT (the Rust-style `Result[T, MyError]` shape),
 // with field access on the bound error in the `Err` arm, on the self-host IR path
 // (x86-64 + wasm). The existing `?` pins (self_host_try_op_*) use a `string`
-// error; the error-trait pin (self_host_error_trait_ir) uses a `dyn Error` trait
-// object — neither covers a concrete struct error. This exercises: `?` desugar
-// over a struct-payload `Err`, the `Err(struct)` construction + propagation
-// across the call boundary, the `Ok`/`Err` payload `match`, and struct field
-// reads (`e.code`, `e.detail`) on the bound error. All already lowers, so no
-// compiler change — an observability pin against a regression to the AST
-// fallback.
+// error; the error-trait pin (self_host_error_trait_ir_test.go) uses a
+// `dyn Error` trait object — neither covers a concrete struct error. This
+// exercises: `?` desugar over a struct-payload `Err`, the `Err(struct)`
+// construction + propagation across the call boundary, the `Ok`/`Err` payload
+// `match`, and struct field reads (`e.code`, `e.detail`) on the bound error.
 //
 // Each case is oracle-checked against the interpreter; results stay <= 120
 // (the wasm exit-code clamp, #2908).

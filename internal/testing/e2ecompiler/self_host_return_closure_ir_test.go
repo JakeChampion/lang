@@ -4,11 +4,8 @@ import "testing"
 
 // returnClosureIRCases exercise calling a capturing closure that is RETURNED
 // from a function, directly off the call result (`mk(..)(args)`) — the inline
-// call-on-call shape. Handling only a callee that returns a bare fn pointer
-// (no-capture lambda) and bailing when the callee returns a CLOSURE drops the
-// module to the AST path, because that lowering
-// box (a capturing-lambda-returning fn). The fix dispatches env-first off the
-// returned box, the same shape `let f = mk(..); f(args)` already used.
+// call-on-call shape. The call dispatches env-first off the returned closure
+// box, the same shape `let f = mk(..); f(args)` uses.
 //
 // Each case is oracle-checked against the interpreter and returns a value
 // <= 120 (wasmtime exit-code truncation, cf. #2908).

@@ -9,15 +9,9 @@ import (
 // TestSelfHostTupleWideCallElem pins a tuple element that comes from a call
 // returning i64 or f64 to the IR path (#5902).
 //
-// tuple_elem_ctor_eligible's call arm admitted a free-fn call only when the
-// callee was in NO wide-return registry, scoping itself to "a statically-known
-// SCALAR (one-i32-slot) result". But i64/f64 are one-slot scalars too, and the
-// width machinery was already there and already used by the other element
-// forms: elem_type_tag classifies "i64" (infer_expr_width == 64) / "f64"
-// (expr_is_f64), the construction loop routes an i64 element through lower_i64,
-// and op_tuple_make_k stores each element at its own width. So a wide LOCAL or
-// wide ARITHMETIC element lowered while only the CALL form bailed the whole
-// enclosing module.
+// A wide LOCAL or wide ARITHMETIC tuple element lowers; the CALL form must
+// too, storing each element at its own width (an i64 or f64 result is still a
+// one-slot scalar).
 //
 // Each case asserts BOTH halves of what the fix has to deliver:
 //
@@ -28,8 +22,8 @@ import (
 //     same computation spelled without the tuple, so it asserts agreement
 //     rather than a hard-coded constant.
 //
-// The i32 / string / local / arithmetic rows are controls: they lowered on the
-// IR path before this change and must continue to.
+// The i32 / string / local / arithmetic rows are controls that must keep
+// lowering on the IR path.
 func TestSelfHostTupleWideCallElem(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

@@ -81,15 +81,13 @@ function main(): i32 {
 // TestSelfHostOperatorOverloadRootsIRX86_64 compiles each shape with the
 // full driver and oracle-checks the exit against the interpreter.
 //
-// The driver matters, and a first version of this test got it wrong: under
-// asm_load_run nothing runs annotate_module, every `ty` is "", treeshake
-// falls back to the BARE method name, and ts_kept_name's exact-name match
-// keeps the method whatever its receiver — so the bug cannot appear and the
-// test passed against the unfixed compiler. fern.fern annotates, which is
-// what puts a qualified root in the set.
+// The driver matters: under asm_load_run nothing runs annotate_module, every
+// `ty` is "", treeshake falls back to the BARE method name, and ts_kept_name's
+// exact-name match keeps the method whatever its receiver — so the bug cannot
+// appear there. fern.fern annotates, which is what puts a qualified root in
+// the set.
 //
-// FERN_STRICT_IR makes a prune fail the compile and name the site rather
-// than routing the module to an AST emitter that no longer exists.
+// FERN_STRICT_IR makes a prune fail the compile at the bail site, naming it.
 func TestSelfHostOperatorOverloadRootsIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)

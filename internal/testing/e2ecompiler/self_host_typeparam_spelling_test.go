@@ -4,10 +4,10 @@ import "testing"
 
 // typeParamSpellingCases name a user type exactly like a generic's type
 // parameter (#9577). The self-host monomorphiser reads types as spellings, so
-// `PMap[K, V]` taken at a user `struct K` produced a clone indistinguishable
-// from its template: the instantiations never registered and the build
-// stopped on calls to the bare templates. Every case's expected value is what
-// the native compiler's build of the same program exits with.
+// `PMap[K, V]` taken at a user `struct K` must still produce a clone distinct
+// from its template, or the instantiations never register and the build stops
+// on calls to the bare templates. Every case's expected value comes from an
+// independent build of the same program, never from the self-host run.
 var typeParamSpellingCases = []struct {
 	name string
 	src  string

@@ -5,30 +5,21 @@ import (
 	"testing"
 )
 
-// A match-EXPRESSION whose arm hands back a bare ARRAY payload binding used to
-// BAIL the IR path (#7686):
+// A match-EXPRESSION whose arm hands back a bare ARRAY payload binding must
+// lower (#7686), though the combination once refused with
 //
 //	FERN_STRICT_IR: rd (did not lower: immediately-invoked value block …)
 //
-// The bail was the intersection of three things, none of which fails alone —
-// match-expressions, arrays, and payload bindings all lowered on their own.
-// iife_type_is_composite admitted a leak-safe struct, an enum or a tuple and
-// nothing else, so an array result recovered no composite type, no temp was
-// marked, and the bare payload arm then failed the scalar admission below it.
+// while match-expressions, arrays, and payload bindings each lowered alone.
 //
-// The widening takes the same leak-cleanly bargain the struct arm takes, and
-// needs it more: ONE temp carries both a BORROWED payload (`E.A(xs) => xs`, a
-// buffer the enum box still owns) and a FRESH sibling (`E.B => [i]`). The temp
-// is marked borrowed, so the exit sweep never decs it — releasing it would be
-// the double-free the ELB tier fences. The fresh arm leaks instead; that is the
-// polarity the whole gate is built on, and `iife-array-no-underflow` is what
-// holds the safe half of it.
+// ONE result carries both a BORROWED payload (`E.A(xs) => xs`, a buffer the
+// enum box still owns) and a FRESH sibling (`E.B => [i]`), so the borrowed
+// buffer must never be released through the result: `iife-array-no-underflow`
+// holds that half.
 //
-// Every case runs under FERN_STRICT_IR=1 (via runCaptureStrictIR) because the
-// answer alone cannot show the shape stayed on the IR path — a per-function bail
-// reaches the same exit code by another route, so the controls here would pass
-// unfixed without the flag. Every `exit` is the answer `bin/fern -interp`
-// produces for that program.
+// Every case runs under FERN_STRICT_IR=1 (via runCaptureStrictIR), so a
+// refusal fails the case and names the function. Every `exit` is the answer
+// `bin/fern -interp` produces for that program.
 var iifeArrayResultCases = []struct {
 	name string
 	src  string
@@ -39,8 +30,8 @@ var iifeArrayResultCases = []struct {
 function rd(e: E, i: i32): i32[] { return (match (e) { E.A(xs) => xs, E.B => [i] }); }
 function main(): i32 { return rd(E.A([1, 2]), 0).len() + rd(E.B, 5).len(); }`, 3},
 
-	// The 8-byte-stride element kinds use their own marks (mark_f64arr /
-	// mark_i64arr) and would read at the wrong width without them.
+	// The 8-byte-stride element kinds, which read at the wrong width if the
+	// result is typed as a 4-byte-element array.
 	{"iife-array-payload-f64", `enum E { A(f64[]), B }
 function rd(e: E): f64[] { return (match (e) { E.A(xs) => xs, E.B => [1.5] }); }
 function main(): i32 { return rd(E.A([1.5, 2.5])).len() + rd(E.B).len(); }`, 3},
@@ -67,13 +58,10 @@ function main(): i32 {
     return __rc_underflow_count();
 }`, 0},
 
-	// The DEEPER-RELEASE element kinds (#7686's remaining half). These bailed
-	// after the first widening, on the reasoning that "their release is an
-	// element WALK a borrowed temp cannot describe" — which had it backwards:
-	// the temp is BORROWED, so it is never released and the walk never runs.
-	// The borrowed bargain carries them exactly as it carries a scalar array,
-	// and the reads below are what the element-kind marks buy (mark_strarr for
-	// a string element, the element struct name for a struct one).
+	// The DEEPER-RELEASE element kinds (#7686's remaining half): a string or
+	// struct element, whose release would be an element walk. The borrowed
+	// payload is never released through the result, so no walk runs; the reads
+	// below check the element kind reaches the binding.
 	{"iife-strarr-payload", `enum E { A(string[]), B }
 function rd(e: E): string[] { return (match (e) { E.A(xs) => xs, E.B => ["z"] }); }
 function main(): i32 { return rd(E.A(["a", "b"])).len() + rd(E.B).len(); }`, 3},

@@ -21,10 +21,9 @@ func childFailure(err error) string {
 	return err.Error()
 }
 
-// TestSelfHostStage2FixpointArm64 restores the arm64 stage-2 fixpoint that
-// #5972 removed without a successor (#6327).
+// TestSelfHostStage2FixpointArm64 is the arm64 stage-2 fixpoint (#6327).
 //
-//	stage 0  the Go x86-64 backend builds `asm_load_run.fern` into `mmc`, an
+//	stage 0  the x86-64 compiler builds `asm_load_run.fern` into `mmc`, an
 //	         x86 host binary that emits aarch64 (the cross-compiler-on-host
 //	         pattern).
 //	stage 1  `mmc` emits aarch64 asm for `asm_load_run.fern` — ITSELF — and
@@ -44,9 +43,8 @@ func childFailure(err error) string {
 // (numeric local labels, the missing `.text` symbol case, an i32 literal pool)
 // were each mis-attributed to codegen first.
 //
-// #6327 predicted this needed a new `asm_arm64_ir_load_run.fern` driver. It
-// does not: #4398 part 1 folded the arm64 loader mirror into `asm_load_run.fern`
-// behind `-target arm64-linux`, so the driver the deleted test wanted already exists.
+// `asm_load_run.fern` emits aarch64 behind `-target arm64-linux` (#4398), so
+// one driver serves both stages.
 //
 // COST. Stage 1 is the expensive half and it runs NATIVELY (~3 min for 35 MB of
 // asm); the aarch64 link is ~5 s. Stage 2 is qemu, and the per-case cost is
@@ -98,10 +96,9 @@ func TestSelfHostStage2FixpointArm64(t *testing.T) {
 		{name: "sort_wider", src: "tests/stdlib/sort_wider_test.fern", stdlib: true},
 		{name: "float_math", src: "tests/stdlib/float_math_test.fern", stdlib: true},
 		{name: "process_assertions", src: "tests/stdlib/process_assertions_test.fern", stdlib: true},
-		// The heavyweight: gen2 compiling the whole compiler under qemu. This
-		// is the case the deleted test measured at ~709 s on the AST path, and
-		// it is the strongest form of the property — but it is not worth its
-		// wall-clock on every run, so it is gated by an env var.
+		// The heavyweight: gen2 compiling the whole compiler under qemu. It is
+		// the strongest form of the property, but not worth its wall-clock on
+		// every run, so it is gated by an env var.
 		{name: "self", src: "compiler/drivers/asm_load_run.fern", stdlib: true, selfEnv: true},
 	}
 	for _, tc := range cases {

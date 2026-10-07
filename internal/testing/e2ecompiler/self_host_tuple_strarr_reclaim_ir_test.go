@@ -7,19 +7,11 @@ import (
 	"testing"
 )
 
-// tupleStrArrReclaimCases pin the #4353 `string[]` ELEMENT POSITION of an rc-tuple.
-// A `(i32, string[])` tuple was admitted for deep reclaim, but both walkers treated
-// the position as a plain buffer: the literal-driven emit_tuple_child_drops
-// __fern_rc_dec'd it (buffer only, every element string stranded) and the
-// type-driven tuple_field_deep_droppable refused the type outright, so an
-// `Option[(i32, string[])]` payload leaked the whole structure. Measured per round
-// on the self-host IR path before the fix: 64 B (x86-64 / arm64) and 46 B (wasm)
-// for the bare tuple, 120+ B / 110 B for the Option payload; native is flat on both.
-//
-// The position now takes the element-walking __fern_str_arr_free, gated by
-// tuple_strarr_elem_fresh: an array LITERAL whose every element is a string literal
-// or a fresh producer (concat / .to_string(), tuple_str_elem_fresh). One bare-ident
-// element keeps the shallow buffer-only dec, so a live local's box is never freed.
+// tupleStrArrReclaimCases pin the #4353 `string[]` ELEMENT POSITION of an rc-tuple:
+// releasing a `(i32, string[])` tuple — bare or as an `Option[(i32, string[])]`
+// payload — frees the array's element strings, not just its buffer, so nothing
+// leaks per round. An element that is a bare ident naming a live local is never
+// freed out from under it.
 var tupleStrArrReclaimCases = []struct {
 	name string
 	src  string
@@ -41,9 +33,8 @@ var tupleStrArrReclaimCases = []struct {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// The TYPE-driven walker: an Option payload has no construction literal at the
-	// drop site, so the release is read off the `(i32, string[])` type tag. Pre-fix
-	// tuple_field_deep_droppable rejected the type and the payload leaked whole.
+	// The TYPE-driven release: an Option payload has no construction literal at
+	// the drop site, so the release is read off the `(i32, string[])` type.
 	{"tuple-strarr-opt-payload", `function main(): i32 {
     let pre: string = "ab";
     let acc: i32 = 0;

@@ -6,15 +6,9 @@ import (
 )
 
 // Self-host RC: an Option / Result box is released whatever its payload is made
-// of, and a bound one nothing consumes is released too (#8806); the built-in I/O
-// producers' boxes are released as well (#8811, the self-host half of #8405).
-//
-// Before this, the release rode two payload-KIND admissions: a scalar payload
-// (consumed_scalar_enum_frees) or a leak-safe array / fresh string / nested
-// scalar Option (consumed_rcpayload_option_frees). A payload in neither — a
-// struct, an IoError, a Reader — kept the whole 40-byte box as well as itself,
-// and the free rode the CONSUMING match, so a binding simply dead at scope exit
-// had no sweep at all.
+// of — a scalar, an array, a struct, an IoError, a Reader — and a bound one
+// nothing consumes is released too (#8806); the built-in I/O producers' boxes
+// are released as well (#8811, the self-host half of #8405).
 //
 // Each leg pins INDEPENDENCE FROM THE ROUND COUNT: ten times the calls must cost
 // the same live bytes, and every block the loop allocates must come back. That
@@ -102,12 +96,10 @@ function main(): i32 {
 }`, rounds)
 }
 
-// optBoxNestedMatchSrc keeps the box at a function's TOP LEVEL with its match one
-// block deeper, which is the precise-drop half of the fix rather than the
-// consumed-match half: a top-level local whose consuming match is nested is
-// claimed by neither consumed_optbox_frees (it looks for a top-level scrutinee)
-// nor the dead-binding branch (the `if` is a use). The round is a call so the
-// shape repeats without the binding moving into a block.
+// optBoxNestedMatchSrc keeps the box at a function's TOP LEVEL with its consuming
+// match one block deeper: the local is neither a top-level scrutinee nor a dead
+// binding (the `if` is a use), so its release falls to the scope-exit drop. The
+// round is a call so the shape repeats without the binding moving into a block.
 func optBoxNestedMatchSrc(rounds int) string {
 	return fmt.Sprintf(`function g(x: i32): Option[IoError] { return None; }
 function step(i: i32): i32 {
@@ -192,11 +184,9 @@ func ioOpenCloseSrc(rounds int) string {
 }
 
 // ioOpenCloseBoundSrc is the same round with the open's Result reached through a
-// `let` first. A binding, unlike an anonymous match scrutinee, can carry reclaim
-// credits of its own, so it is admitted by a different predicate
-// (opt_box_init_type) and needs its own leg: `Result[Reader, IoError]` carries
-// no payload either side that anything deep-drops, so the box-only release is
-// all of it.
+// `let` first — a binding rather than an anonymous match scrutinee, so it needs
+// its own leg. `Result[Reader, IoError]` carries no payload either side that
+// anything deep-drops, so the box-only release is all of it.
 func ioOpenCloseBoundSrc(rounds int) string {
 	return fmt.Sprintf(`function main(): i32 {
     let i: i32 = 0;

@@ -10,23 +10,20 @@ import (
 
 // --- An element appended by INDEX is owned by both arrays -------------------
 //
-// `out = out.append(pre[p])` stored pre's struct box into out without retaining
-// it. pre's own release then dropped the box while out still pointed at it, and
-// the next string allocation recycled the memory — every op the LICM pass
-// (#8245) spliced from its prologue list came back as `invalid` once the
-// self-host had compiled the pass, and the stage-2 compiler refused its own
-// sources with garbage op kinds (`0x20202020`, four spaces) while the
-// native-built driver ran the same code correctly.
+// `out = out.append(pre[p])` must retain pre's struct box: without it pre's own
+// release frees the box while out still points at it, and the next string
+// allocation recycles the memory. That is how every op the LICM pass (#8245)
+// spliced from its prologue list came back as `invalid` once the self-host had
+// compiled the pass, and the stage-2 compiler refused its own sources with
+// garbage op kinds (`0x20202020`, four spaces).
 //
-// The three append forms lower the element at three sites (the `a = a.append`
-// statement, the expression-position push, and the clone form); each now asks
-// indexed_box_elem_escapes and retains the box. Struct and nested-array
-// elements are the affected kinds; string and enum elements were already
-// balanced by their own rules and are the controls here, where a second retain
-// would show as a leak.
+// The three append forms (the `a = a.append` statement, the expression-position
+// push, and the clone form) each retain the box. Struct and nested-array
+// elements are the affected kinds; string and enum elements are the controls
+// here, where a second retain would show as a leak.
 //
-// Every want was confirmed against bin/fern -interp and the native x86-64
-// backend, never read off the self-host run.
+// Every want was confirmed against bin/fern -interp, never read off the
+// self-host run.
 
 const appendIndexedElemProlog = "struct Op { a: i32, b: i32 }\n" +
 	"struct St { ops: Op[] }\n" +
@@ -58,10 +55,8 @@ func appendIndexedElemCases() []struct{ name, src string } {
 			"let pre: Op[] = three(); let p: i32 = 0; while (p < 3) { out = out.append(pre[p]); p = p + 1; }",
 			"out.len()", opDigit)},
 		// The same shape with the SOURCE built in this frame rather than
-		// returned by a callee — what the LICM pass actually does. `pre` is an
-		// append-built struct array here, so it earns its own element walk;
-		// `out` earns one too (structarr_elem_store_ok admits the index read as
-		// a COUNTED store), and the two rc-guarded decs take each box to zero
+		// returned by a callee — what the LICM pass actually does. Both `pre`
+		// and `out` release their elements, so each box must reach zero
 		// exactly once.
 		{"stmt_local_sameframe", appendIndexedElemSrc(opsOut,
 			"let pre: Op[] = []; let i: i32 = 0; while (i < 3) { pre = pre.append(mkop(i)); i = i + 1; } "+

@@ -8,28 +8,16 @@ import (
 )
 
 // TestSelfHostRcEnumCallInitIRX86_64 pins #4355 slice 5 on the self-host IR
-// path — two coupled changes:
+// path: a match-consumed enum local initialised by a CALL to a factored
+// constructor (`let e: E = mk(i)`), where every return of mk is a fresh direct
+// variant construction, is reclaimed exactly like a direct variant-ctor init
+// (`let b = Full([..])`) — the whole chain (enum box + payload struct box + its
+// string/array fields) is released each iteration, so the bump high-water
+// stays flat.
 //
-//  1. CALL-INIT admission: the RCENUM enum-local reclaim (loop-rebind /
-//     consume deep-drop of a fresh, match-consumed enum local) only fired for
-//     DIRECT variant-ctor inits (`let b = Full([..])`). A factored constructor
-//     (`let e: E = mk(i)`) was never credited, so the whole chain (enum box +
-//     payload struct box + its string/array fields) leaked per iteration.
-//     opt_fresh_ret_fns_of now emits "RCE:<name>|<Enum>" entries for functions
-//     whose every return is a fresh direct variant construction (with fresh
-//     string fields in StructLit payloads), and collect_fresh_rcenum_names
-//     admits a call init against that set.
-//
-//  2. __struct_drop_<T> RETURN-CLOBBER fix: the helper's documented contract
-//     is "returns the box", but the x86 body set %rax at entry and the field-
-//     release calls clobbered it — it returned the LAST-FREED FIELD pointer.
-//     emit_enum_variant_drops CONSUMES that return for its payload-box free,
-//     so every enum-with-struct-payload consume dec'd the last-freed field a
-//     second time (one rc-underflow tick per consume — latent in the shipped
-//     TestSelfHostEnumStructPayloadDropIRX86_64 shape, which only asserts
-//     boundedness) while the payload box leaked; a STRING field segfaulted
-//     via __fern_str_free on the wrong block. The body now reloads the box
-//     from the stack arg before ret.
+// The release must free the payload box once and each field once: a field
+// released twice ticks the underflow detector once per consume (99) and, for
+// a STRING field, segfaults.
 func TestSelfHostRcEnumCallInitIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -91,8 +79,8 @@ function main(): i32 {
     return 0;
 }`, "rcenum-call-init-str-flat", 0)
 
-	// CALL-INIT, ARRAY-field payload struct: same admission, array field freed
-	// via __struct_drop_<S>'s arr_dec.
+	// CALL-INIT, ARRAY-field payload struct: same admission, and the array field
+	// is freed with the payload box.
 	run(t, `struct S { xs: i32[], n: i32 }
 enum E { A(S, i32), B(i32, i32) }
 function mk(n: i32): E { return A(S { xs: [n, n + 1], n: n }, n); }
@@ -119,9 +107,8 @@ function main(): i32 {
 }`, "rcenum-call-init-arr-flat", 0)
 
 	// SCALAR-ONLY struct payload (#4355 slice 8): S { m, n } has no reclaimable
-	// leaf, so nested_field_deep_drop_ok rejected it and the chain leaked; the
-	// widened enum_field_rc_droppable admits it and the consume releases the
-	// payload box with a single rc_dec. Churn flat at detector zero.
+	// leaf, but the consume still releases the payload box with a single
+	// rc_dec. Churn flat at detector zero.
 	run(t, `struct S { m: i32, n: i32 }
 enum E { A(S, i32), B(i32, i32) }
 function mk(n: i32): E { return A(S { m: n, n: n + 1 }, n); }
@@ -147,10 +134,10 @@ function main(): i32 {
     return 0;
 }`, "rcenum-scalar-struct-payload-flat", 0)
 
-	// SCALAR-ONLY struct payload, ALIASED (bare-ident) — the fresh-literal gate
-	// (variant_struct_payloads_fresh) must reject it: s0's box is swept by its
-	// own local reclaim, so a consume-site free would double-free. s0 stays
-	// readable at detector zero (the chain keeps the sound leak).
+	// SCALAR-ONLY struct payload, ALIASED (bare-ident) — not a fresh literal,
+	// so the consume must not free it: s0's box is swept by its own local
+	// reclaim, and a consume-site free would double-free. s0 stays readable at
+	// detector zero.
 	run(t, `struct S { m: i32, n: i32 }
 enum E { A(S, i32), B(i32, i32) }
 function main(): i32 {

@@ -9,21 +9,14 @@ import (
 
 // arrStructReclaimCases pin the #4365 `(<struct-with-array-field>)[]` array-of-structs
 // reclaim: a `let ps: P[] = [P { xs: [i, i+1] }, ...]` local — an array whose ELEMENTS
-// are struct boxes each carrying a fresh rc-array field — leaked all three levels (the
-// per-element field array buffers, the element struct boxes, and the outer buffer) per
-// loop iteration on the self-host IR path (native bounds it). The new "ARRSTRUCT:" class
-// is the struct sibling of "ARRTUP:": it credits a fresh array of fresh struct literals
-// consumed borrow-only, and releases it with the same counted element walk
-// (emit_arrstruct_deep_free) — but each element is dropped via the struct-field deep-drop
-// (__struct_drop_<P>, balanced by the construction alias-inc) + a struct-box dec, then
-// the outer buffer. The element struct type is taken from the slot's struct_type (already
-// recorded at the array-of-structs binding).
+// are struct boxes each carrying a fresh rc-array field — must release all three levels
+// (the per-element field array buffers, the element struct boxes, and the outer buffer)
+// every loop iteration, so the bump high-water stays flat.
 //
-// SOUNDNESS: the element field use is checked by arrstruct_elem_payload_escapes — a
-// scalar field read (ps[i].n), an indexed array-field read (ps[i].xs[j]) and
+// SOUNDNESS: a scalar field read (ps[i].n), an indexed array-field read (ps[i].xs[j]) and
 // ps[i].xs.len() are borrows (reclaim proceeds); a BARE array-field extraction (store /
-// return / pass / alias / slice ps[i].xs) OR a bound element (let t = ps[i] / for t in ps,
-// via arrarr_row_escapes) escapes and the local is left leak-safe (never over-released).
+// return / pass / alias / slice ps[i].xs) OR a bound element (let t = ps[i] / for t in ps)
+// escapes, and the local must then leak rather than be over-released.
 var arrStructReclaimCases = []struct {
 	name string
 	src  string

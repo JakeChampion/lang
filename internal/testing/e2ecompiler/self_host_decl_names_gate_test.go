@@ -19,17 +19,13 @@ import (
 // `peek_member_name` returns "" for a keyword, `parse_func_decl` returns a
 // FuncDecl with an empty name, and the module parses "successfully".
 //
-// `function use()` is the case that cost us: `use` is in the lexer's keyword set, so
-// the function came out nameless and every downstream stage reported
-// verdicts about a malformed module. Two sessions of #3457 read those verdicts as
-// evidence about the IR subset and wrote a WRONG bisection into
-// docs/SELFHOST-AST-RETIREMENT.md before anyone noticed the eligibility report
-// listing a function called "".
+// `function use()` is the motivating case: `use` is in the lexer's keyword set,
+// so the function comes out nameless and every downstream stage reports
+// verdicts about a malformed module.
 //
-// The native parser has always rejected the same source properly, which is what
-// makes this worth a test: the divergence is the bug. Each case below asserts the
-// native compiler AND the self-host driver both refuse, so the two cannot drift
-// apart again.
+// The Go parser rejects the same source, which is what makes this worth a
+// test: the divergence is the bug. Each case below asserts `bin/fern -check`
+// AND the self-host driver both refuse, so the two cannot drift apart.
 func TestSelfHostDeclNamesGate(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH")
@@ -105,7 +101,7 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			src := []byte(tc.src + "\n")
 
-			// The native compiler is the oracle for what is legal Fern.
+			// The Go front end is the oracle for what is legal Fern.
 			nativeOK := exec.Command(interpBin, "-check", writeTemp(t, dir, tc.name+".fern", src)).Run() == nil
 			if nativeOK == tc.reject {
 				t.Fatalf("native -check accepted=%v, want accepted=%v — the fixture no longer means what it says", nativeOK, !tc.reject)

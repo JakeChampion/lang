@@ -11,27 +11,15 @@ import (
 // expression position — `h.get().len()`, `h.get()[i].field`, `for x in
 // h.get()` — without binding it to a local first.
 //
-// `expr_is_arr_src` had no arm for such a call. Its free-function limb reads
-// arr_ret_fns, and its field-access limb knew only the builtins (`.bytes()`,
-// `.split()`, `.keys()`) and the std/array helpers, so a plain user method fell
-// through. That left the `.len()` dispatch gate resting on its last disjunct,
-// "the receiver is not a struct" — and `expr_struct_type` reported a
-// `P[]`-returning call as the ELEMENT type P, because the struct_ret_fns
-// registry stripped the `[]`. So for a STRUCT-element array the fallback denied
-// an array it could not otherwise see and `.len()` resolved against P, emitting
-// `Inner.len`: a symbol nothing declares (#7627).
+// The result must read as the array, not as its element type: for a
+// STRUCT-element array, resolving `.len()` against the element struct P emits
+// `Inner.len`, a symbol nothing declares (#7627). A struct-array element
+// indexed straight off the method result (`h.get()[0].k`) must likewise take
+// the method's element type. The `string[]`, `i32[]` and `E[]` element kinds
+// are controls.
 //
-// The sibling element kinds escaped only by accident — `string[]`, `i32[]` and
-// `E[]` method results report "" from expr_struct_type, so the same fallback
-// admitted them. They are controls here: the fix must not move them.
-//
-// A struct-array element indexed straight off the method result
-// (`h.get()[0].k`) needs the matching half in expr_struct_type's ExprIndex arm,
-// which recovered a free-fn callee's element type but not a method's.
-//
-// They run under FERN_STRICT_IR=1 (#6602) because the answer alone cannot show
-// the shape stayed on the IR path: a per-function bail reaches the same exit
-// code by another route, so these would pass unfixed without the flag.
+// They run under FERN_STRICT_IR=1 (#6602) so a bail names its site rather than
+// surfacing as a module-level refusal.
 var arrRetMethodRecvCases = []struct {
 	name string
 	src  string
@@ -53,12 +41,11 @@ var arrRetMethodRecvCases = []struct {
 	{"i32arr-method-len", i32ArrPrelude + `function main(): i32 { let h: IH = IH { xs: [7, 8] }; return h.get().len(); }`, 2},
 	{"i32arr-method-index", i32ArrPrelude + `function main(): i32 { let h: IH = IH { xs: [7, 8] }; return h.get()[1]; }`, 8},
 
-	// The free-FUNCTION limb is the one that always worked (arr_ret_fns keyed
-	// by bare name); it is the control the method limb was modelled on.
+	// Control: the same reads off a free FUNCTION's array result.
 	{"free-fn-arr-ret-len", freeFnArrPrelude + `function main(): i32 { return mk().len(); }`, 2},
 	{"free-fn-arr-ret-index-field", freeFnArrPrelude + `function main(): i32 { return mk()[1].k; }`, 4},
 
-	// expr_is_arr_src drives RC decisions, so admitting a new expression to it
+	// Reading a method result as an array drives RC decisions, so getting it wrong
 	// risks an over-release rather than a wrong answer. Each of these calls the
 	// method repeatedly against a struct rebuilt every round; a stray release
 	// shows up as an underflow, not as a bad exit code. (The unbound result

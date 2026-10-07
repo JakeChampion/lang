@@ -25,9 +25,10 @@ import (
 // is lifted to SSA form and emitted with registers; it is the only emitter on
 // the native ISAs, so a function it cannot take is a compile error, never a
 // fall-through. These tests build the self-host CLI for this host once,
-// compile each program with it and with the native compiler for every target
-// the host can run output for (its own ISA natively, the other under its qemu
-// user emulator when present), run both, and compare stdout and exit status.
+// compile each program with it and with the `fern` CLI it was built with, for
+// every target the host can run output for (its own ISA natively, the other
+// under its qemu user emulator when present), run both, and compare stdout
+// and exit status.
 // Each program is a shape the register path once got wrong or emits specially,
 // named in the comment above it.
 
@@ -780,8 +781,8 @@ type ssaBackendTarget struct {
 	runner []string
 }
 
-// ssaBackendHost is the self-host CLI built for this host, the native
-// compiler it was built with (the differential's oracle), the targets whose
+// ssaBackendHost is the self-host CLI built for this host, the `fern` CLI it
+// was built with (the differential's oracle), the targets whose
 // output this host can run, and the stdlib root.
 type ssaBackendHost struct {
 	cli     string
@@ -883,7 +884,8 @@ func (h ssaBackendHost) compileWith(t *testing.T, tg ssaBackendTarget, src, out 
 	}
 }
 
-// compileNative runs the native compiler on src for the target.
+// compileNative runs the `fern` CLI the self-host was built with on src for
+// the target.
 func (h ssaBackendHost) compileNative(t *testing.T, tg ssaBackendTarget, src, out string) {
 	t.Helper()
 	args := []string{"-target", tg.target, "-o", out, src}
@@ -913,10 +915,7 @@ func (h ssaBackendHost) runProduced(t *testing.T, tg ssaBackendTarget, bin strin
 	return stdout.String(), cmd.ProcessState.ExitCode()
 }
 
-// The oracle is the native compiler's build of the same program: the stack
-// machine that used to stand on the other side of this differential is gone,
-// and native's emitters are the reference the self-host converges on
-// (docs/NATIVE-CONVERGENCE.md).
+// The oracle is the `fern` CLI's build of the same program.
 func TestSelfHostSSABackendAgreesWithNative(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	for _, tg := range h.targets {

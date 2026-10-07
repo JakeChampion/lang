@@ -7,37 +7,18 @@ import (
 // --- A string[] local read by `for s in names` -------------------------------
 //
 // `let names: string[] = [mk("a"), mk("b")]; for s in names { t = t + s.len(); }`
-// measured 500 allocs / 100 frees against native's 100/100 — the whole array and
-// both element boxes surviving every round. It is `for_in_str_elem__loop__read`
-// on both leak-matrix arches (#5338, #7292/#7356 family).
+// must release the array and both element boxes every round, as the indexed
+// spelling `while (j < names.len()) { t = t + names[j].len(); j = j + 1 }` does.
+// It is `for_in_str_elem__loop__read` on both leak-matrix arches (#5338).
 //
-// THE BINDER NEVER NEEDED A CREDIT. The matrix note reads "the for-in binder is
-// not a StmtVar, so no collector credits it", which points at the wrong value:
-// `s` borrows an element that `names` owns, and `names`'s own deep free is what
-// releases it. What actually happened is that `strarr_unsafe_for`'s StmtFor arm
-// refused the ARRAY's credit outright whenever the array was iterated, so the
-// release never ran for either.
+// The binder needs no credit of its own: `s` borrows an element that `names`
+// owns, and `names`'s own deep free releases it. What matters is whether `s`
+// outlives an iteration. A bind, a return, a container or struct store, or a
+// call whose result is bound outward all make it do so; those rows must keep
+// the element alive, and each reads its value back after 200 rounds of churn
+// have recycled the freelist.
 //
-// The indexed sibling says so directly. Before this change:
-//
-//	for s in names { t = t + s.len(); }                        500/100
-//	while (j < names.len()) { t = t + names[j].len(); j = j+1 } 500/500 clean
-//
-// Two spellings of one read, and only the `for` one leaked —
-// `strarr_expr_unsafe` already draws the transient-versus-lasting line for
-// `names[j]` in exactly those positions.
-//
-// So the arm asks the same question of the BINDER: body_unsafe_for over the
-// loop body decides whether `s` outlives an iteration. A bind, a return, a
-// container or struct store, or a call whose result is bound outward all make
-// the binder outlive an iteration; each reads its value back after churn. On
-// the typed lowering every row balances.
-//
-// Every probe answers identically on native x86-64, `bin/fern -interp` and the
-// self-host, before and after, and the refusing ones read their value back
-// after 200 rounds of churn have recycled the freelist. The flipped rows were
-// re-run under FERN_SANITIZE=1 with FERN_RC_UNDERFLOW_TRAP=1 and
-// FERN_RC_FREE_DEBUG=1: no trap, no quarantine hit.
+// Each want is the `bin/fern -interp` answer.
 
 const forinBinderDecl = `function mkstr(a: string): string { return a + "-long-enough-to-heap-allocate"; }
 function churn(i: i32): i32 { let a: string[] = [mkstr("c"), mkstr("d")]; return a[0].len() + a[1].len(); }

@@ -4,11 +4,9 @@ import (
 	"testing"
 )
 
-// A closure held in a variant payload is released with the variant (#9841).
-// The enum release admission (enum_field_rc_droppable) takes an fn payload,
-// the construction counts it, and the release gives the count back with one
-// rc-guarded dec of the env box. Each program runs ten rounds and returns 99
-// if __rc_underflow_count() moved.
+// A closure held in a variant payload is released with the variant (#9841):
+// the construction counts the env box and the release gives the count back.
+// Each program runs ten rounds and returns 99 if __rc_underflow_count() moved.
 
 // The payload built from a lambda, a closure local and a closure-returning
 // call; matched with the payload ignored, bound and called, and never matched.

@@ -71,9 +71,9 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// The USER-ENUM path is a different test from the built-in one:
-	// expr_enum_type resolves the ctor against the program's declared variants,
-	// where expr_opt_elem_tag matches the built-in Option shape.
+	// The USER-ENUM path is a different test from the built-in one: the ctor
+	// resolves against the program's declared variants, not the built-in
+	// Option shape.
 	{"user-enum-variant-elem-reclaimed", `enum Tag { Num(i32), Nil }
 function churn(n: i32): i32 {
     let acc: i32 = 0;

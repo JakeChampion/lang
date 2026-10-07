@@ -10,49 +10,21 @@ import (
 
 // --- The cross-tuple reuse donor's children, given back (#7275) --------------
 //
-// emit_cross_tuple_reuse recycles a dead donor tuple's box for a later tuple
-// construction. Whatever that box OWNED died with the recycling and nothing gave
-// it back: the donor is deliberately excluded from the precise drop-on-last-use
-// (the xtuple.donors guard, which stops a free from racing the reuse), and its
-// slot is zeroed at the reuse, so the exit sweep finds null too. Two classes of
-// child were stranded, one per credit:
+// When a dead donor tuple's box is recycled for a later tuple construction,
+// whatever that box OWNED must be given back: a bare-ident element's
+// construction retain (#7226) and a fresh array-literal element. The same holds
+// at a LOOP-CARRIED recipient, whose prior iteration's box is released at the
+// rebind rather than by the exit sweep. A recipient whose element is a fresh
+// array literal owns it, typed from the declared tuple type, so its exit sweep
+// frees the array.
 //
-//	"TUP:"    a bare-ident element's construction retain (#7226)   48 B/round
-//	"TUPRCS:" a fresh array-literal element the deep free owns     88 B/round
+// The reuse is runtime-guarded on __fern_rc_is_unique: when the donor's box is
+// not unique it survives under its other owners, and releasing its children
+// there would free buffers those owners still read. No source-level shape
+// reaches that arm, so no case below witnesses it.
 //
-// against 0 on native and interp for both. A third shape sits at the LOOP-CARRIED
-// recipient, where the prior iteration's box is released by
-// emit_reuse_recip_prior_release rather than by the exit sweep: a shallow box dec
-// is the whole release only when the box owns nothing, and the "TUPRCS:" class was
-// outside that site's gate entirely, so both the buffer and the box strand. `FERN_SELFHOST_NO_REUSE=1` took every
-// shape below to 0 without touching the compiler, which is what attributed them
-// to this path rather than to the credit gates.
-//
-// The release CANNOT sit where the other three sites put theirs. The reuse is
-// runtime-guarded on __fern_rc_is_unique(d): on the reuse arm the box is recycled
-// and its children are dead, but on the fresh arm the donor's box survives under
-// its other owners and the same release would free buffers those owners still
-// read — an over-release, strictly worse than the leak. So it sits INSIDE the
-// uniqueness test (emit_tup_donor_releases).
-//
-// The fresh arm is not reachable from a source-level shape: the donor gate
-// (cross_tuple_construction_donor) admits only a non-escaping, never-reassigned
-// local with no mention after the construction, so its box is provably sole-owned
-// and the runtime guard is there to make an ANALYSIS miss degrade rather than
-// corrupt. That is why no case below witnesses the fresh arm — the placement is
-// defence for a bug that does not exist yet, and asserting it needs a unit on the
-// emitted branch, not a program.
-//
-// The recipient side is the second half. emit_cross_tuple_reuse tagged c's slot
-// from the element EXPRESSIONS, and elem_type_tag coarsens a scalar-array element
-// to the bare "i32" — so `(i32, i32[])` was recorded as "i32,i32" and the
-// type-driven deep free found no array child. It now prefers the declared tuple
-// type, which is what bind_var_slot's ExprTuple arm does on the non-reuse path;
-// the two agreeing is the whole fix.
-//
-// Every want below was confirmed against BOTH oracles — bin/fern -interp and the
-// native x86-64 backend agreed on each — never read off the self-host run under
-// test.
+// Every want below was confirmed against `fern -interp`, never read off the
+// self-host run under test.
 
 type tupXReuseElemCase struct {
 	name string
@@ -153,9 +125,8 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 		},
 		{
 			// The donor's element is a PARAM ident — a buffer the frame does not
-			// own. The construction still retained it (slot_is_rc_container has no
-			// n_params guard), so the reuse arm still owes exactly one dec; one too
-			// many frees the caller's live array.
+			// own. The construction still retains it, so the reuse arm owes
+			// exactly one dec; one too many frees the caller's live array.
 			name: "param_ident_donor",
 			src: `function feed(xs: i32[], i: i32): i32 {
     let t: (i32, i32[]) = (i, xs);
@@ -169,9 +140,8 @@ function main(): i32 { let xs: i32[] = [7, 11]; let x: i32 = 0; let r: i32 = 0; 
 		},
 		{
 			// A LOOP-CARRIED recipient: `u`'s slot is re-bound every iteration, so
-			// its prior box is released by emit_reuse_recip_prior_release rather
-			// than by the exit sweep. That is the fifth site on the enumeration,
-			// and a shallow box dec is the whole release only when the box owns
+			// its prior box is released at the rebind rather than by the exit
+			// sweep. A shallow box dec is the whole release only when the box owns
 			// nothing — here it owns a fresh array literal.
 			name: "loop_carried_recipient_literal",
 			src: `function run(n: i32): i32 {

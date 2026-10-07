@@ -2,12 +2,12 @@ package e2ecompiler
 
 import "testing"
 
-// TestSelfHostFormerBailsRun runs programs the AST lowering refused (#8590) —
-// a loop over the innermost level of a 4-deep nested array, and a
-// value-position match binding an 8-byte-element array payload — which the
-// typed lowering produces. Each must answer what the interpreter does, with a
-// balanced census, on both register targets. The nested array's rows go through
-// id so it is built on the heap rather than placed as a constant.
+// TestSelfHostFormerBailsRun runs two shapes that once failed to lower (#8590)
+// — a loop over the innermost level of a 4-deep nested array, and a
+// value-position match binding an 8-byte-element array payload. Each must
+// answer what the interpreter does, with a balanced census, on both register
+// targets. The nested array's rows go through id so it is built on the heap
+// rather than placed as a constant.
 func TestSelfHostFormerBailsRun(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range []struct {

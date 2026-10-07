@@ -7,19 +7,12 @@ import (
 	"testing"
 )
 
-// strOnlyStructExitDropCases pin the string-ONLY-rc struct exit-sweep reclaim
+// strOnlyStructExitDropCases pin the string-ONLY-rc struct exit release
 // (#4355 slice-3 completion, found probing #4354's struct-capture kind): a
 // fresh struct-literal local whose only rc field is a STRING (`P { s: string,
-// n: i32 }`) was reclaimed box-only at scope exit — emit_struct_field_drops
-// gated on struct_has_reclaim_array_field, which a string-only type never
-// passes — so its fresh string field leaked per bind. Native reclaims the
-// shape. The construction-side retain (slit_reclaim) and the consume-rebind
-// path already routed on the wider struct_routes_field_reclaim (rc-array /
-// nested-struct / enum field OR a STRFLDOK-admitted string-fielded type); the
-// exit sweep was the last unwidened consumer, so its k_str decs were already
-// balanced by construction. Detector guards prove no over-release; the
-// param-embed case proves a caller-owned field value survives (retain → dec
-// nets zero).
+// n: i32 }`) must release that string at scope exit, not only the box.
+// Detector guards prove no over-release; the param-embed case proves a
+// caller-owned field value survives (retain → release nets zero).
 var strOnlyStructExitDropCases = []struct {
 	name string
 	src  string
@@ -38,8 +31,8 @@ function go(pre: string): i32 { let p: P = P { s: pre + "x", n: 1 }; return rd(p
 function churn(m: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`, 0},
 	// PARAM-EMBED safety: the field aliases the caller's string — the
-	// construction retain (rc 2) balances the k_str dec (→1), the caller's
-	// string stays readable, detector zero.
+	// construction retain (rc 2) balances the field's release (→1), the
+	// caller's string stays readable, detector zero.
 	{"stronly-param-embed-safe", `struct P { s: string, n: i32 }
 function go(pre: string): i32 { let p: P = P { s: pre, n: 1 }; return p.n + p.s.len(); }
 function churn(m: i32): i32 { let pre: string = "ab" + "cd"; let bad: i32 = 0; let i: i32 = 0; while (i < m) { if (go(pre) != 5) { bad = 1; } i = i + 1; } if (pre.len() != 4) { bad = 2; } return bad; }

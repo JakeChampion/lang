@@ -8,17 +8,12 @@ import (
 )
 
 // annotateTupleCases extend the typed-IR annotation (#5531) to tuple-valued
-// calls. type_to_irtag now serialises a TypeTuple to its canonical
-// "(t0, t1, …)" tag, and expr_tuple_elem_tag gained an ExprCall arm that reads
-// it. This closes a genuine coverage gap: a `f().N` read of a STRUCT- or
-// nested-tuple-typed element of a tuple-returning call had no tag at the call
-// receiver, so expr_struct_type(f().N) was "" and `f().N.field` / `f().N.m()`
-// bailed the whole function. With the annotation those
-// functions route through the IR path (unlike the byte-identical earlier
-// slices, this WIDENS IR routing — verified by the interpreter oracle, and by
-// the `-decide` route being "ir": these programs are not structurally IR-
-// eligible, so `-decide` — which now annotates, mirroring emit_module — is the
-// canary that the annotate wiring is what lifts them).
+// calls. type_to_irtag serialises a TypeTuple to its canonical "(t0, t1, …)"
+// tag, which is what types a `f().N` read of a STRUCT- or nested-tuple-typed
+// element of a tuple-returning call, so `f().N.field` / `f().N.m()` lower. The
+// test checks the result against the interpreter and that `-decide` reports
+// "ir"; `-decide` annotates as emit_module does, so it fails if the annotation
+// stops reaching these calls.
 var annotateTupleCases = []struct {
 	name string
 	src  string

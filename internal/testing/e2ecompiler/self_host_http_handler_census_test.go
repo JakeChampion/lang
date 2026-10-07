@@ -95,7 +95,8 @@ func checkSelfHostHTTPHandlerCensus(t *testing.T, targets []string, client func(
 
 func requireCompleteHTTPSemanticLowering(t *testing.T, report []byte) {
 	t.Helper()
-	// Correct responses alone could conceal an AST fallback and its ownership.
+	// Correct responses alone would not show that the typed lowering produced
+	// every declaration and instance.
 	rows := regexp.MustCompile(`FERN_SEM_IR: module: produced ([0-9]+) of ([0-9]+) declarations and ([0-9]+) of ([0-9]+) instances`).FindAllStringSubmatch(string(report), -1)
 	if len(rows) == 0 || strings.Contains(string(report), "refused") {
 		t.Fatalf("HTTP fixture must use semantic ownership: %s", report)

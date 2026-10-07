@@ -13,36 +13,13 @@ import (
 // in receiver position — `base[4:base.len()].to_owned()`, where the slice yields
 // a box nothing names and the call is done with it once it returns.
 //
-// #7164 releases a fresh-or-receiver CHAIN in receiver position under a runtime
-// pointer compare, but sfrrecv_chain_root_slot only walked an ExprCall link. A
-// bare ExprSlice was not a link it followed, so the box survived: 9600 B over
-// 400 rounds on the register backends and 48000 on wasm, where a slice is a COPY
-// rather than the zero-copy view the asm-IR path builds (#4294). A slice link is
-// the same character as an SFRRECV call — the box is a view over the source's
-// bytes and never the source's own box — so walking through it to the root is
-// all that was missing.
+// The slice box is a view over the source's bytes, never the source's own box,
+// so it is released once the call has returned. On wasm a slice is a COPY
+// rather than the zero-copy view the register backends build (#4294), so there
+// the leak scales with the payload; the wide-payload case pins that.
 //
-// Measured, two compilers built from the same commit, 400 rounds:
-//
-//	leg      before   after
-//	x86-64     9600       0
-//	arm64      9600       0
-//	wasm      48000       0
-//	wasm (wide payload)  230400 -> 0
-//
-// The wasm rows are the ones worth keeping: its residual scaled with the payload
-// because the slice copies, so this recovers the whole copy rather than a
-// 24-byte header.
-//
-// The two guards have DIFFERENT standing at this arm, which the cases record:
-//
-//   - recv_borrow is WITNESSED here. A callee that returns its receiver hands the
-//     view straight back, and releasing the box corrupts what the caller holds:
-//     exit 97 on a build with the gate dropped.
-//   - the pointer compare is CONTRACT-ONLY here, and deliberately so. A slice box
-//     is never the source's own box, so the compare cannot fire; every case below
-//     passes on a build with it removed. It stays because the ExprCall arm it
-//     shares does need it — #7164's identity-path probe still exits 97 without it.
+// A callee that returns its receiver hands the view straight back, and
+// releasing the box then corrupts what the caller holds (exit 97).
 const sliceViewPrelude = `import "std/i32";
 import "std/i64";
 import "std/string";
@@ -96,10 +73,8 @@ var strSliceViewReleaseCases = []struct {
     return base.len() + c.len();
 }
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 3000) { let r: i32 = round(pre); if (r != 125) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
-	// WITNESS for the recv_borrow gate. `idv` returns its receiver, so the call's
-	// result IS the view box; releasing it frees what `v` still points at. Exit 97
-	// on a build with the gate dropped. body_unsafe_for refuses `idv` because a
-	// bare `return s` is an escape, so the key is absent and nothing is emitted.
+	// `idv` returns its receiver, so the call's result IS the view box; releasing
+	// it frees what `v` still points at (exit 97).
 	{"str-slice-view-release-identity-callee-refused", sliceViewPrelude + `function round(pre: string): i32 {
     let base: string = w(pre);
     let v: str = slice_unchecked(base, 4, base.len()).idv();

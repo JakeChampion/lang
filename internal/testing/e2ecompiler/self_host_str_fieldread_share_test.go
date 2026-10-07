@@ -10,36 +10,12 @@ import (
 
 // --- The FIELD-READ spelling of the STRING counted share ---------------------
 //
-// `let p: P = P { f: q.f, … }` off a live sibling holder, string flavour — the
-// construction matrix's str__fieldread cell (400 allocs / 200 frees against
-// native's 300/300). The read lowers through struct_get to the SOURCE box's
-// buffer, so the new box co-owns it.
-//
-// Both holders were marked box-only ("NODEEP:"), each correctly while the share
-// is uncounted: q because a field read in a struct-literal field is a positive
-// MOVE position, p because its literal borrows a string it did not retain.
-// slot_nodeep then withholds __struct_drop_P from BOTH, so neither holder frees
-// the string at all — two leaked boxes per round. Dumping the credit rows for the
-// pair is what settled it:
-//
-//	inline spelling:  NODEEP:p      NODEEP:q
-//	hoisted spelling: FLDCHECKED:p  FLDCHECKED:q
-//
-// Hoisting the read to a local (`let t = q.f; P { f: t }`) was already clean —
-// strfld_safe_operand forgives a direct field-read init and the #4768 read-side
-// retain counts it. The two spellings are the same program and return the same
-// answer; only the inline one leaked.
-//
-// ONE predicate decides all three sites (str_field_share_read): the retain in the
-// ExprStructLit lowering and the two marker flips in bind_var_slot. They agree by
-// construction rather than by three conditions lining up, which is the safety
-// argument — a marker flipped without the inc behind it turns one box under two
-// rc-aware k_str decs into a free followed by a dangle.
-//
-// Flipping the verdict means WRITING "FLDCHECKED:", not merely revoking
-// "NODEEP:" — they are two arms of one either/or and a block-scoped slot deep-
-// drops only on the second (#6127). `blockscoped` is the row that would catch a
-// revoke-only change.
+// `let p: P = P { f: q.f, … }` off a live sibling holder, string flavour. The
+// read yields the SOURCE box's string, so the new box co-owns it and must
+// retain it; both holders then release it, and neither may leave it stranded.
+// Hoisting the read to a local (`let t = q.f; P { f: t }`) is the same program
+// and must balance the same way. `blockscoped` holds the new box in a nested
+// block, which must still drop its string there.
 //
 // TWO SHAPES could over-release, and both are essential rather than decorative:
 //
@@ -47,15 +23,11 @@ import (
 //     creating a third owner.
 //   - `moved_ret`: no bind, and the inc goes with the move (#6726).
 //
-// Both assert their exit code against native; on the typed lowering they
-// balance like the rest.
-//
-// Every `want` was measured against the NATIVE x86-64 backend, never read off the
-// self-host run under test. `source_uaf` is the wrong-ANSWER probe: p dies inside
-// the branch and q must read its string back intact after allocation churn has
-// had the chance to reuse anything freed too early. The census cannot separate a
-// correct fix from an over-release — both read allocs == frees — so that row, not
-// the counts, is what makes the share sound.
+// `source_uaf` is the wrong-ANSWER probe: p dies inside the branch and q must
+// read its string back intact after allocation churn has had the chance to
+// reuse anything freed too early. The census cannot separate a correct share
+// from an over-release — both read allocs == frees — so that row, not the
+// counts, is what makes the share sound.
 
 const strFieldReadDecl = `struct P { f: string, n: i32 }
 function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }

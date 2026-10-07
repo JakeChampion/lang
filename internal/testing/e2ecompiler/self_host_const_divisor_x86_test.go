@@ -87,7 +87,7 @@ function main(): i32 {
 		fn          string
 		want, avoid []string
 	}{
-		// i32 reciprocal: the magic (ir.derive_magic_s32(4093) — also pins the
+		// i32 reciprocal: the magic (ir.derive_magic_s(4093, 32) — also pins the
 		// derivation), the dividend stashed in ecx, the multiply-back for the
 		// remainder, and the sign-extension back into the slot.
 		{"m4093", []string{"movl %eax, %ecx", "movl $-2145909631, %eax", "imull %ecx", "addl %ecx, %edx", "sarl $11, %edx", "imull $4093, %eax, %eax", "cltq"}, append([]string{"idiv"}, guards...)},

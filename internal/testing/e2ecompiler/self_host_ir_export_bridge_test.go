@@ -6,25 +6,16 @@ import (
 )
 
 // TestSelfHostIRExportBridge pins that the IR path emits the WIT extern/export
-// canonical-ABI bridge — the one part of the wasm surface that had no IR sibling.
-//
-// It showed up two ways, both the same cause:
-//
-//   - component mode REFUSED any module declaring an `@import` extern or an
-//     `@export` binding (component_ir_core_ok), so such modules fell through to
-//     the AST emitter;
-//   - mode 0 never consulted that gate, so an `@export` module routed IR and
-//     emitted a core whose only exports were `memory` and `_start` — the binding
-//     SILENTLY DROPPED. Measured on the pre-fix tree: 11,108 bytes, no `iota`.
+// canonical-ABI bridge. In mode 0 an `@export` module must keep its binding: a
+// core whose only exports are `memory` and `_start` has SILENTLY DROPPED it.
 //
 // The bridge lives in wasm_ir and lays its heap boxes out with 8-byte slots
 // (wasm_ir.xbox_field_off). TestSelfHostWasmExternBridgeIRLayout pins the
 // offsets per shape.
 //
-// This test covers the mode-0 half, which is the half that was silently wrong and
-// is reachable from a stdin driver. The component half is covered by the
-// TestSelfHostExport*/TestSelfHostExtern* component tests, which compose a real
-// component and run it under wasmtime.
+// This test covers the mode-0 half, which is reachable from a stdin driver.
+// The component half is covered by the TestSelfHostExport*/TestSelfHostExtern*
+// component tests, which compose a real component and run it under wasmtime.
 func TestSelfHostIRExportBridge(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 

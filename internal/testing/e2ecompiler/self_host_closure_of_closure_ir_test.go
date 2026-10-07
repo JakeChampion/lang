@@ -10,13 +10,9 @@ import (
 // TestSelfHostClosureOfClosureIRX86_64 pins a closure factory that returns a
 // (capturing) closure, called through both levels via locals:
 // `let outer = make(30); let inner = outer(); inner(12)`. `outer` is a closure
-// local (make returns a closure box); calling it yields ANOTHER closure box,
-// but `let inner = outer()` wasn't classified as a closure local — the callee
-// `outer` is a closure LOCAL, not a module fn in closure_fns — so `inner(x)`
-// called the box pointer as code and SIGSEGV'd. The closure-local var-init
-// classification now also fires when the callee is a closure local whose
-// return type is a fn (a closure returning a closure), so inner dispatches
-// env-first and the chain computes the native value.
+// local (make returns a closure box), and calling it yields ANOTHER closure
+// box, so `inner(x)` must dispatch env-first through that box rather than call
+// the box pointer as code (a SIGSEGV).
 func TestSelfHostClosureOfClosureIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

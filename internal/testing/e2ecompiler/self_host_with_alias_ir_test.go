@@ -12,14 +12,11 @@ import (
 // withAliasIRCases exercise the in-place `a = a.with(i, v)` self-reassign through
 // the self-host IR path when the array `a` has a lasting LOCAL alias (#3599).
 //
-// The single-owner / leak model lowered the self-reassign as an in-place arr_set,
-// which is UNSOUND once `a` is aliased (`let b = a`, captured into a struct
-// literal, …): the in-place write mutates the buffer the alias still reads, so
-// `b` observes the change. The interpreter and the native (Perceus) backend both
-// copy-on-write and leave the alias unchanged. The fix detected the alias at
-// lower_func time (aliased_array_names_of) and routed the aliased self-reassign
-// through the value-producing clone (lower_arr_with_value) instead of the
-// in-place store. The unaliased "no-alias" case still takes the in-place path.
+// An in-place write is UNSOUND once `a` is aliased (`let b = a`, captured into a
+// struct literal, …): it mutates the buffer the alias still reads, so `b` would
+// observe the change. The aliased self-reassign must copy-on-write and leave the
+// alias unchanged, as the interpreter does. The unaliased "no-alias" case may
+// still update in place.
 //
 // The own-caller cases cover #8874: a declared consuming parameter can arrive
 // shared through its caller, so its update must test runtime uniqueness. These

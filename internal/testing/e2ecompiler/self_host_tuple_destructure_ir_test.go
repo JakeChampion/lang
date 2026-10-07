@@ -8,20 +8,16 @@ import (
 	"testing"
 )
 
-// tupleDestructureIRCases pin `let (a, b) = E` / `let (a, b) = E` tuple
-// destructuring on the IR path. The destructure already lowers fully through IR
-// (the lowering emits op_tuple_get reads into the freshly-bound
-// locals — no bail), but the existing TestSelfHostTupleDestructure* assert only
-// exit codes, which the legacy AST emitter also satisfies. So a silent regression
-// that kicked destructuring off the IR path would pass undetected — and the
-// `let (a, b)` form has a documented history of hanging the self-host compiler,
-// exactly the kind of frontier that warrants a hard IR-path pin.
+// tupleDestructureIRCases pin `let (a, b) = E` tuple destructuring on the IR
+// path: the destructure lowers to op_tuple_get reads into the freshly-bound
+// locals. The `let (a, b)` form has a documented history of hanging the
+// self-host compiler, which is why it gets a pin beyond the exit-code-only
+// TestSelfHostTupleDestructure* tests.
 //
-// Each program declares a fresh, non-escaping struct temp whose IR-only reclaim
-// free (`call __fn___fern_arr_dec`) proves the module took the IR path — the AST
-// fallback is leak-only and emits none. `t.x - t.y` pads 0 into every result, so
-// exit codes still pin the destructured values. Every tuple stays scalar
-// `(i32, i32)` (the confirmed-lowering shape); the struct only appears as the
+// Each program also declares a fresh, non-escaping struct temp whose reclaim
+// free (`call __fn___fern_arr_dec`) the test requires in the asm. `t.x - t.y`
+// pads 0 into every result, so exit codes still pin the destructured values.
+// Every tuple stays scalar `(i32, i32)`; the struct only appears as the
 // separate pad temp, never as a tuple element. Mirrors self_host_if_let_ir_test.go.
 var tupleDestructureIRCases = []struct {
 	name string

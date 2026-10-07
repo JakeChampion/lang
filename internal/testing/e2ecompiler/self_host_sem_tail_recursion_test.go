@@ -126,20 +126,12 @@ const selfHostTailRecursionWant = "0|a=5 b=3 c=206 alive=14 ticks=300000 view=19
 
 // TestSelfHostSemanticTailRecursion is the reference-typed half of #9692.
 //
-// It was a test of its own rather than a row in semProductionPrograms because
-// the deleted AST lowering could not be its oracle. That lowering's TCO
-// (`irlower.tco_self_tail`) matched an op-stream `call_direct f/N` immediately
-// followed by `return`, and once a parameter carries a unit the frame still
-// owes a release after the call returns — the emitted asm for the `rebuilt`
-// shape was `bl __fn_rebuilt` then `bl __fn___fern_arr_dec` then `ret`. So the
-// pair was not adjacent, the rewrite did not fire, and the AST leg died on
-// these depths. Native does the same thing for the same reason (#9794).
-//
-// The graph rewrite has no such limit: it runs before the unit planner, so
-// the release is placed around the loop rather than after a call that is no
-// longer there. That is the whole argument for rewriting the graph instead of
-// re-running the op-stream pass on produced output, and these depths are what
-// hold it.
+// Once a parameter carries a unit, the frame still owes a release after a
+// self-tail call returns, so a rewrite that matches a `call_direct f/N`
+// immediately followed by `return` in the op stream never fires on these
+// shapes. The graph rewrite runs before the unit planner, so the release is
+// placed around the loop rather than after a call that is no longer there;
+// these depths are what hold it.
 func TestSelfHostSemanticTailRecursion(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	stdlibRoot, err := filepath.Abs("../../stdlib")

@@ -13,13 +13,10 @@ import (
 // largeSingleFnProgram builds a single `main` with `n` sequential accumulator
 // statements followed by an `acc == acc` guard that always returns 42. Every
 // statement lowers to a run of IR ops, so the function's op count scales with
-// `n` — the exact shape that exposed the #4652 quadratic: irlower's wasm emit
-// path used to re-lower every function once PER collect / gate pass (~30×), and
-// each re-lowering paid an O(statements²) ops-array clone into the no-free bump
-// arena. Peak RSS grew ≈ 0.16·n² MB (measured: n=40 → 406 MB, n=80 → 1.18 GB,
-// n=120 → 2.3 GB), so a large single-function module exhausted the 3.875 GiB arena and
-// the self-host wasm compile was killed (exit 137) — which is what pinned the
-// x86_encode/x86_gas migration to the AST path on wasm.
+// `n` — the shape behind the #4652 quadratic, where re-lowering every function
+// once PER collect / gate pass (~30×), each paying an O(statements²) ops-array
+// clone, grew peak RSS ≈ 0.16·n² MB until the self-host wasm compile was killed
+// (exit 137).
 //
 // The guard reads `acc` (so the accumulator chain stays live against any DCE)
 // but the result is constant, so the wasm exit code is a fixed 42 regardless of

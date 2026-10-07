@@ -10,23 +10,22 @@ import (
 
 // --- Unary minus keeps its operand's width ----------------------------------
 //
-// lower_expr_unary lowered `-x` as `const_i32(0); x; sub(width 0)` for every
-// integer type. The register backends are right by ACCIDENT — the operation
-// lands in a 64-bit register and the wrong width is invisible — so an i64
-// negation only shows up on the one typed backend:
+// `-x` must negate at the operand's width; a 32-bit `0 - x` for every integer
+// type is wrong for i64. The register backends hide that — the operation lands
+// in a 64-bit register and the wrong width is invisible — so an i64 negation
+// only shows up on the one typed backend:
 //
 //	self-host, -target wasm32-wasi:
 //	  Error: failed to compile: wasm[0]::function[27]
 //	  type mismatch: expected i32, found i64
 //
-// lower_i64's own unary arm has had the right shape all along (const_i64 "0"
-// and a 64-bit sub), so this is the case where a 64-bit value reaches the
-// 32-bit lowering instead — through a method receiver, here `(-b).to_string()`.
+// The rows reach the negation through a method receiver, `(-b).to_string()`,
+// and through a local.
 //
 // The rows assert the printed VALUE, not that the module loads: a width bug
 // that truncates rather than failing validation is the one this would miss
-// otherwise. i32 and f64 are the controls — they were already correct, and
-// they pin that selecting a width did not disturb them.
+// otherwise. i32 and f64 are the controls: they pin that selecting a width
+// did not disturb them.
 func TestSelfHostNegateWidthWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host wasm negate width e2e")

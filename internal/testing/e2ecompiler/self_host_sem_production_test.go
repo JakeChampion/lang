@@ -6470,13 +6470,9 @@ function main(): i32 {
     return add5(4) + curry(1)(2) + c3(1)(2)(3) + add(3)(4) + 17;
 }
 `},
-	// A function declared to return a function returns an env box, whatever its
-	// return statements spell (#9763): a lambda handed back through a generic
-	// call, a local bound from one, or a match-arm payload, called by a caller
-	// that bound the result to a local.
 	// A field read stored into a container is a second owner of a box its
-	// struct's __struct_drop_<T> releases: a scalar array, an array of structs,
-	// a nested struct, an enum. Left uncounted, `xs.append(a.env)` in a callee
+	// struct's drop also releases: a scalar array, an array of structs, a
+	// nested struct, an enum. Left uncounted, `xs.append(a.env)` in a callee
 	// leaves the element to the caller's drop of the argument, and the next
 	// allocation reuses the block under the container (#9763).
 	{name: "a-stored-field-read-is-retained", atLeast: 11, want: "24|", src: `

@@ -2,23 +2,19 @@ package e2ecompiler
 
 import "testing"
 
-// mapInsertAliasIRCases exercise the self-reassign `m = m.insert(k, v)` through
-// the self-host IR path when the map `m` has a lasting LOCAL alias (#3633 — the
+// mapInsertAliasIRCases exercise the self-reassign `m = m.insert(k, v)` when
+// the map `m` has a lasting LOCAL alias (#3633 — the
 // map sibling of the array `.with` fix #3599).
 //
 // The builtin op_map_set mutates the map's parallel keys[]/values[] in place,
 // which is unsound once `m` is aliased (`let n = m`): the in-place write mutates
-// the buffer `n` still references, so `n` observes the change. The interpreter
-// and the native (Perceus) backend both copy-on-write and leave `n` unchanged.
-// The fix detected the alias at lower_func time (aliased_array_names_of, shared
-// with #3599) and routed the aliased self-reassign through a map clone
-// (lower_map_clone_insert: fresh map_new + a copy loop over keys()/values(),
-// mutate the sole-owned clone) instead of the in-place store. The unaliased
-// "no-alias" case still takes the in-place path.
+// the buffer `n` still references, so `n` observes the change. An aliased
+// self-reassign therefore inserts into a sole-owned clone and leaves `n`
+// unchanged, as the interpreter's copy-on-write does. The unaliased "no-alias"
+// case still takes the in-place path.
 //
 // Programs build maps with the `Map {}` literal like the other self-host map IR
-// tests; `want` values are verified against the native x86-64 backend and the
-// interpreter.
+// tests; `want` values are verified against the interpreter.
 var mapInsertAliasIRCases = []struct {
 	name string
 	main string

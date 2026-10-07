@@ -23,15 +23,12 @@ import (
 // This is wasm-only: x86-64 / arm64 keep the u32 zero-extended in a 64-bit
 // register, so a signed shift already matched there.
 //
-// The generic arm reuses the "name|$arg<i>" argref registry the u64 sibling
-// uses; the IIFE arm classifies by the first branch's returned value; the dyn arm
-// keys "dyn <Trait>.<method>" in i64_ret_fns via append_dyn_i64_ret_fns (ret flag
-// '3', is_u32_ret_fn). SHIFTS are the sharp probe (a shift's signedness follows
-// the LEFT operand alone), so `idg(a) >> k` / `d.v() >> k` have no other u32
-// signal. For DIV the call must be the SOLE u32 operand (two u32-returning calls,
-// no `as u32` literal) — otherwise a u32 literal operand already selects the
-// unsigned op and the case would pass even unfixed. Every value here has bit 31
-// set; expected values are the interpreter-oracle answers (kept <= 126 for
+// SHIFTS are the sharp probe (a shift's signedness follows the LEFT operand
+// alone), so `idg(a) >> k` / `d.v() >> k` have no other u32 signal. For DIV the
+// call must be the SOLE u32 operand (two u32-returning calls, no `as u32`
+// literal) — otherwise a u32 literal operand already selects the unsigned op
+// and the case would pass even unfixed. Every value here has bit 31 set;
+// expected values are the interpreter-oracle answers (kept <= 126 for
 // wasmtime's exit-code range).
 func TestSelfHostU32RetGenericDynWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
@@ -73,9 +70,9 @@ func TestSelfHostU32RetGenericDynWasmIR(t *testing.T) {
 		expected int
 	}{
 		// ERASED-GENERIC return mirroring a u32 argument, chained in a shift:
-		// `idg(a) >> 25`. is_u32_ret_fn misses (the generic fn isn't u32-typed),
-		// so the ExprCall(ident) arm falls through to str_ret_argref + the u32-ness
-		// of the actual argument. 0x80000001 >> 25 == 64 unsigned.
+		// `idg(a) >> 25`. The generic fn's return is not u32-typed, so the
+		// unsigned-ness comes from the actual argument. 0x80000001 >> 25 == 64
+		// unsigned.
 		{"generic-shr", `function idg[T](x: T): T { return x; } function main(): i32 { let a: u32 = 2147483649 as u32; return (idg(a) >> 25) as i32; }`, 64},
 		// TWO generic-call operands in a DIVISION: `idg(a) / idg(b)` — the argref
 		// u32-ness is the sole signal (no u32 literal operand). 4000000000 / 7 ==
@@ -86,8 +83,7 @@ func TestSelfHostU32RetGenericDynWasmIR(t *testing.T) {
 		// u32). `(if (…) { a } else { 0 }) >> 25`.
 		{"iife-shr", `function main(): i32 { let a: u32 = 2147483649 as u32; let r: u32 = (if (a > (0 as u32)) { a } else { 0 as u32 }) >> 25; return r as i32; }`, 64},
 		// dyn Trait method dispatch returning u32, chained in a shift: `d.v() >> 25`.
-		// The "dyn Val.v" key is populated by append_dyn_i64_ret_fns with ret flag
-		// '3'; the ExprCall(method) arm resolves the receiver to "dyn Val".
+		// The unsigned-ness comes from the trait method's declared u32 return.
 		{"dyn-shr", `trait Val { function v(self: Self): u32; } struct B { n: u32 } impl Val for B { function v(self: Self): u32 { return self.n; } } function main(): i32 { let b: B = B { n: 2147483649 as u32 }; let d: dyn Val = b; return (d.v() >> 25) as i32; }`, 64},
 		// TWO dyn-method-call operands in a DIVISION: `d.v() / d.d7()` — the dyn
 		// u32-return is the sole signal. Same 71 arithmetic as generic-twocall-div.

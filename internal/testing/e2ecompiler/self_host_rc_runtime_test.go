@@ -117,9 +117,7 @@ func TestSelfHostRcAliasIncX86_64(t *testing.T) {
 	})
 
 	// At xs's LAST mention the same binding is a MOVE instead: the retain
-	// is elided and xs's exit dec elided with it (moves_local_at +
-	// note_moved_elided), the pair cancellation native performs at this
-	// site — so the moved shape must emit no inc at all.
+	// and xs's exit dec cancel, so the moved shape must emit no inc at all.
 	t.Run("elides-retain-at-move-alias", func(t *testing.T) {
 		asm := cli.emit(t, "x86-64-linux", "function main(): i32 { let xs: i32[] = [1, 2]; let ys = xs; return ys[0]; }")
 		if rcIncSites(asm) > 0 {
@@ -527,15 +525,12 @@ func TestSelfHostRcFreeReclaimX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostRcStructArrayFieldDropX86_64 covers the Perceus deep-drop (one
-// level) of array-of-struct / array-of-enum FIELDS: when a reclaimable struct
-// is dropped, emit_struct_field_drops releases its struct/enum-array field
-// BUFFERS via a shallow __fern_arr_dec (the element boxes still leak — the
-// safe-leak invariant for nested payloads). This BALANCES the alias-inc the
-// struct-lit / bind / return / assign paths add when such a field aliases a
-// local, so the over-release detector must stay 0 across all construction
-// shapes — fresh literal (sole owner), aliased ident/param (inc'd), and a fresh
-// call value (sole owner). A double-free here would trip the detector or crash.
+// TestSelfHostRcStructArrayFieldDropX86_64 covers dropping array-of-struct /
+// array-of-enum FIELDS: a dropped struct releases its struct/enum-array field
+// buffers, balancing the retain taken when such a field aliases a local, so
+// the over-release detector must stay 0 across all construction shapes — fresh
+// literal (sole owner), aliased ident/param (retained), and a fresh call value
+// (sole owner). A double-free here would trip the detector or crash.
 func TestSelfHostRcStructArrayFieldDropX86_64(t *testing.T) {
 	cli := newStrictCLI(t)
 

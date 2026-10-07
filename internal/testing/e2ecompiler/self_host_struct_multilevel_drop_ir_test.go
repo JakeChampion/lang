@@ -7,26 +7,16 @@ import (
 	"testing"
 )
 
-// TestSelfHostStructMultiLevelDropIRX86_64 covers the Perceus MULTI-LEVEL deep-drop
-// (#2649): nested_field_deep_drop_ok was generalised from a LEAF-only rule (depth-1)
-// to an ACYCLIC-closure rule, so a chain of DIRECT nested-struct fields deep-drops
-// all the way down. For `A { b: B }`, `B { c: C }`, `C { items: i32[] }`, dropping a
-// reclaimable `A` local now emits `__struct_drop_A` -> `__struct_drop_B` ->
-// `__struct_drop_C`, and C frees `items` — whereas the old leaf gate stopped at A's
-// b-field (B is non-leaf), shallow-freeing B's box and leaking B.c and C.items.
+// TestSelfHostStructMultiLevelDropIRX86_64 covers the MULTI-LEVEL deep drop
+// (#2649): for `A { b: B }`, `B { c: C }`, `C { items: i32[] }`, dropping an `A`
+// local must release down the whole chain of DIRECT nested-struct fields, so C
+// frees `items` too. Each level releases a field only when it holds the sole
+// reference (rc 1), so a shared inner is left alone.
 //
-// The emitted call graph is a DAG bounded by the struct-type count (a type cannot
-// re-appear on the chain without a cycle, which the acyclicity check rejects), so
-// the runtime recursion terminates. Each level re-applies the same is_unique guard
-// the leaf case already used, so a shared inner (rc>1) still skips the field release.
-//
-// KEY DIFFERENTIAL: `call __fn___struct_drop_B` is emitted ONLY under the multi-level
-// gate — B is a non-leaf, so the old leaf rule kept A's b-field shallow and never
-// struct-dropped B. Its presence proves A recursed into a non-leaf inner. Runtime
-// signal is heap exhaustion: a long churn that leaks C.items each iteration exhausts
-// the bump heap and is SIGKILLed (137); with the multi-level reclaim it stays
-// bounded (exit 0). Each items array goes through id so the chain is built on the
-// heap rather than placed as a constant.
+// Runtime signal is heap exhaustion: a long churn that leaks C.items each
+// iteration exhausts the bump heap and is SIGKILLed (137); with the multi-level
+// release it stays bounded (exit 0). Each items array goes through id so the
+// chain is built on the heap rather than placed as a constant.
 func TestSelfHostStructMultiLevelDropIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

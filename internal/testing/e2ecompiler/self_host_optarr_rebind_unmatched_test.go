@@ -6,43 +6,21 @@ import (
 
 // --- A rebound Option[i32[]] with nothing consuming it -----------------------
 //
-// `let x: Option[i32[]] = Some([i, i+1]); x = Some([i+2, i+3, i+4]);` measured
-// 400 allocs / **0 frees** — nothing released at all, the signature of a credit
-// that was never granted rather than a release that was half-wired. It is
-// `opt_arr__rebind__unused` on both leak-matrix arches (#5338).
+// `let x: Option[i32[]] = Some([i, i+1]); x = Some([i+2, i+3, i+4]);` must
+// release both payloads although no match consumes the local; left uncredited
+// it is 400 allocs / **0 frees**. It is `opt_arr__rebind__unused` on both
+// leak-matrix arches (#5338). `rebind_matched_unchanged` is the matched control.
 //
-// THE FAMILY IS A 2x2 ON (reassigned, consumed-by-match) AND ONE CELL WAS
-// EMPTY. collect_fresh_optarr_names requires the name to be reassigned AND a
-// sole top-level match to consume it; collect_unmatched_optarr_names requires
-// neither. A rebound local with nothing matching on it satisfied neither
-// collector, so no one credited it and no one swept it. The matrix note read
-// the other way round — "the release exists and only the no-match sweep half is
-// missing" — but `oa_rebind_match` measuring clean says the release is fine;
-// the admission is what was absent.
-//
-// The two collectors stay disjoint on the `reassigned` axis alone, which is
-// what the comment they share relies on, so filling the quadrant inside
-// collect_fresh_optarr_names cannot double-free anything.
-//
-// THE NO-MATCH PROOF IS NOT THE SIBLING'S. The never-reassigned class may lean
-// on the plan's frame-escape verdict, because its locals are bound once. Asking
-// the same question through it here produced a WRONG ANSWER rather than a leak:
-// `option_escapes` returns the rebound local out of a callee, the plan granted
-// it anyway, and the self-host exited 25 where native and interp both say 42.
-// The fix is to ask body_unsafe_for directly, which is the same reason the
-// matched branch carries name_escapes_outside_stmt. That row is the one below
-// worth reading twice.
+// A rebound local is bound more than once, so whether it escapes cannot be read
+// off one binding: `refused_option_escapes` returns it out of a callee, and
+// admitting it there gives a WRONG ANSWER rather than a leak (25 where the
+// interpreter says 42). That row is the one below worth reading twice.
 //
 // Five shapes could over-release — two matches on the name, a payload bound out
 // of the match, the option escaping, an alias bound before the rebind, and a
 // match placed BEFORE the rebind. Each reads its value back after 200 rounds of
-// churn have recycled the freelist, and each answers identically on native
-// x86-64, `bin/fern -interp` and the self-host. On the typed lowering every row
-// balances.
-//
-// Every flipped row was re-run under FERN_SANITIZE=1 with
-// FERN_RC_UNDERFLOW_TRAP=1 and FERN_RC_FREE_DEBUG=1: clean, no trap, no
-// quarantine hit.
+// churn have recycled the freelist and must answer as `bin/fern -interp` does.
+// Every row balances.
 
 const optarrRebindChurn = `function churn(i: i32): i32 { let a: i32[] = [i, i + 1, i + 2]; let b: i32[] = [i, i + 1]; return a[0] + b[1]; }
 `
@@ -147,8 +125,8 @@ function round(i: i32): i32 {
 			want: 42,
 		},
 		{
-			// Two matches on the name, which
-			// sole_top_level_match_idx reports the same way as none.
+			// Two matches on the name: neither is the sole consumer, and each
+			// must read its own payload.
 			name: "refused_two_matches",
 			src: optarrRebindChurn + `function round(i: i32): i32 {
     let t: i32 = 0;
@@ -193,7 +171,7 @@ function round(i: i32): i32 {
 		},
 		{
 			// The match precedes the rebind, so it consumes a value
-			// the later store replaces — `match_idx > vi` is what rules it out.
+			// the later store replaces.
 			name: "refused_match_before_rebind",
 			src: optarrRebindChurn + `function round(i: i32): i32 {
     let t: i32 = 0;

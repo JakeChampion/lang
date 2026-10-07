@@ -36,7 +36,7 @@ func TestSelfHostExternImportRunsUnderWasmtime(t *testing.T) {
 	dir := t.TempDir()
 
 	// Stage the self-host front end + wasm backend, plus a component-io driver
-	// that emits the run core (emit_module_run_io) from source on stdin.
+	// that emits the io-wrapped run core from source on stdin.
 	copySelfHostDriver(t, dir, "drivers/wasm_runio_run.fern")
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/wasm_runio_run.fern", "wasm_runio_run")
 

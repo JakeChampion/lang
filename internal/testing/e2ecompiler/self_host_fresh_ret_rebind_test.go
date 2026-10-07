@@ -11,29 +11,14 @@ import (
 // --- The REBOUND fresh-ret-call struct local ---------------------------------
 //
 // `let s: S = mk(i); s = mk(i + 1);` — a struct local bound from a producer call
-// and then reassigned. collect_fresh_ret_call_names used to drop every name in
-// body_assign_targets, so this local earned no credit at all: `round` emitted no
-// dec of any kind, and the box plus its rc fields leaked on every rebind
-// (800 allocs / 0 frees over 200 rounds, against native's 800/800).
-//
-// The exclusion deferred to the snapshot-LOCAL path, which claims only the
-// locals threaded and MOVED OUT (`let st = f(x); st = st.emit(..); return st`).
-// A rebound local that simply goes dead fell between the two.
-//
-// The INIT spelling is what decided it, not the rebind: the literal-bound
-// sibling (collect_fresh_struct_names) never carried the exclusion, so
-// `let s: S = S { .. }` was already clean under the identical rebind. That
-// asymmetry is why `literal_init_control` sits here — it passed before the fix
-// and pins the half that was never broken.
-//
-// It is also why no cell of the generated leak matrix could see this: every
-// kind there inits from a literal (`let x: P = P { xs: [i, i + 1], k: i }`),
-// so its `rebind` scope exercises only the clean spelling. A row added there
-// would not have caught it either.
+// and then reassigned. The rebind releases the old box plus its rc fields; missed,
+// they leaked on every rebind (800 allocs / 0 frees over 200 rounds).
+// `literal_init_control` is the literal-bound spelling, `let s: S = S { .. }`,
+// under the identical rebind.
 //
 // `alias_into_container` appends the old value to a live `S[]` before the
 // rebind, so releasing at the rebind would free a box the container still
-// points at; its exit code guards that. On the typed lowering it balances.
+// points at; its exit code guards that, and it balances.
 //
 // `field_moved_out` balances: `let held: string = s.name` takes its own count
 // on the field (#10371), so the deep drop of the orphaned box leaves `held`
@@ -43,12 +28,12 @@ import (
 // reads the orphaned box after the rebind, and the returned one is the
 // caller's to release.
 //
-// Every `want` was measured against the NATIVE x86-64 backend, never read off
-// the self-host run under test. The U-shaped rows are wrong-ANSWER probes as
-// well as census rows: each reads its held string back after `churn` has had the
-// chance to reuse anything freed too early, and returns -1 on a short read, so
-// the run answers 100 rather than balancing quietly. The census alone cannot
-// separate a correct fix from an over-release — both read allocs == frees.
+// No `want` was read off the self-host run under test. The U-shaped rows are
+// wrong-ANSWER probes as well as census rows: each reads its held string back
+// after `churn` has had the chance to reuse anything freed too early, and
+// returns -1 on a short read, so the run answers 100 rather than balancing
+// quietly. The census alone cannot separate a correct release from an
+// over-release — both read allocs == frees.
 
 const freshRetRebindDecl = `struct S { name: string, n: i32 }
 function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }

@@ -10,12 +10,8 @@ import (
 // auditPlatformCases isolate environment / clock / randomness / sleep
 // built-ins and run them through the SELF-HOSTED compiler, asserting the
 // exit code. Self-host arm of the §B audit (docs/FEATURE-AUDIT.md); the
-// native arm is the `audit_env_time_random` fixture (env / now_unix_ms /
-// random across all four native backends).
-//
-// monotonic_ns + sleep_ms are included here deliberately: the self-hosted
-// compiler implements them (emits __fern_monotonic_ns / __fern_sleep_ms)
-// even though the native x86-64/arm64 backends do not (#2843).
+// conformance fixtures `audit_env_time_random` and `audit_monotonic_sleep`
+// cover the same built-ins.
 var auditPlatformCases = []struct {
 	name string
 	src  string

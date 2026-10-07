@@ -622,21 +622,15 @@ type formerlyExemptCode struct {
 }
 
 // TestSelfHostFormerlyExemptCodesGateX86_64 is the three-way parity matrix
-// #8461 asks for: the same program through native `-check`, self-host
-// `-check`, and self-host `-target`, asserting all three agree on
-// accept/reject.
+// #8461 asks for: the same program through the Go checker, self-host
+// `-check`, and self-host `-target`, asserting all three reject it with the
+// same code.
 //
-// The eighteen codes below were exempted from the compile path by an
-// `is_partial_checker_gap_code` list, so the two front ends of ONE compiler
-// disagreed about whether a program was legal and the permissive one produced
-// the binary. That is invisible from any single path — both `-check` legs
-// reported E041 on `xs == ys` for as long as the exemption existed, while the
-// build lowered it to a pointer compare and answered "not equal" for two equal
-// arrays. Reading all three at once is what makes the disagreement visible.
-//
-// The list is gone (#8852 retired its last two entries, E013 / E018), so every
-// coded diagnostic gates: a row here that goes red means either a rule
-// regressed or an exemption came back.
+// These eighteen codes were once exempt from the compile path, so `-check`
+// rejected programs that `-target` still built — `xs == ys` on two equal
+// arrays became a pointer compare answering "not equal". No single path shows
+// that disagreement; reading all three does. A red row means a rule regressed
+// or an exemption came back.
 func TestSelfHostFormerlyExemptCodesGateX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {

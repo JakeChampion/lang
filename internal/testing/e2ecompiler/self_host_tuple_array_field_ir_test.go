@@ -11,22 +11,15 @@ import (
 // struct field — `p.ts[0].1` (#8459).
 //
 // The self-host checker resolves a struct field's declared type through
-// `type_from_name_with_names_and_unions`, and that resolver — alone among the
-// five siblings — had no tuple branch at all. A `ts: (i32, f64)[]` field
-// therefore resolved to `unknown[]`, the element type never reached
-// `expr_tuple_elem_tag`, and the read fell back to a default 4 bytes: an f64
-// element came back as its bit pattern (4616752568008180000) on all three
-// self-host backends.
+// `type_from_name_with_names_and_unions`, which needs a tuple branch like its
+// sibling resolvers: without one a `ts: (i32, f64)[]` field resolves to
+// `unknown[]` and the read falls back to a default 4 bytes, so an f64 element
+// comes back as its bit pattern (4616752568008180000) on all three self-host
+// backends. An `unknown` there is silent and widens into every consumer
+// downstream.
 //
-// The parser was never at fault, which the issue's diagnosis assumed: `-fmt`
-// reconstructs `(i32, f64)[]` exactly. It is the same class as the `char` note
-// sitting in that very function — "every resolver must know it", one type
-// constructor over — and an `unknown` there is silent and widens into every
-// consumer downstream.
-//
-// The `local` and `call` rows were already correct, and the `bind` row was
-// correct because a `let f: f64 = …` annotation supplies the width the field
-// type could not. They are kept as controls.
+// The `local`, `call` and `bind` rows are controls; in the `bind` row a
+// `let f: f64 = …` annotation supplies the width on its own.
 var tupleArrayFieldCases = []struct {
 	name string
 	src  string

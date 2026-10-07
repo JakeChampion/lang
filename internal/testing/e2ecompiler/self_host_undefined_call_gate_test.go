@@ -39,7 +39,7 @@ func runDriverAllowFail(t *testing.T, runner []string, bin string, stdin string,
 //
 // The accept cases are the gate's real risk: they pin that the admit list
 // (builtins, variant constructors, closure locals, receiver methods, and the
-// emitter-only free-function spellings the AST lowering lowers) never rejects
+// emitter-only free-function spellings the lowering accepts) never rejects
 // a valid program, and that an accepted program still routes through the IR
 // path and runs.
 func TestSelfHostUndefinedCallGate(t *testing.T) {

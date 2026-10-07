@@ -9,20 +9,12 @@ import (
 )
 
 // TestSelfHostStructConsumeRebindReclaimIRX86_64 covers the escaping-struct
-// reclaim slice (#3456): a LOCAL struct that is threaded through a
-// consume-rebind — `let s = S{...}; ... s = bump(s) ...` — is now reclaimable
-// even though it appears as a call ARGUMENT / method RECEIVER, because
-// reclaimable_names_of switched from the crude walk_stmts_escapes to the
-// borrow-AWARE body_unsafe_for (a borrowable free-call arg and a method
-// receiver count as borrows, not escapes — the same predicate the array
-// reclaim already uses). The StmtAssign struct reassign now wires
-// slot_is_reclaimable_struct into emit_arr_store's do_dec, so each rebind
-// frees the previous box with a cow-guarded, rc-guarded SHALLOW arr_dec
-// (box-only — a builder's shared field pointers keep rc==1 across the chain
-// and are freed once at the final box's death).
+// reclaim slice (#3456): a LOCAL struct threaded through a consume-rebind —
+// `let s = S{...}; ... s = bump(s) ...` — must have each previous box released
+// at the rebind even though it appears as a call ARGUMENT / method RECEIVER,
+// while the builder's shared field buffers survive until the final box dies.
 //
-// `s` is NOT returned (only a field is read out at the end), so it stays
-// reclaimable; a returned builder would (correctly) flag unsafe and leak.
+// `s` is never returned; only a field is read out at the end.
 func TestSelfHostStructConsumeRebindReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

@@ -5,9 +5,9 @@ import (
 	"testing"
 )
 
-// An unmatched Result local whose Err payload is a string is released whole on
-// the AST lowering (#10439): the Err string with it when proven fresh, and the
-// box when the Ok payload is a scalar, which no class claimed before.
+// An unmatched Result local whose Err payload is a string is released whole
+// (#10439): the Err string with it when proven fresh, and the box when the Ok
+// payload is a scalar.
 
 const resultErrLoop = `import "std/i32";
 import "std/result";

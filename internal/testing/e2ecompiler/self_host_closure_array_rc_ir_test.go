@@ -10,22 +10,19 @@ import (
 )
 
 // Closure-ARRAY element reclaim on the self-host IR path (#4354). A closure
-// array local (`let fns: (() => i32)[] = [() => n, …]`) is an is_arr slot whose
-// elements are env boxes; the shallow buffer dec every array slot took leaked
-// every box — measured 40 B per element per round on x86-64 against 0 on
-// native. A "CLOARR:"-credited slot now releases the boxes with the buffer
-// through __fern_arrarr_free at scope exit and at the loop rebind.
+// array local (`let fns: (() => i32)[] = [() => n, …]`) holds env boxes, and
+// its release frees the boxes with the buffer at scope exit and at the loop
+// rebind; a shallow buffer dec would leak every box.
 //
 // Three instruments per case, because each is blind to something the others
 // see: FERN_LEAKCHECK's live_bytes (the leak direction), the FERN_SANITIZE
-// quarantine (an over-release that the census reads as a CLEANER run — the
-// `[c, …]` literal's `for f in fns` loop var was an owned array whose exit
-// dec double-released a box, at live_bytes 0), and the exit code against the
-// native compiler's (a miscompile). The refusal cases assert only the last two:
-// a shape the credit must decline leaks, and must not free.
+// quarantine (an over-release that the census reads as a CLEANER run, such as
+// a `for f in fns` loop var double-releasing a box at live_bytes 0), and the
+// exit code (a miscompile). The refusal cases assert only the last two: a
+// shape the credit must decline leaks, and must not free.
 
-// closureArrayRcCases: programs the credit ADMITS. `want` is the native
-// compiler's exit code for the same source.
+// closureArrayRcCases: programs the credit ADMITS. `want` is the program's
+// expected exit code.
 var closureArrayRcCases = []struct {
 	name string
 	src  string
@@ -113,9 +110,8 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = (t 
     return s + d() + e() + c() + fns.len();
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = (t + go(i)) % 251; i = i + 1; } return t % 7; }`, 1},
-	// An annotated EMPTY literal grown by `.append`: the is_closurearr flag
-	// arrives at the append, after the bind, so the credit alone routes both
-	// release sites.
+	// An annotated literal grown by `.append` with a closure local that is
+	// still called afterwards.
 	{"annotated-empty-append", `function go(n: i32): i32 {
     let fns: (() => i32)[] = [() => n];
     let c = () => n + 1;
@@ -124,11 +120,8 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = (t 
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = (t + go(i)) % 251; i = i + 1; } return t % 7; }`, 3},
 	// An EMPTY `fn[]` literal whose element READ is lowered BEFORE the first
-	// append and reached at runtime from iteration 2. The is_closurearr flag
-	// used to arrive only at the append, so this read bound a plain scalar and
-	// called the box pointer as code: SIGSEGV, where native runs it. The
-	// declaration now carries the flag ("CLOAPPEND:"), which also leaves no
-	// state in which the CLOARR credit could forgive a bind the retain missed.
+	// append and reached at runtime from iteration 2. The read must bind a
+	// closure, not a plain scalar — calling the box pointer as code SIGSEGVs.
 	{"empty-append-read-before-append", `function go(n: i32): i32 {
     let fns: (() => i32)[] = [];
     let s: i32 = 0;

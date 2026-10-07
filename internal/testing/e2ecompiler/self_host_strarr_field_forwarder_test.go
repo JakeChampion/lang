@@ -10,27 +10,19 @@ import (
 
 // --- A string[]-field FORWARDER is read at its call sites, not at its return --
 //
-// `function (h: Holder) get(): string[] { return h.xs; }` is a read of `h.xs`,
-// and the string[]-field admission walk marked it. The mark is keyed on the
-// TYPE, so ONE such declaration anywhere in the program refused
-// __struct_drop_Holder for every Holder in every function — and the method
-// never had to run. 288 B/round, unbounded, on a loop that only constructs the
-// struct (#7417).
+// `function (h: Holder) get(): string[] { return h.xs; }` is a read of `h.xs`.
+// Declaring such a method must not stop Holder's string[] field from being
+// released anywhere else in the program — whether or not the method ever runs.
+// Kept at the type, that verdict cost 288 B/round, unbounded, on a loop that
+// only constructs the struct (#7417).
 //
-// The verdict moves to the call sites. strarrfld_forwarders_of registers every
-// function whose returns all hand out one borrowed string[] field; inside such a
-// function the forwarding return is exempt, and at a CALL of one the walk
-// marks only where its result is read for its ELEMENTS — indexed, sliced or
-// iterated — since the forwarding return retains the buffer and a result bound
-// or handed on whole is a counted reference (#9187). So `keep.get()[0]` is the
-// escape `keep.xs[0]` already was, and `let g = keep.get()` is not.
+// What matters is how a CALL's result is used. Read for its ELEMENTS —
+// indexed, sliced or iterated — it is the escape `keep.xs[0]` already is; bound
+// or handed on whole, it is a counted reference (#9187). So `keep.get()[0]`
+// escapes and `let g = keep.get()` does not.
 //
-// Every want was confirmed against native x86-64 and `bin/fern -interp`, which
-// agree on every row. Native allocates a different number of boxes for the same
-// source, so its COUNTS are not a comparison — its ANSWERS are, and they match
-// on every row. Native is flat at zero everywhere except
-// forwarder_element_escapes_by_call. Exit 99 is reserved for
-// __rc_underflow_count(). On the typed lowering every row balances.
+// Every want was confirmed against `bin/fern -interp`. Exit 99 is reserved for
+// __rc_underflow_count(). Every row balances.
 
 type strArrFwdCase struct {
 	name   string

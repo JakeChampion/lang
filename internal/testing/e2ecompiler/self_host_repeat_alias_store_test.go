@@ -7,29 +7,21 @@ import (
 
 // --- A repeated array alias assignment owes a release (#7814) ----------------
 //
-// emit_arr_store does two things when a slot is overwritten: retain the new
-// reference (alias_inc), and release the old one. The release used to be
-// cow-guarded unconditionally — `if (old != new) arr_dec(old)` — so that an
-// in-place mutator handing back the SAME buffer did not free the live value.
+// Overwriting an array slot retains the new reference and releases the old
+// one. Skipping the release when old == new is right only for an in-place
+// mutator handing back the SAME buffer, which creates no second count; a
+// self-ALIAS does create one. `b = a` executed twice assigns the same pointer
+// both times, so the second store's retain must be paired with a release or
+// one buffer is stranded. Constant, not per-iteration — each further repeat
+// inflates the refcount again but it is the same single block that ends up
+// stranded.
 //
-// That guard is right for a self-MUTATION, which creates no second count, and
-// wrong for a self-ALIAS, which does. `b = a` executed twice assigns the same
-// pointer both times: the second store retained and did not release, stranding
-// one buffer. Constant, not per-iteration — each further repeat inflates the
-// refcount again but it is the same single block that ends up stranded.
-//
-// Native states the same rule on its Map twin (internal/oracle/ir/ir.go): "a release
-// is owed only if an alias inc created a second count for it (`m = m2`); a
-// self-mutation created none, and dec'ing there is the over-release ... COW-aware
-// branch exists to avoid." So the release is now unconditional exactly when
-// alias_inc fired, and cow-guarded otherwise.
-//
-// Differential against native, like the rest of this package: the assertion is
-// AGREEMENT with the native compiler, not an absolute byte count.
+// Each case asserts the answer agrees with the `fern` CLI build of the same
+// program and the census reads live_bytes 0.
 
 // repeatAliasSrc is the minimal shape — no nested array, no append, no element
-// read. One execution of `b = a` was always clean; two or more stranded a
-// buffer. The loop bound is what the fix turns on, so the churn is the point.
+// read. A second execution of `b = a` is what owes the extra release, so the
+// loop is the point.
 const repeatAliasSrc = `function round(n: i32): i32 {
     let a: i32[] = [n, n, n, n, n];
     let b: i32[] = [7];
@@ -71,12 +63,10 @@ function main(): i32 {
     return t % 3;
 }`
 
-// repeatSelfMutationSrc is the shape the cow guard exists FOR, kept as the
-// control: an in-place append can hand back the same buffer, and that store
-// takes no alias inc, so releasing it would free the live value. A fix that
-// dropped the guard wholesale instead of conditioning it on alias_inc turns
-// this into a use-after-free — which shows up as a wrong answer or a crash,
-// so it is asserted on exit-code agreement rather than on bytes.
+// repeatSelfMutationSrc is the control: an in-place append can hand back the
+// same buffer, and that store takes no retain, so releasing the old value
+// would free the live one. That use-after-free shows up as a wrong answer or a
+// crash, so it is asserted on exit-code agreement rather than on bytes.
 const repeatSelfMutationSrc = `function round(n: i32): i32 {
     let xs: i32[] = [n];
     let i: i32 = 0;

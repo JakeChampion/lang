@@ -11,21 +11,14 @@ import (
 // tupleScalarElemReclaimCases pin an rc-tuple whose literal carries a SCALAR
 // arithmetic element alongside its rc children.
 //
-// tuple_lit_rc_reclaimable sent every ExprBinary and ExprCall element through
-// tuple_str_elem_fresh — the fresh-STRING producer test — and refused the whole
-// tuple when it came back false. `i + 1` is a numeric add, so a tuple that
-// merely counts (`(i + 1, [i, i + 1])`) lost its deep reclaim entirely and
-// leaked its array buffer, its box, and any string element beside them.
-//
-// emit_tuple_child_drops already skips such an element (its ExprBinary and
-// ExprCall arms free only what tuple_str_elem_fresh proves fresh), so the
-// admission is now the leak-safe skip the bare-ident arm has always used rather
-// than a refusal.
+// `i + 1` is a numeric add, not a fresh string, so a tuple that merely counts
+// (`(i + 1, [i, i + 1])`) must keep its deep reclaim: the scalar element is
+// simply not freed, and the array buffer, the box, and any string element
+// beside them are.
 //
 // Each byte case returns the MEASURED bytes per round as its exit code, so a
-// regression reports its own size. Before: 80 | 80 | 48 (flat), 120 | 120 | 72
-// (nested) and 112 | 112 | 80 (fresh-string sibling) as x86-64 | arm64 | wasm.
-// Native is flat on all three.
+// regression reports its own size. Unreclaimed: 80 | 80 | 48 (flat), 120 | 120 |
+// 72 (nested) and 112 | 112 | 80 (fresh-string sibling) as x86-64 | arm64 | wasm.
 var tupleScalarElemReclaimCases = []struct {
 	name string
 	src  string
@@ -122,13 +115,12 @@ function main(): i32 {
     if (w != x) { return 97; }
     return w;
 }`, 72},
-	// ESCAPE negative: the tuple outlives the scope whose reclaim now frees it.
+	// ESCAPE negative: the tuple outlives the scope that would otherwise free it.
 	// `last = t` carries each round's tuple out of the loop body and the function
-	// returns it, so the escape gate (body_unsafe_for, applied by
-	// reclaimable_names_of) must withhold the credit the admission would
-	// otherwise hand out. A freed-then-returned tuple reads its buffer back
-	// wrong. 1000 + 999 + 1000 = 2999, reduced mod 97 to 89 — WASI's proc_exit
-	// rejects a status of 126 or more, so an expectation carried in the exit
+	// returns it, so the loop body must not free it. A freed-then-returned
+	// tuple reads its buffer back wrong. 1000 + 999 + 1000 = 2999, reduced mod
+	// 97 to 89 — WASI's proc_exit rejects a status of 126 or more, so an
+	// expectation carried in the exit
 	// code has to stay under it on the wasm leg.
 	{"tuple-scalar-binary-escape-safe", `function churn(n: i32): (i32, i32[]) {
     let last: (i32, i32[]) = (0, [0, 0]);
@@ -145,10 +137,9 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return (r.0 + r.1[0] + r.1[1]) % 97;
 }`, 89},
-	// UNPROVABLE-CONCAT negative: `a + b` of two live strings is fresh in fact,
-	// but tuple_str_elem_fresh cannot show it, so the position keeps no release.
-	// That is a leak, not a fault — what must hold is that both operands survive
-	// the tuple's reclaim.
+	// CONCAT-OF-LIVE-STRINGS negative: `a + b` of two live strings in a tuple
+	// element. What must hold is that both operands survive the tuple's
+	// reclaim.
 	{"tuple-unproven-concat-safe", `function churn(n: i32, a: string, b: string): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;

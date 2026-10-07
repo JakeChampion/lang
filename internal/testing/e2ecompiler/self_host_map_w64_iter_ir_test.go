@@ -5,16 +5,13 @@ import (
 )
 
 // mapW64IterIRCases cover map ITERATION over 64-bit value columns (#5253):
-// both `for (k, v) in m` and the single-var `for v in m.values()` form bound
-// the value with a 32-bit element read (op_arr_get(32)) and no width/sign/f64
-// mark on the binding — so an i64/u64/f64-valued map iterated to truncated
-// (and, for u64, signed) garbage ON the IR path (a silent wrong answer, not
-// a bail: measured 113/199/146/255 against interp oracles 62/7/18/5
-// on a pre-fix driver). The fix reads the full 8-byte element (arr_get_i64
-// for i64/u64; arr_get width 64 — f64.load — for f64) and marks the binding
-// i64/u64/f64, so body uses route through the 64-bit/float ops with the right
-// sign. String/i32 columns keep the 4-byte/pointer path — pinned by the
-// regression cases.
+// both `for (k, v) in m` and the single-var `for v in m.values()` form must
+// read the full 8-byte element and type the binding i64/u64/f64, so body uses
+// take the 64-bit/float ops with the right sign. A 32-bit element read
+// (op_arr_get(32)) yields truncated (and, for u64, signed) values — a silent
+// wrong answer, not a refusal; the "was N" notes are those answers.
+// String/i32 columns keep the 4-byte/pointer path — pinned by the regression
+// cases.
 //
 // Run through the CLI on x86-64 and wasm, oracle-checked against the interpreter.
 var mapW64IterIRCases = []struct {

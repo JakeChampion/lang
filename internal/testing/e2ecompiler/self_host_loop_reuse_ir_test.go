@@ -85,7 +85,7 @@ var loopReuseIRCases = []struct {
 	{"loop-escaping-recipient-struct",
 		`struct P { x: i32, y: i32 } function main(): i32 { let acc: P[] = []; let i: i32 = 0; while (i < 5) { let a: P = P { x: i, y: i + 1 }; let s: i32 = a.x + a.y; let b: P = P { x: i, y: 100 }; acc = acc.append(b); i = i + 1; } let sum: i32 = 0; let j: i32 = 0; while (j < acc.len()) { sum = sum + acc[j].x + acc[j].y; j = j + 1; } return sum; }`,
 		254},
-	// Same regression for an escaping TUPLE recipient (slot_is_reclaimable_tuple).
+	// Same regression for an escaping TUPLE recipient.
 	{"loop-escaping-recipient-tuple",
 		`function main(): i32 { let acc: (i32, i32)[] = []; let i: i32 = 0; while (i < 5) { let a: (i32, i32) = (i, i + 1); let s: i32 = a.0 + a.1; let b: (i32, i32) = (i, 100); acc = acc.append(b); i = i + 1; } let sum: i32 = 0; let j: i32 = 0; while (j < acc.len()) { sum = sum + acc[j].0 + acc[j].1; j = j + 1; } return sum; }`,
 		254},
@@ -198,11 +198,9 @@ var loopReuseIRCases = []struct {
 	{"loop-funcupdate-nested-struct-churn-safe",
 		`struct Inner { a: i32, b: i32 } struct Outer { inner: Inner, n: i32 } function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 5000000) { let d: Outer = Outer { inner: Inner { a: i, b: i + 1 }, n: i }; let c: Outer = Outer { ...d, inner: Inner { a: i, b: 3 } }; sum = (sum + c.inner.a + c.inner.b + c.n) % 1000; i = i + 1; } return sum; }`,
 		0},
-	// CROSS-BLOCK reuse of a struct with an ENUM field (Delta B follow-through:
-	// xblock_scan_body now takes struct_fields_reusable_cross + the shared
-	// cross_recipient_fields_fresh gate). The loop-body donor `d` (dead by the
-	// nested if) is reused by the if-arm recipient `b`; b's enum value is a fresh
-	// variant ctor, so the reuse arm's flat old-enum release is alias-free. Static
+	// CROSS-BLOCK reuse of a struct with an ENUM field. The loop-body donor `d`
+	// (dead by the nested if) is reused by the if-arm recipient `b`; b's enum
+	// value is a fresh variant ctor, so releasing the old enum is alias-free. Static
 	// box sites: d's M + d's On payload + b's On payload = THREE (b's M box is
 	// reused, __fern_alloc_reuse not arr_box). Value: sum over i of s=(i+1)+i plus
 	// r=3+i for i>0 → 16 + 15 = 31, matching the interp oracle.

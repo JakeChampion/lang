@@ -8,20 +8,16 @@ import (
 )
 
 // TestSelfHostTryBoxReclaimIRX86_64 pins the #4355 `?`-consumed source-box
-// reclaim on the self-host IR path: `mk(pre)?` over an OPT-FRESH producer
-// (every return in the callee a direct Ok/Err/Some/None constructor —
-// opt_fresh_ret_fns_of) frees the dead source box at both consume edges
-// (success after the payload read; the Option failure edge before the fresh
-// None), and a FRESH string success payload's sole reference MOVES to the
-// `let s: string = ...?` binding, credited "STR:" so the exit sweep frees it
-// (collect_try_str_binding_names).
+// reclaim on the self-host IR path: `mk(pre)?` over a producer whose every
+// return is a direct Ok/Err/Some/None constructor frees the dead source box at
+// both consume edges (success after the payload read; the Option failure edge
+// before the fresh None), and a FRESH string success payload's sole reference
+// MOVES to the `let s: string = ...?` binding, which the exit sweep frees.
 //
-// Since #7910 (d) a match on a producer call reclaims its scrutinee box too,
-// so the hand-desugared baseline (innerB) frees what innerT frees and a
-// growth ratio between them measures nothing. Each churn case instead pins
-// the try path's residual at zero: the caller's own match frees the outer
-// `let r = innerT(pre)` box as well. innerB stays as the value cross-check
-// (w != x); over-release is caught by the __rc_underflow_count detector.
+// Each churn case pins the try path's residual at zero: the caller's own match
+// frees the outer `let r = innerT(pre)` box as well. The hand-desugared
+// baseline innerB is the value cross-check (w != x); over-release is caught by
+// the __rc_underflow_count detector.
 func TestSelfHostTryBoxReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -138,9 +134,9 @@ function main(): i32 {
     return bad;
 }`, "try-nonfresh-callee-excluded", 0)
 
-	// ESCAPING binding excluded: s escapes via `return Ok(s)`, so the "STR:"
-	// credit is rejected (body_unsafe_for) — the returned string must stay
-	// valid at the caller. Box still freed; correctness + detector only.
+	// ESCAPING binding: s escapes via `return Ok(s)`, so the returned string
+	// must stay valid at the caller. Box still freed; correctness + detector
+	// only.
 	run(t, `function mk(pre: string): Result[string, i32] { return Ok(pre + "abc"); }
 function inner(pre: string): Result[string, i32] { let s: string = mk(pre)?; return Ok(s); }
 function main(): i32 {

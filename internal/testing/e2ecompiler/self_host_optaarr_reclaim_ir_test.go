@@ -61,8 +61,8 @@ var optAarrReclaimCases = []struct {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// ELEMENT-ALIAS negative: `let o = xs[0]` binds an option box — the
-	// candidate is excluded (arrarr_row_escapes), values + detector hold.
+	// ELEMENT-ALIAS negative: `let o = xs[0]` binds an option box out of the
+	// array, which must stay live; values + detector hold.
 	{"optaarr-elem-alias-safe", `function main(): i32 {
     let xs: Option[i32[]][] = [Some([7, 8]), None];
     let o = xs[0];
@@ -72,7 +72,7 @@ var optAarrReclaimCases = []struct {
     return acc;
 }`, 15},
 	// PAYLOAD-ESCAPE negative: a Some-arm binding returned out of the match —
-	// excluded (optaarr_elem_payload_escapes), the escaped payload stays live.
+	// the escaped payload must stay live.
 	{"optaarr-payload-escape-safe", `function pick(xs: Option[i32[]][]): i32[] {
     match (xs[0]) { Some(p) => { return p; }, None => {} }
     return [0];

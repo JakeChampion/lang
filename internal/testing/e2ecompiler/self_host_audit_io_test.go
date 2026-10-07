@@ -10,14 +10,8 @@ import (
 // auditIOCases isolate stdout/stderr built-in functions and run them
 // through the SELF-HOSTED compiler, checking the compiled program's
 // stdout and exit code. Self-host arm of the §B audit
-// (docs/FEATURE-AUDIT.md); the native arm is the `audit_io_builtins`
-// fixture (all four native backends).
-//
-// `putchar` is fixed on the self-host IR path (#2839 — the x86-64 / arm64 /
-// wasm IR backends emit the `__fern_putchar` runtime; guarded by
-// self_host_putchar_{,arm64_,wasm_}ir_test.go). It stays held out HERE because
-// this audit uses the legacy AST driver (asm_run / asm.fern), which still
-// doesn't lower putchar — an AST-only gap that goal 1 leaves to the IR path.
+// (docs/FEATURE-AUDIT.md); the conformance case `audit_io_builtins` covers
+// the same builtins. `putchar` is covered by self_host_putchar_ir_test.go.
 var auditIOCases = []struct {
 	name string
 	src  string
