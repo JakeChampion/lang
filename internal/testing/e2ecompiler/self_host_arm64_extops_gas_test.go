@@ -505,6 +505,12 @@ func TestSelfHostArm64VectorWidenAcrossGas(t *testing.T) {
 		{"pmull2 v0.1q, v1.2d, v2.2d", 0x4ee2e020},
 		{"pmull v31.8h, v30.8b, v29.8b", 0x0e3de3df},
 		{"pmull2 v31.1q, v30.2d, v29.2d", 0x4efde3df},
+
+		{"aese v0.16b, v1.16b", 0x4e284820},
+		{"aesmc v0.16b, v1.16b", 0x4e286820},
+		{"aese v31.16b, v30.16b", 0x4e284bdf},
+		{"aesmc v31.16b, v29.16b", 0x4e286bbf},
+		{"aese v17.16b, v5.16b", 0x4e2848b1},
 	})
 	checkRefusedSelfHost(t, bin, runner, []string{
 		// The pair must differ by exactly one element size.
@@ -558,6 +564,11 @@ func TestSelfHostArm64VectorWidenAcrossGas(t *testing.T) {
 		"pmull2 v0.1q, v1.2d, v2.1d",
 		"add v0.1q, v1.1q, v2.1q",
 		"ld1 {v0.1q}, [x0]",
+		// The AES rounds take two registers and only .16b.
+		"aese v0.4s, v1.4s",
+		"aesmc v0.16b, v1.8b",
+		"aese v0.16b, v1.16b, v2.16b",
+		"aesmc v0.16b",
 	})
 }
 

@@ -179,6 +179,7 @@ var Named = []NamedFamily{
 		{ATT: "pcmpestri", Op: 0x61, ATTProbe: "pcmpestri $0, %xmm1, %xmm0"},
 		{ATT: "pcmpistri", Op: 0x63, ATTProbe: "pcmpistri $0, %xmm1, %xmm0"},
 		{ATT: "pclmulqdq", Op: 0x44, ATTProbe: "pclmulqdq $0, %xmm1, %xmm0"},
+		{ATT: "aeskeygenassist", Op: 0xDF, ATTProbe: "aeskeygenassist $1, %xmm1, %xmm0"},
 	}},
 	{Name: "shuf", Doc: "the [Prefix] 0F Op /r ib shuffles; packed as pfx*256 + op", FernFn: "x86_gas_shuf_op", Pack: pfxOp, Ops: []NamedOp{
 		{ATT: "pshufd", Prefix: 0x66, Op: 0x70, ATTProbe: "pshufd $0, %xmm2, %xmm1"},
@@ -215,7 +216,7 @@ var Named = []NamedFamily{
 			{ATT: "psrldq", Op: 0x73, Ext: 3, ATTProbe: "psrldq $8, %xmm0"},
 			{ATT: "pslldq", Op: 0x73, Ext: 7, ATTProbe: "pslldq $8, %xmm0"},
 		}},
-	{Name: "sse38", Doc: "the 66 0F 38 Op /r forms with an xmm destination. SSSE3 and SSE4.1, both well inside the declared x86-64-v3 baseline", FernFn: "x86_gas_sse38_op", Pack: opOnly, Ops: []NamedOp{
+	{Name: "sse38", Doc: "the 66 0F 38 Op /r forms with an xmm destination. SSSE3, SSE4.1 and AES-NI, all inside the declared baseline", FernFn: "x86_gas_sse38_op", Pack: opOnly, Ops: []NamedOp{
 		{ATT: "pshufb", Op: 0x00, ATTProbe: "pshufb %xmm1, %xmm0"},
 		{ATT: "ptest", Op: 0x17, ATTProbe: "ptest %xmm1, %xmm0"},
 		{ATT: "pmulld", Op: 0x40, ATTProbe: "pmulld %xmm1, %xmm0"},
@@ -227,5 +228,7 @@ var Named = []NamedFamily{
 		{ATT: "pmaxsd", Op: 0x3D, ATTProbe: "pmaxsd %xmm1, %xmm0"},
 		{ATT: "pmaxuw", Op: 0x3E, ATTProbe: "pmaxuw %xmm1, %xmm0"},
 		{ATT: "pmaxud", Op: 0x3F, ATTProbe: "pmaxud %xmm1, %xmm0"},
+		{ATT: "aesenc", Op: 0xDC, ATTProbe: "aesenc %xmm1, %xmm0"},
+		{ATT: "aesenclast", Op: 0xDD, ATTProbe: "aesenclast %xmm1, %xmm0"},
 	}},
 }
