@@ -2799,6 +2799,16 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
+	// sysctl(mib: i32[]): Result[u8[], IoError] — the kernel's answer for a
+	// MIB as raw bytes: Darwin's sysctl(3). Gated on `sysctl`, which only
+	// Darwin grants; Linux removed sysctl(2).
+	c.info.FuncSigs["sysctl"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 32, Signed: true}}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
 	// rlimit_nofile(): i64 — the SOFT limit the kernel is currently
 	// enforcing on this process's open file descriptors, `getrlimit(2)`
 	// on RLIMIT_NOFILE (#8819). What `ulimit -n` prints, and what

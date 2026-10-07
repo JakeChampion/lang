@@ -405,6 +405,9 @@ var rcInertBuiltins = map[string]bool{
 	// () → Result[MountEntry[], IoError]. Takes nothing and returns a fresh
 	// table. Native-only for statfs's reason.
 	"mounts": true,
+	// (mib) → Result[u8[], IoError]. The MIB is read and copied out; the
+	// bytes are a fresh array. Darwin-only, so named here like mounts.
+	"sysctl": true,
 	// (path) -> Result. The path is read and NUL-copied and the working
 	// directory it moves to is process state, not a counted reference.
 	// Native-only -- WASI has no process cwd -- so it is named here the

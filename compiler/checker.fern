@@ -4814,6 +4814,7 @@ function builtin_sigs(): string[] {
     "stat(string): Result[FileStat, IoError]",
     "statfs(string): Result[FsStat, IoError]",
     "mounts(): Result[MountEntry[], IoError]",
+    "sysctl(i32[]): Result[u8[], IoError]",
     "stderr(): Writer",
     "stdin(): Reader",
     "stdout(): Writer",

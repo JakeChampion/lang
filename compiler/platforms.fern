@@ -51,7 +51,8 @@ pub struct Descriptor {
 // capability_profile lists what a host underneath grants. Profiles exist
 // because the list belongs to the host and not the ISA: linux / darwin /
 // android are genuinely different environments — different object formats,
-// different syscall vectors — and grant exactly the same set.
+// different syscall vectors — and grant the same set, which Darwin extends by
+// `sysctl`, the one thing only its kernel answers.
 //
 // `subprocess` is the ONE entry that differs from native's table, and
 // deliberately. Native grants it nowhere, because no Go backend lowers it —
@@ -66,6 +67,9 @@ pub struct Descriptor {
 function capability_profile(profile: string): string[] {
   if (profile == "hosted-native") {
     return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "xattr", "syscall", "subprocess", "unix", "reactor"];
+  }
+  if (profile == "hosted-darwin") {
+    return ["log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "xattr", "syscall", "subprocess", "unix", "reactor", "sysctl"];
   }
   if (profile == "wasi-cli") {
     // fs is preview1's fd helpers and tcp is wasi:sockets; there is no
@@ -96,8 +100,11 @@ function capability_profile(profile: string): string[] {
 // environment_profile names the capability profile an environment draws on,
 // or "" when the environment is not one this compiler knows.
 function environment_profile(environment: string): string {
-  if (environment == "linux" || environment == "darwin" || environment == "android") {
+  if (environment == "linux" || environment == "android") {
     return "hosted-native";
+  }
+  if (environment == "darwin") {
+    return "hosted-darwin";
   }
   if (environment == "wasi") {
     return "wasi-cli";
@@ -440,6 +447,8 @@ pub function gated_builtins(): Gate[] {
     // than a corner of `host`.
     Gate { builtin: "uname_field", capability: "sysinfo" },
     Gate { builtin: "cpu_count", capability: "sysinfo" },
+    // A kernel variable by MIB: Darwin's sysctl(3). Linux removed sysctl(2).
+    Gate { builtin: "sysctl", capability: "sysctl" },
     // The process's working directory. Separate from `fs` for the same
     // reason: WASI resolves every path against a preopened descriptor
     // and has no current directory to report.

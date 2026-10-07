@@ -24,28 +24,32 @@
 // ---- where the numbers come from --------------------------------------
 //
 // Both counts come from the login-accounting database — the FILE
-// operand, or /var/run/utmp — rather than from the kernel: a
+// operand, or the default database — rather than from the kernel: a
 // BOOT_TIME record carries the boot instant and a USER_PROCESS record
 // with a non-empty name is one session. The LAST boot record wins,
 // which is what GNU's loop leaves behind. A database that cannot be read
 // is an empty one with no diagnostic, which is what glibc's utmp reader
 // gives GNU for an unopenable FILE.
 //
-// Only the load averages come from the kernel, as /proc/loadavg, which
+// On Linux the load averages come from the kernel, as /proc/loadavg, which
 // is what glibc's getloadavg(3) reads. The kernel writes those three as
 // `%lu.%02lu`, so `%.2f` of the double glibc parses out of them is the
 // same two digits back again, and this reformats the digits rather than
 // going through a float.
 //
-// ---- Linux only, and loudly ------------------------------------------
+// ---- Darwin ----------------------------------------------------------
 //
-// /proc/loadavg is the only source there is: Darwin answers the same
-// question through `sysctl(KERN_BOOTTIME)` and `getloadavg(3)`, and
-// there is no primitive for either. So a build for another target
-// REFUSES rather than printing the line without its load averages --
-// which is a shape GNU also produces, when getloadavg(3) fails, and
-// would therefore look like an answer instead of a gap. `df` is
-// Linux-only for the same kind of reason and fails the same way.
+// Darwin has no /proc. Its getloadavg(3) is `sysctl({CTL_VM,
+// VM_LOADAVG})`, three fixed-point loads and their scale, and `%.2f`
+// of each is that ratio rounded to nearest with ties to even, which
+// this does in integers. The default database there is utmpx, and when
+// it holds no boot record gnulib takes the boot instant from
+// `sysctl({CTL_KERN, KERN_BOOTTIME})`, for that file and no other.
+//
+// Any other target REFUSES rather than printing the line without its
+// load averages -- which is a shape GNU also produces, when
+// getloadavg(3) fails, and would therefore look like an answer instead
+// of a gap.
 //
 // ---- what cannot go wrong quietly -------------------------------------
 //
@@ -95,6 +99,9 @@ function pad2(v: i32): string {
 // container without /proc and GNU answers the same way; a target that
 // has no /proc at all never reaches here, because main refuses first.
 function load_averages(): Option[string] {
+  if (target_os() == "darwin") {
+    return darwin_load_averages();
+  }
   match (read_file("/proc/loadavg")) {
     Ok(text) => {
       let f: string[] = text.fields();
@@ -108,6 +115,64 @@ function load_averages(): Option[string] {
     },
     Err(_) => {
       return None;
+    }
+  }
+}
+
+function darwin_load_averages(): Option[string] {
+  match (sysctl([2, 2])) {
+    Ok(bs) => {
+      if (bs.len() < 24) {
+        return None;
+      }
+      let scale: i64 = le_bytes(bs, 16, 8);
+      if (scale <= 0 as i64) {
+        return None;
+      }
+      let out: string = ",  load average: " + hundredths(le_bytes(bs, 0, 4), scale);
+      out = out + ", " + hundredths(le_bytes(bs, 4, 4), scale);
+      out = out + ", " + hundredths(le_bytes(bs, 8, 4), scale);
+      return Some(out);
+    },
+    Err(_) => {
+      return None;
+    }
+  }
+}
+
+// `%.2f` of `num / den`: rounded to nearest, ties to even, as printf
+// rounds a double that holds the ratio exactly.
+function hundredths(num: i64, den: i64): string {
+  let q: i64 = num * (100 as i64) / den;
+  let r: i64 = num * (100 as i64) % den;
+  if (r * (2 as i64) > den || r * (2 as i64) == den && q % (2 as i64) == 1 as i64) {
+    q = q + 1 as i64;
+  }
+  return (q / (100 as i64)).to_string() + "." + two((q % (100 as i64)) as i32);
+}
+
+// An unsigned little-endian field of `width` bytes.
+function le_bytes(bs: u8[], at: i32, width: i32): i64 {
+  let v: i64 = 0 as i64;
+  let i: i32 = width - 1;
+  while (i >= 0) {
+    v = v * (256 as i64) + bs[at + i] as i64;
+    i = i - 1;
+  }
+  return v;
+}
+
+// Darwin's boot instant: `struct timeval` from KERN_BOOTTIME, or 0.
+function darwin_boot_time(): i64 {
+  match (sysctl([1, 21])) {
+    Ok(bs) => {
+      if (bs.len() < 8) {
+        return 0 as i64;
+      }
+      return le_bytes(bs, 0, 8);
+    },
+    Err(_) => {
+      return 0 as i64;
     }
   }
 }
@@ -143,7 +208,7 @@ function two_places(s: string): string {
 // The clock, the elapsed time and the session count, in that order.
 // Returns the line and the exit status, which is 1 when a field had to
 // be filled in with question marks.
-function report(read: Result[utmp.Entry[], IoError], now: i64): (string, i32) {
+function report(read: Result[utmp.Entry[], IoError], now: i64, fallback_boot: i64): (string, i32) {
   let entries: utmp.Entry[] = [];
   let why: string = "";
   match (read) {
@@ -169,6 +234,9 @@ function report(read: Result[utmp.Entry[], IoError], now: i64): (string, i32) {
       boot = entries[i].sec;
     }
     i = i + 1;
+  }
+  if (boot == 0 as i64) {
+    boot = fallback_boot;
   }
   let out: string = "";
   if (boot == 0 as i64) {
@@ -212,7 +280,7 @@ pub function main(): i32 {
   // After the option scan, so `--help` and `--version` answer on every
   // target and only a run that would have to produce the load averages
   // is refused.
-  if (target_os() != "linux") {
+  if (target_os() != "linux" && target_os() != "darwin") {
     gnu.error("the load averages are read from /proc/loadavg, which " + target_os() + " does not have");
     return 1;
   }
@@ -223,7 +291,13 @@ pub function main(): i32 {
   if (operands.len() == 1) {
     path = operands[0];
   }
-  let r: (string, i32) = report(utmp.read_all_result(path), now_unix_ms() / (1000 as i64));
+  let fallback_boot: i64 = 0 as i64;
+  if (target_os() == "darwin") {
+    if (path == utmp.default_path()) {
+      fallback_boot = darwin_boot_time();
+    }
+  }
+  let r: (string, i32) = report(utmp.read_all_result(path), now_unix_ms() / (1000 as i64), fallback_boot);
   let o: io_buffered.BufWriter = gnu.put(gnu.out_new(), r.0);
   gnu.finish(o);
   return r.1;

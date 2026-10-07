@@ -108,5 +108,4 @@ TestShred
 TestStty
 TestTestParity
 TestTtyParity
-TestUptime
 TestWhoParity

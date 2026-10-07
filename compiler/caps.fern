@@ -147,6 +147,9 @@ pub function builtin_caps(): BuiltinCap[] {
     // count are the same kind of ambient fact.
     BuiltinCap { builtin: "uname_field", capability: "env" },
     BuiltinCap { builtin: "cpu_count", capability: "env" },
+    // The kernel's own variables (load averages, boot time) are the same
+    // kind of ambient fact.
+    BuiltinCap { builtin: "sysctl", capability: "env" },
     BuiltinCap { builtin: "subprocess", capability: "subprocess" },
     BuiltinCap { builtin: "proc_fork", capability: "subprocess" },
     BuiltinCap { builtin: "proc_waitpid", capability: "subprocess" },

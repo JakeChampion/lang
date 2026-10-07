@@ -174,6 +174,7 @@ var BuiltinCaps = map[string]string{
 	// runs, and are seen to the same way.
 	"uname_field": "env",
 	"cpu_count":   "env",
+	"sysctl":      "env",
 
 	"subprocess":          "subprocess",
 	"proc_fork":           "subprocess",
