@@ -1593,8 +1593,9 @@ function other_tuple_get(ins: ssa.SInst, root: i32, field: i32): boolean {
 }
 
 // A source whose box this frame ALLOCATED, so nulling a slot in it is invisible
-// to everyone else. The take nulls without asking, so this is the whole of its
-// safety: owning a unit is not enough, the box has to be the frame's alone.
+// to everyone else. The take nulls without asking, so this and
+// `only_element_reads` are the whole of its safety: owning a unit is not
+// enough, the box has to be the frame's alone.
 //
 // Only two kinds of instruction can define a TUPLE and qualify:
 //
@@ -1659,7 +1660,7 @@ function tuple_take_field(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], 
   if (!ssasem.reference(f.values[ins.result])) {
     return none;
   }
-  if (!owned[root] || !takeable_root(defs[root].kind_tag)) {
+  if (!owned[root] || !takeable_root(defs[root].kind_tag) || !only_element_reads(f, root)) {
     return none;
   }
   let b: ssa.SBlock = f.graph.blocks[bi];
@@ -1688,6 +1689,23 @@ function tuple_take_field(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], 
     w = w + 1;
   }
   return ins.imm;
+}
+
+// A box this frame built has a count of 1 only until something else is handed
+// it: a container it is stored in, a call, a phi. Every use has to be an
+// element read.
+function only_element_reads(f: ssasem.Func, root: i32): boolean {
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag != ssasem.tuple_get() && ssa.reads_value(ins, root)) {
+        return false;
+      }
+    }
+    if (ssa.term_reads_value(b.term, root)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 // The element each tuple read takes, indexed by the read's result value, and
@@ -1748,13 +1766,13 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
   }
   let takes: i32[] = tuple_takes(f, a, owned, defs);
   let held: boolean[] = held_elements(f, a, owned, defs);
-  // A taken payload or slot is a unit of its own at the read already, moved
-  // out of the box or retained there by the lowering's uniqueness test
-  // (ssarc.steal); the hold read it as still anchored to its source, and
+  // A taken payload is a unit of its own at the read already, moved out of
+  // the box or retained there by the lowering's uniqueness test
+  // (ssarc.steal); the hold read it as still anchored to its array, and
   // would retain it a second time.
   i = 0;
   while (i < held.len()) {
-    if (held[i] && (payloads[i] || takes[i] >= 0)) {
+    if (held[i] && payloads[i]) {
       held = held.with(i, false);
     }
     i = i + 1;
