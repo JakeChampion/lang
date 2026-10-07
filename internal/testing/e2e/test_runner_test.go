@@ -1098,6 +1098,19 @@ func TestRunnerRSAExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "rsa", "std/crypto/rsa", 12)
 }
 
+// `tests/stdlib/tls_keyschedule_test.fern` derives every secret, key, IV and
+// Finished of RFC 8448's simple 1-RTT handshake, and the same schedule over
+// SHA-384.
+func TestRunnerTLSKeyScheduleExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "tls_keyschedule", "std/tls/keyschedule", 17)
+}
+
+// `tests/stdlib/tls_record_test.fern` covers framing against RFC 8448's
+// records, ChaCha20-Poly1305 record protection, and every refusal.
+func TestRunnerTLSRecordExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "tls_record", "std/tls/record", 20)
+}
+
 func TestRunnerHashChecksumsExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "hash_checksums", "std/hash checksums", 8)
 }

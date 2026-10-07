@@ -1,0 +1,409 @@
+import "std/test";
+import "core/int";
+import "std/hex";
+import "std/crypto";
+import "std/crypto/chacha20poly1305";
+import "std/tls/keyschedule";
+import "std/tls/record";
+
+// tests/stdlib/tls_record_test.fern — std/tls/record: framing against
+// RFC 8448 §3's plaintext records, and record protection under
+// TLS_CHACHA20_POLY1305_SHA256. RFC 8448 has no ChaCha20-Poly1305 trace,
+// so the protected records here were sealed by a Python reference, using
+// the `cryptography` package's AEAD, that reproduces every AES-128-GCM
+// record in RFC 8448 §3; the keys are the trace's traffic secrets.
+
+function client_hello(): u8[] {
+  return hex.hex_decode("010000c00303cb34ecb1e78163ba1c38c6dacb196a6dffa21a8d9912ec18a2ef6283024dece7000006130113031302010000910000000b0009000006736572766572ff01000100000a00140012001d0017001800190100010101020103010400230000003300260024001d002099381de560e4bd43d23d8e435a7dbafeb3c06e51c13cae4d5413691e529aaf2c002b0003020304000d0020001e040305030603020308040805080604010501060102010402050206020202002d00020101001c00024001");
+}
+
+function server_hello(): u8[] {
+  return hex.hex_decode("020000560303a6af06a4121860dc5e6e60249cd34c95930c8ac5cb1434dac155772ed3e2692800130100002e00330024001d0020c9828876112095fe66762bdbf7c672e156d6cc253b833df1dd69b1b04e751f0f002b00020304");
+}
+
+// EncryptedExtensions through the server's Finished, the plaintext of the
+// server's first protected record.
+function server_flight(): u8[] {
+  return hex.hex_decode("080000240022000a00140012001d00170018001901000101010201030104001c00024001000000000b0001b9000001b50001b0308201ac30820115a003020102020102300d06092a864886f70d01010b0500300e310c300a06035504031303727361301e170d3136303733303031323335395a170d3236303733303031323335395a300e310c300a0603550403130372736130819f300d06092a864886f70d010101050003818d0030818902818100b4bb498f8279303d980836399b36c6988c0c68de55e1bdb826d3901a2461eafd2de49a91d015abbc9a95137ace6c1af19eaa6af98c7ced43120998e187a80ee0ccb0524b1b018c3e0b63264d449a6d38e22a5fda430846748030530ef0461c8ca9d9efbfae8ea6d1d03e2bd193eff0ab9a8002c47428a6d35a8d88d79f7f1e3f0203010001a31a301830090603551d1304023000300b0603551d0f0404030205a0300d06092a864886f70d01010b05000381810085aad2a0e5b9276b908c65f73a7267170618a54c5f8a7b337d2df7a594365417f2eae8f8a58c8f8172f9319cf36b7fd6c55b80f21a03015156726096fd335e5e67f2dbf102702e608ccae6bec1fc63a42a99be5c3eb7107c3c54e9b9eb2bd5203b1c3b84e0a8b2f759409ba3eac9d91d402dcc0cc8f8961229ac9187b42b4de100000f000084080400805a747c5d88fa9bd2e55ab085a61015b7211f824cd484145ab3ff52f1fda8477b0b7abc90db78e2d33a5c141a078653fa6bef780c5ea248eeaaa785c4f394cab6d30bbe8d4859ee511f602957b15411ac027671459e46445c9ea58c181e818e95b8c3fb0bf3278409d3be152a3da5043e063dda65cdf5aea20d53dfacd42f74f3140000209b9b141d906337fbd2cbdce71df4deda4ab42c309572cb7fffee5454b78f0718");
+}
+
+// The client's application data and its close_notify alert.
+function app_data(): u8[] {
+  return hex.hex_decode("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f202122232425262728292a2b2c2d2e2f3031");
+}
+
+function close_notify(): u8[] {
+  return hex.hex_decode("0100");
+}
+
+function suite(): keyschedule.CipherSuite {
+  return keyschedule.ChaCha20Poly1305Sha256;
+}
+
+// The trace's client application and server handshake traffic secrets.
+function client_write(): record.Protection {
+  return record.protection(suite(), hex.hex_decode("9e40646ce79a7f9dc05af8889bce6552875afa0b06df0087f792ebb7c17504a5"));
+}
+
+function server_handshake_write(): record.Protection {
+  return record.protection(suite(), hex.hex_decode("b67b7d690cc16c4e75e54213cb2d37b4e9c912bcded9105d42befd59d391ad38"));
+}
+
+function shown_bytes(r: Result[u8[], record.RecordError]): string {
+  match (r) {
+    Ok(b) => {
+      return hex.hex_encode(b);
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function sealed(r: Result[record.Sealed, record.RecordError]): string {
+  match (r) {
+    Ok(s) => {
+      return hex.hex_encode(s.record);
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+// opened shows a record's content type and content, or why it was refused.
+function opened(r: Result[record.Opened, record.RecordError]): string {
+  match (r) {
+    Ok(o) => {
+      return int.int_to_string(o.content_type.code()) + " " + hex.hex_encode(o.content);
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+// deframed shows each record as type, version and fragment length, then
+// the length of the rest.
+function deframed(r: Result[record.Deframed, record.RecordError]): string {
+  match (r) {
+    Ok(d) => {
+      let out: string = "";
+      let i: i32 = 0;
+      while (i < d.records.len()) {
+        let rec: record.Record = d.records[i];
+        out = out + int.int_to_string(rec.content_type.code()) + "/" + int.int_to_string(rec.version) + "/" + int.int_to_string(rec.fragment.len()) + " ";
+        i = i + 1;
+      }
+      return out + "rest " + int.int_to_string(d.rest.len());
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+// one is the single record buf holds.
+function one(buf: u8[]): record.Record {
+  match (record.deframe(buf)) {
+    Ok(d) => {
+      return d.records[0];
+    },
+    Err(e) => {
+      return record.Record { content_type: record.Alert, version: 0, fragment: [] };
+    }
+  }
+  return record.Record { content_type: record.Alert, version: 0, fragment: [] };
+}
+
+function filled(n: i32, b: i32): u8[] {
+  let out: u8[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append(b as u8);
+    i = i + 1;
+  }
+  return out;
+}
+
+function cat(a: u8[], b: u8[]): u8[] {
+  let out: u8[] = a;
+  let i: i32 = 0;
+  while (i < b.len()) {
+    out = out.append(b[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+function test_frame_client_hello(): test.TestOutcome {
+  return test.assert_eq(hex.hex_encode(record.frame(record.Handshake, 0x0301, client_hello())), "16030100c4010000c00303cb34ecb1e78163ba1c38c6dacb196a6dffa21a8d9912ec18a2ef6283024dece7000006130113031302010000910000000b0009000006736572766572ff01000100000a00140012001d0017001800190100010101020103010400230000003300260024001d002099381de560e4bd43d23d8e435a7dbafeb3c06e51c13cae4d5413691e529aaf2c002b0003020304000d0020001e040305030603020308040805080604010501060102010402050206020202002d00020101001c00024001");
+}
+
+function test_frame_server_hello(): test.TestOutcome {
+  return test.assert_eq(hex.hex_encode(record.frame(record.Handshake, 0x0303, server_hello())), "160303005a020000560303a6af06a4121860dc5e6e60249cd34c95930c8ac5cb1434dac155772ed3e2692800130100002e00330024001d0020c9828876112095fe66762bdbf7c672e156d6cc253b833df1dd69b1b04e751f0f002b00020304");
+}
+
+// Data past 2^14 bytes is split, and deframes back to the same bytes.
+function test_frame_splits(): test.TestOutcome {
+  let data: u8[] = filled(16385, 7);
+  let wire: u8[] = record.frame(record.Handshake, 0x0303, data);
+  if (deframed(record.deframe(wire)) != "22/771/16384 22/771/1 rest 0") {
+    return test.fail(deframed(record.deframe(wire)));
+  }
+  return test.assert_eq(wire.len(), 16385 + 10);
+}
+
+// The ServerHello record, the server's first protected record, and the
+// first three bytes of the next record: two records and a rest.
+function test_deframe(): test.TestOutcome {
+  match (server_handshake_write().seal(record.Handshake, server_flight(), 0)) {
+    Ok(s) => {
+      let start: u8[] = hex.hex_decode("170303");
+      let wire: u8[] = cat(cat(hex.hex_decode("160303005a020000560303a6af06a4121860dc5e6e60249cd34c95930c8ac5cb1434dac155772ed3e2692800130100002e00330024001d0020c9828876112095fe66762bdbf7c672e156d6cc253b833df1dd69b1b04e751f0f002b00020304"), s.record), start);
+      match (record.deframe(wire)) {
+        Ok(d) => {
+          if (deframed(Ok(d)) != "22/771/90 23/771/674 rest 3") {
+            return test.fail(deframed(Ok(d)));
+          }
+          if (hex.hex_encode(d.records[0].fragment) != hex.hex_encode(server_hello())) {
+            return test.fail("the ServerHello");
+          }
+          return test.assert_eq(hex.hex_encode(d.rest), "170303");
+        },
+        Err(e) => {
+          return test.fail(e.message());
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function test_deframe_waits(): test.TestOutcome {
+  let sh: u8[] = hex.hex_decode("160303005a020000560303a6af06a4121860dc5e6e60249cd34c95930c8ac5cb1434dac155772ed3e2692800130100002e00330024001d0020c9828876112095fe66762bdbf7c672e156d6cc253b833df1dd69b1b04e751f0f002b00020304");
+  if (deframed(record.deframe(sh[0:4])) != "rest 4") {
+    return test.fail("a partial header");
+  }
+  return test.assert_eq(deframed(record.deframe(sh[0:94])), "rest 94");
+}
+
+function test_deframe_refusals(): test.TestOutcome {
+  if (deframed(record.deframe(hex.hex_decode("1603034001"))) != "tls record: 16385 bytes is over the record size limit") {
+    return test.fail("plaintext over 2^14");
+  }
+  if (deframed(record.deframe(hex.hex_decode("1703034101"))) != "tls record: 16641 bytes is over the record size limit") {
+    return test.fail("protected over 2^14 + 256");
+  }
+  if (deframed(record.deframe(hex.hex_decode("1703034100"))) != "rest 5") {
+    return test.fail("protected at 2^14 + 256");
+  }
+  if (deframed(record.deframe(hex.hex_decode("180303000100"))) != "tls record: unexpected content type 24") {
+    return test.fail("an unknown content type");
+  }
+  if (deframed(record.deframe(hex.hex_decode("000303000100"))) != "tls record: unexpected content type 0") {
+    return test.fail("the invalid content type");
+  }
+  return test.assert_eq(deframed(record.deframe(hex.hex_decode("1503030000"))), "tls record: a handshake or alert record with no content");
+}
+
+// Three records under one key: the sequence number, 0, 1 then 2, goes into
+// each nonce, and the third is padded.
+function test_seal(): test.TestOutcome {
+  let p: record.Protection = client_write();
+  match (p.seal(record.ApplicationData, app_data(), 0)) {
+    Ok(s) => {
+      if (hex.hex_encode(s.record) != "17030300431fd0486e9713f060eaebc04aadd9df0a5448b51a6675c2deacc5c3f774203c979cf2e49f999bcf33e553e632e48ba372130aed733b75a8db3a214bd3cadf535cc92bd5") {
+        return test.fail("record 0");
+      }
+      p = s.next;
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  match (p.seal(record.Alert, close_notify(), 0)) {
+    Ok(s) => {
+      if (hex.hex_encode(s.record) != "17030300135751bb89d96c0bfb14470003e6f006f1b2c0f8") {
+        return test.fail("record 1");
+      }
+      p = s.next;
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  match (p.seal(record.ApplicationData, app_data(), 7)) {
+    Ok(s) => {
+      if (hex.hex_encode(s.record) != "170303004a85e8b1c60ae361aede07b8140dfa333320bfde42832fc77f19c76902304519d6ff9492842e85bb2b4071e89971f2096ee7862d283ffe7309127d377b963b5f5c7ab84cf2b64b932645dd") {
+        return test.fail("record 2");
+      }
+      return test.assert_eq(s.next.seq, 3 as u64);
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function test_open(): test.TestOutcome {
+  let p: record.Protection = client_write();
+  let records: string[] = ["17030300431fd0486e9713f060eaebc04aadd9df0a5448b51a6675c2deacc5c3f774203c979cf2e49f999bcf33e553e632e48ba372130aed733b75a8db3a214bd3cadf535cc92bd5", "17030300135751bb89d96c0bfb14470003e6f006f1b2c0f8", "170303004a85e8b1c60ae361aede07b8140dfa333320bfde42832fc77f19c76902304519d6ff9492842e85bb2b4071e89971f2096ee7862d283ffe7309127d377b963b5f5c7ab84cf2b64b932645dd"];
+  let want: string[] = ["23 " + hex.hex_encode(app_data()), "21 " + hex.hex_encode(close_notify()), "23 " + hex.hex_encode(app_data())];
+  let i: i32 = 0;
+  while (i < 3) {
+    match (p.open(one(hex.hex_decode(records[i])))) {
+      Ok(o) => {
+        if (int.int_to_string(o.content_type.code()) + " " + hex.hex_encode(o.content) != want[i]) {
+          return test.fail("record " + int.int_to_string(i));
+        }
+        p = o.next;
+      },
+      Err(e) => {
+        return test.fail(e.message());
+      }
+    }
+    i = i + 1;
+  }
+  return test.assert_eq(p.seq, 3 as u64);
+}
+
+// The server's handshake flight spans many ChaCha20 blocks; the record is
+// compared by its SHA-256.
+function test_seal_open_flight(): test.TestOutcome {
+  match (server_handshake_write().seal(record.Handshake, server_flight(), 0)) {
+    Ok(s) => {
+      if (crypto.sha256_new().update_bytes(s.record).final_hex() != "6c9225306ee6904ab39f8365c45ca9ce95f6a8443a9de5f21592a02cb27973d6") {
+        return test.fail("sealed");
+      }
+      return test.assert_eq(opened(server_handshake_write().open(one(s.record))), "22 " + hex.hex_encode(server_flight()));
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+// Record 1 opened as record 0: the nonce differs, so the tag does not
+// verify.
+function test_open_out_of_order(): test.TestOutcome {
+  return test.assert_eq(opened(client_write().open(one(hex.hex_decode("17030300135751bb89d96c0bfb14470003e6f006f1b2c0f8")))), "tls record: the record does not verify");
+}
+
+function test_bad_record_mac(): test.TestOutcome {
+  let rec: u8[] = hex.hex_decode("17030300431fd0486e9713f060eaebc04aadd9df0a5448b51a6675c2deacc5c3f774203c979cf2e49f999bcf33e553e632e48ba372130aed733b75a8db3a214bd3cadf535cc92bd5");
+  let n: i32 = rec.len();
+  if (opened(client_write().open(one(rec.with(n - 1, rec[n - 1] ^ 1 as u8)))) != "tls record: the record does not verify") {
+    return test.fail("a flipped tag bit");
+  }
+  if (opened(client_write().open(one(rec.with(5, rec[5] ^ 0x80 as u8)))) != "tls record: the record does not verify") {
+    return test.fail("a flipped ciphertext bit");
+  }
+  // The header is the additional data, so even the ignored version counts.
+  return test.assert_eq(opened(client_write().open(one(rec.with(2, 1 as u8)))), "tls record: the record does not verify");
+}
+
+function test_open_wrong_content_type(): test.TestOutcome {
+  let rec: record.Record = one(hex.hex_decode("17030300431fd0486e9713f060eaebc04aadd9df0a5448b51a6675c2deacc5c3f774203c979cf2e49f999bcf33e553e632e48ba372130aed733b75a8db3a214bd3cadf535cc92bd5"));
+  return test.assert_eq(opened(client_write().open(record.Record { ...rec, content_type: record.Handshake })), "tls record: unexpected content type 22");
+}
+
+// An inner plaintext of four zero bytes has no content type to find.
+function test_open_all_zero_padding(): test.TestOutcome {
+  return test.assert_eq(opened(client_write().open(one(hex.hex_decode("17030300141fd14a6d3d9a4c36dcd98c1cb87d0156731b26e3")))), "tls record: the decrypted record has no content type");
+}
+
+function test_open_protected_change_cipher_spec(): test.TestOutcome {
+  return test.assert_eq(opened(client_write().open(one(hex.hex_decode("17030300121ec55bd7b3c4934cb4924504b6cc7992d75b")))), "tls record: unexpected content type 20");
+}
+
+// Empty application data is allowed; an empty handshake record is not.
+function test_open_empty(): test.TestOutcome {
+  if (opened(client_write().open(one(hex.hex_decode("1703030011081d1a7419b93b44c850a45c2aeff8ca25")))) != "23 ") {
+    return test.fail("empty application data");
+  }
+  return test.assert_eq(opened(client_write().open(one(hex.hex_decode("170303001109f1a520172c5ed29d8f4febad894b43f6")))), "tls record: a handshake or alert record with no content");
+}
+
+// A record that verifies but whose inner plaintext is 2^14 + 2 bytes,
+// sealed directly with the AEAD under sequence number 0's nonce.
+function test_open_inner_overflow(): test.TestOutcome {
+  let p: record.Protection = client_write();
+  let header: u8[] = hex.hex_decode("1703034012");
+  match (chacha20poly1305.seal(p.key, p.iv, cat(filled(16385, 1), filled(1, 23)), header)) {
+    Ok(ct) => {
+      return test.assert_eq(opened(p.open(record.Record { content_type: record.ApplicationData, version: 0x0303, fragment: ct })), "tls record: 16386 bytes is over the record size limit");
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function test_seal_refusals(): test.TestOutcome {
+  let p: record.Protection = client_write();
+  if (sealed(p.seal(record.ApplicationData, filled(16385, 0), 0)) != "tls record: 16385 bytes is over the record size limit") {
+    return test.fail("content over 2^14");
+  }
+  if (sealed(p.seal(record.ApplicationData, filled(16384, 0), 1)) != "tls record: 16385 bytes is over the record size limit") {
+    return test.fail("content and padding over 2^14");
+  }
+  if (sealed(p.seal(record.ChangeCipherSpec, filled(1, 1), 0)) != "tls record: unexpected content type 20") {
+    return test.fail("change_cipher_spec");
+  }
+  return test.assert_eq(sealed(p.seal(record.Handshake, [], 0)), "tls record: a handshake or alert record with no content");
+}
+
+// After a KeyUpdate the next secret's keys protect from sequence number 0.
+function test_key_update(): test.TestOutcome {
+  let next: u8[] = keyschedule.next_traffic_secret(keyschedule.Sha256, hex.hex_decode("9e40646ce79a7f9dc05af8889bce6552875afa0b06df0087f792ebb7c17504a5"));
+  return test.assert_eq(sealed(record.protection(suite(), next).seal(record.ApplicationData, app_data(), 0)), "1703030043edcd32a2097e5153e9c681a6fc09a406307ffdf112e1888d6cd99a73a5879e62c656513151f18cf19a5f3b468cbe2c39bc321a1c6df4e9fc84bd82bd6c5ee7ffae3455");
+}
+
+function test_sequence_exhausted(): test.TestOutcome {
+  let p: record.Protection = record.Protection { ...client_write(), seq: 0xffffffffffffffff as u64 };
+  if (sealed(p.seal(record.ApplicationData, app_data(), 0)) != "tls record: the sequence number is exhausted") {
+    return test.fail("seal");
+  }
+  return test.assert_eq(opened(p.open(one(hex.hex_decode("17030300431fd0486e9713f060eaebc04aadd9df0a5448b51a6675c2deacc5c3f774203c979cf2e49f999bcf33e553e632e48ba372130aed733b75a8db3a214bd3cadf535cc92bd5")))), "tls record: the sequence number is exhausted");
+}
+
+function test_bad_keys(): test.TestOutcome {
+  let p: record.Protection = record.Protection { ...client_write(), key: filled(16, 0) };
+  return test.assert_eq(sealed(p.seal(record.ApplicationData, app_data(), 0)), "tls record: a 16-byte key and a 12-byte iv do not fit the cipher suite");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/tls/record");
+  r = r.it("frame the ClientHello", test_frame_client_hello);
+  r = r.it("frame the ServerHello", test_frame_server_hello);
+  r = r.it("frame splits at 2^14", test_frame_splits);
+  r = r.it("deframe", test_deframe);
+  r = r.it("deframe waits for a whole record", test_deframe_waits);
+  r = r.it("deframe refusals", test_deframe_refusals);
+  r = r.it("seal, sequence numbers and padding", test_seal);
+  r = r.it("open", test_open);
+  r = r.it("seal and open a multi-block record", test_seal_open_flight);
+  r = r.it("open out of order", test_open_out_of_order);
+  r = r.it("bad_record_mac", test_bad_record_mac);
+  r = r.it("open refuses a plaintext content type", test_open_wrong_content_type);
+  r = r.it("open refuses all-zero padding", test_open_all_zero_padding);
+  r = r.it("open refuses a protected change_cipher_spec", test_open_protected_change_cipher_spec);
+  r = r.it("open empty records", test_open_empty);
+  r = r.it("open refuses an inner plaintext over 2^14 + 1", test_open_inner_overflow);
+  r = r.it("seal refusals", test_seal_refusals);
+  r = r.it("key update", test_key_update);
+  r = r.it("sequence number exhausted", test_sequence_exhausted);
+  r = r.it("keys that do not fit the suite", test_bad_keys);
+  return r.finish();
+}

@@ -1186,6 +1186,75 @@ constant time. About 1 ms per verification on x86-64 under a 2048-bit key.
   `verify_pss(key, hash, msg, sig): boolean`, `hash` one of `Sha256`,
   `Sha384`, `Sha512`.
 
+### `std/tls/keyschedule`
+
+The TLS 1.3 key schedule of RFC 8446 §7, the first part of `std/tls` (#9858).
+Sans-IO and stateless: the caller keeps the running transcript hash and
+passes it in. Verified against every secret, key, IV and Finished in RFC 8448
+§3, derived from the trace's key shares and handshake messages
+(`tests/stdlib/tls_keyschedule_test.fern`).
+
+```fern
+let early: keyschedule.EarlySecret = keyschedule.early_secret(suite.hash(), []);
+let hs: keyschedule.HandshakeSecret = early.handshake_secret(shared_secret);
+let keys: keyschedule.TrafficKeys = keyschedule.traffic_keys(suite, hs.server_traffic(transcript_hash));
+```
+
+- `CipherSuite` is `ChaCha20Poly1305Sha256`, TLS_CHACHA20_POLY1305_SHA256;
+  `hash()` is its `Hash` (`Sha256` or `Sha384`, with `size()` and
+  `digest(msg)`), `aead()` its `Aead` (`ChaCha20Poly1305`, with `key_len()`).
+  The AES-GCM suites arrive with `std/crypto/aes_gcm`.
+- `hkdf_extract(h, salt, ikm)`, `hkdf_expand_label(h, secret, label, context,
+  length)`, `derive_secret(h, secret, label, transcript_hash)` — §7.1's
+  functions.
+- `early_secret(h, psk): EarlySecret` (an empty `psk` for a handshake without
+  one), `.handshake_secret(shared_secret): HandshakeSecret`,
+  `.master_secret(): MasterSecret`. Each stage holds `hash` and `secret`. The
+  handshake secret's `client_traffic(th)` / `server_traffic(th)` take the
+  transcript through ServerHello; the master secret's `client_traffic`,
+  `server_traffic` and `exporter` take it through the server's Finished, and
+  `resumption` through the client's.
+- `traffic_keys(suite, traffic_secret): TrafficKeys` — `key` and `iv` (§7.3).
+- `finished_verify_data(h, base_key, th)` and
+  `verify_finished(h, base_key, th, verify_data)`, which compares in constant
+  time (§4.4.4).
+- `next_traffic_secret(h, traffic_secret)` — the secret after a KeyUpdate
+  (§7.2).
+
+### `std/tls/record`
+
+The TLS 1.3 record layer of RFC 8446 §5, sans-IO: bytes in, records out, no
+sockets. Framing is checked against RFC 8448 §3's records, and protection
+against ChaCha20-Poly1305 records from a reference that reproduces the trace's
+AES-128-GCM ones (`tests/stdlib/tls_record_test.fern`).
+
+```fern
+let d: record.Deframed = record.deframe(buffered)?;   // keep d.rest
+let read: record.Protection = record.protection(suite, traffic_secret);
+let o: record.Opened = read.open(d.records[0])?;      // o.content_type, o.content
+read = o.next;
+```
+
+- `deframe(buf): Result[Deframed, RecordError]` — the whole `records` at the
+  front of `buf` and the `rest`. A header is refused as soon as it arrives:
+  an unknown content type, a length over 2^14 (2^14 + 256 for
+  ApplicationData), or an empty handshake or alert record.
+- `frame(t, legacy_version, data): u8[]` — plaintext records of at most 2^14
+  bytes; `legacy_version` is 0x0303, or 0x0301 for an initial ClientHello.
+- `Record` is `content_type` (`ContentType`: `ChangeCipherSpec`, `Alert`,
+  `Handshake`, `ApplicationData`, with `code()`), `version` and `fragment`.
+- `protection(suite, traffic_secret): Protection` — one direction's `key`,
+  `iv` and `seq`, from sequence number 0. `p.seal(t, content, padding):
+  Result[Sealed, RecordError]` gives the `record` and the `next` state;
+  `p.open(record): Result[Opened, RecordError]` gives `content_type`,
+  `content` with the padding removed, and `next`. The nonce is the IV
+  exclusive-ored with the sequence number and the additional data is the
+  record header.
+- `RecordError` is `RecordOverflow(i32)`, `UnexpectedContentType(i32)`,
+  `EmptyFragment`, `NoContentType`, `BadRecordMac`, `SequenceExhausted` or
+  `BadKeys(i32, i32)`, with `message()`; each variant's comment names the
+  alert RFC 8446 sends for it.
+
 ### `std/hash`
 
 Non-cryptographic checksums, in std/crypto's streaming shape (`update` /
