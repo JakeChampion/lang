@@ -412,6 +412,12 @@ pub function group_list(name: string, gid: i64): i64[] {
 }
 
 pub function group_list_in(text: string, name: string, gid: i64): i64[] {
+  match (account_group_list(name, gid)) {
+    Some(gids) => {
+      return gids;
+    },
+    None => {}
+  }
   let out: i64[] = [gid];
   let lines: string[] = text.lines();
   let i: i32 = 0;
@@ -529,8 +535,9 @@ pub function (n: Names) group(gid: i64): (string, Names) {
 
 // ---- libSystem's answer -----------------------------------------------------
 // `__account_entry(kind, key)` is what libSystem answers, or 0: kind 0 is
-// getpwuid(key), 1 getpwnam(key), 2 getgrgid(key), 3 getgrnam(key) and 4
-// getlogin(); a name goes in as a C string. The entries are Darwin's
+// getpwuid(key), 1 getpwnam(key), 2 getgrgid(key), 3 getgrnam(key), 4
+// getlogin(), 5 getgrouplist over an argument block, 6 strerror(key) and 7
+// __error(); a name goes in as a C string. The entries are Darwin's
 // `struct passwd` and `struct group`, read field by field before the next
 // call reuses them. Only Darwin is asked: everywhere else the files are the
 // whole database.
@@ -584,6 +591,65 @@ function account_group_named(name: string): Option[Group] {
   let g: Option[Group] = account_group(__account_entry(3, key));
   __free(key, name.len() + 1);
   return g;
+}
+
+// getgrouplist(3): the base gid and every group Directory Services counts
+// the user in, nested ones included. Darwin answers -1 without saying how
+// many there are when the buffer is short, so it doubles until they fit.
+function account_group_list(name: string, gid: i64): Option[i64[]] {
+  if (!darwin() || gid < 0 as i64 || gid > 4294967295 as i64) {
+    return None;
+  }
+  let key: usize = cstr_key(name);
+  let block: usize = __alloc(32);
+  let count: usize = __alloc(8);
+  let cap: i32 = 64;
+  let out: Option[i64[]] = None;
+  while (cap <= 65536) {
+    let buf: usize = __alloc(cap * 4);
+    __store_ptr(block, key);
+    __store_i64(block + 8 as usize, gid);
+    __store_ptr(block + 16 as usize, buf);
+    __store_ptr(block + 24 as usize, count);
+    __store_i64(count, cap as i64);
+    let rc: i64 = __account_entry(5, block) as i64 & 4294967295 as i64;
+    if (rc != 4294967295 as i64) {
+      let gids: i64[] = [];
+      let n: i32 = __load_i32(count);
+      let i: i32 = 0;
+      while (i < n && i < cap) {
+        gids = gids.append(id_at(buf + (i * 4) as usize));
+        i = i + 1;
+      }
+      out = Some(gids);
+      __free(buf, cap * 4);
+      break;
+    }
+    __free(buf, cap * 4);
+    cap = cap * 2;
+  }
+  __free(count, 8);
+  __free(block, 32);
+  __free(key, name.len() + 1);
+  return out;
+}
+
+// The strerror text for the errno the last failed lookup left, or "" when it
+// left none. Only Darwin's lookups set one: there GNU's `no such user` carries
+// it, and glibc's files backend reports a missing entry with errno 0.
+pub function lookup_failure_text(): string {
+  if (!darwin()) {
+    return "";
+  }
+  let at: usize = __account_entry(7, 0 as usize);
+  if (at == 0 as usize) {
+    return "";
+  }
+  let e: i32 = __load_i32(at);
+  if (e == 0) {
+    return "";
+  }
+  return c_string(__account_entry(6, e as usize));
 }
 
 function account_user(p: usize): Option[User] {

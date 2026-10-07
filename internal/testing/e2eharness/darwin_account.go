@@ -10,7 +10,8 @@ import (
 // DarwinAccountAnswers is what the account-entry gates' program must print
 // on Darwin, from Go's os/user and the system logname: this user's name, none
 // for a uid no account has, root's home, gid 0's name, staff's gid, and the
-// session's login name (none when there is none).
+// session's login name (none when there is none), then this user's primary
+// gid (the first getgrouplist gives), EINVAL's text and that __error answers.
 func DarwinAccountAnswers(t *testing.T) string {
 	t.Helper()
 	me, err := user.Current()
@@ -33,5 +34,5 @@ func DarwinAccountAnswers(t *testing.T) string {
 	if out, err := exec.Command("/usr/bin/logname").Output(); err == nil {
 		login = strings.TrimSpace(string(out))
 	}
-	return strings.Join([]string{me.Username, "none", root.HomeDir, wheel.Name, staff.Gid, login}, "\n") + "\n"
+	return strings.Join([]string{me.Username, "none", root.HomeDir, wheel.Name, staff.Gid, login, me.Gid, "Invalid argument", "errno"}, "\n") + "\n"
 }
