@@ -6944,7 +6944,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo)
   // Before the verifier in anchor_module, so the rewritten graph is the one
   // it checks, and before anything downstream plans ownership over it (#9692).
   f = ssasem.tail_recursion(f, name);
-  f = ssabounds.proven_indices(f);
+  f = ssabounds.grouped_reads(ssabounds.proven_indices(f));
   return Made { p: Produced { ok: true, why: "", func: f, modes: modes, template: false, key: "", requests: s.requests, bodyless: false, analysis: None, view_escape: 0, dropped: false }, memo: table.memo };
 }
 
@@ -7800,6 +7800,9 @@ function memory_contracts(): ssasem.Contract[] {
   for c in load_store_contracts() {
     out = out.append(c);
   }
+  for c in aes_gcm_contracts() {
+    out = out.append(c);
+  }
   return out;
 }
 
@@ -7823,6 +7826,18 @@ function load_store_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "__store_ptr", params: [t_usize(), t_usize()], modes: [v, v], result: t_void() },
     ssasem.Contract { name: "__ct_secret", params: [typeinfo.TypeArray { elem: t_u8(), view: true }], modes: [b], result: t_void() },
     ssasem.Contract { name: "__ct_public", params: [typeinfo.TypeArray { elem: t_u8(), view: true }], modes: [b], result: t_void() },
+  ];
+}
+
+// The AES-GCM kernels are lent their byte views and answer a fresh u8[].
+function aes_gcm_contracts(): ssasem.Contract[] {
+  let b: i32 = ssaunits.borrow_mode();
+  let view: typeinfo.Type = typeinfo.TypeArray { elem: t_u8(), view: true };
+  let bytes: typeinfo.Type = typeinfo.TypeArray { elem: t_u8(), view: false };
+  return [
+    ssasem.Contract { name: "__aes_expand_key", params: [view], modes: [b], result: bytes },
+    ssasem.Contract { name: "__aes_ctr32", params: [view, view, view], modes: [b, b, b], result: bytes },
+    ssasem.Contract { name: "__ghash", params: [view, view, view], modes: [b, b, b], result: bytes },
   ];
 }
 

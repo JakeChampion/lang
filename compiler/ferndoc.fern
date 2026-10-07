@@ -235,7 +235,8 @@ pub function module_summary(intro: string): string {
   if (first == 0 || has_upper_or_digit(s, first) || s[0] as i32 < 97 || s[0] as i32 > 122) {
     return s;
   }
-  return own(slice_unchecked(s, 0, 1)).to_upper() + slice_unchecked(s, 1, s.len());
+  let up: u8[] = __alloc_u8(1).with(0, (s[0] as i32 - 32) as u8);
+  return string_from_bytes_unchecked(up) + slice_unchecked(s, 1, s.len());
 }
 
 // collapse_space is strings.Join(strings.Fields(s), " ").

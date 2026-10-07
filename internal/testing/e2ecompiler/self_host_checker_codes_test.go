@@ -3303,6 +3303,11 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"ct-mark-wrong-element", "function main(): i32 { let k: i32[] = [1, 2]; __ct_secret(k); return 0; }\n"},
 		{"ct-mark-arity", "function main(): i32 { let k: u8[] = __alloc_u8(4); __ct_public(k, k); return 0; }\n"},
 		{"ct-mark-void-result", "function main(): i32 { let k: u8[] = __alloc_u8(4); let r: i32 = __ct_public(k); return r; }\n"},
+		// The AES-GCM kernels take [u8] views and answer a fresh u8[].
+		{"aes-gcm-kernels", "function main(): i32 { let k: u8[] = __alloc_u8(16); let rk: u8[] = __aes_expand_key(k); let c: [u8] = k[0:16]; let out: u8[] = __aes_ctr32(rk, c, \"ab\".as_bytes()); let y: u8[] = __ghash(k, c, out); return y.len(); }\n"},
+		{"aes-gcm-wrong-element", "function main(): i32 { let k: i32[] = [1, 2]; let rk: u8[] = __aes_expand_key(k); return 0; }\n"},
+		{"aes-gcm-arity", "function main(): i32 { let h: u8[] = __alloc_u8(16); let y: u8[] = __ghash(h, h); return 0; }\n"},
+		{"aes-gcm-result", "function main(): i32 { let k: u8[] = __alloc_u8(16); let r: i32 = __aes_ctr32(k, k, k); return r; }\n"},
 		{"tuple-var-annot", "function main(): i32 { let t: (i32, string) = (1, \"a\"); return t.0; }\n"},
 		{"tuple-array-annot", "function main(): i32 { let out: (i32, string)[] = []; return 0; }\n"},
 		{"tuple-nested", "function main(): i32 { let t: (i32, (string, i32)) = (1, (\"a\", 2)); return t.0; }\n"},

@@ -4,7 +4,7 @@
 // each stage yields, the traffic keys record protection uses, Finished's
 // verify_data and the key update.
 //
-//   let suite: keyschedule.CipherSuite = keyschedule.ChaCha20Poly1305Sha256;
+//   let suite: keyschedule.CipherSuite = keyschedule.Aes128GcmSha256;
 //   let early: keyschedule.EarlySecret = keyschedule.early_secret(suite.hash(), psk);
 //   let hs: keyschedule.HandshakeSecret = early.handshake_secret(shared_secret);
 //   let keys: keyschedule.TrafficKeys = keyschedule.traffic_keys(suite, hs.client_traffic(transcript_hash));
@@ -49,6 +49,8 @@ pub function (h: Hash) digest(msg: [u8]): u8[] {
 
 // Aead — the record protection a cipher suite uses.
 pub enum Aead {
+  Aes128Gcm,
+  Aes256Gcm,
   ChaCha20Poly1305,
 }
 
@@ -56,6 +58,12 @@ pub enum Aead {
 // nonce.
 pub function (a: Aead) key_len(): i32 {
   match (a) {
+    Aes128Gcm => {
+      return 16;
+    },
+    Aes256Gcm => {
+      return 32;
+    },
     ChaCha20Poly1305 => {
       return 32;
     }
@@ -63,15 +71,22 @@ pub function (a: Aead) key_len(): i32 {
   return 0;
 }
 
-// CipherSuite — a TLS 1.3 cipher suite: an AEAD and the hash its key
-// schedule runs over. TLS_CHACHA20_POLY1305_SHA256 is the one implemented;
-// the AES-GCM suites are an arm here and one in `Aead` each.
+// CipherSuite — a TLS 1.3 cipher suite (RFC 8446 §B.4): an AEAD and the
+// hash its key schedule runs over.
 pub enum CipherSuite {
+  Aes128GcmSha256,
+  Aes256GcmSha384,
   ChaCha20Poly1305Sha256,
 }
 
 pub function (s: CipherSuite) hash(): Hash {
   match (s) {
+    Aes128GcmSha256 => {
+      return Sha256;
+    },
+    Aes256GcmSha384 => {
+      return Sha384;
+    },
     ChaCha20Poly1305Sha256 => {
       return Sha256;
     }
@@ -81,6 +96,12 @@ pub function (s: CipherSuite) hash(): Hash {
 
 pub function (s: CipherSuite) aead(): Aead {
   match (s) {
+    Aes128GcmSha256 => {
+      return Aes128Gcm;
+    },
+    Aes256GcmSha384 => {
+      return Aes256Gcm;
+    },
     ChaCha20Poly1305Sha256 => {
       return ChaCha20Poly1305;
     }

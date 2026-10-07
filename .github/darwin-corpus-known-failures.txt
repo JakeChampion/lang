@@ -85,15 +85,10 @@ TestCpWalkOrder
 TestCsplit
 TestDateParity
 TestHostidParity
-TestLinkParity
-TestLnParity
 TestMknodParity
 TestMktempRetryExhaustion
-TestMvParity
 TestNice
 TestNiceReadsTheNicenessItWasStartedAt
-TestPrintfParity
-TestPwdUnlinkedWorkingDirectory
 TestRealpathParity
 TestRmdirParity
 TestRunconParity

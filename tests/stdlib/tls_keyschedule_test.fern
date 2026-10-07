@@ -1,4 +1,5 @@
 import "std/test";
+import "core/int";
 import "std/hex";
 import "std/crypto/x25519";
 import "std/tls/keyschedule";
@@ -7,8 +8,8 @@ import "std/tls/keyschedule";
 // RFC 8448 §3, the simple 1-RTT handshake: every secret, key, IV and
 // Finished in the trace, derived from the trace's key shares and the
 // transcript hashes of its handshake messages. The trace's suite is
-// TLS_AES_128_GCM_SHA256, so its 16-byte keys are checked through
-// hkdf_expand_label. The ChaCha20-Poly1305 keys, the key update and the
+// TLS_AES_128_GCM_SHA256, so its 16-byte keys are checked through that
+// suite's traffic_keys. The ChaCha20-Poly1305 keys, the key update and the
 // SHA-384 schedule over the same handshake were computed with Python's
 // hmac and hashlib by a reference that reproduces every value in the trace.
 
@@ -161,8 +162,8 @@ function test_application_secrets(): test.TestOutcome {
 // The trace's four AES-128-GCM key and IV pairs: §7.3's derivation with a
 // 16-byte key.
 function aes_keys(secret: u8[]): string {
-  let none: u8[] = [];
-  return shown(keyschedule.hkdf_expand_label(keyschedule.Sha256, secret, "key", none, 16)) + " " + shown(keyschedule.hkdf_expand_label(keyschedule.Sha256, secret, "iv", none, 12));
+  let k: keyschedule.TrafficKeys = keyschedule.traffic_keys(keyschedule.Aes128GcmSha256, secret);
+  return shown(k.key) + " " + shown(k.iv);
 }
 
 function test_aes_128_traffic_keys(): test.TestOutcome {
@@ -192,12 +193,12 @@ function test_chacha20_poly1305_traffic_keys(): test.TestOutcome {
   return test.assert_eq(shown(c.key) + " " + shown(c.iv), "c8afd24f48952725381a54085e8d8e3856d8d89e3019243b30a9db54809a3732 5b78923dee08579033e523d9");
 }
 
+function suite_shape(s: keyschedule.CipherSuite): string {
+  return int.int_to_string(s.hash().size()) + "/" + int.int_to_string(s.aead().key_len());
+}
+
 function test_cipher_suite(): test.TestOutcome {
-  let suite: keyschedule.CipherSuite = keyschedule.ChaCha20Poly1305Sha256;
-  if (suite.hash().size() != 32) {
-    return test.fail("hash");
-  }
-  return test.assert_eq(suite.aead().key_len(), 32);
+  return test.assert_eq(suite_shape(keyschedule.Aes128GcmSha256) + " " + suite_shape(keyschedule.Aes256GcmSha384) + " " + suite_shape(keyschedule.ChaCha20Poly1305Sha256), "32/16 48/32 32/32");
 }
 
 // Each side's verify_data, which the trace's Finished messages carry after
@@ -272,10 +273,9 @@ function test_sha384_master(): test.TestOutcome {
 
 function test_sha384_traffic(): test.TestOutcome {
   let h: keyschedule.Hash = keyschedule.Sha384;
-  let none: u8[] = [];
   let th: u8[] = th_server_finished(h);
-  let s_ap: u8[] = master(h).server_traffic(th);
-  if (shown(keyschedule.hkdf_expand_label(h, s_ap, "key", none, 32)) + " " + shown(keyschedule.hkdf_expand_label(h, s_ap, "iv", none, 12)) != "c662148873b603bd489063ed551439ecdc8723af4addab36f6bd119a221e5a35 290f1d18cef19ec9685d2da8") {
+  let k: keyschedule.TrafficKeys = keyschedule.traffic_keys(keyschedule.Aes256GcmSha384, master(h).server_traffic(th));
+  if (shown(k.key) + " " + shown(k.iv) != "c662148873b603bd489063ed551439ecdc8723af4addab36f6bd119a221e5a35 290f1d18cef19ec9685d2da8") {
     return test.fail("traffic key and iv");
   }
   if (shown(keyschedule.next_traffic_secret(h, master(h).client_traffic(th))) != "b0b16e4f620fefa7edc022e6ea7481ef1aa3bf78fa9427124d72b7a23b67b587c41c7351cfdc0e329f36c4906189c219") {

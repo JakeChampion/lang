@@ -2180,14 +2180,20 @@ function needed_past(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: 
 // another of v's slots is let through, as `reached_past_take` and
 // `read_later_in_block` do: what keeps v live is then not the slot taken. A
 // read of the taken slot itself still counts, so a take a loop would run again
-// on the same box is refused.
+// on the same box is refused. The walk keeps to v's live range: a block v is
+// not live out of hands it to no successor, phi edges included, and a block v
+// is not live into reads it nowhere.
 function named_after(f: ssasem.Func, fl: ssalive.Flow, bi: i32, v: i32, take: ssa.SInst): boolean {
   let seen: boolean[] = __alloc_bool(f.graph.blocks.len());
   let work: i32[] = [bi];
   let next: i32 = 0;
   while (next < work.len()) {
-    let from: ssa.SBlock = f.graph.blocks[work[next]];
+    let at: i32 = work[next];
     next = next + 1;
+    if (!ssalive.live_out_has(fl, at, v)) {
+      continue;
+    }
+    let from: ssa.SBlock = f.graph.blocks[at];
     for id in successors(from) {
       let k: i32 = ssalive.position(fl, id);
       if (k >= 0) {
@@ -2197,7 +2203,7 @@ function named_after(f: ssasem.Func, fl: ssalive.Flow, bi: i32, v: i32, take: ss
         }
         if (!seen[k]) {
           seen = seen.with(k, true);
-          if (!block_defines(blk, v)) {
+          if (ssalive.live_in_has(fl, k, v) && !block_defines(blk, v)) {
             if (block_reads(blk, v, take)) {
               return true;
             }
