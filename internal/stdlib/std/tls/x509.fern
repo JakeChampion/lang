@@ -1,0 +1,539 @@
+// std/tls/x509 — X.509 certificates (RFC 5280) as TLS reads them: the
+// fields path validation and name checking need, parsed from DER.
+//
+//   let cert: x509.Certificate = x509.parse(der_bytes)?;
+//   // cert.subject.common_name, cert.dns_names, cert.not_after, cert.key, …
+//
+// Parsing is strict where it matters to validation: the outer and inner
+// signature algorithms must agree, an extension may appear once, and a
+// critical extension this module does not understand is kept in
+// `unknown_critical` for the verifier to refuse. Extensions it does not
+// need and that are not critical are skipped.
+
+import "core/int";
+import "std/tls/der";
+
+// Algorithm — a signature algorithm a certificate is signed with.
+pub enum Algorithm {
+  RsaPkcs1Sha256,
+  RsaPkcs1Sha384,
+  RsaPkcs1Sha512,
+  RsaPssSha256,
+  RsaPssSha384,
+  RsaPssSha512,
+  EcdsaSha256,
+  EcdsaSha384,
+  Ed25519,
+  // Another algorithm, by OID.
+  OtherAlgorithm(string),
+}
+
+// PublicKey — a certificate's subject key: an RSA modulus and exponent, an
+// uncompressed P-256 point, an Ed25519 key, or another algorithm by OID.
+pub enum PublicKey {
+  RsaKey(u8[], u8[]),
+  P256Key(u8[]),
+  Ed25519Key(u8[]),
+  OtherKey(string),
+}
+
+// Name — a distinguished name: its DER, which issuer matching compares, and
+// its common name, empty when it has none.
+pub struct Name { raw: u8[], common_name: string }
+
+// KeyUsage bits, as `key_usage` holds them.
+pub const KU_DIGITAL_SIGNATURE: i32 = 1;
+
+pub const KU_KEY_CERT_SIGN: i32 = 32;
+
+pub const EKU_SERVER_AUTH: string = "1.3.6.1.5.5.7.3.1";
+
+pub const EKU_ANY: string = "2.5.29.37.0";
+
+// Certificate — a parsed certificate. `tbs` is the signed part, `path_len`
+// is -1 when unconstrained, and `key_usage` is -1 when the extension is
+// absent; `ext_key_usage` and the subject alternative names are empty when
+// theirs is, with `has_ext_key_usage` telling an absent list from an empty
+// one.
+pub struct Certificate {
+  raw: u8[],
+  tbs: u8[],
+  version: i32,
+  serial: u8[],
+  algorithm: Algorithm,
+  issuer: Name,
+  subject: Name,
+  not_before: i64,
+  not_after: i64,
+  key: PublicKey,
+  ca: boolean,
+  path_len: i32,
+  key_usage: i32,
+  ext_key_usage: string[],
+  has_ext_key_usage: boolean,
+  dns_names: string[],
+  ip_addresses: u8[][],
+  unknown_critical: string[],
+  signature: u8[],
+}
+
+// X509Error — DER that does not parse, or a certificate that breaks RFC
+// 5280, naming what.
+pub enum X509Error {
+  Der(der.DerError),
+  Malformed(string),
+}
+
+pub function (e: X509Error) message(): string {
+  match (e) {
+    Der(d) => {
+      return "x509: " + d.message();
+    },
+    Malformed(what) => {
+      return "x509: malformed " + what;
+    }
+  }
+  return "";
+}
+
+function __d[T](r: Result[T, der.DerError]): Result[T, X509Error] {
+  match (r) {
+    Ok(v) => {
+      return Ok(v);
+    },
+    Err(e) => {
+      return Err(Der(e));
+    }
+  }
+  return Err(Malformed("der"));
+}
+
+function __n(parts: der.Element[], n: i32, what: string): Result[boolean, X509Error] {
+  if (parts.len() < n) {
+    return Err(Malformed(what));
+  }
+  return Ok(true);
+}
+
+// Hash OIDs, for RSASSA-PSS parameters.
+const SHA256: string = "2.16.840.1.101.3.4.2.1";
+
+const SHA384: string = "2.16.840.1.101.3.4.2.2";
+
+const SHA512: string = "2.16.840.1.101.3.4.2.3";
+
+// __algorithm reads an AlgorithmIdentifier.
+function __algorithm(b: [u8], e: der.Element): Result[Algorithm, X509Error] {
+  let parts: der.Element[] = __d(der.children(b, e))?;
+  __n(parts, 1, "AlgorithmIdentifier")?;
+  let oid: string = __d(der.oid(b, parts[0]))?;
+  if (oid == "1.2.840.113549.1.1.10") {
+    return __pss(b, parts);
+  }
+  let named: Algorithm = __named(oid);
+  // PKCS #1 v1.5 carries a NULL; the ECDSA and EdDSA identifiers carry
+  // nothing.
+  if (parts.len() == 2 && (parts[1].tag != der.NULL || parts[1].to != parts[1].from)) {
+    return Err(Malformed("algorithm parameters"));
+  }
+  if (parts.len() > 2) {
+    return Err(Malformed("AlgorithmIdentifier"));
+  }
+  return Ok(named);
+}
+
+function __named(oid: string): Algorithm {
+  let oids: string[] = ["1.2.840.113549.1.1.11", "1.2.840.113549.1.1.12", "1.2.840.113549.1.1.13", "1.2.840.10045.4.3.2", "1.2.840.10045.4.3.3", "1.3.101.112"];
+  let algs: Algorithm[] = [RsaPkcs1Sha256, RsaPkcs1Sha384, RsaPkcs1Sha512, EcdsaSha256, EcdsaSha384, Ed25519];
+  let i: i32 = 0;
+  while (i < oids.len()) {
+    if (oids[i] == oid) {
+      return algs[i];
+    }
+    i = i + 1;
+  }
+  return OtherAlgorithm(oid);
+}
+
+// Pss — RSASSA-PSS-params as read: the hash, the mask generation function
+// and its hash, and the salt length.
+struct Pss { hash: string, mgf: string, mgf_hash: string, salt: i32 }
+
+// __pss reads RSASSA-PSS-params; only MGF1 over the same hash with a salt as
+// long as the digest, the parameters TLS uses, are understood.
+function __pss(b: [u8], parts: der.Element[]): Result[Algorithm, X509Error] {
+  __n(parts, 2, "RSASSA-PSS-params")?;
+  let params: der.Element[] = __d(der.children(b, parts[1]))?;
+  if (!__pss_shape(params)) {
+    return Ok(OtherAlgorithm("1.2.840.113549.1.1.10"));
+  }
+  let p: Pss = __pss_fields(b, params)?;
+  if (p.mgf != "1.2.840.113549.1.1.8" || p.mgf_hash != p.hash) {
+    return Ok(OtherAlgorithm("1.2.840.113549.1.1.10"));
+  }
+  return Ok(__pss_alg(p.hash, p.salt));
+}
+
+// The hash [0], mask generation [1] and salt length [2], all given.
+function __pss_shape(params: der.Element[]): boolean {
+  return params.len() == 3 && params[0].tag == der.context(0, true) && params[1].tag == der.context(1, true) && params[2].tag == der.context(2, true);
+}
+
+function __pss_fields(b: [u8], params: der.Element[]): Result[Pss, X509Error] {
+  let hash: string = __hash_oid(b, __d(der.read(b, params[0].from))?)?;
+  let mgf: der.Element[] = __d(der.children(b, __d(der.read(b, params[1].from))?))?;
+  __n(mgf, 2, "MaskGenAlgorithm")?;
+  let salt: i32 = __d(der.small(b, __d(der.read(b, params[2].from))?))?;
+  return Ok(Pss { hash: hash, mgf: __d(der.oid(b, mgf[0]))?, mgf_hash: __hash_oid(b, mgf[1])?, salt: salt });
+}
+
+function __pss_alg(hash: string, salt: i32): Algorithm {
+  if (hash == SHA256 && salt == 32) {
+    return RsaPssSha256;
+  }
+  if (hash == SHA384 && salt == 48) {
+    return RsaPssSha384;
+  }
+  if (hash == SHA512 && salt == 64) {
+    return RsaPssSha512;
+  }
+  return OtherAlgorithm("1.2.840.113549.1.1.10");
+}
+
+// __hash_oid reads a hash AlgorithmIdentifier's OID.
+function __hash_oid(b: [u8], e: der.Element): Result[string, X509Error] {
+  let parts: der.Element[] = __d(der.children(b, e))?;
+  __n(parts, 1, "hash algorithm")?;
+  return __d(der.oid(b, parts[0]));
+}
+
+function __same_algorithm(a: Algorithm, b: Algorithm): boolean {
+  return algorithm_name(a) == algorithm_name(b);
+}
+
+// algorithm_name is the algorithm's name, or its OID when it is another.
+// One arm per variant.
+// fern-lint: allow cyclomatic-complexity
+pub function algorithm_name(a: Algorithm): string {
+  match (a) {
+    RsaPkcs1Sha256 => {
+      return "rsa_pkcs1_sha256";
+    },
+    RsaPkcs1Sha384 => {
+      return "rsa_pkcs1_sha384";
+    },
+    RsaPkcs1Sha512 => {
+      return "rsa_pkcs1_sha512";
+    },
+    RsaPssSha256 => {
+      return "rsa_pss_sha256";
+    },
+    RsaPssSha384 => {
+      return "rsa_pss_sha384";
+    },
+    RsaPssSha512 => {
+      return "rsa_pss_sha512";
+    },
+    EcdsaSha256 => {
+      return "ecdsa_sha256";
+    },
+    EcdsaSha384 => {
+      return "ecdsa_sha384";
+    },
+    Ed25519 => {
+      return "ed25519";
+    },
+    OtherAlgorithm(oid) => {
+      return oid;
+    }
+  }
+  return "";
+}
+
+// __name reads a Name, keeping its DER and its first common name.
+function __name(b: [u8], e: der.Element): Result[Name, X509Error] {
+  if (e.tag != der.SEQUENCE) {
+    return Err(Malformed("Name"));
+  }
+  let cn: string = "";
+  let rdns: der.Element[] = __d(der.children(b, e))?;
+  let i: i32 = 0;
+  while (i < rdns.len()) {
+    let found: string = __rdn_common_name(b, rdns[i])?;
+    if (cn.len() == 0) {
+      cn = found;
+    }
+    i = i + 1;
+  }
+  return Ok(Name { raw: der.whole(b, e), common_name: cn });
+}
+
+function __rdn_common_name(b: [u8], rdn: der.Element): Result[string, X509Error] {
+  if (rdn.tag != der.SET) {
+    return Err(Malformed("RelativeDistinguishedName"));
+  }
+  let atvs: der.Element[] = __d(der.children(b, rdn))?;
+  let i: i32 = 0;
+  while (i < atvs.len()) {
+    let tv: der.Element[] = __d(der.children(b, atvs[i]))?;
+    __n(tv, 2, "AttributeTypeAndValue")?;
+    if (__d(der.oid(b, tv[0]))? == "2.5.4.3") {
+      return __d(der.text(b, tv[1]));
+    }
+    i = i + 1;
+  }
+  return Ok("");
+}
+
+// __key reads a SubjectPublicKeyInfo.
+function __key(b: [u8], e: der.Element): Result[PublicKey, X509Error] {
+  let parts: der.Element[] = __d(der.children(b, e))?;
+  __n(parts, 2, "SubjectPublicKeyInfo")?;
+  let alg: der.Element[] = __d(der.children(b, parts[0]))?;
+  __n(alg, 1, "SubjectPublicKeyInfo algorithm")?;
+  let bits: der.BitString = __d(der.bit_string(b, parts[1]))?;
+  if (bits.unused != 0) {
+    return Err(Malformed("subjectPublicKey"));
+  }
+  return __key_of(b, __d(der.oid(b, alg[0]))?, alg, bits.bytes);
+}
+
+function __key_of(b: [u8], oid: string, alg: der.Element[], k: u8[]): Result[PublicKey, X509Error] {
+  if (oid == "1.2.840.113549.1.1.1") {
+    return __rsa_key(k);
+  }
+  if (oid == "1.2.840.10045.2.1") {
+    __n(alg, 2, "EC parameters")?;
+    if (__d(der.oid(b, alg[1]))? == "1.2.840.10045.3.1.7") {
+      return Ok(P256Key(k));
+    }
+  }
+  if (oid == "1.3.101.112" && k.len() == 32) {
+    return Ok(Ed25519Key(k));
+  }
+  return Ok(OtherKey(oid));
+}
+
+function __rsa_key(k: u8[]): Result[PublicKey, X509Error] {
+  let seq: der.Element = __d(der.only(k, der.SEQUENCE))?;
+  let parts: der.Element[] = __d(der.children(k, seq))?;
+  if (parts.len() != 2) {
+    return Err(Malformed("RSAPublicKey"));
+  }
+  return Ok(RsaKey(__d(der.unsigned(k, parts[0]))?, __d(der.unsigned(k, parts[1]))?));
+}
+
+// The extensions read so far, and the certificate they fill in.
+struct Exts { cert: Certificate, seen: string[] }
+
+function __extensions(b: [u8], e: der.Element, c: Certificate): Result[Certificate, X509Error] {
+  let list: der.Element = __d(der.read(b, e.from))?;
+  if (list.tag != der.SEQUENCE || list.next != e.to) {
+    return Err(Malformed("Extensions"));
+  }
+  let exts: der.Element[] = __d(der.children(b, list))?;
+  let acc: Exts = Exts { cert: c, seen: [] };
+  let i: i32 = 0;
+  while (i < exts.len()) {
+    acc = __extension(b, exts[i], acc)?;
+    i = i + 1;
+  }
+  return Ok(acc.cert);
+}
+
+function __extension(b: [u8], e: der.Element, acc: Exts): Result[Exts, X509Error] {
+  let parts: der.Element[] = __d(der.children(b, e))?;
+  __n(parts, 2, "Extension")?;
+  let oid: string = __d(der.oid(b, parts[0]))?;
+  if (__has(acc.seen, oid)) {
+    return Err(Malformed("repeated extension " + oid));
+  }
+  let critical: boolean = false;
+  let value: der.Element = parts[parts.len() - 1];
+  if (parts.len() == 3) {
+    critical = __d(der.boolean_value(b, parts[1]))?;
+  }
+  if (value.tag != der.OCTET_STRING || parts.len() > 3) {
+    return Err(Malformed("Extension"));
+  }
+  let cert: Certificate = __apply(oid, critical, der.bytes(b, value), acc.cert)?;
+  return Ok(Exts { cert: cert, seen: acc.seen.append(oid) });
+}
+
+function __has(v: string[], x: string): boolean {
+  for s in v {
+    if (s == x) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// __apply reads the extensions validation uses.
+function __apply(oid: string, critical: boolean, v: u8[], c: Certificate): Result[Certificate, X509Error] {
+  if (oid == "2.5.29.19") {
+    return __basic_constraints(v, c);
+  }
+  if (oid == "2.5.29.15") {
+    return __key_usage(v, c);
+  }
+  if (oid == "2.5.29.37") {
+    return __ext_key_usage(v, c);
+  }
+  if (oid == "2.5.29.17") {
+    return __subject_alt_name(v, c);
+  }
+  if (critical) {
+    return Ok(Certificate { ...c, unknown_critical: c.unknown_critical.append(oid) });
+  }
+  return Ok(c);
+}
+
+// BasicConstraints ::= SEQUENCE { cA BOOLEAN DEFAULT FALSE,
+// pathLenConstraint INTEGER OPTIONAL }
+function __basic_constraints(v: u8[], c: Certificate): Result[Certificate, X509Error] {
+  let seq: der.Element = __d(der.only(v, der.SEQUENCE))?;
+  let parts: der.Element[] = __d(der.children(v, seq))?;
+  let ca: boolean = false;
+  let path_len: i32 = -1;
+  let i: i32 = 0;
+  if (i < parts.len() && parts[i].tag == der.BOOLEAN) {
+    ca = __d(der.boolean_value(v, parts[i]))?;
+    i = i + 1;
+  }
+  if (i < parts.len()) {
+    path_len = __d(der.small(v, parts[i]))?;
+    i = i + 1;
+  }
+  if (i != parts.len()) {
+    return Err(Malformed("BasicConstraints"));
+  }
+  return Ok(Certificate { ...c, ca: ca, path_len: path_len });
+}
+
+// KeyUsage is a BIT STRING whose bit n is the first byte's 0x80 >> n; it is
+// kept as an int with 1 << n set.
+function __key_usage(v: u8[], c: Certificate): Result[Certificate, X509Error] {
+  let bits: der.BitString = __d(der.bit_string(v, __d(der.only(v, der.BIT_STRING))?))?;
+  let usage: i32 = 0;
+  let n: i32 = 0;
+  while (n < 16 && n / 8 < bits.bytes.len()) {
+    if ((bits.bytes[n / 8] as i32 & 0x80 >> n % 8) != 0) {
+      usage = usage | 1 << n;
+    }
+    n = n + 1;
+  }
+  return Ok(Certificate { ...c, key_usage: usage });
+}
+
+function __ext_key_usage(v: u8[], c: Certificate): Result[Certificate, X509Error] {
+  let seq: der.Element = __d(der.only(v, der.SEQUENCE))?;
+  let parts: der.Element[] = __d(der.children(v, seq))?;
+  let out: string[] = [];
+  let i: i32 = 0;
+  while (i < parts.len()) {
+    out = out.append(__d(der.oid(v, parts[i]))?);
+    i = i + 1;
+  }
+  return Ok(Certificate { ...c, ext_key_usage: out, has_ext_key_usage: true });
+}
+
+// GeneralNames: dNSName is [2] and iPAddress [7]; the rest are skipped.
+function __subject_alt_name(v: u8[], c: Certificate): Result[Certificate, X509Error] {
+  let seq: der.Element = __d(der.only(v, der.SEQUENCE))?;
+  let parts: der.Element[] = __d(der.children(v, seq))?;
+  let dns: string[] = [];
+  let ips: u8[][] = [];
+  let i: i32 = 0;
+  while (i < parts.len()) {
+    if (parts[i].tag == der.context(2, false)) {
+      dns = dns.append(__d(der.text(v, der.Element { ...parts[i], tag: der.IA5_STRING }))?);
+    }
+    if (parts[i].tag == der.context(7, false)) {
+      ips = ips.append(der.bytes(v, parts[i]));
+    }
+    i = i + 1;
+  }
+  return Ok(Certificate { ...c, dns_names: dns, ip_addresses: ips });
+}
+
+// __validity reads Validity ::= SEQUENCE { notBefore Time, notAfter Time }.
+function __validity(b: [u8], e: der.Element, c: Certificate): Result[Certificate, X509Error] {
+  let parts: der.Element[] = __d(der.children(b, e))?;
+  if (parts.len() != 2) {
+    return Err(Malformed("Validity"));
+  }
+  return Ok(Certificate { ...c, not_before: __d(der.time(b, parts[0]))?, not_after: __d(der.time(b, parts[1]))? });
+}
+
+function __empty(raw: [u8]): Certificate {
+  let none: Name = Name { raw: [], common_name: "" };
+  return Certificate { raw: der.bytes(raw, der.Element { tag: 0, start: 0, from: 0, to: raw.len(), next: raw.len() }), tbs: [], version: 1, serial: [], algorithm: OtherAlgorithm(""), issuer: none, subject: none, not_before: 0 as i64, not_after: 0 as i64, key: OtherKey(""), ca: false, path_len: -1, key_usage: -1, ext_key_usage: [], has_ext_key_usage: false, dns_names: [], ip_addresses: [], unknown_critical: [], signature: [] };
+}
+
+// __tbs reads the TBSCertificate's fields into c: the version, which a
+// version 1 certificate leaves out, then six fields, then the tail.
+function __tbs(b: [u8], tbs: der.Element, c: Certificate): Result[Certificate, X509Error] {
+  let parts: der.Element[] = __d(der.children(b, tbs))?;
+  let i: i32 = 0;
+  let cert: Certificate = c;
+  if (parts.len() > 0 && parts[0].tag == der.context(0, true)) {
+    cert = Certificate { ...cert, version: __d(der.small(b, __d(der.read(b, parts[0].from))?))? + 1 };
+    i = 1;
+  }
+  __n(parts, i + 6, "TBSCertificate")?;
+  return __tbs_tail(b, parts, i + 6, __tbs_fields(b, parts, i, cert)?);
+}
+
+// The serial number, signature algorithm, issuer, validity, subject and key.
+function __tbs_fields(b: [u8], parts: der.Element[], i: i32, c: Certificate): Result[Certificate, X509Error] {
+  let cert: Certificate = Certificate { ...c, serial: der.bytes(b, parts[i]), algorithm: __algorithm(b, parts[i + 1])?, issuer: __name(b, parts[i + 2])? };
+  cert = __validity(b, parts[i + 3], cert)?;
+  return Ok(Certificate { ...cert, subject: __name(b, parts[i + 4])?, key: __key(b, parts[i + 5])? });
+}
+
+// After the key: the optional unique identifiers [1] and [2], then the
+// extensions [3], which only a version 3 certificate has.
+function __tbs_tail(b: [u8], parts: der.Element[], from: i32, c: Certificate): Result[Certificate, X509Error] {
+  let i: i32 = from;
+  while (i < parts.len() && (parts[i].tag == der.context(1, false) || parts[i].tag == der.context(2, false))) {
+    i = i + 1;
+  }
+  let cert: Certificate = c;
+  if (i < parts.len() && parts[i].tag == der.context(3, true) && c.version == 3) {
+    cert = __extensions(b, parts[i], cert)?;
+    i = i + 1;
+  }
+  if (i != parts.len()) {
+    return Err(Malformed("TBSCertificate"));
+  }
+  return Ok(cert);
+}
+
+// parse reads one DER certificate, which must fill raw.
+pub function parse(raw: [u8]): Result[Certificate, X509Error] {
+  let outer: der.Element = __d(der.only(raw, der.SEQUENCE))?;
+  let parts: der.Element[] = __d(der.children(raw, outer))?;
+  if (parts.len() != 3 || parts[0].tag != der.SEQUENCE) {
+    return Err(Malformed("Certificate"));
+  }
+  let cert: Certificate = __tbs(raw, parts[0], __empty(raw))?;
+  let sig: der.BitString = __d(der.bit_string(raw, parts[2]))?;
+  __agrees(cert, __algorithm(raw, parts[1])?, sig)?;
+  return Ok(Certificate { ...cert, tbs: der.whole(raw, parts[0]), signature: sig.bytes });
+}
+
+// __agrees checks the version, that the outer signature algorithm is the
+// inner one, and that the signature is whole bytes.
+function __agrees(c: Certificate, outer: Algorithm, sig: der.BitString): Result[boolean, X509Error] {
+  if (c.version < 1 || c.version > 3) {
+    return Err(Malformed("version"));
+  }
+  if (!__same_algorithm(outer, c.algorithm)) {
+    return Err(Malformed("signature algorithm: the two identifiers differ"));
+  }
+  if (sig.unused != 0) {
+    return Err(Malformed("signatureValue"));
+  }
+  return Ok(true);
+}

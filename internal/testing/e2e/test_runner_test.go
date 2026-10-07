@@ -1112,6 +1112,24 @@ func TestRunnerTLSKeyScheduleExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "tls_keyschedule", "std/tls/keyschedule", 17)
 }
 
+// `tests/stdlib/tls_der_test.fern` covers DER's lengths, tags and value
+// types, and every encoding DER forbids.
+func TestRunnerTLSDerExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "tls_der", "std/tls/der", 7)
+}
+
+// `tests/stdlib/tls_x509_test.fern` parses certificates of every key type
+// and RFC 8448's, and covers PEM both ways.
+func TestRunnerTLSX509ExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "tls_x509", "std/tls/x509", 6)
+}
+
+// `tests/stdlib/tls_verify_test.fern` validates chains, names and RFC
+// 8448's CertificateVerify, with every refusal.
+func TestRunnerTLSVerifyExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "tls_verify", "std/tls/verify", 7)
+}
+
 // `tests/stdlib/tls_handshake_test.fern` runs the client through RFC 8448 §3
 // byte for byte, the server to the trace's ServerHello, and the two against
 // each other across suites and groups.

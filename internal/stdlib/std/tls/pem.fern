@@ -1,0 +1,121 @@
+// std/tls/pem — the textual encoding of RFC 7468: DER wrapped in base64
+// between BEGIN and END lines, as certificate bundles and key files hold it.
+//
+//   let certs: u8[][] = pem.certificates(bundle_text)?;
+//   let text: string = pem.encode("CERTIFICATE", der_bytes);
+//
+// Text outside the blocks is ignored, so a bundle's comments pass through.
+// Inside a block every line is base64, decoded strictly.
+
+import "std/base64";
+import "std/string";
+
+// Block — one block: its label (CERTIFICATE, PRIVATE KEY, …) and its bytes.
+pub struct Block { label: string, bytes: u8[] }
+
+// PemError — a block whose END line is missing or names another label, or
+// whose body is not base64, with the label.
+pub enum PemError {
+  Unterminated(string),
+  MismatchedEnd(string),
+  BadBase64(string),
+}
+
+pub function (e: PemError) message(): string {
+  match (e) {
+    Unterminated(label) => {
+      return "pem: the " + label + " block has no END line";
+    },
+    MismatchedEnd(label) => {
+      return "pem: the " + label + " block ends with another label";
+    },
+    BadBase64(label) => {
+      return "pem: the " + label + " block is not base64";
+    }
+  }
+  return "";
+}
+
+// __label is the label of a BEGIN or END line of the given kind.
+function __label(line: string, kind: string): Option[string] {
+  match (line.strip_prefix("-----" + kind + " ")) {
+    Some(rest) => {
+      return rest.strip_suffix("-----");
+    },
+    None => {
+      return None;
+    }
+  }
+  return None;
+}
+
+// Open — the block being read: its label and its base64 so far.
+struct Open { label: string, body: string, open: boolean }
+
+// decode reads every block in text.
+pub function decode(text: string): Result[Block[], PemError] {
+  let out: Block[] = [];
+  let cur: Open = Open { label: "", body: "", open: false };
+  for raw in text.lines() {
+    let line: string = raw.trim();
+    if (!cur.open) {
+      if let Some(label) = __label(line, "BEGIN") {
+        cur = Open { label: label, body: "", open: true };
+      }
+    } else if (line.starts_with("-----END ")) {
+      out = out.append(__close(cur, line)?);
+      cur = Open { label: "", body: "", open: false };
+    } else {
+      cur = Open { ...cur, body: cur.body + line };
+    }
+  }
+  if (cur.open) {
+    return Err(Unterminated(cur.label));
+  }
+  return Ok(out);
+}
+
+function __close(cur: Open, line: string): Result[Block, PemError] {
+  match (__label(line, "END")) {
+    Some(label) => {
+      if (label != cur.label) {
+        return Err(MismatchedEnd(cur.label));
+      }
+    },
+    None => {
+      return Err(MismatchedEnd(cur.label));
+    }
+  }
+  match (base64.base64_decode_strict(cur.body)) {
+    Some(b) => {
+      return Ok(Block { label: cur.label, bytes: b });
+    },
+    None => {
+      return Err(BadBase64(cur.label));
+    }
+  }
+  return Err(BadBase64(cur.label));
+}
+
+// certificates is the DER of every CERTIFICATE block in text.
+pub function certificates(text: string): Result[u8[][], PemError] {
+  let out: u8[][] = [];
+  for b in decode(text)? {
+    if (b.label == "CERTIFICATE") {
+      out = out.append(b.bytes);
+    }
+  }
+  return Ok(out);
+}
+
+// encode wraps bytes as a block, its base64 in lines of 64.
+pub function encode(label: string, bytes: u8[]): string {
+  let body: string = base64.base64_encode(bytes);
+  let out: string = "-----BEGIN " + label + "-----\n";
+  let at: i32 = 0;
+  while (at < body.len()) {
+    out = out + body.drop(at).take(64) + "\n";
+    at = at + 64;
+  }
+  return out + "-----END " + label + "-----\n";
+}
