@@ -1121,13 +1121,19 @@ func TestRunnerTLSDerExamplePasses(t *testing.T) {
 // `tests/stdlib/tls_x509_test.fern` parses certificates of every key type
 // and RFC 8448's, and covers PEM both ways.
 func TestRunnerTLSX509ExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "tls_x509", "std/tls/x509", 6)
+	runnerSuitePasses(t, "tls_x509", "std/tls/x509", 7)
 }
 
-// `tests/stdlib/tls_verify_test.fern` validates chains, names and RFC
-// 8448's CertificateVerify, with every refusal.
+// `tests/stdlib/tls_verify_test.fern` validates chains, names, name
+// constraints and RFC 8448's CertificateVerify, with every refusal.
 func TestRunnerTLSVerifyExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "tls_verify", "std/tls/verify", 7)
+	runnerSuitePasses(t, "tls_verify", "std/tls/verify", 8)
+}
+
+// `tests/stdlib/tls_roots_test.fern` reads roots from a bundle on disk and
+// from the machine.
+func TestRunnerTLSRootsExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "tls_roots", "std/tls/verify roots", 3)
 }
 
 // `tests/stdlib/tls_handshake_test.fern` runs the client through RFC 8448 §3

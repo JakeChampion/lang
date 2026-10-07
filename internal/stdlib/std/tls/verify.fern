@@ -11,8 +11,9 @@
 // server's Certificate message, leaf first; its other certificates are
 // candidate intermediates in any order. A name is matched against the
 // leaf's subject alternative names only, never its common name. Name
-// constraints, policies and revocation are not checked: a certificate that
-// marks name constraints critical is refused.
+// constraints are enforced for DNS names and IP addresses; a certificate
+// that marks constraints of another form critical is refused. Policies and
+// revocation are not checked.
 
 import "core/int";
 import "std/crypto/ed25519";
@@ -44,6 +45,10 @@ pub enum VerifyError {
   NotForServers,
   NameMismatch(string),
   BadSignature(i32),
+  // A CA's name constraints exclude a name of a certificate below it.
+  NameConstraint(i32),
+  // No roots could be read from the file named.
+  RootsUnreadable(string),
   // A signature algorithm or key this module cannot check, by name.
   UnsupportedAlgorithm(string),
 }
@@ -91,6 +96,12 @@ pub function (e: VerifyError) message(): string {
     BadSignature(i) => {
       return "tls verify: certificate " + int.int_to_string(i) + "'s signature does not verify";
     },
+    RootsUnreadable(path) => {
+      return "tls verify: no certificates could be read from " + path;
+    },
+    NameConstraint(i) => {
+      return "tls verify: certificate " + int.int_to_string(i) + "'s name constraints exclude a name below it";
+    },
     UnsupportedAlgorithm(what) => {
       return "tls verify: unsupported " + what;
     }
@@ -124,6 +135,41 @@ pub function roots_from_pem(text: string): Result[Roots, VerifyError] {
     }
   }
   return Ok(Roots { certs: [] });
+}
+
+// The bundles distributions keep their trusted roots in, in the order Go's
+// crypto/x509 looks for them; macOS keeps one at the last.
+const BUNDLES: string[] = ["/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/ca-bundle.pem", "/etc/pki/tls/cacert.pem", "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem", "/etc/ssl/cert.pem"];
+
+// roots_from_file trusts the certificates in a PEM bundle file.
+pub function roots_from_file(path: string): Result[Roots, VerifyError] {
+  match (read_file(path)) {
+    Ok(text) => {
+      let r: Roots = roots_from_pem(text)?;
+      if (r.certs.len() > 0) {
+        return Ok(r);
+      }
+    },
+    Err(_) => {}
+  }
+  return Err(RootsUnreadable(path));
+}
+
+// system_roots trusts the machine's roots: the bundle SSL_CERT_FILE names
+// when it is set, else the first of the distributions' bundles that holds
+// any. None when there is none to read, as under WASI with no directory
+// granted.
+pub function system_roots(): Option[Roots] {
+  let paths: string[] = BUNDLES;
+  if let Some(p) = env("SSL_CERT_FILE") {
+    paths = [p];
+  }
+  for p in paths {
+    if let Ok(r) = roots_from_file(p) {
+      return Some(r);
+    }
+  }
+  return None;
 }
 
 // __signed_by checks that issuer's key made c's signature.
@@ -263,15 +309,16 @@ function __issuer_ok(c: x509.Certificate, at: i32, now: i64): Result[boolean, Ve
 // found.
 struct Search { found: boolean, err: VerifyError }
 
-// __extend tries each certificate that could have issued `c`, at position
-// `at`, roots first: a root ends the path, an intermediate continues it.
-function __extend(c: x509.Certificate, at: i32, inter: x509.Certificate[], roots: Roots, now: i64, s: Search): Search {
+// __extend tries each certificate that could have issued the last of
+// `below`, at position `at`, roots first: a root ends the path, an
+// intermediate continues it.
+function __extend(below: x509.Certificate[], at: i32, inter: x509.Certificate[], roots: Roots, now: i64, s: Search): Search {
   if (at >= MAX_PATH) {
     return Search { found: false, err: PathTooLong(at) };
   }
   let i: i32 = 0;
   while (i < roots.certs.len()) {
-    let r: Search = __try(c, roots.certs[i], at, now, s);
+    let r: Search = __try(below, roots.certs[i], at, now, s);
     if (r.found) {
       return r;
     }
@@ -280,9 +327,9 @@ function __extend(c: x509.Certificate, at: i32, inter: x509.Certificate[], roots
   }
   i = 0;
   while (i < inter.len()) {
-    let r: Search = __try(c, inter[i], at, now, s);
+    let r: Search = __try(below, inter[i], at, now, s);
     if (r.found) {
-      let up: Search = __extend(inter[i], at + 1, inter, roots, now, Search { found: false, err: r.err });
+      let up: Search = __extend(below.append(inter[i]), at + 1, inter, roots, now, Search { found: false, err: r.err });
       if (up.found) {
         return up;
       }
@@ -294,32 +341,90 @@ function __extend(c: x509.Certificate, at: i32, inter: x509.Certificate[], roots
   return s;
 }
 
-// __try checks candidate as c's issuer: names, signature and its own
-// fitness to issue. A found result means the candidate is usable; whether
-// it ends the path is the caller's.
-function __try(c: x509.Certificate, candidate: x509.Certificate, at: i32, now: i64, s: Search): Search {
+// __try checks candidate as the issuer of the last of `below`: names, its
+// fitness to issue, its name constraints over every certificate below it,
+// and last, as the dearest, the signature. A found result means the
+// candidate is usable; whether it ends the path is the caller's.
+function __try(below: x509.Certificate[], candidate: x509.Certificate, at: i32, now: i64, s: Search): Search {
+  let c: x509.Certificate = below[below.len() - 1];
   if (!__same_bytes(candidate.subject.raw, c.issuer.raw)) {
     return s;
   }
-  match (__signed_by(c, candidate)) {
+  match (__issuer_ok(candidate, at, now)) {
     Ok(ok) => {
-      if (!ok) {
-        return Search { found: false, err: BadSignature(at - 1) };
+      if (!__constraints_ok(candidate, below)) {
+        return Search { found: false, err: NameConstraint(at) };
       }
     },
     Err(e) => {
       return Search { found: false, err: e };
     }
   }
-  match (__issuer_ok(candidate, at, now)) {
+  match (__signed_by(c, candidate)) {
     Ok(ok) => {
-      return Search { found: true, err: s.err };
+      if (ok) {
+        return Search { found: true, err: s.err };
+      }
+      return Search { found: false, err: BadSignature(at - 1) };
     },
     Err(e) => {
       return Search { found: false, err: e };
     }
   }
   return s;
+}
+
+// __constraints_ok applies a CA's name constraints to the names of every
+// certificate below it. A form with no permitted subtree is unconstrained.
+function __constraints_ok(ca: x509.Certificate, below: x509.Certificate[]): boolean {
+  for b in below {
+    for d in b.dns_names {
+      if (ca.permitted_dns.len() > 0 && !__dns_within_any(d, ca.permitted_dns) || __dns_within_any(d, ca.excluded_dns)) {
+        return false;
+      }
+    }
+    for ip in b.ip_addresses {
+      if (ca.permitted_ip.len() > 0 && !__ip_within_any(ip, ca.permitted_ip) || __ip_within_any(ip, ca.excluded_ip)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// A DNS constraint covers its name and every name below it; one starting
+// with a dot covers only the names below it.
+function __dns_within_any(name: string, subtrees: string[]): boolean {
+  let n: string = __normal(name);
+  for t in subtrees {
+    let c: string = __normal(t);
+    if (c.len() == 0 || n == c && !c.starts_with(".") || n.ends_with(c) && c.starts_with(".") || n.ends_with("." + c)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// An IP subtree is an address then a mask of the same length.
+function __ip_within_any(ip: u8[], subtrees: u8[][]): boolean {
+  for t in subtrees {
+    if (t.len() == 2 * ip.len() && __masked_equal(ip, t)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function __masked_equal(ip: u8[], t: u8[]): boolean {
+  let n: i32 = ip.len();
+  let i: i32 = 0;
+  while (i < n) {
+    if ((ip[i] & t[n + i]) != (t[i] & t[n + i])) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
 }
 
 function __same_bytes(a: u8[], b: u8[]): boolean {
@@ -382,7 +487,7 @@ pub function verify_server(chain: u8[][], roots: Roots, name: string, now: i64):
   }
   let leaf: x509.Certificate = certs[0];
   __leaf_ok(leaf, name, now)?;
-  let s: Search = __extend(leaf, 1, certs.drop(1), roots, now, Search { found: false, err: UnknownIssuer });
+  let s: Search = __extend([leaf], 1, certs.drop(1), roots, now, Search { found: false, err: UnknownIssuer });
   if (!s.found) {
     return Err(s.err);
   }

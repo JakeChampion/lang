@@ -54,7 +54,8 @@ pub const EKU_ANY: string = "2.5.29.37.0";
 // is -1 when unconstrained, and `key_usage` is -1 when the extension is
 // absent; `ext_key_usage` and the subject alternative names are empty when
 // theirs is, with `has_ext_key_usage` telling an absent list from an empty
-// one.
+// one. The `permitted_*` and `excluded_*` lists are a CA's DNS and IP name
+// constraints, each IP subtree an address then its mask.
 pub struct Certificate {
   raw: u8[],
   tbs: u8[],
@@ -73,6 +74,10 @@ pub struct Certificate {
   has_ext_key_usage: boolean,
   dns_names: string[],
   ip_addresses: u8[][],
+  permitted_dns: string[],
+  excluded_dns: string[],
+  permitted_ip: u8[][],
+  excluded_ip: u8[][],
   unknown_critical: string[],
   signature: u8[],
 }
@@ -383,6 +388,9 @@ function __apply(oid: string, critical: boolean, v: u8[], c: Certificate): Resul
   if (oid == "2.5.29.17") {
     return __subject_alt_name(v, c);
   }
+  if (oid == "2.5.29.30") {
+    return __name_constraints(v, critical, c);
+  }
   if (critical) {
     return Ok(Certificate { ...c, unknown_critical: c.unknown_critical.append(oid) });
   }
@@ -457,6 +465,60 @@ function __subject_alt_name(v: u8[], c: Certificate): Result[Certificate, X509Er
   return Ok(Certificate { ...c, dns_names: dns, ip_addresses: ips });
 }
 
+// Subtrees — the DNS and IP subtrees of a GeneralSubtrees, and whether it
+// had one of another form, which this module does not evaluate.
+struct Subtrees { dns: string[], ips: u8[][], other: boolean }
+
+// NameConstraints ::= SEQUENCE { permittedSubtrees [0], excludedSubtrees [1] }.
+// A constraint of a form other than dNSName or iPAddress leaves a critical
+// extension unread, so the verifier refuses the certificate.
+function __name_constraints(v: u8[], critical: boolean, c: Certificate): Result[Certificate, X509Error] {
+  let seq: der.Element = __d(der.only(v, der.SEQUENCE))?;
+  let parts: der.Element[] = __d(der.children(v, seq))?;
+  let cert: Certificate = c;
+  let other: boolean = false;
+  for p in parts {
+    let t: Subtrees = __subtrees(v, p)?;
+    other = other || t.other;
+    if (p.tag == der.context(0, true)) {
+      cert = Certificate { ...cert, permitted_dns: t.dns, permitted_ip: t.ips };
+    } else if (p.tag == der.context(1, true)) {
+      cert = Certificate { ...cert, excluded_dns: t.dns, excluded_ip: t.ips };
+    } else {
+      return Err(Malformed("NameConstraints"));
+    }
+  }
+  if (other && critical) {
+    cert = Certificate { ...cert, unknown_critical: cert.unknown_critical.append("2.5.29.30") };
+  }
+  return Ok(cert);
+}
+
+// GeneralSubtree ::= SEQUENCE { base GeneralName, minimum [0] DEFAULT 0,
+// maximum [1] OPTIONAL }; RFC 5280 leaves the last two out, so a subtree with
+// either is counted as another form.
+function __subtrees(v: u8[], e: der.Element): Result[Subtrees, X509Error] {
+  let out: Subtrees = Subtrees { dns: [], ips: [], other: false };
+  for sub in __d(der.children(v, e))? {
+    out = __subtree(v, sub, out)?;
+  }
+  return Ok(out);
+}
+
+function __subtree(v: u8[], sub: der.Element, out: Subtrees): Result[Subtrees, X509Error] {
+  let parts: der.Element[] = __d(der.children(v, sub))?;
+  __n(parts, 1, "GeneralSubtree")?;
+  let base: der.Element = parts[0];
+  let n: i32 = base.to - base.from;
+  if (parts.len() == 1 && base.tag == der.context(2, false)) {
+    return Ok(Subtrees { ...out, dns: out.dns.append(__d(der.text(v, der.Element { ...base, tag: der.IA5_STRING }))?) });
+  }
+  if (parts.len() == 1 && base.tag == der.context(7, false) && (n == 8 || n == 32)) {
+    return Ok(Subtrees { ...out, ips: out.ips.append(der.bytes(v, base)) });
+  }
+  return Ok(Subtrees { ...out, other: true });
+}
+
 // __validity reads Validity ::= SEQUENCE { notBefore Time, notAfter Time }.
 function __validity(b: [u8], e: der.Element, c: Certificate): Result[Certificate, X509Error] {
   let parts: der.Element[] = __d(der.children(b, e))?;
@@ -468,7 +530,7 @@ function __validity(b: [u8], e: der.Element, c: Certificate): Result[Certificate
 
 function __empty(raw: [u8]): Certificate {
   let none: Name = Name { raw: [], common_name: "" };
-  return Certificate { raw: der.bytes(raw, der.Element { tag: 0, start: 0, from: 0, to: raw.len(), next: raw.len() }), tbs: [], version: 1, serial: [], algorithm: OtherAlgorithm(""), issuer: none, subject: none, not_before: 0 as i64, not_after: 0 as i64, key: OtherKey(""), ca: false, path_len: -1, key_usage: -1, ext_key_usage: [], has_ext_key_usage: false, dns_names: [], ip_addresses: [], unknown_critical: [], signature: [] };
+  return Certificate { raw: der.bytes(raw, der.Element { tag: 0, start: 0, from: 0, to: raw.len(), next: raw.len() }), tbs: [], version: 1, serial: [], algorithm: OtherAlgorithm(""), issuer: none, subject: none, not_before: 0 as i64, not_after: 0 as i64, key: OtherKey(""), ca: false, path_len: -1, key_usage: -1, ext_key_usage: [], has_ext_key_usage: false, dns_names: [], ip_addresses: [], permitted_dns: [], excluded_dns: [], permitted_ip: [], excluded_ip: [], unknown_critical: [], signature: [] };
 }
 
 // __tbs reads the TBSCertificate's fields into c: the version, which a

@@ -1446,15 +1446,21 @@ if (!verify.verify_signed(leaf, scheme, signed, signature)) { … }
   in a certificate covers exactly the leftmost label, and a name asked for
   is never a wildcard.
 - `roots(ders)` and `roots_from_pem(text)` make `Roots`, skipping
-  certificates that do not parse.
+  certificates that do not parse. `roots_from_file(path)` reads a bundle;
+  `system_roots()` reads the one `SSL_CERT_FILE` names, else the first of
+  the distributions' bundle paths (Debian, Fedora, OpenSUSE, RHEL, Alpine
+  and macOS) that holds any, and is None when none does
+  (`tests/stdlib/tls_roots_test.fern`).
 - `verify_signed(cert, scheme, signed, sig)` checks a CertificateVerify
   (ecdsa_secp256r1_sha256, rsa_pss_rsae_sha256/384/512, ed25519).
   `signature_ok(key, alg, msg, sig)` checks any signature this module
   knows, and `matches_name(cert, name)` is the name check alone.
 - `VerifyError` names the cause and the position up the path from the leaf,
   with `message()`.
-- Not checked: name constraints (a certificate marking them critical is
-  refused), policies and revocation.
+- Name constraints apply to the DNS names and IP addresses of every
+  certificate below the CA that sets them. A certificate marking constraints
+  of another form critical is refused. Policies and revocation are not
+  checked.
 
 ### `std/tls/x509`
 
@@ -1468,6 +1474,8 @@ X.509 certificates (RFC 5280) as TLS reads them. `parse(der)` answers a
 - `key`: `RsaKey(n, e)`, `P256Key(point)`, `Ed25519Key(k)` or
   `OtherKey(oid)`.
 - `ca`, `path_len`, `key_usage` (as `KU_*` bits) and `ext_key_usage`.
+- `permitted_dns`, `excluded_dns`, `permitted_ip` and `excluded_ip`, a CA's
+  name constraints (each IP subtree an address then its mask).
 - `dns_names` and `ip_addresses`.
 - `unknown_critical`, the critical extensions it does not read, for the
   verifier to refuse.

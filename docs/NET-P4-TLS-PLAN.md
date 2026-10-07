@@ -117,9 +117,11 @@ TLS itself is `std/tls/keyschedule`, `keyshare`, `message`, `record`,
    ECDSA P-256, Ed25519), and matches names against the subject
    alternative names only. `verify_signed` checks a CertificateVerify.
    Gate: chains made with Python's `cryptography` covering every refusal,
-   and RFC 8448's certificate and CertificateVerify. Remaining: the root
-   store, and name constraints, which are refused as an unknown critical
-   extension until then.
+   and RFC 8448's certificate and CertificateVerify. Then name constraints
+   over DNS names and IP addresses (other forms still refuse a critical
+   extension), and the system root store: `SSL_CERT_FILE`, then the
+   distributions' bundle paths. Remaining: the bundled CCADB list, as its own
+   module so that only a program that asks for it carries it.
 10. **`std/tls/client`.** X25519MLKEM768 by default, ALPN and
     HelloRetryRequest, wired into `fetch`'s `https`.
 11. **`std/tls/server`.** Resumption and client certificates, wired into
