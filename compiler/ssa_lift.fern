@@ -1133,6 +1133,9 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
   let sc_dl_from: i32[] = [];
   let sc_tl_from: i32[] = [];
   let sc_lp_from: i32[] = [];
+  // The op index each scope opened at; a loop's bounds how far back a
+  // slot's last read may sit and still run again (`read_horizon`).
+  let sc_op: i32[] = [];
   let sc_n: i32 = 0;
   let next_uid: i32 = 1;
 
@@ -1208,6 +1211,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
   let t_tee_local: i32 = ir.kind_id("tee_local");
   let t_u32_wrap: i32 = ir.kind_id("u32_wrap");
   let scan_tags: i32[] = [t_block, t_loop, t_if, t_end, t_store_local, t_tee_local];
+  let last_read: i32[] = last_reads(ops, nslots, t_load_local, t_dyn_dispatch);
   let i: i32 = 0;
   while (i < ops.len() && ok) {
     let op: ir.Op = ops[i];
@@ -1386,6 +1390,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         blocks = blocks.append(ssa.SBlock { id: cur_id, insts: cur_insts, term: cur_term, preds: cur_preds });
         // push an if-scope
         sc_kind = put_at_s(sc_kind, sc_n, "if");
+        sc_op = put_at(sc_op, sc_n, i);
         sc_uid = put_at(sc_uid, sc_n, next_uid);
         next_uid = next_uid + 1;
         sc_target = put_at(sc_target, sc_n, merge_id);
@@ -1455,6 +1460,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
       let exit_id: i32 = next_blk;
       next_blk = next_blk + 1;
       sc_kind = put_at_s(sc_kind, sc_n, "block");
+      sc_op = put_at(sc_op, sc_n, i);
       sc_uid = put_at(sc_uid, sc_n, next_uid);
       next_uid = next_uid + 1;
       sc_target = put_at(sc_target, sc_n, exit_id);
@@ -1506,6 +1512,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         slots = slots.with(hs, ph);
       }
       sc_kind = put_at_s(sc_kind, sc_n, "loop");
+      sc_op = put_at(sc_op, sc_n, i);
       sc_uid = put_at(sc_uid, sc_n, luid);
       sc_target = put_at(sc_target, sc_n, hdr_id);
       sc_else = put_at(sc_else, sc_n, 0);
@@ -1740,11 +1747,12 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         // Fold the if's writes into the enclosing scope: the else (or
         // only) arm's entries first, then the then-arm's that the
         // else arm did not write again.
+        let hq: i32 = read_horizon(sc_kind, sc_op, t2, i);
         let wq: i32 = dfrom;
         let jq: i32 = dfrom;
         while (jq < dl_n) {
           let sq: i32 = dl_slot[jq];
-          if (t2 > 0 && dl_prev[jq] < t2 - 1) {
+          if (t2 > 0 && dl_prev[jq] < t2 - 1 && last_read[sq] >= hq) {
             if (wq != jq) {
               dl_slot = dl_slot.with(wq, sq);
               dl_old = dl_old.with(wq, dl_old[jq]);
@@ -1759,7 +1767,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         let jt2: i32 = sc_tl_from[t2];
         while (jt2 < tl_n) {
           let st: i32 = tl_slot[jt2];
-          if (t2 > 0 && slot_mark[st] < t2 - 1) {
+          if (t2 > 0 && slot_mark[st] < t2 - 1 && last_read[st] >= hq) {
             dl_slot = put_at(dl_slot, dl_n, st);
             dl_old = put_at(dl_old, dl_n, tl_old[jt2]);
             dl_prev = put_at(dl_prev, dl_n, tl_prev[jt2]);
@@ -1896,11 +1904,12 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         }
         lp_n = lfrom;
         // Fold the body's writes into the enclosing scope.
+        let hl: i32 = read_horizon(sc_kind, sc_op, t2, i);
         let wl2: i32 = sc_dl_from[t2];
         let jl: i32 = wl2;
         while (jl < dl_n) {
           let sl: i32 = dl_slot[jl];
-          if (t2 > 0 && dl_prev[jl] < t2 - 1) {
+          if (t2 > 0 && dl_prev[jl] < t2 - 1 && last_read[sl] >= hl) {
             if (wl2 != jl) {
               dl_slot = dl_slot.with(wl2, sl);
               dl_old = dl_old.with(wl2, dl_old[jl]);
@@ -2047,11 +2056,12 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
         cur_term = STerm_none();
         cur_dead = bpreds.len() == 0;
         // Fold the block's writes into the enclosing scope.
+        let hb: i32 = read_horizon(sc_kind, sc_op, t2, i);
         let wb: i32 = dfrom_b;
         let jf: i32 = dfrom_b;
         while (jf < dl_n) {
           let sf: i32 = dl_slot[jf];
-          if (t2 > 0 && dl_prev[jf] < t2 - 1) {
+          if (t2 > 0 && dl_prev[jf] < t2 - 1 && last_read[sf] >= hb) {
             if (wb != jf) {
               dl_slot = dl_slot.with(wb, sf);
               dl_old = dl_old.with(wb, dl_old[jf]);
@@ -2133,6 +2143,47 @@ function edge_end(edge_from: i32[], e: i32, total: i32): i32 {
 // loop_writes lists, ascending and without repeats, the slots a store or
 // tee names between the loop opening at ops[at] and its matching end.
 // tags is [block, loop, if, end, store_local, tee_local].
+// last_reads is each slot's last read, as an op index, or -1: a load, or an
+// argument a dyn dispatch takes from its run of slots.
+function last_reads(ops: ir.Op[], nslots: i32, t_load: i32, t_dyn: i32): i32[] {
+  let out: i32[] = filled(nslots, 0 - 1);
+  let i: i32 = 0;
+  while (i < ops.len()) {
+    let o: ir.Op = ops[i];
+    let n: i32 = 0;
+    if (o.kind_tag == t_load) {
+      n = 1;
+    } else if (o.kind_tag == t_dyn) {
+      n = o.width;
+    }
+    let k: i32 = 0;
+    while (k < n) {
+      if (o.i32_imm + k >= 0 && o.i32_imm + k < nslots) {
+        out = out.with(o.i32_imm + k, i);
+      }
+      k = k + 1;
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// read_horizon is the earliest op a slot's last read must reach for the slot
+// to be read again once scope `t2` closes at op `at`: `at` itself, or the
+// start of the outermost loop still open around it, whose back edge runs its
+// body again. A row whose slot's last read falls short is dead there, and a
+// closing scope drops it rather than folding it into its parent.
+function read_horizon(kinds: string[], opened: i32[], t2: i32, at: i32): i32 {
+  let k: i32 = 0;
+  while (k < t2) {
+    if (kinds[k] == "loop") {
+      return opened[k];
+    }
+    k = k + 1;
+  }
+  return at;
+}
+
 function loop_writes(ops: ir.Op[], at: i32, nslots: i32, tags: i32[]): i32[] {
   let raw: i32[] = [];
   let lo: i32 = nslots;
