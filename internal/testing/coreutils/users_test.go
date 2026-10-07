@@ -74,7 +74,7 @@ func usersCases(t *testing.T) []invocation {
 
 	// Trailing bytes that are not a whole record, and a file far too
 	// short to hold one.
-	truncated := utmpRaw(t, dir, "truncated", append(append([]byte{}, oneRecordBytes(utmpMixed())...), "\x07\x00\x00\x00abc"...))
+	truncated := utmpRaw(t, dir, "truncated", append(utmpDB(utmpMixed()...), "\x07\x00\x00\x00abc"...))
 	stub := utmpRaw(t, dir, "stub", []byte{7, 0})
 	// A file whose length is a multiple of the record size but whose
 	// content is text: every "record" has a type no utility prints.
@@ -137,16 +137,6 @@ func usersCases(t *testing.T) []invocation {
 		{name: "stdout full with nothing to write", args: []string{empty}, stdout: stdoutFull},
 		{name: "stdout closed on a fault", args: []string{mixed, "extra"}, stdout: stdoutClosed},
 	}
-}
-
-// oneRecordBytes is the fixture's records as the bytes of a database,
-// for the cases that append something that is not a record.
-func oneRecordBytes(recs []utmpRec) []byte {
-	var out []byte
-	for _, r := range recs {
-		out = append(out, r.bytes()...)
-	}
-	return out
 }
 
 func TestUsersParity(t *testing.T) {
