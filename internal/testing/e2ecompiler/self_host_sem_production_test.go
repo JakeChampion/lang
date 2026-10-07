@@ -341,6 +341,7 @@ function main(): i32 {
 	// the array moves into the write and is written in place rather than
 	// copied (#9849); TestSelfHostSemanticAllocationCounts pins the count.
 	{name: "element-read-outlives-the-array-write", atLeast: 2, want: "6||a|g|bb|ee|ccc|dddd|ffffff|\n", src: semHeldElementSource},
+	{name: "field-read-outlives-the-record-move", atLeast: 2, want: "0|200|a|900|\n", src: semHeldFieldSource},
 	// A bodied `async function` is an ordinary function; on this path the bit
 	// only keeps it alive as a tree-shake root. semsource refused the
 	// modifier (#10794).
@@ -7694,6 +7695,46 @@ function main(): i32 {
 }
 `
 
+// semHeldFieldSource saves a record's field across a loop that moves the
+// record into a callee, which appends to another field: `block`'s `scope`
+// around `step`. The field read takes a unit of its own, so the record moves
+// into `step` and its appends land in place. As a borrow anchored to the
+// record it pinned the record for each call, and `step` copied `values` on
+// the first append of every block (#11834).
+const semHeldFieldSource = `
+import "std/i32";
+
+struct Scope { names: string[] }
+struct St { values: string[], scope: Scope, n: i32 }
+
+@noinline
+function step(s: St, k: i32): St {
+    return St { ...s, values: s.values.append("v"), n: s.n + k };
+}
+
+@noinline
+function block(s: St, k: i32): St {
+    let scope: Scope = s.scope;
+    let i: i32 = 0;
+    while (i < k) {
+        s = step(s, i);
+        i = i + 1;
+    }
+    return St { ...s, scope: scope };
+}
+
+function main(): i32 {
+    let s: St = St { values: [], scope: Scope { names: ["a"] }, n: 0 };
+    let j: i32 = 0;
+    while (j < 20) {
+        s = block(s, 10);
+        j = j + 1;
+    }
+    print(s.values.len().to_string() + "|" + s.scope.names[0] + "|" + s.n.to_string() + "|");
+    return 0;
+}
+`
+
 // semElementBesideArraySource hands an element of a table to a callee beside
 // the table itself, where the table dies: `copy_entry`'s `t.names[at]` and
 // `t.values[at]` next to `t`. The element read takes a unit of its own for
@@ -7764,6 +7805,8 @@ func TestSelfHostSemanticAllocationCounts(t *testing.T) {
 		src    string
 	}{
 		{"element-read-outlives-the-array-write", 6, semHeldElementSource},
+		// 51 while the saved field pinned the record across each call.
+		{"field-read-outlives-the-record-move", 13, semHeldFieldSource},
 		{"an-element-handed-beside-its-dying-array", 46, semElementBesideArraySource},
 		// A view merged past a source that dominates the join stays a view.
 		{"a-view-of-a-dominating-source-is-not-copied", 29, semDominatingViewSource},

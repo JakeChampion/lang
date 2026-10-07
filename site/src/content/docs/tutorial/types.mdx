@@ -28,6 +28,11 @@ function main(): i32 {
 }`}
 />
 
+A struct value cannot change after it is built: `p.x = 9;` is a compile
+error (E048). Build an updated copy instead — `Point { ...p, x: 9 }`
+copies every field of `p` except the ones you name. The binding `p` can
+still be reassigned to the new value.
+
 ## Methods
 
 The receiver goes between `function` and the name. Calls dispatch
@@ -99,5 +104,43 @@ That's the property that makes adding a variant safe: every `match` that
 now has a hole becomes a compile error pointing at the code that needs
 updating. Arms can also carry a `when` guard — but a guard can always
 fail, so a variant covered only by guarded arms still counts as a hole.
+
+## Option, Result and `?`
+
+Fern has no exceptions and no null. A value that may be absent is an
+`Option[T]` (`Some(v)` or `None`); an operation that can fail returns a
+`Result[T, E]` (`Ok(v)` or `Err(e)`). Inside a function that itself
+returns a `Result`, a trailing `?` unwraps an `Ok` or returns the `Err`
+to the caller; on an `Option` it does the same with `Some` and `None`.
+
+<FernPlayground
+  code={`import "std/i32";
+import "std/string";
+import "std/option";
+
+// ? unwraps an Ok, or returns the Err from this function.
+function area(w: string, h: string): Result[i32, string] {
+    let width: i32 = w.parse_int().ok_or("width is not a number")?;
+    let height: i32 = h.parse_int().ok_or("height is not a number")?;
+    return Ok(width * height);
+}
+
+function main(): i32 {
+    match (area("6", "7")) {
+        Ok(n) => { print(n.to_string()); },      // 42
+        Err(msg) => { print("error: " + msg); },
+    }
+    match (area("6", "seven")) {
+        Ok(n) => { print(n.to_string()); },
+        Err(msg) => { print("error: " + msg); }, // error: height is not a number
+    }
+    return 0;
+}`}
+/>
+
+`parse_int` answers an `Option[i32]`; `ok_or` turns its `None` into an
+`Err` carrying the message. [Error handling](../../reference/error-handling/)
+lists the combinators on both types; `let … else` and `defer` /
+`errdefer` are in [Language features](../../reference/language-features/).
 
 [Next: Modules →](../modules/)

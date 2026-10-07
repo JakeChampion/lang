@@ -1,0 +1,54 @@
+// Example-local queue prototype. Construct through new_ring; fields are internal.
+pub struct Ring[T] {
+  data: T[],
+  empty: T,
+  head: i32,
+  count: i32,
+  status: i32,
+}
+
+pub function new_ring[T](capacity: i32, empty: T): Option[Ring[T]] {
+  if (capacity < 1 || capacity > 4096) {
+    return None;
+  }
+  let data: T[] = [];
+  let i: i32 = 0;
+  while (i < capacity) {
+    data = data.append(empty);
+    i = i + 1;
+  }
+  return Some(Ring[T] { data: data, empty: empty, head: 0, count: 0, status: 0 });
+}
+
+pub fip function capacity[T](q: Ring[T]): i32 {
+  return q.data.len();
+}
+
+pub fip function at_or[T](q: Ring[T], index: i32, fallback: T): T {
+  if (index < 0 || index >= q.count) {
+    return fallback;
+  }
+  return q.data[(q.head + index) % q.data.len()];
+}
+
+pub fip function front_or[T](q: Ring[T], fallback: T): T {
+  return at_or(q, 0, fallback);
+}
+
+// Status0: success;1: full;2: empty. Refusal preserves the logical sequence.
+pub fip function push[T](own q: Ring[T], value: T): Ring[T] {
+  if (q.count == q.data.len()) {
+    return Ring[T] { ...q, status: 1 };
+  }
+  let tail: i32 = (q.head + q.count) % q.data.len();
+  q = Ring[T] { ...q, data: q.data.with(tail, value) };
+  return Ring[T] { ...q, count: q.count + 1, status: 0 };
+}
+
+pub fip function drop[T](own q: Ring[T]): Ring[T] {
+  if (q.count == 0) {
+    return Ring[T] { ...q, status: 2 };
+  }
+  q = Ring[T] { ...q, data: q.data.with(q.head, q.empty) };
+  return Ring[T] { ...q, head: (q.head + 1) % q.data.len(), count: q.count - 1, status: 0 };
+}

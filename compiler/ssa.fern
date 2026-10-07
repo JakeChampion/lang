@@ -2474,8 +2474,14 @@ pub function prune_trivial_phis(f: SFunc): Formed {
     flat = flat.append(resolve_repl(repl, i));
     i = i + 1;
   }
+  return Formed { f: rewrite_through(f, flat), repl: flat };
+}
+
+// rewrite_through drops every instruction whose result `flat` maps to another
+// value and points every reader at the value it maps to.
+function rewrite_through(f: SFunc, flat: i32[]): SFunc {
   // `nblocks` is written from the first block that changes on, and a block's
-  // `ninsts` from its first dropped phi or rewritten instruction on.
+  // `ninsts` from its first dropped or rewritten instruction on.
   let nblocks: SBlock[] = [];
   let copying: boolean = false;
   let bi: i32 = 0;
@@ -2486,7 +2492,7 @@ pub function prune_trivial_phis(f: SFunc): Formed {
     let k: i32 = 0;
     while (k < blk.insts.len()) {
       let ins: SInst = blk.insts[k];
-      let gone: boolean = ins.kind_tag == 8 && flat[ins.result] != ins.result;
+      let gone: boolean = ins.result >= 0 && flat[ins.result] != ins.result;
       let moved: boolean = !gone && args_move(ins, flat);
       if (!changed && (gone || moved)) {
         ninsts = insts_before(blk.insts, k);
@@ -2521,9 +2527,136 @@ pub function prune_trivial_phis(f: SFunc): Formed {
     bi = bi + 1;
   }
   if (!copying) {
-    return Formed { f: f, repl: flat };
+    return f;
   }
-  return Formed { f: SFunc { ...f, blocks: nblocks }, repl: flat };
+  return SFunc { ...f, blocks: nblocks };
+}
+
+// merge_duplicates maps an instruction that repeats an earlier one in its
+// block, the same pure operation on the same operands, onto the earlier one,
+// so a rotate whose operand is written out twice reaches fuse_rotates as one
+// value (#10615). Constants compare by value. Loads, calls and integer
+// divisions are left alone.
+function merge_duplicates(f: SFunc): Formed {
+  // `canon` is what each value compares as: the value it merged into, or for
+  // a constant the first constant of the same value, in any block.
+  let canon: i32[] = identity_repl(f.nvals);
+  let n: i32 = 0;
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (ins.kind_tag >= 1 && ins.kind_tag <= 3 || ins.kind_tag == 9 || ins.kind_tag == 10) {
+        n = n + 1;
+      }
+    }
+  }
+  let nb: i32 = n * 2 + 1;
+  let head: i32[] = util.minus_ones(nb);
+  let seen: SInst[] = [];
+  let seen_block: i32[] = [];
+  let next: i32[] = [];
+  let merged: i32[] = [];
+  let bi: i32 = 0;
+  while (bi < f.blocks.len()) {
+    for ins in f.blocks[bi].insts {
+      let scope: i32 = 0 - 2;
+      if (is_constant(ins, f.nvals)) {
+        scope = 0 - 1;
+      } else if (mergeable(ins)) {
+        scope = bi;
+      }
+      if (scope >= 0 - 1) {
+        let bk: i32 = (inst_hash(ins, canon) * 31 + (scope & 65535) & 1073741823) % nb;
+        let found: i32 = 0 - 1;
+        let j: i32 = head[bk];
+        while (j >= 0 && found < 0) {
+          if (seen_block[j] == scope && same_operation(seen[j], ins, canon)) {
+            found = seen[j].result;
+          }
+          j = next[j];
+        }
+        if (found >= 0) {
+          canon = canon.with(ins.result, found);
+          if (scope >= 0) {
+            merged = merged.append(ins.result).append(found);
+          }
+        } else {
+          next = next.append(head[bk]);
+          head = head.with(bk, seen.len());
+          seen = seen.append(ins);
+          seen_block = seen_block.append(scope);
+        }
+      }
+    }
+    bi = bi + 1;
+  }
+  if (merged.len() == 0) {
+    return Formed { f: f, repl: [] };
+  }
+  let repl: i32[] = identity_repl(f.nvals);
+  let k: i32 = 0;
+  while (k < merged.len()) {
+    repl = repl.with(merged[k], merged[k + 1]);
+    k = k + 2;
+  }
+  return Formed { f: rewrite_through(f, repl), repl: repl };
+}
+
+function identity_repl(n: i32): i32[] {
+  let out: i32[] = __alloc_i32(n);
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.with(i, i);
+    i = i + 1;
+  }
+  return out;
+}
+
+function is_constant(ins: SInst, nvals: i32): boolean {
+  return ins.kind_tag >= 1 && ins.kind_tag <= 3 && ins.result >= 0 && ins.result < nvals;
+}
+
+function mergeable(ins: SInst): boolean {
+  if (ins.result < 0) {
+    return false;
+  }
+  if (ins.kind_tag == 9) {
+    return !binary_fixes_abi(ins.str);
+  }
+  if (ins.kind_tag == 10) {
+    return ins.str == "!" || ins.str == "u32_wrap" || ins.str == "int_wrap" || ins.str == "int_extend"
+      || util.str_has_prefix(ins.str, "int_cast:") || util.str_has_prefix(ins.str, "rotr:");
+  }
+  return false;
+}
+
+function operand_id(a: i32, canon: i32[]): i32 {
+  if (a < 0 || a >= canon.len()) {
+    return a;
+  }
+  return canon[a];
+}
+
+// inst_hash is a non-negative hash of an instruction's operation and operands.
+function inst_hash(ins: SInst, canon: i32[]): i32 {
+  let h: i32 = (ins.kind_tag * 31 + (ins.imm & 65535)) * 31 + (__str_hash(ins.str, 0) & 65535) & 1048575;
+  for a in ins.args {
+    h = h * 31 + (operand_id(a, canon) & 1048575) & 1048575;
+  }
+  return h;
+}
+
+function same_operation(a: SInst, b: SInst, canon: i32[]): boolean {
+  if (a.kind_tag != b.kind_tag || a.imm != b.imm || a.args.len() != b.args.len() || a.str != b.str) {
+    return false;
+  }
+  let k: i32 = 0;
+  while (k < a.args.len()) {
+    if (operand_id(a.args[k], canon) != operand_id(b.args[k], canon)) {
+      return false;
+    }
+    k = k + 1;
+  }
+  return true;
 }
 
 // args_move reports whether `resolved` maps any operand of `ins` elsewhere.
@@ -3050,17 +3183,18 @@ function compose_repl(a: i32[], b: i32[]): i32[] {
 }
 
 // register_form is a lifted function as the register backends allocate it:
-// trivial phis folded, rotates fused, wraps nothing reads dropped, dead values
+// trivial phis folded, repeated pure operations merged, rotates fused, wraps nothing reads dropped, dead values
 // pruned, branches on boolean joins threaded and forwarding blocks threaded.
 pub function register_form(f: SFunc): Formed {
   let folded: Formed = prune_trivial_phis(f);
-  let unwrapped: Formed = drop_low_wraps(fuse_rotates(folded.f));
+  let merged: Formed = merge_duplicates(folded.f);
+  let unwrapped: Formed = drop_low_wraps(fuse_rotates(merged.f));
   let g: SFunc = prune_dead(unwrapped.f);
   let t: Threading = thread_bool_joins(g);
   if (t.changed) {
     g = prune_dead(t.f);
   }
-  return Formed { f: thread_forwarding(g), repl: compose_repl(folded.repl, unwrapped.repl) };
+  return Formed { f: thread_forwarding(g), repl: compose_repl(compose_repl(folded.repl, merged.repl), unwrapped.repl) };
 }
 
 // drop_low_wraps replaces a signed 32-bit wrap, extend or cast by its operand where

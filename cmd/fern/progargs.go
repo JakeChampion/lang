@@ -30,3 +30,14 @@ func programArgs(rest []string) ([]string, error) {
 	}
 	return rest, nil
 }
+
+// documentArgsError explains a -tangle / -weave / -doctest command line with
+// more than the one document: flags past it are not parsed, so `-o OUT`
+// written after the document would otherwise be dropped without a word.
+func documentArgsError(args []string) string {
+	extra := args[1]
+	if len(extra) > 1 && strings.HasPrefix(extra, "-") {
+		return fmt.Sprintf("fern: %s comes after the document, where flags are no longer parsed; put it before %s", extra, args[0])
+	}
+	return fmt.Sprintf("fern: one document expected, got %q and %q", args[0], extra)
+}

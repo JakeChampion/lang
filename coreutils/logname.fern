@@ -23,6 +23,9 @@
 //      user-process entry for that terminal. A descriptor that is not a
 //      terminal ends it here — there is no session to name.
 //
+// Darwin keeps the session's login name in the kernel, and getlogin(2)
+// answers alone there.
+//
 // Naming the terminal is ttyname(0), which is `lib/tty.fern`; matching it
 // against ut_line wants it without the `/dev/` prefix, which `who -m`
 // needs too and which lives in lib/utmp.fern beside that field.
@@ -66,6 +69,9 @@ function login_uid(): Option[i64] {
 }
 
 function login_name(): Option[string] {
+  if (target_os() == "darwin") {
+    return pwdb.session_login();
+  }
   match (login_uid()) {
     Some(uid) => {
       return pwdb.user_name(uid);

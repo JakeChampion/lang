@@ -96,3 +96,18 @@ func TestFlagAfterFileExitsNonZero(t *testing.T) {
 		})
 	}
 }
+
+// -tangle, -weave and -doctest read one document; a flag after it would be
+// dropped unparsed, so it is named in the refusal instead.
+func TestDocumentArgsError(t *testing.T) {
+	got := documentArgsError([]string{"prog.fern.md", "-o", "out.fern"})
+	for _, want := range []string{"-o comes after the document", "before prog.fern.md"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("documentArgsError = %q, missing %q", got, want)
+		}
+	}
+	got = documentArgsError([]string{"a.fern.md", "b.fern.md"})
+	if !strings.Contains(got, "one document expected") {
+		t.Errorf("documentArgsError = %q, want a one-document refusal", got)
+	}
+}

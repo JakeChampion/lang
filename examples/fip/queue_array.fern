@@ -1,0 +1,40 @@
+// Ordinary array FIFO control: append and copy the suffix when dropping front.
+// This deliberately uses the existing std/array API; operations may allocate.
+import "std/array";
+
+pub struct Ring {
+  data: i64[],
+  limit: i32,
+  count: i32,
+  status: i32,
+}
+
+pub function new_ring(capacity: i32, empty: i64): Option[Ring] {
+  if (capacity < 1 || capacity > 4096) {
+    return None;
+  }
+  return Some(Ring { data: [], limit: capacity, count: 0, status: 0 });
+}
+
+pub function at_or(q: Ring, index: i32, fallback: i64): i64 {
+  if (index < 0 || index >= q.count) {
+    return fallback;
+  }
+  return q.data[index];
+}
+
+pub function push(own q: Ring, value: i64): Ring {
+  if (q.count == q.limit) {
+    return Ring { ...q, status: 1 };
+  }
+  q = Ring { ...q, data: q.data.append(value) };
+  return Ring { ...q, count: q.count + 1, status: 0 };
+}
+
+pub function drop(own q: Ring): Ring {
+  if (q.count == 0) {
+    return Ring { ...q, status: 2 };
+  }
+  q = Ring { ...q, data: array.drop(q.data, 1) };
+  return Ring { ...q, count: q.count - 1, status: 0 };
+}

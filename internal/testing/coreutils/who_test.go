@@ -130,7 +130,7 @@ func whoCases(t *testing.T) []invocation {
 
 	// Non-text fields, and a file that is not a database.
 	raw := utmpFile(t, dir, "raw", utmpRec{typ: utUserProcess, pid: 1, line: "pts/\xff", id: "\xff", user: "a\xffb", host: "h\xfe", sec: utmpWhen})
-	truncated := utmpRaw(t, dir, "truncated", append(oneRecordBytes(utmpMixed()), "\x07\x00\x00\x00abc"...))
+	truncated := utmpRaw(t, dir, "truncated", append(utmpDB(utmpMixed()...), "\x07\x00\x00\x00abc"...))
 	text := utmpRaw(t, dir, "text", []byte(strings.Repeat("not a utmp file\n", utmpRecordSize/16)))
 	missing := filepath.Join(dir, "nosuch")
 
