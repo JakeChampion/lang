@@ -2182,6 +2182,15 @@ pub function op_statfs(): Op {
   return op0(270);
 }
 
+// `mounts` takes no operands and pushes a fresh Result[MountEntry[], IoError]:
+// the mounted filesystems in the order the kernel lists them (#9104). Linux
+// parses /proc/self/mountinfo and Darwin asks getfsstat(2); see
+// asmcore.rt_src_mounts. Refused on wasm with statfs, on the same `fsinfo`
+// gate: a preopen is a capability handle, not a mount.
+pub function op_mounts(): Op {
+  return op0(398);
+}
+
 // `subprocess` pops a stdin string, an args string[], and a cmd string (TOS
 // order stdin/args/cmd), spawns the child, pipes its streams, and pushes a fresh
 // ProcessResult struct {stdout, stderr, exit_code} (a VALUE op — three args
@@ -3682,6 +3691,9 @@ function kind_id_len6_f(name: string): i32 {
 }
 
 function kind_id_len6_m(name: string): i32 {
+  if (name == "mounts") {
+    return 398;
+  }
   if (name == "memcpy") {
     return 74;
   }
@@ -5794,6 +5806,9 @@ function buf_kind_name(id: i32): string {
 // extension tags beyond kind_count() (struct_copy=198 … buf_free=297)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
+  if (id == 398) {
+    return "mounts";
+  }
   if (id == 397) {
     return "proc_waitpid_status";
   }
@@ -5997,6 +6012,7 @@ function pops0(t: i32): boolean {
     || t == 251 || t == 252  // getcwd, cpu_count
     || t == 272 || t == 282  // rlimit_nofile, priority
     || t == 389  // clock_resolution
+    || t == 398  // mounts
     || t == 396  // disable_core_dumps
     || t == 298;  // sync
 }
@@ -8668,6 +8684,10 @@ pub function op_allocates(tag: i32): boolean {
   // statfs boxes a fresh FsStat struct + a Result wrapper, and heap-builds the
   // NUL-terminated path it hands the kernel.
   if (tag == 270) {
+    return true;
+  }
+  // mounts boxes a fresh MountEntry array + a Result wrapper.
+  if (tag == 398) {
     return true;
   }
   // window_size boxes a fresh WinSize struct + a Result wrapper.

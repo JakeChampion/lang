@@ -415,9 +415,6 @@ func TestDf(t *testing.T) {
 // by asking the kernel which of the paths the suite can reach keeps one; a
 // machine where none does fails rather than passing vacuously.
 func TestDfAvailableIsNotFree(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skipf("df reads /proc/self/mountinfo; %s has no such table", runtime.GOOS)
-	}
 	dir := t.TempDir()
 	var path string
 	var gap uint64
@@ -429,6 +426,9 @@ func TestDfAvailableIsNotFree(t *testing.T) {
 		if st.Bfree > st.Bavail && st.Bfree-st.Bavail > gap {
 			path, gap = cand, st.Bfree-st.Bavail
 		}
+	}
+	if path == "" && runtime.GOOS == "darwin" {
+		t.Skip("no reachable filesystem keeps a superuser reserve; APFS keeps none")
 	}
 	if path == "" {
 		t.Fatal("no filesystem this suite can reach keeps a superuser reserve, so the f_bavail / f_bfree distinction cannot be exercised; run the suite where one does")

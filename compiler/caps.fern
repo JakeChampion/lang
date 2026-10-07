@@ -130,6 +130,7 @@ pub function builtin_caps(): BuiltinCap[] {
     // filesystem surface rather than in ungated().
     BuiltinCap { builtin: "umask", capability: "fs" },
     BuiltinCap { builtin: "statfs", capability: "fs" },
+    BuiltinCap { builtin: "mounts", capability: "fs" },
     BuiltinCap { builtin: "temp_dir", capability: "fs" },
     BuiltinCap { builtin: "getcwd", capability: "fs" },
     BuiltinCap { builtin: "env", capability: "env" },

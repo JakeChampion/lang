@@ -468,6 +468,7 @@ var providedSigs = map[string]providedSig{
 	"stat":                             {-1, rWord},
 	"lstat":                            {-1, rWord},
 	"statfs":                           {-1, rWord},
+	"mounts":                           {0, rWord},
 	"stderr":                           {-1, rWord},
 	"stdin":                            {-1, rWord},
 	"stdout":                           {-1, rWord},

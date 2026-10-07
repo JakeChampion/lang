@@ -2417,7 +2417,7 @@ function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState 
 // errno the same way and so shares the same call graph.
 function needs_fs_runtime(s: asmcore.EmitState): boolean {
   return s.any_need([
-    "stat", "lstat", "statfs", "access", "read_file",
+    "stat", "lstat", "statfs", "mounts", "access", "read_file",
     "read_file_bytes", "read_file_bytes_u8", "remove_file", "create_dir_all", "create_dir",
     "remove_dir", "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at",
     "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
@@ -2441,7 +2441,7 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
     "remove_dir", "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at",
     "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
     "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups",
-    "umask", "env", "environ", "raw_environ", "getgroups", "stat", "lstat", "statfs",
+    "umask", "env", "environ", "raw_environ", "getgroups", "stat", "lstat", "statfs", "mounts",
     "access", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "subprocess",
     "signal_send", "set_process_group", "set_priority", "clock_set",
   ]);
@@ -10762,6 +10762,11 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.write("    call __fn___fern_statfs\n    addq $8, %rsp\n    pushq %rax\n");
     s = s.need("heap");
     s = s.need("statfs");
+  } else if (o.kind_tag == 398) {  // mounts
+    // No operands; pushes a fresh Result[MountEntry[], IoError].
+    s = s.write("    call __fn___fern_mounts\n    pushq %rax\n");
+    s = s.need("heap");
+    s = s.need("mounts");
   } else if (o.kind_tag == 299) {  // fd_fsync
     // [fd] IS param[0]; __fn___fern_fd_fsync pushes a fresh
     // Option[IoError], None once the write-back is scheduled.
@@ -11935,6 +11940,10 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
     let fvPre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "FsStat");
     s = fvPre.state;
   }
+  if (s.has_need("mounts")) {
+    let mePre: asmcore.ShapeRefOut = asmcore.shape_ref(s, "MountEntry");
+    s = mePre.state;
+  }
   // Pre-intern "DirEntry" for __fern_read_dir_ino's shape label, same
   // reasoning as FsStat above.
   if (s.has_need("read_dir_ino")) {
@@ -12464,6 +12473,9 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     }
     if (s.has_need("statfs")) {
       fs_src = fs_src + " " + asmcore.rt_src_statfs("x86_64");
+    }
+    if (s.has_need("mounts")) {
+      fs_src = fs_src + " " + asmcore.rt_src_mounts("x86_64");
     }
     if (s.has_need("window_size")) {
       fs_src = fs_src + " " + asmcore.rt_src_window_size("x86_64");

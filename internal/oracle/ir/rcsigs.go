@@ -399,6 +399,9 @@ var rcInertBuiltins = map[string]bool{
 	// Native-only for the same reason — no wasm world has a volume to
 	// measure — so it too is classified under the builtin name.
 	"statfs": true,
+	// () → Result[MountEntry[], IoError]. Takes nothing and returns a fresh
+	// table. Native-only for statfs's reason.
+	"mounts": true,
 	// (path) -> Result. The path is read and NUL-copied and the working
 	// directory it moves to is process state, not a counted reference.
 	// Native-only -- WASI has no process cwd -- so it is named here the

@@ -85,7 +85,6 @@ TestCpParity
 TestCpWalkOrder
 TestCsplit
 TestDateParity
-TestDf
 TestGroupsParity
 TestHostidParity
 TestIdParity

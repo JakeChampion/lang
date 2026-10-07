@@ -264,6 +264,7 @@ var rcResultOwned = map[string]bool{
 	"mknod":             true,
 	"chown_at":          true,
 	"statfs":            true,
+	"mounts":            true,
 	"chdir":             true,
 	"chroot":            true,
 	"setuid":            true,
@@ -422,6 +423,7 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"stat":                             true,
 	"lstat":                            true,
 	"statfs":                           true,
+	"mounts":                           true,
 	"access":                           true,
 	// The builder's take hands over its own string-shaped buffer, the
 	// only reference to it (rcResultOwned, #8773); in argument position

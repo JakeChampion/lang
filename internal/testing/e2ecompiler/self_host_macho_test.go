@@ -330,6 +330,32 @@ function main(): i32 { let e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 }`,
 		7)
 
+	// mounts — getfsstat64, read at the 64-bit-inode record's offsets. A
+	// record misread by a few bytes still yields plausible strings, so the
+	// root row is pinned to stat("/"): its dev must agree and its type and
+	// source must be non-empty names.
+	runCase("mounts",
+		`function main(): i32 {
+  let root: i64 = 0 as i64;
+  match (stat("/")) { Ok(st) => { root = st.dev; }, Err(e) => { return 1; } }
+  match (mounts()) {
+    Ok(ms) => {
+      if (ms.len() == 0) { return 2; }
+      for m in ms {
+        if (m.target == "/") {
+          if (m.dev != root) { return 3; }
+          if (m.fstype.len() == 0) { return 4; }
+          if (m.source.len() == 0) { return 5; }
+          return 7;
+        }
+      }
+      return 6;
+    },
+    Err(e) => { return 8; }
+  }
+}`,
+		7)
+
 	// window_size — TIOCGWINSZ, whose request number is Darwin's own
 	// (0x40087468 vs Linux's 0x5413). A wrong number answers ENOTTY, which is
 	// indistinguishable from a correct one asked about a pipe, so this case

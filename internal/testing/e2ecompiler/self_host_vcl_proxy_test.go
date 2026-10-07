@@ -3,6 +3,7 @@ package e2ecompiler
 import (
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
@@ -28,4 +29,21 @@ func TestSelfHostVCLProxyServesAndCaches(t *testing.T) {
 func TestSelfHostVCLProxyRejectsABadPolicyAtLoadTime(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	e2eharness.CheckVCLProxyRejectsABadPolicy(t, selfHostVCLBinary(t, cli, "vclproxy.fern"))
+}
+
+// The evaluator's TAP suite built under FERN_SANITIZE=1 (#11798). A carried
+// donor dropped on a self tail call's back edge was dropped after the edge
+// rebound the parameter it lived in, so the previous argument leaked and the
+// next was over-released: a leak here, a use-after-free in the proxy. A leak
+// finding leaves the exit code alone, so the output is checked too.
+func TestSelfHostVCLBackendSuiteSanitized(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	path, err := filepath.Abs("../../../examples/vcl/vclbackend_test.fern")
+	if err != nil {
+		t.Fatal(err)
+	}
+	out, err := runX86_64Bin(cli.runner, cli.x86Binary(t, path, "FERN_SANITIZE=1")).CombinedOutput()
+	if err != nil || strings.Contains(string(out), "fern-sanitizer:") || !strings.Contains(string(out), "# fail 0") {
+		t.Fatalf("want a clean sanitized run with every case passing (%v):\n%s", err, out)
+	}
 }

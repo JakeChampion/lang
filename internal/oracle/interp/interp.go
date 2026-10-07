@@ -1593,6 +1593,7 @@ func New() *Interp {
 	i.Builtins["rlimit_nofile"] = &Builtin{Fn: builtinRlimitNofile}
 	i.Builtins["disable_core_dumps"] = &Builtin{Fn: builtinDisableCoreDumps}
 	i.Builtins["statfs"] = &Builtin{Fn: builtinStatfs}
+	i.Builtins["mounts"] = &Builtin{Fn: builtinMounts}
 	i.Builtins["temp_dir"] = &Builtin{Fn: builtinTempDir}
 	i.Builtins["read_dir"] = &Builtin{Fn: builtinReadDir}
 	i.Builtins["read_dir_all"] = &Builtin{Fn: builtinReadDirAll}
@@ -4324,6 +4325,32 @@ func builtinStatfs(_ *Interp, args []Value) (Value, error) {
 			"fs_type_name": String(raw.fsTypeName),
 		},
 	}), nil
+}
+
+// builtinMounts mirrors the native `mounts()` — the mounted filesystems in
+// the order the kernel lists them. Where the rows come from is per-OS
+// (mounts_linux.go / mounts_darwin.go).
+func builtinMounts(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("mounts: expected 0 args, got %d", len(args))
+	}
+	rows, err := mountRows()
+	if err != nil {
+		return resultErr(classifyIoError(mountTablePath, err)), nil
+	}
+	out := newArray(len(rows))
+	for i, m := range rows {
+		out.E[i] = &Struct{
+			TypeName: "MountEntry",
+			Fields: map[string]Value{
+				"source": String(m.source),
+				"target": String(m.target),
+				"fstype": String(m.fstype),
+				"dev":    Number(m.dev),
+			},
+		}
+	}
+	return resultOk(out), nil
 }
 
 // builtinRlimitNofile mirrors the native `rlimit_nofile()` — the soft

@@ -892,6 +892,19 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "fs_type_name", Type: ast.StringType{}},
 			},
 		},
+		// MountEntry — one row of `mounts()`: the device or name a
+		// filesystem was mounted FROM, the directory it is mounted ON,
+		// its type's name, and `dev`, its device number in the kernel's
+		// st_dev encoding so it compares directly against `stat().dev`.
+		{
+			Name: "MountEntry",
+			Fields: []ast.Param{
+				{Name: "source", Type: ast.StringType{}},
+				{Name: "target", Type: ast.StringType{}},
+				{Name: "fstype", Type: ast.StringType{}},
+				{Name: "dev", Type: ast.NumberType{Width: 64, Signed: true}},
+			},
+		},
 		// WinSize — `window_size(fd)` shape: how large the terminal
 		// on the other end of a descriptor is, in character cells.
 		//
@@ -2762,6 +2775,17 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		Params: []ast.Type{ast.StringType{}},
 		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
 			ast.StructType{Name: "FsStat"},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
+	// mounts(): Result[MountEntry[], IoError] — the mounted filesystems,
+	// in the order the kernel lists them (#9104). Linux reads and parses
+	// /proc/self/mountinfo, octal escapes included; Darwin asks
+	// getfsstat(2). Gated on `fsinfo` with statfs: a wasm preopen is a
+	// capability handle, not a mount, so there is no table to list.
+	c.info.FuncSigs["mounts"] = &ast.FuncType{
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.ArrayType{Elem: ast.StructType{Name: "MountEntry"}},
 			ast.EnumType{Name: "IoError"},
 		}},
 	}

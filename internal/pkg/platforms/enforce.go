@@ -77,6 +77,7 @@ var gatedBuiltins = map[string]string{
 	// a name — rather than the files on it, which is `fs`. A host can
 	// serve files and have no volume to measure.
 	"statfs": "fsinfo",
+	"mounts": "fsinfo",
 
 	// One-level bump-arena checkpoint (__heap_mark / __heap_release_to).
 	// Native-only: both natives rewind __fern_heap_ptr and snapshot the

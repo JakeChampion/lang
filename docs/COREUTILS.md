@@ -3949,15 +3949,13 @@ and lets it OVERRIDE the utmp `BOOT_TIME` record, so a fixture database proves
 nothing against it, while 9.4 and 9.10 take the record. The oracle is pinned
 to 9.4 for that reason.
 
-**`df` is Linux-only.** `statfs` answers the counts on every native target, but
-not the device, the mount point or the type NAME, and those come from
-`/proc/self/mountinfo` — which is what GNU reads too, visible as one `openat`
-under strace. Darwin has no such file, so an `arm64-darwin` build compiles and
-then fails on its first line with `cannot read table of mounted file systems`.
-Darwin answers all three from `getfsstat(2)`, whose `struct statfs` carries
-`f_mntfromname`, `f_mntonname` and — the part Linux makes hard —
-`f_fstypename`. #9104 is that primitive, shaped as a list rather than a lookup
-because df deduplicates by device across the whole table.
+**`df` reads the mount table through `mounts()` (#9104).** `statfs` answers the
+counts, but not the device, the mount point or the type NAME. `mounts()` lists
+those three plus the device number for every mount: on Linux it parses
+`/proc/self/mountinfo`, which is what GNU reads too (one `openat` under
+strace), and on Darwin it asks `getfsstat(2)`, whose `struct statfs` carries
+`f_mntfromname`, `f_mntonname` and `f_fstypename`. It is a list rather than a
+lookup because df deduplicates by device across the whole table.
 
 **`stat` reports filesystem names on Darwin and Linux.** Darwin's `%T` reads
 the kernel's `f_fstypename` through `FsStat.fs_type_name`, including in the
