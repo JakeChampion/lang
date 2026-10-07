@@ -1592,6 +1592,25 @@ function other_tuple_get(ins: ssa.SInst, root: i32, field: i32): boolean {
   return ins.kind_tag == ssasem.tuple_get() && ins.args.len() == 1 && ins.args[0] == root && ins.imm != field;
 }
 
+// A construction is the frame's alone only until it is handed to something:
+// stored in a container, passed to a call or joined in a phi gives the box a
+// second holder, and a take would null the slot that holder still sees
+// (#11881). So every use of the source, before the read as well as after it,
+// has to be a read of one of its elements.
+function only_element_reads(f: ssasem.Func, root: i32): boolean {
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ssa.reads_value(ins, root) && !(ins.kind_tag == ssasem.tuple_get() && ins.args.len() == 1 && ins.args[0] == root)) {
+        return false;
+      }
+    }
+    if (ssa.term_reads_value(b.term, root)) {
+      return false;
+    }
+  }
+  return true;
+}
+
 // A source whose box this frame ALLOCATED, so nulling a slot in it is invisible
 // to everyone else. The take nulls without asking, so this is the whole of its
 // safety: owning a unit is not enough, the box has to be the frame's alone.
@@ -1659,7 +1678,7 @@ function tuple_take_field(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], 
   if (!ssasem.reference(f.values[ins.result])) {
     return none;
   }
-  if (!owned[root] || !takeable_root(defs[root].kind_tag)) {
+  if (!owned[root] || !takeable_root(defs[root].kind_tag) || !only_element_reads(f, root)) {
     return none;
   }
   let b: ssa.SBlock = f.graph.blocks[bi];

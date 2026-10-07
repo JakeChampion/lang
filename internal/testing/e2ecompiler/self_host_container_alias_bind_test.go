@@ -349,6 +349,16 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 21, allocs: 300, frees: 300,
 		},
 		{
+			// The container reads the slot the alias's read would have taken: a
+			// take is admitted only when every use of the tuple is an element
+			// read (#11881).
+			name: "tuple_alias_chain_container_reads_the_slot",
+			src: `function sink(xs: (i32, i32[])[]): i32 { return xs[0].1.len() * 10 + xs[0].1[1]; }
+function round(i: i32): i32 { let t: (i32, i32[]) = (i, [i, i + 1]); let v: (i32, i32[]) = t; let u: (i32, i32[]) = v; let held: (i32, i32[])[] = [v]; return u.1.len() + sink(held) + i; }
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 82, allocs: 300, frees: 300,
+		},
+		{
 			// The SCALAR tuple chain: the tuple is not boxed, so each hop is a copy.
 			name: "tuple_alias_scalar_chain",
 			src: `function round(i: i32): i32 { let t: (i32, i32) = (i, i + 1); let v: (i32, i32) = t; let u: (i32, i32) = v; return u.0 + u.1; }
