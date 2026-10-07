@@ -12,10 +12,6 @@
 //
 // WHAT IS NOT HERE, and why it is absent rather than approximated:
 //
-//   - reflink (FICLONE). There is no clone primitive, so `--reflink=always`
-//     can only report the failure GNU reports on a filesystem that cannot
-//     clone. On ext4 and overlayfs that IS GNU's answer; on btrfs or XFS it
-//     is not, and the primitive is what closes the gap.
 //   - copy_file_range offload. GNU's `--debug` line names it, so that
 //     line describes GNU's internals rather than the copy's result.
 //   - SELinux contexts and xattrs. `--preserve=context,xattr` parses and
@@ -185,7 +181,7 @@ pub function reflink_values(): i32[] {
 pub struct Cfg { attrs: Attrs, recursive: boolean, deref: i32, hard_link: boolean, sym_link: boolean, force: boolean, ask: i32, update: i32, backups: boolean, control: i32, suffix: string, verbose: boolean, debug: boolean, one_fs: boolean, attributes_only: boolean, copy_contents: boolean, remove_destination: boolean, sparse: i32, reflink: i32, verbose_style: i32, announced_backup: string, forced_mode: i32 }
 
 pub function cfg_new(): Cfg {
-  return Cfg { attrs: attrs_none(), recursive: false, deref: deref_cmdline(), hard_link: false, sym_link: false, force: false, ask: ask_yes(), update: update_all(), backups: false, control: gnu.backup_existing(), suffix: "~", verbose: false, debug: false, one_fs: false, attributes_only: false, copy_contents: false, remove_destination: false, sparse: sparse_auto(), reflink: reflink_never(), verbose_style: vstyle_copy(), announced_backup: "", forced_mode: 0 - 1 };
+  return Cfg { attrs: attrs_none(), recursive: false, deref: deref_cmdline(), hard_link: false, sym_link: false, force: false, ask: ask_yes(), update: update_all(), backups: false, control: gnu.backup_existing(), suffix: "~", verbose: false, debug: false, one_fs: false, attributes_only: false, copy_contents: false, remove_destination: false, sparse: sparse_auto(), reflink: reflink_auto(), verbose_style: vstyle_copy(), announced_backup: "", forced_mode: 0 - 1 };
 }
 
 // ---- the walk's state --------------------------------------------------------
@@ -841,13 +837,6 @@ function link_record(s: State, src: Info, dest: string): State {
 // ---- one regular file -----------------------------------------------------------
 function copy_file(cfg: Cfg, s: State, src_path: string, dest: string, src: Info, existed: boolean): State {
   let st: State = s;
-  // `--reflink=always` asks for a clone and accepts nothing else. There is
-  // no clone primitive, so the answer is the one GNU gives on a filesystem
-  // that cannot clone — which is every filesystem this is tested on, and
-  // the wrong answer on btrfs or XFS until the primitive exists.
-  if (cfg.reflink == reflink_always()) {
-    return fail(st, "failed to clone " + gnu.quotea(dest) + " from " + gnu.quotea(src_path) + ": Operation not supported");
-  }
   let want_mode: i32 = create_mode(cfg, src);
   if (existed && !cfg.attrs.mode) {
     // An existing destination keeps its own permissions: the file is
@@ -882,6 +871,10 @@ function copy_file(cfg: Cfg, s: State, src_path: string, dest: string, src: Info
   // its own words, and `-f` does NOT override it.
   if (dangling_symlink(dest)) {
     return fail(st, "not writing through dangling symlink " + gnu.quotea(dest));
+  }
+  let cl: Cloned = try_clone(cfg, st, src_path, dest, src, existed, want_mode);
+  if (cl.done) {
+    return cl.st;
   }
   match (open_reader(src_path)) {
     Err(e2) => {
@@ -939,6 +932,57 @@ function copy_file(cfg: Cfg, s: State, src_path: string, dest: string, src: Info
       }
     }
   }
+}
+
+// `--reflink`: a clone in place of the bytes, as GNU's copy_reg tries one.
+// Darwin's fclonefileat only creates, so GNU asks it for a new destination
+// whose cloned mode bits are no wider than the ones wanted, and puts the
+// times to now unless they are preserved; any other destination reaches its
+// FICLONE stand-in, which answers ENOTSUP. Linux clones into the destination
+// either way. `done` is false when the copy goes on to the bytes.
+struct Cloned { done: boolean, st: State }
+
+function try_clone(cfg: Cfg, s: State, src_path: string, dest: string, src: Info, existed: boolean, want_mode: i32): Cloned {
+  if (cfg.reflink == reflink_never()) {
+    return Cloned { done: false, st: s };
+  }
+  if (target_os() == "darwin") {
+    // S_ISVTX and the permission bits are what a clone carries over.
+    let cloned: i32 = src.mode as i32 & 1023;
+    if (existed || (cloned & mode.complement(create_mode(cfg, src))) != 0) {
+      return clone_refused(cfg, s, src_path, dest, "Operation not supported");
+    }
+  }
+  match (clone_file(src_path, dest)) {
+    Err(e) => {
+      return clone_refused(cfg, s, src_path, dest, gnu.io_error_text(e));
+    },
+    Ok(_) => {}
+  }
+  let st: State = s;
+  if (target_os() == "darwin" && !cfg.attrs.timestamps) {
+    match (set_file_times(dest, 0 as i64, 0 as i64, 0 as i64, 0 as i64, 25)) {
+      Ok(_) => {},
+      Err(e2) => {
+        return Cloned { done: true, st: fail(st, "updating times for " + gnu.quotea(dest) + ": " + gnu.io_error_text(e2)) };
+      }
+    }
+  }
+  if (cfg.debug) {
+    st = State { ...st, out: gnu.put(st.out, "copy offload: no, reflink: yes, sparse detection: no\n") };
+  }
+  if (want_mode >= 0 || cfg.attrs.ownership || cfg.attrs.timestamps) {
+    st = apply_attrs(cfg, st, src, dest, want_mode);
+  }
+  return Cloned { done: true, st: st };
+}
+
+// A clone that did not happen ends the file only under `--reflink=always`.
+function clone_refused(cfg: Cfg, s: State, src_path: string, dest: string, why: string): Cloned {
+  if (cfg.reflink != reflink_always()) {
+    return Cloned { done: false, st: s };
+  }
+  return Cloned { done: true, st: fail(s, "failed to clone " + gnu.quotea(dest) + " from " + gnu.quotea(src_path) + ": " + why) };
 }
 
 // `dangling_symlink(path)` — the entry IS a symlink and what it names does

@@ -194,6 +194,12 @@ than discovering:
     these five's, but a `ln` or `mkdir` operand is far likelier to be absolute
     than a `read_file` one.
 
+**`clone_file` is plain `fs` too, and WASI answers it Unsupported.** Neither
+preview has a copy-on-write clone, and Unsupported is the answer a kernel gives
+for a filesystem that cannot clone, which every caller already has to handle
+by copying the bytes. Refusing it with E066 instead would make `cp` unbuildable
+for wasm over an option it can honour by falling back.
+
 **`read_dir_all` is plain `fs` beside `read_dir`, and preview 2 answers it
 with less than it was asked for.** Every kernel and preview 1 report `.` and
 `..` from a directory read, so dropping them is the filter `read_dir` applies

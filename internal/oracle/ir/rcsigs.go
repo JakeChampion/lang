@@ -584,7 +584,7 @@ var rcInert = map[string]bool{
 	"__fern_reader_read_line_fd":     true, "__fern_remove_dir_all": true,
 	"__fern_remove_file": true, "__fern_rmdir_rec": true,
 	"__fern_create_dir": true, "__fern_remove_dir": true,
-	"__fern_create_link": true, "__fern_create_symlink": true,
+	"__fern_create_link": true, "__fern_clone_file": true, "__fern_create_symlink": true,
 	"__fern_read_link":      true,
 	"__fern_rename":         true,
 	"__fern_set_file_times": true,

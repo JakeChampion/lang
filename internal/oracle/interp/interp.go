@@ -1634,6 +1634,7 @@ func New() *Interp {
 	i.Builtins["create_dir"] = &Builtin{Fn: builtinCreateDir}
 	i.Builtins["remove_dir"] = &Builtin{Fn: builtinRemoveDir}
 	i.Builtins["create_link"] = &Builtin{Fn: builtinCreateLink}
+	i.Builtins["clone_file"] = &Builtin{Fn: builtinCloneFile}
 	i.Builtins["create_symlink"] = &Builtin{Fn: builtinCreateSymlink}
 	i.Builtins["read_link"] = &Builtin{Fn: builtinReadLink}
 	i.Builtins["getxattr"] = &Builtin{Fn: builtinGetxattr}
@@ -4665,6 +4666,16 @@ func builtinCreateLink(_ *Interp, args []Value) (Value, error) {
 	// The IoError names the link being created, which is the operand
 	// every diagnostic over this builtin reports.
 	return ioResult(p[1], syscall.Link(p[0], p[1])), nil
+}
+
+// builtinCloneFile mirrors __fern_clone_file: `dest` as a copy-on-write
+// clone of `src`, by the host's own call (clonefile_*.go).
+func builtinCloneFile(_ *Interp, args []Value) (Value, error) {
+	p, err := pathArgs("clone_file", args, 2)
+	if err != nil {
+		return nil, err
+	}
+	return ioResult(p[1], cloneFile(p[0], p[1])), nil
 }
 
 // builtinCreateSymlink writes a symbolic link at `path` holding the

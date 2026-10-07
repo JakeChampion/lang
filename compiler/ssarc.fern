@@ -6635,6 +6635,9 @@ function fs_op_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "create_link") {
     return Lowered { found: true, r: emit(r, ir.op_create_link()) };
   }
+  if (ins.str == "clone_file") {
+    return Lowered { found: true, r: emit(r, ir.op_clone_file()) };
+  }
   if (ins.str == "create_symlink") {
     return Lowered { found: true, r: emit(r, ir.op_create_symlink()) };
   }
