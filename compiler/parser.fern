@@ -15753,6 +15753,15 @@ function ms_struct_lit(s: ast.ExprStructLit, dest: string, env: MEnv, gstructs: 
     cur = wm.mins;
     lit_dest = wm.ty;
   }
+  // A spread keeps the base's instantiation even when the replacement fields
+  // do not mention its parameters (for example, an empty tail in PVec.with).
+  // Do not retarget plain literals to the enclosing method's receiver: they
+  // may intentionally construct a different instantiation.
+  if (lit_dest.len() == 0 && s.has_base) {
+    let bm: TyIns = mg_ty(mono_infer(s.base, env, funcs), gstructs, cur);
+    cur = bm.mins;
+    lit_dest = bm.ty;
+  }
   let vals: ast.Expr[] = [];
   let i: i32 = 0;
   while (i < s.field_values.len()) {
