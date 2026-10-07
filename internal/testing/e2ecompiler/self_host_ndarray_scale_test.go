@@ -132,7 +132,7 @@ func TestSelfHostNdarrayScaleKernelX86_64(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			body := emittedBody(t, string(asm), "__fn_"+tc.name)
 			mapped := strings.Contains(body, "call __fn___smm_ndarray__NdArray_map__")
-			vector := strings.Contains(body, "unpcklpd")
+			vector := strings.Contains(body, "vbroadcastsd")
 			if mapped == tc.kernel || vector != tc.kernel {
 				t.Fatalf("kernel=%t, map call=%t, vector splat=%t\n%s", tc.kernel, mapped, vector, body)
 			}
@@ -148,7 +148,7 @@ func TestSelfHostNdarrayScaleKernelX86_64(t *testing.T) {
 	}
 	for _, name := range []string{"packed_scale", "packed_dynamic", "zero_scale"} {
 		body := emittedBody(t, string(disabled), "__fn_"+name)
-		if !strings.Contains(body, "call __fn___smm_ndarray__NdArray_map__") || strings.Contains(body, "unpcklpd") {
+		if !strings.Contains(body, "call __fn___smm_ndarray__NdArray_map__") || strings.Contains(body, "vbroadcastsd") {
 			t.Fatalf("disabled kernel still rewrote %s:\n%s", name, body)
 		}
 	}

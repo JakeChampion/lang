@@ -267,21 +267,29 @@ func compareArm64Cases(t *testing.T, cases []string) {
 	}
 }
 
-// TestSelfHostArm64RefusesUnencodableForms pins the one shape gas encodes and
+// TestSelfHostArm64RefusesUnencodableForms pins the shapes gas encodes and
 // this assembler does not: a mov immediate needing two mov-wide chunks, which
-// gas builds with an orr-bitmask rather than a mov. Refusing is safe — the
-// driver checks p.unknown and declines to write the image — and refusing is
-// what it does now; before #7903 phase 5 it encoded `movn x1, #0` and loaded
-// -1 instead.
+// gas builds with an orr-bitmask rather than a mov, and the q-register loads,
+// stores and pairs, which encoded as register 31 in the integer form before
+// they were refused. Refusing is safe — the driver checks p.unknown and
+// declines to write the image.
 //
-// The row asserts GNU as still ENCODES it, so it fails the day the gap closes
+// Each row asserts GNU as still ENCODES it, so it fails the day the gap closes
 // rather than outliving it.
 func TestSelfHostArm64RefusesUnencodableForms(t *testing.T) {
 	gas := gnuArm64Oracle(t)
 	gcc, runner := x86_64Tooling(t)
 	bin := buildAsmBenchDriver(t, gcc)
 
-	lines := []string{"mov x1, #4294967295"}
+	lines := []string{
+		"mov x1, #4294967295",
+		// The 128-bit q forms, which arm64_gas_reg does not decode.
+		"ldp q0, q2, [x6], #32",
+		"stp q0, q2, [x7], #32",
+		"ldr q0, [x6], #16",
+		"str q0, [x7], #16",
+		"ldr q1, [x2, #32]",
+	}
 	for _, ln := range lines {
 		if _, rejected := gas.program(t, ".text\n"+ln+"\n"); rejected != "" {
 			t.Errorf("%-40s GNU as refuses it too, so this row does not "+
