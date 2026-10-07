@@ -2008,15 +2008,18 @@ function reuse_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32): i
 // and the reads, the retains, the donor's release and the construction all
 // follow that one answer: a donor read as shared there has its kept fields
 // retained and is released whole, whatever its count says by the time it dies.
+// A scalar field read from the same slot is kept too: it holds no unit, so
+// only its store is skipped, and the uniqueness read waits for the donor's drop.
 //
 // The token slot is held from that first read to the construction, so a donor
 // is kept only where no other pairing's token is live in between. `start` is
-// the position of the first kept read, `taken` the donor's drop.
+// the position of the first counted kept read, else the donor's drop, and
+// `taken` the donor's drop.
 //
 // A kept field the construction alone reads is not read at all while the
 // donor is unique: its slot is already the construction's. `late` holds those
-// values; the construction copies them from the donor, retained, under the
-// token's null arm, where its box is fresh (reuse_construct).
+// values; the construction copies them from the donor, a counted one retained,
+// under the token's null arm, where its box is fresh (reuse_construct).
 struct Keeps { donors: i32[], slots: boolean[][], values: i32[][], late: i32[][], start: i32[], taken: i32[], built: i32[] }
 
 function keep_slots(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlock, ins: ssa.SInst, built: i32, donor: i32, taken: i32, uses: i32[]): Keeps {
@@ -2037,13 +2040,16 @@ function keep_slots(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBloc
       retained = retained.append(supply.value);
     }
   }
+  let scalars: boolean = false;
   let pos: i32 = 0;
   while (pos <= taken) {
     let get: ssa.SInst = b.insts[pos];
-    // Exactly one unit: a read that is taken AND retained at the
-    // construction holds two, and keeping in place stands in for one.
+    // A counted read keeps exactly one unit: one taken AND retained at the
+    // construction holds two, and keeping in place stands in for one. A
+    // scalar read has no unit and is kept as it stands.
+    let counted: boolean = get.kind_tag == ssasem.record_get() && walked(f.values[get.result]);
     if (get.kind_tag == ssasem.record_get() && get.args[0] == donor
-      && payload_taken(f, p, get) != util.index_of_i32(retained, get.result) >= 0) {
+      && (!counted || payload_taken(f, p, get) != util.index_of_i32(retained, get.result) >= 0)) {
       let i: i32 = util.index_of_i32(ins.args, get.result);
       // Once: the donor's slot holds one unit, which a second operand
       // naming the same value would need a retain of its own for.
@@ -2053,12 +2059,18 @@ function keep_slots(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBloc
         if (uses[get.result] == 1 && !held_read(p, get)) {
           late = late.append(get.result);
         }
-        if (start < 0) {
+        // Only a counted read needs the donor's uniqueness at the read.
+        if (!counted) {
+          scalars = true;
+        } else if (start < 0) {
           start = pos;
         }
       }
     }
     pos = pos + 1;
+  }
+  if (start < 0 && scalars) {
+    start = taken;
   }
   if (start < 0) {
     return none;
@@ -2242,6 +2254,15 @@ function reuse_construct(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.S
     fields = record_fields(f.values[ins.result], f);
     shape = record_name(f.values[ins.result]);
   }
+  // A kept donor has the construction's own type, so a token is a box of the
+  // right size whose first word already names the type: it is the result as
+  // it stands, and only the fresh box of the null arm is allocated and shaped.
+  if (at >= 0) {
+    r = emit(r, ir.op_load_local(token_slot(f)));
+    r = emit(r, ir.op_const_i32(0));
+    r = emit(r, ir.op_bin("eq", 0, false));
+    r = emit(r, ir.op_if(0));
+  }
   r = emit(r, ir.op_load_local(token_slot(f)));
   r = emit(r, ir.op_const_i32(fields.len() + 1));
   r = emit(r, ir.op_call_direct("__fern_alloc_reuse", 2));
@@ -2258,10 +2279,6 @@ function reuse_construct(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.S
   let kept: boolean[] = [];
   if (at >= 0) {
     kept = k.slots[at];
-    r = emit(r, ir.op_load_local(token_slot(f)));
-    r = emit(r, ir.op_const_i32(0));
-    r = emit(r, ir.op_bin("eq", 0, false));
-    r = emit(r, ir.op_if(0));
     let ki: i32 = 0;
     while (ki < ins.args.len() && ki < fields.len()) {
       if (ki < kept.len() && kept[ki]) {
@@ -2269,7 +2286,9 @@ function reuse_construct(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.S
         if (util.index_of_i32(k.late[at], ins.args[ki]) >= 0) {
           r = emit(r, ir.op_load_local(k.donors[at]));
           r = field_get(r, f, ssa.SInst { kind_tag: ssasem.record_get(), result: ins.args[ki], args: [k.donors[at]], imm: ki, str: "" });
-          r = emit(r, ir.op_call_direct("__fern_rc_inc", 1));
+          if (walked(fields[ki].ty)) {
+            r = emit(r, ir.op_call_direct("__fern_rc_inc", 1));
+          }
         } else {
           r = emit(r, ir.op_load_local(ins.args[ki]));
         }
@@ -2277,6 +2296,9 @@ function reuse_construct(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.S
       }
       ki = ki + 1;
     }
+    r = emit(r, ir.op_else());
+    r = emit(r, ir.op_load_local(token_slot(f)));
+    r = emit(r, ir.op_store_local(ins.result));
     r = emit(r, ir.op_end());
     r = keep_release(r, f, k.donors[at], kept);
   }

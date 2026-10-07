@@ -1,0 +1,222 @@
+pub struct Message {
+  topic: i32,
+  serial: i64,
+  payload: i64,
+}
+
+pub struct Broker {
+  topics: i32,
+  subscribers: i32,
+  queue_capacity: i32,
+  slots: Message[],
+  empty: Message,
+  free: i32[],
+  free_count: i32,
+  phase: i32[],
+  refs: i32[],
+  queues: i32[],
+  heads: i32[],
+  lengths: i32[],
+  leases: Message[],
+  lease_slots: i32[],
+  producer: Message,
+  producer_slot: i32,
+  serial: i64,
+  status: i32,
+  result_slot: i32,
+}
+
+pub function new_broker(topics: i32, subscribers: i32, pool: i32, queue_capacity: i32): Option[Broker] {
+  if (topics < 1 || topics > 16 || subscribers < 1 || subscribers > 16
+    || pool < 1 || pool > 4096 || queue_capacity < 1 || queue_capacity > 4096) {
+    return None;
+  }
+  let empty: Message = Message { topic: -1, serial: 0i64, payload: 0i64 };
+  let slots: Message[] = [];
+  let free: i32[] = __alloc_i32(pool);
+  let i: i32 = 0;
+  while (i < pool) {
+    slots = slots.append(Message { topic: -1, serial: 0i64, payload: 0i64 });
+    free = free.with(i, pool - i - 1);
+    i = i + 1;
+  }
+  let leases: Message[] = [];
+  let lease_slots: i32[] = __alloc_i32(subscribers);
+  i = 0;
+  while (i < subscribers) {
+    leases = leases.append(empty);
+    lease_slots = lease_slots.with(i, -1);
+    i = i + 1;
+  }
+  return Some(Broker {
+    topics: topics, subscribers: subscribers, queue_capacity: queue_capacity,
+    slots: slots, empty: empty, free: free, free_count: pool,
+    phase: __alloc_i32(pool), refs: __alloc_i32(pool),
+    queues: __alloc_i32(subscribers * queue_capacity), heads: __alloc_i32(subscribers),
+    lengths: __alloc_i32(subscribers), leases: leases, lease_slots: lease_slots,
+    producer: empty, producer_slot: -1, serial: 0i64, status: 0, result_slot: -1,
+  });
+}
+
+pub fip function result(own b: Broker, status: i32, slot: i32): Broker {
+  return Broker { ...b, status: status, result_slot: slot };
+}
+
+pub fip function recipients(b: Broker, topic: i32): i32 {
+  let total: i32 = 0;
+  let s: i32 = 0;
+  while (s < b.subscribers) {
+    if (s % b.topics == topic) {
+      total = total + 1;
+    }
+    s = s + 1;
+  }
+  return total;
+}
+
+pub fip function slot_message(b: Broker, slot: i32): Message {
+  return b.slots[slot];
+}
+
+pub fip function producer_message(b: Broker): Message {
+  return b.producer;
+}
+
+// Free pool -> producer. Detaching the slot releases the collection's donor reference.
+pub fip function reserve(own b: Broker, topic: i32, payload: i64): Broker {
+  if (topic < 0 || topic >= b.topics) {
+    return result(b, 1, -1);
+  }
+  if (b.producer_slot >= 0) {
+    return result(b, 2, -1);
+  }
+  if (recipients(b, topic) == 0) {
+    return result(b, 9, -1);
+  }
+  if (b.serial == 9223372036854775807i64) {
+    return result(b, 8, -1);
+  }
+  if (b.free_count == 0) {
+    return result(b, 3, -1);
+  }
+  let slot: i32 = b.free[b.free_count - 1];
+  let message: Message = slot_message(b, slot);
+  b = Broker { ...b, slots: b.slots.with(slot, b.empty) };
+  message = Message { ...message, topic: topic };
+  message = Message { ...message, serial: b.serial + 1i64 };
+  message = Message { ...message, payload: payload };
+  b = Broker { ...b, phase: b.phase.with(slot, 1) };
+  return Broker {
+    ...b, producer: message, producer_slot: slot,
+    serial: b.serial + 1i64, free_count: b.free_count - 1, status: 0, result_slot: slot,
+  };
+}
+
+pub fip function cancel(own b: Broker): Broker {
+  let slot: i32 = b.producer_slot;
+  if (slot < 0) {
+    return result(b, 6, -1);
+  }
+  let message: Message = producer_message(b);
+  b = Broker { ...b, producer: b.empty };
+  b = Broker { ...b, slots: b.slots.with(slot, message) };
+  b = Broker { ...b, phase: b.phase.with(slot, 0) };
+  b = Broker { ...b, free: b.free.with(b.free_count, slot) };
+  return Broker { ...b, free_count: b.free_count + 1, producer_slot: -1, status: 0, result_slot: slot };
+}
+
+pub fip function queues_fit(b: Broker, topic: i32): boolean {
+  let s: i32 = 0;
+  while (s < b.subscribers) {
+    if (s % b.topics == topic && b.lengths[s] == b.queue_capacity) {
+      return false;
+    }
+    s = s + 1;
+  }
+  return true;
+}
+
+pub fip function enqueue(own b: Broker, slot: i32, topic: i32): Broker {
+  let count: i32 = 0;
+  let s: i32 = 0;
+  while (s < b.subscribers) {
+    if (s % b.topics == topic) {
+      let tail: i32 = (b.heads[s] + b.lengths[s]) % b.queue_capacity;
+      b = Broker { ...b, queues: b.queues.with(s * b.queue_capacity + tail, slot) };
+      b = Broker { ...b, lengths: b.lengths.with(s, b.lengths[s] + 1) };
+      count = count + 1;
+    }
+    s = s + 1;
+  }
+  b = Broker { ...b, refs: b.refs.with(slot, count) };
+  return b;
+}
+
+// Publication is atomic across subscribers; refusal leaves the producer lease intact.
+pub fip function publish(own b: Broker): Broker {
+  let slot: i32 = b.producer_slot;
+  if (slot < 0) {
+    return result(b, 6, -1);
+  }
+  let topic: i32 = producer_message(b).topic;
+  if (!queues_fit(b, topic)) {
+    return result(b, 4, -1);
+  }
+  let message: Message = producer_message(b);
+  b = Broker { ...b, producer: b.empty };
+  b = Broker { ...b, slots: b.slots.with(slot, message) };
+  b = enqueue(b, slot, topic);
+  b = Broker { ...b, phase: b.phase.with(slot, 2) };
+  return Broker { ...b, producer_slot: -1, status: 0, result_slot: slot };
+}
+
+// Broker -> consumer lease. The payload remains immutable while deliveries exist.
+pub fip function consume(own b: Broker, subscriber: i32): Broker {
+  if (subscriber < 0 || subscriber >= b.subscribers) {
+    return result(b, 1, -1);
+  }
+  if (b.lease_slots[subscriber] >= 0) {
+    return result(b, 6, -1);
+  }
+  if (b.lengths[subscriber] == 0) {
+    return result(b, 5, -1);
+  }
+  let at: i32 = subscriber * b.queue_capacity + b.heads[subscriber];
+  let slot: i32 = b.queues[at];
+  b = Broker { ...b, leases: b.leases.with(subscriber, b.slots[slot]) };
+  b = Broker { ...b, lease_slots: b.lease_slots.with(subscriber, slot) };
+  b = Broker { ...b, heads: b.heads.with(subscriber, (b.heads[subscriber] + 1) % b.queue_capacity) };
+  b = Broker { ...b, lengths: b.lengths.with(subscriber, b.lengths[subscriber] - 1) };
+  return result(b, 0, slot);
+}
+
+pub fip function message(b: Broker, subscriber: i32): Message {
+  if (subscriber < 0 || subscriber >= b.subscribers || b.lease_slots[subscriber] < 0) {
+    return b.empty;
+  }
+  return b.leases[subscriber];
+}
+
+// Consumer -> free pool only after the last queued or leased delivery acknowledges.
+pub fip function acknowledge(own b: Broker, subscriber: i32, serial: i64): Broker {
+  if (subscriber < 0 || subscriber >= b.subscribers) {
+    return result(b, 1, -1);
+  }
+  let slot: i32 = b.lease_slots[subscriber];
+  if (slot < 0) {
+    return result(b, 6, -1);
+  }
+  if (b.leases[subscriber].serial != serial) {
+    return result(b, 7, -1);
+  }
+  b = Broker { ...b, leases: b.leases.with(subscriber, b.empty) };
+  b = Broker { ...b, lease_slots: b.lease_slots.with(subscriber, -1) };
+  let remaining: i32 = b.refs[slot] - 1;
+  b = Broker { ...b, refs: b.refs.with(slot, remaining) };
+  if (remaining == 0) {
+    b = Broker { ...b, phase: b.phase.with(slot, 0) };
+    b = Broker { ...b, free: b.free.with(b.free_count, slot) };
+    b = Broker { ...b, free_count: b.free_count + 1 };
+  }
+  return result(b, 0, slot);
+}
