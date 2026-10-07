@@ -93,11 +93,10 @@ function pad2(v: i32): string {
   return v.to_string();
 }
 
-// The three load averages as GNU prints them, or None when there is no
-// /proc/loadavg to read — the state getloadavg(3) reports as -1, where
-// uptime ends the line after the session count. On Linux that is a
-// container without /proc and GNU answers the same way; a target that
-// has no /proc at all never reaches here, because main refuses first.
+// The three load averages as GNU prints them — from /proc/loadavg on
+// Linux, from `vm.loadavg` on Darwin — or None when the kernel gives
+// none, the state getloadavg(3) reports as -1, where uptime ends the
+// line after the session count.
 function load_averages(): Option[string] {
   if (target_os() == "darwin") {
     return darwin_load_averages();
