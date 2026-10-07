@@ -1,0 +1,188 @@
+import "./simulation_rules";
+
+pub struct World {
+  count: i32,
+  tick: i32,
+  x: i32[],
+  y: i32[],
+  vx: i32[],
+  vy: i32[],
+  health: i32[],
+  kind: i32[],
+  target: i32[],
+  mode: i32[],
+  heads: i32[],
+  next: i32[],
+  neighbors: i32[],
+  candidates: i64,
+  checksum: i64,
+  refused: i32,
+}
+
+// Refuse unsupported capacity before allocating any world storage.
+pub function new_world(count: i32, clustered: boolean): Option[World] {
+  if (count < 0 || count > 4096) {
+    return None;
+  }
+  let w: World = World {
+    count: count, tick: 0, x: __alloc_i32(count), y: __alloc_i32(count),
+    vx: __alloc_i32(count), vy: __alloc_i32(count), health: __alloc_i32(count),
+    kind: __alloc_i32(count), target: __alloc_i32(count), mode: __alloc_i32(count),
+    heads: __alloc_i32(256), next: __alloc_i32(count), neighbors: __alloc_i32(count),
+    candidates: 0i64, checksum: 0i64, refused: 0,
+  };
+  let i: i32 = 0;
+  while (i < count) {
+    let x: i32 = i * 73 % 4096;
+    let y: i32 = i * 151 % 4096;
+    if (clustered) {
+      x = i % 8;
+      y = i / 8 % 8;
+    }
+    let target: i32 = -1;
+    if (i % 3 != 0) {
+      target = (i + 1) % count;
+    }
+    w = World { ...w, x: w.x.with(i, x) };
+    w = World { ...w, y: w.y.with(i, y) };
+    w = World { ...w, vx: w.vx.with(i, i * 7 % 9 - 4) };
+    w = World { ...w, vy: w.vy.with(i, i * 11 % 9 - 4) };
+    w = World { ...w, health: w.health.with(i, 100) };
+    w = World { ...w, kind: w.kind.with(i, i % 3) };
+    w = World { ...w, target: w.target.with(i, target) };
+    w = World { ...w, mode: w.mode.with(i, simulation_rules.mode(0, 100, target)) };
+    i = i + 1;
+  }
+  return Some(w);
+}
+
+// Positions stay unchanged throughout AI, so target reads are phase-consistent.
+pub fip function input_ai(own w: World): World {
+  let i: i32 = 0;
+  while (i < w.count) {
+    let target: i32 = simulation_rules.target(w.target[i], i, w.tick, w.count);
+    let vx: i32 = 0;
+    let vy: i32 = 0;
+    if (w.mode[i] != 2) {
+      if (target >= 0) {
+        vx = simulation_rules.steer(simulation_rules.delta(w.x[target], w.x[i]), w.kind[i]);
+        vy = simulation_rules.steer(simulation_rules.delta(w.y[target], w.y[i]), w.kind[i]);
+      } else {
+        vx = (i * 7 + w.tick) % 9 - 4;
+        vy = (i * 11 + w.tick * 3) % 9 - 4;
+      }
+    }
+    w = World { ...w, target: w.target.with(i, target) };
+    w = World { ...w, vx: w.vx.with(i, vx) };
+    w = World { ...w, vy: w.vy.with(i, vy) };
+    i = i + 1;
+  }
+  return w;
+}
+
+pub fip function move(own w: World): World {
+  let i: i32 = 0;
+  while (i < w.count) {
+    let x: i32 = simulation_rules.wrap(w.x[i] + w.vx[i]);
+    let y: i32 = simulation_rules.wrap(w.y[i] + w.vy[i]);
+    w = World { ...w, x: w.x.with(i, x) };
+    w = World { ...w, y: w.y.with(i, y) };
+    i = i + 1;
+  }
+  return w;
+}
+
+pub fip function rebuild(own w: World): World {
+  let cell: i32 = 0;
+  while (cell < 256) {
+    w = World { ...w, heads: w.heads.with(cell, -1) };
+    cell = cell + 1;
+  }
+  let i: i32 = 0;
+  while (i < w.count) {
+    cell = w.y[i] / 256 * 16 + w.x[i] / 256;
+    let next: i32 = w.heads[cell];
+    w = World { ...w, next: w.next.with(i, next) };
+    w = World { ...w, heads: w.heads.with(cell, i) };
+    i = i + 1;
+  }
+  return w;
+}
+
+pub fip function proximity(own w: World): World {
+  let candidates: i64 = 0i64;
+  let i: i32 = 0;
+  while (i < w.count) {
+    let neighbors: i32 = 0;
+    let oy: i32 = -1;
+    while (oy <= 1) {
+      let cy: i32 = w.y[i] / 256 + oy & 15;
+      let ox: i32 = -1;
+      while (ox <= 1) {
+        let cx: i32 = w.x[i] / 256 + ox & 15;
+        let j: i32 = w.heads[cy * 16 + cx];
+        while (j >= 0) {
+          candidates = candidates + 1i64;
+          if (i != j) {
+            let dx: i32 = simulation_rules.delta(w.x[j], w.x[i]);
+            let dy: i32 = simulation_rules.delta(w.y[j], w.y[i]);
+            if (dx * dx + dy * dy <= 16384) {
+              neighbors = neighbors + 1;
+            }
+          }
+          j = w.next[j];
+        }
+        ox = ox + 1;
+      }
+      oy = oy + 1;
+    }
+    w = World { ...w, neighbors: w.neighbors.with(i, neighbors) };
+    i = i + 1;
+  }
+  return World { ...w, candidates: candidates };
+}
+
+pub fip function update(own w: World): World {
+  let i: i32 = 0;
+  while (i < w.count) {
+    let health: i32 = simulation_rules.health(w.health[i], w.mode[i], w.neighbors[i], w.kind[i]);
+    let mode: i32 = simulation_rules.mode(w.mode[i], health, w.target[i]);
+    w = World { ...w, health: w.health.with(i, health) };
+    w = World { ...w, mode: w.mode.with(i, mode) };
+    i = i + 1;
+  }
+  return w;
+}
+
+pub fip function checksum(w: World): i64 {
+  let hash: i64 = w.tick as i64;
+  let i: i32 = 0;
+  while (i < w.count) {
+    hash = simulation_rules.mix(hash, w.x[i]);
+    hash = simulation_rules.mix(hash, w.y[i]);
+    hash = simulation_rules.mix(hash, w.vx[i] + 4);
+    hash = simulation_rules.mix(hash, w.vy[i] + 4);
+    hash = simulation_rules.mix(hash, w.health[i]);
+    hash = simulation_rules.mix(hash, w.kind[i]);
+    hash = simulation_rules.mix(hash, w.target[i] + 1);
+    hash = simulation_rules.mix(hash, w.mode[i]);
+    hash = simulation_rules.mix(hash, w.neighbors[i]);
+    i = i + 1;
+  }
+  return hash;
+}
+
+// The tick limit bounds all deterministic input arithmetic.
+pub fip function step(own w: World): World {
+  if (w.tick >= 1000000) {
+    return World { ...w, refused: 1 };
+  }
+  w = input_ai(w);
+  w = move(w);
+  w = rebuild(w);
+  w = proximity(w);
+  w = update(w);
+  w = World { ...w, tick: w.tick + 1 };
+  let hash: i64 = checksum(w);
+  return World { ...w, checksum: hash };
+}
