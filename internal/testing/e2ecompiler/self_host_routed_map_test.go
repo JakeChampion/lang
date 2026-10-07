@@ -391,6 +391,38 @@ function main(): i32 {
 }
 `
 
+// routedMapUsizeValuesSrc: a usize value is the whole pointer-wide slot. The
+// values pass 2^32 on the register backends (and wrap past 2^31 on wasm), so
+// a slot that took only their low 32 bits would read back unequal.
+const routedMapUsizeValuesSrc = `import "core/map";
+import "std/i32";
+function main(): i32 {
+    let big: usize = (3000000000 as usize) * (4 as usize);
+    let m: Map[i32, usize] = Map {};
+    let i: i32 = 0;
+    while (i < 300) { m = m.insert(i, big + (i as usize)); i = i + 1; }
+    m = m.insert(7, big + (1000 as usize));
+    let alias: Map[i32, usize] = m;
+    alias = alias.insert(8, 5 as usize);
+    let r: (Map[i32, usize], boolean) = m.without(9);
+    let hit: boolean = m.get_or(7, 0 as usize) == big + (1000 as usize) && alias.get_or(8, 0 as usize) == (5 as usize)
+        && m.get_or(8, 0 as usize) == big + (8 as usize) && m.get_or(999, 3 as usize) == (3 as usize) && !r.0.has(9) && m.has(9);
+    let got: i32 = 0;
+    match (m.get(299)) { Some(v) => { if (v == big + (299 as usize)) { got = 1; } }, None => {} }
+    match (m.get(300)) { Some(v) => { got = 100; }, None => { got = got + 2; } }
+    let n: i32 = 0;
+    for (k, v) in r.0 { if (v - big == (k as usize) || k == 7) { n = n + 1; } }
+    for v in alias.values() { if (v >= big) { n = n + 1; } }
+    let named: Map[string, usize] = Map {};
+    named = named.insert("a" + 1.to_string(), big);
+    named = named.insert("a1", big + (2 as usize));
+    let e: Map[i32, usize] = m.cleared();
+    print(hit.to_string() + " " + got.to_string() + " " + n.to_string() + " " + ((named.get_or("a1", 0 as usize) - big) as i32).to_string()
+        + " " + e.len().to_string() + " " + r.0.len().to_string());
+    return 0;
+}
+`
+
 // routedMapStringValuesSrc: string value columns hold their strings in the
 // slots, so an overwrite, a delete, an alias's copy and the last drop each
 // release exactly the values they own, and a get hands out its own reference.
@@ -661,6 +693,7 @@ func TestSelfHostRoutedScalarMaps(t *testing.T) {
 		{"keyed_keys", routedMapKeyedKeysSrc, "1635 twonamed-dot four! 19 3 1761 202 two 0 50000000010 1500"},
 		{"generic_keyed_keys", routedMapGenericKeyedKeysSrc, "784 twoempty-five! 31 1745"},
 		{"map_values", routedMapMapValuesSrc, "5706 8136 0"},
+		{"usize_values", routedMapUsizeValuesSrc, "true 3 598 2 0 299"},
 		{"view_values", routedMapViewValuesSrc, "abc,over,gh7!,h7,lit,ite,abcdefgh7!,miss,gone,cde,a,true,abcdefgh7!,none,again,abcdefgh7!,cde,pt,abcdefgh7!,1\n2749"},
 	}
 	for _, c := range cases {

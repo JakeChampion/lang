@@ -3760,6 +3760,9 @@ function from_address(own r: irtables.LowerResult, to: typeinfo.Type): irtables.
 }
 
 function into_address(own r: irtables.LowerResult, from: typeinfo.Type): irtables.LowerResult {
+  if (ssasem.is_usize(from)) {
+    return r;
+  }
   if (!ssasem.is_wide(from)) {
     r = emit(r, ir.op_int_extend(ssasem.is_unsigned_int(from)));
   }
@@ -4011,9 +4014,9 @@ function routed_key(t: typeinfo.Type): boolean {
 // on every read and copy, and this lowering releases the ones it drops.
 // A view value column is a string column: an insert stores a unit of a
 // counted view descriptor, a counted string or a literal, never a view in its
-// maker's frame (ssaunits.frame_views).
+// maker's frame (ssaunits.frame_views). A usize value is the slot itself.
 function routed_value(t: typeinfo.Type): boolean {
-  return routed_column(t) || ssasem.is_text(t) || routed_box(t) || cell_column(t);
+  return routed_column(t) || ssasem.is_usize(t) || ssasem.is_text(t) || routed_box(t) || cell_column(t);
 }
 
 // The boxes a routed value column can hold: any counted value but a string or
@@ -4250,7 +4253,12 @@ function routed_column_read(own r: irtables.LowerResult, elem: typeinfo.Type, of
     return emit(r, ir.op_call_direct("__map_string_column", 2));
   }
   if (routed_box(elem)) {
-    return emit(r, ir.op_call_direct("__map_box_column", 2));
+    r = emit(r, ir.op_const_i32(1));
+    return emit(r, ir.op_call_direct("__map_box_column", 3));
+  }
+  if (ssasem.is_usize(elem)) {
+    r = emit(r, ir.op_const_i32(0));
+    return emit(r, ir.op_call_direct("__map_box_column", 3));
   }
   return emit(r, ir.op_call_direct("__map_i32_column", 2));
 }
