@@ -7,20 +7,13 @@ import (
 	"testing"
 )
 
-// A MAIN-LESS module — a library compiled standalone — now lowers on the
-// self-host IR path (#3457 slice 5). An `_start` that emits `call __fn_main`
-// unconditionally forces a `require_main` eligibility flag, which bails any
-// such module to
-// the legacy AST emitter. `_start` now exits 0 instead when there is no main, and
-// the flag is gone.
+// A MAIN-LESS module — a library compiled standalone — lowers on the self-host
+// IR path (#3457 slice 5): with no main, `_start` exits 0 rather than emitting
+// `call __fn_main`.
 //
-// This is not a hypothetical shape. TestSelfHostBootstrapsItself pipes each
-// compiler SOURCE through the same driver, and 7 of its 9 files are main-less
-// libraries (util / astwalk / asmcore / ir / irlower / asm_ir; only lexer, parser
-// and asm define `main`) — so that test was compiling most of the compiler
-// through the emitter #3457 exists to delete. NOTE the doc's gap-reason table
-// listed `no-main` as "supported by the desugar; not exercised today", which was
-// wrong on both counts.
+// This is not a hypothetical shape: most of the compiler's own sources are
+// main-less libraries, and compiling one standalone through a stdin driver
+// takes exactly this path.
 //
 // A script-shaped source (top-level statements, no `main`) is NOT this case:
 // asmcore.synth_script_main rewrites it into `function main()` upstream, which

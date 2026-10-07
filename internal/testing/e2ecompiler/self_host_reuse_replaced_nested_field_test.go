@@ -8,30 +8,20 @@ import (
 	"testing"
 )
 
-// #8568: the in-place reuse path released a replaced nested-struct field
-// box-only when the base was an `own` parameter, stranding the inner's fields.
+// #8568: when the in-place reuse path repurposes an `own` parameter's box
+// (__fern_rc_is_unique), the OLD value of a replaced nested-struct field is
+// released deeply, not box-only, so the inner's fields are not stranded.
 //
-// `lower_expr_struct_lit`'s reuse arm — taken when __fern_rc_is_unique says the
-// base box can be repurposed — releases each overridden field's OLD value
-// before the stores overwrite it. Its nested-struct arm ran the deep
-// __struct_drop_<Inner> only when `!shallow`, and `shallow` is set for an `own`
-// base, on this stated reason:
-//
-//	an `own` base, whose override values are owned but may share the old
-//	value's children
-//
-// That hazard does not hold. `__struct_drop_<Inner>` is rc==1-gated per field,
-// and a child carried into the new inner from the old one is retained by the
-// construction (the struct literal's alias-inc), so it sits at rc 2 when the
-// walk decs it and survives at 1 for the new owner. The own-shared-child row
-// below is that case built deliberately, and it is clean.
-//
-// The ordering concern is answered too: the release loop runs BEFORE the
-// stores, so the walk reads the old inner while it is still intact.
+// The deep release is rc==1-gated per field, and a child carried into the new
+// inner from the old one is retained by the construction (the struct literal's
+// alias-inc), so it sits at rc 2 when the walk decs it and survives at 1 for
+// the new owner. The own-shared-child row below is that case built
+// deliberately. The release runs BEFORE the stores, so the walk reads the old
+// inner while it is still intact.
 //
 // THE EXIT CODE DOES NOT MOVE, as with the rest of this family: the leakcheck
-// leg against native is the gate, and the register/wasm legs are the miscompile
-// guard on adding a deep walk.
+// leg is the gate, and the register/wasm legs are the miscompile guard on the
+// deep walk.
 var selfHostReuseReplacedNestedCases = []struct {
 	name string
 	src  string

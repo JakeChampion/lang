@@ -6,30 +6,23 @@ import (
 
 // --- A string local passed to a copying builtin keeps its reclaim ----------
 //
-// Native credits the builtins that copy a string argument rather than retain
-// it — `copyingBuiltinArgs` in rc_analysis.go (#7867, #8394) — so `print(out)`
-// or `w.write(out)` leaves `out` owned and its scope-exit release freeing. The
-// self-host's escape walk had no such credit: any builtin taking `out` was
-// an escape, so the local lost its release and every round leaked its
-// accumulator. copying_builtin_keys (fnsigs.fern) seeds the same table into
-// the borrowability registry both builders produce.
+// A builtin that copies a string argument rather than retaining it (#7867,
+// #8394) borrows it, so `print(out)` or `w.write(out)` leaves `out` owned and
+// its scope-exit release still frees it. Counted as an escape, the local lost
+// its release and every round leaked its accumulator.
 //
-// The method form is admitted by NAME: the walk cannot see a receiver's type,
-// so "Writer.write" is seeded only while no user receiver method is called
-// `write`. The last case declares one that retains its argument into a field
-// and checks the program still reads the value back: with the credit wrongly
-// reaching it, `out` would be released under the field (exit 139, or 250 when
-// the bytes had already been recycled).
+// The last case declares a user receiver method called `write` that retains
+// its argument into a field, and checks the program still reads the value
+// back: given the builtin's borrow, `out` would be released under the field
+// (exit 139, or 250 when the bytes had already been recycled).
 //
 // `__mismatch` is the one row with the string in TWO argument positions, so it
-// pins the per-POSITION half of the credit: a table keyed by name alone would
+// pins the per-POSITION half of the rule: a table keyed by name alone would
 // free `out` under position 0 and lose it under position 2.
 //
-// `print` and `Writer.write` used to leave one block per call whatever their
-// argument — print's newline-joined temp and write's Option[IoError] result box
-// (#8410). print now writes the payload and a "\n" literal without joining
-// them, and a match over `w.write(...)` releases the box it consumed, so every
-// row here is balanced: each case allocates only the accumulator's three
+// Every row is balanced: print writes the payload and a "\n" literal without
+// joining them, and a match over `w.write(...)` releases the Option[IoError]
+// box it consumed (#8410), so each case allocates only the accumulator's three
 // concats per round and frees all of them.
 
 const copyingBuiltinProlog = `function round(n: i32): i32 {

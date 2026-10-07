@@ -9,19 +9,14 @@ import (
 )
 
 // TestSelfHostArm64EnvpSaveIR pins the envp-save in the arm64 IR-path _start.
-// env() (and subprocess) read __fern_envp, a .bss slot the _start prologue is
-// supposed to seed from the SysV entry stack (envp = sp + 16 + argc*8). The AST
-// _start (asm_arm64.emit_module) saved it, but BOTH IR _start emitters —
-// asm_arm64_ir.emit_body (single-module) and asm_arm64.emit_module_ir_unit_arm64
-// (multi-unit) — omitted it, so __fern_envp stayed null and __fern_env's envp
-// walk (`ldr x1, [x19]` on a null base) SIGSEGV'd. Every env()-calling program
-// that routed the IR path crashed — which was the arm64 std-test
-// env_unreachable / lang_binary_e2e failures.
+// env() (and subprocess) read __fern_envp, a .bss slot the _start prologue
+// seeds from the SysV entry stack (envp = sp + 16 + argc*8). Left null, the
+// envp walk in __fern_env (`ldr x1, [x19]` on a null base) SIGSEGVs, so every
+// env()-calling program crashes.
 //
-// A small env() program routes the IR path (no strings-heavy stdlib to bail it
-// to AST), so this compiles one to aarch64 on the x86 host and asserts the
-// _start prologue seeds __fern_envp. Pure emission check — no qemu, runs on
-// every x86 CI lane.
+// This compiles a small env() program to aarch64 on the x86 host and asserts
+// the _start prologue seeds __fern_envp. Pure emission check — no qemu, runs
+// on every x86 CI lane.
 func TestSelfHostArm64EnvpSaveIR(t *testing.T) {
 	x86gcc, x86runner := x86_64Tooling(t)
 	if len(x86runner) != 0 {

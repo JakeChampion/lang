@@ -7,7 +7,7 @@ import (
 // TestSelfHostMapKeysSnapshotIRArm64 is the arm64 port of
 // TestSelfHostMapKeysSnapshotIRX86_64 (#4353 slices 1+2): scalar keys()/values()
 // snapshot-copy via the arm64 __fern_map_snapshot_col, plus the owncols
-// (x4 bit 1) owned grow in asm_arm64.fern's __fern_map_set. Lighter churn under
+// (x4 bit 1) owned grow in the arm64 __fern_map_set. Lighter churn under
 // qemu, same assertions: snapshot semantics, absolute grow-churn flatness,
 // keys-taken flatness (no double free: __rc_underflow_count() == 0), and the
 // post-loop release of the `for (k, v) in m` column snapshots.
@@ -45,8 +45,8 @@ func TestSelfHostMapKeysSnapshotIRArm64(t *testing.T) {
     return 0;
 }`, "map-keys-snapshot-semantics-arm64", 0)
 
-	// i32/i32 grow churn, no keys() taken: the owned grow + map_free make it
-	// FLAT (the #4877 grow-leak closing on arm64).
+	// i32/i32 grow churn, no keys() taken: the owned grow and the map's
+	// release keep it FLAT (#4877).
 	run(t, `function build(n: i32): i32 {
     let m: Map[i32, i32] = Map { 1: 2 };
     let j: i32 = 0;
@@ -68,8 +68,8 @@ function main(): i32 {
     return 0;
 }`, "map-i32-grow-churn-flat-arm64", 0)
 
-	// keys()-taken churn: snapshot copy swept + map_free frees the real
-	// buffers exactly once — flat, no underflow.
+	// keys()-taken churn: the snapshot copy is swept and the map's real
+	// buffers are freed exactly once — flat, no underflow.
 	run(t, `function build(n: i32): i32 {
     let m: Map[i32, i32] = Map { 1: 2 };
     let j: i32 = 0;

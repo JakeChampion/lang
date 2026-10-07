@@ -10,29 +10,22 @@ import (
 	"testing"
 )
 
-// --- A nested Option/Result local is never reclaimed (#7218) ----------------
+// --- A nested Option/Result local is reclaimed (#7218) ----------------------
 //
-// One level of Option is fully reclaimed; nesting one inside another dropped the
-// reclaim entirely — frees=0, not merely incomplete:
+// One level of Option is fully reclaimed, and nesting one inside another must
+// keep the reclaim. Missing it frees nothing at all, not merely too little:
 //
 //	Option[Option[i32]]  Some(Some(i))   allocs=400 frees=0 live_bytes=16000
 //	Option[i32]          Some(i)         allocs=200 frees=200 live_bytes=0
 //
-// against 0 on native for both. Three gates refused it in series, and each had
-// to be found by instrumenting the gate rather than reading the code: the
-// candidate was never produced (rcpayload_option_cand knows array / string /
-// string[] / struct payloads and nothing else), then the arm's nested
-// `match (inner)` read as an ESCAPE, then `blockable` excluded it from the only
-// pass that sees a loop-body local.
+// The arm's nested `match (inner)` is a borrow, not an escape.
 //
 // A SCALAR inner box holds a by-value scalar and NOTHING else, so one
-// __fern_rc_dec releases it whole — which is already what opt_payload_freefn
-// answers for the type, making that half admission-only. An RC inner owns a
-// payload of its own and takes emit_nested_opt_payload_drop instead: spill the
-// inner box, free ITS payload, free the inner box, then the outer. Both halves
-// are here; what separates them is the extra proof the rc one carries, that the
-// NESTED match's own binding does not escape either (a pointer can outlive its
-// arm where a scalar copy cannot).
+// __fern_rc_dec releases it whole. An RC inner owns a payload of its own, so the
+// drop is two levels deep: free the inner box's payload, the inner box, then
+// the outer. Both halves are here; the rc one also needs the NESTED match's own
+// binding not to escape (a pointer can outlive its arm where a scalar copy
+// cannot).
 
 func nestedOptChurn(prelude, body string, rounds int) string {
 	return fmt.Sprintf(`%sfunction churn(n: i32): i32 {
@@ -75,7 +68,7 @@ var nestedOptFlatCases = []struct {
 		// A RESULT inner. Both arms must be scalar, because the drop runs after
 		// the match and does not read the tag — an Err arm carrying a pointer
 		// would be stranded by the very same dec that fully releases a scalar
-		// one. type_is_scalar_union is what proves both.
+		// one.
 		name: "result_inner",
 		body: `        let o: Option[Result[i32, i32]] = Some(Ok(i));
         match (o) {
@@ -173,7 +166,7 @@ var nestedOptHazardCases = []struct {
 	{
 		// The inner box comes from a LIVE LOCAL rather than a construction. That
 		// local's own scalar-Option reclaim already frees it; this drop would be
-		// the second. opt_arg_is_direct_ctor is what excludes it.
+		// the second.
 		name: "inner_is_local",
 		src: nestedOptChurn("", `        let inner0: Option[i32] = Some(i);
         let o: Option[Option[i32]] = Some(inner0);
@@ -197,9 +190,8 @@ var nestedOptHazardCases = []struct {
 	{
 		// THE rc-inner trap. The NESTED match's binding is carried out of its
 		// arm — a pointer, which a scalar inner's copy could never be — so the
-		// two-level drop would free a buffer `held` still names.
-		// nested_opt_payload_arm_escapes is what sees this; the outer arm looks
-		// clean to every other gate.
+		// two-level drop would free a buffer `held` still names. The outer arm
+		// alone looks clean.
 		name: "inner_payload_escapes",
 		src: nestedOptChurn("", `        let held: i32[] = [];
         let o: Option[Option[i32[]]] = Some(Some([i, i + 1]));
@@ -213,16 +205,15 @@ var nestedOptHazardCases = []struct {
 	{
 		// A `None` INNER under an rc-inner annotation. The two-level drop reads
 		// offset 8 of the inner box unconditionally, and a None box never stored
-		// one — opt_arg_is_some_ctor is what keeps this out.
+		// one, so this must stay refused.
 		name: "inner_none_under_rc_type",
 		src: nestedOptChurn("", `        let o: Option[Option[i32[]]] = Some(None);
         match (o) { Some(inner) => { acc = (acc + 1) % 91; }, None => { acc = (acc + 2) % 91; } }`, 200),
 		want: 18,
 	},
 	{
-		// THREE levels. nested_opt_inner_freefn names a release for an array /
-		// string / string[] inner and nothing else, so an Option inner refuses
-		// rather than recursing — the walk is two levels deep by construction.
+		// THREE levels. The drop is two levels deep by construction, so an
+		// Option inner is refused rather than recursed into.
 		name: "triple_nested",
 		src: nestedOptChurn("", `        let o: Option[Option[Option[i32]]] = Some(Some(Some(i)));
         match (o) { Some(inner) => { acc = (acc + 1) % 91; }, None => { acc = (acc + 2) % 91; } }`, 200),
@@ -299,8 +290,7 @@ func TestSelfHostNestedOptionReclaimX86_64(t *testing.T) {
 
 // TestSelfHostNestedOptionHazardsX86_64 pins the refusals. A wrong answer or a
 // crash here means a box was freed while its construction site, an extracted
-// local, or the caller still owned it. Each `want` came from the interpreter and
-// the native backend agreeing.
+// local, or the caller still owned it. Each `want` came from the interpreter.
 func TestSelfHostNestedOptionHazardsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

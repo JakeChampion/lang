@@ -26,10 +26,8 @@ var selfHostEnumFieldDeepDropCases = []struct {
 	// Route 1: the field reclaim releases the replaced enum field.
 	{"enum-field-via-field-reclaim", "enum Payload { None, Some(i32[]) }\nstruct Asm { p: Payload, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, p: Payload.Some([v]) };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { p: Payload.Some([9]), n: 0 };\n    a = step(a, 1);\n    let r: i32 = 0;\n    match (a.p) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g.len(); } }\n    return r + __rc_underflow_count();\n}"},
 
-	// Route 2: reached only through `__struct_drop_Inner`, whose deep_enum_drop
-	// is the one releaser of a direct enum field's payload on every drop path
-	// (#8692). The scope-exit sweep that used to be a second releaser is gone,
-	// which is what makes walking it here safe.
+	// Route 2: the enum field sits one struct down, so only Inner's drop reaches its
+	// payload when the old Asm dies.
 	{"enum-field-via-struct-drop", "enum Payload { None, Some(i32[]) }\nstruct Inner { p: Payload }\nstruct Asm { i: Inner, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, i: Inner { p: Payload.Some([v]) } };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { i: Inner { p: Payload.Some([9]) }, n: 0 };\n    a = step(a, 1);\n    let r: i32 = 0;\n    match (a.i.p) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g.len(); } }\n    return r + __rc_underflow_count();\n}"},
 
 	// Two rc-carrying variants, so the tag dispatch has to pick rather than fall
@@ -53,24 +51,18 @@ var selfHostEnumFieldDeepDropCases = []struct {
 	// box, this one proves the dec is right when it does not.
 	{"shared-payload-buffer", "enum Payload { None, Some(i32[]) }\nstruct Asm { p: Payload, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, p: Payload.Some([v]) };\n}\nfunction main(): i32 {\n    let buf: i32[] = [9, 9, 9];\n    let a: Asm = Asm { p: Payload.Some(buf), n: 0 };\n    a = step(a, 1);\n    return buf.len() + __rc_underflow_count();\n}"},
 
-	// Control: a SCALAR payload. enum_arr_elems_walk_ok requires an rc payload, so
-	// this must NOT gain a walk — nothing heap sits under the box and a dec there
-	// would be an over-release. Clean before and after.
+	// Control: a SCALAR payload. Nothing heap sits under the box, so releasing it
+	// must not dec anything beneath — that would be an over-release.
 	{"scalar-payload-control", "enum Payload { None, Some(i32) }\nstruct Asm { p: Payload, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, p: Payload.Some(v) };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { p: Payload.Some(0), n: 0 };\n    a = step(a, 1);\n    let r: i32 = 0;\n    match (a.p) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g; } }\n    return r + __rc_underflow_count();\n}"},
 
 	// A SECOND STRUCT holds the enum box across the supersede. Every struct
 	// literal reading a nested-struct or enum field incs it, so `b` holds a
-	// COUNTED reference and `a`'s supersede must still release its own — but the
-	// unsafe scan marked the field by NAME, which stripped the enum arm out of
-	// __field_reclaim_Asm for the whole type and left the supersede's claim
-	// standing (#8658: 88 B a round, unbounded in a loop).
+	// COUNTED reference and `a`'s supersede must still release its own: one dec
+	// too few leaks the payload every round, one too many lands as an underflow,
+	// which is why `__rc_underflow_count()` is added to the answer.
 	//
-	// It is the guard the local-alias row cannot be: only the STRUCT alias took
-	// the marking path, which is why `local-alias-declines-walk` above stayed
-	// clean throughout. `__rc_underflow_count()` is added to the answer here for the
-	// same reason it does everywhere else in this table — the carve-out restores
-	// a dec, and a dec past a live claim would land as an underflow rather than
-	// as a leak.
+	// The local-alias row above cannot stand in for it: there the second
+	// reference lives in a local, here in another struct's field.
 	{"second-struct-alias", "enum Payload { None, Some(i32[]) }\nstruct Asm { p: Payload, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, p: Payload.Some([v]) };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { p: Payload.Some([9, 9, 9]), n: 0 };\n    let b: Asm = Asm { p: a.p, n: 1 };\n    a = step(a, 1);\n    let r: i32 = 0;\n    match (b.p) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g.len(); } }\n    return r + __rc_underflow_count();\n}"},
 
 	// The same share built by ASSIGNMENT rather than by an initialiser. The

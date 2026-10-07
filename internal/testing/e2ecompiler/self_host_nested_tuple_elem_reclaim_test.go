@@ -9,30 +9,21 @@ import (
 )
 
 // nestedTupleElemReclaimCases pin an rc-tuple holding a NESTED TUPLE element.
-// Two independent defects, either of which alone left the outer tuple with no
-// reclaim at all — buffer, boxes and nested box.
+// Two independent conditions, either of which alone would leave the outer tuple
+// with no reclaim at all — buffer, boxes and nested box.
 //
-//  1. Admission. tuple_lit_rc_reclaimable required a nested tuple element to be
-//     reclaimable IN ITS OWN RIGHT, i.e. to carry an array. An all-scalar
-//     `(i, j)` carries none, so it answered false and the ELEMENT arm turned
-//     that into a refusal of the whole outer tuple — the same "I will not free
-//     this element" / "I cannot free this tuple" conflation #4353 fixed in the
-//     binary and call arms, left behind in the tuple arm. A nested box is an
-//     allocation in its own right, so it is a child to free whatever it holds;
-//     the predicate is now split into tuple_lit_elems_admissible (structural)
-//     and tuple_lit_has_rc_child (worth freeing).
+//  1. Admission. A nested tuple element need not be reclaimable IN ITS OWN
+//     RIGHT: an all-scalar `(i, j)` carries no array, but the nested box is an
+//     allocation in its own right, so it is a child to free whatever it holds.
 //
-//  2. The read gate. rctuple_payload_escapes routed `t.2.0` — a scalar copied
-//     out of a nested tuple element — through decl_field_type, which finds no
-//     struct for a `(..)` tag and returns "". That is not a scalar type name,
-//     so the read counted as a bare pointer extraction and disqualified the
-//     tuple, though it is a borrow exactly like the struct scalar-field read
-//     beside it. A nested tuple element indexes by POSITION, so it now reads
-//     its tag with tuple_type_elem_tag.
+//  2. The read. `t.2.0` — a scalar copied out of a nested tuple element — is a
+//     borrow exactly like the struct scalar-field read beside it, not a bare
+//     pointer extraction. A nested tuple element indexes by POSITION, so its
+//     type comes from the tuple's element tag, not from a struct field.
 //
 // Byte cases return measured bytes per round, so a regression reports its own
-// size. Before, as x86-64 | arm64 | wasm, native flat on every row:
-// 128 | 128 | 80 for the three-element shapes and 80 | 80 | 48 for `(i, (j, k))`.
+// size. Unreclaimed, as x86-64 | arm64 | wasm: 128 | 128 | 80 for the
+// three-element shapes and 80 | 80 | 48 for `(i, (j, k))`.
 var nestedTupleElemReclaimCases = []struct {
 	name string
 	src  string

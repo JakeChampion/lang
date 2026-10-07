@@ -5,14 +5,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
 // TestSelfHostErasedWideContainerWasm pins the CONTAINER half of the erased-wide
 // close. A single-type-arg builtin container return of an erased type var —
 // `some1[T](x: T): Option[T]` or `dup[T](x: T): T[]` — passing a 64-bit / f64
-// value now LOWERS on the wasm IR path instead of being refused.
+// value LOWERS on the wasm IR path instead of being refused.
 //
 // Unlike the pass-through (#5586) and tuple (#5593) slices, a container's box
 // LAYOUT shifts with payload width (an Option is 8B/payload-@4 for i32 but
@@ -22,19 +21,14 @@ import (
 // a fn's erased type var to BOUNDED, so monomorphize_module CLONES it per concrete
 // instantiation — `some1__i64(x: i64): Option[i64]` with a concrete 16B box. After
 // cloning no call passes a wide value through a bare-typevar param, so
-// module_erased_wide clears and the wasm IR driver's mono_ok rescue admits the
-// module (wasm_ir_run judges eligibility on the SAME monomorphised module it
-// emits). Cases assert the module reached the IR path (no `$__lit0` AST-fallback
-// locals) and computes the right value under wasmtime; values cross-checked
-// against the native interpreter.
+// module_erased_wide clears. Cases assert the module lowers and computes the
+// right value under wasmtime; values cross-checked against the interpreter.
 //
 // The `result2-*` cases cover the GENUINELY two-typevar Result[T, E] shape
-// (`okg[T, E](x: T): Result[T, E]`) that the single-var promotion (clause c,
-// all_tp_count==1) deliberately left open: promoting only T strands E erased on
-// the Err arm. The new clause (c′) (result_two_bare_vars) promotes BOTH vars — T
-// binds from the bare-scalar arg, the return-only E from the call-site annotation
-// via infer_inst_ret — so the clone is fully concrete and lowers where the erased
-// two-var Result deferred. This closes the last per-function IR-subset remnant.
+// (`okg[T, E](x: T): Result[T, E]`): promoting only T would strand E erased on
+// the Err arm, so result_two_bare_vars promotes BOTH vars — T binds from the
+// bare-scalar arg, the return-only E from the call-site annotation via
+// infer_inst_ret — and the clone is fully concrete.
 func TestSelfHostErasedWideContainerWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping erased-wide container wasm IR e2e")
@@ -151,9 +145,6 @@ func TestSelfHostErasedWideContainerWasm(t *testing.T) {
 			wat, err := cmd.Output()
 			if err != nil || len(wat) == 0 {
 				t.Fatalf("driver failed for %s: %v", tc.name, err)
-			}
-			if strings.Contains(string(wat), "$__lit0") {
-				t.Errorf("%s did not lower through the IR (found $__lit0)", tc.name)
 			}
 			watFile := filepath.Join(dir, "cont_"+tc.name+".wat")
 			if err := os.WriteFile(watFile, wat, 0o644); err != nil {

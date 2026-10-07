@@ -11,22 +11,16 @@ import (
 // an array-of-tuples / option-of-tuple: `xs[i].1.y` / `match (o) { Some(g) => g.1.y }`
 // where the tuple's element is a reclaim-struct P (P sole-owning an rc-array field).
 //
-// Two gaps were closed together:
-//  1. IR-lowering: a field access whose object is a tuple-projection of an array element
-//     (`xs[i].1.y`, `xs[i].1.xs[0]`) had no tag in expr_tuple_elem_tag (its ExprIndex
-//     object hit the `_ => ""` fall-through), so expr_struct_type returned "" and
-//     lower_expr's field read called s.fail() — bailing the WHOLE function to the AST
-//     fallback (undefined __heap_bump_bytes at link). expr_tuple_elem_tag now resolves an
-//     `arr[i].N` element from the (tuple)[] slot's recorded element tuple type (arrarr_elem).
-//  2. Reclaim coverage: with the read on the IR path, the ARRTUP / OPTTUP escape checkers
-//     (arrtup_elem_esc_expr / opttup_arm_expr_escapes) still flagged a struct-field read
-//     `…N.field` as an escape (the tuple element is non-scalar), disqualifying the reclaim →
-//     leak. Both walkers now take `structs` and treat a struct SCALAR-field read, an indexed
-//     struct ARRAY-field read (`…N.field[j]`), and their `.len()` as borrows; a WHOLE struct
-//     element or a bare struct array-field extraction still escapes (leak-safe).
+// Two things are pinned together:
+//  1. The read lowers: a field access whose object is a tuple projection of an
+//     array element (`xs[i].1.y`, `xs[i].1.xs[0]`) resolves its struct type from
+//     the array's element tuple type.
+//  2. The reclaim still happens: a struct SCALAR-field read, an indexed struct
+//     ARRAY-field read (`…N.field[j]`), and their `.len()` are borrows; a WHOLE
+//     struct element or a bare struct array-field extraction escapes and the
+//     container is left leak-safe.
 //
-// Lowers through op_tuple_get / op_struct_get / __struct_drop_<P> / __fern_rc_dec, all
-// backend-complete, so x86-64 / arm64 / wasm share the case table.
+// x86-64 / arm64 / wasm share the case table.
 var tupStructFieldReclaimCases = []struct {
 	name string
 	src  string

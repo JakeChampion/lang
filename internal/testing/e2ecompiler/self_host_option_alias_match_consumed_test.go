@@ -5,26 +5,25 @@ import (
 	"testing"
 )
 
-// The Option twin of the rc-enum alias-match fix: a CONFINED alias bind no
-// longer denies the source its consuming-match free. This closed the last row
-// where the self-host leaked against a clean native.
+// The Option twin of the rc-enum alias-match case: a CONFINED alias bind must
+// not deny the source its consuming-match free.
 //
-// The confinement proof (rcopt_alias_bind_sites_of) has two halves that are
-// only sound together:
+// Confinement has two halves that are only sound together:
 //
-//	body_unsafe_for_MATCH_BORROW — the plain scan flags any bare ident, so an
-//	  alias consumed by its own `match (x)` reads as an escape and every
-//	  actually-used alias is refused (measured: the cell stayed leaking);
-//	opt_body_binds_rc_payload — reading a match scrutinee as a borrow is true
-//	  of the BOX and false of the PAYLOAD, so an alias whose arm carries the
-//	  payload out must still be refused.
+//	an alias consumed by its own `match (x)` is a borrow, not an escape — a
+//	  scan that flags every bare ident refuses every actually-used alias,
+//	  and the source leaks;
+//	reading a match scrutinee as a borrow is true of the BOX and false of
+//	  the PAYLOAD, so an alias whose arm carries the payload out must still
+//	  be refused.
 //
 // EVERY case here gates on the EXIT CODE and the sanitizer leg, not the census
 // alone: an over-releasing build exits 99 with a PERFECTLY BALANCED census. On
 // the typed lowering every row balances with the right exit.
-// See docs/rc-log/2026-08-28-option-alias-match-consumed.md.
+// See docs/rc-log/2026-08-28-optarr-alias-match.md and
+// docs/rc-log/2026-08-29-option-alias-payload-out.md.
 //
-// Exits confirmed on BOTH oracles (bin/fern -interp and native x86-64).
+// Exits confirmed against bin/fern -interp.
 
 func optionAliasMatchConsumedCases() []tupleAliasParamCase {
 	return []tupleAliasParamCase{

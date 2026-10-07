@@ -2,29 +2,17 @@ package e2ecompiler
 
 import "testing"
 
-// strSourceMethodBindingCases pin the reclaim credit a `let t: string = <expr>.m()`
-// binding earns, and which methods must not earn it.
-//
-// is_fresh_ret_binding has always had a method arm, but the string collector
-// passed it an empty receiver type, so the arm returned false for every binding
-// in the program: `let t = b.to_owned()` leaked 47 B/round where the builtin
-// `let t = b.to_ascii_upper()` beside it was flat. The struct collector next to
-// it passes v.type_name and works.
-//
-// The credit reads a STRICT registry class rather than SFRRECV:. SFRRECV admits a
-// method that returns its receiver or a view of it, which the consuming site
-// sorts out with a runtime pointer compare; a binding has no discriminator and
-// may only own a box that is nobody else's. Keying is by method NAME, because an
-// AST scan cannot type the receiver — so a name is admitted only when every
-// STRING-RETURNING declaration of it is strictly fresh, and never when it also
-// spells a string builtin.
+// strSourceMethodBindingCases pin which `let t: string = <expr>.m()` bindings
+// are reclaimed: a user method whose every return is a fresh string (like the
+// builtin `to_ascii_upper` beside it), and not one that can return its
+// receiver or a view of it — a binding has no runtime discriminator, so it may
+// only free a box that is nobody else's.
 //
 // The flat cases return 98 when the bound box is stranded: 400 rounds of a
 // 170-byte producer is 68 KB against a 32 KB ceiling. The refusal cases are
 // value-exact under same-size-class allocation pressure and verify `t` only
-// through borrow positions — an earlier version compared it with `!=`, which is
-// itself an escape, so nothing was credited in either direction and the probes
-// distinguished nothing.
+// through borrow positions: comparing it with `!=` would itself be an escape,
+// and the probes would distinguish nothing.
 var strSourceMethodBindingCases = []struct {
 	name string
 	src  string

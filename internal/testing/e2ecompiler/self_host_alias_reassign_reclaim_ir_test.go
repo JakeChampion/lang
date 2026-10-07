@@ -7,23 +7,14 @@ import (
 	"testing"
 )
 
-// aliasReassignReclaimCases pin the #3425 stage-2 alias-reassign reclaim fix: a
-// FRESH struct local (`let t = S { arr: [] }`) that is later REASSIGNED from an
-// ALIAS — a match-arm payload binding (`t = l`), a struct-field read (`t = x.s`),
-// or an array-element read (`t = xs[i]`) — no longer owns a fresh box after the
-// rebind; its rc fields BORROW whatever the RHS points into (still owned by its
-// container). The self-host IR path used to keep such a local in
-// reclaimable_names, so the loop's next-iteration `let t = ...` re-init reclaim
-// (emit_field_reclaim_store) freed the container's live array out from under it
-// — a double-free / use-after-free. This is exactly how the merged-bundle IR
-// self-compile SIGSEGV'd (box_mutated_scalar_captures' `let lam = ExprLambda{};
-// match (v.init) { ExprLambda(l) => { lam = l; } }` freed fd's own lambda body).
-//
-// reassigned_from_alias now excludes such locals from reclaim entirely — they
-// leak, exactly like the borrowed match-payload struct bindings already do — so
-// the container's arrays survive. The programs churn fresh arrays after scan()
-// so the freed buffer is REUSED (7/8-filled) before the reads: a surviving
-// double-free reads the reused data (sum wrong -> 90) rather than the originals.
+// aliasReassignReclaimCases pin a FRESH struct local (`let t = S { arr: [] }`)
+// that is later REASSIGNED from an ALIAS — a match-arm payload binding
+// (`t = l`), a struct-field read (`t = x.s`), or an array-element read
+// (`t = xs[i]`) — so its rc fields now point into a box the container still
+// owns (#3425). The loop's next-iteration `let t = ...` must not free them out
+// from under the container. The programs churn fresh arrays after scan() so a
+// freed buffer is REUSED (7/8-filled) before the reads: a double-free reads the
+// reused data (sum wrong -> 90) rather than the originals.
 var aliasReassignReclaimCases = []struct {
 	name string
 	src  string

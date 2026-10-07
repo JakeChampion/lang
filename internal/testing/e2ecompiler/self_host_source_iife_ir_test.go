@@ -10,34 +10,21 @@ import (
 // self-host IR path (#7192).
 //
 // A value block and a source IIFE have the identical AST shape — a zero-arg
-// call of a zero-param lambda — and the self-host told them apart by that shape
-// alone. So a written IIFE got value-block treatment: irlower INLINED it, and
-// its `defer` was hoisted to the enclosing function's exit. The repro answered
-// 1 where native answers 6.
+// call of a zero-param lambda — but they are not the same thing. A value block
+// is a desugar of an if-/match-expression or a comprehension: not a call, no
+// scope, and its defers belong to the enclosing function, which
+// TestSelfHostDeferValueBlockIR_X86_64 pins. A written IIFE *is* a call with a
+// scope of its own, so its defer runs when IT returns; treated as a value
+// block, the repro answers 1 where it should answer 6.
 //
-// They are not the same thing. A value block is a desugar of an if-/match-
-// expression or a comprehension: not a call, no scope, and its defers correctly
-// belong to the enclosing function — which is why the naive fix of "treat value
-// blocks as scopes" is ruled out by TestSelfHostDeferValueBlockIR_X86_64, whose
-// four subtests all refuse to lower under it. A written IIFE *is* a call with a
-// scope of its own, so its defer runs when IT returns.
-//
-// The parser knows which one it built, so the fix marks the desugar
-// (parser.ORIGIN_BLOCK / _MATCH_EXPR / _IF_EXPR / _ARR_COMP / _MAP_COMP) and
-// every consumer tests the marker instead of the shape. There were five such
-// consumers, not one: parser.is_value_block, irlower's is_iife_callee (now
-// irtables.is_iife_callee), and call_bail_tag and the two lower_iife dispatch
-// sites (deleted with the AST lowering).
-//
-// The unmarked IIFE then needs something to call: the lift hoists it to a
-// direct `__lam_N` call, with any captures as trailing arguments
-// (lift.lift_capturing_iife).
+// The parser marks the desugar (parser.ORIGIN_BLOCK / _MATCH_EXPR / _IF_EXPR /
+// _ARR_COMP / _MAP_COMP), and the consumers — parser.is_value_block and
+// irtables.is_iife_callee — test the marker instead of the shape. The unmarked
+// IIFE is hoisted by the lift to a direct `__lam_N` call, with any captures as
+// trailing arguments (lift.lift_capturing_iife).
 //
 // Every case is oracle-checked against the interpreter and compiled under
-// FERN_STRICT_IR, so a per-function bail is a hard failure rather than a route
-// that quietly reaches the same answer. That matters here specifically: before
-// the third part landed, the first two turned the wrong answer into a bail,
-// which looks like progress in a divergence table and is not a fix.
+// FERN_STRICT_IR, so a per-function bail fails naming its site.
 var sourceIifeCases = []struct {
 	name string
 	src  string

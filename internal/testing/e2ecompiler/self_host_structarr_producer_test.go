@@ -10,37 +10,26 @@ import (
 
 // --- A SCALAR-FIELD struct array from a producer call (#7445) ----------------
 //
-// `collect_fresh_structarr_names` admitted an array LITERAL and an append-built
-// local, and nothing else. A producer call was not a shape it refused on the
-// merits — there was no producer registry for this element kind at all, where
-// every neighbouring one has had one for a while ("ARRSTRUCTF:" for structs with
-// an rc-array field, "ARRTUPF:" for tuples, "ARENUMF:" for enums). So:
+//	let v: P[] = [P { .. }, P { .. }];   // literal init
+//	let v: P[] = mk();                   // producer call
 //
-//	let v: P[] = [P { .. }, P { .. }];   // credited, flat
-//	let v: P[] = mk();                   // uncredited, 160 B per round
+// Same elements, same frame, same free. A producer whose every return is a
+// fresh struct-literal array, or a local built by self-append and handed back,
+// gives its caller sole ownership, so the binding must release every element
+// struct — and, for a string-fielded element, its string — not just the outer
+// buffer. Missing it strands 160 B per round, unbounded in any loop that
+// constructs one, which is the shape of an AST walker and so of this compiler.
 //
-// Same elements, same frame, same free. The uncredited binding fell through to
-// the generic shallow buffer dec, which frees the outer buffer and no element
-// box, so every element struct — and, for a string-fielded element, its string —
-// stranded. Unbounded in any loop that constructs one, which is the shape of an
-// AST walker and so of this compiler.
+// The refusal rows carry the soundness: a producer whose element is a bare
+// IDENT, one that hands back its own parameter, and one whose element field
+// embeds a caller's string do not give the caller sole ownership, and 99 in
+// any of those rows would be a box freed under a live owner. Byte counts
+// cannot see that difference — a double free and a clean run report identical
+// allocs/frees — so every row asserts an exit code, and only the rows that
+// must balance assert bytes.
 //
-// The fix registers "STRUCTARRF:<name>" off the SAME body proof its rc-array-field
-// sibling uses (every return either a fresh struct-literal array or a local built
-// by self-append and handed back), which is why the append-built producer row
-// below is green as well.
-//
-// The refusal rows are the ones that carry the soundness. A producer whose
-// element is a bare IDENT, one that hands back its own parameter, and one whose
-// element field embeds a caller's string all stay UNcredited: their leak is the
-// old one, and 99 in any of those rows would be a box freed under a live owner.
-// Byte counts cannot see that difference — a double free and a clean run report
-// identical allocs/frees — so every row asserts an exit code, and only the rows
-// that must balance assert bytes.
-//
-// Every want below was confirmed against BOTH oracles, the native x86-64 backend
-// and `bin/fern -interp`, which agreed on each; none was read off the self-host
-// run under test.
+// Every want below was confirmed against `bin/fern -interp`; none was read off
+// the self-host run under test.
 
 type structarrProdCase struct {
 	name    string
@@ -142,7 +131,7 @@ function round(i: i32): i32 { let v: P[] = mk(i); return v.len() + v[0].n; }` + 
 			// caller binds is one the caller already owns. Crediting the binding
 			// would release it twice.
 			name: "producer_returns_param",
-			src: structarrProdDecl + `function passthru(a: P[]): P[] { return a; }
+			src: structarrProdDecl + `@noinline function passthru(a: P[]): P[] { return a; }
 function round(i: i32): i32 {
     let src: P[] = [P { s: w("p"), n: 1 }, P { s: w("q"), n: 2 }];
     let v: P[] = passthru(src);

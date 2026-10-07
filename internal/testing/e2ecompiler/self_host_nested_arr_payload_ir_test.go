@@ -11,13 +11,11 @@ import (
 // nestedArrPayloadCases pin the NESTED-array (`T[][]`) Option/Result match
 // payload on the IR path (the std/fuzz corpus shape: `match
 // (fuzz_corpus_from_dir(d)) { Ok(seeds) => … }` over a `Result[u8[][], E]`).
-// The payload classifier admitted only flat arrays, so any `T[][]` payload
-// binding bailed the whole function (`did not lower: match`). The binding now
-// uses the flat-array pointer read plus the is_arrarr + inner-element-kind
-// marks a `let m: T[][]` binding records, so nested reads (`seeds[0][1]`),
-// inner string dispatch (`rows[0][1].len()`), and a lambda CAPTURING the
-// binding all resolve. Strict-IR drives each case so a bail fails the test
-// rather than being absorbed by the module-level retry.
+// The payload binding types as the nested array, as a `let m: T[][]` binding
+// does, so nested reads (`seeds[0][1]`), inner string dispatch
+// (`rows[0][1].len()`), and a lambda CAPTURING the binding all resolve.
+// Strict-IR drives each case so a refusal (`did not lower: match`) fails the
+// test.
 var nestedArrPayloadCases = []struct {
 	name string
 	src  string
@@ -52,8 +50,8 @@ function main(): i32 {
     }
     return 94;
 }`, 42},
-	// Err-side nested payload with a string inner element: the binding's
-	// arrarr_elem "string" is what routes `rows[0][1].len()` to str_len.
+	// Err-side nested payload with a string inner element: `rows[0][1]` must
+	// type as a string for `.len()` to route to str_len.
 	{"string-nested-err-payload", `function mk(): Result[i32, string[][]] {
     let rows: string[][] = [];
     rows = rows.append(["ab", "cdef"]);

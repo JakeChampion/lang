@@ -16,13 +16,13 @@ import (
 )
 
 // Cross-validation across the three execution engines: the self-hosted
-// tree-walking interpreter (interp.fern), the native (Go) tree-walking
-// interpreter (internal/oracle/interp), and the self-hosted compiler's x86-64 output.
+// tree-walking interpreter (interp.fern), the Go tree-walking interpreter
+// (internal/oracle/interp), and the self-hosted compiler's x86-64 output.
 // Every source is piped through interp_run.fern and asm_run.fern and run
-// directly against the native interp; all three must return the same exit code.
+// directly against the Go interp; all three must return the same exit code.
 //
 // This is the essential parity net between the self-host compiler and the one
-// implementation whose bugs are UNCORRELATED with it. The native interpreter is
+// implementation whose bugs are UNCORRELATED with it. The Go interpreter is
 // written in a different language and compiled by a different compiler, so it is
 // the only engine here that cannot share a frontend bug with the others — see
 // docs/NATIVE-CONVERGENCE.md §3, which keeps it permanently for exactly that
@@ -35,17 +35,13 @@ import (
 // Result (#5990). Restricting the corpus hides real divergences behind an
 // untested surface, so a closed gap belongs here as a passing row, not a note.
 //
-// `to_ascii_lower` / `to_ascii_upper` were listed alongside it and do NOT
-// belong here: they are `std/string` methods, not builtins, so `"A".to_ascii_
-// lower()` is E043 on the native compiler too without `import "std/string"`.
-// interp_run.fern runs `parser.parse_module` on raw stdin with no module
-// loader, so NO stdlib import resolves in this suite regardless of engine.
+// `to_ascii_lower` / `to_ascii_upper` do NOT belong here: they are
+// `std/string` methods, not builtins, so `"A".to_ascii_lower()` is E043
+// without `import "std/string"`. interp_run.fern runs `parser.parse_module` on
+// raw stdin with no module loader, so NO stdlib import resolves in this suite
+// regardless of engine.
 // Covering them needs a driver that loads modules (the self-hosted CLI's
 // `-interp`), not a row here.
-//
-// (A fourth engine — a bytecode VM, vm.fern — used to sit here too. It was
-// retired in #4392: an unreachable fifth implementation of Fern semantics with
-// no production consumer and known semantic drift from the other engines.)
 
 func TestSelfHostCrossValidationX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -300,12 +296,9 @@ func TestSelfHostCrossValidationX86_64(t *testing.T) {
 		{"try-unwraps-some", `function h(o: Option[i32]): Option[i32] { let v: i32 = o?; return Some(v * 3); } function main(): i32 { match (h(Some(14))) { Some(v) => { return v; }, None => { return 0; } } }`, 42},
 		{"try-propagates-none", `function h(o: Option[i32]): Option[i32] { let v: i32 = o?; return Some(v * 3); } function main(): i32 { match (h(None)) { Some(v) => { return v; }, None => { return 42; } } }`, 42},
 		// A CLOSURE is a function boundary too, so the unwind stops at the
-		// lambda. Found by this corpus: the native interpreter let the None
-		// escape the lambda and exit the whole program 0, while both compiled
-		// backends answered 42 — a divergence in the ORACLE leg, which is the
-		// one this suite cannot catch by construction unless a row disagrees
-		// with the other two. Also pinned as a four-backend fixture
-		// (conformance/cases/try_op_in_closure).
+		// lambda and f(None) returns None rather than exiting the program 0.
+		// The native interpreter once got this wrong, a divergence in the
+		// ORACLE leg that this suite sees only because the legs disagree.
 		{"try-in-closure", `function main(): i32 { let f: (Option[i32]) => Option[i32] = (o: Option[i32]): Option[i32] => { let v: i32 = o?; return Some(v + 1); }; match (f(None)) { Some(a) => { return a; }, None => { match (f(Some(41))) { Some(b) => { return b; }, None => { return 0; } } } } }`, 42},
 	}
 

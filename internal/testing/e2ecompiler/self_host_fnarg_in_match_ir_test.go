@@ -9,17 +9,14 @@ import (
 	"testing"
 )
 
-// TestSelfHostFnArgInMatchIR pins the closure-lift fix for a fn-value passed as
-// a call ARGUMENT inside a `match` SCRUTINEE (and an arm body). The lift pass
-// (lift_inline_closures_stmts) env-boxes a bare fn-name arg into a `$wrap`
-// trampoline so the callee — whose fn-param is a closure local — receives a box
-// and dispatches env-first. It walked StmtIf/While/For conditions but had NO
-// StmtMatch arm, so `match (g(arr, is_even)) { … }` left `is_even` a BARE fn
-// pointer; the callee then unpacked a box from it and segfaulted on the
-// indirect call. This is the latent IR bug that surfaced (#3457) once std/test
-// modules routed IR — every test ends `match`-ing assertion results
-// (wider_array_contains_count's `match (assert_count_i32(arr, is_even, n))`,
-// map_eq's predicate). Compiled through the asm_ir_run driver.
+// TestSelfHostFnArgInMatchIR pins a fn-value passed as a call ARGUMENT inside a
+// `match` SCRUTINEE (and an arm body). The closure lift env-boxes a bare
+// fn-name arg into a `$wrap` trampoline so the callee — whose fn-param is a
+// closure local — receives a box and dispatches env-first. Left a BARE fn
+// pointer, as `is_even` in `match (g(arr, is_even)) { … }`, the callee unpacks
+// a box from it and segfaults on the indirect call. std/test programs hit this
+// shape constantly, since every test `match`es assertion results (#3457).
+// Compiled through the asm_ir_run driver.
 func TestSelfHostFnArgInMatchIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

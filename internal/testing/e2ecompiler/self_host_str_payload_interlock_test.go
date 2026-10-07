@@ -5,24 +5,10 @@ import "testing"
 // strPayloadInterlockCases pin a fresh STRING local handed to a union element of
 // an rc-tuple — `let sv = …; let t = (i, Some(sv))`.
 //
-// #7168 released a bare-ident ARRAY payload there and refused a string. The
-// refusal was right but the reason recorded for it was not: the release is not
-// missing, it cannot reach zero alone. The construction retains the payload
-// (rc 2) and the tuple SUPPRESSES the local's own sweep, so exactly one
-// reference was ever spent. Forced at the call site, on x86-64:
-//
-//	neither half          2 __fern_str_free   32 B/round
-//	the "STR:" credit     3                   32
-//	the element release   3                   32
-//	both                  4                    0
-//
-// So the two halves land together under one condition, which is what the ARRAY
-// twin has always done: alloc + inc paid by the local's rebind/exit release AND
-// the payload dec in the reclaim block.
-//
-// The credit half is the tuple-element twin of the #4354 closure interlock and
-// sits beside it; the release half is gated on slot_is_reclaimable_str, so the
-// two cannot drift apart.
+// The construction retains the payload (rc 2), so the box frees only when BOTH
+// references are spent: the local's own rebind/exit release AND the payload dec
+// when the tuple is released. Either half alone leaves it at rc 1 and leaks
+// 32 B/round on x86-64 — the same pairing the ARRAY twin has.
 var strPayloadInterlockCases = []struct {
 	name string
 	src  string
@@ -53,10 +39,9 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// ESCAPE control: the same local also assigned to an outer one. The interlock
-	// must NOT fire — tuple_union_payload_sole_use is not the thing that refuses
-	// here, the plain escape walk is, because `keep = sv` is a second use outside
-	// the tuple. It must stay refused AND must not over-release. 73 on native.
+	// ESCAPE control: the same local is also assigned to an outer one, so
+	// `keep = sv` is a second use outside the tuple. It must not
+	// over-release. 73.
 	{"str-escapes-must-refuse", `import "std/i32";
 function churn(n: i32): i32 {
     let keep: string = "";

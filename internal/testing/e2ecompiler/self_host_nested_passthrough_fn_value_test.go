@@ -41,19 +41,17 @@ function main(): i32 { let fs: ((i32) => i32)[] = gen(false, 5i32); return fs[0i
 	{"iife_arm_passthrough_holds_lambda", `function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; }
 function main(): i32 { let v0: (i32) => i32 = ((a: i32) => 40i32); let n: i32 = 2i32; let t: boolean = false; let xs: ((i32) => i32)[] = [(if (t) { v0 } else { pick(t, v0, ((x: i32) => (x + n))) })]; return xs[0i32](3i32) & 63i32; }`}, // 5
 
-	// The DESTINATION half, and the reason the boxing above could not land on
-	// its own. The lift boxes a fn value at an erased-generic parameter
-	// unconditionally, so `[pick(c, <lambda>, <lambda>)]` is an array of boxes —
-	// but the registry that decides whether a function returns a closure ARRAY
-	// asked whether element 0 was a lambda, a `__mkclo$` box or a known factory
-	// call, and a passthrough call is none of those. The caller then bound the
-	// result as a plain fn-pointer array and `fs[0](3)` bare-dispatched a box:
-	// compiled clean, no bail, SIGSEGV. Widening the boxing side first would
-	// have turned safe bails into more of these.
+	// The DESTINATION half. The lift boxes a fn value at an erased-generic
+	// parameter unconditionally, so `[pick(c, <lambda>, <lambda>)]` is an array
+	// of boxes, and the function returning it must be known to return a closure
+	// ARRAY even though element 0 is a passthrough call rather than a lambda, a
+	// `__mkclo$` box or a known factory call. Otherwise the caller binds the
+	// result as a plain fn-pointer array and `fs[0](3)` bare-dispatches a box:
+	// compiled clean, no bail, SIGSEGV.
 	//
-	// returned_iife_of_arrays is the same miss one level in: a value-position
-	// if/match in return position is an IIFE, so the arrays sit inside its arms
-	// and the registry's call arm only knew the named-callee form.
+	// returned_iife_of_arrays_passthrough is the same shape one level in: a
+	// value-position if/match in return position is an IIFE, so the arrays sit
+	// inside its arms.
 	{"returned_array_passthrough_element", `function pick[T](cond: boolean, a: T, b: T): T { return if (cond) { a } else { b }; }
 function gen(c: boolean, p1: i32): ((i32) => i32)[] { let s: boolean = !c; return [pick(s, ((y: i32) => (y + p1)), ((z: i32) => 9i32))]; }
 function main(): i32 { let fs: ((i32) => i32)[] = gen(false, 5i32); return fs[0i32](3i32) & 63i32; }`}, // 8
@@ -84,12 +82,10 @@ function main(): i32 { return gen(3i32) & 63i32; }`}, // 4
 	{"arm_array_payload_capture_scope", `function mk(r: Result[i32, i32]): ((i32) => i32)[] { return (match (r) { Ok(a) => [((x: i32) => (x + a))], Err(b) => (match (r) { Ok(c) => [((y: i32) => y)], Err(d) => [((z: i32) => (z + d))] }) }); }
 function main(): i32 { let fs: ((i32) => i32)[] = mk(Err(4i32)); return fs[0i32](3i32) & 63i32; }`}, // 7
 	// An arm spelled `id([…])` rather than `[…]`. A generic passthrough hands the
-	// array literal straight back, so the arm carries the same elements — but the
-	// gate demanded a literal and abandoned the whole rewrite, leaving a sibling
-	// arm's capturing lambda raw. The destination moved first here too:
-	// `expr_is_closure_array` now sees through the same passthrough, so the
-	// binding reads as a closure array rather than bare-dispatching a box.
-	// Reduced from fernsmith seed 42.
+	// array literal straight back, so the arm carries the same elements: the
+	// rewrite must see through it rather than abandon the whole match and leave a
+	// sibling arm's capturing lambda raw, and the binding must read as a closure
+	// array rather than bare-dispatching a box. Reduced from fernsmith seed 42.
 	{"arm_array_passthrough_forwards_literal", `enum Status { Active, Inactive, Pending }
 function id[T](x: T): T { return x; }
 function main(): i32 { let v1: Status = Pending; let v3: ((i32) => i32)[] = (match (v1) { Active => [((a: i32) => (match (v1) { Active => a, Inactive => a, Pending => 673i32 }))], Inactive => [((b: i32) => b)], Pending => id([((c: i32) => 126i32)]) }); return v3[0i32](3i32) & 63i32; }`}, // 62

@@ -50,7 +50,7 @@ function nested(rows: i32[][]): (i32, i32[]) {
     if (t.0 == 0) { return (0, e); }
     return t;
 }
-function view(s: string): string { return s; }
+@noinline function view(s: string): string { return s; }
 // The checked slice is a decision tree with two sinks: every test that
 // fails branches to the one None block, and the result is a phi of the Some
 // of the view and that None. The length is read once and each bound

@@ -9,16 +9,11 @@ import (
 
 // #4357 (tuple sibling of the struct loop-local reclaim #4733/#4735): a fresh
 // tuple loop-local carrying a fresh ARRAY-literal element (`while { let t: (i32,
-// i32[]) = (i, [i, i+1]); }`) leaked the array element every iteration — the
-// scalar-tuple path (tuple_lit_is_fresh_scalar) only reclaims the box with a
-// shallow dec, never the elements, and a non-scalar tuple wasn't collected at all.
-// The fix credits such a tuple "TUPRC:" (collect_fresh_rc_tuple_names) and routes
-// its loop-rebind through emit_tuple_deep_reinit_store: arr_dec each fresh array
-// element (op_tuple_get k), then the box.
+// i32[]) = (i, [i, i+1]); }`) must release the array element every iteration,
+// not just the tuple box: a shallow dec of the box leaks the element.
 //
-// SOUNDNESS: only ExprArray element positions of the init literal are freed. A
-// bare-ident pointer element (`(i, xs)`, xs a live array local) aliases a live
-// value, so it is left untouched (leak-safe) — freeing it would double-release.
+// SOUNDNESS: a bare-ident pointer element (`(i, xs)`, xs a live array local)
+// aliases a live value, so freeing it with the tuple would double-release.
 //
 // Gated on the self-host x86-64 IR path: FIXPOINT (bump growth equal across N) +
 // OVER-RELEASE (the fresh array element is read each iteration) + an ALIAS-SAFETY

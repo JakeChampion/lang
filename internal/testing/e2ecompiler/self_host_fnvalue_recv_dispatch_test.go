@@ -12,34 +12,26 @@ import (
 // that value's declared return type.
 //
 // `keyed_sum[T, K: Key](xs, key: (T) => K)` instantiated at `K = string` calls
-// `key(xs[i]).k_id()`. The receiver is a call through a PARAMETER holding a
-// closure, whose type is coarsened to the flat "fn" tag with the result in a
-// sidecar — so every scalar predicate in irlower answered false for it and
-// `expr_scalar_type` handed back its "i32" last resort. The call then keyed
-// `i32.k_id`, and because the program's OTHER `impl Key for i32` supplies a
-// symbol of exactly that name, strict-IR was satisfied and the module lowered:
-// `impl Key for i32 { k_id(self) { return self; } }` ran with a string BOX as
-// its integer receiver and the program returned a heap address (#7187).
+// `key(xs[i]).k_id()`, where the receiver is a call through a PARAMETER holding
+// a closure. Falling back to an "i32" receiver there keys `i32.k_id`, and
+// because the program's OTHER `impl Key for i32` supplies a symbol of exactly
+// that name, strict-IR is satisfied and the module lowers: the i32 impl runs
+// with a string BOX as its integer receiver and the program returns a heap
+// address (#7187).
 //
 // That is the silent branch of the same failure
 // `TestSelfHostArrayRecvMisdispatchRefuses` pins one receiver kind further out:
-// no diagnostic, no refusal, only an oracle disagreement. The loud branch (no
-// i32 impl of that verb) merely bailed the module.
+// no diagnostic, no refusal, only an oracle disagreement.
 //
 // The first four cases are the issue's own table — the i32 forward, the string
 // forward, a two-hop forward, and a lambda passed directly with no forwarding.
-// The i32 rows were right all along; pinning them keeps a regression of the
-// OTHER half visible, since a generic forwarding its closure parameter to
-// another bounded generic used to fail to instantiate at all. The direct-lambda
-// row is the issue's one mis-measurement: it records that shape as correct,
-// but a string key through it is wrong too — the defect never needed the
-// forwarding.
+// The i32 rows keep the other half visible: a generic forwarding its closure
+// parameter to another bounded generic has to instantiate at all. The
+// direct-lambda row shows the defect never needed the forwarding.
 //
 // The remaining cases sweep the rest of the scalar family through the same
-// shape, since the "i32" fallback captured every one of them. Measured before
-// the fix: `string` / `f64` / `boolean` / `u32` / `f32` all silently ran the
-// i32 impl; `u64` bailed loudly on the absent `i64.k_id` (its 64-bit WIDTH was
-// already tracked, only its unsigned-ness was not).
+// shape — `string` / `f64` / `boolean` / `u32` / `f32` / `u64` — since an
+// "i32" fallback would capture every one of them.
 const fnValueRecvKeyTrait = `trait Key { function k_id(self: Self): i32; }
 impl Key for i32 { function k_id(self: Self): i32 { return self; } }
 impl Key for string { function k_id(self: Self): i32 { return self.len(); } }

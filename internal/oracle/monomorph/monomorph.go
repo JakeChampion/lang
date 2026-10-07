@@ -315,9 +315,21 @@ func Run(prog *ast.Program, info *checker.Info) error {
 	//    fn and struct decls flow through `info.Generics`, so the
 	//    "is this name generic?" predicate is a single map lookup
 	//    irrespective of which kind we're filtering.
+	// A generic enum that stays generic keeps its parametric impls (step 4c),
+	// so the generic methods those impls name stay too: the re-check
+	// validates the impl against them.
+	keptEnumMethods := map[string]bool{}
+	for _, impl := range prog.Impls {
+		if len(impl.TypeParams) > 0 && forKeptGenericEnum(impl, info) {
+			for _, mn := range impl.MethodNames {
+				name, _, _ := info.ResolveMethod(impl.Type.(ast.EnumType).Name, mn, []string{impl.Trait})
+				keptEnumMethods[name] = true
+			}
+		}
+	}
 	keep := prog.Funcs[:0]
 	for _, fn := range prog.Funcs {
-		if _, isGen := info.Generics[fn.Name]; isGen {
+		if _, isGen := info.Generics[fn.Name]; isGen && !keptEnumMethods[fn.Name] {
 			continue
 		}
 		keep = append(keep, fn)
@@ -738,10 +750,14 @@ func Run(prog *ast.Program, info *checker.Info) error {
 	//     report a spurious orphan / missing-type error against a
 	//     type that no longer exists. A plain (non-parametric) impl
 	//     stays: its concrete type survives and the re-check
-	//     re-validates it unchanged. See docs/TRAITS.md.
+	//     re-validates it unchanged. So does a parametric impl for a
+	//     generic enum that stays generic: the enum's decl survives, and
+	//     without its impls the re-check knows no conformance for
+	//     `Opt[i32]`, so a derived Eq + Hash map key reads as E045.
+	//     See docs/TRAITS.md.
 	keepImpls := prog.Impls[:0]
 	for _, impl := range prog.Impls {
-		if len(impl.TypeParams) > 0 {
+		if len(impl.TypeParams) > 0 && !forKeptGenericEnum(impl, info) {
 			continue
 		}
 		keepImpls = append(keepImpls, impl)
@@ -810,8 +826,8 @@ func Run(prog *ast.Program, info *checker.Info) error {
 // needs through its trait bounds on a GENERIC ENUM argument (#9308). A call on
 // a bound type parameter (`x.show()` in `tell[X: Show]`) has no concrete call
 // site to instantiate the method from, and a generic enum that stays generic
-// gets no concrete impl either — step 4c drops the parametric one — so unless
-// something also called the method directly, the re-check found no method on
+// gets no concrete impl either — step 4c keeps only the parametric one — so
+// unless something also called the method directly, no clone ran for
 // `MyOpt[i32]`. Each parametric impl of a bound trait whose `for` type unifies
 // with the argument contributes its methods, keyed exactly as a direct call
 // would key them.
@@ -912,6 +928,17 @@ func dedupeErrors(errs []error) []error {
 		}
 	}
 	return out
+}
+
+// forKeptGenericEnum reports whether impl's `for` type is a generic enum
+// the monomorphizer keeps generic rather than cloning per instantiation.
+func forKeptGenericEnum(impl *ast.ImplDecl, info *checker.Info) bool {
+	et, ok := impl.Type.(ast.EnumType)
+	if !ok {
+		return false
+	}
+	ed := genericEnum(info, et.Name)
+	return ed != nil && !enumNeedsClone(ed, info)
 }
 
 // genericEnum returns the generic EnumDecl for `name` (TypeParams
@@ -1600,17 +1627,10 @@ func rewriteType(t ast.Type, info *checker.Info, into map[instKey][]ast.Type) as
 		// other, so a monomorphised `Box[i32]::Ok` becomes `Box__i32::Ok`
 		// — the name the synthesised concrete impl records its binding
 		// under, and the only spelling the re-check can resolve.
-		base := rewriteType(x.Base, info, into)
-		// A generic ENUM has no such instantiation: rewriteType keeps one
-		// generic decl for it (see the EnumType arm), so nothing synthesises
-		// a concrete impl and the parametric one that carries the binding is
-		// dropped before the re-check. Resolve it here instead, while the
-		// FIRST check's bindings are still in hand — which is also the moment
-		// the doc names, "when the generic is monomorphised".
-		if bound, ok := resolveAssocBinding(info, base, x.Name); ok {
-			return rewriteType(bound, info, into)
-		}
-		return ast.ProjType{Base: base, Name: x.Name}
+		// A generic ENUM keeps its generic decl (see the EnumType arm) and
+		// its parametric impl (step 4c), which carries the binding the
+		// re-check resolves `E[i32]::Item` against.
+		return ast.ProjType{Base: rewriteType(x.Base, info, into), Name: x.Name}
 	case ast.ArrayType:
 		return ast.ArrayType{Elem: rewriteType(x.Elem, info, into)}
 	case ast.SliceType:
@@ -1629,68 +1649,6 @@ func rewriteType(t ast.Type, info *checker.Info, into map[instKey][]ast.Type) as
 		return out
 	}
 	return t
-}
-
-// resolveAssocBinding answers what an impl bound a concrete base's associated
-// type to, substituting a parametric impl's own parameters through the base's
-// type arguments (`impl[T] Holder for E[T] { type Item = T; }` binds `Item` to
-// i32 for an `E[i32]` base). Mirrors the checker's resolveProj /
-// substAssocBinding pair, against the same two Info tables.
-func resolveAssocBinding(info *checker.Info, base ast.Type, name string) (ast.Type, bool) {
-	if info == nil {
-		return nil, false
-	}
-	tn, ok := ast.ReceiverTypeName(base)
-	if !ok {
-		return nil, false
-	}
-	bound, ok := info.AssocBindings[tn][name]
-	if !ok {
-		return nil, false
-	}
-	pat, ok := info.AssocBindingPattern[tn][name]
-	if !ok {
-		return bound, true
-	}
-	pset := map[string]bool{}
-	collectParamNames(pat, pset)
-	psub := map[string]ast.Type{}
-	if unifyImplType(pat, base, pset, psub) && len(psub) > 0 {
-		bound = substTypeByName(bound, psub)
-	}
-	return bound, true
-}
-
-// collectParamNames gathers every type-parameter name a pattern mentions, which
-// is what unifyImplType needs told apart from a same-named concrete type.
-func collectParamNames(t ast.Type, into map[string]bool) {
-	switch x := t.(type) {
-	case ast.ParamType:
-		into[x.Name] = true
-	case ast.ArrayType:
-		collectParamNames(x.Elem, into)
-	case ast.SliceType:
-		collectParamNames(x.Elem, into)
-	case ast.TupleType:
-		for _, e := range x.Elems {
-			collectParamNames(e, into)
-		}
-	case ast.StructType:
-		for _, a := range x.Args {
-			collectParamNames(a, into)
-		}
-	case ast.EnumType:
-		for _, a := range x.Args {
-			collectParamNames(a, into)
-		}
-	case ast.ProjType:
-		collectParamNames(x.Base, into)
-	case *ast.FuncType:
-		collectParamNames(x.Result, into)
-		for _, pp := range x.Params {
-			collectParamNames(pp, into)
-		}
-	}
 }
 
 // rewriteBlockTypes rewrites every generic instantiation ANNOTATED inside a

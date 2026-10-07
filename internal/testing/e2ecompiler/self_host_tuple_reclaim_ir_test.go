@@ -8,15 +8,11 @@ import (
 )
 
 // tupleReclaimIRCases pin the per-iteration reclamation of fresh, non-escaping
-// SCALAR tuple locals in loops on the self-hosted stack-IR path. Classifying
-// only all-LITERAL tuples (`(3, 4)`) as reclaimable leaks one box per iteration
-// for the common `(i, 1)` loop temporary (a variable element) — the
-// native backend reclaims it, the self-host did not. The fix classifies a fresh
-// tuple as reclaimable when its binding annotation is an all-scalar tuple type
-// (tuple_type_is_all_scalar: i32 / i64 / f64 / u32 / u64 / boolean — by-value, no
-// aliasable pointer), and the loop-rebind release (emit_arr_store) now covers
-// reclaimable tuples, so its box is freed each iteration (a SHALLOW box release,
-// matching the leak-mode element contract).
+// SCALAR tuple locals in loops on the self-hosted IR path: a tuple whose
+// elements are all scalars (i32 / i64 / f64 / u32 / u64 / boolean — by-value, no
+// aliasable pointer) has its box freed each iteration, the common `(i, 1)` loop
+// temporary (a variable element) included, not only all-LITERAL tuples
+// (`(3, 4)`).
 //
 // The exit code pins VALUE correctness: a double-free would corrupt or crash.
 var tupleReclaimIRCases = []struct {

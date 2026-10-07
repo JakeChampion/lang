@@ -8,25 +8,18 @@ import (
 // cloArrayFieldBindCases pin the BIND-then-call and for-loop shapes of a
 // closure-array element loaded from a struct field — issue #5160 defect #2
 // (the segfault sibling of the direct-call defect #1 that
-// TestSelfHostCloArrayFieldCallIR* covers). These lower on the IR path (NOT the
-// bailing): the struct-field closure array `r.hs` is `fn[]`, whose element
-// is a closure BOX, but before the fix irlower bound the element / the whole
-// array as a plain scalar/array local, so the subsequent `f()` / `fns[i]()` /
-// `for h in r.hs { h() }` emitted a bare `call *reg` on the box POINTER — jumping
-// into the box's data and SIGSEGVing. The fix marks a local bound from a
-// closure-array field (element or whole-array alias) is_closurearr /
-// closure-local, so the call dispatches env-first (box[0] = fn_addr, box passed
-// as __env). The for-loop uses the same fix via lower_foreach_snapshot's hidden
-// `let $forit = r.hs`.
+// TestSelfHostCloArrayFieldCallIR* covers). The field `r.hs` is `fn[]`, whose
+// element is a closure BOX, so a call through a local bound from it (element or
+// whole-array alias) or through a for-loop variable over it must dispatch
+// env-first (box[0] = fn_addr, box passed as __env). A bare `call *reg` on the
+// box POINTER jumps into the box's data and segfaults.
 //
-// RC-soundness follow-up: the bound element / foreach loop var is a BORROW of the
-// struct-owned closure box (the struct's field reclaim frees it), so it must NOT
-// be marked is_arr — otherwise the function-exit sweep decs the box a second time
-// and underflows its rc. The `rc-soundness` case is a churn-loop probe
-// (__rc_underflow_count / __heap_bump_bytes) pinning this: element bind, direct
+// The bound element and the loop variable BORROW the struct-owned closure box,
+// which the struct's field reclaim frees. The `rc-soundness` churn probe
+// (__rc_underflow_count / __heap_bump_bytes) pins that element bind, direct
 // foreach, and whole-field-alias foreach each reclaim their boxes exactly once.
 //
-// Exit codes cross-checked against the interpreter and the native Go backend.
+// Exit codes cross-checked against the interpreter.
 var cloArrayFieldBindCases = []struct {
 	name string
 	src  string

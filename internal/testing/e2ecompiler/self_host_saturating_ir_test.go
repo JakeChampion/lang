@@ -12,7 +12,8 @@ import (
 // type's [MIN, MAX] instead of wrapping. irtables.sat_binary_ops emits the
 // clamp as a void-`if` + store-to-temp chain over ordinary IR ops (no new
 // opcode), so every self-host IR backend lowers it unchanged. These cases
-// mirror the native oracle in `internal/testing/e2e/saturating_arith_test.go`.
+// mirror `internal/testing/e2e/saturating_arith_test.go`, which adds the
+// interpreter leg.
 var saturatingIRCases = []struct {
 	name     string
 	src      string

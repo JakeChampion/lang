@@ -120,8 +120,8 @@ function main(): i32 {
 }
 
 // TestSelfHostAssocGenericImplX86_64 — the corpus through the self-hosted
-// x86-64 compiler. Exit codes are cross-checked against the native compiler by
-// TestAssociatedTypesGenericImplBinding / the internal/testing/e2e engines.
+// x86-64 compiler. The Go checker's side of the same binding is
+// TestAssociatedTypesGenericImplBinding.
 func TestSelfHostAssocGenericImplX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

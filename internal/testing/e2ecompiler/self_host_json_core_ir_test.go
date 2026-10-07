@@ -13,14 +13,8 @@ import (
 // stdlib access) that exercise the JSON read path: parse + the typed
 // extractors over objects, strings, booleans, arrays, nesting, and
 // null. std/json builds its DOM on core/map (`map_new` / `.insert`),
-// so until core/map lowered fully through the IR path these programs
-// bailed to the legacy AST emitter. With core/map routing IR (the
-// __alloc / __ptr_width / __memset / __free / __fern_arr_dec stages),
-// the whole read path — json_parse, __json_p_*, and the json_get_*
-// extractors — is IR-eligible. The encode path (json_encode → the
-// f64/f32 transcendental formatters that need libm) still bails, but
-// it is unreachable from a parse-only program, so treeshake prunes it
-// and the program reaches `module: IR` through the bundling driver.
+// so these also carry core/map through the IR path. A parse-only
+// program never reaches the encode path, so treeshake prunes it.
 //
 // Each case asserts the modload -ir-probe verdict is `module: IR` AND
 // that the compiled binary matches the interpreter oracle. x86-64 only

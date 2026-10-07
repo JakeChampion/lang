@@ -9,12 +9,10 @@ import (
 )
 
 // TestSelfHostRcEnumCallInitWasmIR is the wasm port of
-// TestSelfHostRcEnumCallInitIRX86_64 (#4355 slice 5): the RCENUM call-init
-// admission on the wasm IR path. The wasm $__struct_drop_<T> body already
-// returned the box correctly ((local.get $box) tail — no register to
-// clobber), so only the admission widening is new here; on wasm a heap
-// string is one inline rc-headered block ($__fern_arr_dec IS the string
-// free), so the string-field payload chain reclaims fully.
+// TestSelfHostRcEnumCallInitIRX86_64 (#4355): an rc-payload enum local
+// initialised from a call is released at scope exit on the wasm IR path. On
+// wasm a heap string is one inline rc-headered block ($__fern_arr_dec IS the
+// string free), so the string-field payload chain reclaims fully.
 func TestSelfHostRcEnumCallInitWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host rcenum-call-init wasm IR e2e")

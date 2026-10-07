@@ -4,12 +4,10 @@ import (
 	"testing"
 )
 
-// TestSelfHostStructMultiLevelDropIRArm64 is the arm64 port of the MULTI-LEVEL
-// deep-drop (the x86 sibling is TestSelfHostStructMultiLevelDropIRX86_64). The
-// reclaim decision lives in the shared `irtables.nested_field_deep_drop_ok` (now an
-// acyclic-closure gate, not leaf-only), so arm64 inherits multi-level deep-drop
-// through the same generic k_struct emission arm — `bl __fn___struct_drop_B` for a
-// non-leaf inner B, which the old leaf gate never emitted.
+// TestSelfHostStructMultiLevelDropIRArm64 is the arm64 leg of the MULTI-LEVEL
+// deep-drop (the x86 sibling is TestSelfHostStructMultiLevelDropIRX86_64): a
+// struct whose field is a non-leaf struct releases the whole chain. The
+// decision is target-independent, so arm64 must answer the same.
 //
 // Under qemu the reclaim is proven by CORRECTNESS (a wrong free of a live buffer
 // down the chain corrupts the read-back) plus a balanced arm64 census. Heavy

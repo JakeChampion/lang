@@ -7,15 +7,10 @@ import (
 	"testing"
 )
 
-// annotateFieldCases extend the typed-IR annotation (#5531) from ExprCall to
-// ExprFieldAccess (#5986). checker.annotate_expr now stamps a field / tuple-
-// element read with its inferred tag, and the AST lowering's fa_type_tag was the single
-// leaf every consumer of a field read's type went through: expr_struct_type,
-// expr_map_type_tag, infer_expr_width and the four numeric-kind predicates
-// (expr_is_f64 / _f32 / _u32 / _u64). Before this each of those re-derived
-// "what type is obj.field?" on its own — infer_expr_width open-coded a second
-// obj → struct → field walk via struct_field_is_i64 that was exactly the tag
-// query the others made.
+// annotateFieldCases cover a field / tuple-element read whose type the lowering
+// needs: checker.annotate_expr stamps each such read with its inferred tag
+// (#5986), and the read's width, signedness, float-ness, struct type and Map
+// K/V all come from that tag.
 //
 // Each program routes a field read into one of those consumers, oracle-checked
 // against the interpreter. The unsigned cases matter beyond the tag lookup:
@@ -57,7 +52,7 @@ function main(): i32 {
     if (o.inn.n == 5000000000) { return 42; }
     return 7;
 }`},
-	// a Map-typed struct field keeps its K/V (expr_map_type_tag).
+	// a Map-typed struct field keeps its K/V types through the field read.
 	{"map_field", `import "core/map";
 
 struct Reg { caps: Map[string, i32] }
@@ -68,8 +63,8 @@ function main(): i32 {
     let r: Reg = Reg { caps: m };
     return r.caps.get_or("a", 0) + 2;
 }`},
-	// a struct TUPLE element, then an unsigned field off it — the tuple half of
-	// fa_type_tag feeding the struct half.
+	// a struct TUPLE element, then an unsigned field off it — the element's
+	// struct type must carry through to the field read.
 	{"tuple_elem_struct_field", `struct P { v: u64 }
 function main(): i32 {
     let t: (P, i32) = (P { v: 18446744073709551615 }, 3);

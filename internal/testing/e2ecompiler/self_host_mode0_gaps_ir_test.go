@@ -8,25 +8,19 @@ import (
 	"testing"
 )
 
-// Three constructs from the enumerated mode-0 decline set (#5977), each of which
-// sent its whole module to the legacy AST emitter.
-//
-// They are grouped because they share a shape: none is a missing FEATURE, each is
-// a piece of type information the IR lowering fails to carry one step further
-// than it already does.
+// Three constructs from the mode-0 decline set (#5977). They are grouped because
+// they share a shape: none is a missing FEATURE, each is a piece of type
+// information the lowering has to carry one step further.
 //
 //   - an i64 `const` READ. A const desugars to a zero-arg accessor, so the bare
-//     ident is a call returning i64. infer_expr_width already knew that; lower_i64's
-//     ident arm did not, so every use of an i64 const bailed.
-//   - iterating a THREE-deep array. `arrarr_elem` could only name a scalar inner
-//     kind, so `for plane in cube` bound `plane` as a plain array and the third
-//     `for` level saw a scalar.
-//   - an un-annotated Option ALIAS. `let u = o` did not copy o's opt_type, so the
-//     later `match (u)` could not recover the payload — annotating `u` worked,
-//     which is what made this look like a match gap rather than a propagation one.
+//     ident is a call returning i64.
+//   - iterating a THREE-deep array. `for plane in cube` binds `plane` as an
+//     array of arrays, so the third `for` level sees arrays, not scalars.
+//   - an un-annotated Option ALIAS. `let u = o` carries o's Option type, so the
+//     later `match (u)` recovers the payload as it would with `u` annotated.
 //
-// Each case asserts the `-decide` route AND the answer, because a regression here
-// is silent: the AST emitter computes these correctly, so only the route shows it.
+// Each case asserts the `-decide` route AND the answer: a regression is a
+// refused module, and the route names it.
 func TestSelfHostMode0GapsIR(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

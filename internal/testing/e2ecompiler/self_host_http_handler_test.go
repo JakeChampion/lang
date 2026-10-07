@@ -34,12 +34,10 @@ function main(): i32 {
 // TestSelfHostHttpHandlerRoutesIRX86_64 pins the routing and the LINKABILITY of
 // the edge-handler program through the file-based self-host driver.
 //
-// Before this change it compiled to assembly carrying a dozen dangling `__fn_`
-// symbols — `tcp_listen`, `tcp_send`, `poll`, `tcp_pollable`, … — and failed at
-// link, because the merged closure crosses the 512-function IR budget and the
-// file-based driver had no over-budget rescue, so the whole program dropped to
-// the AST emitter, which cannot emit those builtins at all. Every one of its
-// functions lowers on the IR path, so this is a routing gate.
+// The merged closure crosses the 512-function IR budget, so the program must
+// take the driver's over-budget rescue; every one of its functions lowers on the
+// IR path, and builtins like `tcp_listen`, `tcp_send`, `poll` and
+// `tcp_pollable` must leave no dangling `__fn_` symbol at link.
 //
 // Linking is the assertion that matters here: it is what catches a unit whose
 // runtime helper the entry never emitted (the all_runtime_need_roots gap) and a
@@ -100,13 +98,10 @@ function main(): i32 {
 // TestSelfHostOverBudgetProgramsRunX86_64 pins the per-module rescue on two
 // programs that pull in the same ~925-function stdlib closure:
 //
-//   - http-parse calls no builtin the AST emitter is missing. Holding it back
-//     from the concat by a gate hides two IR-path over-frees (the
-//     container-read alias and the param-receiver
-//     append, both fixed). The gate is gone, so it now takes the concat like
-//     every other over-budget program — and must still run correctly.
-//   - raw-socket-serve drives a real socket, which the AST emitter cannot emit
-//     at all, so it takes the concat — and serves.
+//   - http-parse takes the concat like every other over-budget program and
+//     must run correctly; it is where two IR-path over-frees surfaced (the
+//     container-read alias and the param-receiver append).
+//   - raw-socket-serve drives a real socket through the concat — and serves.
 func TestSelfHostOverBudgetProgramsRunX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 

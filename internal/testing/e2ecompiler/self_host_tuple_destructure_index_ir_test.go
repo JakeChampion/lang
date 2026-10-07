@@ -8,36 +8,28 @@ import (
 	"testing"
 )
 
-// `let (i, v) = ps[0]` over an UNANNOTATED `(i32, f64)[]` local read every
-// element as a 4-byte i32, so the f64 came back garbage — exit 255 on the
-// self-host x86-64 backend, 0 on wasm, with the compiler exiting 0 and
-// FERN_STRICT_IR=1 silent.
+// `let (i, v) = ps[0]` over an UNANNOTATED `(i32, f64)[]` local must type its
+// bindings from the element's tuple type (#6165). Read as a 4-byte i32 the f64
+// comes back garbage, with the compiler exiting 0 and FERN_STRICT_IR=1 silent.
 //
-// The destructure's ExprIndex arm typed its bindings only from a named local's
-// recorded `arrarr_elem`, which exists for an ANNOTATED `(tuple)[]` binding.
-// `let ps = mk();` records nothing, so the tag walk came back empty and the
-// bindings fell to the untyped i32 default. expr_tuple_elem_tag's own ExprIndex
-// arm already had the ExprIndex.ty fallback (#6165); the destructure did not.
-//
-// Which matches the evidence: `ps[0].1` is right while `let (i, v) = ps[0]`
-// is wrong, one token apart. The controls below pin that
-// difference — remove the fallback and only the destructure cases fail.
+// The controls pin the annotated local and the field read `ps[0].1`, which
+// must agree with the destructure one token apart.
 var tupleDestructureIndexCases = []struct {
 	name string
 	src  string
 }{
 	{"destructure_unannotated_local", `function mk(): (i32, f64)[] { return [(0, 4.5)]; }
-function main(): i32 { let ps = mk(); let (i, v) = ps[0]; return (v * 10.0) as i32 + i; }`}, // 45; was 255
+function main(): i32 { let ps = mk(); let (i, v) = ps[0]; return (v * 10.0) as i32 + i; }`}, // 45
 	{"destructure_call_index", `function mk(): (i32, f64)[] { return [(0, 4.5)]; }
-function main(): i32 { let (i, v) = mk()[0]; return (v * 10.0) as i32 + i; }`}, // 45; was 255 — no local at all
+function main(): i32 { let (i, v) = mk()[0]; return (v * 10.0) as i32 + i; }`}, // 45 — no local at all
 	{"destructure_i64_element", `function mk(): (i32, i64)[] { return [(5, 4000000000)]; }
 function main(): i32 { let (i, v) = mk()[0]; return (v / 100000000) as i32 + i; }`}, // 45
 	{"destructure_string_element", `function mk(): (i32, string)[] { return [(40, "abcde")]; }
 function main(): i32 { let (i, s) = mk()[0]; return s.len() + i; }`}, // 45
 	{"annotated_local_control", `function mk(): (i32, f64)[] { return [(0, 4.5)]; }
-function main(): i32 { let ps: (i32, f64)[] = mk(); let (i, v) = ps[0]; return (v * 10.0) as i32 + i; }`}, // 45 — arrarr_elem path, always worked
+function main(): i32 { let ps: (i32, f64)[] = mk(); let (i, v) = ps[0]; return (v * 10.0) as i32 + i; }`}, // 45 — annotated local
 	{"field_read_control", `function mk(): (i32, f64)[] { return [(0, 4.5)]; }
-function main(): i32 { let ps = mk(); return (ps[0].1 * 10.0) as i32; }`}, // 45 — expr_tuple_elem_tag, already had the fallback
+function main(): i32 { let ps = mk(); return (ps[0].1 * 10.0) as i32; }`}, // 45 — field read, no destructure
 }
 
 // TestSelfHostTupleDestructureIndexX86_64 asserts values against the interp
@@ -83,8 +75,7 @@ func TestSelfHostTupleDestructureIndexX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostTupleDestructureIndexWasm is the wasm leg, where the same untyped
-// read produced 0 rather than 255.
+// TestSelfHostTupleDestructureIndexWasm is the wasm leg.
 func TestSelfHostTupleDestructureIndexWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping tuple-destructure index wasm cases")

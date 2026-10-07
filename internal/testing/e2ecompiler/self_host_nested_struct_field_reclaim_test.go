@@ -7,29 +7,17 @@ import (
 
 // --- Nested-struct / nested-enum field reclaim (#6127 nested_struct) ---------
 //
-// A struct local whose field is itself a struct leaked that field's box on every
-// REBIND. The asymmetry is the whole diagnosis: __struct_drop_<T> already has
-// k_struct / k_enum arms, so a SINGLE bind reclaims cleanly at scope exit
-// (measured 200/200/0), while __field_reclaim_<T>'s field loop had no such arm —
-// so only rebinds leaked (900/600/12000 over 100 rounds against 0 on native).
-// Routing was never the issue either: struct_has_reclaim_array_field already
-// admits a direct nested-struct field.
+// A struct local whose field is itself a struct must release that field's box on
+// every REBIND, not only at scope exit (rebinds leaked 900/600/12000 over 100
+// rounds while a single bind balanced).
 //
-// #6148 added the arms without an admission scan and it was a use-after-free. A
-// struct-literal field value is sole-owned at rc=1, so `items.append(p.node)`
-// takes an UNCOUNTED alias and the next rebind's release freed a box the
-// container still pointed at. The self-host has no read-side alias-inc for these
-// reads, so structfld_reclaim_ok_types_of IS the safety argument, not a
-// convenience: a type is admitted only when every read of its nested-field names
-// is a provable transient borrow.
-//
-// It could not reuse strfld_collect_unsafe. That walker recurses into a marked
-// access's RECEIVER as unsafe, so `o.f.v` would mark `f` and exclude every type
-// whose nested field is merely read through; here the receiver of a borrow chain
-// is a borrow, judged under the inner field's own name. Two positions the string
-// walker never visits also had to be added — a struct-literal field value
-// (including a functional-update base, which copies every field pointer into the
-// new box) and a tuple element. Both are pinned as hazards below.
+// The release must not reach a field box something else still holds. #6148 was
+// that use-after-free: `items.append(p.node)` keeps the field box, and the next
+// rebind's release freed a Node the container still pointed at. A nested field
+// merely read through (`o.f.v`) is a borrow and is still released; a
+// struct-literal field value (including a functional-update base, which copies
+// every field pointer into the new box) and a tuple element are pinned as
+// hazards below.
 
 const nestedStructFieldSrc = `struct Inner { v: i32 }
 struct Outer { f: Inner, n: i32 }
@@ -179,9 +167,9 @@ function main(): i32 { let t: i32 = 0; let r: i32 = 0; while (r < 100) { t = t +
 			want: 21,
 		},
 		{
-			// A borrow CHAIN (`o.f.v`) must stay admitted — this is the case that
-			// forced a struct-specific walker, since strfld_mark would have marked
-			// `f` here and excluded Outer. Granted, and the answer must be right.
+			// A borrow CHAIN (`o.f.v`) must stay admitted: reading through `f`
+			// is not an escape of `f`, so Outer is not excluded. Granted, and
+			// the answer must be right.
 			name: "borrow_chain_still_granted",
 			src: `struct Inner { v: i32 }
 struct Outer { f: Inner, n: i32 }

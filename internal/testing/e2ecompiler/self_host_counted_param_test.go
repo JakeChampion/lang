@@ -6,49 +6,21 @@ import (
 
 // --- A COUNTED param position is not a move ---------------------------------
 //
-// param_counted_of already answers the question these five construction-retain
-// `__param` cells turn on: is every appearance of the callee's parameter a
-// COUNTED store or a non-retaining read? Its verdict was reachable only from the
-// argument-temp stash, which holds the sigs. The ESCAPE walker threads the
-// borrowability registry and nothing else, so a NAMED local passed at a counted
-// position read as a plain escape, earned no reclaim credit, and was never
-// released at all — a constant 2-object leak whatever the loop count.
+// A callee that only reads its parameter, or stores it with a COUNTED store
+// (a struct-literal field, which retains it), does not take the caller's
+// reference. A NAMED local passed at such a position must still be released by
+// the caller; withholding that release is a constant two-object leak whatever
+// the loop count. The `balance: true` rows — string, string[] and enum
+// arguments — assert allocs == frees at live_bytes 0.
 //
-// The asm says it without inference. In `round(src: string, i: i32)` the callee
-// emits __fern_rc_inc on src before boxing the holder and __struct_drop_P at
-// exit; `main` emits no release of `keep` on any path. Both sides are internally
-// consistent and neither owns the caller's original reference.
+// A callee that hands the argument back, returns a struct holding it, passes it
+// onward to one that does, hands out an element, or destructures an enum
+// argument (`callee_hands_out_payload`, whose payload could leave uncounted)
+// keeps a reference the caller must not release. Those rows are refused, and
+// they read their values back after churn: the census cannot see a
+// use-after-free.
 //
-// The fix folds the verdict into the borrow registry under a "CNT:" key prefix.
-// It is the only tier on that registry that ADMITS where the box flag refuses —
-// "TUPB:" and "ELB:" both narrow it — because it asks a different question: not
-// whether the callee keeps a reference, but whether a reference it does keep was
-// RETAINED. A retained one leaves the caller's claim intact.
-//
-// SCOPE: this closes str__param, str_arr__param and enum__param. The enum tier
-// ("ECNT:") is the third on this registry and needs one guard the string tier
-// does not: a callee that DESTRUCTURES the enum could hand its payload out
-// uncounted. arrparam_use_ok_stmt already walks a match scrutinee at
-// counted=false, so a bare `match (p)` on the param disqualifies it outright —
-// the callee cannot destructure it at all. `callee_hands_out_payload` pins that.
-//
-// The enum-ARRAY and struct-ARRAY `__param` cells are a DIFFERENT cause and stay
-// pinned as leaks. They do not withhold the caller's release at all: `main`
-// emits __fern_arr_dec in all three positions where the fixed string[] case
-// emits __fern_str_arr_free. The release is SHALLOW where it needs the element
-// walk, so the question there is why the deep credit is refused, not why the
-// argument reads as an escape.
-//
-// ON WHETHER THE CHECK IS NEEDED, measured rather than asserted: replacing the "CNT:"
-// lookup with a blanket admission of every bare-ident call argument does NOT
-// break any case below, nor the rc suites — it merely closes enum__param too.
-// So these probes do NOT separate the tier from the blanket. The lookup is kept
-// because the blanket asserts something no analysis established, and because
-// refusing is the leak-safe floor for this family; the silence below is not a
-// proof that the blanket is sound.
-//
-// Every want was confirmed against BOTH oracles — bin/fern -interp and the
-// native x86-64 backend agreed on each — never read off the self-host run.
+// Each want is the `bin/fern -interp` answer.
 
 type countedParamCase struct {
 	name    string
@@ -108,14 +80,13 @@ function main(): i32 {
 			want: 71, balance: true,
 		},
 		{
-			// REFUSED: a callee that hands the param back is not counted
-			// (arrparam_use_ok's ExprIdent arm credits only a counted position, and
-			// str_result_cannot_alias refuses a string result outright).
+			// REFUSED: a callee that hands the param back keeps a reference
+			// the caller must not release.
 			name: "callee_returns_param",
 			src: `function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
 function mkv(i: i32): string { let s: string = w("k"); return s; }
 // hands the param straight back — the caller must NOT get a release credit
-function esc(src: string, i: i32): string { return src; }
+@noinline function esc(src: string, i: i32): string { return src; }
 function main(): i32 {
     let keep: string = mkv(7);
     let t: i32 = 0;
@@ -137,7 +108,7 @@ function main(): i32 {
 			name: "callee_returns_param_readback",
 			src: `function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
 function mkv(i: i32): string { let s: string = w("k"); return s; }
-function esc(src: string, i: i32): string { return src; }
+@noinline function esc(src: string, i: i32): string { return src; }
 function bytesum(s: string): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -183,12 +154,12 @@ function main(): i32 {
 			want: 66, balance: false,
 		},
 		{
-			// REFUSED through the onward position: arrparam_use_ok credits an argument
-			// only when the callee's own parameter is counted, and esc2 hands it back.
+			// REFUSED through the onward position: the callee passes the param
+			// to esc2, which hands it back.
 			name: "onward_pass_to_handback",
 			src: `function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
 function mkv(i: i32): string { let s: string = w("k"); return s; }
-function esc2(s: string): string { return s; }
+@noinline function esc2(s: string): string { return s; }
 // passes the param ONWARD to a callee that hands it back
 function outer(src: string, i: i32): i32 { let o: string = esc2(src); return o.len(); }
 function main(): i32 {
@@ -273,15 +244,14 @@ function main(): i32 {
 			want: 5, balance: true,
 		},
 		{
-			// REFUSED by enum_result_cannot_alias: the tier is name-keyed and
-			// type-blind, so ANY enum result could be the argument. Both
-			// compilers leak here; the floor is a leak either way.
+			// REFUSED: the callee hands the enum argument back. Not
+			// balance-checked; the exit value and the underflow check guard it.
 			name: "callee_returns_enum",
 			src: `enum E { A(i32[]), B }
 function mkv(i: i32): E { return E.A([i, i + 1]); }
 function seed(): i32 { return 7; }
 struct P { f: E, n: i32 }
-function esc(src: E, i: i32): E { return src; }
+@noinline function esc(src: E, i: i32): E { return src; }
 function main(): i32 {
     let keep: E = mkv(seed());
     let t: i32 = 0; let r: i32 = 0;
@@ -295,10 +265,8 @@ function main(): i32 {
 		{
 			// REFUSED, and this is the hole with no analogue in the string tier: a
 			// callee that destructures the enum could hand the PAYLOAD out
-			// uncounted. arrparam_use_ok_stmt walks a match scrutinee at
-			// counted=false, so a bare `match (p)` on the param disqualifies it
-			// outright — the callee cannot destructure it at all. Matches
-			// native's leak exactly (202/201).
+			// uncounted, so a `match` on the param keeps the caller's reference
+			// live. The payload is read back after churn.
 			name: "callee_hands_out_payload",
 			src: `enum E { A(i32[]), B }
 function mkv(i: i32): E { return E.A([i, i + 1]); }

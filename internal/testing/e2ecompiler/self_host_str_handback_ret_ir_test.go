@@ -10,20 +10,17 @@ import (
 // TestSelfHostStrHandbackRetIRX86_64 pins #8409: a fresh string argument at a
 // BORROWABLE position whose callee RETURNS it through an identity method.
 //
-// The escape walker reads a bare-ident method receiver as an unconditional
-// borrow, so `ret(x) { return x.idret(); }` leaves `x` borrowable even though
-// `idret`'s no-op fast path (`return s`) hands `x`'s own box back. The caller
-// then stashed the fresh argument temp and freed it unconditionally after the
-// call — freeing the very box the call had just returned as its result: a
-// double free (`__rc_underflow_count`) / use-after-free (`[[[[[]` for `[TOOL]`).
+// `ret(x) { return x.idret(); }` borrows `x` as a method receiver, but
+// `idret`'s no-op fast path (`return s`) hands `x`'s own box back. Freeing the
+// caller's fresh argument temp unconditionally after the call frees the very box
+// the call just returned as its result: a double free (`__rc_underflow_count`) /
+// use-after-free (`[[[[[]` for `[TOOL]`).
 //
-// The fix keeps the position borrowable but guards the post-call release on the
-// result differing from the temp (str_handback_ret / free_stashed_str_args_
-// guarded): on the identity path the temp IS the result, so the free is skipped
-// and the result's new owner frees it once; on the allocating path the temp
-// differs and is freed, so the leak the non-borrowable alternative would have
-// opened (measured on the AL-01 conformance fixture) never appears. Both paths
-// churn flat at detector zero. `maybe` returns its receiver bare in one arm, so
+// The post-call release must be guarded on the result differing from the temp:
+// on the identity path the temp IS the result, so the result's new owner frees
+// it once; on the allocating path the temp differs and is freed, so no leak
+// appears either (the AL-01 conformance fixture is the measured shape). Both
+// paths churn flat at detector zero. `maybe` returns its receiver bare in one arm, so
 // it is a receiver-handback method; `remove_all(needle) { return
 // s.replace(needle, ""); }` is the transitive std/string shape this mirrors.
 func TestSelfHostStrHandbackRetIRX86_64(t *testing.T) {
@@ -138,7 +135,7 @@ function main(): i32 {
 }`, "fresh-return-arg-flat", 0)
 
 	// TRANSITIVE: `wrap` hands its arg to `idret`, which hands it back — the
-	// str_handback_ret fixpoint must chain the fact through `wrap`.
+	// handback must be followed through `wrap` too.
 	run(t, method+`function idret(x: string): string { return x.maybe(0); }
 function wrap(y: string): string { return idret(y); }
 function main(): i32 {

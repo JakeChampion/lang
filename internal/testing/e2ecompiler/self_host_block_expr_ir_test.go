@@ -6,15 +6,12 @@ import "testing"
 // through the self-host IR path on x86-64 + wasm (block-expressions slice 1 in
 // the self-hosted compiler — see docs/BLOCK-EXPRESSIONS.md).
 //
-// The gap this closes: an `if`/`match` EXPRESSION value branch was parsed with
-// a single `parse_expr`, so a multi-statement branch (`{ let k = e + 1; k }`)
-// mis-parsed (the `let` landed in expression position) and bailed the module to
-// the AST emitter. The parser now parses each if/match value branch as a
-// block-with-tail (parse_branch_body): leading `;`-terminated statements run
-// before a trailing expression — written WITHOUT a `;` — that is the branch's
-// value. The result is a `Stmt[]` ending in `s_return(tail)`, which the lowering
-// lowers (leading statements + the value-producing
-// terminal). A lone trailing expression with no leading statements stays
+// The parser parses each if/match value branch as a block-with-tail
+// (parse_branch_body): leading `;`-terminated statements (`{ let k = e + 1; k }`)
+// run before a trailing expression — written WITHOUT a `;` — that is the
+// branch's value. The result is a `Stmt[]` ending in `s_return(tail)`, which
+// the lowering lowers (leading statements + the value-producing terminal). A
+// lone trailing expression with no leading statements stays
 // `[s_return(expr)]`, byte-identical to the single-expr branch.
 //
 // Each case is oracle-checked against the interpreter and returns a value

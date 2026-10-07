@@ -14,14 +14,14 @@ import (
 // caller-side retain — a parameter that is not itself `own` is a borrow the
 // caller still holds. #4873's self-reassign admission lets such a name reach an
 // `own` position anyway (`h = absorb(h, …)` inside a plain-receiver method
-// kills THIS binding, not the caller's), so the callee's
-// __fern_rc_is_unique gate read the caller's sole count as its own and rewrote
-// the caller's box in place. `let keep = h; let forked = h.update(c)` left
-// keep == forked on the self-host while `-interp` and native forked correctly.
+// kills THIS binding, not the caller's). Unless the caller's reference is
+// retained first, the callee's __fern_rc_is_unique gate reads the caller's sole
+// count as its own and rewrites the caller's box in place:
+// `let keep = h; let forked = h.update(c)` must fork, as `-interp` does.
 //
-// The lowering now buys the reference the callee is about to spend
-// (emit_own_borrowed_param_arg), so the guard sees rc >= 2 and degrades to a
-// fresh box. The results check values and __rc_underflow_count(). Each expected
+// The lowering buys the reference the callee is about to spend, so the guard
+// sees rc >= 2 and degrades to a fresh box. The results check values and
+// __rc_underflow_count(). Each expected
 // result is pinned independently of the interpreter, so agreement cannot hide
 // both engines returning the same wrong value.
 //

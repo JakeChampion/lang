@@ -11,21 +11,17 @@ import (
 // the self-host x86-64 backend must emit freestanding `-static -nostdlib
 // -no-pie` programs that link CORRECTLY under any linker, not just GNU bfd.
 //
-// Two assumptions used to make the output bfd-only:
+// Two shapes would make the output bfd-only:
 //
-//  1. The heap was a multi-GiB static `.bss` reservation (`__fern_heap`)
-//     addressed via 64-bit-absolute `movabs`, relying on bfd's default .bss
-//     ordering. It is now an mmap'd arena (like the native Go backend + the
-//     self-host arm64 backend), so the base comes from the kernel and no
+//  1. A heap reserved as a static `.bss` region and addressed via
+//     64-bit-absolute `movabs` relies on bfd's default .bss ordering. The heap
+//     is an mmap'd arena, so its base comes from the kernel and no
 //     linker-layout assumption survives.
 //
-//  2. `g[0][0].len()` on a nested `string[][]` mis-dispatched to `arr_len`
-//     (read offset 0 — the string box's DATA POINTER) instead of `str_len`
-//     (offset 8 — the length). Summing data pointers makes the result depend
-//     on where the linker places `.rodata`: the issue's repro returned 5 under
+//  2. `g[0][0].len()` on a nested `string[][]` must read the string's length,
+//     not its data pointer. Summing data pointers makes the result depend on
+//     where the linker places `.rodata`: the issue's repro returned 5 under
 //     bfd (rodata low bytes 0x00+0x02+0x03) but 253 under lld (0xa8+0xaa+0xab).
-//     `expr_is_strarr` now recognises `m[i]` of a string[][] as a string[], so
-//     the nested string element's `.len()` reads offset 8.
 //
 // The gate compiles a string-heavy program ONCE with the self-host driver, then
 // links the SAME `.s` with every available linker (bfd always, lld/mold when

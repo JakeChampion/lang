@@ -7,39 +7,30 @@ import (
 
 // --- `let v: T = t` on an rc container (#7282) -------------------------------
 //
-// A plain alias bind released NOTHING — not the box, not its payload — because
-// three things all pointed at the alias at once: the bind emitted no retain
-// (the alias-inc was gated on `is_arr_slot`), the source lost its credit to the
-// escape gate, and the alias earned none of its own. Four releases lost, not
-// one, and `frees=0` rather than a partial count.
+// A plain alias bind must release the box and its payload exactly once between
+// the two names.
 //
 // THE MODEL IS DUPLICATION, NOT TRANSFER — except at a proven MOVE site. Both
 // slots own a counted reference and both release it; the refcount arbitrates.
-// `alias_in_a_conditional` is why: under a transfer model `if (c) { let v = t; }`
-// leaves the source un-swept on the path where no transfer happened, so a leak
-// becomes branch-dependent — strictly worse than the leak it replaces.
-// Duplication emits the inc and the dec on the same path by construction.
-// A TOP-LEVEL alias at the source's last mention is the safe exception: it
-// always executes, so the retain and the source's release are elided as one
-// decision (moves_local_at + note_moved_elided) — the counts here are
+// The `_in_a_conditional` rows are why: under a transfer model
+// `if (c) { let v = t; }` leaves the source unreleased on the path where no
+// transfer happened, so a leak becomes branch-dependent. Duplication emits the
+// inc and the dec on the same path by construction. A TOP-LEVEL alias at the
+// source's last mention is the safe exception: it always executes, so the
+// retain and the source's release are elided together — the counts here are
 // unchanged by that, since the single box still frees exactly once.
 //
 // THE INVARIANT: only the BOX is retained at the bind, so only the BOX may be
-// released twice. The alias therefore takes the box-only release and the source
-// keeps the deep one — `"NODEEP:"` for a struct (a field walk plus a box dec)
-// and the shallow `"TUP:"` for an rc-tuple (whose `"TUPRCS:"` release is a
-// type-driven deep free). Both deep classes were measured double-freeing at
-// exit 99 before that split, with `allocs == frees` at `live_bytes == 0` — the
-// census silent, as it is for every over-release.
+// released twice. The alias takes the box-only release and the source keeps
+// the deep one (a struct's field walk, an rc-tuple's element release). Getting
+// that wrong double-frees at exit 99 with `allocs == frees` at
+// `live_bytes == 0` — the census silent, as it is for every over-release.
 //
-// The ARRAY rows are the reference implementation and must stay byte-neutral:
-// arrays already retained at the bind, and their exit sweep is driven by the
-// `is_arr` slot FLAG rather than a credit an escape scan can deny, which is why
-// they never had the bug — and why they could not have warned anyone about the
-// threading defect the block-scoped rows caught.
+// The ARRAY rows are the control and must stay byte-neutral: an array alias
+// retains at the bind and both names release it.
 //
-// Every want was confirmed against BOTH oracles — bin/fern -interp and the
-// native x86-64 backend agreed on each — never read off the self-host run.
+// Every want was confirmed against bin/fern -interp, never read off the
+// self-host run.
 //
 // Counts are one block per heap string (#7351 fused the box into the
 // buffer's reserved header), and every row balances.
@@ -110,17 +101,13 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 40, allocs: 0, frees: 0,
 		},
 		{
-			// The struct limb, and the one class whose release is NOT the box dec:
-			// a struct is a DEEP FIELD DROP (__struct_drop_P) plus a box dec.
-			// Under duplication only the box is retained at the bind, so the
-			// alias carries "NODEEP:" (box-only) while the source keeps the
-			// single field walk; two deep drops would free `xs` twice —
-			// measured as exit 99, with allocs == frees at live_bytes 0.
-			// This shape is a MOVE (t's last mention is the bind), so the
-			// retain is elided and the alias inherits the source's whole
-			// release role: no rc_inc, one __struct_drop_P on the alias.
-			// Either model frees each allocation exactly once — the counts
-			// below hold for both. Base: allocs=200 frees=0, 8000 live.
+			// The struct limb. A struct's release is a deep field drop plus
+			// the box dec, and only the box is retained at a bind, so only
+			// one name may run the field drop: two would free `xs` twice
+			// (exit 99, with allocs == frees at live_bytes 0). This shape
+			// is a MOVE (t's last mention is the bind), so the alias takes
+			// the source's whole release and no retain is emitted. Either
+			// way each allocation is freed exactly once.
 			name: "struct_alias",
 			src: `struct P { xs: i32[] }
 function round(i: i32): i32 {
@@ -151,8 +138,8 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 10, allocs: 200, frees: 200,
 		},
 		{
-			// The fresh-RET-CALL producer, the other half of the struct credit's
-			// collector pair (collect_fresh_ret_call_names). Base: 200/0, 8000.
+			// The fresh-RET-CALL producer: the source is bound from a call that
+			// returns a fresh struct. Base: 200/0, 8000.
 			name: "struct_alias_fresh_call",
 			src: `struct P { xs: i32[] }
 function mk(i: i32): P { return P { xs: [i, i + 1] }; }
@@ -289,24 +276,12 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 38, allocs: 200, frees: 200,
 		},
 		{
-			// The rc-TUPLE CHAIN, credited as one set (#7750). It was the last
-			// limb left refused after #7386, because the bare chain credit
-			// measured an OVER-RELEASE here that the census cannot see: exit 99
-			// at `200/200 live_bytes 0`.
-			//
-			// The tuple limbs perform move-on-alias credit REWRITE: at a move the
-			// deep "TUPRCS:" class migrates from the source to the alias row and
-			// the alias's shallow "TUP:" row is dropped. After the first hop `v`
-			// therefore holds "TUPRCS:" ALONE, and the ladder's retain gate at the
-			// second hop asked only for "TUP:" / "TUPRC:" — so `let u = v` found
-			// its source uncredited: no retain, no move-elision of `v`, while the
-			// credit pass had already granted `u` its "TUP:" row. FERN_RC_TRACE
-			// on one round: two allocs, two frees, NO retain, and the exit sweep
-			// dec'd the box from `u` (shallow, freeing it) and again from `v`
-			// (deep, reading `.1` out of the freed box first — the sanitizer
-			// reports the use-after-free). The gate now asks
-			// slot_is_credited_tuple, which names all three states a credited
-			// source can be in. Base 200/0, 8000.
+			// The rc-TUPLE CHAIN (#7750): `let v = t; let u = v;`. Only the box is
+			// retained at a bind, so exactly one name may take the deep release (the
+			// element walk) and the others take the shallow box dec. Getting it
+			// wrong frees the box shallowly from `u` and then reads `.1` out of the
+			// freed box for the deep free — exit 99 at `200/200 live_bytes 0`, an
+			// over-release the census cannot see. Base 200/0, 8000.
 			//
 			// The element is read through the LAST link on purpose: that is what
 			// puts the deep free's box read after the shallow dec in the failing
@@ -416,9 +391,8 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 40, allocs: 200, frees: 200,
 		},
 		{
-			// AN ENUM with an rc payload, aliased. Enum locals carry their enum name in
-			// the same struct_type field a type test would read, but take the enum
-			// release rather than the struct credit; the shape balances.
+			// AN ENUM with an rc payload, aliased. It takes the enum release rather
+			// than the struct one; the shape balances.
 			name: "enum_alias_reclaimed",
 			src: `enum E { A(i32[]), B }
 function mke(i: i32): E { if (i % 2 == 0) { return E.A([i, i + 1]); } return E.B; }
@@ -662,30 +636,14 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 72, allocs: 100, frees: 100,
 		},
 		{
-			// A PARAMETER is borrowed, never owned, so aliasing one may not RETAIN:
-			// the retain is gated on slot_is_reclaimable_str, whose first line
-			// refuses a parameter, and the credit is only ever copied from a source
-			// that already held one. That is unchanged and is what this row still
-			// guards. An unconditional `is_str` in the retain once gave
-			// `let sp: string = sep;` inside std/array's join_with_last an inc
-			// nothing gives back; an unbalanced retain allocates nothing and frees
+			// A PARAMETER is borrowed, never owned, so aliasing one may not leave
+			// a RETAIN behind: an unbalanced retain allocates nothing and frees
 			// nothing, so it is invisible on its own and shows up HERE, as the
-			// CALLER's box never reaching 0.
-			//
-			// wantFrees moved 0 -> 200 with the aliased-param borrow verdict, and
-			// the guard is sharper for it, not weaker: the caller's box now DOES
-			// reach 0, so an unbalanced retain shows as this count falling BELOW
-			// allocs rather than as a leak that was already there for another
-			// reason. `plen` aliases its param into `v`, reads `v.len()` and returns
-			// an i32 — `v` never escapes, so `p` is a borrow and `t` keeps its own
-			// credit rather than being treated as escaping into the call.
-			//
-			// Checked rather than assumed, because 0 -> 200 is also the direction an
-			// over-release moves in: the answer is unchanged at 21,
-			// __rc_underflow_count() is 0, -sanitize reports neither a
-			// use-after-free nor a double free, and the settling form has the CALLER
-			// read `t` back after the call with two fresh strings allocated in
-			// between — it returns native's answer with allocs == frees.
+			// CALLER's box never reaching 0 and frees falling below allocs.
+			// `plen` aliases its param into `v`, reads `v.len()` and returns an
+			// i32 — `v` never escapes, so `p` is a borrow and `t` keeps its own
+			// release. The underflow guard and the answer catch the
+			// over-release direction.
 			name: "string_alias_of_a_parameter_borrowed",
 			src: `function w(a: string): string { return a + "!"; }
 function plen(p: string): i32 { let v: string = p; return v.len(); }
@@ -729,7 +687,7 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			// there is simply less to forgive. `ids` keeps the array a heap box.
 			name: "string_alias_join_producer",
 			src: `import "std/array";
-function ids(s: string): string { return s; }
+@noinline function ids(s: string): string { return s; }
 function round(i: i32): i32 { let xs: string[] = [ids("ab"), "cd"]; let t: string = xs.join(","); let v: string = t; return v.len() + i; }
 function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 55, allocs: 200, frees: 200,
@@ -744,13 +702,11 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 38, allocs: 200, frees: 200,
 		},
 		{
-			// Formerly string_alias_trim_view_partial, the pinned view-class
-			// residue (300/250, 1200 live): `.trim()` copies since #7393, so the
-			// binding is an ordinary fresh string with the full alias treatment
-			// and the class CLOSES — 400/400, live 0 (the extra alloc per round
-			// is the trim copy). Underflow 0 is the half that must hold: this is
-			// now the row that fails if the copy ever reverts to the view whose
-			// escape was #7393's wrong-answer UAF.
+			// `.trim()` copies (#7393), so the binding is an ordinary fresh string
+			// with the full alias treatment and the row balances (the second alloc
+			// per round is the trim copy). Underflow 0 is the half that must hold:
+			// this row fails if the copy ever reverts to a view, whose escape was
+			// #7393's wrong-answer UAF.
 			name: "string_alias_trim_closes",
 			src: `import "std/string";
 function w(a: string): string { return a + "!"; }
@@ -858,16 +814,11 @@ function main(): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < 100) { acc =
 			want: 32, allocs: 300, frees: 300,
 		},
 		{
-			// The CHAIN, credited as one set (#7750). It used to be refused —
-			// `let y = x` is a bare-ident bind the per-site forgiveness list
-			// could not hold, so x was strarr-unsafe and src kept no credit,
-			// leaving the element box and data to leak while the shallow is_arr
-			// decs still returned the buffer.
+			// The CHAIN (#7750): `let x = src; let y = x;` is one alias set, and the
+			// array, its element box and its data are each released exactly once.
 			//
-			// strarr_alias_chain_sites_of walks the closure raw and vets the set
-			// through the strarr gate, which is what an element escape from ANY
-			// link has to be caught by — strarr_alias_chain_elem_escape_refused
-			// below is that row.
+			// An element escape from ANY link has to keep the set from releasing it —
+			// strarr_alias_chain_elem_escape_refused below is that row.
 			name: "strarr_alias_chain",
 			src: `function mkstr(a: string): string { return a + "!"; }
 function round(i: i32): i32 {

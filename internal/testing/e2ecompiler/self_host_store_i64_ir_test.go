@@ -26,13 +26,8 @@ const storeI64Src = `function main(): i32 {
 }`
 
 // TestSelfHostStoreI64IRX86_64 pins __store_i64 on the self-host x86-64 IR path
-// (#4375 item 2). irlower lowered __load_i64 / __store_i32 / __store_ptr but not
-// __store_i64 — the store half of the 8-byte raw-memory pair was missing, so a
-// program writing an i64 through a raw address bailed the module (the AST
-// emitter it then fell to lacked the __fn___store_i64 runtime helper, or
-// mis-stored). __store_i64 now
-// lowers to op_store_i64 (kind 199): the value routes through lower_i64 (8-byte)
-// and the x86 backend emits an 8-byte movq (shared with store_ptr).
+// (#4375 item 2), the store half of the 8-byte raw-memory pair: it lowers to
+// op_store_i64 and the x86 backend emits an 8-byte movq.
 //
 // The answer is pinned (storeI64Want): the interpreter has no __store_i64, and
 // a truncating store would diverge from the full-width round-trip, so the

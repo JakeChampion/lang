@@ -2,17 +2,13 @@ package e2ecompiler
 
 import "testing"
 
-// A param aliased or destructured at its LAST mention is a move in the rc plan
-// when the frame owns it — the #8498 widening of native movableAliasSource to
-// owned params, ported as rc_ml_owned_rc_param. What the emitter does with a
-// param move is decided per alias limb by the slot facts it already reads: the
-// array limb acts on it, so the alias takes the param's one release and the
-// retain/exit-dec pair cancels as native's does; the tuple / string / struct
-// limbs read credits a param never holds, and the destructure never consults
-// the plan, so those stay plan-only. Both are pinned here: the acted-on move
-// must be leak-free AND underflow-free, and the plan-only move must leave the
-// consumed-param runtime ownflag path intact on the path that never
-// reassigned, with the caller still reading its box afterwards.
+// A param aliased or destructured at its LAST mention is a move when the frame
+// owns it (#8498). An owned array param aliased that way hands the alias its
+// one release, so there is no retain, no second dec and no leak. The
+// consumed-tuple rows pin the other direction: a tuple param reassigned on one
+// path and then destructured or aliased must stay underflow-free on the path
+// that never reassigned, with the caller still reading its box afterwards;
+// they do not claim leak-freedom.
 func TestSelfHostRcParamMoveX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

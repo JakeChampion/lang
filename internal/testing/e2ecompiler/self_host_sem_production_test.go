@@ -2188,7 +2188,7 @@ function main(): i32 { return built(3).cleared().insert(7, 3).len(); }
 	// ON, so the frame that sliced the view owns nothing of it by the time it
 	// returns.
 	{name: "lent-view-handback", atLeast: 4, want: "12|", src: `
-function handed(text: string): string { return text; }
+@noinline function handed(text: string): string { return text; }
 function laundered(src: string): string {
     let v: str = slice_unchecked(src, 0, 3);
     return handed(v);
@@ -4529,7 +4529,7 @@ struct P { a: str, n: i32 }
 function rec(v: str): P { return P { a: v, n: 1 }; }
 function opt(v: str): Option[str] { return Some(v); }
 function arr(v: str): str[] { return [v, v]; }
-function same(v: str): str { return v; }
+@noinline function same(v: str): str { return v; }
 function main(): i32 {
     let s: string = "abcdefgh" + 7.to_string();
     let p: P = rec(slice_unchecked(s, 1, 4));
@@ -4676,7 +4676,7 @@ function main(): i32 {
 	// refused as "dependency unavailable at use" (#10724).
 	{name: "a-loop-phi-over-an-anchored-call-result-is-produced", atLeast: 3, want: "12|abc\n", src: `
 import "std/i32";
-function id(xs: str[]): str[] { return xs; }
+@noinline function id(xs: str[]): str[] { return xs; }
 function build(s: string, k: i32): str[] {
     let xs: str[] = [slice_unchecked(s, 0, 3)];
     let i: i32 = 0;
@@ -6470,13 +6470,9 @@ function main(): i32 {
     return add5(4) + curry(1)(2) + c3(1)(2)(3) + add(3)(4) + 17;
 }
 `},
-	// A function declared to return a function returns an env box, whatever its
-	// return statements spell (#9763): a lambda handed back through a generic
-	// call, a local bound from one, or a match-arm payload, called by a caller
-	// that bound the result to a local.
 	// A field read stored into a container is a second owner of a box its
-	// struct's __struct_drop_<T> releases: a scalar array, an array of structs,
-	// a nested struct, an enum. Left uncounted, `xs.append(a.env)` in a callee
+	// struct's drop also releases: a scalar array, an array of structs, a
+	// nested struct, an enum. Left uncounted, `xs.append(a.env)` in a callee
 	// leaves the element to the caller's drop of the argument, and the next
 	// allocation reuses the block under the container (#9763).
 	{name: "a-stored-field-read-is-retained", atLeast: 11, want: "24|", src: `

@@ -6,20 +6,9 @@ import (
 )
 
 // An `Option[<tuple-with-array>]` consumed by a match one block deeper (#6319's
-// tuple arm, the last of the four payload classes).
-//
-// `collect_fresh_opttup_names` is the consuming-match analysis for this shape and
-// it found its match with `sole_top_level_match_idx` — the same flat-index
-// blindness the scalar, rc-array and struct collectors each had. The EMITTER was
-// never missing: `emit_opttup_deep_free` and `slot_is_reclaimable_opttup` already
-// existed and already do the type-driven tuple deep-drop. Only the credit was
-// absent, which is the opposite of #6588 next door, where emission was the work.
-//
-// NO nested_ok FLAG, unlike the scalar (#6526) and rc-payload (#6538) collectors,
-// and that is measured rather than assumed: nothing else claims this shape at
-// either scope. Both nested cells leaked — 12000 fn-scoped, 48000 block-scoped —
-// while both flat cells were 0, so there is no territory to divide and no second
-// credit to collide with.
+// tuple arm, the last of the four payload classes) releases the tuple and its
+// array, at function and block scope alike. The flat match at each scope is the
+// control.
 
 const otNestedFnSrc = `function round(i: i32): i32 {
     let acc: i32 = 0;
@@ -87,9 +76,8 @@ function main(): i32 {
 }
 `
 
-// The hazard `opttup_payload_escapes` exists for: the arm binds the tuple's ARRAY
-// element out to an outer local, so the buffer is live where the deep drop would
-// walk it.
+// The escape hazard: the arm binds the tuple's ARRAY element out to an outer
+// local, so the buffer is live where a deep drop would walk it.
 const otPayloadEscapesSrc = `import "core/int";
 function main(): i32 {
     let held: i32[] = [0, 0];

@@ -5,11 +5,10 @@ import (
 )
 
 // TestSelfHostOptStructReclaimWasmIR is the wasm port of
-// TestSelfHostOptStructReclaimIRX86_64: the OPTSTRUCT class lives in shared lowering;
-// on wasm the option box is [tag@0, payload@4], __fern_rc_dec maps to $__fern_arr_dec
-// (wasm_helper_symbol), and emit_struct_field_drops emits $__struct_drop_<P>
-// (backend-complete), so the inline tag-check + struct-field deep-drop resolves without any
-// dedicated runtime helper. Case table shared with the x86-64 leg.
+// TestSelfHostOptStructReclaimIRX86_64: the option release is shared lowering, and
+// on wasm the option box is [tag@0, payload@4], so the inline tag-check and the
+// struct-field deep drop need no dedicated runtime helper. Case table shared with
+// the x86-64 leg.
 func TestSelfHostOptStructReclaimWasmIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range optStructReclaimCases {

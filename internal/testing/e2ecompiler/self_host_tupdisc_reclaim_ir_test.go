@@ -9,14 +9,9 @@ import (
 
 // tupDiscReclaimCases pin the #4365 discarded rc-field tuple temp reclaim: a
 // discarded tuple LITERAL carrying a fresh array element (`(w, [w, w+1]);`) and
-// a discarded CALL to a tuple-fresh-ret free function (`mk(i);`, every return a
-// direct tuple literal) both leaked box + array buffers per evaluation on the
-// self-host IR path (native bounds both). The literal arm deep-drops via
-// tuple_lit_rc_reclaimable (the TUPRC: admission — ExprArray positions freed,
-// ident/pointer elements skipped); the call arm consults the "TUPRET:<name>|
-// <flags>" registry (tuple_ret_arrfree_flags: '1' where EVERY return has a
-// direct array literal under a scalar-element-array annotation; an i64/u64/f64
-// SCALAR element declines the whole entry for tuple_get layout uniformity).
+// a discarded CALL to a function returning a fresh tuple (`mk(i);`) release the
+// tuple box and its array buffers on every evaluation, so the churn's heap stays
+// bounded. An element that aliases a live local must stay readable.
 var tupDiscReclaimCases = []struct {
 	name string
 	src  string

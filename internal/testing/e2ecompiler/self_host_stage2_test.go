@@ -8,14 +8,15 @@ import (
 // TestSelfHostStage2Bootstrap is the strongest gate of the self-host effort:
 // a genuine TWO-STAGE bootstrap.
 //
-//	stage 0: the Go compiler builds the file-based asm driver
+//	stage 0: the `fern` CLI builds the file-based asm driver
 //	         (asm_modload_run, via buildModloadDriverX86).
 //	stage 1: that driver compiles the compiler's OWN front end + back end
-//	         — lexer.fern + parser.fern + asm.fern (+ deps) — plus a small
-//	         entry that lexes → parses → emits a program, loaded from FILES
-//	         off disk (no ///MODULE bundle). asm.emit_module lowers the
-//	         merged module to x86-64 asm; gcc links it into a SELF-HOSTED
-//	         COMPILER binary (every compiler stage Fern-authored).
+//	         — lexer.fern + parser.fern + semlower.fern + asm_ir.fern
+//	         (+ deps) — plus a small entry that lexes → parses → emits a
+//	         program, loaded from FILES off disk.
+//	         asm_ir.emit_module_or_error_sub lowers the module to x86-64
+//	         asm; gcc links it into a SELF-HOSTED COMPILER binary (every
+//	         compiler stage Fern-authored).
 //	stage 2: that self-hosted compiler is run. It emits asm for its
 //	         embedded program `function main(): i32 { return 7; }`,
 //	         which is assembled, linked, and run — and must exit 7.

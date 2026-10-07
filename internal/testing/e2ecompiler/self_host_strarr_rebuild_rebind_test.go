@@ -6,46 +6,20 @@ import (
 
 // --- A string[] local REBUILT by a rebind ------------------------------------
 //
-// `let x: string[] = [mk("x")]; x = [mk("y"), mk("z")];` measured 800 allocs /
-// 200 frees on the self-host against native's 200/200. It is
-// `str_arr__rebind__{read,unused}` on both leak-matrix arches (#5338).
+// `let x: string[] = [mk("x")]; x = [mk("y"), mk("z")];` must balance: the
+// rebind releases the old array's buffer AND its element strings (#5338). It is
+// `str_arr__rebind__{read,unused}` on both leak-matrix arches.
 //
-// THE `"SARR:"` CLASS ALREADY HANDLES A REBIND — the self-`append` and
-// self-`.with` forms are sanctioned and measure clean, so this was never the
-// single-bind refusal the matrix note called it. What was missing was the
-// REBUILD form: a rebind to a value the local can solely own, sharing nothing
-// with what the slot holds. It is the same freshness proof
-// collect_fresh_strarr_in_stmt applies to the declaration — an array literal
-// whose every element is element-fresh, or a call to a visible whole-program
-// string[] producer — so strarr_rebind_is_fresh asks it at the rebind instead.
+// The failure mode to guard is an over-release — freeing element boxes another
+// holder could still reach — so the hazard rows are essential. Five shapes
+// return the array after rebuilding it, bind an element out of it, rebind from
+// a live local, rebuild from the array's own element, or store it into a
+// container; each reads its value back after 200 rounds of churn have recycled
+// the freelist and answers as `bin/fern -interp` does. Every row balances.
 //
-// ADMITTING IT WAS ONLY HALF. With the credit granted the row went 800/200 →
-// 800/600 and stayed leaking, because lower_stmt_assign had no branch for the
-// class at all: a rebound reclaimable string[] fell through to emit_arr_store's
-// SHALLOW arr_dec, which frees the buffer and leaves its element pointers
-// unreleased. The `let` re-declaration has driven emit_strarr_reclaim_store all
-// along; the assign path is the sibling the rc-tuple and rc-enum rebinds each
-// had to open for themselves, one element kind over. Both halves are needed and
-// neither alone moves the row.
-//
-// The failure mode is an over-release rather than a leak — the store now frees
-// element boxes another holder could still reach — so the refused rows below
-// are essential. Five shapes return the array after rebuilding it, bind an
-// element out of it, rebind from a live local, rebuild from the array's own
-// element, or store it into a container; each reads its value back after 200
-// rounds of churn have recycled the freelist and answers identically on native
-// x86-64, `bin/fern -interp` and the self-host. On the typed lowering every row
-// balances.
-//
-// `alias_before_rebind` is the row that proves the arbitration rather than the
-// refusal: an alias bound BEFORE the rebind is not refused, it goes CLEAN,
-// because the alias site earns the same `"SARR:"` credit and
+// `alias_before_rebind` binds an alias BEFORE the rebind and still goes CLEAN:
 // __fern_str_arr_free walks elements only at the last owner's rc 1. It reads
-// every element back after churn on all three engines.
-//
-// Every flipped row was re-run under FERN_SANITIZE=1 with
-// FERN_RC_UNDERFLOW_TRAP=1 and FERN_RC_FREE_DEBUG=1: clean, no trap, no
-// quarantine hit.
+// every element back after churn.
 
 const strarrRebuildDecl = `function mkstr(a: string): string { return a + "-long-enough-to-heap-allocate"; }
 function mkarr(i: i32): string[] { let o: string[] = []; o = o.append(mkstr("a")); o = o.append(mkstr("b")); return o; }

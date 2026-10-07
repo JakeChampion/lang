@@ -5,24 +5,21 @@ import (
 	"testing"
 )
 
-// The confined-alias forgiveness reaching the rc-enum's MATCH-CONSUMED credit
-// path. #7687 gave it to body_unsafe_for_enumfield_alias, which gates the
-// exit-sweep credit; consumed_rcpayload_enum_frees consults a second scan
-// (name_escapes_outside_stmt_enumfield) that had not learned it, so a dead
-// alias bind still denied the source its match-consumed free.
+// A dead alias bind of an rc-enum must not deny the SOURCE its release when
+// the source is consumed by a match.
 //
 // The bisect is why these cases are shaped as they are — see
 // docs/rc-log/2026-08-28-enum-alias-match-consumed.md. Two matches on the
 // source with NO alias are clean, and the alias alone denies the source, so the
-// match is not the cause; the earlier diagnosis blamed the wrong gate. Both
-// halves are kept as cases so a regression says which one moved.
+// match is not the cause. Both halves are kept as cases so a regression says
+// which one moved.
 //
 // The payload-out and escaping-alias shapes are the ones that could
 // over-release. They gate on the exit code as well as the census: an
 // over-release balances the census and shows up as __rc_underflow_count()
-// (exit 99) and in the sanitizer leg. On the typed lowering every row balances.
+// (exit 99) and in the sanitizer leg. Every row balances.
 //
-// Exits confirmed on BOTH oracles (bin/fern -interp and native x86-64).
+// Exits confirmed against bin/fern -interp.
 
 func enumAliasMatchConsumedCases() []tupleAliasParamCase {
 	return []tupleAliasParamCase{

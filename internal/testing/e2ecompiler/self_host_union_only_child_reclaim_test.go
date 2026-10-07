@@ -8,23 +8,14 @@ import (
 	"testing"
 )
 
-// unionOnlyChildReclaimCases pin a tuple whose ONLY rc child is a tagged union.
+// unionOnlyChildReclaimCases pin a tuple whose ONLY rc child is a tagged union
+// (#7147): the tuple box is released along with the union. Leaked, that was per
+// round, as x86-64 | arm64 | wasm: 80 | 80 | 40 for `(i, Some(i))` and
+// 80 | 80 | 48 for a user-enum variant.
 //
-// #7147 taught emit_tuple_child_drops to release a union constructed at an
-// element position, but nothing COUNTED such an element as an rc child, so
-// tuple_lit_has_rc_child answered false and the tuple was never admitted at all
-// — its own box leaked alongside the union's. Measured per round before, as
-// x86-64 | arm64 | wasm, native flat on both rows: 80 | 80 | 40 for
-// `(i, Some(i))` and 80 | 80 | 48 for a user-enum variant.
-//
-// The count is driven by the element's DECLARED TAG, not by its expression.
-// That is what keeps it accurate, and accuracy matters in one specific way: a
-// tuple carrying a union position is never all-scalar, so this credit and the
-// shallow scalar-tuple path can never both claim the same local and free its
-// box twice. A name-based test for `Some` could not offer that guarantee,
-// because a user function may be called `Some`.
-//
-// An un-annotated binding yields an empty tag and is left exactly as it was.
+// A tuple carrying a union position is never all-scalar, so this release and
+// the shallow scalar-tuple release must never both claim the same local and
+// free its box twice.
 var unionOnlyChildReclaimCases = []struct {
 	name string
 	src  string

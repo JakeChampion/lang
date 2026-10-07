@@ -41,9 +41,8 @@ import (
 // visible by reading the ORIGINAL back after the call — values through the
 // RESULT are all correct.
 //
-// So both halves read one registry (`FnSigs.trmc_consume_fns`) rather than
-// re-deriving the verdict: a path holding the verdict must never free what a
-// path lacking it never retained.
+// So both halves must come from one verdict: a path holding it must never
+// free what a path lacking it never retained.
 //
 // The scan refuses anything whose cell needs more than a shallow free — the loop
 // steals the tail out of the cell it is releasing, so a string or container

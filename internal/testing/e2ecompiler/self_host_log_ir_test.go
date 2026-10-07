@@ -9,11 +9,11 @@ import (
 )
 
 // TestSelfHostLogIRWasm pins `__log_f64(x)` (the lowering behind std/float's
-// `(x: f64) log()`) on the wasm IR path, where flog lowers to op_flog ->
+// `(x: f64) log()`) on the wasm IR path, where the flog op lowers to
 // $__fern_log_f64: the table-driven kernel internal/tables/fdlibm/logtab.go documents,
 // reading its rows from the data segment at log_tab_addr().
 //
-// Value-tested (not differential — the wasm AST path has no log to diff against):
+// Value-tested rather than differential:
 // the program computes ln(x) at a range of inputs (1, e, e², 0.5, 2, 1000) and
 // checks each against the known f64 value within a 1e-6 ABSOLUTE tolerance
 // (absolute, not relative, so ln(1)=0 is handled). Exits 0 only if every check

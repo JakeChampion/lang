@@ -2,26 +2,20 @@ package e2ecompiler
 
 import "testing"
 
-// tupleDestructureNestedStrIRCases pin the two #5306 gaps — string elements of
-// a tuple destructure that miscompiled ON the IR path (silent wrong answers,
-// not bails; native/interp is the oracle):
+// tupleDestructureNestedStrIRCases pin the two #5306 shapes — string elements
+// whose wrong typing on the IR path is a silent wrong answer, not a refusal
+// (the interpreter is the oracle):
 //
 //  1. NESTED destructure: `let (p, c) = t; var (s, b) = p` over
-//     ((string, i32), i32) read the string element empty (11 → 9). The
-//     destructure binding chain never recorded a tuple-typed element's
-//     element tags, so the second-level destructure resolved dtag "" and the
-//     string binding was never str-marked (the all-i32 shape only worked
-//     because the untyped fallback happens to be i32). Fixed by the
-//     mark_tuple_elems branch in the destructure chain.
+//     ((string, i32), i32) must type the inner string element, or it reads
+//     empty (11 → 9).
 //
 //  2. A struct fn-FIELD closure call chained into a string op:
-//     `h.f(1).len()` where H.f: (i32) => string read 0 (6 → 4) — for ANY
-//     captured or literal string return, destructure or not. The field's
-//     declared type coarsens to "fn" (losing the return), so expr_is_str
-//     didn't know the call yields a string. Fixed by preserving a `string`
-//     fn return in StructFieldDecl.fn_ret (parser) and consuming it in
-//     expr_is_str's fn-field-call arm. (An annotated rebind
-//     `let r: string = h.f(1)` already worked — only the direct chain broke.)
+//     `h.f(1).len()` where H.f: (i32) => string must know the call yields a
+//     string, or it reads 0 (6 → 4) — for ANY captured or literal string
+//     return, destructure or not. The `string` return is kept in
+//     StructFieldDecl.fn_ret. (An annotated rebind `let r: string = h.f(1)`
+//     takes the type from its annotation.)
 //
 // Each case is oracle-checked against the interpreter; results stay <= 120
 // (the wasm exit-code clamp, #2908).

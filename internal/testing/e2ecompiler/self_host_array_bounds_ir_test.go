@@ -10,12 +10,9 @@ import (
 // TestSelfHostArrayBoundsIR pins the array-bounds contract
 // (docs/ARRAY-BOUNDS.md) on the self-host x86-64 IR path: an out-of-range
 // index — read or write, over-large or negative — ABORTS with exit 134 and
-// never returns a garbage value. Before this, op_arr_get / op_arr_set emitted a
-// raw `data+(idx+1)*8` load/store with no length check, so the self-host
-// silently read/wrote past the end (e.g. `a[5]` on a len-3 array returned 0)
-// while the native backends aborted — a policy violation. The IR emit now
-// checks the index against the length prefix (data[0]) with a single unsigned
-// compare and branches to the shared __fern_oob_abort (exit 134).
+// never returns a garbage value. The IR emit checks the index against the
+// length prefix (data[0]) with a single unsigned compare and branches to the
+// shared __fern_oob_abort (exit 134).
 //
 // In-range indexing (every case's "ok" leg) is unaffected — the sum probe
 // walks the array and returns a real value.

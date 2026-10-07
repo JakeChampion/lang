@@ -54,15 +54,14 @@ func TestSelfHostMachO(t *testing.T) {
 }
 
 // machoSelfTestMain asserts the fixed-layout fields of the produced arm64
-// Mach-O — the same shape the Go reference's macho_test.go validates —
-// plus the SHA-256 test vectors that back the ad-hoc code signature. Each
-// `return N` is a distinct failing-check id (0 = all pass).
+// Mach-O plus the SHA-256 test vectors that back the ad-hoc code signature.
+// Each `return N` is a distinct failing-check id (0 = all pass).
 //
-// For the no-data case: load_cmds_len = 648, so text_off = 32 + 648 = 680 and
-// sizeofcmds = 600 (the 48-byte difference is the layout slack the native
-// writer also carries). text_vmsize rounds 684 up to one 16 KiB page = 16384
-// = code_limit; ident "fern" (len 4) gives sig_len = 20 + (88+5) + 4*32 = 241,
-// so total = 16625.
+// For the no-data case: macho_load_cmds_len = 648, so text_off = 32 + 648 = 680
+// and sizeofcmds = 600 (the 48-byte difference is the layout slack
+// macho_load_cmds_len reserves). text_vmsize rounds 684 up to one 16 KiB page
+// = 16384 = code_limit; ident "fern" (len 4) gives sig_len = 20 + (88+5) +
+// 4*32 = 241, so total = 16625.
 //
 // Load-command offsets, no-data image:
 //

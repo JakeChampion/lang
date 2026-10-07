@@ -7,23 +7,20 @@ import (
 
 // returnClosureContainerIRCases pin RETURNING a closure/fn value held in a
 // container across a function boundary — the struct-field / param variants of
-// issue #5202 (cases B, C, E). closure_ret_fns_of / closurearr_ret_fns_of
-// register a function declared to return a function or a function array, so a
-// caller's `let g = pick()` binds g a closure local / closure array, whatever
-// the return statements spell:
+// issue #5202 (cases B, C, E). For a function declared to return a function or
+// a function array, a caller's `let g = pick()` must bind g a closure local /
+// closure array, whatever the return statements spell:
 //
 //	B — `return r.hs[0]` / `return fs[i]`: an element of a closure ARRAY that is
 //	    a struct field or an fn[] param (type resolves to "fn[]").
 //	C — `return r.hs`: a whole closure-array struct field / fn[] param.
 //	E — `return kvs[i].f` / `return s.f`: a fn-valued struct FIELD.
 //
-// Before the fix these went unregistered, the caller bound g a plain scalar,
-// and `g()` bare-called the box pointer → SIGSEGV. Case A (`return hs[0]` from a
-// LOCAL closure array) landed earlier in #5207; case D (a MATCH-bound fn-typed
-// enum payload) is a separate mechanism still open in #5202.
+// Bound as a plain scalar instead, `g()` bare-calls the box pointer → SIGSEGV.
+// Case A (`return hs[0]` from a LOCAL closure array) is #5207; case D (a
+// MATCH-bound fn-typed enum payload) is a separate mechanism.
 //
-// Found via differential probing. Exit codes cross-checked against the
-// interpreter and the native Go backend.
+// The expected exit codes are the interpreter's answers.
 var returnClosureContainerIRCases = []struct {
 	name string
 	src  string

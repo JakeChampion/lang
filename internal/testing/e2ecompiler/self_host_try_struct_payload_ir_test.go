@@ -10,15 +10,10 @@ import (
 )
 
 // An UNANNOTATED `let u = f()?` whose success payload is a STRUCT (or nominal
-// ENUM) now lowers on the self-host IR path. The try-operator bind already
-// recovered a TUPLE payload's element tags (so `u.0` / `u.1` read) via
-// try_opt_type, but a struct / enum payload left the slot untyped — so `u.field`
-// / `u.method()` / `match (u)` in the body failed to lower and the whole module
-// dropped to the legacy AST emitter. The fix carries the payload's struct/enum
-// name onto the slot (mark_struct_type), exactly what an explicit
-// `let u: User = f()?` annotation already did (the annotated form always worked;
-// only the inferred one bailed). Found by differential probing; each case is
-// oracle-checked and routing-pinned "ir".
+// ENUM) lowers on the self-host IR path: `u` takes the payload's type, so
+// `u.field` / `u.method()` / `match (u)` lower exactly as they do after an
+// explicit `let u: User = f()?`. Each case is oracle-checked and
+// routing-pinned "ir".
 var tryStructPayloadIRCases = []struct {
 	name string
 	src  string

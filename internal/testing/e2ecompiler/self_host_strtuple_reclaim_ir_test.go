@@ -7,16 +7,10 @@ import (
 
 // strTupleReclaimCases pin the #4353 item-1 string-element tuple reclaim: a
 // tuple literal carrying a FRESH-string element (`(i, "x" + s)` concat /
-// `(i, i.to_string())`) leaked the string box AND the tuple box per loop
-// iteration / per discard on the self-host IR path (native bounds it) — the
-// TUPRC: admission rejected any string element outright. The admission
-// (tuple_lit_rc_reclaimable) now admits string LITERAL elements (immortal box,
-// nothing to free) and fresh-string producers (tuple_str_elem_fresh: concat
-// with a string-literal operand / 0-arg `.to_string()`), and the deep-drop
-// (emit_tuple_child_drops) routes producer elements through the rc-aware
-// __fern_str_free. A bare string IDENT element aliases a live local and is
-// still excluded (leak-safe); an extracted element (`keep = t.1`) rejects the
-// credit via the annotated escape gate (string is pointer-shaped there).
+// `(i, i.to_string())`) or a string literal releases both the string box and
+// the tuple box per loop iteration / per discard. A bare string IDENT element
+// aliases a live local, and an extracted element (`keep = t.1`) outlives the
+// tuple; both must stay readable.
 var strTupleReclaimCases = []struct {
 	name string
 	src  string

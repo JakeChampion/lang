@@ -28,7 +28,7 @@ import (
 //
 // EPERM is NOT reachable from here: this container runs as uid 0, so kill(1, 0)
 // succeeds outright rather than being refused, and a test process cannot drop
-// to another uid and still be the thing under test. Native's
+// to another uid and still be the thing under test.
 // internal/testing/e2e/process_alive_test.go has the same gap for the same reason.
 //
 // wasm's whole answer is a refusal: a component has no process table, so

@@ -22,24 +22,24 @@ enum Rc { RA(i32[]), RB }
 struct HS { e: Sc, n: i32 }
 struct HR { e: Rc, n: i32 }
 function k_of(x: i32): i32 { return x; }
-function sval(e: Sc): i32 { match (e) { SA(v) => { return v; }, SB => { return 100; } } }
-function rval(e: Rc): i32 { match (e) { RA(v) => { return v[0]; }, RB => { return 100; } } }
-function mk_sc_ctor(r: i32): Sc { return SA(k_of(r)); }
-function mk_rc_ctor(r: i32): Rc { return RA([k_of(r), 1]); }
-function mk_sc_local(r: i32): Sc {
+@noinline function sval(e: Sc): i32 { match (e) { SA(v) => { return v; }, SB => { return 100; } } }
+@noinline function rval(e: Rc): i32 { match (e) { RA(v) => { return v[0]; }, RB => { return 100; } } }
+@noinline function mk_sc_ctor(r: i32): Sc { return SA(k_of(r)); }
+@noinline function mk_rc_ctor(r: i32): Rc { return RA([k_of(r), 1]); }
+@noinline function mk_sc_local(r: i32): Sc {
     let m: Sc = SA(k_of(r));
     return m;
 }
-function mk_rc_local(r: i32): Rc {
+@noinline function mk_rc_local(r: i32): Rc {
     let m: Rc = RA([k_of(r), 1]);
     return m;
 }
-function mk_sc_chain(r: i32): Sc {
+@noinline function mk_sc_chain(r: i32): Sc {
     let m: Sc = mk_sc_local(r);
     return m;
 }
-function mk_rc_chain(r: i32): Rc { return mk_rc_local(r); }
-function mk_sc_branch(r: i32): Sc {
+@noinline function mk_rc_chain(r: i32): Rc { return mk_rc_local(r); }
+@noinline function mk_sc_branch(r: i32): Sc {
     if (r % 3 == 0) { return SB; }
     let m: Sc = SA(k_of(r));
     if (r % 3 == 1) { return m; }
@@ -47,7 +47,7 @@ function mk_sc_branch(r: i32): Sc {
     let g: Sc = h.e;
     return g;
 }
-function mk_rc_branch(r: i32): Rc {
+@noinline function mk_rc_branch(r: i32): Rc {
     if (r % 2 == 0) {
         let h: HR = HR { e: RA([k_of(r), 7]), n: 1 };
         let g: Rc = h.e;
@@ -118,8 +118,8 @@ enum Rc { RA(i32[]), RB }
 struct HS { e: Sc, n: i32 }
 struct HR { e: Rc, n: i32 }
 function k_of(x: i32): i32 { return x; }
-function sval(e: Sc): i32 { match (e) { SA(v) => { return v; }, SB => { return 100; } } }
-function rval(e: Rc): i32 { match (e) { RA(v) => { return v[0]; }, RB => { return 100; } } }
+@noinline function sval(e: Sc): i32 { match (e) { SA(v) => { return v; }, SB => { return 100; } } }
+@noinline function rval(e: Rc): i32 { match (e) { RA(v) => { return v[0]; }, RB => { return 100; } } }
 @noinline function hb_sc_param(e: Sc): Sc { return e; }
 @noinline function hb_rc_param(e: Rc): Rc { return e; }
 function hb_sc_field(h: HS): Sc { return h.e; }
@@ -178,14 +178,14 @@ func TestSelfHostEnumCallHandbackWasm(t *testing.T) {
 	checkEnumFieldAlias(t, "wasm32-wasi", enumCallHandbackSrc, enumCallHandbackWant)
 }
 
-// A local lent to a handback callee and then returned (#10443). The AST
-// lowering credited the local's release while the returned result was the same
-// box uncounted, so the churned box was read back: 93 instead of 3.
+// A local lent to a handback callee and then returned (#10443). The returned
+// result is the same box, so it must carry a count of its own past the local's
+// release; otherwise the churned box is read back, 93 instead of 3.
 const enumHandbackReturnSrc = `enum Sc { SA(i32), SB }
 function k_of(x: i32): i32 { return x; }
-function sval(e: Sc): i32 { match (e) { SA(v) => { return v; }, SB => { return 100; } } }
+@noinline function sval(e: Sc): i32 { match (e) { SA(v) => { return v; }, SB => { return 100; } } }
 @noinline function hb_sc_param(e: Sc): Sc { return e; }
-function mk(r: i32): Sc {
+@noinline function mk(r: i32): Sc {
     let a0: Sc = SA(k_of(r));
     let a: Sc = hb_sc_param(a0);
     return a;
@@ -234,15 +234,15 @@ func TestSelfHostEnumHandbackReturnWasm(t *testing.T) {
 const enumCallTempSrc = `enum Sc { SA(i32), SB }
 enum Rc { RA(i32[]), RB }
 function k_of(x: i32): i32 { return x; }
-function sval(e: Sc): i32 { match (e) { SA(v) => { return v; }, SB => { return 100; } } }
-function rval(e: Rc): i32 { match (e) { RA(v) => { return v[0]; }, RB => { return 100; } } }
-function mk_sc_ctor(r: i32): Sc { return SA(k_of(r)); }
-function mk_rc_ctor(r: i32): Rc { return RA([k_of(r), 1]); }
-function mk_sc_local(r: i32): Sc {
+@noinline function sval(e: Sc): i32 { match (e) { SA(v) => { return v; }, SB => { return 100; } } }
+@noinline function rval(e: Rc): i32 { match (e) { RA(v) => { return v[0]; }, RB => { return 100; } } }
+@noinline function mk_sc_ctor(r: i32): Sc { return SA(k_of(r)); }
+@noinline function mk_rc_ctor(r: i32): Rc { return RA([k_of(r), 1]); }
+@noinline function mk_sc_local(r: i32): Sc {
     let m: Sc = SA(k_of(r));
     return m;
 }
-function mk_rc_local(r: i32): Rc {
+@noinline function mk_rc_local(r: i32): Rc {
     let m: Rc = RA([k_of(r), 1]);
     return m;
 }

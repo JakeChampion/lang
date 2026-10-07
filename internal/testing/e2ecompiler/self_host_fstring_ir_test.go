@@ -36,8 +36,7 @@ var fstringIRCases = []struct {
 	// parser.parse_expr_from_text into a full expression, so `${e}` desugars to
 	// `(e).to_string()` for any i32-valued `e`. These pin that a method-call result
 	// and an arithmetic expression interpolate through the same i32 `to_string`
-	// fast-path the bare-local cases use (`expr_recv_prim_type` classifies the call
-	// / arith result as i32). The most common real f-string shape — `${x.len()}`.
+	// the bare-local cases use. The most common real f-string shape — `${x.len()}`.
 	// i32 method-call result: "L4" (len 2).
 	{"method-len", `let s: string = "abcd"; let t: string = f"L{s.len()}"; return t.len();`, 2},
 	// i32 method-call result, byte-checked: "3"[0] == '3' == 51 — proves the

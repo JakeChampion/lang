@@ -855,11 +855,10 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 4},
-	// A forwarding LAYER between the caller and the producer. The layer alone
-	// decided whether the receiver's buffer came back: written as a free function
-	// it balanced, written as a method it leaked one buffer a round, because one
-	// pass of recv_borrow_fns_of answered a forwarding method with no row at all
-	// and the caller then dropped the receiver box-only (#9235). Three rows: the
+	// A forwarding LAYER between the caller and the producer, written as a
+	// method: it must balance exactly as the same layer written as a free
+	// function does, rather than leak one buffer a round by dropping the
+	// receiver box-only (#9235). Three rows: the
 	// fresh path through the layer, the same with the layer's own identity return
 	// present, and the identity path, where the result IS the receiver's box and
 	// an over-release would read 99 rather than a leak.
@@ -1018,11 +1017,10 @@ function main(): i32 {
 }`, 3},
 	// The fresh path of the same method reads `a.mag` into a local before
 	// forwarding it, so the callee is neither a receiver borrow nor
-	// identity-only and the receiver was "NODEEP:" — box-only, with the count
-	// the callee's field read added never given back. A counted identity
-	// method's moved result no longer costs the receiver its deep drop
-	// (recv_ident_methods_of): both owners are SINKSHARE, and whichever
-	// reaches rc 1 walks the fields. Each row read allocs / allocs - 1 before.
+	// identity-only. The receiver must still get its deep drop rather than a
+	// box-only one, which would never give back the count the callee's field
+	// read added: both owners take the rc-gated field walk, and whichever
+	// reaches rc 1 walks the fields. A box-only drop reads allocs / allocs - 1.
 	{"struct-handback-fresh-path", `struct Big { neg: boolean, mag: u64[] }
 @noinline
 function make(neg: boolean, mag: u64[]): Big { return Big { neg: neg, mag: mag }; }

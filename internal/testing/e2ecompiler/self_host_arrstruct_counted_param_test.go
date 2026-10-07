@@ -6,43 +6,19 @@ import (
 
 // --- A struct-array local at a COUNTED-STORE argument position ----------------
 //
-// The struct-array twin of self_host_arrenum_counted_param_test.go, and the last
-// of the five construction-retain `__param` cells. Same leak, same cause, same
-// two guards:
+// The struct-array twin of self_host_arrenum_counted_param_test.go. A callee
+// that STORES the whole array argument in a struct field takes a counted
+// reference and touches no element, so the caller's local keeps its deep
+// element release. Losing it to the outer-only dec strands every element:
 //
 //	callee stores `src` in a struct field   104 allocs / 102 frees, 88 live
 //
-// arrstruct_elem_esc_expr read every argument position it could not prove
-// element-safe as an escape. A callee that STORES the array is not element-safe
-// by the "ELB:" question — that flag asks whether the callee touches an ELEMENT,
-// and one that stores the whole array touches none yet keeps a reference — so
-// the caller's local lost its element walk and the sweep emitted the shallow
-// __fern_arr_dec where emit_arrstruct_deep_free was owed.
+// The other three rows are callees that could let an element outlive the call
+// — returning the param, reading an element, storing an element — and must
+// keep the caller's local off the element walk.
 //
-// ONE TIER SERVES BOTH ELEMENT KINDS. "DCNT:" grew a struct arm rather than
-// gaining a fifth key, because what the caller RELEASES is decided by its own
-// local's type — emit_arrenum_deep_free or emit_arrstruct_deep_free — not by
-// which type proved the store counted. The two escape walkers differ only in
-// which deep free they route; the question they ask of the registry is
-// identical, and borrow_reg_with_counted already merges every tier into one
-// "CNT:" flag for exactly that reason.
-//
-// The walk-exists guard is asked with the predicate the RELEASE side asks:
-// struct_has_reclaim_array_field, which slot_is_reclaimable_arrstruct checks
-// before routing emit_arrstruct_deep_free. (The enum arm asks
-// enum_arr_elems_walk_ok, what the backends check before emitting
-// __enum_arr_elems_drop_<E>.) Crediting a walk nothing emits would leave the
-// leak in place rather than close it.
-//
-// The element-handout guard needed no new code, as in the enum twin:
-// arrparam_use_ok credits `p[i]` only for the STRING tier, so an element read
-// disqualifies the param outright.
-//
-// Every want was confirmed against BOTH oracles — native x86-64 and
-// `bin/fern -interp` agreed on each exit — and never read off the self-host run.
-// All four were measured against the UNFIXED compiler first: only
-// `counted_store` moved (104/102 -> 104/104) and the three refusals are
-// byte-identical before and after.
+// Every want was confirmed against `bin/fern -interp` and never read off the
+// self-host run.
 //
 // The local is built from `mkv(seed())`, never a literal: a bare-literal
 // producer argument makes the local precise-drop eligible, which was its own
@@ -75,7 +51,7 @@ func arrstructCountedCases() []arrenumShareCase {
 			// The repro: the callee stores the whole array in a struct literal
 			// whose holder dies inside it, so the store's retain and the
 			// holder's field drop net to zero and the caller's claim is the only
-			// one left. 104/102 before, 104/104 now.
+			// one left. Balances at 104/104.
 			name: "counted_store",
 			src: mk(`function rd(src: Inner[], i: i32): i32 { let p: P = P { f: src, n: i }; return (p.f.len() + p.n) % 101; }`,
 				"rd(keep, r)"),
@@ -85,7 +61,7 @@ func arrstructCountedCases() []arrenumShareCase {
 			// REFUSED before the tier is consulted: an array RESULT can BE the
 			// argument, and the caller's release fires immediately after the call.
 			name: "callee_returns_param",
-			src: mk(`function rd(src: Inner[], i: i32): Inner[] { return src; }`,
+			src: mk(`@noinline function rd(src: Inner[], i: i32): Inner[] { return src; }`,
 				"rd(keep, r).len()"),
 			want: 3,
 		},

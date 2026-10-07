@@ -8,13 +8,12 @@ import (
 )
 
 // genericEnumIRCase is a self-host generic-enum (`enum E[T]`) program whose
-// exit code is pinned against the native interpreter's oracle value. Each case
+// exit code is pinned against the interpreter's oracle value. Each case
 // exercises the parser's monomorphize_enums pass (parser.fern): a generic enum
 // is cloned per concrete instantiation (`Opt[i32]` → `Opt__i32` with
 // `Sm__i32(i32)`), the variant constructions + match arm patterns + annotations
-// are mangled to the clone, so the variant payload types are concrete and the
-// module lowers through the IR path instead of bailing to the legacy AST
-// emitter (issue #3572). Exit codes are kept <= 120 (native) / <= 125 (WASI).
+// are mangled to the clone, so the variant payload types are concrete (#3572).
+// Exit codes are kept <= 120 (native) / <= 125 (WASI).
 type genericEnumIRCase struct {
 	name     string
 	src      string
@@ -45,10 +44,8 @@ function main(): i32 {
 }`, 9},
 	// unit variant passed BARE as a call argument (#5247): the callee's declared
 	// parameter type `Opt[i32]` — not a var annotation at the use site — must pin
-	// the bare `Nn`'s instantiation. Before the fix the argument stayed
-	// un-mangled, monomorphize_enums dropped the generic `Nn` struct, and the
-	// dangling reference bailed the whole module (and the AST emitter it then fell
-	// to miscompiled it into a SIGSEGV).
+	// the bare `Nn`'s instantiation; an un-mangled argument would name the
+	// generic `Nn` struct monomorphize_enums drops.
 	{"unit_variant_call_arg", `enum Opt[T] { Sm(T), Nn }
 function get(o: Opt[i32]): i32 { match (o) { Sm(v) => { return v; }, Nn => { return 42; } } }
 function main(): i32 { return get(Nn); }`, 42},

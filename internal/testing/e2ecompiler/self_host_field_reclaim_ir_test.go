@@ -7,16 +7,14 @@ import (
 	"testing"
 )
 
-// TestSelfHostFieldReclaimIRX86_64 covers field-level move tracking (#3457): the
-// per-type __field_reclaim_<T> helper that frees a superseded builder box's
-// REPLACED array-field buffers before freeing the box. This converges the
-// dominant clone-form leak — `S { ops: s.ops.append(op), … }` clones
-// `s.ops` each emit, so the dead SOURCE buffer leaks O(K^2)/function without it.
+// TestSelfHostFieldReclaimIRX86_64 pins the release of a superseded builder's
+// array fields. `S { ops: s.ops.append(op), … }` builds a fresh buffer each
+// time, so every rebind leaves the old box and its old ops buffer dead; unless
+// both are released, the dead buffers grow O(K^2) per function.
 //
-// A struct PARAM threaded through a consume-rebind snapshots its entry box; each
-// rebind frees the old box (snapshot-guarded) AND, now, each replaced array
-// field that differs from BOTH the new value (cow) and the caller's snapshot.
-// The local consume-rebind (`c = bump(c)`) variant uses just the != new guard.
+// The rebind is exercised on a struct PARAM, whose caller still holds the
+// original, and on a local (`c = step(c)`): the old value is released, while a
+// buffer still reachable from the new value or from the caller survives.
 func TestSelfHostFieldReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -52,12 +50,10 @@ func TestSelfHostFieldReclaimIRX86_64(t *testing.T) {
 	// `b` with an i32[] field is threaded via the immutable-update method
 	// `b = b.emit(f)` (each builds `B { ops: b.ops.append(f), n: b.n+1 }`, a fresh
 	// growing clone of the ops buffer), bounded by `b = b.clear()` once it reaches
-	// 100 elements, for 200M iterations. Without field-level reclaim EVERY rebind's
-	// dead ops clone (and every cleared builder's buffer) leaks — O(iterations) of
-	// growing buffers exhaust the heap (exit 137; verified on origin/main). With
-	// __field_reclaim_B freeing each replaced ops buffer the freed blocks recycle
-	// through the size-class freelist → bounded → exit 0. The per-module-
-	// convergence repro shape (#3457): a builder's replaced array fields reclaim.
+	// 100 elements, for 200M iterations. Each rebind must release the replaced ops
+	// buffer (and every cleared builder's buffer) so the freed blocks recycle
+	// through the size-class freelist; a leak there exhausts the heap (exit 137)
+	// instead of exiting 0.
 	run(t, `struct B { ops: i32[], n: i32 }
 function (b: B) emit(v: i32): B { return B { ops: b.ops.append(v), n: b.n + 1 }; }
 function (b: B) clear(): B { return B { ops: [], n: 0 }; }

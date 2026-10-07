@@ -7,17 +7,12 @@ import (
 	"testing"
 )
 
-// TestSelfHostNestedArrFirstElemIR pins the type-driven arr-of-arr
-// classification at a `let m = [<first>, …]` binding (#5326): the old
-// detection recognised only a LITERAL first element (`[[…], …]`), so a
-// call-shaped (`[mk(), …]`) or ident-shaped (`[inner, …]`) first element —
-// array-typed by the return/slot registries — left `m` un-arr-arr-marked and
-// nested reads m[i][j] took the 4-byte default stride. For f64/string inner
-// elements that was a silent wrong-value miscompile on the self-host IR path
-// (found differentially vs the native interp oracle; native backends were
-// always type-driven via ast.ElemSizeBytesFor). The binding now classifies the
-// first element through expr_is_arr_src (literal, array-marked local,
-// registered T[]-returning call, slice), so these shapes stride correctly.
+// TestSelfHostNestedArrFirstElemIR pins the arr-of-arr classification at a
+// `let m = [<first>, …]` binding (#5326): a call-shaped (`[mk(), …]`) or
+// ident-shaped (`[inner, …]`) first element makes `m` an array of arrays just
+// as a LITERAL one (`[[…], …]`) does, so nested reads m[i][j] stride at the
+// inner element's width. For f64/string inner elements the 4-byte default
+// stride is a silent wrong-value miscompile.
 func TestSelfHostNestedArrFirstElemIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -54,10 +49,10 @@ function main(): i32 { let m = [mk(), [1 as i64]]; if (m[0][0] + m[0][1] + m[1][
 		// regression by the same classifier now serving all four shapes.
 		{"f64-literal-first",
 			`function main(): i32 { let m = [[1.5, 2.5], [0.25]]; let s = m[0][0] + m[0][1] + m[1][0]; if (s > 4.24 && s < 4.26) { return 42; } return 7; }`, 42},
-		// UNANNOTATED array-returning function (#5326, second cluster): the
-		// ret-type inferencer had no ExprArray arm, so `mk2` never entered
-		// f64arr_ret_fns and `let a = mk2()` element-reads took the 4-byte
-		// default stride (silent wrong value pre-fix).
+		// UNANNOTATED array-returning function (#5326, second cluster): `mk2`'s
+		// inferred f64[] return must carry its 8-byte element width to
+		// `let a = mk2()`, or its element reads take the 4-byte default stride
+		// (a silent wrong value).
 		{"f64-unannotated-ret",
 			`function mk2() { return [1.5, 2.5]; }
 function main(): i32 { let a = mk2(); let s = a[0] + a[1]; if (s > 3.99 && s < 4.01) { return 42; } return 7; }`, 42},

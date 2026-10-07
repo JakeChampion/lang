@@ -7,22 +7,15 @@ import (
 	"testing"
 )
 
-// TestSelfHostEnumStrPayloadReclaimIRX86_64 pins the #4355 slice-2 gap: enum and
-// Option/Result STRING payloads now release on the self-host IR path. A FRESH
-// string payload (a literal or a fresh producer — gated by
-// variant_struct_payloads_fresh / rcpayload_option_cand) makes the box the
-// payload's sole owner, so the consumed-by-match free releases it via the
-// rc-aware __fern_str_free (per-variant variant_is dispatch for enums —
-// emit_enum_variant_drops' string arm; op_opt_payload for options —
-// emit_opt_str_payload_drop) before the box dec. Non-fresh payloads (a bare
-// ident aliasing a live local) and escaping arm bindings keep today's sound
-// leak.
+// TestSelfHostEnumStrPayloadReclaimIRX86_64 pins release of enum and
+// Option/Result STRING payloads (#4355). A FRESH string payload (a literal or a
+// fresh producer) is solely owned by its box, so a consuming match frees the
+// payload through the rc-aware __fern_str_free and then the box. A payload that
+// aliases a live local, or that an arm moves out, must stay valid.
 //
 // The reclaim is proven by a BOUNDED HIGH-WATER assertion (__heap_bump_bytes()
 // stays flat across a second 5000-iteration churn), a double-free by the
 // over-release detector (__rc_underflow_count() → 99), and values checked in Fern.
-// Probes use the IR-path builtins (__rc_underflow_count / __heap_bump_bytes) so the
-// programs stay on the IR path.
 func TestSelfHostEnumStrPayloadReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -66,14 +59,14 @@ function main(): i32 { let w: i32 = churn(5000); let b1: i32 = (__heap_bump_byte
 		"enum-str-payload-flat", 0)
 
 	// OPTION string payload (`Option[string] = Some(<fresh concat>)`), consumed
-	// by match: emit_opt_str_payload_drop frees the payload (op_opt_payload →
-	// __fern_str_free) then the box. Flat across the second churn.
+	// by match: the payload is freed (__fern_str_free), then the box. Flat
+	// across the second churn.
 	run(t, `function go(pre: string): i32 { let o: Option[string] = Some(pre + "xyz"); let r = 0; match (o) { Some(s) => { r = s.len(); }, None => { r = 1; }, } return r; }
 function churn(n: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + go(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 { let w: i32 = churn(5000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(5000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"option-str-payload-flat", 0)
 
-	// RESULT Err string payload (variant-aware opt_payload_type reads E for Err).
+	// RESULT Err string payload: the free must read Err's payload as E.
 	run(t, `function go(pre: string): i32 { let r2: Result[i32, string] = Err(pre + "e"); let r = 0; match (r2) { Ok(v) => { r = v; }, Err(e) => { r = e.len(); }, } return r; }
 function churn(n: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + go(pre)) % 251; i = i + 1; } return acc; }
 function main(): i32 { let w: i32 = churn(5000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(5000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
@@ -87,12 +80,10 @@ function churn(n: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i
 function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"option-aliased-str-payload-excluded", 0)
 
-	// ESCAPING arm binding via RETURN — ADMITTED under the Koka consuming-match
-	// lift (#4400): `Word(s) => return s` hands the payload to the caller, so
-	// the candidate is now accepted and the free site SKIPS the Word payload's
-	// dec (match_moved_rc_payloads / emit_enum_variant_drops_moved — ownership
-	// moved to the returned value). The returned string must stay valid and
-	// nothing may double-free. len 5 over 2000 calls, detector 0.
+	// ESCAPING arm binding via RETURN (#4400): `Word(s) => return s` moves the
+	// payload to the caller, so the match frees the box without releasing the
+	// payload. The returned string must stay valid and nothing may double-free.
+	// len 5 over 2000 calls, detector 0.
 	run(t, `enum Tok { Word(string), Num(i32) }
 function go(pre: string): string { let x = Word(pre + "abc"); match (x) { Word(s) => { return s; }, Num(n) => { return "n"; }, } return ""; }
 function churn(n: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i32 = 0; while (i < n) { if (go(pre).len() != 5) { bad = 1; } i = i + 1; } return bad; }
@@ -116,12 +107,10 @@ function churn(n: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i
 function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"enum-escaping-binding-store-moved", 0)
 
-	// GUARD + MOVE mix REJECTED (the #4560 review point): the escaping Word
-	// arm sits behind a guarded sibling — a guard-true run would take the
-	// borrow-only arm while the moved-set skip still suppressed the payload
-	// dec (a per-call leak). Admission rejects the mix (guarded_move), so the
-	// candidate falls back to the exit sweep: values stay correct on both
-	// guard outcomes and the detector stays 0 (no skip fired, no over-release).
+	// GUARD + MOVE mix (the #4560 review point): the escaping Word arm sits
+	// behind a guarded sibling, so a guard-true run takes the borrow-only arm
+	// and a guard-false run moves the payload out. Values stay correct on both
+	// guard outcomes and the detector stays 0.
 	run(t, `enum Tok { Word(string), Num(i32) }
 function go(pre: string, k: i32): i32 {
     let out: string = "";

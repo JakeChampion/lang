@@ -4,16 +4,10 @@ import "testing"
 
 // mapArrIdentCases pin a `Map[K, V][]` IDENT not being typed as a single map.
 //
-// A map-array slot records its ELEMENT map type in the same column a plain map
-// local uses, so that `ms[i].get(k)` can resolve K/V. Two readers took that
-// column for the name itself without asking whether the slot is an array, so
-// `ms` typed as one `Map[K, V]` and `ms.len()` lowered to op_map_len over array
-// memory — a SEGFAULT, not a bail, where native answers 1.
-//
-// The fix sent both readers through LowerState.slot_map_type, which answered ""
-// for an array slot. The array-ELEMENT readers are unaffected: they pair map_type_of
-// with is_arr_slot explicitly, which is how `ms[i].get(k)` already worked and
-// why it is a control here rather than a fix.
+// `ms` is an array whose ELEMENTS are maps, so `ms[i].get(k)` resolves K/V from
+// the element type while `ms.len()` is the array's length. Typed as one
+// `Map[K, V]`, `ms.len()` lowers to op_map_len over array memory — a SEGFAULT
+// where the interpreter answers 1. The element reads are controls.
 var mapArrIdentCases = []struct {
 	name string
 	src  string
@@ -36,9 +30,7 @@ function main(): i32 {
     let ms: Map[string, i32][] = [m];
     return ms.len() + ms[0].get_or("k", 0);
 }`, 8},
-	// CONTROL: the element read alone already resolved through the ExprIndex
-	// arm's own is_arr_slot check. It must keep working — a fix that answered
-	// "" everywhere for the column would break this.
+	// CONTROL: the element read alone must keep typing as a map.
 	{"maparr-index-only", `import "core/map";
 function main(): i32 {
     let m: Map[string, i32] = map_new(4);
@@ -47,7 +39,7 @@ function main(): i32 {
     return ms[0].get_or("k", 0);
 }`, 7},
 	// CONTROL: a genuine map local must still dispatch every map op off its
-	// ident. This is the shape slot_map_type exists to keep answering.
+	// ident.
 	{"plain-map-ops-unchanged", `import "core/map";
 function main(): i32 {
     let m: Map[string, i32] = map_new(4);

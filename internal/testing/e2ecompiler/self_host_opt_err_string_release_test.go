@@ -5,27 +5,18 @@ import (
 	"testing"
 )
 
-// --- The Err arm's string, stranded by an empty else-branch (#6360) ----------
+// --- The Err arm's string is released with its box (#6360) -----------------
 //
-// Every tag-guarded Option/Result drop frees the payload under `tag == 0` and the
-// box on every path, with NOTHING in the else-branch. #6463 made that explicit
-// when it dropped the scalar-Err gate: "a non-scalar Err payload is never reached
-// — it is stranded, not dangled". Stranded is sound, and it is still a leak:
-// `Result[i32[], string]` from a call leaves 6400 over 100 rounds, exactly ×2.0
-// per doubling, against 0 on native.
+// A tag-guarded Option/Result drop must release the Err payload as well as the
+// Ok one: `Result[i32[], string]` from a call strands 6400 bytes over 100
+// rounds, doubling with the round count, when only the Ok payload is released.
+// The Err release needs its own freshness proof — the producer's Err payload
+// must be a value the caller owns — since the success payload's proof cannot
+// vouch for it, and an unconditional release would free a caller's box on the
+// Err path.
 //
-// Filling that branch needs a proof the registry did not have. The "f" flag is
-// computed from the SUCCESS payload only (`body_has_nonfresh_opt_success_payload`),
-// so it cannot vouch for an Err string, and reusing it here would release a
-// caller's box on the Err path. The walker is now parameterised by which
-// constructor it inspects — one traversal, two verdicts — and the Err verdict gets
-// its own tagged registry row (`ERRFRESH:`, seeded as `OPTERRFRESH:`).
-//
-// Both quadrants are covered. The match-consumed one fills the else-branch of
-// `emit_opt_tagged_payload_drop`; the UNMATCHED one reaches `emit_optarr_deep_free`
-// instead, and its Err release is gated per-SLOT ("OPTARRERR:") because that
-// emitter is shared with the reassigned+match OPTARR class, whose slots carry no
-// Err-freshness proof — an unconditional branch there would dangle.
+// Both quadrants are covered: the local a match consumes, and the UNMATCHED
+// one.
 
 func TestSelfHostOptErrStringReleaseX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -188,14 +179,7 @@ function main(): i32 {
 		}
 	})
 
-	// The other half, closed in turn. Same leak, different emitter: no consuming
-	// match, so this reaches emit_optarr_deep_free rather than
-	// emit_opt_tagged_payload_drop, and its Err release is gated per-SLOT
-	// ("OPTARRERR:") because the OPTARR credit is shared with the reassigned+match
-	// class, whose slots carry no Err-freshness proof.
-	//
-	// This case was pinned AS a leak while that half was open, and converted here
-	// rather than deleted — which is what its failure message asked for.
+	// The UNMATCHED quadrant: the same leak with no consuming match.
 	t.Run("unmatched_err_string_is_released", func(t *testing.T) {
 		src := `function mk(i: i32): Result[i32[], string] {
     if (i % 3 == 0) { return Err("e" + "rr"); }

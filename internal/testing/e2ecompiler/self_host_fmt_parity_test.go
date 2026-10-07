@@ -2077,8 +2077,8 @@ var selfHostFmtKnownDivergences = map[string]string{}
 // somebody has to notice and write up.
 //
 // Cheap enough to belong here: 425 `-fmt` invocations of the linked driver take
-// ~16 s in total (the driver's fixed startup is ~12 ms; the cost is the ten
-// 15-50 kloc self_host modules), against the driver build the parity test above
+// ~16 s in total (the driver's fixed startup is ~12 ms; the cost is the
+// 15-50 kloc compiler/ modules), against the driver build the parity test above
 // already pays for and caches.
 func TestSelfHostFmtCorpusParityX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)

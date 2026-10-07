@@ -779,8 +779,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"bound-struct-impl-ok", "trait Ord { function cmp(self: Self, other: Self): i32; }\nstruct Foo { x: i32 }\nimpl Ord for Foo { function cmp(self: Self, other: Self): i32 { return 0; } }\nfunction pick[T: Ord](a: T): T { return a; }\nfunction main(): i32 { let p: Foo = Foo { x: 1 }; let r: Foo = pick(p); return r.x; }\n", nil},
 		// bound-derive-ok carries `impl Ord for i32`: the derived `cmp`
 		// dispatches per-field to the FIELD type's impl (synthOrd emits
-		// `self.x.cmp(other.x)` — the ord_struct_enum e2e fixture is the
-		// design reference), so without it the derive is rejected by the
+		// `self.x.cmp(other.x)` — the ord_struct_enum conformance case is
+		// the design reference), so without it the derive is rejected by the
 		// E021 field-conformance pre-check below (#5392).
 		{"bound-derive-ok", "trait Ord { function cmp(self: Self, other: Self): i32; }\nimpl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } }\n@derive(Ord)\nstruct Foo { x: i32 }\nfunction pick[T: Ord](a: T): T { return a; }\nfunction main(): i32 { let p: Foo = Foo { x: 1 }; let r: Foo = pick(p); return r.x; }\n", nil},
 		// An untyped literal argument takes the type the call binds T to (i64

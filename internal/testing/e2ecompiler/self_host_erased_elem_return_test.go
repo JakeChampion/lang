@@ -87,9 +87,9 @@ function main(): i32 {
     let (x, y) = a.firstpair(b);
     return (x * 10.0) as i32 + y - 1;
 }`}, // 45 — a METHOD must NOT be promoted: its receiver's `T` is not in
-	// type_params, so `all_tp_count` reads 1 while `T` is right there in the
-	// return, and promoting `U` alone would strand `T` erased in the clone.
-	// `array.zip`'s method form is exactly this and fell off the IR path.
+	// type_params although it appears in the return, and promoting `U` alone
+	// would strand `T` erased in the clone. `array.zip`'s method form has this
+	// shape.
 	{"count_of_control", `function count_of[T](xs: T[]): i32 { return xs.len(); }
 function main(): i32 {
     let xs: f64[] = [4.5, 1.5];

@@ -2,14 +2,14 @@ package e2ecompiler
 
 import "testing"
 
-// labeledBreakIRCases widen the self-host IR subset to labeled break/continue —
+// labeledBreakIRCases pin labeled break/continue —
 // `outer: while/for { … break outer; … continue outer; … }`. The parser records a
 // loop label on StmtWhile/StmtFor and a target label on break/continue; a
 // resolve_labels pass (run at the shared parse entry, before any desugar) bakes
-// each labeled break/continue's RELATIVE loop depth into its `tag`; and the lowering's
-// break/continue lowering targets loop_blk[len-1-tag] (tag 0 = innermost =
-// unchanged behaviour for unlabeled). Verified to match the interpreter on
-// x86-64 + wasm (and arm64 via qemu).
+// each labeled break/continue's RELATIVE loop depth into its `tag`, and the
+// lowering branches to the loop that many levels out (tag 0 = innermost =
+// unlabeled behaviour). Verified to match the interpreter on x86-64 + wasm (and
+// arm64 via qemu).
 //
 // Each case is oracle-checked against the interpreter and returns a value
 // <= 120 (cf. the wasmtime exit-code gap #2908).

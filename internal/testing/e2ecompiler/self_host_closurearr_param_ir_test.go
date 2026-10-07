@@ -5,22 +5,19 @@ import "testing"
 // --- A closure array reaches a callee through a parameter or a passthrough
 //
 // The self-host keeps two representations for a fn-typed array element: a
-// bare code pointer for a named function, an env box for a closure. Which one
-// a callee's `a[i](x)` dispatches on is decided by an interprocedural proof
-// (fn_param_sigs_of's '3' flag): every call site must provably pass an array
-// of boxes. The proof knew a lambda written inline, a `__mkclo$` box and a
-// factory call as box elements, and a closurearr-returning call as a box
-// array. It did not know an IDENT the caller had bound to a closure
-// (`let f = (x) => x; call0([f])`), nor a generic passthrough handing such an
-// array straight back (`id([f, f])`), so those arrays read as bare-pointer
-// arrays, the callee's param went unproven, and `a[0](7)` jumped into the box
-// — SIGSEGV on both natives where the Go compiler answers 7. Nightly
-// differential seed 24937 is the passthrough shape.
+// bare code pointer for a named function, an env box for a closure. A callee's
+// `a[i](x)` dispatches env-first only when every call site provably passes an
+// array of boxes. An IDENT the caller bound to a closure
+// (`let f = (x) => x; call0([f])`) and a generic passthrough handing such an
+// array straight back (`id([f, f])`) must both count as box arrays; read as
+// bare-pointer arrays, `a[0](7)` jumps into the box and segfaults where the
+// interpreter answers 7. Nightly differential seed 24937 is the passthrough
+// shape.
 //
 // The two bare-function rows are the other half of the contract: a named-fn
 // array must stay on plain dispatch, or a correct program would bare-call an
-// env-first thunk. Every want was read off `bin/fern -interp` and the native
-// x86-64 backend, never off the self-host.
+// env-first thunk. Every want was read off `bin/fern -interp`, never off the
+// self-host.
 
 const closureArrParamProlog = "function id[T](x: T): T { return x; }\n" +
 	"function inc(x: i32): i32 { return x + 1; }\n" +

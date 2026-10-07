@@ -88,8 +88,7 @@ func TestSelfHostTupleRebindHazardsX86_64(t *testing.T) {
 	}{
 		{
 			// Aliased into a second local that still reads the old box after the
-			// rebind. body_unsafe_for flags the bare-ident init, so no credit at
-			// all — releasing here would free the box `keep` holds.
+			// rebind, so the rebind must not free the box `keep` holds.
 			name: "aliased_to_local",
 			src: `function round(): i32 {
     let p: (i32, i32) = (1, 2);

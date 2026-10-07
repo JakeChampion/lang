@@ -32,8 +32,8 @@ function main(): i32 { let v: i32 = churn(5000); if (__rc_underflow_count() != 0
 		"strarr-elem-reclaim-arm64", 0)
 
 	// LOOP-BODY REINIT (#4353 item 4): a string[] re-DECLARED each iteration is
-	// freed at the loop REBIND (emit_strarr_reclaim_store), not at a helper exit.
-	// Correctness + over-release proof under qemu (the x86 sibling carries the
+	// freed at the loop REBIND, not at a helper exit. Correctness +
+	// over-release proof under qemu (the x86 sibling carries the
 	// heap-exhaustion / bounded-high-water leg). xs[1]="abx" (3) + xs[2]="abyy"
 	// (4) = 7 each iteration; a UAF from an early element free would read garbage
 	// (bad=1) or tick the underflow detector (99). underflow 0 + value 7 → 0.
@@ -48,12 +48,10 @@ function churn(n: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i
 function main(): i32 { let v: i32 = churn(1000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"strarr-elem-alias-excluded-arm64", 0)
 
-	// PRODUCER-CALL ELEMENT: the stored elements are calls to a proven
-	// fresh-string producer rather than inline concats. The credit's element
-	// proof is strarr_value_is_fresh, so the registry arm admits them; the
-	// registry-blind sibling it replaced refused any call. Correctness +
-	// over-release under qemu (the x86 sibling carries the flatness leg).
-	// 43 + 3 + 43 = 89 each build.
+	// PRODUCER-CALL ELEMENT: the stored elements are calls to a fresh-string
+	// producer rather than inline concats, and the array owns each one.
+	// Correctness + over-release under qemu (the x86 sibling carries the
+	// flatness leg). 43 + 3 + 43 = 89 each build.
 	run(t, `function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function build(pre: string): i32 { let xs: string[] = [w(pre), "lit"]; xs = xs.append(w(pre)); let tl: i32 = 0; let j: i32 = 0; while (j < xs.len()) { tl = tl + xs[j].len(); j = j + 1; } return tl; }
 function churn(n: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i32 = 0; while (i < n) { if (build(pre) != 89) { bad = 1; } i = i + 1; } return bad; }
@@ -71,19 +69,10 @@ function churn(n: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i
 function main(): i32 { let v: i32 = churn(1000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"strarr-local-from-producer-arm64", 0)
 
-	// STORED BY THE CALLEE is ADMITTED, and this case used to pin the opposite.
-	// Its premise was that `keep`'s parameter is not borrowable, which is still
-	// true and is no longer the whole question: param_counted_of proves every
-	// appearance of that parameter is a COUNTED store, so the construction incs
-	// the buffer and the caller's claim survives the call. The "CNT:" tier
-	// carries that verdict to the escape walker.
-	//
-	// Granting the DEEP walk on a shallow-release justification is the part that
-	// needs stating. Two rules close it from both ends: __fern_str_arr_free is
-	// rc-gated, so only the owner that finds rc 1 walks the elements; and no
-	// element can be out UNCOUNTED, because the tier refuses ExprIndex for array
-	// params while the caller's own element-hazard rules still exclude
-	// `let t = xs[0]`. Both reads stay valid. 3 + 43 + 43 = 89.
+	// STORED BY THE CALLEE: `keep` stores its array parameter into a struct, so
+	// the construction counts the store and the caller's claim survives the
+	// call; only the owner that finds rc 1 walks the elements. Both reads stay
+	// valid. 3 + 43 + 43 = 89.
 	run(t, `struct Box { rows: string[] }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function mk(pre: string): string[] { let out: string[] = []; let i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
@@ -106,7 +95,7 @@ function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-
 function mk(pre: string): string[] { let out: string[] = []; let i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
 function keep(xs: string[]): Box { return Box { rows: xs }; }
 function build(pre: string): Box { let xs: string[] = mk(pre); let b: Box = keep(xs); return b; }
-function ids(s: string): string { return s; }
+@noinline function ids(s: string): string { return s; }
 function churnjunk(i: i32): i32 { let a: string[] = ["zzzz", "yyyy", ids("xxxx")]; return a[0].len() + a[2].len(); }
 function round(i: i32): i32 {
     let pre: string = "ab";

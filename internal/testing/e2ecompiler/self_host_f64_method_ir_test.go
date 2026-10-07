@@ -8,27 +8,15 @@ import (
 )
 
 // f64MethodCases exercise std/float's f64 RECEIVER methods (`x.sqrt()`,
-// `.floor()`, `.pow(y)`, …) through the self-host x86-64 native-binary track.
+// `.floor()`, `.pow(y)`, …) through the self-host x86-64 native-binary track
+// (#4361): each primitive-receiver method body
+// (`(x: f64) sqrt() { return __sqrt_f64(x); }`) must be emitted alongside its
+// call, or the link fails on an undefined reference. The float-intrinsic suites
+// cover the `__*_f64` FREE functions and the f64-recv IR suite covers USER
+// methods; this covers std/float's own method forms.
 //
-// This used to drive them through the legacy AST emitter (asm.fern) — the path
-// #4361 was filed against — by importing std/test unpruned so the merged module
-// exceeded asm_ir's 512-function IR budget and fell back. #3457 slice 5 deleted that
-// emitter, so the mechanism is gone; the SUBJECT is not. The cases now import only
-// std/float, route "ir", and still oracle-check every result against the
-// interpreter, so what #4361 was actually about — std/float's method forms
-// resolving and running on the self-host — stays pinned.
-//
-// #4361 recorded these as an asm.fern gap — the emitter was said to emit
-// `call __fn_f64__sqrt` etc. without emitting the method bodies (an undefined
-// reference at link). That gap has since closed: primitive-receiver method
-// bodies (`(x: f64) sqrt() { return __sqrt_f64(x); }`) emit correctly, so
-// `x.sqrt()` resolves and runs. Nothing pinned it, though — the float-intrinsic
-// suites cover the `__*_f64` FREE functions and the f64-recv IR suite covers USER
-// methods, but std/float's own method forms were unguarded. This is that guard.
-//
-// Each case ASSERTS the route is "ir" (via -decide), so a stdlib change that
-// pushes this import set back over the budget fails loudly here rather than
-// silently compiling through a path that no longer exists.
+// Each case asserts `-decide` reports "ir" and oracle-checks the result
+// against the interpreter.
 var f64MethodCases = []struct {
 	name string
 	body string
@@ -44,16 +32,14 @@ var f64MethodCases = []struct {
 	{"log", `let x: f64 = 10.0; return x.log() as i32;`},      // 2
 }
 
-// f64MethodSrc builds a minimal program calling an f64 method. std/test is NOT
-// imported any more: it was there only to exceed the IR budget and reach the AST
-// emitter, and pruned to std/float alone the module routes "ir".
+// f64MethodSrc builds a minimal program calling an f64 method.
 func f64MethodSrc(body string) string {
 	return "import \"std/float\";\nfunction main(): i32 { " + body + " }\n"
 }
 
 // TestSelfHostF64MethodIR_X86_64 pins std/float's f64 receiver methods
 // compiling + linking + running on the self-host x86-64 native-binary path
-// (#4361, re-pointed off the deleted AST emitter by #3457 slice 5).
+// (#4361).
 func TestSelfHostF64MethodIR_X86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	interpBin := buildLangBinForInterp(t)

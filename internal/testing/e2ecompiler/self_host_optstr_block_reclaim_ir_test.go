@@ -6,14 +6,11 @@ import (
 )
 
 // optStrBlockReclaimCases pin the #4353 item-2 PER-BLOCK consumed-match
-// Option/Result reclaim: the fn-level consumed_rcpayload_option_frees pass
-// scans only top-level fn-body statements, so a LOOP-LOCAL
-// `let o = Some(<fresh rc payload>)` consumed by exactly one match in the
-// same nested block leaked the payload AND the option box per iteration
-// (probe p2 in the 2026-07-20 recon on #4353). lower_block now runs the same
-// classifier + gates over each nested block's own statement list and emits
-// the payload deep-drop + box free after the consuming match. Escaping arm
-// bindings, post-match uses, and double matches keep today's sound leak.
+// Option/Result reclaim: a LOOP-LOCAL `let o = Some(<fresh rc payload>)`
+// consumed by exactly one match in the same nested block must release the
+// payload AND the option box every iteration (probe p2 in the 2026-07-20 recon
+// on #4353). Escaping arm bindings, post-match uses, and double matches must
+// keep the payload alive.
 var optStrBlockReclaimCases = []struct {
 	name string
 	src  string
@@ -52,7 +49,7 @@ function main(): i32 {
     return 0;
 }`, 0},
 	// Array-payload sibling: loop-local Some([..]) consumed by a borrowing
-	// match — the non-string rc payload uses emit_opt_payload_drop.
+	// match — the non-string rc payload.
 	{"optarr-loop-local-churn", `function main(): i32 {
     let acc: i32 = 0;
     let w: i32 = 0;
@@ -82,9 +79,8 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// ESCAPE negative: the Some-arm binding is stored outside the match —
-	// opt_arm_binding_escapes rejects the credit, the extracted string stays
-	// valid (leak-safe, no UAF, detector zero).
+	// ESCAPE negative: the Some-arm binding is stored outside the match, so
+	// the extracted string stays valid (no UAF, detector zero).
 	{"optstr-binding-escape-safe", `import "std/i32";
 function main(): i32 {
     let keep: string = "";
@@ -115,8 +111,8 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// DOUBLE-MATCH negative: two matches consume o — n_match != 1, no
-	// credit, both matches read valid data, detector zero.
+	// DOUBLE-MATCH negative: two matches consume o, so it is not released
+	// after the first — both matches read valid data, detector zero.
 	{"optstr-double-match-safe", `import "std/i32";
 function main(): i32 {
     let acc: i32 = 0;
@@ -224,8 +220,7 @@ function main(): i32 {
     return 0;
 }`, 0},
 	// PAYLOAD-RETURN negative: `Some(s) => { return s; }` moves the payload
-	// out — binds_esc rejects the credit entirely (no pending, no post-match
-	// drop), the returned string is valid in the caller, detector zero.
+	// out, so the returned string is valid in the caller, detector zero.
 	{"optstr-return-payload-safe", `import "std/i32";
 function pick(k: i32): string {
     let o: Option[string] = Some("k" + k.to_string());

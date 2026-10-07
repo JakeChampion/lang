@@ -35,7 +35,7 @@ function main(): i32 {
 `, 40},
 	// The argument repro: a callee that hands its parameter back retained. 11
 	// allocs / 1 free before.
-	{"arg_identity_callee", `function id(acc: i32[]): i32[] { return acc; }
+	{"arg_identity_callee", `@noinline function id(acc: i32[]): i32[] { return acc; }
 function main(): i32 {
     let pending: i32[] = [];
     let fd: i32 = 0;
@@ -64,7 +64,7 @@ function main(): i32 {
 	{"wide_elements", `function f(p: f64[]): f64[] { return p.append(1.5); }
 function stepf(n: i32, acc: f64[]): f64[] { return acc.append(n as f64).append(0.5); }
 function stepi(n: i32, acc: i64[]): i64[] { return acc.append(n as i64).append(7 as i64); }
-function idf(acc: f64[]): f64[] { return acc; }
+@noinline function idf(acc: f64[]): f64[] { return acc; }
 function main(): i32 {
     let xs: f64[] = [];
     let fs: f64[] = [];

@@ -10,15 +10,11 @@ import (
 )
 
 // tupleReturnMoveProg is the #4598 reproducer: a `(St[], Par)` tuple return
-// under cursor threading. Before the fix, the exit dec-sweep freed `body` /
-// `r_body` right after the tuple box captured the buffer pointer
-// (returned_moved_arr_slots had no ExprTuple arm, so a tuple-returned array
-// local was not kept from the sweep the way an enum-payload move (#3720) is) —
-// a use-after-free that stayed latent until a later same-size allocation
-// recycled the freed block. The junk-allocation loop forces that recycling
-// deterministically: pre-fix this program segfaulted; the parser.fern
-// *Result→tuple migration (#4406) hit the same corruption via Par
-// re-allocation in parse_block.
+// under cursor threading. Returning an array local inside a tuple moves it into
+// the tuple box, so the exit sweep must not free `body` / `r_body` once the box
+// holds the buffer pointer — a use-after-free that stays latent until a later
+// same-size allocation recycles the freed block. The junk-allocation loop forces
+// that recycling deterministically, so a stray free segfaults.
 const tupleReturnMoveProg = `struct Par { toks: i32[], pos: i32 }
 struct SA { v: i32 }
 struct SB { name: string }

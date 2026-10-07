@@ -20,9 +20,7 @@ import (
 // hole with a node built there; `mirror`'s hands back the node it was given,
 // and `append_to`'s an element of an array it borrows, so `tails` is read back
 // afterwards. The answer was confirmed at 3,000 cells against `fern -interp`,
-// whose own recursion is too slow at this depth, and matches the native
-// compiler at 300,000 on everything but `mirror`, which native does not
-// rewrite and overflows on.
+// whose own recursion is too slow at this depth.
 const selfHostTrmcSource = `import "std/i32";
 
 enum List { Cons(i32, List), Neg(i32, List), Nil }

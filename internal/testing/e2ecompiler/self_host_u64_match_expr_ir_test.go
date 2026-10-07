@@ -7,27 +7,17 @@ import (
 
 // --- u64 match-EXPRESSION (#6647) --------------------------------------------
 //
-// A match-expression desugars to an immediately-invoked value block whose
-// payload binding is admitted by iife_payload_field_bindable. That gate is a
-// width whitelist — i32, u32 (#6400), then a wide arm for i64 / f64 — and u64
-// was in none of them, so `match (o) { Some(v) => v, … }` on a u64 payload took
-// the whole MODULE off the IR path while the i64 spelling of the identical
-// program lowered. The statement form already lowered either way: the StmtMatch
-// binder carries the width on the slot and never consults this gate.
+// A match-expression desugars to an immediately-invoked value block, and its
+// payload binding must take a u64 payload as it takes i32, u32 (#6400), i64 and
+// f64: `match (o) { Some(v) => v, … }` on a u64 payload lowers exactly as the
+// i64 spelling of the identical program and the statement form do.
 //
-// u64 is i64-WIDE, so it normalises to i64 before the wide arm rather than being
-// OR'd into it — the arm forwards the width into payload-arith shape tests that
-// compare against "i64", and threading the raw "u64" there would widen the
-// admission while silently stopping those tests matching.
+// u64 is i64-WIDE but unsigned. unsigned-div is the row that catches treating
+// it as i64 in the PRODUCING expression: `(2^64-1) / 2` is 2^63-1 unsigned and
+// 0 signed, so the mistake shows up as a wrong answer. The i64 rows are the
+// controls that must keep lowering.
 //
-// unsigned-div is the row that would catch that kind of mistake: `(2^64-1) / 2`
-// is 2^63-1 unsigned and 0 signed, so a normalisation that leaked into the
-// PRODUCING expression's signedness shows up as a wrong answer rather than as a
-// quieter bail. The i64 rows are the controls that must keep lowering.
-//
-// Every case runs under FERN_STRICT_IR (#6602), which is what makes these
-// mutation checks at all: the AST answers are correct, so an exit-code-only
-// assertion passes on the unfixed compiler.
+// Every case runs under FERN_STRICT_IR (#6602), so a refusal names its site.
 var u64MatchExprCases = []struct {
 	name string
 	src  string

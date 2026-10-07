@@ -9,11 +9,10 @@ import (
 )
 
 // tupleRetUsizeCases pin `usize` as a lowerable TUPLE-ELEMENT and struct-FIELD
-// type on the self-host IR path. Both eligibility gates — tuple_elems_lowerable
-// and decl_is_leaksafe_at_d — listed every other scalar spelling but not
-// `usize`, so a `(usize, usize)`-returning function, or a struct with a `usize`
-// field, bailed the whole module (`coreutils/lib/base.fern`'s `tables()` /
-// `Codec`, which is what made base32 / base64 / basenc fail their self-host leg).
+// type on the self-host IR path: a `(usize, usize)`-returning function, or a
+// struct with a `usize` field, must lower like any other scalar spelling
+// (`coreutils/lib/base.fern`'s `tables()` / `Codec`, which base32 / base64 /
+// basenc depend on).
 //
 // A `usize` is a raw address, so it wants the WIDTH-0 tuple slot every other
 // pointer element already uses: the register backends move 8 bytes for every

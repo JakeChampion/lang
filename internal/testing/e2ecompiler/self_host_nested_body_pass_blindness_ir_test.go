@@ -9,43 +9,40 @@ import (
 	"testing"
 )
 
-// nestedBodyPassBlindnessCases pin two parser passes that walked a flat
+// nestedBodyPassBlindnessCases pin front-end passes that walked a flat
 // statement list and never reached the bodies nested inside it (#7199, the
 // #7174 / #6993 family).
 //
-// Both were invisible at top level and only appeared one block down, which is
-// what kept them hidden: the same program with the construct unwrapped compiles
-// correctly on every path.
+// Each defect was invisible at top level and only appeared one block down: the
+// same program with the construct unwrapped compiles correctly on every path.
 //
-//  1. cf_inline_fn_body — blind to ALL nested bodies, not just lambdas; a plain
-//     `if` was enough. Its `fn[]` annotation never fired, so the array lowering
-//     const-CALLED each element and `fns[0]()` called an integer as a code
-//     pointer: the self-host binary SIGSEGVs (139) where native answers 42.
-//     The `fn[]` annotation must be ABSENT for this to fail — writing
-//     `let fns: (() => i32)[]` compiles correctly even unfixed, so an annotated
-//     probe proves nothing.
+//  1. An UNANNOTATED fn-valued local or array one block down — a plain `if`
+//     is enough — must still be typed as fn values. Typed wrong, the array
+//     lowering const-CALLS each element and `fns[0]()` calls an integer as a
+//     code pointer: the binary SIGSEGVs (139) where the interpreter
+//     answers 42. The annotation must be ABSENT for this to probe anything:
+//     `let fns: (() => i32)[]` types the elements without the inference.
 //
 //  2. settle_block — descended into a lambda but passed empty name/type lists,
 //     so neither the lambda's own params nor the enclosing locals it captures
 //     were in scope for literal settling. A literal assigned to an `f64` param
 //     settled as an integer and the compiled binary read the raw i32 bit
-//     pattern as a denormal: 0 where native gives 3, silently. A method call
-//     resolves only from the receiver's ANNOTATION, so for a CAPTURED receiver
-//     that annotation lives in the enclosing scope and its arguments went
-//     unsettled too. An annotated local in the same lambda was always correct,
-//     which is what pins the gap to the dropped scope rather than the descent.
+//     pattern as a denormal: 0 where the interpreter gives 3, silently. A
+//     method call resolves only from the receiver's ANNOTATION, so for a
+//     CAPTURED receiver that annotation lives in the enclosing scope and its
+//     arguments went unsettled too. An annotated local in the same lambda was
+//     always correct, which pins the gap to the dropped scope, not the descent.
 //
-// The third defect in #7199 (resolve_labels_block) landed earlier; its case is
-// kept here as a regression guard because a `continue outer` degrading to the
-// innermost loop hangs the compiled binary forever, which no timeout in the
-// suite would attribute correctly.
+// The third defect in #7199 (resolve_labels_block) has its case here too: a
+// `continue outer` degrading to the innermost loop hangs the compiled binary
+// forever, which no timeout in the suite would attribute correctly.
 //
 // Exit 0 is correct; each nonzero code names the check that failed.
 var nestedBodyPassBlindnessCases = []struct {
 	name string
 	src  string
 }{
-	// cf_inline: an UNANNOTATED fn array, one `if` deep.
+	// An UNANNOTATED fn array, one `if` deep.
 	{"fn-array-in-if", `function mk(): i32 { return 42; }
 function mk2(): i32 { return 7; }
 
@@ -59,7 +56,7 @@ function main(): i32 {
     return 92;
 }
 `},
-	// cf_inline: an unannotated fn LOCAL, one `if` deep.
+	// An unannotated fn LOCAL, one `if` deep.
 	{"fn-local-in-if", `function mk(): i32 { return 42; }
 
 function main(): i32 {
@@ -71,7 +68,8 @@ function main(): i32 {
     return 91;
 }
 `},
-	// cf_inline: inside a lambda body — the expression-hosted statement list.
+	// An unannotated fn array inside a lambda body — the expression-hosted
+	// statement list.
 	{"fn-array-in-lambda", `function mk(): i32 { return 42; }
 function mk2(): i32 { return 7; }
 
@@ -84,7 +82,7 @@ function main(): i32 {
     return 0;
 }
 `},
-	// cf_inline: two levels down, through a loop then an if.
+	// An unannotated fn local two levels down, through a loop then an if.
 	{"fn-local-in-while-if", `function mk(): i32 { return 42; }
 
 function main(): i32 {

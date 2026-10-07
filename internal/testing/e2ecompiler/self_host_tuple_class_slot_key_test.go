@@ -63,9 +63,9 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 10,
 		},
 		{
-			// The reverse ordering. Which block comes first decides which credit
-			// tagged_value_of returns FIRST, so both orders have to be pinned —
-			// a fix that only reorders the lookup would pass one and fail the other.
+			// The reverse ordering. Which block comes first must not decide which
+			// release either binding gets, so both orders are pinned — a fix that
+			// only reorders a lookup would pass one and fail the other.
 			name: "sibling_blocks_reversed",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];

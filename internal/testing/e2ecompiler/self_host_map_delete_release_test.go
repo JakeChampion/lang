@@ -6,14 +6,9 @@ import (
 	"testing"
 )
 
-// A deleted map entry's key and value are released (#9970). `m.without(k)`
-// used to remove an entry and release nothing it held — the register
-// backends overwrite the slot with the last entry and shrink the columns, wasm
-// tombstones the slot and its release walk visits live slots only — so every
-// counted box in the deleted slot was stranded for the life of the program.
-// The typed path refused a delete over any counted column for exactly that
-// reason, which kept every program deleting from a string-keyed, string-valued
-// or keyed map on the AST lowering.
+// A deleted map entry's key and value are released (#9970): nothing visits a
+// deleted slot again, so a box left in it is stranded for the life of the
+// program.
 //
 // The register backends route a delete that owes a release to
 // `__fern_map_delete_rel`, which releases the removed key and value through the

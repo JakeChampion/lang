@@ -167,10 +167,8 @@ var traitsCases = []struct {
 			"function (s: Shape) area(): i32 { match (s) { Circle(r) => { return r * r * 3; }, Square(w) => { return w * w; } } } " +
 			"function main(): i32 { let a: Shape = Circle(3); let b: Shape = Square(4); return a.area() + b.area(); }", 43},
 	// Enum-receiver method on an UNANNOTATED enum local (`let a = Circle(3)`,
-	// `let c = Green`) — the slot is typed from the variant's enum_owner so the
-	// `<Enum>.<method>` dispatch resolves. Regression guard: the struct-array-
-	// literal `else if (struct_ty == "")` clause used to swallow the enum-init
-	// typing for a non-array init, silently routing these to AST.
+	// `let c = Green`): the local takes the variant's enum type, so the
+	// `<Enum>.<method>` dispatch resolves.
 	{"trait-enum-method-unannot-local",
 		"enum Shape { Circle(i32), Square(i32) } " +
 			"function (s: Shape) area(): i32 { match (s) { Circle(r) => { return r * r * 3; }, Square(w) => { return w * w; } } } " +

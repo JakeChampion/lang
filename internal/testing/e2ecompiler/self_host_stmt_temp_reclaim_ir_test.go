@@ -10,14 +10,12 @@ import (
 // Statement-temporary reclamation, stage (a), on the self-host IR path: a
 // discarded bare-ExprStmt whose value is a FRESH scalar-element array literal
 // (`[i, i + 1, i + 2];`) is DEC'd at the statement boundary (the rc-guarded
-// __fern_rc_dec, discardable_scalar_arr_lit) instead of leaking its buffer
-// every iteration. This is the self-host sibling of native's
-// emitOwnedTempStackDrop (internal/testing/e2e/rc_heap_bump_stmt_temp_test.go);
-// #4365 flagged it as a native-tested behavior with no self-host equivalent.
+// __fern_rc_dec) instead of leaking its buffer every iteration (#4365). The
+// e2e twin is internal/testing/e2e/rc_heap_bump_stmt_temp_test.go.
 //
 // Two assertions, both through the self-host x86-64 IR driver (asm_run):
-//   - FIXPOINT: the discarded-temp loop's bump-growth is now BOUNDED — equal at
-//     N=50 and N=5000 (before the reclaim it scaled with N: 96 -> 128 -> …).
+//   - FIXPOINT: the discarded-temp loop's bump-growth is BOUNDED — equal at
+//     N=50 and N=5000 (a leak scales with N: 96 -> 128 -> …).
 //   - OVER-RELEASE: the discarded temp must reclaim its OWN box without touching
 //     the live `xs` built from the same loop-variable operands — a wrong "owned"
 //     verdict that freed a shared buffer would corrupt the sum (999) or trip the
@@ -84,13 +82,9 @@ func stmtTempStrConcatBumpSrc(n string) string {
 }
 
 // A discarded fresh rc-FIELD struct literal (`H { id, xs: [..] };`) leaks BOTH
-// its box AND its field buffers if merely dropped. The reclaim deep-drops it the
-// way the exit sweep drops a struct LOCAL: __struct_drop_<T> releases the rc-array
-// field buffers, then __fern_rc_dec frees the box. Because __struct_drop_<T>'s
-// inner arr_dec clobbers its box return register, the box is stashed in a scratch
-// local and re-loaded for the free (the exit sweep's slot-reload pattern) — a
-// naive box→drop→box chain double-freed the field buffer instead (the __rc_underflow_count
-// detector below catches exactly that regression).
+// its box AND its field buffers if merely dropped, so the statement releases the
+// field buffers and then the box. A double free of a field buffer trips the
+// __rc_underflow_count detector below.
 func stmtTempRcFieldStructBumpSrc(n string) string {
 	return `struct H { id: i32, xs: i32[] }
 function main(): i32 {
@@ -102,9 +96,8 @@ function main(): i32 {
 }
 
 // A discarded call to a STRICT fresh-struct-returning function hands back a rc=1
-// box that leaks if merely dropped; the ExprCall reclaim releases it (native
-// ownedCallResultType). `mk` returns a fresh no-base `P { … }`, so it is in
-// return_fresh_struct_ret_fns.
+// box that leaks if merely dropped, so the statement must release it. `mk`
+// returns a fresh no-base `P { … }`.
 func stmtTempFreshCallBumpSrc(n string) string {
 	return `struct P { x: i32, y: i32 }
 function mk(a: i32): P { return P { x: a, y: a + 1 }; }
@@ -116,12 +109,11 @@ function main(): i32 {
 }`
 }
 
-// A discarded ARRAY-fresh-ret call (`mk(i) -> i32[]`, every return a direct
-// scalar-element array literal — the "ARR:" entries of the strict-fresh
-// registry, #4365): the returned rc=1 buffer is released with the shallow
-// rc-guarded __fern_rc_dec at the statement boundary (element-blind, scalar
-// elements live in the freed buffer). Native bounds this shape
-// (rc_heap_bump_discarded_call); the self-host leaked it until the ARR: arm.
+// A discarded ARRAY-returning call (`mk(i) -> i32[]`, every return a direct
+// scalar-element array literal, #4365): the returned rc=1 buffer is released at
+// the statement boundary; its scalar elements live in the buffer, so one dec
+// frees all of it. The e2e twin is
+// internal/testing/e2e/rc_heap_bump_discarded_call_test.go.
 func stmtTempFreshCallArrBumpSrc(n string) string {
 	return `function mk(a: i32): i32[] { return [a, a + 1, a + 2]; }
 function main(): i32 {
@@ -133,10 +125,9 @@ function main(): i32 {
 }
 
 // A FRESH string-concat RECEIVER (`(s1 + s2).len()`) — the value-consuming-op
-// sibling of the discarded-statement concat (#4365; native's
-// rc_heap_bump_len_receiver arc). The `.len()` intercept stashes the fresh
-// temp box in an unmarked scratch, reads the length, then releases the box
-// with the rc-aware __fern_str_free. No warmup: the fixpoint harness requires
+// sibling of the discarded-statement concat (#4365; the e2e twin is
+// internal/testing/e2e/rc_heap_bump_len_receiver_test.go). The temp box is
+// released once its length is read. No warmup: the fixpoint harness requires
 // a NON-ZERO bounded high-water (a zero reads as "nothing measured"), and the
 // cold first iteration allocates exactly one concat box before the freelist
 // recycles it — the same small constant at every N.
@@ -154,10 +145,8 @@ func stmtTempLenReceiverBumpSrc(n string) string {
 }
 
 // A discarded STRICT fresh-struct-returning call whose return type carries an
-// rc-ARRAY field (`mk(i) -> H { id, xs: [..] };`) sole-owns every field buffer
-// (the strict-fresh registry guarantees no aliased inner buffers), so the ExprCall
-// reclaim DEEP-drops it — __struct_drop_<H> releases xs, then __fern_rc_dec frees
-// the box — instead of freeing only the box and leaking xs.
+// rc-ARRAY field (`mk(i) -> H { id, xs: [..] };`) sole-owns every field buffer,
+// so the statement releases xs as well as the box instead of leaking xs.
 func stmtTempFreshCallRcFieldBumpSrc(n string) string {
 	return `struct H { id: i32, xs: i32[] }
 function mk(a: i32): H { return H { id: a, xs: [a, a + 1, a + 2] }; }
@@ -338,9 +327,7 @@ const stmtTempFreshStrArrDetectorSrc = `function main(): i32 {
 // A discarded string[] literal whose elements are BORROWED (`[s, s];` — a bare
 // owned local, not a fresh producer) must NOT be admitted to the deep free: the
 // element boxes alias `s`, which the exit sweep also frees, so a deep free here
-// would double-free. discardable_fresh_strarr_lit excludes borrowed elements
-// (expr_is_fresh_str is false for a bare ident), so this keeps leaking on the
-// plain drop — sound. The detector proves the exclusion holds: `s.len()`==5 over
+// would double-free. The detector proves the exclusion holds: `s.len()`==5 over
 // 200 = 1000, and __rc_underflow_count stays 0 (no over-release). A regression that
 // admitted borrowed elements would trip __rc_underflow_count (> 0).
 const stmtTempBorrowedStrArrDetectorSrc = `function main(): i32 {

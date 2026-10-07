@@ -96,9 +96,7 @@ func TestSelfHostArm64NativeMmcMatchesCrossHost(t *testing.T) {
 
 // firstDivergentLine returns the 1-based line number where `a` and `b` first
 // differ, or 0 when they are identical — the diagnostic that makes a
-// byte-identity failure readable instead of a full asm dump. It lived alongside
-// TestSelfHostStage2FixedPoint until that merged-bundle fixpoint retired with
-// the AST emitters (#3457 slice 5); this is its remaining caller.
+// byte-identity failure readable instead of a full asm dump.
 func firstDivergentLine(a, b []byte) int {
 	la := bytes.Split(a, []byte{'\n'})
 	lb := bytes.Split(b, []byte{'\n'})

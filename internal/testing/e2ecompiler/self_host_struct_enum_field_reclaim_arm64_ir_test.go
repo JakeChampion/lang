@@ -4,14 +4,13 @@ import (
 	"testing"
 )
 
-// TestSelfHostStructEnumFieldReclaimIRArm64 is the arm64 port of the #4297 A2
-// direct-enum-field exit-reclaim (x86 sibling: TestSelfHostStructEnumFieldReclaimIRX86_64).
-// A struct carrying a direct enum field is admitted to the reclaim set, and the
-// k_enum arm of `__struct_drop_<T>` SHALLOW-frees the enum box via __fern_arr_dec
-// (one level — the variant payload leaks; churn keeps payloads scalar so the box
-// free balances). Under qemu the reclaim is proven by CORRECTNESS (a wrong free of
-// a live enum box corrupts the read-back match) plus a balanced arm64 census.
-// Heavy heap-exhaustion churn is left to the x86 path (too slow under qemu).
+// TestSelfHostStructEnumFieldReclaimIRArm64 is the arm64 leg of the #4297 A2
+// direct-enum-field reclaim (x86 sibling: TestSelfHostStructEnumFieldReclaimIRX86_64).
+// A struct carrying a direct enum field releases the enum box when the struct
+// dies, and only drops its count while an aliased enum local still shares it.
+// Under qemu the reclaim is proven by CORRECTNESS (a wrong free of a live enum
+// box corrupts the read-back match) plus a balanced arm64 census. Heavy
+// heap-exhaustion churn is left to the x86 path (too slow under qemu).
 func TestSelfHostStructEnumFieldReclaimIRArm64(t *testing.T) {
 	boxedProbes(t)
 	arm64gcc, qemu := arm64Tooling(t)

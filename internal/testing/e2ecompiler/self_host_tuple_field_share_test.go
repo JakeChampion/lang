@@ -303,9 +303,8 @@ func TestSelfHostTupleFieldShareX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostTupleFieldShareNative holds the native compiler to the same
-// rows: every one clean, with the answer the self-host legs expect, a check a
-// miscompile in the self-host compiler cannot pass.
+// TestSelfHostTupleFieldShareNative holds the `fern` CLI's build to the same
+// rows: every one clean, with the answer the self-host legs expect.
 func TestSelfHostTupleFieldShareNative(t *testing.T) {
 	boxedProbes(t)
 	_, runner := x86_64Tooling(t)

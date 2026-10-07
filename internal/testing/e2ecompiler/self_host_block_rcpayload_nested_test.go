@@ -8,22 +8,10 @@ import (
 // A BLOCK-scoped rc-payload `Option` built by a DIRECT ctor and consumed by a
 // match one block deeper (#6319, the rc-payload analogue of #6526's scalar row).
 //
-// #6480 widened `consumed_rcpayload_option_frees`' match lookup to the nested
-// spelling for CALL inits only, because at function scope a direct ctor is
-// already `precise_drop_names`' is_rcopt candidate and letting both analyses
-// claim it segfaults. A BLOCK-scoped local has no such owner —
-// `precise_drop_names` is only ever called with `fn.body` — so the direct ctor
-// leaked there: 35200 over 100 rounds, `frees=0`, where every other spelling of
-// the same shape was 0.
-//
-// THE FLAG IS ESSENTIAL HERE, which is the difference from #6526's scalar
-// version. Flipping the fn-scope call site to `nested_ok = true` segfaults both
-// TestSelfHostNestedMatchBorrowNoUnderflow's program and the opt-struct-payload
-// hazard, where the same mutation on the SCALAR collector was harmless. A scalar
-// drop is a shallow box free that slot-zeroing neutralises on a second credit; an
-// rc-payload drop releases the payload as well, so the second credit double-frees
-// it. Same-shaped flag, genuinely different reason — do not assume one from the
-// other.
+// The payload is released exactly once. Missed, the direct ctor leaked 35200
+// bytes over 100 rounds where every other spelling of the shape was 0; credited
+// twice it double-frees, because an rc-payload drop releases the payload as
+// well as the box — unlike the scalar row, where a second credit is harmless.
 
 // The row this closes: rc payload, direct ctor, declared in a loop, match nested.
 const blkRcDirectNestedSrc = `import "core/int";

@@ -12,7 +12,7 @@ import (
 // its result then owns. Before that the frame that sliced the view and the
 // holder of the result released one box twice, which the sanitizer reports
 // deterministically. `dup` is the fresh-result control.
-const lentViewHandbackSrc = `function keep(text: string): string { return text; }
+const lentViewHandbackSrc = `@noinline function keep(text: string): string { return text; }
 function dup(text: string): string { return text + "!"; }
 function scan(src: string): string {
     let v: str = slice_unchecked(src, 0, 3);

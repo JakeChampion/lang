@@ -43,8 +43,7 @@ func TestSelfHostMapFreshBoxArgWasmRC(t *testing.T) {
 		name string
 		src  string
 	}{
-		// A struct literal in the insert: map_arg_binding_is_fresh's "b" kind
-		// answers for it, is_fresh_str_temp does not.
+		// A struct literal in the KEY position: the map takes its single ref.
 		{"struct-literal-key",
 			`import "core/cmp"; @derive(cmp.Eq, cmp.Hash) struct P { x: i32, y: i32 } ` +
 				`function build(n: i32): i32 { let m: Map[P, i32] = map_new(4); m = m.insert(P { x: n, y: n * 2 }, 7); return m.len(); } ` + probe},

@@ -8,14 +8,13 @@ import (
 
 // --- The heap-bump FLATNESS gate on the self-host IR path (#4365) ------------
 //
-// Native pins ~50 reclaim shapes with one probe: run the same program at a small
-// and a large iteration count and require `__heap_bump_bytes()` to report the
-// SAME high-water mark for both. A shape that reclaims is flat; a shape that
-// leaks tracks the iteration count. The self-host had one heap-bump test and it
-// pins the BUILTIN (`self_host_heap_bump_bytes_ir_test.go`), not any shape's
-// flatness — so every reclaim behaviour below was unasserted on this path, and
-// the fixpoint is structurally blind to a stable over-allocation (a compiler
-// that leaks identically in both generations still reproduces itself).
+// One probe pins many reclaim shapes: run the same program at a small and a
+// large iteration count and require `__heap_bump_bytes()` to report the SAME
+// high-water mark for both. A shape that reclaims is flat; a shape that leaks
+// tracks the iteration count. self_host_heap_bump_bytes_ir_test.go pins the
+// BUILTIN, not any shape's flatness, and the fixpoint is structurally blind to
+// a stable over-allocation (a compiler that leaks identically in both
+// generations still reproduces itself).
 //
 // Each row is measured against the compiler's own reclaim, never against an
 // absolute number: box sizes and temp strategies move the totals, so the
@@ -25,9 +24,8 @@ import (
 // Rows deliberately absent:
 //
 //   - An enum scrutinee that is never bound (`match (mk(i)) { … }`) is NOT flat
-//     on either compiler — self-host 160 -> 128 and native 64 -> 0 at N=50/200,
-//     both wrapping a growing byte count through the exit-code byte. That is
-//     #6393, an open leak on all three backends rather than a self-host gap, so
+//     — 160 -> 128 at N=50/200, wrapping a growing byte count through the
+//     exit-code byte. That is #6393, an open leak on all three backends, so
 //     gating it here would pin a bug rather than a behaviour.
 //   - A string-array element built from literals reports an exact 0 on the
 //     self-host: it allocates nothing, so flatness holds vacuously and the row

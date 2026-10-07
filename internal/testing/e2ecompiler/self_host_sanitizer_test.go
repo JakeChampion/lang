@@ -15,14 +15,13 @@ import (
 // FERN_LEAKCHECK / FERN_RC_TRACE precedent), so the flag goes to the
 // driver process, not to the program it produces.
 //
-// This backend's half of the mode is the leak census, the rc
-// over-release report, and the use-after-free quarantine (the
-// RcFreeDebug port — self_host_uaf_quarantine_test.go). Each report ends in
-// the native backends' frame-pointer backtrace unless FERN_BACKTRACE=0.
+// The mode is the leak census, the rc over-release report, and the
+// use-after-free quarantine (the RcFreeDebug port —
+// self_host_uaf_quarantine_test.go). Each report ends in a frame-pointer
+// backtrace unless FERN_BACKTRACE=0.
 //
-// What must NOT differ is the text and the exit status: a
-// `fern-sanitizer:` line must not tell you which compiler built the
-// binary. That is what these tests are mostly for.
+// What these tests are mostly for is the exact text and exit status of each
+// `fern-sanitizer:` line.
 
 // sanSelfHostCleanSrc: the rc-driven drop-everything loop. Every row is
 // precisely dropped, so a sanitizer run must be silent.
@@ -149,8 +148,8 @@ func TestSelfHostSanitizeDoubleFreeReportedX86_64(t *testing.T) {
 	if code != e2eharness.ExitSanitizer {
 		t.Errorf("exit=%d, want %d (a sanitizer finding is fatal and has its own status)", code, e2eharness.ExitSanitizer)
 	}
-	// Byte-for-byte the native backends' text — this is the assertion
-	// that keeps "build it with -sanitize" meaning one thing. The
+	// Byte-for-byte text — this is the assertion that keeps
+	// "build it with -sanitize" meaning one thing. The
 	// quarantine (the RcFreeDebug port) catches the re-free at the
 	// poison it left, one instruction before the underflow test would
 	// have seen a zero that no longer exists.
@@ -243,7 +242,7 @@ func TestSelfHostSanitizeBoxFreeIsQuarantined(t *testing.T) {
 }
 
 // sanBacktraceRe is the walk's output: the header, then at least one return
-// address in the native backends' "  0x<16 hex>" form.
+// address in "  0x<16 hex>" form.
 var sanBacktraceRe = regexp.MustCompile(`backtrace:\n(  0x[0-9a-f]{16}\n)+`)
 
 // Both reports end in the frame-pointer backtrace, and FERN_BACKTRACE=0 drops

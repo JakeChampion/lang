@@ -11,11 +11,8 @@ import (
 // exits 42. `pending` is `@noinline` so main cannot see that k is step and call
 // it directly.
 //
-// Before slice 5, the user-enum match path recovered the payload type but had no
-// path to mark a function-typed field a closure local, so lower_func bailed and
-// the module bailed (and the AST emitter it fell to could not emit it -> `call
-// __fn_Pending`, a link failure). Now the function-typed payload is marked a
-// closure local and the call dispatches via call_indirect, like Option/Result.
+// The user-enum match marks the function-typed payload binding a closure local,
+// so the call dispatches via call_indirect, like Option/Result.
 const futureEnumProgram = `enum Future { Ready(i32), Pending(i32, (i32) => Future) }
 
 function step(x: i32): Future { return Ready(x + 1); }

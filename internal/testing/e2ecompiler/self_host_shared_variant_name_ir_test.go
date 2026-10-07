@@ -10,24 +10,16 @@ import (
 // Two enums in one program may declare the SAME variant name. The parser
 // desugars every variant into a StructDecl keyed by the bare name, so with
 // `enum A { None, … }` and `enum B { None, … }` there are two decls called
-// `None` — and the by-name lookups (`variant_enum_owner`, `decl_field_count`,
-// `struct_field_is_i64`) all answer for whichever was declared FIRST.
+// `None`, and a by-name lookup (`variant_enum_owner`) answers for whichever
+// was declared FIRST.
 //
-// The two qualified-EXPRESSION sites asked the wrong question of that table:
-// they took the first decl's owner and tested it for equality with the
-// qualifier, so `B.None` saw owner `A` and fell through to a struct-field
-// read, bailing the module. `variant_decl_index` asks whether a decl with
-// that name owned by THAT enum exists, which is the question a qualified
-// reference actually poses.
+// A qualified EXPRESSION must therefore ask whether a decl with that name
+// owned by THAT enum exists (`variant_decl_index`), not take the first decl's
+// owner and compare it with the qualifier — which reads `B.None` as owner `A`,
+// falls through to a struct-field read and refuses the module.
 //
-// Not a miscompile in any shape measured — the by-name lookups are uniformly
-// first-wins, so the one enum that did lower stayed self-consistent and the
-// other refused outright. With the AST emitter retired that refusal is a hard
-// compile error, so these are programs native builds and the self-host would
-// not.
-//
-// The qualified-PATTERN side already worked: it is scrutinee-driven, so it
-// never consulted the flat table this way.
+// The qualified-PATTERN side is scrutinee-driven, so it never consults the
+// flat table this way.
 var sharedVariantNameCases = []struct {
 	name string
 	src  string

@@ -7,10 +7,8 @@ import (
 	"testing"
 )
 
-// TestSelfHostLambdaReachesIR guards that lambda programs actually lower
-// through the IR path. The IR path never emits the AST
-// tagged-value runtime (release_JNull / …), and each lambda position has a
-// designed IR lowering whose artifacts the AST backend never produces:
+// TestSelfHostLambdaReachesIR pins the artifacts of each lambda position's
+// lowering, and that no tagged-value runtime (release_JNull / …) is emitted:
 //
 //   - A no-capture lambda passed as a fn-typed CALL ARGUMENT uses the uniform
 //     env-box ABI (lift.lift_inline_closures_expr): it is wrapped into an
@@ -22,12 +20,6 @@ import (
 //   - A capture-free lambda BOUND TO A LOCAL and called directly is hoisted to
 //     a top-level __lam_<k> and the call rewritten to a direct call
 //     (lift.lift_stmt).
-//
-// This is the check that was missing while the lambda slices silently rode the
-// AST fallback that then existed: a native free-list bug corrupted the lift's
-// reconstructed statements, the lifted module bailed IR eligibility, and the
-// exit-code-only tests passed via AST. The fix (binding each rebuilt statement
-// to a `let` before the result array) is in lift.lift_stmt.
 func TestSelfHostLambdaReachesIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping lambda-reaches-IR guard")

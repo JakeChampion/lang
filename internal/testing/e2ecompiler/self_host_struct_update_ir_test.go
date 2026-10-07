@@ -3,16 +3,14 @@ package e2ecompiler
 import "testing"
 
 // structUpdateIRCases pin functional struct-update expressions
-// (`T { ...base, field: v }`) to the self-host IR path on x86-64 + wasm. The lowering
-// fully lowers an ExprStructLit with a base (emit each declared field in order;
-// lower the overrides, struct_get-copy the rest from the base), gated only by
-// decl_is_struct + decl_is_leaksafe — so an all-scalar or scalar+string struct
-// routes IR. Two other tests (self_host_struct_update_test.go,
+// (`T { ...base, field: v }`) on the self-host IR path on x86-64 + wasm: the
+// overrides are lowered and the remaining declared fields copied from the base,
+// in declaration order. Two other tests (self_host_struct_update_test.go,
 // self_host_functional_update_test.go) also exercise struct-update; these
 // cases check each exit code against the interp oracle, mirroring
 // self_host_block_expr_ir_test.go.
 //
-// Every struct is leaksafe (all-i32, or i32+string) and every result <= 126
+// Every struct is all-i32 or i32+string, and every result <= 126
 // (wasmtime exit-code truncation, cf. #2908).
 var structUpdateIRCases = []struct {
 	name string

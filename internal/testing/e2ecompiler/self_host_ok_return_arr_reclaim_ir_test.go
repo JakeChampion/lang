@@ -8,19 +8,14 @@ import (
 	"testing"
 )
 
-// okReturnArrProg exercises a Perceus move-on-return gap: `return Ok(a)` /
-// `return Some(a)` over an owned array LOCAL. The Result/Option box stores the
-// payload pointer with NO alias-inc and is leak-mode (never deep-dropped), so
-// the local is MOVED into the box — yet returned_moved_arr_slots only recognised
-// USER enum-variant constructors, not the built-in Ok/Err/Some. The exit
-// dec-sweep therefore freed the array while the returned box still referenced it
-// (rc 1 -> 0). Harmless for a grown array (its buffer lands in a different
-// freelist size-class) but a use-after-free for an EMPTY array (`[]`, freelist
-// class 3) which the caller's next 24-byte string box recycles — so `names`
-// aliases `s` and `names.len()` reads `s`'s length. Surfaced end-to-end by the
-// read_dir->Fern migration (#2649/#5290): `__fern_read_dir` on an empty
-// directory returns `Ok([])`, whose block the caller's next string allocation
-// stomped (the filesystem_ops / string_count_and_dir_listing std/test gates).
+// okReturnArrProg pins move-on-return through a built-in wrapper: `return Ok(a)`
+// / `return Some(a)` over an owned array LOCAL moves the local into the
+// Result/Option box, so the exit sweep must not also release it. A stray
+// release is a use-after-free for an EMPTY array (`[]`), whose block the
+// caller's next string allocation recycles — so `names` aliases `s` and
+// `names.len()` reads `s`'s length. `__fern_read_dir` on an empty directory
+// returns exactly this `Ok([])` (#2649/#5290; the filesystem_ops /
+// string_count_and_dir_listing std/test gates).
 //
 // probe returns 0*100 + 10 = 10 when sound; the UAF makes names.len() read the
 // recycled string box, so probe != 10 (exit 97/96); a double-free trips the

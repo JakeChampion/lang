@@ -9,19 +9,10 @@ import (
 // TestSelfHostMapMethodTupleElem pins a MAP method call at a tuple-element
 // position to the IR path (#7213).
 //
-// tuple_elem_ctor_eligible admitted a builtin-receiver method only through its
-// `.len()` carve-out, and that carve-out was keyed on the string / array
-// predicates alone. So `(xs.len(), 5)` lowered and `(m.len(), 5)` bailed the
-// whole enclosing function, the difference being nothing but the receiver's
-// type — and the same for `has`, `get` and `get_or`, whose results are one slot
-// each. (`keys` / `values` / `insert` already answered through the array and
-// Map predicates.)
-//
-// The fix names a map read method's result kind from the receiver's
-// `Map[K, V]`, so eligibility and elem_type_tag cannot disagree: a
-// `Map[K, string]` read is stored in a string slot, a `Map[K, i64]` read at
-// eight bytes, and a value column with no element tag (an array, a struct) is
-// not admitted at all.
+// `(m.len(), 5)` must lower just as `(xs.len(), 5)` does, and the same for
+// `has`, `get` and `get_or`, whose results are one slot each. The element's
+// slot comes from the receiver's `Map[K, V]` value column: a `Map[K, string]`
+// read is stored in a string slot, a `Map[K, i64]` read at eight bytes.
 //
 // Each case asserts BOTH halves:
 //
@@ -30,8 +21,8 @@ import (
 //     computation spelled without the tuple, so it asserts agreement rather
 //     than a hard-coded constant.
 //
-// `iter` is deliberately not admitted: its MapIter box holds a raw pointer into
-// the mapbox, which a tuple slot would outlive.
+// `iter` is not covered: its MapIter box holds a raw pointer into the mapbox,
+// which a tuple slot would outlive.
 func TestSelfHostMapMethodTupleElem(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

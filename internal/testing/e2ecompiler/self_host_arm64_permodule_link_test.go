@@ -10,23 +10,17 @@ import (
 )
 
 // TestSelfHostPerModuleArm64LeafOnlyLinkRun is the regression guard for #4305:
-// the arm64 per-module unit emit used to reference runtime-helper string
-// literals with a BARE label (.S0/.S1 — via the AST emitter's emit_function,
-// which emit_runtime_fern_fn drove for arr_str_join / str_lines) while
-// DEFINING them with the per-module-namespaced label (str_lit_label →
-// .S<ns>_<idx>). The ref/def mismatch made a leaf-only program (whose library
-// modules emit no bare .S<idx> to accidentally satisfy the reference) fail to
-// link with "undefined reference to .S0". The whole-compiler arm64 per-module
-// link only survived it by accident (unrelated modules defined those labels).
+// in an arm64 per-module build, a runtime helper's string-literal references
+// must use the same per-module-namespaced label as their definitions
+// (str_lit_label → .S<ns>_<idx>; byte-identical .S<idx> on the merged path,
+// where str_ns==""). A mismatch fails a leaf-only program — whose library
+// modules emit no bare .S<idx> to satisfy the reference by accident — at link
+// time with "undefined reference to .S0".
 //
-// The fix routes the AST emitter's string-literal references through
-// str_lit_label too, so ref and def use the same scheme on both paths
-// (byte-identical on the merged path, where str_ns=="" → ".S<idx>").
-//
-// This drives the exact failing shape: a main → mid → leaf tree with NO library
-// string literals, whose entry emits the whole runtime (arr_str_join / str_lines
-// pull in the .S0/.S1 constants). It must link with the aarch64 cross gcc and
-// run to exit 42, natively or under qemu-aarch64.
+// This drives that shape: a main → mid → leaf tree with NO library string
+// literals, whose entry emits the whole runtime (arr_str_join / str_lines pull
+// in the .S0/.S1 constants). It must link with the aarch64 cross gcc and run to
+// exit 42, natively or under qemu-aarch64.
 func TestSelfHostPerModuleArm64LeafOnlyLinkRun(t *testing.T) {
 	armgcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

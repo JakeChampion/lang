@@ -15,16 +15,14 @@ import (
 // signed `i32.shr_s` / `div_s` / `rem_s` / `gt_s` diverge from the unsigned
 // answer; the lowering must select the `_u` opcode.
 //
-// expr_is_u32 must treat a u32-returning call as u32. Skipping it holds for
-// value WRAPPING — the callee already masked its result into [0, 2^32) — but
-// NOT for SIGN INTERPRETATION, so `id32(a) >> 25`, `p.get() >> 25`,
-// `id32(a) / 7`, and `p.get() > k` all lowered SIGNED. This is wasm-only: x86-64
-// / arm64 keep the u32 zero-extended in a 64-bit register, so a signed shift/div
-// already matched there. The fix uses the same i64_ret_fns registry as the
-// i64/u64 return family (#5159), with a distinct ret flag '3' for u32 read only
-// by is_u32_ret_fn. Every value here has bit 31 set, so each case fails with the
-// signed opcode and passes with the unsigned one; expected values are the
-// interpreter-oracle answers (kept <= 126 for the wasmtime exit-code range).
+// A u32-returning call must count as u32 for SIGN INTERPRETATION, not only for
+// value WRAPPING (the callee already masked its result into [0, 2^32)), or
+// `id32(a) >> 25`, `p.get() >> 25`, `id32(a) / 7`, and `p.get() > k` lower
+// SIGNED. This is wasm-only: x86-64 / arm64 keep the u32 zero-extended in a
+// 64-bit register, so a signed shift/div already matches there. Every value
+// here has bit 31 set, so each case fails with the signed opcode and passes
+// with the unsigned one; expected values are the interpreter-oracle answers
+// (kept <= 126 for the wasmtime exit-code range).
 func TestSelfHostU32RetCallWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host u32-return-call wasm IR e2e")
@@ -66,7 +64,7 @@ func TestSelfHostU32RetCallWasmIR(t *testing.T) {
 	}{
 		// FREE FUNCTION u32 return chained in a shift: 0x80000001 >> 25 == 64
 		// unsigned; a signed shr sign-extends and diverges (and exits outside the
-		// valid range). expr_is_u32 ExprCall(ExprIdent) arm → is_u32_ret_fn.
+		// valid range).
 		{"free-fn-shr", `function id32(x: u32): u32 { return x; } function main(): i32 { let a: u32 = 2147483649 as u32; return (id32(a) >> 25) as i32; }`, 64},
 		// METHOD u32 return chained in a shift: `p.get() >> 25`. ExprCall's
 		// ExprFieldAccess callee arm resolves the receiver's struct type and looks

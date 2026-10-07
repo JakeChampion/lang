@@ -10,9 +10,8 @@ import (
 // A string projection returned out of a frame keeps a counted unit of its own
 // after the parent array is released (#8999). join_range hands back
 // `parts[lo]` for a single chunk, and joined drops `parts` on the way out;
-// without a unit of its own the result was freed there, and the next
-// allocation, churn's, overwrote it. The typed lowering supplies the unit;
-// the AST lowering still returns the freed buffer.
+// without a unit of its own the result is freed there, and the next
+// allocation, churn's, overwrites it.
 const stringProjectionReturnSrc = `import "std/i32";
 
 @noinline function joined(n: i32): string {

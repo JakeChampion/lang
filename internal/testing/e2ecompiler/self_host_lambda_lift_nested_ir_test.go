@@ -3,14 +3,12 @@ package e2ecompiler
 import "testing"
 
 // lambdaLiftNestedIRCases exercise no-capture lambda CALLS nested inside compound
-// expressions — binary / unary / index — which the lambda-lift pre-pass now
-// reaches by recursing through those forms in lift_expr_walk. Descending only
-// into call-arg / array / struct-field / tuple / callee positions leaves a
-// lambda call inside `(...) + 1`, `0 - (...)`, or `a[...]`
-// survived unlifted and the module bailed to the AST path.
+// expressions — binary / unary / index — which the lambda-lift pre-pass reaches
+// by recursing through those forms in lift_expr_walk, so a lambda call inside
+// `(...) + 1`, `0 - (...)`, or `a[...]` is lifted like one in call-arg /
+// array / struct-field / tuple / callee position.
 //
-// All lambdas here are no-capture (lifted to a top-level `__lam_N`); a capturing
-// lambda nested the same way still bails (needs the env-passing closure form).
+// All lambdas here are no-capture (lifted to a top-level `__lam_N`).
 // Each case is oracle-checked against the interpreter and returns a
 // non-negative value <= 126 (avoiding the wasmtime exit-code truncation gap
 // and the negative-exit-code ambiguity, cf. #2908).

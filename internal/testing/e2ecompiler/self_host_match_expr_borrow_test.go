@@ -10,37 +10,28 @@ import (
 
 // --- A value block is not a closure -----------------------------------------
 //
-// Reading a struct local's field through a `match` EXPRESSION cost that local —
-// and every other struct local in the same function — its reclaim credit, so
-// nothing was released at all, not even the holder box. The same code with a
-// plain field read was flat.
-//
-// A match expression is not an AST expression: parser.fern desugars it to a
-// zero-arg IIFE marked ORIGIN_MATCH_EXPR, one of the VALUE BLOCK origins the lowering
-// INLINES rather than calls, so no closure is ever built. expr_unsafe_for's
-// ExprLambda arm did not know that and read every ident in the body as a
-// capture. From there the credit machinery worked correctly on a false premise:
-// alias_bind_sites_of refuses an escaping alias, and #7282's rule that the
-// forgiveness and the credit-copy must agree then withdrew the SOURCE's credit
-// too, leaving neither box released.
+// Reading a struct local's field through a `match` EXPRESSION must not cost that
+// local — or any other struct local in the same function — its release. A match
+// expression is not an AST expression: parser.fern desugars it to a zero-arg
+// IIFE marked ORIGIN_MATCH_EXPR, one of the VALUE BLOCK origins the lowering
+// INLINES rather than calls, so no closure is built and the idents in its body
+// are not captures.
 //
 // The rows pair each value-block form with the identical program written
 // without one, so a regression shows up as the pair diverging rather than as a
 // number nobody can place. `if` expressions and block expressions use the same
 // origin set as `match` and are pinned here for that reason.
 //
-// Exit 99 is reserved for an over-release on every row: the narrowing must not
-// start freeing a value a real capture still holds, which is what the
-// real_lambda_capture_refused row guards from the other side.
+// Exit 99 is reserved for an over-release on every row: a value a real capture
+// still holds must not be freed, which is what the real_lambda_capture_refused
+// row guards from the other side.
 //
-// Every want was confirmed against the native x86-64 backend and bin/fern
-// -interp, never read off the self-host run.
+// Every want was confirmed against bin/fern -interp, never read off the
+// self-host run.
 //
-// Counts here are ONE block per heap string: #7351 fused the box into the
-// buffer's reserved header. Every row was re-measured against main, and every
-// live_bytes is unchanged — the clean rows stayed clean and each refusal-leak
-// row leaks the same bytes it did — so what moved is block volume, not
-// behaviour. A pre-fusion number quoted in a row note below is the older one.
+// Counts here are ONE block per heap string: the box shares the buffer's
+// reserved header (#7351). A "Base:" figure in a row note predates that, at two
+// blocks per string.
 
 type matchExprBorrowCase struct {
 	name   string
@@ -129,10 +120,9 @@ function mkxs(i: i32): i32[] { let o: i32[] = [i, i + 1]; return o; }
 			want: 4, allocs: 200, frees: 200,
 		},
 		{
-			// The same bug one KIND over, and the reason the fix is not confined
-			// to expr_unsafe_for: strarr_expr_unsafe carried the identical blanket
-			// test, so a string[] local read through a match expression stranded
-			// its elements and buffer. Base: allocs=500 frees=100.
+			// The same shape one KIND over: a string[] local read through a
+			// match expression still releases its elements and buffer.
+			// Base: allocs=500 frees=100.
 			name: "match_expr_strarr_read",
 			src: `function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
 function round(i: i32): i32 {

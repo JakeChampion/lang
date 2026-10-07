@@ -12,14 +12,11 @@ import (
 )
 
 // TestSelfHostModloadPerModuleWholeCompilerX86_64 drives the builtins-aware
-// per-module build of the WHOLE self-host compiler (#3451 — the step the epic's
-// own plan calls out: "make asm_modload_run able to per-module-emit the whole
-// compiler (behind a flag) and prove it links/runs, before flipping the default
-// and deleting the AST emitters").
+// per-module build of the WHOLE self-host compiler (#3451).
 //
 // asm_modload_run's per-module flags follow asm_modload_run.fern's OWN import
-// graph (the whole compiler), thread the built-in TYPE layouts (builtin_view)
-// into the whole-program struct view, and emit each module as its own IR
+// graph (the whole compiler), thread the built-in TYPE layouts into the
+// whole-program struct view, and emit each module as its own IR
 // translation unit. The units linking with no undefined symbols proves the
 // whole-program runtime-need aggregation is complete; the linked binary running
 // as a compiler (emitting non-empty asm, exit 0) proves the per-module emit +
@@ -27,23 +24,18 @@ import (
 //
 // The emit uses `-per-module-emit-all` — a fresh process per BATCH of units,
 // each batch deriving the whole-program side tables once and sharing them
-// across its units. The one-unit-per-process shape this used to drive rebuilt
-// the whole-program parse + side-table floor once per unit, 54 times over, for
-// the same units.
+// across its units.
 //
-// Step 5 carries it past the emit+link milestone to SELF-COMPILE correctness: the
-// per-module-built compiler compiles the whole compiler (the fixpoint gen2 input)
-// without crashing and emits a real `call __fn_main`. That self-compile first
-// surfaced the string[]-struct-field `.append()` aliasing UAF in the checker
-// (#3561), fixed by routing string[] field appends through the clone form.
+// The per-module-built compiler then compiles the whole compiler (the fixpoint
+// gen2 input) without crashing and emits a real `call __fn_main`. That
+// self-compile first surfaced the string[]-struct-field `.append()` aliasing
+// UAF in the checker (#3561).
 //
-// This IS the whole-compiler self-compile gate (#3457 slice 2). Every
-// merged-bundle fixpoint that preceded it drove the whole compiler through the
-// legacy AST emitter, and all of them are DELETED as of slice 5 — a merged
-// bundle is past the 512-function IR budget, so with that emitter gone there is
-// nothing left to compile one. Byte-identity of the per-module self-reproduction
-// is proved by TestSelfHostPerModuleEmitAllFixpointX86_64; this test guards the
-// emit+link+self-compile mechanics on every run.
+// This is the whole-compiler self-compile gate (#3457 slice 2): a merged
+// bundle of the compiler is past the 512-function IR budget, so per-module
+// emit is the only way to build it. Byte-identity of the per-module
+// self-reproduction is proved by TestSelfHostPerModuleEmitAllFixpointX86_64;
+// this test guards the emit+link+self-compile mechanics on every run.
 func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProjectTyped(t)
@@ -203,16 +195,13 @@ const pmEmitAllBatch = 64
 // pmFuncBudget is the [lo,hi) function-window budget the emit plan is sized
 // with, passed to the driver as -func-budget so its internal windowing matches.
 //
-// An oversized module (~511 funcs) OOMs (exit 137) if emitted in one
-// process: the leak-mode runtime never reclaims the per-function IR-op lists, so
-// they accumulate past the arena ceiling. The #3425 fix shards such a module's
-// emit by a [lo,hi) FUNCTION WINDOW — each window emits a non-entry library
-// sub-unit that links exactly like a per-module unit. The AST lowering's heaviest
-// lowering functions clustered around index ~200, so peak scales with which
-// functions a window holds, not just the count. 100-func windows keep the worst
-// window's measured peak ~2.3 GB — comfortably clear of the kill point — while a
-// coarser split (e.g. 150) can land the whole heavy cluster in one window
-// (~2.6 GB).
+// An oversized module (~511 funcs) emitted in one process can pass the arena
+// ceiling and be killed (exit 137), so #3425 shards such a module's emit by a
+// [lo,hi) FUNCTION WINDOW — each window emits a non-entry library sub-unit that
+// links exactly like a per-module unit. Peak scales with which functions a
+// window holds, not just the count: the heaviest lowering functions cluster
+// together, and a coarser split (e.g. 150) can land the whole cluster in one
+// window.
 const pmFuncBudget = 100
 
 // pmEmitJob is one emit window of the whole-compiler build plan: module modIdx's

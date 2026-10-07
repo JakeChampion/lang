@@ -6,8 +6,8 @@ import (
 
 // TestSelfHostArrEnumReclaimWasmIR is the wasm port of
 // TestSelfHostArrEnumReclaimIRX86_64. The ARRENUM element walk is shared IR, and on wasm
-// __fern_rc_dec maps to $__fern_arr_dec (wasm_helper_symbol) while emit_enum_variant_drops
-// lowers to the same runtime variant_is dispatch it emits for a scalar enum local — so the
+// __fern_rc_dec maps to $__fern_arr_dec (wasm_helper_symbol) while each element's variant
+// drop lowers to the same runtime variant_is dispatch a scalar enum local uses — so the
 // class resolves with no dedicated runtime helper on this backend either. Case table
 // shared with the x86-64 leg.
 func TestSelfHostArrEnumReclaimWasmIR(t *testing.T) {

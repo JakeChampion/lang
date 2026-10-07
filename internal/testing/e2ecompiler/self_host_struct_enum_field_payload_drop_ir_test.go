@@ -119,18 +119,16 @@ func heapFlatMain(iters string) string {
 // TestSelfHostStructEnumFieldPayloadDropIRX86_64 pins #6696: the VARIANT PAYLOAD
 // of a struct's direct enum field is released when the struct is swept.
 //
-// __struct_drop_<T>'s k_enum arm is a box-only dec, so before this the payload
-// array outlived the struct — 48 bytes per construction, unbounded in the call
-// count, while the same enum spelled as a LOCAL was exact (lowering deep-drops
-// that one via emit_enum_variant_drops). The sweep now runs the same variant
-// dispatch over the field's box before handing it to __struct_drop_.
+// The sweep runs the same variant dispatch over the field's box that an enum
+// LOCAL gets; a box-only dec leaves the payload array outliving the struct — 48
+// bytes per construction, unbounded in the call count.
 //
-// The four shapes are the admission's corners: a fresh sole-owned field (must
-// reclaim), an aliased BOX and a base-copied field (the __fern_rc_is_unique gate
-// must decline — releasing there frees a payload another owner still reads), and
-// an aliased PAYLOAD (must reclaim AND stay balanced, since a bare-ident array
-// payload gets the variant-construction alias-inc). All four must be flat;
-// exit 99 would catch the over-release the aliased shapes risk.
+// The four shapes are the corners: a fresh sole-owned field (must reclaim), an
+// aliased BOX and a base-copied field (the __fern_rc_is_unique gate must
+// decline — releasing there frees a payload another owner still reads), and an
+// aliased PAYLOAD (must reclaim AND stay balanced, since a bare-ident array
+// payload is retained at variant construction). All four must be flat; exit 99
+// would catch the over-release the aliased shapes risk.
 func TestSelfHostStructEnumFieldPayloadDropIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -201,13 +199,10 @@ func TestSelfHostStructEnumFieldPayloadDropIRArm64(t *testing.T) {
 	run(t, churnEnumFieldBaseCopy+flat, "enum-field-base-copy-balanced")
 }
 
-// TestSelfHostStructEnumFieldPayloadDropWasm is the wasm leg of #6696, and it
-// needed a second fix to go green: wasm's $__struct_drop_ had NO enum-field arm
-// at all, so where x86-64/arm64 shallow-freed the enum box and leaked only its
-// payload, wasm leaked the box too. Releasing the payload alone left the shape
-// still growing, so the wasm sibling of the register backends' k_enum arm landed
-// with it. On the typed lowering the struct's sweep is $__sem_drop_S, which the
-// WAT assertion pins.
+// TestSelfHostStructEnumFieldPayloadDropWasm is the wasm leg of #6696: a
+// struct's direct enum field must release both the enum box and its payload
+// when the struct dies, so the churn stays flat. The struct's sweep is
+// $__sem_drop_S, which the WAT assertion pins.
 func TestSelfHostStructEnumFieldPayloadDropWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping wasm enum-field payload-drop e2e")

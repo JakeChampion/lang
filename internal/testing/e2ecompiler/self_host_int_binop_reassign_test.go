@@ -7,16 +7,14 @@ import (
 	"testing"
 )
 
-// intBinopReassignCases pin the string-freshness collector against integer
-// arithmetic. str_local_binding_is_fresh admits every `+` on the strength of
-// the binding being a string, and collect_fresh_string_in_stmt used to admit a
-// `let` on that predicate alone — so `let e: i32 = ae + 1` was credited as a
-// fresh string, and the later `e = eb` between two such locals took the
-// string alias-reassign retain: a __fern_rc_inc on an integer, which faults
-// for every value but the immortal sentinel -1. coreutils/lib/ld's `add`
-// computes exactly that shape (a value's exponent plus its trailing zeros,
-// then `if (eb < e) { e = eb; }`), which crashed the self-host numfmt on
-// every fractional input.
+// intBinopReassignCases pin string-freshness tracking against integer
+// arithmetic: `let e: i32 = ae + 1` is a `+` but not a string. Credited as a
+// fresh string, the later `e = eb` between two such locals takes the string
+// alias-reassign retain: a __fern_rc_inc on an integer, which faults for every
+// value but the immortal sentinel -1. coreutils/lib/ld's `add` computes
+// exactly that shape (a value's exponent plus its trailing zeros, then
+// `if (eb < e) { e = eb; }`), which crashed the self-host numfmt on every
+// fractional input.
 //
 // Each program exits 0 when the arithmetic is right; a surviving retain is a
 // SIGSEGV (exit 139), never a wrong answer, so the exit code is the whole

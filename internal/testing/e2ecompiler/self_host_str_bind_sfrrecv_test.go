@@ -68,9 +68,9 @@ var strBindSfrrecvCases = []struct {
 	// The BINDING carries no annotation. Only the RECEIVER's declared type is
 	// consulted, so this is admitted exactly like the annotated form.
 	{"str-bind-sfrrecv-unannotated-flat", strBindHeap(`let v = base.tail(4); return v.len();`), 0},
-	// CONTROL: an outer link whose every return is fresh is already credited by
-	// str_method_ret_is_fresh ("SFRFRESHNAME:"), so this was flat before. It pins
-	// that the new credit does not stack a second release onto that one.
+	// CONTROL: an outer link whose every return is fresh is released as an
+	// ordinary fresh result, so this was flat already. It pins that the
+	// fresh-or-receiver release does not stack a second release onto that one.
 	{"str-bind-fresh-name-chain-control", strBindHeap(`let v: string = base.tail(4).to_owned2(); return v.len();`), 0},
 	// A PARAM root: params carry no `let` in the body, and the declared-name/type
 	// pair has to reach them or every `function f(p: str)` is refused.

@@ -11,16 +11,12 @@ import (
 // TestSelfHostMapIterIRWasm pins map iteration (m.iter() / it.has_next() / .key() /
 // .value() / .advance()) on the wasm IR path. The register backends iterate their
 // parallel-array maps lazily; a wasm map is a hash map with gaps, so map_iter +
-// mapiter_* were wasm_eligible exclusions (and the wasm AST path has no iterator
-// runtime either — map iteration simply did not work on wasm). They now lower to
-// op_map_iter / op_mapiter_* -> a fresh runtime ($__fern_map_iter materializes the
-// live entries via the existing $__fern_map_keys / $__fern_map_values snapshots
-// into an iterator box [keys@0, vals@4, cursor@8]; the accessors index those
-// compacted arrays). It reuses map_helpers, so it pulls in no new structural
-// runtime.
+// mapiter_* lower to their own runtime ($__fern_map_iter materializes the live
+// entries via the existing $__fern_map_keys / $__fern_map_values snapshots into an
+// iterator box [keys@0, vals@4, cursor@8]; the accessors index those compacted
+// arrays). It reuses map_helpers, so it pulls in no new structural runtime.
 //
-// Value-tested (not differential — the wasm AST path has no map iteration to diff
-// against): the program builds a 3-entry i32->i32 map and sums key+value over a
+// Value-tested: the program builds a 3-entry i32->i32 map and sums key+value over a
 // full iter() loop. The sum is order-independent, so the wasm hash-slot iteration
 // order is irrelevant. Exits with that sum (66) only if every op lowered
 // correctly; the test also pins that the IR path was taken (`call $__fern_map_iter`

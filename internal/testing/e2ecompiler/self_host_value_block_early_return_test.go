@@ -7,10 +7,9 @@ import (
 )
 
 // A value-block arm whose statements always leave the enclosing function
-// (`Err(_) => { return 1; }`) hands the block no value (#9326). The checker
-// used to type its unreachable filler as an arm result and report E031, and
-// the semantic lowering refused the arm, which sent the module to the AST
-// lowering. The if-expression, the match-expression over a builtin Result and
+// (`Err(_) => { return 1; }`) hands the block no value (#9326): the checker
+// must not type it as an arm result (E031), and the typed lowering must accept
+// the arm. The if-expression, the match-expression over a builtin Result and
 // the same through a user wrapper each take the early exit on one path and
 // produce a value on the other.
 const valueBlockEarlyReturnSrc = `import "std/i32";

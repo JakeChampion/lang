@@ -15,8 +15,8 @@ import (
 // falling through to the next with a phi per value an arm below it wrote.
 // A phi that takes the arm's home copies the value arriving from the inner
 // merge on every path through it; one that takes the inner merge's home
-// (ssa.phi_mates, path_counts) copies nothing there and the arm pays its
-// one move. f is called once, so @noinline keeps the inliner out.
+// (ssa.phi_mates) copies nothing there and the arm pays its one move. f is
+// called once, so @noinline keeps the inliner out.
 const mergeChainProg = `@noinline function f(ops: i32[]): i32 {
   let v0: i32 = 0;
   let v1: i32 = 0;

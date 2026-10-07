@@ -10,41 +10,26 @@ import (
 	"testing"
 )
 
-// strArrFieldBufferReleaseCases pin a THREE-WAY emitter disagreement about a
-// struct's `string[]` field, found while measuring the conformance case
-// alloc_flat_fresh_array_arg: one shared lowering change moved it on the wasm
-// leg and not at all on x86-64 or arm64.
+// strArrFieldBufferReleaseCases pin the release of a struct's `string[]` field
+// BUFFER on every backend, whether or not its elements are freed with it (found
+// while measuring the conformance case alloc_flat_fresh_array_arg).
 //
-// lower_expr's ExprStructLit array arm retained a BARE IDENT naming an rc-tracked
-// slot, so `S { xs: p }` handed the field a counted reference; a fresh literal or
-// a proven producer gave it one the field solely owned. Either way the box had
-// something to give back. The register backends reached a `string[]` field only
-// through their DEEP arm (__fern_str_arr_free, gated on the "strfldok:arr:<T>"
-// strarrfld admission), so a type the scan refused — including one refused only
-// on its READS — got no release at all and kept one buffer per construction for
-// the program's life.
-//
-// The scan's verdict therefore splits. The READ half gates the ELEMENT walk,
-// which is what can dangle an element alias. The STORE half is what the BUFFER
-// dec needs, and it is emitted on its own as "strfldok:arrbuf:<T>": a store the
-// scan refused (a field read, an `.append` on one) is an uncounted alias, and
-// dec'ing that frees a buffer another owner still holds — which is what the
-// per-module emit-all fixpoint said when this arm was first written ungated.
+// A field whose elements are read through the struct, so an element alias may
+// survive, still has its buffer released; only the element walk is withheld. A
+// field stored as an uncounted alias (a field read, an `.append` on one) must
+// keep its buffer, which another owner still holds.
 //
 // The probes use SSO-short elements on purpose: the buffer is then the only heap
 // object per round, and each case returns the MEASURED bytes per round as its
 // exit code, so a regression reports its own size instead of a bare "not zero".
-// x86-64 and arm64 both read 56 before the fix; wasm
-// already read 0 and is here to pin that it stays there.
 var strArrFieldBufferReleaseCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// SCOPE EXIT (__struct_drop_<T>). `Node` routes field reclaim through its
-	// `name: string` field, so the drop helper is emitted; `f.deps[0].len()` is
-	// an element read, so "strfldok:arr:Node" is withheld and the deep arm is
-	// not taken. The buffer still has to go back. 56 B/round before, 0 after.
+	// SCOPE EXIT. `f` dies at the end of `round`, so Node's drop releases the
+	// deps buffer. `f.deps[0].len()` reads an element through the struct; the
+	// buffer still has to go back every round.
 	{"strarr-field-drop-buffer-flat", `struct Node { name: string, deps: string[], mtime: i32 }
 function mk(): string[] { let o: string[] = []; o = o.append("aa"); o = o.append("bb"); o = o.append("cc"); return o; }
 function node(name: string, deps: string[], mtime: i32): Node { return Node { name: name, deps: deps, mtime: mtime }; }
@@ -59,13 +44,9 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 2000;
 }`, 0},
-	// LOOP REBIND (__field_reclaim_<T>). The same field, released by the OTHER
-	// helper: `let r: Row = Row { … }` re-declared each iteration routes through
-	// emit_field_reclaim_store, whose per-type body frees the superseded box's
-	// replaced fields. Both helpers are emitted for both probes, so this row is
-	// what separates them: with only the struct-drop arm fixed it still reads
-	// 55, because the buffer that leaks here is the one every iteration but the
-	// last supersedes.
+	// LOOP REBIND. The same field, released when `let r: Row = Row { … }` is
+	// re-declared each iteration: the superseded box's buffer must go back,
+	// not only the last one at scope exit.
 	{"strarr-field-rebind-buffer-flat", `struct Row { tag: string, cells: string[] }
 function mk(): string[] { let o: string[] = []; o = o.append("aa"); o = o.append("bb"); o = o.append("cc"); return o; }
 function churn(n: i32): i32 {
@@ -122,12 +103,7 @@ function main(): i32 { let pre: string = "ab"; let i: i32 = 0; while (i < 2000) 
 	// pointer with no retain, so `b` and the `sg` built from it hold one
 	// `ys` buffer between them at rc 1. `sg` is dropped at inner's exit; the
 	// deep arm would free the buffer and its element boxes while `b` still
-	// reads them. `Sigs` is refused on both halves of the string[] admission
-	// (the base copy is a refused store, the element read a refused read), so
-	// every backend must leave `ys` alone — which is the row the register
-	// backends' classifier already took and wasm's own did not (#8119: the
-	// compiler's FnSigs is this shape, and the self-host-built wasm compiler
-	// read a freed strfld_ok_types until linear memory ran out). The junk
+	// reads them, so every backend must leave `ys` alone (#8119). The junk
 	// allocations recycle the freed blocks so a wrong answer, not luck, is
 	// what an over-release reports.
 	{"strarr-field-base-copy-co-owner", `struct Reg { rows: string[] }

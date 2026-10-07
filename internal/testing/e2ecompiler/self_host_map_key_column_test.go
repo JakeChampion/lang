@@ -281,9 +281,9 @@ function build[T](k: T, v: i32): Map[T, i32] {
 function main(): i32 { return build(2.5, 7).get_or(2.5, 0); }
 `
 
-// TestSelfHostMonomorphisedFloatKeyStillRefusesToLower pins the float half of
-// map_key_has_no_column, which nothing else does now that E045 refuses every
-// written float-key spelling (#10009).
+// TestSelfHostMonomorphisedFloatKeyStillRefusesToLower pins the lowering's
+// refusal of a float map key, which nothing else does now that E045 refuses
+// every written float-key spelling (#10009).
 //
 // This program writes none. Both checkers re-check its instantiations and
 // report E045 on the monomorphised copy (#10018,
@@ -294,8 +294,8 @@ function main(): i32 { return build(2.5, 7).get_or(2.5, 0); }
 // what stands in the way there, and this test pins it.
 //
 // It takes no interpreter oracle. The other cases have one to prove they are
-// well-formed programs refused for their key; this one native refuses
-// outright, and that refusal is half of what is asserted.
+// well-formed programs refused for their key; this one the Go front end
+// refuses outright, and that refusal is half of what is asserted.
 func TestSelfHostMonomorphisedFloatKeyStillRefusesToLower(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {

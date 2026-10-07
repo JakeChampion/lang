@@ -3,15 +3,12 @@ package e2ecompiler
 import "testing"
 
 // u64TupArrIRCases exercise a u64 element of an array-of-tuples (`(u64, i32)[]`)
-// read via `xs[i].N` and chained in an unsigned op. An all-scalar tuple array is
-// NOT deep-droppable, so arrtup_elem_tuple_type recorded no element tuple type
-// and the read side fell back to elem_type_tag, which coarsens a u64 element to
-// "i64" (width only) — so `xs[i].N >> k` / `xs[i].N > x` used a SIGNED shift /
-// compare and diverged once bit 63 was set. The fix records the ANNOTATION's
-// tuple type (which preserves "u64") into the read-side arrarr_elem, reclaim-inert
-// (an all-scalar tuple array never earns the ARRTUP credit), so expr_is_u64's
-// nested read recovers the sign and selects shr_u / gt_u. Sibling of the u64[][]
-// arrarr fix (#5206).
+// read via `xs[i].N` and chained in an unsigned op. The element read has to
+// keep the tuple type's "u64", not coarsen it to a 64-bit width: read as i64,
+// `xs[i].N >> k` / `xs[i].N > x` take a SIGNED shift / compare and diverge once
+// bit 63 is set. An all-scalar tuple array needs no drop, so the read cannot
+// lean on reclaim bookkeeping for the type. Sibling of the u64[][] case
+// (#5206).
 //
 // Oracle-checked against the interpreter, values <= 120 (the wasmtime
 // exit-code gap #2908). The wide element 18000000000000000000 has bit 63 set,

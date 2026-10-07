@@ -149,13 +149,10 @@ function main(): i32 {
 }`, "snap_param_caller_intact_arm64", 40, true)
 
 	// SCALAR-STRUCT CHURN: threads a scalar struct param 50x via a method
-	// receiver (`c = c.step(k)`), so __fern_snapshot_dec frees 50 intermediate
-	// boxes; returns an i32 (not c). A double-free / wrong free across the 50
-	// rebinds would crash or corrupt. sum(0..49) = 1225, so build == 1225 and
-	// the program returns 7. (A scalar struct avoids the per-type field-reclaim
-	// deep-drop helper, which is a separate unfinished arm64 slice — a RETURNED
-	// heap-field builder there link-errors on `__field_reclaim_<T>`, unrelated to
-	// snapshot_dec.)
+	// receiver (`c = c.step(k)`), so each rebind releases the intermediate box
+	// it replaces and never the caller's; returns an i32 (not c). A double-free /
+	// wrong free across the 50 rebinds would crash or corrupt. sum(0..49) = 1225,
+	// so build == 1225 and the program returns 7.
 	run(t, `struct C { a: i32, n: i32 }
 function (c: C) step(v: i32): C { return C { a: c.a + v, n: c.n + 1 }; }
 @noinline function build(c: C): i32 {

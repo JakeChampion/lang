@@ -288,18 +288,15 @@ func TestSelfHostModloadX86_64(t *testing.T) {
 }
 
 // TestSelfHostModloadIRProbeX86_64 exercises the import-driven driver's
-// `-ir-probe` flag (asm_modload_run.fern), which reports the IR-eligibility
-// frontier (asm_ir.eligibility_report) AFTER real import resolution + bundling.
+// `-ir-probe` flag (asm_modload_run.fern), which reports the typed lowering's
+// verdict (semlower.verdict_text) AFTER real import resolution + bundling.
 //
 // This is the import-AWARE counterpart to asm_ir_run's stdin probe
 // (TestSelfHostIREligibilityProbe). The stdin probe parses one source with no
 // modload, so a function that calls an IMPORTED helper is measured with its
-// callee ABSENT — calls_only_known sees an unknown call and reports an
-// artificial `BAIL call` even though the function lowers cleanly once the
-// import is present. The modload probe loads the `import` graph off disk first,
-// so `f` (which calls `helper.dbl`, mangled `helper__dbl`) is measured with the
-// real callee in the module and shows `ir`. The decisive assertion is exactly
-// that cross-module flip: a call to an imported function does NOT bail here.
+// callee ABSENT. The modload probe loads the `import` graph off disk first, so
+// `f` (which calls `helper.dbl`, mangled `helper__dbl`) is measured with the
+// real callee in the module and shows `ir`.
 func TestSelfHostModloadIRProbeX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostModloadProject(t)

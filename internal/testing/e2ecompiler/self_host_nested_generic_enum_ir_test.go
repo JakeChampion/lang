@@ -9,16 +9,13 @@ import (
 
 // nestedGenericEnumIRCase is a self-host generic-enum program whose type
 // argument is ITSELF a generic enum (`Opt[Opt[i32]]`) — a COMPOSITE
-// instantiation key. The base generic-enum pass (#3572) keys clones with a
-// `__`-joined string of simple nominals (`Opt[i32]` → `Opt__i32`) and rejects a
-// composite arg (`is_simple_key`), so a nested generic enum bailed to the legacy
-// AST emitter. This follow-up extends monomorphize_enums (parser.fern): for a
-// SINGLE-type-param enum the one arg may itself be a (recursively) mangled
-// generic-enum clone, so `Opt[Opt[i32]]` clones to `Opt__Opt__i32` with field
-// type `Opt__i32`, the inner `Opt[i32]` is enqueued + cloned too, a nested
-// `match` recovers the bound payload's instantiation, and a nested unit-variant
+// instantiation key. For a SINGLE-type-param enum, monomorphize_enums
+// (parser.fern) accepts a (recursively) mangled generic-enum clone as the one
+// arg, so `Opt[Opt[i32]]` clones to `Opt__Opt__i32` with field type
+// `Opt__i32`, the inner `Opt[i32]` is enqueued + cloned too, a nested `match`
+// recovers the bound payload's instantiation, and a nested unit-variant
 // payload (`Sm(Nn)`) is pinned from the outer annotation. Each exit code is
-// pinned against the native interpreter oracle and kept <= 120.
+// pinned against the interpreter oracle and kept <= 120.
 type nestedGenericEnumIRCase struct {
 	name     string
 	src      string

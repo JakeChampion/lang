@@ -8,14 +8,12 @@ import (
 
 // letElseIRCases pin `let PAT = EXPR else { divergent };` on the IR path. The
 // parser desugars it by folding the rest of the enclosing block into the success
-// arm of a statement-match (parser.fern), so it uses the already-proven match IR
-// machinery. As with the if-let pin, the existing TestSelfHostLetElse* assert
-// only exit codes (which the AST emitter also satisfies); these cases add the
-// missing IR-path gate, mirroring self_host_bool_match_ir_test.go.
+// arm of a statement-match (parser.fern), so it uses the match lowering.
+// Mirrors self_host_bool_match_ir_test.go.
 //
-// Each program declares a fresh, non-escaping struct temp whose IR-only reclaim
-// free (`call __fn___fern_arr_dec`) proves the module took the IR path. `t.x -
-// t.y` pads 0 into every result, so exit codes still pin the matched arm.
+// Each program declares a fresh, non-escaping struct temp, and the test asserts
+// its reclaim free (`call __fn___fern_arr_dec`) is emitted. `t.x - t.y` pads 0
+// into every result, so exit codes still pin the matched arm.
 var letElseIRCases = []struct {
 	name string
 	src  string

@@ -10,32 +10,20 @@ import (
 
 // --- `.trim()` returns an owned copy (#7393) ---------------------------------
 //
-// rt_src_str_trim used to return the bare slice `s[start:end]` — a zero-copy
-// view whose backing buffer the producer's exit sweep frees. A view that
-// crossed its frame was a deterministic wrong-answer UAF on the register
-// backends: the control read 0 from the freed (zeroed) block, and a recycling
-// allocation between the free and the read handed the view the recycler's
-// bytes — the looped repro's self-host exit differed from the oracles by
-// exactly 'p'-'Z'. Wasm answered correctly only because its slice op already
-// copies. Meanwhile every memory instrument read clean: leakcheck saw only the
-// 24-byte view-box floor, the underflow counter never moved, and the
-// exit-code gates matched on programs that did not read the view.
+// rt_src_str_trim returns `s[start:end] + ""` — an owned copy, the
+// interpreter's semantics (docs/STR-VIEW-CONTRACT.md step 1) — so a trim
+// result is an ordinary fresh string. A zero-copy view instead would be a
+// wrong-answer UAF once it crossed its frame on the register backends: the
+// producer's exit sweep frees the backing buffer, and a recycling allocation
+// between the free and the read hands the view the recycler's bytes. The
+// memory instruments cannot see that — leakcheck sees only the 24-byte
+// view-box floor and the underflow counter never moves — so these cases read
+// the result back by value.
 //
-// The fix follows docs/STR-VIEW-CONTRACT.md step 1: the helper returns
-// `s[start:end] + ""` — an owned copy, native and interp's semantics — and
-// every "trim is a view" classification flips to the ordinary fresh-producer
-// set (str_fresh_alloc_method / str_free_producer_ident /
-// str_producer_ownership), which DELETED the trim-specific credit machinery
-// (init_is_str_trim, trim_str_init, collect_trim_local_names) outright: an
-// owned trim is just a fresh string.
-//
-// Every want was confirmed against BOTH oracles; counts are the self-host
-// build's own, measured through this harness (the CLI const-folds
-// literal-literal concats, so probe strings route through a call).
-//
-// Counts here are ONE block per heap string: #7351 fused the box into the
-// buffer's reserved header, so every count below is half what it was when the
-// rows were written.
+// Every want was confirmed against `bin/fern -interp`; counts are the
+// self-host build's own, measured through this harness (the CLI const-folds
+// literal-literal concats, so probe strings route through a call). A heap
+// string is ONE block (#7351).
 
 type trimOwnedCase struct {
 	name   string

@@ -12,16 +12,15 @@ import (
 //     append only for a sole-owner (rc==1) or immortal (bit-31) receiver;
 //     a shared receiver takes the copy path (un-share copies keep the SAME
 //     cap — the #3425 arena lesson);
-//   - the caller-side share bracket wired to the register-backend pair
-//     (share_inc → $__fern_rc_inc, share_dec → the freeing $__fern_arr_dec)
-//     instead of the historical no-op (whose "arrays are headerless" premise
-//     was stale — wasm-IR arrays are rc-headered via $__fern_arr_box);
-//   - the root-cause fix that blocked #5138: $__fern_arr_push_owned frees
-//     the superseded old buffer ONLY when it was the sole owner (rc==1),
-//     mirroring asm_ir's defensive "not sole owner — leave" gate. The old
-//     unconditional delegation to the DECREMENTING $__fern_arr_dec cancelled the
-//     bracket's +1 on a bracketed shared receiver, so the bracket's own dec
-//     freed the caller's still-referenced buffer — the WIT-codec SIGABRT.
+//   - the caller-side share bracket (__fern_arr_share_inc /
+//     __fern_arr_share_dec) is a real refcount pair, the dec being the
+//     freeing $__fern_arr_dec — wasm-IR arrays are rc-headered via
+//     $__fern_arr_box;
+//   - $__fern_arr_push_owned frees the superseded old buffer ONLY when it was
+//     the sole owner (rc==1), mirroring asm_ir's defensive "not sole owner —
+//     leave" gate. Freeing it unconditionally cancels the bracket's +1 on a
+//     bracketed shared receiver, so the bracket's own dec frees the caller's
+//     still-referenced buffer — the WIT-codec SIGABRT that blocked #5138.
 //
 // Cases: selfHostAppendBorrowedCases, shared verbatim with the register leg
 // (self_host_append_borrowed_param_test) so neither backend can drift from the

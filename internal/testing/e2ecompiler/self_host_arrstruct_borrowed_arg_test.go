@@ -101,14 +101,10 @@ func arrstructBorrowCases() []arrstructBorrowCase {
 			want: 6,
 		},
 		{
-			// ADMITTED by the extract-then-die widening: `let e = src[0]` with a
-			// confined local (the same body_unsafe_for_match_borrow +
-			// param_match_binding_escapes pair the box flag trusts for a param
-			// name) keeps the "ELB:" flag, because the extracted box dies inside
-			// the callee before the caller's element walk frees it. This is NOT
-			// the box-flag weakening this row used to guard against — the four
-			// handout witnesses below still refuse, and the widening's own
-			// grant is what the balance pins now.
+			// The callee binds an element to a local (`let e = src[0]`) that dies
+			// inside the callee, so the caller keeps its element walk and the row
+			// balances. The four handout rows below must still keep their elements
+			// alive.
 			name: "callee_extracts_element",
 			src: mk(`function rd(src: Inner[], i: i32): i32 { let e: Inner = src[0]; return e.xs.len() + i; }`,
 				producer, "rd(keep, r)"),
@@ -118,23 +114,14 @@ func arrstructBorrowCases() []arrstructBorrowCase {
 			// The callee hands the array back, so the caller does not sole-
 			// own it while the result lives.
 			name: "callee_returns_param",
-			src: mk(`function rd(src: Inner[], i: i32): Inner[] { return src; }`,
+			src: mk(`@noinline function rd(src: Inner[], i: i32): Inner[] { return src; }`,
 				producer, "rd(keep, r).len()"),
 			want: 3,
 		},
 		{
-			// ADMITTED, by a different tier than this suite's — and the row this
-			// suite's guard was watching for. "ELB:" refuses it (the callee
-			// keeps a reference, so it is not element-safe), but the reference
-			// is a COUNTED store, which param_counted_of's "DCNT:" tier proves
-			// and borrow_reg_with_counted publishes here under "CNT:".
-			//
-			// The guard warned that a balance here could instead mean the BOX
-			// FLAG had been weakened, and named the check. It was not: every
-			// handout shape below still refuses (element_handed_out_in_struct,
-			// _bare, element_field_handed_out, element_appended_elsewhere), so
-			// does callee_extracts_element, and TestSelfHostStage2FixpointArm64
-			// is green with no gen2 segfault. Only the counted-STORE shape moved.
+			// The callee stores the array into a struct field: a counted store, so
+			// the reference it keeps is retained and the row balances. The four
+			// handout rows below must still keep their elements alive.
 			name: "callee_stores_field",
 			src: mk(`struct P { f: Inner[], n: i32 }
 function rd(src: Inner[], i: i32): i32 { let p: P = P { f: src, n: i }; return (p.f.len() + p.n) % 101; }`,

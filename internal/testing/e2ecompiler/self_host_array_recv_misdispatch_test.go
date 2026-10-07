@@ -11,34 +11,22 @@ import (
 // An array-method call the monomorphiser did NOT rewrite must refuse, not
 // dispatch as `i32.<method>`.
 //
-// The AST lowering dispatched a method call as `<receiver-type>.<field>`, and
-// `expr_recv_prim_type` used to end by falling through to `expr_scalar_type`,
-// whose last resort is `return "i32"`. An array receiver that reached there —
-// which happens whenever the `__arrm_<m>` fold declines the method — therefore
-// keyed `i32.<m>`. Two outcomes, and only one of them was safe:
+// A receiver whose type the lowering cannot name must not fall back to `i32`.
+// Where std/i32 owns a verb of that name, the call resolves — with an array
+// pointer as the integer receiver — and the answer is wrong with no
+// diagnostic, because strict-IR is satisfied by the symbol resolving. #6915
+// found it on `rotate_left`, where the call landed in std/i32's BITWISE rotate.
 //
-//   - no such symbol      -> strict-IR names the bail site. Fine.
-//   - a symbol EXISTS     -> it is called, with an array pointer as the
-//     integer receiver. Wrong answer, no diagnostic,
-//     because strict-IR is satisfied by the symbol
-//     resolving.
+// The case below pins that silent branch. `pow` is chosen because std/i32
+// defines `(n: i32) pow(e: i32): i32` — a real symbol to be captured by — while
+// `std/array` does not, so the name is free for a user method. The bounded
+// EXTRA type param `U` is what makes `is_generic_array_method` decline the fold
+// (only the receiver's own element var may appear bounded), which is what
+// routes the call into the dispatch.
 //
-// Which one you got depended on whether std/i32 happened to own a verb of that
-// name: `rotate_left` and `step_by` have identical signature shapes and failed
-// in opposite ways for exactly that reason (#6915 found it on `rotate_left`,
-// where the call landed in std/i32's BITWISE rotate).
-//
-// The case below pins the silent branch, since the loud one was never the
-// problem. `pow` is chosen because std/i32 defines `(n: i32) pow(e: i32): i32`
-// — a real symbol to be captured by — while `std/array` does not, so the name
-// is free for a user method. The bounded EXTRA type param `U` is what makes
-// `is_generic_array_method` decline the fold (only the receiver's own element
-// var may appear bounded), which is what routes the call into the dispatch.
-//
-// Before the fix this program compiled clean under FERN_STRICT_IR and returned
-// 0 where the interpreter says 103. The assertion is therefore that the module
-// is NOT IR-eligible: refusing is the correct outcome, and an answer that
-// disagrees with the oracle is the bug.
+// The interpreter answers 103. The assertion is that the module is NOT
+// IR-eligible: refusing is the correct outcome, and an answer that disagrees
+// with the oracle is the bug.
 const arrayRecvMisdispatchSrc = `import "std/i32";
 import "core/cmp";
 

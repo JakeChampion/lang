@@ -5,26 +5,23 @@ import "testing"
 // #6891: an expression-position `.append` whose receiver is READ AGAIN must
 // have value semantics. op_arr_push consumes its receiver — at rc==1 with
 // spare capacity the grow helper appends into the receiver's own buffer and
-// returns that pointer — so `sink(roomy.append(20))` grew `roomy` itself and
-// the `sink(roomy)` under it read four elements where the interpreter and
-// native read three. rc is the wrong test here: `roomy` is uniquely
-// referenced and still read twice, and rc counts references, not uses.
+// returns that pointer — so `sink(roomy.append(20))` must not grow `roomy`
+// itself: the `sink(roomy)` under it reads three elements, as the interpreter
+// does. rc is the wrong test here: `roomy` is uniquely referenced and still
+// read twice, and rc counts references, not uses.
 //
-// The fix brackets the receiver with a retain/release around the push, so the
-// helper's uniqueness gate takes the copy path (native's emitArrayPush does
-// the same, #4827/#4838). It is the ANSWER that diverged, so these cases are
-// differential — every expectation comes from `fern -interp` rather than a
-// written-down number, and the allocation-shape conformance case that carries
-// the same shape (alloc_flat_consumed_append) cannot see this at all.
+// The receiver is bracketed with a retain/release around the push, so the
+// helper's uniqueness gate takes the copy path (#4827/#4838). It is the ANSWER
+// that is at stake, so these cases are differential — every expectation comes
+// from `fern -interp` rather than a written-down number.
 //
 // SPARE CAPACITY is what makes it visible: with none the grow allocates a
-// fresh buffer anyway and the receiver is untouched, which is why the ordinary
-// corpus missed it. Each case therefore appends three times from empty first.
+// fresh buffer anyway and the receiver is untouched. Each case therefore
+// appends three times from empty first.
 //
-// The last two are controls on the exemption (append_inplace_names_of): the
-// self-reassign `a = a.append(v)` and the accumulator tail
-// `return acc.append(v)` may still mutate in place, and forcing a copy there
-// would be O(n²).
+// The last case is the control on the in-place exemption: the self-reassign
+// `a = a.append(v)` and the accumulator tail `return acc.append(v)` may still
+// mutate in place, and forcing a copy there would be O(n²).
 var selfHostAppendValueCases = []struct {
 	name string
 	src  string
@@ -38,11 +35,9 @@ var selfHostAppendValueCases = []struct {
 	// ($__fern_arr_push_i64 / _f64), which had no rc gate at all.
 	{"arg-position-i64", "function s8(xs: i64[]): i64 {\n    let t: i64 = 0i64;\n    for i in 0..xs.len() { t = t + xs[i]; }\n    return t;\n}\nfunction main(): i32 {\n    let xs: i64[] = [];\n    xs = xs.append(1i64);\n    xs = xs.append(2i64);\n    xs = xs.append(3i64);\n    let a: i64 = s8(xs.append(20i64));\n    let b: i64 = s8(xs);\n    return (a as i32) + (b as i32) * 2 + xs.len();\n}"},
 	{"arg-position-f64", "function sf(xs: f64[]): f64 {\n    let t: f64 = 0.0;\n    for i in 0..xs.len() { t = t + xs[i]; }\n    return t;\n}\nfunction main(): i32 {\n    let xs: f64[] = [];\n    xs = xs.append(1.0);\n    xs = xs.append(2.0);\n    xs = xs.append(3.0);\n    let a: f64 = sf(xs.append(20.0));\n    let b: f64 = sf(xs);\n    return (a as i32) + (b as i32) * 2 + xs.len();\n}"},
-	// A map literal is the position the receiver census could not see:
-	// collect_append_recvs_expr had no ExprMapLit / ExprFString arm, so every
-	// other occurrence of `roomy` here is a self-reassign and the name would
-	// have kept the in-place exemption it does not deserve. Same hole in the
-	// #4873 may-grow param census, which shares the collector.
+	// The receiver read again inside a map literal: every other occurrence of
+	// `roomy` here is a self-reassign, so missing this use would wrongly keep
+	// the in-place exemption.
 	{"map-literal-position", "import \"core/map\";\nfunction sink(xs: i32[]): i32 {\n    let s: i32 = 0;\n    for i in 0..xs.len() { s = s + xs[i]; }\n    return s;\n}\nfunction main(): i32 {\n    let roomy: i32[] = [];\n    roomy = roomy.append(1);\n    roomy = roomy.append(2);\n    roomy = roomy.append(3);\n    let m: Map[string, i32] = Map { \"k\": sink(roomy.append(20)) };\n    return m.get_or(\"k\", 0) + sink(roomy) * 2 + roomy.len();\n}"},
 	// Not an argument: a receiver read again from the same expression.
 	{"operand-position", "function main(): i32 {\n    let roomy: i32[] = [];\n    roomy = roomy.append(1);\n    roomy = roomy.append(2);\n    roomy = roomy.append(3);\n    return roomy.append(9).len() * 10 + roomy.len();\n}"},

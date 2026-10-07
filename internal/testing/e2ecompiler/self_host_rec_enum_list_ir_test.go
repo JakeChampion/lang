@@ -5,14 +5,13 @@ import "testing"
 // recEnumListIRCases pin a RECURSIVE enum used as a multi-node heap data
 // structure — a cons-list `enum List { Cons(i32, List), Nil }` whose `Cons`
 // variant carries the enum type itself — on the self-host IR path (x86-64 +
-// wasm). The existing recursive-enum coverage (self_host_rc_precise_drop's
-// `Tree.Leaf(7)`) is a single shallow node whose match arm returns immediately;
+// wasm). The recursive-enum case in self_host_rc_precise_drop_x86_ir_test.go
+// (`Tree.Leaf(7)`) is a single shallow node whose match arm returns immediately;
 // it never builds or traverses a multi-level chain. These cases exercise the
 // distinct shape: a heap-boxed enum-payload CHAIN (each `Cons` boxes the next
 // `List`), genuine deep structural recursion over that payload (a function that
 // recurses on the enum value nested inside the enum), and the multi-node drop on
-// function exit. All of it already lowers, so no compiler change — this is an
-// observability pin against a regression off the IR path.
+// function exit.
 //
 // Each case is oracle-checked against the interpreter; every result stays
 // <= 120 (the wasm exit-code clamp, #2908).

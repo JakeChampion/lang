@@ -11,7 +11,7 @@ import (
 // Return-type-directed instantiation of a generic CONSTRUCTOR. A no-argument
 // generic function whose type parameter appears only in its return type
 // (`mk[T](): Box[T]`) is bound from the call-site annotation (`let b: Box[i32]
-// = mk()`) — the arguments alone can't. The monomorphiser (parser.fern) now:
+// = mk()`) — the arguments alone can't. The monomorphiser (parser.fern):
 //  1. promotes such a return-only unbounded type var into type_params (it is
 //     bindable from the annotation, not just from a param),
 //  2. binds it via infer_inst_ret in the annotated-var position (mono_var_init),
@@ -19,10 +19,10 @@ import (
 //     — whose empty-array field yields no element type to infer from — using
 //     the function's concrete return type (ms_stmt StmtReturn).
 //
-// Without all three the template stays un-monomorphised, its `Box { xs: [] }`
-// can't lower, and the whole module drops to the legacy AST emitter and
-// SEGFAULTS. std/set's `set_new` → `set_of` is the real-world victim. Each case
-// is oracle-checked against the interpreter and routing-pinned to "ir".
+// Without all three the template stays un-monomorphised and its
+// `Box { xs: [] }` cannot lower. std/set's `set_new` → `set_of` has this shape.
+// Each case is oracle-checked against the interpreter and routing-pinned to
+// "ir".
 var genericCtorIRCases = []struct {
 	name string
 	src  string

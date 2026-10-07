@@ -7,22 +7,18 @@ import (
 	"testing"
 )
 
-// TestSelfHostGenericArgMangleIR pins a loader defect: a module-local type used
-// as a GENERIC ARGUMENT was never mangled.
+// TestSelfHostGenericArgMangleIR pins a loader rule: a module-local type used
+// as a GENERIC ARGUMENT is mangled like any other use of it.
 //
-// flatten's rewrite_type_name splits a bracketed spelling into base + suffix and
-// re-attaches the suffix verbatim, so `find(): Option[Flag]` kept `Option[Flag]`
-// while the struct declaration became `lib__Flag`. Nothing then resolves the
-// payload type of the match binder, so `f.<field>` on it cannot lower and the
-// whole module bails.
+// flatten's rewrite_type_name splits a bracketed spelling into base + suffix,
+// so the suffix's arguments need mangling too: `find(): Option[Flag]` has to
+// follow the struct declaration to `lib__Flag`, or nothing resolves the payload
+// type of the match binder, `f.<field>` on it cannot lower, and the whole
+// module bails. The tuple case — `(string, Box)` keeping an unmangled `Box`,
+// which dispatched a non-existent `Box.method` — is the same defect, so this is
+// a loader correctness rule in its own right, not only an IR-routing one.
 //
-// This is the SAME defect the tuple case was fixed for — `(string, Box)` keeping
-// an unmangled `Box`, which dispatched a non-existent `Box.method` — so it is a
-// loader correctness bug in its own right, not only an IR-routing one. The
-// generic case simply had no test.
-//
-// It was the last construct keeping the self-host drivers on the legacy AST
-// emitters (#3457 slice 5): std/cli's `parse` reaches it through
+// std/cli's `parse` reaches the shape through
 // `match (__cli_find_short(...)) { Some(f) => f.takes_value }`, which is what
 // TestSelfHostStdTestE2E/cli compiles.
 //

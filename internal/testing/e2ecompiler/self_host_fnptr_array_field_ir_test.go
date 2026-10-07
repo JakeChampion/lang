@@ -9,17 +9,13 @@ import (
 )
 
 // fnptrArrayFieldCases pin struct fields typed `(() => i32)[]` (coarsened to
-// "fn[]") that hold NAMED functions or NON-capturing lambdas — issue #5235. They
-// were once a separate fn-POINTER representation from closure arrays under the
-// same spelling, and the self-host mis-handled that split at construction, on
-// the read side and in the struct-drop glue; every read shape segfaulted while
-// the native backend and the interpreter were right. Since #10076 a function
-// array holds env boxes whatever built it: each element is a `$wrap` or
-// `$clo` box, every read dispatches env-first, and struct-drop walks the field
-// as a box array. These cases stay as the pin that the named-function and
+// "fn[]") that hold NAMED functions or NON-capturing lambdas — issue #5235. A
+// function array holds env boxes whatever built it (#10076): each element is a
+// `$wrap` or `$clo` box, every read dispatches env-first, and struct-drop walks
+// the field as a box array. These cases pin that the named-function and
 // non-capturing shapes answer through that one representation.
 //
-// Exit codes cross-checked against the interpreter and the native Go backend.
+// Exit codes cross-checked against the interpreter.
 var fnptrArrayFieldCases = []struct {
 	name string
 	src  string
@@ -47,9 +43,9 @@ var fnptrArrayFieldCases = []struct {
 	// Same, direct inline call with an argument.
 	{"direct-arg", "function twice(x: i32): i32 { return x * 2; } struct Reg { hs: ((i32) => i32)[] } function main(): i32 { let r = Reg { hs: [twice] }; return r.hs[0](21); }", 42},
 	// RC soundness / drop: build a Reg per iteration and let it go out of scope N
-	// times, exercising __struct_drop_Reg on a function-array field. Probe for
+	// times, so Reg's drop releases a function-array field each round. Probe for
 	// over-release (__rc_underflow_count) and unbounded heap growth (__heap_bump_bytes):
-	// struct-drop walks the field as a box array and frees the buffer once (a
+	// the drop walks the field as a box array and frees the buffer once (a
 	// `$wrap` box of a named function is a static block, so its dec is a no-op),
 	// and the whole-array alias's read-inc is balanced by its exit sweep.
 	{"rc-soundness", "function f0(): i32 { return 1; } function f1(): i32 { return 2; } struct Reg { hs: (() => i32)[] } function one(): i32 { let r = Reg { hs: [f0, f1] }; let f = r.hs[0]; let acc: i32 = f(); let xs = r.hs; acc = acc + xs[1](); acc = acc + r.hs[0](); return acc; } function churn(n: i32): i32 { let i: i32 = 0; let s: i32 = 0; while (i < n) { s = one(); i = i + 1; } return s; } function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 4096) { return 98; } if (w != x) { return 97; } return 0; }", 0},

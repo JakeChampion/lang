@@ -6,46 +6,33 @@ import (
 
 // --- The struct-literal FIELD share of an array-of-enums local ---------------
 //
-// The arrenum twin of the arrstruct counted field share. `let p: P = P { f: xs, … }`
-// where `xs` is a credited `E[]` local: the construction RETAINS it — the
-// ExprStructLit fallback arm alias-incs any bare arr-slot ident whose field type
-// is an array, which covers `E[]` even though the gate above it names only
-// scalar- and struct-arrays — so the field holds a COUNTED share. Every escape
-// gate on the ARRENUM credit read that bare ident as an escape anyway, and `xs`
-// lost its reclaim: 450 allocs / 350 frees, 4000 bytes over 100 rounds, against
-// native's 450/450.
+// `let p: P = P { f: xs, … }` where `xs` is an `E[]` local: the construction
+// RETAINS it, so the field holds a COUNTED share and `xs` keeps its deep
+// release. Both owners' element walks are rc-gated on the buffer, so only the
+// last one to die walks it. That matters more here than on the struct side
+// because this walk FREES each element box rather than deccing it, so two
+// owners both walking is a double free.
 //
-// Both releases are rc-gated, which is what makes granting it safe. The holder's
-// walk (__enum_arr_elems_drop_<E>) already is_unique-gated the buffer; the
-// source's (emit_arrenum_deep_free) now does too. That gate is a no-op for every
-// shape that existed before — a sole owner is rc 1, verified across the whole
-// probe corpus before anything was lifted — and the prerequisite for this one.
-// It matters more here than on the struct side because this walk FREES each
-// element box rather than deccing it, so two owners both walking is a double free.
+// Two shapes carry the hazard:
 //
-// TWO FINDINGS, and this class hides them better than any other:
-//
-//   - `respread`: `P { ...q, … }` used to copy the buffer pointer into a third
-//     box with NO inc, so three owners sat at rc 2 — exit 99 at 600 allocs, 600
-//     frees, live_bytes 0. The base copy now retains the array it carries and the
-//     copy releases it through the same rc-gated walk, so the row balances.
+//   - `respread`: `P { ...q, … }` copies the buffer pointer into a third box,
+//     so the base copy must retain the array it carries and release it through
+//     the same rc-gated walk.
 //   - `moved_ret`: the retain is MOVE-gated (#6726), so at a move site the box
-//     takes over the local's reference and both the inc and the sweep dec are
+//     takes over the local's reference and both the inc and the source's dec are
 //     dropped. `return P { f: xs, … }` is that shape — the return is xs's last use.
 //
 // The second is the dangerous one, because NOTHING counts it. Without the gate,
 // `moved_ret` measures 500 allocs / 400 frees — MORE frees than the correct
 // 500/100, since a double free counts as a free — and `__rc_underflow_count()`
 // stays silent, because this class frees element boxes rather than deccing them.
-// The arm64 stage-2 fixpoint does not see it either: the compiler's own source has
-// no enum-array moved share, so gen2 stays green. `moved_uaf` below is what
-// catches it — it reads the payload back after the callee returned and checks the
-// value, and without the gate the self-host binary SEGFAULTS (139) where native
-// and interp both exit 25.
+// The stage-2 fixpoint does not see it either: the compiler's own source has no
+// enum-array moved share. `moved_uaf` below is what catches it — it reads the
+// payload back after the callee returned and checks the value, and without the
+// gate the self-host binary SEGFAULTS (139) where the interp exits 25.
 //
 // So: a wrong-ANSWER case, not a census case. Every want was confirmed against
-// BOTH oracles — bin/fern -interp and the native x86-64 backend agreed on each —
-// never read off the self-host run under test.
+// bin/fern -interp, never read off the self-host run under test.
 
 type arrenumShareCase struct {
 	name    string

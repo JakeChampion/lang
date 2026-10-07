@@ -7,13 +7,10 @@ import (
 
 // ownReceiverCases exercise `own`-RECEIVER methods (`function (own s: Acc)
 // emit(…)`) through the self-host compiler. The self-host parser must consume
-// the `own` modifier in the receiver clause (before the fix the receiver
-// branch read `own` AS the receiver name, left the cursor on the real name,
-// and the decl misparsed); the backends then lower the receiver as a borrow
-// (leak-safe — the native compiler's move semantics are not mirrored yet), so
-// the programs' observable behaviour matches the native reference exit codes.
+// the `own` modifier in the receiver clause rather than read it AS the receiver
+// name, and each program must exit with the reference code.
 //
-// Shapes mirror internal/testing/e2e/rc_own_receiver_rebind_test.go's native pins:
+// Shapes mirror internal/testing/e2e/rc_own_receiver_rebind_test.go's pins:
 // a local-receiver self-reassign churn, the borrowed-param threading shape,
 // and a receiver literally named `own` (the parse_param-mirrored probe must
 // not swallow it).

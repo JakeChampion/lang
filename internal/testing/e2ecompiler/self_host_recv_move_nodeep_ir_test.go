@@ -7,22 +7,15 @@ import (
 	"testing"
 )
 
-// recvMoveNoDeepCases pin the "NODEEP:" gate on the sweeps' deep field drop
-// (#3425 residual miscompile): the exit/return/precise sweeps free a
-// reclaimable struct local via emit_struct_field_drops → __struct_drop_<T>,
-// which walk-frees the box's rc-array fields (elements + buffer). That deep
-// walk is sound only while the dead box still OWNS those fields — but the
-// #3456 credit deliberately admits builder locals used as method RECEIVERS
-// (`ms.emit(op)`), and such a method can MOVE the receiver's field into its
-// result with no counted reference: `ops: self.ops.append(op)` hands the SAME
-// rc==1 buffer to the result whenever the append is in-place (spare
-// capacity). Deep-dropping the dead receiver then frees element boxes the
-// returned value still holds; the next allocation reuses them and the live
-// value reads foreign data. This is the exact mechanism that corrupted the
-// IR-built compiler's own Op streams when the merged bundle first compiled
-// irlower through the IR path. The fix keeps the credit (rebind reclaim +
-// box-only sweep dec both stay) but marks receiver / call-arg / struct-base
-// used locals "NODEEP:" so the sweeps withhold the deep drop.
+// recvMoveNoDeepCases pin the #3425 residual miscompile: a builder local used
+// as a method RECEIVER (`ms.emit(op)`) can have its field MOVED into the
+// method's result — `ops: self.ops.append(op)` hands the SAME rc==1 buffer to
+// the result whenever the append is in place (spare capacity). Releasing the
+// dead receiver must not free that buffer's element boxes: the returned value
+// still holds them, the next allocation reuses them, and the live value reads
+// foreign data. This is the mechanism that corrupted the IR-built compiler's
+// own Op streams when the merged bundle first compiled irlower through the IR
+// path.
 var recvMoveNoDeepCases = []struct {
 	name string
 	src  string
@@ -61,13 +54,10 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// The SNAPSHOT-LOCAL credit sibling: same chain, but ms is bound from a
-	// fresh-struct-returning CALL (`mk()`), so its bare reclaim credit comes
-	// from snapshot_local_names_of — a SECOND source appended after
-	// reclaimable_names_of that originally bypassed the NODEEP marking (this
-	// is the exact credit path behind the IR-built compiler's Op-stream
-	// corruption: lower_stmt_var/lower_expr's `let sb = se.add_local(..)` …
-	// `return sb.emit(..)` locals). Pre-fix exit 91, same mechanism.
+	// The SNAPSHOT-LOCAL sibling: same chain, but ms is bound from a
+	// fresh-struct-returning CALL (`mk()`) — the shape of the compiler's own
+	// `let sb = se.add_local(..)` … `return sb.emit(..)` locals. Pre-fix exit
+	// 91, same mechanism.
 	{"snapshot-local-receiver-move-survives-sweep", `struct P { x: i32 }
 struct S { ops: P[], n: i32 }
 function (self: S) emit(v: i32): S {

@@ -8,23 +8,18 @@ import (
 	"testing"
 )
 
-// #8527: `x = f(…, x, …)` where f hands its parameter back emitted NO exit
-// release for x at all.
+// #8527: `x = f(…, x, …)` where f hands its parameter back must still release x
+// at exit.
 //
 // A callee that returns its parameter gives the box back with no counted
 // reference (the convention #8240 settled: a returned param is an UNCOUNTED
-// alias). reclaimable_fresh_struct therefore refused the reclaim credit to any
-// name passed at such a position, because a SECOND name for that box would then
-// run a second release.
-//
-// A self-rebind makes no second name. One slot, one claim across the call, so
-// the exit sweep owes exactly one release — and withholding it strands the whole
-// value: zero `__struct_drop_<T>`, zero box dec in the caller.
+// alias). A self-rebind makes no second name for that box: one slot, one claim
+// across the call, so the exit sweep owes exactly one release — and withholding
+// it strands the whole value.
 //
 // THE EXIT CODE DOES NOT MOVE. A leak reads the same answer and never trips
 // __rc_underflow_count(), so the register legs below are here to catch a
-// miscompile from the change, not the defect: the LEAKCHECK leg is the gate,
-// and it takes native as the oracle rather than a written-down verdict.
+// miscompile, not the leak: the LEAKCHECK leg is the gate.
 //
 // Every case uses a plain array field. A nested-struct or rc-payload-enum field
 // leaks through a different hole (#8538, the shallow field release), which would

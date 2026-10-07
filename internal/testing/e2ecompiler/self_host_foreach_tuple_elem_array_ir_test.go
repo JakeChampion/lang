@@ -9,22 +9,12 @@ import (
 	"testing"
 )
 
-// A `for x in t.N` loop over a tuple ELEMENT that is itself an array now lowers
-// on the self-host IR path. The struct-field foreach path (`for c in r.cells`)
-// already snapshots an array it doesn't own into a hidden BORROW local (never
-// array-marked, so the exit-sweep never decs it) and walks it with explicit
-// arr_len / arr_get — the field buffer's lifetime stays with the owning value,
-// which leaks it, so the borrow can't double-free. A tuple element `t.N` of array
-// type is the same shape: the tuple is leak-only on the IR path (its box + arrays
-// are never freed), so its array element is an equally-safe read-only borrow. The
-// only difference from the struct-field case is the type SOURCE — the element type
-// comes from the tuple (expr_tuple_elem_tag), not a struct field decl — so the
-// classification was unified to read from either. Before this, `for x in t.1`
-// fell to lower_foreach_snapshot's owning `let $forit = t.1` bind, which can't
-// alias a leak-only tuple's array, and the whole module dropped to the legacy AST
-// emitter. Found by differential probing; each case is oracle-checked and pinned
-// "ir". Scalar-array tuple elements (i32[]/f64[]/i64[]) stay deferred (they need
-// the width-typed element read, like the struct-field scalar arrays).
+// A `for x in t.N` loop over a tuple ELEMENT that is itself an array lowers on
+// the self-host IR path. Like the struct-field loop (`for c in r.cells`), it
+// walks a borrow of an array the tuple owns, with the element type taken from
+// the tuple's type rather than a struct field decl. Found by differential
+// probing; each case is oracle-checked and pinned "ir". Scalar-array tuple
+// elements (i32[]/f64[]/i64[]) are not covered here.
 var foreachTupleElemArrayIRCases = []struct {
 	name string
 	src  string

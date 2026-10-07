@@ -3,12 +3,10 @@ package e2ecompiler
 import "testing"
 
 // tryTupleIRCases pin the `?` (try) operator on a TUPLE success payload on the
-// self-host IR path — the last `?`-payload shape that bailed to AST (after
-// #3810's string/enum and #3822's f64). A tuple is pointer-boxed, so the
-// success read is the default pointer-width op_opt_payload (exactly like a
-// struct); the `let t: (A, B) = inner?` binding types t's slot via
-// mark_tuple_elems from its annotation so a later `t.N` resolves each element.
-// Each case is value-pinned against the native interpreter oracle.
+// self-host IR path. A tuple is pointer-boxed, so the success read is the
+// default pointer-width op_opt_payload (exactly like a struct); the
+// `let t: (A, B) = inner?` binding types t from its annotation so a later `t.N`
+// resolves each element. Each case is value-pinned against the interpreter.
 var tryTupleIRCases = []struct {
 	name string
 	src  string

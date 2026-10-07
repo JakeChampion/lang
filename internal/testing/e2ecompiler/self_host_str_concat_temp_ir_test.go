@@ -6,11 +6,11 @@ import (
 )
 
 // strConcatTempIRCases pin the anonymous-temporary reclaim of FRESH string concat
-// OPERANDS on the self-hosted stack-IR path (#2649). In `X + Y`, an operand that is
-// a fresh anonymous temp — a string literal (`s + "x"`: const_str allocs a box) or
+// OPERANDS on the self-hosted IR path (#2649). In `X + Y`, an operand that is a
+// fresh anonymous temp — a string literal (`s + "x"`: const_str allocs a box) or
 // a fresh producer (a nested concat `a + b + c`, a method, a named producer) — is
-// dead the instant the concat has read it, so emit_str_concat_reclaim frees it via
-// __fern_str_free right after. A bare-ident / field operand (an ALIAS) is excluded.
+// dead the instant the concat has read it, so it is freed via __fern_str_free
+// right after. A bare-ident / field operand (an ALIAS) is not.
 var strConcatTempIRCases = []struct {
 	name     string
 	src      string
@@ -47,23 +47,17 @@ var strConcatTempIRCases = []struct {
 	// __fern_str_free site), while the ALIASED operands a/b are never freed;
 	// the exit code proves the values survive.
 	//
-	// a and b are PARAMETERS, which is what makes them un-reclaimable and lets the
-	// count isolate the result temp. Two alternatives do not work. Bare literal-init
-	// locals: a concat operand is a borrow, so `let a = "ab"` used only there earns
-	// the ordinary literal-local reclaim and the count stops isolating anything.
-	// Locals aliased by `let ka = a` — what this case used before #7282 — no longer
-	// suppress the reclaim either: an alias now retains the box and both slots
-	// release it, so the operands were freed and the count went 1 → 9.
-	// A parameter is refused by slot_is_reclaimable_str's first line, which is a
-	// property of the class rather than of an escape scan, so it cannot drift back.
+	// a and b are PARAMETERS, which f never frees, so the count isolates the
+	// result temp. A literal-init local would not do: a concat operand is a
+	// borrow, so `let a = "ab"` used only there earns the ordinary literal-local
+	// reclaim and the count stops isolating anything.
 	// ("ab"+"cde").len() + 2 + 3 = 10.
 	{"ident-operands-result-only",
 		`@noinline function f(a: string, b: string): i32 { return (a + b).len() + a.len() + b.len(); } function main(): i32 { return f("ab", "cde"); }`,
 		10, 1, "f"},
 	// A scalar `.to_string()` operand (`"n" + w.to_string()`) is the builtin
-	// fresh producer — freed after the concat (#4353 concat-temp finding: it
-	// was the one producer is_fresh_str_temp missed, leaking the temp per
-	// evaluation). Heap-bump flat across 5000 iterations.
+	// fresh producer — freed after the concat (#4353). Heap-bump flat across
+	// 5000 iterations.
 	{"tostring-operand-churn",
 		`import "std/i32";
 function main(): i32 {

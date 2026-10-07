@@ -69,10 +69,10 @@ func TestSelfHostCaptureLambdaX86IR(t *testing.T) {
 		{"capture-param", `function f(base: i32): i32 { let g = (x: i32): i32 => { return x * base; }; return g(3) + g(4); } function main(): i32 { return f(10); }`, 70},
 		{"multi-capture", `function main(): i32 { let a: i32 = 7; let b: i32 = 3; let combine = (x: i32): i32 => { return x + a - b; }; return combine(10); }`, 14},
 		{"capture-in-loop", `function main(): i32 { let step: i32 = 2; let bump = (x: i32): i32 => { return x + step; }; let total: i32 = 0; let i: i32 = 0; while (i < 3) { total = bump(total); i = i + 1; } return total; }`, 6},
-		// Unannotated literal captures: cap_type now infers the type from an
-		// array / struct LITERAL initializer (lit_init_type), so `let a =
-		// [..]` / `let p = P{..}` captures lift like the annotated/param cases
-		// (the capture flows as an ordinary typed argument — no env box, no RC).
+		// Unannotated literal captures: the capture's type comes from its array /
+		// struct LITERAL initializer, so `let a = [..]` / `let p = P{..}` captures
+		// lift like the annotated/param cases (the capture flows as an ordinary
+		// typed argument — no env box, no RC).
 		{"arr-literal-capture", `function main(): i32 { let a = [10, 20, 30]; let len = (): i32 => { return a.len(); }; return len(); }`, 3},
 		{"arr-literal-index", `function main(): i32 { let a = [3, 5, 9]; let third = (): i32 => { return a[2]; }; return third(); }`, 9},
 		{"strarr-literal-capture", `function main(): i32 { let a = ["x", "y"]; let len = (): i32 => { return a.len(); }; return len(); }`, 2},

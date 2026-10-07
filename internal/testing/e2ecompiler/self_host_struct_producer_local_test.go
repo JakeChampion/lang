@@ -10,34 +10,22 @@ import (
 
 // --- A struct producer that returns a LOCAL (#7343) --------------------------
 //
-// `function mk(): P { let p: P = P { xs: [..] }; return p; }` handed its caller
-// a box no reclaim credit covered, so every `let v: P = mk()` leaked the struct,
-// its buffer and its string: 128 B/round, unbounded, against 0 on native and
-// interp. The byte-identical producer that returns the literal DIRECTLY was
-// already admitted, so one extra statement in the callee was the whole
-// difference.
+// `function mk(): P { let p: P = P { xs: [..] }; return p; }` hands its caller
+// a fresh box exactly as the byte-identical producer returning the literal
+// DIRECTLY does, so every `let v: P = mk()` must release the struct, its buffer
+// and its string; missing it leaks 128 B/round, unbounded.
 //
-// The gate is `return_value_is_strictfresh_struct`, which had an ExprStructLit
-// arm and an ExprCall forwarding arm and no ExprIdent arm at all. It already
-// receives `fnbody`, `fnparams`, `arr_fresh`, `fwd` and `sfok`, so the proof
-// needed no signature change — the issue's own "signature change rather than a
-// two-line edit" framing named a different predicate (`fresh_struct_ret_fns_of`,
-// the LOOSE registry, consumed only by snapshot_local_names_of).
-//
-// WHY THIS WAITED FOR #7349. Applied to the name-keyed table, this exact
-// widening SIGSEGVd — `sibling_alias` below at exit 139, not an rc counter,
-// because the same-named alias inherited the newly granted credit and freed the
-// caller's box. Site-keying the struct credit was a precondition, not a parallel
-// cleanup, and this suite pins that it now holds: `sibling_alias` and
-// `sibling_alias_renamed` measure identically.
+// The over-release guard is `sibling_alias`: two same-named `v`, one from the
+// producer and one aliasing a parameter. The release must be keyed per binding
+// site, not per name (#7349), or the alias frees the caller's box (exit 139).
+// `sibling_alias` and `sibling_alias_renamed` must measure identically.
 //
 // The hazard rows are half the suite: a returned PARAMETER, an aliased local, a
 // reassigned one, two declarations of the name, and a receiver call that moves
-// a field out. Each must exit its oracle answer; on the typed lowering every
-// row balances.
+// a field out. Each must exit its oracle answer, and every row balances.
 //
-// Every want was confirmed against BOTH oracles — bin/fern -interp and the
-// native x86-64 backend agreed on each — never read off the self-host run.
+// Every want was confirmed against bin/fern -interp, never read off the
+// self-host run.
 //
 // Counts here are ONE block per heap string: #7351 fused the box into the
 // buffer's reserved header. A pre-fusion number quoted in a row note below is
@@ -93,7 +81,7 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 200) { t = t +
 			// box rather than a static one.
 			name: "minimal_array_field",
 			src: `struct P { xs: i32[] }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function mk(): P { let p: P = P { xs: id([1, 2, 3]) }; return p; }
 function round(i: i32): i32 { let v: P = mk(); return v.xs.len(); }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
@@ -151,18 +139,11 @@ function main(): i32 {
 			want: 1, allocs: 102, frees: 102,
 		},
 		{
-			// ADMITTED, and deliberately so after being measured rather than
-			// assumed. `let stolen: i32[] = p.xs;` before `return p` takes a second
-			// reference to the buffer the caller's deep drop frees — but `stolen` is
-			// a local of the producer's own frame and dies at its exit, so the drop
-			// is balanced: 200/200 at live_bytes 0, underflow 0, both oracles
-			// agreeing, against 200/0 (8000) before.
-			//
-			// Worth knowing precisely: NEITHER moves_fields_stmts NOR
-			// optstruct_body_moves_field reports this shape — a bare field READ is
-			// the blind spot #7259 records — so it is admitted on the measurement
-			// plus frame locality, not on a predicate. If this class ever
-			// over-releases, this row is the first suspect.
+			// ADMITTED: `let stolen: i32[] = p.xs;` before `return p` takes a
+			// second reference to the buffer the caller's deep drop frees — but
+			// `stolen` is a local of the producer's own frame and dies at its exit,
+			// so the drop is balanced: 200/200 at live_bytes 0, underflow 0. If
+			// this class ever over-releases, this row is the first suspect.
 			name: "field_read_admitted",
 			src: `struct P { xs: i32[] }
 function mk(i: i32): P { let p: P = P { xs: [i, i + 1] }; let stolen: i32[] = p.xs; return p; }
@@ -171,14 +152,12 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 34, allocs: 200, frees: 200,
 		},
 		{
-			// REFUSED by this registry — `return p` where p is a PARAMETER is the
-			// `return self` shape it exists to refuse. The row balances all the
-			// same since #9203: the handback is counted, so `v` earns the struct
-			// credit from cnt_struct_ret_fns and `src` keeps its own, each walking
-			// its fields only on finding rc 1. It leaked 8000 before that.
+			// A returned PARAMETER — the `return self` shape. The handback is
+			// counted (#9203), so `v` and `src` each release their fields only on
+			// finding rc 1, and the row balances. It leaked 8000 before that.
 			name: "refused_param_returned",
 			src: `struct P { xs: i32[] }
-function mk(p: P): P { return p; }
+@noinline function mk(p: P): P { return p; }
 function round(i: i32): i32 { let src: P = P { xs: [i, i + 1] }; let v: P = mk(src); return v.xs.len(); }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 34, allocs: 200, frees: 200,
@@ -196,13 +175,10 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 		},
 		{
 			// ADMITTED — the local is reassigned, but EVERY write is itself a
-			// strict-fresh literal, so the final box is frame-fresh whichever
-			// write produced it: the caller's binding earns the credit and the
-			// callee's rebind frees the superseded literal (the widened
-			// struct_ret_local_is_frame_fresh + the snapshot-local literal arm).
-			// This row pinned the pre-widening refusal at frees=0; an alias, a
-			// second declaration, or a field move still sink the credit — the
-			// refused rows below are the soundness boundary.
+			// fresh literal, so the final box is fresh whichever write produced
+			// it: the caller's binding releases it and the callee's rebind frees
+			// the superseded literal. An alias, a second declaration, or a field
+			// move are the refused rows below.
 			name: "admitted_reassigned_all_fresh",
 			src: `struct P { xs: i32[] }
 function mk(i: i32): P { let p: P = P { xs: [i, i + 1] }; p = P { xs: [i + 2, i + 3] }; return p; }
@@ -212,9 +188,7 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 		},
 		{
 			// Two declarations of the same spelling in sibling blocks. Each is its
-			// own binding (lexical.fern), so the init witness is the declaration's
-			// own literal and the credit resolves for both; same as
-			// arr_field_ident_is_frame_built.
+			// own binding (lexical.fern), so each hands back its own literal.
 			name: "two_declarations",
 			src: `struct P { xs: i32[] }
 function mk(i: i32): P {

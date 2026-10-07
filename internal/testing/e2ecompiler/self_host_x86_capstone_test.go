@@ -10,7 +10,7 @@ import (
 )
 
 // TestSelfHostX86Capstone is the milestone of the native-binary track: it
-// takes the AT&T assembly the self-hosted compiler (asm.fern) emits for a
+// takes the AT&T assembly the self-hosted compiler (asm_run.fern) emits for a
 // real Fern program, feeds that text through the self-hosted GAS front-end
 // (x86_native.fern PART 2) + ELF writer (elf.fern), and runs the resulting binary
 // NATIVELY on x86-64 — with no external `as` or `ld` anywhere.
@@ -28,7 +28,7 @@ import (
 //
 // The table spans arithmetic, loops, if/else, comparisons (setCC), calls,
 // recursion, floats, strings, and heap types (struct / array) — the last
-// exercising asm.fern's full alloc/memcpy runtime through the assembler.
+// exercising the emitted alloc/memcpy runtime through the assembler.
 func TestSelfHostX86Capstone(t *testing.T) {
 	if runtime.GOARCH != "amd64" {
 		t.Skip("native x86-64 run requires an amd64 host")
@@ -106,11 +106,9 @@ func TestSelfHostX86Capstone(t *testing.T) {
 		// SIB-indexed 64-bit loads no scan kernel emits.
 		{"mismatch", "function main(): i32 { let a = \"aaaaaaaaaaaaaaaaaaaabaaa\"; let b = \"aaaaaaaaaaaaaaaaaaaacaaa\"; return __mismatch(a, 0, b, 0, 24) + 22; }\n", 42, ""},
 		{"mismatchwindow", "function main(): i32 { let a = \"abcdefghijklm\"; let b = \"abcdefghijXlm\"; return __mismatch(a, 0, b, 0, 13) + 32; }\n", 42, ""},
-		// NOTE: f64 `.sqrt()`/`.floor()`/`.ceil()`/`.trunc()` are an asm.fern
-		// gap — it emits `call __fn_f64__sqrt` etc. without emitting those
-		// method bodies (an undefined reference even for gcc), so they aren't
-		// capstone cases. Their SSE encoders (sqrtsd / roundsd) are
-		// byte-verified in TestSelfHostX86Encode for when asm.fern emits them.
+		// f64 `.sqrt()`/`.floor()`/`.ceil()`/`.trunc()` are not capstone
+		// cases; their SSE encoders (sqrtsd / roundsd) are byte-verified in
+		// TestSelfHostX86Encode.
 	}
 
 	for _, tc := range cases {

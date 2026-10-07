@@ -7,39 +7,32 @@ import (
 	"testing"
 )
 
-// dynCallReclaimCases pin the #4351 slice that closes the three remaining
-// NON-LITERAL-initialiser holes in dyn-payload reclaim:
+// dynCallReclaimCases pin dyn-payload reclaim for NON-LITERAL initialisers
+// (#4351):
 //
 //  1. A STRICT-FRESH CALL result (`let d: dyn T = mk(k)`, `= f.make(k)`) is
-//     credited "DYN:<name>|<Concrete>" and released by the exit sweep, exactly
-//     as a struct-LITERAL init already was. Only the literal / prim /
-//     variant-ctor arms of collect_dyn_struct_in_stmt used to credit, so a call
-//     result fell through and leaked the concrete's whole rc-headered box —
-//     40 B/round on x86-64 for a scalar-only concrete, 88 with an rc field.
+//     this frame's rc==1 box and is released at scope exit, exactly as a
+//     struct-LITERAL init is.
 //  2. A COMPUTED non-string PRIMITIVE payload (`let d: dyn T = k * 2`). The
 //     coercion COPIES the value into a fresh op_dyn_box cell, so the local owns
-//     that cell however the value was produced — but only a prim LITERAL was
-//     credited, and everything else leaked the 40-byte cell.
-//  3. A dyn local declared inside an if / while / for / match BODY. The credit
-//     is keyed by name and retire_locals renames a block-scoped slot to
-//     "!retired!<name>" on block exit, so the sweep and the entry-zeroing both
-//     missed it — a literal payload leaked there too.
+//     that cell however the value was produced.
+//  3. A dyn local declared inside an if / while / for / match BODY is released
+//     on block exit like one at function scope.
 //
 // The flat cases RETURN THE MEASURED BYTES PER ROUND (clamped at 95) rather
-// than a boolean verdict, so a regression reports its own size: pre-fix the
-// main case exits 40, post-fix 0. 99 = rc over-release, 97 = the two churns
+// than a boolean verdict, so a regression reports its own size (a leaked
+// scalar-only concrete reads 40). 99 = rc over-release, 97 = the two churns
 // disagreed (a value was corrupted), 96 = wrong answer.
 //
-// The gate cases must NOT move: a bare-ident STRUCT alias, a non-strict-fresh
-// (identity) callee, a PARAM receiver whose type the AST scan cannot resolve,
-// an escaping `return d`, and a STRING payload behind a non-literal init (its
-// cell holds a pointer to a box that may be borrowed) all stay uncredited — a
-// sound leak. Each reads its aliased source AFTER the dyn local is done with
-// it, so an over-admission surfaces as a wrong answer or an underflow tick
-// rather than as silence.
+// The gate cases must not over-release: a bare-ident STRUCT alias, a
+// non-strict-fresh (identity) callee, a PARAM receiver, an escaping
+// `return d`, and a STRING payload behind a non-literal init (its cell holds a
+// pointer to a box that may be borrowed). Each reads its aliased source AFTER
+// the dyn local is done with it, so an over-release surfaces as a wrong answer
+// or an underflow tick rather than as silence.
 //
-// They run under FERN_STRICT_IR=1 (#6602): a per-function bail would reach the
-// same exit code by the AST route on the commit the fix has not landed on.
+// They run under FERN_STRICT_IR=1 (#6602), so a function the IR path cannot
+// lower fails the case rather than passing.
 var dynCallReclaimCases = []struct {
 	name string
 	src  string
@@ -56,8 +49,8 @@ function go(k: i32): i32 { let d: dyn Shape = mk(k); return d.area(); }
 function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + go(3)) % 251; i = i + 1; } return acc; }
 function main(): i32 { let w: i32 = churn(2000); let b1: i64 = __heap_bump_bytes(); let x: i32 = churn(2000); let b2: i64 = __heap_bump_bytes(); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } let per: i64 = (b2 - b1) / 2000; if (per > 95) { per = 95; } return (per as i32); }`, 0},
 
-	// An rc-ARRAY field on the concrete: the sweep has to reach
-	// __struct_drop_Circle for the tags buffer, not just dec the box.
+	// An rc-ARRAY field on the concrete: releasing the dyn local has to release the
+	// tags buffer through Circle's drop, not just dec the box.
 	{"call-result-rc-field-concrete", `trait Shape { function area(self: Self): i32; }
 struct Circle { r: i32, tags: i32[] }
 impl Shape for Circle { function area(self: Self): i32 { return self.r * self.r + self.tags[0]; } }
@@ -92,7 +85,7 @@ function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0
 	{"identity-callee-excluded", `trait Shape { function area(self: Self): i32; }
 struct Square { side: i32 }
 impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }
-function ident(s: Square): Square { return s; }
+@noinline function ident(s: Square): Square { return s; }
 function go(k: i32): i32 { let live: Square = Square { side: k }; let d: dyn Shape = ident(live); let a: i32 = d.area(); return a + live.side; }
 function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { if (go(3) != 12) { bad = 96; } i = i + 1; } return bad; }
 function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
@@ -152,8 +145,8 @@ function go(k: i32): i32 { let s: string = "abcd"; let d: dyn Show = s; let a: i
 function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { if (go(3) != 8) { bad = 96; } i = i + 1; } return bad; }
 function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`, 0},
 
-	// GATE: `return d` escapes the box to the caller — body_unsafe_for refuses,
-	// and the caller's dispatch has to still find a live payload.
+	// GATE: `return d` escapes the box to the caller, so it is not released
+	// here and the caller's dispatch still finds a live payload.
 	{"escaping-dyn-excluded", `trait Shape { function area(self: Self): i32; }
 struct Square { side: i32 }
 impl Shape for Square { function area(self: Self): i32 { return self.side * self.side; } }

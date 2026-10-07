@@ -8,20 +8,15 @@ import (
 	"testing"
 )
 
-// --- The last name-keyed reclaim credits, keyed on the binding (#7253) -------
-//
-// The final block of #7253 step 1, and the one that RETIRES reclaim_slot_name:
-// "ARRTUP:", "ARRSTRUCT:", "ARRSTRUCTA:", "ARRENUM:", "STRUCTARR:",
-// "STRUCTARRA:", "RCENUM:", "RCENUMS:", "SCENUMS:" and the "DYN:" / "DYNCAND:"
-// pair. After it, nothing in irlower.fern resolved a reclaim credit by name.
+// --- Reclaim verdicts are keyed on the binding, not the name (#7253) ---------
 //
 // A name has no scope, so two same-named locals in sibling blocks must each
 // keep their own reclaim verdict. A collision shows as a release landing on a
 // box the other local still owns (exit 99 on __rc_underflow_count()), a stray
 // release masking a leak, or a denied release; the census alone cannot see the
 // first. Every row is therefore asserted on the exit code AND on exact counts,
-// and each colliding row must match its rename control. On the typed lowering
-// every pair has identical, balanced censuses.
+// and each colliding row must match its rename control: every pair has
+// identical, balanced censuses.
 //
 // `arrenum_collide` needs an rc-bearing payload: the `A(i32)` version of the
 // same program never reaches the credit at all.
@@ -29,8 +24,8 @@ import (
 // The `credited_*` rows pin that every class still reclaims where there is no
 // collision.
 //
-// Every want was confirmed against BOTH oracles — bin/fern -interp and the
-// native x86-64 backend agreed on each — never read off the self-host run.
+// Every want was confirmed against bin/fern -interp, never read off the
+// self-host run.
 
 type finalKeyCase struct {
 	name   string

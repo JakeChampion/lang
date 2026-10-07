@@ -5,20 +5,16 @@ import (
 	"testing"
 )
 
-// The self-host port of the #4873 containment (the native fix's sibling —
-// see internal/testing/e2e/append_borrowed_param_test.go): a callee's consume-form
-// append (op_arr_push) mutates its receiver buffer in place at rc==1, and a
-// borrowed PARAM's buffer is aliased by the caller at the same rc — so
-// `let c = grow(a, 3)` with `a` kept live silently grew `a` on the
-// self-host IR path (22 expected, 23 observed). The port threads may-grow
-// flags ('4') through fn_param_sigs and brackets surviving ident args at
-// call sites with __fern_rc_inc/dec, exempting the dying self-reassign /
-// return-position shapes so accumulator chains stay O(n).
+// #4873: a callee's consume-form append (op_arr_push) mutates its receiver
+// buffer in place at rc==1, and a borrowed PARAM's buffer is aliased by the
+// caller at the same rc — so `let c = grow(a, 3)` with `a` kept live must not
+// grow `a` (22, not 23). A surviving ident arg holds its own count across the
+// call; the dying self-reassign / return-position shapes stay in place so
+// accumulator chains stay O(n).
 //
-// The struct / nested-field shapes were ALREADY correct on the self-host
-// (their field-read appends route through the clone-form
-// lower_arr_append_value) — pinned here as regression guards alongside the
-// bare-param fixes. Exit codes cross-checked against native -interp.
+// The struct / nested-field shapes append through the clone form and are
+// pinned as regression guards alongside the bare-param cases. Exit codes are
+// cross-checked against -interp.
 var selfHostAppendBorrowedCases = []struct {
 	name string
 	src  string

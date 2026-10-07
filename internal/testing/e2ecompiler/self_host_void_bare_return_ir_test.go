@@ -3,14 +3,9 @@ package e2ecompiler
 import "testing"
 
 // voidBareReturnIRCases pin a VOID function with an explicit bare `return;`
-// (value-less) to the self-host IR path on x86-64 + wasm. parse_expr yields an
-// ExprUnknown for the missing return value, which lower_expr couldn't lower, so the
-// StmtReturn arm bailed the whole module to the legacy AST emitter — affecting
-// every void helper with an early `return;` (the common guard-clause shape in the
-// CLI tools). #2691 detects the ExprUnknown (only reachable in a void function;
-// the checker rejects a value-less return elsewhere) and emits a dummy 0 before
-// the exit dec-sweep + op_return, mirroring `return 0` (a void caller ignores the
-// result). Each case is oracle-checked against the interpreter and returns <= 126.
+// (value-less) on the self-host IR path on x86-64 + wasm (#2691) — the common
+// guard-clause shape in the CLI tools. Each case is oracle-checked against the
+// interpreter and returns <= 126.
 var voidBareReturnIRCases = []struct {
 	name string
 	main string

@@ -220,11 +220,9 @@ function main(): i32 {
 	// #6604: the same box, in the same borrow positions, with no NAME at all. An
 	// ANONYMOUS slice temp — `"x" + s[0:1]`, `s[a:b].len()`, `s[a:b] == "x"`,
 	// `s[a:b][i]`, `s[a:b][c:d]` — is consumed by the operator that built it, so it
-	// cannot outlive either the frame or its own site, yet every one of them took a
-	// heap box until now. Measured on the issue's struct-rebind reproducer, x86-64:
-	// 9736 / 19200 fresh bytes at 50 / 100 rounds before, 136 / 0 after (native is
-	// 64 / 0). The temps have no binding for view_frame_names_of to approve, which is
-	// why the whitelist for them lives at the lowering CALL SITE instead.
+	// cannot outlive either the frame or its own site, and must not take a heap
+	// box. Measured on the issue's struct-rebind reproducer, x86-64: 9736 / 19200
+	// fresh bytes at 50 / 100 rounds with a heap box per temp, 136 / 0 without.
 	{"strview-temp-loop-flat", `function main(): i32 {
     let s: string = "hello world";
     let acc: i32 = 0;

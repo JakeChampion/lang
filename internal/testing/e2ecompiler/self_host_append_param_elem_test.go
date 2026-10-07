@@ -7,12 +7,11 @@ import (
 // --- A struct element a CALLEE appends is owned by the array, not the caller
 //
 // `emitf(s, o) { return St { ops: s.ops.append(o) }; }` — the self-host's own
-// state-threading shape — stored the
-// caller's box into the array without retaining it. The caller then released it
-// on the binding's next rebind, and the array was left pointing at freed
-// memory.
+// state-threading shape — must retain the caller's box as it stores it. Without
+// the retain the caller releases the box on the binding's next rebind, and the
+// array is left pointing at freed memory.
 //
-// It surfaced as a WRONG ANSWER, and every counter read healthy while it did.
+// That defect shows as a WRONG ANSWER while every counter reads healthy.
 // Reading the elements back after three appends, `t = t * 10 + st.ops[k].a`:
 //
 //	                                  answer   allocs/frees   live
@@ -28,13 +27,11 @@ import (
 // answer correctly because no allocation recycles the freed box before the
 // read; the third one does, and elements 0 and 2 then alias — hence 212.
 //
-// The fix is the counted-store contract, in the two halves it always takes.
-// `lower_arr_append_value` retains a struct element that is a borrowed
-// PARAMETER (the enum arm directly above it has done this since #6049), and
-// `param_counted_of` grows a "PCNT:" tier so a caller handing over a fresh temp
-// emits the matching post-call release. Either half alone leaks: the retain
-// with no credit leaves the temp unreleased, the credit with no retain releases
-// a box nobody counted.
+// The counted-store contract has two halves. The append retains a struct
+// element that is a borrowed PARAMETER, and a caller handing over a fresh temp
+// emits the matching post-call release. Either half alone is wrong: the retain
+// with no release leaks the temp, the release with no retain frees a box
+// nobody counted.
 //
 // A LOCAL is excluded from the retain, and that exclusion is the whole
 // precision of the test: a local that escapes into a container has already lost
@@ -43,8 +40,8 @@ import (
 // the other side — the caller transferred its reference rather than keeping
 // one.
 //
-// Every want below was confirmed against BOTH oracles — bin/fern -interp and
-// the native x86-64 backend agreed on each — never read off the self-host run.
+// Every want below was confirmed against bin/fern -interp, never read off the
+// self-host run.
 
 const appendParamElemProlog = "struct Op { a: i32, b: i32 }\n" +
 	"struct St { ops: Op[] }\n" +
@@ -76,9 +73,8 @@ func appendParamElemCases() []struct{ name, inner string } {
 		// fire — the local's own escape already gave the array sole ownership,
 		// and a retain here would leak.
 		{"inline_local", "let o: Op = mkop(j); st = St { ops: st.ops.append(o) };"},
-		// A fresh temp handed to the callee: the "PCNT:" credit's own row. The
-		// retain fires inside the callee, and the caller's post-call release is
-		// what nets it.
+		// A fresh temp handed to the callee. The retain fires inside the
+		// callee, and the caller's post-call release is what nets it.
 		{"temp", "st = st.emit(mkop(j));"},
 		// An `own` parameter — a reference the caller TRANSFERRED. Retaining it
 		// would leave the array holding two claims and the caller none. (The

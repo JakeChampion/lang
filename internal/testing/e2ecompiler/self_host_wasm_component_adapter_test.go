@@ -10,18 +10,17 @@ import (
 )
 
 // TestSelfHostWasmComponentAdapter exercises the *adapter* route to I/O
-// components — the way the native compiler's `-wasi-adapter` option works.
-// The self-host emits a normal WASI-preview1 *command* core (which it
-// already does perfectly, including fd_write for output); composing that
-// core with the preview1→preview2 adapter via `wasm-tools component new
-// --adapt` yields a wasi:cli/run component that runs under wasmtime with
-// real I/O — no preview2 codegen needed.
+// components. The self-host emits a normal WASI-preview1 *command* core
+// (including fd_write for output); composing that core with the
+// preview1→preview2 adapter via `wasm-tools component new --adapt` yields a
+// wasi:cli/run component that runs under wasmtime with real I/O — no preview2
+// codegen needed.
 //
 // Pipeline: source → wasm_run (preview1 WAT) → emit_binary (preview1 core)
 // → wasm-tools component new --adapt → wasi:cli/run component.
 //
-// (component_full / emit_module_run cover the adapter-free no-I/O path;
-// this covers the adapter path, which works for printing / file I/O too.)
+// (TestSelfHostWasmComponentFull covers the adapter-free no-I/O path; this
+// covers the adapter path, which works for printing / file I/O too.)
 func TestSelfHostWasmComponentAdapter(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

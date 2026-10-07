@@ -13,24 +13,20 @@ import (
 //
 // Two residues of the bare-ident tuple element retain/release pair:
 //
-//  1. A tuple literal with ANY compound scalar element — `(i + 1, ys)` — was
-//     refused by tuple_lit_is_fresh_scalar (Number/Bool/Ident leaves only) and
-//     by the all-scalar annotation leg, so the whole tuple lost its release:
-//     allocs=2 frees=0 on one round against 0 on native. The binding's
-//     annotation names every element's type, so tuple_ann_admits_fresh_mixed
-//     admits per-position: a scalar position may hold any expression, an rc
-//     position must stay a bare ident.
-//  2. The assign-form rebind `t = (k, ys)` freed the superseded box through
-//     emit_arr_store's SHALLOW dec, stranding the box's retained element
-//     buffer (40 B/round). The StmtVar re-declaration has driven
-//     emit_tup_elem_reclaim_store all along; the assign path now takes it too.
+//  1. A tuple literal with ANY compound scalar element — `(i + 1, ys)` — must
+//     still be released (it lost its release entirely: allocs=2 frees=0 on one
+//     round). The binding's annotation names every element's type, so a scalar
+//     position may hold any expression while an rc position stays a bare
+//     ident.
+//  2. The assign-form rebind `t = (k, ys)` must free the superseded box's
+//     retained element buffer too, as the `let` re-declaration does (40 B/round
+//     stranded otherwise).
 //
 // The STRING position at that same rebind, and the writer agreement it needs,
 // are in self_host_tuple_str_rebind_test.go.
 //
-// Every want below was confirmed against BOTH oracles — bin/fern -interp and
-// the native x86-64 backend agreed on each — never read off the self-host run
-// under test.
+// Every want below was confirmed against bin/fern -interp, never read off the
+// self-host run under test.
 
 type tupMixedAnnCase struct {
 	name string

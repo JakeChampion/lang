@@ -8,39 +8,19 @@ import (
 	"testing"
 )
 
-// --- A string handed to a struct-literal FIELD loses its own release ---------
+// --- A string handed to a struct-literal FIELD keeps its own release ---------
 //
 // `let src: string = w("k"); let p: P = P { f: src, n: i };` with `src` read
-// afterwards freed 100 of 300 boxes over 100 rounds where native freed all 300.
-// The `str` column of the construction-retain matrix; the `local` cell of it.
+// afterwards: the literal retains the field and the struct's drop decs it back,
+// while `src` keeps its own reference and releases it at scope exit. The `str`
+// column of the construction-retain matrix; the `local` cell of it.
 //
-// BOTH SIDES ALREADY FIRE. The literal retains the field (the ExprStructLit
-// lowering's `cfft == "string" && slit_reclaim` arm) and __struct_drop_P decs it
-// back. What was missing is the SOURCE's own claim: the struct-literal store
-// reads as a store into a container, so `src` never earned "STR:" and the box it
-// still holds at scope exit was never swept. inc 1, dec 1, and a reference
-// nothing releases.
+// With `src` dead after the literal the store MOVES it: the struct takes over
+// the source's reference, no retain fires, and the struct's drop alone frees it
+// — releasing the source as well would be an over-release. A RETURNED holder
+// runs no field drop, so the field's reference travels with it.
 //
-// The gate is the MOVE SITE, and it is what makes this a carve-out rather than a
-// blanket accept. With `src` dead after the literal the store MOVES it: the box
-// takes over the source's reference, moves_local_at elides the retain, and
-// __struct_drop_P alone frees it — already correct, and granting the source a
-// release there would be an over-release rather than a leak. So the forgiveness
-// is granted only where the retain actually fires, which is the same
-// co-extensivity rule the alias bind and the alias reassign are held to.
-//
-// Two more conditions, one per remaining way the pair could come apart. The
-// holder must have earned its OWN struct credit — a RETURNED holder runs no
-// field drop, so the retain would have nothing to give it back. And the type
-// must route field reclaim, or __struct_drop_<T> carries no string arm at all.
-//
-// Ordering makes a classifier mismatch a sound leak rather than a double free:
-// the exit sweep's struct loop runs BEFORE its string loop, so the field drop
-// always precedes the local's free. That is the same guarantee the closure and
-// tuple interlocks rest on.
-//
-// Every want below was confirmed against the native x86-64 backend, which is
-// clean on all seven. Exit 99 is reserved for __rc_underflow_count().
+// Exit 99 is reserved for __rc_underflow_count().
 //
 // Counts here are ONE block per heap string: #7351 fused the box into the
 // buffer's reserved header. A pre-fusion number quoted in a row note below is
@@ -131,10 +111,8 @@ func structFieldStrSourceCases() []structFieldStrSourceCase {
 		{
 			// THE MOVED CONTROL, and the row that says why the gate is the move
 			// site. `src` is dead after the literal, so the store TRANSFERS the
-			// box: no retain, and __struct_drop_P is the one release. Already
-			// clean at 300/300 before this change and unchanged by it. If it ever
-			// moves ABOVE 300 the forgiveness has reached a moved store and is
-			// releasing a box the holder took over.
+			// box: no retain, and P's drop is the one release. Releasing the
+			// source as well would free a box the holder took over (exit 99).
 			name: "moved_field_source_unchanged",
 			src: sfssPrelude + `function round(i: i32): i32 {
     let src: string = w("k");

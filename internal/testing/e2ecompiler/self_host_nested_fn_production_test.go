@@ -130,9 +130,7 @@ func TestSelfHostNestedFnProduction(t *testing.T) {
 }
 
 // TestSelfHostNestedFnProductionRunsX86_64 pins both spellings to the same
-// answer. It passes on either side of the fix — a refused module falls back to
-// the AST lowering and runs anyway — and is here so the production gain cannot
-// be bought with a miscompile.
+// answer, so the production gain cannot be bought with a miscompile.
 func TestSelfHostNestedFnProductionRunsX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 

@@ -10,34 +10,18 @@ import (
 )
 
 // optaarrForInCases pin the #7414 widening: an `Option[<scalar-arr>][]` local
-// iterated with `for o in xs` keeps its "OPTAARR:" credit when the loop variable
-// stays confined to the loop, and loses it — back to the leak-safe shallow buffer
-// dec — when anything reachable from the loop body could outlive it.
+// iterated with `for o in xs` is deep-reclaimed — option boxes and payload
+// buffers — when the loop variable stays confined to the loop (read only as the
+// bare scrutinee of a `match (o)` whose bindings do not escape the arm), and
+// keeps every box alive when anything reachable from the loop body could
+// outlive it.
 //
-// Before the widening, arrarr_row_escapes refused EVERY `for o in xs` outright,
-// so the issue's repro leaked the option boxes and their payload buffers whole:
-// 150 rounds measured allocs=750 frees=150 live_bytes=24000 on the self-host
-// against native's 750/750/0, a flat 160 B/round that no exit code could see.
-// `match (xs[i])` next to it already balanced, so only the ITERATION was ever the
-// difference.
-//
-// The loop var is an element BOX borrowed with no retain (measured: zero rc_inc,
-// the same as the arr-of-arr row form arrarr_row_escapes_iter already admits) and
-// the bind is transient — the loop ends before the exit sweep. What the widening
-// has to establish is that nothing reachable from the arm outlives the loop:
-// body_unsafe_for_match_borrow admits the box in exactly one position (the bare
-// scrutinee of a `match (o)`), and elem_box_iter_bind_escapes vets the bindings
-// that reading hands out with the STRICT binding_escapes_arm.
-//
-// SOUNDNESS, measured rather than argued: with those two checks stubbed out and
-// nothing else changed, `box-escapes-loop-uaf` below exits 100 on the self-host —
-// the payload read back as the recycling allocation's 7777 — while native exits 0,
-// with allocs=1350 frees=1200 and __rc_underflow_count() at ZERO throughout. That
-// is the failure mode this class sets: a use-after-free that reads plausible bytes,
-// invisible to the underflow counter, and invisible to `-sanitize` too, whose
-// quarantine keeps the freed block out of the recycling path and lets the stale
-// read return the right answer. The value each row reads back after churn is
-// therefore the guard; on the typed lowering every row also balances.
+// SOUNDNESS: an over-eager free here is a use-after-free that reads plausible
+// bytes — `box-escapes-loop-uaf` below reads back the recycling allocation's
+// 7777 and exits 100 — with __rc_underflow_count() at ZERO, and `-sanitize`
+// misses it too, because its quarantine keeps the freed block out of the
+// recycling path. The value each row reads back after churn is therefore the
+// guard; every row must also balance.
 var optaarrForInCases = []struct {
 	name string
 	src  string
@@ -84,9 +68,8 @@ function round(i: i32): i32 {
     let keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
     return keep.len();
 }`), 2},
-	// CONTROL: `match (xs[i])` already balanced before the widening
-	// (optaarr_elem_payload_escapes admits the transient payload borrow), and
-	// still must.
+	// CONTROL: `match (xs[i])` borrows the element's payload transiently and
+	// balanced before the widening, and still must.
 	{"index-match-control", optaarrProg(150, `
 function round(i: i32): i32 {
     let keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
@@ -96,10 +79,8 @@ function round(i: i32): i32 {
 }`), 5},
 
 	// ── refusals ────────────────────────────────────────────────────────────
-	// A GUARDED arm. binding_escapes_arm does vet the guard, so this is a
-	// deliberate narrowing rather than a demonstrated hazard — the same one
-	// consumed_rcpayload_enum_frees makes next door, because under a guard which
-	// arm ran is not syntactic and this admission's proof is per-arm.
+	// A GUARDED arm: under a guard which arm ran is not syntactic. The value
+	// must stay correct.
 	{"guarded-arm-refused", optaarrProg(150, `
 function round(i: i32): i32 {
     let keep: Option[i32[]][] = [Some([i, i + 1]), Some([i + 2, i + 3])];
@@ -169,9 +150,8 @@ function round(i: i32): i32 {
 }`), 5},
 	// OUT OF CLASS, both directions. A `string[]` payload is not a leak-safe
 	// scalar array (is_leaksafe_array_field), and a nested `Option[Option[T[]]]`
-	// element is not an option of an array at all, so optaarr_ann_is declines
-	// both before any escape gate runs. They are here so a later widening of the
-	// ANNOTATION cannot land silently on shapes this proof never covered.
+	// element is not an option of an array at all. They are here so a widening
+	// cannot land silently on shapes this suite never covered.
 	{"string-payload-out-of-class", optaarrProg(150, `
 function round(i: i32): i32 {
     let pre: string = "abcdefgh";

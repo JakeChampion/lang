@@ -6,27 +6,15 @@ import (
 
 // --- All-scalar-payload enum arrays free their element boxes (#7678) --------
 //
-// An enum whose every variant carries only scalars got NO element release for
-// its arrays: the credit path's element admissions ran only through
-// fresh_rcpayload_enum_init (whose rc-droppable set is deliberately disjoint
-// from the all-scalar set the match-consume machinery owns), and the
-// append/producer flavors additionally gated on enum_arr_elems_walk_ok, whose
-// any_arr clause protects a payload dec an all-scalar enum does not have. So
-// the exit sweep's bare buffer dec freed the buffer and stranded every
-// element box — a constant leak per array, invisible to exits (native and
-// self-host agreed throughout).
+// An enum whose every variant carries only scalars still boxes each element, so
+// releasing one of its arrays must free every element box, not just the
+// buffer. A buffer-only release strands one box per element — a constant leak
+// per array, invisible to the exit code. The release is box-only per element,
+// since there is no payload under it.
 //
-// The fix admits a fresh all-scalar ctor beside the rc-payload one at both
-// element admissions, and routes the two credit-side walk gates through
-// enum_arr_release_walk_ok — a wrapper, so enum_arr_elems_walk_ok keeps its
-// meaning and the field-walk emitters emit no empty-dispatch helper. The
-// release then degenerates per element to the box-only free
-// emit_enum_variant_drops already performs for a payload-less variant.
-//
-// Wants confirmed against bin/fern -interp and the native x86-64 backend;
-// counts are the self-host's own (native const-folds differently). Exit 99 is
-// reserved for __rc_underflow_count() — the row that catches an over-widening
-// here, since the census alone cannot.
+// Wants confirmed against bin/fern -interp; counts are the self-host's own.
+// Exit 99 is reserved for __rc_underflow_count() — the row that catches an
+// over-release here, since the census alone cannot.
 
 type scalarEnumArrCase struct {
 	name   string
@@ -70,7 +58,7 @@ function main(): i32 {
 			// array a heap box around its static elements.
 			name: "scalar_literal",
 			src: `enum Tag { Box(i32), Nil }
-function idt(t: Tag): Tag { return t; }
+@noinline function idt(t: Tag): Tag { return t; }
 function round(src: Tag[], i: i32): i32 {
     let t: i32 = 0;
     let e: Tag = src[0];

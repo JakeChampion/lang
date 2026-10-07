@@ -11,19 +11,13 @@ import (
 // struct that introduces type parameters of its OWN —
 // `(b: Box[T]) map[U](f: (T) => U): Box[U]`.
 //
-// monomorphize_structs clones such a method once per RECEIVER instantiation and
-// drops the method's own type params, so `U` survived into the clone as a free
-// variable; `to_concrete_struct_ty` then mangled the return `Box[U]` to
-// `Box__U` against a THROWAWAY accumulator, so no pass ever generated that
-// struct or its methods. Every one of these programs bailed the whole module
-// with `call to unknown symbol Box__U.get` — a hard error since #3457 deleted
-// the AST emitters.
-//
-// register_struct_method_generics folds the method into a free generic
-// `__smm_<Base>_<name>[<receiver vars>, <own vars>]` with the receiver as
-// arg0, the same shape the array (`__arrm_`) and map (`__mapm_`) folds already
-// use, so the proven free-generic worklist clones it per instantiation with a
-// CONCRETE return for monomorphize_structs to mangle.
+// Cloned once per RECEIVER instantiation alone, `U` would survive into the
+// clone as a free variable and the call would resolve to an unknown
+// `Box__U.get`. register_struct_method_generics folds the method into a free
+// generic `__smm_<Base>_<name>[<receiver vars>, <own vars>]` with the receiver
+// as arg0, the same shape the array (`__arrm_`) and map (`__mapm_`) folds use,
+// so the free-generic worklist clones it per instantiation with a CONCRETE
+// return for monomorphize_structs to mangle.
 //
 // Each program's expected value was taken from `bin/fern -interp`, and each was
 // confirmed to bail on the pre-fix compiler — except `own-var-in-param-only`,

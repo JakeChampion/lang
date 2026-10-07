@@ -11,14 +11,11 @@ import (
 // TestSelfHostLoopLocalCaptureIRX86_64 pins the loop-local capturing-closure
 // lift (closure_lift_one's nested-body recursion): a `let f = <capturing
 // lambda>` that is only CALLED (not escaping) is param-lifted to a hoisted
-// `__lam_N` + direct call sites. Before, closure_lift_one scanned only the
-// TOP-LEVEL function body, so a capturing lambda bound inside a `while` / `for`
-// / `if` / `match` body was never lifted and the whole module fell to the AST
-// path — correct, but off the IR path. closure_lift_one now recurses into
-// nested loop / conditional / match bodies (captures still resolve against the
-// whole fd, so a capture declared outside the loop types fine), so these common
-// shapes lower via the IR path (asserted via the .Lssa_main / .Lssa_g witness)
-// and compute the native values.
+// `__lam_N` + direct call sites, including when it is bound inside a `while` /
+// `for` / `if` / `match` body. Captures resolve against the whole fd, so a
+// capture declared outside the loop types fine. These shapes lower via the IR
+// path (asserted via the .Lssa_main / .Lssa_g witness) and compute the
+// expected values.
 func TestSelfHostLoopLocalCaptureIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

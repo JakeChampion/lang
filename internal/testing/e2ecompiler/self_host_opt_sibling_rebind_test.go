@@ -17,16 +17,9 @@ import (
 //	Option[P{xs:i32[]}]      4000              12800     64000  frees=0
 //	Option[i32[][]]             0              15200     76000  frees=0
 //
-// The collectors are structurally identical and differ only in which freshness
-// predicate they apply, so the fix is one relaxation applied three times:
-// a reassigned name is admitted when EVERY rebind is itself fresh, and the
-// StmtAssign path — which the family had never used, because refusing reassigned
-// names meant it could only ever reclaim at a `let` re-declaration — releases the
-// superseded chain at the depth that payload kind needs.
-//
-// The per-rebind walk that #6225 wrote for the flat kind is now shared by all
-// four (opt_rebinds_all_fresh + opt_assign_is_fresh), rather than copied a
-// fourth time.
+// A reassigned name is reclaimable when EVERY rebind is itself fresh: each
+// assignment then releases the superseded chain at the depth that payload kind
+// needs, the same rule #6225 gave the flat kind.
 //
 // These assert allocs == frees alongside live_bytes == 0: frees > allocs is a
 // double free, frees < allocs an unclaimed box, and they mean different bugs.

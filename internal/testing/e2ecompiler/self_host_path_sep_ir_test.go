@@ -3,13 +3,13 @@ package e2ecompiler
 import "testing"
 
 // pathSepIRCases pin the `::` path separator (`Type::f(args)`, #2700) to the
-// self-host IR path. Native already lexes/parses `::` (path_sep_test.go); the
-// self-host lexer now normalises `::` to a `.` token, so every `.`-handling
-// parser site (postfix access, qualified names) treats it identically — the
-// self-host AST carries no record of the separator. These cases prove `::`
-// resolves to the same associated-function / method dispatch as `.` end to end
-// on the self-host compiler. Exit codes are the oracle. Mirrors
-// self_host_assoc_fn_ir_test.go (the `.` form).
+// self-host IR path. The self-host lexer keeps `::` as its own token, and every
+// `.`-handling parser site in expression position (postfix access, qualified
+// names) accepts both. These cases prove `::` resolves to the same
+// associated-function / method dispatch as `.` end to end on the self-host
+// compiler; internal/testing/e2e/path_sep_test.go adds the interpreter leg.
+// Exit codes are the oracle. Mirrors self_host_assoc_fn_ir_test.go (the `.`
+// form).
 var pathSepIRCases = []struct {
 	name     string
 	src      string

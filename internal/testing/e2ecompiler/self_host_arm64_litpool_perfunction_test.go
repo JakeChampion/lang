@@ -6,8 +6,8 @@ import (
 )
 
 // TestSelfHostArm64LitPoolPerFunction pins the arm64 IR selector's literal-pool
-// flush structurally: `asm_arm64_ir.emit_function_via_ir` emits `.ltorg` after
-// each function's final `ret`, so a `ldr Xd, =N` reaches its pool within one
+// flush structurally: asm_arm64_ir emits `.ltorg` after each function's final
+// `ret`, so a `ldr Xd, =N` reaches its pool within one
 // function's text rather than across the whole program. Without the flush the
 // assembler holds every pending literal to the END of .text and the reach — a
 // signed 19-bit word offset, ±1 MiB — has to span the module: the self-host

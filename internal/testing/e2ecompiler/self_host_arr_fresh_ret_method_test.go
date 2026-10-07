@@ -11,28 +11,16 @@ import (
 
 // --- A METHOD returning a fresh array is reclaimed like a free function (#7259)
 //
-// The strict-fresh "ARR:" registry admitted only FREE functions
-// (arr_fresh_ret_fns_of gated on an empty receiver_type, and the entry keyed the
-// bare name). Every consumer was already method-aware — owned_fresh_call_callee
-// resolves "<Base>.<method>", the same key the registry's struct entries use —
-// so they were looking up a key the producer never wrote, and a method returning
-// a fresh array was released by nobody in any consumption form:
+// A method's fresh array result must be released in every consumption form —
+// a discarded statement, a `.len()` receiver, an index read — exactly as the
+// byte-identical free function's is. When it was not, nothing released it and
+// the leak grew with the round count:
 //
 //	rounds     100      200      400
 //	live      4000     8000    16000     frees=0 throughout
 //
-// Exactly 2.0x per doubling — UNBOUNDED, where the byte-identical free function
-// is flat at 0. That is what separates this from the other two defects on #7259,
-// which are bounded per object.
-//
-// Three sites had open-coded the free-function half of the lookup. Two are fixed
-// here (the discarded-statement reclaim and the `.len()` receiver reclaim, the
-// latter now routed through owned_fresh_call_callee rather than re-deriving the
-// admission); the `mk()[i]` read reclaim already used the shared resolver and
-// started working the moment the registry carried the key.
-//
-// Every want below was confirmed against BOTH oracles — bin/fern -interp and the
-// native x86-64 backend agreed on each — never read off the self-host run.
+// Every want below was confirmed against bin/fern -interp, never read off the
+// self-host run.
 
 const arrFreshMethProlog = "struct H { v: i32 }\n" +
 	"function (h: H) mkm(): i32[] { return [h.v, h.v + 1]; }\n"

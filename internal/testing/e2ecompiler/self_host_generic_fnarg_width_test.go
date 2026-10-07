@@ -28,17 +28,15 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostGenericFnArgWidthX86_64 pins the answer against the native
-// compiler rather than a literal, so the fixture cannot drift away from the
-// oracle. The self-host answered 0 for every element before the checker learned
-// to unify a callable parameter's spelling against the argument's type.
+// TestSelfHostGenericFnArgWidthX86_64 pins the answer against the `fern` CLI's
+// build of the same program rather than a literal, so the fixture cannot drift
+// away from the oracle.
 //
 // x86-64 only. The self-host WASM emitter is separately wrong on this shape —
 // the residual `T` also reaches the funcref type a call_indirect dispatches
 // through and the array-push helper the append selects, so it emits a module
-// wasmtime rejects (#9488). That is pre-existing and reproduces on main; it is
-// not what this test is for, and a wasm leg here would assert someone else's
-// bug rather than this one.
+// wasmtime rejects (#9488). A wasm leg here would assert that bug rather than
+// this one.
 func TestSelfHostGenericFnArgWidthX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {

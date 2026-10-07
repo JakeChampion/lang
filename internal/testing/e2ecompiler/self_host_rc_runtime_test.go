@@ -117,9 +117,7 @@ func TestSelfHostRcAliasIncX86_64(t *testing.T) {
 	})
 
 	// At xs's LAST mention the same binding is a MOVE instead: the retain
-	// is elided and xs's exit dec elided with it (moves_local_at +
-	// note_moved_elided), the pair cancellation native performs at this
-	// site — so the moved shape must emit no inc at all.
+	// and xs's exit dec cancel, so the moved shape must emit no inc at all.
 	t.Run("elides-retain-at-move-alias", func(t *testing.T) {
 		asm := cli.emit(t, "x86-64-linux", "function main(): i32 { let xs: i32[] = [1, 2]; let ys = xs; return ys[0]; }")
 		if rcIncSites(asm) > 0 {
@@ -265,7 +263,7 @@ func TestSelfHostRcMoveOnReturnX86_64(t *testing.T) {
 		{"move-with-sibling-sweep", "function make(): i32[] { let keep: i32[] = [9, 9]; let xs: i32[] = [5, 6, 7]; return xs; } function main(): i32 { let ys = make(); return ys[0] + ys[2] + __rc_underflow_count(); }", 12},
 		// Returning a BORROWED param array is NOT a move (idx < n_params):
 		// the caller still owns it, so it stays usable after the call.
-		{"return-param-not-moved", "function pick(a: i32[]): i32[] { return a; } function main(): i32 { let xs: i32[] = [3, 4]; let ys = pick(xs); return ys[0] + xs[1] + __rc_underflow_count(); }", 7},
+		{"return-param-not-moved", "@noinline function pick(a: i32[]): i32[] { return a; } function main(): i32 { let xs: i32[] = [3, 4]; let ys = pick(xs); return ys[0] + xs[1] + __rc_underflow_count(); }", 7},
 		// Churn: a builder whose result is moved out on every call must
 		// still allow reclamation (alloc >> heap completes via the freelist).
 		{"move-churn", "function build(n: i32): i32[] { let xs: i32[] = []; let i = 0; while (i < n) { xs = xs.append(i); i = i + 1; } return xs; } function main(): i32 { let k = 0; let s = 0; while (k < 200000) { let r = build(64); s = r[63]; k = k + 1; } return (s % 7) + __rc_underflow_count(); }", 0},
@@ -325,7 +323,7 @@ func TestSelfHostRcArm64(t *testing.T) {
 		{"struct-holds-array", "struct H { items: i32[] } function mk(): H { let xs: i32[] = [7, 8]; return H { items: xs }; } function main(): i32 { let h = mk(); return h.items[0] + h.items[1] + __rc_underflow_count(); }", 15},
 		// The inner arrays go through id so they are built on the heap rather than
 		// placed as constants.
-		{"array-of-arrays", "function id(xs: i32[]): i32[] { return xs; } function main(): i32 { let a: i32[] = id([1, 2]); let b: i32[] = id([3, 4]); let both: i32[][] = [a, b]; return both[0][1] + both[1][0] + __rc_underflow_count(); }", 5},
+		{"array-of-arrays", "@noinline function id(xs: i32[]): i32[] { return xs; } function main(): i32 { let a: i32[] = id([1, 2]); let b: i32[] = id([3, 4]); let both: i32[][] = [a, b]; return both[0][1] + both[1][0] + __rc_underflow_count(); }", 5},
 		{"struct-update-copy", "struct H { items: i32[], n: i32 } function main(): i32 { let xs: i32[] = [1, 2]; let h: H = H { items: xs, n: 0 }; let h2: H = H { ...h, n: 5 }; return h2.items[1] + h2.n + __rc_underflow_count(); }", 7},
 		// Phase 3 (arm64 free): reclamation churn (alloc >> heap completes) + enum payload retain.
 		// xs goes through id so the payload is built on the heap rather than placed as a constant.
@@ -335,7 +333,7 @@ func TestSelfHostRcArm64(t *testing.T) {
 		// local still swept; borrowed-param return is not a move.
 		{"move-bare-local", "function make(): i32[] { let xs: i32[] = [10, 20, 30]; return xs; } function main(): i32 { let ys = make(); return ys[0] + ys[2] + __rc_underflow_count(); }", 40},
 		{"move-with-sibling-sweep", "function make(): i32[] { let keep: i32[] = [9, 9]; let xs: i32[] = [5, 6, 7]; return xs; } function main(): i32 { let ys = make(); return ys[0] + ys[2] + __rc_underflow_count(); }", 12},
-		{"return-param-not-moved", "function pick(a: i32[]): i32[] { return a; } function main(): i32 { let xs: i32[] = [3, 4]; let ys = pick(xs); return ys[0] + xs[1] + __rc_underflow_count(); }", 7},
+		{"return-param-not-moved", "@noinline function pick(a: i32[]): i32[] { return a; } function main(): i32 { let xs: i32[] = [3, 4]; let ys = pick(xs); return ys[0] + xs[1] + __rc_underflow_count(); }", 7},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -448,13 +446,13 @@ func TestSelfHostRcConstructContainersX86_64(t *testing.T) {
 	}{
 		// Array of arrays: the inner array aliases are retained. The inner arrays go
 		// through id so they are built on the heap rather than placed as constants.
-		{"array-of-arrays", "function id(xs: i32[]): i32[] { return xs; } function main(): i32 { let a: i32[] = id([1, 2]); let b: i32[] = id([3, 4]); let both: i32[][] = [a, b]; return both[0][1] + both[1][0] + __rc_underflow_count(); }", 5},
+		{"array-of-arrays", "@noinline function id(xs: i32[]): i32[] { return xs; } function main(): i32 { let a: i32[] = id([1, 2]); let b: i32[] = id([3, 4]); let both: i32[][] = [a, b]; return both[0][1] + both[1][0] + __rc_underflow_count(); }", 5},
 		// Tuple holding an array: the array element is retained.
 		{"tuple-of-array", "function main(): i32 { let xs: i32[] = [7, 8]; let t = (xs, 9); return t.0[1] + t.1 + __rc_underflow_count(); }", 17},
 		// Returning a container that captured a local array (would UAF
 		// once free is on without the construction inc) stays correct. a goes
 		// through id so it is built on the heap rather than placed as a constant.
-		{"return-arr-of-arrs", "function id(xs: i32[]): i32[] { return xs; } function mk(): i32[][] { let a: i32[] = id([5, 6]); return [a, a]; } function main(): i32 { let both = mk(); return both[0][0] + both[1][1] + __rc_underflow_count(); }", 11},
+		{"return-arr-of-arrs", "@noinline function id(xs: i32[]): i32[] { return xs; } function mk(): i32[][] { let a: i32[] = id([5, 6]); return [a, a]; } function main(): i32 { let both = mk(); return both[0][0] + both[1][1] + __rc_underflow_count(); }", 11},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -527,15 +525,12 @@ func TestSelfHostRcFreeReclaimX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostRcStructArrayFieldDropX86_64 covers the Perceus deep-drop (one
-// level) of array-of-struct / array-of-enum FIELDS: when a reclaimable struct
-// is dropped, emit_struct_field_drops releases its struct/enum-array field
-// BUFFERS via a shallow __fern_arr_dec (the element boxes still leak — the
-// safe-leak invariant for nested payloads). This BALANCES the alias-inc the
-// struct-lit / bind / return / assign paths add when such a field aliases a
-// local, so the over-release detector must stay 0 across all construction
-// shapes — fresh literal (sole owner), aliased ident/param (inc'd), and a fresh
-// call value (sole owner). A double-free here would trip the detector or crash.
+// TestSelfHostRcStructArrayFieldDropX86_64 covers dropping array-of-struct /
+// array-of-enum FIELDS: a dropped struct releases its struct/enum-array field
+// buffers, balancing the retain taken when such a field aliases a local, so
+// the over-release detector must stay 0 across all construction shapes — fresh
+// literal (sole owner), aliased ident/param (retained), and a fresh call value
+// (sole owner). A double-free here would trip the detector or crash.
 func TestSelfHostRcStructArrayFieldDropX86_64(t *testing.T) {
 	cli := newStrictCLI(t)
 

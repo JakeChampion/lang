@@ -98,8 +98,7 @@ func duplicateLocalLabels(asm []byte) []string {
 // run with `--dir`). read_file lowers to a value IR op that pops the path string box and
 // calls each backend's __fern_read_file helper, pushing a fresh
 // Result[string, IoError] box — so `match (read_file(p)) { Ok(s) => …, Err(e)
-// => … }` lowers like any other Result (the Result type is recognised by
-// opt_ret_type's read_file fallback).
+// => … }` lowers like any other Result.
 //
 // The harness writes "hello" (5 bytes, no newline) to rf_data.txt in the run
 // directory. `len` returns the Ok contents' length (exercising the str-tracking
@@ -173,9 +172,8 @@ func TestSelfHostReadFileIRX86_64(t *testing.T) {
 
 // TestSelfHostReadFileIRWasm runs the same cases through the wasm IR backend
 // under wasmtime, granting the run directory as preopen fd 3 (`--dir=.::/`).
-// read_file now lowers on the wasm IR path: wasm_ir emits `call $__fern_read_file`
-// and wasm_ir_run pulls in the path_open / fd_read / fd_close imports + the
-// readfile_func helper (the runtime the AST path already used).
+// wasm_ir emits `call $__fern_read_file` and wasm_ir_run pulls in the
+// path_open / fd_read / fd_close imports + the readfile_func helper.
 func TestSelfHostReadFileIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host read_file wasm IR e2e")

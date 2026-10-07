@@ -10,10 +10,9 @@ import (
 
 // strbufIRCases exercise the global string-builder builtins (strbuf_reset /
 // strbuf_append / strbuf_take) on the IR path. They lower to dedicated
-// strbuf_* IR ops (NOT a call_direct, so they sidestep the call eligibility
-// gate that would bail asmcore.EmitState.write) which each register backend
-// emits as a call into the same __fern_strbuf_* runtime the AST path used. strbuf_take snapshots the builder into a fresh string box;
-// stdout pins the exact accumulated bytes.
+// strbuf_* IR ops, which each register backend emits as a call into the
+// shared __fern_strbuf_* runtime. strbuf_take snapshots the builder into a
+// fresh string box; stdout pins the exact accumulated bytes.
 var strbufIRCases = []struct {
 	name, src, want string
 }{
@@ -128,12 +127,10 @@ func TestSelfHostStrbufIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrbufIRWasm — the wasm IR path now lowers strbuf too: the new
-// wasm.strbuf_helpers runtime (a growable bump-heap buffer) backs the
-// `call $__fern_strbuf_*` the wasm_ir op handlers emit, so a strbuf module routes
-// through wasm IR (it never had a wasm AST path). Same cases as the register
-// backends, run under wasmtime; stdout pins the accumulated bytes, "take-len"
-// the exit code.
+// TestSelfHostStrbufIRWasm — the wasm IR path lowers strbuf too: a growable
+// bump-heap buffer runtime backs the `call $__fern_strbuf_*` the wasm_ir op
+// handlers emit. Same cases as the register backends, run under wasmtime;
+// stdout pins the accumulated bytes, "take-len" the exit code.
 func TestSelfHostStrbufIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host strbuf wasm IR e2e")

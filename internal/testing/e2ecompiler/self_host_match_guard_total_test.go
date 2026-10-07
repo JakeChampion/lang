@@ -8,13 +8,12 @@ import (
 
 // A value match whose plain variant arms cover the union is total however
 // many guarded arms stand ahead of them: a guard decides nothing about
-// coverage, since its false edge reaches the arms after it. The self-host
-// lowering counted every arm against the variant count, so one guarded arm
-// made the match "fall through" and the typed lowering refused it with
-// `value block match falls through`, while the statement form and the
-// native compiler both accepted it (found by fernsmith's guard production).
-// Each case runs under the self-host CLI for every target this host can run
-// and under the native build of the same program; the two must agree.
+// coverage, since its false edge reaches the arms after it. Counted against the
+// variant count, one guarded arm makes the match "fall through" and the typed
+// lowering refuses it with `value block match falls through` (found by
+// fernsmith's guard production). Each case runs under the self-host CLI for
+// every target this host can run and through the Go `fern` CLI for the same
+// program; the two must agree.
 var matchGuardTotalCases = []struct {
 	name string
 	src  string

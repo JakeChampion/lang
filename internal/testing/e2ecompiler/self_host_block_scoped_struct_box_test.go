@@ -5,47 +5,19 @@ import (
 	"testing"
 )
 
-// --- The block-scoped struct BOX, but not its fields (#6127) -----------------
+// --- A struct declared inside a block (#6127) ---------------------------------
 //
-// A struct declared inside a `while` body is credited under its source name, and
-// its slot_name carries the "!retired!" prefix once the block ends, so the exit
-// sweep's exact-match lookup misses it and nothing is swept: 8800 bytes over 100
-// rounds on `S { xs: i32[], n: i32 }`, against 0 on native.
+// A struct local declared inside a `while` body is released when its block
+// ends — the box and its rc fields — so `S { xs: i32[], n: i32 }` over 100
+// rounds reaches live_bytes 0.
 //
-// Switching this class on wholesale SEGFAULTS the gen1 self-compile. The
-// cause is NOT the other thirteen consumers of slot_is_reclaimable_struct;
-// three fixpoint runs, one variable each, isolate it:
-//
-//	the sweep + entry-zeroing only, deep drop included   SEGFAULT (gen1)
-//	entry-zeroing alone (frees nothing)                  green, 402s
-//	the sweep + entry-zeroing, BOX-ONLY free             green, 390s
-//
-// So the unsafe operation is specifically `__struct_drop_<T>` on a block-scoped
-// slot. That got the BOX free landed (8800 -> 4000) with the field drop withheld,
-// and left the why open.
-//
-// The why, from a stack trace rather than a fourth theory: gen1 faulted in
-// `asmcore.EmitState.has_need` -> `__fern_str_eq` on a freed string. The shape is
-// `let lo: StringLitOut = add_string_lit(s, ..); s = lo.state;` — `lo` is
-// block-scoped and its `EmitState` FIELD is moved into the live threaded `s`, so
-// the deep walk freed that state's arrays out from under it.
-//
-// Both escape analyses missed it identically: `expr_unsafe_for` and
-// `moves_fields_expr` treat `name.field` as a borrow, which is right for a SCALAR
-// field and wrong for a nested-struct / array / string one. The `"NODEEP:"`
-// detector now consults the field TYPE (`optstruct_body_moves_field`), so the
-// withholding is the marker's job — and with the marker able to see this move,
-// the deep drop is granted to everyone else and the shape reaches **0**.
-//
-// The trade is visible in `field_extracted_out_of_the_block` below: it now
-// reclaims LESS (500 frees, was 800) because the marker correctly refuses a local
-// whose field escapes. Across the 164-program probe corpus that is the only shape
-// that lost reclaim, against three that reached zero.
-//
-// None of this is visible to the probe corpus: all 162 differential programs agreed
-// with native on both the segfaulting and the green build. The self-compiler is the
-// only program that shows it, which is why the fixpoint runs FIRST on a reclaim
-// change and not last.
+// The field drop is the hazardous half. When a block-scoped struct's FIELD is
+// moved out — `let lo: StringLitOut = add_string_lit(s, ..); s = lo.state;` —
+// the field must not be freed under its new owner: a read of a nested-struct /
+// array / string field is a move, not a borrow. Getting that wrong segfaulted
+// the gen1 self-compile while every differential probe program still agreed
+// with the oracle, which is why the fixpoint runs FIRST on a reclaim change and
+// not last.
 
 func TestSelfHostBlockScopedStructBoxX86_64(t *testing.T) {
 	boxedProbes(t)
@@ -78,9 +50,7 @@ func TestSelfHostBlockScopedStructBoxX86_64(t *testing.T) {
 		return allocs, frees, live
 	}
 
-	// The box is reclaimed; the field buffer is not. Both halves are asserted, so
-	// this fails if the box free is lost AND if the field drop is ever granted
-	// without the fixpoint question above being answered.
+	// The box and its `xs` buffer are both reclaimed.
 	t.Run("struct_declared_in_a_loop", func(t *testing.T) {
 		src := `struct S { xs: i32[], n: i32 }
 function round(r: i32): i32 {
@@ -240,7 +210,7 @@ function round(r: i32): i32 {
 			// Passed to a callee that keeps it.
 			name: "passed_to_a_callee_that_keeps_it",
 			body: `struct S { xs: i32[], n: i32 }
-function keepit(s: S): S { return s; }
+@noinline function keepit(s: S): S { return s; }
 function round(r: i32): i32 {
     let held: S = S { xs: [0], n: r };
     let acc: i32 = 0;

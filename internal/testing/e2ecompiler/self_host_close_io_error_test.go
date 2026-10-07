@@ -11,15 +11,10 @@ import (
 // `w.close()` / `r.close()` report a FAILING close, rather than answering None
 // whatever the kernel said (#8569).
 //
-// The self-host's `__fern_reader_close` discarded the syscall's result — a
-// deliberate choice at the time, on the grounds that the std/io drain loop
-// never read the error arm. Every native backend maps the errno
-// (`__fern_close_fd_box` on x86-64/arm64, `buildCloseBody` on wasm), so the two
-// compilers disagreed the moment anything did read it: gnulib's close_stream
-// contract is exactly "did the close fail", so `printf ... >&-` built by the
-// self-host printed `write error` where native and GNU print `write error: Bad
-// file descriptor`. The coreutils self-host gate (internal/testing/coreutils) found it;
-// this is the reduced case.
+// gnulib's close_stream contract is exactly "did the close fail", so a
+// swallowed errno made `printf ... >&-` print `write error` where GNU prints
+// `write error: Bad file descriptor`. The coreutils self-host gate
+// (internal/testing/coreutils) found it; this is the reduced case.
 //
 // Closing the same fd twice is the portable way to reach EBADF: the first close
 // succeeds, the second has nothing to close. The exit code carries both answers

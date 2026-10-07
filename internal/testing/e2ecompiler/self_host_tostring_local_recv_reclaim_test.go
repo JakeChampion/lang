@@ -7,23 +7,18 @@ import (
 
 // --- `.to_string()` on a callee LOCAL, not a param (#7193 follow-up) ---------
 //
-// #7193 got a helper returning `n.to_string()` into the fresh-string-return
-// registry. The receiver there is a PARAM, and the registry runs on bare AST, so
-// the proof it uses — tostring_recv_is_scalar_param — reads the params list and
-// nothing else. A helper that computes before it formats has a LOCAL receiver
-// and never entered the registry, so every caller's binding leaked the result:
+// A helper returning `n.to_string()` hands its caller a fresh string, and so
+// does one that computes into a LOCAL first; the caller's binding must release
+// the result either way:
 //
-//	fmt(n) { return n.to_string(); }              allocs=400 frees=398 live=32
-//	fmt(n) { let v: i32 = n*2; return v.to_string(); }  allocs=400 frees=0 live=6400
+//	fmt(n) { return n.to_string(); }
+//	fmt(n) { let v: i32 = n*2; return v.to_string(); }
 //
-// against 0 on native for both — 32 B/round for a one-word difference in the
-// helper. The same `.to_string()` written INLINE at the call site was already
-// flat, which is what isolates it to the registry rather than the lowering.
+// The same `.to_string()` written INLINE at the call site is the control.
 //
-// The local's ANNOTATION carries exactly the proof the param's does, so
-// decl_scalar_local reads it. Every declaration of the name must be scalar: this
-// scan has no scopes, and a nested block may shadow the name with a
-// pointer-shaped local — `h_shadow_nonscalar` is that case, and it must stay
+// The result is fresh only when the receiver is a scalar, and every
+// declaration of the name counts: a nested block may shadow it with a
+// pointer-shaped local — `shadowed_by_nonscalar` is that case, and it must stay
 // refused.
 
 func toStringLocalSrc(helper string, rounds int) string {
@@ -60,8 +55,7 @@ var toStringLocalFlatCases = []struct {
 		want200: 90,
 	},
 	{
-		// The result bound to a local on the way out, which routes through
-		// str_local_is_fresh_ret and needs the same proof one level in.
+		// The result bound to a local on the way out: still fresh, one level in.
 		name: "local_recv_via_binding",
 		helper: `function fmt(n: i32): string {
     let v: i32 = n * 2;
@@ -72,7 +66,7 @@ var toStringLocalFlatCases = []struct {
 		want200: 90,
 	},
 	{
-		// i64, not just i32 — is_scalar_type_name is the whole test.
+		// i64, not just i32 — any scalar receiver qualifies.
 		name: "i64_local_recv",
 		helper: `function fmt(n: i32): string {
     let v: i64 = (n as i64) * 2;
@@ -129,10 +123,8 @@ var toStringLocalHazardCases = []struct {
 	},
 	{
 		// A STRUCT receiver whose `to_string` is a source-declared method, not
-		// the builtin decimal-text producer. is_scalar_type_name refuses the
-		// annotation, so the registry never claims it — this one is already flat
-		// by another route, and the case is here to pin that this widening did
-		// not divert it.
+		// the builtin decimal-text producer. Not a scalar receiver, but flat all
+		// the same; the case pins that it stays so.
 		name: "struct_recv_method",
 		src: toStringLocalSrc(`struct P { a: i32 }
 function (p: P) to_string(): string { return "p"; }
@@ -191,7 +183,7 @@ func TestSelfHostToStringLocalRecvReclaimX86_64(t *testing.T) {
 
 // TestSelfHostToStringLocalRecvHazardsX86_64 pins the refusals. A wrong answer
 // or a crash means a caller's binding took ownership of a box it does not own.
-// Each `want` came from the interpreter and the native backend agreeing.
+// Each `want` is the interpreter's answer.
 func TestSelfHostToStringLocalRecvHazardsX86_64(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range toStringLocalHazardCases {

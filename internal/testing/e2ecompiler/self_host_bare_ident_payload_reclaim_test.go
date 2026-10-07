@@ -3,25 +3,18 @@ package e2ecompiler
 import "testing"
 
 // bareIdentPayloadReclaimCases pin a union element whose payload is a BARE
-// IDENT rather than a construction — `(i, Some(xs))`.
-//
-// #7159 released the payload of a freshly-constructed one and refused this,
-// because the release has to be NAMED and that site had no annotation to tell a
-// bare-ident array (which a flat dec releases) from a bare-ident string (which a
-// flat dec would misread as a pointer on the two-word-string backends). The
-// slot carries what the annotation did not: is_arr_slot answers for the array.
+// IDENT rather than a construction — `(i, Some(xs))`. A bare-ident ARRAY payload
+// is released with the tuple; a bare-ident STRING payload is refused and keeps
+// its leak.
 //
 // That freeing it is balanced is measured, not argued. The construction
-// alias-incs the payload, so the element's dec spends the box's own reference
-// and the local is still readable afterwards — `arr-read-after` reads `xs`
-// after the tuple, and `arr-carried-out` reads a binding taken out of the arm
-// past every reclaim point, both matching native.
+// retains the payload, so the element's release spends that reference and the
+// local is still readable afterwards — `bare-ident-array-payload` reads `xs`
+// after the tuple, and `bare-ident-array-carried-out` reads a binding taken out
+// of the arm past every reclaim point.
 //
-// A string ARRAY is is_arr too, and a flat dec there would free the buffer and
-// strand every element box, so it is refused rather than released.
-//
-// Byte cases return measured bytes per round; the two gates measure 40 on the
-// parent across all three backends, native flat.
+// Byte cases return measured bytes per round, so a regression reports its own
+// size; 99 is an over-release.
 var bareIdentPayloadReclaimCases = []struct {
 	name string
 	src  string

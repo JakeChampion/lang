@@ -12,13 +12,7 @@ import (
 // url.url_* calls, the way modload routes stdlib access) covering the
 // whole std/url surface: percent encode/decode, url_parse + the parsed
 // Url fields (scheme / host / port), and query_parse (which returns a
-// Map[string, string[]]). std/url's query_parse builds its result on
-// core/map, so until core/map lowered fully through the IR path these
-// programs bailed to the legacy AST emitter. With core/map routing
-// IR (the __alloc / __ptr_width / __memset / __free / __fern_arr_dec
-// stages), the entire std/url module is IR-eligible — it has zero
-// AST-only functions — so every one of these programs reaches
-// `module: IR` through the bundling loader.
+// Map[string, string[]], built on core/map).
 //
 // Each case asserts the modload -ir-probe verdict is `module: IR` AND
 // that the compiled binary matches the interpreter oracle. x86-64 only

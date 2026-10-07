@@ -15,35 +15,22 @@ import (
 //
 //	function (g: Getopt) next(): (Option[OptMatch], Getopt)
 //
-// The self-host tuple-literal admission took an Option element only when its
-// payload was a scalar, a string or a closure, so this bailed the WHOLE module
-// ("did not lower: tuple literal") and no coreutils utility declaring an option
-// could be compiled by the self-host compiler at all (#8407).
+// Every coreutils utility that declares an option needs it (#8407).
 //
-// What makes the widening sound is that the same runtime shape was already
-// being built two other ways. An Option[S] LOCAL as an element, and a CALL
-// returning Option[S] as an element, both lowered before this change — the
-// payload box is one pointer in the slot at offset 8, which is exactly what the
-// match lowering's struct-payload branch reads. Only the spelling that names
-// `Some` at the element position was refused, so `(pick(5), g)` lowered while
-// `(Some(S { … }), g)` refused the module. The controls below are those two
-// spellings: they must keep lowering, and all three must agree with the interp
-// oracle.
+// The runtime shape is the one an Option[S] LOCAL as an element, or a CALL
+// returning Option[S] as an element, already builds: the payload box is one
+// pointer in the slot at offset 8, which is what the match lowering's
+// struct-payload branch reads. So `(Some(S { … }), g)` must lower like
+// `(pick(5), g)`. The controls are those two spellings, and all three must
+// agree with the interp oracle.
 //
-// The payload struct still has to be leak-safe (opt_payload_struct_ok), the
-// same requirement a struct FIELD of type `Option[S]` has carried since
-// is_leaksafe_opt_field_d admitted it.
-//
-// The enum cases below are the same gap one payload kind over, found by wc's
+// The enum cases are the same shape one payload kind over, from wc's
 //
 //	function count_stream(r: Reader, show: Show): (Counts, Option[IoError])
 //
-// which is the shape every streaming utility returns an IO error through, so
-// the whole of coreutils group B was blocked behind it (#8737). A nominal enum
-// payload is the same one-pointer-at-offset-8 slot the struct payload is, and
-// the match lowering's ptag_is_enum branch already read it — only the
-// construction tag was missing, so `(c, Some(e))` refused the module while a
-// BARE enum element and `let o: Option[E] = Some(e)` both lowered. Those two
+// which is how every streaming utility returns an IO error (#8737). A nominal
+// enum payload is the same one-pointer-at-offset-8 slot, so `(c, Some(e))` must
+// lower like a BARE enum element and `let o: Option[E] = Some(e)`. Those two
 // spellings are the controls.
 var tupleOptStructElemCases = []struct {
 	name string
@@ -291,17 +278,16 @@ func TestSelfHostTupleOptStructElemStampedX86_64(t *testing.T) {
 //
 // so the whole of coreutils group B was blocked behind it (#8737). A nominal
 // enum payload is the same one-pointer-at-offset-8 slot the struct payload is,
-// and the match lowering's ptag_is_enum branch already read it — only the
-// CONSTRUCTION tag was missing, so `(c, Some(e))` refused the module while a
-// bare enum element and `let o: Option[E] = Some(e)` both lowered.
+// and the match lowering already read it — only the CONSTRUCTION tag was
+// missing, so `(c, Some(e))` refused the module while a bare enum element and
+// `let o: Option[E] = Some(e)` both lowered.
 //
 // It is pinned on the module-LOADING compiler rather than the stdin drivers
-// above, and that distinction is the whole test: under the driver these cases
-// pass WITHOUT the fix, because the payload has no stamped type there and
-// elem_type_tag falls to its i32 default instead of naming the enum. Only the
-// loading path resolves `e` to its enum type, reaches the admission, and
-// bailed. A driver-path case would have looked like coverage and asserted
-// nothing.
+// above, and that distinction is the whole test: under the driver the payload
+// has no stamped type and falls to an i32 default instead of naming the enum,
+// so these cases pass even without the construction tag. Only the loading path
+// resolves `e` to its enum type and reaches the admission. A driver-path case
+// would look like coverage and assert nothing.
 const tupleOptEnumStampedSrc = `enum E { A, B(i32) }
 struct C { n: i32 }
 function step(c: C, k: i32): (C, Option[E]) {

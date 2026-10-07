@@ -89,14 +89,15 @@ framing path: what parsing a hello request from two call sites, as
 as `std/serve` does, allocate per request on x86-64, arm64 and wasm,
 pinned per target as a ratchet. Its parse and serialize both read 0 on
 every target.
-`TestSelfHostServeAllocsPerRequest` counts what every request still
-allocates through the rest of the serve loop: a hello handler served on
-one keep-alive connection, `__heap_alloc_count()` read through the
-server's own `/count` path around 2,000 requests, on x86-64, pinned as a
-ratchet the same way (`docs/NET-P0-MESSAGE-LAYER-PLAN.md` §6).
-A count above its pin fails as a regression and one below it fails until the
-pin is lowered, so `docs/NET-P0-MESSAGE-LAYER-PLAN.md`'s slices each move
-it in the PR that earns the drop. `TestHTTPHandlerCensus` and its wasm and self-host twins are the leak
+`TestSelfHostServeAllocsPerRequest` and its `Arm64` and `Wasm` legs count
+what every request still allocates through the rest of the serve loop: a
+hello handler served on one keep-alive connection, `__heap_alloc_count()`
+read through the server's own `/count` path around 100k requests on x86-64
+and 10k on arm64 under qemu and on wasm under wasmtime, pinned at 0 on all
+three (`docs/NET-P0-MESSAGE-LAYER-PLAN.md` §6). The pin is a ratchet the same
+way: a count above it fails as a regression and one below it fails until
+the pin is lowered. The slack it allows is per second of the run, for the
+Date the loop reformats once a second. `TestHTTPHandlerCensus` and its wasm and self-host twins are the leak
 half: a bounded serve loop under `FERN_LEAKCHECK` frees what it allocated.
 `TestServeListenFailure` and `TestSelfHostServeListenFailure` pin a server
 whose port is taken: exit 98 and the reason in words, from the single loop

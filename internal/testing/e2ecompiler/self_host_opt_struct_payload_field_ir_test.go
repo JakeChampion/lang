@@ -3,18 +3,11 @@ package e2ecompiler
 import "testing"
 
 // optStructPayloadFieldIRCases pin a struct FIELD whose Option/Result payload is
-// itself a STRUCT (`Option[Inner]` / `Result[Inner, …]`) to the self-host IR path
-// on x86-64 + wasm. Scalar-payload Option/Result fields were already admitted (see
-// self_host_opt_struct_field_ir_test.go); the construction and match-on-Option
-// lowering already handled a leak-safe STRUCT payload on every backend (the match
-// path reads it as a leak-only pointer at offset 8, like a string), but the
-// eligibility predicate is_leaksafe_opt_field rejected any non-scalar payload, so
-// such a field bailed the whole module to the legacy AST emitter. #2691 adds the
-// structs-aware is_leaksafe_opt_field_d so an Option[Struct]/Result[Struct,…] field
-// is admitted, and so is an Option[enum] / Result[enum, …] field: the box holds
-// one variant pointer, leak-only, like a bare enum field.
-// Each case is oracle-checked
-// against the interpreter and returns <= 126. Mirrors self_host_nested_array_ir_test.go.
+// itself a STRUCT (`Option[Inner]` / `Result[Inner, …]`) or an enum to the
+// self-host IR path on x86-64 + wasm (#2691); scalar-payload Option/Result
+// fields are in self_host_opt_struct_field_ir_test.go. Each case is
+// oracle-checked against the interpreter and returns <= 126. Mirrors
+// self_host_nested_array_ir_test.go.
 var optStructPayloadFieldIRCases = []struct {
 	name string
 	main string

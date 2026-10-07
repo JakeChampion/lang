@@ -19,7 +19,7 @@ import (
 // forgot to re-test the chain" classes of bugs.
 //
 // main() runs five sub-checks:
-//   1. Mutual recursion + const-fold opportunity: fact(2+3) = 120.
+//   1. Recursion + const-fold opportunity: fact(2+3) = 120.
 //   2. Constfold visible in the AST: let c = 2 + 3 → ExprNumber "5".
 //   3. Ill-typed program — checker rejects, the interpreter is never called.
 //   4. Array + while: sum of [3,5,7,9] = 24 via main().

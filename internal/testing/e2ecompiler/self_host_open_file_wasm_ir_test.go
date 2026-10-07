@@ -18,10 +18,10 @@ import (
 // Some($__fern_build_io_error)). Runs under wasmtime with `--dir=.::/` granting
 // the run dir as fd 3, and verifies the host file.
 //
-// The programs use NATIVE's signature — `match (open_writer(p)) { Ok(w) => .., Err(e)
-// => .. }` over Result[Writer, IoError] — which is the whole point of #7758: the
-// self-host used to hand back a bare fd here and refuse the match the native
-// compiler runs. Each source below exits identically under `bin/fern -interp`.
+// The programs match on the intrinsics' Result —
+// `match (open_writer(p)) { Ok(w) => .., Err(e) => .. }` over
+// Result[Writer, IoError] (#7758). Each source below exits identically under
+// `bin/fern -interp`.
 func TestSelfHostOpenFileWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host open_file wasm IR e2e")

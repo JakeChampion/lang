@@ -11,39 +11,19 @@ import (
 
 // --- An UNMATCHED Option local's alias bind gets a retain and a credit -------
 //
-// `let x: Option[T] = src` denied `src` its whole reclaim credit whenever `src`
-// had no consuming match of its own — the `!name_is_alias_bound` conjunct in
-// `opt_unmatched_esc_ok` (#7687). Nothing else released either slot, so the bind
-// alone leaked the box and its payload:
+// `let x: Option[T] = src`, where `src` has no consuming match of its own, must
+// not leak the box and its payload (#7687). The bind RETAINS the box, the
+// alias's release is the box dec alone, and the source keeps the one deep
+// release.
 //
-//	shape (100 rounds)                     native      self-host (before)
-//	Option[i32[]] alias, never read        200/200/0   200/0  live 8000
-//	Option[i32[]] alias, alias matched     200/200/0   200/0  live 8000
-//	Option[string] alias, never read       100/100/0   300/0  live 7200
+// EVERY ROW IS GATED ON `__rc_underflow_count()`, NOT BYTES. A release without
+// the retain, or a deep release on both slots, balances the census perfectly
+// (200/200 live 0) while corrupting memory; only the exit code (99 against 36)
+// separates them. Every row also runs a second leg under FERN_SANITIZE=1, whose
+// quarantining allocator reports an over-release directly.
 //
-// The denial was correct for the code as it stood: these releases are a payload
-// release plus a box dec, the bind took no retain, and forgiving it alone leaves
-// two slots decing one count. The fix is the pairing every other container class
-// already has — the bind RETAINS the box, and the alias takes the class credit
-// qualified by "NODEEP:" so its release is the box dec alone while the source
-// keeps the one deep release.
-//
-// EVERY ROW IS GATED ON `__rc_underflow_count()`, NOT BYTES, and that is not
-// a redundant check here. Both intermediate states of this change balanced the
-// census perfectly while corrupting memory:
-//
-//	build                                   exit   census
-//	credit without the retain               99     200/200 live 0
-//	credit + retain, deep release on both   99     200/200 live 0
-//	correct                                 36     200/200 live 0
-//
-// A leak-accounting assertion passes on all three. The exit code separates them,
-// and every row runs a second leg under FERN_SANITIZE=1 — the quarantining
-// allocator reports the over-release directly rather than by arithmetic. #7687
-// was explicit that this family needs an instrument the census does not provide.
-//
-// Every want was confirmed against BOTH oracles — `bin/fern -interp` and the
-// native x86-64 backend agreed on each — never read off the self-host run.
+// Every want was confirmed against `bin/fern -interp`, never read off the
+// self-host run.
 type optAliasBindCase struct {
 	name string
 	src  string
@@ -77,11 +57,9 @@ func optAliasBindCases() []optAliasBindCase {
 			want: 36,
 		},
 		{
-			// The alias is itself matched — the commonest use of one, and the row
-			// that pins the vetting walker. `body_unsafe_for` reads a bare-ident
-			// match scrutinee as an escape, which would refuse this shape outright;
-			// `body_unsafe_for_match_borrow` plus the payload-out conjunct is the
-			// pairing that admits the box while staying strict on the payload.
+			// The alias is itself matched — the commonest use of one. A bare-ident
+			// match scrutinee is a borrow of the box, so the box is still
+			// released, while a payload moved out of the arm must not be.
 			name: "arr_alias_matched",
 			src: `function round(i: i32): i32 {
     let t: i32 = 0;

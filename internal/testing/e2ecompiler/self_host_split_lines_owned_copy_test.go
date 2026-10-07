@@ -10,18 +10,15 @@ import (
 
 // --- split/lines segments are owned copies (#7230) ---------------------------
 //
-// rt_src_str_split and rt_src_str_lines appended bare segment slices — views
-// whose backing buffer is the receiver's. A result that crossed its frame
-// dangled exactly like #7393's trim: pre-fix, both probes below answered 36 on
-// the self-host x86-64 leg against the oracles' 29, reading the recycler's
-// bytes, with underflow 0 and no diagnostic. The fix appends `slice + ""` (the
-// #7393 idiom), and the SARRB release routing collapses: owned elements take
-// the ordinary rc-aware full free — the view-aware helpers, which free boxes
-// alone, would strand each element's data buffer. The strarr_builtin flag
-// survives only as the SARRB credit's binding-site type confirmation.
+// rt_src_str_split and rt_src_str_lines append an OWNED COPY of each segment
+// (`slice + ""`, the #7393 idiom), not a view whose backing buffer is the
+// receiver's. A view result that crossed its frame would dangle exactly like
+// #7393's trim — both probes below would answer 36 against the oracles' 29,
+// reading the recycler's bytes, with underflow 0 and no diagnostic. Owned
+// elements take the ordinary rc-aware full free.
 //
 // The escaping rows return the result across a frame; the exits are the part
-// that must hold. On the typed lowering every row balances.
+// that must hold. Every row balances.
 
 type splitOwnedCase struct {
 	name   string

@@ -9,7 +9,7 @@ import (
 )
 
 // #4372 (file half) / #7758 / #8776: open_reader / open_writer / open_appender /
-// open_exclusive must lower on the self-host x86-64 IR path, with NATIVE's
+// open_exclusive must lower on the self-host x86-64 IR path with their checked
 // signature — Result[Reader, IoError] / Result[Writer, IoError], matched rather
 // than sign-tested. All four lower to one op_open_file carrying the openat flags
 // (O_RDONLY=0 / O_WRONLY|O_CREAT|O_TRUNC=577 / O_WRONLY|O_CREAT|O_APPEND=1089 /
@@ -23,8 +23,8 @@ import (
 // on it, and finally opens a path that does not exist and matches the
 // IoError variant — proving all four openat flag paths, Writer.write, close, and
 // BOTH Result arms (including the Err payload being a real matchable IoError, not a
-// raw errno) work end-to-end through the IR backend. Byte-identical to what the
-// native compiler runs: `bin/fern -interp` on this source also exits 42.
+// raw errno) work end-to-end through the IR backend. `bin/fern -interp` on this
+// source also exits 42.
 func TestSelfHostOpenFileIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {

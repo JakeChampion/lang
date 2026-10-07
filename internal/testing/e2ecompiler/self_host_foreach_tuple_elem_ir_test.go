@@ -8,16 +8,12 @@ import (
 	"testing"
 )
 
-// Element-type typing of a `for p in <(tuple)[]>` loop variable. The element
-// tuple's tags are recorded on the array slot's arrarr_elem (#4365) — the
-// direct-index `ps[i].N` reads them there — but the FOR-LOOP var `p` needs its
-// own mark_tuple_elems, which the loop lowering omitted. So `p.N` had no element
-// tag: an INFERRED `let s = p.1` (a string element) typed it wrong and `s.len()`
-// mis-read the length — a SILENT MISCOMPILE (p.1 itself printed fine; only its
-// derived length was wrong), on the IR path. The loop var carries the tuple
-// tags, so `p.N` resolves — pointer elements (string / struct) included. Found by
-// differential probing; each case is oracle-checked vs the interpreter and
-// routing-pinned to "ir".
+// Element-type typing of a `for p in <(tuple)[]>` loop variable: `p` carries the
+// element tuple's types, so `p.N` resolves — pointer elements (string / struct)
+// included. A wrong element type is a SILENT MISCOMPILE: an INFERRED
+// `let s = p.1` (a string element) mistyped makes `s.len()` mis-read the length
+// while p.1 itself prints fine. Found by differential probing; each case is
+// oracle-checked vs the interpreter and routing-pinned to "ir".
 var foreachTupleElemIRCases = []struct {
 	name string
 	src  string

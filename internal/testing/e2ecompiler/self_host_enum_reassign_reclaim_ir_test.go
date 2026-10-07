@@ -9,14 +9,11 @@ import (
 	"testing"
 )
 
-// Enum self-reassign payload deep-drop (Perceus): a loop-carried array-payload enum
-// `let b: E = V0([..]); while (..) { b = V1([..]); b = V2([..]); }` whose payload is
-// NEVER bound (all-`_` matches) has each superseded box DEEP-DROPPED (payload array +
-// box) at the reassign, closing the register-backend per-reassign leak (box-only
-// shallow free left it). enum_only_wildcard_used_rec gates soundness (no payload
-// aliasing); a payload-binding match disqualifies b (safe fallback to the shallow
-// free). On wasm the pattern is already reclaimed, so the extra dec is a rc-guarded
-// no-op.
+// Enum self-reassign payload deep-drop (Perceus): in a loop-carried array-payload
+// enum `let b: E = V0([..]); while (..) { b = V1([..]); b = V2([..]); }` each
+// superseded box is DEEP-DROPPED (payload array + box) at the reassign, so the
+// churn stays flat on every backend. A match that binds the payload must still
+// read it correctly.
 
 const enumReassignChurn = `enum Bag { Keep(i32[]), Swap(i32[]) }
 function churn(n: i32): i32 {
@@ -38,7 +35,7 @@ function main(): i32 { return churn(%d); }
 // traps (exit 137). With the deep-drop it stays flat and completes. The payloads go
 // through id so they are built on the heap rather than placed as constants.
 const enumReassignFlatHeap = `enum Big { A(i32[]), B(i32[]) }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function churn(n: i32): i32 {
     let b: Big = A([0]);
     let i: i32 = 0;
@@ -58,7 +55,7 @@ function main(): i32 { return churn(3000000); }
 // buffer). acc = 10 * (7+8) = 150. The arrays go through id so they are built on
 // the heap rather than placed as constants.
 const enumReassignCorruptionProbe = `enum Bag { Keep(i32[]), Swap(i32[]) }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function churn(n: i32): i32 {
     let b: Bag = Keep([9, 9]);
     let i: i32 = 0;

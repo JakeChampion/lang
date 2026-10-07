@@ -9,19 +9,16 @@ import (
 )
 
 // TestSelfHostPowIRWasm pins `__pow_f64(x, y)` (the lowering behind std/float's
-// `(x: f64) pow(y)`) on the wasm IR path. pow is the one BINARY transcendental
-// and the last of the exp/log family: it was a wasm_eligible exclusion, and now
-// that exp + log lower on wasm it does too. fpow lowers to op_fpow (an op_fbin) ->
-// $__fern_pow_f64, a one-line runtime x^y = exp(y·ln x) composing the two
-// polynomial helpers — the wasm sibling of asm_arm64's __fern_pow_f64. The two
-// f64 operands arrive in stack order x then y, matching the
-// param order.
+// `(x: f64) pow(y)`) on the wasm IR path. pow is the one BINARY transcendental:
+// fpow lowers to $__fern_pow_f64, a one-line runtime x^y = exp(y·ln x)
+// composing the exp and log polynomial helpers — the wasm sibling of
+// asm_arm64's __fern_pow_f64. The two f64 operands arrive in stack order x then
+// y, matching the param order.
 //
-// Value-tested (not differential — the wasm AST path has no pow to diff against):
-// the program computes x^y at a range of inputs (2^10, 2^0.5, 9^0.5, 5^0, 10^-2,
-// e^1) and checks each against the known f64 value within a 1e-6 RELATIVE
-// tolerance. Exits 0 only if every check passes; the test also pins that the IR
-// path was taken (`call $__fern_pow_f64` in the WAT).
+// Value-tested: the program computes x^y at a range of inputs (2^10, 2^0.5,
+// 9^0.5, 5^0, 10^-2, e^1) and checks each against the known f64 value within a
+// 1e-6 RELATIVE tolerance. Exits 0 only if every check passes; the test also
+// pins that the IR path was taken (`call $__fern_pow_f64` in the WAT).
 func TestSelfHostPowIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host pow wasm IR e2e")

@@ -9,49 +9,30 @@ import (
 )
 
 // fnValueCallCases pin calls made THROUGH a function value that no local slot
-// describes — a struct field, an array element, a tuple element (#5986,
-// docs/TYPED-IR-REWRITE.md §"Calls through a fn value that no slot carries").
+// describes — a struct field, an array element, a tuple element, a call result
+// (#5986, docs/TYPED-IR-REWRITE.md §"Calls through a fn value that no slot
+// carries").
 //
-// The zero-argument rows landed first: 17 of the 32 subtests they made up then
-// failed on the sources they went in against. The
-// self-host checker had no arm for a call whose callee is a value expression,
-// so `fs[0]()` and `t.0()` typed unknown and the register backends read an f64
-// result out of an integer register (exit 255 against an oracle of 45); and
-// every one of these sites emitted the arity-keyed `op_call_indirect`, so wasm
-// typed the funcref `(result i32)` and rejected the module outright.
+// The callee's declared signature has to reach two places: the result width
+// the register backends read (an f64 result read out of an integer register
+// exits 255 against an oracle of 45), and the funcref type wasm's indirect call
+// names (a funcref typed `(result i32)` makes wasm reject the module). It must
+// also drive the width each argument is lowered at, from the same derivation:
+// two derivations that disagree are a module the validator rejects.
 //
 // The _local rows bind the call's result to a declared local first, which is a
 // control for the REGISTER half only: the declaration supplies the width there,
-// but it says nothing about the funcref type, so those rows were failing on
-// wasm too.
+// but it says nothing about the funcref type.
 //
 // The _i32 rows and the zero-argument fnlocal_annotated_* rows are the true
-// controls — passing on both legs before and after. The all-i32 signatures
-// decline the funcref tag on purpose (`$fn<N>` already describes them), which
-// is what holds the emitted bytes identical for every program that was already
-// correct.
+// controls. The all-i32 signatures decline the funcref tag on purpose (`$fn<N>`
+// already describes them), which holds the emitted bytes identical for every
+// program that was already correct.
 //
-// The fnfield_arg_* rows are the WITH-ARGUMENT half for a struct field, which a
-// `fn_param_types` sidecar on StructFieldDecl carries. One declared signature
-// drives both the width each argument is lowered at and the funcref type the
-// call names; split across two derivations they disagree, and a disagreement is
-// a module the validator rejects.
-//
-// The fntuple_arg_* rows are the same half for a TUPLE ELEMENT, which the slot
-// carries as its declared tuple SPELLING (`tuple_type`) rather than a second
-// list of tags: the element tags are the coarse "clo"/"fn" dispatch markers by
-// design, and a signature cannot be recovered from those.
-//
-// The fnarray_arg_* rows are the same half for an ARRAY ELEMENT. An array is
-// the one shape whose declared spelling does NOT survive — parse_type_name
-// coarsens `((f64) => f64)[]` to the flat "fn[]" tag — so the element signature
-// is rebuilt from the binding's own two sidecars and carried on the slot, and
-// travels with a whole-array alias rebind.
-//
-// The fnretcall_* rows close the last of these shapes: `mk()()`, whose callee is
-// a CALL. Its result has no slot and no spelling at the call site, so the
-// signature comes from the callee's own declaration — the two FuncDecl sidecars,
-// registered per module by ret_fn_sigs_of.
+// The fnfield_arg_*, fntuple_arg_*, fnarray_arg_* and fnretcall_* rows are the
+// WITH-ARGUMENT half for a struct field, a tuple element, an array element and
+// a call result (`mk()()`), whose signature comes from the callee's own
+// declaration.
 var fnValueCallCases = []struct {
 	name string
 	src  string

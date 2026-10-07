@@ -13,20 +13,17 @@ import "testing"
 // call site `Box.default()` → `Box__Inner.default()` from the binding's
 // annotation (a receiver-less constructor has no args to infer from).
 //
-// Scope: type params instantiated with a leaf-safe STRUCT or a PRIMITIVE. A
-// primitive param (`Box[i32]`) needs a primitive `Default` impl in scope for
-// the native compiler (#2864); the self-host substitutes the primitive's zero
-// LITERAL for `T.default()` directly. An enum-typed field isn't leaf-safe in
-// the IR struct model — left as a follow-up. The inline `trait Default` (+
-// primitive impl, where needed) keeps each program valid for both compilers.
+// Scope: type params instantiated with a leaf-safe STRUCT or a PRIMITIVE. For a
+// primitive param (`Box[i32]`) the self-host substitutes the primitive's zero
+// LITERAL for `T.default()` directly. The inline `trait Default` (+ primitive
+// impl, where needed) keeps each program valid for the interpreter oracle.
 var genericDefaultIRCases = []struct {
 	name     string
 	src      string
 	expected int
 }{
 	// Primitive type params: the self-host emits the zero literal for the
-	// defaulted field; the native compiler dispatches through the primitive
-	// `Default` impl. Both yield the same result.
+	// defaulted field, which the primitive `Default` impl also returns.
 	{"box-i32",
 		`trait Default { function default(): Self; } impl Default for i32 { function default(): i32 { return 0; } } @derive(Default) struct Box[T] { v: T } function main(): i32 { let b: Box[i32] = Box.default(); return b.v + 7; }`, 7},
 	{"box-string",

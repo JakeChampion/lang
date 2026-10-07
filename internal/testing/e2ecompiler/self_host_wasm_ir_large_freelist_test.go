@@ -15,9 +15,9 @@ import (
 // self-host wasm allocator (#7735).
 //
 // The small size-class table covers blocks up to fl_cells*8 = 512 KiB. Past
-// that the wasm allocator used to bump and never recycle, so every large array
-// a long-running program allocated and dropped was gone for the life of the
-// process — while both native backends had grown a 512-KiB-class large tier.
+// that a large tier must recycle dropped blocks, or every large array a
+// long-running program allocates and drops is gone for the life of the
+// process.
 //
 // __heap_bump_bytes is the metric that decides it: the cursor moves only on a
 // fresh bump, never on a freelist reuse, so a loop that allocates and drops the

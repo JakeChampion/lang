@@ -15,24 +15,16 @@ import (
 // out — the return-transfer Perceus dup — so the result is a counted reference
 // somebody owes a dec for. A caller that BINDS it pays that from the slot's exit
 // sweep. A caller that consumes it in place — `h.get().len()`, `grab(h)[0]`, a
-// discarded `h.get();` — has no slot, and nothing paid it. Two things then went
-// wrong at once, and each alone measures identically to no fix at all:
+// discarded `h.get();` — has no slot, so the dec follows the consuming use. A
+// method returning a field must also leave its RECEIVER's deep drop intact,
+// including the rc fields the method never names.
 //
-//   - the retain was never released, so the buffer's rc ratcheted up per call;
-//   - a method returning a field cost its RECEIVER the deep drop entirely
-//     (moves_fields_expr marks every method receiver a field-move hazard), so
-//     the receiver's own reference was never dec'd either — and that marker is
-//     whole-local, so it stranded every rc field of the struct, including ones
-//     the method never names.
-//
-// Every case is LOOP-RESIDENT: the struct is constructed inside the loop, so the
-// leak is per ROUND rather than per object. The issue's original probe hoisted
-// it out and therefore reported "flat" for something unbounded. Measured on the
-// x86-64 self-host before the fix, live bytes at 100 / 200 / 400 rounds:
-// 4800 / 9600 / 19200 — exactly 48 B/round — where native is 0 on every row.
+// Every case is LOOP-RESIDENT: the struct is constructed inside the loop, so a
+// leak is per ROUND rather than per object; hoisting it out reads "flat" for
+// something unbounded.
 //
 // The byte cases return `(heap after churn 2 − heap after churn 1) / rounds`,
-// which is that same per-round rate: what the first churn failed to give back is
+// which is the per-round leak rate: what the first churn failed to give back is
 // exactly what the second has to allocate fresh. A one-time cost would read 0
 // here, so a non-zero exit IS the growth.
 var arrOwnedRetReleaseCases = []struct {
@@ -97,7 +89,7 @@ function main(): i32 {
 	// A bare BORROWED param returned (the #4357 return-transfer limb) with the
 	// result never bound. Its owner `s` is read afterwards, so the release has
 	// to give back the retain and nothing more.
-	{"arrown-borrowed-param-len-recv", `function id(a: i32[]): i32[] { return a; }
+	{"arrown-borrowed-param-len-recv", `@noinline function id(a: i32[]): i32[] { return a; }
 function churn(n: i32): i32 {
     let t: i32 = 0;
     let i: i32 = 0;
@@ -209,7 +201,7 @@ function main(): i32 {
 	// has no E051, so it lowers `id(s)` over a live local — which native rejects
 	// — and admitting the shape took that program to an rc underflow. It keeps
 	// its leak instead; only the safety property is pinned here.
-	{"arrown-own-param-refused", `function id(own a: i32[]): i32[] { return a; }
+	{"arrown-own-param-refused", `@noinline function id(own a: i32[]): i32[] { return a; }
 function churn(n: i32): i32 {
     let t: i32 = 0;
     let i: i32 = 0;
@@ -313,19 +305,15 @@ function main(): i32 {
     return ((b2 - b1) / 200) as i32;
 }`, 0},
 
-	// A string[] FIELD read reaches `.len()` through the same site but is NOT a
-	// STRARR: producer — the buffer belongs to the struct, and the elements with
-	// it — so the new deep arm must stay OFF. It takes the "ARROWN:" shallow
-	// path instead, which `!alfresh` gates it behind.
+	// A string[] FIELD read through a method reaches `.len()` the same way, but the
+	// buffer and its elements belong to the struct, so the call result must not be
+	// deep-freed.
 	//
 	// The receiver is read twice more AFTER the `.get()`, which is what makes a
-	// wrong deep free visible: __fern_str_arr_free would take the element boxes
-	// the struct still owns, so the later reads return garbage (97) or the rc
-	// underflows (99). The byte rate is asserted too, now that #7648 is fixed:
-	// the wasm loop-rebind's field reclaim used the shallow $__fern_arr_dec on
-	// a string[] field where the register backends deep-free under the same
-	// "arr:<T>" admission, stranding the element boxes at 47 B/round on that
-	// leg alone while the exit path's $__struct_drop_<T> walked deep.
+	// wrong deep free visible: it would take element boxes the struct still owns,
+	// so the later reads return garbage (97) or the rc underflows (99). The byte
+	// rate is asserted too: when the struct dies its drop must release the element
+	// boxes along with the buffer, on every backend.
 	{"strarr-field-len-not-deep-freed", `function w(a: string): string { return a + "!"; }
 struct H { xs: string[] }
 function (h: H) get(): string[] { return h.xs; }
@@ -350,16 +338,13 @@ function main(): i32 {
     return ((b2 - b1) / 200) as i32;
 }`, 0},
 
-	// --- the STRUCT-element producers (#7445's registries) ---
+	// --- the STRUCT-element producers ---
 	//
-	// A struct array from a producer call earned its BOUND credit in #7445, but
-	// the in-place consumers matched no admission at either registry class and
-	// released nothing at all: frees=0 outright, ~200 B/round and unbounded,
-	// where native is flat at zero. The release is the same split the exit
-	// sweep gives a credited slot of the class: a field-routing or
-	// rc-array-field element ("ARRSTRUCTF:") walks __struct_drop_<T> per
-	// element; a scalar-field one ("STRUCTARRF:") frees box-per-element via
-	// __fern_arrarr_free.
+	// A struct array from a producer call consumed in place (`mk().len()`, or a
+	// discarded `mk();`) has no slot to sweep, so its release follows the consuming
+	// use: each element is released through its type's drop, then the buffer. An
+	// rc-array-field element (Inner) and a string-field element (P) must both stay
+	// flat per round.
 	{"arrstruct-producer-len-recv", `struct Inner { k: i32, ys: i32[] }
 function mk(): Inner[] { return [Inner { k: 1, ys: [1, 2] }, Inner { k: 2, ys: [3] }]; }
 function churn(n: i32): i32 {
@@ -433,12 +418,8 @@ function main(): i32 {
 }`, 0},
 
 	// A producer whose local is REASSIGNED before return, every write a
-	// strict-fresh literal. The registry used to refuse any reassignment, so
-	// the caller's binding earned no credit and the callee's rebind freed
-	// nothing: 240 B/round, frees=0 outright, where native balances both. The
-	// caller half goes through the widened struct_ret_local_is_frame_fresh (all
-	// writes strict-fresh); the callee half goes through the snapshot-local literal
-	// arm, vouched by the function's own strict-fresh registry row.
+	// strict-fresh literal. The caller's binding owns the returned box and the
+	// callee's rebind frees the box it replaces, so the per-round rate is 0.
 	{"struct-producer-reassigned-local", `struct P { xs: i32[], s: string }
 function w(s: string): string { return s + ""; }
 function re(i: i32): P { let p: P = P { xs: [i], s: w("r") }; p = P { xs: [i, i, i], s: w("q") }; return p; }

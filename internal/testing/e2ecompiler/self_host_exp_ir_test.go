@@ -9,20 +9,17 @@ import (
 )
 
 // TestSelfHostExpIRWasm pins `__exp_f64(x)` (the lowering behind std/float's
-// `(x: f64) exp()`) on the wasm IR path. The libm transcendentals had no wasm
-// instruction or IR runtime, so a module computing e^x was a wasm_eligible
-// exclusion (the wasm AST path defers them too — they simply didn't work on wasm).
-// fexp now lowers to op_fexp -> $__fern_exp_f64, a fresh polynomial runtime: e^x =
-// 2^k · Taylor7(r), k = round(x·log2e), r = x − k·ln2, with 2^k built directly in
-// the f64 exponent bits — the wasm sibling of asm_arm64's __fern_exp_f64 (same
+// `(x: f64) exp()`) on the wasm IR path. wasm has no exp instruction, so fexp
+// lowers to $__fern_exp_f64, a polynomial runtime: e^x = 2^k · Taylor7(r),
+// k = round(x·log2e), r = x − k·ln2, with 2^k built directly in the f64
+// exponent bits — the wasm sibling of asm_arm64's __fern_exp_f64 (same
 // coefficients). Self-contained f64 math, no imports/heap.
 //
-// Value-tested (not differential — the wasm AST path has no exp to diff against):
-// the program computes e^x at a range of inputs (0, ±1, 0.5, 2, 10) and checks
-// each against the known f64 value within a 1e-6 RELATIVE tolerance, comfortably
-// inside the ~7e-9 worst-case error of the degree-7 polynomial. Exits 0 only if
-// every check passes; the test also pins that the IR path was taken
-// (`call $__fern_exp_f64` in the WAT).
+// Value-tested: the program computes e^x at a range of inputs (0, ±1, 0.5, 2,
+// 10) and checks each against the known f64 value within a 1e-6 RELATIVE
+// tolerance, comfortably inside the ~7e-9 worst-case error of the degree-7
+// polynomial. Exits 0 only if every check passes; the test also pins that the
+// IR path was taken (`call $__fern_exp_f64` in the WAT).
 func TestSelfHostExpIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host exp wasm IR e2e")

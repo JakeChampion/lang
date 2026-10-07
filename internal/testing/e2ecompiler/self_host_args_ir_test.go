@@ -93,10 +93,9 @@ func TestSelfHostArgsIRX86_64(t *testing.T) {
 }
 
 // TestSelfHostArgsIRWasm runs the same cases through the wasm IR backend under
-// wasmtime, which supplies argv (argv[0] is the program name). args() now
-// lowers on the wasm IR path: wasm_ir emits `call $__fern_args` and wasm_ir_run
-// pulls in the wasi args_sizes_get / args_get imports + the args_func helper
-// (the runtime the AST path already used) when the module reads argv. The extra
+// wasmtime, which supplies argv (argv[0] is the program name). wasm_ir emits
+// `call $__fern_args` and wasm_ir_run pulls in the wasi args_sizes_get /
+// args_get imports + the args_func helper when the module reads argv. The extra
 // args sit after the module path on the wasmtime command line.
 func TestSelfHostArgsIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {

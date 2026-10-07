@@ -5,22 +5,17 @@ import (
 	"testing"
 )
 
-// The owned-return admission learns the #7667 alias forgiveness:
-// tuple_ret_local_is_frame_fresh feeds rctuple_param_alias_bind_sites into
-// the ret-forgiving escape walk, so a producer local read through a
-// dead-ended alias (`let a = t; ... a.0 ...; return t;`) keeps the callee in
-// tuple_fresh_ret_fns and the caller its TUP:/ARRF: credit. The vet is the
-// rc-tuple payload scan on the alias's own name — an alias that is itself
-// returned, chains, extracts a payload, or leaves through a call arg still
-// sinks the admission, which is what keeps the caller's deep free from
-// dangling a second live reference (the over-release the cell comment warns
-// a careless widening buys).
+// A producer that returns a tuple local read through a dead-ended alias
+// (`let a = t; ... a.0 ...; return t;`) still hands the caller an owned result
+// (#7667), so the caller's binding releases it. An alias that is itself
+// returned, chains, extracts a payload, or leaves through a call arg denies
+// that, which is what keeps the caller's deep free from dangling a second live
+// reference.
 //
-// Every want is confirmed against BOTH oracles (bin/fern -interp and native
-// x86-64) — never read off the self-host run under test. Every early arm is
-// dynamically live (the 08-24 entry's trap: a dead arm makes half the shape
-// unverifiable). Each case re-runs under FERN_SANITIZE=1 and must exit
-// identically with no over-release / use-after-free report.
+// Every want is confirmed against bin/fern -interp — never read off the
+// self-host run under test. Every early arm is dynamically live (a dead arm
+// makes half the shape unverifiable). Each case re-runs under FERN_SANITIZE=1
+// and must exit identically with no over-release / use-after-free report.
 
 func tupleOwnedretAliasCases() []tupleAliasParamCase {
 	const caller = `

@@ -13,9 +13,8 @@ import (
 // fieldReadMoveCases pin #10482: a local bound from a field read of an `own`
 // parameter (`let fr = st.fr`) holds no count of its own, so storing it into a
 // struct or tuple literal at its last use is not a move. The construction has
-// to retain it, because the parameter's exit drop releases the field. #10414's
-// pass had this shape in strarr_own_node, and the gen1 compiler segfaulted
-// there. Every row's census must read zero.
+// to retain it, because the parameter's exit drop releases the field. Every
+// row's census must read zero.
 var fieldReadMoveCases = []struct {
 	name string
 	src  string

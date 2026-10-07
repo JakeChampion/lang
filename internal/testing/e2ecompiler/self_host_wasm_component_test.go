@@ -125,10 +125,9 @@ function main(): i32 {
 // (wat_component.fern's component_full): given a core module that exports
 // `_lang_run`, it emits the core-instance / alias / type / canon-lift /
 // instance / `wasi:cli/run` sections around it. The framing is constant for
-// this fixed shape, so the test feeds the Go backend's own core module
-// (extracted from its `-target wasm32-wasi` component output) to component_full and
-// asserts the result is byte-identical to — and runs the same as — the Go
-// reference component.
+// this fixed shape, so the test feeds the core module of a `fern -target
+// wasm32-wasi` component build to component_full and asserts the result is
+// byte-identical to — and runs the same as — that component.
 func TestSelfHostWasmComponentFull(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -264,7 +263,7 @@ function main(): i32 {
 `
 
 // TestSelfHostWasmComponentEndToEnd compiles a program to a wasi:cli/run
-// component entirely through the self-host: source -> emit_module_run
+// component entirely through the self-host: source -> wasm_ir in run mode
 // (preview2 core WAT) -> emit_binary (core) -> component_full (component).
 // It then runs the component and checks the run() result convention
 // (main()==0 -> ok -> exit 0; main()!=0 -> err -> exit 1). No-I/O programs
@@ -428,10 +427,10 @@ function main(): i32 {
 // TestSelfHostWasmComponentFullIO exercises component_full_io: the stdout
 // I/O component framing (wat_component.fern), embedded as \xNN blobs around
 // the user core. Given a core that uses the preview2 stdout imports and
-// exports _lang_run, it must reproduce the native compiler's I/O component
-// byte-for-byte. The test feeds the Go backend's own I/O core (from its
-// `-target wasm32-wasi` output for a printing program) to component_full_io and
-// asserts byte-equality + that the component prints under wasmtime.
+// exports _lang_run, it must reproduce the I/O component `fern -target
+// wasm32-wasi` builds, byte-for-byte. The test feeds the core section of that
+// build for a printing program to component_full_io and asserts byte-equality
+// + that the component prints under wasmtime.
 func TestSelfHostWasmComponentFullIO(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -536,7 +535,7 @@ function main(): i32 {
 `
 
 // TestSelfHostWasmComponentStdout exercises the fully self-hosted preview2
-// stdout I/O path: source -> emit_module_run_io (a run core importing
+// stdout I/O path: source -> wasm_ir in run-I/O mode (a run core importing
 // wasi:cli/stdout + wasi:io/streams, with a $__fern_fd_write shim over the stream)
 // -> emit_binary -> component_full_io -> a wasi:cli/run component that
 // prints under wasmtime. Asserts both stdout and the run() result
@@ -669,9 +668,10 @@ function main(): i32 {
 
 // TestSelfHostWasmComponentFullIOFS exercises component_full_io_fs: the
 // read_file + stdout component framing (wat_component.fern), embedded as
-// \xNN blobs around the core. Given the Go backend's own read_file core, it
-// must reproduce the native compiler's file-I/O component byte-for-byte and
-// run (reading a preopened file and printing its contents).
+// \xNN blobs around the core. Given the core of a read_file program's
+// `fern -target wasm32-wasi` build, it must reproduce that build's file-I/O
+// component byte-for-byte and run (reading a preopened file and printing its
+// contents).
 func TestSelfHostWasmComponentFullIOFS(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -877,11 +877,9 @@ func TestSelfHostWasmComponentReadFile(t *testing.T) {
 	})
 
 	// The Err payload must be a real, matchable IoError variant carrying the
-	// path — the same thing every other target produces. The preview2 helper
-	// stored the RAW wasi error code there until the fs shapes moved onto the
-	// IR leg, so matching a variant on it dereferenced an integer as a variant
-	// box. The sibling missing-file-err case above cannot see that: it takes
-	// the Err branch but never inspects `e`, which is how it survived (#5795).
+	// path — the same thing every other target produces, not the RAW wasi
+	// error code. The sibling missing-file-err case above cannot see that: it
+	// takes the Err branch but never inspects `e` (#5795).
 	t.Run("missing-file-err-variant", func(t *testing.T) {
 		comp := build(t, `function main(): i32 {
 			match (read_file("nope.txt")) {
@@ -910,13 +908,8 @@ func TestSelfHostWasmComponentReadFile(t *testing.T) {
 		}
 	})
 
-	// The same Err variant, but on the AST emitter rather than the IR one.
-	// An fs shape normally lowers through the IR leg; padding the module past
-	// eligible_core's 512-function budget pushed it onto the AST fallback,
-	// whose variant boxes are 4-byte-slotted instead of 8. The boxer emitted
-	// one layout for both consumers, so this leg read the path out of the id
-	// slot; before that it stored the raw wasi error code here and there was
-	// no variant to match at all (#5795).
+	// The same Err variant in a module padded past 512 functions: the variant
+	// box layout must not depend on the module's size (#5795).
 	t.Run("missing-file-err-variant-ast", func(t *testing.T) {
 		var pad strings.Builder
 		for i := 0; i < 520; i++ {
@@ -997,10 +990,10 @@ function main(): i32 {
 `
 
 // TestSelfHostWasmComponentFullIOFSWrite is the write counterpart of
-// TestSelfHostWasmComponentFullIOFS: given the Go backend's own write_file +
-// stdout core, the self-host's component_full_io_fs_write framing must
-// reproduce the native compiler's file-write component byte-for-byte and run
-// (creating a preopened file with the written contents).
+// TestSelfHostWasmComponentFullIOFS: given the write_file + stdout core of a
+// `fern -target wasm32-wasi` build, the self-host's component_full_io_fs_write
+// framing must reproduce that build's file-write component byte-for-byte and
+// run (creating a preopened file with the written contents).
 func TestSelfHostWasmComponentFullIOFSWrite(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -1256,10 +1249,10 @@ function main(): i32 {
 `
 
 // TestSelfHostWasmComponentFullIOFSRW is the read+write counterpart of the
-// io-fs framing tests: given the Go backend's own read_file + write_file +
-// stdout core, the self-host's component_full_io_fs_rw framing must reproduce
-// the native compiler's combined file-I/O component byte-for-byte and run
-// (copying a preopened file and printing a marker).
+// io-fs framing tests: given the read_file + write_file + stdout core of a
+// `fern -target wasm32-wasi` build, the self-host's component_full_io_fs_rw
+// framing must reproduce that build's combined file-I/O component
+// byte-for-byte and run (copying a preopened file and printing a marker).
 func TestSelfHostWasmComponentFullIOFSRW(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -1503,8 +1496,8 @@ function main(): i32 {
 `
 
 // TestSelfHostWasmComponentFullIORandom is the random+stdout framing test:
-// given the Go backend's own random_bytes + stdout core, the self-host's
-// component_full_io_random framing must reproduce the native compiler's
+// given the random_bytes + stdout core of a `fern -target wasm32-wasi` build,
+// the self-host's component_full_io_random framing must reproduce that build's
 // component byte-for-byte, validate, and run.
 func TestSelfHostWasmComponentFullIORandom(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
@@ -1611,7 +1604,7 @@ function main(): i32 {
 `
 
 // TestSelfHostWasmComponentRandom exercises the fully self-hosted preview2
-// random path: source -> emit_module_run_io (a run core importing
+// random path: source -> wasm_ir in run-I/O mode (a run core importing
 // wasi:random/random's get-random-u64 + the stdout shim, with a preview2
 // $__fern_random_bytes) -> emit_binary -> component_full_io_random -> a
 // wasi:cli/run component that draws randomness under wasmtime.
@@ -1730,9 +1723,9 @@ function main(): i32 {
 `
 
 // TestSelfHostWasmComponentFullIOEnv is the env+stdout framing test: given
-// the Go backend's own env + stdout core, the self-host's
-// component_full_io_env framing must reproduce the native compiler's
-// component byte-for-byte, validate, and run (reading a preopened env var).
+// the env + stdout core of a `fern -target wasm32-wasi` build, the self-host's
+// component_full_io_env framing must reproduce that build's component
+// byte-for-byte, validate, and run (reading a preopened env var).
 func TestSelfHostWasmComponentFullIOEnv(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -1839,7 +1832,7 @@ function main(): i32 {
 `
 
 // TestSelfHostWasmComponentEnv exercises the fully self-hosted preview2 env
-// path: source -> emit_module_run_io (a run core importing
+// path: source -> wasm_ir in run-I/O mode (a run core importing
 // wasi:cli/environment's get-environment + the stdout shim + cabi_realloc,
 // with a preview2 $__fern_env) -> emit_binary -> component_full_io_env -> a
 // wasi:cli/run component that reads environment variables under wasmtime.
@@ -1958,9 +1951,9 @@ function main(): i32 {
 `
 
 // TestSelfHostWasmComponentFullIOArgs is the args+stdout framing test: given
-// the Go backend's own args + stdout core, the self-host's
-// component_full_io_args framing must reproduce the native compiler's
-// component byte-for-byte, validate, and run.
+// the args + stdout core of a `fern -target wasm32-wasi` build, the self-host's
+// component_full_io_args framing must reproduce that build's component
+// byte-for-byte, validate, and run.
 func TestSelfHostWasmComponentFullIOArgs(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -2067,7 +2060,7 @@ function main(): i32 {
 `
 
 // TestSelfHostWasmComponentArgs exercises the fully self-hosted preview2 args
-// path: source -> emit_module_run_io (a run core importing
+// path: source -> wasm_ir in run-I/O mode (a run core importing
 // wasi:cli/environment's get-arguments + the stdout shim + cabi_realloc, with
 // a preview2 $__fern_args) -> emit_binary -> component_full_io_args -> a
 // wasi:cli/run component that reads its argv under wasmtime.
@@ -2177,8 +2170,8 @@ function main(): i32 {
 `
 
 // TestSelfHostWasmComponentFullIOClock is the clock+stdout framing test:
-// given the Go backend's own now_unix_ms + stdout core, the self-host's
-// component_full_io_clock framing must reproduce the native compiler's
+// given the now_unix_ms + stdout core of a `fern -target wasm32-wasi` build,
+// the self-host's component_full_io_clock framing must reproduce that build's
 // component byte-for-byte, validate, and run.
 func TestSelfHostWasmComponentFullIOClock(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
@@ -2285,7 +2278,7 @@ function main(): i32 {
 `
 
 // TestSelfHostWasmComponentClock exercises the fully self-hosted preview2
-// wall-clock path: source -> emit_module_run_io (a run core importing
+// wall-clock path: source -> wasm_ir in run-I/O mode (a run core importing
 // wasi:clocks/wall-clock's now + the stdout shim, with preview2 now_unix_ms /
 // now_ns) -> emit_binary -> component_full_io_clock -> a wasi:cli/run
 // component that reads the wall clock under wasmtime.
@@ -2397,9 +2390,9 @@ function main(): i32 {
 `
 
 // TestSelfHostWasmComponentFullIOClockMono is the monotonic-clock+stdout
-// framing test: given the Go backend's own monotonic_ns + stdout core, the
-// self-host's component_full_io_clock_mono framing must reproduce native's
-// component byte-for-byte, validate, and run.
+// framing test: given a `fern -target wasm32-wasi` build's monotonic_ns +
+// stdout core, the self-host's component_full_io_clock_mono framing must
+// reproduce that build's component byte-for-byte, validate, and run.
 func TestSelfHostWasmComponentFullIOClockMono(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -2505,9 +2498,9 @@ function main(): i32 {
 `
 
 // TestSelfHostWasmComponentClockMono exercises the fully self-hosted preview2
-// monotonic-clock path: source -> emit_module_run_io (a run core importing
-// wasi:clocks/monotonic-clock's now + the stdout shim, with a preview2
-// monotonic_ns) -> emit_binary -> component_full_io_clock_mono -> a
+// monotonic-clock path: source -> wasm_ir in run-I/O mode (a run core
+// importing wasi:clocks/monotonic-clock's now + the stdout shim, with a
+// preview2 monotonic_ns) -> emit_binary -> component_full_io_clock_mono -> a
 // wasi:cli/run component that reads the monotonic clock under wasmtime.
 func TestSelfHostWasmComponentClockMono(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
@@ -2607,11 +2600,12 @@ function main(): i32 {
 `
 
 // TestSelfHostWasmComponentFullIOFSReadEnv is the read_file+env+stdout
-// combination framing test: given the Go backend's own read+env+stdout core,
-// the self-host's component_full_io_fs_read_env framing must reproduce
-// native's component byte-for-byte, validate, and run. Proves the canonical-
-// import-order reorder lets a multi-import combination wire up byte-
-// identically (no per-combination native blob needed beyond the framing).
+// combination framing test: given a `fern -target wasm32-wasi` build's
+// read+env+stdout core, the self-host's component_full_io_fs_read_env framing
+// must reproduce that build's component byte-for-byte, validate, and run.
+// Proves the canonical-import-order reorder lets a multi-import combination
+// wire up byte-identically (no per-combination blob needed beyond the
+// framing).
 func TestSelfHostWasmComponentFullIOFSReadEnv(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -2833,9 +2827,10 @@ function main(): i32 {
 `
 
 // TestSelfHostWasmComponentFullIOFSRWEnv is the read+write+env+stdout
-// combination framing test: given the Go backend's own core, the self-host's
-// component_full_io_fs_rw_env framing must reproduce native's component
-// byte-for-byte, validate, and run. The richest realistic edge-handler shape.
+// combination framing test: given a `fern -target wasm32-wasi` build's core,
+// the self-host's component_full_io_fs_rw_env framing must reproduce that
+// build's component byte-for-byte, validate, and run. The richest realistic
+// edge-handler shape.
 func TestSelfHostWasmComponentFullIOFSRWEnv(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -3060,10 +3055,11 @@ function main(): i32 {
 `
 
 // TestSelfHostWasmComponentFullIORandomWrite is the random+write+stdout
-// combination framing test: given the Go backend's own core, the self-host's
-// component_full_io_random_write framing must reproduce native's component
-// byte-for-byte, validate, and run. Mixes a memory-free import (random,
-// lowered without memory) with the memory-dependent fs write chain.
+// combination framing test: given a `fern -target wasm32-wasi` build's core,
+// the self-host's component_full_io_random_write framing must reproduce that
+// build's component byte-for-byte, validate, and run. Mixes a memory-free
+// import (random, lowered without memory) with the memory-dependent fs write
+// chain.
 func TestSelfHostWasmComponentFullIORandomWrite(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -3282,9 +3278,10 @@ function main(): i32 {
 `
 
 // TestSelfHostWasmComponentFullIOEprint is the eprint+stdout framing test:
-// given the Go backend's own eprint+stdout core, the self-host's
-// component_full_io_eprint framing must reproduce native's component
-// byte-for-byte, validate, and run (writing to both stdout and stderr).
+// given a `fern -target wasm32-wasi` build's eprint+stdout core, the
+// self-host's component_full_io_eprint framing must reproduce that build's
+// component byte-for-byte, validate, and run (writing to both stdout and
+// stderr).
 func TestSelfHostWasmComponentFullIOEprint(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -3396,8 +3393,8 @@ function main(): i32 {
 `
 
 // TestSelfHostWasmComponentEprint exercises the fully self-hosted preview2
-// eprint path end to end: source -> emit_module_run_io (a run core importing
-// wasi:cli/stderr's get-stderr + the stdout pair, with a preview2
+// eprint path end to end: source -> wasm_ir in run-I/O mode (a run core
+// importing wasi:cli/stderr's get-stderr + the stdout pair, with a preview2
 // $__fern_eprint stderr shim) -> emit_binary -> component_full_io_eprint -> a
 // wasi:cli/run component that logs to stderr (and stdout) under wasmtime.
 func TestSelfHostWasmComponentEprint(t *testing.T) {
@@ -3516,9 +3513,9 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostWasmComponentFullIOExit is the exit+stdout framing test: given
-// the Go backend's own exit+stdout core, the self-host's
-// component_full_io_exit framing must reproduce native's component
+// TestSelfHostWasmComponentFullIOExit is the exit+stdout framing test: given a
+// `fern -target wasm32-wasi` build's exit+stdout core, the self-host's
+// component_full_io_exit framing must reproduce that build's component
 // byte-for-byte, validate, and run (exit(0) terminates cleanly after stdout).
 func TestSelfHostWasmComponentFullIOExit(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
@@ -3629,7 +3626,7 @@ function main(): i32 {
 `
 
 // TestSelfHostWasmComponentExit exercises the fully self-hosted preview2 exit
-// path end to end: source -> emit_module_run_io (a run core importing
+// path end to end: source -> wasm_ir in run-I/O mode (a run core importing
 // wasi:cli/exit + the stdout pair, with a preview2 $__fern_exit) ->
 // emit_binary -> component_full_io_exit -> a wasi:cli/run component that
 // terminates early under wasmtime.
@@ -3747,9 +3744,10 @@ function main(): i32 {
 `
 
 // TestSelfHostWasmComponentFullIOFSArgsRead is the args+read_file+stdout
-// combination framing test: given the Go backend's own core, the self-host's
-// component_full_io_fs_args_read framing must reproduce native's component
-// byte-for-byte, validate, and run. The canonical CLI-tool shape.
+// combination framing test: given a `fern -target wasm32-wasi` build's core,
+// the self-host's component_full_io_fs_args_read framing must reproduce that
+// build's component byte-for-byte, validate, and run. The canonical CLI-tool
+// shape.
 func TestSelfHostWasmComponentFullIOFSArgsRead(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -3971,11 +3969,12 @@ function main(): i32 {
 }
 `
 
-// TestSelfHostWasmComponentFullIOFSRWArgs is the args+read+write+stdout
-// framing test (file-transform CLI shape): given the Go backend's own core,
-// the self-host's component_full_io_fs_rw_args framing must reproduce native's
-// component byte-for-byte, validate, and run (copy a file named in argv to
-// another). Its prefix is io_fs_rw_head() + an args tail (phase-3 composition).
+// TestSelfHostWasmComponentFullIOFSRWArgs is the args+read+write+stdout framing
+// test (file-transform CLI shape): given a `fern -target wasm32-wasi` build's
+// core, the self-host's component_full_io_fs_rw_args framing must reproduce
+// that build's component byte-for-byte, validate, and run (copy a file named in
+// argv to another). Its prefix is io_fs_rw_head() + an args tail (phase-3
+// composition).
 func TestSelfHostWasmComponentFullIOFSRWArgs(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

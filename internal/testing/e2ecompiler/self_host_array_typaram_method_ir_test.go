@@ -9,16 +9,14 @@ import (
 )
 
 // Type-parameter generic array methods (`xs.map[U](f)` / `xs.flat_map[U](f)` /
-// `xs.fold[A](init, f)` / `xs.zip[U](other)`) lower on the self-host IR path
-// (array-method monomorphisation, slice 4). Slice 3 folded methods whose only
-// type variable was the receiver's `T`; these also carry an UNBOUNDED extra
-// type variable (`U` / `A`). The self-host erases unbounded type variables under
-// its uniform 8-byte ABI — the result's element width is driven by the CALL
-// SITE's annotation (`let ys: string[] = xs.map(f)`), not by cloning the body —
-// so the receiver alone fixes the monomorphised `T` and the folded body delegates
-// to the free `map` / `flat_map` / `fold` / `zip`, all of which already lower on
-// IR for any `U`/`A` (incl. a width-changing one, e.g. i32 -> string). This
-// flipped `array_hof` from AST to IR.
+// `xs.fold[A](init, f)` / `xs.zip[U](other)`) lower on the self-host IR path.
+// Beyond the receiver's `T` these carry an UNBOUNDED extra type variable
+// (`U` / `A`). The self-host erases unbounded type variables under its uniform
+// 8-byte ABI — the result's element width is driven by the CALL SITE's
+// annotation (`let ys: string[] = xs.map(f)`), not by cloning the body — so the
+// receiver alone fixes the monomorphised `T` and the folded body delegates to
+// the free `map` / `flat_map` / `fold` / `zip`, which lower for any `U`/`A`
+// (incl. a width-changing one, e.g. i32 -> string).
 //
 // Each case uses a single element type; the same verb at several element types
 // in one program is covered by TestSelfHostArrayMethodMultiElemIR. Each case is

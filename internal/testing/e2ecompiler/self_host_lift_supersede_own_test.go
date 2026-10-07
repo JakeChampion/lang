@@ -9,27 +9,20 @@ import (
 )
 
 // #8198: a struct field lifted into a local, superseded in the container, then
-// moved into an `own` parameter came back with the value lost.
+// moved into an `own` parameter must come back with its value.
 //
-// The release is __field_reclaim_<T>, run when a struct local is rebound. It
-// frees each rc field of the OLD box that the NEW one does not carry, and a
-// nested struct / enum field deliberately SKIPS the carried (old.f == new.f)
-// test: a field carried through `...base` was inc'd for the new box, so the old
-// box's own claim has to die there or the inner box is stranded (#6605).
+// When a struct local is rebound, the OLD box's rc fields are released. A field
+// carried through `...base` was inc'd for the new box, so the old box's own
+// claim has to die there or the inner box is stranded (#6605). But equal
+// pointers do not imply a second claim: a callee taking the field by `own` may
+// reuse its box in place and hand it back, so old.f and new.f coincide with ONE
+// reference between them, and releasing it frees a box the new binding names.
 //
-// That reasoning assumes pointer equality implies a second claim. It does not.
-// A callee taking the field by `own` may reuse its box in place and hand it
-// back, so old.f and new.f coincide with ONE reference between them, and the
-// release frees a box the new binding names. The fix asks the rc: equal
-// pointers skip the release only when the field is uniquely owned, which leaves
-// the #6605 case (rc >= 2) releasing exactly as before.
-//
-// SILENT, and that is why a scale probe found it rather than a gate. The free
-// is at rc 1, so __rc_underflow_count() never moves; the block goes to the
-// freelist and the next allocation of that shape gets it back, so the lifted
-// local and the fresh field become the same box. `rounds` is what exposes it:
-// every round re-lifts a field that is empty again, so a broken compiler
-// answers 1 no matter how many rounds run, and the count is the answer.
+// SILENT. The free is at rc 1, so __rc_underflow_count() never moves; the block
+// goes to the freelist and the next allocation of that shape gets it back, so
+// the lifted local and the fresh field become the same box. `rounds` is what
+// exposes it: every round re-lifts a field that is empty again, so a broken
+// compiler answers 1 no matter how many rounds run, and the count is the answer.
 //
 // Differential against `fern -interp` rather than written-down numbers.
 var selfHostLiftSupersedeCases = []struct {
@@ -97,9 +90,9 @@ func TestSelfHostLiftSupersedeOwnX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostLiftSupersedeOwnArm64 — the arm64 emit of the same helper. Each
-// backend writes its own __field_reclaim_<T> body from the shared directive
-// list, so a fix applied to one of them lands here as a failure.
+// TestSelfHostLiftSupersedeOwnArm64 — the same rows on arm64, against the
+// interpreter oracle. Each backend emits the release itself, so x86-64 passing
+// says nothing about this one.
 func TestSelfHostLiftSupersedeOwnArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

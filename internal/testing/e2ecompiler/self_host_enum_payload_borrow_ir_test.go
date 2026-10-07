@@ -7,33 +7,29 @@ import (
 	"testing"
 )
 
-// TestSelfHostEnumPayloadBorrowIRX86_64 pins the two #6049 rc defects around an
-// enum value that lives inside another value, both of which produced a
-// use-after-free the moment the freed block was recycled:
+// TestSelfHostEnumPayloadBorrowIRX86_64 pins two rc shapes around an enum value
+// that lives inside another value. Getting either wrong is a use-after-free the
+// moment the freed block is recycled:
 //
 //  1. A DIRECT ENUM struct field read stored into a CONTAINER (`[p.node]`,
-//     `xs.append(p.node)`) took no Perceus dup, while __struct_drop_<T>'s k_enum
-//     arm decs that field when the struct is reclaimed — so the container's
-//     element was freed under it. enum_field_read_type now drives the alias-inc
-//     at both the array-literal and the append sites.
+//     `xs.append(p.node)`) must take a dup: the struct's drop releases that
+//     field when the struct dies, which would free the container's element
+//     under it.
 //  2. A match arm's PAYLOAD ARRAY binding (`Seq(xs) => …`, and the same for an
-//     Option/Result payload) was marked is_arr and therefore swept at every
-//     function exit, decing a buffer the box owns — once per call, so the
-//     payload died on the second entry. Both lowerings already described the
-//     binding as borrowed and leak-only; is_arr alone put it in the sweep
-//     anyway. LocalInfo.borrowed_arr keeps the sweep off a borrowed binding.
+//     Option/Result payload) borrows a buffer the box owns, so it must not be
+//     released at function exit — once per call, that kills the payload on the
+//     second entry.
 //
-// In std/regex both fire in the same parse tree: `__rx_alt` builds its branches
-// array out of `RParse.node` field reads and `__rx_match` re-binds `RSeq(xs)` /
-// `RAlt(xs)` once per scan position. The freed RSeq box came back from the
-// freelist as the enclosing RGroup, making the tree self-referential and
-// `__rx_match` recurse until the stack ran out (six fixtures, x86-64 + arm64).
+// In std/regex both shapes occur in the same parse tree: `__rx_alt` builds its
+// branches array out of `RParse.node` field reads and `__rx_match` re-binds
+// `RSeq(xs)` / `RAlt(xs)` once per scan position. A freed RSeq box coming back
+// from the freelist as the enclosing RGroup makes the tree self-referential, and
+// `__rx_match` recurses until the stack runs out.
 //
 // Every program below allocates BETWEEN the reads so a freed block is actually
 // recycled — without that churn the stale pointer still reads plausible data and
-// the bug is invisible (a first cut of these probes passed on the broken
-// compiler for exactly that reason). Values are checked in Fern and the
-// over-release detector is asserted, so a wrong exit code is unambiguous.
+// the bug is invisible. Values are checked in Fern and the over-release detector
+// is asserted, so a wrong exit code is unambiguous.
 func TestSelfHostEnumPayloadBorrowIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -188,17 +184,15 @@ function main(): i32 {
 }`, "option-array-payload-arm-borrow", 0)
 }
 
-// #6121: routing the same enum field read through a LOCAL defeated #6049's
-// retain. `let tmp: N = first.node` binds an uncounted alias of the source
-// struct's enum box; the container store that follows is then a bare ident, and
-// the ident arm only retained an rc-CONTAINER slot (array / string / tuple), of
-// which an enum slot is none. So __struct_drop_P's k_enum arm freed the box the
-// array still pointed at — the identical use-after-free #6049 fixed for the
-// direct spelling, one indirection away, on all three backends.
+// #6121: the same enum field read routed through a LOCAL must keep #6049's
+// retain. `let tmp: N = first.node` binds an alias of the source struct's enum
+// box; the container store that follows is then a bare ident, and it must
+// still retain the box. Without that, the struct's drop frees the box the
+// array still points at — the use-after-free #6049 pins for the direct
+// spelling, one indirection away, on all three backends.
 //
-// The mark travels with the name (mark_enum_field_alias) and the retain happens
-// at the store, so the container holds its own count exactly as with the direct
-// read. The bind's own dup and release are #10310's
+// The container holds its own count exactly as with the direct read. The
+// bind's own dup and release are #10310's
 // (self_host_enum_field_alias_count_test.go).
 //
 // Every case churns after the struct dies so a freed block is really recycled;
