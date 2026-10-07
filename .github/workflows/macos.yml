@@ -120,6 +120,13 @@ jobs:
         run: |
           gotestsum --format standard-verbose -- ./internal/tables/strerror/
 
+      # internal/tools/tty has Darwin-only files (ioctl numbers, isatty's
+      # FIODTYPE question, the pty opener) that no Linux lane compiles in.
+      - name: go test (Darwin terminal ioctls)
+        if: matrix.shard == 1 && steps.gate.outputs.signed != 'true'
+        run: |
+          gotestsum --format standard-verbose -- ./internal/tools/tty/
+
       # THE COREUTILS CORPUS HAD NO DARWIN ORACLE UNTIL THIS STEP (#9645).
       # Every utility in `coreutils/` is held to byte-for-byte GNU parity, and
       # that was checked on Linux only — both the thirteen explicit

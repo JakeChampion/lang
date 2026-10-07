@@ -283,6 +283,10 @@ var Ungated = map[string]bool{
 	// The constant-time marks only tell valgrind which bytes are secret.
 	"__ct_secret": true,
 	"__ct_public": true,
+	// The AES-GCM kernels compute over bytes in memory and reach nothing.
+	"__aes_expand_key": true,
+	"__aes_ctr32":      true,
+	"__ghash":          true,
 	// A signal disposition reconfigures how THIS process reacts to
 	// something delivered to it. It reaches nothing outside the
 	// process and confers no authority a dependency could escalate

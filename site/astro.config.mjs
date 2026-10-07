@@ -54,7 +54,7 @@ const ogImage = `${siteUrl.replace(/\/$/, "")}${base.replace(/\/$/, "")}/og.png`
 const STDLIB_GROUPS = [
   ["Text", ["ansi", "format", "glob", "peg", "regex", "strdist", "string",
     "table", "textwrap", "unicode", "utf8"]],
-  ["Data & encoding", ["base32", "base64", "crypto", "crypto_chacha20poly1305",
+  ["Data & encoding", ["base32", "base64", "crypto", "crypto_aes_gcm", "crypto_chacha20poly1305",
     "crypto_ed25519", "crypto_field25519", "crypto_mlkem768", "crypto_p256", "crypto_rsa", "crypto_x25519", "csv", "deflate", "hash", "hex", "json", "semver", "url", "uuid"]],
   ["Collections & errors", ["array", "error", "iter", "map", "ndarray", "option",
     "result", "set", "sort", "ordmap", "ordset", "pmap", "pset", "pvec"]],
@@ -64,7 +64,7 @@ const STDLIB_GROUPS = [
   ["Files, I/O & time", ["async", "cli", "dotenv", "errno", "io", "io_buffered",
     "log", "path", "signal", "stream", "time", "tz"]],
   ["Networking", ["dns", "fetch", "headers", "http", "net", "platform", "serve", "tcp",
-    "wasi_http"]],
+    "tls_keyschedule", "tls_record", "wasi_http"]],
   ["Testing", ["bench", "fuzz", "mock_platform", "sim", "sim_fetch", "sim_platform", "test"]],
   ["WebAssembly", ["wasm_component", "wasm_convert", "wasm_encode",
     "wasm_imports", "wasm_inst", "wasm_leb128", "wasm_memory",

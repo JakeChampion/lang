@@ -1,0 +1,237 @@
+import "std/test";
+import "std/hex";
+import "std/crypto/aes_gcm";
+
+// tests/stdlib/aes_gcm_test.fern — std/crypto/aes_gcm against the AES known
+// answers of FIPS-197 Appendix C, the GCM specification's test cases 1 to 4
+// (AES-128) and 13 to 16 (AES-256), and vectors from Go's crypto/cipher for
+// additional data alone, a one-byte message, and messages of 33 and 255
+// bytes, plus the refusals.
+
+function shown(r: Result[u8[], aes_gcm.AeadError]): string {
+  match (r) {
+    Ok(b) => {
+      return hex.hex_encode(b);
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function zeros(n: i32): u8[] {
+  return __alloc_u8(n);
+}
+
+// The cipher alone: one block of keystream XOR zeros is E(K, block).
+function test_block128(): test.TestOutcome {
+  let rk: u8[] = __aes_expand_key(hex.hex_decode("000102030405060708090a0b0c0d0e0f"));
+  return test.assert_eq(hex.hex_encode(__aes_ctr32(rk, hex.hex_decode("00112233445566778899aabbccddeeff"), zeros(16))), "69c4e0d86a7b0430d8cdb78070b4c55a");
+}
+
+function test_block256(): test.TestOutcome {
+  let rk: u8[] = __aes_expand_key(hex.hex_decode("000102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f"));
+  return test.assert_eq(hex.hex_encode(__aes_ctr32(rk, hex.hex_decode("00112233445566778899aabbccddeeff"), zeros(16))), "8ea2b7ca516745bfeafc49904b496089");
+}
+
+function k3(): string {
+  return "feffe9928665731c6d6a8f9467308308";
+}
+
+function iv3(): u8[] {
+  return hex.hex_decode("cafebabefacedbaddecaf888");
+}
+
+function aad3(): u8[] {
+  return hex.hex_decode("feedfacedeadbeeffeedfacedeadbeefabaddad2");
+}
+
+function p64(): u8[] {
+  return hex.hex_decode("d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b391aafd255");
+}
+
+function p60(): u8[] {
+  return hex.hex_decode("d9313225f88406e5a55909c5aff5269a86a7a9531534f7da2e4c303d8a318a721c3c0c95956809532fcf0e2449a6b525b16aedf5aa0de657ba637b39");
+}
+
+function sealed4(): string {
+  return "42831ec2217774244b7221b784d0d49ce3aa212f2c02a4e035c17e2329aca12e21d514b25466931c7d8f6a5aac84aa051ba30b396a0aac973d58e091" + "5bc94fbc3221a5db94fae95ae7121a47";
+}
+
+function sealed16(): string {
+  return "522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662" + "76fc6ece0f4e1768cddf8853bb2d551b";
+}
+
+function test_case1(): test.TestOutcome {
+  return test.assert_eq(shown(aes_gcm.seal(zeros(16), zeros(12), zeros(0), zeros(0))), "58e2fccefa7e3061367f1d57a4e7455a");
+}
+
+function test_case2(): test.TestOutcome {
+  return test.assert_eq(shown(aes_gcm.seal(zeros(16), zeros(12), zeros(16), zeros(0))), "0388dace60b6a392f328c2b971b2fe78ab6e47d42cec13bdf53a67b21257bddf");
+}
+
+function test_case3(): test.TestOutcome {
+  return test.assert_eq(
+    shown(aes_gcm.seal(hex.hex_decode(k3()), iv3(), p64(), zeros(0))),
+    "42831ec2217774244b7221b784d0d49ce3aa212f2c02a4e035c17e2329aca12e21d514b25466931c7d8f6a5aac84aa051ba30b396a0aac973d58e091473f5985" + "4d5c2af327cd64a62cf35abd2ba6fab4",
+  );
+}
+
+function test_case4(): test.TestOutcome {
+  return test.assert_eq(shown(aes_gcm.seal(hex.hex_decode(k3()), iv3(), p60(), aad3())), sealed4());
+}
+
+function test_open4(): test.TestOutcome {
+  return test.assert_eq(shown(aes_gcm.open(hex.hex_decode(k3()), iv3(), hex.hex_decode(sealed4()), aad3())), hex.hex_encode(p60()));
+}
+
+function test_aad_only(): test.TestOutcome {
+  return test.assert_eq(shown(aes_gcm.seal(hex.hex_decode(k3()), iv3(), zeros(0), aad3())), "346434fd51d5cd0c5887ec63e39b907a");
+}
+
+function test_case13(): test.TestOutcome {
+  return test.assert_eq(shown(aes_gcm.seal(zeros(32), zeros(12), zeros(0), zeros(0))), "530f8afbc74536b9a963b4f1c4cb738b");
+}
+
+function test_case14(): test.TestOutcome {
+  return test.assert_eq(shown(aes_gcm.seal(zeros(32), zeros(12), zeros(16), zeros(0))), "cea7403d4d606b6e074ec5d3baf39d18d0d1c8a799996bf0265b98b5d48ab919");
+}
+
+function test_case15(): test.TestOutcome {
+  return test.assert_eq(
+    shown(aes_gcm.seal(hex.hex_decode(k3() + k3()), iv3(), p64(), zeros(0))),
+    "522dc1f099567d07f47f37a32a84427d643a8cdcbfe5c0c97598a2bd2555d1aa8cb08e48590dbb3da7b08b1056828838c5f61e6393ba7a0abcc9f662898015ad" + "b094dac5d93471bdec1a502270e3cc6c",
+  );
+}
+
+function test_case16(): test.TestOutcome {
+  return test.assert_eq(shown(aes_gcm.seal(hex.hex_decode(k3() + k3()), iv3(), p60(), aad3())), sealed16());
+}
+
+function test_open16(): test.TestOutcome {
+  return test.assert_eq(shown(aes_gcm.open(hex.hex_decode(k3() + k3()), iv3(), hex.hex_decode(sealed16()), aad3())), hex.hex_encode(p60()));
+}
+
+function test_one_byte(): test.TestOutcome {
+  return test.assert_eq(
+    shown(aes_gcm.seal(hex.hex_decode("6bde975873204aa11ef4542e6534cdcc"), hex.hex_decode("b97eb97974f6ae3cb42c48b0"), hex.hex_decode("d1"), zeros(0))),
+    "5cf01f12c6abc9aab9f74f52c57def930b",
+  );
+}
+
+function test_33_bytes(): test.TestOutcome {
+  return test.assert_eq(
+    shown(aes_gcm.seal(
+      hex.hex_decode("8aabbb8fc6f7fb70889749a4217c6b25fef57f1026be930ca781337b0b6cc916"),
+      hex.hex_decode("b1a9caa290eea335ac6ae190"),
+      hex.hex_decode("3e07904f4e861069bdfbd2ed4f8f301ef617a6932c92ff8a7c644796f44fed8441"),
+      hex.hex_decode("1d14ae1328bc6c"),
+    )),
+    "0ebf3615b57c33e791086da11e95ee8dc58a4b2743f0a6f6ace562494632e7d66ade37217bcb312d3212a74fe57dfa6a92",
+  );
+}
+
+function plain255(): string {
+  return "94aa708ec4ba2b7b1cbc2b0b7273c8389ef0a7bffa4f4645736536e3e9970c5834feac4e030e2e6455ec369ab129aeaf5d717aef36b169813ad859672081ee707b14e2443738a7615dce5bd91d4b35ad8fcea29e068cf7cb5376239eb6d3ce7c9b903a2ecfcd31afe6cfd9f5c6f080eb5af75ab1354906dba985ef9fd17d7d"
+    + "8024a84e9fcf5844e8cf9fd83be941bec91a237297616a6a6763d54413b81a2f2ab57434ea411c09b57178624e6459eda81ebbbdf6ad6a27e487acbcb41ce7b0e67f2e1ff8445acd0048cbab6042f759a0c072619f9c9e5a055919421caffba728501ff4cd048f2dbf2edbf1310382bad68a6e03d721badb660aa90d207d17c8";
+}
+
+function aad64(): u8[] {
+  return hex.hex_decode("4082c25f594139595f64d038db2f8338ec1e6697dc7fe97181a92f38391076876a8b18a260e3c6064a77383929826d911b9398d634b2c12e96def9352d89bd4c");
+}
+
+function sealed255(): string {
+  return "642d4bdcaa8e99a05e3890ffa6657aaf75b9387f8db2ee34cbc648473a5ef67bb5b8b5ec6571d64cad8b60d61be8490b2f27361713ac85f6e06bd951e7c458d4cbd7c9677fc038e8b174c567294843cd53a60bab62c88a4c1297bff7ab19587d6e8fa252d808089aeecd12ee1403ed27453c6a80c6a4d62a6fd6bacf9548ab5b"
+    + "7a299604fbe3d4e0c3b2ff111cf7cb58f790804ce54caae30ab5f307907e5bd0d69d0c92b26f3ac6f7483287480239ef0f29ae81c49645e525527f7f13d1456f9f2a264f935f55e85c805dfcbb8f8a3ba7aeee13ec6a1b80a569d720f2ac6a83e84f7eaa04e7e437a0187ce8e8b5cb7cff2d743a319639928d0829ba4a2a0333934e81d8808c15f8e9cba17c2a218b";
+}
+
+function test_255_bytes(): test.TestOutcome {
+  let key: u8[] = hex.hex_decode("504cae995b35bdd93579f9e580109f8a");
+  let nonce: u8[] = hex.hex_decode("053f345b77676adbfa3035f1");
+  if (shown(aes_gcm.seal(key, nonce, hex.hex_decode(plain255()), aad64())) != sealed255()) {
+    return test.fail("seal disagrees with crypto/cipher");
+  }
+  return test.assert_eq(shown(aes_gcm.open(key, nonce, hex.hex_decode(sealed255()), aad64())), plain255());
+}
+
+function forged(r: Result[u8[], aes_gcm.AeadError]): boolean {
+  match (r) {
+    Err(e) => {
+      match (e) {
+        aes_gcm.Forged => {
+          return true;
+        },
+        _ => {
+          return false;
+        }
+      }
+    },
+    Ok(_) => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// A flipped bit in the tag, the ciphertext or the additional data, another
+// key or nonce, or a message shorter than a tag does not open.
+function test_open_refuses(): test.TestOutcome {
+  let key: u8[] = hex.hex_decode(k3());
+  let sealed: u8[] = hex.hex_decode(sealed4());
+  let last: i32 = sealed.len() - 1;
+  if (!forged(aes_gcm.open(key, iv3(), sealed.with(last, sealed[last] ^ 1 as u8), aad3()))) {
+    return test.fail("a flipped tag bit opened");
+  }
+  if (!forged(aes_gcm.open(key, iv3(), sealed.with(0, sealed[0] ^ 128 as u8), aad3()))) {
+    return test.fail("a flipped ciphertext bit opened");
+  }
+  let aad: u8[] = aad3();
+  if (!forged(aes_gcm.open(key, iv3(), sealed, aad.with(19, aad[19] ^ 2 as u8)))) {
+    return test.fail("a flipped additional-data bit opened");
+  }
+  if (!forged(aes_gcm.open(key.with(0, key[0] ^ 1 as u8), iv3(), sealed, aad3()))) {
+    return test.fail("another key opened");
+  }
+  let nonce: u8[] = iv3();
+  if (!forged(aes_gcm.open(key, nonce.with(11, nonce[11] ^ 1 as u8), sealed, aad3()))) {
+    return test.fail("another nonce opened");
+  }
+  if (!forged(aes_gcm.open(key, iv3(), sealed[0:15], aad3()))) {
+    return test.fail("a message shorter than a tag opened");
+  }
+  return test.pass();
+}
+
+function test_lengths(): test.TestOutcome {
+  if (shown(aes_gcm.seal(zeros(24), zeros(12), zeros(0), zeros(0))) != "aes_gcm: the key is 24 bytes, want 16 or 32") {
+    return test.fail("a 24-byte key was not refused by its length");
+  }
+  if (shown(aes_gcm.open(zeros(15), zeros(12), zeros(16), zeros(0))) != "aes_gcm: the key is 15 bytes, want 16 or 32") {
+    return test.fail("open took a 15-byte key");
+  }
+  return test.assert_eq(shown(aes_gcm.seal(zeros(16), zeros(8), zeros(0), zeros(0))), "aes_gcm: the nonce is 8 bytes, want 12");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/crypto/aes_gcm");
+  r = r.it("aes-128 block, FIPS-197 C.1", test_block128);
+  r = r.it("aes-256 block, FIPS-197 C.3", test_block256);
+  r = r.it("seal, GCM test case 1", test_case1);
+  r = r.it("seal, GCM test case 2", test_case2);
+  r = r.it("seal, GCM test case 3", test_case3);
+  r = r.it("seal, GCM test case 4", test_case4);
+  r = r.it("open, GCM test case 4", test_open4);
+  r = r.it("seal, additional data only", test_aad_only);
+  r = r.it("seal, GCM test case 13", test_case13);
+  r = r.it("seal, GCM test case 14", test_case14);
+  r = r.it("seal, GCM test case 15", test_case15);
+  r = r.it("seal, GCM test case 16", test_case16);
+  r = r.it("open, GCM test case 16", test_open16);
+  r = r.it("seal, one byte", test_one_byte);
+  r = r.it("seal, AES-256 over 33 bytes", test_33_bytes);
+  r = r.it("seal and open, 255 bytes", test_255_bytes);
+  r = r.it("open refuses a forgery", test_open_refuses);
+  r = r.it("key and nonce lengths", test_lengths);
+  return r.finish();
+}

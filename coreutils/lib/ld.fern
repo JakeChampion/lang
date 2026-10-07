@@ -1820,13 +1820,13 @@ pub function general(d: Dec, prec: i64, alt: boolean, upper: boolean, extra: i64
 // of the first. glibc chooses the style BEFORE rounding, so when
 // `carried` lifted a fixed-style value to exactly 10^prec the exponent
 // style inherits the fixed style's zero fraction digits: `%#.3g` of
-// 999.5 is `1.e+03`.
+// 999.5 is `1.e+03`. Apple's libc follows C and prints `1.00e+03`.
 function general_shape(digits: string, x: i32, prec: i64, alt: boolean, upper: boolean, carried: boolean, extra: i64): Body {
   let pr: i32 = prec as i32;
   let zeros: i64 = 0 as i64;
   if (x < 0 - 4 || x as i64 >= prec) {
     let end: i32 = digits.len();
-    if (carried && x as i64 == prec) {
+    if (carried && x as i64 == prec && target_os() != "darwin") {
       end = 1;
     } else if (alt) {
       if (prec - 1 as i64 + extra >= overflow_len()) {
