@@ -4156,6 +4156,23 @@ pub function rt_src_remove_dir(t: string): string {
 // preamble: TestRawStringPointerComesFromRawAlloc reads each builder's own
 // text to prove the pointer __raw_string boxes came from __raw_alloc, and a
 // binding it cannot see is a binding it cannot check (#7351).
+// rt_src_clone_file backs `clone_file(src, dest)` → Result[void, IoError]:
+// dest made as a copy-on-write clone of src. Darwin opens src and asks
+// fclonefileat (517) with CLONE_NOFOLLOW | CLONE_NOOWNERCOPY, which creates
+// dest and refuses one that exists. Linux opens dest exclusively, or as it
+// stands when it exists, and asks FICLONE (0x40049409); a dest this call
+// created is unlinked again when the clone fails.
+pub function rt_src_clone_file(t: string): string {
+  let at: string = at_fdcwd(t);
+  let head: string = "function __fern_clone_file(src: string, dest: string): Result[void, IoError] { let slen: i32 = src.len(); let srcz: usize = __raw_alloc(slen + 1); let j: i32 = 0; while (j < slen) { __raw_store8(srcz, j, src[j] as i32); j = j + 1; } __raw_store8(srcz, slen, 0); let dlen: i32 = dest.len(); let destz: usize = __raw_alloc(dlen + 1); let i: i32 = 0; while (i < dlen) { __raw_store8(destz, i, dest[i] as i32); i = i + 1; } __raw_store8(destz, dlen, 0); let srcz_own: string = __raw_string(srcz, slen + 1); let destz_own: string = __raw_string(destz, dlen + 1); let sfd: i32 = __syscall4(" + sysno(t, "openat") + ", " + at + ", srcz as i64, 0, 0) as i32; if (sfd < 0) { return Err(__fern_io_error(0 - sfd, __fern_path_copy(srcz_own, slen))); } ";
+  let close_src: string = "__syscall3(" + sysno(t, "close") + ", sfd as i64, 0, 0); ";
+  let fail: string = "if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(destz_own, dlen))); } return Ok(()); }";
+  if (t == "arm64-darwin") {
+    return head + "let rc: i32 = __syscall4(517, sfd as i64, " + at + ", destz as i64, 3) as i32; " + close_src + fail;
+  }
+  return head + "let made: i32 = 1; let dfd: i32 = __syscall4(" + sysno(t, "openat") + ", " + at + ", destz as i64, " + oflag(t, "wr_creat_excl") + ", 438) as i32; if (dfd == 0 - 17) { made = 0; dfd = __syscall4(" + sysno(t, "openat") + ", " + at + ", destz as i64, 1, 0) as i32; } if (dfd < 0) { " + close_src + "return Err(__fern_io_error(0 - dfd, __fern_path_copy(destz_own, dlen))); } let rc: i32 = __syscall3(" + sysno(t, "ioctl") + ", dfd as i64, 1074041865, sfd as i64) as i32; __syscall3(" + sysno(t, "close") + ", dfd as i64, 0, 0); " + close_src + "if (rc < 0 && made == 1) { __syscall3(" + sysno(t, "unlinkat") + ", " + at + ", destz as i64, 0); } " + fail;
+}
+
 pub function rt_src_create_link(t: string): string {
   return "function __fern_create_link(target: string, path: string): Result[void, IoError] { let tlen: i32 = target.len(); let targetz: usize = __raw_alloc(tlen + 1); let j: i32 = 0; while (j < tlen) { __raw_store8(targetz, j, target[j] as i32); j = j + 1; } __raw_store8(targetz, tlen, 0); let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let rc: i32 = __syscall5(" + sysno(t, "linkat") + ", " + at_fdcwd(t) + ", targetz as i64, " + at_fdcwd(t) + ", pathz as i64, 0) as i32; let targetz_own: string = __raw_string(targetz, tlen + 1); let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } return Ok(()); }";
 }
@@ -7564,6 +7581,9 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     return ty_option(ty_unknown());
   }
   if (id.name == "create_link") {
+    return ty_option(ty_unknown());
+  }
+  if (id.name == "clone_file") {
     return ty_option(ty_unknown());
   }
   if (id.name == "create_symlink") {

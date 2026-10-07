@@ -7555,6 +7555,7 @@ function fs_op_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Contr
     ssasem.Contract { name: "lsetxattr_bytes", params: [t_string(), t_string(), typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [b, b, b], result: done },
     ssasem.Contract { name: "rename_exchange", params: [t_string(), t_string()], modes: [b, b], result: done },
     ssasem.Contract { name: "create_link", params: [t_string(), t_string()], modes: [b, b], result: done },
+    ssasem.Contract { name: "clone_file", params: [t_string(), t_string()], modes: [b, b], result: done },
     ssasem.Contract { name: "create_symlink", params: [t_string(), t_string()], modes: [b, b], result: done },
     ssasem.Contract { name: "tcp_connect", params: [t_i32(), t_i32()], modes: [v, v], result: t_i32() },
     ssasem.Contract { name: "tcp_listen", params: [t_i32()], modes: [v], result: t_i32() },

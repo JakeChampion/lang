@@ -1,0 +1,186 @@
+// Module descriptions mirror cmd/ferndoc, including its quoted front matter.
+import "./util";
+import "./docprintable";
+import "std/utf8";
+import "std/unicode";
+
+function decoded(s: string, i: i32): (i32, i32) {
+  match (utf8.utf8_decode_at(s, i)) {
+    Some(cp) => {
+      return cp;
+    },
+    None => {
+      return (65533, 1);
+    }
+  }
+}
+
+function words(s: string): string {
+  let out: string = "";
+  let gap: boolean = false;
+  let i: i32 = 0;
+  while (i < s.len()) {
+    let cp: (i32, i32) = decoded(s, i);
+    if ((cp.0 as char).is_whitespace()) {
+      gap = out.len() > 0;
+    } else {
+      if (gap) {
+        out = out + " ";
+      }
+      out = out + slice_unchecked(s, i, i + cp.1);
+      gap = false;
+    }
+    i = i + cp.1;
+  }
+  return out;
+}
+
+function capitalize(s: string): string {
+  let i: i32 = 0;
+  while (i < s.len() && s[i] != b' ') {
+    let cp: (i32, i32) = decoded(s, i);
+    // Go's lowercase result replaces an invalid byte, so it differs from
+    // the original first word even when no letter changes case.
+    if (cp.1 == 1 && s[i] as i32 >= 128) {
+      return s;
+    }
+    let c: char = cp.0 as char;
+    if (c.to_lower() != c || cp.0 >= 48 && cp.0 <= 57) {
+      return s;
+    }
+    i = i + cp.1;
+  }
+  if (s.len() == 0) {
+    return s;
+  }
+  // The reference uppercases the first BYTE, not the first rune. Preserve
+  // even its invalid-UTF8 replacement behavior for a non-ASCII first byte.
+  let first: i32 = s[0] as i32;
+  if (first >= 128) {
+    first = 65533;
+  }
+  return utf8.utf8_encode((first as char).to_upper()) + slice_unchecked(s, 1, s.len());
+}
+
+pub function summary(intro: string): string {
+  let para: string = intro;
+  let end: i32 = util.index_of_sub(para, "\n\n");
+  if (end >= 0) {
+    para = slice_unchecked(para, 0, end) + "";
+  }
+  let s: string = words(para);
+  // U+2014 is part of the reference's module-label syntax.
+  let label: i32 = util.index_of_sub(s, " — ");
+  if (label >= 0) {
+    s = slice_unchecked(s, label + 5, s.len()) + "";
+  }
+  let sentence: i32 = util.index_of_sub(s, ". ");
+  if (sentence >= 0) {
+    s = slice_unchecked(s, 0, sentence + 1) + "";
+  }
+  return capitalize(s);
+}
+
+function hex_value(s: string, p: i32): i32 {
+  let out: i32 = 0;
+  let i: i32 = p;
+  while (i < p + 6) {
+    let b: i32 = s[i] as i32;
+    let digit: i32 = b - 48;
+    if (b >= 97) {
+      digit = b - 87;
+    }
+    out = out * 16 + digit;
+    i = i + 1;
+  }
+  return out;
+}
+
+function printable(cp: i32): boolean {
+  if (cp < 128) {
+    return cp >= 32 && cp < 127;
+  }
+  let ranges: string = docprintable.printable_ranges();
+  let lo: i32 = 0;
+  let hi: i32 = ranges.len() / 12;
+  while (lo < hi) {
+    let mid: i32 = lo + (hi - lo) / 2;
+    if (cp < hex_value(ranges, mid * 12)) {
+      hi = mid;
+    } else if (cp > hex_value(ranges, mid * 12 + 6)) {
+      lo = mid + 1;
+    } else {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hex_escape(cp: i32, digits: i32, prefix: string): string {
+  let hex: string = "0123456789abcdef";
+  let out: string = "";
+  let value: i32 = cp;
+  let i: i32 = 0;
+  while (i < digits) {
+    let d: i32 = value & 15;
+    out = slice_unchecked(hex, d, d + 1) + out;
+    value = value >> 4;
+    i = i + 1;
+  }
+  return prefix + out;
+}
+
+function quoted_scalar(cp: i32, raw: string): string {
+  if (cp == 34 || cp == 92) {
+    return "\\" + raw;
+  }
+  if (printable(cp)) {
+    return raw;
+  }
+  if (cp == 7) {
+    return "\\a";
+  }
+  if (cp == 8) {
+    return "\\b";
+  }
+  if (cp == 9) {
+    return "\\t";
+  }
+  if (cp == 10) {
+    return "\\n";
+  }
+  if (cp == 11) {
+    return "\\v";
+  }
+  if (cp == 12) {
+    return "\\f";
+  }
+  if (cp == 13) {
+    return "\\r";
+  }
+  if (cp < 32 || cp == 127) {
+    return hex_escape(cp, 2, "\\x");
+  }
+  if (cp < 65536) {
+    return hex_escape(cp, 4, "\\u");
+  }
+  return hex_escape(cp, 8, "\\U");
+}
+
+pub function quote(s: string): string {
+  let out: string = "\"";
+  let i: i32 = 0;
+  while (i < s.len()) {
+    match (utf8.utf8_decode_at(s, i)) {
+      Some(cp) => {
+        out = out + quoted_scalar(cp.0, slice_unchecked(s, i, i + cp.1));
+        i = i + cp.1;
+      },
+      None => {
+        out = out + hex_escape(s[i] as i32, 2, "\\x");
+        i = i + 1;
+      }
+    }
+  }
+  return out + "\"";
+}

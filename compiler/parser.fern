@@ -10175,6 +10175,8 @@ pub function builtin_function_names(): string[] {
     // the single-step directory and link primitives, each one syscall
     // with nothing folded away
     "create_dir", "remove_dir", "create_link", "create_symlink", "read_link", "umask", "rename",
+    // a copy-on-write clone of a file: clonefileat, FICLONE
+    "clone_file",
     // the rename the kernel conditions: refuse an existing destination, or swap
     "rename_noreplace", "rename_exchange",
     // an entry's extended attribute, following a final symlink or not
