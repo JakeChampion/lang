@@ -65,6 +65,15 @@ func stdoutRefusal(r compileRequest) error {
 	return fmt.Errorf("-target %s requires -o OUTPUT (the component is a binary)", r.target)
 }
 
+// wasmRunRefusal refuses a -run that wasmtime run cannot execute: an HTTP
+// component is served, not run.
+func wasmRunRefusal(r compileRequest) error {
+	if r.target == "wasm32-wasi-http" {
+		return fmt.Errorf("--run cannot serve -target wasm32-wasi-http; build it with -o OUT.wasm and run `wasmtime serve OUT.wasm`")
+	}
+	return nil
+}
+
 // compileSelfHost hands r to the self-host compiler, and with --run executes
 // what it built.
 func compileSelfHost(r compileRequest) (int, error) {
@@ -102,6 +111,12 @@ func compileSelfHost(r compileRequest) (int, error) {
 	}
 	if r.target == "arm64-darwin" {
 		return 1, fmt.Errorf("--run is not supported for -target arm64-darwin (Mach-O binaries need an Apple Silicon Mac to execute; the output at %q is ready to run there)", out)
+	}
+	if d := platforms.ForTarget(r.target); d != nil && d.ISA == "wasm32" {
+		if err := wasmRunRefusal(r); err != nil {
+			return 1, err
+		}
+		return execTool("wasmtime", append([]string{"run", out}, r.progArgs...))
 	}
 	// The target's ISA and the host's GOARCH are different vocabularies
 	// ("x86-64" against "amd64"), so the comparison goes through the

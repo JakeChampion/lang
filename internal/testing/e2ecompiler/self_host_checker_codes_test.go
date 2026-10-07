@@ -485,6 +485,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// lambda's (#9515); the differential is what pins them together.
 		{"e079-defer-try-op", "function g(v: i32): Option[i32] { if (v < 100) { return Some(v + 1); } return None; }\nfunction f(): Option[i32] { let n: i32 = 0; defer n = g(n)?; return Some(n); }\nfunction main(): i32 { return 0; }\n", []string{"E079"}},
 		{"e079-defer-inside-lambda-body", "function g(v: i32): Option[i32] { if (v < 100) { return Some(v + 1); } return None; }\nfunction main(): i32 { let h: (i32) => i32 = (x: i32) => { let n: i32 = x; defer n = g(n)?; return n; }; return h(1); }\n", []string{"E042", "E079"}},
+		// E081: a named function with no return type, valued or void.
+		{"e081-missing-return-type", "function greet() { return \"hi\"; }\nfunction main(): i32 { return 0; }\n", []string{"E081"}},
+		{"e081-missing-void-return-type", "function noop() { }\nfunction main(): i32 { noop(); return 0; }\n", []string{"E081"}},
 		// The complementary shape — a lambda LITERAL in the action, whose `?`
 		// leaves the lambda. Neither compiler reports E079; both report the
 		// lambda's conflicting exits (the `?`'s Option and the i32 it yields)

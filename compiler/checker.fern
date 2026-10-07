@@ -10787,7 +10787,7 @@ function slit_diags(e: ast.Expr, structs: StructSig[]): util.Diag[] {
       if (usig.name.len() > 0) {
         for field_name in sl.field_names {
           if (!util.has_str(usig.field_names, field_name)) {
-            out = out.append(dg_at("E043", "struct " + sl.type_name + " has no field \"" + field_name + "\"", sl.line, sl.col));
+            out = out.append(dg_at("E043", "struct " + util.demangle(sl.type_name) + " has no field \"" + field_name + "\"", sl.line, sl.col));
           }
         }
       } else if (slit_names_no_struct(structs, sl.type_name)) {
@@ -13059,7 +13059,7 @@ function cell_call_diags(c: ast.ExprCall, mfa: ast.ExprFieldAccess, recv: typein
     want = 1;
   }
   if (want < 0) {
-    return [dg_at("E043", "struct Cell has no field \"" + mfa.field + "\"", mfa.line, mfa.col)];
+    return [dg_at("E043", "struct Cell has no field or method \"" + mfa.field + "\"", mfa.line, mfa.col)];
   }
   if (c.args.len() != want) {
     return [dg_at("E004", "function expects " + util.i32_to_string(want + 1) + " arguments, got " + util.i32_to_string(c.args.len() + 1), c.line, c.col)];
@@ -13837,11 +13837,11 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
               } else if (sn.name == "MapIter" && !is_map_iter_method(mfa.field)) {
                 // Map.iter()'s cursor is a builtin with no struct
                 // declaration, so the field fallback below never sees it.
-                out = out.append(dg_at("E043", "struct MapIter has no field \"" + mfa.field + "\"", mfa.line, mfa.col));
+                out = out.append(dg_at("E043", "struct MapIter has no field or method \"" + mfa.field + "\"", mfa.line, mfa.col));
               } else if (fsig.name.len() > 0) {
                 let fldi: i32 = field_index(fsig, mfa.field);
                 if (fldi < 0) {
-                  out = out.append(dg_at("E043", "struct " + sn.name + " has no field \"" + mfa.field + "\"", mfa.line, mfa.col));
+                  out = out.append(dg_at("E043", "struct " + util.demangle(sn.name) + " has no field or method \"" + mfa.field + "\"", mfa.line, mfa.col));
                 } else {
                   let fldt: typeinfo.Type = fsig.field_types[fldi];
                   let fld_is_fn: boolean = false;
@@ -14412,7 +14412,7 @@ function call_diags_field_access(fa: ast.ExprFieldAccess, s: Scope, out: util.Di
     typeinfo.TypeStruct(sn) => {
       let fsig: StructSig = s.lookup_struct(sn.name);
       if (fsig.name.len() > 0 && !util.has_str(fsig.field_names, fa.field) && s.lookup_method(fa.field, sn.name).name.len() == 0) {
-        out = out.append(dg_at("E043", "struct " + sn.name + " has no field \"" + fa.field + "\"", fa.line, fa.col));
+        out = out.append(dg_at("E043", "struct " + util.demangle(sn.name) + " has no field or method \"" + fa.field + "\"", fa.line, fa.col));
       }
     },
     typeinfo.TypeTuple(tt) => {
@@ -16293,16 +16293,16 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
     }
     rn = rn + 1;
   }
-  // E070: a named function that declares no return type. Every function
+  // E081: a named function that declares no return type. Every function
   // writes its return type — `: void` when it returns nothing — so an
-  // omitted one is an error, not an inference request. Body-less `@import`
-  // externs are exempt (they carry a signature, not a definition). Mirrors
-  // the native checkFunction rule.
+  // omitted one is an error, not an inference request, and an empty body
+  // is no exception. `@import` externs are exempt (they carry a signature,
+  // not a definition). Mirrors the native checkFunction rule.
   for func in mod.funcs {
     if (func.ret_type == "" && func.body.len() > 0 && func.is_const) {
-      out = out.append(dg_at("E070", "cannot infer the type of const \"" + func.name + "\"; declare it explicitly", func.line, func.col));
-    } else if (func.ret_type == "" && func.body.len() > 0) {
-      out = out.append(dg_at("E070", "missing return type on function \"" + func.name + "\"; declare it explicitly (use `: void` if it returns nothing)", func.line, func.col));
+      out = out.append(dg_at("E081", "cannot infer the type of const \"" + func.name + "\"; declare it explicitly", func.line, func.col));
+    } else if (func.ret_type == "" && func.import_iface == "" && !func.is_const) {
+      out = out.append(dg_at("E081", "missing return type on function \"" + func.name + "\"; declare it explicitly (use `: void` if it returns nothing)", func.line, func.col));
     }
   }
   // E016: a `type X = …` union alias the Go checker refuses to desugar, and
