@@ -22,6 +22,7 @@ import "./lexer";
 import "./parser";
 import "./util";
 import "./astwalk";
+import "./aesref";
 import "std/utf8";
 
 // =================== VALUES ====================
@@ -4204,6 +4205,66 @@ function call_count_byte_bytes(args: Value[]): Value {
   return v_err("__count_byte_bytes: first arg must be a byte array");
 }
 
+// byte_args reads each argument as a byte array, the u8 elements packed; a
+// non-array or a non-byte element ends the list early.
+function byte_args(args: Value[]): u8[][] {
+  let out: u8[][] = [];
+  for a in args {
+    if let VArr(av) = a {
+      let b: u8[] = __alloc_u8(av.elements.len());
+      let i: i32 = 0;
+      while (i < av.elements.len()) {
+        let e: Value = av.elements[i];
+        if (!is_i32_arg(e) || vint_bits(e) < 0 || vint_bits(e) > 255) {
+          return out;
+        }
+        b = b.with(i, vint_bits(e) as u8);
+        i = i + 1;
+      }
+      out = out.append(b);
+    } else {
+      return out;
+    }
+  }
+  return out;
+}
+
+function byte_value(b: u8[]): Value {
+  let out: Value[] = [];
+  for x in b {
+    out = out.append(v_int(x as i32));
+  }
+  return v_arr(out);
+}
+
+// aes_gcm_arity is how many byte arrays an AES-GCM kernel takes, or 0.
+function aes_gcm_arity(name: string): i32 {
+  if (name == "__aes_expand_key") {
+    return 1;
+  }
+  if (name == "__aes_ctr32" || name == "__ghash") {
+    return 3;
+  }
+  return 0;
+}
+
+// call_aes_gcm runs one of the AES-GCM kernels, which aesref spells from
+// their definitions.
+function call_aes_gcm(name: string, args: Value[]): Value {
+  let want: i32 = aes_gcm_arity(name);
+  let bs: u8[][] = byte_args(args);
+  if (args.len() != want || bs.len() != want) {
+    return v_err(name + ": expected " + util.i32_to_string(want) + " byte arrays");
+  }
+  if (want == 1) {
+    return byte_value(aesref.expand_key(bs[0]));
+  }
+  if (name == "__ghash") {
+    return byte_value(aesref.ghash(bs[0], bs[1], bs[2]));
+  }
+  return byte_value(aesref.ctr32(bs[0], bs[1], bs[2]));
+}
+
 // Reduce a borrowed byte array with wrapping or seeded BSD arithmetic.
 function call_crc32_cksum_array(args: Value[]): Value {
   if (args.len() != 2) {
@@ -5058,6 +5119,9 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
   // Only valgrind sees the constant-time marks.
   if (name == "__ct_secret" || name == "__ct_public") {
     return v_void();
+  }
+  if (aes_gcm_arity(name) > 0) {
+    return call_aes_gcm(name, args);
   }
   // `__memchr(s, byte, from)` / `__ascii_run(s, from)` — the two scan
   // kernels the compiled backends vectorise, and the byte-search floor

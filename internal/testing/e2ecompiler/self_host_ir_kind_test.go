@@ -54,7 +54,7 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 		"bijection_ok=187\n" +
 		"bijection_failures=0\n" +
 		"retired=1\n" +
-		"ext_ok=192\n" +
+		"ext_ok=195\n" +
 		"ext_failures=0\n" +
 		"neg_ok=14\n" +
 		"neg_failures=0\n" +
@@ -69,7 +69,7 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 		"is_term return=1 br=1 exit=1 brif=0\n" +
 		"is_fold add=1 div_s=1 ge_s=1 fadd=0\n" +
 		"is_commute add=1 xor=1 sub=0 shl=0\n" +
-		"tag_consistency ok=193 bad=0\n"
+		"tag_consistency ok=196 bad=0\n"
 
 	// The report ends with every registered tag's id in id order, pinned by
 	// testdata/ir-kind-ids.txt. The backends dispatch on literal ids, so this

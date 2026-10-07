@@ -1752,6 +1752,21 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 			Result: ast.VoidType{},
 		}
 	}
+	// The AES-GCM kernels (std/crypto/aes_gcm), each a fresh u8[]:
+	//   __aes_expand_key(key): the FIPS-197 round keys of a 16- or 32-byte
+	//     key, 176 or 240 bytes; any other key length answers empty.
+	//   __aes_ctr32(round_keys, counter, data): data exclusive-ored with the
+	//     keystream E(K, counter), E(K, counter+1), ..., the counter's last
+	//     four bytes stepping as a big-endian u32 (GCM's inc32).
+	//   __ghash(h, y, data): the GHASH state y with data's 16-byte blocks
+	//     folded in under the hash key h, a short last block zero-padded.
+	// The native backends use AES-NI and PCLMULQDQ or AESE and PMULL, wasm a
+	// bitsliced AES; every one runs in constant time.
+	u8View := ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}}
+	u8Arr := ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}
+	c.info.FuncSigs["__aes_expand_key"] = &ast.FuncType{Params: []ast.Type{u8View}, Result: u8Arr}
+	c.info.FuncSigs["__aes_ctr32"] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8View}, Result: u8Arr}
+	c.info.FuncSigs["__ghash"] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8View}, Result: u8Arr}
 	// Bit-counting intrinsics: __clz32 / __ctz32 / __popcount32 and their
 	// 64-bit siblings. Each takes one integer of its width and returns an
 	// i32 count. clz/ctz of 0 return the operand width (32 or 64), matching

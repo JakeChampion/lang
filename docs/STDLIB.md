@@ -1080,6 +1080,33 @@ let opened: u8[] = chacha20poly1305.open(key, nonce, sealed, aad)?;
 - `AeadError` is `KeyLength(i32)`, `NonceLength(i32)` or `Forged`, with
   `message()`.
 
+### `std/crypto/aes_gcm`
+
+AES-128-GCM and AES-256-GCM, the AEAD of NIST SP 800-38D with a 12-byte
+nonce and a 16-byte tag (#9858). The cipher and GHASH are three builtins,
+`__aes_expand_key`, `__aes_ctr32` and `__ghash`: AES-NI and `pclmulqdq` on
+x86-64, `aese`/`aesmc` and `pmull` on arm64, and on wasm a bitsliced AES and
+a GHASH multiplied a bit at a time under masks, so nothing branches on or
+indexes memory with a key or data byte on any target. The tag compare has no
+early exit. Verified against FIPS-197 and the GCM specification's test cases
+(`tests/stdlib/aes_gcm_test.fern`), and run under valgrind's memcheck with
+the key and plaintext marked secret by the constant-time gate
+(`docs/TEST-GATES.md`).
+
+```fern
+let sealed: u8[] = aes_gcm.seal(key, nonce, plaintext, aad)?;
+let opened: u8[] = aes_gcm.open(key, nonce, sealed, aad)?;
+```
+
+- `seal(key, nonce, plaintext, aad): Result[u8[], AeadError]` — the
+  ciphertext with the 16-byte tag after it. The key is 16 bytes (AES-128)
+  or 32 (AES-256) and the nonce 12; a nonce must never repeat under one key.
+- `open(key, nonce, sealed, aad): Result[u8[], AeadError]` — checks the tag
+  before decrypting; a message that does not verify, or is shorter than a
+  tag, is `Forged`.
+- `AeadError` is `KeyLength(i32)`, `NonceLength(i32)` or `Forged`, with
+  `message()`.
+
 ### `std/crypto/field25519`
 
 Arithmetic in the integers mod 2^255 - 19, the field `std/crypto/x25519` and
@@ -1200,10 +1227,10 @@ let hs: keyschedule.HandshakeSecret = early.handshake_secret(shared_secret);
 let keys: keyschedule.TrafficKeys = keyschedule.traffic_keys(suite, hs.server_traffic(transcript_hash));
 ```
 
-- `CipherSuite` is `ChaCha20Poly1305Sha256`, TLS_CHACHA20_POLY1305_SHA256;
-  `hash()` is its `Hash` (`Sha256` or `Sha384`, with `size()` and
-  `digest(msg)`), `aead()` its `Aead` (`ChaCha20Poly1305`, with `key_len()`).
-  The AES-GCM suites arrive with `std/crypto/aes_gcm`.
+- `CipherSuite` is `Aes128GcmSha256`, `Aes256GcmSha384` or
+  `ChaCha20Poly1305Sha256`, the three TLS 1.3 suites; `hash()` is its `Hash`
+  (`Sha256` or `Sha384`, with `size()` and `digest(msg)`), `aead()` its `Aead`
+  (`Aes128Gcm`, `Aes256Gcm` or `ChaCha20Poly1305`, with `key_len()`).
 - `hkdf_extract(h, salt, ikm)`, `hkdf_expand_label(h, secret, label, context,
   length)`, `derive_secret(h, secret, label, transcript_hash)` — §7.1's
   functions.
@@ -1224,9 +1251,9 @@ let keys: keyschedule.TrafficKeys = keyschedule.traffic_keys(suite, hs.server_tr
 ### `std/tls/record`
 
 The TLS 1.3 record layer of RFC 8446 §5, sans-IO: bytes in, records out, no
-sockets. Framing is checked against RFC 8448 §3's records, and protection
-against ChaCha20-Poly1305 records from a reference that reproduces the trace's
-AES-128-GCM ones (`tests/stdlib/tls_record_test.fern`).
+sockets. Framing and AES-128-GCM protection are checked against RFC 8448 §3's
+records, and the other two suites against records from a reference that
+reproduces the trace's (`tests/stdlib/tls_record_test.fern`).
 
 ```fern
 let d: record.Deframed = record.deframe(buffered)?;   // keep d.rest
