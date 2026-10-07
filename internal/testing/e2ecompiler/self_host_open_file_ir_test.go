@@ -3,7 +3,6 @@ package e2ecompiler
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"testing"
 )
@@ -27,9 +26,6 @@ import (
 // source also exits 42.
 func TestSelfHostOpenFileIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("self-host open-file test runs host-native only (real filesystem)")
-	}
 	dir := writeSelfHostAsmProject(t)
 	src, err := os.ReadFile(filepath.Join("../../../compiler", "drivers/asm_run.fern"))
 	if err != nil {
@@ -86,7 +82,7 @@ func TestSelfHostOpenFileIRX86_64(t *testing.T) {
 	}
 	progBin := buildBin(t, gcc, dir, "open_file", string(asm))
 
-	cmd := exec.Command(progBin)
+	cmd := runX86_64Bin(runner, progBin)
 	_ = cmd.Run()
 	if code := cmd.ProcessState.ExitCode(); code != 42 {
 		t.Fatalf("open-file program exit = %d, want 42 (open_writer/appender/reader/exclusive steps; #4372, #7758, #8776)", code)
