@@ -1,0 +1,24 @@
+import "./dsp_core";
+
+// Ordinary indexed replacement, with identical arithmetic and final scratch state.
+pub function process(own g: dsp_core.Graph, input: f64[], count: i32): dsp_core.Graph {
+  if (!dsp_core.fits(g, input, count)) {
+    return dsp_core.refuse(g);
+  }
+  let i: i32 = 0;
+  while (i < count) {
+    let gained: f64 = input[i] * 1.5;
+    let filtered: f64 = gained * 0.5 + g.previous * 0.25 + g.previous2 * 0.25;
+    let wet: f64 = g.delay[g.cursor];
+    g = dsp_core.Graph { ...g, work: g.work.with(i, filtered) };
+    g = dsp_core.Graph { ...g, delay: g.delay.with(g.cursor, filtered + wet * 0.25) };
+    g = dsp_core.Graph { ...g, output: g.output.with(i, dsp_core.limit(filtered * 0.75 + wet * 0.5)) };
+    let cursor: i32 = g.cursor + 1;
+    if (cursor == g.delay.len()) {
+      cursor = 0;
+    }
+    g = dsp_core.Graph { ...g, cursor: cursor, previous2: g.previous, previous: gained };
+    i = i + 1;
+  }
+  return dsp_core.Graph { ...g, samples: g.samples + count as i64, output_count: count, refused: false };
+}
