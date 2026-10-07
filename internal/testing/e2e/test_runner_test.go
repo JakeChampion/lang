@@ -1094,6 +1094,13 @@ func TestRunnerMLKEM768ExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "mlkem768", "std/crypto/mlkem768", 8)
 }
 
+// `tests/stdlib/montgomery_test.fern` checks std/crypto/montgomery's
+// constant-time arithmetic against core/bigint over P-256's field and
+// P-384's order.
+func TestRunnerMontgomeryExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "montgomery", "std/crypto/montgomery", 4)
+}
+
 // `tests/stdlib/ed25519_test.fern` covers RFC 8032's Ed25519 vectors, one
 // from Go's crypto/ed25519, and every refusal.
 func TestRunnerEd25519ExamplePasses(t *testing.T) {

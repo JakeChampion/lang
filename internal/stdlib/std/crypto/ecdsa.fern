@@ -11,6 +11,8 @@
 
 import "core/bigint";
 import "std/crypto";
+import "std/crypto/montgomery" as mont;
+import "std/hex";
 
 pub enum Curve {
   P256,
@@ -30,6 +32,10 @@ pub enum EcdsaError {
   Encoding,
   // The coordinates are out of range or the point is not on the curve.
   NotOnCurve,
+  // A private scalar of the wrong length, or not in [1, n).
+  ScalarRange,
+  // Signing over SHA-512, which TLS never asks of these curves.
+  SigningHash,
 }
 
 pub function (e: EcdsaError) message(): string {
@@ -39,6 +45,12 @@ pub function (e: EcdsaError) message(): string {
     },
     NotOnCurve => {
       return "ecdsa: the point is not on the curve";
+    },
+    ScalarRange => {
+      return "ecdsa: the private scalar is not in [1, n) at the curve's size";
+    },
+    SigningHash => {
+      return "ecdsa: signing takes SHA-256 or SHA-384";
     }
   }
   return "";
@@ -70,16 +82,25 @@ function __hex_int(s: string): bigint.BigInt {
   return v;
 }
 
-function __params(c: Curve): Params {
+// A curve's constants: its field prime, order, b, base point and size in
+// bytes.
+struct CurveHex { p: string, n: string, b: string, gx: string, gy: string, bytes: i32 }
+
+function __hexes(c: Curve): CurveHex {
   match (c) {
     P256 => {
-      return __curve("ffffffff00000001000000000000000000000000ffffffffffffffffffffffff", "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551", "5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b", "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296", "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5", 32);
+      return CurveHex { p: "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff", n: "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551", b: "5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b", gx: "6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296", gy: "4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5", bytes: 32 };
     },
     P384 => {
-      return __curve("fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000ffffffff", "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973", "b3312fa7e23ee7e4988e056be3f82d19181d9c6efe8141120314088f5013875ac656398d8a2ed19d2a85c8edd3ec2aef", "aa87ca22be8b05378eb1c71ef320ad746e1d3b628ba79b9859f741e082542a385502f25dbf55296c3a545e3872760ab7", "3617de4a96262c6f5d9e98bf9292dc29f8f41dbd289a147ce9da3113b5f0b8c00a60b1ce1d7e819d7a431d7c90ea0e5f", 48);
+      return CurveHex { p: "fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffeffffffff0000000000000000ffffffff", n: "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973", b: "b3312fa7e23ee7e4988e056be3f82d19181d9c6efe8141120314088f5013875ac656398d8a2ed19d2a85c8edd3ec2aef", gx: "aa87ca22be8b05378eb1c71ef320ad746e1d3b628ba79b9859f741e082542a385502f25dbf55296c3a545e3872760ab7", gy: "3617de4a96262c6f5d9e98bf9292dc29f8f41dbd289a147ce9da3113b5f0b8c00a60b1ce1d7e819d7a431d7c90ea0e5f", bytes: 48 };
     }
   }
-  return __params(P256);
+  return __hexes(P256);
+}
+
+function __params(c: Curve): Params {
+  let h: CurveHex = __hexes(c);
+  return __curve(h.p, h.n, h.b, h.gx, h.gy, h.bytes);
 }
 
 function __curve(p: string, n: string, b: string, gx: string, gy: string, bytes: i32): Params {
@@ -310,4 +331,301 @@ pub function verify(key: PublicKey, hash: Hash, msg: [u8], sig: [u8]): boolean {
     }
   }
   return false;
+}
+
+// Signing. Everything a secret reaches runs over std/crypto/montgomery: no
+// branch on and no index by a secret value. Points are projective (X:Y:Z),
+// added by the complete formula for a = -3 of Renes, Costello and Batina
+// (eprint 2015/1060), which has no exceptional case to branch on, so it
+// doubles too. The nonce is RFC 6979's, so a signature is deterministic.
+
+// PrivateKey — a scalar d in [1, n), big-endian at the curve's size.
+pub struct PrivateKey { curve: Curve, d: u8[] }
+
+// A point (X:Y:Z) with coordinates in Montgomery form; Z = 0 is the
+// identity.
+struct Proj { x: i64[], y: i64[], z: i64[] }
+
+// The field and the order as Montgomery moduli, b in Montgomery form, the
+// base point and the size in bytes.
+struct Signer { fp: mont.Modulus, fn: mont.Modulus, b: i64[], g: Proj, bytes: i32 }
+
+function __signer(c: Curve): Signer {
+  let h: CurveHex = __hexes(c);
+  let fp: mont.Modulus = mont.modulus(h.p, h.bytes);
+  let g: Proj = Proj { x: mont.from_bytes(fp, hex.hex_decode(h.gx)), y: mont.from_bytes(fp, hex.hex_decode(h.gy)), z: fp.one };
+  return Signer { fp: fp, fn: mont.modulus(h.n, h.bytes), b: mont.from_bytes(fp, hex.hex_decode(h.b)), g: g, bytes: h.bytes };
+}
+
+// private_key(curve, d) — d checked to be in [1, n) at the curve's size.
+pub function private_key(curve: Curve, d: [u8]): Result[PrivateKey, EcdsaError] {
+  let s: Signer = __signer(curve);
+  if (d.len() != s.bytes || !__revealed(mont.in_range(s.fn, d))) {
+    return Err(ScalarRange);
+  }
+  return Ok(PrivateKey { curve: curve, d: __copy(d) });
+}
+
+function __copy(b: [u8]): u8[] {
+  let out: u8[] = [];
+  for x in b {
+    out = out.append(x);
+  }
+  return out;
+}
+
+// (k).public_point() — [d]G as an uncompressed SEC 1 point.
+pub function (k: PrivateKey) public_point(): u8[] {
+  let s: Signer = __signer(k.curve);
+  let xy: (u8[], u8[]) = __affine(s, __base_mul(s, k.d));
+  let out: u8[] = [4 as u8];
+  for b in xy.0 {
+    out = out.append(b);
+  }
+  for b in xy.1 {
+    out = out.append(b);
+  }
+  return out;
+}
+
+// sign(key, hash, msg) — the DER ECDSA-Sig-Value over msg's digest, with
+// RFC 6979's nonce. SHA-256 and SHA-384 only.
+pub function sign(key: PrivateKey, hash: Hash, msg: [u8]): Result[u8[], EcdsaError] {
+  match (hash) {
+    Sha512 => {
+      return Err(SigningHash);
+    },
+    _ => {}
+  }
+  let s: Signer = __signer(key.curve);
+  let d: u8[] = __digest(hash, msg);
+  let take: i32 = d.len();
+  if (take > s.bytes) {
+    take = s.bytes;
+  }
+  let e: i64[] = mont.from_bytes(s.fn, d[0:take]);
+  let drbg: Drbg = __drbg_new(hash, key.d, mont.to_bytes(s.fn, e));
+  while (true) {
+    let next: (Drbg, u8[]) = __drbg_next(drbg, s.bytes);
+    drbg = next.0;
+    let k: u8[] = next.1;
+    if (__revealed(mont.in_range(s.fn, k))) {
+      let rs: (u8[], u8[]) = __sign_with(s, key.d, e, k);
+      // r and s are the signature, public once returned.
+      __ct_public(rs.0);
+      __ct_public(rs.1);
+      if (!__all_zero(rs.0) && !__all_zero(rs.1)) {
+        return Ok(__der(rs.0, rs.1));
+      }
+    }
+    drbg = __drbg_reseed(drbg);
+  }
+  return Err(SigningHash);
+}
+
+// __sign_with is (r, s) for nonce k: r the x of [k]G mod n, s = (e + r d)/k.
+function __sign_with(s: Signer, d: [u8], e: [i64], k: [u8]): (u8[], u8[]) {
+  let x: u8[] = __affine(s, __base_mul(s, k)).0;
+  let r: i64[] = mont.from_bytes(s.fn, x);
+  let kinv: i64[] = mont.inv(s.fn, mont.from_bytes(s.fn, k));
+  let sm: i64[] = mont.mul(s.fn, kinv, mont.add(s.fn, e, mont.mul(s.fn, r, mont.from_bytes(s.fn, d))));
+  return (mont.to_bytes(s.fn, r), mont.to_bytes(s.fn, sm));
+}
+
+// __revealed declassifies a secret-derived 0 or 1 to branch on it: whether
+// a scalar is in range says nothing of its value worth hiding.
+function __revealed(flag: i64): boolean {
+  let verdict: u8[] = [flag as u8];
+  __ct_public(verdict);
+  return verdict[0] == 1 as u8;
+}
+
+function __all_zero(b: [u8]): boolean {
+  for x in b {
+    if (x != 0 as u8) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// __padd is p1 + p2 by the complete formula for a = -3 (eprint 2015/1060,
+// algorithm 4).
+function __padd(s: Signer, p1: Proj, p2: Proj): Proj {
+  let m: mont.Modulus = s.fp;
+  let t0: i64[] = mont.mul(m, p1.x, p2.x);
+  let t1: i64[] = mont.mul(m, p1.y, p2.y);
+  let t2: i64[] = mont.mul(m, p1.z, p2.z);
+  let t3: i64[] = mont.mul(m, mont.add(m, p1.x, p1.y), mont.add(m, p2.x, p2.y));
+  t3 = mont.sub(m, t3, mont.add(m, t0, t1));
+  let t4: i64[] = mont.mul(m, mont.add(m, p1.y, p1.z), mont.add(m, p2.y, p2.z));
+  t4 = mont.sub(m, t4, mont.add(m, t1, t2));
+  let x3: i64[] = mont.mul(m, mont.add(m, p1.x, p1.z), mont.add(m, p2.x, p2.z));
+  let y3: i64[] = mont.sub(m, x3, mont.add(m, t0, t2));
+  let z3: i64[] = mont.mul(m, s.b, t2);
+  x3 = mont.sub(m, y3, z3);
+  x3 = mont.add(m, x3, mont.add(m, x3, x3));
+  z3 = mont.sub(m, t1, x3);
+  x3 = mont.add(m, t1, x3);
+  y3 = mont.mul(m, s.b, y3);
+  t2 = mont.add(m, t2, mont.add(m, t2, t2));
+  y3 = mont.sub(m, mont.sub(m, y3, t2), t0);
+  y3 = mont.add(m, y3, mont.add(m, y3, y3));
+  t0 = mont.sub(m, mont.add(m, t0, mont.add(m, t0, t0)), t2);
+  t1 = mont.mul(m, t4, y3);
+  t2 = mont.mul(m, t0, y3);
+  y3 = mont.add(m, mont.mul(m, x3, z3), t2);
+  x3 = mont.sub(m, mont.mul(m, t3, x3), t1);
+  z3 = mont.add(m, mont.mul(m, t4, z3), mont.mul(m, t3, t0));
+  return Proj { x: x3, y: y3, z: z3 };
+}
+
+// __base_mul is [k]G for a secret big-endian k: four doublings and one
+// addition per 4-bit digit, the digit's multiple of G taken from all
+// sixteen by mask.
+function __base_mul(s: Signer, k: [u8]): Proj {
+  let table: Proj[] = [__identity(s), s.g];
+  let i: i32 = 2;
+  while (i < 16) {
+    table = table.append(__padd(s, table[i - 1], s.g));
+    i = i + 1;
+  }
+  let r: Proj = __identity(s);
+  for b in k {
+    r = __add_digit(s, __times16(s, r), table, b as i64 >> 4 as i64);
+    r = __add_digit(s, __times16(s, r), table, b as i64 & 15 as i64);
+  }
+  return r;
+}
+
+function __times16(s: Signer, p: Proj): Proj {
+  let r: Proj = __padd(s, p, p);
+  r = __padd(s, r, r);
+  r = __padd(s, r, r);
+  return __padd(s, r, r);
+}
+
+// __add_digit is r plus table[digit], the entry chosen by mask.
+function __add_digit(s: Signer, r: Proj, table: Proj[], digit: i64): Proj {
+  let pick: Proj = table[0];
+  let j: i32 = 1;
+  while (j < 16) {
+    let hit: i64 = mont.is_zero([digit ^ j as i64]);
+    pick = Proj { x: mont.select(pick.x, table[j].x, hit), y: mont.select(pick.y, table[j].y, hit), z: mont.select(pick.z, table[j].z, hit) };
+    j = j + 1;
+  }
+  return __padd(s, r, pick);
+}
+
+function __identity(s: Signer): Proj {
+  return Proj { x: mont.zero(s.fp), y: s.fp.one, z: mont.zero(s.fp) };
+}
+
+// __affine is (X/Z, Y/Z) as big-endian bytes.
+function __affine(s: Signer, p: Proj): (u8[], u8[]) {
+  let zinv: i64[] = mont.inv(s.fp, p.z);
+  return (mont.to_bytes(s.fp, mont.mul(s.fp, p.x, zinv)), mont.to_bytes(s.fp, mont.mul(s.fp, p.y, zinv)));
+}
+
+// __der is SEQUENCE { INTEGER r, INTEGER s }, each minimal.
+function __der(r: [u8], s: [u8]): u8[] {
+  let ri: u8[] = __der_integer(r);
+  let si: u8[] = __der_integer(s);
+  let out: u8[] = [48 as u8, (ri.len() + si.len()) as u8];
+  for b in ri {
+    out = out.append(b);
+  }
+  for b in si {
+    out = out.append(b);
+  }
+  return out;
+}
+
+function __der_integer(v: [u8]): u8[] {
+  let at: i32 = 0;
+  while (at < v.len() - 1 && v[at] == 0 as u8) {
+    at = at + 1;
+  }
+  let body: u8[] = [];
+  if (v[at] as i32 >= 128) {
+    body = body.append(0 as u8);
+  }
+  while (at < v.len()) {
+    body = body.append(v[at]);
+    at = at + 1;
+  }
+  let out: u8[] = [2 as u8, body.len() as u8];
+  for b in body {
+    out = out.append(b);
+  }
+  return out;
+}
+
+// RFC 6979 §3.2's HMAC_DRBG: K and V, over the signature's hash.
+struct Drbg { hash: Hash, k: u8[], v: u8[] }
+
+function __mac(h: Hash, key: [u8], msg: [u8]): u8[] {
+  match (h) {
+    Sha384 => {
+      return crypto.hmac_sha384(key, msg);
+    },
+    _ => {
+      return crypto.hmac_sha256(key, msg);
+    }
+  }
+  return [];
+}
+
+function __cat3(a: [u8], tag: i32, b: [u8], c: [u8]): u8[] {
+  let out: u8[] = __copy(a);
+  if (tag >= 0) {
+    out = out.append(tag as u8);
+  }
+  for x in b {
+    out = out.append(x);
+  }
+  for x in c {
+    out = out.append(x);
+  }
+  return out;
+}
+
+// __drbg_new seeds the generator with the private scalar and the digest
+// reduced mod n (steps b to g).
+function __drbg_new(h: Hash, x: [u8], h1: [u8]): Drbg {
+  let size: i32 = __digest(h, []).len();
+  let v: u8[] = [];
+  let k: u8[] = [];
+  let i: i32 = 0;
+  while (i < size) {
+    v = v.append(1 as u8);
+    k = k.append(0 as u8);
+    i = i + 1;
+  }
+  k = __mac(h, k, __cat3(v, 0, x, h1));
+  v = __mac(h, k, v);
+  k = __mac(h, k, __cat3(v, 1, x, h1));
+  v = __mac(h, k, v);
+  return Drbg { hash: h, k: k, v: v };
+}
+
+// __drbg_next is the next candidate nonce of `bytes` bytes (step h).
+function __drbg_next(g: Drbg, bytes: i32): (Drbg, u8[]) {
+  let v: u8[] = g.v;
+  let t: u8[] = [];
+  while (t.len() < bytes) {
+    v = __mac(g.hash, g.k, v);
+    for x in v {
+      if (t.len() < bytes) {
+        t = t.append(x);
+      }
+    }
+  }
+  return (Drbg { ...g, v: v }, t);
+}
+
+// __drbg_reseed moves past a candidate that was refused.
+function __drbg_reseed(g: Drbg): Drbg {
+  let k: u8[] = __mac(g.hash, g.k, __cat3(g.v, 0, [], []));
+  return Drbg { ...g, k: k, v: __mac(g.hash, k, g.v) };
 }

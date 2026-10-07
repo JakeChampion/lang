@@ -1187,11 +1187,12 @@ per verification on x86-64.
 
 ### `std/crypto/ecdsa`
 
-ECDSA signature verification over NIST P-256 and P-384 (FIPS 186-5), the
-curves TLS certificates and handshake signatures use. Verification handles
-only public values, so it is built on `core/bigint` in Jacobian coordinates:
-about 7 ms per P-256 verification and 16 ms per P-384 one on x86-64.
-Constant-time limbs come with signing (#9858).
+ECDSA over NIST P-256 and P-384 (FIPS 186-5), the curves TLS certificates and
+handshake signatures use. Verification handles only public values, so it is
+built on `core/bigint` in Jacobian coordinates: about 7 ms per P-256
+verification and 16 ms per P-384 one on x86-64. Signing runs over
+`std/crypto/montgomery`, constant time, with RFC 6979's deterministic nonce,
+and the valgrind gate checks it (`TestSelfHostCtGateX86_64/ecdsa`).
 
 - `public_key(curve, point: [u8]): Result[PublicKey, EcdsaError]` — `curve`
   `P256` or `P384`, `point` an uncompressed SEC 1 point of that curve's size,
@@ -1199,6 +1200,31 @@ Constant-time limbs come with signing (#9858).
 - `verify(key, hash, msg, sig): boolean` — `sig` a DER ECDSA-Sig-Value, as TLS
   and X.509 carry it; `hash` `Sha256`, `Sha384` or `Sha512`, a digest longer
   than the curve's order cut to its leftmost bytes.
+- `private_key(curve, d)` takes a big-endian scalar at the curve's size,
+  refused with `ScalarRange` outside [1, n); `(k).public_point()` is its
+  uncompressed SEC 1 point.
+- `sign(key, hash, msg): Result[u8[], EcdsaError]` is the DER signature,
+  the same bytes for the same key and message (RFC 6979). It takes `Sha256`
+  or `Sha384`, the hashes TLS 1.3 pairs with these curves, and refuses
+  `Sha512` with `SigningHash`. Points are projective and added by the
+  complete formula for a = -3 (eprint 2015/1060); the base-point
+  multiplication reads all sixteen table entries for each 4-bit digit and
+  keeps one by mask. About 4 ms per P-256 signature on x86-64.
+
+### `std/crypto/montgomery`
+
+Constant-time arithmetic modulo an odd modulus of up to 390 bits, in
+Montgomery form, for ECDSA signing over the NIST fields and orders. An
+element is 26-bit limbs in `i64` (ten for 256 bits, fifteen for 384), so a
+product of limbs fits with room to accumulate; nothing branches on or
+indexes by an element's value.
+
+- `modulus(hex, bytes)` makes a `Modulus` from public constants.
+- `mul`, `add`, `sub`, `inv` (Fermat, the public exponent walked bit by bit),
+  `select(a, b, flag)` by mask, `is_zero` and `in_range` (as 0 or 1).
+- `from_bytes` and `to_bytes` convert big-endian bytes in and out of
+  Montgomery form.
+
 
 ### `std/crypto/rsa`
 

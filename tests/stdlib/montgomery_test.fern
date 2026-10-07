@@ -1,0 +1,122 @@
+import "std/test";
+import "std/hex";
+import "std/string";
+import "core/bigint";
+import "std/crypto/montgomery" as mont;
+
+// tests/stdlib/montgomery_test.fern — std/crypto/montgomery against
+// core/bigint over P-256's field prime and P-384's group order: products,
+// sums, differences and inverses of values at the edges (0, 1, p - 1) and
+// between, and in_range at its bounds.
+
+const P256: string = "ffffffff00000001000000000000000000000000ffffffffffffffffffffffff";
+
+const N384: string = "ffffffffffffffffffffffffffffffffffffffffffffffffc7634d81f4372ddf581a0db248b0a77aecec196accc52973";
+
+function big(s: string): bigint.BigInt {
+  let v: bigint.BigInt = bigint.zero();
+  for c in s.bytes() {
+    let d: i32 = c as i32 - 48;
+    if (c as i32 >= 97) {
+      d = c as i32 - 87;
+    }
+    v = v.shl(4).add(bigint.from_u64(d as u64));
+  }
+  return v;
+}
+
+function hex_of(v: bigint.BigInt, bytes: i32): string {
+  let out: string = "";
+  let digits: string = "0123456789abcdef";
+  let i: i32 = 2 * bytes - 1;
+  while (i >= 0) {
+    let d: i32 = (v.shr(4 * i).low_u64() & 15 as u64) as i32;
+    out = out + slice_unchecked(digits, d, d + 1);
+    i = i - 1;
+  }
+  return out;
+}
+
+function reduced(v: bigint.BigInt, p: bigint.BigInt): bigint.BigInt {
+  let r: bigint.BigInt = v.divmod(p).1;
+  if (r.is_negative()) {
+    return r.add(p);
+  }
+  return r;
+}
+
+// values are the operands tried: 0, 1, 2, p - 1, p - 2 and three between.
+function values(p: bigint.BigInt, bytes: i32): string[] {
+  let one: bigint.BigInt = bigint.from_u64(1 as u64);
+  let mid: bigint.BigInt = reduced(big("123456789abcdef0fedcba9876543210").mul(big("deadbeefcafef00d1234567890abcdef0123")), p);
+  return [hex_of(bigint.zero(), bytes), hex_of(one, bytes), hex_of(one.add(one), bytes), hex_of(p.sub(one), bytes), hex_of(p.sub(one).sub(one), bytes), hex_of(mid, bytes), hex_of(reduced(mid.mul(mid), p), bytes), hex_of(p.shr(1), bytes)];
+}
+
+// mismatch is the first operation whose result differs from bigint's, or
+// "" when none does.
+function mismatch(modulus: string, bytes: i32): string {
+  let m: mont.Modulus = mont.modulus(modulus, bytes);
+  let p: bigint.BigInt = big(modulus);
+  let vs: string[] = values(p, bytes);
+  for a in vs {
+    let am: i64[] = mont.from_bytes(m, hex.hex_decode(a));
+    if (hex.hex_encode(mont.to_bytes(m, am)) != a) {
+      return "round trip " + a;
+    }
+    for b in vs {
+      let bm: i64[] = mont.from_bytes(m, hex.hex_decode(b));
+      if (hex.hex_encode(mont.to_bytes(m, mont.mul(m, am, bm))) != hex_of(reduced(big(a).mul(big(b)), p), bytes)) {
+        return "mul " + a + " " + b;
+      }
+      if (hex.hex_encode(mont.to_bytes(m, mont.add(m, am, bm))) != hex_of(reduced(big(a).add(big(b)), p), bytes)) {
+        return "add " + a + " " + b;
+      }
+      if (hex.hex_encode(mont.to_bytes(m, mont.sub(m, am, bm))) != hex_of(reduced(big(a).sub(big(b)), p), bytes)) {
+        return "sub " + a + " " + b;
+      }
+    }
+    if (mont.is_zero(am) == 0 as i64) {
+      let inv: i64[] = mont.inv(m, am);
+      if (hex.hex_encode(mont.to_bytes(m, mont.mul(m, inv, am))) != hex_of(bigint.from_u64(1 as u64), bytes)) {
+        return "inv " + a;
+      }
+    }
+  }
+  return "";
+}
+
+function test_p256_field(): test.TestOutcome {
+  return test.assert_eq(mismatch(P256, 32), "");
+}
+
+function test_p384_order(): test.TestOutcome {
+  return test.assert_eq(mismatch(N384, 48), "");
+}
+
+function test_in_range(): test.TestOutcome {
+  let m: mont.Modulus = mont.modulus(P256, 32);
+  let p: bigint.BigInt = big(P256);
+  let one: bigint.BigInt = bigint.from_u64(1 as u64);
+  let got: string = "";
+  for v in [bigint.zero(), one, p.sub(one), p, p.add(one)] {
+    got = got + mont.in_range(m, hex.hex_decode(hex_of(v, 32))).to_string();
+  }
+  return test.assert_eq(got, "01100");
+}
+
+function test_select(): test.TestOutcome {
+  let a: i64[] = [1 as i64, 2 as i64];
+  let b: i64[] = [3 as i64, 4 as i64];
+  let pick: i64[] = mont.select(a, b, 1 as i64);
+  let keep: i64[] = mont.select(a, b, 0 as i64);
+  return test.assert_eq(pick[0].to_string() + pick[1].to_string() + keep[0].to_string() + keep[1].to_string(), "3412");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/crypto/montgomery");
+  r = r.it("P-256's field", test_p256_field);
+  r = r.it("P-384's order", test_p384_order);
+  r = r.it("in_range", test_in_range);
+  r = r.it("select", test_select);
+  return r.finish();
+}

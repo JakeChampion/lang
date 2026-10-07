@@ -127,6 +127,97 @@ function test_p384(): test.TestOutcome {
   return test.assert_true(!verified_on(ecdsa.P384, POINT_C, ecdsa.Sha384, message384(), hex.hex_encode(flipped)));
 }
 
+const P256_POINT: string = "0460fed4ba255a9d31c961eb74c6356d68c049b8923b61fa6ce669622e60f29fb67903fe1008b8bc99a41ae9e95628bc64f2f1b20c2d7e9f5177a3c294d4462299";
+
+const P256_SHA256_SAMPLE: string = "3046022100efd48b2aacb6a8fd1140dd9cd45e81d69d2c877b56aaf991c34d0ea84eaf3716022100f7cb1c942d657c41d436c7a1b6e29f65f3e900dbb9aff4064dc4ab2f843acda8";
+
+const P256_SHA256_TEST: string = "3045022100f1abb023518351cd71d881567b1ea663ed3efcf6c5132b354f28d3b0b7d383670220019f4113742a2b14bd25926b49c649155f267e60d3814b4c0cc84250e46f0083";
+
+const P256_SHA384_SAMPLE: string = "304402200eafea039b20e9b42309fb1d89e213057cbf973dc0cfc8f129edddc800ef771902204861f0491e6998b9455193e34e7b0d284ddd7149a74b95b9261f13abde940954";
+
+const P384_D: string = "6b9d3dad2e1b8c1c05b19875b6659f4de23c3b667bf297ba9aa47740787137d896d5724e4c70a825f872c9ea60d2edf5";
+
+const P384_POINT: string = "04ec3a4e415b4e19a4568618029f427fa5da9a8bc4ae92e02e06aae5286b300c64def8f0ea9055866064a254515480bc138015d9b72d7d57244ea8ef9ac0c621896708a59367f9dfb9f54ca84b3f1c9db1288b231c3ae0d4fe7344fd2533264720";
+
+const P384_SHA384_SAMPLE: string = "306602310094edbb92a5ecb8aad4736e56c691916b3f88140666ce9fa73d64c4ea95ad133c81a648152e44acf96e36dd1e80fabe4602310099ef4aeb15f178cea1fe40db2603138f130e740a19624526203b6351d0a3a94fa329c145786e679e7b82c71a38628ac8";
+
+const P384_SHA256_TEST: string = "306402306d6defac9ab64dabafe36c6bf510352a4cc27001263638e5b16d9bb51d451559f918eedaf2293be5b475cc8f0188636b02302d46f3becbcc523d5f1a1256bf0c9b024d879ba9e838144c8ba6baeb4b53b47d51ab373f9845c0514eefb14024787265";
+
+// RFC 6979 A.2.5's P-256 key.
+const P256_D: string = "c9afa9d845ba75166b5c215767b1d6934e50c3db36e89b127b8a622b120f6721";
+
+// signed is the hex signature `d` makes on `curve` over msg, after checking
+// its public point and that it verifies.
+function signed(curve: ecdsa.Curve, d: string, point: string, h: ecdsa.Hash, msg: string): string {
+  match (ecdsa.private_key(curve, hex.hex_decode(d))) {
+    Ok(k) => {
+      if (hex.hex_encode(k.public_point()) != point) {
+        return "public point " + hex.hex_encode(k.public_point());
+      }
+      match (ecdsa.sign(k, h, msg.bytes())) {
+        Ok(sig) => {
+          if (!verified_on(curve, point, h, msg.bytes(), hex.hex_encode(sig))) {
+            return "does not verify";
+          }
+          return hex.hex_encode(sig);
+        },
+        Err(e) => {
+          return e.message();
+        }
+      }
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+// RFC 6979's deterministic signatures, from A.2.5 and A.2.6 and a
+// reference implementation that reproduces them.
+function test_signing(): test.TestOutcome {
+  if (signed(ecdsa.P256, P256_D, P256_POINT, ecdsa.Sha256, "sample") != P256_SHA256_SAMPLE || signed(ecdsa.P256, P256_D, P256_POINT, ecdsa.Sha256, "test") != P256_SHA256_TEST) {
+    return test.fail("P-256 SHA-256: " + signed(ecdsa.P256, P256_D, P256_POINT, ecdsa.Sha256, "sample"));
+  }
+  if (signed(ecdsa.P256, P256_D, P256_POINT, ecdsa.Sha384, "sample") != P256_SHA384_SAMPLE) {
+    return test.fail("P-256 SHA-384");
+  }
+  if (signed(ecdsa.P384, P384_D, P384_POINT, ecdsa.Sha384, "sample") != P384_SHA384_SAMPLE) {
+    return test.fail("P-384 SHA-384: " + signed(ecdsa.P384, P384_D, P384_POINT, ecdsa.Sha384, "sample"));
+  }
+  return test.assert_eq(signed(ecdsa.P384, P384_D, P384_POINT, ecdsa.Sha256, "test"), P384_SHA256_TEST);
+}
+
+function key_refusal(curve: ecdsa.Curve, d: string): string {
+  match (ecdsa.private_key(curve, hex.hex_decode(d))) {
+    Ok(k) => {
+      match (ecdsa.sign(k, ecdsa.Sha512, "x".bytes())) {
+        Ok(_) => {
+          return "signed";
+        },
+        Err(e) => {
+          return e.message();
+        }
+      }
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function test_signing_refusals(): test.TestOutcome {
+  let range: string = "ecdsa: the private scalar is not in [1, n) at the curve's size";
+  let zero: string = "0000000000000000000000000000000000000000000000000000000000000000";
+  let n: string = "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551";
+  let n_minus_1: string = "ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632550";
+  if (key_refusal(ecdsa.P256, zero) != range || key_refusal(ecdsa.P256, n) != range || key_refusal(ecdsa.P384, P256_D) != range) {
+    return test.fail("a scalar out of range or of the wrong size");
+  }
+  return test.assert_eq(key_refusal(ecdsa.P256, n_minus_1), "ecdsa: signing takes SHA-256 or SHA-384");
+}
+
 function test_bad_keys(): test.TestOutcome {
   if (key_error(compressed_a()) != "ecdsa: the key is not an uncompressed SEC 1 point on its curve") {
     return test.fail("a compressed point was accepted");
@@ -151,5 +242,7 @@ function main(): i32 {
   r = r.it("P-384", test_p384);
   r = r.it("refusals", test_refusals);
   r = r.it("malformed keys", test_bad_keys);
+  r = r.it("signing", test_signing);
+  r = r.it("signing refusals", test_signing_refusals);
   return r.finish();
 }
