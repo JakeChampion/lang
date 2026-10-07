@@ -119,7 +119,7 @@ function trace_hello(): message.ClientHello {
 function trace_client(): Result[handshake.ClientStep, handshake.HandshakeError] {
   match (keyshare.client_share(keyshare.X25519, hex.hex_decode("49af42ba7f7994852d713ef2784bcbcaa7911de26adc5642cb634540e7ea5005"))) {
     Ok(share) => {
-      return handshake.client_from_hello(trace_hello(), share);
+      return handshake.client_from_hello(trace_hello(), share, []);
     },
     Err(e) => {
       return Err(handshake.KeyShare(e));
@@ -378,11 +378,16 @@ function ed_public(): u8[] {
 
 // handshake_between runs a whole handshake: the server signs with Ed25519
 // and the client checks the signature against the key the "chain" carries.
+// A HelloRetryRequest, when the server asks for one, is answered before
+// the signature.
 function handshake_between(cc: handshake.ClientConfig, sc: handshake.ServerConfig): Result[Pair, handshake.HandshakeError] {
-  let g: keyshare.Group = cc.groups[0];
-  let start: handshake.ClientStep = handshake.client_start(cc, pattern(1, 32 + g.client_entropy()))?;
+  let start: handshake.ClientStep = handshake.client_start(cc, pattern(1, handshake.client_entropy(cc)))?;
   let server: handshake.Server = handshake.server_new(sc, pattern(2, 96))?;
   let s1: handshake.ServerStep = server.read(start.output)?;
+  if (s1.events.len() == 0) {
+    start = start.client.read(s1.output)?;
+    s1 = s1.server.read(start.output)?;
+  }
   let sg: handshake.Signing = signing(s1.events);
   let sig: u8[] = [];
   match (ed25519.sign(seed(), sg.signed)) {
@@ -496,11 +501,169 @@ function refused(r: Result[Pair, handshake.HandshakeError]): string {
   return "";
 }
 
+// The server takes only X25519, so it asks for a share in it, and the
+// handshake goes on from the second ClientHello.
+function test_hello_retry(): test.TestOutcome {
+  let cc: handshake.ClientConfig = handshake.client_config("example.com");
+  let sc: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config([ed_public()], [0x0807]), groups: [keyshare.X25519] };
+  match (handshake_between(cc, sc)) {
+    Ok(p) => {
+      return test.assert_eq(exchange(p), "ping pong");
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+// A HelloRetryRequest from the trace's server for the given group, with a
+// cookie when one is given.
+function retry_record(group: i32, cookie: u8[]): u8[] {
+  let exts: message.Extension[] = [message.ext_selected_version(message.TLS13), message.ext_retry_group(group)];
+  if (cookie.len() > 0) {
+    exts = exts.append(message.Extension { kind: message.EXT_COOKIE, data: cookie });
+  }
+  return record.frame(record.Handshake, 0x0303, message.encode(message.ServerHelloMsg(message.ServerHello { random: message.retry_random(), session_id: [], cipher_suite: 0x1301, extensions: exts })));
+}
+
+function default_client(): Result[handshake.ClientStep, handshake.HandshakeError] {
+  let cc: handshake.ClientConfig = handshake.client_config("example.com");
+  return handshake.client_start(cc, pattern(1, handshake.client_entropy(cc)));
+}
+
+// The second ClientHello keeps the first's random and names, carries an
+// X25519 share in place of the hybrid one, and echoes the cookie; a second
+// HelloRetryRequest is refused.
+function test_retry_cookie(): test.TestOutcome {
+  match (default_client()) {
+    Ok(start) => {
+      // The cookie's extension_data is the cookie with its two-byte length.
+      match (start.client.read(retry_record(0x001d, [0 as u8, 2 as u8, 7 as u8, 7 as u8]))) {
+        Ok(step) => {
+          let shape: string = second_hello_shape(step.output);
+          if (shape != "x25519 32 cookie 00020707") {
+            return test.fail(shape);
+          }
+          return test.assert_eq(client_outcome(step.client.read(retry_record(0x001d, []))), "10 tls handshake: unexpected handshake message 2");
+        },
+        Err(e) => {
+          return test.fail(e.message());
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+// The group and key length of the second ClientHello's one share, and its
+// cookie.
+function second_hello_shape(rec: u8[]): string {
+  match (message.decode(message.Raw { kind: 1, bytes: rec.drop(5) })) {
+    Ok(m) => {
+      match (m) {
+        message.ClientHelloMsg(h) => {
+          let shares: message.KeyShareEntry[] = [];
+          if let Some(d) = message.find(h.extensions, message.EXT_KEY_SHARE) {
+            if let Ok(v) = message.key_shares(d) {
+              shares = v;
+            }
+          }
+          let cookie: string = "none";
+          if let Some(c) = message.find(h.extensions, message.EXT_COOKIE) {
+            cookie = hex.hex_encode(c);
+          }
+          if (shares.len() != 1 || shares[0].group != 0x001d) {
+            return "shares";
+          }
+          return "x25519 " + int.int_to_string(shares[0].key.len()) + " cookie " + cookie;
+        },
+        _ => {
+          return "not a ClientHello";
+        }
+      }
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function client_outcome(r: Result[handshake.ClientStep, handshake.HandshakeError]): string {
+  match (r) {
+    Ok(step) => {
+      return "accepted" + event_names(step.events);
+    },
+    Err(e) => {
+      return int.int_to_string(e.alert()) + " " + e.message();
+    }
+  }
+  return "";
+}
+
+function test_retry_refusals(): test.TestOutcome {
+  match (default_client()) {
+    Ok(start) => {
+      if (client_outcome(start.client.read(retry_record(0x11ec, []))) != "47 tls handshake: illegal HelloRetryRequest group") {
+        return test.fail("the group already shared");
+      }
+      if (client_outcome(start.client.read(retry_record(0x0017, []))) != "47 tls handshake: illegal HelloRetryRequest group") {
+        return test.fail("a group not offered");
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  // The trace's ClientHello names secp256r1, which this client cannot make.
+  if (client_refusal(retry_record(0x0017, [])) != "40 tls handshake: the server asks for a group this client cannot make") {
+    return test.fail("an unimplemented group");
+  }
+  // A server that asked for an X25519 share is sent the first ClientHello
+  // again.
+  let cc: handshake.ClientConfig = handshake.client_config("example.com");
+  let sc: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config([ed_public()], [0x0807]), groups: [keyshare.X25519] };
+  match (default_client()) {
+    Ok(start) => {
+      match (handshake.server_new(sc, pattern(2, 96))) {
+        Ok(s) => {
+          match (s.read(start.output)) {
+            Ok(s1) => {
+              match (s1.server.read(start.output)) {
+                Ok(s2) => {
+                  return test.fail("accepted");
+                },
+                Err(e) => {
+                  return test.assert_eq(e.message(), "tls handshake: illegal second ClientHello without the share asked for");
+                }
+              }
+            },
+            Err(e) => {
+              return test.fail(e.message());
+            }
+          }
+        },
+        Err(e) => {
+          return test.fail(e.message());
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
 function test_no_common_ground(): test.TestOutcome {
   if (refused(handshake_between(client_with([keyschedule.ChaCha20Poly1305Sha256], [keyshare.X25519], []), server_with([keyschedule.Aes128GcmSha256], [keyshare.X25519], []))) != "40 tls handshake: no cipher suite in common") {
     return test.fail("suite");
   }
-  if (refused(handshake_between(client_with([keyschedule.Aes128GcmSha256], [keyshare.X25519], []), server_with([keyschedule.Aes128GcmSha256], [keyshare.X25519MlKem768], []))) != "40 tls handshake: no key share for a group in common") {
+  if (refused(handshake_between(client_with([keyschedule.Aes128GcmSha256], [keyshare.X25519], []), server_with([keyschedule.Aes128GcmSha256], [keyshare.X25519MlKem768], []))) != "40 tls handshake: no group in common") {
     return test.fail("group");
   }
   return test.assert_eq(refused(handshake_between(client_with([keyschedule.Aes128GcmSha256], [keyshare.X25519], ["h2"]), server_with([keyschedule.Aes128GcmSha256], [keyshare.X25519], ["http/1.1"]))), "120 tls handshake: no application protocol in common");
@@ -563,12 +726,6 @@ function test_client_refusals(): test.TestOutcome {
   let flight: u8[] = server_flight_record();
   if (client_refusal(cat(server_hello_record(), flight.with(100, flight[100] ^ 1 as u8))) != "20 tls record: the record does not verify") {
     return test.fail("tampered flight");
-  }
-  // A HelloRetryRequest is not answered yet.
-  let hrr: message.ServerHello = message.ServerHello { random: hex.hex_decode("cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c"), session_id: [], cipher_suite: 0x1301, extensions: [message.ext_selected_version(message.TLS13), message.ext_retry_group(0x0017)] };
-  let hrr_record: u8[] = record.frame(record.Handshake, 0x0303, message.encode(message.ServerHelloMsg(hrr)));
-  if (client_refusal(hrr_record) != "40 tls handshake: a HelloRetryRequest, which this client does not answer") {
-    return test.fail("HelloRetryRequest");
   }
   // A suite the ClientHello did not offer.
   let sh: u8[] = server_hello_record();
@@ -675,6 +832,9 @@ function main(): i32 {
   r = r.it("the server's ServerHello of RFC 8448", test_server_trace);
   r = r.it("client and server across suites and groups", test_round_trips);
   r = r.it("defaults, server name and ALPN", test_defaults_and_alpn);
+  r = r.it("HelloRetryRequest", test_hello_retry);
+  r = r.it("HelloRetryRequest cookie and a second one", test_retry_cookie);
+  r = r.it("HelloRetryRequest refusals", test_retry_refusals);
   r = r.it("no suite, group or protocol in common", test_no_common_ground);
   r = r.it("a refused certificate", test_refused_certificate);
   r = r.it("client refusals", test_client_refusals);

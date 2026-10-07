@@ -11,9 +11,10 @@ module, so each primitive is a module of its own under `std/crypto/`:
 `std/crypto/chacha20poly1305`, then `aes_gcm`, `x25519`, `mlkem768`,
 `p256`, `ed25519` and `rsa`, with the field X25519 and Ed25519 share in
 `field25519`. The existing digests, HMAC and HKDF stay in `std/crypto`.
-TLS itself is `std/tls/record`, `handshake`, `client` and `server`, with
-X.509 in `std/tls/der`, `verify` and `pem`. Every module type-checks
-standalone (`TestStdlibModulesImportStandalone`).
+TLS itself is `std/tls/keyschedule`, `keyshare`, `message`, `record`,
+`handshake`, `client` and `server`, with X.509 in `std/tls/der`, `pem`,
+`x509` and `verify`. Every module type-checks standalone
+(`TestStdlibModulesImportStandalone`).
 
 ## Slices
 
@@ -104,11 +105,36 @@ standalone (`TestStdlibModulesImportStandalone`).
    two complete handshakes with each other across every suite and group.
    HelloRetryRequest comes with slice 10, resumption and client
    certificates with slice 11.
-9. **`std/tls/der`, `pem` and `verify`.** Path building, name and SAN
-   checks, and the root store (Linux bundle paths, `SSL_CERT_FILE`, a
+9. **`std/tls/der`, `pem`, `x509` and `verify`.** Path building, name and
+   SAN checks, and the root store (Linux bundle paths, `SSL_CERT_FILE`, a
    bundled CCADB list as the fallback).
+
+   Landed: strict DER, PEM, certificate parsing, and `verify_server`, which
+   builds a path through the server's intermediates to the caller's roots
+   at the caller's time. It checks validity, CA and path-length
+   constraints, key usage, the leaf's server extended key usage, unknown
+   critical extensions and every signature (RSA PKCS #1 v1.5 and PSS,
+   ECDSA P-256, Ed25519), and matches names against the subject
+   alternative names only. `verify_signed` checks a CertificateVerify.
+   Gate: chains made with Python's `cryptography` covering every refusal,
+   and RFC 8448's certificate and CertificateVerify. Then name constraints
+   over DNS names and IP addresses (other forms still refuse a critical
+   extension), and the system root store: `SSL_CERT_FILE`, then the
+   distributions' bundle paths. Remaining: the bundled CCADB list, as its own
+   module so that only a program that asks for it carries it.
 10. **`std/tls/client`.** X25519MLKEM768 by default, ALPN and
     HelloRetryRequest, wired into `fetch`'s `https`.
+
+    Landed: HelloRetryRequest in `std/tls/handshake`, both sides. A server
+    that takes none of the client's shares asks for one in a group the
+    client named, and the client answers with a second ClientHello carrying
+    that share and any cookie, the first ClientHello going into the
+    transcript as its hash. Gate: client and server complete the retry
+    against each other, the second ClientHello's share and cookie are
+    checked, and a retry naming the group already shared, one not offered or
+    one the client cannot make, a second retry, and a second ClientHello
+    without the share are each refused. Remaining: the client module over a
+    socket, and `fetch`.
 11. **`std/tls/server`.** Resumption and client certificates, wired into
     `std/serve`.
 12. **Interop and fuzzing on `net-nightly`.** OpenSSL 3.5, Go, rustls'

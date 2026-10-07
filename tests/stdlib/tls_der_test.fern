@@ -1,0 +1,280 @@
+import "std/test";
+import "core/int";
+import "std/hex";
+import "std/i64";
+import "std/tls/der";
+
+// tests/stdlib/tls_der_test.fern — std/tls/der: lengths, tags and each
+// value type, with every encoding DER forbids refused.
+
+function h(s: string): u8[] {
+  return hex.hex_decode(s);
+}
+
+function element(r: Result[der.Element, der.DerError]): string {
+  match (r) {
+    Ok(e) => {
+      return int.int_to_string(e.tag) + " " + int.int_to_string(e.start) + " " + int.int_to_string(e.from) + " " + int.int_to_string(e.to);
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function first(s: string): der.Element {
+  match (der.read(h(s), 0)) {
+    Ok(e) => {
+      return e;
+    },
+    Err(e) => {
+      return der.Element { tag: -1, start: 0, from: 0, to: 0, next: 0 };
+    }
+  }
+  return der.Element { tag: -1, start: 0, from: 0, to: 0, next: 0 };
+}
+
+function shown_bytes(r: Result[u8[], der.DerError]): string {
+  match (r) {
+    Ok(b) => {
+      return hex.hex_encode(b);
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function shown_string(r: Result[string, der.DerError]): string {
+  match (r) {
+    Ok(s) => {
+      return s;
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function unsigned(s: string): string {
+  return shown_bytes(der.unsigned(h(s), first(s)));
+}
+
+function oid(s: string): string {
+  return shown_string(der.oid(h(s), first(s)));
+}
+
+function time(s: string): string {
+  match (der.time(h(s), first(s))) {
+    Ok(t) => {
+      return t.to_string();
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function text(s: string): string {
+  return shown_string(der.text(h(s), first(s)));
+}
+
+function test_lengths(): test.TestOutcome {
+  if (element(der.read(h("020105"), 0)) != "2 0 2 3") {
+    return test.fail("short form");
+  }
+  let long: string = "048180";
+  let i: i32 = 0;
+  while (i < 128) {
+    long = long + "00";
+    i = i + 1;
+  }
+  if (element(der.read(h(long), 0)) != "4 0 3 131") {
+    return test.fail("long form");
+  }
+  if (element(der.read(h("04810500000000"), 0)) != "der: a length DER does not allow") {
+    return test.fail("long form for a short length");
+  }
+  if (element(der.read(h("0482007f"), 0)) != "der: a length DER does not allow") {
+    return test.fail("leading zero length octet");
+  }
+  if (element(der.read(h("0480"), 0)) != "der: a length DER does not allow") {
+    return test.fail("indefinite");
+  }
+  if (element(der.read(h("020501"), 0)) != "der: truncated") {
+    return test.fail("truncated");
+  }
+  return test.assert_eq(element(der.read(h("1f0100"), 0)), "der: a high tag number");
+}
+
+function test_children(): test.TestOutcome {
+  let b: u8[] = h("3006020101020102");
+  match (der.children(b, first("3006020101020102"))) {
+    Ok(c) => {
+      if (c.len() != 2 || c[1].from != 7 || c[1].start != 5) {
+        return test.fail("two integers");
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  // The child runs past its parent.
+  match (der.children(h("3003020201ff"), first("3003020201ff"))) {
+    Ok(c) => {
+      return test.fail("accepted");
+    },
+    Err(e) => {
+      if (e.message() != "der: truncated") {
+        return test.fail(e.message());
+      }
+    }
+  }
+  if (element(der.only(h("020101ff"), der.INTEGER)) != "der: malformed trailing bytes") {
+    return test.fail("trailing bytes");
+  }
+  return test.assert_eq(element(der.expect(h("0101ff"), 0, der.INTEGER)), "der: tag 1 where 2 was wanted");
+}
+
+function test_integers(): test.TestOutcome {
+  if (unsigned("020100") != "00" || unsigned("020200ff") != "ff" || unsigned("0203010001") != "010001") {
+    return test.fail("unsigned");
+  }
+  if (unsigned("02020001") != "der: malformed integer" || unsigned("0201ff") != "der: malformed integer" || unsigned("0200") != "der: malformed integer") {
+    return test.fail("refusals");
+  }
+  match (der.small(h("0203010000"), first("0203010000"))) {
+    Ok(v) => {
+      if (v != 65536) {
+        return test.fail("small");
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  match (der.small(h("020500ffffffff"), first("020500ffffffff"))) {
+    Ok(v) => {
+      return test.fail("2^32 - 1 accepted");
+    },
+    Err(e) => {
+      return test.assert_eq(e.message(), "der: malformed integer");
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function test_oids(): test.TestOutcome {
+  if (oid("06092a864886f70d01010b") != "1.2.840.113549.1.1.11" || oid("06032b6570") != "1.3.101.112" || oid("0603550403") != "2.5.4.3") {
+    return test.fail("known identifiers");
+  }
+  if (oid("0603883703") != "2.999.3") {
+    return test.fail("a first arc of 2: " + oid("0603883703"));
+  }
+  if (oid("0603808101") != "der: malformed object identifier") {
+    return test.fail("a non-minimal arc");
+  }
+  return test.assert_eq(oid("06022a86"), "der: malformed object identifier");
+}
+
+function test_booleans_and_bits(): test.TestOutcome {
+  let t: Result[boolean, der.DerError] = der.boolean_value(h("0101ff"), first("0101ff"));
+  let f: Result[boolean, der.DerError] = der.boolean_value(h("010100"), first("010100"));
+  match (t) {
+    Ok(v) => {
+      if (!v) {
+        return test.fail("true");
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  match (f) {
+    Ok(v) => {
+      if (v) {
+        return test.fail("false");
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  match (der.boolean_value(h("010101"), first("010101"))) {
+    Ok(v) => {
+      return test.fail("0x01 accepted");
+    },
+    Err(e) => {
+      if (e.message() != "der: malformed boolean") {
+        return test.fail(e.message());
+      }
+    }
+  }
+  match (der.bit_string(h("03020780"), first("03020780"))) {
+    Ok(bs) => {
+      if (bs.unused != 7 || hex.hex_encode(bs.bytes) != "80") {
+        return test.fail("bit string");
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  match (der.bit_string(h("03020781"), first("03020781"))) {
+    Ok(bs) => {
+      return test.fail("a set unused bit accepted");
+    },
+    Err(e) => {
+      return test.assert_eq(e.message(), "der: malformed bit string");
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function test_times(): test.TestOutcome {
+  if (time("170d3236303130313030303030305a") != "1767225600") {
+    return test.fail("UTCTime 2026");
+  }
+  if (time("170d3439313233313233353935395a") != "2524607999" || time("170d3530303130313030303030305a") != "-631152000") {
+    return test.fail("UTCTime's century");
+  }
+  if (time("180f32303234303232393132303030305a") != "1709208000") {
+    return test.fail("GeneralizedTime on a leap day");
+  }
+  if (time("180f32303233303232393132303030305a") != "der: malformed time") {
+    return test.fail("29 February 2023");
+  }
+  if (time("170d3236313330313030303030305a") != "der: malformed time") {
+    return test.fail("month 13");
+  }
+  return test.assert_eq(time("170d323630313031303030303030ff"), "der: malformed time");
+}
+
+function test_text(): test.TestOutcome {
+  if (text("0c03616263") != "abc" || text("1303616263") != "abc" || text("1603616263") != "abc") {
+    return test.fail("UTF8String, PrintableString and IA5String");
+  }
+  if (text("1e0400610062") != "ab" || text("1e0200e9") != "é") {
+    return test.fail("BMPString");
+  }
+  if (text("160180") != "der: malformed string") {
+    return test.fail("a high byte in an IA5String");
+  }
+  return test.assert_eq(text("020101"), "der: tag 2 where 12 was wanted");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/tls/der");
+  r = r.it("lengths and tags", test_lengths);
+  r = r.it("children", test_children);
+  r = r.it("integers", test_integers);
+  r = r.it("object identifiers", test_oids);
+  r = r.it("booleans and bit strings", test_booleans_and_bits);
+  r = r.it("times", test_times);
+  r = r.it("strings", test_text);
+  return r.finish();
+}
