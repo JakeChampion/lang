@@ -1975,8 +1975,9 @@ function other_payload_get(ins: ssa.SInst, root: i32, slot: i32): boolean {
 }
 
 // The box whose slot the read at (`bi`, `pos`) may MOVE out of rather than
-// borrow, or -1: an enum's payload named by a variant read, a record's array
-// or record field, or a tuple's array or record element. Same shape as
+// borrow, or -1: an enum's payload named by a variant read, or an array, map
+// or record held in a record's field, a tuple's element or an owned array's
+// element (field_takeable). Same shape as
 // `projection_root` above, over the one slot the read names: the box is a
 // unit of this frame's own, no later block names it, and after the read it
 // is reached only through reads of its OTHER slots (`needed_past`).
@@ -2035,9 +2036,8 @@ function payload_root(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs
 }
 
 // Whether the box `root` can give up the slot the read `got` names: a
-// buffer or record field of a record, a buffer or record element of a tuple,
-// a buffer or record element of an owned array, or a reference payload of a
-// union. A view, or the builtin Option layout, needs a box nobody else sees.
+// buffer, map or record field of a record, element of a tuple or element of
+// an owned array, or a reference payload of a union. A view, or the builtin Option layout, needs a box nobody else sees.
 function slot_takeable(f: ssasem.Func, defs: ssa.SInst[], got: typeinfo.Type, root: i32, field: boolean, element: boolean, slot: boolean): boolean {
   let box: typeinfo.Type = f.values[root];
   if (field) {
