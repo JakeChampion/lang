@@ -276,6 +276,46 @@ function main(): i32 {
 }
 `
 
+// routedMapMapValuesSrc: a map's value column holding maps (#9608). Each
+// inner map is a counted box like any other value: a read retains it, so an
+// insert through the read copies rather than writing the outer map's entry,
+// an alias of the outer map keeps the old inner map, and the last drop
+// releases every inner map once.
+const routedMapMapValuesSrc = `import "core/map";
+import "std/i32";
+function build(n: i32): Map[string, Map[i32, i32]] {
+  let outer: Map[string, Map[i32, i32]] = map_new(2);
+  let i: i32 = 0;
+  while (i < n) {
+    let inner: Map[i32, i32] = map_new(2);
+    let j: i32 = 0;
+    while (j < 5) { inner = inner.insert(j, i * 10 + j); j = j + 1; }
+    outer = outer.insert("k" + i.to_string(), inner);
+    i = i + 1;
+  }
+  return outer;
+}
+function main(): i32 {
+  let outer: Map[string, Map[i32, i32]] = build(40);
+  let alias: Map[string, Map[i32, i32]] = outer;
+  let e: Map[i32, i32] = map_new(1);
+  let got: Map[i32, i32] = outer.get_or("k3", e);
+  got = got.insert(99, 7);
+  let s: i32 = outer.get_or("k3", e).len() * 1000 + got.len();
+  outer = outer.insert("k3", got);
+  s = s + outer.get_or("k3", e).get_or(99, 0) * 100 + alias.get_or("k3", e).get_or(99, -1);
+  let (o2, had) = outer.without("k4");
+  if (had && !o2.has("k4") && outer.has("k4")) { s = s + 1; }
+  let t: i32 = 0;
+  for (k, v) in o2 { t = t + v.len() + k.len(); }
+  for v in o2.values() { t = t + v.get_or(0, 0); }
+  match (o2.get("k7")) { Some(m) => { t = t + m.get_or(2, 0); }, None => {} }
+  let cleared: Map[string, Map[i32, i32]] = o2.cleared();
+  print(s.to_string() + " " + t.to_string() + " " + cleared.len().to_string());
+  return 0;
+}
+`
+
 // routedMapStringValuesSrc: string value columns hold their strings in the
 // slots, so an overwrite, a delete, an alias's copy and the last drop each
 // release exactly the values they own, and a get hands out its own reference.
@@ -545,6 +585,7 @@ func TestSelfHostRoutedScalarMaps(t *testing.T) {
 		{"string_keys", routedMapStringKeysSrc, "202311 691 61358 0"},
 		{"keyed_keys", routedMapKeyedKeysSrc, "1635 twonamed-dot four! 19 3 1761 202 two 0 50000000010 1500"},
 		{"generic_keyed_keys", routedMapGenericKeyedKeysSrc, "784 twoempty-five! 31 1745"},
+		{"map_values", routedMapMapValuesSrc, "5706 8136 0"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
