@@ -1,0 +1,67 @@
+import "./etl_core";
+
+function decode(data: u8[], at: i32): etl_core.Record {
+  return etl_core.Record {
+    sensor: data[at] as i32, quality: data[at + 1] as i32,
+    value: etl_core.reading(data, at),
+  };
+}
+
+pub function process_baseline(own s: etl_core.State, data: u8[], offset: i32, count: i32): etl_core.State {
+  if (!etl_core.fits(s, data, offset, count)) {
+    return etl_core.refuse(s);
+  }
+  s = etl_core.State { ...s, output_count: 0 };
+  let i: i32 = 0;
+  while (i < count) {
+    let at: i32 = offset + i * 8;
+    let row: etl_core.Record = decode(data, at);
+    s = etl_core.apply(s, data, at, row.sensor, row.quality, row.value);
+    i = i + 1;
+  }
+  return s;
+}
+
+pub function process_batched(own s: etl_core.State, data: u8[], offset: i32, count: i32): etl_core.State {
+  if (!etl_core.fits(s, data, offset, count)) {
+    return etl_core.refuse(s);
+  }
+  let rows: etl_core.Record[] = [];
+  let i: i32 = 0;
+  while (i < count) {
+    rows = rows.append(decode(data, offset + i * 8));
+    i = i + 1;
+  }
+  s = etl_core.State { ...s, output_count: 0 };
+  i = 0;
+  while (i < count) {
+    let row: etl_core.Record = rows[i];
+    s = etl_core.apply(s, data, offset + i * 8, row.sensor, row.quality, row.value);
+    i = i + 1;
+  }
+  return s;
+}
+
+fbip function decode_reuse(own row: etl_core.Record, data: u8[], at: i32): etl_core.Record {
+  row = etl_core.Record { ...row, sensor: data[at] as i32 };
+  row = etl_core.Record { ...row, quality: data[at + 1] as i32 };
+  return etl_core.Record { ...row, value: etl_core.reading(data, at) };
+}
+
+pub fbip function process_fbip(own s: etl_core.State, data: u8[], offset: i32, count: i32): etl_core.State {
+  if (!etl_core.fits(s, data, offset, count)) {
+    return etl_core.refuse(s);
+  }
+  s = etl_core.State { ...s, output_count: 0 };
+  let i: i32 = 0;
+  while (i < count) {
+    let at: i32 = offset + i * 8;
+    s = etl_core.State { ...s, scratch: decode_reuse(s.scratch, data, at) };
+    let sensor: i32 = s.scratch.sensor;
+    let quality: i32 = s.scratch.quality;
+    let value: i32 = s.scratch.value;
+    s = etl_core.apply(s, data, at, sensor, quality, value);
+    i = i + 1;
+  }
+  return s;
+}

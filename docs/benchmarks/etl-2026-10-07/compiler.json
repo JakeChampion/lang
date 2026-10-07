@@ -1,0 +1,11 @@
+{
+  "revision": "f009e7a36be99cb883f35430e8ee29aa5eff5802",
+  "official_pin": "stage0-20261006-0d42e82",
+  "compiler_sha256": "50f2848162a619e7681e0932e27401670d6f1e6c14016d9e941ffebc32fe7d10",
+  "compiler_bytes": 12217393,
+  "stage2_equals_stage3": true,
+  "bootstrap_command": "make bootstrap distcheck",
+  "compile_command": "build/bootstrap/stage3 -target arm64-darwin -o /tmp/fern-etl-mainf009-final examples/fip/etl.fern internal/stdlib",
+  "binary_sha256": "7ca867ad64b982b1ae8e37970d2931a2c35a689e15ddb71b113a39d03c589688",
+  "assembly_sha256": "eef90d872e6cc5afd559885fa8ff82c419ba1f3dd9c906ec00500319b0d71b96"
+}

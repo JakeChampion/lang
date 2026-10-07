@@ -1,0 +1,11 @@
+{
+  "seen": 2000000,
+  "accepted": 747596,
+  "invalid": 504715,
+  "filtered": 747689,
+  "refused": 0,
+  "total": 6168075210,
+  "low": 2,
+  "high": 16499,
+  "checksum": 321051050
+}
