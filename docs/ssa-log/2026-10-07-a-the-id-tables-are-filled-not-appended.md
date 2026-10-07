@@ -17,8 +17,12 @@ table, the op-list passes' slot tables (loop marks, the stored and
 slot-for tables of the invariant hoist, the known and written tables of
 the constant propagation, the read, store and tee counts of the dead-tee
 pass), the x86 emitter's view-slot and argument-preference tables, the
-string-literal buckets, the checker's signature, variant, method and sum
-tables and the IR label registries.
+string-literal buckets and both native assemblers' label buckets, the
+checker's signature, variant, method and sum tables, the IR label
+registries, the IR verifier's name chains, the ownership summary's index
+and the flattener's declaration-name tables. The arm64 emitter's view-slot
+and argument-preference tables are hand-kept copies of the x86 emitter's
+and change with them.
 
 Each is now one allocation of its final size: `__alloc_i32` or
 `__alloc_bool` where the empty entry is zero, and `util.minus_ones` where
@@ -50,7 +54,17 @@ The baseline moved between this entry and the one before it: main at
 ## What is left
 
 `util.minus_ones` is 77 M for a fill of -1: a store per entry behind the
-in-place write's uniqueness test. A fill the runtime does in one call,
-beside `__alloc_i32`'s zero fill, would take most of that. The parser's
-and semantic passes' tables (`semsource`, `seminline`, `parser`) still
-append their sentinels; each was under 3 M on this compile.
+in-place write's uniqueness test, which cannot change inside the loop. A
+proof that the loop's array is the frame's only reference would drop the
+test from every such loop, the fills here among them.
+
+Sentinel fills that still append are in the semantic passes (`ssarc`,
+`ssaunits`, `seminline`, `sempair`, `ssasem`, `semsource`, `suspend`,
+`ssabounds`) and the parser; none was over 3 M on this compile. The rest of
+what the command below finds is byte emission in the assemblers and binary
+writers (`watbin`, `wit_decode`, the two native assemblers), which encodes
+output rather than filling a table.
+
+```
+grep -nE "^\s*[a-z_]+ = [a-z_]+\.append\((false|true|0|0 - 1)\);" compiler/*.fern
+```

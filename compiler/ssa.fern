@@ -1595,7 +1595,6 @@ struct Mates { hint: i32[], carried: boolean[], alt: i32[], through: boolean[] }
 function phi_mates(f: SFunc, at: i32[], def_pos: i32[], hi: i32[], no_home: boolean[]): Mates {
   let hint: i32[] = util.minus_ones(f.nvals);
   let carried: boolean[] = __alloc_bool(f.nvals);
-  let i: i32 = 0;
   // Both start all -1, sharing one buffer: the first write to either copies it.
   let alt: i32[] = hint;
   let fell: boolean[] = carried;
@@ -2432,7 +2431,6 @@ pub function inline_leaves(f: SFunc, leaves: Leaf[]): SFunc {
       }
       let leaf: SFunc = leaves[at].func;
       let map: i32[] = util.minus_ones(leaf.nvals);
-      let i: i32 = 0;
       for li in leaf.blocks[0].insts {
         if (li.kind_tag == 6) {
           map = map.with(li.result, ins.args[li.imm]);
