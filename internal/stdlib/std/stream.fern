@@ -1,5 +1,5 @@
-// std/stream — the byte-stream value behind `HttpRequest.body`
-// (docs/STDLIB-DESIGN-RESEARCH.md Rec §1).
+// std/stream — the byte-stream value behind `HttpRequest.body`. See
+// docs/STDLIB-DESIGN-RESEARCH.md Rec §1.
 //
 // A Stream is a `data: u8[]` buffer with a `pos: i32` read cursor; reads
 // advance the cursor and `.read_all()` / `.read_all_string()` consume

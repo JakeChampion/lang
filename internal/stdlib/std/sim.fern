@@ -1,5 +1,5 @@
-// std/sim — the deterministic simulation driver for std/async
-// (docs/DST-PLATFORM-BRIEF.md, slices 1–2). A `Sim` implements
+// std/sim — the deterministic simulation driver for std/async. See
+// docs/DST-PLATFORM-BRIEF.md, slices 1–2. A `Sim` implements
 // `async.Driver` over a VIRTUAL clock: pass it to `async.gather_on` /
 // `race_on` / `with_deadline_on` and the whole fan-out runs under
 // simulated time — identically on every backend, including the

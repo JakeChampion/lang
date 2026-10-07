@@ -1,7 +1,7 @@
-// std/dns — a stub resolver (#9855, the P2 slice of the networking plan
-// in #9851): the RFC 1035 wire codec, `/etc/hosts`, `/etc/resolv.conf`,
-// a query over UDP that retries over TCP when the reply is truncated,
-// and the A, AAAA and canonical-name lookups built on them.
+// std/dns — a stub resolver: the RFC 1035 wire codec, `/etc/hosts`,
+// `/etc/resolv.conf`, a query over UDP that retries over TCP when the reply
+// is truncated, and the A, AAAA and canonical-name lookups built on them.
+// It is the P2 slice (#9855) of the networking plan in #9851.
 //
 // The pieces, bottom up:
 //

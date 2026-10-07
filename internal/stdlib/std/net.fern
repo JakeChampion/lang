@@ -1,6 +1,6 @@
 // std/net — IP addresses, socket addresses, and the typed error every
-// networking primitive reports (#9853, the P0 floor of the networking
-// plan in #9851).
+// networking primitive reports. It is the P0 floor (#9853) of the
+// networking plan in #9851.
 //
 // Three types:
 //
