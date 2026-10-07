@@ -29,7 +29,7 @@ func TestSelfHostStructArrElemDropIRArm64(t *testing.T) {
 	// Both probes pass items through id so it is built on the heap rather than placed
 	// as a constant.
 	run(t, `struct Inner { items: i32[] }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 struct S { elems: Inner[], tag: i32 }
 function main(): i32 {
     let s: S = S { elems: [Inner { items: id([1,2,3,4,5,6,7,8]) }, Inner { items: id([9,10,11,12,13,14,15,16]) }], tag: 3 };
@@ -46,7 +46,7 @@ function main(): i32 {
 	// (a register-clobber bug in the helper's x19/x20 save/restore or the box reload would
 	// corrupt the loop / heap). mk returns 20; exit 0.
 	run(t, `struct Inner { items: i32[] }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 struct S { elems: Inner[], tag: i32 }
 function mk(): i32 {
     let s: S = S { elems: [Inner { items: id([1,2,3,4,5,6,7,8]) }, Inner { items: id([9,10,11,12,13,14,15,16]) }], tag: 3 };
