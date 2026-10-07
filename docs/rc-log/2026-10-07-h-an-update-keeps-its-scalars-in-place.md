@@ -55,6 +55,11 @@ shape.
 `put` went from 129.7 M to 100.8 M Ir with the scalar keep alone, and lower
 again with the token taken as the result.
 
+The compiler gains less. Its updates mostly carry counted fields, which the
+earlier keep already left in place. A stage 2 of each side, built by its own
+stage 1, compiling `checker.fern` for x86-64: 14,805,664,837 Ir before,
+14,691,227,236 after (−0.77%).
+
 ## Tests
 
 `TestSelfHostSemanticReuseDifferentialX86_64` gains four cases:
