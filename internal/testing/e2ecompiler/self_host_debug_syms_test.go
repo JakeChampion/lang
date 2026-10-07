@@ -123,6 +123,8 @@ func TestSelfHostDebugSymsFlag(t *testing.T) {
 // A `-g` build carries a line mark ahead of every statement. The marks emit no
 // code, so they must not keep a leaf from being spliced into its callers:
 // `is_space` is a leaf called from two places, and neither build may name it.
+// `mix` is a leaf only while its marks stay out of the instruction budget: its
+// statements are under max_leaf_insts, its statements and marks over it.
 func TestSelfHostDebugSymsKeepSplices(t *testing.T) {
 	gcc, _ := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -142,7 +144,29 @@ func TestSelfHostDebugSymsKeepSplices(t *testing.T) {
     while (i < buf.len() && is_space(buf[i] as i32)) { i = i + 1; }
     return i;
 }
-function main(): i32 { let b: u8[] = [32, 9, 65, 9, 66]; return count(b) * 10 + lead(b); }
+function mix(x: i32): i32 {
+    let a: i32 = x + 1;
+    let b: i32 = a * 3;
+    let c: i32 = b - x;
+    let d: i32 = c ^ 5;
+    let e: i32 = d + a;
+    let f: i32 = e * 7;
+    let g: i32 = f - b;
+    let h: i32 = g ^ c;
+    let i: i32 = h + d;
+    let j: i32 = i * 11;
+    let k: i32 = j - e;
+    let l: i32 = k ^ f;
+    let m: i32 = l + g;
+    let n: i32 = m * 13;
+    let o: i32 = n - h;
+    let p: i32 = o ^ i;
+    let q: i32 = p + j;
+    let r: i32 = q * 17;
+    return r - k;
+}
+@noinline function mix_twice(x: i32): i32 { return mix(x) + mix(x + 1); }
+function main(): i32 { let b: u8[] = [32, 9, 65, 9, 66]; return count(b) * 10 + lead(b) + mix_twice(b.len()) % 7; }
 `), 0o644); err != nil {
 		t.Fatalf("writing source: %v", err)
 	}
@@ -158,8 +182,10 @@ function main(): i32 { let b: u8[] = [32, 9, 65, 9, 66]; return count(b) * 10 + 
 			if err != nil {
 				t.Fatal(err)
 			}
-			if n := strings.Count(string(asm), "__fn_is_space"); n != 0 {
-				t.Errorf("%s %v: %d references to the leaf is_space, want 0 (spliced into both callers)", target, flags, n)
+			for _, leaf := range []string{"__fn_is_space", "__fn_mix:", "call __fn_mix\n", "bl __fn_mix\n"} {
+				if n := strings.Count(string(asm), leaf); n != 0 {
+					t.Errorf("%s %v: %d occurrences of %q, want 0 (the leaf spliced into its callers)", target, flags, n, leaf)
+				}
 			}
 		}
 	}
