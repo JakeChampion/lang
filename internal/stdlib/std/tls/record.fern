@@ -228,22 +228,32 @@ function __nonce(p: Protection): u8[] {
   return n;
 }
 
-// __seal and __open run the suite's AEAD; `__advance` has checked the key
-// and IV lengths, so only a forged record fails.
-function __seal(p: Protection, plaintext: [u8], aad: [u8]): u8[] {
+// __seal and __open run the suite's AEAD. `__advance` has already checked the
+// key and IV lengths, so a refusal here means the state is inconsistent.
+function __seal(p: Protection, plaintext: [u8], aad: [u8]): Result[u8[], RecordError] {
   match (p.suite.aead()) {
     keyschedule.ChaCha20Poly1305 => {
       match (chacha20poly1305.seal(p.key, __nonce(p), plaintext, aad)) {
         Ok(sealed) => {
-          return sealed;
+          return Ok(sealed);
         },
         Err(e) => {
-          return [];
+          match (e) {
+            chacha20poly1305.KeyLength(n) => {
+              return Err(BadKeys(n, p.iv.len()));
+            },
+            chacha20poly1305.NonceLength(n) => {
+              return Err(BadKeys(p.key.len(), n));
+            },
+            chacha20poly1305.Forged => {
+              return Err(BadRecordMac);
+            }
+          }
         }
       }
     }
   }
-  return [];
+  return Err(BadKeys(p.key.len(), p.iv.len()));
 }
 
 function __open(p: Protection, sealed: [u8], aad: [u8]): Result[u8[], RecordError] {
@@ -300,7 +310,7 @@ pub function (p: Protection) seal(t: ContentType, content: [u8], padding: i32): 
     i = i + 1;
   }
   let header: u8[] = __header(__alloc_u8(5), 0, 23, 0x0303, n + TAG_LEN);
-  let sealed: u8[] = __seal(p, inner, header);
+  let sealed: u8[] = __seal(p, inner, header)?;
   let out: u8[] = __alloc_u8(5 + sealed.len());
   out = __put(out, 0, header);
   return Ok(Sealed { record: __put(out, 5, sealed), next: next });

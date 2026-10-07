@@ -350,6 +350,24 @@ function test_open_inner_overflow(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
+// The largest record allowed: 2^14 bytes of content, so 2^14 + 1 bytes of
+// inner plaintext, seals and opens back.
+function test_largest_record(): test.TestOutcome {
+  let content: u8[] = filled(16384, 5);
+  match (client_write().seal(record.ApplicationData, content, 0)) {
+    Ok(s) => {
+      if (s.record.len() != 5 + 16385 + 16) {
+        return test.fail("record is " + int.int_to_string(s.record.len()) + " bytes");
+      }
+      return test.assert_eq(opened(client_write().open(one(s.record))), "23 " + hex.hex_encode(content));
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
 function test_seal_refusals(): test.TestOutcome {
   let p: record.Protection = client_write();
   if (sealed(p.seal(record.ApplicationData, filled(16385, 0), 0)) != "tls record: 16385 bytes is over the record size limit") {
@@ -401,6 +419,7 @@ function main(): i32 {
   r = r.it("open refuses a protected change_cipher_spec", test_open_protected_change_cipher_spec);
   r = r.it("open empty records", test_open_empty);
   r = r.it("open refuses an inner plaintext over 2^14 + 1", test_open_inner_overflow);
+  r = r.it("the largest record", test_largest_record);
   r = r.it("seal refusals", test_seal_refusals);
   r = r.it("key update", test_key_update);
   r = r.it("sequence number exhausted", test_sequence_exhausted);
