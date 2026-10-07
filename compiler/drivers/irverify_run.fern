@@ -1074,6 +1074,23 @@ function rc_checks(): i32 {
   if (kd.checked != 1 || kd.problems.len() != 1 || !util.contains(kd.problems[0].msg, "leaks on the decline path")) {
     return 220;
   }
+  // After the peephole the allocation's result is teed, not stored and reloaded.
+  let stored: ir.Op[] = keep_reuse(1, 1, 1);
+  let teed: ir.Op[] = [];
+  let ti: i32 = 0;
+  while (ti < stored.len()) {
+    if (ti > 0 && stored[ti - 1].str == "__fern_alloc_reuse") {
+      teed = teed.append(ir.op_tee_local(stored[ti].i32_imm));
+      ti = ti + 1;
+    } else {
+      teed = teed.append(stored[ti]);
+    }
+    ti = ti + 1;
+  }
+  let ke: irverifyrc.RcResult = irverifyrc.verify_rc_fn("f", teed);
+  if (ke.checked != 1 || ke.problems.len() != 0) {
+    return 224;
+  }
 
   // ---- coverage renders the tally and the grouped reasons ------------
   if (!util.contains(irverifyrc.rc_coverage_str(sh), "reuse sites modelled 1/1")) {

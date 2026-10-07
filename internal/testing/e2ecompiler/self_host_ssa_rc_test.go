@@ -1224,7 +1224,7 @@ function main(): i32 {
         ko = ko + 1;
     }
     if (keepUnique < 0 || keepReuse < 0 || keepGets != 1 || keepRetains != 1) { return 237; }
-    if (keepGet < keepReuse || keepLowered.ops[keepGet - 3].kind_tag != ir.kind_id("if") || keepLowered.ops[keepGet + 1].str != "__fern_rc_inc") { return 238; }
+    if (keepGet < keepReuse || keepLowered.ops[keepGet + 1].str != "__fern_rc_inc" || keepLowered.ops[keepGet + 3].kind_tag != ir.kind_id("else")) { return 238; }
     if (keepSet0 != keepGet + 2 || keepNe < keepSet0 || keepSet1 < keepNe) { return 239; }
     let keepVerified: irverifyrc.RcResult = irverifyrc.verify_rc_fn("keep", keepLowered.ops);
     if (keepVerified.checked != 1 || keepVerified.problems.len() != 0) { if (keepVerified.skips.len() > 0) { eprint(keepVerified.skips[0]); } return 240; }

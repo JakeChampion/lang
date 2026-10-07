@@ -486,9 +486,17 @@ function no_keep(): Site {
 // donor and stored it, or null, into the token slot; it supplies the gate and
 // the token source, and the later select's else arm the decline release.
 function read_keep_site(ops: ir.Op[], call: i32, token_slot: i32): Site {
+  // The result is stored and reloaded, or teed once the peephole has run.
   let at: i32 = call + 1;
-  if (at + 3 >= ops.len() || !is_kind(ops[at], "store_local") || !is_kind(ops[at + 1], "load_local")
-    || !is_kind(ops[at + 2], "struct_set_shape") || !is_kind(ops[at + 3], "drop")) {
+  if (at < ops.len() && is_kind(ops[at], "store_local")) {
+    if (at + 1 >= ops.len() || !is_kind(ops[at + 1], "load_local") || ops[at + 1].i32_imm != ops[at].i32_imm) {
+      return no_keep();
+    }
+    at = at + 1;
+  } else if (at >= ops.len() || !is_kind(ops[at], "tee_local")) {
+    return no_keep();
+  }
+  if (at + 2 >= ops.len() || !is_kind(ops[at + 1], "struct_set_shape") || !is_kind(ops[at + 2], "drop")) {
     return no_keep();
   }
   let result: i32 = ops[at].i32_imm;
