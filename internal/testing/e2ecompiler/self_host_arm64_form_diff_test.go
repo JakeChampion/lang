@@ -233,6 +233,8 @@ func arm64FormCases() []string {
 		add("ldur %s, [x6, #-48]", q.a)
 		add("stur %s, [x7, #3]", q.b)
 		add("ldp %s, %s, [x6], #32", q.a, q.b)
+		add("ldp %s, %s, [x6, #-32]!", q.a, q.b)
+		add("ldr %s, [x6, #-16]!", q.a)
 		add("stp %s, %s, [x7, #-1024]!", q.a, q.b)
 		add("ldp %s, %s, [sp, #1008]", q.a, q.b)
 	}
