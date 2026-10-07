@@ -169,8 +169,7 @@ pub function take_doc(cs: lexer.Comment[], cursor: i32, decl_line: i32): TakeRes
 }
 
 // module_intro is the file-header block: the run of comments starting on line
-// 1, each line trimmed and joined by newline, so a blank comment line still
-// separates paragraphs.
+// 1, one line per comment, so a blank `//` line stays a paragraph break.
 //
 // It is not an intro when it runs straight into the first declaration — then
 // it is that declaration's doc and take_doc will claim it. `first_decl_line`
@@ -209,15 +208,14 @@ pub function module_intro(cs: lexer.Comment[], first_decl_line: i32): string {
   return out;
 }
 
-// module_summary is the intro's first sentence without its leading
-// "std/x — " label, for the page description: cmd/ferndoc's moduleSummary.
-// A sentence opening on a lowercase word gains a capital unless its first word
-// has an upper-case letter or a digit.
+// module_summary is cmd/ferndoc's moduleSummary: the intro's first sentence,
+// without its leading "std/x — " label, for the page description. It is
+// capitalised unless its first word has an upper-case letter or a digit.
 pub function module_summary(intro: string): string {
   let para: string = intro;
-  let cut: i32 = util.index_of_sub(intro, "\n\n");
-  if (cut >= 0) {
-    para = own(slice_unchecked(intro, 0, cut));
+  let gap: i32 = util.index_of_sub(intro, "\n\n");
+  if (gap >= 0) {
+    para = own(slice_unchecked(intro, 0, gap));
   }
   let s: string = collapse_space(para);
   let dash: i32 = util.index_of_sub(s, " — ");
@@ -228,14 +226,20 @@ pub function module_summary(intro: string): string {
   if (stop >= 0) {
     s = own(slice_unchecked(s, 0, stop + 1));
   }
-  let first: i32 = util.index_of_sub(s, " ");
-  if (first < 0) {
-    first = s.len();
+  let k: i32 = 0;
+  while (k < s.len() && s[k] as i32 != 32) {
+    let c: i32 = s[k] as i32;
+    if (c >= 65 && c <= 90 || c >= 48 && c <= 57) {
+      return s;
+    }
+    k = k + 1;
   }
-  if (first == 0 || has_upper_or_digit(s, first) || s[0] as i32 < 97 || s[0] as i32 > 122) {
+  if (k == 0 || s[0] as i32 < 97 || s[0] as i32 > 122) {
     return s;
   }
-  return own(slice_unchecked(s, 0, 1)).to_upper() + slice_unchecked(s, 1, s.len());
+  let upper: u8[] = __alloc_u8(1);
+  upper = upper.with(0, (s[0] as i32 - 32) as u8);
+  return string_from_bytes_unchecked(upper) + own(slice_unchecked(s, 1, s.len()));
 }
 
 // collapse_space is strings.Join(strings.Fields(s), " ").
@@ -259,20 +263,6 @@ function collapse_space(s: string): string {
     i = j;
   }
   return out;
-}
-
-// Whether s[0, n) holds an ASCII capital or digit: a word that lowercasing
-// would change, or a number.
-function has_upper_or_digit(s: string, n: i32): boolean {
-  let i: i32 = 0;
-  while (i < n) {
-    let c: i32 = s[i] as i32;
-    if (c >= 65 && c <= 90 || c >= 48 && c <= 57) {
-      return true;
-    }
-    i = i + 1;
-  }
-  return false;
 }
 
 // quote is strconv.Quote for the text a summary can hold: a double-quoted
