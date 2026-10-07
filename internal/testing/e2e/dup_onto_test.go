@@ -149,13 +149,14 @@ func TestInterpDupOnto(t *testing.T) {
 	dupOntoCheckTree(t, dir)
 }
 
-// Preview 1 and the component leg are two separate hand-written bodies, so
-// two runs. Neither can install a descriptor at a chosen number: preview 1's
+// The refusal is one body on both previews, but the handles it is asked
+// about are opened and dropped by separate ones, so two runs. Neither
+// preview can install a descriptor at a chosen number: preview 1's
 // fd_renumber CLOSES the source, which is a move rather than a duplicate and
 // would leave the handle the caller still holds dangling, and preview 2 has
 // no numbered table at all.
 func TestWASMPreview1DupOntoUnsupported(t *testing.T) {
-	mod := buildPreview1Module(t, dupOntoSource("", true))
+	mod := buildWasmCore(t, dupOntoSource("", true))
 	dir := t.TempDir()
 	if got := runPreview1Module(t, mod, dir); got != 0 {
 		t.Fatalf("main = %d, want 0 — the code names the step (see dupOntoSource)", got)
@@ -163,15 +164,9 @@ func TestWASMPreview1DupOntoUnsupported(t *testing.T) {
 }
 
 func TestWASMDupOntoUnsupported(t *testing.T) {
-	p := buildComponent(t, dupOntoSource("", true))
-	dir := t.TempDir()
-	stdout, stderr, ec := runComponent(t, p, runOpts{workDir: dir})
-	if ec != 0 {
-		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, stdout, stderr)
-	}
-	if got := parseMainResult(t, stdout); got != 0 {
-		t.Fatalf("main = %d, want 0 — the code names the step (see dupOntoSource)\nstdout:\n%s\nstderr:\n%s",
-			got, stdout, stderr)
+	out := runResultStdout(t, dupOntoSource("", true), runOpts{workDir: t.TempDir()})
+	if got := parseMainResult(t, out); got != 0 {
+		t.Fatalf("main = %d, want 0 — the code names the step (see dupOntoSource)\nstdout:\n%s", got, out)
 	}
 }
 

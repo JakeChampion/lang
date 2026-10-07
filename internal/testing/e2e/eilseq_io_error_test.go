@@ -4,7 +4,6 @@ package e2e
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"syscall"
@@ -56,23 +55,11 @@ func TestEilseqIsInvalidUtf8EveryTarget(t *testing.T) {
 			bin, qemu := e2eharness.CompileArm64Bin(t, src)
 			return e2eharness.RunArm64Bin(qemu, bin).Args
 		}},
-		{"wasm32-wasi", func(t *testing.T) []string {
-			if _, err := exec.LookPath("wasmtime"); err != nil {
-				t.Fatal("wasmtime not on PATH")
-			}
-			wasm := filepath.Join(t.TempDir(), "main.wasm")
-			fern := e2eharness.BuildLangBinForInterp(t)
-			if out, err := exec.Command(fern, "-target", "wasm32-wasi", "-o", wasm, srcPath).CombinedOutput(); err != nil {
-				t.Fatalf("fern -target wasm32-wasi: %v\n%s", err, out)
-			}
-			return []string{"wasmtime", "run", "--dir", dir, wasm}
-		}},
 		{"wasm-core", func(t *testing.T) []string {
-			core := e2eharness.CompileSelfHostSource(t, e2eharness.TargetWasm32Wasi, src, nil)
-			return []string{"wasmtime", "run", "--dir", dir, core}
+			return []string{"wasmtime", "run", "--dir", dir, buildWasmCore(t, src)}
 		}},
 		{"wasm-component", func(t *testing.T) []string {
-			return []string{"wasmtime", "run", "--dir=" + dir, buildComponent(t, src)}
+			return []string{"wasmtime", "run", "--dir", dir, buildCLIComponent(t, src)}
 		}},
 	}
 	for _, tc := range targets {

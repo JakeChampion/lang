@@ -2392,6 +2392,21 @@ pub function op_signal_taken(): Op {
   return op0(393);
 }
 
+// `signal_catch_interrupting` is signal_catch without SA_RESTART: a blocking
+// read, write or wait the signal lands in fails with EINTR, so a caller
+// waiting on a call that may never return sees it, then polls signal_taken.
+pub function op_signal_catch_interrupting(): Op {
+  return op0(394);
+}
+
+// `signal_raise` pops a signal number and sends it to this process, pushing
+// kill(2)'s return: a signal that is not blocked is delivered before the op
+// finishes, so one at its default disposition ends the process there. On
+// wasm, where no signal can be delivered, it pushes -ENOTSUP.
+pub function op_signal_raise(): Op {
+  return op0(395);
+}
+
 // The global string-builder primitives — the amortised-O(1) output accumulator
 // the self-host emitters write through (asmcore.EmitState.write → strbuf_append;
 // emit_module_ir → strbuf_reset / strbuf_take). A single .bss buffer + length:
@@ -3316,6 +3331,9 @@ pub function kind_id(name: string): i32 {
   }
   if (n == 23) {
     return kind_id_len23(name);
+  }
+  if (n == 25 && name == "signal_catch_interrupting") {
+    return 394;
   }
   return 0;
 }
@@ -4426,6 +4444,9 @@ function kind_id_len12_s(name: string): i32 {
   }
   if (name == "signal_catch") {
     return 392;
+  }
+  if (name == "signal_raise") {
+    return 395;
   }
   if (name == "signal_taken") {
     return 393;
@@ -5752,6 +5773,12 @@ function buf_kind_name(id: i32): string {
 // extension tags beyond kind_count() (struct_copy=198 … buf_free=297)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
+  if (id == 395) {
+    return "signal_raise";
+  }
+  if (id == 394) {
+    return "signal_catch_interrupting";
+  }
   if (id == 393) {
     return "signal_taken";
   }
@@ -5990,7 +6017,8 @@ function pops1_io(t: i32): boolean {
     || t == 168  // read_line (fd)
     || t == 231 || t == 232  // create_dir_all, isatty
     || t == 243 || t == 244  // signal_ignore, signal_default
-    || t == 392 || t == 393  // signal_catch, signal_taken
+    || t == 392 || t == 393 || t == 394  // signal_catch, signal_taken, signal_catch_interrupting
+    || t == 395  // signal_raise
     || t == 277 || t == 279  // chdir, signal_disposition
     || t == 241 || t == 250 || t == 307  // fd_stat, uname_field, fd_flags
     || t == 299 || t == 300 || t == 301  // fd_fsync, fd_fdatasync, fd_syncfs
@@ -7173,6 +7201,7 @@ function strength_rewrite(ks: StrengthKinds, k: i32, bop: Op): StrengthRewrite {
 // so the second site is found in the same pass.
 pub function reduce_strength_ex(ops: Op[]): StrengthResult {
   let ks: StrengthKinds = strength_kinds();
+  // `out` is written from the first rewrite on.
   let out: Op[] = [];
   let changed: boolean = false;
   let i: i32 = 0;
@@ -7180,6 +7209,9 @@ pub function reduce_strength_ex(ops: Op[]): StrengthResult {
     if (i + 1 < ops.len() && const_i32_readable(ops[i]) && ops[i + 1].width == 0) {
       let repl: StrengthRewrite = strength_rewrite(ks, const_i32_value(ops[i]), ops[i + 1]);
       if (repl.ok) {
+        if (!changed) {
+          out = fold_prefixed(ops, i, []);
+        }
         let r: i32 = 0;
         while (r < repl.ops.len()) {
           out = out.append(repl.ops[r]);
@@ -7190,10 +7222,15 @@ pub function reduce_strength_ex(ops: Op[]): StrengthResult {
         continue;
       }
     }
-    out = out.append(ops[i]);
+    if (changed) {
+      out = out.append(ops[i]);
+    }
     i = i + 1;
   }
-  return StrengthResult { ops: out, changed: changed };
+  if (changed) {
+    return StrengthResult { ops: out, changed: true };
+  }
+  return StrengthResult { ops: ops, changed: false };
 }
 
 // reduce_strength is the plain-op-list form, for callers that don't need the
@@ -7424,19 +7461,30 @@ pub function prune_zero_slot_guards(ops: Op[], n_params: i32): Op[] {
   let in_loop: boolean[] = zg_in_loop(ops);
   let k_load: i32 = kind_id("load_local");
   let k_call: i32 = kind_id("call_direct");
+  // `out` is written from the first guard on.
   let out: Op[] = [];
+  let copying: boolean = false;
   let i: i32 = 0;
   while (i < ops.len()) {
     if (ops[i].kind_tag == k_load && !in_loop[i]
       && zg_zero_guard(ops, i, n_params, first, k_call)) {
+      if (!copying) {
+        out = fold_prefixed(ops, i, []);
+        copying = true;
+      }
       out = out.append(op_const_i32(0));
       i = i + 2;
     } else {
-      out = out.append(ops[i]);
+      if (copying) {
+        out = out.append(ops[i]);
+      }
       i = i + 1;
     }
   }
-  return out;
+  if (copying) {
+    return out;
+  }
+  return ops;
 }
 
 // OptimizedOps is optimize_ops' output: the rewritten op list and the slot count
@@ -8238,21 +8286,32 @@ pub function propagate_copies(ops: Op[]): Op[] {
 pub function fuse_tee(ops: Op[]): Op[] {
   let k_store: i32 = kind_id("store_local");
   let k_load: i32 = kind_id("load_local");
+  // `out` is written from the first fused pair on.
   let out: Op[] = [];
+  let copying: boolean = false;
   let i: i32 = 0;
   while (i < ops.len()) {
     if (i + 1 < ops.len()
       && ops[i].kind_tag == k_store
       && ops[i + 1].kind_tag == k_load
       && ops[i].i32_imm == ops[i + 1].i32_imm) {
+      if (!copying) {
+        out = fold_prefixed(ops, i, []);
+        copying = true;
+      }
       out = out.append(op_tee_local(ops[i].i32_imm));
       i = i + 2;
     } else {
-      out = out.append(ops[i]);
+      if (copying) {
+        out = out.append(ops[i]);
+      }
       i = i + 1;
     }
   }
-  return out;
+  if (copying) {
+    return out;
+  }
+  return ops;
 }
 
 // is_commutative_kind reports whether `id` is an integer binary op whose

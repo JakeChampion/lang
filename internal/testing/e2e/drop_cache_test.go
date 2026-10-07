@@ -113,7 +113,7 @@ func TestArm64DropCache(t *testing.T) {
 
 // Preview 1's fd_advise and preview 2's descriptor.advise are two bodies.
 func TestWASMPreview1DropCache(t *testing.T) {
-	mod := buildPreview1Module(t, dropCacheSource("", false))
+	mod := buildWasmCore(t, dropCacheSource("", false))
 	dir := t.TempDir()
 	if got := runPreview1Module(t, mod, dir); got != 0 {
 		t.Fatalf("main = %d, want 0 — the code names the step (see dropCacheSource)", got)
@@ -122,15 +122,10 @@ func TestWASMPreview1DropCache(t *testing.T) {
 }
 
 func TestWASMDropCache(t *testing.T) {
-	p := buildComponent(t, dropCacheSource("", false))
 	dir := t.TempDir()
-	stdout, stderr, ec := runComponent(t, p, runOpts{workDir: dir})
-	if ec != 0 {
-		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, stdout, stderr)
-	}
-	if got := parseMainResult(t, stdout); got != 0 {
-		t.Fatalf("main = %d, want 0 — the code names the step (see dropCacheSource)\nstdout:\n%s\nstderr:\n%s",
-			got, stdout, stderr)
+	out := runResultStdout(t, dropCacheSource("", false), runOpts{workDir: dir})
+	if got := parseMainResult(t, out); got != 0 {
+		t.Fatalf("main = %d, want 0 — the code names the step (see dropCacheSource)\nstdout:\n%s", got, out)
 	}
 	dropCacheCheckTree(t, dir)
 }

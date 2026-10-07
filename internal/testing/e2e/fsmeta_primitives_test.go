@@ -19,9 +19,6 @@
 // `path_filestat_set_times` against `descriptor.rename-at` /
 // `descriptor.set-times-at`, one an errno return and the other a return area,
 // one an `fstflags` bit for an omitted timestamp and the other a variant arm.
-// Everything else in internal/testing/e2e reaches wasm through the component, so
-// without the preview-1 leg here these bodies would be compiled and never
-// run.
 package e2e
 
 import (
@@ -34,8 +31,6 @@ import (
 	"strconv"
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 // fsMetaSource is the probe, parameterised by the directory its relative
@@ -203,16 +198,6 @@ func TestInterpFsMetaPrimitives(t *testing.T) {
 	fsMetaCheckTree(t, dir, true)
 }
 
-// buildPreview1Module compiles src with the self-host compiler to a bare
-// preview-1 core module — the wasm32-wasi artifact `-emit core-module`
-// produces, importing `wasi_snapshot_preview1` directly rather than through a
-// component wrapper — and returns its path.
-func buildPreview1Module(t *testing.T, src string) string {
-	t.Helper()
-	skipIfPreview2Missing(t) // the gate is wasmtime itself, which runs both
-	return e2eharness.CompileSelfHostSource(t, e2eharness.TargetWasm32Wasi, src, nil)
-}
-
 // runPreview1Module runs a preview-1 core module with `workDir` as its only
 // preopen and answers main's return value, which `--invoke` prints.
 func runPreview1Module(t *testing.T, modPath, workDir string) int {
@@ -259,7 +244,7 @@ func runPreview1ModuleStdin(t *testing.T, modPath, workDir string, stdin *os.Fil
 // timestamp as a cleared `fstflags` bit rather than a variant arm — so it is
 // a separate body from the component leg below and gets its own run.
 func TestWASMPreview1FsMetaPrimitives(t *testing.T) {
-	mod := buildPreview1Module(t, fsMetaSource("", false, true))
+	mod := buildWasmCore(t, fsMetaSource("", false, true))
 	dir := t.TempDir()
 	if got := runPreview1Module(t, mod, dir); got != 0 {
 		t.Fatalf("main = %d, want 0 — the code names the step (see fsMetaSource)", got)
@@ -267,23 +252,15 @@ func TestWASMPreview1FsMetaPrimitives(t *testing.T) {
 	fsMetaCheckTree(t, dir, false)
 }
 
-// The wasm leg runs under the component's preopen, so its paths are relative
-// and `chmod` is absent: neither WASI preview has permission bits and E066
+// The component leg runs under its preopen, so its paths are relative and
+// `chmod` is absent: neither WASI preview has permission bits and E066
 // refuses the builtin on that target, which is the correct answer rather than
 // a mode word that describes nothing.
-//
-// main's return reaches us on STDOUT, not as the exit status: the harness
-// runs the module with `--invoke main`.
 func TestWASMFsMetaPrimitives(t *testing.T) {
-	p := buildComponent(t, fsMetaSource("", false, true))
 	dir := t.TempDir()
-	stdout, stderr, ec := runComponent(t, p, runOpts{workDir: dir})
-	if ec != 0 {
-		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, stdout, stderr)
-	}
-	if got := parseMainResult(t, stdout); got != 0 {
-		t.Fatalf("main = %d, want 0 — the code names the step (see fsMetaSource)\nstdout:\n%s\nstderr:\n%s",
-			got, stdout, stderr)
+	out := runResultStdout(t, fsMetaSource("", false, true), runOpts{workDir: dir})
+	if got := parseMainResult(t, out); got != 0 {
+		t.Fatalf("main = %d, want 0 — the code names the step (see fsMetaSource)\nstdout:\n%s", got, out)
 	}
 	fsMetaCheckTree(t, dir, false)
 }

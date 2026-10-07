@@ -31,19 +31,19 @@ import (
 // numbers must show it, and a program that does not, which must report
 // a balanced census and no verdict line.
 
-// buildLeakCheckComponent compiles src with the self-host compiler to a WASI
+// buildLeakCheckWasmCore compiles src with the self-host compiler to a WASI
 // core module with the census on (FERN_LEAKCHECK=1), or under the whole
 // sanitizer (FERN_SANITIZE=1, which implies the census). The flag is read at
 // EMIT time, like the register backends' — it changes the module the compiler
-// produces, so it goes on the build, not the run. runComponent runs the core
+// produces, so it goes on the build, not the run. runWasmArtifact runs the core
 // with `--invoke main`, and the exported main reports on its return.
-func buildLeakCheckComponent(t *testing.T, src string, sanitize bool) string {
+func buildLeakCheckWasmCore(t *testing.T, src string, sanitize bool) string {
 	t.Helper()
 	skipIfPreview2Missing(t)
 	return e2eharness.CompileSelfHostSource(t, e2eharness.TargetWasm32Wasi, src, leakCheckEnv(sanitize))
 }
 
-// buildLeakCheckCLIComponent is buildLeakCheckComponent for a program whose
+// buildLeakCheckCLIComponent is buildLeakCheckWasmCore for a program whose
 // host surface is preview 2 (sockets, clocks, http): the census core, with its
 // stdio and exit through preview 1, becomes a wasi:cli/run component by way of
 // the preview-1 adapter, and the report comes out of _start's exit.
@@ -66,7 +66,7 @@ func leakCheckEnv(sanitize bool) []string {
 // "stderr only, stdout untouched", so combined output won't do.
 func runLeakCheckWasm(t *testing.T, src string, sanitize bool) (string, string, int) {
 	t.Helper()
-	return runComponent(t, buildLeakCheckComponent(t, src, sanitize), runOpts{})
+	return runWasmArtifact(t, buildLeakCheckWasmCore(t, src, sanitize), runOpts{})
 }
 
 // wasmLeakBalancedSrc: 100 paired __alloc/__free of one class. The same
@@ -219,7 +219,7 @@ func TestWASMLeakCheckReportsOnce(t *testing.T) {
 // reporter's fixed text would appear verbatim.
 func TestWASMLeakCheckOffEmitsNoCensus(t *testing.T) {
 	skipIfPreview2Missing(t)
-	_, stderr, _ := runComponent(t, buildComponent(t, wasmLeakBalancedSrc), runOpts{})
+	_, stderr, _ := runWasmArtifact(t, buildWasmCore(t, wasmLeakBalancedSrc), runOpts{})
 	if strings.Contains(stderr, "leakcheck:") {
 		t.Errorf("census-off build still reported: %q", stderr)
 	}

@@ -51,8 +51,8 @@ func TestFloatSemantics_PortableSubset(t *testing.T) {
 		}
 	})
 	t.Run("wasm32-wasi", func(t *testing.T) {
-		componentPath := buildComponent(t, src)
-		stdout, stderr, ec := runComponent(t, componentPath, runOpts{})
+		core := buildWasmCore(t, src)
+		stdout, stderr, ec := runWasmArtifact(t, core, runOpts{})
 		if ec != 0 {
 			t.Fatalf("wasmtime exit=%d\nstdout:\n%s\nstderr:\n%s", ec, stdout, stderr)
 		}

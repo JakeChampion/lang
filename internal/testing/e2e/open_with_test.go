@@ -189,7 +189,7 @@ const openWithWasmSrc = `function main(): i32 {
 }`
 
 func TestWASMPreview1OpenWith(t *testing.T) {
-	mod := buildPreview1Module(t, openWithWasmSrc)
+	mod := buildWasmCore(t, openWithWasmSrc)
 	dir := t.TempDir()
 	if got := runPreview1Module(t, mod, dir); got != 0 {
 		t.Fatalf("main = %d, want 0 — the code names the step (see openWithWasmSrc)", got)
@@ -198,14 +198,10 @@ func TestWASMPreview1OpenWith(t *testing.T) {
 }
 
 func TestWASMOpenWith(t *testing.T) {
-	p := buildComponent(t, openWithWasmSrc)
 	dir := t.TempDir()
-	stdout, stderr, ec := runComponent(t, p, runOpts{workDir: dir})
-	if ec != 0 {
-		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, stdout, stderr)
-	}
-	if got := parseMainResult(t, stdout); got != 0 {
-		t.Fatalf("main = %d, want 0 — the code names the step (see openWithWasmSrc)\nstdout:\n%s\nstderr:\n%s", got, stdout, stderr)
+	out := runResultStdout(t, openWithWasmSrc, runOpts{workDir: dir})
+	if got := parseMainResult(t, out); got != 0 {
+		t.Fatalf("main = %d, want 0 — the code names the step (see openWithWasmSrc)\nstdout:\n%s", got, out)
 	}
 	openWithWasmCheckTree(t, dir)
 }

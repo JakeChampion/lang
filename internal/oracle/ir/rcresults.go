@@ -603,7 +603,9 @@ var rcResultNonPointer = map[string]bool{
 	// The sigaction return, which the caller drops; nothing counted.
 	"signal_default": true, "signal_ignore": true,
 	// signal_catch's is the same; signal_taken's a boolean.
-	"signal_catch": true, "signal_taken": true,
+	"signal_catch": true, "signal_taken": true, "signal_catch_interrupting": true,
+	// signal_raise's is kill(2)'s.
+	"signal_raise": true,
 	// The blocked mask and one signal's disposition: an i64 bitmask and a
 	// small enumerated i32. Neither is an address.
 	"signal_mask": true, "signal_disposition": true,

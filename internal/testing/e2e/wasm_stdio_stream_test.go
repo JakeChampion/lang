@@ -94,11 +94,11 @@ var stdioLegs = map[string]stdioLeg{
 	// `--invoke` has wasmtime print main's result itself, after the
 	// guest has run, so that line is the host's and not the program's.
 	"wasm preview 1": func(t *testing.T, src string) (string, string, int) {
-		mod := buildPreview1Module(t, src)
+		mod := buildWasmCore(t, src)
 		return stdioRunCmd(t, exec.Command("wasmtime", "run", "--invoke", "main", mod))
 	},
 	"self-host wasm core": func(t *testing.T, src string) (string, string, int) {
-		return runComponent(t, buildComponent(t, src), runOpts{stdin: "hello\n"})
+		return runWasmArtifact(t, buildWasmCore(t, src), runOpts{stdin: "hello\n"})
 	},
 	"self-host wasm": func(t *testing.T, src string) (string, string, int) {
 		return runCLIComponent(t, src, runOpts{stdin: "hello\n"})
@@ -257,9 +257,6 @@ func TestX86_64FailedWriteFile(t *testing.T) { runParityX86_64(t, failedWriteFil
 func TestWASMPreview1FailedWriteFile(t *testing.T) {
 	runParityPreview1(t, failedWriteFileSource, devFull(t))
 }
-func TestSelfHostWasmCoreFailedWriteFile(t *testing.T) {
-	runParitySelfHostCore(t, failedWriteFileSource, devFull(t))
-}
 func TestSelfHostWasmFailedWriteFile(t *testing.T) {
 	runParitySelfHostComponent(t, failedWriteFileSource, devFull(t))
 }
@@ -281,7 +278,7 @@ func TestWASMFailedPrint(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer full.Close()
-	_, stderr, ec := runComponent(t, buildCLIComponent(t, failedPrintSource), runOpts{stdoutFile: full, maxResources: failureResourceCap})
+	_, stderr, ec := runWasmArtifact(t, buildCLIComponent(t, failedPrintSource), runOpts{stdoutFile: full, maxResources: failureResourceCap})
 	if ec != 0 {
 		t.Fatalf("wasmtime exit %d, want 0\nstderr:\n%s", ec, stderr)
 	}
@@ -318,20 +315,11 @@ func TestSelfHostWasmStdinClose(t *testing.T) {
 	checkStdioClose(t, "self-host wasm", stdinCloseSource, "stdout")
 }
 
-func TestSelfHostWasmCoreFailedWrite(t *testing.T) {
-	runParitySelfHostCore(t, failedWriteSource, devFull(t))
-}
 func TestSelfHostWasmFailedWrite(t *testing.T) {
 	runParitySelfHostComponent(t, failedWriteSource, devFull(t))
 }
-func TestSelfHostWasmCoreFailedReadLine(t *testing.T) {
-	runParitySelfHostCore(t, failedReadLineSource, procSelf(t))
-}
 func TestSelfHostWasmFailedReadLine(t *testing.T) {
 	runParitySelfHostComponent(t, failedReadLineSource, procSelf(t))
-}
-func TestSelfHostWasmCoreFailedReadFile(t *testing.T) {
-	runParitySelfHostCore(t, failedReadFileSource, procSelf(t))
 }
 func TestSelfHostWasmFailedReadFile(t *testing.T) {
 	runParitySelfHostComponent(t, failedReadFileSource, procSelf(t))

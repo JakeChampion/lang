@@ -207,13 +207,20 @@ func TestArm64ReadFileReadsPseudoFiles(t *testing.T) {
 	checkReadFileMarker(t, "pseudo-read-ok", out, code)
 }
 
-// A component gets one preopen, and runWasmInDir's is a seeded temp
-// dir, so this runs the component directly with the root preopened —
-// the only way the guest can name a path under /proc at all.
-func TestWASMReadFileReadsPseudoFiles(t *testing.T) {
-	stdout, stderr, _ := runComponent(t, buildComponent(t, readFilePseudoProgram), runOpts{workDir: "/"})
+// The wasm legs run with the root preopened, the only way the guest can name
+// a path under /proc at all. Preview 1 reads with path_open and fd_read, the
+// component with open-at and read-via-stream: two bodies, so two runs.
+func TestWASMPreview1ReadFileReadsPseudoFiles(t *testing.T) {
+	stdout, stderr, _ := runWasmArtifact(t, buildWasmCore(t, readFilePseudoProgram), runOpts{workDir: "/"})
 	if !strings.Contains(stdout, "pseudo-read-ok") {
 		t.Fatalf("stdout %q stderr %q; want pseudo-read-ok", stdout, stderr)
+	}
+}
+
+func TestWASMReadFileReadsPseudoFiles(t *testing.T) {
+	stdout, stderr, ec := runCLIComponent(t, readFilePseudoProgram, runOpts{workDir: "/"})
+	if ec != 0 || !strings.Contains(stdout, "pseudo-read-ok") {
+		t.Fatalf("exit %d, stdout %q stderr %q; want exit 0 and pseudo-read-ok", ec, stdout, stderr)
 	}
 }
 

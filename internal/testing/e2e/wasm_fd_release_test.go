@@ -61,8 +61,15 @@ function main(): i32 {
 }
 `
 
-func TestWASMFileBuiltinsReleaseDescriptors(t *testing.T) {
+func TestWASMPreview1FileBuiltinsReleaseDescriptors(t *testing.T) {
 	stdout, stderr, _, _ := runWasmInDirOpts(t, wasmFdReleaseProgram, nil, runOpts{fdLimit: 64})
+	if !strings.Contains(stdout, "fds-released") {
+		t.Fatalf("stdout %q stderr %q; want fds-released", stdout, stderr)
+	}
+}
+
+func TestWASMFileBuiltinsReleaseDescriptors(t *testing.T) {
+	stdout, stderr, _ := runCLIComponent(t, wasmFdReleaseProgram, runOpts{workDir: t.TempDir(), fdLimit: 64})
 	if !strings.Contains(stdout, "fds-released") {
 		t.Fatalf("stdout %q stderr %q; want fds-released", stdout, stderr)
 	}

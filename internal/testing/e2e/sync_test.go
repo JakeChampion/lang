@@ -211,7 +211,7 @@ func TestInterpSync(t *testing.T) {
 // return, where the component leg goes through descriptor.sync / sync-data and
 // a result<_, error-code>. Two separate hand-written bodies, so two runs.
 func TestWASMPreview1Sync(t *testing.T) {
-	mod := buildPreview1Module(t, syncSource("", true, false))
+	mod := buildWasmCore(t, syncSource("", true, false))
 	dir := t.TempDir()
 	if got := runPreview1Module(t, mod, dir); got != 0 {
 		t.Fatalf("main = %d, want 0 — the code names the step (see syncSource)", got)
@@ -219,18 +219,11 @@ func TestWASMPreview1Sync(t *testing.T) {
 	syncCheckTree(t, dir)
 }
 
-// main's return reaches us on STDOUT, not as the exit status: the harness
-// runs the module with `--invoke main`.
 func TestWASMSync(t *testing.T) {
-	p := buildComponent(t, syncSource("", true, false))
 	dir := t.TempDir()
-	stdout, stderr, ec := runComponent(t, p, runOpts{workDir: dir})
-	if ec != 0 {
-		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, stdout, stderr)
-	}
-	if got := parseMainResult(t, stdout); got != 0 {
-		t.Fatalf("main = %d, want 0 — the code names the step (see syncSource)\nstdout:\n%s\nstderr:\n%s",
-			got, stdout, stderr)
+	out := runResultStdout(t, syncSource("", true, false), runOpts{workDir: dir})
+	if got := parseMainResult(t, out); got != 0 {
+		t.Fatalf("main = %d, want 0 — the code names the step (see syncSource)\nstdout:\n%s", got, out)
 	}
 	syncCheckTree(t, dir)
 }

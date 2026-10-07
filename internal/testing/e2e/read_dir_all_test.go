@@ -130,7 +130,7 @@ func TestInterpReadDirAll(t *testing.T) {
 // Preview 1's fd_readdir yields `.` and `..`, so the dot entries are there
 // to be kept.
 func TestWASMPreview1ReadDirAll(t *testing.T) {
-	mod := buildPreview1Module(t, readDirAllSource(true))
+	mod := buildWasmCore(t, readDirAllSource(true))
 	if code := runPreview1Module(t, mod, t.TempDir()); code != 0 {
 		t.Errorf("preview-1 read_dir_all: main = %d, want 0 (see readDirAllSource)", code)
 	}
@@ -203,7 +203,7 @@ func TestInterpReadDirAllBesideRemoveDirAll(t *testing.T) {
 }
 
 func TestWASMPreview1ReadDirAllBesideRemoveDirAll(t *testing.T) {
-	mod := buildPreview1Module(t, readDirAllWithRemoveSource)
+	mod := buildWasmCore(t, readDirAllWithRemoveSource)
 	if code := runPreview1Module(t, mod, t.TempDir()); code != 0 {
 		t.Errorf("preview-1 read_dir_all beside remove_dir_all: main = %d, want 0", code)
 	}

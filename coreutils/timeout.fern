@@ -23,14 +23,21 @@
 // to the command's pid and sends no SIGCONT, so `--foreground -s STOP` hangs
 // where the default mode recovers.
 //
-// THE DEADLINE is a forked child that sleeps and exits. GNU arms a SIGALRM
-// and lets the handler interrupt its wait; a Fern catch only raises a flag
-// and resumes the wait (#9243), so the clock is a process instead and ONE
-// blocking `proc_waitpid(-1)` wakes on whichever finishes first — the
-// command or the timer. `proc_waitpid_nohang` then says which, since a child already reaped
-// answers ECHILD where a live one answers -1. The timer is reaped before
+// THE DEADLINE is a forked child that sleeps and exits. GNU arms a timer
+// whose SIGALRM ends its wait; nothing here arms one, so the clock is a
+// process instead and ONE blocking `proc_waitpid(-1)` wakes on whichever
+// finishes first — the command or the timer. `proc_waitpid_nohang` then says
+// which, since a child already reaped answers ECHILD where a live one answers
+// -1. The timer ignores the signals timeout forwards, is reaped before
 // timeout exits and holds nothing the command can see; the only trace is one
 // extra process in the group while the command runs.
+//
+// FORWARDING is GNU's too: SIGINT, SIGTERM and the rest of term-sig.h's list
+// reaching timeout are passed on to the command, and timeout then dies of
+// the signal if the command did. Each is caught with
+// `signal_catch_interrupting`, so its arrival ends the blocking wait with
+// EINTR and is passed on at once (#11698). SIGALRM from outside is the
+// deadline passing, as it is for GNU's own timer.
 //
 // Four measured behaviours worth knowing before reading the code.
 //
@@ -46,14 +53,9 @@
 //   - **The last `-s` and the last `-k` win**, and a bad `-k` is reported
 //     where it is parsed rather than after the DURATION operand:
 //     `timeout -k x y true` reports `x`.
-//
-// NOT IMPLEMENTED: forwarding a signal that arrives at timeout itself. GNU
-// handles SIGINT / SIGQUIT / SIGHUP / SIGTERM / SIGXCPU by passing them on to
-// the command and then dying of them, which needs a signal that wakes the
-// blocked wait — `signal_catch`'s flag does not (#9243). Nothing else here
-// depends on it, and no invocation in the corpus reaches it.
 import "std/string";
 import "std/array";
+import "std/signal";
 import "./lib/gnu";
 import "./lib/duration";
 import "./lib/ld";
@@ -149,13 +151,19 @@ function interval(f: ld.Format, s: string): ld.LD {
   }
 }
 
-// `fork_timer(f, seconds)` — a child that sleeps `seconds` and exits 0, or a
-// negative errno when the fork failed. GNU's alarm(2) with a process
-// standing in for the signal; see the header.
-function fork_timer(f: ld.Format, seconds: ld.LD): i32 {
+// `fork_timer(f, seconds, fwd)` — a child that sleeps `seconds` and exits 0,
+// or a negative errno when the fork failed. GNU's timer with a process
+// standing in for the signal; see the header. It ignores the signals timeout
+// forwards, so passing one to the group does not end the deadline with it.
+function fork_timer(f: ld.Format, seconds: ld.LD, fwd: i32[]): i32 {
   let pid: i32 = proc_fork();
   if (pid != 0) {
     return pid;
+  }
+  let i: i32 = 0;
+  while (i < fwd.len()) {
+    signal.ignore(fwd[i]);
+    i = i + 1;
   }
   duration.sleep_seconds(f, seconds);
   exit(0);
@@ -164,13 +172,71 @@ function fork_timer(f: ld.Format, seconds: ld.LD): i32 {
 
 // `cancel_timer(pid)` — stop a timer that is no longer needed and reap it.
 // The KILL is unconditional: a timer that has already fired is gone and the
-// ESRCH is the answer, not a failure.
+// ESRCH is the answer, not a failure. A forwarded signal can interrupt the
+// reap, and is acted on at the supervisor's next look.
 function cancel_timer(pid: i32): void {
   match (signal_send(pid, 9)) {
     Ok(_) => {},
     Err(_) => {}
   }
   let reaped: i32 = proc_waitpid(pid);
+  while (reaped == eintr()) {
+    reaped = proc_waitpid(pid);
+  }
+}
+
+// What a wait the signal interrupted answers: -EINTR, 4 on both kernels.
+function eintr(): i32 {
+  return 0 - 4;
+}
+
+// `forwarded(term)` — the signals timeout passes on to the command, as GNU's
+// install_cleanup catches them: the list in its term-sig.h, the realtime
+// range, and `term`, the `-s` signal. One ignored when timeout started stays
+// ignored, so a background job that a shell started deaf to SIGINT passes on
+// none — except SIGALRM, the deadline's own, and `term`. A name this kernel
+// does not have is left out.
+function forwarded(term: i32): i32[] {
+  let names: string[] = ["ALRM", "INT", "QUIT", "HUP", "TERM", "PIPE", "USR1", "USR2", "ILL", "TRAP", "ABRT", "BUS", "FPE", "SEGV", "XCPU", "XFSZ", "SYS", "VTALRM", "PROF", "POLL", "PWR", "STKFLT", "EMT"];
+  let out: i32[] = [];
+  let i: i32 = 0;
+  while (i < names.len()) {
+    out = with_handled(out, signals.number(names[i]), term);
+    i = i + 1;
+  }
+  let rt: i32 = signals.rt_min();
+  while (rt > 0 && rt <= signals.rt_max()) {
+    out = with_handled(out, rt, term);
+    rt = rt + 1;
+  }
+  return with_handled(out, term, term);
+}
+
+function with_handled(sigs: i32[], n: i32, term: i32): i32[] {
+  if (n <= 0 || has(sigs, n)) {
+    return sigs;
+  }
+  if (n != sig_alrm() && n != term && signal.disposition(n) == signal.IGN) {
+    return sigs;
+  }
+  return sigs.append(n);
+}
+
+function has(sigs: i32[], n: i32): boolean {
+  let i: i32 = 0;
+  while (i < sigs.len()) {
+    if (sigs[i] == n) {
+      return true;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+// SIGALRM, which reaching timeout from outside is the deadline passing, as
+// it is for GNU's own timer.
+function sig_alrm(): i32 {
+  return signals.number("ALRM");
 }
 
 // `fired(pid)` — whether `pid` is the child a blocking `proc_waitpid(-1)`
@@ -328,6 +394,17 @@ pub function main(): i32 {
     }
   }
 
+  // The catches come before the fork, as GNU's do, so a signal the command
+  // provokes at once is not missed; exec puts them back to the default in
+  // the command. Each interrupts the one blocking wait, so it is passed on
+  // the moment it arrives.
+  let fwd: i32[] = forwarded(cfg.sig);
+  let i: i32 = 0;
+  while (i < fwd.len()) {
+    signal.catch_interrupting(fwd[i]);
+    i = i + 1;
+  }
+
   let cpid: i32 = proc_fork();
   if (cpid < 0) {
     gnu.error("fork system call failed: " + gnu.exec_errno_text(0 - cpid));
@@ -337,14 +414,9 @@ pub function main(): i32 {
     run_child(cmd, argv);
     return 126;
   }
-  return supervise(f, cfg, wait_for, cmd, cpid);
+  return supervise(f, cfg, wait_for, cmd, cpid, fwd);
 }
 
-// `supervise(...)` — wait for the command, and send the timeout signal if the
-// deadline arrives first.
-//
-// A zero DURATION disables the timeout entirely: no timer, and `-k` never
-// comes into it.
 // `over_setitimer_bound(f, seconds)` — whether Darwin's setitimer would refuse
 // this deadline. xnu's `itimerfix` is the bound, and it is not about the width
 // of the field:
@@ -362,94 +434,143 @@ function over_setitimer_bound(f: ld.Format, seconds: ld.LD): boolean {
   return seconds.cmp(f.from_i64(100000000 as i64)) > 0;
 }
 
-function supervise(f: ld.Format, cfg: Cfg, wait_for: ld.LD, cmd: string, cpid: i32): i32 {
-  if (wait_for.is_zero()) {
-    return proc_waitpid(cpid);
-  }
+// `Watch` — what supervising has done so far: the timer running (0 for none)
+// and the signal it sends when it fires, the `-k` grace period not yet
+// started, whether a deadline passed, and the signals sent to the command, a
+// bit each.
+struct Watch { tpid: i32, timer_sig: i32, kill_after: ld.LD, timed_out: boolean, sent: i64 }
+
+// `supervise(...)` — wait for the command, sending the timeout signal if the
+// deadline arrives first and passing on each forwarded signal that arrives.
+//
+// ONE blocking `proc_waitpid(-1)` waits on everything: it returns when the
+// command or the timer ends, and fails with EINTR when a forwarded signal
+// arrives. The flags are also read before each wait, for a signal that ended
+// some other wait (cancel_timer's) instead.
+//
+// A zero DURATION arms no timer, but a forwarded signal still starts `-k`'s
+// grace period, as GNU's does.
+function supervise(f: ld.Format, cfg: Cfg, wait_for: ld.LD, cmd: string, cpid: i32, fwd: i32[]): i32 {
+  let w: Watch = Watch { tpid: 0, timer_sig: cfg.sig, kill_after: cfg.kill_after, timed_out: false, sent: 0 as i64 };
   // A DEADLINE DARWIN WILL NOT TAKE IS REPORTED, not silently run unbounded.
   // GNU's settimeout prefers timer_create, which glibc has and Darwin has
   // not, so there it falls back to setitimer — "more portable (to Darwin for
   // example)", says the comment beside it — and the bound above makes `inf`
-  // or a saturated duration EINVAL. GNU warns and returns WITHOUT arming, so
-  // the command then runs to completion with no deadline and `-k` never comes
-  // into it, exactly as a zero DURATION does.
+  // or a saturated duration EINVAL. GNU warns and is left with alarm(2)'s
+  // whole-second deadline, which for anything past the bound is decades off,
+  // so the command runs to completion as under a zero DURATION.
   //
   // We fork a sleeper rather than call setitimer, so there is no call of ours
   // to fail and the bound is modelled instead. Measured on the macos-15
   // runner: `timeout inf true` and `timeout 99999999999999999999 true` both
   // warn there and neither does on Linux, where timer_create takes them.
-  if (target_os() == "darwin" && over_setitimer_bound(f, wait_for)) {
-    gnu.error("warning: setitimer: " + gnu.exec_errno_text(22));
-    return proc_waitpid(cpid);
+  if (!wait_for.is_zero()) {
+    if (target_os() == "darwin" && over_setitimer_bound(f, wait_for)) {
+      gnu.error("warning: setitimer: " + gnu.exec_errno_text(22));
+    } else {
+      let tpid: i32 = fork_timer(f, wait_for, fwd);
+      if (tpid < 0) {
+        gnu.error("fork system call failed: " + gnu.exec_errno_text(0 - tpid));
+        return status_canceled();
+      }
+      w = Watch { ...w, tpid: tpid };
+    }
   }
-  let tpid: i32 = fork_timer(f, wait_for);
-  if (tpid < 0) {
-    gnu.error("fork system call failed: " + gnu.exec_errno_text(0 - tpid));
-    return status_canceled();
+  while (true) {
+    w = take_signals(f, cfg, cmd, cpid, fwd, w);
+    let status: i32 = proc_waitpid(0 - 1);
+    if (status == eintr()) {
+      continue;
+    }
+    if (w.tpid > 0 && fired(w.tpid)) {
+      w = act(f, cfg, cmd, cpid, fwd, Watch { ...w, tpid: 0, timed_out: true }, w.timer_sig);
+      continue;
+    }
+    if (w.tpid > 0) {
+      cancel_timer(w.tpid);
+    }
+    return finish(cfg, w, status);
   }
-  let status: i32 = proc_waitpid(0 - 1);
-  if (!fired(tpid)) {
-    // The command finished inside its DURATION: its status passes through
-    // and the timer is cancelled unfired.
-    cancel_timer(tpid);
-    return status;
-  }
+  return status_canceled();
+}
 
-  deliver(cfg.sig, cmd, cpid, cfg.foreground, cfg.verbose);
-  let killed: boolean = cfg.sig == sig_kill();
-  if (!cfg.kill_after.is_zero()) {
-    let esc: Escalation = await_kill_after(f, cfg.kill_after, cmd, cpid, cfg.foreground, cfg.verbose);
-    status = esc.status;
-    killed = killed || esc.sent_kill;
-  } else {
-    status = proc_waitpid(cpid);
+// `take_signals(...)` — act on each forwarded signal that has arrived.
+// SIGALRM is the deadline passing; any other is passed on to the command.
+function take_signals(f: ld.Format, cfg: Cfg, cmd: string, cpid: i32, fwd: i32[], w0: Watch): Watch {
+  let w: Watch = w0;
+  let i: i32 = 0;
+  while (i < fwd.len()) {
+    let n: i32 = fwd[i];
+    if (signal.taken(n)) {
+      if (n == sig_alrm()) {
+        w = act(f, cfg, cmd, cpid, fwd, Watch { ...w, timed_out: true }, w.timer_sig);
+      } else {
+        w = act(f, cfg, cmd, cpid, fwd, w, n);
+      }
+    }
+    i = i + 1;
+  }
+  return w;
+}
+
+// `act(...)` — GNU's cleanup handler: send `sig` the way `deliver` does, and
+// on the first signal sent, start `-k`'s grace period, whose end sends KILL.
+// The grace period replaces the timer rather than running beside it, and
+// later signals do not restart it: measured, `timeout -v -k 0.2 0.1 sleep 5`
+// prints one line and not two, because the TERM was enough.
+function act(f: ld.Format, cfg: Cfg, cmd: string, cpid: i32, fwd: i32[], w0: Watch, sig: i32): Watch {
+  deliver(sig, cmd, cpid, cfg.foreground, cfg.verbose);
+  let w: Watch = w0;
+  if (sig > 0) {
+    w = Watch { ...w, sent: w.sent | signal.bit(sig) };
+  }
+  if (w.kill_after.is_zero()) {
+    return w;
+  }
+  if (w.tpid > 0) {
+    cancel_timer(w.tpid);
+  }
+  let kpid: i32 = fork_timer(f, w.kill_after, fwd);
+  if (kpid < 0) {
+    // Nothing left to escalate with, so the command is waited out as an
+    // unadorned timeout would be.
+    kpid = 0;
+  }
+  return Watch { ...w, tpid: kpid, timer_sig: sig_kill(), kill_after: f.from_i64(0 as i64) };
+}
+
+// `finish(cfg, w, status)` — timeout's exit, from the command's.
+//
+// A command that was not timed out passes its status through — and when it
+// died of a signal this process passed on to it, timeout dies of that signal
+// too, as GNU's does, so whoever started timeout sees the death rather than
+// an exit status. GNU asks WTERMSIG, and dies of whatever signal killed the
+// command; `proc_waitpid` collapses a death by a signal into the shell's one
+// number, so the SIGNAL THIS PROCESS SENT stands in for the half the status
+// cannot carry: a command that exits 143 of its own accord is not mistaken
+// for one SIGTERM killed. The residue is a command killed by a signal from
+// elsewhere, which exits timeout with 128 + the signal where GNU's dies of it.
+//
+// A timeout is 124, except where the command was KILLED: `-s KILL`, and a
+// `-k` grace period that expired, both report 128+9 instead — the 137 the
+// help text names. Measured: `--foreground -s HUP` is 124 where
+// `--foreground -s KILL` is 137, and `-s 0 -k G` is 137 because the grace
+// period expired even though the first signal delivered nothing. The same
+// stand-in applies: a SIGKILL arriving from somewhere else during the
+// timeout reads as 124 here and 137 there.
+function finish(cfg: Cfg, w: Watch, status: i32): i32 {
+  if (!w.timed_out) {
+    let sig: i32 = status - 128;
+    if (sig > 0 && sig <= 64 && (w.sent & signal.bit(sig)) != 0) {
+      signals.die_of(sig);
+    }
+    return status;
   }
   if (cfg.preserve) {
     return status;
   }
-  // A timeout is 124, except where the command was KILLED: `-s KILL`, and a
-  // `-k` grace period that expired, both report 128+9 instead — the 137 the
-  // help text names. Measured: `--foreground -s HUP` is 124 where
-  // `--foreground -s KILL` is 137, and `-s 0 -k G` is 137 because the grace
-  // period expired even though the first signal delivered nothing.
-  //
-  // Both halves are needed. GNU asks WTERMSIG, which separates a command
-  // KILLED from one that exited 137 of its own accord; `proc_waitpid`
-  // collapses the two into the shell's one number, so the signal this
-  // process actually sent stands in for the half the status cannot carry.
-  // `-s 0` over a command that exits 137 is therefore 124, as GNU's is. The
-  // residue is a SIGKILL from somewhere else arriving during the timeout,
-  // which reads as 124 here and 137 there.
-  if (killed && status == 128 + sig_kill()) {
+  if ((w.sent & signal.bit(sig_kill())) != 0 && status == 128 + sig_kill()) {
     return status;
   }
   return 124;
-}
-
-// `Escalation` — what `-k` did: the command's status, and whether the grace
-// period expired and the KILL went out.
-struct Escalation { status: i32, sent_kill: boolean }
-
-// `await_kill_after(...)` — the second deadline `-k` adds: wait for the
-// command, and send SIGKILL if it outlives the grace period.
-//
-// The KILL is only sent if the command is STILL there: measured,
-// `timeout -v -k 0.2 0.1 sleep 5` prints one line and not two, because the
-// TERM was enough. In group mode the KILL takes timeout down with the
-// command, so this does not return — the shell sees timeout killed by signal
-// 9, which is the 137 the help text names.
-function await_kill_after(f: ld.Format, kill_after: ld.LD, cmd: string, cpid: i32, foreground: boolean, verbose: boolean): Escalation {
-  let kpid: i32 = fork_timer(f, kill_after);
-  if (kpid < 0) {
-    // Nothing left to escalate with, so wait the command out as an
-    // unadorned timeout would.
-    return Escalation { status: proc_waitpid(cpid), sent_kill: false };
-  }
-  let status: i32 = proc_waitpid(0 - 1);
-  if (!fired(kpid)) {
-    cancel_timer(kpid);
-    return Escalation { status: status, sent_kill: false };
-  }
-  deliver(sig_kill(), cmd, cpid, foreground, verbose);
-  return Escalation { status: proc_waitpid(cpid), sent_kill: true };
 }

@@ -400,10 +400,10 @@ function position_of(f: ssa.SFunc): i32[] {
       top = b.id;
     }
   }
-  let out: i32[] = [];
+  let out: i32[] = __alloc_i32(top + 1);
   let i: i32 = 0;
   while (i <= top) {
-    out = out.append(0 - 1);
+    out = out.with(i, 0 - 1);
     i = i + 1;
   }
   i = 0;

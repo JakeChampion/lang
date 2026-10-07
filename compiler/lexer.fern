@@ -159,10 +159,6 @@ function is_valid_numeric_suffix(s: string): boolean {
 // `.` (scan_number's guard), and `.field` / `.0` stay single-dot, so
 // `..` never clashes with field access or fractions.
 function match_multipunct(src: string, i: i32, n: i32): string {
-  // Probe by BYTE, not by slice: slicing before matching would
-  // manufacture a split-code-point str when src[i] or a following
-  // byte starts a multibyte character. The slices below are taken
-  // only after every byte in range matched an ASCII punctuator.
   if (i >= n) {
     return "";
   }
@@ -175,52 +171,248 @@ function match_multipunct(src: string, i: i32, n: i32): string {
   if (i + 2 < n) {
     b2 = src[i + 2] as i32;
   }
-  if (i + 3 <= n) {
-    let hit3: boolean = false;
-    if (b0 == 60 && b1 == 60 && (b2 == 61 || b2 == 124 || b2 == 63)) {  // <<= <<| <<?
-      hit3 = true;
-    } else if (b0 == 62 && b1 == 62 && (b2 == 61 || b2 == 63)) {  // >>= >>?
-      hit3 = true;
-    } else if (b0 == 46 && b1 == 46 && (b2 == 46 || b2 == 61)) {  // ... ..=
-      hit3 = true;
-    }
-    if (hit3) {
-      return slice_unchecked(src, i, i + 3) + "";
-    }
+  let three: string = punct3(b0, b1, b2);
+  if (three.len() > 0) {
+    return three;
   }
-  if (i + 2 <= n) {
-    let hit2: boolean = false;
-    if (b1 == 61) {  // == != <= >= += -= *= /= %= &= |= ^=
-      hit2 = b0 == 61 || b0 == 33 || b0 == 60 || b0 == 62
-        || b0 == 43 || b0 == 45 || b0 == 42 || b0 == 47
-        || b0 == 37 || b0 == 38 || b0 == 124 || b0 == 94;
-    } else if (b1 == 124) {  // +| -| *| ||
-      hit2 = b0 == 43 || b0 == 45 || b0 == 42 || b0 == 124;
-    } else if (b1 == 63) {  // +? -? *? /? %?
-      hit2 = b0 == 43 || b0 == 45 || b0 == 42 || b0 == 47 || b0 == 37;
-    } else if (b1 == 62) {  // => |> >>
-      hit2 = b0 == 61 || b0 == 124 || b0 == 62;
-    } else {  // << .. :: &&
-      hit2 = b0 == 60 && b1 == 60 || b0 == 46 && b1 == 46
-        || b0 == 58 && b1 == 58 || b0 == 38 && b1 == 38;
+  if (b1 == 61) {
+    return punct_assign(b0);
+  }
+  if (b1 == 124) {
+    return punct_bar(b0);
+  }
+  if (b1 == 63) {
+    return punct_try(b0);
+  }
+  if (b1 == 62) {
+    return punct_arrow(b0);
+  }
+  return punct_double(b0, b1);
+}
+
+// Each punctuator is a literal, so a token carries no copy of the source.
+function punct3(b0: i32, b1: i32, b2: i32): string {
+  if (b0 == 60 && b1 == 60) {
+    if (b2 == 61) {
+      return "<<=";
     }
-    if (hit2) {
-      return slice_unchecked(src, i, i + 2) + "";
+    if (b2 == 124) {
+      return "<<|";
+    }
+    if (b2 == 63) {
+      return "<<?";
+    }
+  } else if (b0 == 62 && b1 == 62) {
+    if (b2 == 61) {
+      return ">>=";
+    }
+    if (b2 == 63) {
+      return ">>?";
+    }
+  } else if (b0 == 46 && b1 == 46) {
+    if (b2 == 46) {
+      return "...";
+    }
+    if (b2 == 61) {
+      return "..=";
     }
   }
   return "";
 }
 
-// is_single_punct mirrors the Go lexer's bare-punctuation set:
+function punct_assign(b0: i32): string {
+  if (b0 == 61) {
+    return "==";
+  }
+  if (b0 == 33) {
+    return "!=";
+  }
+  if (b0 == 60) {
+    return "<=";
+  }
+  if (b0 == 62) {
+    return ">=";
+  }
+  if (b0 == 43) {
+    return "+=";
+  }
+  if (b0 == 45) {
+    return "-=";
+  }
+  if (b0 == 42) {
+    return "*=";
+  }
+  if (b0 == 47) {
+    return "/=";
+  }
+  if (b0 == 37) {
+    return "%=";
+  }
+  if (b0 == 38) {
+    return "&=";
+  }
+  if (b0 == 124) {
+    return "|=";
+  }
+  if (b0 == 94) {
+    return "^=";
+  }
+  return "";
+}
+
+function punct_bar(b0: i32): string {
+  if (b0 == 43) {
+    return "+|";
+  }
+  if (b0 == 45) {
+    return "-|";
+  }
+  if (b0 == 42) {
+    return "*|";
+  }
+  if (b0 == 124) {
+    return "||";
+  }
+  return "";
+}
+
+function punct_try(b0: i32): string {
+  if (b0 == 43) {
+    return "+?";
+  }
+  if (b0 == 45) {
+    return "-?";
+  }
+  if (b0 == 42) {
+    return "*?";
+  }
+  if (b0 == 47) {
+    return "/?";
+  }
+  if (b0 == 37) {
+    return "%?";
+  }
+  return "";
+}
+
+function punct_arrow(b0: i32): string {
+  if (b0 == 61) {
+    return "=>";
+  }
+  if (b0 == 124) {
+    return "|>";
+  }
+  if (b0 == 62) {
+    return ">>";
+  }
+  return "";
+}
+
+function punct_double(b0: i32, b1: i32): string {
+  if (b0 != b1) {
+    return "";
+  }
+  if (b0 == 60) {
+    return "<<";
+  }
+  if (b0 == 46) {
+    return "..";
+  }
+  if (b0 == 58) {
+    return "::";
+  }
+  if (b0 == 38) {
+    return "&&";
+  }
+  return "";
+}
+
+// single_punct is the Go lexer's bare-punctuation set, each a literal:
 // `+`, `-`, `*`, `/`, `%`, parens / braces / brackets, `,`, `;`,
-// `:`, `=`, `<`, `>`, `!`, `&`, `|`, `^`, `?`, `.`, `@`.
-function is_single_punct(b: i32): boolean {
-  return b == 43 || b == 45 || b == 42 || b == 47 || b == 37
-    || b == 40 || b == 41 || b == 123 || b == 125
-    || b == 91 || b == 93 || b == 44 || b == 59 || b == 58
-    || b == 61 || b == 60 || b == 62 || b == 33
-    || b == 38 || b == 124 || b == 94 || b == 63 || b == 46
-    || b == 64;
+// `:`, `=`, `<`, `>`, `!`, `&`, `|`, `^`, `?`, `.`, `@`; "" for any
+// other byte.
+function single_punct(b: i32): string {
+  let op: string = single_punct_op(b);
+  if (op.len() > 0) {
+    return op;
+  }
+  if (b == 40) {
+    return "(";
+  }
+  if (b == 41) {
+    return ")";
+  }
+  if (b == 123) {
+    return "{";
+  }
+  if (b == 125) {
+    return "}";
+  }
+  if (b == 91) {
+    return "[";
+  }
+  if (b == 93) {
+    return "]";
+  }
+  if (b == 44) {
+    return ",";
+  }
+  if (b == 59) {
+    return ";";
+  }
+  if (b == 58) {
+    return ":";
+  }
+  if (b == 46) {
+    return ".";
+  }
+  if (b == 64) {
+    return "@";
+  }
+  return "";
+}
+
+function single_punct_op(b: i32): string {
+  if (b == 43) {
+    return "+";
+  }
+  if (b == 45) {
+    return "-";
+  }
+  if (b == 42) {
+    return "*";
+  }
+  if (b == 47) {
+    return "/";
+  }
+  if (b == 37) {
+    return "%";
+  }
+  if (b == 61) {
+    return "=";
+  }
+  if (b == 60) {
+    return "<";
+  }
+  if (b == 62) {
+    return ">";
+  }
+  if (b == 33) {
+    return "!";
+  }
+  if (b == 38) {
+    return "&";
+  }
+  if (b == 124) {
+    return "|";
+  }
+  if (b == 94) {
+    return "^";
+  }
+  if (b == 63) {
+    return "?";
+  }
+  return "";
 }
 
 // Lexer state, passed as a struct through the helpers below.
@@ -1277,11 +1469,11 @@ function tokenize_impl(src: string, keep: boolean, first_line: i32): LexResult {
       after_dot = false;
       continue;
     }
-    if (is_single_punct(b)) {
-      let text: str = slice_unchecked(l.src, l.i, l.i + 1);
+    let text: string = single_punct(b);
+    if (text.len() > 0) {
       l = l.advance();
-      out = out.append(TokPunct { text: text + "", line: start_line, col: start_col });
-      after_dot = text == ".";
+      out = out.append(TokPunct { text: text, line: start_line, col: start_col });
+      after_dot = b == 46;
       continue;
     }
     // Unknown byte — surface a TokError and stop, matching the

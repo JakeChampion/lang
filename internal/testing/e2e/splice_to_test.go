@@ -172,7 +172,7 @@ func TestInterpSpliceToUnsupported(t *testing.T) {
 }
 
 func TestWASMPreview1SpliceToUnsupported(t *testing.T) {
-	mod := buildPreview1Module(t, spliceToSource("", false))
+	mod := buildWasmCore(t, spliceToSource("", false))
 	dir := t.TempDir()
 	if got := runPreview1Module(t, mod, dir); got != 0 {
 		t.Fatalf("main = %d, want 0 — the code names the step (see spliceToSource)", got)
@@ -180,15 +180,14 @@ func TestWASMPreview1SpliceToUnsupported(t *testing.T) {
 	spliceToCheckTree(t, dir)
 }
 
+// Both previews share the refusal, but the fallback's reads and writes are
+// separate bodies: preview 2's go through input and output streams.
 func TestWASMSpliceToUnsupported(t *testing.T) {
-	p := buildComponent(t, spliceToSource("", false))
 	dir := t.TempDir()
-	stdout, stderr, ec := runComponent(t, p, runOpts{workDir: dir})
-	if ec != 0 {
-		t.Fatalf("wasmtime exit %d\nstderr:\n%s", ec, stderr)
-	}
-	if got := parseMainResult(t, stdout); got != 0 {
-		t.Fatalf("main = %d, want 0 — the code names the step (see spliceToSource)\nstderr:\n%s", got, stderr)
+	out := runResultStdout(t, spliceToSource("", false), runOpts{workDir: dir})
+	if got := parseMainResult(t, out); got != 0 {
+		t.Fatalf("main = %d, want 0 — the code names the step (see spliceToSource)", got)
 	}
 	spliceToCheckTree(t, dir)
+	spliceToCheckStdout(t, out)
 }

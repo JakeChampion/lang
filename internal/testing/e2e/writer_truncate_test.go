@@ -166,18 +166,23 @@ func TestInterpWriterTruncate(t *testing.T) {
 	writerTruncateCheckTree(t, dir, true, true)
 }
 
-// The wasm leg runs under the component's preopen, so its paths are relative
-// and main's return reaches us on stdout rather than as the exit status.
-func TestWASMWriterTruncate(t *testing.T) {
-	p := buildComponent(t, writerTruncateSource("", false, false))
+// The wasm legs run under a preopen, so their paths are relative. Preview 1
+// resizes with fd_filestat_set_size, the component with descriptor.set-size:
+// two bodies, so two runs.
+func TestWASMPreview1WriterTruncate(t *testing.T) {
+	mod := buildWasmCore(t, writerTruncateSource("", false, false))
 	dir := t.TempDir()
-	stdout, stderr, ec := runComponent(t, p, runOpts{workDir: dir})
-	if ec != 0 {
-		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, stdout, stderr)
+	if got := runPreview1Module(t, mod, dir); got != 0 {
+		t.Fatalf("main = %d, want 0 — the code names the step (see writerTruncateSource)", got)
 	}
-	if got := parseMainResult(t, stdout); got != 0 {
-		t.Fatalf("main = %d, want 0 — the code names the step (see writerTruncateSource)\nstdout:\n%s\nstderr:\n%s",
-			got, stdout, stderr)
+	writerTruncateCheckTree(t, dir, false, false)
+}
+
+func TestWASMWriterTruncate(t *testing.T) {
+	dir := t.TempDir()
+	out := runResultStdout(t, writerTruncateSource("", false, false), runOpts{workDir: dir})
+	if got := parseMainResult(t, out); got != 0 {
+		t.Fatalf("main = %d, want 0 — the code names the step (see writerTruncateSource)\nstdout:\n%s", got, out)
 	}
 	writerTruncateCheckTree(t, dir, false, false)
 }

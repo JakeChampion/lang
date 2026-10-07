@@ -2,12 +2,9 @@ package e2e
 
 import (
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
-
-	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 // IoError.Other's message is strerror's text for the errno on wasm as
@@ -45,32 +42,19 @@ func ioErrorTextDir(t *testing.T) string {
 	return dir
 }
 
-func TestWasmIoErrorOtherTextPreview2(t *testing.T) {
-	comp := buildComponent(t, ioErrorTextProg)
-	stdout, stderr, ec := runComponent(t, comp, runOpts{workDir: ioErrorTextDir(t)})
+// ioErrorTextRun runs the program as `wasm` with ioErrorTextDir preopened.
+func ioErrorTextRun(t *testing.T, wasm string) {
+	t.Helper()
+	stdout, stderr, ec := runWasmArtifact(t, wasm, runOpts{workDir: ioErrorTextDir(t)})
 	if ec != 0 || !strings.Contains(stdout, ioErrorTextWant) {
 		t.Errorf("exit %d, stdout %q (want it to contain %q)\nstderr:\n%s", ec, stdout, ioErrorTextWant, stderr)
 	}
 }
 
+func TestWasmIoErrorOtherTextPreview2(t *testing.T) {
+	ioErrorTextRun(t, buildCLIComponent(t, ioErrorTextProg))
+}
+
 func TestWasmIoErrorOtherTextPreview1(t *testing.T) {
-	if _, err := exec.LookPath("wasmtime"); err != nil {
-		t.Skip("wasmtime not on PATH")
-	}
-	dir := ioErrorTextDir(t)
-	srcPath := filepath.Join(dir, "main.fern")
-	if err := os.WriteFile(srcPath, []byte(ioErrorTextProg), 0o644); err != nil {
-		t.Fatalf("write src: %v", err)
-	}
-	// The preview-1 core `fern -target wasm32-wasi -o` emits, run by
-	// wasmtime directly.
-	wasmPath := filepath.Join(dir, "main.wasm")
-	fern := e2eharness.BuildLangBinForInterp(t)
-	if out, err := exec.Command(fern, "-target", "wasm32-wasi", "-o", wasmPath, srcPath).CombinedOutput(); err != nil {
-		t.Fatalf("fern -target wasm32-wasi: %v\n%s", err, out)
-	}
-	out, err := exec.Command("wasmtime", "run", "--dir", dir, wasmPath).CombinedOutput()
-	if err != nil || !strings.Contains(string(out), ioErrorTextWant) {
-		t.Errorf("wasmtime: %v\noutput %q (want it to contain %q)", err, out, ioErrorTextWant)
-	}
+	ioErrorTextRun(t, buildWasmCore(t, ioErrorTextProg))
 }

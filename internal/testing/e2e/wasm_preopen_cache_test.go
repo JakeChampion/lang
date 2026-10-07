@@ -1,6 +1,8 @@
 package e2e
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -30,7 +32,11 @@ function main(): i32 {
     write("preopen-cached");
     return 0;
 }`
-	stdout, stderr, _, _ := runWasmInDir(t, src, map[string]string{"probe.txt": "x"})
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "probe.txt"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, _ := runCLIComponent(t, src, runOpts{workDir: dir})
 	if !strings.Contains(stdout, "preopen-cached") {
 		t.Fatalf("stdout %q stderr %q; want preopen-cached", stdout, stderr)
 	}

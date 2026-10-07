@@ -117,10 +117,10 @@ function find_loops(f: ssa.SFunc, reachable: boolean[], dom: ssadeps.Dom): Loops
 // holds it, else to itself, once per region: the ordering below asks for it once
 // per edge per round.
 function representatives(l: Loops, region: boolean[], root: i32): i32[] {
-  let out: i32[] = [];
+  let out: i32[] = __alloc_i32(l.n);
   let x: i32 = 0;
   while (x < l.n) {
-    out = out.append(x);
+    out = out.with(x, x);
     x = x + 1;
   }
   let taken: boolean[] = __alloc_bool(l.n);
@@ -173,21 +173,52 @@ function pending_edges(l: Loops, region: boolean[], root: i32, reps: i32[]): i32
   return pending;
 }
 
-function release(l: Loops, region: boolean[], root: i32, chosen: i32, own pending: i32[], reps: i32[]): i32[] {
+// Members lists the region's blocks by representative: those of `r` are
+// `list[start[r]]` up to `list[start[r + 1]]`.
+struct Members { start: i32[], list: i32[] }
+
+function members_by_rep(l: Loops, region: boolean[], reps: i32[]): Members {
+  let start: i32[] = __alloc_i32(l.n + 2);
   let x: i32 = 0;
   while (x < l.n) {
-    if (region[x] && reps[x] == chosen) {
-      for y in l.succ[x] {
-        if (!region[y] || y == root) {
-          continue;
-        }
-        let ry: i32 = reps[y];
-        if (ry != chosen) {
-          pending = pending.with(ry, pending[ry] - 1);
-        }
-      }
+    if (region[x]) {
+      let r: i32 = reps[x] + 2;
+      start = start.with(r, start[r] + 1);
     }
     x = x + 1;
+  }
+  let r2: i32 = 2;
+  while (r2 < start.len()) {
+    start = start.with(r2, start[r2] + start[r2 - 1]);
+    r2 = r2 + 1;
+  }
+  let list: i32[] = __alloc_i32(start[l.n + 1]);
+  x = 0;
+  while (x < l.n) {
+    if (region[x]) {
+      let r: i32 = reps[x] + 1;
+      list = list.with(start[r], x);
+      start = start.with(r, start[r] + 1);
+    }
+    x = x + 1;
+  }
+  return Members { start: start, list: list };
+}
+
+function release(l: Loops, region: boolean[], root: i32, chosen: i32, own pending: i32[], reps: i32[], members: Members): i32[] {
+  let m: i32 = members.start[chosen];
+  while (m < members.start[chosen + 1]) {
+    let x: i32 = members.list[m];
+    for y in l.succ[x] {
+      if (!region[y] || y == root) {
+        continue;
+      }
+      let ry: i32 = reps[y];
+      if (ry != chosen) {
+        pending = pending.with(ry, pending[ry] - 1);
+      }
+    }
+    m = m + 1;
   }
   return pending;
 }
@@ -241,6 +272,7 @@ function complete(l: Loops, region: boolean[], done: boolean[], reps: i32[]): bo
 function region_order(l: Loops, region: boolean[], root: i32, out: Layout): Layout {
   let start: i32 = out.order.len();
   let reps: i32[] = representatives(l, region, root);
+  let members: Members = members_by_rep(l, region, reps);
   let pending: i32[] = pending_edges(l, region, root, reps);
   let done: boolean[] = __alloc_bool(l.n);
   let chosen: i32 = root;
@@ -254,7 +286,7 @@ function region_order(l: Loops, region: boolean[], root: i32, out: Layout): Layo
     } else {
       out = Layout { ok: true, order: out.order.append(chosen), loop_end: out.loop_end.append(0 - 1) };
     }
-    pending = release(l, region, root, chosen, pending, reps);
+    pending = release(l, region, root, chosen, pending, reps, members);
     chosen = next_ready(l, region, pending, done, reps, chosen);
   }
   if (!complete(l, region, done, reps)) {

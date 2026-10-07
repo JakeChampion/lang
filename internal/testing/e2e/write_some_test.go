@@ -185,13 +185,12 @@ func TestInterpWriteSome(t *testing.T) {
 	}
 }
 
-// The preview-2 half, where a Writer holds an output STREAM rather than a
-// descriptor: `blocking-write-and-flush` takes the whole chunk it is
-// handed, so the count is the chunk's length and the file still ends up
-// with both writes in order.
-func TestWASMWriteSome(t *testing.T) {
-	stdout, stderr, ec, _ := runWasmInDirOpts(t, writeSomeSource("out.txt"),
-		map[string]string{"seed.txt": ""}, runOpts{stdin: ""})
+// Preview 1 writes with fd_write, preview 2 through the Writer's output
+// STREAM rather than a descriptor: `blocking-write-and-flush` takes the
+// whole chunk it is handed, so the count is the chunk's length and the file
+// still ends up with both writes in order.
+func TestWASMPreview1WriteSome(t *testing.T) {
+	stdout, stderr, ec, _ := runWasmInDirOpts(t, writeSomeSource("out.txt"), nil, runOpts{})
 	if ec != 0 {
 		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, stdout, stderr)
 	}
@@ -201,27 +200,9 @@ func TestWASMWriteSome(t *testing.T) {
 	}
 }
 
-// The preview-1 half reaches the fd_write body. It writes into the
-// module's own working directory, which the wasmbin runner does not
-// mount, so this one asks only about a STDIO descriptor — and fd 2
-// rather than fd 1, because the runner reads main's answer off stdout.
-const writeSomePreview1Source = `import "std/i64";
-
-function main(): i32 {
-    match (stderr().write_some("ok\n")) {
-        Err(_) => { return 1; },
-        Ok(n) => { if (n != 3 as i64) { return 2; } }
-    }
-    match (stderr().write_some("")) {
-        Err(_) => { return 3; },
-        Ok(n) => { if (n != 0 as i64) { return 4; } }
-    }
-    return 0;
-}
-`
-
-func TestWASMPreview1WriteSome(t *testing.T) {
-	if code := compileAndRunWasmbinMain(t, writeSomePreview1Source); code != 0 {
-		t.Errorf("preview-1 write_some: main = %d, want 0 (1/3=Err, 2=count not 3, 4=empty count not 0)", code)
+func TestWASMWriteSome(t *testing.T) {
+	out := runResultStdout(t, writeSomeSource("out.txt"), runOpts{workDir: t.TempDir()})
+	if got := parseMainResult(t, out); got != 0 {
+		t.Errorf("main = %d, want 0 — the code names the case (see writeSomeSource)\nstdout:\n%s", got, out)
 	}
 }

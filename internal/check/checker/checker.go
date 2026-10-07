@@ -3245,6 +3245,26 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
 		Result: ast.BoolType{},
 	}
+	// signal_catch_interrupting(sig): i32 — signal_catch without
+	// SA_RESTART (#11698). A blocking read, write or wait the signal
+	// lands in fails with EINTR — IoError.Interrupted, or -4 from
+	// proc_waitpid — so a caller blocked on a call that may never return
+	// on its own sees the signal, then polls signal_taken. Same return
+	// as signal_catch.
+	c.info.FuncSigs["signal_catch_interrupting"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
+	// signal_raise(sig): i32 — kill(2) of this process: 0, or a negative
+	// errno (EINVAL for a number that names no signal). A signal the
+	// process does not block is delivered before the call returns, so
+	// after signal_default one whose default action ends the process
+	// ends it there: how a utility dies OF a signal it caught, as GNU's
+	// call raise() after reporting.
+	c.info.FuncSigs["signal_raise"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
+		Result: ast.NumberType{Width: 32, Signed: true},
+	}
 	// signal_mask(how, mask): i64 — sigprocmask(2). `mask` is a bit
 	// per signal, bit (sig-1), and `how` says what to do with it:
 	// 0 block, 1 unblock, 2 replace. The result is the mask that was

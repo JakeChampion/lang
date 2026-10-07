@@ -61,7 +61,7 @@ func assertAborts(t *testing.T, src string) {
 	})
 	t.Run("wasm32-wasi", func(t *testing.T) {
 		comp := buildCLIComponent(t, src)
-		_, _, code := runComponent(t, comp, runOpts{})
+		_, _, code := runWasmArtifact(t, comp, runOpts{})
 		if code == 0 {
 			t.Errorf("wasm did not trap (exit 0)\nsrc:\n%s", src)
 		}

@@ -924,7 +924,9 @@ function block_loop_weights(f: SFunc): i32[] {
   let depth: i32[] = __alloc_i32(f.blocks.len());
   let bi: i32 = 0;
   while (bi < f.blocks.len()) {
-    for tgt in successor_positions(f, at, bi) {
+    let which: i32 = 0;
+    while (which < 2) {
+      let tgt: i32 = distinct_successor_position(at, f.blocks[bi].term, which);
       if (tgt >= 0 && tgt <= bi) {
         let k: i32 = tgt;
         while (k <= bi) {
@@ -932,6 +934,7 @@ function block_loop_weights(f: SFunc): i32[] {
           k = k + 1;
         }
       }
+      which = which + 1;
     }
     bi = bi + 1;
   }
@@ -982,30 +985,30 @@ pub struct Alloc { reg_of: i32[], def_pos: i32[], hi: i32[] }
 pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[]): Alloc {
   let wish: i32[] = return_prefs(f, pref, abi_reg);
   let big: i32 = 2000000000;
-  let lo: i32[] = [];
-  let hi: i32[] = [];
+  let lo: i32[] = __alloc_i32(f.nvals);
+  let hi: i32[] = __alloc_i32(f.nvals);
   let i: i32 = 0;
   while (i < f.nvals) {
-    lo = lo.append(big);
-    hi = hi.append(0 - 1);
+    lo = lo.with(i, big);
+    hi = hi.with(i, 0 - 1);
     i = i + 1;
   }
   let calls: i32[] = [];
   let abi_cl: i32[] = [];
 
   // Number instructions and record each value's def/use positions.
-  let def_pos: i32[] = [];
-  let def_blk: i32[] = [];
+  let def_pos: i32[] = __alloc_i32(f.nvals);
+  let def_blk: i32[] = __alloc_i32(f.nvals);
   let call_def: i32[] = __alloc_i32(f.nvals);
   let reads_mate: boolean[] = __alloc_bool(f.nvals);
-  let def_a: i32[] = [];
-  let def_b: i32[] = [];
+  let def_a: i32[] = __alloc_i32(f.nvals);
+  let def_b: i32[] = __alloc_i32(f.nvals);
   i = 0;
   while (i < f.nvals) {
-    def_pos = def_pos.append(0 - 1);
-    def_blk = def_blk.append(0 - 1);
-    def_a = def_a.append(0 - 1);
-    def_b = def_b.append(0 - 1);
+    def_pos = def_pos.with(i, 0 - 1);
+    def_blk = def_blk.with(i, 0 - 1);
+    def_a = def_a.with(i, 0 - 1);
+    def_b = def_b.with(i, 0 - 1);
     i = i + 1;
   }
   let blk_start: i32[] = [];
@@ -1133,12 +1136,12 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
 
   // Built the first time an interference question is asked.
   let sites: ReadSites = ReadSites { start: [], blk: [], pos: [], succ: [], phi_end: [], unseen: [] };
-  let reg_of: i32[] = [];
-  let shared_with: i32[] = [];
+  let reg_of: i32[] = __alloc_i32(f.nvals);
+  let shared_with: i32[] = __alloc_i32(f.nvals);
   i = 0;
   while (i < f.nvals) {
-    reg_of = reg_of.append(0 - 1);
-    shared_with = shared_with.append(0 - 1);
+    reg_of = reg_of.with(i, 0 - 1);
+    shared_with = shared_with.with(i, 0 - 1);
     i = i + 1;
   }
 
@@ -1693,10 +1696,10 @@ pub function block_positions(f: SFunc): i32[] {
       top = blk.id;
     }
   }
-  let out: i32[] = [];
+  let out: i32[] = __alloc_i32(top + 1);
   let i: i32 = 0;
   while (i <= top) {
-    out = out.append(0 - 1);
+    out = out.with(i, 0 - 1);
     i = i + 1;
   }
   i = 0;
@@ -1725,6 +1728,35 @@ function successor_positions(f: SFunc, at: i32[], bi: i32): i32[] {
     }
   }
   return out;
+}
+
+// successor_id is branch `which` of `t` by block id, in branch order: a
+// plain branch has one, a conditional two, and -1 stands past them. A walk
+// over the two reads them without building a list.
+pub function successor_id(t: STerm, which: i32): i32 {
+  if (t.kind_tag == 2 && which == 0) {
+    return t.target;
+  }
+  if (t.kind_tag == 3) {
+    if (which == 0) {
+      return t.t;
+    }
+    if (which == 1) {
+      return t.f;
+    }
+  }
+  return 0 - 1;
+}
+
+// distinct_successor_position is successor_id's branch by position, or -1
+// for a second branch to the first's block, which successor_positions lists
+// once.
+function distinct_successor_position(at: i32[], t: STerm, which: i32): i32 {
+  let id: i32 = successor_id(t, which);
+  if (id < 0 || which == 1 && id == t.t) {
+    return 0 - 1;
+  }
+  return position_of(at, id);
 }
 
 function position_of(at: i32[], id: i32): i32 {
@@ -2266,10 +2298,10 @@ function resolve_repl(repl: i32[], v: i32): i32 {
 // trivial_phi_repl builds the value-to-value map, to a fixpoint: folding one
 // phi can make the next trivial.
 function trivial_phi_repl(f: SFunc): i32[] {
-  let repl: i32[] = [];
+  let repl: i32[] = __alloc_i32(f.nvals);
   let i: i32 = 0;
   while (i < f.nvals) {
-    repl = repl.append(i);
+    repl = repl.with(i, i);
     i = i + 1;
   }
   let rounds: i32 = 0;
@@ -2375,17 +2407,32 @@ pub function inline_leaves(f: SFunc, leaves: Leaf[]): SFunc {
     return f;
   }
   let nvals: i32 = f.nvals;
+  // `blocks` is written from the first block that splices a leaf on, and a
+  // block's `insts` from its first spliced call on.
   let blocks: SBlock[] = [];
-  for b in f.blocks {
+  let copying: boolean = false;
+  let bi: i32 = 0;
+  while (bi < f.blocks.len()) {
+    let b: SBlock = f.blocks[bi];
     let insts: SInst[] = [];
-    for ins in b.insts {
+    let spliced: boolean = false;
+    let k: i32 = 0;
+    while (k < b.insts.len()) {
+      let ins: SInst = b.insts[k];
       let at: i32 = 0 - 1;
       if (ins.kind_tag == 11) {
         at = leaf_index(leaves, ins.str, ins.args.len());
       }
       if (at < 0) {
-        insts = insts.append(ins);
+        if (spliced) {
+          insts = insts.append(ins);
+        }
+        k = k + 1;
         continue;
+      }
+      if (!spliced) {
+        insts = insts_before(b.insts, k);
+        spliced = true;
       }
       let leaf: SFunc = leaves[at].func;
       let map: i32[] = [];
@@ -2410,8 +2457,21 @@ pub function inline_leaves(f: SFunc, leaves: Leaf[]): SFunc {
       if (ins.result >= 0) {
         insts = insts.append(SInst { kind_tag: 7, result: ins.result, args: [map[leaf.blocks[0].term.value]], imm: 0, str: "" });
       }
+      k = k + 1;
     }
-    blocks = blocks.append(SBlock { ...b, insts: insts });
+    if (spliced) {
+      if (!copying) {
+        blocks = blocks_before(f.blocks, bi);
+        copying = true;
+      }
+      blocks = blocks.append(SBlock { ...b, insts: insts });
+    } else if (copying) {
+      blocks = blocks.append(b);
+    }
+    bi = bi + 1;
+  }
+  if (!copying) {
+    return f;
   }
   return SFunc { ...f, nvals: nvals, blocks: blocks };
 }
@@ -2419,7 +2479,7 @@ pub function inline_leaves(f: SFunc, leaves: Leaf[]): SFunc {
 function leaf_index(leaves: Leaf[], name: string, argc: i32): i32 {
   let i: i32 = 0;
   while (i < leaves.len()) {
-    if (leaves[i].name == name && leaves[i].func.nparams == argc) {
+    if (leaves[i].func.nparams == argc && leaves[i].name == name) {
       return i;
     }
     i = i + 1;
@@ -2447,18 +2507,76 @@ pub function prune_trivial_phis(f: SFunc): Formed {
     flat = flat.append(resolve_repl(repl, i));
     i = i + 1;
   }
+  // `nblocks` is written from the first block that changes on, and a block's
+  // `ninsts` from its first dropped phi or rewritten instruction on.
   let nblocks: SBlock[] = [];
-  for blk in f.blocks {
+  let copying: boolean = false;
+  let bi: i32 = 0;
+  while (bi < f.blocks.len()) {
+    let blk: SBlock = f.blocks[bi];
     let ninsts: SInst[] = [];
-    for ins in blk.insts {
-      if (ins.kind_tag == 8 && flat[ins.result] != ins.result) {
-        continue;
+    let changed: boolean = false;
+    let k: i32 = 0;
+    while (k < blk.insts.len()) {
+      let ins: SInst = blk.insts[k];
+      let gone: boolean = ins.kind_tag == 8 && flat[ins.result] != ins.result;
+      let moved: boolean = !gone && args_move(ins, flat);
+      if (!changed && (gone || moved)) {
+        ninsts = insts_before(blk.insts, k);
+        changed = true;
       }
-      ninsts = ninsts.append(rewrite_args(ins, flat));
+      if (changed && !gone) {
+        if (moved) {
+          ninsts = ninsts.append(rewrite_args(ins, flat));
+        } else {
+          ninsts = ninsts.append(ins);
+        }
+      }
+      k = k + 1;
     }
-    nblocks = nblocks.append(SBlock { id: blk.id, insts: ninsts, term: rewrite_term(blk.term, flat), preds: blk.preds });
+    let term: STerm = blk.term;
+    if (term_moves(term, flat)) {
+      term = rewrite_term(term, flat);
+      if (!changed) {
+        ninsts = blk.insts;
+        changed = true;
+      }
+    }
+    if (changed) {
+      if (!copying) {
+        nblocks = blocks_before(f.blocks, bi);
+        copying = true;
+      }
+      nblocks = nblocks.append(SBlock { ...blk, insts: ninsts, term: term });
+    } else if (copying) {
+      nblocks = nblocks.append(blk);
+    }
+    bi = bi + 1;
   }
-  return Formed { f: SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env }, repl: flat };
+  if (!copying) {
+    return Formed { f: f, repl: flat };
+  }
+  return Formed { f: SFunc { ...f, blocks: nblocks }, repl: flat };
+}
+
+// args_move reports whether `resolved` maps any operand of `ins` elsewhere.
+function args_move(ins: SInst, resolved: i32[]): boolean {
+  for a in ins.args {
+    if (a >= 0 && resolved[a] != a) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function term_moves(t: STerm, resolved: i32[]): boolean {
+  if (t.kind_tag == 1) {
+    return resolved[t.value] != t.value;
+  }
+  if (t.kind_tag == 3) {
+    return resolved[t.cond] != t.cond;
+  }
+  return false;
 }
 
 // repeated_block_id names the first block id that appears twice in `f.blocks`,
@@ -2496,18 +2614,44 @@ pub function repeated_block_id(f: SFunc): i32 {
 // it, since the phis' operands are per predecessor.
 pub function thread_forwarding(f: SFunc): SFunc {
   let at: i32[] = block_positions(f);
+  // `nblocks` is written from the first block whose branch moves on.
   let nblocks: SBlock[] = [];
-  for blk in f.blocks {
+  let copying: boolean = false;
+  let bi: i32 = 0;
+  while (bi < f.blocks.len()) {
+    let blk: SBlock = f.blocks[bi];
     let t: STerm = blk.term;
+    let moved: boolean = false;
     if (t.kind_tag == 2) {
-      t = STerm { ...t, target: forwarded(f, at, t.target) };
+      let target: i32 = forwarded(f, at, t.target);
+      if (target != t.target) {
+        t = STerm { ...t, target: target };
+        moved = true;
+      }
     }
     if (t.kind_tag == 3) {
-      t = STerm { ...t, t: forwarded(f, at, t.t), f: forwarded(f, at, t.f) };
+      let tt: i32 = forwarded(f, at, t.t);
+      let tf: i32 = forwarded(f, at, t.f);
+      if (tt != t.t || tf != t.f) {
+        t = STerm { ...t, t: tt, f: tf };
+        moved = true;
+      }
     }
-    nblocks = nblocks.append(SBlock { id: blk.id, insts: blk.insts, term: t, preds: blk.preds });
+    if (moved) {
+      if (!copying) {
+        nblocks = blocks_before(f.blocks, bi);
+        copying = true;
+      }
+      nblocks = nblocks.append(SBlock { ...blk, term: t });
+    } else if (copying) {
+      nblocks = nblocks.append(blk);
+    }
+    bi = bi + 1;
   }
-  let g: SFunc = SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
+  let g: SFunc = f;
+  if (copying) {
+    g = SFunc { ...f, blocks: nblocks };
+  }
   let live: boolean[] = __alloc_bool(g.blocks.len());
   let work: i32[] = [position_of(at, g.entry)];
   let next: i32 = 0;
@@ -2518,19 +2662,34 @@ pub function thread_forwarding(f: SFunc): SFunc {
       continue;
     }
     live = live.with(b, true);
-    for s in successor_positions(g, at, b) {
-      work = work.append(s);
+    let which: i32 = 0;
+    while (which < 2) {
+      let id: i32 = successor_id(g.blocks[b].term, which);
+      if (id >= 0 && (which == 0 || id != g.blocks[b].term.t)) {
+        work = work.append(position_of(at, id));
+      }
+      which = which + 1;
     }
   }
+  // `kept` is written from the first unreachable block on.
   let kept: SBlock[] = [];
+  let dropping: boolean = false;
   let i: i32 = 0;
   while (i < g.blocks.len()) {
-    if (live[i]) {
+    if (!live[i]) {
+      if (!dropping) {
+        kept = blocks_before(g.blocks, i);
+        dropping = true;
+      }
+    } else if (dropping) {
       kept = kept.append(g.blocks[i]);
     }
     i = i + 1;
   }
-  let out: SFunc = SFunc { ...g, blocks: kept };
+  let out: SFunc = g;
+  if (dropping) {
+    out = SFunc { ...g, blocks: kept };
+  }
   return SFunc { ...out, blocks: refreshed_preds(out) };
 }
 
@@ -2580,25 +2739,72 @@ function refreshed_preds(f: SFunc): SBlock[] {
   }
   i = 0;
   while (i < f.blocks.len()) {
-    for s in successor_positions(f, at, i) {
+    let which: i32 = 0;
+    while (which < 2) {
+      let s: i32 = distinct_successor_position(at, f.blocks[i].term, which);
       if (s >= 0 && !has_pred(preds[s], f.blocks[i].id)) {
         preds = preds.with(s, preds[s].append(f.blocks[i].id));
       }
+      which = which + 1;
     }
     i = i + 1;
   }
+  // `out` is written from the first block whose list changes on.
   let out: SBlock[] = [];
+  let copying: boolean = false;
   i = 0;
   while (i < f.blocks.len()) {
     let b: SBlock = f.blocks[i];
+    let nb: SBlock = b;
+    let fresh: boolean = false;
     if (has_phi(b)) {
-      out = out.append(trim_phi_edges(b, preds[i]));
-    } else {
-      out = out.append(SBlock { ...b, preds: preds[i] });
+      if (!every_pred(b.preds, preds[i])) {
+        nb = trim_phi_edges(b, preds[i]);
+        fresh = true;
+      }
+    } else if (!same_preds(b.preds, preds[i])) {
+      nb = SBlock { ...b, preds: preds[i] };
+      fresh = true;
+    }
+    if (fresh) {
+      if (!copying) {
+        out = blocks_before(f.blocks, i);
+        copying = true;
+      }
+      out = out.append(nb);
+    } else if (copying) {
+      out = out.append(b);
     }
     i = i + 1;
   }
+  if (!copying) {
+    return f.blocks;
+  }
   return out;
+}
+
+// every_pred reports whether `edges` backs every entry of `ps`.
+function every_pred(ps: i32[], edges: i32[]): boolean {
+  for p in ps {
+    if (!has_pred(edges, p)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function same_preds(a: i32[], b: i32[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i < a.len()) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
 }
 
 // trim_phi_edges drops the predecessor slots of b, and each phi's operand
@@ -2910,13 +3116,13 @@ pub function drop_low_wraps(f: SFunc): Formed {
   // half read once v's is (high_operands); def_b / def_k locate v's
   // definition, -1 for a value nothing defines.
   let prop: i32[] = __alloc_i32(f.nvals);
-  let def_b: i32[] = [];
-  let def_k: i32[] = [];
+  let def_b: i32[] = __alloc_i32(f.nvals);
+  let def_k: i32[] = __alloc_i32(f.nvals);
   let high: boolean[] = __alloc_bool(f.nvals);
   let i: i32 = 0;
   while (i < f.nvals) {
-    def_b = def_b.append(0 - 1);
-    def_k = def_k.append(0 - 1);
+    def_b = def_b.with(i, 0 - 1);
+    def_k = def_k.with(i, 0 - 1);
     i = i + 1;
   }
   let wraps: i32[] = [];
@@ -3223,6 +3429,9 @@ function term_operand(t: STerm): i32 {
 // value zero-extended, so its left half carries a u32_wrap and its right half
 // needs none; a 64-bit rotate has neither. The shifts are left to prune_dead.
 pub function fuse_rotates(f: SFunc): SFunc {
+  if (!has_or(f)) {
+    return f;
+  }
   let defs: SInst[] = [];
   let none: SInst = SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
   let i: i32 = 0;
@@ -3237,11 +3446,18 @@ pub function fuse_rotates(f: SFunc): SFunc {
       }
     }
   }
-  let changed: boolean = false;
+  // `nblocks` is written from the first block that fuses a rotate on, and a
+  // block's `ninsts` from its first fused instruction on.
   let nblocks: SBlock[] = [];
-  for blk in f.blocks {
+  let copying: boolean = false;
+  let bi: i32 = 0;
+  while (bi < f.blocks.len()) {
+    let blk: SBlock = f.blocks[bi];
     let ninsts: SInst[] = [];
-    for ins in blk.insts {
+    let fused: boolean = false;
+    let k: i32 = 0;
+    while (k < blk.insts.len()) {
+      let ins: SInst = blk.insts[k];
       let r: SInst = ins;
       if (ins.kind_tag == 9 && ins.str == "or" && ins.args.len() == 2) {
         let m: SInst = rotate_half_pair(defs, ins, ins.args[0], ins.args[1]);
@@ -3250,17 +3466,45 @@ pub function fuse_rotates(f: SFunc): SFunc {
         }
         if (m.kind_tag != 0) {
           r = m;
-          changed = true;
+          if (!fused) {
+            ninsts = insts_before(blk.insts, k);
+            fused = true;
+          }
         }
       }
-      ninsts = ninsts.append(r);
+      if (fused) {
+        ninsts = ninsts.append(r);
+      }
+      k = k + 1;
     }
-    nblocks = nblocks.append(SBlock { ...blk, insts: ninsts });
+    if (fused) {
+      if (!copying) {
+        nblocks = blocks_before(f.blocks, bi);
+        copying = true;
+      }
+      nblocks = nblocks.append(SBlock { ...blk, insts: ninsts });
+    } else if (copying) {
+      nblocks = nblocks.append(blk);
+    }
+    bi = bi + 1;
   }
-  if (!changed) {
+  if (!copying) {
     return f;
   }
   return SFunc { ...f, blocks: nblocks };
+}
+
+// has_or reports whether `f` holds a two-operand `or`, the only instruction
+// fuse_rotates rewrites.
+function has_or(f: SFunc): boolean {
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (ins.kind_tag == 9 && ins.args.len() == 2 && ins.str == "or") {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 // rotate_half_pair is the rotate `or` computes when `rv` is the logical right
@@ -3363,19 +3607,69 @@ pub function rotr_count(what: string): i32 {
   return n;
 }
 
+// prune_dead drops the pure instructions nothing reads. A block that keeps
+// every instruction keeps its record, and a function that keeps every block
+// is returned as it came: `nblocks` is written from the first block that
+// loses an instruction on, and a block's `ninsts` from its first dead
+// instruction on.
 pub function prune_dead(f: SFunc): SFunc {
   let live: i32[] = prune_mark(f, prune_roots(f));
   let nblocks: SBlock[] = [];
-  for blk in f.blocks {
+  let copying: boolean = false;
+  let bi: i32 = 0;
+  while (bi < f.blocks.len()) {
+    let blk: SBlock = f.blocks[bi];
     let ninsts: SInst[] = [];
-    for ins in blk.insts {
-      if (inst_has_effect(ins.kind_tag) || live[ins.result] == 1) {
-        ninsts = ninsts.append(ins);
+    let pruned: boolean = false;
+    let k: i32 = 0;
+    while (k < blk.insts.len()) {
+      let ins: SInst = blk.insts[k];
+      let stays: boolean = inst_has_effect(ins.kind_tag) || live[ins.result] == 1;
+      if (pruned) {
+        if (stays) {
+          ninsts = ninsts.append(ins);
+        }
+      } else if (!stays) {
+        ninsts = insts_before(blk.insts, k);
+        pruned = true;
       }
+      k = k + 1;
     }
-    nblocks = nblocks.append(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds });
+    if (pruned) {
+      if (!copying) {
+        nblocks = blocks_before(f.blocks, bi);
+        copying = true;
+      }
+      nblocks = nblocks.append(SBlock { id: blk.id, insts: ninsts, term: blk.term, preds: blk.preds });
+    } else if (copying) {
+      nblocks = nblocks.append(blk);
+    }
+    bi = bi + 1;
+  }
+  if (!copying) {
+    return f;
   }
   return SFunc { name: f.name, nparams: f.nparams, nvals: f.nvals, blocks: nblocks, entry: f.entry, takes_env: f.takes_env };
+}
+
+function insts_before(insts: SInst[], n: i32): SInst[] {
+  let out: SInst[] = [];
+  let j: i32 = 0;
+  while (j < n) {
+    out = out.append(insts[j]);
+    j = j + 1;
+  }
+  return out;
+}
+
+function blocks_before(blocks: SBlock[], n: i32): SBlock[] {
+  let out: SBlock[] = [];
+  let j: i32 = 0;
+  while (j < n) {
+    out = out.append(blocks[j]);
+    j = j + 1;
+  }
+  return out;
 }
 
 // inst_has_effect names the instructions kept whether or not their result is

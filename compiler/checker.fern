@@ -1981,19 +1981,10 @@ function sig_buckets(): i32 {
   return 4093;
 }
 
-// sig_name_bucket hashes a signature name to a bucket. The accumulator is
-// masked to 23 bits each step and reduced once at the end: `h * 131` then
-// stays under 2^31, so the hash still needs no wrapping arithmetic, without
-// paying an integer division per character. The loop is the shape the
-// parser's bounds-check elision takes.
+// sig_name_bucket hashes a signature name to a bucket with the `__str_hash`
+// kernel, masked so the `%` cannot return a negative index.
 function sig_name_bucket(name: string): i32 {
-  let h: i32 = 0;
-  let i: i32 = 0;
-  while (i < name.len()) {
-    h = h * 131 + name[i] as i32 & 8388607;
-    i = i + 1;
-  }
-  return h % 4093;
+  return (__str_hash(name, 0) & 1073741823) % 4093;
 }
 
 // sig_bucket_from is sig_name_bucket over the SUFFIX of `name` starting at
@@ -4824,10 +4815,12 @@ function builtin_sigs(): string[] {
     "setgroups(i64[]): Result[void, IoError]",
     "setuid(i64): Result[void, IoError]",
     "signal_catch(i32): i32",
+    "signal_catch_interrupting(i32): i32",
     "signal_default(i32): i32",
     "signal_disposition(i32): i32",
     "signal_ignore(i32): i32",
     "signal_mask(i32, i64): i64",
+    "signal_raise(i32): i32",
     "signal_send(i32, i32): Result[void, IoError]",
     "signal_taken(i32): boolean",
     "sleep_ms(i64): void",

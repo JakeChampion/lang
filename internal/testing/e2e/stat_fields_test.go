@@ -192,10 +192,11 @@ func TestInterpStatFields(t *testing.T) {
 	}
 }
 
-// statFieldsWasmSource is the preview-1 half of the same probe, and it is a
+// statFieldsWasmSource is the WASI half of the same probe, and it is a
 // different assertion because WASI answers a different question.
 //
-// `filestat` has dev, ino, nlink, size and the three timestamps; it has no
+// Preview 1's `filestat` has dev, ino, nlink, size and the three timestamps,
+// and preview 2's `descriptor-stat` the same less dev and ino; neither has
 // mode, uid, gid, rdev, blksize or blocks at all. Those read ZERO, which is
 // the checker's documented contract for `stat` — so a zero here is the
 // assertion, not an absence of one. A backend that left the tail of the struct
@@ -208,7 +209,7 @@ func statFieldsWasmSource() string {
             if (f.size != (5 as i64)) { return 2; }
             if (f.mtime != (%[1]d as i64)) { return 3; }
             if (f.mtime_nsec < (0 as i64) || f.mtime_nsec > (999999999 as i64)) { return 4; }
-            // The fields preview 1 does not report.
+            // The fields WASI does not report.
             if (f.mode != (0 as u32)) { return 5; }
             if (f.uid != (0 as u32)) { return 6; }
             if (f.gid != (0 as u32)) { return 7; }
@@ -226,24 +227,27 @@ func statFieldsWasmSource() string {
 `, statProbeMtime)
 }
 
-func TestWASMStatFields(t *testing.T) {
-	stdout, stderr := runWasmStatProbe(t, statFieldsWasmSource())
-	if got := parseMainResult(t, stdout); got != 0 {
-		t.Errorf("main = %d, want 0 — the code names the field (see statFieldsWasmSource)\nstdout:\n%s\nstderr:\n%s",
-			got, stdout, stderr)
+// Preview 1 fills the record from path_filestat_get, the component from
+// stat-at's descriptor-stat: two bodies, so two runs.
+func TestWASMPreview1StatFields(t *testing.T) {
+	mod := buildWasmCore(t, statFieldsWasmSource())
+	if got := runPreview1Module(t, mod, statProbeWasmDir(t)); got != 0 {
+		t.Errorf("main = %d, want 0 — the code names the field (see statFieldsWasmSource)", got)
 	}
 }
 
-// runWasmStatProbe seeds the probe file and stamps its mtime before the
-// component runs; runWasmInDir's own seeding cannot, since it writes the files
-// itself and nothing there sets a time.
-//
-// main's return reaches us on STDOUT, not as the exit status: the harness
-// runs the module with `--invoke main`, so a program that returned 7 still
-// exits 0.
-func runWasmStatProbe(t *testing.T, src string) (stdout, stderr string) {
+func TestWASMStatFields(t *testing.T) {
+	out := runResultStdout(t, statFieldsWasmSource(), runOpts{workDir: statProbeWasmDir(t)})
+	if got := parseMainResult(t, out); got != 0 {
+		t.Errorf("main = %d, want 0 — the code names the field (see statFieldsWasmSource)\nstdout:\n%s", got, out)
+	}
+}
+
+// statProbeWasmDir seeds the probe file and stamps its mtime before the wasm
+// runs; runWasmInDir's own seeding cannot, since it writes the files itself
+// and nothing there sets a time.
+func statProbeWasmDir(t *testing.T) string {
 	t.Helper()
-	p := buildComponent(t, src)
 	dir := t.TempDir()
 	file := filepath.Join(dir, "probe.txt")
 	if err := os.WriteFile(file, []byte("hello"), 0o640); err != nil {
@@ -253,21 +257,15 @@ func runWasmStatProbe(t *testing.T, src string) (stdout, stderr string) {
 	if err := os.Chtimes(file, when, when); err != nil {
 		t.Fatalf("chtimes: %v", err)
 	}
-	s, e, ec := runComponent(t, p, runOpts{workDir: dir})
-	if ec != 0 {
-		t.Fatalf("wasmtime exit %d\nstdout:\n%s\nstderr:\n%s", ec, s, e)
-	}
-	return s, e
+	return dir
 }
 
 // parseMainResult reads main's integer result from the last line of stdout.
 func parseMainResult(t *testing.T, stdout string) int {
 	t.Helper()
-	for _, ln := range strings.Split(stdout, "\n") {
-		ln = strings.TrimSpace(ln)
-		if ln == "" {
-			continue
-		}
+	lines := strings.Split(stdout, "\n")
+	for k := len(lines) - 1; k >= 0; k-- {
+		ln := strings.TrimSpace(lines[k])
 		if i := strings.LastIndex(ln, " "); i >= 0 {
 			ln = ln[i+1:]
 		}

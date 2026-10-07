@@ -862,6 +862,35 @@ Zero-config stderr wrappers plus a leveled logger (#2683).
   errno.ENOTDIR` holds on Darwin and WASI as well. `ENOATTR` is `ENODATA` and
   `EOPNOTSUPP` is `ENOTSUP`, as glibc defines them.
 
+### `std/signal`
+
+Signal dispositions, and signals a program observes without running Fern code
+when one arrives: a catch only sets the signal's flag, and the program reads it
+with `taken`. Needs the `signal` target capability; on wasi-cli every call is a
+no-op, since nothing can deliver a signal there.
+
+- `SIGHUP`, `SIGINT`, `SIGQUIT`, `SIGPIPE`, `SIGTERM`: the numbers shared by
+  Linux and Darwin.
+- `ignore(sig)` / `default(sig)`: SIG_IGN / SIG_DFL. 0, or a negative errno
+  (EINVAL for SIGKILL, SIGSTOP and numbers outside 1..64).
+- `catch(sig)`: record each arrival for `taken`. A read, write or wait the
+  signal interrupts resumes, so the program notices at its next poll.
+- `catch_interrupting(sig)`: `catch`, except that a blocking read, write or
+  wait the signal arrives during fails: `Interrupted` from a Reader or Writer,
+  -4 (EINTR) from `proc_waitpid`. For a program that must act on the signal
+  while blocked on a call that may never return by itself; every blocking call
+  can then fail that way, so each needs a retry.
+- `taken(sig): boolean`: whether `sig` arrived since the last call, clearing
+  it. Several arrivals between two polls read as one.
+- `raise(sig)`: send `sig` to this process. One the process does not block is
+  delivered before it returns, so after `default(sig)` a fatal one ends the
+  process there: how a program dies of a signal it caught. -ENOTSUP on
+  wasi-cli.
+- `blocked()`, `block(mask)`, `unblock(mask)`, `set_blocked(mask)`, `bit(sig)`:
+  the blocked set, a bit per signal at bit (sig-1); each setter answers the set
+  as it was before the call.
+- `disposition(sig)`: `DFL`, `IGN` or `HANDLER`.
+
 ### `std/path`
 
 POSIX path manipulation (string-level only).

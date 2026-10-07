@@ -35,6 +35,12 @@
 // that arrives during a read is reported when the read returns, before its
 // record is counted, so the numbers are the ones GNU prints and only the
 // moment differs.
+//
+// SIGINT writes the report too, and then dd dies of it, as GNU's does. Its
+// catch interrupts a blocked read or write, so ^C at an idle terminal or pipe
+// reports at once; the record that read was waiting for and the block that
+// write was writing are not counted, nor is a block still being assembled
+// written out. A SIGINT ignored when dd starts stays ignored.
 import "std/string";
 import "std/i32";
 import "std/i64";
@@ -764,10 +770,14 @@ function apply_sync(piece: u8[], s: Settings): u8[] {
 // than a write, and still counts as a record out. A handle that cannot
 // seek turns sparse off for the rest of the run, without a word. `seeked`
 // says the LAST block was a seek, which `settle_holes` needs.
-struct Sink { w: Writer, buf: io_buffered.BufBlock, held: i32, obs: i32, name: string, c: Counts, ok: boolean, sparse: boolean, seeked: boolean }
+//
+// `intr` is the SIGINT a write looks for before it starts and after it is
+// interrupted; `stopped` says it arrived, with the block it was writing
+// left uncounted, as GNU leaves it.
+struct Sink { w: Writer, buf: io_buffered.BufBlock, held: i32, obs: i32, name: string, c: Counts, ok: boolean, sparse: boolean, seeked: boolean, intr: i32, stopped: boolean }
 
-function sink_new(w: Writer, name: string, obs: i32, c: Counts, sparse: boolean): Sink {
-  return Sink { w: w, buf: io_buffered.BufBlock { h: buf_new(obs * 2) }, held: 0, obs: obs, name: name, c: c, ok: true, sparse: sparse, seeked: false };
+function sink_new(w: Writer, name: string, obs: i32, c: Counts, sparse: boolean, intr: i32): Sink {
+  return Sink { w: w, buf: io_buffered.BufBlock { h: buf_new(obs * 2) }, held: 0, obs: obs, name: name, c: c, ok: true, sparse: sparse, seeked: false, intr: intr, stopped: false };
 }
 
 function all_nul(data: u8[]): boolean {
@@ -798,6 +808,9 @@ function write_full(k0: Sink, data: u8[], partial: boolean): Sink {
   }
   let off: i32 = 0;
   while (off < data.len()) {
+    if (interrupt_taken(k.intr)) {
+      return Sink { ...k, ok: false, stopped: true };
+    }
     let piece: u8[] = data;
     if (off > 0) {
       let h: usize = buf_new(data.len() - off);
@@ -807,8 +820,10 @@ function write_full(k0: Sink, data: u8[], partial: boolean): Sink {
     }
     match (k.w.write_some_bytes(piece)) {
       Err(e) => {
-        gnu.error("error writing " + gnu.quote(k.name) + ": " + gnu.io_error_text(e));
-        return Sink { ...k, ok: false };
+        if (errno.of(e) != errno.EINTR) {
+          gnu.error("error writing " + gnu.quote(k.name) + ": " + gnu.io_error_text(e));
+          return Sink { ...k, ok: false };
+        }
       },
       Ok(n) => {
         if (n == 0 as i64) {
@@ -912,22 +927,52 @@ function sink_flush(k: Sink): Sink {
 // dribbled two bytes at a time into a 4-byte block. `iflag=fullblock`
 // asks for the other reading: keep reading until the block is full or
 // the input ends, so the same two dribbles become `1+0`.
-struct Take { data: u8[], ok: boolean, eof: boolean }
+//
+// `stopped` says SIGINT arrived before a read or during one, and nothing of
+// that read is in the record.
+struct Take { data: u8[], ok: boolean, eof: boolean, stopped: boolean }
 
-function read_record(r: Reader, s: Settings, want: i32, name: string): Take {
-  match (r.read_chunk_bytes(want)) {
+// `read_some` is one read of up to `want` bytes, as GNU's iread is: SIGINT
+// is looked for before it, and a read a signal interrupts with nothing read
+// is tried again. The flag says SIGINT arrived, and then nothing was read.
+function read_some(r: Reader, want: i32, intr: i32): (Result[u8[], IoError], boolean) {
+  while (true) {
+    if (interrupt_taken(intr)) {
+      return (Ok([]), true);
+    }
+    let got: Result[u8[], IoError] = r.read_chunk_bytes(want);
+    match (got) {
+      Err(e) => {
+        if (errno.of(e) != errno.EINTR) {
+          return (got, false);
+        }
+      },
+      Ok(_) => {
+        return (got, false);
+      }
+    }
+  }
+  return (Ok([]), true);
+}
+
+function read_record(r: Reader, s: Settings, want: i32, name: string, intr: i32): Take {
+  let (got, stopped) = read_some(r, want, intr);
+  if (stopped) {
+    return Take { data: [], ok: true, eof: false, stopped: true };
+  }
+  match (got) {
     Err(e) => {
       gnu.error("error reading " + gnu.quote(name) + ": " + gnu.io_error_text(e));
-      return Take { data: [], ok: false, eof: true };
+      return Take { data: [], ok: false, eof: true, stopped: false };
     },
     Ok(first) => {
       if (first.len() == 0) {
-        return Take { data: [], ok: true, eof: true };
+        return Take { data: [], ok: true, eof: true, stopped: false };
       }
       if ((s.iflag & flag_fullblock()) == 0 || first.len() == want) {
-        return Take { data: first, ok: true, eof: false };
+        return Take { data: first, ok: true, eof: false, stopped: false };
       }
-      return fill_block(r, s, want, name, first);
+      return fill_block(r, s, want, name, first, intr);
     }
   }
 }
@@ -935,16 +980,21 @@ function read_record(r: Reader, s: Settings, want: i32, name: string): Take {
 // `iflag=fullblock`: keep reading into the same record until it holds a
 // whole block. The end of the input stops it short, and that record is
 // the partial one.
-function fill_block(r: Reader, s: Settings, want: i32, name: string, first: u8[]): Take {
+function fill_block(r: Reader, s: Settings, want: i32, name: string, first: u8[], intr: i32): Take {
   let h: usize = buf_new(want);
   buf_push_bytes_range(h, first, 0, first.len());
   let have: i32 = first.len();
   while (have < want) {
-    match (r.read_chunk_bytes(want - have)) {
+    let (got, stopped) = read_some(r, want - have, intr);
+    if (stopped) {
+      buf_free(h);
+      return Take { data: [], ok: true, eof: false, stopped: true };
+    }
+    match (got) {
       Err(e) => {
         buf_free(h);
         gnu.error("error reading " + gnu.quote(name) + ": " + gnu.io_error_text(e));
-        return Take { data: [], ok: false, eof: true };
+        return Take { data: [], ok: false, eof: true, stopped: false };
       },
       Ok(more) => {
         if (more.len() == 0) {
@@ -958,15 +1008,24 @@ function fill_block(r: Reader, s: Settings, want: i32, name: string, first: u8[]
   }
   let bytes: u8[] = buf_take_bytes(h);
   buf_free(h);
-  return Take { data: bytes, ok: true, eof: false };
+  return Take { data: bytes, ok: true, eof: false, stopped: false };
 }
 
 // ---- the copy ---------------------------------------------------------------
 //
 // `count` is a number of RECORDS unless `iflag=count_bytes` makes it a
 // number of bytes, and the same pair of readings applies to `skip` and
-// `seek` through their own flags.
-struct Run { c: Counts, status: i32, progressed: boolean }
+// `seek` through their own flags. `stopped` says the copy ended on SIGINT.
+struct Run { c: Counts, status: i32, progressed: boolean, stopped: boolean }
+
+// The run as it stands when the sink gave up: a write failed, or SIGINT
+// arrived, and then the report counts the truncated records too.
+function sink_gave_up(k: Sink, truncated: i64, progressed: boolean): Run {
+  if (k.stopped) {
+    return Run { c: Counts { ...k.c, truncated: truncated }, status: 1, progressed: progressed, stopped: true };
+  }
+  return Run { c: k.c, status: 1, progressed: progressed, stopped: false };
+}
 
 // One `\r`-prefixed transfer line per second of a `status=progress` run,
 // its seconds a whole number rather than the `%g` the final line prints.
@@ -1058,6 +1117,34 @@ function info_poll(info: i32, c: Counts, truncated: i64, s: Settings, started: i
   return false;
 }
 
+// The interrupt dd reports on and dies of: SIGINT, unless it was ignored
+// when dd started, which GNU leaves as it found it — a dd started in the
+// background of a shell without job control stays deaf to ^C. 0 for none.
+function interrupt_signal(): i32 {
+  if (signal.disposition(signal.SIGINT) == signal.IGN) {
+    return 0;
+  }
+  return signal.SIGINT;
+}
+
+function interrupt_taken(intr: i32): boolean {
+  return intr > 0 && signal.taken(intr);
+}
+
+// What the SIGINT report needs beside the counts.
+struct Stop { intr: i32, s: Settings, started: i64 }
+
+// `stop_now` is GNU's answer to SIGINT: the report as the counts stand, on a
+// line of its own after a progress line, then death by the signal. A block
+// still being assembled for output is not written, and is not counted.
+function stop_now(st: Stop, c: Counts, progressed: boolean): void {
+  if (progressed) {
+    eprint("");
+  }
+  report(c, st.s, (monotonic_ns() - st.started) as f64 / 1000000000.0);
+  signals.die_of(st.intr);
+}
+
 function copy(r: Reader, k0: Sink, s: Settings, bs_given: boolean, in_name: string, started: i64, info: i32): Run {
   let k: Sink = k0;
   let st: Rec = rec_new(s.cbs as i32, s.conv);
@@ -1086,11 +1173,14 @@ function copy(r: Reader, k0: Sink, s: Settings, bs_given: boolean, in_name: stri
     if (s.have_count && count_bytes && bytes_left < s.ibs) {
       want = bytes_left as i32;
     }
-    let got: Take = read_record(r, s, want, in_name);
+    let got: Take = read_record(r, s, want, in_name, k.intr);
+    if (got.stopped) {
+      return Run { c: Counts { ...k.c, truncated: st.trunc }, status: 1, progressed: progressed, stopped: true };
+    }
     progressed = info_poll(info, k.c, st.trunc, s, started, progressed);
     if (!got.ok) {
       if ((s.conv & conv_noerror()) == 0) {
-        return Run { c: k.c, status: 1, progressed: progressed };
+        return Run { c: k.c, status: 1, progressed: progressed, stopped: false };
       }
       status = 1;
       break;
@@ -1127,7 +1217,7 @@ function copy(r: Reader, k0: Sink, s: Settings, bs_given: boolean, in_name: stri
       k = sink_push(k, piece);
     }
     if (!k.ok) {
-      return Run { c: k.c, status: 1, progressed: progressed };
+      return sink_gave_up(k, st.trunc, progressed);
     }
     let (oc2, odue) = cache_advance(oc, piece.len() as i64);
     oc = oc2;
@@ -1161,11 +1251,14 @@ function copy(r: Reader, k0: Sink, s: Settings, bs_given: boolean, in_name: stri
   }
   k = sink_push(k, rest);
   if (!k.ok) {
-    return Run { c: k.c, status: 1, progressed: progressed };
+    return sink_gave_up(k, st.trunc, progressed);
   }
   k = sink_flush(k);
-  if (!k.ok || !settle_holes(k)) {
-    return Run { c: k.c, status: 1, progressed: progressed };
+  if (!k.ok) {
+    return sink_gave_up(k, st.trunc, progressed);
+  }
+  if (!settle_holes(k)) {
+    return Run { c: k.c, status: 1, progressed: progressed, stopped: false };
   }
   if (ic.on) {
     r.drop_cache(ic.start, 0 as i64);
@@ -1174,7 +1267,7 @@ function copy(r: Reader, k0: Sink, s: Settings, bs_given: boolean, in_name: stri
     k.w.drop_cache(oc.start, 0 as i64);
   }
   let c: Counts = Counts { ...k.c, truncated: st.trunc };
-  return Run { c: c, status: status, progressed: progressed };
+  return Run { c: c, status: status, progressed: progressed, stopped: false };
 }
 
 // The conversions that rewrite a record's bytes, in GNU's order: the
@@ -1692,7 +1785,7 @@ function open_out_appending(s: Settings): (Writer, boolean) {
 // skip a stream. When neither works the run says
 // `'NAME': cannot skip to specified offset` and carries on from where
 // it is, as GNU does, rather than failing.
-function skip_input(r: Reader, s: Settings): boolean {
+function skip_input(r: Reader, s: Settings, stop: Stop): boolean {
   let want: i64 = s.skip;
   if (want <= 0 as i64) {
     return true;
@@ -1706,7 +1799,7 @@ function skip_input(r: Reader, s: Settings): boolean {
     },
     Err(_) => {}
   }
-  return drain(r, s, want);
+  return drain(r, s, want, stop);
 }
 
 // A seek PAST the end of a regular file is not an error — lseek takes
@@ -1736,15 +1829,20 @@ function cannot_skip(s: Settings): void {
 }
 
 // The forward read a pipe needs. A short read is fine; the end of the
-// input before the offset is what GNU warns about.
-function drain(r: Reader, s: Settings, want: i64): boolean {
+// input before the offset is what GNU warns about. SIGINT here reports the
+// empty counts, as GNU's does, since nothing has been copied yet.
+function drain(r: Reader, s: Settings, want: i64, stop: Stop): boolean {
   let left: i64 = want;
   while (left > 0 as i64) {
     let take: i32 = s.ibs as i32;
     if (left < s.ibs) {
       take = left as i32;
     }
-    match (r.read_chunk_bytes(take)) {
+    let (got, stopped) = read_some(r, take, stop.intr);
+    if (stopped) {
+      stop_now(stop, counts_new(), false);
+    }
+    match (got) {
       Err(_) => {
         cannot_skip(s);
         return true;
@@ -1849,19 +1947,31 @@ pub function main(): i32 {
   }
   let r: Reader = ri.0;
   let w: Writer = wo.0;
-  if (!skip_input(r, s)) {
+  // GNU installs its handlers here, after the files are open and before the
+  // skip, and starts the clock. SIGINT has to end a read that may never
+  // return, a skip over an idle pipe among them, so its catch interrupts;
+  // the info report waits for the read to return.
+  let info: i32 = info_signal();
+  if (info > 0) {
+    signal.catch(info);
+  }
+  let intr: i32 = interrupt_signal();
+  if (intr > 0) {
+    signal.catch_interrupting(intr);
+  }
+  let started: i64 = monotonic_ns();
+  let stop: Stop = Stop { intr: intr, s: s, started: started };
+  if (!skip_input(r, s, stop)) {
     exit(1);
   }
   if (!seek_output(w, s, s.out_name)) {
     exit(1);
   }
-  let info: i32 = info_signal();
-  if (info > 0) {
-    signal.catch(info);
-  }
-  let started: i64 = monotonic_ns();
-  let k: Sink = sink_new(w, s.out_name, s.obs as i32, counts_new(), (s.conv & conv_sparse()) != 0);
+  let k: Sink = sink_new(w, s.out_name, s.obs as i32, counts_new(), (s.conv & conv_sparse()) != 0, intr);
   let run: Run = copy(r, k, s, scan.bs_given, s.in_name, started, info);
+  if (run.stopped) {
+    stop_now(stop, run.c, run.progressed);
+  }
   let status: i32 = run.status;
   // `count=0` with `nocache` copies nothing and drops the whole file's
   // cache instead, the one form whose failure GNU reports.
@@ -1900,6 +2010,9 @@ pub function main(): i32 {
       },
       None => {}
     }
+  }
+  if (interrupt_taken(intr)) {
+    stop_now(stop, run.c, run.progressed);
   }
   let progressed: boolean = info_poll(info, run.c, run.c.truncated, s, started, run.progressed);
   let secs: f64 = (monotonic_ns() - started) as f64 / 1000000000.0;

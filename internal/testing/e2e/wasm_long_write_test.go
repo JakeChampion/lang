@@ -42,10 +42,12 @@ function main(): i32 {
 		return sb.String()
 	}
 	want := body(4095) + "|" + body(4096) + "|" + body(4097) + "|" + body(9000) + "\n"
-	out, errOut := invokeWasmtime(t, src)
-	// invokeWasmtime's result printer appends main's result on its own line.
-	if !strings.HasPrefix(out, want) {
-		t.Fatalf("stdout is %d bytes and does not start with the %d expected; first difference near byte %d",
+	out, errOut, ec := runCLIComponent(t, src, runOpts{})
+	if ec != 0 {
+		t.Fatalf("wasmtime exit %d\nstderr:\n%s", ec, errOut)
+	}
+	if out != want {
+		t.Fatalf("stdout is %d bytes, want the %d expected; first difference near byte %d",
 			len(out), len(want), firstDiff(out, want))
 	}
 	if !strings.Contains(errOut, body(8193)+"\n") {
