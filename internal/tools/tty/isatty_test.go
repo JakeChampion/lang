@@ -44,6 +44,20 @@ func TestIsTerminalAcceptsAPty(t *testing.T) {
 	}
 }
 
+// A master opened straight from /dev/ptmx, never granted or unlocked, is
+// what the coreutils corpus hands `test -t` and `tty`. Darwin's libc calls it
+// a terminal by its device type, since it refuses TIOCGETA.
+func TestIsTerminalAcceptsABarePtmxMaster(t *testing.T) {
+	f, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
+	if err != nil {
+		t.Skipf("open /dev/ptmx: %v", err)
+	}
+	defer f.Close()
+	if !tty.IsTerminal(int(f.Fd())) {
+		t.Error("IsTerminal(/dev/ptmx master) = false")
+	}
+}
+
 // A pipe is the shape a redirected CLI actually has, and the one the colour
 // gate turns on.
 func TestIsTerminalRejectsAPipeAndAClosedFd(t *testing.T) {
