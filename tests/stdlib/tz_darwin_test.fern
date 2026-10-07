@@ -1,0 +1,73 @@
+import "std/test";
+import "std/tz";
+
+// tests/stdlib/tz_darwin_test.fern — std/tz on Darwin, where tzset is
+// tzcode's rather than glibc's. It holds only when built for Darwin;
+// internal/testing/e2e/arm64_darwin_tz_test.go is its gate.
+
+// A TZ that is neither a zone file nor a whole rule is UTC under that
+// name, where glibc keeps the name it was given.
+function test_bare_name_is_utc(): test.TestOutcome {
+  let z: tz.Zone = tz.zone_from_tz("ABC");
+  if (z.offset_at(0i64) != 0) {
+    return test.fail("offset");
+  }
+  return test.assert_eq(z.abbrev_at(0i64), "UTC");
+}
+
+function test_empty_is_utc(): test.TestOutcome {
+  return test.assert_eq(tz.zone_from_tz("").abbrev_at(1700000000i64), "UTC");
+}
+
+// A quoted designation of any length, which glibc refuses under three.
+function test_short_quoted_names(): test.TestOutcome {
+  let z: tz.Zone = tz.zone_from_tz("<XX>5<YY>4,M3.2.0,M11.1.0");
+  if (z.abbrev_at(1720000000i64) != "YY") {
+    return test.fail("daylight name");
+  }
+  return test.assert_eq(z.offset_at(1700000000i64), 0 - 18000);
+}
+
+// Hours run to 167 rather than clamping at 24, and past that the rule
+// is refused.
+function test_hours_past_a_day(): test.TestOutcome {
+  if (tz.zone_from_tz("AAA+25:59:59").offset_at(0i64) != 0 - 93599) {
+    return test.fail("25:59:59");
+  }
+  return test.assert_eq(tz.zone_from_tz("AAA+168").abbrev_at(0i64), "UTC");
+}
+
+// The transitions start in 1970: before the first of them a southern
+// rule is standard time even in its summer.
+function test_rule_starts_in_1970(): test.TestOutcome {
+  let z: tz.Zone = tz.zone_from_tz("NZST-12NZDT,M9.5.0,M4.1.0/3");
+  if (z.abbrev_at(0i64 - 372000000i64) != "NZST") {
+    return test.fail("1958");
+  }
+  if (z.offset_at(0i64) != 43200) {
+    return test.fail("the epoch");
+  }
+  return test.assert_eq(z.abbrev_at(1704067200i64), "NZDT");
+}
+
+// A bad date refuses the whole string, where glibc keeps the offsets.
+function test_bad_date_is_utc(): test.TestOutcome {
+  return test.assert_eq(tz.zone_from_tz("EST5EDT,M13.1.0,M11.1.0").abbrev_at(0i64), "UTC");
+}
+
+// `;` separates the rule as a comma does.
+function test_semicolon_rule(): test.TestOutcome {
+  return test.assert_eq(tz.zone_from_tz("EST5EDT4;M3.2.0,M11.1.0").offset_at(1720000000i64), 0 - 14400);
+}
+
+function main(): i32 {
+  let t: test.TestRunner = test.test_new("tz-darwin");
+  t = t.it("a bare name is UTC", test_bare_name_is_utc);
+  t = t.it("an empty TZ is UTC", test_empty_is_utc);
+  t = t.it("short quoted names", test_short_quoted_names);
+  t = t.it("hours past a day", test_hours_past_a_day);
+  t = t.it("a rule starts in 1970", test_rule_starts_in_1970);
+  t = t.it("a bad date is UTC", test_bad_date_is_utc);
+  t = t.it("a semicolon before the rule", test_semicolon_rule);
+  return t.finish();
+}

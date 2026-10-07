@@ -453,7 +453,7 @@ var rcInertBuiltins = map[string]bool{
 	// saying whether the clock was set. Scalars only, so nothing to move.
 	"clock_resolution": true, "clock_set": true,
 	"geteuid": true, "getegid": true, "hostname": true,
-	"getuid": true, "getgid": true, "__getpwuid_name": true,
+	"getuid": true, "getgid": true, "__account_entry": true,
 	// `getgroups` has no arguments either, and it is classified here
 	// under the BUILTIN name rather than as `__fern_getgroups`: the
 	// runtime tables are the WASM registry's, and wasm has no users, so

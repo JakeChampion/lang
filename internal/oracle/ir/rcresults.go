@@ -601,7 +601,7 @@ var rcResultNonPointer = map[string]bool{
 	"process_alive":        true,
 	"disable_core_dumps":   true,
 	"geteuid":              true, "getegid": true, "getuid": true, "getgid": true,
-	"__getpwuid_name": true,
+	"__account_entry": true,
 	// The builder's handle is an opaque token indexing its own control
 	// block, not a counted header, and its length is a byte count — the
 	// two cases `rWord` cannot tell apart on its own.

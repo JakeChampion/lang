@@ -51,5 +51,5 @@
 # summary prints the corrected lines ready to paste. Keep the reason in the PR,
 # not here.
 
-x86_64/checker.allocs	23901042
-x86_64/checker.frees	23901042
+x86_64/checker.allocs	22033705
+x86_64/checker.frees	22033705

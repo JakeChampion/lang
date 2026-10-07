@@ -267,7 +267,7 @@ var Ungated = map[string]bool{
 	"getuid":  true,
 	// The account database's name for a uid: the same question /etc/passwd
 	// answers, asked of Directory Services on Darwin (#9815).
-	"__getpwuid_name": true,
+	"__account_entry": true,
 	"getgid":          true,
 	"getgroups":       true,
 	"rlimit_nofile":   true,

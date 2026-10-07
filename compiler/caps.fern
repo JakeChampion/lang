@@ -217,8 +217,8 @@ pub function ungated(): string[] {
     "signal_mask", "signal_disposition",
     "priority", "set_priority",
     "geteuid", "getegid", "getuid", "getgid", "getgroups",
-    // The account database's name for a uid (#9815).
-    "__getpwuid_name",
+    // An entry of the account database (#9815).
+    "__account_entry",
     "rlimit_nofile", "disable_core_dumps",
     // The constant-time marks only tell valgrind which bytes are secret.
     "__ct_secret", "__ct_public",

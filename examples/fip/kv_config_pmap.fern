@@ -1,0 +1,64 @@
+import "core/cmp";
+import "std/pmap";
+import "./kv_config_core";
+import "./kv_config_records";
+
+pub struct Db {
+  capacity: i32,
+  key_bytes: i32,
+  value_bytes: i32,
+  batch: i32,
+  refused: boolean,
+  entries: pmap.PMap[string, string],
+  output: u8[],
+}
+
+pub function new_db(capacity: i32, key_bytes: i32, value_bytes: i32, batch: i32): Option[Db] {
+  if (!kv_config_core.valid_config(capacity, key_bytes, value_bytes, batch)) {
+    return None;
+  }
+  let entries: pmap.PMap[string, string] = pmap.pmap_new();
+  return Some(Db {
+    capacity: capacity, key_bytes: key_bytes, value_bytes: value_bytes,
+    batch: batch, refused: false, entries: entries, output: [],
+  });
+}
+
+function apply(own db: Db, req: kv_config_records.Request): Db {
+  let present: boolean = db.entries.contains(req.key);
+  if (req.op == 1) {
+    if (!present && db.entries.len() == db.capacity) {
+      return Db { ...db, output: kv_config_records.emit(db.output, 3, "") };
+    }
+    db = Db { ...db, entries: db.entries.insert(req.key, req.value) };
+    return Db { ...db, output: kv_config_records.emit(db.output, 1, "") };
+  }
+  if (!present) {
+    return Db { ...db, output: kv_config_records.emit(db.output, 2, "") };
+  }
+  if (req.op == 3) {
+    db = Db { ...db, entries: db.entries.remove(req.key) };
+    return Db { ...db, output: kv_config_records.emit(db.output, 1, "") };
+  }
+  let value: string = db.entries.get_or(req.key, "");
+  if (req.op == 4) {
+    value = kv_config_records.increment(value, req.value);
+    db = Db { ...db, entries: db.entries.insert(req.key, value) };
+  }
+  return Db { ...db, output: kv_config_records.emit(db.output, 4, value) };
+}
+
+pub function process(own db: Db, input: u8[], offset: i32, count: i32): Db {
+  if (!kv_config_core.fits_widths(db.key_bytes, db.value_bytes, db.batch, input, offset, count)) {
+    return Db { ...db, refused: true };
+  }
+  db = Db { ...db, output: [], refused: false };
+  let stride: i32 = 1 + db.key_bytes + db.value_bytes;
+  let i: i32 = 0;
+  while (i < count) {
+    let req: kv_config_records.Request = kv_config_records.decode(input, offset + i * stride, db.key_bytes, db.value_bytes);
+    db = apply(db, req);
+    i = i + 1;
+  }
+  return db;
+}

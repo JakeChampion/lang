@@ -1609,7 +1609,7 @@ func New() *Interp {
 	i.Builtins["geteuid"] = &Builtin{Fn: builtinGeteuid}
 	i.Builtins["getegid"] = &Builtin{Fn: builtinGetegid}
 	i.Builtins["getuid"] = &Builtin{Fn: builtinGetuid}
-	i.Builtins["__getpwuid_name"] = &Builtin{Fn: builtinGetpwuidName}
+	i.Builtins["__account_entry"] = &Builtin{Fn: builtinAccountEntry}
 	i.Builtins["getgid"] = &Builtin{Fn: builtinGetgid}
 	i.Builtins["getgroups"] = &Builtin{Fn: builtinGetgroups}
 	i.Builtins["hostname"] = &Builtin{Fn: builtinHostname}
@@ -4066,12 +4066,12 @@ func builtinGetuid(_ *Interp, args []Value) (Value, error) {
 	return Number(os.Getuid()), nil
 }
 
-// builtinGetpwuidName answers 0, "no name from the account database", as
+// builtinAccountEntry answers 0, "no entry from the account database", as
 // every compiled target but arm64-darwin does: the interpreter has no C
-// string to hand back, so the caller reads the files.
-func builtinGetpwuidName(_ *Interp, args []Value) (Value, error) {
-	if len(args) != 1 {
-		return nil, fmt.Errorf("__getpwuid_name: expected 1 arg, got %d", len(args))
+// struct to hand back, so the caller reads the files.
+func builtinAccountEntry(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 2 {
+		return nil, fmt.Errorf("__account_entry: expected 2 args, got %d", len(args))
 	}
 	return Number(0), nil
 }

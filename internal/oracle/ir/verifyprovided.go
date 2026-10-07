@@ -387,7 +387,7 @@ var providedSigs = map[string]providedSig{
 	"geteuid":                          {0, rWord},
 	"getegid":                          {0, rWord},
 	"getuid":                           {0, rWord},
-	"__getpwuid_name":                  {1, rWord},
+	"__account_entry":                  {2, rWord},
 	"getgid":                           {0, rWord},
 	"getgroups":                        {0, rWord},
 	"environ":                          {0, rWord},

@@ -6469,8 +6469,8 @@ function value_builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowere
   if (ins.str == "f32_from_bits") {
     return Lowered { found: true, r: emit(r, ir.op_f32_from_bits()) };
   }
-  if (ins.str == "__getpwuid_name") {
-    return Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_getpwuid_name", 1)) };
+  if (ins.str == "__account_entry") {
+    return Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_account_entry", 2)) };
   }
   if (ins.str == "__ct_secret") {
     return Lowered { found: true, r: emit(r, ir.op_ct_mark(0)) };
