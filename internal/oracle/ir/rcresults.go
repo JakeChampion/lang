@@ -594,6 +594,7 @@ var rcResultNonPointer = map[string]bool{
 	"__fern_irem_s32": true, "__fern_irem_u32": true, "isatty": true,
 	"__fern_handle_isatty": true,
 	"process_alive":        true,
+	"disable_core_dumps":   true,
 	"geteuid":              true, "getegid": true, "getuid": true, "getgid": true,
 	"__getpwuid_name": true,
 	// The builder's handle is an opaque token indexing its own control

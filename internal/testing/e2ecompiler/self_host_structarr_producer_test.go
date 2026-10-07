@@ -185,7 +185,7 @@ function main(): i32 {
 			// the heap rather than placed as a constant.
 			name: "arrfield_elem_stays_arrstruct",
 			src: `struct Q { ys: i32[], n: i32 }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function mkq(): Q[] { let a: Q[] = [Q { ys: id([1, 2]), n: 1 }, Q { ys: id([3]), n: 2 }]; return a; }
 function round(i: i32): i32 { let v: Q[] = mkq(); return v.len() + v[0].ys.len(); }` + structarrProdMain,
 			want: 53, balance: true,

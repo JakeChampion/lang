@@ -120,8 +120,8 @@ struct HR { e: Rc, n: i32 }
 function k_of(x: i32): i32 { return x; }
 function sval(e: Sc): i32 { match (e) { SA(v) => { return v; }, SB => { return 100; } } }
 function rval(e: Rc): i32 { match (e) { RA(v) => { return v[0]; }, RB => { return 100; } } }
-function hb_sc_param(e: Sc): Sc { return e; }
-function hb_rc_param(e: Rc): Rc { return e; }
+@noinline function hb_sc_param(e: Sc): Sc { return e; }
+@noinline function hb_rc_param(e: Rc): Rc { return e; }
 function hb_sc_field(h: HS): Sc { return h.e; }
 function hb_rc_field(h: HR): Rc { return h.e; }
 function hb_rc_fwd(e: Rc): Rc { return hb_rc_param(e); }
@@ -184,7 +184,7 @@ func TestSelfHostEnumCallHandbackWasm(t *testing.T) {
 const enumHandbackReturnSrc = `enum Sc { SA(i32), SB }
 function k_of(x: i32): i32 { return x; }
 function sval(e: Sc): i32 { match (e) { SA(v) => { return v; }, SB => { return 100; } } }
-function hb_sc_param(e: Sc): Sc { return e; }
+@noinline function hb_sc_param(e: Sc): Sc { return e; }
 function mk(r: i32): Sc {
     let a0: Sc = SA(k_of(r));
     let a: Sc = hb_sc_param(a0);

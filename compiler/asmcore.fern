@@ -1290,6 +1290,9 @@ function sysno_x86_64(name: string): string {
   if (name == "getrlimit") {
     return "97";
   }
+  if (name == "setrlimit") {
+    return "160";
+  }
   if (name == "statfs") {
     return "137";
   }
@@ -1568,6 +1571,9 @@ function sysno_arm64_darwin(name: string): string {
   }
   if (name == "getrlimit") {
     return "194";
+  }
+  if (name == "setrlimit") {
+    return "195";
   }
   // 345 rather than 157: arm64 macOS ships only the 64-bit-inode
   // variants, and that is the one libSystem's `statfs` resolves to.
@@ -1849,6 +1855,9 @@ function sysno_arm64_linux(name: string): string {
   }
   if (name == "getrlimit") {
     return "163";
+  }
+  if (name == "setrlimit") {
+    return "164";
   }
   if (name == "statfs") {
     return "43";
@@ -2600,6 +2609,13 @@ pub function rt_src_proc_waitpid(t: string): string {
 //
 // The status lands in __fern_scratch, so this joins the scratch gate with its
 // blocking sibling.
+// rt_src_proc_waitpid_status backs `proc_waitpid_status(pid)` (syscall-leaf) —
+// rt_src_proc_waitpid's wait4 without the decode: the raw status word, whose
+// core-dump bit (0x80) the shell's one number has no room for, or -errno.
+pub function rt_src_proc_waitpid_status(t: string): string {
+  return "function __fern_proc_waitpid_status(pid: i32): i32 { let st: usize = __raw_scratch(16); let rc: i32 = __syscall4(" + sysno(t, "wait4") + ", pid as i64, st as i64, 0, 0) as i32; if (rc < 0) { return rc; } return __load_i32(st); }";
+}
+
 pub function rt_src_proc_waitpid_nohang(t: string): string {
   return "function __fern_proc_waitpid_nohang(pid: i32): i32 { let st: usize = __raw_scratch(16); let rc: i32 = __syscall4(" + sysno(t, "wait4") + ", pid as i64, st as i64, 1, 0) as i32; if (rc < 0) { return rc; } if (rc == 0) { return 0 - 1; } let w: i32 = __load_i32(st); let sig: i32 = w & 127; if (sig != 0) { return sig + 128; } return (w >> 8) & 255; }";
 }
@@ -2951,6 +2967,19 @@ pub function rt_src_signal_catch(t: string): string {
 // does not block is delivered to it before kill returns.
 pub function rt_src_signal_raise(t: string): string {
   return "function __fern_signal_raise(sig: i32): i32 { let pid: i64 = __syscall3(" + sysno(t, "getpid") + ", 0, 0, 0); return __syscall3(" + sysno(t, "kill") + ", pid, sig as i64, 0) as i32; }";
+}
+
+// rt_src_disable_core_dumps backs `disable_core_dumps()` (syscall-leaf) -> 1
+// once this process cannot dump core. Linux clears the dumpable flag first,
+// which a piped core_pattern obeys where RLIMIT_CORE does not, and falls back
+// to the limit as GNU does; Darwin has only the limit. RLIMIT_CORE is 4 on
+// both, and the zeroed {cur, max} pair goes out of the scratch buffer.
+pub function rt_src_disable_core_dumps(t: string): string {
+  let prctl: string = "";
+  if (t != "arm64-darwin") {
+    prctl = "if (__syscall3(" + sysno(t, "prctl") + ", 4, 0, 0) == (0 as i64)) { return 1; } ";
+  }
+  return "function __fern_disable_core_dumps(): i32 { " + prctl + "let lim: usize = __raw_scratch(16); __store_i64(lim, 0 as i64); __store_i64(__raw_addr(lim, 8), 0 as i64); if (__syscall3(" + sysno(t, "setrlimit") + ", 4, lim as i64, 0) == (0 as i64)) { return 1; } return 0; }";
 }
 
 // sockaddr_head writes the first two bytes of a `sockaddr_in`, which is the one
@@ -7134,6 +7163,8 @@ function builtin_i32_names(): string[] {
     // as isatty's; rlimit_nofile() -> i64, in one like the clocks'.
     "process_alive",
     "rlimit_nofile",
+    // disable_core_dumps() -> boolean, isatty's slot again.
+    "disable_core_dumps",
     // clock_resolution() -> i64 nanoseconds, a clock reading's slot.
     "clock_resolution",
     // priority() -> this process's nice value, -20..19. An integer
@@ -7217,6 +7248,8 @@ function builtin_i32_names(): string[] {
     // The same reap with WNOHANG: the status, -1 for a child still
     // running, or -errno. Also a plain i32.
     "proc_waitpid_nohang",
+    // The same reap's raw status word, or -errno.
+    "proc_waitpid_status",
     // proc_exec(path, args) → i32, but only on FAILURE (-errno):
     // on success execve has replaced the process image, so there
     // is nothing left to return to. Matches native's FuncSigs.
@@ -10266,12 +10299,13 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fern_buf_push_bytes_range", "__fern_buf_push_bytes_range_u8",
     // crash-only supervision (#5686): the entry owns fork / wait4.
     "__fern_buf_push_bytes_mapped_u8", "__fern_buf_push_bytes_filtered_u8", "__fern_buf_push_bytes_expanded_u8", "__fn___fern_proc_fork", "__fn___fern_proc_waitpid",
-    "__fn___fern_proc_waitpid_nohang", "__fn___fern_proc_exec",
+    "__fn___fern_proc_waitpid_nohang", "__fn___fern_proc_waitpid_status", "__fn___fern_proc_exec",
     "__fn___fern_proc_exec_as",
     // one pid's liveness, delivering a signal to one, and this
     // process's descriptor ceiling.
     "__fn___fern_process_alive", "__fn___fern_signal_send",
     "__fn___fern_set_process_group", "__fn___fern_rlimit_nofile",
+    "__fn___fern_disable_core_dumps",
     // and how it competes for the CPU.
     "__fn___fern_priority", "__fn___fern_set_priority",
     // the wall clock's resolution, and setting it.

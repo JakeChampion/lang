@@ -4789,6 +4789,8 @@ function builtin_sigs(): string[] {
     "proc_exec_as(string, string[], string[]): i32",
     "proc_fork(): i32",
     "proc_waitpid(i32): i32",
+    "proc_waitpid_status(i32): i32",
+    "disable_core_dumps(): boolean",
     "proc_waitpid_nohang(i32): i32",
     "process_alive(i32): boolean",
     "putchar(i32): void",

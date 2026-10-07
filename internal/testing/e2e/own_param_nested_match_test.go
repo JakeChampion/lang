@@ -15,7 +15,7 @@ enum Other { Thing(i32[]), Nothing }
 // Each payload goes through id, so the boxes are built on the heap rather than
 // placed as constants: a program that never allocates leaves the census at
 // zero and could not show the double free.
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 
 @noinline function two(own b: Box, own o: Other): i32 {
     match (b) { Arr(a) => { let n = a.len(); match (o) { Thing(c) => { return n + c.len(); }, Nothing => { return n; } } }, Nil => { return 0; } }
