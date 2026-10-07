@@ -1253,13 +1253,18 @@ step = step.client.read(received)?;   // step.output, step.data, step.events
 - `client_config(server_name)` offers every suite, X25519MLKEM768 with X25519
   as the fallback group, and the signature schemes `std/crypto` verifies;
   `ClientConfig` has `server_name`, `alpn`, `suites`, `groups` and `schemes`.
-  `client_start(config, entropy)` takes 32 random bytes and the entropy the
-  first group's share takes; `client_from_hello(hello, share)` starts from a
-  ClientHello the caller built.
+  `client_start(config, entropy)` takes `client_entropy(config)` random
+  bytes: the random, the first group's share, and a share for any other
+  group a HelloRetryRequest may ask for. `client_from_hello(hello, share,
+  spare)` starts from a ClientHello the caller built, with the entropy for
+  such a retry share.
 - `server_config(chain, schemes)` and `ServerConfig` (`chain`, leaf first;
   `schemes` its key can make; `suites`, `groups` and `alpn` in preference
   order). `server_new(config, entropy)` takes 96 bytes. The server reads the
-  client's `server_name` and chooses its `alpn`.
+  client's `server_name` and chooses its `alpn`. When the client sent no
+  share in a group the server takes but names one, the server sends a
+  HelloRetryRequest for it, and the client answers with a second
+  ClientHello carrying that share and any cookie.
 - `read(input)` on either side returns a step: the other side's bytes to
   send (`output`), application data (`data`) and `events`: `VerifyServer`
   (the chain, scheme, signed content and signature: judge them, then call
@@ -1272,8 +1277,8 @@ step = step.client.read(received)?;   // step.output, step.data, step.events
 - `HandshakeError` names the cause, with `alert()` and `message()`.
 - `certificate_verify_content(server, transcript_hash)` is what a
   CertificateVerify signs.
-- Not yet: HelloRetryRequest, PSK resumption and early data, and client
-  certificates beyond answering a request with an empty Certificate.
+- Not yet: PSK resumption and early data, and client certificates beyond
+  answering a request with an empty Certificate.
 
 ### `std/tls/keyschedule`
 
@@ -1365,7 +1370,8 @@ let out: u8[] = message.encode(message.Finished(verify_data));
   `EndOfEarlyData`, `EncryptedExtensions`, `CertificateRequestMsg`,
   `CertificateMsg`, `CertificateVerifyMsg`, `Finished` or `KeyUpdate`, with
   `kind()`; the structs hold the fields TLS 1.3 uses, and a ServerHello's
-  `is_retry()` says whether it is a HelloRetryRequest.
+  `is_retry()` says whether it is a HelloRetryRequest, whose random is
+  `retry_random()`.
 - `Extension { kind, data }` and `find(exts, kind): Option[u8[]]`. Each
   extension TLS 1.3 reads has an encoder and a decoder: `ext_server_name` /
   `server_name`, `ext_supported_versions` / `supported_versions` and

@@ -1140,7 +1140,7 @@ func TestRunnerTLSRootsExamplePasses(t *testing.T) {
 // byte for byte, the server to the trace's ServerHello, and the two against
 // each other across suites and groups.
 func TestRunnerTLSHandshakeExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "tls_handshake", "std/tls/handshake", 10)
+	runnerSuitePasses(t, "tls_handshake", "std/tls/handshake", 13)
 }
 
 // `tests/stdlib/tls_keyshare_test.fern` checks X25519 against RFC 8448's key

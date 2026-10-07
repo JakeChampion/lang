@@ -13,8 +13,9 @@
 // once `verdict` is called. The server stops with `SignNeeded` and goes on
 // once `signature` is called, so no private key enters it.
 //
-// One full handshake per connection: no PSK, no early data, and no
-// HelloRetryRequest yet, on either side.
+// One full handshake per connection, with a HelloRetryRequest when the
+// client's key share is in a group the server does not take: no PSK and no
+// early data.
 
 import "core/int";
 import "std/tls/keyschedule";
@@ -538,13 +539,17 @@ const C_CONNECTED: i32 = 7;
 const C_CLOSED: i32 = 8;
 
 // Client — one client connection. `alpn` is the protocol the server chose,
-// empty when none was.
+// empty when none was. `spare` is the entropy a share for a
+// HelloRetryRequest takes, and `retry_suite` the suite one chose, 0 before
+// any.
 pub struct Client {
   conn: Conn,
   state: i32,
   hello: message.ClientHello,
   alpn_offered: string[],
   share: keyshare.ClientShare,
+  spare: u8[],
+  retry_suite: i32,
   hs: keyschedule.HandshakeSecret,
   client_hs: u8[],
   server_hs: u8[],
@@ -578,17 +583,33 @@ function __group_codes(config: ClientConfig): i32[] {
   return out;
 }
 
-// client_start begins a handshake from 32 random bytes and the entropy the
-// first group's share takes, and returns the ClientHello to send.
+// client_entropy is how many random bytes client_start takes for config:
+// 32 for the random, the first group's share, and enough for a share in any
+// other group a HelloRetryRequest may ask for.
+pub function client_entropy(config: ClientConfig): i32 {
+  let spare: i32 = 0;
+  let i: i32 = 1;
+  while (i < config.groups.len()) {
+    if (config.groups[i].client_entropy() > spare) {
+      spare = config.groups[i].client_entropy();
+    }
+    i = i + 1;
+  }
+  return 32 + config.groups[0].client_entropy() + spare;
+}
+
+// client_start begins a handshake from client_entropy(config) random bytes
+// and returns the ClientHello to send.
 pub function client_start(config: ClientConfig, entropy: [u8]): Result[ClientStep, HandshakeError] {
   if (config.groups.len() == 0 || config.suites.len() == 0) {
     return Err(BadConfig("a client needs a group and a suite"));
   }
   let g: keyshare.Group = config.groups[0];
-  if (entropy.len() != 32 + g.client_entropy()) {
-    return Err(Entropy(entropy.len(), 32 + g.client_entropy()));
+  if (entropy.len() != client_entropy(config)) {
+    return Err(Entropy(entropy.len(), client_entropy(config)));
   }
-  match (keyshare.client_share(g, entropy[32:entropy.len()])) {
+  let first: i32 = 32 + g.client_entropy();
+  match (keyshare.client_share(g, entropy[32:first])) {
     Ok(share) => {
       let exts: message.Extension[] = [];
       if (config.server_name.len() > 0) {
@@ -599,7 +620,7 @@ pub function client_start(config: ClientConfig, entropy: [u8]): Result[ClientSte
         exts = exts.append(message.ext_alpn(config.alpn));
       }
       let hello: message.ClientHello = message.ClientHello { random: __copy(entropy[0:32]), session_id: [], cipher_suites: __offers(config), extensions: exts };
-      return client_from_hello(hello, share);
+      return client_from_hello(hello, share, entropy[first:entropy.len()]);
     },
     Err(e) => {
       return Err(KeyShare(e));
@@ -608,10 +629,11 @@ pub function client_start(config: ClientConfig, entropy: [u8]): Result[ClientSte
   return Err(Misuse("client_start"));
 }
 
-// client_from_hello begins a handshake from a ClientHello the caller built
-// and the share whose public key it carries. What the server answers is
-// checked against what this hello offers.
-pub function client_from_hello(hello: message.ClientHello, share: keyshare.ClientShare): Result[ClientStep, HandshakeError] {
+// client_from_hello begins a handshake from a ClientHello the caller built,
+// the share whose public key it carries, and the entropy for a share a
+// HelloRetryRequest may ask for. What the server answers is checked against
+// what this hello offers.
+pub function client_from_hello(hello: message.ClientHello, share: keyshare.ClientShare, spare: [u8]): Result[ClientStep, HandshakeError] {
   let alpn: string[] = [];
   match (message.find(hello.extensions, message.EXT_ALPN)) {
     Some(d) => {
@@ -631,7 +653,7 @@ pub function client_from_hello(hello: message.ClientHello, share: keyshare.Clien
   let bytes: u8[] = message.encode(message.ClientHelloMsg(hello));
   let conn: Conn = Conn { ...__conn(), transcript: bytes };
   let hs: keyschedule.HandshakeSecret = keyschedule.HandshakeSecret { hash: keyschedule.Sha256, secret: [] };
-  let c: Client = Client { conn: conn, state: C_WAIT_SERVER_HELLO, hello: hello, alpn_offered: alpn, share: share, hs: hs, client_hs: [], server_hs: [], chain: [], alpn: "", requested: false, request_context: [] };
+  let c: Client = Client { conn: conn, state: C_WAIT_SERVER_HELLO, hello: hello, alpn_offered: alpn, share: share, spare: __copy(spare), retry_suite: 0, hs: hs, client_hs: [], server_hs: [], chain: [], alpn: "", requested: false, request_context: [] };
   return Ok(ClientStep { client: c, output: record.frame(record.Handshake, 0x0301, bytes), data: [], events: [] });
 }
 
@@ -647,7 +669,13 @@ function __server_hello(c: Client, raw: message.Raw, out: Out): Result[ClientRun
       return Err(OutOfOrder(raw.kind));
     }
   }
+  if (h.is_retry()) {
+    return __hello_retry(c, raw, h, out);
+  }
   let suite: keyschedule.CipherSuite = __check_server_hello(c, h)?;
+  if (c.retry_suite != 0 && h.cipher_suite != c.retry_suite) {
+    return Err(Illegal("cipher suite after a HelloRetryRequest"));
+  }
   let shared: u8[] = __agree(c, h)?;
   let conn: Conn = Conn { ...c.conn, suite: suite, transcript: __join(c.conn.transcript, raw.bytes) };
   __at_key_change(conn)?;
@@ -659,12 +687,9 @@ function __server_hello(c: Client, raw: message.Raw, out: Out): Result[ClientRun
   return Ok(ClientRun { client: Client { ...c, conn: conn, state: C_WAIT_ENCRYPTED_EXTENSIONS, hs: hs, client_hs: client_hs, server_hs: server_hs }, out: out });
 }
 
-// __check_server_hello checks the ServerHello against the ClientHello and
-// answers the suite it chose.
+// __check_server_hello checks a ServerHello or HelloRetryRequest against the
+// ClientHello and answers the suite it chose.
 function __check_server_hello(c: Client, h: message.ServerHello): Result[keyschedule.CipherSuite, HandshakeError] {
-  if (h.is_retry()) {
-    return Err(HandshakeFailure("a HelloRetryRequest, which this client does not answer"));
-  }
   match (message.find(h.extensions, message.EXT_SUPPORTED_VERSIONS)) {
     Some(d) => {
       if (__version(d)? != message.TLS13) {
@@ -682,6 +707,82 @@ function __check_server_hello(c: Client, h: message.ServerHello): Result[keysche
   return __offered_suite(c, h.cipher_suite);
 }
 
+// __hello_retry answers a HelloRetryRequest (§4.1.4): a share in the group
+// it names, the cookie it carries echoed, and the first ClientHello
+// replaced in the transcript by its hash.
+function __hello_retry(c: Client, raw: message.Raw, h: message.ServerHello, out: Out): Result[ClientRun, HandshakeError] {
+  if (c.retry_suite != 0) {
+    return Err(OutOfOrder(raw.kind));
+  }
+  let suite: keyschedule.CipherSuite = __check_server_hello(c, h)?;
+  let share: keyshare.ClientShare = __retry_share(c, h)?;
+  let hello: message.ClientHello = message.ClientHello { ...c.hello, extensions: __retry_extensions(c.hello.extensions, h.extensions, share) };
+  let ch2: u8[] = message.encode(message.ClientHelloMsg(hello));
+  let digest: u8[] = suite.hash().digest(c.conn.transcript);
+  let transcript: u8[] = __cat(__cat(__cat([254 as u8, 0 as u8, 0 as u8, digest.len() as u8], digest), raw.bytes), ch2);
+  __at_key_change(c.conn)?;
+  let next: Client = Client { ...c, conn: Conn { ...c.conn, transcript: transcript }, hello: hello, share: share, spare: [], retry_suite: h.cipher_suite };
+  return Ok(ClientRun { client: next, out: Out { ...out, output: __join(out.output, record.frame(record.Handshake, 0x0303, ch2)) } });
+}
+
+// __retry_share makes the share a HelloRetryRequest asks for: in a group the
+// ClientHello named, not the one it already sent a share in.
+function __retry_share(c: Client, h: message.ServerHello): Result[keyshare.ClientShare, HandshakeError] {
+  let code: i32 = __retry_group(c, h)?;
+  match (keyshare.group(code)) {
+    Some(g) => {
+      if (c.spare.len() < g.client_entropy()) {
+        return Err(Entropy(c.spare.len(), g.client_entropy()));
+      }
+      match (keyshare.client_share(g, c.spare[0:g.client_entropy()])) {
+        Ok(share) => {
+          return Ok(share);
+        },
+        Err(e) => {
+          return Err(KeyShare(e));
+        }
+      }
+    },
+    None => {
+      return Err(HandshakeFailure("the server asks for a group this client cannot make"));
+    }
+  }
+  return Err(Illegal("HelloRetryRequest group"));
+}
+
+function __retry_group(c: Client, h: message.ServerHello): Result[i32, HandshakeError] {
+  let offered: i32[] = __codes(message.supported_groups(__ext(c.hello.extensions, message.EXT_SUPPORTED_GROUPS, "supported_groups")?))?;
+  match (message.retry_group(__ext(h.extensions, message.EXT_KEY_SHARE, "key_share")?)) {
+    Ok(code) => {
+      if (code == c.share.group.code() || !__has(offered, code)) {
+        return Err(Illegal("HelloRetryRequest group"));
+      }
+      return Ok(code);
+    },
+    Err(e) => {
+      return Err(Message(e));
+    }
+  }
+  return Err(Illegal("HelloRetryRequest group"));
+}
+
+// The second ClientHello's extensions: the first's, its key share replaced
+// by the new one, and the server's cookie echoed at the end.
+function __retry_extensions(first: message.Extension[], retry: message.Extension[], share: keyshare.ClientShare): message.Extension[] {
+  let out: message.Extension[] = [];
+  for e in first {
+    if (e.kind == message.EXT_KEY_SHARE) {
+      out = out.append(message.ext_key_shares([message.KeyShareEntry { group: share.group.code(), key: share.public }]));
+    } else {
+      out = out.append(e);
+    }
+  }
+  if let Some(cookie) = message.find(retry, message.EXT_COOKIE) {
+    out = out.append(message.Extension { kind: message.EXT_COOKIE, data: cookie });
+  }
+  return out;
+}
+
 // The server's suite must be one the ClientHello offered.
 function __offered_suite(c: Client, code: i32): Result[keyschedule.CipherSuite, HandshakeError] {
   match (keyschedule.cipher_suite(code)) {
@@ -697,12 +798,13 @@ function __offered_suite(c: Client, code: i32): Result[keyschedule.CipherSuite, 
   return Err(Illegal("cipher suite"));
 }
 
-// A ServerHello carries only supported_versions and key_share without a PSK.
+// A ServerHello carries only supported_versions and key_share without a PSK,
+// and a HelloRetryRequest a cookie too.
 function __hello_extensions_only(h: message.ServerHello): Result[boolean, HandshakeError] {
   let i: i32 = 0;
   while (i < h.extensions.len()) {
     let k: i32 = h.extensions[i].kind;
-    if (k != message.EXT_SUPPORTED_VERSIONS && k != message.EXT_KEY_SHARE) {
+    if (k != message.EXT_SUPPORTED_VERSIONS && k != message.EXT_KEY_SHARE && (k != message.EXT_COOKIE || !h.is_retry())) {
       return Err(UnsupportedExtension(k));
     }
     i = i + 1;
@@ -1082,12 +1184,15 @@ const S_CLOSED: i32 = 4;
 const SERVER_ENTROPY: i32 = 96;
 
 // Server — one server connection. `server_name` and `alpn` are what the
-// client asked for and what was chosen, empty when absent.
+// client asked for and what was chosen, empty when absent. `retry_group` and
+// `retry_suite` are what a HelloRetryRequest named, 0 before one.
 pub struct Server {
   conn: Conn,
   state: i32,
   config: ServerConfig,
   entropy: u8[],
+  retry_group: i32,
+  retry_suite: i32,
   scheme: i32,
   hs: keyschedule.HandshakeSecret,
   client_hs: u8[],
@@ -1109,7 +1214,7 @@ pub function server_new(config: ServerConfig, entropy: [u8]): Result[Server, Han
     return Err(Entropy(entropy.len(), SERVER_ENTROPY));
   }
   let hs: keyschedule.HandshakeSecret = keyschedule.HandshakeSecret { hash: keyschedule.Sha256, secret: [] };
-  return Ok(Server { conn: __conn(), state: S_WAIT_CLIENT_HELLO, config: config, entropy: __copy(entropy), scheme: 0, hs: hs, client_hs: [], server_hs: [], flight: [], server_name: "", alpn: "" });
+  return Ok(Server { conn: __conn(), state: S_WAIT_CLIENT_HELLO, config: config, entropy: __copy(entropy), retry_group: 0, retry_suite: 0, scheme: 0, hs: hs, client_hs: [], server_hs: [], flight: [], server_name: "", alpn: "" });
 }
 
 struct ServerRun { server: Server, out: Out }
@@ -1138,7 +1243,9 @@ function __codes(r: Result[i32[], message.MsgError]): Result[i32[], HandshakeErr
   return Ok([]);
 }
 
-struct Choice { group: keyshare.Group, key: u8[] }
+// Choice — the group the server takes and the client's share in it, or with
+// `retry`, a group the client named without a share, to ask for one.
+struct Choice { group: keyshare.Group, key: u8[], retry: boolean }
 
 function __client_shares(h: message.ClientHello): Result[message.KeyShareEntry[], HandshakeError] {
   match (message.key_shares(__ext(h.extensions, message.EXT_KEY_SHARE, "key_share")?)) {
@@ -1153,7 +1260,8 @@ function __client_shares(h: message.ClientHello): Result[message.KeyShareEntry[]
 }
 
 // __choose_share picks the server's most preferred group the client sent a
-// share for.
+// share for, else its most preferred group the client names, to ask for a
+// share in.
 function __choose_share(s: Server, h: message.ClientHello): Result[Choice, HandshakeError] {
   let groups: i32[] = __codes(message.supported_groups(__ext(h.extensions, message.EXT_SUPPORTED_GROUPS, "supported_groups")?))?;
   let shares: message.KeyShareEntry[] = __client_shares(h)?;
@@ -1169,13 +1277,23 @@ function __choose_share(s: Server, h: message.ClientHello): Result[Choice, Hands
     let j: i32 = 0;
     while (j < shares.len()) {
       if (shares[j].group == s.config.groups[g].code()) {
-        return Ok(Choice { group: s.config.groups[g], key: shares[j].key });
+        return Ok(Choice { group: s.config.groups[g], key: shares[j].key, retry: false });
       }
       j = j + 1;
     }
     g = g + 1;
   }
-  return Err(HandshakeFailure("no key share for a group in common"));
+  return __retry_choice(s, groups);
+}
+
+// The server's most preferred group the client names without a share.
+function __retry_choice(s: Server, groups: i32[]): Result[Choice, HandshakeError] {
+  for want in s.config.groups {
+    if (__has(groups, want.code())) {
+      return Ok(Choice { group: want, key: [], retry: true });
+    }
+  }
+  return Err(HandshakeFailure("no group in common"));
 }
 
 function __choose_alpn(s: Server, h: message.ClientHello): Result[string, HandshakeError] {
@@ -1313,23 +1431,27 @@ function __negotiate(s: Server, h: message.ClientHello): Result[Negotiated, Hand
   return Ok(Negotiated { suite: __pick_suite(s, h)?, scheme: __pick_scheme(s, h)?, choice: __choose_share(s, h)?, alpn: __choose_alpn(s, h)?, name: __server_name(h)? });
 }
 
-// __client_hello answers a ClientHello with the ServerHello, then builds
-// EncryptedExtensions and Certificate and asks for the CertificateVerify
+// __client_hello answers a ClientHello: with a HelloRetryRequest when it
+// has no share the server takes, else with the ServerHello, then
+// EncryptedExtensions and Certificate, asking for the CertificateVerify
 // signature.
 function __client_hello(s: Server, raw: message.Raw, out: Out): Result[ServerRun, HandshakeError] {
   let h: message.ClientHello = __as_client_hello(raw)?;
   let n: Negotiated = __negotiate(s, h)?;
+  if (s.retry_group != 0) {
+    __check_second_hello(s, n)?;
+  } else if (n.choice.retry) {
+    return __retry_request(s, raw, h, n, out);
+  }
   let suite: keyschedule.CipherSuite = n.suite;
   let share: keyshare.ServerShare = __answer_share(s, n.choice)?;
   let sh: message.ServerHello = message.ServerHello { random: __copy(s.entropy[0:32]), session_id: h.session_id, cipher_suite: suite.code(), extensions: [message.ext_key_share(message.KeyShareEntry { group: n.choice.group.code(), key: share.public }), message.ext_selected_version(message.TLS13)] };
   let sh_bytes: u8[] = message.encode(message.ServerHelloMsg(sh));
-  let conn: Conn = Conn { ...s.conn, suite: suite, transcript: __cat(__copy(raw.bytes), sh_bytes) };
+  let conn: Conn = Conn { ...s.conn, suite: suite, transcript: __cat(__cat(__copy(s.conn.transcript), raw.bytes), sh_bytes) };
   __at_key_change(conn)?;
   let output: u8[] = __join(out.output, record.frame(record.Handshake, 0x0303, sh_bytes));
-  // A client in middlebox compatibility mode sends a session id and expects
-  // a change_cipher_spec after the ServerHello (Appendix D.4).
-  if (h.session_id.len() > 0) {
-    output = __cat(output, [20 as u8, 3 as u8, 3 as u8, 0 as u8, 1 as u8, 1 as u8]);
+  if (s.retry_group == 0) {
+    output = __compat_ccs(output, h);
   }
   let hs: keyschedule.HandshakeSecret = keyschedule.early_secret(suite.hash(), []).handshake_secret(share.shared_secret);
   let th: u8[] = __hash(conn);
@@ -1340,6 +1462,40 @@ function __client_hello(s: Server, raw: message.Raw, out: Out): Result[ServerRun
   let ev: Event = SignNeeded(Signing { scheme: n.scheme, signed: certificate_verify_content(true, __hash(conn)) });
   let next: Server = Server { ...s, conn: conn, state: S_WAIT_SIGNATURE, scheme: n.scheme, hs: hs, client_hs: client_hs, server_hs: server_hs, flight: flight, server_name: n.name, alpn: n.alpn };
   return Ok(ServerRun { server: next, out: Out { ...out, output: output, events: out.events.append(ev) } });
+}
+
+// A client in middlebox compatibility mode sends a session id and expects a
+// change_cipher_spec after the server's first handshake message (Appendix
+// D.4).
+function __compat_ccs(own output: u8[], h: message.ClientHello): u8[] {
+  if (h.session_id.len() > 0) {
+    return __cat(output, [20 as u8, 3 as u8, 3 as u8, 0 as u8, 1 as u8, 1 as u8]);
+  }
+  return output;
+}
+
+// __retry_request asks for a share in the group chosen (§4.1.4), the first
+// ClientHello going into the transcript as its hash.
+function __retry_request(s: Server, raw: message.Raw, h: message.ClientHello, n: Negotiated, out: Out): Result[ServerRun, HandshakeError] {
+  let hrr: message.ServerHello = message.ServerHello { random: message.retry_random(), session_id: h.session_id, cipher_suite: n.suite.code(), extensions: [message.ext_selected_version(message.TLS13), message.ext_retry_group(n.choice.group.code())] };
+  let hrr_bytes: u8[] = message.encode(message.ServerHelloMsg(hrr));
+  let digest: u8[] = n.suite.hash().digest(raw.bytes);
+  let conn: Conn = Conn { ...s.conn, transcript: __cat(__cat([254 as u8, 0 as u8, 0 as u8, digest.len() as u8], digest), hrr_bytes) };
+  __at_key_change(conn)?;
+  let output: u8[] = __compat_ccs(__join(out.output, record.frame(record.Handshake, 0x0303, hrr_bytes)), h);
+  return Ok(ServerRun { server: Server { ...s, conn: conn, retry_group: n.choice.group.code(), retry_suite: n.suite.code() }, out: Out { ...out, output: output } });
+}
+
+// The second ClientHello must carry a share in the group asked for and keep
+// the suite chosen.
+function __check_second_hello(s: Server, n: Negotiated): Result[boolean, HandshakeError] {
+  if (n.choice.retry || n.choice.group.code() != s.retry_group) {
+    return Err(Illegal("second ClientHello without the share asked for"));
+  }
+  if (n.suite.code() != s.retry_suite) {
+    return Err(Illegal("second ClientHello changes the cipher suite"));
+  }
+  return Ok(true);
 }
 
 function __client_finished(s: Server, raw: message.Raw, verify_data: u8[], out: Out): Result[ServerRun, HandshakeError] {
@@ -1399,7 +1555,8 @@ function __server_run(s: Server, out: Out): Result[ServerStep, HandshakeError] {
   let r: ServerRun = __server_drain(s, out)?;
   let i: i32 = 0;
   while (r.server.state != S_WAIT_SIGNATURE && r.server.state != S_CLOSED && i < records.len()) {
-    let a: Absorbed = __absorb(r.server.conn, records[i], r.server.state == S_WAIT_FINISHED, r.server.state == S_CONNECTED, r.out)?;
+    let ccs: boolean = r.server.state == S_WAIT_FINISHED || r.server.state == S_WAIT_CLIENT_HELLO && r.server.retry_group != 0;
+    let a: Absorbed = __absorb(r.server.conn, records[i], ccs, r.server.state == S_CONNECTED, r.out)?;
     let state: i32 = r.server.state;
     if (a.out.closed) {
       state = S_CLOSED;

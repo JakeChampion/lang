@@ -124,6 +124,17 @@ TLS itself is `std/tls/keyschedule`, `keyshare`, `message`, `record`,
    module so that only a program that asks for it carries it.
 10. **`std/tls/client`.** X25519MLKEM768 by default, ALPN and
     HelloRetryRequest, wired into `fetch`'s `https`.
+
+    Landed: HelloRetryRequest in `std/tls/handshake`, both sides. A server
+    that takes none of the client's shares asks for one in a group the
+    client named, and the client answers with a second ClientHello carrying
+    that share and any cookie, the first ClientHello going into the
+    transcript as its hash. Gate: client and server complete the retry
+    against each other, the second ClientHello's share and cookie are
+    checked, and a retry naming the group already shared, one not offered or
+    one the client cannot make, a second retry, and a second ClientHello
+    without the share are each refused. Remaining: the client module over a
+    socket, and `fetch`.
 11. **`std/tls/server`.** Resumption and client certificates, wired into
     `std/serve`.
 12. **Interop and fuzzing on `net-nightly`.** OpenSSL 3.5, Go, rustls'
