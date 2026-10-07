@@ -14,7 +14,7 @@ import (
 func TestEnumLocalReassignedFromAUnitVariant(t *testing.T) {
 	e2eharness.BoxedProbes(t)
 	const loop = `
-function ids(s: string): string { return s; }
+@noinline function ids(s: string): string { return s; }
 function main(): i32 {
     let t: i32 = 0;
     let i: i32 = 0;

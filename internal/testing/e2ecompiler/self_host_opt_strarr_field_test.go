@@ -201,7 +201,7 @@ function round(i: i32): i32 {
 		{
 			name: "strarr_field_to_a_callee_that_keeps_it",
 			body: `struct P { xs: string[], n: i32 }
-function keepit(xs: string[]): string[] { return xs; }
+@noinline function keepit(xs: string[]): string[] { return xs; }
 function round(i: i32): i32 {
     let held: string[] = [];
     let acc: i32 = 0;

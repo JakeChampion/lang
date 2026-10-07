@@ -94,7 +94,7 @@ struct W { n: i32 }
 impl mem.Drop for W {
     function drop(self: Self): void { print("drop " + self.n.to_string()); }
 }
-function passthru(w: W): W { return w; }
+@noinline function passthru(w: W): W { return w; }
 function main(): i32 {
     let p: W = passthru(W { n: 2 });
     print("p " + p.n.to_string());

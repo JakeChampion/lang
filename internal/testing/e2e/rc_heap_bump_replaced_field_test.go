@@ -47,7 +47,7 @@ function main(): i32 {
 // the read in the RHS, so the freeing dec doesn't reclaim a still-referenced
 // buffer. Returns 0 iff value-correct AND 0 over-releases.
 const replacedFieldAliasCallSrc = `struct Box { items: i32[], n: i32 }
-function ident(xs: i32[]): i32[] { return xs; }
+@noinline function ident(xs: i32[]): i32[] { return xs; }
 function main(): i32 {
     let p: Box = Box{ items: [1, 2, 3], n: 0 };
     let i: i32 = 0;
@@ -86,7 +86,7 @@ function main(): i32 {
 // `keep` across the overwrite, and `keep` is read AFTER — the alias must keep
 // the buffer alive past the reuse free.
 const replacedFieldAliasLocalSrc = `struct Box { items: i32[], n: i32 }
-function ident(xs: i32[]): i32[] { return xs; }
+@noinline function ident(xs: i32[]): i32[] { return xs; }
 function main(): i32 {
     let p: Box = Box{ items: [9, 8, 7], n: 0 };
     let i: i32 = 0;

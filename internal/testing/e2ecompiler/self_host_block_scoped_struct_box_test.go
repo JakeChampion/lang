@@ -240,7 +240,7 @@ function round(r: i32): i32 {
 			// Passed to a callee that keeps it.
 			name: "passed_to_a_callee_that_keeps_it",
 			body: `struct S { xs: i32[], n: i32 }
-function keepit(s: S): S { return s; }
+@noinline function keepit(s: S): S { return s; }
 function round(r: i32): i32 {
     let held: S = S { xs: [0], n: r };
     let acc: i32 = 0;

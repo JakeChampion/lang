@@ -86,7 +86,7 @@ func arrenumBorrowCases() []arrenumShareCase {
 			// placed as a constant.
 			name: "borrowed_arg_literal",
 			src: mk(`function rd(src: E[], i: i32): i32 { return (src.len() + i) % 101; }
-function id(xs: i32[]): i32[] { return xs; }`,
+@noinline function id(xs: i32[]): i32[] { return xs; }`,
 				literal, "rd(keep, r)"),
 			want: 6, balance: true,
 		},
@@ -164,7 +164,7 @@ function rd(src: E[], i: i32): i32 { return (match (src[0]) { E.A(xs) => take(xs
 		{
 			// REFUSED by the BOX flag, before this tier is consulted at all.
 			name: "callee_returns_param",
-			src: mk(`function rd(src: E[], i: i32): E[] { return src; }`,
+			src: mk(`@noinline function rd(src: E[], i: i32): E[] { return src; }`,
 				producer, "rd(keep, r).len()"),
 			want: 3,
 		},

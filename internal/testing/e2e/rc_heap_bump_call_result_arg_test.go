@@ -50,7 +50,7 @@ function main(): i32 {
 // return-transfer inc). It's a call-result arg to sum(); the post-call dec
 // must only DEC it (is_unique false), never free, so `arr` stays valid and
 // readable on the next line. sum(pass(arr)) == 60, + arr[0] == 10, ×200.
-const callResultArgAliasedSafe = `function pass(p: i32[]): i32[] { return p; }
+const callResultArgAliasedSafe = `@noinline function pass(p: i32[]): i32[] { return p; }
 function sum(xs: i32[]): i32 { return xs[0] + xs[1] + xs[2]; }
 function main(): i32 {
     let i: i32 = 0; let acc: i32 = 0;

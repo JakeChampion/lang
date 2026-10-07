@@ -62,7 +62,7 @@ func TestSelfHostStructArrElemDropIRX86_64(t *testing.T) {
 	// element's `items` leaked every call -> heap exhausted -> SIGKILL (137). items goes
 	// through id so it is built on the heap rather than placed as a constant.
 	run(t, `struct Inner { items: i32[] }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 struct S { elems: Inner[], tag: i32 }
 function mk(): i32 {
     let s: S = S { elems: [Inner { items: id([1,2,3,4,5,6,7,8]) }, Inner { items: id([9,10,11,12,13,14,15,16]) }], tag: 3 };
@@ -79,7 +79,7 @@ function main(): i32 {
 	// (1..8)=36 and (9..16)=100, + tag 3 = 139. items goes through id so it is built on
 	// the heap rather than placed as a constant.
 	run(t, `struct Inner { items: i32[] }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 struct S { elems: Inner[], tag: i32 }
 function main(): i32 {
     let s: S = S { elems: [Inner { items: id([1,2,3,4,5,6,7,8]) }, Inner { items: id([9,10,11,12,13,14,15,16]) }], tag: 3 };
@@ -99,7 +99,7 @@ function main(): i32 {
 	// items goes through id so the chain is built on the heap rather than placed as a
 	// constant.
 	run(t, `struct Mid { items: i32[] }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 struct Inner { mid: Mid, it: i32 }
 struct S { elems: Inner[], tag: i32 }
 function mk(): i32 {

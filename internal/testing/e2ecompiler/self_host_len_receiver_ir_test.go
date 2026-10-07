@@ -65,8 +65,8 @@ function main(): i32 {
 	// (a bare-ident return is non-fresh for strings; not a direct array
 	// literal for "ARR:"), so no free fires — base / arr stay value-intact.
 	{name: "alias-negative", fixed: true, want: 0, src: func(string) string {
-		return `function id(s: string): string { return s; }
-function ida(xs: i32[]): i32[] { return xs; }
+		return `@noinline function id(s: string): string { return s; }
+@noinline function ida(xs: i32[]): i32[] { return xs; }
 function main(): i32 {
     let base: string = "0123456789abcdef" + "-suffix-to-force-heap";
     let arr: i32[] = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];

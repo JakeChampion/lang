@@ -169,7 +169,7 @@ function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-
 function mk(pre: string): string[] { let out: string[] = []; let i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
 function keep(xs: string[]): Box { return Box { rows: xs }; }
 function build(pre: string): Box { let xs: string[] = mk(pre); let b: Box = keep(xs); return b; }
-function ids(s: string): string { return s; }
+@noinline function ids(s: string): string { return s; }
 function churnjunk(i: i32): i32 { let a: string[] = ["zzzz", "yyyy", ids("xxxx")]; return a[0].len() + a[2].len(); }
 function round(i: i32): i32 {
     let pre: string = "ab";

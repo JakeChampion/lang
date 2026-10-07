@@ -105,7 +105,7 @@ func arrenumCountedCases() []arrenumShareCase {
 			// argument, and the caller's release fires immediately after the
 			// call. The tier requires a concrete scalar result for exactly this.
 			name: "callee_returns_param",
-			src: mk(`function rd(src: E[], i: i32): E[] { return src; }`,
+			src: mk(`@noinline function rd(src: E[], i: i32): E[] { return src; }`,
 				"rd(keep, r).len()"),
 			want: 3,
 		},

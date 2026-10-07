@@ -203,7 +203,7 @@ func TestSelfHostOptStructBorrowChainHazardsX86_64(t *testing.T) {
 			name: "intermediate_struct_extracted",
 			src: `struct Inner { ys: i32[] }
 struct P { inner: Inner, n: i32 }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function round(i: i32): i32 {
     let held: Inner = Inner { ys: id([0]) };
     let acc: i32 = 0;
@@ -267,7 +267,7 @@ function main(): i32 {
 			name: "leaf_array_to_a_callee_that_keeps_it",
 			src: `struct Inner { ys: i32[] }
 struct P { inner: Inner, n: i32 }
-function keepit(xs: i32[]): i32[] { return xs; }
+@noinline function keepit(xs: i32[]): i32[] { return xs; }
 function round(i: i32): i32 {
     let held: i32[] = [];
     let acc: i32 = 0;

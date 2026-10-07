@@ -116,7 +116,7 @@ function main(): i32 {
 const enumPayloadStructStrAliasedBoxSafe = `struct S { name: string, n: i32 }
 enum E { A(S, i32), B(i32, i32) }
 function mk(nm: string, n: i32): E { return A(S { name: nm + "x", n: n }, n); }
-function id2(e: E): E { return e; }
+@noinline function id2(e: E): E { return e; }
 function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;

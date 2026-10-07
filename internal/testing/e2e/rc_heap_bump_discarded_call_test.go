@@ -46,7 +46,7 @@ function main(): i32 {
 // return-transfer inc makes the result rc>=2). Discarding it must only DEC
 // (is_unique false), never free, so `arr` stays valid and readable. A wrong
 // free shows up as a wrong sum (999) or a non-zero underflow count.
-const discardedCallAliasedSafe = `function pass(p: i32[]): i32[] { return p; }
+const discardedCallAliasedSafe = `@noinline function pass(p: i32[]): i32[] { return p; }
 function main(): i32 {
     let i: i32 = 0; let acc: i32 = 0;
     let arr: i32[] = [10, 20, 30];

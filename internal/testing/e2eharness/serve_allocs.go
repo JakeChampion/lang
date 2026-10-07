@@ -19,21 +19,26 @@ import (
 // two requests (the reactor wait, the read, the handler's task, the reply,
 // the buffer's compaction), and the handler's own response.
 
-// ServeAllocsRounds is how many hello requests the count spans.
-const ServeAllocsRounds = 2000
+// ServeAllocsRounds is how many hello requests the count spans on a host
+// running the server natively; ServeAllocsRoundsEmulated is the count under
+// qemu or wasmtime, where a request costs about a millisecond.
+const ServeAllocsRounds = 100000
+const ServeAllocsRoundsEmulated = 10000
 
 // serveAllocsWarm is how many requests run before the first count, so the
 // connection's buffers and the loop's tables have reached their size.
 const serveAllocsWarm = 2000
 
-// serveAllocsSlack is how far the total may sit from a whole number per
-// request: the loop reformats its Date once a second, a few allocations
-// each time, and the rounds can straddle a second or two.
-const serveAllocsSlack = 64
+// serveAllocsSlackPerSecond is how far the total may sit from a whole
+// number per request, per second the rounds took and two more: the loop
+// reformats its Date once a second, about thirty allocations each time.
+const serveAllocsSlackPerSecond = 40
 
 // ServeAllocsServerSource is a server answering "hello" to every
-// path but /count, which answers the allocator's call count.
-func ServeAllocsServerSource() string {
+// path but /count, which answers the allocator's call count. It serves the
+// listener it inherits for `rounds` requests and the warm-up on one
+// connection.
+func ServeAllocsServerSource(rounds int) string {
 	return fmt.Sprintf(`import "std/http";
 import "std/serve";
 import "std/platform";
@@ -46,14 +51,15 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 function main(): i32 {
     return serve.run(0, serve.Config { ...serve.config(), keep_alive_requests: %d }, handle);
 }
-`, serveAllocsWarm+ServeAllocsRounds+8)
+`, serveAllocsWarm+rounds+8)
 }
 
-// CheckServeAllocs drives ServeAllocsServerSource at addr and holds the
-// allocations per hello request to want. Two counts back to back give what
-// a count request costs, which is taken off the count around the rounds.
-// The pin is a ratchet: above it is a regression, below it lowers the pin.
-func CheckServeAllocs(t *testing.T, addr string, want int64) {
+// CheckServeAllocs drives ServeAllocsServerSource at addr for rounds hello
+// requests and holds the allocations per request to want. Two counts back
+// to back give what a count request costs, which is taken off the count
+// around the rounds. The pin is a ratchet: above it is a regression, below
+// it lowers the pin.
+func CheckServeAllocs(t *testing.T, addr string, want int64, rounds int) {
 	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
 	conn, err := net.DialTimeout("tcp", addr, 5*time.Second)
@@ -92,14 +98,17 @@ func CheckServeAllocs(t *testing.T, addr string, want int64) {
 	}
 	c0 := count()
 	c1 := count()
-	for i := 0; i < ServeAllocsRounds; i++ {
+	started := time.Now()
+	for i := 0; i < rounds; i++ {
 		get("/")
 	}
 	c2 := count()
+	seconds := int64(time.Since(started)/time.Second) + 2
 	total := c2 - c1 - (c1 - c0)
-	got := int64(math.Round(float64(total) / ServeAllocsRounds))
-	if d := total - got*ServeAllocsRounds; d < -serveAllocsSlack || d > serveAllocsSlack {
-		t.Fatalf("%d allocations over %d requests is %d from a whole number per request", total, ServeAllocsRounds, d)
+	t.Logf("counts %d, %d, %d: %d allocations over %d requests in %d s", c0, c1, c2, total, rounds, seconds-2)
+	got := int64(math.Round(float64(total) / float64(rounds)))
+	if d := total - got*int64(rounds); d < -serveAllocsSlackPerSecond*seconds || d > serveAllocsSlackPerSecond*seconds {
+		t.Fatalf("%d allocations over %d requests is %d from a whole number per request", total, rounds, d)
 	}
 	if got != want {
 		t.Errorf("the serve loop allocates %d times per hello request; pinned %d.\n"+
