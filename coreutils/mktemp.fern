@@ -28,12 +28,9 @@
 //   - `-u` is not "print a name and create nothing": it lstat()s each
 //     candidate, retries a name that exists, and reports every errno but
 //     ENOENT through the ordinary creation diagnostic.
-//   - A candidate that already exists is retried at most 238328 times —
-//     62^3, whatever the run length — and the exhaustion is reported as
-//     `File exists`. Measured: with all 238328 three-character names
-//     taken, `mktemp XXX` fails, and it fails about a third of the time
-//     with exactly one name free, which is what a bounded number of
-//     random draws (rather than a sweep) looks like.
+//   - Collisions are retried up to max(62^3, TMP_MAX), independent of
+//     the run length. Darwin's TMP_MAX is 308915776; Linux uses 238328
+//     attempts. Exhaustion reports `File exists`.
 //   - `-V` is a live short option for `--version` that `--help` does not
 //     mention; every other letter is `invalid option`.
 //
@@ -250,9 +247,11 @@ function random_run(n: i32): string {
   return string_from_bytes_unchecked(out);
 }
 
-// How many candidates a run of X's is worth before the attempt is
-// abandoned: 62^3, whatever the run's length.
+// gnulib uses max(62^3, TMP_MAX), regardless of the run's length.
 function attempt_limit(): i32 {
+  if (target_os() == "darwin") {
+    return 308915776;
+  }
   return 238328;
 }
 

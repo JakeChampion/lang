@@ -5,6 +5,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -142,9 +143,10 @@ func init() {
 //     holds the alphabet, the length and the fact that the characters
 //     actually vary — the one thing maskRandom is blind to, since a
 //     constant name from inside the alphabet masks to the same X's.
-//     TestMktempRetryExhaustion holds the bounded retry: it fills a
-//     directory with all 62^3 three-character names and requires both
-//     sides to report `File exists` rather than looping forever.
+//     TestMktempRetryExhaustion holds the bounded retry: Linux exhausts
+//     a directory filled with all 62^3 names; Darwin injects collisions
+//     through the full TMP_MAX bound. Both require GNU's failure and
+//     diagnostic, and retain a live four-character escape case.
 func mktempCases(*testing.T) []invocation {
 	long := strings.Repeat("a", 300)
 	return []invocation{
@@ -436,13 +438,14 @@ func TestMktempRandomAlphabet(t *testing.T) {
 // TestMktempRetryExhaustion holds the bounded retry. A name that is taken
 // is redrawn, which nothing else here reaches: the corpus cannot make a
 // collision happen, and an unbounded loop would hang rather than fail. GNU
-// gives up after 62^3 candidates whatever the run length, so a directory
+// gives up after max(62^3, TMP_MAX) candidates whatever the run length, so a directory
 // holding every three-character name is where both sides run out — and an
 // implementation that never retried would report the same thing for the
 // wrong reason, which is why the name is three characters rather than ten.
 //
-// It fills 238328 files, which costs a few seconds; it is the only test
-// here that does.
+// Darwin's TMP_MAX is 308915776. Fault injection checks its full retry count
+// without hundreds of millions of real filesystem calls. The saturated
+// directory still checks the live four-character escape case.
 func TestMktempRetryExhaustion(t *testing.T) {
 	dir := t.TempDir()
 	for _, a := range alnum62 {
@@ -465,11 +468,20 @@ func TestMktempRetryExhaustion(t *testing.T) {
 			}
 		}
 	}
+	var fault *mktempRetryFault
+	if runtime.GOOS == "darwin" {
+		fault = newMktempRetryFault(t)
+	}
 	for _, args := range [][]string{{"XXX"}, {"-d", "XXX"}, {"-u", "XXX"}, {"-u", "-d", "XXX"}, {"-q", "XXX"}} {
 		t.Run(strings.Join(args, " "), func(t *testing.T) {
 			inv := invocation{args: args, dir: dir}
-			want := inv.run(t, referenceBin(t, "mktemp"), "mktemp")
-			got := inv.run(t, fernBin(t, "mktemp"), "mktemp")
+			var want, got outcome
+			if fault != nil {
+				want, got = fault.run(t, inv, 0)
+			} else {
+				want = inv.run(t, referenceBin(t, "mktemp"), "mktemp")
+				got = inv.run(t, fernBin(t, "mktemp"), "mktemp")
+			}
 			if want.how() != got.how() {
 				t.Errorf("status differs: gnu %s, fern %s", want.how(), got.how())
 			}
