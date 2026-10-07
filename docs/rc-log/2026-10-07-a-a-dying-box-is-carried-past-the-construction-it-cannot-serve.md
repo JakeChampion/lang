@@ -83,4 +83,8 @@ differ in one instruction.
 `TestSelfHostReuseCarry`: 37 allocations over 100 rounds (the 33 `Bad`
 boxes and the probe's own four), from 136. `TestSelfHostSemanticInline`'s
 `kind` case covers the leaf. The perf corpus: `sort_strings.ir` -5.4% and
-`ordmap_insert.ir` -2.1% on x86-64, `sort_strings.text` +1.8%.
+`ordmap_insert.ir` -2.1% on x86-64, -4.0% and -5.8% on aarch64,
+`sort_strings.text` +1.8%; emitted size rises on four self-host rows,
+`sort_strings` on each target (+1.3% to +3.9%) and wasm `ordmap_insert`
+(+7.7%). The compiler compiling itself allocates 0.2% less than main's
+(105,552,422 to 105,329,411), and the self-built compiler is 0.4% larger.
