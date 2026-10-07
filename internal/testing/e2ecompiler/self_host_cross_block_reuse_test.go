@@ -2,9 +2,9 @@ package e2ecompiler
 
 import "testing"
 
-// A donor dying in one block hands its box to the first construction of a
-// later block entered only by way of it (ssarc.carried_pairs); a path that
-// leaves that way drops the donor instead. Each case returns
+// A donor dying in one or more blocks hands its box to the first construction
+// of each later block entered only by way of them (ssarc.carried_pairs); a
+// path that leaves those ways drops the donor instead. Each case returns
 // a value the interpreter agrees on, runs under the sanitizer and the leak
 // census, and pins how many boxes it allocates: one fewer than without the
 // reuse where the pairing applies, the same where it must not. A constant
@@ -72,6 +72,64 @@ function main(): i32 { let acc: P[] = []; let i: i32 = 0; while (i < 4) { let a:
 		// it shared and allocates, and the skipping path only releases it.
 		{"shared-donor", `struct P { x: i32, y: i32 }
 function main(): i32 { let sum: i32 = 0; let keep: P[] = []; let i: i32 = 0; while (i < 4) { let a: P = P { x: i, y: i + 1 }; if (i == 1) { keep = keep.append(a); } let s: i32 = a.x + a.y; if (i > 0) { let b: P = P { x: i, y: 3 }; sum = sum + b.x + b.y; } sum = sum + s; i = i + 1; } return sum + keep[0].x * 10; }`, 41, 6},
+		// A donor dying before a branch serves the construction in each arm:
+		// at most one arm runs, so the box is spent at most once.
+		{"record-into-both-arms", `struct P { x: i32, y: i32 }
+function f(n: i32): i32 { let a: P = P { x: n, y: 2 }; let t: i32 = a.x; let r: i32 = 0; if (n > 3) { let b: P = P { x: n * 3, y: 4 }; r = b.x + b.y; } else { let c: P = P { x: n * 5, y: 6 }; r = c.x + c.y; } return t + r; }
+function main(): i32 { return f(5) + f(1); }`, 36, 2},
+		// The ways to the two arms share the `else if` test, and the arm
+		// that returns first drops the donor on its way out.
+		{"else-if-arms", `struct P { x: i32, xs: i32[] }
+@noinline function id(xs: i32[]): i32[] { return xs; }
+function f(n: i32): i32 { let a: P = P { x: n, xs: id([n, 1]) }; let s: i32 = a.x + a.xs[1]; if (n > 5) { return s; } else if (n > 2) { let b: P = P { x: n * 3, xs: id([4]) }; return s + b.x + b.xs[0]; } else { let c: P = P { x: n * 5, xs: id([6, 7]) }; return s + c.x + c.xs[1]; } }
+function main(): i32 { return f(9) + f(3) + f(1); }`, 41, 6},
+		// Each iteration's donor is rebuilt in whichever arm runs, its
+		// array field released before the new one is stored.
+		{"both-arms-in-loop", `struct P { x: i32, xs: i32[] }
+@noinline function id(xs: i32[]): i32[] { return xs; }
+function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 4) { let a: P = P { x: i, xs: id([1]) }; let s: i32 = a.x + a.xs[0]; if (i % 2 == 0) { let b: P = P { x: i, xs: id([10]) }; sum = sum + b.x + b.xs[0]; } else { let c: P = P { x: i, xs: id([20]) }; sum = sum + c.x + c.xs[0]; } sum = sum + s; i = i + 1; } return sum; }`, 76, 4},
+		// The same at scale, with an arm that builds nothing.
+		{"both-arms-churn", `struct P { x: i32, xs: i32[] }
+@noinline function id(xs: i32[]): i32[] { return xs; }
+function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 1000000) { let a: P = P { x: i, xs: id([i, 1]) }; let s: i32 = a.x + a.xs[1]; if (i % 3 == 0) { let b: P = P { x: i, xs: id([10]) }; sum = (sum + b.x + b.xs[0]) % 1000; } else if (i % 3 == 1) { let c: P = P { x: i, xs: id([20, 3]) }; sum = (sum + c.x + c.xs[1]) % 1000; } sum = (sum + s) % 1000; i = i + 1; } return sum % 100; }`, 39, 2000000},
+		// A donor `keep` shares in two iterations: the arm's construction
+		// finds it shared and allocates.
+		{"shared-donor-both-arms", `struct P { x: i32, xs: i32[] }
+@noinline function id(xs: i32[]): i32[] { return xs; }
+function main(): i32 { let keep: P[] = []; let sum: i32 = 0; let i: i32 = 0; while (i < 6) { let a: P = P { x: i, xs: id([i, 1]) }; if (i == 2 || i == 3) { keep = keep.append(a); } let s: i32 = a.x + a.xs[1]; if (i % 2 == 0) { let b: P = P { x: i, xs: id([10]) }; sum = sum + b.x + b.xs[0]; } else { let c: P = P { x: i, xs: id([20, 3]) }; sum = sum + c.x + c.xs[1]; } sum = sum + s; i = i + 1; } return sum + keep[0].xs[0] + keep[1].x; }`, 80, 15},
+		// `d` dies in each arm of the match on its field; both arms hold it
+		// for the record built after they rejoin.
+		{"dying-in-both-match-arms", `enum St { On(i32), Off }
+struct M { tag: i32, st: St }
+@noinline function id(n: i32): i32 { return n; }
+function f(n: i32): i32 { let d: M = M { tag: n, st: On(id(n)) }; let s: i32 = 0; match (d.st) { On(v) => { s = v + d.tag; }, Off => { s = d.tag; } } let e: M = M { tag: n, st: Off }; if (n > 2) { s = s + e.tag; } let b: M = M { tag: n + 1, st: On(id(3)) }; match (b.st) { On(v) => { s = s + v + b.tag; }, Off => {} } return s; }
+function main(): i32 { return f(1) + f(5); }`, 31, 8},
+		// One arm builds a record of the donor's count before the donor's
+		// last read; the donor dies after it in both arms all the same.
+		{"dying-in-both-if-arms", `struct P { x: i32, xs: i32[] }
+@noinline function id(xs: i32[]): i32[] { return xs; }
+function f(n: i32): i32 { let a: P = P { x: n, xs: id([n, 1]) }; let s: i32 = 0; if (n > 3) { s = a.x; } else { let q: P = P { x: 9, xs: id([n]) }; s = q.x + a.xs[1]; } let b: P = P { x: n * 3, xs: id([4]) }; return s + b.x + b.xs[0]; }
+function main(): i32 { return f(5) + f(1); }`, 41, 6},
+		// `a` dies in all three arms, and the one that returns holds nothing:
+		// it has no edge to drop a held box on.
+		{"returning-arm-holds-nothing", `struct P { x: i32, xs: i32[] }
+@noinline function id(xs: i32[]): i32[] { return xs; }
+function f(n: i32): i32 { let a: P = P { x: n, xs: id([n, 1]) }; let s: i32 = 0; if (n > 3) { s = a.x; } else if (n > 1) { s = a.xs[1]; return s; } else { s = a.xs[0] + 1; } let b: P = P { x: n * 3, xs: id([4]) }; return s + b.x + b.xs[0]; }
+function main(): i32 { return f(5) + f(2) + f(0); }`, 30, 6},
+		// The match arms hold boxes of different counts, so only one could
+		// serve `m`, and the join is entered from the other: nothing is
+		// carried.
+		{"arms-of-different-counts", `enum S { One(i32), Two(i32, i32) }
+struct M { tag: i32, xs: i32[] }
+@noinline function id(xs: i32[]): i32[] { return xs; }
+@noinline function mk(n: i32): S { if (n % 2 == 0) { return One(n); } return Two(n, 1); }
+function f(n: i32): i32 { let s: S = mk(n); let t: i32 = 0; match (s) { One(v) => { t = v; }, Two(v, w) => { t = v + w; } } let m: M = M { tag: t, xs: id([n]) }; return m.tag + m.xs[0]; }
+function main(): i32 { return f(2) + f(3); }`, 11, 6},
+		// Dying in the match arms, served in one of two later arms, at scale.
+		{"match-arms-churn", `enum St { On(i32[]), Off(i32[]) }
+struct M { tag: i32, st: St }
+@noinline function id(xs: i32[]): i32[] { return xs; }
+function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 1000000) { let d: M = M { tag: i, st: On(id([i, 1])) }; let s: i32 = 0; match (d.st) { On(v) => { s = v[1] + d.tag; }, Off(v) => { s = d.tag; } } if (i % 3 > 0) { let b: M = M { tag: i, st: Off(id([3])) }; match (b.st) { On(v) => { sum = sum + 1; }, Off(v) => { sum = (sum + v[0] + b.tag) % 1000; } } } sum = (sum + s) % 1000; i = i + 1; } return sum % 100; }`, 65, 3666666},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

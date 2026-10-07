@@ -106,11 +106,10 @@ var loopReuseIRCases = []struct {
 	{"cross-block-reuse",
 		`struct P { x: i32, y: i32 } function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 4) { let a: P = P { x: i, y: i + 1 }; let s: i32 = a.x + a.y; if (i > 0) { let b: P = P { x: i, y: 3 }; sum = sum + b.x + b.y; } sum = sum + s; i = i + 1; } return sum; }`,
 		31},
-	// CROSS-BRANCH sharing (#4402 opt 3): one dead donor `a` feeds a construction
-	// in BOTH arms — only one arm runs per iteration, so the token is claimed at
-	// most once and ONE box covers the loop. Before the arms shared, the else arm
-	// found the donor already consumed by the then arm and bump-allocated, so this
-	// measured 2. i=0:{0,10}=10; i=1:{1,20}=21; i=2:{2,10}=12; i=3:{3,20}=23 = 66.
+	// A construction in each arm of a branch below a record `a` built and never
+	// read. The value is what is pinned; TestSelfHostCrossBlockReuse pins the
+	// allocations of a donor serving both arms.
+	// i=0:{0,10}=10; i=1:{1,20}=21; i=2:{2,10}=12; i=3:{3,20}=23 = 66.
 	{"cross-block-both-arms",
 		`struct P { x: i32, y: i32 } function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 4) { let a: P = P { x: i, y: 1 }; if (i % 2 == 0) { let b: P = P { x: i, y: 10 }; sum = sum + b.x + b.y; } else { let c: P = P { x: i, y: 20 }; sum = sum + c.x + c.y; } i = i + 1; } return sum; }`,
 		66},

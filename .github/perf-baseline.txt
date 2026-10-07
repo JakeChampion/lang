@@ -69,9 +69,9 @@ x86_64/map_string.text	9602
 x86_64/map_string.ir	90171521	2
 x86_64/ordmap_insert.text	4339
 x86_64/ordmap_insert.ir	226418414
-x86_64/pmap_insert.text	5198
-x86_64/pmap_insert.ir	96333349
-x86_64/pvec_with.text	2917
+x86_64/pmap_insert.text	5313
+x86_64/pmap_insert.ir	83397970
+x86_64/pvec_with.text	2949
 x86_64/pvec_with.ir	83108391
 x86_64/record_update.ir	167224936
 x86_64/record_update.text	1437
@@ -172,9 +172,9 @@ aarch64/map_string.text	10696
 aarch64/map_string.ir	91222257	2
 aarch64/ordmap_insert.text	4934
 aarch64/ordmap_insert.ir	247937830
-aarch64/pmap_insert.text	5927
-aarch64/pmap_insert.ir	113070646
-aarch64/pvec_with.text	3127
+aarch64/pmap_insert.text	6041
+aarch64/pmap_insert.ir	89079538
+aarch64/pvec_with.text	3163
 aarch64/pvec_with.ir	88701085
 aarch64/record_update.text	1583
 aarch64/record_update.ir	160686304
