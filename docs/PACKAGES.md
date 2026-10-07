@@ -70,8 +70,9 @@ else through `pkgcache.ValidateHash`, so neither an uppercase spelling
 nor a path segment can reach the store path. The URL is just a mirror
 hint (the Zig/Roc model: trust-on-first-use is closed with zero
 infrastructure, an expired domain can't substitute code, and nothing
-ever needs re-checking). `fern -fetch [DIR]` is the ONLY command that
-touches the network: it walks the governing manifest and its dependencies'
+ever needs re-checking). `fern -fetch [DIR]` is how a build's
+dependencies reach the store (`-add url:` and `-resolve` also download
+packages, and a build never does): it walks the governing manifest and its dependencies'
 manifests transitively, downloads missing archives, verifies each
 against its declared hash (a mismatch fails the run and nothing is
 unpacked), and unpacks into the per-machine content-addressed store —

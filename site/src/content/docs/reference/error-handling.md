@@ -1,6 +1,6 @@
 ---
 title: Error handling
-description: Option, Result, the ? operator, and exhaustive match — errors as values.
+description: Option, Result, the ? operator, error conversion, @try enums, and exhaustive match — errors as values.
 sidebar:
   order: 4
 ---
@@ -9,10 +9,16 @@ Fern has no exceptions and no `panic`-as-control-flow. Fallible
 operations return a value that *describes* the failure, and the type
 system makes you account for it. Two built-in enums carry that weight.
 
+A few conditions are bugs rather than errors, and those abort the program
+instead of returning a value: an out-of-range array index or slice, a
+failed [`assert`](../language-features/#assertions-and-stubs--assert-and-todo),
+and a reached `todo`. Integer arithmetic never aborts — see
+[Integer arithmetic](../types/#integer-arithmetic).
+
 ## `Option[T]` — a value that might be absent
 
 ```fern
-enum Option[T] { Some(T), None }
+enum Option[T] { Some(T), None }   // built in; shown for reference
 ```
 
 Use `Option` when "nothing" is a normal, non-exceptional outcome — a map
@@ -29,7 +35,7 @@ match (m.get("key")) {
 ## `Result[T, E]` — success or a described failure
 
 ```fern
-enum Result[T, E] { Ok(T), Err(E) }
+enum Result[T, E] { Ok(T), Err(E) }   // built in; shown for reference
 ```
 
 Use `Result` when failure carries information you want to report — an I/O
@@ -47,6 +53,11 @@ function parse_int(s: string): Result[i32, ParseError] {
     return Ok(42);
 }
 ```
+
+The built-in I/O functions (`read_file`, `open_reader`, …) fail with
+`IoError`, a built-in enum: `NotFound(path)`, `PermissionDenied(path)`,
+`AlreadyExists(path)`, `InvalidUtf8(…)`, `Interrupted`, `Unsupported`, and
+`Other(…)` for the rest.
 
 When an operation can fail but has nothing to hand back on success, the
 success type is the [unit type](../types/#the-unit-type): `Result[(),
@@ -80,6 +91,83 @@ function double(s: string): Result[i32, ParseError] {
 
 Without `?`, that's a `match` with an explicit error-propagating arm.
 `?` is the same thing, written once.
+
+`?` cannot appear directly inside a `defer` or `errdefer` action
+(`E079`); see [deferred cleanup](../language-features/#deferred-cleanup--defer-and-errdefer).
+
+### Converting the error type
+
+When the function's error type differs from the one `?` meets, `?`
+converts it through a `From` impl from [`std/convert`](../../stdlib/convert/):
+
+```fern
+import "std/convert";
+import "std/i32";
+
+struct ParseError { msg: string }
+struct AppError { text: string }
+
+impl convert.From[ParseError] for AppError {
+    function from(e: ParseError): AppError {
+        return AppError { text: "parse: " + e.msg };
+    }
+}
+
+function parse(s: string): Result[i32, ParseError] {
+    if (s == "") { return Err(ParseError { msg: "empty" }); }
+    return Ok(s.len());
+}
+
+function run(s: string): Result[i32, AppError] {
+    let n: i32 = parse(s)?;   // a ParseError becomes an AppError
+    return Ok(n * 2);
+}
+
+function main(): i32 {
+    match (run("")) {
+        Ok(n)  => { print(n.to_string()); },
+        Err(e) => { print(e.text); },       // parse: empty
+    }
+    return 0;
+}
+```
+
+Without such an impl, the two error types must match. `Option` and
+`Result` do not convert into each other through `?`; use `ok_or` and
+`ok()` (below).
+
+### On your own enums — `@try`
+
+`?` works on any enum marked `@try`, not only the two built-ins. The
+enum must have exactly two variants: first the success variant with one
+payload, then the failure variant with zero or one (`E078` otherwise). As
+with `Option` and `Result`, the enclosing function must return the same
+enum.
+
+```fern
+import "std/i32";
+
+@try
+enum Lookup[T] { Found(T), Missing }
+
+function find(id: i32): Lookup[i32] {
+    if (id > 0) { return Found(id * 10); }
+    return Missing;
+}
+
+function twice(id: i32): Lookup[i32] {
+    let v: i32 = find(id)?;   // Missing returns Missing early
+    return Found(v * 2);
+}
+
+function main(): i32 {
+    match (twice(4)) {
+        Found(v) => { print(v.to_string()); },   // 80
+        Missing  => { print("missing"); },
+    }
+    return 0;
+}
+```
 
 ## `match` is exhaustive
 

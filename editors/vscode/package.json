@@ -54,7 +54,7 @@
             "type": "string"
           },
           "default": [],
-          "description": "Arguments passed to the server. For the self-host compiler's server, set fern.serverPath to the fern binary and this to [\"-lsp\", \"/path/to/stdlib\"]."
+          "description": "Arguments passed to the server. For the self-hosted compiler's server, set fern.serverPath to the fern-selfhost binary and this to [\"-lsp\", \"/path/to/internal/stdlib\"]."
         },
         "fern.trace.server": {
           "type": "string",
