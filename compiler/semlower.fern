@@ -479,7 +479,7 @@ function inferred_rows(mod: parser.Module, built: semsource.Built, declared: Pla
 
 // The module built and lowered, under the inferred modes when it plans whole.
 function produced_rows(mod: parser.Module, structs: irtables.StructTab, debug_lines: boolean): Inference {
-  let built: semsource.Built = semsource.build_module_debug(mod, debug_lines);
+  let built: semsource.Built = semsource.with_analyses(semsource.build_module_debug(mod, debug_lines));
   util.arr_push_cliff_report("sem:built", 0);
   let records: parser.StructDecl[] = instance_records(built);
   if (records.len() > 0) {
