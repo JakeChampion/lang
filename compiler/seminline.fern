@@ -97,6 +97,7 @@ pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][
   }
   let sp: Spliceable = Spliceable { ix: ix, leaves: leaves, once: once, shared: shared, inlinable: inlinable };
   let rounds: Inlined = splice_rounds(funcs0, rewrite, sp);
+  sp = grown_leaves(rounds, sp);
   let ctors: boolean[] = constructor_leaves(rounds.funcs, sp);
   let out: Inlined = split_all(paired_all(rounds, names, rewrite, unnamed), rewrite, modes);
   match (env("FERN_SEM_DUMP")) {
@@ -187,7 +188,8 @@ function spliced_away(sp: Spliceable, ctors: boolean[], calls: i32[], left: i32[
 }
 
 // The functions spliced wherever they are called, by index into the
-// function list `ix` names: leaves at once, functions called once when the
+// function list `ix` names: leaves at once (a function becomes one when every
+// call in it has been spliced, grown_leaves), functions called once when the
 // ones they call once are in them, the `shared` ones among `once` (called
 // from a few places, returning boxes) once nothing else folds, and
 // constructor leaves, read off the bodies as each round leaves them (a
@@ -213,25 +215,42 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], sp: Spliceable
   let folded: boolean = false;
   let round: i32 = 0;
   let more: boolean = true;
+  let s: Spliceable = sp;
   while (more && round < 16) {
-    let ctors: boolean[] = constructor_leaves(out.funcs, sp);
+    s = grown_leaves(out, s);
+    let ctors: boolean[] = constructor_leaves(out.funcs, s);
     let ready: boolean[] = [];
     let j: i32 = 0;
     while (j < out.funcs.len()) {
-      ready = ready.append(sp.leaves[j] || ctors[j] || once[j] && !awaits(out.funcs[j], sp.ix, once, sp.shared, j));
+      ready = ready.append(s.leaves[j] || ctors[j] || once[j] && !awaits(out.funcs[j], s.ix, once, s.shared, j));
       j = j + 1;
     }
-    let next: Round = splice_round(out, rewrite, sp.ix, ready, ctors, if (folded) { sp.shared } else { none_of(sp.shared.len()) });
+    let next: Round = splice_round(out, rewrite, s.ix, ready, ctors, if (folded) { s.shared } else { none_of(s.shared.len()) });
     more = next.changed;
     if (!more && !folded) {
       folded = true;
-      once = sp.once;
+      once = s.once;
       more = true;
     }
     out = next.out;
     round = round + 1;
   }
   return out;
+}
+
+// A function whose every call has been spliced into it can be a leaf itself:
+// `span_len` calling the leaves `span_lo` and `span_hi` is one after the first
+// round. Only a rewritten body can have changed.
+function grown_leaves(sofar: Inlined, sp: Spliceable): Spliceable {
+  let leaves: boolean[] = sp.leaves;
+  let i: i32 = 0;
+  while (i < sofar.funcs.len()) {
+    if (!leaves[i] && sofar.rewritten[i] && sp.inlinable[i] && leaf(sofar.funcs[i])) {
+      leaves = leaves.with(i, true);
+    }
+    i = i + 1;
+  }
+  return Spliceable { ...sp, leaves: leaves };
 }
 
 struct Round { out: Inlined, changed: boolean }
@@ -487,11 +506,20 @@ function leaf_word(f: ssasem.Func, t: typeinfo.Type): boolean {
 
 function leaf_kind(k: i32): boolean {
   return k >= 1 && k <= 10 && k != 5 || k == ssasem.cast() || k == ssasem.tuple_new() || k == ssasem.tuple_get()
-    || k == ssasem.record_get() || k == ssasem.variant_is() || k == ssasem.variant_get() || k == ssasem.variant_new();
+    || k == ssasem.record_get() || k == ssasem.variant_is() || k == ssasem.variant_get() || k == ssasem.variant_new()
+    || line_mark(k);
 }
 
 function record(t: typeinfo.Type): boolean {
   if let typeinfo.TypeStruct(_) = t {
+    return true;
+  }
+  return false;
+}
+
+// The value a line mark defines; no other leaf instruction makes one.
+function void_type(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeVoid(_) = t {
     return true;
   }
   return false;
@@ -560,7 +588,7 @@ function constructor_body(f: ssasem.Func): boolean {
       if (!constructor_kind(ins.kind_tag)) {
         return false;
       }
-      if (ins.kind_tag != ssasem.param()) {
+      if (ins.kind_tag != ssasem.param() && !line_mark(ins.kind_tag)) {
         n = n + 1;
       }
     }
@@ -568,10 +596,16 @@ function constructor_body(f: ssasem.Func): boolean {
   return returned >= 0 && n <= max_leaf_insts() && construction_kind(defs_of(f.graph).insts[returned].kind_tag);
 }
 
-// A literal, a parameter, a copy, a construction, a direct call or a source
-// position marker (ssa kind 35).
+// A literal, a parameter, a copy, a construction, a direct call or a line mark.
 function constructor_kind(k: i32): boolean {
-  return literal_kind(k) || k == ssasem.param() || k == 7 || k == 35 || k == ssasem.call() || construction_kind(k);
+  return literal_kind(k) || k == ssasem.param() || k == 7 || line_mark(k) || k == ssasem.call() || construction_kind(k);
+}
+
+// A `-g` build's source-position marker (ssa kind 35): a void statement that
+// emits no code, so it counts toward no budget here and keeps no function from
+// splicing, or `-g` would change the program it describes.
+function line_mark(k: i32): boolean {
+  return k == 35;
 }
 
 function construction_kind(k: i32): boolean {
@@ -619,19 +653,23 @@ function none_of(n: i32): boolean[] {
   return out;
 }
 
+// The records among the values the body defines, or -1 for a value a leaf may
+// not hold. A splice leaves its callee's values numbered in the caller with no
+// instruction defining some of them (the parameters it mapped to arguments),
+// so only defined values are read.
 function leaf_value_records(f: ssasem.Func, ignored: i32): i32 {
   let records: i32 = 0;
-  let i: i32 = 0;
-  while (i < f.values.len()) {
-    if (i != ignored) {
-      let t: typeinfo.Type = f.values[i];
-      if (record(t)) {
-        records = records + 1;
-      } else if (!leaf_word(f, t)) {
-        return 0 - 1;
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.result >= 0 && ins.result != ignored) {
+        let t: typeinfo.Type = f.values[ins.result];
+        if (record(t)) {
+          records = records + 1;
+        } else if (!leaf_word(f, t) && !void_type(t)) {
+          return 0 - 1;
+        }
       }
     }
-    i = i + 1;
   }
   return records;
 }
@@ -670,7 +708,7 @@ function leaf_body(f: ssasem.Func, ignored: i32): boolean {
         if (ins.result != ignored && record(f.values[ins.result])) {
           record_sources = record_sources + 1;
         }
-      } else {
+      } else if (!line_mark(ins.kind_tag)) {
         if (ins.kind_tag == ssasem.variant_get() && record(f.values[ins.result])) {
           record_sources = record_sources + 1;
         }
@@ -1475,7 +1513,11 @@ function built_type(f: ssasem.Func, built: typeinfo.Type[], t: typeinfo.Type): b
 function count_insts(g: ssa.SFunc): i32 {
   let n: i32 = 0;
   for b in g.blocks {
-    n = n + b.insts.len();
+    for ins in b.insts {
+      if (!line_mark(ins.kind_tag)) {
+        n = n + 1;
+      }
+    }
   }
   return n;
 }

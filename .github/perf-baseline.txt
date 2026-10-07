@@ -62,13 +62,13 @@ x86_64/http_hello.ir	31204779
 x86_64/int_loop.text	33
 x86_64/int_loop.ir	12000022
 x86_64/map_int.text	6242
-x86_64/map_int.ir	45746101
+x86_64/map_int.ir	44895461
 x86_64/map_probe_chain.text	6256
-x86_64/map_probe_chain.ir	427091447
+x86_64/map_probe_chain.ir	419458512
 x86_64/map_string.text	9235
 x86_64/map_string.ir	87246392	2
-x86_64/ordmap_insert.text	4261
-x86_64/ordmap_insert.ir	226418414
+x86_64/ordmap_insert.text	4743
+x86_64/ordmap_insert.ir	220760932
 x86_64/pmap_insert.text	5156
 x86_64/pmap_insert.ir	83397970
 x86_64/pvec_with.text	2949
@@ -165,15 +165,15 @@ aarch64/http_hello.ir	33776600
 aarch64/int_loop.text	101
 aarch64/int_loop.ir	18000025
 aarch64/map_int.text	6889
-aarch64/map_int.ir	46724482
+aarch64/map_int.ir	45533586
 aarch64/map_probe_chain.text	6898
-aarch64/map_probe_chain.ir	434234741
+aarch64/map_probe_chain.ir	423548632
 aarch64/map_string.text	10439
 aarch64/map_string.ir	91222257	2
-aarch64/ordmap_insert.text	4838
+aarch64/ordmap_insert.text	5384
 aarch64/ordmap_insert.ir	247937830
 aarch64/pmap_insert.text	5878
-aarch64/pmap_insert.ir	89079538
+aarch64/pmap_insert.ir	87937698
 aarch64/pvec_with.text	3163
 aarch64/pvec_with.ir	85888297
 aarch64/record_update.text	1543
