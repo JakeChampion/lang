@@ -138,6 +138,41 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 4},
+	// A map field of an owned record, rebuilt through a spread (#11119): the
+	// field read takes the map, so the insert finds it sole-held and updates
+	// in place. A borrowed read held it at two counts and copied every entry
+	// on every update.
+	{"map-field-of-owned-record-updates-in-place", `import "core/map";
+struct Db { entries: Map[i64, i64], n: i32 }
+@noinline
+function step(own db: Db, k: i64, v: i64): Db {
+    return Db { ...db, entries: db.entries.insert(k, v), n: db.n + 1 };
+}
+function main(): i32 {
+    let db: Db = Db { entries: Map {}, n: 0 };
+    let i: i32 = 0;
+    while (i < 200) { db = step(db, (i % 50) as i64, i as i64); i = i + 1; }
+    if (db.entries.len() != 50 || db.n != 200 || db.entries.get_or(7i64, 0i64) != 157i64) { return 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 450},
+	// A BORROWED record keeps its map: the insert copies, and the caller reads
+	// its own map back unchanged.
+	{"map-field-of-borrowed-record-is-not-taken", `import "core/map";
+struct Db { entries: Map[i64, i64], n: i32 }
+@noinline
+function with_key(db: Db, k: i64): Db {
+    return Db { ...db, entries: db.entries.insert(k, 9i64), n: db.n + 1 };
+}
+function main(): i32 {
+    let db: Db = Db { entries: Map {}, n: 0 };
+    db = Db { ...db, entries: db.entries.insert(1i64, 1i64) };
+    let other: Db = with_key(db, 2i64);
+    if (db.entries.len() != 1 || db.entries.get_or(2i64, 0i64) != 0i64) { return 1; }
+    if (other.entries.len() != 2 || other.entries.get_or(2i64, 0i64) != 9i64) { return 2; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`, 16},
 }
 
 // censusWithin holds a run's leakcheck summary to a case's contract: balanced
