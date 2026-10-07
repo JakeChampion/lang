@@ -17918,6 +17918,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					id.Name, c.variantEnumList(id.Name), c.variantQualifierHint(id.Name, "(...)"))
 				return nil
 			}
+			if isVar && len(vr.payloads) == 0 {
+				// A payloadless variant is a value, not a constructor.
+				c.errfCode(n.P, "E038", "calling non-function value of type %s", vr.enumName)
+				return nil
+			}
 			if isVar {
 				if len(n.Args) != len(vr.payloads) {
 					c.errfCode(n.P, "E036", "variant %s expects %d argument(s), got %d",

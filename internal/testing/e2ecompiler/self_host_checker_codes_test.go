@@ -2904,6 +2904,14 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// parameter nothing supplied. A call that does not resolve is left as
 		// written, so the arity check still sees its argument count, as native.
 		{"named-on-method", "struct S { v: i32 }\nimpl S { function m(self: Self, a: i32): i32 { return self.v + a; } }\nfunction main(): i32 { let s: S = S { v: 1 }; return s.m(a = 1); }\n", []string{"E077"}},
+		// A payloadless variant is a value, so calling it is E038 bare or
+		// qualified, with or without arguments (#11922).
+		{"e038-unit-variant-call", "enum C { R, B }\nfunction main(): i32 { let c: C = R(); return 0; }\n", []string{"E038"}},
+		{"e038-qualified-unit-variant-call", "enum C { R, B }\nfunction main(): i32 { let c = C.R(); return 0; }\n", []string{"E038"}},
+		{"e038-qualified-unit-variant-call-with-arg", "enum C { R, B }\nfunction main(): i32 { let c = C.R(1); return 0; }\n", []string{"E038"}},
+		{"e038-qualified-builtin-unit-variant-call", "function main(): i32 { let o: Option[i32] = Option.None(); return 0; }\n", []string{"E038"}},
+		{"e036-qualified-payload-variant-without-payload", "enum C { R, B(i32) }\nfunction main(): i32 { let c = C.B(); return 0; }\n", []string{"E036"}},
+		{"qualified-payload-variant-call-ok", "enum C { R, B(i32) }\nfunction main(): i32 { let c = C.B(1); let o: Option[i32] = Option.Some(1); return 0; }\n", nil},
 		{"named-on-fn-value", "function main(): i32 { let g: (i32) => i32 = (x: i32) => x + 1; return g(x = 1); }\n", []string{"E077"}},
 		// A local binding named like a top-level function is not that
 		// function: no defaults, no parameter names (#11850).

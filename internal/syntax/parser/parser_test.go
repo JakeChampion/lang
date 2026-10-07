@@ -4309,3 +4309,12 @@ func TestQualifiedStructLitTakesPostfix(t *testing.T) {
 		}
 	}
 }
+
+// A payloadless variant is declared without parens. `R()` is the self-host's
+// P001, an empty payload list where a type is expected (#11922).
+func TestEnumVariantEmptyPayloadListRejected(t *testing.T) {
+	_, err := Parse("enum C { R(), B() }\nfunction main(): i32 { return 0; }\n")
+	if err == nil || !strings.Contains(err.Error(), `expected type, got ")"`) {
+		t.Fatalf("got %v, want the empty payload list rejected", err)
+	}
+}

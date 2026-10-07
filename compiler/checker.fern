@@ -12629,6 +12629,20 @@ function qual_variant_exists(en: string, field: string, s: Scope): boolean {
   return mx_builtin_enum_of(field) == en;
 }
 
+// qual_variant_is_unit: the variant `en.field`, which qual_variant_exists has
+// confirmed, carries no payload. It is then a value, as its bare spelling is,
+// and calling it is E038.
+function qual_variant_is_unit(en: string, field: string, s: Scope): boolean {
+  let ou: UnionSig = s.lookup_union(en);
+  if (ou.name.len() > 0 && !ou.is_enum) {
+    return false;
+  }
+  if (field == "Some" || field == "Ok" || field == "Err") {
+    return false;
+  }
+  return variant_payload_count(en + "." + field, s.structs.structs) < 0;
+}
+
 // qual_variant_union names the enum a qualified variant reference `Enum.Variant`
 // belongs to, or "" when `fa` is not one. Both spellings ask this ONE rule: the
 // CONSTRUCTOR form (`W.Wrap(1)`) learned it in #6657 and the VALUE form
@@ -13347,6 +13361,8 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
       if (cqen.len() > 0 && !assoc_call_req(mfa.obj, mfa.field, s).found) {
         if (!qual_variant_exists(cqen, mfa.field, s)) {
           out = out.append(dg_at("E036", "enum " + cqen + " has no variant \"" + mfa.field + "\"", mfa.line, mfa.col));
+        } else if (qual_variant_is_unit(cqen, mfa.field, s)) {
+          out = out.append(dg_at("E038", "calling non-function value of type " + type_label(check_expr(c.callee, s)), c.line, c.col));
         } else {
           out = util.append_diags(out, variant_ctor_diags(cqen + "." + mfa.field, c, s));
         }
