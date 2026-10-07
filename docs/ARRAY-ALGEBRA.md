@@ -300,8 +300,8 @@ nothing about whether the wrapper belongs to the algebra.
 **Normative.** Whether a pipeline fused, and if not which operator or
 position declined it, is reportable on demand. The shape is
 `-append-report`'s, which already "print[s] every `.append` site … and
-whether the compiler grew the array in place or copied it, **with the
-rule that decided**".
+whether the retained Go IR grows the array in place or copies it, **with
+the rule that decided**".
 
 That last clause is the requirement. A report that says "did not fuse"
 is not the answer; the answer names the rule — not statically resolved

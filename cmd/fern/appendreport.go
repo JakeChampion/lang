@@ -11,11 +11,12 @@ import (
 )
 
 // runAppendReport implements `fern -append-report FILE.fern`: load and
-// type-check the entry exactly as a compile would, lower it to IR, and
-// print what emitArrayPush decided at each `.append` (#6992).
+// type-check the entry, lower it through the retained Go IR, and print what
+// its emitArrayPush decided at each `.append` (#6992).
 //
-// Report mode only — the same lowering a build runs, with the emitted code
-// thrown away.
+// This is the retained Go analysis, not the primary compiler's build plan,
+// and it can call an append copying that the primary compiler grows in
+// place (#11251).
 func runAppendReport(srcPath string, w io.Writer) error {
 	e, err := loadEntry(srcPath)
 	if err != nil {
@@ -43,6 +44,9 @@ func runAppendReport(srcPath string, w io.Writer) error {
 	if err != nil {
 		return e.format(err)
 	}
-	_, err = io.WriteString(w, ir.FormatAppendSites(irProg))
+	if _, err := io.WriteString(w, ir.FormatAppendSites(irProg)); err != nil {
+		return err
+	}
+	_, err = io.WriteString(w, "append report: retained Go analysis (not the primary Fern compiler's emitted plan)\n")
 	return err
 }
