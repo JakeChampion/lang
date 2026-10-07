@@ -129,9 +129,10 @@ is §6. Its gate counts the whole serve loop over 100k requests on x86-64
 and 10k on arm64 under qemu, pinned at 0 on both since slice 11 (the
 slices settled the figure over 2,000 rounds on x86-64 alone, since a
 steady loop allocates the same number of times on every request). On
-wasm the loop allocates about eight times per request, and not a whole
-number, so that target has no leg yet; the figure and what is known of
-it are #11770, and its slices belong in a section of their own. The bump
+wasm it read 8.29 per request, all of it the runtime's host-call
+plumbing and a re-parse after an empty read; #11770 took it to 0, and
+the wasm leg over 10k requests under wasmtime pins it there
+(`docs/rc-log/2026-10-07-c-the-wasm-runtimes-host-calls-take-no-block-per-call.md`). The bump
 half, held over 100k requests by `TestBumpPerRequest` and
 `TestSelfHostBumpPerRequest`, is unchanged.
 
