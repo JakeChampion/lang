@@ -39,6 +39,7 @@ var sysnoAliases = map[string]map[string]string{
 		"fstat":     "fstat64",
 		"getrandom": "getentropy",
 		"statfs":    "statfs64",
+		"getfsstat": "getfsstat64",
 	},
 }
 

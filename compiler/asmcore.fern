@@ -1582,6 +1582,11 @@ function sysno_arm64_darwin(name: string): string {
   if (name == "statfs") {
     return "345";
   }
+  // getfsstat64 — the mount table, one 64-bit-inode `struct statfs` per
+  // mount. No Linux row: Linux's table is /proc/self/mountinfo.
+  if (name == "getfsstat") {
+    return "347";
+  }
   // pathconf(2) — BSD 191. No Linux row: Linux has no pathconf syscall
   // at all (glibc computes the answers from statfs plus constants), so a
   // row there would be a number nothing could issue.
@@ -5257,6 +5262,37 @@ pub function rt_src_statfs(t: string): string {
   return head + "let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } return Ok(FsStat { " + statfs_counts_src(t) + ", name_max: " + statfs_field_i64(t, "name_max") + ", path_max: (" + statfs_linux_path_max() + " as i64), fs_type_name: \"\" }); }";
 }
 
+// rt_src_mounts backs `mounts()` (#9104) → Result[MountEntry[], IoError]: the
+// mounted filesystems in the order the kernel lists them.
+//
+// Darwin asks getfsstat64 twice, once for the count and once to fill a buffer
+// with room for a few mounts more, and reads f_fstypename (72),
+// f_mntonname (88) and f_mntfromname (1112) out of each 2168-byte record. `dev`
+// is f_fsid's first word, widened the way stat's 32-bit st_dev is.
+//
+// Linux reads /proc/self/mountinfo, whose size fstat reports as 0, so it reads
+// to end of file into a doubling buffer, then splits each line on blanks:
+//
+//   ID PARENT MAJ:MIN ROOT POINT OPTIONS [TAG...] - TYPE SOURCE SUPEROPTS
+//
+// The optional tags vary in number, so the `-` is searched for from field 6. A
+// field's octal escapes (`\040` for a space) are undone, and MAJ:MIN becomes
+// the kernel's st_dev packing so `dev` compares against `stat().dev`.
+pub function rt_src_mounts(t: string): string {
+  if (t == "arm64-darwin") {
+    let cstr: string = "function __fern_mount_cstr(buf: usize, off: i32, max: i32): string { let n: i32 = 0; while (n < max && __raw_load8(buf, off + n) != 0) { n = n + 1; } let p: usize = __raw_alloc(n); __memcpy(p, __raw_addr(buf, off), n); return __raw_string(p, n); } ";
+    let gf: string = sysno(t, "getfsstat");
+    return cstr + "function __fern_mounts(): Result[MountEntry[], IoError] { let n: i32 = __syscall3(" + gf + ", 0, 0, 2) as i32; if (n < 0) { return Err(__fern_io_error(0 - n, \"\")); } let size: i32 = (n + 8) * 2168; let buf: usize = __raw_alloc(size); let m: i32 = __syscall3(" + gf + ", buf as i64, size as i64, 2) as i32; let out: MountEntry[] = []; let k: i32 = 0; while (k < m) { let base: i32 = k * 2168; out = out.append(MountEntry { source: __fern_mount_cstr(buf, base + 1112, 1024), target: __fern_mount_cstr(buf, base + 88, 1024), fstype: __fern_mount_cstr(buf, base + 72, 16), dev: __load_i32(__raw_addr(buf, base + 48)) as i64 }); k = k + 1; } let buf_own: string = __raw_string(buf, size); if (m < 0) { return Err(__fern_io_error(0 - m, \"\")); } return Ok(out); }";
+  }
+  let blank: string = "(__raw_load8(buf, j) == 32 || __raw_load8(buf, j) == 9)";
+  let octal: string = "function __fern_mount_octal(buf: usize, i: i32, b: i32): boolean { if (i + 3 >= b || __raw_load8(buf, i) != 92) { return false; } let k: i32 = 1; while (k < 4) { let c: i32 = __raw_load8(buf, i + k); if (c < 48 || c > 55) { return false; } k = k + 1; } return true; } ";
+  let field: string = "function __fern_mount_field(buf: usize, a: i32, b: i32): string { let n: i32 = 0; let i: i32 = a; while (i < b) { if (__fern_mount_octal(buf, i, b)) { i = i + 4; } else { i = i + 1; } n = n + 1; } let p: usize = __raw_alloc(n); let o: i32 = 0; i = a; while (i < b) { if (__fern_mount_octal(buf, i, b)) { __raw_store8(p, o, (__raw_load8(buf, i + 1) - 48) * 64 + (__raw_load8(buf, i + 2) - 48) * 8 + (__raw_load8(buf, i + 3) - 48)); i = i + 4; } else { __raw_store8(p, o, __raw_load8(buf, i)); i = i + 1; } o = o + 1; } return __raw_string(p, n); } ";
+  let devno: string = "function __fern_mount_devno(buf: usize, a: i32, b: i32): i64 { let major: i64 = 0 as i64; let minor: i64 = 0 as i64; let i: i32 = a; while (i < b && __raw_load8(buf, i) != 58) { major = major * (10 as i64) + (__raw_load8(buf, i) - 48) as i64; i = i + 1; } i = i + 1; while (i < b) { minor = minor * (10 as i64) + (__raw_load8(buf, i) - 48) as i64; i = i + 1; } return (minor & (255 as i64)) | (major << (8 as i64)) | ((minor & (0 - 256) as i64) << (12 as i64)); } ";
+  let read: string = "let path: string = \"/proc/self/mountinfo\"; let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let fd: i32 = __syscall3(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz as i64, 0) as i32; let pathz_own: string = __raw_string(pathz, plen + 1); if (fd < 0) { return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz_own, plen))); } let cap: i32 = 4096; let buf: usize = __raw_alloc(cap); let got: i32 = 0; let bad: i32 = 0; let done: i32 = 0; while (done == 0) { if (got == cap) { let nb: usize = __raw_alloc(cap * 2); __memcpy(nb, __raw_addr(buf, 0), got); let old_own: string = __raw_string(buf, cap); buf = nb; cap = cap * 2; } let n: i32 = __syscall3(" + sysno(t, "read") + ", fd as i64, __raw_addr(buf, got) as i64, (cap - got) as i64) as i32; if (n < 0) { bad = n; done = 1; } else { if (n == 0) { done = 1; } else { got = got + n; } } } __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); if (bad < 0) { let buf_own0: string = __raw_string(buf, cap); return Err(__fern_io_error(0 - bad, __fern_path_copy(pathz_own, plen))); } ";
+  let parse: string = "let out: MountEntry[] = []; let ls: i32 = 0; while (ls < got) { let le: i32 = ls; while (le < got && __raw_load8(buf, le) != 10) { le = le + 1; } let fa: i32[] = []; let fb: i32[] = []; let j: i32 = ls; while (j < le) { while (j < le && " + blank + ") { j = j + 1; } if (j < le) { let st: i32 = j; while (j < le && !" + blank + ") { j = j + 1; } fa = fa.append(st); fb = fb.append(j); } } if (fa.len() >= 10) { let sep: i32 = 6; while (sep < fa.len() && !(fb[sep] - fa[sep] == 1 && __raw_load8(buf, fa[sep]) == 45)) { sep = sep + 1; } if (sep + 2 < fa.len()) { out = out.append(MountEntry { source: __fern_mount_field(buf, fa[sep + 2], fb[sep + 2]), target: __fern_mount_field(buf, fa[4], fb[4]), fstype: __fern_mount_field(buf, fa[sep + 1], fb[sep + 1]), dev: __fern_mount_devno(buf, fa[2], fb[2]) }); } } ls = le + 1; } let buf_own: string = __raw_string(buf, cap); return Ok(out); }";
+  return octal + field + devno + "function __fern_mounts(): Result[MountEntry[], IoError] { " + read + parse;
+}
+
 // rt_src_access backs `access(path, mode)` (syscall-leaf) →
 // Result[void, IoError]: may the process perform `mode` (the POSIX bitmask
 // F_OK=0, X_OK=1, W_OK=2, R_OK=4) on `path`?
@@ -7556,6 +7592,9 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     return ty_result(ty_unknown());
   }
   if (id.name == "statfs") {
+    return ty_result(ty_unknown());
+  }
+  if (id.name == "mounts") {
     return ty_result(ty_unknown());
   }
   if (id.name == "remove_dir_all") {
@@ -10276,7 +10315,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_chmod", "__fn___fern_chmod_at", "__fn___fern_set_file_times", "__fn___fern_truncate",
     "__fn___fern_mknod", "__fn___fern_chown_at",
     "__fn___fern_window_size",
-    "__fn___fern_env", "__fern_stat", "__fn___fern_stat", "__fn___fern_statfs", "__fn___fern_subprocess",
+    "__fn___fern_env", "__fern_stat", "__fn___fern_stat", "__fn___fern_statfs", "__fn___fern_mounts", "__fn___fern_subprocess",
     "__fern_args", "__fern_arg_at", "__fern_strbuf_append",
     "__fn___fern_hostname",
     "__fn___fern_signal_ignore", "__fn___fern_signal_default",

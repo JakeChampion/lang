@@ -7392,6 +7392,7 @@ function os_contracts(): ssasem.Contract[] {
     ssasem.Contract { name: "read_link", params: [t_string()], modes: [b], result: t_io_result(t_string()) },
     ssasem.Contract { name: "remove_dir", params: [t_string()], modes: [b], result: done },
     ssasem.Contract { name: "statfs", params: [t_string()], modes: [b], result: t_io_result(typeinfo.TypeStruct { name: "FsStat", args: [] }) },
+    ssasem.Contract { name: "mounts", params: [], modes: [], result: t_io_result(typeinfo.TypeArray { elem: typeinfo.TypeStruct { name: "MountEntry", args: [] }, view: false }) },
   ];
   for c in fs_op_contracts(done, strs) {
     out = out.append(c);

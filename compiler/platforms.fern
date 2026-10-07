@@ -257,6 +257,7 @@ pub function gated_builtins(): Gate[] {
     // as a name — rather than the files on it, which is `fs`. A host
     // can serve files and have no volume to measure.
     Gate { builtin: "statfs", capability: "fsinfo" },
+    Gate { builtin: "mounts", capability: "fsinfo" },
     // One-level bump-arena checkpoint. Both natives rewind the heap
     // pointer and shadow the freelist heads; wasm's linear-memory
     // allocator has no room for that below its head table.

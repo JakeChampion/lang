@@ -136,6 +136,7 @@ var BuiltinCaps = map[string]string{
 	// Reading the geometry of a filesystem is filesystem reach; the
 	// package question has none of the target question's subtlety here.
 	"statfs":   "fs",
+	"mounts":   "fs",
 	"temp_dir": "fs",
 	// Changing what every later path resolves against — strictly more
 	// than `umask` above, which only changes the mode of what gets

@@ -4795,6 +4795,7 @@ function builtin_sigs(): string[] {
     "slice_unchecked(string, i32, i32): str",
     "stat(string): Result[FileStat, IoError]",
     "statfs(string): Result[FsStat, IoError]",
+    "mounts(): Result[MountEntry[], IoError]",
     "stderr(): Writer",
     "stdin(): Reader",
     "stdout(): Writer",
@@ -18410,7 +18411,7 @@ function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs:
 function ow_fresh_builtins(): string[] {
   let out: string[] = [
     "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_u8", "__task_wait", "args", "buf_take", "buf_take_bytes", "cell_new", "clock_set", "environ", "getcwd", "getgroups",
-    "hostname", "map_new", "random_bytes", "read_line", "set_priority",
+    "hostname", "map_new", "mounts", "random_bytes", "read_line", "set_priority",
     "setgid", "setuid",
     "signal_send", "set_process_group", "set_window_size",
     "stderr", "stdin", "stdout", "strbuf_take", "target_arch", "target_os",

@@ -240,96 +240,22 @@ function field_left(f: i32): boolean {
 }
 
 // ---- the mount table -------------------------------------------------------
-// One line of /proc/self/mountinfo, reduced to what a row needs.
-//
-// `devno` is the major:minor the table reports, in the kernel's own
-// st_dev encoding, so it compares directly against `stat().dev`. That
-// comparison is how a mount that something else has since mounted OVER
-// is told from the one actually reachable at that path.
-struct Mount { dev: string, dir: string, kind: string, devno: i64 }
-
-// The kernel's st_dev packing: the low byte of the minor stays put, the
-// major goes above it, and a minor past 255 continues above the major.
-function makedev(major: i64, minor: i64): i64 {
-  return major * (256 as i64) + minor % (256 as i64) + minor / (256 as i64) * (1048576 as i64);
-}
-
-// mountinfo writes a space, a tab, a newline and a backslash in a mount
-// point or a type as three octal digits behind a backslash.
-function unescape(s: string): string {
-  let out: u8[] = [];
-  let i: i32 = 0;
-  while (i < s.len()) {
-    let c: i32 = s[i] as i32;
-    if (c == 92 && i + 3 < s.len() && octal_digit(s[i + 1] as i32) && octal_digit(s[i + 2] as i32) && octal_digit(s[i + 3] as i32)) {
-      let v: i32 = (s[i + 1] as i32 - 48) * 64 + (s[i + 2] as i32 - 48) * 8 + (s[i + 3] as i32 - 48);
-      out = out.append(v as u8);
-      i = i + 4;
-    } else {
-      out = out.append(c as u8);
-      i = i + 1;
-    }
-  }
-  return string_from_bytes_unchecked(out);
-}
-
-function octal_digit(c: i32): boolean {
-  return c >= 48 && c <= 55;
-}
-
-function parse_devno(s: string): i64 {
-  let major: i64 = 0 as i64;
-  let minor: i64 = 0 as i64;
-  let i: i32 = 0;
-  while (i < s.len() && gnu.is_digit(s[i] as i32)) {
-    major = major * (10 as i64) + (s[i] as i32 - 48) as i64;
-    i = i + 1;
-  }
-  if (i < s.len() && s[i] as i32 == 58) {
-    i = i + 1;
-  }
-  while (i < s.len() && gnu.is_digit(s[i] as i32)) {
-    minor = minor * (10 as i64) + (s[i] as i32 - 48) as i64;
-    i = i + 1;
-  }
-  return makedev(major, minor);
-}
-
-// The mount table in the order the kernel lists it, which is the order
-// the rows come out in. A line is
-//
-//   ID PARENT MAJ:MIN ROOT POINT OPTIONS [TAG...] - TYPE SOURCE SUPEROPTS
-//
-// with a variable run of optional tags before the `-`, so the separator
-// is searched for rather than counted to.
-function read_mounts(): Mount[] {
-  let out: Mount[] = [];
-  match (read_file("/proc/self/mountinfo")) {
-    Ok(text) => {
-      let lines: string[] = text.lines();
-      let i: i32 = 0;
-      while (i < lines.len()) {
-        let f: string[] = lines[i].fields();
-        i = i + 1;
-        if (f.len() < 10) {
-          continue;
-        }
-        let sep: i32 = 6;
-        while (sep < f.len() && f[sep] != "-") {
-          sep = sep + 1;
-        }
-        if (sep + 2 >= f.len()) {
-          continue;
-        }
-        out = out.append(Mount { dev: unescape(f[sep + 2]), dir: unescape(f[4]), kind: unescape(f[sep + 1]), devno: parse_devno(f[2]) });
-      }
+// The mount table in the order the kernel lists it, which is the order the rows
+// come out in. A mount's `dev` is in the kernel's own st_dev encoding, so it
+// compares directly against `stat().dev`: that comparison is how a mount that
+// something else has since mounted OVER is told from the one actually
+// reachable at that path.
+function read_mounts(): MountEntry[] {
+  match (mounts()) {
+    Ok(ms) => {
+      return ms;
     },
     Err(e) => {
       gnu.error("cannot read table of mounted file systems: " + gnu.io_error_text(e));
       exit(1);
     }
   }
-  return out;
+  return [];
 }
 
 // A type the default listing leaves out on the strength of its NAME,
@@ -355,16 +281,16 @@ function dummy_type(kind: string): boolean {
 // it — the same tmpfs mounted from `//srv/share` stays — and which
 // types those are is not something a machine with no SMB mount can be
 // asked.
-function remote_mount(m: Mount): boolean {
+function remote_mount(m: MountEntry): boolean {
   let i: i32 = 0;
-  while (i < m.dev.len()) {
-    if (m.dev[i] as i32 == 58) {
+  while (i < m.source.len()) {
+    if (m.source[i] as i32 == 58) {
       return true;
     }
     i = i + 1;
   }
-  if (m.dev.len() > 1 && m.dev[0] as i32 == 47 && m.dev[1] as i32 == 47) {
-    return m.kind == "smbfs" || m.kind == "smb3" || m.kind == "cifs";
+  if (m.source.len() > 1 && m.source[0] as i32 == 47 && m.source[1] as i32 == 47) {
+    return m.fstype == "smbfs" || m.fstype == "smb3" || m.fstype == "cifs";
   }
   return false;
 }
@@ -719,14 +645,14 @@ function type_listed(names: string[], kind: string): boolean {
 }
 
 // Whether a mount of this type and locality survives `-t` / `-x` / `-l`.
-function selected(c: Conf, m: Mount): boolean {
+function selected(c: Conf, m: MountEntry): boolean {
   if (c.local && remote_mount(m)) {
     return false;
   }
-  if (c.include.len() > 0 && !type_listed(c.include, m.kind)) {
+  if (c.include.len() > 0 && !type_listed(c.include, m.fstype)) {
     return false;
   }
-  if (type_listed(c.exclude, m.kind)) {
+  if (type_listed(c.exclude, m.fstype)) {
     return false;
   }
   return true;
@@ -773,7 +699,7 @@ function state_dropped(): i32 {
 // filesystem with no blocks at all, which is a kernel interface that
 // did not declare itself in its name.
 function list_all(c: Conf): Row[] {
-  let mounts: Mount[] = read_mounts();
+  let mounts: MountEntry[] = read_mounts();
   let state: i32[] = [];
   let seen_key: i64[] = [];
   let seen_name: string[] = [];
@@ -782,15 +708,15 @@ function list_all(c: Conf): Row[] {
 
   let i: i32 = 0;
   while (i < mounts.len()) {
-    let m: Mount = mounts[i];
-    if (!c.all && dummy_type(m.kind)) {
+    let m: MountEntry = mounts[i];
+    if (!c.all && dummy_type(m.fstype)) {
       state = state.append(state_dropped());
       i = i + 1;
       continue;
     }
     let key: i64 = 0 as i64;
     let known: boolean = false;
-    match (stat(m.dir)) {
+    match (stat(m.target)) {
       Ok(st) => {
         key = st.dev;
         known = true;
@@ -802,7 +728,7 @@ function list_all(c: Conf): Row[] {
       i = i + 1;
       continue;
     }
-    let live: boolean = m.devno == key;
+    let live: boolean = m.dev == key;
     let found: i32 = 0 - 1;
     let j: i32 = 0;
     while (j < seen_key.len()) {
@@ -814,17 +740,17 @@ function list_all(c: Conf): Row[] {
     }
     if (found < 0) {
       seen_key = seen_key.append(key);
-      seen_name = seen_name.append(m.dev);
+      seen_name = seen_name.append(m.source);
       seen_live = seen_live.append(live);
       seen_row = seen_row.append(i);
       state = state.append(state_kept());
-    } else if (seen_name[found] == m.dev) {
+    } else if (seen_name[found] == m.source) {
       state = state.append(state_duplicate());
     } else if (live && !seen_live[found]) {
       // The stored entry is a mount something has since been mounted
       // over, and this one is what is actually reachable there.
       state = state.with(seen_row[found], state_alias());
-      seen_name = seen_name.with(found, m.dev);
+      seen_name = seen_name.with(found, m.source);
       seen_live = seen_live.with(found, live);
       seen_row = seen_row.with(found, i);
       state = state.append(state_kept());
@@ -837,7 +763,7 @@ function list_all(c: Conf): Row[] {
   let rows: Row[] = [];
   i = 0;
   while (i < mounts.len()) {
-    let mt: Mount = mounts[i];
+    let mt: MountEntry = mounts[i];
     let st: i32 = state[i];
     i = i + 1;
     if (st == state_dropped()) {
@@ -851,7 +777,7 @@ function list_all(c: Conf): Row[] {
     }
     let u: Usage = no_usage();
     if (st != state_alias()) {
-      match (statfs(mt.dir)) {
+      match (statfs(mt.target)) {
         Ok(fs) => {
           u = usage_of(fs);
         },
@@ -861,7 +787,7 @@ function list_all(c: Conf): Row[] {
     if (!c.all && (!u.ok || u.blocks == 0 as u64)) {
       continue;
     }
-    rows = rows.append(Row { dev: mt.dev, dir: mt.dir, kind: mt.kind, file: "", u: u, total: false });
+    rows = rows.append(Row { dev: mt.source, dir: mt.target, kind: mt.fstype, file: "", u: u, total: false });
   }
   return rows;
 }
@@ -909,12 +835,12 @@ function operand_pseudo(kind: string): boolean {
     || kind == "sysfs" || kind == "devfs" || kind == "kernfs" || kind == "none";
 }
 
-function prefer_operand_mount(mounts: Mount[], best: i32, m: Mount): boolean {
-  return best < 0 || operand_pseudo(mounts[best].kind) || !operand_pseudo(m.kind);
+function prefer_operand_mount(mounts: MountEntry[], best: i32, m: MountEntry): boolean {
+  return best < 0 || operand_pseudo(mounts[best].fstype) || !operand_pseudo(m.fstype);
 }
 
-function mount_has_device(m: Mount, devno: i64): boolean {
-  match (stat(m.dir)) {
+function mount_has_device(m: MountEntry, devno: i64): boolean {
+  match (stat(m.target)) {
     Ok(st) => {
       return st.dev == devno;
     },
@@ -924,11 +850,11 @@ function mount_has_device(m: Mount, devno: i64): boolean {
   }
 }
 
-function find_mount(mounts: Mount[], path: string, is_block: boolean, devno: i64): i32 {
+function find_mount(mounts: MountEntry[], path: string, is_block: boolean, devno: i64): i32 {
   if (is_block) {
     let i: i32 = 0;
     while (i < mounts.len()) {
-      if (mounts[i].dev == path) {
+      if (mounts[i].source == path) {
         return i;
       }
       i = i + 1;
@@ -939,11 +865,11 @@ function find_mount(mounts: Mount[], path: string, is_block: boolean, devno: i64
   let j: i32 = 0;
   if (path.len() > 0 && path[0] == b'/') {
     while (j < mounts.len()) {
-      let m: Mount = mounts[j];
-      if (m.kind != "lofs" && prefer_operand_mount(mounts, best, m)
-        && under(m.dir, path) && m.dir.len() >= best_len) {
+      let m: MountEntry = mounts[j];
+      if (m.fstype != "lofs" && prefer_operand_mount(mounts, best, m)
+        && under(m.target, path) && m.target.len() >= best_len) {
         best = j;
-        best_len = m.dir.len();
+        best_len = m.target.len();
       }
       j = j + 1;
     }
@@ -954,8 +880,8 @@ function find_mount(mounts: Mount[], path: string, is_block: boolean, devno: i64
   best = 0 - 1;
   j = 0;
   while (j < mounts.len()) {
-    let m: Mount = mounts[j];
-    if (m.devno == devno && m.kind != "lofs" && prefer_operand_mount(mounts, best, m)
+    let m: MountEntry = mounts[j];
+    if (m.dev == devno && m.fstype != "lofs" && prefer_operand_mount(mounts, best, m)
       && mount_has_device(m, devno)) {
       best = j;
     }
@@ -984,7 +910,7 @@ function is_block_device(mode: u32): boolean {
 // the `no file systems processed` report: something WAS asked about and
 // it was already diagnosed.
 function list_operands(c: Conf, names: string[]): (Row[], boolean) {
-  let mounts: Mount[] = read_mounts();
+  let mounts: MountEntry[] = read_mounts();
   let rows: Row[] = [];
   let failed: boolean = false;
   let i: i32 = 0;
@@ -1014,15 +940,15 @@ function list_operands(c: Conf, names: string[]): (Row[], boolean) {
     if (idx < 0) {
       continue;
     }
-    let m: Mount = mounts[idx];
+    let m: MountEntry = mounts[idx];
     if (!selected(c, m)) {
       continue;
     }
     // A device operand is measured at the mount point, because the node
     // itself lives on another filesystem entirely.
     let probe: string = name;
-    if (block && m.dev == path) {
-      probe = m.dir;
+    if (block && m.source == path) {
+      probe = m.target;
     }
     let u: Usage = no_usage();
     let bad: boolean = false;
@@ -1039,7 +965,7 @@ function list_operands(c: Conf, names: string[]): (Row[], boolean) {
     if (bad) {
       continue;
     }
-    rows = rows.append(Row { dev: m.dev, dir: m.dir, kind: m.kind, file: name, u: u, total: false });
+    rows = rows.append(Row { dev: m.source, dir: m.target, kind: m.fstype, file: name, u: u, total: false });
   }
   return (rows, failed);
 }

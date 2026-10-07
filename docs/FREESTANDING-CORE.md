@@ -58,7 +58,7 @@ costs a silent failure on the first target that lacks it.
 | `random` | `random_bytes`, `random_i32` | entropy: a syscall or a host import, never computed |
 | `fs` | `read_file`, `write_file`, `open_reader`, … | a filesystem |
 | `fsmode` | `write_file_exec`, `access`, `chmod`, `chmod_at`, `umask` | permission bits on a filesystem entry, and the mask a creation keeps them through |
-| `fsinfo` | `statfs` | a filesystem with a size and a name-length limit, rather than files on one |
+| `fsinfo` | `statfs`, `mounts` | a filesystem with a size and a name-length limit, and the table of mounted ones, rather than files on one |
 | `fsrename` | `rename_noreplace`, `rename_exchange` | a rename the kernel conditions in one step: refuse an existing destination, or swap the two names |
 | `xattr` | `getxattr`, `lgetxattr`, `setxattr`, `lsetxattr` | an entry's extended attributes |
 | `fsnode` | `mknod` | a filesystem entry that is neither a file nor a directory: a FIFO, or a character or block device node |

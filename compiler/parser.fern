@@ -10169,7 +10169,7 @@ pub function builtin_function_names(): string[] {
     "read_file", "read_file_bytes", "write_file", "write_file_bytes", "write_file_exec", "read_dir", "read_dir_all", "read_dir_ino", "remove_dir_all", "remove_file",
     "create_dir_all", "stat", "lstat", "access", "temp_dir",
     // the FILESYSTEM a path resolves on, where stat describes one entry
-    "statfs",
+    "statfs", "mounts",
     // the single-step directory and link primitives, each one syscall
     // with nothing folded away
     "create_dir", "remove_dir", "create_link", "create_symlink", "read_link", "umask", "rename",
@@ -10347,6 +10347,16 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     fvf = fvf.append(StructFieldDecl { name: "frag_size", type_name: "i64", fn_ret: "", fn_param_types: "" });
     fvf = fvf.append(StructFieldDecl { name: "fs_type_name", type_name: "string", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "FsStat", fields: fvf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
+  }
+  // MountEntry: one row of mounts(). Same injection pattern and the same
+  // reason as FsStat above.
+  if (!name_declared(structs, "MountEntry")) {
+    let mef: StructFieldDecl[] = [];
+    mef = mef.append(StructFieldDecl { name: "source", type_name: "string", fn_ret: "", fn_param_types: "" });
+    mef = mef.append(StructFieldDecl { name: "target", type_name: "string", fn_ret: "", fn_param_types: "" });
+    mef = mef.append(StructFieldDecl { name: "fstype", type_name: "string", fn_ret: "", fn_param_types: "" });
+    mef = mef.append(StructFieldDecl { name: "dev", type_name: "i64", fn_ret: "", fn_param_types: "" });
+    structs = structs.append(StructDecl { name: "MountEntry", fields: mef, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
   }
   // WinSize: the builtin struct returned by window_size(fd) — how many rows
   // and columns the terminal on the other end of it has. Same injection
@@ -20616,7 +20626,7 @@ pub function is_reserved_struct_name(name: string): boolean {
   let reserved: string[] = [
     "BodySource", "BytesWriter", "Cell", "ChunkProducer", "Date", "DateTime", "DirEntry", "Duration", "FileStat",
     "FsStat", "HeaderMap", "HttpRequest", "HttpResponse", "Instant", "Map",
-    "MapIter", "ProcessResult",
+    "MapIter", "MountEntry", "ProcessResult",
     "Reader", "Span", "Stream", "Time", "TimeZone", "Url", "WinSize", "Writer",
     "Zoned",
   ];
