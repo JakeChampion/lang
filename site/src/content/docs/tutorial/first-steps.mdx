@@ -26,6 +26,10 @@ function main(): i32 {
 }`}
 />
 
+A program sees only what it imports, methods included: `import "std/i32";`
+is what gives an `i32` its `.to_string()`. Leave it out and the checker
+says so (`no method "to_string" on i32 — add import "std/i32"`).
+
 ## Numbers have sizes
 
 There's no untyped `int`. The integer types are `i32`, `i64`
@@ -68,7 +72,7 @@ The three-part `for (init; cond; step)` form also exists, for the rare
 loop whose stepping isn't a simple walk:
 
 ```fern
-for (let i: i32 = 0; i < n; i = i * 2) { … }
+for (let i: i32 = 1; i < n; i = i * 2) { … }
 ```
 
 `loop { … }` is an unconditional loop you leave with `break`. Any loop can
@@ -92,5 +96,30 @@ function add(a: i32, b: i32): i32 {
 
 Return and parameter types are always required — even `void` for
 procedures. There's no inference at the signature boundary.
+
+Functions are values. A lambda is written `(x: i32) => x * 2`, a
+function type `(i32) => i32`, and a lambda can read the variables around
+it. An `f"…"` string interpolates `{expr}` holes, calling `.to_string()`
+on each:
+
+<FernPlayground
+  code={`import "std/i32";
+import "std/array";
+
+function apply_twice(f: (i32) => i32, x: i32): i32 {
+    return f(f(x));
+}
+
+function main(): i32 {
+    let step: i32 = 3;
+    let add_step = (x: i32) => x + step;   // reads step from main
+    print(apply_twice(add_step, 10).to_string());  // 16
+
+    let squares: i32[] = [1, 2, 3, 4].map((x: i32) => x * x);
+    let name: string = "fern";
+    print(f"{name}: {squares.len()} squares, last {squares[3]}");
+    return 0;
+}`}
+/>
 
 [Next: Types →](../types/)
