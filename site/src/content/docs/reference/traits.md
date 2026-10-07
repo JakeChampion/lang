@@ -361,10 +361,10 @@ function main(): i32 {
 zero, before its fields are freed. Calling `drop` yourself is an error
 (`E073`).
 
-Treat it as a cleanup hook, not a guarantee. When it runs is the
-compiler's release point, which can be earlier than the end of the
-enclosing block, and the interpreter (`fern -interp`) never runs it at
-all. For cleanup that must happen at a known point, use
+Treat it as a cleanup hook, not a guarantee. It runs once, at the
+compiler's release point: never before the value's last use, but often
+earlier than the end of the enclosing block. The interpreter
+(`fern -interp`) never runs it at all. For cleanup that must happen at a known point, use
 [`defer`](../language-features/#deferred-cleanup--defer-and-errdefer).
 
 ## Coherence (the orphan rule)
