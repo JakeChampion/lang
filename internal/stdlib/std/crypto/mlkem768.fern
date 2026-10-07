@@ -20,7 +20,8 @@
 // reduced by Barrett multiplication and masked subtraction, never `%` or
 // `/`; compression divides by q with a multiply and a shift; and `decaps`
 // compares the re-encryption and selects the secret with masks. Only the
-// matrix sampling branches, on bytes expanded from the public seed.
+// matrix sampling branches, on bytes expanded from the public seed, which
+// keygen and decaps declassify for the constant-time gate.
 
 import "core/int";
 import "std/crypto";
@@ -400,7 +401,10 @@ function __g(a: [u8], b: [u8]): u8[] {
 // and 16).
 function __keygen(d: [u8], z: [u8]): KeyPair {
   let rs: u8[] = __g(d, [3 as u8]);
-  let rho: [u8] = rs[0:32];
+  // rho is published in the encapsulation key, so the matrix sampling may
+  // branch on it.
+  let rho: u8[] = __copy(__alloc_u8(32), 0, rs, 0, 32);
+  __ct_public(rho);
   let sigma: [u8] = rs[32:64];
   let a: i32[] = __matrix(rho, false);
   let s: i32[] = __alloc_i32(768);
@@ -517,8 +521,11 @@ pub function decaps(dk: [u8], c: [u8]): Result[u8[], MlKemError] {
   if (c.len() != 1088) {
     return Err(CiphertextLength(c.len()));
   }
-  let ek: [u8] = dk[1152:2336];
-  let h: [u8] = dk[2336:2368];
+  // The encapsulation key and its hash inside dk are public.
+  let ek: u8[] = __copy(__alloc_u8(1184), 0, dk, 1152, 1184);
+  let h: u8[] = __copy(__alloc_u8(32), 0, dk, 2336, 32);
+  __ct_public(ek);
+  __ct_public(h);
   if (!__same(__h(ek), h, 32)) {
     return Err(DecapsulationKeyHash);
   }
