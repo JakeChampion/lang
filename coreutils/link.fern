@@ -4,8 +4,8 @@
 //
 // One `link(2)` and nothing else: exactly two operands, no options of its
 // own, and no attempt to be helpful about what went wrong. A symlink named
-// as FILE1 is linked to ITSELF rather than to what it points at, which is
-// what link(2) does on Linux and what `ln` without `-L` does.
+// as FILE1 is linked to ITSELF on Linux; Darwin's link(2) follows it, so
+// there a dangling one is `No such file or directory`.
 //
 // The diagnostic names both operands, the NEW one first —
 // `cannot create link 'b' to 'a': File exists` — because that is the order
@@ -13,6 +13,7 @@
 import "std/string";
 import "std/array";
 import "./lib/gnu";
+import "./lib/canon";
 
 function help_text(): string {
   let out: string = "";
@@ -36,7 +37,16 @@ pub function main(): i32 {
   if (operands.len() > 2) {
     gnu.die_usage("extra operand " + gnu.quote(operands[2]), 1);
   }
-  match (create_link(operands[0], operands[1])) {
+  let src: string = operands[0];
+  if (target_os() == "darwin") {
+    match (canon.canonicalize(src, canon.missing(), false)) {
+      Ok(r) => {
+        src = r;
+      },
+      Err(_) => {}
+    }
+  }
+  match (create_link(src, operands[1])) {
     Ok(_) => {
       return 0;
     },

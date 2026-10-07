@@ -2155,7 +2155,8 @@ pub function backup_values(): i32[] {
 // own last component, so `-S 'x/y'`, `-S '/x'` and `-S '/'` are ignored
 // and `~` is used. `-S 'x/'` passes the test, and the backup name it
 // builds ends in a slash — which is how `ln -b -S x/ a b` reaches
-// `cannot backup 'b': Not a directory`.
+// `cannot backup 'b': Not a directory` on Linux. Darwin's rename answers
+// ENOENT there, which GNU takes as nothing to back up.
 pub function usable_suffix(s: string): boolean {
   return s.len() > 0 && last_component_start(s) == 0;
 }
