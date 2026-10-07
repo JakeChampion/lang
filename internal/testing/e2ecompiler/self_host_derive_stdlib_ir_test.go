@@ -53,6 +53,17 @@ function main(): i32 {
     match (User.from_json("nope")) { Ok(u3) => { sum = sum + 100; }, Err(e) => { sum = sum + 5; } }
     return sum;
 }`},
+	// With std/i32 and std/string imported, `i32` and `string` also name
+	// modules, so a decoder spelled `i32.from_json_value(v)` became a call to
+	// a module function that does not exist (#11849). The derive names the
+	// field type in type position, through json.from_json_elem. 9 + 2 = 11.
+	{"json-from-struct-scalar-modules-imported", `import "std/json";
+import "std/i32";
+import "std/string";
+@derive(json.FromJson) struct User { id: i32, name: string }
+function main(): i32 {
+    match (User.from_json("{\"id\":9,\"name\":\"xy\"}")) { Ok(u) => { return u.id + u.name.len(); }, Err(e) => { return 100; } }
+}`},
 	// A boolean field decodes through std/json's `impl FromJson for
 	// boolean` → 14.
 	{"json-from-bool", `import "std/json";

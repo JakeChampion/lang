@@ -25175,7 +25175,7 @@ function synth_from_json_value(sd: StructDecl): FuncDecl {
     if (cont == "option") {
       getter = "from_json_optional_field";
     }
-    let decode: ast.Expr = e_call(e_field_access(e_ident(elem), "from_json_value"), [e_ident(value)]);
+    let decode: ast.Expr = ast.ExprCall { callee: e_field_access(e_ident("json"), "from_json_elem"), args: [e_ident(value)], line: 0, col: 0, type_args: [elem], ty: "" };
     if (cont == "array") {
       decode = ast.ExprCall { callee: e_field_access(e_ident("json"), "from_json_array"), args: [e_ident(value)], line: 0, col: 0, type_args: [elem], ty: "" };
     }
