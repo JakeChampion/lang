@@ -24,14 +24,6 @@ import (
 // TestSelfHostWasmVariantF32ArmMatchIR covers the lowering fix the bridge
 // surfaced, on a program with no WIT in it at all.
 
-// The routing assertion. The IR framing emits tid_globals_section
-// unconditionally, and its literal-name list (tid_named) always includes
-// NotFound, so the global is present in every IR core. astFuncMarker is the
-// scratch-local block the deleted AST wasm emitter opened every function with;
-// nothing emits it now.
-const irRouteMarker = "(global $__tid$NotFound i32"
-const astFuncMarker = "(local $__lit0 i32)"
-
 func writeWasmSelfHostSources(t *testing.T, dir, driver string) string {
 	t.Helper()
 	copySelfHostFiles(t, dir, "lexer.fern", "parser.fern", "util.fern", "astwalk.fern", "asmcore.fern", "ir.fern", "irtables.fern", "lift.fern", "irverify.fern", "irverifystack.fern", "irverifygate.fern", "asm_ir.fern", "wasm_ir.fern", driver)
@@ -39,7 +31,7 @@ func writeWasmSelfHostSources(t *testing.T, dir, driver string) string {
 }
 
 // TestSelfHostWasmExternBridgeIRLayout checks the emitted core for each bridge
-// shape: it routes IR, and the wrapper writes the IR consumer's 8-byte slots.
+// shape: the wrapper writes the IR consumer's 8-byte slots.
 func TestSelfHostWasmExternBridgeIRLayout(t *testing.T) {
 	runner := x86_64Runner(t)
 	dir := t.TempDir()
@@ -147,9 +139,6 @@ function on_request(x: i32): void { return; }`,
 			if len(wat) == 0 {
 				t.Fatal("wasm emitter produced 0 bytes")
 			}
-			if !strings.Contains(wat, irRouteMarker) || strings.Contains(wat, astFuncMarker) {
-				t.Fatalf("module did not route the IR path (want %q, want no %q) — the extern/export bridge is back on the AST emitter\n--- WAT ---\n%s", irRouteMarker, astFuncMarker, wat)
-			}
 			for _, w := range tc.want {
 				if !strings.Contains(wat, w) {
 					t.Errorf("emitted core missing:\n%s\n--- WAT ---\n%s", w, wat)
@@ -190,9 +179,6 @@ function main(): i32 { return (rank(5) - 100) + (rank(50) - 200); }`
 	wat := runCapture(t, "", runner, driverBin, []byte(src))
 	if len(wat) == 0 {
 		t.Fatal("wasm emitter produced 0 bytes")
-	}
-	if !strings.Contains(string(wat), irRouteMarker) || strings.Contains(string(wat), astFuncMarker) {
-		t.Fatalf("program did not route the IR path (want %q, want no %q)\n--- WAT ---\n%s", irRouteMarker, astFuncMarker, wat)
 	}
 	watPath := filepath.Join(dir, "f32arm.wat")
 	if err := os.WriteFile(watPath, wat, 0o644); err != nil {

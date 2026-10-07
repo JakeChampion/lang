@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"testing"
 )
 
@@ -50,11 +49,6 @@ func TestSelfHostErasedWideGenericWasm(t *testing.T) {
 			wat, err := cmd.Output()
 			if err != nil || len(wat) == 0 {
 				t.Fatalf("driver failed for %s: %v", tc.name, err)
-			}
-			// The IR emitter never declares a `$__lit0` scratch local; finding one
-			// means the module did not lower through the IR.
-			if strings.Contains(string(wat), "$__lit0") {
-				t.Errorf("%s did not lower through the IR (found $__lit0)", tc.name)
 			}
 			watFile := filepath.Join(dir, tc.name+".wat")
 			if err := os.WriteFile(watFile, wat, 0o644); err != nil {

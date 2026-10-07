@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -75,44 +74,40 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 		name    string
 		io      bool // the stdout run core (mode 2) rather than the no-I/O one (mode 1)
 		source  string
-		wantIR  bool
 		imports []string
 	}{
 		// Mode 1 — no I/O at all. The framing (component_full) supplies no
 		// imports, so an IR core here must be import-free.
-		{"noio-const", false, `function main(): i32 { return 42; }`, true, nil},
-		{"noio-arith", false, `function main(): i32 { let x: i32 = 5; let y: i32 = 5; return x - y; }`, true, nil},
-		{"noio-array", false, `function main(): i32 { let xs: i32[] = [1, 2, 3]; return xs[0] + xs[2]; }`, true, nil},
-		{"noio-string", false, `function main(): i32 { let s: string = "ab" + "cd"; return s.len(); }`, true, nil},
-		// A WIDE first local. This lowers like any other, but it emits
-		// "(local i64 i32 …" rather than "(local i32 …", which is exactly the
-		// shape a first-type-specific discriminator misses — kept as a row so
-		// the probe itself stays correct.
-		{"noio-wide-local", false, `function main(): i32 { let n: i64 = 7; if (n > 0) { return 0; } return 1; }`, true, nil},
+		{"noio-const", false, `function main(): i32 { return 42; }`, nil},
+		{"noio-arith", false, `function main(): i32 { let x: i32 = 5; let y: i32 = 5; return x - y; }`, nil},
+		{"noio-array", false, `function main(): i32 { let xs: i32[] = [1, 2, 3]; return xs[0] + xs[2]; }`, nil},
+		{"noio-string", false, `function main(): i32 { let s: string = "ab" + "cd"; return s.len(); }`, nil},
+		// A WIDE first local, emitted as "(local i64 i32 …".
+		{"noio-wide-local", false, `function main(): i32 { let n: i64 = 7; if (n > 0) { return 0; } return 1; }`, nil},
 		// A no-I/O core may not exit: mode 1 has no proc_exit to call and no
 		// wasi:cli/exit to shim it over, so the gate declines it and the driver
 		// refuses (see refusedRows). Unreachable through the CLI: component_shape
 		// sends an exit-using program to the io wrap (shape 14).
-		{"noio-exit-refused", false, `function main(): i32 { exit(0); return 0; }`, false, nil},
+		{"noio-exit-refused", false, `function main(): i32 { exit(0); return 0; }`, nil},
 
 		// Mode 2 — stdout. The $__fern_fd_write shim serves every writer, so print /
 		// write / putchar all use the same two imports.
-		{"io-write", true, `function main(): i32 { write("hi"); return 0; }`, true,
+		{"io-write", true, `function main(): i32 { write("hi"); return 0; }`,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush"}},
-		{"io-putchar", true, `function main(): i32 { putchar(72); putchar(105); return 0; }`, true,
+		{"io-putchar", true, `function main(): i32 { putchar(72); putchar(105); return 0; }`,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush"}},
-		{"io-fstring", true, "import \"std/i32\";\nfunction main(): i32 { let n: i32 = 21; write(f\"answer={n * 2}\"); return 0; }", true,
+		{"io-fstring", true, "import \"std/i32\";\nfunction main(): i32 { let n: i32 = 21; write(f\"answer={n * 2}\"); return 0; }",
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush"}},
 		// eprint reorders the trio (get-stderr first) to match
 		// component_full_io_eprint, and keeps stdout imported even when the
 		// program never writes to it.
-		{"io-eprint", true, `function main(): i32 { eprint("boom"); write("out"); return 0; }`, true,
+		{"io-eprint", true, `function main(): i32 { eprint("boom"); write("out"); return 0; }`,
 			[]string{"wasi:cli/stderr@0.2.0 get-stderr", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/stdout@0.2.0 get-stdout"}},
-		{"io-eprint-only", true, `function main(): i32 { eprint("just-err"); return 0; }`, true,
+		{"io-eprint-only", true, `function main(): i32 { eprint("just-err"); return 0; }`,
 			[]string{"wasi:cli/stderr@0.2.0 get-stderr", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/stdout@0.2.0 get-stdout"}},
 		// exit adds wasi:cli/exit last (component_full_io_exit's shape); the IR
 		// emits `call $__fern_proc_exit`, which the mode-2 shim defines over it.
-		{"io-exit", true, `function main(): i32 { write("bye"); exit(0); return 0; }`, true,
+		{"io-exit", true, `function main(): i32 { write("bye"); exit(0); return 0; }`,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/exit@0.2.0 exit"}},
 
 		// The preview2-backed builtins. Their helper bodies (*_p2) define the
@@ -120,40 +115,40 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 		// import + body and every call site is unchanged. Import order is the
 		// canonical interface order — random, wall-clock, monotonic-clock — after
 		// the stdout pair, because the framings alias positionally.
-		{"io-random-i32", true, `function main(): i32 { if (random_i32() != 0) { write("r"); } return 0; }`, true,
+		{"io-random-i32", true, `function main(): i32 { if (random_i32() != 0) { write("r"); } return 0; }`,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:random/random@0.2.0 get-random-u64"}},
-		{"io-random-bytes", true, `function main(): i32 { let b: u8[] = random_bytes(4); if (b.len() == 4) { write("b"); } return 0; }`, true,
+		{"io-random-bytes", true, `function main(): i32 { let b: u8[] = random_bytes(4); if (b.len() == 4) { write("b"); } return 0; }`,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:random/random@0.2.0 get-random-u64"}},
-		{"io-clock-wall", true, `function main(): i32 { if (now_unix_ms() > 0) { write("w"); } return 0; }`, true,
+		{"io-clock-wall", true, `function main(): i32 { if (now_unix_ms() > 0) { write("w"); } return 0; }`,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:clocks/wall-clock@0.2.0 now"}},
-		{"io-clock-mono", true, `function main(): i32 { if (monotonic_ns() > 0) { write("m"); } return 0; }`, true,
+		{"io-clock-mono", true, `function main(): i32 { if (monotonic_ns() > 0) { write("m"); } return 0; }`,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:clocks/monotonic-clock@0.2.0 now"}},
 		// A no-I/O component has no import to satisfy the byte source, so the
 		// gate refuses random there. Unreachable through the CLI (component_shape
 		// sends every random program to the io wrap).
-		{"noio-random-refused", false, `function main(): i32 { return random_i32() & 1; }`, false, nil},
+		{"noio-random-refused", false, `function main(): i32 { return random_i32() & 1; }`, nil},
 
 		// env / args read a preview2 LIST, so their cores also export
 		// cabi_realloc — the guest allocator the canonical ABI materialises the
 		// list into, without which `component new` rejects the module.
-		{"io-env", true, `function main(): i32 { match (env("HOME")) { Some(v) => { write(v); }, None => { write("none"); } } return 0; }`, true,
+		{"io-env", true, `function main(): i32 { match (env("HOME")) { Some(v) => { write(v); }, None => { write("none"); } } return 0; }`,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/environment@0.2.0 get-environment"}},
-		{"io-args", true, `function main(): i32 { let a: string[] = args(); write(a[0]); return 0; }`, true,
+		{"io-args", true, `function main(): i32 { let a: string[] = args(); write(a[0]); return 0; }`,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/environment@0.2.0 get-arguments"}},
 
 		// The filesystem pair, last of component_shape's categories to move.
 		// Their mode-2 bodies box a real IoError variant rather than a raw wasi
 		// error code (#5795), and fs sits last in the import order, which is the
 		// slot component_full_io_fs / _fs_write / _fs_rw alias.
-		{"io-read-file", true, `function main(): i32 { match (read_file("in.txt")) { Ok(s) => { write(s); return 0; }, Err(e) => { return 1; } } return 2; }`, true,
+		{"io-read-file", true, `function main(): i32 { match (read_file("in.txt")) { Ok(s) => { write(s); return 0; }, Err(e) => { return 1; } } return 2; }`,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:filesystem/preopens@0.2.0 get-directories", "wasi:filesystem/types@0.2.0 [method]descriptor.open-at", "wasi:filesystem/types@0.2.0 [resource-drop]descriptor", "wasi:filesystem/types@0.2.0 [method]descriptor.read-via-stream", "wasi:io/streams@0.2.0 [method]input-stream.blocking-read", "wasi:io/streams@0.2.0 [resource-drop]input-stream"}},
-		{"io-write-file", true, `function main(): i32 { match (write_file("o.txt", "x")) { Err(e) => { return 1; }, Ok(_) => { return 0; } } return 2; }`, true,
+		{"io-write-file", true, `function main(): i32 { match (write_file("o.txt", "x")) { Err(e) => { return 1; }, Ok(_) => { return 0; } } return 2; }`,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:filesystem/preopens@0.2.0 get-directories", "wasi:filesystem/types@0.2.0 [method]descriptor.open-at", "wasi:filesystem/types@0.2.0 [resource-drop]descriptor", "wasi:filesystem/types@0.2.0 [method]descriptor.write-via-stream", "wasi:io/streams@0.2.0 [resource-drop]output-stream"}},
 
 		// now_unix_ms() is an i64, so this composes the clock import with the
 		// wide `.to_string()` formatter ($__fern_i64_to_str, #5826) — the last
 		// per-function IR gap a component core hit.
-		{"clock-tostring", true, "import \"std/i64\";\nfunction main(): i32 { write(now_unix_ms().to_string()); return 0; }", true,
+		{"clock-tostring", true, "import \"std/i64\";\nfunction main(): i32 { write(now_unix_ms().to_string()); return 0; }",
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:clocks/wall-clock@0.2.0 now"}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -188,10 +183,6 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 				t.Error("component core exports _start — that is the preview1 command entry")
 			}
 
-			gotIR := isIREmittedWAT(t, wat)
-			if gotIR != tc.wantIR {
-				t.Errorf("emitted via IR = %v, want %v", gotIR, tc.wantIR)
-			}
 			wantImports := tc.imports
 			if tc.io {
 				// The write shim owns last-operation-failed handles and
@@ -203,29 +194,6 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 			}
 		})
 	}
-}
-
-// irLocalGroup matches the IR emitter's unnamed local group, whatever its
-// first type is.
-var irLocalGroup = regexp.MustCompile(`\n    \(local (i32|i64|f32|f64)[ )]`)
-
-// isIREmittedWAT reports whether a core is the IR emitter's flat WAT, keyed on
-// its unnamed local group. It also looks for the named-locals marker
-// ($__retv_i32), which the IR emitter never writes; seeing both or neither
-// means the discriminator itself has gone stale — worth failing loudly on.
-func isIREmittedWAT(t *testing.T, wat string) bool {
-	t.Helper()
-	// An unnamed local group — any leading type. Keying on "(local i32"
-	// specifically would miss a function whose first local is wide (i64/f64
-	// user locals sort ahead of the i32 scratch slots), and since the AST
-	// marker is absent too that shows up as the "cannot tell" fatal below
-	// rather than as a wrong answer — but it is still a false alarm.
-	ir := irLocalGroup.MatchString(wat)
-	ast := strings.Contains(wat, "(local $__retv_i32 i32)")
-	if ir == ast {
-		t.Fatalf("cannot tell which emitter produced the core (flat-locals=%v, named-locals=%v)", ir, ast)
-	}
-	return ir
 }
 
 // watImports lists a core's imports as "module name", in emitted order — the
