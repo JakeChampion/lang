@@ -76,7 +76,14 @@ TLS itself is `std/tls/keyschedule`, `keyshare`, `message`, `record`,
    Verification is cofactorless, as in Go's crypto/ed25519. Gate: RFC 8032's
    vectors, one from Go, and the refusals, plus an `ed25519` case in
    `TestSelfHostCtGateX86_64` that signs under a secret seed. About 0.54 ms
-   per signature and 0.28 ms per verification on x86-64.
+   per signature and 0.28 ms per verification on x86-64. P-256 and P-384
+   signing then landed in `std/crypto/ecdsa` over `std/crypto/montgomery`,
+   a constant-time Montgomery field in 26-bit limbs, with complete
+   projective addition, a masked 4-bit window and RFC 6979 nonces. Gate:
+   RFC 6979's A.2.5 and A.2.6 signatures and a reference that reproduces
+   them, every result verified, the field against `core/bigint`, and an
+   `ecdsa` case in `TestSelfHostCtGateX86_64` signing on both curves under
+   a secret scalar.
 7. **RSA-PSS and PKCS#1 v1.5 verify** over `core/bigint`. Verification
    handles only public values, so it does not need to be constant time,
    and it landed ahead of slices 4 to 6 for that reason: every public
