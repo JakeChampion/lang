@@ -1999,23 +1999,10 @@ function sig_bucket_from(name: string, from: i32): i32 {
 // pushing each entry onto the front of its bucket, which leaves every chain in
 // ascending index order without needing a per-bucket tail.
 function sig_table(sigs: FuncSig[]): SigTable {
-  let head: i32[] = [];
-  let am_head: i32[] = [];
-  let b: i32 = 0;
-  let nb: i32 = sig_buckets();
-  while (b < nb) {
-    head = head.append(0 - 1);
-    am_head = am_head.append(0 - 1);
-    b = b + 1;
-  }
-  let next: i32[] = [];
-  let am_next: i32[] = [];
-  let j: i32 = 0;
-  while (j < sigs.len()) {
-    next = next.append(0 - 1);
-    am_next = am_next.append(0 - 1);
-    j = j + 1;
-  }
+  let head: i32[] = util.minus_ones(sig_buckets());
+  let am_head: i32[] = util.minus_ones(sig_buckets());
+  let next: i32[] = util.minus_ones(sigs.len());
+  let am_next: i32[] = util.minus_ones(sigs.len());
   let k: i32 = sigs.len() - 1;
   while (k >= 0) {
     let nm: string = sigs[k].name;
@@ -2186,13 +2173,7 @@ function enum_union_sig(ed: parser.EnumDecl): UnionSig {
 // each chain ends up in ascending entry order, which is declaration order: a
 // variant named by two unions still answers with the first-declared one.
 function union_table(unions: UnionSig[]): UnionTable {
-  let head: i32[] = [];
-  let b: i32 = 0;
-  let nb: i32 = sig_buckets();
-  while (b < nb) {
-    head = head.append(0 - 1);
-    b = b + 1;
-  }
+  let head: i32[] = util.minus_ones(sig_buckets());
   let vnames: string[] = [];
   let vowner: i32[] = [];
   let u: i32 = 0;
@@ -2206,12 +2187,7 @@ function union_table(unions: UnionSig[]): UnionTable {
     }
     u = u + 1;
   }
-  let next: i32[] = [];
-  let j: i32 = 0;
-  while (j < vnames.len()) {
-    next = next.append(0 - 1);
-    j = j + 1;
-  }
+  let next: i32[] = util.minus_ones(vnames.len());
   let lib_head: i32[] = head;
   let lib_next: i32[] = next;
   let k: i32 = vnames.len() - 1;
@@ -2275,19 +2251,8 @@ pub struct MethodTable {
 // in ascending index order, which is the order the scan visited: two methods
 // sharing a name still answer in declaration order.
 function method_table(methods: MethodSig[]): MethodTable {
-  let head: i32[] = [];
-  let b: i32 = 0;
-  let nb: i32 = sig_buckets();
-  while (b < nb) {
-    head = head.append(0 - 1);
-    b = b + 1;
-  }
-  let next: i32[] = [];
-  let j: i32 = 0;
-  while (j < methods.len()) {
-    next = next.append(0 - 1);
-    j = j + 1;
-  }
+  let head: i32[] = util.minus_ones(sig_buckets());
+  let next: i32[] = util.minus_ones(methods.len());
   let k: i32 = methods.len() - 1;
   while (k >= 0) {
     let bk: i32 = sig_name_bucket(methods[k].name);
@@ -8931,19 +8896,8 @@ pub struct ViewIndex { head: i32[], next: i32[] }
 // up ascending, the order the scan it replaces visited: a duplicate key
 // still answers with the FIRST entry.
 function view_index(sums: ViewSum[]): ViewIndex {
-  let head: i32[] = [];
-  let b: i32 = 0;
-  let nb: i32 = sig_buckets();
-  while (b < nb) {
-    head = head.append(0 - 1);
-    b = b + 1;
-  }
-  let next: i32[] = [];
-  let j: i32 = 0;
-  while (j < sums.len()) {
-    next = next.append(0 - 1);
-    j = j + 1;
-  }
+  let head: i32[] = util.minus_ones(sig_buckets());
+  let next: i32[] = util.minus_ones(sums.len());
   let k: i32 = sums.len() - 1;
   while (k >= 0) {
     let bk: i32 = sig_name_bucket(sums[k].key);

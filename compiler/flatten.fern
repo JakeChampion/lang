@@ -81,12 +81,7 @@ function declname_buckets(n: i32): i32 {
 // call, 6.7 M over a checker.fern compile.
 function build_declname_head(names: string[]): i32[] {
   let nb: i32 = declname_buckets(names.len());
-  let head: i32[] = [];
-  let b: i32 = 0;
-  while (b < nb) {
-    head = head.append(0 - 1);
-    b = b + 1;
-  }
+  let head: i32[] = util.minus_ones(nb);
   // Backwards, so the bucket ends up holding its LOWEST index: the scan this
   // replaces returned the first match, and build_declname_next chains upward
   // from here.
@@ -103,18 +98,8 @@ function build_declname_head(names: string[]): i32[] {
 // visits a bucket in ascending index order and stops at the first match.
 function build_declname_next(names: string[]): i32[] {
   let nb: i32 = declname_buckets(names.len());
-  let seen: i32[] = [];
-  let b: i32 = 0;
-  while (b < nb) {
-    seen = seen.append(0 - 1);
-    b = b + 1;
-  }
-  let next: i32[] = [];
-  let z: i32 = 0;
-  while (z < names.len()) {
-    next = next.append(0 - 1);
-    z = z + 1;
-  }
+  let seen: i32[] = util.minus_ones(nb);
+  let next: i32[] = util.minus_ones(names.len());
   let i: i32 = names.len() - 1;
   while (i >= 0) {
     let k: i32 = util.hash_bucket(names[i], nb);
