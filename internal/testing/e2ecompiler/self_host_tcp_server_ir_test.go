@@ -6,7 +6,6 @@ import (
 	"io"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -30,9 +29,6 @@ import (
 // before recv. Distinct small exit codes localise a failed step.
 func TestSelfHostTcpServerIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("self-host TCP server test runs host-native only (avoids qemu socket nuances)")
-	}
 	dir := writeSelfHostAsmProject(t)
 	src, err := os.ReadFile(filepath.Join("../../../compiler", "drivers/asm_run.fern"))
 	if err != nil {
@@ -88,7 +84,7 @@ function main(): i32 {
 	}
 	progBin := buildBin(t, gcc, dir, "tcp_server", string(asm))
 
-	cmd := exec.Command(progBin)
+	cmd := runX86_64Bin(runner, progBin)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		t.Fatalf("stdout pipe: %v", err)
