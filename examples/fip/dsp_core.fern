@@ -1,0 +1,71 @@
+pub struct Graph {
+  capacity: i32,
+  work: f64[],
+  output: f64[],
+  delay: f64[],
+  cursor: i32,
+  previous: f64,
+  previous2: f64,
+  samples: i64,
+  output_count: i32,
+  refused: boolean,
+}
+
+function zeros(count: i32): f64[] {
+  let values: f64[] = [];
+  let i: i32 = 0;
+  while (i < count) {
+    values = values.append(0.0);
+    i = i + 1;
+  }
+  return values;
+}
+
+pub function new_graph(capacity: i32, delay_samples: i32): Option[Graph] {
+  if (capacity < 1 || capacity > 4096 || delay_samples < 1 || delay_samples > 8192) {
+    return None;
+  }
+  return Some(Graph {
+    capacity: capacity, work: zeros(capacity), output: zeros(capacity),
+    delay: zeros(delay_samples), cursor: 0, previous: 0.0, previous2: 0.0,
+    samples: 0i64, output_count: 0, refused: false,
+  });
+}
+
+pub fip function fits(g: Graph, input: f64[], count: i32): boolean {
+  return count >= 0 && count <= g.capacity && count <= input.len()
+    && g.samples <= 9223372036854775807i64 - count as i64;
+}
+
+pub fip function refuse(own g: Graph): Graph {
+  return Graph { ...g, output_count: 0, refused: true };
+}
+
+pub fip function limit(value: f64): f64 {
+  if (value > 1.0) {
+    return 1.0;
+  }
+  if (value < -1.0) {
+    return -1.0;
+  }
+  return value;
+}
+
+// Finite deterministic samples with periodic silence and positive/negative peaks.
+pub function dataset(count: i32): f64[] {
+  let values: f64[] = [];
+  let i: i32 = 0;
+  while (i < count) {
+    let value: f64 = ((i as i64 * 73i64 % 257i64) as i32 - 128) as f64 / 64.0;
+    if (i % 31 == 0) {
+      value = 4.0;
+    } else if (i % 37 == 0) {
+      value = -4.0;
+    } else if (i % 11 == 0) {
+      value = 0.0;
+    }
+    values = values.append(value);
+    i = i + 1;
+  }
+  return values;
+}

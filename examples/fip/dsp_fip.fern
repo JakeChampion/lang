@@ -1,0 +1,72 @@
+import "./dsp_core";
+
+pub fip function gain(own g: dsp_core.Graph, input: f64[], count: i32): dsp_core.Graph {
+  let i: i32 = 0;
+  while (i < count) {
+    g = dsp_core.Graph { ...g, work: g.work.with(i, input[i] * 1.5) };
+    i = i + 1;
+  }
+  return g;
+}
+
+pub fip function filter(own g: dsp_core.Graph, count: i32): dsp_core.Graph {
+  let i: i32 = 0;
+  while (i < count) {
+    let x: f64 = g.work[i];
+    let y: f64 = x * 0.5 + g.previous * 0.25 + g.previous2 * 0.25;
+    g = dsp_core.Graph { ...g, work: g.work.with(i, y) };
+    g = dsp_core.Graph { ...g, previous2: g.previous, previous: x };
+    i = i + 1;
+  }
+  return g;
+}
+
+pub fip function delay(own g: dsp_core.Graph, count: i32): dsp_core.Graph {
+  let i: i32 = 0;
+  while (i < count) {
+    let wet: f64 = g.delay[g.cursor];
+    let next: f64 = g.work[i] + wet * 0.25;
+    g = dsp_core.Graph { ...g, delay: g.delay.with(g.cursor, next) };
+    g = dsp_core.Graph { ...g, output: g.output.with(i, wet) };
+    let cursor: i32 = g.cursor + 1;
+    if (cursor == g.delay.len()) {
+      cursor = 0;
+    }
+    g = dsp_core.Graph { ...g, cursor: cursor };
+    i = i + 1;
+  }
+  return g;
+}
+
+pub fip function mix(own g: dsp_core.Graph, count: i32): dsp_core.Graph {
+  let i: i32 = 0;
+  while (i < count) {
+    let value: f64 = g.work[i] * 0.75 + g.output[i] * 0.5;
+    g = dsp_core.Graph { ...g, output: g.output.with(i, value) };
+    i = i + 1;
+  }
+  return g;
+}
+
+pub fip function limit(own g: dsp_core.Graph, count: i32): dsp_core.Graph {
+  let i: i32 = 0;
+  while (i < count) {
+    let value: f64 = dsp_core.limit(g.output[i]);
+    g = dsp_core.Graph { ...g, output: g.output.with(i, value) };
+    i = i + 1;
+  }
+  return g;
+}
+
+// Public processing boundary validates before consuming any input or changing state.
+pub fip function process(own g: dsp_core.Graph, input: f64[], count: i32): dsp_core.Graph {
+  if (!dsp_core.fits(g, input, count)) {
+    return dsp_core.refuse(g);
+  }
+  g = gain(g, input, count);
+  g = filter(g, count);
+  g = delay(g, count);
+  g = mix(g, count);
+  g = limit(g, count);
+  return dsp_core.Graph { ...g, samples: g.samples + count as i64, output_count: count, refused: false };
+}
