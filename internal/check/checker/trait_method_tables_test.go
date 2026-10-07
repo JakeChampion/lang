@@ -1,6 +1,8 @@
 package checker
 
 import (
+	"errors"
+	"github.com/jakechampion/lang/internal/syntax/diag"
 	"slices"
 	"strings"
 	"testing"
@@ -392,5 +394,30 @@ func TestResolveMethodOwnerRoundTripsToSameImpl(t *testing.T) {
 		if !ok || got != want || gotOwner != trait {
 			t.Errorf("resolveMethod(P, go, [%s]) = %q, %q, %v; want %q, %s, true", trait, got, gotOwner, ok, want, trait)
 		}
+	}
+}
+
+// An impl colliding with a standard-library inherent method is reported at
+// the impl the program wrote, in its own file, with each candidate's file
+// named. It used to carry the stdlib method's line under the user's file name
+// (`main.fern:1304:5`), a line the file does not have (#11853).
+func TestAmbiguousDeclReportedAtTheProgramsImpl(t *testing.T) {
+	err := checkModuleSource(t, `import "std/i32";
+trait Display { function to_string(self: Self): string; }
+impl Display for i32 { function to_string(self: Self): string { return "x"; } }
+function main(): i32 { return 0; }`)
+	var errs diag.Errors
+	if !errors.As(err, &errs) || len(errs) == 0 {
+		t.Fatalf("expected E074, got %v", err)
+	}
+	var ce *Error
+	if !errors.As(errs[0], &ce) || ce.ErrCode != "E074" {
+		t.Fatalf("first error is %v, want E074", errs[0])
+	}
+	if ce.Pos.Line != 3 || strings.HasPrefix(ce.Path, "stdlib://") {
+		t.Errorf("E074 at %s:%s, want line 3 of the program", ce.Path, ce.Pos)
+	}
+	if !strings.Contains(ce.Msg, "std/i32.fern:") || !strings.Contains(ce.Msg, "main.fern:3:") {
+		t.Errorf("E074 does not name both candidates' files: %s", ce.Msg)
 	}
 }

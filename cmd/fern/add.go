@@ -94,7 +94,7 @@ func depLineFor(name, spec string) (string, error) {
 func insertDependency(src, line string) string {
 	lines := strings.Split(src, "\n")
 	for i, l := range lines {
-		if strings.TrimSpace(l) == "[dependencies]" {
+		if strings.TrimSpace(manifest.Line(l)) == "[dependencies]" {
 			out := append([]string{}, lines[:i+1]...)
 			out = append(out, strings.TrimRight(line, "\n"))
 			out = append(out, lines[i+1:]...)

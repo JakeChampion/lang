@@ -41,13 +41,13 @@ lib = "lib.fern"      # entry module for `import "<name>"` (default)
 
 [dependencies]
 helper = { path = "../helper" }                    # local directory
-webkit = { url = "https://example.com/webkit.tar.gz",
-           hash = "sha256:<64 lowercase hex of the archive bytes>" }
+webkit = { url = "https://example.com/webkit.tar.gz", hash = "sha256:…" }  # 64 lowercase hex of the archive bytes
 kv = { path = "../kv", capabilities = ["net"] }    # capability grant
 ```
 
 The parser (`internal/pkg/manifest`) is a strict TOML subset — sections,
-quoted strings, inline tables — and rejects anything else with a
+quoted strings, arrays, inline tables and `#` comments (on their own line
+or after a value), each entry on one line — and rejects anything else with a
 pointed error. A bare `helper = "1.2.0"` is a versioned (MVS) dependency (see below);
 `helper = "1.2"` errors (versions are MAJOR.MINOR.PATCH).
 
@@ -296,7 +296,7 @@ source is a `url` — resolve since #4949: the loader computes the store
 path (`$FERN_CACHE_DIR/pkgs/<hex>/`, else `<user-cache>/fern/pkgs/<hex>/`
 via `$XDG_CACHE_HOME` / `$HOME/.cache` / `$HOME/Library/Caches`) with the
 `env` runtime builtin and reads the unpacked package from it —
-`modloader.load_from_store`, mirroring native `pkgcache.Root()`/`Dir()`.
+`modloader.store_dir`, mirroring native `pkgcache.Root()`/`Dir()`.
 **Read-only**: populating and sha256-verifying the store stays a native
 `fern -fetch` responsibility (the no-build-time-network constraint), so
 the self-host loader trusts an already-populated store exactly as the

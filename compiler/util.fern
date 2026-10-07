@@ -1188,6 +1188,35 @@ pub function pos_str(entry: string, files: string[], line: i32, col: i32): strin
   return f + ":" + at;
 }
 
+// LineMap carries a module tangled from a literate document back to it:
+// generated line k (1-based) is line lits[k-1] of `doc`, its columns moved
+// shifts[k-1] to the right. An empty `doc` is a module that is its own source.
+pub struct LineMap { doc: string, lits: i32[], shifts: i32[] }
+
+pub function no_line_map(): LineMap {
+  return LineMap { doc: "", lits: [], shifts: [] };
+}
+
+// doc_diag moves a diagnostic's position onto the literate document its module
+// was tangled from, keeping the module's line base, or to line 0 (no position)
+// when the generated line has no document line. `maps` is indexed as
+// pos_file_index numbers modules: the entry, then files[k] at k + 1.
+pub function doc_diag(maps: LineMap[], d: Diag): Diag {
+  let m: i32 = pos_file_index(d.line);
+  if (m < 0 || m >= maps.len() || maps[m].doc.len() == 0) {
+    return d;
+  }
+  let k: i32 = pos_line(d.line);
+  if (k < 1 || k > maps[m].lits.len()) {
+    return Diag { ...d, line: 0, col: 0 };
+  }
+  let col: i32 = d.col - maps[m].shifts[k - 1];
+  if (col < 1) {
+    col = 1;
+  }
+  return Diag { ...d, line: d.line - k + maps[m].lits[k - 1], col: col };
+}
+
 // format_diags renders diagnostics one-per-line as
 // `error[CODE]: message (line:col)` — the self-host counterpart of the Go
 // driver's diag.Format. Used by the checking drivers to surface a rejection
@@ -1364,6 +1393,29 @@ pub function module_name(import_path: string): string {
   return import_path;
 }
 
+// dep_name is the dependency a bare import names: its first path segment
+// (`helper/extra` → `helper`, `helper` → `helper`).
+pub function dep_name(import_path: string): string {
+  let i: i32 = 0;
+  while (i < import_path.len()) {
+    if (import_path[i] == b'/') {
+      return slice_unchecked(import_path, 0, i) + "";
+    }
+    i = i + 1;
+  }
+  return import_path;
+}
+
+// dep_subpath is the module path inside the dependency dep_name names, or ""
+// for the dependency's lib module (`helper/sub/x` → `sub/x`, `helper` → "").
+pub function dep_subpath(import_path: string): string {
+  let n: string = dep_name(import_path);
+  if (n.len() >= import_path.len()) {
+    return "";
+  }
+  return slice_unchecked(import_path, n.len() + 1, import_path.len()) + "";
+}
+
 // mangle_prefix maps a module's bundle name to something an assembler will
 // accept in a symbol. A file name is not required to be an identifier —
 // `coreutils/[.fern` is the bracket form of test(1) and is named for the
@@ -1482,7 +1534,7 @@ pub function should_load(import_path: string, root: string, deps: string[]): boo
   if (is_local(import_path)) {
     return true;
   }
-  if (has_str(deps, module_name(import_path))) {
+  if (has_str(deps, dep_name(import_path))) {
     return true;
   }
   if (root.len() == 0) {

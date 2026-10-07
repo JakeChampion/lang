@@ -1,0 +1,254 @@
+// std/crypto/montgomery — constant-time arithmetic modulo an odd modulus of
+// up to 390 bits, in Montgomery form, for std/crypto/ecdsa's signing over the
+// NIST curves' fields and orders.
+//
+// An element is `limbs` 26-bit limbs in `i64`, least significant first, each
+// in [0, 2^26), standing for a value below the modulus times R = 2^(26 limbs).
+// A 26-bit product is 52 bits, so a multiplication accumulates every partial
+// product unreduced. The modulus and its constants are public; no operation
+// branches on, or indexes memory with, an element's value, and a choice
+// between two values is made by mask.
+
+import "core/bigint";
+import "std/string";
+
+const BITS: i64 = 26;
+
+const MASK: i64 = 67108863;
+
+// Modulus — an odd modulus `p` as limbs, `n0` = -p^-1 mod 2^26, `r2` =
+// R^2 mod p and `one` = R mod p (1 in Montgomery form), with its size in
+// limbs and in bytes.
+pub struct Modulus { p: i64[], n0: i64, r2: i64[], one: i64[], limbs: i32, bytes: i32 }
+
+// modulus is the Modulus for the odd number `hex` spells, `bytes` long.
+pub function modulus(hex: string, bytes: i32): Modulus {
+  let limbs: i32 = (8 * bytes + 26) / 26;
+  let p: bigint.BigInt = __hex_int(hex);
+  let r: bigint.BigInt = bigint.from_u64(1 as u64).shl(26 * limbs);
+  let pl: i64[] = __limbs_of(p, limbs);
+  // Newton's iteration doubles the correct low bits of an inverse each step.
+  let x: i64 = 1 as i64;
+  let i: i32 = 0;
+  while (i < 5) {
+    x = x * (2 as i64 - pl[0] * x) & MASK;
+    i = i + 1;
+  }
+  return Modulus { p: pl, n0: 0 as i64 - x & MASK, r2: __limbs_of(r.mul(r).divmod(p).1, limbs), one: __limbs_of(r.divmod(p).1, limbs), limbs: limbs, bytes: bytes };
+}
+
+function __hex_int(s: string): bigint.BigInt {
+  let v: bigint.BigInt = bigint.zero();
+  for c in s.bytes() {
+    let d: i32 = c as i32 - 48;
+    if (c as i32 >= 97) {
+      d = c as i32 - 87;
+    }
+    v = v.shl(4).add(bigint.from_u64(d as u64));
+  }
+  return v;
+}
+
+function __limbs_of(v: bigint.BigInt, limbs: i32): i64[] {
+  let out: i64[] = [];
+  let rest: bigint.BigInt = v;
+  let i: i32 = 0;
+  while (i < limbs) {
+    out = out.append(rest.low_u64() as i64 & MASK);
+    rest = rest.shr(26);
+    i = i + 1;
+  }
+  return out;
+}
+
+pub function zero(m: Modulus): i64[] {
+  return __zeros(m.limbs);
+}
+
+function __zeros(n: i32): i64[] {
+  let out: i64[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append(0 as i64);
+    i = i + 1;
+  }
+  return out;
+}
+
+// mul is a*b/R mod p (coarsely integrated operand scanning): each step adds a
+// limb of a times b and the multiple of p that clears the low limb, then
+// drops that limb. Limbs stay below 2^58 unnormalised for up to 15 limbs.
+pub function mul(m: Modulus, a: [i64], b: [i64]): i64[] {
+  let n: i32 = m.limbs;
+  let t: i64[] = __zeros(n);
+  let i: i32 = 0;
+  while (i < n) {
+    let ai: i64 = a[i];
+    let t0: i64 = t[0] + ai * b[0];
+    let q: i64 = (t0 & MASK) * m.n0 & MASK;
+    let carry: i64 = t0 + q * m.p[0] >> BITS;
+    let j: i32 = 1;
+    while (j < n) {
+      t = t.with(j - 1, t[j] + ai * b[j] + q * m.p[j] + carry);
+      carry = 0 as i64;
+      j = j + 1;
+    }
+    t = t.with(n - 1, carry);
+    i = i + 1;
+  }
+  return __reduced(m, __normal(t));
+}
+
+// __normal carries each limb into the next, leaving every limb in
+// [0, 2^26); the value must fit in the limbs.
+function __normal(own t: i64[]): i64[] {
+  let carry: i64 = 0 as i64;
+  let i: i32 = 0;
+  while (i < t.len()) {
+    let v: i64 = t[i] + carry;
+    t = t.with(i, v & MASK);
+    carry = v >> BITS;
+    i = i + 1;
+  }
+  return t;
+}
+
+// __reduced is t - p when t >= p, else t, for a normal t below 2p.
+function __reduced(m: Modulus, t: [i64]): i64[] {
+  let d: i64[] = [];
+  let borrow: i64 = 0 as i64;
+  let i: i32 = 0;
+  while (i < m.limbs) {
+    let v: i64 = t[i] - m.p[i] + borrow;
+    d = d.append(v & MASK);
+    borrow = v >> BITS;
+    i = i + 1;
+  }
+  // borrow is -1 when t < p: keep t.
+  return select(t, d, borrow + 1 as i64);
+}
+
+// select is b when flag is 1 and a when it is 0, by mask.
+pub function select(a: [i64], b: [i64], flag: i64): i64[] {
+  let mask: i64 = 0 as i64 - flag;
+  let out: i64[] = [];
+  let i: i32 = 0;
+  while (i < a.len()) {
+    out = out.append(a[i] ^ (a[i] ^ b[i]) & mask);
+    i = i + 1;
+  }
+  return out;
+}
+
+pub function add(m: Modulus, a: [i64], b: [i64]): i64[] {
+  let s: i64[] = [];
+  let i: i32 = 0;
+  while (i < m.limbs) {
+    s = s.append(a[i] + b[i]);
+    i = i + 1;
+  }
+  return __reduced(m, __normal(s));
+}
+
+pub function sub(m: Modulus, a: [i64], b: [i64]): i64[] {
+  let d: i64[] = [];
+  let borrow: i64 = 0 as i64;
+  let i: i32 = 0;
+  while (i < m.limbs) {
+    let v: i64 = a[i] - b[i] + borrow;
+    d = d.append(v & MASK);
+    borrow = v >> BITS;
+    i = i + 1;
+  }
+  // On a borrow, add p back.
+  let mask: i64 = borrow;
+  let s: i64[] = [];
+  i = 0;
+  while (i < m.limbs) {
+    s = s.append(d[i] + (m.p[i] & mask));
+    i = i + 1;
+  }
+  return __normal(s);
+}
+
+// is_zero is 1 when a is 0 and 0 otherwise.
+pub function is_zero(a: [i64]): i64 {
+  let acc: i64 = 0 as i64;
+  for v in a {
+    acc = acc | v;
+  }
+  return acc - 1 as i64 >> 63 & 1 as i64;
+}
+
+// in_range is 1 when the big-endian `b` is in [1, p) and 0 otherwise.
+pub function in_range(m: Modulus, b: [u8]): i64 {
+  let v: i64[] = __plain(m, b);
+  let borrow: i64 = 0 as i64;
+  let i: i32 = 0;
+  while (i < m.limbs) {
+    borrow = v[i] - m.p[i] + borrow >> BITS;
+    i = i + 1;
+  }
+  return 0 as i64 - borrow & 1 as i64 - is_zero(v);
+}
+
+// from_bytes is the big-endian `b`, which must be below p, in Montgomery
+// form.
+pub function from_bytes(m: Modulus, b: [u8]): i64[] {
+  return mul(m, __plain(m, b), m.r2);
+}
+
+// __plain is the big-endian `b` as limbs, not converted.
+function __plain(m: Modulus, b: [u8]): i64[] {
+  let out: i64[] = __zeros(m.limbs);
+  let bit: i32 = 0;
+  let i: i32 = b.len() - 1;
+  while (i >= 0) {
+    let limb: i32 = bit / 26;
+    let shift: i32 = bit % 26;
+    out = out.with(limb, out[limb] | b[i] as i64 << shift as i64 & MASK);
+    if (shift > 18 && limb + 1 < m.limbs) {
+      out = out.with(limb + 1, out[limb + 1] | b[i] as i64 >> (26 - shift) as i64);
+    }
+    bit = bit + 8;
+    i = i - 1;
+  }
+  return out;
+}
+
+// to_bytes is `a` out of Montgomery form, big-endian in m.bytes bytes.
+pub function to_bytes(m: Modulus, a: [i64]): u8[] {
+  let one: i64[] = __zeros(m.limbs).with(0, 1 as i64);
+  let v: i64[] = mul(m, a, one);
+  let out: u8[] = [];
+  let i: i32 = m.bytes - 1;
+  while (i >= 0) {
+    let bit: i32 = 8 * i;
+    let limb: i32 = bit / 26;
+    let shift: i32 = bit % 26;
+    let byte: i64 = v[limb] >> shift as i64;
+    if (shift > 18 && limb + 1 < m.limbs) {
+      byte = byte | v[limb + 1] << (26 - shift) as i64;
+    }
+    out = out.append((byte & 255 as i64) as u8);
+    i = i - 1;
+  }
+  return out;
+}
+
+// inv is a^(p-2), the inverse of a nonzero a for a prime p. The exponent is
+// public, so it is walked bit by bit.
+pub function inv(m: Modulus, a: [i64]): i64[] {
+  let e: i64[] = sub(m, zero(m), __zeros(m.limbs).with(0, 2 as i64));
+  // e is p - 2 as plain limbs: 0 - 2 mod p.
+  let r: i64[] = m.one;
+  let i: i32 = 26 * m.limbs - 1;
+  while (i >= 0) {
+    r = mul(m, r, r);
+    if ((e[i / 26] >> (i % 26) as i64 & 1 as i64) == 1 as i64) {
+      r = mul(m, r, a);
+    }
+    i = i - 1;
+  }
+  return r;
+}

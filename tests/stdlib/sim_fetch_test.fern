@@ -38,12 +38,12 @@ const PROXY: string = "10.0.0.9";
 
 // The route `fetch.send` takes, with no proxy to consult.
 function __open(): fetch.Policy {
-  return fetch.Policy { public_only: false, proxies: fetch.ProxyEnv { http_proxy: "", no_proxy: "" } };
+  return fetch.Policy { public_only: false, proxies: fetch.ProxyEnv { http_proxy: "", https_proxy: "", no_proxy: "" } };
 }
 
 // The route `plat.http` takes: global addresses only.
 function __public(): fetch.Policy {
-  return fetch.Policy { public_only: true, proxies: fetch.ProxyEnv { http_proxy: "", no_proxy: "" } };
+  return fetch.Policy { public_only: true, proxies: fetch.ProxyEnv { http_proxy: "", https_proxy: "", no_proxy: "" } };
 }
 
 // A network where `example.test` is one origin listening on port 80
@@ -540,7 +540,7 @@ function __via_proxy(public_only: boolean, no_proxy: string, cgi: boolean): fetc
   if (cgi) {
     method = Some("GET");
   }
-  let env: fetch.ProxyEnv = fetch.proxy_env_from(Some("http://u@" + PROXY + ":3128"), Some(no_proxy), None, method);
+  let env: fetch.ProxyEnv = fetch.proxy_env_from(Some("http://u@" + PROXY + ":3128"), None, None, Some(no_proxy), None, method);
   return fetch.Policy { public_only: public_only, proxies: env };
 }
 
@@ -571,7 +571,7 @@ function test_proxied(): test.TestOutcome {
 
 // The route through the proxy `spec` names, as the environment gives it.
 function __proxy_spec(spec: string): fetch.Policy {
-  return fetch.Policy { public_only: false, proxies: fetch.proxy_env_from(Some(spec), None, None, None) };
+  return fetch.Policy { public_only: false, proxies: fetch.proxy_env_from(Some(spec), None, None, None, None, None) };
 }
 
 // A proxy named with no scheme and no port is an http one on port 80.

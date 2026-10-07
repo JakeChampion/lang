@@ -465,6 +465,60 @@ function main(): i32 {
   return 5;
 }
 `, false},
+	// ECDSA signing under a secret scalar, on both curves: the field and
+	// order arithmetic choose by mask, the base-point multiplication reads
+	// every table entry, and only the range verdicts and the signature are
+	// declassified. Verification runs on public values.
+	{"ecdsa", `import "std/crypto/ecdsa";
+
+function filled(n: i32, seed: i32): u8[] {
+  let b: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
+  while (i < n) {
+    b = b.with(i, ((i * 13 + seed) & 255) as u8);
+    i = i + 1;
+  }
+  return b;
+}
+
+function signs(curve: ecdsa.Curve, h: ecdsa.Hash, size: i32): i32 {
+  let d: u8[] = filled(size, 5);
+  let msg: u8[] = filled(50, 9);
+  __ct_secret(d);
+  match (ecdsa.private_key(curve, d)) {
+    Ok(k) => {
+      let point: u8[] = k.public_point();
+      __ct_public(point);
+      match (ecdsa.sign(k, h, msg)) {
+        Ok(sig) => {
+          match (ecdsa.public_key(curve, point)) {
+            Ok(public) => {
+              if (!ecdsa.verify(public, h, msg, sig)) {
+                return 1;
+              }
+              return 0;
+            },
+            Err(e) => {
+              return 2;
+            }
+          }
+        },
+        Err(e) => {
+          return 3;
+        }
+      }
+    },
+    Err(e) => {
+      return 4;
+    }
+  }
+  return 5;
+}
+
+function main(): i32 {
+  return signs(ecdsa.P256, ecdsa.Sha256, 32) + 10 * signs(ecdsa.P384, ecdsa.Sha384, 48);
+}
+`, false},
 }
 
 const ctUninitialised = "depends on uninitialised value"

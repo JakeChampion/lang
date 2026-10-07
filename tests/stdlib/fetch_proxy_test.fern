@@ -3,8 +3,9 @@ import "std/fetch";
 
 // tests/stdlib/fetch_proxy_test.fern — std/fetch's proxy selection,
 // pure: which variables `proxy_env_from` reads (the lowercase
-// `http_proxy` only, none under `REQUEST_METHOD`, `no_proxy` before
-// `NO_PROXY`) and what `proxy_for` answers for each `no_proxy` form (`*`,
+// `http_proxy` only, `https_proxy` before `HTTPS_PROXY`, none under
+// `REQUEST_METHOD`, `no_proxy` before `NO_PROXY`), which proxy each scheme
+// takes, and what `proxy_for` answers for each `no_proxy` form (`*`,
 // a domain with and without its leading dot, a `:port`, an address, a
 // bracketed address with a zone, a CIDR block of either family) and for
 // the hosts never proxied (`localhost` and loopback).
@@ -14,7 +15,7 @@ import "std/fetch";
 const PROXY: string = "http://proxy.example:3128";
 
 function skipping(skip: string): fetch.ProxyEnv {
-  return fetch.ProxyEnv { http_proxy: PROXY, no_proxy: skip };
+  return fetch.ProxyEnv { http_proxy: PROXY, https_proxy: "", no_proxy: skip };
 }
 
 // `via(p, url)` — the proxy `p` picks for `url`, or `direct`.
@@ -47,7 +48,15 @@ function routes(p: fetch.ProxyEnv, urls: string[]): string {
 }
 
 function test_no_proxy_configured(): test.TestOutcome {
-  return test.assert_eq(via(fetch.ProxyEnv { http_proxy: "", no_proxy: "" }, "http://example.com/"), "direct");
+  return test.assert_eq(via(fetch.ProxyEnv { http_proxy: "", https_proxy: "", no_proxy: "" }, "http://example.com/"), "direct");
+}
+
+function test_each_scheme_has_its_proxy(): test.TestOutcome {
+  let both: fetch.ProxyEnv = fetch.ProxyEnv { http_proxy: PROXY, https_proxy: "http://tls-proxy.example:8080", no_proxy: "skip.example" };
+  if (via(both, "http://example.com/") != PROXY || via(both, "https://example.com/") != "http://tls-proxy.example:8080" || via(both, "https://skip.example/") != "direct") {
+    return test.fail("both set: " + via(both, "http://example.com/") + " " + via(both, "https://example.com/") + " " + via(both, "https://skip.example/"));
+  }
+  return test.assert_eq(via(skipping(""), "https://example.com/"), "direct");
 }
 
 function test_a_proxy_is_the_spec_as_given(): test.TestOutcome {
@@ -99,24 +108,31 @@ function test_a_bad_block_or_port_matches_nothing(): test.TestOutcome {
 }
 
 function test_only_the_lowercase_variable_is_read(): test.TestOutcome {
-  let p: fetch.ProxyEnv = fetch.proxy_env_from(Some(PROXY), None, None, None);
-  return test.assert_eq(p.http_proxy + "|" + p.no_proxy, PROXY + "|");
+  let p: fetch.ProxyEnv = fetch.proxy_env_from(Some(PROXY), None, None, None, None, None);
+  return test.assert_eq(p.http_proxy + "|" + p.https_proxy + "|" + p.no_proxy, PROXY + "||");
 }
 
 function test_no_proxy_under_request_method(): test.TestOutcome {
-  let p: fetch.ProxyEnv = fetch.proxy_env_from(Some(PROXY), Some("a.example"), None, Some("GET"));
-  return test.assert_eq(p.http_proxy + "|" + p.no_proxy, "|a.example");
+  let p: fetch.ProxyEnv = fetch.proxy_env_from(Some(PROXY), Some(PROXY), Some(PROXY), Some("a.example"), None, Some("GET"));
+  return test.assert_eq(p.http_proxy + "|" + p.https_proxy + "|" + p.no_proxy, "||a.example");
 }
 
 function test_no_proxy_lowercase_wins_over_uppercase(): test.TestOutcome {
-  let lower: fetch.ProxyEnv = fetch.proxy_env_from(Some(PROXY), Some("a.example"), Some("b.example"), None);
-  let upper: fetch.ProxyEnv = fetch.proxy_env_from(Some(PROXY), None, Some("b.example"), None);
+  let lower: fetch.ProxyEnv = fetch.proxy_env_from(Some(PROXY), None, None, Some("a.example"), Some("b.example"), None);
+  let upper: fetch.ProxyEnv = fetch.proxy_env_from(Some(PROXY), None, None, None, Some("b.example"), None);
   return test.assert_eq(lower.no_proxy + "|" + upper.no_proxy, "a.example|b.example");
+}
+
+function test_https_proxy_lowercase_wins_over_uppercase(): test.TestOutcome {
+  let lower: fetch.ProxyEnv = fetch.proxy_env_from(None, Some("http://a:1"), Some("http://b:2"), None, None, None);
+  let upper: fetch.ProxyEnv = fetch.proxy_env_from(None, None, Some("http://b:2"), None, None, None);
+  return test.assert_eq(lower.https_proxy + "|" + upper.https_proxy, "http://a:1|http://b:2");
 }
 
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/fetch proxies");
   r = r.it("no proxy configured", test_no_proxy_configured);
+  r = r.it("each scheme has its proxy", test_each_scheme_has_its_proxy);
   r = r.it("a proxy is the spec as given", test_a_proxy_is_the_spec_as_given);
   r = r.it("localhost and loopback are never proxied", test_localhost_and_loopback_are_never_proxied);
   r = r.it("* means nothing is proxied", test_star_means_nothing_is_proxied);
@@ -132,5 +148,6 @@ function main(): i32 {
   r = r.it("only the lowercase variable is read", test_only_the_lowercase_variable_is_read);
   r = r.it("no proxy under REQUEST_METHOD", test_no_proxy_under_request_method);
   r = r.it("no_proxy lowercase wins over uppercase", test_no_proxy_lowercase_wins_over_uppercase);
+  r = r.it("https_proxy lowercase wins over uppercase", test_https_proxy_lowercase_wins_over_uppercase);
   return r.finish();
 }

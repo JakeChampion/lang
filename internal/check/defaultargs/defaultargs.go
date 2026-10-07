@@ -144,6 +144,7 @@ func Fill(p *ast.Program) []Error {
 			funcs[f.Name] = f.Params
 		}
 	}
+	shadowed := shadowedCalls(p)
 	var errs []Error
 	ast.RewriteProgramExprs(p, func(e ast.Expr) ast.Expr {
 		call, ok := e.(*ast.Call)
@@ -158,13 +159,14 @@ func Fill(p *ast.Program) []Error {
 			}
 		}
 		id, isIdent := call.Callee.(*ast.Ident)
+		var params []ast.Param
+		known := false
+		if isIdent && !shadowed[call] {
+			params, known = funcs[id.Name]
+		}
 
 		if !hasNamed {
 			// Purely positional — fill trailing defaults only.
-			if !isIdent {
-				return e
-			}
-			params, known := funcs[id.Name]
 			if !known || len(call.Args) >= len(params) {
 				return e
 			}
@@ -184,7 +186,6 @@ func Fill(p *ast.Program) []Error {
 			errs = append(errs, Error{call.P, "E077", "named arguments are only supported on direct calls to named functions"})
 			return e
 		}
-		params, known := funcs[id.Name]
 		if !known {
 			errs = append(errs, Error{call.P, "E077", fmt.Sprintf("named arguments are not supported for call to %q", id.Name)})
 			return e
@@ -242,6 +243,137 @@ func Fill(p *ast.Program) []Error {
 		return e
 	})
 	return errs
+}
+
+// shadowedCalls are the calls whose callee is a local binding: a parameter,
+// a `let`, a loop variable, a match binder or a local function. A top-level
+// function's defaults belong only to calls that resolve to it (#11850).
+func shadowedCalls(p *ast.Program) map[*ast.Call]bool {
+	out := map[*ast.Call]bool{}
+	for _, f := range p.Funcs {
+		if f.Body != nil {
+			walkScoped(f.Body, withNames(map[string]bool{}, paramNames(f.Params)), out)
+		}
+	}
+	return out
+}
+
+func walkScoped(n ast.Node, scope map[string]bool, out map[*ast.Call]bool) {
+	ast.Walk(n, func(m ast.Node) bool {
+		switch x := m.(type) {
+		case *ast.Call:
+			if id, ok := x.Callee.(*ast.Ident); ok && scope[id.Name] {
+				out[x] = true
+			}
+		case *ast.Block:
+			if x == nil {
+				return false
+			}
+			inner := withNames(scope, nil)
+			for _, st := range x.Stmts {
+				// A local function sees its own name; a `let` initialiser
+				// does not see the name it binds.
+				if fd, ok := st.(*ast.FuncDecl); ok {
+					inner[fd.Name] = true
+				}
+				walkScoped(st, inner, out)
+				bindStmt(st, inner)
+			}
+			return false
+		case *ast.FuncDecl:
+			if x.Body != nil {
+				walkScoped(x.Body, withNames(scope, paramNames(x.Params)), out)
+			}
+			return false
+		case *ast.Lambda:
+			if x.Body != nil {
+				walkScoped(x.Body, withNames(scope, paramNames(x.Params)), out)
+			}
+			return false
+		case *ast.For:
+			inner := withNames(scope, nil)
+			if x.Init != nil {
+				walkScoped(x.Init, inner, out)
+				bindStmt(x.Init, inner)
+			}
+			for _, c := range []ast.Node{x.Cond, x.Step, x.Body} {
+				if c != nil {
+					walkScoped(c, inner, out)
+				}
+			}
+			return false
+		case *ast.ForEach:
+			walkScoped(x.Iter, scope, out)
+			if x.RangeHigh != nil {
+				walkScoped(x.RangeHigh, scope, out)
+			}
+			names := []string{x.Var}
+			if x.Pattern != nil {
+				names = append(names, x.Pattern.Names...)
+			}
+			walkScoped(x.Body, withNames(scope, names), out)
+			return false
+		case *ast.Match:
+			walkScoped(x.Tag, scope, out)
+			for _, a := range x.Arms {
+				inner := withNames(scope, a.Binders())
+				if a.Guard != nil {
+					walkScoped(a.Guard, inner, out)
+				}
+				if a.Body != nil {
+					walkScoped(a.Body, inner, out)
+				}
+			}
+			return false
+		case *ast.MatchExpr:
+			walkScoped(x.Tag, scope, out)
+			for _, a := range x.Arms {
+				inner := withNames(scope, a.Binders())
+				if a.Guard != nil {
+					walkScoped(a.Guard, inner, out)
+				}
+				if a.Body != nil {
+					walkScoped(a.Body, inner, out)
+				}
+			}
+			return false
+		}
+		return true
+	})
+}
+
+// bindStmt adds the names a statement binds for the statements after it.
+func bindStmt(st ast.Stmt, scope map[string]bool) {
+	switch x := st.(type) {
+	case *ast.Var:
+		scope[x.Name] = true
+	case *ast.Destructure:
+		for _, n := range x.Names {
+			scope[n] = true
+		}
+		if x.AtName != "" {
+			scope[x.AtName] = true
+		}
+	}
+}
+
+func withNames(scope map[string]bool, names []string) map[string]bool {
+	out := make(map[string]bool, len(scope)+len(names))
+	for n := range scope {
+		out[n] = true
+	}
+	for _, n := range names {
+		out[n] = true
+	}
+	return out
+}
+
+func paramNames(ps []ast.Param) []string {
+	out := make([]string, len(ps))
+	for i, p := range ps {
+		out[i] = p.Name
+	}
+	return out
 }
 
 func paramIndex(params []ast.Param, name string) int {

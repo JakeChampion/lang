@@ -4144,29 +4144,18 @@ function tuple_elem_names(prefix: string, n: i32): string {
 // elements need, innermost element last, and returns the wrapped path.
 //
 // A variant element (kind 3) nests the path inside a match on the element
-// temp — the tag test and the payload binds are exactly what a match arm
-// already does, so a payload SUB-PATTERN needs nothing new either: the two
-// synthesised arms go through fold_lit_cond and desugar_nested_arms, the same
-// pair an arm-position payload takes. A nested tuple element (kind 4)
-// destructures the element temp one level deeper, recurses for that level's
-// own elements, declares its binders and tests its literals. The destructure
-// is irrefutable, so running it before the level's own tests is safe.
+// temp, built by match_sub_pattern as for a payload slot. A nested tuple
+// element (kind 4) destructures the element temp one level deeper, recurses
+// for that level's own elements, declares its binders and tests its literals.
+// The destructure is irrefutable, so running it before the level's own tests
+// is safe.
 function wrap_tuple_elems(path: ast.Stmt[], kinds: i32[], pats: ast.Pattern[], prefix: string, line: i32, col: i32): ast.Stmt[] {
   let cur: ast.Stmt[] = path;
   let wi: i32 = kinds.len() - 1;
   while (wi >= 0) {
     let en: string = prefix + "_e" + util.i32_to_string(wi);
     if (kinds[wi] == 3) {
-      let (mk_pat, mk_guard, mk_hg) = fold_lit_cond(pats[wi], e_bool(true), false);
-      let mk_arms: ast.MatchArm[] = [];
-      mk_arms = mk_arms.append(ast.MatchArm { pattern: mk_pat, body: cur, line: line, col: col, guard: mk_guard, has_guard: mk_hg, alt_cont: false });
-      let mk_skip: ast.Stmt[] = [];
-      mk_arms = mk_arms.append(ast.MatchArm { pattern: p_wildcard(), body: mk_skip, line: line, col: col, guard: e_bool(true), has_guard: false, alt_cont: false });
-      let mk_wrap: ast.Stmt[] = [];
-      // Every element of every level shares the arm's line/col, so the
-      // element temp name is what keeps the desugar's own temps apart.
-      mk_wrap = mk_wrap.append(s_match_at(e_ident_at(en, line, col), desugar_nested_arms(mk_arms, 0, en), line, col));
-      cur = mk_wrap;
+      cur = match_sub_pattern(cur, en, pats[wi], line, col);
     } else if (kinds[wi] == 4) {
       let (nk, nb, nl, np) = pv_tup(pats[wi]);
       let sub: ast.Stmt[] = wrap_tuple_elems(cur, nk, np, en, line, col);
@@ -6069,29 +6058,47 @@ function payload_binder(pv: ast.PatVariant, i: i32): string {
   return "";
 }
 
-// wrap_payload_pats wraps an arm's matched path in one
-// `match (slot) { <sub-pattern> => …, _ => {} }` per payload slot that
-// carries one, innermost last — the shape wrap_tuple_elems builds for a
-// variant tuple element.
-//
-// A sub-pattern that nests further routes back through desugar_nested_arms,
-// which is correct at depth: the inner match has exactly one real arm plus
-// the `_`, so there is no sibling for the merge to collapse and nothing to
-// fall to but this level's skip.
+// match_sub_pattern wraps `path` in `match (scrut) { pat => path, _ => {} }`,
+// matching each of pat's own payload sub-patterns the same way inside it, so
+// every slot of a multi-payload sub-pattern keeps its binder at any depth. A
+// tuple in a payload slot has no Pattern form; desugar_nested_arms builds its
+// tuple match.
+function match_sub_pattern(path: ast.Stmt[], scrut: string, pat: ast.Pattern, line: i32, col: i32): ast.Stmt[] {
+  let body: ast.Stmt[] = path;
+  let flat: ast.Pattern = pat;
+  let tuple_slot: boolean = false;
+  match (pat) {
+    ast.PatVariant(pv) => {
+      if (pv.tup_kinds.len() > 0) {
+        tuple_slot = true;
+      } else {
+        body = wrap_payload_pats(path, pv, line, col);
+        flat = clear_nested_pat(pv);
+      }
+    },
+    ast.PatWildcard(w) => {}
+  }
+  let (mk_pat, mk_guard, mk_hg) = fold_lit_cond(flat, e_bool(true), false);
+  let mk_arms: ast.MatchArm[] = [];
+  mk_arms = mk_arms.append(ast.MatchArm { pattern: mk_pat, body: body, line: line, col: col, guard: mk_guard, has_guard: mk_hg, alt_cont: false });
+  let mk_skip: ast.Stmt[] = [];
+  mk_arms = mk_arms.append(ast.MatchArm { pattern: p_wildcard(), body: mk_skip, line: line, col: col, guard: e_bool(true), has_guard: false, alt_cont: false });
+  if (tuple_slot) {
+    // Every synthesised arm shares the source arm's line/col, so the
+    // scrutinee name is what keeps the desugar's own temps apart.
+    mk_arms = desugar_nested_arms(mk_arms, 0, scrut);
+  }
+  return [s_match_at(e_ident_at(scrut, line, col), mk_arms, line, col)];
+}
+
+// wrap_payload_pats wraps an arm's matched path in one match_sub_pattern per
+// payload slot that carries a sub-pattern, innermost last.
 function wrap_payload_pats(path: ast.Stmt[], pv: ast.PatVariant, line: i32, col: i32): ast.Stmt[] {
   let cur: ast.Stmt[] = path;
   let wi: i32 = pv.nested.len() - 1;
   while (wi >= 0) {
     if (pv_name(pv.nested[wi]) != "") {
-      let slot: string = payload_binder(pv, wi);
-      let (mk_pat, mk_guard, mk_hg) = fold_lit_cond(pv.nested[wi], e_bool(true), false);
-      let mk_arms: ast.MatchArm[] = [];
-      mk_arms = mk_arms.append(ast.MatchArm { pattern: mk_pat, body: cur, line: line, col: col, guard: mk_guard, has_guard: mk_hg, alt_cont: false });
-      let mk_skip: ast.Stmt[] = [];
-      mk_arms = mk_arms.append(ast.MatchArm { pattern: p_wildcard(), body: mk_skip, line: line, col: col, guard: e_bool(true), has_guard: false, alt_cont: false });
-      let mk_wrap: ast.Stmt[] = [];
-      mk_wrap = mk_wrap.append(s_match_at(e_ident_at(slot, line, col), desugar_nested_arms(mk_arms, 0, slot), line, col));
-      cur = mk_wrap;
+      cur = match_sub_pattern(cur, payload_binder(pv, wi), pv.nested[wi], line, col);
     }
     wi = wi - 1;
   }
@@ -16157,8 +16164,9 @@ function ms_stmt(st: ast.Stmt, env: MEnv, gstructs: StructDecl[], funcs: MFns, i
       return RStmtOne { rstmt: ast.StmtExpr { value: xv.rexpr, line: 0 }, renv: env, rins2: xv.rins };
     },
     ast.StmtAssign(a) => {
-      let av: RExpr = ms_expr(a.value, env, gstructs, funcs, ins);
-      return RStmtOne { rstmt: ast.StmtAssign { target: a.target, value: av.rexpr, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }, renv: env, rins2: av.rins };
+      let dest: string = env.elook(a.target);
+      let av: RExpr = ms_expr_to(a.value, dest, env, gstructs, funcs, ins);
+      return RStmtOne { rstmt: ast.StmtAssign { target: a.target, value: retype_assoc_ctor(av.rexpr, dest, gstructs, funcs), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }, renv: env, rins2: av.rins };
     },
     ast.StmtIf(f) => {
       let cv: RExpr = ms_expr(f.cond, env, gstructs, funcs, ins);
@@ -21639,7 +21647,8 @@ pub function desugar_prepass_module(raw: Module): Module {
       body = resolve_labels_block(body, none);
     }
     if (need_fda) {
-      body = fda_stmts(body, mod.funcs);
+      let (filled, diags) = fda_stmts(body, fd.params, mod.funcs);
+      body = filled;
     }
     body = desugar_ranges_body(body);
     funcs = funcs.append(FuncDecl { ...fd, body: body });
@@ -21647,7 +21656,9 @@ pub function desugar_prepass_module(raw: Module): Module {
   }
   let tops: ast.Stmt[] = resolve_labels_block(mod.top_stmts, none);
   if (need_fda) {
-    tops = fda_stmts(tops, mod.funcs);
+    let no_params: ast.ParamDecl[] = [];
+    let (filled, diags) = fda_stmts(tops, no_params, mod.funcs);
+    tops = filled;
   }
   tops = desugar_ranges_block(tops);
   return Module { ...mod, funcs: funcs, top_stmts: tops };
@@ -21854,69 +21865,188 @@ function module_has_named_args(mod: Module): boolean {
 
 // fda_call_of resolves ONE call's arguments: it fills omitted trailing
 // defaults from the callee's parameter list, and reorders a mixed
-// positional/named list into a plain positional one. ExprCall is the only
-// node it changes; map_expr rebuilds every other verbatim around its
-// rewritten children.
-//
-// map_expr is post-order, so `c` arrives with its callee and args already
-// rewritten — the order the hand-written walk used, which matters because a
-// default_value is spliced in AFTER the arguments beside it are resolved.
-// Rewriting never turns an ident callee into something else, so the callee
-// this tests is the one the old walk tested.
-function fda_call_of(x: ast.Expr, funcs: FuncDecl[]): ast.Expr {
-  match (x) {
-    ast.ExprCall(c) => {
-      let new_args: ast.Expr[] = c.args;
-      let has_named: boolean = fda_args_have_named(new_args);
-      // A call whose named arguments do not resolve is left exactly as
-      // written, markers included: fda_call_error names it (E077 / E004)
-      // and the checker types a marker as its value, so the diagnostic
-      // is the only thing that changes.
-      if (has_named) {
-        let (err_code, err_msg) = fda_call_error(c, funcs);
-        if (err_code.len() > 0) {
-          return x;
+// positional/named list into a plain positional one. The caller has already
+// rewritten the arguments, because a default_value is spliced in AFTER the
+// arguments beside it are resolved, and has checked that any named arguments
+// resolve.
+function fda_call_of(c: ast.ExprCall, funcs: FuncDecl[]): ast.Expr {
+  let new_args: ast.Expr[] = c.args;
+  match (c.callee) {
+    ast.ExprIdent(id) => {
+      let params: ast.ParamDecl[] = fda_lookup_params(id.name, funcs);
+      if (fda_args_have_named(new_args)) {
+        new_args = fda_resolve_named(params, new_args);
+      } else if (params.len() > new_args.len()) {
+        let ok: boolean = true;
+        let k: i32 = new_args.len();
+        while (k < params.len()) {
+          if (!params[k].has_default) {
+            ok = false;
+          }
+          k = k + 1;
+        }
+        if (ok) {
+          let j: i32 = new_args.len();
+          while (j < params.len()) {
+            new_args = new_args.append(params[j].default_value);
+            j = j + 1;
+          }
         }
       }
-      match (c.callee) {
-        ast.ExprIdent(id) => {
-          let params: ast.ParamDecl[] = fda_lookup_params(id.name, funcs);
-          if (has_named) {
-            new_args = fda_resolve_named(params, new_args);
-          } else if (params.len() > new_args.len()) {
-            let ok: boolean = true;
-            let k: i32 = new_args.len();
-            while (k < params.len()) {
-              if (!params[k].has_default) {
-                ok = false;
-              }
-              k = k + 1;
-            }
-            if (ok) {
-              let j: i32 = new_args.len();
-              while (j < params.len()) {
-                new_args = new_args.append(params[j].default_value);
-                j = j + 1;
-              }
-            }
-          }
-        },
-        _ => {}
-      }
-      return ast.ExprCall { ...c, args: new_args };
     },
-    _ => {
-      return x;
-    }
+    _ => {}
   }
-  return x;
+  return ast.ExprCall { ...c, args: new_args };
 }
 
-function fda_stmts(stmts: ast.Stmt[], funcs: FuncDecl[]): ast.Stmt[] {
-  function rw(x: ast.Expr): ast.Expr {
-    return fda_call_of(x, funcs);
+// FdaWalk is default filling's walk state: the module's functions, the local
+// names in scope, and the diagnostics collected so far. A call whose callee
+// is a local binding is not a call to the top-level function of that name,
+// so it gets none of its defaults or parameter names (#11850).
+struct FdaWalk { funcs: FuncDecl[], local: string[], diags: util.Diag[] }
+
+function fda_bind(w: FdaWalk, packed: string): FdaWalk {
+  let local: string[] = w.local;
+  for name in astwalk.append_bound_name([], packed) {
+    local = local.append(name);
   }
-  return astwalk.map_stmts(stmts, rw);
+  return FdaWalk { ...w, local: local };
+}
+
+function fda_bind_params(w: FdaWalk, ps: ast.ParamDecl[]): FdaWalk {
+  for p in ps {
+    w = fda_bind(w, p.name);
+  }
+  return w;
+}
+
+// fda_leave keeps the diagnostics `inner` collected but restores `outer`'s
+// scope.
+function fda_leave(inner: FdaWalk, outer: FdaWalk): FdaWalk {
+  return FdaWalk { ...inner, local: outer.local };
+}
+
+function fda_expr(e: ast.Expr, w: FdaWalk): (ast.Expr, FdaWalk) {
+  let (out, tail, handled) = astwalk.map_expr_acc(e, w, fda_stmt_at, fda_expr_at);
+  return (out, tail);
+}
+
+function fda_body(stmts: ast.Stmt[], w: FdaWalk): (ast.Stmt[], FdaWalk) {
+  return astwalk.map_stmts_acc(stmts, w, fda_stmt_at, fda_expr_at);
+}
+
+// fda_call leaves a call whose named arguments do not resolve exactly as
+// written, markers included, and records its diagnostic (E077 / E004); the
+// checker types a marker as its value, so the diagnostic is the only thing
+// that changes.
+function fda_call(c: ast.ExprCall, w: FdaWalk): (ast.Expr, FdaWalk) {
+  if (fda_args_have_named(c.args)) {
+    let (code, msg) = fda_call_error(c, w.funcs, w.local);
+    if (code.len() > 0) {
+      return (c, FdaWalk { ...w, diags: w.diags.append(util.Diag { code: code, message: msg, line: c.line, col: c.col }) });
+    }
+  }
+  if let ast.ExprIdent(id) = c.callee {
+    if (util.has_str(w.local, id.name)) {
+      return (c, w);
+    }
+  }
+  return (fda_call_of(c, w.funcs), w);
+}
+
+function fda_expr_at(e: ast.Expr, w: FdaWalk): (ast.Expr, FdaWalk, boolean) {
+  match (e) {
+    ast.ExprCall(c) => {
+      let args: ast.Expr[] = [];
+      for arg in c.args {
+        let (na, aw) = fda_expr(arg, w);
+        args = args.append(na);
+        w = aw;
+      }
+      let (callee, cw) = fda_expr(c.callee, w);
+      let (out, tail) = fda_call(ast.ExprCall { ...c, callee: callee, args: args }, cw);
+      return (out, tail, true);
+    },
+    ast.ExprLambda(lm) => {
+      let (bs, tail) = fda_body(lm.body, fda_bind_params(w, lm.params));
+      return (ast.ExprLambda { ...lm, body: bs }, fda_leave(tail, w), true);
+    },
+    _ => {
+      return (e, w, false);
+    }
+  }
+  return (e, w, false);
+}
+
+function fda_stmt_at(st: ast.Stmt, w: FdaWalk): (ast.Stmt, FdaWalk, boolean) {
+  match (st) {
+    ast.StmtVar(v) => {
+      let recursive: boolean = ast.var_binds_itself(v);
+      let before: FdaWalk = w;
+      if (recursive) {
+        before = fda_bind(w, v.name);
+      }
+      let (init, tail) = fda_expr(v.init, before);
+      if (!recursive) {
+        tail = fda_bind(tail, v.name);
+      }
+      return (ast.StmtVar { ...v, init: init }, tail, true);
+    },
+    ast.StmtIf(f) => {
+      let (cond, cw) = fda_expr(f.cond, w);
+      let (tb, tw) = fda_body(f.then_body, cw);
+      let (eb, ew) = fda_body(f.else_body, fda_leave(tw, cw));
+      return (ast.StmtIf { ...f, cond: cond, then_body: tb, else_body: eb }, fda_leave(ew, w), true);
+    },
+    ast.StmtWhile(wh) => {
+      let (cond, cw) = fda_expr(wh.cond, w);
+      let (bs, tail) = fda_body(wh.body, cw);
+      return (ast.StmtWhile { ...wh, cond: cond, body: bs }, fda_leave(tail, w), true);
+    },
+    ast.StmtFor(f) => {
+      let (iter, iw) = fda_expr(f.iter, w);
+      let (bs, tail) = fda_body(f.body, fda_bind(iw, f.var_name));
+      return (ast.StmtFor { ...f, iter: iter, body: bs }, fda_leave(tail, w), true);
+    },
+    ast.StmtMatch(m) => {
+      let (scrutinee, cur) = fda_expr(m.scrutinee, w);
+      let arms: ast.MatchArm[] = [];
+      for arm in m.arms {
+        let inner: FdaWalk = cur;
+        for n in astwalk.pattern_binders(arm.pattern, []) {
+          inner = fda_bind(inner, n);
+        }
+        let guard: ast.Expr = arm.guard;
+        if (arm.has_guard) {
+          let (g, gw) = fda_expr(guard, inner);
+          guard = g;
+          inner = gw;
+        }
+        let (bs, tail) = fda_body(arm.body, inner);
+        arms = arms.append(ast.MatchArm { ...arm, guard: guard, body: bs });
+        cur = fda_leave(tail, cur);
+      }
+      return (ast.StmtMatch { ...m, scrutinee: scrutinee, arms: arms }, cur, true);
+    },
+    ast.StmtDefer(d) => {
+      let (action, tail, handled) = astwalk.map_stmt_acc(d.action, w, fda_stmt_at, fda_expr_at);
+      return (ast.StmtDefer { ...d, action: action }, fda_leave(tail, w), true);
+    },
+    _ => {
+      return (st, w, false);
+    }
+  }
+  return (st, w, false);
+}
+
+// fda_stmts resolves every call in a body whose parameters are `params`, and
+// returns the diagnostics of the calls it left as written.
+function fda_stmts(stmts: ast.Stmt[], params: ast.ParamDecl[], funcs: FuncDecl[]): (ast.Stmt[], util.Diag[]) {
+  let none: util.Diag[] = [];
+  let scope: string[] = [];
+  let w: FdaWalk = fda_bind_params(FdaWalk { funcs: funcs, local: scope, diags: none }, params);
+  let (out, tail) = fda_body(stmts, w);
+  return (out, tail.diags);
 }
 
 // ---- default-argument diagnostics (mirrors internal/check/defaultargs) ----
@@ -22119,7 +22249,7 @@ function fda_param_index(params: ast.ParamDecl[], name: string): i32 {
 // named free function, a positional argument after a named one, a name no
 // parameter has, or a parameter given twice; E004 for too many positionals
 // or a required parameter nothing supplied.
-function fda_call_error(c: ast.ExprCall, funcs: FuncDecl[]): (string, string) {
+function fda_call_error(c: ast.ExprCall, funcs: FuncDecl[], local: string[]): (string, string) {
   let callee: string = "";
   match (c.callee) {
     ast.ExprIdent(id) => {
@@ -22129,7 +22259,7 @@ function fda_call_error(c: ast.ExprCall, funcs: FuncDecl[]): (string, string) {
       return ("E077", "named arguments are only supported on direct calls to named functions");
     }
   }
-  if (!fda_known_func(callee, funcs)) {
+  if (util.has_str(local, callee) || !fda_known_func(callee, funcs)) {
     return ("E077", "named arguments are not supported for call to \"" + callee + "\"");
   }
   let params: ast.ParamDecl[] = fda_lookup_params(callee, funcs);
@@ -22176,45 +22306,6 @@ function fda_call_error(c: ast.ExprCall, funcs: FuncDecl[]): (string, string) {
   return ("", "");
 }
 
-// FdaAcc carries the module's function table beside the diagnostics the walk
-// below collects, so the fold visitor reaches both without a closure.
-struct FdaAcc { funcs: FuncDecl[], diags: util.Diag[] }
-
-function fda_call_diag_of(e: ast.Expr, own acc: FdaAcc): FdaAcc {
-  match (e) {
-    ast.ExprCall(c) => {
-      if (!fda_args_have_named(c.args)) {
-        return acc;
-      }
-      let (code, msg) = fda_call_error(c, acc.funcs);
-      if (code.len() == 0) {
-        return acc;
-      }
-      return FdaAcc { ...acc, diags: acc.diags.append(util.Diag { code: code, message: msg, line: c.line, col: c.col }) };
-    },
-    _ => {
-      return acc;
-    }
-  }
-  return acc;
-}
-
-// fda_call_diags collects fda_call_error over every call in the module, at
-// the call's own position.
-function fda_call_diags(mod: Module): util.Diag[] {
-  let none: util.Diag[] = [];
-  let acc: FdaAcc = FdaAcc { funcs: mod.funcs, diags: none };
-  for fd in mod.funcs {
-    for st in fd.body {
-      acc = astwalk.fold_stmt(st, acc, fda_call_diag_of);
-    }
-  }
-  for st in mod.top_stmts {
-    acc = astwalk.fold_stmt(st, acc, fda_call_diag_of);
-  }
-  return acc.diags;
-}
-
 // fill_default_args_with_diags is native constfold-then-Fill over parameter
 // defaults: every top-level const a default names is replaced by its value,
 // then the E076 declaration check runs, and a module holding one is returned
@@ -22229,14 +22320,14 @@ pub function fill_default_args_with_diags(raw: Module): (Module, util.Diag[]) {
     if (!module_has_named_args(raw)) {
       return (raw, none);
     }
-    return (fda_fill(raw), fda_call_diags(raw));
+    return fda_fill(raw);
   }
   let mod: Module = fda_fold_default_consts(raw);
   let decl_diags: util.Diag[] = fda_decl_diags(mod);
   if (decl_diags.len() > 0) {
     return (raw, decl_diags);
   }
-  return (fda_fill(mod), fda_call_diags(mod));
+  return fda_fill(mod);
 }
 
 // retag_type_arg_indexes turns `f[Box](x)` into a call carrying one written
@@ -22420,15 +22511,17 @@ function rta_callee_name(callee: ast.Expr, shadow: string[]): string {
   return "";
 }
 
-function fda_fill(mod: Module): Module {
+function fda_fill(mod: Module): (Module, util.Diag[]) {
   let funcs: FuncDecl[] = [];
-  let i: i32 = 0;
-  while (i < mod.funcs.len()) {
-    let fd: FuncDecl = mod.funcs[i];
-    funcs = funcs.append(FuncDecl { ...fd, body: fda_stmts(fd.body, mod.funcs) });
-    i = i + 1;
+  let diags: util.Diag[] = [];
+  for fd in mod.funcs {
+    let (body, fdiags) = fda_stmts(fd.body, fd.params, mod.funcs);
+    funcs = funcs.append(FuncDecl { ...fd, body: body });
+    diags = util.append_diags(diags, fdiags);
   }
-  return Module { ...mod, funcs: funcs, top_stmts: fda_stmts(mod.top_stmts, mod.funcs) };
+  let no_params: ast.ParamDecl[] = [];
+  let (tops, tdiags) = fda_stmts(mod.top_stmts, no_params, mod.funcs);
+  return (Module { ...mod, funcs: funcs, top_stmts: tops }, util.append_diags(diags, tdiags));
 }
 
 // lower_stream_signatures rewrites each async import's `stream[T]` result and
@@ -25176,7 +25269,7 @@ function synth_from_json_value(sd: StructDecl): FuncDecl {
     if (cont == "option") {
       getter = "from_json_optional_field";
     }
-    let decode: ast.Expr = e_call(e_field_access(e_ident(elem), "from_json_value"), [e_ident(value)]);
+    let decode: ast.Expr = ast.ExprCall { callee: e_field_access(e_ident("json"), "from_json_elem"), args: [e_ident(value)], line: 0, col: 0, type_args: [elem], ty: "" };
     if (cont == "array") {
       decode = ast.ExprCall { callee: e_field_access(e_ident("json"), "from_json_array"), args: [e_ident(value)], line: 0, col: 0, type_args: [elem], ty: "" };
     }
@@ -28075,6 +28168,12 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
           }
           continue;
         }
+        continue;
+      }
+      let attr_name: string = probe.peek_ident();
+      if (attr_name.len() > 0 && attr_name != "derive") {
+        top_stmts = top_stmts.append(decl_sentinel(p, "unknown attribute @" + attr_name + " (only @derive, @import, @export, @must_consume, @try, @inline, and @noinline are supported)"));
+        p = probe.advance();
         continue;
       }
       let (dr_derives, dr_p) = parse_derive_attr(p);

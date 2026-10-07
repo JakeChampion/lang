@@ -44,6 +44,20 @@ func TestAddPathDependency(t *testing.T) {
 	}
 }
 
+// A `[dependencies]` header with a trailing comment is still the table to add
+// to, not a reason to append a second one (#11841).
+func TestAddIntoCommentedTable(t *testing.T) {
+	dir := writeManifest(t, "[package]\nname = \"app\"\n[dependencies]  # deps\nx = { path = \"../x\" }\n")
+	if err := runAdd("helper", "path:../helper", dir); err != nil {
+		t.Fatal(err)
+	}
+	src, _ := os.ReadFile(filepath.Join(dir, manifest.FileName))
+	want := "[package]\nname = \"app\"\n[dependencies]  # deps\nhelper = { path = \"../helper\" }\nx = { path = \"../x\" }\n"
+	if string(src) != want {
+		t.Errorf("manifest = %q, want %q", src, want)
+	}
+}
+
 func TestAddWorkspaceDependencyCreatesTable(t *testing.T) {
 	dir := writeManifest(t, "[package]\nname = \"app\"\n")
 	if err := runAdd("lexer", "workspace", dir); err != nil {

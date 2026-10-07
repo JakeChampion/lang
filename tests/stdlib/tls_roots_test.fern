@@ -1,0 +1,116 @@
+import "std/test";
+import "core/int";
+import "std/hex";
+import "std/tls/pem";
+import "std/tls/verify";
+import "std/tls/x509";
+
+// tests/stdlib/tls_roots_test.fern — std/tls/verify's root store: roots read
+// from a PEM bundle on disk, a path that does not read, and the machine's
+// own bundle. Kept apart from tls_verify_test because it needs a file system,
+// which the wasm suite does not grant.
+
+function ec_root(): u8[] {
+  return hex.hex_decode("308201433081eaa003020102020101300a06082a8648ce3d04030230193117301506035504030c0e4665726e205465737420526f6f74301e170d3236303130313030303030305a170d3237303130313030303030305a30193117301506035504030c0e4665726e205465737420526f6f743059301306072a8648ce3d020106082a8648ce3d030107034200040dcc7648c78a3118f2612866fe83ef19f40304f623399e1211a10f2b3d1c05cf30e8027677bcb912943e99ff71140ea9bc24713be1b75c31ff4054724c4f9d00a3233021300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106300a06082a8648ce3d0403020348003045022051b74a89e235c981464cae54764206d65f11184dc5e78a5298441305ef3e72db022100d538cc2287d10ead1e561d7ecc33bf752db02620f12924df9728d20b5b4bd863");
+}
+
+function ec_int(): u8[] {
+  return hex.hex_decode("3082014f3081f5a003020102020102300a06082a8648ce3d04030230193117301506035504030c0e4665726e205465737420526f6f74301e170d3236303130313030303030305a170d3237303130313030303030305a3021311f301d06035504030c164665726e205465737420496e7465726d6564696174653059301306072a8648ce3d020106082a8648ce3d03010703420004a62f048f367359809c2d46c2049d7d7bf268c3c073c472753cb18a24a8ad20b1caccf8104b666795c7f35dac9dc444b3c2c61978198c49859955b99956da5edba326302430120603551d130101ff040830060101ff020100300e0603551d0f0101ff040403020106300a06082a8648ce3d0403020349003046022100941bc1cd576204889cafacbadb1b6fc30b9830a8094fc7877c5c82e340488511022100ee1366a7d6615a39b4e286481f142f3671c176f3d2eb85e2352539beea3c4165");
+}
+
+function ec_leaf(): u8[] {
+  return hex.hex_decode("308201893082012ea003020102020103300a06082a8648ce3d0403023021311f301d06035504030c164665726e205465737420496e7465726d656469617465301e170d3236303130313030303030305a170d3237303130313030303030305a30163114301206035504030c0b6578616d706c652e636f6d3059301306072a8648ce3d020106082a8648ce3d030107034200048570e95d85825286db92c78317679bdd8ffe3c90d0af84291bf64132b66fcc99c926f087212d75b1f4dbc5d4999b4c5605adf66db801a4de371cdad39ebc55e5a3623060300c0603551d130101ff04023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070301302b0603551d1104243022820b6578616d706c652e636f6d820d2a2e6578616d706c652e6f72678704c0000201300a06082a8648ce3d0403020349003046022100da38e1164d3765330da9a2dd2b18a98adf7a415165462cd69dc6d67d84046e49022100c1eea0178ddc0406183d1179abd4403bf67a82f966a4a52c7612271afb7fdcd3");
+}
+
+function rsa_root(): u8[] {
+  return hex.hex_decode("308202ce308201b6a00302010202010b300d06092a864886f70d01010b050030183116301406035504030c0d4665726e2052534120526f6f74301e170d3236303130313030303030305a170d3237303130313030303030305a30183116301406035504030c0d4665726e2052534120526f6f7430820122300d06092a864886f70d01010105000382010f003082010a02820101009bc0d2c64bc6fc7d10503008162540eb74c7b709237362d261a1d0d75c4a358082d41c66f0a70ca99aec0d9bf366549c7debe3f0c7c5064c919104ed82a8d695b3f9cdf106b04d382156a0b5d7d9b01eb42a110166057c81d32b4bcf379cce77feb8128404c4cba7810ec86d735c4970715e8a0825798626bb8d00fad7952c5496d055b422122ee9fabeab1b2dbcb2893de284311c209f3f25d1ccee83075f292e3a8261bcaafda48939c92594cd1d3fc52cf10c97dbe2cce75aae4c7ccba8db4403bf37cee2ff6a945180e2999c55f91ec4a2f052439fa7ac5bbe1f55ca2c014dba6796c2c4cbfbf6c977e341ca8245572c422b2aa713f59390035f40d4e2f90203010001a3233021300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106300d06092a864886f70d01010b05000382010100231c6957eeb440d2e5a94e969448415a1150770d8282658285ae2f747cf58caca451fc85f2831eb31fef53510cc34af8c56cd07af01c98d053c59a14fb7c834cbb5229bdddc768a943913b0ddf8ab6592906193b749eebe2c85f52c9f606a98dc7767c5033921fe64325e40a7ba4b53ef46d87122e6eaf7588f41f6cdaf38ec9183b96e74a084dd41efc1eda2a3c39a8fdd75c25e3f8f37ea26439cbdbd1f907365bdd3c54ef882daa2c8d249c0a2f531e4fcafc1319b458b25f6b18b0adcdf3ad6077af0aa200cfa55aec481ff46489484f1d312666e861bd7ab234d1073abb2b37f1cc6821194ccace0ea96d7ff0fe27dd1948896e8671092a1ff2f70883d0");
+}
+
+function outcome(r: Result[x509.Certificate, verify.VerifyError]): string {
+  match (r) {
+    Ok(c) => {
+      return "ok " + c.subject.common_name;
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function test_bundle_file(dir: string): test.TestOutcome {
+  let path: string = dir + "/bundle.pem";
+  let text: string = "# test roots\n" + pem.encode("CERTIFICATE", rsa_root()) + pem.encode("CERTIFICATE", ec_root());
+  match (write_file(path, text)) {
+    Ok(_) => {},
+    Err(_) => {
+      return test.fail("write_file failed");
+    }
+  }
+  match (verify.roots_from_file(path)) {
+    Ok(r) => {
+      if (r.certs.len() != 2) {
+        return test.fail("two roots");
+      }
+      return test.assert_eq(outcome(verify.verify_server([ec_leaf(), ec_int()], r, "example.com", 1780000000 as i64)), "ok example.com");
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function test_unreadable(dir: string): test.TestOutcome {
+  let empty: string = dir + "/empty.pem";
+  match (write_file(empty, "no certificates here\n")) {
+    Ok(_) => {},
+    Err(_) => {
+      return test.fail("write_file failed");
+    }
+  }
+  match (verify.roots_from_file(empty)) {
+    Ok(r) => {
+      return test.fail("a bundle with no certificates accepted");
+    },
+    Err(e) => {
+      if (e.message() != "tls verify: no certificates could be read from " + empty) {
+        return test.fail(e.message());
+      }
+    }
+  }
+  match (verify.roots_from_file(dir + "/missing.pem")) {
+    Ok(r) => {
+      return test.fail("a missing file accepted");
+    },
+    Err(e) => {
+      return test.assert_eq(e.message(), "tls verify: no certificates could be read from " + dir + "/missing.pem");
+    }
+  }
+  return test.fail("unreachable");
+}
+
+// What the machine trusts depends on the machine; whatever it finds parsed.
+function test_system_roots(): test.TestOutcome {
+  match (verify.system_roots()) {
+    Some(r) => {
+      return test.assert_eq(r.certs.len() > 0, true);
+    },
+    None => {
+      return test.pass();
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/tls/verify roots");
+  let (dir, rr) = test.must_temp_dir(r, "tls-roots");
+  if (dir == "") {
+    return rr.finish();
+  }
+  rr = rr.it("roots from a bundle file", () => test_bundle_file(dir));
+  rr = rr.it("a file with no roots", () => test_unreadable(dir));
+  rr = rr.it("the system's roots", test_system_roots);
+  return rr.finish();
+}

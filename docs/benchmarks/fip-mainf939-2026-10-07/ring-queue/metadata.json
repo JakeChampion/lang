@@ -1,0 +1,68 @@
+{
+  "host": "macOS-15.8-arm64-arm-64bit-Mach-O",
+  "compiler": "/private/tmp/fern-fip-mainf939-native-compiler",
+  "compiler_sha256": "d503f53ec257a41ef7b5be9ae00b0532c35b078f09dd660005c30b732171b6e9",
+  "revision": "f939351127f45c4007b2429f965094b29b029c5e",
+  "working_tree": "A  docs/FIP-APPLICATION-GUIDE.md\nA  docs/contexts/runtime/specs/fip-application-guide.md\n?? AGENTS.md\n?? SPEC.md\n?? scripts/__pycache__/\n",
+  "sources": {
+    "examples/fip/ring_queue.fern": "c27c62afc1bb8afa659d4824d1bcda200a4edc8a0fd5ab132de01b379b7c7938",
+    "examples/fip/bounded_ring.fern": "27b1036fc51a94469584db42915d657259129ad41cb7d9472935df3699c498a8",
+    "examples/fip/queue_inline.fern": "4dd72d5a2e782f090989a5296d3cafa8e9fddf05781288960ebdd99bf685c3e9",
+    "examples/fip/queue_array.fern": "12232ae57a6ca9700ba254663bd52dd7c4e881624f118fa8fa16bbc11c1f23ef",
+    "scripts/bench-ring-queue.py": "991f3d4a00ae2cb6247a486618d9b67497da9a69acdac16a9601e9460a84e238",
+    "bootstrap/stage0.lock": "6cbf5f6d6b13a72c6f0c271655d37468021eb428b2b163364de1d2442ca4637e",
+    "internal/stdlib/std/bench.fern": "028d73d80366813b3d51676ed83cc2d0be41be8b4bf1fa0d7172fa35fe9904b5",
+    "internal/stdlib/std/array.fern": "d1a58a8303ef71f015f1ca0e3aae5962fff785c389b36c66f0f536d9d071b685"
+  },
+  "builds": {
+    "ring": {
+      "command": [
+        "/private/tmp/fern-fip-mainf939-native-compiler",
+        "-target",
+        "arm64-darwin",
+        "-o",
+        "/private/tmp/fern-ring-queue-mainf939-repeated/ring",
+        "/private/tmp/fern-ring-queue-mainf939-repeated/source/driver_ring.fern",
+        "/Users/jakechampion/.codex/worktrees/fip-architecture-epic/lang/internal/stdlib"
+      ],
+      "binary_sha256": "f5097b01673bf36079f24f7f26de3638acdfd7c65b9ab1a0695f55565ef63336",
+      "driver_sha256": "c27c62afc1bb8afa659d4824d1bcda200a4edc8a0fd5ab132de01b379b7c7938"
+    },
+    "inline": {
+      "command": [
+        "/private/tmp/fern-fip-mainf939-native-compiler",
+        "-target",
+        "arm64-darwin",
+        "-o",
+        "/private/tmp/fern-ring-queue-mainf939-repeated/inline",
+        "/private/tmp/fern-ring-queue-mainf939-repeated/source/driver_inline.fern",
+        "/Users/jakechampion/.codex/worktrees/fip-architecture-epic/lang/internal/stdlib"
+      ],
+      "binary_sha256": "0c3d75d36d0adba23b81c24941c877b01aa03f247f3c784cfe017b690ab5cbb7",
+      "driver_sha256": "1287492c2255e7288fcb831dad0036fe556a570eea25d93ebe2016fc1857b8b5"
+    },
+    "array": {
+      "command": [
+        "/private/tmp/fern-fip-mainf939-native-compiler",
+        "-target",
+        "arm64-darwin",
+        "-o",
+        "/private/tmp/fern-ring-queue-mainf939-repeated/array",
+        "/private/tmp/fern-ring-queue-mainf939-repeated/source/driver_array.fern",
+        "/Users/jakechampion/.codex/worktrees/fip-architecture-epic/lang/internal/stdlib"
+      ],
+      "binary_sha256": "4018cd13576fa8fefe35fd701b2ea2da2dc28e71c428b751581669c7d880ce49",
+      "driver_sha256": "9bb9232b93c139a7a6da6de802f6457d036c03e0eadf3808f933a604b2547cee"
+    }
+  },
+  "capacities": [
+    1,
+    8,
+    64,
+    512,
+    4096
+  ],
+  "turns": 1000,
+  "repeats": 5,
+  "measurement": "Scalar i64 payloads require no payload container allocation. Startup includes sample storage, queue construction and fill; fill allocations also reported separately. Samples time drop/push or full refusal. Shared retains the whole old queue and reads its endpoints after mutation; unique performs equal endpoint reads before mutation. Wall includes these reads, checks and sample storage. Final full FIFO verification, export and sorting follow marks. Whole-process CPU/RSS/faults include them all. Array drop copies the suffix using std/array; no claim of optimal array queue. Fresh bytes are high-water growth, not requested bytes; faults are not cache misses."
+}

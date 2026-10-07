@@ -1,0 +1,591 @@
+// std/tls/verify — certificate path validation as the Web PKI does it (RFC
+// 5280 §6, with RFC 6125's name checks), and the signatures TLS 1.3 checks
+// against a certificate's key.
+//
+//   let roots: verify.Roots = verify.roots_from_pem(bundle_text)?;
+//   let leaf: x509.Certificate = verify.verify_server(chain, roots, "example.com", now)?;
+//   if (!verify.verify_signed(leaf, scheme, signed, signature)) { … }
+//
+// The caller supplies the roots and the time, in seconds since the Unix
+// epoch, so validation needs no clock and no file system. The chain is the
+// server's Certificate message, leaf first; its other certificates are
+// candidate intermediates in any order. A name is matched against the
+// leaf's subject alternative names only, never its common name. Name
+// constraints are enforced for DNS names and IP addresses; a certificate
+// that marks constraints of another form critical is refused. Policies and
+// revocation are not checked.
+
+import "core/int";
+import "std/crypto/ed25519";
+import "std/crypto/ecdsa";
+import "std/crypto/rsa";
+import "std/net";
+import "std/string";
+import "std/tls/pem";
+import "std/tls/x509";
+
+// The deepest path accepted: the leaf, up to six intermediates and a root.
+const MAX_PATH: i32 = 8;
+
+// VerifyError — why a chain was refused. A position counts up the path
+// from the leaf at 0.
+pub enum VerifyError {
+  EmptyChain,
+  Parse(i32, x509.X509Error),
+  Pem(pem.PemError),
+  Expired(i32),
+  NotYetValid(i32),
+  UnknownCritical(i32, string),
+  // No path from the leaf reaches a root.
+  UnknownIssuer,
+  NotACa(i32),
+  PathTooLong(i32),
+  KeyUsage(i32),
+  // The leaf's extended key usage does not allow a TLS server.
+  NotForServers,
+  NameMismatch(string),
+  BadSignature(i32),
+  // A CA's name constraints exclude a name of a certificate below it.
+  NameConstraint(i32),
+  // No roots could be read from the file named.
+  RootsUnreadable(string),
+  // A signature algorithm or key this module cannot check, by name.
+  UnsupportedAlgorithm(string),
+}
+
+// One arm per variant.
+// fern-lint: allow cyclomatic-complexity
+pub function (e: VerifyError) message(): string {
+  match (e) {
+    EmptyChain => {
+      return "tls verify: the chain is empty";
+    },
+    Parse(i, x) => {
+      return "tls verify: certificate " + int.int_to_string(i) + ": " + x.message();
+    },
+    Pem(p) => {
+      return p.message();
+    },
+    Expired(i) => {
+      return "tls verify: certificate " + int.int_to_string(i) + " has expired";
+    },
+    NotYetValid(i) => {
+      return "tls verify: certificate " + int.int_to_string(i) + " is not yet valid";
+    },
+    UnknownCritical(i, oid) => {
+      return "tls verify: certificate " + int.int_to_string(i) + " has an unknown critical extension " + oid;
+    },
+    UnknownIssuer => {
+      return "tls verify: no path from the certificate reaches a trusted root";
+    },
+    NotACa(i) => {
+      return "tls verify: certificate " + int.int_to_string(i) + " issues certificates but is not a CA";
+    },
+    PathTooLong(i) => {
+      return "tls verify: certificate " + int.int_to_string(i) + " allows a shorter path";
+    },
+    KeyUsage(i) => {
+      return "tls verify: certificate " + int.int_to_string(i) + "'s key usage does not allow this";
+    },
+    NotForServers => {
+      return "tls verify: the certificate is not for TLS servers";
+    },
+    NameMismatch(name) => {
+      return "tls verify: the certificate is not valid for " + name;
+    },
+    BadSignature(i) => {
+      return "tls verify: certificate " + int.int_to_string(i) + "'s signature does not verify";
+    },
+    RootsUnreadable(path) => {
+      return "tls verify: no certificates could be read from " + path;
+    },
+    NameConstraint(i) => {
+      return "tls verify: certificate " + int.int_to_string(i) + "'s name constraints exclude a name below it";
+    },
+    UnsupportedAlgorithm(what) => {
+      return "tls verify: unsupported " + what;
+    }
+  }
+  return "";
+}
+
+// Roots — the trusted certificates.
+pub struct Roots { certs: x509.Certificate[] }
+
+// roots trusts the DER certificates given, skipping any that do not parse,
+// as a system bundle may hold one this module cannot read.
+pub function roots(ders: u8[][]): Roots {
+  let out: x509.Certificate[] = [];
+  for d in ders {
+    if let Ok(c) = x509.parse(d) {
+      out = out.append(c);
+    }
+  }
+  return Roots { certs: out };
+}
+
+// roots_from_pem trusts every CERTIFICATE block in a PEM bundle.
+pub function roots_from_pem(text: string): Result[Roots, VerifyError] {
+  match (pem.certificates(text)) {
+    Ok(ders) => {
+      return Ok(roots(ders));
+    },
+    Err(e) => {
+      return Err(Pem(e));
+    }
+  }
+  return Ok(Roots { certs: [] });
+}
+
+// The bundles distributions keep their trusted roots in, in the order Go's
+// crypto/x509 looks for them; macOS keeps one at the last.
+const BUNDLES: string[] = ["/etc/ssl/certs/ca-certificates.crt", "/etc/pki/tls/certs/ca-bundle.crt", "/etc/ssl/ca-bundle.pem", "/etc/pki/tls/cacert.pem", "/etc/pki/ca-trust/extracted/pem/tls-ca-bundle.pem", "/etc/ssl/cert.pem"];
+
+// roots_from_file trusts the certificates in a PEM bundle file.
+pub function roots_from_file(path: string): Result[Roots, VerifyError] {
+  match (read_file(path)) {
+    Ok(text) => {
+      let r: Roots = roots_from_pem(text)?;
+      if (r.certs.len() > 0) {
+        return Ok(r);
+      }
+    },
+    Err(_) => {}
+  }
+  return Err(RootsUnreadable(path));
+}
+
+// system_roots trusts the machine's roots: the bundle SSL_CERT_FILE names
+// when it is set, else the first of the distributions' bundles that holds
+// any. None when there is none to read, as under WASI with no directory
+// granted.
+pub function system_roots(): Option[Roots] {
+  let paths: string[] = BUNDLES;
+  if let Some(p) = env("SSL_CERT_FILE") {
+    paths = [p];
+  }
+  for p in paths {
+    if let Ok(r) = roots_from_file(p) {
+      return Some(r);
+    }
+  }
+  return None;
+}
+
+// __signed_by checks that issuer's key made c's signature.
+function __signed_by(c: x509.Certificate, issuer: x509.Certificate): Result[boolean, VerifyError] {
+  return signature_ok(issuer.key, c.algorithm, c.tbs, c.signature);
+}
+
+// signature_ok checks a signature under a certificate key and algorithm,
+// refusing a pairing it cannot check.
+pub function signature_ok(key: x509.PublicKey, alg: x509.Algorithm, msg: [u8], sig: [u8]): Result[boolean, VerifyError] {
+  match (key) {
+    x509.RsaKey(n, e) => {
+      return __rsa(n, e, alg, msg, sig);
+    },
+    x509.EcKey(curve, point) => {
+      return __ecdsa(curve, point, alg, msg, sig);
+    },
+    x509.Ed25519Key(k) => {
+      if (x509.algorithm_name(alg) == "ed25519") {
+        return Ok(ed25519.verify(k, msg, sig));
+      }
+    },
+    x509.OtherKey(oid) => {
+      return Err(UnsupportedAlgorithm("key " + oid));
+    }
+  }
+  return Err(UnsupportedAlgorithm(x509.algorithm_name(alg) + " under an Ed25519 key"));
+}
+
+function __rsa(n: u8[], e: u8[], alg: x509.Algorithm, msg: [u8], sig: [u8]): Result[boolean, VerifyError] {
+  match (rsa.public_key(n, e)) {
+    Ok(k) => {
+      return __rsa_check(k, alg, msg, sig);
+    },
+    Err(err) => {
+      return Err(UnsupportedAlgorithm("RSA key: " + err.message()));
+    }
+  }
+  return Err(UnsupportedAlgorithm("RSA key"));
+}
+
+function __rsa_check(key: rsa.PublicKey, alg: x509.Algorithm, msg: [u8], sig: [u8]): Result[boolean, VerifyError] {
+  let name: string = x509.algorithm_name(alg);
+  let hashes: string[] = ["sha256", "sha384", "sha512"];
+  let hs: rsa.Hash[] = [rsa.Sha256, rsa.Sha384, rsa.Sha512];
+  let i: i32 = 0;
+  while (i < 3) {
+    if (name == "rsa_pkcs1_" + hashes[i]) {
+      return Ok(rsa.verify_pkcs1v15(key, hs[i], msg, sig));
+    }
+    if (name == "rsa_pss_" + hashes[i]) {
+      return Ok(rsa.verify_pss(key, hs[i], msg, sig));
+    }
+    i = i + 1;
+  }
+  return Err(UnsupportedAlgorithm(name + " under an RSA key"));
+}
+
+// __scheme_curve is whether key is on the curve an ECDSA scheme names.
+function __scheme_curve(key: x509.PublicKey, scheme: i32): boolean {
+  match (key) {
+    x509.EcKey(curve, _) => {
+      match (curve) {
+        ecdsa.P256 => {
+          return scheme == 0x0403;
+        },
+        ecdsa.P384 => {
+          return scheme == 0x0503;
+        }
+      }
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function __ecdsa(curve: ecdsa.Curve, point: u8[], alg: x509.Algorithm, msg: [u8], sig: [u8]): Result[boolean, VerifyError] {
+  match (ecdsa.public_key(curve, point)) {
+    Ok(k) => {
+      let name: string = x509.algorithm_name(alg);
+      let hashes: string[] = ["sha256", "sha384", "sha512"];
+      let hs: ecdsa.Hash[] = [ecdsa.Sha256, ecdsa.Sha384, ecdsa.Sha512];
+      let i: i32 = 0;
+      while (i < 3) {
+        if (name == "ecdsa_" + hashes[i]) {
+          return Ok(ecdsa.verify(k, hs[i], msg, sig));
+        }
+        i = i + 1;
+      }
+      return Err(UnsupportedAlgorithm(name + " under an EC key"));
+    },
+    Err(e) => {
+      return Err(UnsupportedAlgorithm("EC key: " + e.message()));
+    }
+  }
+  return Err(UnsupportedAlgorithm("EC key"));
+}
+
+// verify_signed checks a TLS 1.3 CertificateVerify signature (§4.4.3)
+// under the certificate's key, for the schemes std/tls/handshake offers. An
+// ECDSA scheme names its curve, so the key must be on it.
+pub function verify_signed(cert: x509.Certificate, scheme: i32, signed: [u8], sig: [u8]): boolean {
+  let alg: x509.Algorithm = x509.OtherAlgorithm("");
+  if (scheme == 0x0403 || scheme == 0x0503) {
+    if (!__scheme_curve(cert.key, scheme)) {
+      return false;
+    }
+    alg = x509.EcdsaSha256;
+    if (scheme == 0x0503) {
+      alg = x509.EcdsaSha384;
+    }
+  } else if (scheme == 0x0804) {
+    alg = x509.RsaPssSha256;
+  } else if (scheme == 0x0805) {
+    alg = x509.RsaPssSha384;
+  } else if (scheme == 0x0806) {
+    alg = x509.RsaPssSha512;
+  } else if (scheme == 0x0807) {
+    alg = x509.Ed25519;
+  }
+  match (signature_ok(cert.key, alg, signed, sig)) {
+    Ok(ok) => {
+      return ok;
+    },
+    Err(e) => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// __usable checks what every certificate on a path must satisfy: the time
+// and no critical extension left unread.
+function __usable(c: x509.Certificate, at: i32, now: i64): Result[boolean, VerifyError] {
+  if (now < c.not_before) {
+    return Err(NotYetValid(at));
+  }
+  if (now > c.not_after) {
+    return Err(Expired(at));
+  }
+  if (c.unknown_critical.len() > 0) {
+    return Err(UnknownCritical(at, c.unknown_critical[0]));
+  }
+  return Ok(true);
+}
+
+// __issuer_ok checks a certificate that issued the one below it, at
+// position `at`, with `at - 1` intermediates below it.
+function __issuer_ok(c: x509.Certificate, at: i32, now: i64): Result[boolean, VerifyError] {
+  __usable(c, at, now)?;
+  if (!c.ca) {
+    return Err(NotACa(at));
+  }
+  if (c.key_usage >= 0 && (c.key_usage & x509.KU_KEY_CERT_SIGN) == 0) {
+    return Err(KeyUsage(at));
+  }
+  if (c.path_len >= 0 && at - 1 > c.path_len) {
+    return Err(PathTooLong(at));
+  }
+  return Ok(true);
+}
+
+// Search — the state of the path search: the best error seen so far, kept
+// so that a refused chain names why rather than only that no path was
+// found.
+struct Search { found: boolean, err: VerifyError }
+
+// __extend tries each certificate that could have issued the last of
+// `below`, at position `at`, roots first: a root ends the path, an
+// intermediate continues it.
+function __extend(below: x509.Certificate[], at: i32, inter: x509.Certificate[], roots: Roots, now: i64, s: Search): Search {
+  if (at >= MAX_PATH) {
+    return Search { found: false, err: PathTooLong(at) };
+  }
+  let i: i32 = 0;
+  while (i < roots.certs.len()) {
+    let r: Search = __try(below, roots.certs[i], at, now, s);
+    if (r.found) {
+      return r;
+    }
+    s = r;
+    i = i + 1;
+  }
+  i = 0;
+  while (i < inter.len()) {
+    let r: Search = __try(below, inter[i], at, now, s);
+    if (r.found) {
+      let up: Search = __extend(below.append(inter[i]), at + 1, inter, roots, now, Search { found: false, err: r.err });
+      if (up.found) {
+        return up;
+      }
+      r = up;
+    }
+    s = Search { found: false, err: r.err };
+    i = i + 1;
+  }
+  return s;
+}
+
+// __try checks candidate as the issuer of the last of `below`: names, its
+// fitness to issue, its name constraints over every certificate below it,
+// and last, as the dearest, the signature. A found result means the
+// candidate is usable; whether it ends the path is the caller's.
+function __try(below: x509.Certificate[], candidate: x509.Certificate, at: i32, now: i64, s: Search): Search {
+  let c: x509.Certificate = below[below.len() - 1];
+  if (!__same_bytes(candidate.subject.raw, c.issuer.raw)) {
+    return s;
+  }
+  match (__issuer_ok(candidate, at, now)) {
+    Ok(ok) => {
+      if (!__constraints_ok(candidate, below)) {
+        return Search { found: false, err: NameConstraint(at) };
+      }
+    },
+    Err(e) => {
+      return Search { found: false, err: e };
+    }
+  }
+  match (__signed_by(c, candidate)) {
+    Ok(ok) => {
+      if (ok) {
+        return Search { found: true, err: s.err };
+      }
+      return Search { found: false, err: BadSignature(at - 1) };
+    },
+    Err(e) => {
+      return Search { found: false, err: e };
+    }
+  }
+  return s;
+}
+
+// __constraints_ok applies a CA's name constraints to the names of every
+// certificate below it. A form with no permitted subtree is unconstrained.
+function __constraints_ok(ca: x509.Certificate, below: x509.Certificate[]): boolean {
+  for b in below {
+    for d in b.dns_names {
+      if (ca.permitted_dns.len() > 0 && !__dns_within_any(d, ca.permitted_dns) || __dns_within_any(d, ca.excluded_dns)) {
+        return false;
+      }
+    }
+    for ip in b.ip_addresses {
+      if (ca.permitted_ip.len() > 0 && !__ip_within_any(ip, ca.permitted_ip) || __ip_within_any(ip, ca.excluded_ip)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
+
+// A DNS constraint covers its name and every name below it; one starting
+// with a dot covers only the names below it.
+function __dns_within_any(name: string, subtrees: string[]): boolean {
+  let n: string = __normal(name);
+  for t in subtrees {
+    let c: string = __normal(t);
+    if (c.len() == 0 || n == c && !c.starts_with(".") || n.ends_with(c) && c.starts_with(".") || n.ends_with("." + c)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// An IP subtree is an address then a mask of the same length.
+function __ip_within_any(ip: u8[], subtrees: u8[][]): boolean {
+  for t in subtrees {
+    if (t.len() == 2 * ip.len() && __masked_equal(ip, t)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function __masked_equal(ip: u8[], t: u8[]): boolean {
+  let n: i32 = ip.len();
+  let i: i32 = 0;
+  while (i < n) {
+    if ((ip[i] & t[n + i]) != (t[i] & t[n + i])) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function __same_bytes(a: u8[], b: u8[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i < a.len()) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// __leaf_ok checks what only the leaf must satisfy: usable for a TLS
+// server, by key usage and extended key usage, under the name asked for.
+function __leaf_ok(leaf: x509.Certificate, name: string, now: i64): Result[boolean, VerifyError] {
+  __usable(leaf, 0, now)?;
+  if (leaf.key_usage >= 0 && (leaf.key_usage & x509.KU_DIGITAL_SIGNATURE) == 0) {
+    return Err(KeyUsage(0));
+  }
+  if (leaf.has_ext_key_usage && !__has(leaf.ext_key_usage, x509.EKU_SERVER_AUTH) && !__has(leaf.ext_key_usage, x509.EKU_ANY)) {
+    return Err(NotForServers);
+  }
+  if (!matches_name(leaf, name)) {
+    return Err(NameMismatch(name));
+  }
+  return Ok(true);
+}
+
+function __has(v: string[], x: string): boolean {
+  for s in v {
+    if (s == x) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// verify_server validates a server's chain for `name` at time `now` and
+// answers the leaf.
+pub function verify_server(chain: u8[][], roots: Roots, name: string, now: i64): Result[x509.Certificate, VerifyError] {
+  if (chain.len() == 0) {
+    return Err(EmptyChain);
+  }
+  let certs: x509.Certificate[] = [];
+  let i: i32 = 0;
+  while (i < chain.len()) {
+    match (x509.parse(chain[i])) {
+      Ok(c) => {
+        certs = certs.append(c);
+      },
+      Err(e) => {
+        return Err(Parse(i, e));
+      }
+    }
+    i = i + 1;
+  }
+  let leaf: x509.Certificate = certs[0];
+  __leaf_ok(leaf, name, now)?;
+  let s: Search = __extend([leaf], 1, certs.drop(1), roots, now, Search { found: false, err: UnknownIssuer });
+  if (!s.found) {
+    return Err(s.err);
+  }
+  return Ok(leaf);
+}
+
+// matches_name says whether the certificate's subject alternative names
+// cover a DNS name or an IP address literal. A wildcard in a certificate
+// stands for exactly the leftmost label.
+pub function matches_name(c: x509.Certificate, name: string): boolean {
+  match (net.ip_parse(name)) {
+    Some(ip) => {
+      let want: u8[] = ip.bytes();
+      for got in c.ip_addresses {
+        if (__same_bytes(got, want)) {
+          return true;
+        }
+      }
+      return false;
+    },
+    None => {
+      // A name asked for is never itself a wildcard.
+      if (name.contains("*")) {
+        return false;
+      }
+      return __dns_match(c.dns_names, __normal(name));
+    }
+  }
+  return false;
+}
+
+function __normal(name: string): string {
+  let n: string = name.to_ascii_lower();
+  match (n.strip_suffix(".")) {
+    Some(s) => {
+      return s;
+    },
+    None => {
+      return n;
+    }
+  }
+  return n;
+}
+
+function __dns_match(patterns: string[], name: string): boolean {
+  for p in patterns {
+    let pat: string = __normal(p);
+    if (pat == name) {
+      return true;
+    }
+    if let Some(rest) = pat.strip_prefix("*.") {
+      if (__wild(rest, name)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// __wild matches "*.rest": name is one non-empty label, then ".rest".
+function __wild(rest: string, name: string): boolean {
+  match (name.strip_suffix("." + rest)) {
+    Some(label) => {
+      return label.len() > 0 && !label.contains(".") && rest.contains(".");
+    },
+    None => {
+      return false;
+    }
+  }
+  return false;
+}

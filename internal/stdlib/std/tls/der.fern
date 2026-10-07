@@ -1,0 +1,449 @@
+// std/tls/der — the Distinguished Encoding Rules of X.690, the encoding
+// X.509 certificates use, read one element at a time.
+//
+//   let cert: der.Element = der.expect(bytes, 0, der.SEQUENCE)?;
+//   let parts: der.Element[] = der.children(bytes, cert)?;
+//   let oid: string = der.oid(bytes, parts[0])?;      // "1.2.840.10045.4.3.2"
+//
+// An Element is a tag and where its contents lie in the bytes it was read
+// from, so reading copies nothing until a value is asked for. Reading is
+// strict: an indefinite or non-minimal length, a high tag number, a
+// non-minimal integer or OID arc, a boolean other than 0x00 or 0xff, or set
+// unused bits in a bit string is refused, as DER requires.
+
+import "core/int";
+import "std/i64";
+import "std/utf8";
+
+// Universal tags, and the constructed SEQUENCE and SET.
+pub const BOOLEAN: i32 = 0x01;
+
+pub const INTEGER: i32 = 0x02;
+
+pub const BIT_STRING: i32 = 0x03;
+
+pub const OCTET_STRING: i32 = 0x04;
+
+pub const NULL: i32 = 0x05;
+
+pub const OID: i32 = 0x06;
+
+pub const UTF8_STRING: i32 = 0x0c;
+
+pub const PRINTABLE_STRING: i32 = 0x13;
+
+pub const TELETEX_STRING: i32 = 0x14;
+
+pub const IA5_STRING: i32 = 0x16;
+
+pub const UTC_TIME: i32 = 0x17;
+
+pub const GENERALIZED_TIME: i32 = 0x18;
+
+pub const BMP_STRING: i32 = 0x1e;
+
+pub const SEQUENCE: i32 = 0x30;
+
+pub const SET: i32 = 0x31;
+
+// context is the tag of context-specific element n: [n] EXPLICIT, or a
+// constructed IMPLICIT one, when constructed; a primitive IMPLICIT one
+// otherwise.
+pub function context(n: i32, constructed: boolean): i32 {
+  if (constructed) {
+    return 0xa0 | n;
+  }
+  return 0x80 | n;
+}
+
+// DerError — why bytes were refused: running out, a length or tag DER does
+// not allow, an element of another tag than wanted (wanted, got), or
+// contents that are not a valid value of their type, naming it.
+pub enum DerError {
+  Truncated,
+  BadLength,
+  HighTag,
+  UnexpectedTag(i32, i32),
+  BadValue(string),
+}
+
+pub function (e: DerError) message(): string {
+  match (e) {
+    Truncated => {
+      return "der: truncated";
+    },
+    BadLength => {
+      return "der: a length DER does not allow";
+    },
+    HighTag => {
+      return "der: a high tag number";
+    },
+    UnexpectedTag(want, got) => {
+      return "der: tag " + int.int_to_string(got) + " where " + int.int_to_string(want) + " was wanted";
+    },
+    BadValue(what) => {
+      return "der: malformed " + what;
+    }
+  }
+  return "";
+}
+
+// Element — one element: its tag, where it starts in the bytes it was read
+// from, and its contents from `from` up to `to`; `next` is where the
+// element after it starts.
+pub struct Element { tag: i32, start: i32, from: i32, to: i32, next: i32 }
+
+struct Length { len: i32, from: i32 }
+
+// __length reads the length at `at`, which must use the fewest octets.
+function __length(b: [u8], at: i32): Result[Length, DerError] {
+  if (at >= b.len()) {
+    return Err(Truncated);
+  }
+  let first: i32 = b[at] as i32;
+  if (first < 0x80) {
+    return Ok(Length { len: first, from: at + 1 });
+  }
+  return __long_length(b, at + 1, first & 0x7f);
+}
+
+// __long_length reads the n length octets at `at`: at most four, the first
+// not zero, and a value short form could not have held.
+function __long_length(b: [u8], at: i32, n: i32): Result[Length, DerError] {
+  if (n == 0 || n > 4) {
+    return Err(BadLength);
+  }
+  if (at + n > b.len()) {
+    return Err(Truncated);
+  }
+  if (b[at] == 0 || n == 4 && b[at] >= 0x80) {
+    return Err(BadLength);
+  }
+  let len: i32 = 0;
+  let i: i32 = 0;
+  while (i < n) {
+    len = len << 8 | b[at + i] as i32;
+    i = i + 1;
+  }
+  if (len < 0x80) {
+    return Err(BadLength);
+  }
+  return Ok(Length { len: len, from: at + n });
+}
+
+// read reads the element starting at `at`.
+pub function read(b: [u8], at: i32): Result[Element, DerError] {
+  if (at >= b.len()) {
+    return Err(Truncated);
+  }
+  let tag: i32 = b[at] as i32;
+  if ((tag & 0x1f) == 0x1f) {
+    return Err(HighTag);
+  }
+  let l: Length = __length(b, at + 1)?;
+  if (l.len > b.len() - l.from) {
+    return Err(Truncated);
+  }
+  return Ok(Element { tag: tag, start: at, from: l.from, to: l.from + l.len, next: l.from + l.len });
+}
+
+// expect reads the element at `at`, which must have the tag given.
+pub function expect(b: [u8], at: i32, tag: i32): Result[Element, DerError] {
+  let e: Element = read(b, at)?;
+  if (e.tag != tag) {
+    return Err(UnexpectedTag(tag, e.tag));
+  }
+  return Ok(e);
+}
+
+// only reads the one element b holds, with nothing after it.
+pub function only(b: [u8], tag: i32): Result[Element, DerError] {
+  let e: Element = expect(b, 0, tag)?;
+  if (e.next != b.len()) {
+    return Err(BadValue("trailing bytes"));
+  }
+  return Ok(e);
+}
+
+// children reads the elements e's contents hold, which must fill them.
+pub function children(b: [u8], e: Element): Result[Element[], DerError] {
+  let inner: [u8] = b[0:e.to];
+  let out: Element[] = [];
+  let at: i32 = e.from;
+  while (at < e.to) {
+    let c: Element = read(inner, at)?;
+    out = out.append(c);
+    at = c.next;
+  }
+  return Ok(out);
+}
+
+// bytes is a copy of e's contents.
+pub function bytes(b: [u8], e: Element): u8[] {
+  let out: u8[] = __alloc_u8(e.to - e.from);
+  let i: i32 = e.from;
+  while (i < e.to) {
+    out = out.with(i - e.from, b[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+// whole is a copy of e itself, tag and length included.
+pub function whole(b: [u8], e: Element): u8[] {
+  return bytes(b, Element { ...e, from: e.start });
+}
+
+// unsigned is the value of a non-negative INTEGER as big-endian bytes,
+// without the sign octet DER puts in front of a high first byte.
+pub function unsigned(b: [u8], e: Element): Result[u8[], DerError] {
+  if (e.tag != INTEGER) {
+    return Err(UnexpectedTag(INTEGER, e.tag));
+  }
+  let n: i32 = e.to - e.from;
+  if (n == 0 || b[e.from] >= 0x80) {
+    return Err(BadValue("integer"));
+  }
+  if (n > 1 && b[e.from] == 0 && b[e.from + 1] < 0x80) {
+    return Err(BadValue("integer"));
+  }
+  if (n > 1 && b[e.from] == 0) {
+    return Ok(bytes(b, Element { ...e, from: e.from + 1 }));
+  }
+  return Ok(bytes(b, e));
+}
+
+// small is a non-negative INTEGER below 2^31.
+pub function small(b: [u8], e: Element): Result[i32, DerError] {
+  let v: u8[] = unsigned(b, e)?;
+  if (v.len() > 4 || v.len() == 4 && v[0] >= 0x80) {
+    return Err(BadValue("integer"));
+  }
+  let out: i32 = 0;
+  let i: i32 = 0;
+  while (i < v.len()) {
+    out = out << 8 | v[i] as i32;
+    i = i + 1;
+  }
+  return Ok(out);
+}
+
+pub function boolean_value(b: [u8], e: Element): Result[boolean, DerError] {
+  if (e.tag != BOOLEAN) {
+    return Err(UnexpectedTag(BOOLEAN, e.tag));
+  }
+  if (e.to - e.from != 1 || b[e.from] != 0 && b[e.from] != 0xff) {
+    return Err(BadValue("boolean"));
+  }
+  return Ok(b[e.from] == 0xff);
+}
+
+// oid is an OBJECT IDENTIFIER in dotted form.
+pub function oid(b: [u8], e: Element): Result[string, DerError] {
+  if (e.tag != OID) {
+    return Err(UnexpectedTag(OID, e.tag));
+  }
+  if (e.to == e.from || b[e.to - 1] >= 0x80) {
+    return Err(BadValue("object identifier"));
+  }
+  let out: string = "";
+  let arc: i64 = 0;
+  let start: boolean = true;
+  let i: i32 = e.from;
+  while (i < e.to) {
+    if (start && b[i] == 0x80) {
+      return Err(BadValue("object identifier"));
+    }
+    arc = arc << 7 | (b[i] & 0x7f) as i64;
+    if (arc > 0xffffffff) {
+      return Err(BadValue("object identifier"));
+    }
+    start = b[i] < 0x80;
+    if (start) {
+      out = __arc(out, arc);
+      arc = 0;
+    }
+    i = i + 1;
+  }
+  return Ok(out);
+}
+
+// The first subidentifier holds the first two arcs, 40x + y.
+function __arc(out: string, arc: i64): string {
+  if (out.len() > 0) {
+    return out + "." + arc.to_string();
+  }
+  if (arc < 80) {
+    return (arc / 40).to_string() + "." + (arc % 40).to_string();
+  }
+  return "2." + (arc - 80).to_string();
+}
+
+// BitString — a BIT STRING's bytes, the last `unused` bits of which are not
+// part of it.
+pub struct BitString { unused: i32, bytes: u8[] }
+
+pub function bit_string(b: [u8], e: Element): Result[BitString, DerError] {
+  if (e.tag != BIT_STRING) {
+    return Err(UnexpectedTag(BIT_STRING, e.tag));
+  }
+  if (e.to == e.from) {
+    return Err(BadValue("bit string"));
+  }
+  let unused: i32 = b[e.from] as i32;
+  let n: i32 = e.to - e.from - 1;
+  if (unused > 7 || n == 0 && unused != 0) {
+    return Err(BadValue("bit string"));
+  }
+  if (n > 0 && (b[e.to - 1] as i32 & (1 << unused) - 1) != 0) {
+    return Err(BadValue("bit string"));
+  }
+  return Ok(BitString { unused: unused, bytes: bytes(b, Element { ...e, from: e.from + 1 }) });
+}
+
+// time is a UTCTime or GeneralizedTime in UTC, as seconds since the Unix
+// epoch. A UTCTime's two-digit year is 1950 to 2049 (RFC 5280 §4.1.2.5.1).
+pub function time(b: [u8], e: Element): Result[i64, DerError] {
+  let n: i32 = e.to - e.from;
+  let at: i32 = e.from;
+  let year: i32 = 0;
+  if (e.tag == UTC_TIME && n == 13) {
+    year = __digits(b, at, 2)?;
+    year = year + 1900;
+    if (year < 1950) {
+      year = year + 100;
+    }
+    at = at + 2;
+  } else if (e.tag == GENERALIZED_TIME && n == 15) {
+    year = __digits(b, at, 4)?;
+    at = at + 4;
+  } else {
+    return Err(BadValue("time"));
+  }
+  if (b[e.to - 1] != 0x5a) {
+    return Err(BadValue("time"));
+  }
+  return __seconds(year, b, at);
+}
+
+function __digits(b: [u8], at: i32, n: i32): Result[i32, DerError] {
+  let v: i32 = 0;
+  let i: i32 = 0;
+  while (i < n) {
+    let d: i32 = b[at + i] as i32 - 48;
+    if (d < 0 || d > 9) {
+      return Err(BadValue("time"));
+    }
+    v = v * 10 + d;
+    i = i + 1;
+  }
+  return Ok(v);
+}
+
+// __seconds reads MMDDHHMMSS after the year and counts from 1970-01-01.
+function __seconds(year: i32, b: [u8], at: i32): Result[i64, DerError] {
+  let f: i32[] = [];
+  let i: i32 = 0;
+  while (i < 5) {
+    f = f.append(__digits(b, at + 2 * i, 2)?);
+    i = i + 1;
+  }
+  if (!__in_range(year, f[0], f[1], f[2], f[3], f[4])) {
+    return Err(BadValue("time"));
+  }
+  return Ok(((__days(year, f[0], f[1]) * 24 + f[2] as i64) * 60 + f[3] as i64) * 60 + f[4] as i64);
+}
+
+function __in_range(year: i32, month: i32, day: i32, hour: i32, minute: i32, second: i32): boolean {
+  if (month < 1 || month > 12 || day < 1) {
+    return false;
+  }
+  return day <= __month_days(year, month) && hour <= 23 && minute <= 59 && second <= 59;
+}
+
+function __leap(y: i32): boolean {
+  return y % 4 == 0 && (y % 100 != 0 || y % 400 == 0);
+}
+
+function __month_days(y: i32, m: i32): i32 {
+  if (m == 2 && __leap(y)) {
+    return 29;
+  }
+  let days: i32[] = [31, 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return days[m - 1];
+}
+
+// __days counts the days from 1970-01-01 to the date (Hinnant's
+// days_from_civil).
+function __days(y: i32, m: i32, d: i32): i64 {
+  let yy: i64 = y as i64;
+  if (m <= 2) {
+    yy = yy - 1;
+  }
+  let era: i64 = yy / 400;
+  let yoe: i64 = yy - era * 400;
+  let mp: i64 = (m as i64 + 9) % 12;
+  let doy: i64 = (153 * mp + 2) / 5 + d as i64 - 1;
+  let doe: i64 = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+  return era * 146097 + doe - 719468;
+}
+
+// text is a UTF8String, PrintableString, IA5String or TeletexString (read as
+// ASCII), or a BMPString (UCS-2), as a string.
+pub function text(b: [u8], e: Element): Result[string, DerError] {
+  if (e.tag == BMP_STRING) {
+    return __bmp(b, e);
+  }
+  if (e.tag != UTF8_STRING && e.tag != PRINTABLE_STRING && e.tag != IA5_STRING && e.tag != TELETEX_STRING) {
+    return Err(UnexpectedTag(UTF8_STRING, e.tag));
+  }
+  let raw: u8[] = bytes(b, e);
+  if (e.tag != UTF8_STRING && !__ascii(raw)) {
+    return Err(BadValue("string"));
+  }
+  match (utf8.from_bytes(raw)) {
+    Some(s) => {
+      return Ok(s);
+    },
+    None => {
+      return Err(BadValue("string"));
+    }
+  }
+  return Err(BadValue("string"));
+}
+
+function __ascii(raw: u8[]): boolean {
+  for c in raw {
+    if (c >= 0x80) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function __bmp(b: [u8], e: Element): Result[string, DerError] {
+  if ((e.to - e.from) % 2 != 0) {
+    return Err(BadValue("string"));
+  }
+  let out: u8[] = [];
+  let i: i32 = e.from;
+  while (i < e.to) {
+    let c: i32 = b[i] as i32 << 8 | b[i + 1] as i32;
+    if (c >= 0xd800 && c < 0xe000) {
+      return Err(BadValue("string"));
+    }
+    out = __utf8(out, c);
+    i = i + 2;
+  }
+  return Ok(string_from_bytes_unchecked(out));
+}
+
+function __utf8(own out: u8[], c: i32): u8[] {
+  if (c < 0x80) {
+    return out.append(c as u8);
+  }
+  if (c < 0x800) {
+    return out.append((0xc0 | c >> 6) as u8).append((0x80 | c & 0x3f) as u8);
+  }
+  return out.append((0xe0 | c >> 12) as u8).append((0x80 | c >> 6 & 0x3f) as u8).append((0x80 | c & 0x3f) as u8);
+}

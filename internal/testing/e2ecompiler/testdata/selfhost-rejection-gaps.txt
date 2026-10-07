@@ -21,7 +21,6 @@
 diag_e033
 diag_e073
 diag_e074
-sat_usize_rejected
 tuple_match_err_nonexhaustive
 
 parse:diag_p001

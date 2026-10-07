@@ -176,6 +176,11 @@ pub function (m: Message) kind(): i32 {
 // The random of a HelloRetryRequest, SHA-256("HelloRetryRequest") (§4.1.3).
 const RETRY_RANDOM: string = "cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c";
 
+// retry_random is the random every HelloRetryRequest carries.
+pub function retry_random(): u8[] {
+  return hex.hex_decode(RETRY_RANDOM);
+}
+
 pub function (s: ServerHello) is_retry(): boolean {
   return hex.hex_encode(s.random) == RETRY_RANDOM;
 }

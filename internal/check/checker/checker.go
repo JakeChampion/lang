@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strconv"
@@ -4979,8 +4980,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 				c.errfCode(fn.P, "E006", "associated function %q on %s redeclared", fn.Name, typeName)
 				continue
 			case declAmbiguous:
-				c.errAmbiguousMethod(fn.P, typeName, fn.Name,
-					[]methodCand{{Trait: fn.ImplTrait, Pos: fn.P}, other})
+				c.errAmbiguousDecl(typeName, fn.Name,
+					[]methodCand{{Trait: fn.ImplTrait, Pos: fn.P, Module: fn.BodyModule()}, other})
 				continue
 			}
 			simpleName := fn.Name
@@ -5061,8 +5062,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 				if kind == declDup {
 					c.errfCode(fn.P, "E006", "method %q on %s redeclared", fn.Name, typeName)
 				} else {
-					c.errAmbiguousMethod(fn.P, typeName, fn.Name,
-						[]methodCand{{Trait: fn.ImplTrait, Pos: fn.P}, other})
+					c.errAmbiguousDecl(typeName, fn.Name,
+						[]methodCand{{Trait: fn.ImplTrait, Pos: fn.P, Module: fn.BodyModule()}, other})
 				}
 				// Hoist the receiver even though the declaration is rejected.
 				// Its BODY is still walked, and a receiver left off Params[0]
@@ -5785,8 +5786,9 @@ func declSiteKey(typeName, name, trait string) string {
 // that provided it ("" for an inherent declaration) and where it was
 // written.
 type methodCand struct {
-	Trait string
-	Pos   ast.Position
+	Trait  string
+	Pos    ast.Position
+	Module string
 }
 
 // How a pending method registration relates to what is already registered.
@@ -5820,8 +5822,8 @@ func (c *checker) methodDeclConflict(typeName, name, trait string) (int, methodC
 		if owners := c.info.MethodOwners[key]; len(owners) > 0 {
 			return declAmbiguous, c.info.methodCands(typeName, name, owners[:1])[0]
 		}
-	} else if pos, inherent := c.info.MethodDeclSites[key]; inherent {
-		return declAmbiguous, methodCand{Pos: pos}
+	} else if _, inherent := c.info.MethodDeclSites[key]; inherent {
+		return declAmbiguous, c.info.methodCands(typeName, name, []string{""})[0]
 	}
 	if _, taken := c.info.Methods[key]; taken && len(c.info.MethodOwners[key]) == 0 {
 		return declDup, methodCand{}
@@ -5835,6 +5837,10 @@ func (c *checker) methodDeclConflict(typeName, name, trait string) (int, methodC
 // method") and where it was declared, mirroring E062's shape for the
 // multi-trait-object case.
 func (c *checker) errAmbiguousMethod(pos ast.Position, typeName, name string, cands []methodCand) {
+	c.errfCode(pos, "E074", "%s", ambiguousMethodMessage(typeName, name, cands))
+}
+
+func ambiguousMethodMessage(typeName, name string, cands []methodCand) string {
 	parts := make([]string, len(cands))
 	for i, cand := range cands {
 		what := "an inherent method"
@@ -5845,10 +5851,39 @@ func (c *checker) errAmbiguousMethod(pos ast.Position, typeName, name string, ca
 			parts[i] = what
 			continue
 		}
-		parts[i] = what + " (declared at " + cand.Pos.String() + ")"
+		at := cand.Pos.String()
+		if cand.Module != "" {
+			at = moduleFileLabel(cand.Module) + ":" + at
+		}
+		parts[i] = what + " (declared at " + at + ")"
 	}
-	c.errfCode(pos, "E074", "ambiguous method %q on %s: provided by %s",
-		name, demangle(typeName), strings.Join(parts, " and "))
+	return fmt.Sprintf("ambiguous method %q on %s: provided by %s", name, demangle(typeName), strings.Join(parts, " and "))
+}
+
+// errAmbiguousDecl reports E074 for two declarations of one method, at the
+// one the program wrote rather than at a standard-library declaration it
+// cannot change, and in that declaration's own file.
+func (c *checker) errAmbiguousDecl(typeName, name string, cands []methodCand) {
+	at := cands[0]
+	for _, cand := range cands {
+		if !strings.HasPrefix(cand.Module, stdlibModulePrefix) {
+			at = cand
+			break
+		}
+	}
+	c.report(at.Module, at.Pos, "E074", ambiguousMethodMessage(typeName, name, cands))
+}
+
+// stdlibModulePrefix marks a module loaded from the embedded standard library.
+const stdlibModulePrefix = "stdlib://"
+
+// moduleFileLabel is how a diagnostic names a module's file: a stdlib module
+// by its import path's file (`std/i32.fern`), a program's by its base name.
+func moduleFileLabel(module string) string {
+	if rest, ok := strings.CutPrefix(module, stdlibModulePrefix); ok {
+		return rest
+	}
+	return filepath.Base(module)
 }
 
 // simpleTraitName strips a trait name's module mangling, so a caller can
@@ -5996,7 +6031,11 @@ func (in *Info) ResolveMethodFrom(fromModule, typeName, name string, prefer []st
 func (in *Info) methodCands(typeName, name string, traits []string) []methodCand {
 	out := make([]methodCand, len(traits))
 	for i, tr := range traits {
-		out[i] = methodCand{Trait: tr, Pos: in.MethodDeclSites[declSiteKey(typeName, name, tr)]}
+		site := declSiteKey(typeName, name, tr)
+		out[i] = methodCand{Trait: tr, Pos: in.MethodDeclSites[site]}
+		if insts := in.MethodInsts[site]; len(insts) > 0 {
+			out[i].Module = in.MethodSources[insts[0]]
+		}
 	}
 	return out
 }
@@ -6917,8 +6956,11 @@ func (dc *deriveConf) deriveFieldGap(td *ast.TraitDecl, dn string, labels []stri
 // reports its own per-field gap from synthDefault — it composes through
 // zero literals and `Type.default()`, not a call on the field value.
 func (c *checker) preCheckDeriveFields(dc *deriveConf, td *ast.TraitDecl, dn, kind, what string, p ast.Position, labels []string, types []ast.Type, typeParams []string) bool {
-	if kind == "" || kind == "Default" {
+	if kind == "" {
 		return false
+	}
+	if kind == "Default" {
+		labels, types = nominalFields(labels, types)
 	}
 	label, tn, bad := dc.deriveFieldGap(td, dn, labels, types, typeParams)
 	if !bad {
@@ -6927,6 +6969,22 @@ func (c *checker) preCheckDeriveFields(dc *deriveConf, td *ast.TraitDecl, dn, ki
 	c.errfCode(p, "E021", "cannot @derive(%s) for %s: %s of type %s does not implement %s — add `impl %s for %s` (or remove the derive)",
 		demangle(dn), demangle(what), label, demangle(tn), demangle(dn), demangle(dn), demangle(tn))
 	return true
+}
+
+// nominalFields keeps the struct- and enum-typed entries: a derived Default
+// gives a scalar field its zero literal and delegates only these to their
+// own `default()`.
+func nominalFields(labels []string, types []ast.Type) ([]string, []ast.Type) {
+	var ls []string
+	var ts []ast.Type
+	for i, t := range types {
+		switch t.(type) {
+		case ast.StructType, ast.EnumType:
+			ls = append(ls, labels[i])
+			ts = append(ts, t)
+		}
+	}
+	return ls, ts
 }
 
 // synthesizeDerives expands every struct's `@derive(Trait, …)` into a
@@ -18889,7 +18947,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			for _, t := range []ast.Type{lt, rt} {
 				if nt, ok := t.(ast.NumberType); ok && nt.IsPointerWidth() {
 					c.errfCode(n.P, "E009", "checked operator %q is not supported on `usize` — its overflow bound is target-width-dependent; cast to a fixed-width integer (`as u64`) first", n.Op)
-					return ast.NumberType{}
+					return ast.EnumType{Name: "Option", Args: []ast.Type{ast.NumberType{}}}
 				}
 			}
 			common, ok := commonIntegerWidth(lt, rt)

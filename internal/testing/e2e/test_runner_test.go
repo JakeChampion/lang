@@ -361,7 +361,8 @@ func TestRunnerNetExamplePasses(t *testing.T) {
 }
 
 // `tests/stdlib/fetch_proxy_test.fern` covers std/fetch's proxy
-// selection: which variables are read and every `no_proxy` form.
+// selection: which variables are read, which proxy each scheme takes, and
+// every `no_proxy` form.
 func TestRunnerFetchProxyExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "tests/stdlib/fetch_proxy_test.fern")
@@ -369,7 +370,7 @@ func TestRunnerFetchProxyExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/fetch proxies", "# pass 16", "# fail 0", "1..16"} {
+	for _, w := range []string{"# Suite: std/fetch proxies", "# pass 18", "# fail 0", "1..18"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -1093,6 +1094,13 @@ func TestRunnerMLKEM768ExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "mlkem768", "std/crypto/mlkem768", 8)
 }
 
+// `tests/stdlib/montgomery_test.fern` checks std/crypto/montgomery's
+// constant-time arithmetic against core/bigint over P-256's field and
+// P-384's order.
+func TestRunnerMontgomeryExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "montgomery", "std/crypto/montgomery", 4)
+}
+
 // `tests/stdlib/ed25519_test.fern` covers RFC 8032's Ed25519 vectors, one
 // from Go's crypto/ed25519, and every refusal.
 func TestRunnerEd25519ExamplePasses(t *testing.T) {
@@ -1112,11 +1120,42 @@ func TestRunnerTLSKeyScheduleExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "tls_keyschedule", "std/tls/keyschedule", 17)
 }
 
+// `tests/stdlib/tls_der_test.fern` covers DER's lengths, tags and value
+// types, and every encoding DER forbids.
+func TestRunnerTLSDerExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "tls_der", "std/tls/der", 7)
+}
+
+// `tests/stdlib/tls_x509_test.fern` parses certificates of every key type
+// and RFC 8448's, and covers PEM both ways.
+func TestRunnerTLSX509ExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "tls_x509", "std/tls/x509", 7)
+}
+
+// `tests/stdlib/tls_verify_test.fern` validates chains, names, name
+// constraints and RFC 8448's CertificateVerify, with every refusal.
+func TestRunnerTLSVerifyExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "tls_verify", "std/tls/verify", 9)
+}
+
+// `tests/stdlib/tls_roots_test.fern` reads roots from a bundle on disk and
+// from the machine.
+func TestRunnerTLSRootsExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "tls_roots", "std/tls/verify roots", 3)
+}
+
+// `tests/stdlib/tls_client_test.fern` runs std/tls/client's session against
+// std/tls/handshake's server: a trusted chain, the name and root refusals,
+// a forged CertificateVerify, a saved and restored session, close_notify.
+func TestRunnerTLSClientExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "tls_client", "std/tls/client", 6)
+}
+
 // `tests/stdlib/tls_handshake_test.fern` runs the client through RFC 8448 §3
 // byte for byte, the server to the trace's ServerHello, and the two against
 // each other across suites and groups.
 func TestRunnerTLSHandshakeExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "tls_handshake", "std/tls/handshake", 10)
+	runnerSuitePasses(t, "tls_handshake", "std/tls/handshake", 13)
 }
 
 // `tests/stdlib/tls_keyshare_test.fern` checks X25519 against RFC 8448's key

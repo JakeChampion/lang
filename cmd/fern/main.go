@@ -37,10 +37,10 @@
 //	                                     # cross-referenced Markdown reading
 //	                                     # file on stdout.
 //
-// A literate `FILE.fern.md` may be passed to -check, -interp and -fmt
-// directly: it is tangled in memory first, and diagnostics are mapped back
-// to the lines you wrote in the document. The compile modes hand the path
-// to the self-hosted compiler, which does not tangle yet (#11838).
+// A literate `FILE.fern.md` may be passed to any of the compile / -run /
+// -check / -interp / -fmt modes directly, and imported like a `.fern`
+// module: it is tangled in memory first, and diagnostics are mapped back to
+// the lines you wrote in the document.
 //
 // # Program arguments
 //

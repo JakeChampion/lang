@@ -5750,7 +5750,10 @@ func (p *parser) parseCall() (ast.Expr, error) {
 				if err != nil {
 					return nil, err
 				}
-				return p.parseStructLit(pos, name, typeArgs)
+				if expr, err = p.parseStructLit(pos, name, typeArgs); err != nil {
+					return nil, err
+				}
+				continue
 			}
 			open := p.advance()
 			// Slicing distinguishes from indexing by the `:`
@@ -5826,7 +5829,10 @@ func (p *parser) parseCall() (ast.Expr, error) {
 			// reads `b.items` as a field access, not `b.items { … }`.
 			// Mirrors the bare-`Ident { … }` guard below.
 			if id, ok := expr.(*ast.Ident); ok && !p.noStructLit && p.match(lexer.Punct, "{") {
-				return p.parseStructLit(id.P, id.Name+"."+fname.Text, nil)
+				if expr, err = p.parseStructLit(id.P, id.Name+"."+fname.Text, nil); err != nil {
+					return nil, err
+				}
+				continue
 			}
 			expr = &ast.FieldAccess{P: dot.Pos, Target: expr, Field: fname.Text, FieldPos: fname.Pos}
 		case p.match(lexer.Punct, "::"):
@@ -5845,7 +5851,10 @@ func (p *parser) parseCall() (ast.Expr, error) {
 			// `mod::Foo { … }` is a path-qualified struct literal, mirroring
 			// the `mod.Foo { … }` form (suppressed in noStructLit positions).
 			if id, ok := expr.(*ast.Ident); ok && !p.noStructLit && p.match(lexer.Punct, "{") {
-				return p.parseStructLit(id.P, id.Name+"."+fname.Text, nil)
+				if expr, err = p.parseStructLit(id.P, id.Name+"."+fname.Text, nil); err != nil {
+					return nil, err
+				}
+				continue
 			}
 			expr = &ast.FieldAccess{P: colons.Pos, Target: expr, Field: fname.Text, FieldPos: fname.Pos, PathSep: true}
 		case p.match(lexer.Punct, "?"):
