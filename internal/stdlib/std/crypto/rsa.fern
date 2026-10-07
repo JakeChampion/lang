@@ -24,7 +24,9 @@ pub enum Hash {
 pub enum RsaError {
   // The modulus has fewer bits than the 1,024 this module accepts at all.
   ModulusTooSmall(i32),
-  // The exponent is even, or less than 3.
+  // The modulus has more bits than the 16,384 this module accepts.
+  ModulusTooLarge(i32),
+  // The exponent is even, less than 3, or wider than 64 bits.
   BadExponent,
 }
 
@@ -33,8 +35,11 @@ pub function (e: RsaError) message(): string {
     ModulusTooSmall(bits) => {
       return "rsa: the modulus is " + int.int_to_string(bits) + " bits, want at least 1024";
     },
+    ModulusTooLarge(bits) => {
+      return "rsa: the modulus is " + int.int_to_string(bits) + " bits, want at most 16384";
+    },
     BadExponent => {
-      return "rsa: the exponent must be odd and at least 3";
+      return "rsa: the exponent must be odd, at least 3 and at most 64 bits";
     }
   }
   return "";
@@ -76,7 +81,12 @@ pub function public_key(modulus: [u8], exponent: [u8]): Result[PublicKey, RsaErr
   if (bits < 1024) {
     return Err(ModulusTooSmall(bits));
   }
-  if (!e.bit(0) || e.bit_length() < 2) {
+  // Both bounds are OpenSSL's: a certificate is attacker-supplied, and
+  // verification costs grow with the modulus and the exponent.
+  if (bits > 16384) {
+    return Err(ModulusTooLarge(bits));
+  }
+  if (!e.bit(0) || e.bit_length() < 2 || e.bit_length() > 64) {
     return Err(BadExponent);
   }
   return Ok(PublicKey { n: n, e: e, bytes: (bits + 7) / 8, bits: bits });
