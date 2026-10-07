@@ -55,6 +55,10 @@ The simulation executable hash was
 The compiler at merged revision `97a6004e5a228d0dc7cafe2f6b669fea9b6e0c00`
 produces the same executable byte-for-byte. Earlier results from `f009e7a36`
 remain in the [historical records](benchmarks/simulation-2026-10-07/f009/).
+The driver subsequently made snapshot retention explicit through borrowing
+helpers so the retained Go checker also accepts the owned loop binding.
+That source change produces the same executable hash above; its helpers add
+no runtime work to the measured program.
 
 A five-tick pilot at 33 entities validated the complete pipeline first.
 Entity-count pilots then covered 129, 513, 2048 and 4096. A separate 1000-tick

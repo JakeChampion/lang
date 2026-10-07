@@ -23,6 +23,19 @@ struct Measurement {
   checks: i64,
 }
 
+// Borrowing helpers retain snapshots without moving the owned loop binding.
+function snapshot_persistent(w: simulation_persistent.World): simulation_persistent.World {
+  return w;
+}
+
+function snapshot_fbip(w: simulation_fbip.World): simulation_fbip.World {
+  return w;
+}
+
+function snapshot_fip(w: simulation_fip.World): simulation_fip.World {
+  return w;
+}
+
 function report(r: Measurement, variant: string, count: i32, ticks: i32, layout: string, sharing: string, export_samples: boolean): i32 {
   if (export_samples) {
     let i: i32 = 0;
@@ -78,7 +91,7 @@ function run_persistent(count: i32, ticks: i32, layout: string, sharing: string,
         let observed: i64 = 0i64;
         let t0: i64 = monotonic_ns();
         if (sharing == "shared") {
-          let saved: simulation_persistent.World = w;
+          let saved: simulation_persistent.World = snapshot_persistent(w);
           w = simulation_persistent.step(w);
           observed = simulation_persistent.checksum(saved);
         } else {
@@ -134,7 +147,7 @@ function run_fbip(count: i32, ticks: i32, layout: string, sharing: string, expor
         let observed: i64 = 0i64;
         let t0: i64 = monotonic_ns();
         if (sharing == "shared") {
-          let saved: simulation_fbip.World = w;
+          let saved: simulation_fbip.World = snapshot_fbip(w);
           w = simulation_fbip.step(w);
           observed = simulation_fbip.checksum(saved);
         } else {
@@ -190,7 +203,7 @@ function run_fip(count: i32, ticks: i32, layout: string, sharing: string, export
         let observed: i64 = 0i64;
         let t0: i64 = monotonic_ns();
         if (sharing == "shared") {
-          let saved: simulation_fip.World = w;
+          let saved: simulation_fip.World = snapshot_fip(w);
           w = simulation_fip.step(w);
           observed = simulation_fip.checksum(saved);
         } else {
