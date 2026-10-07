@@ -6183,11 +6183,11 @@ function type_holds_view(t: typeinfo.Type, views: string[], impls: parser.ImplIn
 // declarations, not of the function whose walk reached it, so one function's
 // walk hands the next its entries and a schema is read off the declarations
 // once per module.
-struct SchemaMemo { records: semrecords.Record[], record_names: util.NameIndex, enums: semrecords.Enum[] }
+struct SchemaMemo { records: semrecords.Record[], record_names: util.NameIndex, enums: semrecords.Enum[], enum_names: util.NameIndex }
 
 function no_memo(): SchemaMemo {
   let none: string[] = [];
-  return SchemaMemo { records: [], record_names: util.name_index(none), enums: [] };
+  return SchemaMemo { records: [], record_names: util.name_index(none), enums: [], enum_names: util.name_index(none) };
 }
 
 // `memo` is the module's memo as the walk leaves it. Every entry the walk
@@ -6210,7 +6210,9 @@ function schemas(types: typeinfo.Type[], s: State, memo: SchemaMemo): Schemas {
     if (!out.ok) {
       return out;
     }
-    pending = named_by_schemas(out, nr, ne, pending);
+    if (out.records.len() > nr || out.enums.len() > ne) {
+      pending = named_by_schemas(out, nr, ne, pending);
+    }
     i = i + 1;
   }
   return out;
@@ -6239,6 +6241,16 @@ function named_by_schemas(out: Schemas, nr: i32, ne: i32, pending: typeinfo.Type
     ne = ne + 1;
   }
   return pending;
+}
+
+// with_schema_root keeps `t` for the schema closure only when the closure can
+// find something in it: a scalar or a string names no schema, function type
+// or dyn type.
+function with_schema_root(own named: typeinfo.Type[], t: typeinfo.Type): typeinfo.Type[] {
+  if (names_schema(t) || ssasem.is_dyn(t)) {
+    return named.append(t);
+  }
+  return named;
 }
 
 function names_schema(t: typeinfo.Type): boolean {
@@ -6327,7 +6339,7 @@ function schema_of(t: typeinfo.Type, s: State, out: Schemas): Schemas {
     return record_entry(t, r, s, out);
   }
   if let typeinfo.TypeUnion(u) = t {
-    let me: i32 = semrecords.find_enum(out.memo.enums, t);
+    let me: i32 = semrecords.find_named_enum(out.memo.enums, out.memo.enum_names, u.name, t);
     if (me >= 0) {
       if (out.seen_e[me]) {
         return out;
@@ -6357,7 +6369,7 @@ function with_known_enum(out: Schemas, at: i32): Schemas {
 }
 
 function with_new_enum(out: Schemas, e: semrecords.Enum): Schemas {
-  return Schemas { ...out, enums: out.enums.append(e), seen_e: out.seen_e.append(true), memo: SchemaMemo { ...out.memo, enums: out.memo.enums.append(e) } };
+  return Schemas { ...out, enums: out.enums.append(e), seen_e: out.seen_e.append(true), memo: SchemaMemo { ...out.memo, enums: out.memo.enums.append(e), enum_names: out.memo.enum_names.added(semrecords.union_name_of(e.ty)) } };
 }
 
 // A member's box is read through its own record, so the table must carry
@@ -6894,9 +6906,13 @@ function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo)
     params = params.append(f.values[at]);
     at = at + 1;
   }
-  let named: typeinfo.Type[] = f.values.append(s.result);
+  let named: typeinfo.Type[] = [];
+  for t in f.values {
+    named = with_schema_root(named, t);
+  }
+  named = with_schema_root(named, s.result);
   for t in contract_types(s.calls) {
-    named = named.append(t);
+    named = with_schema_root(named, t);
   }
   let closed: Closed = env_rows_closed(named, s, memo);
   let table: Schemas = closed.table;
