@@ -220,6 +220,22 @@ func arm64FormCases() []string {
 		add("cset x1, %s", c)
 		add("cset w1, %s", c)
 	}
+	// The 128-bit q loads, stores and pairs, in every addressing mode and
+	// with a high register, against the d forms beside them.
+	for _, q := range []struct{ a, b string }{{"q0", "q2"}, {"q17", "q31"}} {
+		add("ldr %s, [x6]", q.a)
+		add("ldr %s, [x6, #32]", q.a)
+		add("ldr %s, [x6, #-16]", q.a)
+		add("ldr %s, [x6, #8]", q.a)
+		add("str %s, [x7, #65520]", q.b)
+		add("ldr %s, [x6], #16", q.a)
+		add("str %s, [x7, #-32]!", q.b)
+		add("ldur %s, [x6, #-48]", q.a)
+		add("stur %s, [x7, #3]", q.b)
+		add("ldp %s, %s, [x6], #32", q.a, q.b)
+		add("stp %s, %s, [x7, #-1024]!", q.a, q.b)
+		add("ldp %s, %s, [sp, #1008]", q.a, q.b)
+	}
 	return out
 }
 
@@ -267,29 +283,21 @@ func compareArm64Cases(t *testing.T, cases []string) {
 	}
 }
 
-// TestSelfHostArm64RefusesUnencodableForms pins the shapes gas encodes and
+// TestSelfHostArm64RefusesUnencodableForms pins the one shape gas encodes and
 // this assembler does not: a mov immediate needing two mov-wide chunks, which
-// gas builds with an orr-bitmask rather than a mov, and the q-register loads,
-// stores and pairs, which encoded as register 31 in the integer form before
-// they were refused. Refusing is safe — the driver checks p.unknown and
-// declines to write the image.
+// gas builds with an orr-bitmask rather than a mov. Refusing is safe — the
+// driver checks p.unknown and declines to write the image — and refusing is
+// what it does now; before #7903 phase 5 it encoded `movn x1, #0` and loaded
+// -1 instead.
 //
-// Each row asserts GNU as still ENCODES it, so it fails the day the gap closes
+// The row asserts GNU as still ENCODES it, so it fails the day the gap closes
 // rather than outliving it.
 func TestSelfHostArm64RefusesUnencodableForms(t *testing.T) {
 	gas := gnuArm64Oracle(t)
 	gcc, runner := x86_64Tooling(t)
 	bin := buildAsmBenchDriver(t, gcc)
 
-	lines := []string{
-		"mov x1, #4294967295",
-		// The 128-bit q forms, which arm64_gas_reg does not decode.
-		"ldp q0, q2, [x6], #32",
-		"stp q0, q2, [x7], #32",
-		"ldr q0, [x6], #16",
-		"str q0, [x7], #16",
-		"ldr q1, [x2, #32]",
-	}
+	lines := []string{"mov x1, #4294967295"}
 	for _, ln := range lines {
 		if _, rejected := gas.program(t, ".text\n"+ln+"\n"); rejected != "" {
 			t.Errorf("%-40s GNU as refuses it too, so this row does not "+
@@ -339,6 +347,29 @@ func TestSelfHostArm64RefusesUnencodableImmediates(t *testing.T) {
 		if _, rejected := gas.program(t, ".text\n"+ln+"\n"); rejected == "" {
 			t.Errorf("%-40s GNU as ACCEPTS it, so it is encodable after all "+
 				"and the self-host should encode it rather than refuse", ln)
+		}
+	}
+	checkRefusedSelfHost(t, bin, runner, lines)
+}
+
+// TestSelfHostArm64RefusesMisplacedQRegisters pins q registers in forms that
+// take none. arm64_gas_reg does not decode a q register, so before these were
+// refused each encoded as register 31 in the integer form.
+func TestSelfHostArm64RefusesMisplacedQRegisters(t *testing.T) {
+	gas := gnuArm64Oracle(t)
+	gcc, runner := x86_64Tooling(t)
+	bin := buildAsmBenchDriver(t, gcc)
+
+	lines := []string{
+		"add x0, q1, x2",
+		"ldrb q0, [x1]",
+		"ldpsw q0, q1, [x2]",
+		"ldp q0, d1, [x2]",
+		"ldr q32, [x1]",
+	}
+	for _, ln := range lines {
+		if _, rejected := gas.program(t, ".text\n"+ln+"\n"); rejected == "" {
+			t.Errorf("%-40s GNU as ACCEPTS it, so this row does not describe a misplaced register", ln)
 		}
 	}
 	checkRefusedSelfHost(t, bin, runner, lines)
