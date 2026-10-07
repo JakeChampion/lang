@@ -1,11 +1,14 @@
 import "std/test";
 import "std/crypto" as crypto;
+import "std/hex";
 import "std/string";
 
 // tests/stdlib/crypto_test.fern — pure-Fern coverage of std/crypto's
 // SHA-256 + HMAC-SHA256 against the standard NIST (FIPS 180-4) and
 // RFC 4231 known-answer vectors: the empty string, "abc", the classic
-// pangram, the 32-byte raw-digest length, and an HMAC-SHA256 vector.
+// pangram, the 32-byte raw-digest length, and an HMAC-SHA256 vector,
+// and SHAKE128/256 against FIPS 202 outputs for the empty message and 200
+// bytes of 0xa3.
 // The Go-side suite unit-tests the rounds; this is the migration-shaped
 // (pure-Fern, std/test-driven) companion. All arithmetic is u32, so this
 // also exercises the unsigned round math end to end.
@@ -177,6 +180,76 @@ function test_hkdf_expand_matches_oneshot(): test.TestOutcome {
   ));
 }
 
+// SHAKE128 and SHAKE256 (FIPS 202) for the empty message and for 200
+// bytes of 0xa3, which is longer than either rate. Outputs past 64 bytes
+// are compared by their SHA3-256.
+function __a3x200(): u8[] {
+  return __hkdf_byte_rep(0xa3, 200);
+}
+
+function __sha3_256_of(b: u8[]): string {
+  return crypto.sha3_256_new().update_bytes(b).final_hex();
+}
+
+function test_shake128_empty(): test.TestOutcome {
+  let e: u8[] = [];
+  if (hex.hex_encode(crypto.shake128(e, 32)) != "7f9c2ba4e88f827d616045507605853ed73b8093f6efbc88eb1a6eacfa66ef26") {
+    return test.fail("32 bytes");
+  }
+  if (__sha3_256_of(crypto.shake128(e, 200)) != "0d8eb608fbb0c0196e2bb58ecd41e47aac9fbfbc2334e02e5d5a5767bf0a4d88") {
+    return test.fail("200 bytes");
+  }
+  return test.assert_eq(__sha3_256_of(crypto.shake128(e, 512)), "783f768321fcc797b69ca9dc323343dbb776263d96e4c40e6c3b48678f355931");
+}
+
+function test_shake128_a3(): test.TestOutcome {
+  if (hex.hex_encode(crypto.shake128(__a3x200(), 32)) != "131ab8d2b594946b9c81333f9bb6e0ce75c3b93104fa3469d3917457385da037") {
+    return test.fail("32 bytes");
+  }
+  if (__sha3_256_of(crypto.shake128(__a3x200(), 200)) != "74aa9a100299230f02a2a0a01e12f18b58f324e3decca4468d4c684201085f4d") {
+    return test.fail("200 bytes");
+  }
+  return test.assert_eq(__sha3_256_of(crypto.shake128(__a3x200(), 512)), "70ee622999bda44af5ef3bb03a4afb254e0973e12d8d6b3382e0613cfc8efc23");
+}
+
+function test_shake256_empty(): test.TestOutcome {
+  let e: u8[] = [];
+  if (hex.hex_encode(crypto.shake256(e, 64)) != "46b9dd2b0ba88d13233b3feb743eeb243fcd52ea62b81b82b50c27646ed5762fd75dc4ddd8c0f200cb05019d67b592f6fc821c49479ab48640292eacb3b7c4be") {
+    return test.fail("64 bytes");
+  }
+  if (__sha3_256_of(crypto.shake256(e, 200)) != "8f3e5ca710dda92d2d0dbfa8ee2d796ffdfca88bc43b97e1860e9ae24773ea03") {
+    return test.fail("200 bytes");
+  }
+  return test.assert_eq(__sha3_256_of(crypto.shake256(e, 512)), "f758de459963f104daad27582204ddb6730c73b12dfbb359a10d97ed77ffd09b");
+}
+
+function test_shake256_a3(): test.TestOutcome {
+  if (hex.hex_encode(crypto.shake256(__a3x200(), 32)) != "cd8a920ed141aa0407a22d59288652e9d9f1a7ee0c1e7c1ca699424da84a904d") {
+    return test.fail("32 bytes");
+  }
+  if (__sha3_256_of(crypto.shake256(__a3x200(), 200)) != "efbb3e2319365b90f450f45a67944e009e2e0b629cf2a017cbf6c2ecdf225572") {
+    return test.fail("200 bytes");
+  }
+  return test.assert_eq(__sha3_256_of(crypto.shake256(__a3x200(), 512)), "2730489e394c59f24db0aa5275070ec976a5e81f17599cb4c28149603ae10a09");
+}
+
+// Absorbing in two pieces and squeezing in five, across block boundaries,
+// reads the same 512 bytes as the one-shot.
+function test_shake_streaming(): test.TestOutcome {
+  let msg: u8[] = __a3x200();
+  let r: crypto.ShakeReader = crypto.shake128_new().update_bytes(msg[0:77]).update_bytes(msg[77:200]).reader();
+  let out: u8[] = [];
+  let sizes: i32[] = [1, 167, 1, 200, 143];
+  let i: i32 = 0;
+  while (i < 5) {
+    let next: (u8[], crypto.ShakeReader) = r.squeeze(sizes[i]);
+    out = out.concat(next.0);
+    r = next.1;
+    i = i + 1;
+  }
+  return test.assert_eq(hex.hex_encode(out), hex.hex_encode(crypto.shake128(msg, 512)));
+}
+
 // TOTP / HOTP (RFC 6238 SHA-256 mode) against Appendix B: key =
 // "12345678901234567890123456789012" (32 ASCII bytes), 8 digits, 30s.
 function test_totp_rfc6238(): test.TestOutcome {
@@ -223,5 +296,10 @@ function main(): i32 {
   r = r.it("hkdf expand==oneshot", test_hkdf_expand_matches_oneshot);
   r = r.it("totp RFC 6238", test_totp_rfc6238);
   r = r.it("hotp + digits", test_hotp_and_digits);
+  r = r.it("shake128 empty", test_shake128_empty);
+  r = r.it("shake128 0xa3 x 200", test_shake128_a3);
+  r = r.it("shake256 empty", test_shake256_empty);
+  r = r.it("shake256 0xa3 x 200", test_shake256_a3);
+  r = r.it("shake streaming", test_shake_streaming);
   return r.finish();
 }

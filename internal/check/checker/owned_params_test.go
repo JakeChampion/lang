@@ -870,6 +870,18 @@ function relay(ys: i32[]): i32[] { return sized(ys); }
 function main(): i32 { return consume(relay([1, 2])); }`)
 }
 
+// A cast makes a new scalar, so passing one to a method that can hand its
+// receiver back leaves the result as fresh as the receiver (#11816).
+func TestOwnGuardAcceptsAFreshResultWrittenWithACast(t *testing.T) {
+	wantOK(t, "fresh-written-with-a-cast", ownConsumer+`
+function widen(xs: i64[]): i32[] {
+    let out: i32[] = [0, 0];
+    out = out.with(0, xs[0] as i32);
+    return out;
+}
+function main(): i32 { return consume(widen([1, 2])); }`)
+}
+
 // Recursion is seeded clean rather than pessimistically, so a recursive
 // function that returns only constructions is still a fresh owner.
 func TestOwnGuardAcceptsAFreshResultFromARecursiveFunction(t *testing.T) {

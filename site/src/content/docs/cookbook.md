@@ -1,6 +1,6 @@
 ---
 title: Cookbook
-description: Short, complete answers to the things you actually need on day one — files, stdin, flags, JSON, HTTP, tests.
+description: Short, complete answers to the things you actually need on day one — files, stdin, flags, JSON, CSV, regular expressions, paths, dates, HTTP, tests.
 ---
 
 Every recipe here is a complete program, type-checked and run before it
@@ -176,6 +176,36 @@ function main(): i32 {
 }
 ```
 
+## Match a regular expression
+
+`std/regex` searches by default; anchor with `^` and `$` to match the
+whole string. `regex_captures` returns the match with each group's span,
+and a group can be named.
+
+```fern
+import "std/regex";
+import "std/option";
+
+function main(): i32 {
+    let line: string = "2026-10-07 ERROR disk full on /dev/sda1";
+    let m: regex.RCaps = regex.regex_captures("^(?<date>\\d{4}-\\d{2}-\\d{2}) (?<level>[A-Z]+) (.*)$", line);
+    if (!m.found) {
+        eprint("not a log line");
+        return 1;
+    }
+    print(m.group_named("level").unwrap_or(""));   // ERROR
+    print(m.group(3).unwrap_or(""));               // disk full on /dev/sda1
+    let masked: string = regex.regex_replace_all("[0-9]", "call 555-0100", "#").unwrap_or("");
+    print(masked);                                 // call ###-####
+    return 0;
+}
+```
+
+`regex_match`, `regex_find_all`, `regex_split` and `regex_count` cover
+the other common jobs. Offsets are byte indices, and the functions that
+return text return an `Option` because a match can split a UTF-8
+character.
+
 ## Parse JSON
 
 ```fern
@@ -215,6 +245,39 @@ function main(): i32 {
 }
 ```
 
+## Read CSV
+
+`csv_parse` reads a whole RFC 4180 document, including quoted fields
+that contain commas or newlines, into one `string[]` per record.
+`csv_join` goes the other way and quotes a field only when it has to.
+
+```fern
+import "std/csv";
+import "std/string";
+import "std/i32";
+
+function main(): i32 {
+    let text: string = "name,qty\n\"Smith, J\",3\nLee,4\n";
+    let rows: string[][] = csv.csv_parse(text);
+    let total: i32 = 0;
+    let i: i32 = 1;
+    while (i < rows.len()) {
+        let row: string[] = rows[i];
+        if (row.len() == 2) {
+            match (row[1].parse_int()) {
+                Some(n) => { total = total + n; },
+                None => { eprint("bad qty on row " + i.to_string()); return 1; },
+            }
+        }
+        i = i + 1;
+    }
+    print(rows[1][0]);                               // Smith, J
+    print(total.to_string());                        // 7
+    print(csv.csv_join(["a,b", "say \"hi\""]));      // "a,b","say ""hi"""
+    return 0;
+}
+```
+
 ## List a directory
 
 ```fern
@@ -242,6 +305,49 @@ it, as a `DirEntry { name, ino }`, for a walk that orders or identifies
 entries by inode without a `stat` per entry. `ino` is 0 where the platform
 supplies none: WASI preview 2 carries no inode at all, so `lstat` reports 0
 there too.
+
+## Work with paths
+
+`std/path` works on the string alone and never touches the filesystem.
+
+```fern
+import "std/path";
+
+function main(): i32 {
+    let p: string = path.path_join(["build", "out", "report.txt"]);
+    print(p);                                   // build/out/report.txt
+    print(path.path_parent(p));                 // build/out
+    print(path.path_file_name(p));              // report.txt
+    print(path.path_stem(p));                   // report
+    print(path.path_extension(p));              // txt
+    print(path.path_with_extension(p, "md"));   // build/out/report.md
+    print(path.path_clean("a/./b/../c//d/"));   // a/c/d
+    return 0;
+}
+```
+
+## Dates and elapsed time
+
+`Date`, `Instant` and `Duration` are separate built-in types, so a
+calendar day and a point in time cannot be mixed up. `std/time` holds
+the functions that make and convert them.
+
+```fern
+import "std/time";
+
+function main(): i32 {
+    let start: Instant = time.instant_now();
+    let d: Date = time.date_make(2028, 2, 27);
+    print(d.add_days(3).format_iso());                // 2028-03-01
+    print(d.weekday_name());                          // Sunday
+    print(time.days_in_month(2028, 2).to_string());   // 29
+    print(time.instant_now().format_rfc3339());       // the current UTC time
+    print("took " + time.instant_now().duration_since(start).to_string());
+    return 0;
+}
+```
+
+`std/tz` adds real time zones with their daylight-saving transitions.
 
 ## Run another program
 
@@ -289,16 +395,17 @@ The status is data on the response (`resp.status`, or
 `FetchError` says which phase failed: the URL, DNS, the connect, a
 timeout, the protocol. Bodies are bytes, not text: an upstream can serve
 a PNG or a truncated UTF-8 sequence, so `body_text()` is a decode that
-can fail. A handler sends through its bag, `plat.http(req)`, and a
-`mock_platform.MockPlatform` cans the answer with `http_set`. `fetch.fetch_future`
-gives you a future you can hand to `async.gather` to overlap several
-requests on one thread.
+can fail. Inside an HTTP handler, send through the platform value
+instead, `plat.http(req)`, so a test can pass a
+`mock_platform.MockPlatform` whose `http_set` records the response to
+return. `fetch.fetch_future` gives you a future you can hand to
+`async.gather` to overlap several requests on one thread.
 
 ## Serve HTTP
 
 A program with a `handle` function and no `main` is a server: Fern
-synthesises the `main` that listens, or exports the WASI HTTP interface
-when you build for `wasi-http`.
+synthesises the `main` that listens on `$PORT` (8080 when unset), or
+exports the WASI HTTP interface when you build for `wasm32-wasi-http`.
 
 ```fern
 import "std/http";
@@ -311,6 +418,11 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     }
     return http.not_found();
 }
+```
+
+```bash
+fern -target x86-64-linux -o server server.fern && PORT=3000 ./server
+fern -target wasm32-wasi-http -o server.wasm server.fern && wasmtime serve server.wasm
 ```
 
 The [HTTP tutorial](../tutorial/http-server/) covers routing, JSON bodies
@@ -346,6 +458,9 @@ TAP version 13
 # Suite: slug
 ok 1 - lowercases and hyphenates
 1..1
+# tests 1
+# pass 1
+# fail 0
 ```
 
 The [testing tutorial](../tutorial/testing/) has the rest of the assertion

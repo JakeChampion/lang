@@ -1,0 +1,12 @@
+{
+  "source_revision": "11a71739408e54e69ce5a3db5bf8e2136ad8316c",
+  "official_pin": "stage0-20261006-0d42e82",
+  "compiler_sha256": "b5f886d2ee1c8e1165606426913c23648fb24b09697d62de4395cc1189ddd894",
+  "compiler_bytes": 12052881,
+  "bootstrap_stage2_equals_stage3": true,
+  "compile_working_directory": "/Users/jakechampion/.codex/worktrees/fip-storage-experiment/lang",
+  "compile_command": ["build/bootstrap/stage3", "-target", "arm64-darwin", "-o", "/tmp/fern-etl-main11a", "examples/fip/etl.fern", "internal/stdlib"],
+  "binary_sha256": "b2b4a8fa1393bda4ac739b3b070f990182413c7d0a7d31927a5138363949721c",
+  "build_log": "/tmp/fern-fip-main11a-validation.log",
+  "note": "The benchmark harness accepts a prebuilt binary; this record supplies compiler provenance from the validation script and retained artifact."
+}

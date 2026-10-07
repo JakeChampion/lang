@@ -9,10 +9,11 @@ interpreter and the self-host compiler on x86-64, arm64 and wasm.
 `std/crypto.fern` is past the 4,000-line cap #9858 sets for any one
 module, so each primitive is a module of its own under `std/crypto/`:
 `std/crypto/chacha20poly1305`, then `aes_gcm`, `x25519`, `mlkem768`,
-`p256`, `ed25519` and `rsa`. The existing digests, HMAC and HKDF stay in
-`std/crypto`. TLS itself is `std/tls/record`, `handshake`, `client` and
-`server`, with X.509 in `std/tls/der`, `verify` and `pem`. Every module
-type-checks standalone (`TestStdlibModulesImportStandalone`).
+`p256`, `ed25519` and `rsa`, with the field X25519 and Ed25519 share in
+`field25519`. The existing digests, HMAC and HKDF stay in `std/crypto`.
+TLS itself is `std/tls/record`, `handshake`, `client` and `server`, with
+X.509 in `std/tls/der`, `verify` and `pem`. Every module type-checks
+standalone (`TestStdlibModulesImportStandalone`).
 
 ## Slices
 
@@ -44,14 +45,26 @@ type-checks standalone (`TestStdlibModulesImportStandalone`).
    x86-64-v3 baseline, so this PR records the raise in CLAUDE.md and
    `docs/BACKEND-PARITY.md`. Every AVX2-class part has AES-NI, so reach is
    unchanged. wasm has neither, so it gets a bitsliced constant-time AES.
-5. **ML-KEM-768** (FIPS 203) over `std/crypto`'s Keccak, which needs
-   SHAKE128 and SHAKE256 added beside SHA-3. Then the X25519MLKEM768
-   hybrid share.
+5. **ML-KEM-768** (FIPS 203) over `std/crypto`'s Keccak, with SHAKE128 and
+   SHAKE256 added beside SHA-3. Coefficients are `i32`s under Barrett
+   reduction, and decapsulation compares and selects by mask. Gate: known
+   answers from Go's FIPS 140 implementation, implicit rejection and the
+   input checks. About 0.8 ms per key generation, encapsulation and
+   decapsulation together on x86-64. The X25519MLKEM768 hybrid share comes
+   with `std/tls/handshake`.
 6. **P-256 and Ed25519** for certificate signatures. P-256 verification
    landed first on `core/bigint`, about 13 ms per verification, since it
    handles only public values. Signing, for the server, needs constant-time
-   32-bit limbs, which replace the bigint path. Ed25519 goes over slice 3's
-   field and SHA-512.
+   32-bit limbs, which replace the bigint path. Ed25519 signing and
+   verification landed over slice 3's field, moved to
+   `std/crypto/field25519` for both curves to share, and `std/crypto`'s
+   SHA-512. Points are extended coordinates, signing multiplies the base
+   point through a fixed 4-bit window that reads every table entry and keeps
+   one by mask, and scalars mod L are 8-bit digits reduced without a branch.
+   Verification is cofactorless, as in Go's crypto/ed25519. Gate: RFC 8032's
+   vectors, one from Go, and the refusals, plus an `ed25519` case in
+   `TestSelfHostCtGateX86_64` that signs under a secret seed. About 0.54 ms
+   per signature and 0.28 ms per verification on x86-64.
 7. **RSA-PSS and PKCS#1 v1.5 verify** over `core/bigint`. Verification
    handles only public values, so it does not need to be constant time,
    and it landed ahead of slices 4 to 6 for that reason: every public

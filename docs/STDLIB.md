@@ -994,6 +994,14 @@ side then owns its own copy. `final_*` reads the state without consuming it.
   `blake2b_new(out_len: i32): Blake2b` (`out_len` 1..64 bytes; b2sum's `-l N`
   is bits, so pass `N / 8`; unkeyed), `sm3_new(): Sm3` (GB/T 32905-2016,
   32-byte output; `cksum -a sm3` is the one utility that offers it).
+  SHA-3 (FIPS 202): `sha3_224_new()`, `sha3_256_new()`, `sha3_384_new()`,
+  `sha3_512_new()`, all `Sha3`, and the one-shot `sha3_256_hex(s)`.
+- SHAKE128 and SHAKE256, FIPS 202's extendable-output functions:
+  `shake128_new()` / `shake256_new()` return a `Shake` that takes
+  `update_bytes`; its `reader()` ends the input and returns a
+  `ShakeReader`, whose `squeeze(n)` returns the next `n` bytes and the
+  reader that follows. One-shots: `shake128(data, out_len)`,
+  `shake256(data, out_len)`.
 - Methods on each state type: `update(chunk: string)`,
   `update_bytes(chunk: [u8])` — both return the new state;
   `final_bytes(): u8[]`, `final_hex(): string`.
@@ -1069,14 +1077,30 @@ let opened: u8[] = chacha20poly1305.open(key, nonce, sealed, aad)?;
 - `AeadError` is `KeyLength(i32)`, `NonceLength(i32)` or `Forged`, with
   `message()`.
 
+### `std/crypto/field25519`
+
+Arithmetic in the integers mod 2^255 - 19, the field `std/crypto/x25519` and
+`std/crypto/ed25519` share. An element (`Fe`) is ten signed limbs of 26 and
+25 bits in `i64`, so every product fits, and no operation branches on or
+indexes memory with a limb.
+
+- `add`, `sub`, `neg`, `mul`, `sq` — `mul` and `sq` take a sum or difference
+  of up to three reduced elements and answer a reduced one; `carry(a)`
+  reduces a longer sum.
+- `from_i64(v)`, `from_bytes(b)` (32 little-endian bytes, the top bit
+  ignored) and `to_bytes(a)`, the canonical encoding.
+- `invert(a)` is 1/a and `pow22523(a)` is a^((p-5)/8), the power a square
+  root is built from.
+- `cswap(a, b, swap)` and `cmov(a, b, flag)` swap or select by mask on a 0 or
+  1 flag.
+
 ### `std/crypto/x25519`
 
 The X25519 Diffie-Hellman function of RFC 7748, TLS 1.3's default key share
-(#9858). Field elements are ten signed limbs of 26 and 25 bits in `i64`; the
-ladder swaps by mask. Verified against the RFC's vectors, including the
-1,000-step iterated one (`tests/stdlib/x25519_test.fern`,
-`TestSelfHostX25519Iterated1000`). About 0.2 ms per scalar multiplication on
-x86-64.
+(#9858), over `std/crypto/field25519`. The ladder swaps by mask. Verified
+against the RFC's vectors, including the 1,000-step iterated one
+(`tests/stdlib/x25519_test.fern`, `TestSelfHostX25519Iterated1000`). About
+0.2 ms per scalar multiplication on x86-64.
 
 - `public_key(scalar): Result[u8[], X25519Error]` — the 32-byte public key
   of a 32-byte secret.
@@ -1084,6 +1108,52 @@ x86-64.
   refused as `LowOrder` when it is all zeros, as TLS 1.3 requires.
 - `X25519Error` is `ScalarLength(i32)`, `PointLength(i32)` or `LowOrder`,
   with `message()`.
+
+### `std/crypto/mlkem768`
+
+ML-KEM-768, the module-lattice key-encapsulation mechanism of FIPS 203, at
+the parameter set TLS 1.3's X25519MLKEM768 hybrid key share uses (#9858).
+Coefficients mod 3329 are reduced by Barrett multiplication and masked
+subtraction, and decapsulation compares and selects with masks, so nothing
+branches on a secret. Verified against known answers from Go's FIPS 140
+implementation (`tests/stdlib/mlkem768_test.fern`). About 0.8 ms per key
+generation, encapsulation and decapsulation together on x86-64.
+
+- `keygen_derand(d, z): Result[KeyPair, MlKemError]` — the key pair for two
+  32-byte random seeds: `encapsulation_key` (1,184 bytes) and
+  `decapsulation_key` (2,400).
+- `encaps_derand(ek, m): Result[Encapsulation, MlKemError]` — for a 32-byte
+  random `m`, the `shared_secret` (32 bytes) and the `ciphertext` (1,088) to
+  send.
+- `decaps(dk, ct): Result[u8[], MlKemError]` — the shared secret. A
+  ciphertext that does not re-encrypt to itself yields a secret derived from
+  the key's `z` instead (implicit rejection), never an error.
+- `MlKemError` names a wrong length (and the length given), an encapsulation
+  key with a coefficient not below 3329, or a decapsulation key whose stored
+  hash of its encapsulation key does not match, with `message()`.
+
+### `std/crypto/ed25519`
+
+Ed25519 signatures (RFC 8032 §5.1, the pure variant), for TLS 1.3 handshake
+and certificate signatures (#9858). Points are extended twisted Edwards
+coordinates over `std/crypto/field25519`, and scalars mod the group order L
+are reduced in 8-bit digits without a branch. Signing is constant time: the
+base-point multiplication reads every table entry and keeps one by mask, and
+the constant-time gate runs it under valgrind's memcheck with the seed marked
+secret. Verified against RFC 8032 §7.1's vectors and Go's crypto/ed25519
+(`tests/stdlib/ed25519_test.fern`). About 0.54 ms per signature and 0.28 ms
+per verification on x86-64.
+
+- `public_key(seed): Result[u8[], Ed25519Error]` — the 32-byte public key of
+  a 32-byte secret seed.
+- `sign(seed, msg): Result[u8[], Ed25519Error]` — the 64-byte signature
+  R || S.
+- `verify(public_key, msg, sig): boolean` — checks [S]B = R + [k]A without
+  the cofactor, as Go's crypto/ed25519 does. It refuses an S not below L and
+  a public key or R that does not decode, including a y not below p, which
+  Go accepts in a public key. A key or signature of the wrong length does
+  not verify.
+- `Ed25519Error` is `SeedLength(i32)`, with `message()`.
 
 ### `std/crypto/p256`
 

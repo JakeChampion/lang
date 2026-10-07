@@ -21,13 +21,22 @@ app/
 ```toml
 [package]
 name = "app"
-version = "0.1.0"     # informational for now
-lib = "lib.fern"      # entry module for `import "app"` (this is the default)
+# informational for now
+version = "0.1.0"
+# entry module for `import "app"` (this is the default)
+lib = "lib.fern"
 ```
 
 `name` is the only required key. A bare `import "<dep>"` from another
 package resolves to that package's `lib` module; `import "<dep>/sub"`
-resolves `sub.fern` inside its directory.
+resolves `sub.fern` inside its directory. Qualified use follows the last
+segment of the import: `helper.three()`, `sub.four()`.
+
+The manifest is a strict subset of TOML: section headers, `key = value`
+lines with quoted strings, arrays and inline tables, and `#` comments on
+lines of their own. Each entry fits on one line, and a comment after a
+value on the same line is rejected. A `[lint]` table sets the
+[linter's](../tooling/#linter) severities for the package.
 
 ## Dependencies
 
@@ -38,8 +47,7 @@ the directory layout says.
 ```toml
 [dependencies]
 helper = { path = "../helper" }
-webkit = { url = "https://example.com/webkit.tar.gz",
-           hash = "sha256:<64 hex of the archive bytes>" }
+webkit = { url = "https://example.com/webkit.tar.gz", hash = "sha256:…" }
 lexer  = { workspace = true }
 foo    = "1.1.0"
 ```
@@ -52,8 +60,10 @@ foo    = "1.1.0"
 | `"1.1.0"` | The version [MVS](#versioned-dependencies) picked, from `fern.lock` |
 
 Use `fern -add` rather than editing by hand — it manages the hash for
-you and re-parses the manifest before writing, so a bad edit can't leave
-a broken `fern.toml` on disk:
+you, edits the file textually so comments and formatting survive, and
+re-parses the manifest before writing, so a bad edit can't leave a
+broken `fern.toml` on disk. Adding a name that is already declared is an
+error; change an existing source by hand.
 
 ```bash
 fern -add helper path:../helper
@@ -64,15 +74,23 @@ fern -add lexer  workspace
 ## The hash is the identity
 
 A `url` dependency is identified by its **hash**, not its URL. The URL is
-a mirror hint; the `sha256:` is what's checked. An expired domain can't
-substitute code, and nothing needs re-verifying later.
+a mirror hint; the `sha256:` of the archive bytes, written as 64
+lowercase hex digits, is what's checked. An expired domain can't
+substitute code, and nothing needs re-verifying later. The archive is a
+`.tar.gz` of the package directory; a single top-level directory inside
+it is stripped.
 
-`fern -fetch` is **the only command that touches the network**. It walks
-the manifest and its dependencies' manifests, downloads what's missing,
+Builds never touch the network. `fern -fetch` is the command that
+downloads; `fern -add NAME url:…` and `fern -resolve` also download, but
+only the url sources they are adding or have just selected.
+`fern -fetch` walks the manifest and its dependencies' manifests,
+downloads what's missing,
 verifies each archive against its declared hash — a mismatch fails the
 run and nothing is unpacked — and unpacks into a per-machine store at
-`$FERN_CACHE_DIR` (or your user cache directory), shared across
-projects.
+`$FERN_CACHE_DIR/pkgs/` (or `fern/pkgs/` in your user cache directory),
+shared across projects. It also fetches the url-sourced versions pinned
+in a committed `fern.lock`, so a fresh machine can build offline after
+one `fern -fetch`.
 
 Build, check and interp read that store and never fetch. If a `url`
 dependency hasn't been fetched, they say so and point at `fern -fetch`.
@@ -91,10 +109,13 @@ The six v1 capabilities are `net`, `fs`, `env`, `subprocess`, `time` and
 call-graph reachability — a logging library that reaches the network
 fails the build (E070) rather than the audit. Grants **attenuate**: a
 dependency may grant its own dependencies at most what it holds itself,
-and an amplifying grant is a load-time error.
+and an amplifying grant is a load-time error. A dependency with no
+`capabilities` key is not yet enforced: each capability it reaches prints
+a warning.
 
 `fern -capabilities FILE.fern` prints what each package in a program can
 reach, with an example call chain down to the runtime builtin.
+`fern -effects FILE.fern` answers the same question per function.
 
 ## Vendoring
 
@@ -108,9 +129,10 @@ loader resolves every declared dependency out of `vendor/`, ignoring the
 originals entirely, and a declared dependency missing from `vendor/` is
 an error rather than a quiet fall back to the network.
 
-Names must be unique across the graph. `url` dependencies must be
-fetched before vendoring — vendoring copies from the store, it doesn't
-download.
+Names must be unique across the graph. `vendor/` holds source only —
+each package's `fern.toml` and its `.fern` and `.fern.md` files. `url`
+dependencies must be fetched before vendoring — vendoring copies from
+the store, it doesn't download.
 
 ## Workspaces
 
@@ -137,7 +159,8 @@ member reaches a sibling only if it declares the dependency.
 
 `fern -check DIR` on a workspace root type-checks **every member**,
 printing an `ok` / `FAIL` line each and exiting non-zero if any fail, so
-one broken package doesn't hide the rest. `fern -vendor` on a root
+one broken package doesn't hide the rest. On a plain package directory it
+checks that package's entry module. `fern -vendor` on a root
 vendors the union of the members' external dependencies into one shared
 `vendor/`.
 
@@ -191,12 +214,12 @@ a top-level `[exclude]` table, applied only from the manifest you run
 
 ```toml
 [exclude]
-bar = ["1.9.0", "1.9.1"]   # a demand for either rounds up to the next
-                           # non-excluded version in the index
+bar = ["1.9.0", "1.9.1"]
 ```
 
-Excluding every version at or above a demand is an error; excluding a
-version nothing demands does nothing.
+A demand for an excluded version rounds up to the next non-excluded
+version in the index. Excluding every version at or above a demand is an
+error; excluding a version nothing demands does nothing.
 
 ## How an import resolves
 

@@ -1,4 +1,4 @@
-// std/array — Array.X receiver-method bodies.
+// std/array — methods on arrays: map, filter, fold, zip, windows, and more.
 //
 // Two spellings reach the same `arr.<name>(…)` dispatch. An
 // element-polymorphic method is written with a real receiver,

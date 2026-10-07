@@ -1,4 +1,4 @@
-// std/time — six-type date/time module, jiff/NodaTime shape.
+// std/time — dates, times, instants and durations as distinct types.
 //
 // Backs the seven time types registered as built-ins:
 // `Instant`, `Date`, `Time`, `DateTime`, `Zoned`, `Span`,

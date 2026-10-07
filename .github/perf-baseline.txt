@@ -62,18 +62,18 @@ x86_64/http_hello.ir	31204779
 x86_64/int_loop.text	33
 x86_64/int_loop.ir	12000022
 x86_64/map_int.text	6242
-x86_64/map_int.ir	45746101
+x86_64/map_int.ir	44895461
 x86_64/map_probe_chain.text	6256
-x86_64/map_probe_chain.ir	427091447
+x86_64/map_probe_chain.ir	419458512
 x86_64/map_string.text	9235
 x86_64/map_string.ir	87246392	2
-x86_64/ordmap_insert.text	4261
-x86_64/ordmap_insert.ir	226418414
+x86_64/ordmap_insert.text	4743
+x86_64/ordmap_insert.ir	220760932
 x86_64/pmap_insert.text	5156
 x86_64/pmap_insert.ir	83397970
 x86_64/pvec_with.text	2949
-x86_64/pvec_with.ir	83108391
-x86_64/record_update.ir	167224936
+x86_64/pvec_with.ir	80788658
+x86_64/record_update.ir	142620274
 x86_64/record_update.text	1399
 x86_64/sort_inplace.text	2963
 x86_64/sort_inplace.ir	43380614
@@ -98,9 +98,9 @@ x86_64/struct_drop.ir	358420237
 x86_64/tokenize.text	984
 x86_64/tokenize.ir	36950039
 x86_64/utf8_ingest_unchecked.text	14613
-x86_64/utf8_ingest_unchecked.ir	6896674	3
+x86_64/utf8_ingest_unchecked.ir	6251274	3
 x86_64/utf8_ingest_validated.text	14857
-x86_64/utf8_ingest_validated.ir	10020680	3
+x86_64/utf8_ingest_validated.ir	9415880	3
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
 # Perf workflow's own perf-aarch64 job, because no aarch64 host is available to
@@ -165,19 +165,19 @@ aarch64/http_hello.ir	33776600
 aarch64/int_loop.text	101
 aarch64/int_loop.ir	18000025
 aarch64/map_int.text	6889
-aarch64/map_int.ir	46724482
+aarch64/map_int.ir	45533586
 aarch64/map_probe_chain.text	6898
-aarch64/map_probe_chain.ir	434234741
+aarch64/map_probe_chain.ir	423548632
 aarch64/map_string.text	10439
 aarch64/map_string.ir	91222257	2
-aarch64/ordmap_insert.text	4838
+aarch64/ordmap_insert.text	5384
 aarch64/ordmap_insert.ir	247937830
 aarch64/pmap_insert.text	5878
-aarch64/pmap_insert.ir	89079538
+aarch64/pmap_insert.ir	87937698
 aarch64/pvec_with.text	3163
-aarch64/pvec_with.ir	88701085
+aarch64/pvec_with.ir	85888297
 aarch64/record_update.text	1543
-aarch64/record_update.ir	160686304
+aarch64/record_update.ir	129523944
 aarch64/sort_inplace.text	3522
 aarch64/sort_inplace.ir	53111058
 aarch64/sort_ints.text	4115
@@ -201,6 +201,6 @@ aarch64/struct_drop.ir	428300325
 aarch64/tokenize.text	1170
 aarch64/tokenize.ir	38580038
 aarch64/utf8_ingest_unchecked.text	15938
-aarch64/utf8_ingest_unchecked.ir	7189922	3
+aarch64/utf8_ingest_unchecked.ir	6198322	3
 aarch64/utf8_ingest_validated.text	16188
-aarch64/utf8_ingest_validated.ir	10751926	3
+aarch64/utf8_ingest_validated.ir	9826926	3
