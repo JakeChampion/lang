@@ -154,9 +154,9 @@ function self_checks(): i32 {
   }
 
   // ---- 5. module intro -----------------------------------------------
-  // A header run followed by a blank line is the intro, joined by SPACE.
+  // A header run followed by a blank line is the intro, a line per comment.
   let hdr: lexer.Comment[] = [c(1, " Package foo."), c(2, " Second line.")];
-  if (ferndoc.module_intro(hdr, 5) != "Package foo. Second line.") {
+  if (ferndoc.module_intro(hdr, 5) != "Package foo.\nSecond line.") {
     return 40;
   }
   // Running straight into the first declaration makes it that declaration's
@@ -172,8 +172,27 @@ function self_checks(): i32 {
     return 43;
   }
   // No declarations at all: the header stands.
-  if (ferndoc.module_intro(hdr, 0) != "Package foo. Second line.") {
+  if (ferndoc.module_intro(hdr, 0) != "Package foo.\nSecond line.") {
     return 44;
+  }
+
+  // The page description is the intro's first sentence, without its label.
+  if (ferndoc.module_summary("std/x — the thing it is. More.\nAnd more.") != "The thing it is.") {
+    return 45;
+  }
+  // Only the first paragraph counts, read as one line.
+  if (ferndoc.module_summary("Wrapped\nfirst line\n\nSecond paragraph.") != "Wrapped first line") {
+    return 46;
+  }
+  // A first word with a capital or a digit is kept as written.
+  if (ferndoc.module_summary("std/x — iOS-style toggles. Etc.") != "iOS-style toggles.") {
+    return 47;
+  }
+  if (ferndoc.module_summary("x64 helpers.") != "x64 helpers.") {
+    return 48;
+  }
+  if (ferndoc.module_summary("") != "") {
+    return 49;
   }
 
   // ---- 6. end to end -------------------------------------------------
