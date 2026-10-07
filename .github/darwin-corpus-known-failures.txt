@@ -108,4 +108,3 @@ TestStty
 TestTestParity
 TestTtyParity
 TestUptime
-TestWhoParity
