@@ -33,7 +33,8 @@ import "./semarrayreport";
 // answer `ok: false`; only the first is evidence.
 // `analysis` is the semantic analysis of `func` as it stands, kept from the
 // anchoring that verified it so the planner reads it rather than analysing the
-// same graph again: None before that, and again once a rewrite moves the graph.
+// same graph again: None before that, and again once a rewrite moves the graph
+// until `with_analyses` analyses it once more for every reader after the build.
 // view_escape carries a definite typed source escape (1 array, 2 string).
 // Other refusals and callers refused transitively leave it at zero.
 // `dropped` marks a function the inliner spliced into every caller and that
@@ -8318,6 +8319,29 @@ function builtin_row(c: ssasem.Contract): ownership.Escapes {
     bits = bits.append(m == ssaunits.counted_mode());
   }
   return ownership.Escapes { name: c.name, bits: bits, lends: reference(c.result), cycle: 0 - 1 };
+}
+
+// with_analyses gives each row a plan reads the analysis of its graph as it
+// stands, once: the declared plans, the ownership inference and the inferred
+// plans all read the same graph of a row the build rewrote after anchoring it.
+pub function with_analyses(b: Built): Built {
+  return Built { ...b, decls: analysed_rows(b.decls), instances: analysed_rows(b.instances) };
+}
+
+function analysed_rows(rows: Produced[]): Produced[] {
+  let i: i32 = 0;
+  while (i < rows.len()) {
+    if (rows[i].ok && !rows[i].template) {
+      match (rows[i].analysis) {
+        None => {
+          rows = rows.with(i, Produced { ...rows[i], analysis: Some(ssasem.analyze(rows[i].func)) });
+        },
+        _ => {}
+      }
+    }
+    i = i + 1;
+  }
+  return rows;
 }
 
 // The analysis a row is inferred from: the one its anchoring verified, which
