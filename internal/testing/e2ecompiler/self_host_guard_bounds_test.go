@@ -69,6 +69,11 @@ function main(): i32 { let s: i32[] = [11, 22, 33]; return slot(s, Op { imm: 2 }
     return t;
 }
 function main(): i32 { return total([1, 2, 3, 4, 5]); }`},
+	// grouped_reads: a run at one index plus constants is checked at its ends.
+	{"grouped_view_reads", `function word(bs: [u8], off: i32): i32 { return bs[off] as i32 + bs[off + 1] as i32 + bs[off + 2] as i32 + bs[off + 3] as i32; }
+function main(): i32 { let xs: u8[] = [1, 2, 3, 4, 5]; return word(xs, 1) + word(xs, 0); }`},
+	{"grouped_array_reads", `function sum3(xs: i32[], k: i32): i32 { return xs[k + 2] + xs[k] * 0 + xs[k + 1]; }
+function main(): i32 { let xs: i32[] = [4, 5, 6, 7]; return sum3(xs, 0) + sum3(xs, 1); }`},
 }
 
 // guardBoundsTwins pairs each proven program with one whose guard proves
@@ -86,6 +91,11 @@ var guardBoundsTwins = []struct{ name, proven, unproven string }{
 	{"field_guard",
 		`struct Op { imm: i32 } function slot(s: i32[], op: Op): i32 { if (op.imm < 0 || op.imm >= s.len()) { return 0; } return s[op.imm]; } function main(): i32 { return slot([4, 5], Op { imm: 1 }); }`,
 		`struct Op { imm: i32 } function slot(s: i32[], op: Op): i32 { if (op.imm < 0 || op.imm >= 2) { return 0; } return s[op.imm]; } function main(): i32 { return slot([4, 5], Op { imm: 1 }); }`},
+	// A division between the reads could abort first, so the twin keeps
+	// every read's check.
+	{"grouped_reads",
+		`function word(bs: [u8], off: i32, d: i32): i32 { return bs[off] as i32 + bs[off + 1] as i32 + bs[off + 2] as i32 + bs[off + 3] as i32 + 10 / d; } function main(): i32 { let xs: u8[] = [1, 2, 3, 4]; return word(xs, 0, 5); }`,
+		`function word(bs: [u8], off: i32, d: i32): i32 { return bs[off] as i32 + bs[off + 1] as i32 / d + bs[off + 2] as i32 / d + bs[off + 3] as i32; } function main(): i32 { let xs: u8[] = [1, 2, 3, 4]; return word(xs, 0, 1) + 2; }`},
 }
 
 // guardBoundsUnsafe are reads a guard does not cover, each run out of range:
@@ -107,6 +117,14 @@ function main(): i32 { return walk([1, 2, 3]); }`},
 function main(): i32 { return total([1, 2, 3, 4]); }`},
 	{"read_after_loop", `function past(xs: i32[]): i32 { let i: i32 = 0; while (i < xs.len()) { i = i + 1; } return xs[i]; }
 function main(): i32 { return past([1, 2, 3]); }`},
+	{"grouped_far_end", `function word(bs: [u8], off: i32): i32 { return bs[off] as i32 + bs[off + 1] as i32 + bs[off + 2] as i32 + bs[off + 3] as i32; }
+function main(): i32 { let xs: u8[] = [1, 2, 3, 4, 5]; return word(xs, 2); }`},
+	{"grouped_negative_base", `function word(bs: [u8], off: i32): i32 { return bs[off] as i32 + bs[off + 1] as i32 + bs[off + 2] as i32 + bs[off + 3] as i32; }
+function main(): i32 { let xs: u8[] = [1, 2, 3, 4, 5]; return word(xs, 0 - 1); }`},
+	{"grouped_negative_offset", `function around(xs: i32[], k: i32): i32 { return xs[k + 0 - 1] + xs[k] + xs[k + 1]; }
+function main(): i32 { return around([1, 2, 3], 0); }`},
+	{"grouped_first_not_lowest", `function word(bs: [u8], off: i32): i32 { return bs[off + 2] as i32 + bs[off] as i32 + bs[off + 1] as i32; }
+function main(): i32 { let xs: u8[] = [1, 2, 3]; return word(xs, 0 - 1); }`},
 }
 
 func TestSelfHostGuardBoundsX86_64(t *testing.T) {
