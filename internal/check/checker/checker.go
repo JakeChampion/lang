@@ -3164,15 +3164,16 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		Params: []ast.Type{ast.NumberType{Width: 32, Signed: true}},
 		Result: ast.StringType{},
 	}
-	// getcwd(): the absolute path of the process's working
-	// directory, as getcwd(2) reports it. A fresh string each
-	// call. EMPTY when the kernel refuses — the working directory
-	// was unlinked, or an ancestor is unreadable — which a caller
-	// can tell from a success because a real answer always begins
-	// with `/`.
+	// getcwd(): Result[string, IoError] — the absolute path of the
+	// process's working directory, as getcwd(2) reports it. Err
+	// carries the errno it was refused with: ENOENT for a working
+	// directory that has been removed.
 	c.info.FuncSigs["getcwd"] = &ast.FuncType{
 		Params: nil,
-		Result: ast.StringType{},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.StringType{},
+			ast.EnumType{Name: "IoError"},
+		}},
 	}
 	// chdir(path): Result[void, IoError] — change the process's
 	// working directory, the counterpart getcwd has always lacked.

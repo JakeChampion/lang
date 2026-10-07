@@ -311,6 +311,33 @@ function words_of(recs: usize): u8[] {
   return words;
 }
 
+// comp_dir is the directory DWARF records the compile ran in: $PWD when it
+// names `.`, as GCC records it, else `.`. It calls no getcwd() until the
+// stage0 pin types that builtin as a Result (#11810).
+function comp_dir(): string {
+  match (env("PWD")) {
+    Some(wd) => {
+      if (wd.len() > 0 && wd[0] as i32 == 47) {
+        match (stat(wd)) {
+          Ok(named) => {
+            match (stat(".")) {
+              Ok(here) => {
+                if (named.dev == here.dev && named.ino == here.ino) {
+                  return wd;
+                }
+              },
+              Err(_) => {}
+            }
+          },
+          Err(_) => {}
+        }
+      }
+    },
+    None => {}
+  }
+  return ".";
+}
+
 // arm64_elf_binary assembles arm64 Linux GAS text (from either the SSA or AST
 // emitter) into a runnable static ELF entirely in-process via arm64_native +
 // elf.fern — no `.s` + external gcc/ld. Returns the binary bytes packed into a
@@ -366,7 +393,7 @@ function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name:
     elf.elf_func_sym_names(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
     elf.elf_func_sym_offs(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
     elf.elf_func_sym_sizes(pa2.lab_names, pa2.lab_offs, nosec, 0 - 1, aend),
-    cu_name, getcwd(),
+    cu_name, comp_dir(),
     pa2.files, pa2.loc_offs, pa2.loc_files, pa2.loc_lines, pa2.loc_cols, pa2.loc_flags,
     arm64_native.arm64_debug_frame(p, elf.elf_text_vaddr_wx() as i64),
     arm64_var_ranges(p, tv, dv),
@@ -463,7 +490,7 @@ function x86_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name: s
     elf.elf_func_sym_names(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
     elf.elf_func_sym_offs(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
     elf.elf_func_sym_sizes(a.lab_names, a.lab_offs, a.lab_secs, 0, end),
-    cu_name, getcwd(),
+    cu_name, comp_dir(),
     a.files, a.loc_offs, a.loc_files, a.loc_lines, a.loc_cols, a.loc_flags,
     x86_native.x86_debug_frame(a, elf.elf_text_vaddr_x86() as i64),
     x86_var_ranges(a, elf.elf_text_vaddr_x86()),

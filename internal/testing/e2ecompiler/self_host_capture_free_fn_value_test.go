@@ -87,6 +87,26 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`},
+	// The same positions in a body with no lambda. The lift skips such a body
+	// unless it names a module function as a value, so this one must still
+	// reach the wrap, beside a direct call that nets out its own name.
+	{"fn-names-without-a-lambda", `function dbl(x: i32): i32 { return x * 2; }
+function inc(x: i32): i32 { return x + 1; }
+struct Box { f: (i32) => i32 }
+function apply(b: Box, v: i32): i32 { return b.f(v); }
+function twice(f: (i32) => i32, v: i32): i32 { return f(f(v)); }
+function main(): i32 {
+    let total: i32 = apply(Box { f: inc }, 5);
+    if (total != 6) { return 91; }
+    let fns: ((i32) => i32)[] = [dbl, inc];
+    total = total + fns[0](10) + fns[1](10);
+    if (total != 37) { return 92; }
+    let h: (i32) => i32 = dbl;
+    total = total + h(1) + twice(inc, 0) + dbl(1);
+    if (total != 43) { return 93; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return 0;
+}`},
 }
 
 func TestSelfHostCaptureFreeFnValue(t *testing.T) {

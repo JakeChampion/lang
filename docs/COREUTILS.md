@@ -4411,15 +4411,13 @@ gethostname(2) on every backend (#8529) — and got it under its own
 capability rather than a one-off syscall on one backend. A gap met later
 gets an issue and a fix, never a corpus carve-out.
 
-**A failed getcwd carries no errno (#9067).** `getcwd()` is a bare string and
-reports failure as the empty one, where every other filesystem builtin is a
-`Result[T, IoError]` carrying glibc's strerror text. `readlink -f` and
-`realpath` on a RELATIVE operand start at the working directory, and GNU names
-what getcwd(2) said when it will not answer — `No such file or directory` for a
-directory that has been removed, `Permission denied` for one whose ancestor lost
-search permission. `lib/canon.fern` can report only the first, and does. The
-corpus cannot reach either: the harness has no way to put both children in the
-same removed or unsearchable directory.
+**A failed getcwd carries its errno (#9067, fixed).** `getcwd()` is a
+`Result[string, IoError]` like every other filesystem builtin. `readlink -f`
+and `realpath` on a RELATIVE operand start at the working directory and report
+what getcwd(2) said when it will not answer; `pwd` walks up through `..` on any
+refusal, as GNU's does. The corpus reaches the removed-directory case by
+removing it in a shell just before it execs the utility
+(`TestPwdUnlinkedWorkingDirectory` and its readlink and realpath siblings).
 
 **`read_file` reads to EOF rather than trusting `st_size` (#9065, fixed).** It
 used to size its buffer from `fstat` and report the string's length as

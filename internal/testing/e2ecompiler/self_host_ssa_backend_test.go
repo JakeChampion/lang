@@ -432,7 +432,7 @@ function probe_ids(): i32 {
     if (geteuid() < 1000000000) { n = n + 1; }
     if (cpu_count() > 0) { n = n + 2; }
     if (hostname().len() > 0) { n = n + 4; }
-    if (getcwd().len() > 0) { n = n + 8; }
+    match (getcwd()) { Ok(wd) => { if (wd.len() > 0) { n = n + 8; } }, Err(e) => {} }
     if (uname_field(0).len() > 0) { n = n + 16; }
     let old: i32 = umask(18);
     if (umask(old) == 18) { n = n + 32; }

@@ -5212,6 +5212,38 @@ pub function lift_lambdas_typed(raw_mod: parser.Module): parser.Module {
   return lift_lambdas_view_typed(raw_mod, []);
 }
 
+// needs_lift reports whether `body` holds what the lift rewrites: a lambda, or
+// a module function named as a value, which takes a `$wrap` trampoline. The
+// count nets each call through a module function's name against that name.
+function needs_lift(body: ast.Stmt[], gset: irtables.SigReg): boolean {
+  function visit(e: ast.Expr, own n: i32): i32 {
+    match (e) {
+      ast.ExprLambda(_) => {
+        return n + 1;
+      },
+      ast.ExprIdent(id) => {
+        if (irtables.sig_reg_has_exact(gset, id.name)) {
+          return n + 1;
+        }
+      },
+      ast.ExprCall(c) => {
+        if let ast.ExprIdent(callee) = c.callee {
+          if (irtables.sig_reg_has_exact(gset, callee.name)) {
+            return n - 1;
+          }
+        }
+      },
+      _ => {}
+    }
+    return n;
+  }
+  let n: i32 = 0;
+  for st in body {
+    n = astwalk.fold_stmt_pruned(st, n, visit, astwalk.not_lambda);
+  }
+  return n > 0;
+}
+
 pub function lift_lambdas_view_typed(raw_mod: parser.Module, view: parser.FuncDecl[]): parser.Module {
   // Fill omitted trailing arguments from default parameter values before the
   // IR path inspects the module, so `f(5)` to `f(a, b = 128)` reaches the IR
@@ -5282,6 +5314,11 @@ pub function lift_lambdas_view_typed(raw_mod: parser.Module, view: parser.FuncDe
   let wi: i32 = 0;
   while (wi < worklist.len()) {
     let fd: parser.FuncDecl = worklist[wi];
+    if (!needs_lift(fd.body, gset)) {
+      newfuncs = newfuncs.append(fd);
+      wi = wi + 1;
+      continue;
+    }
     // A lifted body is a declaration of its own now, so its `return
     // <lambda>` takes the `$lamret$N` slot the pre-worklist pass gave a
     // source function's; a body that pass already rewrote has none left.

@@ -1379,8 +1379,8 @@ pub function op_uname_field(): Op {
   return op0(250);
 }
 
-// `getcwd` takes no operands and pushes ONE fresh string box holding the
-// process's working directory; the empty string when the kernel refuses.
+// `getcwd` takes no operands and pushes a fresh Result[string, IoError]
+// holding the process's working directory or the errno the kernel refused.
 pub function op_getcwd(): Op {
   return op0(251);
 }
@@ -8737,8 +8737,8 @@ pub function op_allocates(tag: i32): boolean {
   if (tag == 168) {
     return true;
   }
-  // hostname boxes the node name into a fresh string block; uname_field
-  // and getcwd box their answers the same way.
+  // hostname boxes the node name into a fresh string block, and uname_field
+  // its answer the same way; getcwd boxes a string inside a Result.
   if (tag == 240 || tag == 250 || tag == 251) {
     return true;
   }

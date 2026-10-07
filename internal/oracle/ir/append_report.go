@@ -7,13 +7,11 @@ import (
 )
 
 // FormatAppendSites renders every `.append` site in p and the decision
-// emitArrayPush made there, for `fern -append-report` (#6992).
+// emitArrayPush made there, for `fern -append-report` (#6992). This is the
+// retained Go lowering's decision, not the primary compiler's (#11251).
 //
 // A copying append reallocates and copies the whole buffer, so one inside
-// a loop is O(n²) bytes. Nothing else in the toolchain distinguishes it
-// from the O(1) in-place form: the two emit near-identical code and differ
-// only in an rc-inc, and under the leak-mode arena the cost surfaces as an
-// eventual OOM rather than as a wrong answer. #4838 was exactly that.
+// a loop is O(n²) bytes.
 //
 // The decision reads only types and AST shape (see appendDecision), so the
 // report does not depend on the target's pointer width.

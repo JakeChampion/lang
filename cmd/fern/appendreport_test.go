@@ -48,6 +48,7 @@ function main(): i32 { return grow(3) + quadratic(3); }
 		"grow:4:35",
 		"quadratic:11:36",
 		"2 append site(s), 1 copying",
+		"append report: retained Go analysis (not the primary Fern compiler's emitted plan)",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("report missing %q:\n%s", want, got)

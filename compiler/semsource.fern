@@ -7370,7 +7370,7 @@ function os_contracts(): ssasem.Contract[] {
   let done: typeinfo.Type = t_io_result(t_void());
   let strs: typeinfo.Type = typeinfo.TypeArray { elem: t_string(), view: false };
   let out: ssasem.Contract[] = [
-    ssasem.Contract { name: "getcwd", params: [], modes: [], result: t_string() },
+    ssasem.Contract { name: "getcwd", params: [], modes: [], result: t_io_result(t_string()) },
     ssasem.Contract { name: "hostname", params: [], modes: [], result: t_string() },
     ssasem.Contract { name: "cpu_count", params: [], modes: [], result: t_i32() },
     ssasem.Contract { name: "geteuid", params: [], modes: [], result: t_u32() },

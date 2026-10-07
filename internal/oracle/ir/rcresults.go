@@ -147,10 +147,8 @@ var rcResultOwned = map[string]bool{
 	// The kernel's node name copied into a fresh rc=1 string; the empty
 	// answer is the same sentinel / inline form the string helpers use.
 	"hostname": true,
-	// One utsname field and the working directory, each copied into a
-	// fresh rc=1 string the same way.
+	// One utsname field, copied into a fresh rc=1 string the same way.
 	"uname_field": true,
-	"getcwd":      true,
 
 	// Byte buffers in the __alloc_u8 box shape.
 	"__fern_random_bytes": true,
@@ -265,6 +263,7 @@ var rcResultOwned = map[string]bool{
 	"chown_at":          true,
 	"statfs":            true,
 	"mounts":            true,
+	"getcwd":            true,
 	"chdir":             true,
 	"chroot":            true,
 	"setuid":            true,
@@ -383,6 +382,7 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"remove_dir_all":                   true,
 	"create_dir_all":                   true,
 	"create_dir":                       true,
+	"getcwd":                           true,
 	"chdir":                            true,
 	"chroot":                           true,
 	"setuid":                           true,

@@ -1,0 +1,11 @@
+{
+  "revision": "882e71060e9cde33b14a44103b1c99121091751c",
+  "pin": "stage0-20261006-0d42e82",
+  "compiler": "/tmp/fern-fip-main882-native-compiler",
+  "compiler_sha256": "9f95e090d983014c82cd8c2b864d9d50fb570da9d5cf0bc377506f86bca05ff7",
+  "native_stage2_stage3_identical": true,
+  "binary_sha256": "4feb54b856f020317be16611c300439a45c1c62d0a1c48abb5263a3f58fe11ef",
+  "compile_command": "build/bootstrap/stage3 -target arm64-darwin -o /tmp/fern-etl-main882-final examples/fip/etl.fern internal/stdlib",
+  "identical_binary_revision": "97a6004e5a228d0dc7cafe2f6b669fea9b6e0c00",
+  "identical_binary_compiler_sha256": "ade47ba7ec7d9480bc1ee0d4f02706fbc8355dc35e1d1241205541ec6e9522df"
+}

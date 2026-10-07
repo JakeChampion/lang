@@ -4738,7 +4738,7 @@ function builtin_sigs(): string[] {
     "f32_from_bits(i32): f32",
     "f64_bits(f64): i64",
     "f64_from_bits(i64): f64",
-    "getcwd(): string",
+    "getcwd(): Result[string, IoError]",
     "getegid(): u32",
     "geteuid(): u32",
     "getgid(): u32",

@@ -1981,6 +1981,8 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"callee-undefined", "function main(): i32 { return foo(1); }\n", []string{"E001"}},
 		{"callee-user-fn-ok", "function g(): i32 { return 1; }\nfunction main(): i32 { return g(); }\n", nil},
 		{"callee-builtin-ok", "function main(): i32 { print(\"hi\"); return 0; }\n", nil},
+		{"getcwd-is-not-a-string", "function main(): i32 { let s: string = getcwd(); return 0; }\n", []string{"E003"}},
+		{"getcwd-is-a-result", "function main(): i32 { let r: Result[string, IoError] = getcwd(); return 0; }\n", nil},
 		{"callee-variant-ctor-ok", "function f(): Option[i32] { return Some(1); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"callee-closure-ok", "function main(): i32 { let f = (x: i32): i32 => { return x; }; return f(7); }\n", nil},
 		{"value-builtin-as-value-ok", "function main(): i32 { let w = write; return 0; }\n", nil},
@@ -3141,6 +3143,10 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"result-conversion-literal-overflow", `function f(): Result[u8, string] { return Ok(300); }`},
 		{"result-conversion-option-narrow", `function f(n: i64): Option[i32] { return Some(n); }`},
 		{"result-conversion-existing-result", `function f(n: Result[i64, string]): Result[i32, string] { return n; }`},
+		// getcwd() answers a Result, not a string the empty one of which
+		// meant failure (#9067).
+		{"getcwd-is-not-a-string", `function f(): i32 { let s: string = getcwd(); return s.len(); }`},
+		{"getcwd-matches-as-a-result", `function f(): i32 { match (getcwd()) { Ok(p) => { return p.len(); }, Err(e) => { return 0; } } }`},
 		{"qualified-constructor-shadowing", qualifiedConstructorShadowingSource},
 		{"qualified-constructor-function-value-mismatch", `enum A { Value(i32) } enum B { Value(string) } function Value(n: i32): B { return B.Value("value"); } function f(): B { let call = Value; return call("wrong"); }`},
 		{"partial-result-foreign-constructor-widening", `enum Other[T] { Ok(T), No } function f(n: i32): Result[i64, string] { return Other.Ok(n); } function main(): i32 { return 0; }`},

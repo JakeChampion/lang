@@ -3475,7 +3475,7 @@ function main(): i32 {
 	{name: "os-floor-queries", atLeast: 2, want: "255|", nativeOnly: true, src: `
 function queries(): i32 {
     let n: i32 = 0;
-    if (getcwd().len() > 0) { n = n + 1; }
+    match (getcwd()) { Ok(wd) => { if (wd.len() > 0) { n = n + 1; } }, Err(e) => {} }
     if (hostname().len() > 0) { n = n + 2; }
     if (cpu_count() > 0) { n = n + 4; }
     if ((geteuid() as i64) >= 0) { n = n + 8; }
@@ -3889,8 +3889,7 @@ function leaves(dir: string, p: string): i32 {
 }
 function each(dir: string): i32 {
     let n: i32 = 0;
-    let cwd: string = getcwd();
-    if (cwd.len() > 0) { n = n + 1; }
+    match (getcwd()) { Ok(cwd) => { if (cwd.len() > 0) { n = n + 1; } }, Err(_) => {} }
     let host: string = hostname();
     if (host.len() > 0) { n = n + 1; }
     let sys: string = uname_field(0);
@@ -5774,7 +5773,7 @@ function main(): i32 {
     let n: i32 = 0;
     match (env("FERN_SEM_PROBE")) { Some(v) => { n = n + v.len(); }, None => { n = n + 100; } }
     if (environ().len() > 0) { n = n + 1; }
-    if (getcwd().len() > 0) { n = n + 1; }
+    match (getcwd()) { Ok(wd) => { if (wd.len() > 0) { n = n + 1; } }, Err(e) => {} }
     if (hostname().len() > 0) { n = n + 1; }
     if (uname_field(0).len() > 0) { n = n + 1; }
     if (rlimit_nofile() > 0) { n = n + 1; }

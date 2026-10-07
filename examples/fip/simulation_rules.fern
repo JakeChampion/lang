@@ -1,0 +1,64 @@
+// Integer rules shared by all representations in the simulation experiment.
+pub fip function wrap(value: i32): i32 {
+  return value & 4095;
+}
+
+pub fip function delta(to: i32, from: i32): i32 {
+  return (to - from + 2048 & 4095) - 2048;
+}
+
+pub fip function steer(distance: i32, kind: i32): i32 {
+  if (distance < 0) {
+    return -1 - kind;
+  }
+  if (distance > 0) {
+    return 1 + kind;
+  }
+  return 0;
+}
+
+pub fip function target(previous: i32, index: i32, tick: i32, count: i32): i32 {
+  if ((index + tick) % 17 == 0) {
+    return -1;
+  }
+  if ((index + tick) % 11 == 0) {
+    return (index + tick) % count;
+  }
+  return previous;
+}
+
+pub fip function health(previous: i32, mode: i32, neighbors: i32, kind: i32): i32 {
+  if (mode == 2) {
+    let next: i32 = previous + 3;
+    if (next > 100) {
+      return 100;
+    }
+    return next;
+  }
+  let damage: i32 = neighbors;
+  if (damage > 4) {
+    damage = 4;
+  }
+  let next: i32 = previous - damage + kind;
+  if (next < 0) {
+    return 0;
+  }
+  if (next > 100) {
+    return 100;
+  }
+  return next;
+}
+
+pub fip function mode(previous: i32, health: i32, target: i32): i32 {
+  if (health < 25 || previous == 2 && health < 75) {
+    return 2;
+  }
+  if (target >= 0) {
+    return 1;
+  }
+  return 0;
+}
+
+pub fip function mix(hash: i64, value: i32): i64 {
+  return (hash * 65599i64 + value as i64) % 1000000007i64;
+}

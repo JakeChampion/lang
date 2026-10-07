@@ -142,38 +142,66 @@ func TestPwdHelpVersion(t *testing.T) {
 	requireVersion(t, "pwd", []string{"--version", "x"}, 0)
 }
 
-// The one path the corpus above cannot reach: getcwd(2) refusing to
-// answer. An unlinked working directory is the way to make it, and
-// exec cannot deliver it — a child whose working directory has already
-// been removed never starts — so the removal happens in the child, just
-// before it execs the utility.
-//
-// What both implementations do then is walk up from `.` reading `..`,
-// and here that walk finds no entry for the directory that is gone. The
-// diagnostic is the whole assertion: it says the walk ran, got one level
-// up, and stopped where it should.
-func TestPwdUnlinkedWorkingDirectory(t *testing.T) {
+// runInUnlinkedDir runs bin as `util args...` from a working directory
+// that has been removed, which is how getcwd(2) is made to refuse. exec
+// cannot deliver one — a child whose working directory has already been
+// removed never starts — so the removal happens in the child, just before
+// it execs the utility. `exec -a` keeps argv[0] the bare name on both
+// sides, which is what every diagnostic is prefixed with.
+func runInUnlinkedDir(t *testing.T, bin, util string, args ...string) (string, string, int) {
+	t.Helper()
 	shell, err := exec.LookPath("bash")
 	if err != nil {
 		t.Skipf("bash is what sets argv[0] for this case (exec -a): %v", err)
 	}
-	run := func(bin string) (string, string, int) {
-		t.Helper()
-		dir := filepath.Join(t.TempDir(), "gone")
-		if err := os.Mkdir(dir, 0o755); err != nil {
-			t.Fatalf("mkdir: %v", err)
-		}
-		// `exec -a pwd` keeps argv[0] the bare name on both sides,
-		// which is what every diagnostic here is prefixed with.
-		cmd := exec.Command(shell, "-c", `cd "$1" && rmdir "$1" && exec -a pwd "$2"`, "_", dir, bin)
-		cmd.Env = baseEnv()
-		var out, errb bytes.Buffer
-		cmd.Stdout, cmd.Stderr = &out, &errb
-		_ = cmd.Run()
-		return out.String(), errb.String(), cmd.ProcessState.ExitCode()
+	dir := filepath.Join(t.TempDir(), "gone")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
 	}
-	wantOut, wantErr, wantExit := run(referenceBin(t, "pwd"))
-	gotOut, gotErr, gotExit := run(fernBin(t, "pwd"))
+	argv := append([]string{"-c", `cd "$1" && rmdir "$1" && exec -a "$2" "$3" "${@:4}"`, "_", dir, util, bin}, args...)
+	cmd := exec.Command(shell, argv...)
+	cmd.Env = baseEnv()
+	var out, errb bytes.Buffer
+	cmd.Stdout, cmd.Stderr = &out, &errb
+	_ = cmd.Run()
+	return out.String(), errb.String(), cmd.ProcessState.ExitCode()
+}
+
+// unlinkedCase is one invocation from a removed working directory, and
+// what the reference's stderr has to say there: proof the case reached
+// the refusal it is about rather than matching an earlier failure.
+type unlinkedCase struct {
+	args   []string
+	refErr string
+}
+
+// requireUnlinkedParity runs util with each case under both
+// implementations from a removed working directory, and requires the same
+// stdout, stderr and exit status.
+func requireUnlinkedParity(t *testing.T, util string, cases []unlinkedCase) {
+	t.Helper()
+	ref, fern := referenceBin(t, util), fernBin(t, util)
+	for _, c := range cases {
+		wantOut, wantErr, wantExit := runInUnlinkedDir(t, ref, util, c.args...)
+		gotOut, gotErr, gotExit := runInUnlinkedDir(t, fern, util, c.args...)
+		if !strings.Contains(wantErr, c.refErr) {
+			t.Errorf("%s %q: the reference's stderr %q does not say %q", util, c.args, wantErr, c.refErr)
+		}
+		if gotOut != wantOut || gotErr != wantErr || gotExit != wantExit {
+			t.Errorf("%s %q from an unlinked working directory:\n fern: out=%q err=%q exit=%d\n  gnu: out=%q err=%q exit=%d",
+				util, c.args, gotOut, gotErr, gotExit, wantOut, wantErr, wantExit)
+		}
+	}
+}
+
+// The one path the corpus above cannot reach: getcwd(2) refusing to
+// answer. What both implementations do then is walk up from `.` reading
+// `..`, and here that walk finds no entry for the directory that is gone.
+// The diagnostic is the whole assertion: it says the walk ran, got one
+// level up, and stopped where it should.
+func TestPwdUnlinkedWorkingDirectory(t *testing.T) {
+	wantOut, wantErr, wantExit := runInUnlinkedDir(t, referenceBin(t, "pwd"), "pwd")
+	gotOut, gotErr, gotExit := runInUnlinkedDir(t, fernBin(t, "pwd"), "pwd")
 	if !strings.Contains(wantErr, "matching i-node") {
 		t.Fatalf("the reference did not reach its walk-up path; stderr was %q", wantErr)
 	}

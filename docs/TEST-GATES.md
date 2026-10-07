@@ -1656,17 +1656,13 @@ answer, these are the tools, in the order they are usually reached for:
   to two functions in one file; `printf "%d %d", $esi, $edx` at the same
   breakpoint gives each crossing's oldLen / stride if you want the distribution
   rather than the total.
-- **`fern -append-report FILE.fern`** — the STATIC complement to the two
-  counters above, and the one to reach for first when the question is "which
-  appends in this program copy". It prints one line per `.append` site — the
+- **`fern -append-report FILE.fern`** — one line per `.append` site (the
   function, source position, receiver, in-place-vs-copy, and the rule that
-  decided — by running the real lowering and reporting what `emitArrayPush`
-  chose, so it cannot disagree with the emitted code. No `-g`, no gdb, no run.
-  Different population from the counters, not a cheaper reading of the same
-  one: this names the sites that copy on EVERY execution because the compiler
-  forced it, which is what a code change can remove; a copy bought by a stray
-  upstream retain at run time is invisible here and is exactly what
-  `__arr_push_shared_count()` is for.
+  decided) from the retained Go IR's `emitArrayPush`. That is not the
+  compiler that builds the program, so it can disagree with the emitted code:
+  it calls `p = f(p, …); p = P { ...p, xs: p.xs.append(v) }` copying, and the
+  primary compiler grows it in place (#11251). For what a build actually
+  does, use the two counters above.
 
 - **`FERN_LEAKCHECK=1`** — alloc/free counts and live bytes at exit. The other
   direction: what the rc detector cannot see. Under `-sanitize` the same

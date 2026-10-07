@@ -28,9 +28,7 @@ import (
 // The move is proved by resolving a RELATIVE path, not by reading getcwd()
 // back. That asks the KERNEL where the process is rather than asking a second
 // builtin to agree, so a `chdir` that reported success without moving fails
-// here. (It also keeps this test off #9131, where getcwd answers stack garbage
-// on arm64-darwin because 296 is vm_pressure_monitor rather than __getcwd.)
-// "/" is the one directory whose contents are known on every target this runs
+// here. "/" is the one directory whose contents are known on every target this runs
 // on, and the harness starts the program somewhere else.
 const chdirSource = `
 // Naming every variant forces chdir's Err payload to BE the IoError enum.
