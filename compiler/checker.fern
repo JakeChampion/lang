@@ -8363,8 +8363,15 @@ function build_func_scope(fd: parser.FuncDecl, st: SigTable, structs: StructTabl
   // struct's own parameters have to come from its declaration instead.
   // Without them `T.default()` in a `@derive(cmp.Default) struct Pair[T]`
   // body read `T` as a value and drew an undefined-name E001 (#8461).
+  // A generic enum's derived methods are spelled the same way, and their
+  // parameters come from the enum's declaration (#11776).
   if (fd.receiver_type.len() > 0) {
-    for rtv in s.lookup_struct(util.base_type_name(fd.receiver_type)).type_params {
+    let rbase: string = util.base_type_name(fd.receiver_type);
+    let rtvs: string[] = s.lookup_struct(rbase).type_params;
+    if (rtvs.len() == 0) {
+      rtvs = s.lookup_union(rbase).type_params;
+    }
+    for rtv in rtvs {
       if (util.index_of_str(tps, rtv) < 0) {
         tps = tps.append(rtv);
       }
@@ -8508,7 +8515,9 @@ function check_func_body(fd: parser.FuncDecl, s: Scope): boolean {
   // and already skip opaque-generic param types when flagging E038 / E003 —
   // so genuine errors are unaffected; only the uncoded over-reject signal is
   // suppressed for generic bodies. Non-generic bodies keep the strict check.
-  let generic: boolean = func_scope_tparams(fd).len() > 0 || fd.all_type_params.len() > 0;
+  // `s.tparams` also holds the parameters a derived method's bare receiver
+  // takes from its type's declaration (build_func_scope).
+  let generic: boolean = s.tparams.len() > 0 || fd.all_type_params.len() > 0;
   // A generic-RECEIVER method (`function (o: Option[T]) unwrap_or(f: T): T`)
   // binds its type parameters through the receiver spelling, which
   // func_scope_tparams reads. A receiver spelling it does not read is still
