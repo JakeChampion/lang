@@ -16156,8 +16156,9 @@ function ms_stmt(st: ast.Stmt, env: MEnv, gstructs: StructDecl[], funcs: MFns, i
       return RStmtOne { rstmt: ast.StmtExpr { value: xv.rexpr, line: 0 }, renv: env, rins2: xv.rins };
     },
     ast.StmtAssign(a) => {
-      let av: RExpr = ms_expr(a.value, env, gstructs, funcs, ins);
-      return RStmtOne { rstmt: ast.StmtAssign { target: a.target, value: av.rexpr, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }, renv: env, rins2: av.rins };
+      let dest: string = env.elook(a.target);
+      let av: RExpr = ms_expr_to(a.value, dest, env, gstructs, funcs, ins);
+      return RStmtOne { rstmt: ast.StmtAssign { target: a.target, value: retype_assoc_ctor(av.rexpr, dest, gstructs, funcs), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }, renv: env, rins2: av.rins };
     },
     ast.StmtIf(f) => {
       let cv: RExpr = ms_expr(f.cond, env, gstructs, funcs, ins);

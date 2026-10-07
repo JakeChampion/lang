@@ -49,6 +49,22 @@ function main(): i32 {
     print(p.swap().first);
     return 0;
 }`, "u\nu\n"},
+	// A spread update assigned back to the receiver: the receiver's
+	// instantiation reaches the literal through the assignment, the shape
+	// std/pvec's with builds.
+	{"spread-assigned-to-receiver",
+		`struct Box[T] { n: i32, items: T[] }
+function (b: Box[T]) renum(k: i32): Box[T] {
+    b = Box { ...b, n: k };
+    return b;
+}
+function main(): i32 {
+    let b: Box[string] = Box { n: 1, items: ["x"] };
+    b = b.renum(5);
+    print(b.items[0]);
+    if (b.n != 5) { return 1; }
+    return 0;
+}`, "x\n"},
 	// Control: a literal of the receiver's own instantiation nested where no
 	// destination reaches it, the shape core/iter's ArrayIter.next builds.
 	{"same-instantiation-in-tuple",
