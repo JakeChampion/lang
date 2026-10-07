@@ -1,6 +1,6 @@
 // std/crypto — message digests (MD5, SHA-1, SHA-224/256, SHA-384/512,
 // BLAKE2b, SM3, SHA-3), the SHAKE128/256 extendable-output functions,
-// HMAC-SHA256 (RFC 2104), PBKDF2, HKDF and HOTP/TOTP.
+// HMAC-SHA256 and HMAC-SHA384 (RFC 2104), PBKDF2, HKDF and HOTP/TOTP.
 //
 // Pure-Fern, no dependencies — suited to the fast-startup / no-deps
 // posture. All arithmetic is on `u32` / `u64` (wrapping add, logical
@@ -3445,76 +3445,70 @@ pub function blake2b_hex(s: string, out_len: i32): string {
 
 // <<< generated
 
-// __sha256_core hashes a byte array and returns the 32-byte digest — the
-// form HMAC's block arithmetic wants.
-function __sha256_core(msg: u8[]): u8[] {
+// === HMAC (RFC 2104) over SHA-256 and SHA-384 ===
+//
+// The private helpers name the digest by its output length, `hlen`: 32 is
+// SHA-256 with its 64-byte block, 48 is SHA-384 with its 128-byte block.
+
+function __mac_digest(hlen: i32, msg: [u8]): u8[] {
+  if (hlen == 48) {
+    return sha384_new().update_bytes(msg).final_bytes();
+  }
   return sha256_new().update_bytes(msg).final_bytes();
 }
 
-// size: keys longer than 64 bytes are hashed first, then all keys are
-// zero-padded to 64 bytes.
-function __block_key(key: u8[]): u8[] {
-  let k: u8[] = key;
-  if (key.len() > 64) {
-    k = __sha256_core(key);
+function __mac_block(hlen: i32): i32 {
+  if (hlen == 48) {
+    return 128;
   }
-  // Zero the block explicitly (key padding) — __alloc_u8 isn't guaranteed
-  // zeroed on the AOT backends.
-  let out: u8[] = __alloc_u8(64);
-  let z: i32 = 0;
-  while (z < 64) {
-    out = out.with(z, 0 as u8);
-    z = z + 1;
-  }
-  let i: i32 = 0;
-  while (i < k.len()) {
-    out = out.with(i, k[i]);
-    i = i + 1;
-  }
-  return out;
+  return 64;
 }
 
-// __hmac_core computes HMAC-SHA256(key, msg) and returns the 32-byte
-// digest. inner = H((k0 ^ ipad) || msg); out = H((k0 ^ opad) || inner).
-function __hmac_core(key: u8[], msg: u8[]): u8[] {
-  let k0: u8[] = __block_key(key);
-  // Inner block: (k0 ^ 0x36) followed by the message.
-  let inner: u8[] = __alloc_u8(64 + msg.len());
+// __block_key is the key as one zero-padded block, hashed first when it is
+// longer than a block.
+function __block_key(hlen: i32, key: [u8]): u8[] {
+  let bs: i32 = __mac_block(hlen);
+  if (key.len() > bs) {
+    return __copy_in(__zero_u8(bs), 0, __mac_digest(hlen, key), 0, hlen);
+  }
+  return __copy_in(__zero_u8(bs), 0, key, 0, key.len());
+}
+
+// __hmac is H((k0 ^ opad) || H((k0 ^ ipad) || msg)).
+function __hmac(hlen: i32, key: [u8], msg: [u8]): u8[] {
+  let bs: i32 = __mac_block(hlen);
+  let k0: u8[] = __block_key(hlen, key);
+  let inner: u8[] = __alloc_u8(bs + msg.len());
+  let outer: u8[] = __alloc_u8(bs + hlen);
   let i: i32 = 0;
-  while (i < 64) {
+  while (i < bs) {
     inner = inner.with(i, (k0[i] as i32 ^ 0x36) as u8);
-    i = i + 1;
-  }
-  let j: i32 = 0;
-  while (j < msg.len()) {
-    inner = inner.with(64 + j, msg[j]);
-    j = j + 1;
-  }
-  let inner_hash: u8[] = __sha256_core(inner);
-  // Outer block: (k0 ^ 0x5c) followed by the inner hash (32 bytes).
-  let outer: u8[] = __alloc_u8(64 + 32);
-  i = 0;
-  while (i < 64) {
     outer = outer.with(i, (k0[i] as i32 ^ 0x5c) as u8);
     i = i + 1;
   }
-  j = 0;
-  while (j < 32) {
-    outer = outer.with(64 + j, inner_hash[j]);
-    j = j + 1;
-  }
-  return __sha256_core(outer);
+  inner = __copy_in(inner, bs, msg, 0, msg.len());
+  outer = __copy_in(outer, bs, __mac_digest(hlen, inner), 0, hlen);
+  return __mac_digest(hlen, outer);
+}
+
+// hmac_sha256 / hmac_sha384 — the 32- and 48-byte HMAC of a byte message.
+pub function hmac_sha256(key: [u8], msg: [u8]): u8[] {
+  return __hmac(32, key, msg);
+}
+
+pub function hmac_sha384(key: [u8], msg: [u8]): u8[] {
+  return __hmac(48, key, msg);
 }
 
 // hmac_sha256_bytes returns the raw 32-byte HMAC-SHA256 digest.
 pub function hmac_sha256_bytes(key: u8[], msg: string): u8[] {
-  return __hmac_core(key, __str_to_bytes(msg));
+  return __hmac(32, key, __str_to_bytes(msg));
 }
 
 // hmac_sha256_hex returns the HMAC-SHA256 digest as a 64-character
 // lowercase hex string.
 pub function hmac_sha256_hex(key: u8[], msg: string): string {
-  return __bytes_to_hex(__hmac_core(key, __str_to_bytes(msg)));
+  return __bytes_to_hex(__hmac(32, key, __str_to_bytes(msg)));
 }
 
 // consteq compares two byte arrays in CONSTANT TIME with respect to their
@@ -3585,11 +3579,11 @@ function __pbkdf2_core(pw: u8[], salt: u8[], iterations: i32, dk_len: i32): u8[]
     msg = msg.with(salt.len() + 1, (block_index >> 16 & 255) as u8);
     msg = msg.with(salt.len() + 2, (block_index >> 8 & 255) as u8);
     msg = msg.with(salt.len() + 3, (block_index & 255) as u8);
-    let u: u8[] = __hmac_core(pw, msg);
+    let u: u8[] = __hmac(32, pw, msg);
     let t: u8[] = u;  // T = U1
     let c: i32 = 1;
     while (c < iterations) {
-      u = __hmac_core(pw, u);
+      u = __hmac(32, pw, u);
       let nt: u8[] = __alloc_u8(hLen);
       let x: i32 = 0;
       while (x < hLen) {
@@ -3642,7 +3636,7 @@ pub function pbkdf2_verify_hex(password: string, salt: u8[], iterations: i32, ex
   return consteq(__str_to_bytes(pbkdf2_sha256_hex(password, salt, iterations, expected_hex.len() / 2)), __str_to_bytes(expected_hex));
 }
 
-// === HKDF-SHA256 (RFC 5869) ===
+// === HKDF-SHA256 and HKDF-SHA384 (RFC 5869) ===
 //
 // The HMAC-based key-derivation function: turn input keying material
 // (IKM) into one or more cryptographically strong subkeys. Two steps —
@@ -3651,71 +3645,77 @@ pub function pbkdf2_verify_hex(password: string, salt: u8[], iterations: i32, ex
 // bound to an application-specific `info` label. Unlike PBKDF2 (which
 // stretches a low-entropy PASSWORD with many iterations), HKDF assumes
 // already-high-entropy IKM (a shared secret, a random key) and is fast.
-// Built on the same HMAC-SHA256 core; verified against the RFC 5869
+// Built on the same HMAC core; verified against the RFC 5869
 // known-answer vectors.
 
-// hkdf_extract(salt, ikm) — the 32-byte PRK. PRK = HMAC(salt, IKM); an
-// empty salt is replaced by hLen (32) zero bytes, per RFC 5869 §2.2.
-pub function hkdf_extract(salt: u8[], ikm: u8[]): u8[] {
-  let s: u8[] = salt;
+// PRK = HMAC(salt, IKM); an empty salt is replaced by hlen zero bytes, per
+// RFC 5869 §2.2.
+function __hkdf_extract(hlen: i32, salt: [u8], ikm: [u8]): u8[] {
   if (salt.len() == 0) {
-    s = __alloc_u8(32);
-    let i: i32 = 0;
-    while (i < 32) {
-      s = s.with(i, 0 as u8);
-      i = i + 1;
-    }
+    return __hmac(hlen, __zero_u8(hlen), ikm);
   }
-  return __hmac_core(s, ikm);
+  return __hmac(hlen, salt, ikm);
 }
 
-// hkdf_expand(prk, info, length) — `length` output bytes from a PRK.
 // OKM = T(1) || T(2) || … truncated to `length`, where
 // T(i) = HMAC(PRK, T(i-1) || info || byte(i)) and T(0) is empty
-// (RFC 5869 §2.3). `length` must be ≤ 255*32 (the counter is one byte).
-pub function hkdf_expand(prk: u8[], info: u8[], length: i32): u8[] {
-  let hLen: i32 = 32;
+// (RFC 5869 §2.3). `length` must be ≤ 255*hlen (the counter is one byte).
+function __hkdf_expand(hlen: i32, prk: [u8], info: [u8], length: i32): u8[] {
   let okm: u8[] = __alloc_u8(length);
   let t: u8[] = [];  // T(0)
   let offset: i32 = 0;
   let i: i32 = 1;
   while (offset < length) {
     let msg: u8[] = __alloc_u8(t.len() + info.len() + 1);
-    let p: i32 = 0;
-    let k: i32 = 0;
-    while (k < t.len()) {
-      msg = msg.with(p, t[k]);
-      p = p + 1;
-      k = k + 1;
+    msg = __copy_in(msg, 0, t, 0, t.len());
+    msg = __copy_in(msg, t.len(), info, 0, info.len());
+    msg = msg.with(t.len() + info.len(), (i & 255) as u8);
+    t = __hmac(hlen, prk, msg);
+    let n: i32 = hlen;
+    if (length - offset < n) {
+      n = length - offset;
     }
-    k = 0;
-    while (k < info.len()) {
-      msg = msg.with(p, info[k]);
-      p = p + 1;
-      k = k + 1;
-    }
-    msg = msg.with(p, (i & 255) as u8);
-    t = __hmac_core(prk, msg);
-    let c: i32 = 0;
-    while (c < hLen && offset + c < length) {
-      okm = okm.with(offset + c, t[c]);
-      c = c + 1;
-    }
-    offset = offset + hLen;
+    okm = __copy_in(okm, offset, t, 0, n);
+    offset = offset + hlen;
     i = i + 1;
   }
   return okm;
 }
 
+// hkdf_extract(salt, ikm) — the 32-byte HKDF-SHA256 PRK.
+pub function hkdf_extract(salt: [u8], ikm: [u8]): u8[] {
+  return __hkdf_extract(32, salt, ikm);
+}
+
+// hkdf_expand(prk, info, length) — `length` HKDF-SHA256 output bytes from
+// a PRK, at most 255*32.
+pub function hkdf_expand(prk: [u8], info: [u8], length: i32): u8[] {
+  return __hkdf_expand(32, prk, info, length);
+}
+
 // hkdf_sha256(salt, ikm, info, length) — the one-shot extract-then-
 // expand: derive `length` bytes of keying material from `ikm`.
-pub function hkdf_sha256(salt: u8[], ikm: u8[], info: u8[], length: i32): u8[] {
+pub function hkdf_sha256(salt: [u8], ikm: [u8], info: [u8], length: i32): u8[] {
   return hkdf_expand(hkdf_extract(salt, ikm), info, length);
 }
 
 // hkdf_sha256_hex — the one-shot HKDF as a lowercase hex string.
-pub function hkdf_sha256_hex(salt: u8[], ikm: u8[], info: u8[], length: i32): string {
+pub function hkdf_sha256_hex(salt: [u8], ikm: [u8], info: [u8], length: i32): string {
   return __bytes_to_hex(hkdf_expand(hkdf_extract(salt, ikm), info, length));
+}
+
+// hkdf_sha384_extract / hkdf_sha384_expand / hkdf_sha384 — the same over
+// SHA-384: a 48-byte PRK, and at most 255*48 output bytes.
+pub function hkdf_sha384_extract(salt: [u8], ikm: [u8]): u8[] {
+  return __hkdf_extract(48, salt, ikm);
+}
+
+pub function hkdf_sha384_expand(prk: [u8], info: [u8], length: i32): u8[] {
+  return __hkdf_expand(48, prk, info, length);
+}
+
+pub function hkdf_sha384(salt: [u8], ikm: [u8], info: [u8], length: i32): u8[] {
+  return __hkdf_expand(48, __hkdf_extract(48, salt, ikm), info, length);
 }
 
 // === HOTP / TOTP (RFC 4226 / RFC 6238), HMAC-SHA256 ===
@@ -3739,7 +3739,7 @@ pub function hotp_sha256(key: u8[], counter: i64, digits: i32): i32 {
     msg = msg.with(i, (counter >> shift & 255 as i64) as u8);
     i = i + 1;
   }
-  let hs: u8[] = __hmac_core(key, msg);
+  let hs: u8[] = __hmac(32, key, msg);
   let offset: i32 = hs[hs.len() - 1] as i32 & 15;
   // 31-bit dynamic-truncation value (top bit masked → stays non-negative).
   let bin: i32 = (hs[offset] as i32 & 127) << 24
