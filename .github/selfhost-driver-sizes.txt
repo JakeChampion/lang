@@ -489,7 +489,7 @@
 # (docs/NET-P0-MESSAGE-LAYER-PLAN.md §6.2, slice 10). Measured with the
 # self-built compiler compiling its own source, the stage2 method.
 
-fern.fern/stage2 11404832
+fern.fern/stage2 11166752
 fern.fern 10903144
 drivers/asm_load_run.fern 8920280
 drivers/asm_modload_run.fern 7551872
