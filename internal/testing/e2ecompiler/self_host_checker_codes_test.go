@@ -969,6 +969,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// The negative for that position: an object-safe trait in the same local
 		// slot stays clean, so the new site is not just "any dyn local errors".
 		{"dyn-safe-local", "trait T { function m(self: Self, other: i32): i32; }\nstruct S { v: i32 }\nimpl T for S { function m(self: Self, other: i32): i32 { return self.v + other; } }\nfunction main(): i32 { let d: dyn T = S { v: 3 }; return 0; }\n", nil},
+		// An array suffix is not the associated-type pin list (#11848).
+		{"dyn-assoc-pinned-array-element", "trait Holder { type Item; function get(self: Self): Self::Item; }\nstruct B { v: i32 }\nimpl Holder for B { type Item = i32; function get(self: Self): Self::Item { return self.v; } }\nfunction f(hs: dyn Holder[Item = i32][]): dyn Holder[Item = i32][] { return hs; }\nfunction main(): i32 { let hs: dyn Holder[Item = i32][] = [B { v: 4 }]; return f(hs).len(); }\n", nil},
+		{"dyn-assoc-unpinned-array-element", "trait Holder { type Item; function get(self: Self): Self::Item; }\nstruct B { v: i32 }\nimpl Holder for B { type Item = i32; function get(self: Self): Self::Item { return self.v; } }\nfunction main(): i32 { let hs: dyn Holder[] = [B { v: 4 }]; return 0; }\n", []string{"E021"}},
 		// The position native deliberately does NOT flag. It is here so widening
 		// the scan cannot quietly widen it past parity: a `dyn T` STRUCT FIELD
 		// draws nothing from either checker, object-unsafe trait or not.

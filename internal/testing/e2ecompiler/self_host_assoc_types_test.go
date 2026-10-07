@@ -137,6 +137,40 @@ function take(h: dyn Holder[Item = i32]): i32 { return 0; }
 function main(): i32 { return 0; }`,
 	},
 	{
+		// The pin survives an array suffix: `[]` is not the pin list (#11848).
+		name: "a pinned dyn array element is object-safe",
+		src: `trait Holder {
+    type Item;
+    function get(self: Self): Self::Item;
+}
+struct IntBox { v: i32 }
+impl Holder for IntBox {
+    type Item = i32;
+    function get(self: Self): Self::Item { return self.v; }
+}
+function take(hs: dyn Holder[Item = i32][]): dyn Holder[Item = i32][] { return hs; }
+function main(): i32 {
+    let hs: dyn Holder[Item = i32][] = [IntBox { v: 4 }];
+    return take(hs).len();
+}`,
+	},
+	{
+		name: "an unpinned dyn array element is not object-safe",
+		src: `trait Holder {
+    type Item;
+    function get(self: Self): Self::Item;
+}
+struct IntBox { v: i32 }
+impl Holder for IntBox {
+    type Item = i32;
+    function get(self: Self): Self::Item { return self.v; }
+}
+function main(): i32 {
+    let hs: dyn Holder[] = [IntBox { v: 4 }];
+    return 0;
+}`,
+	},
+	{
 		// A PARAMETRIC impl binding the associated type to its OWN type
 		// parameter. Every case above binds a concrete type on a non-generic
 		// impl, which is how this shape shipped broken in both compilers.
