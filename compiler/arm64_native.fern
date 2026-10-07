@@ -1487,9 +1487,10 @@ function arm64_ldr(buf: i32[], rt: i32, rn: i32, off: i32, w: boolean): i32[] {
   return arm64_le32(buf, arm64_ldr_word(rt, rn, off));
 }
 
-// Scalar SIMD&FP load/store, D and S registers (`single` clears bit 30,
-// turning the size-11 D encoding into the size-10 S one and halving the
-// offset scale). Two encoding shapes:
+// SIMD&FP load/store of an S, D or Q register; `size` is the access's
+// log2 (2, 3, 4). S clears bit 30 of the size-11 D encoding and halves the
+// offset scale; Q is size 00 with opc 1x (0x3D8/0x3DC00000 scaled,
+// 0x3C8/0x3CC00000 imm9) and scales by 16. Two encoding shapes:
 //
 //   scaled unsigned imm12 : ldr 0xFD400000 / str 0xFD000000, imm12 =
 //     off/8 (off/4 for S) — the f64 constant-load form. Verified vs
@@ -1502,26 +1503,39 @@ function arm64_ldr(buf: i32[], rt: i32, rn: i32, off: i32, w: boolean): i32[] {
 //     dropped the writeback (#6060). Verified vs clang:
 //     str d8,[sp,#-16]! = 0xfc1f0fe8, ldr d8,[sp],#16 = 0xfc4107e8,
 //     stur d0,[x12,#-8] = 0xfc1f8180.
-function arm64_ldst_fp_scaled(buf: i32[], load: boolean, rt: i32, rn: i32, off: i32, single: boolean): i32[] {
+function arm64_ldst_fp_scaled(buf: i32[], load: boolean, rt: i32, rn: i32, off: i32, size: i32): i32[] {
   let base: i64 = 0xfd000000;
   if (load) {
     base = 0xfd400000;
   }
   let scale: i32 = 8;
-  if (single) {
+  if (size == 2) {
     base = base & 0xbfffffff;
     scale = 4;
+  }
+  if (size == 4) {
+    base = 0x3d800000;
+    if (load) {
+      base = 0x3dc00000;
+    }
+    scale = 16;
   }
   return arm64_le32(buf, base | (off / scale & 0xfff) as i64 << 10 | (rn & 31) as i64 << 5 | (rt & 31) as i64);
 }
 
-function arm64_ldst_fp_imm9(buf: i32[], load: boolean, rt: i32, rn: i32, off: i32, idx: i32, single: boolean): i32[] {
+function arm64_ldst_fp_imm9(buf: i32[], load: boolean, rt: i32, rn: i32, off: i32, idx: i32, size: i32): i32[] {
   let base: i64 = 0xfc000000;
   if (load) {
     base = 0xfc400000;
   }
-  if (single) {
+  if (size == 2) {
     base = base & 0xbfffffff;
+  }
+  if (size == 4) {
+    base = 0x3c800000;
+    if (load) {
+      base = 0x3cc00000;
+    }
   }
   return arm64_le32(buf, base | (idx & 0xc00) as i64 | (off & 0x1ff) as i64 << 12 | (rn & 31) as i64 << 5 | (rt & 31) as i64);
 }
@@ -1615,11 +1629,11 @@ function arm64_ldr_lit(buf: i32[], rt: i32, imm19: i32): i32[] {
   return arm64_le32(buf, arm64_ldr_lit_word(rt, imm19));
 }
 
-// ---- pair load/store (the prologue/epilogue idiom, and W/D pairs) ----
+// ---- pair load/store (the prologue/epilogue idiom, and W/D/Q pairs) ----
 //
 // stp/ldp for X (class base 0xA8000000, offset scale 8), W (0x28000000,
-// scale 4) and D (0x6C000000, scale 8) register pairs in all three
-// addressing modes. The caller folds the load bit (0x00400000) and the
+// scale 4), D (0x6C000000, scale 8) and Q (0xAC000000, scale 16) register
+// pairs in all three addressing modes. The caller folds the load bit (0x00400000) and the
 // addressing mode (post=1, offset=2, pre=3 at bits 24:23) into `base`;
 // `off` is the byte offset, which callers must range-check to a signed
 // multiple of `scale` reaching the imm7 field (the mask here would
@@ -4022,8 +4036,9 @@ function arm64_gas_bad_reg_piece(s: string, lo: i32, hi: i32): string {
 }
 
 // arm64_gas_bad_ldst_reg returns a load/store's or pair's data register
-// that arm64_gas_reg does not decode, such as a q register: its -1 would
-// otherwise encode as register 31 in the integer form.
+// that does not decode, or a q register outside ldr/str/ldur/stur/ldp/stp,
+// the only forms that encode one: a -1 would otherwise encode as register
+// 31 in the integer form.
 function arm64_gas_bad_ldst_reg(mnem: string, ops: string[]): string {
   let n: i32 = 0;
   if (mnem == "ldp" || mnem == "stp" || mnem == "ldpsw") {
@@ -4033,14 +4048,72 @@ function arm64_gas_bad_ldst_reg(mnem: string, ops: string[]): string {
     || mnem == "ldrsb" || mnem == "ldrsh" || mnem == "ldrsw") {
     n = 1;
   }
+  let qok: boolean = mnem == "ldr" || mnem == "str" || mnem == "ldur" || mnem == "stur" || mnem == "ldp" || mnem == "stp";
   let i: i32 = 0;
-  while (i < n && i < ops.len()) {
-    if (arm64_gas_reg(ops[i]) < 0) {
+  while (i < ops.len()) {
+    let q: boolean = arm64_gas_is_qreg(ops[i]);
+    if (q && (i >= n || !qok || arm64_gas_qreg(ops[i]) < 0)) {
+      return arm64_gas_trim(ops[i]);
+    }
+    if (i < n && !q && arm64_gas_reg(ops[i]) < 0) {
       return arm64_gas_trim(ops[i]);
     }
     i = i + 1;
   }
   return "";
+}
+
+// arm64_gas_is_qreg reports a token shaped like a 128-bit q register.
+function arm64_gas_is_qreg(tok: string): boolean {
+  let n: i32 = tok.len();
+  let i: i32 = arm64_gas_trim_lo(tok, 0, n);
+  return i + 1 < n && tok[i] == b'q' && tok[i + 1] >= b'0' && tok[i + 1] <= b'9';
+}
+
+// arm64_gas_qreg decodes q0..q31, or -1.
+function arm64_gas_qreg(tok: string): i32 {
+  if (!arm64_gas_is_qreg(tok)) {
+    return 0 - 1;
+  }
+  let i: i32 = arm64_gas_trim_lo(tok, 0, tok.len());
+  let j: i32 = arm64_gas_trim_hi(tok, i, tok.len());
+  let n: i32 = 0;
+  let k: i32 = i + 1;
+  while (k < j) {
+    let c: i32 = tok[k] as i32;
+    if (c < 48 || c > 57) {
+      return 0 - 1;
+    }
+    n = n * 10 + (c - 48);
+    k = k + 1;
+  }
+  if (n > 31) {
+    return 0 - 1;
+  }
+  return n;
+}
+
+// arm64_gas_fp_ldst_size is the log2 access size of an FP load/store's
+// data register: 2 for s, 3 for d, 4 for q, and 0 for anything else.
+function arm64_gas_fp_ldst_size(tok: string): i32 {
+  if (arm64_gas_is_qreg(tok)) {
+    return 4;
+  }
+  if (arm64_gas_is_d(tok)) {
+    return 3;
+  }
+  if (arm64_gas_is_sreg(tok)) {
+    return 2;
+  }
+  return 0;
+}
+
+// arm64_gas_fp_regnum decodes a load/store data register of any file.
+function arm64_gas_fp_regnum(tok: string): i32 {
+  if (arm64_gas_is_qreg(tok)) {
+    return arm64_gas_qreg(tok);
+  }
+  return arm64_gas_reg(tok);
 }
 
 // arm64_gas_reg_shaped_bad reports a trimmed piece that is shaped like a
@@ -7038,7 +7111,7 @@ function arm64_gas_bad_ldst_off(mnem: string, ops: string[], lm: Arm64Mem): stri
   if (arm64_gas_has_bang(ops[1])) {  // pre-index is its own imm9
     return "";
   }
-  if (arm64_gas_is_d(ops[0]) || arm64_gas_is_sreg(ops[0])) {  // FP scales differ
+  if (arm64_gas_fp_ldst_size(ops[0]) > 0) {  // FP scales differ
     return "";
   }
   let m: Arm64Mem = arm64_gas_mem_at(ops, 1, lm);
@@ -7428,9 +7501,15 @@ function arm64_gas_bad_pair(mnem: string, ops: string[], lm: Arm64Mem): string {
   if (arm64_gas_is_d(ops[0]) != arm64_gas_is_d(ops[1])) {
     return "width";
   }
+  if (arm64_gas_is_qreg(ops[0]) != arm64_gas_is_qreg(ops[1])) {
+    return "width";
+  }
   let scale: i32 = 8;
   if (arm64_gas_is_w(ops[0])) {
     scale = 4;
+  }
+  if (arm64_gas_is_qreg(ops[0])) {
+    scale = 16;
   }
   let off: i32 = arm64_gas_mem_at(ops, 2, lm).off;
   if (ops.len() == 4) {
@@ -7457,7 +7536,7 @@ function arm64_gas_bad_regext(mnem: string, ops: string[], lm: Arm64Mem): string
   if (m.off_reg < 0) {
     return "";
   }
-  if (arm64_gas_is_d(ops[0]) || arm64_gas_is_sreg(ops[0])) {
+  if (arm64_gas_fp_ldst_size(ops[0]) > 0) {
     return "regoff";
   }
   if (m.ext_opt < 0) {
@@ -7846,6 +7925,10 @@ function arm64_gas_emit_pair(own a: Arm64Asm, mnem: string, ops: string[], lm: A
   if (arm64_gas_is_d(ops[0])) {
     base = 0x6c000000;
   }
+  if (arm64_gas_is_qreg(ops[0])) {
+    base = 0xac000000;
+    scale = 16;
+  }
   if (mnem == "ldp") {
     base = base | 0x00400000;
   }
@@ -7858,7 +7941,7 @@ function arm64_gas_emit_pair(own a: Arm64Asm, mnem: string, ops: string[], lm: A
     mode = 0x800000;  // post-index (1 << 23)
     off = arm64_gas_imm(ops[3]);
   }
-  arm64_push_arr(a.code, arm64_pair([], base | mode, arm64_gas_reg(ops[0]), arm64_gas_reg(ops[1]), m.base, off, scale));
+  arm64_push_arr(a.code, arm64_pair([], base | mode, arm64_gas_fp_regnum(ops[0]), arm64_gas_fp_regnum(ops[1]), m.base, off, scale));
   return a;
 }
 
@@ -7872,29 +7955,26 @@ function arm64_gas_emit_ldst_regext(own a: Arm64Asm, load: boolean, size: i32, r
   return a;
 }
 
-// Scalar D/S ldr/str in all four addressing modes; a negative or
+// D/S/Q ldr/str in all four addressing modes; a negative or
 // unaligned scaled offset falls back to the unscaled imm9 form exactly as
 // GNU as rewrites it.
-function arm64_gas_emit_ldst_fp(own a: Arm64Asm, load: boolean, rt: i32, ops: string[], single: boolean, lm: Arm64Mem): Arm64Asm {
+function arm64_gas_emit_ldst_fp(own a: Arm64Asm, load: boolean, rt: i32, ops: string[], size: i32, lm: Arm64Mem): Arm64Asm {
   if (ops.len() >= 3) {  // post-index `[Xn], #imm9`
     let pm: Arm64Mem = arm64_gas_mem_at(ops, 1, lm);
-    arm64_push_arr(a.code, arm64_ldst_fp_imm9([], load, rt, pm.base, arm64_gas_imm(ops[2]), 0x400, single));
+    arm64_push_arr(a.code, arm64_ldst_fp_imm9([], load, rt, pm.base, arm64_gas_imm(ops[2]), 0x400, size));
     return a;
   }
   let m: Arm64Mem = arm64_gas_mem_at(ops, 1, lm);
   if (arm64_gas_has_bang(ops[1])) {  // pre-index `[Xn, #imm9]!`
-    arm64_push_arr(a.code, arm64_ldst_fp_imm9([], load, rt, m.base, m.off, 0xc00, single));
+    arm64_push_arr(a.code, arm64_ldst_fp_imm9([], load, rt, m.base, m.off, 0xc00, size));
     return a;
   }
-  let align: i32 = 7;
-  if (single) {
-    align = 3;
-  }
+  let align: i32 = arm64_gas_pow2(size) - 1;
   if (m.off < 0 || (m.off & align) != 0) {
-    arm64_push_arr(a.code, arm64_ldst_fp_imm9([], load, rt, m.base, m.off, 0, single));
+    arm64_push_arr(a.code, arm64_ldst_fp_imm9([], load, rt, m.base, m.off, 0, size));
     return a;
   }
-  arm64_push_arr(a.code, arm64_ldst_fp_scaled([], load, rt, m.base, m.off, single));
+  arm64_push_arr(a.code, arm64_ldst_fp_scaled([], load, rt, m.base, m.off, size));
   return a;
 }
 
@@ -8335,9 +8415,10 @@ function arm64_gas_emit_addsub(own a: Arm64Asm, mnem: string, ops: string[]): Ar
 // every addressing mode.
 function arm64_gas_emit_ldst(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64Mem): Arm64Asm {
   let rt: i32 = arm64_gas_reg(ops[0]);
-  // SIMD&FP `ldr/str Dt|St, <mem>` — a separate opcode space (V=1).
-  if (arm64_gas_is_d(ops[0]) || arm64_gas_is_sreg(ops[0])) {
-    return arm64_gas_emit_ldst_fp(a, mnem == "ldr", rt, ops, arm64_gas_is_sreg(ops[0]), lm);
+  // SIMD&FP `ldr/str Qt|Dt|St, <mem>` — a separate opcode space (V=1).
+  let fpsz: i32 = arm64_gas_fp_ldst_size(ops[0]);
+  if (fpsz > 0) {
+    return arm64_gas_emit_ldst_fp(a, mnem == "ldr", arm64_gas_fp_regnum(ops[0]), ops, fpsz, lm);
   }
   if (ops.len() >= 3) {
     // post-index: `ldr Xt, [Xn], #off` (ops[1]="[Xn]", ops[2]="#off")
@@ -8465,8 +8546,9 @@ function arm64_gas_emit_unscaled(own a: Arm64Asm, mnem: string, ops: string[], l
   // The explicit ldur/stur spelling used to fall straight through to the
   // GP encoder, so `stur d1, [x2, #-16]` assembled as the integer STUR of
   // x1 — the right shape, the wrong register file, silently (#6075).
-  if (arm64_gas_is_d(ops[0]) || arm64_gas_is_sreg(ops[0])) {
-    arm64_push_arr(a.code, arm64_ldst_fp_imm9([], mnem == "ldur", arm64_gas_reg(ops[0]), um.base, um.off, 0, arm64_gas_is_sreg(ops[0])));
+  let ufp: i32 = arm64_gas_fp_ldst_size(ops[0]);
+  if (ufp > 0) {
+    arm64_push_arr(a.code, arm64_ldst_fp_imm9([], mnem == "ldur", arm64_gas_fp_regnum(ops[0]), um.base, um.off, 0, ufp));
     return a;
   }
   if (mnem == "ldur") {
