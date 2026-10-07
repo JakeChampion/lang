@@ -10,7 +10,7 @@ import "testing"
 const enumRebindHead = `enum Sc { SA(i32), SB }
 enum Rc { RA(i32[]), RB }
 function k_of(r: i32): i32 { return r % 7; }
-function (e: Sc) val(): i32 { match (e) { SA(v) => { return v; }, SB => { return 100; } } }
+@noinline function (e: Sc) val(): i32 { match (e) { SA(v) => { return v; }, SB => { return 100; } } }
 function rval(e: Rc): i32 { match (e) { RA(v) => { return v[0]; }, RB => { return 100; } } }
 @noinline function hb_sc_param(e: Sc): Sc { return e; }
 @noinline function hb_rc_param(e: Rc): Rc { return e; }
