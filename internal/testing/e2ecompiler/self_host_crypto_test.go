@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
@@ -16,7 +17,7 @@ func TestSelfHostCryptoSuitesWasm(t *testing.T) {
 	wasmtime := e2eharness.Wasmtime(t)
 	cli := buildSelfHostCLI(t)
 	interp := buildLangBinForInterp(t)
-	for _, suite := range []string{"chacha20poly1305", "x25519"} {
+	for _, suite := range []string{"chacha20poly1305", "x25519", "rsa"} {
 		t.Run(suite, func(t *testing.T) {
 			src := langSrcAbs(t, "tests/stdlib/"+suite+"_test.fern")
 			want, err := exec.Command(interp, "-interp", src).Output()
@@ -66,4 +67,31 @@ function main(): i32 {
 	if got, want := string(out), "684cf59ba83309552800ef566f2f4d3c1c3887c49360e3875f2eb94d99532c51\n"; got != want {
 		t.Errorf("1,000 iterations gave %q, want %q", got, want)
 	}
+}
+
+// The std/crypto/p256 suite, compiled on all three targets. Its verifications
+// run on core/bigint and take the interpreter tens of seconds, so it is not a
+// stdtest differential case; each target must pass every case instead.
+func TestSelfHostP256Suite(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	src := langSrcAbs(t, "tests/stdlib/p256_test.fern")
+	check := func(t *testing.T, out []byte, err error) {
+		t.Helper()
+		if err != nil || !strings.Contains(string(out), "# pass 4\n# fail 0\n") {
+			t.Fatalf("p256 suite: %v\n%s", err, out)
+		}
+	}
+	t.Run("x86-64", func(t *testing.T) {
+		out, err := runX86_64Bin(cli.runner, cli.x86Binary(t, src, "FERN_STRICT_IR=1")).Output()
+		check(t, out, err)
+	})
+	t.Run("arm64", func(t *testing.T) {
+		_, qemu := arm64Tooling(t)
+		out, err := runArm64Bin(qemu, cli.arm64Binary(t, src, "FERN_STRICT_IR=1")).Output()
+		check(t, out, err)
+	})
+	t.Run("wasm", func(t *testing.T) {
+		out, err := exec.Command(e2eharness.Wasmtime(t), "run", cli.wasmComponent(t, src, "FERN_STRICT_IR=1")).Output()
+		check(t, out, err)
+	})
 }
