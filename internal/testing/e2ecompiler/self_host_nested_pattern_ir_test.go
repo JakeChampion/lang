@@ -18,9 +18,9 @@ import (
 // whichever path the driver picks (the IR path bails on Option/Result
 // scrutinees, which is expected and still correct).
 //
-// Scope matches the self-host's single-payload variant model: nesting at
-// the one payload slot (`Some(Ok(n))`), including deep nesting, flat
-// siblings, guards, and the outer-`_` fallthrough.
+// These cases nest at a single payload slot (`Some(Ok(n))`), including deep
+// nesting, flat siblings, guards, and the outer-`_` fallthrough; multi-payload
+// nesting is in internal/testing/e2e/nested_pattern_test.go.
 var selfHostNestedPatternCases = []struct {
 	name string
 	main string
