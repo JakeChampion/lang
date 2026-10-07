@@ -4,6 +4,8 @@ What is left of #9853's byte-based message layer and its exit criterion B
 (zero allocations per request in the framing path for the hello handler),
 planned from a measurement of what the path allocates today. It also records
 what #8635, the two-word `[u8]`, still owes P0, which turns out to be nothing.
+§6 takes the serve loop's own per-request allocations to zero as well, the
+count half of exit criterion A, reached at §6.2's slice 11.
 
 ## 1. What the framing path allocates today
 
@@ -346,7 +348,7 @@ per request there.)
 | 1 | `__fern_reactor_wait` built its kernel-facing events scratch, 792 bytes for 64 `epoll_event`s and a header, and freed it per wait (slice 6) |
 | 1 | `__serve_read`'s `(conns, eof)` tuple |
 | 1 | the read's one copy of what it took (`__bytes_range`) (slice 9) |
-| 3 | the parse: the `Framed` box the loop keeps whole (§5.3's slice 7), and two in `__request_head` until slice 10: its head record, and the `Length(n)` framing the record carried. A server calls two parse entry points, so `__request_head` had two callers and stayed a function, where the framing probe's one caller has it spliced and read apart |
+| 3 | the parse: the `Framed` box the loop kept whole until slice 11 (§5.3's slice 7), and two in `__request_head` until slice 10: its head record, and the `Length(n)` framing the record carried. A server calls two parse entry points, so `__request_head` had two callers and stayed a function, where the framing probe's one caller has it spliced and read apart |
 | 3 | `__serve_start`: the `Task`, its closure and `run_task`'s `Done`, for a handler that never parks (slice 5) |
 | 1 | `__serve_wire`'s `__Wire` record: the tail and whether the connection persists, which follows from the tail (slice 6) |
 | 3 | `__serve_send_out`'s, `__serve_produce`'s and `__serve_ready`'s `(conns, sent)` and `(conns, more)` tuples: each has several callers, so it is not spliced, and each caller takes the tuple apart at once (slice 6, and slice 8 for the two that may suspend) |
@@ -468,4 +470,29 @@ is preferred where it covers a case, since every program gains.
    compiler grows 4.6% (`.github/selfhost-driver-sizes.txt`, a copy of
    each body spliced into a second caller) and makes 0.6% fewer
    allocations compiling itself, in the same wall time.
+11. **The loop carries the parse's framing apart.** Done: 1 to 0, exit
+   criterion A's count half. The loop kept the `HttpFraming` whole, as the
+   `tail` its tuples, `__serve_start` and a flight carried, so the parse
+   stayed unpaired and built the `Framed` box its every caller then took
+   apart. `std/serve` now takes the framing apart at the parse
+   (`__serve_behind`): what is behind the request as a `__Behind`
+   (`Pipelined`, `Idle`, `Expecting`, `Illformed(status)`) and the framed
+   request beside it, carried in the loop's locals and in `__serve_took`'s
+   tuple, with a request the loop already holds standing in where there is
+   none, since a fresh `http_framed_none()` is three boxes. Two compiler
+   changes made that enough. A leaf may take a variant apart
+   (`seminline.leaf_word`): a function under the leaf budget that reads a
+   variant parameter's position and payload and builds a tuple or variant
+   of words is spliced into every caller, as a scalar leaf is, so
+   `__serve_behind`'s match sits at each parse call and the parse returns
+   in two words. And a dying box is carried to the construction that can
+   take it (`ssarc.carried_pairs`): the carry across blocks used to stop at
+   the first block that built anything, so the `Illformed(status)` box on
+   the malformed arm, which the connection table cannot serve, left the
+   table's rebuild after the join to allocate (176 bytes per request); the
+   route is now by slot count, past constructions of other counts, which
+   pair with nothing while the donor is held. `TestSelfHostReuseCarry`
+   pins the shape. Nothing is left on the hello path; what the loop costs
+   for a body, a pipelined burst, a parked handler or a short write is
+   §7's.
 

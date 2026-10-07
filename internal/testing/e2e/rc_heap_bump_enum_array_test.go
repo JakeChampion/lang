@@ -30,7 +30,7 @@ import (
 
 func enumArrBumpSrc(n string) string {
 	return `enum Box { Val(string), Empty }
-function ids(s: string): string { return s; }
+@noinline function ids(s: string): string { return s; }
 function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);
     let i: i32 = 0;
@@ -48,7 +48,7 @@ function main(): i32 {
 // Concrete Box[] — reads both heap-string payloads back: 20 + 17 == 37, ×200
 // == 7400.
 const enumArrCheckBox = `enum Box { Val(string), Empty }
-function ids(s: string): string { return s; }
+@noinline function ids(s: string): string { return s; }
 function main(): i32 {
     let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) {
@@ -64,7 +64,7 @@ function main(): i32 {
 
 // Generic Option[string][] — exercises the substituted-decl registration:
 // 18 + 6 == 24, ×200 == 4800.
-const enumArrCheckOption = `function ids(s: string): string { return s; }
+const enumArrCheckOption = `@noinline function ids(s: string): string { return s; }
 function main(): i32 {
     let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) {
@@ -81,7 +81,7 @@ function main(): i32 {
 // Nested Box[][] — exercises the recursive __drop_arr_of_ wrapper:
 // 5 + 4 + 5 == 14, ×200 == 2800.
 const enumArrCheckNested = `enum Box { Val(string), Empty }
-function ids(s: string): string { return s; }
+@noinline function ids(s: string): string { return s; }
 function main(): i32 {
     let i: i32 = 0; let acc: i32 = 0;
     while (i < 200) {

@@ -13,7 +13,11 @@ import "testing"
 // parameter into a tuple, and kept_span is the same body under @noinline,
 // paired the same way. pick reads the fields of a record a phi
 // chooses, which is not a parameter, so it is no leaf; pick_rounds is its only
-// caller, so it is spliced there all the same and its tuple read apart.
+// caller, so it is spliced there all the same and its tuple read apart. kind
+// takes a variant apart into a tuple, which a leaf may do: spliced into
+// kind_rounds, the match reads probe's Got off its two-word return (probe
+// keeps its body under @noinline), and the rounds allocate nothing; with
+// the pass off, every Hit is a box and every tuple another.
 const semInlineProgram = `struct Range { lo: i32, hi: i32 }
 function span(r: Range): (i32, i32) { return (r.lo, r.hi - r.lo); }
 @noinline function kept_span(r: Range): (i32, i32) { return (r.lo, r.hi - r.lo); }
@@ -26,6 +30,15 @@ function divmod(a: i32, b: i32): (i32, i32) { return (a / b, a % b); }
 function scan(n: i32): (boolean, i32) {
     if (n > 50) { return (true, n - 50); }
     return (false, n);
+}
+enum Got { Hit(i32), Miss }
+function kind(g: Got, fallback: i32): (boolean, i32) {
+    match (g) { Hit(n) => { return (true, n); }, Miss => { return (false, fallback); } }
+    return (false, fallback);
+}
+@noinline function probe(i: i32): Got {
+    if (i % 3 == 0) { return Hit(i); }
+    return Miss;
 }
 function clamp(v: i32, lo: i32, hi: i32): i32 {
     if (v < lo) { return lo; }
@@ -52,6 +65,13 @@ function clamp(v: i32, lo: i32, hi: i32): i32 {
     let t: i32 = 0;
     let i: i32 = 0;
     while (i < 100) { t = t + clamp(i, 10, 20); i = i + 1; }
+    return t * 1000 + ((__heap_alloc_count() - before) as i32);
+}
+@noinline function kind_rounds(): i32 {
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) { let (hit, n) = kind(probe(i), 5); if (hit) { t = t + n; } else { t = t + n * 2; } i = i + 1; }
     return t * 1000 + ((__heap_alloc_count() - before) as i32);
 }
 @noinline function kept_rounds(): i32 {
@@ -92,6 +112,7 @@ function main(): i32 {
     print_int(scan_rounds()); print("");
     print_int(clamp_rounds()); print("");
     print_int(kept_rounds()); print("");
+    print_int(kind_rounds()); print("");
     let r: Range = Range { lo: 3, hi: 10 };
     print_int(span_rounds(r)); print("");
     print_int(kept_span_rounds(r)); print("");
@@ -100,7 +121,7 @@ function main(): i32 {
 }
 `
 
-var semInlineProduced = []string{"divmod", "scan", "clamp", "kept", "divmod_rounds", "scan_rounds", "clamp_rounds", "kept_rounds",
+var semInlineProduced = []string{"divmod", "scan", "clamp", "kept", "divmod_rounds", "scan_rounds", "clamp_rounds", "kept_rounds", "kind", "probe", "kind_rounds",
 	"span", "kept_span", "span_rounds", "kept_span_rounds", "pick", "pick_rounds"}
 
 func semInlineWants(want string) map[string]string {
@@ -109,7 +130,7 @@ func semInlineWants(want string) map[string]string {
 
 func TestSelfHostSemanticInline(t *testing.T) {
 	runSemanticProgram(t, "seminline", semInlineProgram, semInlineProduced,
-		semInlineWants("1950000\n1225000\n1845000\n1950000\n5950000\n5950000\n900000\n"), "kept", "kept_span")
+		semInlineWants("1950000\n1225000\n1845000\n1950000\n2343000\n5950000\n5950000\n900000\n"), "kept", "kept_span", "probe")
 }
 
 // FERN_SEM_INLINE= turns off both splicing and pair returns, so every tuple
@@ -117,5 +138,5 @@ func TestSelfHostSemanticInline(t *testing.T) {
 func TestSelfHostSemanticInlineOff(t *testing.T) {
 	t.Setenv("FERN_SEM_INLINE", "")
 	runSemanticProgram(t, "seminline-off", semInlineProgram, semInlineProduced,
-		semInlineWants("1950100\n1225100\n1845000\n1950100\n5950100\n5950100\n900100\n"))
+		semInlineWants("1950100\n1225100\n1845000\n1950100\n2343134\n5950100\n5950100\n900100\n"))
 }

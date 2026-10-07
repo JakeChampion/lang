@@ -1554,23 +1554,26 @@ function claimed_after(c: Claims, slots: i32, pos: i32): boolean {
 
 // Donors handed to a construction in a later block. The donor dying at
 // `drop_at` in block `from` is held there instead of dropped, and becomes the
-// token of the first construction in block `to`, at `build_at`, as a value
-// dying at a construction does. The blocks on the way build nothing and are
-// entered only from `from` or each other, as `to` is, so the donor reaches the
-// construction at most once per drop; an edge that leaves the way for a block
-// that cannot reach `to` (`exit_from` to `exit_to`, for carry `exit_of`) drops
-// the donor there.
+// token of the first construction claiming its slot count in block `to`, at
+// `build_at`, as a value dying at a construction does. The blocks on the way
+// claim that count nowhere and are entered only from `from` or each other, as
+// `to` is, so the donor reaches the construction at most once per drop. The
+// held donor stays in its own local until `build_at` writes the token slot,
+// so a pairing on the way, whose token is written and spent within its block,
+// is unaffected. An edge that leaves the way for a block that cannot reach
+// `to` (`exit_from` to `exit_to`, for carry `exit_of`) drops the donor there.
 struct Carry { from: i32[], drop_at: i32[], donor: i32[], to: i32[], build_at: i32[], exit_of: i32[], exit_from: i32[], exit_to: i32[] }
 
 function no_carry(): Carry {
   return Carry { from: [], drop_at: [], donor: [], to: [], build_at: [], exit_of: [], exit_from: [], exit_to: [] };
 }
 
-function first_claim(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock): i32 {
+// The first construction in `b` claiming `slots`, or -1.
+function first_claim_of(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock, slots: i32): i32 {
   let pos: i32 = 0;
   while (pos < b.insts.len()) {
     let ins: ssa.SInst = b.insts[pos];
-    if (ins.kind_tag != 6 && ins.kind_tag != 8 && recipient_slots(f, p, ins) >= 0) {
+    if (ins.kind_tag != 6 && ins.kind_tag != 8 && recipient_slots(f, p, ins) == slots) {
       return pos;
     }
     pos = pos + 1;
@@ -1590,26 +1593,32 @@ function last_claim(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock): i32 {
   return 0 - 1;
 }
 
-// Where a box dropped in `from` can be carried: the first block that builds,
-// on some path out of `from`, whose way from `from` is entered from nowhere
-// else; the blocks on that way, which build nothing; and the edges that leave
-// them, and `from`, for a block that cannot reach it, where the box goes back.
-struct Route { target: i32, exit_from: i32[], exit_to: i32[] }
+// Where a box of `slots` dropped in `from` can be carried: the first block
+// claiming that count, on some path out of `from`, whose way from `from` is
+// entered from nowhere else; the blocks on that way, which claim it nowhere;
+// and the edges that leave them, and `from`, for a block that cannot reach
+// it, where the box goes back.
+struct Route { target: i32, way: i32[], exit_from: i32[], exit_to: i32[] }
 
 function no_route(): Route {
-  return Route { target: 0 - 1, exit_from: [], exit_to: [] };
+  return Route { target: 0 - 1, way: [], exit_from: [], exit_to: [] };
 }
 
 // The per-function facts every route search reads: each block's position by
-// id and whether it builds.
-struct RouteGraph { at: i32[], builds: boolean[] }
+// id and the slot counts its constructions claim.
+struct RouteGraph { at: i32[], claims: i32[][] }
 
 function route_graph(f: ssasem.Func, p: ssaunits.Plan): RouteGraph {
-  let builds: boolean[] = [];
+  let claims: i32[][] = [];
   for b in f.graph.blocks {
-    builds = builds.append(first_claim(f, p, b) >= 0);
+    claims = claims.append(block_claims(f, p, b).counts);
   }
-  return RouteGraph { at: ssa.block_positions(f.graph), builds: builds };
+  return RouteGraph { at: ssa.block_positions(f.graph), claims: claims };
+}
+
+// Whether the block at position `k` builds something claiming `slots`.
+function claims_slots(g: RouteGraph, k: i32, slots: i32): boolean {
+  return util.index_of_i32(g.claims[k], slots) >= 0;
 }
 
 // What the route searches of one function mark, by block position: `seen` the
@@ -1630,7 +1639,7 @@ function route_marks(n: i32): RouteMarks {
   return RouteMarks { seen: seen, way: way, stamp: 0 };
 }
 
-function carry_route(f: ssasem.Func, g: RouteGraph, from: ssa.SBlock, own m: RouteMarks): Searched {
+function carry_route(f: ssasem.Func, g: RouteGraph, from: ssa.SBlock, own m: RouteMarks, slots: i32): Searched {
   let ahead: i32 = m.stamp + 1;
   let seen: i32[] = m.seen;
   let way: i32[] = m.way;
@@ -1645,7 +1654,7 @@ function carry_route(f: ssasem.Func, g: RouteGraph, from: ssa.SBlock, own m: Rou
       continue;
     }
     seen = seen.with(k, ahead);
-    if (g.builds[k]) {
+    if (claims_slots(g, k, slots)) {
       builds = builds.append(id);
     } else {
       for s in successors(f.graph.blocks[k].term) {
@@ -1655,7 +1664,7 @@ function carry_route(f: ssasem.Func, g: RouteGraph, from: ssa.SBlock, own m: Rou
   }
   m = RouteMarks { seen: seen, way: way, stamp: ahead };
   for target in builds {
-    let found: Searched = route_to(f, g, from, m, ahead, target);
+    let found: Searched = route_to(f, g, from, m, ahead, target, slots);
     if (found.route.target >= 0) {
       return found;
     }
@@ -1665,11 +1674,11 @@ function carry_route(f: ssasem.Func, g: RouteGraph, from: ssa.SBlock, own m: Rou
 }
 
 // `ahead` is the stamp of the `seen` marks of the search from `from`.
-function route_to(f: ssasem.Func, g: RouteGraph, from: ssa.SBlock, own m: RouteMarks, ahead: i32, target: i32): Searched {
+function route_to(f: ssasem.Func, g: RouteGraph, from: ssa.SBlock, own m: RouteMarks, ahead: i32, target: i32, slots: i32): Searched {
   // The walk takes the predecessors of the target and of each block on the
   // way, marked `way` at a fresh stamp. Each must be `from`, on the way, or a
-  // block ahead that builds nothing, which joins the way; any other enters the
-  // way from elsewhere.
+  // block ahead claiming nothing of the count, which joins the way; any other
+  // enters the way from elsewhere.
   let stamp: i32 = m.stamp + 1;
   let seen: i32[] = m.seen;
   let way: i32[] = m.way;
@@ -1683,7 +1692,7 @@ function route_to(f: ssasem.Func, g: RouteGraph, from: ssa.SBlock, own m: RouteM
     if (id == from.id || way[k] == stamp) {
       continue;
     }
-    if (seen[k] != ahead || g.builds[k]) {
+    if (seen[k] != ahead || claims_slots(g, k, slots)) {
       return Searched { route: no_route(), marks: RouteMarks { seen: seen, way: way, stamp: stamp } };
     }
     between = between.append(id);
@@ -1692,7 +1701,7 @@ function route_to(f: ssasem.Func, g: RouteGraph, from: ssa.SBlock, own m: RouteM
       work = work.append(pr);
     }
   }
-  let r: Route = Route { target: target, exit_from: [], exit_to: [] };
+  let r: Route = Route { target: target, way: between, exit_from: [], exit_to: [] };
   for id in between.append(from.id) {
     for s in successors(f.graph.blocks[g.at[id]].term) {
       if (s != target && way[g.at[s]] != stamp) {
@@ -1733,33 +1742,38 @@ function carried_pairs(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i3
   let marks: RouteMarks = route_marks(f.graph.blocks.len());
   for b in f.graph.blocks {
     let dying: Dying = dying_after_claims(p, idx, links, b, last_claim(f, p, b));
-    if (dying.values.len() == 0) {
-      continue;
-    }
-    let found: Searched = carry_route(f, g, b, marks);
-    marks = found.marks;
-    let route: Route = found.route;
-    let target: i32 = route.target;
-    if (target < 0) {
-      continue;
-    }
-    let to: ssa.SBlock = f.graph.blocks[g.at[target]];
-    let build: i32 = first_claim(f, p, to);
-    let slots: i32 = recipient_slots(f, p, to.insts[build]);
+    // One donor leaves a block: the frame has one token slot. The first
+    // dying value whose count some construction ahead claims goes, the
+    // counts without a route tried once each.
+    let tried: i32[] = [];
     let donor: i32 = 0 - 1;
     let drop_at: i32 = 0 - 1;
+    let route: Route = no_route();
+    let build: i32 = 0 - 1;
     let i: i32 = 0;
     while (donor < 0 && i < dying.values.len()) {
       let d: i32 = dying.values[i];
-      if (donor_slots(f, b, d) == slots && util.index_of_i32(to.insts[build].args, d) < 0) {
-        donor = d;
-        drop_at = dying.at[i];
+      let slots: i32 = donor_slots(f, b, d);
+      if (slots >= 0 && util.index_of_i32(tried, slots) < 0) {
+        tried = tried.append(slots);
+        let found: Searched = carry_route(f, g, b, marks, slots);
+        marks = found.marks;
+        if (found.route.target >= 0) {
+          let to: ssa.SBlock = f.graph.blocks[g.at[found.route.target]];
+          let at_build: i32 = first_claim_of(f, p, to, slots);
+          if (util.index_of_i32(to.insts[at_build].args, d) < 0) {
+            donor = d;
+            drop_at = dying.at[i];
+            route = found.route;
+            build = at_build;
+          }
+        }
       }
       i = i + 1;
     }
     if (donor >= 0) {
       let k: i32 = c.to.len();
-      c = Carry { ...c, from: c.from.append(b.id), drop_at: c.drop_at.append(drop_at), donor: c.donor.append(donor), to: c.to.append(target), build_at: c.build_at.append(build) };
+      c = Carry { ...c, from: c.from.append(b.id), drop_at: c.drop_at.append(drop_at), donor: c.donor.append(donor), to: c.to.append(route.target), build_at: c.build_at.append(build) };
       let e: i32 = 0;
       while (e < route.exit_from.len()) {
         c = Carry { ...c, exit_of: c.exit_of.append(k), exit_from: c.exit_from.append(route.exit_from[e]), exit_to: c.exit_to.append(route.exit_to[e]) };

@@ -18,7 +18,7 @@ import (
 // `ids` hides a literal from the static-box plan, so each inner string[] is a
 // heap box.
 func arrOfStrBumpSrc(n string) string {
-	return `function ids(s: string): string { return s; }
+	return `@noinline function ids(s: string): string { return s; }
 function main(): i32 {
     let before: i32 = (__heap_bump_bytes() as i32);
     let i: i32 = 0;
@@ -33,7 +33,7 @@ function main(): i32 {
 }
 
 // Inner strings + buffers must reclaim AND not over-release.
-const arrOfStrUnderflowSrc = `function ids(s: string): string { return s; }
+const arrOfStrUnderflowSrc = `@noinline function ids(s: string): string { return s; }
 function main(): i32 {
     let i: i32 = 0;
     let acc: i32 = 0;
