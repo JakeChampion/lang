@@ -92,7 +92,6 @@ TestIdParity
 TestLinkParity
 TestLnParity
 TestLognameParity
-TestMkdir
 TestMknodParity
 TestMktempRetryExhaustion
 TestMvParity
