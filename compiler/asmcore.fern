@@ -10224,7 +10224,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     // xs.reverse() / xs.concat(ys) / a[start:end] (#3457): a LIBRARY module's
     // call resolves against the entry module's single definition, exactly
     // like the heap helpers above.
-    "__fn___fern_arr_slice",
+    "__fn___fern_arr_slice", "__fn___fern_arr_str_join",
     "__fn___fern_str_concat", "__fn___fern_str_eq",
     "__fn___fern_string_from_bytes", "__fn___fern_str_bytes",
     "__fn___fern_str_lines", "__fn___fern_str_split", "__fn___fern_str_repeat",

@@ -33,7 +33,7 @@ func strArrLit(n int) string {
 // (buffer + element strings) before the next allocates.
 func strArrDead4Src() string {
 	l := strArrLit(40)
-	return `function ids(s: string): string { return s; }
+	return `@noinline function ids(s: string): string { return s; }
 function main(): i32 {
     let a: string[] = ` + l + `; let sa: i32 = a[0].len();
     let b: string[] = ` + l + `; let sb: i32 = b[0].len();
@@ -45,7 +45,7 @@ function main(): i32 {
 
 func strArrLive4Src() string {
 	l := strArrLit(40)
-	return `function ids(s: string): string { return s; }
+	return `@noinline function ids(s: string): string { return s; }
 function main(): i32 {
     let a: string[] = ` + l + `;
     let b: string[] = ` + l + `;
@@ -58,7 +58,7 @@ function main(): i32 {
 // strArrAliasSrc: a string element aliased into `keep` and read AFTER the
 // array's precise drop, with a forced interleaved allocation (junk). The
 // per-element str_dec must only DEC the aliased string (keep survives).
-const strArrAliasSrc = `function ids(s: string): string { return s; }
+const strArrAliasSrc = `@noinline function ids(s: string): string { return s; }
 function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;

@@ -15,7 +15,6 @@
 // the construction is a constant there (`constructor_leaves`). A function
 // called from a few places that returns a box at every return is spliced
 // into the callers that read it apart (`shared_spliceable`).
-import "std/i32";
 import "./ssa";
 import "./util";
 import "./ssasem";
@@ -110,21 +109,21 @@ pub function inline_leaves(funcs0: ssasem.Func[], names: string[], modes: i32[][
 // leaves it, one line per instruction (value, kind, operands, immediate,
 // name) and one per terminator, on stderr: what the count planner is handed.
 function dump_func(f: ssasem.Func): void {
-  eprint("FUNC " + f.graph.name + " entry=" + f.graph.entry.to_string() + " nvals=" + f.graph.nvals.to_string());
+  eprint("FUNC " + f.graph.name + " entry=" + util.i32_to_string(f.graph.entry) + " nvals=" + util.i32_to_string(f.graph.nvals));
   for b in f.graph.blocks {
     let preds: string = "";
     for p in b.preds {
-      preds = preds + p.to_string() + ",";
+      preds = preds + util.i32_to_string(p) + ",";
     }
-    eprint("BLOCK " + b.id.to_string() + " preds=" + preds);
+    eprint("BLOCK " + util.i32_to_string(b.id) + " preds=" + preds);
     for ins in b.insts {
       let args: string = "";
       for a in ins.args {
-        args = args + a.to_string() + ",";
+        args = args + util.i32_to_string(a) + ",";
       }
-      eprint("  v" + ins.result.to_string() + " = k" + ins.kind_tag.to_string() + " [" + args + "] imm=" + ins.imm.to_string() + " " + ins.str);
+      eprint("  v" + util.i32_to_string(ins.result) + " = k" + util.i32_to_string(ins.kind_tag) + " [" + args + "] imm=" + util.i32_to_string(ins.imm) + " " + ins.str);
     }
-    eprint("  TERM k" + b.term.kind_tag.to_string() + " cond=" + b.term.cond.to_string() + " target=" + b.term.target.to_string() + " t=" + b.term.t.to_string() + " f=" + b.term.f.to_string() + " value=" + b.term.value.to_string());
+    eprint("  TERM k" + util.i32_to_string(b.term.kind_tag) + " cond=" + util.i32_to_string(b.term.cond) + " target=" + util.i32_to_string(b.term.target) + " t=" + util.i32_to_string(b.term.t) + " f=" + util.i32_to_string(b.term.f) + " value=" + util.i32_to_string(b.term.value));
   }
 }
 
