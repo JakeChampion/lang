@@ -5267,8 +5267,10 @@ pub function rt_src_statfs(t: string): string {
 //
 // Darwin asks getfsstat64 twice, once for the count and once to fill a buffer
 // with room for a few mounts more, and reads f_fstypename (72),
-// f_mntonname (88) and f_mntfromname (1112) out of each 2168-byte record. `dev`
-// is f_fsid's first word, widened the way stat's 32-bit st_dev is.
+// f_mntonname (88) and f_mntfromname (1112) out of each 2168-byte record.
+// f_fsid is not the st_dev a stat of the mount point reports (APFS's sealed
+// system snapshot at / differs), so `dev` stats f_mntonname, as gnulib's
+// getmntinfo path does, and is -1 when that stat fails.
 //
 // Linux reads /proc/self/mountinfo, whose size fstat reports as 0, so it reads
 // to end of file into a doubling buffer, then splits each line on blanks:
@@ -5282,7 +5284,7 @@ pub function rt_src_mounts(t: string): string {
   if (t == "arm64-darwin") {
     let cstr: string = "function __fern_mount_cstr(buf: usize, off: i32, max: i32): string { let n: i32 = 0; while (n < max && __raw_load8(buf, off + n) != 0) { n = n + 1; } let p: usize = __raw_alloc(n); __memcpy(p, __raw_addr(buf, off), n); return __raw_string(p, n); } ";
     let gf: string = sysno(t, "getfsstat");
-    return cstr + "function __fern_mounts(): Result[MountEntry[], IoError] { let n: i32 = __syscall3(" + gf + ", 0, 0, 2) as i32; if (n < 0) { return Err(__fern_io_error(0 - n, \"\")); } let size: i32 = (n + 8) * 2168; let buf: usize = __raw_alloc(size); let m: i32 = __syscall3(" + gf + ", buf as i64, size as i64, 2) as i32; let out: MountEntry[] = []; let k: i32 = 0; while (k < m) { let base: i32 = k * 2168; out = out.append(MountEntry { source: __fern_mount_cstr(buf, base + 1112, 1024), target: __fern_mount_cstr(buf, base + 88, 1024), fstype: __fern_mount_cstr(buf, base + 72, 16), dev: __load_i32(__raw_addr(buf, base + 48)) as i64 }); k = k + 1; } let buf_own: string = __raw_string(buf, size); if (m < 0) { return Err(__fern_io_error(0 - m, \"\")); } return Ok(out); }";
+    return cstr + "function __fern_mounts(): Result[MountEntry[], IoError] { let n: i32 = __syscall3(" + gf + ", 0, 0, 2) as i32; if (n < 0) { return Err(__fern_io_error(0 - n, \"\")); } let size: i32 = (n + 8) * 2168; let buf: usize = __raw_alloc(size); let m: i32 = __syscall3(" + gf + ", buf as i64, size as i64, 2) as i32; let st: usize = __raw_alloc(160); let out: MountEntry[] = []; let k: i32 = 0; while (k < m) { let base: i32 = k * 2168; let dev: i64 = (0 - 1) as i64; let sr: i32 = __syscall4(" + sysno(t, "fstatat") + ", " + at_fdcwd(t) + ", __raw_addr(buf, base + 88) as i64, st as i64, 0) as i32; if (sr >= 0) { dev = __load_i32(__raw_addr(st, " + statoff(t, "dev") + ")) as i64; } out = out.append(MountEntry { source: __fern_mount_cstr(buf, base + 1112, 1024), target: __fern_mount_cstr(buf, base + 88, 1024), fstype: __fern_mount_cstr(buf, base + 72, 16), dev: dev }); k = k + 1; } let st_own: string = __raw_string(st, 160); let buf_own: string = __raw_string(buf, size); if (m < 0) { return Err(__fern_io_error(0 - m, \"\")); } return Ok(out); }";
   }
   let blank: string = "(__raw_load8(buf, j) == 32 || __raw_load8(buf, j) == 9)";
   let octal: string = "function __fern_mount_octal(buf: usize, i: i32, b: i32): boolean { if (i + 3 >= b || __raw_load8(buf, i) != 92) { return false; } let k: i32 = 1; while (k < 4) { let c: i32 = __raw_load8(buf, i + k); if (c < 48 || c > 55) { return false; } k = k + 1; } return true; } ";

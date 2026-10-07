@@ -7,8 +7,8 @@ import "syscall"
 const mountTablePath = ""
 
 // mountRows on Darwin is getfsstat(2), which fills one `struct statfs` per
-// mount. `dev` is f_fsid's first word, which is the st_dev of every file on
-// that filesystem.
+// mount. f_fsid is not the st_dev a stat of the mount point reports, so `dev`
+// stats the mount point, and is -1 when that fails.
 func mountRows() ([]rawMount, error) {
 	const mntNowait = 2
 	n, err := syscall.Getfsstat(nil, mntNowait)
@@ -26,7 +26,7 @@ func mountRows() ([]rawMount, error) {
 			source: cString(st.Mntfromname[:]),
 			target: cString(st.Mntonname[:]),
 			fstype: cString(st.Fstypename[:]),
-			dev:    int64(st.Fsid.Val[0]),
+			dev:    mountPointDev(cString(st.Mntonname[:])),
 		})
 	}
 	return out, nil
@@ -41,4 +41,12 @@ func cString(b []int8) string {
 		out = append(out, byte(c))
 	}
 	return string(out)
+}
+
+func mountPointDev(target string) int64 {
+	var st syscall.Stat_t
+	if err := syscall.Stat(target, &st); err != nil {
+		return -1
+	}
+	return int64(st.Dev)
 }
