@@ -4021,6 +4021,28 @@ function arm64_gas_bad_reg_piece(s: string, lo: i32, hi: i32): string {
   return "";
 }
 
+// arm64_gas_bad_ldst_reg returns a load/store's or pair's data register
+// that arm64_gas_reg does not decode, such as a q register: its -1 would
+// otherwise encode as register 31 in the integer form.
+function arm64_gas_bad_ldst_reg(mnem: string, ops: string[]): string {
+  let n: i32 = 0;
+  if (mnem == "ldp" || mnem == "stp" || mnem == "ldpsw") {
+    n = 2;
+  } else if (mnem == "ldr" || mnem == "str" || mnem == "ldur" || mnem == "stur"
+    || mnem == "ldrb" || mnem == "strb" || mnem == "ldrh" || mnem == "strh"
+    || mnem == "ldrsb" || mnem == "ldrsh" || mnem == "ldrsw") {
+    n = 1;
+  }
+  let i: i32 = 0;
+  while (i < n && i < ops.len()) {
+    if (arm64_gas_reg(ops[i]) < 0) {
+      return arm64_gas_trim(ops[i]);
+    }
+    i = i + 1;
+  }
+  return "";
+}
+
 // arm64_gas_reg_shaped_bad reports a trimmed piece that is shaped like a
 // register — x/w/d/s then a digit — but fails the strict decode.
 function arm64_gas_reg_shaped_bad(t: string): boolean {
@@ -9870,6 +9892,10 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
     let badreg: string = arm64_gas_bad_reg_token(ops);
     if (badreg.len() > 0) {
       p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":" + badreg) };
+    }
+    let badldst: string = arm64_gas_bad_ldst_reg(mnem, ops);
+    if (badldst.len() > 0) {
+      p = Arm64GasProg { ...p, unknown: p.unknown.append(mnem + ":" + badldst) };
     }
     // Same discipline for the SIMD operands: a shape the encoders have no
     // form for is recorded, never folded into the register field, where a

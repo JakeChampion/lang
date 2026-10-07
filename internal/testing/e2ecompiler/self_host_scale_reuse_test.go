@@ -159,9 +159,9 @@ func TestSelfHostScaleReuseDecisions(t *testing.T) {
 			guard := strings.Contains(body, "cmpl $1, -8(")
 			copy := strings.Contains(body, "call __fn___fern_arr_slice")
 			boxes := strings.Count(body, "call __fern_arr_box")
-			inPlace := strings.Contains(body, "movq %rax, %rsi\n    movq %rcx, %xmm1\n    unpcklpd")
+			inPlace := strings.Contains(body, "movq %rax, %rsi\n    movq %rcx, %xmm1\n    vbroadcastsd")
 			if tc.reason == "guarded-reuse" {
-				if !guard || copy || boxes != 1 || !inPlace || strings.Count(body, "unpcklpd") != 2 {
+				if !guard || copy || boxes != 1 || !inPlace || strings.Count(body, "vbroadcastsd") != 2 {
 					t.Fatalf("missing guarded SIMD reuse, guard=%t copy=%t boxes=%d inPlace=%t\n%s", guard, copy, boxes, inPlace, body)
 				}
 			} else if boxes == 0 {

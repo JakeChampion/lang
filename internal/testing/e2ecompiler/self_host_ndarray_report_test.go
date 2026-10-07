@@ -105,7 +105,7 @@ func TestSelfHostNdarrayReportMatchesEmission(t *testing.T) {
 				t.Fatalf("wrong decision: %s", decision)
 			}
 			body := emittedBody(t, asm, "__fn_"+tc.name)
-			vector := strings.Contains(body, "unpcklpd")
+			vector := strings.Contains(body, "vbroadcastsd")
 			mapped := strings.Contains(body, "call __fn___smm_ndarray__NdArray_map__")
 			kernel := tc.reason == "scale-kernel"
 			if vector != kernel || mapped == kernel {
