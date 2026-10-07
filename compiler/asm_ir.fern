@@ -3783,10 +3783,10 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".Laie_ret:\n");
     s = s.write("    ret\n");
   }
-  // __fern_getpwuid_name(uid) -> 0: Linux keeps every account in the files
-  // the caller reads (#9815).
-  if (s.has_need("pwname")) {
-    s = s.write("__fn___fern_getpwuid_name:\n");
+  // __fern_account_entry(kind, key) -> 0: Linux keeps every account in the
+  // files the caller reads (#9815).
+  if (s.has_need("account")) {
+    s = s.write("__fn___fern_account_entry:\n");
     s = s.write("    xorl %eax, %eax\n");
     s = s.write("    ret\n");
   }
@@ -11360,8 +11360,8 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   if (name == "__fern_str_grow" || name == "__fern_str_grow_range") {
     s = s.need("str_grow");
   }
-  if (name == "__fern_getpwuid_name") {
-    s = s.need("pwname");
+  if (name == "__fern_account_entry") {
+    s = s.need("account");
   }
   if (name == "__fern_set_args") {
     s = s.need("set_args");

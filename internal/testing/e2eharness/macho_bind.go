@@ -7,7 +7,7 @@ import (
 
 // MachOBindsSymbol reports whether a Mach-O image's LC_DYLD_INFO_ONLY bind
 // stream names `sym` (BIND_OPCODE_SET_SYMBOL_TRAILING_FLAGS_IMM carries it
-// inline). The native and self-host getpwuid tests both read the stream
+// inline). The native and self-host account-entry tests both read the stream
 // through it (#9815).
 func MachOBindsSymbol(img []byte, sym string) bool {
 	if len(img) < 32 {

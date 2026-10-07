@@ -93,7 +93,7 @@ pub function provided_names(): string[] {
     "__fern_task_push_f64",
     "__fern_task_pop_f64",
     "__fern_rc_underflow_get",
-    "__fern_getpwuid_name",
+    "__fern_account_entry",
     "__fern_arr_share_inc",
     "__fern_arr_share_dec",
     // reclaim: strings, arrays of them, arrays of arrays, maps
