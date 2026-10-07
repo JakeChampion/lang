@@ -316,6 +316,113 @@ function main(): i32 {
 }
 `
 
+// routedMapViewValuesSrc: a `str` value column is a string column (#10867).
+// Each entry is a unit of what the insert stored: a counted view descriptor
+// over an arena string, a counted string held as a view, or a literal, a
+// window onto one included. An overwrite and a without release the entry
+// they supersede, an alias's insert or without copies, a lent receiver's
+// insert copies, and the strings allocated after them would reissue any box
+// released early. Integer, view, i64 and keyed key columns all take one.
+const routedMapViewValuesSrc = `import "core/map";
+import "core/cmp";
+import "std/i32";
+@derive(cmp.Eq, cmp.Hash)
+struct Pt { x: i32, y: i32 }
+struct Holder { m: Map[i32, str], tag: i32 }
+function fill(s: string, n: i32): Map[i32, str] {
+    let m: Map[i32, str] = Map {};
+    let i: i32 = 0;
+    while (i < n) { m = m.insert(i, slice_unchecked(s, i % 5, i % 5 + 3)); i = i + 1; }
+    m = m.insert(100, "lit");
+    m = m.insert(101, slice_unchecked("literal", 1, 4));
+    return m;
+}
+function grow(m: Map[i32, str], s: string): Map[i32, str] {
+    return m.insert(200, slice_unchecked(s, 0, 1));
+}
+function main(): i32 {
+    let s: string = "abcdefgh" + 7.to_string();
+    let t: string = s + "!";
+    let c: str = t;
+    let m: Map[i32, str] = fill(s, 40);
+    m = m.insert(102, c);
+    let alias: Map[i32, str] = m;
+    alias = alias.insert(0, "over");
+    alias = alias.insert(1, slice_unchecked(t, 6, 10));
+    let r: (Map[i32, str], boolean) = m.without(2);
+    let m2: Map[i32, str] = r.0;
+    m = m.insert(3, slice_unchecked(s, 7, 9));
+    let m3: Map[i32, str] = grow(m, s);
+    let junk: string[] = [];
+    let j: i32 = 0;
+    while (j < 64) { junk = junk.append("zzzzzzzzz" + j.to_string()); j = j + 1; }
+    let out: string = m.get_or(0, "q") + "," + alias.get_or(0, "q") + "," + alias.get_or(1, "q") + "," + m.get_or(3, "q")
+        + "," + m.get_or(100, "q") + "," + m.get_or(101, "q") + "," + m.get_or(102, "q") + "," + m.get_or(999, "miss")
+        + "," + m2.get_or(2, "gone") + "," + m.get_or(2, "q") + "," + m3.get_or(200, "q") + "," + r.1.to_string();
+    match (m.get(102)) { Some(v) => { out = out + "," + v; }, None => { out = out + ",none"; } }
+    match (m.get(998)) { Some(v) => { out = out + "," + v; }, None => { out = out + ",none"; } }
+    let total: i32 = 0;
+    for (k, v) in m2 { total = total + k + v.len(); }
+    for v in alias.values() { total = total + v.len(); }
+    for k in m3.keys() { total = total + k; }
+    let h: Holder = Holder { m: fill(s, 4), tag: 2 };
+    let hs: Holder[] = [h, Holder { m: m2, tag: 1 }];
+    total = total + hs[0].m.len() + hs[1].m.len() + h.tag;
+    let e: Map[i32, str] = m.cleared();
+    total = total + e.len();
+    let named: Map[str, str] = Map {};
+    named = named.insert(slice_unchecked(s, 0, 2), slice_unchecked(s, 2, 4));
+    named = named.insert("k", c);
+    named = named.insert(slice_unchecked(s, 0, 2), "again");
+    let wide: Map[i64, str] = Map {};
+    wide = wide.insert(5 as i64, slice_unchecked(t, 1, 3));
+    wide = wide.insert(5 as i64, slice_unchecked(t, 2, 5));
+    let pts: Map[Pt, str] = Map {};
+    pts = pts.insert(Pt { x: 1, y: 2 }, slice_unchecked(s, 3, 6));
+    pts = pts.insert(Pt { x: 1, y: 2 }, "pt");
+    pts = pts.insert(Pt { x: 3, y: 4 }, c);
+    let pts2: Map[Pt, str] = pts;
+    let pr: (Map[Pt, str], boolean) = pts2.without(Pt { x: 3, y: 4 });
+    out = out + "," + named.get_or("ab", "q") + "," + named.get_or("k", "q") + "," + wide.get_or(5 as i64, "q")
+        + "," + pts.get_or(Pt { x: 1, y: 2 }, "q") + "," + pts.get_or(Pt { x: 3, y: 4 }, "q") + "," + pr.0.len().to_string();
+    print(out);
+    print((total + junk.len()).to_string());
+    return 0;
+}
+`
+
+// routedMapUsizeValuesSrc: a usize value is the whole pointer-wide slot. The
+// values pass 2^32 on the register backends (and wrap past 2^31 on wasm), so
+// a slot that took only their low 32 bits would read back unequal.
+const routedMapUsizeValuesSrc = `import "core/map";
+import "std/i32";
+function main(): i32 {
+    let big: usize = (3000000000 as usize) * (4 as usize);
+    let m: Map[i32, usize] = Map {};
+    let i: i32 = 0;
+    while (i < 300) { m = m.insert(i, big + (i as usize)); i = i + 1; }
+    m = m.insert(7, big + (1000 as usize));
+    let alias: Map[i32, usize] = m;
+    alias = alias.insert(8, 5 as usize);
+    let r: (Map[i32, usize], boolean) = m.without(9);
+    let hit: boolean = m.get_or(7, 0 as usize) == big + (1000 as usize) && alias.get_or(8, 0 as usize) == (5 as usize)
+        && m.get_or(8, 0 as usize) == big + (8 as usize) && m.get_or(999, 3 as usize) == (3 as usize) && !r.0.has(9) && m.has(9);
+    let got: i32 = 0;
+    match (m.get(299)) { Some(v) => { if (v == big + (299 as usize)) { got = 1; } }, None => {} }
+    match (m.get(300)) { Some(v) => { got = 100; }, None => { got = got + 2; } }
+    let n: i32 = 0;
+    for (k, v) in r.0 { if (v - big == (k as usize) || k == 7) { n = n + 1; } }
+    for v in alias.values() { if (v >= big) { n = n + 1; } }
+    let named: Map[string, usize] = Map {};
+    named = named.insert("a" + 1.to_string(), big);
+    named = named.insert("a1", big + (2 as usize));
+    let e: Map[i32, usize] = m.cleared();
+    print(hit.to_string() + " " + got.to_string() + " " + n.to_string() + " " + ((named.get_or("a1", 0 as usize) - big) as i32).to_string()
+        + " " + e.len().to_string() + " " + r.0.len().to_string());
+    return 0;
+}
+`
+
 // routedMapStringValuesSrc: string value columns hold their strings in the
 // slots, so an overwrite, a delete, an alias's copy and the last drop each
 // release exactly the values they own, and a get hands out its own reference.
@@ -586,6 +693,8 @@ func TestSelfHostRoutedScalarMaps(t *testing.T) {
 		{"keyed_keys", routedMapKeyedKeysSrc, "1635 twonamed-dot four! 19 3 1761 202 two 0 50000000010 1500"},
 		{"generic_keyed_keys", routedMapGenericKeyedKeysSrc, "784 twoempty-five! 31 1745"},
 		{"map_values", routedMapMapValuesSrc, "5706 8136 0"},
+		{"usize_values", routedMapUsizeValuesSrc, "true 3 598 2 0 299"},
+		{"view_values", routedMapViewValuesSrc, "abc,over,gh7!,h7,lit,ite,abcdefgh7!,miss,gone,cde,a,true,abcdefgh7!,none,again,abcdefgh7!,cde,pt,abcdefgh7!,1\n2749"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -595,7 +704,7 @@ func TestSelfHostRoutedScalarMaps(t *testing.T) {
 					if stdout != c.want {
 						t.Fatalf("stdout = %q, want %q\n%s", stdout, c.want, stderr)
 					}
-					if target == "x86-64-linux" && !strings.Contains(stderr, "leakcheck:") {
+					if !strings.Contains(stderr, "leakcheck:") {
 						t.Fatalf("no leak census line\n%s", stderr)
 					}
 					if strings.Contains(stderr, "fern-sanitizer:") || (strings.Contains(stderr, "leakcheck:") && !strings.Contains(stderr, "live_bytes=0")) {
@@ -606,12 +715,12 @@ func TestSelfHostRoutedScalarMaps(t *testing.T) {
 		})
 	}
 
-	// Each routed program calls core/map and nothing of the runtime's map, so
-	// a value column that stopped routing turns its case red here rather than
-	// passing on the runtime map.
+	// Each routed program calls core/map and carries nothing of the runtime's
+	// map, so a value column that stopped routing turns its case red here
+	// rather than passing on the runtime map.
 	for _, c := range cases {
 		asm := routedMapAsm(t, selfHostBin, stdlibRoot, c.src)
-		if !strings.Contains(asm, "call __fn___map_set_") || strings.Contains(asm, "call __fern_map_set") {
+		if !strings.Contains(asm, "call __fn___map_set_") || strings.Contains(asm, "__fern_map_find") {
 			t.Fatalf("the %s program's maps are not routed onto core/map", c.name)
 		}
 	}
