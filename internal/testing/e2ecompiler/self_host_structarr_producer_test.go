@@ -142,7 +142,7 @@ function round(i: i32): i32 { let v: P[] = mk(i); return v.len() + v[0].n; }` + 
 			// caller binds is one the caller already owns. Crediting the binding
 			// would release it twice.
 			name: "producer_returns_param",
-			src: structarrProdDecl + `function passthru(a: P[]): P[] { return a; }
+			src: structarrProdDecl + `@noinline function passthru(a: P[]): P[] { return a; }
 function round(i: i32): i32 {
     let src: P[] = [P { s: w("p"), n: 1 }, P { s: w("q"), n: 2 }];
     let v: P[] = passthru(src);
@@ -185,7 +185,7 @@ function main(): i32 {
 			// the heap rather than placed as a constant.
 			name: "arrfield_elem_stays_arrstruct",
 			src: `struct Q { ys: i32[], n: i32 }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function mkq(): Q[] { let a: Q[] = [Q { ys: id([1, 2]), n: 1 }, Q { ys: id([3]), n: 2 }]; return a; }
 function round(i: i32): i32 { let v: Q[] = mkq(); return v.len() + v[0].ys.len(); }` + structarrProdMain,
 			want: 53, balance: true,

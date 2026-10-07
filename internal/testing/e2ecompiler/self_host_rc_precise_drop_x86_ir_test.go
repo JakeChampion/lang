@@ -67,7 +67,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		{"borrow-helper-detector", `function sum_arr(v: i32[]): i32 { let s = 0; let i = 0; while (i < v.len()) { s = s + v[i]; i = i + 1; } return s; } function main(): i32 { let t = [1, 2, 3, 4]; let a = sum_arr(t); let b = sum_arr(t); if (a + b != 20) { return 99; } return __rc_underflow_count(); }`, 0},
 		// Conservative: a callee that RETURNS its param (escape) is NOT borrowable,
 		// so the arg is not reclaimed early. The detector confirms no over-release.
-		{"escape-helper-detector", `function keep(v: i32[]): i32[] { return v; } function main(): i32 { let t = [1, 2, 3, 4]; let u = keep(t); let a = u[0]; if (a != 1) { return 99; } return __rc_underflow_count(); }`, 0},
+		{"escape-helper-detector", `@noinline function keep(v: i32[]): i32[] { return v; } function main(): i32 { let t = [1, 2, 3, 4]; let u = keep(t); let a = u[0]; if (a != 1) { return 99; } return __rc_underflow_count(); }`, 0},
 		// Inter-procedural borrow inference (single forward pass on the emit path,
 		// computed once per module): `inner` is defined before `outer` and borrows
 		// its param, so the pass recognises `outer`'s forwarded param as a borrow too
@@ -77,7 +77,7 @@ func TestSelfHostRcPreciseDropX86IR(t *testing.T) {
 		// Escape through a chain stays rejected: `wrap` forwards to `idf`, which
 		// RETURNS its param, so `idf` is not borrowable, hence `wrap` is not, hence
 		// `t` is not reclaimed — the result that aliases `t` stays valid.
-		{"escape-chain-detector", `function idf(v: i32[]): i32[] { return v; } function wrap(v: i32[]): i32[] { return idf(v); } function main(): i32 { let t = [3, 4, 5]; let u = wrap(t); if (u[1] != 4) { return 99; } return __rc_underflow_count(); }`, 0},
+		{"escape-chain-detector", `@noinline function idf(v: i32[]): i32[] { return v; } function wrap(v: i32[]): i32[] { return idf(v); } function main(): i32 { let t = [3, 4, 5]; let u = wrap(t); if (u[1] != 4) { return 99; } return __rc_underflow_count(); }`, 0},
 		// Full convergence (least-fixpoint, iterated): `outer` is defined BEFORE the
 		// borrowable `inner`, so a single forward pass would miss it — the iterated
 		// fixpoint propagates inner's borrowability back to outer, reclaiming `t`.

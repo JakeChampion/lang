@@ -2569,6 +2569,21 @@ pub function op_proc_waitpid_nohang(): Op {
   return op0(286);
 }
 
+// `proc_waitpid_status` takes one operand [pid] and pushes wait4's raw status
+// word, or -errno: `proc_waitpid` without the decode, for a caller that needs
+// what the shell's one number drops, such as WCOREDUMP.
+pub function op_proc_waitpid_status(): Op {
+  return op0(397);
+}
+
+// `disable_core_dumps` takes no operands and pushes whether this process can
+// no longer dump core: prctl(PR_SET_DUMPABLE, 0) on Linux, which a piped
+// core_pattern also obeys, and setrlimit(RLIMIT_CORE, 0) on Darwin. A process
+// about to re-raise a fatal signal calls it first, as GNU's timeout does.
+pub function op_disable_core_dumps(): Op {
+  return op0(396);
+}
+
 // `proc_exec` pops [path, args] and replaces the process image via execve. It
 // only ever pushes a FAILURE (-errno): on success there is no process left to
 // push into. Completes the crash-only trio, mirroring the native builtin, and
@@ -4703,6 +4718,9 @@ function kind_id_len18(name: string): i32 {
   if (c == b's' && name == "signal_disposition") {
     return 279;
   }
+  if (c == b'd' && name == "disable_core_dumps") {
+    return 396;
+  }
   if (c == b'a' && name == "arr_push_owned_i64") {
     return 302;
   }
@@ -4716,6 +4734,9 @@ function kind_id_len19(name: string): i32 {
   let c: u8 = name[0];
   if (c == b'p' && name == "proc_waitpid_nohang") {
     return 286;
+  }
+  if (c == b'p' && name == "proc_waitpid_status") {
+    return 397;
   }
   if (c == b'c' && name == "call_closure_direct") {
     return 151;
@@ -5773,6 +5794,12 @@ function buf_kind_name(id: i32): string {
 // extension tags beyond kind_count() (struct_copy=198 … buf_free=297)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
+  if (id == 397) {
+    return "proc_waitpid_status";
+  }
+  if (id == 396) {
+    return "disable_core_dumps";
+  }
   if (id == 395) {
     return "signal_raise";
   }
@@ -5970,6 +5997,7 @@ function pops0(t: i32): boolean {
     || t == 251 || t == 252  // getcwd, cpu_count
     || t == 272 || t == 282  // rlimit_nofile, priority
     || t == 389  // clock_resolution
+    || t == 396  // disable_core_dumps
     || t == 298;  // sync
 }
 
@@ -6028,6 +6056,7 @@ function pops1_io(t: i32): boolean {
     || t == 276 || t == 312  // window_size, termios_get
     || t == 185 || t == 212  // random_bytes, proc_waitpid
     || t == 286  // proc_waitpid_nohang
+    || t == 397  // proc_waitpid_status
     || t == 188 || t == 148 || t == 161 || t == 162 || t == 167  // timer_fd, wasm_*
     || t == 116 || t == 112 || t == 200 || t == 201 || t == 203  // tcp_close, tcp_pollable(112), tcp_listen/accept, open_file
     || t == 320  // tcp_local_port

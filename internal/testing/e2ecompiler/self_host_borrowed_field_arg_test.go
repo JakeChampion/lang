@@ -67,7 +67,7 @@ function tagof(v: V): i32 {
     }
 }
 
-function keep(v: V): V { return v; }
+@noinline function keep(v: V): V { return v; }
 
 function work(k: i32): i32 {
     let o: S = S { xs: [1, 2], v: V.A([9, 8, 7]), n: 0 };
@@ -130,7 +130,7 @@ function main(): i32 {
 const borrowedStructFieldArgRetainedSrc = `struct I { tag: i32, data: i32[] }
 struct S { xs: i32[], inner: I, n: i32 }
 
-function keepi(v: I): I { return v; }
+@noinline function keepi(v: I): I { return v; }
 
 function work(k: i32): i32 {
     let o: S = S { xs: [1, 2], inner: I { tag: 3, data: [9] }, n: 0 };
@@ -195,7 +195,7 @@ function main(): i32 {
 // second copy of the row above.
 const borrowedStringFieldArgRetainedSrc = `struct S { name: string, xs: i32[], n: i32 }
 
-function keeps(v: string): string { return v; }
+@noinline function keeps(v: string): string { return v; }
 
 function work(k: i32): i32 {
     let o: S = S { name: "seed", xs: [1, 2], n: 0 };

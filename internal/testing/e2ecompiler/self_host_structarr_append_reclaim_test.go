@@ -358,7 +358,7 @@ function main(): i32 {
 			// consulted rather than assumed.
 			name: "passthrough_call_element",
 			src: `struct N { name: string, n: i32 }
-function passthru(p: N): N { return p; }
+@noinline function passthru(p: N): N { return p; }
 function main(): i32 {
     let shared: N = N { name: "pq", n: 5 };
     let ns: N[] = [];

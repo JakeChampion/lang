@@ -124,12 +124,14 @@ further. Continue widening these seams.
 `type_to_irtag(check_expr(e, s))`, the canonical string spelling irlower already
 keys on — onto the node types below. It runs after `check_module` and before
 every emit path, so `-decide`, the eligibility judgement and the emit all see the
-same annotated tree. A driver that skips it (`asm_ir_run`, the native compiler)
-leaves every `ty` empty and gets the structural walk unchanged.
+same annotated tree.
 
 The tag VOCABULARY is a separate axis from the carrier set: it names scalars,
-strings, structs, nominal enums, maps, tuples and the builtin Option/Result
-generics, and `""` for everything else. A node type can carry a stamp and still
+strings, arrays and views, structs, nominal enums, maps, tuples and the builtin
+Option/Result generics, and `""` for everything else. A struct or enum tag drops
+its type arguments and a function tag is the bare `"fn"`, so the monomorphiser
+(`parser.stamped_type`) keys a generic only on a scalar, string, array or view
+tag. A node type can carry a stamp and still
 be told nothing, which is how the enum gap below survived a complete carrier set.
 
 | node | landed | consumers reading it |

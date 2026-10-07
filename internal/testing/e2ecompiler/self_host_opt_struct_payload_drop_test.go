@@ -320,7 +320,7 @@ function main(): i32 {
 		{
 			name: "field_passed_to_a_callee_that_keeps_it",
 			src: `struct P { xs: i32[], n: i32 }
-function keepit(xs: i32[]): i32[] { return xs; }
+@noinline function keepit(xs: i32[]): i32[] { return xs; }
 function round(i: i32): i32 {
     let held: i32[] = [];
     let acc: i32 = 0;

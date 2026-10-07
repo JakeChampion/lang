@@ -76,7 +76,7 @@ function main(): i32 {
 	// back, a choice between two, and a record also stored elsewhere. The
 	// caller must not free a field the other owner still reads.
 	{"shared_results", `struct Ints { n: i32, ys: i32[] }
-function pass(p: Ints): Ints { return p; }
+@noinline function pass(p: Ints): Ints { return p; }
 function pick(a: Ints, b: Ints, c: boolean): Ints { if (c) { return a; } return b; }
 function stash(k: i32, keep: Ints[]): Ints {
     let s: Ints = Ints { n: k, ys: [k, k] };
@@ -102,7 +102,7 @@ function main(): i32 {
 	// here the method builds its result and the free function hands back its
 	// argument.
 	{"method_name_collision", `struct Ints { n: i32, ys: i32[] }
-function mk(p: Ints): Ints { return p; }
+@noinline function mk(p: Ints): Ints { return p; }
 function (s: Ints) mk(k: i32): Ints { return Ints { n: k, ys: [k, s.n] }; }
 function main(): i32 {
     let base: Ints = Ints { n: 2, ys: [5, 6, 7] };

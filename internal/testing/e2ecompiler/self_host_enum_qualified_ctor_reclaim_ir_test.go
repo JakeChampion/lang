@@ -60,7 +60,7 @@ func TestSelfHostEnumQualifiedCtorReclaimIRX86_64(t *testing.T) {
 	// (exit 0). Pre-fix the qualified callee wasn't recognised, so the box + buffer
 	// leaked every iteration → heap exhausted → SIGKILL.
 	run(t, `enum Bag { Items(i32[]), None }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function mk(): i32 {
     let b: Bag = Bag.Items(id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]));
     match (b) { Items(_) => {}, None => {}, }
@@ -77,7 +77,7 @@ function main(): i32 {
 	// bounded AND the read-back is intact. xs[0]+xs[15] = 1 + 16 = 17. A missing inc
 	// would double-free → freelist corruption / crash; a wrong free → wrong value.
 	run(t, `enum Bag { Items(i32[]), None }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function mk(): i32 {
     let xs: i32[] = id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]);
     let b: Bag = Bag.Items(xs);

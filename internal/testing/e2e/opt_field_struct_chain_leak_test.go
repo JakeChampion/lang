@@ -18,7 +18,7 @@ func TestX86_64OptFieldStructChainLeakFree(t *testing.T) {
 		// The chained receiver: `o = id_w(o).put(..)`.
 		{"chained-receiver", `struct W { buf: string, err: Option[i32] }
 function (w: W) put(s: string): W { return W { ...w, buf: w.buf + s }; }
-function id_w(w: W): W { return w; }
+@noinline function id_w(w: W): W { return w; }
 function main(): i32 {
     let o: W = W { buf: "", err: None };
     let i: i32 = 0;

@@ -10245,6 +10245,11 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     // -errno.
     s = s.write("    call __fn___fern_proc_waitpid_nohang\n    addq $8, %rsp\n    pushq %rax\n");
     s = s.need("proc_waitpid_nohang");
+  } else if (o.kind_tag == 397) {  // proc_waitpid_status
+    // [pid] -> __fern_proc_waitpid_status(%rdi = pid) -> the raw wait
+    // status or -errno.
+    s = s.write("    call __fn___fern_proc_waitpid_status\n    addq $8, %rsp\n    pushq %rax\n");
+    s = s.need("proc_waitpid_status");
   } else if (o.kind_tag == 213) {  // proc_exec
     // Only returns on failure (-errno), so the push is the failure value.
     // [pathbox, argsbox] with args on top; the stack ABI wants param[0]
@@ -10367,6 +10372,10 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     // full-width i64 in %rax.
     s = s.write("    call __fn___fern_rlimit_nofile\n    pushq %rax\n");
     s = s.need("rlimit_nofile");
+  } else if (o.kind_tag == 396) {  // disable_core_dumps
+    // no args -> __fern_disable_core_dumps() -> 1 once it cannot dump core.
+    s = s.write("    call __fn___fern_disable_core_dumps\n    pushq %rax\n");
+    s = s.need("disable_core_dumps");
   } else if (o.kind_tag == 243 || o.kind_tag == 244) {  // signal_ignore / signal_default
     // [sig]; __fern_signal_{ignore,default}(%rdi=sig) -> the sigaction
     // return, pushed so the statement-level drop balances. [sig] IS
@@ -12338,6 +12347,10 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_waitpid_nohang("x86_64"), s);
   }
+  if (s.has_need("proc_waitpid_status")) {
+    s = s.write("    .text\n");
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_waitpid_status("x86_64"), s);
+  }
   if (s.has_need("proc_exec")) {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_exec("x86_64"), s);
@@ -12370,7 +12383,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     "monotonic_ns", "now_unix_ms", "now_ns", "stat", "lstat",
     "read_file", "read_file_bytes", "read_file_bytes_u8", "random_i32", "sleep_ms",
     "sleep_ns", "set_file_times", "statfs", "poll", "proc_waitpid",
-    "proc_waitpid_nohang",
+    "proc_waitpid_nohang", "proc_waitpid_status", "disable_core_dumps",
     "timer_fd", "tcp_listen", "tcp_local_port", "tcp_connect", "putchar",
     "udp_send_bytes", "udp_send_bytes_u8", "udp_sendto_bytes", "udp_sendto_bytes_u8",
     "eprint", "udp_send", "tcp_listen_with", "tcp_socket_ctl", "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "tcp_sendfile",
@@ -12699,6 +12712,10 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("rlimit_nofile")) {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_rlimit_nofile("x86_64"), s);
+  }
+  if (s.has_need("disable_core_dumps")) {
+    s = s.write("    .text\n");
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_disable_core_dumps("x86_64"), s);
   }
   if (s.has_need("clock_resolution")) {
     s = s.write("    .text\n");

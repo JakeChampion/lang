@@ -33,7 +33,7 @@ func bdLit(n int) string {
 func boxDead4Src() string {
 	l := bdLit(100)
 	return `struct Box { data: i32[], n: i32 }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function main(): i32 {
     let a: Box = Box { data: id(` + l + `), n: 1 }; let sa: i32 = a.data[0] + a.n;
     let b: Box = Box { data: id(` + l + `), n: 2 }; let sb: i32 = b.data[0] + b.n;
@@ -46,7 +46,7 @@ function main(): i32 {
 func boxLive4Src() string {
 	l := bdLit(100)
 	return `struct Box { data: i32[], n: i32 }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function main(): i32 {
     let a: Box = Box { data: id(` + l + `), n: 1 };
     let b: Box = Box { data: id(` + l + `), n: 2 };
@@ -79,7 +79,7 @@ function main(): i32 {
 func boxEnumDead4Src() string {
 	l := bdLit(100)
 	return `enum E { Wrap(i32[]), Two(i32, i32) }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function main(): i32 {
     let a: E = Wrap(id(` + l + `)); let sa: i32 = match (a) { Wrap(x) => x[0], Two(p, q) => p + q };
     let b: E = Wrap(id(` + l + `)); let sb: i32 = match (b) { Wrap(x) => x[0], Two(p, q) => p + q };

@@ -204,7 +204,7 @@ function main(): i32 { let q: i32[][] = build(); return q[2][1] + q.len(); }`,
 			// already owns. Registering it would let the arr-of-arr deep-free
 			// `shared` out from under the caller (#6102).
 			name: "producer_returns_param",
-			src: `function passthru(src: i32[]): i32[] { return src; }
+			src: `@noinline function passthru(src: i32[]): i32[] { return src; }
 function main(): i32 {
     let shared: i32[] = [3, 4];
     let g: i32[][] = [];

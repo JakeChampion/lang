@@ -113,7 +113,7 @@ function main(): i32 {
 		{
 			// `ids` hides "alpha" from the static-box plan, so `xs` is a heap box.
 			name: "strarr_declared_in_loop",
-			src: `function ids(s: string): string { return s; }
+			src: `@noinline function ids(s: string): string { return s; }
 function round(r: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -341,7 +341,7 @@ function main(): i32 {
 			// A block-scoped string[] both aliased outward and passed to a call.
 			// `ids` hides "alpha" from the static-box plan, so `xs` is a heap box.
 			name: "strarr_aliased_and_passed_to_a_call",
-			src: `function ids(s: string): string { return s; }
+			src: `@noinline function ids(s: string): string { return s; }
 function keepit(xs: string[]): i32 { return xs.len(); }
 function round(r: i32): i32 {
     let acc: i32 = 0;

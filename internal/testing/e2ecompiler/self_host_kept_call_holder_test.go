@@ -46,7 +46,7 @@ function rebuild(m: M): M {
     while (i < m.funcs.len()) { fs = fs.append(touch(m.funcs[i])); i = i + 1; }
     return M { ...m, funcs: fs };
 }
-function infer(m: M): M { return m; }
+@noinline function infer(m: M): M { return m; }
 function lift(mod: M): M {
     let worklist: F[] = [];
     let i: i32 = 0;
@@ -78,7 +78,7 @@ function rebuild(m: M): M {
     while (i < m.funcs.len()) { fs = fs.append(touch(m.funcs[i])); i = i + 1; }
     return M { ...m, funcs: fs };
 }
-function infer(m: M): M { return m; }
+@noinline function infer(m: M): M { return m; }
 function lift(mod: M): M {
     let fresh: F[] = [];
     let i: i32 = 0;

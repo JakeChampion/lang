@@ -3995,6 +3995,11 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     // status, -1 when the child is still running, or -errno.
     s = s.need("proc_waitpid_nohang");
     s = s.write("    bl __fn___fern_proc_waitpid_nohang\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+  } else if (o.kind_tag == 397) {  // proc_waitpid_status
+    // [pid] -> __fern_proc_waitpid_status(x0 = pid) -> the raw wait
+    // status or -errno.
+    s = s.need("proc_waitpid_status");
+    s = s.write("    bl __fn___fern_proc_waitpid_status\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 213) {  // proc_exec
     // [pathbox, argsbox] -> __fern_proc_exec(path, args). Only returns
     // on failure (-errno), so the push is that value.
@@ -4130,6 +4135,10 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     // full-width i64 in x0.
     s = s.write("    bl __fn___fern_rlimit_nofile\n    str x0, [sp, #-16]!\n");
     s = s.need("rlimit_nofile");
+  } else if (o.kind_tag == 396) {  // disable_core_dumps
+    // no args -> __fern_disable_core_dumps() -> 1 once it cannot dump core.
+    s = s.write("    bl __fn___fern_disable_core_dumps\n    str x0, [sp, #-16]!\n");
+    s = s.need("disable_core_dumps");
   } else if (o.kind_tag == 243 || o.kind_tag == 244) {  // signal_ignore / signal_default
     // [sig] -> __fern_signal_{ignore,default}(x0=sig) -> the sigaction
     // return, pushed so the statement-level drop balances.
@@ -6004,7 +6013,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     "monotonic_ns", "now_unix_ms", "now_ns", "stat", "lstat",
     "read_file", "read_file_bytes", "read_file_bytes_u8", "random_i32", "sleep_ms",
     "sleep_ns", "set_file_times", "statfs", "poll", "proc_waitpid",
-    "proc_waitpid_nohang",
+    "proc_waitpid_nohang", "proc_waitpid_status", "disable_core_dumps",
     "timer_fd", "tcp_listen", "tcp_local_port", "tcp_connect", "putchar",
     "udp_send_bytes", "udp_send_bytes_u8", "udp_sendto_bytes", "udp_sendto_bytes_u8",
     "eprint", "udp_send", "tcp_listen_with", "tcp_socket_ctl", "udp_bind", "udp_connect", "udp_sendto", "udp_recvfrom", "tcp_connect_with", "unix_listen", "unix_connect", "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "tcp_sendfile",
@@ -10970,6 +10979,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   if (s.has_need("proc_waitpid_nohang")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_waitpid_nohang(tgt), s);
   }
+  if (s.has_need("proc_waitpid_status")) {
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_proc_waitpid_status(tgt), s);
+  }
   // timer_fd: timerfd_create + timerfd_settime over an itimerspec in
   // __fern_scratch. Darwin has no timerfd and answers -1, as its hand-asm did.
   if (s.has_need("timer_fd")) {
@@ -11024,6 +11036,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   }
   if (s.has_need("rlimit_nofile")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_rlimit_nofile(tgt), s);
+  }
+  if (s.has_need("disable_core_dumps")) {
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_disable_core_dumps(tgt), s);
   }
   if (s.has_need("clock_resolution")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock_resolution(tgt), s);

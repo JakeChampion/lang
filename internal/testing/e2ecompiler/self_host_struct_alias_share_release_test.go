@@ -101,7 +101,7 @@ function main(): i32 {
 }
 `, 0},
 	{"hostile_handback_rebind", `struct St { ops: i32[], n: i32 }
-function same(x: St): St { return x; }
+@noinline function same(x: St): St { return x; }
 function take(p: St): i32 {
     let a: St = p;
     a = same(a);

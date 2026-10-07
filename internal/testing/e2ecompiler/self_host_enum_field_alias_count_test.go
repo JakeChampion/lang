@@ -24,8 +24,8 @@ enum Rc { RA(i32[]), RB }
 struct HS { e: Sc, n: i32 }
 struct HR { e: Rc, n: i32 }
 function k_of(x: i32): i32 { return x; }
-function sval(e: Sc): i32 { match (e) { SA(v) => { return v; }, SB => { return 100; } } }
-function rval(e: Rc): i32 { match (e) { RA(v) => { return v[0]; }, RB => { return 100; } } }
+@noinline function sval(e: Sc): i32 { match (e) { SA(v) => { return v; }, SB => { return 100; } } }
+@noinline function rval(e: Rc): i32 { match (e) { RA(v) => { return v[0]; }, RB => { return 100; } } }
 function rc_loop(n: i32): i32 {
     let t: i32 = 0;
     let r: i32 = 0;
@@ -124,19 +124,19 @@ enum Rc { RA(i32[]), RB }
 struct HS { e: Sc, n: i32 }
 struct HR { e: Rc, n: i32 }
 function k_of(x: i32): i32 { return x; }
-function sval(e: Sc): i32 { match (e) { SA(v) => { return v; }, SB => { return 100; } } }
-function rval(e: Rc): i32 { match (e) { RA(v) => { return v[0]; }, RB => { return 100; } } }
-function sc_get(r: i32): Sc {
+@noinline function sval(e: Sc): i32 { match (e) { SA(v) => { return v; }, SB => { return 100; } } }
+@noinline function rval(e: Rc): i32 { match (e) { RA(v) => { return v[0]; }, RB => { return 100; } } }
+@noinline function sc_get(r: i32): Sc {
     let h: HS = HS { e: SA(k_of(r)), n: 1 };
     let g: Sc = h.e;
     return g;
 }
-function rc_get(r: i32): Rc {
+@noinline function rc_get(r: i32): Rc {
     let h: HR = HR { e: RA([k_of(r), 1]), n: 1 };
     let g: Rc = h.e;
     return g;
 }
-function fresh_get(r: i32): Sc {
+@noinline function fresh_get(r: i32): Sc {
     let m: Sc = SA(k_of(r));
     return m;
 }

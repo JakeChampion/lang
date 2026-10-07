@@ -273,7 +273,7 @@ function main(): i32 {
 			// Passed to a callee that keeps it. The initial None is static;
 			// each round allocates only the Some box and its array.
 			name: "passed_to_a_callee_that_keeps_it",
-			src: `function keepit(o: Option[i32[]]): Option[i32[]] { return o; }
+			src: `@noinline function keepit(o: Option[i32[]]): Option[i32[]] { return o; }
 function round(i: i32): i32 {
     let acc: i32 = 0;
     let held: Option[i32[]] = None;
