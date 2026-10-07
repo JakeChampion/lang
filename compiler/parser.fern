@@ -12541,12 +12541,18 @@ function generic_recv_ret_of(funcs: FuncDecl[], tyname: string, method: string):
   return "";
 }
 
-// stamped_scalar reads the checker's tag off a call the walk could not type
-// (docs/TYPED-IR-REWRITE.md), admitted only at a scalar or string, where the
-// tag and the declared spelling coincide. Empty in an unannotated driver.
-function stamped_scalar(tag: string): string {
+// stamped_type reads the checker's tag off an expression the walk could not
+// type (docs/TYPED-IR-REWRITE.md), admitted only where the tag and the declared
+// spelling coincide: a scalar, a string, or an array or view of one. A nominal
+// tag drops its type arguments and a function tag is the bare "fn", so neither
+// is admitted. Empty in an unannotated driver.
+function stamped_type(tag: string): string {
   if (tag == "i32" || tag == "i64" || tag == "u8" || tag == "u32" || tag == "u64" || tag == "usize"
     || tag == "f32" || tag == "f64" || tag == "string" || tag == "boolean") {
+    return tag;
+  }
+  let elem: string = array_method_element(tag);
+  if (elem.len() > 0 && stamped_type(elem).len() > 0) {
     return tag;
   }
   return "";
@@ -12700,11 +12706,6 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
           if (crt.len() == 0) {
             crt = func_ret_of(funcs.decls, cid.name);
           }
-          // This builtin has no FuncDecl to read. Keep its declared
-          // owned byte-array result for generic receiver selection.
-          if (crt.len() == 0 && cid.name == "buf_take_bytes" && c.args.len() == 1) {
-            return "u8[]";
-          }
           // A bare type variable as the inferred call type — `A` from a
           // generic whose return type IS an UNBOUNDED type param
           // (`fold[T, A, I]: A`): `A` is erased from `type_params`, so
@@ -12719,7 +12720,7 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
           // report "unknown" (the other, concrete-literal arg still
           // binds the call at `i32`).
           if (looks_type_var(crt) || crt.len() == 0) {
-            return stamped_scalar(c.ty);
+            return stamped_type(c.ty);
           }
           return crt;
         },
@@ -12734,14 +12735,6 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
           // `rotr_roundtrip` asserts two computed `.to_string()`s).
           if ((cfa.field == "to_string" || cfa.field == "to_debug") && c.args.len() == 0) {
             return "string";
-          }
-          // The builtin has no function declaration for return-type lookup.
-          // Preserve its borrowed view when inferring a following method.
-          if (cfa.field == "as_bytes" && c.args.len() == 0) {
-            let source: string = mono_infer(cfa.obj, env, funcs);
-            if (source == "string" || source == "str") {
-              return "[u8]";
-            }
           }
           // Generic array method `recv.m(args)` whose receiver is an
           // array — folded to `__arrm_m[T]` by
@@ -12828,7 +12821,7 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
             },
             _ => {}
           }
-          return stamped_scalar(c.ty);
+          return stamped_type(c.ty);
         },
         ast.ExprLambda(lm) => {
           // Value blocks carry the checker's result, including view receivers.
@@ -12838,7 +12831,7 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
           return "";
         },
         _ => {
-          return stamped_scalar(c.ty);
+          return stamped_type(c.ty);
         }
       }
       return "";
@@ -12852,9 +12845,8 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
       // CALLER as ineligible — a hard compile error since the AST emitters
       // were deleted (#6189).
       //
-      // Read exactly one container layer, preserving nested views. String
-      // indices and unknown containers stay unknown here instead of binding
-      // a generic to a truncated type spelling.
+      // Read exactly one container layer, preserving nested views. A string
+      // index or an unknown container answers the checker's stamp instead.
       //
       // The element type is also rejected when it is itself a bare type
       // variable — indexing a `T[]` inside a generic yields `T`, which is not
@@ -12871,7 +12863,7 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
         }
         return el;
       }
-      return "";
+      return stamped_type(ix.ty);
     },
     ast.ExprFieldAccess(fa) => {
       // `s.f` on a struct value: the field's declared type, instantiated
