@@ -2,7 +2,8 @@
 //
 //   hostid    print the numeric identifier for the current host, in hex
 //
-// The number is glibc's gethostid: the four bytes of /etc/hostid if that
+// Darwin's gethostid is the kern.hostid sysctl. Elsewhere the number is
+// glibc's gethostid: the four bytes of /etc/hostid if that
 // file holds four, else the machine's IPv4 address with its halves
 // swapped — `addr << 16 | addr >> 16` over the in_addr word, so the
 // low-order host part of the address leads — else 0. The address is the
@@ -41,6 +42,22 @@ function stored_id(): Option[i64] {
   }
 }
 
+// Darwin's gethostid is sysctl kern.hostid ({CTL_KERN, KERN_HOSTID}), a
+// 32-bit int that is 0 unless something set it.
+function darwin_host_id(): i64 {
+  match (sysctl([1, 11])) {
+    Ok(bs) => {
+      if (bs.len() < 4) {
+        return 0;
+      }
+      return (bs[0] as i64 | bs[1] as i64 << 8 | bs[2] as i64 << 16 | bs[3] as i64 << 24) & 4294967295;
+    },
+    Err(_) => {
+      return 0;
+    }
+  }
+}
+
 // gethostid's derivation from the address: the in_addr word rotated by
 // sixteen bits, kept to 32.
 function address_id(word: i32): i64 {
@@ -49,6 +66,9 @@ function address_id(word: i32): i64 {
 }
 
 function host_id(): i64 {
+  if (target_os() == "darwin") {
+    return darwin_host_id();
+  }
   match (stored_id()) {
     Some(id) => {
       return id;

@@ -3716,10 +3716,30 @@ func statLike(name string, resolve func(string) (os.FileInfo, error), follow boo
 		return nil, fmt.Errorf("%s: expected string path, got %T", name, args[0])
 	}
 	info, err := resolve(string(path))
+	if err == nil && strings.HasSuffix(string(path), "/") {
+		info, err = slashResolve(string(path), info)
+	}
 	if err != nil {
 		return resultErr(classifyIoError(string(path), err)), nil
 	}
 	return resultOk(fileStatValue(info, statOrigin{path: string(path), follow: follow})), nil
+}
+
+// slashResolve holds a trailing slash to POSIX: it resolves a symlink and
+// names a directory, else ENOTDIR. Linux's kernel does this itself; XNU's
+// answers as though the slash were absent.
+func slashResolve(path string, info os.FileInfo) (os.FileInfo, error) {
+	if info.Mode()&os.ModeSymlink != 0 {
+		followed, err := os.Stat(path)
+		if err != nil {
+			return nil, err
+		}
+		info = followed
+	}
+	if !info.IsDir() {
+		return nil, &os.PathError{Op: "stat", Path: path, Err: syscall.ENOTDIR}
+	}
+	return info, nil
 }
 
 // fileStatValue projects an os.FileInfo onto the FileStat struct.
