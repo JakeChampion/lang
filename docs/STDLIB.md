@@ -1067,6 +1067,22 @@ let opened: u8[] = chacha20poly1305.open(key, nonce, sealed, aad)?;
 - `AeadError` is `KeyLength(i32)`, `NonceLength(i32)` or `Forged`, with
   `message()`.
 
+### `std/crypto/x25519`
+
+The X25519 Diffie-Hellman function of RFC 7748, TLS 1.3's default key share
+(#9858). Field elements are ten signed limbs of 26 and 25 bits in `i64`; the
+ladder swaps by mask. Verified against the RFC's vectors, including the
+1,000-step iterated one (`tests/stdlib/x25519_test.fern`,
+`TestSelfHostX25519Iterated1000`). About 0.2 ms per scalar multiplication on
+x86-64.
+
+- `public_key(scalar): Result[u8[], X25519Error]` — the 32-byte public key
+  of a 32-byte secret.
+- `x25519(scalar, point): Result[u8[], X25519Error]` — the shared secret,
+  refused as `LowOrder` when it is all zeros, as TLS 1.3 requires.
+- `X25519Error` is `ScalarLength(i32)`, `PointLength(i32)` or `LowOrder`,
+  with `message()`.
+
 ### `std/hash`
 
 Non-cryptographic checksums, in std/crypto's streaming shape (`update` /

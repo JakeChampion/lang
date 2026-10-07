@@ -28,8 +28,10 @@ type-checks standalone (`TestStdlibModulesImportStandalone`).
    before the field arithmetic, so every later kernel is gated from its
    first PR.
 3. **X25519** (RFC 7748). Field arithmetic mod 2^255 - 19 in ten limbs of
-   25 and 26 bits, so every product fits a `u64`, and a Montgomery ladder
-   with a masked swap.
+   25 and 26 bits held in `i64`, so every product fits, and a Montgomery
+   ladder with a masked swap. Gate: RFC 7748's vectors and the 1,000-step
+   iterated vector compiled (`TestSelfHostX25519Iterated1000`). About 0.2 ms
+   per scalar multiplication on x86-64.
 4. **AES-GCM.** Table-driven software AES leaks through the cache, so AES
    uses the instructions: `aes`/`pmull` on arm64, which the baseline has,
    and AES-NI/`pclmulqdq` on x86-64. AES-NI is outside the declared

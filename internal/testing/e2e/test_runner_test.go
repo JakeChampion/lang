@@ -1073,6 +1073,12 @@ func TestRunnerChaCha20Poly1305ExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "chacha20poly1305", "std/crypto/chacha20poly1305", 12)
 }
 
+// `tests/stdlib/x25519_test.fern` covers RFC 7748's vectors, a
+// non-canonical u-coordinate and the low-order refusal.
+func TestRunnerX25519ExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "x25519", "std/crypto/x25519", 8)
+}
+
 func TestRunnerHashChecksumsExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "hash_checksums", "std/hash checksums", 8)
 }
