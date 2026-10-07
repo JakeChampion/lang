@@ -61,12 +61,12 @@ x86_64/http_hello.text	20830
 x86_64/http_hello.ir	31204779
 x86_64/int_loop.text	33
 x86_64/int_loop.ir	12000022
-x86_64/map_int.text	6452
-x86_64/map_int.ir	48728523
-x86_64/map_probe_chain.text	6466
-x86_64/map_probe_chain.ir	447313169
-x86_64/map_string.text	9602
-x86_64/map_string.ir	90171521	2
+x86_64/map_int.text	6242
+x86_64/map_int.ir	45746101
+x86_64/map_probe_chain.text	6256
+x86_64/map_probe_chain.ir	427091447
+x86_64/map_string.text	9235
+x86_64/map_string.ir	87246392	2
 x86_64/ordmap_insert.text	4339
 x86_64/ordmap_insert.ir	226418414
 x86_64/pmap_insert.text	5313
