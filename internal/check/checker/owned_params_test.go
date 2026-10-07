@@ -882,6 +882,29 @@ function widen(xs: i64[]): i32[] {
 function main(): i32 { return consume(widen([1, 2])); }`)
 }
 
+// An element read out of a view of values is a copy, so an accumulator that
+// appends it stays fresh (#11877).
+func TestOwnGuardAcceptsAResultBuiltFromAViewsValues(t *testing.T) {
+	wantOK(t, "built-from-a-views-values", ownConsumer+`
+function bytes(own out: i32[], b: [i32]): i32[] {
+    let i: i32 = 0;
+    while (i < b.len()) { out = out.append(b[i]); i = i + 1; }
+    return out;
+}
+function main(): i32 { let a: i32[] = [1, 2]; return consume(bytes(bytes([], a), a)); }`)
+}
+
+// ...but an element that is itself a pointer still borrows.
+func TestOwnGuardRejectsAResultHoldingAPointerElement(t *testing.T) {
+	wantE051(t, "holding-a-pointer-element", `function keep(own ys: string[]): i32 { return ys.len(); }
+function firsts(xs: string[]): string[] {
+    let out: string[] = [];
+    out = out.append(xs[0]);
+    return out;
+}
+function main(): i32 { return keep(firsts(["a"])); }`)
+}
+
 // Recursion is seeded clean rather than pessimistically, so a recursive
 // function that returns only constructions is still a fresh owner.
 func TestOwnGuardAcceptsAFreshResultFromARecursiveFunction(t *testing.T) {

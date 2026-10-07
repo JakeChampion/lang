@@ -1,0 +1,276 @@
+// std/tls/keyshare — the key exchange a TLS 1.3 key_share carries (RFC 8446
+// §4.2.8): X25519, and X25519MLKEM768, the hybrid of ML-KEM-768 and X25519
+// (draft-ietf-tls-ecdhe-mlkem).
+//
+//   let mine: keyshare.ClientShare = keyshare.client_share(keyshare.X25519MlKem768, entropy)?;
+//   let theirs: keyshare.ServerShare = keyshare.server_share(mine.group, mine.public, server_entropy)?;
+//   let shared: u8[] = mine.shared_secret(theirs.public)?;   // theirs.shared_secret
+//
+// The caller supplies the randomness, so a handshake replays exactly. In
+// X25519MLKEM768 ML-KEM's part comes first throughout: the client's share is
+// the encapsulation key then the X25519 public key, the server's the
+// ciphertext then its X25519 public key, and the shared secret ML-KEM's then
+// X25519's.
+
+import "core/int";
+import "std/crypto/mlkem768";
+import "std/crypto/x25519";
+
+// Group — a key exchange group (NamedGroup).
+pub enum Group {
+  X25519,
+  X25519MlKem768,
+}
+
+pub function (g: Group) code(): i32 {
+  match (g) {
+    X25519 => {
+      return 0x001d;
+    },
+    X25519MlKem768 => {
+      return 0x11ec;
+    }
+  }
+  return 0;
+}
+
+// group is the Group with a NamedGroup code, or None for one not
+// implemented.
+pub function group(code: i32): Option[Group] {
+  if (code == 0x001d) {
+    return Some(X25519);
+  }
+  if (code == 0x11ec) {
+    return Some(X25519MlKem768);
+  }
+  return None;
+}
+
+// client_entropy and server_entropy are how many random bytes each side's
+// share takes: an X25519 scalar, then ML-KEM's d and z for the client or
+// its message m for the server.
+pub function (g: Group) client_entropy(): i32 {
+  match (g) {
+    X25519 => {
+      return 32;
+    },
+    X25519MlKem768 => {
+      return 96;
+    }
+  }
+  return 0;
+}
+
+pub function (g: Group) server_entropy(): i32 {
+  match (g) {
+    X25519 => {
+      return 32;
+    },
+    X25519MlKem768 => {
+      return 64;
+    }
+  }
+  return 0;
+}
+
+// client_share_len and server_share_len are the lengths of each side's
+// key_exchange.
+pub function (g: Group) client_share_len(): i32 {
+  match (g) {
+    X25519 => {
+      return 32;
+    },
+    X25519MlKem768 => {
+      return 1216;
+    }
+  }
+  return 0;
+}
+
+pub function (g: Group) server_share_len(): i32 {
+  match (g) {
+    X25519 => {
+      return 32;
+    },
+    X25519MlKem768 => {
+      return 1120;
+    }
+  }
+  return 0;
+}
+
+// KeyShareError — entropy or a peer's share of the wrong length (the length
+// it had, then the length wanted), an X25519 key whose shared secret is all
+// zeros, or an ML-KEM encapsulation key with a coefficient not below q. The
+// last three end a handshake with illegal_parameter.
+pub enum KeyShareError {
+  EntropyLength(i32, i32),
+  ShareLength(i32, i32),
+  LowOrder,
+  BadEncapsulationKey,
+}
+
+pub function (e: KeyShareError) message(): string {
+  match (e) {
+    EntropyLength(n, want) => {
+      return "tls keyshare: " + int.int_to_string(n) + " bytes of entropy, want " + int.int_to_string(want);
+    },
+    ShareLength(n, want) => {
+      return "tls keyshare: the peer's share is " + int.int_to_string(n) + " bytes, want " + int.int_to_string(want);
+    },
+    LowOrder => {
+      return "tls keyshare: the peer's X25519 key is of low order";
+    },
+    BadEncapsulationKey => {
+      return "tls keyshare: the peer's ML-KEM encapsulation key is not reduced";
+    }
+  }
+  return "";
+}
+
+// ClientShare — the client's half of a key exchange: `public` goes in the
+// ClientHello, and the secrets stay to finish the exchange once the server
+// answers. `decapsulation_key` is empty for X25519.
+pub struct ClientShare { group: Group, public: u8[], scalar: u8[], decapsulation_key: u8[] }
+
+// ServerShare — the server's answer: `public` goes in the ServerHello, and
+// `shared_secret` feeds the handshake secret.
+pub struct ServerShare { public: u8[], shared_secret: u8[] }
+
+function __cat(a: [u8], b: [u8]): u8[] {
+  let out: u8[] = __alloc_u8(a.len() + b.len());
+  let i: i32 = 0;
+  while (i < a.len()) {
+    out = out.with(i, a[i]);
+    i = i + 1;
+  }
+  let j: i32 = 0;
+  while (j < b.len()) {
+    out = out.with(a.len() + j, b[j]);
+    j = j + 1;
+  }
+  return out;
+}
+
+function __x25519_error(e: x25519.X25519Error): KeyShareError {
+  match (e) {
+    x25519.ScalarLength(n) => {
+      return EntropyLength(n, 32);
+    },
+    x25519.PointLength(n) => {
+      return ShareLength(n, 32);
+    },
+    x25519.LowOrder => {
+      return KeyShareError.LowOrder;
+    }
+  }
+  return KeyShareError.LowOrder;
+}
+
+// Only a reduced key can fail once the lengths are checked.
+function __mlkem_error(e: mlkem768.MlKemError): KeyShareError {
+  return BadEncapsulationKey;
+}
+
+function __public(scalar: [u8]): Result[u8[], KeyShareError] {
+  match (x25519.public_key(scalar)) {
+    Ok(p) => {
+      return Ok(p);
+    },
+    Err(e) => {
+      return Err(__x25519_error(e));
+    }
+  }
+  return Err(KeyShareError.LowOrder);
+}
+
+function __agree(scalar: [u8], point: [u8]): Result[u8[], KeyShareError] {
+  match (x25519.x25519(scalar, point)) {
+    Ok(s) => {
+      return Ok(s);
+    },
+    Err(e) => {
+      return Err(__x25519_error(e));
+    }
+  }
+  return Err(KeyShareError.LowOrder);
+}
+
+// client_share makes the client's share from g.client_entropy() random
+// bytes.
+pub function client_share(g: Group, entropy: [u8]): Result[ClientShare, KeyShareError] {
+  if (entropy.len() != g.client_entropy()) {
+    return Err(EntropyLength(entropy.len(), g.client_entropy()));
+  }
+  let scalar: u8[] = __cat(entropy[0:32], []);
+  let point: u8[] = __public(scalar)?;
+  match (g) {
+    X25519 => {
+      return Ok(ClientShare { group: g, public: point, scalar: scalar, decapsulation_key: [] });
+    },
+    X25519MlKem768 => {
+      match (mlkem768.keygen_derand(entropy[32:64], entropy[64:96])) {
+        Ok(kp) => {
+          return Ok(ClientShare { group: g, public: __cat(kp.encapsulation_key, point), scalar: scalar, decapsulation_key: kp.decapsulation_key });
+        },
+        Err(e) => {
+          return Err(__mlkem_error(e));
+        }
+      }
+    }
+  }
+  return Err(EntropyLength(entropy.len(), g.client_entropy()));
+}
+
+// server_share answers the client's share for g from g.server_entropy()
+// random bytes.
+pub function server_share(g: Group, client_public: [u8], entropy: [u8]): Result[ServerShare, KeyShareError] {
+  if (entropy.len() != g.server_entropy()) {
+    return Err(EntropyLength(entropy.len(), g.server_entropy()));
+  }
+  if (client_public.len() != g.client_share_len()) {
+    return Err(ShareLength(client_public.len(), g.client_share_len()));
+  }
+  let scalar: u8[] = __cat(entropy[0:32], []);
+  let point: u8[] = __public(scalar)?;
+  match (g) {
+    X25519 => {
+      return Ok(ServerShare { public: point, shared_secret: __agree(scalar, client_public)? });
+    },
+    X25519MlKem768 => {
+      match (mlkem768.encaps_derand(client_public[0:1184], entropy[32:64])) {
+        Ok(enc) => {
+          let ss: u8[] = __agree(scalar, client_public[1184:1216])?;
+          return Ok(ServerShare { public: __cat(enc.ciphertext, point), shared_secret: __cat(enc.shared_secret, ss) });
+        },
+        Err(e) => {
+          return Err(__mlkem_error(e));
+        }
+      }
+    }
+  }
+  return Err(ShareLength(client_public.len(), g.client_share_len()));
+}
+
+// shared_secret finishes the exchange with the server's share.
+pub function (c: ClientShare) shared_secret(server_public: [u8]): Result[u8[], KeyShareError] {
+  if (server_public.len() != c.group.server_share_len()) {
+    return Err(ShareLength(server_public.len(), c.group.server_share_len()));
+  }
+  match (c.group) {
+    X25519 => {
+      return __agree(c.scalar, server_public);
+    },
+    X25519MlKem768 => {
+      match (mlkem768.decaps(c.decapsulation_key, server_public[0:1088])) {
+        Ok(k) => {
+          return Ok(__cat(k, __agree(c.scalar, server_public[1088:1120])?));
+        },
+        Err(e) => {
+          return Err(__mlkem_error(e));
+        }
+      }
+    }
+  }
+  return Err(ShareLength(server_public.len(), c.group.server_share_len()));
+}

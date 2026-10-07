@@ -18313,6 +18313,32 @@ function ow_borrowed_params(fn: parser.FuncDecl, mod: parser.Module, ofuncs: Own
   return out;
 }
 
+// ow_elem_type_name is the element of an array (`T[]`) or view (`[T]`) type
+// name, or "" for any other.
+function ow_elem_type_name(tn: string): string {
+  let n: i32 = tn.len();
+  if (n > 2 && tn[n - 2] == b'[' && tn[n - 1] == b']') {
+    return slice_unchecked(tn, 0, n - 2) + "";
+  }
+  if (n > 2 && tn[0] == b'[' && tn[n - 1] == b']') {
+    return slice_unchecked(tn, 1, n - 1) + "";
+  }
+  return "";
+}
+
+// ow_value_elem_params names the borrowed parameters whose elements are
+// values, so that indexing one yields a copy.
+function ow_value_elem_params(fn: parser.FuncDecl, borrowed: string[], ofuncs: OwnFuncs): string[] {
+  let out: string[] = [];
+  for p in fn.params {
+    let elem: string = ow_elem_type_name(p.type_name);
+    if (util.has_str(borrowed, p.name) && elem.len() > 0 && !ow_type_is_pointer(elem, ofuncs)) {
+      out = out.append(p.name);
+    }
+  }
+  return out;
+}
+
 // ow_call_may_borrow reports whether a call's result can alias one of the
 // arguments it was handed. A struct or variant construction cannot; a declared
 // function answers from `borrows`; a builtin from the fresh list below. A
@@ -18334,7 +18360,7 @@ function ow_call_may_borrow(c: ast.ExprCall, ofuncs: OwnFuncs, borrows: util.Nam
 // ow_expr_borrows reports whether `e` can alias one of `borrowed`.
 // Pessimistic by construction: a shape that is not a construction and not a
 // path this walk follows is assumed to be able to.
-function ow_expr_borrows(e: ast.Expr, ofuncs: OwnFuncs, borrowed: string[], locals: string[], borrows: util.NameIndex, builtins: util.NameIndex): boolean {
+function ow_expr_borrows(e: ast.Expr, ofuncs: OwnFuncs, borrowed: string[], locals: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex): boolean {
   match (e) {
     ast.ExprNumber(_) => {
       return false;
@@ -18379,20 +18405,25 @@ function ow_expr_borrows(e: ast.Expr, ofuncs: OwnFuncs, borrowed: string[], loca
       return util.has_str(borrowed, id.name) || util.has_str(locals, id.name);
     },
     ast.ExprFieldAccess(fa) => {
-      return ow_expr_borrows(fa.obj, ofuncs, borrowed, locals, borrows, builtins);
+      return ow_expr_borrows(fa.obj, ofuncs, borrowed, locals, values, borrows, builtins);
     },
     ast.ExprIndex(ix) => {
-      return ow_expr_borrows(ix.array, ofuncs, borrowed, locals, borrows, builtins);
+      if let ast.ExprIdent(aid) = ix.array {
+        if (util.has_str(values, aid.name)) {
+          return false;
+        }
+      }
+      return ow_expr_borrows(ix.array, ofuncs, borrowed, locals, values, borrows, builtins);
     },
     ast.ExprSlice(sl) => {
-      return ow_expr_borrows(sl.array, ofuncs, borrowed, locals, borrows, builtins);
+      return ow_expr_borrows(sl.array, ofuncs, borrowed, locals, values, borrows, builtins);
     },
     ast.ExprCall(c) => {
       if (!ow_call_may_borrow(c, ofuncs, borrows, builtins)) {
         return false;
       }
       for a in c.args {
-        if (ow_expr_borrows(a, ofuncs, borrowed, locals, borrows, builtins)) {
+        if (ow_expr_borrows(a, ofuncs, borrowed, locals, values, borrows, builtins)) {
           return true;
         }
       }
@@ -18404,7 +18435,7 @@ function ow_expr_borrows(e: ast.Expr, ofuncs: OwnFuncs, borrowed: string[], loca
 // ow_borrowed_locals names the locals that can hold a borrow of one of
 // `borrowed`. Settled to a fixed point rather than read once, so a value that
 // only becomes a borrow on a loop's second iteration is still seen.
-function ow_borrowed_locals(spine: ast.Stmt[], ofuncs: OwnFuncs, borrowed: string[], borrows: util.NameIndex, builtins: util.NameIndex): string[] {
+function ow_borrowed_locals(spine: ast.Stmt[], ofuncs: OwnFuncs, borrowed: string[], values: string[], borrows: util.NameIndex, builtins: util.NameIndex): string[] {
   let locals: string[] = [];
   let changed: boolean = true;
   while (changed) {
@@ -18423,7 +18454,7 @@ function ow_borrowed_locals(spine: ast.Stmt[], ofuncs: OwnFuncs, borrowed: strin
       if (name.len() == 0 || util.has_str(locals, name)) {
         continue;
       }
-      if (ow_expr_borrows(init, ofuncs, borrowed, locals, borrows, builtins)) {
+      if (ow_expr_borrows(init, ofuncs, borrowed, locals, values, borrows, builtins)) {
         locals = locals.append(name);
         changed = true;
       }
@@ -18439,11 +18470,12 @@ function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs:
   if (borrowed.len() == 0) {
     return false;
   }
+  let values: string[] = ow_value_elem_params(fn, borrowed, ofuncs);
   let spine: ast.Stmt[] = ow_spine_stmts(fn.body);
-  let locals: string[] = ow_borrowed_locals(spine, ofuncs, borrowed, borrows, builtins);
+  let locals: string[] = ow_borrowed_locals(spine, ofuncs, borrowed, values, borrows, builtins);
   for st in spine {
     if let ast.StmtReturn(r) = st {
-      if (ow_expr_borrows(r.value, ofuncs, borrowed, locals, borrows, builtins)) {
+      if (ow_expr_borrows(r.value, ofuncs, borrowed, locals, values, borrows, builtins)) {
         return true;
       }
     }
