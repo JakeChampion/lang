@@ -718,7 +718,7 @@ pub function all_runtime_need_roots(): string[] {
     "map_free_kf", "map_free_kfvs", "map_free_kfvsa", "map_free_kfvf",
     "chdir", "chroot", "setuid", "setgid", "setgroups",
     "signal_mask", "signal_disposition",
-    "proc_exec", "proc_exec_as", "proc_fork", "proc_waitpid", "proc_waitpid_nohang", "putchar", "random_bytes", "random_i32", "read_file",
+    "proc_exec", "proc_exec_as", "proc_fork", "proc_waitpid", "proc_waitpid_nohang", "proc_waitpid_status", "putchar", "random_bytes", "random_i32", "read_file",
     "read_file_bytes",
     "sleep_ms", "sleep_ns", "str_bytes", "str_case", "str_cmp", "task",
     "str_concat", "str_eq", "str_from_bytes", "str_lines", "str_print",
@@ -766,6 +766,8 @@ pub function all_runtime_need_roots(): string[] {
     // The liveness of one pid, delivering a signal to one, and this
     // process's descriptor ceiling.
     "process_alive", "signal_send", "set_process_group", "rlimit_nofile",
+    // Whether it may dump core, and a child's raw wait status.
+    "disable_core_dumps", "proc_waitpid_status",
     // And how it competes for the CPU.
     "priority", "set_priority",
     // The wall clock's resolution, and setting it.

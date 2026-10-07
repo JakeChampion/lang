@@ -10124,6 +10124,8 @@ pub function builtin_function_names(): string[] {
     // supervise is the stdlib caller of the first and last;
     // asm_modload_run's batched per-module orchestrator uses all three.
     "proc_fork", "proc_waitpid", "proc_waitpid_nohang", "proc_exec",
+    // The raw wait status, for the core-dump bit the decode drops.
+    "proc_waitpid_status",
     // exec with BOTH vectors given verbatim: argv[0] as typed rather
     // than the resolved path, and an environment the caller built
     // rather than its own (#9090).
@@ -10201,6 +10203,9 @@ pub function builtin_function_names(): string[] {
     // The kernel-enforced ceiling on this process's open descriptors,
     // which `ulimit -n` prints (#8819).
     "rlimit_nofile",
+    // Making this process unable to dump core, before it re-raises a
+    // fatal signal (#11765).
+    "disable_core_dumps",
     // signal dispositions — SIG_IGN / SIG_DFL for one signal, and the
     // flag-raising catch a program polls
     "signal_ignore", "signal_default", "signal_catch", "signal_taken", "signal_catch_interrupting",

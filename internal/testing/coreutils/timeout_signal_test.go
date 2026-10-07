@@ -18,7 +18,8 @@ import (
 //
 // stderr goes to a file rather than a pipe: with --foreground the command's
 // own children are not signalled and can outlive timeout, and a pipe they
-// hold open would keep the read waiting for them.
+// hold open would keep the read waiting for them. Each run has a working
+// directory of its own, where a core dump lands.
 func TestTimeoutForwardsSignals(t *testing.T) {
 	sleepBin := referenceBin(t, "sleep")
 	for _, c := range []struct {
@@ -30,7 +31,11 @@ func TestTimeoutForwardsSignals(t *testing.T) {
 	}{
 		{"INT is passed on and kills timeout too", "", []string{"-v", "10", sleepBin, "30"}, []syscall.Signal{syscall.SIGINT}},
 		{"TERM in the foreground", "", []string{"--foreground", "-v", "10", sleepBin, "30"}, []syscall.Signal{syscall.SIGTERM}},
-		{"QUIT", "", []string{"-v", "10", sleepBin, "30"}, []syscall.Signal{syscall.SIGQUIT}},
+		// With cores allowed the command dumps one and timeout must not
+		// (#11765): GNU reports the command's and disables its own first.
+		{"QUIT", `ulimit -S -c "$(ulimit -H -c)";`, []string{"-v", "10", sleepBin, "30"}, []syscall.Signal{syscall.SIGQUIT}},
+		// A signal timeout did not send is the command's death all the same.
+		{"a command killed from elsewhere", "", []string{"-v", "10", "sh", "-c", "kill -USR1 $$"}, nil},
 		{"USR2, on term-sig.h's list", "", []string{"-v", "10", sleepBin, "30"}, []syscall.Signal{syscall.SIGUSR2}},
 		{"a command that exits on HUP", "", []string{"-v", "10", "sh", "-c", "trap 'exit 7' HUP; sleep 30 & wait"}, []syscall.Signal{syscall.SIGHUP}},
 		{"a command that ignores INT finishes", "", []string{"-v", "10", "sh", "-c", "trap '' INT; sleep 1"}, []syscall.Signal{syscall.SIGINT}},
@@ -84,6 +89,7 @@ func forwardRun(t *testing.T, bin, pre string, args []string, sigs []syscall.Sig
 		cmd = exec.Command("bash", append([]string{"-c", pre + ` exec -a "$0" "$@"`, cmd.Args[0]}, inner...)...)
 	}
 	cmd.Env = baseEnv()
+	cmd.Dir = t.TempDir()
 	errPath := filepath.Join(t.TempDir(), "stderr")
 	errFile, err := os.Create(errPath)
 	if err != nil {

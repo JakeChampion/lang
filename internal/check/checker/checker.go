@@ -2686,6 +2686,14 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.NumberType{},
 	}
+	// proc_waitpid_status(pid): i32 — proc_waitpid's blocking reap with
+	// wait4's raw status word instead of the shell's one number, or
+	// -errno. The decode drops the core-dump bit (0x80), which is what a
+	// caller reporting "dumped core" needs. Same `proc` gate.
+	c.info.FuncSigs["proc_waitpid_status"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{}},
+		Result: ast.NumberType{},
+	}
 	// proc_exec(path, args): i32 — replace this process with `path`,
 	// completing the crash-only trio (fork / exec / waitpid) so a forked
 	// child can become another program. argv is [path, args...], so callers
@@ -2781,6 +2789,16 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	c.info.FuncSigs["rlimit_nofile"] = &ast.FuncType{
 		Params: []ast.Type{},
 		Result: ast.NumberType{Width: 64, Signed: true},
+	}
+	// disable_core_dumps(): boolean — true once this process can no
+	// longer dump core: prctl(PR_SET_DUMPABLE, 0) on Linux, falling back
+	// to a zero RLIMIT_CORE, which is Darwin's only switch. A process
+	// about to re-raise a fatal signal it relays calls it first, so the
+	// relay does not leave a core of its own (#11765). Gated on `rlimit`
+	// like rlimit_nofile.
+	c.info.FuncSigs["disable_core_dumps"] = &ast.FuncType{
+		Params: []ast.Type{},
+		Result: ast.BoolType{},
 	}
 	// process_alive(pid): boolean — is `pid` a process that currently
 	// exists? `kill(pid, 0)` underneath: signal 0 runs every check kill(2)
