@@ -72,6 +72,13 @@ agree:
 | `a` dying in three arms, one returning | 8 | 6 |
 | match arms of different counts (control) | 6 | 6 |
 
+The bench corpus, retired instructions: `pmap_insert` -21.2% on aarch64 and
+-13.4% on x86-64, `string_build` -3.6% / -4.0%, `struct_drop` -2.3% / -2.9%.
+Emitted size falls on six rows and rises on `pmap_insert` (+1.9% / +2.2%)
+and `pvec_with` (+1.2% / +1.1%), where the reuse sequence is emitted in each
+arm. The analysis costs the compiler 43,531 more allocations compiling
+`checker.fern` than main's (+0.19%, `scripts/selfhost-alloc-bench`).
+
 The compiler compiling itself (x86-64, `FERN_LEAKCHECK`, semantic inlining
 on): 99,285,055 allocations with main's carry in its own code, 99,284,338
 with this one, 717 fewer. Both stage 3s are byte-identical. The self-built
