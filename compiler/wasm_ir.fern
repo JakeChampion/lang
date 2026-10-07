@@ -34,6 +34,7 @@ import "./irverifygate";
 import "./asmcore";
 import "./astwalk";
 import "./ircore";
+import "./wasm_aes";
 
 // Linear-memory layout: the low scratch, then a unit's string literals, then
 // its aggregate constants, then the fl_cells-entry small freelist head array,
@@ -530,6 +531,9 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (module_emits_op_cached(cache, "crc32_cksum_array")) {
     out = out.append("@uses_crc32_cksum_array");
   }
+  if (module_uses_aes_gcm(cache)) {
+    out = out.append("@uses_aes_gcm");
+  }
   if (module_uses_ascii_run(cache)) {
     out = out.append("@uses_ascii_run");
   }
@@ -993,6 +997,12 @@ pub function module_uses_scale_f64(cache: irtables.LowerResult[]): boolean {
     return o.kind_tag == 322;
   }
   return any_op(cache, is_scale_f64);
+}
+
+// module_uses_aes_gcm gates the AES-GCM kernels, which wasm_aes emits
+// together.
+pub function module_uses_aes_gcm(cache: irtables.LowerResult[]): boolean {
+  return module_emits_op_cached(cache, "aes_expand_key") || module_emits_op_cached(cache, "aes_ctr32") || module_emits_op_cached(cache, "ghash");
 }
 
 // module_uses_crc32_cksum gates $__fern_crc32_cksum, the CRC-32 fold of
@@ -2032,6 +2042,10 @@ pub function wasm_unsupported_builtin(mod: parser.Module): string {
     if (util.index_of_str(ids, "mounts") >= 0) {
       return "mounts";
     }
+    // sysctl — Darwin's kernel variables. A component has no kernel.
+    if (util.index_of_str(ids, "sysctl") >= 0) {
+      return "sysctl";
+    }
     // proc_fork / proc_waitpid / proc_exec (#5686) — the crash-only trio.
     // A wasm component is a single instance with no process model: there is
     // nothing to fork and no child to reap. Same endpoint treatment as
@@ -2212,6 +2226,9 @@ pub function wasm_unsupported_message(name: string): string {
   }
   if (name == "mounts") {
     return "error: mounts is not supported on the wasm target (a preopen is a capability handle, not a mount, so neither preview has a mount table to list)";
+  }
+  if (name == "sysctl") {
+    return "error: sysctl is not supported on the wasm target (a component has no kernel whose variables it could read)";
   }
   if (is_raw_floor_builtin(name)) {
     return "error: " + name + " is not supported on the wasm target (a raw-memory / syscall floor intrinsic: wasm has neither a raw address space nor syscalls — these back the register backends' runtime helpers, which wasm serves with hand-written WAT)";
@@ -7258,6 +7275,11 @@ function emit_str_op_wat(o: ir.Op): string {
   }
   if (o.kind_tag == 373) {
     return "    call $__fern_crc32_cksum_array\n";
+  }
+  // The AES-GCM kernels (wasm_aes): their views are already on the stack in
+  // parameter order.
+  if (ir.is_aes_gcm_op(o.kind_tag)) {
+    return "    call " + wasm_aes.kernel_name(o.kind_tag) + "\n";
   }
   if (o.kind_tag == 309) {  // crc32_cksum
     // stack: crc, s -> the incoming CRC-32 with s's bytes folded in.
@@ -15119,6 +15141,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   }
   if (need(needs, "@uses_crc32_cksum_array")) {
     parts = parts.append(crc32_cksum_helper_for(true));
+  }
+  if (need(needs, "@uses_aes_gcm")) {
+    parts = parts.append(wasm_aes.funcs());
   }
   if (need(needs, "@uses_ascii_run")) {
     parts = parts.append(ascii_run_helper());

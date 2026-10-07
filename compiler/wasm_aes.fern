@@ -1,0 +1,438 @@
+// wasm_aes — the AES-GCM kernels on wasm, which has neither AES nor
+// carry-less multiply instructions: $__fern_aes_expand_key,
+// $__fern_aes_ctr32 and $__fern_ghash, each answering a fresh packed u8[].
+//
+// Both are constant time with no table at all. AES is bitsliced over i64:
+// four blocks a pass, each of eight words holding one bit of every byte, the
+// S-box the Boyar-Peralta circuit and the linear layers shifts and masks,
+// after BearSSL's aes_ct64. GHASH multiplies a bit at a time, each bit of the
+// operand widened to a mask that selects the running multiple of H.
+
+import "./util";
+
+function lget(n: string): string {
+  return "(local.get $" + n + ")";
+}
+
+function i64c(v: string): string {
+  return "(i64.const " + v + ")";
+}
+
+// One `[u8]` view: a packed array ([len] then the bytes at +8), or a string
+// tagged with bit 1 ([len] then the bytes at +4, at p - 2).
+function view_funcs(): string {
+  return "  (func $__fern_aes_view_data (param $v i32) (result i32)\n"
+    + "    (if (result i32) (i32.and (local.get $v) (i32.const 2))\n"
+    + "      (then (i32.add (local.get $v) (i32.const 2)))\n"
+    + "      (else (i32.add (local.get $v) (i32.const 8)))))\n"
+    + "  (func $__fern_aes_view_len (param $v i32) (result i32)\n"
+    + "    (i32.load (i32.and (local.get $v) (i32.const -3))))\n"
+    // $__fern_aes_bytes(n): a fresh packed u8[] of n bytes.
+    + "  (func $__fern_aes_bytes (param $n i32) (result i32) (local $a i32)\n"
+    + "    (local.set $a (call $__fern_arr_elems (local.get $n) (i32.const 1)))\n"
+    + "    (i32.store (local.get $a) (local.get $n))\n"
+    + "    (i32.store offset=4 (local.get $a) (local.get $n))\n"
+    + "    (local.get $a))\n"
+    + "  (func $__fern_bswap32 (param $x i32) (result i32)\n"
+    + "    (i32.or (i32.and (i32.rotr (local.get $x) (i32.const 8)) (i32.const -16711936))\n"
+    + "      (i32.and (i32.rotl (local.get $x) (i32.const 8)) (i32.const 16711935))))\n"
+    + "  (func $__fern_bswap64 (param $x i64) (result i64)\n"
+    + "    (local.set $x (i64.or (i64.shl (i64.and (local.get $x) " + i64c("0x00FF00FF00FF00FF") + ") (i64.const 8))\n"
+    + "      (i64.and (i64.shr_u (local.get $x) (i64.const 8)) " + i64c("0x00FF00FF00FF00FF") + ")))\n"
+    + "    (local.set $x (i64.or (i64.shl (i64.and (local.get $x) " + i64c("0x0000FFFF0000FFFF") + ") (i64.const 16))\n"
+    + "      (i64.and (i64.shr_u (local.get $x) (i64.const 16)) " + i64c("0x0000FFFF0000FFFF") + ")))\n"
+    + "    (i64.rotl (local.get $x) (i64.const 32)))\n";
+}
+
+// sbox_gates is the Boyar-Peralta circuit as (dst, a, op, b) rows, op one of
+// "^", "&" and "^~" (a xor not b). x0 is the S-box input's top bit and q[7];
+// s0 its output's, back to q[7].
+function sbox_gates(): string[] {
+  return [
+    "y14", "x3", "^", "x5", "y13", "x0", "^", "x6", "y9", "x0", "^", "x3", "y8", "x0", "^", "x5",
+    "t0", "x1", "^", "x2", "y1", "t0", "^", "x7", "y4", "y1", "^", "x3", "y12", "y13", "^", "y14",
+    "y2", "y1", "^", "x0", "y5", "y1", "^", "x6", "y3", "y5", "^", "y8", "t1", "x4", "^", "y12",
+    "y15", "t1", "^", "x5", "y20", "t1", "^", "x1", "y6", "y15", "^", "x7", "y10", "y15", "^", "t0",
+    "y11", "y20", "^", "y9", "y7", "x7", "^", "y11", "y17", "y10", "^", "y11", "y19", "y10", "^", "y8",
+    "y16", "t0", "^", "y11", "y21", "y13", "^", "y16", "y18", "x0", "^", "y16",
+    "t2", "y12", "&", "y15", "t3", "y3", "&", "y6", "t4", "t3", "^", "t2", "t5", "y4", "&", "x7",
+    "t6", "t5", "^", "t2", "t7", "y13", "&", "y16", "t8", "y5", "&", "y1", "t9", "t8", "^", "t7",
+    "t10", "y2", "&", "y7", "t11", "t10", "^", "t7", "t12", "y9", "&", "y11", "t13", "y14", "&", "y17",
+    "t14", "t13", "^", "t12", "t15", "y8", "&", "y10", "t16", "t15", "^", "t12", "t17", "t4", "^", "t14",
+    "t18", "t6", "^", "t16", "t19", "t9", "^", "t14", "t20", "t11", "^", "t16", "t21", "t17", "^", "y20",
+    "t22", "t18", "^", "y19", "t23", "t19", "^", "y21", "t24", "t20", "^", "y18",
+    "t25", "t21", "^", "t22", "t26", "t21", "&", "t23", "t27", "t24", "^", "t26", "t28", "t25", "&", "t27",
+    "t29", "t28", "^", "t22", "t30", "t23", "^", "t24", "t31", "t22", "^", "t26", "t32", "t31", "&", "t30",
+    "t33", "t32", "^", "t24", "t34", "t23", "^", "t33", "t35", "t27", "^", "t33", "t36", "t24", "&", "t35",
+    "t37", "t36", "^", "t34", "t38", "t27", "^", "t36", "t39", "t29", "&", "t38", "t40", "t25", "^", "t39",
+    "t41", "t40", "^", "t37", "t42", "t29", "^", "t33", "t43", "t29", "^", "t40", "t44", "t33", "^", "t37",
+    "t45", "t42", "^", "t41",
+    "z0", "t44", "&", "y15", "z1", "t37", "&", "y6", "z2", "t33", "&", "x7", "z3", "t43", "&", "y16",
+    "z4", "t40", "&", "y1", "z5", "t29", "&", "y7", "z6", "t42", "&", "y11", "z7", "t45", "&", "y17",
+    "z8", "t41", "&", "y10", "z9", "t44", "&", "y12", "z10", "t37", "&", "y3", "z11", "t33", "&", "y4",
+    "z12", "t43", "&", "y13", "z13", "t40", "&", "y5", "z14", "t29", "&", "y2", "z15", "t42", "&", "y9",
+    "z16", "t45", "&", "y14", "z17", "t41", "&", "y8",
+    "t46", "z15", "^", "z16", "t47", "z10", "^", "z11", "t48", "z5", "^", "z13", "t49", "z9", "^", "z10",
+    "t50", "z2", "^", "z12", "t51", "z2", "^", "z5", "t52", "z7", "^", "z8", "t53", "z0", "^", "z3",
+    "t54", "z6", "^", "z7", "t55", "z16", "^", "z17", "t56", "z12", "^", "t48", "t57", "t50", "^", "t53",
+    "t58", "z4", "^", "t46", "t59", "z3", "^", "t54", "t60", "t46", "^", "t57", "t61", "z14", "^", "t57",
+    "t62", "t52", "^", "t58", "t63", "t49", "^", "t58", "t64", "z4", "^", "t59", "t65", "t61", "^", "t62",
+    "t66", "z1", "^", "t63", "s0", "t59", "^", "t63", "s6", "t56", "^~", "t62", "s7", "t48", "^~", "t60",
+    "t67", "t64", "^", "t65", "s3", "t53", "^", "t66", "s4", "t51", "^", "t66", "s5", "t47", "^", "t65",
+    "s1", "t64", "^~", "s3", "s2", "t55", "^~", "t67",
+  ];
+}
+
+function gate_wat(dst: string, a: string, op: string, b: string): string {
+  let rhs: string = lget(b);
+  if (op == "^~") {
+    rhs = "(i64.xor " + rhs + " (i64.const -1))";
+  }
+  let ins: string = "i64.xor";
+  if (op == "&") {
+    ins = "i64.and";
+  }
+  return "    (local.set $" + dst + " (" + ins + " " + lget(a) + " " + rhs + "))\n";
+}
+
+// $__fern_aes_bs_sbox(p) runs the S-box over the eight words at p.
+function sbox_func(): string {
+  let g: string[] = sbox_gates();
+  let locals: string = "";
+  let body: string = "";
+  let k: i32 = 0;
+  while (k < 8) {
+    locals = locals + " (local $x" + util.i32_to_string(k) + " i64)";
+    body = body + "    (local.set $x" + util.i32_to_string(k) + " (i64.load offset=" + util.i32_to_string(8 * (7 - k)) + " (local.get $p)))\n";
+    k = k + 1;
+  }
+  let i: i32 = 0;
+  while (i < g.len()) {
+    locals = locals + " (local $" + g[i] + " i64)";
+    body = body + gate_wat(g[i], g[i + 1], g[i + 2], g[i + 3]);
+    i = i + 4;
+  }
+  k = 0;
+  while (k < 8) {
+    body = body + "    (i64.store offset=" + util.i32_to_string(8 * (7 - k)) + " (local.get $p) (local.get $s" + util.i32_to_string(k) + "))\n";
+    k = k + 1;
+  }
+  return "  (func $__fern_aes_bs_sbox (param $p i32)" + locals + "\n" + body + "  )\n";
+}
+
+// swap_wat exchanges the bits under the masks between words a and b, s apart
+// (ortho's SWAPN).
+function swap_wat(a: i32, b: i32, cl: string, ch: string, s: string): string {
+  let pa: string = "(local.get $p)";
+  return "    (local.set $a (i64.load offset=" + util.i32_to_string(8 * a) + " " + pa + "))\n"
+    + "    (local.set $b (i64.load offset=" + util.i32_to_string(8 * b) + " " + pa + "))\n"
+    + "    (i64.store offset=" + util.i32_to_string(8 * a) + " " + pa + " (i64.or (i64.and (local.get $a) " + i64c(cl) + ") (i64.shl (i64.and (local.get $b) " + i64c(cl) + ") (i64.const " + s + "))))\n"
+    + "    (i64.store offset=" + util.i32_to_string(8 * b) + " " + pa + " (i64.or (i64.shr_u (i64.and (local.get $a) " + i64c(ch) + ") (i64.const " + s + ")) (i64.and (local.get $b) " + i64c(ch) + ")))\n";
+}
+
+// $__fern_aes_bs_ortho(p) transposes the eight words at p between the
+// interleaved and the bitsliced forms; it is its own inverse.
+function ortho_func(): string {
+  let o: string = "  (func $__fern_aes_bs_ortho (param $p i32) (local $a i64) (local $b i64)\n";
+  let pairs: i32[] = [0, 1, 2, 3, 4, 5, 6, 7, 0, 2, 1, 3, 4, 6, 5, 7, 0, 4, 1, 5, 2, 6, 3, 7];
+  let cl: string[] = ["0x5555555555555555", "0x3333333333333333", "0x0F0F0F0F0F0F0F0F"];
+  let ch: string[] = ["0xAAAAAAAAAAAAAAAA", "0xCCCCCCCCCCCCCCCC", "0xF0F0F0F0F0F0F0F0"];
+  let sh: string[] = ["1", "2", "4"];
+  let i: i32 = 0;
+  while (i < 12) {
+    o = o + swap_wat(pairs[2 * i], pairs[2 * i + 1], cl[i / 4], ch[i / 4], sh[i / 4]);
+    i = i + 1;
+  }
+  return o + "  )\n";
+}
+
+// spread_wat widens a 32-bit word to its sixteen-bit halves, then its bytes,
+// in alternate 16-bit lanes (interleave_in's first half).
+function spread_wat(x: string): string {
+  return "    (local.set $" + x + " (i64.and (i64.or (local.get $" + x + ") (i64.shl (local.get $" + x + ") (i64.const 16))) " + i64c("0x0000FFFF0000FFFF") + "))\n"
+    + "    (local.set $" + x + " (i64.and (i64.or (local.get $" + x + ") (i64.shl (local.get $" + x + ") (i64.const 8))) " + i64c("0x00FF00FF00FF00FF") + "))\n";
+}
+
+// gather_wat folds a spread word back to 32 bits (interleave_out's half).
+function gather_wat(x: string, at: string): string {
+  return "    (local.set $" + x + " (i64.or (local.get $" + x + ") (i64.shr_u (local.get $" + x + ") (i64.const 8))))\n"
+    + "    (local.set $" + x + " (i64.and (local.get $" + x + ") " + i64c("0x0000FFFF0000FFFF") + "))\n"
+    + "    (i32.store offset=" + at + " (local.get $w) (i32.wrap_i64 (i64.or (local.get $" + x + ") (i64.shr_u (local.get $" + x + ") (i64.const 16)))))\n";
+}
+
+// $__fern_aes_bs_in(p, w, i) loads the block of four little-endian words at
+// w into q[i] and q[i + 4]; $__fern_aes_bs_out(p, w, i) is its inverse.
+function interleave_funcs(): string {
+  let o: string = "  (func $__fern_aes_bs_in (param $p i32) (param $w i32) (param $i i32) (local $x0 i64) (local $x1 i64) (local $x2 i64) (local $x3 i64) (local $q i32)\n";
+  let k: i32 = 0;
+  while (k < 4) {
+    let x: string = "x" + util.i32_to_string(k);
+    o = o + "    (local.set $" + x + " (i64.extend_i32_u (i32.load offset=" + util.i32_to_string(4 * k) + " (local.get $w))))\n" + spread_wat(x);
+    k = k + 1;
+  }
+  o = o + "    (local.set $q (i32.add (local.get $p) (i32.shl (local.get $i) (i32.const 3))))\n"
+    + "    (i64.store (local.get $q) (i64.or (local.get $x0) (i64.shl (local.get $x2) (i64.const 8))))\n"
+    + "    (i64.store offset=32 (local.get $q) (i64.or (local.get $x1) (i64.shl (local.get $x3) (i64.const 8)))))\n";
+  o = o + "  (func $__fern_aes_bs_out (param $p i32) (param $w i32) (param $i i32) (local $x0 i64) (local $x1 i64) (local $x2 i64) (local $x3 i64) (local $q i32)\n"
+    + "    (local.set $q (i32.add (local.get $p) (i32.shl (local.get $i) (i32.const 3))))\n"
+    + "    (local.set $x0 (i64.and (i64.load (local.get $q)) " + i64c("0x00FF00FF00FF00FF") + "))\n"
+    + "    (local.set $x1 (i64.and (i64.load offset=32 (local.get $q)) " + i64c("0x00FF00FF00FF00FF") + "))\n"
+    + "    (local.set $x2 (i64.and (i64.shr_u (i64.load (local.get $q)) (i64.const 8)) " + i64c("0x00FF00FF00FF00FF") + "))\n"
+    + "    (local.set $x3 (i64.and (i64.shr_u (i64.load offset=32 (local.get $q)) (i64.const 8)) " + i64c("0x00FF00FF00FF00FF") + "))\n";
+  k = 0;
+  while (k < 4) {
+    o = o + gather_wat("x" + util.i32_to_string(k), util.i32_to_string(4 * k));
+    k = k + 1;
+  }
+  return o + "  )\n";
+}
+
+// $__fern_aes_bs_shift_rows(p) is ShiftRows on the bitsliced words: each
+// word's 16-bit rows rotate by their row number of 4-bit columns.
+function shift_rows_func(): string {
+  let x: string = "(local.get $x)";
+  return "  (func $__fern_aes_bs_shift_rows (param $p i32) (local $i i32) (local $x i64) (local $a i32)\n"
+    + "    (block $done (loop $next\n      (br_if $done (i32.ge_u (local.get $i) (i32.const 8)))\n"
+    + "      (local.set $a (i32.add (local.get $p) (i32.shl (local.get $i) (i32.const 3))))\n      (local.set $x (i64.load (local.get $a)))\n"
+    + "      (i64.store (local.get $a) (i64.or (i64.or (i64.or (i64.and " + x + " (i64.const 65535))\n"
+    + "        (i64.shr_u (i64.and " + x + " (i64.const 4293918720)) (i64.const 4)))\n"
+    + "        (i64.or (i64.shl (i64.and " + x + " (i64.const 983040)) (i64.const 12))\n"
+    + "        (i64.shr_u (i64.and " + x + " (i64.const 280375465082880)) (i64.const 8))))\n"
+    + "        (i64.or (i64.or (i64.shl (i64.and " + x + " (i64.const 1095216660480)) (i64.const 8))\n"
+    + "        (i64.shr_u (i64.and " + x + " " + i64c("0xF000000000000000") + ") (i64.const 12)))\n"
+    + "        (i64.shl (i64.and " + x + " (i64.const 1152640029630136320)) (i64.const 4)))))\n"
+    + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n      (br $next)))\n  )\n";
+}
+
+// mix_row is one output word of MixColumns: the xor of the named q and r
+// words and of rotr32(q[k] ^ r[k]).
+function mix_row(k: i32, terms: string[]): string {
+  let ks: string = util.i32_to_string(k);
+  let e: string = "(i64.rotl (i64.xor (local.get $q" + ks + ") (local.get $r" + ks + ")) (i64.const 32))";
+  for t in terms {
+    e = "(i64.xor " + e + " " + lget(t) + ")";
+  }
+  return "    (i64.store offset=" + util.i32_to_string(8 * k) + " (local.get $p) " + e + ")\n";
+}
+
+// $__fern_aes_bs_mix_columns(p) is MixColumns on the bitsliced words, r[k]
+// each word rotated by a row.
+function mix_columns_func(): string {
+  let o: string = "  (func $__fern_aes_bs_mix_columns (param $p i32)";
+  let body: string = "";
+  let k: i32 = 0;
+  while (k < 8) {
+    let ks: string = util.i32_to_string(k);
+    o = o + " (local $q" + ks + " i64) (local $r" + ks + " i64)";
+    body = body + "    (local.set $q" + ks + " (i64.load offset=" + util.i32_to_string(8 * k) + " (local.get $p)))\n"
+      + "    (local.set $r" + ks + " (i64.rotr (local.get $q" + ks + ") (i64.const 16)))\n";
+    k = k + 1;
+  }
+  body = body + mix_row(0, ["q7", "r7", "r0"]) + mix_row(1, ["q0", "r0", "q7", "r7", "r1"]) + mix_row(2, ["q1", "r1", "r2"])
+    + mix_row(3, ["q2", "r2", "q7", "r7", "r3"]) + mix_row(4, ["q3", "r3", "q7", "r7", "r4"]) + mix_row(5, ["q4", "r4", "r5"])
+    + mix_row(6, ["q5", "r5", "r6"]) + mix_row(7, ["q6", "r6", "r7"]);
+  return o + "\n" + body + "  )\n";
+}
+
+// $__fern_aes_bs_encrypt(p, sk, rounds) encrypts the bitsliced state at p
+// under the bitsliced round keys at sk, 64 bytes a round.
+function encrypt_func(): string {
+  return "  (func $__fern_aes_bs_ark (param $p i32) (param $k i32) (local $i i32)\n"
+    + "    (block $done (loop $next\n      (br_if $done (i32.ge_u (local.get $i) (i32.const 64)))\n"
+    + "      (i64.store (i32.add (local.get $p) (local.get $i)) (i64.xor (i64.load (i32.add (local.get $p) (local.get $i))) (i64.load (i32.add (local.get $k) (local.get $i)))))\n"
+    + "      (local.set $i (i32.add (local.get $i) (i32.const 8)))\n      (br $next)))\n  )\n"
+    + "  (func $__fern_aes_bs_encrypt (param $p i32) (param $sk i32) (param $rounds i32) (local $u i32)\n"
+    + "    (call $__fern_aes_bs_ark (local.get $p) (local.get $sk))\n    (local.set $u (i32.const 1))\n"
+    + "    (block $done (loop $round\n      (br_if $done (i32.ge_u (local.get $u) (local.get $rounds)))\n"
+    + "      (call $__fern_aes_bs_sbox (local.get $p))\n      (call $__fern_aes_bs_shift_rows (local.get $p))\n      (call $__fern_aes_bs_mix_columns (local.get $p))\n"
+    + "      (call $__fern_aes_bs_ark (local.get $p) (i32.add (local.get $sk) (i32.shl (local.get $u) (i32.const 6))))\n"
+    + "      (local.set $u (i32.add (local.get $u) (i32.const 1)))\n      (br $round)))\n"
+    + "    (call $__fern_aes_bs_sbox (local.get $p))\n    (call $__fern_aes_bs_shift_rows (local.get $p))\n"
+    + "    (call $__fern_aes_bs_ark (local.get $p) (i32.add (local.get $sk) (i32.shl (local.get $rounds) (i32.const 6))))\n  )\n";
+}
+
+// $__fern_aes_sub_word(p, x) is SubWord(x) through the bitsliced S-box, with
+// the 64 bytes at p for its state.
+function sub_word_func(): string {
+  return "  (func $__fern_aes_sub_word (param $p i32) (param $x i32) (result i32)\n"
+    + "    (memory.fill (local.get $p) (i32.const 0) (i32.const 64))\n"
+    + "    (i64.store (local.get $p) (i64.extend_i32_u (local.get $x)))\n"
+    + "    (call $__fern_aes_bs_ortho (local.get $p))\n    (call $__fern_aes_bs_sbox (local.get $p))\n    (call $__fern_aes_bs_ortho (local.get $p))\n"
+    + "    (i32.wrap_i64 (i64.load (local.get $p))))\n";
+}
+
+// $__fern_aes_expand_key(key): FIPS-197 §5.2 over little-endian words, so
+// RotWord is a rotate right by a byte. The round constant and the word index
+// are public, so their branches are too.
+function expand_key_func(): string {
+  let w: string = "(i32.add (local.get $w) (i32.shl (local.get $i) (i32.const 2)))";
+  return "  (func $__fern_aes_expand_key (param $key i32) (result i32)\n"
+    + "    (local $n i32) (local $size i32) (local $out i32) (local $w i32) (local $nk i32) (local $i i32) (local $t i32) (local $rcon i32) (local $tmp i32)\n"
+    + "    (local.set $n (call $__fern_aes_view_len (local.get $key)))\n"
+    + "    (if (i32.eq (local.get $n) (i32.const 16)) (then (local.set $size (i32.const 176))))\n"
+    + "    (if (i32.eq (local.get $n) (i32.const 32)) (then (local.set $size (i32.const 240))))\n"
+    + "    (local.set $out (call $__fern_aes_bytes (local.get $size)))\n"
+    + "    (if (i32.eqz (local.get $size)) (then (return (local.get $out))))\n"
+    + "    (local.set $w (i32.add (local.get $out) (i32.const 8)))\n"
+    + "    (memory.copy (local.get $w) (call $__fern_aes_view_data (local.get $key)) (local.get $n))\n"
+    + "    (local.set $tmp (call $__fern_aes_bytes (i32.const 64)))\n"
+    + "    (local.set $nk (i32.shr_u (local.get $n) (i32.const 2)))\n    (local.set $i (local.get $nk))\n    (local.set $rcon (i32.const 1))\n"
+    + "    (block $done (loop $word\n      (br_if $done (i32.ge_u (local.get $i) (i32.shr_u (local.get $size) (i32.const 2))))\n"
+    + "      (local.set $t (i32.load (i32.sub " + w + " (i32.const 4))))\n"
+    + "      (if (i32.eqz (i32.rem_u (local.get $i) (local.get $nk))) (then\n"
+    + "        (local.set $t (i32.xor (call $__fern_aes_sub_word (i32.add (local.get $tmp) (i32.const 8)) (i32.rotr (local.get $t) (i32.const 8))) (local.get $rcon)))\n"
+    + "        (local.set $rcon (i32.and (i32.xor (i32.shl (local.get $rcon) (i32.const 1)) (i32.mul (i32.shr_u (local.get $rcon) (i32.const 7)) (i32.const 283))) (i32.const 255))))\n"
+    + "      (else (if (i32.and (i32.eq (local.get $nk) (i32.const 8)) (i32.eq (i32.rem_u (local.get $i) (local.get $nk)) (i32.const 4))) (then\n"
+    + "        (local.set $t (call $__fern_aes_sub_word (i32.add (local.get $tmp) (i32.const 8)) (local.get $t)))))))\n"
+    + "      (i32.store " + w + " (i32.xor (i32.load (i32.sub " + w + " (i32.shl (local.get $nk) (i32.const 2)))) (local.get $t)))\n"
+    + "      (local.set $i (i32.add (local.get $i) (i32.const 1)))\n      (br $word)))\n"
+    + "    (drop (call $__fern_arr_dec (local.get $tmp)))\n    (local.get $out))\n";
+}
+
+// ctr_rounds is the AES round count the round-key bytes at $rk select, 0
+// when there are too few or the counter at $ctr is short.
+function ctr_rounds_wat(): string {
+  return "    (if (i32.ge_u (call $__fern_aes_view_len (local.get $rk)) (i32.const 176)) (then (local.set $rounds (i32.const 10))))\n"
+    + "    (if (i32.ge_u (call $__fern_aes_view_len (local.get $rk)) (i32.const 240)) (then (local.set $rounds (i32.const 14))))\n"
+    + "    (if (i32.lt_u (call $__fern_aes_view_len (local.get $ctr)) (i32.const 16)) (then (local.set $rounds (i32.const 0))))\n"
+    + "    (local.set $n (call $__fern_aes_view_len (local.get $data)))\n"
+    + "    (if (i32.eqz (local.get $rounds)) (then (local.set $n (i32.const 0))))\n";
+}
+
+// ctr_keys_wat bitslices each round key: the key in all four block slots,
+// transposed, 64 bytes at $sk + 64r.
+function ctr_keys_wat(): string {
+  return "    (block $kd (loop $key\n      (br_if $kd (i32.gt_u (local.get $j) (local.get $rounds)))\n"
+    + "      (call $__fern_aes_bs_in (local.get $q) (i32.add (local.get $rkp) (i32.shl (local.get $j) (i32.const 4))) (i32.const 0))\n"
+    + "      (i64.store offset=8 (local.get $q) (i64.load (local.get $q)))\n      (i64.store offset=16 (local.get $q) (i64.load (local.get $q)))\n      (i64.store offset=24 (local.get $q) (i64.load (local.get $q)))\n"
+    + "      (i64.store offset=40 (local.get $q) (i64.load offset=32 (local.get $q)))\n      (i64.store offset=48 (local.get $q) (i64.load offset=32 (local.get $q)))\n      (i64.store offset=56 (local.get $q) (i64.load offset=32 (local.get $q)))\n"
+    + "      (call $__fern_aes_bs_ortho (local.get $q))\n"
+    + "      (memory.copy (i32.add (local.get $sk) (i32.shl (local.get $j) (i32.const 6))) (local.get $q) (i32.const 64))\n"
+    + "      (local.set $j (i32.add (local.get $j) (i32.const 1)))\n      (br $key)))\n";
+}
+
+// ctr_chunk_wat is the keystream for four counter blocks at $w, the counter
+// word stepping as a big-endian u32.
+function ctr_chunk_wat(): string {
+  let o: string = "";
+  let j: i32 = 0;
+  while (j < 4) {
+    let b: string = util.i32_to_string(16 * j);
+    o = o + "      (i64.store offset=" + b + " (local.get $w) (local.get $c01))\n      (i32.store offset=" + util.i32_to_string(16 * j + 8) + " (local.get $w) (local.get $c2))\n"
+      + "      (i32.store offset=" + util.i32_to_string(16 * j + 12) + " (local.get $w) (call $__fern_bswap32 (i32.add (local.get $c) (i32.const " + util.i32_to_string(j) + "))))\n"
+      + "      (call $__fern_aes_bs_in (local.get $q) (i32.add (local.get $w) (i32.const " + b + ")) (i32.const " + util.i32_to_string(j) + "))\n";
+    j = j + 1;
+  }
+  o = o + "      (call $__fern_aes_bs_ortho (local.get $q))\n      (call $__fern_aes_bs_encrypt (local.get $q) (local.get $sk) (local.get $rounds))\n      (call $__fern_aes_bs_ortho (local.get $q))\n";
+  j = 0;
+  while (j < 4) {
+    o = o + "      (call $__fern_aes_bs_out (local.get $q) (i32.add (local.get $w) (i32.const " + util.i32_to_string(16 * j) + ")) (i32.const " + util.i32_to_string(j) + "))\n";
+    j = j + 1;
+  }
+  return o;
+}
+
+// ctr_xor_wat combines a chunk of keystream with the input: eight words for
+// a whole chunk, a byte at a time for the last.
+function ctr_xor_wat(): string {
+  let o: string = "      (if (i32.ge_u (i32.sub (local.get $n) (local.get $at)) (i32.const 64)) (then\n";
+  let k: i32 = 0;
+  while (k < 8) {
+    let off: string = util.i32_to_string(8 * k);
+    o = o + "        (i64.store offset=" + off + " (i32.add (local.get $op) (local.get $at)) (i64.xor (i64.load offset=" + off + " (i32.add (local.get $ip) (local.get $at))) (i64.load offset=" + off + " (local.get $w))))\n";
+    k = k + 1;
+  }
+  return o + "      ) (else\n        (local.set $k (i32.const 0))\n        (block $bd (loop $byte\n          (br_if $bd (i32.ge_u (i32.add (local.get $at) (local.get $k)) (local.get $n)))\n"
+    + "          (i32.store8 (i32.add (local.get $op) (i32.add (local.get $at) (local.get $k))) (i32.xor (i32.load8_u (i32.add (local.get $ip) (i32.add (local.get $at) (local.get $k)))) (i32.load8_u (i32.add (local.get $w) (local.get $k)))))\n"
+    + "          (local.set $k (i32.add (local.get $k) (i32.const 1)))\n          (br $byte)))))\n";
+}
+
+// $__fern_aes_ctr32(rk, ctr, data). A scratch block holds the bitsliced
+// round keys, the state and a chunk of counter blocks, and is released.
+function ctr32_func(): string {
+  return "  (func $__fern_aes_ctr32 (param $rk i32) (param $ctr i32) (param $data i32) (result i32)\n"
+    + "    (local $rounds i32) (local $n i32) (local $out i32) (local $tmp i32) (local $sk i32) (local $q i32) (local $w i32) (local $rkp i32) (local $cp i32)\n"
+    + "    (local $ip i32) (local $op i32) (local $j i32) (local $at i32) (local $k i32) (local $c i32) (local $c01 i64) (local $c2 i32)\n"
+    + ctr_rounds_wat()
+    + "    (local.set $out (call $__fern_aes_bytes (local.get $n)))\n    (if (i32.eqz (local.get $n)) (then (return (local.get $out))))\n"
+    + "    (local.set $tmp (call $__fern_aes_bytes (i32.shl (i32.add (local.get $rounds) (i32.const 3)) (i32.const 6))))\n"
+    + "    (local.set $sk (i32.add (local.get $tmp) (i32.const 8)))\n"
+    + "    (local.set $q (i32.add (local.get $sk) (i32.shl (i32.add (local.get $rounds) (i32.const 1)) (i32.const 6))))\n"
+    + "    (local.set $w (i32.add (local.get $q) (i32.const 64)))\n"
+    + "    (local.set $rkp (call $__fern_aes_view_data (local.get $rk)))\n    (local.set $cp (call $__fern_aes_view_data (local.get $ctr)))\n"
+    + "    (local.set $ip (call $__fern_aes_view_data (local.get $data)))\n    (local.set $op (i32.add (local.get $out) (i32.const 8)))\n"
+    + ctr_keys_wat()
+    + "    (local.set $c01 (i64.load (local.get $cp)))\n    (local.set $c2 (i32.load offset=8 (local.get $cp)))\n"
+    + "    (local.set $c (call $__fern_bswap32 (i32.load offset=12 (local.get $cp))))\n"
+    + "    (block $done (loop $chunk\n      (br_if $done (i32.ge_u (local.get $at) (local.get $n)))\n"
+    + ctr_chunk_wat() + ctr_xor_wat()
+    + "      (local.set $c (i32.add (local.get $c) (i32.const 4)))\n      (local.set $at (i32.add (local.get $at) (i32.const 64)))\n      (br $chunk)))\n"
+    + "    (drop (call $__fern_arr_dec (local.get $tmp)))\n    (local.get $out))\n";
+}
+
+// ghash_bits_wat folds the 64 bits of $<x>, top first, into Z: each bit
+// widened to a mask selects V, and V steps by x, reducing by R = 0xe1 || 0.
+function ghash_bits_wat(x: string, label: string): string {
+  return "      (local.set $b (i32.const 0))\n      (block $" + label + "d (loop $" + label + "\n        (br_if $" + label + "d (i32.ge_u (local.get $b) (i32.const 64)))\n"
+    + "        (local.set $m (i64.shr_s (local.get $" + x + ") (i64.const 63)))\n        (local.set $" + x + " (i64.shl (local.get $" + x + ") (i64.const 1)))\n"
+    + "        (local.set $zh (i64.xor (local.get $zh) (i64.and (local.get $vh) (local.get $m))))\n        (local.set $zl (i64.xor (local.get $zl) (i64.and (local.get $vl) (local.get $m))))\n"
+    + "        (local.set $m (i64.shr_s (i64.shl (local.get $vl) (i64.const 63)) (i64.const 63)))\n"
+    + "        (local.set $vl (i64.or (i64.shr_u (local.get $vl) (i64.const 1)) (i64.shl (local.get $vh) (i64.const 63))))\n"
+    + "        (local.set $vh (i64.xor (i64.shr_u (local.get $vh) (i64.const 1)) (i64.and (local.get $m) " + i64c("0xE100000000000000") + ")))\n"
+    + "        (local.set $b (i32.add (local.get $b) (i32.const 1)))\n        (br $" + label + ")))\n";
+}
+
+// ghash_block_wat reads the next block of data as two big-endian words,
+// zero-padding a short last one through $pad.
+function ghash_block_wat(): string {
+  return "      (if (i32.lt_u (i32.sub (local.get $n) (local.get $at)) (i32.const 16)) (then\n"
+    + "        (i64.store (local.get $pad) (i64.const 0))\n        (i64.store offset=8 (local.get $pad) (i64.const 0))\n"
+    + "        (memory.copy (local.get $pad) (i32.add (local.get $dp) (local.get $at)) (i32.sub (local.get $n) (local.get $at)))\n"
+    + "        (local.set $xh (call $__fern_bswap64 (i64.load (local.get $pad))))\n        (local.set $xl (call $__fern_bswap64 (i64.load offset=8 (local.get $pad)))))\n"
+    + "      (else\n        (local.set $xh (call $__fern_bswap64 (i64.load (i32.add (local.get $dp) (local.get $at)))))\n"
+    + "        (local.set $xl (call $__fern_bswap64 (i64.load offset=8 (i32.add (local.get $dp) (local.get $at)))))))\n";
+}
+
+// $__fern_ghash(h, y, data), the state and key as big-endian word pairs.
+function ghash_func(): string {
+  return "  (func $__fern_ghash (param $h i32) (param $y i32) (param $data i32) (result i32)\n"
+    + "    (local $size i32) (local $out i32) (local $hp i32) (local $dp i32) (local $n i32) (local $at i32) (local $b i32) (local $pad i32)\n"
+    + "    (local $hh i64) (local $hl i64) (local $yh i64) (local $yl i64) (local $xh i64) (local $xl i64) (local $zh i64) (local $zl i64) (local $vh i64) (local $vl i64) (local $m i64)\n"
+    + "    (if (i32.and (i32.ge_u (call $__fern_aes_view_len (local.get $h)) (i32.const 16)) (i32.ge_u (call $__fern_aes_view_len (local.get $y)) (i32.const 16))) (then (local.set $size (i32.const 16))))\n"
+    + "    (local.set $out (call $__fern_aes_bytes (local.get $size)))\n    (if (i32.eqz (local.get $size)) (then (return (local.get $out))))\n"
+    + "    (local.set $hp (call $__fern_aes_view_data (local.get $h)))\n"
+    + "    (local.set $hh (call $__fern_bswap64 (i64.load (local.get $hp))))\n    (local.set $hl (call $__fern_bswap64 (i64.load offset=8 (local.get $hp))))\n"
+    + "    (local.set $hp (call $__fern_aes_view_data (local.get $y)))\n"
+    + "    (local.set $yh (call $__fern_bswap64 (i64.load (local.get $hp))))\n    (local.set $yl (call $__fern_bswap64 (i64.load offset=8 (local.get $hp))))\n"
+    + "    (local.set $dp (call $__fern_aes_view_data (local.get $data)))\n    (local.set $n (call $__fern_aes_view_len (local.get $data)))\n"
+    // The padded block is staged in the answer's own bytes, written last.
+    + "    (local.set $pad (i32.add (local.get $out) (i32.const 8)))\n"
+    + "    (block $done (loop $blk\n      (br_if $done (i32.ge_u (local.get $at) (local.get $n)))\n"
+    + ghash_block_wat()
+    + "      (local.set $xh (i64.xor (local.get $xh) (local.get $yh)))\n      (local.set $xl (i64.xor (local.get $xl) (local.get $yl)))\n"
+    + "      (local.set $zh (i64.const 0))\n      (local.set $zl (i64.const 0))\n      (local.set $vh (local.get $hh))\n      (local.set $vl (local.get $hl))\n"
+    + ghash_bits_wat("xh", "hi") + ghash_bits_wat("xl", "lo")
+    + "      (local.set $yh (local.get $zh))\n      (local.set $yl (local.get $zl))\n"
+    + "      (local.set $at (i32.add (local.get $at) (i32.const 16)))\n      (br $blk)))\n"
+    + "    (i64.store offset=8 (local.get $out) (call $__fern_bswap64 (local.get $yh)))\n"
+    + "    (i64.store offset=16 (local.get $out) (call $__fern_bswap64 (local.get $yl)))\n    (local.get $out))\n";
+}
+
+// kernel_name is the function an aes_expand_key (402), aes_ctr32 (403) or
+// ghash (404) op calls.
+pub function kernel_name(tag: i32): string {
+  if (tag == 402) {
+    return "$__fern_aes_expand_key";
+  }
+  if (tag == 403) {
+    return "$__fern_aes_ctr32";
+  }
+  return "$__fern_ghash";
+}
+
+// funcs is every function the three kernels need, emitted once when any of
+// them is used. They call the runtime's $__fern_arr_elems and $__fern_arr_dec.
+pub function funcs(): string {
+  return view_funcs() + sbox_func() + ortho_func() + interleave_funcs() + shift_rows_func() + mix_columns_func()
+    + encrypt_func() + sub_word_func() + expand_key_func() + ctr32_func() + ghash_func();
+}

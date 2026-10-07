@@ -4,9 +4,10 @@ import "std/hex";
 import "std/string";
 
 // tests/stdlib/crypto_test.fern — pure-Fern coverage of std/crypto's
-// SHA-256 + HMAC-SHA256 against the standard NIST (FIPS 180-4) and
-// RFC 4231 known-answer vectors: the empty string, "abc", the classic
-// pangram, the 32-byte raw-digest length, and an HMAC-SHA256 vector,
+// SHA-256, HMAC-SHA256 and HMAC-SHA384 against the standard NIST
+// (FIPS 180-4) and RFC 4231 known-answer vectors: the empty string, "abc",
+// the classic pangram, the 32-byte raw-digest length, and HMAC vectors,
+// HKDF over SHA-256 and SHA-384,
 // and SHAKE128/256 against FIPS 202 outputs for the empty message and 200
 // bytes of 0xa3.
 // The Go-side suite unit-tests the rounds; this is the migration-shaped
@@ -180,6 +181,53 @@ function test_hkdf_expand_matches_oneshot(): test.TestOutcome {
   ));
 }
 
+// The byte-message HMACs: RFC 4231 test cases 1, 2 and 6 (a key longer
+// than SHA-384's 128-byte block) for HMAC-SHA384, and test case 1 for
+// HMAC-SHA256.
+function test_hmac_sha384_rfc4231(): test.TestOutcome {
+  if (hex.hex_encode(crypto.hmac_sha384(__hkdf_byte_rep(0x0b, 20), "Hi There".bytes())) != "afd03944d84895626b0825f4ab46907f15f9dadbe4101ec682aa034c7cebc59cfaea9ea9076ede7f4af152e8b2fa9cb6") {
+    return test.fail("test case 1");
+  }
+  if (hex.hex_encode(crypto.hmac_sha384("Jefe".bytes(), "what do ya want for nothing?".bytes())) != "af45d2e376484031617f78d2b58a6b1b9c7ef464f5a01b47e42ec3736322445e8e2240ca5e69e2c78b3239ecfab21649") {
+    return test.fail("test case 2");
+  }
+  return test.assert_eq(
+    hex.hex_encode(crypto.hmac_sha384(__hkdf_byte_rep(0xaa, 131), "Test Using Larger Than Block-Size Key - Hash Key First".bytes())),
+    "4ece084485813e9088d2c63a041bc5b44f9ef1012a2b588f3cd11f05033ac4c60c2ef6ab4030fe8296248df163f44952",
+  );
+}
+
+function test_hmac_sha256_bytes_message(): test.TestOutcome {
+  return test.assert_eq(
+    hex.hex_encode(crypto.hmac_sha256(__hkdf_byte_rep(0x0b, 20), "Hi There".bytes())),
+    "b0344c61d8db38535ca8afceaf0bf12b881dc200c9833da726e9376c2e32cff7",
+  );
+}
+
+// HKDF-SHA384 over RFC 5869 test case 1's inputs, with outputs from Python's
+// hmac module: one block and a bit, three blocks with a partial last one,
+// and an empty salt.
+function test_hkdf_sha384(): test.TestOutcome {
+  let ikm: u8[] = __hkdf_byte_rep(11, 22);
+  let salt: u8[] = hex.hex_decode("000102030405060708090a0b0c");
+  let info: u8[] = hex.hex_decode("f0f1f2f3f4f5f6f7f8f9");
+  let prk: u8[] = crypto.hkdf_sha384_extract(salt, ikm);
+  if (hex.hex_encode(prk) != "704b39990779ce1dc548052c7dc39f303570dd13fb39f7acc564680bef80e8dec70ee9a7e1f3e293ef68eceb072a5ade") {
+    return test.fail("extract");
+  }
+  if (hex.hex_encode(crypto.hkdf_sha384(salt, ikm, info, 42)) != "9b5097a86038b805309076a44b3a9f38063e25b516dcbf369f394cfab43685f748b6457763e4f0204fc5") {
+    return test.fail("42 bytes");
+  }
+  let e: u8[] = [];
+  if (hex.hex_encode(crypto.hkdf_sha384_extract(e, ikm)) != "10e40cf072a4c5626e43dd22c1cf727d4bb140975c9ad0cbc8e45b40068f8f0ba57cdb598af9dfa6963a96899af047e5") {
+    return test.fail("empty salt");
+  }
+  return test.assert_eq(
+    hex.hex_encode(crypto.hkdf_sha384_expand(prk, info, 100)),
+    "9b5097a86038b805309076a44b3a9f38063e25b516dcbf369f394cfab43685f748b6457763e4f0204fc5d95d1da3e62587b22eb8943d0fab6bb631a2fe9df1a68c6ce5d56116a52005b3f122b88b39b7251fcd6c44d3ef25f20ed96802bf1b2c1d98bf74",
+  );
+}
+
 // SHAKE128 and SHAKE256 (FIPS 202) for the empty message and for 200
 // bytes of 0xa3, which is longer than either rate. Outputs past 64 bytes
 // are compared by their SHA3-256.
@@ -294,6 +342,9 @@ function main(): i32 {
   r = r.it("hkdf TC1", test_hkdf_tc1);
   r = r.it("hkdf TC3 empty", test_hkdf_tc3_empty);
   r = r.it("hkdf expand==oneshot", test_hkdf_expand_matches_oneshot);
+  r = r.it("hmac-sha384 RFC 4231", test_hmac_sha384_rfc4231);
+  r = r.it("hmac-sha256 byte message", test_hmac_sha256_bytes_message);
+  r = r.it("hkdf-sha384", test_hkdf_sha384);
   r = r.it("totp RFC 6238", test_totp_rfc6238);
   r = r.it("hotp + digits", test_hotp_and_digits);
   r = r.it("shake128 empty", test_shake128_empty);

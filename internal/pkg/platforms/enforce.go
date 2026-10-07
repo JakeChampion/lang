@@ -358,6 +358,8 @@ var gatedBuiltins = map[string]string{
 	// `host` (which wasi-cli grants and answers honestly empty).
 	"uname_field": "sysinfo",
 	"cpu_count":   "sysinfo",
+	// A kernel variable by MIB: Darwin's sysctl(3). Linux has no sysctl(2).
+	"sysctl": "sysctl",
 
 	// The process's working directory (`getcwd`). Separate from `fs`
 	// for the same reason: WASI resolves every path against a
@@ -428,6 +430,10 @@ var coreBuiltins = map[string]bool{
 	// wherever valgrind is not running.
 	"__ct_secret": true,
 	"__ct_public": true,
+	// The AES-GCM kernels compute over bytes in memory and nothing else.
+	"__aes_expand_key": true,
+	"__aes_ctr32":      true,
+	"__ghash":          true,
 
 	"map_new":                     true,
 	"cell_new":                    true,

@@ -3029,6 +3029,25 @@ function arm64_vecext(buf: i32[], rd: i32, rn: i32, rm: i32, index: i32, q: bool
   return arm64_le32(buf, word);
 }
 
+// arm64_vecaes encodes the AES rounds, `aese` (opcode 4) and `aesmc` (6):
+// FEAT_AES, in the ARMv8.2-A-with-crypto baseline.
+//   0x4E284800 | (opcode - 4)<<12 | Rn<<5 | Rd
+function arm64_vecaes(buf: i32[], rd: i32, rn: i32, opcode: i32): i32[] {
+  let word: i64 = 0x4e284800 | (opcode - 4 & 3) as i64 << 12 | (rn & 31) as i64 << 5 | (rd & 31) as i64;
+  return arm64_le32(buf, word);
+}
+
+// arm64_aes_opcode is a mnemonic's AES opcode, or -1.
+function arm64_aes_opcode(mnem: string): i32 {
+  if (mnem == "aese") {
+    return 4;
+  }
+  if (mnem == "aesmc") {
+    return 6;
+  }
+  return 0 - 1;
+}
+
 // arm64_vectbl1 encodes `tbl Vd.<T>, {Vn.16b}, Vm.<T>` — the single-table
 // byte shuffle, pshufb's counterpart. The table is always .16b.
 //   0x0E000000 | Q<<30 | Rm<<16 | Rn<<5 | Rd
@@ -3428,6 +3447,14 @@ function arm64_gas_emit_vecgen(own a: Arm64Asm, mnem: string, ops: string[]): Ar
       [], arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]),
       arm64_gas_vreg_any(ops[2]), arm64_gas_imm(ops[3]), arm64_gas_arr_q(ec),
     ));
+    return a;
+  }
+  let aes: i32 = arm64_aes_opcode(mnem);
+  if (aes >= 0) {
+    if (ops.len() != 2) {
+      return a;
+    }
+    arm64_push_arr(a.code, arm64_vecaes([], arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]), aes));
     return a;
   }
   if (mnem == "tbl") {
@@ -4640,6 +4667,10 @@ function arm64_gas_bad_vecgen(mnem: string, ops: string[]): string {
   if (pmbad != "-") {
     return pmbad;
   }
+  let aesbad: string = arm64_gas_bad_aes(mnem, ops);
+  if (aesbad != "-") {
+    return aesbad;
+  }
   let nwbad: string = arm64_gas_bad_narrowwide(mnem, ops);
   if (nwbad != "-") {
     return nwbad;
@@ -4748,6 +4779,28 @@ function arm64_gas_bad_pmull(mnem: string, ops: string[]): string {
   // into .1q.
   if (arm64_gas_vreg_arrof(ops[0]) != (size + 1) * 2 + 1) {
     return mnem + ":arr";
+  }
+  return "";
+}
+
+// arm64_gas_bad_aes vets aese and aesmc, answering "-" for anything else: two
+// vector registers, both .16b, the only arrangement the encoding has.
+function arm64_gas_bad_aes(mnem: string, ops: string[]): string {
+  if (arm64_aes_opcode(mnem) < 0) {
+    return "-";
+  }
+  if (ops.len() != 2) {
+    return mnem + ":arity";
+  }
+  let i: i32 = 0;
+  while (i < 2) {
+    if (arm64_gas_vreg_any(ops[i]) < 0) {
+      return arm64_gas_trim(ops[i]);
+    }
+    if (arm64_gas_vreg_arrof(ops[i]) != 1) {
+      return mnem + ":arr";
+    }
+    i = i + 1;
   }
   return "";
 }
@@ -5908,14 +5961,25 @@ function arm64_gas_family_len4(mnem: string): i32 {
 }
 
 function arm64_gas_family_len4_a(mnem: string): i32 {
+  let c: u8 = mnem[1];
+  if (c == b'd') {
+    return arm64_gas_family_len4_a_ad(mnem);
+  }
+  if (c == b'e' && mnem == "aese") {
+    return arm64_fam_vecext();
+  }
+  if (c == b'n' && mnem == "ands") {
+    return arm64_fam_logical2();
+  }
+  return 0 - 1;
+}
+
+function arm64_gas_family_len4_a_ad(mnem: string): i32 {
   if (mnem == "adrp") {
     return arm64_fam_symaddr();
   }
   if (mnem == "adds") {
     return arm64_fam_addsub();
-  }
-  if (mnem == "ands") {
-    return arm64_fam_logical2();
   }
   if (mnem == "adcs") {
     return arm64_fam_carry();
@@ -6237,6 +6301,9 @@ function arm64_gas_family_len4_u_ux(mnem: string): i32 {
 
 function arm64_gas_family_len5(mnem: string): i32 {
   let c: u8 = mnem[0];
+  if (c == b'a' && mnem == "aesmc") {
+    return arm64_fam_vecext();
+  }
   if (c == b'b' && mnem == "bfxil") {
     return arm64_fam_bitfield();
   }
@@ -10298,10 +10365,14 @@ pub function arm64_gas_rebase_offs(p: Arm64GasProg): i32[] {
 }
 
 // arm64_import_sym reports whether an undefined `.quad` target names a
-// libSystem symbol: spelled `_name`. Fern's own symbols are `__`-prefixed or
-// local, so an undefined one of those stays a link error.
+// libSystem symbol: the C name with its `_` prefix, so `_name`, or `___name`
+// for a reserved C name such as `__error`. Fern's own symbols are `__` and a
+// letter, or local, so an undefined one of those stays a link error.
 function arm64_import_sym(name: string): boolean {
-  return name.len() > 1 && name[0] == b'_' && name[1] != b'_';
+  if (name.len() < 2 || name[0] != b'_') {
+    return false;
+  }
+  return name[1] != b'_' || name.len() > 3 && name[2] == b'_' && name[3] != b'_';
 }
 
 // arm64_gas_link resolves the queued @PAGE/@PAGEOFF fixups now that the

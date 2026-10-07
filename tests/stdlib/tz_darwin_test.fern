@@ -60,6 +60,34 @@ function test_semicolon_rule(): test.TestOutcome {
   return test.assert_eq(tz.zone_from_tz("EST5EDT4;M3.2.0,M11.1.0").offset_at(1720000000i64), 0 - 14400);
 }
 
+// A quoted DST name that never closes refuses the string.
+function test_unclosed_dst_name_is_utc(): test.TestOutcome {
+  return test.assert_eq(tz.zone_from_tz("EST5<EDT").abbrev_at(1720000000i64), "UTC");
+}
+
+// A DST name with no rule after it takes the US dates.
+function test_dst_without_rule(): test.TestOutcome {
+  let z: tz.Zone = tz.zone_from_tz("EST5EDT");
+  if (z.abbrev_at(1700000000i64) != "EST") {
+    return test.fail("November");
+  }
+  return test.assert_eq(z.offset_at(1720000000i64), 0 - 14400);
+}
+
+// Only a comma separates the end date from the start, and nothing may
+// follow the end date; neither is the string's otherwise.
+function test_malformed_dates_are_utc(): test.TestOutcome {
+  if (tz.zone_from_tz("EST5EDT,M3.2.0;M11.1.0").abbrev_at(1720000000i64) != "UTC") {
+    return test.fail("semicolon between the dates");
+  }
+  return test.assert_eq(tz.zone_from_tz("EST5EDT,M3.2.0,M11.1.0junk").abbrev_at(1720000000i64), "UTC");
+}
+
+// After the DST offset comes the rule's separator or the end.
+function test_junk_after_dst_offset_is_utc(): test.TestOutcome {
+  return test.assert_eq(tz.zone_from_tz("EST5EDT4x").abbrev_at(1720000000i64), "UTC");
+}
+
 function main(): i32 {
   let t: test.TestRunner = test.test_new("tz-darwin");
   t = t.it("a bare name is UTC", test_bare_name_is_utc);
@@ -69,5 +97,9 @@ function main(): i32 {
   t = t.it("a rule starts in 1970", test_rule_starts_in_1970);
   t = t.it("a bad date is UTC", test_bad_date_is_utc);
   t = t.it("a semicolon before the rule", test_semicolon_rule);
+  t = t.it("an unclosed DST name is UTC", test_unclosed_dst_name_is_utc);
+  t = t.it("a DST name without a rule", test_dst_without_rule);
+  t = t.it("malformed dates are UTC", test_malformed_dates_are_utc);
+  t = t.it("junk after the DST offset is UTC", test_junk_after_dst_offset_is_utc);
   return t.finish();
 }

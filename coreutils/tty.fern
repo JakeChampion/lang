@@ -8,7 +8,9 @@
 //
 // `not a tty` covers every reason ttyname has no answer — a pipe, a
 // regular file, a closed descriptor — because none of them names a
-// terminal and there is nothing else to say about which.
+// terminal and there is nothing else to say about which. A terminal
+// ttyname cannot name, such as a pseudo-terminal master on Darwin, is
+// `ttyname error` and exit 4 instead, and `-s` asks isatty alone.
 //
 // Three of those four statuses are gnulib globals rather than one
 // number: `exit_failure` is 3, so `tty --help > /dev/full` exits 3,
@@ -71,17 +73,24 @@ pub function main(): i32 {
     gnu.die_usage("extra operand " + gnu.quote(operands[0]), usage_status());
   }
 
+  if (silent) {
+    if (isatty(0)) {
+      return 0;
+    }
+    return 1;
+  }
   match (tty.name_of_stdin()) {
     Some(name) => {
-      if (!silent) {
-        gnu.write_out_with(name + "\n", write_status());
-      }
+      gnu.write_out_with(name + "\n", write_status());
       return 0;
     },
     None => {
-      if (!silent) {
-        gnu.write_out_with("not a tty\n", write_status());
+      // ttyname restores errno when it fails, so there is no reason to add.
+      if (isatty(0)) {
+        gnu.error("ttyname error");
+        return 4;
       }
+      gnu.write_out_with("not a tty\n", write_status());
       return 1;
     }
   }

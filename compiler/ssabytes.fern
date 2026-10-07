@@ -57,9 +57,8 @@ function decoded_read(op: ir.Op, base: i32, index: i32): ir.Op[] {
   }
   let ops: ir.Op[] = [ir.op_store_local(index), ir.op_drop()];
   if (op.str == get_name(false)) {
-    ops = joined(ops, [ir.op_load_local(index), ir.op_const_i32(0), ir.op_bin("lt_s", 0, false)]);
-    ops = abort_if(ops);
-    ops = joined(ops, [ir.op_load_local(index), ir.op_load_local(base + 1), ir.op_bin("ge_s", 0, false)]);
+    // One unsigned compare: a negative index reads as larger than any length.
+    ops = joined(ops, [ir.op_load_local(index), ir.op_load_local(base + 1), ir.op_bin("ge_u", 0, false)]);
     ops = abort_if(ops);
   }
   return joined(ops, [ir.op_load_local(base), ir.op_load_local(index), ir.op_raw_load8()]);

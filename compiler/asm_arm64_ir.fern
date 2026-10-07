@@ -449,6 +449,9 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (o.kind_tag == 382) {
     return emit_inner_mul_add_f64(s);
   }
+  if (ir.is_aes_gcm_op(o.kind_tag)) {
+    return emit_aes_gcm_op(o, s);
+  }
   if (o.kind_tag == 381) {
     return emit_outer_mul_f64(s);
   }
@@ -4527,6 +4530,11 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.need("heap");
     s = s.need("mounts");
     s = s.write("    bl __fn___fern_mounts\n    str x0, [sp, #-16]!\n");
+  } else if (o.kind_tag == 401) {  // sysctl
+    // [mib]; pushes a fresh Result[u8[], IoError].
+    s = s.need("heap");
+    s = s.need("sysctl");
+    s = s.write("    bl __fn___fern_sysctl\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 299) {  // fd_fsync
     // [fd] IS param[0]; __fn___fern_fd_fsync pushes a fresh
     // Option[IoError], None once the write-back is scheduled.
@@ -8474,15 +8482,18 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   // __fern_account_entry(kind@[sp,#16], key@[sp]) -> what libSystem answers
   // for one account-database question, or 0: kind 0 is getpwuid(key), 1
   // getpwnam(key as a C string), 2 getgrgid(key), 3 getgrnam(key as a C
-  // string) and 4 getlogin(). Darwin keeps regular accounts and groups in
-  // Directory Services, which only libSystem can ask (#9815): each call goes
-  // through a __DATA slot dyld binds at load, under AAPCS64, which preserves
-  // the callee-saved registers the emitted code relies on. Linux answers 0 and
-  // the caller reads the files.
+  // string), 4 getlogin(), 5 getgrouplist over the block at key (name,
+  // basegid, groups, ngroups, each in an 8-byte slot), 6 strerror(key) and 7
+  // __error(). Darwin keeps regular accounts and groups in Directory Services,
+  // which only libSystem can ask (#9815): each call goes through a __DATA slot
+  // dyld binds at load, under AAPCS64, which preserves the callee-saved
+  // registers the emitted code relies on. Linux answers 0 and the caller
+  // reads the files.
   if (s.has_need("account")) {
     if (darwin) {
       s = s.write("    .section .data\n    .align 3\n__fern_got_account:\n");
-      s = s.write("    .quad _getpwuid\n    .quad _getpwnam\n    .quad _getgrgid\n    .quad _getgrnam\n    .quad _getlogin\n    .text\n");
+      s = s.write("    .quad _getpwuid\n    .quad _getpwnam\n    .quad _getgrgid\n    .quad _getgrnam\n    .quad _getlogin\n");
+      s = s.write("    .quad _getgrouplist\n    .quad _strerror\n    .quad ___error\n    .text\n");
     }
     s = s.write("__fn___fern_account_entry:\n");
     if (darwin) {
@@ -8490,8 +8501,16 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
       s = s.write("    mov x29, sp\n");
       s = s.write("    ldr w9, [sp, #32]\n");  // kind
       s = s.write("    ldr x0, [sp, #16]\n");  // key
-      s = s.write("    cmp x9, #4\n");
+      s = s.write("    cmp x9, #7\n");
       s = s.write("    b.hi .Laccount_none\n");
+      s = s.write("    cmp x9, #5\n");
+      s = s.write("    b.ne .Laccount_call\n");
+      s = s.write("    mov x10, x0\n");
+      s = s.write("    ldr x0, [x10]\n");
+      s = s.write("    ldr w1, [x10, #8]\n");
+      s = s.write("    ldr x2, [x10, #16]\n");
+      s = s.write("    ldr x3, [x10, #24]\n");
+      s = s.write(".Laccount_call:\n");
       s = s.write("    adrp x16, __fern_got_account\n");
       s = s.write("    add x16, x16, :lo12:__fern_got_account\n");
       s = s.write("    lsl x9, x9, #3\n");
@@ -10353,6 +10372,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   if (s.has_need("crc32_cksum")) {
     s = emit_rt_crc32_cksum(s);
   }
+  if (s.has_need("aes_gcm")) {
+    s = emit_rt_aes_gcm(s);
+  }
   if (s.has_need("sum_bytes")) {
     s = emit_rt_sum_bytes(s);
   }
@@ -10725,6 +10747,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     }
     if (s.has_need("mounts")) {
       fs_src = fs_src + " " + asmcore.rt_src_mounts(tgt);
+    }
+    if (s.has_need("sysctl")) {
+      fs_src = fs_src + " " + asmcore.rt_src_sysctl(tgt);
     }
     if (s.has_need("access")) {
       fs_src = fs_src + " " + asmcore.rt_src_access(tgt);
@@ -11367,6 +11392,242 @@ function emit_rt_sum_bytes(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    ret\n");
   s = s.write("    .size __fern_sum_bytes, .-__fern_sum_bytes\n");
   return s;
+}
+
+// The AES-GCM kernels (std/crypto/aes_gcm): __fern_aes_expand_key(x0 = key),
+// __fern_aes_ctr32(x0 = round keys, x1 = counter, x2 = data) and
+// __fern_ghash(x0 = h, x1 = y, x2 = data), each answering a fresh packed u8[]
+// in x0. AESE/AESMC and PMULL, in the ARMv8.2-A-with-crypto baseline, so
+// nothing branches on or indexes by a key or data byte; only the lengths
+// steer. They keep off x16-x28 and v8-v15, which callers rely on.
+// `.arch_extension aes` is for an external assembler, as the CRC fold's is.
+//
+// Each argument is a [u8] view: a packed array ([len] then the bytes at +8),
+// or a string descriptor tagged with bit 1 ([data@0, len@8] at p - 2).
+function a64_aes_view(arg: string, data: string, len: string, tag: string): string {
+  return "    tst " + arg + ", #2\n    b.eq " + tag + "_arr\n    sub " + data + ", " + arg + ", #2\n"
+    + "    ldr " + len + ", [" + data + ", #8]\n    ldr " + data + ", [" + data + "]\n    b " + tag + "_ok\n"
+    + tag + "_arr:\n    ldr " + len + ", [" + arg + "]\n    add " + data + ", " + arg + ", #8\n" + tag + "_ok:\n";
+}
+
+// a64_aes_alloc boxes a packed u8[] of the byte count in x0 and saves it at
+// [x29, #slot], leaving x0 the array.
+function a64_aes_alloc(slot: string): string {
+  return "    str x0, [x29, #" + slot + "]\n    add x0, x0, #7\n    lsr x0, x0, #3\n    bl __fern_arr_box\n"
+    + "    ldr x1, [x29, #" + slot + "]\n    str x1, [x0]\n    str x0, [x29, #" + slot + "]\n";
+}
+
+// a64_aes_subword is SubWord(src) in dst: AESE with a zero key on the word
+// broadcast to every column, where ShiftRows moves nothing.
+function a64_aes_subword(src: string, dst: string): string {
+  return "    dup v16.4s, " + src + "\n    aese v16.16b, v17.16b\n    umov " + dst + ", v16.s[0]\n";
+}
+
+// a64_aes_fold4 xors t into the first of four words, each into the next,
+// and stores the four at [x3, #off].
+function a64_aes_fold4(t: string, w: string[], off: i32): string {
+  return "    eor " + w[0] + ", " + w[0] + ", " + t + "\n    eor " + w[1] + ", " + w[1] + ", " + w[0] + "\n"
+    + "    eor " + w[2] + ", " + w[2] + ", " + w[1] + "\n    eor " + w[3] + ", " + w[3] + ", " + w[2] + "\n"
+    + "    stp " + w[0] + ", " + w[1] + ", [x3, #" + util.i32_to_string(off) + "]\n    stp " + w[2] + ", " + w[3] + ", [x3, #" + util.i32_to_string(off + 8) + "]\n";
+}
+
+// a64_aes_rot_step is SubWord(RotWord(src)) xor rcon folded into w. The
+// words are little-endian, so RotWord is a rotate right by a byte.
+function a64_aes_rot_step(src: string, w: string[], rcon: i32, off: i32): string {
+  return a64_aes_subword(src, "w12") + "    ror w12, w12, #8\n    mov w13, #" + util.i32_to_string(rcon) + "\n    eor w12, w12, w13\n" + a64_aes_fold4("w12", w, off);
+}
+
+function a64_aes_schedule128(): string {
+  let o: string = ".Laesk_128:\n    ldp w4, w5, [x1]\n    ldp w6, w7, [x1, #8]\n    stp w4, w5, [x3]\n    stp w6, w7, [x3, #8]\n";
+  let rcon: i32[] = [1, 2, 4, 8, 16, 32, 64, 128, 27, 54];
+  let i: i32 = 0;
+  while (i < 10) {
+    o = o + a64_aes_rot_step("w7", ["w4", "w5", "w6", "w7"], rcon[i], 16 * (i + 1));
+    i = i + 1;
+  }
+  return o + "    b .Laesk_ret\n";
+}
+
+function a64_aes_schedule256(): string {
+  let o: string = ".Laesk_256:\n    ldp w4, w5, [x1]\n    ldp w6, w7, [x1, #8]\n    ldp w8, w9, [x1, #16]\n    ldp w10, w11, [x1, #24]\n"
+    + "    stp w4, w5, [x3]\n    stp w6, w7, [x3, #8]\n    stp w8, w9, [x3, #16]\n    stp w10, w11, [x3, #24]\n";
+  let rcon: i32[] = [1, 2, 4, 8, 16, 32, 64];
+  let i: i32 = 1;
+  while (i <= 7) {
+    o = o + a64_aes_rot_step("w11", ["w4", "w5", "w6", "w7"], rcon[i - 1], 32 * i);
+    if (i < 7) {
+      o = o + a64_aes_subword("w7", "w12") + a64_aes_fold4("w12", ["w8", "w9", "w10", "w11"], 32 * i + 16);
+    }
+    i = i + 1;
+  }
+  return o + "    b .Laesk_ret\n";
+}
+
+function a64_aes_expand_key(): string {
+  return "    .global __fern_aes_expand_key\n    .type __fern_aes_expand_key, %function\n__fern_aes_expand_key:\n"
+    + "    stp x29, x30, [sp, #-48]!\n    mov x29, sp\n" + a64_aes_view("x0", "x3", "x4", ".Laesk_key")
+    + "    str x3, [x29, #16]\n    mov x0, #0\n    cmp x4, #16\n    b.ne .Laesk_n32\n    mov x0, #176\n.Laesk_n32:\n"
+    + "    cmp x4, #32\n    b.ne .Laesk_box\n    mov x0, #240\n.Laesk_box:\n" + a64_aes_alloc("32")
+    + "    ldr x5, [x0]\n    ldr x1, [x29, #16]\n    add x3, x0, #8\n    movi v17.2d, #0\n"
+    + "    cmp x5, #176\n    b.eq .Laesk_128\n    cmp x5, #240\n    b.eq .Laesk_256\n    b .Laesk_ret\n"
+    + a64_aes_schedule128() + a64_aes_schedule256()
+    + ".Laesk_ret:\n    ldr x0, [x29, #32]\n    ldp x29, x30, [sp], #48\n    ret\n    .size __fern_aes_expand_key, .-__fern_aes_expand_key\n";
+}
+
+// a64_aes_rounds runs the rounds over v0..v(n-1) with the round keys in
+// v16..v30: AESE and AESMC through the ninth, then AES-128's last two keys,
+// or four more rounds and AES-256's when x7 is 14. A local subroutine.
+function a64_aes_rounds(label: string, n: i32): string {
+  let o: string = label + ":\n";
+  let r: i32 = 0;
+  while (r < 13) {
+    if (r == 9) {
+      o = o + "    cmp x7, #14\n    b.eq " + label + "_256\n" + a64_aes_last(n, 25) + "    ret\n" + label + "_256:\n";
+    }
+    let j: i32 = 0;
+    while (j < n) {
+      let v: string = "v" + util.i32_to_string(j) + ".16b";
+      o = o + "    aese " + v + ", v" + util.i32_to_string(16 + r) + ".16b\n    aesmc " + v + ", " + v + "\n";
+      j = j + 1;
+    }
+    r = r + 1;
+  }
+  return o + a64_aes_last(n, 29) + "    ret\n";
+}
+
+// a64_aes_last is the final round: AESE with key k (no MixColumns) and the
+// whitening with key k + 1.
+function a64_aes_last(n: i32, k: i32): string {
+  let o: string = "";
+  let j: i32 = 0;
+  while (j < n) {
+    let v: string = "v" + util.i32_to_string(j) + ".16b";
+    o = o + "    aese " + v + ", v" + util.i32_to_string(k) + ".16b\n    eor " + v + ", " + v + ", v" + util.i32_to_string(k + 1) + ".16b\n";
+    j = j + 1;
+  }
+  return o;
+}
+
+// a64_aes_counter builds the next counter block in v<j>: v6 holds the
+// counter with each word byte-reversed, so the add steps the last word
+// modulo 2^32 (GCM's inc32) and rev32 restores the rest unchanged.
+function a64_aes_counter(j: i32): string {
+  return "    rev32 v" + util.i32_to_string(j) + ".16b, v6.16b\n    add v6.4s, v6.4s, v7.4s\n";
+}
+
+// a64_aes_xor_out exclusive-ors the next input block into v<j> and stores it.
+function a64_aes_xor_out(j: i32): string {
+  let v: string = "v" + util.i32_to_string(j) + ".16b";
+  return "    ld1 {v4.16b}, [x1]\n    eor " + v + ", " + v + ", v4.16b\n    st1 {" + v + "}, [x2]\n    add x1, x1, #16\n    add x2, x2, #16\n";
+}
+
+function a64_aes_ctr_blocks(): string {
+  let o: string = ".Lctr_loop4:\n    cmp x4, #64\n    b.lo .Lctr_loop1\n";
+  let j: i32 = 0;
+  while (j < 4) {
+    o = o + a64_aes_counter(j);
+    j = j + 1;
+  }
+  o = o + "    bl .Lctr_enc4\n";
+  j = 0;
+  while (j < 4) {
+    o = o + a64_aes_xor_out(j);
+    j = j + 1;
+  }
+  o = o + "    sub x4, x4, #64\n    b .Lctr_loop4\n.Lctr_loop1:\n    cmp x4, #16\n    b.lo .Lctr_tail\n" + a64_aes_counter(0) + "    bl .Lctr_enc1\n"
+    + a64_aes_xor_out(0) + "    sub x4, x4, #16\n    b .Lctr_loop1\n";
+  // The last partial block's keystream goes through the frame, combined a
+  // byte at a time.
+  return o + ".Lctr_tail:\n    cbz x4, .Lctr_ret\n" + a64_aes_counter(0) + "    bl .Lctr_enc1\n    add x5, x29, #80\n    st1 {v0.16b}, [x5]\n    mov x6, #0\n"
+    + ".Lctr_tailb:\n    ldrb w9, [x1, x6]\n    ldrb w10, [x5, x6]\n    eor w9, w9, w10\n    strb w9, [x2, x6]\n    add x6, x6, #1\n    cmp x6, x4\n    b.lo .Lctr_tailb\n    b .Lctr_ret\n";
+}
+
+function a64_aes_load_keys(): string {
+  let o: string = "";
+  let r: i32 = 0;
+  while (r < 15) {
+    if (r == 11) {
+      o = o + "    cmp x7, #14\n    b.ne .Lctr_keys\n";
+    }
+    o = o + "    ld1 {v" + util.i32_to_string(16 + r) + ".16b}, [x8]\n    add x8, x8, #16\n";
+    r = r + 1;
+  }
+  return o + ".Lctr_keys:\n";
+}
+
+function a64_aes_ctr32(): string {
+  let o: string = "    .global __fern_aes_ctr32\n    .type __fern_aes_ctr32, %function\n__fern_aes_ctr32:\n"
+    + "    stp x29, x30, [sp, #-112]!\n    mov x29, sp\n"
+    + a64_aes_view("x2", "x3", "x4", ".Lctr_data") + "    str x3, [x29, #16]\n    str x4, [x29, #24]\n"
+    + a64_aes_view("x1", "x3", "x5", ".Lctr_ctr") + "    str x3, [x29, #32]\n"
+    + a64_aes_view("x0", "x3", "x6", ".Lctr_rk") + "    str x3, [x29, #40]\n";
+  // The round count from the key bytes: 14 from 240, 10 from 176, else none,
+  // and none for a short counter; with none the answer is empty.
+  o = o + "    mov x7, #0\n    cmp x6, #176\n    b.lo .Lctr_rounds\n    mov x7, #10\n    cmp x6, #240\n    b.lo .Lctr_rounds\n    mov x7, #14\n.Lctr_rounds:\n"
+    + "    cmp x5, #16\n    b.hs .Lctr_ctrok\n    mov x7, #0\n.Lctr_ctrok:\n    str x7, [x29, #48]\n    ldr x0, [x29, #24]\n    cbnz x7, .Lctr_box\n    mov x0, #0\n.Lctr_box:\n"
+    + a64_aes_alloc("64") + "    ldr x4, [x0]\n    cbz x4, .Lctr_ret\n    add x2, x0, #8\n    ldr x1, [x29, #16]\n    ldr x8, [x29, #40]\n    ldr x7, [x29, #48]\n    ldr x3, [x29, #32]\n"
+    + a64_aes_load_keys() + "    ld1 {v6.16b}, [x3]\n    rev32 v6.16b, v6.16b\n    movi v7.2d, #0\n    mov w9, #1\n    ins v7.s[3], w9\n";
+  return o + a64_aes_ctr_blocks() + a64_aes_rounds(".Lctr_enc4", 4) + a64_aes_rounds(".Lctr_enc1", 1)
+    + ".Lctr_ret:\n    ldr x0, [x29, #64]\n    ldp x29, x30, [sp], #112\n    ret\n    .size __fern_aes_ctr32, .-__fern_aes_ctr32\n";
+}
+
+// a64_ghash_rev reverses the sixteen bytes of v<n>, GHASH's bit order.
+function a64_ghash_rev(v: string): string {
+  return "    rev64 " + v + ".16b, " + v + ".16b\n    ext " + v + ".16b, " + v + ".16b, " + v + ".16b, #8\n";
+}
+
+// a64_ghash_mul is v0 = v0 * v1 in GF(2^128), both byte-reversed: the x86-64
+// kernel's algorithm, pmull/pmull2 for pclmulqdq (v20 is v1 with its halves
+// swapped, for the cross products) and ext against the zero v31 for the
+// byte shifts. Clobbers v2-v7, v16, v17 and v20.
+function a64_ghash_mul(): string {
+  return ".Lgh_mul:\n    ext v20.16b, v1.16b, v1.16b, #8\n    pmull v3.1q, v0.1d, v1.1d\n    pmull v4.1q, v0.1d, v20.1d\n"
+    + "    pmull2 v5.1q, v0.2d, v20.2d\n    pmull2 v6.1q, v0.2d, v1.2d\n    eor v4.16b, v4.16b, v5.16b\n"
+    + "    ext v5.16b, v31.16b, v4.16b, #8\n    ext v4.16b, v4.16b, v31.16b, #8\n    eor v3.16b, v3.16b, v5.16b\n    eor v6.16b, v6.16b, v4.16b\n"
+    + "    ushr v7.4s, v3.4s, #31\n    ushr v16.4s, v6.4s, #31\n    shl v3.4s, v3.4s, #1\n    shl v6.4s, v6.4s, #1\n"
+    + "    ext v17.16b, v7.16b, v31.16b, #12\n    ext v16.16b, v31.16b, v16.16b, #12\n    ext v7.16b, v31.16b, v7.16b, #12\n"
+    + "    orr v3.16b, v3.16b, v7.16b\n    orr v6.16b, v6.16b, v16.16b\n    orr v6.16b, v6.16b, v17.16b\n"
+    + "    shl v7.4s, v3.4s, #31\n    shl v16.4s, v3.4s, #30\n    shl v17.4s, v3.4s, #25\n    eor v7.16b, v7.16b, v16.16b\n    eor v7.16b, v7.16b, v17.16b\n"
+    + "    ext v16.16b, v7.16b, v31.16b, #4\n    ext v7.16b, v31.16b, v7.16b, #4\n    eor v3.16b, v3.16b, v7.16b\n"
+    + "    ushr v2.4s, v3.4s, #1\n    ushr v4.4s, v3.4s, #2\n    ushr v5.4s, v3.4s, #7\n    eor v2.16b, v2.16b, v4.16b\n    eor v2.16b, v2.16b, v5.16b\n"
+    + "    eor v2.16b, v2.16b, v16.16b\n    eor v3.16b, v3.16b, v2.16b\n    eor v0.16b, v6.16b, v3.16b\n    ret\n";
+}
+
+function a64_ghash(): string {
+  let o: string = "    .global __fern_ghash\n    .type __fern_ghash, %function\n__fern_ghash:\n    stp x29, x30, [sp, #-80]!\n    mov x29, sp\n"
+    + a64_aes_view("x2", "x3", "x4", ".Lgh_data") + "    str x3, [x29, #16]\n    str x4, [x29, #24]\n"
+    + a64_aes_view("x1", "x3", "x5", ".Lgh_y") + "    str x3, [x29, #32]\n"
+    + a64_aes_view("x0", "x3", "x6", ".Lgh_h") + "    str x3, [x29, #40]\n"
+    + "    mov x0, #16\n    cmp x6, #16\n    b.hs .Lgh_hok\n    mov x0, #0\n.Lgh_hok:\n    cmp x5, #16\n    b.hs .Lgh_yok\n    mov x0, #0\n.Lgh_yok:\n"
+    + a64_aes_alloc("48") + "    ldr x4, [x0]\n    cbz x4, .Lgh_ret\n    movi v31.2d, #0\n"
+    + "    ldr x3, [x29, #40]\n    ld1 {v1.16b}, [x3]\n" + a64_ghash_rev("v1") + "    ldr x3, [x29, #32]\n    ld1 {v0.16b}, [x3]\n" + a64_ghash_rev("v0")
+    + "    ldr x1, [x29, #16]\n    ldr x4, [x29, #24]\n";
+  o = o + ".Lgh_loop:\n    cmp x4, #16\n    b.lo .Lgh_tail\n    ld1 {v2.16b}, [x1]\n" + a64_ghash_rev("v2") + "    eor v0.16b, v0.16b, v2.16b\n    bl .Lgh_mul\n"
+    + "    add x1, x1, #16\n    sub x4, x4, #16\n    b .Lgh_loop\n";
+  // A short last block is zero-padded through the frame.
+  o = o + ".Lgh_tail:\n    cbz x4, .Lgh_out\n    add x5, x29, #64\n    st1 {v31.16b}, [x5]\n    mov x6, #0\n"
+    + ".Lgh_tailb:\n    ldrb w9, [x1, x6]\n    strb w9, [x5, x6]\n    add x6, x6, #1\n    cmp x6, x4\n    b.lo .Lgh_tailb\n"
+    + "    ld1 {v2.16b}, [x5]\n" + a64_ghash_rev("v2") + "    eor v0.16b, v0.16b, v2.16b\n    bl .Lgh_mul\n";
+  return o + ".Lgh_out:\n" + a64_ghash_rev("v0") + "    ldr x0, [x29, #48]\n    add x3, x0, #8\n    st1 {v0.16b}, [x3]\n"
+    + ".Lgh_ret:\n    ldr x0, [x29, #48]\n    ldp x29, x30, [sp], #80\n    ret\n" + a64_ghash_mul() + "    .size __fern_ghash, .-__fern_ghash\n";
+}
+
+// emit_aes_gcm_op calls a kernel: [key] for aes_expand_key, three views for
+// aes_ctr32 and ghash.
+function emit_aes_gcm_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+  s = s.need("aes_gcm").mark_heap();
+  if (o.kind_tag == 402) {
+    return s.write("    ldr x0, [sp], #16\n    bl __fern_aes_expand_key\n    str x0, [sp, #-16]!\n");
+  }
+  let callee: string = "__fern_aes_ctr32";
+  if (o.kind_tag == 404) {
+    callee = "__fern_ghash";
+  }
+  return s.write("    ldr x2, [sp], #16\n    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl " + callee + "\n    str x0, [sp, #-16]!\n");
+}
+
+function emit_rt_aes_gcm(s: asmcore.EmitState): asmcore.EmitState {
+  return s.write("    .arch_extension aes\n" + a64_aes_expand_key() + a64_aes_ctr32() + a64_ghash());
 }
 
 // emit_rt_crc32_cksum emits `__fern_crc32_cksum(crc, box) -> i32`: the bytes of
@@ -12310,7 +12571,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
     "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at", "truncate",
     "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times", "read_link",
     "getcwd", "chdir", "chroot", "setuid", "setgid", "setgroups", "umask", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "sync",
-    "temp_dir", "stat", "lstat", "statfs", "mounts", "access", "read_dir", "read_dir_all", "read_dir_ino",
+    "temp_dir", "stat", "lstat", "statfs", "mounts", "sysctl", "access", "read_dir", "read_dir_all", "read_dir_ino",
     "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",
     "reader", "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8", "signal_send", "set_process_group", "set_priority", "clock_set",
   ]);

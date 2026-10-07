@@ -261,8 +261,8 @@ inside a codegen switch:
 
 | backend | baseline | what it buys |
 | ------- | -------- | ------------ |
-| arm64 / arm64-darwin | ARMv8.2-A with the cryptographic extensions | `clz`, `rbit`, the SIMD-side popcount (`cnt` + `addv`), `crc32`, LSE atomics, and the carry-less multiply `pmull` / `pmull2` in its `.1q` form. This one IS a raise: FEAT_AES (which carries FEAT_PMULL) stays optional in every ARMv8-A and ARMv9-A profile, and taking it is what drops the Raspberry Pi. |
-| x86-64 | **x86-64-v3** — Haswell-class 2013 (AMD: Excavator 2015, Zen 2017) | `popcnt` (SSE4.2), `lzcnt` / `tzcnt` (BMI1), `pshufb` (SSSE3), the SSE4.1 `roundsd`, SSE2 floating point, `pclmulqdq`, and the **AVX2** 32-byte loops the byte kernels already emit. |
+| arm64 / arm64-darwin | ARMv8.2-A with the cryptographic extensions | `clz`, `rbit`, the SIMD-side popcount (`cnt` + `addv`), `crc32`, LSE atomics, the carry-less multiply `pmull` / `pmull2` in its `.1q` form, and the AES rounds `aese` / `aesmc`. This one IS a raise: FEAT_AES (which carries FEAT_PMULL) stays optional in every ARMv8-A and ARMv9-A profile, and taking it is what drops the Raspberry Pi. |
+| x86-64 | **x86-64-v3 plus AES-NI** — Haswell-class 2013 (AMD: Excavator 2015, Zen 2017) | `popcnt` (SSE4.2), `lzcnt` / `tzcnt` (BMI1), `pshufb` (SSSE3), the SSE4.1 `roundsd`, SSE2 floating point, `pclmulqdq`, `aesenc` / `aesenclast` / `aeskeygenassist`, and the **AVX2** 32-byte loops the byte kernels already emit. |
 | wasm | core wasm 2.0, fixed-width SIMD included | the `v128` family — `v128.load`, `i8x16.splat`, `i8x16.eq`, `i8x16.bitmask` and siblings. SIMD is part of the 2.0 standard rather than an option, and every engine Fern targets (wasmtime, and browsers since 2021) enables it unconditionally, so this is the same kind of floor as arm64's Advanced SIMD. |
 
 **LZCNT / TZCNT have a failure mode POPCNT does not, and it is the reason to
@@ -284,6 +284,22 @@ its in-process assembler encodes (`x86_native.fern`), and the `clz` / `ctz` /
 x86-64-v3 is the standard name for the class that has it, and no real
 part carries AVX2 without v3's other bits. The AMD floor moves with it: Jaguar
 and Piledriver are AVX1 parts and never ran this output.
+
+**AES-NI is a raise, and it drops no hardware.** The psABI levels leave AES-NI
+out of every one of them, v4 included, so std/crypto/aes_gcm's kernels
+(`__aes_expand_key`, `__aes_ctr32`) take it as a separate bit (#9858). Every
+AVX2 part from Intel and AMD has it — the Pentium and Celeron lines that
+shipped without AES-NI also shipped without AVX — so the parts the v3 floor
+admits are the parts this one admits. The reason not to do without it is
+constant time: a table-driven software AES leaks its key through the cache,
+and the constant-time software wasm runs instead seals about 25 MB/s under
+wasmtime where the instructions seal about 1.1 GB/s (x86-64, 64 KiB messages,
+2026-10-07).
+
+wasm has no AES or carry-less multiply instruction, so its AES-GCM kernels are
+software that never branches on or indexes by a secret: a bitsliced AES over
+`i64`, four blocks a pass, and a GHASH that multiplies a bit at a time under
+masks (`compiler/wasm_aes.fern`).
 
 Anything above this level (AVX-512, …) needs runtime dispatch first, and none
 of it is used. AVX-512 is deliberately not taken: Intel removed it from

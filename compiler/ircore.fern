@@ -731,7 +731,7 @@ pub function all_runtime_need_roots(): string[] {
     // edge-handler — linked its library units against undefined
     // __fern_tcp_listen / __fern_tcp_send / __fern_poll / … (#5686).
     // Filesystem + process:
-    "stat", "lstat", "statfs", "mounts", "access", "read_dir", "read_dir_all", "read_dir_ino", "remove_file", "create_dir_all", "remove_dir_all", "write_file", "write_file_exec",
+    "stat", "lstat", "statfs", "mounts", "sysctl", "access", "read_dir", "read_dir_all", "read_dir_ino", "remove_file", "create_dir_all", "remove_dir_all", "write_file", "write_file_exec",
     "write_file_bytes", "write_file_bytes_u8",
     "getxattr_bytes_u8", "lgetxattr_bytes_u8", "setxattr_bytes_u8", "lsetxattr_bytes_u8",
     "create_dir", "remove_dir", "create_link", "create_symlink", "read_link", "umask", "rename",
@@ -741,7 +741,7 @@ pub function all_runtime_need_roots(): string[] {
     "termios_get", "termios_set",
     "temp_dir", "open_file", "open_with", "reader", "fd_stat", "reader_seek", "reader_splice", "fd_flags",
     "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8",
-    "writer_write", "write_some", "writer_truncate", "subprocess", "crc32_cksum", "sum_bytes",
+    "writer_write", "write_some", "writer_truncate", "subprocess", "crc32_cksum", "sum_bytes", "aes_gcm",
     // The packed-byte twins a typed program's u8[] calls (asmcore.packed_suffix).
     "alloc_bytes", "arr_push_u8", "buf_u8", "buf_take_bytes", "buf_take_bytes_u8", "str_bytes_u8", "str_from_bytes_u8", "arr_slice_u8",
     "str_from_bytes_range", "str_from_bytes_range_u8",

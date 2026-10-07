@@ -1,0 +1,130 @@
+// std/crypto/aes_gcm — AES-128-GCM and AES-256-GCM, the AEAD of NIST SP
+// 800-38D with a 12-byte nonce and a 16-byte tag.
+//
+//   let sealed: u8[] = aes_gcm.seal(key, nonce, plaintext, aad)?;
+//   let opened: u8[] = aes_gcm.open(key, nonce, sealed, aad)?;
+//
+// The key is 16 bytes for AES-128 or 32 for AES-256, and the nonce 12.
+// `seal` answers the ciphertext with the 16-byte tag after it; `open` checks
+// the tag before it decrypts, and a sealed message whose tag does not
+// verify, or that is shorter than a tag, is `Forged`. A nonce must never be
+// used twice under one key.
+//
+// Constant time: the cipher and GHASH are the `__aes_expand_key`,
+// `__aes_ctr32` and `__ghash` kernels, the AES and carry-less multiply
+// instructions on x86-64 and arm64 and a bitsliced AES on wasm, none of
+// which branches on or indexes memory with a key or data byte. The tag is
+// compared with no early exit and only the verdict is declassified. The
+// valgrind gate (`__ct_secret`, docs/TEST-GATES.md) checks this.
+
+import "core/int";
+
+// AeadError — why a seal or an open was refused: a key or a nonce of the
+// wrong length (the length it had), or a sealed message that does not
+// verify.
+pub enum AeadError {
+  KeyLength(i32),
+  NonceLength(i32),
+  Forged,
+}
+
+pub function (e: AeadError) message(): string {
+  match (e) {
+    KeyLength(n) => {
+      return "aes_gcm: the key is " + int.int_to_string(n) + " bytes, want 16 or 32";
+    },
+    NonceLength(n) => {
+      return "aes_gcm: the nonce is " + int.int_to_string(n) + " bytes, want 12";
+    },
+    Forged => {
+      return "aes_gcm: the message does not verify";
+    }
+  }
+  return "";
+}
+
+// __round_keys is the key's schedule once both lengths are right.
+function __round_keys(key: [u8], nonce: [u8]): Result[u8[], AeadError] {
+  if (key.len() != 16 && key.len() != 32) {
+    return Err(KeyLength(key.len()));
+  }
+  if (nonce.len() != 12) {
+    return Err(NonceLength(nonce.len()));
+  }
+  return Ok(__aes_expand_key(key));
+}
+
+// __counter is the counter block nonce || 0^24 || `last`: J0 with 1, and the
+// first block of keystream with 2.
+function __counter(nonce: [u8], last: u8): u8[] {
+  let b: u8[] = __alloc_u8(16);
+  let i: i32 = 0;
+  while (i < 12) {
+    b = b.with(i, nonce[i]);
+    i = i + 1;
+  }
+  return b.with(15, last);
+}
+
+// __put_bits writes n bytes as a 64-bit big-endian count of bits at `at`.
+function __put_bits(own b: u8[], at: i32, n: i32): u8[] {
+  let bits: i64 = n as i64 * 8;
+  let k: i32 = 0;
+  while (k < 8) {
+    b = b.with(at + k, (bits >> (56 - 8 * k) as i64 & 255) as u8);
+    k = k + 1;
+  }
+  return b;
+}
+
+// __tag is GCM's tag over aad and the ciphertext: GHASH under H = E(K, 0)
+// of each padded to whole blocks and then their lengths, exclusive-ored with
+// E(K, J0).
+function __tag(rk: [u8], nonce: [u8], aad: [u8], ct: [u8]): u8[] {
+  let zero: u8[] = __alloc_u8(16);
+  let h: u8[] = __aes_ctr32(rk, zero, zero);
+  let y: u8[] = __ghash(h, __ghash(h, zero, aad), ct);
+  let lens: u8[] = __put_bits(__put_bits(__alloc_u8(16), 0, aad.len()), 8, ct.len());
+  return __aes_ctr32(rk, __counter(nonce, 1 as u8), __ghash(h, y, lens));
+}
+
+// seal(key, nonce, plaintext, aad) — the plaintext encrypted, with the
+// 16-byte tag over it and the additional data `aad` after it.
+pub function seal(key: [u8], nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], AeadError] {
+  let rk: u8[] = __round_keys(key, nonce)?;
+  let ct: u8[] = __aes_ctr32(rk, __counter(nonce, 2 as u8), plaintext);
+  let tag: u8[] = __tag(rk, nonce, aad, ct);
+  let b: usize = buf_new(ct.len() + 16);
+  buf_push_bytes_range(b, ct, 0, ct.len());
+  buf_push_bytes_range(b, tag, 0, 16);
+  let sealed: u8[] = buf_take_bytes(b);
+  buf_free(b);
+  return Ok(sealed);
+}
+
+// open(key, nonce, sealed, aad) — the plaintext of a message `seal` made
+// with the same key, nonce and aad, or `Forged`. The tag is checked, in
+// constant time, before anything is decrypted.
+pub function open(key: [u8], nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[], AeadError] {
+  let rk: u8[] = __round_keys(key, nonce)?;
+  if (sealed.len() < 16) {
+    return Err(Forged);
+  }
+  let n: i32 = sealed.len() - 16;
+  let ct: [u8] = sealed[0:n];
+  let want: u8[] = __tag(rk, nonce, aad, ct);
+  let diff: u8 = 0;
+  let i: i32 = 0;
+  while (i < 16) {
+    diff = diff | want[i] ^ sealed[n + i];
+    i = i + 1;
+  }
+  // The verdict is the one secret-derived value allowed to steer a branch.
+  let verdict: u8[] = __alloc_u8(1);
+  verdict = verdict.with(0, diff);
+  __ct_public(verdict);
+  if (verdict[0] != 0) {
+    return Err(Forged);
+  }
+  return Ok(__aes_ctr32(rk, __counter(nonce, 2 as u8), ct));
+}
