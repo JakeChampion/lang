@@ -58,8 +58,26 @@ func brokerDriverOracle(subscribers, occupancy, turns int, mode string) map[stri
 }
 
 func TestSelfHostBrokerDriver(t *testing.T) {
+	testBrokerDriverRepresentation(t, false)
+}
+
+func TestSelfHostRingBrokerDriver(t *testing.T) {
+	testBrokerDriverRepresentation(t, true)
+}
+
+func testBrokerDriverRepresentation(t *testing.T, ring bool) {
 	cli := buildSelfHostCLI(t)
 	path := brokerDriverFiles(t, t.TempDir())
+	if ring {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		source := prepareBrokerRepresentation(t, filepath.Dir(path), string(data), true)
+		if err := os.WriteFile(path, []byte(source), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	bin := cli.x86Binary(t, path, "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
 	for _, tc := range []struct {
 		name                          string

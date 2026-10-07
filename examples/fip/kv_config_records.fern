@@ -1,0 +1,51 @@
+// Ordinary representations decode immutable records and build response bytes.
+import "std/string";
+
+pub struct Request {
+  op: i32,
+  key: string,
+  value: string,
+}
+
+function field(input: u8[], at: i32, size: i32): string {
+  let bytes: u8[] = [];
+  let i: i32 = 0;
+  while (i < size) {
+    bytes = bytes.append(input[at + i]);
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(bytes);
+}
+
+pub function decode(input: u8[], at: i32, key_bytes: i32, value_bytes: i32): Request {
+  return Request {
+    op: input[at] as i32,
+    key: field(input, at + 1, key_bytes),
+    value: field(input, at + 1 + key_bytes, value_bytes),
+  };
+}
+
+pub function increment(current: string, delta: string): string {
+  let bytes: u8[] = current.bytes();
+  let carry: i32 = 0;
+  let i: i32 = 0;
+  while (i < 8) {
+    let sum: i32 = bytes[i] as i32 + delta[i] as i32 + carry;
+    bytes = bytes.with(i, (sum & 255) as u8);
+    carry = sum >> 8;
+    i = i + 1;
+  }
+  return string_from_bytes_unchecked(bytes);
+}
+
+pub function emit(own output: u8[], status: i32, value: string): u8[] {
+  output = output.append(status as u8);
+  if (status == 4) {
+    let i: i32 = 0;
+    while (i < value.len()) {
+      output = output.append(value[i]);
+      i = i + 1;
+    }
+  }
+  return output;
+}

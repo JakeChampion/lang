@@ -5315,8 +5315,8 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   if (name == "__fern_str_grow" || name == "__fern_str_grow_range") {
     s = s.need("str_grow");
   }
-  if (name == "__fern_getpwuid_name") {
-    s = s.need("pwname");
+  if (name == "__fern_account_entry") {
+    s = s.need("account");
   }
   if (name == "__fern_set_args") {
     s = s.need("set_args");
@@ -8471,28 +8471,37 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write(".Laie_ret:\n");
     s = s.write("    ret\n");
   }
-  // __fern_getpwuid_name(uid@[sp]) -> the address of pw_name in the entry
-  // libSystem's getpwuid(3) answers, or 0. Darwin keeps regular accounts in
-  // Directory Services, which only libSystem can ask (#9815): the call goes
-  // through a __DATA slot dyld binds to `_getpwuid` at load, under AAPCS64,
-  // which preserves the callee-saved registers the emitted code relies on.
-  // Linux answers 0 and the caller reads /etc/passwd.
-  if (s.has_need("pwname")) {
+  // __fern_account_entry(kind@[sp,#16], key@[sp]) -> what libSystem answers
+  // for one account-database question, or 0: kind 0 is getpwuid(key), 1
+  // getpwnam(key as a C string), 2 getgrgid(key), 3 getgrnam(key as a C
+  // string) and 4 getlogin(). Darwin keeps regular accounts and groups in
+  // Directory Services, which only libSystem can ask (#9815): each call goes
+  // through a __DATA slot dyld binds at load, under AAPCS64, which preserves
+  // the callee-saved registers the emitted code relies on. Linux answers 0 and
+  // the caller reads the files.
+  if (s.has_need("account")) {
     if (darwin) {
-      s = s.write("    .section .data\n    .align 3\n__fern_got_getpwuid: .quad _getpwuid\n    .text\n");
+      s = s.write("    .section .data\n    .align 3\n__fern_got_account:\n");
+      s = s.write("    .quad _getpwuid\n    .quad _getpwnam\n    .quad _getgrgid\n    .quad _getgrnam\n    .quad _getlogin\n    .text\n");
     }
-    s = s.write("__fn___fern_getpwuid_name:\n");
+    s = s.write("__fn___fern_account_entry:\n");
     if (darwin) {
       s = s.write("    stp x29, x30, [sp, #-16]!\n");
       s = s.write("    mov x29, sp\n");
-      s = s.write("    ldr w0, [sp, #16]\n");  // uid
-      s = s.write("    adrp x16, __fern_got_getpwuid\n");
-      s = s.write("    add x16, x16, :lo12:__fern_got_getpwuid\n");
+      s = s.write("    ldr w9, [sp, #32]\n");  // kind
+      s = s.write("    ldr x0, [sp, #16]\n");  // key
+      s = s.write("    cmp x9, #4\n");
+      s = s.write("    b.hi .Laccount_none\n");
+      s = s.write("    adrp x16, __fern_got_account\n");
+      s = s.write("    add x16, x16, :lo12:__fern_got_account\n");
+      s = s.write("    lsl x9, x9, #3\n");
+      s = s.write("    add x16, x16, x9\n");
       s = s.write("    ldr x16, [x16]\n");
       s = s.write("    blr x16\n");
-      s = s.write("    cbz x0, .Lpwname_done\n");
-      s = s.write("    ldr x0, [x0]\n");  // pw_name is the struct's first field
-      s = s.write(".Lpwname_done:\n");
+      s = s.write("    b .Laccount_done\n");
+      s = s.write(".Laccount_none:\n");
+      s = s.write("    mov x0, #0\n");
+      s = s.write(".Laccount_done:\n");
       s = s.write("    ldp x29, x30, [sp], #16\n");
     } else {
       s = s.write("    mov x0, #0\n");

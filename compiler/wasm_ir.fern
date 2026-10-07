@@ -13194,9 +13194,9 @@ pub function heap_alloc_helpers(heap_base: i32, fl_base: i32, fl_cells: i32, lfl
   o = o + "    (local.set $cls (call $__fern_large_cls (call $__fern_large_cap (local.get $bytes))))\n";
   o = o + "    (i32.store (i32.add (local.get $base) (i32.const 4)) (i32.load (i32.add (i32.const " + lflb + ") (i32.mul (local.get $cls) (i32.const 4)))))\n";
   o = o + "    (i32.store (i32.add (i32.const " + lflb + ") (i32.mul (local.get $cls) (i32.const 4))) (local.get $base)))\n";
-  // $__fern_getpwuid_name(uid) -> 0: a WASI world has no account database
-  // beyond the files the caller reads (#9815).
-  o = o + "  (func $__fern_getpwuid_name (param $uid i32) (result i32) (i32.const 0))\n";
+  // $__fern_account_entry(kind, key) -> 0: a WASI world has no account
+  // database beyond the files the caller reads (#9815).
+  o = o + "  (func $__fern_account_entry (param $kind i32) (param $key i32) (result i32) (i32.const 0))\n";
   // $__fern_str_grow(a, b) -> 1 once b is appended to a in place, else 0 with
   // nothing written: the wasm sibling of the register backends' helper. A heap
   // string is one [rc][bsz][len][bytes] block, freed at the class of its bsz,

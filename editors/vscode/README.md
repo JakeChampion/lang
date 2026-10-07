@@ -25,10 +25,12 @@ the Fern language. Provides:
 
    Or set an explicit path via the `fern.serverPath` setting.
 
-   The self-host compiler is a server too: `fern -lsp STDLIB-ROOT` publishes
-   `fern -check`'s diagnostics and formats as `fern -fmt` does, without the
-   cursor features below. Point `fern.serverPath` at that `fern` binary and set
-   `fern.serverArgs` to `["-lsp", "/path/to/internal/stdlib"]`.
+   The self-hosted compiler is a server too: `fern-selfhost -lsp STDLIB-ROOT`
+   publishes `fern -check`'s diagnostics and formats as `fern -fmt` does,
+   without the cursor features below. Point `fern.serverPath` at the
+   `fern-selfhost` binary (`make bootstrap` or `make selfhost-cli` writes it
+   to `bin/`) and set `fern.serverArgs` to
+   `["-lsp", "/path/to/internal/stdlib"]`.
 
 2. Build + install the extension:
 

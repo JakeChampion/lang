@@ -18,6 +18,14 @@ function snapshot(b: broker_core.Broker): broker_core.Broker { return b; }
 `
 
 func TestSelfHostBrokerBoundaries(t *testing.T) {
+	testBrokerBoundaries(t, false)
+}
+
+func TestSelfHostRingBrokerBoundaries(t *testing.T) {
+	testBrokerBoundaries(t, true)
+}
+
+func testBrokerBoundaries(t *testing.T, ring bool) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range []struct{ name, source string }{
 		{"atomic_fanout", `
@@ -110,15 +118,9 @@ function main(): i32 {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			dir := t.TempDir()
-			data, err := os.ReadFile(filepath.Join("..", "..", "..", "examples", "fip", "broker_core.fern"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(dir, "broker_core.fern"), data, 0600); err != nil {
-				t.Fatal(err)
-			}
+			source := prepareBrokerRepresentation(t, dir, "import \"./broker_core\";\n"+brokerBoundaryHelpers+tc.source, ring)
 			path := filepath.Join(dir, "main.fern")
-			if err := os.WriteFile(path, []byte("import \"./broker_core\";\n"+brokerBoundaryHelpers+tc.source), 0600); err != nil {
+			if err := os.WriteFile(path, []byte(source), 0600); err != nil {
 				t.Fatal(err)
 			}
 			for _, target := range []string{"x86-64-linux", "arm64-linux", "wasm32-wasi"} {

@@ -524,7 +524,10 @@ coreutils/
                     rule in its footer past the transition table, and
                     the rule string itself when no file answers — with
                     the offset AND the abbreviation (`EST`, `+0545`) in
-                    force at an instant
+                    force at an instant. On Darwin it follows tzcode
+                    instead: no $TZDIR, `UTC` for anything that is not a
+                    file or a whole rule, offsets to 167 hours, and a
+                    rule's transitions only from 1970
   lib/timefmt.fern  C-locale nstrftime over the broken-down LOCAL time
                     std/tz resolves: gnulib's `-` `_` `0` `^` `#`
                     flags, an optional field width, the `E` / `O`
@@ -4104,6 +4107,8 @@ difference between the two standard offsets, and past the file's own table
 prints `EST -0500`, not the `ABC` the string names. `std/tz` applies
 the POSIX default dates instead, the United States rule in force since
 2007, which is what glibc itself uses on a system with no posixrules file.
+Darwin's tzcode reads a posixrules file the same way, and `std/tz` takes
+the same default dates there.
 The two agree on every date between those dates and 2037 and differ
 outside it; the corpus therefore carries no case of that TZ shape, and
 `who_test.go` says so where a reader will meet it.

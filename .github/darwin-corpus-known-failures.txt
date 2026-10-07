@@ -90,14 +90,12 @@ TestHostidParity
 TestIdParity
 TestLinkParity
 TestLnParity
-TestLognameParity
 TestMknodParity
 TestMktempRetryExhaustion
 TestMvParity
 TestNice
 TestNiceReadsTheNicenessItWasStartedAt
 TestPinkyParity
-TestPrParity
 TestPrintfParity
 TestPwdUnlinkedWorkingDirectory
 TestRealpathParity
@@ -109,6 +107,3 @@ TestStty
 TestTestParity
 TestTtyParity
 TestUptime
-TestUsersParity
-TestUtmpRecordLayoutMatchesTheHost
-TestWhoParity

@@ -308,6 +308,10 @@ type invocation struct {
 	// whole parity test down with it, which is how 663 cases across 35
 	// utilities came to fail for this one reason (#9714).
 	rawByteName bool
+	// darwinLibcDefect is why GNU's output for the case is wrong on Darwin:
+	// a defect of Apple's libc that GNU passes through and Fern does not
+	// copy (#9714). The case is compared everywhere else.
+	darwinLibcDefect string
 }
 
 // treeEntry is one path under a seedTree case's working directory, as the
@@ -572,6 +576,9 @@ func (inv invocation) prep(t *testing.T) {
 	// the parity leg.
 	if inv.rawByteName && !rawByteNamesHeld(t) {
 		t.Skipf("the fixture name is not valid UTF-8 and this filesystem refuses one (%s validates it)", runtime.GOOS)
+	}
+	if inv.darwinLibcDefect != "" && runtime.GOOS == "darwin" {
+		t.Skipf("the Darwin reference is wrong here: %s", inv.darwinLibcDefect)
 	}
 	if inv.prepare == nil {
 		return
