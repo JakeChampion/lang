@@ -150,6 +150,18 @@ function test_refusals(): test.TestOutcome {
   return test.pass();
 }
 
+function key_refusal(n: string, e: string): string {
+  match (rsa.public_key(hex.hex_decode(n), hex.hex_decode(e))) {
+    Ok(k) => {
+      return "accepted";
+    },
+    Err(err) => {
+      return err.message();
+    }
+  }
+  return "";
+}
+
 function test_bad_keys(): test.TestOutcome {
   match (rsa.public_key(hex.hex_decode("c3"), hex.hex_decode("010001"))) {
     Ok(k) => {
@@ -161,15 +173,23 @@ function test_bad_keys(): test.TestOutcome {
       }
     }
   }
-  match (rsa.public_key(hex.hex_decode(k2048_n()), hex.hex_decode("010000"))) {
-    Ok(k) => {
-      return test.fail("an even exponent was accepted");
-    },
-    Err(e) => {
-      return test.assert_eq(e.message(), "rsa: the exponent must be odd and at least 3");
-    }
+  let bad_exponent: string = "rsa: the exponent must be odd, at least 3 and at most 64 bits";
+  if (key_refusal(k2048_n(), "010000") != bad_exponent) {
+    return test.fail("an even exponent was accepted");
   }
-  return test.pass();
+  if (key_refusal(k2048_n(), "01") != bad_exponent) {
+    return test.fail("an exponent of 1 was accepted");
+  }
+  if (key_refusal(k2048_n(), "010000000000000001") != bad_exponent) {
+    return test.fail("a 65-bit exponent was accepted");
+  }
+  let huge: string = "c3";
+  let i: i32 = 0;
+  while (i < 2049) {
+    huge = huge + "00";
+    i = i + 1;
+  }
+  return test.assert_eq(key_refusal(huge + "01", "010001"), "rsa: the modulus is 16408 bits, want at most 16384");
 }
 
 function main(): i32 {

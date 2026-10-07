@@ -1096,6 +1096,7 @@ with signing (#9858).
 - `verify(key, hash, msg, sig): boolean` — `sig` a DER ECDSA-Sig-Value, as TLS
   and X.509 carry it; `hash` `Sha256` or `Sha384`.
 
+### `std/crypto/rsa`
 
 RSA signature verification (RFC 8017) for TLS 1.3 and X.509 chains:
 RSASSA-PKCS1-v1_5 and RSASSA-PSS over SHA-256, SHA-384 and SHA-512, PSS with
@@ -1110,6 +1111,7 @@ constant time. About 1 ms per verification on x86-64 under a 2048-bit key.
   `verify_pss(key, hash, msg, sig): boolean`, `hash` one of `Sha256`,
   `Sha384`, `Sha512`.
 
+### `std/hash`
 
 Non-cryptographic checksums, in std/crypto's streaming shape (`update` /
 `update_bytes` rebound, `finish()` reads the value) but kept apart from it:
