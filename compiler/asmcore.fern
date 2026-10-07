@@ -8170,13 +8170,7 @@ function slit_buckets(): i32 {
 }
 
 function slit_empty_buckets(): i32[] {
-  let out: i32[] = [];
-  let i: i32 = 0;
-  while (i < slit_buckets()) {
-    out = out.append(0 - 1);
-    i = i + 1;
-  }
-  return out;
+  return util.minus_ones(slit_buckets());
 }
 
 pub function add_string_lit(own s: EmitState, v: string): StringLitOut {

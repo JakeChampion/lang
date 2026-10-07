@@ -9087,12 +9087,7 @@ function ssa_rt_arg_reg(a: i32): i32 {
 // value; ssa_view_count is how many there are. The words sit after the spill
 // slots.
 function ssa_view_slots(f: ssa.SFunc): i32[] {
-  let out: i32[] = [];
-  let i: i32 = 0;
-  while (i < f.nvals) {
-    out = out.append(0 - 1);
-    i = i + 1;
-  }
+  let out: i32[] = util.minus_ones(f.nvals);
   let n: i32 = 0;
   for blk in f.blocks {
     for ins in blk.insts {
@@ -9817,12 +9812,7 @@ function ssa_reg_call(ins: ssa.SInst, s: asmcore.EmitState): boolean {
 // and each register call's argument leaves in, so neither needs a move when
 // the value has nowhere better to be.
 function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
-  let pref: i32[] = [];
-  let i: i32 = 0;
-  while (i < f.nvals) {
-    pref = pref.append(0 - 1);
-    i = i + 1;
-  }
+  let pref: i32[] = util.minus_ones(f.nvals);
   let p: i32 = 0;
   while (p < ssa_reg_params(f)) {
     pref = pref.with(p, p);

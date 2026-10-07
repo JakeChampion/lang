@@ -68,18 +68,8 @@ function sig_key_bucket(key: string, nb: i32): i32 {
 // row order without needing a per-bucket tail.
 pub function sig_reg_of(rows: string[]): SigReg {
   let nb: i32 = sig_bucket_count(rows.len());
-  let head: i32[] = [];
-  let b: i32 = 0;
-  while (b < nb) {
-    head = head.append(0 - 1);
-    b = b + 1;
-  }
-  let next: i32[] = [];
-  let j: i32 = 0;
-  while (j < rows.len()) {
-    next = next.append(0 - 1);
-    j = j + 1;
-  }
+  let head: i32[] = util.minus_ones(nb);
+  let next: i32[] = util.minus_ones(rows.len());
   let k: i32 = rows.len() - 1;
   while (k >= 0) {
     let bk: i32 = sig_key_bucket(rows[k], nb);
@@ -193,22 +183,10 @@ function stab_buckets(): i32 {
 // mfuncs_table.
 pub function struct_tab(decls: parser.StructDecl[]): StructTab {
   let nb: i32 = stab_buckets();
-  let head: i32[] = [];
-  let ehead: i32[] = [];
-  let b: i32 = 0;
-  while (b < nb) {
-    head = head.append(0 - 1);
-    ehead = ehead.append(0 - 1);
-    b = b + 1;
-  }
-  let next: i32[] = [];
-  let enext: i32[] = [];
-  let j: i32 = 0;
-  while (j < decls.len()) {
-    next = next.append(0 - 1);
-    enext = enext.append(0 - 1);
-    j = j + 1;
-  }
+  let head: i32[] = util.minus_ones(nb);
+  let ehead: i32[] = util.minus_ones(nb);
+  let next: i32[] = util.minus_ones(decls.len());
+  let enext: i32[] = util.minus_ones(decls.len());
   let k: i32 = decls.len() - 1;
   while (k >= 0) {
     let bk: i32 = util.hash_bucket(decls[k].name, nb);

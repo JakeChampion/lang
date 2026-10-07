@@ -7402,7 +7402,7 @@ function zg_in_loop(ops: Op[]): boolean[] {
   let k_loop: i32 = kind_id("loop");
   let k_if: i32 = kind_id("if");
   let k_end: i32 = kind_id("end");
-  let marks: boolean[] = [];
+  let marks: boolean[] = __alloc_bool(ops.len());
   let depth: i32 = 0;
   let loop_at: i32 = 0 - 1;
   let i: i32 = 0;
@@ -7421,7 +7421,9 @@ function zg_in_loop(ops: Op[]): boolean[] {
         loop_at = 0 - 1;
       }
     }
-    marks = marks.append(loop_at >= 0);
+    if (loop_at >= 0) {
+      marks = marks.with(i, true);
+    }
     i = i + 1;
   }
   return marks;
@@ -7612,10 +7614,7 @@ pub function hoist_loop_invariants(ops: Op[], n_locals: i32): OptimizedOps {
   let maxs: i32 = cp_max_slot(ops);
   // stored[slot] is the index of the loop whose body last marked the slot
   // written, plus one; one array serves every loop of the function.
-  let stored: i32[] = [];
-  while (stored.len() <= maxs) {
-    stored = stored.append(0);
-  }
+  let stored: i32[] = __alloc_i32(maxs + 1);
   // Later loops first: rewriting one shifts every index after it, and
   // walking backwards keeps the indices of the loops still to visit valid.
   let i: i32 = ops.len() - 1;
@@ -7656,12 +7655,7 @@ function licm_hoist_from_loop(cur: OptimizedOps, loop_idx: i32, maxs: i32, own s
   // slot_for[src] is the cache slot for an operand in `order`, -1 otherwise.
   // Only an operand the body never stores to is in it, so a hit already says
   // the read is invariant.
-  let slot_for: i32[] = [];
-  let s: i32 = 0;
-  while (s <= maxs) {
-    slot_for = slot_for.append(0 - 1);
-    s = s + 1;
-  }
+  let slot_for: i32[] = util.minus_ones(maxs + 1);
   let pre: Op[] = [];
   let n: i32 = 0;
   while (n < order.len()) {
@@ -7727,10 +7721,7 @@ function licm_hoist_from_loop(cur: OptimizedOps, loop_idx: i32, maxs: i32, own s
 function licm_data_slots(ops: Op[], loop_idx: i32, end: i32, slot_for: i32[], next: i32): i32[] {
   let k_load: i32 = kind_id("load_local");
   let k_data: i32 = kind_id("str_data");
-  let out: i32[] = [];
-  while (out.len() < slot_for.len()) {
-    out = out.append(0 - 1);
-  }
+  let out: i32[] = util.minus_ones(slot_for.len());
   let j: i32 = loop_idx + 1;
   while (j + 1 < end) {
     if (ops[j].kind_tag == k_load && ops[j + 1].kind_tag == k_data) {
@@ -8088,14 +8079,12 @@ pub function const_propagate(ops: Op[]): Op[] {
   // every slot has[] is true for, each once, and may also hold slots since
   // unbound until the next kill drops them.
   let known: Op[] = [];
-  let has: boolean[] = [];
-  let wrote: i32[] = [];
+  let has: boolean[] = __alloc_bool(nslots);
+  let wrote: i32[] = util.minus_ones(nslots);
   let bound: i32[] = [];
   let z: i32 = 0;
   while (z < nslots) {
     known = known.append(op_const_i32(0));
-    has = has.append(false);
-    wrote = wrote.append(0 - 1);
     z = z + 1;
   }
 
@@ -8232,16 +8221,9 @@ pub function propagate_copies(ops: Op[]): Op[] {
   if (maxs < 0) {
     return ops;
   }
-  let reads: i32[] = [];
-  let stores: i32[] = [];
-  let tees: i32[] = [];
-  let z: i32 = 0;
-  while (z <= maxs) {
-    reads = reads.append(0);
-    stores = stores.append(0);
-    tees = tees.append(0);
-    z = z + 1;
-  }
+  let reads: i32[] = __alloc_i32(maxs + 1);
+  let stores: i32[] = __alloc_i32(maxs + 1);
+  let tees: i32[] = __alloc_i32(maxs + 1);
   i = 0;
   while (i < ops.len()) {
     let kt2: i32 = ops[i].kind_tag;
