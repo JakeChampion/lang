@@ -2738,31 +2738,44 @@ function fresh_through(fresh: FreshRows, name: string): i32 {
 pub function fresh_rows(keys: string[], funcs: ssasem.Func[], plans: Plan[]): FreshRows {
   let fresh: FreshRows = no_fresh();
   let named: boolean[] = __alloc_bool(keys.len());
+  let check: boolean[] = __alloc_bool(keys.len());
+  let i: i32 = 0;
+  while (i < keys.len()) {
+    check = check.with(i, plans[i].ok && returns_arrays(funcs[i]));
+    i = i + 1;
+  }
   let grew: boolean = true;
   while (grew) {
     grew = false;
-    let i: i32 = 0;
+    let added: string[] = [];
+    i = 0;
     while (i < keys.len()) {
-      if (!named[i] && plans[i].ok) {
+      if (check[i] && !named[i]) {
         let through: i32 = sole_result(funcs[i], plans[i], fresh);
         if (through >= 0 - 1) {
           named = named.with(i, true);
           fresh = FreshRows { rows: fresh.rows.added(keys[i]), through: fresh.through.append(through) };
+          added = added.append(keys[i]);
           grew = true;
         }
       }
+      i = i + 1;
+    }
+    // A row can only join a later round through a call to one just named.
+    let ix: util.NameIndex = util.name_index(added);
+    i = 0;
+    while (grew && i < keys.len()) {
+      check = check.with(i, check[i] && !named[i] && calls_any(funcs[i], ix));
       i = i + 1;
     }
   }
   return fresh;
 }
 
-// sole_result is -1 when every return of `f` is sole, else the first owned
-// array parameter whose arriving sole makes them so, else -2.
+// sole_result is -1 when every return of `f`, which returns arrays, is sole,
+// else the first owned array parameter whose arriving sole makes them so,
+// else -2.
 function sole_result(f: ssasem.Func, p: Plan, fresh: FreshRows): i32 {
-  if (!returns_arrays(f)) {
-    return 0 - 2;
-  }
   if (returns_sole(f, sole_boxes(f, p.steps, p.constants, fresh, 0 - 1))) {
     return 0 - 1;
   }
@@ -2880,9 +2893,29 @@ function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[], fresh: Fres
   if (seed >= 0) {
     sole = sole.with(seed, true);
   }
+  // pass[v] is the operand slot the operation defining v hands its box on
+  // from, or -1. The links are what the fixpoint below settles: a pass link
+  // from operand to result, and a phi link between operand and phi.
+  let pass: i32[] = util.minus_ones(f.graph.nvals);
+  let links: SoleLinks = SoleLinks { from: [], to: [], phi: [] };
   for b in f.graph.blocks {
     for ins in b.insts {
-      if (ins.result >= 0 && (ins.kind_tag == 8 || ins.kind_tag == ssasem.with() || passed_slot(ins, fresh) >= 0 || fresh_array(ins, consts, fresh))) {
+      if (ins.result < 0) {
+        continue;
+      }
+      let k: i32 = passed_slot(ins, fresh);
+      if (k >= 0) {
+        pass = pass.with(ins.result, k);
+        links = SoleLinks { from: links.from.append(ins.args[k]), to: links.to.append(ins.result), phi: links.phi.append(false) };
+      }
+      if (ins.kind_tag == 8) {
+        for a in ins.args {
+          if (a >= 0) {
+            links = SoleLinks { from: links.from.append(a), to: links.to.append(ins.result), phi: links.phi.append(true) };
+          }
+        }
+      }
+      if (ins.kind_tag == 8 || ins.kind_tag == ssasem.with() || k >= 0 || fresh_array(ins, consts, fresh)) {
         sole = sole.with(ins.result, true);
       }
     }
@@ -2905,32 +2938,34 @@ function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[], fresh: Fres
         }
         i = i + 1;
       }
-      let k: i32 = passed_slot(ins, fresh);
-      if (k >= 0 && !moved_at(st, ins.args[k], k)) {
+      if (ins.result >= 0 && pass[ins.result] >= 0 && !moved_at(st, ins.args[pass[ins.result]], pass[ins.result])) {
         sole = sole.with(ins.result, false);
       }
     }
   }
+  return settled(sole, links);
+}
+
+struct SoleLinks { from: i32[], to: i32[], phi: boolean[] }
+
+// settled clears, until nothing changes, a pass result whose operand is not
+// sole, and both ends of a phi link that disagree.
+function settled(own sole: boolean[], links: SoleLinks): boolean[] {
   let changed: boolean = true;
   while (changed) {
     changed = false;
-    for b in f.graph.blocks {
-      for ins in b.insts {
-        let k: i32 = passed_slot(ins, fresh);
-        if (k >= 0 && sole[ins.result] && !sole[ins.args[k]]) {
-          sole = sole.with(ins.result, false);
-          changed = true;
-        }
-        if (ins.kind_tag != 8) {
-          continue;
-        }
-        for a in ins.args {
-          if (a >= 0 && sole[a] != sole[ins.result]) {
-            sole = sole.with(a, false).with(ins.result, false);
-            changed = true;
-          }
-        }
+    let i: i32 = 0;
+    while (i < links.from.len()) {
+      let a: i32 = links.from[i];
+      let v: i32 = links.to[i];
+      if (links.phi[i] && sole[a] != sole[v]) {
+        sole = sole.with(a, false).with(v, false);
+        changed = true;
+      } else if (!links.phi[i] && sole[v] && !sole[a]) {
+        sole = sole.with(v, false);
+        changed = true;
       }
+      i = i + 1;
     }
   }
   return sole;
