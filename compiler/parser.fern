@@ -28076,6 +28076,12 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
         }
         continue;
       }
+      let attr_name: string = probe.peek_ident();
+      if (attr_name.len() > 0 && attr_name != "derive") {
+        top_stmts = top_stmts.append(decl_sentinel(p, "unknown attribute @" + attr_name + " (only @derive, @import, @export, @must_consume, @try, @inline, and @noinline are supported)"));
+        p = probe.advance();
+        continue;
+      }
       let (dr_derives, dr_p) = parse_derive_attr(p);
       p = dr_p;
       let dk: string = p.peek_keyword();
