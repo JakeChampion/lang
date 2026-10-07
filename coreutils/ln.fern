@@ -229,6 +229,14 @@ function make_link(cfg: Cfg, src: string, text: string, path: string): Option[Io
       }
     }
   }
+  if (target_os() == "darwin") {
+    match (darwin_slash_refusal(cfg, src, path)) {
+      Some(e) => {
+        return Some(e);
+      },
+      None => {}
+    }
+  }
   match (create_link(src, path)) {
     Ok(_) => {
       return None;
@@ -237,6 +245,33 @@ function make_link(cfg: Cfg, src: string, text: string, path: string): Option[Io
       return Some(e);
     }
   }
+}
+
+// gnulib's linkat on Darwin answers a trailing slash on either name
+// itself: the source's own stat error, or ENOTDIR unless it is a directory.
+function darwin_slash_refusal(cfg: Cfg, src: string, path: string): Option[IoError] {
+  if (!ends_in_slash(src) && !ends_in_slash(path)) {
+    return None;
+  }
+  let r: Result[FileStat, IoError] = lstat(src);
+  if (cfg.deref_src) {
+    r = stat(src);
+  }
+  match (r) {
+    Err(e) => {
+      return Some(e);
+    },
+    Ok(st) => {
+      if (st.is_dir) {
+        return None;
+      }
+    }
+  }
+  return Some(Other(src, gnu.exec_errno_text(20), errno.ENOTDIR));
+}
+
+function ends_in_slash(p: string): boolean {
+  return p.len() > 0 && p[p.len() - 1] as i32 == 47;
 }
 
 // `temp_link` makes the link under a name of this program's choosing,
@@ -315,9 +350,13 @@ function replace_existing(cfg: Cfg, target: string, src: string, text: string, s
     match (rename(dest, backup)) {
       Ok(_) => {},
       Err(e) => {
-        let why: string = gnu.io_error_text(e);
         drop_temp(tmp_path);
-        w = gnu.error_out(w, "cannot backup " + gnu.quotea(dest) + ": " + why);
+        // GNU then links again without -f, which fails as the first try did.
+        if (errno.of(e) == errno.ENOENT) {
+          w = gnu.error_out(w, create_failure(cfg, dest, shown, err));
+          return Replaced { ok: false, backup: "", out: w };
+        }
+        w = gnu.error_out(w, "cannot backup " + gnu.quotea(dest) + ": " + gnu.io_error_text(e));
         return Replaced { ok: false, backup: "", out: w };
       }
     }
@@ -476,7 +515,9 @@ function option_table(): gnu.Opt[] {
 struct Scan { cfg: Cfg, control_given: boolean, control_text: string, suffix_given: boolean, target_dir: string, have_target_dir: boolean, no_target_dir: boolean }
 
 function scan_options(argv: string[]): (Scan, string[]) {
-  let cfg: Cfg = Cfg { symbolic: false, force: false, interactive: false, no_deref: false, deref_src: false, hard_dir: false, relative: false, verbose: false, backups: false, control: gnu.backup_existing(), suffix: "~" };
+  // GNU's default is LINK_FOLLOWS_SYMLINKS, whether link(2) follows a
+  // symbolic link: it does on Darwin, so there `-L` is the default.
+  let cfg: Cfg = Cfg { symbolic: false, force: false, interactive: false, no_deref: false, deref_src: target_os() == "darwin", hard_dir: false, relative: false, verbose: false, backups: false, control: gnu.backup_existing(), suffix: "~" };
   let s: Scan = Scan { cfg: cfg, control_given: false, control_text: "", suffix_given: false, target_dir: "", have_target_dir: false, no_target_dir: false };
   let g: gnu.Getopt = gnu.getopt_new(argv, option_table(), "ln", help_text(), 1);
   while (true) {

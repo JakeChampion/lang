@@ -346,6 +346,12 @@ function stop(): i32 {
   return 2;
 }
 
+// Go ahead as though the destination were absent: the backup rename found
+// nothing there, so GNU treats the name as new and creates it exclusively.
+function vacated(): i32 {
+  return 3;
+}
+
 // Whether the source is strictly newer than the destination, to the
 // nanosecond — `-u` / `--update=older`'s whole question. Equal times are
 // not newer, so `cp -u` over a file it just wrote does nothing.
@@ -391,6 +397,9 @@ function decide(cfg: Cfg, s: State, src: Info, dst: Info, dest: string): Replace
     match (rename(dest, name)) {
       Ok(_) => {},
       Err(e) => {
+        if (errno.of(e) == errno.ENOENT) {
+          return Replace { verdict: vacated(), backup: "", out: w, status: 0 };
+        }
         w = gnu.error_out(w, "cannot backup " + gnu.quotea(dest) + ": " + gnu.io_error_text(e));
         return Replace { verdict: stop(), backup: "", out: w, status: 1 };
       }
@@ -849,7 +858,7 @@ function copy_file(cfg: Cfg, s: State, src_path: string, dest: string, src: Info
     // The data is not copied. A destination that already exists keeps
     // both its contents and its mode; a fresh one is created empty.
     if (!existed) {
-      match (open_writer(dest)) {
+      match (create_new(dest)) {
         Err(e) => {
           return fail(st, "cannot create regular file " + gnu.quotea(dest) + ": " + gnu.io_error_text(e));
         },
@@ -954,8 +963,21 @@ function dangling_symlink(path: string): boolean {
 // `cannot remove 'im': Operation not permitted`.
 struct DestOpen { w: Option[Writer], err: Option[string] }
 
+// A destination believed absent is created with O_EXCL, at 0666 through
+// the umask, as GNU's is; one that exists is truncated.
+function create_new(dest: string): Result[Writer, IoError] {
+  return open_writer_with(dest, 5);
+}
+
+function open_existing_or_new(dest: string, existed: boolean): Result[Writer, IoError] {
+  if (existed) {
+    return open_writer(dest);
+  }
+  return create_new(dest);
+}
+
 function open_dest(cfg: Cfg, dest: string, existed: boolean): DestOpen {
-  match (open_writer(dest)) {
+  match (open_existing_or_new(dest, existed)) {
     Ok(w) => {
       return DestOpen { w: Some(w), err: None };
     },
@@ -1227,7 +1249,7 @@ pub function copy_one(cfg: Cfg, s: State, src_path: string, dest: string, top: b
     }
     backup = r.backup;
     // A backup RENAMED the destination away, so nothing is there now.
-    if (backup.len() > 0 || cfg.remove_destination) {
+    if (backup.len() > 0 || cfg.remove_destination || r.verdict == vacated()) {
       existed = false;
     }
   }
