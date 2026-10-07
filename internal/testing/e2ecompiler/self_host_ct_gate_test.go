@@ -145,6 +145,81 @@ function main(): i32 {
   return 6;
 }
 `, false},
+	// AES-GCM over a secret key and plaintext, AES-128 and AES-256: the
+	// kernels branch on lengths only, and open declassifies only its verdict.
+	{"aes_gcm", `import "std/crypto/aes_gcm";
+
+function filled(n: i32, seed: i32): u8[] {
+  let b: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
+  while (i < n) {
+    b = b.with(i, ((i * 7 + seed) & 255) as u8);
+    i = i + 1;
+  }
+  return b;
+}
+
+function same(a: u8[], b: u8[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i < a.len()) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function round_trip(klen: i32): i32 {
+  let key: u8[] = filled(klen, 1);
+  let nonce: u8[] = filled(12, 2);
+  let plaintext: u8[] = filled(200, 3);
+  let aad: u8[] = filled(17, 4);
+  __ct_secret(key);
+  __ct_secret(plaintext);
+  match (aes_gcm.seal(key, nonce, plaintext, aad)) {
+    Ok(sealed) => {
+      __ct_public(sealed);
+      match (aes_gcm.open(key, nonce, sealed, aad)) {
+        Ok(opened) => {
+          __ct_public(opened);
+          __ct_public(plaintext);
+          if (!same(opened, plaintext)) {
+            return 2;
+          }
+        },
+        Err(e) => {
+          return 3;
+        }
+      }
+      let forged: u8[] = sealed.with(0, sealed[0] ^ 1 as u8);
+      match (aes_gcm.open(key, nonce, forged, aad)) {
+        Ok(opened) => {
+          return 4;
+        },
+        Err(e) => {
+          return 0;
+        }
+      }
+    },
+    Err(e) => {
+      return 5;
+    }
+  }
+  return 6;
+}
+
+function main(): i32 {
+  let r: i32 = round_trip(16);
+  if (r != 0) {
+    return r;
+  }
+  return round_trip(32);
+}
+`, false},
 	// The key exchange over two secret scalars: the ladder swaps by mask, and
 	// the low-order refusal declassifies only its all-zero verdict.
 	{"x25519", `import "std/crypto/x25519";

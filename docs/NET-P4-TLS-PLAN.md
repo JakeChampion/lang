@@ -39,12 +39,23 @@ standalone (`TestStdlibModulesImportStandalone`).
    ladder with a masked swap. Gate: RFC 7748's vectors and the 1,000-step
    iterated vector compiled (`TestSelfHostX25519Iterated1000`). About 0.2 ms
    per scalar multiplication on x86-64.
-4. **AES-GCM.** Table-driven software AES leaks through the cache, so AES
-   uses the instructions: `aes`/`pmull` on arm64, which the baseline has,
-   and AES-NI/`pclmulqdq` on x86-64. AES-NI is outside the declared
-   x86-64-v3 baseline, so this PR records the raise in CLAUDE.md and
-   `docs/BACKEND-PARITY.md`. Every AVX2-class part has AES-NI, so reach is
-   unchanged. wasm has neither, so it gets a bitsliced constant-time AES.
+4. **AES-GCM** (SP 800-38D). Landed. Table-driven software AES leaks
+   through the cache, so `std/crypto/aes_gcm` (AES-128-GCM and AES-256-GCM)
+   is built on three builtins with a constant-time kernel per backend:
+   `__aes_expand_key`, `__aes_ctr32` (counter mode with GCM's 32-bit
+   increment) and `__ghash`. arm64 uses `aese`/`aesmc` and `pmull`, which
+   its baseline has; x86-64 uses AES-NI and `pclmulqdq`. AES-NI is outside
+   x86-64-v3, so the baseline is now x86-64-v3 plus AES-NI (CLAUDE.md,
+   `docs/BACKEND-PARITY.md`); every AVX2 part has it, so reach is unchanged.
+   wasm has neither, so it runs a bitsliced AES over `i64` (the
+   Boyar-Peralta S-box, after BearSSL's aes_ct64) and a GHASH multiplied a
+   bit at a time under masks. Both interpreters spell the kernels from
+   their definitions. Gate: FIPS-197 and the GCM specification's test cases
+   in the stdtest differential and `TestSelfHostCryptoSuitesWasm`, each
+   kernel against known answers on every target
+   (`TestSelfHostAESGCMKernels*`), and the AEAD under the constant-time
+   gate. About 1.1 GB/s sealing 64 KiB messages on x86-64 with `-O`, and
+   about 25 MB/s on wasm under wasmtime.
 5. **ML-KEM-768** (FIPS 203) over `std/crypto`'s Keccak, with SHAKE128 and
    SHAKE256 added beside SHA-3. Coefficients are `i32`s under Barrett
    reduction, and decapsulation compares and selects by mask. Gate: known

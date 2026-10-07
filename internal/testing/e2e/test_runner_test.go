@@ -1074,6 +1074,13 @@ func TestRunnerChaCha20Poly1305ExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "chacha20poly1305", "std/crypto/chacha20poly1305", 12)
 }
 
+// `tests/stdlib/aes_gcm_test.fern` covers FIPS-197's AES known answers, the
+// GCM specification's AES-128 and AES-256 test cases, vectors from Go's
+// crypto/cipher and the refusals.
+func TestRunnerAESGCMExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "aes_gcm", "std/crypto/aes_gcm", 18)
+}
+
 // `tests/stdlib/x25519_test.fern` covers RFC 7748's vectors, a
 // non-canonical u-coordinate and the low-order refusal.
 func TestRunnerX25519ExamplePasses(t *testing.T) {
