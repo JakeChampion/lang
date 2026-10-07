@@ -452,6 +452,8 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"ed25519", langSrcAbs(t, "tests/stdlib/ed25519_test.fern"), ""},
 		{"rsa", langSrcAbs(t, "tests/stdlib/rsa_test.fern"), ""},
 		{"tls_keyschedule", langSrcAbs(t, "tests/stdlib/tls_keyschedule_test.fern"), ""},
+		{"tls_keyshare", langSrcAbs(t, "tests/stdlib/tls_keyshare_test.fern"), ""},
+		{"tls_message", langSrcAbs(t, "tests/stdlib/tls_message_test.fern"), ""},
 		{"tls_record", langSrcAbs(t, "tests/stdlib/tls_record_test.fern"), ""},
 		{"hash_checksums", langSrcAbs(t, "tests/stdlib/hash_checksums_test.fern"), ""},
 		{"synthetic_fail", failing, ""},

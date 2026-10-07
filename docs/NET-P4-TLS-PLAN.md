@@ -61,8 +61,8 @@ standalone (`TestStdlibModulesImportStandalone`).
    reduction, and decapsulation compares and selects by mask. Gate: known
    answers from Go's FIPS 140 implementation, implicit rejection and the
    input checks. About 0.8 ms per key generation, encapsulation and
-   decapsulation together on x86-64. The X25519MLKEM768 hybrid share comes
-   with `std/tls/handshake`.
+   decapsulation together on x86-64. The X25519MLKEM768 hybrid share is
+   `std/tls/keyshare`.
 6. **P-256 and Ed25519** for certificate signatures. P-256 verification
    landed first on `core/bigint`, about 13 ms per verification, since it
    handles only public values. Signing, for the server, needs constant-time
@@ -92,8 +92,12 @@ standalone (`TestStdlibModulesImportStandalone`).
    numbers. Gate: every derived value and protected record in RFC 8448 §3,
    ChaCha20-Poly1305 and AES-256-GCM records from a reference that
    reproduces the trace's, and every refusal, in the stdtest differential
-   and `TestSelfHostCryptoSuitesWasm`. Remaining: `std/tls/handshake`, the state machine over
-   these two modules, and the X25519MLKEM768 key share.
+   and `TestSelfHostCryptoSuitesWasm`. Then `std/tls/keyshare`, X25519 and
+   the X25519MLKEM768 hybrid with caller-supplied randomness, gated on RFC
+   8448's shares and Go's crypto/mlkem; and `std/tls/message`, every
+   handshake message and the extensions TLS 1.3 reads, gated on RFC 8448's
+   messages round-tripping byte for byte. Remaining: `std/tls/handshake`,
+   the client and server state machines over these modules.
 9. **`std/tls/der`, `pem` and `verify`.** Path building, name and SAN
    checks, and the root store (Linux bundle paths, `SSL_CERT_FILE`, a
    bundled CCADB list as the fallback).

@@ -1248,6 +1248,74 @@ let keys: keyschedule.TrafficKeys = keyschedule.traffic_keys(suite, hs.server_tr
 - `next_traffic_secret(h, traffic_secret)` — the secret after a KeyUpdate
   (§7.2).
 
+### `std/tls/keyshare`
+
+The key exchange a TLS 1.3 key_share carries: X25519, and X25519MLKEM768, the
+hybrid of ML-KEM-768 and X25519 (draft-ietf-tls-ecdhe-mlkem). The caller
+supplies the randomness, so a handshake replays exactly. ML-KEM's part comes
+first in the client's share (encapsulation key, then X25519 key), the
+server's (ciphertext, then X25519 key) and the shared secret. Verified against
+RFC 8448 §3's X25519 shares and against Go's crypto/mlkem and crypto/ecdh for
+the hybrid (`tests/stdlib/tls_keyshare_test.fern`), and run under the
+constant-time gate.
+
+```fern
+let mine: keyshare.ClientShare = keyshare.client_share(keyshare.X25519MlKem768, entropy)?;
+let theirs: keyshare.ServerShare = keyshare.server_share(mine.group, mine.public, server_entropy)?;
+let shared: u8[] = mine.shared_secret(theirs.public)?;   // theirs.shared_secret
+```
+
+- `Group` is `X25519` or `X25519MlKem768`, with `code()` (0x001d, 0x11ec),
+  `client_entropy()` and `server_entropy()` (32 and 96, 32 and 64 bytes), and
+  `client_share_len()` and `server_share_len()`. `group(code)` is the
+  `Option[Group]` for a NamedGroup code.
+- `client_share(g, entropy): Result[ClientShare, KeyShareError]` — `public`
+  goes in the ClientHello; `shared_secret(server_public)` finishes the
+  exchange.
+- `server_share(g, client_public, entropy): Result[ServerShare,
+  KeyShareError]` — `public` for the ServerHello and `shared_secret`.
+- `KeyShareError` is `EntropyLength(n, want)`, `ShareLength(n, want)`,
+  `LowOrder` (an X25519 key whose shared secret is all zeros) or
+  `BadEncapsulationKey`, with `message()`.
+
+### `std/tls/message`
+
+The handshake messages of RFC 8446 §4 and the extensions TLS 1.3 reads,
+encoded and decoded, and the split of handshake records into the messages
+they carry. Decoding is strict: a length that disagrees with what it covers,
+bytes left over, a repeated extension or key share, or a field TLS 1.3 fixes
+holding another value is refused. Every handshake message of RFC 8448 §3
+decodes and re-encodes to the same bytes (`tests/stdlib/tls_message_test.fern`).
+
+```fern
+let s: message.Split = message.split(buffered)?;     // keep s.rest
+let m: message.Message = message.decode(s.messages[0])?;
+let out: u8[] = message.encode(message.Finished(verify_data));
+```
+
+- `split(buf): Result[Split, MsgError]` — `messages` (each a `Raw`, its kind
+  and its bytes with the header, as the transcript hashes them) and `rest`.
+  A bad type or a length over the limit (2^18 bytes for a Certificate, 2^16
+  for the rest) is refused as soon as the header arrives.
+- `decode(raw): Result[Message, MsgError]` and `encode(m): u8[]`. `Message`
+  is `ClientHelloMsg`, `ServerHelloMsg`, `NewSessionTicketMsg`,
+  `EndOfEarlyData`, `EncryptedExtensions`, `CertificateRequestMsg`,
+  `CertificateMsg`, `CertificateVerifyMsg`, `Finished` or `KeyUpdate`, with
+  `kind()`; the structs hold the fields TLS 1.3 uses, and a ServerHello's
+  `is_retry()` says whether it is a HelloRetryRequest.
+- `Extension { kind, data }` and `find(exts, kind): Option[u8[]]`. Each
+  extension TLS 1.3 reads has an encoder and a decoder: `ext_server_name` /
+  `server_name`, `ext_supported_versions` / `supported_versions` and
+  `ext_selected_version` / `selected_version`, `ext_supported_groups`,
+  `ext_signature_algorithms`, `ext_key_shares` / `key_shares` (the client's),
+  `ext_key_share` / `key_share` (the server's), `ext_retry_group` /
+  `retry_group`, `ext_alpn` / `alpn` and `ext_psk_modes` / `psk_modes`.
+- The HandshakeType and ExtensionType codes are constants (`CLIENT_HELLO`,
+  `EXT_KEY_SHARE`, …), with `TLS13` and `LEGACY_VERSION`.
+- `MsgError` is `DecodeError(field)`, `IllegalParameter(field)`,
+  `ProtocolVersion(v)`, `UnexpectedMessage(kind)` or `TooLarge(kind, len)`,
+  with `message()`.
+
 ### `std/tls/record`
 
 The TLS 1.3 record layer of RFC 8446 §5, sans-IO: bytes in, records out, no

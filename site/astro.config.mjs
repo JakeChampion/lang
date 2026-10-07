@@ -64,7 +64,7 @@ const STDLIB_GROUPS = [
   ["Files, I/O & time", ["async", "cli", "dotenv", "errno", "io", "io_buffered",
     "log", "path", "signal", "stream", "time", "tz"]],
   ["Networking", ["dns", "fetch", "headers", "http", "net", "platform", "serve", "tcp",
-    "tls_keyschedule", "tls_record", "wasi_http"]],
+    "tls_keyschedule", "tls_keyshare", "tls_message", "tls_record", "wasi_http"]],
   ["Testing", ["bench", "fuzz", "mock_platform", "sim", "sim_fetch", "sim_platform", "test"]],
   ["WebAssembly", ["wasm_component", "wasm_convert", "wasm_encode",
     "wasm_imports", "wasm_inst", "wasm_leb128", "wasm_memory",

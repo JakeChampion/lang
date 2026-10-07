@@ -1112,6 +1112,18 @@ func TestRunnerTLSKeyScheduleExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "tls_keyschedule", "std/tls/keyschedule", 17)
 }
 
+// `tests/stdlib/tls_keyshare_test.fern` checks X25519 against RFC 8448's key
+// shares and X25519MLKEM768 against Go's crypto/mlkem and crypto/ecdh.
+func TestRunnerTLSKeyshareExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "tls_keyshare", "std/tls/keyshare", 8)
+}
+
+// `tests/stdlib/tls_message_test.fern` round-trips every handshake message
+// in RFC 8448 §3 and covers each refusal.
+func TestRunnerTLSMessageExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "tls_message", "std/tls/message", 10)
+}
+
 // `tests/stdlib/tls_record_test.fern` covers framing against RFC 8448's
 // records, record protection under each suite (RFC 8448's own AES-128-GCM
 // records among them), and every refusal.
