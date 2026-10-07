@@ -7368,10 +7368,12 @@ function order_ranks(f: ssa.SFunc, order: i32[], ids: i32): i32[] {
 
 function jump(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[], position: i32, target: i32): Emit {
   let from: i32 = f.graph.blocks[order[position]].id;
-  e = Emit { ...e, r: edge(e.r, f, p, e.steps, e.links, from, target, e.at[target]) };
+  // A held donor is dropped before the edge's moves: a self tail call's edge
+  // rebinds the parameter locals, and the donor may be one of them.
   for left in carry_exits(e.carry, from, target) {
     e = Emit { ...e, r: drop_linked(e.r, left, e.links, f) };
   }
+  e = Emit { ...e, r: edge(e.r, f, p, e.steps, e.links, from, target, e.at[target]) };
   let dest: i32 = e.ranks[target];
   if (dest == position + 1) {
     return e;
