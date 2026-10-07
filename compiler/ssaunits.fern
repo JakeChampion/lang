@@ -2691,18 +2691,15 @@ function read_before(b: ssa.SBlock, end: i32, arr: i32, index: i32): boolean {
 }
 
 // unique_receivers marks, at a `with`'s result, a `with` whose receiver needs
-// no uniqueness test: the result of another `with`, which hands back a box
-// nobody else holds, moved into this one and otherwise only read. A read of an
-// element or the length shares nothing, so the box is still sole-owned.
+// no uniqueness test: the receiver is moved into it and is `sole`.
 function unique_receivers(f: ssasem.Func, defs: ssa.SInst[], steps: Step[]): boolean[] {
   let out: boolean[] = __alloc_bool(f.graph.nvals);
-  let held: i32[] = holding_uses(f);
+  let sole: boolean[] = sole_boxes(f, steps);
   let at: i32[] = ssa.block_positions(f.graph);
   for st in steps {
     if (st.point >= 0) {
       let ins: ssa.SInst = f.graph.blocks[at[st.block]].insts[st.point];
-      if (ins.kind_tag == ssasem.with() && defs[ins.args[0]].kind_tag == ssasem.with() && held[ins.args[0]] == 1
-        && moved_receiver(st, ins.args[0])) {
+      if (ins.kind_tag == ssasem.with() && sole[ins.args[0]] && moved_receiver(st, ins.args[0])) {
         out = out.with(ins.result, true);
       }
     }
@@ -2719,27 +2716,68 @@ function moved_receiver(st: Step, v: i32): boolean {
   return false;
 }
 
-// Per value, its uses other than reading an element or the length: the ones
-// that could hand its box to another holder.
-function holding_uses(f: ssasem.Func): i32[] {
-  let n: i32[] = __alloc_i32(f.graph.nvals);
+// sole_boxes marks the values whose box no unit but the frame's own one ever
+// holds. A box starts that way when a `with` hands it back or a zero-filled
+// allocation makes it, and a phi keeps it when every operand does. It stops
+// at any unit retained on it, and at any use that could hand it to another
+// holder: everything but reading an element or the length, being a `with`'s
+// receiver, flowing into a phi that keeps it, and being returned.
+function sole_boxes(f: ssasem.Func, steps: Step[]): boolean[] {
+  let sole: boolean[] = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
+      if (ins.result >= 0 && (ins.kind_tag == 8 || ins.kind_tag == ssasem.with() || zero_filled(ins))) {
+        sole = sole.with(ins.result, true);
+      }
+    }
+  }
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == 8) {
+        continue;
+      }
       let i: i32 = 0;
       while (i < ins.args.len()) {
         let a: i32 = ins.args[i];
-        let read: boolean = i == 0 && (ins.kind_tag == ssasem.array_get() || ins.kind_tag == ssasem.length());
-        if (a >= 0 && a < n.len() && !read) {
-          n = n.with(a, n[a] + 1);
+        let reads: boolean = i == 0 && (ins.kind_tag == ssasem.array_get() || ins.kind_tag == ssasem.length() || ins.kind_tag == ssasem.with());
+        if (a >= 0 && !reads) {
+          sole = sole.with(a, false);
         }
         i = i + 1;
       }
     }
-    if (b.term.kind_tag == 1 && b.term.value >= 0 && b.term.value < n.len()) {
-      n = n.with(b.term.value, n[b.term.value] + 1);
+  }
+  for st in steps {
+    for supply in st.supplies {
+      if (supply.value >= 0 && supply.mode != move_unit()) {
+        sole = sole.with(supply.value, false);
+      }
     }
   }
-  return n;
+  let changed: boolean = true;
+  while (changed) {
+    changed = false;
+    for b in f.graph.blocks {
+      for ins in b.insts {
+        if (ins.kind_tag != 8) {
+          continue;
+        }
+        for a in ins.args {
+          if (a >= 0 && sole[a] != sole[ins.result]) {
+            sole = sole.with(a, false).with(ins.result, false);
+            changed = true;
+          }
+        }
+      }
+    }
+  }
+  return sole;
+}
+
+// zero_filled is a call to a builtin that hands back a fresh array of
+// scalars, which no other holder can have seen.
+function zero_filled(ins: ssa.SInst): boolean {
+  return ins.kind_tag == ssasem.call() && (ins.str == "__alloc_i32" || ins.str == "__alloc_i64" || ins.str == "__alloc_bool" || ins.str == "__alloc_u8");
 }
 
 function entry_kept_of(f: ssasem.Func, a: ssasem.Analysis, b: ssa.SBlock, si: i32, own out: boolean[]): boolean[] {
