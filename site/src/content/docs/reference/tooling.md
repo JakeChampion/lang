@@ -331,10 +331,17 @@ fern -doctest prog.fern.md                         # run its ```fern test exampl
 
 Flags go before the document, as with every other mode.
 
-A `.fern.md` entry compiles directly — `fern prog.fern.md` tangles it in
-memory and runs the normal pipeline, with diagnostics mapped back onto
-the document's source lines. A single-root `.fern.md` can also be
-`import`ed as a library from ordinary `.fern` code.
+`-check`, `-interp` and `-fmt` take a `.fern.md` directly: they tangle
+it in memory, and diagnostics point at the document's own lines. Under
+those modes a single-root `.fern.md` can also be `import`ed as a library
+from ordinary `.fern` code. A `-target` compile does not tangle yet
+([#11838](https://github.com/JakeChampion/lang/issues/11838)), so to
+build a binary, tangle first:
+
+```bash
+fern -tangle -o prog.fern prog.fern.md
+fern -target x86-64-linux -o prog prog.fern
+```
 
 A ```` ```fern test ```` block is a runnable example: `fern -doctest`
 tangles each one into its own program, compiles and runs it, and reports

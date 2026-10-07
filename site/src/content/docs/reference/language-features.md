@@ -1,6 +1,6 @@
 ---
 title: Language features
-description: The distinctive constructs — iteration, defer, let-else, match guards, the pipe operator, f-strings, and use.
+description: Iteration, defer, let-else and if-let, match guards, value blocks, closures, the pipe operator, f-strings, use, modules, and must-consume types.
 sidebar:
   order: 5
 ---
@@ -80,10 +80,12 @@ returns, no matter how it returns. Multiple defers run in **last-in,
 first-out** order — so cleanup unwinds in the reverse of acquisition.
 
 ```fern
-function read(path: string): Result[string, IoError] {
-    let r: Reader = open(path)?;
+import "std/option";
+
+function first_line(path: string): Result[string, IoError] {
+    let r: Reader = open_reader(path)?;
     defer r.close();          // runs on every exit path below
-    return r.read_all();
+    return Ok(r.read_line().unwrap_or(""));
 }
 ```
 
@@ -95,9 +97,9 @@ its own iteration left:
 
 ```fern
 for path in paths {
-    let r: Reader = open(path)?;
+    let r: Reader = open_reader(path)?;
     defer r.close();          // closes this iteration's reader, before the next
-    consume(r.read_all());
+    lines = lines.append(r.read_line().unwrap_or(""));
 }
 ```
 
@@ -121,6 +123,15 @@ back on failure.
 defer log("done");           // always
 errdefer rollback();         // only if we bail with an error
 ```
+
+On an error exit the plain defers run first, last-in first-out, and then
+the errdefers, also last-in first-out — so above, `done` prints before
+`rollback`. An `errdefer` in a loop body covers its own iteration only:
+when the iteration ends normally, it is dropped without running.
+
+`?` cannot appear directly inside a `defer` or `errdefer` action
+(`E079`): the action runs on the function's exits, including the one `?`
+would take.
 
 ## Refutable bindings — `let … else` and `if let`
 
@@ -210,8 +221,8 @@ let arrow = (Point { x, y }: Point) => x + y;
 
 A parameter binds unconditionally — there is no else branch to run on a
 miss — so only patterns that always match are allowed. A refutable one
-(an enum variant, a literal element) is a compile error pointing you at
-`match` in the body.
+(an enum variant, a literal element) is a parse error; take the value
+whole and `match` on it in the body.
 
 ## Match guards — `when`
 
@@ -232,6 +243,101 @@ Guarded arms don't count toward exhaustiveness — a guard can always fail,
 so a variant covered *only* by guarded arms still needs an unguarded
 fallback like the `Temp(_)` above.
 
+A `match` also dispatches on literals: integers, characters, bytes,
+strings, and ranges of signed integers (`1..=9 =>`). Several patterns can
+share an arm with `|`. A string scrutinee always needs a final `_` arm,
+since no list of literals covers every string.
+
+```fern
+function classify(n: i32): string {
+    return match (n) {
+        0 => "zero",
+        1..=9 => "digit",
+        -100..=-1 => "small negative",
+        _ => "other",
+    };
+}
+
+function answer(s: string): i32 {
+    match (s) {
+        "yes" | "y" => { return 1; },
+        "no" => { return 0; },
+        _ => { return -1; },
+    }
+}
+```
+
+## Value blocks and expression forms
+
+`if`, `match` and a bare `{ … }` block can all produce a value. A block's
+statements run first, and its last expression — written **without** a
+trailing `;` — is the value:
+
+```fern
+import "std/i32";
+import "std/string";
+
+function main(): i32 {
+    let x: i32 = { let a = 2; a * 3 };
+    let y: i32 = if (x > 5) { let k = x + 1; k } else { 0 };
+    let z: string = match (y) {
+        7 => { let s = "seven"; s },
+        _ => "other",
+    };
+    print(f"{x} {y} {z}");   // 6 7 seven
+    return 0;
+}
+```
+
+An `if` used as a value needs its `else`, and its branches are always
+braced. A match arm's body may be a bare expression (`_ => "other"`) or a
+block. Loops are statements only: `loop` produces no value and `break`
+takes none, so a search loop assigns its result to a binding declared
+before it.
+
+## Closures
+
+A lambda is a parenthesised parameter list, an optional return type, `=>`,
+and either an expression or a braced body. Parameter types are required;
+the return type is inferred when left out.
+
+```fern
+import "std/i32";
+
+function make_adder(n: i32): (i32) => i32 {
+    return (x: i32) => x + n;
+}
+
+function apply_twice(f: (i32) => i32, v: i32): i32 {
+    return f(f(v));
+}
+
+function main(): i32 {
+    let add3 = make_adder(3);
+    print(add3(4).to_string());                                // 7
+    print(apply_twice((x: i32): i32 => x * 2, 5).to_string()); // 20
+
+    let count: i32 = 0;
+    let bump = (): void => { count = count + 1; };
+    bump();
+    bump();
+    print(count.to_string());                                  // 2
+    return 0;
+}
+```
+
+A lambda captures the variables it names **by reference**: it sees later
+assignments to them, and assigning a captured scalar (`count` above)
+updates the outer variable. A captured *reference-typed* variable — a
+string, array, struct, enum, tuple or closure — is read-only inside the
+lambda (`E049`), because writing one could close a reference cycle.
+Return the new value instead, or keep the shared state in a
+[`Cell`](../types/#shared-mutable-state--cellt).
+
+A named function is a value too: pass `make_adder` where a
+`(i32) => (i32) => i32` is expected. A function declared inside another
+function's body is a closure in the same sense.
+
 ## The pipe operator — `|>`
 
 `x |> f` is exactly `f(x)`, and `x |> f(a, b)` is `f(x, a, b)` — the left
@@ -242,6 +348,21 @@ transforms flows in the order it runs instead of nesting inside-out:
 // These two are identical — the pipe form just reads forward.
 let body: string = json.json_encode(describe(u.path, q));
 let body: string = describe(u.path, q) |> json.json_encode;
+```
+
+When the value belongs somewhere other than the first argument, mark the
+spot with `_`: `x |> f(a, _)` is `f(a, x)`. A call takes at most one `_`.
+
+```fern
+import "std/i32";
+
+function sub(a: i32, b: i32): i32 { return a - b; }
+
+function main(): i32 {
+    print((10 |> sub(3)).to_string());      // sub(10, 3) = 7
+    print((10 |> sub(3, _)).to_string());   // sub(3, 10) = -7
+    return 0;
+}
 ```
 
 It's a parse-time desugar with no runtime cost.
@@ -288,24 +409,99 @@ use b <- maybe_double(a);
 return Some(b + 1);
 ```
 
-desugars at parse time to a named nested function per `use`, each one
-returning what the enclosing function returns:
+desugars at parse time to one lambda per `use`, each returning what the
+enclosing function returns:
 
 ```fern
-function __use_2(a: i32): Option[i32] {
-    function __use_1(b: i32): Option[i32] {
+return maybe_double(start, (a: i32) => {
+    return maybe_double(a, (b: i32) => {
         return Some(b + 1);
-    }
-    return maybe_double(a, __use_1);
-}
-return maybe_double(start, __use_2);
+    });
+});
 ```
 
 Each `use` peels one level of nesting off what would otherwise be a
 deeply-indented chain of closures — handy for sequencing fallible
-`Option`/`Result`-returning steps. Where the callback target is
-monomorphic, the compiler defunctionalises the closures away, so the
-flattened form has no allocation overhead versus hand-written nesting.
+`Option`/`Result`-returning steps. The binding's type is inferred from
+the callee's callback parameter; write `use b: i32 <- …` to state it. The
+callbacks are ordinary [closures](#closures), so they capture the
+enclosing function's bindings the same way.
+
+## Modules and visibility
+
+Each `.fern` file is a module. `import "./geo";` loads `geo.fern` from
+the importing file's directory, and its names are then written
+`geo.name`; `import "./geo" as g;` picks a different qualifier. Standard
+library modules import the same way (`import "std/string";`). A program
+sees only what it imports — there is no prelude.
+
+A top-level declaration is private to its module unless marked:
+
+| Marker | Visible to |
+| ------ | ---------- |
+| *(none)* | its own module |
+| `pub(package)` | modules in the same directory |
+| `pub` | any module that imports it |
+
+`pub use` re-exports another module's public names, so one module can
+present a surface assembled from several:
+
+```fern
+// geo.fern
+pub struct Point { x: i32, y: i32 }
+pub function origin(): Point { return Point { x: 0, y: 0 }; }
+```
+
+```fern
+// shapes.fern
+import "./geo";
+pub use "./geo".{ Point, origin };
+
+pub function unit(): geo.Point { return geo.Point { x: 1, y: 1 }; }
+```
+
+```fern
+// main.fern
+import "./shapes";
+
+function main(): i32 {
+    let p: shapes.Point = shapes.origin();   // geo's Point and origin
+    let q: shapes.Point = shapes.unit();
+    return p.x + q.y - 1;
+}
+```
+
+A re-exported name resolves to the original declaration; nothing is
+copied. `pub use` does not bring the names into the re-exporting module's
+own scope — `shapes.fern` above still imports `geo` to use them itself.
+The [modules tutorial](../../tutorial/modules/) walks through imports
+step by step, and [Packages](../packages/) covers dependencies.
+
+## Values that must be used — `@must_consume`
+
+A struct or enum marked `@must_consume` carries an obligation: every
+value of it must be consumed on every path — passed to an `own`
+parameter, returned, matched on, or stored inside another
+`@must_consume` value. Letting one go out of scope unused is a compile
+error (`E067`), which makes "respond exactly once" or "commit or roll
+back" something the checker enforces.
+
+```fern
+@must_consume
+struct Pending { id: i32 }
+
+function finish(own p: Pending): i32 {
+    return p.id;
+}
+
+function main(): i32 {
+    let p: Pending = Pending { id: 3 };
+    return finish(p) - 3;    // without this call: E067
+}
+```
+
+An `own` parameter is the declared sink. A parameter without `own` passes
+the obligation on, so the callee must discharge it in turn.
 
 ## Assertions and stubs — `assert` and `todo`
 
@@ -340,6 +536,8 @@ you can sketch a module's shape and fill it in afterwards.
 
 - [Error handling](../error-handling/) — `Option`, `Result`, and `?`.
 - [Traits](../traits/) — shared behaviour and bounded generics.
-- [Syntax overview](../syntax/) — keywords, precedence, block forms.
+- [Syntax overview](../syntax/) — keywords, literals, precedence, block
+  forms, functions, attributes.
+- [Type system](../types/) — integers, strings, arrays, `Cell`.
 - [Literate programming](../tooling/#literate-programming) — write
   programs as Markdown documents.

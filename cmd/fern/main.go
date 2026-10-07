@@ -3,12 +3,15 @@
 // Usage:
 //
 //	fern FILE.fern                       # write arm64 Linux assembly to stdout
-//	fern -o OUTPUT FILE.fern             # link with the aarch64 cross-
-//	                                     # compiler and write a static ELF
-//	                                     # binary
-//	fern --run FILE.fern [-- ARGS...]    # link to a temporary binary and
-//	                                     # execute it under qemu-aarch64
-//	                                     # (forwarding stdio)
+//	fern -o OUTPUT FILE.fern             # compile with the self-hosted
+//	                                     # compiler to a static arm64
+//	                                     # Linux binary (-target picks
+//	                                     # another; `fern -targets` lists
+//	                                     # them)
+//	fern -run FILE.fern [-- ARGS...]     # build a temporary binary and run
+//	                                     # it, directly when the target's
+//	                                     # ISA is the host's, else under
+//	                                     # -qemu (forwarding stdio)
 //	fern -fmt FILE...                    # write idiomatic, indented source
 //	                                     # to stdout, each file in order
 //	                                     # (use -w to overwrite the files
@@ -34,9 +37,10 @@
 //	                                     # cross-referenced Markdown reading
 //	                                     # file on stdout.
 //
-// A literate `FILE.fern.md` may be passed to any of the compile / -run /
-// -check / -interp modes directly: it is tangled in memory first, and
-// diagnostics are mapped back to the lines you wrote in the document.
+// A literate `FILE.fern.md` may be passed to -check, -interp and -fmt
+// directly: it is tangled in memory first, and diagnostics are mapped back
+// to the lines you wrote in the document. The compile modes hand the path
+// to the self-hosted compiler, which does not tangle yet (#11838).
 //
 // # Program arguments
 //
@@ -609,7 +613,7 @@ func main() {
 	doResolve := flag.Bool("resolve", false, "run Minimum Version Selection over a fern.toml's versioned ([package] index) dependencies and write the chosen versions to fern.lock (pass the manifest, its directory, or any file inside the package; default `.`). url-sourced versions are fetched and verified into the content-addressed store. The build reads fern.lock; the compiler never reads the index.")
 	doVendor := flag.Bool("vendor", false, "flatten the transitive dependency graph of a fern.toml (pass the manifest, its directory, or any file inside the package; default `.`) into <root>/vendor/<name>/, one directory per package. After vendoring, builds are fully offline — the loader resolves declared dependencies out of vendor/ and never touches the network or the deps' original path/url locations. url dependencies must be fetched (`fern -fetch`) first; vendoring copies from the store.")
 	doAdd := flag.Bool("add", false, "add a dependency to the nearest fern.toml: `fern -add NAME SPEC [DIR]` where SPEC is `path:../dir`, `url:https://…/pkg.tar.gz` (the archive is fetched and its sha256 recorded automatically — no hand-computed hash), or `workspace` (a `{ workspace = true }` member dep). DIR (default `.`) selects the package whose fern.toml to edit. The manifest is edited textually so comments and formatting survive.")
-	doFetch := flag.Bool("fetch", false, "download the url+hash dependencies declared by a fern.toml (pass the manifest, its directory, or any file inside the package; default `.`) into the content-addressed package store, verifying each archive against its declared sha256 before unpacking. Transitive: path dependencies' manifests are fetched too. This is the ONLY command that touches the network — build/check/interp read the store and error when a url dependency hasn't been fetched.")
+	doFetch := flag.Bool("fetch", false, "download the url+hash dependencies declared by a fern.toml (pass the manifest, its directory, or any file inside the package; default `.`) into the content-addressed package store, verifying each archive against its declared sha256 before unpacking. Transitive: path dependencies' manifests are fetched too. It, `-add url:` and `-resolve` are the commands that download packages — build/check/interp read the store and error when a url dependency hasn't been fetched.")
 	doLint := flag.Bool("lint", false, "lint FILE.fern or every .fern source under a directory, reporting code that compiles but reads badly (start with `fern -lint-rules`). Parse-only: no type-checking, no import resolution, so a file with a type error still lints and a whole tree costs one parse per file. Severities come from the governing fern.toml's [lint] table and then -lint-set; a `// fern-lint: allow RULE` comment silences one site. Exits 1 when a rule set to `deny` fires; a `warn` finding prints and exits 0.")
 	listLintRulesFlag := flag.Bool("lint-rules", false, "list the lint rules with their default severity, description, and tunable options, then exit.")
 	var lintSets repeatedString
@@ -699,14 +703,10 @@ func main() {
 		return
 	}
 
-	if *explain != "" {
-		body := diag.Explain(*explain)
-		if body == "" {
-			fmt.Fprintf(os.Stderr, "unknown error code %q\navailable codes: %v\n", *explain, diag.AvailableCodes())
-			os.Exit(1)
-		}
-		fmt.Print(diag.FormatExplain(*explain, body))
-		return
+	explainSet := false
+	flag.Visit(func(f *flag.Flag) { explainSet = explainSet || f.Name == "explain" })
+	if explainSet {
+		os.Exit(runExplain(*explain, os.Stdout, os.Stderr))
 	}
 
 	if *repl {
@@ -888,6 +888,11 @@ func main() {
 			os.Exit(1)
 		}
 		return
+	}
+
+	if (*doTangle || *doWeave || *doDoctest) && flag.NArg() > 1 {
+		fmt.Fprintln(os.Stderr, documentArgsError(flag.Args()))
+		os.Exit(2)
 	}
 
 	if (*doTangle || *doWeave) && flag.NArg() >= 1 {
@@ -1233,4 +1238,20 @@ func execUnderQemu(qemu, binPath string, progArgs []string) (int, error) {
 		return cmd.ProcessState.ExitCode(), nil
 	}
 	return 1, err
+}
+
+// runExplain prints the explanation for code, or the list of codes when
+// code is empty, and returns the exit status.
+func runExplain(code string, stdout, stderr io.Writer) int {
+	if code == "" {
+		fmt.Fprintln(stdout, strings.Join(diag.AvailableCodes(), "\n"))
+		return 0
+	}
+	body := diag.Explain(code)
+	if body == "" {
+		fmt.Fprintf(stderr, "unknown error code %q\navailable codes: %v\n", code, diag.AvailableCodes())
+		return 1
+	}
+	fmt.Fprint(stdout, diag.FormatExplain(code, body))
+	return 0
 }

@@ -1,6 +1,6 @@
 ---
 title: Traits
-description: Shared behaviour across types — trait / impl and bounded generics.
+description: Traits and impls, bounded generics, supertraits, associated types, derive, methods, operators, Drop, and dyn Trait.
 sidebar:
   order: 3
 ---
@@ -59,7 +59,96 @@ impl Display for i32 { }     // adopts the existing to_string
 ```
 
 A non-empty impl whose method would collide with an existing one is
-rejected, so the empty form is the intended way to adopt behaviour.
+rejected (`E074`), so the empty form is the intended way to adopt
+behaviour.
+
+### Default methods
+
+A trait method may carry a body. An impl that leaves it out gets the
+default; one that writes it replaces it.
+
+### Supertraits
+
+`trait Loud: Named { … }` requires every `Loud` type to implement `Named`
+too, and a `[T: Loud]` bound makes `Named`'s methods callable as well:
+
+```fern
+import "std/string";
+
+trait Named {
+    function name(self: Self): string;
+    function greet(self: Self): string { return "hello, " + self.name(); }
+}
+
+trait Loud: Named {
+    function shout(self: Self): string;
+}
+
+struct Ash { }
+impl Named for Ash { function name(self: Self): string { return "ash"; } }
+impl Loud for Ash {
+    function shout(self: Self): string { return self.name().to_upper(); }
+}
+
+function both[T: Loud](t: T): string {
+    return t.greet() + " / " + t.shout();
+}
+
+function main(): i32 {
+    print(both(Ash { }));   // hello, ash / ASH
+    return 0;
+}
+```
+
+### Generic traits
+
+A trait can take type parameters — `trait Sink[T] { function put(self:
+Self, v: T): i32; }` — and an impl names its argument:
+`impl Sink[i32] for Counter { … }`. A type implements a given trait once,
+so a second `impl Sink[string] for Counter` is a redeclaration (`E006`).
+[`std/convert`](../../stdlib/convert/)'s `From[T]` and `Into[T]` are
+generic traits.
+
+### Associated types
+
+A trait can declare a type that each impl fixes, and refer to it as
+`Self::Name`. Generic code reaches it through the type parameter
+(`C::Item`), so it needs no extra parameter of its own:
+
+```fern
+import "std/i32";
+
+trait Container {
+    type Item;
+    function first(self: Self): Self::Item;
+}
+
+struct Ints { xs: i32[] }
+
+impl Container for Ints {
+    type Item = i32;
+    function first(self: Self): Self::Item { return self.xs[0]; }
+}
+
+function head[C: Container](c: C): C::Item {
+    return c.first();
+}
+
+function main(): i32 {
+    print(head(Ints { xs: [7, 8] }).to_string());   // 7
+    return 0;
+}
+```
+
+An impl must bind every associated type the trait declares, and no
+others.
+
+### Associated functions
+
+A trait function without `self` is called on the type: `Point.default()`,
+`Celsius.from(20)`. Inside a generic function the type parameter stands in
+for the type, so `[T: convert.From[i32]]` can build a `T` with
+`T.from(v)`.
 
 ## Bounded generics — `[T: Trait]`
 
@@ -159,6 +248,7 @@ common traits so you rarely declare your own from scratch:
 | `Ord`     | `cmp(self, other): i32`                 | Three-way ordering.      |
 | `Hash`    | `hash(self): i32`                       | Hash code.               |
 | `Default` | `default(): Self`                       | A zero/empty value.      |
+| `Debug`   | `to_debug(self): string`                | Diagnostic rendering.    |
 
 The built-in primitives already implement them, so generic code bounded
 on `cmp.*` works for `i32`, `string`, and friends out of the box.
@@ -179,8 +269,10 @@ struct Point { x: i32, y: i32 }
 enum Status { Idle, Running(i32), Done(i32, i32) }
 ```
 
-The derivable traits are **`Eq`, `Ord`, `Hash`, `Display`, `Debug`,
-`Default`, and `Json`**. Each composes structurally:
+The derivable traits are **`cmp.Eq`, `cmp.Ord`, `cmp.Hash`,
+`cmp.Display`, `cmp.Debug`, `cmp.Default`**, and from
+[`std/json`](../../stdlib/json/) **`json.Json`** (`to_json()`) and
+**`json.FromJson`** (`T.from_json(text)`). Each composes structurally:
 
 - **`Eq` / `Ord` / `Hash`** fold field-by-field (and, for enums, over the
   variant tag then its payload), so a type is comparable/hashable as soon
@@ -190,14 +282,90 @@ The derivable traits are **`Eq`, `Ord`, `Hash`, `Display`, `Debug`,
   unambiguous diagnostic dump.
 - **`Default`** builds a zero value — scalars use their zero literal,
   nested types delegate to their own `default()`, and an enum defaults to
-  its first variant. It's an error to derive `Default` for a type with a
-  field that has no default (e.g. a payload-carrying first variant);
-  implement it by hand in that case.
+  its first variant, with each payload at its own default (`Running(0)`
+  for an enum whose first variant is `Running(i32)`). A field whose type
+  has no `default()` makes the derive fail; implement `Default` by hand
+  in that case.
 
 A derived impl is an ordinary impl — it satisfies bounds (`[T: cmp.Eq]`)
 and is callable (`p.hash()`, `Status.default()`) exactly like a
 hand-written one. Mix and match: derive the boring traits and
-hand-write the interesting one.
+hand-write the interesting one. Deriving `Eq` also gives the type `==`
+and `!=`, and `Ord` gives `<` `<=` `>` `>=` (see
+[operators](#operators-on-your-own-types)).
+
+## Methods and inherent impls
+
+A method needs no trait. Either spelling declares one:
+
+```fern
+import "std/i32";
+
+struct Point { x: i32, y: i32 }
+
+impl Point {
+    function origin(): Point { return Point { x: 0, y: 0 }; }   // no self
+    function sum(self: Self): i32 { return self.x + self.y; }
+}
+
+function (p: Point) scaled(k: i32): Point {
+    return Point { x: p.x * k, y: p.y * k };
+}
+
+function main(): i32 {
+    let p: Point = Point { x: 3, y: 4 };
+    print(p.sum().to_string());               // 7
+    print(p.scaled(2).sum().to_string());     // 14
+    print(Point.origin().sum().to_string());  // 0
+    return 0;
+}
+```
+
+The receiver clause `function (p: Point) name(…)` works on any type,
+primitives included — that is how `std/i32` gives `i32` its
+`to_string`.
+
+## Operators on your own types
+
+The operators are spelled as methods, matched by name, so a type that
+declares the method gets the operator. No trait is involved.
+
+| Operator | Method |
+| -------- | ------ |
+| `==` `!=` | `eq(other): boolean` |
+| `<` `<=` `>` `>=` | `cmp(other): i32` |
+| `+` `-` `*` `/` `%` | `add` `sub` `mul` `div` `rem` |
+| `&` `\|` `^` `<<` `>>` | `bitand` `bitor` `bitxor` `shl` `shr` |
+| unary `-` | `neg()` |
+
+```fern
+import "std/i32";
+
+struct V2 { x: i32, y: i32 }
+
+function (a: V2) add(b: V2): V2 { return V2 { x: a.x + b.x, y: a.y + b.y }; }
+function (a: V2) eq(b: V2): boolean { return a.x == b.x && a.y == b.y; }
+
+function main(): i32 {
+    let p: V2 = V2 { x: 1, y: 2 } + V2 { x: 3, y: 4 };
+    print(p.x.to_string());                     // 4
+    print((p == V2 { x: 4, y: 6 }).to_string()); // true
+    return 0;
+}
+```
+
+## Finalizers — `mem.Drop`
+
+`impl mem.Drop for T` (from [`core/mem`](../../stdlib/mem/)) gives `T` a
+`drop(self)` that runs when the reference count of a `T` value reaches
+zero, before its fields are freed. Calling `drop` yourself is an error
+(`E073`).
+
+Treat it as a cleanup hook, not a guarantee. When it runs is the
+compiler's release point, which can be earlier than the end of the
+enclosing block, and the interpreter (`fern -interp`) never runs it at
+all. For cleanup that must happen at a known point, use
+[`defer`](../language-features/#deferred-cleanup--defer-and-errdefer).
 
 ## Coherence (the orphan rule)
 
@@ -222,8 +390,32 @@ for x in xs { print(x.to_string()); }
 
 It works on the interpreter and on all three compiled backends (x86-64,
 arm64, wasm), for struct, enum, string and primitive concretes, including
-the `e as? T` downcast back to a concrete type and multi-trait sets
-(`dyn A + B`). Bounded generics stay the better choice when the type IS
+multi-trait sets (`dyn A + B`). `e as? T` downcasts back to a concrete
+type, giving `Option[T]`:
+
+```fern
+import "std/float";
+
+trait Shape { function area(self: Self): f64; }
+
+struct Circle { r: f64 }
+struct Rect { w: f64, h: f64 }
+impl Shape for Circle { function area(self: Self): f64 { return 3.0 * self.r * self.r; } }
+impl Shape for Rect { function area(self: Self): f64 { return self.w * self.h; } }
+
+function main(): i32 {
+    let shapes: dyn Shape[] = [Circle { r: 1.0 }, Rect { w: 2.0, h: 3.0 }];
+    for s in shapes {
+        match (s as? Rect) {
+            Some(r) => { print(r.w.to_string()); },   // 2, for the Rect
+            None    => { print(s.area().to_string()); },  // 3, for the Circle
+        }
+    }
+    return 0;
+}
+```
+
+`as?` applies only to a `dyn` value (`E059`). Bounded generics stay the better choice when the type IS
 known at each call site — they monomorphise, so there is no box and no
 indirect call. See [`docs/DYN-TRAITS.md`][dyn] for the design, the
 representation per backend, and the remaining gaps.

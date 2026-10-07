@@ -1,0 +1,68 @@
+{
+  "host": "macOS-15.8-arm64-arm-64bit-Mach-O",
+  "compiler": "/private/tmp/fern-fip-main11a-native-compiler",
+  "compiler_sha256": "b5f886d2ee1c8e1165606426913c23648fb24b09697d62de4395cc1189ddd894",
+  "revision": "11a71739408e54e69ce5a3db5bf8e2136ad8316c",
+  "working_tree": "A  docs/contexts/runtime/specs/fip-ring.md\nA  examples/fip/bounded_ring.fern\nA  examples/fip/broker_ring.fern\nA  examples/fip/event_loop_ring.fern\nA  examples/fip/queue_array.fern\nA  examples/fip/queue_inline.fern\nA  examples/fip/ring_queue.fern\nA  internal/testing/e2ecompiler/broker_representation_test.go\nA  internal/testing/e2ecompiler/self_host_bounded_ring_test.go\nM  internal/testing/e2ecompiler/self_host_broker_boundaries_test.go\nM  internal/testing/e2ecompiler/self_host_broker_driver_test.go\nM  internal/testing/e2ecompiler/self_host_fip_broker_test.go\nA  internal/testing/e2ecompiler/self_host_ring_event_loop_test.go\nA  internal/testing/e2ecompiler/self_host_ring_queue_driver_test.go\nA  scripts/bench-ring-broker.py\nA  scripts/bench-ring-queue.py\n?? AGENTS.md\n?? SPEC.md\n?? scripts/__pycache__/\n",
+  "sources": {
+    "examples/fip/ring_queue.fern": "c27c62afc1bb8afa659d4824d1bcda200a4edc8a0fd5ab132de01b379b7c7938",
+    "examples/fip/bounded_ring.fern": "27b1036fc51a94469584db42915d657259129ad41cb7d9472935df3699c498a8",
+    "examples/fip/queue_inline.fern": "4dd72d5a2e782f090989a5296d3cafa8e9fddf05781288960ebdd99bf685c3e9",
+    "examples/fip/queue_array.fern": "12232ae57a6ca9700ba254663bd52dd7c4e881624f118fa8fa16bbc11c1f23ef",
+    "scripts/bench-ring-queue.py": "991f3d4a00ae2cb6247a486618d9b67497da9a69acdac16a9601e9460a84e238",
+    "bootstrap/stage0.lock": "6cbf5f6d6b13a72c6f0c271655d37468021eb428b2b163364de1d2442ca4637e",
+    "internal/stdlib/std/bench.fern": "028d73d80366813b3d51676ed83cc2d0be41be8b4bf1fa0d7172fa35fe9904b5",
+    "internal/stdlib/std/array.fern": "b1ea2e1cf7c93e78c5d376cbca4867af115659b1258218d5af0034ac8f371525"
+  },
+  "builds": {
+    "ring": {
+      "command": [
+        "/private/tmp/fern-fip-main11a-native-compiler",
+        "-target",
+        "arm64-darwin",
+        "-o",
+        "/private/tmp/fern-ring-queue-repeated/ring",
+        "/private/tmp/fern-ring-queue-repeated/source/driver_ring.fern",
+        "/Users/jakechampion/.codex/worktrees/fip-ring-experiment/lang/internal/stdlib"
+      ],
+      "binary_sha256": "93261da71950def6a2ddf926638dc23920bf4255f00f25ce52512684107a2e31",
+      "driver_sha256": "c27c62afc1bb8afa659d4824d1bcda200a4edc8a0fd5ab132de01b379b7c7938"
+    },
+    "inline": {
+      "command": [
+        "/private/tmp/fern-fip-main11a-native-compiler",
+        "-target",
+        "arm64-darwin",
+        "-o",
+        "/private/tmp/fern-ring-queue-repeated/inline",
+        "/private/tmp/fern-ring-queue-repeated/source/driver_inline.fern",
+        "/Users/jakechampion/.codex/worktrees/fip-ring-experiment/lang/internal/stdlib"
+      ],
+      "binary_sha256": "718781b3af6eecd08f137caecfd1138aed5f67accf10f7880f23f55a162d2f21",
+      "driver_sha256": "1287492c2255e7288fcb831dad0036fe556a570eea25d93ebe2016fc1857b8b5"
+    },
+    "array": {
+      "command": [
+        "/private/tmp/fern-fip-main11a-native-compiler",
+        "-target",
+        "arm64-darwin",
+        "-o",
+        "/private/tmp/fern-ring-queue-repeated/array",
+        "/private/tmp/fern-ring-queue-repeated/source/driver_array.fern",
+        "/Users/jakechampion/.codex/worktrees/fip-ring-experiment/lang/internal/stdlib"
+      ],
+      "binary_sha256": "d28acc1a912c3c4dff47e257648aa93beb848b41eed5aaf7e6c9b2ee7e7bb356",
+      "driver_sha256": "9bb9232b93c139a7a6da6de802f6457d036c03e0eadf3808f933a604b2547cee"
+    }
+  },
+  "capacities": [
+    1,
+    8,
+    64,
+    512,
+    4096
+  ],
+  "turns": 1000,
+  "repeats": 5,
+  "measurement": "Scalar i64 payloads require no payload container allocation. Startup includes sample storage, queue construction and fill; fill allocations also reported separately. Samples time drop/push or full refusal. Shared retains the whole old queue and reads its endpoints after mutation; unique performs equal endpoint reads before mutation. Wall includes these reads, checks and sample storage. Final full FIFO verification, export and sorting follow marks. Whole-process CPU/RSS/faults include them all. Array drop copies the suffix using std/array; no claim of optimal array queue. Fresh bytes are high-water growth, not requested bytes; faults are not cache misses."
+}

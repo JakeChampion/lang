@@ -193,7 +193,7 @@ func uptimeCases(t *testing.T) []invocation {
 	)
 	empty := utmpRaw(t, dir, "empty", nil)
 	short := utmpRaw(t, dir, "short", make([]byte, utmpRecordSize/2))
-	trailing := utmpRaw(t, dir, "trailing", append(utmpRec{typ: utBootTime, line: "~", user: "reboot", sec: int32(time.Now().Unix() - 3600)}.bytes(), 1, 2, 3))
+	trailing := utmpRaw(t, dir, "trailing", append(utmpDB(utmpRec{typ: utBootTime, line: "~", user: "reboot", sec: int32(time.Now().Unix() - 3600)}), 1, 2, 3))
 	cases = append(cases,
 		invocation{name: "a boot time in the future", args: []string{future}, mask: maskUptime},
 		invocation{name: "no boot record at all", args: []string{noBoot}, mask: maskUptime, stderrMask: maskBootErrno},

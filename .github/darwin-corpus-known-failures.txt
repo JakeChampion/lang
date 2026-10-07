@@ -108,6 +108,4 @@ TestStty
 TestTestParity
 TestTtyParity
 TestUptime
-TestUsersParity
-TestUtmpRecordLayoutMatchesTheHost
 TestWhoParity

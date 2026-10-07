@@ -125,7 +125,8 @@ ISAs. Per-backend support and known gaps: `docs/BACKEND-PARITY.md`.
 - **Packages.** A `fern.toml` manifest declares `path`, hash-addressed `url`,
   and workspace dependencies; `fern -add`, `-fetch`, `-resolve` (Minimum
   Version Selection into `fern.lock`), and `-vendor` manage them. Only
-  `-fetch` touches the network. `docs/PACKAGES.md`.
+  `-fetch`, `-add url:` and `-resolve` download packages; a build never
+  does. `docs/PACKAGES.md`.
 - **Capabilities.** A manifest can grant a dependency `net`, `fs`, `env`,
   `subprocess`, `time`, or `random`; reaching outside the grant is a compile
   error. `fern -capabilities` reports what each package uses and
@@ -137,9 +138,11 @@ ISAs. Per-backend support and known gaps: `docs/BACKEND-PARITY.md`.
   prints a leak census at exit; `-g` emits a symbol table; fatal aborts print
   a frame-pointer backtrace by default. `docs/SANITIZER.md`.
 - **Literate programming.** A `.fern.md` file is a Markdown document whose
-  named code chunks are tangled into a program and works anywhere a `.fern`
-  file does; `fern -weave -html` turns it back into a cross-referenced page
-  and `-doctest` runs its example blocks. `docs/LITERATE.md`.
+  named code chunks are tangled into a program. `-check`, `-interp` and
+  `-fmt` take one directly; a `-target` compile needs `fern -tangle` first
+  until #11838 is fixed. `fern -weave -html` turns it back into a
+  cross-referenced page and `-doctest` runs its example blocks.
+  `docs/LITERATE.md`.
 - **Embedding and sharing.** `-embed DIR` compiles assets into the binary;
   `-shared -export` emits a `.so` loadable with `dlopen` or Android's
   `System.loadLibrary`. `docs/EMBED.md`.
