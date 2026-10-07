@@ -1,6 +1,8 @@
 package coreutils
 
 import (
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -451,6 +453,11 @@ func TestMktempRetryExhaustion(t *testing.T) {
 			}
 			for _, n := range names {
 				f, err := os.OpenFile(filepath.Join(dir, n), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+				if errors.Is(err, fs.ErrExist) {
+					// A case-insensitive filesystem (APFS's default) already
+					// holds this name under another case, so it is taken.
+					continue
+				}
 				if err != nil {
 					t.Fatalf("fill %s: %v", dir, err)
 				}

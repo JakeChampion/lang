@@ -902,7 +902,9 @@ func readdirOrder(t *testing.T, dir string) []string {
 // batch, deleting half of it and then creating the replacements puts the
 // LATE entries on the freed low inodes, so inode order disagrees with
 // creation order by construction and the two walks stay distinguishable
-// either way.
+// either way. APFS never recycles an inode, so there the replacements come
+// LAST in inode order instead; their names alternate between sorting before
+// the survivors and after them, so the inode order is unsorted either way.
 //
 // Returns the names it left behind, all of them directly under `dir`.
 func seedWalkOrderTree(t *testing.T, dir string) []string {
@@ -928,7 +930,10 @@ func seedWalkOrderTree(t *testing.T, dir string) []string {
 		}
 	}
 	for i := 0; i < 6; i++ {
-		n := fmt.Sprintf("z%02d", i)
+		n := fmt.Sprintf("a%02d", i)
+		if i%2 == 1 {
+			n = fmt.Sprintf("z%02d", i)
+		}
 		if i == 3 {
 			seedMkdir(t, dir, n)
 			seedWrite(t, dir, n+"/inner", "i\n")

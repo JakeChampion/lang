@@ -211,15 +211,20 @@ func niceExecTree(t *testing.T) string {
 // needs a restore that an unprivileged runner cannot perform.
 func TestNiceReadsTheNicenessItWasStartedAt(t *testing.T) {
 	ref := referenceBin(t, "nice")
-	for _, want := range []int{5, 12, 19} {
-		cmd := exec.Command(ref, "-n", strconv.Itoa(want), fernBin(t, "nice"))
+	run := func(adj int, inner string) string {
+		cmd := exec.Command(ref, "-n", strconv.Itoa(adj), inner)
 		cmd.Env = baseEnv()
 		out, err := cmd.Output()
 		if err != nil {
-			t.Fatalf("nice at niceness %d: %v", want, err)
+			t.Fatalf("nice -n %d %s: %v", adj, inner, err)
 		}
-		if printed := strings.TrimRight(string(out), "\n"); printed != strconv.Itoa(want) {
-			t.Errorf("nice printed %q at niceness %d, want %d", printed, want, want)
+		return strings.TrimRight(string(out), "\n")
+	}
+	// The test's own niceness is the runner's, which is not always 0 (the
+	// macOS runner's is -10), so GNU started the same way is the answer.
+	for _, adj := range []int{5, 12, 19} {
+		if got, want := run(adj, fernBin(t, "nice")), run(adj, ref); got != want {
+			t.Errorf("nice printed %q under nice -n %d, GNU printed %q", got, adj, want)
 		}
 	}
 }
