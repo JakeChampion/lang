@@ -74,7 +74,9 @@ pub struct Step { block: i32, point: i32, target: i32, supplies: Supply[], drops
 // `defs` is the definitions table (`definitions`) of the function the plan was
 // planned from, indexed by value; a verifier checking another function
 // derives its own.
-pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[], kept: boolean[], entry_kept: boolean[], frame_views: boolean[], constants: string[], text_lens: i32[], analysis: ssasem.Analysis, defs: ssa.SInst[], modes: i32[], unit_analysis: ssasem.Analysis, unique_receivers: boolean[], checked_writes: boolean[] }
+// `fresh_seeded` says `unique_receivers` counted a fresh row's result
+// (`with_fresh`), so a plan reused under another module's rows is proved again.
+pub struct Plan { ok: boolean, why: string, steps: Step[], owned: boolean[], literal: boolean[], grows: i32[], grow_fields: i32[], takes: i32[], held: boolean[], payloads: boolean[], kept: boolean[], entry_kept: boolean[], frame_views: boolean[], constants: string[], text_lens: i32[], analysis: ssasem.Analysis, defs: ssa.SInst[], modes: i32[], unit_analysis: ssasem.Analysis, unique_receivers: boolean[], fresh_seeded: boolean, checked_writes: boolean[] }
 
 struct Ledger { ok: boolean, why: string, bits: boolean[] }
 
@@ -378,7 +380,7 @@ function plan_callers(kix: util.NameIndex, funcs: ssasem.Func[], plans: Plan[]):
 }
 
 function bad(why: string): Plan {
-  return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [], kept: [], entry_kept: [], frame_views: [], constants: [], text_lens: [], analysis: ssasem.refused_analysis(why), defs: [], modes: [], unit_analysis: ssasem.refused_analysis(why), unique_receivers: [], checked_writes: [] };
+  return Plan { ok: false, why: why, steps: [], owned: [], literal: [], grows: [], grow_fields: [], takes: [], held: [], payloads: [], kept: [], entry_kept: [], frame_views: [], constants: [], text_lens: [], analysis: ssasem.refused_analysis(why), defs: [], modes: [], unit_analysis: ssasem.refused_analysis(why), unique_receivers: [], fresh_seeded: false, checked_writes: [] };
 }
 
 pub function refused(why: string): Plan {
@@ -2659,7 +2661,7 @@ pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analys
     return bad(why);
   }
   let consts: string[] = constants(f, defs);
-  return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: consts, text_lens: text_lens(f), analysis: semantic, defs: defs, modes: modes, unit_analysis: analysis, unique_receivers: unique_receivers(f, steps, consts), checked_writes: checked_writes(f) };
+  return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: consts, text_lens: text_lens(f), analysis: semantic, defs: defs, modes: modes, unit_analysis: analysis, unique_receivers: unique_receivers(f, steps, consts, no_fresh()), fresh_seeded: false, checked_writes: checked_writes(f) };
 }
 
 // checked_writes marks, at a `with`'s result, a `with` whose index an element
@@ -2693,10 +2695,11 @@ function read_before(b: ssa.SBlock, end: i32, arr: i32, index: i32): boolean {
 
 // unique_receivers marks, at a `with`'s or an `append`'s result, one whose
 // receiver needs no uniqueness test: the receiver is moved into it and is
-// `sole`.
-function unique_receivers(f: ssasem.Func, steps: Step[], consts: string[]): boolean[] {
+// `sole`. `fresh` names the module's rows whose result is always sole
+// (`fresh_rows`).
+function unique_receivers(f: ssasem.Func, steps: Step[], consts: string[], fresh: util.NameIndex): boolean[] {
   let out: boolean[] = __alloc_bool(f.graph.nvals);
-  let sole: boolean[] = sole_boxes(f, steps, consts);
+  let sole: boolean[] = sole_boxes(f, steps, consts, fresh);
   let at: i32[] = ssa.block_positions(f.graph);
   for st in steps {
     if (st.point >= 0) {
@@ -2707,6 +2710,92 @@ function unique_receivers(f: ssasem.Func, steps: Step[], consts: string[]): bool
     }
   }
   return out;
+}
+
+function no_fresh(): util.NameIndex {
+  let none: string[] = [];
+  return util.name_index(none);
+}
+
+// fresh_rows names the rows of a module whose every return hands back a sole
+// box, so a caller's result from one starts sole. A row joins once its
+// returns are sole with the rows already named as seeds, so a helper that
+// returns another's fresh result joins a round later, and recursion, which
+// never starts sole, adds nothing.
+pub function fresh_rows(keys: string[], funcs: ssasem.Func[], plans: Plan[]): util.NameIndex {
+  let fresh: util.NameIndex = no_fresh();
+  let named: boolean[] = __alloc_bool(keys.len());
+  let grew: boolean = true;
+  while (grew) {
+    grew = false;
+    let i: i32 = 0;
+    while (i < keys.len()) {
+      if (!named[i] && plans[i].ok && returns_sole(funcs[i], plans[i], fresh)) {
+        named = named.with(i, true);
+        fresh = fresh.added(keys[i]);
+        grew = true;
+      }
+      i = i + 1;
+    }
+  }
+  return fresh;
+}
+
+function returns_sole(f: ssasem.Func, p: Plan, fresh: util.NameIndex): boolean {
+  let returns: i32 = 0;
+  for b in f.graph.blocks {
+    if (b.term.kind_tag == 1) {
+      if (b.term.value < 0 || !is_array(f.values[b.term.value])) {
+        return false;
+      }
+      returns = returns + 1;
+    }
+  }
+  if (returns == 0) {
+    return false;
+  }
+  let sole: boolean[] = sole_boxes(f, p.steps, p.constants, fresh);
+  for b in f.graph.blocks {
+    if (b.term.kind_tag == 1 && !sole[b.term.value]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// with_fresh is `p` with its receivers proved again under the module's fresh
+// rows, for a row that calls one or whose receivers counted one before.
+pub function with_fresh(p: Plan, f: ssasem.Func, fresh: util.NameIndex): Plan {
+  if (!p.ok) {
+    return p;
+  }
+  let seeded: boolean = calls_any(f, fresh);
+  if (!seeded && !p.fresh_seeded) {
+    return p;
+  }
+  return Plan { ...p, unique_receivers: unique_receivers(f, p.steps, p.constants, fresh), fresh_seeded: seeded };
+}
+
+function calls_any(f: ssasem.Func, names: util.NameIndex): boolean {
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == ssasem.call() && names.has(ins.str)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// Whether two fresh-row sets say the same thing about `callees`, the names
+// one body calls: its receivers read the set only through those.
+pub function fresh_rows_agree(a: util.NameIndex, b: util.NameIndex, callees: string[]): boolean {
+  for callee in callees {
+    if (a.has(callee) != b.has(callee)) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function box_update(ins: ssa.SInst): boolean {
@@ -2724,7 +2813,8 @@ function moved_receiver(st: Step, v: i32): boolean {
 
 // sole_boxes marks the values whose box no unit but the frame's own one ever
 // holds. A box starts that way when a `with` hands it back, a fresh or empty
-// array is made, or an `append` takes a sole receiver by move; a phi keeps it
+// array is made, a fresh row returns it, or an `append` takes a sole receiver
+// by move; a phi keeps it
 // when every operand does. It stops at any unit retained on it, and at any use
 // that could hand it to another holder: everything but reading an element or
 // the length, being a `with`'s or an `append`'s receiver, flowing into a phi
@@ -2732,11 +2822,11 @@ function moved_receiver(st: Step, v: i32): boolean {
 //
 // An empty constant is shared, but no write lands in it: a `with` on it fails
 // its bounds check, and a push onto it, having no room, copies.
-function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[]): boolean[] {
+function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[], fresh: util.NameIndex): boolean[] {
   let sole: boolean[] = __alloc_bool(f.graph.nvals);
   for b in f.graph.blocks {
     for ins in b.insts {
-      if (ins.result >= 0 && (ins.kind_tag == 8 || box_update(ins) || fresh_array(ins, consts))) {
+      if (ins.result >= 0 && (ins.kind_tag == 8 || box_update(ins) || fresh_array(ins, consts, fresh))) {
         sole = sole.with(ins.result, true);
       }
     }
@@ -2796,13 +2886,14 @@ function sole_boxes(f: ssasem.Func, steps: Step[], consts: string[]): boolean[] 
 }
 
 // fresh_array is an array no other holder can have seen: a zero-filled or
-// reserved allocation, a literal built at run time, or an empty one.
-function fresh_array(ins: ssa.SInst, consts: string[]): boolean {
+// reserved allocation, a literal built at run time, an empty one, or a fresh
+// row's result.
+function fresh_array(ins: ssa.SInst, consts: string[], fresh: util.NameIndex): boolean {
   if (ins.kind_tag == ssasem.array_new()) {
     return ins.args.len() == 0 || consts[ins.result] == "";
   }
   if (ins.kind_tag == ssasem.call()) {
-    return ins.str == "__alloc_i32" || ins.str == "__alloc_i64" || ins.str == "__alloc_bool" || ins.str == "__alloc_u8";
+    return ins.str == "__alloc_i32" || ins.str == "__alloc_i64" || ins.str == "__alloc_bool" || ins.str == "__alloc_u8" || fresh.has(ins.str);
   }
   return ins.kind_tag == ssasem.array_reserve();
 }
