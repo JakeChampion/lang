@@ -361,7 +361,8 @@ func TestRunnerNetExamplePasses(t *testing.T) {
 }
 
 // `tests/stdlib/fetch_proxy_test.fern` covers std/fetch's proxy
-// selection: which variables are read and every `no_proxy` form.
+// selection: which variables are read, which proxy each scheme takes, and
+// every `no_proxy` form.
 func TestRunnerFetchProxyExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "tests/stdlib/fetch_proxy_test.fern")
@@ -369,7 +370,7 @@ func TestRunnerFetchProxyExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/fetch proxies", "# pass 16", "# fail 0", "1..16"} {
+	for _, w := range []string{"# Suite: std/fetch proxies", "# pass 18", "# fail 0", "1..18"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

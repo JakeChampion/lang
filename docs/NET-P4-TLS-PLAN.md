@@ -133,8 +133,22 @@ TLS itself is `std/tls/keyschedule`, `keyshare`, `message`, `record`,
     against each other, the second ClientHello's share and cookie are
     checked, and a retry naming the group already shared, one not offered or
     one the client cannot make, a second retry, and a second ClientHello
-    without the share are each refused. Remaining: the client module over a
-    socket, and `fetch`.
+    without the share are each refused. Then `std/tls/client`: a sans-IO
+    `Session` that judges the chain against a root store and the
+    CertificateVerify under the leaf's key, sends a failure's alert under
+    the keys in force, and saves a connected session as bytes for a pool;
+    and a `Connection` over a socket. `fetch` speaks `https` through it
+    where it dials, offering `http/1.1` by ALPN and trusting the system's
+    roots, keeps TLS connections in its pool, and reaches an `https` origin
+    through `https_proxy` by a CONNECT tunnel. Real servers sign with P-384
+    keys, so P-256 verification became `std/crypto/ecdsa` with P-384 beside
+    it, and x509 and verify read and check both. Gate: the session against
+    std/tls/handshake's server in the stdtest differential and on wasm, and
+    `TestTLSClientAgainstGo`, which runs fetch and the socket client
+    against Go's crypto/tls (P-256, RSA and Ed25519 leaves under a P-384 CA,
+    a server forcing a HelloRetryRequest, an untrusted CA, a wrong name, a
+    CONNECT proxy and a kept connection) on both native ISAs and in the
+    interpreter.
 11. **`std/tls/server`.** Resumption and client certificates, wired into
     `std/serve`.
 12. **Interop and fuzzing on `net-nightly`.** OpenSSL 3.5, Go, rustls'

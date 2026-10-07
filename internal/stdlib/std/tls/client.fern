@@ -39,7 +39,8 @@ pub function (c: Config) with_alpn(protocols: string[]): Config {
 // TlsError — why a connection failed: the handshake's own refusal, a chain
 // the roots do not vouch for, a CertificateVerify that does not verify, the
 // name not resolving, the socket's error, the handshake outlasting its
-// bound, or the peer closing before the handshake ended.
+// bound, the peer closing before the handshake ended, or closing inside a
+// record.
 pub enum TlsError {
   HandshakeFailed(handshake.HandshakeError),
   Untrusted(verify.VerifyError),
@@ -48,6 +49,7 @@ pub enum TlsError {
   NetFailed(net.NetError),
   HandshakeTimeout,
   ClosedEarly,
+  RecordCut,
 }
 
 pub function (e: TlsError) message(): string {
@@ -72,6 +74,9 @@ pub function (e: TlsError) message(): string {
     },
     ClosedEarly => {
       return "the peer closed the connection during the handshake";
+    },
+    RecordCut => {
+      return "the peer closed the connection inside a record";
     }
   }
   return "";
@@ -436,6 +441,9 @@ pub function (c: Connection) recv(wait: Duration): Result[Received, TlsError] {
       }
     }
     if (input.len() == 0) {
+      if (s.held.len() > 0) {
+        return Err(RecordCut);
+      }
       return Ok(Received { conn: Connection { ...c, session: s }, data: [], ended: true });
     }
     let step: Step = __read_or_alert(c.fd, s, input)?;

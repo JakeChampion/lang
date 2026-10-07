@@ -1246,7 +1246,8 @@ address is checked against the certificate's addresses and not sent as SNI
   whose data is empty when the wait passed first, and `(c).close()`.
 - `TlsError` is `HandshakeFailed(HandshakeError)`, `Untrusted(VerifyError)`,
   `SignatureInvalid`, `Unresolved(DnsError)`, `NetFailed(NetError)`,
-  `HandshakeTimeout` or `ClosedEarly`, with `message()`.
+  `HandshakeTimeout`, `ClosedEarly` or `RecordCut` (closed inside a record),
+  with `message()`.
 
 ### `std/tls/der`
 
@@ -2303,7 +2304,10 @@ answer is `Result[HttpResponse, FetchError]`.
   CRLF in a URL or a field cannot split the request on the wire. It
   writes `Host` and
   `Content-Length` itself and strips hop-by-hop fields from what it sends.
-  No TLS where the client dials (`https` fails with `Tls`). On
+  Where the client dials, `https` is TLS 1.3 by `std/tls/client`, offering
+  `http/1.1` by ALPN: the server's chain must reach the system's roots
+  (`verify.system_roots()`, which `SSL_CERT_FILE` overrides) and name the
+  URL's host. The handshake counts against the connect bound. On
   `wasm32-wasi-http` the client dials nothing:
   the request goes to the host's wasi:http/outgoing-handler (`std/wasi_http`),
   which resolves the name, connects, speaks TLS (so `https` works there)
@@ -2363,16 +2367,19 @@ answer is `Result[HttpResponse, FetchError]`.
   rule there, and a loopback or private address is the host's to refuse.
 - **Proxies:** both routes go through the forward proxy the environment
   names, read through `config_get` as `ProxyEnv` (`proxy_env()`,
-  `proxy_env_from(...)` for the pure form): the lowercase `http_proxy`
-  only, as curl reads it (a CGI host maps a client's `Proxy:` header onto
-  the uppercase name), and none under `REQUEST_METHOD`; `no_proxy` (or
+  `proxy_env_from(...)` for the pure form): for `http` URLs the lowercase
+  `http_proxy` only, as curl reads it (a CGI host maps a client's `Proxy:`
+  header onto the uppercase name); for `https` URLs `https_proxy` (or
+  `HTTPS_PROXY`); none under `REQUEST_METHOD`; `no_proxy` (or
   `NO_PROXY`) lists the hosts reached directly as `*`, a domain (with a
   leading dot, its subdomains only), an address, a CIDR block of either
   family, any of them with a `:port`, zones ignored. `localhost` and
   loopback are never proxied. `(p).proxy_for(url)` is the pure decision.
-  A proxied request carries the absolute-form target, the origin's
+  A proxied `http` request carries the absolute-form target, the origin's
   `Host`, and `Proxy-Authorization: Basic` from the proxy URL's
-  credentials. On the handler's route the origin is still resolved and
+  credentials. An `https` request asks the proxy for a tunnel with
+  `CONNECT host:port`, the credentials on that, and speaks TLS to the
+  origin through it; a kept connection is kept per origin. On the handler's route the origin is still resolved and
   checked before the request goes to the proxy (the proxy's own address
   is the deployment's choice and goes unchecked), so a deployment where
   only the proxy can resolve names reaches it through `send`. On
@@ -2392,8 +2399,9 @@ answer is `Result[HttpResponse, FetchError]`.
   that cannot be written as one line, or a file body; `what` names the
   rule, never the value), `Dns(DnsError)`, `Connect(NetError)`,
   `Blocked(what)` (a host the handler's route may not reach, naming the
-  address), `Tls(what)` (`https` where no host speaks TLS, or the
-  host's handshake failure),
+  address), `Tls(what)` (no roots to trust, a handshake refused
+  by either side, a certificate not trusted for the host, or the
+  wasi-http host's handshake failure),
   `Timeout(Phase)` with `Phase` one of `Connecting` / `Inactivity` /
   `Total`, `Protocol(what)` (a response the parser refuses, interim
   1xx responses past one `limits.header_bytes` between them, or a 101
@@ -2415,7 +2423,7 @@ answer is `Result[HttpResponse, FetchError]`.
   (504 / 500 / 502, under "Errors a handler answers with" above).
 - **Timeouts:** `Timeouts { connect, inactivity, total }`, each a
   `Duration`; `timeouts()` gives 10 s / 30 s / 60 s. The connect bound covers the
-  whole address race; inactivity is the longest wait for the next byte
+  whole address race, a proxy's tunnel and the TLS handshake; inactivity is the longest wait for the next byte
   of the response; total runs from the start to the last byte read.
 - **Transport:** the dialled route reaches the network only through
   `trait Transport` (`now_ns`, `lookup`, `connect`, `write`, `read` under

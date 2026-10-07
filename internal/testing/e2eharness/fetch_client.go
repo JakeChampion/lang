@@ -541,7 +541,7 @@ function main(): i32 {
     show("refused", fetch.send(fetch.get("http://127.0.0.1:%d/")));
     show("badurl", fetch.send(fetch.get("not a url")));
     show("noscheme", fetch.send(fetch.get("ftp://127.0.0.1/")));
-    show("tls", fetch.send(fetch.get("https://127.0.0.1/")));
+    show("tls", fetch.send(fetch.get("https://127.0.0.1:%[2]d/")));
     show("crlfurl", fetch.send(fetch.get(base() + "/a\r\nX-Injected: 1\r\n\r\n")));
     show("crlfvalue", fetch.send(fetch.get(base() + "/plain").with_header("X-A", "1\r\nX-Injected: 1")));
     show("badname", fetch.send(fetch.get(base() + "/plain").with_header("X A", "1")));
@@ -842,7 +842,7 @@ noencoding: 201 [NOENC] headers: Content-Length=NOENCLEN trailers:
 refused: error connect: Connection refused
 badurl: error invalid URL: no scheme in not a url
 noscheme: error invalid URL: scheme ftp is not http
-tls: error TLS: https is not supported on this target
+tls: error connect: Connection refused
 crlfurl: error invalid URL: a path or query that cannot be written on a request line
 crlfvalue: error invalid request: a header value has a byte that cannot be written
 badname: error invalid request: a header name is not a token
