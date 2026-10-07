@@ -1742,6 +1742,16 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		Params: []ast.Type{},
 		Result: ast.NumberType{Width: 64, Signed: true},
 	}
+	// __ct_secret(b) / __ct_public(b): the constant-time gate's marks. Under
+	// valgrind's memcheck the bytes read as undefined after the first and
+	// defined after the second, so a branch or an address computed from a
+	// secret byte is reported; anywhere else both do nothing.
+	for _, n := range []string{"__ct_secret", "__ct_public"} {
+		c.info.FuncSigs[n] = &ast.FuncType{
+			Params: []ast.Type{ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+			Result: ast.VoidType{},
+		}
+	}
 	// Bit-counting intrinsics: __clz32 / __ctz32 / __popcount32 and their
 	// 64-bit siblings. Each takes one integer of its width and returns an
 	// i32 count. clz/ctz of 0 return the operand width (32 or 64), matching

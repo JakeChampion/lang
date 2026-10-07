@@ -10377,6 +10377,14 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     // no args -> __fern_disable_core_dumps() -> 1 once it cannot dump core.
     s = s.write("    call __fn___fern_disable_core_dumps\n    pushq %rax\n");
     s = s.need("disable_core_dumps");
+  } else if (o.kind_tag == 399) {  // ct_mark
+    // [bytes] -> __fern_ct_secret / __fern_ct_public(%rdi = bytes).
+    s = s.write("    call __fn___fern_" + asmcore.ct_mark_helper(o.i32_imm) + "\n    addq $8, %rsp\n    pushq %rax\n");
+    s = s.need("ct_mark");
+  } else if (o.kind_tag == 400) {  // vg_request
+    // [args] -> valgrind's client request: %rax the block, %rdx the
+    // default and then the result; the rotations leave %rdi as it was.
+    s = s.write("    popq %rax\n    xorl %edx, %edx\n    rolq $3, %rdi\n    rolq $13, %rdi\n    rolq $61, %rdi\n    rolq $51, %rdi\n    xchgq %rbx, %rbx\n    pushq %rdx\n");
   } else if (o.kind_tag == 243 || o.kind_tag == 244) {  // signal_ignore / signal_default
     // [sig]; __fern_signal_{ignore,default}(%rdi=sig) -> the sigaction
     // return, pushed so the statement-level drop balances. [sig] IS
@@ -12403,7 +12411,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     "signal_disposition", "access",
     "geteuid", "getegid", "getuid", "getgid", "getgroups", "environ",
     "fd_stat", "raw_scratch",
-    "clock_resolution", "clock_set",
+    "clock_resolution", "clock_set", "ct_mark",
   ])) {
     s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip " + asmcore.scratch_size("x86_64", s.has_need("statfs")) + "\n    .text\n");
   }
@@ -12729,6 +12737,10 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("disable_core_dumps")) {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_disable_core_dumps("x86_64"), s);
+  }
+  if (s.has_need("ct_mark")) {
+    s = s.write("    .text\n");
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_ct_mark(), s);
   }
   if (s.has_need("clock_resolution")) {
     s = s.write("    .text\n");

@@ -1,6 +1,8 @@
 name: Perf
 
-# Four gates, one comparator (scripts/ci-check-perf):
+# Four gates, one comparator (scripts/ci-check-perf), plus the constant-time
+# gate, which rides the bench job because that job installs valgrind on both
+# ISAs:
 #
 #   bench   instruction counts over bench, vs .github/perf-baseline.txt
 #   cliff   how much the self-host compiler copies crossing the rc==1 append
@@ -94,6 +96,18 @@ jobs:
           name: perf-report-${{ matrix.host }}
           path: ${{ runner.temp }}/perf-report.txt
           if-no-files-found: warn
+
+      # The constant-time gate (docs/TEST-GATES.md): crypto kernels run under
+      # memcheck with their key material marked secret by __ct_secret, and a
+      # branch or an address computed from a secret byte fails it. Each runner
+      # gates its own ISA, since memcheck cannot run a binary under qemu.
+      - uses: ./.github/actions/selfhost-driver-cache
+        if: ${{ !cancelled() }}
+      - name: Constant-time gate
+        if: ${{ !cancelled() }}
+        env:
+          FERN_REQUIRE_VALGRIND: "1"
+        run: go test ./internal/testing/e2ecompiler/ -run '^(TestSelfHostCtGateX86_64|TestSelfHostCtGateArm64)$' -count=1 -v -timeout 30m
 
   # THREE MEASUREMENTS, ONE JOB. Each of these builds the whole self-hosted
   # compiler and then measures for well under a minute, so as separate jobs they

@@ -6450,6 +6450,12 @@ function value_builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowere
   if (ins.str == "__getpwuid_name") {
     return Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_getpwuid_name", 1)) };
   }
+  if (ins.str == "__ct_secret") {
+    return Lowered { found: true, r: emit(r, ir.op_ct_mark(0)) };
+  }
+  if (ins.str == "__ct_public") {
+    return Lowered { found: true, r: emit(r, ir.op_ct_mark(1)) };
+  }
   if (ins.str == "__rc_underflow_count") {
     return Lowered { found: true, r: emit(r, ir.op_call_direct("__fern_rc_underflow_get", 0)) };
   }
@@ -7117,6 +7123,7 @@ function raw_floor_ops(): RawOps[] {
     RawOps { name: "__syscall4", ops: [ir.op_syscall4()] },
     RawOps { name: "__syscall5", ops: [ir.op_syscall5()] },
     RawOps { name: "__syscall6", ops: [ir.op_syscall6()] },
+    RawOps { name: "__raw_vg_request", ops: [ir.op_vg_request()] },
     RawOps { name: "__rc_dec", ops: [ir.op_call_direct("__fern_rc_dec", 1)] },
     RawOps { name: "__rc_inc", ops: [ir.op_call_direct("__fern_rc_inc", 1)] },
   ];

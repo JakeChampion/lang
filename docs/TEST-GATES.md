@@ -708,6 +708,28 @@ Regenerate with `uv run --no-project scripts/gen_digests.py`. Digest test vector
 remain the separate check of algorithm correctness; this gate checks that a
 future regeneration cannot silently overwrite a hand-applied fix (#9057).
 
+## The constant-time gate
+
+`__ct_secret(b)` tells valgrind's memcheck that the bytes of `b` are
+undefined and `__ct_public(b)` that they are defined again, through
+valgrind's client-request sequence, which does nothing outside valgrind.
+Memcheck then reports any branch or address computed from a secret byte.
+`TestSelfHostCtGateX86_64` (`internal/testing/e2ecompiler`) compiles probes
+with the self-host CLI and runs each one natively and under
+`valgrind --error-exitcode=3`: a secret byte steering a branch or an index
+must exit 3, a secret used branch-free and then declassified must be clean,
+and `std/crypto/chacha20poly1305`'s seal and open over a secret key and
+plaintext must be clean, where `open` declassifies only its tag verdict.
+`TestSelfHostCtGateArm64` is the same on an arm64 host.
+`TestSelfHostCtMarksArm64` (under qemu), `TestSelfHostCtMarksWasm` and
+`TestSelfHostInterpCtMarks` (both interpreters) run the same probes where the
+marks are no-ops, so each must answer as it would unmarked. The gate runs
+in `perf.yml`'s bench job on both ISAs, which installs valgrind and sets
+`FERN_REQUIRE_VALGRIND=1`; memcheck cannot run a binary under qemu, so each
+runner gates its own ISA. It proves only what the probes execute: a
+secret-dependent path the inputs do not take is not reported. Every later
+crypto kernel adds its own case.
+
 ## Netlify deploys and the standalone smoke script
 
 Netlify runs `scripts/netlify-build`, which builds the playground's two

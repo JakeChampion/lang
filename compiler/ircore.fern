@@ -768,6 +768,8 @@ pub function all_runtime_need_roots(): string[] {
     "process_alive", "signal_send", "set_process_group", "rlimit_nofile",
     // Whether it may dump core, and a child's raw wait status.
     "disable_core_dumps", "proc_waitpid_status",
+    // The constant-time marks.
+    "ct_mark",
     // And how it competes for the CPU.
     "priority", "set_priority",
     // The wall clock's resolution, and setting it.

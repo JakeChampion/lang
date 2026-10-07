@@ -565,6 +565,7 @@ var rcResultNonPointer = map[string]bool{
 	"buf_push": true, "buf_push_range": true, "buf_push_bytes_range": true, "buf_push_mapped": true, "buf_push_bytes_mapped": true, "buf_push_filtered": true, "buf_push_bytes_filtered": true, "buf_push_expanded": true, "buf_push_bytes_expanded": true, "buf_push_byte": true,
 	"buf_push_u64": true,
 	"buf_free":     true, "__fern_buf_reserve": true,
+	"__ct_secret": true, "__ct_public": true,
 
 	// f64.
 	"__fern_abs_f64": true, "__fern_ceil_f64": true, "__fern_cos_f64": true,

@@ -2593,6 +2593,21 @@ pub function op_disable_core_dumps(): Op {
   return op0(396);
 }
 
+// `ct_mark` pops [bytes], a [u8], and pushes a dummy 0: `__ct_secret`
+// (`declassify` 0) tells valgrind's memcheck the bytes are undefined,
+// `__ct_public` (1) that they are defined again. Outside valgrind it changes
+// nothing.
+pub function op_ct_mark(declassify: i32): Op {
+  return Op { ...op0(399), i32_imm: declassify };
+}
+
+// `vg_request` pops [args], the address of valgrind's six-word client
+// request block, runs the client-request sequence and pushes its result
+// word, which is 0 outside valgrind.
+pub function op_vg_request(): Op {
+  return op0(400);
+}
+
 // `proc_exec` pops [path, args] and replaces the process image via execve. It
 // only ever pushes a FAILURE (-errno): on success there is no process left to
 // push into. Completes the crash-only trio, mirroring the native builtin, and
@@ -3735,6 +3750,9 @@ function kind_id_len7(name: string): i32 {
   if (c == b'b' && name == "bsd_sum") {
     return 329;
   }
+  if (c == b'c' && name == "ct_mark") {
+    return 399;
+  }
   if (c == b'm') {
     return kind_id_len7_m(name);
   }
@@ -4198,6 +4216,9 @@ function kind_id_len10(name: string): i32 {
   }
   if (c == b'v' && name == "variant_is") {
     return 145;
+  }
+  if (c == b'v' && name == "vg_request") {
+    return 400;
   }
   if (c == b'w' && name == "write_file") {
     return 170;
@@ -5806,6 +5827,12 @@ function buf_kind_name(id: i32): string {
 // extension tags beyond kind_count() (struct_copy=198 … buf_free=297)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
+  if (id == 400) {
+    return "vg_request";
+  }
+  if (id == 399) {
+    return "ct_mark";
+  }
   if (id == 398) {
     return "mounts";
   }
@@ -6073,6 +6100,7 @@ function pops1_io(t: i32): boolean {
     || t == 185 || t == 212  // random_bytes, proc_waitpid
     || t == 286  // proc_waitpid_nohang
     || t == 397  // proc_waitpid_status
+    || t == 399 || t == 400  // ct_mark, vg_request
     || t == 188 || t == 148 || t == 161 || t == 162 || t == 167  // timer_fd, wasm_*
     || t == 116 || t == 112 || t == 200 || t == 201 || t == 203  // tcp_close, tcp_pollable(112), tcp_listen/accept, open_file
     || t == 320  // tcp_local_port
