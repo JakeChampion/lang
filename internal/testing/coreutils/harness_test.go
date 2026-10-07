@@ -1133,16 +1133,20 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 			}
 		}
 	}()
-	var ptyIn *os.File
+	var ptyState *os.File
 	if inv.ttyIn {
 		master, slave := openPty(t)
 		defer master.Close()
-		ptySlaves = append(ptySlaves, slave)
+		if inv.ttyState {
+			ptyState = slave
+			defer slave.Close()
+		} else {
+			ptySlaves = append(ptySlaves, slave)
+		}
 		cmd.Stdin = slave
 		if len(inv.ttyPre) > 0 {
 			ptyPrepare(t, referenceBin(t, argv0), argv0, slave, inv.ttyPre)
 		}
-		ptyIn = master
 		feedPty(master, inv.stdin)
 	}
 	if inv.ttyOut {
@@ -1295,7 +1299,7 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		flooded: flooded || errBuf.full,
 	}
 	if inv.ttyState {
-		res.ttyState = ptySettings(t, ptyIn)
+		res.ttyState = ptySettings(t, ptyState)
 	}
 	if ws, ok := cmd.ProcessState.Sys().(syscall.WaitStatus); ok && ws.Signaled() {
 		res.signal = ws.Signal().String()

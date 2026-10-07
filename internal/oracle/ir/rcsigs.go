@@ -296,8 +296,9 @@ var rcInertBuiltins = map[string]bool{
 	// through; the word array termios_set takes is read, not retained.
 	"__method_Reader_window_size": true, "__method_Reader_set_window_size": true,
 	"__method_Reader_termios_get": true, "__method_Reader_termios_set": true,
-	"__method_Reader_stat":  true,
-	"__method_Writer_close": true, "__method_Writer_stat": true,
+	"__method_Reader_set_extproc": true,
+	"__method_Reader_stat":        true,
+	"__method_Writer_close":       true, "__method_Writer_stat": true,
 	"__method_Writer_truncate": true, "__method_Writer_write": true,
 	"__method_Writer_write_some":       true,
 	"__method_Writer_write_bytes":      true,
@@ -339,6 +340,7 @@ var rcInertBuiltins = map[string]bool{
 	// retained; `set_window_size` is three scalars and has nothing to move.
 	"set_window_size": true,
 	"termios_get":     true, "termios_set": true,
+	"set_extproc": true,
 	// No arguments at all, and an i64 out. Native-only for the same
 	// reason: no wasm world has resource limits.
 	"rlimit_nofile": true, "disable_core_dumps": true,
@@ -579,6 +581,7 @@ var rcInert = map[string]bool{
 	"__fern_handle_set_window_size": true,
 	"__fern_handle_termios_get":     true,
 	"__fern_handle_termios_set":     true,
+	"__fern_handle_set_extproc":     true,
 	"__fern_reader_read_chunk":      true, "__fern_reader_read_line": true,
 	"__fern_reader_read_chunk_bytes": true,
 	"__fern_reader_read_line_fd":     true, "__fern_remove_dir_all": true,

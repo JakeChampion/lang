@@ -738,7 +738,7 @@ pub function all_runtime_need_roots(): string[] {
     "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "lgetxattr", "lgetxattr_bytes", "setxattr", "setxattr_bytes", "lsetxattr", "lsetxattr_bytes",
     "chmod", "chmod_at", "set_file_times", "truncate", "mknod", "chown_at",
     "sync", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "fd_dup_onto",
-    "termios_get", "termios_set",
+    "termios_get", "termios_set", "set_extproc",
     "temp_dir", "open_file", "open_with", "reader", "fd_stat", "reader_seek", "reader_splice", "fd_flags",
     "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8",
     "writer_write", "write_some", "writer_truncate", "subprocess", "crc32_cksum", "sum_bytes", "aes_gcm",

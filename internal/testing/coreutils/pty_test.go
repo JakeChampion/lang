@@ -8,10 +8,10 @@ import (
 	"os/exec"
 	"runtime"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
-	"unsafe"
+
+	"github.com/jakechampion/lang/internal/tools/tty"
 )
 
 // Pseudo-terminals for the corpus, so a case can ask a utility what it does
@@ -24,21 +24,8 @@ import (
 // every one of those questions answers no, so the piped corpus reaches the
 // dull half of each.
 //
-// Linux only. The slave side is reached through TIOCGPTN — the number behind
-// /dev/ptmx, opened as /dev/pts/N — which is a Linux ioctl; Darwin needs
-// grantpt/unlockpt out of libc, which is not reachable without cgo. That is
-// the same line `/dev/full` is on, and the same answer: skip the case rather
-// than compare something else.
-
-// The ioctls a pty needs. TIOCSPTLCK unlocks the slave, TIOCGPTN reads its
-// number, and TIOCSWINSZ sets the size a utility asks for.
-const (
-	tioctlSPTLCK = 0x40045431
-	tioctlGPTN   = 0x80045430
-	tioctlSWINSZ = 0x5414
-	tioctlGWINSZ = 0x5413
-	tioctlGETS   = 0x5401
-)
+// Linux and Darwin, through internal/tools/tty.OpenPTY: TIOCGPTN and
+// /dev/pts/N on the one, grant, unlock and TIOCPTYGNAME on the other.
 
 // ptyRows and ptyCols are the window size every tty case runs at. A fresh
 // pty carries 0x0, which is not a size any utility can lay out against — it
@@ -50,12 +37,6 @@ const (
 	ptyCols = 80
 )
 
-// winsize is struct winsize: rows, cols, and two pixel fields nothing here
-// sets.
-type winsize struct {
-	rows, cols, xpixel, ypixel uint16
-}
-
 // openPty returns a fresh master/slave pair, sized ptyRows x ptyCols.
 //
 // The caller closes both. The SLAVE goes to the child and the caller closes
@@ -63,30 +44,14 @@ type winsize struct {
 // a read of the master cannot see the end of the child's output.
 func openPty(t *testing.T) (*os.File, *os.File) {
 	t.Helper()
-	if runtime.GOOS != "linux" {
-		t.Skip("a pty case needs TIOCGPTN, which is a Linux ioctl")
+	if runtime.GOOS != "linux" && runtime.GOOS != "darwin" {
+		t.Skip("a pty case needs Linux or Darwin")
 	}
-	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR, 0)
+	master, slave, err := tty.OpenPTY()
 	if err != nil {
-		t.Fatalf("open /dev/ptmx: %v", err)
+		t.Fatalf("open a pseudo-terminal: %v", err)
 	}
-	unlock := int32(0)
-	if err := ioctl(master.Fd(), tioctlSPTLCK, uintptr(unsafe.Pointer(&unlock))); err != nil {
-		master.Close()
-		t.Fatalf("unlock the pty slave: %v", err)
-	}
-	var n int32
-	if err := ioctl(master.Fd(), tioctlGPTN, uintptr(unsafe.Pointer(&n))); err != nil {
-		master.Close()
-		t.Fatalf("read the pty number: %v", err)
-	}
-	slave, err := os.OpenFile("/dev/pts/"+itoa(int(n)), os.O_RDWR|syscall.O_NOCTTY, 0)
-	if err != nil {
-		master.Close()
-		t.Fatalf("open the pty slave: %v", err)
-	}
-	ws := winsize{rows: ptyRows, cols: ptyCols}
-	if err := ioctl(slave.Fd(), tioctlSWINSZ, uintptr(unsafe.Pointer(&ws))); err != nil {
+	if err := tty.SetWindowSize(int(slave.Fd()), ptyRows, ptyCols); err != nil {
 		master.Close()
 		slave.Close()
 		t.Fatalf("set the pty window size: %v", err)
@@ -95,34 +60,40 @@ func openPty(t *testing.T) (*os.File, *os.File) {
 }
 
 // ptySettings renders everything a run can have LEFT on a terminal: the four
-// flag words, the line discipline, the control characters, and the window
-// size. It is the `artifacts` of a utility whose output is a terminal —
-// without it a `stty -echo` case compares two empty streams and proves
-// nothing about the echo.
+// flag words, the control characters, Linux's line discipline or Darwin's two
+// speeds, and the window size. It is the `artifacts` of a utility whose
+// output is a terminal — without it a `stty -echo` case compares two empty
+// streams and proves nothing about the echo.
 //
-// The master answers for the same terminal as the slave, so it can be read
-// after the child and its own slave are gone. The kernel's struct is 4 u32
-// flag words, c_line, and NCCS = 19 control characters.
-func ptySettings(t *testing.T, master *os.File) string {
+// It is read through a slave the parent kept open, because a Darwin master
+// answers no TIOCGETA.
+func ptySettings(t *testing.T, slave *os.File) string {
 	t.Helper()
-	var buf [36]byte
-	if err := ioctl(master.Fd(), tioctlGETS, uintptr(unsafe.Pointer(&buf[0]))); err != nil {
+	fd := int(slave.Fd())
+	words, err := tty.Termios(fd)
+	if err != nil {
 		t.Fatalf("read the terminal settings back: %v", err)
 	}
-	var ws winsize
-	if err := ioctl(master.Fd(), tioctlGWINSZ, uintptr(unsafe.Pointer(&ws))); err != nil {
+	rows, cols, err := tty.WindowSize(fd)
+	if err != nil {
 		t.Fatalf("read the terminal size back: %v", err)
 	}
 	out := ""
 	for i := 0; i < 4; i++ {
-		w := uint32(buf[i*4]) | uint32(buf[i*4+1])<<8 | uint32(buf[i*4+2])<<16 | uint32(buf[i*4+3])<<24
-		out += fmt.Sprintf("%x:", w)
+		out += fmt.Sprintf("%x:", uint64(words[i]))
 	}
-	out += fmt.Sprintf("line=%d:", buf[16])
-	for i := 0; i < 19; i++ {
-		out += fmt.Sprintf("%x,", buf[17+i])
+	var cc []int64
+	if runtime.GOOS == "darwin" {
+		out += fmt.Sprintf("speed=%d/%d:", uint64(words[24]), uint64(words[25]))
+		cc = words[4:24]
+	} else {
+		out += fmt.Sprintf("line=%d:", words[4])
+		cc = words[5:]
 	}
-	return out + fmt.Sprintf(" %dx%d", ws.rows, ws.cols)
+	for _, c := range cc {
+		out += fmt.Sprintf("%x,", c)
+	}
+	return out + fmt.Sprintf(" %dx%d", rows, cols)
 }
 
 // ptyPrepare runs `bin` on the terminal `slave` is open on, to put it in the
@@ -143,13 +114,6 @@ func ptyPrepare(t *testing.T, bin, argv0 string, slave *os.File, args []string) 
 		t.Fatalf("prepare the terminal with %s %s: wrote %q, which means the case's premise is not one",
 			argv0, quoteArgs(args), out)
 	}
-}
-
-func ioctl(fd, req, arg uintptr) error {
-	if _, _, errno := syscall.Syscall(syscall.SYS_IOCTL, fd, req, arg); errno != 0 {
-		return errno
-	}
-	return nil
 }
 
 // ptyReader drains a master end into a buffer on its own goroutine.

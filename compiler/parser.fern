@@ -10205,8 +10205,9 @@ pub function builtin_function_names(): string[] {
     "mknod",
     // how wide the terminal on the other end of a descriptor is, and its
     // LINE SETTINGS, read and written — the kernel's own words, because
-    // `stty -g` prints them and reads them back (#9356)
-    "window_size", "set_window_size", "termios_get", "termios_set",
+    // `stty -g` prints them and reads them back (#9356) — and XNU's
+    // TIOCEXT, which sets the one lflag bit TIOCSETA will not
+    "window_size", "set_window_size", "termios_get", "termios_set", "set_extproc",
     // who an entry BELONGS to — fchownat(2), with -1 for either id
     // leaving that half alone, which is how `chgrp` is this with the
     // uid omitted

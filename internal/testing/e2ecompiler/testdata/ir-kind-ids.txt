@@ -381,3 +381,4 @@ aes_expand_key=402
 aes_ctr32=403
 ghash=404
 clone_file=405
+set_extproc=406

@@ -1126,6 +1126,14 @@ pub function op_set_window_size(): Op {
   return op0(314);
 }
 
+// `set_extproc` pops [fd, on] and pushes Result[void, IoError]: XNU's
+// TIOCEXT, which sets or clears EXTPROC where TIOCSETA treats that bit as
+// read only. Linux has no such ioctl and answers ENOTTY; refused on wasm
+// beside the termios pair.
+pub function op_set_extproc(): Op {
+  return op0(406);
+}
+
 // `access` takes two operands [path, mode] and pushes Result[void, IoError]:
 // may the process perform `mode` on `path`, judged against its EFFECTIVE ids?
 // Lowers to __fern_access, one faccessat with AT_EACCESS set.
@@ -4438,6 +4446,9 @@ function kind_id_len11_s(name: string): i32 {
   if (name == "store_local") {
     return 19;
   }
+  if (name == "set_extproc") {
+    return 406;
+  }
   if (name == "signal_send") {
     return 285;
   }
@@ -5884,6 +5895,9 @@ function buf_kind_name(id: i32): string {
 // extension tags beyond kind_count() (struct_copy=198 … buf_free=297)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
+  if (id == 406) {
+    return "set_extproc";
+  }
   if (id == 405) {
     return "clone_file";
   }
@@ -6215,6 +6229,7 @@ function pops2_io(t: i32): boolean {
     || t == 260 || t == 262 || t == 263 || t == 267 || t == 268  // create_dir, create_link, create_symlink, rename, chmod
     || t == 356 || t == 357  // rename_noreplace, rename_exchange
     || t == 405  // clone_file (src, dest)
+    || t == 406  // set_extproc (fd, on)
     || t == 362 || t == 363 || t == 374 || t == 375  // getxattr, lgetxattr (path, name)
     || t == 273  // truncate (path, length)
     || t == 304 || t == 305  // open_reader_with, open_writer_with (path, flags)

@@ -6343,6 +6343,9 @@ function handle_metadata_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowe
   if (op == "termios_set") {
     return Lowered { found: true, r: emit(r, ir.op_termios_set()) };
   }
+  if (op == "set_extproc") {
+    return Lowered { found: true, r: emit(r, ir.op_set_extproc()) };
+  }
   return Lowered { found: false, r: r };
 }
 
@@ -6355,7 +6358,7 @@ function handle_method(name: string): string {
   let method: str = slice_unchecked(name, 7, name.len());
   let methods: string[] = [
     "stat", "flags", "seek", "fsync", "fdatasync", "syncfs", "drop_cache", "isatty", "dup_onto", "window_size",
-    "set_window_size", "termios_get", "termios_set",
+    "set_window_size", "termios_get", "termios_set", "set_extproc",
   ];
   for m in methods {
     if (method == m) {
@@ -6700,6 +6703,9 @@ function os_floor_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   }
   if (ins.str == "termios_set") {
     return Lowered { found: true, r: emit(r, ir.op_termios_set()) };
+  }
+  if (ins.str == "set_extproc") {
+    return Lowered { found: true, r: emit(r, ir.op_set_extproc()) };
   }
   return os_floor_process_site(r, ins);
 }

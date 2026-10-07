@@ -36,10 +36,17 @@ import "./lib/gnu";
 
 // ---- the words -------------------------------------------------------------
 //
-// termios_get answers [iflag, oflag, cflag, lflag, line, cc[0..18]] — the
-// asm-generic struct, so both Linux targets share it. NCCS is the KERNEL's
-// 19; `-g` prints glibc's 32 because its userspace struct is the wider one
-// and the top 13 are always zero.
+// termios_get answers the kernel's struct, which is two different shapes.
+// Linux (asm-generic, both Linux targets) is [iflag, oflag, cflag, lflag,
+// line, cc[0..18]]: NCCS is the kernel's 19, and `-g` prints glibc's 32
+// because its userspace struct is the wider one and the top 13 are always
+// zero. Darwin is [iflag, oflag, cflag, lflag, cc[0..19], ispeed, ospeed]: no
+// line discipline, and the two speeds are baud values of their own rather
+// than bits in cflag, so they can differ.
+function darwin(): boolean {
+  return target_os() == "darwin";
+}
+
 function w_iflag(): i32 {
   return 0;
 }
@@ -56,24 +63,54 @@ function w_lflag(): i32 {
   return 3;
 }
 
+// Linux only.
 function w_line(): i32 {
   return 4;
 }
 
-function cc_base(): i32 {
-  return 5;
-}
-
-function n_words(): i32 {
+// Darwin only.
+function w_ispeed(): i32 {
   return 24;
 }
 
+function w_ospeed(): i32 {
+  return 25;
+}
+
+function cc_base(): i32 {
+  if (darwin()) {
+    return 4;
+  }
+  return 5;
+}
+
 function n_cc_kernel(): i32 {
+  if (darwin()) {
+    return 20;
+  }
   return 19;
 }
 
 function n_cc_printed(): i32 {
+  if (darwin()) {
+    return 20;
+  }
   return 32;
+}
+
+// _POSIX_VDISABLE, the value of a control character nothing is bound to.
+function vdisable(): i32 {
+  if (darwin()) {
+    return 255;
+  }
+  return 0;
+}
+
+function icanon_bit(): i64 {
+  if (darwin()) {
+    return 256 as i64;
+  }
+  return 2 as i64;
 }
 
 // The tcsetattr action `termios_set` takes: 1 drains the output first, which
@@ -104,6 +141,9 @@ function when_drain(): i32 {
 //
 // `show` is false for an alias, which is a second spelling and not a second
 // flag: `hup` sets hupcl's bit and `-a` prints only `hupcl`.
+//
+// `setattr` is false for Darwin's `extproc`, which TIOCSETA treats as read
+// only: it is set with its own ioctl, and `sane` leaves it alone.
 struct Mode {
   name: string,
   word: i32,
@@ -118,18 +158,19 @@ struct Mode {
   rev: boolean,
   sane: i32,
   show: boolean,
+  setattr: boolean,
 }
 
 function bool_mode(name: string, word: i32, bits: i64, sane: i32): Mode {
-  return Mode { name: name, word: word, bits: bits, mask: bits, grp: false, rev: true, sane: sane, show: true };
+  return Mode { name: name, word: word, bits: bits, mask: bits, grp: false, rev: true, sane: sane, show: true, setattr: true };
 }
 
 function alias_mode(name: string, word: i32, bits: i64): Mode {
-  return Mode { name: name, word: word, bits: bits, mask: bits, grp: false, rev: true, sane: 0, show: false };
+  return Mode { name: name, word: word, bits: bits, mask: bits, grp: false, rev: true, sane: 0, show: false, setattr: true };
 }
 
 function group_mode(name: string, word: i32, bits: i64, mask: i64, sane: i32): Mode {
-  return Mode { name: name, word: word, bits: bits, mask: mask, grp: true, rev: false, sane: sane, show: true };
+  return Mode { name: name, word: word, bits: bits, mask: mask, grp: true, rev: false, sane: sane, show: true, setattr: true };
 }
 
 // The cflag half. `parenb` and `-cread` are the two rows a pseudo-terminal
@@ -137,6 +178,9 @@ function group_mode(name: string, word: i32, bits: i64, mask: i64, sane: i32): M
 // 1 there whatever the bit is — and their values are the asm-generic
 // numbering every other row in this word did confirm.
 function cflag_modes(): Mode[] {
+  if (darwin()) {
+    return darwin_cflag_modes();
+  }
   let m: Mode[] = [];
   m = m.append(bool_mode("parenb", w_cflag(), 256 as i64, 0));
   m = m.append(bool_mode("parodd", w_cflag(), 512 as i64, 0));
@@ -154,6 +198,9 @@ function cflag_modes(): Mode[] {
 }
 
 function iflag_modes(): Mode[] {
+  if (darwin()) {
+    return darwin_iflag_modes();
+  }
   let m: Mode[] = [];
   m = m.append(bool_mode("ignbrk", w_iflag(), 1 as i64, 2));
   m = m.append(bool_mode("brkint", w_iflag(), 2 as i64, 1));
@@ -174,6 +221,9 @@ function iflag_modes(): Mode[] {
 }
 
 function oflag_modes(): Mode[] {
+  if (darwin()) {
+    return darwin_oflag_modes();
+  }
   let m: Mode[] = [];
   m = m.append(bool_mode("opost", w_oflag(), 1 as i64, 1));
   m = m.append(bool_mode("olcuc", w_oflag(), 2 as i64, 2));
@@ -203,6 +253,9 @@ function oflag_modes(): Mode[] {
 }
 
 function lflag_modes(): Mode[] {
+  if (darwin()) {
+    return darwin_lflag_modes();
+  }
   let m: Mode[] = [];
   m = m.append(bool_mode("isig", w_lflag(), 1 as i64, 1));
   m = m.append(bool_mode("icanon", w_lflag(), 2 as i64, 1));
@@ -224,6 +277,9 @@ function lflag_modes(): Mode[] {
 
 // The second spellings, which print nothing of their own.
 function alias_modes(): Mode[] {
+  if (darwin()) {
+    return darwin_alias_modes();
+  }
   let m: Mode[] = [];
   m = m.append(alias_mode("hup", w_cflag(), 1024 as i64));
   m = m.append(alias_mode("tandem", w_iflag(), 4096 as i64));
@@ -231,6 +287,104 @@ function alias_modes(): Mode[] {
   m = m.append(alias_mode("crterase", w_lflag(), 16 as i64));
   m = m.append(alias_mode("crtkill", w_lflag(), 2048 as i64));
   m = m.append(alias_mode("prterase", w_lflag(), 1024 as i64));
+  return m;
+}
+
+// ---- Darwin's mode table ------------------------------------------------------
+//
+// XNU's flag values, in the order GNU's table has them on that platform. It
+// has no cmspar, iuclc, olcuc or xcase, so neither those rows nor `lcase`
+// exist there. TAB3 is OXTABS (0x4) inside a TABDLY mask of 0xc04.
+function darwin_cflag_modes(): Mode[] {
+  let m: Mode[] = [];
+  m = m.append(bool_mode("parenb", w_cflag(), 4096 as i64, 0));
+  m = m.append(bool_mode("parodd", w_cflag(), 8192 as i64, 0));
+  m = m.append(group_mode("cs5", w_cflag(), 0 as i64, 768 as i64, 0));
+  m = m.append(group_mode("cs6", w_cflag(), 256 as i64, 768 as i64, 0));
+  m = m.append(group_mode("cs7", w_cflag(), 512 as i64, 768 as i64, 0));
+  m = m.append(group_mode("cs8", w_cflag(), 768 as i64, 768 as i64, 0));
+  m = m.append(bool_mode("hupcl", w_cflag(), 16384 as i64, 0));
+  m = m.append(bool_mode("cstopb", w_cflag(), 1024 as i64, 0));
+  m = m.append(bool_mode("cread", w_cflag(), 2048 as i64, 1));
+  m = m.append(bool_mode("clocal", w_cflag(), 32768 as i64, 0));
+  m = m.append(bool_mode("crtscts", w_cflag(), 196608 as i64, 0));
+  return m;
+}
+
+function darwin_iflag_modes(): Mode[] {
+  let m: Mode[] = [];
+  m = m.append(bool_mode("ignbrk", w_iflag(), 1 as i64, 2));
+  m = m.append(bool_mode("brkint", w_iflag(), 2 as i64, 1));
+  m = m.append(bool_mode("ignpar", w_iflag(), 4 as i64, 0));
+  m = m.append(bool_mode("parmrk", w_iflag(), 8 as i64, 0));
+  m = m.append(bool_mode("inpck", w_iflag(), 16 as i64, 0));
+  m = m.append(bool_mode("istrip", w_iflag(), 32 as i64, 0));
+  m = m.append(bool_mode("inlcr", w_iflag(), 64 as i64, 2));
+  m = m.append(bool_mode("igncr", w_iflag(), 128 as i64, 2));
+  m = m.append(bool_mode("icrnl", w_iflag(), 256 as i64, 1));
+  m = m.append(bool_mode("ixon", w_iflag(), 512 as i64, 0));
+  m = m.append(bool_mode("ixoff", w_iflag(), 1024 as i64, 2));
+  m = m.append(bool_mode("ixany", w_iflag(), 2048 as i64, 2));
+  m = m.append(bool_mode("imaxbel", w_iflag(), 8192 as i64, 1));
+  m = m.append(bool_mode("iutf8", w_iflag(), 16384 as i64, 2));
+  return m;
+}
+
+function darwin_oflag_modes(): Mode[] {
+  let m: Mode[] = [];
+  m = m.append(bool_mode("opost", w_oflag(), 1 as i64, 1));
+  m = m.append(bool_mode("ocrnl", w_oflag(), 16 as i64, 2));
+  m = m.append(bool_mode("onlcr", w_oflag(), 2 as i64, 1));
+  m = m.append(bool_mode("onocr", w_oflag(), 32 as i64, 2));
+  m = m.append(bool_mode("onlret", w_oflag(), 64 as i64, 2));
+  m = m.append(bool_mode("ofill", w_oflag(), 128 as i64, 2));
+  m = m.append(bool_mode("ofdel", w_oflag(), 131072 as i64, 2));
+  m = m.append(group_mode("nl1", w_oflag(), 256 as i64, 768 as i64, 3));
+  m = m.append(group_mode("nl0", w_oflag(), 0 as i64, 768 as i64, 1));
+  m = m.append(group_mode("cr3", w_oflag(), 12288 as i64, 12288 as i64, 3));
+  m = m.append(group_mode("cr2", w_oflag(), 8192 as i64, 12288 as i64, 3));
+  m = m.append(group_mode("cr1", w_oflag(), 4096 as i64, 12288 as i64, 3));
+  m = m.append(group_mode("cr0", w_oflag(), 0 as i64, 12288 as i64, 1));
+  m = m.append(group_mode("tab3", w_oflag(), 4 as i64, 3076 as i64, 3));
+  m = m.append(group_mode("tab2", w_oflag(), 2048 as i64, 3076 as i64, 3));
+  m = m.append(group_mode("tab1", w_oflag(), 1024 as i64, 3076 as i64, 3));
+  m = m.append(group_mode("tab0", w_oflag(), 0 as i64, 3076 as i64, 1));
+  m = m.append(group_mode("bs1", w_oflag(), 32768 as i64, 32768 as i64, 3));
+  m = m.append(group_mode("bs0", w_oflag(), 0 as i64, 32768 as i64, 1));
+  m = m.append(group_mode("vt1", w_oflag(), 65536 as i64, 65536 as i64, 3));
+  m = m.append(group_mode("vt0", w_oflag(), 0 as i64, 65536 as i64, 1));
+  m = m.append(group_mode("ff1", w_oflag(), 16384 as i64, 16384 as i64, 3));
+  m = m.append(group_mode("ff0", w_oflag(), 0 as i64, 16384 as i64, 1));
+  return m;
+}
+
+function darwin_lflag_modes(): Mode[] {
+  let m: Mode[] = [];
+  m = m.append(bool_mode("isig", w_lflag(), 128 as i64, 1));
+  m = m.append(bool_mode("icanon", w_lflag(), 256 as i64, 1));
+  m = m.append(bool_mode("iexten", w_lflag(), 1024 as i64, 1));
+  m = m.append(bool_mode("echo", w_lflag(), 8 as i64, 1));
+  m = m.append(bool_mode("echoe", w_lflag(), 2 as i64, 1));
+  m = m.append(bool_mode("echok", w_lflag(), 4 as i64, 1));
+  m = m.append(bool_mode("echonl", w_lflag(), 16 as i64, 2));
+  m = m.append(bool_mode("noflsh", w_lflag(), 2147483648 as i64, 2));
+  m = m.append(bool_mode("tostop", w_lflag(), 4194304 as i64, 2));
+  m = m.append(bool_mode("echoprt", w_lflag(), 32 as i64, 2));
+  m = m.append(bool_mode("echoctl", w_lflag(), 64 as i64, 1));
+  m = m.append(bool_mode("echoke", w_lflag(), 1 as i64, 1));
+  m = m.append(bool_mode("flusho", w_lflag(), 8388608 as i64, 2));
+  m = m.append(Mode { ...bool_mode("extproc", w_lflag(), 2048 as i64, 2), setattr: false });
+  return m;
+}
+
+function darwin_alias_modes(): Mode[] {
+  let m: Mode[] = [];
+  m = m.append(alias_mode("hup", w_cflag(), 16384 as i64));
+  m = m.append(alias_mode("tandem", w_iflag(), 1024 as i64));
+  m = m.append(alias_mode("ctlecho", w_lflag(), 64 as i64));
+  m = m.append(alias_mode("crterase", w_lflag(), 2 as i64));
+  m = m.append(alias_mode("crtkill", w_lflag(), 1 as i64));
+  m = m.append(alias_mode("prterase", w_lflag(), 32 as i64));
   return m;
 }
 
@@ -275,6 +429,9 @@ function modes(): Mode[] {
 struct Cchar { name: string, idx: i32, dflt: i32, show: boolean }
 
 function cchars(): Cchar[] {
+  if (darwin()) {
+    return darwin_cchars();
+  }
   let c: Cchar[] = [];
   c = c.append(Cchar { name: "intr", idx: 0, dflt: 3, show: true });
   c = c.append(Cchar { name: "quit", idx: 1, dflt: 28, show: true });
@@ -295,22 +452,55 @@ function cchars(): Cchar[] {
   return c;
 }
 
+// XNU's slots. `swtch` is GNU's alias for `susp` where the kernel has no
+// switch character of its own, which is why it is accepted and never shown;
+// `dsusp` and `status` are the two Linux lacks. An unbound one is 0xff here.
+function darwin_cchars(): Cchar[] {
+  let c: Cchar[] = [];
+  c = c.append(Cchar { name: "intr", idx: 8, dflt: 3, show: true });
+  c = c.append(Cchar { name: "quit", idx: 9, dflt: 28, show: true });
+  c = c.append(Cchar { name: "erase", idx: 3, dflt: 127, show: true });
+  c = c.append(Cchar { name: "kill", idx: 5, dflt: 21, show: true });
+  c = c.append(Cchar { name: "eof", idx: 0, dflt: 4, show: true });
+  c = c.append(Cchar { name: "eol", idx: 1, dflt: 255, show: true });
+  c = c.append(Cchar { name: "eol2", idx: 2, dflt: 255, show: true });
+  c = c.append(Cchar { name: "swtch", idx: 10, dflt: 26, show: false });
+  c = c.append(Cchar { name: "start", idx: 12, dflt: 17, show: true });
+  c = c.append(Cchar { name: "stop", idx: 13, dflt: 19, show: true });
+  c = c.append(Cchar { name: "susp", idx: 10, dflt: 26, show: true });
+  c = c.append(Cchar { name: "dsusp", idx: 11, dflt: 25, show: true });
+  c = c.append(Cchar { name: "rprnt", idx: 6, dflt: 18, show: true });
+  c = c.append(Cchar { name: "werase", idx: 4, dflt: 23, show: true });
+  c = c.append(Cchar { name: "lnext", idx: 14, dflt: 22, show: true });
+  c = c.append(Cchar { name: "flush", idx: 15, dflt: 15, show: false });
+  c = c.append(Cchar { name: "discard", idx: 15, dflt: 15, show: true });
+  c = c.append(Cchar { name: "status", idx: 18, dflt: 20, show: true });
+  return c;
+}
+
 function idx_min(): i32 {
+  if (darwin()) {
+    return 16;
+  }
   return 6;
 }
 
 function idx_time(): i32 {
+  if (darwin()) {
+    return 17;
+  }
   return 5;
 }
 
 // ---- the speeds ------------------------------------------------------------
 //
-// CBAUD is the low four bits plus CBAUDEX (0x1000), so the table is the
-// kernel's B-constants and not a computation: every baud Linux has a
-// constant for, and no others. A speed is WRITTEN as a number rather than
-// looked up by name — `+9600`, ` 9600`, `9600.` and `00009600` are all
-// 9600 — so the table is keyed by the value; `exta` and `extb` are the two
-// names that survive, as aliases the parser knows.
+// On Linux CBAUD is the low four bits plus CBAUDEX (0x1000), so the table is
+// the kernel's B-constants and not a computation: every baud Linux has a
+// constant for, and no others. Darwin's speed_t IS the baud, so any value is
+// one there and the table is not consulted. A speed is WRITTEN as a number
+// rather than looked up by name — `+9600`, ` 9600`, `9600.` and `00009600`
+// are all 9600 — so the table is keyed by the value; `exta` and `extb` are
+// the two names that survive, as aliases the parser knows.
 struct Speed { value: i64, bits: i64 }
 
 function speeds(): Speed[] {
@@ -382,12 +572,11 @@ function hex_lower(v: i64): string {
 
 // One control character the way `-a` prints it: `^C` under 32, `^?` for 127,
 // `M-` and then the same rules for the high half, the byte itself in between,
-// and `<undef>` for the zero that means "no character is bound".
-//
-// The zero check is at the top only, so 128 is `M-^@` rather than `M-<undef>`
-// — measured, and the reason the `M-` prefix is peeled before it.
+// and `<undef>` for the value that means "no character is bound" — 0 on
+// Linux, so 128 is `M-^@` rather than `M-<undef>`, and 0xff on Darwin, where
+// 0 is `^@`.
 function fmt_cc(v: i32): string {
-  if (v == 0) {
+  if (v == vdisable()) {
     return "<undef>";
   }
   let pre: string = "";
@@ -403,6 +592,30 @@ function fmt_cc(v: i32): string {
     return pre + "^" + one_char(c + 64);
   }
   return pre + one_char(c);
+}
+
+// The speed as `speed` prints it, or as the two print forms open with when
+// `fancy`. Darwin's two speeds are printed apart when they differ and the
+// input one is not the zero that means "follow the output".
+function speed_text(t: i64[], fancy: boolean): string {
+  if (!darwin()) {
+    if (fancy) {
+      return "speed " + speed_name(t[w_cflag()]) + " baud;";
+    }
+    return speed_name(t[w_cflag()]);
+  }
+  let isp: string = (t[w_ispeed()] as u64).to_string();
+  let osp: string = (t[w_ospeed()] as u64).to_string();
+  if (t[w_ispeed()] == 0 as i64 || isp == osp) {
+    if (fancy) {
+      return "speed " + osp + " baud;";
+    }
+    return osp;
+  }
+  if (fancy) {
+    return "ispeed " + isp + " baud; ospeed " + osp + " baud;";
+  }
+  return isp + " " + osp;
 }
 
 // The speed a cflag's CBAUD bits stand for. Every reachable value has one,
@@ -431,10 +644,17 @@ function wrap_new(): Wrap {
 }
 
 function wrap_put(w: Wrap, tok: string): Wrap {
+  return wrap_put_n(w, tok, tok.len());
+}
+
+// `wrap_put` with the width the fit is judged by given apart from the token:
+// GNU writes the default form's `min = N; time = N;` with its newline in the
+// same chunk, and the newline counts.
+function wrap_put_n(w: Wrap, tok: string, n: i32): Wrap {
   if (w.line.len() == 0) {
     return Wrap { out: w.out, line: tok };
   }
-  if (w.line.len() + 1 + tok.len() <= 80) {
+  if (w.line.len() + 1 + n <= 80) {
     return Wrap { out: w.out, line: w.line + " " + tok };
   }
   return Wrap { out: w.out + w.line + "\n", line: tok };
@@ -467,11 +687,17 @@ function group_token(t: i64[], m: Mode): string {
   return "";
 }
 
+// `min` and `time`, which GNU writes as one chunk, so they wrap together.
+function min_time(t: i64[]): string {
+  return "min = " + t[cc_base() + idx_min()].to_string() + "; time = " + t[cc_base() + idx_time()].to_string() + ";";
+}
+
 // ---- the three output forms -------------------------------------------------
-// `-g`: the four flag words and then THIRTY-TWO control characters, all in
-// hex. Thirty-two rather than the kernel's nineteen because glibc's struct is
-// the wider one and that is what GNU prints; the extra thirteen are always
-// zero, which is what the tail of a `-g` line is.
+// `-g`: the four flag words and then the control characters, all in hex. On
+// Linux that is THIRTY-TWO rather than the kernel's nineteen, because glibc's
+// struct is the wider one and that is what GNU prints; the extra thirteen are
+// always zero. Darwin's twenty are the kernel's own, and its speeds are not in
+// the line at all.
 function print_g(t: i64[]): string {
   let out: string = hex_lower(t[w_iflag()]) + ":" + hex_lower(t[w_oflag()]) + ":" + hex_lower(t[w_cflag()]) + ":" + hex_lower(t[w_lflag()]);
   let i: i32 = 0;
@@ -490,10 +716,11 @@ function print_g(t: i64[]): string {
 // the only place `window_size` is consulted.
 function print_all(t: i64[], rows: i64, cols: i64): string {
   let w: Wrap = wrap_new();
-  w = wrap_put(w, "speed " + speed_name(t[w_cflag()]) + " baud;");
-  w = wrap_put(w, "rows " + rows.to_string() + ";");
-  w = wrap_put(w, "columns " + cols.to_string() + ";");
-  w = wrap_put(w, "line = " + t[w_line()].to_string() + ";");
+  w = wrap_put(w, speed_text(t, true));
+  w = wrap_put(w, "rows " + rows.to_string() + "; columns " + cols.to_string() + ";");
+  if (!darwin()) {
+    w = wrap_put(w, "line = " + t[w_line()].to_string() + ";");
+  }
   w = wrap_break(w);
 
   let cs: Cchar[] = cchars();
@@ -504,8 +731,7 @@ function print_all(t: i64[], rows: i64, cols: i64): string {
     }
     i = i + 1;
   }
-  w = wrap_put(w, "min = " + t[cc_base() + idx_min()].to_string() + ";");
-  w = wrap_put(w, "time = " + t[cc_base() + idx_time()].to_string() + ";");
+  w = wrap_put(w, min_time(t));
   w = wrap_break(w);
 
   let ms: Mode[] = modes();
@@ -544,8 +770,10 @@ function print_all(t: i64[], rows: i64, cols: i64): string {
 // rather than where they differ.
 function print_diff(t: i64[]): string {
   let w: Wrap = wrap_new();
-  w = wrap_put(w, "speed " + speed_name(t[w_cflag()]) + " baud;");
-  w = wrap_put(w, "line = " + t[w_line()].to_string() + ";");
+  w = wrap_put(w, speed_text(t, true));
+  if (!darwin()) {
+    w = wrap_put(w, "line = " + t[w_line()].to_string() + ";");
+  }
   w = wrap_break(w);
 
   let cs: Cchar[] = cchars();
@@ -559,9 +787,9 @@ function print_diff(t: i64[]): string {
     }
     i = i + 1;
   }
-  if ((t[w_lflag()] & 2 as i64) == 0 as i64) {
-    w = wrap_put(w, "min = " + t[cc_base() + idx_min()].to_string() + ";");
-    w = wrap_put(w, "time = " + t[cc_base() + idx_time()].to_string() + ";");
+  if ((t[w_lflag()] & icanon_bit()) == 0 as i64) {
+    let mt: string = min_time(t);
+    w = wrap_put_n(w, mt, mt.len() + 1);
   }
   w = wrap_break(w);
 
@@ -605,7 +833,7 @@ function find_mode(name: string): (Mode, boolean) {
     }
     i = i + 1;
   }
-  return (Mode { name: "", word: 0, bits: 0 as i64, mask: 0 as i64, grp: false, rev: false, sane: 0, show: false }, false);
+  return (Mode { name: "", word: 0, bits: 0 as i64, mask: 0 as i64, grp: false, rev: false, sane: 0, show: false, setattr: true }, false);
 }
 
 function find_cchar(name: string): (Cchar, boolean) {
@@ -620,19 +848,32 @@ function find_cchar(name: string): (Cchar, boolean) {
   return (Cchar { name: "", idx: 0, dflt: 0, show: false }, false);
 }
 
-// `value_to_baud(v)` — the CBAUD bits for a speed, and whether Linux has a
-// constant for it. It has one for nothing but the table, so an arbitrary
-// baud is refused here rather than passed to the kernel.
-function value_to_baud(v: i64): (i64, boolean) {
+// `value_to_baud(v)` — what a speed is stored as, and whether it is one.
+// Linux stores the CBAUD bits and has them for nothing but the table, so an
+// arbitrary baud is refused here rather than passed to the kernel. Darwin
+// stores the value itself, and refuses only the all-ones that strtoul
+// answers on overflow.
+function value_to_baud(v: u64): (i64, boolean) {
+  if (darwin()) {
+    return (v as i64, v != u64_max());
+  }
   let ss: Speed[] = speeds();
   let i: i32 = 0;
   while (i < ss.len()) {
-    if (ss[i].value == v) {
+    if (ss[i].value as u64 == v) {
       return (ss[i].bits, true);
     }
     i = i + 1;
   }
   return (0 as i64, false);
+}
+
+// One more, the way C's unsigned long wraps.
+function inc_u64(v: u64): u64 {
+  if (v == u64_max()) {
+    return 0 as u64;
+  }
+  return v + 1 as u64;
 }
 
 // `find_speed(arg)` — a written speed. It is a decimal number read by
@@ -641,8 +882,8 @@ function value_to_baud(v: i64): (i64, boolean) {
 //
 // A fraction is allowed and rounded to nearest, ties to even, which is
 // what makes `134.5` the 134 it has always been — and makes `9600.5`
-// 9600 while `9600.6` is refused for having no constant. Leading blanks
-// are skipped and a leading `-` refused before strtoul could take it.
+// 9600 while `9600.6` is refused on Linux for having no constant. Leading
+// blanks are skipped and a leading `-` refused before strtoul could take it.
 // `exta` and `extb` are the only names.
 function find_speed(arg: string): (i64, boolean) {
   let n: i32 = arg.len();
@@ -653,8 +894,8 @@ function find_speed(arg: string): (i64, boolean) {
   if (i < n && arg[i] as i32 == 45) {
     return (0 as i64, false);
   }
-  let r: (i64, i32, boolean) = strtoul10(arg, i);
-  let v: i64 = r.0;
+  let r: (u64, i32, boolean) = strtoul10(arg, i);
+  let v: u64 = r.0;
   let p: i32 = r.1;
   let c: i32 = at_byte(arg, p);
   p = p + 1;
@@ -664,7 +905,7 @@ function find_speed(arg: string): (i64, boolean) {
     if (c != 0) {
       let d: i32 = c - 48;
       if (d > 5 || d < 0) {
-        v = v + 1 as i64;
+        v = inc_u64(v);
       } else if (d == 5) {
         c = at_byte(arg, p);
         p = p + 1;
@@ -672,10 +913,8 @@ function find_speed(arg: string): (i64, boolean) {
           c = at_byte(arg, p);
           p = p + 1;
         }
-        if (c != 0) {
-          v = v + 1 as i64;
-        } else {
-          v = v + (v & 1 as i64);
+        if (c != 0 || (v & 1 as u64) == 1 as u64) {
+          v = inc_u64(v);
         }
       }
       while (c >= 48 && c <= 57) {
@@ -689,10 +928,10 @@ function find_speed(arg: string): (i64, boolean) {
   } else if (c != 0) {
     let rest: string = slice_unchecked(arg, i, n) + "";
     if (rest == "exta") {
-      return value_to_baud(19200 as i64);
+      return value_to_baud(19200 as u64);
     }
     if (rest == "extb") {
-      return value_to_baud(38400 as i64);
+      return value_to_baud(38400 as u64);
     }
     return (0 as i64, false);
   }
@@ -718,44 +957,56 @@ function at_byte(s: string, i: i32): i32 {
 // value, where it stopped, and whether any digit was read — which the
 // caller does not need, since a speed of zero and a speed of nothing are
 // the same answer.
-function strtoul10(s: string, i: i32): (i64, i32, boolean) {
+function strtoul10(s: string, i: i32): (u64, i32, boolean) {
   let p: i32 = i;
   if (at_byte(s, p) == 43) {
     p = p + 1;
   }
   let start: i32 = p;
-  let v: i64 = 0;
+  let v: u64 = 0 as u64;
   let over: boolean = false;
   while (at_byte(s, p) >= 48 && at_byte(s, p) <= 57) {
+    let d: u64 = (at_byte(s, p) - 48) as u64;
+    if (v > u64_max() / (10 as u64) || v == u64_max() / (10 as u64) && d > 5 as u64) {
+      over = true;
+    }
     if (!over) {
-      let d: i64 = (at_byte(s, p) - 48) as i64;
-      if (v > 922337203685477580 as i64 || v == 922337203685477580 as i64 && d > 7 as i64) {
-        over = true;
-      } else {
-        v = v * (10 as i64) + d;
-      }
+      v = v * (10 as u64) + d;
     }
     p = p + 1;
   }
   if (p == start) {
-    return (0 as i64, i, false);
+    return (0 as u64, i, false);
   }
   if (over) {
-    return (9223372036854775807 as i64, p, true);
+    return (u64_max(), p, true);
   }
   return (v, p, true);
 }
 
 // The settings that take a VALUE in the next operand.
 function takes_value(name: string): boolean {
-  if (name == "rows" || name == "cols" || name == "columns" || name == "line") {
+  if (name == "rows" || name == "cols" || name == "columns") {
     return true;
+  }
+  if (name == "line") {
+    return !darwin();
   }
   if (name == "min" || name == "time" || name == "ispeed" || name == "ospeed") {
     return true;
   }
   let r: (Cchar, boolean) = find_cchar(name);
   return r.1;
+}
+
+// `raw` past the input flags, which it clears WHOLE rather than by name —
+// `stty iutf8; stty raw` leaves iutf8 clear though `--help` does not list it.
+// apply_token does that half.
+function raw_tokens(): string {
+  if (darwin()) {
+    return "-opost -isig -icanon min 1 time 0";
+  }
+  return "-opost -isig -icanon -xcase min 1 time 0";
 }
 
 // The combination settings, each as the token list `--help` gives for it,
@@ -768,13 +1019,9 @@ function takes_value(name: string): boolean {
 // measured, `stty eof Z; stty cooked` leaves eof at Z. The behaviour is what
 // this follows.
 function combo_tokens(name: string): (string, boolean) {
-  // `-iutf8` is in the list though `--help` omits it: measured, `stty
-  // iutf8; stty raw` leaves iutf8 CLEAR. The behaviour is what this follows,
-  // the way `cooked` not resetting eof and eol does.
-  let raw: string = "-ignbrk -brkint -ignpar -parmrk -inpck -istrip -inlcr -igncr -icrnl -ixon -ixoff -iutf8 -icanon -opost -isig -iuclc -ixany -imaxbel -xcase min 1 time 0";
   let cooked: string = "brkint ignpar istrip icrnl ixon opost isig icanon";
   if (name == "raw" || name == "-cooked") {
-    return (raw, true);
+    return (raw_tokens(), true);
   }
   if (name == "cooked" || name == "-raw") {
     return (cooked, true);
@@ -809,10 +1056,10 @@ function combo_tokens(name: string): (string, boolean) {
   if (name == "-oddp") {
     return ("-parenb cs8", true);
   }
-  if (name == "lcase" || name == "LCASE") {
+  if (!darwin() && (name == "lcase" || name == "LCASE")) {
     return ("xcase iuclc olcuc", true);
   }
-  if (name == "-lcase" || name == "-LCASE") {
+  if (!darwin() && (name == "-lcase" || name == "-LCASE")) {
     return ("-xcase -iuclc -olcuc", true);
   }
   if (name == "litout") {
@@ -1071,10 +1318,17 @@ function scan(argv: string[]): Scan {
 }
 
 // ---- --help ----------------------------------------------------------------
+//
+// GNU's text, with the lines its `#ifdef`s drop on Darwin dropped here: no
+// `line`, cmspar, iuclc, olcuc, xcase or lcase there, and `dsusp` and
+// `status` only there.
 function help_special_chars(): string {
   let o: string = "";
   o = o + "Special characters:\n";
   o = o + " * discard CHAR  CHAR will toggle discarding of output\n";
+  if (darwin()) {
+    o = o + " * dsusp CHAR    CHAR will send a terminal stop signal once input flushed\n";
+  }
   o = o + "   eof CHAR      CHAR will send an end of file (terminate the input)\n";
   o = o + "   eol CHAR      CHAR will end the line\n";
   o = o + " * eol2 CHAR     alternate CHAR for ending the line\n";
@@ -1082,6 +1336,9 @@ function help_special_chars(): string {
   o = o + "   intr CHAR     CHAR will send an interrupt signal\n";
   o = o + "   kill CHAR     CHAR will erase the current line\n";
   o = o + " * lnext CHAR    CHAR will enter the next character quoted\n";
+  if (darwin()) {
+    o = o + " * status CHAR   CHAR will send an info signal\n";
+  }
   o = o + "   quit CHAR     CHAR will send a quit signal\n";
   o = o + " * rprnt CHAR    CHAR will redraw the current line\n";
   o = o + "   start CHAR    CHAR will restart the output after stopping it\n";
@@ -1097,15 +1354,17 @@ function help_special_settings(): string {
   let o: string = "";
   o = o + "Special settings:\n";
   o = o + "   N             set the input and output speeds to N bauds\n";
-  o = o + " * cols N        tell the kernel that the terminal has N columns\n";
+  o = o + "   cols N        tell the kernel that the terminal has N columns\n";
   o = o + " * columns N     same as cols N\n";
   o = o + " * [-]drain      wait for transmission before applying settings (on by default)\n";
   o = o + "   ispeed N      set the input speed to N\n";
-  o = o + " * line N        use line discipline N\n";
+  if (!darwin()) {
+    o = o + " * line N        use line discipline N\n";
+  }
   o = o + "   min N         with -icanon, set N characters minimum for a completed read\n";
   o = o + "   ospeed N      set the output speed to N\n";
-  o = o + " * rows N        tell the kernel that the terminal has N rows\n";
-  o = o + " * size          print the number of rows and columns according to the kernel\n";
+  o = o + "   rows N        tell the kernel that the terminal has N rows\n";
+  o = o + "   size          print the number of rows and columns according to the kernel\n";
   o = o + "   speed         print the terminal speed\n";
   o = o + "   time N        with -icanon, set read timeout of N tenths of a second\n";
   o = o + "\n";
@@ -1124,7 +1383,9 @@ function help_control_settings(): string {
   o = o + "   [-]hupcl      same as [-]hup\n";
   o = o + "   [-]parenb     generate parity bit in output and expect parity bit in input\n";
   o = o + "   [-]parodd     set odd parity (or even parity with '-')\n";
-  o = o + " * [-]cmspar     use \"stick\" (mark/space) parity\n";
+  if (!darwin()) {
+    o = o + " * [-]cmspar     use \"stick\" (mark/space) parity\n";
+  }
   o = o + "\n";
   return o;
 }
@@ -1142,7 +1403,9 @@ function help_input_settings(): string {
   o = o + "   [-]inpck      enable input parity checking\n";
   o = o + "   [-]istrip     clear high (8th) bit of input characters\n";
   o = o + " * [-]iutf8      assume input characters are UTF-8 encoded\n";
-  o = o + " * [-]iuclc      translate uppercase characters to lowercase\n";
+  if (!darwin()) {
+    o = o + " * [-]iuclc      translate uppercase characters to lowercase\n";
+  }
   o = o + " * [-]ixany      let any character restart output, not only start character\n";
   o = o + "   [-]ixoff      enable sending of start/stop characters\n";
   o = o + "   [-]ixon       enable XON/XOFF flow control\n";
@@ -1162,7 +1425,9 @@ function help_output_settings(): string {
   o = o + " * [-]ocrnl      translate carriage return to newline\n";
   o = o + " * [-]ofdel      use delete characters for fill instead of NUL characters\n";
   o = o + " * [-]ofill      use fill (padding) characters instead of timing for delays\n";
-  o = o + " * [-]olcuc      translate lowercase characters to uppercase\n";
+  if (!darwin()) {
+    o = o + " * [-]olcuc      translate lowercase characters to uppercase\n";
+  }
   o = o + " * [-]onlcr      translate newline to carriage return-newline\n";
   o = o + " * [-]onlret     newline performs a carriage return\n";
   o = o + " * [-]onocr      do not print carriage returns in the first column\n";
@@ -1197,7 +1462,9 @@ function help_local_settings(): string {
   o = o + "   [-]noflsh     disable flushing after interrupt and quit special characters\n";
   o = o + " * [-]prterase   same as [-]echoprt\n";
   o = o + " * [-]tostop     stop background jobs that try to write to the terminal\n";
-  o = o + " * [-]xcase      with icanon, escape with '\\' for uppercase characters\n";
+  if (!darwin()) {
+    o = o + " * [-]xcase      with icanon, escape with '\\' for uppercase characters\n";
+  }
   o = o + "\n";
   return o;
 }
@@ -1205,7 +1472,9 @@ function help_local_settings(): string {
 function help_combination_settings(): string {
   let o: string = "";
   o = o + "Combination settings:\n";
-  o = o + " * [-]LCASE      same as [-]lcase\n";
+  if (!darwin()) {
+    o = o + " * [-]LCASE      same as [-]lcase\n";
+  }
   o = o + "   cbreak        same as -icanon\n";
   o = o + "   -cbreak       same as icanon\n";
   o = o + "   cooked        same as brkint ignpar istrip icrnl ixon opost isig\n";
@@ -1218,7 +1487,9 @@ function help_combination_settings(): string {
   o = o + "   ek            erase and kill characters to their default values\n";
   o = o + "   evenp         same as parenb -parodd cs7\n";
   o = o + "   -evenp        same as -parenb cs8\n";
-  o = o + " * [-]lcase      same as xcase iuclc olcuc\n";
+  if (!darwin()) {
+    o = o + " * [-]lcase      same as xcase iuclc olcuc\n";
+  }
   o = o + "   litout        same as -parenb -istrip -opost cs8\n";
   o = o + "   -litout       same as parenb istrip opost cs7\n";
   o = o + "   nl            same as -icrnl -onlcr\n";
@@ -1230,11 +1501,19 @@ function help_combination_settings(): string {
   o = o + "   -pass8        same as parenb istrip cs7\n";
   o = o + "   raw           same as -ignbrk -brkint -ignpar -parmrk -inpck -istrip\n";
   o = o + "                 -inlcr -igncr -icrnl -ixon -ixoff -icanon -opost\n";
-  o = o + "                 -isig -iuclc -ixany -imaxbel -xcase min 1 time 0\n";
+  if (darwin()) {
+    o = o + "                 -isig -ixany -imaxbel min 1 time 0\n";
+  } else {
+    o = o + "                 -isig -iuclc -ixany -imaxbel -xcase min 1 time 0\n";
+  }
   o = o + "   -raw          same as cooked\n";
   o = o + "   sane          same as cread -ignbrk brkint -inlcr -igncr icrnl\n";
   o = o + "                 icanon iexten echo echoe echok -echonl -noflsh\n";
-  o = o + "                 -ixoff -iutf8 -iuclc -ixany imaxbel -xcase -olcuc -ocrnl\n";
+  if (darwin()) {
+    o = o + "                 -ixoff -iutf8 -ixany imaxbel -ocrnl\n";
+  } else {
+    o = o + "                 -ixoff -iutf8 -iuclc -ixany imaxbel -xcase -olcuc -ocrnl\n";
+  }
   o = o + "                 opost -ofill onlcr -onocr -onlret nl0 cr0 tab0 bs0 vt0 ff0\n";
   o = o + "                 isig -tostop -ofdel -echoprt echoctl echoke -extproc -flusho,\n";
   o = o + "                 all special characters to their default values\n";
@@ -1252,7 +1531,7 @@ function help_text(): string {
   o = o + "Mandatory arguments to long options are mandatory for short options too.\n";
   o = o + "  -a, --all          print all current settings in human-readable form\n";
   o = o + "  -g, --save         print all current settings in a stty-readable form\n";
-  o = o + "  -F, --file=DEVICE  open and use the specified DEVICE instead of stdin\n";
+  o = o + "  -F, --file=DEVICE  open and use DEVICE instead of standard input\n";
   o = o + "      --help        display this help and exit\n";
   o = o + "      --version     output version information and exit\n";
   o = o + "\n";
@@ -1376,11 +1655,15 @@ function need_byte(s: string): i64 {
 
 // A control character's value. A single character is that character, whatever
 // it looks like — `erase 9` binds the digit and not the tab — `^X` is the
-// control character, `^?` is 127, and `^-`, `undef` and the empty string all
-// unbind. Anything else is an integer in C's bases.
+// control character, `^?` is 127, and `^-` and `undef` unbind. The empty
+// string is the NUL byte, which unbinds only where that is what unbound is.
+// Anything else is an integer in C's bases.
 function parse_cchar(s: string): i64 {
-  if (s.len() == 0 || s == "undef" || s == "^-") {
+  if (s.len() == 0) {
     return 0 as i64;
+  }
+  if (s == "undef" || s == "^-") {
+    return vdisable() as i64;
   }
   if (s.len() == 1) {
     return s[0] as i64;
@@ -1448,9 +1731,9 @@ function apply_sane(st: Set): Set {
   let i: i32 = 0;
   while (i < ms.len()) {
     let m: Mode = ms[i];
-    if (m.sane == 1) {
+    if (m.sane == 1 && m.setattr) {
       s = set_word(s, m.word, s.t[m.word] & inv(m.mask) | m.bits);
-    } else if (m.sane == 2) {
+    } else if (m.sane == 2 && m.setattr) {
       s = set_word(s, m.word, s.t[m.word] & inv(m.bits));
     }
     i = i + 1;
@@ -1707,7 +1990,7 @@ function apply_token(st: Set, r: Reader, dev: string, tok: string, value: string
     return st;
   }
   if (tok == "speed") {
-    gnu.write_out(speed_name(st.t[w_cflag()]) + "\n");
+    gnu.write_out(speed_text(st.t, false) + "\n");
     return st;
   }
   if (tok == "sane") {
@@ -1715,6 +1998,9 @@ function apply_token(st: Set, r: Reader, dev: string, tok: string, value: string
   }
   if (tok == "ek") {
     return apply_ek(st);
+  }
+  if (tok == "raw" || tok == "-cooked") {
+    return apply_list(set_word(st, w_iflag(), 0 as i64), r, dev, raw_tokens().split(" "));
   }
   let cb: (string, boolean) = combo_tokens(tok);
   if (cb.1) {
@@ -1735,6 +2021,9 @@ function apply_token(st: Set, r: Reader, dev: string, tok: string, value: string
   }
   if (tok == "ispeed") {
     let ib: i64 = speed_value(tok, value);
+    if (darwin()) {
+      return set_word(st, w_ispeed(), ib);
+    }
     // An input speed of ZERO means "follow the output" and reaches no
     // kernel field at all — glibc records it in a private flag — so the
     // words are left alone and only the marker below is set.
@@ -1745,6 +2034,9 @@ function apply_token(st: Set, r: Reader, dev: string, tok: string, value: string
   }
   if (tok == "ospeed") {
     let ob: i64 = speed_value(tok, value);
+    if (darwin()) {
+      return set_word(st, w_ospeed(), ob);
+    }
     return Set { ...apply_speed(st, ob), osp: value, has_osp: true };
   }
   let cc: (Cchar, boolean) = find_cchar(tok);
@@ -1752,6 +2044,9 @@ function apply_token(st: Set, r: Reader, dev: string, tok: string, value: string
     return apply_cc(st, cc.0.idx, parse_cchar(value));
   }
   let sp: (i64, boolean) = find_speed(tok);
+  if (sp.1 && darwin()) {
+    return set_word(set_word(st, w_ispeed(), sp.0), w_ospeed(), sp.0);
+  }
   if (sp.1) {
     return Set { ...apply_speed(st, sp.0), isp: tok, osp: tok, has_isp: true, has_osp: true };
   }
@@ -1761,7 +2056,23 @@ function apply_token(st: Set, r: Reader, dev: string, tok: string, value: string
     base = slice_unchecked(tok, 1, tok.len()) + "";
   }
   let m: (Mode, boolean) = find_mode(base);
+  if (!m.0.setattr) {
+    apply_extproc(r, dev, !neg);
+    return st;
+  }
   return apply_mode(st, m.0, neg);
+}
+
+// Darwin's `extproc`, through its own ioctl and at once, the way the window
+// size goes in. It is no part of the settings the final tcsetattr carries.
+function apply_extproc(r: Reader, dev: string, on: boolean): void {
+  match (r.set_extproc(on)) {
+    Err(e) => {
+      gnu.error(gnu.quotef(dev) + ": error setting " + gnu.quote("extproc") + ": " + gnu.io_error_text(e));
+      exit(1);
+    },
+    Ok(_) => {}
+  }
 }
 
 // An INPUT speed of zero can never satisfy the read-back comparison, whatever
@@ -1835,6 +2146,55 @@ function check_speeds(st: Set): void {
   }
   gnu.error("asymmetric input (" + speed_name(ib.0) + "), output (" + speed_name(ob.0) + ") speeds not supported");
   exit(1);
+}
+
+// GNU's read-back comparison where tcsetattr is the bare ioctl, as on Darwin:
+// every flag word and control character exactly, and each speed within a
+// quarter of a bit per character of what was asked, an input speed of zero
+// standing for the output one.
+function darwin_matches(want: i64[], got: i64[]): boolean {
+  let i: i32 = 0;
+  while (i < w_ispeed()) {
+    if (want[i] != got[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return speed_near(want, want[w_ospeed()], got[w_ospeed()]) && speed_near(want, in_speed(want), in_speed(got));
+}
+
+function in_speed(t: i64[]): i64 {
+  if (t[w_ispeed()] == 0 as i64) {
+    return t[w_ospeed()];
+  }
+  return t[w_ispeed()];
+}
+
+// The bits a character takes on the line `want` describes: start and stop,
+// the second stop bit, parity, and the character size.
+function char_bits(want: i64[]): u64 {
+  let c: i64 = want[w_cflag()];
+  let bits: u64 = 2 as u64 + (c & 768 as i64) as u64 / (256 as u64) + 5 as u64;
+  if ((c & 1024 as i64) != 0 as i64) {
+    bits = bits + 1 as u64;
+  }
+  if ((c & 4096 as i64) != 0 as i64) {
+    bits = bits + 1 as u64;
+  }
+  return bits;
+}
+
+function speed_near(want: i64[], asked: i64, got: i64): boolean {
+  if (asked == got) {
+    return true;
+  }
+  let a: u64 = asked as u64;
+  let g: u64 = got as u64;
+  let delta: u64 = a - g;
+  if (g > a) {
+    delta = g - a;
+  }
+  return delta <= a / (char_bits(want) * (4 as u64));
 }
 
 // ---- main -------------------------------------------------------------------
@@ -1933,7 +2293,11 @@ pub function main(): i32 {
     // other — the echo landed, and glibc was satisfied by that.
     match (r.termios_get()) {
       Ok(now) => {
-        if (!words_equal(now, st.t) || input_speed_zero(st)) {
+        if (darwin() && !darwin_matches(st.t, now)) {
+          gnu.error(gnu.quotef(dev) + ": unable to perform all requested operations");
+          exit(1);
+        }
+        if (!darwin() && (!words_equal(now, st.t) || input_speed_zero(st))) {
           if (glibc_refused(st, t, now)) {
             gnu.error(gnu.quotef(dev) + ": Invalid argument");
             exit(1);

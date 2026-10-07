@@ -3503,12 +3503,18 @@ is the asm-generic struct byte for byte, and GNU prints 32 control characters
 because glibc's userspace struct is wider than the kernel's 19 — the top 13
 are always zero, which is what the tail of a `-g` line is.
 
-Darwin is the one target it does not reach: its struct is a different shape
-and the TIOCGETA request number encodes that struct's size, neither of which
-can be written from memory or measured on a Linux build box, so both halves
-answer ENOSYS there rather than shipping a number that would answer ENOTTY and
-look like "this is not a terminal". `poll` is on the same line for the same
-target.
+Darwin's struct is a different shape — four unsigned-long flag words, twenty
+control characters, then the input and output speeds as baud values — so its
+array is `[iflag, oflag, cflag, lflag, cc[0..19], ispeed, ospeed]`, through
+TIOCGETA and TIOCSETA[W|F]. There is no line discipline there, the two speeds
+are independent, `_POSIX_VDISABLE` is 0xff rather than 0, and `-g` prints the
+kernel's twenty characters. `stty.fern` carries a second flag table for it,
+taken from GNU's `stty.c` with XNU's headers: no `cmspar`, `iuclc`, `olcuc`,
+`xcase` or `lcase`, `dsusp` and `status` added, and `swtch` an alias of `susp`.
+GNU's read-back comparison there is its own `eq_mode`, since Darwin's
+`tcsetattr` is the bare ioctl and synthesises no EINVAL the way glibc's does.
+TIOCSETA treats EXTPROC as read only, so `[-]extproc` there is GNU's TIOCEXT,
+through `r.set_extproc(on)`, and `sane` leaves the bit alone.
 
 The same utility's `rows N` and `cols N` needed the other half of
 `window_size`, which only ever read (#9360):

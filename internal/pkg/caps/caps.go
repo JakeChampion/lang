@@ -244,6 +244,8 @@ var Ungated = map[string]bool{
 	// reach by writing escape sequences to it.
 	"termios_get": true,
 	"termios_set": true,
+	// EXTPROC, the one line-setting bit Darwin keeps out of termios_set.
+	"set_extproc": true,
 	// Its geometry, written. Same reason again, and a resize is the
 	// tamest of the three: a dependency that sets the row count changes
 	// what a full-screen program lays out against and nothing else.

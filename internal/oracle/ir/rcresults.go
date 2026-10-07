@@ -211,6 +211,7 @@ var rcResultOwned = map[string]bool{
 	"__fern_handle_set_window_size":  true,
 	"__fern_handle_termios_get":      true,
 	"__fern_handle_termios_set":      true,
+	"__fern_handle_set_extproc":      true,
 	"__fern_reader_seek":             true,
 	"__fern_reader_splice":           true,
 	"__fern_writer_seek":             true,
@@ -279,6 +280,7 @@ var rcResultOwned = map[string]bool{
 	"set_window_size":   true,
 	"termios_get":       true,
 	"termios_set":       true,
+	"set_extproc":       true,
 	"signal_send":       true,
 	"set_process_group": true,
 }
@@ -373,6 +375,7 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"__method_Reader_set_window_size":  true, // __fern_handle_set_window_size
 	"__method_Reader_termios_get":      true, // __fern_handle_termios_get
 	"__method_Reader_termios_set":      true, // __fern_handle_termios_set
+	"__method_Reader_set_extproc":      true, // __fern_handle_set_extproc
 	"read_file":                        true,
 	"read_file_bytes":                  true,
 	"write_file":                       true,
@@ -424,6 +427,7 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"set_window_size":                  true,
 	"termios_get":                      true,
 	"termios_set":                      true,
+	"set_extproc":                      true,
 	"read_dir_all":                     true,
 	"read_dir_ino":                     true,
 	"stat":                             true,

@@ -487,9 +487,10 @@ jobs:
             echo "::error::the corpus ran $ran tests, below the $floor floor — the catalogue did not finish, so its failure set is not a measurement. Lower the floor only when the catalogue shrinks on purpose."
             exit 1
           fi
-          grep -oE '^--- FAIL: Test[A-Za-z0-9]+' corpus-darwin.log \
+          # `|| true` on both: an empty set is the goal, and grep exits 1 on it.
+          { grep -oE '^--- FAIL: Test[A-Za-z0-9]+' corpus-darwin.log || true; } \
             | sed 's/^--- FAIL: //' | sort -u > failed-now.txt
-          grep -vE '^[[:space:]]*(#|$)' .github/darwin-corpus-known-failures.txt \
+          { grep -vE '^[[:space:]]*(#|$)' .github/darwin-corpus-known-failures.txt || true; } \
             | sort -u > failed-known.txt
 
           echo "### $(wc -l < failed-now.txt) utilities failing, $(wc -l < failed-known.txt) on the list"

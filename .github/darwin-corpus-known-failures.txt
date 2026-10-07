@@ -79,5 +79,3 @@
 # Darwin GNU was their whole divergence. Removed on the lane's own evidence:
 # run 35687742755 warned for exactly these ten, and the round went from 1887
 # failures to 1647.
-
-TestStty

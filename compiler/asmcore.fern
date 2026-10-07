@@ -2829,15 +2829,15 @@ pub function rt_src_window_size(t: string): string {
 // signed, so a word with its top bit set would sign-extend into a negative i64
 // on the way into the array.
 //
-// Darwin answers ENOSYS. Its struct is a different shape — unsigned-long
-// flags, twenty control characters, no line byte, a speed pair appended — and
-// the TIOCGETA request number encodes that struct's size, so neither can be
-// written from memory and neither is measurable on a Linux build box. A wrong
-// request answers ENOTTY, which a caller cannot tell from "this is not a
-// terminal". Same line `poll` is on for that target.
+// XNU's struct is a different shape: four unsigned-long flag words, NCCS = 20
+// control characters, four bytes of padding, then the input and output speeds
+// as unsigned longs, 72 bytes in all (TIOCGETA = 0x40487413). Its array is
+// the four flags, the twenty characters, ispeed and ospeed: 26 elements and
+// no line byte. Each long is assembled a byte at a time from the top, so a
+// value with its top bit set wraps to a negative i64 rather than saturating.
 pub function rt_src_termios_get(t: string): string {
   if (t == "arm64-darwin") {
-    return "function __fern_termios_get(fd: i32): Result[i64[], IoError] { return Err(__fern_io_error(" + errno_on(t, 38) + ", \"\")); }";
+    return "function __fern_termios_get(fd: i32): Result[i64[], IoError] { let buf: usize = __raw_alloc(72); let rc: i32 = __syscall3(" + sysno(t, "ioctl") + ", fd as i64, 1078490131, buf as i64) as i32; if (rc < 0) { let buf_own0: string = __raw_string(buf, 72); return Err(__fern_io_error(0 - rc, \"\")); } let out: i64[] = []; let i: i32 = 0; while (i < 26) { if (i < 4 || i >= 24) { let off: i32 = i * 8; if (i >= 24) { off = 56 + (i - 24) * 8; } let v: i64 = 0 as i64; let k: i32 = 7; while (k >= 0) { v = (v << 8) | (__raw_load8(buf, off + k) as i64); k = k - 1; } out = out.append(v); } else { out = out.append(__raw_load8(buf, 28 + i) as i64); } i = i + 1; } let buf_own: string = __raw_string(buf, 72); return Ok(out); }";
   }
   return "function __fern_termios_get(fd: i32): Result[i64[], IoError] { let buf: usize = __raw_alloc(36); let rc: i32 = __syscall3(" + sysno(t, "ioctl") + ", fd as i64, 21505, buf as i64) as i32; if (rc < 0) { let buf_own0: string = __raw_string(buf, 36); return Err(__fern_io_error(0 - rc, \"\")); } let out: i64[] = []; let i: i32 = 0; while (i < 4) { let b0: i64 = (__raw_load8(buf, i * 4) as i64); let b1: i64 = (__raw_load8(buf, i * 4 + 1) as i64); let b2: i64 = (__raw_load8(buf, i * 4 + 2) as i64); let b3: i64 = (__raw_load8(buf, i * 4 + 3) as i64); out = out.append(b0 + b1 * 256 + b2 * 65536 + b3 * 16777216); i = i + 1; } out = out.append(__raw_load8(buf, 16) as i64); let j: i32 = 0; while (j < 19) { out = out.append(__raw_load8(buf, 17 + j) as i64); j = j + 1; } let buf_own: string = __raw_string(buf, 36); return Ok(out); }";
 }
@@ -2848,8 +2848,9 @@ pub function rt_src_termios_get(t: string): string {
 // TCSETS, so it adds.
 //
 // A wrong-length array or an out-of-range action is EINVAL: there is a
-// fixed-size struct to fill and no way to guess the rest. Darwin answers
-// ENOSYS, for the reason the read half does.
+// fixed-size struct to fill and no way to guess the rest. Darwin packs its own
+// 26 words into its 72 bytes and adds the action to TIOCSETA (0x80487414),
+// whose W and F forms follow it the same way.
 //
 // The action parameter is spelled `act` and not `when`, which is what the
 // builtin's own documentation calls it: `when` is a KEYWORD (a match guard),
@@ -2858,9 +2859,20 @@ pub function rt_src_termios_get(t: string): string {
 // parser thinks it is looking at.
 pub function rt_src_termios_set(t: string): string {
   if (t == "arm64-darwin") {
-    return "function __fern_termios_set(fd: i32, act: i32, words: i64[]): Result[void, IoError] { return Err(__fern_io_error(" + errno_on(t, 38) + ", \"\")); }";
+    return "function __fern_termios_set(fd: i32, act: i32, words: i64[]): Result[void, IoError] { if (words.len() != 26 || act < 0 || act > 2) { return Err(__fern_io_error(22, \"\")); } let buf: usize = __raw_alloc(72); let z: i32 = 0; while (z < 72) { __raw_store8(buf, z, 0); z = z + 1; } let i: i32 = 0; while (i < 26) { let v: i64 = words[i]; if (i < 4 || i >= 24) { let off: i32 = i * 8; if (i >= 24) { off = 56 + (i - 24) * 8; } let k: i32 = 0; while (k < 8) { __raw_store8(buf, off + k, ((v >> ((k * 8) as i64)) & (255 as i64)) as i32); k = k + 1; } } else { __raw_store8(buf, 28 + i, (v & (255 as i64)) as i32); } i = i + 1; } let rc: i32 = __syscall3(" + sysno(t, "ioctl") + ", fd as i64, (2152231956 as i64) + (act as i64), buf as i64) as i32; let buf_own: string = __raw_string(buf, 72); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
   }
   return "function __fern_termios_set(fd: i32, act: i32, words: i64[]): Result[void, IoError] { if (words.len() != 24 || act < 0 || act > 2) { return Err(__fern_io_error(22, \"\")); } let buf: usize = __raw_alloc(36); let i: i32 = 0; while (i < 4) { let v: i64 = words[i]; __raw_store8(buf, i * 4, (v % 256) as i32); __raw_store8(buf, i * 4 + 1, ((v / 256) % 256) as i32); __raw_store8(buf, i * 4 + 2, ((v / 65536) % 256) as i32); __raw_store8(buf, i * 4 + 3, ((v / 16777216) % 256) as i32); i = i + 1; } __raw_store8(buf, 16, (words[4] % 256) as i32); let j: i32 = 0; while (j < 19) { __raw_store8(buf, 17 + j, (words[5 + j] % 256) as i32); j = j + 1; } let rc: i32 = __syscall3(" + sysno(t, "ioctl") + ", fd as i64, (21506 + act) as i64, buf as i64) as i32; let buf_own: string = __raw_string(buf, 36); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
+}
+
+// rt_src_set_extproc backs `set_extproc(fd, on)` -> Result[void, IoError]:
+// XNU's TIOCEXT (0x80047460) with an int, the only way to change EXTPROC
+// there. Linux has no such ioctl, and ENOTTY is what its terminals answer
+// to one they do not know.
+pub function rt_src_set_extproc(t: string): string {
+  if (t != "arm64-darwin") {
+    return "function __fern_set_extproc(fd: i32, on: boolean): Result[void, IoError] { return Err(__fern_io_error(25, \"\")); }";
+  }
+  return "function __fern_set_extproc(fd: i32, on: boolean): Result[void, IoError] { let buf: usize = __raw_scratch(16); let v: i32 = 0; if (on) { v = 1; } __raw_store8(buf, 0, v); __raw_store8(buf, 1, 0); __raw_store8(buf, 2, 0); __raw_store8(buf, 3, 0); let rc: i32 = __syscall3(" + sysno(t, "ioctl") + ", fd as i64, (2147775584 as i64), buf as i64) as i32; if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
 }
 
 // rt_src_set_window_size backs `set_window_size(fd, rows, cols)` ->
@@ -2871,15 +2883,16 @@ pub function rt_src_termios_set(t: string): string {
 // and a negative one truncates the way the native backends' `and #0xffff`
 // does, rather than leaving a negative byte behind (#9360).
 //
-// Darwin answers ENOSYS beside the termios pair. Its `struct winsize` is the
-// same four u16s, but the request numbers are ioctl-encoded from that size and
-// a wrong one answers ENOTTY, which a caller cannot tell from "this is not a
-// terminal"; the macos runner is where they can be pinned.
+// XNU's `struct winsize` is the same four u16s under its own request numbers:
+// TIOCGWINSZ 0x40087468 (1074295912), TIOCSWINSZ 0x80087467 (2148037735).
 pub function rt_src_set_window_size(t: string): string {
+  let get: string = "21523";
+  let put: string = "21524";
   if (t == "arm64-darwin") {
-    return "function __fern_set_window_size(fd: i32, rows: i32, cols: i32): Result[void, IoError] { return Err(__fern_io_error(" + errno_on(t, 38) + ", \"\")); }";
+    get = "1074295912";
+    put = "(2148037735 as i64)";
   }
-  return "function __fern_set_window_size(fd: i32, rows: i32, cols: i32): Result[void, IoError] { let buf: usize = __raw_scratch(16); let rc: i32 = __syscall3(" + sysno(t, "ioctl") + ", fd as i64, 21523, buf as i64) as i32; if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } let r: i32 = rows & 65535; let c: i32 = cols & 65535; __raw_store8(buf, 0, r % 256); __raw_store8(buf, 1, r / 256); __raw_store8(buf, 2, c % 256); __raw_store8(buf, 3, c / 256); rc = __syscall3(" + sysno(t, "ioctl") + ", fd as i64, 21524, buf as i64) as i32; if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
+  return "function __fern_set_window_size(fd: i32, rows: i32, cols: i32): Result[void, IoError] { let buf: usize = __raw_scratch(16); let rc: i32 = __syscall3(" + sysno(t, "ioctl") + ", fd as i64, " + get + ", buf as i64) as i32; if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } let r: i32 = rows & 65535; let c: i32 = cols & 65535; __raw_store8(buf, 0, r % 256); __raw_store8(buf, 1, r / 256); __raw_store8(buf, 2, c % 256); __raw_store8(buf, 3, c / 256); rc = __syscall3(" + sysno(t, "ioctl") + ", fd as i64, " + put + ", buf as i64) as i32; if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
 }
 
 // rt_src_process_alive backs `process_alive(pid)` (syscall-leaf) -> 1 when a
@@ -7072,7 +7085,7 @@ function infer_call_method_type(fa: ast.ExprFieldAccess, c: ast.ExprCall, s: Emi
   if (ty_struct_name(rt) == "Reader" && fa.field == "termios_get") {
     return ty_result(ty_array_i64());
   }
-  if (ty_struct_name(rt) == "Reader" && (fa.field == "set_window_size" || fa.field == "termios_set")) {
+  if (ty_struct_name(rt) == "Reader" && (fa.field == "set_window_size" || fa.field == "termios_set" || fa.field == "set_extproc")) {
     return ty_result(ty_unknown());
   }
   if (is_cell(rt) && fa.field == "get") {
