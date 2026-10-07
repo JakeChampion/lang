@@ -387,6 +387,17 @@ function t_array(elem: typeinfo.Type): typeinfo.Type {
   return typeinfo.TypeArray { elem: elem, view: false };
 }
 
+// aes_gcm_arity is how many [u8] views an AES-GCM kernel takes, or -1.
+function aes_gcm_arity(name: string): i32 {
+  if (name == "__aes_expand_key") {
+    return 1;
+  }
+  if (name == "__aes_ctr32" || name == "__ghash") {
+    return 3;
+  }
+  return 0 - 1;
+}
+
 // `[T]` — the array view a slice yields (#9944). Like `str`, view-ness is a
 // flag every stage but an owning sink ignores: type_eq is flag-blind and
 // type_assignable refuses a view where an owned `T[]` is required.
@@ -708,6 +719,10 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
   if (argc == 1 && (name == "__ct_secret" || name == "__ct_public")) {
     return t_void();
   }
+  // The AES-GCM kernels each answer a fresh u8[].
+  if (argc == aes_gcm_arity(name)) {
+    return t_array(t_u8());
+  }
   // The task primitives (docs/NET-P3-SUSPENSION-PLAN.md §3.4): a record per
   // task, the current task, the park that unwinds it and the words the
   // scheduler reads back.
@@ -941,6 +956,13 @@ function intrinsic_params(name: string): (typeinfo.Type[], boolean) {
   }
   if (name == "__ct_secret" || name == "__ct_public") {
     return ([t_view(t_u8())], true);
+  }
+  if (aes_gcm_arity(name) > 0) {
+    let views: typeinfo.Type[] = [];
+    while (views.len() < aes_gcm_arity(name)) {
+      views = views.append(t_view(t_u8()));
+    }
+    return (views, true);
   }
   if (name == "__task_new") {
     return ([], true);
@@ -2747,16 +2769,24 @@ function (s: Scope) lookup_assoc_sig(tyname: string, field: string): FuncSig {
   return s.lookup_sig("");
 }
 
-// sig_at is the index of `name`'s signature in the scope's table, or -1.
+// sig_at is the index of `name`'s signature in the scope's table, or -1. A
+// free function wins over an associated function of the same name, which a
+// bare call cannot name (#11844).
 function (s: Scope) sig_at(name: string): i32 {
+  let first: i32 = 0 - 1;
   let i: i32 = s.sigs.head[sig_name_bucket(name)];
   while (i >= 0) {
     if (s.sigs.sigs[i].name == name) {
-      return i;
+      if (s.sigs.sigs[i].receiver.len() == 0) {
+        return i;
+      }
+      if (first < 0) {
+        first = i;
+      }
     }
     i = s.sigs.next[i];
   }
-  return 0 - 1;
+  return first;
 }
 
 function (s: Scope) lookup_sig(name: string): FuncSig {
@@ -4814,6 +4844,7 @@ function builtin_sigs(): string[] {
     "stat(string): Result[FileStat, IoError]",
     "statfs(string): Result[FsStat, IoError]",
     "mounts(): Result[MountEntry[], IoError]",
+    "sysctl(i32[]): Result[u8[], IoError]",
     "stderr(): Writer",
     "stdin(): Reader",
     "stdout(): Writer",
@@ -16077,7 +16108,7 @@ function e079_visit_stmt(st: ast.Stmt, own acc: util.Diag[]): util.Diag[] {
 function registered_intrinsics(): string[] {
   return [
     "__task_cur", "__task_enter", "__task_free", "__task_leave", "__task_new", "__task_park", "__task_set_cancelled", "__task_set_ready", "__task_timeout", "__task_wait",
-    "__abs_f64", "__alloc", "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_reuse", "__alloc_u8", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len",
+    "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__ghash", "__alloc", "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_reuse", "__alloc_u8", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len",
     "__ascii_run", "__bsd_sum", "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32",
     "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64", "__c_call3", "__c_call3_f32", "__c_call3_f64",
     "__c_call4", "__c_call4_f32", "__c_call4_f64", "__ceil_f64", "__clz32", "__clz64", "__cos_f64", "__count_byte",

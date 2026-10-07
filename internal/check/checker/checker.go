@@ -1752,6 +1752,21 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 			Result: ast.VoidType{},
 		}
 	}
+	// The AES-GCM kernels (std/crypto/aes_gcm), each a fresh u8[]:
+	//   __aes_expand_key(key): the FIPS-197 round keys of a 16- or 32-byte
+	//     key, 176 or 240 bytes; any other key length answers empty.
+	//   __aes_ctr32(round_keys, counter, data): data exclusive-ored with the
+	//     keystream E(K, counter), E(K, counter+1), ..., the counter's last
+	//     four bytes stepping as a big-endian u32 (GCM's inc32).
+	//   __ghash(h, y, data): the GHASH state y with data's 16-byte blocks
+	//     folded in under the hash key h, a short last block zero-padded.
+	// The native backends use AES-NI and PCLMULQDQ or AESE and PMULL, wasm a
+	// bitsliced AES; every one runs in constant time.
+	u8View := ast.SliceType{Elem: ast.NumberType{Width: 8, Signed: false}}
+	u8Arr := ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}
+	c.info.FuncSigs["__aes_expand_key"] = &ast.FuncType{Params: []ast.Type{u8View}, Result: u8Arr}
+	c.info.FuncSigs["__aes_ctr32"] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8View}, Result: u8Arr}
+	c.info.FuncSigs["__ghash"] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8View}, Result: u8Arr}
 	// Bit-counting intrinsics: __clz32 / __ctz32 / __popcount32 and their
 	// 64-bit siblings. Each takes one integer of its width and returns an
 	// i32 count. clz/ctz of 0 return the operand width (32 or 64), matching
@@ -2799,6 +2814,16 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
+	// sysctl(mib: i32[]): Result[u8[], IoError] — the kernel's answer for a
+	// MIB as raw bytes: Darwin's sysctl(3). Gated on `sysctl`, which only
+	// Darwin grants; Linux removed sysctl(2).
+	c.info.FuncSigs["sysctl"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 32, Signed: true}}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
 	// rlimit_nofile(): i64 — the SOFT limit the kernel is currently
 	// enforcing on this process's open file descriptors, `getrlimit(2)`
 	// on RLIMIT_NOFILE (#8819). What `ulimit -n` prints, and what
@@ -3109,7 +3134,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// __account_entry(kind, key): what libSystem's account database answers,
 	// as an address, or 0 — kind 0 getpwuid(key), 1 getpwnam(key as a C
 	// string), 2 getgrgid(key), 3 getgrnam(key as a C string), 4
-	// getlogin(). Only arm64-darwin asks: there regular accounts and groups
+	// getlogin(), 5 getgrouplist over an argument block, 6 strerror(key),
+	// 7 __error(). Only arm64-darwin asks: there regular accounts and groups
 	// live in Directory Services, not the files (#9815). Every other target
 	// answers 0, which sends the caller to the files.
 	c.info.FuncSigs["__account_entry"] = &ast.FuncType{

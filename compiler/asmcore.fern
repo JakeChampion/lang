@@ -1587,6 +1587,10 @@ function sysno_arm64_darwin(name: string): string {
   if (name == "getfsstat") {
     return "347";
   }
+  // __sysctl — a kernel variable by MIB. No Linux row: Linux removed sysctl(2).
+  if (name == "sysctl") {
+    return "202";
+  }
   // pathconf(2) — BSD 191. No Linux row: Linux has no pathconf syscall
   // at all (glibc computes the answers from statfs plus constants), so a
   // row there would be a number nothing could issue.
@@ -2776,19 +2780,23 @@ pub function rt_src_timer_fd(t: string): string {
 
 // rt_src_isatty backs `isatty(fd)` (syscall-leaf) -> 1 when fd is a terminal.
 //
-// The question is a terminal-attribute ioctl, which only a tty answers. Its
-// REQUEST number is the platform difference, not the syscall's shape: Linux
-// spells it TCGETS (0x5401 = 21505), XNU TIOCGETA (0x40487413 = 1078490131).
-// `fstat` + `S_ISCHR` would be simpler and answers yes for /dev/null.
+// The question is a terminal-attribute ioctl, which only a tty answers: Linux
+// TCGETS (0x5401 = 21505), XNU TIOCGETA (0x40487413 = 1078490131). `fstat` +
+// `S_ISCHR` would be simpler and answers yes for /dev/null.
+//
+// Darwin's libc asks FIODTYPE (0x4004667a = 1074030202) first and answers
+// whether the device type is D_TTY (3), falling back to TIOCGETA only when
+// that ioctl fails. A pseudo-terminal master is D_TTY but refuses TIOCGETA.
 //
 // The 80-byte scratch covers `struct termios` on both (60 on Linux, 72 on
-// XNU); nothing reads it back, since success is the whole answer.
+// XNU); only FIODTYPE's int is read back.
 pub function rt_src_isatty(t: string): string {
-  let req: string = "21505";
+  let ioctl: string = "__syscall3(" + sysno(t, "ioctl") + ", fd as i64, ";
+  let attrs: string = "if (" + ioctl + "21505, buf as i64) == (0 as i64)) { return 1; } return 0;";
   if (t == "arm64-darwin") {
-    req = "1078490131";
+    attrs = "if (" + ioctl + "1074030202, buf as i64) == (0 as i64)) { if (__raw_load8(buf, 0) == 3 && __raw_load8(buf, 1) == 0 && __raw_load8(buf, 2) == 0 && __raw_load8(buf, 3) == 0) { return 1; } return 0; } if (" + ioctl + "1078490131, buf as i64) == (0 as i64)) { return 1; } return 0;";
   }
-  return "function __fern_isatty(fd: i32): i32 { let buf: usize = __raw_scratch(80); if (__syscall3(" + sysno(t, "ioctl") + ", fd as i64, " + req + ", buf as i64) == (0 as i64)) { return 1; } return 0; }";
+  return "function __fern_isatty(fd: i32): i32 { let buf: usize = __raw_scratch(80); " + attrs + " }";
 }
 
 // rt_src_window_size backs `window_size(fd)` (syscall-leaf) ->
@@ -5284,6 +5292,19 @@ pub function rt_src_statfs(t: string): string {
     return head + "let nmax: i32 = 0; let pmax: i32 = 0; if (rc >= 0) { nmax = __syscall3(" + pc + ", pathz as i64, 4, 0) as i32; rc = nmax; } if (rc >= 0) { pmax = __syscall3(" + pc + ", pathz as i64, 5, 0) as i32; rc = pmax; } let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } " + name + "return Ok(FsStat { " + statfs_counts_src(t) + ", name_max: (nmax as i64), path_max: (pmax as i64), fs_type_name: type_name }); }";
   }
   return head + "let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } return Ok(FsStat { " + statfs_counts_src(t) + ", name_max: " + statfs_field_i64(t, "name_max") + ", path_max: (" + statfs_linux_path_max() + " as i64), fs_type_name: \"\" }); }";
+}
+
+// rt_src_sysctl backs `sysctl(mib)` → Result[u8[], IoError]: the kernel's
+// answer for a MIB as raw bytes, in a packed u8 box. Darwin asks __sysctl
+// twice, once for the size and once to fill a buffer of it; the MIB goes in as
+// 32-bit ints. Every other kernel answers ENOSYS, which only a program the
+// platforms gate let through could see.
+pub function rt_src_sysctl(t: string): string {
+  if (t != "arm64-darwin") {
+    return "function __fern_sysctl(mib: i32[]): Result[i32[], IoError] { return Err(__fern_io_error(38, \"\")); }";
+  }
+  let sc: string = sysno(t, "sysctl");
+  return "function __fern_sysctl(mib: i32[]): Result[i32[], IoError] { let n: i32 = mib.len(); let m: usize = __raw_alloc(n * 4 + 4); let i: i32 = 0; while (i < n) { let v: i32 = mib[i]; __raw_store8(m, i * 4, v & 255); __raw_store8(m, i * 4 + 1, (v >> 8) & 255); __raw_store8(m, i * 4 + 2, (v >> 16) & 255); __raw_store8(m, i * 4 + 3, (v >> 24) & 255); i = i + 1; } let lenp: usize = __raw_alloc(8); __store_i64(lenp, 0 as i64); let r: i32 = __syscall6(" + sc + ", m as i64, n as i64, 0, lenp as i64, 0, 0) as i32; let size: i32 = __load_i64(lenp) as i32; let buf: usize = __raw_alloc(size + 1); if (r >= 0) { r = __syscall6(" + sc + ", m as i64, n as i64, buf as i64, lenp as i64, 0, 0) as i32; } let got: i32 = __load_i64(lenp) as i32; let m_own: string = __raw_string(m, n * 4 + 4); let lenp_own: string = __raw_string(lenp, 8); if (r < 0) { let buf_own0: string = __raw_string(buf, size + 1); return Err(__fern_io_error(0 - r, \"\")); } " + packed_box("b", "got") + " __memcpy(__raw_addr(b, 8), buf, got); let buf_own: string = __raw_string(buf, size + 1); return Ok(__raw_array(b)); }";
 }
 
 // rt_src_mounts backs `mounts()` (#9104) → Result[MountEntry[], IoError]: the

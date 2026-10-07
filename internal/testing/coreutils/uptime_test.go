@@ -2,6 +2,7 @@ package coreutils
 
 import (
 	"os"
+	"os/exec"
 	"regexp"
 	"runtime"
 	"strings"
@@ -261,33 +262,52 @@ func TestUptimeHelp(t *testing.T) {
 // check: a property no diff against GNU can see, asserted against the
 // machine rather than against the reference.
 func TestUptimeReportsTheRealLoadAverages(t *testing.T) {
-	if runtime.GOOS != "linux" {
-		t.Skipf("the load averages are /proc/loadavg; %s has none, and uptime refuses there", runtime.GOOS)
-	}
-	before, err := os.ReadFile("/proc/loadavg")
-	if err != nil {
-		t.Fatalf("/proc/loadavg: %v", err)
-	}
+	loads := uptimeKernelLoads(t)
+	before := loads()
 	dir := t.TempDir()
 	db := uptimeDB(t, dir, "loads", time.Hour, 1)
 	inv := invocation{name: "loads", args: []string{db}}
 	got := inv.run(t, fernBin(t, "uptime"), "uptime")
-	after, err := os.ReadFile("/proc/loadavg")
-	if err != nil {
-		t.Fatalf("/proc/loadavg: %v", err)
-	}
+	after := loads()
 	if got.exit != 0 {
 		t.Fatalf("uptime %v: %s, stderr %q", inv.args, got.how(), got.stderr)
 	}
 	printed := uptimeLoadRe.FindString(string(got.stdout))
 	if printed == "" {
-		t.Fatalf("no load-average clause in %q; on Linux there is always one", got.stdout)
+		t.Fatalf("no load-average clause in %q; the kernel always has one", got.stdout)
 	}
 	printed = strings.TrimPrefix(printed, "load average: ")
 	for i, f := range strings.Split(printed, ", ") {
-		if !strings.Contains(string(before), f) && !strings.Contains(string(after), f) {
-			t.Errorf("load average %d is %q, which /proc/loadavg held neither before (%q) nor after (%q) the run",
-				i+1, f, strings.TrimSpace(string(before)), strings.TrimSpace(string(after)))
+		if !strings.Contains(before, f) && !strings.Contains(after, f) {
+			t.Errorf("load average %d is %q, which the kernel reported neither before (%q) nor after (%q) the run",
+				i+1, f, strings.TrimSpace(before), strings.TrimSpace(after))
 		}
 	}
+}
+
+// uptimeKernelLoads answers a reader of the kernel's load averages as text
+// holding each with two decimals: /proc/loadavg on Linux, and on Darwin
+// `sysctl -n vm.loadavg`, which prints them with %.2f.
+func uptimeKernelLoads(t *testing.T) func() string {
+	t.Helper()
+	switch runtime.GOOS {
+	case "linux":
+		return func() string {
+			b, err := os.ReadFile("/proc/loadavg")
+			if err != nil {
+				t.Fatalf("/proc/loadavg: %v", err)
+			}
+			return string(b)
+		}
+	case "darwin":
+		return func() string {
+			b, err := exec.Command("/usr/sbin/sysctl", "-n", "vm.loadavg").Output()
+			if err != nil {
+				t.Fatalf("sysctl -n vm.loadavg: %v", err)
+			}
+			return string(b)
+		}
+	}
+	t.Skipf("uptime refuses on %s: it has no load averages to read", runtime.GOOS)
+	return nil
 }

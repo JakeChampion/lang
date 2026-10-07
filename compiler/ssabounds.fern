@@ -3,6 +3,8 @@
 // and below the length of what it reads is marked unchecked (`imm` 1), the flag
 // the parser's len-bounded loop pass already sets and every backend honours.
 // It runs on the typed semantic graphs every backend lowers from.
+// `grouped_reads` then checks a run of reads at one index plus constants once
+// at each end instead of at every read.
 //
 // A block learns a compare when its only predecessor ends in a two-way `brif`
 // on it: true on the `t` edge, false on the `f` edge. Every block it dominates
@@ -28,6 +30,7 @@
 import "./ssa";
 import "./ssadeps";
 import "./ssasem";
+import "./typeinfo";
 
 struct Rel { lo: i32, hi: i32, strict: boolean }
 
@@ -493,6 +496,214 @@ function at_least(g: Graph, b: i32, y: i32, n: i32): boolean {
       k = k + 1;
     }
     c = g.above[c];
+  }
+  return false;
+}
+
+// grouped_reads checks a run of reads of one array at one index plus
+// constants, `bs[off]` then `bs[off + 1]` ... `bs[off + 63]`, at its two ends
+// rather than at every read. The run's first read keeps its check and must
+// have the smallest offset, at least zero; a probe read of the largest offset,
+// placed before it, checks the other end; the reads between are unchecked.
+// Between the first read and the last, nothing may abort another way or be
+// observed (`silent`), so aborting at the probe instead of at the read that
+// would have failed cannot be told apart: the abort names no index.
+pub function grouped_reads(f: ssasem.Func): ssasem.Func {
+  if (!any_checked_index(f)) {
+    return f;
+  }
+  let defs: ssa.SInst[] = definitions(f);
+  let values: typeinfo.Type[] = f.values;
+  let blocks: ssa.SBlock[] = [];
+  let changed: boolean = false;
+  for blk in f.graph.blocks {
+    let plan: Probes = probes_of(f, defs, blk.insts);
+    if (plan.at.len() == 0) {
+      blocks = blocks.append(blk);
+      continue;
+    }
+    let insts: ssa.SInst[] = [];
+    let p: i32 = 0;
+    let pos: i32 = 0;
+    while (pos < blk.insts.len()) {
+      let ins: ssa.SInst = blk.insts[pos];
+      if (p < plan.at.len() && plan.at[p] == pos) {
+        let v: i32 = values.len();
+        let x: i32 = plan.x[p];
+        insts = insts.append(ssa.SInst { kind_tag: 1, result: v, args: [], imm: plan.c[p], str: "" });
+        insts = insts.append(ssa.SInst { kind_tag: 9, result: v + 1, args: [x, v], imm: 0, str: "+" });
+        insts = insts.append(ssa.SInst { ...ins, result: v + 2, args: [ins.args[0], v + 1], imm: 0 });
+        values = values.append(f.values[x]).append(f.values[x]).append(f.values[ins.result]);
+        p = p + 1;
+      }
+      if (plan.unchecked[pos]) {
+        ins = ssa.SInst { ...ins, imm: 1 };
+      }
+      insts = insts.append(ins);
+      pos = pos + 1;
+    }
+    blocks = blocks.append(ssa.SBlock { ...blk, insts: insts });
+    changed = true;
+  }
+  if (!changed) {
+    return f;
+  }
+  return ssasem.Func { ...f, values: values, graph: ssa.SFunc { ...f.graph, blocks: blocks, nvals: values.len() } };
+}
+
+// Where a block's probes go: before the instruction at `at[i]`, a read of the
+// same array at `x[i] + c[i]`; `unchecked` marks the reads they cover.
+struct Probes { at: i32[], x: i32[], c: i32[], unchecked: boolean[] }
+
+function definitions(f: ssasem.Func): ssa.SInst[] {
+  let none: ssa.SInst = ssa.SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
+  let defs: ssa.SInst[] = [];
+  let v: i32 = 0;
+  while (v < f.values.len()) {
+    defs = defs.append(none);
+    v = v + 1;
+  }
+  for blk in f.graph.blocks {
+    for ins in blk.insts {
+      if (ins.result >= 0 && ins.result < defs.len()) {
+        defs = defs.with(ins.result, ins);
+      }
+    }
+  }
+  return defs;
+}
+
+function probes_of(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[]): Probes {
+  let out: Probes = Probes { at: [], x: [], c: [], unchecked: __alloc_bool(insts.len()) };
+  let start: i32 = 0;
+  let pos: i32 = 0;
+  while (pos <= insts.len()) {
+    if (pos == insts.len() || !silent(f, insts[pos])) {
+      out = probes_in_run(f, defs, insts, start, pos, out);
+      start = pos + 1;
+    }
+    pos = pos + 1;
+  }
+  return out;
+}
+
+// The groups among the reads of insts[start .. end), a run of silent
+// instructions, each probed before its first read.
+function probes_in_run(f: ssasem.Func, defs: ssa.SInst[], insts: ssa.SInst[], start: i32, end: i32, own out: Probes): Probes {
+  let reads: i32[] = [];
+  let k: i32 = start;
+  while (k < end) {
+    let ins: ssa.SInst = insts[k];
+    if (ins.kind_tag == ssasem.array_get() && checked_index(ins) && ssasem.is_i32(f.values[ins.args[1]]) && scalar(f, ins.result)) {
+      reads = reads.append(k);
+    }
+    k = k + 1;
+  }
+  let done: boolean[] = __alloc_bool(reads.len());
+  let i: i32 = 0;
+  while (i < reads.len()) {
+    if (done[i]) {
+      i = i + 1;
+      continue;
+    }
+    let first: ssa.SInst = insts[reads[i]];
+    let x: i32 = offset_base(f, defs, first.args[1]);
+    let low: i32 = offset_of(f, defs, first.args[1]);
+    let high: i32 = low;
+    let members: i32[] = [];
+    let j: i32 = i + 1;
+    while (j < reads.len()) {
+      let r: ssa.SInst = insts[reads[j]];
+      if (!done[j] && r.args[0] == first.args[0] && offset_base(f, defs, r.args[1]) == x) {
+        done = done.with(j, true);
+        let c: i32 = offset_of(f, defs, r.args[1]);
+        if (c < low) {
+          low = c;
+        }
+        if (c > high) {
+          high = c;
+        }
+        members = members.append(reads[j]);
+      }
+      j = j + 1;
+    }
+    if (members.len() >= 2 && low == offset_of(f, defs, first.args[1]) && low >= 0 && high > low) {
+      out = Probes { ...out, at: out.at.append(reads[i]), x: out.x.append(x), c: out.c.append(high) };
+      for m in members {
+        out = Probes { ...out, unchecked: out.unchecked.with(m, true) };
+      }
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+// offset_base is the `x` of an index `x + c` with `c` a constant, or the index
+// itself; offset_of is that `c`, or 0.
+function offset_base(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
+  let c: i32 = constant_operand(f, defs, v);
+  if (c < 0) {
+    return v;
+  }
+  return defs[v].args[1 - c];
+}
+
+function offset_of(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
+  let c: i32 = constant_operand(f, defs, v);
+  if (c < 0) {
+    return 0;
+  }
+  return defs[defs[v].args[c]].imm;
+}
+
+// constant_operand is which operand of an i32 `+` defining v is a constant,
+// or -1.
+function constant_operand(f: ssasem.Func, defs: ssa.SInst[], v: i32): i32 {
+  let d: ssa.SInst = defs[v];
+  if (d.kind_tag != 9 || d.str != "+" || d.args.len() != 2 || !ssasem.is_i32(f.values[v])) {
+    return 0 - 1;
+  }
+  let k: i32 = 0;
+  while (k < 2) {
+    let a: ssa.SInst = defs[d.args[k]];
+    if (a.kind_tag == 1 && ssasem.is_i32(f.values[d.args[k]])) {
+      return k;
+    }
+    k = k + 1;
+  }
+  return 0 - 1;
+}
+
+// A probe's result is never used, so only a read of a scalar, which owns
+// nothing, may be probed.
+function scalar(f: ssasem.Func, v: i32): boolean {
+  return ssasem.is_integer(f.values[v]) || ssasem.is_bool(f.values[v]);
+}
+
+// silent reports whether an instruction can neither abort nor be observed:
+// integer and boolean arithmetic other than division, an integer conversion, a
+// constant, a phi, a length or an array read, whose own abort says the same as
+// the probe's.
+function silent(f: ssasem.Func, ins: ssa.SInst): boolean {
+  let k: i32 = ins.kind_tag;
+  if (k == 1 || k == 2 || k == 3 || k == 7 || k == 8 || k == ssasem.param()) {
+    return true;
+  }
+  if (k == ssasem.array_get() || k == ssasem.length()) {
+    return true;
+  }
+  if (ins.result < 0 || ins.result >= f.values.len()) {
+    return false;
+  }
+  let t: typeinfo.Type = f.values[ins.result];
+  if (k == 9) {
+    return ins.str != "/" && ins.str != "%" && scalar(f, ins.result);
+  }
+  if (k == 10) {
+    return scalar(f, ins.result);
+  }
+  if (k == ssasem.cast()) {
+    return ins.args.len() == 1 && ssasem.is_integer(t) && ssasem.is_integer(f.values[ins.args[0]]);
   }
   return false;
 }

@@ -24,7 +24,7 @@ function fixture(row: i32): ssasem.Func {
     semrecords.Variant { name: "None", fields: [] }];
   let layout = semrecords.layout_option();
   if (row == 8) { layout = semrecords.layout_variant(); }
-  let enums = [semrecords.Enum { ty: whole, variants: variants, layout: layout, views: false }];
+  let enums = [semrecords.Enum { ty: whole, variants: variants, layout: layout, views: false, nests_func: false }];
   let constant = ssa.SInst { kind_tag: 1, result: 0, args: [], imm: 7, str: "" };
   if (row == 6) { constant = ssa.SInst { ...constant, kind_tag: 5, str: "payload" }; }
   let fallback = constant;

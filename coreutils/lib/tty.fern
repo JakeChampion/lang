@@ -57,6 +57,15 @@ function proc_name(want: i64): Option[string] {
   return None;
 }
 
+// glibc's walk follows symbolic links; Darwin's devname_r does not, so
+// `/dev/stdin` there is never the answer.
+function dev_stat(path: string): Result[FileStat, IoError] {
+  if (target_os() == "darwin") {
+    return lstat(path);
+  }
+  return stat(path);
+}
+
 // The first character device under /dev/pts or /dev with that device
 // number. A directory that cannot be read contributes nothing.
 function walk_dev(want: i64): Option[string] {
@@ -68,7 +77,7 @@ function walk_dev(want: i64): Option[string] {
         let i: i32 = 0;
         while (i < names.len()) {
           let path: string = ds[d] + "/" + names[i];
-          match (stat(path)) {
+          match (dev_stat(path)) {
             Ok(st) => {
               if (is_char_device(st) && st.rdev == want) {
                 return Some(path);

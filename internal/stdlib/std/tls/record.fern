@@ -1,0 +1,408 @@
+// std/tls/record — the TLS 1.3 record layer of RFC 8446 §5, sans-IO: it
+// turns bytes into records and protects them, and never touches a socket.
+//
+//   let d: record.Deframed = record.deframe(buffered)?;   // keep d.rest for the next read
+//   let read: record.Protection = record.protection(suite, traffic_secret);
+//   let o: record.Opened = read.open(d.records[0])?;      // o.content_type, o.content
+//   read = o.next;
+//
+// `deframe` splits buffered bytes into whole records and the bytes of the
+// one still arriving. `frame` writes plaintext records. A `Protection` is
+// one direction's key, IV and sequence number: `seal` and `open` protect
+// one record each and hand back the state for the next, whose sequence
+// number is one higher.
+
+import "core/int";
+import "std/crypto/aes_gcm";
+import "std/crypto/chacha20poly1305";
+import "std/tls/keyschedule";
+
+// ContentType — the record types TLS 1.3 defines.
+pub enum ContentType {
+  ChangeCipherSpec,
+  Alert,
+  Handshake,
+  ApplicationData,
+}
+
+pub function (t: ContentType) code(): i32 {
+  match (t) {
+    ChangeCipherSpec => {
+      return 20;
+    },
+    Alert => {
+      return 21;
+    },
+    Handshake => {
+      return 22;
+    },
+    ApplicationData => {
+      return 23;
+    }
+  }
+  return 0;
+}
+
+// RecordError — why a record was refused, each with the alert RFC 8446
+// ends the connection with.
+pub enum RecordError {
+  // A record, fragment or inner plaintext longer than its limit, with its
+  // length: record_overflow.
+  RecordOverflow(i32),
+  // A content type that is unknown, or not allowed where it arrived:
+  // unexpected_message.
+  UnexpectedContentType(i32),
+  // A handshake or alert record with no content: unexpected_message.
+  EmptyFragment,
+  // A decrypted record that is all zeros, so has no content type:
+  // unexpected_message.
+  NoContentType,
+  // A protected record that does not verify: bad_record_mac.
+  BadRecordMac,
+  // The sequence number would wrap: the keys must be updated first.
+  SequenceExhausted,
+  // A Protection whose key or IV, the lengths given, does not fit its
+  // suite.
+  BadKeys(i32, i32),
+}
+
+pub function (e: RecordError) message(): string {
+  match (e) {
+    RecordOverflow(n) => {
+      return "tls record: " + int.int_to_string(n) + " bytes is over the record size limit";
+    },
+    UnexpectedContentType(t) => {
+      return "tls record: unexpected content type " + int.int_to_string(t);
+    },
+    EmptyFragment => {
+      return "tls record: a handshake or alert record with no content";
+    },
+    NoContentType => {
+      return "tls record: the decrypted record has no content type";
+    },
+    BadRecordMac => {
+      return "tls record: the record does not verify";
+    },
+    SequenceExhausted => {
+      return "tls record: the sequence number is exhausted";
+    },
+    BadKeys(key, iv) => {
+      return "tls record: a " + int.int_to_string(key) + "-byte key and a " + int.int_to_string(iv) + "-byte iv do not fit the cipher suite";
+    }
+  }
+  return "";
+}
+
+// The largest fragment, and the largest protected record: the fragment,
+// its content type and up to 255 bytes of AEAD expansion (§5.2).
+const MAX_FRAGMENT: i32 = 16384;
+
+const MAX_PROTECTED: i32 = 16640;
+
+// Every TLS 1.3 AEAD appends a 16-byte tag.
+const TAG_LEN: i32 = 16;
+
+function __content_type(b: i32): Result[ContentType, RecordError] {
+  if (b == 20) {
+    return Ok(ChangeCipherSpec);
+  }
+  if (b == 21) {
+    return Ok(Alert);
+  }
+  if (b == 22) {
+    return Ok(Handshake);
+  }
+  if (b == 23) {
+    return Ok(ApplicationData);
+  }
+  return Err(UnexpectedContentType(b));
+}
+
+// A handshake or alert record must carry content (§5.1, §5.4).
+function __needs_content(t: ContentType): boolean {
+  return t.code() == 21 || t.code() == 22;
+}
+
+function __copy(src: [u8], from: i32, len: i32): u8[] {
+  let out: u8[] = __alloc_u8(len);
+  let i: i32 = 0;
+  while (i < len) {
+    out = out.with(i, src[from + i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+function __put(own dst: u8[], at: i32, src: [u8]): u8[] {
+  let i: i32 = 0;
+  while (i < src.len()) {
+    dst = dst.with(at + i, src[i]);
+    i = i + 1;
+  }
+  return dst;
+}
+
+function __header(own dst: u8[], at: i32, t: i32, version: i32, len: i32): u8[] {
+  return dst.with(at, t as u8).with(at + 1, (version >> 8 & 255) as u8).with(at + 2, (version & 255) as u8).with(at + 3, (len >> 8 & 255) as u8).with(at + 4, (len & 255) as u8);
+}
+
+// Record — one record as it crossed the wire: TLSPlaintext, or a
+// TLSCiphertext whose type is ApplicationData and whose fragment is
+// sealed. `version` is legacy_record_version, ignored but for a sealed
+// record's additional data.
+pub struct Record { content_type: ContentType, version: i32, fragment: u8[] }
+
+// Deframed — the whole records at the front of a buffer, and the bytes
+// after them, which are the start of a record still arriving.
+pub struct Deframed { records: Record[], rest: u8[] }
+
+// deframe splits buf into records. A header is checked as soon as it has
+// arrived: an unknown content type, or a length over 2^14 (2^14 + 256 for
+// a sealed record), is refused without waiting for the body.
+pub function deframe(buf: [u8]): Result[Deframed, RecordError] {
+  let records: Record[] = [];
+  let at: i32 = 0;
+  while (at + 5 <= buf.len()) {
+    let code: i32 = buf[at] as i32;
+    let t: ContentType = __content_type(code)?;
+    let len: i32 = buf[at + 3] as i32 << 8 | buf[at + 4] as i32;
+    let limit: i32 = MAX_FRAGMENT;
+    if (code == 23) {
+      limit = MAX_PROTECTED;
+    }
+    if (len > limit) {
+      return Err(RecordOverflow(len));
+    }
+    if (len == 0 && __needs_content(t)) {
+      return Err(EmptyFragment);
+    }
+    if (at + 5 + len > buf.len()) {
+      break;
+    }
+    records = records.append(Record { content_type: t, version: buf[at + 1] as i32 << 8 | buf[at + 2] as i32, fragment: __copy(buf, at + 5, len) });
+    at = at + 5 + len;
+  }
+  return Ok(Deframed { records: records, rest: __copy(buf, at, buf.len() - at) });
+}
+
+// frame writes data as plaintext records of type t, at most 2^14 bytes
+// each; empty data is no records. `legacy_version` is 0x0303, or 0x0301
+// for an initial ClientHello.
+pub function frame(t: ContentType, legacy_version: i32, data: [u8]): u8[] {
+  let n: i32 = (data.len() + MAX_FRAGMENT - 1) / MAX_FRAGMENT;
+  let out: u8[] = __alloc_u8(data.len() + 5 * n);
+  let at: i32 = 0;
+  let from: i32 = 0;
+  while (from < data.len()) {
+    let len: i32 = data.len() - from;
+    if (len > MAX_FRAGMENT) {
+      len = MAX_FRAGMENT;
+    }
+    out = __header(out, at, t.code(), legacy_version, len);
+    out = __put(out, at + 5, data[from:from + len]);
+    at = at + 5 + len;
+    from = from + len;
+  }
+  return out;
+}
+
+// Protection — one direction's record protection: the suite, the traffic
+// key and IV, and the sequence number of the next record.
+pub struct Protection { suite: keyschedule.CipherSuite, key: u8[], iv: u8[], seq: u64 }
+
+// protection is the state for the first record under a traffic secret.
+pub function protection(suite: keyschedule.CipherSuite, traffic_secret: [u8]): Protection {
+  let k: keyschedule.TrafficKeys = keyschedule.traffic_keys(suite, traffic_secret);
+  return Protection { suite: suite, key: k.key, iv: k.iv, seq: 0 as u64 };
+}
+
+// __nonce is the IV exclusive-ored with the sequence number, big-endian
+// and padded on the left to the IV's length (§5.3).
+function __nonce(p: Protection): u8[] {
+  let n: u8[] = __copy(p.iv, 0, p.iv.len());
+  let i: i32 = 0;
+  while (i < 8) {
+    let at: i32 = p.iv.len() - 1 - i;
+    n = n.with(at, n[at] ^ (p.seq >> (8 * i) as u64 & 255 as u64) as u8);
+    i = i + 1;
+  }
+  return n;
+}
+
+// __seal and __open run the suite's AEAD. `__advance` has already checked the
+// key and IV lengths, so a refusal here means the state is inconsistent.
+function __seal(p: Protection, plaintext: [u8], aad: [u8]): Result[u8[], RecordError] {
+  match (p.suite.aead()) {
+    keyschedule.Aes128Gcm | keyschedule.Aes256Gcm => {
+      match (aes_gcm.seal(p.key, __nonce(p), plaintext, aad)) {
+        Ok(sealed) => {
+          return Ok(sealed);
+        },
+        Err(e) => {
+          return Err(__gcm_error(p, e));
+        }
+      }
+    },
+    keyschedule.ChaCha20Poly1305 => {
+      match (chacha20poly1305.seal(p.key, __nonce(p), plaintext, aad)) {
+        Ok(sealed) => {
+          return Ok(sealed);
+        },
+        Err(e) => {
+          return Err(__chacha_error(p, e));
+        }
+      }
+    }
+  }
+  return Err(BadKeys(p.key.len(), p.iv.len()));
+}
+
+function __gcm_error(p: Protection, e: aes_gcm.AeadError): RecordError {
+  match (e) {
+    aes_gcm.KeyLength(n) => {
+      return BadKeys(n, p.iv.len());
+    },
+    aes_gcm.NonceLength(n) => {
+      return BadKeys(p.key.len(), n);
+    },
+    aes_gcm.Forged => {
+      return BadRecordMac;
+    }
+  }
+  return BadRecordMac;
+}
+
+function __chacha_error(p: Protection, e: chacha20poly1305.AeadError): RecordError {
+  match (e) {
+    chacha20poly1305.KeyLength(n) => {
+      return BadKeys(n, p.iv.len());
+    },
+    chacha20poly1305.NonceLength(n) => {
+      return BadKeys(p.key.len(), n);
+    },
+    chacha20poly1305.Forged => {
+      return BadRecordMac;
+    }
+  }
+  return BadRecordMac;
+}
+
+function __open(p: Protection, sealed: [u8], aad: [u8]): Result[u8[], RecordError] {
+  match (p.suite.aead()) {
+    keyschedule.Aes128Gcm | keyschedule.Aes256Gcm => {
+      match (aes_gcm.open(p.key, __nonce(p), sealed, aad)) {
+        Ok(inner) => {
+          return Ok(inner);
+        },
+        Err(e) => {
+          return Err(BadRecordMac);
+        }
+      }
+    },
+    keyschedule.ChaCha20Poly1305 => {
+      match (chacha20poly1305.open(p.key, __nonce(p), sealed, aad)) {
+        Ok(inner) => {
+          return Ok(inner);
+        },
+        Err(e) => {
+          return Err(BadRecordMac);
+        }
+      }
+    }
+  }
+  return Err(BadRecordMac);
+}
+
+// __advance is p for the record after this one, once this one's keys and
+// sequence number are known to be usable.
+function __advance(p: Protection): Result[Protection, RecordError] {
+  if (p.key.len() != p.suite.aead().key_len() || p.iv.len() != 12) {
+    return Err(BadKeys(p.key.len(), p.iv.len()));
+  }
+  if (p.seq == 0xffffffffffffffff as u64) {
+    return Err(SequenceExhausted);
+  }
+  return Ok(Protection { ...p, seq: p.seq + 1 as u64 });
+}
+
+// Sealed — a protected record ready for the wire, and the state for the
+// next one.
+pub struct Sealed { record: u8[], next: Protection }
+
+// seal protects content as one record of type t followed by `padding`
+// zero bytes, which hide its length (§5.4); a negative padding is none.
+pub function (p: Protection) seal(t: ContentType, content: [u8], padding: i32): Result[Sealed, RecordError] {
+  let pad: i32 = padding;
+  if (pad < 0) {
+    pad = 0;
+  }
+  if (content.len() + pad > MAX_FRAGMENT) {
+    return Err(RecordOverflow(content.len() + pad));
+  }
+  let checked: ContentType = __inner_type(t.code(), content.len())?;
+  let next: Protection = __advance(p)?;
+  let n: i32 = content.len() + 1 + pad;
+  let inner: u8[] = __alloc_u8(n);
+  inner = __put(inner, 0, content);
+  inner = inner.with(content.len(), t.code() as u8);
+  let i: i32 = content.len() + 1;
+  while (i < n) {
+    inner = inner.with(i, 0 as u8);
+    i = i + 1;
+  }
+  let header: u8[] = __header(__alloc_u8(5), 0, 23, 0x0303, n + TAG_LEN);
+  let sealed: u8[] = __seal(p, inner, header)?;
+  let out: u8[] = __alloc_u8(5 + sealed.len());
+  out = __put(out, 0, header);
+  return Ok(Sealed { record: __put(out, 5, sealed), next: next });
+}
+
+// Opened — a record's content and type, and the state for the next one.
+pub struct Opened { content_type: ContentType, content: u8[], next: Protection }
+
+// open removes the protection from a record `deframe` returned. Anything
+// but a sealed ApplicationData record is refused, as is a sealed
+// ChangeCipherSpec (§5).
+pub function (p: Protection) open(r: Record): Result[Opened, RecordError] {
+  if (r.content_type.code() != 23) {
+    return Err(UnexpectedContentType(r.content_type.code()));
+  }
+  if (r.fragment.len() > MAX_PROTECTED) {
+    return Err(RecordOverflow(r.fragment.len()));
+  }
+  let next: Protection = __advance(p)?;
+  let header: u8[] = __header(__alloc_u8(5), 0, 23, r.version, r.fragment.len());
+  let inner: u8[] = __open(p, r.fragment, header)?;
+  let end: i32 = __content_end(inner)?;
+  let t: ContentType = __inner_type(inner[end] as i32, end)?;
+  return Ok(Opened { content_type: t, content: __copy(inner, 0, end), next: next });
+}
+
+// __content_end is where a decrypted record's content type sits: its last
+// non-zero byte, the zeros after it being padding (§5.4).
+function __content_end(inner: [u8]): Result[i32, RecordError] {
+  if (inner.len() > MAX_FRAGMENT + 1) {
+    return Err(RecordOverflow(inner.len()));
+  }
+  let end: i32 = inner.len() - 1;
+  while (end >= 0 && inner[end] == 0) {
+    end = end - 1;
+  }
+  if (end < 0) {
+    return Err(NoContentType);
+  }
+  return Ok(end);
+}
+
+// __inner_type is the type of a protected record with `len` bytes of
+// content: never ChangeCipherSpec, and never an empty handshake or alert.
+function __inner_type(code: i32, len: i32): Result[ContentType, RecordError] {
+  let t: ContentType = __content_type(code)?;
+  if (code == 20) {
+    return Err(UnexpectedContentType(20));
+  }
+  if (len == 0 && __needs_content(t)) {
+    return Err(EmptyFragment);
+  }
+  return Ok(t);
+}

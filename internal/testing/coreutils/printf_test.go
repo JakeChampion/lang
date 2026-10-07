@@ -9,6 +9,14 @@ func init() {
 	registerCorpus("printf", printfCases)
 }
 
+// Where Apple's printf is the one at fault, the Darwin reference is wrong and
+// Fern keeps glibc's answer.
+const (
+	appleNaNSign       = "Apple's printf drops a NaN's sign"
+	appleIntMaxField   = "Apple's printf refuses a conversion of exactly INT_MAX bytes, which POSIX allows"
+	applePrecisionWrap = "Apple's printf wraps a precision past INT_MAX into a smaller one"
+)
+
 func printfCases(t *testing.T) []invocation {
 	long := strings.Repeat("x", 10000)
 	return []invocation{
@@ -154,7 +162,7 @@ func printfCases(t *testing.T) []invocation {
 		{name: "char constant as star width", args: []string{`%*d`, "'a", "1"}},
 
 		// Float arguments: strtold.
-		{name: "f words", args: []string{`%f\n`, "1e3", "inf", "nan", "-inf", "0x1p3", "INF", "Infinity", "nan(abc)", "nan(", "-nan", "nan(a-b)", "nanx", "infx", "infinit", "infinityx", "-INFINITY", "+inf", "nan()", "NAN(12_a)"}},
+		{name: "f words", darwinLibcDefect: appleNaNSign + "; its strtold also takes '-' inside nan(...)", args: []string{`%f\n`, "1e3", "inf", "nan", "-inf", "0x1p3", "INF", "Infinity", "nan(abc)", "nan(", "-nan", "nan(a-b)", "nanx", "infx", "infinit", "infinityx", "-INFINITY", "+inf", "nan()", "NAN(12_a)"}},
 		{name: "f syntax edges", args: []string{`%f\n`, "1.5", "1.5x", "", "abc", ".5", "5.", ".", "e5", "1e", "1e+", "1e5x", "0x", "0x.", "0x.8", "0x8.", "0x1p", "0x1p+", "0x1P3", "0X1p3", "1E3", "0x.8p1", "0x1.8p-1", ".e5", "0x1pz"}},
 		{name: "f spacing and zeros", args: []string{`%f\n`, "'a", "", " 1.5", "1.5 ", "00012.5", "1_0", "+.5", "-.5", "-0", "+0", "-0.0"}},
 		{name: "f range", args: []string{`%f\n`, "1e-4950", "1e-5000", "1e5000", "1e4932", "1e4933", "1.18973149535723176502e4932", "1.18973149535723176503e4932"}},
@@ -180,9 +188,9 @@ func printfCases(t *testing.T) []invocation {
 		{name: "g near the style switch", args: []string{`%g %g %g %g\n`, "99999.5", "999999", "9999995", "0.000099999"}},
 		{name: "G", args: []string{`%G\n`, "1e-10", "1e10", "0.5"}},
 		{name: "alternate forms", args: []string{`%#.0f %#.0e %#g %#e %#f %#a\n`, "1", "1", "1", "1", "1", "1"}},
-		{name: "F E G A of specials", args: []string{`%F %E %G %A %F %F\n`, "inf", "nan", "1e-10", "0.5", "-inf", "-nan"}},
-		{name: "negative nan", args: []string{`%f %e %g %a\n`, "-nan", "-nan", "-nan", "-nan"}},
-		{name: "nan spellings", args: []string{`%f %e %g %a\n`, "nan(123)", "-nan(x)", "NaN", "nAn"}},
+		{name: "F E G A of specials", darwinLibcDefect: appleNaNSign, args: []string{`%F %E %G %A %F %F\n`, "inf", "nan", "1e-10", "0.5", "-inf", "-nan"}},
+		{name: "negative nan", darwinLibcDefect: appleNaNSign, args: []string{`%f %e %g %a\n`, "-nan", "-nan", "-nan", "-nan"}},
+		{name: "nan spellings", darwinLibcDefect: appleNaNSign, args: []string{`%f %e %g %a\n`, "nan(123)", "-nan(x)", "NaN", "nAn"}},
 		{name: "ten digit precisions", args: []string{`%.10f %.10e %.10g\n`, "1e-10", "1e-10", "1e-10"}},
 		{name: "g digits of a tenth", args: []string{`%.17g %.18g %.19g %.20g %.21g %.22g\n`, "0.1", "0.1", "0.1", "0.1", "0.1", "0.1"}},
 		{name: "e digits of a tenth", args: []string{`%.19e %.20e %.21e\n`, "0.1", "0.1", "0.1"}},
@@ -265,7 +273,7 @@ func printfCases(t *testing.T) []invocation {
 		{name: "float sign flags", args: []string{`%+.3e % .3E %+g %+a % a % g\n`, "1", "1", "1", "1", "1", "1"}},
 		{name: "float widths", args: []string{`%08.3f %-8.3f %+8.3f % 8.3f %08.3f %+08.3f\n`, "1.5", "1.5", "1.5", "1.5", "-1.5", "-1.5"}},
 		{name: "specials are not zero padded", args: []string{`%08f %08e %08g %08a %-8f| %+8f % 8f\n`, "-inf", "-inf", "nan", "nan", "inf", "inf", "inf"}},
-		{name: "nan is not zero padded", args: []string{`%08f %08e %08g %08a\n`, "nan", "nan", "-nan", "-nan"}},
+		{name: "nan is not zero padded", darwinLibcDefect: appleNaNSign, args: []string{`%08f %08e %08g %08a\n`, "nan", "nan", "-nan", "-nan"}},
 		{name: "float width mix", args: []string{`%5.1f|%-8g|%08.3a|%#8.0f|%#08.0f|%#08.0e|%#08.0g|\n`, "inf", "nan", "1", "1", "1", "1", "1"}},
 		{name: "bench float shape", args: []string{`%5.2f|%-8.3e|%+g\n`, "3.14159", "2.71828", "1.5"}},
 
@@ -324,30 +332,30 @@ func printfCases(t *testing.T) []invocation {
 
 		// glibc refuses a conversion whose output would reach INT_MAX-1
 		// bytes: nothing is printed for it, `write error`, exit 1.
-		{name: "width at int max", args: []string{"%2147483647d", "1"}},
+		{name: "width at int max", darwinLibcDefect: appleIntMaxField, args: []string{"%2147483647d", "1"}},
 		{name: "width one under int max", args: []string{"%2147483646d", "1"}},
 		{name: "width far too large", args: []string{"%99999999999d", "1"}},
-		{name: "precision at int max", args: []string{"%.2147483647d", "1"}},
+		{name: "precision at int max", darwinLibcDefect: appleIntMaxField, args: []string{"%.2147483647d", "1"}},
 		{name: "precision one under int max", args: []string{"%.2147483646d", "1"}},
-		{name: "precision far too large", args: []string{"%.99999999999d", "1"}},
+		{name: "precision far too large", darwinLibcDefect: applePrecisionWrap, args: []string{"%.99999999999d", "1"}},
 		// Just under the limit is a two-gigabyte field, which both
 		// sides write as a run of zeros (#9812).
 		{name: "e precision just under", args: []string{"%.2147483640e", "1"}},
 		{name: "f precision just under", args: []string{"%.2147483640f", "1"}},
 		{name: "a precision just under", args: []string{"%.2147483640a", "1"}},
 		{name: "g precision is fine", args: []string{"%.2147483640g", "1"}},
-		{name: "star width at int max", args: []string{"%*d", "2147483647", "1"}},
+		{name: "star width at int max", darwinLibcDefect: appleIntMaxField, args: []string{"%*d", "2147483647", "1"}},
 		{name: "star width at int min", args: []string{"%*d", "-2147483648", "1"}},
-		{name: "refused directive between text", args: []string{`a%2147483647db\n`, "1"}},
-		{name: "refused directive then cycle", args: []string{`a%2147483647db\n`, "1", "2"}},
-		{name: "refused directive then another", args: []string{`a%2147483647d\n%d`, "1", "2"}},
-		{name: "refused precision between text", args: []string{`a%.2147483647d\n`, "1"}},
-		{name: "refused star width between text", args: []string{`a%*db\n`, "2147483647", "1"}},
-		{name: "refused then invalid", args: []string{`%2147483647d\n%z`, "1"}},
-		{name: "refused then backslash c in b", args: []string{`%2147483647d%b`, "1", `x\c`}},
-		{name: "refused then backslash c", args: []string{`%2147483647d\c`, "1"}},
-		{name: "refused then bad number", args: []string{`%2147483647d%d\n`, "1", "abc"}},
-		{name: "bad number then refused", args: []string{`%d%2147483647d\n`, "abc", "1"}},
+		{name: "refused directive between text", darwinLibcDefect: appleIntMaxField, args: []string{`a%2147483647db\n`, "1"}},
+		{name: "refused directive then cycle", darwinLibcDefect: appleIntMaxField, args: []string{`a%2147483647db\n`, "1", "2"}},
+		{name: "refused directive then another", darwinLibcDefect: appleIntMaxField, args: []string{`a%2147483647d\n%d`, "1", "2"}},
+		{name: "refused precision between text", darwinLibcDefect: appleIntMaxField, args: []string{`a%.2147483647d\n`, "1"}},
+		{name: "refused star width between text", darwinLibcDefect: appleIntMaxField, args: []string{`a%*db\n`, "2147483647", "1"}},
+		{name: "refused then invalid", darwinLibcDefect: appleIntMaxField, args: []string{`%2147483647d\n%z`, "1"}},
+		{name: "refused then backslash c in b", darwinLibcDefect: appleIntMaxField, args: []string{`%2147483647d%b`, "1", `x\c`}},
+		{name: "refused then backslash c", darwinLibcDefect: appleIntMaxField, args: []string{`%2147483647d\c`, "1"}},
+		{name: "refused then bad number", darwinLibcDefect: appleIntMaxField, args: []string{`%2147483647d%d\n`, "1", "abc"}},
+		{name: "bad number then refused", darwinLibcDefect: appleIntMaxField, args: []string{`%d%2147483647d\n`, "abc", "1"}},
 
 		// Write failures: what close_stdout reports depends on whether a
 		// diagnostic flushed stdout first (#8265).

@@ -376,3 +376,7 @@ proc_waitpid_status=397
 mounts=398
 ct_mark=399
 vg_request=400
+sysctl=401
+aes_expand_key=402
+aes_ctr32=403
+ghash=404

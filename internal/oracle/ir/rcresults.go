@@ -120,6 +120,9 @@ var rcResultOwned = map[string]bool{
 	"__fern_string_bytes_copy": true, // borrowed string copied into a fresh u8[]
 	"buf_take_bytes":           true, // fresh owned byte array, independent of the builder
 	"__fern_scale_f64":         true, // cap@-12, rc=1@-8, len@-4, the scaled f64 copy
+	"__aes_expand_key":         true, // a fresh u8[] of round keys
+	"__aes_ctr32":              true, // a fresh u8[], the data exclusive-ored with the keystream
+	"__ghash":                  true, // a fresh 16-byte u8[], the GHASH state
 
 	// String production. Each is three-way — empty, inline-packed (<=7
 	// bytes), or an rc1 heap copy — and "owned" is the right answer for
@@ -263,6 +266,7 @@ var rcResultOwned = map[string]bool{
 	"chown_at":          true,
 	"statfs":            true,
 	"mounts":            true,
+	"sysctl":            true,
 	"getcwd":            true,
 	"chdir":             true,
 	"chroot":            true,
@@ -424,6 +428,7 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"lstat":                            true,
 	"statfs":                           true,
 	"mounts":                           true,
+	"sysctl":                           true,
 	"access":                           true,
 	// The builder's take hands over its own string-shaped buffer, the
 	// only reference to it (rcResultOwned, #8773); in argument position

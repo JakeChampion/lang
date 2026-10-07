@@ -3339,6 +3339,9 @@ function x86_gas_imm3a_op(mnem: string): i32 {
     "pclmulqdq" => {
       return 68;
     },
+    "aeskeygenassist" => {
+      return 223;
+    },
     _ => {
       return 0 - 1;
     }
@@ -3430,7 +3433,7 @@ function x86_gas_vshift_op(mnem: string): i32 {
   }
 }
 
-// x86_gas_sse38_op: the 66 0F 38 Op /r forms with an xmm destination. SSSE3 and SSE4.1, both well inside the declared x86-64-v3 baseline.
+// x86_gas_sse38_op: the 66 0F 38 Op /r forms with an xmm destination. SSSE3, SSE4.1 and AES-NI, all inside the declared baseline.
 function x86_gas_sse38_op(mnem: string): i32 {
   match (mnem) {
     "pshufb" => {
@@ -3465,6 +3468,12 @@ function x86_gas_sse38_op(mnem: string): i32 {
     },
     "pmaxud" => {
       return 63;
+    },
+    "aesenc" => {
+      return 220;
+    },
+    "aesenclast" => {
+      return 221;
     },
     _ => {
       return 0 - 1;

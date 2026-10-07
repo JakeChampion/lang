@@ -718,8 +718,11 @@ Memcheck then reports any branch or address computed from a secret byte.
 with the self-host CLI and runs each one natively and under
 `valgrind --error-exitcode=3`: a secret byte steering a branch or an index
 must exit 3, a secret used branch-free and then declassified must be clean,
-and `std/crypto/chacha20poly1305`'s seal and open over a secret key and
-plaintext must be clean, where `open` declassifies only its tag verdict.
+and `std/crypto/chacha20poly1305`'s and `std/crypto/aes_gcm`'s seal and
+open over a secret key and plaintext must be clean, where `open`
+declassifies only its tag verdict. The AES-GCM case runs AES-128 and AES-256,
+so it covers the AES-NI and `pclmulqdq` kernels; memcheck tracks definedness
+through both.
 `TestSelfHostCtGateArm64` is the same on an arm64 host.
 `TestSelfHostCtMarksArm64` (under qemu), `TestSelfHostCtMarksWasm` and
 `TestSelfHostInterpCtMarks` (both interpreters) run the same probes where the
@@ -729,6 +732,15 @@ in `perf.yml`'s bench job on both ISAs, which installs valgrind and sets
 runner gates its own ISA. It proves only what the probes execute: a
 secret-dependent path the inputs do not take is not reported. Every later
 crypto kernel adds its own case.
+
+The AES-GCM kernels (`__aes_expand_key`, `__aes_ctr32`, `__ghash`) are
+checked on their own against known answers on every target by
+`TestSelfHostAESGCMKernelsX86_64`, `…Arm64` (qemu), `…Wasm` and
+`TestSelfHostInterpAESGCMKernels` (both interpreters): FIPS-197's key
+schedules and blocks, GCM's test case 2 GHASH, a counter whose low word
+wraps, and every length to 80 bytes, which crosses each kernel's unrolled
+stride and partial last block. A wrong kernel on one backend fails that
+backend's leg even when the others agree.
 
 ## Netlify deploys and the standalone smoke script
 
