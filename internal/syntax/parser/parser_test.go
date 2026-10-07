@@ -4281,3 +4281,31 @@ func TestIntegerLiteralPastU64ParsesFlagged(t *testing.T) {
 		t.Errorf("u64 max: got ExceedsU64=%v ExceedsI64=%v Value=%d", lit.ExceedsU64, lit.ExceedsI64, lit.Value)
 	}
 }
+
+// A module-qualified struct literal takes postfix operators like a bare one:
+// `lib.Thing { v: 1 }.v` used to stop at the literal and fail with P001 (#11853).
+func TestQualifiedStructLitTakesPostfix(t *testing.T) {
+	for _, src := range []string{
+		`function main(): i32 { return lib.Thing { v: 1 }.v; }`,
+		`function main(): i32 { return lib::Thing { v: 1 }.v; }`,
+		`function main(): i32 { return Box[i32] { v: 1 }.v; }`,
+	} {
+		prog, err := Parse(src)
+		if err != nil {
+			t.Errorf("%s: %v", src, err)
+			continue
+		}
+		ret, ok := prog.Funcs[0].Body.Stmts[0].(*ast.Return)
+		if !ok {
+			t.Fatalf("%s: first statement is %T", src, prog.Funcs[0].Body.Stmts[0])
+		}
+		fa, ok := ret.Value.(*ast.FieldAccess)
+		if !ok || fa.Field != "v" {
+			t.Errorf("%s: return value is %T, want a .v field access", src, ret.Value)
+			continue
+		}
+		if _, ok := fa.Target.(*ast.StructLit); !ok {
+			t.Errorf("%s: field access target is %T, want the struct literal", src, fa.Target)
+		}
+	}
+}

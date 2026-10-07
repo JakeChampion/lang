@@ -109,6 +109,7 @@ func TestSelfHostPlaygroundOverlay(t *testing.T) {
 	t.Run("check-accepts-a-valid-program", func(t *testing.T) { playgroundCheckAccepts(t, bin) })
 	t.Run("check-names-a-type-error", func(t *testing.T) { playgroundCheckRejects(t, bin) })
 	t.Run("check-demangles-an-imported-struct", func(t *testing.T) { playgroundCheckDemangles(t, bin) })
+	t.Run("check-derive-default-needs-a-field-default", func(t *testing.T) { playgroundCheckDeriveDefault(t, bin) })
 	t.Run("interp-runs-and-prints", func(t *testing.T) { playgroundInterpRuns(t, bin) })
 	t.Run("interp-checks-first", func(t *testing.T) { playgroundInterpChecksFirst(t, bin) })
 	t.Run("interp-reaches-the-stdlib", func(t *testing.T) { playgroundInterpStdlib(t, bin) })
@@ -250,6 +251,20 @@ func playgroundCheckDemangles(t *testing.T, bin string) {
 	}
 	if !strings.Contains(stderr, `struct iter.ArrayIter has no field or method "sum"`) || strings.Contains(stderr, "__") {
 		t.Errorf("the diagnostic does not name iter.ArrayIter:\n%s", stderr)
+	}
+}
+
+// A derived Default delegates a struct field to the field type's own
+// default(); a field type without one is E021 at the derive, naming the
+// field, not an unpositioned E001 from the synthesised call (#11853).
+func playgroundCheckDeriveDefault(t *testing.T, bin string) {
+	_, stderr, code := runPlayground(t, bin, t.TempDir(),
+		"import \"core/cmp\";\nstruct Inner { v: i32 }\n@derive(cmp.Default)\nstruct Outer { i: Inner, n: i32 }\nfunction main(): i32 { return 0; }\n", "-check")
+	if code == 0 {
+		t.Fatal("-check accepted a Default derive over a field with no default")
+	}
+	if !strings.Contains(stderr, "4:1") || !strings.Contains(stderr, "E021") || !strings.Contains(stderr, "field i of type Inner") || strings.Contains(stderr, "E001") {
+		t.Errorf("want E021 at the derive naming field i:\n%s", stderr)
 	}
 }
 

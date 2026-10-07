@@ -21,10 +21,8 @@ app/
 ```toml
 [package]
 name = "app"
-# informational for now
-version = "0.1.0"
-# entry module for `import "app"` (this is the default)
-lib = "lib.fern"
+version = "0.1.0"     # informational for now
+lib = "lib.fern"      # entry module for `import "app"` (this is the default)
 ```
 
 `name` is the only required key. A bare `import "<dep>"` from another
@@ -33,9 +31,9 @@ resolves `sub.fern` inside its directory. Qualified use follows the last
 segment of the import: `helper.three()`, `sub.four()`.
 
 The manifest is a strict subset of TOML: section headers, `key = value`
-lines with quoted strings, arrays and inline tables, and `#` comments on
-lines of their own. Each entry fits on one line, and a comment after a
-value on the same line is rejected. A `[lint]` table sets the
+lines with quoted strings, arrays and inline tables, and `#` comments,
+on a line of their own or after a value. Each entry fits on one line.
+A `[lint]` table sets the
 [linter's](../tooling/#linter) severities for the package.
 
 ## Dependencies
@@ -214,7 +212,7 @@ a top-level `[exclude]` table, applied only from the manifest you run
 
 ```toml
 [exclude]
-bar = ["1.9.0", "1.9.1"]
+bar = ["1.9.0", "1.9.1"]   # broken releases
 ```
 
 A demand for an excluded version rounds up to the next non-excluded

@@ -46,6 +46,8 @@ func TestSelfHostAddDifferentialX86_64(t *testing.T) {
 		// The line goes directly under an existing table header, and the
 		// comment and the dependency already there are untouched.
 		{"path-into-existing-table", withTable, "helper", "path:../helper", true},
+		// A trailing comment on the header still names the table (#11841).
+		{"path-into-commented-table", "[package]\nname = \"app\"\n[dependencies]  # deps\n", "helper", "path:../helper", true},
 		// No table yet: one is appended, with the same separating blank line.
 		{"path-creates-table", noTable, "helper", "path:../helper", true},
 		// A manifest whose last line has no newline must not gain a joined line.
