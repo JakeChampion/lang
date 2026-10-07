@@ -1,0 +1,104 @@
+import "std/test";
+import "std/hex";
+import "std/string";
+import "std/crypto/p256";
+
+// tests/stdlib/p256_test.fern — std/crypto/p256 against ECDSA signatures
+// Python's cryptography package made over SHA-256 and SHA-384. Another
+// message, another key, a flipped bit, a malformed DER signature, and a
+// point off the curve or in the wrong encoding are refused.
+
+function point_a(): string {
+  return "04a23b9022d49b897ce4b6226ea2eaa36dd59f277918f9898473c8ce63303383790df2d39e99356fefe7d0437f100e5db677df12dbbc6676242f6421ac1df486b5";
+}
+
+function point_b(): string {
+  return "04774b4b57e541af2d09b64e237491791181537742a0344af1166d21addbd63ae070e88fd056b5604e61b44bd7ed01994cfe7d0da40347ebdd71dd5bbf777f627c";
+}
+
+function compressed_a(): string {
+  return "02a23b9022d49b897ce4b6226ea2eaa36dd59f277918f9898473c8ce6330338379";
+}
+
+function sig256(): string {
+  return "3045022048904d4503626fdc06a955c8d520721abef0207349e167c61d5058ff7dd208d2022100deb3c0f1dd86a4b857c2d9735d719115d0dcda2d96aa7c04a68acfeb9e739509";
+}
+
+function sig384(): string {
+  return "304502203b50f948beff36ed1b3a2de838361ab73b2384e71cd4242022cada876ee24b040221009ac88530dcf6676c4325f34c6cfedae34e0d3f497a9b33c7f12c2b35fcf3604c";
+}
+
+function message(): u8[] {
+  return "fern p256 verification".bytes();
+}
+
+function verified(point: string, h: p256.Hash, msg: u8[], sig: string): boolean {
+  match (p256.public_key(hex.hex_decode(point))) {
+    Ok(k) => {
+      return p256.verify(k, h, msg, hex.hex_decode(sig));
+    },
+    Err(e) => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function key_error(point: string): string {
+  match (p256.public_key(hex.hex_decode(point))) {
+    Ok(k) => {
+      return "accepted";
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function test_sha256(): test.TestOutcome {
+  return test.assert_true(verified(point_a(), p256.Sha256, message(), sig256()));
+}
+
+function test_sha384(): test.TestOutcome {
+  return test.assert_true(verified(point_a(), p256.Sha384, message(), sig384()));
+}
+
+function test_refusals(): test.TestOutcome {
+  if (verified(point_a(), p256.Sha256, "fern p256 verification!".bytes(), sig256())) {
+    return test.fail("a signature over another message verified");
+  }
+  if (verified(point_b(), p256.Sha256, message(), sig256())) {
+    return test.fail("a signature verified under another key");
+  }
+  if (verified(point_a(), p256.Sha384, message(), sig256())) {
+    return test.fail("a signature verified under the other digest");
+  }
+  let flipped: u8[] = hex.hex_decode(sig256());
+  flipped = flipped.with(20, flipped[20] ^ 1 as u8);
+  if (verified(point_a(), p256.Sha256, message(), hex.hex_encode(flipped))) {
+    return test.fail("a flipped bit verified");
+  }
+  if (verified(point_a(), p256.Sha256, message(), sig256() + "00")) {
+    return test.fail("a signature with a trailing byte verified");
+  }
+  return test.pass();
+}
+
+function test_bad_keys(): test.TestOutcome {
+  if (key_error(compressed_a()) != "p256: the key is not an uncompressed SEC 1 point") {
+    return test.fail("a compressed point was accepted");
+  }
+  let off: u8[] = hex.hex_decode(point_a());
+  off = off.with(64, off[64] ^ 1 as u8);
+  return test.assert_eq(key_error(hex.hex_encode(off)), "p256: the point is not on the curve");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/crypto/p256");
+  r = r.it("ECDSA SHA-256", test_sha256);
+  r = r.it("ECDSA SHA-384", test_sha384);
+  r = r.it("refusals", test_refusals);
+  r = r.it("malformed keys", test_bad_keys);
+  return r.finish();
+}

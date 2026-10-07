@@ -1,0 +1,295 @@
+// std/crypto/p256 — ECDSA signature verification over NIST P-256
+// (FIPS 186-5, SEC 1), the curve most TLS certificates and handshake
+// signatures use.
+//
+//   let key: p256.PublicKey = p256.public_key(sec1_point)?;
+//   if (p256.verify(key, p256.Sha256, message, der_signature)) { … }
+//
+// Verification handles only public values, so it is built on `core/bigint`
+// rather than constant-time limbs; signing, which needs those, is a later
+// slice of #9858.
+
+import "core/bigint";
+import "std/crypto";
+
+// The digest a signature was made over.
+pub enum Hash {
+  Sha256,
+  Sha384,
+}
+
+// P256Error — why a public key was refused.
+pub enum P256Error {
+  // Not a 65-byte uncompressed SEC 1 point (04 || x || y).
+  Encoding,
+  // The coordinates are out of range or the point is not on the curve.
+  NotOnCurve,
+}
+
+pub function (e: P256Error) message(): string {
+  match (e) {
+    Encoding => {
+      return "p256: the key is not an uncompressed SEC 1 point";
+    },
+    NotOnCurve => {
+      return "p256: the point is not on the curve";
+    }
+  }
+  return "";
+}
+
+// PublicKey — a point on the curve, in affine coordinates.
+pub struct PublicKey { x: bigint.BigInt, y: bigint.BigInt }
+
+// A point in Jacobian coordinates: (X/Z^2, Y/Z^3), the point at infinity
+// when Z is 0.
+struct Point { x: bigint.BigInt, y: bigint.BigInt, z: bigint.BigInt }
+
+function __hex_int(s: string): bigint.BigInt {
+  let v: bigint.BigInt = bigint.zero();
+  let i: i32 = 0;
+  while (i < s.len()) {
+    let c: i32 = s[i] as i32;
+    let d: i32 = c - 48;
+    if (c >= 97) {
+      d = c - 87;
+    }
+    v = v.shl(4).add(bigint.from_u64(d as u64));
+    i = i + 1;
+  }
+  return v;
+}
+
+function __p(): bigint.BigInt {
+  return __hex_int("ffffffff00000001000000000000000000000000ffffffffffffffffffffffff");
+}
+
+function __n(): bigint.BigInt {
+  return __hex_int("ffffffff00000000ffffffffffffffffbce6faada7179e84f3b9cac2fc632551");
+}
+
+function __b(): bigint.BigInt {
+  return __hex_int("5ac635d8aa3a93e7b3ebbd55769886bc651d06b0cc53b0f63bce3c3e27d2604b");
+}
+
+function __g(): Point {
+  return Point {
+    x: __hex_int("6b17d1f2e12c4247f8bce6e563a440f277037d812deb33a0f4a13945d898c296"),
+    y: __hex_int("4fe342e2fe1a7f9b8ee7eb4a7c0f9e162bce33576b315ececbb6406837bf51f5"),
+    z: bigint.from_u64(1 as u64),
+  };
+}
+
+function __int(v: i32): bigint.BigInt {
+  return bigint.from_u64(v as u64);
+}
+
+function __mod(a: bigint.BigInt, m: bigint.BigInt): bigint.BigInt {
+  let r: bigint.BigInt = a.divmod(m).1;
+  if (r.is_negative()) {
+    return r.add(m);
+  }
+  return r;
+}
+
+function __mul(a: bigint.BigInt, b: bigint.BigInt, m: bigint.BigInt): bigint.BigInt {
+  return __mod(a.mul(b), m);
+}
+
+// __inv is a^(m-2) mod m, the inverse of a for a prime m.
+function __inv(a: bigint.BigInt, m: bigint.BigInt): bigint.BigInt {
+  let e: bigint.BigInt = m.sub(__int(2));
+  let r: bigint.BigInt = __int(1);
+  let i: i32 = e.bit_length() - 1;
+  while (i >= 0) {
+    r = __mul(r, r, m);
+    if (e.bit(i)) {
+      r = __mul(r, a, m);
+    }
+    i = i - 1;
+  }
+  return r;
+}
+
+function __from_be(b: [u8], from: i32, len: i32): bigint.BigInt {
+  let v: bigint.BigInt = bigint.zero();
+  let i: i32 = 0;
+  while (i < len) {
+    v = v.shl(8).add(bigint.from_u64(b[from + i] as u64));
+    i = i + 1;
+  }
+  return v;
+}
+
+// __on_curve is whether y^2 = x^3 - 3x + b mod p, both below p.
+function __on_curve(x: bigint.BigInt, y: bigint.BigInt): boolean {
+  let p: bigint.BigInt = __p();
+  if (x.cmp(p) >= 0 || y.cmp(p) >= 0) {
+    return false;
+  }
+  let rhs: bigint.BigInt = __mod(__mul(__mul(x, x, p), x, p).sub(x.mul(__int(3))).add(__b()), p);
+  return __mul(y, y, p).eq(rhs);
+}
+
+// public_key(point) — the key an uncompressed SEC 1 point encodes, as a
+// certificate's SubjectPublicKeyInfo carries it.
+pub function public_key(point: [u8]): Result[PublicKey, P256Error] {
+  if (point.len() != 65 || point[0] != 4 as u8) {
+    return Err(Encoding);
+  }
+  let x: bigint.BigInt = __from_be(point, 1, 32);
+  let y: bigint.BigInt = __from_be(point, 33, 32);
+  if (!__on_curve(x, y)) {
+    return Err(NotOnCurve);
+  }
+  return Ok(PublicKey { x: x, y: y });
+}
+
+// __double is 2P, the curve's a being -3.
+function __double(q: Point): Point {
+  let p: bigint.BigInt = __p();
+  if (q.z.is_zero() || q.y.is_zero()) {
+    return Point { x: __int(1), y: __int(1), z: bigint.zero() };
+  }
+  let delta: bigint.BigInt = __mul(q.z, q.z, p);
+  let gamma: bigint.BigInt = __mul(q.y, q.y, p);
+  let beta: bigint.BigInt = __mul(q.x, gamma, p);
+  let alpha: bigint.BigInt = __mul(__mul(q.x.sub(delta), q.x.add(delta), p), __int(3), p);
+  let x3: bigint.BigInt = __mod(__mul(alpha, alpha, p).sub(beta.mul(__int(8))), p);
+  let z3: bigint.BigInt = __mod(__mul(q.y.add(q.z), q.y.add(q.z), p).sub(gamma).sub(delta), p);
+  let y3: bigint.BigInt = __mod(__mul(alpha, beta.mul(__int(4)).sub(x3), p).sub(__mul(gamma, gamma, p).mul(__int(8))), p);
+  return Point { x: x3, y: y3, z: z3 };
+}
+
+// __add is P + Q, doubling when the two are the same point.
+function __add(a: Point, b: Point): Point {
+  if (a.z.is_zero()) {
+    return b;
+  }
+  if (b.z.is_zero()) {
+    return a;
+  }
+  let p: bigint.BigInt = __p();
+  let z1z1: bigint.BigInt = __mul(a.z, a.z, p);
+  let z2z2: bigint.BigInt = __mul(b.z, b.z, p);
+  let u1: bigint.BigInt = __mul(a.x, z2z2, p);
+  let u2: bigint.BigInt = __mul(b.x, z1z1, p);
+  let s1: bigint.BigInt = __mul(__mul(a.y, b.z, p), z2z2, p);
+  let s2: bigint.BigInt = __mul(__mul(b.y, a.z, p), z1z1, p);
+  let h: bigint.BigInt = __mod(u2.sub(u1), p);
+  let r: bigint.BigInt = __mod(s2.sub(s1).mul(__int(2)), p);
+  if (h.is_zero()) {
+    if (r.is_zero()) {
+      return __double(a);
+    }
+    return Point { x: __int(1), y: __int(1), z: bigint.zero() };
+  }
+  let i: bigint.BigInt = __mul(h.mul(__int(2)), h.mul(__int(2)), p);
+  let j: bigint.BigInt = __mul(h, i, p);
+  let v: bigint.BigInt = __mul(u1, i, p);
+  let x3: bigint.BigInt = __mod(__mul(r, r, p).sub(j).sub(v.mul(__int(2))), p);
+  let y3: bigint.BigInt = __mod(__mul(r, v.sub(x3), p).sub(__mul(s1, j, p).mul(__int(2))), p);
+  let z3: bigint.BigInt = __mul(__mod(__mul(a.z.add(b.z), a.z.add(b.z), p).sub(z1z1).sub(z2z2), p), h, p);
+  return Point { x: x3, y: y3, z: z3 };
+}
+
+// __combine is u1*G + u2*Q by one double-and-add over both scalars
+// (Shamir's trick).
+function __combine(u1: bigint.BigInt, u2: bigint.BigInt, q: Point): Point {
+  let g: Point = __g();
+  let gq: Point = __add(g, q);
+  let r: Point = Point { x: __int(1), y: __int(1), z: bigint.zero() };
+  let i: i32 = 255;
+  while (i >= 0) {
+    r = __double(r);
+    let b1: boolean = u1.bit(i);
+    let b2: boolean = u2.bit(i);
+    if (b1 && b2) {
+      r = __add(r, gq);
+    } else if (b1) {
+      r = __add(r, g);
+    } else if (b2) {
+      r = __add(r, q);
+    }
+    i = i - 1;
+  }
+  return r;
+}
+
+function __digest(h: Hash, msg: [u8]): u8[] {
+  match (h) {
+    Sha256 => {
+      return crypto.sha256_new().update_bytes(msg).final_bytes();
+    },
+    Sha384 => {
+      return crypto.sha384_new().update_bytes(msg).final_bytes();
+    }
+  }
+  return [];
+}
+
+// __der_int reads a DER INTEGER at `at` in sig: its value and the offset
+// after it, or nothing when it is malformed or not minimally encoded.
+function __der_int(sig: [u8], at: i32): Option[(bigint.BigInt, i32)] {
+  if (at + 2 > sig.len() || sig[at] != 2 as u8) {
+    return None;
+  }
+  let len: i32 = sig[at + 1] as i32;
+  if (len == 0 || len > 33 || at + 2 + len > sig.len()) {
+    return None;
+  }
+  if (sig[at + 2] as i32 >= 128) {
+    return None;
+  }
+  if (len > 1 && sig[at + 2] == 0 as u8 && sig[at + 3] as i32 < 128) {
+    return None;
+  }
+  return Some((__from_be(sig, at + 2, len), at + 2 + len));
+}
+
+// __verify_rs is whether (r, s) is key's ECDSA signature
+// over msg's digest.
+function __verify_rs(key: PublicKey, hash: Hash, msg: [u8], r: bigint.BigInt, s: bigint.BigInt): boolean {
+  let n: bigint.BigInt = __n();
+  if (r.is_zero() || s.is_zero() || r.cmp(n) >= 0 || s.cmp(n) >= 0) {
+    return false;
+  }
+  let d: u8[] = __digest(hash, msg);
+  let e: bigint.BigInt = __from_be(d, 0, 32);
+  let w: bigint.BigInt = __inv(s, n);
+  let u1: bigint.BigInt = __mul(e, w, n);
+  let u2: bigint.BigInt = __mul(r, w, n);
+  let x: Point = __combine(u1, u2, Point { x: key.x, y: key.y, z: __int(1) });
+  if (x.z.is_zero()) {
+    return false;
+  }
+  let p: bigint.BigInt = __p();
+  let zinv: bigint.BigInt = __inv(x.z, p);
+  let ax: bigint.BigInt = __mul(x.x, __mul(zinv, zinv, p), p);
+  return __mod(ax, n).eq(r);
+}
+
+// verify(key, hash, msg, sig) — whether sig, a DER ECDSA-Sig-Value
+// (SEQUENCE { r INTEGER, s INTEGER }) as TLS and X.509 carry it, is key's
+// signature over msg.
+pub function verify(key: PublicKey, hash: Hash, msg: [u8], sig: [u8]): boolean {
+  if (sig.len() < 8 || sig[0] != 48 as u8 || sig[1] as i32 != sig.len() - 2) {
+    return false;
+  }
+  match (__der_int(sig, 2)) {
+    Some(r) => {
+      match (__der_int(sig, r.1)) {
+        Some(s) => {
+          return s.1 == sig.len() && __verify_rs(key, hash, msg, r.0, s.0);
+        },
+        None => {
+          return false;
+        }
+      }
+    },
+    None => {
+      return false;
+    }
+  }
+  return false;
+}

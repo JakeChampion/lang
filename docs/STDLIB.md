@@ -1083,7 +1083,19 @@ x86-64.
 - `X25519Error` is `ScalarLength(i32)`, `PointLength(i32)` or `LowOrder`,
   with `message()`.
 
-### `std/crypto/rsa`
+### `std/crypto/p256`
+
+ECDSA signature verification over NIST P-256 (FIPS 186-5), the curve most TLS
+certificates and handshake signatures use. Verification handles only public
+values, so this first version is built on `core/bigint` in Jacobian
+coordinates, about 13 ms per verification on x86-64; constant-time limbs come
+with signing (#9858).
+
+- `public_key(point: [u8]): Result[PublicKey, P256Error]` — an uncompressed
+  SEC 1 point, checked to lie on the curve.
+- `verify(key, hash, msg, sig): boolean` — `sig` a DER ECDSA-Sig-Value, as TLS
+  and X.509 carry it; `hash` `Sha256` or `Sha384`.
+
 
 RSA signature verification (RFC 8017) for TLS 1.3 and X.509 chains:
 RSASSA-PKCS1-v1_5 and RSASSA-PSS over SHA-256, SHA-384 and SHA-512, PSS with
