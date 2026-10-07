@@ -107,53 +107,101 @@ function is_blank_byte(c: i32): boolean {
   return c == 32 || c >= 9 && c <= 13;
 }
 
-// The operand as a uid, on gnulib's terms: leading blanks, an optional
-// `+`, then decimal digits and nothing else. (uid_t)-1 is refused — it
-// is the "no change" value every setuid-family call reserves — which is
-// why `id 4294967295` is `no such user` even where a passwd entry with
-// that id would be found.
-function operand_uid(spec: string): Option[i64] {
+// The operand as a uid, read as gnulib's xstrtoul reads it: leading
+// blanks, an optional `+`, then decimal digits and nothing else. (uid_t)-1
+// is refused — it is the "no change" value every setuid-family call
+// reserves — which is why `id 4294967295` is `no such user` even where a
+// passwd entry with that id would be found.
+//
+// A refusal carries the text of the errno the read leaves, "" for none,
+// because GNU's `no such user` prints it: Darwin's strtoul sets EINVAL when
+// it finds no digits, and either libc sets ERANGE past 2^64 - 1. A leading
+// `-` is refused before strtoul runs.
+function operand_uid(spec: string): Result[i64, string] {
   let i: i32 = 0;
   while (i < spec.len() && is_blank_byte(spec[i] as i32)) {
     i = i + 1;
   }
+  if (i < spec.len() && spec[i] as i32 == 45) {
+    return Err("");
+  }
   if (i < spec.len() && spec[i] as i32 == 43) {
     i = i + 1;
   }
-  if (i >= spec.len()) {
-    return None;
+  let start: i32 = i;
+  while (i < spec.len() && spec[i] as i32 == 48) {
+    i = i + 1;
+  }
+  let sig: i32 = i;
+  while (i < spec.len() && spec[i] as i32 >= 48 && spec[i] as i32 <= 57) {
+    i = i + 1;
+  }
+  if (i == start) {
+    if (target_os() == "darwin") {
+      return Err("Invalid argument");
+    }
+    return Err("");
+  }
+  if (exceeds_ulong(spec, sig, i)) {
+    return Err(gnu.erange_text());
+  }
+  if (i < spec.len() || i - sig > 10) {
+    return Err("");
   }
   let v: i64 = 0;
-  while (i < spec.len()) {
-    let c: i32 = spec[i] as i32;
-    if (c < 48 || c > 57) {
-      return None;
-    }
-    v = v * (10 as i64) + (c - 48) as i64;
-    if (v > 4294967295 as i64) {
-      return None;
+  let k: i32 = sig;
+  while (k < i) {
+    v = v * (10 as i64) + (spec[k] as i32 - 48) as i64;
+    k = k + 1;
+  }
+  if (v >= 4294967295 as i64) {
+    return Err("");
+  }
+  return Ok(v);
+}
+
+// Whether the digits s[from..to], with no leading zero, are past 2^64 - 1.
+function exceeds_ulong(s: string, from: i32, to: i32): boolean {
+  let max: string = "18446744073709551615";
+  if (to - from != max.len()) {
+    return to - from > max.len();
+  }
+  let i: i32 = 0;
+  while (i < max.len()) {
+    if (s[from + i] != max[i]) {
+      return s[from + i] > max[i];
     }
     i = i + 1;
   }
-  if (v == 4294967295 as i64) {
-    return None;
-  }
-  return Some(v);
+  return false;
 }
 
-function lookup_user(spec: string): Option[pwdb.User] {
+// The account a USER operand names, or the text of the errno GNU's
+// `no such user` carries for it: the uid read's, or the uid lookup's. GNU
+// looks nothing up for an empty operand.
+function lookup_user(spec: string): Result[pwdb.User, string] {
+  if (spec.len() == 0) {
+    return Err("");
+  }
   match (pwdb.user_by_name(spec)) {
     Some(u) => {
-      return Some(u);
+      return Ok(u);
     },
     None => {}
   }
   match (operand_uid(spec)) {
-    Some(uid) => {
-      return pwdb.user_by_uid(uid);
+    Ok(uid) => {
+      match (pwdb.user_by_uid(uid)) {
+        Some(u) => {
+          return Ok(u);
+        },
+        None => {
+          return Err(pwdb.lookup_failure_text());
+        }
+      }
     },
-    None => {
-      return None;
+    Err(why) => {
+      return Err(why);
     }
   }
 }
@@ -405,16 +453,13 @@ pub function main(): i32 {
     let i: i32 = 0;
     while (i < operands.len()) {
       match (lookup_user(operands[i])) {
-        Some(u) => {
+        Ok(u) => {
           // A named user's ids are all four the same, and the group
           // list is the database's rather than the kernel's.
           o = print_one(o, m, u.uid, u.gid, u.uid, u.gid, pwdb.group_list(u.name, u.gid), "", term, extra);
         },
-        None => {
-          // GNU reports the errno the lookup left: none from glibc's files
-          // backend, and Directory Services' own on Darwin.
+        Err(why) => {
           let msg: string = gnu.quote(operands[i]) + ": no such user";
-          let why: string = pwdb.lookup_failure_text();
           if (why.len() > 0) {
             msg = msg + ": " + why;
           }

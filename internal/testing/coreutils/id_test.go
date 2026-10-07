@@ -45,6 +45,9 @@ func init() {
 //   - The operand is looked up by name and then as a decimal uid, so
 //     `id 0` is root where `groups 0` is `no such user`. `0x0`, `4a`,
 //     `4 ` and 4294967295 are all refused, and ` +4` is not.
+//   - `no such user` carries the errno gnulib's number read leaves: ERANGE
+//     past 2^64 - 1 on both libcs, and EINVAL on Darwin for an operand
+//     with no digits, whose strtoul sets it.
 //   - `-n` / `-r` / `-z` are each refused in the default format, and
 //     two of `-ugGZ` together are refused whatever they are.
 //   - `-Z` is refused before any of that on a kernel with no SELinux.
@@ -106,6 +109,11 @@ func idCases(t *testing.T) []invocation {
 		{name: "numeric operand with a trailing letter", args: []string{"0a"}},
 		{name: "the reserved uid", args: []string{"4294967295"}},
 		{name: "past the reserved uid", args: []string{"4294967296"}},
+		{name: "the largest unsigned long", args: []string{"18446744073709551615"}},
+		{name: "past the largest unsigned long", args: []string{"18446744073709551616"}},
+		{name: "far past the largest unsigned long", args: []string{"99999999999999999999"}},
+		{name: "overflow with a trailing letter", args: []string{"99999999999999999999a"}},
+		{name: "a lone plus", args: []string{"+"}},
 		{name: "a uid no entry claims", args: []string{"99999"}},
 		{name: "no such user", args: []string{"nosuchuser"}},
 		{name: "no such user with -u", args: []string{"-u", "nosuchuser"}},
