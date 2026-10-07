@@ -1700,23 +1700,6 @@ pub function block_positions(f: SFunc): i32[] {
   return out;
 }
 
-// successor_positions lists the positions of bi's successors; an edge to an
-// id no block carries contributes -1.
-function successor_positions(f: SFunc, at: i32[], bi: i32): i32[] {
-  let t: STerm = f.blocks[bi].term;
-  let out: i32[] = [];
-  if (t.kind_tag == 2) {
-    out = out.append(position_of(at, t.target));
-  }
-  if (t.kind_tag == 3) {
-    out = out.append(position_of(at, t.t));
-    if (t.f != t.t) {
-      out = out.append(position_of(at, t.f));
-    }
-  }
-  return out;
-}
-
 // successor_id is branch `which` of `t` by block id, in branch order: a
 // plain branch has one, a conditional two, and -1 stands past them. A walk
 // over the two reads them without building a list.
@@ -1736,8 +1719,8 @@ pub function successor_id(t: STerm, which: i32): i32 {
 }
 
 // distinct_successor_position is successor_id's branch by position, or -1
-// for a second branch to the first's block, which successor_positions lists
-// once.
+// for a second branch to the first's block, so a branch to one block on
+// both arms is one successor; an edge to an id no block carries is -1 too.
 function distinct_successor_position(at: i32[], t: STerm, which: i32): i32 {
   let id: i32 = successor_id(t, which);
   if (id < 0 || which == 1 && id == t.t) {
@@ -1909,15 +1892,9 @@ function read_sites(f: SFunc, at: i32[], blk_start: i32[]): ReadSites {
   let phi_end: i32[] = [];
   let bi: i32 = 0;
   while (bi < f.blocks.len()) {
-    let ss: i32[] = successor_positions(f, at, bi);
-    succ_a = succ_a.with(bi, 0 - 1);
-    succ_b = succ_b.with(bi, 0 - 1);
-    if (ss.len() > 0) {
-      succ_a = succ_a.with(bi, ss[0]);
-    }
-    if (ss.len() > 1) {
-      succ_b = succ_b.with(bi, ss[1]);
-    }
+    let t: STerm = f.blocks[bi].term;
+    succ_a = succ_a.with(bi, distinct_successor_position(at, t, 0));
+    succ_b = succ_b.with(bi, distinct_successor_position(at, t, 1));
     let end: i32 = 0;
     let k: i32 = 0;
     while (k < f.blocks[bi].insts.len()) {
