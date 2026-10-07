@@ -338,7 +338,7 @@ var table = map[string]struct {
 }{
 	"arm64-linux": {
 		isa: "arm64", environment: "linux",
-		description: "ARM64 Linux ELF (Graviton, Raspberry Pi 4+ 64-bit, Apple Silicon via container).",
+		description: "ARM64 Linux ELF (AWS Graviton, Apple Silicon via container; ARMv8.2-A with the crypto extensions).",
 	},
 	"arm64-darwin": {
 		isa: "arm64", environment: "darwin",
