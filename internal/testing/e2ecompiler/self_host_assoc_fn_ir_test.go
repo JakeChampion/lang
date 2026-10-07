@@ -45,6 +45,10 @@ var assocFnIRCases = []struct {
 		`trait Def { function def(): Self; } enum E { A(i32), B } impl Def for E { function def(): E { return B; } } function val(e: E): i32 { match (e) { A(n) => { return n; }, B => { return 42; } } return 0; } function main(): i32 { let x: E = E.def(); return val(x); }`, 42},
 	{"enum-str-payload",
 		`trait Mk { function of(s: string): Self; } enum E { Tag(string), Nil } impl Mk for E { function of(s: string): E { return Tag(s); } } function val(e: E): i32 { match (e) { Tag(w) => { return w.len(); }, Nil => { return 0; } } return 0; } function main(): i32 { let x: E = E.of("hello"); return val(x); }`, 5},
+	// A free function shares the associated function's name; the bare call
+	// names the free one (#11844). 42 + 7 = 49.
+	{"free-fn-same-name",
+		`trait Mk { function one(): Self; } struct Pt { x: i32 } impl Mk for Pt { function one(): Pt { return Pt { x: 7 }; } } function one(x: i32): i32 { return x + 1; } function main(): i32 { return one(41) + Pt.one().x; }`, 49},
 	{"enum-inferred",
 		`trait Mk { function tag(n: i32): Self; } enum E { A(i32), B } impl Mk for E { function tag(n: i32): E { if (n > 0) { return A(n); } return B; } } function val(e: E): i32 { match (e) { A(n) => { return n; }, B => { return 99; } } return 0; } function main(): i32 { let x = E.tag(3); return val(x); }`, 3},
 }

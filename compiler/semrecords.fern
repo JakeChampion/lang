@@ -6,8 +6,10 @@ import "./util";
 pub struct Field { name: string, ty: typeinfo.Type }
 
 // `views` says whether a value of the type holds a `str` view anywhere,
-// through every type its fields reach (semsource.view_types).
-pub struct Record { ty: typeinfo.Type, fields: Field[], views: boolean }
+// through every type its fields reach (semsource.view_types). `nests_func`
+// says whether a field holds a function value inside an array, tuple or map
+// (ssasem.nests_func), which no release walk reaches.
+pub struct Record { ty: typeinfo.Type, fields: Field[], views: boolean, nests_func: boolean }
 
 // Records is a function's record table with a bucket index over the struct
 // names, so a lookup by type walks one name's instances, not the table.
@@ -32,7 +34,8 @@ pub function no_records(): Records {
 // behind the variant's own shape, while a struct-union's member IS the box.
 pub struct Variant { name: string, fields: Field[] }
 
-pub struct Enum { ty: typeinfo.Type, variants: Variant[], layout: i32, views: boolean }
+// `views` and `nests_func` are a Record's, over every variant's fields.
+pub struct Enum { ty: typeinfo.Type, variants: Variant[], layout: i32, views: boolean, nests_func: boolean }
 
 pub function layout_variant(): i32 {
   return 1;

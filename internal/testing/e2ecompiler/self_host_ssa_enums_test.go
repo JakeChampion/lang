@@ -8,7 +8,7 @@ let shape: typeinfo.Type = typeinfo.TypeUnion { name: "Shape", args: [] };
 let dot = semrecords.Variant { name: "Dot", fields: [] };
 let full = semrecords.Variant { name: "Full", fields: [semrecords.Field { name: "__ev", ty: ia }] };
 let line = semrecords.Variant { name: "Line", fields: [semrecords.Field { name: "__ev", ty: i32t }] };
-let shapeEnum = semrecords.Enum { views: false, ty: shape, variants: [dot, full, line], layout: semrecords.layout_variant() };
+let shapeEnum = semrecords.Enum { views: false, nests_func: false, ty: shape, variants: [dot, full, line], layout: semrecords.layout_variant() };
 enums = [shapeEnum];
 params = [shape]; types = [shape, bt, ia, i32t, i32t, i32t, shape]; result = i32t;
 graph = ssa.SFunc { name: "measure", nparams: 1, nvals: 7, entry: 7, takes_env: false, blocks: [
@@ -57,7 +57,7 @@ func semanticEnumCases() []struct{ name, change, want string } {
 		{"enum-nonunion-identity", `enums = [semrecords.Enum { ...shapeEnum, ty: ia }];`, "non-union enum identity"},
 		{"enum-unresolved-identity", `enums = [semrecords.Enum { ...shapeEnum, ty: typeinfo.unchecked() }];`, "unresolved enum identity"},
 		{"enum-variant-field-missing-schema", `enums = [semrecords.Enum { ...shapeEnum, variants: [semrecords.Variant { name: "Boxed", fields: [semrecords.Field { name: "__ev", ty: typeinfo.TypeStruct { name: "Box", args: [] } }] }] }];`, "missing nested record schema"},
-		{"enum-record-field-missing-enum", `records = [semrecords.Record { views: false, ty: typeinfo.TypeStruct { name: "Holder", args: [] }, fields: [semrecords.Field { name: "s", ty: shape }] }]; enums = [];`, "missing nested record schema"},
+		{"enum-record-field-missing-enum", `records = [semrecords.Record { views: false, nests_func: false, ty: typeinfo.TypeStruct { name: "Holder", args: [] }, fields: [semrecords.Field { name: "s", ty: shape }] }]; enums = [];`, "missing nested record schema"},
 	}
 	for i := range cases {
 		cases[i].change = semanticEnum + cases[i].change
