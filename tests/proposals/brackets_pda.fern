@@ -254,7 +254,7 @@ function analyze(src: string): Report {
 
   if (mode == st_string()) {
     return Report {
-      verdict: Unterminated(str_start),
+      verdict: Verdict.Unterminated(str_start),
       max_depth: max_depth,
       opens: opens,
     };

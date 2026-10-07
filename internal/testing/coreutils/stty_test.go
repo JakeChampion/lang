@@ -19,6 +19,7 @@ package coreutils
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"testing"
@@ -63,6 +64,16 @@ func sttyControlChars() []string {
 // The starting states a case can ask for. Each is reachable with one
 // reference invocation, and between them they turn every flag `sane` names
 // both ways, so a `-brkint` case has a brkint to clear.
+func sttyDelayPre() []string {
+	args := []string{"nl1", "cr3", "tab3", "-opost"}
+	// Darwin has no OLCUC. Keep its set/clear rejection cases, but use
+	// supported settings when establishing a starting state for another case.
+	if runtime.GOOS != "darwin" {
+		args = append(args, "olcuc")
+	}
+	return args
+}
+
 func sttyPres() map[string][]string {
 	return map[string][]string{
 		"fresh":    nil,
@@ -70,7 +81,7 @@ func sttyPres() map[string][]string {
 		"sane":     {"sane"},
 		"noncanon": {"-icanon", "min", "5", "time", "2"},
 		"chars":    {"erase", "X", "intr", "^A"},
-		"delays":   {"nl1", "cr3", "tab3", "bs1", "vt1", "ff1", "-opost", "olcuc"},
+		"delays":   append(sttyDelayPre(), "bs1", "vt1", "ff1"),
 		"slow":     {"300"},
 		"resized":  {"rows", "40", "columns", "100"},
 		"iflags":   {"ixoff", "iutf8", "-icrnl"},
@@ -114,7 +125,7 @@ func sttyCases(t *testing.T) []invocation {
 	for _, c := range sttyCombos() {
 		add("combo "+c, c)
 		addFrom("combo "+c+" from raw", []string{"raw"}, c)
-		addFrom("combo "+c+" from delays", []string{"nl1", "cr3", "tab3", "-opost", "olcuc"}, c)
+		addFrom("combo "+c+" from delays", sttyDelayPre(), c)
 		addFrom("combo "+c+" from iflags", []string{"ixoff", "iutf8", "-icrnl"}, c)
 		addFrom("combo "+c+" from chars", []string{"erase", "X", "intr", "^A", "eof", "Z"}, c)
 	}

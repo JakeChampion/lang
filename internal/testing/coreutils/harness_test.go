@@ -114,14 +114,10 @@ type invocation struct {
 	// `nohup` decides which descriptors to redirect and which clause to
 	// print, and `stty` is nothing else. A pipe answers no to all of it.
 	//
-	// Two consequences of a real terminal, both of which BOTH sides
-	// meet, so the comparison is unaffected:
-	//
-	//   - the line discipline translates each \n into \r\n on the way
-	//     out, so the bytes a tty case compares carry the \r,
-	//   - the window size is set explicitly to 24x80 rather than left at
-	//     the 0x0 a fresh pty carries, so a layout is pinned by the case
-	//     rather than by whatever a utility falls back to.
+	// Output terminals disable kernel output translation so the comparison
+	// captures the utility's exact bytes. They remain terminals, sized 24x80
+	// so layout does not depend on a utility's fallback for a fresh 0x0 pty.
+	// Input terminal settings remain intact for the stty state comparisons.
 	//
 	// A pty holds only a few kilobytes, so the masters are drained by
 	// their own goroutines: a child writing more than that into a
@@ -1136,7 +1132,11 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 	var ptyState *os.File
 	if inv.ttyIn {
 		master, slave := openPty(t)
-		defer master.Close()
+		stopEcho := discardPtyEcho(master)
+		defer func() {
+			slave.Close()
+			stopEcho()
+		}()
 		if inv.ttyState {
 			ptyState = slave
 			defer slave.Close()
@@ -1150,14 +1150,14 @@ func (inv invocation) run(t *testing.T, bin, argv0 string) outcome {
 		feedPty(master, inv.stdin)
 	}
 	if inv.ttyOut {
-		master, slave := openPty(t)
+		master, slave := openOutputPty(t)
 		defer master.Close()
 		outSlave = slave
 		cmd.Stdout = slave
 		ptyOut = drainPty(master)
 	}
 	if inv.ttyErr {
-		master, slave := openPty(t)
+		master, slave := openOutputPty(t)
 		defer master.Close()
 		errSlave = slave
 		cmd.Stderr = slave
