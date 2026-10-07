@@ -279,6 +279,9 @@ var Ungated = map[string]bool{
 	// Rewriting the argv later args() calls report reaches nothing outside
 	// the process, the argument that leaves `args` and `exit` here.
 	"set_args": true,
+	// The constant-time marks only tell valgrind which bytes are secret.
+	"__ct_secret": true,
+	"__ct_public": true,
 	// A signal disposition reconfigures how THIS process reacts to
 	// something delivered to it. It reaches nothing outside the
 	// process and confers no authority a dependency could escalate

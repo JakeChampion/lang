@@ -3298,6 +3298,11 @@ func TestSelfHostCheckerDifferentialX86_64(t *testing.T) {
 		{"intrinsic-str-dec", "function main(): i32 { let s: string = \"ab\"; let q: usize = __fern_str_dec(s); return 0; }\n"},
 		{"intrinsic-arr-dec", "function main(): i32 { let p: usize = __alloc(16); let q: usize = __fern_arr_dec(p, 8); return 0; }\n"},
 		{"intrinsic-drop-arr-ptr", "function main(): i32 { let p: usize = __alloc(16); let q: usize = __fern_drop_arr_ptr(p, 8); return 0; }\n"},
+		// The constant-time marks take a [u8] and answer nothing.
+		{"ct-marks", "function main(): i32 { let k: u8[] = __alloc_u8(4); __ct_secret(k); let v: [u8] = k[0:2]; __ct_public(v); __ct_secret(\"ab\".as_bytes()); return 0; }\n"},
+		{"ct-mark-wrong-element", "function main(): i32 { let k: i32[] = [1, 2]; __ct_secret(k); return 0; }\n"},
+		{"ct-mark-arity", "function main(): i32 { let k: u8[] = __alloc_u8(4); __ct_public(k, k); return 0; }\n"},
+		{"ct-mark-void-result", "function main(): i32 { let k: u8[] = __alloc_u8(4); let r: i32 = __ct_public(k); return r; }\n"},
 		{"tuple-var-annot", "function main(): i32 { let t: (i32, string) = (1, \"a\"); return t.0; }\n"},
 		{"tuple-array-annot", "function main(): i32 { let out: (i32, string)[] = []; return 0; }\n"},
 		{"tuple-nested", "function main(): i32 { let t: (i32, (string, i32)) = (1, (\"a\", 2)); return t.0; }\n"},

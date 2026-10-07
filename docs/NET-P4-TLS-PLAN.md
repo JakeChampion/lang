@@ -20,13 +20,19 @@ type-checks standalone (`TestStdlibModulesImportStandalone`).
    Poly1305 in 26-bit limbs with `u64` products. Gate: the RFC's vectors
    plus an independent implementation's, in the stdtest differential and
    `TestSelfHostChaCha20Poly1305Wasm`. About 94 MB/s on x86-64.
-2. **The constant-time gate.** A builtin that marks a buffer secret emits
-   valgrind's client-request sequence, which is a no-op outside valgrind.
-   `perf.yml` runs the AEAD's kernels under memcheck on x86-64 and arm64,
-   and a conditional jump or an address computed from a marked byte fails
-   it. The builtin is classified four times like any other. This lands
-   before the field arithmetic, so every later kernel is gated from its
-   first PR.
+2. **The constant-time gate.** Landed. `__ct_secret(b: [u8])` and
+   `__ct_public(b: [u8])` issue memcheck's MAKE_MEM_UNDEFINED and
+   MAKE_MEM_DEFINED client requests over the bytes, a no-op outside
+   valgrind, and no-ops in both interpreters and on wasm. They lower to one
+   op, `ct_mark`, whose register arms call `asmcore.rt_src_ct_mark`, a Fern
+   helper that builds the request block in `__fern_scratch` and issues it
+   through a new raw-floor op, `__raw_vg_request`: valgrind.h's sequence,
+   the only per-backend code. Both are core with no capability. `open`
+   declassifies only its tag verdict before branching on it.
+   `TestSelfHostCtGateX86_64` runs the AEAD and probes under memcheck, and
+   `perf.yml`'s bench job runs it with `TestSelfHostCtGateArm64` on both
+   ISAs (docs/TEST-GATES.md). This lands before the field arithmetic, so
+   every later kernel is gated from its first PR.
 3. **X25519** (RFC 7748). Field arithmetic mod 2^255 - 19 in ten limbs of
    25 and 26 bits held in `i64`, so every product fits, and a Montgomery
    ladder with a masked swap. Gate: RFC 7748's vectors and the 1,000-step

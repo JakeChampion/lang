@@ -4148,6 +4148,14 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     // no args -> __fern_disable_core_dumps() -> 1 once it cannot dump core.
     s = s.write("    bl __fn___fern_disable_core_dumps\n    str x0, [sp, #-16]!\n");
     s = s.need("disable_core_dumps");
+  } else if (o.kind_tag == 399) {  // ct_mark
+    // [bytes] -> __fern_ct_secret / __fern_ct_public(x0 = bytes).
+    s = s.need("ct_mark");
+    s = s.write("    bl __fn___fern_" + asmcore.ct_mark_helper(o.i32_imm) + "\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+  } else if (o.kind_tag == 400) {  // vg_request
+    // [args] -> valgrind's client request: x4 the block, x3 the default
+    // and then the result; the rotations leave x12 as it was.
+    s = s.write("    ldr x4, [sp], #16\n    mov x3, #0\n    ror x12, x12, #3\n    ror x12, x12, #13\n    ror x12, x12, #51\n    ror x12, x12, #61\n    orr x10, x10, x10\n    str x3, [sp, #-16]!\n");
   } else if (o.kind_tag == 243 || o.kind_tag == 244) {  // signal_ignore / signal_default
     // [sig] -> __fern_signal_{ignore,default}(x0=sig) -> the sigaction
     // return, pushed so the statement-level drop balances.
@@ -6038,7 +6046,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     "signal_disposition", "access",
     "geteuid", "getegid", "getuid", "getgid", "getgroups", "environ",
     "fd_stat", "raw_scratch", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "sync",
-    "clock_resolution", "clock_set",
+    "clock_resolution", "clock_set", "ct_mark",
   ])) {
     s = s.write("    .section .bss\n    .align 8\n__fern_scratch: .skip " + asmcore.scratch_size(ctgt, s.has_need("statfs")) + "\n    .section .text\n");
   }
@@ -11057,6 +11065,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   }
   if (s.has_need("disable_core_dumps")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_disable_core_dumps(tgt), s);
+  }
+  if (s.has_need("ct_mark")) {
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_ct_mark(), s);
   }
   if (s.has_need("clock_resolution")) {
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_clock_resolution(tgt), s);

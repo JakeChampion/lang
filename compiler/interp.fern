@@ -5055,6 +5055,10 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
   if (name == "__inner_mul_add_f64") {
     return call_inner_mul_add_f64(args);
   }
+  // Only valgrind sees the constant-time marks.
+  if (name == "__ct_secret" || name == "__ct_public") {
+    return v_void();
+  }
   // `__memchr(s, byte, from)` / `__ascii_run(s, from)` — the two scan
   // kernels the compiled backends vectorise, and the byte-search floor
   // under std/string's find family. `from` clamps (negative behaves as 0)

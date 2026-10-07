@@ -1965,7 +1965,7 @@ function is_raw_floor_builtin(name: string): boolean {
   if (name == "__raw_string" || name == "__raw_scratch" || name == "__raw_environ" || name == "__raw_splice_pipe" || name == "__raw_cover" || name == "__raw_task_state") {
     return true;
   }
-  if (name == "__raw_addr" || name == "__raw_arr_box") {
+  if (name == "__raw_addr" || name == "__raw_arr_box" || name == "__raw_vg_request") {
     return true;
   }
   return name == "__syscall3" || name == "__syscall4" || name == "__syscall5" || name == "__syscall6";
@@ -6686,6 +6686,10 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     parts = emit_wasm_signal_taken(parts);
   } else if (o.kind_tag == 395) {  // signal_raise
     parts = emit_wasm_signal_raise(parts);
+  } else if (o.kind_tag == 399) {  // ct_mark
+    // Only valgrind reads the constant-time marks: the view is dropped and
+    // the dummy i32 the statement drops is pushed.
+    parts = parts.append("    drop\n    i32.const 0\n");
   } else if (o.kind_tag == 278) {  // signal_mask
     parts = emit_wasm_signal_mask(parts);
   } else if (o.kind_tag == 279) {  // signal_disposition

@@ -8,7 +8,8 @@
 //
 // Constant time by construction: field elements are ten signed limbs of 26
 // and 25 bits in `i64`, so every product fits; the ladder swaps with a mask,
-// never a branch; and the inversion's exponent is a public constant.
+// never a branch; and the inversion's exponent is a public constant. The
+// valgrind gate (`__ct_secret`, docs/TEST-GATES.md) checks this.
 
 import "core/int";
 
@@ -351,7 +352,12 @@ pub function x25519(scalar: [u8], point: [u8]): Result[u8[], X25519Error] {
     any = any | out[i];
     i = i + 1;
   }
-  if (any == 0) {
+  // Whether the secret is all zeros is the one secret-derived value allowed
+  // to steer a branch.
+  let verdict: u8[] = __alloc_u8(1);
+  verdict = verdict.with(0, any);
+  __ct_public(verdict);
+  if (verdict[0] == 0) {
     return Err(LowOrder);
   }
   return Ok(out);

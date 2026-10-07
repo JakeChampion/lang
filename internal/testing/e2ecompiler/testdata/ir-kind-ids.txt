@@ -374,3 +374,5 @@ signal_raise=395
 disable_core_dumps=396
 proc_waitpid_status=397
 mounts=398
+ct_mark=399
+vg_request=400

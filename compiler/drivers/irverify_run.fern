@@ -752,11 +752,11 @@ function selfhost_reuse(gate: i32, token: i32): ir.Op[] {
   ];
 }
 
-// keep_reuse builds ssarc's kept-field shape: keep_token's select, the
-// allocation with its result stored and shaped, the kept field copied from
-// the donor under the token's null arm, then keep_release's select on the
-// token with the donor's whole-value release on the decline arm, and the
-// donor cleared.
+// keep_reuse builds ssarc's kept-field shape: keep_token's select; under the
+// token's null arm the allocation with its result stored and shaped and the
+// kept field copied from the donor, and the token as the result on the other
+// arm; then keep_release's select on the token with the donor's whole-value
+// release on the decline arm, and the donor cleared.
 function keep_reuse(gate: i32, token: i32, dec: i32): ir.Op[] {
   return [
     ir.op_load_local(gate),
@@ -769,21 +769,24 @@ function keep_reuse(gate: i32, token: i32, dec: i32): ir.Op[] {
     ir.op_store_local(4),
     ir.op_end(),
     ir.op_load_local(4),
+    ir.op_const_i32(0),
+    ir.op_bin("eq", 0, false),
+    ir.op_if(0),
+    ir.op_load_local(4),
     ir.op_const_i32(3),
     ir.op_call_direct("__fern_alloc_reuse", 2),
     ir.op_store_local(5),
     ir.op_load_local(5),
     ir.op_struct_set_shape("P"),
     ir.op_drop(),
-    ir.op_load_local(4),
-    ir.op_const_i32(0),
-    ir.op_bin("eq", 0, false),
-    ir.op_if(0),
     ir.op_load_local(5),
     ir.op_load_local(gate),
     ir.op_struct_get(1, 0),
     ir.op_call_direct("__fern_rc_inc", 1),
     ir.op_struct_set(1, 0),
+    ir.op_else(),
+    ir.op_load_local(4),
+    ir.op_store_local(5),
     ir.op_end(),
     ir.op_load_local(4),
     ir.op_const_i32(0),

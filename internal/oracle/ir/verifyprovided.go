@@ -256,6 +256,8 @@ var providedSigs = map[string]providedSig{
 	"__heap_bump_bytes":                {-1, rWord},
 	"__heap_mark":                      {-1, rWord},
 	"__heap_release_to":                {-1, rVoid},
+	"__ct_secret":                      {1, rVoid},
+	"__ct_public":                      {1, rVoid},
 	"__http_entry":                     {2, rVoid},
 	"__load_i32":                       {1, rWord},
 	"__load_i64":                       {1, rWord},

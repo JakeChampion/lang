@@ -818,6 +818,10 @@ func New() *Interp {
 	// reason — Go's allocator serves this evaluator and there is no bump
 	// allocator to count calls into.
 	i.Builtins["__heap_alloc_count"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Number(0), nil }}
+	// The constant-time marks speak only to valgrind.
+	ctMark := &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Void{}, nil }}
+	i.Builtins["__ct_secret"] = ctMark
+	i.Builtins["__ct_public"] = ctMark
 	// __rc_underflow_count(): the runtime's over-release counter, for the same
 	// reason — the interpreter has no refcounts to underflow, so it reports the
 	// clean reading rather than erroring. Every self-host driver ends in
