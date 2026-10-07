@@ -125,6 +125,15 @@ struct M { tag: i32, xs: i32[] }
 @noinline function mk(n: i32): S { if (n % 2 == 0) { return One(n); } return Two(n, 1); }
 function f(n: i32): i32 { let s: S = mk(n); let t: i32 = 0; match (s) { One(v) => { t = v; }, Two(v, w) => { t = v + w; } } let m: M = M { tag: t, xs: id([n]) }; return m.tag + m.xs[0]; }
 function main(): i32 { return f(2) + f(3); }`, 11, 6},
+		// The filter's tail calls become a loop over the walked cell, which
+		// dies in both arms of the match on it: one arm builds a cell, the
+		// other loops on with the payload. Its edge back drops the held cell
+		// before the loop's phi takes the payload.
+		{"held-across-the-loop-edge", `enum L { C(i32, L), N(i32, L), E }
+function build(n: i32): L { let acc: L = E; let i: i32 = 0; while (i < n) { if (i % 3 == 1) { acc = N(i, acc); } else { acc = C(i - 2, acc); } i = i + 1; } return acc; }
+@noinline function drop_neg(xs: L): L { match (xs) { C(h, t) => { if (h < 0) { return drop_neg(t); } return C(h, drop_neg(t)); }, N(h, t) => { return drop_neg(t); }, E => { return E; } } }
+function score(l: L): i32 { let acc: i32 = 0; let cur: L = l; let go: boolean = true; while (go) { match (cur) { C(h, t) => { acc = acc * 3 + h; cur = t; }, N(h, t) => { acc = acc * 5 + h; cur = t; }, E => { go = false; } } } return acc; }
+function main(): i32 { let keep: L = build(8); let before: i32 = score(keep); let d: i32 = score(drop_neg(keep)); return (d * 7 + score(keep) - before) % 101; }`, 57, 12},
 		// Dying in the match arms, served in one of two later arms, at scale.
 		{"match-arms-churn", `enum St { On(i32[]), Off(i32[]) }
 struct M { tag: i32, st: St }
