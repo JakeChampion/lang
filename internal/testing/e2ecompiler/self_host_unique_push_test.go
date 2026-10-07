@@ -5,9 +5,10 @@ import (
 	"testing"
 )
 
-// uniquePushProg grows a fresh array one element at a time. Each append tests
-// whether the receiver is unique and pushes in place when it is; that arm's
-// inline push needs no count test of its own, while the shared arm keeps one.
+// uniquePushProg grows a fresh array one element at a time. The receiver is
+// proved sole (an empty literal, then each append's own result), so every
+// append is the consuming push alone and tests no count at run time; the first
+// push, onto the empty literal's static box, has no room and copies.
 const uniquePushProg = "@noinline function zeros(n: i32): i32[] { let out: i32[] = []; let i: i32 = 0; while (i < n) { out = out.append(i); i = i + 1; } return out; }\n" +
 	"function main(): i32 { let z: i32[] = zeros(300); return z.len() - 300 + z[299] - 200; }\n"
 
@@ -19,8 +20,8 @@ func TestSelfHostUniquePushSkipsCountTest(t *testing.T) {
 	} {
 		t.Run(tc.target, func(t *testing.T) {
 			body := asmFuncBody(t, cli.emit(t, tc.target, uniquePushProg), "__fn_zeros")
-			if n := strings.Count(body, tc.countTest); n != 1 {
-				t.Errorf("%d push count tests in zeros, want 1 (the shared arm's only):\n%s", n, body)
+			if n := strings.Count(body, tc.countTest); n != 0 {
+				t.Errorf("%d push count tests in zeros, want 0 (the receiver is proved sole):\n%s", n, body)
 			}
 		})
 	}
