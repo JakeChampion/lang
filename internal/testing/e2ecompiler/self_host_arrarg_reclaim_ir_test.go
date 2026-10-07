@@ -7,29 +7,25 @@ import (
 	"testing"
 )
 
-// arrArgReclaimCases pin the #4365 stage-(b) borrowed-call-arg temp reclaim for
-// ARRAYS: a fresh scalar-element array literal passed directly to a borrowing
-// free function (`take([i, i+1])`) allocated a buffer per evaluation that
-// nothing freed on the self-host IR path (native bounds the shape). The
-// call lowering now stashes such an arg (discardable_scalar_arr_lit at a
-// call_arg_borrowable position) and __fern_rc_dec's it right after the call —
-// the array sibling of the #4355 string literal-arg box reclaim.
+// arrArgReclaimCases pin the borrowed-call-arg temp reclaim for ARRAYS (#4365):
+// a fresh scalar-element array literal passed directly to a borrowing free
+// function (`take([i, i+1])`) is released right after the call, so the buffer
+// allocated per evaluation does not accumulate — the array sibling of the #4355
+// string literal-arg box reclaim.
 //
-// The last four cases widen that stash: a fresh array a "STRARR:" / "ARR:"
-// PRODUCER returned is the same temp one step removed, and a COUNTED-RETAIN
-// param position admits one where borrowability cannot — the callee stores the
-// argument, but every appearance of its parameter is a counted store or a
-// non-retaining read, so this one dec nets it to a single owner either way.
-// Pointer-element arrays use only the counted-retain half: the release is the
-// shallow buffer dec, which at a borrowable position would strand the element
-// boxes.
+// The last four cases widen the shape: a fresh array a producer function
+// returned is the same temp one step removed, and a param the callee stores
+// still takes one when every appearance of that parameter is a counted store or
+// a non-retaining read, so the caller's dec nets it to a single owner either
+// way. Pointer-element arrays use only that counted-store half: the release is
+// the shallow buffer dec, which at a borrowable position would strand the
+// element boxes.
 //
-// The consuming-callee case additionally pins the borrow-verdict soundness fix
-// this slice required: a param that is REASSIGNED (`xs = xs.append(9)`) or used
-// as an `.append` receiver (`let ys = xs.append(7)`) is never borrowable —
-// append reuses/frees a unique receiver buffer on growth, so a caller-side
-// release after such a callee double-freed (rc underflow; pre-existing for the
-// Level-2 named-local precise drop, which shares the verdict).
+// The consuming-callee case pins that a param that is REASSIGNED
+// (`xs = xs.append(9)`) or used as an `.append` receiver
+// (`let ys = xs.append(7)`) is never borrowable: append reuses/frees a unique
+// receiver buffer on growth, so a caller-side release after such a callee
+// would double-free (rc underflow).
 var arrArgReclaimCases = []struct {
 	name string
 	src  string

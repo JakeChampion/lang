@@ -7,19 +7,10 @@ import (
 
 // --- A field read at a BORROWABLE call-arg position is not a move (#6691) ----
 //
-// `tag(o.v)` cost the struct local `o` its entire reclaim credit: the NODEEP
-// field-move scan reads every non-scalar field read in a direct call argument as
-// a move, so `emit_struct_field_drops` withheld the deep drop AND no
-// `__field_reclaim_S` was emitted at all. Every superseded box and the `xs`
-// buffer it owned then leaked per ITERATION — 1840 / 10240 / 98560 bytes at
-// k = 1 / 8 / 32, against a flat 0 on native.
-//
-// `borrowable_params_of` already answers the question the scan needs: a param is
-// admitted only when the callee provably never returns, stores, slices or
-// captures it, so such a position leaves the field owned by `o` alone. It is the
-// same registry and the same Level-2 rule `expr_unsafe_for` applies to a
-// bare-ident argument, where it is trusted for caller-side FREES — a strictly
-// stronger action than keeping a deep drop.
+// `tagof(o.v)` hands a field to a callee that never returns, stores, slices or
+// captures its param, so the field stays owned by `o` alone and `o` keeps its
+// deep drop. Read as a move, every superseded box and the `xs` buffer it owned
+// leaked per ITERATION — 1840 / 10240 / 98560 bytes at k = 1 / 8 / 32.
 func borrowedFieldArgSrc(k int) string {
 	return fmt.Sprintf(`enum V { A(i32[]), B }
 struct S { xs: i32[], v: V, n: i32 }
@@ -53,10 +44,10 @@ function main(): i32 {
 // six bits.
 func borrowedFieldArgExit(k int) int { return (10 * (k + 5)) & 63 }
 
-// The callee that RETAINS its argument must keep marking. `keep` returns its
-// param, so `borrowable_params_of` refuses it and `kept` genuinely aliases the
-// enum box `o` still holds — deep-dropping a superseded `o` would free the box
-// `tagof(kept)` reads after the loop, which is a wrong answer, not a byte count.
+// The callee that RETAINS its argument is a move. `keep` returns its param, so
+// `kept` genuinely aliases the enum box `o` still holds — deep-dropping a
+// superseded `o` would free the box `tagof(kept)` reads after the loop, which is
+// a wrong answer, not a byte count.
 const borrowedFieldArgRetainedSrc = `enum V { A(i32[]), B }
 struct S { xs: i32[], v: V, n: i32 }
 
@@ -67,7 +58,7 @@ function tagof(v: V): i32 {
     }
 }
 
-function keep(v: V): V { return v; }
+@noinline function keep(v: V): V { return v; }
 
 function work(k: i32): i32 {
     let o: S = S { xs: [1, 2], v: V.A([9, 8, 7]), n: 0 };
@@ -87,14 +78,12 @@ function main(): i32 {
     return t & 63;
 }`
 
-// --- The same position, the other scan: `structfldok:` admission (#6698) -----
+// --- The same position, a nested-struct field (#6698) ------------------------
 //
-// The whole-program read scan behind the nested-struct / enum field arms of
-// `__field_reclaim_<T>` and `__struct_drop_<T>` counted a call argument as an
-// escaping read, so `itag(o.inner)` refused the type outright and the
-// struct-literal override's retain on `o.inner` had nothing to pair with — the
-// #6653 imbalance, reached through a different door. Only the SPELLING of the
-// read differs between these two programs, and the direct one was already 0.
+// `itag(o.inner)` passes a nested struct field to a borrowing callee; the type
+// must keep the field release that pairs with the struct literal's retain on
+// `o.inner` (the #6653 imbalance otherwise). Only the SPELLING of the read
+// differs between these two programs, and both must cost 0.
 func borrowedStructFieldArgSrc(k int, viaCall bool) string {
 	read := "o.inner.tag"
 	if viaCall {
@@ -123,14 +112,14 @@ function main(): i32 {
 }`, read, k)
 }
 
-// The retaining callee, for the read scan: `keepi` returns its param, so
-// `borrowable_params_of` refuses it and `p` genuinely aliases the inner box `o`
-// still holds. `p` is read back after the rebind loop — both its scalar and its
-// array — so admitting the type here would answer wrongly, not just quietly.
+// The retaining callee, for the struct field: `keepi` returns its param, so `p`
+// genuinely aliases the inner box `o` still holds. `p` is read back after the
+// rebind loop — both its scalar and its array — so treating the argument as a
+// borrow here would answer wrongly, not just quietly.
 const borrowedStructFieldArgRetainedSrc = `struct I { tag: i32, data: i32[] }
 struct S { xs: i32[], inner: I, n: i32 }
 
-function keepi(v: I): I { return v; }
+@noinline function keepi(v: I): I { return v; }
 
 function work(k: i32): i32 {
     let o: S = S { xs: [1, 2], inner: I { tag: 3, data: [9] }, n: 0 };
@@ -150,14 +139,12 @@ function main(): i32 {
     return t & 63;
 }`
 
-// --- The STRING half of the same admission: `strfldok:` (#6703) -------------
+// --- The same position, a string field (#6703) -------------------------------
 //
-// `strfld_collect_unsafe` marked every call argument too, and a marked field
-// NAME disqualifies its type from `strfldok:` — which gates the `k_str` arm of
-// `__struct_drop_<T>`, the `fr_str` arm of `__field_reclaim_<T>` AND the
-// construction-side retain that pairs with them. So the type kept its
-// arrays-only body and every superseded `name` stranded, once per ITERATION
-// rather than once per call: 2800 B against the direct read's 0.
+// `slen(o.name)` passes a string field to a borrowing callee. The struct's
+// string field must still be released with the struct and on every rebind;
+// missed, every superseded `name` stranded once per ITERATION: 2800 B against
+// the direct read's 0.
 //
 // Only the final read differs between the two programs.
 func borrowedStringFieldArgSrc(k int, viaCall bool) string {
@@ -187,15 +174,13 @@ function main(): i32 {
 }`, read, k)
 }
 
-// The retaining callee, for the string scan. `keeps` returns its param, so
-// `borrowable_params_of` refuses it and `kept` is a second reference to the
-// buffer `o.name` holds — read back after the rebind loop, so admitting the
-// type here would free it early and answer wrongly. Measured identically on
-// the parent (12160 B), which is what makes it a negative rather than a
-// second copy of the row above.
+// The retaining callee, for the string field. `keeps` returns its param, so
+// `kept` is a second reference to the buffer `o.name` holds — read back after
+// the rebind loop, so treating the argument as a borrow would free it early and
+// answer wrongly.
 const borrowedStringFieldArgRetainedSrc = `struct S { name: string, xs: i32[], n: i32 }
 
-function keeps(v: string): string { return v; }
+@noinline function keeps(v: string): string { return v; }
 
 function work(k: i32): i32 {
     let o: S = S { name: "seed", xs: [1, 2], n: 0 };

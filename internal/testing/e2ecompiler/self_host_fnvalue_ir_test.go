@@ -9,13 +9,12 @@ import (
 )
 
 // TestSelfHostFnValueIR is the correctness gate for plain (capture-free)
-// function VALUES on the wasm IR backend — the first closures slice. A bare
-// top-level function used as a value lowers to const_func (a funcref-table
-// index), a call through a "fn"-typed local/param lowers to call_indirect, and
-// the module grows a $fn<N> signature type + (table)/(elem) segment
-// (fn_support_section_units). The register backends still bail such modules
-// (all_eligible keeps the !module_uses_fn_values restriction), so this is
-// wasm-only. Results pinned to hardcoded oracle exit codes.
+// function VALUES on the wasm IR backend. A bare top-level function used as a
+// value lowers to const_func (a funcref-table index), a call through a
+// "fn"-typed local/param lowers to call_indirect, and the module grows a
+// $fn<N> signature type + (table)/(elem) segment (fn_support_section_units).
+// TestSelfHostFnValueX86IR is the register-backend sibling. Results pinned to
+// hardcoded oracle exit codes.
 func TestSelfHostFnValueIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host fn-value wasm IR e2e")

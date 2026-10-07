@@ -10,9 +10,7 @@ import "testing"
 // those don't, and the new wrinkle is **unsigned `clamp`/`max` against a
 // high-bit-set bound** (>= 2^63), where a signed comparison inside the helper
 // would pick the wrong branch. min/max/clamp are inlined verbatim from std/u64 as
-// free functions. (std/u64's `to_string` is excluded: it wraps core/int's
-// `__int_to_string_u64`, whose `u8[]`/`usize`/`__memcpy` internals route through
-// the AST path — a separate low-level concern.)
+// free functions.
 //
 // No imports are needed for the interpreter oracle (inlined free functions +
 // builtin casts). Each case returns a value kept <= 126 (avoiding the wasmtime
@@ -47,9 +45,9 @@ var u64IRCases = []struct {
 	// A CONCRETE u64-returning function's result chained DIRECTLY in an unsigned
 	// op, where the call is the SOLE u64 operand (a shift follows its left operand,
 	// and the shift amount is a plain i32) — so the unsigned-ness depends only on the
-	// callee's u64 return, not on an `as u64` sibling. Without is_u64_ret_fn the
-	// shift lowered SIGNED (arithmetic) and diverged: 0xF9CCD8A1C5080000 >> 57 is
-	// 124 unsigned but 252 (sign-extended low byte) signed. #5159.
+	// callee's u64 return, not on an `as u64` sibling. A SIGNED (arithmetic) shift
+	// diverges: 0xF9CCD8A1C5080000 >> 57 is 124 unsigned but 252 (sign-extended low
+	// byte) signed. #5159.
 	{"concrete-u64-ret-shift", `let a: u64 = 18000000000000000000 as u64; return (u64_id(a) >> 57) as i32;`},
 	// A u64-valued if/match-EXPRESSION (the 0-arg IIFE the desugar emits) chained
 	// in a shift, where the IIFE is the SOLE u64 operand. expr_is_u64 gained an
@@ -65,7 +63,7 @@ var u64IRCases = []struct {
 	// unsigned — 124, not the signed 252.
 	{"u64-literal-index-shift", `return ([18000000000000000000 as u64, 1 as u64][0] >> 57) as i32;`},
 	// A direct index of a u64[] SLICE chained in a shift (`a[lo:hi][0] >> 57`):
-	// the sliced array is u64[] (expr_is_u64arr), so the element stays unsigned.
+	// the sliced array is u64[], so the element stays unsigned.
 	{"u64-slice-index-shift", `let a: u64[] = [18000000000000000000 as u64, 1 as u64, 2 as u64]; return (a[0:2][0] >> 57) as i32;`},
 }
 

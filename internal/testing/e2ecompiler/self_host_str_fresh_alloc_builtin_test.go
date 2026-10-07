@@ -12,33 +12,24 @@ import (
 // strFreshAllocBuiltinCases pin that a fresh-ALLOCATING string builtin's result is
 // itself a fresh temp, and that the builtins which do not allocate are not.
 //
-// is_fresh_str_temp answers "is this a box nobody else names" for concat operands,
-// map inserts, call arguments and the `.len()` receiver. Its ExprCall arm admitted
-// a scalar `.to_string()` and a proven fresh-ret free call, but not a string
-// builtin — so `w(pre).to_ascii_upper().len()` stranded the transform's own result
-// even after the receiver beneath it was released.
+// A fresh temp is a box nobody else names, which a concat operand, map insert,
+// call argument or `.len()` receiver may release once it is done with it. So
+// `w(pre).to_ascii_upper().len()` must release the transform's own result as
+// well as the receiver beneath it.
 //
-// str_fresh_alloc_method is the warrant, and it is strictly smaller than
-// str_borrowing_method: that predicate is about what a method does to its
-// RECEIVER and also admits the scalar predicates, while this one is about what it
-// RETURNS. The runtime bodies decide it — __fern_str_to_upper, _to_lower
-// and _repeat all allocate unconditionally and return the new box, with repeat
-// forcing a 1-byte cap so even an empty result allocates. `trim` returns a view and
-// `replace` returns the receiver unchanged when the needle is absent.
+// The runtime bodies decide which builtins qualify — __fern_str_to_upper,
+// _to_lower and _repeat all allocate unconditionally and return the new box,
+// with repeat forcing a 1-byte cap so even an empty result allocates.
 //
-// The flat cases return 98 when the transform's result is stranded; all three
-// return 98 on a base-built compiler.
+// The flat cases return 98 when the transform's result is stranded.
 var strFreshAllocBuiltinCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// The shape that led here. `w(pre).to_ascii_upper()` is itself a fresh box, but
-	// is_fresh_str_temp did not know it — its ExprCall arm admitted a scalar
-	// `.to_string()` and a proven fresh-ret free call, not a fresh-ALLOCATING string
-	// builtin. The runtime body settles it: __fern_str_to_upper is `__raw_alloc(n)`
-	// … `__raw_string(p, n)` with no identity path at all. 46 B/round before, flat
-	// after.
+	// `w(pre).to_ascii_upper()` is itself a fresh box: __fern_str_to_upper is
+	// `__raw_alloc(n)` … `__raw_string(p, n)` with no identity path at all.
+	// Stranded, it costs 46 B/round.
 	{"str-fresh-builtin-len-receiver-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function round(pre: string): i32 { return w(pre).to_ascii_upper().len(); }
 function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
@@ -69,10 +60,7 @@ function main(): i32 {
     if (b2 - b1 >= 65536) { return 98; }
     return 0;
 }`, 0},
-	// A CONTROL, not a guard: the concat operand path was already flat before
-	// this change and must stay flat. The widening reaches emit_str_concat_reclaim,
-	// map inserts and call arguments as well as the `.len()` receiver, so pinning no
-	// regression there is worth the runtime.
+	// The same fresh builtin result as a concat operand must stay flat too.
 	{"str-fresh-builtin-concat-operand-unchanged", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function round(pre: string): i32 { return (w(pre).to_ascii_upper() + "!").len(); }
 function churn(pre: string, n: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + round(pre)) % 251; i = i + 1; } return acc; }
@@ -104,13 +92,9 @@ function round(pre: string): i32 {
     return h.v.len();
 }
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
-	// NEGATIVE, and honestly a CONTRACT case rather than a witnessed one. `.trim()`
-	// returns a zero-copy view, so it is outside str_fresh_alloc_method and its
-	// source must stay live. Adding trim to that set does change the emission — one
-	// extra __fern_str_free in `round` — but no probe I built turns that into an
-	// observable fault, exactly as the same distinction was contract-only in the
-	// binding credit. It stays excluded because the runtime body says view, not
-	// because a test caught it.
+	// `.trim()`'s receiver is a live local, so releasing the trim result must
+	// leave `b` intact: it is read back by value under same-size-class
+	// pressure after the trim.
 	{"str-trim-view-not-fresh-alloc", strProbeHelpers + `function w(pre: string): string { return "  " + pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789  "; }
 function round(pre: string): i32 {
     let b: string = w(pre);

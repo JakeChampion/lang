@@ -17,7 +17,7 @@ import (
 // so a body that read the neighbouring utsname field would pass a
 // non-empty check. The utsname probe reads uname(2) and is linux-only
 // (syscall.Utsname does not exist on darwin), so it lives in
-// self_host_sysinfo_linux_test.go and the other OSes skip in
+// self_host_sysinfo_linux_host_test.go and the other OSes skip in
 // self_host_sysinfo_other_test.go.
 
 // selfHostSysinfoSource exits 0 only when every field matches; each

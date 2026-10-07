@@ -18,13 +18,11 @@ import (
 // genuine nested-array load had no dedicated routing pin.
 //
 // Covers i32[][], string[][], and the 8-byte inner element kinds i64[][] /
-// f64[][]. Recording only THAT a slot is T[][] and not what T is leaves a
-// nested read m[i][j] unable to recover the inner width, truncating i64/f64
-// elements to 32 bits as a silent miscompile. #2691
-// adds local_arrarr_elem (the inner kind) so arr_index_is_i64/_f64 pick the
-// 8-byte load. Each case is oracle-checked against the interpreter and returns
-// <= 126 (wasmtime exit-code truncation, cf. #2908). Mirrors
-// self_host_nested_tuple_ir_test.go.
+// f64[][]. A nested read m[i][j] has to recover the inner element type, not
+// just that the slot is T[][]; otherwise i64/f64 elements truncate to 32 bits
+// as a silent miscompile (#2691). Each case is oracle-checked against the
+// interpreter and returns <= 126 (wasmtime exit-code truncation, cf. #2908).
+// Mirrors self_host_nested_tuple_ir_test.go.
 var nestedArrayIRCases = []struct {
 	name string
 	main string
@@ -42,14 +40,12 @@ var nestedArrayIRCases = []struct {
 	{"f64-2x2", `function main(): i32 { let m: f64[][] = [[2.5], [3.5]]; return (m[0][0] * 2.0) as i32; }`},
 }
 
-// nestedArrayI64IRCases pin the i64[][] read AND construction fixes on x86-64 +
-// wasm. The READ side (local_arrarr_elem → arr_get_i64) and the CONSTRUCTION side
-// both work on every backend. If infer_expr_width treats every bare integer
-// literal as i32, an i64 array LITERAL (`[5000000000]`) emits its 64-bit element
-// as `i32.const` on wasm — out of range, so the module will not parse. It
-// classifies a literal that exceeds i32-max as i64 by value (it has no valid
-// i32 reading — checker E047), so the inner array literal takes the
-// arr_make_i64 path and the element is emitted i64.const.
+// nestedArrayI64IRCases pin the i64[][] read AND construction on x86-64 +
+// wasm. The read must take the 8-byte element load. The construction must
+// emit an i64 array LITERAL's (`[5000000000]`) element as i64: read as
+// `i32.const` on wasm it is out of range and the module will not parse. A
+// literal that exceeds i32-max is i64 by value (it has no valid i32 reading —
+// checker E047), so the inner array literal is built as an i64 array.
 // (An UNANNOTATED 1-D big-literal array — `let a = [7000000000]` — would exercise
 // the same compiler path, but the tree-walking interpreter still defaults an
 // unannotated big literal to i32 and wraps, so it can't serve as an oracle here;
@@ -70,13 +66,10 @@ var nestedArrayI64IRCases = []struct {
 
 // nestedArrayStructIRCases pin field/method access on a struct/enum element of an
 // array-of-arrays (`a[i][j].field`, `a[i][j].method()`) to the self-host IR path on
-// x86-64 + wasm. Value lowering of `a[i][j]` already worked (the temp-bound form
-// `let p = a[i][j]; p.x` lowers), but `expr_struct_type` couldn't recover the
-// element type for a doubly-indexed `a[i][j]` (its ExprIndex arm only matched an
-// ExprIdent/ExprFieldAccess array, never a nested ExprIndex), so the field-read and
-// method-dispatch paths bailed. #2691 adds the depth-2 ExprIndex
-// case so the innermost struct/enum element type recorded on the T[][] slot is
-// recovered. Each case is oracle-checked against the interpreter and returns <= 126.
+// x86-64 + wasm: the field read and the method dispatch recover the element
+// type of a doubly-indexed `a[i][j]`, as they do for the temp-bound form
+// `let p = a[i][j]; p.x` (#2691). Each case is oracle-checked against the
+// interpreter and returns <= 126.
 var nestedArrayStructIRCases = []struct {
 	name string
 	main string

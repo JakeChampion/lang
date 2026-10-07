@@ -7,36 +7,17 @@ import (
 	"testing"
 )
 
-// TestSelfHostBorrowedWithInPlaceIRX86_64 pins #6158: the in-place `arr_set`
+// TestSelfHostBorrowedWithInPlaceIRX86_64 pins #6158: the in-place store
 // behind a `x = x.with(i, v)` SELF-REASSIGN is sound only when `x` is a sole
-// owner, and the self-host was taking it for BORROWED values too — so the write
-// landed in an array the caller still owned.
-//
-// The gate it consulted (`aliased_names`, #3599) models local ALIASING — a name
-// bound to a second local, or stored into a container literal — and knows
-// nothing about ownership. A local bound from a struct field read has no local
-// alias at all, so it passed the gate.
+// owner. For a BORROWED value the write must not land in an array the caller
+// still owns.
 //
 // SCOPE: the FIELD-READ shapes, the bare-ident REBIND shapes (#6170) —
 // `let heap = heap_in; heap = heap.with(…)` over a borrowed param, and
 // `let b = a; b = b.with(…)` over a still-live local — and the DIRECT form
-// (#6185), `function f(buf: i32[]) { buf = buf.with(…); }`.
-//
-// The direct form is the one that needed a representation change rather than a
-// gate tweak. A mutable capture is written the same way: box_mutated_scalar_-
-// captures rewrites a captured `x = v` into `x = x.with(0, v)` on a 1-element
-// cell, and the param-lift hands that cell to the lifted body as a plain array
-// param (#5301), which MUST write through it — that write-through IS the by-
-// reference capture semantics. Both arrive as a non-`own` array param and
-// demand opposite lowerings, so no aliasing analysis can separate them; a first
-// attempt that credited the param unconditionally cost five red CI shards,
-// failing `loop-accumulator` (32, want 42) and `outer-and-inner-write`
-// (38, want 42) on all three backends.
-//
-// The cell now carries a `$cell$` name (box_rewrite_stmt), the same collision-
-// free marker `$wc$` uses for wide captures, so the mode is carried by the name that
-// ParamDecl has no field for. `borrowed_names_of` credits every other non-`own`
-// array param as a member, and the two cases are distinguishable at the gate.
+// (#6185), `function f(buf: i32[]) { buf = buf.with(…); }`. A mutated capture
+// is the opposite case: its `$cell$` storage must be written THROUGH, which
+// `mut-capture-cell-param-writes-through` pins.
 //
 // Every expected value came from `bin/fern -interp`, and each failing case was
 // confirmed to diverge on the pre-fix compiler at the value named in its
@@ -162,10 +143,9 @@ function main(): i32 {
     return 7;
 }`, "own-param-with-loop-allocates-nothing", 7)
 
-	// #6170: the bare-ident REBIND of a borrowed array param. `alias_idents_in_value`
-	// credits `heap_in` — the name that ACQUIRED an alias — while the name actually
-	// mutated is `heap`, which is neither a param nor a field read, so nothing marked
-	// it and the write went through into the caller's buffer. Pre-fix: 77.
+	// #6170: the bare-ident REBIND of a borrowed array param. The mutated name,
+	// `heap`, is neither a param nor a field read, but its buffer is the
+	// caller's. Pre-fix: 77.
 	run(t, `function run(heap_in: i32[], at: i32, v: i32): i32[] {
     let heap: i32[] = heap_in;
     heap = heap.with(at, v);
@@ -190,9 +170,8 @@ function main(): i32 {
 	// MUST NOT REGRESS, and the case that keeps the rule from being written as
 	// "any rebind clones": the source is an `own` param and is dead after the
 	// rebind, so `heap` is the buffer's only remaining name and the stores stay
-	// in place. This is the const-eval VM's shape (the AST lowering's `eval_ops`, which
-	// rebound `heap` from `heap_in` and wrote it a dozen times per op), and the
-	// reason #6170 was split out of #6158 in the first place.
+	// in place. A const-eval VM that rebinds its heap from an `own` param and
+	// writes it many times per op has exactly this shape.
 	//
 	// Asserted by ALLOCATION, not by answer: getting this wrong is silent
 	// quadratic copying that every correctness case above still passes. With the

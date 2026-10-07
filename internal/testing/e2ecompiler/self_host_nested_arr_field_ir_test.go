@@ -8,26 +8,20 @@ import (
 )
 
 // nestedArrFieldCases exercise a struct field whose type is an ARRAY OF ARRAYS
-// (`xs: i32[][]`) — the one array field shape no field classifier claimed.
-//
-// A method on such a receiver reached the primitive-receiver cascade, which
-// answers "i32" for anything it cannot type, so `a.xs.append(row)` dispatched
-// `i32.append` and the module was refused outright (#7208). A local copy of the
-// same field appended fine, which is what showed the level was recoverable: the
-// field DECLARATION carries it, and now nested_arr_field_read_type reads it.
+// (`xs: i32[][]`). A method on such a receiver dispatches on the array type the
+// field DECLARATION carries; typed "i32" instead, `a.xs.append(row)` dispatched
+// `i32.append` and the module was refused (#7208).
 //
 // The read side is here for a second reason: an `f64[][]` FIELD indexed twice
-// took the 4-byte element stride, because the nested-index width classifiers
-// only looked through an array-of-array LOCAL slot. That one is a wrong ANSWER
-// rather than a refusal, and it was reachable before the append gap closed.
+// must read the 8-byte element stride. The 4-byte stride is a wrong ANSWER
+// rather than a refusal.
 //
-// Every case runs under FERN_STRICT_IR=1 (#6602): the answer alone cannot show
-// the shape stayed on the IR path, and these ARE the shapes that used to bail.
+// Every case runs under FERN_STRICT_IR=1 (#6602), so a refusal fails the case.
 //
 // The controls at the end must not move — the one-level field append, the local
 // and parameter receivers of the same type, a user `append` method on a struct
 // (which shadows the array builtin and must keep winning), and a non-array field
-// whose method dispatch the widened predicate must not claim.
+// whose method dispatch must not be claimed as an array's.
 var nestedArrFieldCases = []struct {
 	name string
 	src  string

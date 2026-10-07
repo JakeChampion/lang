@@ -8,12 +8,11 @@ import (
 	"testing"
 )
 
-// An `own` string parameter stored into a struct literal leaked a box per call
-// on the AST lowering (#10268). The store retains the parameter, since a
-// construction moves only a local, but the release gate read the store as an
-// escape and withheld the parameter's exit release. The literal is returned,
-// bound and returned, and bound to a local that is read and dropped; the last
-// function stores nothing.
+// An `own` string parameter stored into a struct literal is released at the
+// callee's exit (#10268): the store retains the parameter, since a
+// construction moves only a local, so the store is not an escape. The literal
+// is returned, bound and returned, and bound to a local that is read and
+// dropped; the last function stores nothing.
 const ownStringFieldStoreSrc = `import "std/i32";
 struct Box { s: string }
 function store(own s: string): Box { return Box { s: s }; }

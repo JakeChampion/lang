@@ -67,10 +67,8 @@ func TestTcpLocalPortRoundTrip(t *testing.T) {
 				qemu := arm64QemuOrEmpty(t)
 				run = func(out string) *exec.Cmd { return runArm64Bin(qemu, out) }
 			} else {
-				if qemu := x86QemuOrEmpty(t); qemu != "" {
-					t.Skip("tcp_local_port round-trip runs host-native only (loopback under qemu-user)")
-				}
-				run = func(out string) *exec.Cmd { return exec.Command(out) }
+				qemu := x86QemuOrEmpty(t)
+				run = func(out string) *exec.Cmd { return runX86Bin(qemu, out) }
 			}
 
 			out := filepath.Join(dir, c.name+".bin")
@@ -142,9 +140,7 @@ func TestTcpLocalPortInterp(t *testing.T) {
 // shells do exactly that) makes getsockname SUCCEED and report port 0, and the
 // case passes or fails on the harness rather than on the emitter.
 func TestTcpLocalPortErrno(t *testing.T) {
-	if qemu := x86QemuOrEmpty(t); qemu != "" {
-		t.Skip("tcp_local_port errno test runs host-native only")
-	}
+	qemu := x86QemuOrEmpty(t)
 	bin := buildFernCLI(t)
 	dir := t.TempDir()
 	src := `function main(): i32 {
@@ -164,7 +160,7 @@ func TestTcpLocalPortErrno(t *testing.T) {
 				t.Fatalf("build failed: %v\n%s", err, o)
 			}
 			code := 0
-			run := exec.Command(out)
+			run := runX86Bin(qemu, out)
 			run.Stdin = nil // the null device; see the comment above
 			if err := run.Run(); err != nil {
 				var ee *exec.ExitError

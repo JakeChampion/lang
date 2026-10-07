@@ -235,6 +235,47 @@ function main(): i32 {
 }
 `
 
+// routedMapGenericKeyedKeysSrc: a generic instance key routes like any keyed
+// key (#9608): a struct instance by its clone's derived methods, an enum
+// instance by its instantiated ones. A bare unit variant handed to a map
+// method takes its instantiation from the map's key type, including through a
+// tuple destructured from `without`.
+const routedMapGenericKeyedKeysSrc = `import "core/map";
+import "core/cmp";
+import "std/i32";
+@derive(cmp.Eq, cmp.Hash)
+struct Pair[T] { a: T, b: T }
+@derive(cmp.Eq, cmp.Hash)
+enum Slot[T] { Empty, One(T), Two(T, T) }
+function main(): i32 {
+    let p: Map[Pair[string], i32] = map_new(4);
+    let i: i32 = 0;
+    while (i < 40) { p = p.insert(Pair[string] { a: "a" + i.to_string(), b: "b" + (i % 7).to_string() }, i); i = i + 1; }
+    p = p.insert(Pair[string] { a: "a3", b: "b3" }, 300);
+    let palias: Map[Pair[string], i32] = p;
+    p = p.insert(Pair[string] { a: "a4", b: "b4" }, 400);
+    let (p2, phad) = p.without(Pair[string] { a: "a5", b: "b5" });
+    let s: i32 = p2.get_or(Pair[string] { a: "a3", b: "b3" }, 0) + p2.get_or(Pair[string] { a: "a4", b: "b4" }, 0) + palias.get_or(Pair[string] { a: "a4", b: "b4" }, 0) + p2.len() + palias.len();
+    if (phad && !p2.has(Pair[string] { a: "a5", b: "b5" })) { s = s + 1; }
+    let q: Map[Slot[i32], string] = map_new(4);
+    i = 0;
+    while (i < 30) { q = q.insert(Slot.Two(i, i * 3), "t" + i.to_string()); i = i + 1; }
+    q = q.insert(Slot.Empty, "empty");
+    q = q.insert(Slot.One(5), "five");
+    q = q.insert(Slot.Two(2, 6), "two");
+    let qs: string = q.get_or(Slot.Two(2, 6), "-") + q.get_or(Slot.Empty, "-") + q.get_or(Slot.One(6), "-");
+    match (q.get(Slot.One(5))) { Some(v) => { qs = qs + v; }, None => { qs = qs + "?"; } }
+    let (q2, qhad) = q.without(Slot.Empty);
+    if (qhad && !q2.has(Slot.Empty) && q.has(Slot.Empty)) { qs = qs + "!"; }
+    let ks: i32 = 0;
+    for k in q2.keys() {
+        match (k) { Empty => { ks = ks + 1000; }, One(x) => { ks = ks + x; }, Two(x, y) => { ks = ks + x + y; } }
+    }
+    print(s.to_string() + " " + qs + " " + q2.len().to_string() + " " + ks.to_string());
+    return 0;
+}
+`
+
 // routedMapStringValuesSrc: string value columns hold their strings in the
 // slots, so an overwrite, a delete, an alias's copy and the last drop each
 // release exactly the values they own, and a get hands out its own reference.
@@ -503,6 +544,7 @@ func TestSelfHostRoutedScalarMaps(t *testing.T) {
 		{"string_array_values", routedMapStringArrayValuesSrc, "80 a39 xy override 8 true"},
 		{"string_keys", routedMapStringKeysSrc, "202311 691 61358 0"},
 		{"keyed_keys", routedMapKeyedKeysSrc, "1635 twonamed-dot four! 19 3 1761 202 two 0 50000000010 1500"},
+		{"generic_keyed_keys", routedMapGenericKeyedKeysSrc, "784 twoempty-five! 31 1745"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {

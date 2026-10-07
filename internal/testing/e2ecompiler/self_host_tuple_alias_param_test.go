@@ -5,19 +5,16 @@ import (
 	"testing"
 )
 
-// The "TUPB:" payload tier learns the #7553 alias forgiveness
-// (rctuple_param_alias_bind_sites): a callee that binds `let x = src` and only
-// READS through the alias keeps its tuple param payload-borrowable, so the
-// caller's TUPRCS deep free survives. The vet is the rc-tuple payload scan on
-// the alias's own name — never the box walker, which would admit the handout
-// shape below (the sanitizer-confirmed UAF that killed v1 of the tier).
+// A callee that binds `let x = src` and only READS through the alias (#7553)
+// still borrows its tuple param, so the caller's deep free of the tuple
+// survives the call. A callee that hands the payload out through the alias
+// must keep it alive (the handout shape below was a sanitizer-confirmed UAF).
 //
-// Every want is confirmed against BOTH oracles (bin/fern -interp and native
-// x86-64) — never read off the self-host run under test. Each case also
-// recompiles under FERN_SANITIZE=1 and must exit identically with no
-// over-release or use-after-free report (a leak report on a refused row is
-// the census's business): a wrongly-admitted handout trips the quarantine,
-// not the census.
+// Every want is confirmed against bin/fern -interp — never read off the
+// self-host run under test. Each case also recompiles under FERN_SANITIZE=1
+// and must exit identically with no over-release or use-after-free report (a
+// leak report on a refused row is the census's business): a wrongly-admitted
+// handout trips the quarantine, not the census.
 
 // tupleAliasParamCase is one program whose run must exit want and balance at
 // live_bytes 0.
@@ -56,8 +53,8 @@ func tupleAliasParamCases() []tupleAliasParamCase {
 		},
 		{
 			// tuple_mixed__if_block__alias_param: the same alias inside a
-			// branch — rctuple_param_alias_bind_sites recurses, so a
-			// block-scoped bind is forgiven exactly like the fnscope one.
+			// branch — a block-scoped bind is treated exactly like the
+			// function-scope one.
 			name: "if_block_alias_reads_only",
 			src: `function round(src: (i32, i32[]), i: i32): i32 {
     let t: i32 = 0;

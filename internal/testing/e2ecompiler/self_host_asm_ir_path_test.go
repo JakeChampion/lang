@@ -118,9 +118,8 @@ func TestSelfHostAsmIRPath(t *testing.T) {
 		{"chained-str-method", `function (s: string) dup(): string { return s + s; } function f(s: string): i32 { return s.dup().dup().len(); } function main(): i32 { return f("ab"); }`, 8},
 		// Method-name collision across receiver types with different return types:
 		// `bump` exists on i32 (-> i32) AND string (-> string), and `b.bump()` on an
-		// i32 is an i32, so the chained `.chr()` dispatches `i32.chr`. This is the
-		// std/string case_separator / to_acronym shape (i32.to_lower vs
-		// string.to_lower). f(64): 64+1 -> char 65 'A' -> s[0] -> 65.
+		// i32 is an i32, so the chained `.chr()` dispatches `i32.chr`.
+		// f(64): 64+1 -> char 65 'A' -> s[0] -> 65.
 		{"method-name-collision", `function (n: i32) bump(): i32 { return n + 1; } function (s: string) bump(): string { return s + "!"; } function (n: i32) chr(): string { let a: u8[] = __alloc_u8(1); a = a.with(0, n as u8); return string_from_bytes_unchecked(a); } function f(b: i32): i32 { let s: string = b.bump().chr(); return s[0] as i32; } function main(): i32 { return f(64); }`, 65},
 		// Chained ARRAY-method call `arr.m().n()` where the inner m returns an
 		// array — `__method_Array_rev` (-> i32[]) then `.sum2()` on the result.
@@ -1609,12 +1608,9 @@ function main(): i32 { let ms = [Map { 1: "abcd" }]; return ms[0].get_or(1, "z")
 		{"i64arr-unannot-forin", `function main(): i32 { let xs = [10 as i64, 20 as i64]; let s: i64 = 0 as i64; for x in xs { s = s + x; } return s as i32; }`, 30},
 		// Two random_i32 draws differ (a stuck/zero generator returns 0/1).
 		{"random-i32-varies", `function main(): i32 { let a: i32 = random_i32(); let b: i32 = random_i32(); if (a == 0) { return 0; } if (a == b) { return 1; } return 7; }`, 7},
-		// A draw is a SIGNED i32: about half of them are negative. The hand-asm
-		// this replaced (#2649) loaded the four bytes with a zero-extending
-		// `movl`, so the 64-bit slot never had its top bit set and `< 0` was
-		// dead code — random_i32 disagreed with the native backend on every
-		// draw above 2^31. The Fern helper returns i32, so the load
-		// sign-extends. Ranged, not exact, since the draws are real.
+		// A draw is a SIGNED i32: about half of them are negative, so the load
+		// must sign-extend — a zero-extended slot never has its top bit set and
+		// `< 0` is dead code. Ranged, not exact, since the draws are real.
 		{"random-i32-signed", `function main(): i32 { let neg: i32 = 0; let i: i32 = 0; while (i < 200) { if (random_i32() < 0) { neg = neg + 1; } i = i + 1; } if (neg == 0) { return 1; } if (neg > 60) { if (neg < 140) { return 7; } } return 2; }`, 7},
 		// A random byte is in 0..255.
 		{"random-bytes-byte-range", `function main(): i32 { let s: u8[] = random_bytes(4); let x: i32 = s[0] as i32; if (x >= 0) { if (x <= 255) { return 1; } } return 0; }`, 1},

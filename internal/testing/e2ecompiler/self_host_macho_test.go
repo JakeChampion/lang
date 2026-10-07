@@ -16,15 +16,15 @@ import (
 
 // TestSelfHostArm64DarwinBuilds exercises the self-hosted compiler's
 // arm64-darwin (Mach-O) target — compiler/fern.fern's
-// `-target arm64-darwin`. Since the flip (slice 3q) this path is fully
-// in-process: asm_arm64.darwinize emits the GAS text, and arm64_native
+// `-target arm64-darwin`. This path is fully in-process:
+// asm_arm64_ir.darwinize emits the GAS text, and arm64_native
 // assembles + links + signs the Mach-O binary directly — no `.s`, no
 // clang/ld64.
 //
 // Two host modes:
 //
-//   - Off Apple Silicon (the Linux CI box): the CLI is built with the Go
-//     x86-64 backend so it runs on the host; we assert each emitted file is
+//   - Off Apple Silicon (the Linux CI box): the CLI is built for x86-64 so
+//     it runs on the host; we assert each emitted file is
 //     a well-formed arm64 Mach-O executable. qemu-aarch64 only speaks the
 //     Linux ABI, so we can't run the result.
 //
@@ -36,7 +36,7 @@ import (
 //     all, since a container the kernel rejects (#6042) is the single thing
 //     this test is best placed to catch.
 //
-// darwinize() reuses asm_arm64.fern's instruction selection and only
+// darwinize() reuses asm_arm64_ir.fern's instruction selection and only
 // reskins the assembler dialect (@PAGE/@PAGEOFF addressing, Mach-O
 // sections, _main entry) and remaps the number-compatible syscalls
 // (read/write/close/openat/lseek/exit/mmap) to the BSD vector with
@@ -285,11 +285,8 @@ function main(): i32 { let e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 	// Linux). stat_file: a regular file reports is_file + its size; stat_dir:
 	// a directory reports is_dir; stat_missing: a bad path hits the Err arm
 	// (needs the errno normalization too).
-	// fs.size is i64, so it needs an explicit narrow to leave an i32 function.
-	// Without the `as i32` this case was simply ill-typed — the native compiler
-	// rejects it with E002 — and the self-host reported it as "module is not IR-
-	// eligible", which read as an IR-subset gap and was recorded as one for as
-	// long as the lane could not go red (#6164).
+	// fs.size is i64, so it needs an explicit narrow to leave an i32 function;
+	// without the `as i32` the case is ill-typed (E002, #6164).
 	runCase("stat_file",
 		`function main(): i32 { match (stat("`+okPath+`")) { Ok(fs) => { if (fs.is_file) { return fs.size as i32; } return 1; }, Err(e) => { return 99; } } }`,
 		len(rfContent))

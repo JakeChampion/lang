@@ -5,12 +5,11 @@ import (
 )
 
 // TestSelfHostRcEnumCallInitIRArm64 is the arm64 port of
-// TestSelfHostRcEnumCallInitIRX86_64 (#4355 slice 5): the RCENUM call-init
-// admission plus the arm64-specific __struct_drop_<T> return fix — the arm64
-// body restored its return from x10, which __fern_str_free and a nested
-// __struct_drop_* bl clobber (the slice-2 field-reclaim lesson), so the
-// enum-payload deep-drop consumed a stale pointer. The body now reloads the
-// box from the stack arg ([sp, #16] under the stp frame). Lighter churn under
+// TestSelfHostRcEnumCallInitIRX86_64 (#4355): an rc-payload enum local
+// initialised from a call is released at scope exit, payload chain included.
+// The payload's drop calls further helpers, so a box pointer held in a
+// clobbered register across them would release a stale pointer; the cases pin
+// flat churn, no underflow, and live values left intact. Lighter churn under
 // qemu.
 func TestSelfHostRcEnumCallInitIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)

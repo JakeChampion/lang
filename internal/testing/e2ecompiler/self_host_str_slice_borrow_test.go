@@ -5,19 +5,11 @@ import "testing"
 // strSliceBorrowCases pin which positions read a string SLICE as a borrow of its
 // source and which read it as an alias.
 //
-// A slice is a zero-copy view over the source's buffer, so the escape scan
-// counted every one of them as an alias: a `base[a:b]` anywhere in the body
-// struck `base`'s reclaim credit, and neither the loop-rebind release nor the
-// scope-exit sweep ever freed it. `base[4:base.len()].len()` — no binding, no
-// method chain, nothing carried anywhere — leaked 47 B/round on x86-64 and
-// arm64, 71 on wasm.
-//
-// The lowerer already draws the line the scan was missing. lower_view_borrowed
-// marks the positions where a view is consumed inside the expression that built
-// it, and lower_str_slice_frame puts the box for one in reserved frame slots
-// that no name can reach. expr_unsafe_for_view_pos is that same list asked as an
-// escape question, and the source of a view in one of those positions is READ,
-// not aliased out.
+// A slice is a zero-copy view over the source's buffer. Where the view is
+// consumed inside the expression that built it — `base[4:base.len()].len()`,
+// no binding, no method chain, nothing carried anywhere — the source is READ,
+// not aliased out, so `base` is still released. Read as an alias, that shape
+// leaked 47 B/round on x86-64 and arm64, 71 on wasm.
 //
 // The flat cases return 98 when the source is stranded: 400 rounds of a 170-byte
 // producer is 68 KB leaked against a 32 KB ceiling, and the widest legitimate

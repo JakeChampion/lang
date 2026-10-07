@@ -5,14 +5,11 @@ import "testing"
 // optArithNarrowF64IRCases pin an Option/Result match-EXPRESSION arm that does
 // f64 ARITHMETIC over a bound f64 payload and then narrows it with `as i32`
 // (`match (o) { Some(v) => (v * 4.0) as i32, None => 0 }`) to the self-host IR
-// path on x86-64 + wasm. This is the f64 sibling of the i64 arith-narrow admit
-// (#3585): the arm computes a wide f64 intermediate over the payload and casts
-// the whole thing to i32, so the result temp is i32 (the cast narrows) exactly
-// like the i64 case. iife_arm_returns_narrowed_payload_arith was gated `ft ==
-// "i64"`; #2691 extends it (and its call site in iife_payload_field_bindable) to
-// f64, passing kind = ft so the f64 arith leaf/op classifier
-// (iife_payload_arith_kind / _leaf_kind, which already handle f64) fires. Each
-// case is oracle-checked against the interpreter and returns <= 126.
+// path on x86-64 + wasm (#2691). This is the f64 sibling of the i64 arith-narrow
+// case (#3585): the arm computes a wide f64 intermediate over the payload and
+// casts the whole thing to i32, so the result temp is i32 (the cast narrows)
+// exactly like the i64 case. Each case is oracle-checked against the
+// interpreter and returns <= 126.
 var optArithNarrowF64IRCases = []struct {
 	name string
 	main string

@@ -7,29 +7,17 @@ import (
 
 // --- `.len()` on an array-of-structs / -tuples is a borrow (#6127) -----------
 //
-// `arrstruct_elem_esc_expr` and its tuple twin whitelisted `name[i].f.len()` —
-// a `.len()` on an ELEMENT's array field — but a `.len()` on the LOCAL ITSELF
-// fell through to the generic call tail, which recurses into the callee, hits
-// the bare-ident arm, and reports an escape. One `name.len()` anywhere in the
-// function therefore refused the whole ARRSTRUCT: / ARRTUP: credit.
+// A `.len()` on the LOCAL ITSELF reads only its header, so it must not cost the
+// local its deep release. Same array, same struct, 100 rounds; every row must
+// balance:
 //
-// The symptom is backwards, which is what made it hard to see: reading LESS
-// made it leak. Same array, same struct, 100 rounds —
+//	ps[0].xs[0]   (element read)
+//	ps[0].n       (scalar field)
+//	ps.len()      (header read)
+//	ps.len() + ps[0].xs[0]
 //
-//	ps[0].xs[0]   (element read)   300 / 300      0
-//	ps[0].n       (scalar field)   300 / 300      0
-//	ps.len()      (header read)    300 / 100   8000
-//	ps.len() + ps[0].xs[0]         300 / 100   8000   <- one .len() poisons it
-//
-// It is not scope-related. This was first chased as a block-scoped gap (#6285
-// left `ARRSTRUCT` and `ARRTUP` out on the grounds that switching their
-// retired-name lookup changed nothing), and the top-level form turned out to
-// leak identically — the predicate never reached the name lookup at all.
-//
-// The existing arrstruct/arrtup suites never caught it because every case there
-// reads an element and none calls `.len()` on the array, and because they assert
-// bump-allocator growth rather than alloc/free balance, which the freelist can
-// mask.
+// The rows assert alloc/free balance rather than bump-allocator growth, which
+// the freelist can mask.
 
 func TestSelfHostArrStructLenBorrowX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -270,7 +258,7 @@ function main(): i32 {
 			// The array itself is passed to a callee that keeps it.
 			name: "len_plus_call_arg_the_callee_keeps",
 			src: `struct P { xs: i32[] }
-function keepit(ps: P[]): P[] { return ps; }
+@noinline function keepit(ps: P[]): P[] { return ps; }
 function round(r: i32): i32 {
     let ps: P[] = [P { xs: [r, r + 1] }];
     let held: P[] = keepit(ps);

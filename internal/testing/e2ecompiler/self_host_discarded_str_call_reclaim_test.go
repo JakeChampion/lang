@@ -8,22 +8,13 @@ import (
 
 // --- Discarded string-returning call reclaim --------------------------------
 //
-// `mk(a);` as a STATEMENT owns a fresh string nothing else will ever hold, but
-// the statement-expression lowering ended in a bare op_drop: the value left the
-// stack and its box was never freed. Measured over a 200-round churn,
-// allocs=601 frees=200 live_bytes=9624, scaling exactly x2 per doubling, where
-// native is 200/200/0.
+// `mk(a);` as a STATEMENT owns a fresh string nothing else will ever hold, so
+// the discard must free it, as the same call BOUND to a local
+// (`let t = mk(a);`) does.
 //
-// The same call BOUND to a local (`let t = mk(a);`) already reclaimed, which is
-// what made this easy to miss — the leak needs the result to be thrown away.
-//
-// str_fresh_ret_fns is the gate, for the same reason it is everywhere else: it
-// means "every return of this callee is a freshly-allocated string, never an
-// alias of a borrowed arg / field / literal". The weaker str_ret_fns would
-// admit a callee handing back a borrowed value, and freeing that drops a box a
-// live local still holds. Unlike the concat-OPERAND position (#6171, where
-// gating on this same registry broke the wasm-hosted whole compiler), a discard
-// has no reader to outlive: the statement is the value's entire lifetime.
+// Only a callee whose every return is a freshly-allocated string qualifies. A
+// callee that can hand back a borrowed arg / field / literal must be left
+// alone: freeing its result drops a box a live local still holds.
 
 // discardedStrCallSrc churns `mk(a);` n times and returns n % 7, so the exit
 // code pins that the loop actually ran the requested number of rounds.
@@ -126,10 +117,9 @@ func TestSelfHostDiscardedStrCallHazardsX86_64(t *testing.T) {
 		src  string
 		want int
 	}{
-		// A callee returning a BORROWED value — its own param — is not in
-		// str_fresh_ret_fns, so the discard must leave it alone. Freeing it
-		// would drop the box `a` still holds; the next allocation reuses it and
-		// the content check fails.
+		// A callee returning a BORROWED value — its own param — so the discard
+		// must leave it alone. Freeing it would drop the box `a` still holds;
+		// the next allocation reuses it and the content check fails.
 		{"borrowed_return_untouched", `function mk(s: string): string { return s + "!"; }
 function pick(a: string, b: string): string { if (a.len() > 3) { return a; } return b; }
 function main(): i32 {
@@ -142,8 +132,8 @@ function main(): i32 {
     return 5;
 }`, 5},
 		// A conditional return where ONE arm is a borrowed param disqualifies
-		// the whole callee — str_fresh_ret_fns requires EVERY return to be
-		// fresh, and body_has_nonfresh_str_return recurses into the if.
+		// the whole callee: EVERY return must be fresh, including one nested
+		// in an if.
 		{"mixed_return_disqualifies", `function half(a: string, c: boolean): string {
     if (c) { return a; }
     return a + "!";

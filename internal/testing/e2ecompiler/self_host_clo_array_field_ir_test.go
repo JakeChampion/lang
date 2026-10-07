@@ -5,33 +5,14 @@ import (
 	"testing"
 )
 
-// cloArrayFieldCallCases pin the DIRECT call of a closure-array element loaded
-// from a struct field — `reg.hs[i](args)`.
+// cloArrayFieldCallCases pin the call of a closure-array element loaded from a
+// struct field — `reg.hs[i](args)` — on the IR path. A field of env BOXES must
+// dispatch as a closure rather than as a raw fn pointer; calling the box as a
+// code address crashes or returns garbage. `clo-rebound-bind` reaches the
+// element through a bind (`let f = r.hs[1]; f()`) rather than an inline call,
+// so that dispatch site is covered too.
 //
-// These now lower on the IR path (#3457). The gap was narrow and in DISPATCH,
-// not eligibility: construction, `.len()`, a named-fn element, and the same
-// call through a LOCAL clo-array all lowered already — only the inline call
-// bailed, because the element-call dispatch's ExprFieldAccess arm recognised
-// only a registered fn-POINTER field, so a field of env BOXES matched neither
-// flag and fell through to s.fail().
-//
-// The AST emitter still handles them, and that path stays correct: it bails to
-// the legacy emitter
-// (asm.fern / asm_arm64.fern). There, emit_call's callee dispatch matched only
-// ExprLambda (IIFE), ExprIdent, and ExprFieldAccess (method); a closure-valued
-// ExprIndex callee hit the `_` fallthrough, which emitted `pushq $0`
-// (arm64: `mov x0, #0`) — silently compiling the call to "return 0". The
-// fallthrough now evaluates the callee to its box ptr and invokes it via the
-// closure convention (box ptr in %r10/x9, fn_addr = box[0]), mirroring the
-// ExprLambda arm right above it.
-//
-// (A SEPARATE, still-open defect — issue #5160 — is `let f = reg.hs[i]; f()`
-// and `for h in reg.hs { h() }`: binding a closure-array element from a struct
-// field yields a value the `f()` lowering treats as a raw fn pointer rather
-// than a closure box, so it SIGSEGVs. That is the element-BIND path, not the
-// direct-call callee dispatch these cases exercise.)
-//
-// Exit codes cross-checked against the interpreter and the native Go backend.
+// Exit codes cross-checked against the interpreter.
 var cloArrayFieldCallCases = []struct {
 	name string
 	src  string
@@ -56,7 +37,7 @@ var cloArrayFieldCallCases = []struct {
 	{"local-array-regress", "function main(): i32 { let n: i32 = 2; let hs: (() => i32)[] = [() => n, () => n + 1]; return hs[0]() + hs[1](); }", 5},
 }
 
-// TestSelfHostCloArrayFieldCallIRX86_64 — the x86-64 asm.fern fix, through the
+// TestSelfHostCloArrayFieldCallIRX86_64 runs the cases on x86-64 through the
 // production driver (asm_ir_run).
 func TestSelfHostCloArrayFieldCallIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -85,9 +66,9 @@ func TestSelfHostCloArrayFieldCallIRX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostCloArrayFieldCallIRArm64 — CI-gated arm64 counterpart of the
-// asm_arm64.fern fix (same callee-dispatch fallthrough), via the arm64 IR path
-// (asm_ir_run `-target arm64-linux`). Mirrors TestSelfHostTupleFnIRArm64.
+// TestSelfHostCloArrayFieldCallIRArm64 — CI-gated arm64 counterpart, via the
+// arm64 IR path (asm_ir_run `-target arm64-linux`). Mirrors
+// TestSelfHostTupleFnIRArm64.
 func TestSelfHostCloArrayFieldCallIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

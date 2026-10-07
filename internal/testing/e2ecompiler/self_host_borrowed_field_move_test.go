@@ -5,12 +5,10 @@ import (
 	"testing"
 )
 
-// A local bound from a struct field read holds no reference of its own on the
-// AST lowering: the bind takes none and the exit sweep releases none. Storing
-// it into a construction at its last use is therefore not a move. When it was
-// taken as one, the construction skipped its retain, and the `own` receiver's
-// drop freed the field under the new struct (#10475). The per-module-built
-// compiler crashed on exactly this shape in irlower's own strarr_own_node.
+// A local bound from a struct field read, stored into a construction at its
+// last use, is not a move: the construction retains it, since the `own`
+// receiver's drop still releases the field. Taken as a move, that drop freed
+// the field under the new struct (#10475).
 const borrowedFieldMoveSrc = `struct Frame { key: string, n: i32 }
 struct Acc { fr: Frame, k: i32 }
 function node(own st: Acc): Acc {

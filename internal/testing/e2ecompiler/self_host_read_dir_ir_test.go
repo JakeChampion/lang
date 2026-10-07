@@ -11,14 +11,13 @@ import (
 
 // TestSelfHostReadDirIR pins `read_dir(path)` lowering on the self-host x86-64 IR
 // path. read_dir lists a directory's base-name children (openat+getdents64,
-// skipping . / ..) and returns Result[string[], IoError]; it had a full AST
-// runtime (__fn___fern_read_dir) but no IR lowering, so any user (std/test's
-// assert_eq_dir_listing) bailed the module (#3457). It now lowers to
-// op_read_dir -> the Fern __fn___fern_read_dir runtime (boxing a
-// string[] via __fern_arr_box). The program makes a temp dir, writes two files,
-// read_dirs it, asserts the count is 2, removes the tree, and exits 0 — exercising
-// temp_dir / write_file / read_dir / remove_dir_all all on the IR path. The test
-// also pins that the IR runtime was reached (call __fn___fern_read_dir in the asm).
+// skipping . / ..) and returns Result[string[], IoError]; std/test's
+// assert_eq_dir_listing is built on it (#3457). It lowers to op_read_dir -> the
+// Fern __fn___fern_read_dir runtime (boxing a string[] via __fern_arr_box). The
+// program makes a temp dir, writes two files, lists it, asserts the count is 2,
+// removes the tree, and exits 0 — exercising temp_dir / write_file / read_dir /
+// remove_dir_all all on the IR path. The test also pins that the runtime was
+// reached (call __fn___fern_read_dir in the asm).
 func TestSelfHostReadDirIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

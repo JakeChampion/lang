@@ -13,14 +13,11 @@ import (
 // self-hosted x86-64 IR path and compute the hardcoded oracle exit code. `?`
 // unwraps an Option[T]/Result[T,E]'s Some/Ok payload as the expression's value
 // or early-returns the failure box (a fresh None for Option, the forwarded Err
-// box for Result) from the enclosing function. The self-host runtime leaks, so
-// the lowering skips the native path's rc/defer/errdefer cleanup. Covers scalar
-// i32/boolean (4-byte) AND i64/u64 (8-byte) payloads: an i64/u64 payload reads
-// through op_opt_payload_w(64) — the same 8-byte read the match-arm payload
-// binding uses — so `let x: i64 = inner?` yields a true i64 (the binding routes
-// through lower_i64, which dispatches back into lower_try; an unannotated `let x =
-// inner?` width-tracks i64 via infer_expr_width). string/f64/composite payloads
-// still bail. The eligibility assertion below is the proof that each case
+// box for Result) from the enclosing function. Covers scalar i32/boolean
+// (4-byte) AND i64/u64 (8-byte) payloads: an i64/u64 payload reads through
+// op_opt_payload_w(64) — the same 8-byte read the match-arm payload binding
+// uses — so `let x: i64 = inner?` yields a true i64, and so does an unannotated
+// `let x = inner?`. The path assertion below is the proof that each case
 // reaches the IR path.
 var tryOpIRCases = []struct {
 	name     string

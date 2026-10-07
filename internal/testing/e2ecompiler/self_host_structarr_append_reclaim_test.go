@@ -7,36 +7,17 @@ import (
 
 // --- Append-built struct-array element reclaim (#6127) -------------
 //
-// The lowering's "STRUCTARR:" credit routes a fresh, non-escaping scalar-field
-// struct array to __fern_arrarr_free, which frees each element STRUCT BOX and
-// then the outer buffer. Like the arr-of-arr class before #6092, that credit
-// was refused for any REASSIGNED name — and `ps = ps.append(P { .. })` is a
-// reassignment — so an append-built `P[]` fell out of the credit and leaked one
-// element box per append.
+// A fresh, non-escaping struct array built by `ps = ps.append(P { .. })` must
+// free each element STRUCT BOX and then the outer buffer, exactly as the
+// literal-built form of the same array does. The append is a reassignment, so
+// it must not cost the array its freshness, or the array leaks one element box
+// per append.
 //
-// Found by the FERN_LEAKCHECK differential (#6091) against native, which is
-// also why these tests assert AGREEMENT with native rather than a byte count.
-//
-// Scope note: STRUCTARR is a SHALLOW class — it frees element boxes, not their
-// fields — so the append path is admitted only for an element struct whose
-// fields are all scalar, `string` or `fn`
-// (struct_all_scalar_string_or_fn_fields). That
-// restriction is not caution for its own sake: the first version of this change
-// used the class's existing, fully loose field guard and broke self-compilation
-// (#6129 — gen0/gen1 diverged on unit 2_s83), because that guard also lets map /
-// option / tuple fields through and the compiler's own sources have ~112
-// append-built struct arrays.
-//
-// `string` was folded back in afterwards, because the exclusion was costing a
-// real leak for no safety: the LITERAL-built form of the same array has always
-// reclaimed its element boxes under the fully loose rule, so refusing the append
-// form made two ways of building one value disagree (28800 vs 9600 bytes over
-// 100 rounds). It is sound because the element BOX is fresh by construction —
-// structarr_elem_store_ok admits a no-base struct literal or a call to a
-// strict-fresh struct-returning function — so the shallow free releases a box
-// the array solely owns, and the string field leaks exactly as it already does
-// on the literal path. `fn` joined on the same argument (#6461). map / option /
-// tuple stay out.
+// The free is SHALLOW — it releases element boxes, not their fields — so it is
+// sound only while the array solely owns each box: an element that is a no-base
+// struct literal, or a call to a function whose every return is one. Element
+// structs with scalar, `string` or `fn` fields are covered (#6461); the hazard
+// cases below pin the shapes that must still leak rather than free a shared box.
 
 const structArrAppendChurnSrc = `struct P { x: i32, y: i32 }
 
@@ -358,7 +339,7 @@ function main(): i32 {
 			// consulted rather than assumed.
 			name: "passthrough_call_element",
 			src: `struct N { name: string, n: i32 }
-function passthru(p: N): N { return p; }
+@noinline function passthru(p: N): N { return p; }
 function main(): i32 {
     let shared: N = N { name: "pq", n: 5 };
     let ns: N[] = [];

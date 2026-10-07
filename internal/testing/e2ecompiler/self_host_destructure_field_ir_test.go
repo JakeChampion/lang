@@ -8,22 +8,10 @@ import (
 )
 
 // destructureFieldCases cover `let (a, b, c) = <source>` where the source is a
-// struct FIELD, which `lower_stmt_var_destructure` had no arm for (#8458).
-//
-// It typed the destructured elements by matching `v.init` against ExprTuple /
-// ExprIdent / ExprIndex / ExprCall. A field access matched none of them, fell
-// through to the default, and every element read as an untyped 4 bytes — so an
-// f64 element came back as its bit pattern (4612811918334231000) and an i64
-// truncated (5000000001 → 705032705), on all three self-host backends, with no
-// diagnostic. The identical destructure from a call, a local or a param was
-// correct, which is what made it look like a tuple bug rather than a
-// source-shape one.
-//
-// `tuple_decl_type` already resolved a field's declared tuple type — its own
-// ExprFieldAccess arm exists for exactly this — so the information was there
-// and unread. The fix asks it for anything the match leaves untyped, which
-// covers a nested field and a receiver field by the same walk rather than
-// adding one arm and waiting for the next shape to go missing.
+// struct FIELD (#8458), including a nested field and a receiver field. Each
+// element takes the field's declared tuple type; read as an untyped 4 bytes, an
+// f64 element comes back as its bit pattern and an i64 truncates
+// (5000000001 → 705032705), with no diagnostic.
 //
 // Each case returns a value the interp oracle also computes, so the assertion
 // is the two agreeing rather than a hardcoded number.

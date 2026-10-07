@@ -10,22 +10,16 @@ import (
 )
 
 // `__memchr(s, byte, from)` on the self-host IR path — the first fused SIMD
-// kernel of docs/ATLAS-PLATFORM-PLAN.md §3, completed across the three
-// self-host backends.
-//
-// §3.4 ordered the work as "total everywhere before fast anywhere", and both
-// halves are now done: every backend answers the same question, and all seven
-// answer it 16 bytes at a time — SSE2 on x86-64, NEON on arm64, v128 on wasm,
-// self-host and native alike. Holding them all to ONE expectation is what these
-// tests are for; the corpus was written while every body was scalar and passed
+// kernel of docs/ATLAS-PLATFORM-PLAN.md §3, lowered on all three self-host
+// backends with a vector body: AVX2 and SSE2 tiers on x86-64, NEON on arm64,
+// v128 on wasm. Holding them all to ONE expectation is what these tests are
+// for; the corpus was written while every body was scalar and passed
 // unchanged through each vector swap, which is the whole reason it is worth
 // anything.
 //
-// Only once all seven lowerings exist may `std/string` route its single-byte
-// search through the intrinsic: the self-hosted compiler compiles the stdlib,
-// the AST emitters are gone, and every backend routes IR-or-error
-// (docs/SELFHOST-AST-RETIREMENT.md), so a missing lowering is a hard compile
-// error rather than a slow path.
+// `std/string` routes its single-byte search through the intrinsic, and every
+// backend routes IR-or-error (docs/SELFHOST-AST-RETIREMENT.md), so a missing
+// lowering is a hard compile error rather than a slow path.
 
 // memchrIRProg is SELF-CHECKING: it carries its own reference implementation
 // written in Fern and compares `__memchr` against it, so the corpus can be

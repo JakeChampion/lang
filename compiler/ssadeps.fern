@@ -4,16 +4,6 @@ import "./ssa";
 import "./ssalive";
 import "./util";
 
-function indices(n: i32): i32[] {
-  let out: i32[] = [];
-  let i: i32 = 0;
-  while (i < n) {
-    out = out.append(0 - 1);
-    i = i + 1;
-  }
-  return out;
-}
-
 function contains(values: i32[], value: i32): boolean {
   for v in values {
     if (v == value) {
@@ -32,7 +22,7 @@ pub function position_of(f: ssa.SFunc): i32[] {
       top = b.id;
     }
   }
-  let out: i32[] = indices(top + 1);
+  let out: i32[] = util.minus_ones(top + 1);
   let i: i32 = 0;
   while (i < f.blocks.len()) {
     out = out.with(f.blocks[i].id, i);
@@ -91,12 +81,12 @@ pub function dominates(f: ssa.SFunc): Dom {
   let entry: i32 = at[f.entry];
   // Postorder by an explicit stack: a block is numbered once all its
   // successors are.
-  let po: i32[] = indices(n);
+  let po: i32[] = util.minus_ones(n);
   let order: i32[] = [];
   let seen: boolean[] = __alloc_bool(n);
   let stack: i32[] = [entry];
   let sp: i32 = 1;
-  let next_succ: i32[] = indices(n);
+  let next_succ: i32[] = util.minus_ones(n);
   seen = seen.with(entry, true);
   while (sp > 0) {
     let bi: i32 = stack[sp - 1];
@@ -119,7 +109,7 @@ pub function dominates(f: ssa.SFunc): Dom {
       sp = sp - 1;
     }
   }
-  let idom: i32[] = indices(n);
+  let idom: i32[] = util.minus_ones(n);
   idom = idom.with(entry, entry);
   let changed: boolean = true;
   while (changed) {
@@ -150,8 +140,8 @@ pub function dominates(f: ssa.SFunc): Dom {
     }
   }
   // Number the tree: children lists, then an explicit-stack walk.
-  let first_child: i32[] = indices(n);
-  let next_sibling: i32[] = indices(n);
+  let first_child: i32[] = util.minus_ones(n);
+  let next_sibling: i32[] = util.minus_ones(n);
   let bi: i32 = 0;
   while (bi < n) {
     if (bi != entry && idom[bi] >= 0) {
@@ -160,12 +150,12 @@ pub function dominates(f: ssa.SFunc): Dom {
     }
     bi = bi + 1;
   }
-  let pre: i32[] = indices(n);
-  let post: i32[] = indices(n);
+  let pre: i32[] = util.minus_ones(n);
+  let post: i32[] = util.minus_ones(n);
   let clock: i32 = 0;
   let walk: i32[] = [entry];
   let wp: i32 = 1;
-  let cursor: i32[] = indices(n);
+  let cursor: i32[] = util.minus_ones(n);
   pre = pre.with(entry, clock);
   clock = clock + 1;
   while (wp > 0) {
@@ -283,8 +273,8 @@ pub function verify(f: ssa.SFunc, dependencies: i32[][]): string {
   if (f.blocks[at[f.entry]].preds.len() > 0) {
     return "entry has predecessors";
   }
-  let defs: i32[] = indices(f.nvals);
-  let positions: i32[] = indices(f.nvals);
+  let defs: i32[] = util.minus_ones(f.nvals);
+  let positions: i32[] = util.minus_ones(f.nvals);
   let bi: i32 = 0;
   while (bi < f.blocks.len()) {
     let pos: i32 = 0;

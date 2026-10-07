@@ -107,9 +107,8 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"if-expr-true", "function main(): i32 { let x: i32 = if (true) { 3 } else { 4 }; return x; }", 3, ""},
 		{"if-expr-capture", "function main(): i32 { let n: i32 = 10; let x: i32 = if (n > 5) { n + 1 } else { 0 }; return x; }", 11, ""},
 		{"if-expr-else-if", "function main(): i32 { let n: i32 = 2; let x: i32 = if (n == 1) { 10 } else if (n == 2) { 20 } else { 30 }; return x; }", 20, ""},
-		// Two SEPARATE lambdas in one module — exercises the shared lam_ctr /
-		// lamdefs Cells incrementing (0→1→2) and accumulating both bodies
-		// (the array-as-cell idiom migrated to Cell). 1 + 4 = 5.
+		// Two SEPARATE lambdas in one module — both bodies are emitted.
+		// 1 + 4 = 5.
 		// Array.build desugar through the self-host parser (parser.fern):
 		// b.append in a loop builds [1,2,3,4]; sum 10.
 		{"array-build", "function main(): i32 { let out: i32[] = Array.build((b: ArrayBuilder[i32]): void => { let i = 0; while (i < 4) { b.append(i + 1); i = i + 1; } }); return out[0] + out[1] + out[2] + out[3]; }", 10, ""},
@@ -308,10 +307,9 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// read back through get().
 		{"cell-string", "function main(): i32 { let c: Cell[string] = cell_new(\"A\"); c.set(\"hi\"); write(c.get()); return 0; }", 0, "hi"},
 		// Cell stored in a STRUCT FIELD: get/set on `b.c` (a field access).
-		// is_cell_expr resolves the owner struct + the field's declared Cell
-		// type so the wasm backend dispatches the cell load/store. Recognising
-		// only Ident/cell_new receivers miscompiles `b.c.get()` to a bare
-		// i32.load. This is the lam_ctr/lamdefs shape.
+		// The receiver's Cell type comes from the field's declared type, so
+		// the wasm backend dispatches the cell load/store; recognising only
+		// Ident/cell_new receivers miscompiles `b.c.get()` to a bare i32.load.
 		{"cell-i32-field", "struct Box { c: Cell[i32] } function main(): i32 { let b: Box = Box { c: cell_new(5) }; b.c.set(b.c.get() + 1); return b.c.get(); }", 6, ""},
 		{"cell-str-field", "struct Box { c: Cell[string] } function main(): i32 { let b: Box = Box { c: cell_new(\"ab\") }; b.c.set(\"xyz\"); return b.c.get().len(); }", 3, ""},
 		{"arr-index-first", "function main(): i32 { let a = [42, 99, 7]; return a[0]; }", 42, ""},
@@ -556,10 +554,9 @@ func TestSelfHostWasmRun(t *testing.T) {
 		{"f64-to-i64-direct-print", "function main(): i32 { print_i64(9000000000.0 as i64); return 0; }", 0, "9000000000"},
 		// Un-annotated f64 locals: `let x = 1.5` (no `: f64`) must declare its
 		// wasm local as f64 to match the f64 value stored — the type is inferred
-		// from the initialiser (literal / float arith / negation / `as f64`).
-		// collect_f64_var_names has to honour the inferred type, not just an
-		// explicit annotation: an inferred-f64 local declared i32 fails module
-		// validation (i32 local <- f64.const).
+		// from the initialiser (literal / float arith / negation / `as f64`),
+		// not just an explicit annotation: an inferred-f64 local declared i32
+		// fails module validation (i32 local <- f64.const).
 		{"f64-inferred-unused", "function main(): i32 { let z = 1.5; return 5; }", 5, ""},
 		{"f64-inferred-cast-print", "function main(): i32 { let x = 3.5; print_int(x as i32); return 0; }", 0, "3"},
 		{"f64-inferred-arith", "function main(): i32 { let x = 2.5 + 1.5; print_int(x as i32); return 0; }", 0, "4"},
@@ -687,8 +684,7 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// Wide enum payload slots (S1): a single i64 / f64 variant payload
 		// stores + binds at full width (8-byte slot), so a value above 2^31 (or
 		// a float's fractional bits) round-trips — a 4-byte i32 slot would
-		// truncate it. The bound `x` is a 64-bit local (declared i64/f64,
-		// recognised by is_i64_expr / is_f64_expr).
+		// truncate it. The bound `x` is a 64-bit local (declared i64/f64).
 		{"enum-i64-payload", "enum Box { Big(i64) } function main(): i32 { let b: Box = Big(5000000000); match (b) { Big(x) => { if (x == 5000000000) { return 42; } return 1; } } return 0; }", 42, ""},
 		{"enum-i64-payload-arith", "enum Box { Big(i64) } function main(): i32 { let b: Box = Big(4200000000); match (b) { Big(x) => { return (x / 100000000) as i32; } } return 0; }", 42, ""},
 		{"enum-f64-payload", "enum FBox { F(f64) } function main(): i32 { let b: FBox = F(3.5); match (b) { F(x) => { return (x * 4.0) as i32; } } return 0; }", 14, ""},
@@ -714,11 +710,9 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// var-typed receiver form.
 		{"derive-ord-enum", "trait Ord { function cmp(self: Self, other: Self): i32; } impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } } @derive(Ord) enum Lvl { Low(i32), High } function main(): i32 { let a: Lvl = Low(1); let a2: Lvl = Low(2); let h: Lvl = High; let lo: Lvl = Low(0); let a3: Lvl = Low(1); let r: i32 = 0; if (a.cmp(a2) < 0) { r = r + 1; } if (a.cmp(h) < 0) { r = r + 2; } if (h.cmp(lo) > 0) { r = r + 4; } if (a.cmp(a3) == 0) { r = r + 8; } return r; }", 15, ""},
 		// INLINE variant-call receivers (`Has(5).eq(…)`, `Nil.eq(…)`,
-		// `Low(1).cmp(…)`, `Circle(3).area()`): struct_type_of has to recover
-		// the enum from a bare variant constructor, or dispatch falls to the
-		// i32 path (pointer compare).
-		// enum_of_variant now maps the variant to its enum via the enum
-		// methods' match arms, so inline receivers dispatch statically.
+		// `Low(1).cmp(…)`, `Circle(3).area()`): the enum is recovered from a
+		// bare variant constructor, so inline receivers dispatch statically
+		// rather than falling to the i32 path (pointer compare).
 		{"inline-variant-eq", "trait Eq { function eq(self: Self, other: Self): boolean; } impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self == other; } } @derive(Eq) enum Opt { Has(i32), Nil } function main(): i32 { let r: i32 = 0; if (Has(5).eq(Has(5))) { r = r + 1; } if (!Has(5).eq(Has(6))) { r = r + 2; } if (!Has(5).eq(Nil)) { r = r + 4; } if (Nil.eq(Nil)) { r = r + 8; } return r; }", 15, ""},
 		{"inline-variant-ord", "trait Ord { function cmp(self: Self, other: Self): i32; } impl Ord for i32 { function cmp(self: Self, other: Self): i32 { if (self < other) { return 0 - 1; } if (self > other) { return 1; } return 0; } } @derive(Ord) enum Lvl { Low(i32), High } function main(): i32 { let r: i32 = 0; if (Low(1).cmp(Low(2)) < 0) { r = r + 1; } if (Low(9).cmp(High) < 0) { r = r + 2; } if (High.cmp(Low(0)) > 0) { r = r + 4; } if (Low(3).cmp(Low(3)) == 0) { r = r + 8; } return r; }", 15, ""},
 		{"inline-enum-method", "enum Shape { Circle(i32), Square(i32) } function (s: Shape) area(): i32 { match (s) { Circle(r) => { return r * r * 3; }, Square(w) => { return w * w; } } } function main(): i32 { return Circle(3).area() + Square(4).area(); }", 43, ""},
@@ -738,8 +732,8 @@ func TestSelfHostWasmRun(t *testing.T) {
 		// Generic-struct monomorphisation reaches the wasm backend through
 		// the shared module_with_builtins pass: `Box[i32]` / `Box[string]`
 		// become concrete `Box__i32` / `Box__string` clones, and wasm's
-		// static dispatch (struct_type_of -> $Box__i32__to_string) routes
-		// each to its own helper. Both clones coexist with a shared `v`.
+		// static dispatch routes each to its own helper
+		// ($Box__i32__to_string, …). Both clones coexist with a shared `v`.
 		{"generic-struct-derive-eq", "trait Eq { function eq(self: Self, other: Self): boolean; } impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self == other; } } @derive(Eq) struct Box[T] { v: T } function main(): i32 { let a: Box[i32] = Box { v: 5 }; let b: Box[i32] = Box { v: 5 }; let c: Box[i32] = Box { v: 9 }; let r: i32 = 0; if (a.eq(b)) { r = r + 1; } if (!a.eq(c)) { r = r + 2; } return r; }", 3, ""},
 		// Struct-array indexing: pts[i].field resolves the element struct type.
 		{"struct-array-index", "struct Pt { x: i32, y: i32 } function main(): i32 { let pts = [Pt { x: 5, y: 6 }, Pt { x: 7, y: 8 }]; print_int(pts[0].x); print_int(pts[1].y); return 0; }", 0, "58"},

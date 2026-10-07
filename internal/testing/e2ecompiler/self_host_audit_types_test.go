@@ -9,13 +9,11 @@ import (
 
 // auditTypesCases isolate composite-type + pattern-matching features and
 // run them through the SELF-HOSTED compiler, asserting the exit code.
-// Self-host arm of the §C / §A audit (docs/FEATURE-AUDIT.md); the native
-// arm is the `audit_types_match` fixture (all four native backends).
+// Self-host arm of the §C / §A audit (docs/FEATURE-AUDIT.md); the
+// conformance case `audit_types_match` covers the same features.
 //
-// NOTE: struct fields are immutable after construction — the sanctioned
-// update is functional (`T { ...old, f: v }`). The native checker rejects
-// `p.x = v` (E048); the self-host checker currently does NOT (issue
-// #2825), so these cases deliberately use only functional update.
+// Struct fields are immutable after construction (E048), so these cases use
+// only functional update (`T { ...old, f: v }`).
 var auditTypesCases = []struct {
 	name string
 	src  string

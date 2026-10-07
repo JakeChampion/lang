@@ -10,35 +10,20 @@ import (
 
 // --- An enum read through a match EXPRESSION keeps its release ---------------
 //
-// `let v: E = E.A([i, i + 1]); consume(v);` reclaimed NOTHING — 200 allocs / 0
-// frees over 100 rounds against native's 200/200, the box and its payload every
-// round. The same code with the match written as a STATEMENT was already flat.
+// `let v: E = E.A([i, i + 1]); consume(v);` must reclaim the box and its payload
+// every round when the enum is read through a match EXPRESSION, exactly as it
+// does when the match is written as a STATEMENT.
 //
-// A match/if/block expression desugars to a zero-arg IIFE that the lowering INLINES,
-// so a name read inside it is an ordinary in-scope read. The struct family
-// learned that (self_host_match_expr_borrow_test.go) and recursed into the
-// STRICT walker, which was right for its own caller and wrong for the walkers
-// that carry the match-borrow reading:
+// A match/if/block expression desugars to a zero-arg IIFE that the lowering
+// INLINES, so a name read inside it is an ordinary in-scope read. That holds on
+// both sides of a call: a callee that reads its param through a match
+// expression still borrows it, so the caller keeps its own release; and the
+// caller's own `let t = match (v) { … }` read does not refuse it either. It
+// holds through the borrowing binary-operator operands too, so
+// `(match (e) { … }) + k` is the same read. self_host_match_expr_borrow_test.go
+// pins the struct family.
 //
-//   - stmt_unsafe_for_match_borrow, which feeds borrowable_params_of. A callee
-//     that reads its param through a match expression had that param marked
-//     non-borrowable, so every CALLER refused its own enum local's release.
-//   - ef_unsafe_expr, the enum-field fork, which is the caller's own
-//     `let t = match (v) { … }` read.
-//
-// The reading is carried explicitly now (expr_unsafe_for_vb), through the
-// borrowing-binop operand path too — `+` and the comparisons hand their operands
-// to binop_operand_unsafe_for / expr_unsafe_for_view_pos, which dropped it, so
-// `(match (e) { … }) + k` stayed refused until those were threaded as well.
-//
-// The strict entry point is unchanged and still recurses strictly:
-// precise_drop_names reads it and widens to the match-borrow reading for one
-// class at a time on purpose, and making value blocks borrow-aware for everyone
-// silently widened the enum class too — the plan then claimed a precise drop of
-// a box its own consuming-match reuse still owned.
-//
-// Every want below was confirmed against the native x86-64 backend. Exit 99 is
-// reserved for __rc_underflow_count().
+// Exit 99 is reserved for __rc_underflow_count().
 
 type enumValueBlockCase struct {
 	name   string
@@ -111,12 +96,10 @@ function round(i: i32): i32 {
 			want: 6, allocs: 200, frees: 200,
 		},
 		{
-			// The value block nested inside a BINARY expression. `+` and the
-			// comparisons take a separate operand path (binop_operand_unsafe_for
-			// -> expr_unsafe_for_view_pos), and that path dropped the mode too —
-			// so a helper written `return (match (e) { … }) + k;` stayed refused
-			// after the first three walkers were threaded. It is the shape the
-			// enum field-share suite's call-argument row uses.
+			// The value block nested inside a BINARY expression:
+			// `return (match (e) { … }) + k;` reads `e` as a borrowing operand,
+			// so the caller keeps its release. It is the shape the enum
+			// field-share suite's call-argument row uses.
 			name: "helper_wraps_match_expr_in_binary",
 			src: decls + `function consume(e: E, k: i32): i32 { return (match (e) { E.A(xs) => xs.len(), E.B => 0 }) + k; }
 function round(i: i32): i32 {

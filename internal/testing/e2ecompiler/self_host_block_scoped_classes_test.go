@@ -7,37 +7,15 @@ import (
 
 // --- Block-scoped reclaim, the rest of the family (#6127) --------------------
 //
-// #6263 gave the reclaim credits a retired-name-aware lookup (reclaim_slot_name)
-// but switched it on for only four classes — "TUP:", "OPTTUP:", "OPTSTRUCT:",
-// "OPTARRARR:" — the four with a measured leak at the time, deliberately leaving
-// the rest keying on slot_name because switching a class on turns on an
-// exit-sweep release that has never run for these slots.
+// A heap value declared inside a loop body is released once per pass, so each
+// `round` below reaches allocs == frees at live_bytes 0. The cases cover one
+// container shape each: arr-of-arr, string array, struct array, optional
+// arr-of-arr, rc tuple, and the array-of-structs / array-of-tuples shapes read
+// through `.len()`, which is a borrow rather than an escape (#6291).
 //
-// Probing the rest of the family found the same n-1-of-n signature on six more,
-// each closed here and each verified to reach allocs == frees:
-//
-//	ARRARR / ARRARRS   7200      OPTAARR   12000      TUPRC / TUPRCS   8000
-//	SARR               4800      STRUCTARR(A)   9600
-//
-// TUPRC needed BOTH its credits switched — "TUPRC:" drives the rebind and
-// "TUPRCS:" (#6251) the exit sweep — and flipping only the first left the shape
-// measuring exactly its unfixed 8000.
-//
-// Two classes are absent by MEASUREMENT rather than omission, and the tests
-// below pin both directions:
-//
-//   - "RCENUM:" and "OPTARR:" are already flat at 0, because their
-//     consuming-match analyses are per-block (#4357) and free the value before
-//     the block ends. Switching them on would be a second claim on a released
-//     box, so they must stay balanced without it.
-//   - "ARRSTRUCT:" and "ARRTUP:" once leaked here and switching them changed
-//     NOTHING, because their cause was elsewhere: `.len()` marked the local as
-//     ESCAPING, so the shape could not earn any credit however the columns were
-//     set. #6291 made `.len()` on an array-of-structs a borrow and closed both
-//     incidentally. Measured at #6285 they leak 67200 / 60800 and at #6291 both
-//     are 0; at #6285 only the `.len()` probes leaked, while element-access and
-//     no-access variants were already clean. The two shapes are pinned below —
-//     nothing else keeps a fix that landed as a side effect from regressing.
+// The rc-payload enum and the flat Option are consumed by a match inside the
+// block, which frees the value before the block ends (#4357). They are pinned
+// balanced so that a second release at block end cannot creep in.
 
 func TestSelfHostBlockScopedClassesX86_64(t *testing.T) {
 	boxedProbes(t)
@@ -113,7 +91,7 @@ function main(): i32 {
 		{
 			// `ids` hides "alpha" from the static-box plan, so `xs` is a heap box.
 			name: "strarr_declared_in_loop",
-			src: `function ids(s: string): string { return s; }
+			src: `@noinline function ids(s: string): string { return s; }
 function round(r: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -197,9 +175,8 @@ function main(): i32 {
 			want: 42,
 		},
 		{
-			// Already balanced WITHOUT this mechanism: consumed_rcpayload_enum_frees is
-			// per-block (#4357), so the value is freed before the block ends. If
-			// "RCENUM:" were switched on too, this would be freed twice.
+			// Freed by the consuming match before the block ends (#4357), so a
+			// block-end release as well would free it twice.
 			name: "rc_payload_enum_in_loop_stays_balanced",
 			src: `enum E { Full(i32[]), Nil }
 function round(r: i32): i32 {
@@ -341,7 +318,7 @@ function main(): i32 {
 			// A block-scoped string[] both aliased outward and passed to a call.
 			// `ids` hides "alpha" from the static-box plan, so `xs` is a heap box.
 			name: "strarr_aliased_and_passed_to_a_call",
-			src: `function ids(s: string): string { return s; }
+			src: `@noinline function ids(s: string): string { return s; }
 function keepit(xs: string[]): i32 { return xs.len(); }
 function round(r: i32): i32 {
     let acc: i32 = 0;

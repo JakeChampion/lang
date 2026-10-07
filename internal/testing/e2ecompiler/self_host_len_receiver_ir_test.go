@@ -7,24 +7,14 @@ import (
 	"testing"
 )
 
-// Heap-bump FIXPOINTS for the self-host x86-64 IR path's `.len()` CALL-
-// receiver reclaim — the self-host twin of native #5141 (#4357 fallout). A
-// user-call result consumed as a len receiver (`f(i).len()`) leaked the
-// callee's returned value linearly (strings ~160 B/iter, arrays ~104 B/iter):
-// the len lowering's receiver reclaim only matched direct concat receivers.
+// Heap-bump FIXPOINTS for the `.len()` CALL-receiver reclaim (#5141, #4357):
+// a user-call result consumed only as a len receiver (`f(i).len()`) is
+// released after the read, so a loop's heap growth does not scale with its
+// trip count. An identity callee hands back the CALLER's value, which must
+// stay intact.
 //
-// Since this path has no return-transfer inc, only registry-proven-fresh
-// callees are freed: string receivers gate on "SFRLEN:" seeds
-// (str_fresh_ret_fns ∩ the per-body len-receiver-callee walker) and release
-// via the rc-aware __fern_str_free; array receivers gate on the strict-fresh
-// "ARR:" entries in return_fresh_struct_ret_fns and release via the
-// rc-guarded __fern_rc_dec. Unproven callees (the identity negatives) keep
-// the prior safe-leak, so live caller values are never touched.
-//
-// The builder shapes deliberately avoid literal-bound string LOCALS
-// (`let p: string = "..."`): those leak their 24-byte box per call through a
-// separate, pre-existing callee-side exit-sweep gap (bare-literal inits are
-// excluded from the fresh classes) that would mask these fixpoints.
+// The builder shapes avoid literal-bound string LOCALS
+// (`let p: string = "..."`) so the fixpoints measure only the receiver.
 var lenRecvIRCases = []struct {
 	name  string
 	src   func(n string) string
@@ -65,8 +55,8 @@ function main(): i32 {
 	// (a bare-ident return is non-fresh for strings; not a direct array
 	// literal for "ARR:"), so no free fires — base / arr stay value-intact.
 	{name: "alias-negative", fixed: true, want: 0, src: func(string) string {
-		return `function id(s: string): string { return s; }
-function ida(xs: i32[]): i32[] { return xs; }
+		return `@noinline function id(s: string): string { return s; }
+@noinline function ida(xs: i32[]): i32[] { return xs; }
 function main(): i32 {
     let base: string = "0123456789abcdef" + "-suffix-to-force-heap";
     let arr: i32[] = [10, 20, 30, 40, 50, 60, 70, 80, 90, 100];

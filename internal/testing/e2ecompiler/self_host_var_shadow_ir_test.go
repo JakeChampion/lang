@@ -4,14 +4,11 @@ import "testing"
 
 // varShadowIRCases pin lexical variable SHADOWING in a nested block on the
 // self-host IR path. A `let x` inside an if/while/for body shadows an outer `x`
-// for the block's extent; after the block the outer binding is restored. The
-// self-host lowerer resolved a name to its FIRST slot (slot_of) while `add_local`
-// appended a fresh slot for the inner `let x`, so a shadowing `let x = 10` wrote
-// to the OUTER slot and clobbered it — `return x` after the block read 10 instead
-// of the outer 1 (interp + native were correct). The fix resolves a name to its
-// MOST-RECENT binding (slot_of scans from the end); `lower_block` already retires
-// the inner names on exit, so the outer is found again afterward. Each case is
-// value-pinned against the native interpreter oracle.
+// for the block's extent; after the block the outer binding is restored. A
+// name must resolve to its MOST-RECENT binding — resolving to the first would
+// make a shadowing `let x = 10` write the OUTER slot, so `return x` after the
+// block reads 10 instead of 1. Each case is value-pinned against the
+// interpreter oracle.
 var varShadowIRCases = []struct {
 	name string
 	src  string

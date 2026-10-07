@@ -7,17 +7,12 @@ import (
 
 // --- Reaching a field THROUGH a field is a borrow (#6127) --------------------
 //
-// `optstruct_bind_esc_expr` (#6308) gates the deep drop of an Option's struct
-// payload on no rc FIELD being moved out of the arm binding. It understood one
-// level: `p.xs`, `p.xs[j]`, `p.xs.len()`. A chain — `p.inner.ys.len()`, where the
-// payload's rc content sits one struct further down — fell through to the generic
-// call tail, which reaches the bare-ident arm through `p.inner` and reports the
-// non-scalar field `inner` extracted. So the deep drop was refused and the whole
-// nested level leaked.
-//
-// That is the same distinction structfld_safe_operand draws for the whole-program
-// scan, and the reason that scan could not reuse the string walker either (#6274):
-// reaching `ys` through `inner` retains only ys's box, so `inner` is borrowed.
+// An Option's struct payload is deep-dropped unless an rc FIELD is moved out of
+// the arm binding (#6308), and a chain — `p.inner.ys.len()`, where the
+// payload's rc content sits one struct further down — moves nothing: reaching
+// `ys` through `inner` retains only ys's box, so `inner` is borrowed. Read as
+// a move of `inner`, the deep drop was refused and the whole nested level
+// leaked.
 //
 // Which block leaked, by growing one dimension at a time over 100 rounds:
 //
@@ -27,10 +22,7 @@ import (
 //	P 2 -> 6 fields               400 / 200   8000   <- unchanged
 //
 // so both the Inner box and its array leaked while the P box and the option box
-// were freed. The other half of the diagnosis is that the SAME struct bound as a
-// bare local reclaims fully (300/300) and emits both `__struct_drop_P` and
-// `__struct_drop_Inner` — the drop helpers were there all along, and the option
-// payload path was the only caller that never asked for them.
+// were freed.
 
 func TestSelfHostOptStructBorrowChainX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -122,8 +114,8 @@ function main(): i32 {
 			want: 4,
 		},
 		{
-			// A string field beside the nested array, read through the same chain —
-			// __struct_drop_Inner's k_str arm, reached two levels down.
+			// A string field beside the nested array, read through the same chain;
+			// its release is reached two levels down.
 			name: "nested_string_field",
 			src: `struct Inner { ys: i32[], tag: string }
 struct P { inner: Inner, n: i32 }
@@ -203,7 +195,7 @@ func TestSelfHostOptStructBorrowChainHazardsX86_64(t *testing.T) {
 			name: "intermediate_struct_extracted",
 			src: `struct Inner { ys: i32[] }
 struct P { inner: Inner, n: i32 }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function round(i: i32): i32 {
     let held: Inner = Inner { ys: id([0]) };
     let acc: i32 = 0;
@@ -267,7 +259,7 @@ function main(): i32 {
 			name: "leaf_array_to_a_callee_that_keeps_it",
 			src: `struct Inner { ys: i32[] }
 struct P { inner: Inner, n: i32 }
-function keepit(xs: i32[]): i32[] { return xs; }
+@noinline function keepit(xs: i32[]): i32[] { return xs; }
 function round(i: i32): i32 {
     let held: i32[] = [];
     let acc: i32 = 0;

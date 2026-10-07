@@ -3,19 +3,14 @@ package e2ecompiler
 import "testing"
 
 // retStructFieldIRCases pin the move-on-return of a POINTER-shaped FIELD of a
-// local struct on the self-host IR path (#4801). A function `return r.node` over a
-// local `let r: P = ...` hands the field out to the caller, but the lowerer's exit
-// dec-sweep still reclaimed `r` — emit_struct_field_drops' __struct_drop_<T> then
-// DEEP-freed the returned field out from under the caller. It surfaced as a SIGSEGV
-// only once a later allocation recycled the freed block: the watbin `wat_parse`
-// (`let r = wat_parse_one(...); return r.node;`) returned a dangling SExpr tree, so
-// emit_binary's enc_functype allocations recycled a freed tree node and the import
-// walk dereferenced an encoder byte (0x7f) as a node pointer — the SIGABRT/exit-134
-// the whole watbin/wit/component test family tripped on. The fix keeps the parent
-// struct local out of the sweep (returned_moved_arr_slots' ExprFieldAccess arm), so
-// the returned field survives; the box + any un-returned heap sibling fields LEAK
-// (sound, never over-free), the struct-field sibling of the #3720 enum/array move.
-// Each case is value-pinned against the native oracle.
+// local struct on the self-host IR path (#4801). `return r.node` over a local
+// `let r: P = ...` hands the field out to the caller, so releasing `r` at exit
+// must not free the returned field. When it did, the failure surfaced only once
+// a later allocation recycled the freed block: the watbin `wat_parse`
+// (`let r = wat_parse_one(...); return r.node;`) returned a dangling SExpr tree,
+// and the import walk dereferenced an encoder byte (0x7f) as a node pointer —
+// the SIGABRT/exit-134 the whole watbin/wit/component test family tripped on.
+// Each case is value-pinned.
 var retStructFieldIRCases = []struct {
 	name string
 	src  string

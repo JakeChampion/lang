@@ -17,7 +17,7 @@ import (
 // `ids` hides the literal payload from the static-box plan, so each Text is a
 // heap box.
 const rcenumRebindSrc = `enum T { Text(string), Nothing }
-function ids(s: string): string { return s; }
+@noinline function ids(s: string): string { return s; }
 
 function round(): i32 {
     let e: T = Nothing;
@@ -107,7 +107,7 @@ func TestSelfHostRcEnumRebindHazardsX86_64(t *testing.T) {
 			// still reachable through the array.
 			name: "escapes_to_container",
 			src: `enum T { Text(string), Nothing }
-function ids(s: string): string { return s; }
+@noinline function ids(s: string): string { return s; }
 function round(): i32 {
     let keep: T[] = [];
     let e: T = Nothing;
@@ -130,7 +130,7 @@ function main(): i32 {
 			// Passed to a call before being overwritten — the callee may retain it.
 			name: "passed_to_call",
 			src: `enum T { Text(string), Nothing }
-function ids(s: string): string { return s; }
+@noinline function ids(s: string): string { return s; }
 function sink(x: T): i32 { match (x) { Text(s) => { return s.len(); }, Nothing => { return 0; } } return 0; }
 function round(): i32 {
     let e: T = Nothing;
@@ -152,7 +152,7 @@ function main(): i32 {
 			// rebind.
 			name: "aliased_to_local",
 			src: `enum T { Text(string), Nothing }
-function ids(s: string): string { return s; }
+@noinline function ids(s: string): string { return s; }
 function round(): i32 {
     let e: T = Text(ids("aa"));
     let keep: T = e;
@@ -172,11 +172,11 @@ function main(): i32 {
 		},
 		{
 			// The match arm MOVES the string payload out into a container that
-			// outlives the enum, so deep-dropping the chain would free a string the
-			// array still points at. This is what match_arm_binds_rc_payload guards.
+			// outlives the enum, so dropping the chain must not free a string the
+			// array still points at.
 			name: "arm_moves_payload_out",
 			src: `enum T { Text(string), Nothing }
-function ids(s: string): string { return s; }
+@noinline function ids(s: string): string { return s; }
 function round(): i32 {
     let out: string[] = [];
     let e: T = Nothing;
@@ -197,9 +197,8 @@ function main(): i32 {
 		},
 		{
 			// The payload is a PARAM string, not a freshly produced one, so the
-			// caller still owns it after the callee's chain is dropped. This is the
-			// hazard rcenum_ctor_payload_strings_fresh exists for: the caller reads
-			// `owned` again after build() returns.
+			// caller still owns it after the callee's chain is dropped: the caller
+			// reads `owned` again after build() returns.
 			name: "payload_is_param_string",
 			src: `enum T { Text(string), Nothing }
 function build(p: string, n: i32): i32 {

@@ -4,42 +4,21 @@ import (
 	"testing"
 )
 
-// --- The array-of-enums class reaches its siblings' reclaim shapes ------------
+// --- The array-of-enums class: producer and append-built locals --------------
 //
-// `ARRENUM` (#5474) was the last array-of-X element kind to get an element walk
-// at all, and it arrived with only ONE admitted shape: `let xs: E[] = [E.A(..)]`,
-// a non-empty literal of fresh ctors, never reassigned. Both other ways to build
-// one leaked their whole structure, on the shapes ordinary code has to use:
+// An `E[]` local is released with its element walk however it was built, on
+// the shapes ordinary code has to use:
 //
-//	let xs: E[] = mk(i)                       producer, 3 allocs / 1 free
-//	let xs: E[] = []; xs = xs.append(E.A(..)) append-built, 4 allocs / 2 frees
-//	let xs: E[] = mk(i)  // mk append-built   both, 4 allocs / 2 frees
+//	let xs: E[] = mk(i)                       producer
+//	let xs: E[] = []; xs = xs.append(E.A(..)) append-built
+//	let xs: E[] = mk(i)  // mk append-built   both
 //
-// 80 bytes a round each, unbounded, against 0 on native and interp. The struct
-// side had both of these — `ARRSTRUCTF:` and `ARRSTRUCTA:` (#6535) — so this is
-// three transcriptions rather than three designs, and they compose: the third
-// shape is the first two together, the same composition #7548 made for arrstruct.
+// The walk FREES each element box rather than decrementing it, so admitting an
+// element that aliases a live enum box is a double free rather than a leak.
+// `append_bare_ident_elem` pins that refusal, and `append_then_extract` pins
+// that extracting an element still refuses.
 //
-// The per-element rule is the one the literal already applied
-// (`fresh_rcpayload_enum_init`): a bare-ident element would alias a live enum box
-// this class's walk could dangle, and that walk FREES the element box rather than
-// deccing it (`emit_enum_variant_drops` zeroes the slot), so a wrong admission
-// here is a double free rather than a leak. `append_bare_ident_elem` pins the
-// refusal.
-//
-// One deliberate non-transcription: `with` is not admitted, though arrstruct's
-// self-store predicate takes it. `with` REPLACES, so the superseded element has
-// to be released at the store, and this class's release is a variant dispatch
-// that frees the box. That needs its own emitter, so it is its own slice.
-//
-// The class's escape gate stays as tight as it was — only `xs.len()` — because
-// an element extraction risks a double free here rather than a leak.
-// `append_then_extract` pins that it still refuses, now that the credit reaches
-// further. Only the self-append rebind is newly permitted, and only for a
-// candidate that earned the append-built credit.
-//
-// Every want was confirmed against BOTH oracles — bin/fern -interp and the
-// native x86-64 backend agreed on each — never read off the self-host run.
+// Each want is the `bin/fern -interp` answer.
 
 type arrenumProdCase struct {
 	name    string

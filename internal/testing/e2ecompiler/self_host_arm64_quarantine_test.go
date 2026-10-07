@@ -291,8 +291,8 @@ func TestSelfHostSanitizeCleanRunIsSilentArm64(t *testing.T) {
 	}
 }
 
-// The leak verdict, the third: a positive balance at exit names itself in the
-// native backends' words. The block count is what this asserts — the byte
+// The leak verdict, the third: a positive balance at exit prints a
+// `fern-sanitizer: leak` line. The block count is what this asserts — the byte
 // figure depends on an allocation granularity the allocator is free to change.
 func TestSelfHostSanitizeLeakVerdictArm64(t *testing.T) {
 	h := selfHostCLIForHost(t)

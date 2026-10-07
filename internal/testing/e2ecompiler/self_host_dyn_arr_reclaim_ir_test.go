@@ -13,11 +13,10 @@ import (
 // (`let xs: dyn T[] = [41, "s", Dot{..}]`). Every element is an rc-headered
 // box (a prim/string op_dyn_box cell — slice 2 — or a scalar-only leak-safe
 // struct box), sole-owned by the buffer, so the exit sweep releases each
-// element by its recorded kind ('s' first frees the sole-owned inner string
-// box at cell@8) before the buffer dec — credited "DARR:<name>|<kinds>" by
-// reclaimable_names_of under the darr_unsafe_for element-hazard walk
-// (dispatch only in transient positions; element bindings, for-in, appends,
-// stores, and escapes all exclude — those arrays keep today's sound leak).
+// element by its kind (a string cell first frees its sole-owned inner string
+// box at cell@8) before the buffer dec. Only dispatch in transient positions
+// is admitted; an element binding, for-in, append, store or escape leaves the
+// array leaking rather than risk an over-release.
 func TestSelfHostDynArrReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -95,9 +94,8 @@ function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { 
 function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"dyn-arr-idx-loop-reclaim-flat", 0)
 
-	// ELEMENT BINDING excluded: `let e = xs[0]` is a lasting element alias —
-	// darr_expr_unsafe rejects the candidate; values + detector stay clean
-	// (the array leaks, sound).
+	// ELEMENT BINDING: `let e = xs[0]` is a lasting element alias, so values
+	// and the underflow detector must stay clean.
 	run(t, `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
 function go(k: i32): i32 { let xs: dyn Show[] = [k, 5]; let e = xs[0]; return e.show() + xs[1].show(); }
@@ -124,14 +122,10 @@ function churn(m: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < m) { 
 function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"dyn-arr-aliased-excluded", 0)
 
-	// RETURNED `dyn T[]` dispatches in the caller (#4780): struct_ret_fns_of
-	// now records the coarse "dyn <Trait>" ELEMENT type for a `dyn Trait[]`
-	// return (exactly as the literal-binding and param paths tag it), so an
-	// unannotated `let ys = mk()` — and the annotated form — recover the
-	// trait and route `ys[i].m()` through op_dyn_dispatch. Pre-fix this
-	// mis-dispatched (returned 74 for a want-10 program). The returned array
-	// itself is escaping → excluded from the DARR sweep (leaks, sound):
-	// values + detector pin correctness, not flatness.
+	// RETURNED `dyn T[]` dispatches in the caller (#4780): an unannotated
+	// `let ys = mk()` — and the annotated form — recover the trait and route
+	// `ys[i].m()` through op_dyn_dispatch. A mis-dispatch returns 74 rather
+	// than 10. Values + detector pin correctness, not flatness.
 	run(t, `trait Show { function show(self: Self): i32; }
 struct Dot { r: i32 }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }

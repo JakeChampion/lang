@@ -2,22 +2,11 @@ package e2ecompiler
 
 import "testing"
 
-// subwordWrapIRCases guard a real correctness bug: u8 arithmetic (`+` `-` `*`
-// `<<`) was NOT masked back to its width on the self-host IR path, so an
-// overflowing result (e.g. `255u8 + 1`) kept its full value on every IR
-// backend (256) instead of wrapping (0). The interpreter and the native Go
-// backends wrap per the declared width (`signExtend` by IntWidth), so this
-// was a silent miscompile — the program routed through "ir" and computed the
-// wrong answer. The fix records each slot's sub-word kind (local_subword, the
-// sub-32-bit sibling of local_is_u32) and emits an int_cast after
-// `+`/`-`/`*`/`<<` whose result is sub-word, masking exactly as `as u8`
-// already does.
-//
-// This originally also covered i8/u16/i16, but those types were removed from
-// the language (#4408); u8 is the only sub-word type left, so the i8
-// (sign-extend) and u16/i16 (wider sub-word) cases are gone rather than
-// force-substituted onto a type that would test something different — u8's
-// add/mul/shift/sub coverage below still exercises the same masking bug.
+// subwordWrapIRCases guard u8 arithmetic (`+` `-` `*` `<<`) wrapping to its
+// width on the self-host IR path: an overflowing result (e.g. `255u8 + 1`)
+// must wrap to 0, as the interpreter does, not keep its full value (256). The
+// result is masked exactly as `as u8` masks. u8 is the only sub-word type
+// (#4408).
 //
 // Each case is oracle-checked against the interpreter and returns a value in
 // [0,126] (an equality branch reduces the wrapped result to a small code, cf.

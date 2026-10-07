@@ -331,9 +331,9 @@ function main(): i32 { let m = Map { K { a: 1 }: 1 }; return 0; }`,
 	},
 	{
 		// The type NAME a message renders is advice to write as much as a
-		// hint is: the self-host used to print its internal "bool" tag here,
-		// naming a type the reader cannot spell. e042_ret_label patched
-		// exactly one of the two E042 sites; this is the other one (#7251).
+		// hint is: it must be `boolean`, not the internal "bool" tag, a type
+		// the reader cannot spell. This is the second of the two E042 sites
+		// (#7251).
 		name: "E042 non-Option operand names boolean",
 		src: `function f(): i32 { let b: boolean = true; let c = b?; return 0; }
 function main(): i32 { return 0; }`,

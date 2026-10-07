@@ -11,11 +11,8 @@ import (
 
 // TestSelfHostEnvIR pins `env(name)` lowering on the self-host x86-64 IR path.
 // env looks up an environment variable and returns Option[string] (Some(value)
-// when set, None otherwise); it had a full AST runtime (__fern_env) but no IR
-// lowering, so a program using it bailed `BAIL call[env]` -> AST, dragging the
-// `env_unreachable` test module to the legacy emitter (#3457). It now lowers to
-// op_env -> the same __fern_env runtime the AST path calls (x86 transcribed +
-// the env-gated _start envp save; arm64 reuses asm_arm64's heap-block runtime).
+// when set, None otherwise); it lowers to op_env, a call into the __fern_env
+// runtime, with the env-gated _start saving envp.
 //
 // The program reads FERN_ENV_IR_TEST and exits 0/1/2 for set-matching /
 // set-mismatched / unset; the test runs it under all three to exercise the
@@ -69,13 +66,11 @@ func TestSelfHostEnvIR(t *testing.T) {
 	}
 }
 
-// TestSelfHostEnvIRWasm is the wasm mirror: env(name) now lowers through the
-// wasm IR path, not held off it as a strbuf-class exclusion. wasm_ir emits
-// `call $__fern_env`, and wasm_ir_run pulls in the
-// preview1 environ_sizes_get / environ_get imports + the $__fern_env body (the
-// same env_helpers/env_func runtime the AST path uses) + the heap. wasmtime
-// supplies env vars via `--env KEY=VAL`; the three cases exercise the
-// Some(value) match, the value comparison, and the None arm.
+// TestSelfHostEnvIRWasm is the wasm mirror: wasm_ir emits `call $__fern_env`,
+// and the module pulls in the preview1 environ_sizes_get / environ_get imports
+// + the $__fern_env body + the heap. wasmtime supplies env vars via
+// `--env KEY=VAL`; the three cases exercise the Some(value) match, the value
+// comparison, and the None arm.
 func TestSelfHostEnvIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host env wasm IR e2e")

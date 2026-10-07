@@ -7,14 +7,11 @@ import (
 
 // TestSelfHostLiteralArgReclaimIRX86_64 pins #4355 slice 6: a string-LITERAL
 // call arg allocates a fresh 16-byte rc-headered box per evaluation
-// (const_str; its .rodata data is heap-guard-skipped), and nothing freed it —
-// one box leaked per call in any loop passing literal string args. At a
-// BORROWABLE param position of a known free function (borrowable_params_of:
-// provably borrow-read-only, never escaping — so the callee cannot retain or
-// return the arg) the call lowering now stashes the literal arg and frees it
-// right after the call via the rc-aware __fern_str_free, net-zero on the
-// operand stack under the live result. Non-borrowable positions (returned /
-// stored / forwarded args) keep the sound leak — pinned below.
+// (const_str; its .rodata data is heap-guard-skipped). At a parameter the
+// callee only reads — so it cannot retain or return the arg — the box must be
+// freed right after the call, keeping a loop that passes literal args flat. An
+// arg the callee returns, stores or forwards is not freed at the call site —
+// pinned below.
 func TestSelfHostLiteralArgReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	l := newStdlibLoader(t)
@@ -59,7 +56,7 @@ function main(): i32 {
 	// retained by the binding, so it must NOT be freed at the call edge — the
 	// bound value stays readable at detector zero (the box keeps its prior
 	// sound leak).
-	run(t, `function keepit(nm: string): string { return nm; }
+	run(t, `@noinline function keepit(nm: string): string { return nm; }
 function main(): i32 {
     let bad: i32 = 0;
     let i: i32 = 0;
@@ -74,8 +71,7 @@ function main(): i32 {
 }`, "literal-arg-retained-safe", 0)
 
 	// FRESH CONCAT arg (#4355 slice 7): `readit(base + "bc")` — the concat
-	// byte-copies into a fresh anonymous temp; is_fresh_str_temp admits it at
-	// the borrowable position and the post-call free reclaims it. base (an
+	// byte-copies into a fresh anonymous temp, freed after the call. base (an
 	// operand, only read) stays readable; churn flat at detector zero.
 	run(t, `function readit(nm: string): i32 { return nm.len(); }
 function main(): i32 {
@@ -115,9 +111,9 @@ function main(): i32 {
     return 0;
 }`, "fresh-producer-arg-flat", 0)
 
-	// BARE-IDENT arg trap: `readit(src)` aliases a live local —
-	// is_fresh_str_temp excludes it, so NO free is emitted; src stays
-	// readable across every call at detector zero.
+	// BARE-IDENT arg trap: `readit(src)` aliases a live local, so NO free
+	// is emitted after the call; src stays readable across every call at
+	// detector zero.
 	run(t, `function readit(nm: string): i32 { return nm.len(); }
 function main(): i32 {
     let src: string = "aa" + "bb";
@@ -232,9 +228,9 @@ function main(): i32 {
 
 	// The other non-borrowable direction, and the shape
 	// conformance/cases/alloc_flat_method_identity_return is built from: the
-	// param is MOVED into a struct field, so the field owns it after the call
-	// and the literal keeps its prior sound leak. A reclaim that ignored the
-	// borrowability verdict would free the tag out from under the result.
+	// param is MOVED into a struct field, so the field owns it after the call.
+	// Freeing the literal at the call site would free the tag out from under
+	// the result.
 	run(t, `struct Box { tag: string, n: i32 }
 function (b: Box) relabel(t: string): Box {
     if (t.len() == 0) { return b; }
@@ -255,12 +251,11 @@ function main(): i32 {
     return 0;
 }`, "method-literal-arg-consumed-safe", 0)
 
-	// A fresh PRODUCER CALL in the same argument position. The stash already
-	// admitted a literal, a concat and a scalar `.to_string()`; a call to a
-	// function str_fresh_ret_fns proves returns a fresh sole-owned box —
-	// `size(mks(i))` — reached none of them, so the box leaked once per
-	// evaluation (70 B/round measured). The producer is the ordinary way to
-	// build the argument, so the leak was on the ordinary path.
+	// A fresh PRODUCER CALL in the same argument position: `size(mks(i))`
+	// passes the sole-owned box mks returns, and it must be freed after the
+	// call like a literal, a concat or a scalar `.to_string()` (70 B/round
+	// leaked otherwise). The producer is the ordinary way to build the
+	// argument.
 	run(t, `import "std/i32";
 function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
 function size(s: string): i32 { return s.len(); }
@@ -284,7 +279,7 @@ function main(): i32 {
 	// back rather than only counting bytes.
 	run(t, `import "std/i32";
 function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
-function pick(s: string): string { return s; }
+@noinline function pick(s: string): string { return s; }
 function main(): i32 {
     let bad: i32 = 0;
     let i: i32 = 0;
@@ -340,12 +335,9 @@ function main(): i32 {
     return 0;
 }`, "producer-call-arg-bound-local-safe", 0)
 
-	// The ARRAY sibling of the producer-call arg. The stash arm admitted only a
-	// `parser.ExprArray` literal via discardable_scalar_arr_lit, so the same
-	// temp one step removed — a call to an "ARR:"-registered producer — leaked
-	// its buffer per evaluation (55 B/round measured). The registry already
-	// admits a loop-built producer (body_returns_local_built_arr), so this is a
-	// call-site widening, not a registry one.
+	// The ARRAY sibling of the producer-call arg: a loop-built array returned
+	// by a call and passed straight to a reading param must be freed after the
+	// call, as an array literal is (55 B/round leaked otherwise).
 	run(t, `function mk(n: i32): i32[] { let out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
 function size(d: i32[]): i32 { return d.len(); }
 function main(): i32 {
@@ -365,7 +357,7 @@ function main(): i32 {
 	// REFUSED — the callee RETURNS the array, so the result aliases the temp and
 	// is read after. Freeing at the call would be a use-after-free.
 	run(t, `function mk(n: i32): i32[] { let out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
-function pick(d: i32[]): i32[] { return d; }
+@noinline function pick(d: i32[]): i32[] { return d; }
 function main(): i32 {
     let bad: i32 = 0;
     let i: i32 = 0;
@@ -380,10 +372,9 @@ function main(): i32 {
     return 0;
 }`, "producer-call-arr-arg-returned-safe", 0)
 
-	// REFUSED — a constructor STORES the array, so the returned struct owns it.
-	// This is the shape conformance/cases/alloc_flat_fresh_array_arg is built
-	// from; closing it needs native's per-argument counted-retain admission, not
-	// this borrowable-position stash.
+	// REFUSED — a constructor STORES the array, so the returned struct owns it
+	// and the call site must not free it. This is the shape
+	// conformance/cases/alloc_flat_fresh_array_arg is built from.
 	run(t, `struct Node { deps: i32[], k: i32 }
 function mk(n: i32): i32[] { let out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
 function node(deps: i32[], k: i32): Node { return Node { deps: deps, k: k }; }

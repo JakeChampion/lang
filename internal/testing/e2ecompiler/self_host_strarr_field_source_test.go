@@ -11,44 +11,13 @@ import (
 // --- A struct-literal `string[]` field costs the SOURCE its element walk -----
 //
 // `let src: string[] = mkv(i); if (..) { let p: P = P { f: src, n: i }; .. }`
-// freed 450 of 650 boxes over 100 rounds where native freed all 450 of its own.
+// must free every element box whether or not the holder is built: the source's
+// own release walks its elements, rather than leaving the walk to a holder that
+// may never exist. Skipping the holder on half the rounds is the repro.
 //
-// THIS IS NOT #7557 ONE TYPE OVER, and the grid is what says so. For `string`
-// the discriminator was the MOVE: the unconditional store leaked and the moved
-// one was already clean. Here the move axis is irrelevant — every unconditional
-// form was ALREADY clean, and every conditional one leaked by the same amount:
-//
-//	unconditional, source not read after (move)   700/700  clean
-//	unconditional, source read after              700/700  clean
-//	unconditional nested block { }                700/700  clean
-//	`if (i >= 0)` — always entered                700/700  clean
-//	`while (k < 1)` — entered once                700/700  clean
-//	`if (i % 2 == 0)` — entered half the time     650/450  LEAKS
-//
-// The decisive pair is `if (i >= 0)` against `if (i % 2 == 0)`: `round`'s
-// emitted call profile is IDENTICAL between them — same counts of rc_inc,
-// __struct_drop_P, __field_reclaim_P, __fern_arr_dec, and no __fern_str_arr_free
-// in either. Same code, different path coverage.
-//
-// WHAT WAS ACTUALLY WRONG. The retain already fired (the struct-lit ARRAY arm's
-// `is_array_type_name(cfft)` covers `string[]`), and `__struct_drop_P` walked
-// the elements. What was missing is the SOURCE's own DEEP release: `src` never
-// earned "SARR:", so its exit sweep was a shallow `__fern_arr_dec` — buffer
-// only. The program was correct by accident. The exit sweep's ARRAY loop runs
-// BEFORE its struct loop, so src decs 2 -> 1 and frees nothing, then the struct
-// loop finds rc 1 and does the full walk. That balances only on paths where the
-// holder is actually constructed; skip it and the elements leak while the
-// buffer is still freed — 200 over 50 skipped rounds, exactly the two element
-// strings (box + buffer each).
-//
-// The fix grants `src` the DEEP class rather than delegating its walk to a
-// holder that may never exist. Safe by the mechanism the SARR: block already
-// states for the alias bind: __fern_str_arr_free is rc-gated, so rc>1 decs and
-// leaves the elements to the other owner and only the LAST owner at rc 1 walks.
-// The walk cannot run twice.
-//
-// Every want below was confirmed against the native x86-64 backend, which is
-// clean on all of them. Exit 99 is reserved for __rc_underflow_count().
+// __fern_str_arr_free is rc-gated — rc>1 decs and leaves the elements to the
+// other owner, and only the LAST owner at rc 1 walks — so the walk cannot run
+// twice. Exit 99 is reserved for __rc_underflow_count().
 //
 // Counts here are ONE block per heap string: #7351 fused the box into the
 // buffer's reserved header. A pre-fusion number quoted in a row note below is

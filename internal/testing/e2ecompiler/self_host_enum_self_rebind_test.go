@@ -2,21 +2,21 @@ package e2ecompiler
 
 import "testing"
 
-// An enum local rebound through a counted handback — `cur = f(cur)` where f is
-// an "ENUM:" member returning its parameter — keeps its release on the AST
-// lowering (#10447): the result is the local's own chain with one more count,
-// and the rebind gives the old count back.
+// An enum local rebound through a counted handback — `cur = f(cur)` where f
+// returns its parameter — keeps its release (#10447): the result is the
+// local's own chain with one more count, and the rebind gives the old count
+// back.
 
 const enumRebindHead = `enum Sc { SA(i32), SB }
 enum Rc { RA(i32[]), RB }
 function k_of(r: i32): i32 { return r % 7; }
 @noinline function (e: Sc) val(): i32 { match (e) { SA(v) => { return v; }, SB => { return 100; } } }
-function rval(e: Rc): i32 { match (e) { RA(v) => { return v[0]; }, RB => { return 100; } } }
+@noinline function rval(e: Rc): i32 { match (e) { RA(v) => { return v[0]; }, RB => { return 100; } } }
 @noinline function hb_sc_param(e: Sc): Sc { return e; }
 @noinline function hb_rc_param(e: Rc): Rc { return e; }
 function hb_rc_pick(e: Rc, f: Rc, first: boolean): Rc { if (first) { return e; } return f; }
-function mk_sc(r: i32): Sc { let m: Sc = SA(k_of(r)); return m; }
-function mk_rc(r: i32): Rc { let m: Rc = RA([k_of(r), 1]); return m; }
+@noinline function mk_sc(r: i32): Sc { let m: Sc = SA(k_of(r)); return m; }
+@noinline function mk_rc(r: i32): Rc { let m: Rc = RA([k_of(r), 1]); return m; }
 `
 
 func enumRebindLoop(body string) string {

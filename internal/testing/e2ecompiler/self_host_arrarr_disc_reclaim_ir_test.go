@@ -8,15 +8,11 @@ import (
 )
 
 // arrArrDiscReclaimCases pin the #4365 discarded scalar-inner array-of-arrays
-// reclaim: a discarded `[[i, i+1], [i]];` literal leaked its inner buffers AND
-// the outer buffer per evaluation on the self-host IR path (the shallow scalar
-// path freed only the outer box, orphaning every inner; native bounds the
-// shape). The StmtExpr lowering now routes a discardable_scalar_arrarr_lit (every
-// element a DIRECT scalar-element array literal, sole-owned rc=1) through
-// __fern_arrarr_free — one rc-guarded arr_dec per inner (scalar inners fully
-// reclaim), then the outer buffer. A bare-ident inner aliases a live local and
-// keeps the whole literal leak-mode (no double-free); string-element inners stay
-// leak-safe on the plain drop (first-cut scope).
+// reclaim: a discarded `[[i, i+1], [i]];` literal releases every inner buffer
+// and then the outer buffer, so rebuilding it in a loop keeps the heap bounded.
+// A bare-ident inner aliases a live local and must not be freed through the
+// literal (no double free); string-element inners stay value-correct on the
+// plain drop.
 var arrArrDiscReclaimCases = []struct {
 	name string
 	src  string

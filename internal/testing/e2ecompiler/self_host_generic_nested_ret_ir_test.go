@@ -68,7 +68,7 @@ function main(): i32 { let ps = mk(); return (ps[0].1 * 10.0) as i32; }`}, // 45
     while (i < xs.len()) { out = out.append((i, xs[i])); i = i + 1; }
     return out;
 }
-function main(): i32 { let xs: f64[] = [4.5]; let ps: (i32, f64)[] = enum2(xs); return (ps[0].1 * 10.0) as i32; }`}, // 45 — the annotation gave the slot a concrete arrarr_elem, bypassing the tag
+function main(): i32 { let xs: f64[] = [4.5]; let ps: (i32, f64)[] = enum2(xs); return (ps[0].1 * 10.0) as i32; }`}, // 45 — the element type spelled out on the binding
 }
 
 // TestSelfHostGenericNestedRetX86_64 asserts values against the interp oracle on

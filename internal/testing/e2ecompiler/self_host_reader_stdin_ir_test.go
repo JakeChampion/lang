@@ -10,16 +10,13 @@ import (
 )
 
 // readerStdinIRCases exercise the built-in Reader resource intrinsics — stdin(),
-// r.read_chunk(n), r.close() — newly lowered through the self-host IR path. A
-// Reader is just its fd (an i32); stdin() is fd 0; read_chunk(n) reads up to n
-// bytes and yields Option[string] (Some(chunk) / None at EOF); close() yields
-// Option[IoError]. #2691 routes these (and thus std/io's read_all_stdin loop)
-// through IR instead of bailing the whole module to the legacy AST emitter, which
-// flips the dominant real-CLI bail (every stdin-reading tool funnels through this
-// Reader path). Each case is a single-module program (Reader/stdin/read_chunk are
-// builtins) fed a stdin string and oracle-checked against the interpreter with the
-// same stdin. x86-64 only — there is no wasm stdin runtime (wasm_eligible rejects
-// read_chunk/reader_close, mirroring read_line).
+// r.read_chunk(n), r.close() — through the self-host IR path (#2691). A Reader
+// is just its fd (an i32); stdin() is fd 0; read_chunk(n) reads up to n bytes;
+// close() yields Option[IoError]. Every stdin-reading tool funnels through this
+// Reader path, std/io's read_all_stdin loop included. Each case is a
+// single-module program (Reader/stdin/read_chunk are builtins) fed a stdin
+// string and oracle-checked against the interpreter with the same stdin.
+// x86-64 only.
 //
 // Both helpers are Fern runtime functions (#2649, asmcore.rt_src_reader_read_chunk /
 // rt_src_reader_close), so the emitted calls carry the stack-ABI `__fn___` prefix;

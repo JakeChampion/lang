@@ -16,10 +16,10 @@ import (
 //
 // Both shapes the compiler-sized case exercises are here: a local bound from a
 // struct FIELD read (to_string's `let cur = a.mag`) and one bound from a
-// borrowed array PARAM (mul_small's `let out = a`). Each source is read back
-// after the loop, so a release that freed the live buffer, or a clone that
-// wrote through to it, is an answer this program reports rather than a leak
-// the census alone would have to catch.
+// borrowed array PARAM (__bi_mul_small's `let out = a`). Each source is read
+// back after the loop, so a release that freed the live buffer, or a clone
+// that wrote through to it, is an answer this program reports rather than a
+// leak the census alone would have to catch.
 const withCloneReclaimSrc = `struct Box { mag: u64[] }
 
 @noinline

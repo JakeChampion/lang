@@ -64,18 +64,17 @@ func TestSelfHostU32ContainerWasmIR(t *testing.T) {
 		// STRUCT FIELD chained in a shift: 0x80000001 >> 25 == 64 unsigned; a
 		// signed shr sign-extends and diverges. #expr_is_u32 ExprFieldAccess arm.
 		{"struct-field-shr", `struct SU { n: u32 } function main(): i32 { let p: SU = SU { n: 2147483649 as u32 }; return (p.n >> 25) as i32; }`, 64},
-		// ENUM u32-PAYLOAD binding chained in a shift: the match arm marks the bound
-		// slot u32 (mark_u32) so `x >> 25` selects shr_u. 4-byte read (no width
+		// ENUM u32-PAYLOAD binding chained in a shift: the bound slot is u32, so
+		// `x >> 25` selects shr_u. 4-byte read (no width
 		// change vs the u64 payload's 8-byte).
 		{"enum-payload-shr", `enum EU { U(u32), N } function main(): i32 { let e: EU = EU.U(2147483649); match (e) { EU.U(x) => { return (x >> 25) as i32; }, EU.N => { return 99; } } }`, 64},
-		// TUPLE ELEMENT chained in a shift: `t.0 >> 25`. expr_is_u32's
-		// ExprFieldAccess arm resolves the digit field via expr_tuple_elem_tag.
+		// TUPLE ELEMENT chained in a shift: `t.0 >> 25`, typed u32 from the
+		// tuple's element type.
 		{"tuple-elem-shr", `function main(): i32 { let t: (u32, i32) = (2147483649, 1); return (t.0 >> 25) as i32; }`, 64},
 		// ARRAY LITERAL element chained in a shift: `[big, …][0] >> 25`. ExprIndex
 		// arm gained an ExprArray case.
 		{"array-literal-shr", `function main(): i32 { return ([2147483649 as u32, 1 as u32][0] >> 25) as i32; }`, 64},
-		// ARRAY SLICE element chained in a shift: `a[lo:hi][0] >> 25`. ExprIndex arm
-		// gained an ExprSlice case (via expr_is_u32arr).
+		// ARRAY SLICE element chained in a shift: `a[lo:hi][0] >> 25`.
 		{"array-slice-shr", `function main(): i32 { let a: u32[] = [2147483649 as u32, 1 as u32, 2 as u32]; return (a[0:2][0] >> 25) as i32; }`, 64},
 		// STRUCT FIELD chained in a DIVISION: `p.n / 7` needs div_u (a numerator >=
 		// 2^31 reads signed-negative). 4000000000 / 7 == 571428571; % 100 == 71.

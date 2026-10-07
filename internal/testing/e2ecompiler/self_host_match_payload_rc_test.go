@@ -8,22 +8,15 @@ import (
 
 // Self-host RC: a heap array payload of Ok()/Some()/Err() must be alias-inc'd.
 //
-// Regression guard for a self-host-only UAF (#2649): `Ok(r)` / `Some(r)` where
-// `r` is a local array stored the buffer into the enum box WITHOUT the Perceus
-// alias-inc that the enum-variant construction already performs, so the box's
-// payload aliased the local `r` at refcount 1. The match arm that extracts the
-// payload reclaims it at arm exit (an arr_dec), and the constructing function's
-// own exit-sweep decremented `r` too — a double owner over one +1, freeing the
-// buffer out from under the returned box. Benign until a later allocation reuses
-// the freed store, so it only broke when the extracted array was held live ACROSS
-// an allocating call (gdb: `names[j]` came back as the allocator's 0x7979... filler,
-// faulting at the element's `movq 8(%rax)`).
-//
-// Fixed by adding the array alias-inc to lower_opt_make_payload (mirroring the
-// enum-variant construction, irlower.fern). The native compiler always handled
-// both shapes; this closes the self-host gap. rcMatchPayloadWorks /
-// rcMatchPayloadUAF are the isolating pair (var-binding vs match-extraction of the
-// SAME append-built array) — both must return 17.
+// Regression guard for a UAF (#2649): `Ok(r)` / `Some(r)` where `r` is a local
+// array must retain the buffer it stores into the enum box. Without that the
+// payload aliases `r` at refcount 1: the match arm that extracts the payload
+// releases it at arm exit, and the constructing function's own exit sweep
+// releases `r` too — two owners over one +1, freeing the buffer out from under
+// the returned box. It only shows when the extracted array is held live ACROSS
+// an allocating call that reuses the freed store. rcMatchPayloadWorks /
+// rcMatchPayloadUAF are the isolating pair (var-binding vs match-extraction of
+// the SAME append-built array) — both must return 17.
 //
 // rcMatchPayloadWorks: the array is returned directly and bound to a `let` (no
 // enum wrapper). Held across the same allocating `eat` loop, it stays intact.
@@ -86,16 +79,14 @@ function main(): i32 {
     }
 }`
 
-// rcOptStructPayloadUAF: the STRUCT-BOX sibling of rcMatchPayloadUAF, and the
-// same bug one payload kind over. lower_opt_make_payload's alias-inc was gated on
-// slot_is_rc_container — array / string / tuple slots — so `Some(p)` / `Ok(p)`
-// where p is a struct LOCAL stored the box with no retain. p's exit sweep then
-// freed a box the RETURNED option still pointed at, and `clobber`'s allocation
-// reused the cell, so the payload read back 9999 instead of i.
+// rcOptStructPayloadUAF: the STRUCT-BOX sibling of rcMatchPayloadUAF.
+// `Some(p)` / `Ok(p)` where p is a struct LOCAL must retain the box: without
+// it p's exit sweep frees a box the RETURNED option still points at, and
+// `clobber`'s allocation reuses the cell, so the payload reads back 9999
+// instead of i.
 //
-// Both spellings are exercised: they build the same box through the same
-// lowering, so a fix reaching only one of them is not a fix. Correct answer is 0
-// (no round disagrees); the pre-fix self-host returned 100.
+// Both spellings are exercised. Correct answer is 0 (no round disagrees); a
+// missing retain returns 100.
 const rcOptStructPayloadUAF = `struct P { xs: i32[], k: i32 }
 
 function some_of(i: i32): Option[P] {
@@ -226,9 +217,9 @@ func TestSelfHostMatchPayloadRC(t *testing.T) {
 		}
 	})
 
-	// Fixed (#2649): the Option/Result construction now emits the Perceus
-	// array alias-inc (lower_opt_make_payload), balancing the match-arm's reclaim
-	// so the extracted array survives an intervening allocation.
+	// #2649: the Option/Result construction retains its array payload,
+	// balancing the match-arm's reclaim so the extracted array survives an
+	// intervening allocation.
 	t.Run("match_payload_across_alloc", func(t *testing.T) {
 		if code := compileAndRunSelfHostIR(t, gcc, runner, dir, driverBin, "rc_uaf", rcMatchPayloadUAF); code != 17 {
 			t.Errorf("match-extracted array across an allocating call exited %d, want 17", code)

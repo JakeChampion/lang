@@ -5,23 +5,22 @@ import (
 )
 
 // TestSelfHostTypeResolve pins the self-hosted checker's structured type-name
-// resolver (compiler/checker.fern's type_from_name_with_structs_unions
-// / type_from_ref_su — SH-021 slice 4, docs/SELF-HOST-AUDIT.md T2). The resolver
-// maps a type STRING to the checker's Type against a struct/union context; it now
-// decodes via the structured TypeRef (parser.parse_type_ref + pattern-match)
-// instead of the former array-suffix / tuple / `Map[` first-comma byte scans.
+// resolver (compiler/checker.fern's type_from_name_with_structs_unions — SH-021
+// slice 4, docs/SELF-HOST-AUDIT.md T2). The resolver maps a type STRING to the
+// checker's Type against a struct/union context by decoding the structured
+// TypeRef (parser.parse_type_ref + pattern-match).
 //
 // The type_resolve_run driver resolves a corpus spanning every branch (scalars,
 // struct / union / unknown names, multi-depth arrays of struct/union/unknown
 // elements, tuples incl. nested + single-element/empty fallthrough, Map incl.
 // nested value + single-arg fallthrough, array-of-map / array-of-tuple, non-Map
 // generics, qualified name) against fixed fixtures, printing type_debug of each.
-// The golden below is the EXACT output the old byte scan produced (captured
-// before the migration), so this is the byte-identical guard: a shifted resolved
+// The golden below is the EXACT output of the byte-scan resolver the TypeRef
+// decode replaced, so this is the byte-identical guard: a shifted resolved
 // Type — or a differing `unrecognised type name` reason — fails here rather than
 // silently mis-typing a param / field / return in the checker.
 //
-// The driver is built natively via the Go x86-64 backend; its stdout is the map.
+// The driver is built by the pinned stage0 compiler; its stdout is the map.
 func TestSelfHostTypeResolve(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

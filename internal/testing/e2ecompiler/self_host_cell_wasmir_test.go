@@ -47,14 +47,10 @@ var cellWasmIRCases = []struct {
 	{"struct-field-f64-set", `struct Box { c: Cell[f64] } function main(): i32 { let b: Box = Box { c: cell_new(2.5) }; b.c.set(b.c.get() + 0.5); return (b.c.get() * 2.0) as i32; }`, 6},
 	// The other 8-byte element, whose classifiers carry the same field arm.
 	{"struct-field-i64", `struct Box { c: Cell[i64] } function main(): i32 { let b: Box = Box { c: cell_new(5000000000 as i64) }; return (b.c.get() / (1000000000 as i64)) as i32; }`, 5},
-	// A cell as a TUPLE ELEMENT. Two separate gaps met here, which is why both
-	// spellings of the construction are pinned: a cell LOCAL element was already
-	// admitted (its slot is marked is_arr), while a direct `cell_new(v)` element
-	// bailed the whole module at `tuple_elem_ctor_eligible` — the difference
-	// being nothing but whether the cell was named first. And the READ needed
-	// the element to be tagged by its declared `Cell[T]` spelling rather than by
-	// the element's own width, or `t.1.get()` dispatched as a method on the
-	// element type and bailed as the unknown symbol `i32.get`.
+	// A cell as a TUPLE ELEMENT, in both spellings of the construction: a direct
+	// `cell_new(v)` element and a cell LOCAL named first. The READ must take the
+	// element's declared `Cell[T]` spelling rather than its width, or
+	// `t.1.get()` dispatches as `i32.get`.
 	{"tuple-elem-ctor", `function main(): i32 { let t: (i32, Cell[i32]) = (7, cell_new(5)); return t.1.get() + t.0; }`, 12},
 	{"tuple-elem-local", `function main(): i32 { let c: Cell[i32] = cell_new(5); let t: (i32, Cell[i32]) = (7, c); return t.1.get() + t.0; }`, 12},
 	{"tuple-elem-set", `function main(): i32 { let t: (i32, Cell[i32]) = (7, cell_new(0)); t.1.set(t.1.get() + t.0); return t.1.get(); }`, 7},
@@ -72,17 +68,14 @@ var cellWasmIRCases = []struct {
 	{"enum-payload", `enum H { Has(Cell[i32]), No } function main(): i32 { let h: H = Has(cell_new(4)); match (h) { Has(c) => { c.set(c.get() + 3); return c.get(); }, No => { return 0; } } }`, 7},
 	{"enum-payload-f64", `enum H { Has(Cell[f64]), No } function main(): i32 { let h: H = Has(cell_new(2.5)); match (h) { Has(c) => { return (c.get() * 2.0) as i32; }, No => { return 0; } } }`, 5},
 	// `f32` is the OTHER float spelling, and it occupies the same 8-byte column: a
-	// scalar f32 lowers to a wasm f64 (is_float_array_type_name, #6175). The
-	// sites that learn a cell's element each spelled the ladder themselves and
-	// had drifted on that pair; they share mark_cell_elem now.
+	// scalar f32 lowers to a wasm f64 (#6175). Every route that learns a
+	// cell's element type — a tuple element, an enum payload binding, an
+	// unannotated `cell_new` — has to map f32 onto that 8-byte column.
 	//
-	// enum-payload-f32 is the row that PINS it — it returns 1 without the fix,
-	// the low half of 2.5. The two beside it pass either way and are the
-	// controls that say why the drift stayed invisible: a tuple element reaches
-	// the width through `f32[]` and is_float_array_type_name, and
-	// cell_new_elem_tag never answers "f32", so only the payload route was
-	// both drifted and reachable. An f64 case cannot cover any of this, since
-	// f64 was the one spelling every copy of the ladder agreed on.
+	// enum-payload-f32 is the row that PINS it: a 4-byte read answers 1, the
+	// low half of 2.5. The two beside it cover the other routes to the same
+	// element type. An f64 case cannot cover any of this, since f64 needs no
+	// mapping on any route.
 	{"tuple-elem-f32", `function main(): i32 { let t: (i32, Cell[f32]) = (1, cell_new(2.5 as f32)); return (t.1.get() * 2.0) as i32; }`, 5},
 	{"enum-payload-f32", `enum H { Has(Cell[f32]), No } function main(): i32 { let h: H = Has(cell_new(2.5 as f32)); match (h) { Has(c) => { return (c.get() * 2.0) as i32; }, No => { return 0; } } }`, 5},
 	{"unannotated-cell-f32", `function main(): i32 { let c = cell_new(2.5 as f32); return (c.get() * 2.0) as i32; }`, 5},

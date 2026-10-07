@@ -10,25 +10,19 @@ import (
 
 // A generic array-receiver method whose receiver element type carries a TRAIT
 // BOUND — `(xs: T[]) peak[T: cmp.Ord]()`, whose body calls `xs[i].cmp(m)` — on
-// the self-host IR path. The receiver var `T` is re-declared in the method's
-// type-param list because only BOUNDED params land there (unbounded `U`/`A`
-// from `map[U]`/`fold[A]` are erased), so the old `is_generic_array_method`
-// gate rejected it (`type_params.len() != 0`) and the method never folded into
-// the free generic `__arrm_peak[T]`. The call site `xs.peak()` then had no
-// concrete `__arrm_peak__<elem>` to bind and the whole module bailed to the AST
-// emitter. The gate now permits the receiver var itself to appear bounded in
-// `type_params`, so the method folds and monomorphises exactly like the
-// equivalent free generic `peak[T: cmp.Ord](xs: T[])` already did — routing the
-// IR path on every backend. (An EXTRA bounded type param, a bounded `U` not
+// the self-host IR path. The receiver var `T` appears in the method's
+// type-param list because BOUNDED params land there (unbounded `U`/`A` from
+// `map[U]`/`fold[A]` are erased); is_generic_array_method admits the receiver
+// var there, so the method folds into the free generic `__arrm_peak[T]` and
+// monomorphises exactly like the equivalent free generic
+// `peak[T: cmp.Ord](xs: T[])`. (An EXTRA bounded type param, a bounded `U` not
 // fixed by the receiver, stays excluded.)
 //
 // Each program uses the method on a SINGLE element type: the folded-method
 // monomorphiser instantiates one clone per generic name, the same contract the
-// existing `map`/`filter`/`fold` array methods use (a second distinct element
-// type in one program is a separate, pre-existing limitation shared with them).
-// A non-`max`/`min` method name (`peak`) is used deliberately so the test
-// exercises the generic-method fold rather than the self-host AST emitter's
-// builtin special-casing of `.max()`/`.min()` on i32 arrays.
+// existing `map`/`filter`/`fold` array methods use. A non-`max`/`min` method
+// name (`peak`) is used so the test exercises the generic-method fold rather
+// than any builtin handling of `.max()`/`.min()`.
 var boundedArrayMethodIRCases = []struct {
 	name string
 	src  string

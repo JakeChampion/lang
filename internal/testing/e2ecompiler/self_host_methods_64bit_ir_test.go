@@ -9,12 +9,9 @@ import (
 )
 
 // TestSelfHostF64MethodsIR is the correctness gate for f64 methods (a method
-// whose signature contains f64) on the wasm IR backend. f64_ret_fns_of records
-// methods keyed "<Type>.<method>" as well as free functions, and expr_is_f64's
-// method case recovers the result's f64-ness; without both the whole module
-// bails. (i64 methods stay deferred until
-// i64 struct fields land — an i64-field-reading method body needs struct_get_i64.)
-// Results pinned to hardcoded oracle values.
+// whose signature contains f64) on the wasm IR backend: a method call's result
+// must be recovered as f64 exactly as a free function's is. Results pinned to
+// hardcoded oracle values.
 func TestSelfHostF64MethodsIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host method-64bit wasm IR e2e")

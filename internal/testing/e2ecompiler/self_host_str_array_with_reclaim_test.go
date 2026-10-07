@@ -11,27 +11,15 @@ import (
 
 // --- `.with` on a string[] must not leak the receiver (#6407) ------
 //
-// On the native compiler, `arr.with(i, v)` did no rc bookkeeping at all for a
-// `string[]`: strings sat outside the counted-array-element set, so the CoW
-// copy shared the receiver's element buffers uncounted, the overwritten
-// element was never released, and the escape analysis — which keys the
-// receiver's reclaimability on that store being counted — tainted the whole
-// receiver out of freeEligible. One `.with` stranded N+1 blocks per round.
-//
-// The self-host compiler lowers `.with` differently — an in-place arr_set on a
-// sole-owned slot, a clone plus arr_set on an aliased one, never
-// __fern_arr_cow_inplace — but it inherited the leak by another route: the
-// in-place store dropped the overwritten element pointer, and the rebind cost
-// the array its element-reclaim credit ("SARR:"), so every element box leaked.
-// That was invisible while `mks()` denied the control the same credit — both
-// columns leaked 380 B/round and the delta was 0. lower_strarr_with_store
-// closed it: the store releases the superseded box and retains the value, and
-// both columns are now flat.
+// `arr.with(i, v)` on a `string[]` must release the overwritten element and
+// retain the stored value, whether it lowers as an in-place arr_set on a
+// sole-owned slot or a clone plus arr_set on an aliased one; otherwise one
+// `.with` strands a block per element every round.
 //
 // It is the delta that this asserts, not a byte count. Whatever the self-host
 // leaks for unrelated reasons appears in both columns and cancels, so this
-// cannot become a byte budget for the rest of the goal-2 port — while still
-// failing the moment a `.with` starts costing a per-round block.
+// cannot become a byte budget — while still failing the moment a `.with`
+// starts costing a per-round block.
 func strArrayWithChurnSrc(rounds int, with bool) string {
 	set := ""
 	if with {

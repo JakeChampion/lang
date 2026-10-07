@@ -23,7 +23,7 @@ var strAggregateCases = []struct {
 function main(): i32 { let p: (str, i32) = mk(); return p.0.len() + p.1; }
 `, 7},
 	{"field_literal", `struct H { s: str, n: i32 }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function main(): i32 { let h: H = H { s: "abc", n: id([1])[0] }; return h.n + h.s.len(); }
 `, 4},
 	{"field_view", `struct H { s: str, n: i32 }
@@ -59,8 +59,8 @@ func TestSelfHostStrAggregateX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrAggregateNative holds the native compiler to the same rows,
-// every one clean.
+// TestSelfHostStrAggregateNative builds the same rows with `fern -target
+// x86-64-linux`, every one clean.
 func TestSelfHostStrAggregateNative(t *testing.T) {
 	_, runner := x86_64Tooling(t)
 	cli := buildLangBinForInterp(t)

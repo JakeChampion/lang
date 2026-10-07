@@ -8,17 +8,10 @@ import (
 )
 
 // tupleRetIntermediateCases pin the #4357 tuple-returning dead-intermediate
-// reclaim: `let t = mk(k); … t.0 …` where mk's every return is a DIRECT tuple
-// literal leaked one box per call on the self-host IR path (native reclaims
-// it). tuple_fresh_ret_fns_of now registers such free functions, and
-// reclaimable_names_of credits their non-reassigned, non-escaping call
-// bindings into the existing "TUP:" class — the same SHALLOW box free a
-// scalar-tuple literal local gets (elements untouched), at scope exit and at
-// the loop-rebind / precise-drop sites. Box freshness is the only admission
-// requirement (the box is constructed in return position, never bound in the
-// callee); element shapes don't matter to a shallow free. Escape and alias
-// shapes stay un-credited (leak-mode) and must remain CORRECT at detector
-// zero.
+// reclaim: `let t = mk(k); … t.0 …`, where mk returns a fresh tuple literal,
+// must free the box at scope exit and at the loop-rebind, as a scalar-tuple
+// literal local's box is. Escape and alias shapes must stay CORRECT at
+// detector zero.
 var tupleRetIntermediateCases = []struct {
 	name string
 	src  string

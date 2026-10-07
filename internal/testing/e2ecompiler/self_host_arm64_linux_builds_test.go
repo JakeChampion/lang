@@ -11,16 +11,16 @@ import (
 )
 
 // TestSelfHostArm64LinuxBuilds is the main arm64-Linux test: the self-host CLI
-// (compiler/fern.fern, `-target arm64-linux`) now emits a runnable static
-// ELF **in-process** — asm_arm64 / ssa_arm64 produce the GAS text and
-// arm64_native + elf.fern assemble + link it, with no `.s` + gcc/ld step (the
-// flip, mirroring arm64-darwin). Unlike the darwin path (which can only be
-// executed on a macOS runner), the arm64-Linux output runs on the Linux CI
-// box under qemu-aarch64 — so this EXECUTES each program and checks its exit
-// code, the decisive end-to-end check of the flipped path.
+// (compiler/fern.fern, `-target arm64-linux`) emits a runnable static ELF
+// **in-process** — asm_arm64_ir.fern and the SSA backend produce the GAS text
+// and arm64_native + elf.fern assemble + link it, with no `.s` + gcc/ld step.
+// Unlike the darwin path (which can only be executed on a macOS runner), the
+// arm64-Linux output runs on the Linux CI box under qemu-aarch64 — so this
+// EXECUTES each program and checks its exit code.
 //
-// The CLI is built with the Go x86-64 backend so it runs on the host; it then
-// emits arm64 ELF binaries straight to `-o`, which qemu-aarch64 runs.
+// The CLI itself is an x86-64 binary built by the pinned stage0 compiler so it
+// runs on the host; it emits arm64 ELF binaries straight to `-o`, which
+// qemu-aarch64 runs.
 func TestSelfHostArm64LinuxBuilds(t *testing.T) {
 	if _, err := exec.LookPath("qemu-aarch64"); err != nil {
 		t.Skip("qemu-aarch64 not on PATH; skipping arm64-linux self-host e2e")

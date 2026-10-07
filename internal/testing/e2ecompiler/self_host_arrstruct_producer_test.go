@@ -6,38 +6,27 @@ import (
 
 // --- An array-of-structs from a producer that returns a LOCAL ----------------
 //
-// The arrstruct twin of #7335. `collect_fresh_arrstruct_names` admits
-// `let g: Val[] = mk(..)` off the "ARRSTRUCTF:" registry, and
-// `fn_returns_fresh_arrstruct` built that registry by proving every return of
-// the callee is a fresh array LITERAL — syntactically. The append-built form,
-// which is how a producer that computes its elements has to be written, was
-// refused:
+// The arrstruct twin of #7335. `let g: Val[] = mk(..)` takes the reclaim credit
+// a fresh array is owed whether `mk` returns a literal or a local it built by
+// self-append — the form a producer that computes its elements has to take:
 //
-//	function mk(i: i32): Val[] { return [Val { .. }, Val { .. }]; }        clean
+//	function mk(i: i32): Val[] { return [Val { .. }, Val { .. }]; }
 //	function mk(i: i32): Val[] { let vals: Val[] = [];
 //	                             vals = vals.append(Val { .. });
-//	                             return vals; }                            leaks
+//	                             return vals; }
 //
-// Same caller either way. The refused form left the consumer's slot uncredited,
-// so its exit sweep took the shallow buffer dec: every element box and every
-// element ARRAY field stranded. The leak needs no struct literal at the call
-// site to appear — `let src: Val[] = mk(i); return src.len() + src[0].k;` is
-// enough, which is what makes this an ordinary-code leak rather than a matrix
-// corner. The construction-retain matrix's struct_arr__local / __param cells
-// read as a construction-retain hole and were this instead: their `mkv` is
-// append-built.
+// Uncredited, the consumer's exit release takes the shallow buffer dec and
+// strands every element box and every element ARRAY field. No struct literal at
+// the call site is needed — `let src: Val[] = mk(i); return src.len() +
+// src[0].k;` is enough.
 //
-// Strictness is the registry's question, not the local credit's. Inside one
-// frame an appended BARE IDENT is fine — the append retains it and both owners
-// walk under __fern_rc_is_unique. A RETURNED container's co-owner would be a
-// local of the frame being left, so the producer arm requires every appended
-// element to be a fresh struct LITERAL, the same reason arrstruct_lit_is_fresh
-// takes bare_ok=false for this registry. producer_bare_ident_elem pins that
-// refusal: it stays a safe leak rather than becoming an over-release.
+// A RETURNED container's co-owner would be a local of the frame being left, so
+// the producer must append fresh struct LITERALS, never a bare ident;
+// producer_bare_ident_elem pins that refusal: it stays a safe leak rather than
+// becoming an over-release.
 //
-// Every want below was confirmed against BOTH oracles — bin/fern -interp and
-// the native x86-64 backend agreed on each — never read off the self-host run
-// under test.
+// Every want below was confirmed against bin/fern -interp, never read off the
+// self-host run under test.
 
 type arrstructProdCase struct {
 	name    string

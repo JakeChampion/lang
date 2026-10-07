@@ -7,30 +7,25 @@ import (
 
 // Dup-at-extract for a tuple destructure (#7682).
 //
-// `let (a, b) = p` lowered `op_tuple_get` → `op_store_local` → `mark_arr`
-// without any retain: the marks make the slot one the scope-exit sweep
-// RELEASES, so the binding gave back a reference it never took. Wherever the
-// source tuple also carried a reclaim credit the same buffer was decremented
-// twice — the first dec frees it, the second underflows into the quarantined
-// block. Both oracles were correct; the self-host corrupted memory.
+// `let (a, b) = p` retains each rc element it binds: the binding's slot is one
+// the scope-exit release gives back, so a binding that took no reference gives
+// back one it never had. Wherever the source tuple is released too, the same
+// buffer is then decremented twice — the first dec frees it, the second
+// underflows into the quarantined block.
 //
 // THE CENSUS CANNOT SEE THIS. Every failing row below balanced at
 // `allocs == frees`, `live_bytes 0`, and returned an answer that differs from
-// the oracles' only through the `__rc_underflow_count()` guard. So each row gates on
-// the EXIT CODE (the guard returns 99) rather than on bytes, per #7432's gate
-// note, and re-runs under FERN_SANITIZE=1 where the parent reports
-// `use-after-free (touched a quarantined block)` and exits 124.
+// the interpreter's only through the `__rc_underflow_count()` guard. So each
+// row gates on the EXIT CODE (the guard returns 99) rather than on bytes, per
+// #7432's gate note, and re-runs under FERN_SANITIZE=1, where an over-release
+// reports `use-after-free (touched a quarantined block)` and exits 124.
 //
-// Every `want` is the answer native AND interp produce for that program.
+// Every `want` is the interpreter's answer for that program.
 //
-// The scope is every element kind a tuple's own sweep can release:
-// `is_leaksafe_array_field` (shallow `__fern_rc_dec`) and `string[]`, whose
-// deep `__fern_str_arr_free` is rc-gated so the binding's shallow dec runs
-// first and the element walk happens at rc 1. The `string[]` rows below all
-// over-released before the retain reached them, including on element forms the
-// admission has taken since long before it learned the fresh-string registry.
-// A struct / enum array element stays out: no tuple position of that type is
-// sweep-credited at all, so it can only leak.
+// The scope is every element kind a tuple's own release covers: a
+// scalar-element array (shallow `__fern_rc_dec`) and `string[]`, whose deep
+// `__fern_str_arr_free` is rc-gated so the binding's shallow dec runs first and
+// the element walk happens at rc 1.
 
 func tupleDestructureRetainCases() []tupleAliasParamCase {
 	return []tupleAliasParamCase{
@@ -48,9 +43,8 @@ function main(): i32 {
 			want: 9,
 		},
 		{
-			// The 8-byte-stride element kinds use a different mark
-			// (mark_f64arr / mark_i64arr) but the same shallow dec, so they
-			// over-released identically and must be covered by the same gate.
+			// The 8-byte-stride element kinds take the same shallow dec, so
+			// they need the same retain as the i32[] case.
 			name: "f64arr_bind_read",
 			src: `function round(i: i32): i32 { let p: (i32, f64[]) = (i, [1.5, 2.5]); let (a, b) = p; return a + b.len(); }
 function main(): i32 {
@@ -73,11 +67,9 @@ function main(): i32 {
 			want: 9,
 		},
 		{
-			// A BARE-IDENT element source: the tuple earns no "TUPRC:" literal
-			// credit here (tuple_lit_has_rc_child has no ExprIdent arm), yet the
-			// construction alias-incs the element — so this over-released for a
-			// different reason than the literal row and has to be held
-			// separately.
+			// A BARE-IDENT element source: the construction retains the element
+			// `xs` still owns, so the release balances by a different route than
+			// the literal row's and is held separately.
 			name: "bare_ident_elem_source",
 			src: `function round(i: i32): i32 { let xs: i32[] = [i, i + 1]; let p: (i32, i32[]) = (i, xs); let (a, b) = p; return a + b.len(); }
 function main(): i32 {

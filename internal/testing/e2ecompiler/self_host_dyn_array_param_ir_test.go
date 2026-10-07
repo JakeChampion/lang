@@ -10,15 +10,10 @@ import (
 // parenthesized `(dyn Trait)[]` PARAM through the self-host IR path on
 // x86-64 + wasm.
 //
-// A `dyn Trait[]` param (no parens) already recorded the coarse `"dyn Trait"`
-// element type on its slot, so `param[i].m()` / `for x in param` dispatched
-// dynamically on the IR path. But the parenthesized spelling `(dyn Trait)[]`
-// — the form the checker requires to bind the trailing `[]` to the whole
-// trait object — was char-mashed by parse_type_name into `"(dynShape)[]"`
-// (the space dropped, the parens kept), so the `type_name[0:4] == "dyn "`
-// classifier missed and every element method call on such a param bailed to
-// the AST path and miscompiled (#5203). The fix unwraps the redundant parens
-// at parse time so `(dyn Trait)[]` normalises to `dyn Trait[]`.
+// The parser unwraps the redundant parens, so `(dyn Trait)[]` — the form the
+// checker requires to bind the trailing `[]` to the whole trait object —
+// normalises to `dyn Trait[]` and its elements dispatch dynamically, like the
+// unparenthesized spelling's (#5203).
 //
 // Each case is oracle-checked against the interpreter and returns a
 // non-negative value <= 126 (cf. #2908).

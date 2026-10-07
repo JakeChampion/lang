@@ -189,11 +189,9 @@ func TestSelfHostCheckerCodeSequenceX86_64(t *testing.T) {
 		// identical before and after the fold, which is what separates "coverage
 		// widened" from "behaviour changed".
 		{"e053-two-arrays", "fip function f(n: i32): i32 {\n    let a: i32[] = [1];\n    let b: i32[] = [2];\n    return n;\n}\nfunction main(): i32 { return f(1); }\n", "E053(`fip` function \"f\" may not allocate (array literal)),E053(`fip` function \"f\" may not allocate (array literal))", true},
-		// Was "" — e053_expr pruned at ExprLambda, so an allocation anywhere in a
-		// closure body was excused outright. Go reports it. And since the
-		// self-host has no FuncDecl statement — a nested named function parses as
-		// a StmtVar holding an ExprLambda — the same hole covered both spellings,
-		// which the second row pins.
+		// An allocation inside a closure body still counts against the `fip`
+		// function, as Go reports it. A nested named function parses as a
+		// StmtVar holding an ExprLambda, so the second row pins that spelling.
 		{"e053-lambda-body-array", "fip function f(n: i32): i32 {\n    let g = (): i32 => { let a: i32[] = [1]; return a.len(); };\n    return n;\n}\nfunction main(): i32 { return f(1); }\n", "E053(`fip` function \"f\" may not allocate (array literal))", true},
 		{"e053-nested-named-fn-array", "fip function f(n: i32): i32 {\n    function inner(): i32 { let a: i32[] = [1]; return a.len(); }\n    return n + inner();\n}\nfunction main(): i32 { return f(1); }\n", "E053(`fip` function \"f\" may not allocate (array literal)),E053(`fip` function \"f\" may only call other `fip` functions, not \"inner\")", true},
 		// match_diags reaching into lambda bodies. It walks STATEMENTS and never

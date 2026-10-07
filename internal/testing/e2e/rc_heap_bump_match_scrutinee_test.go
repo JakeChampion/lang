@@ -107,7 +107,7 @@ function main(): i32 {
 // 1400; final read of b must still be 7. Returns __rc_underflow_count() (0 iff
 // value-correct AND no over-release / UAF).
 const matchScrutineeAliasedSafe = `enum E3 { A(i32), B(i32), C }
-function pass(b: E3): E3 { return b; }
+@noinline function pass(b: E3): E3 { return b; }
 function main(): i32 {
     let b: E3 = A(7);
     let i: i32 = 0;

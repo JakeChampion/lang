@@ -85,9 +85,9 @@ function main(): i32 {
     return 0;
 }`, 0},
 	// The REASSIGN sibling: `vn = h.names` over an already-array slot takes the
-	// same alias, so lower_stmt_assign needs the matching retain (its
-	// pre-existing field-read arm only covered scalar- / struct- / enum-element
-	// fields, not string[], tuple elements, or array-of-array elements).
+	// same alias, so the assignment needs the matching retain — for a
+	// string[], tuple-element or array-of-array field as much as for a
+	// scalar- / struct- / enum-element one.
 	{"container-read-reassign", `struct Holder { names: string[] }
 function total(h: Holder, seed: string[]): i32 {
     let vn: string[] = seed;

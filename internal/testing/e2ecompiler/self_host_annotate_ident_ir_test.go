@@ -13,25 +13,18 @@ import (
 // ExprCall.ty (#5531), ExprFieldAccess.ty and ExprIndex.ty (#6165) and
 // ExprSlice.ty.
 //
-// A bare name got its type in the AST lowering from the SLOT it read, and a module
-// `const` has no slot at all: its read is really a call to a zero-argument
-// accessor. Each ident predicate therefore grew its own const clause, one at a
-// time — expr_is_str (#2954), then expr_is_f64 and infer_expr_width (#4801) —
-// and expr_is_u32, expr_is_u64 and expr_is_bool never got one. Both halves of
-// that omission are live defects, and both are here:
+// A module `const` has no slot: its read is a call to a zero-argument accessor,
+// so a bare const name must take its type from the annotation. Two shapes
+// diverge when it does not:
 //
-//   - `const M: u32` read bare answered false to expr_is_u32, so a chained
-//     `>>` selected i32.shr_s. wasm-only: a u32 with bit 31 set is a
-//     signed-negative i32 there, while x86-64 and arm64 keep it zero-extended
-//     in a 64-bit register and already matched.
-//   - `const B: boolean` answered false to expr_is_bool, so expr_scalar_type
-//     fell through to its "i32" default and `B.to_json()` rendered 1 / 0
-//     rather than true / false. Both backends.
+//   - `const M: u32` read bare and shifted with `>>` must shift UNSIGNED. wasm
+//     only: a u32 with bit 31 set is a signed-negative i32 there, while x86-64
+//     and arm64 keep it zero-extended in a 64-bit register.
+//   - `const B: boolean` must dispatch as a boolean, so `B.to_json()` renders
+//     true / false rather than 1 / 0. Both backends.
 //
-// The carrier replaces the per-predicate clauses with one leaf, id_type_tag,
-// so the next scalar kind cannot be missed from three places independently.
-// The controls below are the ones that used the retired clauses: they answer
-// from the annotation now and must be unchanged.
+// The controls are the i64, f64 and string const reads and the same u32 value
+// through a local or a parameter.
 var annotateIdentCases = []struct {
 	name string
 	src  string
@@ -55,9 +48,7 @@ function main(): i32 { return B.to_json().len() as i32; }`}, // 4; was 1
 const B: boolean = false;
 function main(): i32 { return B.to_json().len() as i32; }`}, // 5; was 1
 
-	// Control: the same u32 shift through a LOCAL. The slot carries u32, so
-	// this always worked and the leaf must not consult the annotation for it —
-	// id_type_tag returns "" for any name with a slot.
+	// Control: the same u32 shift through a LOCAL, whose slot carries u32.
 	{"local_u32_shift", `function main(): i32 {
     let m: u32 = 2147484527u32;
     return ((m >> 1u32) % 100u32) as i32;

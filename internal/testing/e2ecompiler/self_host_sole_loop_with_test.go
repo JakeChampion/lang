@@ -236,7 +236,8 @@ function main(): i32 {
 // or an `append` in a loop (ssaunits.sole_boxes): an array a fresh or empty
 // allocation, a `with` or an `append` makes, carried around a loop, read,
 // written and returned but never lent, stored or retained, is written in
-// place with no test, and every other shape keeps the test. Each program's exit is the interpreter's, run under
+// place with no test, and every other shape keeps the test. Each program's exit
+// is the interpreter's, run under
 // the sanitizer, so a proof that let a shared box be written in place shows
 // up as the wrong answer as well as in the count.
 func TestSelfHostSoleLoopWithX86_64(t *testing.T) {

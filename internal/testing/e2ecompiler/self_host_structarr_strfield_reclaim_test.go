@@ -5,33 +5,21 @@ import (
 	"testing"
 )
 
-// --- String fields of struct-array ELEMENTS (#6127 struct_string) ------------
+// --- String fields of struct-array ELEMENTS (#6127) --------------------------
 //
-// A struct-array local whose element struct has a string field landed on the
-// SHALLOW structarr path: __fern_arrarr_free decs each element box and the outer
-// buffer, and never looks inside the box, so every element's string leaked. A
-// BARE local of the same struct already reclaimed its string correctly, through
-// __field_reclaim_<T>'s STRFLDOK arm — it was only the ELEMENT walk that never
-// reached that machinery.
+// A struct-array local whose element struct has a string field must free each
+// element's string when the array dies, not only each element box and the
+// outer buffer. A shallow element walk leaks every element's string:
 //
-//	bare local            allocs=200  frees=200  live_bytes=0     <- already fine
+//	bare local            allocs=200  frees=200  live_bytes=0     <- balanced
 //	array, literal-built  allocs=500  frees=300  live_bytes=4800  = 2 elems x 24
 //	array, append-built   allocs=1000 frees=600  live_bytes=9600  = 4 elems x 24
-//	scalar-field elements allocs=600  frees=600  live_bytes=0     <- already fine
+//	scalar-field elements allocs=600  frees=600  live_bytes=0     <- balanced
 //
-// The routing, not the machinery, was missing. slot_is_reclaimable_structarr
-// already excludes rc-array-field structs, so a structarr slot whose element type
-// ROUTES field reclaim can only be a STRFLDOK-admitted string / string[] / fn
-// -fielded one — and those take the same counted element walk ARRSTRUCT uses
-// (per element __struct_drop_<T>, then the box, then the outer buffer).
-//
-// Crucially the admission gate is the EXISTING whole-program read scan
-// (strfld_reclaim_ok_types_of, via struct_routes_field_reclaim), not a new looser
-// check. That scan has history: the per-module compiler self-run
-// segfaulted on exactly this class, because the self-host has no read-side
-// alias-inc for strings, so a field read that escapes is an uncounted alias the
-// free would dangle. Reusing it is what makes this sound; hand-rolling a
-// predicate to make a probe pass is what #6148 did and had to revert.
+// The other half is soundness: an element string still referenced elsewhere
+// when the array dies (moved into a container, or a parameter the caller
+// still owns) must not be freed with the element. An over-freed string
+// corrupts the freelist rather than crashing cleanly.
 
 const structArrStrFieldSrc = `struct N { name: string, v: i32 }
 
@@ -51,9 +39,8 @@ function main(): i32 {
 
 // TestSelfHostStructArrStrFieldReclaimX86_64 — the element string fields are
 // freed. allocs == frees is essential: frees short of allocs is the leak this
-// closes; frees ABOVE allocs would mean the element walk's __struct_drop_<T> and
-// something else both claimed one string (a double free), which for a string is a
-// freelist corruption rather than a clean crash.
+// closes; frees ABOVE allocs would mean one string was released twice, which
+// for a string is a freelist corruption rather than a clean crash.
 func TestSelfHostStructArrStrFieldReclaimX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -145,8 +132,8 @@ function main(): i32 {
 			want: 42,
 		},
 		{
-			// A bound element (`let q = xs[0]`) holds a box the free would dangle —
-			// structarr_elem_escapes refuses the whole array.
+			// A bound element (`let q = xs[0]`) holds a box the array's release
+			// must not free while `q` still reads it.
 			name: "element_bound_to_local",
 			src: `struct N { name: string, v: i32 }
 function round(i: i32): i32 {

@@ -8,13 +8,12 @@ import (
 // --- A holder handed whole to a call, and a closure array's clone -----------
 //
 // `let result: M = M { items: mod.items, funcs: fresh }` takes a counted share
-// of `mod.items`, and the bind-site flip (mark_enum_arr_share) then grants the
-// holder its deep drop. That drop walks `result.funcs`, whose element boxes
-// `rebuild(result)` hands back inside its own result: appended uncounted,
-// every generation-2 self-host binary died in fn_sigs_for_borrow reading a
-// FuncDecl body (#9016). The store of a handed-back borrow is counted now
-// (#9021's append-handback), so the deep drop is sound; the two holder rows
-// keep the shape running under the sanitizer, directly and through an alias.
+// of `mod.items`, which grants the holder its deep drop. That drop walks
+// `result.funcs`, whose element boxes `rebuild(result)` hands back inside its
+// own result, so the store of a handed-back borrow must be counted (#9021);
+// appended uncounted, every generation-2 self-host binary died reading a freed
+// FuncDecl body (#9016). The two holder rows keep the shape running under the
+// sanitizer, directly and through an alias.
 //
 // The other two rows are the value-form `.with` / `.append` on a
 // closure-element array, whose clone must retain its elements only where they
@@ -46,7 +45,7 @@ function rebuild(m: M): M {
     while (i < m.funcs.len()) { fs = fs.append(touch(m.funcs[i])); i = i + 1; }
     return M { ...m, funcs: fs };
 }
-function infer(m: M): M { return m; }
+@noinline function infer(m: M): M { return m; }
 function lift(mod: M): M {
     let worklist: F[] = [];
     let i: i32 = 0;
@@ -78,7 +77,7 @@ function rebuild(m: M): M {
     while (i < m.funcs.len()) { fs = fs.append(touch(m.funcs[i])); i = i + 1; }
     return M { ...m, funcs: fs };
 }
-function infer(m: M): M { return m; }
+@noinline function infer(m: M): M { return m; }
 function lift(mod: M): M {
     let fresh: F[] = [];
     let i: i32 = 0;
@@ -96,10 +95,8 @@ function round(i: i32): i32 {
 }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 50) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }
 `},
-	// The closure array reached through a struct field, whose declared type is
-	// the flat "fn[]" spelling that is_enum_array_field_type admits.
-	// The elements are read into locals before the call: a call through an
-	// indexed element is not IR-eligible.
+	// The closure array reached through a struct field. The elements are read
+	// into locals before the call.
 	{"closure_field_with", `struct H { hs: ((i32) => i32)[], n: i32 }
 function inc(x: i32): i32 { return x + 7; }
 function dec(x: i32): i32 { return x - 1; }

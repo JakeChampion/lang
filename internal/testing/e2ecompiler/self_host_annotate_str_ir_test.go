@@ -8,10 +8,10 @@ import (
 )
 
 // annotateStrCases extend the typed-IR annotation (#5531) to string-valued
-// calls. The annotate pass stamps ExprCall.ty = "string" for a string-returning
-// call; expr_is_str's ExprCall arm reads it instead of re-deriving via the
-// str_ret_fns registry. Each program routes a string-returning call's result
-// into a string-typed use (.len() / concat), oracle-checked against the interp.
+// calls: the annotate pass stamps a string-returning call with its "string"
+// type tag, and the lowering reads the tag. Each program routes a
+// string-returning call's result into a string-typed use (.len() / concat),
+// oracle-checked against the interp.
 //
 // String programs allocate a heap (arena mmap): under binfmt-direct exec in a
 // cross-arch container that SIGSEGVs, but it runs correctly under explicit qemu

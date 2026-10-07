@@ -6,8 +6,7 @@ import (
 
 // auditDataCases isolate string / array / map features and run them
 // through the SELF-HOSTED compiler, asserting the exit code. Self-host
-// arm of the §A / §B / §C audit (docs/FEATURE-AUDIT.md); the native arm
-// is the `audit_strings_arrays_maps` fixture (all four native backends).
+// arm of the §A / §B / §C audit (docs/FEATURE-AUDIT.md).
 //
 // `.with` uses the canonical reassignment idiom (`a = a.with(i, v)`) —
 // reading the pre-`.with` binding diverges across backends (#2832).

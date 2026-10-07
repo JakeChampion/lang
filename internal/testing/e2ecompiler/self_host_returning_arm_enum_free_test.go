@@ -7,21 +7,12 @@ import (
 
 // --- Consumed-match enum frees on the `return`-out-of-an-arm paths (#6219) ---
 //
-// The consumed-enum releases are emitted AFTER the consuming match statement.
-// When every arm of that match `return`s, control leaves the function before
-// reaching them, so the box was never released — one leaked box per call,
-// unbounded. `consumed_scalar_enum_frees` (scalar enum / scalar Option) and
-// `consumed_rcpayload_enum_frees` (rc-payload enum) both placed their frees
-// that way and both leaked; `frees=0` on every probe below, against a native
-// column that was already balanced.
-//
-// The mechanism the fix reuses is the one #4353 p1/p3 built for the
-// Option/Result payload drop: `optret_pending` carries the release across the
-// arm bodies, and `emit_dec_sweep_except_list` — which every return form runs —
-// emits it before `op_return`. The post-match site stays exactly where it was
-// and remains the release for the fallthrough paths; the slot-zero each site
-// already performed is what keeps a path from being claimed twice, since
-// `__fern_rc_dec` is null-safe.
+// A consumed enum box is released on every path out of the consuming match:
+// an arm that `return`s releases it before the return, and the fallthrough
+// paths release it after the match. Released only after the match, a scalar
+// enum, a scalar Option and an rc-payload enum each leaked one box per call,
+// unbounded (`frees=0` on every probe below). Each site zeroes the slot it
+// releases and `__fern_rc_dec` is null-safe, so no path is claimed twice.
 //
 // The gate is an exact `allocs == frees` balance rather than `live_bytes == 0`.
 // An over-release is the failure mode that matters here — the release now runs
@@ -29,8 +20,7 @@ import (
 // it. `__rc_underflow_count()` is checked inside the probes too (exit 99), so a
 // double-dec that happens to rebalance the byte count still fails.
 //
-// Measured, self-host x86-64, allocs/frees/live_bytes before -> after. Native
-// was already balanced on all seven, and every exit code below is native's:
+// Measured, self-host x86-64, allocs/frees/live_bytes before -> after #6219:
 //
 //	scalar-enum-returning-arms       100/0/4800    -> 100/100/0
 //	scalar-enum-fallthrough-control  100/100/0     -> 100/100/0   (unchanged)
@@ -77,9 +67,8 @@ function main(): i32 {
     return t % 7;
 }`
 
-// The scalar-OPTION half of the same admission: `consumed_scalar_enum_frees`
-// admits `let o = Some(<scalar>)` on the same footing as an inline enum ctor,
-// so it reached the post-match free the same way and missed it the same way.
+// The scalar-OPTION half: `let o = Some(<scalar>)` is released on the same
+// footing as an inline enum ctor, so a returning arm owes it the same release.
 const raeScalarOptionSrc = `function round(i: i32): i32 {
     let o: Option[i32] = Some(i);
     match (o) { Some(a) => { return a; }, None => { return 0; } }
@@ -92,11 +81,9 @@ function main(): i32 {
     return t % 7;
 }`
 
-// The rc-PAYLOAD enum sibling, which the issue flagged as worth checking and
-// which leaks the same way — worse, in fact: the box AND its array payload, two
-// objects per round. Its release is `emit_enum_variant_drops_moved`, a runtime
-// variant_is dispatch, so the pending entry has to carry the enum name and the
-// moved-field set as well as the slot (rcenum_pending_entry).
+// The rc-PAYLOAD enum sibling, which leaks the same way — worse, in fact: the
+// box AND its array payload, two objects per round. Its release dispatches on
+// the runtime variant and must know which payload fields an arm moved out.
 //
 // No arm binds the payload here, so the moved set is empty and the deep-drop
 // releases the array.
@@ -114,11 +101,11 @@ function main(): i32 {
 }`
 
 // The MOVED-payload case, and the one that would dangle rather than leak if the
-// pending entry silently discarded the moved set. The arm binds the array
-// payload and RETURNS it, so `match_moved_rc_payloads` holds `Box#0` and the
-// deep-drop must skip that field's dec while still freeing the box — the caller
-// reads the buffer back afterwards, so a lost skip is a use-after-free, not a
-// number that is merely off.
+// returning-arm release ignored the moved set. The arm binds the array payload
+// and RETURNS it, so `Box#0` is moved out and the deep-drop must skip that
+// field's dec while still freeing the box — the caller reads the buffer back
+// afterwards, so a lost skip is a use-after-free, not a number that is merely
+// off.
 const raeMovedPayloadSrc = `enum E { Box(i32[], i32), Nil }
 function mk(i: i32): i32[] {
     let e: E = Box([i, i + 1], i);

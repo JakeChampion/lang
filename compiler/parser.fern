@@ -2954,9 +2954,18 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
         if (p.peek_punct() == "]") {
           p = p.advance();
         }
+        // Type arguments open a call or a struct literal and nothing else, so
+        // `Tag[i32].One(1)` is an index whose `i32` is no value (#11777).
+        let ta_after: string = p.peek_punct();
+        if (ta_after != "(" && (ta_after != "{" || p.no_struct)) {
+          base = e_index(base, idx_expr, bline, bcol);
+          pending_type_arg_list = [];
+          pending_type_args = "";
+          continue;
+        }
         // `Name[T] { … }` — a generic struct construction: the
         // erased base is the struct name; parse the literal body.
-        if (p.peek_punct() == "{") {
+        if (ta_after == "{") {
           match (base) {
             ast.ExprIdent(bid) => {
               // The written instantiation is stored in the literal's
@@ -12253,6 +12262,111 @@ function func_param_type_at(funcs: FuncDecl[], name: string, idx: i32): string {
   return "";
 }
 
+// me_method_arg_types: the type spelling each argument of `recv.name(...)`
+// expects, from the receiver's own type — the method call's analogue of
+// func_param_type_at, so a bare unit variant handed to one (`m.insert(Non,
+// 1)` on a `Map[Opt[i32], i32]`) pins its instantiation. A map's builtin
+// methods take its key and value; a declared method its parameters, with
+// the receiver's type arguments substituted. An entry is "" where nothing
+// pins it.
+function me_method_arg_types(fa: ast.ExprFieldAccess, argc: i32, env: MEnv, enums: EnumDecl[], structs: StructDecl[], funcs: MFns): string[] {
+  let rty: string = me_scrutinee_type(fa.obj, env, enums, structs, funcs);
+  if (rty.len() == 0) {
+    return [];
+  }
+  let kv: string[] = me_map_args(rty);
+  if (kv.len() == 2) {
+    if (fa.field == "insert" || fa.field == "set" || fa.field == "get_or") {
+      return kv;
+    }
+    if (fa.field == "has" || fa.field == "get" || fa.field == "without") {
+      return [kv[0]];
+    }
+  }
+  let at: i32 = me_method_decl(funcs, rty, fa.field);
+  if (at < 0) {
+    return [];
+  }
+  let fd: FuncDecl = funcs.decls[at];
+  let out: string[] = [];
+  let i: i32 = 0;
+  while (i < argc && i < fd.params.len()) {
+    out = out.append(me_receiver_subst(fd, rty, fd.params[i].type_name, funcs));
+    i = i + 1;
+  }
+  return out;
+}
+
+// me_method_ret_type: the type a method call `recv.name(...)` answers, for a
+// receiver typed `rty` — a map's builtin methods by their shape, a declared
+// method's return type with the receiver's type arguments substituted.
+function me_method_ret_type(rty: string, name: string, funcs: MFns): string {
+  let kv: string[] = me_map_args(rty);
+  if (kv.len() == 2) {
+    if (name == "insert" || name == "set" || name == "cleared") {
+      return rty;
+    }
+    if (name == "without") {
+      return "(" + rty + ", boolean)";
+    }
+    if (name == "get_or") {
+      return kv[1];
+    }
+    if (name == "get") {
+      return "Option[" + kv[1] + "]";
+    }
+    if (name == "keys") {
+      return kv[0] + "[]";
+    }
+    if (name == "values") {
+      return kv[1] + "[]";
+    }
+  }
+  let at: i32 = me_method_decl(funcs, rty, name);
+  if (at < 0) {
+    return "";
+  }
+  return me_receiver_subst(funcs.decls[at], rty, funcs.decls[at].ret_type, funcs);
+}
+
+// A `Map[K, V]` spelling's key and value spellings, or [] for any other.
+function me_map_args(rty: string): string[] {
+  let r: TypeRef = parse_type_ref(rty);
+  if (r.base != "Map" || r.args.len() != 2 || r.array_depth != 0) {
+    return [];
+  }
+  return [render_type_ref(r.args[0]), render_type_ref(r.args[1])];
+}
+
+// The declared method `name` on a receiver typed `rty`, or -1.
+function me_method_decl(funcs: MFns, rty: string, name: string): i32 {
+  let rbase: string = strip_struct_base(rty);
+  let i: i32 = 0;
+  while (i < funcs.decls.len()) {
+    if (funcs.decls[i].name == name && funcs.decls[i].receiver_type.len() > 0 && strip_struct_base(funcs.decls[i].receiver_type) == rbase) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// `ty`, a spelling in method `fd`'s signature, with the type parameters its
+// receiver binds replaced by what the receiver typed `rty` binds them to.
+function me_receiver_subst(fd: FuncDecl, rty: string, ty: string, funcs: MFns): string {
+  let binds: MEnv = bind_unify(fd.receiver_type, rty, fd.all_type_params, MEnv { mnames: [], mtypes: [] }, funcs);
+  let tps: string[] = [];
+  let cts: string[] = [];
+  for tp in fd.all_type_params {
+    let ct: string = binds.elook(tp);
+    if (ct.len() > 0) {
+      tps = tps.append(tp);
+      cts = cts.append(ct);
+    }
+  }
+  return subst_ty(ty, tps, cts);
+}
+
 function call_ret_type(funcs: MFns, name: string, args: ast.Expr[], env: MEnv): string {
   let fi: i32 = 0 - 1;
   let i: i32 = 0;
@@ -17263,11 +17377,15 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
       // generic `Non` struct and the dangling reference bailed the module
       // (#5247).
       let calleeFn: string = "";
+      let mexps: string[] = [];
       if (owner < 0) {
         if let ast.ExprIdent(cid) = c.callee {
           if (!str_list_contains(env.mnames, cid.name)) {
             calleeFn = cid.name;
           }
+        }
+        if let ast.ExprFieldAccess(cfa) = c.callee {
+          mexps = me_method_arg_types(cfa, c.args.len(), env, enums, structs, funcs);
         }
       }
       let nargs: ast.Expr[] = [];
@@ -17279,6 +17397,8 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
           ae = fexps[i];
         } else if (calleeFn.len() > 0) {
           ae = func_param_type_at(funcs.decls, calleeFn, i);
+        } else if (i < mexps.len()) {
+          ae = mexps[i];
         }
         let ra: RExpr = me_expr(c.args[i], ae, env, enums, structs, funcs, cur);
         cur = ra.rins;
@@ -17626,15 +17746,7 @@ function me_scrutinee_type(e: ast.Expr, env: MEnv, enums: EnumDecl[], structs: S
           // wrong variant.
           let rt: string = me_scrutinee_type(cfa.obj, env, enums, structs, funcs);
           if (rt.len() > 0) {
-            let rbase: string = strip_struct_base(rt);
-            let mi: i32 = 0;
-            while (mi < funcs.decls.len()) {
-              if (funcs.decls[mi].name == cfa.field && funcs.decls[mi].receiver_type.len() > 0
-                && strip_struct_base(funcs.decls[mi].receiver_type) == rbase) {
-                return funcs.decls[mi].ret_type;
-              }
-              mi = mi + 1;
-            }
+            return me_method_ret_type(rt, cfa.field, funcs);
           }
           return "";
         },
@@ -17785,7 +17897,7 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
       if (vty.len() == 0) {
         vty = me_scrutinee_type(v.init, env, enums, structs, funcs);
       }
-      return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: nslot.ty, init: iv.rexpr, line: v.line, col: v.col, fn_ret: nslot.fn_ret, fn_param_types: nslot.fn_params }, renv: env.ebind(v.name, vty), rins2: cins };
+      return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: nslot.ty, init: iv.rexpr, line: v.line, col: v.col, fn_ret: nslot.fn_ret, fn_param_types: nslot.fn_params }, renv: me_bind_var(env, v, vty, enums, structs, funcs), rins2: cins };
     },
     ast.StmtReturn(r) => {
       let rv: RExpr = me_expr(r.value, ret_ty, env, enums, structs, funcs, ins);
@@ -17872,6 +17984,27 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
 }
 
 // me_stmts walks a statement list, threading the block-local env.
+// me_bind_var binds what a `let` declares: its name to `vty`, or, for a
+// tuple destructure (`let (m2, had) = m.without(k)`, one StmtVar whose name
+// is the comma-joined list), each plain name to its element of the init's
+// tuple type.
+function me_bind_var(env: MEnv, v: ast.StmtVar, vty: string, enums: EnumDecl[], structs: StructDecl[], funcs: MFns): MEnv {
+  let names: string[] = split_top_commas(v.name);
+  if (names.len() < 2) {
+    return env.ebind(v.name, vty);
+  }
+  let tty: string = me_scrutinee_type(v.init, env, enums, structs, funcs);
+  let out: MEnv = env;
+  let i: i32 = 0;
+  while (i < names.len()) {
+    if (names[i].len() > 0 && names[i][0] != b'(') {
+      out = out.ebind(names[i], me_tuple_elem_type(tty, util.i32_to_string(i)));
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
 function me_stmts(stmts: ast.Stmt[], env: MEnv, ret_ty: string, enums: EnumDecl[], structs: StructDecl[], funcs: MFns, ins: Insts): RStmts {
   let out: ast.Stmt[] = [];
   let e2: MEnv = env;

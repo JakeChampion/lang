@@ -9,23 +9,21 @@ import (
 )
 
 // annotateConsumerCases pin the consumer half of the typed-IR migration
-// (#5986, docs/TYPED-IR-REWRITE.md): predicates and binding marks in
-// irlower.fern that re-derived an expression's type structurally while the
-// checker's stamped carrier tag on the same node went unread. Each case was
-// first demonstrated as a live defect against the interp oracle — an IR bail
-// under FERN_STRICT_IR or a silent wrong answer — and compiles clean with the
-// carrier read wired in. The _control siblings perturb each shape onto the
-// structural walk (an annotated local, a named type) and pin that the walk
-// still answers first where it resolves.
+// (#5986, docs/TYPED-IR-REWRITE.md): shapes whose type only the checker's
+// stamped type on the node can answer, because a structural walk of the
+// expression cannot. Each case was first demonstrated as a live defect against
+// the interp oracle — an IR bail under FERN_STRICT_IR or a silent wrong answer.
+// The _control siblings perturb each shape so the type is also visible
+// structurally (an annotated local, a named type) and pin that both agree.
 //
-// The shapes cover: the expr_is_bool/str/u32/u64 Call/FieldAccess/Index/Unary
-// arms; expr_struct_type's Index and operator-overload arms; expr_map_kind /
-// expr_map_type_tag map-array elements; arr_tag_of's sliced base;
-// expr_opt_elem_tag's method callee; expr_tuple_elem_tag's FieldAccess
-// fallback; lower_i64's Call load site paired with infer_expr_width;
-// method_recv_tyname's associated bare-type receiver; the mark_tuple/map
-// binding transfers; the lift-time cap_type_expr / cap_type_in_stmts family; and ty survival through the monomorphiser's
-// array/map method folds.
+// The shapes cover: bool / string / u32 results of calls, field accesses,
+// indexing and overloaded unary operators; the struct type of an indexed
+// element and of an operator-overload result; map-array elements; a sliced
+// array base; an Option element from a method callee; a nested tuple-element
+// field access; the i64 width of an associated method call; the types of
+// lifted lambda captures (module consts, wide arithmetic, builtin calls, a
+// match scrutinee field); tuple types surviving the monomorphiser's array/map
+// method folds; and function-value locals and params.
 var annotateConsumerCases = []struct {
 	name string
 	src  string
@@ -649,11 +647,10 @@ function main(): i32 {
     return apply(mk);
 }`},
 	// The widened fn_ret spellings (tuple and array returns) through the
-	// sidecar consumers. w1 was a live wasm miscompile (the fn param mixes
-	// an i64 param with an array return, so fn_sig_of now emits the
-	// width-typed funcref signature instead of the arity fallback); w3 a
-	// live x86-64 miscompile (annotated tuple-returning fn var). w2/w4 pin
-	// the shapes that already worked through the same paths.
+	// sidecar consumers. w1's fn param mixes an i64 param with an array
+	// return, so the wasm funcref signature must carry the widths, not just
+	// the arity; w3 is an annotated tuple-returning fn var on x86-64. w2/w4
+	// pin the neighbouring shapes through the same paths.
 	{"fnwiden_funcref_width", `function pick(f: (i64) => i32[]): i32 {
     let xs: i32[] = f(5000000042i64);
     return xs[0];

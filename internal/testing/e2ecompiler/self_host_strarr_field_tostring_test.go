@@ -8,10 +8,9 @@ import (
 	"testing"
 )
 
-// A record's string[] field built from a number's `.to_string()` was refused
-// by the element freshness proof, so the field was marked program-wide and
-// every Rec lost its deep drop: the AST lowering left the buffer and the
-// decimal text behind on every round (#10319).
+// A record's string[] field built from a number's `.to_string()` holds fresh
+// elements, so every Rec keeps its deep drop: the buffer and the decimal text
+// are released on every round (#10319).
 const strarrFieldToStringSrc = `import "std/i32";
 struct Rec { n: i32, xs: string[] }
 function round(i: i32): i32 {

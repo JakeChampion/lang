@@ -49,14 +49,8 @@ pub struct Index { head: i32[], next: i32[] }
 
 pub function index(rows: Escapes[]): Index {
   let nb: i32 = rows.len() * 2 + 1;
-  let head: i32[] = [];
-  while (head.len() < nb) {
-    head = head.append(0 - 1);
-  }
-  let next: i32[] = [];
-  while (next.len() < rows.len()) {
-    next = next.append(0 - 1);
-  }
+  let head: i32[] = util.minus_ones(nb);
+  let next: i32[] = util.minus_ones(rows.len());
   let k: i32 = rows.len() - 1;
   while (k >= 0) {
     let b: i32 = util.hash_bucket(rows[k].name, nb);

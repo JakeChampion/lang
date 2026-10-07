@@ -22,16 +22,14 @@ var binderScopeCases = []struct {
 	src  string
 }{
 	// A lambda inside an `n @ Tag(x)` arm reading the @-binding. The whole-value
-	// binder is carried on the PATTERN and lower_stmt_match only materialises it as a
-	// `let` later, so every AST-level capture pass ran before it existed:
-	// collect_bound_stmt did not report `n` as bound, the free-variable filter
-	// then declined to treat it as an enclosing local, and the lambda took the
-	// no-capture lift with a bare `n` in its body —
+	// binder is carried on the PATTERN, so collect_bound_stmt must report `n` as
+	// bound; otherwise the free-variable filter declines to treat it as an
+	// enclosing local and the lambda takes the no-capture lift with a bare `n` in
+	// its body —
 	//
 	//	FERN_STRICT_IR: __lam_0 (function value n not defined)
 	//
-	// Two halves had to agree for this to work: the binder set (astwalk) and
-	// the capture's TYPE, which cap_type_in_stmts resolves from the scrutinee.
+	// The capture's TYPE must also resolve, from the scrutinee's enum.
 	{"at-binding-captured-by-a-lambda", `enum Box { Full(i32), Empty }
 
 function total(b: Box): i32 { match (b) { Full(v) => { return v; }, Empty => { return 0; } } return 0; }

@@ -10,11 +10,8 @@ import (
 // TestSelfHostPlatformBuiltinLowers pins the std/serve half of #5686.
 //
 // Every std/serve entry point names the host platform
-// (`(HttpRequest, platform.Host) => HttpResponse`); when the self-host could
-// not resolve that type, `__serve_loop` reported `BAIL lower`. One bailing
-// function drops the whole module (and the AST emitter it fell to could not
-// emit `tcp_listen` or `poll` at all) — so the failure surfaced far from its
-// cause, as `undefined reference to __fn_tcp_listen` at link.
+// (`(HttpRequest, platform.Host) => HttpResponse`), so the self-host must
+// resolve that type for `__serve_loop` to lower.
 //
 // The probe is the assertion: every function of the std/serve closure must lower,
 // with the serve loop named explicitly so a regression says which one broke.

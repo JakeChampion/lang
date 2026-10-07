@@ -58,8 +58,7 @@ func TestSelfHostBlockReassignScopeX86_64(t *testing.T) {
 		return allocs, frees, live
 	}
 
-	// An unmatched Option[string] declared in a loop body
-	// (collect_unmatched_optstr_names).
+	// An unmatched Option[string] declared in a loop body.
 	const optStrAlone = `function round(r: i32): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -99,8 +98,7 @@ function main(): i32 {
     return x % 83;
 }`
 
-	// An unmatched Option[i32[]] declared in a loop body
-	// (collect_unmatched_optarr_names).
+	// An unmatched Option[i32[]] declared in a loop body.
 	const optArrAlone = `function mk(i: i32): Option[i32[]] {
     if (i % 3 == 0) { return None; }
     return Some([i, i + 1]);

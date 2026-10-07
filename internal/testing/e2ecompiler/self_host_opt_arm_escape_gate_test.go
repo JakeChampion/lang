@@ -5,35 +5,25 @@ import (
 	"testing"
 )
 
-// --- The call-bound escape gate, which matched nothing (#6360) ---------------
+// --- The consumer-side escape of a call-bound Option payload (#6360) ----------
 //
-// `opt_arm_binding_escapes` compares the arm's variant SPELLING against the name
-// its caller passes. #6451 introduced the call-init candidate with a hardcoded
-// `variant: "Ok"` and a comment claiming "Ok covers Some too — matches the arm by
-// payload position, not by spelling". It does not: `"Ok"` never equals `"Some"`,
-// so for every `match (v) { Some(s) => ..., None => ... }` the gate iterated the
-// arms and refused nothing.
+// `match (v) { Some(s) => { held = s; }, None => ... }` on a call-bound Option:
+// the arm binding escapes into `held`, so the payload must outlive the match.
+// For an ARRAY payload the escaping assignment retains the buffer; for a STRING
+// payload the release must not free a box the caller still reads. The escaping
+// string rows balance and read back correctly, and the array and scalar-`Err`
+// rows reclaim fully.
 //
-// That was survivable while the payload was an ARRAY, because an escaping arm
-// binding RETAINS — `held = xs` incs the buffer, so the drop's dec is balanced.
-// #6469 then admitted STRING success payloads to the same drop, and a string
-// assignment is a BORROW. With the gate matching nothing, `held = s` leaves
-// `__fern_str_free` releasing a box the caller still reads.
-//
-// On the typed lowering the escaping string rows balance and read back
-// correctly, and the array and scalar-`Err` rows reclaim fully.
-//
-// THE FAILURE IS INVISIBLE TO A PLAIN PROBE. With the bug present, the escaping
-// shape still exits correctly — the freed box is simply not reused before it is
-// read. It only becomes observable once same-shaped strings are churned in
-// between, which recycles it: exit 178 against `-interp`'s 55. Both hazard
-// probes below therefore churn before the aliased read, and both take their
-// expected exit from `fern -interp` rather than a constant.
+// THE FAILURE IS INVISIBLE TO A PLAIN PROBE. An early release still exits
+// correctly when the freed box is not reused before it is read; it only shows
+// once same-shaped strings are churned in between, which recycles it: exit 178
+// against `-interp`'s 55. Both hazard probes below therefore churn before the
+// aliased read, and both take their expected exit from `fern -interp` rather
+// than a constant.
 //
 // #6469's suite covers the producer-side aliases (payload aliases a live local or
-// a parameter). This is the consumer side, which its "f" flag cannot speak to:
-// the flag proves the producer built a fresh payload, and says nothing about what
-// the CONSUMER's match arm then does with it.
+// a parameter). This is the consumer side: what the match arm does with a
+// payload the producer built fresh.
 
 func TestSelfHostOptArmEscapeGateX86_64(t *testing.T) {
 	boxedProbes(t)

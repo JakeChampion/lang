@@ -33,7 +33,7 @@ function main(): i32 {
 // handed out again by the allocator and come back wrong.
 const ownFuncValueFold = `struct Acc { tag: string, hits: i32 }
 
-function keep(own a: Acc): Acc { return a; }
+@noinline function keep(own a: Acc): Acc { return a; }
 function bump(own a: Acc): Acc { return Acc { ...a, hits: a.hits + 1 }; }
 
 function fold[T](own acc: T, n: i32, visit: (own T) => T): T {

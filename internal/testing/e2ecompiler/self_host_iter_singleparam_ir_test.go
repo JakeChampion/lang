@@ -12,17 +12,12 @@ import (
 // the single-type-parameter trait-bound combinators over a concrete
 // iterator (iter.range -> iter.Range). These combinators —
 // sum/product/min/max/contains/count_value/position (all
-// `[I: Iterator[i32]]`) plus count (`[T, I: Iterator[T]]`) — were routed
-// to the legacy AST emitter because the monomorphiser's clone_bg split the
-// instantiation key on `__`, and a module-mangled type argument
-// (`iter__Range`, from the bundling loader) itself contains `__`, so
-// `split_dunder("iter__Range")` split into ["iter","Range"] and
-// subst_ty bound the type parameter to the bogus "iter". The clone's
-// `it: I` then became `it: iter`, an unknown type, and the IR lowerer
-// bailed (BAIL lower). Guarding the single-type-param case (use the key
-// verbatim, never split — the same guard the generic-struct / enum
-// monomorphisers already use) lets these clones lower, so the whole
-// program reaches `module: IR`.
+// `[I: Iterator[i32]]`) plus count (`[T, I: Iterator[T]]`) — are instantiated
+// with a module-mangled type argument (`iter__Range`, from the bundling loader)
+// that itself contains `__`. For a single type parameter the monomorphiser's
+// clone_bg must use the instantiation key verbatim rather than split it on
+// `__`, or the type parameter binds to the bogus "iter" and the clone's
+// `it: I` becomes an unknown type.
 //
 // Each case asserts the modload -ir-probe verdict is `module: IR` AND
 // that the compiled binary matches the interpreter oracle. x86-64 only

@@ -10,19 +10,15 @@ import (
 
 // TestSelfHostArrayMethodTreeshakeIR pins that a stdlib-importing program using
 // an array-method call (`ss.join(sep)`, dispatched to std/array's
-// auto-discovered `__method_Array_join` helper) routes the IR path rather than
-// bailing (#3457).
+// auto-discovered `__method_Array_join` helper) survives the treeshake and
+// lowers.
 //
-// The treeshaker prunes the merged module to functions reachable from main
-// before codegen so a stdlib-importing program fits asm_ir's IR budget. It
-// over-approximates reachability BY NAME, but the method-call syntax
-// `arr.<m>(...)` names only `<m>` — never the `__method_Array_<m>` helper it
-// dispatches to (nor that helper's `<mod>__`-mangled name). So the helper looked
-// unreachable, got pruned, and `find_arr_method` then resolved nothing — the IR
-// lowering bailed `i32.join` and dropped the WHOLE module to AST. treeshake now
-// appends the helper's canonical `__method_Array_<m>` token at every `.<m>`
-// field access and matches it by suffix (ts_kept_name), so the helper survives
-// the prune and the module stays on the IR path.
+// The treeshaker prunes the merged module to functions reachable from main,
+// by NAME. The method-call syntax `arr.<m>(...)` names only `<m>` — never the
+// `__method_Array_<m>` helper it dispatches to, nor that helper's
+// `<mod>__`-mangled name — so treeshake matches array-method helpers against
+// the bare `<m>` (ts_array_method_name). A pruned helper leaves the call
+// unresolved and the module refused.
 //
 // Asserts both halves: `-decide` reports `ir` (routing), and the compiled
 // program runs to exit 0 (correctness — `["1","2","3"].join("-") == "1-2-3"`).

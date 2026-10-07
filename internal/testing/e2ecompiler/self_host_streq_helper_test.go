@@ -7,12 +7,11 @@ import (
 	"testing"
 )
 
-// TestSelfHostStreqHelperGap is a regression test for the self-host wasm
-// backend's string-helper emission gap: a program that uses string equality
-// (which lowers to a `$__fern_streq` call) but declares no string *literals*
-// must still emit the string runtime. Before the fix, `has_strings` was gated
-// solely on the string-literal table, so this program referenced an undefined
-// `$__fern_streq` and wasmtime rejected the module. The program gets its
+// TestSelfHostStreqHelperGap pins the self-host wasm backend's string-helper
+// emission: a program that uses string equality (which lowers to a
+// `$__fern_streq` call) but declares no string *literals* must still emit the
+// string runtime, or the module references an undefined `$__fern_streq` and
+// wasmtime rejects it. The program gets its
 // strings from string_from_bytes_unchecked + string-typed declarations (no literals),
 // then compares them.
 func TestSelfHostStreqHelperGap(t *testing.T) {

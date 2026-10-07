@@ -16,10 +16,9 @@ import (
 // addresses, an offset computed then sign-extended — is therefore green on
 // every Linux lane and wrong only on Apple hardware. FERN_HIGH_HEAP=1 makes
 // the self-host arm64 emitter raise the hint to 8 GiB, and qemu-aarch64
-// honours the raised hint, so the regime is reachable here. Same knob as the
-// native backend's arm64codegen.Options.HighHeapProbe.
+// honours the raised hint, so the regime is reachable here.
 //
-// The shapes are the native gate's minus the two Map[i64, _] cases, which the
+// The shapes are the e2e gate's minus the two Map[i64, _] cases, which the
 // self-host refuses to lower (#10005: a map key wider than 4 bytes has no
 // column). Each stores heap pointers into memory and reads them back, and
 // returns 0 on success on either heap.

@@ -9,16 +9,14 @@ import (
 )
 
 // The self-host treeshake pass (compiler/treeshake.fern) + stdlib
-// loading. The self-host loader can resolve `core/…` / `std/…` imports under a
-// stdlib root, but a stdlib-importing program drags in the whole transitive
-// closure, blowing asm_ir's 512-function IR budget so the program is forced
-// onto the legacy AST emitter. `-treeshake` prunes the merged module to the
-// functions reachable from main, so the program fits the IR path. These tests
-// drive the self-hosted x86-64 driver (asm_load_run) with the repo's real
-// stdlib as the root and assert: (a) a stdlib-heavy program flips ast→ir under
-// -treeshake, (b) the emitted IR runs correctly (oracle-checked against the
-// native interpreter), and (c) treeshake never changes behaviour (the AST and
-// IR builds agree).
+// loading. The self-host loader resolves `core/…` / `std/…` imports under a
+// stdlib root, and a stdlib-importing program drags in the whole transitive
+// closure; `-treeshake` prunes the merged module to the functions reachable
+// from main. These tests drive the self-hosted x86-64 driver (asm_load_run)
+// with the repo's real stdlib as the root and assert: (a) a stdlib-heavy
+// program routes IR with and without -treeshake, (b) the emitted IR runs
+// correctly (oracle-checked against the Go interpreter), and (c) treeshake
+// never changes behaviour (the pruned and unpruned builds both compile).
 
 // copySelfHostTree copies every compiler source, drivers/ included and in the
 // same layout, into a fresh temp dir so the driver (and the asm buildBin
@@ -54,11 +52,9 @@ func copySelfHostTree(t *testing.T) string {
 // derive-heavy program: 4 derives (incl. string fields → pulls core/sort) +
 // JSON, plus three independent stdlib modules (std/http, std/regex, std/time)
 // that are NOT in the cmp/json transitive closure. Without treeshake the merged
-// module pulls all of them (~580 funcs) and exceeds the 512 IR budget (→ ast);
-// with treeshake only the reachable slice (~90) survives, so it fits (→ ir).
-// (The http/regex/time imports are required: cmp+json alone already lower
-// to ~480 funcs — under budget — so json's Map.iter flipping to IR removed the
-// old over-budget margin; the extra modules restore a genuine >512 closure.)
+// module pulls all of them (~580 funcs, over 512); with treeshake only the
+// reachable slice (~90) survives. (cmp+json alone lower to ~480 funcs, so the
+// http/regex/time imports are what make a genuine >512 closure.)
 // Returns 7 (the count of passing checks), a stable oracle independent of hash
 // internals.
 const treeshakeHeavyProg = `import "core/cmp";
@@ -84,7 +80,7 @@ function main(): i32 {
 }`
 
 // a lighter derive(Eq) program: returns 42 iff eq is correct (no hash-value
-// dependence), independent of treeshake/AST internals.
+// dependence), independent of treeshake internals.
 const treeshakeLightProg = `import "core/cmp";
 @derive(cmp.Eq)
 struct P { x: i32, y: i32 }
@@ -118,7 +114,7 @@ func TestSelfHostTreeshakeStdlibIR(t *testing.T) {
 		if err := os.WriteFile(entry, []byte(src+"\n"), 0o644); err != nil {
 			t.Fatalf("write entry: %v", err)
 		}
-		// Oracle: the native interpreter's result.
+		// Oracle: the Go interpreter's result.
 		if _, code := runFixtureInterp(t, entry, ""); code != want {
 			t.Fatalf("%s native interp = %d, want %d", name, code, want)
 		}
@@ -181,11 +177,8 @@ func TestSelfHostTreeshakeStdlibIR(t *testing.T) {
 		if code := cmd.ProcessState.ExitCode(); code != 7 {
 			t.Errorf("heavy (pruned) run = %d, want 7", code)
 		}
-		// And the UNPRUNED one builds too, restoring the original contract that
-		// treeshake changes the path, not behaviour. Between #3457 slice 5 (which
-		// deleted the AST emitter the over-budget module used to fall back to) and
-		// the budget removal, this asserted a REFUSAL instead — the prune was
-		// briefly required for compilability. It is not any more.
+		// And the UNPRUNED one builds too: treeshake changes the size of the
+		// build, not whether it compiles or how it behaves.
 		if noPrune, _ := runDriver(entry, root, "-no-treeshake"); len(noPrune) == 0 {
 			t.Error("heavy (unpruned) emitted 0 bytes, want a build — the merged bundle is being refused again")
 		}

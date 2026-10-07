@@ -15,15 +15,13 @@ import (
 //
 // Ungated, that produces SILENT WRONG VALUES: `array.reverse` on an f64[]
 // returns 1.5 where 4.5 is expected, with the compiler exiting 0 and
-// FERN_STRICT_IR=1 reporting nothing. Every other path is correct — native
-// interp, native x86-64, and the self-host's own x86-64 backend — so only the
-// wasm leg is wrong.
+// FERN_STRICT_IR=1 reporting nothing. The interpreter and the x86-64 backend
+// are correct, so only the wasm leg is wrong.
 //
-// The erased-wide deferral gate is supposed to keep exactly this off the wasm IR
-// path. It missed the shape because it looks for a wide value passed BY VALUE
-// through a bare-typevar param; here nothing wide is passed by value at all —
-// the erasure is in the element type. Flag '7' (callee_param_is_erased_array)
-// closes it.
+// The erased-wide gate looks for a wide value passed BY VALUE through a
+// bare-typevar param; here nothing wide is passed by value at all — the erasure
+// is in the element type — so it also has to key on a wide-element array
+// reaching an erased `T[]` param.
 //
 // erasedWideArrayFixedCases are the promoted set: clause (c-arr) clones them
 // per concrete element type, so they COMPILE AND RUN CORRECTLY with a real
@@ -117,11 +115,10 @@ function main(): i32 {
     return 11;
 }`},
 	// A wide ELEMENT under the method spelling (#9838). The worklist's
-	// `__arrm_map__i64` clone keeps `U` erased, so the semantic lowering
-	// declines it as a template and produces the instance beside it; the AST
-	// lowering of the erased clone then carried the module's only erased_wide
-	// verdict, and the wasm route declined a module nothing calls that body
-	// from. A superseded template has no emitted body and no verdict.
+	// `__arrm_map__i64` clone keeps `U` erased, so the typed lowering declines
+	// it as a template and produces the instance beside it. A superseded
+	// template has no emitted body and no verdict, so it cannot decline the
+	// module on the wasm route.
 	{"map_method_i64_elem_named", `import "std/array";
 function dbl(x: i64): i64 { return x * (2 as i64); }
 function twice(own xs: i64[]): i64[] { return xs.map(dbl); }

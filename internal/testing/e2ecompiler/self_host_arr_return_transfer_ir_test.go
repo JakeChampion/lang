@@ -9,7 +9,7 @@ import (
 )
 
 // TestSelfHostArrReturnTransferIRX86_64 pins the array return-transfer retain
-// (#4357 probe finding): `function id(a: i32[]): i32[] { return a; }` returned
+// (#4357 probe finding): `@noinline function id(a: i32[]): i32[] { return a; }` returned
 // a bare PARAM array with NO retain, while the caller's binding slot is
 // unconditionally exit-swept — so `let t = id(s)` over-released s's buffer
 // (rc 1 → 0 while the owner still held it: a use-after-free surfaced by the
@@ -55,7 +55,7 @@ func TestSelfHostArrReturnTransferIRX86_64(t *testing.T) {
 	// s's buffer uncounted, t's sweep freed it, s's owner double-dec'd. With
 	// the return-transfer inc every call is balanced and s stays live across
 	// 4000 calls. Values checked, detector 0.
-	run(t, `function id(a: i32[]): i32[] { return a; }
+	run(t, `@noinline function id(a: i32[]): i32[] { return a; }
 function f(s: i32[]): i32 { let t: i32[] = id(s); return t[0] + s[1]; }
 function churn(m: i32): i32 { let s: i32[] = [1, 2, 3]; let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + f(s)) % 251; i = i + 1; } return acc; }
 function main(): i32 { let w: i32 = churn(2000); let x: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } return 0; }`,
@@ -143,7 +143,7 @@ func TestSelfHostArrReturnTransferWasmIR(t *testing.T) {
 		src      string
 		expected int
 	}{
-		{"arr-return-transfer-alias-balanced-wasm", `function id(a: i32[]): i32[] { return a; }
+		{"arr-return-transfer-alias-balanced-wasm", `@noinline function id(a: i32[]): i32[] { return a; }
 function f(s: i32[]): i32 { let t: i32[] = id(s); return t[0] + s[1]; }
 function churn(m: i32): i32 { let s: i32[] = [1, 2, 3]; let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + f(s)) % 251; i = i + 1; } return acc; }
 function main(): i32 { let w: i32 = churn(1000); let x: i32 = churn(1000); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } return 0; }`, 0},
@@ -195,7 +195,7 @@ func TestSelfHostArrReturnTransferIRArm64(t *testing.T) {
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	prog := `function id(a: i32[]): i32[] { return a; }
+	prog := `@noinline function id(a: i32[]): i32[] { return a; }
 function f(s: i32[]): i32 { let t: i32[] = id(s); return t[0] + s[1]; }
 function churn(m: i32): i32 { let s: i32[] = [1, 2, 3]; let acc: i32 = 0; let i: i32 = 0; while (i < m) { acc = (acc + f(s)) % 251; i = i + 1; } return acc; }
 function main(): i32 { let w: i32 = churn(1000); let x: i32 = churn(1000); if (__rc_underflow_count() != 0) { return 99; } if (w != x) { return 97; } return 0; }`

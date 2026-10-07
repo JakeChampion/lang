@@ -10,40 +10,22 @@ import (
 	"testing"
 )
 
-// `let t: string = base.trim()` leaked its box on every backend.
+// `let t: string = base.trim()` releases its box on every backend.
 //
-// trim is listed in `str_local_binding_is_fresh`'s DELIBERATELY EXCLUDED set as
-// a "zero-copy VIEW into the receiver buffer", alongside the genuine
-// receiver-identity cases. That reasoning conflates the BOX with the DATA.
 // `asmcore.rt_src_str_trim` returns `s[start:end]` — always a slice, never the
 // receiver — so the box is new on every call and nobody else names it. Only the
-// bytes belong to the receiver.
+// bytes belong to the receiver. A leak is 24 bytes per round on the register
+// backends: exactly one view box.
 //
-// The measurement settles it without reading any of that: 24 bytes per round on
-// the register backends is exactly one view box, and a result that WERE the
-// receiver would add no box at all.
+// The backends release it differently. On the register backends the box
+// carries the immortal rc the slice op stamps, so `__fern_str_view_free`
+// returns the 24 bytes and leaves the data alone; on wasm the slice COPIES, so
+// the same helper takes `__fern_str_free`'s path and frees box and data
+// together.
 //
-// Measured, 400 rounds of the harness below, a pair of compilers from the same
-// commit:
-//
-//	shape                      x86-64          arm64            wasm
-//	base.trim()             9600 -> 0       9600 -> 0      48000 -> 0
-//	base.trim().trim()     19200 -> 0      19200 -> 0      96000 -> 0
-//
-// The two backends need different releases and get them from one flag. On the
-// register backends the box carries the immortal rc the slice op stamps, so
-// `__fern_str_view_free` returns the 24 bytes and leaves the data alone; on wasm
-// the slice COPIES, so the same helper takes `__fern_str_free`'s path and frees
-// box and data together. `LocalInfo.str_view_local`, set at the binding site
-// where the receiver's type is known, is what makes the release site choose it —
-// the credit itself is an ordinary `STR:` name, because "is this box mine" is the
-// same question every other entry in that set answers.
-//
-// The receiver-type test is in `trim_str_init`, reading declared types, for the
-// same reason `join_strarr_init` and `tostr_scalar_init` do: a user-declared
-// `.trim()` on another type would otherwise be admitted by name alone, and its
-// result may alias a field the receiver still owns. That shape is the last case
-// below.
+// Only a `.trim()` on a string receiver qualifies: a user-declared `.trim()` on
+// another type may return an alias of a field the receiver still owns. That
+// shape is the last case below.
 
 const strTrimPrelude = strProbeHelpers + `function w(pre: string): string { return pre + "   -a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789   "; }
 `
@@ -119,8 +101,8 @@ function round(pre: string): i32 {
 }
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; let want: i32 = round(pre); while (i < 2000) { if (round(pre) != want) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
 	// A USER `.trim()` whose result ALIASES a field the receiver still owns.
-	// Nothing may credit it — this is what proves trim_str_init's receiver-type
-	// test is required here, since the heap cases above move either way.
+	// The name matches the builtin but the receiver type does not, so it must
+	// not get the builtin's treatment: keep's fields stay readable.
 	{"str-trim-user-method-not-credited", strTrimPrelude + `struct Holder { name: string, tag: string }
 function (h: Holder) trim(): string { return h.name; }
 function trimmed(h: Holder): i32 { let t: string = h.trim(); return t.len() % 251; }

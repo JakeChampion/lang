@@ -32,9 +32,8 @@ var selfHostFieldReclaimEnumArrayCases = []struct {
 	// missed walk.
 	{"enum-array-three-rounds", "enum Payload { None, Some(i32[]) }\nstruct Asm { ps: Payload[], n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, ps: [Payload.Some([v])] };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { ps: [Payload.Some([9])], n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    a = step(a, 3);\n    return a.ps.len() + __rc_underflow_count();\n}"},
 
-	// The SAME field one level down, so `__struct_drop_Inner` is what releases
-	// it. It was already clean; keeping it here is what says the two helpers
-	// agree now rather than that the reclaim side merely stopped leaking.
+	// The SAME field one level down, released through Inner's drop when the old Asm
+	// dies rather than as a field of Asm itself.
 	{"enum-array-via-struct-drop", "enum Payload { None, Some(i32[]) }\nstruct Inner { ps: Payload[] }\nstruct Asm { i: Inner, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, i: Inner { ps: [Payload.Some([v])] } };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { i: Inner { ps: [Payload.Some([9])] }, n: 0 };\n    a = step(a, 1);\n    return a.i.ps.len() + __rc_underflow_count();\n}"},
 
 	// A SECOND owner holds the buffer across the rebind, so the walk's rc==1
@@ -45,9 +44,9 @@ var selfHostFieldReclaimEnumArrayCases = []struct {
 	// would confound this row.
 	{"shared-via-second-struct-declines-walk", "enum Payload { None, Some(i32[]) }\nstruct Asm { ps: Payload[], n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, ps: [Payload.Some([v])] };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { ps: [Payload.Some([9, 9, 9])], n: 0 };\n    let b: Asm = Asm { ps: a.ps, n: 1 };\n    a = step(a, 1);\n    let r: i32 = 0;\n    match (b.ps[0]) { Payload.None => { r = 0; }, Payload.Some(g) => { r = g.len(); } }\n    return r + __rc_underflow_count();\n}"},
 
-	// Control: an enum array whose payloads are all SCALAR. enum_arr_elems_walk_ok
-	// requires a rc payload, so this must NOT gain a walk — nothing heap sits
-	// under those element boxes and a dec there would be an over-release.
+	// Control: an enum array whose payloads are all SCALAR. Nothing on the heap
+	// sits under those element boxes, so a payload dec there would be an
+	// over-release.
 	{"scalar-payload-enum-array-control", "enum Payload { None, Some(i32) }\nstruct Asm { ps: Payload[], n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, ps: [Payload.Some(v)] };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { ps: [Payload.Some(0)], n: 0 };\n    a = step(a, 1);\n    return a.ps.len() + __rc_underflow_count();\n}"},
 
 	// Control: the STRUCT-array sibling in the same helper, which already had its

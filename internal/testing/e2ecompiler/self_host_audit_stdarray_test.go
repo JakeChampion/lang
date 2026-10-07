@@ -12,8 +12,8 @@ import (
 // (via compileSourceModload) so array's cmp-delegating methods — `sorted_asc` /
 // `sorted_desc` route to core/cmp's generic `sort` / `sort_desc` (#5397) — pull
 // core/cmp into the bundle and its generic bodies monomorphise correctly.
-// Self-host arm of the §D std/array audit (docs/FEATURE-AUDIT.md); the native
-// arm is the `audit_std_numeric` fixture (all four native backends).
+// Self-host arm of the §D std/array audit (docs/FEATURE-AUDIT.md); the
+// conformance arm is the `audit_std_numeric` case.
 var auditStdArrayCases = []struct {
 	name string
 	main string

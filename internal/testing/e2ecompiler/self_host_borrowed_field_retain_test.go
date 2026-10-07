@@ -7,25 +7,12 @@ import (
 	"testing"
 )
 
-// TestSelfHostBorrowedFieldRetainIRX86_64 pins the pairing that broke the
-// three-way circularity behind alloc_flat_fresh_array_arg's residual.
-//
-// `mk(deps: string[]): H { return H { deps: deps }; }` stores a BORROWED
-// parameter into the struct it returns. Three refusals used to hold each other
-// up: the strict-fresh return gate refused a bare-ident array field, so the
-// CALLER's binding earned no drop at all; strarrfld_scan refused the same store,
-// so the type was not STRFLDOK-admitted; and the struct-literal construction
-// took no retain, because that is gated on struct_routes_field_reclaim — which the
-// second decides. Opening the store gate turns the retain on, which is what
-// makes crediting the caller safe; either alone is inert, and the caller credit
-// alone would free the caller's array.
-//
-// The witness is the ASM SHAPE, not a byte count: the caller emits
-// __struct_drop_H / __field_reclaim_H where it previously emitted neither. The
-// row measures 398 -> 268 B/round on the method/struct probes and 798 -> 537 on
-// the conformance case, so it is an improvement rather than a flattening, and a
-// high-water threshold would be a budget for the rest of the port instead of a
-// gate on this. The value rows carry the soundness half.
+// TestSelfHostBorrowedFieldRetainIRX86_64 pins a struct built from a BORROWED
+// parameter: `mk(deps: string[]): H { return H { deps: deps }; }`. The struct
+// literal retains the stored array, so the caller drops the returned struct
+// without freeing an array it still reads. Each row churns 3000 rounds and
+// exits 0; 99 is an over-release, and any other non-zero is a value read wrong
+// after the drop, which is what a missing retain looks like.
 func TestSelfHostBorrowedFieldRetainIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

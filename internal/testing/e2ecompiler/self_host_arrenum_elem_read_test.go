@@ -8,27 +8,15 @@ import (
 	"testing"
 )
 
-// #8610: an enum-array LOCAL was released only when nothing read an element, so
-// `match (xs[i])` cost the whole structure — every element box, and any rc
-// payload under it, per construction.
+// #8610: an enum-array LOCAL whose elements are read by `match (xs[i])` still
+// releases the whole structure — every element box, and any rc payload under
+// it. The release runs AFTER the whole match, so it is sound when every arm
+// confines its bindings to the arm: a binding whose last use is inside its arm
+// is already dead when the element is freed.
 //
-// The walk was never the problem. `slot_is_reclaimable_arrenum` simply refused
-// the credit: `arrenum_esc_expr` admitted `xs.len()` and nothing else, so an
-// element read fell back to the shallow buffer dec and no element release was
-// emitted at all. The same local with only `.len()` read has always been clean,
-// which is the measurement that located it.
-//
-// The widening is the follow-up `arrenum_esc_expr`'s own comment named. A
-// `match (xs[i])` scrutinee is now vetted at the STATEMENT level, where the arms
-// are visible: the credit survives when every arm confines its bindings to the
-// arm. That is sound because the reclaim runs AFTER the whole match, so a binding
-// whose last use is inside its arm is already dead when the element is freed.
-//
-// Two readings make a binding confined. A POINTER payload must be borrow-only
-// (binding_escapes_arm, the gate the enum path already applies to its own arm
-// bindings). A SCALAR payload is a value copy that aliases nothing, so it is
-// confined however the arm uses it — the same reading arrtup gives a scalar tuple
-// element, and without it `Some(n) => { total = n; }` would be read as an escape.
+// Two readings make a binding confined. A POINTER payload must be borrow-only.
+// A SCALAR payload is a value copy that aliases nothing, so it is confined
+// however the arm uses it: `Some(n) => { total = n; }` is not an escape.
 //
 // The hazard being guarded is a DOUBLE FREE, not a leak: freeing an element while
 // a binding still names its payload corrupts the self-compile. So the exit codes

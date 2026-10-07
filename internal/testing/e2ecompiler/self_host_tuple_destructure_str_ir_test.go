@@ -9,9 +9,7 @@ import "testing"
 // scalar `(i32, i32)` ("the confirmed-lowering shape"); these cases extend the
 // coverage to mixed scalar+pointer and all-pointer tuples, plus a 3-element
 // tuple — exercising the `tuple_get` element reads at pointer width for the
-// string slots (and the i32 slots in the same tuple). All already lower, so no
-// compiler change — an observability pin against a regression to the AST
-// fallback.
+// string slots (and the i32 slots in the same tuple).
 //
 // Each case is oracle-checked against the interpreter; results stay <= 120
 // (the wasm exit-code clamp, #2908).

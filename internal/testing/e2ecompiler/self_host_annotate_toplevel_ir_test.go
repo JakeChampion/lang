@@ -7,13 +7,12 @@ import (
 	"testing"
 )
 
-// annotateTopLevelCases close the last producer gap in the typed-IR annotate
-// pass (#5520 / #5531): annotate_module stamped every function body but left
-// mod.top_stmts alone, so a SCRIPT-shaped module — top-level statements, no
-// `main`, which asmcore.synth_script_main desugars into `function main(): i32`
-// inside the emit (#5657) — lowered with every top-level call unannotated.
-// annotate_module now walks top_stmts from the bare module scope, threading
-// statement-to-statement exactly as check_module's own top_stmts loop does.
+// annotateTopLevelCases pin that the typed-IR annotate pass (#5520 / #5531)
+// types the top-level statements of a SCRIPT-shaped module — top-level
+// statements, no `main`, which asmcore.synth_script_main desugars into
+// `function main(): i32` (#5657) — and not only its function bodies:
+// annotate_module walks top_stmts from the bare module scope, as check_module
+// does.
 //
 // Each case makes a top-level call's RESULT TYPE observable in the exit code:
 // f64 arithmetic, an unsigned shift, a string length, a struct field, and a
@@ -23,11 +22,10 @@ import (
 // function-shaped modules, so a script has no native oracle — script support is
 // a self-host driver feature.
 //
-// The route assertion is essential twice over. It pins that these programs
-// take the IR path at all, and it pins the `-decide` fix that shipped with them:
-// the gate judged the RAW module, whose `main` the emit had not synthesised yet,
-// so `-decide` printed "refused" for a script that emit_module_ir_gated then lowered
-// through IR. Both now normalise through asm_ir.script_normalized.
+// The route assertion pins that these programs take the IR path, and that
+// `-decide` judges the same module the emit lowers: both normalise the script
+// through ircore.script_normalized first, so `-decide` must answer "ir" rather
+// than refusing a module whose `main` is not synthesised yet.
 var annotateTopLevelCases = []struct {
 	name string
 	src  string

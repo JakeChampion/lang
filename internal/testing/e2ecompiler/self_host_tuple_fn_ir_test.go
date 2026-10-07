@@ -6,25 +6,19 @@ import (
 )
 
 // tupleFnIRCases pin tuples with FUNCTION-typed elements on the self-host IR
-// path. Before this slice the shapes below didn't even reach the IR tuple
-// machinery: parser.fern's parse_type_name coarsened ANY parenthesized type
-// containing `=>` to "fn", so `((i32) => i32, i32)` wasn't a tuple type to the
-// self-host compiler at all — factories returning one bailed to the legacy AST
-// path, which miscompiles the element call (exit 255).
-//
-// The slice has three layers:
-//   - parser: a depth-1 comma inside the parens means TUPLE, and each fn-typed
-//     element keeps its signature ("((i32) => i32, i32)") instead of the whole
-//     type being swallowed — the result type is what lets the checker type a
-//     call through the element (#7961);
+// path. Three layers carry them:
+//   - parser: a depth-1 comma inside the parens means TUPLE, so
+//     `((i32) => i32, i32)` is a tuple type whose fn-typed element keeps its
+//     signature — the result type is what lets the checker type a call through
+//     the element (#7961);
 //   - lift: every fn-VALUED tuple element (capturing lambda, no-capture
 //     lambda, unshadowed bare fn name) wraps into a `__mkclo$…` env box, so
 //     the element representation is uniformly a closure box;
-//   - the lowering: the "clo" element tag (irtables.tuple_type_elem_tag,
-//     which asks parser.ref_is_fn_value) drives env-first `t.N(args)` dispatch, closure-local binding for
-//     `let f = t.0`, and the destructure bind.
+//   - the lowering: the "clo" element tag drives env-first `t.N(args)`
+//     dispatch, closure-local binding for `let f = t.0`, and the destructure
+//     bind.
 //
-// Exit codes are cross-checked against the Go reference (native -interp).
+// Exit codes are cross-checked against the Go reference (`fern -interp`).
 var tupleFnIRCases = []struct {
 	name string
 	src  string
@@ -51,17 +45,15 @@ var tupleFnIRCases = []struct {
 	// Regression: a plain scalar/string tuple keeps its precise spelling and
 	// behaviour under the new fn-segment coarsening.
 	{"scalar-tuple-regress", "function mk(): (string, i32) { return (\"hello\", 37); } function main(): i32 { let t = mk(); return t.0.len() + t.1; }", 42},
-	// A tuple-with-fn PARAMETER (`callit(t: ((i32) => i32, i32))`): the param
-	// slot records its element tags (tuple_elem_tags, fn segment → "clo") so
-	// `t.0(args)` inside the callee dispatches env-first; before the fix a
-	// tuple param carried NO element tags and the callee bailed to the legacy
-	// AST path (exit 255).
+	// A tuple-with-fn PARAMETER (`callit(t: ((i32) => i32, i32))`): the param's
+	// fn element is tagged "clo", so `t.0(args)` inside the callee dispatches
+	// env-first.
 	{"tuple-fn-param", "function callit(t: ((i32) => i32, i32)): i32 { return t.0(37); } function main(): i32 { let n = 5; let t = ((x: i32): i32 => { return x + n; }, 1); return callit(t); }", 42},
 	// A closure in an OPTION payload, UNANNOTATED (`let o = Some(<lambda>)`):
-	// the lift wraps the payload into a `__mkclo$` box, expr_opt_elem_tag /
-	// some_opt_type record "Option[clo]", and the match bind marks f a closure
-	// local — checked BEFORE the struct/enum branch (is_enum_like_name must
-	// not claim "clo"). Before the fix `f(37)` bare-called the box → SIGSEGV.
+	// the lift wraps the payload into a `__mkclo$` box, the binding is typed
+	// "Option[clo]", and the match bind marks f a closure local — checked
+	// BEFORE the struct/enum branch (is_enum_like_name must not claim "clo"),
+	// or `f(37)` bare-calls the box.
 	{"option-clo-payload-local", "function main(): i32 { let n = 5; let o = Some((x: i32): i32 => { return x + n; }); match (o) { Some(f) => { return f(37); }, None => { return 0; } } }", 42},
 	// The ANNOTATED sibling: the coarse "fn" payload tag reads as enum-like,
 	// so the closure-local mark must run before the struct/enum bind branch.
@@ -82,51 +74,40 @@ var tupleFnIRCases = []struct {
 	// (`Op.Apply(<lambda>)` matched and called) keeps working.
 	{"enum-fn-payload-regress", "enum Op { Apply((i32) => i32), Nop } function main(): i32 { let n = 5; let o = Op.Apply((x: i32): i32 => { return x + n; }); match (o) { Apply(f) => { return f(37); }, Nop => { return 0; } } }", 42},
 	// A NESTED tuple's closure element via an intermediate binding
-	// (`let inner = t.0; inner.0(37)`): the binding transfers the inner
-	// element tags (mark_tuple_elems from the "(…)"-shaped element tag), so
-	// the inner "clo" element dispatches env-first. (The DIRECT chain
-	// `t.0.0(37)` remains a deferred edge — it still bails.)
+	// (`let inner = t.0; inner.0(37)`): the binding carries the inner element
+	// types, so the inner closure element dispatches env-first.
 	{"nested-tuple-clo-via-binding", "function main(): i32 { let n = 5; let t = (((x: i32): i32 => { return x + n; }, 1), 2); let inner = t.0; return inner.0(37); }", 42},
 	// Scalar sibling of the nested transfer (pins the tag hand-off shape).
 	{"nested-tuple-scalar-via-binding", "function main(): i32 { let t = ((7, 1), 2); let inner = t.0; return inner.0 + 35; }", 42},
-	// A scalar-returning CALL as a tuple element (`(add(1,2), 4)`): admitted
-	// by the el_call_ok gate (callee in no nonscalar/wide registry); before,
-	// ANY call element made the construction bail (#5051).
+	// A scalar-returning CALL as a tuple element (`(add(1,2), 4)`) must
+	// lower rather than bail the construction (#5051).
 	{"scalar-call-elem", "function add(a: i32, b: i32): i32 { return a + b; } function main(): i32 { let u = (add(1, 2), 4); return u.0 + u.1 + 35; }", 42},
 	// A closure tuple-element CALL as an element of ANOTHER tuple literal
-	// (`(t.0(3), t.1)`): the el_call_ok FieldAccess-digits arm.
+	// (`(t.0(3), t.1)`).
 	{"clo-elem-call-in-tuple", "function main(): i32 { let k = 4; let t = ((x: i32): i32 => { return x + k; }, k); let u = (t.0(3), t.1); return u.0 + u.1 + 31; }", 42},
 	// The #5051 loop-churn differential: a while body rebinding a tuple whose
 	// lambda captures a var with an IDENT/ARITHMETIC init (`let k = i % 7`) —
-	// cap_type now resolves nested bindings and i32 ident/arith chains, so
-	// the lift no longer declines and the module stays on the IR path. The
-	// legacy fallback MISCOMPILED this (229; native reference 226).
+	// the capture's type resolves through nested bindings and i32 ident/arith
+	// chains, so the lift wraps it.
 	{"loop-tuple-clo-churn", "function main(): i32 { let acc = 0; let i = 0; while (i < 1000) { let k = i % 7; let t = ((x: i32): i32 => { return x + k; }, k); let u = (t.0(3), t.1); acc = (acc + u.0 + u.1) % 1000; i = i + 1; } return acc % 256; }", 226},
 	// The DIRECT nested chain `t.0.0(args)` (no intermediate binding): the
-	// compact nested element tag "(clo,i32)" joins with a BARE comma, and
-	// parse_type_ref's split_top_commas required ", " — so tuple_type_elem_tag
-	// read the tag as ONE element ("clo,i32" != "clo"), the dispatch missed,
-	// and the call fell to bogus method dispatch (`i32.0`) + the legacy AST
-	// path, which MISCOMPILED it (exit 255). split_top_commas now splits bare
-	// top-level commas too.
+	// compact nested element tag "(clo,i32)" joins with a BARE comma, which
+	// split_top_commas must split like ", " for the dispatch to find "clo".
 	{"direct-chain-call", "function main(): i32 { let n = 5; let t = (((x: i32): i32 => { return x + n; }, 1), 2); return t.0.0(37); }", 42},
-	// Loop-churn sibling of the direct chain (the differential-probe repro:
-	// legacy exited 255, native 243).
+	// Loop-churn sibling of the direct chain (a differential-probe repro).
 	{"direct-chain-churn", "function main(): i32 { let acc = 0; let i = 0; while (i < 500) { let k = i % 5; let t = (((x: i32): i32 => { return x + k; }, k), i % 3); acc = (acc + t.0.0(2) + t.1) % 1000; i = i + 1; } return acc % 256; }", 243},
 	// A closure element of an UNANNOTATED array-of-tuples, called through an
-	// element binding (`let t = a[0]; t.0(3)`): arrarr_elem now records the
-	// element tuple tag from the literal's first element, so the Index arm of
-	// expr_tuple_elem_tag resolves. Before, the module bailed and the legacy
-	// AST path emitted a call to a NONEXISTENT `__fn_i32__0` (link failure).
+	// element binding (`let t = a[0]; t.0(3)`): the element tuple type comes
+	// from the literal's first element, so the call dispatches through the
+	// closure rather than as a method `__fn_i32__0` that does not exist.
 	{"arrtuple-elem-binding-call", "function main(): i32 { let k = 4; let a = [((x: i32): i32 => { return x + k; }, k)]; let t = a[0]; return t.0(3) + t.1 + 31; }", 42},
-	// The inline form `a[j].0(args)` churned in a loop (the differential-probe
-	// repro that link-failed on `__fn_i32__0` via the legacy path).
+	// The inline form `a[j].0(args)` churned in a loop (a differential-probe
+	// repro).
 	{"arrtuple-elem-inline-churn", "function main(): i32 { let acc = 0; let i = 0; while (i < 300) { let k = i % 6; let a = [((x: i32): i32 => { return x + k; }, k), ((x: i32): i32 => { return x * 2 + k; }, k + 1)]; let j = 0; while (j < a.len()) { acc = (acc + a[j].0(2) + a[j].1) % 1000; j = j + 1; } i = i + 1; } return acc % 256; }", 100},
 	// A STRING-capturing lambda in a tuple (`let s = "ab" + "c"` captured for
-	// `s.len()`): cap_type_expr now infers string for string+string concat, so
-	// the lift wraps it (a string capture occupies the env box's pointer slot).
-	// Before, the lift declined, the module bailed, and the legacy fallback
-	// MISCOMPILED the shape (exit 100; native reference 44).
+	// `s.len()`): the capture is typed string from the string+string concat,
+	// so the lift wraps it (a string capture occupies the env box's pointer
+	// slot).
 	{"string-capture-tuple-churn", "function main(): i32 { let acc = 0; let i = 0; while (i < 200) { let s = \"ab\" + \"c\"; let t = ((x: i32): i32 => { return x + s.len(); }, i % 4); acc = (acc + t.0(2) + t.1) % 1000; i = i + 1; } return acc % 256; }", 44},
 }
 

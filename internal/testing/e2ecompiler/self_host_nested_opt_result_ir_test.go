@@ -2,17 +2,11 @@ package e2ecompiler
 
 import "testing"
 
-// nestedOptResultIRCases close the last seam in Option/Result nesting: a
-// fully-matched `Option[Result[T, E]]` (the outer Some bound, then the inner Result
-// matched and its payload read) now lowers on the IR path. The bug was in
-// `some_opt_type`: for `let o: Option[Result[..]] = Some(Ok(x))` it inferred o's
-// type from the construction, and `elem_type_tag(Ok(x))` defaults an Ok/Err payload
-// to "i32" — so o was mis-recorded as `Option[i32]` and that wrong inference
-// preempted the authoritative annotation. The inner `match (r)` then found no
-// Result type on the bound slot and bailed the module to AST. Fix: `some_opt_type`
-// returns "" when the Some payload is itself an Ok/Err construction, so the
-// binding's annotation (`Option[Result[T, E]]`) wins. (`Option[Option[T]]` was
-// already fine — a Some payload types cleanly.)
+// nestedOptResultIRCases pin a fully-matched `Option[Result[T, E]]` (the outer
+// Some bound, then the inner Result matched and its payload read) on the IR
+// path. For `let o: Option[Result[..]] = Some(Ok(x))` the binding's annotation
+// is o's type: an inference from the construction would type the Ok payload as
+// "i32", leaving the inner `match (r)` no Result type to match on.
 //
 // Each case is oracle-checked against the interpreter and returns a value
 // <= 126 (cf. the wasmtime exit-code gap #2908).
@@ -26,7 +20,7 @@ var nestedOptResultIRCases = []struct {
 	{"some-err", `function main(): i32 { let o: Option[Result[i32, string]] = Some(Err("ab")); match (o) { Some(r) => { match (r) { Ok(n) => { return n; }, Err(e) => { return e.len(); } } }, None => { return 7; } } }`},
 	// Option[Option[T]] regression (Some payload types cleanly).
 	{"opt-opt-regress", `function main(): i32 { let o: Option[Option[i32]] = Some(Some(5)); match (o) { Some(r) => { match (r) { Some(n) => { return n; }, None => { return 0; } } }, None => { return 0; } } }`},
-	// Unannotated Some(scalar) regression (some_opt_type still infers it).
+	// Unannotated Some(scalar) regression: the Option type is still inferred.
 	{"unannot-some-regress", `function main(): i32 { let o = Some(7); match (o) { Some(n) => { return n; }, None => { return 0; } } }`},
 }
 

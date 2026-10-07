@@ -4,9 +4,9 @@ import (
 	"testing"
 )
 
-// Heap-bump FIXPOINTS for the self-host's map reclaim — #4357's self-host twin
-// (the native side landed in #5096): a cow-threaded map rebuilt in a loop, and
-// `m.get_or(k, d)` on its hit and miss paths, keep the heap flat.
+// Heap-bump FIXPOINTS for the self-host's map reclaim (#4357): a cow-threaded
+// map rebuilt in a loop, and `m.get_or(k, d)` on its hit and miss paths, keep
+// the heap flat.
 //
 // Fixpoint contract: growth at N=50 == growth at N=5000, non-zero, under a
 // hard leak guard. The fixed-exit cases pin value-correctness churn and the
@@ -19,11 +19,9 @@ var mapFixpointIRCases = []struct {
 	fixed bool
 	want  int
 }{
-	// A cow-threaded map DECLARED INSIDE a loop body: the loop-reinit drop
-	// (emit_map_buffers_free before the shared store) frees the prior
-	// iteration's box, so the loop's high-water is one box wide. Without the
-	// reinit drop it leaks one box per iteration: precise_drop_names is
-	// top-level-only, so no early drop fires for a loop-declared map.
+	// A cow-threaded map DECLARED INSIDE a loop body: each iteration's box
+	// is released before the next is stored, so the loop's high-water is
+	// one box wide rather than growing a box per iteration.
 	{name: "cow-loop-getor", src: func(n string) string {
 		return `import "core/map";
 function main(): i32 {
@@ -92,11 +90,9 @@ function main(): i32 {
     return g / 8;
 }`
 	}},
-	// Bound-from-call: `let m: Map[..] = mk(i)` where mk is a registered
-	// builder ("MAPF:" — map_fresh_ret_fns_of) earns the same reclaim credit
-	// as a local map_new, so the loop-reinit drop and end-of-scope free fire
-	// on the binding. A collector that credits only literal map_new inits
-	// leaks every mk() box.
+	// Bound-from-call: `let m: Map[..] = mk(i)`, where mk returns a fresh
+	// map, is released like a local map_new — at the loop reinit and at
+	// scope end — rather than leaking every mk() box.
 	{name: "mkcall-loop-getor", src: func(n string) string {
 		return `import "core/map";
 function mk(k: i32): Map[i32, i32] {
@@ -189,11 +185,10 @@ function main(): i32 {
     return 0;
 }`
 	}},
-	// Param-shaped "builders" must stay OFF the "MAPF:" registry: feed
-	// returns its param (rejected — the returned name is a param, not a
-	// fresh local decl), grow's binding init is a method call on a param
-	// (rejected — not is_fresh_map_init). If either were credited, the
-	// caller's reclaim would free base's live buffers → value corruption.
+	// Param-shaped "builders" must not count as returning a fresh map: feed
+	// returns its param, and grow returns a map built by a method call on its
+	// param. If either result were reclaimed as the caller's own fresh map, it
+	// would free base's live buffers → value corruption.
 	{name: "mkcall-param-negative", fixed: true, want: 0, src: func(string) string {
 		return `import "core/map";
 function feed(m: Map[i32, i32]): Map[i32, i32] {
@@ -234,11 +229,10 @@ function main(): i32 {
     return 0;
 }`
 	}},
-	// A NESTED `return p;` hides from a top-level-only return scan: pick's
-	// only top-level return is the bare fresh local, but the k<0 arm hands
-	// out the param. map_builder_body_ok rejects any statement containing a
-	// nested return (body_has_return), so pick stays uncredited — otherwise
-	// the caller's loop-reinit drop would free base every iteration.
+	// A NESTED `return p;`: pick's only top-level return is the bare fresh local,
+	// but the k<0 arm hands out the param, so pick's result must not count as
+	// fresh — otherwise the caller's loop-reinit drop would free base every
+	// iteration.
 	{name: "mkcall-nested-return-negative", fixed: true, want: 0, src: func(string) string {
 		return `import "core/map";
 function pick(p: Map[i32, i32], k: i32): Map[i32, i32] {

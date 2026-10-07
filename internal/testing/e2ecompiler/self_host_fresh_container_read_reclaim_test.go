@@ -50,7 +50,7 @@ function main(): i32 {
 }`, 0},
 
 	// A SCALAR field read off a fresh owned struct with no reclaimable field:
-	// the box alone is dec'd, no __struct_drop_<T> involved.
+	// only the box is released.
 	{"fresh-struct-field-scalar", `struct Pair { j: i32, k: i32 }
 function pair(n: i32): Pair { return Pair { j: n, k: n + 1 }; }
 function rounds(n: i32): i32 {
@@ -72,10 +72,9 @@ function main(): i32 {
     return 0;
 }`, 0},
 
-	// The same read on a struct that DOES carry an rc-array field, so the box dec
-	// is preceded by __struct_drop_<T>. This is the half that would double-free if
-	// the admission were looser than the strict-fresh registry: the field buffer is
-	// reclaimed as well as the box, and the churn afterwards would surface a
+	// The same read on a struct that DOES carry an rc-array field, so the field
+	// buffer is released along with the box. Releasing a struct that was not
+	// sole-owned here would double-free; the churn afterwards would surface a
 	// surviving reference as a corrupt read.
 	{"fresh-struct-field-deep", `struct Bag { xs: i32[], k: i32 }
 function bag(n: i32): Bag { return Bag { xs: [n, n + 1, n + 2, n + 3], k: n }; }
@@ -99,11 +98,10 @@ function main(): i32 {
 }`, 0},
 
 	// The refusal that carries the safety argument. `borrowed` hands back a struct
-	// whose array field is the CALLER's live buffer, so it is not in the
-	// strict-fresh registry and the read reclaims nothing. If the admission were
-	// widened to "any struct-returning call", __struct_drop_Bag would free `live`
-	// out from under main — the churn below re-fills the freed buffer, so a
-	// surviving double-free reads 9s and reports 90 rather than passing by luck.
+	// whose array field is the CALLER's live buffer, so the read must release the
+	// box without freeing that field — doing so would free `live` out from under
+	// main. The churn below re-fills a freed buffer, so a double free reads 9s
+	// and reports 90 rather than passing by luck.
 	{"borrowed-field-refused", `struct Bag { xs: i32[], k: i32 }
 function borrowed(v: i32[], n: i32): Bag { return Bag { xs: v, k: n }; }
 function main(): i32 {
@@ -120,11 +118,10 @@ function main(): i32 {
 }`, 0},
 
 	// The accumulator idiom — the way a producer is actually written. `nums`
-	// builds its result in a LOCAL and returns that, which the literal-return rule
-	// declines; `body_returns_local_built_arr` admits it by proving the buffer is
-	// built entirely in that frame (literal init, self-append only, no other
-	// escape), so it reaches the caller as its sole rc == 1 reference. Leaked
-	// 2824 B / 50 rounds, doubling, before that admission.
+	// builds its result in a LOCAL and returns that. The buffer is built
+	// entirely in that frame (literal init, self-append only, no other escape),
+	// so it reaches the caller as its sole rc == 1 reference and the read
+	// reclaims it. A leak doubles with the round count and fails exit 92.
 	{"local-built-producer", `function nums(n: i32): i32[] {
     let out: i32[] = [];
     let i: i32 = 0;
@@ -153,10 +150,9 @@ function main(): i32 {
 	// The refusal that keeps the local-built admission narrow. `seeded` rebinds its
 	// local FROM A PARAMETER before appending, so the buffer it hands back is the
 	// caller's — reclaiming it at the read would free `live` out from under main.
-	// `body_unsafe_for_allow_ret` cannot catch this on its own (its assign arm reads
-	// only the assigned value, and `out = src` never mentions `out`), which is why
-	// `arr_reassigned_other_than_selfappend` exists. The churn re-fills the freed
-	// buffer with 9s, so a widened admission reports 90 rather than passing by luck.
+	// Any reassignment of the local other than a self-append disqualifies it. The
+	// churn re-fills the freed buffer with 9s, so a widened admission reports 90
+	// rather than passing by luck.
 	{"param-seeded-producer-refused", `function seeded(src: i32[], n: i32): i32[] {
     let out: i32[] = [];
     out = src;
@@ -321,12 +317,10 @@ function main(): i32 {
 }`, 0},
 
 	// The BINDING destination for that same read. `.len()` above borrows the
-	// moved-out string and the receiver-position reclaim frees it; a binding
-	// OWNS it instead, and the credit that says so was decided by
-	// reclaimable_names_of, which saw no slot types and so resolved the
-	// receiver's type from the local's annotation. Until it did, the string
-	// survived the box it was moved out of with nothing left to free it: 72 B a
-	// round, where the free-function spelling of the same binding is flat.
+	// moved-out string; a binding OWNS it instead and must release it at its
+	// own scope exit, or the string outlives the box it was moved out of with
+	// nothing left to free it (72 B a round, where the free-function spelling
+	// of the same binding is flat).
 	{"method-field-string-bound", `import "std/i32";
 struct Box { tag: string, n: i32 }
 function (b: Box) bump(): Box { return Box { tag: b.tag + "!", n: b.n + 1 }; }
@@ -452,14 +446,10 @@ function main(): i32 {
 	// an over-release: `me()` hands the RECEIVER back, so the "temp" the read
 	// would free is `keep`'s own box and the moved-out tag is `keep`'s own string.
 	//
-	// The REGISTRY no longer refuses this shape, and since #9203 neither does the
-	// release. `me()` is the degenerate all-receiver member of the counted-return
-	// class, so its result is the receiver's own box carrying one count the callee
-	// added on the way out; the read-through release decs exactly that count
-	// (emit_counted_result_release) rather than comparing the result against the
-	// receiver's slot. `keep`'s box and its moved-out tag are untouched either way,
-	// which is the safety this case pins — the mechanism moved from a pointer
-	// guard to the count itself.
+	// `me()` returns the receiver's own box carrying one count the callee added
+	// on the way out, and the read-through release decs exactly that count
+	// (#9203). `keep`'s box and its moved-out tag stay untouched, which is the
+	// safety this case pins.
 	{"method-identity-return-not-released", `import "std/i32";
 struct Box { tag: string, n: i32 }
 function wide(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }

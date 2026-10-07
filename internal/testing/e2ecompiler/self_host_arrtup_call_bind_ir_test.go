@@ -8,21 +8,16 @@ import (
 	"testing"
 )
 
-// An array-of-tuples local bound from a CALL (`let ps = mk()`) recorded no
-// `arrarr_elem`, because that slot tag was only derived from an ANNOTATION or an
-// array LITERAL. Every consumer that reads a tuple element tag off the slot then
-// fell through to an untyped 4-byte read.
+// An array-of-tuples local bound from a CALL (`let ps = mk()`) must know its
+// tuple element types as an annotated or literal-initialised one does. Without
+// them an element read is an untyped 4-byte read: on wasm32 an f64 element
+// comes back wrong while a string element — a 4-byte pointer — survives. The
+// register backends give every slot 8 bytes and lose nothing, so only the wasm
+// leg diverges. See docs/SELFHOST-TUPLE-ARRAY-LOCAL-TAGS.md.
 //
-// That made it look like a width bug rather than a missing tag: on wasm32 an f64
-// element came back wrong while a string element — a 4-byte pointer — survived.
-// The register backends give every slot 8 bytes and lost nothing, so only the
-// wasm leg was wrong. See docs/SELFHOST-TUPLE-ARRAY-LOCAL-TAGS.md.
-//
-// Fixed at the SOURCE (arrtup_ret_fns / arrtup_ret_type populate the slot at the
-// binding) rather than per-consumer. Four sites read this tag; two already had an
-// `ExprIndex.ty` fallback (#6165, #6279) and two did not — and one of those,
-// `for p in ps`, has no ExprIndex node, so a third copy of the fallback could not
-// have reached it. `foreach_loop_var` is the case that proves the difference.
+// `foreach_loop_var` reads the element through `for p in ps`, which has no
+// index expression to carry a type, so only the binding's own element type
+// reaches it.
 var arrtupCallBindCases = []struct {
 	name string
 	src  string
@@ -38,7 +33,7 @@ function main(): i32 { let ps = mk(); let t = ps[0]; return (t.1 / 100000000) as
 	{"direct_index_control", `function mk(): (i32, f64)[] { return [(0, 4.5)]; }
 function main(): i32 { let ps = mk(); return (ps[0].1 * 10.0) as i32; }`}, // 45 — no intermediate local: always worked
 	{"annotated_control", `function mk(): (i32, f64)[] { return [(0, 4.5)]; }
-function main(): i32 { let ps: (i32, f64)[] = mk(); let t = ps[0]; return (t.1 * 10.0) as i32; }`}, // 45 — annotation supplied arrarr_elem: always worked
+function main(): i32 { let ps: (i32, f64)[] = mk(); let t = ps[0]; return (t.1 * 10.0) as i32; }`}, // 45 — the annotation supplies the element types: always worked
 	{"string_elem_control", `function mk(): (i32, string)[] { return [(5, "abcde")]; }
 function main(): i32 { let ps = mk(); let t = ps[0]; return t.1.len() + 40; }`}, // 45 — a 4-byte pointer survived the untyped read even before the fix
 	{"literal_control", `function main(): i32 { let ps = [(0, 4.5)]; let t = ps[0]; return (t.1 * 10.0) as i32; }`}, // 45 — the literal arm already inferred the tag

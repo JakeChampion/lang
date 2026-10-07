@@ -125,8 +125,8 @@ func intToF64Cases() []struct {
 		x86Avoid  []string
 		arm64Want []string
 	}{
-		// u64::MAX as f64 is ~1.8446744e19, not -1.0 (#6051 — the fixture
-		// u64_max_to_f64_is_huge, which returned 1 here and 0 natively).
+		// u64::MAX as f64 is ~1.8446744e19, not -1.0 (#6051, the
+		// conformance case u64_max_to_f64_is_huge).
 		{"u64-max-is-above-1e19", `function main(): i32 {
     let i: i64 = 0 - 1i64;
     let u: u64 = i as u64;

@@ -8,19 +8,13 @@ import (
 	"testing"
 )
 
-// TestSelfHostMapAllocPtrWidthIRProbeX86_64 verifies the first stage of lowering
-// core/map through the IR path: the __alloc and __ptr_width raw-memory intrinsics
-// (new op_alloc dispatch + new op_ptr_width). core/map's hashmap functions used
-// to all `BAIL call` (no IR lowering for these intrinsics); with op_alloc +
-// op_ptr_width, the ~28 functions that compose only the now-lowered raw-memory
-// intrinsics (alloc / ptr_width / load_* / store_* / memcpy) flip from "BAIL
-// call" to "ir" in the per-function -ir-probe report. (The module verdict stays
-// AST until the remaining __memset / __free / RC-helper intrinsics also lower —
-// follow-up stages; the whole module routes AST if ANY function bails. This test
-// gates the per-function progress that is the staged-PR validation signal.)
+// TestSelfHostMapAllocPtrWidthIRProbeX86_64 checks the core/map functions that
+// compose only raw-memory intrinsics (__alloc / __ptr_width / load_* / store_* /
+// memcpy): each must read "ir" in the per-declaration -ir-probe report.
 //
 // x86-64 only (the loader driver takes argv file paths, like the other modload
-// tests). The probe runs asm_ir.eligibility_report over the bundled program.
+// tests). The probe reports the typed lowering's verdict
+// (semlower.verdict_text) over the bundled program.
 func TestSelfHostMapAllocPtrWidthIRProbeX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	if len(runner) != 0 {

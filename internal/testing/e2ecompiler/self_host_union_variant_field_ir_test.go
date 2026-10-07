@@ -13,21 +13,13 @@ import (
 // imported structs is matched via a QUALIFIED pattern `rows.Row(r)`. The
 // pattern's type_name stays qualified ("rows.Row") through flatten (rewrite_pattern
 // does not mangle it, unlike ctor / field references), while the member struct's
-// flattened decl name is the MANGLED "rows__Row". The match-lowering used to strip
-// the qualifier to the bare "Row", which matches only a same-module ENUM variant —
-// for an imported union member it missed decl_is_struct and BAILED the whole
-// function (and on the AST emitter it fell to, the untyped payload's
-// `r.cells.len()` on a `string[]` field mis-dispatched to an undefined
-// `i32__len`). The lowering now tries
-// the '.'->'__' mangled form first, so the member lowers through the IR path AND
-// binds `r` typed "rows__Row" — so `r.cells.len()` dispatches as a string[] read.
-// (This widening flips the self-host's own `parser.*` matches to IR too; the extra
-// whole-compiler codegen is kept under the per-module-emit ceiling by the #3425
-// function-window sharding.)
+// flattened decl name is the MANGLED "rows__Row". The match lowering resolves
+// the '.'->'__' mangled form, so `r` binds typed "rows__Row" and
+// `r.cells.len()` dispatches as a string[] read rather than to an undefined
+// `i32__len`.
 //
-// Asserts: the module decides `ir` (the qualified pattern no longer forces an AST
-// bail), the emitted asm has no `__fn_i32__len`, and the self-host binary's exit
-// code matches the native interpreter oracle.
+// Asserts: the module decides `ir`, the emitted asm has no `__fn_i32__len`, and
+// the self-host binary's exit code matches the interpreter oracle.
 func TestSelfHostUnionVariantFieldIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := copySelfHostTree(t)

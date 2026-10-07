@@ -5,22 +5,12 @@ import (
 	"testing"
 )
 
-// The "TCNT:" counted tier: a tuple param the callee STORES into a struct
-// literal it returns. Not a borrow — the callee keeps a reference — but a
-// counted one, since the counted-store trio retains it at construction and
-// gives it back in the holder's field drop. The caller therefore keeps its own
-// deep free, and the two net to one owner.
+// A tuple param the callee STORES into a struct literal it returns. Not a
+// borrow — the callee keeps a reference — but a counted one: the construction
+// retains it and the holder's field drop gives it back. The caller therefore
+// keeps its own deep free, and the two net to one owner.
 //
-// Admission requires the callee's RESULT to route field reclaim, which is why
-// this tier could not exist before the struct-field store landed: nothing gave
-// a tuple field a releaser, so `Hold` did not route.
-//
-// Both escape scans have to admit it, and they learn it differently:
-// expr_unsafe_for's call arm already reads the merged "CNT:" key, so the tier
-// alone tells it; rctuple_esc_expr's call arm reads only "TUPB:" and needed the
-// routing edit. Knocking that edit out returns the matrix row to leak.
-//
-// Exits confirmed on BOTH oracles (bin/fern -interp and native x86-64).
+// Exits confirmed against bin/fern -interp.
 
 func tupleCallargCountedCases() []tupleAliasParamCase {
 	return []tupleAliasParamCase{

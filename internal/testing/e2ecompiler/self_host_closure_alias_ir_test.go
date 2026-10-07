@@ -9,20 +9,14 @@ import (
 	"testing"
 )
 
-// closureAliasIRCases pin #4557: `let d = c` where c is a closure local left
-// d a plain scalar slot, so `d()` called the raw env-box pointer as a
-// call-table index — SIGSEGV on the self-host IR path (all backends).
-// The fix gives StmtVar's clo_init detection a bare-ident arm gated on
-// is_closure_local: the alias is marked a closure local (env-first
-// dispatch) and its env box is __fern_rc_inc'd, so the exit sweep's two
-// shallow decs balance and the rc==1 gate hands the capture release to the
-// last owner (the alias name carries no capture kinds, so captures keep
-// the documented aliased-env leak).
+// closureAliasIRCases pin #4557: `let d = c` where c is a closure local must
+// make d a closure local too, so `d()` dispatches env-first instead of calling
+// the raw env-box pointer as a call-table index (a SIGSEGV on every backend).
+// Both names share one env box, so the release must happen once, by the last
+// owner.
 //
-// RC note: the hoisted call path's per-call capture over-dec these cases
-// originally had to tolerate is FIXED (the ENVCAP borrow exclusion —
-// see self_host_closure_capture_borrow_ir_test.go, which pins detector
-// zero on these shapes); these cases keep pinning values + crash-freedom.
+// self_host_closure_capture_borrow_ir_test.go pins the RC detector at zero on
+// these shapes; these cases pin values + crash-freedom.
 var closureAliasIRCases = []struct {
 	name string
 	src  string

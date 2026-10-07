@@ -8,28 +8,12 @@ import (
 // --- A struct payload's rc fields need a DEEP drop (#6127) -------------------
 //
 // `let o: Option[P] = Some(P { xs: [..], n: .. })` consumed by one `match (o)`
-// is released by consumed_rcpayload_option_frees → emit_opt_payload_drop, which
-// dec'd the payload BOX and the option box. For a scalar-only struct that is
-// complete; for a struct with an rc-ARRAY field it freed the box and stranded
-// the buffer — and because the drop zeroes the slot, the exit sweep's own
-// OPTSTRUCT deep free then saw a null and never picked it up.
+// must release the payload's rc FIELDS as well as the payload box and the
+// option box. For a scalar-only struct the boxes are all there is; for a struct
+// with an rc-ARRAY field, a box-only drop strands the field buffer every round.
 //
-// 100 rounds, the leaked block identified by which dimension moves it:
-//
-//	struct P { xs: i32[2], n }   allocs 300  frees 200   4000
-//	struct P { xs: i32[10], n }  allocs 300  frees 200  10400   <- array grew
-//	struct P { xs: i32[2], n+4 } allocs 300  frees 200   4000   <- struct did not
-//
-// so the unfreed block is the FIELD BUFFER, not the payload box. (The #6127
-// leaked object here is the array FIELD buffer, not the struct box — identical
-// in size at this shape, so the size sweep above is what tells them apart, and
-// it is the difference between "free the box" and "drop the fields".)
-//
-// The REBOUND sibling has deep-dropped the same shape since #6252
-// (emit_optstruct_deep_free → __struct_drop_<P>), which is also the evidence
-// that the construction alias-incs the field: the comment on
-// rcpayload_option_cand used to assert a deep drop here would over-release, and
-// the underflow counter says otherwise (see the hazards test below).
+// The struct construction counts the field it stores, so the deep drop does
+// not over-release; the NoUnderflow test below checks that directly.
 
 func TestSelfHostOptStructPayloadDropX86_64(t *testing.T) {
 	boxedProbes(t)
@@ -140,10 +124,10 @@ function main(): i32 {
 			want: 4,
 		},
 		{
-			// A STRING field beside the array one: __struct_drop_<P>'s k_str arm
-			// frees it rc-aware. A literal's .rodata data is heap-guard-skipped, so
-			// a wrong second release would tick the underflow counter — which the
-			// hazards test asserts stays at zero.
+			// A STRING field beside the array one, freed rc-aware. A literal's
+			// .rodata data is heap-guard-skipped, so a wrong second release
+			// would tick the underflow counter — which the hazards test asserts
+			// stays at zero.
 			name: "string_field_beside_the_array_field",
 			src: `struct P { xs: i32[], s: string }
 function round(i: i32): i32 {
@@ -186,10 +170,9 @@ function main(): i32 {
 			want: 42,
 		},
 		{
-			// The other half of the admission split: a SCALAR-ONLY struct payload
-			// has no rc field, so the shallow box dec is complete and must stay —
-			// emitting __struct_drop_<P> for it would be a call with nothing to do
-			// at best, and this pins that the two shapes keep their own drops.
+			// The other half of the split: a SCALAR-ONLY struct payload has no rc
+			// field, so freeing the box is the whole release. It must stay balanced
+			// under leakcheck alongside the rc-field shapes above.
 			name: "scalar_only_struct_payload_stays_balanced",
 			src: `struct P { n: i32, m: i32 }
 function round(i: i32): i32 {
@@ -242,18 +225,15 @@ function main(): i32 {
 }
 
 // TestSelfHostOptStructPayloadDropHazardsX86_64 — the deep drop frees the
-// payload's rc FIELDS, so it needs a stronger property than the box dec did:
-// no field may be moved out of the arm binding. `binding_escapes_arm` proves
-// only that the payload BOX does not outlive the match, and `held = p.xs`
-// satisfies that while handing `held` the buffer the deep drop would free.
+// payload's rc FIELDS, so it needs a stronger property than the box dec does:
+// no field may be moved out of the arm binding. `held = p.xs` keeps the payload
+// BOX inside the match while handing `held` the buffer the deep drop would
+// free.
 //
 // Each case pairs a live reference to a moved field with a read AFTER the match
 // and asserts BEHAVIOUR: a wrong answer or a crash means the drop freed a value
-// something else still holds. They are worth more than a leak assertion here —
-// while writing this, the deep drop landed WITHOUT the field-escape gate and
-// every one of these still exited correctly, purely because the freelist had
-// not yet reused the block. What gave it away was the free COUNT running ahead
-// of native's, which is why the counts are asserted too.
+// something else still holds. An early free can still exit correctly while the
+// freelist has not reused the block, so the free counts are asserted too.
 //
 // Every `want` is from `fern -interp`.
 func TestSelfHostOptStructPayloadDropHazardsX86_64(t *testing.T) {
@@ -320,7 +300,7 @@ function main(): i32 {
 		{
 			name: "field_passed_to_a_callee_that_keeps_it",
 			src: `struct P { xs: i32[], n: i32 }
-function keepit(xs: i32[]): i32[] { return xs; }
+@noinline function keepit(xs: i32[]): i32[] { return xs; }
 function round(i: i32): i32 {
     let held: i32[] = [];
     let acc: i32 = 0;
@@ -415,11 +395,10 @@ function main(): i32 {
 }
 
 // TestSelfHostOptStructPayloadDropNoUnderflowX86_64 — the deep drop rests on the
-// struct construction having alias-inc'd its rc fields, which the comment on
-// rcpayload_option_cand denied ("a __struct_drop_<T> deep-drop here would
-// OVER-RELEASE them"). An over-release lands on a box whose count is already
-// zero, which the runtime counts rather than crashes on, so the counter is the
-// direct test of the claim. Both programs return it; 0 is the assertion.
+// struct construction having counted its rc fields. An over-release lands on a
+// box whose count is already zero, which the runtime counts rather than crashes
+// on, so the counter is the direct test of the claim. Both programs return it;
+// 0 is the assertion.
 func TestSelfHostOptStructPayloadDropNoUnderflowX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

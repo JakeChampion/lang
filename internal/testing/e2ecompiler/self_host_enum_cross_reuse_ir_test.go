@@ -6,9 +6,9 @@ import (
 
 // General enum->enum cross-local box reuse (Perceus FBIP): a `let c = V([..])`
 // construction of a uniform-layout array-payload enum reuses the heap box of an
-// EARLIER, same-enum donor `a = W([..])` that is DEAD, non-escaping, and provably
-// non-aliased by the construction site (enum_only_wildcard_used_rec). Instead of
-// allocating a fresh box for c, the reuse RELEASES a's old payload arrays, re-shapes
+// EARLIER, same-enum donor `a = W([..])` that is DEAD, non-escaping, and not
+// aliased by the construction site. Instead of allocating a fresh box for c,
+// the reuse RELEASES a's old payload arrays, re-shapes
 // a's box to V in place, writes V's fresh array payloads into it, binds c to it, and
 // zeroes a's slot — so the box is freed exactly once, via c. Net: one fewer alloc +
 // one fewer free per such construction.

@@ -78,7 +78,7 @@ function main(): i32 {
 // 17 = element 3 of mk(8) (which is 9) plus the length 8. A freed header reads
 // back as whatever the freelist put there, so a wrong answer here is the
 // use-after-free this gate exists for.
-const viewLendEscapeSrc = `function id(s: [u8]): [u8] { return s; }
+const viewLendEscapeSrc = `@noinline function id(s: [u8]): [u8] { return s; }
 function mk(n: i32): u8[] {
     let a: u8[] = __alloc_u8(n);
     let i: i32 = 0;

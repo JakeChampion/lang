@@ -9,11 +9,10 @@ import (
 )
 
 // A string local stored into a struct literal at its last use, inside a loop,
-// leaked a box per iteration on the AST lowering (#10192). The store retains
-// there, because only a top-level move elides the retain, but the release gate
-// asked the loop-inclusive move analysis and read the store as a move, so the
-// local's own release never came. Beside it: the same store with a later read,
-// a string[] field, and the top-level store a callee makes.
+// is released every iteration (#10192): the store retains there, because only a
+// top-level move elides the retain, so the local still owes its own release.
+// Beside it: the same store with a later read, a string[] field, and the
+// top-level store a callee makes.
 const stringFieldStoreSrc = `import "std/i32";
 struct Box { s: string }
 struct Bag { s: string[] }

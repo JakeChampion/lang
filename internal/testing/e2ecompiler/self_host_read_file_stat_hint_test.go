@@ -11,10 +11,10 @@ import (
 
 // readFilePseudoSrc reads a kernel pseudo-file, whose st_size is 0 and whose
 // contents the kernel generates on the read. Sizing the buffer from st_size and
-// reporting st_size as the length made every such read come back EMPTY (#9065);
-// the self-host runtime sources (asmcore.rt_src_read_file /
-// rt_src_read_file_bytes) grow to EOF and report what they read, like every
-// native backend and the interpreter.
+// reporting st_size as the length would make every such read come back EMPTY
+// (#9065), so the self-host runtime sources (asmcore.rt_src_read_file /
+// rt_src_read_file_bytes) grow to EOF and report what they read, like the
+// interpreter.
 //
 // Exit 0 = both builtins reported the same non-zero length.
 const readFilePseudoSrc = `function main(): i32 {

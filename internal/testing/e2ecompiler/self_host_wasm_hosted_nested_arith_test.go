@@ -14,15 +14,12 @@ import (
 // #7948 was invisible to: the SAME self-host driver source, compiled twice by
 // the SAME self-host CLI with only -target differing, must answer identically.
 //
-// The bug it pins was a use-after-free in the compiler's own gate passes. The
-// snapshot-param consume-rebind routed a struct-ARRAY parameter through
-// __field_reclaim_<ElementType>, a helper written against a STRUCT box; on a
-// buffer its field offsets land past the end, so it released whatever words
-// followed. Both backends emitted the call, but the wasm reclaim body walks
-// four field slots where the register backends' body walks one, so only the
-// wasm-hosted compiler dereferenced enough garbage to corrupt an AST node — and
-// then bailed with "unknown expression" on a program the native build compiled
-// fine.
+// It pins a use-after-free in the compiler's own gate passes. Releasing a
+// struct-ARRAY parameter on a consume-rebind as if it were a struct box reads
+// its field offsets past the end of the buffer and frees whatever words follow.
+// The wasm-hosted compiler dereferences enough of that garbage to corrupt an
+// AST node, then bails with "unknown expression" on a program the native build
+// compiles fine.
 //
 // The programs below are the shape that reached it: two or more depth->=2
 // binary initialisers with a NON-CONSTANT operand. One such statement, or

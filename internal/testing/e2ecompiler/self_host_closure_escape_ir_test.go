@@ -52,17 +52,14 @@ var closureEscapeCases = []struct {
 	// Composition: the escaped closure captures a fn-value it applies twice.
 	{"escape-compose-twice", "function twice(f: (i32) => i32): (i32) => i32 { let g = (x: i32): i32 => { return f(f(x)); }; return g; } function inc(x: i32): i32 { return x + 1; } function main(): i32 { let d = twice(inc); return d(40); }", 42},
 	// Return an ARRAY of closures, then call an element via the caller's
-	// binding: `let arr = mk(); arr[0](x)`. The caller must mark arr's slot
-	// is_closurearr (mk returns `((i32) => i32)[]`) so `arr[0](x)` dispatches
-	// env-first; before the fix it bare-called the box pointer → SIGSEGV.
+	// binding: `let arr = mk(); arr[0](x)`. The call must dispatch env-first;
+	// a bare call of the box pointer is a SIGSEGV.
 	{"return-closure-array-via-var", "function mk(): ((i32) => i32)[] { let n = 5; let a = [(x: i32): i32 => { return x + n; }]; return a; } function main(): i32 { let arr = mk(); return arr[0](37); }", 42},
 	// Same, with the array returned directly (`return [<closure>]`).
 	{"return-closure-array-direct", "function mk(): ((i32) => i32)[] { return [(x: i32): i32 => { return x + 1; }]; } function main(): i32 { let arr = mk(); return arr[0](41); }", 42},
-	// A closure array passed as a PARAMETER: fn_param_sigs_of's call-site
-	// analysis (flag '3') proves every caller passes a closure array, so the
-	// param slot is marked is_closurearr and `fns[0](x)` inside the callee
-	// dispatches env-first; before the fix it bare-called the element box →
-	// SIGSEGV.
+	// A closure array passed as a PARAMETER: every caller passes a closure
+	// array, so `fns[0](x)` inside the callee must dispatch env-first; a bare
+	// call of the element box is a SIGSEGV.
 	{"closure-array-param", "function mk(): ((i32) => i32)[] { let n = 5; let a = [(x: i32): i32 => { return x + n; }]; return a; } function consume(fns: ((i32) => i32)[]): i32 { return fns[0](37); } function main(): i32 { let arr = mk(); return consume(arr); }", 42},
 	// A named-function array (`[inc, dbl]`) passed to the same-shaped param:
 	// its elements are `$wrap` boxes, so the param dispatches env-first too
@@ -70,8 +67,8 @@ var closureEscapeCases = []struct {
 	{"bare-fnarr-param", "function apply(fns: ((i32) => i32)[], n: i32): i32 { let s = 0; let i = 0; while (i < fns.len()) { s = s + fns[i](n); i = i + 1; } return s; } function inc(n: i32): i32 { return n + 1; } function dbl(n: i32): i32 { return n * 2; } function main(): i32 { return apply([inc, dbl], 10); }", 31},
 	// Indexing a closure-array factory's result DIRECTLY (`mk()[0](x)`, no
 	// binding): the ExprIndex-callee dispatch must recognise a call to a
-	// closurearr-ret fn as the array source; before the fix the shape fell to
-	// the legacy AST path, which miscompiled it (exit 0).
+	// closurearr-ret fn as the array source rather than call the element as a
+	// raw fn pointer.
 	{"closure-array-direct-index-call", "function mk(): ((i32) => i32)[] { let n = 5; let a = [(x: i32): i32 => { return x + n; }]; return a; } function main(): i32 { return mk()[0](37); }", 42},
 	// A factory whose closure returns live in IF/ELSE branches (not the last
 	// statement); the caller's binding once stayed a plain scalar → SIGSEGV.

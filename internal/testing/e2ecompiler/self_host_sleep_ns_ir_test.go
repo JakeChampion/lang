@@ -29,7 +29,7 @@ import (
 //
 // The 1e3-divisor mutant is caught as a HANG rather than a diff — asking for
 // 200 seconds instead of 200 µs — which the package timeout reports. That is
-// the same trade internal/testing/e2e/sleep_ns_test.go makes on the native side.
+// the same trade internal/testing/e2e/sleep_ns_test.go makes.
 const sleepNsSelfHostSource = `function main(): i32 {
     let t0: i64 = monotonic_ns();
     sleep_ns(200000 as i64);

@@ -28,8 +28,7 @@ function build(n: i32): i32 {
     return s.unwrap_or("").len() + f.unwrap_or("q").len();
 }
 ` + mapChurnMain(5280)},
-	// The same settle through Option: `and[U](other: Option[U])` was the one
-	// shape the removed `some_of` special case covered.
+	// The same settle through Option: `and[U](other: Option[U])`.
 	{"option-and-string-payload", `import "std/option";
 import "core/cmp";
 function build(n: i32): i32 {

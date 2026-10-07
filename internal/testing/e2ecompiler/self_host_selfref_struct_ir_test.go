@@ -2,20 +2,11 @@ package e2ecompiler
 
 import "testing"
 
-// selfrefStructIRCases widen the self-host IR subset to SELF-REFERENTIAL (and
-// mutually-recursive) structs — `struct Node { v: i32, next: Node[] }` and the
-// like, the shape behind linked lists / trees / ASTs.
-//
-// The leak-safety gate (fnsigs.decl_is_leaksafe_d) walks a struct's field type
-// graph to decide whether it can take the IR path in leak mode (no RC; the boxes
-// leak with the struct, matching the AST path's exit codes). It used a depth cap
-// to avoid looping on cyclic type graphs, which also rejected legitimate
-// self-referential structs — a `next: Node[]` field recurses into Node forever
-// until the cap trips, bailing the whole module. The gate now
-// threads a `visiting` set and treats a back-edge to a struct already on the
-// proof path as leak-safe (a leak-only back-pointer introduces no unsafe field),
-// so self-referential and mutually-recursive structs route the IR path while the
-// outer struct's own fields are still each validated.
+// selfrefStructIRCases pin SELF-REFERENTIAL (and mutually-recursive) structs on
+// the self-host IR path — `struct Node { v: i32, next: Node[] }` and the like,
+// the shape behind linked lists / trees / ASTs. A walk of the field type graph
+// must treat a back-edge to a struct it is already visiting as a cycle to stop
+// at, not recurse into it until it gives up and refuses the module.
 //
 // Each case is oracle-checked against the interpreter and returns a value
 // <= 120 (cf. the wasmtime exit-code gap #2908).

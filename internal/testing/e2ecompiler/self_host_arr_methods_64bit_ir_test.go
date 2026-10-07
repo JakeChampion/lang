@@ -9,12 +9,9 @@ import (
 )
 
 // TestSelfHostArrMethods64bitIR is the correctness gate for METHODS that return
-// f64[] / i64[] on the wasm IR backend. The array registries record them keyed
-// "<Type>.<method>" (f64arr_ret_fns_of / i64arr_ret_fns_of) so the call site
-// element-width-tracks the result (expr_is_f64arr / expr_is_i64arr / the
-// arr_index_is_* method-call cases) and a later x[i] reads an 8-byte f64/i64.
-// The body is just the union of the already-working method + array-return
-// machineries. Results pinned to hardcoded oracle values.
+// f64[] / i64[] on the wasm IR backend: the call result must carry its 8-byte
+// element width so a later x[i] reads an 8-byte f64/i64. Results pinned to
+// hardcoded oracle values.
 func TestSelfHostArrMethods64bitIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host arr-methods-64bit wasm IR e2e")

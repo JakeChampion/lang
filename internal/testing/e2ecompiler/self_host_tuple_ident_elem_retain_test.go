@@ -11,35 +11,25 @@ import (
 
 // --- The bare-ident tuple element's retain, given back (#7226) ---------------
 //
-// lower_expr's ExprTuple arm retained an element that is a bare ident naming an
-// rc-container local (gated on slot_is_rc_container), so the tuple box was a
-// second owner and __fern_rc_is_unique could not call the source local unique while
-// the tuple still pointed at its buffer. Nothing gave that reference back: the
-// only dec was the is_arr sweep's, which covers the LOCAL's own reference, so
-// incs 1 / decs 1 against a start rc of 1 left the buffer at 1 forever.
+// A tuple literal holding a bare ident that names an rc-container local
+// retains it, so the tuple box is a second owner of the buffer. That reference
+// must be given back when the tuple dies; left held, it stranded the buffer at
+// rc 1 forever:
 //
 //	(i32, i32[]) from a bare ident   allocs=400 frees=200   live 8000 (40 B/round)
 //	(i32[], i32[]) two idents        allocs=600 frees=200   live 16000
 //
-// against 0 on native for all of them.
+// The release must cover exactly the positions the construction retained, not
+// every position of rc type: releasing a position the construction never
+// retained is the use-after-free TestSelfHostRcTupleSweepHazardsX86_64 pins.
 //
-// The release is keyed on what the retain actually did rather than on the
-// element's type: bind_var_slot records the retained positions from the SAME
-// slot_is_rc_container test, and the scope-exit sweep and the rebind store both
-// replay exactly that list. Recording it is what makes the pair safe — a
-// type-driven release would free a position the construction never retained,
-// which is the use-after-free TestSelfHostRcTupleSweepHazardsX86_64 pins.
+// Two shapes must stay correct, and both are covered below: a PARAM ident
+// element (the retain is on a buffer the frame does not own, so it must be
+// released exactly once), and an untaken-branch tuple whose slot still holds
+// its entry zero at the exit (a null tuple's elements must not be read).
 //
-// Two shapes must NOT move, and both are covered below: a PARAM ident element
-// (the retain is on a buffer the frame does not own, so the dec must still be
-// emitted — but exactly once), and an untaken-branch tuple whose slot still holds
-// its entry zero at the sweep (the box dec tolerates null because __fern_rc_dec
-// null-guards; the op_tuple_get that reaches an element does not, so the walk
-// carries its own guard).
-//
-// Every want below was confirmed against BOTH oracles — bin/fern -interp and the
-// native x86-64 backend agreed on each — never read off the self-host run under
-// test.
+// Every want below was confirmed against bin/fern -interp, never read off the
+// self-host run under test.
 
 type tupIdentElemCase struct {
 	name string
@@ -87,11 +77,10 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 40,
 		},
 		{
-			// A PARAM ident element. slot_is_rc_container has no >= n_params guard, so
-			// the construction retains a buffer the frame does not own — while the
-			// is_arr sweep starts AT n_params and so never dec'd it. Fixing the
-			// general case fixes this one; getting it wrong over-releases the
-			// caller's live array, which the underflow counter would catch.
+			// A PARAM ident element: the construction retains a buffer the
+			// frame does not own, so it must be released exactly once. Getting
+			// it wrong over-releases the caller's live array, which the
+			// underflow counter would catch.
 			name: "param_ident_elem",
 			src: `function use_it(xs: i32[], i: i32): i32 {
     let t: (i32, i32[]) = (i, xs);
@@ -138,13 +127,10 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 		},
 		{
 			// Two same-named tuple locals in SIBLING BLOCKS, retaining at
-			// DIFFERENT positions. The kinds registry is keyed on the SLOT for
-			// this case: tagged_value_of returns the first entry matching a key,
-			// so a name key would hand block A's ".a" to block B's slot and
-			// release position 1 of a tuple that retained position 0 — measured
-			// as a 4000-byte strand before the key changed, and a live-buffer
-			// release waiting to happen once the positions disagree about what is
-			// owned.
+			// DIFFERENT positions. Each binding must release the position it
+			// retained: mixing them up by name releases position 1 of a tuple
+			// that retained position 0 — a 4000-byte strand, and a live-buffer
+			// release once the positions disagree about what is owned.
 			name: "same_name_sibling_blocks",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -178,24 +164,19 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 //
 // `return t.1` / `let u = t.1` hands the element's reference to a new owner, so
 // releasing it at the tuple's scope exit releases a reference the frame no longer
-// holds. The escaping form witnessed this as **exit 99** (rc underflow) against 40
-// on native and interp alike; the fix is the same `rctuple_payload_escapes` gate
-// the "TUPRC:" class has always applied, for the reason its own comment gives —
-// "leaving a live alias to over-release".
+// holds — an over-release that reads as **exit 99** (rc underflow) against the
+// interpreter's 40.
 //
 // Each probe ends with an explicit `__rc_underflow_count()` check, and that is the
 // essential part: WITHOUT it both cases pass on a compiler that over-releases,
 // because a doubly-released block goes back to the freelist and the arithmetic
-// still comes out at 40. The first version of this test was vacuous for exactly
-// that reason. The counter is the only thing that separates the two readings.
+// still comes out at 40. The counter is the only thing that separates the two
+// readings.
 //
-// These assert the ANSWER, not leak counts, and deliberately so: the local form
-// falls back to leak-mode under the gate (a bare pointer extraction is refused
-// whether or not it leaves the frame), which is the safe direction and the same
-// trade "TUPRC:" makes. A wrongly-granted credit here is a wrong answer or a
-// crash, not a number.
+// These assert the ANSWER, not leak counts: a wrongly-granted release here is
+// a wrong answer or a crash, not a number.
 //
-// Both wants came from bin/fern -interp and the native x86-64 backend agreeing.
+// Both wants came from bin/fern -interp.
 func TestSelfHostTupleIdentElemExtractionHazardX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

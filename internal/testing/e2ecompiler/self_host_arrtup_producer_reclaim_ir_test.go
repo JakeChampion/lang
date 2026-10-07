@@ -7,22 +7,16 @@ import (
 	"testing"
 )
 
-// arrtupProducerReclaimCases pin the #4353 CALL-BOUND array-of-boxes reclaim.
-// `collect_fresh_arrtup_names` / `collect_fresh_arrstruct_names` admitted only a
-// direct array LITERAL initialiser, so `let ps: (i32, i32[])[] = mk(k)` — and its
-// array-of-structs sibling — leaked the buffer, every element box and every inner
-// array per round: 80 B (x86-64 / arm64) and 48 B (wasm), where native is flat and
-// the `string[]` equivalent has been flat since the "STRARR:" producer registry.
+// arrtupProducerReclaimCases pin the #4353 CALL-BOUND array-of-boxes reclaim:
+// `let ps: (i32, i32[])[] = mk(k)` — and its array-of-structs sibling — must
+// release the buffer, every element box and every inner array when the binding
+// dies, as a literal initialiser does. Leaking them costs 80 B (x86-64 / arm64)
+// and 48 B (wasm) per round.
 //
-// The "ARRTUPF:" / "ARRSTRUCTF:" registries close it on the same terms: a free
-// function whose EVERY return is a fresh array literal of fresh tuple (resp.
-// struct) literals hands its caller a structure the caller solely owns, so a
-// binding from it earns the same credit a literal earns. The callee's own value
-// escapes by return and keeps the shallow dec, so each box is freed once.
-//
-// The erased-generic producer (`wrap[T](…): (T, i32[])[]`) is deliberately NOT
-// admitted: its return type carries a type var, so there is no concrete element
-// tuple for the deep free to walk. That case still measures 80 B/round.
+// A producer whose EVERY return is a fresh array literal of fresh tuple (resp.
+// struct) literals hands its caller a structure the caller solely owns. The
+// negatives pin the shapes where that does not hold — a param array at an
+// element position, a forwarded return, an element box held past the release.
 var arrtupProducerReclaimCases = []struct {
 	name string
 	src  string
@@ -104,7 +98,7 @@ function main(): i32 {
     return 0;
 }`, 0},
 	// ELEMENT-ALIAS negative: `let t = ps[0]` holds an element tuple box past the
-	// reclaim point, so arrarr_row_escapes must keep the local uncredited.
+	// reclaim point, so the release must not free what `t` still reads.
 	{"arrtup-producer-elem-alias-safe", `function mk(n: i32): (i32, i32[])[] { return [(n, [n, n + 1])]; }
 function main(): i32 {
     let acc: i32 = 0;

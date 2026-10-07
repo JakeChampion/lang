@@ -10,10 +10,8 @@ import (
 )
 
 // TestSelfHostRemoveFileIR pins `remove_file(path)` lowering on the self-host
-// x86-64 IR path. remove_file unlinks a file and returns Result[(), IoError]; it had
-// a full AST runtime (__fern_remove_file) but no IR lowering, so it bailed
-// `BAIL call[remove_file]` -> AST (#3457: filesystem_ops). It now lowers to
-// op_remove_file -> the same __fern_remove_file runtime the AST path calls. The
+// x86-64 IR path. remove_file unlinks a file and returns Result[(), IoError]; it
+// lowers to op_remove_file, backed by the __fern_remove_file runtime. The
 // program makes a temp dir, writes a file, remove_file's it, then read_dir's the
 // dir and asserts it's empty (0 entries) -> exit 0; exercises temp_dir /
 // write_file / remove_file / read_dir / remove_dir_all on the IR path.

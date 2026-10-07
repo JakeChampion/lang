@@ -81,7 +81,7 @@ function main(): i32 {
     return n;
 }
 `, 24, false},
-	// A literal rebound inside an `if` (#10497's remainder on the AST lowering).
+	// A literal rebound inside an `if` (#10497).
 	{"literal_rebound_in_if", `@noinline function ids(s: string): string { return s; }
 function main(): i32 {
     let q: string[][] = [[ids("a") + "b", "c"]];

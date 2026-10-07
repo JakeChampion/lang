@@ -7,12 +7,11 @@ import (
 
 // A fresh-ret struct local bound from a borrowed parameter carries that
 // parameter's field buffers uncounted: `let st: Buf = se.add_local(1)` copies
-// se.ops into st's box. Its first rebind replaced ops and released the old one
-// — se.ops, the CALLER's buffer — because the rebind release compared the
-// superseded box against the new value only. The binding now snapshots the box
-// it was derived from (seed_snapshot_local) and a field still shared with it is
-// left alone. Pinned under the sanitizer, whose quarantine is what turns the
-// stale free into a finding rather than a value that happens to still be there.
+// se.ops into st's box. Its first rebind replaces ops, and must not release the
+// old one — se.ops, the CALLER's buffer: a field still shared with the box the
+// binding was derived from is left alone. Pinned under the sanitizer, whose
+// quarantine is what turns a stale free into a finding rather than a value
+// that happens to still be there.
 const snapshotLocalSourceSrc = `struct Buf { ops: i32[], locals: i32[], n: i32 }
 
 function (s: Buf) emit(v: i32): Buf { return Buf { ...s, ops: s.ops.append(v) }; }

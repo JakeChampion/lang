@@ -6,44 +6,22 @@ import (
 
 // --- Passing an enum-array local to a BORROWING callee ------------------------
 //
-// `rd(xs, i)` where `rd` only reads `src.len()`. The arrenum escape gate admits
-// exactly one use of the local — `xs.len()` — and read every other position,
-// argument positions included, as an escape. So handing the array to a callee
-// that touches nothing cost it its element walk, and the exit sweep emitted a
-// bare buffer dec where the counted walk was owed: 4 allocs / 2 frees against
-// native's 4/4, the whole payload stranded.
+// `rd(xs, i)` where `rd` only reads `src.len()`. Handing the array to a callee
+// that keeps nothing must not cost the caller its element walk: the
+// `balance: true` rows assert allocs == frees at live_bytes 0. The binding
+// source is not the axis (a literal behaves as a producer call does) and
+// neither is the loop — this is purely the argument position, and the leak it
+// guards is the caller's.
 //
-// The binding source is irrelevant (a literal leaks exactly as a producer call
-// does) and so is the loop — this is purely the argument position. That matters
-// because the construction matrix's `enum_arr__param` cell was read as a
-// question about the CALLEE's param slot; it is not. The leak is the caller's,
-// and it is a constant two objects however many times the callee runs.
+// Borrowing the array box is not enough to license the element walk, which
+// frees every element box. A callee can keep no reference to the array while
+// still handing an ELEMENT out — `H { e: src[0], n: i }` — and the caller's
+// walk would then free it under a live reference. `element_handed_out` pins
+// that refusal by reading the value back after churn: an over-release there
+// reads as a perfect alloc/free balance, so only the wrong-answer probe sees
+// it.
 //
-// THE BOX FLAG IS NOT ENOUGH, and asking it would be a double free.
-// `borrowable_params_of` already proves "the callee never keeps this param",
-// which licenses a box-only release. An element walk is a DEEP free: it frees
-// every element box. A callee can be box-borrowable while still handing an
-// element out — `H { e: src[0], n: i }` — and the caller's walk would then
-// dangle it. That is the same distinction the "TUPB:" tier draws for rc-tuples,
-// so this adds the array-of-boxes sibling, "ELB:", on the same registry: flag
-// '1' iff the box flag is '1', the param is an array, and no ELEMENT escapes the
-// callee under an EMPTY registry (registry-independent, so the interproc
-// fixpoint cannot oscillate).
-//
-// `element_handed_out` is what proves that stronger question necessary.
-// Dropping the element check and keeping the box flag puts it at self-host
-// exit 99 — an rc underflow — while native and interp both exit 25, at a flat
-// 1400 allocs / 1400 frees, live_bytes 0. The census reads perfect. Note the
-// same edit makes three of the refused cases below LOOK clean (4/4 instead of
-// 4/2), so a census-only reading scores the broken compiler higher than this
-// one; only the wrong-answer probe separates them.
-//
-// Every want was confirmed against BOTH oracles — bin/fern -interp and the
-// native x86-64 backend agreed on each — never read off the self-host run.
-//
-// The struct-array twin (`Inner[]`, same shape, same cause) followed as its own
-// slice, the way the arrstruct and arrenum halves of every earlier slice did;
-// both walkers now carry this tier and the "CNT:" one beside it.
+// Each want is the `bin/fern -interp` answer.
 
 const arrenumBorrowDecl = `enum E { A(i32[]), B }
 function mkv(i: i32): E[] { let o: E[] = []; o = o.append(E.A([i, i + 1])); return o; }
@@ -86,7 +64,7 @@ func arrenumBorrowCases() []arrenumShareCase {
 			// placed as a constant.
 			name: "borrowed_arg_literal",
 			src: mk(`function rd(src: E[], i: i32): i32 { return (src.len() + i) % 101; }
-function id(xs: i32[]): i32[] { return xs; }`,
+@noinline function id(xs: i32[]): i32[] { return xs; }`,
 				literal, "rd(keep, r)"),
 			want: 6, balance: true,
 		},
@@ -97,14 +75,10 @@ function id(xs: i32[]): i32[] { return xs; }`,
 			want: 6, balance: true,
 		},
 		{
-			// ADMITTED, by a different tier than this suite's. "ELB:" refuses it
-			// — the callee keeps a reference, so it is not element-safe — but
-			// the reference is a COUNTED store, which param_counted_of's
-			// "DCNT:" tier proves and borrow_reg_with_counted publishes to this
-			// walker under "CNT:". Was the `enum_arr__param` leak when this
-			// suite was written; balances since that tier landed, and pinned
-			// here at the balance rather than only at the exit code so the row
-			// cannot go stale silently a second time.
+			// The callee keeps a reference in a record, but that store is
+			// COUNTED, so the caller's release still balances. Pinned at the
+			// balance rather than only at the exit code: this row was once the
+			// `enum_arr__param` leak and went stale silently.
 			name: "callee_stores_field",
 			src: mk(`struct P { f: E[], n: i32 }
 function rd(src: E[], i: i32): i32 { let p: P = P { f: src, n: i }; return (p.f.len() + p.n) % 101; }`,
@@ -164,16 +138,14 @@ function rd(src: E[], i: i32): i32 { return (match (src[0]) { E.A(xs) => take(xs
 		{
 			// REFUSED by the BOX flag, before this tier is consulted at all.
 			name: "callee_returns_param",
-			src: mk(`function rd(src: E[], i: i32): E[] { return src; }`,
+			src: mk(`@noinline function rd(src: E[], i: i32): E[] { return src; }`,
 				producer, "rd(keep, r).len()"),
 			want: 3,
 		},
 		{
-			// ADMITTED by the extract-then-die widening the old comment here
-			// asked for: `let e = src[0]` with a confined local keeps the flag
-			// (arrenum_param_escapes), so the caller's element walk is owed and
-			// granted — pinned at the balance, not only the exit, per the
-			// stale-row lesson the struct twin's callee_stores_field taught.
+			// The callee extracts an element into a local that dies in the
+			// callee (`let e = src[0]`), so nothing escapes and the caller's
+			// element walk still runs. Pinned at the balance, not only the exit.
 			name: "callee_extracts_element",
 			src: mk(`function rd(src: E[], i: i32): i32 { let e: E = src[0]; return (match (e) { E.A(xs) => xs.len(), E.B => 0 }) + i; }`,
 				producer, "rd(keep, r)"),

@@ -4,23 +4,15 @@ import (
 	"testing"
 )
 
-// TestSelfHostPollIRX86_64 is the first slice of putting async on the
-// self-hosted compiler's IR path (docs/ASYNC-SELFHOST-IR.md): the `poll`
-// readiness builtin now lowers to a dedicated IR op (`op_poll`) that the
-// self-host x86-64 IR backend emits as a call into `__fn___fern_poll` (poll(2)
-// over the fd set), reading the SELF-HOST array layout (len at [ptr+0],
-// element i at [ptr+(i+1)*8]). Because it's a real op — not a
-// `call_direct` to an unknown `poll` symbol — a `poll`-using module is
-// now IR-ELIGIBLE rather than bailing (the AST emitter it used to fall to
-// can't emit `poll` at all).
+// TestSelfHostPollIRX86_64 pins the `poll` readiness builtin on the self-hosted
+// compiler's x86-64 IR path (docs/ASYNC-SELFHOST-IR.md): it lowers to a
+// dedicated IR op (`op_poll`) that the backend emits as a call into
+// `__fn___fern_poll` (poll(2) over the fd set), reading the self-host array
+// layout (len at [ptr+0], element i at [ptr+(i+1)*8]).
 //
 // The case polls an EMPTY fd set, which returns -1 without a syscall —
 // deterministic, and enough to pin that the typed path compiles it and it
-// runs to the interp oracle's value. The syscall/marshalling
-// body mirrors the native `__fern_poll` (separately tested; the self-host one
-// is compiled Fern since #2649), adapted to
-// the self-host array ABI. Real-fd polling on the self-host arrives with
-// the timer/socket builtins (later slices).
+// runs to the interp oracle's value.
 func TestSelfHostPollIRX86_64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	interpBin := buildLangBinForInterp(t)

@@ -138,10 +138,10 @@ function main(): i32 { return (apply(4i64) % 83i64) as i32; }`},
 }
 function main(): i32 { return (apply(4i64) % 83i64) as i32; }`},
 
-	// The DYN-position half (#5276): the inner call inherited the outer's
-	// dyn-boxed argument positions, so a plain integer argument was handed to
-	// lower_dyn_arg and the callee compared a box POINTER against 4. The inner
-	// body compares against a literal deliberately — a `y * 3` body would
+	// The DYN-position half (#5276): the inner call must not inherit the
+	// outer's dyn-boxed argument positions, or a plain integer argument is
+	// boxed and the callee compares a box POINTER against 4. The inner body
+	// compares against a literal deliberately — a `y * 3` body would
 	// multiply an arena address and give a non-reproducible exit.
 	{"shadowed-dyn", `trait Show { function show(self: Self): i32; }
 struct A { v: i32 }

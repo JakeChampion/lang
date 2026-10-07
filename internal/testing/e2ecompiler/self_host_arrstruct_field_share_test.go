@@ -6,54 +6,22 @@ import (
 
 // --- The struct-literal FIELD share of an array-of-structs local -------------
 //
-// `let p: P = P { f: src, … }` where `src` is a credited `Inner[]` local. The
-// construction RETAINS `src` unconditionally, so the field holds a COUNTED share — but every
-// escape gate on the ARRSTRUCT credit read the bare ident as an escape and sank
-// `src`'s reclaim outright. It then took the generic buffer dec, freeing the
-// outer array while every element box and element array field stranded.
+// `let p: P = P { f: src, … }` where `src` is an `Inner[]` local. The
+// construction retains `src`, so the field holds a counted share and the source
+// keeps its own release. Both releases are rc-gated, so whichever drops last
+// finds rc 1 and walks every element box and element array field. A source
+// left with no walk leaks on the path where the share does NOT run, which is
+// what `conditional` measures.
 //
-// The measurement that located it inverts the obvious reading. On the path where
-// the share RUNS the census was already flat, because the holder's own field
-// walk did the work; it was the path where the share did NOT run that leaked:
+// `respread` is why the underflow guard is asserted on every case:
+// `P { ...q, … }` is a third holder of the buffer, and an uncounted copy there
+// is a double free at a census that reads allocs == frees at live_bytes 0.
 //
-//	share taken at runtime       5 allocs / 5 frees      already clean
-//	share NOT taken at runtime   4 allocs / 2 frees      88 B/round
+// `moved_ret` returns the construction, so it MOVES `src` rather than retaining
+// it (#6726); it asserts the answer only, not the balance.
 //
-// So "the share is uncounted" was the wrong diagnosis. The share was counted and
-// the SOURCE had been left with no walk at all.
-//
-// Both releases are rc-gated, which is what makes granting this safe: the
-// holder's is __struct_arr_elems_drop_<E>, which is_unique-gates the buffer, and
-// the source's is emit_arrstruct_deep_free, which now gates the same way. That
-// gate is a no-op for every shape that existed before — a sole owner is rc 1 —
-// and the prerequisite for this one. Half the pairing would be an over-release:
-// with one owner gated and the other walking statically, both sweeps free the
-// buffers, at a census that reads allocs == frees at live_bytes 0.
-//
-// `respread` is the reason the underflow guard is asserted on every case here:
-// `P { ...q, … }` used to copy the buffer pointer into a third box with NO inc,
-// so three owners sat at rc 2 and granting the share took it to exit 99 at 600
-// allocs, 600 frees, live_bytes 0 — nothing in the census showed it. The base
-// copy now retains the array it carries and the copy is a counted holder like
-// the others, so the three walks hand off to the one that finds rc 1.
-//
-// `moved_ret` is the second such precondition, and it cost a red CI to find. The
-// retain is MOVE-gated (#6726): where the analysis says the construction moves
-// the local, the box takes over its reference and both the inc and the sweep dec
-// that cancels it are dropped. This credit does not route that plain sweep dec —
-// it routes emit_arrstruct_deep_free — so granting it at a moved site frees a
-// buffer whose ownership left the frame. `return P { f: src, … }` is exactly
-// that, because the return is src's last use.
-//
-// Nothing on x86-64 saw it. Both matrices, TestSelfHostRcPlanDiff, the whole
-// probe corpus and all three x86-64 fixpoints were green; it surfaced as gen2
-// SEGFAULTING under qemu on TestSelfHostStage2FixpointArm64/lexer — the
-// whole-compiler leg, and the blind spot docs/TEST-GATES.md names. The credit
-// now asks exactly the question the retain asks, so this case stays the leak it
-// was, which is why it opts out of the balance assertion.
-//
-// Every want was confirmed against BOTH oracles — bin/fern -interp and the
-// native x86-64 backend agreed on each — never read off the self-host run.
+// Every want was confirmed against bin/fern -interp, never read off the
+// self-host run.
 
 type arrstructShareCase struct {
 	name    string
@@ -74,9 +42,8 @@ function mkv(i: i32): Inner[] { let o: Inner[] = []; o = o.append(Inner { xs: [i
 func arrstructShareCases() []arrstructShareCase {
 	return []arrstructShareCase{
 		{
-			// The repro. The share is in a branch taken half the time, so the
-			// rounds that skip it are the ones that leaked: 450 allocs / 350
-			// frees, 4400 bytes over 100 rounds, against native's 450/450.
+			// The share is in a branch taken half the time, so the rounds that
+			// skip it exercise the source's own release.
 			name: "conditional",
 			src: arrstructShareDecl + `function round(i: i32): i32 {
     let src: Inner[] = mkv(i);

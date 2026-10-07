@@ -3,29 +3,22 @@ package e2ecompiler
 import "testing"
 
 // closureArrayIRCases pin arrays of CAPTURING closures — built, indexed, and
-// CALLED through the array — on the self-host IR path (x86-64 + wasm). The
-// existing call_on_call coverage has a single NON-capturing named-function value
-// in a one-element array called at a constant index (`fs[0](4)`); these cases
+// CALLED through the array — on the self-host IR path (x86-64 + wasm).
+// self_host_call_on_call_ir_test.go has a single NON-capturing named-function
+// value in a one-element array called at a constant index (`fs[0](4)`); these cases
 // exercise the distinct shape: capturing lambdas (`() => n`) stored in a
 // multi-element ARRAY-LITERAL `(() => i32)[]`, called via a VARIABLE index in a
 // loop. That drives closure-env boxing (the captured `n` / `k`) AND dynamic
 // dispatch through an array element (the indirect call target comes from a
 // runtime array read), which the constant-index non-capturing case does not.
-// All of it already lowers, so no compiler change — an observability pin against
-// a regression off the IR path.
 //
-// The `.append`-built form (`fns = fns.append(() => n)`) is now covered too
-// (#3556): an EMPTY closure-array literal `let fns: (() => i32)[] = []` leaves
-// the slot a generic array (no closure elements to infer from at the decl), so
-// the later `fns[i]()` dispatched a closure box as a plain fn pointer and
-// segfaulted while `all_eligible` wrongly admitted it. The fix marks the slot a
-// closure array at the FIRST closure `.append` (when the appended value is a
-// `__mkclo$…` env box / closure-returning call / closure local), so the indexed
-// call dispatches env-first. A bare NAMED-function value (`[f]` / `append(f)`)
+// The `.append`-built form (`fns = fns.append(() => n)`, #3556) starts from an
+// EMPTY literal `let fns: (() => i32)[] = []` with no closure element to infer
+// from, and `fns[i]()` must still dispatch env-first rather than call a closure
+// box as a plain fn pointer. A bare NAMED-function value (`[f]` / `append(f)`)
 // is boxed through its `$wrap` like any other function value (#10076), so the
-// `namedfn-*` cases below dispatch env-first too; a bare 0-arg name is a function
-// value rather than a const-call of f (which segfaulted, #3574). They share this
-// harness because the routing-pin + run is identical.
+// `namedfn-*` cases dispatch env-first too; a bare 0-arg name is a function
+// value rather than a const-call of f (#3574).
 //
 // Each case is routing-pinned to "ir" (asm_pathprobe_run) and oracle-checked
 // against the interpreter; every result stays <= 120 (the wasm exit-code clamp,
@@ -98,13 +91,10 @@ var closureArrayIRCases = []struct {
 	{"mixed-cap-then-namedfn", `function inc(x: i32): i32 { return x + 100; } function main(): i32 { let a = 3; let fs: ((i32) => i32)[] = [(x: i32) => x + a, inc]; return fs[1](5); }`, 105},
 	// named-fn + capturing lambda summed over a loop: (5+10) + (5+3) = 23.
 	{"mixed-namedfn-loop", `function inc(x: i32): i32 { return x + 10; } function main(): i32 { let a = 3; let fs: ((i32) => i32)[] = [inc, (x: i32) => x + a]; let s = 0; let i = 0; while (i < fs.len()) { s = s + fs[i](5); i = i + 1; } return s; }`, 23},
-	// #5109: a closure-array PARAM dispatched inside the callee is marked
-	// is_closurearr (→ env-first) only when a whole-program scan proves every
-	// call site passes a closure array. That scan must classify calls at EVERY
-	// expression position, not just statement-top-level ones — otherwise a call
-	// buried in a match scrutinee / if-condition / call-argument / binary
-	// operand is uncounted, the proof fails, the param stays unmarked, and
-	// `fs[i](args)` dispatches PLAIN → bare-calls the element box → SIGSEGV.
+	// #5109: a closure-array PARAM dispatched inside the callee must dispatch
+	// env-first wherever the call site sits — a match scrutinee, if-condition,
+	// call argument or binary operand, not just a statement. A PLAIN dispatch
+	// of `fs[i](args)` bare-calls the element box → SIGSEGV.
 	// callee called from an ENUM (Option) match scrutinee: fs[0](4)=14 → Some → 14.
 	{"param-enum-match-scrutinee", `function get(fs: ((i32) => i32)[], v: i32): Option[i32] { let f = fs[0]; return Some(f(v)); } function main(): i32 { let k = 10; let fs: ((i32) => i32)[] = [(x: i32) => x + k]; match (get(fs, 4)) { Some(v) => { return v; }, None => { return 0; } } }`, 14},
 	// callee called from a SCALAR/literal match scrutinee (desugars to an if

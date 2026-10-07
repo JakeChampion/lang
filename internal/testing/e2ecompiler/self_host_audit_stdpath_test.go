@@ -9,8 +9,7 @@ import (
 
 // auditStdPathCases compile the real std/path (import-free) prepended to a
 // main, through the self-hosted compiler, asserting the exit code.
-// Self-host arm of the §D std/path audit (docs/FEATURE-AUDIT.md); the
-// native arm is the `audit_std_path_numeric` fixture (all four backends).
+// Self-host arm of the §D std/path audit (docs/FEATURE-AUDIT.md).
 var auditStdPathCases = []struct {
 	name string
 	main string

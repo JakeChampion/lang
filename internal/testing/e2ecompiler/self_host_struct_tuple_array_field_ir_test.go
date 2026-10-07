@@ -9,30 +9,15 @@ import (
 	"testing"
 )
 
-// A struct field whose type is a tuple ARRAY (`pairs: (i32, string)[]`) now
-// lowers on the IR path. Three gaps had to close, all in shared irlower.fern:
+// A struct field whose type is a tuple ARRAY (`pairs: (i32, string)[]`) lowers
+// on the IR path, whether or not anything reads it:
 //
-//  1. STRUCT ADMISSION (decl_is_leaksafe_d): the array-element branch admitted a
-//     struct/enum/nested-array/Option element but not a leak-safe TUPLE element,
-//     so ANY struct with a tuple-array field — even one that never read it —
-//     bailed the whole module to the ~35 KB AST emitter (and miscompiled). Now an
-//     `is_leaksafe_tuple_field` element is admitted in leak mode, like the sibling
-//     array-of-struct / array-of-enum fields.
-//  2. INDEX-READ BIND (lower_stmt_var): `let p = r.pairs[0]` read the element
-//     tuple tags off the array LOCAL's arrarr_elem slot — but a struct-field array
-//     access has no slot, so p got no tuple tags and `p.1.len()` mis-read a
-//     pointer element (a silent miscompile: p.0=1, p.1.len()=0 → 1 not 2). The
-//     new ExprFieldAccess arm resolves the element tuple type from the field's
-//     declared type and marks p.
-//  3. FOR-LOOP BIND (lower_stmt_for): the struct-field foreach path bound the loop
-//     var for string[]/struct[]/enum[]/Option[] element fields but not a tuple[]
-//     element field, so `for p in r.pairs` bailed the module to AST. A new tuple
-//     element kind marks the loop var's tuple tags (the field-foreach sibling of
-//     the #5305 local-array foreach fix).
+//   - `let p = r.pairs[0]` takes the element tuple type from the field's
+//     declared type; without it `p.1.len()` mis-reads a pointer element (a
+//     silent miscompile: 1, not 2).
+//   - `for p in r.pairs` binds the loop variable's tuple type the same way.
 //
-// The tuple-array field leaks with the struct (like the string[]/struct[] fields),
-// matching the AST path's exit codes. Found by differential probing (interp exit
-// vs the self-host-IR binary); each case is oracle-checked and routing-pinned "ir".
+// Each case is oracle-checked against the interpreter and routing-pinned "ir".
 var structTupleArrayFieldIRCases = []struct {
 	name string
 	src  string
@@ -55,7 +40,7 @@ function main(): i32 {
     return s;
 }`},
 	// INDEX-READ into a local: `let p = r.pairs[0]` then p.0 + p.1.len() = 1 + 1
-	// = 2 (the silent-miscompile case: was 1 before the ExprFieldAccess arm).
+	// = 2 (the silent-miscompile case answers 1).
 	{"index_bind", `struct Row { pairs: (i32, string)[] }
 function main(): i32 {
     let r = Row { pairs: [(1, "a"), (2, "bb")] };
@@ -171,7 +156,7 @@ func TestSelfHostStructTupleArrayFieldWasmIR(t *testing.T) {
 	for _, tc := range structTupleArrayFieldIRCases {
 		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
-			// Oracle: the native interpreter's exit code.
+			// Oracle: the Go interpreter's exit code.
 			entry := filepath.Join(dir, "wstaf_"+tc.name+".fern")
 			if err := os.WriteFile(entry, []byte(tc.src+"\n"), 0o644); err != nil {
 				t.Fatalf("write entry: %v", err)

@@ -8,24 +8,17 @@ import (
 )
 
 // #4357 (#4297 A2 follow-up): a reclaimable struct LOOP-LOCAL carrying a DIRECT enum
-// field (`while { let t: Tagged = Tagged { e: Poly([i, i+1]), n: i }; }`) leaked the
-// enum field's VARIANT PAYLOAD every iteration. The struct is admitted to the reclaim
-// set (struct_has_reclaim_array_field admits a direct enum field since #4297 A2), but
-// its loop-rebind routed through the array-only __field_reclaim path, which skips enum
-// fields entirely — the enum box AND its payload array leaked per iteration; the exit
-// sweep's k_enum arm is only a shallow box-only dec. The fix routes such a binding
-// through emit_struct_enum_deep_reinit_store: for each enum field it runs the runtime
-// variant-dispatch deep-drop (emit_enum_variant_drops → drop the variant payload, free
-// the enum box) before freeing the struct box.
+// field (`while { let t: Tagged = Tagged { e: Poly([i, i+1]), n: i }; }`) must release
+// the enum field's VARIANT PAYLOAD at each loop rebind, not only the struct box: for
+// each enum field the runtime variant dispatch drops the variant payload and frees the
+// enum box before the struct box is freed.
 //
-// SOUNDNESS: it fires ONLY when every enum field of the literal is a FRESH variant ctor
-// (struct_lit_all_enum_fields_fresh — `e: Poly([..])` with a fresh array payload), so
-// old's enum box + payload is sole-owned (rc=1, no construction alias-inc). A NON-fresh
-// (aliased bare-ident) enum field is retained + alias-inc'd by its owner, so freeing its
-// payload would double-release — such a struct is rejected at the gate and takes the
-// leak-safe shallow path (the ALIAS-SAFETY case proves __rc_underflow_count stays 0). The exit
-// sweep is deliberately NOT widened; only the per-iteration rebind reclaim is added, so
-// the once-off final-box payload leak stays bounded (the fixpoint is flat across N).
+// SOUNDNESS: that holds only when every enum field of the literal is a FRESH variant
+// ctor (`e: Poly([..])` with a fresh array payload), so the old enum box + payload is
+// sole-owned (rc=1). A NON-fresh (aliased bare-ident) enum field is retained by its
+// owner, so freeing its payload would double-release — such a struct must leak
+// instead (the ALIAS-SAFETY case proves __rc_underflow_count stays 0). A once-off
+// final-box payload leak is bounded, so the fixpoint is flat across N.
 //
 // Gated on the self-host x86-64 IR path: FIXPOINT (bump growth equal at N=50 / N=5000)
 // + OVER-RELEASE (the fresh payload is read each iteration) + ALIAS-SAFETY.
@@ -68,9 +61,8 @@ function main(): i32 {
 
 // A struct whose enum field is a bare IDENT (`e: shared`, shared a live enum local
 // across the loop) must NOT be deep-dropped — that would double-release shared's
-// payload. The gate (struct_lit_all_enum_fields_fresh) rejects the non-fresh field, so
-// the struct takes the leak-safe shallow path; __rc_underflow_count == 0 proves no over-
-// release. acc = 100*7 (xs[0] per iter) + 7 (final match) = 707.
+// payload, so the struct takes the leak-safe shallow path; __rc_underflow_count == 0
+// proves no over-release. acc = 100*7 (xs[0] per iter) + 7 (final match) = 707.
 const structEnumFieldAliasSafetySrc = `enum Shape { Poly(i32[]), Dot }
 struct Tagged { e: Shape, n: i32 }
 function main(): i32 {
@@ -87,12 +79,11 @@ function main(): i32 {
 }`
 
 // A struct whose enum field is a FRESH ctor but with a NON-fresh (aliased bare-ident)
-// STRING payload (`m: Text(s)`, s a live string local): the freshness gate keys off
-// fresh_rcpayload_enum_init -> variant_struct_payloads_fresh, which rejects a non-fresh
-// STRING payload (not just array payloads — the array-only check would wrongly admit
-// this and __fern_str_free the aliased string). So the struct takes the leak-safe
-// shallow path; s stays live (read after the loop). acc = 100*5 (v.len per iter) + 5
-// (s.len after) = 505; __rc_underflow_count == 0 proves no over-release of s.
+// STRING payload (`m: Text(s)`, s a live string local): a non-fresh string payload is
+// not sole-owned any more than an array one, so the struct takes the leak-safe shallow
+// path rather than __fern_str_free the aliased string; s stays live (read after the
+// loop). acc = 100*5 (v.len per iter) + 5 (s.len after) = 505;
+// __rc_underflow_count == 0 proves no over-release of s.
 const structEnumFieldStringPayloadAliasSrc = `enum Msg { Text(string), None }
 struct W { m: Msg, n: i32 }
 function main(): i32 {

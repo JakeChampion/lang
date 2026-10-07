@@ -34,38 +34,33 @@ func TestSelfHostRuntimeHelpersAreFern(t *testing.T) {
 		gone []string // hand-asm markers that must NOT appear
 	}{
 		{
-			// AST path; the x86-64 IR path is covered by
-			// TestSelfHostRuntimeHelpersAreFernIR.
+			// str_cmp backs ordered comparison on strings.
 			"str_cmp",
 			`function main(): i32 { if ("abc" < "abd") { return 1; } return 0; }`,
 			"__fn___fern_str_cmp",
 			[]string{"\n__fern_str_cmp:", ".Lstrcmp_loop"},
 		},
 		{
-			// str_eq backs == on strings (and the map / arr_str helpers). AST
-			// path; IR covered by the IR lock-in test.
+			// str_eq backs == on strings (and the map / arr_str helpers).
 			//
-			// One operand comes from args() so the comparison cannot be folded
-			// away. It used to be `"ab" == "ab"`, and once the literal-vs-literal
-			// fold landed that emitted no comparison at all — the helper was
-			// still migrated, but this case had stopped asking.
+			// One operand comes from args() so the literal-vs-literal fold
+			// cannot remove the comparison.
 			"str_eq",
 			`function main(): i32 { let xs: string[] = args(); if (xs[0] == "ab") { return 1; } return 0; }`,
 			"__fn___fern_str_eq",
 			[]string{"\n__fern_str_eq:", ".Lstreq_loop"},
 		},
 		{
-			// str_trim (s.trim()) — AST-only; a zero-copy slice helper under its
-			// own str_trim need. The IR path keeps its own str_trim emission.
+			// str_trim (s.trim()) — a zero-copy slice helper under its own
+			// str_trim need.
 			"str_trim",
 			`function main(): i32 { return "  hi ".trim().len(); }`,
 			"__fn___fern_str_trim",
 			[]string{"\n__fern_str_trim:", ".Ltrim_front"},
 		},
 		{
-			// str_lines (s.lines()) — was an INLINE lowering on the AST path; now a
-			// Fern helper composing str_split + an array slice. The old inline
-			// labels (.Llines_have_) must be gone.
+			// str_lines (s.lines()) — a Fern helper composing str_split + an array
+			// slice, with no inline `.Llines_have_` labels.
 			"str_lines",
 			`function main(): i32 { return "a\nb\n".lines().len(); }`,
 			"__fn___fern_str_lines",

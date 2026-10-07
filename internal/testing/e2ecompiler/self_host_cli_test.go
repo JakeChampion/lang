@@ -33,7 +33,7 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		// wouldn't see the same paths. Native-only, like the file driver.
 		t.Skip("CLI driver test runs only natively (argv paths)")
 	}
-	dir := writeSelfHostAsmProject(t) // lexer.fern, parser.fern, asm.fern
+	dir := writeSelfHostAsmProject(t) // the self-host compiler sources
 	copySelfHostDriver(t, dir, "fern.fern")
 
 	// Build the CLI driver with the Go backend.
@@ -202,11 +202,9 @@ function main(): i32 {
 		if code != 0 {
 			t.Fatalf("-target wasm emit exited %d, want 0", code)
 		}
-		// The AST lowering reaches the formatter through the runtime's
-		// $__fern_u32_to_str; the semantic lowering produces std/u32's own
-		// to_string body and calls neither runtime name. What both must hold
-		// is the #5992 invariant itself: every function the module calls, it
-		// defines or imports.
+		// The typed lowering produces std/u32's own to_string body. What
+		// this pins is the #5992 invariant: every function the module calls,
+		// it defines or imports.
 		for _, name := range undefinedWatCalls(wat) {
 			t.Errorf("emitted WAT calls $%s, which it neither defines nor imports (#5992)", name)
 		}
@@ -580,14 +578,10 @@ function main(): i32 {
 	})
 
 	// i32::MIN. `0 - 2147483647 - 1` is how std/i32 spells it, because it is the
-	// only way to spell it — and folding it produced an ExprNumber whose TEXT
-	// carried the sign. literal_is_i64 classified a literal by text
-	// LENGTH, so the 11-character "-2147483648" read as an i64 and the i32
-	// return path declined it: the whole module fell off the IR path. lit_i32
-	// now emits unary minus over the magnitude, the shape the parser produces.
-	//
-	// This failed under `-O` long before folding was ungated; nothing ran `-O`
-	// over a program reaching std/i32, so it sat unfound.
+	// only way to spell it. The folded result must be unary minus over the
+	// magnitude (constfold's lit_int), the shape the parser produces: an
+	// ExprNumber whose TEXT carried the sign reads as an i64, the i32 return
+	// path declines it, and the whole module falls off the IR path.
 	t.Run("fold-i32-min", func(t *testing.T) {
 		foldCase(t, "foldmin", "function f(): i32 { return 0 - 2147483647 - 1; }\n"+
 			"function main(): i32 { if (f() < 0 - 2147483647) { return 11; } return 1; }\n", 11)
@@ -999,8 +993,7 @@ function main(): i32 {
 			"function g(x: string): i32 { return x.len(); }\nfunction main(): i32 { let t: string = \"abcdef\"; return g(slice_unchecked(t, 0, 3)); }\n",
 			// through a `str`-typed local
 			"function g(x: string): i32 { return x.len(); }\nfunction main(): i32 { let t: string = \"abcdef\"; let v: str = slice_unchecked(t, 0, 3); return g(v); }\n",
-			// and with the callee itself declared `str`, which the AST
-			// lowering erases to `string` in the signature
+			// and with the callee itself declared `str`
 			"function g(x: str): i32 { return x.len(); }\nfunction main(): i32 { let t: string = \"abcdef\"; return g(slice_unchecked(t, 0, 3)); }\n",
 		} {
 			srcPath := filepath.Join(dir, "strview_arg.fern")
@@ -2390,9 +2383,8 @@ function main(): i32 {
 			// accordingly: wrapped as plain stdout, this component carries a core
 			// import no instantiation argument satisfies and will not load.
 			{"map", "import \"core/map\";\nfunction main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert(\"a\", 1); if (!m.has(\"a\")) { return 1; } print(\"map ok\"); return 0; }\n", "map ok\n", true},
-			// A program only the semantic path produces (the AST lowering
-			// refuses a value block over an Option of an array): the no-I/O
-			// framing takes the substituted bodies like every other framing.
+			// A value block over an Option of an array: the no-I/O framing
+			// takes the substituted bodies like every other framing.
 			{"typed-only", "function picked(k: i32): i32 { let rows: i32[] = [k, k]; let some: i32[] = (match (Some(rows)) { Some(r) => r, None => [] }); return some.len(); }\nfunction main(): i32 { return picked(4) - 2; }\n", "", false},
 			// A std/array combinator over a wide element under the method
 			// spelling (#9838): the erased `__arrm_map__i64` clone is a

@@ -8,13 +8,9 @@ import (
 // An enum variant carrying a FUNCTION-typed payload — the shape std/task's
 // Step/Future need — must round-trip on the self-host IR path: construct the
 // variant with a function value in payload position, store it, `match`-bind the
-// payload back out, and call it indirectly. docs/SELF-HOST-FN-PAYLOAD-VARIANT-GAP.md
-// (#4364) documented this failing on the older SSA/AST path (a variant
-// constructor mis-emitted as `call __fn_<Variant>`). It now composes on the IR
-// path — the closure-conv work (#4354 + the CLOSURE-CONV slices) lowers a
-// function value in payload position as an ordinary pointer-sized payload — so
-// this pins the construction → store → match-bind → indirect-call round-trip
-// across the shapes the issue names.
+// payload back out, and call it indirectly. A function value in payload
+// position is an ordinary pointer-sized payload; the cases cover the shapes
+// docs/SELF-HOST-FN-PAYLOAD-VARIANT-GAP.md (#4364) names.
 //
 // The shapes include the generic recursive `Future[T]`, whose payload fn
 // returns the generic enum itself.

@@ -9,17 +9,11 @@ import (
 	"testing"
 )
 
-// strArrFieldTransientReadCases pin the READ half of the strarrfld admission,
-// the half that gates the DEEP element walk (__fern_str_arr_free at scope exit,
-// $__fern_arr_dec_ptr on wasm).
+// strArrFieldTransientReadCases pin the READ half of releasing a `string[]`
+// field's elements with its struct (__fern_str_arr_free at scope exit).
 //
-// The scan tolerated exactly one borrow of a `string[]` field: `x.f.len()`, the
-// whole-array length. An ELEMENT read marked the field unsafe however briefly
-// the element lived, so `f.deps[0].len()` cost the type its admission and every
-// element box leaked. That is a line fnsigs already knows how to draw the other
-// way round: strarr_expr_unsafe, the same question asked about a string[] LOCAL,
-// separates a transient element receiver from a lasting alias and admits the
-// former. The field scan now draws it too.
+// A TRANSIENT element read such as `f.deps[0].len()` must not stop the field's
+// element boxes being released.
 //
 // Transient means the element is borrowed for one call and never bound: `len`,
 // the predicates (`starts_with` / `ends_with` / `contains` / `index_of`) and the
@@ -37,9 +31,9 @@ var strArrFieldTransientReadCases = []struct {
 	want int
 }{
 	// The shape the conformance case is built from: the caller reads
-	// `f.deps[0].len()`, which is transient, so the field keeps its admission
-	// and __struct_drop_Node's deep arm frees the three element boxes. 98
-	// (leaked, ~200 B/round of element boxes) before; flat after.
+	// `f.deps[0].len()`, which is transient, so when `f` dies Node's drop still
+	// frees the three element boxes with the buffer. Flat across rounds; 98 is
+	// leaked element boxes.
 	{"strarr-field-transient-elem-read-flat", `struct Node { name: string, deps: string[], mtime: i32 }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function mk(pre: string): string[] { let o: string[] = []; let i: i32 = 0; while (i < 3) { o = o.append(w(pre)); i = i + 1; } return o; }
@@ -57,10 +51,10 @@ function main(): i32 {
     return 0;
 }`, 0},
 	// A VIEW receiver is not transient: `.trim()` returns a zero-copy `str` over
-	// the element's buffer, and `v` outlives the call. The field must stay
-	// refused — the emitted __struct_drop_View has no element walk — or `v`
-	// reads freed bytes. Value-exact against a freshly computed reference so a
-	// recycled buffer of the same length cannot pass.
+	// the element's buffer, and `v` outlives the call. Releasing the struct must
+	// not free the element under `v`, or `v` reads freed bytes. Value-exact
+	// against a freshly computed reference so a recycled buffer of the same
+	// length cannot pass.
 	{"strarr-field-view-elem-read-refused", `struct View { title: string, lines: string[] }
 function w(pre: string): string { return pre + "  a-wide-element-past-the-inline-threshold  "; }
 function mk(pre: string): string[] { let o: string[] = []; let i: i32 = 0; while (i < 3) { o = o.append(w(pre)); i = i + 1; } return o; }

@@ -15,10 +15,8 @@ import (
 // bare append, the append into a struct field, and a call-born element
 // appended into a struct field the way std/serve grows a connection's buffer.
 //
-// Only the two fatal detectors are asserted. The per-module lowering releases
-// an array of arrays deeply only where it proves the local fresh and
-// non-escaping (slot_is_reclaimable_arrarr) and leaks the rest by design, so
-// the leak census may name the elements the container now rightly holds.
+// Only the two fatal detectors (use-after-free, over-release) are asserted,
+// not the leak census.
 func TestSelfHostAppendedArrayLocalIsRetainedX86_64(t *testing.T) {
 	t.Setenv("FERN_SANITIZE", "1")
 	gcc, runner, driverBin := buildModloadDriverX86(t)

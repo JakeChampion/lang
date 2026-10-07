@@ -10,12 +10,10 @@ import (
 
 // The checked operators `+?` / `-?` / `*?` (#5542) yield `Some(result)` when
 // the exact result fits the operand type and `None` on overflow.
-// irtables.chk_binary_ops emits the clamp condition sat_binary_ops
-// tests (the same per-backend-proven shape), then constructs `None` /
-// `Some(wrapped)` as a void-`if` + store-to-temp over op_opt_none /
-// op_opt_make — the Option occupies a default (un-i64-marked) pointer slot, so
-// every self-host IR backend lowers it unchanged. Each program matches the
-// result and returns a distinctive exit code, mirroring the native oracle in
+// irtables.chk_binary_ops tests the overflow condition, then builds `None` /
+// `Some(wrapped)` into an Option held in an ordinary pointer slot, so every
+// IR backend lowers it unchanged. Each program matches the result and returns
+// a distinctive exit code, mirroring the cases in
 // `internal/testing/e2e/checked_arith_test.go`.
 var checkedIRCases = []struct {
 	name     string

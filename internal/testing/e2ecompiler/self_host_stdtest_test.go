@@ -419,11 +419,10 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"sort_by_and_ci", langSrcAbs(t, "tests/stdlib/sort_by_and_ci_test.fern"), ""},
 		{"option_combinators", langSrcAbs(t, "tests/stdlib/option_combinators_test.fern"), ""},
 		{"result_combinators", langSrcAbs(t, "tests/stdlib/result_combinators_test.fern"), ""},
-		// rc_struct_drop exercises __struct_drop_<T> deep-drop of a reclaimable
-		// struct's rc-array fields (scalar-array k_scalar + struct-array k_box
-		// paths) over many alloc→drop cycles. Differential vs interp catches a
-		// broken drop on x86-64 AND arm64 — the latter now a real deep-drop
-		// (Perceus self-host slice 1a) rather than a leak-safe pass-through.
+		// rc_struct_drop releases a struct's rc-array fields at scope exit (a
+		// scalar-array field and a struct-array field) over many alloc→drop
+		// cycles; the differential against the interpreter catches a broken
+		// drop as a crash or a wrong sum.
 		{"rc_struct_drop", langSrcAbs(t, "tests/stdlib/rc_struct_drop_test.fern"), ""},
 		// map_verbs flips to IR now that generic map verbs monomorphise: the
 		// methods (merge/extend/get_or_insert/entries/…) via the __mapm_ fold
@@ -432,10 +431,10 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		// `(K,V)[]` tuple arg + mono_infer typing the tuple literal. The last
 		// non-async AST-router (#3457).
 		{"map_verbs", langSrcAbs(t, "tests/stdlib/map_verbs_test.fern"), ""},
-		// crypto + u32 lower fully on the IR path now that remove_dir_all (the
-		// TestRunner.finish cleanup call) lowers there. A bail refuses every
-		// std/test module (and the AST emitter it used to fall to did not
-		// truncate u32 arithmetic to 32 bits, miscompiling SHA-256 — #3457).
+		// crypto + u32 lower fully on the IR path, including remove_dir_all
+		// (the TestRunner.finish cleanup call every std/test module reaches).
+		// u32 arithmetic must truncate to 32 bits, or SHA-256 miscompiles
+		// (#3457).
 		{"u32_arith", langSrcAbs(t, "tests/stdlib/u32_arith_test.fern"), ""},
 		{"crypto", langSrcAbs(t, "tests/stdlib/crypto_test.fern"), ""},
 		{"digest_md5", langSrcAbs(t, "tests/stdlib/digest_md5_test.fern"), ""},
@@ -446,6 +445,8 @@ func selfHostStdTestCases(t *testing.T, failing string) []selfHostStdTestCase {
 		{"digest_sha512", langSrcAbs(t, "tests/stdlib/digest_sha512_test.fern"), ""},
 		{"digest_blake2b", langSrcAbs(t, "tests/stdlib/digest_blake2b_test.fern"), ""},
 		{"digest_sm3", langSrcAbs(t, "tests/stdlib/digest_sm3_test.fern"), ""},
+		{"chacha20poly1305", langSrcAbs(t, "tests/stdlib/chacha20poly1305_test.fern"), ""},
+		{"x25519", langSrcAbs(t, "tests/stdlib/x25519_test.fern"), ""},
 		{"hash_checksums", langSrcAbs(t, "tests/stdlib/hash_checksums_test.fern"), ""},
 		{"synthetic_fail", failing, ""},
 	}

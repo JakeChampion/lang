@@ -8,14 +8,11 @@ import (
 )
 
 // operatorOverloadIRCase is a self-host composite-operator-overload program
-// whose exit code is pinned against the native interpreter's oracle. Each
+// whose exit code is pinned against the interpreter's oracle. Each
 // exercises the #2706 lowering: a binary `a <op> b` (or unary `-a`) on a
 // struct rewrites to the conventionally-named method (`+`→add, `-`→sub, `*`→mul,
-// `/`→div, unary `-`→neg) and lowers through the existing struct-returning
-// method-call path. Before this, the self-host *admitted* `a + b` on a struct
-// and emitted scalar arithmetic on the struct pointers — a silent miscompile
-// (the field read returned garbage). The native compiler desugars these in its
-// checker; this is the matching self-host IR-path support. Exit codes <= 120.
+// `/`→div, unary `-`→neg) and lowers through the struct-returning method-call
+// path, never as scalar arithmetic on the struct pointers. Exit codes <= 120.
 type operatorOverloadIRCase struct {
 	name     string
 	src      string

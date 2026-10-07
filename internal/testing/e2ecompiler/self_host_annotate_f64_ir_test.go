@@ -7,20 +7,16 @@ import (
 	"testing"
 )
 
-// annotateF64Cases exercise the typed-IR annotation pass (#5531,
-// docs/TYPED-IR-REWRITE.md). Each program's float-ness flows through a CALL
-// whose result type the lowering must recognise. Before the annotate
-// pass irlower re-derived that structurally (is_f64_ret_fn / the f64-builtin
-// tables); now checker.annotate_module stamps ExprCall.ty with the checker's
-// inferred result type and expr_is_f64 READS c.ty (asm_load_run.fern runs the
-// pass after the checker gate, before emit). Getting the float verdict wrong
-// mis-selects an integer op on the double's bits, so the exit codes below (an
-// `as i32` of the float result) are a direct oracle on the typed path.
+// annotateF64Cases exercise the checker's annotation pass (#5531,
+// docs/TYPED-IR-REWRITE.md): checker.annotate_module stamps ExprCall.ty with
+// the inferred result type, and each program's float-ness flows through such a
+// CALL. Getting the float verdict wrong mis-selects an integer op on the
+// double's bits, so the exit codes below (an `as i32` of the float result) are
+// a direct oracle on the typed path.
 //
-// These route through the IR emitter (self-contained, well under the 512-fn
-// budget); each case ASSERTS "ir" via -decide so a change that pushes them to
-// the AST path — where expr_is_f64 / c.ty are not consulted — fails loudly
-// instead of silently stopping exercising the annotation. Oracle: the interp.
+// Each case asserts `-decide` reports "ir" — the typed lowering accepts the
+// whole program — so a regression that refuses one fails loudly. Oracle: the
+// interp.
 var annotateF64Cases = []struct {
 	name string
 	src  string

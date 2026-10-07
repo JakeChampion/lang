@@ -102,12 +102,9 @@ func structKeyCases() []structKeyCase {
 			want: 68, allocs: 302, frees: 302,
 		},
 		{
-			// CONTROL — a BLOCK-SCOPED struct local, credited through
-			// slot_is_reclaimable_struct_scoped and the "FLDCHECKED:" witness.
-			// This is the row that catches the silent half of a key migration: the
-			// markers are derived from the same entries, and a reader left on the
-			// name key takes this to 400/100 (7200 bytes) with the exit code
-			// unchanged.
+			// CONTROL — a BLOCK-SCOPED struct local. A reader keyed on the name
+			// rather than the binding takes this to 400/100 (7200 bytes) with the
+			// exit code unchanged, so this row catches what the exit code cannot.
 			name: "block_scoped",
 			src: structKeyP + `function round(i: i32): i32 {
     let t: i32 = 0;
@@ -132,9 +129,7 @@ func structKeyCases() []structKeyCase {
 			want: 34, allocs: 300, frees: 300,
 		},
 		{
-			// CONTROL — a struct from a producer returning the literal DIRECTLY,
-			// the shape `return_fresh_struct_ret_fns` already admits. Credited
-			// before and after.
+			// CONTROL — a struct from a producer returning the literal DIRECTLY.
 			name: "producer_literal",
 			src: structKeyP + `function mk(i: i32): P { return P { xs: [i, i + 1], s: w("p") }; }
 function round(i: i32): i32 {
@@ -144,15 +139,9 @@ function round(i: i32): i32 {
 			want: 34, allocs: 300, frees: 300,
 		},
 		{
-			// #7343, now CREDITED. This row was "producer_local_still_refused"
-			// when the keying landed: it pinned that the re-key widened nothing,
-			// and it was that fix's fails-before case. #7343 then supplied the
-			// ExprIdent arm the return predicate lacked, so the shape balances at
-			// 400/400 and the name would be a lie if it stayed — the same rename
-			// the rc-log records for `string-concat-temps-still-leak`.
-			//
-			// It is still worth having, one direction over: it is now the row that
-			// fails if that credit is ever withdrawn.
+			// A local returned by a strict-fresh producer (#7343): the caller's
+			// binding owns the box and the shape balances. This row fails if that
+			// credit is ever withdrawn.
 			name: "producer_local_now_credited",
 			src: structKeyP + `function mk(i: i32): P { let p: P = P { xs: [i, i + 1], s: w("p") }; return p; }
 function round(i: i32): i32 {
@@ -181,7 +170,7 @@ function round(i: i32): i32 {
 			name: "builder_nodeep",
 			src: `struct B { ops: i32[] }
 function (b: B) emit(x: i32): B { return B { ops: b.ops.append(x) }; }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function round(i: i32): i32 {
     let s: B = B { ops: id([1]) };
     s = s.emit(i);

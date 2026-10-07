@@ -11,13 +11,9 @@ import (
 // TestSelfHostDynStructReclaimIRX86_64 pins the #4351 slice: a dyn-Trait local
 // holding a statically-known STRUCT payload (`let d: dyn T = C { ... }` — the
 // struct flows UNBOXED behind the coercion, so the local holds the concrete's
-// rc-headered box) is credited "DYN:<name>|<Concrete>" by reclaimable_names_of
-// and released by the exit sweep: __struct_drop_<Concrete> deep-drops the
-// concrete's rc fields (only when it has any), then the box is dec'd. Gates
-// mirror the enum struct-payload path: fresh leak-safe struct LITERAL init,
-// single-bind, never reassigned, non-escaping. Escaping/reassigned dyn locals
-// and primitive/string dyn payloads (a separate HEADERLESS box cell) keep
-// today's sound leak.
+// rc-headered box) is released at scope exit: the concrete's rc fields are
+// dropped (only when it has any), then the box. An escaping dyn local must
+// stay valid for its caller.
 func TestSelfHostDynStructReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -72,8 +68,8 @@ function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { 
 function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"dyn-scalar-struct-reclaim-flat", 0)
 
-	// ESCAPING dyn excluded: `return d` — body_unsafe_for rejects the
-	// candidate, the caller's use stays valid, detector 0.
+	// ESCAPING dyn: `return d` hands the box to the caller, whose use stays
+	// valid, detector 0.
 	run(t, `trait Show { function show(self: Self): i32; }
 struct Circle { r: i32, tags: i32[] }
 impl Show for Circle { function show(self: Self): i32 { return self.r + self.tags[0]; } }

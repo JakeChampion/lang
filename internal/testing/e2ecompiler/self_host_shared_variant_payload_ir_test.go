@@ -9,21 +9,20 @@ import (
 
 // Two enums may declare the same variant name at DIFFERENT payload types. The
 // parser desugars every variant into a StructDecl keyed by the bare name, so
-// `enum A { W(i32) }` + `enum B { W(f64) }` leaves two decls called `W`, and the
-// by-name decl accessors (decl_field_type, struct_field_width, decl_field_count,
-// decl_is_leaksafe) all answer for whichever was declared FIRST.
+// `enum A { W(i32) }` + `enum B { W(f64) }` leaves two decls called `W`, and a
+// lookup by name alone answers for whichever was declared FIRST.
 //
-// A match arm on the SECOND enum therefore read its payload at the first enum's
-// type and width. Where the two widths agree that is only a wrong dispatch tag;
-// where they don't it is a silent MISCOMPILE — an f64 payload read as i32 gives
-// the low half of the double, an i64 payload truncates, a string payload is
-// typed i32 so `.len()` reads garbage. Measured against the interpreter oracle
-// before the fix: f64 7→2, string 5→0, i64 9→2.
+// A match arm on the SECOND enum read that way gets its payload at the first
+// enum's type and width. Where the two widths agree that is only a wrong
+// dispatch tag; where they don't it is a silent MISCOMPILE — an f64 payload read
+// as i32 gives the low half of the double, an i64 payload truncates, a string
+// payload is typed i32 so `.len()` reads garbage (f64 7→2, string 5→0, i64 9→2
+// against the interpreter).
 //
 // An arm is resolved against the SCRUTINEE, so the arm's enum is known: the
-// pattern's `Enum.` qualifier when it has one, else the scrutinee's type. The
-// lowering now reads every per-decl property through the decl that names
-// (variant_arm_decl_index), not through the first decl of that name.
+// pattern's `Enum.` qualifier when it has one, else the scrutinee's type. Every
+// per-decl property must be read through the decl that names, not through the
+// first decl of that name.
 //
 // The sibling file self_host_shared_variant_name_ir_test.go covers the
 // same-name/same-shape half, which bailed the module rather than miscompiling.

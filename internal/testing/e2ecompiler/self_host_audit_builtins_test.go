@@ -9,11 +9,9 @@ import (
 
 // auditBuiltinCases isolate one foundational built-in language feature
 // each and compile+run them through the SELF-HOSTED compiler, asserting
-// the process exit code. This is the self-host arm of the feature audit
-// (docs/FEATURE-AUDIT.md §A) — the native arm lives in the
-// `audit_core_builtins` fixture (all four native backends). A feature
-// that lowers cleanly here proves the self-hosted compiler covers it;
-// a failure pinpoints exactly which built-in the IR subset is missing.
+// the process exit code — the self-host arm of the feature audit
+// (docs/FEATURE-AUDIT.md §A). A failure pinpoints exactly which built-in
+// the IR subset is missing.
 //
 // Exit codes are the observable: each `main` returns a value in 0..255.
 var auditBuiltinCases = []struct {
@@ -42,27 +40,13 @@ var auditBuiltinCases = []struct {
 	// Bare nested block `{ ... }` — fixed by #2821 (#2831 added StmtBlock
 	// to the self-host parser). Re-enabled here as a regression guard.
 	{"nested-block", `function main(): i32 { let b: i32 = 1; { let inner: i32 = 40; b = b + inner; } return b; }`, 41},
-	// C-style `for (let i = …; …; …)` — fixed by #2820 (#2841: parser
-	// desugar to a while-loop with a first-iteration flag so `continue`
-	// re-runs the step). Runs on this AST path too (the desugar is at parse
-	// time). Re-enabled as a regression guard.
+	// C-style `for (let i = …; …; …)` — a parse-time desugar to a while-loop
+	// with a first-iteration flag, so `continue` re-runs the step (#2841).
 	{"c-style-for", `function main(): i32 { let s: i32 = 0; for (let i: i32 = 1; i <= 10; i = i + 1) { s = s + i; } return s; }`, 55},
-	// `for b in <string>` — iterates the BYTES. Was held out while this
-	// driver routed a string foreach through the AST path's array layout
-	// (len@0, elem*8+8) and answered 2; the lowering desugars it to a
-	// byte-index counted loop (#2822 / #2834), and asm_run is IR-or-error
-	// now, so 'A'+'B' = 131 is what it computes.
+	// `for b in <string>` — iterates the BYTES: the lowering desugars it to a
+	// byte-index counted loop (#2822 / #2834), so 'A'+'B' = 131.
 	{"for-in-string", `function main(): i32 { let s: i32 = 0; for b in "AB" { s = s + (b as i32); } return s; }`, 131},
 }
-
-// Known self-host gaps surfaced by this audit (2026-06-12) — held out of
-// the executed table because the self-hosted compiler currently
-// MISCOMPILES them (the native compiler handles both on every backend).
-// Each is a goal-1 self-host widening, tracked by an issue. Re-add the
-// case here once its issue is fixed.
-//
-//   (none right now — the string-foreach gap closed with #2822 / #2834 and
-//   its case is back in the executed table above.)
 
 // TestSelfHostAuditBuiltinsX86_64 runs each isolated built-in through the
 // self-hosted x86-64 driver and asserts the exit code.

@@ -5,30 +5,21 @@ import (
 	"testing"
 )
 
-// The rc-tuple credit learns the string-fresh registry at a CALL element
-// (#7374): `let v: (i32, string) = (1, w("p"))` with w a
-// str_fresh_ret_fns_of-registered producer now earns the "TUPRC:"/"TUPRCS:"
-// credits (tuple_str_elem_fresh_reg at both gates — tuple_lit_has_rc_child
-// and tuple_arg_payload_retained), so the scope-exit sweep frees the string
-// box AND the tuple box where before NOTHING was freed (600/0, 72 B/round
-// unbounded). `.to_string()` was the one call form the syntactic predicate
-// accepted, which is what proved the whole downstream path already worked.
+// A tuple whose string element is a CALL to a fresh-string producer (#7374):
+// `let v: (i32, string) = (1, w("p"))` frees the string box AND the tuple box
+// at scope exit. Left unreleased, that was 600/0, 72 B/round unbounded.
 //
 // An aliased producer (`id(s) { return s; }` and every param/field return) must
-// never be released under its alias — the row below asserts that. The sole-owner
-// flavour
-// (tuple_arg_payload_fresh: an Option's tuple payload, an array-of-tuples
-// element) deliberately keeps the syntactic admission; #7374 records the
-// scope split.
+// never be released under its alias — the row below asserts that.
 //
-// Exits confirmed against native x86-64. Each case re-runs under
-// FERN_SANITIZE=1 (identical exit, no over-release / use-after-free).
+// Each case re-runs under FERN_SANITIZE=1 (identical exit, no over-release /
+// use-after-free).
 
 func tupleStrCallElemCases() []tupleAliasParamCase {
 	return []tupleAliasParamCase{
 		{
-			// The issue's repro verbatim: 200 rounds, was allocs=600 frees=0
-			// live=14400 (native 200/200/0), now balanced.
+			// The issue's repro verbatim: 200 rounds, balanced (allocs=600
+			// frees=0 live=14400 when the tuple was not released).
 			name: "inline_call_string_elem",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 { let v: (i32, string) = (1, w("p")); return v.1.len(); }
@@ -63,11 +54,9 @@ function main(): i32 {
 			want: 17,
 		},
 		{
-			// The rebind flavour: every assignment rebuilds the same shape
-			// (all_assigns_fresh_rc_tuple through the widened predicates), so
-			// the assign-site deep drop releases each superseded chain and the
-			// sweep takes the last — exercising the emit-side
-			// tuple_str_elem_fresh_reg arm in emit_tuple_child_drops too.
+			// The rebind flavour: every assignment rebuilds the same shape, so
+			// each assignment releases the tuple and string it supersedes and the
+			// scope exit releases the last.
 			name: "rebind_call_string_elem",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -89,7 +78,7 @@ function main(): i32 {
 			// aliases the live local `q`, so a release of the tuple under
 			// it would free q's box. The sanitize leg must stay silent.
 			name: "aliased_producer_refused",
-			src: `function id(s: string): string { return s; }
+			src: `@noinline function id(s: string): string { return s; }
 function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 { let q: string = w("q"); let v: (i32, string) = (1, id(q)); return v.1.len() + q.len(); }
 function main(): i32 {

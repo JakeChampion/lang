@@ -9,24 +9,14 @@ import (
 
 // optArrArrReclaimCases pin the #4365 `Option[<scalar-arr-of-arr>]` reclaim: a
 // `let o: Option[i32[][]] = Some([[i, i+1], ...])` consumed by a borrow-only match
-// leaked its payload (inner row buffers + outer buffer) + option box per iteration on the
-// self-host IR path (native bounds it). The new "OPTARRARR:" class is the arr-of-arr
-// sibling of "OPTSTRUCT:": it admits a fresh Some(<arr-of-arr literal>) / None consumed by
-// exactly one borrow-only match, and inline-frees the box — tag-check (Some) -> the payload
-// freed whole by the backend-complete __fern_arrarr_free (inner buffers + outer) -> option
-// box dec, at the loop-rebind and exit sweep. some_opt_type collapses the arr-of-arr payload
-// a level, so the slot check matches on the CREDIT (granted only on the authoritative
-// Option[<scalar-arr-of-arr>] annotation), not the opt_type shape.
+// releases its payload (inner row buffers + outer buffer) and the option box at
+// the loop rebind and at exit.
 //
-// SOUNDNESS: the Some-arm's payload use is checked by optarrarr_payload_escapes — a
-// doubly-indexed scalar read (g[i][j]), g.len() and g[i].len() are borrows (reclaim
-// proceeds); a BARE outer `g` or a BARE row `g[i]` extraction (store / return / pass /
-// alias / slice) escapes and the local is left leak-safe (never over-released).
-//
-// The escape-via-fn negative that the other reclaim classes test is omitted here: an
-// Option[i32[][]] function parameter / return is outside the IR subset (routes to the AST
-// fallback, where this class never applies), so it is not compiled-driver-testable — the
-// escape-store / escape-call negatives cover the over-release guard on the IR path.
+// SOUNDNESS: in the Some arm, a doubly-indexed scalar read (g[i][j]), g.len()
+// and g[i].len() are borrows (reclaim proceeds); a BARE outer `g` or a BARE row
+// `g[i]` extraction (store / return / pass / alias / slice) escapes and the
+// local is left leak-safe (never over-released). The escape-store / escape-call
+// negatives cover the over-release guard.
 var optArrArrReclaimCases = []struct {
 	name string
 	src  string

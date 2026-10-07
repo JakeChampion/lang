@@ -8,24 +8,17 @@ import (
 	"testing"
 )
 
-// #8267: a field lifted into a local and then handed to an `own` parameter was
-// freed twice.
+// #8267: a field lifted into a local and then handed to an `own` parameter must
+// not be freed twice.
 //
-// `let st = a.cfi` emits no retain — the local is an UNCOUNTED alias and the
-// base's box keeps the only claim. Passing it to a declared `own` parameter
-// gives the callee a claim that was never made: the callee releases it at exit
+// The callee's `own` parameter holds a claim on the box: it releases it at exit
 // (or, having found it unique, reuses the box in place and hands it back), and
-// a's own release takes the same box again. When the returned box IS that
-// field, the result is built on freed memory.
-//
-// a's release is either of two: the exit deep drop, or — when the base is
-// superseded first — the in-place reuse behind `a = Asm { ...a, cfi: … }`,
-// which decs the replaced field outright, before the call even runs.
-//
-// A field read passed DIRECTLY to an `own` position already takes a transfer
-// retain (emit_own_field_arg, #8186). The fix is that same pairing one binding
-// along, emitted at the BIND — at the argument it would be too late for the
-// supersede — so the two release paths have two claims between them.
+// a's own release takes the same box again — either the exit deep drop or, when
+// the base is superseded first, the in-place reuse behind
+// `a = Asm { ...a, cfi: … }`, which decs the replaced field before the call even
+// runs. So `let st = a.cfi` must take a claim of its own at the BIND, as a field
+// read passed DIRECTLY to an `own` position does (#8186); when the returned box
+// IS that field, getting this wrong builds the result on freed memory.
 //
 // Assertions are on the answer AND __rc_underflow_count(): this is a genuine
 // over-release, so the counter moves, unlike the #8198 family where the free is
@@ -64,9 +57,8 @@ var selfHostOwnParamLiftedFieldCases = []struct {
 
 	// Control: the lifted field is an ARRAY, not a nested struct. Its bind
 	// already takes a Perceus dup, so it owns its claim before the `own`
-	// position sees it and a second retain there would strand the box — which
-	// is exactly what the first gate did (it admitted every field_move_type
-	// kind, and this row went clean to leak).
+	// position sees it and a second retain there would strand the box. A gate
+	// that admits every field kind takes this row from clean to a leak.
 	{"array-field-lift-control", "struct Asm { bad: i32[], n: i32 }\n@noinline\nfunction directive(own s: i32[], v: i32): i32[] {\n    return s.append(v);\n}\n@noinline\nfunction step(own a: Asm, v: i32): Asm {\n    let st: i32[] = a.bad;\n    st = directive(st, v);\n    return Asm { bad: st, n: a.n };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { bad: [], n: 0 };\n    a = step(a, 1);\n    a = step(a, 2);\n    return a.bad.len() + __rc_underflow_count();\n}"},
 
 	// Control: an ENUM field, balanced by its own alias marking before the fix

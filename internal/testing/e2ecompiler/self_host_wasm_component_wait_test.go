@@ -110,6 +110,7 @@ function main(): i32 {
 		{"udp", e2eharness.UdpSocketProbe},
 		{"net_udp", e2eharness.NetUdpProbe},
 		{"tcp_bytes", tcpBytesProbe},
+		{"reactor_grow", reactorGrowProbe},
 	} {
 		t.Run(p.name, func(t *testing.T) {
 			comp := component(t, p.name, p.src())
@@ -164,6 +165,121 @@ function main(): i32 {
     tcp_close(a);
     tcp_close(c);
     tcp_close(ln);
+    print("ok");
+    return 0;
+}
+`
+}
+
+// reactorGrowProbe watches forty sockets for both readiness bits, past the
+// pollable list, slot table and ready buffer a new reactor holds room for, so
+// the first wait grows all three. Every socket is reported writable, a wait
+// after the growth allocates nothing, the bytes sent to each accepted side are
+// reported and read through the lent ready buffer, and the reactor frees what
+// it grew. wasmtime's poll returns once any pollable is ready, so a wait may
+// report part of what is ready; readiness is collected over waits. Prints
+// "ok" or the number of the first failing check.
+func reactorGrowProbe() string {
+	return `import "core/int";
+
+function fail(n: i32): i32 {
+    print(int.int_to_string(n));
+    return n;
+}
+
+function index_of(fds: i32[], fd: i32): i32 {
+    let i: i32 = 0;
+    while (i < fds.len()) {
+        if (fds[i] == fd) { return i; }
+        i = i + 1;
+    }
+    return 0 - 1;
+}
+
+// Waits until every descriptor in fds has been reported with bit, or 200
+// waits pass; whether all were.
+function all_report(r: i32, events: i32[], fds: i32[], bit: i32): boolean {
+    let seen: i32[] = [];
+    while (seen.len() < fds.len()) {
+        seen = seen.append(0);
+    }
+    let left: i32 = fds.len();
+    let waits: i32 = 0;
+    while (left > 0 && waits < 200) {
+        let n: i32 = reactor_wait(r, events, 2000);
+        let j: i32 = 0;
+        while (j < n) {
+            let at: i32 = index_of(fds, events[j * 2]);
+            if (at >= 0 && seen[at] == 0 && (events[j * 2 + 1] & bit) == bit) {
+                seen = seen.with(at, 1);
+                left = left - 1;
+            }
+            j = j + 1;
+        }
+        waits = waits + 1;
+    }
+    return left == 0;
+}
+
+function main(): i32 {
+    let any: u8[] = [0u8, 0u8, 0u8, 0u8];
+    let ln: i32 = tcp_listen_with(any, 0, 32, false);
+    if (ln < 0) { return fail(1); }
+    let port: i32 = tcp_local_port(ln);
+    let r: i32 = reactor_new();
+    if (r < 0) { return fail(2); }
+    let cs: i32[] = [];
+    let accs: i32[] = [];
+    let all: i32[] = [];
+    let i: i32 = 0;
+    while (i < 20) {
+        let c: i32 = tcp_connect(16777343, port);
+        if (c < 0) { return fail(3); }
+        let a: i32 = tcp_accept(ln);
+        let tries: i32 = 0;
+        while (a < 0 && tries < 200) {
+            sleep_ms(5 as i64);
+            a = tcp_accept(ln);
+            tries = tries + 1;
+        }
+        if (a < 0) { return fail(4); }
+        if (reactor_ctl(r, 1, c, 3) != 0 || reactor_ctl(r, 1, a, 3) != 0) { return fail(5); }
+        cs = cs.append(c);
+        accs = accs.append(a);
+        all = all.append(c).append(a);
+        i = i + 1;
+    }
+    let events: i32[] = [];
+    while (events.len() < 128) {
+        events = events.append(0);
+    }
+    if (!all_report(r, events, all, 2)) { return fail(6); }
+    let before: i64 = __heap_alloc_count();
+    let n: i32 = reactor_wait(r, events, 2000);
+    let after: i64 = __heap_alloc_count();
+    if (n < 1) { return fail(7); }
+    if (after != before) { return fail(8); }
+    i = 0;
+    while (i < 20) {
+        if (tcp_send(cs[i], "x") != 1) { return fail(9); }
+        i = i + 1;
+    }
+    if (!all_report(r, events, accs, 1)) { return fail(10); }
+    let buf: u8[] = [0u8, 0u8, 0u8, 0u8];
+    i = 0;
+    while (i < 20) {
+        if (tcp_recv_into(accs[i], buf) != 1 || buf[0] != 120u8) { return fail(11); }
+        i = i + 1;
+    }
+    i = 0;
+    while (i < 20) {
+        if (reactor_ctl(r, 2, cs[i], 0) != 0 || reactor_ctl(r, 2, accs[i], 0) != 0) { return fail(12); }
+        tcp_close(cs[i]);
+        tcp_close(accs[i]);
+        i = i + 1;
+    }
+    tcp_close(ln);
+    if (reactor_ctl(r, 3, 0, 0) != 0) { return fail(13); }
     print("ok");
     return 0;
 }

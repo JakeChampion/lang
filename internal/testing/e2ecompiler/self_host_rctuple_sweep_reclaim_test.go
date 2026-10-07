@@ -8,24 +8,16 @@ import (
 // --- Sweepable rc-tuple reclaim (#6127) -------------------------------------
 //
 // A fresh non-escaping tuple local carrying an rc element — an array literal, a
-// string, a nested tuple, a reclaim-struct — is credited "TUPRC:". That credit was
-// consumed in only one place that runs: emit_tuple_deep_reinit_store on the
-// StmtVar path. Nothing freed the local's FINAL
-// value, so a SINGLE BIND with no reassignment anywhere leaked both the rc child
-// and the tuple box, every round:
+// string, a nested tuple, a reclaim-struct — has its FINAL value released at
+// scope exit, not only the values a reassignment replaces. Missed, a SINGLE BIND
+// with no reassignment anywhere leaked both the rc child and the tuple box,
+// every round:
 //
 //	(i32, i32[]) single bind    allocs=200 frees=0    8000
 //	(i32, string) single bind   allocs=200 frees=0    6400
 //
-// against 0 on native for both. #6127's comment 6 read this as a runtime-guard
-// problem because two releases are visibly emitted in round() — but those are the
-// declaration-site cow guard (a no-op on a first bind) and a sweep loop that only
-// ever covered the ALL-SCALAR class.
-//
-// The new "TUPRCS:" credit adds the missing sweep. It is deliberately stricter
-// than "TUPRC:" rather than a reuse of it, because the sweep has no init literal
-// at exit and must free by TYPE — see the hazard test below for why that
-// distinction is essential.
+// The exit release has no init literal to consult and must free by TYPE — see
+// the hazard test below for why that makes it stricter than the rebind.
 
 // TestSelfHostRcTupleSweepReclaimX86_64 — the final value of a sweepable rc-tuple
 // local is deep-freed: rc children first, then the box.
@@ -67,16 +59,15 @@ func TestSelfHostRcTupleSweepReclaimX86_64(t *testing.T) {
 		return allocs, frees, live
 	}
 
-	// Every wantExit below was confirmed against BOTH oracles (bin/fern -interp and
-	// the native x86-64 backend), never read off the self-host run under test.
+	// Every wantExit below was confirmed against bin/fern -interp, never read off
+	// the self-host run under test.
 	for _, tc := range []struct {
 		name string
 		src  string
 		want int
 	}{
 		{
-			// The array-element shape — the one tuple_lit_rc_reclaimable's own header
-			// documents, and it leaked everything on a single bind.
+			// The array-element shape on a single bind.
 			name: "array_elem_single_bind",
 			src: `function round(i: i32): i32 {
     let t: (i32, i32[]) = (i, [i, i + 1]);
@@ -137,20 +128,17 @@ function main(): i32 {
 	}
 }
 
-// TestSelfHostRcTupleSweepHazardsX86_64 — the shapes "TUPRCS:" must still REFUSE.
+// TestSelfHostRcTupleSweepHazardsX86_64 — the shapes the exit release must
+// still REFUSE.
 //
-// The first case is the reason this is a separate, stricter credit rather than a
-// reuse of "TUPRC:", and it is the specific use-after-free #6148 was reverted for.
-// The scope-exit sweep has no init literal to consult, so it frees by TYPE
-// (emit_tuple_type_child_drops), which dec's every rc-typed position BLIND.
-// tuple_lit_rc_reclaimable — the "TUPRC:" gate — admits a bare-ident element, so
-// `(xs, [i, i+2])` is "TUPRC:" while position 0 holds a live local's buffer.
-// Sweeping that by type frees `xs` underneath its owner. tuple_arg_payload_fresh
-// is what excludes it, the same gate OPTTUP already applies to the same helper.
+// The first case is the use-after-free #6148 was reverted for. The exit release
+// frees by TYPE, dec'ing every rc-typed position BLIND, and `(xs, [i, i+2])`
+// holds a live local's buffer at position 0: sweeping that by type frees `xs`
+// underneath its owner.
 //
 // A wrongly-granted credit produces a wrong answer or a crash, so the exit code
 // comes first; the census must balance as well. Each `want` came from the
-// interpreter and the native backend agreeing.
+// interpreter.
 func TestSelfHostRcTupleSweepHazardsX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -182,7 +170,7 @@ function main(): i32 {
 		},
 		{
 			// The rc element is extracted out of the tuple into a local that outlives
-			// the read. rctuple_payload_escapes refuses the whole name.
+			// the read, so the buffer `keep` names must stay alive.
 			name: "rc_elem_extracted_to_local",
 			src: `function round(i: i32): i32 {
     let t: (i32, i32[]) = (i, [i, i + 1]);

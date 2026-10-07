@@ -14,15 +14,13 @@ import (
 // one read off a local whose own type was inferred.
 //
 // For the composite key, the generic-struct monomorphiser (parser.fern)
-// rewrites a nested struct literal's inner instantiation first, so `infer_lit_key` already
-// sees the mangled inner type (`Box__i32`) and keys the outer clone
-// `Box__Box__i32`; the bug was phase-2 (and the method clone) splitting that
-// single-param key on `__`, fracturing the mangled nested arg back into `["Box",
-// "i32"]` and substituting the field type to a dangling bare `Box`. The fix uses
-// the whole key as the one concrete arg for a single-type-param struct (and its
-// methods); multi-param keys still split unambiguously. The native compiler
-// monomorphises these, so this closes a goal-1 IR-subset gap. Each exit code is
-// pinned against the native interpreter oracle and kept <= 120.
+// rewrites a nested struct literal's inner instantiation first, so
+// `infer_lit_key` sees the mangled inner type (`Box__i32`) and keys the outer
+// clone `Box__Box__i32`. A single-type-param struct (and its methods) takes the
+// whole key as its one concrete arg — splitting it on `__` would fracture the
+// mangled nested arg back into `["Box", "i32"]`; multi-param keys still split
+// unambiguously. Each exit code is pinned against the interpreter oracle and
+// kept <= 120.
 type nestedGenericStructIRCase struct {
 	name     string
 	src      string

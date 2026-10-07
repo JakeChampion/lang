@@ -4,14 +4,12 @@ import "testing"
 
 // retArrEnumIRCases pin the move-on-return of an ARRAY-PAYLOAD ENUM built from a
 // LOCAL array on the self-host IR path (#3720). A function `return Many(a)` over a
-// local `let a: Tok[] = [...]` moves `a`'s buffer into the (leaking) enum box, but
-// the lowerer's exit dec-sweep freed `a` anyway — a use-after-free that surfaced
-// as a SIGSEGV only once the freed buffer was recycled by a later allocation (e.g.
-// a second `append` that grew the holding array). The fix excludes every array
-// local the returned value moves out — including one nested under a returned enum
-// or struct-enum field (returned_moved_arr_slots) — from the sweep, so the buffer
-// leaks WITH the box per the IR leak-mode invariant. Each case is value-pinned
-// against the native interpreter oracle (interp == native).
+// local `let a: Tok[] = [...]` moves `a`'s buffer into the enum box, so the exit
+// sweep must not free `a` — including one nested under a returned enum or
+// struct-enum field. A wrong free is a use-after-free that surfaces as a SIGSEGV
+// only once the freed buffer is recycled by a later allocation (e.g. a second
+// `append` that grows the holding array). Each case is value-pinned against the
+// interpreter.
 var retArrEnumIRCases = []struct {
 	name string
 	src  string

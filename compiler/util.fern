@@ -136,6 +136,18 @@ pub function hash_bucket(s: string, n: i32): i32 {
   return (__str_hash(s, 0) & 1073741823) % n;
 }
 
+// minus_ones is a table of n entries, each -1: the empty state of a table
+// that maps an id to an index or a position.
+pub function minus_ones(n: i32): i32[] {
+  let out: i32[] = __alloc_i32(n);
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.with(i, 0 - 1);
+    i = i + 1;
+  }
+  return out;
+}
+
 // NameIndex is a list of names with a bucket index over it: head[b] is the
 // first index in bucket b (-1 when empty) and next[i] chains to the next index
 // in the same bucket, ascending, so a walk meets a repeated name's first entry

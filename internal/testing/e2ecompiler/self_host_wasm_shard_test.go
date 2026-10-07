@@ -15,10 +15,9 @@ import (
 // single module emitted as TWO [lo,hi) windows links into a module that runs
 // identically to the same module emitted whole.
 //
-// This is the mechanism the whole compiler needed for the AST lowering (894 funcs), which
-// exhausted the bump arena emitted in one process. The windows here are tiny and
-// artificial; the point is only that the split-then-link path is correct, since
-// scale is just more windows.
+// Sharding lets a module too large for one process be emitted in windows. The
+// windows here are tiny and artificial; the point is only that the
+// split-then-link path is correct, since scale is just more windows.
 //
 // The plan file drives -link: the orchestrator that decided the split tells the
 // linker exactly which (idx, lo, hi) units to assemble — the wasm analogue of an

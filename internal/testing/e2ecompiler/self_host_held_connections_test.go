@@ -22,9 +22,6 @@ func TestSelfHostHeldConnectionsHeapBoundX86_64(t *testing.T) {
 		t.Skip("requires the Linux x86-64 native target")
 	}
 	_, runner := x86_64Tooling(t)
-	if len(runner) != 0 {
-		t.Skip("runs host-native only: the held connections are real sockets")
-	}
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "fern.fern")
 	host := "x86-64-linux"
@@ -44,7 +41,7 @@ func TestSelfHostHeldConnectionsHeapBoundX86_64(t *testing.T) {
 		served bool
 	}{{"accepted", false}, {"kept", true}} {
 		t.Run(shape.name, func(t *testing.T) {
-			addr := startHeldConnectionsServer(t, driver, stdlib, e2eharness.HeldConnectionsServerSource)
+			addr := startHeldConnectionsServer(t, runner, driver, stdlib, e2eharness.HeldConnectionsServerSource)
 			per, first, second := e2eharness.MeasureHeldConnections(t, addr, shape.served)
 			t.Logf("%s connections: first batch of %d grew the heap by %d bytes, second by %d (%d per connection)",
 				shape.name, e2eharness.HeldConnectionsBatch, first, second, per)
@@ -61,7 +58,7 @@ func TestSelfHostHeldConnectionsHeapBoundX86_64(t *testing.T) {
 	t.Run("suspended", func(t *testing.T) {
 		up := e2eharness.StartFetchUpstream(t)
 		e2eharness.SetFetchProxy(t, up)
-		addr := startHeldConnectionsServer(t, driver, stdlib, e2eharness.HeldSuspendedServerSource)
+		addr := startHeldConnectionsServer(t, runner, driver, stdlib, e2eharness.HeldSuspendedServerSource)
 		per, first, second := e2eharness.MeasureHeldSuspended(t, addr, up)
 		t.Logf("suspended handlers: first batch of %d grew the heap by %d bytes, second by %d (%d per handler)",
 			e2eharness.HeldConnectionsBatch, first, second, per)
@@ -74,7 +71,7 @@ func TestSelfHostHeldConnectionsHeapBoundX86_64(t *testing.T) {
 
 // startHeldConnectionsServer compiles the server source with the
 // self-host driver, starts it, and answers its address.
-func startHeldConnectionsServer(t *testing.T, driver, stdlib string, source func() string) string {
+func startHeldConnectionsServer(t *testing.T, runner []string, driver, stdlib string, source func() string) string {
 	t.Helper()
 	dir := t.TempDir()
 	src := filepath.Join(dir, "main.fern")
@@ -90,6 +87,6 @@ func startHeldConnectionsServer(t *testing.T, driver, stdlib string, source func
 	}
 	e2eharness.RequireCompleteSemanticLowering(t, report)
 
-	addr, _ := e2eharness.StartInheritedServer(t, exec.Command(bin))
+	addr, _ := e2eharness.StartInheritedServer(t, runX86_64Bin(runner, bin))
 	return addr
 }

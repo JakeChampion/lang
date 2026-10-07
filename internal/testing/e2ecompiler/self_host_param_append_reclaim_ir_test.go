@@ -5,40 +5,27 @@ import "testing"
 // paramAppendReclaimCases pin the borrow boundary of the self-append reclaim
 // (#5717 / #5713). `a = a.append(v)` on a sole-owner target grows the buffer
 // and, on a grow-realloc, reclaims the pre-grow block (`arr_push_owned`)
-// instead of leaking it. The sole-owner test, `is_aliased_name`, only sees
-// aliases created INSIDE the function, so it also fired when the target was a
-// borrowed PARAM — whose buffer the CALLER owns and still references. The fix
-// adds the explicit `slot < n_params` borrow boundary.
+// instead of leaking it. A borrowed PARAM is never a sole owner: the CALLER
+// owns its buffer and still references it, however few aliases the callee
+// itself creates.
 //
-// #5717 landed the fix WITHOUT a regression test, on the finding that the
-// symptom could not be reproduced synthetically ("several shapes modelling the
-// aliasing exactly still exit 0 unfixed — the corruption needs the real
-// allocation order"), leaving the whole-checker corpus
-// (`TestSelfHostCheckerCodes*` / `…Differential*`) as the only pin. These cases
-// show it IS synthetically reproducible, and name the missing ingredient.
+// Modelling the aliasing is not enough to see a violation, because freeing the
+// caller's buffer is harmless on its own — no rc underflow, the caller's count
+// genuinely does reach zero, and nothing has yet been handed the recycled
+// block. The symptom needs the callee to ALLOCATE AGAIN after the append and
+// for that allocation to be the value it RETURNS: then the returned object
+// sits in the block the param append released, and the caller's exit-sweep
+// dec of its own stale pointer frees the value it was just handed.
+// `caller-reads-seed-after-callee-append` below is the aliasing-only shape,
+// which passes either way and documents that distinction; the other two catch
+// the bug (exit 3, want 4).
 //
-// Modelling the aliasing is not enough, because freeing the caller's buffer is
-// harmless on its own — no rc underflow, the caller's count genuinely does
-// reach zero, and nothing has yet been handed the recycled block. The symptom
-// needs the callee to ALLOCATE AGAIN after the append and for that allocation
-// to be the value it RETURNS: then the returned object sits in the block the
-// param append released, and the caller's exit-sweep dec of its own stale
-// pointer frees the value it was just handed. `caller-reads-seed-after-callee-append`
-// below is the aliasing-only shape and passes even unfixed — it is kept
-// precisely to document that distinction; the other two catch the bug.
-//
-// That is the live shape: `slc_walk` / `e065_stmts` self-append their
-// `localarr` / `sbacked` param while building the `Diag[]` they return, so
-// `slice_escape_diags` / `e065_diags` freed their own return value on the way
-// out and the diagnostic codes read back as recycled memory (`E063` as ` E06`,
-// `E065` as `)E06`).
-//
-// Verified to catch it: reverting the `|| slot < s.n_params` gate turns
-// `param-append-recycled-by-return` and `param-append-i32-recycled` red (both
-// exit 3, want 4). Worth keeping alongside the corpus pin — it fails in
-// seconds on a standalone program instead of via a multi-minute checker build
-// reporting garbled diagnostic codes, and it covers wasm, which the
-// x86-only checker corpus does not.
+// That is the shape `slc_walk` / `e065_stmts` have: they self-append a param
+// while building the `Diag[]` they return, so a violation lets
+// `slice_escape_diags` / `e065_diags` free their own return value and the
+// diagnostic codes read back as recycled memory (`E063` as ` E06`, `E065` as
+// `)E06`). These cases fail in seconds on a standalone program and cover wasm,
+// which the x86-only checker corpus (`TestSelfHostCheckerCodes*`) does not.
 var paramAppendReclaimCases = []struct {
 	name string
 	main string

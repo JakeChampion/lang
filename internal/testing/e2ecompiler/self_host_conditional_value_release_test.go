@@ -342,7 +342,7 @@ function main(): i32 {
 const condRowHandoutSrc = `struct P { x: i32, y: i32 }
 trait Shape { function area(self: Self): i32; }
 impl Shape for P { function area(self: Self): i32 { return self.x * self.y; } }
-function id(p: P): P { return p; }
+@noinline function id(p: P): P { return p; }
 function idg[T](v: T): T { return v; }
 function todyn(p: P): dyn Shape { return p; }
 function mkp(j: i32): P { return P { x: 1000, y: j }; }

@@ -68,7 +68,7 @@ func TestSelfHostI64ArrayIR(t *testing.T) {
 		{"forin", `function main(): i32 { let a: i64[] = [10000000000, 20000000000, 30000000000]; let s: i64 = 0; for x in a { s = s + x; } if (s > 50000000000) { return 9; } return 0; }`, 9},
 		// for-in with body comparison: count elements > 1.5e10 -> 2
 		{"forin-cmp", `function main(): i32 { let a: i64[] = [10000000000, 20000000000, 30000000000, 5000000000]; let c = 0; for x in a { if (x > 15000000000) { c = c + 1; } } return c; }`, 2},
-		// i64[] slice (8-byte element copy via arr_slice8): b = a[1:3]; b[0]+b[1] = 2e10+3e10 = 5e10 > 4e10 -> 7
+		// i64[] slice (8-byte element copy): b = a[1:3]; b[0]+b[1] = 2e10+3e10 = 5e10 > 4e10 -> 7
 		{"slice", `function main(): i32 { let a: i64[] = [10000000000, 20000000000, 30000000000, 40000000000]; let b = a[1:3]; let s: i64 = b[0] + b[1]; if (s > 40000000000) { return 7; } return 0; }`, 7},
 		// i64[] slice length: a[1:3].len() = 2
 		{"slice-len", `function main(): i32 { let a: i64[] = [10000000000, 20000000000, 30000000000, 40000000000]; let b = a[1:3]; return b.len(); }`, 2},

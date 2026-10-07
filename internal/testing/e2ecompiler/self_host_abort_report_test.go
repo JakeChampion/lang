@@ -15,10 +15,10 @@ import (
 )
 
 // A fatal abort names its cause on stderr and walks the frame-pointer chain
-// under it (#11405), the native backends' report (#5538): the cause line,
-// exit 134, `backtrace:` and one `0x<16 hex>` line per frame. FERN_BACKTRACE=0
-// on the compiler, or its -backtrace=false flag, keeps the cause line and the
-// exit code and drops the walk at compile time.
+// under it (#11405): the cause line, exit 134, `backtrace:` and one
+// `0x<16 hex>` line per frame. FERN_BACKTRACE=0 on the compiler, or its
+// -backtrace=false flag, keeps the cause line and the exit code and drops the
+// walk at compile time.
 
 var abortReportCases = []struct{ name, src, cause string }{
 	{"array_oob", `function main(): i32 { let xs: i32[] = [10, 20, 30]; return xs[7]; }`, "fern: array index out of range"},

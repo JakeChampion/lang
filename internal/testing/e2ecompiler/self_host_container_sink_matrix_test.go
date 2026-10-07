@@ -21,10 +21,9 @@ import (
 // a MOVE: the container takes the one reference and the source's release is
 // elided, which every position has always handled. A source that stays LIVE (or
 // is REBOUND) makes the store a counted SHARE, and that is what needs the
-// store's retain and an rc-gated release on both owners. Positions whose
-// release protocol is unfinished refuse the source's credit outright rather
-// than dangle (struct_box_sink_kind's SINK_REFUSED), so they leak here and the
-// pinned cell says so.
+// store's retain and an rc-gated release on both owners. A position whose
+// release protocol is unfinished must leak rather than dangle, and the pinned
+// cell says so.
 //
 // Exit codes must match between the compilers on every cell and the underflow
 // guard fails hard on either side: an over-release is a bug in any cell, listed
@@ -69,11 +68,8 @@ var csmPositions = []csmPosition{
     out = out.with(0, p);`, `out.len() + out[0].k`},
 	{"tuple", `let tp: (i32, P) = (i, p);`, `tp.0 + tp.1.k`},
 	{"variant", `let e: E = E.A(p);`, `(match (e) { E.A(q) => q.k, E.B => 0 })`},
-	// The UNQUALIFIED ctor spelling, pinned separately because the two used to
-	// disagree: struct_box_sink_stored_expr's ident-callee arm caught `A(p)`
-	// while its field-access arm did not catch `E.A(p)`, so the same program
-	// measured 300/0 one way and 300/200 the other. Nothing in this grid used
-	// the bare spelling, which is why that went unnoticed.
+	// The UNQUALIFIED ctor spelling, pinned separately: `A(p)` and `E.A(p)`
+	// must count the stored box the same way.
 	{"variant_unqual", `let e: E = A(p);`, `(match (e) { E.A(q) => q.k, E.B => 0 })`},
 	{"option", `let o: Option[P] = Some(p);`, `(match (o) { Some(q) => q.k, None => 0 })`},
 	// The SAME store read back through a match STATEMENT rather than a match

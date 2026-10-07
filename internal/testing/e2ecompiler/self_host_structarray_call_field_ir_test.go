@@ -3,15 +3,11 @@ package e2ecompiler
 import "testing"
 
 // structArrayCallFieldIRCases pin field access on a struct ELEMENT indexed directly
-// from a function that returns an array of structs (`mk()[i].field`) to the
-// self-host IR path on x86-64 + wasm. The neighbours already lowered — binding
-// the array first (`let a = mk(); a[i].field`) and indexing without a field
-// (`let p = mk()[i]`) — but the inline `mk()[i].field` shape bailed to the
-// legacy AST emitter: expr_struct_type's ExprIndex arm had no ExprCall case, so
-// it couldn't recover the element type for `mk()[i]` and the field read failed.
-// #2691 adds that case (struct_ret_type already records the P[]-return element type
-// "P", #3035). Each case is oracle-checked against the interpreter and returns
-// <= 126. Mirrors self_host_nested_array_ir_test.go.
+// from a function that returns an array of structs (`mk()[i].field`) on the
+// self-host IR path on x86-64 + wasm (#2691): the element type of `mk()[i]`
+// comes from the callee's `P[]` return type. Each case is oracle-checked
+// against the interpreter and returns <= 126. Mirrors
+// self_host_nested_array_ir_test.go.
 var structArrayCallFieldIRCases = []struct {
 	name string
 	main string

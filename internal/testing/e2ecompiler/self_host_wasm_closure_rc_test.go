@@ -42,8 +42,8 @@ func TestSelfHostRcClosureWasm(t *testing.T) {
 		// binding (call init) not swept — no double free, value-correct.
 		{"clos-return", "function adder(a: i32): (i32) => i32 { let f = (b: i32): i32 => { return a + b; }; return f; } function main(): i32 { let add10 = adder(10); let add20 = adder(20); return add10(5) + add20(7) + __rc_underflow_count(); }", 42},
 		// Slice 2 — per-capture release. A heap STRING capture is released on the
-		// closure's death (construction-inc'd at build, capture_kind-balanced),
-		// value-correct + detector 0.
+		// closure's death (retained at build, released once), value-correct +
+		// detector 0.
 		{"cap-string-released", "function main(): i32 { let s: string = \"ab\" + \"cd\"; let f = (): i32 => { return s.len(); }; return f() + 38 + __rc_underflow_count(); }", 42},
 		// Slice 2 churn: 200k closures each capturing a heap string; the capture
 		// reclaims each cycle (no OOM) — without capture release this leaks.
@@ -57,9 +57,8 @@ func TestSelfHostRcClosureWasm(t *testing.T) {
 		// scalar carries no rc and is skipped; value-correct + detector 0.
 		{"cap-mixed", "function main(): i32 { let s: string = \"xy\" + \"zw\"; let a: i32 = 38; let f = (): i32 => { return s.len() + a; }; return f() + __rc_underflow_count(); }", 42},
 		// Struct-ARRAY capture: the captured struct[] keeps its element type
-		// inside the lambda body (cap_sa), so `ps[i].field` resolves (it read 0
-		// before — a capture-typing gap), AND it deep-releases each element via
-		// $__fern_arr_release_Inner on the closure's death. Value-correct.
+		// inside the lambda body, so `ps[i].field` resolves, AND each element is
+		// deep-released on the closure's death. Value-correct.
 		{"cap-structarr-val", "struct Inner { xs: i32[], n: i32 } function main(): i32 { let ps: Inner[] = [Inner { xs: [1, 2], n: 40 }, Inner { xs: [3, 4], n: 9 }]; let f = (): i32 => { return ps[0].n + ps[1].xs[1]; }; return f() + __rc_underflow_count(); }", 44},
 		// Struct-array capture churn: 200k closures each capturing a struct[]
 		// holding arrays; every element's array field reclaims each cycle (no

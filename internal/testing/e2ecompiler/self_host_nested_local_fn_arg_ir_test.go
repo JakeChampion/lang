@@ -8,27 +8,21 @@ import (
 // nestedLocalFnArgIRCases pin a function value passed as an ARGUMENT to a
 // NESTED local function — #6341.
 //
-// This was a silent miscompile, not a bail. The program compiled clean, with
-// nothing printed even under FERN_STRICT_IR=1, and the binary segfaulted.
+// Getting it wrong is a silent miscompile, not a bail: the program compiles
+// clean, with nothing printed even under FERN_STRICT_IR=1, and the binary
+// segfaults.
 //
 // The lift decides whether a fn-value argument must be env-boxed by asking
-// lift_callee_param_is_fn, which looks the callee up among MODULE functions. A
-// nested local function is not there: hoist_local_funcs_module only rewrites a
-// body containing a SELF-RECURSIVE local, so a plain nested function stays a
-// statement (a `let helper = <lambda>` binding) and never reaches `mfuncs`. The
-// lift therefore judged "callee param is not fn-typed", passed the value RAW,
-// and the callee — which dispatches env-first, reading slot 0 of an assumed
-// [funcval, caps…] box — dereferenced a bare code address.
+// lift_callee_param_is_fn, and that has to cover a nested local function, which
+// is not a MODULE function: hoist_local_funcs_module only rewrites a body
+// containing a SELF-RECURSIVE local, so a plain nested function stays a
+// statement (a `let helper = <lambda>` binding) and never reaches `mfuncs`.
+// Judged "callee param is not fn-typed", the value passes RAW, and the callee —
+// which dispatches env-first, reading slot 0 of an assumed [funcval, caps…]
+// box — dereferences a bare code address (exit 139).
 //
-// The AST lowering's own comment in lift_inline_closures_stmts described the same
-// failure for the sibling case it already handled: "an UNBOXED reassigned value
-// (a bare lambda / fn pointer) in that slot would env-first-dispatch a non-box
-// and crash."
-//
-// Each case was checked to SEGFAULT (exit 139) on the parent commit and to
-// answer correctly with the fix. The two controls are the shapes that already
-// worked and must keep working — they are what isolate "nested callee" as the
-// variable rather than "fn-value argument".
+// The two controls are the shapes that need no nested-callee lookup — they are
+// what isolate "nested callee" as the variable rather than "fn-value argument".
 var nestedLocalFnArgIRCases = []struct {
 	name string
 	src  string

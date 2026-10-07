@@ -12,12 +12,11 @@ import (
 // strBinopOperandBorrowCases pin that a BARE IDENT at a string binary operator's
 // operand is a borrow, and that the positions which really do retain are not.
 //
-// expr_unsafe_for already carves out the index base (`name[i]`) and the method
-// receiver (`name.m()`) as borrow reads. A concat operand was not carved out, so
-// `return s + ""` — the most ordinary fresh-string body there is — made `s`
-// escape, cost the parameter its borrowability, and left stash_fresh_str_arg
-// refusing to release the temp the caller had just passed in. Concat copies both
-// operands' bytes into a new box and the comparisons read them; neither retains.
+// Concat copies both operands' bytes into a new box and the comparisons read
+// them; neither retains, any more than an index base (`name[i]`) or a method
+// receiver (`name.m()`) does. So `return s + ""` — the most ordinary
+// fresh-string body there is — leaves the parameter borrowable, and the caller
+// releases the temp it passed in.
 //
 // The flat cases return 98 when the argument temp is stranded: 400 rounds of a
 // 170-byte producer is 68 KB against a 32 KB ceiling. The refusal cases are
@@ -30,10 +29,8 @@ var strBinopOperandBorrowCases = []struct {
 	want int
 }{
 	// The shape that led here. `cat`'s parameter is read by a concat and nothing
-	// else, so the caller may release the temp it passed once the call returns —
-	// but a bare ident anywhere was an escape, including at a concat operand, so
-	// the parameter was not borrowable and stash_fresh_str_arg refused. 46 B/round
-	// before, flat after.
+	// else, so the caller releases the temp it passed once the call returns.
+	// Stranded, that temp is 46 B/round.
 	{"str-concat-operand-param-borrowable-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function cat(s: string): string { return s + ""; }
 function round(pre: string): i32 { return cat(w(pre)).len(); }
@@ -50,7 +47,7 @@ function main(): i32 {
     return 0;
 }`, 0},
 	// The comparisons read their operands' bytes for the same reason concat copies
-	// them, and lower_view_borrowed already treats both as borrow positions.
+	// them, so they are borrow positions too.
 	{"str-compare-operand-param-borrowable-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function cmpsz(s: string): i32 { if (s > "m") { return 3; } return 5; }
 function round(pre: string): i32 { return cmpsz(w(pre)); }
@@ -87,7 +84,7 @@ function main(): i32 {
 	// argument at the call site frees what the caller now holds. Exits 97 under a
 	// compiler that makes every bare ident a borrow.
 	{"str-identity-return-param-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
-function keep(s: string): string { return s; }
+@noinline function keep(s: string): string { return s; }
 function round(pre: string): i32 {
     let t: string = keep(w(pre));
     let p1: string = w("ZZZZZZZZ");

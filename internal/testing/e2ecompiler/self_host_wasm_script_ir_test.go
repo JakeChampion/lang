@@ -11,18 +11,11 @@ import (
 // SCRIPT-shaped modules on the wasm IR path.
 //
 // A script is top-level statements with no `main` — `return 42;` is the smallest.
-// asmcore.synth_script_main has desugared these into `function main(): i32 { … }`
-// in the shared frontend since #3457, and the asm side routes them through the IR
-// path on that basis (asm_ir.script_normalized). The wasm route simply never
-// called it, so every script went to the legacy AST emitter, which inlines the
-// statements into `_start` itself — exactly the behaviour that made script support
-// a reason wasm.fern could not retire. It has since retired (#3457).
-//
-// wasm_ir.route_normalized now normalises for BOTH the emitter and the `-decide`
-// probe, so the probe cannot report a verdict for a module the emitter does not
-// judge. The routing assertion below is the essential half: a regression puts
-// scripts back on the emitter this all exists to delete, and the ANSWER would stay
-// correct, so only the route catches it.
+// asmcore.synth_script_main desugars these into `function main(): i32 { … }`
+// (ircore.script_normalized), and wasm_ir.route_normalized applies it for BOTH
+// the emitter and the `-decide` probe, so the probe cannot report a verdict for
+// a module the emitter does not judge. Each case asserts the route as well as
+// the answer.
 func TestSelfHostWasmScriptRoutesIR(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {
@@ -43,8 +36,7 @@ func TestSelfHostWasmScriptRoutesIR(t *testing.T) {
 		// Top-level locals + a call, then a return: the shape synth_script_main
 		// moves wholesale into the synthesized main.
 		{"locals-and-call", "let x: i32 = 8;\nlet y: i32 = 34;\nprint_int(x + y);\nreturn x + y;\n", 42},
-		// No trailing return: synth_script_main appends `return 0;`, matching the
-		// exit-0 epilogue the AST emitter wrote after the inlined statements.
+		// No trailing return: synth_script_main appends `return 0;`.
 		{"no-trailing-return", "let x: i32 = 1;\nprint_int(x);\n", 0},
 		// A script that defines functions AND has top-level statements — still
 		// script-shaped, because none of them is `main`.

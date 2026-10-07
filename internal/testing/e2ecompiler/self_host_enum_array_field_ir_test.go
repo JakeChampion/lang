@@ -10,20 +10,15 @@ import (
 )
 
 // enumArrayFieldIRCases exercise ENUM-ARRAY (`E[]`) struct-literal field VALUES
-// through the self-host IR path: the three construction shapes the lowering's
-// struct-lit gate now admits for an array-of-enum field, alongside the
-// array-of-struct forms it already accepted —
+// through the self-host IR path, in the three non-literal construction shapes
+// an array-of-struct field also takes —
 //   - a bare-ident enum-array local       (`S { items: one }`)
 //   - a `.append` on a borrowed param      (`S { items: items.append(B(v)) }`)
 //   - a field-access copy                   (`S { items: a.items }`)
 //
-// Enum-array struct fields take the IDENTICAL is_unique-gated deep-drop as
-// struct-array fields (emit_struct_field_drops' k_box walk), so the same alias-
-// inc / no-inc decisions are sound; this is the construction-side widening that
-// matches the already-shipped drop side. It is the prerequisite for routing
-// parser.dl_collect_stmts (a `DeferAcc { stmts, actions, flags }` builder over
-// `Stmt[]`) through the IR — the goal-1 frontier toward retiring the AST
-// emitters.
+// Enum-array struct fields take the same is_unique-gated deep drop as
+// struct-array fields, so the same alias-inc / no-inc decisions apply at
+// construction.
 //
 // Each program builds an enum array into a struct field and sums it back, so a
 // botched alias-inc (over-release → wrong/garbage element) is caught by the exit
@@ -61,7 +56,7 @@ function main(): i32 { let s0: S = S { items: [A(6), B(0)], k: 3 }; let s1: S = 
 }
 
 // TestSelfHostEnumArrayFieldIRX86_64 routes each case through the x86-64 IR
-// driver (asm_run → asm.emit_module → emit_module_ir when all_eligible).
+// driver (asm_run: the typed lowering, then asm_ir).
 func TestSelfHostEnumArrayFieldIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

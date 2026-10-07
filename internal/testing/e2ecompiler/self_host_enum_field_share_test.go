@@ -10,33 +10,17 @@ import (
 
 // --- An enum local handed to a struct FIELD is a counted share ---------------
 //
-// `let src: E = E.A([..]); let p: P = P { e: src, … }` stranded src's box AND
-// its payload once per construction. The construction retains the value (the
-// k_enum arm's dec is what that balances), but every rc-enum release credit —
-// the RCENUMS sweep, the loop rebind, the consuming-match free — refused a name
-// that reached a struct-literal field, because their escape walks read that
-// position as an escape. One inc, no dec: the source's own claim had nothing to
-// release it.
-//
-// The carve-out (ef_escape_names / body_unsafe_for_enumfield) forgives exactly
-// that position, and the releases it feeds now walk the payload under
-// __fern_rc_is_unique — the gate emit_struct_enum_field_payload_drops already
-// applies from the struct side. Both owners gated means whichever drops LAST
-// finds rc 1 and does the deep work, in either order, and neither order
-// double-frees. The rows below pin both orders: `local_then_match` releases the
+// `let src: E = E.A([..]); let p: P = P { e: src, … }`: the construction
+// retains the value, so the source keeps its own claim and must release it.
+// Both owners walk the payload under __fern_rc_is_unique, so whichever drops
+// LAST finds rc 1 and does the deep work, in either order, and neither order
+// double-frees. The rows pin both orders: `local_then_match` releases the
 // source first (its consuming match runs before the holder dies),
 // `local_no_match` releases the holder first.
 //
 // The over-release direction is what the exit codes pin: every probe returns 99
-// from __rc_underflow_count() if any dec ran past zero. That is not theoretical
-// here — the first cut of this slice tripped it, because the rc-enum sweep was
-// missing the moved_elided conjunct its rc-tuple sibling has, so a construction
-// that MOVED the local (the #6726 elided retain) was swept anyway.
-//
-// Every want was confirmed against the native x86-64 backend, which is clean on
-// all five shapes; the self-host numbers below now match it — including the
-// call-argument row, which this suite originally pinned at a leak and called a
-// refusal.
+// from __rc_underflow_count() if any dec ran past zero — including a
+// construction that MOVED the local (#6726) and must not be swept as well.
 
 type enumFieldShareCase struct {
 	name   string

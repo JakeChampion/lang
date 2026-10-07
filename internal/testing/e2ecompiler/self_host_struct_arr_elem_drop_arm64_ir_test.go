@@ -4,11 +4,9 @@ import (
 	"testing"
 )
 
-// TestSelfHostStructArrElemDropIRArm64 is the arm64 port of the ARRAY-ELEMENT deep-drop
-// (the x86 sibling is TestSelfHostStructArrElemDropIRX86_64). The k_box arm calls
-// __struct_arr_elems_drop_<Inner> (x19=buffer, x20=index callee-saved across the nested
-// __struct_drop_<Inner>), reloading its box from [sp, #16] afterwards. Proven under qemu
-// by CORRECTNESS (a wrong free of a live element buffer corrupts the read-back) plus an
+// TestSelfHostStructArrElemDropIRArm64 is the arm64 leg of the ARRAY-ELEMENT deep-drop
+// (the x86 sibling is TestSelfHostStructArrElemDropIRX86_64). Proven under qemu by
+// CORRECTNESS (a wrong free of a live element buffer corrupts the read-back) plus a
 // balanced arm64 census. Heavy churn is left to the x86 path (too slow under qemu).
 func TestSelfHostStructArrElemDropIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
@@ -42,9 +40,9 @@ function main(): i32 {
     return sum + s.tag;
 }`, "struct_arr_elem_drop_arm64_value", 139)
 
-	// LIGHT CHURN: confirms the element helper terminates + stays correct under repetition
-	// (a register-clobber bug in the helper's x19/x20 save/restore or the box reload would
-	// corrupt the loop / heap). mk returns 20; exit 0.
+	// LIGHT CHURN: confirms the element release terminates + stays correct under
+	// repetition (a register clobber across the nested drops or a stale box reload
+	// would corrupt the loop / heap). mk returns 20; exit 0.
 	run(t, `struct Inner { items: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 struct S { elems: Inner[], tag: i32 }

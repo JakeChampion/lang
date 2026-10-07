@@ -676,10 +676,7 @@ function extend_loop_invariant_intervals(f: SFunc, def_pos: i32[], hi: i32[]): i
       top = b.id;
     }
   }
-  let start_of: i32[] = [];
-  while (start_of.len() <= top) {
-    start_of = start_of.append(0 - 1);
-  }
+  let start_of: i32[] = util.minus_ones(top + 1);
   let rpos: i32 = 0;
   for b in f.blocks {
     if (b.id >= 0) {
@@ -1456,12 +1453,7 @@ function return_prefs(f: SFunc, pref: i32[], abi_reg: i32): i32[] {
 // it, -1 when nothing does and -2 when more than one instruction or a
 // terminator does.
 function sole_readers(f: SFunc): i32[] {
-  let out: i32[] = [];
-  let i: i32 = 0;
-  while (i < f.nvals) {
-    out = out.append(0 - 1);
-    i = i + 1;
-  }
+  let out: i32[] = util.minus_ones(f.nvals);
   for blk in f.blocks {
     for ins in blk.insts {
       for a in ins.args {
@@ -1601,13 +1593,8 @@ function shares_operand_home(op: string): boolean {
 struct Mates { hint: i32[], carried: boolean[], alt: i32[], through: boolean[] }
 
 function phi_mates(f: SFunc, at: i32[], def_pos: i32[], hi: i32[], no_home: boolean[]): Mates {
-  let hint: i32[] = [];
+  let hint: i32[] = util.minus_ones(f.nvals);
   let carried: boolean[] = __alloc_bool(f.nvals);
-  let i: i32 = 0;
-  while (i < f.nvals) {
-    hint = hint.append(0 - 1);
-    i = i + 1;
-  }
   // Both start all -1, sharing one buffer: the first write to either copies it.
   let alt: i32[] = hint;
   let fell: boolean[] = carried;
@@ -1713,23 +1700,6 @@ pub function block_positions(f: SFunc): i32[] {
   return out;
 }
 
-// successor_positions lists the positions of bi's successors; an edge to an
-// id no block carries contributes -1.
-function successor_positions(f: SFunc, at: i32[], bi: i32): i32[] {
-  let t: STerm = f.blocks[bi].term;
-  let out: i32[] = [];
-  if (t.kind_tag == 2) {
-    out = out.append(position_of(at, t.target));
-  }
-  if (t.kind_tag == 3) {
-    out = out.append(position_of(at, t.t));
-    if (t.f != t.t) {
-      out = out.append(position_of(at, t.f));
-    }
-  }
-  return out;
-}
-
 // successor_id is branch `which` of `t` by block id, in branch order: a
 // plain branch has one, a conditional two, and -1 stands past them. A walk
 // over the two reads them without building a list.
@@ -1749,8 +1719,8 @@ pub function successor_id(t: STerm, which: i32): i32 {
 }
 
 // distinct_successor_position is successor_id's branch by position, or -1
-// for a second branch to the first's block, which successor_positions lists
-// once.
+// for a second branch to the first's block, so a branch to one block on
+// both arms is one successor; an edge to an id no block carries is -1 too.
 function distinct_successor_position(at: i32[], t: STerm, which: i32): i32 {
   let id: i32 = successor_id(t, which);
   if (id < 0 || which == 1 && id == t.t) {
@@ -1922,15 +1892,9 @@ function read_sites(f: SFunc, at: i32[], blk_start: i32[]): ReadSites {
   let phi_end: i32[] = [];
   let bi: i32 = 0;
   while (bi < f.blocks.len()) {
-    let ss: i32[] = successor_positions(f, at, bi);
-    succ_a = succ_a.with(bi, 0 - 1);
-    succ_b = succ_b.with(bi, 0 - 1);
-    if (ss.len() > 0) {
-      succ_a = succ_a.with(bi, ss[0]);
-    }
-    if (ss.len() > 1) {
-      succ_b = succ_b.with(bi, ss[1]);
-    }
+    let t: STerm = f.blocks[bi].term;
+    succ_a = succ_a.with(bi, distinct_successor_position(at, t, 0));
+    succ_b = succ_b.with(bi, distinct_successor_position(at, t, 1));
     let end: i32 = 0;
     let k: i32 = 0;
     while (k < f.blocks[bi].insts.len()) {
@@ -2100,13 +2064,11 @@ function live_at_def(sites: ReadSites, r: i32, a: i32, def_blk: i32[], def_pos: 
 }
 
 function spill_starts(lo: i32[], def_pos: i32[]): i32[] {
-  let from: i32[] = [];
+  let from: i32[] = __alloc_i32(lo.len());
   let i: i32 = 0;
   while (i < lo.len()) {
-    if (def_pos[i] < 0) {
-      from = from.append(0);
-    } else {
-      from = from.append(lo[i]);
+    if (def_pos[i] >= 0) {
+      from = from.with(i, lo[i]);
     }
     i = i + 1;
   }
@@ -2115,13 +2077,8 @@ function spill_starts(lo: i32[], def_pos: i32[]): i32[] {
 
 // wanted_by[m] is the spilled value whose phi mate is m, or -1.
 function mates_wanted(hi: i32[], reg_of: i32[], hint: i32[]): i32[] {
-  let wanted_by: i32[] = [];
+  let wanted_by: i32[] = util.minus_ones(reg_of.len());
   let i: i32 = 0;
-  while (i < reg_of.len()) {
-    wanted_by = wanted_by.append(0 - 1);
-    i = i + 1;
-  }
-  i = 0;
   while (i < reg_of.len()) {
     let m: i32 = hint[i];
     if (m >= 0 && hi[i] >= 0 && reg_of[i] == 0 - 1 && reg_of[m] == 0 - 1) {
@@ -2236,10 +2193,7 @@ function imm_use(ins: SInst, a: i32, konst: boolean[], right: string[], left: st
 // the value is the address of (kind 47), or -1: for every other value, and
 // for the empty literal, which has no byte to read.
 pub function literal_first_bytes(f: SFunc): i32[] {
-  let out: i32[] = [];
-  while (out.len() < f.nvals) {
-    out = out.append(0 - 1);
-  }
+  let out: i32[] = util.minus_ones(f.nvals);
   for blk in f.blocks {
     for ins in blk.insts {
       if (ins.kind_tag == 47 && ins.str.len() > 0) {
@@ -2453,12 +2407,7 @@ pub function inline_leaves(f: SFunc, leaves: Leaf[]): SFunc {
         spliced = true;
       }
       let leaf: SFunc = leaves[at].func;
-      let map: i32[] = [];
-      let i: i32 = 0;
-      while (i < leaf.nvals) {
-        map = map.append(0 - 1);
-        i = i + 1;
-      }
+      let map: i32[] = util.minus_ones(leaf.nvals);
       for li in leaf.blocks[0].insts {
         if (li.kind_tag == 6) {
           map = map.with(li.result, ins.args[li.imm]);
@@ -2942,10 +2891,7 @@ function thread_round(f: SFunc): Threading {
 // truth_constants maps each value an integer or boolean constant defines to
 // 1 or 0 as a branch reads it, and every other value to -1.
 function truth_constants(f: SFunc): i32[] {
-  let out: i32[] = [];
-  while (out.len() < f.nvals) {
-    out = out.append(0 - 1);
-  }
+  let out: i32[] = util.minus_ones(f.nvals);
   for blk in f.blocks {
     for ins in blk.insts {
       if ((ins.kind_tag == 1 || ins.kind_tag == 2) && ins.result >= 0 && ins.result < out.len()) {

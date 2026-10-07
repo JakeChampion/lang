@@ -47,9 +47,7 @@ func TestSelfHostImmutabilityGateX86_64(t *testing.T) {
 		{
 			// E049: a reference-typed value (here an i32[]) captured by a closure
 			// is read-only — reassigning it inside the closure could close a
-			// reference cycle, so the native compiler rejects it before codegen.
-			// The self-host build gate must match (it filters check_module to the
-			// cycle rules, of which E049 is the reference-capture write-back one).
+			// reference cycle, so the build gate rejects it before codegen.
 			name:     "captured-ref-assign-E049",
 			src:      "function main(): i32 { let xs: i32[] = [1]; let f = (): i32 => { xs = xs.append(2); return xs.len(); }; return f(); }\n",
 			wantDiag: "error[E049]",
@@ -62,9 +60,7 @@ func TestSelfHostImmutabilityGateX86_64(t *testing.T) {
 		{
 			// E057: a Cell[T] element must be cycle-free — a composite element
 			// (here a struct) could reconstruct a reference cycle, so the
-			// native compiler rejects it before codegen. The self-host build
-			// gate must match: filtering E057 out compiles this silently,
-			// which is more permissive than native.
+			// build gate rejects it before codegen.
 			name:     "cell-composite-E057",
 			src:      "struct P { x: i32 }\nfunction main(): i32 { let c = cell_new(P { x: 1 }); return 0; }\n",
 			wantDiag: "error[E057]",

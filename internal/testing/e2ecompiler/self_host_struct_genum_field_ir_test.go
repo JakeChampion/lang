@@ -9,14 +9,10 @@ import (
 
 // structGenEnumFieldIRCase is a self-host program with a (non-generic) struct
 // whose FIELD is typed as a user generic-enum instantiation — `struct S { o:
-// Opt[i32] }`. The enum monomorphiser rewrote function/param/return types and
-// match scrutinees, but never the field types of a passed-through struct, so the
-// field kept its reference to the dropped generic `Opt` and the module bailed to
-// the AST emitter (which also miscompiled it to 0). The fix collects + rewrites
-// struct field types in the enum pass (`o: Opt[i32]` -> `o: Opt__i32`) and
-// teaches `me_scrutinee_type` to recover a struct field's type so `match (s.o)`
-// rewrites its arms. Native handles these, so this closes a goal-1 IR-subset
-// gap. Each exit code is pinned against the native interpreter oracle and kept
+// Opt[i32] }`. The enum monomorphiser rewrites struct field types as well as
+// function/param/return types (`o: Opt[i32]` -> `o: Opt__i32`), and
+// `me_scrutinee_type` recovers a struct field's type so `match (s.o)` rewrites
+// its arms. Each exit code is pinned against the interpreter oracle and kept
 // <= 120.
 type structGenEnumFieldIRCase struct {
 	name     string

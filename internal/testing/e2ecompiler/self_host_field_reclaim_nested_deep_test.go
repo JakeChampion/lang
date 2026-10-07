@@ -8,27 +8,18 @@ import (
 	"testing"
 )
 
-// #8538: `__field_reclaim_<T>` released a replaced nested-STRUCT field with a
-// shallow box dec, stranding whatever that inner box owned.
-//
-// The helper's per-field release was `__fern_arr_dec` for every field kind.
-// Right for an array — the buffer IS the box — and wrong for a nested struct,
-// which owns rc children of its own. Its sibling `__struct_drop_<T>` had the
-// answer all along: gate on `is_unique(field)`, call `__struct_drop_<Inner>`,
-// then dec the box. The fix is that sequence, after (not instead of) the guards
-// that decide whether to release at all — the cow compare, the snapshot compare,
-// and #8198's uniq test.
+// #8538: a struct local rebound from a call must release a replaced
+// nested-STRUCT field deeply — the inner box's own rc children with it — rather
+// than dec the inner box alone and strand what it owns. An ARRAY field's buffer
+// IS the box, so for it the shallow dec is already complete.
 //
 // THE EXIT CODE DOES NOT MOVE. This is a pure leak, so the register and wasm
-// legs below are the miscompile guard on adding a deep walk inside a helper
-// that three backends emit; the LEAKCHECK leg is the gate, with native as the
-// oracle.
+// legs below are the miscompile guard on the deep release; the LEAKCHECK leg is
+// the gate, with native as the oracle.
 //
-// A direct ENUM field with an rc payload leaked the same way; #8567 fixed it by
-// giving all three backends a single-box variant walk (__enum_drop_) and calling
-// it from both this helper and __struct_drop_. The scalar-payload enum row below
-// is the boundary and predates that: nothing heap sits under that box, so the
-// shallow dec is already complete and it must stay clean either way.
+// A direct ENUM field with an rc payload is released deeply the same way. The
+// scalar-payload enum row below is the boundary: nothing heap sits under that
+// box, so the shallow dec is already complete and it must stay clean either way.
 var selfHostFieldReclaimNestedCases = []struct {
 	name string
 	src  string
@@ -41,9 +32,8 @@ var selfHostFieldReclaimNestedCases = []struct {
 	// condition, and this row is what says so.
 	{"nested-field-rebind-spread", "struct CfiState { bad: i32[], open: boolean }\nstruct Asm { cfi: CfiState, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, cfi: CfiState { bad: [v], open: false } };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { cfi: CfiState { bad: [], open: false }, n: 0 };\n    a = step(a, 1);\n    return a.cfi.bad.len() + __rc_underflow_count();\n}"},
 
-	// Two levels of nesting. `__struct_drop_<Inner>` recurses, so one call at the
-	// top reaches the buffer two boxes down — this row is what proves the fix is
-	// a recursion rather than a single extra level.
+	// Two levels of nesting. Inner's drop is reached through Mid's, so the release
+	// has to recurse to the buffer two boxes down rather than stop one level in.
 	{"nested-two-deep", "struct Inner { xs: i32[] }\nstruct Mid { i: Inner }\nstruct Asm { m: Mid, n: i32 }\n@noinline\nfunction step(a: Asm, v: i32): Asm {\n    return Asm { ...a, m: Mid { i: Inner { xs: [v] } } };\n}\nfunction main(): i32 {\n    let a: Asm = Asm { m: Mid { i: Inner { xs: [] } }, n: 0 };\n    a = step(a, 1);\n    return a.m.i.xs.len() + __rc_underflow_count();\n}"},
 
 	// Control: an ARRAY field in the same shape. The buffer is the box, so the
@@ -125,10 +115,9 @@ func TestSelfHostFieldReclaimNestedX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostFieldReclaimNestedArm64 — the arm64 emit of the same helper. Each
-// backend writes its own __field_reclaim_<T> body, so the walk lands three
-// times and each needs its own frame-reload discipline: __struct_drop_<Inner>
-// clobbers the registers holding new/old/snap.
+// TestSelfHostFieldReclaimNestedArm64 — the same rows on arm64, against the
+// interpreter oracle. Each backend emits the release calls itself, so a box
+// pointer held in a clobbered register across a drop call shows up only here.
 func TestSelfHostFieldReclaimNestedArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -154,10 +143,9 @@ func TestSelfHostFieldReclaimNestedArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostFieldReclaimNestedWasmIR — the wasm leg, which needed a second
-// change: its set of emitted $__struct_drop_<T> bodies is computed from the
-// calls the module makes, so the reclaim body's new call had to be added to
-// that closure or the module would name a function it never defines.
+// TestSelfHostFieldReclaimNestedWasmIR — the wasm leg, against the interpreter
+// oracle. The module must define every drop helper its releases call, or it
+// fails to load.
 func TestSelfHostFieldReclaimNestedWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping the wasm leg")
