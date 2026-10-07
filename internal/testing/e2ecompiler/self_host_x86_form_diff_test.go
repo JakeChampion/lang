@@ -140,8 +140,9 @@ func miscFormCases() []string {
 	return out
 }
 
-// vexFormCases is the AVX2 vocabulary the byte kernels use, each form with a
-// low and an extended register so both halves of the prefix are checked.
+// vexFormCases is the AVX2 vocabulary the byte and f64 kernels use, each
+// form with a low and an extended register so both halves of the prefix are
+// checked.
 func vexFormCases() []string {
 	return []string{
 		"vmovdqu (%rax,%rdx), %ymm0",
@@ -156,6 +157,16 @@ func vexFormCases() []string {
 		"vpmovmskb %ymm0, %eax",
 		"vpmovmskb %ymm0, %r9d",
 		"vpmovmskb %ymm10, %r11d",
+		"vmovupd 8(%rsi,%rdx,8), %ymm0",
+		"vmovupd (%r8,%r9), %ymm11",
+		"vmovupd %ymm0, 8(%rax,%rdx,8)",
+		"vmovupd %ymm12, (%r10)",
+		"vbroadcastsd %xmm1, %ymm1",
+		"vbroadcastsd %xmm9, %ymm10",
+		"vmulpd %ymm1, %ymm0, %ymm0",
+		"vmulpd %ymm9, %ymm10, %ymm11",
+		"vmulpd 8(%rsi,%rdx,8), %ymm1, %ymm0",
+		"vmulpd (%r8,%r9,8), %ymm12, %ymm13",
 		"vzeroupper",
 	}
 }

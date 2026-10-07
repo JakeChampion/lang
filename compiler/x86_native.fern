@@ -4181,11 +4181,11 @@ function x86_gas_cc_code(cond: string): i32 {
 
 // ---- AVX2: the VEX-encoded forms the runtime kernels use ----
 //
-// Native's avx.go vocabulary — vmovdqu (load), vpbroadcastb, vpcmpeqb,
-// vpmovmskb and vzeroupper over a 256-bit ymm — plus the vmovdqu store,
-// kept out of the shared x86tbl tables, which assume legacy encoding
-// throughout. AVX2 is inside the x86-64-v3 baseline, so nothing here is
-// guarded.
+// The byte kernels' vmovdqu, vpbroadcastb, vpcmpeqb, vpmovmskb and
+// vzeroupper over a 256-bit ymm, and the f64 kernels' vmovupd,
+// vbroadcastsd and vmulpd, kept out of the shared x86tbl tables, which
+// assume legacy encoding throughout. AVX2 is inside the x86-64-v3 baseline,
+// so nothing here is guarded.
 
 // x86_vex appends the VEX prefix: the 2-byte form (C5) whenever it can
 // carry the instruction — the 0F map, W clear, neither X nor B needed —
@@ -4259,11 +4259,27 @@ function x86_gas_vex_rm(own a: X86Asm, mnem: string, mmmmm: i32, pp: i32, vvvv: 
 
 // x86_gas_vex_two: the two-operand AVX2 forms, AT&T `src, dst` —
 // `vmovdqu ymm/m256, %ymm` (VEX.256.F3.0F 6F /r), its store `vmovdqu
-// %ymm, m256` (VEX.256.F3.0F 7F /r), `vpbroadcastb %xmm, %ymm`
-// (VEX.256.66.0F38 78 /r) and `vpmovmskb %ymm, %r32` (VEX.256.66.0F D7
-// /r). A 64-bit vpmovmskb destination is not a form the kernels use, so it
-// is refused.
+// %ymm, m256` (VEX.256.F3.0F 7F /r), `vmovupd ymm/m256, %ymm`
+// (VEX.256.66.0F 10 /r) and its store (VEX.256.66.0F 11 /r),
+// `vpbroadcastb %xmm, %ymm` (VEX.256.66.0F38 78 /r), `vbroadcastsd %xmm,
+// %ymm` (VEX.256.66.0F38 19 /r) and `vpmovmskb %ymm, %r32` (VEX.256.66.0F
+// D7 /r). A 64-bit vpmovmskb destination is not a form the kernels use, so
+// it is refused.
 function x86_gas_vex_two(own a: X86Asm, mnem: string, src: string, dst: string): X86Asm {
+  if (mnem == "vmovupd" && x86_gas_has_paren(dst)) {
+    let us0: i32 = x86_gas_ymm(src);
+    if (us0 < 0) {
+      return x86_gas_bad(a, mnem + " " + src + ", " + dst);
+    }
+    return x86_gas_vex_rm(a, mnem, 1, 1, 0, 17, us0, dst);
+  }
+  if (mnem == "vmovupd") {
+    let ud: i32 = x86_gas_ymm(dst);
+    if (ud < 0) {
+      return x86_gas_bad(a, mnem + " " + src + ", " + dst);
+    }
+    return x86_gas_vex_rm(a, mnem, 1, 1, 0, 16, ud, src);
+  }
   if (mnem == "vmovdqu" && x86_gas_has_paren(dst)) {
     let ys0: i32 = x86_gas_ymm(src);
     if (ys0 < 0) {
@@ -4278,14 +4294,18 @@ function x86_gas_vex_two(own a: X86Asm, mnem: string, src: string, dst: string):
     }
     return x86_gas_vex_rm(a, mnem, 1, 2, 0, 111, yd, src);
   }
-  if (mnem == "vpbroadcastb") {
+  if (mnem == "vpbroadcastb" || mnem == "vbroadcastsd") {
     let bd: i32 = x86_gas_ymm(dst);
     let bx: i32 = x86_gas_xmm(src);
     if (bd < 0 || bx < 0) {
       return x86_gas_bad(a, mnem + " " + src + ", " + dst);
     }
+    let bop: i32 = 120;
+    if (mnem == "vbroadcastsd") {
+      bop = 25;
+    }
     x86_push_arr(a.code, x86_vex([], bd >= 8, false, bx >= 8, 2, false, 0, true, 1));
-    buf_push_byte(a.code, 120);
+    buf_push_byte(a.code, bop);
     buf_push_byte(a.code, x86_modrm(3, bd, bx));
     return a;
   }
@@ -4301,12 +4321,13 @@ function x86_gas_vex_two(own a: X86Asm, mnem: string, src: string, dst: string):
 }
 
 function x86_gas_is_vex_two(mnem: string): boolean {
-  return mnem == "vmovdqu" || mnem == "vpbroadcastb" || mnem == "vpmovmskb";
+  return mnem == "vmovdqu" || mnem == "vmovupd" || mnem == "vpbroadcastb" || mnem == "vbroadcastsd" || mnem == "vpmovmskb";
 }
 
-// x86_gas_vpcmpeqb: the three-operand `vpcmpeqb src2, %ymm_src1, %ymm_dst`
-// (VEX.256.66.0F 74 /r), src2 a ymm or memory; src1 rides in VEX.vvvv.
-function x86_gas_vpcmpeqb(own a: X86Asm, mnem: string, rest: string): X86Asm {
+// x86_gas_vex_three: the three-operand `vpcmpeqb src2, %ymm_src1,
+// %ymm_dst` (VEX.256.66.0F 74 /r) and `vmulpd` (VEX.256.66.0F 59 /r), src2
+// a ymm or memory; src1 rides in VEX.vvvv.
+function x86_gas_vex_three(own a: X86Asm, mnem: string, rest: string): X86Asm {
   let ops: string[] = x86_gas_split_ops(rest);
   if (ops.len() != 3) {
     return x86_gas_bad(a, mnem + " " + rest);
@@ -4316,7 +4337,11 @@ function x86_gas_vpcmpeqb(own a: X86Asm, mnem: string, rest: string): X86Asm {
   if (y1 < 0 || yd < 0) {
     return x86_gas_bad(a, mnem + " " + rest);
   }
-  return x86_gas_vex_rm(a, mnem, 1, 1, y1, 116, yd, ops[0]);
+  let op: i32 = 116;
+  if (mnem == "vmulpd") {
+    op = 89;
+  }
+  return x86_gas_vex_rm(a, mnem, 1, 1, y1, op, yd, ops[0]);
 }
 
 // ---- fixed-byte mnemonics ----
@@ -5849,8 +5874,8 @@ function x86_gas_emit_op(own a: X86Asm, l: GasLine): X86Asm {
   if (k == GK_VZEROUPPER) {
     return x86_gas_emit_packed(a, x86_pack3(197, 248, 119));
   }
-  if (k == GK_VPCMPEQB) {
-    return x86_gas_vpcmpeqb(a, mnem, rest);
+  if (k == GK_VEX_THREE) {
+    return x86_gas_vex_three(a, mnem, rest);
   }
   // no-operand mnemonics (incl. the AT&T string ops) — fixed byte lists.
   if (k == GK_FIXED) {
@@ -6922,7 +6947,7 @@ const GK_NONE: i32 = 0;
 
 const GK_VZEROUPPER: i32 = 1;
 
-const GK_VPCMPEQB: i32 = 2;
+const GK_VEX_THREE: i32 = 2;
 
 const GK_FIXED: i32 = 3;
 
@@ -7241,8 +7266,8 @@ struct MnemVerdict { vz: boolean, fixed: i32, a_kind: i32, a_ext: i32, a_sfx: i3
 // in the order x86_gas_emit_op once tried its arms inline.
 function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
   let v: MnemVerdict = MnemVerdict { vz: mnem == "vzeroupper", fixed: x86_gas_fixed_op(mnem), a_kind: GK_NONE, a_ext: 0 - 1, a_sfx: 0, sfx: 0, b_kind: GK_NONE, b_ext: 0 - 1, vshift: x86_gas_vshift_op(mnem), c_kind: GK_NONE, c_ext: 0 - 1 };
-  if (mnem == "vpcmpeqb") {
-    return MnemVerdict { ...v, a_kind: GK_VPCMPEQB };
+  if (mnem == "vpcmpeqb" || mnem == "vmulpd") {
+    return MnemVerdict { ...v, a_kind: GK_VEX_THREE };
   }
   let rpfx: i32 = x86_gas_rep_pfx(mnem);
   if (rpfx >= 0) {
@@ -7419,8 +7444,8 @@ function x86_gas_classify_with(v: MnemVerdict, mnem: string, rest: string): GasL
   if (v.vz && rest.len() == 0) {
     return GasLine { ...l, kind: GK_VZEROUPPER };
   }
-  if (v.a_kind == GK_VPCMPEQB) {
-    return GasLine { ...l, kind: GK_VPCMPEQB };
+  if (v.a_kind == GK_VEX_THREE) {
+    return GasLine { ...l, kind: GK_VEX_THREE };
   }
   if (rest.len() == 0 && v.fixed >= 0) {
     return GasLine { ...l, kind: GK_FIXED, ext: v.fixed };

@@ -18,7 +18,7 @@ import (
 // Two halves have to be proved, and neither is enough alone:
 //
 //   - the rewrite FIRES. Three signals were tried and discarded before one
-//     discriminated. `mulpd` present proves nothing (std/array's scale_f64
+//     discriminated. `vmulpd` present proves nothing (std/array's scale_f64
 //     wrapper is in the bundle either way), a missing `__method_Array_map`
 //     label proves nothing (that name is in neither build -- the call is
 //     `__arrm_map__<elem>`), and the exit code proves nothing (the scalar
@@ -182,7 +182,7 @@ func TestSelfHostScaleMapX86_64(t *testing.T) {
 		}
 		// The kernel splats its factor across the lanes. Scoped to this
 		// function, so std/array's own wrapper cannot supply it.
-		if !strings.Contains(body, "unpcklpd") {
+		if !strings.Contains(body, "vbroadcastsd") {
 			t.Errorf("__fn_scale2 has no lane-wise splat, so the kernel was not "+
 				"inlined even though the map call is gone:\n%s", body)
 		}

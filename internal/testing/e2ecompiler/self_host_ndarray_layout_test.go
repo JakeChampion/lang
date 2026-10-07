@@ -126,7 +126,7 @@ func TestSelfHostNdarrayLayoutPropagation(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			body := emittedBody(t, string(asm), "__fn_"+tc.name)
 			mapped := strings.Contains(body, "call __fn___smm_ndarray__NdArray_map__")
-			vector := strings.Contains(body, "unpcklpd")
+			vector := strings.Contains(body, "vbroadcastsd")
 			if mapped == tc.kernel || vector != tc.kernel {
 				t.Fatalf("kernel=%t, map call=%t, vector splat=%t\n%s", tc.kernel, mapped, vector, body)
 			}
