@@ -1,0 +1,44 @@
+{
+  "1": {
+    "processed_samples": 1000,
+    "checksum": 1052672,
+    "block_checks": 52671993,
+    "ring_checksum": 548181557,
+    "cursor": 1
+  },
+  "7": {
+    "processed_samples": 7000,
+    "checksum": 421871701,
+    "block_checks": 481449565,
+    "ring_checksum": 729649847,
+    "cursor": 1
+  },
+  "64": {
+    "processed_samples": 64000,
+    "checksum": 787464648,
+    "block_checks": 424534445,
+    "ring_checksum": 451590529,
+    "cursor": 1
+  },
+  "256": {
+    "processed_samples": 256000,
+    "checksum": 597096918,
+    "block_checks": 733170919,
+    "ring_checksum": 354419274,
+    "cursor": 1
+  },
+  "1024": {
+    "processed_samples": 1024000,
+    "checksum": 777434556,
+    "block_checks": 956231258,
+    "ring_checksum": 399091524,
+    "cursor": 1
+  },
+  "4096": {
+    "processed_samples": 4096000,
+    "checksum": 929712419,
+    "block_checks": 343735962,
+    "ring_checksum": 484149418,
+    "cursor": 1
+  }
+}

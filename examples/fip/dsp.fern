@@ -1,0 +1,157 @@
+// Usage: dsp fip|direct block_size blocks delay_samples unique|shared [samples]
+// Allocation measurement starts with the first callback after construction.
+import "./dsp_core";
+import "./dsp_fip";
+import "./dsp_direct";
+import "core/cmp";
+import "std/bench";
+import "std/i32";
+import "std/i64";
+import "std/string";
+
+function snapshot(g: dsp_core.Graph): dsp_core.Graph {
+  return g;
+}
+
+function checksum(values: f64[], count: i32): i64 {
+  let hash: i64 = 0i64;
+  let i: i32 = 0;
+  while (i < count) {
+    let quantized: i64 = (values[i] * 4096.0) as i64;
+    hash = (hash * 65599i64 + quantized + 1048576i64) % 1000000007i64;
+    i = i + 1;
+  }
+  return hash;
+}
+
+function process(own g: dsp_core.Graph, input: f64[], block: i32, variant: string): dsp_core.Graph {
+  if (variant == "fip") {
+    return dsp_fip.process(g, input, block);
+  }
+  return dsp_direct.process(g, input, block);
+}
+
+function run(variant: string, block: i32, blocks: i32, delay: i32, sharing: string, export_samples: boolean): i32 {
+  let startup_alloc: i64 = bench.alloc_count();
+  let startup_fresh: i64 = bench.bump_bytes();
+  let startup: i64 = monotonic_ns();
+  let input: f64[] = dsp_core.dataset(block);
+  let samples: i64[] = __alloc_i64(blocks);
+  match (dsp_core.new_graph(block, delay)) {
+    None => {
+      return 2;
+    },
+    Some(g) => {
+      let startup_ns: i64 = monotonic_ns() - startup;
+      let startup_allocs: i64 = bench.allocs_after(startup_alloc);
+      let startup_bytes: i64 = bench.fresh_bytes_after(startup_fresh);
+      let mark: i64 = bench.alloc_count();
+      let fresh_mark: i64 = bench.bump_bytes();
+      let started: i64 = monotonic_ns();
+      let i: i32 = 0;
+      let current: i64 = 0i64;
+      let checks: i64 = 0i64;
+      let first_allocs: i64 = 0i64;
+      while (i < blocks) {
+        let observed: i64 = 0i64;
+        let duration: i64 = 0i64;
+        if (sharing == "shared") {
+          let saved: dsp_core.Graph = snapshot(g);
+          let t0: i64 = monotonic_ns();
+          g = process(g, input, block, variant);
+          duration = monotonic_ns() - t0;
+          observed = checksum(saved.output, saved.output_count);
+        } else {
+          observed = checksum(g.output, g.output_count);
+          let t0: i64 = monotonic_ns();
+          g = process(g, input, block, variant);
+          duration = monotonic_ns() - t0;
+        }
+        samples = samples.with(i, duration);
+        if (observed != current || g.refused || g.output_count != block) {
+          return 1;
+        }
+        current = checksum(g.output, g.output_count);
+        checks = (checks + current) % 1000000007i64;
+        if (i == 0) {
+          first_allocs = bench.allocs_after(mark);
+        }
+        i = i + 1;
+      }
+      let elapsed: i64 = monotonic_ns() - started;
+      let allocations: i64 = bench.allocs_after(mark);
+      let fresh: i64 = bench.fresh_bytes_after(fresh_mark);
+      if (export_samples) {
+        i = 0;
+        while (i < blocks) {
+          print("sample," + i.to_string() + "," + samples[i].to_string());
+          i = i + 1;
+        }
+      }
+      let stats: bench.Report = bench.Report { name: variant, iterations: blocks, wall_ns: elapsed, samples_ns: cmp.sort(samples), allocs: allocations, fresh_bytes: fresh };
+      print("{\"variant\":\"" + variant + "\",\"block_size\":" + block.to_string()
+        + ",\"blocks\":" + blocks.to_string() + ",\"delay_samples\":" + delay.to_string()
+        + ",\"sharing\":\"" + sharing + "\",\"processed_samples\":" + g.samples.to_string()
+        + ",\"checksum\":" + current.to_string() + ",\"block_checks\":" + checks.to_string()
+        + ",\"ring_checksum\":" + checksum(g.delay, g.delay.len()).to_string() + ",\"cursor\":" + g.cursor.to_string()
+        + ",\"startup_ns\":" + startup_ns.to_string() + ",\"startup_allocs\":" + startup_allocs.to_string()
+        + ",\"startup_fresh_bytes\":" + startup_bytes.to_string() + ",\"wall_ns\":" + elapsed.to_string()
+        + ",\"allocs\":" + allocations.to_string() + ",\"first_callback_allocs\":" + first_allocs.to_string()
+        + ",\"fresh_bytes\":" + fresh.to_string() + ",\"block_p50_ns\":" + stats.p50_ns().to_string()
+        + ",\"block_p95_ns\":" + stats.p95_ns().to_string() + ",\"block_p99_ns\":" + stats.p99_ns().to_string()
+        + ",\"block_p999_ns\":" + stats.p999_ns().to_string() + ",\"block_max_ns\":" + stats.max_ns().to_string() + "}");
+      if (g.samples != block as i64 * (blocks as i64) || variant == "fip" && sharing == "unique" && allocations != 0i64) {
+        return 1;
+      }
+      return 0;
+    }
+  }
+}
+
+function main(): i32 {
+  let argv: string[] = args();
+  if (argv.len() < 6 || argv.len() > 7) {
+    return 2;
+  }
+  if (argv[1] != "fip" && argv[1] != "direct") {
+    return 2;
+  }
+  let block: i32 = 0;
+  let blocks: i32 = 0;
+  let delay: i32 = 0;
+  match (argv[2].parse_int()) {
+    Some(n) => {
+      block = n;
+    },
+    None => {
+      return 2;
+    }
+  }
+  match (argv[3].parse_int()) {
+    Some(n) => {
+      blocks = n;
+    },
+    None => {
+      return 2;
+    }
+  }
+  match (argv[4].parse_int()) {
+    Some(n) => {
+      delay = n;
+    },
+    None => {
+      return 2;
+    }
+  }
+  if (block < 1 || block > 4096 || blocks < 1 || blocks > 1000000 || delay < 1 || delay > 8192) {
+    return 2;
+  }
+  if (argv[5] != "unique" && argv[5] != "shared") {
+    return 2;
+  }
+  let export_samples: boolean = argv.len() == 7;
+  if (export_samples && argv[6] != "samples") {
+    return 2;
+  }
+  return run(argv[1], block, blocks, delay, argv[5], export_samples);
+}
