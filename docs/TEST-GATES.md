@@ -1676,6 +1676,14 @@ answer, these are the tools, in the order they are usually reached for:
   uniquely owned grows in place rather than allocating. A string probe must
   therefore build a >7-byte string by concatenation from a **shared** left
   operand that stays live across the loop.
+- **`FERN_SEM_DUMP=<function>`** — the named function's semantic graph as
+  `seminline` leaves it, one stderr line per instruction (value, kind,
+  operands, immediate, name) and one per terminator: what the count planner
+  is handed, after the splices, the pair returns and the split reads. The
+  name is the mangled one the diagnostics use (`serve____serve_took`,
+  `rounds`). Reach for it when a construction allocates where its donor
+  should have served it: the graph says whether the two are still in one
+  body and what lies between them, which the asm no longer does.
 - **`FERN_RC_TRACE=1`** — one stderr line per heap event:
   `rctrace <a|f> <ptr> <size> <site> <caller>`, all four numbers fixed-width
   16-hex, `site` being the *caller's* return address and `caller` one frame
