@@ -124,8 +124,7 @@ further. Continue widening these seams.
 `type_to_irtag(check_expr(e, s))`, the canonical string spelling irlower already
 keys on — onto the node types below. It runs after `check_module` and before
 every emit path, so `-decide`, the eligibility judgement and the emit all see the
-same annotated tree. A driver that skips it (`asm_ir_run`, the native compiler)
-leaves every `ty` empty and gets the structural walk unchanged.
+same annotated tree.
 
 The tag VOCABULARY is a separate axis from the carrier set: it names scalars,
 strings, arrays and views, structs, nominal enums, maps, tuples and the builtin
