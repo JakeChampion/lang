@@ -85,6 +85,5 @@ TestDateParity
 TestMktempRetryExhaustion
 TestNice
 TestNiceReadsTheNicenessItWasStartedAt
-TestRunconParity
 TestShred
 TestStty
