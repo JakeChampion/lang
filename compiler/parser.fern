@@ -2898,6 +2898,9 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
         idx_p = p;
       }
       if (idx_p.pos == idxStart) {
+        let ta_line: i32 = p.peek_line();
+        let ta_col: i32 = p.peek_col();
+        let ta_tok: string = tok_spelling(p.peek());
         // `-fmt` reads the arguments back out as types before the skip
         // loop erases them. On anything the type grammar does not accept
         // the cursor is restored and the erasing walk below runs as it
@@ -2956,7 +2959,8 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
         }
         // `Name[T] { … }` — a generic struct construction: the
         // erased base is the struct name; parse the literal body.
-        if (p.peek_punct() == "{") {
+        let ta_next: string = p.peek_punct();
+        if (ta_next == "{") {
           match (base) {
             ast.ExprIdent(bid) => {
               // The written instantiation is stored in the literal's
@@ -2980,6 +2984,12 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
             },
             _ => {}
           }
+        }
+        // Type arguments instantiate only a call or a struct literal. Native
+        // reads any other bracket as an index, whose type-keyword operand it
+        // refuses as P001: `Tag[i32].One(1)` and a bare `id[i32]` (#11777).
+        if (ta_next != "(" && ta_next != "{") {
+          base = e_unknown_at("unexpected token \"" + ta_tok + "\"", ta_line, ta_col);
         }
         continue;
       }

@@ -181,6 +181,30 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			wantDiag: "error[P001]",
 		},
 		{
+			// Written type arguments instantiate only a call or a struct
+			// literal. Anywhere else native reads the bracket as an index
+			// and refuses its type-keyword operand (#11777); the self-host
+			// dropped the arguments and built the program.
+			name:     "type-args-before-a-variant-P001",
+			src:      "enum Tag[T] { One(T), Empty }\nfunction main(): i32 { let t: Tag[i32] = Tag[i32].One(1); match (t) { One(x) => { return x - 1; }, Empty => { return 9; } } }\n",
+			wantDiag: "error[P001]",
+		},
+		{
+			name:     "type-args-on-an-uncalled-function-P001",
+			src:      "function id[T](x: T): T { return x; }\nfunction main(): i32 { let g = id[i32]; return 0; }\n",
+			wantDiag: "error[P001]",
+		},
+		{
+			name:     "type-keyword-index-P001",
+			src:      "function main(): i32 { let xs: i32[] = [1]; return xs[i32]; }\n",
+			wantDiag: "error[P001]",
+		},
+		{
+			name:     "type-args-on-a-call-and-a-literal-compile",
+			src:      "struct Box[T] { v: T }\nfunction id[T](x: T): T { return x; }\nfunction main(): i32 { let b: Box[i32] = Box[i32] { v: 3 }; return id[i32](b.v) - 3; }\n",
+			wantDiag: "",
+		},
+		{
 			// The negative control, and the one that matters: renaming the
 			// function is all it takes, so the gate must fire on the NAME and
 			// nothing else. 320 sources (the whole stdlib, every self-host
