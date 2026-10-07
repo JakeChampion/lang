@@ -71,6 +71,26 @@ func TestSelfHostEnvX86_64(t *testing.T) {
 			t.Errorf("env(unset) exited %d, want 1 (None arm)", code)
 		}
 	})
+	// Entries sharing the name's first byte, or all of it but the '=', come
+	// first: the walk passes over each and still finds the name, and finds
+	// nothing when only they are there.
+	nearMisses := []string{"F=1", "FERN_SELFHOST_ENV_TES=short", "FERN_SELFHOST_ENV_TESTX=long", "=", "FERN"}
+	t.Run("near-misses-first", func(t *testing.T) {
+		cmd := mkCmd()
+		cmd.Env = append(append([]string{}, nearMisses...), "FERN_SELFHOST_ENV_TEST=hello-env")
+		_ = cmd.Run()
+		if code := cmd.ProcessState.ExitCode(); code != 7 {
+			t.Errorf("env(after near misses) exited %d, want 7 (1=None, 2=value mismatch)", code)
+		}
+	})
+	t.Run("near-misses-only", func(t *testing.T) {
+		cmd := mkCmd()
+		cmd.Env = nearMisses
+		_ = cmd.Run()
+		if code := cmd.ProcessState.ExitCode(); code != 1 {
+			t.Errorf("env(near misses only) exited %d, want 1 (None arm)", code)
+		}
+	})
 }
 
 // TestSelfHostEnvArm64 is the ARM64 counterpart: the self-hosted ARM64

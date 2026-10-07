@@ -4533,8 +4533,10 @@ pub function rt_src_write_file_mode(t: string, fname: string, mode: string, fixu
 // are safe on both native emitters. Allocate exactly the value length: the
 // string destructor releases that size, and the copied string needs no NUL.
 // Empty values use the immortal empty string rather than a raw allocation.
+// An entry whose first byte is not the name's ('=' for an empty name) is
+// passed over without the full compare.
 pub function rt_src_env(): string {
-  return "function __fern_env(name: string): Option[string] { let nlen: i32 = name.len(); let envp: usize = __raw_environ(); let idx: i32 = 0; let done: i32 = 0; while (done == 0) { let entry: usize = __raw_load_ptr(envp, idx); if (entry == 0) { done = 1; } else { let m: i32 = 1; let k: i32 = 0; while (k < nlen) { if (__raw_load8(entry, k) != (name[k] as i32)) { m = 0; k = nlen; } else { k = k + 1; } } if (m == 1) { if (__raw_load8(entry, nlen) == 61) { let vs: i32 = nlen + 1; let vlen: i32 = 0; while (__raw_load8(entry, vs + vlen) != 0) { vlen = vlen + 1; } if (vlen == 0) { return Some(\"\"); } let vbuf: usize = __raw_alloc(vlen); let c: i32 = 0; while (c < vlen) { __raw_store8(vbuf, c, __raw_load8(entry, vs + c)); c = c + 1; } return Some(__raw_string(vbuf, vlen)); } } idx = idx + 1; } } return None; }";
+  return "function __fern_env(name: string): Option[string] { let nlen: i32 = name.len(); let first: i32 = 61; if (nlen > 0) { first = name[0] as i32; } let envp: usize = __raw_environ(); let idx: i32 = 0; let done: i32 = 0; while (done == 0) { let entry: usize = __raw_load_ptr(envp, idx); if (entry == 0) { done = 1; } else { let m: i32 = 1; let k: i32 = 0; if (__raw_load8(entry, 0) != first) { m = 0; k = nlen; } while (k < nlen) { if (__raw_load8(entry, k) != (name[k] as i32)) { m = 0; k = nlen; } else { k = k + 1; } } if (m == 1) { if (__raw_load8(entry, nlen) == 61) { let vs: i32 = nlen + 1; let vlen: i32 = 0; while (__raw_load8(entry, vs + vlen) != 0) { vlen = vlen + 1; } if (vlen == 0) { return Some(\"\"); } let vbuf: usize = __raw_alloc(vlen); let c: i32 = 0; while (c < vlen) { __raw_store8(vbuf, c, __raw_load8(entry, vs + c)); c = c + 1; } return Some(__raw_string(vbuf, vlen)); } } idx = idx + 1; } } return None; }";
 }
 
 // rt_src_temp_dir backs `temp_dir(prefix)` (#2649, syscall-leaf) → Result[string,
