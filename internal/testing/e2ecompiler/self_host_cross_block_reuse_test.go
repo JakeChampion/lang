@@ -139,6 +139,13 @@ function main(): i32 { let keep: L = build(8); let before: i32 = score(keep); le
 struct M { tag: i32, st: St }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 1000000) { let d: M = M { tag: i, st: On(id([i, 1])) }; let s: i32 = 0; match (d.st) { On(v) => { s = v[1] + d.tag; }, Off(v) => { s = d.tag; } } if (i % 3 > 0) { let b: M = M { tag: i, st: Off(id([3])) }; match (b.st) { On(v) => { sum = sum + 1; }, Off(v) => { sum = (sum + v[0] + b.tag) % 1000; } } } sum = (sum + s) % 1000; i = i + 1; } return sum % 100; }`, 65, 3666666},
+		// The loop's `a` dies in the latch and after the loop, both holding it
+		// for `b`. The back edge drops the held box before its phi store
+		// gives `a` the next iteration's value (#11799, #11804).
+		{"loop-phi-donor", `struct P { x: i32, y: i32 }
+@noinline function get(p: P): i32 { return p.x + p.y; }
+function f(n: i32): i32 { let a: P = P { x: n, y: 2 }; let u: i32 = 0; let i: i32 = 0; while (i < 3) { let c: P = P { x: i, y: n }; if (i > n) { u = u + 1; } u = u + get(a); a = c; i = i + 1; } let t: i32 = get(a); let r: i32 = 0; if (t > 3) { r = 1; } let b: P = P { x: t * 3, y: 4 }; return u + r + get(b); }
+function main(): i32 { return f(2); }`, 26, 4},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
