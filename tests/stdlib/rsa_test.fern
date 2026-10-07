@@ -1,0 +1,190 @@
+import "std/test";
+import "std/hex";
+import "std/string";
+import "std/crypto/rsa";
+
+// tests/stdlib/rsa_test.fern — std/crypto/rsa against signatures Python's
+// cryptography package made: PKCS#1 v1.5 and PSS over SHA-256, SHA-384 and
+// SHA-512 under a 2048-bit key, and under a 2049-bit key, where PSS's
+// encoded message is one byte shorter than the modulus. Tampering, a
+// signature checked under the other scheme or digest, and a malformed key
+// are refused.
+
+function k2048_n(): string {
+  return "acf3f006452ba9304082dc0519bb3997486e5d1b57997a5bc74c97b84eaaf9d2718c3852bb47a55d530430227fd68fe44fec286b1df26d3d908b012524005ef2f91563df00e2b97316a210e4f3c17d6d435f372ff77afd24debdc67cca069d04178ea40922849fde1db98b4008d91e7f95d86ff44c0221be4206bf5a40dd9f5e384ef2728c82a2205b14437c55d7e26f9df93d36df0f263580e2f3c79ec950a407ba62e9d0a642a046351c1192ec19ce2f6ef9418b38f51074a6e3b4a4628dad7824739052063373ab2dc53fbf37bd8713d643a9ca2c1f2254851dce4c9157ed45ad56d168f54f3e5a1da8b3c863f6671511e7ca6828545e4d67fd92a0e23cff";
+}
+
+function k2048_pkcs1_sha256(): string {
+  return "3e97d9ce4044604d5fe68eb9bef2996e970cee8934aee567405add80748eee8d7133e0baee12f4fcc588dda5e2059899b6c9c640400d47fa71c52321363f8d8df4f7f1e5e6614a7010a235fd85707d4cdc95194374e36cb9b238a10d5203c4f465b6366ed3dc95998315ab6dffc5ab1ac88e9129cd7acd1211c611f7ceed9f675cb03a107c8a2740758a1b25dd4d4fb9259152145fb3795f6ca210e59c48394ab870db44e3d3a43687e37ad305cefa71fc1d343b66abeb51c47b63d494af5774fdb2854b14fabf88c790c07cca091df7fd96fea6a1a803b5deb494a047224728bc365e12450c8e4a78ee8e4935d952f3b3a02fb48b11eab88e3b790895e481da";
+}
+
+function k2048_pkcs1_sha384(): string {
+  return "a1189cd2124e67d3911ff523a08c646b480df094fe6de36efed77725060902fbea43e857cfbabcef57f4e7b79ccd5167fadc0163e4e4d16ac1e5dd52483c1edfce975dd4dd66d6bc1af4bf7e62d86e8428047abb296af86a5a215dc52d11bb43056889eac2a7fb11b0c49d46333f9a2e78093239589e7d2dc212a7eb79dd5ab64a4831d8fe53ca40027f1771b7e2de924ce37cc14a2c2210637d514d47bf6565635c13065a902a2b0a8214c5c9f425eca5a99ac97222e1681f1ce92ec27034b8d9b8ddd9461f93f0f2be2f54a62549866d139e2a902bd97f043f694eb14b9eeb7a87046dfb7720e18e261b00ee38e292a0fbddf52016265c95c45b8124e6db9e";
+}
+
+function k2048_pkcs1_sha512(): string {
+  return "88e8f6de8eded4aa5007ce54cb3661f939ece50c791690cd483e1d533a5a0ace6aa6abca8304f078a993b6086db81476bf9d7076f6b4ba38f278f4256bc0891c38a1795482be9a3636c8136a97ab18b14b9e6fa61998dcf071e7872ebe40896058ba0fd72add3452c02fee00afaa44e0368d8296e8b420a72cba02ca57d86f59258eb2a53183287c299862bc0451fca8b1ec4f11d0ee6ec1b84a064d30c24cee1851b731d3770ab54835f219357ce5019b6da82f16c7f07817214cff98068accc4ded5fdf7638874f7ec476bd8436b4743f73d0fbbb98bcf5b90b5012c2cc5f3d19b8d25f7bf204f510398a812e7fbc334de22928a427ff286e867692243b0fa";
+}
+
+function k2048_pss_sha256(): string {
+  return "8410d32a86f14533c2f6f6fa731d8ea27a4c8f0dd810fb65232083098fe2d58be8817f4f6f8465fb75188d80923d19491efcf9a45df24936c9c5197c54ea5318f35bfb760eb23bc75ebfa068481afa4cf2880a3986a9c45922b6d5d411b9577bd7ddc5a4cf91cae04ca683e2bcabbbb73277a0f429650f9cb305f9106f41c89c00a25ea54c9b40d292805624c6775be60e73bb9cfe9593b06c591300f57027fd3f999732ba50a35fdc3312d4ac24f150acff08ed189b8c57ea729f41585088ab3df587e27a041f51d0654613c0425f51bd2abf788bc163f4c38910acea9de3c55516f59b0d82a1d3a275f527e2c45a39d225b259609360a7b4ab0bb53c5bf5a4";
+}
+
+function k2048_pss_sha384(): string {
+  return "277da9120d4cc8ab6ff8aaab1a1a48e643c4c7f77ab409ec0a4124dcb60765ebbf362b400c2a3dc391fbf35464c3b3d5fe71c4b085bfc7a3c4ce6fb6c3f50ab540748613447e02e7345f39db863ffa4294de1cda727df76e0f93f7290e5c1e1f22aa895bbe38123548d939a7e86e54eff3f1b27313c5120b15be6cd6ce783cda6b3ddf37a03a52c076dd6b3b49203deefdbe76e6290aa372d45b41dc9045197662fe5f79056d06d8f0eb89960c8a983c3976eb81cc5d13acd6dfcebc78489a63efeefbb02f03623d164348cf5ab301d7b5d95b5f68bc6956a1be14d39cd522af54e690c8ff0a36c790d7b6a0ba74a2f47a31641d81052b61cf99afb7ab37e909";
+}
+
+function k2048_pss_sha512(): string {
+  return "4fae533b2f8fb952637d23cab0fee8628e1a41b9520712c9d9017fd9f5f1882f663ee017727584a000ca9d4d3df482f466a130fbbf9b9ccab23cc260ae2a7ae6b0e01b54afbdab38125d1bcfb1d53af719daafbac18658b5bf11a76eeee4b8db692730abb3d6e32fb2ed6107e0ccf612f9a376892bfe7777b6eb23b9b23824cd0a17dfb4efb3b7ae701feb16bdbd1e33947f36a758aa04ea2986c1609bed01ad5c99100671dde96871b6f98dc68358cb19ed839d6c15a87137b9fbb994dc67db3a6ca9ab52a2f7c895366b79393f4fd8c6f653567482c7603f70e9876d064b095ed3f33b642f4ef3d17e8041285f5b84183864eb688efde23998e2469b508b2b";
+}
+
+function k2049_n(): string {
+  return "0185e196d57119d0578e05faf998778a0966a725b9b2c2b6f7c34bb8558d6f91a28144e4283c45e87b70b4423514fc889057749ac4a32a7161a76edfa46bf9a3cf922353fef8fb9d767bb2e221f174c0350e966019857109e12ff9117bdeaca462e0c801836240c2853c9bcd62b99b8cee126b3378ddb1bed7f3e90918c4dca3253e0e08b20227836f0c33b92edd8b6bdf3b0ca5c0d6b4c387659c34d4a968e12c05b4e33c67bb9fcd343dc4e4357f847ec1e4a711b3d112e49efad6339f36d1103c029ddc869ddba13aff1c5f08bc894ed9db5ee54ceaaca7e07405068adda64a885af176866413da8a9dfb08cdacb2a640bee9d1ca9c6216937030d5674081b1";
+}
+
+function k2049_pkcs1_sha256(): string {
+  return "0058d39a6d39aed8afe452542a8e495ab9b4557dd421601d9873acfa69bd99fb2ec5a3a7754db098cc7c24849beb7d684a292f5327781151f5d3cdb39a717d5ebc037e961442afd8a0aa80e0cf164e79b35085a6672aa65667b3ed1c5813ae45836d403d8b7c4b794136fe9ebda8387fa90ddfe6942c9f5abb82dd7088ee80c9b48c8129c6c72c201799a923e2e18ddef3efae0bb94307582b37374f2f19b10f758568ab61b50663aa2aa74bc9c7ea435a9b073cce740944d7483bbd757f327375e06bd19e0f12da13fd0735df1880d051a6fbf373d414d70e26ffdabb99517ef8b21c20ed86e516fa30f129a5fa3ec1d891124e0e72dc1a69cfe4da0a81b43b95";
+}
+
+function k2049_pkcs1_sha512(): string {
+  return "01379da12a7a643bb4be4b456dbbea3ef28968861a29fa72c9195dd933dcba5be682bb53f7edc86bf47b3a5f9eb234cf80943c6de7e91f20c9218f3ab81dbccd901d938fd09d7d892db7e0235f18985ad7ce70648c8da73c31f2b608e5fefbc8f41ae41c4fa6bf05628bc606f8e35d6dcc4c750b6974ad9abf91f1c62f9b66229ef2dbb432f133667780e4fba43e4e2217f7f8cbabf477e5e0ff0e76022be4ed621c9da7dfab1db2e0ee8e68e37f0954efc4b3b53fb6d373485ae0b5203e1ac34d832029f73545bce7067910256cd18e5b408a4d188f252ca2c3d198cb83674224611ee1cf17fd535f801cb9bafa1937480083fbd53d500c64944fccb229c97274";
+}
+
+function k2049_pss_sha256(): string {
+  return "0093fed99b6b452f31de7847f523eb49cbaf7f2b453c49f7fe22450254550cbb8c69d52cc96bee334aea808f27a0b62607cbc78efe27f9c9edfd32f92a46f4920afc459f2eed55d6af0c483490c2da6f1e4c3ad2683ff7ee7f3bfadf4d1bd0936915236ee9a358cea891b07a0a1fa48fd23b6d1a6385565a2035e02eb42b5cc2836e2faef6f82cbd10ea347eb25cd675e3b0a3d7d587444ec699b93de2cc9d17cd84b2314690beeb86e329b4c9b68785721b45a71d13b1ac7346e2b03ee1f264c4c79d90d5fd3495be95536711970a8b1240a2ccadcfb110fcdf8839bd93d6e7563e72f687d637f24c43d00735987146781b54121d4e0b5ed3dd0292bc808c3ad3";
+}
+
+function k2049_pss_sha512(): string {
+  return "004c62c6c835dbc1ce22a118e7a1abd169c89f8e0d80749de41924d947c843980b3dadfa184e073060cea450942eb7b0b13c19882fbd2a7fbbc107e4fd262026542d94e14b6c65b78dd15a77985148f58b8e881e9640d2c299046a0b36891561ee9743cedcf01dffcd0cd55921138af5e75fc597d98fc916f2b5e8d3ffd5b50c6f5d6ee6d9946696afa11b05bd0c32a9d3872eaf5fec405ae9952b24f896f368d7d01523a8fbcb7cb3d5a5391a888ca572ba6930162d4e00cb64bf1579a10f90df0461e3e7deef610cba1823ef5bd9464adcf27b7b0c9c8e88dda512664e71fed913505b224344eeeac26d94f19c191ddfc1305ed79c41349cc7d0b515ac883658";
+}
+
+function message(): u8[] {
+  return "fern rsa verification".bytes();
+}
+
+function pkcs1(n: string, h: rsa.Hash, msg: u8[], sig: string): boolean {
+  match (rsa.public_key(hex.hex_decode(n), hex.hex_decode("010001"))) {
+    Ok(k) => {
+      return rsa.verify_pkcs1v15(k, h, msg, hex.hex_decode(sig));
+    },
+    Err(e) => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function pss(n: string, h: rsa.Hash, msg: u8[], sig: string): boolean {
+  match (rsa.public_key(hex.hex_decode(n), hex.hex_decode("010001"))) {
+    Ok(k) => {
+      return rsa.verify_pss(k, h, msg, hex.hex_decode(sig));
+    },
+    Err(e) => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function test_pkcs1_2048_sha256(): test.TestOutcome {
+  return test.assert_true(pkcs1(k2048_n(), rsa.Sha256, message(), k2048_pkcs1_sha256()));
+}
+
+function test_pkcs1_2048_sha384(): test.TestOutcome {
+  return test.assert_true(pkcs1(k2048_n(), rsa.Sha384, message(), k2048_pkcs1_sha384()));
+}
+
+function test_pkcs1_2048_sha512(): test.TestOutcome {
+  return test.assert_true(pkcs1(k2048_n(), rsa.Sha512, message(), k2048_pkcs1_sha512()));
+}
+
+function test_pss_2048_sha256(): test.TestOutcome {
+  return test.assert_true(pss(k2048_n(), rsa.Sha256, message(), k2048_pss_sha256()));
+}
+
+function test_pss_2048_sha384(): test.TestOutcome {
+  return test.assert_true(pss(k2048_n(), rsa.Sha384, message(), k2048_pss_sha384()));
+}
+
+function test_pss_2048_sha512(): test.TestOutcome {
+  return test.assert_true(pss(k2048_n(), rsa.Sha512, message(), k2048_pss_sha512()));
+}
+
+function test_pkcs1_2049_sha256(): test.TestOutcome {
+  return test.assert_true(pkcs1(k2049_n(), rsa.Sha256, message(), k2049_pkcs1_sha256()));
+}
+
+function test_pkcs1_2049_sha512(): test.TestOutcome {
+  return test.assert_true(pkcs1(k2049_n(), rsa.Sha512, message(), k2049_pkcs1_sha512()));
+}
+
+function test_pss_2049_sha256(): test.TestOutcome {
+  return test.assert_true(pss(k2049_n(), rsa.Sha256, message(), k2049_pss_sha256()));
+}
+
+function test_pss_2049_sha512(): test.TestOutcome {
+  return test.assert_true(pss(k2049_n(), rsa.Sha512, message(), k2049_pss_sha512()));
+}
+
+// A signature over another message, a flipped bit, the other scheme, the
+// other digest, or the wrong length does not verify.
+function test_refusals(): test.TestOutcome {
+  let other: u8[] = "fern rsa verification!".bytes();
+  if (pkcs1(k2048_n(), rsa.Sha256, other, k2048_pkcs1_sha256()) || pss(k2048_n(), rsa.Sha256, other, k2048_pss_sha256())) {
+    return test.fail("a signature over another message verified");
+  }
+  let flipped: u8[] = hex.hex_decode(k2048_pss_sha256());
+  flipped = flipped.with(100, flipped[100] ^ 1 as u8);
+  if (pss(k2048_n(), rsa.Sha256, message(), hex.hex_encode(flipped))) {
+    return test.fail("a flipped bit verified");
+  }
+  if (pss(k2048_n(), rsa.Sha256, message(), k2048_pkcs1_sha256()) || pkcs1(k2048_n(), rsa.Sha256, message(), k2048_pss_sha256())) {
+    return test.fail("a signature verified under the other scheme");
+  }
+  if (pkcs1(k2048_n(), rsa.Sha384, message(), k2048_pkcs1_sha256()) || pss(k2048_n(), rsa.Sha512, message(), k2048_pss_sha256())) {
+    return test.fail("a signature verified under the other digest");
+  }
+  if (pkcs1(k2048_n(), rsa.Sha256, message(), "00" + k2048_pkcs1_sha256()) || pkcs1(k2049_n(), rsa.Sha256, message(), k2048_pkcs1_sha256())) {
+    return test.fail("a signature of the wrong length verified");
+  }
+  return test.pass();
+}
+
+function test_bad_keys(): test.TestOutcome {
+  match (rsa.public_key(hex.hex_decode("c3"), hex.hex_decode("010001"))) {
+    Ok(k) => {
+      return test.fail("an 8-bit modulus was accepted");
+    },
+    Err(e) => {
+      if (e.message() != "rsa: the modulus is 8 bits, want at least 1024") {
+        return test.fail(e.message());
+      }
+    }
+  }
+  match (rsa.public_key(hex.hex_decode(k2048_n()), hex.hex_decode("010000"))) {
+    Ok(k) => {
+      return test.fail("an even exponent was accepted");
+    },
+    Err(e) => {
+      return test.assert_eq(e.message(), "rsa: the exponent must be odd and at least 3");
+    }
+  }
+  return test.pass();
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/crypto/rsa");
+  r = r.it("pkcs1 2048-bit sha256", test_pkcs1_2048_sha256);
+  r = r.it("pkcs1 2048-bit sha384", test_pkcs1_2048_sha384);
+  r = r.it("pkcs1 2048-bit sha512", test_pkcs1_2048_sha512);
+  r = r.it("pss 2048-bit sha256", test_pss_2048_sha256);
+  r = r.it("pss 2048-bit sha384", test_pss_2048_sha384);
+  r = r.it("pss 2048-bit sha512", test_pss_2048_sha512);
+  r = r.it("pkcs1 2049-bit sha256", test_pkcs1_2049_sha256);
+  r = r.it("pkcs1 2049-bit sha512", test_pkcs1_2049_sha512);
+  r = r.it("pss 2049-bit sha256", test_pss_2049_sha256);
+  r = r.it("pss 2049-bit sha512", test_pss_2049_sha512);
+  r = r.it("refusals", test_refusals);
+  r = r.it("malformed keys", test_bad_keys);
+  return r.finish();
+}

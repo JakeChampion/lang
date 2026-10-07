@@ -44,7 +44,9 @@ type-checks standalone (`TestStdlibModulesImportStandalone`).
 6. **P-256 and Ed25519** for certificate signatures: P-256 in 32-bit
    limbs, and Ed25519 over slice 3's field and SHA-512.
 7. **RSA-PSS and PKCS#1 v1.5 verify** over `core/bigint`. Verification
-   handles only public values, so it does not need to be constant time.
+   handles only public values, so it does not need to be constant time,
+   and it landed ahead of slices 4 to 6 for that reason: every public
+   certificate chain needs it. About 1 ms per verification on x86-64.
 8. **`std/tls/record` and `handshake`.** A sans-IO state machine in the
    rustls shape: bytes in, bytes out, no sockets. It runs identically on
    native, wasm and the sim. TLS 1.3 only. The key schedule uses HKDF from

@@ -1083,7 +1083,21 @@ x86-64.
 - `X25519Error` is `ScalarLength(i32)`, `PointLength(i32)` or `LowOrder`,
   with `message()`.
 
-### `std/hash`
+### `std/crypto/rsa`
+
+RSA signature verification (RFC 8017) for TLS 1.3 and X.509 chains:
+RSASSA-PKCS1-v1_5 and RSASSA-PSS over SHA-256, SHA-384 and SHA-512, PSS with
+MGF1 over the same digest and a digest-length salt as TLS 1.3 fixes. Built on
+`core/bigint`; verification handles only public values, so it is not
+constant time. About 1 ms per verification on x86-64 under a 2048-bit key.
+
+- `public_key(modulus: [u8], exponent: [u8]): Result[PublicKey, RsaError]` —
+  big-endian, as a certificate carries them. A modulus under 1,024 bits, or
+  an even exponent or one below 3, is refused.
+- `verify_pkcs1v15(key, hash, msg, sig): boolean`,
+  `verify_pss(key, hash, msg, sig): boolean`, `hash` one of `Sha256`,
+  `Sha384`, `Sha512`.
+
 
 Non-cryptographic checksums, in std/crypto's streaming shape (`update` /
 `update_bytes` rebound, `finish()` reads the value) but kept apart from it:
