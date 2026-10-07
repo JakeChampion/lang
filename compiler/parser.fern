@@ -2954,9 +2954,18 @@ function parse_postfix(p: Par, base: ast.Expr): (ast.Expr, Par) {
         if (p.peek_punct() == "]") {
           p = p.advance();
         }
+        // Type arguments open a call or a struct literal and nothing else, so
+        // `Tag[i32].One(1)` is an index whose `i32` is no value (#11777).
+        let ta_after: string = p.peek_punct();
+        if (ta_after != "(" && (ta_after != "{" || p.no_struct)) {
+          base = e_index(base, idx_expr, bline, bcol);
+          pending_type_arg_list = [];
+          pending_type_args = "";
+          continue;
+        }
         // `Name[T] { … }` — a generic struct construction: the
         // erased base is the struct name; parse the literal body.
-        if (p.peek_punct() == "{") {
+        if (ta_after == "{") {
           match (base) {
             ast.ExprIdent(bid) => {
               // The written instantiation is stored in the literal's
