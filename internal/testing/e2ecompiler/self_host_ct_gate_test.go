@@ -145,6 +145,68 @@ function main(): i32 {
   return 6;
 }
 `, false},
+	// The key exchange over two secret scalars: the ladder swaps by mask, and
+	// the low-order refusal declassifies only its all-zero verdict.
+	{"x25519", `import "std/crypto/x25519";
+
+function filled(seed: i32): u8[] {
+  let b: u8[] = __alloc_u8(32);
+  let i: i32 = 0;
+  while (i < 32) {
+    b = b.with(i, ((i * 13 + seed) & 255) as u8);
+    i = i + 1;
+  }
+  return b;
+}
+
+function main(): i32 {
+  let a: u8[] = filled(5);
+  let b: u8[] = filled(9);
+  __ct_secret(a);
+  __ct_secret(b);
+  match (x25519.public_key(a)) {
+    Ok(pa) => {
+      __ct_public(pa);
+      match (x25519.public_key(b)) {
+        Ok(pb) => {
+          __ct_public(pb);
+          match (x25519.x25519(a, pb)) {
+            Ok(sa) => {
+              match (x25519.x25519(b, pa)) {
+                Ok(sb) => {
+                  __ct_public(sa);
+                  __ct_public(sb);
+                  let i: i32 = 0;
+                  while (i < 32) {
+                    if (sa[i] != sb[i]) {
+                      return 1;
+                    }
+                    i = i + 1;
+                  }
+                  return 0;
+                },
+                Err(e) => {
+                  return 2;
+                }
+              }
+            },
+            Err(e) => {
+              return 3;
+            }
+          }
+        },
+        Err(e) => {
+          return 4;
+        }
+      }
+    },
+    Err(e) => {
+      return 5;
+    }
+  }
+  return 6;
+}
+`, false},
 }
 
 const ctUninitialised = "depends on uninitialised value"
