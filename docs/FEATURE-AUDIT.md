@@ -111,7 +111,7 @@ programs through the self-hosted x86-64 driver + CI-gated arm64); native
 | Tuples `(T, U)` + destructuring | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `.0`/`.1` + `let (a,b) = …` |
 | `Map[K, V]` literal + ops | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `insert`/`get_or`/`has`/`len`/`keys`/`values`/`for (k,v)`, i32 + string keys; `without` (functional delete) now on the x86-64/arm64 IR path ([#2926](https://github.com/JakeChampion/lang/issues/2926)) — wasm `without` stays on the AST path (box-return ABI) |
 | Array literals | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
-| Function return annotations (required) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | every named function declares its return type — `: void` when it returns nothing. Omitting it is **E070**, not an inference request: a signature is the part of a function its callers read, so it is written, not derived. Return-type *inference* for unannotated named functions was removed (it previously covered plain non-generic free functions only; methods and generics already required an annotation). Lambdas are unaffected: `(x: T): R => e` may annotate, and `(x: T) => e` has R inferred from the body. Coverage: `TestMissingReturnTypeRejected` / `TestExplicitReturnTypeAccepted` (native) + the self-host `E070` rule in `collect_decl_diags`, held to the Go oracle by `TestSelfHostCheckerDifferentialX86_64` |
+| Function return annotations (required) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | every named function declares its return type — `: void` when it returns nothing. Omitting it is **E081**, not an inference request: a signature is the part of a function its callers read, so it is written, not derived. Return-type *inference* for unannotated named functions was removed (it previously covered plain non-generic free functions only; methods and generics already required an annotation). Lambdas are unaffected: `(x: T): R => e` may annotate, and `(x: T) => e` has R inferred from the body. Coverage: `TestMissingReturnTypeRejected` / `TestExplicitReturnTypeAccepted` (native) + the self-host `E070` rule in `collect_decl_diags`, held to the Go oracle by `TestSelfHostCheckerDifferentialX86_64` |
 | `let x: T = expr;` + type inference | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | inference (no `: T`) covers wider scalars (i64/u32/u8-wrap/f64/f32/bool/string), composites (tuple/struct/array/enum), and call-return inference — native `var_inference` fixture (4 backends) + self-host IR pin (x86-64 + wasm) |
 | Compound assignment `+= -= *= …` | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | `+= -= *= /= %=`; read-modify-write is width-correct beyond i32 — i64/u32/u8-wrap/f64 + loop accumulation pinned via the self-host IR `compound_assign_wider` pin (x86-64 + wasm) + native fixture (array-element compound assign is E056: arrays are immutable, use `.with`) |
 | `if`/`else` statement | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | |
@@ -1800,9 +1800,9 @@ to the interpreter) by four coordinated `parser.fern` changes:
 - **Clone-time `Self`-instantiation resolution** in `clone_struct_method` —
   normalise the finalize-baked bare struct name to the module-prefixed registered
   name (`replace_struct_ident`) so `mg_ty` mangles a nested `Self` instantiation
-  in the return/param types, and **retarget** the cloned body's bare-base struct
-  literals to the concrete clone name (`retarget_self_lit_stmts`), since
-  `ms_expr` cannot infer the key for `self.xs`.
+  in the return/param types. A bare-base struct literal in the cloned body is
+  left for its destination or the typed lowering to instantiate: it need not be
+  the receiver's instantiation (`swap` builds `Pair[B, A]`, #11847).
 - **Tuple-aware `subst_ty` / `mg_ty`** — recurse into `( … )` so a struct nested
   in a tuple (`Option[(i32, ArrayIter[i32])]`) is substituted + mangled.
 - **Symbol-safe bounded-generic clone names** — `clone_bg` / the call sites

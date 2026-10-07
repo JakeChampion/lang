@@ -197,7 +197,23 @@ function suite_shape(s: keyschedule.CipherSuite): string {
   return int.int_to_string(s.hash().size()) + "/" + int.int_to_string(s.aead().key_len());
 }
 
+// The code of the suite with a code, or -1 for none.
+function round_trip(code: i32): i32 {
+  match (keyschedule.cipher_suite(code)) {
+    Some(s) => {
+      return s.code();
+    },
+    None => {
+      return -1;
+    }
+  }
+  return -1;
+}
+
 function test_cipher_suite(): test.TestOutcome {
+  if (round_trip(0x1301) != 0x1301 || round_trip(0x1302) != 0x1302 || round_trip(0x1303) != 0x1303 || round_trip(0x1304) != -1) {
+    return test.fail("codes");
+  }
   return test.assert_eq(suite_shape(keyschedule.Aes128GcmSha256) + " " + suite_shape(keyschedule.Aes256GcmSha384) + " " + suite_shape(keyschedule.ChaCha20Poly1305Sha256), "32/16 48/32 32/32");
 }
 

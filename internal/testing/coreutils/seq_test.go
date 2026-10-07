@@ -296,7 +296,8 @@ func seqCases(t *testing.T) []invocation {
 		// of the macOS lane instead of corpusRunLimit's five minutes; the
 		// outcome is "did not finish" either way, so the recorded divergence
 		// does not change.
-		{name: "format precision past an int", args: []string{"-f", "%.2147483648g", "1"}, timeout: 10 * time.Second},
+		{name: "format precision past an int", args: []string{"-f", "%.2147483648g", "1"}, timeout: 10 * time.Second,
+			darwinLibcDefect: "Apple's printf wraps a precision past INT_MAX into a run GNU seq never finishes"},
 		{name: "format two long modifiers", args: []string{"-f", "%LLg", "1.5"}},
 		{name: "format h modifier", args: []string{"-f", "%hg", "1.5"}},
 		{name: "format q modifier", args: []string{"-f", "%qg", "1.5"}},
@@ -734,7 +735,8 @@ func seqCases(t *testing.T) []invocation {
 		{name: "format thousandths in blocks", args: []string{"-f", "%.3f", "0", "0.001", "2.5"}},
 		{name: "format hundredths with a comma", args: []string{"-f", "%.2f", "-s,", "0", "0.01", "25"}},
 		{name: "descending blocks go one at a time", args: []string{"3000", "-1", "-5"}},
-		{name: "descending tenths go one at a time", args: []string{"120", "-0.1", "-1.5"}},
+		{name: "descending tenths go one at a time", args: []string{"120", "-0.1", "-1.5"},
+			darwinLibcDefect: "Apple clang fuses GNU seq's first + i * step into one fma, so 120 + 1200 * -0.1 keeps a -6.7e-15 that two roundings lose"},
 
 		// Write failures inside the block writer: the head of the range
 		// is buffered, so the first write that fails is a block's.

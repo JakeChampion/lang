@@ -68,7 +68,7 @@ func TestUnknownMethodDiagnosticsLeaveNeighboursAlone(t *testing.T) {
 		{"struct field typo still reads as a field",
 			`struct Point { x: i32, y: i32 }
 			 function main(): i32 { let p: Point = Point { x: 1, y: 2 }; return p.z; }`,
-			`struct Point has no field "z"`},
+			`struct Point has no field or method "z"`},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			prog, err := parser.Parse(tc.src)
@@ -83,5 +83,18 @@ func TestUnknownMethodDiagnosticsLeaveNeighboursAlone(t *testing.T) {
 				t.Errorf("error = %v, want it to contain %q", err, tc.want)
 			}
 		})
+	}
+}
+
+// An imported struct is named as the program spells it, never by its
+// mangled `mod__Name`, and a member access says "field or method" (#11842).
+func TestUnknownMemberNamesTheImportedStruct(t *testing.T) {
+	err := checkModuleSource(t, `import "core/iter" as it;
+function main(): i32 { let total: i32 = it.of([1, 2, 3]).sum(); return total; }`)
+	if err == nil {
+		t.Fatal("expected E043 for a method ArrayIter does not have")
+	}
+	if got := err.Error(); !strings.Contains(got, `struct iter.ArrayIter has no field or method "sum"`) || strings.Contains(got, "__") {
+		t.Errorf("error = %s", got)
 	}
 }

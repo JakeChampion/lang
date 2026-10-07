@@ -79,6 +79,37 @@ pub enum CipherSuite {
   ChaCha20Poly1305Sha256,
 }
 
+// code is the suite's CipherSuite value (RFC 8446 §B.4).
+pub function (s: CipherSuite) code(): i32 {
+  match (s) {
+    Aes128GcmSha256 => {
+      return 0x1301;
+    },
+    Aes256GcmSha384 => {
+      return 0x1302;
+    },
+    ChaCha20Poly1305Sha256 => {
+      return 0x1303;
+    }
+  }
+  return 0;
+}
+
+// cipher_suite is the suite with a CipherSuite value, or None for one not
+// implemented.
+pub function cipher_suite(code: i32): Option[CipherSuite] {
+  if (code == 0x1301) {
+    return Some(Aes128GcmSha256);
+  }
+  if (code == 0x1302) {
+    return Some(Aes256GcmSha384);
+  }
+  if (code == 0x1303) {
+    return Some(ChaCha20Poly1305Sha256);
+  }
+  return None;
+}
+
 pub function (s: CipherSuite) hash(): Hash {
   match (s) {
     Aes128GcmSha256 => {

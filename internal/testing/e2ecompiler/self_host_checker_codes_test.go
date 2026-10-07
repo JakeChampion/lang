@@ -408,6 +408,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e051-result-is-the-borrowed-parameter", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction passthru(xs: i32[]): i32[] { return xs; }\nfunction main(): i32 { return keep(passthru([1, 2])); }\n", []string{"E051"}},
 		{"e051-result-borrowed-through-a-local", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction hop(xs: i32[]): i32[] {\n    let y: i32[] = xs;\n    return y;\n}\nfunction main(): i32 { return keep(hop([1, 2])); }\n", []string{"E051"}},
 		{"e051-result-borrowed-through-a-chain", "function keep(own ys: i32[]): i32 { return ys[0]; }\nfunction passthru(xs: i32[]): i32[] { return xs; }\nfunction relay(ys: i32[]): i32[] { return passthru(ys); }\nfunction main(): i32 { return keep(relay([1, 2])); }\n", []string{"E051"}},
+		// An element read out of a view of values is a copy, so an
+		// accumulator that appends it stays fresh; an element that is itself
+		// a pointer still borrows (#11877).
+		{"own-accepts-a-result-built-from-a-views-values", "function keep(own ys: u8[]): i32 { return ys.len(); }\nfunction bytes(own out: u8[], b: [u8]): u8[] {\n    let i: i32 = 0;\n    while (i < b.len()) { out = out.append(b[i]); i = i + 1; }\n    return out;\n}\nfunction main(): i32 { let a: u8[] = [1 as u8, 2 as u8]; return keep(bytes(bytes([], a), a)); }\n", nil},
+		{"e051-an-element-that-is-a-pointer-still-borrows", "function keep(own ys: string[]): i32 { return ys.len(); }\nfunction firsts(xs: string[]): string[] {\n    let out: string[] = [];\n    out = out.append(xs[0]);\n    return out;\n}\nfunction main(): i32 { return keep(firsts([\"a\"])); }\n", []string{"E051"}},
 		// A top-level const is a fresh value at every use, so it may be handed
 		// to an `own` parameter; a parameter of the same name shadows it (#11471).
 		{"own-accepts-a-const-array", "const W: i32[] = [1, 2];\nfunction keep(own ys: i32[]): i32 { return ys[0]; }\nfunction main(): i32 { return keep(W); }\n", nil},
@@ -485,6 +490,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// lambda's (#9515); the differential is what pins them together.
 		{"e079-defer-try-op", "function g(v: i32): Option[i32] { if (v < 100) { return Some(v + 1); } return None; }\nfunction f(): Option[i32] { let n: i32 = 0; defer n = g(n)?; return Some(n); }\nfunction main(): i32 { return 0; }\n", []string{"E079"}},
 		{"e079-defer-inside-lambda-body", "function g(v: i32): Option[i32] { if (v < 100) { return Some(v + 1); } return None; }\nfunction main(): i32 { let h: (i32) => i32 = (x: i32) => { let n: i32 = x; defer n = g(n)?; return n; }; return h(1); }\n", []string{"E042", "E079"}},
+		// E081: a named function with no return type, valued or void.
+		{"e081-missing-return-type", "function greet() { return \"hi\"; }\nfunction main(): i32 { return 0; }\n", []string{"E081"}},
+		{"e081-missing-void-return-type", "function noop() { }\nfunction main(): i32 { noop(); return 0; }\n", []string{"E081"}},
 		// The complementary shape — a lambda LITERAL in the action, whose `?`
 		// leaves the lambda. Neither compiler reports E079; both report the
 		// lambda's conflicting exits (the `?`'s Option and the i32 it yields)

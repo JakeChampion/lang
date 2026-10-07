@@ -166,7 +166,7 @@ pub function canonicalize(name: string, mode: i32, logical: boolean): Result[str
     let ok: boolean = mode == missing();
     if (!ok) {
       if (suffix_needs_dir(rest)) {
-        match (access(rname + "/", 0)) {
+        match (access(rname + dir_suffix(), 0)) {
           Ok(_) => {
             ok = true;
           },
@@ -202,6 +202,16 @@ pub function canonicalize(name: string, mode: i32, logical: boolean): Result[str
     }
   }
   return Ok(rname);
+}
+
+// What makes `access` ask whether a name is a searchable directory: `/`,
+// except on Darwin, whose kernel answers `link-to-a-file/` as the file. gnulib
+// appends `/./` there for that reason.
+function dir_suffix(): string {
+  if (target_os() == "darwin") {
+    return "/./";
+  }
+  return "/";
 }
 
 // The strerror text for ELOOP, which the walk decides for itself rather

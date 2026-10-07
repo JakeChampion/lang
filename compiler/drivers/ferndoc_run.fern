@@ -193,24 +193,16 @@ function self_checks(): i32 {
   if (ferndoc.module_summary("") != "") {
     return 49;
   }
-
-  // The page description is the intro's first sentence, without its label.
-  if (ferndoc.module_summary("std/x — the thing it is. More.\nAnd more.") != "The thing it is.") {
-    return 45;
-  }
-  // Only the first paragraph counts, read as one line.
+  // Only the first paragraph counts, read as one line, even unpunctuated.
   if (ferndoc.module_summary("Wrapped\nfirst line\n\nSecond paragraph.") != "Wrapped first line") {
-    return 46;
+    return 90;
   }
   // A first word with a capital or a digit is kept as written.
   if (ferndoc.module_summary("std/x — iOS-style toggles. Etc.") != "iOS-style toggles.") {
-    return 47;
+    return 91;
   }
   if (ferndoc.module_summary("x64 helpers.") != "x64 helpers.") {
-    return 48;
-  }
-  if (ferndoc.module_summary("") != "") {
-    return 49;
+    return 92;
   }
 
   // ---- 6. end to end -------------------------------------------------

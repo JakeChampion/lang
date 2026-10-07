@@ -52,7 +52,7 @@ to compile with E066 instead of failing at run time.
 | --- | --- | --- |
 | `-target` | `arm64-linux` | Target to compile for; see the table above. |
 | `-o` | none | Output path. Without it a native target prints its assembly to stdout; a wasm target requires `-o`. |
-| `-run` | off | Build to a temporary binary and run it, passing on its exit code. Runs directly when the target's ISA is the host's, otherwise under `-qemu`. Also spelled `--run`. |
+| `-run` | off | Build to a temporary binary and run it, passing on its exit code. Runs directly when the target's ISA is the host's, under `wasmtime run` for `wasm32-wasi` (a component reports only 0 or 1; `-emit command-module` keeps the full code), otherwise under `-qemu`. Also spelled `--run`. |
 | `-qemu` | `qemu-aarch64` | User-mode emulator for `-run` on a foreign ISA. For `-target x86-64-linux` the default becomes `qemu-x86_64`. |
 | `-O` | off | Release build: drop every `assert()` after type-checking, without evaluating its condition. `-check` and `-interp` always keep asserts. |
 | `-g` | off | Emit a symbol table and DWARF so debuggers, `nm`, backtraces and profilers can name functions and source lines. |

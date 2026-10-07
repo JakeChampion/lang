@@ -321,7 +321,23 @@ function make_special(op: string[], perm: i32): void {
   }
   let major: i32 = parse_dev(op[2], "major");
   let minor: i32 = parse_dev(op[3], "minor");
+  if (is_nodev(major, minor)) {
+    gnu.error("invalid device " + op[2] + " " + op[3]);
+    exit(1);
+  }
   make(op[0], perm | kind, major, minor);
+}
+
+// Whether makedev(major, minor) is NODEV, all ones, which GNU refuses. Darwin's
+// dev_t is 32 bits, a major shifted by 24 and a minor OR'd in; Linux's is 64
+// and reaches all ones only from two all-ones halves.
+function is_nodev(major: i32, minor: i32): boolean {
+  let ma: i64 = major as i64 & 4294967295;
+  let mi: i64 = minor as i64 & 4294967295;
+  if (target_os() == "darwin") {
+    return ((ma << 24 | mi) & 4294967295) == 4294967295;
+  }
+  return ma == 4294967295 && mi == 4294967295;
 }
 
 pub function main(): i32 {

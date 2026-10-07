@@ -349,6 +349,16 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 21, allocs: 300, frees: 300,
 		},
 		{
+			// The same, with the container read back after the last link's
+			// read: the box `held` keeps is shared there, so that read borrows
+			// its element rather than taking it, and `held` still sees it.
+			name: "tuple_alias_chain_middle_link_held_read_back",
+			src: `function sink(xs: (i32, i32[])[]): i32 { return xs[0].1.len() * 10 + xs[0].1[1]; }
+function round(i: i32): i32 { let t: (i32, i32[]) = (i, [i, i + 1]); let v: (i32, i32[]) = t; let u: (i32, i32[]) = v; let held: (i32, i32[])[] = [v]; return u.1.len() + sink(held) + i; }
+function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
+			want: 82, allocs: 300, frees: 300,
+		},
+		{
 			// The SCALAR tuple chain: the tuple is not boxed, so each hop is a copy.
 			name: "tuple_alias_scalar_chain",
 			src: `function round(i: i32): i32 { let t: (i32, i32) = (i, i + 1); let v: (i32, i32) = t; let u: (i32, i32) = v; return u.0 + u.1; }

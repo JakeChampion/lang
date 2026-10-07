@@ -108,7 +108,7 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 		},
 		{
 			// A const written without a type takes its value's (#10079); the
-			// self-host drew E070 on it as if it were a function.
+			// self-host drew E081 on it as if it were a function.
 			name: "const-without-a-type",
 			src:  "const W = 9;\nconst A = W * 2;\nfunction main(): i32 { return A; }\n",
 		},

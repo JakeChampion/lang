@@ -327,7 +327,8 @@ func csplitCases(t *testing.T) []invocation {
 		c("suffix newline conversion", "-b", "%\n", "ten", "5"),
 		c("suffix nul conversion", "-b", "%\x01", "ten", "5"),
 		c("suffix width past INT_MAX", "-b", "%2147483648d", "ten", "5"),
-		c("suffix precision past INT_MAX", "-b", "%.2147483648d", "ten", "5"),
+		{name: "suffix precision past INT_MAX", args: []string{"-b", "%.2147483648d", "ten", "5"}, seedTree: csplitSeed,
+			darwinLibcDefect: "Apple's printf wraps a precision past INT_MAX, and GNU csplit then crashes"},
 
 		// -k, -s, -z, --suppress-matched.
 		c("keep files", "-k", "ten", "11"),

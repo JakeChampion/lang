@@ -1173,7 +1173,8 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
   // ---- branch edges (global, tagged by owner scope uid) ----------------
   // Each br/brif records the predecessor block and, in ep_* from
   // edge_from, the value of every slot written since the target scope
-  // opened; a slot not listed holds what it held at the open. The target
+  // opened that no longer holds what it held at the open; a slot not
+  // listed holds that value. The target
   // scope consumes its edges at `end` (loop -> header phis; block -> exit
   // merge). A loop's entry edge lists nothing: its values are lp_pre.
   let edge_owner: i32[] = [];
@@ -1545,15 +1546,17 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
           let tgt: i32 = sc_target[pos];
           let owner: i32 = sc_uid[pos];
           let obid: i32 = cur_id;
-          // record this out-edge for the target scope's merge, with
-          // the slots written since that scope opened.
+          // record this out-edge for the target scope's merge.
           edge_owner = edge_owner.append(owner);
           edge_block = edge_block.append(obid);
           edge_from = edge_from.append(ep_slot.len());
           let jv: i32 = sc_dl_from[pos];
           while (jv < dl_n) {
-            ep_slot = ep_slot.append(dl_slot[jv]);
-            ep_val = ep_val.append(slots[dl_slot[jv]]);
+            let ev: i32 = slots[dl_slot[jv]];
+            if (ev != dl_old[jv]) {
+              ep_slot = ep_slot.append(dl_slot[jv]);
+              ep_val = ep_val.append(ev);
+            }
             jv = jv + 1;
           }
           if (tag == t_br) {

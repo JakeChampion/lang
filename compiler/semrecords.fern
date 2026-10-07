@@ -7,7 +7,7 @@ pub struct Field { name: string, ty: typeinfo.Type }
 
 // `views` says whether a value of the type holds a `str` view anywhere,
 // through every type its fields reach (semsource.view_types). `nests_func`
-// says whether a field holds a function value inside an array, tuple or map
+// says whether a field reaches a function value in a map's key
 // (ssasem.nests_func), which no release walk reaches.
 pub struct Record { ty: typeinfo.Type, fields: Field[], views: boolean, nests_func: boolean }
 
