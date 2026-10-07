@@ -2710,6 +2710,13 @@ function (s: Scope) lookup(name: string): typeinfo.Type {
   return t_unknown("undefined identifier:" + name);
 }
 
+// known reports whether `name` is bound to a type the checker worked out:
+// lookup's answer is not unknown. A miss builds nothing.
+function (s: Scope) known(name: string): boolean {
+  let i: i32 = s.binding_index(name);
+  return i >= 0 && !is_unknown(s.types[i]);
+}
+
 // is_bound reports whether `name` has a binding in scope, however typed —
 // lookup's unknown result conflates "bound opaquely" with "not bound", and
 // the function-value shadowing question needs the difference.
@@ -4168,7 +4175,7 @@ function ctor_payload_diags(e: ast.Expr, to: typeinfo.Type, s: Scope): util.Diag
 // than a construction. A qualified `Option.Some(x)` is never shadowed.
 function ctor_name_taken(c: ast.ExprCall, s: Scope): boolean {
   if let ast.ExprIdent(id) = c.callee {
-    return !is_unknown(s.lookup(id.name)) || s.has_sig(id.name);
+    return s.known(id.name) || s.has_sig(id.name);
   }
   return false;
 }
@@ -12550,7 +12557,7 @@ function variant_ctor_diags(qname: string, c: ast.ExprCall, s: Scope): util.Diag
 function qual_enum_name(obj: ast.Expr, s: Scope): string {
   match (obj) {
     ast.ExprIdent(oid) => {
-      if (!is_unknown(s.lookup(oid.name))) {
+      if (s.known(oid.name)) {
         return "";
       }
       if (s.lookup_union(oid.name).name.len() > 0) {
@@ -12897,7 +12904,7 @@ function assoc_func_impls(impls: parser.ImplInfo[], funcs: parser.FuncDecl[]): p
 function assoc_call_req(obj: ast.Expr, field: string, s: Scope): AssocHit {
   match (obj) {
     ast.ExprIdent(oid) => {
-      if (!is_unknown(s.lookup(oid.name))) {
+      if (s.known(oid.name)) {
         return assoc_miss();
       }
       let h: AssocHit = tp_assoc_req(s, oid.name, field);
@@ -14533,9 +14540,9 @@ function call_diags_ident(id: ast.ExprIdent, s: Scope, out: util.Diag[]): util.D
   // no lookup at all, so it needs the shadowing test spelled out. The
   // sibling rules already gate on exactly this (the qualified-ref
   // detection and vref_expr's ambiguity rule). #6658.
-  if (is_unknown(s.lookup(id.name)) && !s.has_sig(id.name) && variant_in_unions(id.name, s.unions) && variant_carries_payload(s, id.name)) {
+  if (!s.known(id.name) && !s.has_sig(id.name) && variant_in_unions(id.name, s.unions) && variant_carries_payload(s, id.name)) {
     out = out.append(dg_at("E036", "variant " + id.name + " expects a payload; call it as " + id.name + "(...)", id.line, id.col));
-  } else if (is_unknown(s.lookup(id.name)) && !s.is_bound(id.name) && generic_fn_value(s.lookup_sig(id.name))) {
+  } else if (!s.known(id.name) && !s.is_bound(id.name) && generic_fn_value(s.lookup_sig(id.name))) {
     out = out.append(generic_fn_value_diag(id, s.lookup_sig(id.name)));
   } else if (!is_resolvable_value(id.name, s)) {
     // E001: a bare identifier in VALUE position that resolves to
@@ -14607,7 +14614,7 @@ function fn_value_bound_diags(sig: FuncSig, names: string[], types: typeinfo.Typ
 // value: an identifier bound to nothing, naming a generic signature.
 function generic_fn_value_arg(e: ast.Expr, s: Scope): boolean {
   if let ast.ExprIdent(id) = e {
-    return is_unknown(s.lookup(id.name)) && !s.is_bound(id.name) && generic_fn_value(s.lookup_sig(id.name));
+    return !s.known(id.name) && !s.is_bound(id.name) && generic_fn_value(s.lookup_sig(id.name));
   }
   return false;
 }
@@ -14795,7 +14802,7 @@ function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[
   // escapes E040.
   if let ast.ExprIdent(id) = e {
     if let typeinfo.TypeFunc(df) = dest {
-      if (is_unknown(s.lookup(id.name)) && !s.is_bound(id.name) && generic_fn_value(s.lookup_sig(id.name))) {
+      if (!s.known(id.name) && !s.is_bound(id.name) && generic_fn_value(s.lookup_sig(id.name))) {
         let (bn, bt) = fn_value_binds(s.lookup_sig(id.name), df, s);
         if (bn.len() == s.lookup_sig(id.name).all_type_params.len()) {
           return fn_value_bound_diags(s.lookup_sig(id.name), bn, bt, s, id.line, id.col);
@@ -15334,7 +15341,7 @@ function vref_expr(e: ast.Expr, s: Scope, ambig: string[]): util.Diag[] {
   function at(n: ast.Expr, own acc: util.Diag[]): util.Diag[] {
     match (n) {
       ast.ExprIdent(id) => {
-        if (util.has_str(ambig, id.name) && is_unknown(s.lookup(id.name)) && !s.has_sig(id.name) && s.variant_ambiguous(id.name)) {
+        if (util.has_str(ambig, id.name) && !s.known(id.name) && !s.has_sig(id.name) && s.variant_ambiguous(id.name)) {
           return acc.append(dg_at("E036", "variant \"" + id.name + "\" is declared in multiple enums — qualify the reference", id.line, id.col));
         }
         return acc;
@@ -26693,7 +26700,7 @@ function lit_enum_local(c: ast.ExprCall, s: Scope, st: LitInfer): (typeinfo.Type
     let qualified: boolean = false;
     if let ast.ExprFieldAccess(fa) = c.callee {
       if let ast.ExprIdent(owner) = fa.obj {
-        if (owner.name != u.name || !is_unknown(s.lookup(owner.name))) {
+        if (owner.name != u.name || s.known(owner.name)) {
           return (none, st);
         }
         qualified = true;
