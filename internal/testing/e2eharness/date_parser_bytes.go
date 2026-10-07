@@ -9,12 +9,14 @@ import (
 func WriteDateParserBytesFixture(t testing.TB) string {
 	t.Helper()
 	dir := t.TempDir()
-	lib, err := os.ReadFile(RepoPath("coreutils", "lib", "datetime.fern"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "datetime.fern"), lib, 0o644); err != nil {
-		t.Fatal(err)
+	for _, name := range []string{"datetime", "timefmt", "gnu"} {
+		lib, err := os.ReadFile(RepoPath("coreutils", "lib", name+".fern"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name+".fern"), lib, 0o644); err != nil {
+			t.Fatal(err)
+		}
 	}
 	source := `import "./datetime";
 import "std/tz";
