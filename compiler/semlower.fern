@@ -46,8 +46,8 @@ struct Rows {
   n2: string[],
   keep: boolean[],
   grows: ssaunits.GrowTable,
-  // The rows whose result is always a sole box (`ssaunits.fresh_rows`).
-  fresh: util.NameIndex,
+  // The rows whose result is a sole box (`ssaunits.fresh_rows`).
+  fresh: ssaunits.FreshRows,
   // The rows that reach no observable effect (`pure_rows`).
   pure: util.NameIndex,
   susp: suspend.Set,
@@ -212,7 +212,7 @@ function produced_at(built: semsource.Built, mod: parser.Module, i: i32): semsou
 // No rows to take back: what makes `rows_planned` plan every row.
 function no_reuse(): Rows {
   let no_names: string[] = [];
-  return Rows { body: [], n1: [], n2: [], keep: [], grows: ssaunits.no_grows(), fresh: util.name_index(no_names), pure: util.name_index(no_names), susp: suspend.none(), plans: [], why: [] };
+  return Rows { body: [], n1: [], n2: [], keep: [], grows: ssaunits.no_grows(), fresh: ssaunits.no_fresh(), pure: util.name_index(no_names), susp: suspend.none(), plans: [], why: [] };
 }
 
 // Whether row `i`'s plan can be taken from `prev` unchanged. `changed` is
@@ -262,7 +262,7 @@ function rows_planned(mod: parser.Module, built: semsource.Built, prev: Rows, ch
     plans = plans.append(base_plan(prev, changed, i, produced_at(built, mod, i), views[i]));
     i = i + 1;
   }
-  let fresh: util.NameIndex = ssaunits.fresh_rows(keys, funcs, plans);
+  let fresh: ssaunits.FreshRows = ssaunits.fresh_rows(keys, funcs, plans);
   i = 0;
   while (i < funcs.len()) {
     plans = plans.with(i, ssaunits.with_fresh(plans[i], funcs[i], fresh));
