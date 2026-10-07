@@ -896,7 +896,7 @@ type Func struct {
 	InlineHint ast.InlineHint
 	// AppendSites records what emitArrayPush decided at each `.append`
 	// in this function, in lowering order. Populated always; read by
-	// the -append-report build mode (#6992).
+	// the -append-report report mode (#6992).
 	AppendSites []AppendSite
 	// ExternallyReachable marks a function callable from outside this
 	// program: a `-shared -export` symbol on the natives, or an `@export`
@@ -23369,8 +23369,8 @@ func appendRecvString(e ast.Expr) string {
 // through (#6665, fieldPlaceMutationCopies).
 //
 // The reason is what `fern -append-report` prints (#6992), from these
-// branches rather than a second walk, so the report cannot drift from what
-// was emitted. It names the rule, not the aliasing binding: the copy branch
+// branches rather than a second walk, so the report cannot drift from this
+// lowering's decision. It names the rule, not the aliasing binding: the copy branch
 // knows only that the receiver is read again somewhere later, so a report
 // naming "the binding that forced it" would be inventing one.
 func (b *builder) appendDecision(n *ast.Call) (bool, string) {
