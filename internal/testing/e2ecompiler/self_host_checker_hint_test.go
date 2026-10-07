@@ -52,6 +52,11 @@ impl Greet for Dog { function hi(self: Self): i32 { return 7; } }
 		// A user generic enum's payload is its spelling with the enum's
 		// parameters replaced by the scrutinee's arguments.
 		{"generic-enum-match-stmt", `enum Box[T, E] { Full(T), Blank(E) } function f(b: Box[i32, string]): i32 { match (b) { Full(n) => { return n; }, Blank(s) => { return s.len(); } } } function main(): i32 { let b: Box[i32, string] = Full(5); return f(b); }`, 0},
+		// A derived method on a generic type is spelled on the bare name, and
+		// its body reads the type's parameters off the declaration; it is a
+		// generic body like any other (#11776).
+		{"derived-on-generic-struct", `import "core/cmp"; @derive(cmp.Eq, cmp.Hash, cmp.Display) struct Pair[T] { a: T, b: T } function main(): i32 { let p: Pair[i32] = Pair[i32] { a: 1, b: 2 }; if (!p.eq(Pair[i32] { a: 1, b: 2 })) { return 1; } return p.hash() - p.hash() + p.to_string().len() - 18; }`, 0},
+		{"derived-on-generic-enum", `import "core/cmp"; @derive(cmp.Eq, cmp.Hash, cmp.Display) enum Tag[T] { One(T), Two(T, T), Empty } function main(): i32 { let a: Tag[i32] = Tag.Two(1, 2); if (!a.eq(Tag.Two(1, 2))) { return 1; } return a.hash() - a.hash() + a.to_string().len() - 9; }`, 0},
 		{"json-value-match-stmt", `function f(v: JsonValue): i32 { match (v) { JNull => { return 1; }, JBool(b) => { return 2; }, _ => { return 0; } } } function main(): i32 { return f(JNull); }`, 0},
 		{"map-iter-cursor", `import "core/map"; function f(m: Map[string, i32]): i32 { let it: MapIter[string, i32] = m.iter(); let n: i32 = 0; while (it.has_next()) { n = n + it.key().len() + it.value(); it.advance(); } return n; } function main(): i32 { return 0; }`, 0},
 		{"option-literal-scrutinee", `function main(): i32 { match (Some(4)) { Some(v) => { return v + 1; }, None => { return 0; } } }`, 0},
