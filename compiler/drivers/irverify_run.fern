@@ -802,6 +802,79 @@ function keep_reuse(gate: i32, token: i32, dec: i32): ir.Op[] {
   ];
 }
 
+function rc_flow_matches(ops: ir.Op[], problems: i32): boolean {
+  let r: irverifyrc.RcResult = irverifyrc.verify_rc_fn("flow", ops);
+  return r.sites == 2 && r.checked == 2 && r.problems.len() == problems;
+}
+
+function rc_branch_paths(): i32 {
+  // A branch over the second site is exclusive, but a conditional branch
+  // retains its fallthrough. Both sites must still be recognised.
+  let skipped: ir.Op[] = concat_ops([ir.op_block(0)], selfhost_reuse(1, 1));
+  skipped = concat_ops(skipped, [ir.op_br(0)]);
+  skipped = concat_ops(skipped, selfhost_reuse(1, 1));
+  skipped = concat_ops(skipped, [ir.op_end()]);
+  if (!rc_flow_matches(skipped, 0)) {
+    return 224;
+  }
+  let conditional: ir.Op[] = concat_ops([ir.op_block(0)], selfhost_reuse(1, 1));
+  conditional = concat_ops(conditional, [ir.op_const_i32(1), ir.op_brif(0)]);
+  conditional = concat_ops(conditional, selfhost_reuse(1, 1));
+  conditional = concat_ops(conditional, [ir.op_end()]);
+  if (!rc_flow_matches(conditional, 1)) {
+    return 225;
+  }
+
+  // Exiting a nested block can reach a later claim; exiting the outer one
+  // cannot. This is the lowered switch shape in the x86 assembler.
+  let nested: ir.Op[] = concat_ops([ir.op_block(0), ir.op_block(0)], selfhost_reuse(1, 1));
+  let outer: ir.Op[] = concat_ops(nested, [ir.op_br(1), ir.op_end()]);
+  outer = concat_ops(outer, selfhost_reuse(1, 1));
+  outer = concat_ops(outer, [ir.op_end()]);
+  if (!rc_flow_matches(outer, 0)) {
+    return 226;
+  }
+  nested = concat_ops(nested, [ir.op_br(0), ir.op_end()]);
+  nested = concat_ops(nested, selfhost_reuse(1, 1));
+  nested = concat_ops(nested, [ir.op_end()]);
+  if (!rc_flow_matches(nested, 1)) {
+    return 227;
+  }
+
+  // A conditional rebind cannot hide the path which kept the old donor.
+  let partial: ir.Op[] = concat_ops(selfhost_reuse(1, 1), [ir.op_const_i32(1), ir.op_if(0), ir.op_const_i32(0), ir.op_store_local(1), ir.op_end()]);
+  partial = concat_ops(partial, selfhost_reuse(1, 1));
+  if (!rc_flow_matches(partial, 1)) {
+    return 228;
+  }
+  let both: ir.Op[] = concat_ops(selfhost_reuse(1, 1), [ir.op_const_i32(1), ir.op_if(0), ir.op_const_i32(0), ir.op_store_local(1), ir.op_else(), ir.op_const_i32(0), ir.op_tee_local(1), ir.op_drop(), ir.op_end()]);
+  both = concat_ops(both, selfhost_reuse(1, 1));
+  if (!rc_flow_matches(both, 0)) {
+    return 229;
+  }
+
+  // A loop backedge targets its start, not its end. The conditional exit
+  // reaches the later claim; an unconditional backedge does not.
+  let cycling: ir.Op[] = concat_ops([ir.op_block(0), ir.op_loop(0)], selfhost_reuse(1, 1));
+  let forever: ir.Op[] = concat_ops(cycling, [ir.op_br(0), ir.op_end(), ir.op_end()]);
+  forever = concat_ops(forever, selfhost_reuse(1, 1));
+  if (!rc_flow_matches(forever, 0)) {
+    return 230;
+  }
+  cycling = concat_ops(cycling, [ir.op_const_i32(1), ir.op_brif(1), ir.op_br(0), ir.op_end(), ir.op_end()]);
+  cycling = concat_ops(cycling, selfhost_reuse(1, 1));
+  if (!rc_flow_matches(cycling, 1)) {
+    return 231;
+  }
+
+  let returned: ir.Op[] = concat_ops(selfhost_reuse(1, 1), [ir.op_br(0)]);
+  returned = concat_ops(returned, selfhost_reuse(1, 1));
+  if (!rc_flow_matches(returned, 0)) {
+    return 232;
+  }
+  return 0;
+}
+
 // native_reuse builds emitReuseToken's shape, which the same pass must also
 // model: the flag stored and loaded back, a header-subtracting token take, an
 // rc_dec decline, the donor-slot zeroing, and a three-argument allocator.
@@ -1076,6 +1149,10 @@ function rc_checks(): i32 {
   }
 
   // ---- coverage renders the tally and the grouped reasons ------------
+  let branch_paths: i32 = rc_branch_paths();
+  if (branch_paths != 0) {
+    return branch_paths;
+  }
   if (!util.contains(irverifyrc.rc_coverage_str(sh), "reuse sites modelled 1/1")) {
     return 209;
   }
