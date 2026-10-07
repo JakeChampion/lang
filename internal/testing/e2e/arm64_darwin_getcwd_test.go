@@ -39,8 +39,11 @@ func TestArm64DarwinGetcwdValue(t *testing.T) {
   let a: string[] = args();
   if (a.len() < 2) { return 97; }
   let p: string = a[1];
-  let cwd: string = getcwd();
-  if (cwd.len() == 0) { return 98; }
+  let cwd: string = "";
+  match (getcwd()) {
+    Ok(c) => { cwd = c; },
+    Err(e) => { return 98; }
+  }
   print(cwd);
   print(p);
   return 0;
@@ -68,7 +71,7 @@ func TestArm64DarwinGetcwdValue(t *testing.T) {
 	cmd.Dir = dir
 	got, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("run: %v (97 = no argv[1], 98 = getcwd answered empty)", err)
+		t.Fatalf("run: %v (97 = no argv[1], 98 = getcwd answered Err)", err)
 	}
 	if string(got) != want+"\n"+operand+"\n" {
 		t.Errorf("getcwd() and the caller's operand did not both survive\n got: %q\nwant: %q",

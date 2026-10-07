@@ -74,11 +74,13 @@ pub function canonicalize(name: string, mode: i32, logical: boolean): Result[str
   }
   let rname: string = "/";
   if (name[0] as i32 != 47) {
-    rname = getcwd();
-    if (rname.len() == 0) {
-      // getcwd() carries no errno (#9067). The way it fails is a
-      // working directory that has been removed, which is ENOENT.
-      return Err(NotFound(name));
+    match (getcwd()) {
+      Ok(wd) => {
+        rname = wd;
+      },
+      Err(e) => {
+        return Err(e);
+      }
     }
   }
   let path: string = name;

@@ -2421,7 +2421,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
     "read_file_bytes", "read_file_bytes_u8", "remove_file", "create_dir_all", "create_dir",
     "remove_dir", "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at",
     "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
-    "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "sync",
+    "read_link", "getcwd", "chdir", "chroot", "setuid", "setgid", "setgroups", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "sync",
     "umask", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "temp_dir", "read_dir", "read_dir_all", "read_dir_ino",
     "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",
     "reader", "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8", "signal_send", "set_process_group", "set_priority", "clock_set",
@@ -2440,7 +2440,7 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
     "read_dir", "read_dir_all", "read_dir_ino", "remove_file", "create_dir_all", "create_dir",
     "remove_dir", "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at",
     "truncate", "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times",
-    "read_link", "chdir", "chroot", "setuid", "setgid", "setgroups",
+    "read_link", "getcwd", "chdir", "chroot", "setuid", "setgid", "setgroups",
     "umask", "env", "environ", "raw_environ", "getgroups", "stat", "lstat", "statfs", "mounts",
     "access", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "subprocess",
     "signal_send", "set_process_group", "set_priority", "clock_set",
@@ -10429,6 +10429,7 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.need("heap");
     s = s.need("uname_field");
   } else if (o.kind_tag == 251) {  // getcwd
+    // -> a fresh Result[string, IoError] in %rax.
     s = s.write("    call __fn___fern_getcwd\n    pushq %rax\n");
     s = s.need("heap");
     s = s.need("getcwd");
@@ -12516,6 +12517,9 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     if (s.has_need("remove_dir")) {
       fs_src = fs_src + " " + asmcore.rt_src_remove_dir("x86_64");
     }
+    if (s.has_need("getcwd")) {
+      fs_src = fs_src + " " + asmcore.rt_src_getcwd("x86_64");
+    }
     if (s.has_need("chdir")) {
       fs_src = fs_src + " " + asmcore.rt_src_chdir("x86_64");
     }
@@ -12794,10 +12798,6 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   if (s.has_need("uname_field")) {
     s = s.write("    .text\n");
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_uname_field("x86_64"), s);
-  }
-  if (s.has_need("getcwd")) {
-    s = s.write("    .text\n");
-    s = emit_ir_runtime_fern_fn(asmcore.rt_src_getcwd("x86_64"), s);
   }
   if (s.has_need("cpu_count")) {
     s = s.write("    .text\n");

@@ -5331,11 +5331,11 @@ pub function rt_src_uname_field(t: string): string {
   return "function __fern_uname_field(idx: i32): string { let buf: usize = __raw_alloc(390); let n: i32 = 0; let off: i32 = 0; if (idx >= 0 && idx < 5) { off = idx * 65; if (__syscall3(" + sysno(t, "uname") + ", buf as i64, 0, 0) == 0) { while (n < 65 && __raw_load8(buf, off + n) != 0) { n = n + 1; } } } let p: usize = __raw_alloc(n); __memcpy(p, __raw_addr(buf, off), n); let buf_own: string = __raw_string(buf, 390); return __raw_string(p, n); }";
 }
 
-// rt_src_getcwd backs `getcwd()` → the process's working directory as a fresh
-// string. The buffer's first byte is zeroed before the call and the length is
-// then measured from the bytes, so Linux's SUCCESS return (the length
-// including the NUL) is never read: a refusal writes nothing, and the leading
-// NUL reads back as the empty string.
+// rt_src_getcwd backs `getcwd()` → Result[string, IoError]: the process's
+// working directory, or the errno it was refused with — ENOENT for one that
+// has been removed. Linux's success return is the length including the NUL.
+// Linux also SUCCEEDS with an "(unreachable)/…" answer for a directory outside
+// the process's root, which is ENOENT here as it is in glibc and Go.
 //
 // Darwin has no getcwd syscall to issue — there is no SYS___getcwd in the
 // macOS SDK's syscall.h, and the number this used to pass (296) is
@@ -5344,9 +5344,9 @@ pub function rt_src_uname_field(t: string): string {
 // buffer and NUL-terminates what it writes.
 pub function rt_src_getcwd(t: string): string {
   if (t == "arm64-darwin") {
-    return "function __fern_getcwd(): string { let dot: usize = __raw_alloc(2); __raw_store8(dot, 0, 46); __raw_store8(dot, 1, 0); let fd: i32 = __syscall4(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", dot as i64, 0, 0) as i32; let dot_own: string = __raw_string(dot, 2); if (fd < 0) { return \"\"; } let buf: usize = __raw_alloc(4096); __raw_store8(buf, 0, 0); let rc: i32 = __syscall3(" + sysno(t, "fcntl") + ", fd as i64, 50, buf as i64) as i32; __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); if (rc < 0) { let buf_own0: string = __raw_string(buf, 4096); return \"\"; } let n: i32 = 0; while (n < 4096 && __raw_load8(buf, n) != 0) { n = n + 1; } let p: usize = __raw_alloc(n); __memcpy(p, __raw_addr(buf, 0), n); let buf_own: string = __raw_string(buf, 4096); return __raw_string(p, n); }";
+    return "function __fern_getcwd(): Result[string, IoError] { let dot: usize = __raw_alloc(2); __raw_store8(dot, 0, 46); __raw_store8(dot, 1, 0); let fd: i32 = __syscall4(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", dot as i64, 0, 0) as i32; let dot_own: string = __raw_string(dot, 2); if (fd < 0) { return Err(__fern_io_error(0 - fd, \"\")); } let buf: usize = __raw_alloc(4096); __raw_store8(buf, 0, 0); let rc: i32 = __syscall3(" + sysno(t, "fcntl") + ", fd as i64, 50, buf as i64) as i32; __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); let buf_own: string = __raw_string(buf, 4096); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } let n: i32 = 0; while (n < 4096 && buf_own[n] != 0) { n = n + 1; } return Ok(__fern_path_copy(buf_own, n)); }";
   }
-  return "function __fern_getcwd(): string { let buf: usize = __raw_alloc(4096); __raw_store8(buf, 0, 0); __syscall3(" + sysno(t, "getcwd") + ", buf as i64, 4096, 0); let n: i32 = 0; while (n < 4096 && __raw_load8(buf, n) != 0) { n = n + 1; } let p: usize = __raw_alloc(n); __memcpy(p, __raw_addr(buf, 0), n); let buf_own: string = __raw_string(buf, 4096); return __raw_string(p, n); }";
+  return "function __fern_getcwd(): Result[string, IoError] { let buf: usize = __raw_alloc(4096); let rc: i32 = __syscall3(" + sysno(t, "getcwd") + ", buf as i64, 4096, 0) as i32; let buf_own: string = __raw_string(buf, 4096); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } if (buf_own[0] != 47) { return Err(__fern_io_error(2, \"\")); } return Ok(__fern_path_copy(buf_own, rc - 1)); }";
 }
 
 // rt_src_cpu_count backs `cpu_count()` on Linux → the population count of the
@@ -7547,7 +7547,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "set_file_times") {
     return ty_option(ty_unknown());
   }
-  if (id.name == "read_link") {
+  if (id.name == "read_link" || id.name == "getcwd") {
     return ty_result(ty_string());
   }
   if (id.name == "getxattr_bytes" || id.name == "lgetxattr_bytes") {
