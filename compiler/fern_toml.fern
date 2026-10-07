@@ -10,7 +10,7 @@
 //
 // Covered since #4949: url+hash deps, and versioned deps whose lock
 // source is a `url` — both parse to their `sha256:<hex>` hash here, and
-// the loader (modloader.load_from_store) resolves them from the
+// the loader (modloader.store_dir) resolves them from the
 // per-machine content-addressed store via the `env` runtime builtin
 // (read-only; population + verification stay `fern -fetch`).
 //

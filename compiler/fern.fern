@@ -1903,23 +1903,16 @@ function display_path(mpath: string, root: string): string {
 }
 
 // read_bundle_module reads one imported module for load_bundle: the resolved
-// path first, then, only when that file is absent, the manifest resolution. The
-// directory its own `./` imports resolve against is its own — a module in lib/
-// writing `import "./gnu"` means lib/gnu.fern — unless a manifest-resolved
-// dependency moves the root to its package.
+// path first, then, only when that file is absent, the manifest resolution.
 function read_bundle_module(mpath: string, from: string, ipath: string): modloader.Resolved {
-  let mdir: string = util.dir_of(mpath);
-  if (mdir.len() > 0) {
-    mdir = mdir + "/";
-  }
   match (read_file(mpath)) {
     Ok(src) => {
-      return modloader.Resolved { src: src, dir: mdir, ok: true, err: "", err_path: "", shown: mpath };
+      return modloader.Resolved { src: src, ok: true, err: "", err_path: "", shown: mpath };
     },
     Err(e) => {
       let reason: string = modloader.read_error_reason(e);
       if (reason.len() > 0) {
-        return modloader.Resolved { src: "", dir: mdir, ok: false, err: reason, err_path: mpath, shown: "" };
+        return modloader.Resolved { src: "", ok: false, err: reason, err_path: mpath, shown: "" };
       }
     }
   }
@@ -1986,7 +1979,9 @@ function load_bundle(entry_path: string, entry_mod: parser.Module, root: string,
         }
         return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: files, err: "fern: " + modloader.unresolved_import(ipath, importer, bad, rm.err) };
       }
-      let mdir: string = rm.dir;
+      // A module's own imports resolve beside its file — a module in lib/
+      // writing `import "./gnu"` means lib/gnu.fern — wherever it was found.
+      let mdir: string = modloader.dirname(util.clean_path(rm.shown));
       let origin: string = "";
       if (root.len() > 0 && rm.shown == mpath) {
         origin = ipath;
@@ -2871,7 +2866,7 @@ function dep_pkg_name(man: fern_toml.Manifest, dir_slash: string, dep: string): 
 // module with no entry into whichever package calls it.
 //
 // `importer` is the manifest governing the importing module; a dependency's
-// path is relative to its directory.
+// path is relative to its directory. `helper/extra` is a module of `helper`.
 function add_pkg(pkgs: caps.Pkg[], importer: Governed, import_path: string): caps.Pkg[] {
   let mod: string = util.module_name(import_path);
   let no_grants: string[] = [];
@@ -2879,15 +2874,16 @@ function add_pkg(pkgs: caps.Pkg[], importer: Governed, import_path: string): cap
     return pkgs.append(caps.Pkg { module: mod, name: pkgs[0].name, root: true, governed: false, grants: no_grants });
   }
   let man: fern_toml.Manifest = importer.man;
-  if (fern_toml.dep_kind(man, mod).len() == 0) {
+  let dep: string = util.dep_name(import_path);
+  if (fern_toml.dep_kind(man, dep).len() == 0) {
     return pkgs;
   }
   return pkgs.append(caps.Pkg {
     module: mod,
-    name: dep_pkg_name(man, importer.dir, mod),
+    name: dep_pkg_name(man, importer.dir, dep),
     root: false,
-    governed: fern_toml.dep_governed(man, mod),
-    grants: fern_toml.dep_caps(man, mod),
+    governed: fern_toml.dep_governed(man, dep),
+    grants: fern_toml.dep_caps(man, dep),
   });
 }
 

@@ -296,7 +296,7 @@ source is a `url` — resolve since #4949: the loader computes the store
 path (`$FERN_CACHE_DIR/pkgs/<hex>/`, else `<user-cache>/fern/pkgs/<hex>/`
 via `$XDG_CACHE_HOME` / `$HOME/.cache` / `$HOME/Library/Caches`) with the
 `env` runtime builtin and reads the unpacked package from it —
-`modloader.load_from_store`, mirroring native `pkgcache.Root()`/`Dir()`.
+`modloader.store_dir`, mirroring native `pkgcache.Root()`/`Dir()`.
 **Read-only**: populating and sha256-verifying the store stays a native
 `fern -fetch` responsibility (the no-build-time-network constraint), so
 the self-host loader trusts an already-populated store exactly as the
