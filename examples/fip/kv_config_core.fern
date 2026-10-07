@@ -1,0 +1,264 @@
+// Startup dimensions belong to each value, so independent configurations coexist.
+pub struct Db {
+  capacity: i32,
+  key_bytes: i32,
+  value_bytes: i32,
+  batch: i32,
+  slots: i32,
+  live: i32,
+  out_count: i32,
+  refused: boolean,
+  used: i32[],
+  hashes: i64[],
+  keys: u8[],
+  values: u8[],
+  output: u8[],
+}
+
+pub fip function valid_config(capacity: i32, key_bytes: i32, value_bytes: i32, batch: i32): boolean {
+  return capacity >= 1 && capacity <= 4096 && key_bytes >= 1 && key_bytes <= 64
+    && value_bytes >= 8 && value_bytes <= 256 && batch >= 1 && batch <= 1024;
+}
+
+function zeros(n: i32): u8[] {
+  let xs: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
+  while (i < n) {
+    xs = xs.with(i, 0 as u8);
+    i = i + 1;
+  }
+  return xs;
+}
+
+pub function new_db(capacity: i32, key_bytes: i32, value_bytes: i32, batch: i32): Option[Db] {
+  if (!valid_config(capacity, key_bytes, value_bytes, batch)) {
+    return None;
+  }
+  let slots: i32 = 2;
+  while (slots < capacity * 2) {
+    slots = slots * 2;
+  }
+  let used: i32[] = [];
+  let hashes: i64[] = [];
+  let i: i32 = 0;
+  while (i < slots) {
+    used = used.append(0);
+    hashes = hashes.append(0i64);
+    i = i + 1;
+  }
+  return Some(Db {
+    capacity: capacity, key_bytes: key_bytes, value_bytes: value_bytes,
+    batch: batch, slots: slots, live: 0, out_count: 0, refused: false,
+    used: used, hashes: hashes, keys: zeros(slots * key_bytes),
+    values: zeros(slots * value_bytes), output: zeros(batch * (1 + value_bytes)),
+  });
+}
+
+pub fip function request_size(db: Db): i32 {
+  return 1 + db.key_bytes + db.value_bytes;
+}
+
+pub fip function fits(db: Db, input: u8[], offset: i32, count: i32): boolean {
+  return fits_widths(db.key_bytes, db.value_bytes, db.batch, input, offset, count);
+}
+
+// All representations validate the same complete wire batch before updates.
+pub fip function fits_widths(key_bytes: i32, value_bytes: i32, batch: i32, input: u8[], offset: i32, count: i32): boolean {
+  if (offset < 0 || offset > input.len() || count < 0 || count > batch) {
+    return false;
+  }
+  let stride: i32 = 1 + key_bytes + value_bytes;
+  if (count > (input.len() - offset) / stride) {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i < count) {
+    let op: i32 = input[offset + i * stride] as i32;
+    if (op < 1 || op > 4) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+pub fip function hash(input: u8[], at: i32, count: i32): i64 {
+  let h: i64 = 1469598103934665603i64;
+  let i: i32 = 0;
+  while (i < count) {
+    h = (h ^ input[at + i] as i64) * 1099511628211i64;
+    i = i + 1;
+  }
+  return h;
+}
+
+fip function home(db: Db, h: i64): i32 {
+  return ((h ^ h >> 29i64) & (db.slots - 1) as i64) as i32;
+}
+
+fip function equal_key(db: Db, slot: i32, input: u8[], at: i32): boolean {
+  let i: i32 = 0;
+  while (i < db.key_bytes) {
+    if (db.keys[slot * db.key_bytes + i] != input[at + i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+pub fip function find(db: Db, input: u8[], at: i32): i32 {
+  let h: i64 = hash(input, at, db.key_bytes);
+  let slot: i32 = home(db, h);
+  let probes: i32 = 0;
+  while (probes < db.slots) {
+    if (db.used[slot] == 0) {
+      return -1;
+    }
+    if (db.hashes[slot] == h && equal_key(db, slot, input, at)) {
+      return slot;
+    }
+    slot = slot + 1 & db.slots - 1;
+    probes = probes + 1;
+  }
+  return -1;
+}
+
+fip function free_slot(db: Db, h: i64): i32 {
+  let slot: i32 = home(db, h);
+  let probes: i32 = 0;
+  while (probes < db.slots) {
+    if (db.used[slot] == 0) {
+      return slot;
+    }
+    slot = slot + 1 & db.slots - 1;
+    probes = probes + 1;
+  }
+  return -1;
+}
+
+fip function move_entry(own db: Db, from: i32, to: i32): Db {
+  let i: i32 = 0;
+  while (i < db.key_bytes) {
+    let b: u8 = db.keys[from * db.key_bytes + i];
+    db = Db { ...db, keys: db.keys.with(to * db.key_bytes + i, b) };
+    i = i + 1;
+  }
+  i = 0;
+  while (i < db.value_bytes) {
+    let b: u8 = db.values[from * db.value_bytes + i];
+    db = Db { ...db, values: db.values.with(to * db.value_bytes + i, b) };
+    i = i + 1;
+  }
+  let h: i64 = db.hashes[from];
+  return Db { ...db, hashes: db.hashes.with(to, h) };
+}
+
+fip function remove_at(own db: Db, slot: i32): Db {
+  let mask: i32 = db.slots - 1;
+  let hole: i32 = slot;
+  let next: i32 = slot + 1 & mask;
+  let steps: i32 = 1;
+  while (steps < db.slots && db.used[next] != 0) {
+    let origin: i32 = home(db, db.hashes[next]);
+    if ((hole - origin & mask) < (next - origin & mask)) {
+      db = move_entry(db, next, hole);
+      hole = next;
+    }
+    next = next + 1 & mask;
+    steps = steps + 1;
+  }
+  return Db { ...db, used: db.used.with(hole, 0), live: db.live - 1 };
+}
+
+fip function emit(own db: Db, byte: u8): Db {
+  let at: i32 = db.out_count;
+  return Db { ...db, output: db.output.with(at, byte), out_count: at + 1 };
+}
+
+fip function emit_value(own db: Db, slot: i32): Db {
+  db = emit(db, 4 as u8);
+  let i: i32 = 0;
+  while (i < db.value_bytes) {
+    let byte: u8 = db.values[slot * db.value_bytes + i];
+    db = emit(db, byte);
+    i = i + 1;
+  }
+  return db;
+}
+
+// Unsigned byte-wise carry implements wrapping addition without signed division.
+fip function increment(own db: Db, slot: i32, input: u8[], at: i32): Db {
+  let carry: i32 = 0;
+  let i: i32 = 0;
+  while (i < 8) {
+    let index: i32 = slot * db.value_bytes + i;
+    let sum: i32 = db.values[index] as i32 + input[at + i] as i32 + carry;
+    db = Db { ...db, values: db.values.with(index, (sum & 255) as u8) };
+    carry = sum >> 8;
+    i = i + 1;
+  }
+  return db;
+}
+
+fip function put(own db: Db, input: u8[], at: i32, existing: i32): Db {
+  let slot: i32 = existing;
+  if (slot < 0) {
+    if (db.live == db.capacity) {
+      return emit(db, 3 as u8);
+    }
+    let h: i64 = hash(input, at + 1, db.key_bytes);
+    slot = free_slot(db, h);
+    if (slot < 0) {
+      return emit(db, 3 as u8);
+    }
+    let i: i32 = 0;
+    while (i < db.key_bytes) {
+      db = Db { ...db, keys: db.keys.with(slot * db.key_bytes + i, input[at + 1 + i]) };
+      i = i + 1;
+    }
+    db = Db { ...db, used: db.used.with(slot, 1) };
+    db = Db { ...db, hashes: db.hashes.with(slot, h), live: db.live + 1 };
+  }
+  let i: i32 = 0;
+  while (i < db.value_bytes) {
+    db = Db { ...db, values: db.values.with(slot * db.value_bytes + i, input[at + 1 + db.key_bytes + i]) };
+    i = i + 1;
+  }
+  return emit(db, 1 as u8);
+}
+
+fip function apply(own db: Db, input: u8[], at: i32): Db {
+  let op: i32 = input[at] as i32;
+  let slot: i32 = find(db, input, at + 1);
+  if (op == 1) {
+    return put(db, input, at, slot);
+  }
+  if (slot < 0) {
+    return emit(db, 2 as u8);
+  }
+  if (op == 3) {
+    db = remove_at(db, slot);
+    return emit(db, 1 as u8);
+  }
+  if (op == 4) {
+    let value_at: i32 = at + 1 + db.key_bytes;
+    db = increment(db, slot, input, value_at);
+  }
+  return emit_value(db, slot);
+}
+
+// Validate the complete batch before touching entries or the prior output.
+pub fip function process(own db: Db, input: u8[], offset: i32, count: i32): Db {
+  if (!fits(db, input, offset, count)) {
+    return Db { ...db, refused: true };
+  }
+  db = Db { ...db, out_count: 0, refused: false };
+  let stride: i32 = request_size(db);
+  let i: i32 = 0;
+  while (i < count) {
+    db = apply(db, input, offset + i * stride);
+    i = i + 1;
+  }
+  return db;
+}
