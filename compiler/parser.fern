@@ -25264,7 +25264,9 @@ function synth_from_json_value(sd: StructDecl): FuncDecl {
     fvals = fvals.append(e_ident("__fj_" + sd.fields[k].name));
     k = k + 1;
   }
-  let lit: ast.Expr = e_struct_lit(sd.name, fnames, fvals, 0, 0);
+  // Match the native derive's TypeArgs: decoded match bindings do not carry
+  // enough spelling for monomorphisation to infer the generic receiver.
+  let lit: ast.Expr = ast.ExprStructLit { type_name: sd.name, field_names: fnames, field_values: fvals, has_base: false, base: e_unknown("no-base"), line: 0, col: 0, written: derived_self_type(sd) };
   let body: ast.Stmt[] = [s_return(e_call(e_ident("Ok"), [lit]))];
   let fi: i32 = sd.fields.len() - 1;
   while (fi >= 0) {
@@ -25301,9 +25303,7 @@ function synth_from_json_value(sd: StructDecl): FuncDecl {
   return FuncDecl { stdlib: "", no_inline: false, name: "from_json_value", receiver_name: "", receiver_type: sd.name, receiver_own: false, type_params: notp, params: params, ret_type: "Result[" + sd.name + ", string]", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "FromJson", dyn_traits: [], streams: [] };
 }
 
-// synth_from_json_text builds the derived `from_json(s: string):
-// Result[Self, string]`: `json.decode[Self](s)` under the type's own name.
-function synth_from_json_text(sd: StructDecl): FuncDecl {
+function derived_self_type(sd: StructDecl): string {
   let self_ty: string = sd.name;
   if (sd.type_params.len() > 0) {
     let tps: string = "";
@@ -25317,7 +25317,13 @@ function synth_from_json_text(sd: StructDecl): FuncDecl {
     }
     self_ty = sd.name + "[" + tps + "]";
   }
-  let call: ast.Expr = ast.ExprCall { callee: e_field_access(e_ident("json"), "decode"), args: [e_ident("s")], line: 0, col: 0, type_args: [self_ty], ty: "" };
+  return self_ty;
+}
+
+// synth_from_json_text builds the derived `from_json(s: string):
+// Result[Self, string]`: `json.decode[Self](s)` under the type's own name.
+function synth_from_json_text(sd: StructDecl): FuncDecl {
+  let call: ast.Expr = ast.ExprCall { callee: e_field_access(e_ident("json"), "decode"), args: [e_ident("s")], line: 0, col: 0, type_args: [derived_self_type(sd)], ty: "" };
   let params: ast.ParamDecl[] = [ast.ParamDecl { name: "s", type_name: "string", own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
   let notp: string[] = [];
   return FuncDecl { stdlib: "", no_inline: false, name: "from_json", receiver_name: "", receiver_type: sd.name, receiver_own: false, type_params: notp, params: params, ret_type: "Result[" + sd.name + ", string]", body: [s_return(call)], line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "FromJson", dyn_traits: [], streams: [] };
