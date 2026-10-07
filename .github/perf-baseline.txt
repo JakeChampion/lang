@@ -41,15 +41,15 @@
 # only its OWN namespace, so an x86_64 entry is not a missing measurement on the
 # aarch64 runner.
 
-x86_64/array_append.text	954
-x86_64/array_append.ir	19783580
-x86_64/array_index.text	949
+x86_64/array_append.text	912
+x86_64/array_append.ir	13383897
+x86_64/array_index.text	913
 x86_64/array_index.ir	16455548
-x86_64/array_scale_f64.text	2879
+x86_64/array_scale_f64.text	2805
 x86_64/array_scale_f64.ir	21337821
-x86_64/array_with.ir	50898049
-x86_64/array_with.text	1218
-x86_64/ascii_scan.text	3150
+x86_64/array_with.ir	37762183
+x86_64/array_with.text	1072
+x86_64/ascii_scan.text	3076
 x86_64/ascii_scan.ir	37119510
 x86_64/call_overhead.text	91
 x86_64/call_overhead.ir	8550862
@@ -57,7 +57,7 @@ x86_64/closure_call.text	814
 x86_64/closure_call.ir	103908097
 x86_64/enum_match.text	999
 x86_64/enum_match.ir	53775055
-x86_64/http_hello.text	20830
+x86_64/http_hello.text	20370
 x86_64/http_hello.ir	31204779
 x86_64/int_loop.text	33
 x86_64/int_loop.ir	12000022
@@ -67,39 +67,39 @@ x86_64/map_probe_chain.text	6256
 x86_64/map_probe_chain.ir	427091447
 x86_64/map_string.text	9235
 x86_64/map_string.ir	87246392	2
-x86_64/ordmap_insert.text	4339
+x86_64/ordmap_insert.text	4261
 x86_64/ordmap_insert.ir	226418414
-x86_64/pmap_insert.text	5313
+x86_64/pmap_insert.text	5156
 x86_64/pmap_insert.ir	83397970
 x86_64/pvec_with.text	2949
 x86_64/pvec_with.ir	83108391
 x86_64/record_update.ir	167224936
 x86_64/record_update.text	1437
-x86_64/sort_inplace.text	3057
+x86_64/sort_inplace.text	3001
 x86_64/sort_inplace.ir	44638114
-x86_64/sort_ints.text	4047
+x86_64/sort_ints.text	3807
 x86_64/sort_ints.ir	34769288
-x86_64/sort_strings.text	4861
+x86_64/sort_strings.text	4625
 x86_64/sort_strings.ir	124075128
-x86_64/string_build.text	3346
+x86_64/string_build.text	3264
 x86_64/string_build.ir	98161013
-x86_64/string_count_byte.text	3029
+x86_64/string_count_byte.text	2956
 x86_64/string_count_byte.ir	135589612
 x86_64/string_find_byte.text	3342
 x86_64/string_find_byte.ir	43567682
 x86_64/string_rfind_byte.text	3398
 x86_64/string_rfind_byte.ir	43582563
-x86_64/string_scan.text	3428
+x86_64/string_scan.text	3285
 x86_64/string_scan.ir	53501893
 x86_64/string_slice.text	751
 x86_64/string_slice.ir	38700038
-x86_64/struct_drop.text	3652
+x86_64/struct_drop.text	3473
 x86_64/struct_drop.ir	358420237
 x86_64/tokenize.text	984
 x86_64/tokenize.ir	36950039
-x86_64/utf8_ingest_unchecked.text	15034
+x86_64/utf8_ingest_unchecked.text	14613
 x86_64/utf8_ingest_unchecked.ir	6896674	3
-x86_64/utf8_ingest_validated.text	15278
+x86_64/utf8_ingest_validated.text	14857
 x86_64/utf8_ingest_validated.ir	10020680	3
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
