@@ -252,18 +252,19 @@ function dest_path(dest: string): string {
 // `renameat2(..., RENAME_NOREPLACE)` coming back EEXIST, before it knows
 // anything else about it.
 //
-// The kernel answers EEXIST for a trailing slash on an existing
+// Linux answers EEXIST for a trailing slash on an existing
 // non-directory (`b/` where `b` is a file), where `lstat` answers
 // ENOTDIR; every other ENOTDIR is a component of the path that is not a
 // directory, and the name is genuinely not there. That difference is
 // what makes `mv -n a b/` say `not replacing 'b/'` and `mv -n a b/x` say
-// `cannot stat 'b/x'`.
+// `cannot stat 'b/x'`. Darwin's rename answers ENOTDIR for both, so there
+// `mv -n a b/` is `cannot stat 'b/'` as well.
 function dest_present(dest: string): boolean {
   let st: StatInfo = lstat_info(dest);
   if (st.ok) {
     return true;
   }
-  if (st.errnum != errno.ENOTDIR) {
+  if (st.errnum != errno.ENOTDIR || target_os() == "darwin") {
     return false;
   }
   let bare: string = gnu.strip_slashes(dest);
@@ -336,7 +337,8 @@ function move_failure(src: string, dest: string, n: i32, text: string): string {
   if (n == errno.EINVAL) {
     return "cannot move " + gnu.quotea(src) + " to a subdirectory of itself, " + gnu.quotea(dest);
   }
-  if (n == errno.ENOTEMPTY || n == errno.EEXIST) {
+  // The errnos that can only be the destination's fault, as GNU lists them.
+  if (n == errno.ENOTEMPTY || n == errno.EEXIST || n == errno.EISDIR || n == errno.EDQUOT || n == errno.EMLINK || n == errno.ENOSPC || n == errno.ETXTBSY) {
     return "cannot overwrite " + gnu.quotea(dest) + ": " + text;
   }
   return "cannot move " + gnu.quotea(src) + " to " + gnu.quotea(dest) + ": " + text;
@@ -488,8 +490,12 @@ function replace_dest(cfg: Cfg, m: Move, s: StatInfo, d: StatInfo, o: io_buffere
     match (rename(dest_path(m.dest), backup)) {
       Ok(_) => {},
       Err(e) => {
-        w = gnu.error_out(w, "cannot backup " + gnu.quotea(m.dest) + ": " + gnu.io_error_text(e));
-        return MoveOut { status: 1, out: w };
+        // Nothing found to back up: the move goes ahead without one.
+        if (errno.of(e) != errno.ENOENT) {
+          w = gnu.error_out(w, "cannot backup " + gnu.quotea(m.dest) + ": " + gnu.io_error_text(e));
+          return MoveOut { status: 1, out: w };
+        }
+        backup = "";
       }
     }
   }
