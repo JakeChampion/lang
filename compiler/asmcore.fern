@@ -4827,11 +4827,19 @@ pub function rt_src_lstat(t: string): string {
   return rt_src_stat_like(t, "__fern_lstat", atflag(t, "symlink_nofollow"));
 }
 
+// XNU answers stat("link-to-file/") and lstat("link/") as though the slash
+// were absent; POSIX and gnulib's replacements require the slash to resolve a
+// symlink and the result to be a directory, else ENOTDIR.
+function stat_slash_fixup(t: string): string {
+  let hi: string = "(__raw_load8(buf, " + statoff(t, "mode") + " + 1) & 240)";
+  return " if (rc >= 0 && plen > 0 && path[plen - 1] == 47) { if (" + hi + " == 160) { rc = __syscall4(" + sysno(t, "fstatat") + ", " + at_fdcwd(t) + ", pathz as i64, buf as i64, 0) as i32; } if (rc >= 0 && " + hi + " != 64) { rc = 0 - 20; } }";
+}
+
 function rt_src_stat_like(t: string, name: string, at_flags: string): string {
   let head: string = "function " + name + "(path: string): Result[FileStat, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); ";
   let tail: string = " let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } ";
   if (t == "arm64-darwin") {
-    return head + "let buf: usize = __raw_scratch(160); let rc: i32 = __syscall4(" + sysno(t, "fstatat") + ", " + at_fdcwd(t) + ", pathz as i64, buf as i64, " + at_flags + ") as i32;" + tail + stat_project_src(t) + " }";
+    return head + "let buf: usize = __raw_scratch(160); let rc: i32 = __syscall4(" + sysno(t, "fstatat") + ", " + at_fdcwd(t) + ", pathz as i64, buf as i64, " + at_flags + ") as i32;" + stat_slash_fixup(t) + tail + stat_project_src(t) + " }";
   }
   return head + "let buf: usize = __raw_scratch(256); let rc: i32 = __syscall5(" + sysno(t, "statx") + ", " + at_fdcwd(t) + ", pathz as i64, " + at_flags + ", " + statx_mask() + ", buf as i64) as i32;" + tail + statx_project_src() + " }";
 }
