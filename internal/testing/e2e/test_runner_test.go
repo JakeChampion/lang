@@ -989,10 +989,10 @@ func TestRunnerUuidExamplePasses(t *testing.T) {
 	}
 }
 
-// `tests/stdlib/crypto_test.fern` covers std/crypto's SHA-256 +
-// HMAC-SHA256 against the standard NIST (FIPS 180-4) / RFC 4231
-// known-answer vectors (empty / "abc" / pangram, raw-digest length, an
-// HMAC vector), plus the constant-time consteq / hmac_verify / hmac_verify_hex
+// `tests/stdlib/crypto_test.fern` covers std/crypto's SHA-256,
+// HMAC-SHA256 and HMAC-SHA384 against the standard NIST (FIPS 180-4) /
+// RFC 4231 known-answer vectors (empty / "abc" / pangram, raw-digest length,
+// HMAC vectors), HKDF over SHA-256 and SHA-384, plus the constant-time consteq / hmac_verify / hmac_verify_hex
 // MAC-comparison helpers (#4384) and SHAKE128 / SHAKE256 against FIPS 202's
 // vectors. This is the interp oracle; std/crypto also
 // runs in the self-host IR differential now (selfHostStdTestCases). Passing
@@ -1004,7 +1004,7 @@ func TestRunnerCryptoExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/crypto", "# pass 23", "# fail 0", "1..23"} {
+	for _, w := range []string{"# Suite: std/crypto", "# pass 26", "# fail 0", "1..26"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

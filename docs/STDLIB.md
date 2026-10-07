@@ -1023,8 +1023,10 @@ key / salt / IKM / info input. The `*_hex` variants still return a
 password to stretch stay `string`. Pass a string's bytes to a byte-typed
 parameter with `std/string`'s `s.bytes()`.
 
-- `hmac_sha256_bytes(key: u8[], msg: string): u8[]` /
-  `hmac_sha256_hex(key: u8[], msg: string): string`.
+- `hmac_sha256(key: [u8], msg: [u8]): u8[]` /
+  `hmac_sha384(key: [u8], msg: [u8]): u8[]` — HMAC (RFC 2104) of a byte
+  message; `hmac_sha256_bytes(key: u8[], msg: string): u8[]` /
+  `hmac_sha256_hex(key: u8[], msg: string): string` take a text message.
 - `consteq(a: u8[], b: u8[])` — constant-time byte compare; `hmac_verify` /
   `hmac_verify_hex` — the timing-safe way to check a MAC.
 - `pbkdf2_sha256(password: string, salt: u8[], iterations, dk_len): u8[]` /
@@ -1037,13 +1039,14 @@ parameter with `std/string`'s `s.bytes()`.
   short-circuiting `pbkdf2_sha256(...) == stored` that used to be the
   timing-oracle hazard here no longer even compiles, since `u8[]` has no
   structural `==` (E041).
-- `hkdf_extract(salt: u8[], ikm: u8[]): u8[]` /
-  `hkdf_expand(prk: u8[], info: u8[], length): u8[]` /
+- `hkdf_extract(salt: [u8], ikm: [u8]): u8[]` /
+  `hkdf_expand(prk: [u8], info: [u8], length): u8[]` /
   `hkdf_sha256(salt, ikm, info, length): u8[]` / `hkdf_sha256_hex(...): string` —
   HKDF-SHA256 (RFC 5869) key derivation for high-entropy input keying
   material (a shared secret / random key), for key separation and
   subkey derivation. Distinct from PBKDF2, which stretches a low-entropy
-  password.
+  password. `hkdf_sha384_extract`, `hkdf_sha384_expand` and `hkdf_sha384`
+  are the same over SHA-384.
 - `hotp_sha256(key: u8[], counter, digits)` /
   `totp_sha256(key: u8[], unix_time, period, digits)` — one-time
   passwords for 2FA (RFC 4226 / RFC 6238, SHA-256 mode). `key` is the raw
