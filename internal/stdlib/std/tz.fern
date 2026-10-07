@@ -927,15 +927,7 @@ function darwin_zone_from_tz(spec: string): Zone {
   if (spec.len() == 0) {
     return utc_zone();
   }
-  let name: string = spec;
-  if (name[0] as i32 == 58) {
-    name = slice_unchecked(name, 1, name.len()) + "";
-  }
-  let path: string = name;
-  if (name.len() == 0 || name[0] as i32 != 47) {
-    path = "/usr/share/zoneinfo/" + name;
-  }
-  match (read_zone_file(path)) {
+  match (read_zone_file(darwin_zone_path(spec))) {
     Some(z) => {
       return z;
     },
@@ -948,6 +940,25 @@ function darwin_zone_from_tz(spec: string): Zone {
   if (!r.valid) {
     return utc_zone();
   }
+  return darwin_rule_zone(r);
+}
+
+// tzload's path: a leading `:` dropped, and a relative name under the
+// compiled-in zone directory.
+function darwin_zone_path(spec: string): string {
+  let name: string = spec;
+  if (name[0] as i32 == 58) {
+    name = slice_unchecked(name, 1, name.len()) + "";
+  }
+  if (name.len() > 0 && name[0] as i32 == 47) {
+    return name;
+  }
+  return "/usr/share/zoneinfo/" + name;
+}
+
+// A rule as a zone whose transitions start in 1970: standard time before the
+// first of them.
+function darwin_rule_zone(r: Rule): Zone {
   if (!r.has_dst) {
     return rule_zone(r);
   }
@@ -965,39 +976,34 @@ function darwin_zone_from_tz(spec: string): Zone {
 function darwin_parse_posix(s: string): Rule {
   let bad: Rule = utc_rule();
   let std_name: (string, i32) = darwin_name(s, 0);
-  let p: i32 = std_name.1;
-  if (p >= s.len()) {
+  if (std_name.1 >= s.len()) {
     return bad;
   }
-  let std: (boolean, i32, i32) = darwin_offset(s, p);
+  let std: (boolean, i32, i32) = darwin_offset(s, std_name.1);
   if (!std.0) {
     return bad;
   }
-  p = std.2;
   let std_off: i32 = 0 - std.1;
   let r: Rule = Rule { ...bad, valid: true, std_off: std_off, dst_off: std_off, std_name: std_name.0, dst_name: std_name.0 };
-  if (p >= s.len()) {
+  if (std.2 >= s.len()) {
     return r;
   }
-  let dst_name: (string, i32) = ("", p);
-  if (s[p] as i32 == 60) {
-    let k: i32 = p + 1;
-    while (k < s.len() && s[k] as i32 != 62) {
-      k = k + 1;
-    }
-    if (k >= s.len()) {
-      return bad;
-    }
-    dst_name = (slice_unchecked(s, p + 1, k) + "", k + 1);
-  } else {
-    dst_name = darwin_name(s, p);
+  return darwin_parse_dst(s, std.2, r);
+}
+
+// What follows the standard offset: the daylight name, its own offset when
+// one is written, and the dates.
+function darwin_parse_dst(s: string, from: i32, std: Rule): Rule {
+  let name: (boolean, string, i32) = darwin_dst_name(s, from);
+  if (!name.0) {
+    return utc_rule();
   }
-  p = dst_name.1;
-  r = Rule { ...r, has_dst: true, dst_off: std_off + 3600, dst_name: dst_name.0 };
+  let p: i32 = name.2;
+  let r: Rule = Rule { ...std, has_dst: true, dst_off: std.std_off + 3600, dst_name: name.1 };
   if (p < s.len() && !is_rule_comma(s[p] as i32)) {
     let d: (boolean, i32, i32) = darwin_offset(s, p);
     if (!d.0) {
-      return bad;
+      return utc_rule();
     }
     r = Rule { ...r, dst_off: 0 - d.1 };
     p = d.2;
@@ -1006,15 +1012,20 @@ function darwin_parse_posix(s: string): Rule {
     return Rule { ...r, start: us_dst_start(), end: us_dst_end() };
   }
   if (!is_rule_comma(s[p] as i32)) {
-    return bad;
+    return utc_rule();
   }
-  let a: (boolean, DateRule, i32) = darwin_date_rule(s, p + 1);
+  return darwin_parse_dates(s, p + 1, r);
+}
+
+// `start,end`, which must end the string.
+function darwin_parse_dates(s: string, from: i32, r: Rule): Rule {
+  let a: (boolean, DateRule, i32) = darwin_date_rule(s, from);
   if (!a.0 || a.2 >= s.len() || s[a.2] as i32 != 44) {
-    return bad;
+    return utc_rule();
   }
   let b: (boolean, DateRule, i32) = darwin_date_rule(s, a.2 + 1);
   if (!b.0 || b.2 != s.len()) {
-    return bad;
+    return utc_rule();
   }
   return Rule { ...r, start: a.1, end: b.1 };
 }
@@ -1023,27 +1034,47 @@ function is_rule_comma(c: i32): boolean {
   return c == 44 || c == 59;
 }
 
+// The daylight name: getqzname's when it opens with `<`, which then needs its
+// `>`, and getzname's otherwise.
+function darwin_dst_name(s: string, p: i32): (boolean, string, i32) {
+  if (s[p] as i32 != 60) {
+    let n: (string, i32) = darwin_name(s, p);
+    return (true, n.0, n.1);
+  }
+  return darwin_quoted(s, p);
+}
+
 // getzname: the quoted form when a `>` follows the `<` anywhere, and
 // otherwise a run of anything but a digit, `,`, `+` or `-`.
 function darwin_name(s: string, p: i32): (string, i32) {
-  if (p < s.len() && s[p] as i32 == 60) {
-    let k: i32 = p + 1;
-    while (k < s.len() && s[k] as i32 != 62) {
-      k = k + 1;
-    }
-    if (k < s.len()) {
-      return (slice_unchecked(s, p + 1, k) + "", k + 1);
-    }
+  let q: (boolean, string, i32) = darwin_quoted(s, p);
+  if (q.0) {
+    return (q.1, q.2);
   }
   let j: i32 = p;
-  while (j < s.len()) {
-    let c: i32 = s[j] as i32;
-    if (is_digit(c) || c == 44 || c == 43 || c == 45) {
-      break;
-    }
+  while (j < s.len() && !ends_name(s[j] as i32)) {
     j = j + 1;
   }
   return (slice_unchecked(s, p, j) + "", j);
+}
+
+function ends_name(c: i32): boolean {
+  return is_digit(c) || c == 44 || c == 43 || c == 45;
+}
+
+// `<...>` at `p`, as (found, the text between, the index past `>`).
+function darwin_quoted(s: string, p: i32): (boolean, string, i32) {
+  if (p >= s.len() || s[p] as i32 != 60) {
+    return (false, "", p);
+  }
+  let k: i32 = p + 1;
+  while (k < s.len() && s[k] as i32 != 62) {
+    k = k + 1;
+  }
+  if (k >= s.len()) {
+    return (false, "", p);
+  }
+  return (true, slice_unchecked(s, p + 1, k) + "", k + 1);
 }
 
 // getoffset: `[+-]` then getsecs, as (ok, seconds west, next).
@@ -1111,46 +1142,37 @@ function darwin_num(s: string, p: i32, min: i32, max: i32): (boolean, i32, i32) 
 // getrule: `Jn` (1-365), `n` (0-365) or `Mm.w.d`, then an optional
 // `/time` that cannot be negative.
 function darwin_date_rule(s: string, p: i32): (boolean, DateRule, i32) {
+  let day: (boolean, DateRule, i32) = darwin_rule_day(s, p);
+  if (!day.0 || day.2 >= s.len() || s[day.2] as i32 != 47) {
+    return day;
+  }
+  let t: (boolean, i32, i32) = darwin_secs(s, day.2 + 1);
+  return (t.0, DateRule { ...day.1, time: t.1 }, t.2);
+}
+
+function darwin_rule_day(s: string, p: i32): (boolean, DateRule, i32) {
+  if (p < s.len() && s[p] as i32 == 74) {
+    let j: (boolean, i32, i32) = darwin_num(s, p + 1, 1, 365);
+    return (j.0, DateRule { kind: 1, mon: 0, week: 0, day: 0, n: j.1, time: 7200 }, j.2);
+  }
+  if (p < s.len() && s[p] as i32 == 77) {
+    return darwin_month_rule(s, p + 1);
+  }
+  let n: (boolean, i32, i32) = darwin_num(s, p, 0, 365);
+  return (n.0, DateRule { kind: 2, mon: 0, week: 0, day: 0, n: n.1, time: 7200 }, n.2);
+}
+
+// `m.w.d` after the `M`.
+function darwin_month_rule(s: string, p: i32): (boolean, DateRule, i32) {
   let bad: DateRule = DateRule { kind: 2, mon: 0, week: 0, day: 0, n: 0, time: 0 };
-  let out: DateRule = bad;
-  let i: i32 = p;
-  if (i < s.len() && s[i] as i32 == 74) {
-    let j: (boolean, i32, i32) = darwin_num(s, i + 1, 1, 365);
-    if (!j.0) {
-      return (false, bad, p);
-    }
-    out = DateRule { kind: 1, mon: 0, week: 0, day: 0, n: j.1, time: 7200 };
-    i = j.2;
-  } else if (i < s.len() && s[i] as i32 == 77) {
-    let m: (boolean, i32, i32) = darwin_num(s, i + 1, 1, 12);
-    if (!m.0 || m.2 >= s.len() || s[m.2] as i32 != 46) {
-      return (false, bad, p);
-    }
-    let w: (boolean, i32, i32) = darwin_num(s, m.2 + 1, 1, 5);
-    if (!w.0 || w.2 >= s.len() || s[w.2] as i32 != 46) {
-      return (false, bad, p);
-    }
-    let d: (boolean, i32, i32) = darwin_num(s, w.2 + 1, 0, 6);
-    if (!d.0) {
-      return (false, bad, p);
-    }
-    out = DateRule { kind: 0, mon: m.1, week: w.1, day: d.1, n: 0, time: 7200 };
-    i = d.2;
-  } else {
-    let n: (boolean, i32, i32) = darwin_num(s, i, 0, 365);
-    if (!n.0) {
-      return (false, bad, p);
-    }
-    out = DateRule { kind: 2, mon: 0, week: 0, day: 0, n: n.1, time: 7200 };
-    i = n.2;
+  let m: (boolean, i32, i32) = darwin_num(s, p, 1, 12);
+  if (!m.0 || m.2 >= s.len() || s[m.2] as i32 != 46) {
+    return (false, bad, p);
   }
-  if (i < s.len() && s[i] as i32 == 47) {
-    let t: (boolean, i32, i32) = darwin_secs(s, i + 1);
-    if (!t.0) {
-      return (false, bad, p);
-    }
-    out = DateRule { ...out, time: t.1 };
-    i = t.2;
+  let w: (boolean, i32, i32) = darwin_num(s, m.2 + 1, 1, 5);
+  if (!w.0 || w.2 >= s.len() || s[w.2] as i32 != 46) {
+    return (false, bad, p);
   }
-  return (true, out, i);
+  let d: (boolean, i32, i32) = darwin_num(s, w.2 + 1, 0, 6);
+  return (d.0, DateRule { kind: 0, mon: m.1, week: w.1, day: d.1, n: 0, time: 7200 }, d.2);
 }
