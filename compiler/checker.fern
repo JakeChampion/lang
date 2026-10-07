@@ -10787,7 +10787,7 @@ function slit_diags(e: ast.Expr, structs: StructSig[]): util.Diag[] {
       if (usig.name.len() > 0) {
         for field_name in sl.field_names {
           if (!util.has_str(usig.field_names, field_name)) {
-            out = out.append(dg_at("E043", "struct " + sl.type_name + " has no field \"" + field_name + "\"", sl.line, sl.col));
+            out = out.append(dg_at("E043", "struct " + util.demangle(sl.type_name) + " has no field \"" + field_name + "\"", sl.line, sl.col));
           }
         }
       } else if (slit_names_no_struct(structs, sl.type_name)) {
@@ -13059,7 +13059,7 @@ function cell_call_diags(c: ast.ExprCall, mfa: ast.ExprFieldAccess, recv: typein
     want = 1;
   }
   if (want < 0) {
-    return [dg_at("E043", "struct Cell has no field \"" + mfa.field + "\"", mfa.line, mfa.col)];
+    return [dg_at("E043", "struct Cell has no field or method \"" + mfa.field + "\"", mfa.line, mfa.col)];
   }
   if (c.args.len() != want) {
     return [dg_at("E004", "function expects " + util.i32_to_string(want + 1) + " arguments, got " + util.i32_to_string(c.args.len() + 1), c.line, c.col)];
@@ -13837,11 +13837,11 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
               } else if (sn.name == "MapIter" && !is_map_iter_method(mfa.field)) {
                 // Map.iter()'s cursor is a builtin with no struct
                 // declaration, so the field fallback below never sees it.
-                out = out.append(dg_at("E043", "struct MapIter has no field \"" + mfa.field + "\"", mfa.line, mfa.col));
+                out = out.append(dg_at("E043", "struct MapIter has no field or method \"" + mfa.field + "\"", mfa.line, mfa.col));
               } else if (fsig.name.len() > 0) {
                 let fldi: i32 = field_index(fsig, mfa.field);
                 if (fldi < 0) {
-                  out = out.append(dg_at("E043", "struct " + sn.name + " has no field \"" + mfa.field + "\"", mfa.line, mfa.col));
+                  out = out.append(dg_at("E043", "struct " + util.demangle(sn.name) + " has no field or method \"" + mfa.field + "\"", mfa.line, mfa.col));
                 } else {
                   let fldt: typeinfo.Type = fsig.field_types[fldi];
                   let fld_is_fn: boolean = false;
@@ -14412,7 +14412,7 @@ function call_diags_field_access(fa: ast.ExprFieldAccess, s: Scope, out: util.Di
     typeinfo.TypeStruct(sn) => {
       let fsig: StructSig = s.lookup_struct(sn.name);
       if (fsig.name.len() > 0 && !util.has_str(fsig.field_names, fa.field) && s.lookup_method(fa.field, sn.name).name.len() == 0) {
-        out = out.append(dg_at("E043", "struct " + sn.name + " has no field \"" + fa.field + "\"", fa.line, fa.col));
+        out = out.append(dg_at("E043", "struct " + util.demangle(sn.name) + " has no field or method \"" + fa.field + "\"", fa.line, fa.col));
       }
     },
     typeinfo.TypeTuple(tt) => {

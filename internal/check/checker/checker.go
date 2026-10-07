@@ -12096,6 +12096,12 @@ func editDistanceStr(a, b string) int {
 }
 
 func (c *checker) errUnknownField(pos, namePos ast.Position, structName, field string, declared []string) {
+	c.errUnknownMember(pos, namePos, structName, "field", field, declared)
+}
+
+// errUnknownMember reports E043 for a name `noun` (a field, or a field or
+// method) that struct structName does not have.
+func (c *checker) errUnknownMember(pos, namePos ast.Position, structName, noun, field string, declared []string) {
 	// A retired method spelling reads as a missing FIELD here, because
 	// `m.set(k, v)` parses as a field access before it is a call — and
 	// "struct Map has no field \"set\"" tells the reader nothing about
@@ -12107,7 +12113,7 @@ func (c *checker) errUnknownField(pos, namePos ast.Position, structName, field s
 	}
 	e := &Error{
 		Pos:     pos,
-		Msg:     fmt.Sprintf("struct %s has no field %q", structName, field),
+		Msg:     fmt.Sprintf("struct %s has no %s %q", demangle(structName), noun, field),
 		Path:    c.currentModule(),
 		ErrCode: "E043",
 	}
@@ -19917,7 +19923,7 @@ func (c *checker) fieldAccessType(n *ast.FieldAccess, s *scope, tt ast.Type) ast
 	}
 	sort.Strings(methodNames)
 	declared = append(declared, methodNames...)
-	c.errUnknownField(n.P, n.FieldPos, st.Name, n.Field, declared)
+	c.errUnknownMember(n.P, n.FieldPos, st.Name, "field or method", n.Field, declared)
 	return nil
 }
 
