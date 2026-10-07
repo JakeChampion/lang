@@ -3450,6 +3450,17 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
+	// clone_file(src, dest): Result[void, IoError] — `dest` made as a
+	// copy-on-write clone of `src`: fclonefileat on Darwin, which creates
+	// `dest`, and FICLONE on Linux, into `dest` whether or not it exists.
+	// A filesystem that cannot clone, and WASI, answer Unsupported.
+	c.info.FuncSigs["clone_file"] = &ast.FuncType{
+		Params: []ast.Type{ast.StringType{}, ast.StringType{}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.VoidType{},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
 	// create_symlink(target, path): Result[void, IoError] — a
 	// symbolic link at `path` holding the bytes `target`,
 	// `symlink(2)`. `target` is stored verbatim and is never

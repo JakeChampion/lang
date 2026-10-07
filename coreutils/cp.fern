@@ -529,6 +529,11 @@ pub function main(): i32 {
     gnu.error("warning: ignoring --context; it requires an SELinux-enabled kernel");
   }
   let cfg: copy.Cfg = from_environment(s);
+  // A clone keeps the source's holes, so `--sparse=never` turns the
+  // default clone off; an explicit `--reflink=always` stays.
+  if (cfg.reflink == copy.reflink_auto() && cfg.sparse == copy.sparse_never()) {
+    cfg = copy.Cfg { ...cfg, reflink: copy.reflink_never() };
+  }
   // `-n` is `--update=none` decided once the whole command line has
   // been read, so it beats an `--update` on either side of it. 9.5
   // dropped the warning that used to come with it.
