@@ -4527,6 +4527,11 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.need("heap");
     s = s.need("mounts");
     s = s.write("    bl __fn___fern_mounts\n    str x0, [sp, #-16]!\n");
+  } else if (o.kind_tag == 401) {  // sysctl
+    // [mib]; pushes a fresh Result[u8[], IoError].
+    s = s.need("heap");
+    s = s.need("sysctl");
+    s = s.write("    bl __fn___fern_sysctl\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 299) {  // fd_fsync
     // [fd] IS param[0]; __fn___fern_fd_fsync pushes a fresh
     // Option[IoError], None once the write-back is scheduled.
@@ -8474,15 +8479,18 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   // __fern_account_entry(kind@[sp,#16], key@[sp]) -> what libSystem answers
   // for one account-database question, or 0: kind 0 is getpwuid(key), 1
   // getpwnam(key as a C string), 2 getgrgid(key), 3 getgrnam(key as a C
-  // string) and 4 getlogin(). Darwin keeps regular accounts and groups in
-  // Directory Services, which only libSystem can ask (#9815): each call goes
-  // through a __DATA slot dyld binds at load, under AAPCS64, which preserves
-  // the callee-saved registers the emitted code relies on. Linux answers 0 and
-  // the caller reads the files.
+  // string), 4 getlogin(), 5 getgrouplist over the block at key (name,
+  // basegid, groups, ngroups, each in an 8-byte slot), 6 strerror(key) and 7
+  // __error(). Darwin keeps regular accounts and groups in Directory Services,
+  // which only libSystem can ask (#9815): each call goes through a __DATA slot
+  // dyld binds at load, under AAPCS64, which preserves the callee-saved
+  // registers the emitted code relies on. Linux answers 0 and the caller
+  // reads the files.
   if (s.has_need("account")) {
     if (darwin) {
       s = s.write("    .section .data\n    .align 3\n__fern_got_account:\n");
-      s = s.write("    .quad _getpwuid\n    .quad _getpwnam\n    .quad _getgrgid\n    .quad _getgrnam\n    .quad _getlogin\n    .text\n");
+      s = s.write("    .quad _getpwuid\n    .quad _getpwnam\n    .quad _getgrgid\n    .quad _getgrnam\n    .quad _getlogin\n");
+      s = s.write("    .quad _getgrouplist\n    .quad _strerror\n    .quad ___error\n    .text\n");
     }
     s = s.write("__fn___fern_account_entry:\n");
     if (darwin) {
@@ -8490,8 +8498,16 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
       s = s.write("    mov x29, sp\n");
       s = s.write("    ldr w9, [sp, #32]\n");  // kind
       s = s.write("    ldr x0, [sp, #16]\n");  // key
-      s = s.write("    cmp x9, #4\n");
+      s = s.write("    cmp x9, #7\n");
       s = s.write("    b.hi .Laccount_none\n");
+      s = s.write("    cmp x9, #5\n");
+      s = s.write("    b.ne .Laccount_call\n");
+      s = s.write("    mov x10, x0\n");
+      s = s.write("    ldr x0, [x10]\n");
+      s = s.write("    ldr w1, [x10, #8]\n");
+      s = s.write("    ldr x2, [x10, #16]\n");
+      s = s.write("    ldr x3, [x10, #24]\n");
+      s = s.write(".Laccount_call:\n");
       s = s.write("    adrp x16, __fern_got_account\n");
       s = s.write("    add x16, x16, :lo12:__fern_got_account\n");
       s = s.write("    lsl x9, x9, #3\n");
@@ -10726,6 +10742,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("mounts")) {
       fs_src = fs_src + " " + asmcore.rt_src_mounts(tgt);
     }
+    if (s.has_need("sysctl")) {
+      fs_src = fs_src + " " + asmcore.rt_src_sysctl(tgt);
+    }
     if (s.has_need("access")) {
       fs_src = fs_src + " " + asmcore.rt_src_access(tgt);
     }
@@ -12310,7 +12329,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
     "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at", "truncate",
     "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times", "read_link",
     "getcwd", "chdir", "chroot", "setuid", "setgid", "setgroups", "umask", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "sync",
-    "temp_dir", "stat", "lstat", "statfs", "mounts", "access", "read_dir", "read_dir_all", "read_dir_ino",
+    "temp_dir", "stat", "lstat", "statfs", "mounts", "sysctl", "access", "read_dir", "read_dir_all", "read_dir_ino",
     "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",
     "reader", "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8", "signal_send", "set_process_group", "set_priority", "clock_set",
   ]);

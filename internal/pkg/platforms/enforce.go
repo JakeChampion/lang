@@ -358,6 +358,8 @@ var gatedBuiltins = map[string]string{
 	// `host` (which wasi-cli grants and answers honestly empty).
 	"uname_field": "sysinfo",
 	"cpu_count":   "sysinfo",
+	// A kernel variable by MIB: Darwin's sysctl(3). Linux has no sysctl(2).
+	"sysctl": "sysctl",
 
 	// The process's working directory (`getcwd`). Separate from `fs`
 	// for the same reason: WASI resolves every path against a
