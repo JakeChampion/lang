@@ -1,0 +1,160 @@
+{
+  "revision": "f939351127f45c4007b2429f965094b29b029c5e",
+  "compiler": "/tmp/fern-fip-mainf939-native-compiler",
+  "compiler_sha256": "d503f53ec257a41ef7b5be9ae00b0532c35b078f09dd660005c30b732171b6e9",
+  "compiler_bytes": 12289537,
+  "official_pin": "stage0-20261006-0d42e82",
+  "compiler_evidence": "Exact main compiler emitted from the validated documentation-integration fixed point; recompiling exact main with this compiler is byte-identical.",
+  "datasets": [
+    {
+      "name": "etl",
+      "raw": "/tmp/fern-etl-mainf939-repeated",
+      "runs": 60,
+      "files": {
+        "results.jsonl": "2c85f5d2a0553633f8ac98ac8543cb3e30cff38cebb7e905480c12fbf97c5c0c",
+        "metadata.json": "3f9a4da1f46911a06f6d75a30ae8587a71652112a69a3e9a8a7db116d5c008ca",
+        "oracle.json": "76a36b9df1b92d9e95642f6055de3a58ec5ae3c6fc6a861968763c6da7831dfe"
+      }
+    },
+    {
+      "name": "simulation-n33",
+      "raw": "/tmp/fern-simulation-mainf939-n33-repeated",
+      "runs": 60,
+      "files": {
+        "results.jsonl": "8a98dd56e1079439ff4870c5b62130d81278282971d740d27a9c4cc840fa76c3",
+        "metadata.json": "8b482edb11402298c977b49efb3af8e051619517fdfa8064de32ae5655aa077d",
+        "oracle.json": "58cdc09664dc124d0d2ab405f00e4b37f2ac401da4e16dfe163c0b062673c7a4"
+      }
+    },
+    {
+      "name": "simulation-n129",
+      "raw": "/tmp/fern-simulation-mainf939-n129-repeated",
+      "runs": 60,
+      "files": {
+        "results.jsonl": "8e167b74824bdbbb6eb228c9c66622728461bed73fa6546b6203aa0e7ea5fdd7",
+        "metadata.json": "e88f872872c4ab7db777b86f1f9ac8bbf68c13dbcb0251ca8eb26fa900571e26",
+        "oracle.json": "9f47833c287a550b2a54bc8da52c84326d2d7ea4c69e055d4e41624b7dde4f4b"
+      }
+    },
+    {
+      "name": "simulation-n513",
+      "raw": "/tmp/fern-simulation-mainf939-n513-repeated",
+      "runs": 60,
+      "files": {
+        "results.jsonl": "f0635c78bb99e831cb3159ddbebcb9d0e9aaf3ef06d2ce97201764554e0e65e2",
+        "metadata.json": "30939d8feea58e2bf48be266b3b36b7e22a38e957fee310139c118899deaeb92",
+        "oracle.json": "cf6800678e58cd444721c3464945d8f90cf7a2b380c95d5e095111a697367c7d"
+      }
+    },
+    {
+      "name": "dsp",
+      "raw": "/tmp/fern-dsp-mainf939-repeated",
+      "runs": 120,
+      "files": {
+        "results.jsonl": "1f86c93843f9cfaf78e7df6d876060b53274adc6331b4e120c2d3c133216cfba",
+        "metadata.json": "7dc5b11d051296ce7488ec7df78cfa88e58ab13d2b76a7255ef333f73b4ddd49",
+        "oracle.json": "f7aebe665da44b007142d0c9f98560e41a8833d1f9679ef0c81cc58eae74712d"
+      }
+    },
+    {
+      "name": "broker",
+      "raw": "/tmp/fern-broker-mainf939-repeated",
+      "runs": 300,
+      "files": {
+        "results.jsonl": "d8b2144b5d6de70e1d1a024bd92965beae02525875e2ea9f098a8c7e894105cf",
+        "metadata.json": "3cebbe045e4d3377121abfe757aa7cf9aaa490fc1ec10565d254e804125744b3",
+        "oracle.json": "0cad79cb0b2149798eed6c51e362e0cd8b9017303a5940ad3cfdf40c14cf7f10"
+      }
+    },
+    {
+      "name": "storage",
+      "raw": "/tmp/fern-storage-mainf939-repeated",
+      "runs": 150,
+      "files": {
+        "results.jsonl": "1a887854e9bd28c0e40c28f1d95408c0799c771100dd27182a5d0532c477c503",
+        "metadata.json": "629ab0e9c20ac046fb6c59e0038e400693bdabde8ee3227a00e2e5f6db693e45",
+        "oracle.json": "87b3a31e992dbaa308f5b882988e7bd48774f25a868ddd491ee40f813950f19f"
+      }
+    },
+    {
+      "name": "ring-broker",
+      "raw": "/tmp/fern-ring-broker-mainf939-repeated",
+      "runs": 400,
+      "files": {
+        "results.jsonl": "cc55b9ef81260b97608657d5842141f9ea4fcf1dcdea6f8bf62f9b4afc5dc6d1",
+        "metadata.json": "f9f5e473600ee8c3b8ac89af3c10afd401d07fa48dfaeb701ebe317499c70d3a",
+        "oracle.json": "41a8fcd923302e9bee7db9d64fd5282b58cb4447534e449bd627cfcca70839d8"
+      }
+    },
+    {
+      "name": "ring-queue",
+      "raw": "/tmp/fern-ring-queue-mainf939-repeated",
+      "runs": 300,
+      "files": {
+        "results.jsonl": "233f5526b5a6685dc4776f9ab13e6afaaa82b6d75f56b213c0da57275f7b436e",
+        "metadata.json": "58986e23ab45edb5d3250eee40bef3d3b48bcd947515dc8213c4df641a1ff9bc",
+        "oracle.json": "9a6bcbc6e7edefe45257cfff4bfb9971eb53bbfa596953f05f1c61803cd197a2"
+      }
+    },
+    {
+      "name": "kv-base",
+      "raw": "/tmp/fern-kv-config-mainf939-repeated-base",
+      "runs": 270,
+      "files": {
+        "results.jsonl": "420dc1a0fbcedac6fb37f266ce1e468539c5f235a5d2bfa0b6ad0b83c2cf1d5c",
+        "metadata.json": "4ce109d307b196eeac74018fb58c8868243e5e48a6c8da0fb18e875628078435",
+        "oracle.json": "12804f886b3d98d1b3f3a9f5e5c9f69d5f959ae4ba8e3dc1877106e4db829221"
+      }
+    },
+    {
+      "name": "kv-capacity",
+      "raw": "/tmp/fern-kv-config-mainf939-capacity-repeated",
+      "runs": 270,
+      "files": {
+        "results.jsonl": "75df795c4d19f8df3239fe71f1ce0283fdfeec47dcdc91133d537681cbf09daa",
+        "metadata.json": "de17bab4a0ee3bf917d466879c652ed99d62f7f085cd8d9ddab58855db9160fb",
+        "oracle.json": "9bac288a90039d647934085c58acafd3d0e3c6c70b4c0def3aa49c48d36e2f16"
+      }
+    },
+    {
+      "name": "kv-key",
+      "raw": "/tmp/fern-kv-config-mainf939-key-repeated",
+      "runs": 270,
+      "files": {
+        "results.jsonl": "8d81a2e3710f2c8098b20f30a787900c51aa145a92fe3e999b9248ef503e9c2a",
+        "metadata.json": "90791f37cd18c80fe3e2feed8348b25816cfb188443f66f18529a1960788a147",
+        "oracle.json": "0be28d69d30a675d5bb5134d75524d3adff414b1e4d72a57c0b99f97124b6d4b"
+      }
+    },
+    {
+      "name": "kv-value",
+      "raw": "/tmp/fern-kv-config-mainf939-value-repeated",
+      "runs": 270,
+      "files": {
+        "results.jsonl": "5c5ad6117fd51f9dcff775b4fc6d496d4797fbe61878489ac80e9f9367b07d6f",
+        "metadata.json": "bb087de6944a338b0fd28e9505ae07c37ab18500f3e9178024e6ccc6ff85ffb1",
+        "oracle.json": "dc177eb8c8043da9597c9b03a92a43219100131d2a96158ee483116620528c9f"
+      }
+    },
+    {
+      "name": "kv-batch1",
+      "raw": "/tmp/fern-kv-config-mainf939-batch1-repeated",
+      "runs": 270,
+      "files": {
+        "results.jsonl": "2693253f9bb2170b540e9c7cf1bc0fdc5b40d02c09ca6d49b9d2bd9b36e59436",
+        "metadata.json": "1d2585ce90d99a5cd22b9a8e3da85acd92000b3326a7ca7c70351a6d7eac013a",
+        "oracle.json": "9dbf95e1671320f0c1f2b93a8bdfb28ffb28f375a846ca2e2ba8b3f5e8d869d8"
+      }
+    },
+    {
+      "name": "kv-batch64",
+      "raw": "/tmp/fern-kv-config-mainf939-batch64-repeated",
+      "runs": 270,
+      "files": {
+        "results.jsonl": "b8725d52ab8bb9cb1384636fe8329a6f28b5faa91ac26931c8c85f954e4f2bfb",
+        "metadata.json": "7f5e7ecde35c0405ced4d9bcb85ecc30fc832f724d5947f010a64ab01b0c5876",
+        "oracle.json": "2883d4e4aba200278af85044280689bcd9649c9f7aa7f6cf7f64e45123663915"
+      }
+    }
+  ]
+}

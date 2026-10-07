@@ -1,0 +1,45 @@
+{
+  "host": "macOS-15.8-arm64-arm-64bit-Mach-O",
+  "machine": "arm64",
+  "compiler": "/private/tmp/fern-fip-mainf939-native-compiler",
+  "compiler_sha256": "d503f53ec257a41ef7b5be9ae00b0532c35b078f09dd660005c30b732171b6e9",
+  "compile_command": [
+    "/private/tmp/fern-fip-mainf939-native-compiler",
+    "-target",
+    "arm64-darwin",
+    "-o",
+    "/private/tmp/fern-broker-mainf939-repeated/broker",
+    "/Users/jakechampion/.codex/worktrees/fip-architecture-epic/lang/examples/fip/broker.fern",
+    "/Users/jakechampion/.codex/worktrees/fip-architecture-epic/lang/internal/stdlib"
+  ],
+  "binary_sha256": "6c11462bc87d0ded6a25b75eb598e95fa5adb7446b0f2d21e9c9f0ce229c70b0",
+  "sources": {
+    "examples/fip/broker.fern": "b15e87e357cb3eee076e6988cd8978ca6cfdbdd203b680a66942a87fd05495d8",
+    "examples/fip/broker_core.fern": "118c840073c18d8542b83651277d60313b8ff78982705e8130501471f334cd64",
+    "examples/fip/broker_ring.fern": "086a0218a4ea56a6d1135407045acdf8122563184f1e66ba73f90c9e5cfd1eeb",
+    "scripts/bench-broker.py": "c955ccb1b68f09000fb22655ec94f2e47c80f1de49e5418c00bb82ee217cd41d",
+    "bootstrap/stage0.lock": "6cbf5f6d6b13a72c6f0c271655d37468021eb428b2b163364de1d2442ca4637e",
+    "internal/stdlib/std/bench.fern": "028d73d80366813b3d51676ed83cc2d0be41be8b4bf1fa0d7172fa35fe9904b5"
+  },
+  "revision": "f939351127f45c4007b2429f965094b29b029c5e",
+  "working_tree": "A  docs/FIP-APPLICATION-GUIDE.md\nA  docs/contexts/runtime/specs/fip-application-guide.md\n?? AGENTS.md\n?? SPEC.md\n?? scripts/__pycache__/\n",
+  "subscribers": [
+    1,
+    4,
+    16
+  ],
+  "occupancies": [
+    1,
+    8,
+    64,
+    512,
+    4095
+  ],
+  "turns": 1000,
+  "repeats": 5,
+  "modes": [
+    "flow",
+    "full"
+  ],
+  "measurement": "Fill allocations are separate. Samples time one turnover with delivery validation, or one full-queue refusal. Wall time also includes equal external-alias checks and sample storage. Export/sorting follow marks. Whole-process CPU/RSS/faults include startup, fill, export and sorting. Fresh bytes are high-water growth, not requested bytes. Page faults are not cache misses."
+}
