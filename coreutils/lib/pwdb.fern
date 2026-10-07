@@ -26,6 +26,12 @@
 //     duplicates removed keeping the first. The order is visible in
 //     `id -G` and in `groups`.
 //
+// On Darwin the files are not the database: regular accounts and groups
+// live in Directory Services, and even root differs there (its shell is
+// /bin/bash, where /etc/passwd says /bin/sh). There every lookup below asks
+// libSystem first through `__account_entry` and reads the files only when
+// it has no answer (#9815); everywhere else the files are the database.
+//
 // The files are read as BYTES. A GECOS field in some 8-bit encoding is
 // legal and common, and `read_file` rejects it as invalid UTF-8, which
 // would turn a real user into "no such user".
@@ -192,6 +198,12 @@ pub function user_by_name(name: string): Option[User] {
 // these with fixtures for the rules the machine happens not to show —
 // a malformed line, a duplicate name, a gid no group entry claims.
 pub function user_by_name_in(text: string, name: string): Option[User] {
+  match (account_user_named(name)) {
+    Some(u) => {
+      return Some(u);
+    },
+    None => {}
+  }
   let lines: string[] = text.lines();
   let i: i32 = 0;
   while (i < lines.len()) {
@@ -216,6 +228,12 @@ pub function group_by_name(name: string): Option[Group] {
 }
 
 pub function group_by_name_in(text: string, name: string): Option[Group] {
+  match (account_group_named(name)) {
+    Some(g) => {
+      return Some(g);
+    },
+    None => {}
+  }
   let lines: string[] = text.lines();
   let i: i32 = 0;
   while (i < lines.len()) {
@@ -238,6 +256,12 @@ pub function user_by_uid(uid: i64): Option[User] {
 }
 
 pub function user_by_uid_in(text: string, uid: i64): Option[User] {
+  match (account_user_id(uid)) {
+    Some(u) => {
+      return Some(u);
+    },
+    None => {}
+  }
   let lines: string[] = text.lines();
   let i: i32 = 0;
   while (i < lines.len()) {
@@ -254,10 +278,7 @@ pub function user_by_uid_in(text: string, uid: i64): Option[User] {
   return None;
 }
 
-// The user name for `uid`: the files' entry, then the account database
-// libSystem asks. On Darwin regular accounts live only in Directory Services
-// and /etc/passwd holds just the system ones (#9815); every other target
-// answers no name there and the files are the whole answer.
+// The user name for `uid`.
 pub function user_name(uid: i64): Option[string] {
   return user_name_in(slurp(passwd_path()), uid);
 }
@@ -267,22 +288,10 @@ pub function user_name_in(text: string, uid: i64): Option[string] {
     Some(u) => {
       return Some(u.name);
     },
-    None => {}
+    None => {
+      return None;
+    }
   }
-  if (uid < 0 as i64 || uid > 4294967295 as i64) {
-    return None;
-  }
-  let p: usize = __getpwuid_name(uid as u32);
-  if (p == 0 as usize) {
-    return None;
-  }
-  let bs: u8[] = [];
-  let at: usize = p;
-  while (__load_u8(at) != 0) {
-    bs = bs.append(__load_u8(at) as u8);
-    at = at + 1 as usize;
-  }
-  return Some(string_from_bytes_unchecked(bs));
 }
 
 // The two databases as TEXT, for a caller that looks up more than once. Every
@@ -326,6 +335,16 @@ pub function group_names_in(text: string, gids: i64[]): Option[string][] {
   }
   if (gids.len() == 0) {
     return out;
+  }
+  k = 0;
+  while (k < gids.len()) {
+    match (account_group_id(gids[k])) {
+      Some(g) => {
+        out = out.with(k, Some(g.name));
+      },
+      None => {}
+    }
+    k = k + 1;
   }
   let lines: string[] = text.lines();
   let i: i32 = 0;
@@ -506,4 +525,111 @@ pub function (n: Names) group(gid: i64): (string, Names) {
     None => {}
   }
   return (name, Names { ...n, gids: n.gids.append(gid), groups: n.groups.append(name) });
+}
+
+// ---- libSystem's answer -----------------------------------------------------
+// `__account_entry(kind, key)` is what libSystem answers, or 0: kind 0 is
+// getpwuid(key), 1 getpwnam(key), 2 getgrgid(key), 3 getgrnam(key) and 4
+// getlogin(); a name goes in as a C string. The entries are Darwin's
+// `struct passwd` and `struct group`, read field by field before the next
+// call reuses them. Only Darwin is asked: everywhere else the files are the
+// whole database.
+
+function darwin(): boolean {
+  return target_os() == "darwin";
+}
+
+// The login name the kernel holds for this session: getlogin(2), which is
+// where Darwin's logname answers from.
+pub function session_login(): Option[string] {
+  if (!darwin()) {
+    return None;
+  }
+  let p: usize = __account_entry(4, 0 as usize);
+  if (p == 0 as usize) {
+    return None;
+  }
+  return Some(c_string(p));
+}
+
+function account_user_id(uid: i64): Option[User] {
+  if (!darwin() || uid < 0 as i64 || uid > 4294967295 as i64) {
+    return None;
+  }
+  return account_user(__account_entry(0, uid as usize));
+}
+
+function account_user_named(name: string): Option[User] {
+  if (!darwin()) {
+    return None;
+  }
+  let key: usize = cstr_key(name);
+  let u: Option[User] = account_user(__account_entry(1, key));
+  __free(key, name.len() + 1);
+  return u;
+}
+
+function account_group_id(gid: i64): Option[Group] {
+  if (!darwin() || gid < 0 as i64 || gid > 4294967295 as i64) {
+    return None;
+  }
+  return account_group(__account_entry(2, gid as usize));
+}
+
+function account_group_named(name: string): Option[Group] {
+  if (!darwin()) {
+    return None;
+  }
+  let key: usize = cstr_key(name);
+  let g: Option[Group] = account_group(__account_entry(3, key));
+  __free(key, name.len() + 1);
+  return g;
+}
+
+function account_user(p: usize): Option[User] {
+  if (p == 0 as usize) {
+    return None;
+  }
+  return Some(User { name: c_string(__load_ptr(p)), uid: id_at(p + 16 as usize), gid: id_at(p + 20 as usize), gecos: c_string(__load_ptr(p + 40 as usize)), dir: c_string(__load_ptr(p + 48 as usize)), shell: c_string(__load_ptr(p + 56 as usize)) });
+}
+
+function account_group(p: usize): Option[Group] {
+  if (p == 0 as usize) {
+    return None;
+  }
+  return Some(Group { gid: id_at(p + 16 as usize), name: c_string(__load_ptr(p)) });
+}
+
+// A uid_t or gid_t: unsigned, so nobody's 4294967294 is not -2.
+function id_at(at: usize): i64 {
+  let v: i64 = __load_i32(at) as i64;
+  if (v < 0 as i64) {
+    return v + 4294967296 as i64;
+  }
+  return v;
+}
+
+// `name` as a NUL-terminated copy of `name.len() + 1` bytes.
+function cstr_key(name: string): usize {
+  let p: usize = __alloc(name.len() + 1);
+  let i: i32 = 0;
+  while (i < name.len()) {
+    __store_u8(p + i as usize, name[i] as i32);
+    i = i + 1;
+  }
+  __store_u8(p + name.len() as usize, 0);
+  return p;
+}
+
+function c_string(p: usize): string {
+  if (p == 0 as usize) {
+    return "";
+  }
+  let bs: u8[] = [];
+  let at: usize = p;
+  while (__load_u8(at) != 0) {
+    bs = bs.append(__load_u8(at) as u8);
+    at = at + 1 as usize;
+  }
+  return string_from_bytes_unchecked(bs);
 }

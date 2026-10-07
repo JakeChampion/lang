@@ -90,7 +90,6 @@ TestHostidParity
 TestIdParity
 TestLinkParity
 TestLnParity
-TestLognameParity
 TestMknodParity
 TestMktempRetryExhaustion
 TestMvParity
