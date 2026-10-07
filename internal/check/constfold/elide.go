@@ -133,6 +133,9 @@ func elideExpr(e ast.Expr) {
 			elideExpr(x.Tail)
 		}
 	case *ast.StructLit:
+		if x.Base != nil {
+			elideExpr(x.Base)
+		}
 		for i := range x.Fields {
 			elideExpr(x.Fields[i].Value)
 		}

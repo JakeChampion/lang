@@ -99,3 +99,32 @@ function main(): i32 {
 		t.Fatal("expected the hand-written ifs to survive")
 	}
 }
+
+// An assert inside a struct update's spread source is elided like one in
+// a field value.
+func TestElideAssertsInSpreadSource(t *testing.T) {
+	prog, err := parser.Parse(`
+struct S { a: i32, b: i32 }
+function mk(f: (i32) => i32): S {
+    return S { a: f(1), b: 0 };
+}
+function main(): i32 {
+    let s: S = S { ...mk((x: i32) => { assert(x > 0); return x; }), b: 1 };
+    return s.a;
+}
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ElideAsserts(prog)
+	left := 0
+	ast.WalkProgram(prog, func(n ast.Node) bool {
+		if ifs, ok := n.(*ast.If); ok && ifs.IsAssert {
+			left++
+		}
+		return true
+	})
+	if left != 0 {
+		t.Fatalf("ElideAsserts left %d assert desugars in the spread source", left)
+	}
+}

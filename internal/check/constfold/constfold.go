@@ -1084,6 +1084,9 @@ func (s *substituter) walkExpr(slot *ast.Expr) {
 		}
 		s.popScope()
 	case *ast.StructLit:
+		if x.Base != nil {
+			s.walkExpr(&x.Base)
+		}
 		for i := range x.Fields {
 			s.walkExpr(&x.Fields[i].Value)
 		}
