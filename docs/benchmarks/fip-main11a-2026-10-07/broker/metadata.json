@@ -1,0 +1,44 @@
+{
+  "host": "macOS-15.8-arm64-arm-64bit-Mach-O",
+  "machine": "arm64",
+  "compiler": "/private/tmp/fern-fip-main11a-native-compiler",
+  "compiler_sha256": "b5f886d2ee1c8e1165606426913c23648fb24b09697d62de4395cc1189ddd894",
+  "compile_command": [
+    "/private/tmp/fern-fip-main11a-native-compiler",
+    "-target",
+    "arm64-darwin",
+    "-o",
+    "/private/tmp/fern-broker-main11a-repeated/broker",
+    "/Users/jakechampion/.codex/worktrees/fip-storage-experiment/lang/examples/fip/broker.fern",
+    "/Users/jakechampion/.codex/worktrees/fip-storage-experiment/lang/internal/stdlib"
+  ],
+  "binary_sha256": "f0eeeac13b9c512525e8cce426ffa8f87662465faccc733b162ea8aa3b9225c3",
+  "sources": {
+    "examples/fip/broker.fern": "b15e87e357cb3eee076e6988cd8978ca6cfdbdd203b680a66942a87fd05495d8",
+    "examples/fip/broker_core.fern": "118c840073c18d8542b83651277d60313b8ff78982705e8130501471f334cd64",
+    "scripts/bench-broker.py": "c955ccb1b68f09000fb22655ec94f2e47c80f1de49e5418c00bb82ee217cd41d",
+    "bootstrap/stage0.lock": "6cbf5f6d6b13a72c6f0c271655d37468021eb428b2b163364de1d2442ca4637e",
+    "internal/stdlib/std/bench.fern": "028d73d80366813b3d51676ed83cc2d0be41be8b4bf1fa0d7172fa35fe9904b5"
+  },
+  "revision": "11a71739408e54e69ce5a3db5bf8e2136ad8316c",
+  "working_tree": "A  docs/contexts/runtime/specs/fip-storage.md\nA  examples/fip/storage_core.fern\nA  examples/fip/storage_fip.fern\nA  internal/testing/e2ecompiler/self_host_fip_storage_test.go\n?? AGENTS.md\n?? SPEC.md\n",
+  "subscribers": [
+    1,
+    4,
+    16
+  ],
+  "occupancies": [
+    1,
+    8,
+    64,
+    512,
+    4095
+  ],
+  "turns": 1000,
+  "repeats": 5,
+  "modes": [
+    "flow",
+    "full"
+  ],
+  "measurement": "Fill allocations are separate. Samples time one turnover with delivery validation, or one full-queue refusal. Wall time also includes equal external-alias checks and sample storage. Export/sorting follow marks. Whole-process CPU/RSS/faults include startup, fill, export and sorting. Fresh bytes are high-water growth, not requested bytes. Page faults are not cache misses."
+}
