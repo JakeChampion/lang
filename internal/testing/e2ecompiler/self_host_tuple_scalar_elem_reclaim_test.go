@@ -103,7 +103,7 @@ function main(): i32 {
 	// The tuple is admitted now (the array literal is its rc child), so its box
 	// is freed each round while the call element still points at a live local.
 	// The emitter must leave that position alone; freeing it corrupts `live`.
-	{"tuple-call-elem-alias-safe", `function id(xs: i32[]): i32[] { return xs; }
+	{"tuple-call-elem-alias-safe", `@noinline function id(xs: i32[]): i32[] { return xs; }
 function churn(n: i32): i32 {
     let live: i32[] = [7, 8, 9];
     let acc: i32 = 0;

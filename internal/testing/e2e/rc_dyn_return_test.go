@@ -139,7 +139,7 @@ func TestDynReturnedBorrowThroughABranch(t *testing.T) {
 	const head = `trait Label { function a(self: Self): i32; }
 struct Box { name: string }
 impl Label for Box { function a(self: Self): i32 { return self.name.len(); } }
-function ids(s: string): string { return s; }
+@noinline function ids(s: string): string { return s; }
 `
 	const body = `
 function main(): i32 {

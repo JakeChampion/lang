@@ -118,7 +118,7 @@ func arrstructBorrowCases() []arrstructBorrowCase {
 			// The callee hands the array back, so the caller does not sole-
 			// own it while the result lives.
 			name: "callee_returns_param",
-			src: mk(`function rd(src: Inner[], i: i32): Inner[] { return src; }`,
+			src: mk(`@noinline function rd(src: Inner[], i: i32): Inner[] { return src; }`,
 				producer, "rd(keep, r).len()"),
 			want: 3,
 		},

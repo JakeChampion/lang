@@ -69,7 +69,7 @@ function main(): i32 { let v: i32 = churn(2000000); if (__rc_underflow_count() !
 	// (r.name reads len 3 while nm is still live). Exit 0. nm is a concat over ids so
 	// it and r are built on the heap rather than placed as constants.
 	run(t, `struct R { name: string, items: i32[] }
-function ids(s: string): string { return s; }
+@noinline function ids(s: string): string { return s; }
 function churn(n: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < n) { let nm: string = ids("ab") + "c"; let r: R = R { name: nm, items: [1] }; if (r.name.len() != 3) { bad = 1; } if (nm.len() != 3) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { let v: i32 = churn(2000000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"struct-str-field-aliased-balanced", 0)
@@ -83,7 +83,7 @@ function main(): i32 { let v: i32 = churn(2000000); if (__rc_underflow_count() !
 	// the pre-fix double-free would tick the underflow counter → exit 99. nm is a
 	// concat over ids so it and r1 are built on the heap rather than placed as constants.
 	run(t, `struct R { name: string, items: i32[] }
-function ids(s: string): string { return s; }
+@noinline function ids(s: string): string { return s; }
 function churn(n: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < n) { let nm: string = ids("ab") + "c"; let r1: R = R { name: nm, items: [1] }; let r2: R = R { ...r1, items: [2, 3] }; if (r2.name.len() != 3) { bad = 1; } if (r1.name.len() != 3) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { let v: i32 = churn(2000000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"struct-str-field-base-copy-balanced", 0)
@@ -110,7 +110,7 @@ function main(): i32 { let v: i32 = churn(1500000); if (__rc_underflow_count() !
 	// (underflow 0) and correct values → exit 0. The second element is a concat over
 	// ids so it is built on the heap rather than folded to a constant.
 	run(t, `struct Diag { code: i32, notes: string[] }
-function ids(s: string): string { return s; }
+@noinline function ids(s: string): string { return s; }
 function churn(n: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < n) { let d: Diag = Diag { code: i, notes: ["alpha", ids("beta") + "x"] }; if (d.notes.len() != 2) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { let v: i32 = churn(4000000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"strarr-field-reclaim-churn", 0)
@@ -121,7 +121,7 @@ function main(): i32 { let v: i32 = churn(4000000); if (__rc_underflow_count() !
 	// drop (xs is read after). Value correct, underflow 0. xs[0] is a concat over ids
 	// so xs is built on the heap rather than placed as a constant.
 	run(t, `struct Diag { code: i32, notes: string[] }
-function ids(s: string): string { return s; }
+@noinline function ids(s: string): string { return s; }
 function main(): i32 { let xs: string[] = [ids("a") + "b", "cd"]; let d: Diag = Diag { code: 3, notes: xs }; let s: i32 = d.code + xs[0].len() + xs.len(); if (s != 7) { return 90; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`,
 		"strarr-field-aliased-excluded", 0)
 
@@ -130,7 +130,7 @@ function main(): i32 { let xs: string[] = [ids("a") + "b", "cd"]; let d: Diag = 
 	// survive the struct's exit drop. Value correct, underflow 0. notes[0] is a concat
 	// over ids so d is built on the heap rather than placed as a constant.
 	run(t, `struct Diag { code: i32, notes: string[] }
-function ids(s: string): string { return s; }
+@noinline function ids(s: string): string { return s; }
 function main(): i32 { let d: Diag = Diag { code: 3, notes: [ids("al") + "pha", "beta"] }; let n0: string = d.notes[0]; let s: i32 = d.code + d.notes.len() + n0.len(); if (s != 10) { return 90; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`,
 		"strarr-field-read-excluded", 0)
 

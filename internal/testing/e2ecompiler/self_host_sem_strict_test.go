@@ -379,7 +379,7 @@ func TestSelfHostSemIRRuntimeHelperRefusal(t *testing.T) {
 	}
 	driverBin := buildSelfHostBin(t, gcc, dir, "drivers/asm_run.fern", "driver")
 
-	const prog = "function ids(s: string): string { return s; } function main(): i32 { let s: string = ids(\"a\") + \"b\"; return s.len(); }\n"
+	const prog = "@noinline function ids(s: string): string { return s; } function main(): i32 { let s: string = ids(\"a\") + \"b\"; return s.len(); }\n"
 	emit := func() (string, int) {
 		var cmd *exec.Cmd
 		if len(runner) == 0 {

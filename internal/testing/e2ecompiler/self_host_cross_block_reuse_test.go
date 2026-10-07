@@ -21,7 +21,7 @@ func TestSelfHostCrossBlockReuse(t *testing.T) {
 	}{
 		// `a` dies at its match; both arms rejoin at `c`, which takes its box.
 		{"dead-donor", `enum E { A(i32[]), B(i32[]) }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function f(): i32 { let a: E = A(id([1, 2])); let t: i32 = 0; match (a) { A(_) => { t = 5; }, B(_) => { t = 6; } } let c: E = B(id([3, 4])); let v: i32 = 0; match (c) { A(w) => { v = w[0]; }, B(w) => { v = w[0] + w[1]; } } return t + v; }
 function main(): i32 { return f(); }`, 12, 1},
 		// A fresh array allocated after the reuse reads back intact, and the
@@ -32,18 +32,18 @@ function main(): i32 { return f(1); }`, 0, 4},
 		// `a` is read after `c` is built, so it is not dead where the arms
 		// rejoin and both boxes are allocated.
 		{"donor-live", `enum E { A(i32[]), B(i32[]) }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function f(): i32 { let a: E = A(id([1, 2])); let t: i32 = 0; match (a) { A(_) => { t = 5; }, B(_) => { t = 6; } } let c: E = B(id([3, 4])); let v: i32 = 0; match (c) { A(w) => { v = w[0]; }, B(w) => { v = w[0] + w[1]; } } match (a) { A(w) => { v = v + w[1]; }, B(_) => {} } return t + v; }
 function main(): i32 { return f(); }`, 14, 2},
 		// One arm returns before `c`, so a box held across it would leak.
 		{"early-return-path", `enum E { A(i32[]), B(i32[]) }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function f(n: i32): i32 { let a: E = A([n, 2]); match (a) { A(w) => { if (w[0] > 5) { return 1; } }, B(_) => {} } let c: E = B(id([3, 4])); match (c) { A(w) => { return w[0]; }, B(w) => { return w[0] + w[1]; } } return 0; }
 function main(): i32 { return f(9) * 10 + f(1); }`, 17, 5},
 		// `c` is built in a loop the donor's block is outside, so a box handed
 		// to its first iteration would be built into again on the next.
 		{"construction-in-loop", `enum E { A(i32[]), B(i32[]) }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function f(): i32 { let a: E = A(id([1, 2])); let t: i32 = 0; match (a) { A(_) => { t = 5; }, B(_) => { t = 6; } } let s: i32 = 0; let i: i32 = 0; while (i < 3) { let c: E = B([i, 4]); match (c) { A(w) => { s = s + w[0]; }, B(w) => { s = s + w[0] + w[1]; } } i = i + 1; } return t + s; }
 function main(): i32 { return f(); }`, 20, 7},
 		// A struct donor dying in an `if`'s condition block hands its box to

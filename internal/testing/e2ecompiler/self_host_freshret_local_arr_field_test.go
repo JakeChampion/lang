@@ -108,7 +108,7 @@ function main(): i32 {
 	// under the loop that keeps reading it. This is the boundary the
 	// producer-call row rests on, so it is carried beside it.
 	{"passthru-producer-declined", `struct Q { xs: i32[], pos: i32 }
-function passthru(p: i32[]): i32[] { return p; }
+@noinline function passthru(p: i32[]): i32[] { return p; }
 function mkq(p: i32[]): Q { let xs: i32[] = passthru(p); return Q { xs: xs, pos: 1 }; }
 function work(k: i32): i32 {
     let base: i32[] = [11, 22, 33];

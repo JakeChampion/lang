@@ -88,7 +88,7 @@ function main(): i32 {
 			// heap box rather than a static one.
 			name: "optstruct_collide",
 			src: `struct P { xs: i32[] }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function round(b: Option[P], i: i32): i32 {
     let t: i32 = 0;
     if (i % 2 == 0) { let o: Option[P] = Some(P { xs: [i, i + 1] }); match (o) { Some(p) => { t = t + p.xs.len(); }, None => {} } }
@@ -109,7 +109,7 @@ function main(): i32 {
 			// Its pairwise control.
 			name: "optstruct_renamed",
 			src: `struct P { xs: i32[] }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function round(b: Option[P], i: i32): i32 {
     let t: i32 = 0;
     if (i % 2 == 0) { let o: Option[P] = Some(P { xs: [i, i + 1] }); match (o) { Some(p) => { t = t + p.xs.len(); }, None => {} } }
@@ -161,7 +161,7 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			// underflow.
 			// `id` keeps keep's outer array a heap box around its static rows.
 			name: "optarrarr_collide",
-			src: `function id(xs: i32[]): i32[] { return xs; }
+			src: `@noinline function id(xs: i32[]): i32[] { return xs; }
 function round(i: i32): i32 {
     let keep: Option[i32[][]] = Some([id([7, 8]), [9, 10]]);
     let t: i32 = 0;
@@ -176,7 +176,7 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 		{
 			// Its pairwise control.
 			name: "optarrarr_renamed",
-			src: `function id(xs: i32[]): i32[] { return xs; }
+			src: `@noinline function id(xs: i32[]): i32[] { return xs; }
 function round(i: i32): i32 {
     let keep: Option[i32[][]] = Some([id([7, 8]), [9, 10]]);
     let t: i32 = 0;

@@ -69,7 +69,7 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			// read. Counts cannot see a use-after-READ. Native returns 9.
 			name: "stored_out_read_back_after_churn",
 			src: `enum E { A(i32[]), B }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function mkv(): E { return E.A(id([7, 8])); }
 function round(i: i32): i32 {
     let v: E = mkv();
@@ -101,7 +101,7 @@ function round(i: i32): i32 {
 			// The call-argument row as a VALUE with churn. Native returns 9.
 			name: "borrowed_by_callee_read_back_after_churn",
 			src: `enum E { A(i32[]), B }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function mkv(): E { return E.A(id([7, 8])); }
 function sink(a: i32[]): i32 { return a[0] + a[a.len() - 1]; }
 function round(i: i32): i32 {
@@ -133,7 +133,7 @@ function round(i: i32): i32 {
 			// (the guard keys on the round index). Native returns 96.
 			name: "guarded_arm_read_back_after_churn",
 			src: `enum E { A(i32[]), B }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function mkv(): E { return E.A(id([7, 8])); }
 function round(i: i32): i32 {
     let v: E = mkv();
@@ -201,7 +201,7 @@ function round(i: i32): i32 {
 			name: "struct_payload_keeps_the_skip",
 			src: `struct P { xs: i32[] }
 enum S { V(P), N }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function round(i: i32): i32 {
     let v: S = S.V(P { xs: id([7, 8]) });
     let keep: P = P { xs: id([0]) };
@@ -220,7 +220,7 @@ function round(i: i32): i32 {
 			// staying at a one-element array's size.
 			name: "large_payload_stored_out",
 			src: `enum E { A(i32[]), B }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function mkv(): E { return E.A(id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16])); }
 function round(i: i32): i32 {
     let v: E = mkv();

@@ -270,7 +270,7 @@ function main(): i32 {
 			// The array itself is passed to a callee that keeps it.
 			name: "len_plus_call_arg_the_callee_keeps",
 			src: `struct P { xs: i32[] }
-function keepit(ps: P[]): P[] { return ps; }
+@noinline function keepit(ps: P[]): P[] { return ps; }
 function round(r: i32): i32 {
     let ps: P[] = [P { xs: [r, r + 1] }];
     let held: P[] = keepit(ps);

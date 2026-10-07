@@ -176,7 +176,7 @@ function size(s: S): i32 {
     }
     return -1;
 }
-function pass(s: S): S { return s; }
+@noinline function pass(s: S): S { return s; }
 function first(g: (i32) => S, n: i32): i32 {
     let e: S = g(n);
     return size(e);

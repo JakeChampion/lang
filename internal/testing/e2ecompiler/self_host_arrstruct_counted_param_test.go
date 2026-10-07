@@ -85,7 +85,7 @@ func arrstructCountedCases() []arrenumShareCase {
 			// REFUSED before the tier is consulted: an array RESULT can BE the
 			// argument, and the caller's release fires immediately after the call.
 			name: "callee_returns_param",
-			src: mk(`function rd(src: Inner[], i: i32): Inner[] { return src; }`,
+			src: mk(`@noinline function rd(src: Inner[], i: i32): Inner[] { return src; }`,
 				"rd(keep, r).len()"),
 			want: 3,
 		},

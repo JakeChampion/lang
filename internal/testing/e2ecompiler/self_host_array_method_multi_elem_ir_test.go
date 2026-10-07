@@ -34,7 +34,7 @@ var arrayMethodMultiElemIRCases = []struct {
 	// 2-element string[] -> 6 + 2 = 8.
 	{"map-i32-string", `import "std/array";
 function dbl(x: i32): i32 { return x * 2; }
-function id_s(s: string): string { return s; }
+@noinline function id_s(s: string): string { return s; }
 function main(): i32 {
     let xs: i32[] = [1, 2, 3];
     let ss: string[] = ["a", "b"];
@@ -46,7 +46,7 @@ function main(): i32 {
 	// Three element types through one method, including a wide (i64) element.
 	{"map-i32-string-i64", `import "std/array";
 function dbl(x: i32): i32 { return x * 2; }
-function id_s(s: string): string { return s; }
+@noinline function id_s(s: string): string { return s; }
 function id_l(x: i64): i64 { return x; }
 function main(): i32 {
     let xs: i32[] = [1, 2, 3];
@@ -113,7 +113,7 @@ function main(): i32 {
 	{"chained-pipeline", `import "std/array";
 function dbl(x: i32): i32 { return x * 2; }
 function big(x: i32): boolean { return x > 2; }
-function id_s(s: string): string { return s; }
+@noinline function id_s(s: string): string { return s; }
 function nonempty(s: string): boolean { return s.len() > 0; }
 function main(): i32 {
     let xs: i32[] = [1, 2, 3];

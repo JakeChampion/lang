@@ -47,7 +47,7 @@ const freshStructArgProlog = "struct Op { a: i32, b: i32 }\n" +
 	"function mkop(i: i32): Op { return Op { a: i, b: i + 1 }; }\n" +
 	"function (s: St) count(o: Op): St { return St { n: s.n + o.a }; }\n" +
 	"function countf(s: St, o: Op): St { return St { n: s.n + o.a }; }\n" +
-	"function keepf(o: Op): Op { return o; }\n" +
+	"@noinline function keepf(o: Op): Op { return o; }\n" +
 	"function wrapf(o: Op, k: i32): Box { return Box { o: o, k: k }; }\n"
 
 func freshStructArgSrc(body string, rounds int) string {

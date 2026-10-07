@@ -5114,7 +5114,7 @@ import "core/int";
 import "std/i32";
 struct P { a: i32, b: i32 }
 struct Box { items: P[], tag: i32 }
-function pick(b: Box): Box { return b; }
+@noinline function pick(b: Box): Box { return b; }
 function main(): i32 {
     let t: i32 = 0;
     let r: i32 = 0;
@@ -6103,7 +6103,7 @@ function mk(n: i32): Option[i32[]] {
     return Some([n, n + 1, n + 2]);
 }
 function total(a: i32[]): i32 { let s: i32 = 0; let i: i32 = 0; while (i < a.len()) { s = s + a[i]; i = i + 1; } return s; }
-function ident(a: i32[]): i32[] { return a; }
+@noinline function ident(a: i32[]): i32[] { return a; }
 function main(): i32 {
     let t: i32 = 0;
     let i: i32 = 0;
@@ -6206,7 +6206,7 @@ function mk_sbox(k: i32): SBox { return SBox { names: ["nn", "mm"], tag: k }; }
 function mk_outer(k: i32): Outer {
     return Outer { inner: Inner { vals: [k, k + 1, k + 2] }, tag: k };
 }
-function passthru(b: Box): Box { return b; }
+@noinline function passthru(b: Box): Box { return b; }
 function sink(ps: P[]): i32 { return ps.len(); }
 function sinks(ns: string[]): i32 { return ns.len(); }
 function main(): i32 {

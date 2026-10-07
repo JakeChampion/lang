@@ -37,7 +37,7 @@ function build(n: i32): string { return "x=" + n.to_string(); } function main():
 	// fresh-returning — r must NOT be reclaimed (freeing it could double-free the
 	// caller-owned box). No __fern_str_free; value stays correct. len 2.
 	{"freshret-return-param-not-reclaimed",
-		`function id(s: string): string { return s; } function main(): i32 { let r: string = id("xy"); return r.len(); }`,
+		`@noinline function id(s: string): string { return s; } function main(): i32 { let r: string = id("xy"); return r.len(); }`,
 		2},
 }
 
