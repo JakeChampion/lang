@@ -1,6 +1,7 @@
 package mvs
 
 import (
+	"os"
 	"path/filepath"
 	"reflect"
 	"testing"
@@ -40,8 +41,8 @@ func TestParseIndex(t *testing.T) {
 	ix, err := ParseIndex(`# registry
 [foo]
 "1.0.0" = { path = "../foo-1.0.0" }
-"1.2.0" = { url = "https://x/foo.tar.gz", hash = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }
-[bar]
+"1.2.0" = { url = "https://x/foo.tar.gz", hash = "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }  # newest
+[bar]  # a second package
 "2.1.0" = { path = "bar" }
 `)
 	if err != nil {
@@ -204,6 +205,23 @@ func TestLockRoundTrip(t *testing.T) {
 	}
 	if got["bar"].Source.Path != filepath.FromSlash("/pkgs/bar") {
 		t.Errorf("bar round-trip wrong: %+v", got["bar"])
+	}
+}
+
+// A comment after a value is TOML, in a lock written by hand as in one
+// written by WriteLock.
+func TestReadLockTrailingComments(t *testing.T) {
+	dir := t.TempDir()
+	src := "[[package]]  # the first\nname = \"foo\"\nversion = \"1.2.0\"  # pinned\npath = \"/pkgs/foo\"\n"
+	if err := os.WriteFile(filepath.Join(dir, LockFileName), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	got, err := ReadLock(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got["foo"].Version.String() != "1.2.0" || got["foo"].Source.Path != "/pkgs/foo" {
+		t.Errorf("foo = %+v", got["foo"])
 	}
 }
 

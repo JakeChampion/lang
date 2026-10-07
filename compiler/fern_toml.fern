@@ -122,6 +122,22 @@ function split_lines(src: string): string[] {
   return out;
 }
 
+// line_content is a source line without its comment or the space around
+// it: a `#` outside a double-quoted string starts a comment.
+pub function line_content(raw: string): string {
+  let quoted: boolean = false;
+  let i: i32 = 0;
+  while (i < raw.len()) {
+    if (raw[i] == b'"') {
+      quoted = !quoted;
+    } else if (raw[i] == b'#' && !quoted) {
+      return util.trim(slice_unchecked(raw, 0, i));
+    }
+    i = i + 1;
+  }
+  return util.trim(raw);
+}
+
 // parse reads a fern.toml source into a Manifest: the [package] lib key
 // and every [dependencies] `name = { path = "..." }` entry. Non-path
 // dependency forms (url/workspace/version) are skipped here — the loader
@@ -138,12 +154,9 @@ pub function parse(src: string): Manifest {
   let lines: string[] = split_lines(src);
   let li: i32 = 0;
   while (li < lines.len()) {
-    let line: string = util.trim(lines[li]);
+    let line: string = line_content(lines[li]);
     li = li + 1;
     if (line.len() == 0) {
-      continue;
-    }
-    if (line[0] == b'#') {  // comment
       continue;
     }
     if (line[0] == b'[') {  // section header
@@ -484,12 +497,9 @@ pub function parse_lock(src: string): LockResult {
   let lines: string[] = split_lines(src);
   let li: i32 = 0;
   while (li < lines.len()) {
-    let line: string = util.trim(lines[li]);
+    let line: string = line_content(lines[li]);
     li = li + 1;
     if (line.len() == 0) {
-      continue;
-    }
-    if (line[0] == b'#') {
       continue;
     }
     if (line == "[[package]]") {

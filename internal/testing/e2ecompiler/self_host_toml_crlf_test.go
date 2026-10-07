@@ -39,13 +39,13 @@ func TestSelfHostTomlCRLF(t *testing.T) {
 		"LF   dep dbl kind=path version= path=../dbl\n" +
 		"LF   dep shout kind=version version=1.2.3 path=\n" +
 		"LF   member a\n" +
-		"LF   member b/c\n" +
+		"LF   member b#c\n" +
 		"CRLF name=acme\n" +
 		"CRLF deps=2\n" +
 		"CRLF dep dbl kind=path version= path=../dbl\n" +
 		"CRLF dep shout kind=version version=1.2.3 path=\n" +
 		"CRLF member a\n" +
-		"CRLF member b/c\n" +
+		"CRLF member b#c\n" +
 		"LF   entries=2\n" +
 		"LF   entry dbl version=1.0.0 path=../dbl hash=\n" +
 		"LF   entry shout version=1.2.3 path= hash=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\n" +

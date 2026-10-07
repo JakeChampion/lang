@@ -214,8 +214,8 @@ func Parse(src string) (*Manifest, error) {
 	m := &Manifest{Lib: DefaultLib, Deps: map[string]Dep{}}
 	section := ""
 	for ln, raw := range strings.Split(src, "\n") {
-		line := strings.TrimSpace(raw)
-		if line == "" || strings.HasPrefix(line, "#") {
+		line := Line(raw)
+		if line == "" {
 			continue
 		}
 		if strings.HasPrefix(line, "[") {
@@ -318,6 +318,23 @@ func Parse(src string) (*Manifest, error) {
 		return nil, fmt.Errorf("missing [package] name")
 	}
 	return m, nil
+}
+
+// Line is a manifest-format source line without its comment or the space
+// around it: a `#` outside a double-quoted string starts a comment.
+func Line(raw string) string {
+	quoted := false
+	for i := 0; i < len(raw); i++ {
+		switch raw[i] {
+		case '"':
+			quoted = !quoted
+		case '#':
+			if !quoted {
+				return strings.TrimSpace(raw[:i])
+			}
+		}
+	}
+	return strings.TrimSpace(raw)
 }
 
 // parseStringArray parses an inline TOML array of double-quoted strings
