@@ -153,9 +153,9 @@ function rewrite_obsolete(argv: string[]): string[] {
 // invalid. Decimal only, so `0x5` is refused rather than read as 5.
 //
 // A value past the width SATURATES rather than failing, which is
-// strtol's ERANGE going unread: `-n 99999999999999999999` is 19. The
-// saturation point here is far below i64's, because every value at or
-// past 20 clamps to the same 19 and every one at or past -20 to the same
+// strtol's ERANGE going unread: `-n 99999999999999999999` is 19, or 20
+// on Darwin. The saturation point here is far below i64's, because every
+// large value clamps to the same top and every one at or past -20 to the same
 // -20, so a nearer bound cannot change an answer and cannot overflow the
 // sum with the current niceness either.
 struct Adj { value: i64, ok: boolean }
@@ -210,10 +210,19 @@ function clamp_nice(n: i64): i32 {
   if (n < 0 as i64 - 20 as i64) {
     return 0 - 20;
   }
-  if (n > 19 as i64) {
-    return 19;
+  if (n > prio_max()) {
+    return prio_max() as i32;
   }
   return n as i32;
+}
+
+// The kernel's highest niceness, where setpriority clamps: Linux's 19 and
+// Darwin's PRIO_MAX of 20.
+function prio_max(): i64 {
+  if (target_os() == "darwin") {
+    return 20 as i64;
+  }
+  return 19 as i64;
 }
 
 pub function main(): i32 {
