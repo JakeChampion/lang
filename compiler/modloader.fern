@@ -249,22 +249,40 @@ function dep_dir(m: fern_toml.Manifest, dir: string, name: string): Option[strin
 // manifest_dir is the nearest directory at or above `dir` holding a fern.toml,
 // as native's manifest.FindForDir walks, or `dir` itself when none does.
 pub function manifest_dir(dir: string): string {
+  match (find_manifest(dir)) {
+    Some(d) => {
+      return d;
+    },
+    None => {
+      return dir;
+    }
+  }
+  return dir;
+}
+
+// find_manifest is the nearest directory at or above `dir` holding a fern.toml,
+// or None when none does.
+pub function find_manifest(dir: string): Option[string] {
   let d: string = dir;
   let steps: i32 = 0;
   while (steps < 64) {
     match (read_file(d + "fern.toml")) {
       Ok(src) => {
-        return d;
+        return Some(d);
       },
       Err(e) => {}
     }
-    if (d.len() == 0 || d == "/") {
-      return dir;
+    match (up_dir(d)) {
+      Some(u) => {
+        d = u;
+      },
+      None => {
+        return None;
+      }
     }
-    d = parent_dir(d);
     steps = steps + 1;
   }
-  return dir;
+  return None;
 }
 
 // load_lib reads a dependency directory's own fern.toml for its `lib`
@@ -280,22 +298,43 @@ function load_lib(depdir: string): Resolved {
   return res_read(depdir, strip_fern_ext(deplib));
 }
 
-// parent_dir returns `dir` with its last path segment removed (both
-// expected to end in '/'): "a/b/c/" → "a/b/", "a/" → "", "" → "".
-function parent_dir(dir: string): string {
-  if (dir.len() == 0) {
-    return "";
+// up_dir is the directory above `dir` (both end in '/', "" naming the working
+// directory), or None at the filesystem root. Past a relative path's own
+// segments it climbs on through `../`, so a walk from a relative path reaches
+// the ancestors the same walk from its absolute path does.
+pub function up_dir(dir: string): Option[string] {
+  if (dir == "/") {
+    return None;
   }
-  // Drop the trailing '/', then cut back to (and including) the prior '/'.
-  let end: i32 = dir.len() - 1;
-  let i: i32 = end - 1;
-  while (i >= 0) {
-    if (dir[i] == b'/') {
-      return slice_unchecked(dir, 0, i + 1) + "";
-    }
-    i = i - 1;
+  let up: string = util.clean_path(dir + "..");
+  if (up == "/") {
+    return Some(up);
   }
-  return "";
+  if (up == ".") {
+    return Some("");
+  }
+  up = up + "/";
+  if (util.str_has_prefix(up, "../") && same_dir(dir, up)) {
+    return None;
+  }
+  return Some(up);
+}
+
+// same_dir is true when directories `a` and `b` are one directory, or either
+// cannot be read: above the root, `../` names the root again.
+function same_dir(a: string, b: string): boolean {
+  match (stat(a + ".")) {
+    Ok(sa) => {
+      match (stat(b + ".")) {
+        Ok(sb) => {
+          return sa.dev == sb.dev && sa.ino == sb.ino;
+        },
+        Err(e) => {}
+      }
+    },
+    Err(e) => {}
+  }
+  return true;
 }
 
 // vendor_dir is `<vendor-root>/vendor/<name>/` when such a tree governs `dir`
@@ -304,11 +343,18 @@ function parent_dir(dir: string): string {
 function vendor_dir(dir: string, name: string): Option[string] {
   let d: string = dir;
   let steps: i32 = 0;
-  while (d.len() > 0 && steps < 64) {
+  while (steps < 64) {
     if (util.is_dir(d + "vendor/" + name)) {
       return Some(d + "vendor/" + name + "/");
     }
-    d = parent_dir(d);
+    match (up_dir(d)) {
+      Some(u) => {
+        d = u;
+      },
+      None => {
+        return None;
+      }
+    }
     steps = steps + 1;
   }
   return None;
@@ -320,7 +366,7 @@ function vendor_dir(dir: string, name: string): Option[string] {
 function workspace_member_dir(dir: string, name: string): Option[string] {
   let d: string = dir;
   let steps: i32 = 0;
-  while (d.len() > 0 && steps < 64) {
+  while (steps < 64) {
     match (read_file(d + "fern.toml")) {
       Ok(src) => {
         let wm: fern_toml.Manifest = fern_toml.parse(src);
@@ -338,7 +384,14 @@ function workspace_member_dir(dir: string, name: string): Option[string] {
       },
       Err(e) => {}
     }
-    d = parent_dir(d);
+    match (up_dir(d)) {
+      Some(u) => {
+        d = u;
+      },
+      None => {
+        return None;
+      }
+    }
     steps = steps + 1;
   }
   return None;
@@ -555,10 +608,14 @@ function vendored_stdlib_dir(ov: Overlay, dir: string): string {
     if (util.is_dir(d + "std") || util.is_dir(d + "core")) {
       return d;
     }
-    if (d.len() == 0 || d == "/") {
-      return dir;
+    match (up_dir(d)) {
+      Some(u) => {
+        d = u;
+      },
+      None => {
+        return dir;
+      }
     }
-    d = parent_dir(d);
     steps = steps + 1;
   }
   return dir;

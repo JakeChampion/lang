@@ -1188,28 +1188,26 @@ function governing_manifest(dir_slash: string): Governed {
 }
 
 // find_manifest_dir walks up from `dir` to the first directory holding a
-// fern.toml, or "" when nothing governs it.
+// fern.toml and names it without a trailing slash, or is "" when nothing
+// governs it.
 function find_manifest_dir(dir: string): string {
   let d: string = dir;
-  while (d.len() > 0) {
-    let found: boolean = false;
-    match (read_file(d + "/fern.toml")) {
-      Ok(s) => {
-        found = true;
-      },
-      Err(e) => {}
-    }
-    if (found) {
-      return d;
-    }
-    if (d.len() <= 1) {
+  if (d.len() > 0 && d[d.len() - 1] != b'/') {
+    d = d + "/";
+  }
+  match (modloader.find_manifest(d)) {
+    Some(m) => {
+      if (m.len() == 0) {
+        return ".";
+      }
+      if (m == "/") {
+        return m;
+      }
+      return slice_unchecked(m, 0, m.len() - 1) + "";
+    },
+    None => {
       return "";
     }
-    let up: string = util.dir_of(d);
-    if (up.len() == 0) {
-      up = "/";
-    }
-    d = up;
   }
   return "";
 }
