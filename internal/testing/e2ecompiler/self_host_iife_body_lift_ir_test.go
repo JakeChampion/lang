@@ -139,6 +139,35 @@ function main(): i32 {
     let h: (i32) => i32 = lf(1u8, lf(7u8, ((x: i32) => x + 2i32)));
     return h(4i32);
 }`, 6},
+	// A value-position `if` at a fn-typed argument, one arm a call to a
+	// function returning a fn value and the other a lambda. The call's result
+	// is already a box, but only passthrough calls counted as boxable arms, so
+	// neither arm was boxed. Reduced from nightly seed 86446.
+	{"fn-returning-call-arm-beside-lambda-arm", `function g(p: (i32) => i32): (i32) => i32 { return p; }
+function main(): i32 {
+    let b: boolean = true;
+    return g((if (b) { g(((x: i32) => x + 4i32)) } else { ((x: i32) => 26i32) }))(3i32);
+}`, 7},
+	// The same with the lambda arm taken.
+	{"lambda-arm-beside-fn-returning-call-arm", `function g(p: (i32) => i32): (i32) => i32 { return p; }
+function main(): i32 {
+    let b: boolean = false;
+    return g((if (b) { g(((x: i32) => x + 4i32)) } else { ((x: i32) => 26i32) }))(3i32);
+}`, 26},
+	// Every arm a fn-returning call: nothing in the arms needs a box of its
+	// own, but each call's lambda argument still does.
+	{"fn-returning-call-in-every-match-arm", `function g(p: (i32) => i32): (i32) => i32 { return p; }
+function main(): i32 {
+    let v: i32 = 2i32;
+    return g((match (v) { 1i32 => g(((x: i32) => x * 5i32)), _ => g(((x: i32) => x + 9i32)) }))(3i32);
+}`, 12},
+	// Capturing lambdas in both arms.
+	{"fn-returning-call-arm-capturing", `function g(p: (i32) => i32): (i32) => i32 { return p; }
+function main(): i32 {
+    let k: i32 = 7i32;
+    let v: i32 = 1i32;
+    return g((match (v) { 1i32 => g(((x: i32) => x * k)), _ => ((x: i32) => x + k) }))(3i32);
+}`, 21},
 	// A local function called from a value-position `if` that also yields a
 	// lambda. The `if` is hoisted with the local function as a capture, which
 	// made it a value and stopped its direct-call lift, and nothing boxed it.

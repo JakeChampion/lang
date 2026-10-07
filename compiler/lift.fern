@@ -1517,7 +1517,7 @@ function iife_arm_values_boxable(stmts: ast.Stmt[], seen: i32, fd: parser.FuncDe
                 n = deep;
               },
               ast.ExprIdent(cid) => {
-                if (!passthrough_call_boxable(rc, cid.name, fd, mfuncs)) {
+                if (!passthrough_call_boxable(rc, cid.name, fd, mfuncs) && !arm_calls_fn_returning(cid.name, fd, mfuncs)) {
                   return 0 - 1;
                 }
                 n = n + 1;
@@ -1680,6 +1680,9 @@ function expr_is_marked(e: ast.Expr, mfuncs: MFuncs): boolean {
     }
     if let ast.ExprIdent(cid) = c.callee {
       if (cid.name.len() > 8 && slice_unchecked(cid.name, 0, 8) == "__mkclo$") {
+        return true;
+      }
+      if (lift_callee_returns_fn(mfuncs, cid.name)) {
         return true;
       }
       return passthrough_call_marked(c, cid.name, mfuncs);
@@ -2366,6 +2369,20 @@ function lift_callee_is_typevar_passthrough(mfuncs: MFuncs, callee: string, idx:
   return false;
 }
 
+// A callable result uses the env-box ABI, so a call to a receiver-less function
+// declared to return one yields a box.
+function lift_callee_returns_fn(mfuncs: MFuncs, callee: string): boolean {
+  let i: i32 = mfuncs.head[util.hash_bucket(callee, mfuncs.head.len())];
+  while (i >= 0) {
+    if (mfuncs.decls[i].name == callee && mfuncs.decls[i].receiver_type.len() == 0
+      && (mfuncs.decls[i].ret_type == "fn" || util.contains(mfuncs.decls[i].ret_type, "=>"))) {
+      return true;
+    }
+    i = mfuncs.next[i];
+  }
+  return false;
+}
+
 function lift_callee_param_is_fn(mfuncs: MFuncs, callee: string, idx: i32): boolean {
   let i: i32 = mfuncs.head[util.hash_bucket(callee, mfuncs.head.len())];
   while (i >= 0) {
@@ -2664,6 +2681,13 @@ function arm_value_is_unboxed_fn(e: ast.Expr, fd: parser.FuncDecl, mfuncs: MFunc
 // not a local or parameter that shadows one (#6191).
 function arm_names_module_fn(name: string, fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
   return !lift_ident_is_param(fd, name) && lift_names_fn_value(mfuncs, name);
+}
+
+// arm_calls_fn_returning: an arm calling a module function that returns a
+// function yields that function's env box, so it needs no boxing of its own;
+// its arguments go through the ordinary expression lift.
+function arm_calls_fn_returning(name: string, fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
+  return !lift_ident_is_param(fd, name) && lift_callee_returns_fn(mfuncs, name);
 }
 
 // passthrough_arg_has_lambda reports whether `e` is a raw lambda, directly or at
