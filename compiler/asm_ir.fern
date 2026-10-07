@@ -6051,10 +6051,9 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // shorter than one block. vzeroupper on every way out of the AVX
     // loop, since the SSE loop and the caller are legacy-SSE code.
     //
-    // The cursor is an INDEX in %rdx rather than a pointer, which keeps
-    // the sequence inside the five registers the scalar body used (%rax
-    // data, %rcx byte, %rdx cursor, %r8 len, %r9 scratch): no end pointer
-    // to hold and no index to reconstruct on a hit.
+    // Between tiers the cursor is an INDEX in %rdx (%rax data, %rcx byte,
+    // %r8 len, %r9 scratch), so the SSE2 loop and the tail need no index
+    // reconstructed on a hit.
     //
     // No feature detection: AVX2 and popcnt are inside the x86-64-v3
     // baseline, hard requirements rather than a fast path.
@@ -6101,13 +6100,17 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movd %ecx, %xmm1\n    punpcklbw %xmm1, %xmm1\n");
     s = s.write("    punpcklwd %xmm1, %xmm1\n    pshufd $0, %xmm1, %xmm1\n");
     s = s.write("    vpbroadcastb %xmm1, %ymm1\n");
+    // The AVX2 loop steps a POINTER in %r9 against %r10, the last address
+    // a whole block can start at, tested at the bottom: seven instructions.
+    s = s.write("    leaq (%rax,%rdx), %r9\n    leaq -32(%rax,%r8), %r10\n");
+    s = s.write("    cmpq %r10, %r9\n    jg " + l_avx_done + "\n");
     s = s.write(l_avx + ":\n");
-    s = s.write("    movq %r8, %r9\n    subq %rdx, %r9\n");
-    s = s.write("    cmpq $32, %r9\n    jl " + l_avx_done + "\n");
-    s = s.write("    vmovdqu (%rax,%rdx), %ymm0\n    vpcmpeqb %ymm1, %ymm0, %ymm0\n");
-    s = s.write("    vpmovmskb %ymm0, %r9d\n    testl %r9d, %r9d\n    jnz " + l_hit32 + "\n");
-    s = s.write("    addq $32, %rdx\n    jmp " + l_avx + "\n");
-    s = s.write(l_hit32 + ":\n    vzeroupper\n    bsfl %r9d, %r9d\n    addq %r9, %rdx\n    jmp " + l_done + "\n");
+    s = s.write("    vpcmpeqb (%r9), %ymm1, %ymm0\n");
+    s = s.write("    vpmovmskb %ymm0, %r11d\n    testl %r11d, %r11d\n    jnz " + l_hit32 + "\n");
+    s = s.write("    addq $32, %r9\n    cmpq %r10, %r9\n    jle " + l_avx + "\n");
+    s = s.write("    subq %rax, %r9\n    movq %r9, %rdx\n    jmp " + l_avx_done + "\n");
+    s = s.write(l_hit32 + ":\n    vzeroupper\n    bsfl %r11d, %r11d\n");
+    s = s.write("    subq %rax, %r9\n    leaq (%r9,%r11), %rdx\n    jmp " + l_done + "\n");
     s = s.write(l_avx_done + ":\n    vzeroupper\n");
     s = s.write(l_vec + ":\n");
     s = s.write("    movq %r8, %r9\n    subq %rdx, %r9\n");
@@ -6197,20 +6200,24 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movd %ecx, %xmm1\n    punpcklbw %xmm1, %xmm1\n");
     s = s.write("    punpcklwd %xmm1, %xmm1\n    pshufd $0, %xmm1, %xmm1\n");
     s = s.write("    vpbroadcastb %xmm1, %ymm1\n");
-    // Each AVX2 iteration covers the 32 bytes ENDING at the cursor,
-    // [rdx-31, rdx], while a whole block fits below it; the 16-byte loop
-    // takes over from whatever cursor is left, negative included. That
-    // bound keeps the load in bounds at the LOW end, where memchr's "32
-    // or more left" keeps it in bounds at the high end.
-    s = s.write(r_avx + ":\n");
+    // Each AVX2 iteration covers the 32 bytes ENDING at the cursor while a
+    // whole block fits below it; the 16-byte loop takes over from whatever
+    // cursor is left, negative included. That bound keeps the load in
+    // bounds at the LOW end, where memchr's "32 or more left" keeps it in
+    // bounds at the high end. %r9 is the block's ADDRESS, stepped down by
+    // 32 and tested at the bottom, so the loop is seven instructions.
     s = s.write("    cmpq $31, %rdx\n    jl " + r_avx_done + "\n");
-    s = s.write("    movq %rdx, %r9\n    subq $31, %r9\n");
-    s = s.write("    vmovdqu (%rax,%r9), %ymm0\n    vpcmpeqb %ymm1, %ymm0, %ymm0\n");
+    s = s.write("    leaq -31(%rax,%rdx), %r9\n");
+    s = s.write(r_avx + ":\n");
+    s = s.write("    vpcmpeqb (%r9), %ymm1, %ymm0\n");
     s = s.write("    vpmovmskb %ymm0, %r11d\n    testl %r11d, %r11d\n    jnz " + r_hit32 + "\n");
-    s = s.write("    subq $32, %rdx\n    jmp " + r_avx + "\n");
+    s = s.write("    subq $32, %r9\n    cmpq %rax, %r9\n    jge " + r_avx + "\n");
+    // The next block would start below the data: the cursor is the byte
+    // under the block just cleared.
+    s = s.write("    subq %rax, %r9\n    leaq 31(%r9), %rdx\n    jmp " + r_avx_done + "\n");
     // bsr gives the LAST match in the block.
     s = s.write(r_hit32 + ":\n    vzeroupper\n    bsrl %r11d, %r11d\n");
-    s = s.write("    movq %r9, %rdx\n    addq %r11, %rdx\n    jmp " + r_done + "\n");
+    s = s.write("    subq %rax, %r9\n    leaq (%r9,%r11), %rdx\n    jmp " + r_done + "\n");
     s = s.write(r_avx_done + ":\n    vzeroupper\n");
     s = s.write("    cmpq $15, %rdx\n    jl " + r_tail + "\n");
     s = s.write("    movq %rdx, %r9\n    subq $15, %r9\n");  // block base index

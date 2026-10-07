@@ -5,8 +5,8 @@ import "std/string";
 // at the very first byte.
 //
 // This is the shape `__rmemchr` exists for (docs/ATLAS-PLATFORM-PLAN.md §3.3):
-// `last_index_of` routes a one-byte needle to it, and the native backends walk
-// DOWN 16 bytes at a time, scanning each block's mask for its HIGHEST set bit
+// `last_index_of` routes a one-byte needle to it, and the kernel walks DOWN a
+// vector block at a time, scanning each block's mask for its HIGHEST set bit
 // rather than its lowest. It gates that the same way string_find_byte gates
 // the forward kernel — a return to a byte-at-a-time loop moves this number by
 // most of an order of magnitude, and nothing else in the corpus would notice.

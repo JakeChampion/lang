@@ -1,0 +1,151 @@
+// Usage: etl baseline|batched|fbip|fip records batch [samples]
+// The optional sample lines are emitted after the measured region.
+import "./etl_core";
+import "./etl_variants";
+import "core/cmp";
+import "std/bench";
+import "std/i32";
+import "std/i64";
+import "std/string";
+
+function process(variant: i32, own s: etl_core.State, data: u8[], offset: i32, count: i32): etl_core.State {
+  if (variant == 0) {
+    return etl_variants.process_baseline(s, data, offset, count);
+  }
+  if (variant == 1) {
+    return etl_variants.process_batched(s, data, offset, count);
+  }
+  if (variant == 2) {
+    return etl_variants.process_fbip(s, data, offset, count);
+  }
+  return etl_core.process(s, data, offset, count);
+}
+
+function main(): i32 {
+  let argv: string[] = args();
+  if (argv.len() < 4 || argv.len() > 5) {
+    return 2;
+  }
+  let variant: i32 = -1;
+  if (argv[1] == "baseline") {
+    variant = 0;
+  }
+  if (argv[1] == "batched") {
+    variant = 1;
+  }
+  if (argv[1] == "fbip") {
+    variant = 2;
+  }
+  if (argv[1] == "fip") {
+    variant = 3;
+  }
+  let records: i32 = 0;
+  let batch: i32 = 0;
+  match (argv[2].parse_int()) {
+    Some(n) => {
+      records = n;
+    },
+    None => {
+      return 2;
+    }
+  }
+  match (argv[3].parse_int()) {
+    Some(n) => {
+      batch = n;
+    },
+    None => {
+      return 2;
+    }
+  }
+  // Both byte-region lengths must fit i32. Memory availability is a host limit.
+  if (variant < 0 || records <= 0 || records > 268435455 || batch <= 0 || batch > 268435455) {
+    return 2;
+  }
+  let export_samples: boolean = false;
+  if (argv.len() == 5) {
+    if (argv[4] != "samples") {
+      return 2;
+    }
+    export_samples = true;
+  }
+  let start_allocs: i64 = bench.alloc_count();
+  let start_fresh: i64 = bench.bump_bytes();
+  let start_ns: i64 = monotonic_ns();
+  let data: u8[] = etl_core.dataset(records);
+  let s: etl_core.State = etl_core.new_state(batch);
+  let warm: i32 = batch;
+  if (warm > records) {
+    warm = records;
+  }
+  s = process(variant, s, data, 0, warm);
+  s = etl_core.reset(s);
+  let rounds: i32 = (records - 1) / batch + 1;
+  let samples: i64[] = __alloc_i64(rounds);
+  let startup_ns: i64 = monotonic_ns() - start_ns;
+  let startup_allocs: i64 = bench.allocs_after(start_allocs);
+  let startup_fresh: i64 = bench.fresh_bytes_after(start_fresh);
+
+  let mark_allocs: i64 = bench.alloc_count();
+  let mark_fresh: i64 = bench.bump_bytes();
+  let started: i64 = monotonic_ns();
+  let first: i32 = 0;
+  let r: i32 = 0;
+  let checksum: i64 = 0i64;
+  while (first < records) {
+    let count: i32 = batch;
+    if (count > records - first) {
+      count = records - first;
+    }
+    let t0: i64 = monotonic_ns();
+    s = process(variant, s, data, first * 8, count);
+    samples = samples.with(r, monotonic_ns() - t0);
+    // Consume every encoded byte before reusing the output region. This work
+    // is in wall_ns and excluded from each process-batch latency sample.
+    let i: i32 = 0;
+    while (i < s.output_count * 8) {
+      checksum = checksum + s.output[i] as i64;
+      i = i + 1;
+    }
+    first = first + count;
+    r = r + 1;
+  }
+  let elapsed: i64 = monotonic_ns() - started;
+  let allocations: i64 = bench.allocs_after(mark_allocs);
+  let fresh: i64 = bench.fresh_bytes_after(mark_fresh);
+  if (export_samples) {
+    r = 0;
+    while (r < rounds) {
+      print("sample," + r.to_string() + "," + samples[r].to_string());
+      r = r + 1;
+    }
+  }
+  let rep: bench.Report = bench.Report {
+    name: argv[1], iterations: rounds,
+    wall_ns: elapsed, samples_ns: cmp.sort(samples), allocs: allocations, fresh_bytes: fresh,
+  };
+  print("{\"variant\":\"" + argv[1] + "\",\"records\":" + records.to_string()
+    + ",\"batch\":" + batch.to_string() + ",\"batches\":" + rounds.to_string()
+    + ",\"seen\":" + s.seen.to_string() + ",\"accepted\":" + s.accepted.to_string()
+    + ",\"invalid\":" + s.invalid.to_string() + ",\"filtered\":" + s.filtered.to_string()
+    + ",\"refused\":" + s.refused.to_string() + ",\"total\":" + s.total.to_string()
+    + ",\"low\":" + s.low.to_string() + ",\"high\":" + s.high.to_string()
+    + ",\"checksum\":" + checksum.to_string()
+    + ",\"startup_ns\":" + startup_ns.to_string()
+    + ",\"startup_allocs\":" + startup_allocs.to_string()
+    + ",\"startup_fresh_bytes\":" + startup_fresh.to_string()
+    + ",\"wall_ns\":" + elapsed.to_string()
+    + ",\"steady_allocs\":" + allocations.to_string()
+    + ",\"steady_fresh_bytes\":" + fresh.to_string()
+    + ",\"batch_p50_ns\":" + rep.p50_ns().to_string()
+    + ",\"batch_p95_ns\":" + rep.p95_ns().to_string()
+    + ",\"batch_p99_ns\":" + rep.p99_ns().to_string()
+    + ",\"batch_p999_ns\":" + rep.p999_ns().to_string()
+    + ",\"batch_max_ns\":" + rep.max_ns().to_string() + "}");
+  if (s.seen != records as i64 || s.refused != 0i64) {
+    return 1;
+  }
+  if (variant >= 2 && allocations != 0i64) {
+    return 1;
+  }
+  return 0;
+}

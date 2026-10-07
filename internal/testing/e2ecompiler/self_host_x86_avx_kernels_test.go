@@ -40,14 +40,16 @@ function main(): i32 {
 	}
 	text := string(asm)
 	// One broadcast per needle kernel (memchr, rmemchr, count_byte); the
-	// ascii_run kernel has no needle. An AVX loop clears the upper halves on
-	// each of its exits: the hit and the hand-over for the three scans, the
-	// hand-over alone for the count, seven in all.
+	// ascii_run kernel has no needle. memchr and rmemchr compare straight
+	// from the block their pointer addresses; count_byte loads, then
+	// compares. An AVX loop clears the upper halves on each of its exits:
+	// the hit and the hand-over for the three scans, the hand-over alone for
+	// the count, seven in all.
 	for want, atLeast := range map[string]int{
 		"vpbroadcastb %xmm1, %ymm1":    3,
-		"vpcmpeqb %ymm1, %ymm0, %ymm0": 3,
-		"vmovdqu (%rax,%rdx), %ymm0":   3,
-		"vmovdqu (%rax,%r9), %ymm0":    1,
+		"vpcmpeqb (%r9), %ymm1, %ymm0": 2,
+		"vpcmpeqb %ymm1, %ymm0, %ymm0": 1,
+		"vmovdqu (%rax,%rdx), %ymm0":   2,
 		"vpmovmskb %ymm0,":             4,
 		"vzeroupper":                   7,
 	} {

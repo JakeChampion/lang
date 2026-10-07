@@ -41,15 +41,15 @@
 # only its OWN namespace, so an x86_64 entry is not a missing measurement on the
 # aarch64 runner.
 
-x86_64/array_append.text	954
-x86_64/array_append.ir	19783580
-x86_64/array_index.text	949
+x86_64/array_append.text	912
+x86_64/array_append.ir	13383897
+x86_64/array_index.text	913
 x86_64/array_index.ir	16455548
-x86_64/array_scale_f64.text	2879
+x86_64/array_scale_f64.text	2805
 x86_64/array_scale_f64.ir	21337821
-x86_64/array_with.ir	50898049
-x86_64/array_with.text	1218
-x86_64/ascii_scan.text	3150
+x86_64/array_with.ir	37762183
+x86_64/array_with.text	1072
+x86_64/ascii_scan.text	3076
 x86_64/ascii_scan.ir	37119510
 x86_64/call_overhead.text	91
 x86_64/call_overhead.ir	8550862
@@ -57,49 +57,49 @@ x86_64/closure_call.text	814
 x86_64/closure_call.ir	103908097
 x86_64/enum_match.text	999
 x86_64/enum_match.ir	53775055
-x86_64/http_hello.text	20830
+x86_64/http_hello.text	20370
 x86_64/http_hello.ir	31204779
 x86_64/int_loop.text	33
 x86_64/int_loop.ir	12000022
-x86_64/map_int.text	6452
-x86_64/map_int.ir	48728523
-x86_64/map_probe_chain.text	6466
-x86_64/map_probe_chain.ir	447313169
-x86_64/map_string.text	9602
-x86_64/map_string.ir	90171521	2
-x86_64/ordmap_insert.text	4339
+x86_64/map_int.text	6242
+x86_64/map_int.ir	45746101
+x86_64/map_probe_chain.text	6256
+x86_64/map_probe_chain.ir	427091447
+x86_64/map_string.text	9235
+x86_64/map_string.ir	87246392	2
+x86_64/ordmap_insert.text	4261
 x86_64/ordmap_insert.ir	226418414
-x86_64/pmap_insert.text	5313
+x86_64/pmap_insert.text	5156
 x86_64/pmap_insert.ir	83397970
 x86_64/pvec_with.text	2949
 x86_64/pvec_with.ir	83108391
 x86_64/record_update.ir	167224936
 x86_64/record_update.text	1437
-x86_64/sort_inplace.text	3057
+x86_64/sort_inplace.text	3001
 x86_64/sort_inplace.ir	44638114
-x86_64/sort_ints.text	4047
+x86_64/sort_ints.text	3807
 x86_64/sort_ints.ir	34769288
-x86_64/sort_strings.text	4861
+x86_64/sort_strings.text	4625
 x86_64/sort_strings.ir	124075128
-x86_64/string_build.text	3346
+x86_64/string_build.text	3264
 x86_64/string_build.ir	98161013
-x86_64/string_count_byte.text	3029
+x86_64/string_count_byte.text	2956
 x86_64/string_count_byte.ir	135589612
-x86_64/string_find_byte.text	3417
-x86_64/string_find_byte.ir	68113681
-x86_64/string_rfind_byte.text	3477
-x86_64/string_rfind_byte.ir	68134563
-x86_64/string_scan.text	3428
+x86_64/string_find_byte.text	3342
+x86_64/string_find_byte.ir	43567682
+x86_64/string_rfind_byte.text	3398
+x86_64/string_rfind_byte.ir	43582563
+x86_64/string_scan.text	3285
 x86_64/string_scan.ir	53501893
 x86_64/string_slice.text	751
 x86_64/string_slice.ir	38700038
-x86_64/struct_drop.text	3652
+x86_64/struct_drop.text	3473
 x86_64/struct_drop.ir	358420237
 x86_64/tokenize.text	984
 x86_64/tokenize.ir	36950039
-x86_64/utf8_ingest_unchecked.text	15034
+x86_64/utf8_ingest_unchecked.text	14613
 x86_64/utf8_ingest_unchecked.ir	6896674	3
-x86_64/utf8_ingest_validated.text	15278
+x86_64/utf8_ingest_validated.text	14857
 x86_64/utf8_ingest_validated.ir	10020680	3
 
 # aarch64, the arch this project defaults to. The `.ir` half comes from the
@@ -144,15 +144,15 @@ x86_64/utf8_ingest_validated.ir	10020680	3
 # on one program says nothing about the next. A new benchmark reports as
 # UNBASELINED here for one CI run, which is the gate saying "measured,
 # recorded, not yet compared" — paste that run's block in rather than guessing.
-aarch64/array_append.text	1091
-aarch64/array_append.ir	24293238
-aarch64/array_index.text	1087
+aarch64/array_append.text	1052
+aarch64/array_append.ir	17893556
+aarch64/array_index.text	1050
 aarch64/array_index.ir	18548348
-aarch64/array_scale_f64.text	3357
-aarch64/array_scale_f64.ir	82777591
-aarch64/array_with.text	1365
-aarch64/array_with.ir	44359384
-aarch64/ascii_scan.text	3681
+aarch64/array_scale_f64.text	3273
+aarch64/array_scale_f64.ir	25365579
+aarch64/array_with.text	1207
+aarch64/array_with.ir	31219422
+aarch64/ascii_scan.text	3601
 aarch64/ascii_scan.ir	68660210
 aarch64/call_overhead.text	147
 aarch64/call_overhead.ir	11250762
@@ -160,47 +160,47 @@ aarch64/closure_call.text	1012
 aarch64/closure_call.ir	139968083
 aarch64/enum_match.text	1137
 aarch64/enum_match.ir	41400056
-aarch64/http_hello.text	22071
+aarch64/http_hello.text	21758
 aarch64/http_hello.ir	33776600
 aarch64/int_loop.text	101
 aarch64/int_loop.ir	18000025
-aarch64/map_int.text	6990
-aarch64/map_int.ir	47807266
-aarch64/map_probe_chain.text	6999
-aarch64/map_probe_chain.ir	444259099
-aarch64/map_string.text	10696
+aarch64/map_int.text	6889
+aarch64/map_int.ir	46724482
+aarch64/map_probe_chain.text	6898
+aarch64/map_probe_chain.ir	434234741
+aarch64/map_string.text	10439
 aarch64/map_string.ir	91222257	2
-aarch64/ordmap_insert.text	4934
+aarch64/ordmap_insert.text	4838
 aarch64/ordmap_insert.ir	247937830
-aarch64/pmap_insert.text	6041
+aarch64/pmap_insert.text	5878
 aarch64/pmap_insert.ir	89079538
 aarch64/pvec_with.text	3163
 aarch64/pvec_with.ir	88701085
 aarch64/record_update.text	1583
 aarch64/record_update.ir	160686304
-aarch64/sort_inplace.text	3618
+aarch64/sort_inplace.text	3559
 aarch64/sort_inplace.ir	54286058
-aarch64/sort_ints.text	4659
+aarch64/sort_ints.text	4408
 aarch64/sort_ints.ir	37318031
-aarch64/sort_strings.text	5553
+aarch64/sort_strings.text	5314
 aarch64/sort_strings.ir	135864667
-aarch64/string_build.text	3937
+aarch64/string_build.text	3858
 aarch64/string_build.ir	95860138
-aarch64/string_count_byte.text	3517
+aarch64/string_count_byte.text	3438
 aarch64/string_count_byte.ir	295398919
-aarch64/string_find_byte.text	3934
-aarch64/string_find_byte.ir	123681318
-aarch64/string_rfind_byte.text	4033
-aarch64/string_rfind_byte.ir	123375931
-aarch64/string_scan.text	4049
+aarch64/string_find_byte.text	3878
+aarch64/string_find_byte.ir	55807313
+aarch64/string_rfind_byte.text	3974
+aarch64/string_rfind_byte.ir	55809919
+aarch64/string_scan.text	3907
 aarch64/string_scan.ir	61026656
 aarch64/string_slice.text	916
 aarch64/string_slice.ir	43620043
-aarch64/struct_drop.text	4254
+aarch64/struct_drop.text	4077
 aarch64/struct_drop.ir	428300325
 aarch64/tokenize.text	1170
 aarch64/tokenize.ir	38580038
-aarch64/utf8_ingest_unchecked.text	16244
+aarch64/utf8_ingest_unchecked.text	15938
 aarch64/utf8_ingest_unchecked.ir	7189922	3
-aarch64/utf8_ingest_validated.text	16494
+aarch64/utf8_ingest_validated.text	16188
 aarch64/utf8_ingest_validated.ir	10751926	3

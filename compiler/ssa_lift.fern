@@ -1188,6 +1188,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
   let t_call_direct: i32 = ir.kind_id("call_direct");
   let t_const_f64: i32 = ir.kind_id("const_f64");
   let t_const_i32: i32 = ir.kind_id("const_i32");
+  let t_ptr_width: i32 = ir.kind_id("ptr_width");
   let t_const_i32_text: i32 = ir.kind_id("const_i32_text");
   let t_const_i64: i32 = ir.kind_id("const_i64");
   let t_drop: i32 = ir.kind_id("drop");
@@ -1226,7 +1227,13 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
       continue;
     }
 
-    if ((cls & 1) == 0 && flat_arm_op(op)) {
+    if (tag == t_ptr_width) {
+      // Both lifted ISAs are 64-bit, so the width is a known constant.
+      let pv: i32 = nvals;
+      nvals = nvals + 1;
+      cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: pv, args: [], imm: 8, str: "" });
+      stack = stack.append(pv);
+    } else if ((cls & 1) == 0 && flat_arm_op(op)) {
       let lv: LiftVals = lift_pop_push(LiftVals { nvals: nvals, stack: stack, insts: [], ok: true }, ir.op_pops_by(kt.pops, op), 59, i, k);
       nvals = lv.nvals;
       stack = lv.stack;
