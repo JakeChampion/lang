@@ -189,8 +189,8 @@ function rfc_3339_formats(): string[] {
   return ["%Y-%m-%d", "%Y-%m-%d %H:%M:%S%:z", "%Y-%m-%d %H:%M:%S.%N%:z"];
 }
 
-// `adjust_resolution(fmt)` — every `%-N` becomes `%9N`, the width the
-// clock's nanosecond resolution needs.
+// `adjust_resolution(fmt)` — every `%-N` becomes `%9N`, `%6N` or
+// whatever width the clock's resolution needs.
 function adjust_resolution(fmt: string): string {
   let out: string = "";
   let i: i32 = 0;
@@ -198,7 +198,7 @@ function adjust_resolution(fmt: string): string {
   while (i < fmt.len()) {
     if (fmt[i] as i32 == 37) {
       if (i + 2 < fmt.len() && fmt[i + 1] as i32 == 45 && fmt[i + 2] as i32 == 78) {
-        out = out + slice_unchecked(fmt, start, i) + "%9N";
+        out = out + slice_unchecked(fmt, start, i) + "%" + res_width(clock_resolution()).to_string() + "N";
         i = i + 3;
         start = i;
         continue;
@@ -211,6 +211,17 @@ function adjust_resolution(fmt: string): string {
     i = i + 1;
   }
   return out + slice_unchecked(fmt, start, fmt.len());
+}
+
+// The fraction digits a resolution of `res` nanoseconds has.
+function res_width(res: i64): i32 {
+  let digits: i32 = 9;
+  let r: i64 = 10 as i64;
+  while (r <= res) {
+    digits = digits - 1;
+    r = r * (10 as i64);
+  }
+  return digits;
 }
 
 // What the run prints with: the zone, the TZ value the debug trace

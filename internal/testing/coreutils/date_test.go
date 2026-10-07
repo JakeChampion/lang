@@ -355,7 +355,8 @@ func dateCases(t *testing.T) []invocation {
 	add(invocation{name: "a valid operand", args: []string{"06151234"}})
 	add(invocation{name: "a valid operand with a year and seconds", args: []string{"061512342024.30"}})
 	add(invocation{name: "a valid operand with -u", args: []string{"-u", "0615123424"}})
-	add(invocation{name: "-s with a closed stdout", args: []string{"-s", "2024-06-15"}, stdout: stdoutClosed})
+	add(invocation{name: "-s with a closed stdout", args: []string{"-s", "2024-06-15"}, stdout: stdoutClosed,
+		darwinLibcDefect: "Apple's settimeofday opens its log socket in the closed stdout's slot, so GNU's date line goes there"})
 	add(invocation{name: "-r a file", args: []string{"-r", "ref", "+%s.%N %F %T"}, seedTree: dateTree})
 	add(invocation{name: "-r through a symlink", args: []string{"-r", "lref", "+%s.%N"}, seedTree: dateTree})
 	add(invocation{name: "-r a file in Tokyo", args: []string{"-r", "ref", "+%s.%N %F %T %Z"}, seedTree: dateTree, env: []string{"TZ=Asia/Tokyo"}})
