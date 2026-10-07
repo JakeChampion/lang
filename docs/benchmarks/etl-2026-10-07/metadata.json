@@ -1,0 +1,23 @@
+{
+  "host": "macOS-15.8-arm64-arm-64bit-Mach-O",
+  "machine": "arm64",
+  "binary": "/private/tmp/fern-etl-mainf009-final",
+  "binary_sha256": "7ca867ad64b982b1ae8e37970d2931a2c35a689e15ddb71b113a39d03c589688",
+  "sources": {
+    "examples/fip/etl.fern": "d45704ce52cd50b440c4132b4440cf7285d0deef3885af31d84a764fb9a70fcc",
+    "examples/fip/etl_core.fern": "accef52836b4acbae3e0fefc85edb27b0c4cfaa08380642724ce1cb348963aec",
+    "examples/fip/etl_variants.fern": "b3265f28404d60cd3f614023a6e111cdd9dc64ade721ab33227f17106125a1c9",
+    "scripts/bench-etl.py": "aea15727f627de41d6a9f55c072753ebce375558e249045fc429b3daf65a84d5",
+    "bootstrap/stage0.lock": "6cbf5f6d6b13a72c6f0c271655d37468021eb428b2b163364de1d2442ca4637e"
+  },
+  "revision": "f009e7a36be99cb883f35430e8ee29aa5eff5802",
+  "working_tree": "A  docs/FIP-ETL.md\nA  docs/benchmarks/etl-2026-10-06/metadata.json\nA  docs/benchmarks/etl-2026-10-06/oracle.json\nA  docs/benchmarks/etl-2026-10-06/results.jsonl\nA  docs/contexts/runtime/specs/fip-application-architecture.md\nA  examples/fip/etl.fern\nA  examples/fip/etl_core.fern\nA  examples/fip/etl_variants.fern\nA  internal/testing/e2ecompiler/self_host_fip_etl_test.go\nA  scripts/bench-etl.py\n?? AGENTS.md\n?? SPEC.md\n",
+  "records": 2000000,
+  "batches": [
+    1,
+    64,
+    1024
+  ],
+  "repeats": 5,
+  "measurement": "wall_ns includes batch processing and output consumption; batch samples exclude output consumption. Process CPU/RSS/faults include startup, sample export and report sorting. Fresh bytes are allocator high-water growth, not total requested bytes. Faults are not hardware cache misses."
+}
