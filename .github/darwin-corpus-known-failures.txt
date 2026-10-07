@@ -80,26 +80,18 @@
 # run 35687742755 warned for exactly these ten, and the round went from 1887
 # failures to 1647.
 
-TestBracketParity
 TestCpParity
 TestCpWalkOrder
 TestCsplit
 TestDateParity
 TestHostidParity
-TestLinkParity
-TestLnParity
 TestMknodParity
 TestMktempRetryExhaustion
-TestMvParity
 TestNice
 TestNiceReadsTheNicenessItWasStartedAt
-TestPrintfParity
-TestPwdUnlinkedWorkingDirectory
 TestRealpathParity
 TestRmdirParity
 TestRunconParity
 TestSeqParity
 TestShred
 TestStty
-TestTestParity
-TestTtyParity

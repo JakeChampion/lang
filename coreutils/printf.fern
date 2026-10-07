@@ -502,8 +502,8 @@ function i64_min_mag(): u64 {
 }
 
 // `strtox(s, unsigned)` — strtoimax / strtoumax with base 0: leading
-// white space, a sign, then `0x` hex, `0b` binary (glibc 2.38+), a
-// leading `0` for octal, else decimal. Overflow keeps consuming digits
+// white space, a sign, then `0x` hex, `0b` binary (glibc 2.38+, not
+// Apple's libc), a leading `0` for octal, else decimal. Overflow keeps consuming digits
 // and clamps; an unsigned negative wraps modulo 2^64 as glibc does.
 function strtox(s: string, unsigned: boolean): IntParse {
   let n: i32 = s.len();
@@ -521,7 +521,7 @@ function strtox(s: string, unsigned: boolean): IntParse {
     if (i + 2 < n && lower(s[i + 1] as i32) == 120 && hex_digit(s[i + 2] as i32) >= 0) {
       base = 16 as u64;
       i = i + 2;
-    } else if (i + 2 < n && lower(s[i + 1] as i32) == 98 && (s[i + 2] as i32 == 48 || s[i + 2] as i32 == 49)) {
+    } else if (target_os() != "darwin" && i + 2 < n && lower(s[i + 1] as i32) == 98 && (s[i + 2] as i32 == 48 || s[i + 2] as i32 == 49)) {
       base = 2 as u64;
       i = i + 2;
     } else {

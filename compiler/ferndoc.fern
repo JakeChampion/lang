@@ -170,7 +170,8 @@ pub function take_doc(cs: lexer.Comment[], cursor: i32, decl_line: i32): TakeRes
 }
 
 // module_intro is the file-header block: the run of comments starting on line
-// 1, one line per comment, so a blank `//` line stays a paragraph break.
+// 1, each line trimmed and joined by newline, so a blank comment line still
+// separates paragraphs.
 //
 // It is not an intro when it runs straight into the first declaration — then
 // it is that declaration's doc and take_doc will claim it. `first_decl_line`
@@ -209,9 +210,10 @@ pub function module_intro(cs: lexer.Comment[], first_decl_line: i32): string {
   return out;
 }
 
-// module_summary is cmd/ferndoc's moduleSummary: the intro's first sentence,
-// without its leading "std/x — " label, for the page description. It is
-// capitalised unless its first word has an upper-case letter or a digit.
+// module_summary is the intro's first sentence without its leading
+// "std/x — " label, for the page description: cmd/ferndoc's moduleSummary.
+// A sentence opening on a lowercase word gains a capital unless its first word
+// has an upper-case letter or a digit.
 pub function module_summary(intro: string): string {
   return docsummary.summary(intro);
 }

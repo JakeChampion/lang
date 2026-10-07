@@ -42,7 +42,8 @@ var lowLaneWrites = map[string]bool{
 // otherScalarSSE are the rest of the assembler's mnemonics with ss or sd in
 // the name: each reads its destination (arithmetic, min, max, cmpsd), writes
 // no xmm register (compares, conversions to an integer register), or writes
-// all of it (the packed integer forms).
+// all of it (the packed integer forms, and aeskeygenassist, whose "ss" is
+// in "assist").
 var otherScalarSSE = map[string]bool{
 	"addsd": true, "addss": true, "subsd": true, "subss": true,
 	"mulsd": true, "mulss": true, "divsd": true, "divss": true,
@@ -54,6 +55,7 @@ var otherScalarSSE = map[string]bool{
 	"cvttsd2si": true, "cvttsd2sil": true, "cvttsd2siq": true,
 	"cvttss2si": true, "cvttss2sil": true, "cvttss2siq": true,
 	"packssdw": true, "packsswb": true, "pmaxsd": true, "pminsd": true,
+	"aeskeygenassist": true,
 }
 
 var (

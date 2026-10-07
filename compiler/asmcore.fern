@@ -2780,19 +2780,23 @@ pub function rt_src_timer_fd(t: string): string {
 
 // rt_src_isatty backs `isatty(fd)` (syscall-leaf) -> 1 when fd is a terminal.
 //
-// The question is a terminal-attribute ioctl, which only a tty answers. Its
-// REQUEST number is the platform difference, not the syscall's shape: Linux
-// spells it TCGETS (0x5401 = 21505), XNU TIOCGETA (0x40487413 = 1078490131).
-// `fstat` + `S_ISCHR` would be simpler and answers yes for /dev/null.
+// The question is a terminal-attribute ioctl, which only a tty answers: Linux
+// TCGETS (0x5401 = 21505), XNU TIOCGETA (0x40487413 = 1078490131). `fstat` +
+// `S_ISCHR` would be simpler and answers yes for /dev/null.
+//
+// Darwin's libc asks FIODTYPE (0x4004667a = 1074030202) first and answers
+// whether the device type is D_TTY (3), falling back to TIOCGETA only when
+// that ioctl fails. A pseudo-terminal master is D_TTY but refuses TIOCGETA.
 //
 // The 80-byte scratch covers `struct termios` on both (60 on Linux, 72 on
-// XNU); nothing reads it back, since success is the whole answer.
+// XNU); only FIODTYPE's int is read back.
 pub function rt_src_isatty(t: string): string {
-  let req: string = "21505";
+  let ioctl: string = "__syscall3(" + sysno(t, "ioctl") + ", fd as i64, ";
+  let attrs: string = "if (" + ioctl + "21505, buf as i64) == (0 as i64)) { return 1; } return 0;";
   if (t == "arm64-darwin") {
-    req = "1078490131";
+    attrs = "if (" + ioctl + "1074030202, buf as i64) == (0 as i64)) { if (__raw_load8(buf, 0) == 3 && __raw_load8(buf, 1) == 0 && __raw_load8(buf, 2) == 0 && __raw_load8(buf, 3) == 0) { return 1; } return 0; } if (" + ioctl + "1078490131, buf as i64) == (0 as i64)) { return 1; } return 0;";
   }
-  return "function __fern_isatty(fd: i32): i32 { let buf: usize = __raw_scratch(80); if (__syscall3(" + sysno(t, "ioctl") + ", fd as i64, " + req + ", buf as i64) == (0 as i64)) { return 1; } return 0; }";
+  return "function __fern_isatty(fd: i32): i32 { let buf: usize = __raw_scratch(80); " + attrs + " }";
 }
 
 // rt_src_window_size backs `window_size(fd)` (syscall-leaf) ->

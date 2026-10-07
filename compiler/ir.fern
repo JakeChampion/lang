@@ -2616,6 +2616,33 @@ pub function op_vg_request(): Op {
   return op0(400);
 }
 
+// The AES-GCM kernels, each over lent packed byte arrays and answering a
+// fresh packed u8[], in constant time. `aes_expand_key` pops [key] and pushes
+// its FIPS-197 round keys: 176 bytes for a 16-byte key, 240 for a 32-byte one,
+// empty for any other.
+pub function op_aes_expand_key(): Op {
+  return op0(402);
+}
+
+// `aes_ctr32` pops [round_keys, counter, data] and pushes data exclusive-ored
+// with E(K, counter), E(K, counter + 1), ..., the counter block's last four
+// bytes stepping as a big-endian u32. 240 round-key bytes select AES-256, 176
+// AES-128; fewer, or a counter under 16 bytes, answer empty.
+pub function op_aes_ctr32(): Op {
+  return op0(403);
+}
+
+// `ghash` pops [h, y, data] and pushes the 16-byte GHASH state y with each
+// 16-byte block of data folded in under the hash key h (SP 800-38D), a short
+// last block padded with zeros. An h or y under 16 bytes answers empty.
+pub function op_ghash(): Op {
+  return op0(404);
+}
+
+pub function is_aes_gcm_op(tag: i32): boolean {
+  return tag == 402 || tag == 403 || tag == 404;
+}
+
 // `proc_exec` pops [path, args] and replaces the process image via execve. It
 // only ever pushes a FAILURE (-errno): on success there is no process left to
 // push into. Completes the crash-only trio, mirroring the native builtin, and
@@ -3628,6 +3655,9 @@ function kind_id_len5(name: string): i32 {
   if (c == b'r' && name == "rem_u") {
     return 27;
   }
+  if (c == b'g' && name == "ghash") {
+    return 404;
+  }
   if (c == b's') {
     return kind_id_len5_s(name);
   }
@@ -4019,6 +4049,9 @@ function kind_id_len9(name: string): i32 {
   }
   if (c == b'a' && name == "ascii_run") {
     return 227;
+  }
+  if (c == b'a' && name == "aes_ctr32") {
+    return 403;
   }
   if (c == b'b' && name == "buf_clear") {
     return 386;
@@ -4581,6 +4614,9 @@ function kind_id_len13(name: string): i32 {
 function kind_id_len14(name: string): i32 {
   if (name == "setxattr_bytes") {
     return 376;
+  }
+  if (name == "aes_expand_key") {
+    return 402;
   }
   if (name == "getxattr_bytes") {
     return 374;
@@ -5838,6 +5874,15 @@ function buf_kind_name(id: i32): string {
 // extension tags beyond kind_count() (struct_copy=198 … buf_free=297)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
+  if (id == 404) {
+    return "ghash";
+  }
+  if (id == 403) {
+    return "aes_ctr32";
+  }
+  if (id == 402) {
+    return "aes_expand_key";
+  }
   if (id == 401) {
     return "sysctl";
   }
@@ -6116,6 +6161,7 @@ function pops1_io(t: i32): boolean {
     || t == 286  // proc_waitpid_nohang
     || t == 397  // proc_waitpid_status
     || t == 399 || t == 400  // ct_mark, vg_request
+    || t == 402  // aes_expand_key
     || t == 188 || t == 148 || t == 161 || t == 162 || t == 167  // timer_fd, wasm_*
     || t == 116 || t == 112 || t == 200 || t == 201 || t == 203  // tcp_close, tcp_pollable(112), tcp_listen/accept, open_file
     || t == 320  // tcp_local_port
@@ -6189,7 +6235,8 @@ function pops3(t: i32): boolean {
     || t == 324  // scan_set (str, from, set)
     || t == 327  // count_runs (str, inside, set)
     || t == 364 || t == 365 || t == 376 || t == 377  // setxattr, lsetxattr (path, name, value)
-    || t == 366 || t == 380;  // fd_drop_cache, str_from_bytes_range
+    || t == 366 || t == 380  // fd_drop_cache, str_from_bytes_range
+    || t == 403 || t == 404;  // aes_ctr32, ghash
 }
 
 // pops_buf is the operand count of one of the capacity-carrying string
@@ -8607,6 +8654,9 @@ pub function op_allocates(tag: i32): boolean {
   if (tag == 381 || tag == 382 || tag == 383) {
     return true;
   }
+  if (is_aes_gcm_op(tag)) {  // the AES-GCM kernels' fresh u8[]
+    return true;
+  }
   if (tag == 348 || tag == 349 || tag == 350 || tag == 352) {  // byte array plus Result wrapper
     return true;
   }
@@ -8827,5 +8877,6 @@ pub function is_str_op_kind(tag: i32): boolean {
     || tag == 111 || tag == 113 || tag == 98
     || tag == 99 || tag == 100 || tag == 225 || tag == 227
     || tag == 234 || tag == 235 || tag == 245 || tag == 253
-    || tag == 309 || tag == 322 || tag == 324 || tag == 327 || tag == 329 || tag == 390;
+    || tag == 309 || tag == 322 || tag == 324 || tag == 327 || tag == 329 || tag == 390
+    || is_aes_gcm_op(tag);
 }
