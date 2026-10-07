@@ -6120,6 +6120,24 @@ function func_view_key(t: typeinfo.Type): string {
   return "fn " + ssasem.type_key(t);
 }
 
+function fields_nest_func(fields: semrecords.Field[]): boolean {
+  for fl in fields {
+    if (ssasem.nests_func(fl.ty)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function variants_nest_func(variants: semrecords.Variant[]): boolean {
+  for v in variants {
+    if (fields_nest_func(v.fields)) {
+      return true;
+    }
+  }
+  return false;
+}
+
 function fields_hold_view(fields: semrecords.Field[], views: string[], impls: parser.ImplInfo[]): boolean {
   for fl in fields {
     if (type_holds_view(fl.ty, views, impls)) {
@@ -6416,7 +6434,7 @@ function env_entry(t: typeinfo.Type, views: string[], impls: parser.ImplInfo[], 
     i = i + 1;
     fields = fields.append(semrecords.Field { name: "c" + util.i32_to_string(i), ty: cap });
   }
-  return with_new_record(out, semrecords.Record { ty: t, fields: fields, views: fields_hold_view(fields, views, impls) });
+  return with_new_record(out, semrecords.Record { ty: t, fields: fields, views: fields_hold_view(fields, views, impls), nests_func: fields_nest_func(fields) });
 }
 
 function record_entry(t: typeinfo.Type, r: typeinfo.TypeStruct, s: State, out: Schemas): Schemas {
@@ -6427,7 +6445,8 @@ function record_entry(t: typeinfo.Type, r: typeinfo.TypeStruct, s: State, out: S
   if (!fields_resolved(sig)) {
     return Schemas { ...out, ok: false, why: "unresolved record field type" };
   }
-  return with_new_record(out, semrecords.Record { ty: t, fields: fields_of(sig), views: type_holds_view(t, s.views, s.impls) });
+  let fields: semrecords.Field[] = fields_of(sig);
+  return with_new_record(out, semrecords.Record { ty: t, fields: fields, views: type_holds_view(t, s.views, s.impls), nests_func: fields_nest_func(fields) });
 }
 
 // A union is a declared enum, whose variants it owns, or a struct-union, whose
@@ -6450,7 +6469,7 @@ function enum_entry(t: typeinfo.Type, u: typeinfo.TypeUnion, s: State, out: Sche
       }
     }
   }
-  let e: semrecords.Enum = semrecords.Enum { ty: t, variants: variants, layout: layout, views: util.index_of_str(s.views, u.name) >= 0 };
+  let e: semrecords.Enum = semrecords.Enum { ty: t, variants: variants, layout: layout, views: util.index_of_str(s.views, u.name) >= 0, nests_func: variants_nest_func(variants) };
   return enum_members(e, s, with_new_enum(out, e));
 }
 
@@ -6490,7 +6509,7 @@ function builtin_enum_entry(t: typeinfo.Type, s: State, out: Schemas): Schemas {
       views = true;
     }
   }
-  return with_new_enum(out, semrecords.Enum { ty: t, variants: variants, layout: semrecords.layout_option(), views: views });
+  return with_new_enum(out, semrecords.Enum { ty: t, variants: variants, layout: semrecords.layout_option(), views: views, nests_func: variants_nest_func(variants) });
 }
 
 // A frame that merely HOLDS a function value never built the box, so its own
