@@ -1970,9 +1970,10 @@ function is_raw_floor_builtin(name: string): boolean {
 // nothing at all.
 //
 //   - subprocess — child-process spawning, unsupportable on wasm/WASI (#4320).
-//   - process_alive / signal_send / set_process_group / rlimit_nofile — a
-//     process table to ask about pids in, deliver to, or group, and a
-//     kernel-enforced resource ceiling. Neither preview has either.
+//   - process_alive / signal_send / set_process_group / rlimit_nofile /
+//     disable_core_dumps — a process table to ask about pids in, deliver to,
+//     or group, and kernel-enforced resource ceilings. Neither preview has
+//     either.
 //   - timer_fd — the native fd-based CLOCK_MONOTONIC timerfd. wasm has no file
 //     descriptors to poll, and its analog already exists and lowers:
 //     wasm_timer_pollable, which returns a wasi:io/poll pollable instead of an
@@ -2030,6 +2031,9 @@ pub function wasm_unsupported_builtin(mod: parser.Module): string {
     if (util.index_of_str(ids, "proc_waitpid_nohang") >= 0) {
       return "proc_waitpid_nohang";
     }
+    if (util.index_of_str(ids, "proc_waitpid_status") >= 0) {
+      return "proc_waitpid_status";
+    }
     if (util.index_of_str(ids, "proc_exec") >= 0) {
       return "proc_exec";
     }
@@ -2084,6 +2088,11 @@ pub function wasm_unsupported_builtin(mod: parser.Module): string {
     // "unlimited") would be a measurement a component never took.
     if (util.index_of_str(ids, "rlimit_nofile") >= 0) {
       return "rlimit_nofile";
+    }
+    // disable_core_dumps — a component never dumps core, and answering true
+    // would claim a limit was set.
+    if (util.index_of_str(ids, "disable_core_dumps") >= 0) {
+      return "disable_core_dumps";
     }
     // priority / set_priority (#8375) — neither preview has a scheduler
     // knob, and neither stand-in is honest: answering 0 from `priority`
@@ -2152,7 +2161,7 @@ pub function wasm_unsupported_message(name: string): string {
     return "error: " + name + " (C FFI) is not supported on the wasm target (wasm has no C ABI)";
   }
   if (name == "proc_fork" || name == "proc_waitpid"
-    || name == "proc_waitpid_nohang" || name == "proc_exec"
+    || name == "proc_waitpid_nohang" || name == "proc_waitpid_status" || name == "proc_exec"
     || name == "proc_exec_as") {
     return "error: " + name + " is not supported on the wasm target (a component has no process model to fork, exec into, or reap)";
   }
@@ -2167,6 +2176,9 @@ pub function wasm_unsupported_message(name: string): string {
   }
   if (name == "rlimit_nofile") {
     return "error: rlimit_nofile is not supported on the wasm target (neither WASI preview enforces resource limits, so there is no ceiling to report)";
+  }
+  if (name == "disable_core_dumps") {
+    return "error: disable_core_dumps is not supported on the wasm target (neither WASI preview has core dumps or resource limits to turn them off with)";
   }
   if (name == "priority" || name == "set_priority") {
     return "error: " + name + " is not supported on the wasm target (neither WASI preview has a scheduler knob, so there is no nice value to read and nothing a change could move)";

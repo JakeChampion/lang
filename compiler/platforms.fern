@@ -227,6 +227,7 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "proc_fork", capability: "proc" },
     Gate { builtin: "proc_waitpid", capability: "proc" },
     Gate { builtin: "proc_waitpid_nohang", capability: "proc" },
+    Gate { builtin: "proc_waitpid_status", capability: "proc" },
     Gate { builtin: "proc_exec", capability: "proc" },
     Gate { builtin: "proc_exec_as", capability: "proc" },
     Gate { builtin: "chdir", capability: "cwd" },
@@ -241,6 +242,7 @@ pub function gated_builtins(): Gate[] {
     // processes at all, while this is a property a host can lack while
     // still having them.
     Gate { builtin: "rlimit_nofile", capability: "rlimit" },
+    Gate { builtin: "disable_core_dumps", capability: "rlimit" },
     // How this process competes for the CPU. Its own capability for
     // the same reason `rlimit` is: `proc` is the authority to have
     // processes at all, while a scheduler knob is a property a host

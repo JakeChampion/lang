@@ -314,7 +314,7 @@ var rcInertBuiltins = map[string]bool{
 	"buf_push_bytes_range": true,
 
 	"proc_exec": true, "proc_exec_as": true, "proc_fork": true, "proc_waitpid": true,
-	"proc_waitpid_nohang": true,
+	"proc_waitpid_nohang": true, "proc_waitpid_status": true,
 	// (path, backlog) / (path) → a descriptor or -errno; the path is read,
 	// not kept. Native-only like `access` below: the `unix` capability
 	// refuses them on both wasm worlds, so they are classified here under
@@ -336,7 +336,7 @@ var rcInertBuiltins = map[string]bool{
 	"termios_get":     true, "termios_set": true,
 	// No arguments at all, and an i64 out. Native-only for the same
 	// reason: no wasm world has resource limits.
-	"rlimit_nofile": true,
+	"rlimit_nofile": true, "disable_core_dumps": true,
 
 	// (path, contents) → Result. Both strings are read and written
 	// out; neither is retained. Its sibling `write_file` resolves

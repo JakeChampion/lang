@@ -25,7 +25,7 @@
 //
 // THE DEADLINE is a forked child that sleeps and exits. GNU arms a timer
 // whose SIGALRM ends its wait; nothing here arms one, so the clock is a
-// process instead and ONE blocking `proc_waitpid(-1)` wakes on whichever
+// process instead and ONE blocking `proc_waitpid_status(-1)` wakes on whichever
 // finishes first — the command or the timer. `proc_waitpid_nohang` then says
 // which, since a child already reaped answers ECHILD where a live one answers
 // -1. The timer ignores the signals timeout forwards, is reaped before
@@ -436,14 +436,13 @@ function over_setitimer_bound(f: ld.Format, seconds: ld.LD): boolean {
 
 // `Watch` — what supervising has done so far: the timer running (0 for none)
 // and the signal it sends when it fires, the `-k` grace period not yet
-// started, whether a deadline passed, and the signals sent to the command, a
-// bit each.
-struct Watch { tpid: i32, timer_sig: i32, kill_after: ld.LD, timed_out: boolean, sent: i64 }
+// started, and whether a deadline passed.
+struct Watch { tpid: i32, timer_sig: i32, kill_after: ld.LD, timed_out: boolean }
 
 // `supervise(...)` — wait for the command, sending the timeout signal if the
 // deadline arrives first and passing on each forwarded signal that arrives.
 //
-// ONE blocking `proc_waitpid(-1)` waits on everything: it returns when the
+// ONE blocking `proc_waitpid_status(-1)` waits on everything: it returns when the
 // command or the timer ends, and fails with EINTR when a forwarded signal
 // arrives. The flags are also read before each wait, for a signal that ended
 // some other wait (cancel_timer's) instead.
@@ -451,7 +450,7 @@ struct Watch { tpid: i32, timer_sig: i32, kill_after: ld.LD, timed_out: boolean,
 // A zero DURATION arms no timer, but a forwarded signal still starts `-k`'s
 // grace period, as GNU's does.
 function supervise(f: ld.Format, cfg: Cfg, wait_for: ld.LD, cmd: string, cpid: i32, fwd: i32[]): i32 {
-  let w: Watch = Watch { tpid: 0, timer_sig: cfg.sig, kill_after: cfg.kill_after, timed_out: false, sent: 0 as i64 };
+  let w: Watch = Watch { tpid: 0, timer_sig: cfg.sig, kill_after: cfg.kill_after, timed_out: false };
   // A DEADLINE DARWIN WILL NOT TAKE IS REPORTED, not silently run unbounded.
   // GNU's settimeout prefers timer_create, which glibc has and Darwin has
   // not, so there it falls back to setitimer — "more portable (to Darwin for
@@ -478,7 +477,7 @@ function supervise(f: ld.Format, cfg: Cfg, wait_for: ld.LD, cmd: string, cpid: i
   }
   while (true) {
     w = take_signals(f, cfg, cmd, cpid, fwd, w);
-    let status: i32 = proc_waitpid(0 - 1);
+    let status: i32 = proc_waitpid_status(0 - 1);
     if (status == eintr()) {
       continue;
     }
@@ -521,9 +520,6 @@ function take_signals(f: ld.Format, cfg: Cfg, cmd: string, cpid: i32, fwd: i32[]
 function act(f: ld.Format, cfg: Cfg, cmd: string, cpid: i32, fwd: i32[], w0: Watch, sig: i32): Watch {
   deliver(sig, cmd, cpid, cfg.foreground, cfg.verbose);
   let w: Watch = w0;
-  if (sig > 0) {
-    w = Watch { ...w, sent: w.sent | signal.bit(sig) };
-  }
   if (w.kill_after.is_zero()) {
     return w;
   }
@@ -539,38 +535,38 @@ function act(f: ld.Format, cfg: Cfg, cmd: string, cpid: i32, fwd: i32[], w0: Wat
   return Watch { ...w, tpid: kpid, timer_sig: sig_kill(), kill_after: f.from_i64(0 as i64) };
 }
 
-// `finish(cfg, w, status)` — timeout's exit, from the command's.
-//
-// A command that was not timed out passes its status through — and when it
-// died of a signal this process passed on to it, timeout dies of that signal
-// too, as GNU's does, so whoever started timeout sees the death rather than
-// an exit status. GNU asks WTERMSIG, and dies of whatever signal killed the
-// command; `proc_waitpid` collapses a death by a signal into the shell's one
-// number, so the SIGNAL THIS PROCESS SENT stands in for the half the status
-// cannot carry: a command that exits 143 of its own accord is not mistaken
-// for one SIGTERM killed. The residue is a command killed by a signal from
-// elsewhere, which exits timeout with 128 + the signal where GNU's dies of it.
+// `finish(cfg, w, status)` — timeout's exit, from the command's raw wait
+// status (or -errno), as GNU's: an exit passes its code through, and a death
+// by a signal reports a core dump and, when there was no timeout, ends
+// timeout by the same signal so whoever started it sees the death. Core dumps
+// are disabled first, or timeout would dump its own address space, arena and
+// all (#11765); where that fails it exits 128 + the signal instead.
 //
 // A timeout is 124, except where the command was KILLED: `-s KILL`, and a
 // `-k` grace period that expired, both report 128+9 instead — the 137 the
 // help text names. Measured: `--foreground -s HUP` is 124 where
 // `--foreground -s KILL` is 137, and `-s 0 -k G` is 137 because the grace
-// period expired even though the first signal delivered nothing. The same
-// stand-in applies: a SIGKILL arriving from somewhere else during the
-// timeout reads as 124 here and 137 there.
+// period expired even though the first signal delivered nothing.
 function finish(cfg: Cfg, w: Watch, status: i32): i32 {
-  if (!w.timed_out) {
-    let sig: i32 = status - 128;
-    if (sig > 0 && sig <= 64 && (w.sent & signal.bit(sig)) != 0) {
-      signals.die_of(sig);
+  let sig: i32 = status & 127;
+  if (status < 0 || sig == 0) {
+    let code: i32 = status;
+    if (status >= 0) {
+      code = status >> 8 & 255;
     }
-    return status;
+    if (w.timed_out && !cfg.preserve) {
+      return 124;
+    }
+    return code;
   }
-  if (cfg.preserve) {
-    return status;
+  if ((status & 128) != 0) {
+    gnu.error("the monitored command dumped core");
   }
-  if ((w.sent & signal.bit(sig_kill())) != 0 && status == 128 + sig_kill()) {
-    return status;
+  if (!w.timed_out && disable_core_dumps()) {
+    signals.die_of(sig);
   }
-  return 124;
+  if (w.timed_out && !cfg.preserve && sig != sig_kill()) {
+    return 124;
+  }
+  return 128 + sig;
 }

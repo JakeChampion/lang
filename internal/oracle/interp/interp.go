@@ -1584,12 +1584,14 @@ func New() *Interp {
 	i.Builtins["proc_fork"] = &Builtin{Fn: builtinProcFork}
 	i.Builtins["proc_waitpid"] = &Builtin{Fn: builtinProcWaitpid}
 	i.Builtins["proc_waitpid_nohang"] = &Builtin{Fn: builtinProcWaitpidNohang}
+	i.Builtins["proc_waitpid_status"] = &Builtin{Fn: builtinProcWaitpidStatus}
 	i.Builtins["proc_exec"] = &Builtin{Fn: builtinProcExec}
 	i.Builtins["proc_exec_as"] = &Builtin{Fn: builtinProcExecAs}
 	i.Builtins["process_alive"] = &Builtin{Fn: builtinProcessAlive}
 	i.Builtins["signal_send"] = &Builtin{Fn: builtinSignalSend}
 	i.Builtins["set_process_group"] = &Builtin{Fn: builtinSetProcessGroup}
 	i.Builtins["rlimit_nofile"] = &Builtin{Fn: builtinRlimitNofile}
+	i.Builtins["disable_core_dumps"] = &Builtin{Fn: builtinDisableCoreDumps}
 	i.Builtins["statfs"] = &Builtin{Fn: builtinStatfs}
 	i.Builtins["temp_dir"] = &Builtin{Fn: builtinTempDir}
 	i.Builtins["read_dir"] = &Builtin{Fn: builtinReadDir}
@@ -3557,6 +3559,18 @@ func builtinProcWaitpidNohang(_ *Interp, args []Value) (Value, error) {
 	return Number(-10), nil // -ECHILD
 }
 
+// builtinProcWaitpidStatus is the reap that keeps wait4's raw status. With no
+// child to reap it answers -ECHILD, as proc_waitpid does.
+func builtinProcWaitpidStatus(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 1 {
+		return nil, fmt.Errorf("proc_waitpid_status: expected 1 arg, got %d", len(args))
+	}
+	if _, ok := args[0].(Number); !ok {
+		return nil, fmt.Errorf("proc_waitpid_status: expected number arg, got %T", args[0])
+	}
+	return Number(-10), nil // -ECHILD
+}
+
 // builtinTempDir creates a fresh temporary directory and
 // returns its path inside `Result[string, IoError]`.
 // `prefix` is appended to a unique random suffix the OS picks
@@ -4335,6 +4349,14 @@ func builtinRlimitNofile(_ *Interp, args []Value) (Value, error) {
 		return Number(math.MaxInt64), nil
 	}
 	return Number(int64(cur)), nil
+}
+
+// builtinDisableCoreDumps mirrors the native `disable_core_dumps()`.
+func builtinDisableCoreDumps(_ *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("disable_core_dumps: expected 0 args, got %d", len(args))
+	}
+	return Bool(disableCoreDumps()), nil
 }
 
 // builtinProcessAlive mirrors the native `process_alive(pid)` — kill(pid, 0),
