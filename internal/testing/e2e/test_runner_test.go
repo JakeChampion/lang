@@ -1136,6 +1136,13 @@ func TestRunnerTLSRootsExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "tls_roots", "std/tls/verify roots", 3)
 }
 
+// `tests/stdlib/tls_client_test.fern` runs std/tls/client's session against
+// std/tls/handshake's server: a trusted chain, the name and root refusals,
+// a forged CertificateVerify, a saved and restored session, close_notify.
+func TestRunnerTLSClientExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "tls_client", "std/tls/client", 6)
+}
+
 // `tests/stdlib/tls_handshake_test.fern` runs the client through RFC 8448 §3
 // byte for byte, the server to the trace's ServerHello, and the two against
 // each other across suites and groups.

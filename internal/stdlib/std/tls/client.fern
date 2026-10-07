@@ -1,0 +1,502 @@
+// std/tls/client — a TLS 1.3 client: std/tls/handshake's client with the
+// server's certificate judged against a root store, as a sans-IO `Session`
+// any transport can carry, and as a `Connection` over a TCP socket.
+//
+//   let roots: verify.Roots = ...;   // verify.system_roots(), or the caller's
+//   let c: client.Connection = client.connect("example.com", 443, client.config("example.com", roots), time.duration_seconds(10 as i64))?;
+//   c = c.send("GET / HTTP/1.1\r\nHost: example.com\r\n\r\n".bytes())?;
+//   let got: client.Received = c.recv(time.duration_seconds(30 as i64))?;
+//
+// The server's chain must reach one of the roots at the current time and
+// name the server (std/tls/verify), and its CertificateVerify must verify
+// under the leaf's key. The client offers X25519MLKEM768 with X25519 as the
+// group a HelloRetryRequest may ask for, every suite, and the protocols in
+// `alpn`. A server name that is an IP address is checked against the
+// certificate's addresses and not sent as SNI, which carries names only.
+
+import "core/int";
+import "std/dns";
+import "std/net";
+import "std/tcp";
+import "std/time";
+import "std/tls/handshake";
+import "std/tls/verify";
+import "std/tls/x509";
+
+// Config — the name the certificate must carry, the protocols to offer by
+// ALPN in preference order, and the roots to trust.
+pub struct Config { server_name: string, alpn: string[], roots: verify.Roots }
+
+// config offers no application protocol.
+pub function config(server_name: string, roots: verify.Roots): Config {
+  return Config { server_name: server_name, alpn: [], roots: roots };
+}
+
+pub function (c: Config) with_alpn(protocols: string[]): Config {
+  return Config { ...c, alpn: protocols };
+}
+
+// TlsError — why a connection failed: the handshake's own refusal, a chain
+// the roots do not vouch for, a CertificateVerify that does not verify, the
+// name not resolving, the socket's error, the handshake outlasting its
+// bound, or the peer closing before the handshake ended.
+pub enum TlsError {
+  HandshakeFailed(handshake.HandshakeError),
+  Untrusted(verify.VerifyError),
+  SignatureInvalid,
+  Unresolved(dns.DnsError),
+  NetFailed(net.NetError),
+  HandshakeTimeout,
+  ClosedEarly,
+}
+
+pub function (e: TlsError) message(): string {
+  match (e) {
+    HandshakeFailed(h) => {
+      return h.message();
+    },
+    Untrusted(v) => {
+      return "the server's certificate is not trusted: " + v.message();
+    },
+    SignatureInvalid => {
+      return "the server's CertificateVerify does not verify";
+    },
+    Unresolved(d) => {
+      return d.message();
+    },
+    NetFailed(n) => {
+      return n.message();
+    },
+    HandshakeTimeout => {
+      return "the handshake did not finish in time";
+    },
+    ClosedEarly => {
+      return "the peer closed the connection during the handshake";
+    }
+  }
+  return "";
+}
+
+// Session — one connection's TLS, bytes in and bytes out: the handshake's
+// client, the name and roots it is judged by, and the bytes of a record
+// still arriving.
+pub struct Session { client: handshake.Client, name: string, roots: verify.Roots, held: u8[] }
+
+// Failure — why `read` failed, and the alert record to send the server
+// before closing, sealed under the keys in force when it failed.
+pub struct Failure { error: TlsError, alert: u8[] }
+
+pub function (f: Failure) message(): string {
+  return f.error.message();
+}
+
+// Step — the session after a call, the bytes to send, the application data
+// read, and whether the peer has sent close_notify.
+pub struct Step { session: Session, output: u8[], data: u8[], closed: boolean }
+
+// start begins a handshake; send `output`, then feed what arrives to `read`.
+pub function start(config: Config): Result[Step, TlsError] {
+  let sni: string = config.server_name;
+  if (__is_address(sni)) {
+    sni = "";
+  }
+  let hc: handshake.ClientConfig = handshake.ClientConfig { ...handshake.client_config(sni), alpn: config.alpn };
+  match (handshake.client_start(hc, random_bytes(handshake.client_entropy(hc)))) {
+    Ok(step) => {
+      let s: Session = Session { client: step.client, name: config.server_name, roots: config.roots, held: [] };
+      return Ok(Step { session: s, output: step.output, data: [], closed: false });
+    },
+    Err(e) => {
+      return Err(HandshakeFailed(e));
+    }
+  }
+  return Err(ClosedEarly);
+}
+
+function __is_address(name: string): boolean {
+  match (net.ip_parse(name)) {
+    Some(_) => {
+      return true;
+    },
+    None => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// read takes bytes from the server, judging its certificate when the
+// handshake reaches it. Whole records go to the handshake one at a time:
+// the keys change only between records, so a failure's alert is sealed
+// under the keys the records before it left.
+pub function (s: Session) read(input: [u8]): Result[Step, Failure] {
+  let buf: u8[] = __copy(s.held);
+  buf = __cat(buf, input);
+  let session: Session = Session { ...s, held: [] };
+  let output: u8[] = [];
+  let data: u8[] = [];
+  let closed: boolean = false;
+  let at: i32 = 0;
+  while (!closed && buf.len() - at >= 5) {
+    let end: i32 = at + 5 + (buf[at + 3] as i32 << 8 | buf[at + 4] as i32);
+    if (end > buf.len()) {
+      break;
+    }
+    let next: Step = __record(session, buf[at:end])?;
+    session = next.session;
+    output = __cat(output, next.output);
+    data = __cat(data, next.data);
+    closed = next.closed;
+    at = end;
+  }
+  return Ok(Step { session: Session { ...session, held: __copy(buf[at:buf.len()]) }, output: output, data: data, closed: closed });
+}
+
+function __record(s: Session, record: [u8]): Result[Step, Failure] {
+  match (s.client.read(record)) {
+    Ok(step) => {
+      return __judged(s, step);
+    },
+    Err(e) => {
+      return Err(Failure { error: HandshakeFailed(e), alert: s.client.alert(e) });
+    }
+  }
+  return Err(Failure { error: ClosedEarly, alert: [] });
+}
+
+// write seals application data; the session must be connected.
+pub function (s: Session) write(data: [u8]): Result[Step, TlsError] {
+  let step: handshake.ClientStep = __step(s.client.write(data))?;
+  return Ok(Step { session: Session { ...s, client: step.client }, output: step.output, data: [], closed: false });
+}
+
+// close is the close_notify to send; nothing more may be written.
+pub function (s: Session) close(): Result[Step, TlsError] {
+  let step: handshake.ClientStep = __step(s.client.close())?;
+  return Ok(Step { session: Session { ...s, client: step.client }, output: step.output, data: [], closed: false });
+}
+
+pub function (s: Session) connected(): boolean {
+  return s.client.connected();
+}
+
+// The protocol the server chose by ALPN, empty when none was.
+pub function (s: Session) alpn(): string {
+  return s.client.alpn();
+}
+
+// save is a connected session as bytes, for a pool that keeps idle
+// connections where only bytes can go; `restore` makes it again. It holds
+// the traffic secrets.
+pub function (s: Session) save(): Result[u8[], TlsError] {
+  let c: u8[] = __handshake_ok(s.client.save())?;
+  let n: i32 = c.len();
+  let out: u8[] = [(n >> 24 & 255) as u8, (n >> 16 & 255) as u8, (n >> 8 & 255) as u8, (n & 255) as u8];
+  return Ok(__cat(__cat(out, c), s.held));
+}
+
+pub function restore(saved: [u8]): Result[Session, TlsError] {
+  if (saved.len() < 4) {
+    return Err(HandshakeFailed(handshake.Misuse("restore")));
+  }
+  let n: i32 = saved[0] as i32 << 24 | saved[1] as i32 << 16 | saved[2] as i32 << 8 | saved[3] as i32;
+  if (n < 0 || n > saved.len() - 4) {
+    return Err(HandshakeFailed(handshake.Misuse("restore")));
+  }
+  match (handshake.client_restore(saved[4:4 + n])) {
+    Ok(c) => {
+      return Ok(Session { client: c, name: "", roots: verify.roots([]), held: __copy(saved[4 + n:saved.len()]) });
+    },
+    Err(e) => {
+      return Err(HandshakeFailed(e));
+    }
+  }
+  return Err(ClosedEarly);
+}
+
+function __step(r: Result[handshake.ClientStep, handshake.HandshakeError]): Result[handshake.ClientStep, TlsError] {
+  match (r) {
+    Ok(step) => {
+      return Ok(step);
+    },
+    Err(e) => {
+      return Err(HandshakeFailed(e));
+    }
+  }
+  return Err(ClosedEarly);
+}
+
+function __verdict(c: handshake.Client): Result[handshake.ClientStep, Failure] {
+  match (c.verdict(true)) {
+    Ok(step) => {
+      return Ok(step);
+    },
+    Err(e) => {
+      return Err(Failure { error: HandshakeFailed(e), alert: c.alert(e) });
+    }
+  }
+  return Err(Failure { error: ClosedEarly, alert: [] });
+}
+
+function __handshake_ok(r: Result[u8[], handshake.HandshakeError]): Result[u8[], TlsError] {
+  match (r) {
+    Ok(b) => {
+      return Ok(b);
+    },
+    Err(e) => {
+      return Err(HandshakeFailed(e));
+    }
+  }
+  return Err(ClosedEarly);
+}
+
+// __judged answers each VerifyServer in a step and gathers what the
+// handshake goes on to produce.
+function __judged(s: Session, first: handshake.ClientStep): Result[Step, Failure] {
+  let c: handshake.Client = first.client;
+  let output: u8[] = first.output;
+  let data: u8[] = first.data;
+  let events: handshake.Event[] = first.events;
+  let closed: boolean = false;
+  let i: i32 = 0;
+  while (i < events.len()) {
+    match (events[i]) {
+      handshake.VerifyServer(v) => {
+        match (__trusted(s, v)) {
+          Ok(_) => {},
+          Err(e) => {
+            return Err(Failure { error: e, alert: c.alert(handshake.BadCertificate) });
+          }
+        }
+        let next: handshake.ClientStep = __verdict(c)?;
+        c = next.client;
+        output = __cat(output, next.output);
+        data = __cat(data, next.data);
+        events = __more(events, next.events);
+      },
+      handshake.PeerClosed => {
+        closed = true;
+      },
+      _ => {}
+    }
+    i = i + 1;
+  }
+  return Ok(Step { session: Session { ...s, client: c }, output: output, data: data, closed: closed });
+}
+
+// __trusted checks the chain against the roots for the session's name now,
+// and the CertificateVerify under the leaf's key.
+function __trusted(s: Session, v: handshake.Verification): Result[void, TlsError] {
+  match (verify.verify_server(v.chain, s.roots, s.name, now_unix_ms() / 1000)) {
+    Ok(leaf) => {
+      if (!verify.verify_signed(leaf, v.scheme, v.signed, v.signature)) {
+        return Err(SignatureInvalid);
+      }
+      return Ok(());
+    },
+    Err(e) => {
+      return Err(Untrusted(e));
+    }
+  }
+  return Err(SignatureInvalid);
+}
+
+function __cat(own a: u8[], b: [u8]): u8[] {
+  let i: i32 = 0;
+  while (i < b.len()) {
+    a = a.append(b[i]);
+    i = i + 1;
+  }
+  return a;
+}
+
+function __copy(b: [u8]): u8[] {
+  return __cat([], b);
+}
+
+function __more(own a: handshake.Event[], b: handshake.Event[]): handshake.Event[] {
+  for e in b {
+    a = a.append(e);
+  }
+  return a;
+}
+
+// Over a socket.
+
+// Connection — a session over a connected TCP socket.
+pub struct Connection { fd: i32, session: Session }
+
+// Received — what `recv` read: application data, empty when the wait
+// passed first, and whether the peer has ended the stream, by close_notify
+// or by closing the socket.
+pub struct Received { conn: Connection, data: u8[], ended: boolean }
+
+// connect resolves `host`, races its addresses and completes a handshake,
+// all within `timeout`.
+pub function connect(host: string, port: i32, config: Config, timeout: Duration): Result[Connection, TlsError] {
+  let deadline: i64 = monotonic_ns() + timeout.as_nanos();
+  let addrs: net.IpAddr[] = [];
+  match (dns.resolve(host)) {
+    Ok(a) => {
+      addrs = a;
+    },
+    Err(e) => {
+      return Err(Unresolved(e));
+    }
+  }
+  match (dns.connect_race(addrs, port, dns.DialOptions { ...dns.dial_options(), timeout: timeout })) {
+    Ok(fd) => {
+      return __handshake_by(fd, config, deadline);
+    },
+    Err(e) => {
+      return Err(NetFailed(e));
+    }
+  }
+  return Err(ClosedEarly);
+}
+
+// over completes a handshake on a socket already connected, within
+// `timeout`: after a STARTTLS, or through a proxy's tunnel. The socket is
+// closed if the handshake fails.
+pub function over(fd: i32, config: Config, timeout: Duration): Result[Connection, TlsError] {
+  return __handshake_by(fd, config, monotonic_ns() + timeout.as_nanos());
+}
+
+function __handshake_by(fd: i32, config: Config, deadline: i64): Result[Connection, TlsError] {
+  match (__handshake_on(fd, config, deadline)) {
+    Ok(st) => {
+      return Ok(st);
+    },
+    Err(e) => {
+      tcp_close(fd);
+      return Err(e);
+    }
+  }
+  return Err(ClosedEarly);
+}
+
+function __handshake_on(fd: i32, config: Config, deadline: i64): Result[Connection, TlsError] {
+  let step: Step = start(config)?;
+  __send_fd(fd, step.output)?;
+  let s: Session = step.session;
+  while (!s.connected()) {
+    let left: i64 = deadline - monotonic_ns();
+    if (left <= 0) {
+      return Err(HandshakeTimeout);
+    }
+    let input: u8[] = [];
+    match (__recv_fd(fd, time.duration_nanos(left))?) {
+      Some(b) => {
+        input = b;
+      },
+      None => {
+        return Err(HandshakeTimeout);
+      }
+    }
+    if (input.len() == 0) {
+      return Err(ClosedEarly);
+    }
+    match (s.read(input)) {
+      Ok(next) => {
+        __send_fd(fd, next.output)?;
+        s = next.session;
+      },
+      Err(f) => {
+        __send_fd(fd, f.alert);
+        return Err(f.error);
+      }
+    }
+  }
+  return Ok(Connection { fd: fd, session: s });
+}
+
+// send writes data to the server.
+pub function (c: Connection) send(data: [u8]): Result[Connection, TlsError] {
+  let step: Step = c.session.write(data)?;
+  __send_fd(c.fd, step.output)?;
+  return Ok(Connection { ...c, session: step.session });
+}
+
+// recv waits at most `wait` for application data.
+pub function (c: Connection) recv(wait: Duration): Result[Received, TlsError] {
+  let deadline: i64 = monotonic_ns() + wait.as_nanos();
+  let s: Session = c.session;
+  while (true) {
+    let left: i64 = deadline - monotonic_ns();
+    if (left <= 0) {
+      return Ok(Received { conn: Connection { ...c, session: s }, data: [], ended: false });
+    }
+    let input: u8[] = [];
+    match (__recv_fd(c.fd, time.duration_nanos(left))?) {
+      Some(b) => {
+        input = b;
+      },
+      None => {
+        return Ok(Received { conn: Connection { ...c, session: s }, data: [], ended: false });
+      }
+    }
+    if (input.len() == 0) {
+      return Ok(Received { conn: Connection { ...c, session: s }, data: [], ended: true });
+    }
+    let step: Step = __read_or_alert(c.fd, s, input)?;
+    __send_fd(c.fd, step.output)?;
+    s = step.session;
+    if (step.data.len() > 0 || step.closed) {
+      return Ok(Received { conn: Connection { ...c, session: s }, data: step.data, ended: step.closed });
+    }
+  }
+  return Ok(Received { conn: c, data: [], ended: true });
+}
+
+function __read_or_alert(fd: i32, s: Session, input: [u8]): Result[Step, TlsError] {
+  match (s.read(input)) {
+    Ok(step) => {
+      return Ok(step);
+    },
+    Err(f) => {
+      __send_fd(fd, f.alert);
+      return Err(f.error);
+    }
+  }
+  return Err(ClosedEarly);
+}
+
+// close sends close_notify and closes the socket.
+pub function (c: Connection) close(): void {
+  if let Ok(step) = c.session.close() {
+    __send_fd(c.fd, step.output);
+  }
+  tcp_close(c.fd);
+}
+
+function __send_fd(fd: i32, data: [u8]): Result[void, TlsError] {
+  let at: i32 = 0;
+  while (at < data.len()) {
+    let n: i32 = tcp_send_bytes(fd, __cat([], data[at:data.len()]));
+    if (n < 0) {
+      return Err(NetFailed(net.error_from_errno(0 - n)));
+    }
+    if (n == 0) {
+      return Err(NetFailed(net.ConnectionReset));
+    }
+    at = at + n;
+  }
+  return Ok(());
+}
+
+// __recv_fd is the next bytes off the socket within `wait`, empty at the
+// end of the stream, or None when the wait passed first.
+function __recv_fd(fd: i32, wait: Duration): Result[Option[u8[]], TlsError] {
+  match (tcp.tcp_recv_deadline(fd, 65536, wait)) {
+    tcp.Chunk(b) => {
+      return Ok(Some(b));
+    },
+    tcp.Elapsed => {
+      return Ok(None);
+    },
+    tcp.Abandoned => {
+      return Err(NetFailed(net.Interrupted));
+    }
+  }
+  return Ok(None);
+}

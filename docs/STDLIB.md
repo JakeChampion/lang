@@ -1215,6 +1215,39 @@ constant time. About 1 ms per verification on x86-64 under a 2048-bit key.
   `verify_pss(key, hash, msg, sig): boolean`, `hash` one of `Sha256`,
   `Sha384`, `Sha512`.
 
+### `std/tls/client`
+
+A TLS 1.3 client: `std/tls/handshake`'s client with the server's certificate
+judged against a root store (`std/tls/verify`), the chain at the current time
+for the name asked for and the CertificateVerify under the leaf's key. It
+offers X25519MLKEM768 with X25519 for a HelloRetryRequest to ask for, every
+suite, and the protocols the config names by ALPN. A name that is an IP
+address is checked against the certificate's addresses and not sent as SNI
+(`tests/stdlib/tls_client_test.fern`, and Go's crypto/tls in
+`TestTLSClientAgainstGo`).
+
+- `config(server_name, roots)` and `(c).with_alpn(protocols)` make a `Config`.
+- `Session` is sans-IO, so any transport can carry it: `start(config)` draws
+  its entropy from `random_bytes` and returns a `Step { session, output,
+  data, closed }`; `(s).read(input)` takes what arrived, `(s).write(data)`
+  seals application data and `(s).close()` is the close_notify. `read`
+  passes whole records to the handshake one at a time, so on failure it
+  returns a `Failure { error, alert }` whose alert is sealed under the keys
+  in force when it failed; send it, then close. `(s).alpn()` is the
+  protocol the server chose.
+- `(s).save()` and `restore(saved)` turn a connected session into bytes
+  and back, for a pool that can keep only bytes. The bytes hold the
+  traffic secrets.
+- `Connection` is a session over a TCP socket: `connect(host, port, config,
+  timeout)` resolves, races the addresses and completes the handshake
+  within `timeout`; `over(fd, config, timeout)` does the handshake on a
+  socket already connected (after a STARTTLS, or through a proxy's tunnel).
+  `(c).send(data)`, `(c).recv(wait)`, a `Received { conn, data, ended }`
+  whose data is empty when the wait passed first, and `(c).close()`.
+- `TlsError` is `HandshakeFailed(HandshakeError)`, `Untrusted(VerifyError)`,
+  `SignatureInvalid`, `Unresolved(DnsError)`, `NetFailed(NetError)`,
+  `HandshakeTimeout` or `ClosedEarly`, with `message()`.
+
 ### `std/tls/der`
 
 The Distinguished Encoding Rules of X.690, read one element at a time. An
