@@ -1843,10 +1843,12 @@ function units_analysis(f: ssasem.Func, a: ssasem.Analysis, units: Units): ssase
   return ssasem.Analysis { ...a, ok: flow.ok, why: flow.why, parents: units.parents, dependencies: units.deps, flow: flow };
 }
 
-// An element read of a type the frame can hold a unit of: a view is lent,
-// never retained, and a scalar has no unit.
-function retainable_element(f: ssasem.Func, defs: ssa.SInst[], w: i32): boolean {
-  if (defs[w].kind_tag != ssasem.array_get()) {
+// A read of an array element, a record field or a tuple element, of a type
+// the frame can hold a unit of: a view is lent, never retained, and a scalar
+// has no unit.
+function retainable_read(f: ssasem.Func, defs: ssa.SInst[], w: i32): boolean {
+  let k: i32 = defs[w].kind_tag;
+  if (k != ssasem.array_get() && k != ssasem.record_get() && k != ssasem.tuple_get()) {
     return false;
   }
   let t: typeinfo.Type = f.values[w];
@@ -1900,7 +1902,7 @@ function anchored_to(a: ssasem.Analysis, nvals: i32): Anchored {
   return Anchored { start: start, at: at };
 }
 
-// The element reads anchored to `s` that are still in hand once `s` is
+// The reads anchored to `s` that are still in hand once `s` is
 // supplied: past the operation at (`bi`, `pos`), into block `si` when `s`
 // goes out along an edge, or as an operand of that same operation (`args`)
 // where `s` dies. A read handed to a call beside its own array would
@@ -1913,7 +1915,7 @@ function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], anchor
   let k: i32 = anchored.start[s];
   while (k < anchored.start[s + 1]) {
     let w: i32 = anchored.at[k];
-    if (w != s && !out[w] && !owned[w] && retainable_element(f, defs, w)) {
+    if (w != s && !out[w] && !owned[w] && retainable_read(f, defs, w)) {
       let live: boolean = false;
       if (si >= 0) {
         live = ssalive.live_in_has(a.flow, si, w);
@@ -1929,13 +1931,14 @@ function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], anchor
   return out;
 }
 
-// An element read still in hand when its array is consumed takes a unit of
-// its own at the read: one that outlives the consuming use, or one handed to
-// that use beside the array (`outliving`). Retained there, released when it
-// dies, anchored to nothing. As a borrow it kept the array alive past the
-// use, so a `.with`, an append or a call there retained the array instead of
-// moving it and copied the whole buffer (#9849). A read that dies before any
-// such use stays a borrow and costs nothing.
+// A read of an element or a field still in hand when its array, record or
+// tuple is consumed takes a unit of its own at the read: one that outlives
+// the consuming use, or one handed to that use beside its source
+// (`outliving`). Retained there, released when it dies, anchored to nothing.
+// As a borrow it kept the source alive past the use, so a `.with`, an append
+// or a call there retained the source instead of moving it, and the write
+// copied the whole buffer (#9849, #11834). A read that dies before any such
+// use stays a borrow and costs nothing.
 function held_elements(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[]): boolean[] {
   let out: boolean[] = __alloc_bool(f.graph.nvals);
   let anchored: Anchored = anchored_to(a, f.graph.nvals);
