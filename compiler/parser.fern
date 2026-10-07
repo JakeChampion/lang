@@ -18967,26 +18967,26 @@ function dl_iter_cleanup(actions: ast.Stmt[], flags: i32[], start: i32, end: i32
 // how far into the action list the walk has passed an arming write.
 struct DeferEdges { stmts: ast.Stmt[], armed: i32 }
 
-// dl_arm_index returns the action index an assignment ARMS (`__dfa<i> = true`),
-// or -1 for anything else — including dl_iter_cleanup's own `__dfa<i> = false`.
-// Indices below `from` have already been passed, so the scan starts there.
-function dl_arm_index(a: ast.StmtAssign, from: i32, end: i32): i32 {
-  let armed: boolean = false;
-  match (a.value) {
-    ast.ExprBool(b) => {
-      armed = b.value;
-    },
-    _ => {}
-  }
-  if (!armed) {
+// defer_flag returns the action index a `__dfa<i>` flag guards, or -1 for any
+// other name.
+pub function defer_flag(name: string): i32 {
+  if (name.len() < 6 || slice_unchecked(name, 0, 5) != "__dfa") {
     return 0 - 1;
   }
-  let i: i32 = from;
-  while (i < end) {
-    if (a.target == "__dfa" + dl_itoa(i)) {
-      return i;
+  let digits: string = slice_unchecked(name, 5, name.len()) + "";
+  if (!util.is_all_digits(digits)) {
+    return 0 - 1;
+  }
+  return util.digits_to_i32(digits);
+}
+
+// defer_armed returns the action index an assignment ARMS (`__dfa<i> = true`),
+// or -1 for anything else — including dl_iter_cleanup's own `__dfa<i> = false`.
+pub function defer_armed(a: ast.StmtAssign): i32 {
+  if let ast.ExprBool(b) = a.value {
+    if (b.value) {
+      return defer_flag(a.target);
     }
-    i = i + 1;
   }
   return 0 - 1;
 }
@@ -19046,7 +19046,6 @@ function dl_edges_expr(e: ast.Expr, actions: ast.Stmt[], flags: i32[], start: i3
 function dl_expand_loop_edges(stmts: ast.Stmt[], actions: ast.Stmt[], flags: i32[], start: i32, armed0: i32, label: string, own_level: boolean): DeferEdges {
   let out: ast.Stmt[] = [];
   let armed: i32 = armed0;
-  let end: i32 = actions.len();
   let i: i32 = 0;
   while (i < stmts.len()) {
     match (stmts[i]) {
@@ -19054,8 +19053,8 @@ function dl_expand_loop_edges(stmts: ast.Stmt[], actions: ast.Stmt[], flags: i32
         let ave: DeferEdgeExpr = dl_edges_expr(a.value, actions, flags, start, armed, label, own_level);
         armed = ave.armed;
         let ast: ast.StmtAssign = ast.StmtAssign { target: a.target, value: ave.expr, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col };
-        let ax: i32 = dl_arm_index(ast, armed, end);
-        if (ax >= 0) {
+        let ax: i32 = defer_armed(ast);
+        if (ax >= armed) {
           armed = ax + 1;
         }
         out = out.append(ast);
@@ -19326,14 +19325,12 @@ function dl_collect_stmt(st: ast.Stmt, actions: ast.Stmt[], flags: i32[]): Defer
   }
 }
 
-// dl_cleanup_kind builds the LIFO cleanup for one kind: for i = n-1 .. 0,
-// `if (__dfa<i>) { action_i }`, restricted to actions whose on_error flag
-// equals `want` (0 = plain defer, 1 = errdefer). With every flag 0 (no
-// errdefer) `want = 0` reproduces the original all-actions cleanup, so a
-// defer-only function lowers byte-identically.
-function dl_cleanup_kind(actions: ast.Stmt[], flags: i32[], want: i32): ast.Stmt[] {
+// dl_cleanup_kind builds the LIFO cleanup for one kind over the actions armed
+// so far: for i = end-1 .. 0, `if (__dfa<i>) { action_i }`, restricted to
+// actions whose on_error flag equals `want` (0 = plain defer, 1 = errdefer).
+function dl_cleanup_kind(actions: ast.Stmt[], flags: i32[], want: i32, end: i32): ast.Stmt[] {
   let out: ast.Stmt[] = [];
-  let i: i32 = actions.len() - 1;
+  let i: i32 = end - 1;
   while (i >= 0) {
     if (flags[i] == want) {
       let body1: ast.Stmt[] = [actions[i]];
@@ -19376,26 +19373,56 @@ function dl_is_err_value(e: ast.Expr): boolean {
 // (the value is captured before the deferred actions run). cleanup_all (plain
 // defers) runs on every return; cleanup_err (errdefers) runs only when the
 // returned value is a None/Err. A bare/void return runs cleanup_all only.
-function dl_expand_returns(stmts: ast.Stmt[], cleanup_all: ast.Stmt[], cleanup_err: ast.Stmt[]): ast.Stmt[] {
+//
+// As at a loop edge, a return replays only the actions armed before it
+// (`armed`): a defer it has not reached cannot be pending, and its action may
+// name a binding declared after the return.
+function dl_expand_returns(stmts: ast.Stmt[], actions: ast.Stmt[], flags: i32[], armed: i32): ast.Stmt[] {
   let out: ast.Stmt[] = [];
-  let i: i32 = 0;
-  while (i < stmts.len()) {
-    let ex: ast.Stmt[] = dl_expand_return_stmt(stmts[i], cleanup_all, cleanup_err);
-    let j: i32 = 0;
-    while (j < ex.len()) {
-      out = out.append(ex[j]);
-      j = j + 1;
-    }
-    i = i + 1;
+  let at: i32 = armed;
+  for st in stmts {
+    out = util.append_all(out, dl_expand_return_stmt(st, actions, flags, at));
+    at = dl_armed_after(st, at);
   }
   return out;
+}
+
+// dl_armed_after is `armed` advanced past the arming writes `st` holds, value
+// blocks included. An ordinary lambda's flags belong to its own scope.
+function dl_armed_after(st: ast.Stmt, armed: i32): i32 {
+  return astwalk.fold_stmt_nodes(st, armed, dl_arm_stmt, dl_arm_expr, dl_arm_descend);
+}
+
+function dl_armed_after_expr(e: ast.Expr, armed: i32): i32 {
+  return astwalk.fold_expr_nodes(e, armed, dl_arm_stmt, dl_arm_expr, dl_arm_descend);
+}
+
+function dl_arm_stmt(st: ast.Stmt, own acc: i32): i32 {
+  if let ast.StmtAssign(a) = st {
+    let ax: i32 = defer_armed(a);
+    if (ax >= acc) {
+      return ax + 1;
+    }
+  }
+  return acc;
+}
+
+function dl_arm_expr(e: ast.Expr, own acc: i32): i32 {
+  return acc;
+}
+
+function dl_arm_descend(e: ast.Expr): boolean {
+  if let ast.ExprLambda(l) = e {
+    return is_value_block_origin(l.origin);
+  }
+  return true;
 }
 
 // dl_expand_returns_vb expands the returns of a value block's body. Its LAST
 // statement is the block's VALUE, not an exit — lower_value_block rewrites that
 // `return tail` into a store — so only the leading statements, which the same
 // lowering runs inline, carry real function returns.
-function dl_expand_returns_vb(body: ast.Stmt[], cleanup_all: ast.Stmt[], cleanup_err: ast.Stmt[]): ast.Stmt[] {
+function dl_expand_returns_vb(body: ast.Stmt[], actions: ast.Stmt[], flags: i32[], armed: i32): ast.Stmt[] {
   if (body.len() == 0) {
     return body;
   }
@@ -19405,107 +19432,98 @@ function dl_expand_returns_vb(body: ast.Stmt[], cleanup_all: ast.Stmt[], cleanup
     lead = lead.append(body[i]);
     i = i + 1;
   }
-  return dl_expand_returns(lead, cleanup_all, cleanup_err).append(body[body.len() - 1]);
+  return dl_expand_returns(lead, actions, flags, armed).append(body[body.len() - 1]);
 }
 
 // dl_return_expr expands the `return`s written inside `e`'s value blocks: a
 // value block is inlined into the enclosing function, so a return there is a
 // real function return and needs the cleanup spliced in front of it.
-function dl_return_expr(e: ast.Expr, cleanup_all: ast.Stmt[], cleanup_err: ast.Stmt[]): ast.Expr {
-  match (e) {
-    ast.ExprCall(c) => {
-      if (is_value_block(c)) {
-        match (c.callee) {
-          ast.ExprLambda(l) => {
-            return dl_vb_rebuild(c, dl_expand_returns_vb(l.body, cleanup_all, cleanup_err));
-          },
-          _ => {}
-        }
+function dl_return_expr(e: ast.Expr, actions: ast.Stmt[], flags: i32[], armed: i32): ast.Expr {
+  if let ast.ExprCall(c) = e {
+    if (is_value_block(c)) {
+      if let ast.ExprLambda(l) = c.callee {
+        return dl_vb_rebuild(c, dl_expand_returns_vb(l.body, actions, flags, armed));
       }
-    },
-    _ => {}
+    }
   }
   let kids: ast.Expr[] = dl_expr_kids(e);
   if (kids.len() == 0) {
     return e;
   }
   let out: ast.Expr[] = [];
-  let i: i32 = 0;
-  while (i < kids.len()) {
-    out = out.append(dl_return_expr(kids[i], cleanup_all, cleanup_err));
-    i = i + 1;
+  let at: i32 = armed;
+  for k in kids {
+    out = out.append(dl_return_expr(k, actions, flags, at));
+    at = dl_armed_after_expr(k, at);
   }
   return dl_expr_with_kids(e, out);
 }
 
-function dl_expand_return_stmt(st: ast.Stmt, cleanup_all: ast.Stmt[], cleanup_err: ast.Stmt[]): ast.Stmt[] {
+function dl_expand_return(r: ast.StmtReturn, actions: ast.Stmt[], flags: i32[], armed: i32): ast.Stmt[] {
+  let rv: ast.Expr = dl_return_expr(r.value, actions, flags, armed);
+  let at: i32 = dl_armed_after_expr(r.value, armed);
+  let isvoid: boolean = false;
+  if let ast.ExprUnknown(_) = rv {
+    isvoid = true;
+  }
+  let out: ast.Stmt[] = [];
+  if (!isvoid) {
+    out = out.append(s_assign("__defret", rv));
+  }
+  out = util.append_all(out, dl_cleanup_kind(actions, flags, 0, at));
+  if (!isvoid && dl_is_err_value(rv)) {
+    out = util.append_all(out, dl_cleanup_kind(actions, flags, 1, at));
+  }
+  if (isvoid) {
+    return out.append(s_return(rv));
+  }
+  return out.append(s_return(e_ident("__defret")));
+}
+
+function dl_expand_return_match(m: ast.StmtMatch, actions: ast.Stmt[], flags: i32[], armed: i32): ast.Stmt {
+  let at: i32 = dl_armed_after_expr(m.scrutinee, armed);
+  let arms: ast.MatchArm[] = [];
+  for a in m.arms {
+    let body_at: i32 = dl_armed_after_expr(a.guard, at);
+    arms = arms.append(ast.MatchArm { pattern: a.pattern, body: dl_expand_returns(a.body, actions, flags, body_at), line: a.line, col: a.col, guard: dl_return_expr(a.guard, actions, flags, at), has_guard: a.has_guard, alt_cont: false });
+  }
+  return s_match(dl_return_expr(m.scrutinee, actions, flags, armed), arms);
+}
+
+function dl_expand_return_stmt(st: ast.Stmt, actions: ast.Stmt[], flags: i32[], armed: i32): ast.Stmt[] {
   match (st) {
     ast.StmtReturn(r) => {
-      let rv: ast.Expr = dl_return_expr(r.value, cleanup_all, cleanup_err);
-      let isvoid: boolean = false;
-      match (rv) {
-        ast.ExprUnknown(_) => {
-          isvoid = true;
-        },
-        _ => {}
-      }
-      let out: ast.Stmt[] = [];
-      if (!isvoid) {
-        out = out.append(s_assign("__defret", rv));
-      }
-      let i: i32 = 0;
-      while (i < cleanup_all.len()) {
-        out = out.append(cleanup_all[i]);
-        i = i + 1;
-      }
-      if (!isvoid && dl_is_err_value(rv)) {
-        let k: i32 = 0;
-        while (k < cleanup_err.len()) {
-          out = out.append(cleanup_err[k]);
-          k = k + 1;
-        }
-      }
-      if (isvoid) {
-        out = out.append(s_return(rv));
-      } else {
-        out = out.append(s_return(e_ident("__defret")));
-      }
-      return out;
+      return dl_expand_return(r, actions, flags, armed);
     },
     ast.StmtVar(v) => {
-      let one: ast.Stmt[] = [ast.StmtVar { name: v.name, type_name: v.type_name, init: dl_return_expr(v.init, cleanup_all, cleanup_err), line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }];
+      let one: ast.Stmt[] = [ast.StmtVar { name: v.name, type_name: v.type_name, init: dl_return_expr(v.init, actions, flags, armed), line: v.line, col: v.col, fn_ret: v.fn_ret, fn_param_types: v.fn_param_types }];
       return one;
     },
     ast.StmtExpr(x) => {
-      let one: ast.Stmt[] = [ast.StmtExpr { value: dl_return_expr(x.value, cleanup_all, cleanup_err), line: x.line }];
+      let one: ast.Stmt[] = [ast.StmtExpr { value: dl_return_expr(x.value, actions, flags, armed), line: x.line }];
       return one;
     },
     ast.StmtAssign(a) => {
-      let one: ast.Stmt[] = [ast.StmtAssign { target: a.target, value: dl_return_expr(a.value, cleanup_all, cleanup_err), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }];
+      let one: ast.Stmt[] = [ast.StmtAssign { target: a.target, value: dl_return_expr(a.value, actions, flags, armed), line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }];
       return one;
     },
     ast.StmtIf(f) => {
-      let one: ast.Stmt[] = [s_if(dl_return_expr(f.cond, cleanup_all, cleanup_err), dl_expand_returns(f.then_body, cleanup_all, cleanup_err), dl_expand_returns(f.else_body, cleanup_all, cleanup_err))];
+      let at: i32 = dl_armed_after_expr(f.cond, armed);
+      let one: ast.Stmt[] = [s_if(dl_return_expr(f.cond, actions, flags, armed), dl_expand_returns(f.then_body, actions, flags, at), dl_expand_returns(f.else_body, actions, flags, at))];
       return one;
     },
     ast.StmtWhile(w) => {
-      let wl: ast.StmtWhile = ast.StmtWhile { cond: dl_return_expr(w.cond, cleanup_all, cleanup_err), body: w.body, label: w.label, line: w.line, is_loop: w.is_loop };
-      let one: ast.Stmt[] = [dl_while(wl, dl_expand_returns(w.body, cleanup_all, cleanup_err))];
+      let wl: ast.StmtWhile = ast.StmtWhile { cond: dl_return_expr(w.cond, actions, flags, armed), body: w.body, label: w.label, line: w.line, is_loop: w.is_loop };
+      let one: ast.Stmt[] = [dl_while(wl, dl_expand_returns(w.body, actions, flags, dl_armed_after_expr(w.cond, armed)))];
       return one;
     },
     ast.StmtFor(fr) => {
-      let fl: ast.StmtFor = ast.StmtFor { var_name: fr.var_name, iter: dl_return_expr(fr.iter, cleanup_all, cleanup_err), body: fr.body, label: fr.label, line: fr.line };
-      let one: ast.Stmt[] = [dl_for(fl, dl_expand_returns(fr.body, cleanup_all, cleanup_err))];
+      let fl: ast.StmtFor = ast.StmtFor { var_name: fr.var_name, iter: dl_return_expr(fr.iter, actions, flags, armed), body: fr.body, label: fr.label, line: fr.line };
+      let one: ast.Stmt[] = [dl_for(fl, dl_expand_returns(fr.body, actions, flags, dl_armed_after_expr(fr.iter, armed)))];
       return one;
     },
     ast.StmtMatch(m) => {
-      let arms: ast.MatchArm[] = [];
-      let i: i32 = 0;
-      while (i < m.arms.len()) {
-        arms = arms.append(ast.MatchArm { pattern: m.arms[i].pattern, body: dl_expand_returns(m.arms[i].body, cleanup_all, cleanup_err), line: m.arms[i].line, col: m.arms[i].col, guard: dl_return_expr(m.arms[i].guard, cleanup_all, cleanup_err), has_guard: m.arms[i].has_guard, alt_cont: false });
-        i = i + 1;
-      }
-      let one: ast.Stmt[] = [s_match(dl_return_expr(m.scrutinee, cleanup_all, cleanup_err), arms)];
+      let one: ast.Stmt[] = [dl_expand_return_match(m, actions, flags, armed)];
       return one;
     },
     _ => {
@@ -20375,9 +20393,9 @@ function lower_defers_body(body0: ast.Stmt[], params: string[], ret: string, fn_
   // cleanup_all = plain defers (every return + falloff); cleanup_err =
   // errdefers (only on a None/Err return). For a defer-only function
   // cleanup_err is empty and this is byte-identical to the old lowering.
-  let cleanup: ast.Stmt[] = dl_cleanup_kind(cr.actions, cr.flags, 0);
-  let cleanup_err: ast.Stmt[] = dl_cleanup_kind(cr.actions, cr.flags, 1);
-  let expanded: ast.Stmt[] = dl_expand_returns(cr.stmts, cleanup, cleanup_err);
+  let cleanup: ast.Stmt[] = dl_cleanup_kind(cr.actions, cr.flags, 0, cr.actions.len());
+  let cleanup_err: ast.Stmt[] = dl_cleanup_kind(cr.actions, cr.flags, 1, cr.actions.len());
+  let expanded: ast.Stmt[] = dl_expand_returns(cr.stmts, cr.actions, cr.flags, 0);
   let body: ast.Stmt[] = [];
   // The shared return temp, which a void return never writes, and a
   // boolean flag per defer.
