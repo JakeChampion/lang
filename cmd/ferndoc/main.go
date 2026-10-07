@@ -26,6 +26,7 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/stdlib"
@@ -161,11 +162,16 @@ func collectFrom(root string) ([]module, error) {
 func renderModule(m module) (string, error) {
 	var b strings.Builder
 	modPath := m.prefix + "/" + m.name
-	frontMatter(&b, modPath, "Standard library reference for "+modPath+".")
-	b.WriteString(fmt.Sprintf("# `%s`\n\n", modPath))
 	// Top-of-file doc: any comment(s) at line 1 that don't
 	// immediately precede a decl. Treat as the module's overview.
-	if intro := moduleIntro(m); intro != "" {
+	intro := moduleIntro(m)
+	description := moduleSummary(intro)
+	if description == "" {
+		description = "Standard library reference for " + modPath + "."
+	}
+	frontMatter(&b, modPath, description)
+	b.WriteString(fmt.Sprintf("# `%s`\n\n", modPath))
+	if intro != "" {
 		b.WriteString(intro)
 		b.WriteString("\n\n")
 	}
@@ -260,7 +266,7 @@ func renderModule(m module) (string, error) {
 func frontMatter(b *strings.Builder, title, description string) {
 	b.WriteString("---\n")
 	b.WriteString("title: " + title + "\n")
-	b.WriteString("description: " + description + "\n")
+	b.WriteString("description: " + strconv.Quote(description) + "\n")
 	b.WriteString("---\n\n")
 }
 
@@ -299,7 +305,25 @@ func moduleIntro(m module) string {
 	for i := 0; i < end; i++ {
 		lines = append(lines, strings.TrimSpace(m.prog.Comments[i].Text))
 	}
-	return strings.Join(lines, " ")
+	return strings.Join(lines, "\n")
+}
+
+// moduleSummary is the intro's first sentence without its leading
+// "std/x — " label, for the page description.
+func moduleSummary(intro string) string {
+	para, _, _ := strings.Cut(intro, "\n\n")
+	s := strings.Join(strings.Fields(para), " ")
+	if _, rest, ok := strings.Cut(s, " — "); ok {
+		s = rest
+	}
+	if i := strings.Index(s, ". "); i >= 0 {
+		s = s[:i+1]
+	}
+	first, _, _ := strings.Cut(s, " ")
+	if first == "" || strings.ToLower(first) != first || strings.ContainsAny(first, "0123456789") {
+		return s
+	}
+	return strings.ToUpper(s[:1]) + s[1:]
 }
 
 func firstDeclLineNum(prog *ast.Program) int {

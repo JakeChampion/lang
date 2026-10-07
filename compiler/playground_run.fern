@@ -271,8 +271,13 @@ function run(): i32 {
   // Ahead of the emit gates below: those reject shapes the wasm EMITTER
   // would miscompile, and the evaluator does not emit. A program the
   // interpreter can run is worth running even where the backend would
-  // decline it.
+  // decline it. It is checked first, as `fern -interp` is, so a type error
+  // reads as a diagnostic rather than an evaluator failure mid-run.
   if (mode_interp) {
+    let checked: i32 = check(merged, files);
+    if (checked != 0) {
+      return checked;
+    }
     return interpret(merged);
   }
   return emit(merged, files, target, form);

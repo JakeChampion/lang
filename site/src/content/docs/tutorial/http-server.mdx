@@ -44,10 +44,11 @@ request — no leaks across a long-running deployment, and no GC pauses.
 
 ## Try it: a routed handler
 
-The playground runs HTTP handlers in-browser. Pick the **`wasi:http`**
-world in the playground's world selector when you open this in a full
-tab; here it's already wired up. This handler routes on path and method,
-echoes a POST body, and sets a response header.
+The playground runs HTTP handlers in-browser. Switch its world selector
+from `wasi:cli/run` to **`wasi:http/incoming-handler`**: a request editor
+appears (method, path, headers, body), and **Run (wasm)** compiles the
+handler and sends it that request. This handler routes on path and
+method, echoes a POST body, and sets a response header.
 
 <FernPlayground
   code={`import "std/http";
@@ -112,6 +113,11 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
       <td><code>i32</code></td>
       <td>Body length in bytes</td>
     </tr>
+    <tr>
+      <td><code>req.headers.get(name)</code></td>
+      <td><code>Option[string]</code></td>
+      <td>A request header, matched without regard to case</td>
+    </tr>
   </tbody>
 </table>
 
@@ -135,6 +141,10 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
     <tr>
       <td><code>http.text(status, body)</code></td>
       <td>any status + body</td>
+    </tr>
+    <tr>
+      <td><code>http.json(body)</code></td>
+      <td><code>200 OK</code> with <code>Content-Type: application/json</code></td>
     </tr>
     <tr>
       <td><code>http.not_found()</code></td>
@@ -241,23 +251,47 @@ off. Anything that must be shared across workers or outlive a crash
 belongs in a store the handler reaches through `plat`, not in the state.
 
 A worker is also the unit of concurrency. Each worker runs one handler at
-a time, and what a handler that waits costs it depends on the compiler
-that built the server. Built by the self-host compiler, a handler that
-waits on `plat.http` or on a streaming request body parks: the worker
-serves its other connections while the upstream answers, thousands of
-them if need be, and the handler runs on from the wait with nothing
-written at the call site. Built by `fern`'s Go compiler, the same wait
-blocks, and the handler holds every other connection on its worker until
-it returns. Either way a handler that computes holds its worker, so add
-workers to absorb CPU-bound handlers. `docs/ASYNC.md` §8 has the
-details.
+a time. A handler that waits on `plat.http` or on a streaming request
+body parks: the worker serves its other connections while the upstream
+answers, thousands of them if need be, and the handler runs on from the
+wait with nothing written at the call site. A handler that computes
+holds its worker until it returns, so add workers to absorb CPU-bound
+handlers. `docs/ASYNC.md` §8 has the details.
 
 A handler compiled for `wasm32-wasi-http` cannot take a state at all,
-because that world builds a fresh instance per request. An `init`
+because that world builds a fresh instance per request; build the
+stateful example above for a native target. An `init`
 returning nothing is still useful — it runs before the first request,
 which is where a start-up log line or an env-var read goes; one
 returning only `serve.Config` tunes the server for a stateless
 handler.
+
+## Failing with `?`
+
+A handler can return `Result[HttpResponse, E]` instead of an
+`HttpResponse`, and use `?` on the way. An `Err` becomes the response
+through `E`'s `to_response()`: `http.fail(status, detail)` builds an
+`http.HttpError` that answers with an RFC 9457 problem-details body, and
+a `std/json` parse error answers `400`.
+
+```fern
+import "std/http";
+import "std/serve";
+import "std/option";
+import "std/platform";
+
+function handle(req: HttpRequest, plat: platform.Platform): Result[HttpResponse, http.HttpError] {
+    let name: string = req.headers.get("x-name")
+        .ok_or(http.fail(400, "send an x-name header"))?;
+    return Ok(http.ok("hello, " + name));
+}
+```
+
+```bash
+curl -H 'x-name: fern' http://localhost:8080/   # → hello, fern
+curl http://localhost:8080/
+# → {"type":"about:blank","title":"Bad Request","status":400,"detail":"send an x-name header"}
+```
 
 ## Compile and serve
 

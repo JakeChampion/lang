@@ -1,5 +1,8 @@
 # Bounded offline DSP
 
+Latest compiler measurements: [merged main11a validation](FIP-MAIN11A.md).
+The measurements below retain their original compiler and date.
+
 The complete gain/filter/delay/mixer/limiter graph is FIP. With unique input
 state, its allocation count stays unchanged from the first processing callback.
 The ordinary direct loop also allocates nothing and is faster in these runs.

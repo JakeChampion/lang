@@ -1,0 +1,173 @@
+import "./storage_core";
+
+// Kinds: read=0, write=1, flush=2, evict=3. API statuses: invalid=1,
+// queue-full=2, stale=3, pending=4, exhausted=5. Completion errors start at10.
+pub fip function submit(own s: storage_core.State, kind: i32, page: i32, offset: i32, value: i64, delay: i32, fault: boolean): storage_core.State {
+  if (kind < 0 || kind > 3 || page < 0 || page >= s.pages || offset < 0 || offset >= s.width || delay < 0 || delay > 1024) {
+    return storage_core.result(s, 1, -1, 0i64, 0i64);
+  }
+  if (s.serial == 9223372036854775807i64 || s.tick == 9223372036854775807i64) {
+    return storage_core.result(s, 5, -1, 0i64, 0i64);
+  }
+  if (s.outstanding == s.capacity) {
+    return storage_core.result(s, 2, -1, 0i64, 0i64);
+  }
+  let i: i32 = 0;
+  while (i < s.capacity && s.phase[i] != 0) {
+    i = i + 1;
+  }
+  let ticket: i64 = s.serial + 1i64;
+  let injected: i32 = 0;
+  if (fault) {
+    injected = 1;
+  }
+  s = storage_core.State { ...s, phase: s.phase.with(i, 1) };
+  s = storage_core.State { ...s, kind: s.kind.with(i, kind) };
+  s = storage_core.State { ...s, page: s.page.with(i, page) };
+  s = storage_core.State { ...s, offset: s.offset.with(i, offset) };
+  s = storage_core.State { ...s, value: s.value.with(i, value) };
+  s = storage_core.State { ...s, delay: s.delay.with(i, delay) };
+  s = storage_core.State { ...s, fault: s.fault.with(i, injected) };
+  s = storage_core.State { ...s, frame: s.frame.with(i, -1) };
+  s = storage_core.State { ...s, ticket: s.ticket.with(i, ticket) };
+  s = storage_core.State { ...s, due: s.due.with(i, 0i64) };
+  s = storage_core.State { ...s, completion_status: s.completion_status.with(i, 0) };
+  s = storage_core.State { ...s, completion_value: s.completion_value.with(i, 0i64) };
+  return storage_core.State {
+    ...s, serial: ticket, outstanding: s.outstanding + 1,
+    status: 0, result_slot: i, result_ticket: ticket, result_value: 0i64,
+  };
+}
+
+fip function finish(own s: storage_core.State, slot: i32, status: i32, value: i64): storage_core.State {
+  s = storage_core.State { ...s, completion_status: s.completion_status.with(slot, status) };
+  s = storage_core.State { ...s, completion_value: s.completion_value.with(slot, value) };
+  return storage_core.State { ...s, phase: s.phase.with(slot, 3) };
+}
+
+fip function dispatch(own s: storage_core.State, slot: i32): storage_core.State {
+  let page: i32 = s.page[slot];
+  let kind: i32 = s.kind[slot];
+  if (s.page_pin[page] != 0) {
+    return finish(s, slot, 10, 0i64);
+  }
+  let frame: i32 = storage_core.lookup(s, page);
+  if (frame >= 0 && s.frame_pin[frame] != 0) {
+    return finish(s, slot, 10, 0i64);
+  }
+  if (frame < 0) {
+    if (kind >= 2) {
+      return finish(s, slot, 12, 0i64);
+    }
+    frame = storage_core.victim(s);
+    if (frame < 0) {
+      return finish(s, slot, 11, 0i64);
+    }
+  }
+  if (kind == 3 && s.dirty[frame] != 0) {
+    return finish(s, slot, 13, 0i64);
+  }
+  if (s.tick > 9223372036854775807i64 - s.delay[slot] as i64) {
+    return finish(s, slot, 15, 0i64);
+  }
+  s = storage_core.State { ...s, frame: s.frame.with(slot, frame) };
+  s = storage_core.State { ...s, frame_pin: s.frame_pin.with(frame, slot + 1) };
+  s = storage_core.State { ...s, page_pin: s.page_pin.with(page, slot + 1) };
+  s = storage_core.State { ...s, due: s.due.with(slot, s.tick + s.delay[slot] as i64) };
+  return storage_core.State { ...s, phase: s.phase.with(slot, 2) };
+}
+
+fip function load(own s: storage_core.State, frame: i32, page: i32): storage_core.State {
+  let i: i32 = 0;
+  while (i < s.width) {
+    s = storage_core.State { ...s, cache: s.cache.with(frame * s.width + i, s.disk[page * s.width + i]) };
+    i = i + 1;
+  }
+  s = storage_core.State { ...s, mapped: s.mapped.with(frame, page) };
+  return storage_core.State { ...s, dirty: s.dirty.with(frame, 0) };
+}
+
+fip function flush(own s: storage_core.State, frame: i32, page: i32): storage_core.State {
+  if (s.dirty[frame] != 0) {
+    let i: i32 = 0;
+    while (i < s.width) {
+      s = storage_core.State { ...s, disk: s.disk.with(page * s.width + i, s.cache[frame * s.width + i]) };
+      i = i + 1;
+    }
+  }
+  return storage_core.State { ...s, dirty: s.dirty.with(frame, 0) };
+}
+
+fip function complete(own s: storage_core.State, slot: i32): storage_core.State {
+  let frame: i32 = s.frame[slot];
+  let page: i32 = s.page[slot];
+  let kind: i32 = s.kind[slot];
+  // Error and success release the same reservations. Only success changes data.
+  s = storage_core.State { ...s, frame_pin: s.frame_pin.with(frame, 0) };
+  s = storage_core.State { ...s, page_pin: s.page_pin.with(page, 0) };
+  if (s.fault[slot] != 0) {
+    return finish(s, slot, 14, 0i64);
+  }
+  if (kind < 2 && s.mapped[frame] != page) {
+    s = load(s, frame, page);
+  }
+  let result: i64 = 0i64;
+  if (kind == 0) {
+    result = s.cache[frame * s.width + s.offset[slot]];
+  } else if (kind == 1) {
+    result = s.value[slot];
+    s = storage_core.State { ...s, cache: s.cache.with(frame * s.width + s.offset[slot], result) };
+    s = storage_core.State { ...s, dirty: s.dirty.with(frame, 1) };
+  } else if (kind == 2) {
+    s = flush(s, frame, page);
+  } else {
+    s = storage_core.State { ...s, mapped: s.mapped.with(frame, -1) };
+  }
+  let touched: i64 = s.tick;
+  if (kind == 3) {
+    touched = 0i64;
+  }
+  s = storage_core.State { ...s, touched: s.touched.with(frame, touched) };
+  return finish(s, slot, 0, result);
+}
+
+// A visited slot makes at most one transition, including zero-delay requests.
+pub fip function advance(own s: storage_core.State): storage_core.State {
+  if (s.tick == 9223372036854775807i64) {
+    s = storage_core.State { ...s, work: 0, transitions: 0 };
+    return storage_core.result(s, 5, -1, 0i64, 0i64);
+  }
+  s = storage_core.State { ...s, tick: s.tick + 1i64, work: 0, transitions: 0 };
+  let i: i32 = 0;
+  while (i < s.batch) {
+    let slot: i32 = s.cursor;
+    let phase: i32 = s.phase[slot];
+    if (phase == 1) {
+      s = dispatch(s, slot);
+      s = storage_core.State { ...s, transitions: s.transitions + 1 };
+    } else if (phase == 2 && s.due[slot] <= s.tick) {
+      s = complete(s, slot);
+      s = storage_core.State { ...s, transitions: s.transitions + 1 };
+    }
+    s = storage_core.State { ...s, cursor: (slot + 1) % s.capacity, work: s.work + 1 };
+    i = i + 1;
+  }
+  return storage_core.result(s, 0, -1, 0i64, 0i64);
+}
+
+pub fip function collect(own s: storage_core.State, slot: i32, ticket: i64): storage_core.State {
+  if (slot < 0 || slot >= s.capacity) {
+    return storage_core.result(s, 1, -1, 0i64, 0i64);
+  }
+  if (s.phase[slot] == 0 || s.ticket[slot] != ticket) {
+    return storage_core.result(s, 3, slot, ticket, 0i64);
+  }
+  if (s.phase[slot] != 3) {
+    return storage_core.result(s, 4, slot, ticket, 0i64);
+  }
+  let status: i32 = s.completion_status[slot];
+  let value: i64 = s.completion_value[slot];
+  s = storage_core.State { ...s, phase: s.phase.with(slot, 0) };
+  s = storage_core.State { ...s, outstanding: s.outstanding - 1 };
+  return storage_core.result(s, status, slot, ticket, value);
+}

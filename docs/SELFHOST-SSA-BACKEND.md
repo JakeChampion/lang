@@ -36,7 +36,11 @@ lowered function it:
    and returns a value in at most twelve computing instructions, unless it is
    declared `@noinline`. Its body is already reference-counted as the
    callee's, so the splice keeps every retain and release the call made;
-3. turns `(x >> n) | (x << (W - n))`, Fern's only spelling of a rotate, into
+3. maps a pure operation that repeats an earlier one in its block, the same
+   operation on the same operands with constants compared by value, onto the
+   earlier one (`ssa.merge_duplicates`; loads, calls and integer divisions are left
+   alone), so a rotate whose operand is written out twice has one operand;
+   turns `(x >> n) | (x << (W - n))`, Fern's only spelling of a rotate, into
    one `rotr:W:n` unary on x at either width (`ssa.fuse_rotates`; a u32's
    left half is recognised through the zero extension that follows it),
    replaces a signed 32-bit wrap by its operand where nothing reads the high

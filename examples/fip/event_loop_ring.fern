@@ -1,0 +1,155 @@
+// Explicit successor to the measured packed event loop. Payloads enter by value.
+import "./bounded_ring";
+
+pub struct Event { kind: i64, id: i64, value: i64 }
+
+pub struct State {
+  entries: i32,
+  table: i64[],
+  input: bounded_ring.Ring[Event],
+  output: bounded_ring.Ring[i64],
+  empty_input: bounded_ring.Ring[Event],
+  empty_output: bounded_ring.Ring[i64],
+  empty_event: Event,
+  live: i32,
+  ok: i64,
+  missing: i64,
+  full: i64,
+  dropped: i64,
+}
+
+pub function new_state(entries: i32, capacity: i32): Option[State] {
+  if (entries < 1 || entries > 256 || capacity < 1 || capacity > 4096) {
+    return None;
+  }
+  let empty: Event = Event { kind: 0i64, id: 0i64, value: 0i64 };
+  match (bounded_ring.new_ring(capacity, empty)) {
+    None => {
+      return None;
+    },
+    Some(input) => {
+      match (bounded_ring.new_ring(capacity, 0i64)) {
+        None => {
+          return None;
+        },
+        Some(output) => {
+          match (bounded_ring.new_ring(1, empty)) {
+            None => {
+              return None;
+            },
+            Some(empty_input) => {
+              match (bounded_ring.new_ring(1, 0i64)) {
+                None => {
+                  return None;
+                },
+                Some(empty_output) => {
+                  return Some(State {
+                    entries: entries, table: __alloc_i64(entries * 3), input: input, output: output,
+                    empty_input: empty_input, empty_output: empty_output, empty_event: empty,
+                    live: 0, ok: 0i64, missing: 0i64, full: 0i64, dropped: 0i64,
+                  });
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
+
+fip function input_queue(s: State): bounded_ring.Ring[Event] {
+  return s.input;
+}
+
+fip function output_queue(s: State): bounded_ring.Ring[i64] {
+  return s.output;
+}
+
+pub fip function enqueue(own s: State, event: Event): State {
+  if (s.input.count == bounded_ring.capacity(s.input)) {
+    return State { ...s, dropped: s.dropped + 1i64 };
+  }
+  let q: bounded_ring.Ring[Event] = input_queue(s);
+  s = State { ...s, input: s.empty_input };
+  q = bounded_ring.push(q, event);
+  return State { ...s, input: q };
+}
+
+fip function respond(own s: State, value: i64): State {
+  if (s.output.count == bounded_ring.capacity(s.output)) {
+    return State { ...s, dropped: s.dropped + 1i64 };
+  }
+  let q: bounded_ring.Ring[i64] = output_queue(s);
+  s = State { ...s, output: s.empty_output };
+  q = bounded_ring.push(q, value);
+  return State { ...s, output: q };
+}
+
+// Same linear lookup and first-unused replacement as the original packed loop.
+pub fip function lookup(s: State, id: i64): i32 {
+  let i: i32 = 0;
+  while (i < s.entries) {
+    if (s.table[s.entries * 2 + i] != 0i64 && s.table[i] == id) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return -1;
+}
+
+pub fip function step(own s: State): State {
+  if (s.input.count == 0) {
+    return s;
+  }
+  let q: bounded_ring.Ring[Event] = input_queue(s);
+  let event: Event = bounded_ring.front_or(q, s.empty_event);
+  s = State { ...s, input: s.empty_input };
+  q = bounded_ring.drop(q);
+  s = State { ...s, input: q };
+  if (event.kind < 1i64 || event.kind > 4i64) {
+    return s;
+  }
+  let at: i32 = lookup(s, event.id);
+  if (event.kind == 1i64) {
+    if (at < 0) {
+      at = 0;
+      while (at < s.entries && s.table[s.entries * 2 + at] != 0i64) {
+        at = at + 1;
+      }
+      if (at == s.entries) {
+        s = State { ...s, full: s.full + 1i64 };
+        return respond(s, 3i64);
+      }
+      s = State { ...s, table: s.table.with(at, event.id) };
+      s = State { ...s, table: s.table.with(s.entries * 2 + at, 1i64) };
+      s = State { ...s, live: s.live + 1 };
+    }
+    s = State { ...s, table: s.table.with(s.entries + at, event.value) };
+  } else {
+    if (at < 0) {
+      s = State { ...s, missing: s.missing + 1i64 };
+      return respond(s, 2i64);
+    }
+    if (event.kind == 2i64) {
+      s = State { ...s, table: s.table.with(s.entries + at, s.table[s.entries + at] + event.value) };
+    } else if (event.kind == 4i64) {
+      s = State { ...s, table: s.table.with(s.entries * 2 + at, 0i64) };
+      s = State { ...s, live: s.live - 1 };
+    }
+  }
+  s = State { ...s, ok: s.ok + 1i64 };
+  if (event.kind == 3i64) {
+    return respond(s, 4i64);
+  }
+  return respond(s, 1i64);
+}
+
+pub fip function drain(own s: State): State {
+  let q: bounded_ring.Ring[i64] = output_queue(s);
+  s = State { ...s, output: s.empty_output };
+  while (q.count > 0) {
+    q = bounded_ring.drop(q);
+  }
+  return State { ...s, output: q };
+}

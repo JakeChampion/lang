@@ -7,12 +7,11 @@ sidebar:
 
 import FernPlayground from "../../../components/FernPlayground.astro";
 
-Fast-startup CLI tools are one of the two workloads Fern is tuned
-hardest for (it's a general-purpose language, but this is where it
-shines). This page walks the full shape of a Unix-style filter: read
-`argv`, accept
-input from stdin *or* files, parse flags, and return a meaningful exit
-code. By the end you'll have a working `grep`.
+Fast-startup CLI tools are one of the two workloads Fern grew up
+around, and where it is most polished. This page walks the full shape
+of a Unix-style filter: read `argv`, accept input from stdin *or* files,
+parse flags, and return a meaningful exit code. By the end you'll have a
+working `grep`.
 
 ## The anatomy of a CLI program
 
@@ -50,8 +49,10 @@ can't-open case explicitly instead of crashing.
 import "std/io";
 
 match (io.read_input(path)) {
-    Ok(text) => { /* use text */ },
-    Err(_)   => { eprint("tool: cannot open " + path); },
+    Ok(text) => {
+        // use text
+    },
+    Err(_) => { eprint("tool: cannot open " + path); },
 }
 ```
 
@@ -61,31 +62,28 @@ stack.
 
 ## Parsing flags
 
-There's no argument-parsing framework — and for small tools you don't
-need one. Walk `argv` yourself. The pattern below recognises bundled
-single-character flags (`-in` is `-i` plus `-n`), the standard shape for
-classic tools.
+For a tool with two flags you can walk `argv` yourself; `std/cli`,
+covered [below](#larger-interfaces-stdcli), takes over when the interface
+grows. The pattern here recognises bundled single-character flags (`-in`
+is `-i` plus `-n`), the standard shape for classic tools.
 
 We'll collect the recognised flags into a small `struct` and use the
 `{ ...o, field: value }` spread-update form to flip one field
 immutably — structs are immutable, so an update produces a new value.
 
 ```fern
-struct Opts { ignore_case: boolean, show_num: boolean }
+struct Opts { ignore_case: boolean, show_num: boolean, pattern: string }
 
 // ... inside the argv loop, for an argument like "-in":
-let f: i32 = 1;
-while (f < a.len()) {
-    let c: i32 = a[f] as i32;              // a byte, compared by code point
+for f in 1..a.len() {
+    let c: i32 = a[f] as i32;       // a byte, compared by code point
     if (c == 105) {                 // 'i'
         o = Opts { ...o, ignore_case: true };
     } else if (c == 110) {          // 'n'
         o = Opts { ...o, show_num: true };
     } else {
-        eprint("grep: invalid option");
-        return 2;
+        return Err("grep: invalid option in " + a);
     }
-    f = f + 1;
 }
 ```
 
@@ -93,116 +91,203 @@ while (f < a.len()) {
 Indexing a `string` yields a **`u8`** — one byte, not a one-character
 string. There are no implicit numeric conversions, so compare it against
 an ASCII code point by casting first: `a[f] as i32 == 105` (`'i'`), which
-is what the `let c: i32 = a[f] as i32;` above does. Use `a[f:f+1]` to
-slice out a one-byte substring when you need a `string`.
+is what the `let c: i32 = a[f] as i32;` above does. A slice `a[f:f+1]`
+is an `Option[str]` rather than a `string`: it is `None` when a bound is
+out of range or falls inside a multi-byte character (see
+[Types](../../reference/types/)).
 :::
 
 ## Putting it together: a working grep
 
 Here's a compact `grep` with `-i` (case-insensitive) and `-n` (line
-numbers). It reads stdin, prints matching lines, and follows grep's exit
-convention — `0` if anything matched, `1` if nothing did. Edit the
-program and the input is whatever you'd pipe in; try changing the
-pattern or the flags.
+numbers). `parse_args` turns `argv` into options or an error message —
+a `Result`, so the caller decides how to report it — and `grep` prints
+the matching lines and follows grep's exit convention: `0` if anything
+matched, `1` if nothing did. The playground has no command line and no
+stdin, so this `main` supplies both; try changing the pattern or the
+flags.
 
 <FernPlayground
   code={`import "std/string";
-import "std/io";
 
-struct Opts { ignore_case: boolean, show_num: boolean }
+struct Opts { ignore_case: boolean, show_num: boolean, pattern: string }
 
-function matches(line: string, pat: string, ci: boolean): boolean {
-    if (ci) { return line.contains_ci(pat); }
-    return line.contains(pat);
-}
-
-function run(argv: string[]): i32 {
-    let o: Opts = Opts { ignore_case: false, show_num: false };
-    let pat: string = "";
+// parse_args reads the flags and the pattern out of argv, or says
+// what is wrong with them.
+function parse_args(argv: string[]): Result[Opts, string] {
+    let o: Opts = Opts { ignore_case: false, show_num: false, pattern: "" };
     let have_pat: boolean = false;
-
-    let i: i32 = 1;
-    while (i < argv.len()) {
+    for i in 1..argv.len() {
         let a: string = argv[i];
         if (a.starts_with("-") && a.len() > 1 && !have_pat) {
-            let f: i32 = 1;
-            while (f < a.len()) {
+            for f in 1..a.len() {
                 let c: i32 = a[f] as i32;
                 if (c == 105) { o = Opts { ...o, ignore_case: true }; }
                 else if (c == 110) { o = Opts { ...o, show_num: true }; }
-                else { eprint("grep: invalid option"); return 2; }
-                f = f + 1;
+                else { return Err("grep: invalid option in " + a); }
             }
         } else if (!have_pat) {
-            pat = a;
+            o = Opts { ...o, pattern: a };
             have_pat = true;
         }
-        i = i + 1;
     }
-    if (!have_pat) { eprint("usage: grep [-in] PATTERN"); return 2; }
+    if (!have_pat) { return Err("usage: grep [-in] PATTERN"); }
+    return Ok(o);
+}
 
-    match (io.read_input("-")) {
-        Ok(text) => {
-            let any: boolean = false;
-            let lines: string[] = text.lines();
-            let ln: i32 = 0;
-            while (ln < lines.len()) {
-                if (matches(lines[ln], pat, o.ignore_case)) {
-                    any = true;
-                    if (o.show_num) {
-                        print((ln + 1).to_string() + ":" + lines[ln]);
-                    } else {
-                        print(lines[ln]);
-                    }
-                }
-                ln = ln + 1;
+// grep prints the lines of text that match, and returns grep's exit
+// code: 0 if any line matched, 1 if none did.
+function grep(o: Opts, text: string): i32 {
+    let any: boolean = false;
+    let lines: string[] = text.lines();
+    for ln in 0..lines.len() {
+        let line: string = lines[ln];
+        let hit: boolean = if (o.ignore_case) {
+            line.contains_ci(o.pattern)
+        } else {
+            line.contains(o.pattern)
+        };
+        if (hit) {
+            any = true;
+            if (o.show_num) {
+                print((ln + 1).to_string() + ":" + line);
+            } else {
+                print(line);
             }
-            return if (any) { 0 } else { 1 };
-        },
-        Err(_) => { eprint("grep: read error"); return 2; }
+        }
     }
+    return if (any) { 0 } else { 1 };
 }
 
 function main(): i32 {
-    // In the playground there's no real argv, so we simulate one.
-    // On the command line this would just be: return run(args());
-    let fake_argv: string[] = ["grep", "-n", "fern"];
-    return run(fake_argv);
+    // The playground has no argv and no stdin, so this main supplies
+    // both. Change the flags or the pattern and run it again.
+    let argv: string[] = ["grep", "-n", "fern"];
+    let text: string = "one\ntwo fern\nFern three\n";
+    match (parse_args(argv)) {
+        Ok(o) => { return grep(o, text); },
+        Err(msg) => { eprint(msg); return 2; },
+    }
 }`}
   autoRun={false}
 />
 
-On a real terminal the `main` is a one-liner — `return run(args());` —
-and you'd invoke it as `./grep -n fern file.txt` or
-`cat log | ./grep -i error`.
-
 ## Compile and run it for real
 
-Save the program as `grep.fern` and either interpret it directly or
-compile a native binary:
+On a real command line, `main` reads the flags from `args()` and the text
+from stdin. Save the program as `grep.fern` with this `main` in place of
+the playground's, and add `import "std/io";` at the top:
+
+```fern
+function main(): i32 {
+    match (parse_args(args())) {
+        Err(msg) => { eprint(msg); return 2; },
+        Ok(o) => {
+            match (io.read_input("-")) {
+                Ok(text) => { return grep(o, text); },
+                Err(_) => { eprint("grep: cannot read stdin"); return 2; },
+            }
+        },
+    }
+}
+```
+
+It parses `argv` before it reads anything, so a usage error is reported
+straight away instead of after waiting on stdin. Run it under the
+interpreter — arguments after `--` go to the program — or compile a
+native binary:
 
 ```bash
 # Quick loop — no binary, runs under the interpreter:
-printf 'one\ntwo Fern\nthree\n' | fern -interp grep.fern
+printf 'one\ntwo Fern\nthree\n' | fern -interp grep.fern -- -i fern
 
-# Native binary (no external toolchain needed on Linux):
+# Native binary (no external toolchain needed):
 fern -target x86-64-linux -o grep grep.fern    # or -target arm64-linux
 printf 'one\ntwo Fern\nthree\n' | ./grep -i fern
+./grep -n error < app.log
 ```
 
 Because there's no runtime to boot, the compiled binary starts
 instantly — exactly what you want for a tool invoked thousands of times
 in a shell loop.
 
+## Larger interfaces: `std/cli`
+
+Once a tool has long options, valued options, or subcommands, describe
+them to `std/cli` instead of walking `argv` by hand. A spec lists the
+flags once; `parse` handles `-i`, `--ignore-case`, bundles like `-in`,
+`--`, and unknown options, and `usage()` writes the help text from the
+same spec. This version also takes an optional FILE operand and passes
+`"-"` to `io.read_input` when there is none, so it reads stdin:
+
+```fern
+import "std/cli";
+import "std/io";
+import "std/option";
+import "std/string";
+
+function main(): i32 {
+    let spec: cli.CliSpec = cli.cli_new("grep", "print lines that match a pattern");
+    spec = spec.flag("ignore-case", "i", "ignore case distinctions");
+    spec = spec.flag("line-number", "n", "prefix each line with its line number");
+    let a: cli.CliArgs = spec.parse(args());
+    if (a.is_error()) {
+        eprint(a.error_text());
+        eprint(spec.usage());
+        return 2;
+    }
+    let Some(pat) = a.operand(0) else {
+        eprint(spec.usage());
+        return 2;
+    };
+    let path: string = a.operand(1).unwrap_or("-");   // no FILE: read stdin
+    let text: string = match (io.read_input(path)) {
+        Ok(t) => t,
+        Err(_) => { eprint("grep: cannot open " + path); return 2; },
+    };
+    let any: boolean = false;
+    let lines: string[] = text.lines();
+    for ln in 0..lines.len() {
+        let hit: boolean = if (a.is_set("ignore-case")) {
+            lines[ln].contains_ci(pat)
+        } else {
+            lines[ln].contains(pat)
+        };
+        if (hit) {
+            any = true;
+            if (a.is_set("line-number")) {
+                print(f"{ln + 1}:{lines[ln]}");
+            } else {
+                print(lines[ln]);
+            }
+        }
+    }
+    return if (any) { 0 } else { 1 };
+}
+```
+
+```bash
+fern -target x86-64-linux -o grep grep.fern
+./grep -in fern notes.txt
+./grep --line-number TODO < main.fern
+```
+
+Flags are queried by their long name whichever spelling was passed. The
+same spec also produces a man page (`spec.manpage("1")`) and shell
+completions (`spec.completion("bash")`, `"zsh"` or `"fish"`).
+
 ## Where to go from here
 
 - The repository's [`examples/cli/`][cli] directory has full, idiomatic
   reimplementations of `cat`, `wc`, `head`, `tail`, `sort`, `cut`, `tr`,
   and more — each a single self-contained `.fern` file.
+- [`coreutils/`][coreutils] reimplements GNU coreutils in Fern, held to
+  byte-for-byte output parity with GNU.
 - The [Standard library reference](../../stdlib/) documents `std/string`,
-  `std/io`, `std/sort`, and the rest of the toolbox.
+  `std/io`, `std/cli`, `std/sort`, and the rest of the toolbox.
 - Ready for the other use case? [Build an HTTP handler →](../http-server/)
 
 [cli]: https://github.com/JakeChampion/lang/tree/main/examples/cli
+[coreutils]: https://github.com/JakeChampion/lang/tree/main/coreutils
 
 [Next: Build an HTTP handler →](../http-server/)

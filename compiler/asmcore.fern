@@ -5365,10 +5365,19 @@ pub function rt_src_uname_field(t: string): string {
 // macOS SDK's syscall.h, and the number this used to pass (296) is
 // vm_pressure_monitor (#9131). It opens a descriptor on "." and asks for that
 // descriptor's path with fcntl(F_GETPATH = 50), which wants MAXPATHLEN of
-// buffer and NUL-terminates what it writes.
+// buffer and NUL-terminates what it writes. F_GETPATH answers a removed
+// directory's last path, so the answer stands only if it still names the
+// device and inode "." does; otherwise the error is ENOENT (#11832).
 pub function rt_src_getcwd(t: string): string {
   if (t == "arm64-darwin") {
-    return "function __fern_getcwd(): Result[string, IoError] { let dot: usize = __raw_alloc(2); __raw_store8(dot, 0, 46); __raw_store8(dot, 1, 0); let fd: i32 = __syscall4(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", dot as i64, 0, 0) as i32; let dot_own: string = __raw_string(dot, 2); if (fd < 0) { return Err(__fern_io_error(0 - fd, \"\")); } let buf: usize = __raw_alloc(4096); __raw_store8(buf, 0, 0); let rc: i32 = __syscall3(" + sysno(t, "fcntl") + ", fd as i64, 50, buf as i64) as i32; __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); let buf_own: string = __raw_string(buf, 4096); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } let n: i32 = 0; while (n < 4096 && buf_own[n] != 0) { n = n + 1; } return Ok(__fern_path_copy(buf_own, n)); }";
+    let fstatat: string = sysno(t, "fstatat");
+    let o: string = "function __fern_getcwd(): Result[string, IoError] { let dot: usize = __raw_alloc(2); __raw_store8(dot, 0, 46); __raw_store8(dot, 1, 0); ";
+    o = o + "let here: usize = __raw_alloc(144); let hr: i32 = __syscall4(" + fstatat + ", " + at_fdcwd(t) + ", dot as i64, here as i64, 0) as i32; let hdev: i32 = __load_i32(here); let hino: i64 = __load_i64(__raw_addr(here, 8)); let here_own: string = __raw_string(here, 144); ";
+    o = o + "let fd: i32 = __syscall4(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", dot as i64, 0, 0) as i32; let dot_own: string = __raw_string(dot, 2); if (fd < 0) { return Err(__fern_io_error(0 - fd, \"\")); } ";
+    o = o + "let buf: usize = __raw_alloc(4096); __raw_store8(buf, 0, 0); let rc: i32 = __syscall3(" + sysno(t, "fcntl") + ", fd as i64, 50, buf as i64) as i32; __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); ";
+    o = o + "let seen: usize = __raw_alloc(144); let sr: i32 = 0 - 2; if (rc >= 0) { sr = __syscall4(" + fstatat + ", " + at_fdcwd(t) + ", buf as i64, seen as i64, 0) as i32; } let sdev: i32 = __load_i32(seen); let sino: i64 = __load_i64(__raw_addr(seen, 8)); let seen_own: string = __raw_string(seen, 144); ";
+    o = o + "let buf_own: string = __raw_string(buf, 4096); if (hr < 0) { return Err(__fern_io_error(0 - hr, \"\")); } if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } if (sr < 0) { return Err(__fern_io_error(0 - sr, \"\")); } if (sdev != hdev || sino != hino) { return Err(__fern_io_error(2, \"\")); } ";
+    return o + "let n: i32 = 0; while (n < 4096 && buf_own[n] != 0) { n = n + 1; } return Ok(__fern_path_copy(buf_own, n)); }";
   }
   return "function __fern_getcwd(): Result[string, IoError] { let buf: usize = __raw_alloc(4096); let rc: i32 = __syscall3(" + sysno(t, "getcwd") + ", buf as i64, 4096, 0) as i32; let buf_own: string = __raw_string(buf, 4096); if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } if (buf_own[0] != 47) { return Err(__fern_io_error(2, \"\")); } return Ok(__fern_path_copy(buf_own, rc - 1)); }";
 }

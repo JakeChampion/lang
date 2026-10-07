@@ -10,8 +10,8 @@ from source with Go. Both take about a minute.
 
 ## Option A — prebuilt binary (fastest)
 
-Every push to `main` publishes a rolling [**nightly
-release**][nightly] with statically-linked binaries. Grab the one for
+A rolling [**nightly release**][nightly] is rebuilt from `main` once a
+day, at 06:00 UTC, with statically-linked binaries. Grab the one for
 your platform:
 
 | Platform              | Asset                          |
@@ -29,8 +29,10 @@ install -m755 fern ~/.local/bin/fern    # anywhere on your $PATH
 ```
 
 Each asset ships a `*.tar.gz.sha256` alongside it if you want to verify
-the download. [Releases](../../releases/) covers what the nightly
-channel promises and how to pin a build.
+the download. The archive holds only the `fern` binary; the compiler it
+runs is built on your machine the first time you compile (see
+[The first compile](#the-first-compile)). [Releases](../../releases/)
+covers what the nightly channel promises and how to pin a build.
 
 ## Option B — build from source
 
@@ -54,7 +56,8 @@ else. Compiling a Fern program needs nothing else either — no `gcc`, no
 
 ## The first compile
 
-`fern` compiles through Fern's self-hosted compiler. It uses
+`fern` compiles through Fern's self-hosted compiler, which is written
+in Fern. (`fern -interp` and `fern -check` do not need it.) It uses
 `$FERN_SELFHOST` when that is set, else a `fern-selfhost` in the same
 directory as `fern`. With neither, the first compile downloads the stage0
 compiler pinned in `bootstrap/stage0.lock` from the project's GitHub
@@ -76,18 +79,20 @@ or copy `bin/fern-selfhost` next to `fern`.
 ## Verify the install
 
 ```bash
-fern -help
+fern -version    # the commit this binary was built from
+fern -targets    # every compile target and what its host provides
 ```
 
 ### Companion binaries
 
-These are only built from a source checkout (`go build ./cmd/...`):
+These are built from a source checkout:
 
-| Binary       | Build command                          | Purpose                          |
-| ------------ | -------------------------------------- | -------------------------------- |
-| `fern`       | `go build ./cmd/fern`                  | The main compiler + runner.      |
-| `fern-lsp`   | `go build ./cmd/fern-lsp`              | Language server for editors.     |
-| `ferndoc`    | `go build ./cmd/ferndoc`               | Generate the stdlib reference.   |
+| Binary          | Build command              | Purpose                                                                  |
+| --------------- | -------------------------- | ------------------------------------------------------------------------ |
+| `fern`          | `go build ./cmd/fern`      | The CLI: interpreter, checker, formatter, linter, package tools; runs the compiler for `-target` builds. |
+| `fern-selfhost` | `make bootstrap`           | The compiler itself, built without Go from the pinned stage0.            |
+| `fern-lsp`      | `go build ./cmd/fern-lsp`  | Language server for editors.                                             |
+| `ferndoc`       | `go build ./cmd/ferndoc`   | Generate the stdlib reference.                                           |
 
 ## Run hello, world
 
@@ -106,11 +111,22 @@ Run it under the interpreter:
 fern -interp hello.fern
 ```
 
+Compile a native binary. The default target is `arm64-linux`, so name the
+target that matches your machine:
+
+```bash
+fern -target x86-64-linux -o hello hello.fern    # or arm64-linux, arm64-darwin
+./hello
+```
+
+`fern -target x86-64-linux -run hello.fern` builds to a temporary binary
+and runs it in one step.
+
 Or compile to wasm and run under wasmtime:
 
 ```bash
 fern -target wasm32-wasi -o hello.wasm hello.fern
-wasmtime hello.wasm
+wasmtime run hello.wasm
 ```
 
 [Next: First steps →](../first-steps/)

@@ -1,0 +1,39 @@
+{
+  "host": "macOS-15.8-arm64-arm-64bit-Mach-O",
+  "machine": "arm64",
+  "compiler": "/private/tmp/fern-fip-main11a-native-compiler",
+  "compiler_sha256": "b5f886d2ee1c8e1165606426913c23648fb24b09697d62de4395cc1189ddd894",
+  "compile_command": [
+    "/private/tmp/fern-fip-main11a-native-compiler",
+    "-target",
+    "arm64-darwin",
+    "-o",
+    "/private/tmp/fern-dsp-main11a-repeated/dsp",
+    "/Users/jakechampion/.codex/worktrees/fip-storage-experiment/lang/examples/fip/dsp.fern",
+    "/Users/jakechampion/.codex/worktrees/fip-storage-experiment/lang/internal/stdlib"
+  ],
+  "binary_sha256": "83249b28abaf1db31870a7e24e7805d5c8ca69cfbb991472a2de993a4873a10b",
+  "sources": {
+    "examples/fip/dsp.fern": "dd75cba0224e338fcb94335d3148c05d4bc700bd8b7ff298446b502e5ea49d9f",
+    "examples/fip/dsp_core.fern": "fc4e9b60f16ec10ee5c0371d6e668659b4a534d091fe8b051b7779306d343a20",
+    "examples/fip/dsp_direct.fern": "d8153b61e6e065a6402d66e38f06ef2fe2326aa9bb5895af89fa90a587f72e53",
+    "examples/fip/dsp_fip.fern": "4de46656d6e8f053f66484e338b3dcb61a0176808b748cbb98e2e2427ba75cec",
+    "scripts/bench-dsp.py": "97431c6b701b6293938e7f6aedad0e3cec7c94e6abd4f69a71d10872f8e0b540",
+    "bootstrap/stage0.lock": "6cbf5f6d6b13a72c6f0c271655d37468021eb428b2b163364de1d2442ca4637e",
+    "internal/stdlib/std/bench.fern": "028d73d80366813b3d51676ed83cc2d0be41be8b4bf1fa0d7172fa35fe9904b5"
+  },
+  "revision": "11a71739408e54e69ce5a3db5bf8e2136ad8316c",
+  "working_tree": "A  docs/contexts/runtime/specs/fip-storage.md\nA  examples/fip/storage_core.fern\nA  examples/fip/storage_fip.fern\nA  internal/testing/e2ecompiler/self_host_fip_storage_test.go\n?? AGENTS.md\n?? SPEC.md\n",
+  "block_sizes": [
+    1,
+    7,
+    64,
+    256,
+    1024,
+    4096
+  ],
+  "blocks": 1000,
+  "delay": 3,
+  "repeats": 5,
+  "measurement": "No warm-up exemption. Samples time the callback; wall time also includes equal checksum traversals, validation and sample storage. Whole-process CPU/RSS/faults include startup, export and sorting. Fresh bytes are high-water growth, not requested bytes. Page faults are not cache misses."
+}

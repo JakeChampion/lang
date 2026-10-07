@@ -1,0 +1,35 @@
+{
+  "host": "macOS-15.8-arm64-arm-64bit-Mach-O",
+  "machine": "arm64",
+  "compiler": "/private/tmp/fern-fip-main11a-native-compiler",
+  "compiler_sha256": "b5f886d2ee1c8e1165606426913c23648fb24b09697d62de4395cc1189ddd894",
+  "compile_command": [
+    "/private/tmp/fern-fip-main11a-native-compiler",
+    "-target",
+    "arm64-darwin",
+    "-o",
+    "/private/tmp/fern-simulation-main11a-n33-repeated/simulation",
+    "/Users/jakechampion/.codex/worktrees/fip-storage-experiment/lang/examples/fip/simulation.fern",
+    "/Users/jakechampion/.codex/worktrees/fip-storage-experiment/lang/internal/stdlib"
+  ],
+  "binary_sha256": "891d42247476d7f91b9433f528364cb0bab550f62380549f63b5b44619aff441",
+  "sources": {
+    "examples/fip/simulation.fern": "dbac8e85047cf63bf0c6beb448560ab4237a86fed12bd2cff0481cedeef7dd52",
+    "examples/fip/simulation_entity.fern": "b995f1354d4adaaebb99663d209bbae13e4e7c0e09f9ac4d9c63c7bcc73daede",
+    "examples/fip/simulation_fbip.fern": "500cf9ee81c0d7da6f72214c6f9b3130ea02a72d4553197b7a9770eb5a7472bf",
+    "examples/fip/simulation_fip.fern": "c7a4c6443cc087c8fcebfa1aaadfbdfb93446463b109d9e4eac6c65f6dc674a7",
+    "examples/fip/simulation_persistent.fern": "5c6be01f88df08528b66a1eb10f62aae22f1da1fd8dfd8f0db8f5e617ad8fae7",
+    "examples/fip/simulation_rules.fern": "60ad18455f2ede429f651521b789b05443c8d02a97e9180a65145320cbe9c461",
+    "scripts/bench-simulation.py": "63ac737bca7461a15f6bdae55b006e971d6fb09c6d6c7646b8390f4e3fe8be49",
+    "bootstrap/stage0.lock": "6cbf5f6d6b13a72c6f0c271655d37468021eb428b2b163364de1d2442ca4637e",
+    "internal/stdlib/std/bench.fern": "028d73d80366813b3d51676ed83cc2d0be41be8b4bf1fa0d7172fa35fe9904b5"
+  },
+  "revision": "11a71739408e54e69ce5a3db5bf8e2136ad8316c",
+  "working_tree": "A  docs/contexts/runtime/specs/fip-storage.md\nA  examples/fip/storage_core.fern\nA  examples/fip/storage_fip.fern\nA  internal/testing/e2ecompiler/self_host_fip_storage_test.go\n?? AGENTS.md\n?? SPEC.md\n",
+  "entities": [
+    33
+  ],
+  "ticks": 1000,
+  "repeats": 5,
+  "measurement": "One warm-up tick is excluded. Tick samples include one additional checksum traversal in both sharing modes. Whole-process CPU/RSS/faults include startup, export and sorting. Fresh bytes are high-water growth, not total requested bytes. Page faults are not cache misses."
+}

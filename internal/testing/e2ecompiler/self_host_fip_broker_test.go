@@ -218,6 +218,14 @@ function step(own b: broker_core.Broker, kind: i32, argument: i32, value: i64): 
 `
 
 func TestSelfHostFipBroker(t *testing.T) {
+	testBrokerRepresentation(t, false)
+}
+
+func TestSelfHostRingBroker(t *testing.T) {
+	testBrokerRepresentation(t, true)
+}
+
+func testBrokerRepresentation(t *testing.T, ring bool) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range []struct {
 		name                                string
@@ -315,13 +323,7 @@ function main(): i32 {
 }
 `, expected.String(), kinds.String(), arguments.String(), values.String(), tc.topics, tc.subscribers, tc.pool, tc.capacity)
 			dir := t.TempDir()
-			data, err := os.ReadFile(filepath.Join("..", "..", "..", "examples", "fip", "broker_core.fern"))
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := os.WriteFile(filepath.Join(dir, "broker_core.fern"), data, 0600); err != nil {
-				t.Fatal(err)
-			}
+			source = prepareBrokerRepresentation(t, dir, source, ring)
 			path := filepath.Join(dir, "main.fern")
 			if err := os.WriteFile(path, []byte(source), 0600); err != nil {
 				t.Fatal(err)
