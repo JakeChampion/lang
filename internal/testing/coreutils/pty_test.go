@@ -59,6 +59,57 @@ func openPty(t *testing.T) (*os.File, *os.File) {
 	return master, slave
 }
 
+// Capture application bytes without kernel output translation. Darwin's
+// ONLCR can insert a second CR when its queue fills between CR and LF.
+// Disabling OPOST also preserves literal CR, tabs and control bytes; nothing
+// is normalized after capture. This applies only to output terminals.
+func openOutputPty(t *testing.T) (*os.File, *os.File) {
+	t.Helper()
+	master, slave := openPty(t)
+	words, err := tty.Termios(int(slave.Fd()))
+	if err == nil {
+		// OPOST is bit 0 on both supported PTY platforms, Linux and Darwin.
+		words[1] &^= 1
+		err = tty.SetTermios(int(slave.Fd()), 0, words)
+	}
+	if err != nil {
+		master.Close()
+		slave.Close()
+		t.Fatalf("disable terminal output translation: %v", err)
+	}
+	return master, slave
+}
+
+func TestPtyOutputPreservesBytes(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		data []byte
+	}{
+		{"controls", []byte("literal\r\n\t\x00\x04\x1b\b\xff\n")},
+		{"queue-boundaries", bytes.Repeat([]byte("x\n"), 65536)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			master, slave := openOutputPty(t)
+			defer master.Close()
+			defer slave.Close()
+			if !tty.IsTerminal(int(slave.Fd())) {
+				t.Fatal("capture descriptor is not a terminal")
+			}
+			rows, cols, err := tty.WindowSize(int(slave.Fd()))
+			if err != nil || rows != ptyRows || cols != ptyCols {
+				t.Fatalf("terminal dimensions: %dx%d, %v", rows, cols, err)
+			}
+			reader := drainPty(master)
+			if _, err := io.Copy(slave, bytes.NewReader(tc.data)); err != nil {
+				t.Fatal(err)
+			}
+			if got := reader.finish(slave); !bytes.Equal(got, tc.data) {
+				t.Fatalf("terminal changed output: wrote %d bytes, captured %d", len(tc.data), len(got))
+			}
+		})
+	}
+}
+
 // ptySettings renders everything a run can have LEFT on a terminal: the four
 // flag words, the control characters, Linux's line discipline or Darwin's two
 // speeds, and the window size. It is the `artifacts` of a utility whose
@@ -150,6 +201,22 @@ func drainPty(master *os.File) *ptyReader {
 		}
 	}()
 	return r
+}
+
+// An input terminal can echo even though the child's stdout is a separate
+// pipe. Consume that echo so tcsetattr(TCSADRAIN) can finish. The caller
+// closes its slave copies before calling the returned cleanup function.
+// Echo is not stdout or stderr and must not enter either captured stream.
+func discardPtyEcho(master *os.File) func() {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		_, _ = io.Copy(io.Discard, master)
+	}()
+	return func() {
+		master.Close()
+		<-done
+	}
 }
 
 // ptyEndMark is written into a slave once its child has exited. It queues
