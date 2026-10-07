@@ -294,6 +294,21 @@ function main(): i32 {
 // exit code 134, and /ok answers again from the reforked worker.
 func CheckSurvivesHandlerTrap(t *testing.T, addr, stderrPath string) {
 	t.Helper()
+	checkSurvivesHandlerTrap(t, addr, stderrPath, false)
+}
+
+// CheckOwnListenersSurviveHandlerTrap is CheckSurvivesHandlerTrap for
+// workers that bind their own listeners (ReusePortWorkersServerSource). The
+// dead worker's listener goes with it, and a dial is refused until its
+// sibling or its replacement has bound one, which a loaded host can leave
+// until after the death, so the request after it waits for a listener.
+func CheckOwnListenersSurviveHandlerTrap(t *testing.T, addr, stderrPath string) {
+	t.Helper()
+	checkSurvivesHandlerTrap(t, addr, stderrPath, true)
+}
+
+func checkSurvivesHandlerTrap(t *testing.T, addr, stderrPath string, ownListeners bool) {
+	t.Helper()
 	WaitServerReady(t, addr, 10*time.Second)
 	if resp := HTTPRoundTrip(t, addr, "/ok", 5*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
 		t.Fatalf("first /ok: want 200, got\n%s", resp)
@@ -302,8 +317,11 @@ func CheckSurvivesHandlerTrap(t *testing.T, addr, stderrPath string) {
 		t.Fatalf("/boom answered 200:\n%s", resp)
 	}
 	WaitStderrContains(t, stderrPath, "worker died with exit code 134", 10*time.Second)
-	// The refork backoff starts at 100 ms; the parent-owned listener
-	// keeps the connection in its backlog meanwhile.
+	// The refork backoff starts at 100 ms; a parent-owned listener keeps
+	// the connection in its backlog meanwhile.
+	if ownListeners {
+		WaitServerReady(t, addr, 10*time.Second)
+	}
 	if resp := HTTPRoundTrip(t, addr, "/ok", 10*time.Second); !strings.Contains(resp, "HTTP/1.1 200") {
 		t.Fatalf("post-crash /ok: want 200 (the service should have survived), got\n%s", resp)
 	}
@@ -525,8 +543,8 @@ function main(): i32 {
 // ReusePortWorkersServerSource is TrappingServerSource over two workers
 // that each bind their own SO_REUSEPORT listener (`reuse_port`): a
 // worker's death takes its listener with it, and its replacement binds
-// anew, so CheckSurvivesHandlerTrap proves the service is back on the
-// port after a trap.
+// anew, so CheckOwnListenersSurviveHandlerTrap proves the service is back
+// on the port after a trap.
 func ReusePortWorkersServerSource(port int) string {
 	return strings.Replace(TrappingServerSource(port), "workers: 1 }", "workers: 2, reuse_port: true }", 1)
 }
