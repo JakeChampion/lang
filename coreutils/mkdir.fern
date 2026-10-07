@@ -22,13 +22,17 @@
 //     is what the `--help` line means by "with their file modes
 //     unaffected by any -m option".
 //
-// The third rule is the one that surprises, and it is measured rather
-// than derived: a mode carrying a special bit is created with the group
-// and other WRITE bits held back, and they come back only if a chmod
-// follows. Whether one follows depends on which bits the MODE SPELLED
-// OUT — so `-m 1777` ends at 1777 and `-m +t` ends at 1755, though the
-// two name the same value, and `-m +t,g+w` is 1777 again because the
-// group write bit is now mentioned. `plan_mode` below is that rule.
+// The third rule is the one that surprises: a mode carrying a special
+// bit is created with the group and other WRITE bits held back, and a
+// chmod after the mkdir puts right only the bits the MODE SPELLED OUT.
+// What the mkdir left is read back with a stat rather than assumed,
+// because kernels differ: Linux's mkdir(2) keeps S_ISVTX and Darwin's
+// drops it. So `-m 1777` ends at 1777 everywhere, `-m +t` ends at 1755
+// on Linux (the held-back write bits were never mentioned) and at 1777
+// on Darwin (the sticky bit was mentioned, and its chmod writes the
+// whole mode), and `-m +t,g+w` is 1777 again because the group write
+// bit is mentioned.
+// `plan_mode` and `finish_mode` below are that rule.
 //
 // `-p` is otherwise its own walk: an ancestor that already exists is not
 // an error, one that exists and is not a DIRECTORY is, and the final
@@ -84,42 +88,49 @@ function help_text(): string {
 
 // ---- the mode a directory is created with ----------------------------------
 //
-// `create` is what `mkdir(2)` is given, `finish` the mode the directory
-// is meant to end up with, and `chmod_after` whether one more call is
-// needed to get there.
-struct Plan { create: i32, finish: i32, chmod_after: boolean }
+// `create` is what `mkdir(2)` is given and `finish` the mode the
+// directory is meant to end up with. `bits` are the ones a chmod after
+// the mkdir is allowed to correct; zero means no chmod and no stat.
+struct Plan { create: i32, finish: i32, bits: i32 }
 
 // The default: no `-m`, so the umask does all the work and there is
-// nothing to hold back.
+// nothing to correct.
 function plan_default(mask: i32): Plan {
   let m: i32 = mode.s_irwxugo() & mode.complement(mask);
-  return Plan { create: m, finish: m, chmod_after: false };
+  return Plan { create: m, finish: m, bits: 0 };
 }
 
 // `-m`'s plan. The mode is `mode.adjust` from a base of 0777; what is
-// mkdir's own is the pair of decisions after it.
+// mkdir's own is what it is created with and which bits may be fixed.
 //
 // A directory whose mode carries S_ISUID, S_ISGID or S_ISVTX — or whose
 // MODE went near the first two with `+` or `-` — is created without
 // group and other write, so that nothing can enter it during the window
 // between the mkdir and the chmod that finishes it.
 //
-// The chmod only happens when it has to: S_ISUID and S_ISGID are bits
-// mkdir(2) does not set, and the write bits held back are restored only
-// when the MODE MENTIONED them. Nothing restores them otherwise, which
-// is why `-m +t` leaves 1755 where `-m 1777` leaves 1777.
+// The bits a chmod may correct are the ones the MODE mentioned, plus
+// the set-ID bits, which mkdir(2) never sets. Write bits held back and
+// not mentioned stay off, which is why `-m +t` leaves 1755 on Linux
+// where `-m 1777` leaves 1777.
 function plan_mode(c: mode.Changes, mask: i32): Plan {
   let a: mode.Adjusted = c.adjust(mode.s_irwxugo(), true, mask);
+  let bits: i32 = a.mentioned | a.mode & mode.setid_bits();
   let special: i32 = mode.setid_bits() + mode.s_isvtx();
   if ((a.mode & special) == 0 && !a.touches_setid) {
-    return Plan { create: a.mode, finish: a.mode, chmod_after: false };
+    return Plan { create: a.mode, finish: a.mode, bits: bits };
   }
   let held: i32 = a.mode & mode.complement(mode.w_group_other());
-  let needed: boolean = (a.mode & mode.setid_bits()) != 0 || (a.mentioned & a.mode & mode.w_group_other()) != 0;
-  if (needed) {
-    return Plan { create: held, finish: a.mode, chmod_after: true };
+  return Plan { create: held, finish: a.mode, bits: bits };
+}
+
+// The chmod a just-created directory whose mode is `got` needs, if any:
+// the planned bits put right and every other bit left as the mkdir set
+// it.
+function finish_mode(p: Plan, got: i32): Option[i32] {
+  if (((got ^ p.finish) & p.bits) == 0) {
+    return None;
   }
-  return Plan { create: held, finish: held, chmod_after: false };
+  return Some(p.finish | got & mode.all_bits() & mode.complement(p.bits));
 }
 
 // The mode `-p` gives an ancestor: the default with u+w and u+x forced
@@ -225,16 +236,28 @@ function make_final(o0: Out, cfg: Cfg, dir: string): Out {
   match (create_dir(dir, cfg.plan.create)) {
     Ok(_) => {
       o = announce(o, cfg.verbose, dir);
-      if (cfg.plan.chmod_after) {
-        match (chmod(dir, cfg.plan.finish)) {
-          Ok(_) => {},
-          Err(e) => {
-            // The one wording here the reference binary has never been
-            // made to print: a directory this process just created is
-            // one it owns and may chmod, even a setgid one it is not in
-            // the group of.
-            return report(o, "cannot change permissions of " + gnu.quote(dir) + ": " + gnu.io_error_text(e));
+      if (cfg.plan.bits == 0) {
+        return o;
+      }
+      // The wordings below the reference binary has never been made to
+      // print: a directory this process just created is one it can stat,
+      // owns, and may chmod, even a setgid one it is not in the group of.
+      match (stat(dir)) {
+        Ok(st) => {
+          match (finish_mode(cfg.plan, st.mode as i32)) {
+            Some(m) => {
+              match (chmod(dir, m)) {
+                Ok(_) => {},
+                Err(e) => {
+                  return report(o, "cannot change permissions of " + gnu.quote(dir) + ": " + gnu.io_error_text(e));
+                }
+              }
+            },
+            None => {}
           }
+        },
+        Err(e) => {
+          return report(o, "cannot change permissions of " + gnu.quote(dir) + ": " + gnu.io_error_text(e));
         }
       }
       return o;

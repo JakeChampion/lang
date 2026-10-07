@@ -28,9 +28,10 @@ import (
 //   - `=` on a directory keeps the set-user-ID and set-group-ID bits
 //     that are already there. `-m +s,=rwx` is 6777, not 0777.
 //   - A mode carrying a special bit is created with group and other
-//     write held back, and they come back only if the MODE MENTIONED
-//     them: `-m 1777` is 1777 and `-m +t` is 1755, though the two name
-//     the same value, and `-m +t,g+w` is 1777 again.
+//     write held back, and a chmod puts right only the bits the MODE
+//     MENTIONED: `-m 1777` is 1777 and `-m +t` is 1755 on Linux, though
+//     the two name the same value, and `-m +t,g+w` is 1777 again. Darwin's
+//     mkdir(2) drops S_ISVTX, so there `+t` needs the chmod and is 1777.
 //
 // The `mkdirGuarded` cases say different things depending on who runs
 // the suite, and are worth having either way because both sides meet the
