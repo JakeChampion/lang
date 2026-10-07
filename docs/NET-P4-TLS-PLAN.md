@@ -96,8 +96,14 @@ standalone (`TestStdlibModulesImportStandalone`).
    the X25519MLKEM768 hybrid with caller-supplied randomness, gated on RFC
    8448's shares and Go's crypto/mlkem; and `std/tls/message`, every
    handshake message and the extensions TLS 1.3 reads, gated on RFC 8448's
-   messages round-tripping byte for byte. Remaining: `std/tls/handshake`,
-   the client and server state machines over these modules.
+   messages round-tripping byte for byte. Then `std/tls/handshake`, the
+   client and server state machines: the caller judges the certificate
+   (`VerifyServer`, `verdict`) and makes the signature (`SignNeeded`,
+   `signature`), so no key or trust decision enters it. Gate: the client
+   reproduces RFC 8448 §3 byte for byte, the server its ServerHello, and the
+   two complete handshakes with each other across every suite and group.
+   HelloRetryRequest comes with slice 10, resumption and client
+   certificates with slice 11.
 9. **`std/tls/der`, `pem` and `verify`.** Path building, name and SAN
    checks, and the root store (Linux bundle paths, `SSL_CERT_FILE`, a
    bundled CCADB list as the fallback).

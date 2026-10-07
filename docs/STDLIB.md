@@ -1213,6 +1213,47 @@ constant time. About 1 ms per verification on x86-64 under a 2048-bit key.
   `verify_pss(key, hash, msg, sig): boolean`, `hash` one of `Sha256`,
   `Sha384`, `Sha512`.
 
+### `std/tls/handshake`
+
+The TLS 1.3 handshake of RFC 8446, client and server, as sans-IO state
+machines over the four modules below: bytes in, bytes out, with no sockets, no
+clock and no randomness of its own. The client reproduces RFC 8448 §3 byte for
+byte from the trace's ClientHello and key share, through Finished, application
+data and close_notify; the server reproduces the trace's ServerHello; and the
+two complete handshakes with each other across every suite and group
+(`tests/stdlib/tls_handshake_test.fern`).
+
+```fern
+let step: handshake.ClientStep = handshake.client_start(handshake.client_config("example.com"), entropy)?;
+send(step.output);
+step = step.client.read(received)?;   // step.output, step.data, step.events
+```
+
+- `client_config(server_name)` offers every suite, X25519MLKEM768 with X25519
+  as the fallback group, and the signature schemes `std/crypto` verifies;
+  `ClientConfig` has `server_name`, `alpn`, `suites`, `groups` and `schemes`.
+  `client_start(config, entropy)` takes 32 random bytes and the entropy the
+  first group's share takes; `client_from_hello(hello, share)` starts from a
+  ClientHello the caller built.
+- `server_config(chain, schemes)` and `ServerConfig` (`chain`, leaf first;
+  `schemes` its key can make; `suites`, `groups` and `alpn` in preference
+  order). `server_new(config, entropy)` takes 96 bytes. The server reads the
+  client's `server_name` and chooses its `alpn`.
+- `read(input)` on either side returns a step: the other side's bytes to
+  send (`output`), application data (`data`) and `events`: `VerifyServer`
+  (the chain, scheme, signed content and signature: judge them, then call
+  `verdict(ok)`), `SignNeeded` (sign `signed` under `scheme`, then call
+  `signature(sig)`), `Connected`, `PeerClosed` and `Ticket`. No private key
+  and no trust decision enter the module.
+- `write(data)` once connected, `close()` for close_notify, `connected()`, and
+  `alert(e)`, the record that reports a `HandshakeError` to the peer. A
+  KeyUpdate is answered, and a compatibility change_cipher_spec ignored.
+- `HandshakeError` names the cause, with `alert()` and `message()`.
+- `certificate_verify_content(server, transcript_hash)` is what a
+  CertificateVerify signs.
+- Not yet: HelloRetryRequest, PSK resumption and early data, and client
+  certificates beyond answering a request with an empty Certificate.
+
 ### `std/tls/keyschedule`
 
 The TLS 1.3 key schedule of RFC 8446 §7, the first part of `std/tls` (#9858).
@@ -1228,7 +1269,8 @@ let keys: keyschedule.TrafficKeys = keyschedule.traffic_keys(suite, hs.server_tr
 ```
 
 - `CipherSuite` is `Aes128GcmSha256`, `Aes256GcmSha384` or
-  `ChaCha20Poly1305Sha256`, the three TLS 1.3 suites; `hash()` is its `Hash`
+  `ChaCha20Poly1305Sha256`, the three TLS 1.3 suites, with `code()` its
+  CipherSuite value and `cipher_suite(code)` the reverse; `hash()` is its `Hash`
   (`Sha256` or `Sha384`, with `size()` and `digest(msg)`), `aead()` its `Aead`
   (`Aes128Gcm`, `Aes256Gcm` or `ChaCha20Poly1305`, with `key_len()`).
 - `hkdf_extract(h, salt, ikm)`, `hkdf_expand_label(h, secret, label, context,

@@ -1112,6 +1112,13 @@ func TestRunnerTLSKeyScheduleExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "tls_keyschedule", "std/tls/keyschedule", 17)
 }
 
+// `tests/stdlib/tls_handshake_test.fern` runs the client through RFC 8448 §3
+// byte for byte, the server to the trace's ServerHello, and the two against
+// each other across suites and groups.
+func TestRunnerTLSHandshakeExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "tls_handshake", "std/tls/handshake", 10)
+}
+
 // `tests/stdlib/tls_keyshare_test.fern` checks X25519 against RFC 8448's key
 // shares and X25519MLKEM768 against Go's crypto/mlkem and crypto/ecdh.
 func TestRunnerTLSKeyshareExamplePasses(t *testing.T) {
