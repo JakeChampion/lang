@@ -91,8 +91,8 @@ func TestSelfHostSemIRStrict(t *testing.T) {
 		}
 	}
 
-	// A read of a view map value takes a fresh box rather than the column's
-	// own, so the typed lowering takes it (#10701).
+	// A read of a view map value owns a unit of the column's box, so the
+	// typed lowering takes it (#10701).
 	viewRead := `import "core/map";
 function main(): i32 {
     let b: string = "abcdefgh";

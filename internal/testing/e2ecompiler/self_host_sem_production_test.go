@@ -4595,12 +4595,12 @@ function main(): i32 {
     return xs.len() + ys.len() + ws.len() + zs.len() + g.names.len() + junk.len();
 }
 `},
-	// Every read of a view map value hands out a fresh box over the entry's
-	// bytes: get, get_or on a hit and on a miss, values() and iteration. The
-	// map keeps its own boxes, which it frees on its drop; before #10701 each
-	// read shared them, the reader's release freed the map's entry, and
-	// `junk` reused it, so later reads printed "zzz".
-	{name: "every-read-of-a-view-map-value-is-a-fresh-view", atLeast: 2, want: "13|ab\ncde\nh\nab\ncde\nab\ncde\ncde\nab\n", src: `
+	// Every read of a view map value owns a unit of the entry's box: get,
+	// get_or on a hit and on a miss, values() and iteration. A read that
+	// shared the map's box without one would let the reader's release free
+	// the map's entry, `junk` would reuse it, and later reads would print
+	// "zzz" (#10701).
+	{name: "every-read-of-a-view-map-value-owns-a-unit", atLeast: 2, want: "13|ab\ncde\nh\nab\ncde\nab\ncde\ncde\nab\n", src: `
 import "core/map";
 function fill(s: string): Map[i32, str] {
     let m: Map[i32, str] = map_new(4);
@@ -4627,9 +4627,8 @@ function main(): i32 {
 }
 `},
 	// A shared view map copied by an insert, a without or a lent receiver's
-	// insert gives the copy a fresh box for each view, and a counted string or
-	// a literal held as a view reads back as itself. A view column stays off
-	// core/map, whose retains would share the boxes.
+	// insert gives the copy a unit of each view, and a counted string or a
+	// literal held as a view reads back as itself.
 	{name: "a-copied-view-map-owns-its-boxes", atLeast: 3, want: "28|gh\nabcdefgh!\nlit\nq\ngone\nbc\nabcdefgh!\nbc\nbc\nd\n", src: `
 import "core/map";
 function fill(s: string): Map[string, str] {
