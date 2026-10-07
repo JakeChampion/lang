@@ -3378,14 +3378,11 @@ function definitions(f: Func): ssa.SInst[] {
 
 // The index of the block `target` names, when the edge from `from` is its
 // only way in.
-function sole_successor(f: Func, target: i32, from: i32): i32 {
-  let i: i32 = 0;
-  while (i < f.graph.blocks.len() && f.graph.blocks[i].id != target) {
-    i = i + 1;
-  }
-  if (i == f.graph.blocks.len()) {
+function sole_successor(f: Func, at: i32[], target: i32, from: i32): i32 {
+  if (target < 0 || target >= at.len() || at[target] < 0) {
     return 0 - 1;
   }
+  let i: i32 = at[target];
   let succ: ssa.SBlock = f.graph.blocks[i];
   if (succ.preds.len() != 1 || succ.preds[0] != from) {
     return 0 - 1;
@@ -3400,29 +3397,57 @@ struct Known { held: string[], gone: string[] }
 // What the tests of `value` have settled on every way into block `bi`. An
 // edge settles nothing unless it is its successor's only way in, and unless
 // that successor dominates `bi`.
-function settled(f: Func, value: i32, bi: i32, dom: ssadeps.Dom, defs: ssa.SInst[]): Known {
+function settled(f: Func, value: i32, bi: i32, g: Guards): Known {
   let held: string[] = [];
   let gone: string[] = [];
-  let n: i32 = f.graph.blocks.len();
+  for pi in g.tests {
+    let b: ssa.SBlock = f.graph.blocks[pi];
+    let test: ssa.SInst = g.defs[b.term.cond];
+    if (test.args[0] == value) {
+      let ti: i32 = sole_successor(f, g.at, b.term.t, b.id);
+      if (ti >= 0 && ssadeps.dom_holds(g.dom, bi, ti)) {
+        held = held.append(test.str);
+      }
+      let fi: i32 = sole_successor(f, g.at, b.term.f, b.id);
+      if (fi >= 0 && ssadeps.dom_holds(g.dom, bi, fi)) {
+        gone = gone.append(test.str);
+      }
+    }
+  }
+  return Known { held: held, gone: gone };
+}
+
+// What a guard check reads of the function: its dominators, the position of
+// each block, the definition of each value, and the positions of the blocks
+// whose two-way branch tests a value's variant or dyn shape, ascending.
+struct Guards { dom: ssadeps.Dom, at: i32[], defs: ssa.SInst[], tests: i32[] }
+
+function guards_of(f: Func): Guards {
+  let defs: ssa.SInst[] = definitions(f);
+  let tests: i32[] = [];
   let pi: i32 = 0;
-  while (pi < n) {
+  while (pi < f.graph.blocks.len()) {
     let b: ssa.SBlock = f.graph.blocks[pi];
     if (b.term.kind_tag == 3 && b.term.t != b.term.f && b.term.cond >= 0 && b.term.cond < defs.len()) {
-      let test: ssa.SInst = defs[b.term.cond];
-      if ((test.kind_tag == variant_is() || test.kind_tag == dyn_is()) && test.args[0] == value) {
-        let ti: i32 = sole_successor(f, b.term.t, b.id);
-        if (ti >= 0 && ssadeps.dom_holds(dom, bi, ti)) {
-          held = held.append(test.str);
-        }
-        let fi: i32 = sole_successor(f, b.term.f, b.id);
-        if (fi >= 0 && ssadeps.dom_holds(dom, bi, fi)) {
-          gone = gone.append(test.str);
-        }
+      let k: i32 = defs[b.term.cond].kind_tag;
+      if (k == variant_is() || k == dyn_is()) {
+        tests = tests.append(pi);
       }
     }
     pi = pi + 1;
   }
-  return Known { held: held, gone: gone };
+  return Guards { dom: ssadeps.dominates(f.graph), at: ssadeps.position_of(f.graph), defs: defs, tests: tests };
+}
+
+function has_guarded_projection(f: Func): boolean {
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (needs_guard(ins.kind_tag)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 function names_has(names: string[], name: string): boolean {
@@ -3438,9 +3463,9 @@ function names_has(names: string[], name: string): boolean {
 // every OTHER variant its enum declares has been refuted, since a value is
 // one of them. The second is what a total match's last arm rests on: it
 // carries no test of its own.
-function guarded(f: Func, ins: ssa.SInst, bi: i32, dom: ssadeps.Dom, defs: ssa.SInst[]): boolean {
+function guarded(f: Func, ins: ssa.SInst, bi: i32, g: Guards): boolean {
   let value: i32 = ins.args[0];
-  let known: Known = settled(f, value, bi, dom, defs);
+  let known: Known = settled(f, value, bi, g);
   if (settled_viewless(ins)) {
     for c in dyn_view_concretes(f, f.values[value]) {
       if (!names_has(known.gone, shape_name(f, c))) {
@@ -3468,14 +3493,16 @@ function guarded(f: Func, ins: ssa.SInst, bi: i32, dom: ssadeps.Dom, defs: ssa.S
 // projection must sit where that is known. A value never changes variant, so
 // what a test settled holds for every later use of the value.
 function guard_error(f: Func): string {
+  if (!has_guarded_projection(f)) {
+    return "";
+  }
   let reachable: boolean[] = ssadeps.reachable_blocks(f.graph);
-  let dom: ssadeps.Dom = ssadeps.dominates(f.graph);
-  let defs: ssa.SInst[] = definitions(f);
+  let g: Guards = guards_of(f);
   let bi: i32 = 0;
   while (bi < f.graph.blocks.len()) {
     if (reachable[bi]) {
       for ins in f.graph.blocks[bi].insts {
-        if (needs_guard(ins.kind_tag) && !guarded(f, ins, bi, dom, defs)) {
+        if (needs_guard(ins.kind_tag) && !guarded(f, ins, bi, g)) {
           return "unguarded variant projection";
         }
       }
