@@ -286,11 +286,11 @@ function fields_have_children(fields: semrecords.Field[]): boolean {
 // run time. A closure box's own captures are no exception since #9637: it
 // takes a unit of each (ssaunits.taken), so walking them is what balances it.
 // A routed map whose columns own what their slots name, released with the
-// map: a string column's strings, and a wide column's cells.
+// map: a string or view column's strings, and a wide column's cells.
 function owned_columns(t: typeinfo.Type): boolean {
   let k: typeinfo.Type = ssasem.map_key(t);
   let v: typeinfo.Type = ssasem.map_value(t);
-  return ssasem.is_text(k) || ssasem.is_string(v) || cell_column(k) || cell_column(v);
+  return ssasem.is_text(k) || ssasem.is_text(v) || cell_column(k) || cell_column(v);
 }
 
 function walked(t: typeinfo.Type): boolean {
@@ -407,7 +407,7 @@ function release(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, f: ss
     return emit(r, ir.op_drop());
   }
   let fns: string[] = map_release_fns(t);
-  if (fns.len() == 0) {
+  if (fns.len() == 0 || routed_map(t, f)) {
     return helper(r, slot, release_name(t, f));
   }
   r = emit(r, ir.op_load_local(slot));
@@ -2814,10 +2814,10 @@ function key_closure_name(k: typeinfo.Type, which: string): string {
 }
 
 // The release of one value of a keyed routed map's column, as a closure: a
-// string's, a box's through its type's helper, a wide value's cell, or
-// nothing for a scalar.
+// string's or a view's, a box's through its type's helper, a wide value's
+// cell, or nothing for a scalar.
 function value_env_release(v: typeinfo.Type): string {
-  if (ssasem.is_string(v)) {
+  if (ssasem.is_text(v)) {
     return "__sem_str_release$env";
   }
   if (routed_box(v)) {
@@ -2837,7 +2837,7 @@ function value_env_helper(v: typeinfo.Type): irtables.LowerResult {
     ...empty(""), ok: true,
     n_params: 2, n_locals: 2, name: value_env_release(v),
   };
-  if (ssasem.is_string(v)) {
+  if (ssasem.is_text(v)) {
     r = emit(r, ir.op_load_local(1));
     r = emit(r, ir.op_call_direct("__fern_str_free", 1));
     return emit(r, ir.op_return());
@@ -3760,6 +3760,9 @@ function from_address(own r: irtables.LowerResult, to: typeinfo.Type): irtables.
 }
 
 function into_address(own r: irtables.LowerResult, from: typeinfo.Type): irtables.LowerResult {
+  if (ssasem.is_usize(from)) {
+    return r;
+  }
   if (!ssasem.is_wide(from)) {
     r = emit(r, ir.op_int_extend(ssasem.is_unsigned_int(from)));
   }
@@ -3950,9 +3953,6 @@ function map_op(own r: irtables.LowerResult, ins: ssa.SInst, f: ssasem.Func): ir
   }
   if (ins.kind_tag == ssasem.map_get()) {
     r = emit(r, ir.op_map_get(kkind, eq, map_widekind(t)));
-    if (ssasem.is_view(ssasem.map_value(t))) {
-      return own_view_hit(r, f, ins);
-    }
     if (vkind == 0) {
       return r;
     }
@@ -3967,10 +3967,6 @@ function map_op(own r: irtables.LowerResult, ins: ssa.SInst, f: ssasem.Func): ir
   }
   if (ins.kind_tag == ssasem.map_values()) {
     let vt: typeinfo.Type = ssasem.map_value(t);
-    if (ssasem.is_view(vt)) {
-      r = emit(r, ir.op_map_values(0, map_widekind(t)));
-      return owned_copy(r, f, vt);
-    }
     r = emit(r, ir.op_map_values(column_flag(vt), map_widekind(t)));
     if (ssasem.is_u8(vt)) {
       return packed_snapshot(r, f);
@@ -3981,9 +3977,6 @@ function map_op(own r: irtables.LowerResult, ins: ssa.SInst, f: ssasem.Func): ir
     return emit(r, ir.op_map_delete(kkind, ir.map_op_packed(eq, vrel, krel), key_column_counted(kkind), vkind));
   }
   r = emit(r, ir.op_map_get_or(kkind, eq, map_widekind(t)));
-  if (ssasem.is_view(ssasem.map_value(t))) {
-    return emit(r, ir.op_call_direct("__fern_str_own", 1));
-  }
   if (vkind == 0) {
     return r;
   }
@@ -4019,16 +4012,15 @@ function routed_key(t: typeinfo.Type): boolean {
 
 // A value column may also hold boxes, one unit of each; core/map retains them
 // on every read and copy, and this lowering releases the ones it drops.
-// A view value column stays on the runtime's map (routed_box), where a view
-// key column is a string column of owned copies (routed_key).
+// A view value column is a string column: an insert stores a unit of a
+// counted view descriptor, a counted string or a literal, never a view in its
+// maker's frame (ssaunits.frame_views). A usize value is the slot itself.
 function routed_value(t: typeinfo.Type): boolean {
-  return routed_column(t) || ssasem.is_string(t) || routed_box(t) || cell_column(t);
+  return routed_column(t) || ssasem.is_usize(t) || ssasem.is_text(t) || routed_box(t) || cell_column(t);
 }
 
-// The boxes a routed value column can hold: any counted value but a string,
-// released through the type's own release helper. A view's box is not
-// counted, so core/map's retains would share it; a view column stays on the
-// runtime's map, whose reads take a fresh box.
+// The boxes a routed value column can hold: any counted value but a string or
+// a view, released through the type's own release helper.
 function routed_box(t: typeinfo.Type): boolean {
   return ssasem.boxed_map_value(t) && !ssasem.is_view(t) || ssasem.is_string_array(t);
 }
@@ -4113,7 +4105,7 @@ function routed_lookup(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
   if (ins.kind_tag == ssasem.map_has()) {
     return map_entry(r, f, ins, "__map_has_impl", "__map_has_keyed_impl", 2);
   }
-  let counted: boolean = ssasem.is_string(v);
+  let counted: boolean = ssasem.is_text(v);
   if (ins.kind_tag == ssasem.map_get()) {
     if (cell_column(v) && ssasem.is_float(v)) {
       return map_entry(r, f, ins, "__map_get_cell_f64_impl", "__map_get_cell_f64_keyed_impl", 2);
@@ -4179,10 +4171,11 @@ function key_operand(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst
   return routed_slot(r, ins.args[1], kt);
 }
 
-// core/map's valTag: 5 a string, 4 a counted box, 0 a scalar held in the
-// slot itself, or in an eight-byte cell, whose size is the tag's high bytes.
+// core/map's valTag: 5 a string or a view, 4 a counted box, 0 a scalar held
+// in the slot itself, or in an eight-byte cell, whose size is the tag's high
+// bytes.
 function routed_val_tag(t: typeinfo.Type): i32 {
-  if (ssasem.is_string(t)) {
+  if (ssasem.is_text(t)) {
     return 5;
   }
   if (routed_box(t)) {
@@ -4260,7 +4253,12 @@ function routed_column_read(own r: irtables.LowerResult, elem: typeinfo.Type, of
     return emit(r, ir.op_call_direct("__map_string_column", 2));
   }
   if (routed_box(elem)) {
-    return emit(r, ir.op_call_direct("__map_box_column", 2));
+    r = emit(r, ir.op_const_i32(1));
+    return emit(r, ir.op_call_direct("__map_box_column", 3));
+  }
+  if (ssasem.is_usize(elem)) {
+    r = emit(r, ir.op_const_i32(0));
+    return emit(r, ir.op_call_direct("__map_box_column", 3));
   }
   return emit(r, ir.op_call_direct("__map_i32_column", 2));
 }
@@ -4357,7 +4355,7 @@ function routed_delete(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
   let old_key: i32 = box + 2;
   let old_val: i32 = box + 3;
   let counted_key: boolean = counted_key_column(ssasem.map_key(t));
-  let counted_val: boolean = ssasem.is_string(ssasem.map_value(t)) || routed_box(ssasem.map_value(t));
+  let counted_val: boolean = ssasem.is_text(ssasem.map_value(t)) || routed_box(ssasem.map_value(t));
   r = reserve(r, old_val + 1);
   r = emit(r, ir.op_load_local(ins.args[0]));
   r = emit(r, ir.op_call_direct("__map_cow_inplace", 1));
@@ -4506,30 +4504,6 @@ function retain_hit_payload(own r: irtables.LowerResult, ins: ssa.SInst): irtabl
   r = emit(r, ir.op_opt_payload());
   r = emit(r, ir.op_call_direct("__fern_rc_inc", 1));
   r = emit(r, ir.op_drop());
-  r = emit(r, ir.op_end());
-  return emit(r, ir.op_load_local(ins.result));
-}
-
-// On a view column the payload is the column's own view box, which a retain
-// cannot count, so a hit is rebuilt around the unit `__fern_str_own` answers
-// and the runtime's box is freed alone.
-function own_view_hit(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
-  let hit: i32 = scratch_base(f);
-  r = reserve(r, hit + 1);
-  r = emit(r, ir.op_store_local(ins.result));
-  r = emit(r, ir.op_load_local(ins.result));
-  r = emit(r, ir.op_opt_tag());
-  r = emit(r, ir.op_const_i32(0));
-  r = emit(r, ir.op_bin("eq", 0, false));
-  r = emit(r, ir.op_if(0));
-  r = emit(r, ir.op_load_local(ins.result));
-  r = emit(r, ir.op_opt_payload());
-  r = emit(r, ir.op_call_direct("__fern_str_own", 1));
-  r = emit(r, ir.op_opt_make(0));
-  r = emit(r, ir.op_store_local(hit));
-  r = helper(r, ins.result, "__fern_rc_dec");
-  r = emit(r, ir.op_load_local(hit));
-  r = emit(r, ir.op_store_local(ins.result));
   r = emit(r, ir.op_end());
   return emit(r, ir.op_load_local(ins.result));
 }
@@ -6104,11 +6078,7 @@ function unshared_map(own r: irtables.LowerResult, f: ssasem.Func, slot: i32, bo
   if (key_column_counted(kkind)) {
     r = helper(r, key, "__fern_rc_inc");
   }
-  if (ssasem.is_view(ssasem.map_value(t))) {
-    r = emit(r, ir.op_load_local(value));
-    r = emit(r, ir.op_call_direct("__fern_str_own", 1));
-    r = emit(r, ir.op_store_local(value));
-  } else if (vkind != 0) {
+  if (vkind != 0) {
     r = helper(r, value, "__fern_rc_inc");
   }
   r = emit(r, ir.op_load_local(box));
@@ -6616,6 +6586,9 @@ function fs_op_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   }
   if (ins.str == "mounts") {
     return Lowered { found: true, r: emit(r, ir.op_mounts()) };
+  }
+  if (ins.str == "sysctl") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_sysctl())) };
   }
   if (ins.str == "create_dir") {
     return Lowered { found: true, r: emit(r, ir.op_create_dir()) };

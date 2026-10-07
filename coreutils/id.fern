@@ -411,9 +411,14 @@ pub function main(): i32 {
           o = print_one(o, m, u.uid, u.gid, u.uid, u.gid, pwdb.group_list(u.name, u.gid), "", term, extra);
         },
         None => {
-          // No errno: GNU <= 9.4 let glibc's ENOENT for the empty name
-          // through, and 9.5 clears it before reporting.
-          o = Out { w: gnu.error_out(o.w, gnu.quote(operands[i]) + ": no such user"), ok: false };
+          // GNU reports the errno the lookup left: none from glibc's files
+          // backend, and Directory Services' own on Darwin.
+          let msg: string = gnu.quote(operands[i]) + ": no such user";
+          let why: string = pwdb.lookup_failure_text();
+          if (why.len() > 0) {
+            msg = msg + ": " + why;
+          }
+          o = Out { w: gnu.error_out(o.w, msg), ok: false };
         }
       }
       i = i + 1;

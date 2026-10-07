@@ -2799,6 +2799,16 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 			ast.EnumType{Name: "IoError"},
 		}},
 	}
+	// sysctl(mib: i32[]): Result[u8[], IoError] — the kernel's answer for a
+	// MIB as raw bytes: Darwin's sysctl(3). Gated on `sysctl`, which only
+	// Darwin grants; Linux removed sysctl(2).
+	c.info.FuncSigs["sysctl"] = &ast.FuncType{
+		Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 32, Signed: true}}},
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{
+			ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}},
+			ast.EnumType{Name: "IoError"},
+		}},
+	}
 	// rlimit_nofile(): i64 — the SOFT limit the kernel is currently
 	// enforcing on this process's open file descriptors, `getrlimit(2)`
 	// on RLIMIT_NOFILE (#8819). What `ulimit -n` prints, and what
@@ -3109,7 +3119,8 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 	// __account_entry(kind, key): what libSystem's account database answers,
 	// as an address, or 0 — kind 0 getpwuid(key), 1 getpwnam(key as a C
 	// string), 2 getgrgid(key), 3 getgrnam(key as a C string), 4
-	// getlogin(). Only arm64-darwin asks: there regular accounts and groups
+	// getlogin(), 5 getgrouplist over an argument block, 6 strerror(key),
+	// 7 __error(). Only arm64-darwin asks: there regular accounts and groups
 	// live in Directory Services, not the files (#9815). Every other target
 	// answers 0, which sends the caller to the files.
 	c.info.FuncSigs["__account_entry"] = &ast.FuncType{

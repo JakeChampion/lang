@@ -65,6 +65,7 @@ costs a silent failure on the first target that lacks it.
 | `tty` | `window_size`, `set_window_size`, `termios_get`, `termios_set` | a terminal with a size and line settings, where `isatty` only asks whether there is one |
 | `userid` | `geteuid`, `getegid` | a user the process can be |
 | `host` | `hostname` | a node name: uname(2) on Linux, kern.hostname on Darwin; `""` on WASI, which has none |
+| `sysctl` | `sysctl` | the kernel's variables by MIB: Darwin's sysctl(3). Granted by Darwin's own profile, `hosted-darwin`, alone; Linux removed sysctl(2) |
 | `signal` | `signal_ignore`, `signal_default`, `signal_catch`, `signal_catch_interrupting`, `signal_taken`, `signal_raise` | a host that can deliver a signal to a process; a no-op on WASI, which cannot |
 | `cabi` | `__c_call0..4` (+ `_f32` / `_f64`) | a C calling convention to call a function pointer through |
 | `tcp` | `tcp_*`, `udp_*` | a network stack |

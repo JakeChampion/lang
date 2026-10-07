@@ -263,6 +263,7 @@ var rcResultOwned = map[string]bool{
 	"chown_at":          true,
 	"statfs":            true,
 	"mounts":            true,
+	"sysctl":            true,
 	"getcwd":            true,
 	"chdir":             true,
 	"chroot":            true,
@@ -424,6 +425,7 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"lstat":                            true,
 	"statfs":                           true,
 	"mounts":                           true,
+	"sysctl":                           true,
 	"access":                           true,
 	// The builder's take hands over its own string-shaped buffer, the
 	// only reference to it (rcResultOwned, #8773); in argument position

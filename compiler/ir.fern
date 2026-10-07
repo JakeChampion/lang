@@ -2182,6 +2182,14 @@ pub function op_statfs(): Op {
   return op0(270);
 }
 
+// `sysctl` pops an i32[] MIB and pushes a fresh Result[u8[], IoError]: the
+// kernel's answer for that MIB as raw bytes. Darwin issues __sysctl (BSD 202);
+// every other kernel answers ENOSYS, and the platforms gate refuses the
+// builtin there before it reaches an emitter. See asmcore.rt_src_sysctl.
+pub function op_sysctl(): Op {
+  return op0(401);
+}
+
 // `mounts` takes no operands and pushes a fresh Result[MountEntry[], IoError]:
 // the mounted filesystems in the order the kernel lists them (#9104). Linux
 // parses /proc/self/mountinfo and Darwin asks getfsstat(2); see
@@ -3688,6 +3696,9 @@ function kind_id_len6(name: string): i32 {
   }
   if (c == b's' && name == "statfs") {
     return 270;
+  }
+  if (c == b's' && name == "sysctl") {
+    return 401;
   }
   return 0;
 }
@@ -5827,6 +5838,9 @@ function buf_kind_name(id: i32): string {
 // extension tags beyond kind_count() (struct_copy=198 … buf_free=297)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
+  if (id == 401) {
+    return "sysctl";
+  }
   if (id == 400) {
     return "vg_request";
   }
@@ -6096,6 +6110,7 @@ function pops1_io(t: i32): boolean {
     || t == 261 || t == 264 || t == 265  // remove_dir, read_link, umask
     || t == 283  // set_priority (nice)
     || t == 270 || t == 271  // statfs, process_alive
+    || t == 401  // sysctl
     || t == 276 || t == 312  // window_size, termios_get
     || t == 185 || t == 212  // random_bytes, proc_waitpid
     || t == 286  // proc_waitpid_nohang
@@ -8716,6 +8731,10 @@ pub function op_allocates(tag: i32): boolean {
   }
   // mounts boxes a fresh MountEntry array + a Result wrapper.
   if (tag == 398) {
+    return true;
+  }
+  // sysctl boxes a fresh u8 array + a Result wrapper.
+  if (tag == 401) {
     return true;
   }
   // window_size boxes a fresh WinSize struct + a Result wrapper.

@@ -1,0 +1,352 @@
+// Usage: kv_config fip|map|pmap capacity key_bytes value_bytes batch turns mixed|read|write load_pct unique|shared [samples]
+import "./kv_config_core";
+import "./kv_config_map";
+import "./kv_config_pmap";
+import "./kv_workload";
+import "core/cmp";
+import "std/bench";
+import "std/i32";
+import "std/i64";
+import "std/string";
+
+struct RunReport {
+  samples: i64[],
+  wall: i64,
+  allocations: i64,
+  first: i64,
+  fresh: i64,
+  startup_ns: i64,
+  startup_allocs: i64,
+  startup_fresh: i64,
+  seed_allocs: i64,
+  responses: i64,
+  snapshot_checks: i64,
+  live: i32,
+}
+
+function report(c: kv_workload.Config, r: RunReport): i32 {
+  if (c.samples) {
+    let i: i32 = 0;
+    while (i < c.turns) {
+      print("sample," + i.to_string() + "," + r.samples[i].to_string());
+      i = i + 1;
+    }
+  }
+  let stats: bench.Report = bench.Report { name: c.mix, iterations: c.turns, wall_ns: r.wall, samples_ns: cmp.sort(r.samples), allocs: r.allocations, fresh_bytes: r.fresh };
+  print("{\"representation\":\"" + c.representation + "\",\"capacity\":" + c.capacity.to_string()
+    + ",\"key_bytes\":" + c.key_bytes.to_string() + ",\"value_bytes\":" + c.value_bytes.to_string()
+    + ",\"batch\":" + c.batch.to_string() + ",\"turns\":" + c.turns.to_string()
+    + ",\"mix\":\"" + c.mix + "\",\"load\":" + c.load.to_string() + ",\"sharing\":\"" + c.sharing + "\""
+    + ",\"universe\":" + kv_workload.universe(c).to_string() + ",\"live\":" + r.live.to_string()
+    + ",\"response_digest\":" + r.responses.to_string() + ",\"snapshot_checks\":" + r.snapshot_checks.to_string()
+    + ",\"wall_ns\":" + r.wall.to_string() + ",\"allocs\":" + r.allocations.to_string()
+    + ",\"first_batch_allocs\":" + r.first.to_string() + ",\"fresh_bytes\":" + r.fresh.to_string()
+    + ",\"startup_ns\":" + r.startup_ns.to_string() + ",\"startup_allocs\":" + r.startup_allocs.to_string()
+    + ",\"startup_fresh_bytes\":" + r.startup_fresh.to_string() + ",\"seed_allocs\":" + r.seed_allocs.to_string()
+    + ",\"batch_p50_ns\":" + stats.p50_ns().to_string() + ",\"batch_p95_ns\":" + stats.p95_ns().to_string()
+    + ",\"batch_p99_ns\":" + stats.p99_ns().to_string() + ",\"batch_p999_ns\":" + stats.p999_ns().to_string()
+    + ",\"batch_max_ns\":" + stats.max_ns().to_string() + "}");
+  if (c.representation == "fip" && c.sharing == "unique" && r.allocations != 0i64) {
+    return 7;
+  }
+  return 0;
+}
+
+function saved_core(db: kv_config_core.Db): kv_config_core.Db {
+  return db;
+}
+
+function probe_core(db: kv_config_core.Db, tape: kv_workload.Tape, c: kv_workload.Config, index: i32): i64 {
+  let digest: i64 = db.live as i64;
+  let slot: i32 = kv_config_core.find(db, tape.input, index * c.batch * kv_workload.stride(c) + 1);
+  if (slot >= 0) {
+    let j: i32 = 0;
+    while (j < c.value_bytes) {
+      digest = kv_workload.fold(digest, db.values[slot * c.value_bytes + j] as i64);
+      j = j + 1;
+    }
+  }
+  return kv_workload.bytes_digest(digest, db.output, db.out_count);
+}
+
+function export_core(db: kv_config_core.Db): void {
+  let i: i32 = 0;
+  while (i < db.slots) {
+    if (db.used[i] != 0) {
+      print("entry," + kv_workload.hex(db.keys, i * db.key_bytes, db.key_bytes) + "," + kv_workload.hex(db.values, i * db.value_bytes, db.value_bytes));
+    }
+    i = i + 1;
+  }
+}
+
+function run_core(c: kv_workload.Config): i32 {
+  let startup_mark: i64 = bench.alloc_count();
+  let startup_fresh: i64 = bench.bump_bytes();
+  let startup: i64 = monotonic_ns();
+  let tape: kv_workload.Tape = kv_workload.build(c);
+  let samples: i64[] = __alloc_i64(c.turns);
+  match (kv_config_core.new_db(c.capacity, c.key_bytes, c.value_bytes, c.batch)) {
+    None => {
+      return 2;
+    },
+    Some(db) => {
+      let seed_mark: i64 = bench.alloc_count();
+      let i: i32 = 0;
+      while (i < tape.seed_count) {
+        let count: i32 = tape.seed_count - i;
+        if (count > c.batch) {
+          count = c.batch;
+        }
+        db = kv_config_core.process(db, tape.seed, i * kv_workload.stride(c), count);
+        if (db.refused) {
+          return 3;
+        }
+        i = i + count;
+      }
+      let seed_allocs: i64 = bench.allocs_after(seed_mark);
+      let startup_ns: i64 = monotonic_ns() - startup;
+      let startup_allocs: i64 = bench.allocs_after(startup_mark);
+      let startup_bytes: i64 = bench.fresh_bytes_after(startup_fresh);
+      let mark: i64 = bench.alloc_count();
+      let fresh_mark: i64 = bench.bump_bytes();
+      let started: i64 = monotonic_ns();
+      let responses: i64 = 0i64;
+      let checks: i64 = 0i64;
+      let first: i64 = 0i64;
+      i = 0;
+      while (i < c.turns) {
+        let index: i32 = i % 100;
+        let observed: i64 = 0i64;
+        let duration: i64 = 0i64;
+        if (c.sharing == "shared") {
+          let old: kv_config_core.Db = saved_core(db);
+          let t0: i64 = monotonic_ns();
+          db = kv_config_core.process(db, tape.input, index * c.batch * kv_workload.stride(c), c.batch);
+          duration = monotonic_ns() - t0;
+          observed = probe_core(old, tape, c, index);
+        } else {
+          observed = probe_core(db, tape, c, index);
+          let t0: i64 = monotonic_ns();
+          db = kv_config_core.process(db, tape.input, index * c.batch * kv_workload.stride(c), c.batch);
+          duration = monotonic_ns() - t0;
+        }
+        if (db.refused) {
+          return 4;
+        }
+        checks = (checks + observed) % 2147483647i64;
+        responses = kv_workload.bytes_digest(responses, db.output, db.out_count);
+        samples = samples.with(i, duration);
+        if (i == 0) {
+          first = bench.allocs_after(mark);
+        }
+        i = i + 1;
+      }
+      let elapsed: i64 = monotonic_ns() - started;
+      let allocations: i64 = bench.allocs_after(mark);
+      let fresh: i64 = bench.fresh_bytes_after(fresh_mark);
+      export_core(db);
+      return report(c, RunReport { samples: samples, wall: elapsed, allocations: allocations, first: first, fresh: fresh, startup_ns: startup_ns, startup_allocs: startup_allocs, startup_fresh: startup_bytes, seed_allocs: seed_allocs, responses: responses, snapshot_checks: checks, live: db.live });
+    }
+  }
+}
+
+function saved_map(db: kv_config_map.Db): kv_config_map.Db {
+  return db;
+}
+
+function probe_map(db: kv_config_map.Db, tape: kv_workload.Tape, c: kv_workload.Config, index: i32): i64 {
+  let digest: i64 = db.entries.len() as i64;
+  digest = kv_workload.string_digest(digest, db.entries.get_or(tape.probes[index], ""));
+  return kv_workload.bytes_digest(digest, db.output, db.output.len());
+}
+
+function export_map(db: kv_config_map.Db): void {
+  let keys: string[] = db.entries.keys();
+  let i: i32 = 0;
+  while (i < keys.len()) {
+    let key: string = keys[i];
+    let value: string = db.entries.get_or(key, "");
+    print("entry," + kv_workload.hex(key.bytes(), 0, db.key_bytes) + "," + kv_workload.hex(value.bytes(), 0, db.value_bytes));
+    i = i + 1;
+  }
+}
+
+function run_map(c: kv_workload.Config): i32 {
+  let startup_mark: i64 = bench.alloc_count();
+  let startup_fresh: i64 = bench.bump_bytes();
+  let startup: i64 = monotonic_ns();
+  let tape: kv_workload.Tape = kv_workload.build(c);
+  let samples: i64[] = __alloc_i64(c.turns);
+  match (kv_config_map.new_db(c.capacity, c.key_bytes, c.value_bytes, c.batch)) {
+    None => {
+      return 2;
+    },
+    Some(db) => {
+      let seed_mark: i64 = bench.alloc_count();
+      let i: i32 = 0;
+      while (i < tape.seed_count) {
+        let count: i32 = tape.seed_count - i;
+        if (count > c.batch) {
+          count = c.batch;
+        }
+        db = kv_config_map.process(db, tape.seed, i * kv_workload.stride(c), count);
+        if (db.refused) {
+          return 3;
+        }
+        i = i + count;
+      }
+      let seed_allocs: i64 = bench.allocs_after(seed_mark);
+      let startup_ns: i64 = monotonic_ns() - startup;
+      let startup_allocs: i64 = bench.allocs_after(startup_mark);
+      let startup_bytes: i64 = bench.fresh_bytes_after(startup_fresh);
+      let mark: i64 = bench.alloc_count();
+      let fresh_mark: i64 = bench.bump_bytes();
+      let started: i64 = monotonic_ns();
+      let responses: i64 = 0i64;
+      let checks: i64 = 0i64;
+      let first: i64 = 0i64;
+      i = 0;
+      while (i < c.turns) {
+        let index: i32 = i % 100;
+        let observed: i64 = 0i64;
+        let duration: i64 = 0i64;
+        if (c.sharing == "shared") {
+          let old: kv_config_map.Db = saved_map(db);
+          let t0: i64 = monotonic_ns();
+          db = kv_config_map.process(db, tape.input, index * c.batch * kv_workload.stride(c), c.batch);
+          duration = monotonic_ns() - t0;
+          observed = probe_map(old, tape, c, index);
+        } else {
+          observed = probe_map(db, tape, c, index);
+          let t0: i64 = monotonic_ns();
+          db = kv_config_map.process(db, tape.input, index * c.batch * kv_workload.stride(c), c.batch);
+          duration = monotonic_ns() - t0;
+        }
+        if (db.refused) {
+          return 4;
+        }
+        checks = (checks + observed) % 2147483647i64;
+        responses = kv_workload.bytes_digest(responses, db.output, db.output.len());
+        samples = samples.with(i, duration);
+        if (i == 0) {
+          first = bench.allocs_after(mark);
+        }
+        i = i + 1;
+      }
+      let elapsed: i64 = monotonic_ns() - started;
+      let allocations: i64 = bench.allocs_after(mark);
+      let fresh: i64 = bench.fresh_bytes_after(fresh_mark);
+      export_map(db);
+      return report(c, RunReport { samples: samples, wall: elapsed, allocations: allocations, first: first, fresh: fresh, startup_ns: startup_ns, startup_allocs: startup_allocs, startup_fresh: startup_bytes, seed_allocs: seed_allocs, responses: responses, snapshot_checks: checks, live: db.entries.len() });
+    }
+  }
+}
+
+function saved_pmap(db: kv_config_pmap.Db): kv_config_pmap.Db {
+  return db;
+}
+
+function probe_pmap(db: kv_config_pmap.Db, tape: kv_workload.Tape, c: kv_workload.Config, index: i32): i64 {
+  let digest: i64 = db.entries.len() as i64;
+  digest = kv_workload.string_digest(digest, db.entries.get_or(tape.probes[index], ""));
+  return kv_workload.bytes_digest(digest, db.output, db.output.len());
+}
+
+function export_pmap(db: kv_config_pmap.Db): void {
+  let keys: string[] = db.entries.keys();
+  let i: i32 = 0;
+  while (i < keys.len()) {
+    let key: string = keys[i];
+    let value: string = db.entries.get_or(key, "");
+    print("entry," + kv_workload.hex(key.bytes(), 0, db.key_bytes) + "," + kv_workload.hex(value.bytes(), 0, db.value_bytes));
+    i = i + 1;
+  }
+}
+
+function run_pmap(c: kv_workload.Config): i32 {
+  let startup_mark: i64 = bench.alloc_count();
+  let startup_fresh: i64 = bench.bump_bytes();
+  let startup: i64 = monotonic_ns();
+  let tape: kv_workload.Tape = kv_workload.build(c);
+  let samples: i64[] = __alloc_i64(c.turns);
+  match (kv_config_pmap.new_db(c.capacity, c.key_bytes, c.value_bytes, c.batch)) {
+    None => {
+      return 2;
+    },
+    Some(db) => {
+      let seed_mark: i64 = bench.alloc_count();
+      let i: i32 = 0;
+      while (i < tape.seed_count) {
+        let count: i32 = tape.seed_count - i;
+        if (count > c.batch) {
+          count = c.batch;
+        }
+        db = kv_config_pmap.process(db, tape.seed, i * kv_workload.stride(c), count);
+        if (db.refused) {
+          return 3;
+        }
+        i = i + count;
+      }
+      let seed_allocs: i64 = bench.allocs_after(seed_mark);
+      let startup_ns: i64 = monotonic_ns() - startup;
+      let startup_allocs: i64 = bench.allocs_after(startup_mark);
+      let startup_bytes: i64 = bench.fresh_bytes_after(startup_fresh);
+      let mark: i64 = bench.alloc_count();
+      let fresh_mark: i64 = bench.bump_bytes();
+      let started: i64 = monotonic_ns();
+      let responses: i64 = 0i64;
+      let checks: i64 = 0i64;
+      let first: i64 = 0i64;
+      i = 0;
+      while (i < c.turns) {
+        let index: i32 = i % 100;
+        let observed: i64 = 0i64;
+        let duration: i64 = 0i64;
+        if (c.sharing == "shared") {
+          let old: kv_config_pmap.Db = saved_pmap(db);
+          let t0: i64 = monotonic_ns();
+          db = kv_config_pmap.process(db, tape.input, index * c.batch * kv_workload.stride(c), c.batch);
+          duration = monotonic_ns() - t0;
+          observed = probe_pmap(old, tape, c, index);
+        } else {
+          observed = probe_pmap(db, tape, c, index);
+          let t0: i64 = monotonic_ns();
+          db = kv_config_pmap.process(db, tape.input, index * c.batch * kv_workload.stride(c), c.batch);
+          duration = monotonic_ns() - t0;
+        }
+        if (db.refused) {
+          return 4;
+        }
+        checks = (checks + observed) % 2147483647i64;
+        responses = kv_workload.bytes_digest(responses, db.output, db.output.len());
+        samples = samples.with(i, duration);
+        if (i == 0) {
+          first = bench.allocs_after(mark);
+        }
+        i = i + 1;
+      }
+      let elapsed: i64 = monotonic_ns() - started;
+      let allocations: i64 = bench.allocs_after(mark);
+      let fresh: i64 = bench.fresh_bytes_after(fresh_mark);
+      export_pmap(db);
+      return report(c, RunReport { samples: samples, wall: elapsed, allocations: allocations, first: first, fresh: fresh, startup_ns: startup_ns, startup_allocs: startup_allocs, startup_fresh: startup_bytes, seed_allocs: seed_allocs, responses: responses, snapshot_checks: checks, live: db.entries.len() });
+    }
+  }
+}
+
+function main(): i32 {
+  match (kv_workload.parse(args())) {
+    None => {
+      return 2;
+    },
+    Some(c) => {
+      if (c.representation == "fip") {
+        return run_core(c);
+      }
+      if (c.representation == "map") {
+        return run_map(c);
+      }
+      return run_pmap(c);
+    }
+  }
+}

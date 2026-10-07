@@ -143,7 +143,8 @@ func (e EntryShape) OrDefault() EntryShape {
 // names. linux / darwin / android are genuinely different environments —
 // different object formats, different syscall vectors, and #6510's entry
 // shape is a per-environment property — but a host either has a
-// filesystem or it does not, and all three grant exactly the same set.
+// filesystem or it does not, and all three grant the same set, which
+// Darwin extends by the one thing only its kernel answers: sysctl(3).
 // A shared profile keeps that list written once without pretending the
 // three environments are one.
 type capabilityProfile = []string
@@ -252,6 +253,11 @@ var capabilityProfiles = map[string]capabilityProfile{
 	//     epoll, kqueue, or on wasm a table of wasi:io pollables.
 	"hosted-native": {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "xattr", "syscall", "unix", "reactor"},
 
+	// hosted-native plus `sysctl` — the kernel's named variables by MIB
+	// (load averages, boot time). Linux removed sysctl(2) and keeps the
+	// same facts in /proc, so only Darwin grants it.
+	"hosted-darwin": {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "xattr", "syscall", "unix", "reactor", "sysctl"},
+
 	// CLI-world wasm wires fs (the preview1 fd helpers) and tcp
 	// (wasi:sockets — wasmbin/wasi_tcp.go) but NOT subprocess:
 	// wasi:cli/exec-process isn't in the runtime helpers (the standing
@@ -301,7 +307,7 @@ type environment struct {
 // after.
 var environments = map[string]environment{
 	"linux":   {profile: "hosted-native", handlerKinds: []string{"handle", "main"}, entry: EntryProcess},
-	"darwin":  {profile: "hosted-native", handlerKinds: []string{"handle", "main"}, entry: EntryProcess},
+	"darwin":  {profile: "hosted-darwin", handlerKinds: []string{"handle", "main"}, entry: EntryProcess},
 	"android": {profile: "hosted-native", handlerKinds: []string{"handle", "main"}, entry: EntryProcess},
 	"wasi":    {profile: "wasi-cli", handlerKinds: []string{"main", "handle"}, entry: EntryProcess},
 
