@@ -1077,14 +1077,30 @@ let opened: u8[] = chacha20poly1305.open(key, nonce, sealed, aad)?;
 - `AeadError` is `KeyLength(i32)`, `NonceLength(i32)` or `Forged`, with
   `message()`.
 
+### `std/crypto/field25519`
+
+Arithmetic in the integers mod 2^255 - 19, the field `std/crypto/x25519` and
+`std/crypto/ed25519` share. An element (`Fe`) is ten signed limbs of 26 and
+25 bits in `i64`, so every product fits, and no operation branches on or
+indexes memory with a limb.
+
+- `add`, `sub`, `neg`, `mul`, `sq` — `mul` and `sq` take a sum or difference
+  of up to three reduced elements and answer a reduced one; `carry(a)`
+  reduces a longer sum.
+- `from_i64(v)`, `from_bytes(b)` (32 little-endian bytes, the top bit
+  ignored) and `to_bytes(a)`, the canonical encoding.
+- `invert(a)` is 1/a and `pow22523(a)` is a^((p-5)/8), the power a square
+  root is built from.
+- `cswap(a, b, swap)` and `cmov(a, b, flag)` swap or select by mask on a 0 or
+  1 flag.
+
 ### `std/crypto/x25519`
 
 The X25519 Diffie-Hellman function of RFC 7748, TLS 1.3's default key share
-(#9858). Field elements are ten signed limbs of 26 and 25 bits in `i64`; the
-ladder swaps by mask. Verified against the RFC's vectors, including the
-1,000-step iterated one (`tests/stdlib/x25519_test.fern`,
-`TestSelfHostX25519Iterated1000`). About 0.2 ms per scalar multiplication on
-x86-64.
+(#9858), over `std/crypto/field25519`. The ladder swaps by mask. Verified
+against the RFC's vectors, including the 1,000-step iterated one
+(`tests/stdlib/x25519_test.fern`, `TestSelfHostX25519Iterated1000`). About
+0.2 ms per scalar multiplication on x86-64.
 
 - `public_key(scalar): Result[u8[], X25519Error]` — the 32-byte public key
   of a 32-byte secret.
