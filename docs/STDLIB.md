@@ -1048,7 +1048,9 @@ The ChaCha20-Poly1305 AEAD of RFC 8439, the first TLS 1.3 primitive (#9858),
 and its two parts. Pure Fern and constant time by construction: the cipher is
 `u32` additions, rotations and exclusive ors, Poly1305 is 26-bit limbs
 reduced with masks, and the tag compare has no early exit. Verified against
-the RFC's vectors (`tests/stdlib/chacha20poly1305_test.fern`).
+the RFC's vectors (`tests/stdlib/chacha20poly1305_test.fern`), and run under
+valgrind's memcheck with the key and plaintext marked secret by the
+constant-time gate (`docs/TEST-GATES.md`).
 
 ```fern
 let sealed: u8[] = chacha20poly1305.seal(key, nonce, plaintext, aad)?;

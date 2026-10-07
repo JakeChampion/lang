@@ -424,6 +424,10 @@ var coreBuiltins = map[string]bool{
 	// the rest answer 0, meaning use the files, which is the truth there
 	// (#9815).
 	"__getpwuid_name": true,
+	// The constant-time marks are valgrind client requests, a no-op
+	// wherever valgrind is not running.
+	"__ct_secret": true,
+	"__ct_public": true,
 
 	"map_new":                     true,
 	"cell_new":                    true,

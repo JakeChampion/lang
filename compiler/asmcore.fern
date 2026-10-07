@@ -2621,6 +2621,28 @@ pub function rt_src_proc_waitpid_status(t: string): string {
   return "function __fern_proc_waitpid_status(pid: i32): i32 { let st: usize = __raw_scratch(16); let rc: i32 = __syscall4(" + sysno(t, "wait4") + ", pid as i64, st as i64, 0, 0) as i32; if (rc < 0) { return rc; } return __load_i32(st); }";
 }
 
+// rt_src_ct_mark backs `__ct_secret(b)` / `__ct_public(b)`: memcheck's
+// MAKE_MEM_UNDEFINED / MAKE_MEM_DEFINED client request (0x4d430001 /
+// 0x4d430002) over the view's bytes. A view is a packed array or a string
+// descriptor tagged with bit 1, decoded as rt_src_writer_bytes does. The
+// request block lands in __fern_scratch, so this joins the scratch gate.
+pub function rt_src_ct_mark(): string {
+  return "function __fern_ct_mark(bytes: usize, req: i64): i32 { let n: i32 = 0; let p: usize = 0; if (((bytes as i32) & 2) != 0) { let base: usize = __raw_addr(bytes, 0 - 2); n = __load_i32(__raw_addr(base, 8)); p = __raw_load_ptr(base, 0); } else { n = __load_i32(bytes); p = __raw_addr(bytes, 8); } "
+    + "let a: usize = __raw_scratch(48); __store_i64(a, req); __store_i64(__raw_addr(a, 8), p as i64); __store_i64(__raw_addr(a, 16), n as i64); __store_i64(__raw_addr(a, 24), 0 as i64); __store_i64(__raw_addr(a, 32), 0 as i64); __store_i64(__raw_addr(a, 40), 0 as i64); "
+    + "return __raw_vg_request(a) as i32; }"
+    + " function __fern_ct_secret(bytes: usize): i32 { return __fern_ct_mark(bytes, 1296236545 as i64); }"
+    + " function __fern_ct_public(bytes: usize): i32 { return __fern_ct_mark(bytes, 1296236546 as i64); }";
+}
+
+// ct_mark_helper names the rt_src_ct_mark function a ct_mark op calls, by the
+// op's `declassify` immediate.
+pub function ct_mark_helper(declassify: i32): string {
+  if (declassify == 1) {
+    return "ct_public";
+  }
+  return "ct_secret";
+}
+
 pub function rt_src_proc_waitpid_nohang(t: string): string {
   return "function __fern_proc_waitpid_nohang(pid: i32): i32 { let st: usize = __raw_scratch(16); let rc: i32 = __syscall4(" + sysno(t, "wait4") + ", pid as i64, st as i64, 1, 0) as i32; if (rc < 0) { return rc; } if (rc == 0) { return 0 - 1; } let w: i32 = __load_i32(st); let sig: i32 = w & 127; if (sig != 0) { return sig + 128; } return (w >> 8) & 255; }";
 }
@@ -7333,6 +7355,8 @@ function builtin_i32_names(): string[] {
     // Fixed static scratch buffer for syscall leaves (timespec /
     // stat) — reused, never freed. Returns the buffer ptr as i32.
     "__raw_scratch",
+    // valgrind's client request: its result word, 0 outside valgrind.
+    "__raw_vg_request",
     // __arr_push_shared_count(): the rc==1 cliff counter. i32,
     // unlike the bump mark above — it counts appends, not bytes,
     // and a healthy run reports 0. Matches native's FuncSigs.
@@ -10335,6 +10359,8 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     // crash-only supervision (#5686): the entry owns fork / wait4.
     "__fern_buf_push_bytes_mapped_u8", "__fern_buf_push_bytes_filtered_u8", "__fern_buf_push_bytes_expanded_u8", "__fn___fern_proc_fork", "__fn___fern_proc_waitpid",
     "__fn___fern_proc_waitpid_nohang", "__fn___fern_proc_waitpid_status", "__fn___fern_proc_exec",
+    // The constant-time marks.
+    "__fn___fern_ct_secret", "__fn___fern_ct_public",
     "__fn___fern_proc_exec_as",
     // one pid's liveness, delivering a signal to one, and this
     // process's descriptor ceiling.

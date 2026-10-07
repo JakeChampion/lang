@@ -14,7 +14,8 @@
 // exclusive ors on `u32`, Poly1305 is 26-bit limbs multiplied as `u64` and
 // reduced with masks, and the tag is compared with no early exit. Nothing
 // branches on, or indexes memory with, a secret; only the lengths, which are
-// public, steer the loops.
+// public, steer the loops, and `open` branches on whether the tag matched.
+// The valgrind gate (`__ct_secret`, docs/TEST-GATES.md) checks this.
 
 import "core/int";
 
@@ -490,7 +491,11 @@ pub function open(key: [u8], nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[],
     diff = diff | want[i] ^ sealed[n + i];
     i = i + 1;
   }
-  if (diff != 0) {
+  // The verdict is the one secret-derived value allowed to steer a branch.
+  let verdict: u8[] = __alloc_u8(1);
+  verdict = verdict.with(0, diff);
+  __ct_public(verdict);
+  if (verdict[0] != 0) {
     return Err(Forged);
   }
   return Ok(__xor_stream(k, 1, sealed, 0, n, 0));

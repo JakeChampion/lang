@@ -267,6 +267,9 @@ var rcInertBuiltins = map[string]bool{
 
 	"__heap_mark": true, "__heap_release_to": true,
 
+	// The constant-time marks lend the bytes to a valgrind client request.
+	"__ct_secret": true, "__ct_public": true,
+
 	"__method_Array_len": true, "__method_slice_len": true,
 	"__method_string_len": true, "__method_Cell_get": true,
 	"__method_Cell_set": true, "cell_new": true,
