@@ -7,8 +7,7 @@ import "testing"
 // function already in the module's symbol table — no new IR construct — and all
 // the building blocks (if, arithmetic, calls, string +) are individually pinned,
 // so eligibility never bails. Recursive *local* (nested, hoisted) functions are
-// covered by self_host_recursive_local_test.go (a Go-backend cross-check, no
-// wasm leg).
+// covered by self_host_recursive_local_test.go.
 //
 // Each case is oracle-checked against the interpreter; every result is <= 126
 // (wasmtime exit-code truncation, cf. #2908). Mirrors

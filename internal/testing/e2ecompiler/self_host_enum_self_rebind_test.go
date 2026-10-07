@@ -2,10 +2,10 @@ package e2ecompiler
 
 import "testing"
 
-// An enum local rebound through a counted handback — `cur = f(cur)` where f is
-// an "ENUM:" member returning its parameter — keeps its release on the AST
-// lowering (#10447): the result is the local's own chain with one more count,
-// and the rebind gives the old count back.
+// An enum local rebound through a counted handback — `cur = f(cur)` where f
+// returns its parameter — keeps its release (#10447): the result is the
+// local's own chain with one more count, and the rebind gives the old count
+// back.
 
 const enumRebindHead = `enum Sc { SA(i32), SB }
 enum Rc { RA(i32[]), RB }

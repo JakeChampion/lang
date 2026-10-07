@@ -10,21 +10,17 @@ import (
 )
 
 // Bootstrap-style end-to-end demo. asm_run.fern is a driver
-// that reads lang source from stdin, runs it through the
-// self-host lexer + parser + asm emitter, and prints the
-// resulting AT&T x86_64 assembly to stdout. This table-driven
-// test runs every entry through that pipeline:
+// that reads Fern source from stdin, runs it through the
+// self-host lexer + parser + typed lowering + x86-64 IR
+// backend, and prints the resulting AT&T x86_64 assembly to
+// stdout. This table-driven test runs every entry through that
+// pipeline:
 //
-//   1. Build asm_run.fern once via the production langc.
+//   1. Build asm_run.fern once with the stage0 compiler.
 //   2. For each test case: pipe its source to the driver,
 //      capture stdout (= emitted asm), gcc-assemble the asm
 //      into a standalone Linux ELF, run it, assert the inner
 //      exit code matches the entry's expected value.
-//
-// End-to-end: lang source → fern-port asm emitter → real
-// native binary → expected exit code. Proves the asm.fern
-// lowering produces working executables across the full
-// feature matrix it covers.
 
 func TestSelfHostAsmRunX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
@@ -818,8 +814,8 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 			"bc",
 			"",
 		},
-		// 64-bit-element arrays (i64[] / f64[]): the native backend already
-		// uses 8-byte element slots, so values above 2^31 round-trip.
+		// 64-bit-element arrays (i64[] / f64[]): the x86-64 backend uses
+		// 8-byte element slots, so values above 2^31 round-trip.
 		// Mirrors the wasm i64arr-* cases.
 		{
 			"arr-i64-literal-index-large",
@@ -1170,7 +1166,7 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"field-mutate-both", "struct P { x: i32, y: i32 } function main(): i32 { let p = P { x: 0, y: 0 }; p = P { ...p, x: 30 }; p = P { ...p, y: 12 }; return p.x + p.y; }", 42, "", ""},
 		{"field-mutate-loop", "struct C { n: i32 } function main(): i32 { let c = C { n: 0 }; let i = 0; while (i < 5) { c = C { ...c, n: c.n + i }; i = i + 1; } return c.n; }", 10, "", ""},
 		{"field-mutate-alias", "struct P { x: i32 } function main(): i32 { let p = P { x: 1 }; let q = p; q = P { ...q, x: 9 }; return p.x; }", 1, "", ""},
-		// String-returning functions (str_ret_fns tracking; box leaks).
+		// String-returning functions: the call result types as a string.
 		{"str-return", "function greet(): string { return \"hi\"; } function main(): i32 { let s = greet(); return s.len(); }", 2, "", ""},
 		{"str-return-concat", "function shout(s: string): string { return s + \"!\"; } function main(): i32 { let g = shout(\"hey\"); return g.len(); }", 4, "", ""},
 		// String-typed struct/enum fields (leak-safe — strings never freed, no RC).
@@ -1271,9 +1267,8 @@ func TestSelfHostAsmRunX86_64(t *testing.T) {
 		{"strarr-param", "function f(names: string[]): i32 { return names[0].len(); } function main(): i32 { return f([\"abcd\"]); }", 4, "", ""},
 		{"strarr-loop", "function main(): i32 { let names = [\"a\", \"bb\", \"ccc\"]; let s = 0; let i = 0; while (i < 3) { s = s + names[i].len(); i = i + 1; } return s; }", 6, "", ""},
 		{"strarr-eq-elem", "function main(): i32 { let names = [\"hi\", \"ho\"]; if (names[0] == \"hi\") { return 7; } return 0; }", 7, "", ""},
-		// string[]-returning functions: the array is rc-tracked (move-on-return),
-		// the call site tracks the result as string[] (element typing via
-		// strarr_ret_fns) so `xs[i]` is a string. Elements leak.
+		// string[]-returning functions: the array moves out on return and the
+		// call site types the result as string[], so `xs[i]` is a string.
 		{"strarr-ret", "function names(): string[] { return [\"a\", \"bb\", \"ccc\"]; } function main(): i32 { let xs = names(); return xs[1].len(); }", 2, "", ""},
 		{"strarr-ret-direct-index", "function names(): string[] { return [\"a\", \"bb\", \"ccc\"]; } function main(): i32 { return names()[2].len(); }", 3, "", ""},
 		{"strarr-ret-len", "function names(): string[] { let a = [\"x\", \"yy\"]; return a; } function main(): i32 { let xs = names(); return xs.len() + xs[1].len(); }", 4, "", ""},

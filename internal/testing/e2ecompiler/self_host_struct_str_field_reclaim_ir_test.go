@@ -8,12 +8,10 @@ import (
 )
 
 // TestSelfHostStructStrFieldReclaimIRX86_64 pins the #4297 A2 slice: a `string`
-// FIELD of a reclaimable, non-escaping struct local is now reclaimed when the
-// struct is dropped. The struct-lit construction retains (rc_inc) a non-fresh
-// string field — gated on the per-lit ownership precompute (field_ownerships /
-// str_producer_ownership) so the classifying read stays out of the lowering's hot
-// path — and the k_str arm of the per-type __struct_drop frees it (rc-aware:
-// free at rc==1, dec at rc>1, skip an immortal view/literal at rc<0).
+// FIELD of a reclaimable, non-escaping struct local is reclaimed when the
+// struct is dropped. The construction retains a non-fresh string field, and the
+// drop releases it rc-aware: free at rc==1, dec at rc>1, skip an immortal
+// view/literal at rc<0.
 //
 // The reclaim is proven by SCALE: a fresh-string-field struct is built and
 // dropped every iteration. WITHOUT the field-drop the fresh name box leaks each
@@ -89,11 +87,9 @@ function main(): i32 { let v: i32 = churn(2000000); if (__rc_underflow_count() !
 		"struct-str-field-base-copy-balanced", 0)
 
 	// NESTED string-only struct (deep-drop): `B { name: string }` has no rc-array
-	// field, so before #4297 A2's nddo_reach extension it was NOT deep-drop-worthy —
-	// dropping the outer `A` shallow-freed the inner B box and LEAKED B.name. Now B
-	// is deep-drop-worthy, so A's drop (when B is uniquely owned — a fresh literal
-	// here) runs $__struct_drop_B, whose k_str arm frees B.name (a fresh concat, rc=1).
-	// A is reclaimable (its `items` array) and non-escaping, swept each iteration.
+	// field, but dropping the outer `A` must still release B.name (a fresh concat,
+	// rc=1), not just the inner B box. A is reclaimable (its `items` array) and
+	// non-escaping, swept each iteration.
 	// 1,500,000 cycles stay flat (B.name freed) → exit 0; a leak SIGKILLs (137).
 	run(t, `struct B { name: string }
 struct A { inner: B, items: i32[] }
@@ -101,14 +97,13 @@ function churn(n: i32): i32 { let pre: string = "z"; let bad: i32 = 0; let i: i3
 function main(): i32 { let v: i32 = churn(1500000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"nested-string-only-struct-reclaim", 0)
 
-	// STRING[] FIELD (the k_str_arr slice): a struct whose string[] field is
-	// only ever constructed from element-fresh array literals and read only
-	// via .len() is admitted by the strarrfld scan ("strfldok:arr:<T>"), so
-	// the consume-rebind __field_reclaim and the exit __struct_drop now
-	// deep-free the field via __fern_str_arr_free (elements + buffer at
-	// rc==1). 4,000,000 build/drop cycles stay balanced — no over-release
-	// (underflow 0) and correct values → exit 0. The second element is a concat over
-	// ids so it is built on the heap rather than folded to a constant.
+	// STRING[] FIELD: a struct whose string[] field is only ever constructed
+	// from element-fresh array literals and read only via .len() has the field
+	// deep-freed via __fern_str_arr_free (elements + buffer at rc==1) at the
+	// rebind and at scope exit. 4,000,000 build/drop cycles stay balanced — no
+	// over-release (underflow 0) and correct values → exit 0. The second element
+	// is a concat over ids so it is built on the heap rather than folded to a
+	// constant.
 	run(t, `struct Diag { code: i32, notes: string[] }
 @noinline function ids(s: string): string { return s; }
 function churn(n: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < n) { let d: Diag = Diag { code: i, notes: ["alpha", ids("beta") + "x"] }; if (d.notes.len() != 2) { bad = 1; } i = i + 1; } return bad; }
@@ -135,11 +130,9 @@ function main(): i32 { let d: Diag = Diag { code: 3, notes: [ids("al") + "pha", 
 		"strarr-field-read-excluded", 0)
 
 	// PRODUCER-CALL ELEMENTS, BOUNDED HIGH-WATER: the field is built from calls
-	// to `w`, a whole-program-proven fresh-string producer, rather than from
-	// inline concats. The store gate now asks strarr_value_is_fresh — the same
-	// question the "SARR:" local credit and the "STRARR:" producer admission
-	// ask — so the type is admitted; the registry-blind sibling it replaced
-	// refused any call and every element box leaked per round → 98.
+	// to `w`, a fresh-string producer, rather than from inline concats. Those
+	// elements are owned like a literal's; a leaked element box per round
+	// exits 98.
 	run(t, `struct Diag { code: i32, notes: string[] }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function build(pre: string): i32 { let d: Diag = Diag { code: 1, notes: [w(pre), w(pre)] }; return d.notes.len(); }
@@ -165,15 +158,12 @@ function churn(n: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i
 function main(): i32 { let seed: i32 = useother("q"); if (seed < 0) { return 96; } let w0: i32 = churn(5000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(5000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w0 != x) { return 97; } return 0; }`,
 		"strarr-field-sibling-name-not-poisoned", 0)
 
-	// A BORROWED-PARAMETER store is admitted, and the retain is what makes that
-	// safe: the construction takes a reference (both gated on
-	// struct_routes_field_reclaim), so `Esc`'s drop decs a count it owns instead
-	// of freeing the caller's array. This row was written when the store was
-	// REFUSED and asserted the caller's array survived anyway; it asserts the
-	// same values now, which is the stronger claim — it is what proves the
-	// retain balances. `Ok.notes`, same field name, is admitted on its own
-	// merits. A long string is built between the store and the reads so a
-	// wrongly freed block is really recycled first. 2 + 43 + 43 + 1 = 89.
+	// A BORROWED-PARAMETER store: the construction takes a reference, so
+	// `Esc`'s drop decs a count it owns instead of freeing the caller's array,
+	// and the caller's values survive. `Ok.notes`, same field name, is
+	// reclaimed on its own merits. A long string is built between the store and
+	// the reads so a wrongly freed block is really recycled first.
+	// 2 + 43 + 43 + 1 = 89.
 	run(t, `struct Esc { notes: string[] }
 struct Ok { notes: string[] }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
@@ -184,14 +174,10 @@ function churn(n: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i
 function main(): i32 { let v: i32 = churn(3000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"strarr-field-borrowed-param-retained", 0)
 
-	// WHOLE-ARRAY PRODUCER CALL as the field value, BOUNDED HIGH-WATER: the
-	// store gate accepted only an array LITERAL, so `Node { deps: deps_of(pre) }`
-	// was refused and every element box plus the buffer leaked per round — the
-	// same omission the "SARR:" local credit had for its initialiser.
-	// fn_returns_fresh_strarr is the "STRARR:" registry's own admission rule,
-	// named so the field gate asks the question the registry already answers:
-	// every element of that result is a box the callee allocated at rc=1, so
-	// the struct owns them exactly as it owns a literal's.
+	// WHOLE-ARRAY PRODUCER CALL as the field value, BOUNDED HIGH-WATER:
+	// `Node { deps: deps_of(pre) }`. Every element of that result is a box the
+	// callee allocated at rc=1, so the struct owns them exactly as it owns a
+	// literal's, and the elements and the buffer are released each round.
 	run(t, `struct Node { name: string, deps: string[], mtime: i32 }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function deps_of(pre: string): string[] { let out: string[] = []; let i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }

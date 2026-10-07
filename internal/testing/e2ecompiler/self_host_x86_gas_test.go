@@ -10,7 +10,7 @@ import (
 
 // TestSelfHostX86Gas exercises the self-hosted GAS (AT&T) assembly
 // front-end (compiler/x86_native.fern PART 2) — the parser that
-// turns asm.fern's text into x86_native.fern encoder calls. It concatenates
+// turns GAS text into x86_native.fern encoder calls. It concatenates
 // x86_native.fern + a self-test main() that checks the
 // operand parsers and a small assembled program, run through the self-host
 // wasm pipeline (wasm_run -> WAT -> wasmtime). Exit 0 = pass.
@@ -161,14 +161,14 @@ func TestSelfHostX86GasByteRegRuns(t *testing.T) {
 	runX86GasNativeDriver(t, "gasbytereg42", x86GasByteRegDriverMain, 42)
 }
 
-// TestSelfHostX86GasRuntimeOpsRuns exercises the mnemonics asm.fern's
-// mmap-era alloc/RC runtime emits that the front-end grew for #4801:
+// TestSelfHostX86GasRuntimeOpsRuns exercises the mnemonics the x86-64
+// alloc/RC runtime emits that the front-end grew for #4801:
 // unsuffixed movabs, shrq, btq + jc (the RC sentinel-bit test), incl
 // sym(%rip) + movl sym(%rip) (the rc-underflow counter), movl $imm →
 // mem (refcount zeroing), and store-form cmpq %reg, mem (the array-push
-// capacity check). Before, unknown mnemonics were silently dropped and
-// the two mis-dispatched forms encoded a WRONG instruction — the
-// assembled runtime then died in __fern_alloc's exit-137 bounds trap.
+// capacity check). An unknown mnemonic must not be silently dropped, nor
+// a form mis-dispatched into a WRONG instruction — the assembled runtime
+// then dies in __fern_alloc's exit-137 bounds trap.
 func TestSelfHostX86GasRuntimeOpsRuns(t *testing.T) {
 	runX86GasNativeDriver(t, "gasruntimeops42", x86GasRuntimeOpsDriverMain, 42)
 }

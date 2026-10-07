@@ -31,15 +31,15 @@ var errorTraitIRCases = []struct {
 		43},
 
 	// IIFE (value-position) match with a dyn Error payload: both the Ok arm
-	// and the Err arm yield i32.  iife_payload_bindable must admit the dyn
-	// payload.  handler(false) → Err(NotFound{n:7}) → e.code() = 7.
+	// and the Err arm yield i32, and the Err arm binds the dyn payload.
+	// handler(false) → Err(NotFound{n:7}) → e.code() = 7.
 	{"iife-err-arm-dyn-dispatch",
 		`trait Error { function code(self: Self): i32; } struct NotFound { n: i32 } impl Error for NotFound { function code(self: Self): i32 { return self.n; } } function find(ok: boolean): Result[i32, NotFound] { if (ok) { return Ok(42); } return Err(NotFound { n: 7 }); } function handler(ok: boolean): Result[i32, dyn Error] { let v: i32 = find(ok)?; return Ok(v + 1); } function main(): i32 { let a: i32 = match (handler(true)) { Ok(v) => v, Err(e) => e.code() }; let b: i32 = match (handler(false)) { Ok(v) => v, Err(e) => e.code() }; return a + b; }`,
 		50}, // 43 + 7
 
 	// Two Error impls in scope; dispatch routes to the right concrete method.
-	// find_nf returns NotFound{n:3}; find_pe returns PermError{code:5}.
-	// handler_nf → dyn Error(NotFound), handler_pe → dyn Error(PermError).
+	// find_nf returns NotFound{n:3}; find_pe returns PermError{c:5}.
+	// run_nf → dyn Error(NotFound), run_pe → dyn Error(PermError).
 	// e.code() for NotFound = 3, for PermError = 5; sum = 8.
 	{"two-impls-dispatch",
 		`trait Error { function code(self: Self): i32; } struct NotFound { n: i32 } struct PermError { c: i32 } impl Error for NotFound { function code(self: Self): i32 { return self.n; } } impl Error for PermError { function code(self: Self): i32 { return self.c; } } function find_nf(): Result[i32, NotFound] { return Err(NotFound { n: 3 }); } function find_pe(): Result[i32, PermError] { return Err(PermError { c: 5 }); } function run_nf(): Result[i32, dyn Error] { let v: i32 = find_nf()?; return Ok(v); } function run_pe(): Result[i32, dyn Error] { let v: i32 = find_pe()?; return Ok(v); } function main(): i32 { let a: i32 = 0; let b: i32 = 0; match (run_nf()) { Ok(v) => { a = v; }, Err(e) => { a = e.code(); } } match (run_pe()) { Ok(v) => { b = v; }, Err(e) => { b = e.code(); } } return a + b; }`,

@@ -7,22 +7,14 @@ import (
 	"testing"
 )
 
-// TestSelfHostArrArrCallRetReclaimIRX86_64 pins #4355 slice 10: an arr-of-arr
-// local initialised from a CALL (`let g: T[][] = mk(..)`) earns the same
-// ARRARR:/ARRARRS: credits the literal it returns would — opt_fresh_ret_fns_of
-// registers "AAC:<name>|<flag>" for FREE functions whose every return is a
-// fresh arr-of-arr literal (arrarr_lit_is_fresh; flag "s" when every return is
-// also strings-fresh), and collect_fresh_arrarr_names admits the call init off
-// that registry. The self-host IR path has no return-transfer inc, so the call
-// result is rc=1 and solely owned by the caller.
+// TestSelfHostArrArrCallRetReclaimIRX86_64 pins reclaim of an arr-of-arr local
+// initialised from a CALL (`let g: T[][] = mk(..)`, #4355): the caller solely
+// owns the result, so each rebind frees the whole structure, inner strings
+// included, exactly as a literal initialiser would. A callee that embeds its
+// string param in the result must not get that param freed by the caller.
 //
-// Also pins the slice-9 double-sweep fix: an arrarr slot is ALSO is_arr, and
-// the exit sweep used to free it twice (a shallow arr_dec zeroed the rc, then
-// the separate arrarr loop's helper saw rc==0, ticked the underflow detector,
-// and skipped its element walk — inner strings leaked at function scope). The
-// whole-structure helper now runs INSIDE the is_arr sweep (one slot, one
-// free); the fn-scope-sweep case would exit 99 (detector) or 98 (leak) on the
-// old code.
+// Also pins one release per slot at function exit: the fn-scope case exits 99
+// if the structure is released twice and 98 if its inner strings leak.
 func TestSelfHostArrArrCallRetReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -161,9 +153,9 @@ function main(): i32 {
     return 0;
 }`, "arrarr-callret-local-ret-credit", 0)
 
-	// A returned local GROWN by a self-append before the return: only the
-	// returned-local proof (aac_local_kind) admits it, so "AAC:mk4|s" and the
-	// strict credit rest on it alone.
+	// A returned local GROWN by a self-append before the return: the append
+	// rebind must not cost the call result its freshness, so the caller still
+	// frees the whole structure per rebind.
 	run(t, `function mk4(i: i32): string[][] {
     let t: string[][] = [["a" + "b"]];
     t = t.append(["c" + "d"]);

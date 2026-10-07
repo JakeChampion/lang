@@ -14,19 +14,16 @@ import (
 // self-host CLI must compile a program to the same asm the native build of the
 // same driver emits.
 //
-// Before the fix the wasm-hosted driver ran linear memory to 3.8 GB and
-// trapped on `function main(): i32 { return 0; }`. emit_module_funcs builds
-// its FnSigs by functional update over the whole-program registry it was
-// handed, and a base copy hands the new box every array field pointer with no
-// retain; wasm's own `__struct_drop_<T>` classifier then deep-freed those
-// `string[]` fields ungated where the register backends' shared classifier
-// requires the `strfldok:arr:` / `arrbuf:` admission, so the caller's
-// `b.strfld_ok_types` was read after its buffer and elements had been freed
-// and recycled. The x86-64-hosted build of the same source never had the arm,
-// which is why every native leg was green.
+// A functional-update copy of a struct shares its base's array fields, and the
+// wasm build has to count that sharing exactly as the register builds do: a
+// drop that frees the shared `string[]` fields leaves the caller reading a
+// freed and recycled buffer. On this driver that runs linear memory to 3.8 GB
+// and traps on `function main(): i32 { return 0; }`, while the x86-64-hosted
+// build of the same source stays green.
 //
 // The wasm_ir_run twin of this test (self_host_wasm_hosted_nested_arith_test.go)
-// does not reach it: that driver never builds a FnSigs by functional update.
+// does not reach it: that driver never builds its signature table by
+// functional update.
 func TestSelfHostWasmHostedX86CompilerMatchesNative(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds the self-host x86-64 driver twice; skipped in -short")

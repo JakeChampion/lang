@@ -25,22 +25,9 @@ func fnLabels(asm string) []string {
 
 // TestSelfHostCLIPrunesStdlibImportClosureX86_64 pins that `fern.fern` — the
 // self-hosted CLI, the binary the whole toolchain ships — prunes the functions
-// a program cannot reach before it emits.
-//
-// It did not. `treeshake.treeshake` was called in exactly one place there, on
-// the diagnostics side of `capability_violations`, and its result was thrown
-// away; the module handed to codegen was the whole merged import closure. One
-// `import "std/string"` reaches core/int, core/bigint, std/array and
-// std/unicode transitively, so bench/string_count_byte emitted 958
-// functions and 81,463 instructions against the native compiler's 27 and 640 —
-// 127x, on a benchmark both compilers had a checked-in size baseline for.
-//
-// Neither baseline could see it. `.github/perf-baseline-selfhost.txt` compares
-// the self-host against ITSELF across the three targets, and
-// `.github/perf-baseline.txt` covers the native compiler; the two count the
-// same thing the same way (`grep -c '^[[:space:]]'` over the same `.s`) on the
-// same benchmark names and are never read against each other. This test is
-// that missing comparison, as a gate rather than an advisory lane.
+// a program cannot reach before it emits. Without the prune, one
+// `import "std/string"` carries core/int, core/bigint, std/array and
+// std/unicode in transitively, and the case below emits 958 functions.
 //
 // Two assertions, because the count alone is a weak claim. NAMED dead
 // functions must be absent — the shape internal/testing/e2e/treeshake_backend_dce_test
@@ -48,10 +35,9 @@ func fnLabels(asm string) []string {
 // total must stay under a ceiling, which is what catches a whole closure
 // surviving again. The ceiling is deliberately loose: the self-host shake
 // over-approximates reachability BY NAME, so `==` in any reachable line keeps
-// every `*.eq` in the program and `<` keeps every `*.cmp` — 69 functions
-// against native's 1 on the case below. A tight ratchet would fail on an
-// unrelated stdlib edit; the defect this exists to catch is two orders of
-// magnitude, not a few percent.
+// every `*.eq` in the program and `<` keeps every `*.cmp`. A tight ratchet
+// would fail on an unrelated stdlib edit; the defect this exists to catch is
+// an order of magnitude, not a few percent.
 //
 // Native only: the CLI takes host filesystem paths as argv, so a qemu runner
 // would not resolve them (mirrors TestSelfHostStdTestE2E).

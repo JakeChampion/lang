@@ -6,9 +6,8 @@ import (
 
 // TestSelfHostTupStructTypePathReclaimIRArm64 is the arm64 port of
 // TestSelfHostTupStructTypePathReclaimIRX86_64: the TYPE-driven struct-element drop
-// (emit_tuple_type_child_drops' struct arm + the structs-threaded admission predicates)
-// lives in shared lowering and lowers through op_tuple_get / __struct_drop_<P> /
-// __fern_rc_dec, all backend-complete. Case table shared with the x86-64 leg.
+// is shared lowering, through op_tuple_get and __fern_rc_dec. Case table shared
+// with the x86-64 leg.
 func TestSelfHostTupStructTypePathReclaimIRArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range tupStructTypePathCases {

@@ -32,17 +32,16 @@ const crossTypeReuseLiveDonor = `struct Point { x: i32, y: i32 } struct Pair { a
 const crossTypeReuseArrDeadDonor = `struct Holder { id: i32, items: i32[] } struct Bag { tag: i32, data: i32[] } function main(): i32 { let k = 1; let h = Holder { id: 1 * k, items: [1, 2] }; let s = h.id + h.items[0]; let b = Bag { tag: s, data: [3, 4] }; return b.tag + b.data[0]; }`
 const crossTypeReuseArrLiveDonor = `struct Holder { id: i32, items: i32[] } struct Bag { tag: i32, data: i32[] } function main(): i32 { let k = 1; let h = Holder { id: 1 * k, items: [1, 2] }; let b = Bag { tag: 5 * k, data: [3, 4] }; return b.tag + b.data[0] + h.id + h.items[1]; }`
 
-// crossTypeReuseIRCases exercise cross-TYPE FBIP reuse (structs_reuse_compatible):
-// a dead struct donor whose box is reused in place by a LATER construction of a
-// DIFFERENT struct type with the same box class (identical per-position field
-// widths + kinds — scalar↔scalar or leak-safe-array↔leak-safe-array). Native does
-// this (general_reuse same-box-class incl. pointer fields), so the self-host
-// must not require the donor and recipient to be the SAME type. Each case
-// embeds a value check (returns 90/91 on mismatch)
-// and then returns __rc_underflow_count() — so want=0 means both the reused value is
-// correct AND no over-release occurred. A mis-sized reuse (wrong box class) would
-// corrupt the freelist and surface as a wrong value or non-zero underflow,
-// especially the "-probe" cases that allocate again after the reuse.
+// crossTypeReuseIRCases exercise cross-TYPE FBIP reuse: a dead struct donor
+// whose box is reused in place by a LATER construction of a DIFFERENT struct
+// type with the same box class (identical per-position field widths + kinds —
+// scalar↔scalar or leak-safe-array↔leak-safe-array), so the donor and
+// recipient need not be the SAME type. Each case embeds a value check (returns
+// 90/91 on mismatch) and then returns __rc_underflow_count() — so want=0 means
+// both the reused value is correct AND no over-release occurred. A mis-sized
+// reuse (wrong box class) would corrupt the freelist and surface as a wrong
+// value or non-zero underflow, especially the "-probe" cases that allocate
+// again after the reuse.
 var crossTypeReuseIRCases = []struct {
 	name string
 	main string

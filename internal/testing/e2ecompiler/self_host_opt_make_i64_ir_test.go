@@ -2,24 +2,18 @@ package e2ecompiler
 
 import "testing"
 
-// optMakeI64IRCases pin the i64/u64 Option/Result CONSTRUCTION-width fix to the
+// optMakeI64IRCases pin the i64/u64 Option/Result CONSTRUCTION width to the
 // self-host IR path on x86-64 + wasm. `return Ok(40)` / `Some(40)` / `Err(40)` in
 // a function whose declared payload is i64/u64 must build the 8-byte box (payload
 // at offset 8) that every consumer reads via op_opt_payload_w(64, true) — match
-// arms and the try-operator. Before the fix the construction inferred the payload
-// width from the ARGUMENT (a bare i32 literal → 4-byte payload at offset 4), so a
-// width-64 read returned garbage (the WASM backend read 0; native interp was
-// correct). The fix recovers the expected payload type from the enclosing
-// function's Option/Result return type and routes a bare literal / i32 arg through
-// the 8-byte construction (lower_i64 / op_int_extend). Each arm READS the unwrapped
-// payload value through to the exit code, so the 8-byte round-trip is exercised;
-// every result is <= 126 (wasmtime exit-code truncation, cf. #2908). Oracle-checked
-// against the interpreter. Mirrors self_host_nested_array_ir_test.go.
-//
-// NOTE: the fix is scoped to RETURN position (the expected payload type is the
-// current function's return type). An annotated let-binding (`let r:
-// Result[i64,_] = Ok(40)`) and the match-arm READ width for an Option[i64] *local*
-// are a separate, entangled inconsistency tracked as a follow-up.
+// arms and the try-operator. The payload width comes from the expected type (the
+// return type, or a let-binding's annotation), not from the ARGUMENT: a bare i32
+// literal or i32 arg is widened into the 8-byte construction (op_int_extend).
+// Built as a 4-byte payload at offset 4, a width-64 read returns garbage (wasm
+// reads 0). Each arm READS the unwrapped payload value through to the exit code,
+// so the 8-byte round-trip is exercised; every result is <= 126 (wasmtime
+// exit-code truncation, cf. #2908). Oracle-checked against the interpreter.
+// Mirrors self_host_nested_array_ir_test.go.
 var optMakeI64IRCases = []struct {
 	name string
 	main string

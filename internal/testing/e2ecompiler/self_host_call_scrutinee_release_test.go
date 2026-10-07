@@ -7,18 +7,14 @@ import (
 
 // --- Enum payload positions consumed straight off a producer call (#7910 (d)) --
 //
-// `match (mk(i)) { … }` over a registered fresh Option / Result / rc-enum
-// producer left the returned box and everything in it unreleased: the
-// scrutinee lived in a scratch slot nothing swept, while the same value
-// BOUND to a local first was released by the call-bound consuming-match
-// path. The direct form is now that binding — hoist_call_scrutinees rewrites
-// the match onto a `$mscrut_L_C` temp before any analysis — and the binding
-// path's admission was widened to what these positions carry: a string[]
-// success payload, a nested Option over an rc payload (the two-level guarded
-// release), and payloads built by a registered fresh-string producer.
+// `match (mk(i)) { … }` over a fresh Option / Result / rc-enum producer must
+// release the returned box and everything in it, exactly as when the same value
+// is BOUND to a local first. The payloads cover a string[] success payload, a
+// nested Option over an rc payload (the two-level guarded release), and
+// payloads built by a fresh-string producer.
 //
 // The x86-64 and arm64 legs are the leak-matrix rows of the same names
-// (native oracle, sanitize leg); this file is the wasm leg, which asserts a
+// (census and sanitize legs); this file is the wasm leg, which asserts a
 // balanced census and the interpreter's exit code.
 
 const callScrutResultStrArrSrc = `function w(i: i32): string { let t: string = "x"; if (i % 2 == 0) { t = "yy"; } return "v-a-wide-payload-past-any-inline-threshold-" + t; }

@@ -5,18 +5,16 @@ import (
 	"testing"
 )
 
-// Real-frontend self-host milestone: bundle the ACTUAL lexer.fern +
-// parser.fern (the compiler's own front end — both pure, importing
-// nothing and using byte builtins, no stdlib) with a
-// tiny entry that lexes + parses an embedded program and returns its
-// function count. The bundle is fed through bundle_run; the merged
-// asm is assembled + run and must return the function count (1).
+// Real-frontend self-host milestone: compile the ACTUAL lexer.fern +
+// parser.fern (the compiler's own front end) with a tiny entry that lexes +
+// parses an embedded program and returns its function count. The module
+// loader merges the three into one program; the merged asm is assembled + run
+// and must return the function count (1).
 //
 // This exercises the full self-host pipeline on real compiler source:
 // flatten + mangle + merge (flatten.fern) and lowering a program that
 // uses cross-module structs with string / array fields (Lex { src:
-// string, … }, Par { toks: lexer.Token[], … }) — the case that
-// required the infer_expr_type struct-field-read fix in asm.fern.
+// string, … }, Par { toks: lexer.Token[], … }).
 func TestSelfHostFrontendBundleX86_64(t *testing.T) {
 	gcc, runner, driverBin := buildModloadDriverX86(t)
 

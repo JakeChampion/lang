@@ -7,33 +7,28 @@ import (
 	"testing"
 )
 
-// --- An inferred f32 element keeps its width in elem_type_tag (#7756) --------
+// --- An inferred f32 element keeps its width (#7756) -------------------------
 //
-// `elem_type_tag` tested `expr_is_f64` with no `expr_is_f32` arm ahead of it. An
-// f32 value is also is_f64 — both occupy the 8-byte slot — so an inferred f32
-// element was tagged "f64" and lost the width its method dispatch keys on. The
-// stored value was right; only the RENDERING was wrong:
+// An inferred f32 tuple element or Option payload keeps the f32 width its
+// method dispatch keys on. Both f32 and f64 occupy the 8-byte slot, so an f32
+// tagged f64 stores the right value and RENDERS it wrong:
 //
 //	let t = (3.14159 as f32 * 2.5 as f32, 1); print(t.0.to_string());
-//	native   19.634937
-//	selfhost 19.634937286376953
+//	as f32   19.634937
+//	as f64   19.634937286376953
 //
 // These rows assert the rendered LENGTH as the exit code rather than capturing
 // stdout, because the length is what separates the two precisions and an exit
 // code is comparable on all three backends. f32 renders 9 characters here, f64
-// renders 17 — so every row below returns 17 (or 178) on a compiler without the
-// fix, which is what makes them non-vacuous. Verified against a pre-fix binary,
-// not assumed.
+// renders 17 — so every row below returns 17 (or 178) if the width is lost,
+// which is what makes them non-vacuous.
 //
-// Every want was confirmed against BOTH oracles — `bin/fern -interp` and the
-// native x86-64 backend — and on wasm, and every value stays under 126 because
-// WASI refuses anything outside [0..126) and reports 1 instead (the phantom
-// mismatch docs/LOCAL-DEV-LOOP.md records).
+// Every want was confirmed against `bin/fern -interp` and on wasm, and every
+// value stays under 126 because WASI refuses anything outside [0..126) and
+// reports 1 instead (the phantom mismatch docs/LOCAL-DEV-LOOP.md records).
 //
-// THE CONFORMANCE CORPUS DOES NOT COVER THESE SHAPES. A before/after
-// `scripts/selfhost-emit-hashes` sweep over all 1554 (fixture, target) pairs is
-// byte-identical, which is why the bug survived: nothing in the corpus puts an
-// f32 in a tuple element or an Option payload. These rows are the only coverage.
+// Nothing in the conformance corpus puts an f32 in a tuple element or an
+// Option payload; these rows are the only coverage.
 type f32ElemTagCase struct {
 	name string
 	src  string
@@ -66,8 +61,8 @@ function main(): i32 {
 			want: 9,
 		},
 		{
-			// The ANNOTATED spelling of the same, which reaches the tag through
-			// opt_elem_tag_from_ty rather than the construction walk.
+			// The ANNOTATED spelling of the same: the payload type comes from
+			// `Option[f32]` rather than from the constructor.
 			name: "annotated_option_f32_payload",
 			src: `import "std/float";
 function main(): i32 {

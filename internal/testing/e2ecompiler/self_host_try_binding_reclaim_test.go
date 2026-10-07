@@ -8,16 +8,14 @@ import (
 	"testing"
 )
 
-// An unannotated `let x = E?` binding had no type in the self-host checker —
-// `?` fell through check_expr's unary arm as unknown — so the semantic lowering
-// refused every function holding one and the AST lowering stood, which admits
-// a `?`-bound payload as an owner only for a `: string`-annotated binding over
-// a user producer. Every other spelling leaked its payload per iteration:
+// An unannotated `let x = E?` binding takes the type of the unwrapped payload,
+// which the binding owns and must release, for every spelling:
 // `r.read_chunk(n)?` and `r.read_line()?` (#8803), a user Option producer, and
 // a `@try` enum, generic or not.
 //
 // Each program runs its shape in a loop and exits with a value derived from
-// every payload, so the census must balance and the answer must be native's.
+// every payload, so the census must balance and the answer must be the
+// interpreter's.
 var tryBindingReclaimCases = []struct {
 	name, src string
 	stdin     []byte

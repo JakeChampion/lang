@@ -5,40 +5,15 @@ import (
 	"testing"
 )
 
-// A fresh SCALAR `Option` consumed by a match one block deeper is precise-dropped
-// (#6319's class, scalar arm).
-//
-// #6127 gave the consuming match the scrutinee-is-a-borrow reading, but wired it
-// to the rc-PAYLOAD kind alone — deliberately, "widens exactly one class at a
-// time". For a scalar Option the coarse `body_unsafe_for` still read the
-// scrutinee as an escape, so `precise_drop_names` refused the candidate and
-// nothing else claimed it: `consumed_scalar_enum_frees` finds its consuming match
-// by top-level statement INDEX and cannot see one nested in an `if`. The box
-// leaked every round, frees=0, while the flat spelling was flat at 0.
-//
-// Disjointness needs no new gate, which is why this is the borrow reading rather
-// than a widened lookup. `is_opt` is only ever set when
-// `!body_has_top_level_match`, so precise-drop takes the shape exactly when the
-// flat analysis cannot, and the flat analysis takes it exactly when precise-drop
-// refuses it.
-//
-// Keeping that split is a responsibility boundary rather than a double-free guard, and
-// the difference was measured rather than assumed: letting the flat analysis take
-// the nested shape too does NOT over-release here, because the precise drop zeroes
-// the slot and the second credit decs null. It is kept because two analyses
-// silently claiming one local is how a real over-release gets built later — the
-// shape #6480 shipped and CI caught as `__rc_underflow_count() == -1`.
-//
-// That same argument is what lets `is_opt` admit a CALL init
-// (`fresh_scalar_option_call_init`, via the OPTFRESH registry now threaded into
-// `precise_drop_names`) alongside the inline ctor. `consumed_scalar_enum_frees`
-// already admits both, so the two analyses cover the identical candidate set and
-// split it purely on where the match sits. The two `*_flat_control` rows below
-// are the ones that would catch it if that split ever stopped holding.
+// A fresh SCALAR `Option` consumed by a match one block deeper is released
+// (#6319's class, scalar arm): the scrutinee is a borrow, so the box is freed
+// after the match rather than leaked every round, the same as the flat
+// spelling. Both an inline ctor and a CALL init are covered, nested and flat;
+// a box released twice shows as `__rc_underflow_count() == -1`, which the
+// `*_flat_control` rows would catch.
 
-// The fn-scoped nested spelling: precise_drop_names' own class, and the row this
-// closes. `__rc_underflow_count()` is the return value, so an over-release shows
-// up as a nonzero exit rather than as a byte count.
+// The fn-scoped nested spelling. `__rc_underflow_count()` is the return value,
+// so an over-release shows up as a nonzero exit rather than as a byte count.
 const scalarOptNestedIfSrc = `function round(i: i32): i32 {
     let acc: i32 = 0;
     let o: Option[i32] = Some(i + 1);
@@ -76,11 +51,8 @@ function main(): i32 {
 }
 `
 
-// Bound from a CALL to an OPTFRESH-proven producer rather than an inline ctor.
-// `is_opt` reaches this only because `precise_drop_names` now takes the registry
-// (`opt_fresh`) and admits `fresh_scalar_option_call_init` beside
-// `fresh_scalar_option_init` — the same pair `consumed_scalar_enum_frees` admits
-// for its own FLAT-match half of the shape.
+// Bound from a CALL to a producer that returns a fresh Option rather than from
+// an inline ctor.
 const scalarOptCallNestedIfSrc = `function mk(i: i32): Option[i32] {
     if (i < 0) { return None; }
     return Some(i + 1);
@@ -102,9 +74,8 @@ function main(): i32 {
 }
 `
 
-// The call-init FLAT control — `consumed_scalar_enum_frees`' half. Admitting the
-// call init into `is_opt` must not give this row a SECOND credit, and only the
-// underflow counter would show it if it did.
+// The call-init FLAT control. It must be released exactly once, and only the
+// underflow counter would show a second release.
 const scalarOptCallFlatSrc = `function mk(i: i32): Option[i32] {
     if (i < 0) { return None; }
     return Some(i + 1);
@@ -124,8 +95,8 @@ function main(): i32 {
 }
 `
 
-// The FLAT control, which the other analysis owns. It must stay balanced and must
-// not gain a second credit from this change.
+// The inline-ctor FLAT control. It must stay balanced and be released exactly
+// once.
 const scalarOptFlatSrc = `function round(i: i32): i32 {
     let acc: i32 = 0;
     let o: Option[i32] = Some(i + 1);
@@ -142,14 +113,9 @@ function main(): i32 {
 `
 
 // BLOCK-scoped — the local declared inside a loop, with the match nested one
-// deeper again. `precise_drop_names` is only ever called with `fn.body` and never
-// reaches a loop-declared local, so this half belongs to `consumed_scalar_enum_frees`,
-// which `lower_block` re-runs per block. Its lookup was flat-index, so the nested
-// match was invisible and both inits leaked 16000.
-//
-// Both inits appear in ONE program deliberately: the two locals are reclaimed by
-// the same per-block pass, and running them together is what would surface an
-// ordering bug between them.
+// deeper again. Both inits appear in ONE program deliberately: running the two
+// locals' releases in the same block is what would surface an ordering bug
+// between them.
 const scalarOptBlockNestedSrc = `function mk(i: i32): Option[i32] {
     if (i < 0) { return None; }
     return Some(i + 1);

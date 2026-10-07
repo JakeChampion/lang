@@ -10,16 +10,11 @@ import (
 
 // std/string free-FUNCTION calls (`string.repeat_char(…)`) on the self-host IR
 // path. The std/string module's basename alias is `string`, which collides with
-// the `string` primitive TYPE keyword: the self-host lexer emits a keyword token
-// for it, so `string.repeat_char(…)` did not parse as a module-qualified
-// reference (the native -interp parser accepts it). It was therefore never
-// rewritten to `string__repeat_char` by flatten_qualified and the call bailed to
-// the AST emitter (the function itself lowered fine — only the call site at the
-// type-keyword base was unparseable). parse_primary now treats a type keyword
-// immediately followed by `.` as a module-qualified reference base, so these
-// calls route the self-host IR path and match the interpreter. (String METHODS
-// like `"x".trim()` already worked — this is specifically the module-qualified
-// free-function form.)
+// the `string` primitive TYPE keyword, so parse_primary treats a type keyword
+// immediately followed by `.` as a module-qualified reference base and
+// flatten_qualified rewrites the call to `string__repeat_char`. Each case must
+// match the interpreter. (String METHODS like `"x".trim()` are a different
+// form.)
 var stringModuleFnIRCases = []struct {
 	name string
 	src  string

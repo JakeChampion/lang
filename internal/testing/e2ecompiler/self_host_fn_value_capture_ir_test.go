@@ -16,10 +16,10 @@ import (
 // every free var there is copied into the closure's env box (make_clo_func) or
 // passed as the lifted call's extra argument (closure_lift_one), and both read
 // a fn value with the uniform env-box ABI — so a call-only use one lambda in
-// left the fn value unboxed and the escaping lambda reached lower_expr raw,
-// asking for a `<fn>$clo` nothing had built. The capture also has to TYPE
-// before the box can be built, and cap_type_expr had no arm for a lambda init
-// nor for the `__mkclo$` marker the lift leaves in its place.
+// must still box the fn value, or the escaping lambda asks for a `<fn>$clo`
+// nothing built. The capture must also TYPE before the box can be built,
+// including a lambda init and the `__mkclo$` marker the lift leaves in its
+// place.
 //
 // A nested `function` declaration desugars to `let f = <lambda>`, which is why
 // the shape reaches this through ordinary-looking source.

@@ -8,25 +8,11 @@ import (
 // A BLOCK-scoped `Option[P]` whose payload struct carries an rc ARRAY field,
 // consumed by a match one block deeper (#6319's struct arm).
 //
-// `blockable` admits only payloads whose drop is COMPLETE on its own, and a
-// struct payload was excluded for a concrete reason: the block-level emission had
-// three branches (tagged / string / flat dec) and no deep one, so claiming a
-// struct there emitted a shallow dec, zeroed the slot, and starved the fn-level
-// OPTSTRUCT machinery of the array FIELDS — the #5453 regression.
-//
-// The fix is on the EMISSION side, not the admission side: the block pass gained
-// the same `emit_opt_struct_payload_drop` branch lower_func had, and `blockable`
-// keyed on `dsty`, which meant "the deep drop is available AND no arm moved a
-// field out of it".
-//
-// THE FIELD-MOVE GATE HAD TO BE CORRECTED FIRST. It read `body[match_idx]`, which
-// under a nested lookup is the enclosing `if` — a statement it cannot parse, so
-// it answered "no field moved" and would have granted a deep drop over a moved-out
-// field. That was masked while struct payloads were unblockable and by the
-// arm-escape gate refusing those shapes earlier; making them blockable puts real
-// weight on it, so it now reads the match itself.
+// The binding is released deeply — the array fields as well as the box — and
+// the release must stay correct when an arm moves a field out to an outer
+// local, whose buffer is then still live.
 
-// The row this closes.
+// The nested shape: the match sits inside an `if` one block below the binding.
 const blkStructNestedSrc = `import "core/int";
 struct P { xs: i32[], n: i32 }
 function main(): i32 {
@@ -47,7 +33,7 @@ function main(): i32 {
 }
 `
 
-// The flat control — always worked, and must not gain a second credit.
+// The flat control: the match at the binding's own level.
 const blkStructFlatSrc = `import "core/int";
 struct P { xs: i32[], n: i32 }
 function main(): i32 {

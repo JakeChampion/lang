@@ -8,17 +8,14 @@ import (
 	"testing"
 )
 
-// TestSelfHostTupleIdentTagWasmIR pins the fix for #9468: an i64 tuple element
-// named by an ident the tag pass cannot resolve was stored 32 bits wide.
+// TestSelfHostTupleIdentTagWasmIR pins #9468: an i64 tuple element named by a
+// match-arm payload binding must be stored 64 bits wide.
 //
-// elem_type_tag classifies each element of a tuple literal, and the kind list it
-// produces is what emit_wasm_tuple_make selects the store instruction from.
-// ident_is_fn_value — the ident arm's predicate — ended in `return true`, so any
-// ident that was not a local slot, `None`, a struct / unit-variant name or a
-// const answered "a function value" and the element was tagged "fn": one 4-byte
-// pointer. A match-arm payload binding is exactly such an ident (it has no slot),
-// so an i64 payload was emitted with i32.store and the module failed validation
-// with "type mismatch: expected i32, found i64".
+// emit_wasm_tuple_make selects each element's store instruction from the
+// tuple's element kinds. A payload binding has no local slot, and classified
+// wrongly — as a function value, one 4-byte pointer — an i64 payload is emitted
+// with i32.store and the module fails validation with "type mismatch: expected
+// i32, found i64".
 //
 // wasm alone, because the register backends ignore the kind list and read the
 // element's own width.

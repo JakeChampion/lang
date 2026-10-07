@@ -10,19 +10,17 @@ import (
 
 // A call whose generic callee returns an UNBOUNDED type parameter — `fold[T, A,
 // I]: A` (core/iter.fold), where `A` is erased from `type_params`, so the
-// monomorphiser never substitutes it — used to make the self-host `mono_infer`
-// report the bare type variable "A" as the call's type. Binding `let s =
-// iter.fold(..)` to "A" then keyed a spurious clone of any trait-bounded generic
-// `s` flowed into (`assert_eq[T: Eq + Display](s, 6)` -> `assert_eq__A`), whose
-// `A.eq` / `A.to_string` can't resolve — dragging the whole module to the AST
-// emitter (e.g. tests/stdlib/iter_test.fern). mono_infer now reports a bare
-// type variable as "unknown" instead, so the other concrete-literal argument
-// binds the call at `i32` and the module routes IR.
+// monomorphiser never substitutes it. `mono_infer` reports such a bare type
+// variable as "unknown" rather than as the call's type, so binding `let s =
+// iter.fold(..)` cannot key a spurious clone of a trait-bounded generic `s`
+// flows into (`assert_eq[T: Eq + Display](s, 6)` -> `assert_eq__A`, whose
+// `A.eq` / `A.to_string` cannot resolve); the other concrete-literal argument
+// binds the call at `i32` (e.g. tests/stdlib/iter_test.fern).
 //
 // `gfold` reproduces the exact shape (return type = an unbounded type param,
 // with the other type var only in a closure param so the key can't be inferred
 // from the call), and `showeq` reproduces assert_eq's `Eq + Display` trait-method
-// body — the combination that bailed pre-fix.
+// body — the combination the rule exists for.
 var genericRetTypeVarIRCases = []struct {
 	name string
 	src  string
@@ -38,12 +36,10 @@ function main(): i32 {
     return showeq(s, 7);
 }`},
 
-	// A generic identity `id[T](x: T): T` whose return mirrors argument 0 records
-	// a "name|$arg0" entry in str_ret_fns; infer_expr_width and str-tracking
-	// already consult it, but the FLOAT / UNSIGNED value predicates did not — so
-	// a numeric result chained directly on the call (`id(2.5) + 0.5`) mis-lowered:
-	// f64/f32 as an integer op on the double's bits, u64 as a signed shift. The
-	// argref arms added to expr_is_f64 / expr_is_f32 / expr_is_u64 recover it.
+	// A generic identity `id[T](x: T): T` returns argument 0's type, so a
+	// numeric result chained directly on the call (`id(2.5) + 0.5`) must take
+	// that type: f64/f32 as a float op rather than an integer op on the
+	// double's bits, u64 as an unsigned shift rather than a signed one.
 	// f64: id(2.5) + 0.5 == 3.0 (float add, not an integer op on the bits).
 	{"typevar-f64-arith", `pub function id[T](x: T): T { return x; }
 function main(): i32 {

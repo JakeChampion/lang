@@ -11,23 +11,17 @@ import (
 // matchElemBorrowReclaimCases pin a tuple one of whose elements is read as a
 // MATCH SCRUTINEE.
 //
-// rctuple_esc_stmt walked `m.scrutinee` through rctuple_esc_expr, whose
-// ExprFieldAccess arm reports a non-scalar `name.<i>` read as a bare pointer
-// extraction. Matching on a union element therefore looked like an escape and
-// cost the WHOLE tuple its reclaim — buffer, element boxes and the tuple box —
-// not merely the union box at that position. The same tuple is flat when the
-// element is read any other way: `(i, [i, i+1], Some(i))` measured 0, and 128
-// with `match (t.2)` added.
-//
 // A scrutinee that is exactly `name.<i>` reads the element's tag and copies its
-// payload into the arm binding, storing the box nowhere, so it is a borrow. That
-// a binding taken from it stays valid is not an argument but a measurement: the
-// reclaim frees the tuple's own children and its box, never a union element's
-// PAYLOAD, so `pointer-payload-*` below hold even when an arm binds an `i32[]`
-// and carries it out of the loop.
+// payload into the arm binding, storing the box nowhere, so it is a borrow: the
+// WHOLE tuple — buffer, element boxes and the tuple box — is still reclaimed,
+// as when the element is read any other way.
 //
-// Byte cases return measured bytes per round. Before, as x86-64 | arm64 | wasm,
-// native flat on both: 80 | 80 | 40 and 128 | 128 | 72.
+// A binding taken from the payload stays valid: the reclaim frees the tuple's
+// own children and its box, never a union element's PAYLOAD, so
+// `pointer-payload-*` below hold even when an arm binds an `i32[]` and carries
+// it out of the loop.
+//
+// Byte cases return measured bytes per round.
 var matchElemBorrowReclaimCases = []struct {
 	name string
 	src  string

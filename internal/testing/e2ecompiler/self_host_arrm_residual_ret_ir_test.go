@@ -19,7 +19,7 @@ import (
 // off it instantiated as `__arrm_reduce__U` with `ret_type = Option[U]`, the
 // match binding found no class for the payload tag `U` and took a default i32
 // slot, and the i64 return path then refused it — "did not lower: `return` of
-// ident `v`". With no AST emitter behind it, the whole module was refused.
+// ident `v`", refusing the whole module.
 //
 // The arm now finishes the job the way `call_ret_type` already does two
 // branches away: a type var still residual after the receiver substitution is
@@ -35,9 +35,8 @@ import (
 // they passed before and must still pass, or the repair moved the problem
 // instead of fixing it.
 //
-// Three binding shapes, because all three failed. Repairing this at the
-// irlower annotation override would have left two of them broken: what was
-// wrong is the type `mono_infer` returns, not how an annotation reaches a slot.
+// Three binding shapes, because all three failed: what was wrong is the type
+// `mono_infer` returns, not how an annotation reaches a slot.
 var arrmResidualRetIRCases = []struct {
 	name string
 	src  string

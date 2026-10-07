@@ -4,12 +4,10 @@ import (
 	"testing"
 )
 
-// TestSelfHostTupStructTypePathReclaimWasmIR is the wasm port of
-// TestSelfHostTupStructTypePathReclaimIRX86_64: the TYPE-driven struct-element drop
-// lives in shared lowering; on wasm __fern_rc_dec maps to $__fern_arr_dec and
-// emit_struct_field_drops emits $__struct_drop_<P> (backend-complete), so the
-// per-element struct-field deep-drop + box dec resolves without any dedicated runtime
-// helper. Case table shared with the x86-64 leg.
+// TestSelfHostTupStructTypePathReclaimWasmIR is the wasm leg of
+// TestSelfHostTupStructTypePathReclaimIRX86_64: the TYPE-driven struct-element
+// drop is decided in the target-independent lowering, so wasm must give the
+// same answers. Case table shared with the x86-64 leg.
 func TestSelfHostTupStructTypePathReclaimWasmIR(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range tupStructTypePathCases {

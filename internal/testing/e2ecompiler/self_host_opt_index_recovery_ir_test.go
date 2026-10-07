@@ -8,23 +8,9 @@ import (
 )
 
 // optIndexRecoveryCases pin the Option/Result element recovery for an indexed
-// read, across every shape the index BASE can take (#5646 option 3).
-//
-// Both scrutinee resolvers — the value-position one and the StmtMatch one —
-// enumerated only `ExprIdent` and a named-field `ExprFieldAccess` as the base of
-// `<base>[i]`. A nested index (`aoa[i][j]`) and a tuple element (`t.N[i]`) fell
-// to the `_` arm, resolved to "", and bailed the enclosing function. Both
-// now route through the shared `arr_tag_of`.
-//
-// The bail was invisible before `FERN_STRICT_IR`: the AST emitter happened to
-// compile all four shapes correctly, so the exit codes agreed and only the
-// routing differed. That is the whole point of the flag — these are the gaps a
-// differential exit-code test cannot see, because there is nothing wrong with
-// the answer, only with which backend produced it.
-//
-// The `-local` and `-struct-field` cases are the two bases that already worked;
-// they are here so a regression in the shared helper is attributed to the
-// refactor rather than to the two new shapes.
+// read, across every shape the index BASE can take (#5646 option 3): a local,
+// a named struct field, a nested index (`aoa[i][j]`) and a tuple element
+// (`t.N[i]`), in both value position and as a match scrutinee.
 //
 // Every `want` stays in [0, 126) — the wasm leg exits through WASI, which
 // rejects anything above that.

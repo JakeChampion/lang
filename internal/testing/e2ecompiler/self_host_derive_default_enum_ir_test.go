@@ -3,16 +3,12 @@ package e2ecompiler
 import "testing"
 
 // deriveDefaultEnumIRCases exercise `@derive(Default)` on concrete ENUMS
-// through the stack-IR path. An enum defaults to its FIRST variant, each
+// through the IR path. An enum defaults to its FIRST variant, each
 // payload defaulted. The synthesized `default()` is an associated function
-// (receiver-less `Enum.default()`) that constructs a variant; both the
-// associated call and the variant construction now lower through the IR path.
-// `match` reads the variant via shape-pointer identity — the same
-// representation IR `struct_make` writes — so a freshly-defaulted variant
-// matches correctly.
-//
-// The inline `trait Default` keeps the program valid for the native compiler
-// too (the self-host discards trait decls).
+// (receiver-less `Enum.default()`) that constructs a variant, and `match`
+// reads the variant back, so a freshly-defaulted variant must match correctly.
+// Each program declares `trait Default` inline rather than importing
+// core/cmp.
 var deriveDefaultEnumIRCases = []struct {
 	name     string
 	src      string

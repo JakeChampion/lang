@@ -3,9 +3,8 @@ package e2ecompiler
 import "testing"
 
 // A record or variant whose every field is a constant is one static box
-// (#8920), as the AST lowering has placed struct literals since #6149. A
-// string literal is a static box, so a field or element holding one is a
-// constant too. Each probe runs 100 rounds and prints its result times 1000
+// (#8920). A string literal is a static box, so a field or element holding
+// one is a constant too. Each probe runs 100 rounds and prints its result times 1000
 // plus the heap allocations the rounds made. origin, the TInt and TVoid
 // members, the Shade payload, named's string field and names' string elements
 // allocate nothing; fresh holds a parameter and rebuild's first record a loop

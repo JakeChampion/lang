@@ -14,24 +14,17 @@ import (
 //
 // The lift boxes a fn value at such a parameter unconditionally: the callee's
 // type is erased, so it cannot call the value, and boxing is what lets the
-// result be dispatched env-first. What was missing is that nothing on the read
-// side could tell that the CALL is therefore a box too. So an array holding
-// `id(<lambda>)` beside a plain lambda element got two representations under one
-// binding — a bare fn pointer and an env box — and `xs[i](…)` dispatched both
-// the same way. Every array case below compiled clean and SIGSEGV'd; the
-// struct-field case bailed instead, because that position calls
-// try_fn_field_value directly and the walk never reached the call's arguments.
+// result be dispatched env-first. The CALL's result is therefore a box too, and
+// the read side must treat it as one. An array holding `id(<lambda>)` beside a
+// plain lambda element must not end up with two representations under one
+// binding — a bare fn pointer and an env box — or `xs[i](…)` SIGSEGVs.
 //
-// A `PASSTHRU:<fn>:<argidx>` marker is stored in the closure_fns list (the same
-// convention as `RETCLO2:`) so the read side can answer
-// "is this call a box" with "is its passthrough argument one".
+// nocapture-array shows capture is not the discriminator: no lambda in it
+// captures anything, and the boxing at the passthrough parameter does not
+// depend on captures either.
 //
-// nocapture-array is the case that shows capture is not the discriminator: no
-// lambda in it captures anything, and it segfaulted just the same, because the
-// boxing at the passthrough parameter does not depend on captures either.
-//
-// tuple-elem-passthrough already worked and is a guard: the tuple path boxes
-// EVERY fn-valued element, so both representations agreed there before.
+// tuple-elem-passthrough is a guard: the tuple path boxes EVERY fn-valued
+// element.
 var passthroughFnValueCases = []struct {
 	name string
 	src  string

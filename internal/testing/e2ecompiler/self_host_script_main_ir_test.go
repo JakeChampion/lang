@@ -10,25 +10,15 @@ import (
 )
 
 // TestSelfHostScriptMainIRX86_64 pins that SCRIPT-shaped programs — top-level
-// statements with no `main` — compile through the IR path rather than the legacy
-// AST emitter (#3457).
+// statements with no `main` — compile through the IR path (#3457).
 //
 // The IR emitters are whole-program emitters whose `_start` does `call
-// __fn_main`, so a script had no entry to lower: asm_ir.emit_module_ir_gated's
-// `has_main` gate turned it away and asm.emit_module's AST fallback picked it up,
-// inlining the statements into `_start` itself. That made script support a reason
-// asm.fern could not be deleted. asmcore.synth_script_main now desugars the script
-// into `function main(): i32 { … }` before the gate, so the one IR pipeline serves
+// __fn_main`, so asmcore.synth_script_main desugars the script into
+// `function main(): i32 { … }` before the gate, and the one IR pipeline serves
 // both shapes.
 //
-// Measuring the fallback (replacing it with a hard error and running the suite)
-// put 39 of the reachable AST-emit cases in this bucket, all of them here and in
-// the cross-validation suite — so this is the guard that keeps them off the AST
-// emitter once it is gone.
-//
-// The assertion is deliberately two-part: the exit code alone would still pass if
-// the program took some other route, so each case also asserts the emitted asm
-// carries the IR shape (`call __fn_main`), which the AST no-main path never emits.
+// The assertion is two-part: each case checks its exit code and that the
+// emitted asm carries the IR shape (`call __fn_main`).
 func TestSelfHostScriptMainIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
@@ -45,11 +35,9 @@ func TestSelfHostScriptMainIRX86_64(t *testing.T) {
 		{"two-vars", "let a = 3; let b = 4; return a * b;", 12},
 		{"while-loop", "let i = 1; let s = 0; while (i <= 5) { s += i; i += 1; } return s;", 15},
 		{"if-else", "if (1 < 2) { return 9; } return 3;", 9},
-		// No trailing `return`: synth_script_main appends `return 0;`, matching the
-		// fallback exit-0 epilogue the AST emitter wrote after the inlined statements.
+		// No trailing `return`: synth_script_main appends `return 0;`.
 		{"no-trailing-return", "let x = 1;", 0},
-		// Unary minus: the AST emitter selected `negq`, the IR path lowers `0 - x`.
-		// Same answer either way; this pins the answer, not the encoding.
+		// Subtraction from zero; this pins the answer, not the encoding.
 		{"unary-negation", "return 0 - 5 + 10;", 5},
 	}
 

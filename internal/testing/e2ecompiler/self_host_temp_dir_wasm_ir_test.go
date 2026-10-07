@@ -10,12 +10,12 @@ import (
 )
 
 // TestSelfHostTempDirIRWasm pins `temp_dir(prefix)` on the wasm IR path. temp_dir
-// creates a uniquely-named directory and returns Result[string, IoError]; it was a
-// wasm_eligible exclusion. It now lowers to op_temp_dir -> $__fern_temp_dir, a
-// fresh runtime that builds `<prefix>-<monotonic_ns>` (ns rendered to decimal
-// inline), path_create_directorys it under the preopen, and boxes Ok(name) /
-// Err(IoError). Unlike asm_ir's __fern_temp_dir it drops the absolute "/tmp/"
-// prefix — wasm has no global /tmp, only the preopen, so the returned name is
+// creates a uniquely-named directory and returns Result[string, IoError]. It
+// lowers to op_temp_dir -> $__fern_temp_dir, a runtime that builds
+// `<prefix>-<monotonic_ns>` (ns rendered to decimal inline), creates it under
+// the preopen with path_create_directory, and boxes Ok(name) / Err(IoError).
+// Unlike asm_ir's __fern_temp_dir it drops the absolute "/tmp/" prefix — wasm
+// has no global /tmp, only the preopen, so the returned name is
 // preopen-RELATIVE, the same model every other wasm fs op uses (so the name
 // round-trips through stat / read_dir / remove_dir_all within the sandbox).
 //

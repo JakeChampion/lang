@@ -6,21 +6,19 @@ import (
 )
 
 // #6758: a struct factory that builds its array field in a LOCAL first —
-// `let xs: i32[] = [k, 8]; return Q { xs: xs, pos: 1 };` — was not strict-fresh,
-// because return_value_is_strictfresh_struct admitted only a direct array
-// LITERAL in the field. So the factory never entered return_fresh_struct_ret_fns,
-// every caller's `let q: Q = mkq(i)` earned no reclaim credit, and the box AND
-// its buffer leaked per call: 88 B/iteration on both register backends, 56 on
-// wasm, unbounded, where native is flat.
+// `let xs: i32[] = [k, 8]; return Q { xs: xs, pos: 1 };` — returns a fresh box
+// exactly as a direct array literal in the field would, so every caller's
+// `let q: Q = mkq(i)` must release the box AND its buffer. A miss leaks 88
+// B/iteration on both register backends and 56 on wasm, unbounded.
 //
-// The proof the widening rests on is the one "ARR:" already uses one container
-// out: the local is literal-initialised, only ever self-appended to, and its
-// single escape is the returned literal itself — so the returned box reaches the
-// caller as the sole owner of that buffer, exactly as a direct literal would.
+// That holds because the local is literal-initialised, only ever self-appended
+// to, and its single escape is the returned literal itself — so the returned
+// box reaches the caller as the sole owner of that buffer.
 //
-// The local may also be seeded by a CALL to an "ARR:" producer, which proves the
-// same sole-ownership one call further out; a producer that hands back its own
-// parameter earns no such entry, and that is what keeps the caller's buffer safe.
+// The local may also be seeded by a CALL to a fresh-array producer, which
+// proves the same sole-ownership one call further out; a producer that hands
+// back its own parameter does not, and that is what keeps the caller's buffer
+// safe.
 //
 // The negatives below are the ways that proof can fail, and each must stay
 // DECLINED rather than merely happen to work: a field seeded from a PARAM
@@ -181,9 +179,8 @@ function main(): i32 {
     return 0;
 }`, 0},
 	// The string[] half: the field's ELEMENTS are boxes too, so the callee has
-	// to be proven fresh element-wise ("STRARR:", via fn_returns_fresh_strarr)
-	// rather than merely buffer-wise. Reads stay on `.len()` so the field keeps
-	// its deep-free admission.
+	// to be proven fresh element-wise rather than merely buffer-wise. Reads
+	// stay on `.len()` so the field keeps its deep free.
 	{"strarr-producer-call-array-field", `struct S { deps: string[], pos: i32 }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function deps_of(pre: string): string[] { let out: string[] = []; let i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }
@@ -266,8 +263,8 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// Negative: one local, two fields. The box carries a single rc and
-	// __struct_drop_Q would free the buffer once per field.
+	// Negative: one local, two fields. Both fields name one buffer, so the
+	// struct's release must free it exactly once (99 on a double free).
 	{"one-local-two-fields-declined", `struct Q { xs: i32[], ys: i32[], pos: i32 }
 function mk2(k: i32): Q { let xs: i32[] = [k, 8]; return Q { xs: xs, ys: xs, pos: 1 }; }
 function work(k: i32): i32 {

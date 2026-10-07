@@ -11,22 +11,17 @@ import (
 )
 
 // TestSelfHostWasmComponentIRPath pins the ROUTING of the Component-Model emit
-// modes, which no other component test can see: every wasm-component core used
-// to come from the AST emitter unconditionally (emit_module_mode gated the IR
-// leg on `!component`), so the self-hosted component path was a hard blocker on
-// retiring wasm.fern, which has since happened (#3457). The sibling tests here (…ComponentStdout / …Eprint /
-// …Exit) run the resulting component and would stay green if the routing
-// silently reverted to AST, so they cannot guard it — this one does.
+// modes: every wasm-component core comes from the IR emitter (#3457). The
+// sibling tests here (…ComponentStdout / …Eprint / …Exit) run the resulting
+// component and cannot see which emitter produced it — this one does.
 //
 // Two things are asserted per program:
 //
 //   - which emitter produced the core. The IR emitter writes flat WAT with an
-//     UNNAMED local group ("(local i64 i32 …") and the AST emitter writes
-//     folded WAT with NAMED locals ($__retv_i32), so the two are
-//     distinguishable by inspection of the emitted core. The discriminator
-//     keys on the group being unnamed rather than on its first type: a
-//     function whose first local is wide emits "(local i64 …", which a
-//     "(local i32" probe misses entirely.
+//     UNNAMED local group ("(local i64 i32 …"). The discriminator keys on the
+//     group being unnamed rather than on its first type: a function whose
+//     first local is wide emits "(local i64 …", which a "(local i32" probe
+//     misses entirely.
 //   - the core's IMPORT LIST, exactly and in order. The component framings
 //     (watbin.component_full / component_full_io / _eprint / _exit) alias
 //     imports positionally, so a core that imports a different set — or the
@@ -36,18 +31,18 @@ import (
 //     decides which shapes the IR leg may serve at all.
 //
 // The out-of-subset rows are as essential as the in-subset ones: each pins a
-// shape that must KEEP falling through, because admitting it would emit a core
-// calling helpers nothing defines. Every WASI category component_shape knows
-// has now migrated — stdout/stderr/exit, clock, random, env, args, and finally
-// the filesystem pair — so what remains out of subset is random without I/O,
-// which has no import any component framing can wire.
+// shape the gate must DECLINE, because admitting it would emit a core calling
+// helpers nothing defines. Every WASI category component_shape knows lowers —
+// stdout/stderr/exit, clock, random, env, args, and the filesystem pair — so
+// what remains out of subset is exit or random without I/O, which has no
+// import any component framing can wire.
 func TestSelfHostWasmComponentIRPath(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()
 
 	copySelfHostDriver(t, dir, "wasm_ir.fern", "semlower.fern")
-	// The no-I/O run core (emit_module_run) and the stdout run core
-	// (emit_module_run_io) — the two component modes with an IR leg.
+	// The no-I/O run core and the stdout run core
+	// (wasm_ir.emit_module_mode_or_error_sub with io false / true).
 	if err := os.WriteFile(filepath.Join(dir, "wasm_run_p2.fern"), []byte(p2Driver), 0o644); err != nil {
 		t.Fatalf("write wasm_run_p2.fern: %v", err)
 	}
@@ -78,7 +73,7 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 
 	for _, tc := range []struct {
 		name    string
-		io      bool // emit_module_run_io (mode 2) rather than emit_module_run (mode 1)
+		io      bool // the stdout run core (mode 2) rather than the no-I/O one (mode 1)
 		source  string
 		wantIR  bool
 		imports []string
@@ -95,12 +90,9 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 		// the probe itself stays correct.
 		{"noio-wide-local", false, `function main(): i32 { let n: i64 = 7; if (n > 0) { return 0; } return 1; }`, true, nil},
 		// A no-I/O core may not exit: mode 1 has no proc_exit to call and no
-		// wasi:cli/exit to shim it over. This used to fall back to the AST
-		// emitter, where exit was equally unwired — a core with a dangling
-		// call. With that emitter gone (#3457) the gate's decline is a hard
-		// error, which is the right answer for a program mode 1 cannot express
-		// (see refusedRows). Unreachable through the CLI either way:
-		// component_shape sends an exit-using program to the io wrap (shape 14).
+		// wasi:cli/exit to shim it over, so the gate declines it and the driver
+		// refuses (see refusedRows). Unreachable through the CLI: component_shape
+		// sends an exit-using program to the io wrap (shape 14).
 		{"noio-exit-refused", false, `function main(): i32 { exit(0); return 0; }`, false, nil},
 
 		// Mode 2 — stdout. The $__fern_fd_write shim serves every writer, so print /
@@ -125,10 +117,9 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 
 		// The preview2-backed builtins. Their helper bodies (*_p2) define the
 		// same $__fern_* functions the IR already calls, so mode 2 swaps the
-		// import + body and every call site is unchanged. Import order follows
-		// the AST path's canonical interface order — random, wall-clock,
-		// monotonic-clock — after the stdout pair, because the framings alias
-		// positionally.
+		// import + body and every call site is unchanged. Import order is the
+		// canonical interface order — random, wall-clock, monotonic-clock — after
+		// the stdout pair, because the framings alias positionally.
 		{"io-random-i32", true, `function main(): i32 { if (random_i32() != 0) { write("r"); } return 0; }`, true,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:random/random@0.2.0 get-random-u64"}},
 		{"io-random-bytes", true, `function main(): i32 { let b: u8[] = random_bytes(4); if (b.len() == 4) { write("b"); } return 0; }`, true,
@@ -138,14 +129,8 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 		{"io-clock-mono", true, `function main(): i32 { if (monotonic_ns() > 0) { write("m"); } return 0; }`, true,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:clocks/monotonic-clock@0.2.0 now"}},
 		// A no-I/O component has no import to satisfy the byte source, so the
-		// gate refuses random there. It used to bail to the AST emitter,
-		// which emitted a PREVIEW1 random_get no component framing can wire —
-		// its `if (io)` split treated "not io" as "preview1 command core". The
-		// old row recorded that output while saying in as many words that it was
-		// "deliberately NOT a contract worth preserving"; deleting the emitter
-		// (#3457) turns it into a refusal, which is what it should always have
-		// been. Unreachable through the CLI (component_shape sends every random
-		// program to the io wrap).
+		// gate refuses random there. Unreachable through the CLI (component_shape
+		// sends every random program to the io wrap).
 		{"noio-random-refused", false, `function main(): i32 { return random_i32() & 1; }`, false, nil},
 
 		// env / args read a preview2 LIST, so their cores also export
@@ -157,10 +142,9 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:cli/environment@0.2.0 get-arguments"}},
 
 		// The filesystem pair, last of component_shape's categories to move.
-		// Their mode-2 bodies box a real IoError variant rather than the raw
-		// wasi error code the AST fallback stored (#5795), and fs sits
-		// last in the import order, which is the slot component_full_io_fs /
-		// _fs_write / _fs_rw alias.
+		// Their mode-2 bodies box a real IoError variant rather than a raw wasi
+		// error code (#5795), and fs sits last in the import order, which is the
+		// slot component_full_io_fs / _fs_write / _fs_rw alias.
 		{"io-read-file", true, `function main(): i32 { match (read_file("in.txt")) { Ok(s) => { write(s); return 0; }, Err(e) => { return 1; } } return 2; }`, true,
 			[]string{"wasi:cli/stdout@0.2.0 get-stdout", "wasi:io/streams@0.2.0 [method]output-stream.blocking-write-and-flush", "wasi:filesystem/preopens@0.2.0 get-directories", "wasi:filesystem/types@0.2.0 [method]descriptor.open-at", "wasi:filesystem/types@0.2.0 [resource-drop]descriptor", "wasi:filesystem/types@0.2.0 [method]descriptor.read-via-stream", "wasi:io/streams@0.2.0 [method]input-stream.blocking-read", "wasi:io/streams@0.2.0 [resource-drop]input-stream"}},
 		{"io-write-file", true, `function main(): i32 { match (write_file("o.txt", "x")) { Err(e) => { return 1; }, Ok(_) => { return 0; } } return 2; }`, true,
@@ -178,9 +162,8 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 				bin = ioBin
 			}
 			if refusedRows[tc.name] {
-				// The gate declines this shape and there is no AST emitter to
-				// fall through to, so the driver must refuse rather than emit a
-				// core whose imports the framing cannot satisfy.
+				// The gate declines this shape, so the driver must refuse rather than
+				// emit a core whose imports the framing cannot satisfy.
 				out, code := emitRefusable(t, runner, bin, tc.source)
 				if code == 0 || len(out) != 0 {
 					t.Fatalf("driver exited %d with %d bytes, want a refusal", code, len(out))
@@ -222,15 +205,14 @@ func TestSelfHostWasmComponentIRPath(t *testing.T) {
 	}
 }
 
-// isIREmittedWAT reports which emitter produced a core: the IR path writes flat
-// WAT with an unnamed local group, the AST path folded WAT with named locals
-// ($__retv_i32, its per-function return slot). The two markers are mutually
-// exclusive by construction, so disagreement means the discriminator itself has
-// gone stale rather than the routing — worth failing loudly on.
 // irLocalGroup matches the IR emitter's unnamed local group, whatever its
 // first type is.
 var irLocalGroup = regexp.MustCompile(`\n    \(local (i32|i64|f32|f64)[ )]`)
 
+// isIREmittedWAT reports whether a core is the IR emitter's flat WAT, keyed on
+// its unnamed local group. It also looks for the named-locals marker
+// ($__retv_i32), which the IR emitter never writes; seeing both or neither
+// means the discriminator itself has gone stale — worth failing loudly on.
 func isIREmittedWAT(t *testing.T, wat string) bool {
 	t.Helper()
 	// An unnamed local group — any leading type. Keying on "(local i32"
@@ -278,8 +260,8 @@ func equalStrs(a, b []string) bool {
 
 // refusedRows names the table rows whose shape the component gate DECLINES. They
 // are kept as rows rather than deleted because the decline is the contract: each
-// is a program mode 1 cannot express, and before #3457 each fell through to the
-// AST emitter and produced a core the framing could not wire.
+// is a program mode 1 cannot express, and the driver must refuse it rather than
+// produce a core the framing could not wire.
 var refusedRows = map[string]bool{
 	"noio-exit-refused":   true,
 	"noio-random-refused": true,

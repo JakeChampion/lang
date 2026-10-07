@@ -26,10 +26,9 @@ import (
 
 // The routing assertion. The IR framing emits tid_globals_section
 // unconditionally, and its literal-name list (tid_named) always includes
-// NotFound — so the global is present in every IR core and, on the AST path,
-// only in a module that does file I/O. astFuncMarker is the converse: every
-// AST-emitted function body opens with the same scratch-local block, so its
-// ABSENCE says no function came from the AST emitter.
+// NotFound, so the global is present in every IR core. astFuncMarker is the
+// scratch-local block the deleted AST wasm emitter opened every function with;
+// nothing emits it now.
 const irRouteMarker = "(global $__tid$NotFound i32"
 const astFuncMarker = "(local $__lit0 i32)"
 

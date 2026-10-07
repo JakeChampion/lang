@@ -10,7 +10,7 @@ import (
 
 // floatIntrinsicCases exercise the cheap f64 math intrinsics emitted
 // by the self-hosted compiler: __abs_f64 / __sqrt_f64 / __floor_f64 /
-// __ceil_f64 / __trunc_f64 / __round_f64. The -nostdlib native
+// __ceil_f64 / __trunc_f64 / __round_f64. The -nostdlib x86-64 / arm64
 // backends can't link libm, so these lower to single SSE / FP
 // instructions (sqrtsd, roundsd, andpd-style sign-mask; fsqrt, frintm,
 // frintp, frintz, frinta, fabs). Each program returns an observable
@@ -62,12 +62,11 @@ var floatTranscendentalCases = []struct {
 }
 
 // TestSelfHostFloatTranscendentalsIRX86_64 proves the transcendentals lower
-// through the IR path (not just the legacy AST emitter): the lowering maps
-// __sin_f64/__cos_f64/__exp_f64/__log_f64 to op_funary fsin/fcos/fexp/flog and
-// __pow_f64 to the fpow fbin, which asm_ir lowers to a call into the shared
-// `__fern_*_f64` runtime bundle. For each case the path prober must report "ir" (the
-// module is IR-eligible) and the IR-built binary must hit the same exit the AST
-// path does — same fixed oracle values as TestSelfHostFloatTranscendentalsX86_64.
+// through the IR path: the lowering maps __sin_f64/__cos_f64/__exp_f64/__log_f64
+// to op_funary fsin/fcos/fexp/flog and __pow_f64 to the fpow fbin, which asm_ir
+// lowers to a call into the shared `__fern_*_f64` runtime bundle. For each case
+// the path prober must report "ir" and the binary must hit the same fixed oracle
+// values as TestSelfHostFloatTranscendentalsX86_64.
 func TestSelfHostFloatTranscendentalsIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

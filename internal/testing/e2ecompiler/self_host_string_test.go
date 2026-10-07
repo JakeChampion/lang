@@ -39,12 +39,8 @@ var stringCases = []struct {
 // stringImportSource is the well-formed spelling of the same program: IMPORT
 // std/string rather than concatenating its source with a main.
 //
-// The concatenated form this replaces — read std/string.fern, append a main — had
-// been ill-formed since std/unicode was added to std/string's imports; the
-// header's "its imports are prelude-resident" went stale. `capitalize` calls
-// `unicode.capitalize`, which a single-module compile cannot resolve, and the
-// legacy AST emitter merely tolerated the dangling reference. Appending the
-// dependency is not a fix either: std/unicode imports std/utf8, which imports
+// The concatenated form would be ill-formed: `capitalize` calls
+// `unicode.capitalize`, and std/unicode imports std/utf8, which imports
 // std/string back, so the three are mutually recursive and only the module
 // loader resolves them.
 //

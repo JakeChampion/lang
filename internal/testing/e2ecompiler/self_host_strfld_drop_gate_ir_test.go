@@ -7,23 +7,15 @@ import (
 	"testing"
 )
 
-// strFldDropGateCases pin the STRFLDOK gating of the per-type struct-drop
-// STRING arm (#3425): __struct_drop_<T>'s k_str free (and its arm64 / wasm
-// siblings) must fire ONLY for types admitted by the whole-program
-// escaping-read scan — the SAME "strfldok:<T>" verdict that gates
-// __field_reclaim_<T>'s string arm and the construction-side retain
-// (slit_reclaim → struct_routes_field_reclaim). Before the gate, the drop
-// body freed string fields of NON-admitted types too, while construction
-// never retained them: a string aliased into several such structs was an
-// uncounted reference the first element drop freed out from under the rest —
-// heap corruption. The shape below is the minimal form of what broke the
-// IR-routed merged-bundle self-compile (ir.Op's shared .str freed by
-// __struct_arr_elems_drop_ir__Op → __struct_drop_ir__Op): `esc` returns the
-// field (an escaping read → Rec is NOT admitted), `shared` is aliased into
-// every element, and Outer's exit drop walks the Rec[] field through the
-// array-element deep-drop. Pre-gate this segfaulted (or ticked the
-// underflow detector); with the gate the un-admitted type keeps the sound
-// leak and the shared string survives intact.
+// strFldDropGateCases pin that a struct drop frees a STRING field only when
+// construction retained it (#3425). Freeing a string field construction never
+// retained turns a string aliased into several structs into an uncounted
+// reference the first element drop frees out from under the rest — heap
+// corruption. The shape below is the minimal form of what once broke the
+// compiler's own self-compile (ir.Op's shared .str): `esc` returns the field
+// (an escaping read), `shared` is aliased into every element, and Outer's exit
+// drop walks the Rec[] field through the array-element deep-drop. The shared
+// string must survive intact with the underflow detector at zero.
 var strFldDropGateCases = []struct {
 	name string
 	src  string

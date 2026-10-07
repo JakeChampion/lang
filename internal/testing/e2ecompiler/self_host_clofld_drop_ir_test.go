@@ -7,28 +7,17 @@ import (
 	"testing"
 )
 
-// TestSelfHostClofldDropIRX86_64 pins the closure struct-FIELD shallow drop
-// (the clofld slice): a struct whose fn-typed fields are admitted by the
-// clofld scan — fresh-lambda-only construction values (each lifts to a
-// sole-owned rc=1 `__mkclo$` env box), no base-including construction of the
-// type, and no read of the field outside a direct `h.f(x)` call — routes
-// through struct_routes_field_reclaim, and the k_clo arm of
-// `__struct_drop_<T>` / the fr_clo arm of `__field_reclaim_<T>` shallow-free
-// the field's env box (rc-guarded __fern_arr_dec; captures leak — the
-// k_struct one-level model). The moves_fields NODEEP walk exempts calls
-// through the local's own fn fields (`h.f(10)` moves nothing), so a called
-// fn-field struct stays deep-drop-worthy.
+// TestSelfHostClofldDropIRX86_64 pins the release of a closure held in a
+// struct FIELD: a fresh lambda stored into a fn-typed field is released with
+// the struct, and a loop-nested `let h: H = …` re-bind releases the prior
+// iteration's env box. Calling through the local's own fn field (`h.f(10)`)
+// moves nothing, so the struct still owns the box.
 //
-// The loop-REINIT release path also routes: a loop-nested `let h: H = …`
-// re-bind reclaims the prior iteration's env box through __field_reclaim_<T>'s
-// fr_clo arm (the NODEEP fn-field exemption resolves the local's type with the
-// nesting-aware fresh_struct_lit_type_deep, so a loop/if-nested declaration is
-// no longer wrongly NODEEP'd into the box-only shallow dec). The churn case
-// asserts the reclaim call and proves it stays BALANCED at scale.
-//
-// The admission and the helpers it names are the AST lowering's, so the asm
-// is read from that lowering; the programs run as the typed lowering builds
-// them.
+// The churn case proves the release stays BALANCED at scale (values right, the
+// underflow counter clean). The excluded cases — a bare closure ident aliased
+// into the field, and a base copy carrying the field's box into a second
+// struct — must keep every owner callable, so an over-release shows up as a
+// wrong value or exit 99.
 func TestSelfHostClofldDropIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -61,15 +50,14 @@ func TestSelfHostClofldDropIRX86_64(t *testing.T) {
 	}
 
 	// DROP FIRES: an admitted straight-line fn-field struct — the exit sweep
-	// calls __struct_drop_H, whose k_clo arm frees the env box. Value 13.
+	// releases the env box with the struct. Value 13.
 	run(t, `struct H { f: (i32) => i32, id: i32 } function main(): i32 { let h: H = H { f: (x: i32): i32 => { return x + 3; }, id: 1 }; let r: i32 = h.f(10); return r; }`,
 		"clofld-drop-fires", 13)
 
 	// CHURN balance + loop-REINIT reclaim: the c1 shape — a capturing lambda
-	// field built and called per iteration, 2M cycles. The loop-nested
-	// re-bind routes through __field_reclaim_H (fr_clo frees the prior
-	// iteration's env box); values right and the underflow detector clean
-	// prove the admission + drops never over-release.
+	// field built and called per iteration, 2M cycles. The loop-nested re-bind
+	// releases the prior iteration's env box; values right and the underflow
+	// detector clean prove the release never over-releases.
 	run(t, `struct H { f: (i32) => i32, id: i32 } function churn(n: i32): i32 { let bad: i32 = 0; let i: i32 = 0; while (i < n) { let k: i32 = i % 5; let h: H = H { f: (x: i32): i32 => { return x + k; }, id: i }; if (h.f(10) != 10 + k) { bad = 1; } i = i + 1; } return bad; } function main(): i32 { let v: i32 = churn(2000000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"clofld-capture-churn-balanced", 0)
 

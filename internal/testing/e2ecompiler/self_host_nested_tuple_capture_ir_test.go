@@ -9,17 +9,10 @@ import (
 // (pointer) element, a second destructure splits that — through the self-host IR
 // path on x86-64.
 //
-// #5173 taught the lift's cap_type resolver to read a destructure binding's
-// element type, but only for SCALAR/string element tags: a first-level
-// destructure whose element is itself a tuple (`let (p, c) = t` with
-// t : ((i32,i32), i32), so p : (i32,i32)) resolved "", so the second-level
-// `let (a, b) = p` couldn't resolve p's tuple type and the capture of a/b
-// declined the lift, dropping the module to the (miscompiling) AST emitter
-// (#5201). The fix returns the tuple (pointer) element tag — gated to all-i32
-// tuples, whose element reads capture soundly via the 32-bit env slot — so the
-// nested-destructure capture (and a direct capture of such a tuple binding)
-// lift. A pointer-element (string/…) destructure binding stays declined: that is
-// a SEPARATE pre-existing nested-destructure lowering gap, out of scope here.
+// A first-level destructure whose element is itself a tuple (`let (p, c) = t`
+// with t : ((i32,i32), i32), so p : (i32,i32)) gives p a tuple type the lift
+// can read, so the second-level `let (a, b) = p` resolves and the capture of
+// a/b — or a direct capture of p — lifts (#5201). The cases use all-i32 tuples.
 //
 // Each case is oracle-checked against the interpreter; results stay <= 120 (the wasm exit-code clamp, #2908).
 var nestedTupleCaptureIRCases = []struct {

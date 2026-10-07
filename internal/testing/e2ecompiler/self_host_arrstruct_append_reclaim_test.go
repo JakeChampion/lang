@@ -7,31 +7,14 @@ import (
 
 // --- Append-built ARRAY-OF-STRUCTS (deep class) element reclaim (#6535) ------
 //
-// The DEEP arrstruct class reclaims a `(<struct-with-an-rc-array-field>)[]`
-// local by walking each element: __struct_drop_<T> for its rc fields, the
-// struct box, then the outer buffer. Its credit refused any REASSIGNED name —
-// and `vals = vals.append(Val { .. })` is a reassignment — so an append-built
-// array-of-structs earned no credit at all and leaked its whole structure,
-// while the literal-built form of the identical value was flat. That is the
-// same hole #6127 closed for the SHALLOW structarr class; this is the deep
-// sibling.
+// A `(<struct-with-an-rc-array-field>)[]` local built by self-append
+// (`vals = vals.append(Val { .. })`) is reclaimed as deeply as the
+// literal-built form of the same value: each element's rc fields, the struct
+// box, then the outer buffer. #6127 is the shallow (no rc field) sibling.
 //
-// Two things had to move together, and the second is the one that broke it:
-//
-//   - the blunt not-reassigned exclusion becomes arrstruct_unsafe_for, which
-//     sanctions the self-append rebind and refuses every other reassignment;
-//   - arrstruct_elem_payload_escapes had to learn the self-append RECEIVER.
-//     A bare mention of the array is an escape there, and `vals.append(..)`'s
-//     receiver is a bare mention, so the credit was refused even once the
-//     reassignment gate allowed it. `.len()` on the array carries exactly this
-//     whitelist already, for exactly this reason (#6127).
-//
-// The element rule is unchanged from the literal-built path: a fresh no-base
-// struct literal, so the element box is sole-owned and the deep walk frees only
-// what the array owns. A BOUND element (`let v = Val { .. }; vals.append(v)`)
-// is still refused — the live local and the buffer would both release the
-// element's field buffers — which is the move-site half of #6535 and a
-// separate mechanism.
+// Any other reassignment of the array, and a BOUND element
+// (`let v = Val { .. }; vals.append(v)`) that a live local still holds, must
+// keep its field buffers alive.
 
 const arrStructAppendChurnSrc = `struct Val { kind: i32, kids: i32[] }
 

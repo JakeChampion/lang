@@ -3,18 +3,12 @@ package e2ecompiler
 import "testing"
 
 // i64CallWidthIRCases pin an i32-returning CALL consumed in an i64 arithmetic
-// context (`s64 + g()`) to the self-host IR path on x86-64 + wasm. lower_i64's
-// ExprCall arm lowered only i64-returning calls (and the 0-arg if/match IIFE)
-// and bailed everything else via `return s.fail()`, dropping the whole module to
-// the legacy AST emitter. #2691 widens it: a width-32 call result (not
-// i64-returning, not the IIFE) was lowered via lower_expr (the normal call path)
-// and sign-extended to i64 (op_int_extend). This is provably safe — the checker
-// forbids i64 + f64/string/u32 and rejects binding a bare i32 call to an i64
-// (E009; it needs an explicit `as i64`), so a call reaching this point in a valid
-// program necessarily returns a signed i32. This is the last of the four i32-leaf
-// shapes feeding lower_i64 (after the i32 ident, array element, and struct/tuple
-// member widenings). Each case narrows the i64 result with `as i32` (valid wasm
-// exit code in [0,126)) and is oracle-checked against the interpreter.
+// context (`s64 + g()`) to the self-host IR path on x86-64 + wasm: the call
+// result is sign-extended to i64 (#2691). The checker forbids i64 +
+// f64/string/u32 and rejects binding a bare i32 call to an i64 (E009; it needs
+// an explicit `as i64`), so such a call in a valid program returns a signed
+// i32. Each case narrows the i64 result with `as i32` (valid wasm exit code in
+// [0,126)) and is oracle-checked against the interpreter.
 var i64CallWidthIRCases = []struct {
 	name string
 	main string

@@ -7,17 +7,15 @@ import (
 
 // returnClosureNestedIRCases pin a DOUBLY-escaping nested closure — a function
 // that returns a closure which itself returns a closure (`() => (() => T)`),
-// issue #5281. The two-level hoist (`pick$clo` / `pick$clo$clo`) is correct; the
-// bug was caller-side: `let g = pick(); let h = g();` bound `h` a plain scalar
-// because `pick`'s nested `() => (() => i32)` return type coarsens to "fn",
-// losing that CALLING g yields another closure — so `h()` bare-called the inner
-// box pointer as code (SIGSEGV). closure_ret_closure_fns_of now marks such a
-// factory RETCLO2 (its returned closure's `__mkclo$` funcval is itself
-// closure-returning); `let g = pick()` records g a RETCLO local, so `let h = g()`
-// binds h a closure local and `h()` dispatches env-first.
+// issue #5281. The two-level hoist is `pick$clo` / `pick$clo$clo`; the hazard is
+// caller-side: `let g = pick(); let h = g();` must bind `h` a closure local,
+// although `pick`'s nested `() => (() => i32)` return type coarsens to "fn"
+// and loses that CALLING g yields another closure. Bound as a plain scalar,
+// `h()` bare-calls the inner box pointer as code (SIGSEGV); as a closure it
+// dispatches env-first.
 //
 // Found via differential probing. Exit codes cross-checked against the
-// interpreter and the native Go backend.
+// interpreter.
 var returnClosureNestedIRCases = []struct {
 	name string
 	src  string

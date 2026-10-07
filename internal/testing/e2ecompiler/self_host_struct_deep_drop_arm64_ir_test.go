@@ -4,18 +4,15 @@ import (
 	"testing"
 )
 
-// TestSelfHostStructDeepDropIRArm64 is the arm64 port of the Perceus slice-3
-// DEEP-DROP (the x86 sibling is TestSelfHostStructDeepDropIRX86_64): a direct
-// nested-struct field (`Outer { inner: Inner }`) whose inner is a LEAF struct
-// carrying its OWN rc-array field is now RECURSIVELY reclaimed. When the inner box
-// is uniquely owned, `__struct_drop_<Inner>` releases the inner's array buffers
-// before the inner box is freed, instead of the shallow box-only free that leaked
-// them (slice 3b).
+// TestSelfHostStructDeepDropIRArm64 is the arm64 port of the struct deep-drop
+// cases (the x86 sibling is TestSelfHostStructDeepDropIRX86_64): a direct
+// nested-struct field (`Outer { inner: Inner }`) whose inner carries its OWN
+// rc-array field is released deeply. When the inner box is uniquely owned,
+// Inner's drop releases its array buffer before the inner box is freed.
 //
-// CYCLE SAFETY: deep-drop fires ONLY for a leaf inner (no nested-struct field of
-// its own), so `__struct_drop_<Inner>` makes no further recursive struct_drop call
-// — the recursion is depth-1 and cannot loop. A self-referential / tree struct
-// necessarily carries a nested-struct field, so its field edge stays shallow.
+// CYCLE SAFETY: a type that reaches itself (a tree) releases its children
+// through calls to its own drop helper rather than an inline expansion, so the
+// drop terminates.
 //
 // Under qemu the reclaim is proven by CORRECTNESS (a wrong free of a live buffer
 // corrupts the read-back) plus the arm64 census balancing at live_bytes 0. Heavy
@@ -35,9 +32,9 @@ func TestSelfHostStructDeepDropIRArm64(t *testing.T) {
 	}
 
 	// DEEP-DROP shape + value: `o.inner` is a fresh struct LITERAL (sole-owned, rc 1),
-	// so the is_unique gate passes and `__struct_drop_Inner` releases `inner.items`
-	// before the inner box is freed. The inner is read back before the drop; a wrong
-	// free of the live buffer would corrupt it. items[0..15] sum to 136, + tag 7 = 143.
+	// so when `o` dies Inner's drop releases `inner.items` before the inner box is
+	// freed. The inner is read back before the drop; a wrong free of the live buffer
+	// would corrupt it. items[0..15] sum to 136, + tag 7 = 143.
 	// A runtime element keeps the array and enclosing boxes on the heap.
 	run(t, `struct Inner { items: i32[] }
 struct Outer { inner: Inner, tag: i32 }

@@ -12,19 +12,16 @@ import (
 // read — `f(xs[i])`, where `xs: T[]` — must monomorphise and route through the
 // IR path.
 //
-// `mono_infer` had no `ExprIndex` arm, so `xs[i]` inferred as "unknown". With
-// no type argument the call was left generic, and the un-monomorphised symbol
-// (`cmp____cmp_probe_after`, with no `__i32` suffix) survived into the IR
-// eligibility gate, which rejected the CALLING function and bailed the module
-// to an AST emitter that no longer exists (#6189). A hard compile error.
+// `mono_infer` has to infer `xs[i]`'s element type; left "unknown", the call
+// stays generic and the un-monomorphised symbol (`cmp____cmp_probe_after`,
+// with no `__i32` suffix) reaches the IR eligibility gate, which refuses the
+// CALLING function — a hard compile error (#6189).
 //
 // THESE CASES NEED THE STDLIB. The bug reproduces through a bounded generic
 // (`T: Ord` calling `.cmp`), which is what core/cmp's adaptive sort does — so
 // the driver here is asm_load_run with the stdlib resolved off disk, not the
-// pathprobe driver. A first version of this test used pathprobe with plain
-// `[T]` generics and passed with the fix REVERTED: unbounded single-module
-// generics never reproduced it, so that test guarded nothing. Verified by
-// reverting the fix and watching these fail.
+// pathprobe driver. Unbounded single-module `[T]` generics do not reproduce
+// it.
 //
 // Each case is oracle-checked against the interpreter and routing-pinned
 // to "ir".

@@ -4,16 +4,12 @@ import "testing"
 
 // i64MixWidthIRCases pin an i32-width scalar leaf consumed in an i64 ARITHMETIC
 // context (`s64 + i32`, a mixed-width local/param, a for-range loop var
-// accumulated into an i64) to the self-host IR path on x86-64 + wasm. lower_i64
-// must accept more than leaves that are ALREADY i64 (an i64 slot/literal/cast
-// or an i64-returning call): a plain i32 identifier hitting `return s.fail()`
-// bails the whole module. #2691 widens lower_i64's
-// ExprIdent arm: an i32-scalar slot (is_i32_scalar_slot) is lowered as an i32 and
-// sign/zero-extended to i64 (op_int_extend; zero-extend for u32, sign-extend for
-// signed i32 / subword). Because the ExprBinary arm recurses through lower_i64,
-// this also lifts the i32 leaves of nested sub-expressions for free. Each case
-// narrows the i64 result with `as i32` so the wasm `_start` exit code is a valid
-// i32 in [0,126); each is oracle-checked against the interpreter.
+// accumulated into an i64) to the self-host IR path on x86-64 + wasm (#2691).
+// The i32 leaf is lowered as an i32 and sign/zero-extended to i64
+// (op_int_extend; zero-extend for u32, sign-extend for signed i32 / subword),
+// including the i32 leaves of nested sub-expressions. Each case narrows the
+// i64 result with `as i32` so the wasm `_start` exit code is a valid i32 in
+// [0,126); each is oracle-checked against the interpreter.
 var i64MixWidthIRCases = []struct {
 	name string
 	main string

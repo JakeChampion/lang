@@ -10,40 +10,26 @@ import (
 
 // --- A `return` inside a match arm takes the return-path release (#7725) -----
 //
-// The consuming-match drop is emitted AFTER the match statement, so a `return`
-// inside an arm jumps over it. `optret_pending` exists for exactly that: the
-// return-path sweep re-emits the drop. But its entry encoded the release as one
-// character derived from the payload's free fn, and the release is a five-way
-// choice that `pfrees` does not determine — a nested-Option payload and a
-// struct payload both free through `__fern_rc_dec`, so both encoded as the
-// SHALLOW drop. The return path then freed the boxes and stranded what they
-// owned, on the two shapes whose only release is that drop:
+// A `return` inside a consuming match's arm leaves before the statement after
+// the match, so the scrutinee's release must also run on the return path — and
+// it must be the same DEEP release the fall-through takes. A nested-Option
+// payload and a struct payload are the two shapes whose box owns something
+// further (the inner string, the `xs` buffer); a shallow release there frees
+// the boxes and strands what they own, unbounded and sanitizer-clean. Each is
+// paired with a control that assigns in the arm and returns after the match.
 //
-//	arm returns              native      self-host (before)
-//	Option[Option[string]]   400/400/0   800/400  live 6400
-//	Option[P{ xs: i32[] }]   600/600/0   600/400  live 8000
-//
-// Both unbounded, both sanitizer-clean — an under-release. Their controls, the
-// byte-identical programs assigning in the arm and returning after the match,
-// balanced throughout, which is what isolated the return path from the analysis
-// (the candidate is admitted and the correct deep release IS selected; it is
-// simply not what the return path emits).
-//
-// The pairs below are the gate. Each row asserts `__rc_underflow_count() == 0` before
-// its answer, because the fix makes the deep release reachable on a second path
-// and the failure mode of getting that wrong is a double free, which no byte
-// count shows — `docs/rc-log/2026-08-29-option-alias-payload-out.md` measured an
+// Each row asserts `__rc_underflow_count() == 0` before its answer, because an
+// over-release on the return path is a double free, which no byte count shows
+// — `docs/rc-log/2026-08-29-option-alias-payload-out.md` measured an
 // over-releasing build reading `300/300 live 0` where the correct one carried an
 // actual leak. `TestSelfHostNestedMatchBorrowNoUnderflowX86_64` covers the same
-// hazard for the shapes that already had a return-path release.
+// hazard for other shapes.
 //
-// The last four rows are the encodings this change rewrote but did not mean to
-// move — string, string[], tagged (call-bound) and leak-safe-array payloads,
-// which reached the return path correctly before. They pin that.
+// The last four rows pin the other payload kinds on the same return path:
+// string, string[], tagged (call-bound) and leak-safe-array.
 //
-// Every want was confirmed against BOTH oracles: `bin/fern -interp` and the
-// native x86-64 backend agreed on each, and neither was read off the self-host
-// run under test.
+// Every want was confirmed against `bin/fern -interp`, never read off the
+// self-host run under test.
 type armReturnDropCase struct {
 	name string
 	src  string
@@ -57,8 +43,8 @@ const armReturnDropMain = "\nfunction main(): i32 { let t: i32 = 0; let i: i32 =
 func armReturnDropCases() []armReturnDropCase {
 	return []armReturnDropCase{
 		{
-			// THE REPRO. Was 800/400 live 6400 — both option boxes freed by the
-			// shallow drop, the string stranded.
+			// THE REPRO: a shallow drop frees both option boxes and strands the
+			// string.
 			name: "optopt_return_in_arm",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -70,7 +56,7 @@ function round(i: i32): i32 {
 		},
 		{
 			// Its control: the same program differing only in where the arm
-			// returns. Balanced before the fix and after it.
+			// returns.
 			name: "optopt_return_after_match",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -82,8 +68,8 @@ function round(i: i32): i32 {
 			want: 19,
 		},
 		{
-			// The lower_block sibling: same shape with the candidate and its
-			// match inside an `if`, which is a different pending-entry site.
+			// The same shape with the candidate and its match inside an `if`
+			// block.
 			name: "optopt_return_in_arm_nested_block",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -108,9 +94,8 @@ function round(i: i32): i32 {
 			want: 19,
 		},
 		{
-			// THE SECOND MEMBER OF THE SPAN. Was 600/400 live 8000 — the struct
-			// box freed, its `xs` buffer stranded, because the field release is
-			// __struct_drop_<P> and the shallow drop does not reach it.
+			// THE SECOND SHAPE: a shallow drop frees the struct box and strands
+			// its `xs` buffer, whose release is the struct's field drop.
 			name: "optstruct_return_in_arm",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
@@ -144,9 +129,7 @@ function round(i: i32): i32 {
 			want: 13,
 		},
 		{
-			// A STRING payload — the release the entry used to spell "#s" and now
-			// names in full. Correct before; pinned so the re-encoding is a no-op
-			// for it.
+			// A STRING payload.
 			name: "str_return_in_arm",
 			src: `function w(a: string): string { return a + "!"; }
 function round(i: i32): i32 {
@@ -157,8 +140,8 @@ function round(i: i32): i32 {
 			want: 19,
 		},
 		{
-			// A string[] payload — the "#S" spelling. Its release walks every
-			// element, so a fallback to the plain box dec strands all of them.
+			// A string[] payload. Its release walks every element, so a fallback
+			// to the plain box dec strands all of them.
 			name: "strarr_return_in_arm",
 			src: `function round(i: i32): i32 {
     let o: Option[string[]] = Some(["a" + "b", "c" + "d"]);
@@ -181,8 +164,7 @@ function round(i: i32): i32 {
 			want: 68,
 		},
 		{
-			// A leak-safe array payload, the "#a" spelling that is still the
-			// shallow drop after the change.
+			// A leak-safe array payload, whose release is the shallow drop.
 			name: "arr_return_in_arm",
 			src: `function round(i: i32): i32 {
     let o: Option[i32[]] = Some([i, i + 1]);

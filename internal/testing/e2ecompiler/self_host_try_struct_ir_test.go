@@ -3,13 +3,10 @@ package e2ecompiler
 import "testing"
 
 // tryStructIRCases pin the `?` (try) operator on a STRUCT-payload Result/Option
-// on the self-host IR path (#3802). `?` was IR-eligible only for scalar payloads
-// (i32/boolean/i64/u64); a struct payload bailed the whole module to the legacy
-// AST path. lower_try now admits a leaf-safe struct payload — op_opt_payload
-// reads the pointer-width struct box exactly as the match-arm Some/Ok binding
-// does, and the `let p: P = inner?` binding types p's slot from its annotation,
-// so `p.field` resolves. Each case is value-pinned against the native
-// interpreter oracle (interp == native).
+// on the self-host IR path (#3802): op_opt_payload reads the pointer-width
+// struct box exactly as the match-arm Some/Ok binding does, and the
+// `let p: P = inner?` binding types p's slot from its annotation, so `p.field`
+// resolves. Each case is value-pinned against the interpreter.
 var tryStructIRCases = []struct {
 	name string
 	src  string

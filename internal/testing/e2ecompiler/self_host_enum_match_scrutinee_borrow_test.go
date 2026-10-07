@@ -8,29 +8,19 @@ import (
 	"testing"
 )
 
-// --- A bare-ident match SCRUTINEE is a borrow in the enum-field walk too ------
+// --- A bare-ident match SCRUTINEE is a borrow --------------------------------
 //
-// An enum local that is not matched exactly ONCE at top level reclaimed nothing:
-// matched twice, matched inside an `if`, matched inside a loop — all 200 allocs
-// / 0 frees over 100 rounds against native's 200/200.
+// Matching an rc-enum local does not hand it out, so a local matched twice,
+// matched inside an `if`, or matched inside a loop is still released at scope
+// exit: those rows balance at 200 allocs / 200 frees over 100 rounds.
 //
-// collect_fresh_rcenum_names takes its match-consumed branch only when
-// sole_top_level_match_idx finds a single top-level match on the name. Every
-// other shape falls to body_unsafe_for_enumfield, and ef_unsafe_stmt's StmtMatch
-// arm sent its scrutinee to ef_unsafe_expr, whose default arm reaches the STRICT
-// walker — which reads a bare ident as an escape. stmt_unsafe_for_match_borrow
-// has read a bare-ident scrutinee as a BORROW all along; this fork never did.
+// The arms' payload bindings are the part that can hand the value out, and that
+// is sound: the binding's own assignment retains, so both owners are counted.
+// Two rows below establish that, one on the counts and one on the VALUE with
+// allocation churn after the match, because counts and the underflow guard
+// cannot see a use-after-READ.
 //
-// Matching a value does not hand it out. The arms' payload bindings are the part
-// that can — and on THIS branch nothing refuses them, because the arm body
-// mentions the binding rather than the matched name. It is sound anyway: the
-// binding's own assignment retains, so both owners are counted. Two rows below
-// establish that, one on the counts and one on the VALUE with allocation churn
-// after the match, because counts and the underflow guard cannot see a
-// use-after-READ.
-//
-// Every want was confirmed against the native x86-64 backend. Exit 99 is
-// reserved for __rc_underflow_count().
+// Exit 99 is reserved for __rc_underflow_count().
 
 type enumScrutineeCase struct {
 	name   string
@@ -54,8 +44,7 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 `
 	return []enumScrutineeCase{
 		{
-			// Two top-level matches, so sole_top_level_match_idx declines and the
-			// escape walk decides alone. Base: 200 allocs / 0 frees.
+			// Two top-level matches on the same local. Base: 200 allocs / 0 frees.
 			name: "matched_twice",
 			src: decls + `function round(i: i32): i32 {
     let v: E = mkv(i);

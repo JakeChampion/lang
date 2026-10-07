@@ -11,29 +11,15 @@ import (
 // --- A STRING payload built by a fresh-producer CALL (#7364) -----------------
 //
 // `R.Full(w("x"))` — a user function's result as the variant's string payload —
-// was refused by variant_struct_payloads_fresh, whose freshness set was purely
-// syntactic (literal / concat / named builtin / string method). The refusal cost
-// the whole enum its "RCENUM:"/"RCENUMS:" credit, so nothing swept the local at
-// all: 150/0, 72 B/round, against a balanced native, in both the exit-sweep and
-// the match-consumed shapes. The byte-identical program with the concat INLINED
-// was already credited, so factoring the payload through a function was the
-// entire difference.
-//
-// The fix consults str_fresh_ret_fns — the whole-program fixpoint of free
-// functions whose every return is a fresh sole-owned string box, the registry
-// every other owner of a fresh-string verdict already uses — threaded into the
-// admission gates that decide reclaim credits. The strict syntactic set still
-// applies where the registry is out of reach (struct-literal enum fields, array
-// elements, the RCE: registration proof).
+// is reclaimed exactly as the same program with the concat INLINED, in both the
+// exit-sweep and the match-consumed shapes: a function whose every return is a
+// fresh sole-owned string box is as fresh a producer as a literal or a concat.
 //
 // The alias row is half the point: a callee that returns its PARAMETER hands
 // back a box the caller still owns; a release under it exits 99.
 //
-// Every want was confirmed against BOTH oracles (bin/fern -interp and the
-// native x86-64 backend agreed on each); alloc/free counts are the self-host
-// build's own, pinned exactly (the 3-vs-1 allocs-per-string ratio against
-// native is #7351, not this change).
-//
+// Every want was confirmed against bin/fern -interp; alloc/free counts are the
+// self-host build's own, pinned exactly.
 
 type rcEnumStrCallCase struct {
 	name   string
@@ -60,8 +46,7 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 50, allocs: 100, frees: 100,
 		},
 		{
-			// The match-consumed sibling (consumed_rcpayload_enum_frees), same
-			// payload. Base: 300/0, 7200 live bytes.
+			// The match-consumed sibling, same payload. Base: 300/0, 7200 live bytes.
 			name: "call_payload_match_consumed",
 			src: `enum R { Full(string), Empty }
 function w(a: string): string { return a + "!"; }
@@ -74,9 +59,8 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			want: 34, allocs: 200, frees: 200,
 		},
 		{
-			// The REBIND path (all_assigns_fresh_rcenum): every assignment a
-			// fresh producer-call construction, superseded chain plus final
-			// value all released.
+			// The REBIND path: every assignment a fresh producer-call
+			// construction, superseded chain plus final value all released.
 			name: "call_payload_rebind",
 			src: `enum R { Full(string), Empty }
 function w(a: string): string { return a + "!"; }
@@ -123,9 +107,8 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 }
 
 // TestSelfHostRcEnumStrCallPayloadX86_64 — a string payload from a
-// str_fresh_ret_fns producer call earns the enum the same reclaim credit an
-// inline concat does, and an alias-returning callee is never released under its
-// caller.
+// fresh-producer call is reclaimed exactly as an inline concat is, and an
+// alias-returning callee is never released under its caller.
 func TestSelfHostRcEnumStrCallPayloadX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)

@@ -9,12 +9,10 @@ import (
 )
 
 // A record lent to a callee that hands back its string[] field, and fresh enum
-// results passed straight into a helper, leaked on the AST lowering and on the
-// mixed pipeline where only some functions are produced (#9187). The forwarder
-// call marked the record's field unsafe although the forwarding return
-// retains it, so the record lost its deep drop; a fresh enum argument had no
-// stash; a scalar enum result read back through caller_sigs had no row; and a
-// parameter whose match returned a scalar binding read as escaping.
+// results passed straight into a helper, are released (#9187). The forwarding
+// return retains the field, so the record keeps its deep drop; a fresh enum
+// argument and a scalar enum result are released by the caller; and a
+// parameter whose match returns a scalar binding does not escape.
 const lentRecordSrc = `import "std/i32";
 struct Rec { n: i32, xs: string[] }
 function keep_field(r: Rec): string[] { return r.xs; }

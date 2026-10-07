@@ -2,7 +2,7 @@ package e2ecompiler
 
 import "testing"
 
-// Capturing closures on the AST lowering. A lambda's env box holds each
+// Capturing closures. A lambda's env box holds each
 // capture as a borrow, and the frame that built the box releases it.
 
 // A capturing lambda written as a call argument (#10746): its box is fresh and

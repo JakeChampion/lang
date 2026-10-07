@@ -12,13 +12,10 @@ import "testing"
 // the right impl: i32 -> __fn_i32__to_json, string -> __fn_string__to_json, a
 // derived struct -> its synthesised `<Struct>.to_json`. Issue #2766.
 //
-// Each case is a complete, IR-eligible program (inline `trait Json` + the
-// primitive impls + the array method) — the same shape as the
-// derive-default IR cases. Bundling the full std/json is deliberately avoided:
-// std/json as a whole isn't IR-eligible, so it routes through the AST emitter
-// where this fix does not apply (a legacy gap that, per project scope, does not
-// need fixing). The program returns the rendered JSON's length as its exit
-// code.
+// Each case is a complete program (inline `trait Json` + the primitive impls +
+// the array method) rather than an import of std/json — the same shape as the
+// derive-default IR cases. The program returns the rendered JSON's length as
+// its exit code.
 const jsonArrayPrelude = `trait Json { function to_json(self: Self): string; }
 impl Json for i32 { function to_json(self: Self): string { return self.to_string(); } }
 impl Json for string { function to_json(self: Self): string { return "\"" + self + "\""; } }

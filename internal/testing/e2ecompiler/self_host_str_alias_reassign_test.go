@@ -8,44 +8,25 @@ import (
 	"testing"
 )
 
-// --- A string local reassigned from an alias reclaims nothing ----------------
+// --- A string local reassigned from an alias is reclaimed --------------------
 //
-// `let s: string = "ab" + "cd"; let keep: string = "zz"; keep = s;` freed neither
-// box — 40 allocs / 0 frees over 20 rounds. The BIND form (`let keep: string = s;`)
-// has been at parity since #7282, so this is the same REASSIGN-vs-BIND split the
-// struct limb had, in the class that has its own reclaim machinery.
+// `let s: string = "ab" + "cd"; let keep: string = "zz"; keep = s;` must free
+// both boxes, exactly as the BIND form (`let keep: string = s;`, #7282) does.
+// Unreclaimed it reads 40 allocs / 0 frees over 20 rounds, so the case table
+// pins both forms.
 //
-// Two halves refused it, and they are NOT the ones the struct limb lifted:
+// The reassign retains the shared box right after the RHS is lowered, on every
+// return path, and both names then release it. Releasing without that retain
+// gives exact count parity with exit 99, so the underflow guard is what
+// separates a correct release from an over-release.
 //
-//   - The TARGET is dropped by a BLANKET `index_of_str(reassigned, name) < 0` in
-//     both STR collectors — any reassigned name, alias or not.
-//   - The SOURCE is refused as a bare-ident escape, because
-//     stmt_unsafe_for_alias_vb consults alias_ok in its StmtVar arm and NOT in its
-//     StmtAssign arm. That asymmetry is the bug: a bind alias is forgiven, the
-//     identical reassign alias is not.
+// The string accumulator (`s = s + part`) is a different shape: a
+// consume-rebind replaces the slot's value with a fresh box rather than
+// sharing one, so it takes no retain. It is pinned below as a control.
 //
-// The blanket is safe to narrow because the other reassigned-string shape never
-// depended on it: the accumulator (`s = s + part`) is credited by its own
-// collector and lowered by emit_str_reclaim_store, which deliberately emits no inc
-// — a consume-rebind replaces the slot's value with a fresh box rather than
-// sharing one. It is pinned below as a control.
-//
-// Strings need no NODEEP:/SINKSHARE: distinction — a string is a single box with
-// no field or element walk, so the alias takes the same "STR:" class. That is what
-// makes this limb simpler than the struct one rather than merely different.
-//
-// The retain is emitted where every return path passes, right after the RHS is
-// lowered — NOT via emit_arr_store's alias_inc, which emit_str_reclaim_store
-// returns before ever reaching. Getting that wrong grants the credit without the
-// retain, whose signature is exact count parity with exit 99.
-//
-// Every want below was confirmed against the native x86-64 backend. Exit 99 is
-// reserved for __rc_underflow_count().
-//
-// A heap string is ONE block: since #7351 the box lives in a header __raw_alloc
-// reserves ahead of the buffer. The per-row notes below quote the counts as
-// they read when each row was written, which was two blocks per string, so a
-// historical number in a note is twice its pin.
+// Exit 99 is reserved for __rc_underflow_count(). A heap string is ONE block
+// (#7351); a count quoted in a row note below as written before that is twice
+// its pin.
 
 type strAliasReassignCase struct {
 	name   string
@@ -107,10 +88,9 @@ func strAliasReassignCases() []strAliasReassignCase {
 			want: 24, allocs: 20, frees: 20,
 		},
 		{
-			// THE CONTROL THAT MUST NOT MOVE. The string-builder consume-rebind
-			// routes through emit_str_reclaim_store, whose RHS is a FRESH box and
-			// which emits no inc on purpose. The new collector must not claim it:
-			// a retain here would leak, since nothing shares the box. One box per
+			// THE CONTROL THAT MUST NOT MOVE. The string-builder consume-rebind's
+			// RHS is a FRESH box, so it takes no retain: a retain here would
+			// leak, since nothing shares the box. One box per
 			// round: the first append onto the empty literal allocates it and the
 			// other three grow it in place (#10960).
 			name: "string_accumulator_unchanged",

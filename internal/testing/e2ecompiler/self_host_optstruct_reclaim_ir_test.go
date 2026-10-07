@@ -9,23 +9,16 @@ import (
 
 // optStructReclaimCases pin the #4365 `Option[<struct-with-array-field>]` reclaim: a
 // `let o: Option[P] = Some(P { xs: [i, i+1] })` (P has an rc-array field) consumed by a
-// borrow-only match leaked its payload array buffer + struct box + option box per
-// iteration on the self-host IR path (native bounds it). The new "OPTSTRUCT:" class is
-// the struct sibling of "OPTTUP:": it admits a fresh Some(<struct literal>) / None
-// consumed by exactly one borrow-only match, and inline-frees the box — tag-check (Some)
-// -> struct-field deep-drop (emit_struct_field_drops -> __struct_drop_<P>, balanced by the
-// construction alias-inc) -> struct box dec -> option box dec, at the loop-rebind and exit
-// sweep. some_opt_type records the full Option[P] for a struct payload (no tuple-style
-// collapse), so no opt_ty override is needed.
+// borrow-only match must free its payload array buffer, the struct box and the option
+// box per iteration, at the loop rebind and at scope exit.
 //
-// SOUNDNESS: the Some-arm's payload use is checked by optstruct_payload_escapes — a scalar
-// field read (p.n), an indexed array-field read (p.xs[i]) and p.xs.len() are borrows
-// (reclaim proceeds); a BARE array-field extraction (store / return / pass / alias / slice
-// p.xs) escapes and the local is left leak-safe (never over-released).
+// SOUNDNESS: a scalar field read (p.n), an indexed array-field read (p.xs[i]) and
+// p.xs.len() in the Some arm are borrows (reclaim proceeds); a BARE array-field
+// extraction (store / return / pass / alias / slice p.xs) escapes and the local is left
+// leak-safe (never over-released).
 //
-// The admitted payload is a struct with a reclaimable field of EITHER kind
-// (optstruct_payload_reclaimable): an rc-array / nested-struct / enum field, or a bare
-// `string` one (#6360). Exact alloc/free balance for the string half — which a bump-growth
+// The payload struct's reclaimable field may be an rc-array / nested-struct / enum
+// field, or a bare `string` one (#6360). Exact alloc/free balance for the string half — which a bump-growth
 // bound cannot separate from "freed the boxes, stranded the string" — is pinned by
 // TestSelfHostOptStructStringFieldX86_64.
 var optStructReclaimCases = []struct {
@@ -96,15 +89,10 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// STRING-FIELD payload (#6360): the payload's only rc field is a bare `string`.
-	// The class admitted a payload struct only when it carried an rc-ARRAY field, so
-	// this shape got no credit and leaked the string AND both boxes — 48000 bytes over
-	// 100 rounds against 0 on native, while the SAME struct bound as a bare local has
-	// been reclaimed since #4357 and the same struct with an array field beside the
-	// string was already clean. Everything downstream was ready: __struct_drop_<P>'s
-	// k_str arm frees the field on all three backends, and optstruct_payload_escapes is
-	// field-TYPE generic (a bare `p.name` extraction escapes because `string` is
-	// non-scalar; `p.name.len()` is a borrow).
+	// STRING-FIELD payload (#6360): the payload's only rc field is a bare `string`,
+	// which must be reclaimed like an rc-ARRAY field — the string AND both boxes
+	// freed, as they are for the same struct bound as a bare local (#4357). A bare
+	// `p.name` extraction escapes, while `p.name.len()` is a borrow.
 	{"optstruct-string-field-churn", `struct P { name: string, n: i32 }
 function main(): i32 {
     let pre: string = "n";
@@ -123,8 +111,8 @@ function main(): i32 {
 	// ALIASED string field: the payload's `name` is a bare ident naming a local the
 	// program keeps reading after the match, with a same-shaped churn in between so a
 	// wrongly-freed box would be recycled before the read. The construction-side retain
-	// and the k_str dec are routed by the SAME whole-program verdict, so they balance
-	// and `shared` still reads "abcd" (sum 0x61+0x62+0x63+0x64 = 394).
+	// and the field's release balance, so `shared` still reads "abcd"
+	// (sum 0x61+0x62+0x63+0x64 = 394).
 	{"optstruct-string-field-alias-safe", `struct P { name: string, n: i32 }
 function main(): i32 {
     let shared: string = "ab" + "cd";

@@ -11,16 +11,12 @@ import (
 
 // TestSelfHostErasedWideGenericWasm pins the wasm side of the erased-generic
 // 64-bit widening (#5464): a module passing a 64-bit or f64 value through a
-// bare-typevar (erased-generic) PASS-THROUGH fn (`ident[T](x: T): T`) now
-// LOWERS on the wasm IR path. The erased param/return/locals are typed i64 —
-// the uniform 8-byte slot the register backends give every value — and the
-// caller coerces its arg/result at the boundary (f64 <-> i64 reinterpret,
-// i32/pointer <-> i64 extend/wrap). Before this the module deferred to the
-// legacy AST emitter, which emitted type-INVALID WAT (`(call $ident
-// (f64.const 2.5))` into an i32 erased param) that wasmtime rejects. The test
-// asserts the module reaches the IR path (no `$__lit` AST-fallback scratch
-// locals) AND computes the right value under wasmtime. Container-returning
-// erased fns (tuple/array/Option/Result of T) still defer — a later slice.
+// bare-typevar (erased-generic) PASS-THROUGH fn (`ident[T](x: T): T`) LOWERS
+// on the wasm IR path. The erased param/return/locals are typed i64 — the
+// uniform 8-byte slot the register backends give every value — and the caller
+// coerces its arg/result at the boundary (f64 <-> i64 reinterpret,
+// i32/pointer <-> i64 extend/wrap), so the module validates and computes the
+// right value under wasmtime.
 func TestSelfHostErasedWideGenericWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping erased-wide generic wasm e2e")
@@ -55,11 +51,8 @@ func TestSelfHostErasedWideGenericWasm(t *testing.T) {
 			if err != nil || len(wat) == 0 {
 				t.Fatalf("driver failed for %s: %v", tc.name, err)
 			}
-			// The AST fallback pre-declared `$__lit0` scratch locals; the IR
-			// emitter does not. Its absence proves the module lowered on the IR
-			// path (the point of #5464) rather than deferring to the AST emitter
-			// that miscompiled it — a value-correct fallback would still have been a
-			// regression here.
+			// The IR emitter never declares a `$__lit0` scratch local; finding one
+			// means the module did not lower through the IR.
 			if strings.Contains(string(wat), "$__lit0") {
 				t.Errorf("%s did not lower through the IR (found $__lit0)", tc.name)
 			}

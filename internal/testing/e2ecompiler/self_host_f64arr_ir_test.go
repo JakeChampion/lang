@@ -9,21 +9,15 @@ import (
 )
 
 // TestSelfHostF64ArrayWasmIR is the CORRECTNESS gate for f64 arrays on the wasm
-// IR backend (wasm_ir.fern). It is NOT a differential test against the wasm AST
-// path: the wasm AST backend still stores array elements at a 4-byte stride
-// (truncating f64), so AST and IR DISAGREE on f64 arrays — which is exactly the
-// bug the IR path fixes. Per the project's IR-widening policy a legacy-AST gap
-// that the IR path closes does not need fixing in the AST backend, so instead of
-// AST==IR this test pins each program's IR result to a hardcoded oracle value
-// (the native interpreter's / hand-computed answer).
+// IR backend (wasm_ir.fern). Each program's result is pinned to a hardcoded
+// oracle value (the interpreter's / hand-computed answer), so an element stored
+// at a 4-byte stride — truncating the f64 — shows up as a wrong answer.
 //
 // Coverage: f64 array literal + indexed read, indexed write (a[i] = v), a counted
 // read loop, for-in iteration, an f64[] param, expression-valued elements, and
 // f64[]-returning functions (bound + directly indexed) — every f64-array shape
 // the IR lowers (arr_make / arr_get / arr_set width 64 -> 8-byte stride +
-// f64.load/store on wasm). f64-array slices still bail by design
-// (the wasm __fern_arr_slice helper copies 4-byte elements); the whole-module
-// eligibility gate bails them.
+// f64.load/store on wasm).
 func TestSelfHostF64ArrayWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host f64-array wasm IR e2e")

@@ -39,19 +39,17 @@ var selfHostProgCases = []struct {
 	// Cell[string] stored in a STRUCT FIELD — the lamdefs/Ctx shape. "ab"
 	// overwritten to "xyz" through the field; len 3.
 	{"cell-string-field", `struct Box { c: Cell[string] } function main(): i32 { let b: Box = Box { c: cell_new("ab") }; b.c.set("xyz"); return b.c.get().len(); }`, 3},
-	// Cell[string] field mutated through a function PARAM (shared mutation) —
-	// exactly how lam_ctr/lamdefs thread through the lambda emitter. "hi" →
-	// "hi!" → "hi!!", len 4.
+	// Cell[string] field mutated through a function PARAM (shared mutation).
+	// "hi" → "hi!" → "hi!!", len 4.
 	{"cell-string-shared", `struct Box { c: Cell[string] } function bump(b: Box): void { b.c.set(b.c.get() + "!"); } function main(): i32 { let b: Box = Box { c: cell_new("hi") }; bump(b); bump(b); return b.c.get().len(); }`, 4},
 	// Cell[i64] — 8-byte element, exercises lower_i64's cell-get case + the
 	// width-64 store: 5e9 + 1e9 = 6e9, /1e9 = 6 (#5510).
 	{"cell-i64", `function main(): i32 { let c: Cell[i64] = cell_new(5000000000i64); c.set(c.get() + 1000000000i64); return (c.get() / 1000000000i64) as i32; }`, 6},
 	// Cell[f64] — 8-byte float element, arr_set(64) store: 3.5 + 2.5 = 6.0.
 	{"cell-f64", `function main(): i32 { let c: Cell[f64] = cell_new(3.5); c.set(c.get() + 2.5); return c.get() as i32; }`, 6},
-	// Float/int type-classification edge cases (#5520) — each exercises a
-	// distinct arm of the expr_is_f64 / expr_is_f32 predicates that had NO
-	// dedicated coverage, and is the fast safety net for the typed-IR numeric
-	// merge (a mis-classified arm changes the emitted float ops -> wrong exit).
+	// Float/int type-classification edge cases (#5520) — each reads a float
+	// from a different kind of expression; a mis-classified one changes the
+	// emitted float ops -> wrong exit.
 	{"float-const-accessor", `const HALF: f64 = 2.5; function main(): i32 { return (HALF + 1.5) as i32; }`, 4},
 	{"f32-cast-arith", `function main(): i32 { let x: i32 = 7; let y: f32 = x as f32; return (y * 2.0) as i32; }`, 14},
 	{"float-struct-field", `struct P { x: f64 } function main(): i32 { let p: P = P { x: 3.5 }; return (p.x + 0.5) as i32; }`, 4},
@@ -76,8 +74,7 @@ var selfHostProgCases = []struct {
 	{"u64-tuple-elem", `function main(): i32 { let t: (u64, i32) = (18446744073709551615 as u64, 0); return (t.0 >> 60) as i32; }`, 15},
 	{"u64-method-ret", `struct S {} function (s: S) w(): u64 { return 18446744073709551615 as u64; } function main(): i32 { let s: S = S {}; return (s.w() >> 60) as i32; }`, 15},
 	// A DIRECT closure-call Option scrutinee `match (f(x))` — the find_map-shaped
-	// combinator that bailed the whole function to AST before closure_opt_rets let
-	// lower_stmt_match recover the closure param's Option return type (#3457 IR-gap).
+	// combinator, whose match needs the closure param's Option return type (#3457).
 	// pick(2)=Some(20), so apply(pick) matches Some(v)=20.
 	{"closure-opt-match", `function pick(x: i32): Option[i32] { if (x == 2) { return Some(x * 10); } return None; } function apply(f: (i32) => Option[i32]): i32 { match (f(2)) { Some(v) => { return v; }, None => { return 0; } } } function main(): i32 { return apply(pick); }`, 20},
 	// A direct `match (recv.method(...))` on a NUMERIC-primitive receiver whose
@@ -85,10 +82,9 @@ var selfHostProgCases = []struct {
 	// the resolver keyed "<prim>.<method>" for non-struct/enum/string receivers
 	// (#3457 IR-gap: std/i64.checked_add et al.). 3.tryadd(4)=Some(7).
 	{"prim-recv-opt-match", `function (n: i64) tryadd(x: i64): Option[i64] { if (x > 0 as i64) { return Some(n + x); } return None; } function main(): i32 { let a: i64 = 3 as i64; match (a.tryadd(4 as i64)) { Some(v) => { return v as i32; }, None => { return 0; } } }`, 7},
-	// A direct `match (r.caps.get(k))` where `caps` is a Map-typed struct FIELD —
-	// the map.get resolver only handled a map IDENT receiver, so a struct-field map
-	// bailed the function to AST (#3457 IR-gap: std/peg's PegResult.caps and any
-	// map-in-struct). expr_map_type_tag now recovers the field's Map[K,V].
+	// A direct `match (r.caps.get(k))` where `caps` is a Map-typed struct FIELD,
+	// not a map IDENT: the get resolves against the field's Map[K,V] (#3457:
+	// std/peg's PegResult.caps and any map-in-struct).
 	{"map-field-get-opt-match", `import "core/map";
 struct R { caps: Map[string, i32] } function mk(): R { let m: Map[string, i32] = map_new(4); m = m.insert("a", 7); return R { caps: m }; } function main(): i32 { let r: R = mk(); match (r.caps.get("a")) { Some(v) => { return v; }, None => { return 0; } } }`, 7},
 	// Array.build (parser.fern desugar): for-in builds [1,4,9]; sum 14.

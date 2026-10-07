@@ -12,8 +12,7 @@ import (
 
 // TestSelfHostOverBudgetPerModuleIR pins that a program importing a large slice
 // of stdlib — enough that the RAW merged module is far past the 512-function IR
-// budget, which used to drop the WHOLE program to the legacy AST emitter — still
-// reaches the IR path (#3457).
+// budget — still reaches the IR path (#3457).
 //
 // MEASURED, and not what the name suggests: this does NOT exercise
 // asm_load_run.emit_per_module_concat. That driver treeshakes its merged module

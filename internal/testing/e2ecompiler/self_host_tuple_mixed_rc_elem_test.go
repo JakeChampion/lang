@@ -10,42 +10,25 @@ import (
 
 // --- A MIXED rc tuple — one bare ident, one fresh literal (#7281) ------------
 //
-// `let t: (i32[], i32[]) = (xs, [i + 2, i + 3])` released NOTHING: not the two
-// buffers, not the tuple box.
+// `let t: (i32[], i32[]) = (xs, [i + 2, i + 3])` releases both buffers and the
+// tuple box. The tuple construction rc_inc's an element naming an rc-container
+// local (#4350 / #7226), so the tuple holds a COUNTED REFERENCE to every
+// position and its drop gives each one back, while the local's own release
+// spends its own reference. Missed, it released NOTHING:
 //
 //	100 rounds   allocs=300 frees=0    live_bytes=12000
 //	200 rounds   allocs=600 frees=0    live_bytes=24000
 //	400 rounds   allocs=1200 frees=0   live_bytes=48000
 //
-// 120 B/round, unbounded, against `300/300 live=0` on native and interp. The
-// answers agreed throughout and `__rc_underflow_count()` was 0, so nothing but
-// the byte count disagreed.
+// 120 B/round, unbounded, while the answers agreed and `__rc_underflow_count()`
+// was 0, so nothing but the byte count disagreed. Make either position rc-free
+// and it balances; only the mix fell through.
 //
-// The mix is all of it, and it falls between two classes that each handle
-// one half. `tuple_lit_rc_reclaimable` admits a bare-ident element, so the tuple
-// is "TUPRC:" and out of "TUP:" (the two sets are kept disjoint). But "TUPRC:"
-// is consumed only by the StmtVar rebind path; the scope-exit sweep needs
-// "TUPRCS:", and that credit required tuple_arg_payload_fresh — EVERY rc
-// position a fresh literal, so the blind type-driven drop sole-owns each one.
-// Position 0 is a live local, so neither credit was granted and no site owed the
-// release. Make either position rc-free and it balances: `(xs, ys)` is
-// "TUP:"+"TUPELEM:" and `([..], [..])` is "TUPRCS:". Only the mix fell through.
+// The rebind and discarded-literal sites owe the same give-back — `rebound`,
+// `loop_scoped` and `discarded_literal` are those.
 //
-// What the sweep actually needs is weaker than sole ownership: it needs the tuple
-// to hold a COUNTED REFERENCE to every position it dec's. A bare-ident element
-// has one — the tuple construction rc_inc's an element naming an rc-container
-// local (#4350 / #7226), so the tuple is a second owner and the drop's dec gives
-// exactly that retain back while the local's own sweep spends its own reference.
-// tuple_arg_payload_retained is that weaker admission; tuple_arg_payload_fresh
-// stays the gate for an Option's Some payload and an array-of-tuples element,
-// where the payload is freed without its own box at the same time.
-//
-// The rebind and discarded-literal sites owed the same give-back and skipped it
-// for the same stale reason (emit_tuple_child_drops' bare-ident arm), so they
-// move here too — `rebound`, `loop_scoped` and `discarded_literal` are those.
-//
-// Every want was confirmed against BOTH oracles — bin/fern -interp and the native
-// x86-64 backend agreed on each — never read off the self-host run under test.
+// Every want was confirmed against bin/fern -interp, never read off the
+// self-host run under test.
 
 type tupMixedRcCase struct {
 	name string
@@ -197,9 +180,9 @@ function round(i: i32): i32 {
 			want: 44, balance: true,
 		},
 		{
-			// A REASSIGNED mixed tuple: the superseded boxes go through
-			// emit_tuple_deep_reinit_store, which skipped their bare-ident retains.
-			// Base: allocs=900 frees=600 live_bytes=12000 — the n-of-n signature
+			// A REASSIGNED mixed tuple: each superseded box must give back its
+			// bare-ident element's retain as well as release its fresh one.
+			// Missed: allocs=900 frees=600 live_bytes=12000 — the n-of-n signature
 			// with the fresh half already released and the ident half stranded.
 			name: "rebound",
 			src: `function round(i: i32): i32 {
@@ -213,11 +196,7 @@ function round(i: i32): i32 {
 		},
 		{
 			// The discarded-literal statement site, which frees the box outright
-			// and owed the same give-back. Base: allocs=300 frees=200 live=4000.
-			//
-			// NATIVE leaks this one (allocs=300 frees=200 live_bytes=3200), so the
-			// self-host is now AHEAD of the oracle here; only the answer is taken
-			// from native. That native gap is its own bug, not this one's.
+			// and owes the same give-back. Missed: allocs=300 frees=200 live=4000.
 			name: "discarded_literal",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];
@@ -228,11 +207,11 @@ function round(i: i32): i32 {
 		},
 		{
 			// DELIBERATELY still refused, and asserted on the exit code alone.
-			// `let keep: i32[] = t.0` extracts an owned pointer element, so
-			// rctuple_payload_escapes denies the credit and this keeps its 12000 —
-			// the safe direction. What the row pins is that it must not start
-			// OVER-releasing while it waits, which is where a careless widening of
-			// the escape gate would take it.
+			// `let keep: i32[] = t.0` extracts an owned pointer element, so the
+			// tuple is not released and this keeps its 12000 — the safe
+			// direction. What the row pins is that it must not start
+			// OVER-releasing, which is where a careless widening of the escape
+			// rules would take it.
 			name: "elem_escapes_still_leaks",
 			src: `function round(i: i32): i32 {
     let xs: i32[] = [i, i + 1];

@@ -13,8 +13,8 @@ import (
 // wasiHttpRouterSrc is the handler the wasm32-wasi-http gates serve: it
 // routes on path and method, reads the body, reads a request header, and
 // sets response headers — every part of the request and response the entry
-// marshals through the host. std/serve is what the native compiler's
-// synthesised main needs to build the same program.
+// marshals through the host. std/serve is what a synthesised main
+// (flatten.with_handler_main) needs to build the same program.
 const wasiHttpRouterSrc = `
 import "std/http";
 import "std/headers";
@@ -128,9 +128,9 @@ func TestSelfHostWasiHttpTargetServes(t *testing.T) {
 }
 
 // TestSelfHostWasiHttpTargetMatchesNative is the differential against the
-// native compiler's component (#6636): the same handler, compiled by each,
-// answers every request of the gate the same — status, body and the headers
-// the handler sets.
+// component `fern -target wasm32-wasi-http` builds (#6636): the same handler,
+// compiled by each route, answers every request of the gate the same — status,
+// body and the headers the handler sets.
 func TestSelfHostWasiHttpTargetMatchesNative(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

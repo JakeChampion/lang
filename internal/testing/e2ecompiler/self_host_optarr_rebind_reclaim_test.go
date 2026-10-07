@@ -7,28 +7,14 @@ import (
 
 // --- Rebound Option[<flat scalar array>] reclaim (#6127) ---------------------
 //
-// The Option loop-rebind family had four classes — OPTAARR (Option[<arr>][]),
-// OPTARRARR (Option[i32[][]]), OPTSTRUCT, OPTTUP — and none for the simplest
-// payload of all, a flat scalar array.
-//
-// A SINGLE-BIND Option[i32[]] never needed one: consumed_rcpayload_option_frees
-// frees it at its consuming match, at fn level and (since #4357) per block. What
-// leaked was the REBOUND form, because every one of those consuming-match
-// analyses refuses a reassigned name outright and no rebind class existed to pick
-// it up. A gate matrix isolated it — same Option, same consuming match, differing
-// only in whether the local is rebound:
-//
-//	top-level, single bind             0   2 releases
-//	nested in a while, per-iteration    0   2 releases
-//	REBOUND in a loop              40000   0 releases
-//
-// The new OPTARR: class credits ONLY names that ARE reassigned, which is the
-// exact complement of those analyses' gate — so a name is claimed by one side or
-// the other and never both. That disjointness is what the mixed test below pins.
+// A REBOUND Option[i32[]] — reassigned in a loop and consumed by a match — must
+// release every superseded payload buffer and option box, as the single-bind
+// forms do. A name released at its consuming match must not also be released
+// as a rebind; the mixed test below pins that.
 //
 // These assert allocs == frees alongside live_bytes == 0, because the two
-// directions mean different things: frees > allocs is a double free (both
-// analyses claimed one box), frees < allocs is an unclaimed box.
+// directions mean different things: frees > allocs is a double free (one box
+// released twice), frees < allocs is an unclaimed box.
 
 // TestSelfHostOptArrRebindReclaimX86_64 — a rebound Option[i32[]] reclaims every
 // superseded payload buffer and option box, and the single-bind forms that were
@@ -93,8 +79,8 @@ function main(): i32 {
 	})
 
 	t.Run("single_bind_top_level_unchanged", func(t *testing.T) {
-		// Owned by consumed_rcpayload_option_frees, NOT by this class. If OPTARR:
-		// also claimed it, its box would be dec'd twice.
+		// A single-bind Option released at its consuming match. Releasing it
+		// again as a rebind would dec its box twice.
 		src := `function round(i: i32): i32 {
     let acc: i32 = 0;
     let o: Option[i32[]] = Some([i, i + 1]);

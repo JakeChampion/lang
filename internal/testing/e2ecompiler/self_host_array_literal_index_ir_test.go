@@ -9,15 +9,12 @@ import (
 )
 
 // Direct-index of an array LITERAL — `[10.5, 20.5, 30.5][i]` — must read at the
-// element's real stride. The ExprArray construction builds an f64 literal at an
-// 8-byte stride (arr_make ewidth=64) and an `[x as i64, …]` literal via
-// arr_make_i64 (8-byte), but the READ side (arr_index_is_f64 / arr_index_is_i64)
-// had no ExprArray arm, so the index defaulted to the 4-byte i32 path. On the
-// register backends every element sits in an 8-byte slot regardless, so they
-// were unaffected; on wasm the 4-byte i32.load read only the low half of the
-// 8-byte value — a silent wrong result (#4366's predicate-gap class, the
-// ExprArray sibling of the #2908 ExprSlice stride gap). This pins both the f64
-// and i64 literal-index reads on the x86-64 and wasm IR paths.
+// element's real stride. An f64 or `[x as i64, …]` literal is built at an
+// 8-byte stride, so the read must be 8 bytes wide too. On the register backends
+// every element sits in an 8-byte slot regardless; on wasm a 4-byte i32.load
+// reads only the low half of the 8-byte value — a silent wrong result (#4366's
+// predicate-gap class, the literal sibling of the #2908 slice stride gap). This
+// pins both the f64 and i64 literal-index reads on the x86-64 and wasm IR paths.
 var arrLitIndexCases = []struct {
 	name string
 	src  string

@@ -4,12 +4,10 @@ import (
 	"testing"
 )
 
-// TestSelfHostArrTupReclaimIRArm64 is the arm64 port of
-// TestSelfHostArrTupReclaimIRX86_64: the ARRTUP class (admission + the counted
-// element-walk deep-free + the element-payload escape checker) lives in shared
-// lowering and lowers through backend-common IR ops (block / loop / arr_len /
-// arr_get / __fern_rc_dec + emit_tuple_type_child_drops), all backend-complete.
-// Case table shared with the x86-64 leg.
+// TestSelfHostArrTupReclaimIRArm64 is the arm64 leg of
+// TestSelfHostArrTupReclaimIRX86_64: the array-of-tuples element reclaim is
+// decided in the target-independent lowering, so arm64 must give the same
+// answers. Case table shared with the x86-64 leg.
 func TestSelfHostArrTupReclaimIRArm64(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	for _, tc := range arrtupReclaimCases {

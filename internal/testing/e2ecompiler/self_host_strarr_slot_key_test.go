@@ -10,28 +10,21 @@ import (
 
 // --- The string[] credit, keyed on the binding rather than the name (#7253) ----
 //
-// `slot_is_reclaimable_strarr` resolved "SARR:" / "SARRB:" through
-// reclaim_slot_name, so the credit was keyed by the source NAME and a name has no
-// scope. Two `let v: string[]` in sibling `if` arms are two slots under one key:
-// the arm that binds a FRESH array earns the credit, and the arm that binds a bare
-// ALIAS inherits it and hands its buffer to __fern_str_arr_free — a buffer someone
-// else still owns.
+// Two `let v: string[]` in sibling `if` arms are two slots that share a source
+// name. The arm that binds a FRESH array owns its buffer; the arm that binds a
+// bare ALIAS must not hand its buffer to __fern_str_arr_free — a buffer someone
+// else still owns. Getting that wrong exits 99 (rc underflow) where the interp
+// answers 34, with `allocs=255 frees=255 live_bytes=0`: a doubly-released block
+// goes back to the freelist, so the byte count is clean and only
+// `__rc_underflow_count()` reports it. #7272 and #7292 are the tuple and "STR:"
+// classes of the same defect.
 //
-//	self-host 99 (rc underflow)   native 34   interp 34
+// `param_rename` is `param_alias` with the second local called `u`, and nothing
+// else changed. The x86-64 runner asserts the two measure identically: the
+// colliding program is indistinguishable from the one that never collided.
 //
-// with `allocs=255 frees=255 live_bytes=0`, which is the trap: a doubly-released
-// block goes back to the freelist, so the byte count is clean and only
-// `__rc_underflow_count()` reports it. This is the same defect #7272 fixed for the tuple
-// classes and #7292 for "STR:", one class over.
-//
-// What isolates it is a one-word rename. `param_rename` below is `param_alias`
-// with the second local called `u`, and nothing else changed: it was ALREADY
-// correct before the fix. After the fix `param_alias` matches it byte for byte,
-// which is the assertion at the bottom of the x86-64 runner — the colliding
-// program becomes indistinguishable from the program that never collided.
-//
-// Every want was confirmed against BOTH oracles — bin/fern -interp and the native
-// x86-64 backend agreed on each — never read off the self-host run under test.
+// Every want was confirmed against bin/fern -interp, never read off the
+// self-host run under test.
 
 type strarrKeyCase struct {
 	name string

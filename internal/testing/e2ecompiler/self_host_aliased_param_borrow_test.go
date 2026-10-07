@@ -10,54 +10,21 @@ import (
 
 // --- Aliasing a param does not hand it out ----------------------------------
 //
-// A callee that does nothing but ALIAS its parameter marked that parameter
-// non-borrowable, and every CALLER then refused its own release. Measured
-// against one caller over 20 rounds, with the callee releasing nothing in any
-// case:
+// A callee that only ALIASES its string parameter (`let q = p`, or
+// `let q = p; q = o;`) does not take ownership of it, so the CALLER still
+// releases the strings it passed. Each row runs one caller over 20 rounds and
+// pins allocs == frees; a "Base:" figure in a row note is the caller-side leak
+// measured before aliasing a param was admitted as a borrow.
 //
-//	return p.len() + o.len();            caller 80/80  — flat
-//	let q: string = p; ... q.len() ...   caller 80/40
-//	let q: string = p; q = o; ...        caller 80/0
-//
-// The whole loss is caller-side, the same expensive half #7507 found when a
-// callee read its param through a match expression.
-//
-// borrowable_params_interproc's per-param gate calls the escape walker with an
-// EMPTY alias_ok, so `let q = p` reads as a bare-ident escape — the same
-// asymmetry #7512 closed one layer down for the string credit. Two readings are
-// now admitted as a UNION of independent proofs: the first forgives a bare-ident
-// match scrutinee and stays strict on aliases, the second forgives non-escaping
-// aliases and stays strict on scrutinees. A body with BOTH satisfies neither and
-// is still refused, so this does not widen past what either walker proves.
-//
-// Two things the param verdict needs that the local-reclaim analyses do not:
-//
-//   - the alias sites are collected WITHOUT alias_bind_sites_of's reassigned-
-//     target exclusion. That exclusion protects a LOCAL's reclaim credit, where a
-//     slot reassigned before its sweep would release the wrong box. The question
-//     here is only whether the PARAM escapes, and `let q = p; q = o;` answers it:
-//     q briefly aliases p, then stops naming it.
-//   - the REASSIGN sites are collected too. `let q = p; q = o;` escapes p through
-//     the bind and o through the assignment; forgiving only the bind left the
-//     other caller half still refused, measured at 80/40.
-//
-// The row that carries the soundness is the CALLER-side value probe. Every other
-// failure in this wave was observable from inside the program under test — a leak
-// in the counts, an over-release in __rc_underflow_count(), a use-after-read in
-// the same function. Freeing a borrowed param's box corrupts memory the CALLER
-// owns and the callee exits clean, so that row reads the caller's own strings
-// back after the call with three fresh allocations in between.
-//
-// Every want was confirmed against the native x86-64 backend. Native const-folds
-// these literal concats and allocates nothing, so its COUNTS are not a comparison
-// — its ANSWERS are, and they match on every row. Exit 99 is reserved for
+// The row that carries the soundness is the CALLER-side value probe. Freeing a
+// borrowed param's box corrupts memory the CALLER owns while the callee exits
+// clean, so that row reads the caller's own strings back after the call with
+// three fresh allocations in between. Exit 99 is reserved for
 // __rc_underflow_count().
 //
-// Counts here are ONE block per heap string: #7351 fused the box into the
-// buffer's reserved header. Every row was re-measured against main, and every
-// live_bytes is unchanged — the clean rows stayed clean and each refusal-leak
-// row leaks the same bytes it did — so what moved is block volume, not
-// behaviour. A pre-fusion number quoted in a row note below is the older one.
+// Counts are ONE block per heap string: the box shares the buffer's reserved
+// header (#7351). A "Base:" figure in a row note predates that, at two blocks
+// per string.
 
 type aliasedParamCase struct {
 	name   string
@@ -155,9 +122,8 @@ function round(i: i32): i32 {
 			want: 46, allocs: 40, frees: 40,
 		},
 		{
-			// The string-builder accumulator, which reaches these predicates by a
-			// different route (collect_str_accumulator_names / emit_str_reclaim_store)
-			// and must not move. One box per round: the first append onto the empty
+			// The string-builder accumulator: no param is involved, and it must
+			// stay balanced. One box per round: the first append onto the empty
 			// literal allocates it and the other three grow it in place (#10960).
 			name: "string_accumulator_unchanged",
 			src: `function round(i: i32): i32 {

@@ -7,37 +7,23 @@ import (
 	"testing"
 )
 
-// tostrScalarReclaimCases pin #6599: `let s: string = i.to_string()` never freed its
-// box on the self-host, unbounded in a loop, while native was flat.
+// tostrScalarReclaimCases pin #6599: `let s: string = i.to_string()` on a SCALAR
+// receiver frees its box, as the free-function spelling `n.to_string()` does.
+// On a STRING receiver `.to_string()` returns the receiver itself, so freeing
+// the result would release a box the source still owns; on a scalar it is the
+// decimal-text builtin returning a fresh sole-owned box. It matters out of
+// proportion to the shape because every `f"{x}"` desugars to `x.to_string()`.
 //
-// `str_free_producer_ident` admits the free-function spelling `n.to_string()` by
-// name and excludes the method form; `str_local_binding_is_fresh` lists `.to_string()`
-// under "receiver-identity fast-paths". That is right for a STRING receiver, where the
-// call returns the receiver itself so freeing the result would release a box the source
-// still owns — and wrong for a SCALAR receiver, where it is the decimal-text builtin
-// returning a fresh sole-owned box: the same value, by the same allocation, as the
-// free-function spelling already credited.
-//
-// Measured with FERN_LEAKCHECK=1 (allocs/frees/live_bytes), 200 iterations, self-host
-// x86-64 — `__heap_bump_bytes()` deltas cannot see this, see #5474's retraction:
+// Measured with FERN_LEAKCHECK=1 (allocs/frees/live_bytes), 200 iterations,
+// self-host x86-64 — `__heap_bump_bytes()` deltas cannot see this, see #5474's
+// retraction:
 //
 //	let s = i.to_string()   400/398/32     bounded, before and after (control)
 //	let s = i.to_string()      400/0/6400  -> 400/398/32
 //
-// Identical allocation counts in both spellings, which is what proves int_to_string's
-// own `__alloc_u8` buffer and string_from_bytes_unchecked are not involved: the whole
-// difference was this one credit. It matters out of proportion to the shape because
-// every `f"{x}"` desugars to `x.to_string()`.
-//
-// WHY THE TEST LIVES AT THE CREDIT SITE. `str_local_binding_is_fresh` is deliberately
-// PURELY SYNTACTIC — no lowering state, no types — with the type gate applied separately
-// through the slot's is_str. is_str is true for BOTH receivers here, because the RESULT
-// is a string either way; what has to be tested is the RECEIVER's type, which that
-// predicate cannot see. Its ~20 other callers drive the accumulator and concat-temp
-// analyses, where widening it broke two over-release contracts in #6590. So the
-// receiver-type test is a separate collector in reclaimable_names_of, and an UNKNOWN
-// receiver type is refused rather than assumed scalar — the wrong answer on this side
-// is an over-release, not a leak.
+// The credit tests the RECEIVER's type, not the result's (a string either
+// way), and an UNKNOWN receiver type is refused rather than assumed scalar —
+// the wrong answer on this side is an over-release, not a leak.
 var tostrScalarReclaimCases = []struct {
 	name string
 	src  string
@@ -59,9 +45,8 @@ function main(): i32 {
     return 0;
 }`, 0},
 	// A scalar PARAM receiver. The receiver-type test reads declared types, and a
-	// parameter is a declaration that never appears as a `let` in the body — so
-	// until the harvesters were seeded with the function's ParamDecl[] this shape
-	// was refused and leaked (12800 over 400 rounds on x86-64, 9600 on wasm).
+	// parameter is a declaration that never appears as a `let` in the body;
+	// refused, this shape leaked 12800 over 400 rounds on x86-64, 9600 on wasm.
 	{"tostr-scalar-param-receiver", `import "std/i32";
 function fmt(n: i32): i32 {
     let s: string = n.to_string();
@@ -78,8 +63,8 @@ function main(): i32 {
     if (b2 - b1 >= 2048) { return 98; }
     return 0;
 }`, 0},
-	// PARAM negative: seeding the harvesters with parameters must not widen the
-	// credit past the type test. A struct param whose user `to_string` returns an
+	// PARAM negative: reading parameters' types must not widen the credit past
+	// the type test. A struct param whose user `to_string` returns an
 	// ALIAS of a field the receiver still owns is refused for the same reason the
 	// local-receiver case above is — the declared type is not a scalar.
 	{"tostr-param-user-method-uncredited", `import "std/i32";
@@ -134,11 +119,11 @@ function main(): i32 {
     if (acc != 239) { return 97; }
     return 0;
 }`, 0},
-	// STRING-RECEIVER negative: the identity case must stay UNCREDITED. It leaks by
-	// design (both the literal source — excluded by #6590's litstr_tostring_receiver —
-	// and the aliasing result), and the point of the case is that the source is still
-	// readable afterwards with the detector at zero. Crediting either would double-
-	// release one box. 200 rounds of 2 = 400, %251 = 149, %97 = 52.
+	// STRING-RECEIVER negative: the identity case must not be released. It leaks by
+	// design (both the literal source and the aliasing result), and the point of
+	// the case is that the source is still readable afterwards with the detector
+	// at zero. Releasing either would double-release one box. 200 rounds of 2 =
+	// 400, %251 = 149, %97 = 52.
 	{"tostr-string-recv-uncredited", `import "std/i32";
 import "std/string";
 function main(): i32 {

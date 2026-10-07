@@ -7,26 +7,13 @@ import (
 
 // --- Map STRUCT value columns with rc fields (#7910 (b)) ---------------------
 //
-// A `Map[K, S]` whose value struct carries a string or array field. The
-// column's one-dec free (__fern_map_free_va) takes each value box, so every
-// box must first release its own fields: the lowering routes such a column through
-// __map_vals_struct_drop_<S>, a per-type helper each backend hand-writes over
-// its own map layout (the raw {keys@0, vals@8} pair on the register backends,
-// the rc-headered cap/vals/used box on wasm), walking sole-owned values through
-// __struct_drop_<S>. The all-scalar struct column was already reclaimed; a
-// struct with an rc field was refused the credit outright and leaked box and
-// field alike.
+// A `Map[K, S]` whose value struct carries a string or array field. Freeing the
+// column must release each value box AND that box's own fields, and an
+// insert-built map's grow must free the buffers it supersedes.
 //
-// The insert-built form also needs the map's GROW to free its superseded
-// buffers: a struct column is a flag-1 (raw-alias) column, so the type-level
-// owncols bit stays clear, and the map local's own "MAPOWN:" credit — no
-// keys() / values() / for-in read anywhere in the body — is what lets the
-// insert take the reclaim-on-grow push instead.
-//
-// The x86-64 and arm64 legs are the leak-matrix rows of the same name
-// (native oracle, sanitize leg); this file is the wasm leg, the backend with
-// no native leak detector to compare against, so it asserts the census
-// balances and the interpreter's exit code.
+// The x86-64 and arm64 legs are the leak-matrix map_struct_* rows
+// (self_host_leak_matrix_test.go); this file is the wasm leg, so it asserts the
+// census balances and the exit code matches the interpreter's.
 
 const mapStructColumnInsertMatchSrc = `import "core/map";
 struct S { name: string, k: i32 }

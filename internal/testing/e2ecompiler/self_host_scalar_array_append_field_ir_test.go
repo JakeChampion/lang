@@ -11,17 +11,14 @@ import (
 // value `S { xs: xs.append(v) }` / `S { xs: xs.with(i, v) }` where `xs` is a
 // bare-ident SCALAR-array local or param (i32[]/u32[]/f64[]/i64[]/sub-word) —
 // the parser.dl_collect_stmt shape `DeferAcc { flags: flags.append(d.on_error) }`
-// over an `i32[]`. Before the fix only a FIELD-READ receiver (`s.flags.append(v)`,
-// via scalar_arr_field_type) was admitted; a bare-ident receiver bailed the
-// whole module.
+// over an `i32[]` — alongside the FIELD-READ receiver (`s.flags.append(v)`).
 //
 // `.append`/`.with` clone the receiver into a fresh sole-owned array, so the
 // struct owns the result with NO alias-inc (the receiver is borrowed for the
 // copy), exactly like the field-read and `[…]`-literal cases.
 //
 // Each case asserts the oracle-pinned exit code, so an rc/heap-accounting
-// miscompile is caught. The programs are small (well under
-// the eligible_core module-size budget) so they route through IR.
+// miscompile is caught.
 func TestSelfHostIRScalarArrayAppendFieldX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)

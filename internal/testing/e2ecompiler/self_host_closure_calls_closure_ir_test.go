@@ -11,17 +11,14 @@ import (
 
 // closureCallsClosureIRCases exercise a local closure whose body CALLS another
 // local, capture-free closure (`let add = fn(a){…}; let twice = fn(a){
-// add(add(a)) }`). `subst_fcall_stmts` has to rewrite the hoisted `add`'s call
-// sites that sit INSIDE `twice`'s body; otherwise `add` stays referenced, its
-// lift declines, and the whole module bails to the
-// AST emitter. Now `subst_fcall_stmts` recurses into nested lambda bodies (for a
-// capture-free hoist, no capture args to inject), and each lift round extends
-// the global-fn set with the names hoisted so far — so a sibling lambda calling
-// an already-hoisted `__lam_N` sees it as a global, not a capture it can't type.
+// add(add(a)) }`). `subst_fcall_stmts` rewrites the hoisted `add`'s call sites
+// inside nested lambda bodies too, and each lift round extends the global-fn
+// set with the names hoisted so far — so a sibling lambda calling an
+// already-hoisted `__lam_N` sees it as a global, not a capture it can't type.
 // Both closures lift to direct calls to hoisted `__lam_N` functions on the IR
 // path. Each case asserts the oracle exit code AND that lifting happened
-// (`__lam_` in the emitted asm/wat). Exit codes are kept <= 120 (native) / <=
-// 125 (WASI).
+// (`__lam_` in the emitted asm/wat). Exit codes are kept <= 120 (x86-64) /
+// <= 125 (WASI).
 var closureCallsClosureIRCases = []struct {
 	name     string
 	src      string
@@ -91,13 +88,10 @@ var closureCallsClosureIRCases = []struct {
     let combo = (a: i32): i32 => { return add(a) + x; };
     return combo(10);
 }`, 20},
-	// The called closure's binding SPELLS ITS TYPE OUT. That spelling is what
-	// cap_type reports for the capture, and the injected param it becomes
-	// carries no signature sidecars — so lower_func's "mark every fn param a
-	// closure local" test, which reads the flat "fn" tag, did not fire and
-	// `add` was dispatched as a raw table index instead of env-first. wasm
-	// trapped (`undefined element`) and the register backends took a bus
-	// error, both with the compiler reporting success.
+	// The called closure's binding SPELLS ITS TYPE OUT. The captured `add`
+	// must still be called env-first as a closure; dispatched as a raw table
+	// index it traps on wasm (`undefined element`) and faults on the register
+	// backends, both with the compiler reporting success.
 	{"annotated_inner_called", `function main(): i32 {
     let add: (i32) => i32 = (a: i32): i32 => { return a + 10; };
     let twice = (a: i32): i32 => { return add(add(a)); };

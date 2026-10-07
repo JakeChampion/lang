@@ -83,9 +83,9 @@ func writeConcatFixtureShape(t *testing.T, dir string, chained bool) (string, in
 
 // assertConcatProduced pins WHICH path emitted `asm`: per-unit `.S<ns>_<idx>`
 // string pools mean the per-module concat, whole-program `.S<idx>` labels mean
-// the merged IR path or the AST emitter. Without this the tests below would keep
-// passing silently if the over-budget rescue stopped engaging — i.e. would stop
-// testing the thing they are named for.
+// the merged IR path. Without this the tests below would keep passing silently
+// if the over-budget rescue stopped engaging — i.e. would stop testing the
+// thing they are named for.
 func assertConcatProduced(t *testing.T, asm []byte) {
 	t.Helper()
 	if !regexp.MustCompile(`(?m)^\.S[A-Za-z_][A-Za-z0-9_]*_[0-9]+:`).Match(asm) {
@@ -109,23 +109,19 @@ func buildConcatDriver(t *testing.T, gcc string) (string, string) {
 	return dir, buildSelfHostBin(t, gcc, dir, "drivers/asm_modload_run.fern", "mmr")
 }
 
-// TestSelfHostPerModuleConcatX86_64 gives asm_modload_run's over-budget
-// per-module concat (emit_per_module_concat, #5676) its FIRST end-to-end
-// coverage on x86-64: emit → assemble → link → run.
+// TestSelfHostPerModuleConcatX86_64 covers asm_modload_run's over-budget
+// per-module concat (emit_per_module_concat, #5676) end to end on x86-64:
+// emit → assemble → link → run.
 //
-// Why this did not exist before. The one test named for the over-budget rescue,
-// TestSelfHostOverBudgetPerModuleIR, documents in its own header that it does
-// NOT reach the concat, and concludes "nothing in the suite has" a program that
-// does. That conclusion was drawn from asm_load_run, which treeshakes its merged
-// module in place BEFORE consulting the size gate, so its gate always sees the
-// small live closure. asm_modload_run is different: it gates on the RAW merged
-// count (`asm_ir.lift_lambdas(module_with_builtins(merged)).funcs.len()`) and
-// treeshakes only afterwards, to derive the reachable-name set. So the concat IS
-// reachable there for any bundle over 512 raw functions — the coverage gap was
-// reachability of the FIXTURE, not of the code.
+// asm_modload_run gates on the RAW merged count
+// (`ircore.lift_lambdas(parser.module_with_builtins(merged)).funcs.len()`) and
+// treeshakes only afterwards, to derive the reachable-name set, so the concat
+// is reachable for any bundle over 512 raw functions. asm_load_run treeshakes
+// before its size gate, which is why TestSelfHostOverBudgetPerModuleIR does
+// not reach the concat.
 //
 // The assertions are ordered so a failure says which half broke:
-//   - concat produced this, not the merged/AST path (assertConcatProduced).
+//   - concat produced this, not the merged path (assertConcatProduced).
 //   - assembles + links  =>  no duplicate or dangling cross-unit symbols. This is
 //     the half that actually fails: the units emit one-per-program symbols that
 //     rely on dedupe_weak_defs, and a dangling runtime-helper reference links

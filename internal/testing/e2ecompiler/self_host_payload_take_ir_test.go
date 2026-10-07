@@ -197,11 +197,6 @@ func censusWithin(t *testing.T, name, stderr string, maxAllocs int64) {
 
 // selfHostCLIRun compiles src for target through the production CLI with the
 // leak census on, runs it, and hands back the exit code and the run's stderr.
-//
-// The CLI rather than `asm_ir_run.fern`, because what these cases measure
-// lives in the typed semantic pipeline (semsource + ssaunits + ssarc) and that
-// driver has no leg through it: the same program compiled there keeps the AST
-// lowering's allocation count whichever way the pipeline goes.
 func selfHostCLIRun(t *testing.T, fernBin, stdlibRoot, src, target string) (int, string) {
 	t.Helper()
 	dir := t.TempDir()

@@ -6,41 +6,23 @@ import (
 
 // --- The FIELD-READ spelling of the enum-array counted share -----------------
 //
-// `let p: P = P { f: q.f, … }` off a live sibling holder — the flatten__RewriteCtx
-// shape, enum-array flavour, and the construction matrix's enum_arr__fieldread
-// cell (600 allocs / 300 frees against native's 600/600). The read lowers via
-// struct_get to the SOURCE box's buffer, so the new box co-owns it; the share was
-// uncounted and the credit pass had, correctly for an uncounted read, marked BOTH
-// holders box-only ("NODEEP:") — p because the field value reads as an un-retained
-// borrow, q because a field read in a struct-literal field is a positive MOVE
-// position. Retaining the read flips both verdicts at once.
+// `let p: P = P { f: q.f, … }` off a live sibling holder: the read yields the
+// SOURCE box's buffer, so the new box co-owns it and must retain it. Both
+// holders' releases are rc-gated, so whichever drops last finds rc 1 and walks
+// the payload. A share without the retain is a double free the census cannot
+// see — allocs == frees at live_bytes 0 — so every probe returns 99 when
+// __rc_underflow_count() fires.
 //
-// ONE predicate decides all three sites (enum_arr_field_share_read): the retain in
-// the ExprStructLit lowering and the two marker flips in bind_var_slot. They agree
-// by construction rather than by three conditions happening to line up — which is
-// the whole safety argument, because a marker flipped without the inc behind it is
-// a double free this class cannot see. Disabling the retain alone puts every case
-// below at exit 99 with allocs == frees and live_bytes 0: the census reads clean
-// while __rc_underflow_count fires.
+//   - `respread`: `T { ...base }` copies the array pointer into a third box,
+//     which must hold its own counted share.
+//   - `blockscoped`: the holder lives in a nested block and must still drop
+//     its payload there.
+//   - `source_uaf`: the source must read back intact after the holder dies
+//     and allocation churn has had the chance to reuse anything freed early.
 //
-// TWO FINDINGS, both by measurement rather than by reading:
-//
-//   - `respread`: a `T { ...base }` used to copy every field pointer into a
-//     fresh box with NO inc, minting a third owner, and two rc-gated walks
-//     against a count of two were one release too many — exit 99 at a flat
-//     700/700. The base copy now retains the array it carries and the copy is
-//     credited, so the three walks hand off to the last one.
-//   - `blockscoped`: "NODEEP:" and "FLDCHECKED:" are the two arms of one either/or
-//     verdict, and a block-scoped slot deep-drops ONLY on the second. Dropping
-//     NODEEP alone left `p` with neither marker and the whole payload leaked
-//     (600/300) while the flat sibling was clean — so flipping the verdict means
-//     writing the witness, not just revoking the marker.
-//
-// `moved_ret` stays refused: at a move site the box takes over the local's
-// reference and both the inc and the sweep dec are elided (#6726), so the shape
-// measures exactly as it did before this slice. Every want was confirmed against
-// BOTH oracles — bin/fern -interp and the native x86-64 backend agreed on each —
-// never read off the self-host run under test.
+// `moved_ret` returns the construction, so the box takes over the local's
+// reference (#6726); it asserts the answer only, not the balance. Every want
+// was confirmed against bin/fern -interp, never read off the self-host run.
 
 const arrenumFieldReadDecl = `enum E { A(i32[]), B }
 struct P { f: E[], n: i32 }
@@ -182,9 +164,8 @@ function main(): i32 {
 }
 
 // TestSelfHostArrEnumFieldReadShareX86_64 — a struct-literal field READ of an
-// enum-array is a counted share: the new box retains it and both holders trade
-// their box-only marker for the deep walk, with the two shapes whose share count
-// stays incomplete refusing it.
+// enum-array is a counted share: the new box retains it and the payload is
+// released exactly once.
 func TestSelfHostArrEnumFieldReadShareX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

@@ -10,48 +10,30 @@ import (
 	"testing"
 )
 
-// `xs.join(sep)` made its RECEIVER escape, so a string[] local that would
-// otherwise be fully reclaimed leaked its buffer and every element.
+// `xs.join(sep)` borrows its RECEIVER: the join reads the elements to size and
+// fill a fresh block and stores nothing, on every backend. The register one is
+// Fern source (`asmcore.rt_src_arr_str_join`), which sums the lengths and
+// memcpy's each piece into one exact-size `__raw_alloc` so the result cannot
+// alias any element, and wasm's `$__fern_str_join` copies bytes into a freshly
+// boxed result. So a string[] local that would otherwise be fully reclaimed
+// keeps its credit, and `let s = xs.join(sep)` is credited as fresh.
 //
-// strarr_expr_unsafe treated any method call on the array by name as an escape
-// with one exception hard-coded inline: `len`. That default is the right way
-// round — a method returning an element, a slice, or the array itself hands out
-// a lasting alias — but `join` belongs on the other side of it.
-// __fern_arr_str_join reads the elements to size and fill a fresh block and
-// stores nothing, on every backend: the register one is Fern source
-// (`asmcore.rt_src_arr_str_join`), which sums the lengths and memcpy's each
-// piece into one exact-size `__raw_alloc` so the result cannot alias any
-// element, and wasm's `$__fern_str_join` copies bytes into a freshly boxed
-// result.
-//
-// Measured, 400 rounds of the harness below, a pair of compilers from the same
-// commit:
+// Measured, 400 rounds of the harness below (receiver escaping -> receiver
+// borrowed -> result credited):
 //
 //	elements   x86-64                  arm64                   wasm
 //	1          102400 -> 51200 -> 0    102400 -> 51200 -> 0    89600 -> 44800 -> 0
 //	4          377600 -> 172800 -> 0   377600 -> 172800 -> 0   345600 -> 166400 -> 0
 //	8          742400 -> 332800 -> 0   742400 -> 332800 -> 0   688000 -> 329600 -> 0
 //
-// Two arrows because it took two pieces: the receiver borrow above, then the
-// RESULT credit below.
+// The RESULT credit reads the receiver's DECLARED type, from the body's
+// annotated `let`s and from the function's parameters: a user-declared
+// `(h: Holder) join(sep)` returning `h.name` types as a string too, and freeing
+// its result would free a field the receiver still owns (exit 97 on x86-64, a
+// trap on wasm — pinned by the last case below). An UNANNOTATED local receiver
+// has nothing to read and is refused.
 //
-// The RESULT half needed a gate the receiver half did not. Crediting a
-// `let s = xs.join(sep)` binding as fresh has to happen where the RECEIVER's
-// type is known: str_local_binding_is_fresh is deliberately state-free, and a
-// syntactic `field == "join"` arm there is UNSOUND — a user-declared
-// `(h: Holder) join(sep)` returning `h.name` types as a string, so the result
-// gets freed while the receiver still owns it. That version was written,
-// measured at 0, and reverted; the fault is witnessed on both backends (exit 97
-// on x86-64, a trap on wasm) and is pinned by the last case below.
-//
-// The credit therefore goes through `join_strarr_init`, which reads the receiver's
-// DECLARED type the way the `.to_string()` collector already does. Both read the
-// same name/type pair, which is harvested from the body's annotated `let`s AND
-// from the function's parameters — a parameter is a declaration too, it just
-// never appears as a `let`. An UNANNOTATED local receiver has nothing to read
-// and is still refused, which is the remaining limit and a sound one.
-//
-// The receiver half needed no such gate: the escape analysis runs over a slot
+// The receiver borrow needs no such gate: the escape analysis runs over a slot
 // already known to be `string[]`, and a user method cannot be called on one.
 
 const strArrJoinPrelude = strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
@@ -136,9 +118,8 @@ function round(pre: string): i32 {
     return ys.len();
 }
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { if (round(pre) != 2) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`},
-	// A `string[]` PARAM receiver, which the harvesters see now that they are
-	// seeded with the function's ParamDecl[]. Correctness only — the heap side of
-	// this shape is `strarr-join-param-receiver` below.
+	// A `string[]` PARAM receiver, typed by its declaration. Correctness only —
+	// the heap side of this shape is `strarr-join-param-receiver` below.
 	{"strarr-join-param-receiver-live", strArrJoinPrelude + `function joined(xs: string[]): i32 {
     let s: string = xs.join("|");
     return s.len() % 251;
@@ -160,7 +141,7 @@ function main(): i32 {
     return 0;
 }`},
 	// The heap side of the param receiver: 131200 on x86-64 and 128000 on wasm
-	// before the harvesters could see parameters. Self-contained rather than
+	// with the parameter's type unread. Self-contained rather than
 	// generated, because the array has to live in the CALLER for only the result
 	// to be in play.
 	{"strarr-join-param-receiver", strArrJoinPrelude + `function joined(xs: string[]): i32 {
@@ -179,8 +160,8 @@ function main(): i32 {
     if (b2 - b1 >= 4096) { return 98; }
     return 0;
 }`},
-	// PARAM negative: seeding the harvesters with parameters must not widen the
-	// credit past the type test. A struct param whose user `join` returns an ALIAS
+	// PARAM negative: reading parameters' types must not widen the credit past
+	// the type test. A struct param whose user `join` returns an ALIAS
 	// is refused for the same reason the local-receiver case below is.
 	{"strarr-join-param-user-method-not-credited", strArrJoinPrelude + `struct Holder { name: string, tag: string }
 function (h: Holder) join(sep: string): string { return h.name; }
@@ -200,10 +181,10 @@ function main(): i32 {
     return 0;
 }`},
 	// A USER method named `join` whose result aliases a field the receiver still
-	// owns. Nothing may credit it, and this is what proves join_strarr_init's
-	// receiver-type test is required here: a compiler with a bare syntactic
-	// `field == "join"` in str_local_binding_is_fresh instead exits 97 here on
-	// x86-64 and traps on wasm, while the heap cases above go to 0 either way.
+	// owns. Nothing may credit it, and this is what proves the receiver-type
+	// test is required: crediting every `.join` result by name instead exits 97
+	// here on x86-64 and traps on wasm, while the heap cases above go to 0
+	// either way.
 	{"strarr-join-user-method-not-credited", strArrJoinPrelude + `struct Holder { name: string, tag: string }
 function (h: Holder) join(sep: string): string { return h.name; }
 function churn(pre: string): i32 { let a: string = w(pre + "1"); let b: string = w(pre + "2"); let c: string = w(pre + "3"); return a.len() + b.len() + c.len(); }

@@ -10,16 +10,12 @@ import (
 
 // The full core/iter combinator surface on the self-host IR path, driven over a
 // real `iter.of(xs)` (ArrayIter[i32]) — the predicate/closure-taking, value-
-// returning, and array-collecting combinators all in one gate. After the
-// Iterator-bounded reducer + multi-param-key landings, the remaining frontier was
-// a closure-conversion gap: a fn-value ARGUMENT to a call in MATCH-SCRUTINEE
-// position (`match (iter.find(iter.of(xs), named_fn)) { … }`) was never env-boxed
-// (the lift's statement walker handled if/while/for conditions but not match
-// scrutinees), so a NAMED-function predicate to `find` reached the callee as a
-// raw fn-pointer where a closure box was expected and segfaulted (a lambda
-// predicate, already a box, worked). With the match-scrutinee/arm walk added,
-// every combinator below routes "ir" and matches the interpreter — including
-// `find` with a named-function predicate.
+// returning, and array-collecting combinators all in one gate. Every combinator
+// below must route "ir" and match the interpreter. The sharpest shape is a
+// fn-value ARGUMENT to a call in MATCH-SCRUTINEE position
+// (`match (iter.find(iter.of(xs), gt1)) { … }`): a NAMED-function predicate
+// must reach the callee as a closure box; passed as a raw fn-pointer it
+// segfaults.
 var iterCombinatorIRCases = []struct {
 	name string
 	src  string

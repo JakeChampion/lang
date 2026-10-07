@@ -7,23 +7,13 @@ import (
 	"testing"
 )
 
-// The struct/enum-ARRAY field release in __struct_drop_<T> and __field_reclaim_<T>
-// is __fn___fern_arrarr_free, not an open-coded walk (#2649). Both emitters used to
-// write the same ~24-instruction sequence inline — sole-owner gate, one
-// __fern_arr_dec per element, then the buffer — which is exactly what that helper
-// already is, so each backend carried two hand-written copies of a body it also
-// exported as a symbol.
+// A struct whose field is an array of structs (`Bag { es: P[] }`) must release
+// that field — each element box, then the buffer — when the struct dies, and
+// only drop its count while a second owner still holds the struct (#2649).
 //
-// The x86-64 leg pins BOTH halves, because only the pair is a contract: the call
-// must be there, AND the inline walk must not have come back beside it. The walk
-// is recognisable by its loop label (.Lstd_/.Lfr_), so its absence for the type
-// under test is the erasure assertion.
-//
-// The behavioural half is not redundant with the shape half. The two forms differ
-// in which guard answers a non-sole-owner: the walk asked __fern_rc_is_unique and
-// then let a trailing __fern_arr_dec decrement, where the helper reads rc once and
-// branches. A regression there frees a shared buffer's elements, which shows up as
-// a corrupt read-back or an rc underflow rather than as a missing symbol.
+// The shared program is the one that catches a wrong answer to "sole owner?":
+// a release that frees a shared buffer's elements shows up as a corrupt
+// read-back or an rc underflow rather than as a leak.
 var structDropArrArrFreeProg = `struct P { x: i32, y: i32 }
 struct Bag { es: P[], n: i32 }
 function main(): i32 {
@@ -40,10 +30,8 @@ function main(): i32 {
 }`
 
 // A live second owner across the drop, and ELEMENT reads rather than a bare
-// `.len()`. The reads are what keep __field_reclaim_Bag on its shallow arm — the
-// "sarr:" admission wants .len()-only reads — so this program has the scope-exit
-// call alone, and its subject is the helper's rc>1 arm: `c` still reads the
-// elements a wrongly-taken sole-owner walk would free.
+// `.len()`: `c` still reads the elements a wrongly-taken sole-owner release
+// would free.
 //
 // `acc` is pinned exactly rather than bounded. A freed element box is rewritten
 // by the next iteration's fresh literal, so a wrong release reads back plausible
@@ -97,11 +85,10 @@ func TestSelfHostStructDropArrArrFreeIRX86_64(t *testing.T) {
 		}
 	}
 
-	// Scope-exit drop + rebind reclaim: __struct_drop_Bag and __field_reclaim_Bag
-	// each release `es`, so both call sites are in one program.
+	// Each round's `b` dies at the end of the loop body and releases `es`.
 	run(t, structDropArrArrFreeProg, "struct_drop_arrarr_free", 0)
-	// A live second owner across the drop: the helper's rc>1 arm must decrement
-	// without touching the elements `c` still reads.
+	// A live second owner across the drop: the release must decrement without
+	// touching the elements `c` still reads.
 	run(t, structDropArrArrSharedProg, "struct_drop_arrarr_free_shared", 0)
 }
 

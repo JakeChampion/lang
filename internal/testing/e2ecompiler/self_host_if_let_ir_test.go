@@ -8,16 +8,12 @@ import (
 
 // ifLetIRCases pin `if let PAT = EXPR { then } else { else }` on the IR path.
 // The parser desugars `if let` to `match (EXPR) { PAT => { then }, _ => { else } }`
-// (parser.fern, s_match_origin origin "if_let"), so it uses the already-proven
-// match IR machinery. The existing TestSelfHostIfLet* assert only exit codes,
-// which the legacy AST emitter also satisfies — so a silent regression that
-// kicked `if let` off the IR path would pass undetected. These cases close that
-// observability gap, mirroring self_host_bool_match_ir_test.go.
+// (parser.fern, s_match_origin origin "if_let"), so it uses the match IR
+// machinery, mirroring self_host_bool_match_ir_test.go.
 //
-// Each program declares a fresh, non-escaping struct temp whose IR-only reclaim
-// free (`call __fn___fern_arr_dec`) proves the module took the IR path — the AST
-// fallback is leak-only and emits none. `t.x - t.y` pads 0 into every result, so
-// exit codes still pin the matched arm.
+// Each program declares a fresh, non-escaping struct temp whose reclaim free
+// (`call __fn___fern_arr_dec`) the test asserts alongside the exit code.
+// `t.x - t.y` pads 0 into every result, so exit codes still pin the matched arm.
 var ifLetIRCases = []struct {
 	name string
 	src  string

@@ -8,10 +8,9 @@ import (
 )
 
 // annotateMapCases extend the typed-IR annotation (#5531) to map-valued calls.
-// type_to_irtag now serialises a TypeMap to its "Map[K, V]" tag (the lowering's own
-// spelling), and expr_map_type_tag's ExprCall arm reads it instead of
-// re-deriving via the map_ret_fns registry — the decisive path being a
-// map-valued call in a TUPLE element (its #3317 arm), where a later
+// type_to_irtag serialises a TypeMap to its "Map[K, V]" tag (the lowering's own
+// spelling), and the lowering reads a map-valued call's K/V from it. The
+// decisive case is a map-valued call in a TUPLE element (#3317), where a later
 // `t.0.get_or(...)` must recover the map's K/V. Oracle: the interpreter.
 //
 // Maps allocate a heap; the binary runs via the X86_64Tooling runner prefix

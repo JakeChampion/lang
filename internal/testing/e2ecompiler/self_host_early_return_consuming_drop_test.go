@@ -11,29 +11,18 @@ import (
 
 // --- A `return` before a consuming match strands the local (#7742) -----------
 //
-// #7725 armed the return-path drop for a `return` inside the consuming match's
-// own arm. `optret_pending` was installed around that one statement and restored
-// after it, so a `return` from ANY earlier statement carried an empty pending
-// set — and the post-match drop it jumped is the local's only release, because
-// the consuming-match analysis owns the name and no exit-sweep class covers it.
-//
-// No alias, no nesting, no arm:
+// A local consumed by a match is released by that match, so a `return` from ANY
+// statement between its `let` and the match must release it too — the
+// post-match drop it jumps is the local's only release. No alias, no nesting,
+// no arm:
 //
 //	let src: Option[i32[]] = Some([i, i + 1]);
 //	if (i >= 0) { return 5; }
 //	match (src) { Some(b) => { return b.len(); }, None => { return 2; } }
 //
-//	rounds   native        self-host (before)
-//	100      200/200/0     200/0  live 8000
-//	400      800/800/0     800/0  live 32000
-//
-// 80 B/round, unbounded, frees=0 — nothing released at all. The rc-enum sibling
-// behaves identically; a flat `Option[string]` does NOT leak, because it carries
-// a slot credit whose exit sweep still runs on the return path, which is the same
-// asymmetry #7725 recorded.
-//
-// The fix arms the entry across the candidate's LIVE RANGE — after its `let`, up
-// to and including its match — rather than at the match alone.
+// Left unreleased that is 80 B/round, unbounded, frees=0. The rc-enum sibling
+// behaves identically; a flat `Option[string]` carries a slot credit whose exit
+// sweep runs on the return path either way (the asymmetry #7725 recorded).
 //
 // TWO ROUND COUNTS ON THE ARRAY ROW, deliberately: the discriminator between this
 // and a bounded leak is whether live_bytes moves with the round count, and a
@@ -42,11 +31,10 @@ import (
 // Every row asserts `__rc_underflow_count() == 0` before its answer. Widening a release
 // window is the shape that double-frees, and the census cannot see an
 // over-release into a freelist — so each row also runs a second leg under
-// FERN_SANITIZE=1. `TestSelfHostNestedMatchBorrowNoUnderflow` covers the same
-// hazard from the other side and runs in the same suites.
+// FERN_SANITIZE=1. `TestSelfHostNestedMatchBorrowNoUnderflowX86_64` covers the
+// same hazard from the other side and runs in the same suites.
 //
-// Every want was confirmed against BOTH oracles — `bin/fern -interp` and the
-// native x86-64 backend agreed on each.
+// Each want is the `bin/fern -interp` answer.
 type earlyReturnDropCase struct {
 	name string
 	src  string
@@ -94,9 +82,8 @@ func earlyReturnDropCases() []earlyReturnDropCase {
 			want: 36,
 		},
 		{
-			// The rc-payload ENUM sibling — a different family
-			// (consumed_rcpayload_enum_frees) reached through the same window, and
-			// the one whose pending entry carries a moved set. Was 200/0.
+			// The rc-payload ENUM sibling: an enum box holding an array,
+			// released on the early return the same way.
 			name: "rcenum_early_return",
 			src: `enum E { Full(i32[]), None }
 function round(i: i32): i32 {
@@ -108,8 +95,8 @@ function round(i: i32): i32 {
 			want: 2,
 		},
 		{
-			// The SCALAR enum family (consumed_scalar_enum_frees), the third of the
-			// three that install pending entries.
+			// The SCALAR-payload enum: its box is released on the early return
+			// too.
 			name: "scalar_enum_early_return",
 			src: `enum S { A(i32), B }
 function round(i: i32): i32 {

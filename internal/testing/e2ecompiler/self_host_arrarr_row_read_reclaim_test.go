@@ -5,31 +5,22 @@ import (
 	"testing"
 )
 
-// --- Index row reads no longer forfeit the arr-of-arr credit (#7805) ---------
+// --- Index row reads keep the arr-of-arr deep release (#7805) ---------------
 //
-// The lowering's "ARRARR:" credit routes a fresh, non-escaping arr-of-arr local to
-// the deep release (__fern_arrarr_free), which rc-decs each row buffer and then
-// frees the outer one. arrarr_row_escapes used to refuse that credit for ANY
-// bare single-index row read — `let row = g[i]` or `row = g[i]` — on the
-// grounds that the bound row would dangle when the reclaim ran.
+// A fresh, non-escaping arr-of-arr local is released deeply when it dies
+// (__fern_arrarr_free): each row buffer is rc-dec'd, then the outer one freed.
+// A bare single-index row read — `let row = g[i]` or `row = g[i]` — takes a
+// counted reference at the bind, so it must not cost the local that release:
+// an outer-only dec strands every row, 88 B/round.
 //
-// It would not: both index spellings take a Perceus dup at the bind (the
-// is_arr/ExprIndex retain in lower_stmt_var and its assign twin), so the row is
-// a counted reference and the walk's rc-guarded dec lands on 2, not 1. Refusing
-// the credit dropped the slot to the generic is_arr sweep, which decs only the
-// OUTER buffer — so every row stranded, including rows nothing else touched,
-// at 88 B/round against native's zero.
-//
-// `for row in g` genuinely takes no dup (measured: zero rc_inc for the
-// iteration form against one for each index form), but it is a TRANSIENT borrow
-// — the loop ends before the exit reclaim — so it is admitted on the same terms
-// structarr_elem_escapes admits its own iteration: refused only when the body
-// lets the loop var escape. TestSelfHostArrArrRowReadHazardsX86_64 pins that the
-// shapes still refused stay CORRECT, which is the half a wrongly-granted credit
+// `for row in g` takes no dup, but it is a TRANSIENT borrow — the loop ends
+// before the exit release — so it keeps the deep release unless the body lets
+// the loop var escape. TestSelfHostArrArrRowReadHazardsX86_64 pins that the
+// escaping shapes stay CORRECT, which is the half a wrongly-granted deep release
 // would break: an over-release is a use-after-free, not a leak.
 //
-// Differential against native, as the rest of this package is: the assertion is
-// AGREEMENT with the native compiler, not an absolute byte count.
+// The reclaim cases assert live_bytes 0; the hazard cases assert the self-host
+// driver's answer agrees with the `fern` CLI build of the same program.
 
 // arrarrRowBindChurnSrc: the minimal shape — a row bound out of a fresh
 // arr-of-arr and read locally. Nothing escapes the frame.

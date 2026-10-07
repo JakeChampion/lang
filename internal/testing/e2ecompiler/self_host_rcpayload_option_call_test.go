@@ -6,29 +6,19 @@ import (
 )
 
 // An rc-payload `Option`/`Result` local bound from a CALL is reclaimed
-// (#6360, second half).
+// (#6360, second half). Bound from a constructor (`Some([..])`) the variant is
+// visible at the init; bound from `mk(i)` it is not, so the payload release
+// has to be guarded on the tag at run time.
 //
-// #6416 closed the scalar-payload half of that issue. The rc-payload half
-// stayed at `frees=0` — the box was never released at all — and it is a 2x2
-// worth restating, because the obvious reading of "rc payload leaks" is wrong:
+//	payload  init
+//	rc       direct
+//	rc       call     <- the shape these tests pin
+//	scalar   direct
+//	scalar   call     <- #6416
 //
-//	payload  init     before
-//	rc       direct   0        <- already deep-freed, buffer and all
-//	rc       call     35200    <- the gap these tests pin
-//	scalar   direct   0
-//	scalar   call     0        <- #6416
-//
-// So it is not the rc payload that defeats reclaim. `rcpayload_option_cand`
-// reads the CONSTRUCTED variant off the init: `Some([..])` is visible, `mk(i)`
-// is not, and `emit_opt_payload_drop` then reads offset 8 unconditionally —
-// sound only because a specific variant was admitted. The call form is served
-// by `emit_opt_tagged_payload_drop`, which guards that same release on
-// `op_opt_tag() == 0`.
-//
-// These assert AGREEMENT with the native backend rather than a byte count, for
-// the reason the arr-append tests do: the number moves with box sizes, the
-// agreement does not. `live_bytes` must be 0 and allocs must be nonzero, so a
-// probe that stopped exercising the path fails rather than passing vacuously.
+// These assert `live_bytes` 0 and nonzero allocs rather than a byte count: the
+// number moves with box sizes, and nonzero allocs make a probe that stopped
+// exercising the path fail rather than pass vacuously.
 //
 // WHY NO GATE CAUGHT THIS. From #6360: the rc detector counts over-*releases*,
 // so a pure leak reads as a clean 0; the fixpoint is self-referential and blind

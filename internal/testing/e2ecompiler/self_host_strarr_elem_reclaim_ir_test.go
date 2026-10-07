@@ -8,13 +8,12 @@ import (
 // TestSelfHostStrArrElemReclaimIRX86_64 pins the #4355 string[] ELEMENT reclaim
 // slice: a non-escaping string[] local the frame solely owns — every stored
 // element provably fresh (a concat, a proven producer call) or a static
-// literal, or the whole array handed over by a "STRARR:" producer — is credited
-// "SARR:" by reclaimable_names_of, and the exit sweep frees it with
-// __fern_str_arr_free —
-// the element-walking sibling of the shallow array dec (rc==1: __fern_str_free
-// every element box, then the buffer; rc>1: dec; rc<0: skip; rc==0: underflow
-// detector). Anything the element-hazard walk cannot prove keeps the shallow
-// buffer-only dec (elements leak — sound).
+// literal, or the whole array handed over by a fresh string[] producer — is
+// freed at exit with __fern_str_arr_free, the element-walking sibling of the
+// shallow array dec (rc==1: __fern_str_free every element box, then the
+// buffer; rc>1: dec; rc<0: skip; rc==0: underflow detector). Anything the
+// element-hazard rules cannot prove keeps the shallow buffer-only dec
+// (elements leak).
 //
 // The reclaim is proven by a BOUNDED HIGH-WATER assertion (__heap_bump_bytes()
 // stays flat across a second 5000-iteration churn — element leaks grow it by
@@ -61,13 +60,11 @@ function main(): i32 { let w: i32 = churn(5000); let b1: i32 = (__heap_bump_byte
 
 	// LOOP-BODY REINIT, BOUNDED HIGH-WATER (#4353 item 4): a string[] local
 	// re-DECLARED each iteration of churn's own loop (not freed at a helper's
-	// exit like the flat case above — freed at the loop REBIND). Pre-fix the
-	// reinit store took the shallow buffer-only dec and leaked all 3 element
-	// boxes + their buffers every iteration; the strarr reinit branch
-	// (emit_strarr_reclaim_store) now frees the prior iteration's elements with
-	// __fern_str_arr_free before the store, so the second churn re-serves from
-	// the freelist and the bump high-water stays flat. Element leaks → 98; a
-	// double-free (reinit + exit sweep both freeing the final box) → 99.
+	// exit like the flat case above — freed at the loop REBIND). The reinit
+	// frees the prior iteration's elements with __fern_str_arr_free before the
+	// store, so the second churn re-serves from the freelist and the bump
+	// high-water stays flat. Element leaks → 98; a double-free (reinit + exit
+	// sweep both freeing the final box) → 99.
 	run(t, `function churn(n: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i32 = 0; while (i < n) { let xs: string[] = ["lit", pre + "x", pre + "yy"]; acc = (acc + xs[0].len() + xs[2].len()) % 251; i = i + 1; } return acc; }
 function main(): i32 { let w: i32 = churn(5000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(5000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"strarr-elem-reinit-loop", 0)
@@ -90,12 +87,9 @@ function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0
 		"strarr-elem-return-excluded", 0)
 
 	// PRODUCER-CALL ELEMENT, BOUNDED HIGH-WATER: the stored elements are calls
-	// to `w`, a whole-program-proven fresh-string producer (str_fresh_ret_fns),
-	// rather than inline concats. The credit's element proof is
-	// strarr_value_is_fresh, the same question the "STRARR:" producer admission
-	// asks, so the registry arm admits them and the exit sweep element-walks.
-	// Before that the credit asked a registry-blind sibling that refused any
-	// call, and all three element boxes leaked per build → 98.
+	// to `w`, a whole-program-proven fresh-string producer, rather than inline
+	// concats, so the exit sweep element-walks them. Leaking the three element
+	// boxes per build → 98.
 	run(t, `function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function build(pre: string): i32 { let xs: string[] = [w(pre), "lit"]; xs = xs.append(w(pre)); let tl: i32 = 0; let j: i32 = 0; while (j < xs.len()) { tl = tl + xs[j].len(); j = j + 1; } return tl; }
 function churn(n: i32): i32 { let pre: string = "ab"; let acc: i32 = 0; let i: i32 = 0; while (i < n) { acc = (acc + build(pre)) % 251; i = i + 1; } return acc; }
@@ -129,21 +123,14 @@ function churn(n: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i
 function main(): i32 { let v: i32 = churn(2000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"strarr-local-borrowed-arg-flat", 0)
 
-	// STORED BY THE CALLEE is ADMITTED, and this case used to pin the opposite.
-	// Its premise was that `keep`'s parameter is not borrowable, which is still
-	// true and is no longer the whole question: param_counted_of proves every
-	// appearance of that parameter is a COUNTED store, so the construction incs
-	// the buffer and the caller's claim survives the call. The "CNT:" tier now
-	// carries that verdict to the escape walker.
+	// STORED BY THE CALLEE: `keep` stores its parameter into a struct, a
+	// COUNTED store — the construction retains the buffer — so the caller's
+	// claim survives the call and xs is still swept with the deep walk.
 	//
-	// Granting the DEEP walk on top of a shallow-release justification is the
-	// part that needs stating. Two rules close it from both ends, and neither is
-	// this slice's invention: __fern_str_arr_free is rc-gated, so only the owner
-	// that finds rc 1 walks the elements at all; and no element can be out
-	// UNCOUNTED, because the tier refuses ExprIndex for array params (a callee
-	// cannot extract one, nor pass the array onward to a callee that does) while
-	// the caller's own element-hazard rules still exclude `let t = xs[0]` — the
-	// alias case above.
+	// That is safe from both ends: __fern_str_arr_free is rc-gated, so only the
+	// owner that finds rc 1 walks the elements at all; and no element is out
+	// UNCOUNTED, because the callee extracts none and the caller's own
+	// element-hazard rules still exclude `let t = xs[0]` — the alias case above.
 	//
 	// Both the struct read and the direct `xs[2]` read stay valid. 89 over 2000
 	// calls, underflow 0.
@@ -203,14 +190,11 @@ function main(): i32 { let v: i32 = churn(2000); let before = __heap_bump_bytes(
 		"strarr-local-forwarded-return-owned", 0)
 
 	// SELF-`.with` REBIND, BOUNDED HIGH-WATER (#6407): `a = a.with(i, v)` on an
-	// owned string[] lowers to an in-place arr_set, which used to drop the
-	// overwritten element pointer without releasing it — and, because the rebind was a
-	// hazard, cost the array its credit as well, so ALL eight element boxes
-	// leaked per round (380 B/round measured). lower_strarr_with_store now
-	// releases the superseded box and retains the stored value, which makes the
-	// rebind admissible: the sweep element-walks and the loop is flat. `v` is
-	// another ELEMENT here, so without the retain the walk would free one box
-	// through two slots → 99.
+	// owned string[] lowers to an in-place arr_set that releases the superseded
+	// element box and retains the stored value, so the sweep still
+	// element-walks and the loop is flat (a miss leaks all eight element boxes,
+	// 380 B/round). `v` is another ELEMENT here, so without the retain the walk
+	// would free one box through two slots → 99.
 	run(t, `import "std/i32";
 function mks(pre: string): string[] { let out: string[] = []; let i: i32 = 0; while (i < 8) { out = out.append(pre + "kkkkkkkkkkkkkkkkkkkk" + i.to_string()); i = i + 1; } return out; }
 function build(pre: string): i32 { let a: string[] = mks(pre); a = a.with(3, a[5]); return a.len() + a[3].len() + a[5].len(); }

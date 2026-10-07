@@ -8,13 +8,11 @@ import (
 	"testing"
 )
 
-// A map READ takes its key, probes with it, and releases nothing (#10071).
-//
-// That is right for a BORROWED key — the source local's own sweep owns it —
-// but a freshly constructed key has no other owner, so every call strands it.
-// The probe helpers ($__fern_map_find / _get / _has / _get_or) touch no
-// refcount by design; the release has to come from the lowering, and only
-// `get` emitted one, for strings alone.
+// A map READ takes its key and probes with it (#10071). A BORROWED key is owned
+// by the source local's own sweep, but a freshly constructed key has no other
+// owner, so the read must release it or every call strands it. The probe
+// helpers ($__fern_map_find / _get / _has / _get_or) touch no refcount by
+// design; the release comes from the lowering.
 //
 // Each arm is paired with the same program keyed by a surviving local. The
 // control is what makes a failure mean "the fresh key leaked" rather than
@@ -30,10 +28,8 @@ import (
 //   - `get` consumed by a `return` inside the match arm, or hoisted into a
 //     `let` — there the Option box is stranded whether the key is fresh or
 //     borrowed (#10083), so those shapes pin nothing. A get whose match FALLS
-//     THROUGH does release it: lower_stmt_match emits the scrutinee free after
-//     the body, which a `return` leaves before reaching and which a hoisted
-//     scrutinee reaches only as a bare ident. That is the shape the get cases
-//     below use, and it discriminates.
+//     THROUGH does release it, so that is the shape the get cases below use,
+//     and it discriminates.
 func TestSelfHostMapReadKeyTempWasmRC(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host map read-key rc e2e")
@@ -54,12 +50,9 @@ func TestSelfHostMapReadKeyTempWasmRC(t *testing.T) {
 	}{
 		{"box-has-fresh", box + `function build(n: i32): i32 { let m: Map[P, i32] = map_new(4); let k: P = P { x: n, y: n * 2 }; m = m.insert(k, 7); if (m.has(P { x: n, y: n * 2 })) { return 0; } return 0; } ` + probe},
 		{"box-has-borrowed", box + `function build(n: i32): i32 { let m: Map[P, i32] = map_new(4); let k: P = P { x: n, y: n * 2 }; m = m.insert(k, 7); if (m.has(k)) { return 0; } return 0; } ` + probe},
-		// `get` is the arm this change restructures most. Its match must FALL
-		// THROUGH: lower_stmt_match emits the scrutinee free after the body
-		// (match_scrut_is_map_get), so a `return` inside an arm leaves before
-		// reaching it and strands the Option whatever the key is — as does
-		// hoisting the scrutinee into a `let`, which reaches that check as a
-		// bare ident. Either shape would give a red control and pin nothing.
+		// `get`'s match must FALL THROUGH: a `return` inside an arm, or
+		// hoisting the scrutinee into a `let`, strands the Option whatever the
+		// key is, which would give a red control and pin nothing.
 		{"box-get-fresh", box + `function build(n: i32): i32 { let m: Map[P, i32] = map_new(4); let k: P = P { x: n, y: n * 2 }; m = m.insert(k, 7); let acc: i32 = 0; match (m.get(P { x: n, y: n * 2 })) { Some(v) => { acc = acc + v - 7; }, None => { acc = acc - 1; } } return acc; } ` + probe},
 		{"box-get-borrowed", box + `function build(n: i32): i32 { let m: Map[P, i32] = map_new(4); let k: P = P { x: n, y: n * 2 }; m = m.insert(k, 7); let acc: i32 = 0; match (m.get(k)) { Some(v) => { acc = acc + v - 7; }, None => { acc = acc - 1; } } return acc; } ` + probe},
 		{"box-get_or-fresh", box + `function build(n: i32): i32 { let m: Map[P, i32] = map_new(4); let k: P = P { x: n, y: n * 2 }; m = m.insert(k, 7); return m.get_or(P { x: n, y: n * 2 }, 0) - 7; } ` + probe},

@@ -6,41 +6,14 @@ import (
 	"testing"
 )
 
-// arrEnumReclaimCases pin the #5474 `MyEnum[]` array-of-enums reclaim (#4353 item 4) —
-// the last array-of-X element kind with no element walk at any site. `string[]` (#5471),
-// `(…)[]` (ARRTUP) and `(<struct-with-array>)[]` (ARRSTRUCT) all reclaim their elements;
-// an enum array was left on a buffer-only dec, so the outer buffer was freed and every
-// element enum box — plus any rc payload it carried — leaked per iteration.
-//
-// Measured on the pre-fix compiler with FERN_LEAKCHECK=1, 200 iterations of the churn
-// below (allocs/frees/live_bytes), against controls that must be bounded:
-//
-//	i32[]           201 / 200 / 24      bounded (control)
-//	string[]       1401 / 1400 / 24     bounded (control)
-//	(i32,string)[] 1801 / 1800 / 24     bounded (control)
-//	E[]            2001 /  600 / 35224  LEAK -> 2001 / 2000 / 24 after
-//	E[] all-unit    801 /  200 / 19224  LEAK ->  801 /  800 / 24 after
-//
-// The all-unit row is the one that localises the gap: 200 iterations x (3 element boxes
-// + 1 buffer) allocated, exactly 200 freed — so the outer buffer was already being
-// reclaimed and it was purely the element walk that was missing.
-//
-// The new "ARRENUM:" class credits a fresh array of fresh enum constructions and
-// releases it with the same counted element walk its siblings use, but drops each
-// element through the RUNTIME VARIANT DISPATCH (emit_enum_variant_drops) rather than a
-// type-directed drop. That primitive frees the element box ITSELF and zeroes the slot,
-// so — unlike ARRTUP/ARRSTRUCT — the walk emits NO trailing __fern_rc_dec per element;
-// adding one double-frees every element.
-//
-// The element enum name is in the CREDIT ("ARRENUM:<local>#<Enum>") because an `E[]`
-// slot records its element type in neither arrarr_elem (populated only for `T[][]`, and
-// only for four scalar tags) nor struct_type.
+// arrEnumReclaimCases pin the #5474 `MyEnum[]` array-of-enums reclaim (#4353 item 4):
+// releasing an enum array frees every element enum box and any rc payload it
+// carries, not just the outer buffer — as `string[]`, `(…)[]` and
+// `(<struct-with-array>)[]` already do. Every case must leave a balanced census.
 //
 // The negative cases extract an element — a match over `xs[0]`, a bound element, a
 // returned array — so freeing that element while a binding aliases its payload is a
 // double free. Each must compute the exact value with the underflow detector at zero.
-//
-// Every case must also leave a balanced census.
 var arrEnumReclaimCases = []struct {
 	name string
 	src  string
@@ -86,9 +59,8 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// UNQUALIFIED ctor spelling (`A(..)` rather than `E.A(..)`) reaches the same credit —
-	// fresh_rcpayload_enum_init admits both, and a class that only saw one would silently
-	// leak half the real call sites.
+	// UNQUALIFIED ctor spelling (`A(..)` rather than `E.A(..)`) must reclaim the same as
+	// the qualified one.
 	{"arrenum-unqualified-ctor", `enum E { A(string), B }
 function main(): i32 {
     let acc: i32 = 0;

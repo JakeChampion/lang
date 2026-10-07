@@ -10,27 +10,17 @@ import (
 
 // TestSelfHostTypedArrayInvariantIR pins one invariant across every expression
 // form that produces a TYPED array: if the lowering can name the element kind,
-// it must also treat the value as an array.
-//
-// The two halves of that question were answered by separate, independently
-// hand-maintained lists in the AST lowering. `is_arr` (in lower_stmt_var) enumerated
-// callee names — `__alloc_u8`, `str_split`, `args`, `is_arr_ret_fn`, the string
-// methods — and `expr_is_strarr` / `expr_is_f64arr` / `expr_is_i64arr` each
-// enumerated their own. Nothing tied them together, so they could disagree, and
-// they did: `args()` was in `expr_is_strarr` from the day the builtin landed and
-// missing from `is_arr` ever since. The visible symptom was oddly narrow —
-// `a[i]` and `a.len()` lowered fine, `for s in a` bailed the whole function —
-// which is why it survived until the AST fallback was deleted and the bail
-// turned into a hard error (#5983).
+// it must also treat the value as an array. Answered from two places, the two
+// can disagree: `args()` once indexed and took `.len()` fine while `for s in a`
+// over it refused to lower (#5983).
 //
 // So each case below does BOTH: an index/len read and a `for`-loop, over the
-// same expression. A list that gains an entry on one side and not the other
-// fails here rather than years later.
+// same expression.
 //
 // Half the fixtures are self-host dialect with no interpreter oracle
 // (`.split()`, `.bytes()` and `.lines()` need `std/string` imported), so their exit codes are stated and were verified
-// against the emitted wasm. The three that ARE native-valid carry the same value
-// on both, which is what makes the stated ones credible.
+// against the emitted wasm. The three that ARE interpreter-valid carry the same
+// value on both, which is what makes the stated ones credible.
 func TestSelfHostTypedArrayInvariantIR(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

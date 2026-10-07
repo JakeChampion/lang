@@ -9,47 +9,26 @@ import (
 )
 
 // annotateEnumCases exercise the nominal-ENUM half of the typed-IR carrier
-// (#5531, docs/TYPED-IR-REWRITE.md). The checker's tag namer had a
-// `TypeStruct(st) => st.name` arm and no union sibling, so every enum-valued
-// expression stamped "" — while irlower's admission helper struct_tag_from_ty
-// had admitted an enum name all along. Seven shapes below therefore could not
-// resolve their receiver's type, took expr_recv_prim_type's "i32" default, and
-// bailed the module on the unknown symbol `i32.rank`; the interpreter, the
-// semantic oracle, runs all of them.
+// (#5531, docs/TYPED-IR-REWRITE.md): an enum-valued expression must carry its
+// enum's name, so a method call on it dispatches to that enum's method instead
+// of failing to resolve the receiver. Each case names the layer it pins:
 //
-// Three layers were responsible and each case names which one it pins:
-//
-//   - the CARRIER: type_to_irtag now names a bare nominal union, and
-//     expr_struct_type's ExprCall / ExprFieldAccess arms admit it through
-//     struct_tag_from_ty instead of decl_is_struct (which answers only half the
-//     question its callers ask). That guard also discarded a `dyn Trait` field
-//     spelling the call arm had always kept, so a dyn-field case pins it too.
-//   - the WALK: struct_ret_fns_of's ARRAY arms had no enum element sibling, so
-//     an `E[]`-returning function recorded nothing. That is the answer the
-//     UNANNOTATED drivers (asm_ir_run, the native compiler) still depend on.
-//   - the CHECKER: a qualified UNIT variant `Color.Red` in value position typed
-//     unknown — check_call_expr learned the qualified constructor form in #6657
-//     and check_expr's field-access arm never learned the value sibling — so a
-//     carrier alone would have stamped "" on exactly the expressions that needed
-//     it. Both spellings ask one rule now (qual_variant_union).
+//   - the CARRIER: type_to_irtag names a bare nominal union, so an indexed
+//     enum array, a slice, a struct field, a tuple element or a fn-value call
+//     stamps the enum rather than "". A `dyn Trait` struct field resolves
+//     through the same rule.
+//   - the CHECKER: a qualified UNIT variant `Color.Red` in value position types
+//     as its enum, by the same rule as the qualified constructor form
+//     (qual_variant_union).
 //
 // Each case ASSERTS "ir" via -decide, so a change that pushes one off the IR
 // path fails loudly rather than silently stopping exercising the carrier.
 // Oracle: the interp. Every case answers 42.
-//
-// One consequence of the widening is NOT pinned here and cannot be: routing two
-// more arms through struct_tag_from_ty required tightening its enum admission
-// from the loose is_enum_like_name to decl_is_enum, because an ERASED generic
-// struct name (`OrdSet`, stamped before monomorphisation, with only the concrete
-// clones left to declare it) satisfies the loose test. That needs a generic
-// MODULE to reproduce, so TestSelfHostStdTestE2E — which compiles the stdlib —
-// is the gate that holds it, and it is the gate that caught it.
 var annotateEnumCases = []struct {
 	name string
 	src  string
 }{
-	// CARRIER + WALK: an enum-ARRAY-returning call, indexed. struct_ret_fns_of
-	// recorded the element type for a struct return and not for an enum one.
+	// CARRIER: an enum-ARRAY-returning call, indexed.
 	{"enum_array_ret_index_method", `enum Color { Red, Green, Blue }
 function (c: Color) rank(): i32 {
     match (c) { Color.Red => { return 1; }, Color.Green => { return 42; }, _ => { return 3; } }
@@ -57,8 +36,8 @@ function (c: Color) rank(): i32 {
 }
 function mk(): Color[] { return [Color.Green]; }
 function main(): i32 { return mk()[0].rank(); }`},
-	// CARRIER: a SLICED base reaches no walk arm at all, so the element type can
-	// only come from the stamp — the enum twin of the struct case #5986 wired.
+	// CARRIER: a SLICED base, whose element type only the stamp names — the
+	// enum twin of the struct case #5986 wired.
 	{"enum_slice_index_method", `enum Color { Red, Green, Blue }
 function (c: Color) rank(): i32 {
     match (c) { Color.Red => { return 1; }, Color.Green => { return 42; }, _ => { return 3; } }
@@ -68,9 +47,7 @@ function main(): i32 {
     let cs: Color[] = [Color.Red, Color.Green];
     return cs[1:2][0].rank();
 }`},
-	// CARRIER: a struct FIELD declared at an enum type. fa_type_tag resolved the
-	// spelling and expr_struct_type discarded it, because decl_is_struct is not
-	// the question the arm's callers ask.
+	// CARRIER: a struct FIELD declared at an enum type.
 	{"enum_struct_field_method", `enum Color { Red, Green, Blue }
 function (c: Color) rank(): i32 {
     match (c) { Color.Red => { return 1; }, Color.Green => { return 42; }, _ => { return 3; } }
@@ -106,10 +83,8 @@ function (c: Color) rank(): i32 {
     return 0;
 }
 function main(): i32 { return [Color.Red, Color.Green][1].rank(); }`},
-	// CHECKER + CARRIER: an enum-array if-EXPRESSION, indexed. An enum-valued
-	// if-expression is NOT lifted to a `__lam_` (its variant constructors read as
-	// captures), so struct_ret_fns_of's lifted-leaf arm cannot see it and the
-	// stamp is the only answer — which the qualified variants inside it had to
+	// CHECKER + CARRIER: an enum-array if-EXPRESSION, indexed. The stamp is the
+	// only answer for its type, and the qualified variants inside it have to
 	// type first.
 	{"enum_iife_array_index_method", `enum Color { Red, Green, Blue }
 function (c: Color) rank(): i32 {
@@ -121,35 +96,25 @@ function main(): i32 {
     return (if (b) { [Color.Green] } else { [Color.Red] })[0].rank();
 }`},
 
-	// --- controls: the walk paths the tag now sits beside must not move ---
+	// --- controls: shapes that resolve without the enum rules must not move ---
 
-	// The STRUCT sibling of the first two cases, which worked before this slice
-	// and must keep working: the tag must not displace struct_ret_fns_of's own
-	// element answer.
+	// The STRUCT sibling of the first two cases.
 	{"struct_array_ret_index_method", `struct P { v: i32 }
 function (p: P) rank(): i32 { return p.v; }
 function mk(): P[] { return [P { v: 42 }]; }
 function main(): i32 { return mk()[0].rank(); }`},
-	// A SCALAR-returning call reached through the widened admission helper. If
-	// struct_tag_from_ty stopped rejecting the scalar tag vocabulary first, an
-	// `i64` tag would read as a nominal enum and dispatch `i64.rank`-style on a
-	// value that is not one — the exact failure is_enum_like_name's exclusion
-	// list exists to prevent.
+	// A SCALAR-returning call: a scalar tag must not read as a nominal enum and
+	// dispatch `u64.rank`-style on a value that is not one.
 	{"scalar_ret_call_method", `function w(): u64 { return 4294967338u64; }
 function main(): i32 { return (w() % 100u64) as i32; }`},
-	// A `dyn Trait` struct FIELD, which was a live bail for the same reason as
-	// the enum cases and is closed by the same one-rule change:
-	// expr_struct_type's ExprCall arm has returned the coarse "dyn Trait" type
-	// from struct_ret_fns_of for a long time, and the FIELD arm's decl_is_struct
-	// guard threw the identical spelling away. Measured at 42 against the interp
-	// oracle where the pre-change compiler refused the module outright.
+	// A `dyn Trait` struct FIELD, whose method call resolves by the same rule as
+	// the enum field above.
 	{"dyn_struct_field_method", `trait Shape { function area(self: Self): i32; }
 struct Sq { s: i32 }
 impl Shape for Sq { function area(self: Self): i32 { return self.s * self.s; } }
 struct Holder { sh: dyn Shape }
 function main(): i32 { let h: Holder = Holder { sh: Sq { s: 6 } }; return h.sh.area() + 6; }`},
-	// A struct field declared at a SCALAR type, through the arm whose guard
-	// changed from decl_is_struct to struct_tag_from_ty.
+	// A struct field declared at a SCALAR type.
 	{"scalar_struct_field_method", `struct B { v: f64 }
 function main(): i32 { let b: B = B { v: 4.2 }; return (b.v * 10.0) as i32; }`},
 	// Two enums declaring the SAME variant name, in value position. The first
@@ -187,9 +152,7 @@ function main(): i32 {
 
 // TestSelfHostAnnotateEnumIR_X86_64 pins the nominal-enum carrier through the
 // self-host x86-64 IR path. asm_load_run.fern is the driver because it runs
-// checker.annotate_module after the checker gate and before emit; asm_ir_run and
-// the native compiler skip the pass, so under those the WALK cases above answer
-// from struct_ret_fns_of alone.
+// checker.annotate_module after the checker gate and before emit.
 func TestSelfHostAnnotateEnumIR_X86_64(t *testing.T) {
 	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)
 

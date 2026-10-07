@@ -10,26 +10,19 @@ import (
 // TestSelfHostStructStrLiteralFieldReclaimIRX86_64 pins the #6127 string-LITERAL
 // struct-field reclaim.
 //
-// `str_producer_ownership` classifies a string literal `Static`, and the
-// struct-literal string-field retain inc'd every non-Owned class on the stated
-// premise that a literal "is static (.rodata, not heap rc=1) — it must NOT be
-// freed". Since #2649 Option A that is only true of the DATA: `const_str` emits
-// `__fern_str_box` over the interned bytes, so a literal evaluates to a fresh
-// rc=1 heap box on every evaluation. The retain therefore pinned that box at
-// rc=2 for the life of the program while the `k_str` drop's rc-aware
-// `__fern_str_free` only took it back to 1 — a leak on a PLAIN SINGLE BIND, no
-// loop and no rebind involved.
+// A string literal evaluates to a fresh rc=1 heap box over its interned
+// `.rodata` bytes on every evaluation, so a struct field holding one must
+// release that box with the struct. Retained as if it were static, it stays at
+// rc=2 and leaks on a PLAIN SINGLE BIND, no loop and no rebind involved.
 //
 // Freeing it is safe because `__fern_str_free` heap-range-guards the data
 // pointer: the box is released and the `.rodata` bytes are left alone.
 //
-// The escape cases below are the essential half. Soundness rests on
-// `strfld_reclaim_ok_types_of`, the whole-program read scan that already gates
-// the `k_str` dec — a type whose string field is read into a call argument or a
-// container store is excluded, so it is neither retained nor freed. That is the
-// exact hazard class that made the sibling nested-struct release a use-after-free
-// (an uncounted `items.append(p.node)` alias), so it is pinned here rather than
-// assumed.
+// The escape cases below are the essential half: a type whose string field is
+// read into a call argument or a container store must have that box neither
+// retained nor freed. That is the exact hazard class that made the sibling
+// nested-struct release a use-after-free (an uncounted `items.append(p.node)`
+// alias), so it is pinned here rather than assumed.
 func TestSelfHostStructStrLiteralFieldReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -80,8 +73,7 @@ function main(): i32 {
     return 0;
 }`, "str-literal-field-single-bind-flat", 0)
 
-	// LOOP REBIND: the replaced literal box recycles through the
-	// __field_reclaim_<T> string arm, which the retain used to neutralise.
+	// LOOP REBIND: the replaced literal box is released at the rebind.
 	run(t, `struct B { name: string, n: i32 }
 function step(b: B): B { return B { name: "xy", n: b.n + 1 }; }
 function main(): i32 {

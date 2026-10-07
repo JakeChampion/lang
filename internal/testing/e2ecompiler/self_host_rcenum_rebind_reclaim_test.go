@@ -172,8 +172,8 @@ function main(): i32 {
 		},
 		{
 			// The match arm MOVES the string payload out into a container that
-			// outlives the enum, so deep-dropping the chain would free a string the
-			// array still points at. This is what match_arm_binds_rc_payload guards.
+			// outlives the enum, so dropping the chain must not free a string the
+			// array still points at.
 			name: "arm_moves_payload_out",
 			src: `enum T { Text(string), Nothing }
 @noinline function ids(s: string): string { return s; }
@@ -197,9 +197,8 @@ function main(): i32 {
 		},
 		{
 			// The payload is a PARAM string, not a freshly produced one, so the
-			// caller still owns it after the callee's chain is dropped. This is the
-			// hazard rcenum_ctor_payload_strings_fresh exists for: the caller reads
-			// `owned` again after build() returns.
+			// caller still owns it after the callee's chain is dropped: the caller
+			// reads `owned` again after build() returns.
 			name: "payload_is_param_string",
 			src: `enum T { Text(string), Nothing }
 function build(p: string, n: i32): i32 {

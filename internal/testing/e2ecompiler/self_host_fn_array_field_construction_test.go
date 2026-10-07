@@ -10,12 +10,9 @@ import (
 )
 
 // fnArrayFieldConstructionCases build an `fn[]` struct field every way #5787
-// measured and call through an element. While a function array could hold raw
-// function pointers or `__mkclo$` env boxes under the same spelling, a field
-// built from a PARAM or by `.append` in a LOOP proved neither representation:
-// both SIGSEGV'd on the IR path and the AST emitter, and later a pre-emit gate
-// refused them. Since #10076 every function array holds env boxes whatever
-// built it, so each shape compiles and answers what the interpreter does.
+// measured and call through an element. Every function array holds `__mkclo$`
+// env boxes whatever built it (#10076), so a field built from a PARAM or by
+// `.append` in a LOOP compiles and answers what the interpreter does.
 var fnArrayFieldConstructionCases = []struct {
 	name string
 	src  string

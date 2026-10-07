@@ -5,17 +5,10 @@ import "testing"
 // optArithNarrowBindIRCases pin an Option/Result match-EXPRESSION arm that does
 // ARITHMETIC over a bound i64 payload and then narrows it with `as i32`
 // (`match (o) { Some(x) => (x + 2) as i32, None => 0 }`) to the self-host IR path on
-// x86-64 + wasm. The match-expression result is i32 (the cast narrows), but an arm
-// computes a wide i64 intermediate over the payload first. The recognizer
-// iife_arm_returns_narrowed_payload admitted only `name as i32` (the BARE payload);
-// an arithmetic operand under the cast fell through, and because the result temp is
-// i32 none of the wide-result admits fired either, so iife_payload_field_bindable
-// returned false and the whole module bailed to the legacy AST emitter. #2691 adds
-// iife_arm_returns_narrowed_payload_arith (the arith sibling), reusing the existing
-// iife_payload_arith_kind classifier. i64 only — the f64 arith-then-narrow result
-// temp is not yet width-lowered in the IIFE path, so it still bails (a
-// separate follow-up). Each case is oracle-checked against the interpreter and
-// returns <= 126. Mirrors self_host_opt_unused_wide_bind_ir_test.go.
+// x86-64 + wasm (#2691). The match-expression result is i32 (the cast narrows),
+// but an arm computes a wide i64 intermediate over the payload first. Each case
+// is oracle-checked against the interpreter and returns <= 126. Mirrors
+// self_host_opt_unused_wide_bind_ir_test.go.
 var optArithNarrowBindIRCases = []struct {
 	name string
 	main string

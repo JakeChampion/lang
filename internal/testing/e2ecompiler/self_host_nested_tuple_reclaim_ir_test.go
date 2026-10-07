@@ -9,16 +9,12 @@ import (
 
 // nestedTupleReclaimCases pin the #4365 nested-tuple-with-inner-array reclaim: a
 // tuple whose element is ITSELF a tuple literal carrying a fresh array
-// (`((i, [i, i+1]), i)`) leaked all three levels — the inner array buffer, the
-// inner tuple box, and the outer box — per loop iteration / per discard on the
-// self-host IR path (native bounds it). The TUPRC: admission
-// (tuple_lit_rc_reclaimable) now recurses into nested tuple-literal elements
-// (tuple_lit_has_array), and the deep-drop (emit_tuple_child_drops) frees each
-// fresh array buffer and nested tuple box depth-first before the outer box. A
-// bare-ident element (nested or flat) aliases a live local and is skipped
-// (leak-safe); a returned tuple escapes and is never freed. Also fixes a latent
-// bug: expr_scalar_leaf classified a tuple element as scalar, so the shallow
-// scalar-tuple discard admitted a nested tuple and leaked its inner box.
+// (`((i, [i, i+1]), i)`) releases all three levels — the inner array buffer, the
+// inner tuple box, and the outer box — depth-first, per loop iteration and per
+// discard. A bare-ident element (nested or flat) aliases a live local and is
+// not freed with the tuple (leak-safe); a returned tuple escapes and is never
+// freed. A nested tuple element is not a scalar, so a discard must not take the
+// shallow scalar-tuple release and leak its inner box.
 var nestedTupleReclaimCases = []struct {
 	name string
 	src  string
@@ -116,9 +112,9 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// DISCARDED nested tuple statement (`((w, [w, w+1]), w);`) — the discarded-
-	// statement arm takes the same recursive deep-drop. (Regression guard for the
-	// expr_scalar_leaf fix — a shallow scalar-tuple discard leaks the inner box.)
+	// DISCARDED nested tuple statement (`((w, [w, w+1]), w);`) — the discarded
+	// statement takes the same depth-first release; a shallow scalar-tuple
+	// discard would leak the inner box.
 	{"nested-tuple-discarded", `function main(): i32 {
     let acc: i32 = 0;
     let w: i32 = 0;

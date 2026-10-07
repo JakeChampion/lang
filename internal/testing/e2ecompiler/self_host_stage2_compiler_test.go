@@ -10,10 +10,9 @@ import (
 // TestSelfHostStage2Compiler builds a reusable, stdin-driven
 // self-hosted compiler and exercises it across real language features.
 //
-// Stage 1 bundles lexer.fern + parser.fern + asm.fern with an entry
-// that reads a program from stdin (a read_line loop), lexes → parses →
-// emits, and prints the asm. flatten.bundle merges them and
-// asm.emit_module lowers the whole thing; gcc links it into ONE
+// Stage 1 compiles an entry that reads a program from stdin (a read_line
+// loop), lexes → parses → lowers it through semlower and emits it with
+// asm_ir, using the file-based modload driver; gcc links it into ONE
 // self-hosted compiler binary — effectively a Fern-authored `fern`.
 //
 // Stage 2 then feeds that single compiler a table of programs over
@@ -74,8 +73,7 @@ func TestSelfHostStage2Compiler(t *testing.T) {
 		{"array_index", "function main(): i32 { let a: i32[] = [10, 20, 30]; return a[2]; }", 30},
 		// Struct field access, methods that read fields, and union
 		// match — the features the compiler's OWN source is built
-		// from. These exercised the method-result / struct-field type
-		// inference path in asm.fern.
+		// from.
 		{"struct_field", "function main(): i32 { let p: P = P { x: 3, y: 4 }; return p.x + p.y; } struct P { x: i32, y: i32 }", 7},
 		{"method_reads_fields", "struct Pt { x: i32, y: i32 } function (p: Pt) sum(): i32 { return p.x + p.y; } function main(): i32 { let p: Pt = Pt { x: 30, y: 12 }; return p.sum(); }", 42},
 		{"union_match", "struct A { v: i32 } struct B { v: i32 } type U = A | B; function f(u: U): i32 { match (u) { A(a) => { return a.v; }, B(b) => { return b.v + 100; } } return 0 - 1; } function main(): i32 { let u: U = B { v: 5 }; return f(u); }", 105},

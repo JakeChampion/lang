@@ -13,8 +13,7 @@ import (
 // `/run` under `wasmtime serve` with one line per case against the scripted
 // loopback origin, the same lines TestFetchClient's program prints for the
 // cases the hosted route shares (e2eharness.FetchHostedSource says which it
-// does not). The native compiler composes no such handler: its wasm backend
-// does not lower std/wasi_http's externs, and the client is self-host-first.
+// does not).
 func TestSelfHostWasiHttpOutgoing(t *testing.T) {
 	wasmtime, err := exec.LookPath("wasmtime")
 	if err != nil {

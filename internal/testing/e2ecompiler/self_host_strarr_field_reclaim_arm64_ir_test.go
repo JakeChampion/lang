@@ -37,20 +37,18 @@ function main(): i32 { let v: i32 = churn(300000); if (__rc_underflow_count() !=
 		"strarr-field-reclaim-arm64", 0)
 
 	// STRING-BEFORE-ARRAY field order (the x10-staleness regression): R's
-	// `name` (k_str, frees via __fern_str_free which clobbers x10) precedes
-	// `items` (k_scalar, reads the box through x10). Pre-fix the items arm
-	// freed through a stale x10 — a garbage dec that corrupts or ticks the
-	// underflow detector at scale. 300k cycles balanced → exit 0.
+	// `name` (freed via __fern_str_free, which clobbers x10) precedes `items`
+	// (released through the box read via x10). Freeing items through a stale
+	// x10 is a garbage dec that corrupts or ticks the underflow detector at
+	// scale. 300k cycles balanced → exit 0.
 	run(t, `struct R { name: string, items: i32[] }
 function churn(n: i32): i32 { let pre: string = "aa"; let bad: i32 = 0; let i: i32 = 0; while (i < n) { let r: R = R { name: pre + "x", items: [1, 2, 3] }; if (r.name.len() != 3) { bad = 1; } if (r.items.len() != 3) { bad = 1; } i = i + 1; } return bad; }
 function main(): i32 { let v: i32 = churn(300000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"str-before-array-field-order-arm64", 0)
 
-	// PRODUCER-CALL ELEMENTS: the field is built from calls to a proven
-	// fresh-string producer rather than inline concats, which the store gate
-	// now admits (strarr_value_is_fresh, the same question the "SARR:" credit
-	// asks). Correctness + over-release under qemu; the x86 sibling carries the
-	// flatness leg. 2 + 43 = 45 each build.
+	// PRODUCER-CALL ELEMENTS: the field is built from calls to a fresh-string
+	// producer rather than inline concats. Correctness + over-release under
+	// qemu; the x86 sibling carries the flatness leg. 2 + 43 = 45 each build.
 	run(t, `struct Diag { code: i32, notes: string[] }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function build(pre: string): i32 { let d: Diag = Diag { code: 1, notes: [w(pre), w(pre)] }; return d.notes.len() + d.notes.len() + 41; }
@@ -72,11 +70,9 @@ function churn(n: i32): i32 { let pre: string = "ab"; let bad: i32 = 0; let i: i
 function main(): i32 { let v: i32 = churn(1000); if (__rc_underflow_count() != 0) { return 99; } return v; }`,
 		"strarr-field-sibling-name-arm64", 0)
 
-	// WHOLE-ARRAY PRODUCER CALL as the field value: the store gate took only an
-	// array LITERAL, so this shape was refused and leaked every element box.
-	// It now asks fn_returns_fresh_strarr — the "STRARR:" registry's own rule.
-	// Correctness + over-release under qemu; the x86 sibling carries flatness.
-	// 3 + 43 = 46 each build.
+	// WHOLE-ARRAY PRODUCER CALL as the field value: its element boxes must be
+	// released with the struct. Correctness + over-release under qemu; the x86
+	// sibling carries flatness. 3 + 43 = 46 each build.
 	run(t, `struct Node { name: string, deps: string[], mtime: i32 }
 function w(pre: string): string { return pre + "-a-wide-element-past-the-inline-threshold"; }
 function deps_of(pre: string): string[] { let out: string[] = []; let i: i32 = 0; while (i < 3) { out = out.append(w(pre)); i = i + 1; } return out; }

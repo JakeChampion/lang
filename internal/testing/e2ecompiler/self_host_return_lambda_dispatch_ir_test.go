@@ -7,23 +7,19 @@ import (
 
 // returnLambdaDispatchIRCases pin the inline-lambda-return dispatch cluster
 // (#5266): a function that returns an inline `return <lambda>` in non-tail /
-// multi-return / match-payload-sibling position used to mis-dispatch the closure
-// at the caller. The lift pass (lift_stmt) now hoists every `return <lambda>`
-// (capturing or not) to `let $lamret$N = <lambda>; return $lamret$N;`, so the
-// StmtVar clo_init rule boxes the closure and the caller's `let g = f()` binds g a
-// closure local and dispatches `g()` env-first — uniformly, on the IR path.
+// multi-return / match-payload-sibling position. The lift pass (lift_stmt)
+// hoists every `return <lambda>` (capturing or not) to `let $lamret$N = <lambda>;
+// return $lamret$N;`, so the StmtVar clo_init rule boxes the closure and the
+// caller's `let g = f()` binds g a closure local and dispatches `g()` env-first
+// — uniformly, on the IR path.
 //
-// Before the fix:
-//   - a single NON-capturing return (`return () => 7`) returned a bare fn pointer
-//     the caller called env-first -> SIGSEGV;
-//   - two branch-divergent CAPTURING returns unified to the wrong box -> wrong value;
-//   - a lambda return alongside a match-payload closure return bailed the whole
-//     module (and the AST emitter it fell to mis-lowered the CALLER's enum ctor
-//     `E.V(<lambda>)` as an unresolved ident -> SIGSEGV).
+// What each group guards:
+//   - a single NON-capturing return (`return () => 7`) is boxed, not handed back
+//     as a bare fn pointer the caller would call env-first (SIGSEGV);
+//   - two branch-divergent CAPTURING returns each return their own box;
+//   - a lambda return alongside a match-payload closure return lowers.
 //
-// The self-host sources contain no bare lambda returns, so the desugar never fires
-// during the self-compile (byte-identical fixpoint). Found via differential
-// probing; exit codes cross-checked against the interpreter and native Go backend.
+// Exit codes are cross-checked against the interpreter.
 var returnLambdaDispatchIRCases = []struct {
 	name string
 	src  string
@@ -41,7 +37,7 @@ var returnLambdaDispatchIRCases = []struct {
 	{"two-capturing-else", "function pick(flag: i32, n: i32): () => i32 { if (flag > 0) { return () => n; } return () => n + 1; } function main(): i32 { let g = pick(0, 6); return g(); }", 7},
 	// Sequential two returns in one block (no if), non-capturing.
 	{"seq-two-noncapturing", "function pick(): () => i32 { if (true) { return () => 3; } return () => 9; } function main(): i32 { let g = pick(); return g(); }", 3},
-	// D — match-bound payload return + inline lambda sibling (was a bail -> SIGSEGV on the AST emitter).
+	// D — match-bound payload return + inline lambda sibling.
 	{"match-payload-lambda-sibling", "enum Box { W(() => i32) } function pick(b: Box, flag: i32): () => i32 { match (b) { W(f) => { if (flag > 0) { return f; } return () => 0; } } } function main(): i32 { let n: i32 = 6; let g = pick(Box.W(() => n), 1); return g(); }", 6},
 	// D — same, fall-through returns the inline lambda.
 	{"match-payload-lambda-fallthrough", "enum Box { W(() => i32) } function pick(b: Box, flag: i32): () => i32 { match (b) { W(f) => { if (flag > 0) { return f; } return () => 42; } } } function main(): i32 { let n: i32 = 6; let g = pick(Box.W(() => n), 0); return g(); }", 42},

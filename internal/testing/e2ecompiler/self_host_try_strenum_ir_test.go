@@ -6,8 +6,8 @@ import "testing"
 // payloads on the self-host IR path (#3810, follow-up to #3802's struct case).
 // Both are pointer-width payloads handled exactly like the struct case:
 // op_opt_payload loads the box pointer, and the `let x: T = inner?` binding types
-// x's slot from its annotation (is_str for a string, is_enum_like_name→struct_ty
-// for an enum). Each case is value-pinned against the native interpreter oracle.
+// x's slot from its annotation. Each case is value-pinned against the
+// interpreter oracle.
 var tryStrEnumIRCases = []struct {
 	name string
 	src  string

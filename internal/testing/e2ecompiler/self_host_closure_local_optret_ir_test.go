@@ -10,19 +10,14 @@ import (
 // closureLocalOptRetCases pin the Option/Result return recovery for a closure
 // LOCAL (#5646 option 3).
 //
-// `closure_opt_rets` was seeded only from fn-typed PARAMS (`ParamDecl.fn_ret`),
-// so a match on a call through a closure local had no way to name its scrutinee
-// type. The `alias` case below is what that closes.
+// A match on a call through a closure local must name its scrutinee type the
+// way a call through a fn-typed PARAM (`ParamDecl.fn_ret`) does; the `alias`
+// case pins that. The lift runs BEFORE lowering, so by then `let f = <lambda>`
+// is initialised by a `__mkclo$<cloname>` marker call: the return type belongs
+// to `<cloname>`, after the 8-char prefix, not to the callee ident itself.
 //
-// The essential detail is that the lift runs BEFORE lowering: by the time
-// `let f = <lambda>` reaches the lowering its init is a `__mkclo$<cloname>` marker
-// call, whose callee ident is not itself a module function — `<cloname>`, after
-// the 8-char prefix, is. Reading the callee name directly recovers nothing and
-// the whole recovery goes inert.
-//
-// The guards are part of the pin, not decoration: each is a neighbouring shape
-// that already worked, so a regression in the shared helper is attributed to
-// this change rather than to the new case.
+// The guards are neighbouring shapes that share the same recovery, so a
+// regression there shows on a guard as well as on the new case.
 //
 // Every `want` stays in [0, 126) — the wasm leg exits through WASI, which
 // rejects anything above that.
@@ -47,8 +42,7 @@ function call(f: () => Option[i32]): i32 {
 }
 function main(): i32 { return call((): Option[i32] => { return Some(6); }); }
 `, 6},
-	// Guard: a local bound to a NAMED function, which try_opt_type already
-	// resolved via opt_ret_type.
+	// Guard: a local bound to a NAMED function.
 	{"named-fn-init", `
 function g(): Option[i32] { return Some(5); }
 function main(): i32 {

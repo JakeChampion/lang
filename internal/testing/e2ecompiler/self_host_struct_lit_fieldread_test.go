@@ -6,36 +6,20 @@ import (
 
 // --- A struct LITERAL whose field is read in place ---------------------------
 //
-// `(S { … }).a` — the last of the three positions an unbound struct literal can
-// appear in, and the last one that leaked. 100 allocs / 0 frees against native's
-// 100/100 for a scalar-only struct; 200/0 with an rc-array field. Like the
-// argument position (#7576) it leaks per EVALUATION, and like it, the shape is
-// invisible to the construction-retain matrix, whose 35 cells all bind the
-// literal to `let p` first.
+// `(S { … }).a` — the third position an unbound struct literal can appear in,
+// beside a discarded statement and a call argument (#7576). All three reclaim
+// the temporary per EVALUATION; missed here, 100 allocs / 0 frees for a
+// scalar-only struct, 200/0 with an rc-array field.
 //
-// With this the three positions agree: discarded statement, call argument, and
-// intermediate field read all reclaim; binding to a var still does.
+// The hazard is that the read RESULT may alias a field the release frees, so
+// the gate is on the FIELD BEING READ: a scalar result cannot alias anything,
+// which makes the deep drop unconditionally safe. An rc-field read
+// (`(A { … }).xs`) hands out the field itself, so the box's release must not
+// free it: `rc_field_read_uaf` holds that array across churn, and a premature
+// free shows as more frees than allocs.
 //
-// THE MECHANISM WAS HERE, for a different receiver. `lower_expr`'s
-// ExprFieldAccess arm already reclaimed the box behind a SCALAR field read off a
-// strict-fresh producer CALL (`mk().k`, #6491): stash the box, read the field,
-// deep-drop the rc fields while the box still owns them, then dec it. A struct
-// LITERAL receiver is the same temporary and takes the same release; it simply
-// was not admitted.
-//
-// THE GATE IS A DIFFERENT QUESTION FROM #7576's, and that is the point worth
-// keeping. In argument position the question was "can the callee keep this?",
-// answered by the borrowability verdict the string and array arms already use.
-// Here there is no callee to ask. The hazard is that the read RESULT may alias a
-// field the release frees, so the gate is on the FIELD BEING READ: a scalar
-// result cannot alias anything, which makes the deep drop unconditionally safe.
-//
-// An rc-field read (`(A { … }).xs`) hands out the field itself, so the box's
-// release must not free it: `rc_field_read_uaf` holds that array across churn,
-// and a premature free shows as more frees than allocs.
-//
-// Every want was confirmed against BOTH oracles — bin/fern -interp and the
-// native x86-64 backend agreed on each — never read off the self-host run.
+// Every want was confirmed against bin/fern -interp, never read off the
+// self-host run.
 
 const structLitFieldReadDecl = `struct S { a: i32, b: i32 }
 struct A { xs: i32[], k: i32 }

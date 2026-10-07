@@ -30,11 +30,9 @@ var selfAssignReuseCases = []struct {
 	{"self-assign-reuse",
 		`struct P { x: i32, y: i32 } function main(): i32 { let p: P = P { x: 0, y: 7 }; let i: i32 = 0; while (i < 4) { p = P { ...p, x: p.x + 1 }; i = i + 1; } return p.x + p.y; }`,
 		11},
-	// An override that READS the base is the whole point of the port: the
-	// rebind family refuses these outright ("no override value may reference
-	// d"), and they are what every real record update looks like. Sound because
-	// emit_self_overwrite_reuse evaluates every override into a temp before the
-	// box is touched. x doubles each turn from 7: 7, 14, 21, 28.
+	// An override that READS the base, which is what every real record update
+	// looks like. Sound only if every override is evaluated before the box is
+	// written. x grows by 7 each turn: 7, 14, 21, 28.
 	{"self-assign-reads-base",
 		`struct P { x: i32, y: i32 } function main(): i32 { let p: P = P { x: 0, y: 7 }; let i: i32 = 0; while (i < 4) { p = P { ...p, x: p.x + p.y }; i = i + 1; } return p.x % 200; }`,
 		28},

@@ -5,10 +5,9 @@ import (
 )
 
 // TestSelfHostTupleStrArrReclaimIRArm64 is the arm64 port of
-// TestSelfHostTupleStrArrReclaimIRX86_64: the admission (tuple_strarr_elem_fresh)
-// and both drop walkers live in shared lowering, and the release is one
-// __fern_str_arr_free call the arm64 runtime already provides. Case table shared
-// with the x86-64 leg.
+// TestSelfHostTupleStrArrReclaimIRX86_64: the release is shared lowering, one
+// __fern_str_arr_free call the arm64 runtime provides. Case table shared with
+// the x86-64 leg.
 func TestSelfHostTupleStrArrReclaimIRArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

@@ -10,25 +10,14 @@ import (
 // TestSelfHostDynArrayAppendIR pins `(dyn Trait)[]` element dispatch after an
 // append REASSIGN (`ds = ds.append(x)`) on the self-host x86-64 IR path.
 //
-// A dyn-array slot (`let ds: (dyn Shape)[]`) is marked with struct_type
-// "dyn Shape" — the ELEMENT type, the `[]` stripped at its init/param bind — so
-// it is indistinguishable from a SCALAR dyn slot (`let d: dyn Shape`) by the
-// type string alone. lower_stmt_assign's scalar-dyn coercion keyed only on
-// `struct_type[0:4]=="dyn " && !is_array_type_name`, so `ds = ds.append(x)`
-// coerced the whole grown ARRAY into a single dyn cell [shape, array] and stored
-// THAT into ds. Every later `ds[i].method()` then read a garbage self: the
-// single-element case returned 0 (self.field read the shape word), the
-// multi-element case SIGSEGV'd. Array literals (`[Sq{..}]`) were unaffected — the
-// bug was specific to the append reassign. Native x86-64 codegen + the
-// interpreter were always correct.
-//
-// Fix: gate the scalar-dyn coercion on `!is_arr_slot(slot)` so a dyn-array
-// reassign falls through to the array append path (which already coerces each
-// appended element to a dyn cell). The append value coercion was never the bug.
+// The reassign must store the grown ARRAY, with each appended element coerced
+// to a dyn cell — not coerce the whole array into a single dyn cell as a
+// scalar `dyn Shape` assignment would. Wrapped that way, every later
+// `ds[i].method()` reads a garbage self: one element returns 0 (self.field
+// reads the shape word), several SIGSEGV.
 //
 // Value probe (no crash reliance): area(Sq{3})=9, area(Rect{2,5})=10; the loop
-// sums 19. The empty-init + two heterogeneous appends + index dispatch is the
-// exact shape that returned 0 / SIGSEGV'd before the fix.
+// sums 19, from an empty init, two heterogeneous appends and index dispatch.
 func TestSelfHostDynArrayAppendIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

@@ -7,32 +7,13 @@ import (
 
 // --- A `string[]` field is reclaimable too (#6127) ---------------------------
 //
-// `rcpayload_option_cand` admits a struct payload under
-// `struct_is_scalar_only || nested_field_deep_drop_ok`. `nddo_reach` credits an
-// rc-array, a struct/enum-array, a nested struct and a bare `string` — but not a
-// `string[]`. So `P { xs: string[], n: i32 }` reached neither disjunct, the
-// candidate was refused outright, and NOTHING was released.
-//
-// The field's element type was the only variable, 100 rounds:
+// An `Option[P]` whose struct payload has a `string[]` field must release the
+// box, the payload and the array, as it does for an `i32[]` field or a bare
+// `string`. The field's element type is the only variable, 100 rounds:
 //
 //	xs: i32[]                        300 / 300      0
 //	s:  string                       300 / 300      0
-//	xs: string[]                     500 /   0  17600
-//	xs: string[]  bound BARE         400 / 400      0
-//
-// and the discriminating probe is the last row plus this one: adding an `i32[]`
-// beside the `string[]` admits the identical type and reclaims BOTH arrays, with
-// `__struct_drop_P` emitted. So the drop side was already complete and only the
-// admission was short — which is why the fix reuses `struct_has_strarr_field` at
-// the admission rather than adding an arm to `nddo_reach`, whose verdict also
-// decides deep-vs-shallow for nested-struct fields in all three backends'
-// `__struct_drop` emission (the surface #6148's use-after-free came from).
-//
-// Whether the deep drop fires is still decided at emit time by
-// `struct_routes_field_reclaim`, whose strarrfld verdict is whole-program — see
-// the partial-reclaim case below, which is admitted, releases its boxes, and
-// leaves the string[] alone because a read elsewhere in the program disqualifies
-// the type. That fallback is the design, not a gap.
+//	xs: string[]  (unreleased)       500 /   0  17600
 
 func TestSelfHostOptStrArrFieldX86_64(t *testing.T) {
 	boxedProbes(t)
@@ -47,7 +28,7 @@ func TestSelfHostOptStrArrFieldX86_64(t *testing.T) {
 		want int
 	}{
 		{
-			// The shape that released nothing at all.
+			// The string[] field alone.
 			name: "strarr_field_only",
 			src: `struct P { xs: string[], n: i32 }
 function round(i: i32): i32 {
@@ -65,9 +46,7 @@ function main(): i32 {
 			want: 4,
 		},
 		{
-			// The discriminating case: an i32[] beside the string[] was already
-			// admitted, via the OTHER disjunct, and reclaims both arrays. It is the
-			// control that proves the drop side was never the problem.
+			// An i32[] beside the string[]: both arrays are reclaimed.
 			name: "strarr_field_beside_an_i32_array",
 			src: `struct P { xs: string[], ys: i32[], n: i32 }
 function round(i: i32): i32 {
@@ -85,8 +64,7 @@ function main(): i32 {
 			want: 38,
 		},
 		{
-			// The two neighbours that already worked, kept so a regression on the
-			// existing disjuncts fails here too.
+			// The two neighbouring field kinds, which must keep reclaiming.
 			name: "i32_array_field_unchanged",
 			src: `struct P { xs: i32[], n: i32 }
 function round(i: i32): i32 {
@@ -281,9 +259,8 @@ function main(): i32 {
 }
 
 // TestSelfHostOptStrArrFieldPartialReclaimX86_64 reads a string ELEMENT through
-// an Option's struct payload (`p.xs[0].len()`), the shape the AST lowering could
-// reclaim only partially. The typed lowering releases the option box, the
-// payload and the string[], with no over-release.
+// an Option's struct payload (`p.xs[0].len()`): the option box, the payload and
+// the string[] are all released, with no over-release.
 func TestSelfHostOptStrArrFieldPartialReclaimX86_64(t *testing.T) {
 	boxedProbes(t)
 	gcc, runner := x86_64Tooling(t)

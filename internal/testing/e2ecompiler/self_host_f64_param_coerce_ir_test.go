@@ -11,16 +11,12 @@ import (
 // TestSelfHostF64ParamCoerceIR pins that an INTEGER argument bound to an f64
 // parameter is converted rather than pushed raw.
 //
-// irlower's call-argument dispatch had a `param_is_i64` arm (lowering the
-// argument through lower_i64 so an i32 source widens) but no f64 sibling, so
-// `addhalf(3)` at `addhalf(x: f64)` pushed a bare i32 and wasm rejected the
-// whole module:
+// `addhalf(3)` at `addhalf(x: f64)` must convert the argument at the call site;
+// a bare i32 makes wasm reject the whole module:
 //
 //	Invalid input WebAssembly code ...: type mismatch: expected f64, found i32
 //
-// The fix registered an f64 PARAM as flag '4' in the "ret+params" signature
-// registry that backed param_is_i64, and converted via op_i32_to_f64 at the
-// call site. Part of #4801.
+// Part of #4801.
 //
 // Oracle-checked against the reference interpreter so a wrong-but-stable value
 // cannot pass.

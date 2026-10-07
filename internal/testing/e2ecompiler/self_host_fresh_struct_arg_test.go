@@ -11,34 +11,14 @@ import (
 
 // --- A fresh STRUCT handed straight to a call argument is freed after the call
 //
-// `take(mk(i))` — a box nothing else can reach — leaked per EVALUATION. The
-// certifier's self-host run put 6,654 of its 7,132 findings on a call result
-// still held at the return, and the largest single shape under that was a
-// struct produced by one call and handed to the next.
+// `take(mk(i))` — a box nothing else can reach — must be released after the
+// call, whether the argument is a struct literal or a producer call and
+// whether the callee is a free function or a method. A leak here is per
+// EVALUATION, exactly 2.0x per doubling of the round count. A struct produced
+// by one call and handed to the next is the largest single leak shape the
+// self-host's own run showed.
 //
-// Two independent gaps, one per axis, measured at 100 and 200 rounds:
-//
-//	argument           free callee     METHOD callee
-//	Op { … } literal   200/200 clean   200 allocs / 100 frees
-//	mk(i) call         200/100         200/100
-//	bound to a var     clean           clean
-//
-// Exactly 2.0x per doubling on every leaking cell — unbounded, not a bounded
-// per-object loss.
-//
-// The literal row was fixed for free callees by #7576 and never reached a
-// method: `lower_call_struct_method` had the string stash and no struct one,
-// and `lit_arg_callees_expr`'s method arm collected only `ExprString`, so
-// `call_arg_borrowable` answered false at every method callee. The call row
-// had no arm on either path — `lower_call_named`'s producer-call case admitted
-// the "ARR:" / "STRARR:" registries only, never a struct producer.
-//
-// `stash_fresh_struct_arg` / `free_stashed_struct_args` now hold both shapes
-// once, and all three call paths (free, primitive-receiver method, struct
-// method) go through them.
-//
-// Every want below was confirmed against BOTH oracles — bin/fern -interp and
-// the native x86-64 backend agreed on 53 for each — never read off the
+// Every want below was confirmed against bin/fern -interp, never read off the
 // self-host run.
 
 const freshStructArgProlog = "struct Op { a: i32, b: i32 }\n" +
@@ -76,8 +56,7 @@ func freshStructArgCases() []freshStructArgCase {
 		// The literal at a method callee — the half of #7576 that never
 		// reached the method path.
 		{name: "method_struct_lit_arg", body: "st = st.count(Op { a: i, b: i });"},
-		// The producer call at a free callee: seeded by lit_arg_callees_expr
-		// all along, with no arm at the lowering to consume the seed.
+		// The producer call at a free callee.
 		{name: "free_fn_fresh_call_arg", body: "st = countf(st, mkop(i));"},
 		// The cell #7576 fixed. Pinned so the extraction into the shared
 		// helper cannot regress it.

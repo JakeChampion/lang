@@ -35,8 +35,7 @@ import (
 //
 // The hint reaches a LITERAL only. A hand-written `map_new(8).insert(1, 10)`
 // chain keeps the constructor its author wrote, so asmcore's E038 gate on it
-// still fires — native rejects those chains annotated or not, and
-// TestSelfHostIRCheckGate is what pins that.
+// still fires, annotated or not; TestSelfHostIRCheckGate is what pins that.
 //
 // `two_computed_keys` is the case that fails without the syntactic fix and
 // `undecidable_keys_from_annotation` the one that fails without the

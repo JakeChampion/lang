@@ -9,8 +9,7 @@ import (
 
 // urlCases bundle the full std/url module plus a main and check the exit code.
 // query_parse exercises Map[string, string[]] with the get → Option[string[]] →
-// .len() / .append() path that depends on the Map value-type inference. Exit
-// codes cross-checked vs the Go backend.
+// .len() / .append() path that depends on the Map value-type inference.
 //
 // `-no-treeshake` is essential, and it is what keeps these cases meaning
 // what their name says. asm_load_run prunes to what `main` reaches by default,
@@ -22,12 +21,8 @@ import (
 // which is the shape #8745 is about — among them.
 //
 // std/url.fern `import "core/map"` (since #1576), so these need a LOADING
-// driver. They used to run on the stdin bundle drivers — asm_run / asm_ir_run —
-// which resolve no imports; that worked only because the unresolved import left
-// the module IR-ineligible and the AST emitter silently picked it up. #5972
-// deleted the AST emitters, so the same bundle became a hard
-// "module is not IR-eligible" bail and the lane went red on main. The drivers
-// say so themselves: "asm_run has no module loader; UNRESOLVED imports:
+// driver: the stdin bundle drivers — asm_run / asm_ir_run — resolve no
+// imports, and say so: "asm_run has no module loader; UNRESOLVED imports:
 // core/map … to judge this program use a loading driver".
 var urlCases = []struct {
 	name string

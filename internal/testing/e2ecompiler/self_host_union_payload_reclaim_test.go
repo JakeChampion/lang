@@ -8,24 +8,17 @@ import (
 	"testing"
 )
 
-// unionPayloadReclaimCases pin the PAYLOAD of a tagged union at a tuple element.
+// unionPayloadReclaimCases pin the PAYLOAD of a tagged union at a tuple element:
+// releasing `(i, Some([i, i + 2]))` frees the array payload as well as the union
+// box, by the variant's own drop — a user enum's variant dispatch or the
+// built-in Some/Ok/Err payload drop.
 //
-// #7147 gave the union element its box dec, and left the payload alone on the
-// grounds that releasing it needed the variant's own drop plan. The self-host
-// already had that plan — emit_enum_variant_drops for a user enum, and
-// emit_opt_payload_drop_via for a built-in Some/Ok/Err — so the element site
-// only had to reach for it. A `(i, Some([i, i + 2]))` measured 40 B/round with
-// the box freed and its array not; native is flat.
+// The payload release follows the SAME freshness rule the sibling element arms
+// use one level up, so `(i, [a, b])` and `(i, Some([a, b]))` admit the same
+// array; a bare-ident payload is the aliasing control below.
 //
-// What the payload release costs is decided by the SAME freshness rule the
-// sibling element arms use one level up, so `(i, [a, b])` and `(i, Some([a, b]))`
-// admit the same array. A bare-ident payload answers "" and keeps its leak: this
-// site has no annotation, so it cannot tell a bare-ident array (which a flat dec
-// releases) from a bare-ident string (which a flat dec would misread as a
-// pointer on the two-word-string backends).
-//
-// Byte cases return measured bytes per round. The three that gate this change
-// measure 40 | 40 | 24 on the parent, as x86-64 | arm64 | wasm; native is flat.
+// Byte cases return measured bytes per round, so a leaked payload reads
+// non-zero.
 var unionPayloadReclaimCases = []struct {
 	name string
 	src  string
@@ -100,13 +93,10 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// A user enum the LOCAL-consume path refuses (string[] is neither scalar nor
-	// rc-droppable, so enum_all_variants_rc_droppable says no) still gets its
-	// constructed variant's payload released here: the emitter releases what it
-	// can name and leaves the rest, which leaks rather than corrupts. This also
-	// pins that a user variant spelled `Some` goes through variant dispatch and
-	// NOT the built-in Option path, where the payload offset would fit it only by
-	// coincidence. 40 on the parent.
+	// A user enum with a string[] variant still gets its constructed variant's
+	// payload released here. This also pins that a user variant spelled `Some`
+	// goes through variant dispatch and NOT the built-in Option path, where the
+	// payload offset would fit it only by coincidence.
 	{"user-enum-nondroppable-sibling", `enum E { Some(i32[]), Other(string[]) }
 function churn(n: i32): i32 {
     let acc: i32 = 0;

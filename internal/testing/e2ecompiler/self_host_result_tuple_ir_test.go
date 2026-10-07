@@ -2,14 +2,12 @@ package e2ecompiler
 
 import "testing"
 
-// resultTupleIRCases close the comma-containing-tuple-element case (after nested
-// tuples): a `Result[T, E]` element of a tuple — `(1, Ok(5))`, accessed via
-// `match (t.1)` — now lowers on the IR path. `Result[T, E]` has an internal comma
-// but is bracketed, so the now-depth-aware tag decoders keep it whole; the only
-// remaining blockers were the explicit "Option-only" exclusions. The full
+// resultTupleIRCases pin a `Result[T, E]` element of a tuple — `(1, Ok(5))`,
+// accessed via `match (t.1)` — on the IR path. `Result[T, E]` has an internal
+// comma but is bracketed, so the tag decoders keep it whole. The full
 // `Result[T, E]` tag (a bare `Ok(x)` cannot name E) comes from the binding's
 // tuple TYPE annotation — and the checker rejects an un-annotated Result, so the
-// annotation is always present. `opt_payload_type` already recovers both arms.
+// annotation is always present.
 //
 // Each case is oracle-checked against the interpreter and returns a value
 // <= 126 (cf. the wasmtime exit-code gap #2908).

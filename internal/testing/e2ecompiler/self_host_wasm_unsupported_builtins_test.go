@@ -10,25 +10,23 @@ import (
 // with no wasm meaning at all, which both wasm drivers must reject before emit
 // with a clean diagnostic — non-zero exit, a message naming the feature on
 // stderr, and NO WAT — rather than emitting a call against a symbol nothing
-// defines, which is what deferring them used to produce.
+// defines.
 //
 //   - subprocess (#4320) — child-process spawning, unsupportable on wasm/WASI.
 //   - timer_fd (#4317) — the native fd-based CLOCK_MONOTONIC timerfd. wasm has
 //     no pollable file descriptors, and its analog already lowers:
-//     wasm_timer_pollable, which returns a wasi:io/poll pollable. Before the
-//     fix, timer_fd was merely DEFERRED to the AST path, so the program failed
-//     at load with the unhelpful `unknown func: failed to find name $timer_fd`.
-//   - __c_call<n> (#4375) — the C-FFI call primitive. wasm has no C ABI, so there
-//     is no __c_call runtime on any wasm path; before this it deferred to the AST
-//     emitter, which emitted a call against an undefined $__c_call<n>.
+//     wasm_timer_pollable, which returns a wasi:io/poll pollable. Emitted, a
+//     call fails at load with the unhelpful
+//     `unknown func: failed to find name $timer_fd`.
+//   - __c_call<n> (#4375) — the C-FFI call primitive. wasm has no C ABI, so
+//     there is no __c_call runtime on any wasm path.
 //   - the raw-memory / syscall floor (#6946) — __raw_alloc,
 //     __raw_string, __raw_scratch, __raw_environ,
 //     __raw_splice_pipe, __raw_cover, __raw_addr,
 //     __raw_arr_box, __syscall3, __syscall4, __syscall5. They exist so the
 //     register backends' runtime helpers can be written in Fern; wasm has
-//     neither a raw address space nor syscalls. Unclassified, they reached
-//     instruction selection, which named an IR op nobody wrote (and, before
-//     #6981, emitted the op as a WAT comment the assembler then failed on).
+//     neither a raw address space nor syscalls. Unclassified, they would reach
+//     instruction selection, which has no op for them.
 //
 // Both stdin drivers, wasm_ir_run and wasm_run, are exercised.
 func TestSelfHostWasmUnsupportedBuiltins(t *testing.T) {
@@ -74,9 +72,8 @@ func TestSelfHostWasmUnsupportedBuiltins(t *testing.T) {
 		{
 			// FFI __c_call<n> (#4375) is written directly as a builtin call, so its
 			// callee ident is collected by wasm_unsupported_builtin. Wasm has no C
-			// ABI — no __c_call runtime on any wasm path — so both drivers reject it
-			// (before this it deferred to the AST emitter, which also emitted a call
-			// against an undefined $__c_call0). asm_ir.is_c_call classifies the ident.
+			// ABI — no __c_call runtime on any wasm path — so both drivers reject it.
+			// ircore.is_c_call classifies the ident.
 			name:    "c_call",
 			src:     `function main(): i32 { let cb: usize = 0; return __c_call0(cb) as i32; }` + "\n",
 			mustSay: "__c_call0",

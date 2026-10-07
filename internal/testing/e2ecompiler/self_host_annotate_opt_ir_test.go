@@ -8,12 +8,10 @@ import (
 )
 
 // annotateOptCases extend the typed-IR annotation (#5531) to Option/Result-valued
-// calls. This required a checker change: TypeUnion gained an `args` field so a
-// builtin generic union stops dropping its type argument (Option[i32] →
-// TypeUnion{"Option", [i32]}); type_to_irtag then reconstructs the "Option[T]" /
-// "Result[T, E]" tag, and the AST lowering's try_opt_type read it off c.ty instead of
-// re-deriving via opt_ret_type + argref/closure resolution. try_opt_type drives
-// `match` scrutinee routing and the `?` operator's payload/error typing.
+// calls. TypeUnion carries its type arguments (Option[i32] →
+// TypeUnion{"Option", [i32]}), and type_to_irtag reconstructs the "Option[T]" /
+// "Result[T, E]" tag from them; that tag drives `match` scrutinee routing and
+// the `?` operator's payload/error typing.
 //
 // Option/Result box their payload on the heap; the binary runs via the
 // X86_64Tooling runner prefix (nil on an x86_64 host).

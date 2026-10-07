@@ -59,8 +59,8 @@ func TestSelfHostStrAggregateX86_64(t *testing.T) {
 	}
 }
 
-// TestSelfHostStrAggregateNative holds the native compiler to the same rows,
-// every one clean.
+// TestSelfHostStrAggregateNative builds the same rows with `fern -target
+// x86-64-linux`, every one clean.
 func TestSelfHostStrAggregateNative(t *testing.T) {
 	_, runner := x86_64Tooling(t)
 	cli := buildLangBinForInterp(t)

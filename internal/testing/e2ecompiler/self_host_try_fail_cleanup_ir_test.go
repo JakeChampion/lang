@@ -4,23 +4,16 @@ import (
 	"testing"
 )
 
-// tryFailCleanupIRCases pin the RC dec-sweep on the self-host `?` (try) FAILURE
-// path (#4334). A failure-path early return with no cleanup leaks every owned
-// array / string / struct / map / tuple local live at a `?` when the `?`
-// short-circuits — the only uncleaned exit on the IR
-// path (StmtReturn already swept). The fix routes the failure return through the
-// same emit_dec_sweep_except a normal return runs, mirroring native's
-// emitRcDecLocalsAtExit at the TryOp failure edge.
+// tryFailCleanupIRCases pin the RC release on the `?` (try) FAILURE path
+// (#4334): every owned array / string / struct / map / tuple local live at a
+// `?` is released when the `?` short-circuits, as it is on a normal return.
 //
-// The heap probe ISOLATES the owned-local reclaim from the unrelated Option-box
-// safe-leak (an enum box + payload are never swept; ~16 B/iter here on every
-// backend, #2704). It runs two 20000-iteration loops over functions that differ
-// ONLY by an owned local (array / string) declared live across a FAILING `?`,
-// and compares the bump high-water growth: if the owned local is reclaimed the
-// delta is ~0 (both loops leak only their Option boxes), and if it leaks the
-// owned loop grows by 20000 * ~20 B ≈ 400000. Expectations are the native
-// result (native reclaims — validated exit 7). Without the fix the self-host
-// owned loop leaks and returns 1.
+// The heap probe ISOLATES the owned-local reclaim from the Option boxes. It
+// runs two 20000-iteration loops over functions that differ ONLY by an owned
+// local (array / string) declared live across a FAILING `?`, and compares the
+// bump high-water growth: if the owned local is reclaimed the delta is ~0, and
+// if it leaks the owned loop grows by 20000 * ~20 B ≈ 400000. Exit 7 is
+// reclaimed, 1 leaked.
 var tryFailCleanupIRCases = []struct {
 	name string
 	main string

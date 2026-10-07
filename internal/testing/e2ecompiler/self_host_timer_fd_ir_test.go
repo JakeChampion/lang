@@ -6,9 +6,8 @@ import (
 
 // TestSelfHostTimerFdIRX86_64 is slice 3 of putting async on the self-hosted
 // compiler's IR path (docs/ASYNC-SELFHOST-IR.md): the timer / pollable-lifecycle
-// readiness builtins now lower to dedicated IR ops on the self-host x86-64 IR
-// backend, so a module using them is IR-ELIGIBLE rather than falling back to the
-// AST emitter (which can't emit them):
+// readiness builtins lower to dedicated IR ops on the self-host x86-64 IR
+// backend:
 //
 //   - timer_fd(ms)             -> __fern_timer_fd: a CLOCK_MONOTONIC one-shot
 //     timerfd readable after `ms` ms.

@@ -123,14 +123,14 @@ func TestSelfHostIRVerifyFip(t *testing.T) {
 
 // TestSelfHostIRVerifyProvided exercises the callee-resolution verifier
 // (compiler/drivers/irverifyprovided.fern, #6639 slice 4) — the port of
-// native's internal/oracle/ir/verifyprovided.go.
+// internal/oracle/ir/verifyprovided.go.
 //
 // Same driver and the same both-directions discipline as the passes above.
 // The silent half is the essential one here too, and for a sharper reason
 // than usual: this pass rests on an INVENTORY of runtime-helper names, and an
 // inventory is a thing that goes stale. A missing entry is a report on valid
 // IR; a wrong prefix rule excuses a genuinely missing body. The driver's cases
-// pin both edges, including the near-misses (`__c_call5`, `__struct_drop_`
+// pin both edges, including the near-misses (`__c_call5`, `__sem_drop_`
 // with no type, a truncated helper name) that a loose prefix rule would admit.
 //
 // Exit 0 means every assertion held; a non-zero code is the failing case's id

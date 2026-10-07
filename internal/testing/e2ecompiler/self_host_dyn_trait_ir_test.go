@@ -133,11 +133,8 @@ struct Named { s: string } struct Plain { n: i32 } trait Tag { function t(self: 
 	// returns the string in the result register; a string method chained
 	// DIRECTLY on it must see a string receiver so `.len()` lowers as the
 	// length read ([ptr-4], the L2 header) rather than a plain deref ([ptr+0],
-	// the string data). Before the fix the dyn-dispatched method's declared
-	// return type wasn't tracked onto the result, so `d.name().len()` read the
-	// data pointer as a length and returned garbage (0). The trait's required
-	// method signature carries the return type; a "dyn <Trait>.<method>" entry
-	// in str_ret_fns makes the chained lowering track the string.
+	// the string data). The type comes from the trait's required method
+	// signature; losing it reads the data pointer as a length (garbage, 0).
 	// `d.name().len()` on an SSO-inline string ("hello", <=7 bytes) → 5.
 	{name: "dyn-string-len-chained",
 		src: `trait Named { function name(self: Self): string; } struct P { tag: string } impl Named for P { function name(self: Self): string { return self.tag; } } function ids(s: string): string { return s; } function main(): i32 { let p: P = P { tag: ids("hello") }; let d: dyn Named = p; return d.name().len(); }`, expected: 5},
@@ -154,27 +151,21 @@ struct Named { s: string } struct Plain { n: i32 } trait Tag { function t(self: 
 	// A `dyn Named` PARAM, chained `.len()` inside the callee. len("hiya") = 4.
 	{name: "dyn-string-len-param",
 		src: `trait Named { function name(self: Self): string; } struct P { tag: string } impl Named for P { function name(self: Self): string { return self.tag; } } function f(d: dyn Named): i32 { return d.name().len(); } function ids(s: string): string { return s; } function main(): i32 { let p: P = P { tag: ids("hiya") }; return f(p); }`, expected: 4},
-	// Precision guard (#5151, root-caused + fixed by #5149): a `dyn Foo` whose
-	// method `bar` returns i32, alongside an UNRELATED inherent `S.bar()` that
-	// returns a string. expr_is_str's dyn-receiver arm used to scan str_ret_fns
-	// by BARE method name, matching the unrelated `S.bar`, so `d.bar()` was
-	// typed a string and `d.bar() + sv.bar().len()` mis-lowered to
-	// `__fern_strcat` over the i32 result — garbage/trap on wasm (= 1) and, on
-	// x86, strcat walking the integer as a pointer until it faulted (the CI
-	// "26 s hang → exit -1", layout-sensitive because the walk length depended
-	// on heap contents). The mis-lowering was deterministic in the shared
-	// irlower, not an uninitialized read; #5149's exact-qualified
-	// "dyn <Trait>.<method>" lookup eliminates it on every backend. 9 + 3 = 12.
+	// Precision guard (#5151): a `dyn Foo` whose method `bar` returns i32,
+	// alongside an UNRELATED inherent `S.bar()` that returns a string. `d.bar()`
+	// must type as i32 from Foo's signature, not as a string by matching the
+	// bare method name — that mis-lowers `d.bar() + sv.bar().len()` to
+	// `__fern_strcat` over the i32 result (a trap on wasm, a fault or hang on
+	// x86). 9 + 3 = 12.
 	{name: "dyn-i32-vs-unrelated-string",
 		src: `trait Foo { function bar(self: Self): i32; } struct A { n: i32 } impl Foo for A { function bar(self: Self): i32 { return self.n; } } struct S { s: string } impl S { function bar(self: Self): string { return self.s; } } function ids(s: string): string { return s; } function main(): i32 { let a: A = A { n: 9 }; let d: dyn Foo = a; let sv: S = S { s: ids("xyz") }; return d.bar() + sv.bar().len(); }`, expected: 12},
 
 	// --- NUMERIC-returning `dyn Trait` methods, chained in arithmetic. Same
-	// "result type not tracked onto the dispatch result" class as the string
-	// cases above: a 64-bit / float value returned by the dispatch and chained
-	// (`d.v() + 1`) width-tracked as i32 (i64/u64) or as integer bits (f64/f32),
-	// so the arithmetic mis-lowered. "dyn <Trait>.<method>" entries in
-	// i64_ret_fns / f64_ret_fns fix each; the `if (r == …) 1 else 0` returns 1
-	// only when the arithmetic is done at the correct width.
+	// class as the string cases above: a 64-bit / float value returned by the
+	// dispatch and chained (`d.v() + 1`) must carry its declared type, not
+	// lower as i32 (i64/u64) or as integer bits (f64/f32). The
+	// `if (r == …) 1 else 0` returns 1 only when the arithmetic is done at the
+	// correct width.
 	// i64: 5_000_000_000 + 1 == 5_000_000_001 (truncates to garbage at i32).
 	{name: "dyn-i64-chained",
 		src: `trait Big { function v(self: Self): i64; } struct P { n: i64 } impl Big for P { function v(self: Self): i64 { return self.n; } } function main(): i32 { let p: P = P { n: 5000000000 }; let d: dyn Big = p; let r: i64 = d.v() + 1; if (r == 5000000001) { return 1; } return 0; }`, expected: 1},

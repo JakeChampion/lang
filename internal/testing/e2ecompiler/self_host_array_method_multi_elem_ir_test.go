@@ -13,18 +13,14 @@ import (
 //
 // `register_array_method_generics` folds `(xs: T[]) m(args)` into a free
 // generic `__arrm_m[T]` and the free-generic worklist clones one
-// `__arrm_m__<elem>` per element type. A guard in mono_expr used to suppress
-// every instantiation after the first, so a program calling `xs.map(f)` on
-// both `i32[]` and `string[]` left the second call in method form. That guard
-// dated from when an unlowered method still had the AST emitter to fall back
-// to; with the AST emitters retired (#5972) it turned into a hard
-// "module is not IR-eligible" refusal, so mixing element types made a program
-// uncompilable by the self-host compiler while native compiled it fine.
+// `__arrm_m__<elem>` per element type. Every instantiation must be cloned, not
+// only the first: a call left in method form does not lower, so a program
+// calling `xs.map(f)` on both `i32[]` and `string[]` would not compile.
 //
 // Each case asserts three things together: the module decides `ir`, a distinct
 // `__arrm_<name>__<elem>` clone is emitted for EVERY element type used (one
-// clone reaching the asm while another call silently kept the method form is
-// the exact shape of the old bug), and the binary agrees with the interpreter.
+// clone reaching the asm while another call kept the method form is the
+// failure shape), and the binary agrees with the interpreter.
 var arrayMethodMultiElemIRCases = []struct {
 	name string
 	src  string

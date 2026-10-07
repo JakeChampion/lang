@@ -6,25 +6,16 @@ import (
 
 // --- Option/Result whose payload is a `string[]` (#6495) ---------------------
 //
-// The rc-payload Option class admits a payload its drop releases WHOLE, and
-// `is_leaksafe_array_field` decides which arrays qualify: a flat scalar buffer
-// one `__fern_rc_dec` frees with no inner walk. It refuses `string[]`, correctly
-// — a plain dec frees the buffer and strands every element box — and nothing
-// else claimed the shape, so `rcpayload_option_cand` returned no candidate at
-// all. Not a partial release: frees=0. 51200 bytes over 400 iterations, exactly
-// x2.0 per doubling, against an exact balance on native.
+// An Option/Result local holding a `string[]` payload must release it WHOLE:
+// `__fern_str_arr_free` walks the element boxes and then frees the buffer,
+// rc-guarded, on all three backends (wasm routes it to `$__fern_arr_dec_ptr`).
+// A plain dec would free the buffer and strand every element box. Unreleased
+// it is 51200 bytes over 400 iterations, frees=0.
 //
-// The release already existed. `__fern_str_arr_free` walks a string[]'s element
-// boxes and then frees the buffer, rc-guarded, on all three backends (wasm routes
-// it to `$__fern_arr_dec_ptr`) — it is what the string[] LOCAL sweep and the
-// string[] struct FIELD reclaim have called since #4355. So this is an admission
-// plus a routing change in irlower and no runtime work.
-//
-// Freshness is per ELEMENT, and that is the whole soundness argument. The scalar
-// case only ever frees the one buffer it was handed, so a fresh literal is enough;
-// here each element box is freed too, so one aliased element would be released out
-// from under its owner. `all_fresh_string_elems` requires every element to be a
-// literal or a fresh producer, which is why the aliased rows below stay refused.
+// Freshness is per ELEMENT, and that is the whole soundness argument: each
+// element box is freed too, so one aliased element would be released out from
+// under its owner. Only literal and fresh-producer elements qualify, which is
+// why the aliased rows below stay refused.
 
 func TestSelfHostOptStrArrPayloadX86_64(t *testing.T) {
 	boxedProbes(t)

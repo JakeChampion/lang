@@ -9,22 +9,15 @@ import (
 
 // arrtupReclaimCases pin the #4365 `(<tuple-with-array>)[]` array-of-tuples reclaim:
 // a `let xs: (i32, i32[])[] = [(i, [i, i+1]), ...]` local — an array whose ELEMENTS
-// are tuples each carrying a fresh inner array — leaked all three levels (the
+// are tuples each carrying a fresh inner array — releases all three levels (the
 // per-element inner array buffers, the element tuple boxes, and the outer buffer)
-// per loop iteration on the self-host IR path (native bounds it). The new "ARRTUP:"
-// class credits a fresh array of fresh tuple literals consumed borrow-only, and
-// releases it with a COUNTED ELEMENT WALK (emit_arrtup_deep_free): for each element
-// the type-driven tuple deep-drop (emit_tuple_type_child_drops: dec each array field,
-// recurse nested tuples) + tuple box dec, then the outer buffer — at the loop-rebind
-// and the exit sweep. No runtime helper; the loop lowers through backend-common IR
-// ops (block/loop/arr_len/arr_get/rc_dec), so all three backends share it.
+// at the loop rebind and at scope exit, so the heap stays bounded per iteration.
 //
-// SOUNDNESS: the element payload use is checked by arrtup_elem_payload_escapes — a
-// scalar field read (xs[i].0), an indexed array-field read (xs[i].1[j]) and
-// xs[i].1.len() are borrows (reclaim proceeds); a BARE array-field extraction
-// (store / return / pass / alias / slice xs[i].1) OR a bound element (let t = xs[i] /
-// for t in xs, via arrarr_row_escapes) escapes and the local is left leak-safe
-// (never over-released).
+// SOUNDNESS: a scalar field read (xs[i].0), an indexed array-field read
+// (xs[i].1[j]) and xs[i].1.len() are borrows and the reclaim proceeds; a BARE
+// array-field extraction (store / return / pass / alias / slice xs[i].1) OR a
+// bound element (let t = xs[i] / for t in xs) escapes, and the local must then
+// be left leak-safe rather than over-released.
 var arrtupReclaimCases = []struct {
 	name string
 	src  string

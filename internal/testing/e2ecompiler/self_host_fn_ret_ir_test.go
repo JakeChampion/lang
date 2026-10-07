@@ -5,19 +5,13 @@ import "testing"
 // fnRetIRCases exercise functions that RETURN a function value through the
 // self-host IR path on x86-64 + wasm.
 //
-// The gap this closes: a function returning a NO-CAPTURE lambda
-// (`function mk(): (i32) => i32 { return (b) => { ... }; }`) bailed to the
-// AST path, even though returning a *capturing* lambda and returning a *named*
-// function both already lowered. `lift_lambdas` hoisted no-capture lambdas in
-// call-argument / array-element / struct-field positions but not in RETURN
-// position, so the bare lambda survived to lowering and tripped the bail. The fix
-// lifts the return value via lift_call_arg, turning `return (b) => {...}`
-// into `return __lam_N` — the already-working named-function-return path.
-//
-// The capturing-return and named-return cases are included as regression guards
-// (they must stay on the IR path and correct). Each case is oracle-checked
-// against the interpreter and returns a value <= 126 (wasmtime exit-code
-// truncation, cf. #2908).
+// A function returning a NO-CAPTURE lambda
+// (`function mk(): (i32) => i32 { return (b) => { ... }; }`) has its return
+// value hoisted by lift_call_arg, turning `return (b) => {...}` into
+// `return __lam_N` — the named-function-return path. The capturing-return and
+// named-return cases cover the other two spellings. Each case is
+// oracle-checked against the interpreter and returns a value <= 126 (wasmtime
+// exit-code truncation, cf. #2908).
 var fnRetIRCases = []struct {
 	name string
 	main string

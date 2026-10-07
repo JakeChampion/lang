@@ -8,12 +8,10 @@ import (
 )
 
 // annotateStructCases extend the typed-IR annotation (#5531) to struct-valued
-// calls. type_to_irtag now emits a TypeStruct's NAME as the tag, and
-// expr_struct_type's ExprCall arm reads it (when it names a known struct)
-// instead of re-deriving via the struct_ret_type registry. Each program uses a
-// struct-returning call's result for a FIELD or METHOD access directly on the
-// call (so expr_struct_type on the call is the code path under test), oracle-
-// checked against the interpreter.
+// calls: type_to_irtag emits a struct's NAME as the tag, and the call's struct
+// type is read from it. Each program uses a struct-returning call's result for
+// a FIELD or METHOD access directly on the call, oracle-checked against the
+// interpreter.
 var annotateStructCases = []struct {
 	name string
 	src  string

@@ -2,17 +2,13 @@ package e2ecompiler
 
 import "testing"
 
-// deriveDefaultIRCases exercise `@derive(Default)` on concrete structs
-// through the stack-IR path. The self-host parser synthesizes the derived
-// `default()` as an ASSOCIATED function (receiver-less `Type.default()`),
-// which lowers via the associated-function IR path (issue #2779 item 1).
-// Each field gets its type's zero: i32 → 0, string → "", boolean → false.
-//
-// Scope (issue #2779 item 2): concrete leaf-safe structs (scalar / string /
-// boolean fields). Nested-struct composition is RC-tracked → still bails,
-// and enum Default is a follow-up (a safe miss, like enum Eq/Ord derive).
-// The inline `trait Default` keeps the program valid for the native
-// compiler too (the self-host discards trait decls).
+// deriveDefaultIRCases exercise `@derive(Default)` on concrete structs. The
+// self-host parser synthesizes the derived `default()` as an ASSOCIATED
+// function (receiver-less `Type.default()`), which lowers via the
+// associated-function IR path (issue #2779 item 1). Each field gets its type's
+// zero: i32 → 0, string → "", boolean → false. The inline `trait Default`
+// keeps each program valid for the Go checker and interpreter too (the
+// self-host discards trait decls).
 var deriveDefaultIRCases = []struct {
 	name     string
 	src      string

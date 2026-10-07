@@ -59,9 +59,8 @@ func TestSelfHostWasmTempDirName(t *testing.T) {
 
 // TestSelfHostTempDirErrorNamesPrefix makes temp_dir fail with a prefix longer
 // than a file name may be. The IoError names the prefix the caller passed, as
-// the interpreter and every native backend report it, and not the path the
-// self-host built from it: the x86-64 and arm64 runtime named the whole
-// /tmp/<prefix>-<ns> path, and the wasm one the full <prefix>-<ns> name.
+// the interpreter reports it, and not the path the runtime built from it
+// (/tmp/<prefix>-<ns> on x86-64 and arm64, <prefix>-<ns> on wasm).
 func TestSelfHostTempDirErrorNamesPrefix(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	dir := t.TempDir()

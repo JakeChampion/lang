@@ -63,12 +63,11 @@ func TestSelfHostRcOptionBoxWasm(t *testing.T) {
 		// releases the string payload — value-correct + detector clean.
 		{"option-string-payload-released", "function main(): i32 { let s: string = \"ab\" + \"cd\"; let o = Some(s); match (o) { Some(v) => { return v.len() + 38 + __rc_underflow_count(); }, None => { return 0; } } }", 42},
 		// SAFETY: an Option<i32> scalar payload (a value >= heap_base, even, that
-		// looks like a heap pointer) must NOT be released — struct_field_kind_char
-		// returns 'i' for i32, so the payload is skipped (no corruption).
+		// looks like a heap pointer) must NOT be released: an i32 payload is
+		// skipped by the release (no corruption).
 		{"option-i32-payload-flat-safe", "function main(): i32 { let o = Some(262184); match (o) { Some(x) => { return 42 + __rc_underflow_count(); }, None => { return 0; } } }", 42},
 		// Builder-escape: mk returns Some(string) (move-on-return); the caller's
-		// payload release frees the string exactly once (the enum_box_retain
-		// payload retain + the move balance it).
+		// payload release frees the string exactly once.
 		{"option-builder-escape-clean", "function mk(): Option[string] { let s: string = \"x\" + \"yz\"; return Some(s); } function main(): i32 { let o = mk(); let p = mk(); match (o) { Some(v) => { return v.len() + 39 + __rc_underflow_count(); }, None => { return 0; } } }", 42},
 		// A churn of Some(heap string): payload release reclaims the strings (no
 		// growth), detector clean across many cycles.
@@ -81,8 +80,8 @@ func TestSelfHostRcOptionBoxWasm(t *testing.T) {
 		// old (box + its string payload) across 100k cycles, detector clean.
 		{"option-reassign-loop-reclaim", "function main(): i32 { let o = Some(\"xx\" + \"yy\"); let k = 0; while (k < 100000) { o = Some(\"z\" + \"w\"); k = k + 1; } match (o) { Some(v) => { return v.len() + __rc_underflow_count(); }, None => { return 0; } } }", 2},
 		// Result Err-payload release: freeing a Result whose Err type is a heap
-		// string releases the Err string (tag-1 path in emit_option_release,
-		// driven by ol_err_payloads). Value-correct + detector clean.
+		// string releases the Err string (the tag-1 path). Value-correct +
+		// detector clean.
 		{"result-err-string-released", "function fail(): Result[i32, string] { return Err(\"e\" + \"rr\"); } function main(): i32 { let r: Result[i32, string] = fail(); match (r) { Ok(x) => { return x; }, Err(e) => { return e.len() + 39 + __rc_underflow_count(); } } }", 42},
 		// The Ok side still releases (Ok string payload), Err type scalar.
 		{"result-ok-string-released", "function good(): Result[string, i32] { return Ok(\"o\" + \"k!\"); } function main(): i32 { let r: Result[string, i32] = good(); match (r) { Ok(s) => { return s.len() + 39 + __rc_underflow_count(); }, Err(e) => { return e; } } }", 42},
@@ -116,9 +115,8 @@ func TestSelfHostRcOptionBoxWasm(t *testing.T) {
 		// detector clean (the box is freed exactly once, on the shared classifier that
 		// drives wasm too).
 		{"option-precise-if-freed", `function f(n: i32): i32 { let o: Option[i32] = Some(40); let c = 0; if (n > 0) { match (o) { Some(v) => { c = v; }, None => {} } } return c + 2 + __rc_underflow_count(); } function main(): i32 { return f(5); }`, 42},
-		// PRECISE drop of an rc-PAYLOAD (array) Option last-used in a NESTED if-block —
-		// emit_opt_payload_drop frees the payload + box right after the if. Value +
-		// detector clean.
+		// PRECISE drop of an rc-PAYLOAD (array) Option last-used in a NESTED if-block:
+		// the payload + box are freed right after the if. Value + detector clean.
 		{"option-arr-precise-if-freed", `function f(n: i32): i32 { let o: Option[i32[]] = Some([10, 20, 30]); let c = 0; if (n > 0) { match (o) { Some(v) => { c = v[0] + v[2]; }, None => {} } } return c + 2 + __rc_underflow_count(); } function main(): i32 { return f(5); }`, 42},
 		// PRECISE drop of a scalar RESULT in a nested if (kind-gated, so the Result box
 		// — not just an Option — is freed). Value + detector clean.

@@ -3,21 +3,16 @@ package e2ecompiler
 import "testing"
 
 // deferBlockLocalCases exercise a `defer` whose action names a local declared
-// INSIDE the block the defer sits in (#6821). lower_defers_func replayed each
-// action wherever the function could exit, the function TAIL included, and by
-// then the AST lowering had retired the declaring block's locals out of name
-// resolution — so
-// the replay lowered `msg` as a function VALUE and the whole module bailed
-// ("references unknown function value"). A defer over a block-scoped local is
-// ordinary code that native compiles, so the bail was a pure self-host gap.
+// INSIDE the block the defer sits in (#6821). The action is replayed wherever
+// the function can exit, the function TAIL included, and every replay must
+// resolve the name to the block's local rather than to a function value.
 //
 // Every case encodes its whole contract in main's exit code, through a
 // Cell[i32] the deferred action mutates, so the same source serves the x86-64
-// and wasm legs unchanged. `want` is what the NATIVE arm64 backend produces for
-// the same program — the compiled native path is the spec here, and it is what
-// each of these was read off. Values stay under 126: wasmtime rejects an exit
-// status outside [0..126), which is a trap rather than a wrong answer and so
-// would fail the test for the wrong reason.
+// and wasm legs unchanged. `want` is the interpreter's answer for the same
+// program. Values stay under 126: wasmtime rejects an exit status outside
+// [0..126), which is a trap rather than a wrong answer and so would fail the
+// test for the wrong reason.
 var deferBlockLocalCases = []struct {
 	name string
 	main string
@@ -71,10 +66,9 @@ function main(): i32 { let a: Cell[i32] = cell_new(0); let r: i32 = f(a); return
 	// (m is a string, so `.len()` dispatches str_len) and not just an i32.
 	{"string_block_local", `function f(a: Cell[i32], s: string): i32 { if (s.len() > 0) { let m: string = s + "!"; defer a.set(a.get() + m.len()); } return 1; }
 function main(): i32 { let a: Cell[i32] = cell_new(0); let r: i32 = f(a, "abc"); return a.get() * 10 + r; }`, 41},
-	// The `?` failure edge is a THIRD replay site, reached from lower_try rather
-	// than the tail or a rewritten `return` — and it replays the cleanup once
-	// past the declaring block and once from inside it, which resolve by
-	// different routes (the record, and ordinary scope).
+	// The `?` failure edge is a THIRD replay site, besides the tail and a
+	// `return` — exercised once past the declaring block and once from inside
+	// it.
 	{"try_edge_after_block", `function g(x: i32): Option[i32] { if (x < 0) { return None; } return Some(x); }
 function f(a: Cell[i32], x: i32): Option[i32] { let n: i32 = 1; if (n > 0) { let k: i32 = 7; defer a.set(a.get() + k); } let v: i32 = g(x)?; return Some(v + 1); }
 function main(): i32 { let a: Cell[i32] = cell_new(0); let r: i32 = 0; match (f(a, 0 - 5)) { Some(v) => { r = v; }, None => { r = 9; } } return a.get() * 10 + r; }`, 79},

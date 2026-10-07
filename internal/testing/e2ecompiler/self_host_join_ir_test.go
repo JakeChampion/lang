@@ -5,16 +5,12 @@ import (
 )
 
 // TestSelfHostJoinIR pins `xs.join(sep)` on a string[] receiver lowering through
-// the self-host x86-64 IR path (#5328). Before this, irlower never intercepted
-// `.join`, so any module using it bailed; now it
-// lowers to a call of the __fern_arr_str_join runtime helper (the same Fern
-// function the AST path called). Each case is a native-oracle exit-code
-// differential: the native interpreter (which reaches `.join` via std/array's
-// __method_Array_join) is the source of truth, and the self-host-IR-compiled
-// binary must match. The single-program `asm_ir_run` driver resolves no
-// stdlib and treats `.join` as a builtin, so the self-host source omits the
-// import the native oracle needs — the prepended `import "std/array";` is the
-// only difference between the two.
+// the self-host x86-64 IR path (#5328) to a call of the __fern_arr_str_join
+// runtime helper. Each case is an exit-code differential against the
+// interpreter (which reaches `.join` via std/array). The single-program
+// `asm_ir_run` driver resolves no stdlib and treats `.join` as a builtin, so
+// the self-host source omits the import the oracle needs — the prepended
+// `import "std/array";` is the only difference between the two.
 func TestSelfHostJoinIR(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := t.TempDir()

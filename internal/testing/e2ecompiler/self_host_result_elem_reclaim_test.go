@@ -9,24 +9,14 @@ import (
 )
 
 // resultElemReclaimCases pin a tuple one of whose elements is a freshly
-// constructed built-in `Result` — `(i, Ok(i))` / `(i, Err(i))`.
+// constructed built-in `Result` — `(i, Ok(i))` / `(i, Err(i))`. The element's
+// box is released along with the rest of the tuple (buffer, array elements, its
+// own box), as the Option twin `(i, Some(i))`'s is. The byte cases return
+// measured bytes per round, so a leaked element box reads non-zero.
 //
-// The Option twin `(i, Some(i))` has reclaimed since the union-only-child
-// slice, because emit_tuple_child_drops' union arm asks tuple_union_elem_fresh,
-// which resolved a construction through expr_opt_elem_tag. That answers a TAG,
-// and a bare `Ok(x)` cannot name the Result's E arm, so every `Ok` / `Err`
-// element answered "not a construction" and its box leaked while the rest of
-// the tuple — buffer, array elements, its own box — reclaimed around it.
-//
-// Byte cases return measured bytes per round, before as x86-64 | arm64 | wasm,
-// native flat on all three: 40 | 40 | 16.
-//
-// The last three cases are safety controls and pass either way. `Ok` shadowed
-// by a free function is the one the is_user_fn gate carries: the box comes back
-// from a call that did not allocate it, so releasing it would over-release a
-// value `keep` still holds. Native compiles that shape to the built-in Ok and
-// answers 97 where interp and all three self-host backends answer 2 — a
-// separate frontend bug, not something these cases assert against.
+// The last three cases are safety controls. `Ok` shadowed by a free function
+// returns a box from a call that did not allocate it, so releasing it would
+// over-release a value `keep` still holds.
 var resultElemReclaimCases = []struct {
 	name string
 	src  string

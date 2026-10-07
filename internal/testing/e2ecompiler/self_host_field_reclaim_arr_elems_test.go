@@ -9,25 +9,18 @@ import (
 	"testing"
 )
 
-// fieldReclaimArrElemsCases pin #7067: the two per-type reclaim helpers disagreed
-// about a struct's ARRAY field whose ELEMENTS are pointer-shaped.
-// __struct_drop_<T> (scope exit) is_unique-gates the buffer, walks it dec'ing each
-// element box, then decs the buffer; __field_reclaim_<T> (the consume-rebind path)
-// dec'd the buffer only. So `let b: Bag = Bag { es: [P { .. }, P { .. }], .. }`
-// inside a loop stranded one element box per element on every iteration but the
-// last — the value that goes out of scope is reclaimed, every value that is
-// REBOUND leaks. The reclaim body now runs the same walk (and, for a deep-drop-ok
-// element struct, the same __struct_arr_elems_drop_<E> pre-pass).
+// fieldReclaimArrElemsCases pin #7067: a struct's ARRAY field whose ELEMENTS are
+// pointer-shaped releases its element boxes when the struct is REBOUND, not
+// only when it goes out of scope. Otherwise
+// `let b: Bag = Bag { es: [P { .. }, P { .. }], .. }` inside a loop strands one
+// element box per element on every iteration but the last. An element struct
+// with its own rc-array field has that level released too.
 //
-// The walk is admitted per type by the "sarr:" half of
-// fnsigs.strfld_reclaim_ok_types_of, and the append case below is why it needs
-// one at all: `d = Doc { ...d, vals: d.vals.append(v) }` hands the NEW buffer the
-// same element pointers the superseded one holds, uncounted, so walking the old
-// buffer would free boxes the live one still references (it segfaulted the
-// conformance case alloc_flat_array_push_bound_elem). __struct_drop needs no such
-// admission: at scope exit every buffer that ever shared those elements is dying
-// too. Reads are therefore restricted to a bare `.len()` borrow, and stores to an
-// array literal of fresh elements — the same contract the string[] sibling uses.
+// The append case is why the element walk is not unconditional:
+// `d = Doc { ...d, vals: d.vals.append(v) }` hands the NEW buffer the same
+// element pointers the superseded one holds, so walking the old buffer would
+// free boxes the live one still references (it segfaulted the conformance case
+// alloc_flat_array_push_bound_elem).
 var fieldReclaimArrElemsCases = []struct {
 	name string
 	src  string
@@ -199,8 +192,7 @@ func TestSelfHostFieldReclaimArrElemsIRArm64(t *testing.T) {
 }
 
 // TestSelfHostFieldReclaimArrElemsWasmIR is the wasm leg: there the deep release
-// is $__fern_arr_dec_ptr (which rc-gates the element walk internally), routed on
-// the same array_field_elem_is_ptr predicate $__struct_drop_<T> uses.
+// is $__fern_arr_dec_ptr, which rc-gates the element walk internally.
 func TestSelfHostFieldReclaimArrElemsWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping field-reclaim array-element wasm IR e2e")

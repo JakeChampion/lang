@@ -8,17 +8,8 @@ import (
 // closure as its function-typed payload (`Wrap((x) => { x + base })` captures
 // base), matches it, and indirect-calls the bound continuation. make(40) builds
 // Wrap(λx. x+40); k(2) -> 42. `make` is `@noinline` so main cannot see the
-// closure and call its body directly.
-//
-// Slice 5 made the match/read side mark a function-typed payload a closure local,
-// but constructing a variant with a CAPTURING payload still bailed to AST: the
-// pre-lowering lift only env-boxed fn args of module functions / Option-Result,
-// not user-enum variant constructors, so the capturing lambda stayed raw. Slice
-// 5b env-boxes user-enum fn payloads too (try_fn_field_value, the Option/Result
-// mechanism) — capturing -> [funcval, caps…], non-capturing/bare -> a $wrap
-// trampoline box — and marks the match bind a closure local (ordered before the
-// enum/struct branch, since is_enum_like_name("fn") is otherwise true). The whole
-// path now routes IR and dispatches env-first.
+// closure and call its body directly. A payload that lost its capture on the
+// way through construction, match and call would not answer 42.
 const capturingEnumProgram = `enum Box { Wrap((i32) => i32), Empty }
 
 @noinline

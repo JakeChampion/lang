@@ -6,10 +6,8 @@ import "testing"
 // function-typed parameter — a `(dyn Trait) => R` fn value called with a
 // trait-object argument — on the self-host IR path (x86-64 + wasm).
 //
-// The `(dyn Trait) => R` fn-type spelling parses to the coarse "fn" tag
-// (#5273 restored the parse after #5267's paren-unwrap swallowed the `=> R`).
-// #5276 reported that the value still miscompiled through the fn param, but
-// the shapes below all lower correctly on the IR path:
+// The `(dyn Trait) => R` fn-type spelling parses to the coarse "fn" tag. The
+// shapes below (#5276):
 //
 //   - a struct-backed `dyn Trait` value flows UNBOXED (it already carries its
 //     shape pointer at offset 0), so passing it through `f(x)` — whether the
@@ -17,17 +15,12 @@ import "testing"
 //     the fn-value call site — carries the shape and `s.area()` dispatches via
 //     op_dyn_dispatch inside the callee;
 //   - a primitive-backed `dyn Trait` value coerced at the OUTER call
-//     (`apply(speak_of, q)` where `q: dyn Speak`) is heap-boxed at that call
-//     (callee_param_is_dyn on `apply`), so the box pointer flows through `f(x)`
-//     unchanged and dispatches correctly.
+//     (`apply(speak_of, q)` where `q: dyn Speak`) is heap-boxed at that call,
+//     so the box pointer flows through `f(x)` unchanged and dispatches
+//     correctly.
 //
-// The remaining un-lowered shape — a PRIMITIVE literal coerced to `dyn Trait`
-// AT an indirect fn-value call (`f(7)` where `f: (dyn Speak) => i32`) — needs
-// the fn-type's per-parameter dyn-ness threaded through parse_type_name (which
-// coarsens `(dyn Speak) => i32` to the flat "fn" tag, discarding it), the
-// FuncDecl param, the slot, and the indirect-call arg lowering. That is a
-// separate, broader IR-widening item (a `callee_param_is_dyn` for fn-value
-// params), tracked as a #5276 follow-up; it is NOT one of these cases.
+// A PRIMITIVE literal coerced to `dyn Trait` AT an indirect fn-value call
+// (`f(7)` where `f: (dyn Speak) => i32`) is not one of these cases.
 //
 // Each case is oracle-checked against the interpreter, returning a
 // non-negative value <= 126 (cf. #2908).

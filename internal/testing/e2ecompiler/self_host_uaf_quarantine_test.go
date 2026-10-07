@@ -9,7 +9,7 @@ import (
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
-// --- The use-after-free quarantine (the native RcFreeDebug port) -------------
+// --- The use-after-free quarantine -------------------------------------------
 //
 // Under FERN_RC_FREE_DEBUG — or FERN_SANITIZE, which implies it
 // (ast.ApplySanitize parity) — NOTHING is recycled: every free site writes
@@ -22,9 +22,6 @@ import (
 // at the release), so the leak detector composes with this one instead of
 // reading every correct free as a leak — the clean-run census assertions in
 // self_host_sanitizer_test.go pin that composition.
-//
-// This was the sanitizer's one behavioural gap versus native (#5545); the
-// remaining gap is the missing backtrace under the report.
 
 // uafPoisonDec is ast.RcPoison as the emitted decimal, derived rather than
 // written out: the self-host cannot import the Go constant, so the assertions

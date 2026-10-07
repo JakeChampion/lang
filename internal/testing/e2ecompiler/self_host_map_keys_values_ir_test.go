@@ -3,17 +3,11 @@ package e2ecompiler
 import "testing"
 
 // mapKeysValuesIRCases pin an UNANNOTATED `let x = m.keys()` / `m.values()`
-// binding consumed by a `for … in x` loop (or `.len()`) to the self-host IR path
-// on x86-64 + wasm. The annotated form (`let x: i32[] = m.keys()`) already routed
-// IR — the array-local foreach machinery is complete — but the unannotated var
-// binding never marked the slot's array-ness / element type from the map's K/V,
-// so it bailed the whole module to the legacy AST emitter. #2691 teaches the
-// unannotated-var array inference (and the expr_is_arr_src / expr_is_strarr
-// predicates) to recognize map `.keys()`/`.values()` via one map_kv_elem_tag
-// gate. Scope: i32/string keys and i32/string values — the 8-byte i64/f64 value
-// cases hit a SEPARATE pre-existing op_map_values wasm bug (the annotated form
-// mis-sums on wasm too) and stay on AST. Each case is oracle-checked against the
-// interpreter; all need `import "core/map";`.
+// binding consumed by a `for … in x` loop (or `.len()`) on the self-host IR path
+// on x86-64 + wasm: the binding takes its array element type from the map's K/V
+// (#2691). Scope: i32/string keys and i32/string values; 8-byte i64/f64 values
+// are not covered here. Each case is oracle-checked against the interpreter;
+// all need `import "core/map";`.
 var mapKeysValuesIRCases = []struct {
 	name string
 	main string

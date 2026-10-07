@@ -6,12 +6,11 @@ import (
 )
 
 // strFreshRetIRCases pin the fresh-string-return-CALL reclaim on the self-hosted
-// stack-IR path (#2649). A `let r = f(..)` whose callee f ALWAYS returns a freshly
-// allocated string (str_fresh_ret_fns_of: every return is a concat / string method
-// / named producer) means r solely owns the box f moved out — so r is reclaimed at
-// scope exit (and per loop-rebind), closing the caller-side leak the returned
-// builder left behind. A function that returns a param / field / literal / bare
-// accumulator ident is NOT classified fresh, so its result is left to leak (sound).
+// IR path (#2649). A `let r = f(..)` whose callee f ALWAYS returns a freshly
+// allocated string (every return is a concat / string method / named producer)
+// means r solely owns the box f moved out — so r is reclaimed at scope exit (and
+// per loop-rebind). A function that returns a param / field / literal / bare
+// accumulator ident is NOT fresh, and r must not free the box it returns.
 var strFreshRetIRCases = []struct {
 	name     string
 	src      string

@@ -7,18 +7,12 @@ import (
 
 // --- A `match (o)` scrutinee is a borrow, wherever the match sits (#6127) -----
 //
-// `expr_unsafe_for` reports any bare ident as an escape, so the consuming match
-// of an Option reads as an escape of the Option. `consumed_rcpayload_option_frees`
-// has always disagreed — `name_escapes_outside_stmt` skips the consuming match —
-// but it skips it by top-level statement INDEX, so the argument only reaches a
-// match that IS a top-level statement.
+// The consuming match of an Option is not an escape of the Option, whether the
+// match is a top-level statement or sits inside an `if` or a `while`. Read as an
+// escape, the nested form released NOTHING and the whole box leaked every round.
 //
-// `precise_drop_names` covers the other case, where the match sits inside an `if`
-// or a `while`, and it gated on the coarse `body_unsafe_for`. So the nested form
-// was refused outright: not a partial release, NOTHING released, and the whole
-// box leaked every round.
-//
-// The nesting was the only variable, 100 rounds:
+// The nesting was the only variable, 100 rounds (allocs / frees / live bytes
+// before #6127):
 //
 //	match at top level        200 / 200      0
 //	match inside an `if`      200 /   0   8000
@@ -26,9 +20,8 @@ import (
 //	string payload, in `if`   200 /   0   6400
 //	struct payload, in `if`   300 /   0  12800
 //
-// The struct-payload row also exercises the `"opt-structpayload:<P>"` drop kind
-// added in #6308, which until now could not fire — the kind was computed and the
-// candidate carrying it was refused one gate earlier.
+// The struct-payload row also exercises the deep drop of an Option's struct
+// payload (#6308).
 
 func TestSelfHostNestedMatchBorrowX86_64(t *testing.T) {
 	boxedProbes(t)

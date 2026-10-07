@@ -98,17 +98,13 @@ func TestSelfHostModloadPerModuleWholeCompilerArm64(t *testing.T) {
 	// the single-process concat ceiling, and therefore out through the BATCHED
 	// per-module emit (emit_per_module_spawned), which the driver orchestrates
 	// itself with fork/exec rather than being driven from the harness. This is
-	// the direct guard on the arm64 wiring #3457 slice 5 added; arm64 has no AST
-	// emitter to drop to.
+	// the direct guard on the arm64 wiring #3457 slice 5 added.
 	//
-	// Run on the HOST driver, not the qemu one. The per-module-BUILT compiler
-	// doing this same self-compile is what the step used to assert; with the AST
-	// fallback gone it now forks ~35 emit children, and under qemu that took the
-	// whole test from 297 s past the 18-minute shard timeout. Its unique value
-	// was the #3561 string[]-field `.append()` UAF guard, whose fix is in SHARED
-	// lowering and which the x86 twin exercises on every run — so what is
-	// lost here is a duplicate, while what is gained is coverage of code that
-	// otherwise had none.
+	// Run on the HOST driver, not the qemu one: the per-module-BUILT compiler
+	// doing this self-compile forks ~35 emit children, which under qemu takes
+	// the test from 297 s past the 18-minute shard timeout. What that run would
+	// add is the #3561 string[]-field `.append()` UAF guard, whose fix is in
+	// SHARED lowering and which the x86 twin exercises on every run.
 	gen2, err := runX86_64Bin(x86runner, driverBin, entry, "-target", "arm64-linux").Output()
 	if err != nil {
 		t.Fatalf("arm64 whole-compiler merged compile failed (batched per-module escape): %v", err)

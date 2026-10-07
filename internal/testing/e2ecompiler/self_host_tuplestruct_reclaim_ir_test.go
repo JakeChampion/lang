@@ -8,24 +8,16 @@ import (
 )
 
 // tupleStructReclaimCases pin the #4365 tuple-with-STRUCT-element reclaim: a
-// `let t: (i32, P) = (i, P { xs: [..], y: i })` loop-local — a fresh scalar-tuple
-// whose element is a fresh reclaim-struct box (P sole-owns a rc-array field) —
-// leaked the struct's field buffers + the struct box + the tuple box every
-// iteration on the self-host IR path (native bounds it). The TUPRC class now admits
-// a struct-literal element that routes field-reclaim (tuple_lit_rc_reclaimable /
-// tuple_lit_has_array) and emit_tuple_child_drops deep-drops it: for the struct
-// position, __struct_drop_<P> (backend-complete, decs the struct's rc-array fields,
-// balanced by the construction alias-inc) then the struct box dec, then the tuple box
-// — at the loop-rebind and the exit sweep. No dedicated runtime helper; it lowers
-// through op_tuple_get / __struct_drop_<P> / __fern_rc_dec, shared by all backends.
+// `let t: (i32, P) = (i, P { xs: [..], y: i })` loop-local must release the
+// struct's field buffers, the struct box and the tuple box every iteration, at
+// the loop-rebind and at exit.
 //
-// SOUNDNESS: the element uses are checked by rctuple_payload_escapes (gated on the
-// tuple type annotation) — a scalar read (t.0), a struct scalar-field read (t.1.y),
-// an indexed struct array-field read (t.1.xs[j]) and t.1.xs.len() are borrows
-// (reclaim proceeds); a WHOLE struct extraction (`keep = t.1`, store / return / pass)
-// escapes and the local is left leak-safe (never over-released). The same gate closes
-// a PRE-EXISTING TUPRC gap for the plain array element (`keep = t.1` on `(i32, i32[])`
-// used to over-release; it is now leak-safe) — see the arrtuple-whole-extract case.
+// SOUNDNESS: a scalar read (t.0), a struct scalar-field read (t.1.y), an indexed
+// struct array-field read (t.1.xs[j]) and t.1.xs.len() are borrows; a WHOLE
+// struct extraction (`keep = t.1`, store / return / pass) keeps the element
+// alive and must never over-release. The plain array element (`keep = t.1` on
+// `(i32, i32[])`) is held to the same rule — see the arrtuple-whole-extract
+// case.
 var tupleStructReclaimCases = []struct {
 	name string
 	src  string
@@ -98,9 +90,8 @@ function main(): i32 {
     if (__rc_underflow_count() != 0) { return 99; }
     return 0;
 }`, 0},
-	// PRE-EXISTING GAP, now closed by the same rctuple_payload_escapes gate: extracting
-	// the WHOLE array element (`keep = t.1` on `(i32, i32[])`) used to over-release (99);
-	// it is now disqualified (leak-safe) like the struct case above.
+	// The WHOLE array element extracted (`keep = t.1` on `(i32, i32[])`) must not
+	// over-release (it once exited 99), like the struct case above.
 	{"arrtuple-whole-extract-safe", `function main(): i32 {
     let keep: i32[] = [0, 0];
     let i: i32 = 0;

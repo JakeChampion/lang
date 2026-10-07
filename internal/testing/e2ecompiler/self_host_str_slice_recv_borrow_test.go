@@ -5,31 +5,23 @@ import (
 	"testing"
 )
 
-// strSliceRecvBorrowCases pin the escape scan's receiver carve-out reading the
-// callee-side recv_borrow proof, not just the fixed builtin set.
+// strSliceRecvBorrowCases pin a string SLICE as the receiver of a
+// source-declared method: the slice borrows its source unless the method
+// carries the receiver out.
 //
-// `base[4:base.len()].to_owned().len()` cost `base` its whole reclaim credit.
-// expr_unsafe_for's ExprFieldAccess arm treats a non-ident receiver as a borrow
-// only when str_borrowing_method names the field — a closed list of BUILTINS —
-// so any source-declared method, `to_owned` included, sent the slice down the
-// plain scan, where a slice is an alias and `base` escapes.
-//
-// The warrant already existed: recv_borrow carries the plain "<Type>.<method>"
-// key exactly when body_unsafe_for found nothing carrying the receiver out. That
-// admits `to_owned` (`return s + ""`) and refuses `trim` (`return s[low:high]`,
-// a view of the receiver), which is the distinction that matters here. The
-// registry is threaded through the scan family and is EMPTY inside
-// recv_borrow_fns_of itself, the same Level-1 treatment `borrowable` documents,
-// so computing the proof cannot consult it.
+// `base[4:base.len()].to_owned().len()` still releases `base`, because
+// `to_owned` (`return s + ""`) only copies its receiver. `trim`
+// (`return s[low:high]`) returns a view of its receiver, so a slice passed to
+// it is carried out and `base` must stay alive. That is the distinction these
+// cases pin.
 //
 // The cases use fixture-local methods rather than std/string's, so the suite
 // pins the mechanism rather than one stdlib body: `own2` is `to_owned`'s shape
 // and `view2` is `trim`'s.
 //
-// Measured on x86-64, two compilers built from the same commit: 64000 -> 9600
-// over 400 rounds, and the remaining 9600 — the intermediate VIEW BOX — is
-// closed by the ExprSlice receiver release beside this, so the shape is now
-// flat on all three legs.
+// Measured on x86-64 over 400 rounds: 64000 bytes with the source stranded,
+// 9600 with only the intermediate VIEW BOX left, flat once that box is
+// released too — on all three legs.
 const sliceRecvPrelude = `import "std/i32";
 import "std/i64";
 import "std/string";
@@ -114,17 +106,10 @@ function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 
     return base.len() + c.len();
 }
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 3000) { let r: i32 = round(pre); if (r != 208) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
-	// The key can only be spelled `string.<method>` — this scan has no types — so
-	// a same-named method on another type answers to it. Here `Hold.own2` RETAINS
-	// (it hands back a field holding `base`) while `string.own2` is proven
-	// borrowing, and the result outlives the frame.
-	//
-	// CONTRACT-ONLY, and deliberately recorded as such: this passes with the
-	// type-blind lookup unrestricted, because admitting a receiver only routes it
-	// to expr_unsafe_for_view_pos, which differs from expr_unsafe_for on
-	// ExprSlice alone. A non-slice receiver like `mk(base)` reaches the same
-	// verdict either way, so no probe turns the blindness into a fault. A type
-	// check here would be dead code rather than a guard.
+	// A same-named method on another type: `Hold.own2` RETAINS (it hands back
+	// a field holding `base`) while `string.own2` only copies, and the result
+	// outlives the frame. `Hold.own2` must not be read as `string.own2`; the
+	// result is re-read after churn.
 	{"str-slice-recv-struct-name-collision", sliceRecvPrelude + `struct Hold { v: string }
 function (h: Hold) own2(): string { return h.v; }
 function mk(s: string): Hold { return Hold { v: s }; }

@@ -8,24 +8,15 @@ import (
 
 // tryOptionPayloadIRCases pin the self-host CHECKER's type for the `?` (try)
 // operator when the unwrapped payload is itself a generic (Option[T]).
-// infer_expr_type's ExprUnary arm typed `try_` (the desugared `?`) as i32 via a
-// fallthrough, so `let o: Option[i32] = f()?` where f: Result[Option[i32], i32]
-// was rejected E003 ("initializer has type i32") — the self-host compiler
-// refused a program the interpreter and native backend both accept. The arm now
-// returns the operand's Result/Option payload (result_inner / option_inner). The
-// bug only surfaced for an Option (or struct) payload — a string / array /
-// scalar payload slipped through the lenient assignable check.
+// infer_expr_type's ExprUnary arm types `try_` (the desugared `?`) as the
+// operand's Result/Option payload (result_inner / option_inner); typed i32
+// instead, `let o: Option[i32] = f()?` where f: Result[Option[i32], i32] is
+// rejected E003 ("initializer has type i32"). Only an Option (or struct)
+// payload exposes it — a string / array / scalar payload slips through the
+// lenient assignable check.
 //
-// Found via differential probing (native -interp exit vs the self-host-compiled
-// binary's).
-//
-// The exit code alone does not say WHICH emitter produced the binary — the AST
-// fallback happens to get these right, so a green run was consistent with the
-// module never reaching the IR path. Each case therefore also asserts the
-// emitter's per-function label marker (`.Lssa_` on x86-64, `.Lssa_` on arm64).
-// `result-option` / `nested-chain` are the two that really did fall back:
-// lower_try's payload whitelist rejected the bracketed `Option[i32]` because
-// is_enum_like_name declines any type containing `[`.
+// Each case also asserts the emitter's per-function label marker (`.Lssa_`),
+// so a green run shows the IR path was taken, not only the right exit code.
 var tryOptionPayloadIRCases = []struct {
 	name string
 	src  string

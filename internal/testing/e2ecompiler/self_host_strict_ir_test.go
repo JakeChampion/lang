@@ -18,7 +18,7 @@ import (
 //
 //   - strictIRCorpus asserts NO refusal across constructs the typed lowering is
 //     supposed to cover. A newly-unlowerable construct fails here, naming the
-//     function, instead of silently taking the AST lowering.
+//     function.
 //   - TestSelfHostStrictIRRefusesBail asserts a real refusal DOES exit 3, so a
 //     green corpus means the tripwire is armed rather than inert.
 //
@@ -173,7 +173,7 @@ function main(): i32 {
 }
 `, 9},
 	// Generics, tuples, and the `?` operator — the other consuming position
-	// whose scrutinee-type recovery #5642 had to fix alongside lower_match's.
+	// besides `match` whose scrutinee type must be recovered (#5642).
 	{"generics-tuples-try", `
 function pair[K, V](k: K, v: V): (K, V) { return (k, v); }
 function first(t: (i32, string)): i32 { return t.0; }
@@ -192,11 +192,9 @@ function main(): i32 {
 `, 43},
 	// A match whose scrutinee is a call through a capture-free / capturing
 	// closure LOCAL returning Option: the lambda must lift to a hoisted __lam_N
-	// so the call resolves and the scrutinee's Option type recovers. Before the
-	// StmtMatch arm in callsubst.subst_fcall_stmts, the leftover `f` reference in
-	// `match (f())` blocked the binding lift, so the lambda fell to the inline
-	// escaping-closure path (const_func(<fn>$clo)) and bailed the module to AST
-	// (#3457 slice 3). Under the flag these must route IR (no exit-3 bail).
+	// so the call resolves and the scrutinee's Option type recovers; the
+	// `f` in `match (f())` is rewritten by callsubst.subst_fcall_stmts like
+	// any other call. Under the flag these must lower (no exit-3 refusal).
 	{"match-closure-local-opt", `
 function main(): i32 {
     let f: () => Option[i32] = () => Some(7);
@@ -212,10 +210,8 @@ function main(): i32 {
 `, 7},
 	// A match whose scrutinee calls an ANNOTATED fn-typed local bound to a named
 	// Option/Result-returning fn (`let f: () => Option[i32] = g; match (f())`):
-	// the binding seeds its return type (mark_closure_opt_ret, gated on the
-	// fn-type annotation) so the payload recovers and the module routes IR. The
-	// unannotated `let f = g` form is deliberately NOT covered — its `f()` call
-	// miscompiles on the IR path, so the lowering leaves it unseeded and bails.
+	// the annotation gives the call its return type, so the payload recovers and
+	// the module routes IR.
 	{"match-fnlocal-named-opt", `
 function g(): Option[i32] { return Some(7); }
 function main(): i32 {
@@ -231,11 +227,10 @@ function main(): i32 {
 }
 `, 5},
 	// `?` whose success payload is itself a bracketed generic
-	// (`Result[Option[i32], E]`) — the last per-function shape lower_try
-	// declined (#3457 endgame). The payload box is pointer-shaped, read
-	// through the same op_opt_payload as a struct/enum, and the `let x:
-	// Option[i32] = f(n)?` binding types the slot from its annotation, so
-	// the following `match (x)` recovers both arms.
+	// (`Result[Option[i32], E]`, #3457 endgame). The payload box is
+	// pointer-shaped, read through the same op_opt_payload as a struct/enum,
+	// and the `let x: Option[i32] = f(n)?` binding types the slot from its
+	// annotation, so the following `match (x)` recovers both arms.
 	{"try-generic-payload", `
 function f(n: i32): Result[Option[i32], i32] { return Ok(Some(n)); }
 function g(n: i32): Result[i32, i32] {
@@ -370,12 +365,8 @@ function main(): i32 {
 }
 `, 16},
 	// A nested RESULT payload bound in a match-EXPRESSION (`Some(r)` over an
-	// Option[Result[…]]). iife_payload_bindable admitted a nested `Option[` payload
-	// into an i32 temp from an ident scrutinee and omitted `Result[` from the same
-	// spelling test, so this bailed while the identical STATEMENT-form match
-	// lowered. The argument for admitting it is the Option half's: arms share a
-	// result type, so an i32 temp means the bound box is only ever consumed to
-	// compute an i32, never stored as the result.
+	// Option[Result[…]]) must lower just as the identical STATEMENT-form match
+	// and the nested `Option[` payload do.
 	{"iife-match-nested-result-payload", `
 function g(o: Option[Result[i32, i32]]): i32 {
     return match (o) { Some(r) => 7, None => 0 - 1 };
@@ -404,21 +395,15 @@ function g(o: Option[Result[i32, i32]]): i32 {
 function main(): i32 { return g(Some(Ok(5))) + g(Some(Err(2))) + g(None); }
 `, 106},
 	// An UNANNOTATED binding of an erased-generic `T[]`-returning call
-	// (`let s = sort_by_key(ps, …)`). array_ret_fns_of already registered the
-	// function — is_array_type only tests the `[]` suffix, so `T[]` counts and the
-	// slot is is_arr — but struct_ret_fns_of recorded no ELEMENT type, because
-	// stripping `[]` from `T[]` leaves the typevar. So `s[i].k` had no struct type
-	// and the CALLER bailed while the generic function itself
-	// lowered fine. A positional "name|$arg<i>" argref now records "the element
-	// type is argument i's element type", resolved at the call site — the same
-	// convention the erased string / array returns use.
+	// (`let s = sort_by_key(ps, …)`). `s[i].k` needs the ELEMENT type, and
+	// stripping `[]` from `T[]` leaves the typevar, so the element type is
+	// resolved at the call site from the argument's — the same convention the
+	// erased string / array returns use. The annotated form (`let s: P[] = …`)
+	// is the easy case.
 	//
-	// The annotated form (`let s: P[] = …`) always worked, which is what made this
-	// the third second-mechanism gap of the set. Struct AND enum elements are both
-	// covered; `qs` is a separate array from `ps` on purpose, because reading a
-	// source array after a generic mutated it through `.with` measures leak-mode
-	// aliasing (an in-place store on the register/wasm backends, a copy in the
-	// interpreter) rather than anything about this fix.
+	// Struct AND enum elements are both covered; `qs` is a separate array from
+	// `ps` on purpose, because reading a source array after a generic mutated it
+	// through `.with` measures aliasing rather than anything about this case.
 	{"generic-array-return-unannotated", `
 struct P { k: i32 }
 enum C { Red, Blue }
@@ -569,19 +554,14 @@ function main(): i32 {
     return a + b + c + d;
 }
 `, 48},
-	// An annotated TUPLE binding whose initialiser is a method call the tuple-tag
-	// inference does not key. Each StmtVar arm recovers element tags from the
-	// INITIALISER — the method arm keys `tuple_ret_type("<Struct>.<m>")` — so a
-	// method on an Option/Result receiver (std/option's `some.unzip()`, the real
-	// consumer in tests/stdlib/option_combinators_test.fern) recorded nothing
-	// and `sa.0.unwrap_or(0)` dispatched as `i32.unwrap_or`, an unknown symbol.
-	// The annotation names every element, so it now fills the hole — only when
-	// nothing else did, which is what keeps every self-typing binding's tags
-	// (and therefore its asm) identical.
+	// An annotated TUPLE binding whose element types come from the annotation —
+	// the shape of std/option's `some.unzip()`, the real consumer in
+	// tests/stdlib/option_combinators_test.fern. With the element types lost,
+	// `sa.0.unwrap_or(0)` dispatched as `i32.unwrap_or`, an unknown symbol.
 	//
 	// Both elements are CONSUMED at their own types: an i32 payload and a string
 	// payload whose `.len()` would read a non-pointer if the tag were lost, so a
-	// half-recovered tag shows up as a wrong answer rather than as a bail.
+	// half-recovered tag shows up as a wrong answer rather than as a refusal.
 	{"tuple-annotation-from-call", `
 function unwrap_or_i(o: Option[i32], d: i32): i32 { match (o) { Some(v) => { return v; }, None => { return d; } } }
 function unwrap_or_s(o: Option[string], d: string): string { match (o) { Some(v) => { return v; }, None => { return d; } } }
@@ -705,7 +685,7 @@ func TestSelfHostStrictIRRefusesBail(t *testing.T) {
 // function it was in, so two refusals can be told apart without bisecting a
 // body by hand.
 //
-// Each program here is VALID — checked against the native compiler, not merely
+// Each program here is VALID — checked with `fern -check`, not merely
 // observed to refuse — because an invalid program is refused for reasons that
 // say nothing about the typed lowering.
 //

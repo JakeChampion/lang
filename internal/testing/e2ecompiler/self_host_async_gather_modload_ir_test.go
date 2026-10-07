@@ -11,18 +11,15 @@ import (
 // — the end-to-end benefit: a self-host-compiled `std/async` program (gather over
 // a Future[i32][]) compiles through the MODLOAD driver's IR path and runs.
 //
-// This exercises the full stack landed across slices 1-5b (poll, the Future
-// enum's function-typed/closure payloads) PLUS the slice-6 flatten fix: an
-// imported generic enum (`async.Future[T]`) used inside an imported generic
-// function (`async.gather`) now monomorphizes correctly, because flatten now
-// mangles the imported EnumDecls + variant-struct enum_owner to match the
-// mangled variant structs. An EnumDecl that keeps bare names leaves
-// monomorphize_enums unable to find the mangled variants, bailing the whole
-// merged program (and the AST emitter it fell to could not emit poll or the
-// Future constructor at all).
+// This exercises poll and the Future enum's function-typed/closure payloads,
+// plus an imported generic enum (`async.Future[T]`) used inside an imported
+// generic function (`async.gather`): flatten mangles the imported EnumDecls and
+// the variant structs' enum_owner alike, so monomorphize_enums finds the
+// mangled variants. An EnumDecl that kept bare names would refuse the whole
+// merged program.
 //
-// The driver's `-decide` must report `ir` (the merged program routes the IR
-// path), and the compiled binary must match the interpreter oracle
+// The driver's `-decide` must report `ir` (the typed lowering accepts the
+// merged program), and the compiled binary must match the interpreter oracle
 // (sum of three Ready values = 42). The configured runner executes the driver
 // and output binary with the same filesystem paths.
 func TestSelfHostAsyncGatherModloadIRX86_64(t *testing.T) {

@@ -2,19 +2,18 @@ package e2ecompiler
 
 import "testing"
 
-// A callee in cnt_struct_ret_fns hands a borrowed struct parameter back
-// COUNTED (#9203): its return path retains the box. When the caller's own
-// argument was itself a borrowed parameter, nothing released that count.
+// A callee that hands a borrowed struct parameter back COUNTED (#9203) — its
+// return path retains the box — leaves the caller owning that count. When the
+// caller's own argument is itself a borrowed parameter, the caller must still
+// release it:
 //
-//   - A binding (`let a = mk(p)`) got no reclaim credit: the rc plan's taint
-//     rule read the call as aliasing its borrowed argument, so `a` was never
-//     free-eligible, whatever the callee's return convention.
-//   - A read straight through the result (`mk(p).xs.len()`) was released only
-//     for a METHOD callee; the free-call spelling dropped the temp.
+//   - a binding (`let a = mk(p)`) is released like any owned result;
+//   - a read straight through the result (`mk(p).xs.len()`) releases the temp
+//     for a free-call callee as well as for a METHOD callee.
 //
-// Either way one count leaked per call, and the box it held with it. Native
-// is clean on every row, and so is the self-host with an OWNED argument, which
-// is why only a callee that borrows `p` shows it.
+// A missed release leaks one count per call, and the box it holds with it.
+// With an OWNED argument there is nothing to miss, which is why every row
+// borrows `p`.
 var countedHandbackBorrowedCases = []struct{ name, src string }{
 	{"binding", `struct St { ops: i32[], n: i32 }
 @noinline function mk(p: St): St { return p; }

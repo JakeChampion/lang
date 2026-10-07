@@ -100,15 +100,14 @@ func TestSelfHostRcStructBoxWasm(t *testing.T) {
 		// recursive release's `[s-8]` read must be null-guarded. Exercises both
 		// fixes; value-correct (nested kind-sum = 14) + detector clean.
 		{"struct-append-borrowed-field-clean", "struct Node { kind: i32, items: Node[] } struct POne { node: Node, pos: i32 } function parse(xs: i32[], i: i32): POne { if (xs[i] == 0) { return POne { node: Node { kind: xs[i], items: [] }, pos: i + 1 }; } let children: Node[] = []; let j: i32 = i + 1; while (j < xs.len() && xs[j] != 9) { let r: POne = parse(xs, j); children = children.append(r.node); j = r.pos; } return POne { node: Node { kind: 7, items: children }, pos: j + 1 }; } function sum(n: Node): i32 { let s: i32 = n.kind; let i: i32 = 0; while (i < n.items.len()) { s = s + sum(n.items[i]); i = i + 1; } return s; } function main(): i32 { let xs: i32[] = [1, 0, 0, 1, 0, 9, 9]; let r: POne = parse(xs, 0); return sum(r.node) + __rc_underflow_count(); }", 14},
-		// DEPTH: a struct holding a string[] field now DEEP-releases the array's
-		// string elements (emit_struct_release uses arr_dec_ptr for a
-		// pointer-element array field), not just the buffer — value-correct +
-		// detector clean.
+		// DEPTH: a struct holding a string[] field DEEP-releases the array's
+		// string elements, not just the buffer — value-correct + detector
+		// clean.
 		{"struct-field-strarray-released", "struct Bag { items: string[], n: i32 } function main(): i32 { let xs: string[] = [\"a\" + \"b\", \"c\" + \"d\"]; let bag = Bag { items: xs, n: 5 }; return bag.items[0].len() + bag.items[1].len() + bag.n + __rc_underflow_count(); }", 9},
 		// SAFETY: a struct holding an i32[] field must stay FLAT — the scalar
 		// elements (here values >= heap_base and even, which look like heap
-		// pointers) must NOT be arr_dec'd, or arr_dec_ptr would corrupt / trip
-		// the detector. array_field_elem_is_ptr returns false for i32[].
+		// pointers) must NOT be released as pointers, or the release would
+		// corrupt / trip the detector.
 		{"struct-field-i32array-flat-safe", "struct C { ns: i32[], k: i32 } function main(): i32 { let ns: i32[] = [262184, 262192, 262200]; let c = C { ns: ns, k: 3 }; return c.ns.len() + c.k + __rc_underflow_count(); }", 6},
 		// A churn of structs each holding a fresh string[]: deep element release
 		// reclaims the strings (no growth), detector clean across many cycles.

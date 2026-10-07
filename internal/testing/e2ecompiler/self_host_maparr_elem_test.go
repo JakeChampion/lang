@@ -5,18 +5,11 @@ import "testing"
 // mapArrElemCases pin the map ELEMENT of a `Map[K, V][]` reaching every
 // receiver position, and the array itself reaching none of them.
 //
-// #7195 fixed the two IDENT readers that typed a map-array as one map. The
-// element side was the other half: a `for` loop variable carried no map type at
-// all, and the map-op dispatch's ExprIndex arm only understood an ident base, so
-// `t.0[i].get(k)` and `r.rows[i].get(k)` bailed with `unknown symbol i32.get_or`.
-//
-// Widening that arm then exposed the #7195 trap on two more readers: the
-// struct-field and tuple-element arms test the receiver with is_map_type_name,
-// which is a bare `Map[` prefix match, so a `Map[K, V][]` FIELD passed it and
-// `r.rows.len()` lowered to op_map_len over array memory. That segfault was
-// always there — the earlier bail on the element read just stopped anyone
-// reaching it. Both arms now require a non-array spelling, matching the ident
-// arms' slot_map_type.
+// A `for` loop variable, `t.0[i].get(k)` and `r.rows[i].get(k)` must dispatch
+// map ops on the element rather than fail with `unknown symbol i32.get_or`
+// (#7195 was the ident half). A `Map[K, V][]` struct field or tuple element
+// must still dispatch as an array: `r.rows.len()` lowered to op_map_len over
+// array memory segfaults.
 var mapArrElemCases = []struct {
 	name string
 	src  string
@@ -61,8 +54,8 @@ function main(): i32 {
     let r: Reg = Reg { rows: [m, m, m] };
     return r.rows.len();
 }`, 3},
-	// NON-VACUITY on the two new `!is_array_type_name` guards: a genuine Map
-	// STRUCT FIELD must still dispatch every map op off the field.
+	// NON-VACUITY on the array cases: a genuine Map STRUCT FIELD must still
+	// dispatch every map op off the field.
 	{"plain-map-struct-field-unchanged", `import "core/map";
 struct Cfg { caps: Map[string, i32] }
 function main(): i32 {
@@ -102,11 +95,9 @@ function main(): i32 {
     if (w != x) { return 97; }
     return w % 83;
 }`, 12},
-	// A DIRECT CALL receiver whose return type is `Map[K, V][]`. map_ret_fns_of
-	// registered any `Map[`-prefixed return type as map-returning, so the
-	// un-bound `mk().len()` receiver typed as a map — SEGFAULT before. Binding
-	// it to a local first (below) was already safe, because the local's slot is
-	// array-marked and slot_map_type declines it.
+	// A DIRECT CALL receiver whose return type is `Map[K, V][]`: the un-bound
+	// `mk().len()` receiver must type as an array, not a map (a segfault when
+	// it did). Binding it to a local first (below) is the control.
 	{"maparr-call-receiver-len", `import "core/map";
 function mk(): Map[string, i32][] {
     let m: Map[string, i32] = map_new(4);

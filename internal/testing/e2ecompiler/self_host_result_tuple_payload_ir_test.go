@@ -2,14 +2,10 @@ package e2ecompiler
 
 import "testing"
 
-// resultTuplePayloadIRCases close a Result payload gap: a `Result[T, E]` whose T
-// or E is itself a tuple — e.g. `Result[(i32, i32), string]`, matched and the
-// payload's elements read (`t.0` / `t.1`) — now lowers on the IR path. The bug was
-// in `opt_payload_type`: its Result T-vs-E comma split counted only `[`/`]`, not
-// `(`/`)`, so a tuple payload's inner comma was mistaken for the T-E separator
-// (T parsed as `(i32` instead of `(i32, i32)`), failing payload recovery and
-// bailing the module to AST. (Option works regardless — it returns the whole inner
-// type without splitting.) The fix makes that split also count parens.
+// resultTuplePayloadIRCases pin a `Result[T, E]` whose T or E is itself a tuple
+// — e.g. `Result[(i32, i32), string]`, matched and the payload's elements read
+// (`t.0` / `t.1`) — on the IR path. Splitting T from E must skip the tuple's
+// inner comma: T is `(i32, i32)`, not `(i32`.
 //
 // Each case is oracle-checked against the interpreter and returns a value
 // <= 126 (cf. the wasmtime exit-code gap #2908).

@@ -5,19 +5,12 @@ import "testing"
 // genericErasureIRCases pin type-driven dispatch on values returned by
 // ERASED-generic functions. The self-host strips UNBOUNDED type params
 // (`pair[K, V]` carries type_params=[]), so monomorphize_module never clones
-// such functions — they compile once under type erasure. That's fine for the
-// uniform 8-byte slot ABI, but the return-type REGISTRIES recorded the raw
-// type-let spellings: a `(K, V)` tuple return degraded its elements to
-// scalars ("K" != "string"), and a bare `T` return wasn't str-tracked at all.
-// Both made string results silently mis-dispatch (`.len()` read 0) on the IR
-// path AND the legacy AST emitter — native returns the right answer.
-//
-// The fix threads positional "$arg<i>" references through the registries:
-// tuple_ret_fns_of rewrites a type-var ret segment to the first param
-// declared with that var (resolved at the call site by
-// resolve_argref_tuple_tags), and str_ret_fns_of records "name|$arg<i>" for
-// a bare-type-var return (resolved by expr_is_str via str_ret_argref).
-// Exit codes are cross-checked against the Go reference (native -interp).
+// such functions — they compile once under type erasure, which is fine for the
+// uniform 8-byte slot ABI. The result's type still has to be recovered at the
+// call site from the arguments: a `(K, V)` tuple return whose elements degrade
+// to scalars, or a bare `T` return that is not string-tracked, makes a string
+// result silently mis-dispatch (`.len()` reads 0).
+// Exit codes are cross-checked against the interpreter.
 var genericErasureIRCases = []struct {
 	name string
 	src  string
@@ -83,14 +76,12 @@ var genericErasureIRCases = []struct {
 	// A TWO-type-var tuple payload (`Option[(K, V)]`) at (string, string): both
 	// element vars resolve from their respective arguments.
 	{"opt-tuple-two-var", "function mk[K, V](k: K, v: V): Option[(K, V)] { return Some((k, v)); } function main(): i32 { match (mk(\"ab\", \"cde\")) { Some(t) => { return t.0.len() * 10 + t.1.len(); }, None => { return 0; } } }", 23},
-	// The struct_ret_fns_of sibling of the same defect (#6441). A bare type-var
-	// return is not an enum, but is_enum_like_name says it is — that predicate
-	// rules out primitives, arrays, bracketed generics and tuples, and a lone
-	// uppercase letter passes all of them. So `idg|T` was recorded as an enum
-	// return, the call site stamped its slot "T", and a method on the result
-	// keyed `T.to_string` — a symbol nothing defines, bailing the whole module.
-	// f-strings are how this is normally reached, since `f"{e}"` desugars to
-	// `(e).to_string()`. "a5b".len() * 14.
+	// A bare type-var return is not an enum (#6441), though a lone uppercase
+	// letter passes every test is_enum_like_name makes (it rules out
+	// primitives, arrays, bracketed generics and tuples). Typed as an enum
+	// "T", a method on the result keys `T.to_string` — a symbol nothing
+	// defines, refusing the whole module. f-strings are how this is normally
+	// reached, since `f"{e}"` desugars to `(e).to_string()`. "a5b".len() * 14.
 	{"id-scalar-fstring", "import \"std/i32\"; function idg[T](x: T): T { return x; } function main(): i32 { let s = f\"a{idg(5)}b\"; return s.len() * 14; }", 42},
 	// The same defect without the f-string: an explicit method call on a local
 	// bound from the generic. The ANNOTATION does not save it — the slot is
@@ -103,9 +94,8 @@ var genericErasureIRCases = []struct {
 	{"id-enum-regress", "enum E { A, B } function idg[T](x: T): T { return x; } function main(): i32 { let e = idg(E.A); return match (e) { A => 42, B => 9 }; }", 42},
 	// A real enum whose name IS a single uppercase letter, returned by a
 	// function that takes no `E`. The type-var test alone cannot tell this from
-	// an erased generic, so skipping on it sent every @derive(Default) enum to
-	// the AST path; the erased-generic signature (a free function with a param
-	// declared at that spelling) is what separates them, and this has none.
+	// an erased generic; the erased-generic signature (a free function with a
+	// param declared at that spelling) is what separates them, and this has none.
 	{"single-letter-enum-return", "enum E { A, B } function mkE(): E { return E.A; } function main(): i32 { let e = mkE(); return match (e) { A => 42, B => 9 }; }", 42},
 }
 

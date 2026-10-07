@@ -5,31 +5,20 @@ import "testing"
 // strSourceMethodReceiverCases pin the release of a fresh anonymous RECEIVER at a
 // SOURCE-DECLARED string method, and the three callee shapes that must not get it.
 //
-// The builtin twin lands in lower_str_method; this is the primitive-method
-// dispatch, which already stashed its ARGUMENTS through stash_fresh_str_arg and
-// never its receiver — so `w(pre).copies()` stranded 46 B/round.
-//
-// The warrant is the callee-side proof recv_borrow_fns_of already computes, which
-// was gated to STRUCT receivers. A string receiver earns the plain
-// "<Type>.<method>" key on body_unsafe_for alone: the two field-hazard predicates
-// beside it are about carrying a FIELD of the receiver out, and a string has none.
-// body_unsafe_for refuses a bare `return s` and a `return s[a:b]` view alike,
-// because both are escapes for it, and it refuses a receiver moved into a struct
-// the callee hands back.
+// A fresh receiver such as `w(pre)` in `w(pre).copies()` is released after the
+// call when the method carries nothing of it out; stranded, it is 46 B/round.
+// A bare `return s`, a `return s[a:b]` view, and a receiver moved into a struct
+// the callee hands back all carry it out, so the receiver must stay alive.
 //
 // The flat cases return 98 when the receiver is stranded. The three refusals all
-// exit 97 under a compiler that releases the receiver without consulting the
-// proof — including the VIEW case, which is witnessed here where the same
-// question was contract-only at two earlier sites.
+// exit 97 when the receiver is released anyway, the VIEW case included.
 var strSourceMethodReceiverCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// The shape that led here: a fresh receiver at a SOURCE-DECLARED method. The
-	// builtin twin was released at lower_str_method; this is the primitive-method
-	// dispatch, which stashed its ARGUMENTS already and never its receiver.
-	// 46 B/round before, flat after.
+	// The shape that led here: a fresh receiver at a SOURCE-DECLARED method.
+	// Flat; 46 B/round when the receiver is stranded.
 	{"str-fresh-receiver-source-method-copy-flat", `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function (s: string) copies(): string { return s + ""; }
 function round(pre: string): i32 { let u: string = w(pre).copies(); return u.len(); }
@@ -81,9 +70,7 @@ function main(): i32 {
     return 0;
 }`, 0},
 	// NEGATIVE: `return s` hands the receiver's box back, so releasing the receiver
-	// frees what the caller now holds. body_unsafe_for refuses it — a bare ident is
-	// an escape — and the plain recv_borrow key is therefore absent. Exits 97 when
-	// admitted anyway.
+	// frees what the caller now holds. Exits 97 when released anyway.
 	{"str-identity-return-method-receiver-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function (s: string) ident(): string { return s; }
 function round(pre: string): i32 {
@@ -97,11 +84,8 @@ function round(pre: string): i32 {
     return t.len();
 }
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
-	// NEGATIVE: `return s[2:s.len()]` is a VIEW over the receiver's buffer. Worth
-	// noting that this distinction has a WITNESS here — it exits 97 when admitted —
-	// where the same view question was contract-only at the binding-credit and
-	// fresh-alloc-builtin sites. body_unsafe_for refuses it because a slice outside
-	// a borrow position is an escape.
+	// NEGATIVE: `return s[2:s.len()]` is a VIEW over the receiver's buffer, so the
+	// receiver escapes through it. Exits 97 when released anyway.
 	{"str-view-return-method-receiver-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function (s: string) view(): str { return slice_unchecked(s, 2, s.len()); }
 function round(pre: string): i32 {

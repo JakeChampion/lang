@@ -6,52 +6,23 @@ import (
 )
 
 // The BUILTIN string[] producers — `s.split(sep)` and `s.lines()` — build an
-// array whose element boxes the runtime creates and stores nowhere else. Nothing
-// credited them: collect_fresh_strarr_names walks a string[] local's elements and
-// requires each to be a fresh expression it can see, and a call's result is not
-// one, so a split/lines local fell through to the shallow buffer-only dec and
-// every element box leaked.
+// array whose element boxes the runtime creates and stores nowhere else, so a
+// non-escaping split/lines local is released with its elements
+// (__fern_str_arr_free), not by a shallow buffer-only dec.
 //
-// The credit uses a prefix of its own ("SARRB:") because it needs a gate the
-// existing one does not have. reclaimable_names_of is a NAME-level pass: it sees
-// `let xs = recv.split(sep)` and has no type for `recv`. A user method named
-// `split` on some other type answers to the same name, and its elements may be
-// aliases of something the receiver still owns. So the name-level pass collects
-// candidates, the BINDING SITE — the one place that knows the receiver's type —
-// records whether the producer was really the builtin, and slot_is_reclaimable_
-// strarr requires both halves.
+// Only the BUILTIN qualifies: a user method named `split` on some other type
+// answers to the same name, and its elements may be aliases of something the
+// receiver still owns. strArrBuiltinTypeGateSrc below is that shape — a
+// `(h: Holder) split` returning a fresh array of h.xs's element boxes —
+// and freeing them over-releases: rc underflow (99) on wasm, and on x86-64 a
+// churn string is handed the freed box and the read-back fails (97).
 //
-// That type gate is witnessed by fault, not just by emission. strArrBuiltinType
-// GateSrc below is the shape it stops: a `(h: Holder) split` returning a fresh
-// array of h.xs's element boxes. A compiler with the name matched and the type
-// confirmation dropped over-releases those boxes — rc underflow (99) on wasm,
-// and on x86-64 a churn string is handed the freed box and the read-back fails
-// (97). Both compilers here return 0.
+// What is left on wasm (67200 bytes for the 18-part split over 400 rounds) is
+// not the element boxes.
 //
-// Measured, 400 rounds of the harness below; each arrow is a pair of compilers
-// built from the same commit:
-//
-//	case                  x86-64                    wasm
-//	split          172800 -> 0            204800 -> 67200
-//	lines            9600 -> 0             57600 ->  9600
-//	split + lines  182400 -> 0            262400 -> 76800
-//
-// The two columns were fixed by two different pieces. wasm's split COPIES, so
-// crediting the class was enough there. The register backends' split used to
-// yield zero-copy views needing a view-aware walk; since #7230 the segments
-// are OWNED COPIES and the class takes the ordinary __fern_str_arr_free.
-//
-// What is left on wasm (67200 for the 18-part split) is a separate question from
-// this one and is not the element boxes.
-//
-// One real limit, on the NON-ESCAPE half rather than the type half. Building a
-// compiler with strarr_unsafe_for's verdict dropped for this class does change
-// emission — `first_of` below goes from __fern_arr_dec to the element walk, so
-// the guard demonstrably decides something — but no probe here faults under it,
-// including with slice decoys sized to the 24-byte class a freed element box
-// lands in. So the escape cases below are correctness gates, not fault
-// witnesses; the half they rest on is the one the `SARR:` class already carries,
-// unchanged.
+// The escape cases below are correctness gates, not fault witnesses: no probe
+// here faults when an escaping array is wrongly released, including with slice
+// decoys sized to the 24-byte class a freed element box lands in.
 
 const strArrBuiltinPrelude = "import \"std/string\";\n" + strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 `
@@ -93,8 +64,8 @@ var strArrBuiltinHeapCases = []struct {
 	// walk happening at all.
 	{"strarr-builtin-lines", `    let ls: string[] = base.lines();
     return ls.len();`, 4096, 16000},
-	// Reading the elements does not disturb the credit: an index READ is not an
-	// escape, and strarr_unsafe_for says so.
+	// Reading the elements does not disturb the reclaim: an index READ is not
+	// an escape.
 	{"strarr-builtin-split-elements-read", `    let parts: string[] = base.split("-");
     let n: i32 = parts.len();
     if (parts[0] != "abcdefgh") { return 0 - 1; }
@@ -145,8 +116,8 @@ var strArrBuiltinFaultCases = []struct {
 	src  string
 }{
 	{"strarr-builtin-type-gate", strArrBuiltinTypeGateSrc},
-	// An element BOUND OUT of the array outlives it, so strarr_unsafe_for
-	// withholds the credit and the box must survive the sweep.
+	// An element BOUND OUT of the array outlives it, so the box must survive
+	// the sweep.
 	{"strarr-builtin-element-bound-out", strArrBuiltinPrelude + `function round(pre: string): i32 {
     let base: string = w(pre);
     let parts: string[] = base.split("-");
@@ -178,8 +149,8 @@ function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 
 	// The SOURCE is a .rodata literal, so its element views point outside the
 	// arena and the view free's heap-range guard has to decline them; and the
 	// second half overwrites one view element with a fresh string, leaving a MIXED
-	// array the walk has to reclaim completely and exactly once (str_view_free
-	// tail-jumps to str_free for a non-immortal rc).
+	// array the walk has to reclaim completely and exactly once
+	// (__fern_str_view_free tail-jumps to __fern_str_free for a non-immortal rc).
 	{"strarr-builtin-literal-source-and-mixed", strArrBuiltinPrelude + `function litround(): i32 {
     let parts: string[] = "alpha-beta-gamma-delta".split("-");
     let n: i32 = parts.len();

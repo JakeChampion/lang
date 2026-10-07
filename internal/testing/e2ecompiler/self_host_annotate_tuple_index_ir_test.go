@@ -10,21 +10,10 @@ import (
 // annotateTupleIndexCases cover a tuple-element read whose tuple comes from an
 // INDEX of a call result — `mk()[i].N`.
 //
-// `expr_tuple_elem_tag`'s ExprIndex arm resolves the element tuple type from the
-// slot's recorded `arrarr_elem`, which only exists for a NAMED `(tuple)[]` local.
-// When the array is a call result there is no slot to read, it returned "", and
-// the tuple-element read lowered as a 4-byte i32 — so an f64 element failed the
-// wasm validator ("type mismatch: expected f64, found i32"), exiting 1 against
-// an oracle of 33.
-//
-// The fix needed no new carrier: `ExprIndex.ty` (#6165) already holds the
-// checker's type for that exact node, and a tuple stamps its canonical
-// "(f64, i32)" spelling, which the existing `tuple_type_elem_tag` decoder reads.
-// Walk first, tag fills the hole — the same ordering every other consumer uses.
-//
-// This is the cheaper half of the migration worth noting: several remaining
-// holes are not missing carriers but consumers that never learned to read a
-// carrier already in place.
+// There is no named local to take the element type from, so it comes from the
+// checker's type on the index node (`ExprIndex.ty`, #6165), a canonical
+// "(f64, i32)" spelling. Lost, the element lowers as a 4-byte i32 and an f64
+// element fails the wasm validator ("type mismatch: expected f64, found i32").
 var annotateTupleIndexCases = []struct {
 	name string
 	src  string
@@ -48,9 +37,9 @@ function main(): i32 { return mk()[1].0 + mk()[1].1; }`}, // 42
 }`}, // 33
 }
 
-// TestSelfHostAnnotateTupleIndexIR_X86_64 pins the ExprIndex.ty carrier feeding
-// expr_tuple_elem_tag through the self-host x86-64 IR path. asm_load_run.fern is
-// the driver because it runs checker.annotate_module; a driver that skips
+// TestSelfHostAnnotateTupleIndexIR_X86_64 pins tuple-index reads typed through
+// the ExprIndex.ty carrier on the self-host x86-64 IR path. asm_load_run.fern
+// is the driver because it runs checker.annotate_module; a driver that skips
 // annotation leaves every ty empty and cannot regress.
 func TestSelfHostAnnotateTupleIndexIR_X86_64(t *testing.T) {
 	dir, mmc, stdlibRoot, gcc, runner, interpBin := annotateF64ProjDir(t)

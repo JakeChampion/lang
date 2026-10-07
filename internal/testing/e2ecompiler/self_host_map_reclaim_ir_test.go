@@ -4,19 +4,15 @@ import "testing"
 
 // mapReclaimIRCases exercise the Perceus map-local reclaim helper
 // (__fern_map_free / $__fern_map_release). Each `main` builds one or more FRESH,
-// borrow-only (method-call receivers are borrows), non-escaping map locals that
-// slot_is_reclaimable_map admits — so emit_map_buffers_free fires and frees the
-// keys/values buffers + the mapbox at scope exit. The cases that build a SECOND
-// map after the first goes dead stress the freelist: a double-free or corrupted
-// mapbox from the reclaim would poison the recycled block and skew the result.
+// borrow-only (method-call receivers are borrows), non-escaping map locals, whose
+// keys/values buffers and mapbox are freed at scope exit. The cases that build a
+// SECOND map after the first goes dead stress the freelist: a double-free or
+// corrupted mapbox from the reclaim would poison the recycled block and skew the
+// result.
 //
-// This is the regression gate for the wasm defect: before the __fern_map_free
-// helper, emit_map_buffers_free emitted `op_raw_load_ptr`, which the wasm backend
-// did not select, leaving the operand stack imbalanced so wasmtime rejected the
-// module ("values remaining on stack at end of block"). The helper routes wasm to
-// $__fern_map_release instead, so a reclaimable map local now compiles+runs on
-// every backend — and the emit no longer has a comment fallback to slip through
-// (#6917 / #6946), so a regression fails the compile rather than the run.
+// On wasm the release must route to $__fern_map_release; an op the wasm backend
+// does not select leaves the operand stack imbalanced and wasmtime rejects the
+// module ("values remaining on stack at end of block") (#6917 / #6946).
 var mapReclaimIRCases = []struct {
 	name string
 	main string

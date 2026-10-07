@@ -12,13 +12,8 @@ import (
 // must not rebuild a for-loop body or a match arm in the ENCLOSING scope: the
 // loop variable / variant payload is unbound there, so any call whose type
 // depends on one (a method on the binding, above all) resolved to TypeUnknown —
-// tag "", the structural fallback. annotate_for_scope / annotate_arm_scope now
-// bind them as check_stmt does, so those calls carry the checker's type.
-//
-// Verified decisive, not merely present: with the consumer arm in irlower's
-// expr_is_f64 sabotaged to never match c.ty, the f64 cases below emit DIFFERENT
-// asm — but only with these bindings in place; before them the same sabotage was
-// inert, because nothing inside the nested body was annotated at all.
+// tag "", the structural fallback. for_body_scope / annotate_arm_scope bind
+// them as check_stmt does, so those calls carry the checker's type.
 //
 // Each case puts the typed call INSIDE the nested body, over the binding, and
 // picks a result type whose misclassification is observable: f64 arithmetic, an

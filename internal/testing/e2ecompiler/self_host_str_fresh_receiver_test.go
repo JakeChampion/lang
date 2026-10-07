@@ -12,19 +12,12 @@ import (
 // strFreshReceiverCases pin the release of a fresh ANONYMOUS RECEIVER at a string
 // builtin method, and the two methods that must not get it.
 //
-// lower_str_method lowered its receiver and never released it, so
-// `w(pre).to_ascii_upper()` stranded the temp at 46 B/round. `.len()` was always
-// flat because it has its own release path, which made this look like a property
-// of the method rather than a missing site. The fix reuses the ARGUMENT side's
-// park/drain pair (stash_fresh_str_arg / free_stashed_str_args) — same shape, same
-// net-zero load/free/drop under the live result.
-//
-// The warrant is str_borrowing_method: those methods read the receiver's bytes or
-// allocate a new buffer and hand back neither the receiver's box nor a view of it.
-// `trim` and `replace` are outside it because both can return the receiver, and
-// `chars` / `lines` / `split` were never in it because their results carry views
-// into the receiver's bytes. All of them still lower here and all of them keep the
-// leak rather than risk the alias.
+// `w(pre).to_ascii_upper()` must release the temp receiver once the method has
+// read it (46 B/round stranded otherwise). Only methods that read the
+// receiver's bytes or allocate a new buffer — handing back neither the
+// receiver's box nor a view of it — qualify. `trim` and `replace` can return the
+// receiver, and `chars` / `lines` / `split` return views into its bytes, so
+// those keep the receiver alive.
 //
 // The flat cases return 98 when the receiver is stranded: 400 rounds of a 170-byte
 // producer is 68 KB against a 32 KB ceiling. The refusal cases are value-exact
@@ -56,7 +49,7 @@ function main(): i32 {
 }`, 0},
 	// NEGATIVE: `.trim()` returns a zero-copy VIEW over the receiver's buffer, so
 	// releasing the receiver leaves the result pointing at freed bytes. This is the
-	// case that makes str_borrowing_method essential here rather than merely
+	// case that makes the borrowing-method rule essential rather than merely
 	// conservative: it exits 97 under a compiler that releases the receiver anyway.
 	{"str-fresh-receiver-trim-view-refused", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function round(pre: string): i32 {
@@ -86,8 +79,8 @@ function round(pre: string): i32 {
 }
 function main(): i32 { let pre: string = "abcdefgh"; let i: i32 = 0; while (i < 2000) { let r: i32 = round(pre); if (r != 106) { return 97; } i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return 0; }`, 0},
 	// A named local is not an anonymous temp, so it keeps its own scope-exit reclaim
-	// and the call site must not release it. Control: is_fresh_str_temp refuses it
-	// either way, and both the receiver and the copy stay readable afterwards.
+	// and the call site must not release it. Control: both the receiver and the
+	// copy stay readable afterwards.
 	{"str-named-local-receiver-untouched", strProbeHelpers + `function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-and-well-past-the-box-so-the-source-dominates-0123456789"; }
 function round(pre: string): i32 {
     let b: string = w(pre);

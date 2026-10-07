@@ -8,35 +8,21 @@ import (
 	"testing"
 )
 
-// A compiler BUILT THROUGH THE IR PATH must agree with the native-built one
-// about IR eligibility (#5649).
+// TestSelfHostConstFuncGen2 pins that a compiler BUILT BY the self-host compiler
+// agrees with the one that built it on a module that passes a bare named
+// function as a value (#5649). The value lifts to a `main$wrap0` wrapper whose
+// FuncDecl box must stay alive once it is handed to the module's function list
+// (#5674); a premature free in the compiler's own code shows up only in the
+// generation that code produced.
 //
-// It did not. Any module that passed a bare named function as a value was
-// wrongly declined by the IR-built generation, while
-// the native-built generation emitted it through IR. The bail is
-// emit_module_ir_gated's const_func arm: module_has_func could not find the
-// lifted `main$wrap0` wrapper, because the wrapper's FuncDecl box had already
-// been freed and its block recycled (#5674) — try_fn_field_value hands hr.func
-// to funcs.append without a retain, and its scope-exit sweep then deep-dropped
-// hr's fields. That is what made the #3425 flip diverge.
-//
-// The deep drop is withheld now that a bare non-scalar field read in a move
-// position marks the local "NODEEP:" (#6127). HoistResult still routes field
-// reclaim, so it is that marker alone that keeps the wrapper alive, and this
-// test is the only thing holding the rule in place.
-//
-// The failure is self-referential — the IR path miscompiles the code that
-// decides IR eligibility — so it is invisible to every single-generation test.
-// Pinning it needs two generations, which is what this test builds.
+// The failure is self-referential — the compiler miscompiles its own code — so
+// it is invisible to every single-generation test. Pinning it needs two
+// generations, which is what this test builds.
 //
 // It is env-gated because it is expensive in a way the ordinary suite is not: it
 // builds a full mmc1/mmc2 pair (~4 min, a ~220 MB stage-1 binary and a heavy
 // emit). The gate keeps a plain `go test ./...` fast; CI runs it in the `gen2`
-// job of test-e2e-selfhost.yml, which sets the variable. That lane exists
-// because this is the ONLY guard for the hazard, and it was gated behind a
-// variable nothing set — unguarded in CI at exactly the moment the 512-function
-// budget was removed and generation 2 became IR-BUILT by default (#3457).
-// Locally:
+// job of test-e2e-selfhost.yml, which sets the variable. Locally:
 //
 //	RUN_CONST_FUNC_GEN2=1 go test ./internal/testing/e2ecompiler/ -run TestSelfHostConstFuncGen2 -timeout 30m
 func TestSelfHostConstFuncGen2(t *testing.T) {
@@ -78,10 +64,9 @@ func TestSelfHostConstFuncGen2(t *testing.T) {
 	}
 	mmc2 := buildBin(t, gcc, dir, "cfg_mmc2", string(stage2Asm))
 
-	// The `.Lssa_` label count is the emitter discriminator: the IR emitter emits
-	// them, the AST emitter emits none. Equal counts mean the two generations
-	// agree on routing; the control's row is what proves the fn-value is the
-	// trigger rather than the harness.
+	// The `.Lssa_` label count fingerprints what each generation emitted for the
+	// program. Equal counts mean the two generations agree; the control's row is
+	// what proves the fn-value is the trigger rather than the harness.
 	for _, tc := range []struct {
 		name string
 		src  string

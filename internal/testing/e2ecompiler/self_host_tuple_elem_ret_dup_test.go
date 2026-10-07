@@ -5,19 +5,16 @@ import (
 	"testing"
 )
 
-// Dup-at-extract for tuple element returns (the tuple wave's retain-side
-// port): `return src.<i>` of an rc-array element is RETAINED by the return
-// lowering (ret-tuple-elem) and forgiven by the rc-tuple escape scans under
-// the same predicate (tuple_elem_ret_dup) — one gate, two entry points. The
-// grant half (TUPB / TUPELEMOK / TUPRCS admitting the retained return) and
-// the retain half land together: each alone is measurably wrong in opposite
-// directions (docs/rc-log/2026-08-28-elemret-scoping-pin.md — the coupled
+// Dup-at-extract for tuple element returns: `return src.<i>` of an rc-array
+// element is RETAINED on return, so the tuple it came from can still be
+// released in full by its owner. The retain and the owner's release must go
+// together: either alone is wrong, in opposite directions
+// (docs/rc-log/2026-08-28-elemret-scoping-pin.md — the coupled
 // tuple_mixed__elemret__* matrix rows are the standing instrument).
 //
-// Exits confirmed on BOTH oracles (bin/fern -interp and native x86-64);
-// every early arm dynamically live; census + FERN_SANITIZE legs per case,
-// and a FERN_SELFHOST_RC_PLAN=0 leg on the flipped shapes (nothing here is
-// plan-routed, so plan-off must change nothing).
+// Exits confirmed against `bin/fern -interp`; every early arm dynamically
+// live; census + FERN_SANITIZE legs per case, and a FERN_SELFHOST_RC_PLAN=0
+// leg that must change nothing.
 
 func tupleElemRetDupCases() []tupleAliasParamCase {
 	return []tupleAliasParamCase{
@@ -63,7 +60,7 @@ function main(): i32 {
 			want: 21,
 		},
 		{
-			// A CONDITIONAL element return (the ret_ok recursion) with a live
+			// A CONDITIONAL element return (one nested in an `if`) with a live
 			// arm: the fresh-literal arm moves out, the element arm retains —
 			// both paths admitted, both counted.
 			name: "nested_elem_return_balances",
@@ -86,11 +83,9 @@ function main(): i32 {
 			want: 2,
 		},
 		{
-			// Adversarial: the element passed ONWARD (`sink(src.1)`) is a
-			// composite return value, not the dup shape — rctuple_esc_expr
-			// still reads it as an escape... but sink borrows, so TUPB's
-			// verdict comes from the call-arg tier, not this port. What this row
-			// pins is the EXIT and free-safety either way.
+			// Adversarial: the element passed ONWARD (`sink(src.1)`) inside a
+			// composite return value, not the dup shape; sink borrows it. What
+			// this row pins is the EXIT and free-safety.
 			name: "elem_onward_stays_sound",
 			src: `function sink(xs: i32[]): i32 { return xs.len(); }
 function get(src: (i32, i32[])): i32 { return sink(src.1); }

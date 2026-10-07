@@ -8,18 +8,14 @@ import (
 
 // TestSelfHostPollIRArm64 is the arm64 half of slice 2 of putting async on the
 // self-hosted compiler's IR path (docs/ASYNC-SELFHOST-IR.md): the `poll`
-// readiness builtin now lowers to the dedicated IR op (`op_poll`) on the
-// self-host ARM64 IR backend too, emitting `bl __fn___fern_poll` — the ppoll(2)
+// readiness builtin lowers to the dedicated IR op (`op_poll`) on the self-host
+// ARM64 IR backend too, emitting `bl __fn___fern_poll` — the ppoll(2)
 // (syscall #73; arm64 has no bare `poll`) mirror of the x86-64 helper, reading
 // the SELF-HOST array layout (nfds at [ptr+0], element i at [ptr+(i+1)*8]).
-// Because it's a real op — not a `call_direct` to an unknown `poll` symbol — a
-// `poll`-using module is IR-ELIGIBLE on arm64 rather than falling back to the
-// AST emitter (which can't emit `poll`).
 //
-// The helper is compiled Fern now (#2649), so the ppoll NUMBER no longer reaches
-// `mov x8, #73`: __syscall5 loads it as an ordinary operand and pops it into x8.
-// The check is for the constant plus the five-argument pop sequence instead —
-// asserting `mov x8, #73` would only ever pass for a hand-written body.
+// The helper is compiled Fern (#2649), so the ppoll NUMBER does not reach
+// `mov x8, #73`: __syscall5 loads it as an ordinary operand and pops it into
+// x8. The check is for the constant plus the five-argument pop sequence.
 //
 // The case polls an EMPTY fd set, which returns -1 without a syscall —
 // deterministic — pinning that the helper is dispatched and runs to the interp

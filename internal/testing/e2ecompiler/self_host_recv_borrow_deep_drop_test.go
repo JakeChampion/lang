@@ -4,21 +4,12 @@ import "testing"
 
 // The receiver-borrow deep drop (#6544).
 //
-// `moves_fields_expr` marks EVERY method receiver as a field-move hazard, so
-// `b.score()` costs `b` its "NODEEP:" credit and the exit sweep degrades to a
-// box-only dec — the struct's own string / array fields are stranded for the
-// rest of the scope. A method body genuinely can carry a receiver field into
-// its result uncounted (`ops: self.ops.append(op)`, the builder shape), which
-// is why the mark exists; most methods cannot, and each one that cannot was
-// paying 22 bytes a round on a one-string struct.
-//
-// recv_borrow_fns_of answers the question on the CALLEE side, proving the
-// receiver behaves exactly like a deep-drop-worthy local with the same three
-// predicates reclaimable_names_of runs over one: body_unsafe_for (the box does
-// not escape), moves_fields_stmts (no receiver-position hazard inside — so a
-// method calling through its own receiver is refused, which is what keeps the
-// registry non-circular), and optstruct_body_moves_field (no field reaches a
-// bind / assign / return value, a non-borrowable argument, or a container).
+// A method call `b.score()` whose callee cannot carry a receiver field out
+// keeps `b`'s deep drop, so the struct's own string / array fields are released
+// with it; taken as a field move, they were stranded for the rest of the scope —
+// 22 bytes a round on a one-string struct. A method body genuinely can carry a
+// receiver field into its result uncounted (`ops: self.ops.append(op)`, the
+// builder shape), and such a call keeps the receiver's fields alive.
 //
 // Both directions are pinned here. The flat cases prove the fields ARE freed;
 // the refusal cases prove a method that really does move something out keeps
@@ -49,9 +40,8 @@ function main(): i32 {
     return 0;
 }`, 0},
 	// REFUSED — a field MOVE. `label()` returns `b.tag`, handing the field to a
-	// local that outlives the receiver, so optstruct_body_moves_field rejects
-	// the method and `b` keeps its fields. The moved-out string is re-read at
-	// the end.
+	// local that outlives the receiver, so `b` keeps its fields. The moved-out
+	// string is re-read at the end.
 	{"recvborrow-field-move-safe", `struct Box { tag: string, n: i32 }
 function (b: Box) label(): string { return b.tag; }
 function main(): i32 {
@@ -66,10 +56,9 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`, 0},
-	// REFUSED — the method calls through its OWN receiver (`b.inner()`), which
-	// moves_fields_stmts marks. Admitting it would rest this entry on another,
-	// so the registry declines rather than iterating a fixpoint. `via()` is a
-	// pure read, so the refusal costs only the leak; the values stay correct.
+	// The method calls through its OWN receiver (`b.inner()`). `via()` is a
+	// pure read, so the values must stay correct whether or not `b` keeps its
+	// deep drop.
 	{"recvborrow-self-method-safe", `struct Box { tag: string, n: i32 }
 function (b: Box) inner(): i32 { return b.n; }
 function (b: Box) via(): i32 { return b.inner() + 1; }
@@ -218,10 +207,8 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`},
-	// A BORROWABLE param is not a move position, so `take(b.me())` keeps the
-	// credit too — the same registry and reading fieldmove_expr already applies
-	// to a field chain. Marking every argument cost this shape 72 B/round in an
-	// intermediate of this slice, worse than the 22 it started at.
+	// A BORROWABLE param is not a move position, so `take(b.me())` keeps `b`'s
+	// deep drop too, as a field chain does.
 	{"recvident-borrowable-arg-flat", `import "std/i32";
 struct Box { tag: string, n: i32 }
 function (b: Box) me(): Box { return b; }
@@ -331,8 +318,8 @@ function main(): i32 {
     if (acc < 0) { return 97; }
     return 0;
 }`},
-	// A strict-fresh FREE producer under the same chain: counted_call_key reads
-	// a bare callee name too, so the receiver release is keyed the same way.
+	// A fresh value from a FREE producer under the same chain: the receiver is
+	// released the same way.
 	{"recvident-chain-recv-freecall", `import "std/i32";
 struct Box { tag: string, n: i32 }
 function mk(i: i32): Box { return Box { tag: "start-tag-value-" + (i % 8).to_string(), n: i % 8 }; }

@@ -8,16 +8,13 @@ import (
 // value — returned as an enum payload) that captures a POINTER-shaped value:
 // a string, a struct, an array, or a mix of i32 + string.
 //
-// Before this slice, make_clo_func declined any capture whose type was not i32
-// (`cap_type(..) != "i32"`) and hardcoded each capture-read var as i32, so such
-// a closure bailed the module. In the self-host's
-// `-no-pie -static` binary every heap / code address fits in 32 bits, so a
-// pointer-shaped capture occupies the SAME 32-bit env-box slot as an i32 (exactly
-// like a `string[]` element, which also uses the 32-bit arr_get path). The fix:
-// cap_slot_ok admits any capture except an 8-byte scalar (i64 / u64 / f64), and
-// the capture-read var is declared with its REAL type so a captured string's
-// `.len()` (etc.) dispatches correctly. The env box stays an i32[]; only the
-// downstream slot type changes.
+// In the self-host's `-no-pie -static` binary every heap / code address fits in
+// 32 bits, so a pointer-shaped capture occupies the SAME 32-bit env-box slot as
+// an i32 (exactly like a `string[]` element, which also uses the 32-bit arr_get
+// path). make_clo_func admits any capture cap_slot_ok accepts — everything but
+// an 8-byte scalar (i64 / u64 / f64) — and declares the capture-read var with
+// its REAL type so a captured string's `.len()` (etc.) dispatches correctly.
+// The env box stays an i32[].
 var closurePtrCaptureIRCases = []struct {
 	name string
 	src  string

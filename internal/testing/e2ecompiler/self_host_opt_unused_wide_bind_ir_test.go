@@ -3,15 +3,10 @@ package e2ecompiler
 import "testing"
 
 // optUnusedWideBindIRCases pin an Option/Result match-EXPRESSION whose arm binds an
-// i64/f64 payload to a name the arm body never references (`Some(x) => 1`) to the
-// self-host IR path on x86-64 + wasm. The StmtMatch binder already produces the
-// correct width-typed payload slot, and an i32 (or wildcard `Some(_)`) binding
-// already lowered; only the eligibility gate `iife_payload_field_bindable` rejected
-// an i64/f64 payload bound to an unread name (its result temp was conservatively
-// assumed to need the payload width), bailing the whole module to the legacy AST
-// emitter. #2691 admits a DEAD wide binding (the arm never mentions the name, so the
-// payload width is irrelevant to the result temp). Each case is oracle-checked
-// against the interpreter and returns <= 126. Mirrors self_host_iife_i64_annot_ir_test.go.
+// i64/f64 payload to a name the arm body never references (`Some(x) => 1`) on the
+// self-host IR path on x86-64 + wasm (#2691): the payload width of a DEAD binding
+// is irrelevant to the match's result. Each case is oracle-checked against the
+// interpreter and returns <= 126. Mirrors self_host_iife_i64_annot_ir_test.go.
 var optUnusedWideBindIRCases = []struct {
 	name string
 	main string

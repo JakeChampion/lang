@@ -8,18 +8,8 @@ import (
 )
 
 // TestSelfHostStructArrElemDropIRX86_64 covers the Perceus ARRAY-ELEMENT deep-drop
-// (#2649): a struct-ARRAY field `S { elems: Inner[] }` whose element struct is
-// deep-drop-ok now recursively reclaims each ELEMENT's own rc fields, closing the
-// "one-level array-element gap" where the k_box walk shallow-freed each element box
-// and leaked its arrays.
-//
-// The reclaim is a per-element-type helper `__struct_arr_elems_drop_<Inner>(buffer)`
-// emitted alongside `__struct_drop_<S>`: it is_unique-gates the buffer AND each
-// element box, then calls `__struct_drop_<Inner>` per uniquely-owned element to free
-// the element's own arrays — BEFORE the existing element/buffer arr_dec frees the
-// boxes. The helper uses callee-saved rbx/r12 for buffer/index so they survive the
-// nested __struct_drop_<Inner> call; the k_box caller reloads its box from 8(%rsp)
-// afterwards.
+// (#2649): a struct-ARRAY field `S { elems: Inner[] }` releases each element's own
+// rc fields, not just each element box, when its last owner drops it.
 //
 // Runtime signal is heap exhaustion: a long churn that leaks each element's `items`
 // buffer exhausts the bump heap and is SIGKILLed (137); with the element deep-drop
@@ -56,11 +46,10 @@ func TestSelfHostStructArrElemDropIRX86_64(t *testing.T) {
 	}
 
 	// ARRAY-ELEMENT DEEP-DROP + CHURN: `s.elems` is a 2-element `Inner[]`, each Inner a
-	// fresh sole-owned literal (rc 1) holding an `items` buffer. The per-element helper
-	// reclaims both `items` buffers each iteration. Asserts the helper call is emitted,
-	// and 50M alloc->drop cycles stay bounded (exit 0); under the shallow k_box walk each
-	// element's `items` leaked every call -> heap exhausted -> SIGKILL (137). items goes
-	// through id so it is built on the heap rather than placed as a constant.
+	// fresh sole-owned literal (rc 1) holding an `items` buffer. Both `items` buffers
+	// are released each iteration, so 50M alloc->drop cycles stay bounded (exit 0); a
+	// leaked element buffer exhausts the heap -> SIGKILL (137). items goes through id
+	// so it is built on the heap rather than placed as a constant.
 	run(t, `struct Inner { items: i32[] }
 @noinline function id(xs: i32[]): i32[] { return xs; }
 struct S { elems: Inner[], tag: i32 }
@@ -93,9 +82,8 @@ function main(): i32 {
 }`, "struct_arr_elem_drop_value", 139)
 
 	// MULTI-LEVEL x ARRAY-ELEMENT: the element struct is itself a nested chain
-	// (`Inner { mid: Mid }`, `Mid { items: i32[] }`), so the element helper calls
-	// __struct_drop_Inner which recurses into __struct_drop_Mid — array-element deep-drop
-	// composed with the acyclic multi-level gate. 40M cycles stay bounded (exit 0).
+	// (`Inner { mid: Mid }`, `Mid { items: i32[] }`), so each element's release
+	// recurses through Mid down to items. 40M cycles stay bounded (exit 0).
 	// items goes through id so the chain is built on the heap rather than placed as a
 	// constant.
 	run(t, `struct Mid { items: i32[] }

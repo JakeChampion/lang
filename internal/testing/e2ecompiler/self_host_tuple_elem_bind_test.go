@@ -9,37 +9,23 @@ import (
 	"testing"
 )
 
-// --- Binding an rc-tuple ELEMENT to a local kept its credit (#7766) ----------
+// --- Binding an rc-tuple ELEMENT to a local keeps the tuple's release (#7766) --
 //
-// `let e: T = t.1` refused `"TUPRC:"` AND `"TUPRCS:"` together, so the local got
-// no release at all and the tuple box and its element buffer both leaked:
-//
-//	rounds   native        self-host (before)
-//	100      200/200/0     200/0  live 8000
-//	400      800/800/0     800/0  live 32000
-//
-// 80 B/round, unbounded, `frees=0` — and `FERN_SANITIZE=1` said so directly:
-// `fern-sanitizer: leak 8000 bytes in 200 blocks`.
-//
-// The refusal exists for a real case, which is why it is narrowed rather than
-// removed. `rctuple_esc_expr`'s own header gives it: `return t.1` hands the
-// element's reference to a NEW owner, so the whole-tuple deep free would release
-// it under the caller — witnessed as exit 99 on that shape. That reasoning does
-// not reach a bind the frame KEEPS: at the exit sweep `e` is dead, so the deep
-// free is releasing memory nothing reads again, and refusing costs the tuple its
-// BOX as well as its element.
+// `let e: T = t.1` where the frame KEEPS `e`: at the exit sweep `e` is dead, so
+// the tuple box and its element buffer are both released rather than leaked
+// (80 B/round, unbounded). An element that is returned, stored, or rebound
+// hands its reference to a NEW owner instead, and the deep free must not
+// release it under that owner — `return t.1` exits 99 when it does.
 //
 // The `refuses_*` rows bind an element that is returned, stored, or rebound;
-// each must exit its oracle answer and stay sanitizer-clean. On the typed
-// lowering every row balances.
+// each must exit its oracle answer and stay sanitizer-clean. Every row
+// balances.
 //
 // Every row is gated on `__rc_underflow_count()` and runs a second leg under
-// FERN_SANITIZE=1. This change WIDENS a deep free, which is the shape that
-// double-frees, and the census cannot see an over-release into a freelist —
-// `docs/rc-log/` has recorded that four times in this family now.
+// FERN_SANITIZE=1: a deep free is the shape that double-frees, and the census
+// cannot see an over-release into a freelist.
 //
-// Every want was confirmed against BOTH oracles: `bin/fern -interp` and the
-// native x86-64 backend agreed on each.
+// Every want was confirmed against `bin/fern -interp`.
 type tupleElemBindCase struct {
 	name string
 	src  string
@@ -170,13 +156,9 @@ function round(i: i32): i32 {
 		},
 		{
 			// The ALIAS side (#7466): the same element bind reached through a
-			// plain alias of the tuple. `alias_bind_sites_of` vets the alias with
-			// the coarse `body_unsafe_for`, which reads `v.1` as a borrow, so the
-			// credit stays with `t` and the bind balances — the element's own
-			// accounting is independent of the box pair. Pinned as CLEAN because
-			// the element-aware gate the string[] side grew (#7391) would deny
-			// this credit outright: porting it as specified trades a balanced
-			// shape for a leaking one, which is why it was not done.
+			// plain alias of the tuple. `v.1` is a borrow, so the release stays
+			// with `t` and the bind balances — the element's own accounting is
+			// independent of the box pair. Pinned as CLEAN.
 			name: "elem_bound_through_alias",
 			src: `function round(i: i32): i32 {
     let t: (i32, i32[]) = (i, [i, i + 1]);

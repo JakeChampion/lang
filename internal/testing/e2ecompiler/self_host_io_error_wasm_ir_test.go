@@ -8,22 +8,20 @@ import (
 	"testing"
 )
 
-// TestSelfHostIoErrorIRWasm is the wasm leg of #4624 item 2: the wasm fs runtime
-// helpers used to box their Err/Some payload as the raw WASI error CODE, so a
-// program that matched the IoError value (not just Ok/Err) read an integer as an
-// enum box and dispatched wrong / dereferenced garbage. Every preview-1 fs
-// helper's error path now routes the errno through $__fern_build_io_error (the
-// wasm sibling of native wasmbin's __build_io_error and the register backends'
-// __fern_io_error): a WASI errno maps to a real IoError variant box
-// ([variant_id@0][path@8]) carrying the offending path, so the match binds a
+// TestSelfHostIoErrorIRWasm is the wasm leg of #4624 item 2: a program that
+// matches the IoError value (not just Ok/Err) must find a real variant box, not
+// the raw WASI error CODE. Every preview-1 fs helper's error path routes the
+// errno through $__fern_build_io_error (the wasm sibling of the register
+// backends' __fern_io_error): a WASI errno maps to a real IoError variant box
+// ([type_id@0][path@8]) carrying the offending path, so the match binds a
 // well-formed variant + path string.
 //
 // Paths are RELATIVE and resolve against the preopen (the temp dir, mapped to
 // guest / with CWD = temp dir): WASI is capability-sandboxed, so an absolute
-// path is rejected with ENOTCAPABLE rather than the ENOENT the register/native
+// path is rejected with ENOTCAPABLE rather than the ENOENT the register
 // backends see — the shared absolute-path ioErrorCases can't run verbatim here.
 // A genuinely-missing relative path gives ENOENT(44) -> NotFound, matching the
-// native interpreter's semantics for the same operation.
+// interpreter's semantics for the same operation.
 func TestSelfHostIoErrorIRWasm(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host io-error wasm IR e2e")

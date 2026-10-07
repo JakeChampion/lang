@@ -10,44 +10,30 @@ import (
 
 // --- The bare-ident tuple element's retain, string half (#7226) --------------
 //
-// The array half landed with the string one left open, and the string one was
-// the larger leak: 32 B/round unbounded, where the array's was 40 bounded.
+// A string local placed in a tuple as a bare ident, `(i, s)`, is retained by the
+// tuple construction, so the tuple's element release and the local's own sweep
+// each owe one release. Missing either strands a box per round, unbounded:
 //
 //	(i32, string) from a bare ident   allocs=600 frees=200   live 6400 at 200 rounds
 //	                                                              12800 at 400
 //
-// against 0 on native and interp. Exactly 2.0x per doubling — unbounded, not a
-// constant. Measure it with `w("ab")` and never `"ab" + "c"`: the latter
-// constant-folds to an immortal literal (rc = -1) and the probe measures nothing,
-// which is why the issue's original table called this row clean.
+// Exactly 2.0x per doubling. Measure it with `w("ab")` and never `"ab" + "c"`:
+// the latter constant-folds to an immortal literal (rc = -1) and the probe
+// measures nothing.
 //
-// It was a CREDIT-side gap, not a missing release. lower_expr's ExprTuple arm
-// already retained the element (slot_is_rc_container includes a string slot), but
-// the string local at that element was escape-flagged by expr_unsafe_for, so it
-// never earned "STR:" and its own box was never swept: inc 1, dec 0. Adding the
-// element release ALONE would have balanced the tuple and still stranded the
-// local, so both halves are needed and neither is useful without the other:
+// The element release is __fern_str_free. __fern_rc_dec is the WRONG helper
+// here and would be heap corruption rather than a leak. A string box is
+// {rc@base, data@base+8, len@base+16} with the value at base+8, so rc sits at
+// value-8 for both layouts — which is why one __fern_rc_inc retains either —
+// but rc_dec frees at value-16, eight bytes below the block.
 //
-//   - the credit, via the interlock body_unsafe_for_clo already ran for closure
-//     captures and union payloads — a bare-ident element of a tuple credited
-//     "TUPELEMOK:" is no longer an escape ("TUPE:" + tuple_bare_ident_sole_use);
-//   - the release, recorded as kind `s` and emitted as __fern_str_free.
+// Every want below was confirmed against `bin/fern -interp`, never read off the
+// self-host run under test.
 //
-// __fern_rc_dec is the WRONG helper here and would be heap corruption rather
-// than a leak. A string box is {rc@base, data@base+8, len@base+16} with the value
-// at base+8, so rc sits at value-8 for both layouts — which is why one
-// __fern_rc_inc retains either — but rc_dec frees at value-16, eight bytes below
-// the block.
-//
-// Every want below was confirmed against BOTH oracles — bin/fern -interp and the
-// native x86-64 backend agreed on each — never read off the self-host run under
-// test.
-//
-// The x86-64 leg is the one that carries the leak signal: six of its seven cases
-// fail with the change reverted and the compiler rebuilt. The wasm and arm64 legs
-// assert exit codes, which a leak does not move, so they pass either way — they
-// are there to catch a release that frees a LIVE box on those backends, which
-// does change the answer.
+// The x86-64 leg is the one that carries the leak signal. The wasm and arm64
+// legs assert exit codes, which a leak does not move — they are there to catch
+// a release that frees a LIVE box on those backends, which does change the
+// answer.
 
 const tupStrElemW = "function w(a: string): string { return a + \"!\"; }\n"
 
@@ -111,15 +97,12 @@ func tupStrElemCases() []tupStrElemCase {
 			want: 74,
 		},
 		{
-			// A LITERAL-init string local (the "LITSTR:" class rather than the fresh
-			// producers). It reaches the same interlock, since that is inside
-			// body_unsafe_for_clo rather than at one caller.
+			// A LITERAL-init string local rather than a fresh producer's result.
 			//
-			// The one case here that was ALREADY balanced before the change, so it
-			// pins nothing about the leak. It earns its place in the other
-			// direction: this class now records kind `s` too, so a __fern_str_free
-			// that mishandled the box behind a literal init would show up here as a
-			// double free rather than as a leak.
+			// This one balances even without the element release, so it pins
+			// nothing about the leak. It earns its place in the other direction:
+			// a __fern_str_free that mishandled the box behind a literal init
+			// would show up here as a double free rather than as a leak.
 			name: "litstr_elem",
 			src: tupStrElemW + `function round(i: i32): i32 {
     let s: string = "abcd";
@@ -231,11 +214,10 @@ func TestSelfHostTupleStrElemHazardsX86_64(t *testing.T) {
 		want int
 	}{
 		{
-			// The element is EXTRACTED to a new local. rctuple_payload_escapes
-			// refuses a bare pointer extraction, and "string" is not a scalar type
-			// name, so the tuple never earns "TUPELEMOK:" — which also denies the
-			// interlock, since it is keyed on that credit. Both halves are denied
-			// together, which is what keeps them consistent.
+			// The element is EXTRACTED to a new local: a bare pointer
+			// extraction, not a scalar read, so neither the tuple's element
+			// release nor the local's sweep may be granted on its own — both are
+			// denied together, which is what keeps them consistent.
 			name: "str_elem_extracted_local",
 			src: tupStrElemW + `function round(i: i32): i32 {
     let s: string = w("ab");
@@ -259,8 +241,8 @@ function round(i: i32): i32 { let g: string = grab(i); return g.len() + i; }` + 
 		},
 		{
 			// The name appears at a bare-ident element AND somewhere else in the
-			// same tuple. tuple_bare_ident_sole_use refuses it, so the second use
-			// — which the interlock cannot see the shape of — is never hidden.
+			// same tuple. This must stay refused, so the second use is never
+			// hidden.
 			name: "ident_used_twice_in_tuple",
 			src: tupStrElemW + `function round(i: i32): i32 {
     let s: string = w("ab");

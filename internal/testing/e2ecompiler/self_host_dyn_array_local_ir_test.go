@@ -5,12 +5,9 @@ import "testing"
 // dynArrayLocalIRCases exercise method dispatch on the elements of a `dyn Trait[]`
 // LOCAL through the self-host IR path on x86-64 + wasm.
 //
-// A `dyn Trait[]` PARAM already recorded the coarse `"dyn Trait"` element type on
-// its slot (so `for x in param` / `param[i].m()` dispatched dynamically), but the
-// local-`let` path marked the slot `is_arr` with NO element type — so every method
-// call on an element of a dyn-array LOCAL (`xs[i].m()`, `let e = xs[i]; e.m()`,
-// `for x in xs { x.m() }`) bailed to the AST path. The fix records the same coarse
-// element type on the local slot, mirroring the param path.
+// A method call on an element of a dyn-array LOCAL (`xs[i].m()`,
+// `let e = xs[i]; e.m()`, `for x in xs { x.m() }`) dispatches dynamically, the
+// same as one on an element of a `dyn Trait[]` PARAM.
 //
 // Each case is oracle-checked against the interpreter and returns a
 // non-negative value <= 126 (cf. #2908).

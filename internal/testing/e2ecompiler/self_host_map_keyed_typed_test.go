@@ -18,10 +18,8 @@ import (
 //
 // The assert is ABSOLUTE and on every backend: the heap bump across 1000
 // build-and-drop rounds is flat, `__rc_underflow_count()` reads zero, and the
-// module is produced WHOLE by the typed path — a body the typed path refused
-// would fall to the AST lowering and the flat heap would say nothing about
-// this path. Each program is also checked to answer what the interpreter
-// answers.
+// module is produced WHOLE by the typed path. Each program is also checked to
+// answer what the interpreter answers.
 var mapKeyedTypedPrograms = []mapChurnProgram{
 	// A struct key carrying a STRING field, overwritten through a FRESH
 	// value-equal key: the map keeps its existing key and releases the one it

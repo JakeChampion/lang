@@ -7,13 +7,9 @@ import (
 // f32IRCases exercise f32 scalar params / returns / locals through the self-host
 // IR path on x86-64 + wasm. Fern represents f32 as an f64 internally (f32<->f64
 // casts are no-ops and every float op runs at double width), so an f32 value is
-// an 8-byte IEEE double at runtime. The bug these guard against: lower_func and
-// f64_ret_fns_of only recognised the literal type name "f64", so an f32 param /
-// return / local slipped through as a plain i32 slot — its 8-byte float bit
-// pattern was then passed/returned/cast through the 4-byte integer path and
-// miscompiled (e.g. `id32(5.5 as f32)` returned 0 instead of 5). The fix routes
-// "f32"/"float" through the same 8-byte-float slot marking as "f64"
-// (is_f64_scalar_type_name).
+// an 8-byte IEEE double at runtime. An f32 param / return / local typed as a
+// plain i32 slot instead passes its 8-byte float bit pattern through the 4-byte
+// integer path and miscompiles (e.g. `id32(5.5 as f32)` returns 0 instead of 5).
 //
 // These are the std/float f32-method shapes (abs/sqrt/floor/round via
 // `__*_f64(x as f64) as f32`), written as free functions.

@@ -3,26 +3,18 @@ package e2ecompiler
 import "testing"
 
 // tostringFreshRetCases pin a helper whose return is a scalar `.to_string()` —
-// `function util_num(i: i32): string { return i.to_string(); }` — entering the
-// whole-program fresh-ret registry, so `let sv = util_num(i)` reclaims the box
-// the callee moved out.
+// `function util_num(i: i32): string { return i.to_string(); }` — returning a
+// fresh string, so `let sv = util_num(i)` reclaims the box the callee moved
+// out, whether the callee returns the conversion directly or through a local.
 //
-// Isolated by varying only the callee body; the AST lowering leaked on the
-// first two before the fix:
-//
-//	return i.to_string();                32 B/round
-//	let t = i.to_string(); return t;     32
-//	return "x" + i.to_string();           0
-//	return "abc";                         0
-//
-// Only a provably scalar receiver admits: a struct `to_string` may hand back
-// an alias of a live field.
+// Only a provably scalar receiver counts as fresh: a struct `to_string` may
+// hand back an alias of a live field.
 var tostringFreshRetCases = []struct {
 	name string
 	src  string
 	want int
 }{
-	// The gate. 32 before the fix on all three backends; native flat.
+	// The gate: a leaked box is 32 B/round.
 	{"freshret-tostring-direct-bind", `function util_num(i: i32): string {
     return i.to_string();
 }
@@ -69,9 +61,7 @@ function main(): i32 {
     if (w != x) { return 97; }
     return (b2 - b1) / 1000;
 }`, 0},
-	// The callee binds the conversion to a LOCAL first and returns it. That path
-	// runs through str_local_is_fresh_ret -> strloc_declared_fresh, which is why
-	// the params thread has to reach the local-declaration test too.
+	// The callee binds the conversion to a LOCAL first and returns it.
 	{"freshret-tostring-via-local", `function util_num(i: i32): string {
     let t: string = i.to_string();
     return t;
@@ -120,9 +110,8 @@ function main(): i32 {
     return (b2 - b1) / 1000;
 }`, 0},
 	// REFUSAL control. The receiver is a STRUCT with a user `to_string`, whose
-	// return is a live field — an alias, not a handover. tostring_recv_is_scalar_param
-	// answers false on a non-scalar declared type, so the helper stays out of the
-	// registry and the caller must not release. Over-release shows as 99.
+	// return is a live field — an alias, not a handover — so the caller must not
+	// release it. Over-release shows as 99.
 	{"freshret-struct-tostring-refused", `struct Tag { s: string }
 function (t: Tag) to_string(): string {
     return t.s;

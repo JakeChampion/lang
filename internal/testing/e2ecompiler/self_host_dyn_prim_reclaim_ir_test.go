@@ -8,17 +8,12 @@ import (
 	"testing"
 )
 
-// TestSelfHostDynPrimReclaimIRX86_64 pins the #4351 slice-2 surface: a
-// dyn-Trait local holding a PRIMITIVE/STRING literal payload
-// (`let d: dyn T = 41` / `= "lit"`). The payload is heap-boxed into an
-// op_dyn_box cell — now rc-HEADERED via __fern_arr_box(cap=2) instead of a
-// raw headerless __fern_alloc(16), so the exit sweep can free it. The
-// binding is credited "DYN:<name>|<prim>" by reclaimable_names_of (fresh
-// LITERAL init, single-bind, never reassigned, non-escaping) and released
-// by the exit sweep: a "string" tag first frees the sole-owned inner
-// string box at cell@8 (rc==1-gated via __fern_rc_is_unique, which doubles
-// as the null guard), then every prim tag decs the cell. Escaping /
-// reassigned / non-literal dyn locals keep today's sound leak.
+// TestSelfHostDynPrimReclaimIRX86_64 pins reclaim of a dyn-Trait local holding
+// a PRIMITIVE/STRING literal payload (`let d: dyn T = 41` / `= "lit"`, #4351).
+// The payload is heap-boxed into an rc-headered op_dyn_box cell
+// (__fern_arr_box, cap=2), released per call — the inner string box first for a
+// string payload — so a second churn stays flat. Escaping, reassigned and
+// aliased dyn locals are pinned on their values and the underflow detector.
 func TestSelfHostDynPrimReclaimIRX86_64(t *testing.T) {
 	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
@@ -70,9 +65,8 @@ function churn(m: i32): i32 { let acc: i32 = 0; let i: i32 = 0; while (i < m) { 
 function main(): i32 { let w: i32 = churn(3000); let b1: i32 = (__heap_bump_bytes() as i32); let x: i32 = churn(3000); let b2: i32 = (__heap_bump_bytes() as i32); if (__rc_underflow_count() != 0) { return 99; } if (b2 - b1 >= 256) { return 98; } if (w != x) { return 97; } return 0; }`,
 		"dyn-prim-str-reclaim-flat", 0)
 
-	// ESCAPING dyn excluded: `return d` — body_unsafe_for rejects the
-	// candidate (bare-ident return), the caller's dispatch stays valid,
-	// detector 0. The cell leaks — sound.
+	// ESCAPING dyn: `return d` hands the cell to the caller, whose dispatch
+	// through it must stay valid. Detector 0.
 	run(t, `trait Show { function show(self: Self): i32; }
 impl Show for i32 { function show(self: Self): i32 { return self + 1; } }
 function mk(k: i32): dyn Show { let d: dyn Show = 41; return d; }

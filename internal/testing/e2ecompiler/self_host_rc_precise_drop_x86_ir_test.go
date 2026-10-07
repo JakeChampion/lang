@@ -397,11 +397,11 @@ function main(): i32 { let mm: Map[i32, i32] = map_new(8); let (m2, e) = mm.with
 		{"option-arr-escapes-not-freed-detector", `function mk(): Option[i32[]] { let o: Option[i32[]] = Some([1, 2, 3]); return o; } function main(): i32 { let o = mk(); let r = 0; match (o) { Some(v) => { r = v[0] + v[2]; }, None => { r = 0; }, } if (r != 4) { return 99; } return __rc_underflow_count(); }`, 0},
 		// STRUCT-PAYLOAD Option/Result deep-drop free: a `let o = Some(P{..})` /
 		// `Ok(P{..})` with a FRESH struct-LITERAL payload frees the payload box (and,
-		// for an array-field struct, deep-drops its fields via __struct_drop_<P>)
-		// then the option box, right after its single consuming match. The fresh
-		// literal is sole-owned (rc==1). Borrow-only arm binding
-		// (`Some(p) => p.x + p.y`). Value + `__rc_underflow_count()==0` pin the
-		// payload box AND the option box freed once each.
+		// for an array-field struct, releases its fields through P's drop) then the
+		// option box, right after its single consuming match. The fresh literal is
+		// sole-owned (rc==1). Borrow-only arm binding (`Some(p) => p.x + p.y`).
+		// Value + `__rc_underflow_count()==0` pin the payload box AND the option box
+		// freed once each.
 		{"option-struct-payload-value", `struct P { x: i32, y: i32 } function go(): i32 { let o: Option[P] = Some(P { x: 3, y: 4 }); let r = 0; match (o) { Some(p) => { r = p.x + p.y; }, None => { r = 0; }, } return r; } function main(): i32 { return go(); }`, 7},
 		{"option-struct-payload-detector", `struct P { x: i32, y: i32 } function go(): i32 { let o: Option[P] = Some(P { x: 3, y: 4 }); let r = 0; match (o) { Some(p) => { r = p.x + p.y; }, None => { r = 0; }, } if (r != 7) { return 99; } return __rc_underflow_count(); } function main(): i32 { return go(); }`, 0},
 		// Un-annotated Some(P{..}) (Option infers the single param from the literal).
@@ -504,8 +504,8 @@ function main(): i32 { let mm: Map[i32, i32] = map_new(8); let (m2, e) = mm.with
 		{"enum-arr-precise-if-value", `enum Shape { Poly(i32[]), Dot(i32) } function f(n: i32): i32 { let x = Poly([10, 20, 30]); let c = 0; if (n > 0) { match (x) { Poly(a) => { c = a[0] + a[2]; }, Dot(d) => { c = d; } } } return c + n; } function main(): i32 { return f(5); }`, 45},
 		{"enum-arr-precise-if-detector", `enum Shape { Poly(i32[]), Dot(i32) } function f(n: i32): i32 { let x = Poly([10, 20, 30]); let c = 0; if (n > 0) { match (x) { Poly(a) => { c = a[0] + a[2]; }, Dot(d) => { c = d; } } } return c + n; } function main(): i32 { let z = f(5); if (z != 45) { return 99; } return __rc_underflow_count(); }`, 0},
 		// STRUCT payload enum variant (`V(Buf)` with Buf{xs:i32[],n}): the drop
-		// releases the payload struct's array field via __struct_drop_<Buf> then
-		// frees the payload + box. Value + detector 0.
+		// releases the payload struct's array field through Buf's drop, then frees
+		// the payload + box. Value + detector 0.
 		{"enum-struct-precise-if-detector", `struct Buf { xs: i32[], n: i32 } enum E { V(Buf), W(i32) } function f(n: i32): i32 { let x = V(Buf { xs: [10, 20, 30], n: 3 }); let c = 0; if (n > 0) { match (x) { V(b) => { c = b.xs[1] + b.n; }, W(k) => { c = k; } } } return c + n; } function main(): i32 { let z = f(5); if (z != 28) { return 99; } return __rc_underflow_count(); }`, 0},
 		// PRECISE drop + corruption probe: a fresh array after the rc-payload enum's
 		// precise deep-drop reads back intact (payload + box freed soundly, exactly once).
@@ -1145,7 +1145,7 @@ struct P { id: i32, m: Map[i32, i32] } function main(): i32 { let d = P { id: 1,
 		{"own-param-donor-nested-detector", `struct Inner { a: i32, b: i32 } struct Outer { id: i32, inner: Inner } function bump(own d: Outer): i32 { let u: i32 = d.id + d.inner.a; let c = Outer { id: 5, inner: Inner { a: 7, b: 8 } }; let s: i32 = c.id + c.inner.a + c.inner.b + u; if (s != 23) { return 99; } return __rc_underflow_count(); } function main(): i32 { return bump(Outer { id: 1, inner: Inner { a: 2, b: 3 } }); }`, 0},
 		{"own-param-donor-array-corruption-probe-detector", `struct H { id: i32, items: i32[] } function bump(own d: H): i32 { let u: i32 = d.id + d.items[0]; let c = H { id: 5, items: [7, 8, 9] }; let fresh = [11, 22, 33]; let s: i32 = fresh[0] + fresh[1] + fresh[2]; if (c.id + c.items[0] + c.items[2] + u != 32) { return 90; } if (s != 66) { return 91; } return __rc_underflow_count(); } function main(): i32 { return bump(H { id: 1, items: [10, 20] }); }`, 0},
 		// OWN-PARAM base in the SELF-OVERWRITE family (#4356 slice 12): `let c =
-		// T { ...own_d, f: v }` reuses the owned param's box in place. Detectors
+		// T { ...d, f: v }` over an `own d` param reuses its box in place. Detectors
 		// guard the override release (array/nested) and the carried-array move; a
 		// mis-balanced release or a dropped carried box would over-free / corrupt.
 		{"own-param-selfoverwrite-scalar-value", `struct P { x: i32, y: i32 } function bump(own d: P): i32 { let c = P { ...d, x: 10 }; return c.x + c.y; } function main(): i32 { return bump(P { x: 3, y: 4 }); }`, 14},
