@@ -993,7 +993,8 @@ func TestRunnerUuidExamplePasses(t *testing.T) {
 // HMAC-SHA256 against the standard NIST (FIPS 180-4) / RFC 4231
 // known-answer vectors (empty / "abc" / pangram, raw-digest length, an
 // HMAC vector), plus the constant-time consteq / hmac_verify / hmac_verify_hex
-// MAC-comparison helpers (#4384). This is the interp oracle; std/crypto also
+// MAC-comparison helpers (#4384) and SHAKE128 / SHAKE256 against FIPS 202's
+// vectors. This is the interp oracle; std/crypto also
 // runs in the self-host IR differential now (selfHostStdTestCases). Passing
 // suite → exit 0.
 func TestRunnerCryptoExamplePasses(t *testing.T) {
@@ -1003,7 +1004,7 @@ func TestRunnerCryptoExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/crypto", "# pass 18", "# fail 0", "1..18"} {
+	for _, w := range []string{"# Suite: std/crypto", "# pass 23", "# fail 0", "1..23"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -1077,6 +1078,12 @@ func TestRunnerChaCha20Poly1305ExamplePasses(t *testing.T) {
 // non-canonical u-coordinate and the low-order refusal.
 func TestRunnerX25519ExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "x25519", "std/crypto/x25519", 8)
+}
+
+// `tests/stdlib/mlkem768_test.fern` covers FIPS 203 known answers from Go's
+// implementation, implicit rejection and the input checks.
+func TestRunnerMLKEM768ExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "mlkem768", "std/crypto/mlkem768", 8)
 }
 
 // `tests/stdlib/rsa_test.fern` covers PKCS#1 v1.5 and PSS verification
