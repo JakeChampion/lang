@@ -406,6 +406,80 @@ function main(): i32 {
     return t % 101;
 }`, 46, 1, 28, 32, false, false},
 
+	// Scalar fields carried over into their own slots are kept as the counted
+	// ones are: a unique update stores only what it replaces. The fields are
+	// one of each scalar width, so a slot left unwritten on the fresh path, or
+	// written from the wrong place, changes the answer.
+	{"update-keeps-scalar-fields", `struct Acc { names: string[], n: i32, on: boolean, big: i64, w: f64 }
+@noinline function ids(s: string): string { return s; }
+function add(own a: Acc, s: string): Acc {
+    a = Acc { ...a, names: a.names.append(s), n: a.n + 1 };
+    return a;
+}
+function main(): i32 {
+    let a: Acc = Acc { names: [ids("p")], n: 0, on: true, big: 5000000000i64, w: 2.5 };
+    let i: i32 = 0;
+    while (i < 6) { a = add(a, "x"); i = i + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    let r: i32 = a.n * 10 + a.names.len();
+    if (a.on) { r = r + 1; }
+    if (a.big == 5000000000i64) { r = r + 2; }
+    if (a.w == 2.5) { r = r + 4; }
+    return r;
+}`, 74, 1, 5, 11, false, false},
+
+	// The same over a base another binding holds: the construction gets a
+	// fresh box, which must receive every kept scalar from the donor.
+	{"update-keeps-scalars-shared-base", `struct Acc { names: string[], n: i32, on: boolean, big: i64, w: f64 }
+@noinline function ids(s: string): string { return s; }
+function add(own a: Acc, s: string): Acc {
+    a = Acc { ...a, names: a.names.append(s), n: a.n + 1 };
+    return a;
+}
+function main(): i32 {
+    let a: Acc = Acc { names: [ids("p")], n: 0, on: true, big: 5000000000i64, w: 2.5 };
+    let keep: Acc = a;
+    a = add(a, "x");
+    a = add(a, "y");
+    if (__rc_underflow_count() != 0) { return 99; }
+    let r: i32 = a.n * 10 + a.names.len() + keep.n + keep.names.len() * 100;
+    if (a.on && keep.on) { r = r + 1; }
+    if (a.big == keep.big) { r = r + 2; }
+    if (a.w == keep.w) { r = r + 4; }
+    return r;
+}`, 130, 1, 5, 6, false, false},
+
+	// A kept scalar also read after the update: its read stays where it is,
+	// and the construction still leaves the slot alone while the donor is
+	// unique.
+	{"update-keeps-scalar-read-later", `struct Acc { names: string[], n: i32, big: i64 }
+@noinline function ids(s: string): string { return s; }
+function step(own a: Acc, s: string): Acc {
+    let big: i64 = a.big;
+    a = Acc { ...a, names: a.names.append(s), n: a.n + (big % 7i64) as i32 };
+    return a;
+}
+function main(): i32 {
+    let a: Acc = Acc { names: [ids("p")], n: 0, big: 12i64 };
+    let i: i32 = 0;
+    while (i < 4) { a = step(a, "x"); i = i + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return a.n * 10 + a.names.len() + a.big as i32;
+}`, 217, 1, 5, 9, false, false},
+
+	// A record of scalars alone: no field holds a count, so the donor's
+	// uniqueness is read at its drop rather than at a kept read.
+	{"update-keeps-scalar-only-record", `struct P3 { x: i32, y: i32, z: i64 }
+@noinline function mk(v: i32): P3 { return P3 { x: v, y: v + 1, z: 7i64 }; }
+@noinline function bump(own p: P3): P3 { return P3 { ...p, x: p.x + 1 }; }
+function main(): i32 {
+    let p: P3 = mk(1);
+    let i: i32 = 0;
+    while (i < 5) { p = bump(p); i = i + 1; }
+    if (__rc_underflow_count() != 0) { return 99; }
+    return p.x * 10 + p.y + p.z as i32;
+}`, 69, 1, 1, 6, false, false},
+
 	{"degenerate-self-donor", `struct S0 { f0: i32, f1: i64, f2: boolean }
 function main(): i32 {
     let v0: S0 = S0 { f0: 687i32, f1: 942i64, f2: false };
