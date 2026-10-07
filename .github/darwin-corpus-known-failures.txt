@@ -84,7 +84,6 @@ TestBracketParity
 TestCpParity
 TestCpWalkOrder
 TestCsplit
-TestDateParity
 TestHostidParity
 TestLinkParity
 TestLnParity

@@ -1,0 +1,64 @@
+import "std/test";
+import "../../coreutils/lib/timefmt" as timefmt;
+
+// tests/stdlib/coreutils_timefmt_test.fern — the year as each C library's
+// strftime writes it, which `%c`, `%EY`, `%EC` and date's --debug trace
+// reach. Apple's form is called directly, so it is checked on every host.
+
+function apple(year: i64): string {
+  return timefmt.apple_yconv(year - 1900i64, true);
+}
+
+// Apple pads to four digits as two `%02d` fields and runs past them.
+function test_apple_pads_the_year(): test.TestOutcome {
+  if (apple(1i64) != "0001") {
+    return test.fail("1: " + apple(1i64));
+  }
+  if (apple(0i64) != "0000") {
+    return test.fail("0: " + apple(0i64));
+  }
+  if (apple(2024i64) != "2024") {
+    return test.fail("2024: " + apple(2024i64));
+  }
+  if (apple(12345i64) != "12345") {
+    return test.fail("12345: " + apple(12345i64));
+  }
+  return test.assert_eq(apple(2147485547i64), "2147485547");
+}
+
+// A negative year: `-0` in the zeroth century, the sign on the century
+// past it.
+function test_apple_negative_years(): test.TestOutcome {
+  if (apple(0i64 - 5i64) != "-005") {
+    return test.fail("-5: " + apple(0i64 - 5i64));
+  }
+  return test.assert_eq(apple(0i64 - 150i64), "-150");
+}
+
+function test_apple_century(): test.TestOutcome {
+  if (timefmt.apple_yconv(124i64, false) != "20") {
+    return test.fail("2024");
+  }
+  return test.assert_eq(timefmt.apple_yconv(5i64 - 1900i64, false), "00");
+}
+
+// glibc writes `tm_year + 1900` as an int: unpadded, and wrapped past
+// INT_MAX.
+function test_glibc_year(): test.TestOutcome {
+  if (target_os() == "darwin") {
+    return test.assert_eq(timefmt.c_year(1i64), "0001");
+  }
+  if (timefmt.c_year(1i64) != "1") {
+    return test.fail("1");
+  }
+  return test.assert_eq(timefmt.c_year(2147485547i64), "-2147481749");
+}
+
+function main(): i32 {
+  let t: test.TestRunner = test.test_new("coreutils/lib/timefmt");
+  t = t.it("Apple pads the year", test_apple_pads_the_year);
+  t = t.it("Apple negative years", test_apple_negative_years);
+  t = t.it("Apple century", test_apple_century);
+  t = t.it("glibc year", test_glibc_year);
+  return t.finish();
+}

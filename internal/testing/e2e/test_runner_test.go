@@ -4851,6 +4851,22 @@ func TestRunnerCoreutilsSelinuxExamplePasses(t *testing.T) {
 	}
 }
 
+// `tests/stdlib/coreutils_timefmt_test.fern` covers the C library year in
+// coreutils/lib/timefmt, glibc's and Apple's.
+func TestRunnerCoreutilsTimefmtExamplePasses(t *testing.T) {
+	bin := buildLangBinForInterp(t)
+	src := langSrcAbs(t, "tests/stdlib/coreutils_timefmt_test.fern")
+	code, out, errOut := runLangInterp(t, bin, src)
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
+	}
+	for _, w := range []string{"# Suite: coreutils/lib/timefmt", "1..4", "# pass 4", "# fail 0"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
+		}
+	}
+}
+
 func TestRunnerCoreutilsLongDoubleExamplePasses(t *testing.T) {
 	bin := buildLangBinForInterp(t)
 	src := langSrcAbs(t, "tests/stdlib/coreutils_ld_test.fern")
