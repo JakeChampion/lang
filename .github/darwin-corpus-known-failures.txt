@@ -92,7 +92,6 @@ TestMktempRetryExhaustion
 TestMvParity
 TestNice
 TestNiceReadsTheNicenessItWasStartedAt
-TestPrintfParity
 TestPwdUnlinkedWorkingDirectory
 TestRealpathParity
 TestRmdirParity
