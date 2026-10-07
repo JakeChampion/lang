@@ -39,10 +39,11 @@ import SpecSheet from "../../components/SpecSheet.astro";
 
 <div class="fern-lead">
 
-Fern is made for programs that start, do their job and exit — command
-line tools, scripts, small HTTP services. Nothing boots ahead of your
-code and nothing pauses it while it runs, so it is quick from the first
-millisecond. Longer-running programs are fair game too.
+Fern is a general-purpose language that is at its best in programs that
+start, do their job and exit — command line tools, scripts, small HTTP
+services. Nothing boots ahead of your code and nothing pauses it while
+it runs, so it is quick from the first millisecond. Long-running
+programs work too: Fern's own compiler is written in Fern.
 
 </div>
 
@@ -103,8 +104,8 @@ up the call stack without ceremony. No exceptions, no invisible jumps.
   <Facet index="06" title="The tools come with it">
 
 An editor server with completion, hover and rename for any LSP client,
-plus a VS Code extension, a formatter and a test runner. All included,
-none to assemble.
+plus a VS Code extension, a formatter, a linter, a test runner and
+coverage reports. All included, none to assemble.
 
   </Facet>
 </FacetRail>
@@ -201,11 +202,11 @@ system, and the error-handling rules.
   items={[
     {
       term: "Runs on",
-      value: "Linux on arm64 and x86-64, macOS on Apple Silicon, and WebAssembly anywhere WASI runs",
+      value: "Linux on arm64 and x86-64, Android and macOS on arm64, and WebAssembly anywhere WASI runs",
     },
     {
       term: "Memory",
-      value: "Freed as soon as it stops being used — no garbage collector, no pauses, nothing to tune",
+      value: "Reference counted, with most of the counting removed at compile time — freed as soon as it stops being used, no garbage collector, no pauses, nothing to tune",
     },
     {
       term: "Install",
@@ -217,7 +218,7 @@ system, and the error-handling rules.
     },
     {
       term: "Testing",
-      value: "A test runner in the standard library, not a separate thing to pick",
+      value: "A test runner in the standard library, and line and branch coverage from the compiler",
     },
     {
       term: "Permissions",
@@ -230,12 +231,13 @@ system, and the error-handling rules.
 ## Good to know
 
 - **macOS means Apple Silicon.** There is no Intel Mac build.
-- **WebAssembly covers less than native.** C libraries and subprocesses
-  are native-only, and you get a clear error at build time rather than a
-  surprise at runtime.
-- **The standard library is small on purpose.** Strings, collections,
-  iterators, JSON, I/O, HTTP, time, math — it grows when a real program
-  needs it to.
+- **WebAssembly covers less than native.** Spawning processes, terminals
+  and raw syscalls are native-only, and you get a clear error at build
+  time rather than a surprise at runtime.
+- **The standard library grows when a real program needs it to.**
+  Today that covers strings, regular expressions, collections, iterators,
+  JSON and CSV, files and paths, HTTP client and server, TCP and DNS,
+  dates and time zones, hashes and cryptography.
 
 [Why Fern](why/) has the fuller account: what it gives up, and how it
 compares to Go, Rust, Zig and TypeScript.

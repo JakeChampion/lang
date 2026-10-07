@@ -45,6 +45,10 @@ the `-g` build's 16.863 G), and a change to the inliner's policy has to be
 measured on a production build. A production binary carries no symbol
 table, so it gives totals only.
 
+Since 2026-10-07 the semantic inliner neither counts the markers nor lets
+one keep a function from being a leaf (`seminline.line_mark`), so a `-g`
+build splices what a production one does.
+
 ## What is left
 
 Each walk still allocates its stack and marks and still visits, on

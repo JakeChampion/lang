@@ -1,5 +1,5 @@
-// std/mock_platform — a Platform that records instead of acting
-// (docs/PLATFORM-RESEARCH.md Rec §6).
+// std/mock_platform — a Platform that records instead of acting, for
+// testing a handler. See docs/PLATFORM-RESEARCH.md Rec §6.
 //
 // A handler can only reach the effects its platform carries, so substituting
 // the platform is the whole test seam: hand `handle` a mock, run it, and read

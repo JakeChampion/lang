@@ -1,6 +1,6 @@
 // std/sim_platform — a `platform.Platform` over the simulation: the clock
 // and randomness of a `sim.Sim`, the network of a `sim_fetch.Net`, and a
-// configuration the test supplies (docs/DST-PLATFORM-BRIEF.md, #9855).
+// configuration the test supplies. See docs/DST-PLATFORM-BRIEF.md and #9855.
 //
 // A handler generic over its platform runs here as it runs on the host,
 // in virtual time: `plat.now_ms()` is the sim's clock, `plat.random_i32()`

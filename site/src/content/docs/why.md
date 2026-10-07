@@ -4,9 +4,10 @@ description: What Fern is good at, what it gives up, and how it compares to the 
 ---
 
 Fern is a small statically typed language that compiles to a standalone
-binary — or to WebAssembly, from the same source. It is a good fit when
-you want a program to start fast, stay small, and depend on nothing;
-it is a bad fit when you need threads, Windows, or a large ecosystem.
+binary — or to WebAssembly, from the same source. It is general-purpose,
+and a good fit when you want a program to start fast, stay small, and
+depend on nothing; it is a bad fit when you need threads, Windows, or a
+large ecosystem.
 
 The rest of this page is the long version, including the parts that
 don't flatter it.
@@ -20,42 +21,47 @@ floor to pay off before your own code earns its size:
 
 | Language | `hello, world` | Statically linked |
 | -------- | -------------- | ----------------- |
-| Fern     | 4.3 kB         | yes               |
-| Go       | 1.4 MB         | yes               |
-| Rust     | 350 kB         | no — needs libc   |
+| Fern     | 2.9 kB         | yes               |
+| Go       | 1.5 MB         | yes               |
+| Rust     | 343 kB         | no — needs libc   |
 
 A `grep`-style line filter — argv handling, stdin, string search, exit
-codes — comes to 16 kB. Startup is the kernel's `exec` and then your
+codes — comes to 36 kB. Startup is the kernel's `exec` and then your
 `main`; nothing initialises first, and nothing pauses you later.
 
 Memory is reference counted, freed at the point the last use goes out of
-scope rather than at a collector's convenience. There is no tuning, no
-heap sizing, and no pause to plan around.
+scope rather than at a collector's convenience. The compiler places the
+counting at compile time and removes most of it, skips it entirely for
+borrowed parameters, and reuses an allocation in place when its last
+reference is dropped and a value of the same shape is built. There is no
+tuning, no heap sizing, and no pause to plan around.
 
-<small>Measured on x86-64 Linux, August 2026: `fern -target x86-64-linux -o
-hello hello.fern`, `go build -ldflags="-s -w"`, `rustc -O -C
-strip=symbols`. Re-run them yourself — the order of magnitude is the
-point, not the digits.</small>
+<small>Measured on x86-64 Linux, October 2026: `fern -target x86-64-linux -o
+hello hello.fern`, `CGO_ENABLED=0 go build -ldflags="-s -w"` with Go 1.27,
+`rustc -O -C strip=symbols`. Re-run them yourself — the order of
+magnitude is the point, not the digits.</small>
 
 ## One toolchain, no build system
 
-`fern` is a single binary. It assembles and links natively in-process,
-so producing an executable needs no `gcc`, no `clang`, no `ld`. There is
-no build file to write and no plugin to configure: `fern -o app
-app.fern` is the whole build.
+`fern` is a single binary. A compile runs Fern's own compiler, which is
+written in Fern and assembles, links and (for macOS) code-signs
+in-process, so producing an executable needs no `gcc`, no `clang`, no
+`ld`. There is no build file to write and no plugin to configure: `fern
+-o app app.fern` is the whole build.
 
-The same binary type-checks (`-check`), formats (`-fmt`), runs a program
-without compiling it (`-interp`), resolves dependencies, and reports what
-capabilities a package uses. Editor support is `fern-lsp` plus a VS Code
-extension; the test runner is `std/test`, a library rather than a
-separate tool.
+The same binary type-checks (`-check`), formats (`-fmt`), lints
+(`-lint`), runs a program without compiling it (`-interp`), measures
+test coverage (`-cover`), builds with memory-safety checks
+(`-sanitize`), resolves dependencies, and reports what capabilities a
+package uses. Editor support is `fern-lsp` plus a VS Code extension; the
+test runner is `std/test`, a library rather than a separate tool.
 
 ## The same program, native or WebAssembly
 
-`-target wasm32-wasi` emits a self-contained WASI component and `-target
-wasi-http` an HTTP handler for `wasmtime serve` — from the source that
-also builds a native binary. No JavaScript shim, no adapter step, no
-second implementation to keep in sync.
+`-target wasm32-wasi` emits a self-contained WASI Preview 2 component
+and `-target wasm32-wasi-http` an HTTP handler for `wasmtime serve` —
+from the source that also builds a native binary. No JavaScript shim, no
+adapter step, no second implementation to keep in sync.
 
 ## Types that don't lie, errors that are values
 
@@ -74,7 +80,8 @@ invisible second control flow to reason about.
 A package's manifest grants it capabilities — `net`, `fs`, `env`,
 `subprocess`, `time`, `random` — and the compiler rejects a build where a
 package reaches past its grant. `fern -capabilities` prints what each
-package in a program can reach, with an example call chain. A logging
+package in a program can reach, with an example call chain, and
+`fern -effects` answers the same question for each function. A logging
 library that suddenly wants the network fails the build rather than the
 audit.
 
@@ -82,21 +89,33 @@ audit.
 
 - **Pre-1.0.** Nightly builds are the release channel. Syntax still
   changes under you, and there is no compatibility promise yet.
-- **The ecosystem is small.** The standard library covers strings,
-  collections, iterators, JSON, I/O, HTTP, time and math. Beyond that you
-  will be writing it yourself.
+- **The ecosystem is small.** The standard library is broad for its
+  age — strings, regular expressions, collections (including persistent
+  ones), JSON and CSV, files and paths, HTTP client and server, TCP and
+  DNS, dates and time zones, gzip decoding, hashes and cryptography — but
+  there is no package registry full of third-party libraries. Beyond the
+  standard library you will be writing it yourself.
 - **Single-threaded.** Concurrency is I/O-driven futures (`std/async`) —
   `gather`, `race`, and friends over one poll loop. There are no threads
   and no parallelism; refcounts are non-atomic by design.
 - **No cycles, by construction.** Reference counting cannot collect a
-  cycle, so Fern makes cycles unconstructible: the checker rejects the
-  struct-field assignment that would close one. Back-pointers, doubly
+  cycle, so Fern makes cycles unconstructible: a struct's fields and an
+  array's elements cannot be assigned after construction (you build an
+  updated copy with `T { ...old, field: value }`), and `Cell[T]`, the one
+  mutable box, holds only scalars and strings. Back-pointers, doubly
   linked lists and observer graphs need a different shape — usually an
   index into an array.
-- **A narrow platform set.** Linux on arm64 and x86-64, macOS on Apple
-  Silicon, and WebAssembly. No Windows, no Intel Mac, no 32-bit.
-- **C interop is native-only.** The wasm target rejects it at build
-  time rather than failing at runtime, but it is still a gap.
+- **A narrow platform set.** Linux on arm64 and x86-64, Android and
+  macOS on arm64, and WebAssembly. No Windows, no Intel Mac, no 32-bit.
+  The CPU baselines are recent — x86-64-v3 (Haswell, 2013) and ARMv8.2-A
+  with the crypto extensions — because binaries pick instructions at
+  build time with no fallback.
+- **WebAssembly reaches less of the host.** Spawning processes, the
+  working directory, terminals, raw syscalls and calls through a C
+  function pointer are native-only; the wasm targets reject them at build
+  time rather than failing at runtime.
+- **No linking against C libraries.** Binaries are static and carry no
+  libc, so a C library is not something you can link in.
 
 ## How it compares
 
@@ -134,8 +153,11 @@ honest recommendation.
 
 Command-line tools, edge and serverless handlers, small HTTP services,
 build-time utilities — anything where you want one small artifact that
-starts instantly and depends on nothing. The compiler is written in
-Fern, so long-running, allocation-heavy programs work too.
+starts instantly and depends on nothing. Those are where Fern is most
+polished, but they are not the limit: the compiler is written in Fern
+and is a long-running, allocation-heavy program, and the `coreutils/`
+tree reimplements GNU coreutils in Fern with byte-for-byte output
+parity.
 
 Start with the [tutorial](../tutorial/install/), or read a program on the
 [overview](../) first.

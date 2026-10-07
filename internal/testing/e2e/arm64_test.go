@@ -6,7 +6,7 @@
 //
 // Tests run the compiled binary under qemu-aarch64, which
 // uses the host's Linux kernel via user-mode emulation. On
-// real arm64 Linux hosts (Raspberry Pi 4+, AWS Graviton,
+// real arm64 Linux hosts (AWS Graviton, Apple Silicon in a container,
 // etc.) the same binary runs natively without qemu.
 package e2e
 
