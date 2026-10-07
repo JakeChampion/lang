@@ -173,6 +173,12 @@ func TestGrammarRejects(t *testing.T) {
 		// structurally unable to notice.
 		{"arrow lambda, untyped param", `function main(): i32 { let f = (x) => x + 1; return 0; }`},
 		{"arrow lambda, untyped params", `function main(): i32 { let f = (x, y) => x; return 0; }`},
+
+		// Four forms the grammar derived and both parsers reject as P001.
+		{"single-type alias", `type Id = Point;`},
+		{"break with a value", `function main(): i32 { while (true) { break 5; } return 0; }`},
+		{"struct literal field shorthand", `function main(): i32 { let p: P = P { x }; return 0; }`},
+		{"if expression with unbraced branches", `function main(): i32 { let a: i32 = if (true) 1 else 2; return a; }`},
 	}
 
 	for _, tc := range cases {

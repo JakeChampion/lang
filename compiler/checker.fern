@@ -16293,16 +16293,16 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
     }
     rn = rn + 1;
   }
-  // E070: a named function that declares no return type. Every function
+  // E081: a named function that declares no return type. Every function
   // writes its return type — `: void` when it returns nothing — so an
-  // omitted one is an error, not an inference request. Body-less `@import`
-  // externs are exempt (they carry a signature, not a definition). Mirrors
-  // the native checkFunction rule.
+  // omitted one is an error, not an inference request, and an empty body
+  // is no exception. `@import` externs are exempt (they carry a signature,
+  // not a definition). Mirrors the native checkFunction rule.
   for func in mod.funcs {
     if (func.ret_type == "" && func.body.len() > 0 && func.is_const) {
-      out = out.append(dg_at("E070", "cannot infer the type of const \"" + func.name + "\"; declare it explicitly", func.line, func.col));
-    } else if (func.ret_type == "" && func.body.len() > 0) {
-      out = out.append(dg_at("E070", "missing return type on function \"" + func.name + "\"; declare it explicitly (use `: void` if it returns nothing)", func.line, func.col));
+      out = out.append(dg_at("E081", "cannot infer the type of const \"" + func.name + "\"; declare it explicitly", func.line, func.col));
+    } else if (func.ret_type == "" && func.import_iface == "" && !func.is_const) {
+      out = out.append(dg_at("E081", "missing return type on function \"" + func.name + "\"; declare it explicitly (use `: void` if it returns nothing)", func.line, func.col));
     }
   }
   // E016: a `type X = …` union alias the Go checker refuses to desugar, and

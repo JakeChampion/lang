@@ -102,7 +102,7 @@ audit.
   cycle, so Fern makes cycles unconstructible: a struct's fields and an
   array's elements cannot be assigned after construction (you build an
   updated copy with `T { ...old, field: value }`), and `Cell[T]`, the one
-  mutable box, holds only scalars and strings. Back-pointers, doubly
+  mutable box, holds only scalars, strings and arrays of scalars. Back-pointers, doubly
   linked lists and observer graphs need a different shape — usually an
   index into an array.
 - **A narrow platform set.** Linux on arm64 and x86-64, Android and

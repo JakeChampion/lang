@@ -88,8 +88,9 @@ VariantPayload
             | '{' [ FieldDecl { FieldDecl } ] '}'
             ;
 
-# `type X = A | B;` is a union; `type X = T;` an alias.
-TypeDecl    = 'type' IDENT [ TypeParams ] '=' Type { '|' Type } ';' ;
+# `type X = A | B;` is a union of two or more types; there is no
+# single-type alias.
+TypeDecl    = 'type' IDENT [ TypeParams ] '=' Type '|' Type { '|' Type } ';' ;
 
 TraitDecl   = 'trait' IDENT [ TypeParams ] [ ':' Bounds ] '{' { TraitItem } '}' [ ';' ] ;
 TraitItem   = 'type' IDENT [ ':' Bounds ] ';'
@@ -204,7 +205,7 @@ LetNoSemi   = 'let' BindPattern '=' Expr
 UseStmt     = 'use' IDENT [ ':' Type ] '<' '-' Expr ';' ;
 
 ReturnStmt  = 'return' [ Expr ] ';' ;
-BreakStmt   = 'break' [ IDENT ] [ Expr ] ';' ;
+BreakStmt   = 'break' [ IDENT ] ';' ;
 ContinueStmt
             = 'continue' [ IDENT ] ';' ;
 DeferStmt   = ( 'defer' | 'errdefer' ) ( Block | Expr ';' ) ;
@@ -359,8 +360,7 @@ NoStructPrimary
             | Name
             ;
 
-IfExpr      = 'if' '(' Expr ')' BranchBody 'else' ( IfExpr | BranchBody ) ;
-BranchBody  = ValueBlock | Expr ;
+IfExpr      = 'if' '(' Expr ')' ValueBlock 'else' ( IfExpr | ValueBlock ) ;
 MatchExpr   = 'match' '(' Expr ')' '{' { MatchExprArm } '}' ;
 MatchExprArm
             = ArmPatterns [ 'when' Expr ] '=>' ( ValueBlock | Expr ) [ ',' ] ;
@@ -419,5 +419,5 @@ ArrayLit    = '[' [ Expr { ',' Expr } [ ',' ] ] ']' ;
 MapLit      = 'Map' '{' [ MapEntry { ',' MapEntry } [ ',' ] ] '}' ;
 MapEntry    = Expr ':' Expr ;
 StructLit   = QualName [ TypeArgs ] '{' [ LitField { ',' LitField } [ ',' ] ] '}' ;
-LitField    = '...' Expr | IDENT ':' Expr | IDENT ;
+LitField    = '...' Expr | IDENT ':' Expr ;
 Name        = QualName [ '::' IDENT ] | '_' ;

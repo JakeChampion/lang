@@ -27917,7 +27917,7 @@ function unannotated_const_names(funcs: FuncDecl[]): string[] {
 // settle_const_types gives a `const` written without a type its value's type,
 // so its own declaration is typed. Consts settle in declaration order, each one
 // visible to the next, so `const B = A * 2` reads A's type. A value it cannot
-// type keeps "" and draws E070.
+// type keeps "" and draws E081.
 function settle_const_types(funcs: FuncDecl[], structs: StructDecl[]): FuncDecl[] {
   let known: ast.ParamDecl[] = [];
   let out: FuncDecl[] = [];
@@ -30373,7 +30373,7 @@ function check_struct_patterns(): i32 {
   //
   // The NAMED-function assertion is the essential one: before this
   // landed the parser took `{ x, y }` for the function BODY, so the failure
-  // surfaced as `E070 missing return type` pointing at a signature that has
+  // surfaced as `E081 missing return type` pointing at a signature that has
   // one. Pinning ret_type here is what makes that misparse impossible to
   // reintroduce silently.
   let srcSP: string = "function f(Point { x, y }: Point): i32 { return x * 10 + y; }";

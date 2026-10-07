@@ -12307,7 +12307,7 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 	// checked through the synthesized-decl path, and the arrow form
 	// `(x: i32) => e` has no annotation slot at all.)
 	if fn.ReturnUnannotated {
-		c.errfCode(fn.P, "E070", "missing return type on function %q; declare it explicitly (use `: void` if it returns nothing)", fn.Name)
+		c.errfCode(fn.P, "E081", "missing return type on function %q; declare it explicitly (use `: void` if it returns nothing)", fn.Name)
 	}
 
 	// Return-type inference: a plain (non-method, non-generic) function
@@ -12315,15 +12315,15 @@ func (c *checker) checkFunction(fn *ast.FuncDecl) {
 	// while the body is checked, then unifies them into a concrete
 	// return type (replacing the defaulted void).
 	//
-	// Since E070 this decides no ACCEPTED program's meaning — an
+	// Since E081 this decides no ACCEPTED program's meaning — an
 	// unannotated function is already rejected above. It is kept as ERROR
 	// RECOVERY, and it is worth having: without it the function defaults to
 	// void and the void propagates, so one missing annotation becomes three
 	// errors, two of them pointing at innocent CALL SITES. Measured on
 	// `function greet() { return "hi"; } … greet().len()`:
 	//
-	//	with:    E070 at the declaration.
-	//	without: E070, plus "returns void but expression is string" at the
+	//	with:    E081 at the declaration.
+	//	without: E081, plus "returns void but expression is string" at the
 	//	         return, plus "field access on non-struct value of type
 	//	         void" at `.len()` — which blames the caller for the
 	//	         callee's missing annotation.

@@ -5,7 +5,7 @@ import (
 	"testing"
 )
 
-// Every named function declares its return type. Omitting it is E070 — not an
+// Every named function declares its return type. Omitting it is E081 — not an
 // inference request. Replaces the return-inference suite: a signature is the
 // one part of a function its callers read, so it is written, not derived.
 func TestMissingReturnTypeRejected(t *testing.T) {
@@ -27,7 +27,10 @@ func TestMissingReturnTypeRejected(t *testing.T) {
 			continue
 		}
 		if !strings.Contains(err.Error(), "missing return type") {
-			t.Errorf("expected the missing-return-type (E070) error for %q, got: %v", src, err)
+			t.Errorf("expected the missing-return-type (E081) error for %q, got: %v", src, err)
+		}
+		if code := firstErrCode(err); code != "E081" {
+			t.Errorf("%q: missing return type is %s, want E081", src, code)
 		}
 	}
 }
@@ -73,7 +76,7 @@ func TestDeclaredReturnTypeKeepsFlowAnalyses(t *testing.T) {
 // A missing return type reports ONCE, at the declaration — it does not cascade
 // into the call sites.
 //
-// The function still defaults to void after E070, so without the error-recovery
+// The function still defaults to void after E081, so without the error-recovery
 // inference in checkFunction that void propagates: the return mismatches, and
 // then every USE of the call result mismatches too, blaming callers for the
 // callee's missing annotation. Measured at the time of writing: 1 error with
@@ -92,7 +95,7 @@ func TestUnannotatedFunctionReportsOnce(t *testing.T) {
 			continue
 		}
 		if n := strings.Count(err.Error(), "type error at"); n != 1 {
-			t.Errorf("%q: reported %d errors, want exactly 1 (the E070 at the declaration)\n%v", src, n, err)
+			t.Errorf("%q: reported %d errors, want exactly 1 (the E081 at the declaration)\n%v", src, n, err)
 		}
 		if !strings.Contains(err.Error(), "missing return type") {
 			t.Errorf("%q: the single error should be the missing-return-type one, got: %v", src, err)
