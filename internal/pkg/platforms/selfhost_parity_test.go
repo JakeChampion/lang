@@ -108,8 +108,9 @@ func TestSelfHostCoreBuiltinsMatch(t *testing.T) {
 // profileExceptions records, per profile, the capabilities the self-host
 // grants and this package does not — deliberately, and with a reason.
 //
-// There is exactly one. `subprocess` is gated in both tables, but no Go
-// backend lowers it, so native grants it nowhere: its table records a codegen
+// There is exactly one capability, on both hosted profiles. `subprocess` is
+// gated in both tables, but no Go backend lowers it, so native grants it
+// nowhere: its table records a codegen
 // limitation as a target property. The self-host's x86-64 and arm64 emitters
 // DO lower it (`__fern_subprocess`; TestSelfHostArm64DarwinBuilds runs four
 // spawn cases end-to-end), so its hosted profile grants what its artifacts can
@@ -120,6 +121,7 @@ func TestSelfHostCoreBuiltinsMatch(t *testing.T) {
 // native's backends lower it.
 var profileExceptions = map[string]map[string]bool{
 	"hosted-native": {"subprocess": true},
+	"hosted-darwin": {"subprocess": true},
 }
 
 // TestSelfHostCapabilityProfilesMatch compares the capability sets themselves,

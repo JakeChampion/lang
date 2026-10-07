@@ -330,6 +330,24 @@ function main(): i32 { let e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 }`,
 		7)
 
+	// sysctl — __sysctl by MIB: kern.ostype is "Darwin", and the load
+	// averages are a 24-byte struct loadavg.
+	runCase("sysctl",
+		`function main(): i32 {
+  match (sysctl([1, 1])) {
+    Ok(bs) => {
+      if (bs.len() < 6 || bs[0] != 68 as u8 || bs[5] != 110 as u8) { return 1; }
+    },
+    Err(e) => { return 2; }
+  }
+  match (sysctl([2, 2])) {
+    Ok(bs) => { if (bs.len() != 24) { return 3; } },
+    Err(e) => { return 4; }
+  }
+  return 7;
+}`,
+		7)
+
 	// mounts — getfsstat64, read at the 64-bit-inode record's offsets. A
 	// record misread by a few bytes still yields plausible strings, so the
 	// root row is pinned to stat("/"): its dev must agree and its type and
