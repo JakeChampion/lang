@@ -122,7 +122,7 @@ function mkv(i: i32): E { return E.A([i, i + 1]); }
 			// through the exit code.
 			name: "payload_read_back_after_churn",
 			src: `enum E { A(i32[]), B }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function mkv(): E { return E.A(id([7, 8])); }
 function round(i: i32): i32 {
     let v: E = mkv();

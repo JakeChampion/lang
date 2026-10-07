@@ -296,7 +296,7 @@ function main(): i32 {
 	// nulled nor released, and only `names`, which the update replaces, is.
 	// `ids` keeps the initial record a heap box.
 	{"update-keeps-fields", `struct Acc { names: string[], tag: string, n: i32 }
-function ids(s: string): string { return s; }
+@noinline function ids(s: string): string { return s; }
 function add(own a: Acc, s: string): Acc {
     a = Acc { ...a, names: a.names.append(s), n: a.n + 1 };
     return a;
@@ -315,7 +315,7 @@ function main(): i32 {
 	// second update's base is unique again and builds in place. `ids` keeps
 	// the initial record a heap box.
 	{"update-keeps-shared-base", `struct Acc { names: string[], tag: string, n: i32 }
-function ids(s: string): string { return s; }
+@noinline function ids(s: string): string { return s; }
 function add(own a: Acc, s: string): Acc {
     a = Acc { ...a, names: a.names.append(s), n: a.n + 1 };
     return a;
@@ -334,7 +334,7 @@ function main(): i32 {
 	// construction still leaves the slot alone while the donor is unique.
 	// `ids` keeps the initial record a heap box.
 	{"update-keeps-field-read-later", `struct Acc { names: string[], tag: string, n: i32 }
-function ids(s: string): string { return s; }
+@noinline function ids(s: string): string { return s; }
 function add(own a: Acc, s: string): Acc {
     let t: string = a.tag;
     a = Acc { names: a.names.append(s), tag: t, n: a.n + t.len() };

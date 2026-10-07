@@ -117,7 +117,7 @@ import "std/i32";
 enum BxS { BOk(string), BErr(i32), BNone }
 function tag(v: i32): string { if (v == 0) { return "aa"; } if (v == 1) { return "bb"; } return "cc"; }
 function mk(k: i32): BxS { if (k < 0) { return BErr(1); } return BOk("box-payload-" + tag(k)); }
-function pass(b: BxS): BxS { return b; }
+@noinline function pass(b: BxS): BxS { return b; }
 function h1(k: i32): string { match (mk(k)) { BOk(s) => { return s; }, BErr(e) => { return "e"; }, BNone => { return "n"; } } return "x"; }
 function h2(k: i32): i32 {
     let out: string = "";

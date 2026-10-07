@@ -17,7 +17,7 @@ import "testing"
 // is why only a callee that borrows `p` shows it.
 var countedHandbackBorrowedCases = []struct{ name, src string }{
 	{"binding", `struct St { ops: i32[], n: i32 }
-function mk(p: St): St { return p; }
+@noinline function mk(p: St): St { return p; }
 function take(p: St): i32 { let a: St = mk(p); return a.ops.len() + p.ops.len() + a.n; }
 function main(): i32 {
     let t: i32 = 0; let j: i32 = 0;
@@ -27,7 +27,7 @@ function main(): i32 {
 }`},
 	{"read-through", `import "std/i32";
 struct St { ops: i32[], tag: string, n: i32 }
-function mk(p: St): St { return p; }
+@noinline function mk(p: St): St { return p; }
 function take(p: St): i32 { return mk(p).ops.len() + mk(p).tag.len() + mk(p).n + mk(p).ops[1]; }
 function main(): i32 {
     let t: i32 = 0; let j: i32 = 0;
@@ -53,7 +53,7 @@ function main(): i32 {
 	// The binding rebuilt from its own spread: the rebind supersedes the
 	// handed-back box, which the caller still owns and reads afterwards.
 	{"binding-rebuilt", `struct St { ops: i32[], n: i32 }
-function mk(p: St): St { return p; }
+@noinline function mk(p: St): St { return p; }
 function take(p: St): i32 {
     let a: St = mk(p);
     let i: i32 = 0;

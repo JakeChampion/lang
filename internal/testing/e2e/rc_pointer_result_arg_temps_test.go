@@ -95,7 +95,7 @@ function main(): i32 {
 }`},
 		{"struct-argument-to-an-identity-through-a-local", 36, `struct C { value: i32 }
 struct W { c: C, n: i32 }
-function id(c: C): C { return c; }
+@noinline function id(c: C): C { return c; }
 function wrap(c: C): W { return W { c: c, n: 1 }; }
 function main(): i32 {
     let f: (C) => C = id;
@@ -138,7 +138,7 @@ function main(): i32 {
 // function value that might be `keep` keeps the temps passed through it. The
 // result must still read what the argument held.
 func TestPointerResultCallKeepsATempAnIdentityCalleeReturns(t *testing.T) {
-	src := `function keep(xs: i32[]): i32[] { return xs; }
+	src := `@noinline function keep(xs: i32[]): i32[] { return xs; }
 function main(): i32 {
     let k: (i32[]) => i32[] = keep;
     let acc: i32 = 0;

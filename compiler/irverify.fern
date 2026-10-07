@@ -106,18 +106,8 @@ function name_index_buckets(): i32 {
 // what makes index_row's forward walk answer with the FIRST declaration.
 function chain_names(names: string[], params: i32[]): NameIndex {
   let nb: i32 = name_index_buckets();
-  let head: i32[] = [];
-  let b: i32 = 0;
-  while (b < nb) {
-    head = head.append(0 - 1);
-    b = b + 1;
-  }
-  let next: i32[] = [];
-  let j: i32 = 0;
-  while (j < names.len()) {
-    next = next.append(0 - 1);
-    j = j + 1;
-  }
+  let head: i32[] = util.minus_ones(nb);
+  let next: i32[] = util.minus_ones(names.len());
   let k: i32 = names.len() - 1;
   while (k >= 0) {
     let bk: i32 = util.hash_bucket(names[k], nb);

@@ -39,7 +39,7 @@ function main(): i32 {
 
 	// NON-borrowable position (callee returns its param): the bound value
 	// stays readable at detector zero.
-	run(t, `function keepit(nm: string): string { return nm; }
+	run(t, `@noinline function keepit(nm: string): string { return nm; }
 function main(): i32 {
     let bad: i32 = 0;
     let i: i32 = 0;
@@ -115,7 +115,7 @@ function main(): i32 {
 	// The callee returns the argument: refused, and the aliased result is read
 	// back rather than merely counted.
 	run(t, `function mks(n: i32): string { return "a-string-well-past-the-inline-threshold-" + n.to_string(); }
-function pick(s: string): string { return s; }
+@noinline function pick(s: string): string { return s; }
 function main(): i32 {
     let bad: i32 = 0;
     let i: i32 = 0;
@@ -148,7 +148,7 @@ function main(): i32 {
 
 	// Refused: the callee returns the array, and the alias is read back.
 	run(t, `function mk(n: i32): i32[] { let out: i32[] = []; for i in 0..3 { out = out.append(n + i); } return out; }
-function pick(d: i32[]): i32[] { return d; }
+@noinline function pick(d: i32[]): i32[] { return d; }
 function main(): i32 {
     let bad: i32 = 0;
     let i: i32 = 0;

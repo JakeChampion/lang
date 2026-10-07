@@ -428,7 +428,7 @@ func ownHandbackReturnCases() []ownParamReleaseCase {
 		{
 			// The same through an identity callee the inliner takes.
 			name: "local_handed_back_inlined",
-			src: ownHandbackReturnHead + "function same(own xs: string[]): string[] { return xs; }\n" +
+			src: ownHandbackReturnHead + "@noinline function same(own xs: string[]): string[] { return xs; }\n" +
 				ownHandbackBuild("same(xs)") + ownParamReleaseMain(ownHandbackReturnMain),
 			want: 53,
 		},

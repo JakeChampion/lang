@@ -13,7 +13,7 @@ import "testing"
 func TestSelfHostStructFieldDrop(t *testing.T) {
 	boxedProbes(t)
 	const prog = `struct Bag { items: i32[], n: i32 }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function use_bag(): i32 {
     let b: Bag = Bag { items: id([1, 2, 3]), n: 3 };
     return b.items[0] + b.n;

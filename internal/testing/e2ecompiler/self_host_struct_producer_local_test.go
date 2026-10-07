@@ -93,7 +93,7 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 200) { t = t +
 			// box rather than a static one.
 			name: "minimal_array_field",
 			src: `struct P { xs: i32[] }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function mk(): P { let p: P = P { xs: id([1, 2, 3]) }; return p; }
 function round(i: i32): i32 { let v: P = mk(); return v.xs.len(); }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
@@ -178,7 +178,7 @@ function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t +
 			// its fields only on finding rc 1. It leaked 8000 before that.
 			name: "refused_param_returned",
 			src: `struct P { xs: i32[] }
-function mk(p: P): P { return p; }
+@noinline function mk(p: P): P { return p; }
 function round(i: i32): i32 { let src: P = P { xs: [i, i + 1] }; let v: P = mk(src); return v.xs.len(); }
 function main(): i32 { let t: i32 = 0; let i: i32 = 0; while (i < 100) { t = t + round(i); i = i + 1; } if (__rc_underflow_count() != 0) { return 99; } return t % 83; }`,
 			want: 34, allocs: 200, frees: 200,

@@ -122,7 +122,7 @@ func TestSelfHostRcCallResultWasm(t *testing.T) {
 		{"callresult-aliased", genFn + "function main(): i32 { let a: i32[] = gen(5); let c = a; return a[0] + c[4] + __rc_underflow_count(); }", 4},
 		// Callee returns a BORROWED param: return-retain protects the buffer
 		// so the caller sweeping BOTH source and result is not a double-free.
-		{"callresult-borrowed-return", "function pick(xs: i32[]): i32[] { return xs; } function main(): i32 { let src: i32[] = [1, 2, 3]; let got: i32[] = pick(src); return got[1] + src[0] + __rc_underflow_count(); }", 3},
+		{"callresult-borrowed-return", "@noinline function pick(xs: i32[]): i32[] { return xs; } function main(): i32 { let src: i32[] = [1, 2, 3]; let got: i32[] = pick(src); return got[1] + src[0] + __rc_underflow_count(); }", 3},
 		// A self-append (method call, in-place receiver) result is NOT swept,
 		// so it never double-frees the receiver's buffer.
 		{"self-append-not-double-freed", "function main(): i32 { let xs: i32[] = [1, 2]; let ys = xs.append(3); return ys[2] + __rc_underflow_count(); }", 3},

@@ -81,7 +81,7 @@ func structAliasReassignCases() []structAliasReassignCase {
 			// THE REPRO. Base: 80 allocs / 0 frees.
 			name: "struct_alias_reassign",
 			src: `struct P { xs: i32[] }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function round(i: i32): i32 {
     let p: P = P { xs: id([7, 8]) };
     let keep: P = P { xs: id([0]) };
@@ -98,7 +98,7 @@ function round(i: i32): i32 {
 			// over-release: counts alone read 120/120 either way. Native returns 9.
 			name: "reassign_read_back_after_churn",
 			src: `struct P { xs: i32[] }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function round(i: i32): i32 {
     let p: P = P { xs: id([7, 8]) };
     let keep: P = P { xs: id([0]) };
@@ -115,7 +115,7 @@ function round(i: i32): i32 {
 			// difference was the reassign and not the alias.
 			name: "struct_alias_bind_unchanged",
 			src: `struct P { xs: i32[] }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function round(i: i32): i32 {
     let p: P = P { xs: id([7, 8]) };
     let keep: P = p;
@@ -143,7 +143,7 @@ function round(i: i32): i32 {
 			// reclaim machinery was never the problem — only the alias was refused.
 			name: "fresh_rhs_reassign_unchanged",
 			src: `struct P { xs: i32[] }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function round(i: i32): i32 {
     let keep: P = P { xs: id([0]) };
     keep = P { xs: id([7, 8]) };

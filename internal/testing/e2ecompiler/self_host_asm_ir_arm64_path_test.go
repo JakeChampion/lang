@@ -149,7 +149,7 @@ function main(): i32 { let s = "hi"; let t = s.to_string(); return t.len(); }`, 
 		{"strarr-ret", `function names(): string[] { return ["a", "bb", "ccc"]; } function main(): i32 { let xs = names(); return xs[1].len(); }`, 2},
 		{"strarr-ret-direct-index", `function names(): string[] { return ["a", "bb", "ccc"]; } function main(): i32 { return names()[2].len(); }`, 3},
 		{"strarr-ret-len", `function names(): string[] { let a = ["x", "yy"]; return a; } function main(): i32 { let xs = names(); return xs.len() + xs[1].len(); }`, 4},
-		{"strarr-ret-param", `function id(a: string[]): string[] { return a; } function main(): i32 { let xs = ["q", "ww", "eee"]; let ys = id(xs); return ys[1].len() + ys.len(); }`, 5},
+		{"strarr-ret-param", `@noinline function id(a: string[]): string[] { return a; } function main(): i32 { let xs = ["q", "ww", "eee"]; let ys = id(xs); return ys[1].len() + ys.len(); }`, 5},
 		{"strarr-ret-loop", `function names(): string[] { return ["a", "bb", "ccc", "dddd"]; } function main(): i32 { let xs = names(); let i = 0; let s = 0; while (i < xs.len()) { s = s + xs[i].len(); i = i + 1; } return s; }`, 10},
 		// Scalar-field structs (struct_make / struct_get): the `[shape_ptr, f0, f1,
 		// …]` 8-byte box, as on x86.

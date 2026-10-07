@@ -48,7 +48,7 @@ function main(): i32 {
 // never free, so `s` stays valid. pass(s).x==10, +s.y==20, ==30 per iter,
 // x200 == 6000.
 const fieldOfFreshAliasedSafe = `struct P { x: i32, y: i32 }
-function pass(p: P): P { return p; }
+@noinline function pass(p: P): P { return p; }
 function main(): i32 {
     let s: P = P { x: 10, y: 20 };
     let i: i32 = 0; let acc: i32 = 0;

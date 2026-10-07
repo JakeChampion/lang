@@ -115,7 +115,7 @@ function main(): i32 {
 			src: `function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
 function mkv(i: i32): string { let s: string = w("k"); return s; }
 // hands the param straight back — the caller must NOT get a release credit
-function esc(src: string, i: i32): string { return src; }
+@noinline function esc(src: string, i: i32): string { return src; }
 function main(): i32 {
     let keep: string = mkv(7);
     let t: i32 = 0;
@@ -137,7 +137,7 @@ function main(): i32 {
 			name: "callee_returns_param_readback",
 			src: `function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
 function mkv(i: i32): string { let s: string = w("k"); return s; }
-function esc(src: string, i: i32): string { return src; }
+@noinline function esc(src: string, i: i32): string { return src; }
 function bytesum(s: string): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -188,7 +188,7 @@ function main(): i32 {
 			name: "onward_pass_to_handback",
 			src: `function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
 function mkv(i: i32): string { let s: string = w("k"); return s; }
-function esc2(s: string): string { return s; }
+@noinline function esc2(s: string): string { return s; }
 // passes the param ONWARD to a callee that hands it back
 function outer(src: string, i: i32): i32 { let o: string = esc2(src); return o.len(); }
 function main(): i32 {
@@ -281,7 +281,7 @@ function main(): i32 {
 function mkv(i: i32): E { return E.A([i, i + 1]); }
 function seed(): i32 { return 7; }
 struct P { f: E, n: i32 }
-function esc(src: E, i: i32): E { return src; }
+@noinline function esc(src: E, i: i32): E { return src; }
 function main(): i32 {
     let keep: E = mkv(seed());
     let t: i32 = 0; let r: i32 = 0;

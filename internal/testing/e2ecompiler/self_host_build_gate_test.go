@@ -655,7 +655,7 @@ func TestSelfHostFormerlyExemptCodesGateX86_64(t *testing.T) {
 		{code: "E001", src: "function main(): i32 { let a: i32 = zz; return a; }\n"},
 		{code: "E009", src: "function main(): i32 { let s: string = \"x\"; if (s && true) { return 1; } return 0; }\n"},
 		{code: "E013", src: "function main(): i32 { let a: i32 = 1; let a: i32 = 2; return a; }\n"},
-		{code: "E018", src: "function f(a: i32, a: i32): i32 { return a; }\nfunction main(): i32 { return f(1, 2); }\n"},
+		{code: "E018", src: "@noinline function f(a: i32, a: i32): i32 { return a; }\nfunction main(): i32 { return f(1, 2); }\n"},
 		{code: "E019", src: "struct Box[T] { v: T }\nfunction f(b: Box[i32, string]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n"},
 		{code: "E021", src: "trait Greet { function hello(): i32; }\nstruct Dog {}\nimpl Greet for Dog {}\nfunction main(): i32 { return 0; }\n"},
 		{code: "E024", src: "function pair(): (i32, i32) { return (1, 2); }\nfunction main(): i32 { let (a, b, c) = pair(); return a; }\n"},

@@ -42,7 +42,7 @@ import (
 const forinBinderDecl = `function mkstr(a: string): string { return a + "-long-enough-to-heap-allocate"; }
 function churn(i: i32): i32 { let a: string[] = [mkstr("c"), mkstr("d")]; return a[0].len() + a[1].len(); }
 function keepstr(x: string): i32 { return x.len(); }
-function stash(x: string): string { return x; }
+@noinline function stash(x: string): string { return x; }
 `
 
 const forinBinderChurnMain = `

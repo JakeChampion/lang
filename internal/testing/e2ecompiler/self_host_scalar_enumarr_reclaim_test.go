@@ -70,7 +70,7 @@ function main(): i32 {
 			// array a heap box around its static elements.
 			name: "scalar_literal",
 			src: `enum Tag { Box(i32), Nil }
-function idt(t: Tag): Tag { return t; }
+@noinline function idt(t: Tag): Tag { return t; }
 function round(src: Tag[], i: i32): i32 {
     let t: i32 = 0;
     let e: Tag = src[0];

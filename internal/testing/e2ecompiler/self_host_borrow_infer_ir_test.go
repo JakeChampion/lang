@@ -46,7 +46,7 @@ func TestSelfHostBorrowInferInterprocX86_64(t *testing.T) {
 	// greatest-fixpoint both params are borrowable; under the old least-fixpoint
 	// neither was (the cycle couldn't bootstrap).
 	const cycle = `struct Node { items: i32[] }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 function walk_a(n: Node, d: i32): i32 { if (d <= 0) { return n.items[0]; } return walk_b(n, d - 1); }
 function walk_b(n: Node, d: i32): i32 { if (d <= 0) { return n.items[0]; } return walk_a(n, d - 1); }
 `

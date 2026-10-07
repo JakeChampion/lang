@@ -2188,7 +2188,7 @@ function main(): i32 { return built(3).cleared().insert(7, 3).len(); }
 	// ON, so the frame that sliced the view owns nothing of it by the time it
 	// returns.
 	{name: "lent-view-handback", atLeast: 4, want: "12|", src: `
-function handed(text: string): string { return text; }
+@noinline function handed(text: string): string { return text; }
 function laundered(src: string): string {
     let v: str = slice_unchecked(src, 0, 3);
     return handed(v);
@@ -4529,7 +4529,7 @@ struct P { a: str, n: i32 }
 function rec(v: str): P { return P { a: v, n: 1 }; }
 function opt(v: str): Option[str] { return Some(v); }
 function arr(v: str): str[] { return [v, v]; }
-function same(v: str): str { return v; }
+@noinline function same(v: str): str { return v; }
 function main(): i32 {
     let s: string = "abcdefgh" + 7.to_string();
     let p: P = rec(slice_unchecked(s, 1, 4));
@@ -4676,7 +4676,7 @@ function main(): i32 {
 	// refused as "dependency unavailable at use" (#10724).
 	{name: "a-loop-phi-over-an-anchored-call-result-is-produced", atLeast: 3, want: "12|abc\n", src: `
 import "std/i32";
-function id(xs: str[]): str[] { return xs; }
+@noinline function id(xs: str[]): str[] { return xs; }
 function build(s: string, k: i32): str[] {
     let xs: str[] = [slice_unchecked(s, 0, 3)];
     let i: i32 = 0;

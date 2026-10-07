@@ -729,7 +729,7 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			// there is simply less to forgive. `ids` keeps the array a heap box.
 			name: "string_alias_join_producer",
 			src: `import "std/array";
-function ids(s: string): string { return s; }
+@noinline function ids(s: string): string { return s; }
 function round(i: i32): i32 { let xs: string[] = [ids("ab"), "cd"]; let t: string = xs.join(","); let v: string = t; return v.len() + i; }
 function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x + round(r); r = r + 1; } if (__rc_underflow_count() != 0) { return 99; } return x % 83; }`,
 			want: 55, allocs: 200, frees: 200,

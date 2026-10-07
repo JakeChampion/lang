@@ -64,7 +64,7 @@ func TestSelfHostEnumStructPayloadDropIRX86_64(t *testing.T) {
 	// enum box each iteration → bounded (exit 0). Asserts __struct_drop_Inner is
 	// emitted; an undroppable enum leaks until SIGKILL (137).
 	run(t, `struct Inner { items: i32[] }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 enum Box { Full(Inner), Empty }
 function mk(): i32 {
     let b: Box = Full(Inner { items: id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]) });
@@ -84,7 +84,7 @@ function main(): i32 {
 	// post-arm reclaim deep-drops it. A wrong free of a live buffer (or a double-free)
 	// would corrupt the read. items[0]+items[15] = 1 + 16 = 17.
 	run(t, `struct Inner { items: i32[] }
-function id(xs: i32[]): i32[] { return xs; }
+@noinline function id(xs: i32[]): i32[] { return xs; }
 enum Box { Full(Inner), Empty }
 function f(): i32 {
     let b: Box = Full(Inner { items: id([1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16]) });

@@ -95,7 +95,7 @@ func structLitArgCases() []arrenumShareCase {
 			// REFUSED: the callee returns the argument, so freeing it after the
 			// call would hand the caller freed memory. Stays the leak it was.
 			name: "callee_returns_param",
-			src: structLitArgDecl + `function keep(p: A): A { return p; }` +
+			src: structLitArgDecl + `@noinline function keep(p: A): A { return p; }` +
 				structLitArgMain(`t = t + keep(A { xs: [r, r + 1], k: r }).k; r = r + 1;`),
 			want: 3,
 		},
