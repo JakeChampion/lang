@@ -38,7 +38,7 @@ lowered function it:
    callee's, so the splice keeps every retain and release the call made;
 3. maps a pure operation that repeats an earlier one in its block, the same
    operation on the same operands with constants compared by value, onto the
-   earlier one (`ssa.merge_duplicates`; loads, calls and divisions are left
+   earlier one (`ssa.merge_duplicates`; loads, calls and integer divisions are left
    alone), so a rotate whose operand is written out twice has one operand;
    turns `(x >> n) | (x << (W - n))`, Fern's only spelling of a rotate, into
    one `rotr:W:n` unary on x at either width (`ssa.fuse_rotates`; a u32's
