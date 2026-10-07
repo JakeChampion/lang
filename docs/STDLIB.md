@@ -994,6 +994,14 @@ side then owns its own copy. `final_*` reads the state without consuming it.
   `blake2b_new(out_len: i32): Blake2b` (`out_len` 1..64 bytes; b2sum's `-l N`
   is bits, so pass `N / 8`; unkeyed), `sm3_new(): Sm3` (GB/T 32905-2016,
   32-byte output; `cksum -a sm3` is the one utility that offers it).
+  SHA-3 (FIPS 202): `sha3_224_new()`, `sha3_256_new()`, `sha3_384_new()`,
+  `sha3_512_new()`, all `Sha3`, and the one-shot `sha3_256_hex(s)`.
+- SHAKE128 and SHAKE256, FIPS 202's extendable-output functions:
+  `shake128_new()` / `shake256_new()` return a `Shake` that takes
+  `update_bytes`; its `reader()` ends the input and returns a
+  `ShakeReader`, whose `squeeze(n)` returns the next `n` bytes and the
+  reader that follows. One-shots: `shake128(data, out_len)`,
+  `shake256(data, out_len)`.
 - Methods on each state type: `update(chunk: string)`,
   `update_bytes(chunk: [u8])` — both return the new state;
   `final_bytes(): u8[]`, `final_hex(): string`.
@@ -1084,6 +1092,29 @@ x86-64.
   refused as `LowOrder` when it is all zeros, as TLS 1.3 requires.
 - `X25519Error` is `ScalarLength(i32)`, `PointLength(i32)` or `LowOrder`,
   with `message()`.
+
+### `std/crypto/mlkem768`
+
+ML-KEM-768, the module-lattice key-encapsulation mechanism of FIPS 203, at
+the parameter set TLS 1.3's X25519MLKEM768 hybrid key share uses (#9858).
+Coefficients mod 3329 are reduced by Barrett multiplication and masked
+subtraction, and decapsulation compares and selects with masks, so nothing
+branches on a secret. Verified against known answers from Go's FIPS 140
+implementation (`tests/stdlib/mlkem768_test.fern`). About 0.8 ms per key
+generation, encapsulation and decapsulation together on x86-64.
+
+- `keygen_derand(d, z): Result[KeyPair, MlKemError]` — the key pair for two
+  32-byte random seeds: `encapsulation_key` (1,184 bytes) and
+  `decapsulation_key` (2,400).
+- `encaps_derand(ek, m): Result[Encapsulation, MlKemError]` — for a 32-byte
+  random `m`, the `shared_secret` (32 bytes) and the `ciphertext` (1,088) to
+  send.
+- `decaps(dk, ct): Result[u8[], MlKemError]` — the shared secret. A
+  ciphertext that does not re-encrypt to itself yields a secret derived from
+  the key's `z` instead (implicit rejection), never an error.
+- `MlKemError` names a wrong length (and the length given), an encapsulation
+  key with a coefficient not below 3329, or a decapsulation key whose stored
+  hash of its encapsulation key does not match, with `message()`.
 
 ### `std/crypto/p256`
 

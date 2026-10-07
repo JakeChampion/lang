@@ -1190,10 +1190,10 @@ function main(): i32 {
     if (ssasem.type_key(dynPair) != "$dyn$Pair_5bi32_2c_20u32_5d") { eprint(ssasem.type_key(dynPair)); return 233; }
     if (ssasem.type_key(typeinfo.TypeDyn { traits: "error.Error" }) == ssasem.type_key(typeinfo.TypeDyn { traits: "error__Error" })) { return 234; }
     // An update that keeps a field the construction alone reads neither
-    // reads nor stores it while the donor is unique: after the allocation the
-    // construction copies the field from the donor, retained, under the
-    // token's null arm, then releases the donor, and the field it replaces is
-    // stored last, unconditionally.
+    // reads nor stores it while the donor is unique: the token's null arm
+    // allocates, shapes and copies the field from the donor, retained. The
+    // other arm uses the donor box directly. The donor is then released and
+    // the field being replaced is stored last, unconditionally.
     let keepGraph = ssa.SFunc { name: "keep", nparams: 2, nvals: 4, entry: 7, takes_env: false,
         blocks: [ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0), inst(6, 1, [], 1),
             ssa.SInst { kind_tag: ssasem.record_get(), result: 2, args: [0], imm: 0, str: "xs" },
@@ -1205,17 +1205,24 @@ function main(): i32 {
     if (!keepLowered.ok) { eprint(keepLowered.why); return 236; }
     let keepUnique: i32 = 0 - 1;
     let keepReuse: i32 = 0 - 1;
+    let keepReuses: i32 = 0;
     let keepGet: i32 = 0 - 1;
     let keepGets: i32 = 0;
     let keepRetains: i32 = 0;
     let keepSet0: i32 = 0 - 1;
     let keepSet1: i32 = 0 - 1;
     let keepNe: i32 = 0 - 1;
+    let keepIf: i32 = 0 - 1;
+    let keepElse: i32 = 0 - 1;
+    let keepEnd: i32 = 0 - 1;
     let ko: i32 = 0;
     while (ko < keepLowered.ops.len()) {
         let o: ir.Op = keepLowered.ops[ko];
         if (o.str == "__fern_rc_is_unique" && keepUnique < 0) { keepUnique = ko; }
-        if (o.str == "__fern_alloc_reuse") { keepReuse = ko; }
+        if (o.str == "__fern_alloc_reuse") { keepReuse = ko; keepReuses = keepReuses + 1; }
+        if (o.kind_tag == ir.kind_id("if") && keepReuse < 0) { keepIf = ko; }
+        if (o.kind_tag == ir.kind_id("else") && keepReuse >= 0 && keepElse < 0) { keepElse = ko; }
+        if (o.kind_tag == ir.kind_id("end") && keepElse >= 0 && keepEnd < 0) { keepEnd = ko; }
         if (o.str == "__fern_rc_inc") { keepRetains = keepRetains + 1; }
         if (ir.render_op(o) == "struct_get 0") { keepGet = ko; keepGets = keepGets + 1; }
         if (ir.render_op(o) == "struct_set 0") { keepSet0 = ko; }
@@ -1223,24 +1230,67 @@ function main(): i32 {
         if (o.kind_tag == ir.kind_id("ne") && keepReuse >= 0 && keepNe < 0) { keepNe = ko; }
         ko = ko + 1;
     }
-    if (keepUnique < 0 || keepReuse < 0 || keepGets != 1 || keepRetains != 1) { return 237; }
-    if (keepGet < keepReuse || keepLowered.ops[keepGet - 3].kind_tag != ir.kind_id("if") || keepLowered.ops[keepGet + 1].str != "__fern_rc_inc") { return 238; }
-    if (keepSet0 != keepGet + 2 || keepNe < keepSet0 || keepSet1 < keepNe) { return 239; }
+    if (keepUnique < 0 || keepReuses != 1 || keepGets != 1 || keepRetains != 1) { return 237; }
+    if (keepIf < 3 || keepReuse < keepIf || keepGet < keepReuse || keepLowered.ops[keepGet + 1].str != "__fern_rc_inc") { return 238; }
+    // The fresh arm is selected only when the reuse token is null.
+    if (keepLowered.ops[keepIf - 1].kind_tag != ir.kind_id("eq")
+        || ir.render_op(keepLowered.ops[keepIf - 2]) != "const_i32 0"
+        || keepLowered.ops[keepIf - 3].kind_tag != ir.kind_id("load_local")) { return 241; }
+    if (keepSet0 != keepGet + 2 || keepElse < keepSet0 || keepEnd != keepElse + 3 || keepNe < keepEnd || keepSet1 < keepNe) { return 239; }
+    // The unique arm hands back that exact token, without allocating a box
+    // or loading/storing the kept payload. Both arms define the same result.
+    if (ir.render_op(keepLowered.ops[keepElse + 1]) != ir.render_op(keepLowered.ops[keepIf - 3])
+        || keepLowered.ops[keepElse + 2].i32_imm != keepLowered.ops[keepReuse + 1].i32_imm
+        || (keepLowered.ops[keepReuse + 1].kind_tag != ir.kind_id("store_local") && keepLowered.ops[keepReuse + 1].kind_tag != ir.kind_id("tee_local"))
+        || keepLowered.ops[keepElse + 2].kind_tag != ir.kind_id("store_local")) {
+        for o in keepLowered.ops { eprint(ir.render_op(o) + "\n"); }
+        return 242;
+    }
     let keepVerified: irverifyrc.RcResult = irverifyrc.verify_rc_fn("keep", keepLowered.ops);
     if (keepVerified.checked != 1 || keepVerified.problems.len() != 0) { if (keepVerified.skips.len() > 0) { eprint(keepVerified.skips[0]); } return 240; }
+    // Cover the unfused spelling too, and do not let recognition of either
+    // spelling hide a gate/token disagreement or a release of another donor.
+    let separate: ir.Op[] = [];
+    ko = 0;
+    while (ko < keepLowered.ops.len()) {
+        let o: ir.Op = keepLowered.ops[ko];
+        if (ko == keepReuse + 1 && o.kind_tag == ir.kind_id("tee_local")) {
+            separate = separate.append(ir.op_store_local(o.i32_imm)).append(ir.op_load_local(o.i32_imm));
+        } else { separate = separate.append(o); }
+        ko = ko + 1;
+    }
+    let separateVerified: irverifyrc.RcResult = irverifyrc.verify_rc_fn("separate", separate);
+    if (separateVerified.checked != 1 || separateVerified.problems.len() != 0) { return 243; }
+    let wrongToken: ir.Op[] = keepLowered.ops.with(keepUnique + 2, ir.op_load_local(1));
+    let tokenVerified: irverifyrc.RcResult = irverifyrc.verify_rc_fn("wrong_token", wrongToken);
+    if (tokenVerified.checked != 1 || tokenVerified.problems.len() == 0) { return 244; }
+    let releaseAt: i32 = 0 - 1;
+    ko = keepEnd + 1;
+    while (ko < keepLowered.ops.len()) {
+        if (keepLowered.ops[ko].str == "__sem_release_Grow") { releaseAt = ko; }
+        ko = ko + 1;
+    }
+    if (releaseAt < 1) { return 245; }
+    let wrongRelease: ir.Op[] = keepLowered.ops.with(releaseAt - 1, ir.op_load_local(1));
+    let releaseVerified: irverifyrc.RcResult = irverifyrc.verify_rc_fn("wrong_release", wrongRelease);
+    if (releaseVerified.checked != 1 || releaseVerified.problems.len() == 0) { return 246; }
+    let wrongResult: ir.Op[] = keepLowered.ops.with(keepElse + 2, ir.op_store_local(1));
+    let resultVerified: irverifyrc.RcResult = irverifyrc.verify_rc_fn("wrong_result", wrongResult);
+    if (resultVerified.checked != 0 || resultVerified.skips.len() != 1) { return 247; }
     return 0;
 }
 `
 }
 
 func TestSelfHostSSAPhysicalRCRejects(t *testing.T) {
-	gcc, runner := x86_64Tooling(t)
+	// This pin-built driver needs an executor, not a GCC cross-linker.
+	runner := x86_64Runner(t)
 	dir := copySelfHostTree(t)
 	source := physicalRCRejectSource()
 	if err := os.WriteFile(filepath.Join(dir, "reject.fern"), []byte(source), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	driver := buildSelfHostBin(t, gcc, dir, "reject.fern", "reject")
+	driver := buildSelfHostBinFor(t, dir, "reject.fern", "reject", "x86-64-linux")
 	if output, err := runX86_64Bin(runner, driver).CombinedOutput(); err != nil {
 		t.Fatalf("physical rejection: %v\n%s", err, output)
 	}

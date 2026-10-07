@@ -487,11 +487,24 @@ function no_keep(): Site {
 // the token source, and the later select's else arm the decline release.
 function read_keep_site(ops: ir.Op[], call: i32, token_slot: i32): Site {
   let at: i32 = call + 1;
-  if (at + 3 >= ops.len() || !is_kind(ops[at], "store_local") || !is_kind(ops[at + 1], "load_local")
-    || !is_kind(ops[at + 2], "struct_set_shape") || !is_kind(ops[at + 3], "drop")) {
+  if (at >= ops.len()) {
     return no_keep();
   }
   let result: i32 = ops[at].i32_imm;
+  // Stack cleanup can fuse the result's store/load into tee_local before
+  // this verifier runs. Both forms name the same shaped allocation.
+  let shape: i32 = at + 1;
+  if (is_kind(ops[at], "store_local")) {
+    if (shape >= ops.len() || !is_kind(ops[shape], "load_local") || ops[shape].i32_imm != result) {
+      return no_keep();
+    }
+    shape = shape + 1;
+  } else if (!is_kind(ops[at], "tee_local")) {
+    return no_keep();
+  }
+  if (shape + 1 >= ops.len() || !is_kind(ops[shape], "struct_set_shape") || !is_kind(ops[shape + 1], "drop")) {
+    return no_keep();
+  }
   if (call < 6 || !is_kind(ops[call - 3], "if") || !is_kind(ops[call - 4], "eq")
     || !is_kind(ops[call - 5], "const_i32") || ops[call - 5].i32_imm != 0
     || !is_kind(ops[call - 6], "load_local") || ops[call - 6].i32_imm != token_slot) {
@@ -656,68 +669,100 @@ function site_problems(fn_name: string, call: i32, s: Site): irverify.Problem[] 
 // Claim is one recognised site's take of a donor's box.
 struct Claim { at: i32, donor: i32 }
 
-// skip_to_matching_end returns the index of the `end` closing the scope whose
-// `else` is at else_at, or -1 when the stream is unbalanced.
-function skip_to_matching_end(ops: ir.Op[], else_at: i32): i32 {
+struct Flow { next: i32[], other: i32[] }
+
+// Resolve structured edges once per function. A loop label is its body;
+// every other label is after its end. The implicit function label exits.
+function flow_graph(ops: ir.Op[]): Flow {
+  let next: i32[] = [];
+  let other: i32[] = [];
+  let ends: i32[] = [];
+  let owner: i32[] = [];
+  let stack: i32[] = [];
   let depth: i32 = 0;
-  let i: i32 = else_at + 1;
+  let i: i32 = 0;
   while (i < ops.len()) {
+    next = next.append(i + 1);
+    other = other.append(ops.len());
+    ends = ends.append(ops.len());
+    owner = owner.append(0 - 1);
     if (is_kind(ops[i], "block") || is_kind(ops[i], "loop") || is_kind(ops[i], "if")) {
-      depth = depth + 1;
-    } else if (is_kind(ops[i], "end")) {
-      if (depth == 0) {
-        return i;
+      if (depth < stack.len()) {
+        stack = stack.with(depth, i);
+      } else {
+        stack = stack.append(i);
       }
+      depth = depth + 1;
+    } else if (is_kind(ops[i], "end") && depth > 0) {
       depth = depth - 1;
+      ends = ends.with(stack[depth], i);
+    } else if (is_kind(ops[i], "else") && depth > 0) {
+      other = other.with(stack[depth - 1], i + 1);
+      owner = owner.with(i, stack[depth - 1]);
+    } else if (is_kind(ops[i], "br") || is_kind(ops[i], "brif")) {
+      let label: i32 = depth - 1 - ops[i].i32_imm;
+      if (label >= 0 && label < depth) {
+        owner = owner.with(i, stack[label]);
+      }
     }
     i = i + 1;
   }
-  return 0 - 1;
+  i = 0;
+  while (i < ops.len()) {
+    if (is_kind(ops[i], "if") && other[i] == ops.len()) {
+      other = other.with(i, ends[i] + 1);
+    } else if (is_kind(ops[i], "else") || is_kind(ops[i], "br") || is_kind(ops[i], "brif")) {
+      let target: i32 = ops.len();
+      let at: i32 = owner[i];
+      if (at >= 0) {
+        target = ends[at] + 1;
+        if (is_kind(ops[at], "loop")) {
+          target = at + 1;
+        }
+      }
+      if (is_kind(ops[i], "brif")) {
+        other = other.with(i, target);
+      } else {
+        next = next.with(i, target);
+      }
+    } else if (is_kind(ops[i], "return")) {
+      next = next.with(i, ops.len());
+    }
+    i = i + 1;
+  }
+  return Flow { next: next, other: other };
 }
 
-// reaches reports whether control can run from the claim at `from` to the one
-// at `to` without passing a rebind of `donor`.
-//
-// The walk is over structured control flow from `from`'s own scope outwards.
-// An `else` at the walk's current depth switches to the sibling arm of a scope
-// `from` is inside, so everything up to that scope's `end` is unreachable from
-// `from` and is skipped. Everything after an enclosing `end` is reachable,
-// because control leaves the scope and continues.
-function reaches(ops: ir.Op[], from: i32, to: i32, donor: i32): boolean {
-  let depth: i32 = 0;
-  let i: i32 = from + 1;
-  while (i < to) {
-    if (is_kind(ops[i], "return")) {
-      // Only a return on this path ends reachability. A conditional return
-      // in a newly entered scope still leaves its other path available.
-      if (depth == 0) {
-        return false;
-      }
-    } else if (is_kind(ops[i], "block") || is_kind(ops[i], "loop") || is_kind(ops[i], "if")) {
-      depth = depth + 1;
-    } else if (is_kind(ops[i], "end")) {
-      if (depth > 0) {
-        depth = depth - 1;
-      }
-    } else if (is_kind(ops[i], "else")) {
-      if (depth == 0) {
-        let j: i32 = skip_to_matching_end(ops, i);
-        if (j < 0) {
-          return false;
-        }
-        if (to < j) {
-          return false;
-        }
-        i = j;
-      }
-    } else if (is_kind(ops[i], "store_local") || is_kind(ops[i], "tee_local")) {
-      if (ops[i].i32_imm == donor) {
-        return false;
-      }
-    }
-    i = i + 1;
+// A rebind stops only the path that executes it. Follow both conditional
+// edges, and visit each op once so backedges cannot make this walk diverge.
+function reaches(ops: ir.Op[], flow: Flow, from: i32, to: i32, donor: i32): boolean {
+  let seen: i32[] = [];
+  let n: i32 = 0;
+  while (n < ops.len()) {
+    seen = seen.append(0);
+    n = n + 1;
   }
-  return true;
+  let work: i32[] = [from + 1];
+  let at: i32 = 0;
+  while (at < work.len()) {
+    let i: i32 = work[at];
+    at = at + 1;
+    if (i < 0 || i >= ops.len() || seen[i] != 0) {
+      continue;
+    }
+    if (i == to) {
+      return true;
+    }
+    seen = seen.with(i, 1);
+    if ((is_kind(ops[i], "store_local") || is_kind(ops[i], "tee_local")) && ops[i].i32_imm == donor) {
+      continue;
+    }
+    work = work.append(flow.next[i]);
+    if (flow.other[i] < ops.len()) {
+      work = work.append(flow.other[i]);
+    }
+  }
+  return false;
 }
 
 // double_claim_problems reports a donor whose box two sites both take on one
@@ -734,12 +779,16 @@ function reaches(ops: ir.Op[], from: i32, to: i32, donor: i32): boolean {
 // is bounded by the same coverage the rest of the pass reports.
 function double_claim_problems(fn_name: string, ops: ir.Op[], claims: Claim[]): irverify.Problem[] {
   let out: irverify.Problem[] = [];
+  if (claims.len() < 2) {
+    return out;
+  }
+  let flow: Flow = flow_graph(ops);
   let i: i32 = 0;
   while (i < claims.len()) {
     let j: i32 = i + 1;
     while (j < claims.len()) {
       if (claims[j].donor == claims[i].donor
-        && reaches(ops, claims[i].at, claims[j].at, claims[i].donor)) {
+        && reaches(ops, flow, claims[i].at, claims[j].at, claims[i].donor)) {
         out = out.append(irverify.Problem {
           fn_name: fn_name,
           op: claims[j].at,

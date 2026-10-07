@@ -44,9 +44,13 @@ type-checks standalone (`TestStdlibModulesImportStandalone`).
    x86-64-v3 baseline, so this PR records the raise in CLAUDE.md and
    `docs/BACKEND-PARITY.md`. Every AVX2-class part has AES-NI, so reach is
    unchanged. wasm has neither, so it gets a bitsliced constant-time AES.
-5. **ML-KEM-768** (FIPS 203) over `std/crypto`'s Keccak, which needs
-   SHAKE128 and SHAKE256 added beside SHA-3. Then the X25519MLKEM768
-   hybrid share.
+5. **ML-KEM-768** (FIPS 203) over `std/crypto`'s Keccak, with SHAKE128 and
+   SHAKE256 added beside SHA-3. Coefficients are `i32`s under Barrett
+   reduction, and decapsulation compares and selects by mask. Gate: known
+   answers from Go's FIPS 140 implementation, implicit rejection and the
+   input checks. About 0.8 ms per key generation, encapsulation and
+   decapsulation together on x86-64. The X25519MLKEM768 hybrid share comes
+   with `std/tls/handshake`.
 6. **P-256 and Ed25519** for certificate signatures. P-256 verification
    landed first on `core/bigint`, about 13 ms per verification, since it
    handles only public values. Signing, for the server, needs constant-time

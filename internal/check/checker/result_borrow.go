@@ -114,7 +114,7 @@ func (c *checker) exprBorrows(e ast.Expr, borrowed, locals map[string]bool) bool
 		return false
 	case *ast.NumberLit, *ast.FloatLit, *ast.StringLit, *ast.BoolLit, *ast.CharLit, *ast.UnitLit,
 		*ast.StructLit, *ast.TupleLit, *ast.ArrayLit, *ast.MapLit, *ast.EnumLit,
-		*ast.Binary, *ast.Unary:
+		*ast.Binary, *ast.Unary, *ast.CastExpr:
 		// A construction is fresh: it copies references into a new value rather
 		// than being one.
 		return false

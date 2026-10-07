@@ -207,6 +207,79 @@ function main(): i32 {
   return 6;
 }
 `, false},
+	// The KEM over secret seeds: a round trip, then implicit rejection of a
+	// modified ciphertext, which must yield another secret without a branch.
+	{"mlkem768", `import "std/crypto/mlkem768";
+
+function filled(seed: i32): u8[] {
+  let b: u8[] = __alloc_u8(32);
+  let i: i32 = 0;
+  while (i < 32) {
+    b = b.with(i, ((i * 29 + seed) & 255) as u8);
+    i = i + 1;
+  }
+  return b;
+}
+
+function same(a: u8[], b: u8[]): boolean {
+  let i: i32 = 0;
+  while (i < 32) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function main(): i32 {
+  let d: u8[] = filled(3);
+  let z: u8[] = filled(7);
+  let m: u8[] = filled(11);
+  __ct_secret(d);
+  __ct_secret(z);
+  __ct_secret(m);
+  match (mlkem768.keygen_derand(d, z)) {
+    Ok(k) => {
+      __ct_public(k.encapsulation_key);
+      match (mlkem768.encaps_derand(k.encapsulation_key, m)) {
+        Ok(s) => {
+          __ct_public(s.ciphertext);
+          match (mlkem768.decaps(k.decapsulation_key, s.ciphertext)) {
+            Ok(got) => {
+              let bad: u8[] = s.ciphertext.with(0, s.ciphertext[0] ^ 1);
+              match (mlkem768.decaps(k.decapsulation_key, bad)) {
+                Ok(rejected) => {
+                  __ct_public(s.shared_secret);
+                  __ct_public(got);
+                  __ct_public(rejected);
+                  if (!same(got, s.shared_secret) || same(rejected, got)) {
+                    return 1;
+                  }
+                  return 0;
+                },
+                Err(e) => {
+                  return 2;
+                }
+              }
+            },
+            Err(e) => {
+              return 3;
+            }
+          }
+        },
+        Err(e) => {
+          return 4;
+        }
+      }
+    },
+    Err(e) => {
+      return 5;
+    }
+  }
+  return 6;
+}
+`, false},
 }
 
 const ctUninitialised = "depends on uninitialised value"
