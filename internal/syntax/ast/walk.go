@@ -116,6 +116,11 @@ func rewriteExprChildren(n Node, fn func(Expr) Expr) {
 				x.Parts[i].Expr = rewriteExpr(x.Parts[i].Expr, fn)
 			}
 		}
+		// Desugared is what the interpreter and the IR evaluate, so a
+		// lowering has to reach it as well as the Parts it mirrors.
+		if x.Desugared != nil {
+			x.Desugared = rewriteExpr(x.Desugared, fn)
+		}
 	case *ArrayLit:
 		for i := range x.Elems {
 			x.Elems[i] = rewriteExpr(x.Elems[i], fn)

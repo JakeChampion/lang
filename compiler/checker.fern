@@ -21070,8 +21070,12 @@ function e021_diags(mod: parser.Module): util.Diag[] {
 // field native checks and this side silently skips, not a conservative
 // omission. `u8` and `char` were both missing. (`str` needs no entry: a field
 // is checked in its receiver namespace, where a `str` is a `string`.)
+function e021_derive_scalar(fty: string): boolean {
+  return fty == "i32" || fty == "i64" || fty == "u8" || fty == "u32" || fty == "u64" || fty == "f32" || fty == "f64" || fty == "boolean" || fty == "char" || fty == "string";
+}
+
 function e021_derive_field_known(mod: parser.Module, fty: string): boolean {
-  if (fty == "i32" || fty == "i64" || fty == "u8" || fty == "u32" || fty == "u64" || fty == "f32" || fty == "f64" || fty == "boolean" || fty == "char" || fty == "string") {
+  if (e021_derive_scalar(fty)) {
     return true;
   }
   for sd in mod.structs {
@@ -21181,9 +21185,9 @@ function derive_import_unloaded(mod: parser.Module, tr: string): boolean {
 // the program's own `trait Eq`), and a declared trait outside the derivable
 // set is refused. Then the field check mirrors native's pre-check (#5392):
 // only known non-generic field types, and the first non-conforming field
-// draws the single diagnostic at the deriving decl. Default skips it: it
-// composes through zero literals and `Type.default()`, not a call on the
-// field value.
+// draws the single diagnostic at the deriving decl. Default gives a scalar
+// field its zero literal, so only its struct and enum fields are checked:
+// those delegate to their own `default()`.
 function e021_derive_one_diag(mod: parser.Module, tr: string, tname: string, labels: string[], ftys: string[], tps: string[], ln: i32, cl: i32): util.Diag[] {
   let kind: string = parser.derive_simple_name(tr);
   let tidx: i32 = derive_trait_idx(tr, mod.trait_reqs);
@@ -21195,9 +21199,6 @@ function e021_derive_one_diag(mod: parser.Module, tr: string, tname: string, lab
   }
   if (kind != "Eq" && kind != "Ord" && kind != "Hash" && kind != "Display" && kind != "Debug" && kind != "Json" && kind != "FromJson" && kind != "Default") {
     return [dg_at("E021", "cannot @derive(" + tr + "): only Eq, Display, Debug, Ord, Hash, Json, FromJson, and Default are derivable", ln, cl)];
-  }
-  if (kind == "Default") {
-    return [];
   }
   // A FromJson derive decodes an array or Option field through its
   // element, so the element is what must conform; a container nested in
@@ -21222,7 +21223,8 @@ function e021_derive_one_diag(mod: parser.Module, tr: string, tname: string, lab
   let fi: i32 = 0;
   while (fi < ctys.len()) {
     let fty: string = receiver_namespace(ctys[fi]);
-    if (!name_in(fty, tps) && e021_derive_field_known(mod, fty)) {
+    let checked: boolean = kind != "Default" || !e021_derive_scalar(fty);
+    if (checked && !name_in(fty, tps) && e021_derive_field_known(mod, fty)) {
       if (!e021_derive_conforms(mod, tr, tidx, fty)) {
         return [dg_at("E021", "cannot @derive(" + tr + ") for " + tname + ": " + labels[fi] + " of type " + fty + " does not implement " + tr + " — add `impl " + tr + " for " + fty + "` (or remove the derive)", ln, cl)];
       }
@@ -21269,6 +21271,9 @@ function derive_method_name(kind: string): string {
   }
   if (kind == "Hash") {
     return "hash";
+  }
+  if (kind == "Default") {
+    return "default";
   }
   return "";
 }

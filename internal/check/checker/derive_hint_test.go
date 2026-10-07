@@ -434,3 +434,32 @@ func TestDemangleAllRewritesEveryPart(t *testing.T) {
 		}
 	}
 }
+
+// A derived Default delegates a struct field to the field type's own
+// default(), so a field type without one is reported at the derive, naming
+// the field. It used to surface as `undefined identifier "Inner"` with no
+// position, from the synthesised `Inner.default()` call (#11853).
+func TestDeriveDefaultNeedsAFieldDefault(t *testing.T) {
+	err := checkModuleSource(t, `import "core/cmp";
+struct Inner { v: i32 }
+@derive(cmp.Default)
+struct Outer { i: Inner, n: i32 }
+function main(): i32 { return 0; }`)
+	if err == nil {
+		t.Fatal("expected E021 for a Default derive over a field with no default")
+	}
+	if code := firstErrCode(err); code != "E021" {
+		t.Errorf("code = %s, want E021: %v", code, err)
+	}
+	if !strings.Contains(err.Error(), "field i of type Inner does not implement cmp.Default") || !strings.Contains(err.Error(), "4:1") {
+		t.Errorf("error = %v", err)
+	}
+	if err := checkModuleSource(t, `import "core/cmp";
+@derive(cmp.Default)
+struct Inner { v: i32 }
+@derive(cmp.Default)
+struct Outer { i: Inner, n: i32 }
+function main(): i32 { let o: Outer = Outer.default(); return o.n + o.i.v; }`); err != nil {
+		t.Errorf("a nested derive should check clean: %v", err)
+	}
+}
