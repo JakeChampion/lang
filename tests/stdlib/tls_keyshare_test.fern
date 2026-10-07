@@ -1,0 +1,288 @@
+import "std/test";
+import "std/hex";
+import "std/crypto";
+import "std/tls/keyshare";
+
+// tests/stdlib/tls_keyshare_test.fern — std/tls/keyshare: X25519 against
+// RFC 8448 §3's key shares and shared secret, and X25519MLKEM768 against
+// answers from Go's crypto/mlkem (mlkemtest.Encapsulate768 for the
+// server's deterministic encapsulation) and crypto/ecdh, composed in the
+// order Go's crypto/tls uses. The client's entropy is the bytes 0x00..0x1f
+// then 0x40..0x7f, the server's 0x80..0x9f then 0xa0..0xbf.
+
+function pattern(start: i32, n: i32): u8[] {
+  let out: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.with(i, (start + i & 255) as u8);
+    i = i + 1;
+  }
+  return out;
+}
+
+function cat(a: [u8], b: [u8]): u8[] {
+  let out: u8[] = [];
+  let i: i32 = 0;
+  while (i < a.len()) {
+    out = out.append(a[i]);
+    i = i + 1;
+  }
+  i = 0;
+  while (i < b.len()) {
+    out = out.append(b[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+function sha256(b: u8[]): string {
+  return crypto.sha256_new().update_bytes(b).final_hex();
+}
+
+function shown(r: Result[u8[], keyshare.KeyShareError]): string {
+  match (r) {
+    Ok(b) => {
+      return hex.hex_encode(b);
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function client_refusal(r: Result[keyshare.ClientShare, keyshare.KeyShareError]): string {
+  match (r) {
+    Ok(c) => {
+      return "accepted";
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function server_refusal(r: Result[keyshare.ServerShare, keyshare.KeyShareError]): string {
+  match (r) {
+    Ok(s) => {
+      return "accepted";
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function hybrid_client_entropy(): u8[] {
+  return cat(pattern(0x00, 32), pattern(0x40, 64));
+}
+
+function hybrid_server_entropy(): u8[] {
+  return cat(pattern(0x80, 32), pattern(0xa0, 32));
+}
+
+function hybrid_shared(): string {
+  return "b1dac4eb1ef2322eabc817f512d0f2d92c9ceb9febed6dc8b14c00a18b98908e74b43a90417395b74f29f89461d912822d9e7c2e60a899d47504fe4a367fb47f";
+}
+
+function test_groups(): test.TestOutcome {
+  if (keyshare.X25519.code() != 0x001d || keyshare.X25519MlKem768.code() != 0x11ec) {
+    return test.fail("codes");
+  }
+  match (keyshare.group(0x11ec)) {
+    Some(g) => {
+      if (g.code() != 0x11ec) {
+        return test.fail("0x11ec");
+      }
+    },
+    None => {
+      return test.fail("0x11ec unknown");
+    }
+  }
+  match (keyshare.group(0x0017)) {
+    Some(g) => {
+      return test.fail("secp256r1 is not implemented");
+    },
+    None => {
+      return test.pass();
+    }
+  }
+  return test.fail("unreachable");
+}
+
+// RFC 8448 §3: the client's and the server's ephemeral keys, and the IKM of
+// the handshake secret.
+function test_x25519_trace(): test.TestOutcome {
+  match (keyshare.client_share(keyshare.X25519, hex.hex_decode("49af42ba7f7994852d713ef2784bcbcaa7911de26adc5642cb634540e7ea5005"))) {
+    Ok(c) => {
+      if (hex.hex_encode(c.public) != "99381de560e4bd43d23d8e435a7dbafeb3c06e51c13cae4d5413691e529aaf2c") {
+        return test.fail("client share");
+      }
+      match (keyshare.server_share(keyshare.X25519, c.public, hex.hex_decode("b1580eeadf6dd589b8ef4f2d5652578cc810e9980191ec8d058308cea216a21e"))) {
+        Ok(s) => {
+          if (hex.hex_encode(s.public) != "c9828876112095fe66762bdbf7c672e156d6cc253b833df1dd69b1b04e751f0f") {
+            return test.fail("server share");
+          }
+          if (hex.hex_encode(s.shared_secret) != "8bd4054fb55b9d63fdfbacf9f04b9f0d35e6d63f537563efd46272900f89492d") {
+            return test.fail("server's shared secret");
+          }
+          return test.assert_eq(shown(c.shared_secret(s.public)), "8bd4054fb55b9d63fdfbacf9f04b9f0d35e6d63f537563efd46272900f89492d");
+        },
+        Err(e) => {
+          return test.fail(e.message());
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function test_hybrid_client_share(): test.TestOutcome {
+  match (keyshare.client_share(keyshare.X25519MlKem768, hybrid_client_entropy())) {
+    Ok(c) => {
+      if (c.public.len() != 1216 || hex.hex_encode(cat(c.public[1184:1216], [])) != "8f40c5adb68f25624ae5b214ea767a6ec94d829d3d7b5e1ad1ba6f3e2138285f") {
+        return test.fail("the X25519 key is last");
+      }
+      return test.assert_eq(sha256(c.public), "512cd4183ba01d01c97c1cd0ccd5c2785c8f324182aa86361253e0f653367c60");
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function test_hybrid_exchange(): test.TestOutcome {
+  match (keyshare.client_share(keyshare.X25519MlKem768, hybrid_client_entropy())) {
+    Ok(c) => {
+      match (keyshare.server_share(keyshare.X25519MlKem768, c.public, hybrid_server_entropy())) {
+        Ok(s) => {
+          if (s.public.len() != 1120 || hex.hex_encode(cat(s.public[1088:1120], [])) != "493e82fc74464a59268817623d2053c5eb8e2cc4a988b4fee179ec6b010d531d") {
+            return test.fail("the X25519 key is last");
+          }
+          if (sha256(s.public) != "888eae70c1f80945f4f6ee24975b892ac4591dccc1a539534c186f118a4ed19a") {
+            return test.fail("server share");
+          }
+          if (hex.hex_encode(s.shared_secret) != hybrid_shared()) {
+            return test.fail("server's shared secret");
+          }
+          return test.assert_eq(shown(c.shared_secret(s.public)), hybrid_shared());
+        },
+        Err(e) => {
+          return test.fail(e.message());
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+// A ciphertext that does not re-encrypt is rejected implicitly: ML-KEM
+// answers a pseudorandom secret, so the exchange disagrees without an error.
+function test_hybrid_tampered_ciphertext(): test.TestOutcome {
+  match (keyshare.client_share(keyshare.X25519MlKem768, hybrid_client_entropy())) {
+    Ok(c) => {
+      match (keyshare.server_share(keyshare.X25519MlKem768, c.public, hybrid_server_entropy())) {
+        Ok(s) => {
+          let bad: u8[] = s.public.with(0, s.public[0] ^ 1 as u8);
+          match (c.shared_secret(bad)) {
+            Ok(got) => {
+              if (got.len() != 64 || hex.hex_encode(got) == hybrid_shared()) {
+                return test.fail(hex.hex_encode(got));
+              }
+              // The X25519 half still agrees.
+              return test.assert_eq(hex.hex_encode(cat(got[32:64], [])), hex.hex_encode(cat(s.shared_secret[32:64], [])));
+            },
+            Err(e) => {
+              return test.fail(e.message());
+            }
+          }
+        },
+        Err(e) => {
+          return test.fail(e.message());
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function test_lengths(): test.TestOutcome {
+  if (client_refusal(keyshare.client_share(keyshare.X25519MlKem768, pattern(0, 32))) != "tls keyshare: 32 bytes of entropy, want 96") {
+    return test.fail("client entropy");
+  }
+  if (server_refusal(keyshare.server_share(keyshare.X25519, pattern(9, 32), pattern(0, 64))) != "tls keyshare: 64 bytes of entropy, want 32") {
+    return test.fail("server entropy");
+  }
+  if (server_refusal(keyshare.server_share(keyshare.X25519MlKem768, pattern(9, 32), hybrid_server_entropy())) != "tls keyshare: the peer's share is 32 bytes, want 1216") {
+    return test.fail("client share");
+  }
+  match (keyshare.client_share(keyshare.X25519, pattern(0, 32))) {
+    Ok(c) => {
+      return test.assert_eq(shown(c.shared_secret(pattern(0, 1120))), "tls keyshare: the peer's share is 1120 bytes, want 32");
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+// The all-zero point is of low order on either side, alone or as the
+// hybrid's X25519 half.
+function test_low_order(): test.TestOutcome {
+  let zero: u8[] = __alloc_u8(32);
+  if (server_refusal(keyshare.server_share(keyshare.X25519, zero, pattern(0x80, 32))) != "tls keyshare: the peer's X25519 key is of low order") {
+    return test.fail("server");
+  }
+  match (keyshare.client_share(keyshare.X25519MlKem768, hybrid_client_entropy())) {
+    Ok(c) => {
+      if (server_refusal(keyshare.server_share(keyshare.X25519MlKem768, cat(c.public[0:1184], zero), hybrid_server_entropy())) != "tls keyshare: the peer's X25519 key is of low order") {
+        return test.fail("hybrid server");
+      }
+      return test.assert_eq(shown(c.shared_secret(cat(__alloc_u8(1088), zero))), "tls keyshare: the peer's X25519 key is of low order");
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+// An encapsulation key whose first coefficient is 0xfff, not below q.
+function test_bad_encapsulation_key(): test.TestOutcome {
+  match (keyshare.client_share(keyshare.X25519MlKem768, hybrid_client_entropy())) {
+    Ok(c) => {
+      let bad: u8[] = c.public.with(0, 0xff as u8).with(1, c.public[1] | 0x0f as u8);
+      return test.assert_eq(server_refusal(keyshare.server_share(keyshare.X25519MlKem768, bad, hybrid_server_entropy())), "tls keyshare: the peer's ML-KEM encapsulation key is not reduced");
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/tls/keyshare");
+  r = r.it("groups", test_groups);
+  r = r.it("X25519 shares of RFC 8448", test_x25519_trace);
+  r = r.it("X25519MLKEM768 client share", test_hybrid_client_share);
+  r = r.it("X25519MLKEM768 exchange", test_hybrid_exchange);
+  r = r.it("X25519MLKEM768 tampered ciphertext", test_hybrid_tampered_ciphertext);
+  r = r.it("lengths", test_lengths);
+  r = r.it("low-order X25519 keys", test_low_order);
+  r = r.it("unreduced encapsulation key", test_bad_encapsulation_key);
+  return r.finish();
+}

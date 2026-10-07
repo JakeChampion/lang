@@ -1634,6 +1634,7 @@ func New() *Interp {
 	i.Builtins["create_dir"] = &Builtin{Fn: builtinCreateDir}
 	i.Builtins["remove_dir"] = &Builtin{Fn: builtinRemoveDir}
 	i.Builtins["create_link"] = &Builtin{Fn: builtinCreateLink}
+	i.Builtins["clone_file"] = &Builtin{Fn: builtinCloneFile}
 	i.Builtins["create_symlink"] = &Builtin{Fn: builtinCreateSymlink}
 	i.Builtins["read_link"] = &Builtin{Fn: builtinReadLink}
 	i.Builtins["getxattr"] = &Builtin{Fn: builtinGetxattr}
@@ -3716,10 +3717,30 @@ func statLike(name string, resolve func(string) (os.FileInfo, error), follow boo
 		return nil, fmt.Errorf("%s: expected string path, got %T", name, args[0])
 	}
 	info, err := resolve(string(path))
+	if err == nil && strings.HasSuffix(string(path), "/") {
+		info, err = slashResolve(string(path), info)
+	}
 	if err != nil {
 		return resultErr(classifyIoError(string(path), err)), nil
 	}
 	return resultOk(fileStatValue(info, statOrigin{path: string(path), follow: follow})), nil
+}
+
+// slashResolve holds a trailing slash to POSIX: it resolves a symlink and
+// names a directory, else ENOTDIR. Linux's kernel does this itself; XNU's
+// answers as though the slash were absent.
+func slashResolve(path string, info os.FileInfo) (os.FileInfo, error) {
+	if info.Mode()&os.ModeSymlink != 0 {
+		followed, err := os.Stat(path)
+		if err != nil {
+			return nil, err
+		}
+		info = followed
+	}
+	if !info.IsDir() {
+		return nil, &os.PathError{Op: "stat", Path: path, Err: syscall.ENOTDIR}
+	}
+	return info, nil
 }
 
 // fileStatValue projects an os.FileInfo onto the FileStat struct.
@@ -4665,6 +4686,16 @@ func builtinCreateLink(_ *Interp, args []Value) (Value, error) {
 	// The IoError names the link being created, which is the operand
 	// every diagnostic over this builtin reports.
 	return ioResult(p[1], syscall.Link(p[0], p[1])), nil
+}
+
+// builtinCloneFile mirrors __fern_clone_file: `dest` as a copy-on-write
+// clone of `src`, by the host's own call (clonefile_*.go).
+func builtinCloneFile(_ *Interp, args []Value) (Value, error) {
+	p, err := pathArgs("clone_file", args, 2)
+	if err != nil {
+		return nil, err
+	}
+	return ioResult(p[1], cloneFile(p[0], p[1])), nil
 }
 
 // builtinCreateSymlink writes a symbolic link at `path` holding the

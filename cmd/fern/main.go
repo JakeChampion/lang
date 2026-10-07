@@ -596,7 +596,7 @@ func shouldUseASCII(force bool) bool {
 func main() {
 	out := flag.String("o", "", "output binary path; if unset, assembly is written to stdout")
 	target := flag.String("target", "arm64-linux", "target as `<isa>-<environment>` — the ISA half selects the backend, the environment half says what the host provides; neither is implied. arm64-linux (default, Linux ELF), arm64-android (Linux ELF as a static position-independent executable for Android), arm64-darwin (native Apple Silicon macOS), x86-64-linux (Linux ELF), wasm32-wasi (CLI component), wasm32-wasi-http (HTTP handler component implementing wasi:http/incoming-handler), arm64-freestanding / x86-64-freestanding (no host at all — type-checks against an empty capability set; no backend emits for them yet, see docs/FREESTANDING-CORE.md). `fern -targets` lists them with their capabilities.")
-	runIt := flag.Bool("run", false, "build to a temporary binary and execute it: directly when the target's ISA is the host's, else under -qemu (qemu-x86_64 for an x86-64 target when -qemu is left at its default)")
+	runIt := flag.Bool("run", false, "build to a temporary binary and execute it: directly when the target's ISA is the host's, else under -qemu (qemu-x86_64 for an x86-64 target when -qemu is left at its default); a wasm32-wasi target runs under `wasmtime run`")
 	optimize := flag.Bool("O", false, "release build: elide every assert() check after type-checking (the condition is not evaluated, so asserts must be side-effect-free). Applies to compiled output; -interp and -check always keep asserts.")
 	shared := flag.Bool("shared", false, "emit a shared object (.so) instead of an executable — a position-independent ET_DYN with a dynamic symbol table exporting the -export functions, loadable via dlopen / Android's System.loadLibrary. Native ELF targets only (x86-64, arm64, arm64-android); requires -o.")
 	export := flag.String("export", "", "with -shared: comma-separated function names to export in the .so (default: main). Each must be a defined top-level function; it becomes a dynamic symbol resolvable by the loader.")
@@ -1228,8 +1228,16 @@ func execUnderQemu(qemu, binPath string, progArgs []string) (int, error) {
 	if _, err := exec.LookPath(qemu); err != nil {
 		return 1, fmt.Errorf("emulator %q not found on PATH (override with -qemu): %w", qemu, err)
 	}
-	args := append([]string{binPath}, progArgs...)
-	cmd := exec.Command(qemu, args...)
+	return execTool(qemu, append([]string{binPath}, progArgs...))
+}
+
+// execTool runs tool with args, stdio passed through, and returns its exit
+// code.
+func execTool(tool string, args []string) (int, error) {
+	if _, err := exec.LookPath(tool); err != nil {
+		return 1, fmt.Errorf("%s not found on PATH: %w", tool, err)
+	}
+	cmd := exec.Command(tool, args...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr

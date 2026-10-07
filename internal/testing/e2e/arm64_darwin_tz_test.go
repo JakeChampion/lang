@@ -24,7 +24,7 @@ func TestArm64DarwinTz(t *testing.T) {
 	if err != nil {
 		t.Fatalf("run: %v\n%s", err, got)
 	}
-	for _, w := range []string{"# Suite: tz-darwin", "1..7", "# pass 7", "# fail 0"} {
+	for _, w := range []string{"# Suite: tz-darwin", "1..12", "# pass 12", "# fail 0"} {
 		if !strings.Contains(string(got), w) {
 			t.Errorf("output missing %q\n%s", w, got)
 		}

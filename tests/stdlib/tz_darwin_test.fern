@@ -50,6 +50,21 @@ function test_rule_starts_in_1970(): test.TestOutcome {
   return test.assert_eq(z.abbrev_at(1704067200i64), "NZDT");
 }
 
+// They end in 2569, and past the last of them the zone keeps the state it
+// set: standard time for a northern rule, daylight time for a southern one.
+function test_rule_ends_in_2569(): test.TestOutcome {
+  let july2569: i64 = tz.days_from_civil(2569i64, 7, 1) * 86400i64;
+  let july2570: i64 = tz.days_from_civil(2570i64, 7, 1) * 86400i64;
+  let north: tz.Zone = tz.zone_from_tz("EST5EDT,M3.2.0/2,M11.1.0/2");
+  if (north.abbrev_at(july2569) != "EDT") {
+    return test.fail("2569");
+  }
+  if (north.offset_at(july2570) != 0 - 18000) {
+    return test.fail("2570");
+  }
+  return test.assert_eq(tz.zone_from_tz("NZST-12NZDT,M9.5.0,M4.1.0/3").abbrev_at(july2570), "NZDT");
+}
+
 // A bad date refuses the whole string, where glibc keeps the offsets.
 function test_bad_date_is_utc(): test.TestOutcome {
   return test.assert_eq(tz.zone_from_tz("EST5EDT,M13.1.0,M11.1.0").abbrev_at(0i64), "UTC");
@@ -95,6 +110,7 @@ function main(): i32 {
   t = t.it("short quoted names", test_short_quoted_names);
   t = t.it("hours past a day", test_hours_past_a_day);
   t = t.it("a rule starts in 1970", test_rule_starts_in_1970);
+  t = t.it("a rule ends in 2569", test_rule_ends_in_2569);
   t = t.it("a bad date is UTC", test_bad_date_is_utc);
   t = t.it("a semicolon before the rule", test_semicolon_rule);
   t = t.it("an unclosed DST name is UTC", test_unclosed_dst_name_is_utc);

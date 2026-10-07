@@ -1213,6 +1213,47 @@ constant time. About 1 ms per verification on x86-64 under a 2048-bit key.
   `verify_pss(key, hash, msg, sig): boolean`, `hash` one of `Sha256`,
   `Sha384`, `Sha512`.
 
+### `std/tls/handshake`
+
+The TLS 1.3 handshake of RFC 8446, client and server, as sans-IO state
+machines over the four modules below: bytes in, bytes out, with no sockets, no
+clock and no randomness of its own. The client reproduces RFC 8448 §3 byte for
+byte from the trace's ClientHello and key share, through Finished, application
+data and close_notify; the server reproduces the trace's ServerHello; and the
+two complete handshakes with each other across every suite and group
+(`tests/stdlib/tls_handshake_test.fern`).
+
+```fern
+let step: handshake.ClientStep = handshake.client_start(handshake.client_config("example.com"), entropy)?;
+send(step.output);
+step = step.client.read(received)?;   // step.output, step.data, step.events
+```
+
+- `client_config(server_name)` offers every suite, X25519MLKEM768 with X25519
+  as the fallback group, and the signature schemes `std/crypto` verifies;
+  `ClientConfig` has `server_name`, `alpn`, `suites`, `groups` and `schemes`.
+  `client_start(config, entropy)` takes 32 random bytes and the entropy the
+  first group's share takes; `client_from_hello(hello, share)` starts from a
+  ClientHello the caller built.
+- `server_config(chain, schemes)` and `ServerConfig` (`chain`, leaf first;
+  `schemes` its key can make; `suites`, `groups` and `alpn` in preference
+  order). `server_new(config, entropy)` takes 96 bytes. The server reads the
+  client's `server_name` and chooses its `alpn`.
+- `read(input)` on either side returns a step: the other side's bytes to
+  send (`output`), application data (`data`) and `events`: `VerifyServer`
+  (the chain, scheme, signed content and signature: judge them, then call
+  `verdict(ok)`), `SignNeeded` (sign `signed` under `scheme`, then call
+  `signature(sig)`), `Connected`, `PeerClosed` and `Ticket`. No private key
+  and no trust decision enter the module.
+- `write(data)` once connected, `close()` for close_notify, `connected()`, and
+  `alert(e)`, the record that reports a `HandshakeError` to the peer. A
+  KeyUpdate is answered, and a compatibility change_cipher_spec ignored.
+- `HandshakeError` names the cause, with `alert()` and `message()`.
+- `certificate_verify_content(server, transcript_hash)` is what a
+  CertificateVerify signs.
+- Not yet: HelloRetryRequest, PSK resumption and early data, and client
+  certificates beyond answering a request with an empty Certificate.
+
 ### `std/tls/keyschedule`
 
 The TLS 1.3 key schedule of RFC 8446 §7, the first part of `std/tls` (#9858).
@@ -1228,7 +1269,8 @@ let keys: keyschedule.TrafficKeys = keyschedule.traffic_keys(suite, hs.server_tr
 ```
 
 - `CipherSuite` is `Aes128GcmSha256`, `Aes256GcmSha384` or
-  `ChaCha20Poly1305Sha256`, the three TLS 1.3 suites; `hash()` is its `Hash`
+  `ChaCha20Poly1305Sha256`, the three TLS 1.3 suites, with `code()` its
+  CipherSuite value and `cipher_suite(code)` the reverse; `hash()` is its `Hash`
   (`Sha256` or `Sha384`, with `size()` and `digest(msg)`), `aead()` its `Aead`
   (`Aes128Gcm`, `Aes256Gcm` or `ChaCha20Poly1305`, with `key_len()`).
 - `hkdf_extract(h, salt, ikm)`, `hkdf_expand_label(h, secret, label, context,
@@ -1247,6 +1289,74 @@ let keys: keyschedule.TrafficKeys = keyschedule.traffic_keys(suite, hs.server_tr
   time (§4.4.4).
 - `next_traffic_secret(h, traffic_secret)` — the secret after a KeyUpdate
   (§7.2).
+
+### `std/tls/keyshare`
+
+The key exchange a TLS 1.3 key_share carries: X25519, and X25519MLKEM768, the
+hybrid of ML-KEM-768 and X25519 (draft-ietf-tls-ecdhe-mlkem). The caller
+supplies the randomness, so a handshake replays exactly. ML-KEM's part comes
+first in the client's share (encapsulation key, then X25519 key), the
+server's (ciphertext, then X25519 key) and the shared secret. Verified against
+RFC 8448 §3's X25519 shares and against Go's crypto/mlkem and crypto/ecdh for
+the hybrid (`tests/stdlib/tls_keyshare_test.fern`), and run under the
+constant-time gate.
+
+```fern
+let mine: keyshare.ClientShare = keyshare.client_share(keyshare.X25519MlKem768, entropy)?;
+let theirs: keyshare.ServerShare = keyshare.server_share(mine.group, mine.public, server_entropy)?;
+let shared: u8[] = mine.shared_secret(theirs.public)?;   // theirs.shared_secret
+```
+
+- `Group` is `X25519` or `X25519MlKem768`, with `code()` (0x001d, 0x11ec),
+  `client_entropy()` and `server_entropy()` (32 and 96, 32 and 64 bytes), and
+  `client_share_len()` and `server_share_len()`. `group(code)` is the
+  `Option[Group]` for a NamedGroup code.
+- `client_share(g, entropy): Result[ClientShare, KeyShareError]` — `public`
+  goes in the ClientHello; `shared_secret(server_public)` finishes the
+  exchange.
+- `server_share(g, client_public, entropy): Result[ServerShare,
+  KeyShareError]` — `public` for the ServerHello and `shared_secret`.
+- `KeyShareError` is `EntropyLength(n, want)`, `ShareLength(n, want)`,
+  `LowOrder` (an X25519 key whose shared secret is all zeros) or
+  `BadEncapsulationKey`, with `message()`.
+
+### `std/tls/message`
+
+The handshake messages of RFC 8446 §4 and the extensions TLS 1.3 reads,
+encoded and decoded, and the split of handshake records into the messages
+they carry. Decoding is strict: a length that disagrees with what it covers,
+bytes left over, a repeated extension or key share, or a field TLS 1.3 fixes
+holding another value is refused. Every handshake message of RFC 8448 §3
+decodes and re-encodes to the same bytes (`tests/stdlib/tls_message_test.fern`).
+
+```fern
+let s: message.Split = message.split(buffered)?;     // keep s.rest
+let m: message.Message = message.decode(s.messages[0])?;
+let out: u8[] = message.encode(message.Finished(verify_data));
+```
+
+- `split(buf): Result[Split, MsgError]` — `messages` (each a `Raw`, its kind
+  and its bytes with the header, as the transcript hashes them) and `rest`.
+  A bad type or a length over the limit (2^18 bytes for a Certificate, 2^16
+  for the rest) is refused as soon as the header arrives.
+- `decode(raw): Result[Message, MsgError]` and `encode(m): u8[]`. `Message`
+  is `ClientHelloMsg`, `ServerHelloMsg`, `NewSessionTicketMsg`,
+  `EndOfEarlyData`, `EncryptedExtensions`, `CertificateRequestMsg`,
+  `CertificateMsg`, `CertificateVerifyMsg`, `Finished` or `KeyUpdate`, with
+  `kind()`; the structs hold the fields TLS 1.3 uses, and a ServerHello's
+  `is_retry()` says whether it is a HelloRetryRequest.
+- `Extension { kind, data }` and `find(exts, kind): Option[u8[]]`. Each
+  extension TLS 1.3 reads has an encoder and a decoder: `ext_server_name` /
+  `server_name`, `ext_supported_versions` / `supported_versions` and
+  `ext_selected_version` / `selected_version`, `ext_supported_groups`,
+  `ext_signature_algorithms`, `ext_key_shares` / `key_shares` (the client's),
+  `ext_key_share` / `key_share` (the server's), `ext_retry_group` /
+  `retry_group`, `ext_alpn` / `alpn` and `ext_psk_modes` / `psk_modes`.
+- The HandshakeType and ExtensionType codes are constants (`CLIENT_HELLO`,
+  `EXT_KEY_SHARE`, …), with `TLS13` and `LEGACY_VERSION`.
+- `MsgError` is `DecodeError(field)`, `IllegalParameter(field)`,
+  `ProtocolVersion(v)`, `UnexpectedMessage(kind)` or `TooLarge(kind, len)`,
+  with `message()`.
 
 ### `std/tls/record`
 

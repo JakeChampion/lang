@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -699,9 +700,9 @@ func cpCases(t *testing.T) []invocation {
 		out = append(out, invocation{name: c.name, args: c.args, seedTree: cpSlash})
 	}
 
-	// --reflink. There is no clone primitive, so `always` reports the
-	// failure GNU reports where the filesystem cannot clone — which is
-	// what the filesystem under this test directory answers.
+	// --reflink. Both sides clone where the filesystem can (APFS, btrfs,
+	// XFS) and report the same failure under `always` where it cannot
+	// (ext4, overlayfs).
 	for _, c := range []struct {
 		name string
 		args []string
@@ -1227,7 +1228,8 @@ func treePaths(t *testing.T, root string) []string {
 // copy used — SEEK_HOLE for a source the filesystem stored with a hole,
 // none otherwise. Whether the fixture's hole survives is the filesystem's
 // call (APFS on the macOS runner allocates it), so the expectation is read
-// off the seeded source rather than assumed.
+// off the seeded source rather than assumed. On Darwin the default
+// `--reflink=auto` clones on APFS, and the line says so instead.
 func TestCpDebug(t *testing.T) {
 	for _, src := range []string{"dense", "sp"} {
 		t.Run(src, func(t *testing.T) {
@@ -1241,6 +1243,9 @@ func TestCpDebug(t *testing.T) {
 				}
 				if st.Blocks*512 < st.Size {
 					want = "copy offload: no, reflink: unsupported, sparse detection: SEEK_HOLE"
+				}
+				if runtime.GOOS == "darwin" {
+					want = "copy offload: no, reflink: yes, sparse detection: no"
 				}
 				return strings.Split(strings.TrimSuffix(runCpIn(t, bin, dir, "--debug", src, "out"), "\n"), "\n")
 			}

@@ -3029,10 +3029,11 @@ function signature_slot(t: typeinfo.Type): boolean {
   return semtypes.concrete(t, false);
 }
 
-// Where a function value may NOT sit: in a Map's key, nested in a Map's
-// value, or in an array of arrays, tuples or maps of them -- slots no release
-// walk reaches yet. A Map's value column of them is admitted: the column is
-// released through `__sem_release_<T>`, which walks each box's captures. An array element and a tuple element are admitted: `ssarc.drop_elements`
+// Where a function value may NOT sit: in a Map's key, reached through any
+// depth of array elements, tuple elements and Map values -- the one slot no
+// release walk reaches yet. A Map's value column of them is admitted: the
+// column is released through `__sem_release_<T>`, which walks each box's
+// captures. An array element and a tuple element are admitted: `ssarc.drop_elements`
 // and `drop_tuple_fields` walk each through `drop_value`, which dispatches a
 // function type to `drop_captures`, and `ssasem.reference` counts a function
 // value, so the container knows it has children to walk. A Cell is not on the
@@ -3071,8 +3072,8 @@ function type_placement_error(t: typeinfo.Type): string {
 
 // A function value is a field like any other: the holder takes a unit of it
 // and its release walks it, which `semsource.env_rows` makes possible from a
-// frame that never built the box. What stays refused is a function value
-// NESTED in a field — an array or tuple of them. A variant's field is released
+// frame that never built the box. What stays refused is a field reaching a
+// function value in a map's key (`nests_func`). A variant's field is released
 // by the same walk (`ssarc.drop_variant_fields`), so it holds one under the
 // same rule. Each schema says which it is when it is made
 // (`semsource.fields_nest_func`).

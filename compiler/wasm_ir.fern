@@ -311,7 +311,7 @@ pub function need_ops(): string[] {
   return [
     "args", "arr_reserve", "arr_push", "arr_push_f64", "arr_push_i64", "arr_push_owned", "arr_push_owned_i64",
     "arr_push_owned_f64", "env", "environ", "eprint_str", "exit", "fcos", "fexp", "flog",
-    "fpow", "fsin", "monotonic_ns", "now_ns", "now_unix_ms", "clock_resolution", "clock_set", "poll", "print_str", "putchar",
+    "fpow", "fsin", "monotonic_ns", "now_ns", "now_unix_ms", "clock_resolution", "clock_set", "clone_file", "poll", "print_str", "putchar",
     "random_bytes", "read_chunk", "read_chunk_bytes", "fd_stat", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache",
     "fd_dup_onto", "reader_seek", "reader_splice", "fd_flags", "writer_truncate", "read_dir",
     "read_dir_all", "read_dir_ino", "read_file", "read_file_bytes", "read_line",
@@ -2366,8 +2366,9 @@ pub function component_refused_need(needs: string[], io: boolean, proxy: boolean
       i = i + 1;
       continue;
     }
-    // clock_set's body answers Unsupported and imports nothing.
-    if (n == "clock_set") {
+    // clock_set's and clone_file's bodies answer Unsupported and import
+    // nothing.
+    if (n == "clock_set" || n == "clone_file") {
       i = i + 1;
       continue;
     }
@@ -6132,7 +6133,7 @@ function is_host_op_kind(tag: i32): boolean {
     || tag == 203 || tag == 304 || tag == 305 || tag == 202 || tag == 308 || tag == 176 || tag == 175 || tag == 236 || tag == 173 || tag == 231
     || tag == 171 || tag == 310 || tag == 391 || tag == 172 || tag == 180 || tag == 249 || tag == 166
     || tag == 260 || tag == 261 || tag == 262 || tag == 263 || tag == 264
-    || tag == 267 || tag == 269 || tag == 273;
+    || tag == 267 || tag == 269 || tag == 273 || tag == 405;
 }
 
 // emit_host_op_wat renders one host op as WAT. Every arm is a fixed call to
@@ -6179,6 +6180,10 @@ function emit_host_op_wat(o: ir.Op): string {
   if (o.kind_tag == 388) {  // clock_set
     // [sec, nsec] -> Result[void, IoError]: always Err(Unsupported).
     return "    call $__fern_clock_set\n";
+  }
+  if (o.kind_tag == 405) {  // clone_file
+    // [src, dest] -> Result[void, IoError]: always Err(Unsupported).
+    return "    call $__fern_clone_file\n";
   }
   if (o.kind_tag == 168) {  // read_line
     // [fd] -> read one line from it, push a fresh Option[string]. The helper
@@ -7628,7 +7633,7 @@ function io_err_field_off(i: i32): string {
 function needs_fd_sync(needs: string[]): boolean {
   return need(needs, "fd_fsync") || need(needs, "fd_fdatasync") || need(needs, "fd_syncfs")
     || need(needs, "fd_drop_cache") || need(needs, "fd_dup_onto") || need(needs, "reader_splice")
-    || need(needs, "clock_set");
+    || need(needs, "clock_set") || need(needs, "clone_file");
 }
 
 // needs_io_error reports whether the module carries any fs op — the gate on
@@ -8586,6 +8591,9 @@ pub function fd_sync_funcs(needs: string[]): string {
   if (need(needs, "clock_set")) {
     o = o + clock_set_func();
   }
+  if (need(needs, "clone_file")) {
+    o = o + clone_file_func();
+  }
   if (need(needs, "fd_dup_onto")) {
     o = o + fd_dup_onto_func();
   }
@@ -8692,6 +8700,21 @@ pub function fd_dup_onto_func(): string {
 pub function clock_set_func(): string {
   let o: string = "";
   o = o + "  (func $__fern_clock_set (param $sec i64) (param $nsec i64) (result i32)\n";
+  o = o + "    (local $res i32)\n";
+  o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
+  o = o + "    (i32.store (local.get $res) (i32.const 1))\n";
+  o = o + "    (i32.store (i32.add (local.get $res) (i32.const 4)) (call $__fern_build_io_error " + refused_errno() + " (i32.const 0)))\n";
+  o = o + "    (local.get $res))\n";
+  return o;
+}
+
+// clone_file_func emits $__fern_clone_file(src, dest) -> Result[void,
+// IoError]: always Err(Unsupported). Neither preview has a copy-on-write
+// clone, so the caller copies the bytes, as it does where a filesystem
+// cannot clone.
+pub function clone_file_func(): string {
+  let o: string = "";
+  o = o + "  (func $__fern_clone_file (param $src i32) (param $dest i32) (result i32)\n";
   o = o + "    (local $res i32)\n";
   o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o = o + "    (i32.store (local.get $res) (i32.const 1))\n";

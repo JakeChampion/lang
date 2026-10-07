@@ -4485,10 +4485,14 @@ groups are the order of work. Each sub-issue names its group.
   create_symlink, create_link, read_link, mknod, `Writer.seek` and
   stat/lstat's full field set were all already here, so #8352's
   "blocked on openat/fchmod/fchown/utimensat/copy_file_range/lseek
-  SEEK_HOLE, symlink" was stale but for the clone. `--reflink=always`
-  reports the failure GNU reports where the filesystem cannot clone,
-  which is what ext4 and overlayfs answer and not what btrfs does:
-  FICLONE is the one primitive still missing. A sparse source is walked
+  SEEK_HOLE, symlink" was stale but for the clone, which is the
+  `clone_file` builtin: fclonefileat on Darwin, FICLONE on Linux.
+  `--reflink` is `auto` by default in cp, mv and install, as GNU's is,
+  and follows GNU's per-platform rules: Darwin clones only a new
+  destination whose cloned mode bits are no wider than the wanted ones
+  and puts its times to now, Linux clones into the destination either
+  way, and `always` reports the failure where the filesystem cannot
+  clone (ext4, overlayfs). A sparse source is walked
   by SEEK_DATA / SEEK_HOLE, as GNU's lseek_copy does, so zeros that were
   written stay written under `--sparse=auto`; `--sparse=always` and a
   source that cannot be asked (WASI) fall back to punching zero blocks

@@ -33,6 +33,7 @@ import "std/string";
 import "std/array";
 import "std/utf8";
 import "std/tz";
+import "./timefmt";
 
 // `hint` is the offset the parse settled on, the next parse's first
 // guess; `dbg` is the `--debug` commentary, empty unless asked for.
@@ -1754,7 +1755,9 @@ function big(v: i64): boolean {
 // change. When `isdst` is 0 or 1 and the instant found does not
 // agree, the nearest instant that does, a week at a time to either
 // side for up to eight years, lends its offset; when there is none,
-// the requested flag is taken to mean an hour's difference.
+// the requested flag is taken to mean an hour's difference. On Darwin
+// GNU links gnulib's replacement instead, which searches a year and
+// then ignores the flag.
 function mktime(z: tz.Zone, year: i64, mon: i64, mday: i64, hour: i64, min: i64, sec: i64, isdst: i32, hint: i64): Mk {
   let q: i64 = tz.floor_div(mon, 12 as i64);
   let m: i32 = (mon - q * (12 as i64)) as i32 + 1;
@@ -1799,8 +1802,12 @@ function mktime(z: tz.Zone, year: i64, mon: i64, mday: i64, hour: i64, min: i64,
   if (isdst >= 0 && isdst != 0 != z.is_dst_at(t)) {
     let want: boolean = isdst != 0;
     let delta: i64 = 601200;
+    let bound: i64 = 268828200;
+    if (target_os() == "darwin") {
+      bound = 32223601;
+    }
     let settled: boolean = false;
-    while (delta < 268828200 as i64 && !settled) {
+    while (delta < bound && !settled) {
       let dir: i32 = 0;
       while (dir < 2 && !settled) {
         let ot: i64 = t - delta;
@@ -1815,7 +1822,7 @@ function mktime(z: tz.Zone, year: i64, mon: i64, mday: i64, hour: i64, min: i64,
       }
       delta = delta + 601200 as i64;
     }
-    if (!settled) {
+    if (!settled && target_os() != "darwin") {
       if (want) {
         t = t - 3600 as i64;
       } else {
@@ -1873,10 +1880,10 @@ function fail(pc: Pc, hint: i64): Result {
 // `fields_text(y, mon, mday, h, m, s)` — the trace's `(Y-M-D) …` form
 // of a set of fields, normalised or not.
 function fields_text(year: i64, mon: i64, mday: i64, hour: i64, min: i64, sec: i64): string {
-  // The year is NOT padded: the original renders this line with the C
-  // library's strftime, whose `%Y` writes the number as it is. Only
-  // `parsed date part`, which is a printf of its own, pads to four.
-  return "(Y-M-D) " + year.to_string() + "-" + pad(mon + 1 as i64, 2) + "-" + pad(mday, 2) + " " + pad(hour, 2) + ":" + pad(min, 2) + ":" + pad(sec, 2);
+  // The original renders this line with the C library's strftime, so
+  // the year is that library's `%Y`. `parsed date part` is a printf of
+  // its own and always pads to four.
+  return "(Y-M-D) " + timefmt.c_year(year) + "-" + pad(mon + 1 as i64, 2) + "-" + pad(mday, 2) + " " + pad(hour, 2) + ":" + pad(min, 2) + ":" + pad(sec, 2);
 }
 
 function civil_text(f: tz.Civil): string {

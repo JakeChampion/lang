@@ -23,6 +23,7 @@ func semanticRecordCases() []struct{ name, change, want string } {
 		{"record-generic-instances", `records = records.append(semrecords.Record { views: false, nests_func: false, ty: wideRecord, fields: [semrecords.Field { name: "xs", ty: typeinfo.TypeArray { elem: i64t, view: false } }, semrecords.Field { name: "n", ty: i64t }] });`, ""},
 		{"record-recursive-schema", `let node: typeinfo.Type = typeinfo.TypeStruct { name: "Node", args: [] }; records = records.append(semrecords.Record { views: false, nests_func: false, ty: node, fields: [semrecords.Field { name: "children", ty: typeinfo.TypeArray { elem: node, view: false } }] });`, ""},
 		{"record-missing-schema", "records = [];", "missing record projection schema"},
+		{"record-nests-function", `records = [semrecords.Record { ...record, nests_func: true }];`, "function value is not a field"},
 		{"record-duplicate-schema", "records = records.append(record);", "duplicate record schema"},
 		{"record-duplicate-schema-apart", `records = records.append(semrecords.Record { views: false, nests_func: false, ty: typeinfo.TypeStruct { name: "Other", args: [] }, fields: [record.fields[1]] }); records = records.append(record);`, "duplicate record schema"},
 		{"record-unresolved-identity", `records = [semrecords.Record { ...record, ty: typeinfo.unchecked() }];`, "unresolved record identity"},

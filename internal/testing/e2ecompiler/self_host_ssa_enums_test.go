@@ -53,6 +53,7 @@ func semanticEnumCases() []struct{ name, change, want string } {
 		{"enum-construction-nonunion", "types = types.with(6, ia);", "missing variant schema"},
 		{"enum-duplicate-schema", "enums = [shapeEnum, shapeEnum];", "duplicate enum schema"},
 		{"enum-duplicate-variant", `enums = [semrecords.Enum { ...shapeEnum, variants: [dot, dot] }];`, "duplicate variant name"},
+		{"enum-nests-function", `enums = [semrecords.Enum { ...shapeEnum, nests_func: true }];`, "function value is not a field"},
 		{"enum-empty-variant-name", `enums = [semrecords.Enum { ...shapeEnum, variants: [semrecords.Variant { ...dot, name: "" }] }];`, "empty variant name"},
 		{"enum-nonunion-identity", `enums = [semrecords.Enum { ...shapeEnum, ty: ia }];`, "non-union enum identity"},
 		{"enum-unresolved-identity", `enums = [semrecords.Enum { ...shapeEnum, ty: typeinfo.unchecked() }];`, "unresolved enum identity"},

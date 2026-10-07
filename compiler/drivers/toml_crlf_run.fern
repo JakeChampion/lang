@@ -11,7 +11,8 @@
 // packages and the loader saw an empty lock rather than an error.
 //
 // This driver parses the same manifest and lock text twice, once LF and once
-// CRLF, and prints what each yields. The two halves must agree line for line;
+// CRLF, and prints what each yields. Both carry comments after values, and a
+// `#` inside a quoted string, which is part of the value (#11841). The two halves must agree line for line;
 // the companion Go test pins the exact output, so a trim that stops handling
 // '\r' fails here rather than silently emptying a lock file.
 
@@ -68,18 +69,18 @@ function crlf(s: string): string {
 
 function main(): i32 {
   let manifest: string = "[package]\n"
-    + "name = \"acme\"\n"
+    + "name = \"acme\"  # the package\n"
     + "\n"
     + "# a comment line\n"
-    + "[dependencies]\n"
-    + "dbl = { path = \"../dbl\" }\n"
+    + "[dependencies]  # what it needs\n"
+    + "dbl = { path = \"../dbl\" }  # beside us\n"
     + "shout = \"1.2.3\"\n"
     + "\n"
     + "[workspace]\n"
-    + "members = [\"a\", \"b/c\"]\n";
+    + "members = [\"a\", \"b#c\"]  # two\n";
   let lock: string = "[[package]]\n"
     + "name = \"dbl\"\n"
-    + "version = \"1.0.0\"\n"
+    + "version = \"1.0.0\"  # pinned\n"
     + "path = \"../dbl\"\n"
     + "\n"
     + "[[package]]\n"

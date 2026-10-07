@@ -206,6 +206,7 @@ var gatedBuiltins = map[string]string{
 	"create_dir":       "fs",
 	"remove_dir":       "fs",
 	"create_link":      "fs",
+	"clone_file":       "fs",
 	"create_symlink":   "fs",
 	"read_link":        "fs",
 	"rename":           "fs",

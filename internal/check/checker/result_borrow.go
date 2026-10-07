@@ -43,16 +43,19 @@ func (c *checker) computeResultBorrows(prog *ast.Program) {
 // funcResultBorrows reports whether any of fn's returns is derived from one of
 // its borrowed pointer parameters.
 func (c *checker) funcResultBorrows(fn *ast.FuncDecl) bool {
-	borrowed := map[string]bool{}
+	b := borrowScope{borrowed: map[string]bool{}, values: map[string]bool{}}
 	for _, p := range fn.Params {
 		if !p.Own && p.Type != nil && ast.IsPointerType(p.Type) {
-			borrowed[p.Name] = true
+			b.borrowed[p.Name] = true
+			if elem := elemType(p.Type); elem != nil && !ast.IsPointerType(elem) {
+				b.values[p.Name] = true
+			}
 		}
 	}
-	if len(borrowed) == 0 {
+	if len(b.borrowed) == 0 {
 		return false
 	}
-	locals := c.borrowedLocals(fn, borrowed)
+	b.locals = c.borrowedLocals(fn, b)
 	found := false
 	ast.Walk(fn.Body, func(n ast.Node) bool {
 		if found {
@@ -63,7 +66,7 @@ func (c *checker) funcResultBorrows(fn *ast.FuncDecl) bool {
 			// A lambda's returns are its own, not this function's.
 			return false
 		case *ast.Return:
-			if s.Value != nil && c.exprBorrows(s.Value, borrowed, locals) {
+			if s.Value != nil && c.exprBorrows(s.Value, b) {
 				found = true
 			}
 		}
@@ -75,16 +78,16 @@ func (c *checker) funcResultBorrows(fn *ast.FuncDecl) bool {
 // borrowedLocals names the locals of fn that can hold a borrow of one of its
 // borrowed parameters. Settled to a fixed point rather than walked once, so a
 // value that only becomes a borrow on a loop's second iteration is still seen.
-func (c *checker) borrowedLocals(fn *ast.FuncDecl, borrowed map[string]bool) map[string]bool {
-	locals := map[string]bool{}
+func (c *checker) borrowedLocals(fn *ast.FuncDecl, b borrowScope) map[string]bool {
+	b.locals = map[string]bool{}
 	mark := func(name string, init ast.Expr) bool {
-		if name == "" || locals[name] || init == nil {
+		if name == "" || b.locals[name] || init == nil {
 			return false
 		}
-		if !c.exprBorrows(init, borrowed, locals) {
+		if !c.exprBorrows(init, b) {
 			return false
 		}
-		locals[name] = true
+		b.locals[name] = true
 		return true
 	}
 	for changed := true; changed; {
@@ -103,12 +106,30 @@ func (c *checker) borrowedLocals(fn *ast.FuncDecl, borrowed map[string]bool) map
 			return true
 		})
 	}
-	return locals
+	return b.locals
+}
+
+// borrowScope is what exprBorrows reads: the borrowed pointer parameters, the
+// locals that can hold a borrow of one, and the parameters whose elements are
+// values, so that indexing one yields a copy.
+type borrowScope struct {
+	borrowed, locals, values map[string]bool
+}
+
+// elemType is the element type of an array or view type, else nil.
+func elemType(t ast.Type) ast.Type {
+	switch at := t.(type) {
+	case ast.ArrayType:
+		return at.Elem
+	case ast.SliceType:
+		return at.Elem
+	}
+	return nil
 }
 
 // exprBorrows reports whether e can alias one of the borrowed names.
 // Pessimistic: a shape not named here is assumed to be able to.
-func (c *checker) exprBorrows(e ast.Expr, borrowed, locals map[string]bool) bool {
+func (c *checker) exprBorrows(e ast.Expr, b borrowScope) bool {
 	switch x := e.(type) {
 	case nil:
 		return false
@@ -119,15 +140,18 @@ func (c *checker) exprBorrows(e ast.Expr, borrowed, locals map[string]bool) bool
 		// than being one.
 		return false
 	case *ast.Ident:
-		return borrowed[x.Name] || locals[x.Name]
+		return b.borrowed[x.Name] || b.locals[x.Name]
 	case *ast.FieldAccess:
-		return c.exprBorrows(x.Target, borrowed, locals)
+		return c.exprBorrows(x.Target, b)
 	case *ast.Index:
-		return c.exprBorrows(x.Array, borrowed, locals)
+		if id, ok := x.Array.(*ast.Ident); ok && b.values[id.Name] {
+			return false
+		}
+		return c.exprBorrows(x.Array, b)
 	case *ast.SliceExpr:
-		return c.exprBorrows(x.Source, borrowed, locals)
+		return c.exprBorrows(x.Source, b)
 	case *ast.IfExpr:
-		return c.exprBorrows(x.Then, borrowed, locals) || c.exprBorrows(x.Else, borrowed, locals)
+		return c.exprBorrows(x.Then, b) || c.exprBorrows(x.Else, b)
 	case *ast.Call:
 		// A callee that can hand a borrowed parameter back aliases whichever
 		// argument it was given, so its result is a borrow HERE only when one
@@ -136,7 +160,7 @@ func (c *checker) exprBorrows(e ast.Expr, borrowed, locals map[string]bool) bool
 			return false
 		}
 		for _, a := range x.Args {
-			if c.exprBorrows(a, borrowed, locals) {
+			if c.exprBorrows(a, b) {
 				return true
 			}
 		}

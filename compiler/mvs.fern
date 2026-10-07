@@ -175,12 +175,9 @@ pub function parse_index(src: string): Index {
   let lines: string[] = split_char(src, b'\n');
   let ln: i32 = 0;
   while (ln < lines.len()) {
-    let line: string = util.trim(lines[ln]);
+    let line: string = fern_toml.line_content(lines[ln]);
     ln = ln + 1;
     if (line.len() == 0) {
-      continue;
-    }
-    if (line[0] == b'#') {
       continue;
     }
     if (line[0] == b'[') {

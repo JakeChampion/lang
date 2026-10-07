@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/jakechampion/lang/internal/pkg/manifest"
 )
 
 // Source locates a specific package version's archive/directory: a local
@@ -85,8 +87,8 @@ func ParseIndex(src string) (*Index, error) {
 	ix := &Index{Packages: map[string]map[string]Source{}}
 	pkg := ""
 	for ln, raw := range strings.Split(src, "\n") {
-		line := strings.TrimSpace(raw)
-		if line == "" || strings.HasPrefix(line, "#") {
+		line := manifest.Line(raw)
+		if line == "" {
 			continue
 		}
 		if strings.HasPrefix(line, "[") {

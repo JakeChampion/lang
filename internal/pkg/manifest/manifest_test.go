@@ -31,6 +31,42 @@ web-kit = { path = "libs/webkit" }
 	}
 }
 
+// A comment may follow a value on its line, as TOML allows (#11841): after a
+// string, a section header, an inline table and an array. A `#` inside a
+// quoted string is part of the value.
+func TestParseTrailingComments(t *testing.T) {
+	m, err := Parse(`[package]  # the package
+name = "app"
+version = "0.1.0"  # first release
+lib = "lib#1.fern"
+
+[dependencies]
+helper = { path = "../helper" }  # beside us
+tagged = { path = "libs/a#b" }
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if m.Name != "app" || m.Version != "0.1.0" || m.Lib != "lib#1.fern" {
+		t.Errorf("package fields: %+v", m)
+	}
+	if d := m.Deps["helper"]; d.Path != filepath.FromSlash("../helper") {
+		t.Errorf("helper dep: %+v", d)
+	}
+	if d := m.Deps["tagged"]; d.Path != filepath.FromSlash("libs/a#b") {
+		t.Errorf("tagged dep: %+v", d)
+	}
+	w, err := Parse(`[workspace]
+members = ["a", "b#c"]  # two members
+`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(w.Members) != 2 || w.Members[1] != "b#c" {
+		t.Errorf("members: %q", w.Members)
+	}
+}
+
 func TestParseDepCapabilities(t *testing.T) {
 	m, err := Parse(`[package]
 name = "app"

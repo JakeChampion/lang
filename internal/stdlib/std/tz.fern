@@ -918,8 +918,10 @@ pub function civil_from_days(z_in: i64): (i64, i32, i32) {
 //     `<` and `>`, of any length.
 //   - An hour may run to 167, and a field out of range refuses the rule
 //     rather than being clamped.
-//   - A rule's transitions are generated from 1970 on, so it is standard
-//     time before the first of them.
+//   - A rule is written out as two transitions a year from 1970 until the
+//     1200-entry table is full, which is through 2569, and no rule is kept
+//     past them. So it is standard time before the first, and after the
+//     last it stays in the state the last one set.
 //
 // A daylight zone with no dates takes them from the posixrules file there;
 // this applies the POSIX default dates instead, as it does for glibc.
@@ -956,19 +958,34 @@ function darwin_zone_path(spec: string): string {
   return "/usr/share/zoneinfo/" + name;
 }
 
-// A rule as a zone whose transitions start in 1970: standard time before the
-// first of them.
+// A rule as tzparse's table: TZ_MAX_TIMES transitions, two a year from
+// 1970.
 function darwin_rule_zone(r: Rule): Zone {
   if (!r.has_dst) {
     return rule_zone(r);
   }
-  let start: i64 = rule_instant(r.start, 1970) - r.std_off as i64;
-  let end: i64 = rule_instant(r.end, 1970) - r.dst_off as i64;
-  let first: i64 = start;
-  if (end < start) {
-    first = end;
+  let times: i64[] = [];
+  let offs: i32[] = [];
+  let abbrs: string[] = [];
+  let dsts: boolean[] = [];
+  let year: i32 = 1970;
+  while (year < 1970 + 600) {
+    let start: i64 = rule_instant(r.start, year) - r.std_off as i64;
+    let end: i64 = rule_instant(r.end, year) - r.dst_off as i64;
+    if (start > end) {
+      times = times.append(end).append(start);
+      offs = offs.append(r.std_off).append(r.dst_off);
+      abbrs = abbrs.append(r.std_name).append(r.dst_name);
+      dsts = dsts.append(false).append(true);
+    } else {
+      times = times.append(start).append(end);
+      offs = offs.append(r.dst_off).append(r.std_off);
+      abbrs = abbrs.append(r.dst_name).append(r.std_name);
+      dsts = dsts.append(true).append(false);
+    }
+    year = year + 1;
   }
-  return Zone { times: [first], offs: [r.std_off], abbrs: [r.std_name], dsts: [false], first: r.std_off, first_abbr: r.std_name, first_dst: false, rule: r };
+  return Zone { times: times, offs: offs, abbrs: abbrs, dsts: dsts, first: r.std_off, first_abbr: r.std_name, first_dst: false, rule: utc_rule() };
 }
 
 // tzparse: `std offset [dst [offset] [,start,end]]`, where `;` may stand

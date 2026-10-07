@@ -1,0 +1,684 @@
+import "std/test";
+import "core/int";
+import "std/hex";
+import "std/crypto/ed25519";
+import "std/crypto/rsa";
+import "std/tls/handshake";
+import "std/tls/keyschedule";
+import "std/tls/keyshare";
+import "std/tls/message";
+import "std/tls/record";
+
+// tests/stdlib/tls_handshake_test.fern — std/tls/handshake. The client runs
+// RFC 8448 §3 from the trace's own ClientHello and key share, reproducing
+// its Finished, application data and close_notify records byte for byte and
+// reading the server's; the server, from the trace's random and key share,
+// reproduces its ServerHello. Then client and server complete handshakes
+// with each other across the suites and groups, signing with Ed25519, and
+// every refusal has a case.
+
+function client_hello_record(): u8[] {
+  return hex.hex_decode("16030100c4010000c00303cb34ecb1e78163ba1c38c6dacb196a6dffa21a8d9912ec18a2ef6283024dece7000006130113031302010000910000000b0009000006736572766572ff01000100000a00140012001d0017001800190100010101020103010400230000003300260024001d002099381de560e4bd43d23d8e435a7dbafeb3c06e51c13cae4d5413691e529aaf2c002b0003020304000d0020001e040305030603020308040805080604010501060102010402050206020202002d00020101001c00024001");
+}
+
+function server_hello_record(): u8[] {
+  return hex.hex_decode("160303005a020000560303a6af06a4121860dc5e6e60249cd34c95930c8ac5cb1434dac155772ed3e2692800130100002e00330024001d0020c9828876112095fe66762bdbf7c672e156d6cc253b833df1dd69b1b04e751f0f002b00020304");
+}
+
+function server_flight_record(): u8[] {
+  return hex.hex_decode("17030302a2d1ff334a56f5bff6594a07cc87b580233f500f45e489e7f33af35edf7869fcf40aa40aa2b8ea73f848a7ca07612ef9f945cb960b4068905123ea78b111b429ba9191cd05d2a389280f526134aadc7fc78c4b729df828b5ecf7b13bd9aefb0e57f271585b8ea9bb355c7c79020716cfb9b1183ef3ab20e37d57a6b9d7477609aee6e122a4cf51427325250c7d0e509289444c9b3a648f1d71035d2ed65b0e3cdd0cbae8bf2d0b227812cbb360987255cc744110c453baa4fcd610928d809810e4b7ed1a8fd991f06aa6248204797e36a6a73b70a2559c09ead686945ba246ab66e5edd8044b4c6de3fcf2a89441ac66272fd8fb330ef8190579b3684596c960bd596eea520a56a8d650f563aad27409960dca63d3e688611ea5e22f4415cf9538d51a200c27034272968a264ed6540c84838d89f72c24461aad6d26f59ecaba9acbbb317b66d902f4f292a36ac1b639c637ce343117b659622245317b49eeda0c6258f100d7d961ffb138647e92ea330faeea6dfa31c7a84dc3bd7e1b7a6c7178af36879018e3f252107f243d243dc7339d5684c8b0378bf30244da8c87c843f5e56eb4c5e8280a2b48052cf93b16499a66db7cca71e4599426f7d461e66f99882bd89fc50800becca62d6c74116dbd2972fda1fa80f85df881edbe5a37668936b335583b599186dc5c6918a396fa48a181d6b6fa4f9d62d513afbb992f2b992f67f8afe67f76913fa388cb5630c8ca01e0c65d11c66a1e2ac4c85977b7c7a6999bbf10dc35ae69f5515614636c0b9b68c19ed2e31c0b3b66763038ebba42f3b38edc0399f3a9f23faa63978c317fc9fa66a73f60f0504de93b5b845e275592c12335ee340bbc4fddd502784016e4b3be7ef04dda49f4b440a30cb5d2af939828fd4ae3794e44f94df5a631ede42c1719bfdabf0253fe5175be898e750edc53370d2b");
+}
+
+function client_finished_record(): u8[] {
+  return hex.hex_decode("170303003575ec4dc238cce60b298044a71e219c56cc77b0517fe9b93c7a4bfc44d87f38f80338ac98fc46deb384bd1caeacab6867d726c40546");
+}
+
+function ticket_record(): u8[] {
+  return hex.hex_decode("17030300de3a6b8f90414a97d6959c3487680de5134a2b240e6cffac116e95d41d6af8f6b580dcf3d11d63c758db289a015940252f55713e061dc13e078891a38efbcf5753ad8ef170ad3c7353d16d9da773b9ca7f2b9fa1b6c0d4a3d03f75e09c30ba1e62972ac46f75f7b981be63439b2999ce13064615139891d5e4c5b406f16e3fc181a77ca475840025db2f0a77f81b5ab05b94c01346755f69232c86519d86cbeeac87aac347d143f9605d64f650db4d023e70e952ca49fe5137121c74bc2697687e248746d6df353005f3bce18696129c8153556b3b6c6779b37bf15985684f");
+}
+
+function client_data_record(): u8[] {
+  return hex.hex_decode("1703030043a23f7054b62c94d0affafe8228ba55cbefacea42f914aa66bcab3f2b9819a8a5b46b395bd54a9a20441e2b62974e1f5a6292a2977014bd1e3deae63aeebb21694915e4");
+}
+
+function server_data_record(): u8[] {
+  return hex.hex_decode("17030300432e937e11ef4ac740e538ad36005fc4a46932fc3225d05f82aa1b36e30efaf97d90e6dffc602dcb501a59a8fcc49c4bf2e5f0a21c0047c2abf332540dd032e167c2955d");
+}
+
+function client_alert_record(): u8[] {
+  return hex.hex_decode("1703030013c9872760655666b74d7ff1153efd6db6d0b0e3");
+}
+
+function server_alert_record(): u8[] {
+  return hex.hex_decode("1703030013b58fd67166ebf599d24720cfbe7efa7a8864a9");
+}
+
+function server_certificate(): u8[] {
+  return hex.hex_decode("308201ac30820115a003020102020102300d06092a864886f70d01010b0500300e310c300a06035504031303727361301e170d3136303733303031323335395a170d3236303733303031323335395a300e310c300a0603550403130372736130819f300d06092a864886f70d010101050003818d0030818902818100b4bb498f8279303d980836399b36c6988c0c68de55e1bdb826d3901a2461eafd2de49a91d015abbc9a95137ace6c1af19eaa6af98c7ced43120998e187a80ee0ccb0524b1b018c3e0b63264d449a6d38e22a5fda430846748030530ef0461c8ca9d9efbfae8ea6d1d03e2bd193eff0ab9a8002c47428a6d35a8d88d79f7f1e3f0203010001a31a301830090603551d1304023000300b0603551d0f0404030205a0300d06092a864886f70d01010b05000381810085aad2a0e5b9276b908c65f73a7267170618a54c5f8a7b337d2df7a594365417f2eae8f8a58c8f8172f9319cf36b7fd6c55b80f21a03015156726096fd335e5e67f2dbf102702e608ccae6bec1fc63a42a99be5c3eb7107c3c54e9b9eb2bd5203b1c3b84e0a8b2f759409ba3eac9d91d402dcc0cc8f8961229ac9187b42b4de1");
+}
+
+// The trace's CertificateVerify signature, RSA-PSS over SHA-256.
+function trace_signature(): u8[] {
+  return hex.hex_decode("5a747c5d88fa9bd2e55ab085a61015b7211f824cd484145ab3ff52f1fda8477b0b7abc90db78e2d33a5c141a078653fa6bef780c5ea248eeaaa785c4f394cab6d30bbe8d4859ee511f602957b15411ac027671459e46445c9ea58c181e818e95b8c3fb0bf3278409d3be152a3da5043e063dda65cdf5aea20d53dfacd42f74f3");
+}
+
+function app_data(): u8[] {
+  let out: u8[] = [];
+  let i: i32 = 0;
+  while (i < 50) {
+    out = out.append(i as u8);
+    i = i + 1;
+  }
+  return out;
+}
+
+function cat(a: u8[], b: u8[]): u8[] {
+  let out: u8[] = a;
+  let i: i32 = 0;
+  while (i < b.len()) {
+    out = out.append(b[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+function zeros(n: i32): u8[] {
+  return __alloc_u8(n);
+}
+
+function pattern(start: i32, n: i32): u8[] {
+  let out: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.with(i, (start + i * 7 & 255) as u8);
+    i = i + 1;
+  }
+  return out;
+}
+
+function trace_hello(): message.ClientHello {
+  let rec: u8[] = client_hello_record();
+  match (message.decode(message.Raw { kind: 1, bytes: rec.drop(5) })) {
+    Ok(m) => {
+      match (m) {
+        message.ClientHelloMsg(h) => {
+          return h;
+        },
+        _ => {
+          return message.ClientHello { random: [], session_id: [], cipher_suites: [], extensions: [] };
+        }
+      }
+    },
+    Err(e) => {
+      return message.ClientHello { random: [], session_id: [], cipher_suites: [], extensions: [] };
+    }
+  }
+  return message.ClientHello { random: [], session_id: [], cipher_suites: [], extensions: [] };
+}
+
+function trace_client(): Result[handshake.ClientStep, handshake.HandshakeError] {
+  match (keyshare.client_share(keyshare.X25519, hex.hex_decode("49af42ba7f7994852d713ef2784bcbcaa7911de26adc5642cb634540e7ea5005"))) {
+    Ok(share) => {
+      return handshake.client_from_hello(trace_hello(), share);
+    },
+    Err(e) => {
+      return Err(handshake.KeyShare(e));
+    }
+  }
+  return Err(handshake.Misuse("unreachable"));
+}
+
+function event_names(events: handshake.Event[]): string {
+  let out: string = "";
+  let i: i32 = 0;
+  while (i < events.len()) {
+    match (events[i]) {
+      handshake.VerifyServer(v) => {
+        out = out + " verify";
+      },
+      handshake.SignNeeded(s) => {
+        out = out + " sign";
+      },
+      handshake.Connected => {
+        out = out + " connected";
+      },
+      handshake.PeerClosed => {
+        out = out + " closed";
+      },
+      handshake.Ticket(t) => {
+        out = out + " ticket";
+      }
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
+function verification(events: handshake.Event[]): handshake.Verification {
+  let i: i32 = 0;
+  while (i < events.len()) {
+    match (events[i]) {
+      handshake.VerifyServer(v) => {
+        return v;
+      },
+      _ => {
+        i = i + 1;
+      }
+    }
+  }
+  return handshake.Verification { chain: [], scheme: 0, signed: [], signature: [] };
+}
+
+function signing(events: handshake.Event[]): handshake.Signing {
+  let i: i32 = 0;
+  while (i < events.len()) {
+    match (events[i]) {
+      handshake.SignNeeded(s) => {
+        return s;
+      },
+      _ => {
+        i = i + 1;
+      }
+    }
+  }
+  return handshake.Signing { scheme: 0, signed: [] };
+}
+
+function trace_verifies(signed: u8[], signature: u8[]): boolean {
+  match (rsa.public_key(hex.hex_decode("b4bb498f8279303d980836399b36c6988c0c68de55e1bdb826d3901a2461eafd2de49a91d015abbc9a95137ace6c1af19eaa6af98c7ced43120998e187a80ee0ccb0524b1b018c3e0b63264d449a6d38e22a5fda430846748030530ef0461c8ca9d9efbfae8ea6d1d03e2bd193eff0ab9a8002c47428a6d35a8d88d79f7f1e3f"), hex.hex_decode("010001"))) {
+    Ok(k) => {
+      return rsa.verify_pss(k, rsa.Sha256, signed, signature);
+    },
+    Err(e) => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// The client's side of RFC 8448 §3, from its ClientHello to close_notify.
+function test_client_trace(): test.TestOutcome {
+  match (trace_client()) {
+    Ok(start) => {
+      if (hex.hex_encode(start.output) != hex.hex_encode(client_hello_record())) {
+        return test.fail("ClientHello record");
+      }
+      match (start.client.read(cat(server_hello_record(), server_flight_record()))) {
+        Ok(step) => {
+          if (event_names(step.events) != " verify" || step.output.len() != 0) {
+            return test.fail("events" + event_names(step.events));
+          }
+          let v: handshake.Verification = verification(step.events);
+          if (v.chain.len() != 1 || hex.hex_encode(v.chain[0]) != hex.hex_encode(server_certificate()) || v.scheme != 0x0804) {
+            return test.fail("chain and scheme");
+          }
+          if (!trace_verifies(v.signed, v.signature)) {
+            return test.fail("the signature does not verify");
+          }
+          return client_after_verdict(step.client);
+        },
+        Err(e) => {
+          return test.fail(e.message());
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function client_after_verdict(c: handshake.Client): test.TestOutcome {
+  match (c.verdict(true)) {
+    Ok(step) => {
+      if (hex.hex_encode(step.output) != hex.hex_encode(client_finished_record()) || event_names(step.events) != " connected") {
+        return test.fail("client Finished");
+      }
+      match (step.client.write(app_data())) {
+        Ok(w) => {
+          if (hex.hex_encode(w.output) != hex.hex_encode(client_data_record())) {
+            return test.fail("client application data");
+          }
+          return client_reads(w.client);
+        },
+        Err(e) => {
+          return test.fail(e.message());
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function client_reads(c: handshake.Client): test.TestOutcome {
+  match (c.read(cat(ticket_record(), server_data_record()))) {
+    Ok(step) => {
+      if (event_names(step.events) != " ticket" || hex.hex_encode(step.data) != hex.hex_encode(app_data())) {
+        return test.fail("ticket and server data" + event_names(step.events));
+      }
+      match (step.client.close()) {
+        Ok(closed) => {
+          if (hex.hex_encode(closed.output) != hex.hex_encode(client_alert_record())) {
+            return test.fail("close_notify");
+          }
+        },
+        Err(e) => {
+          return test.fail(e.message());
+        }
+      }
+      match (step.client.read(server_alert_record())) {
+        Ok(end) => {
+          return test.assert_eq(event_names(end.events), " closed");
+        },
+        Err(e) => {
+          return test.fail(e.message());
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+// The trace's records one byte at a time, with a compatibility
+// change_cipher_spec after the ServerHello, reach the same point.
+function test_client_trace_dribbled(): test.TestOutcome {
+  match (trace_client()) {
+    Ok(start) => {
+      let input: u8[] = cat(cat(server_hello_record(), [20 as u8, 3 as u8, 3 as u8, 0 as u8, 1 as u8, 1 as u8]), server_flight_record());
+      let c: handshake.Client = start.client;
+      let names: string = "";
+      let i: i32 = 0;
+      while (i < input.len()) {
+        match (c.read([input[i]])) {
+          Ok(step) => {
+            c = step.client;
+            names = names + event_names(step.events);
+          },
+          Err(e) => {
+            return test.fail("byte " + int.int_to_string(i) + ": " + e.message());
+          }
+        }
+        i = i + 1;
+      }
+      if (names != " verify") {
+        return test.fail(names);
+      }
+      match (c.verdict(true)) {
+        Ok(step) => {
+          return test.assert_eq(hex.hex_encode(step.output), hex.hex_encode(client_finished_record()));
+        },
+        Err(e) => {
+          return test.fail(e.message());
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+// The server, given the trace's random and key share, answers the trace's
+// ClientHello with the trace's ServerHello.
+function test_server_trace(): test.TestOutcome {
+  let config: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config([server_certificate()], [0x0804]), suites: [keyschedule.Aes128GcmSha256], groups: [keyshare.X25519] };
+  let entropy: u8[] = cat(cat(hex.hex_decode("a6af06a4121860dc5e6e60249cd34c95930c8ac5cb1434dac155772ed3e26928"), hex.hex_decode("b1580eeadf6dd589b8ef4f2d5652578cc810e9980191ec8d058308cea216a21e")), zeros(32));
+  match (handshake.server_new(config, entropy)) {
+    Ok(s) => {
+      match (s.read(client_hello_record())) {
+        Ok(step) => {
+          if (hex.hex_encode(step.output) != hex.hex_encode(server_hello_record())) {
+            return test.fail("ServerHello record");
+          }
+          let sg: handshake.Signing = signing(step.events);
+          if (sg.scheme != 0x0804 || step.server.server_name != "server") {
+            return test.fail("scheme and server name");
+          }
+          return test.assert_eq(hex.hex_encode(sg.signed.take(98).drop(64)), hex.hex_encode("TLS 1.3, server CertificateVerify".bytes()) + "00");
+        },
+        Err(e) => {
+          return test.fail(e.message());
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+// Pair — a client and server mid-handshake, and the bytes each has sent the
+// other.
+struct Pair { client: handshake.Client, server: handshake.Server }
+
+function seed(): u8[] {
+  return pattern(5, 32);
+}
+
+function ed_public(): u8[] {
+  match (ed25519.public_key(seed())) {
+    Ok(p) => {
+      return p;
+    },
+    Err(e) => {
+      return [];
+    }
+  }
+  return [];
+}
+
+// handshake_between runs a whole handshake: the server signs with Ed25519
+// and the client checks the signature against the key the "chain" carries.
+function handshake_between(cc: handshake.ClientConfig, sc: handshake.ServerConfig): Result[Pair, handshake.HandshakeError] {
+  let g: keyshare.Group = cc.groups[0];
+  let start: handshake.ClientStep = handshake.client_start(cc, pattern(1, 32 + g.client_entropy()))?;
+  let server: handshake.Server = handshake.server_new(sc, pattern(2, 96))?;
+  let s1: handshake.ServerStep = server.read(start.output)?;
+  let sg: handshake.Signing = signing(s1.events);
+  let sig: u8[] = [];
+  match (ed25519.sign(seed(), sg.signed)) {
+    Ok(b) => {
+      sig = b;
+    },
+    Err(e) => {
+      return Err(handshake.Misuse("sign"));
+    }
+  }
+  let s2: handshake.ServerStep = s1.server.signature(sig)?;
+  let c1: handshake.ClientStep = start.client.read(cat(s1.output, s2.output))?;
+  let v: handshake.Verification = verification(c1.events);
+  let c2: handshake.ClientStep = c1.client.verdict(v.chain.len() == 1 && ed25519.verify(v.chain[0], v.signed, v.signature))?;
+  let s3: handshake.ServerStep = s2.server.read(c2.output)?;
+  if (!c2.client.connected() || !s3.server.connected()) {
+    return Err(handshake.Misuse("not connected"));
+  }
+  return Ok(Pair { client: c2.client, server: s3.server });
+}
+
+function client_with(suites: keyschedule.CipherSuite[], groups: keyshare.Group[], alpn: string[]): handshake.ClientConfig {
+  return handshake.ClientConfig { ...handshake.client_config("example.com"), suites: suites, groups: groups, alpn: alpn };
+}
+
+function server_with(suites: keyschedule.CipherSuite[], groups: keyshare.Group[], alpn: string[]): handshake.ServerConfig {
+  return handshake.ServerConfig { ...handshake.server_config([ed_public()], [0x0807]), suites: suites, groups: groups, alpn: alpn };
+}
+
+// exchange sends data each way over a connected pair.
+function exchange(p: Pair): string {
+  match (p.client.write("ping".bytes())) {
+    Ok(cw) => {
+      match (p.server.read(cw.output)) {
+        Ok(sr) => {
+          match (sr.server.write("pong".bytes())) {
+            Ok(sw) => {
+              match (cw.client.read(sw.output)) {
+                Ok(cr) => {
+                  return string_from_bytes_unchecked(sr.data) + " " + string_from_bytes_unchecked(cr.data);
+                },
+                Err(e) => {
+                  return e.message();
+                }
+              }
+            },
+            Err(e) => {
+              return e.message();
+            }
+          }
+        },
+        Err(e) => {
+          return e.message();
+        }
+      }
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function round_trip(suite: keyschedule.CipherSuite, group: keyshare.Group): string {
+  match (handshake_between(client_with([suite], [group], []), server_with([suite], [group], []))) {
+    Ok(p) => {
+      return exchange(p);
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function test_round_trips(): test.TestOutcome {
+  if (round_trip(keyschedule.Aes128GcmSha256, keyshare.X25519MlKem768) != "ping pong") {
+    return test.fail("AES-128-GCM over X25519MLKEM768");
+  }
+  if (round_trip(keyschedule.Aes256GcmSha384, keyshare.X25519) != "ping pong") {
+    return test.fail("AES-256-GCM over X25519");
+  }
+  return test.assert_eq(round_trip(keyschedule.ChaCha20Poly1305Sha256, keyshare.X25519MlKem768), "ping pong");
+}
+
+// The defaults agree on X25519MLKEM768 and AES-128-GCM; the server reads
+// the name and picks its preferred protocol the client offered.
+function test_defaults_and_alpn(): test.TestOutcome {
+  let cc: handshake.ClientConfig = handshake.ClientConfig { ...handshake.client_config("example.com"), alpn: ["h2", "http/1.1"] };
+  let sc: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config([ed_public()], [0x0807]), alpn: ["http/1.1", "h2"] };
+  match (handshake_between(cc, sc)) {
+    Ok(p) => {
+      return test.assert_eq(p.server.server_name + " " + p.server.alpn + " " + p.client.alpn + " " + exchange(p), "example.com http/1.1 http/1.1 ping pong");
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function refused(r: Result[Pair, handshake.HandshakeError]): string {
+  match (r) {
+    Ok(p) => {
+      return "connected";
+    },
+    Err(e) => {
+      return int.int_to_string(e.alert()) + " " + e.message();
+    }
+  }
+  return "";
+}
+
+function test_no_common_ground(): test.TestOutcome {
+  if (refused(handshake_between(client_with([keyschedule.ChaCha20Poly1305Sha256], [keyshare.X25519], []), server_with([keyschedule.Aes128GcmSha256], [keyshare.X25519], []))) != "40 tls handshake: no cipher suite in common") {
+    return test.fail("suite");
+  }
+  if (refused(handshake_between(client_with([keyschedule.Aes128GcmSha256], [keyshare.X25519], []), server_with([keyschedule.Aes128GcmSha256], [keyshare.X25519MlKem768], []))) != "40 tls handshake: no key share for a group in common") {
+    return test.fail("group");
+  }
+  return test.assert_eq(refused(handshake_between(client_with([keyschedule.Aes128GcmSha256], [keyshare.X25519], ["h2"]), server_with([keyschedule.Aes128GcmSha256], [keyshare.X25519], ["http/1.1"]))), "120 tls handshake: no application protocol in common");
+}
+
+// A refused certificate ends the handshake, and the alert goes out sealed
+// under the client's handshake keys.
+function test_refused_certificate(): test.TestOutcome {
+  match (trace_client()) {
+    Ok(start) => {
+      match (start.client.read(cat(server_hello_record(), server_flight_record()))) {
+        Ok(step) => {
+          match (step.client.verdict(false)) {
+            Ok(s) => {
+              return test.fail("accepted");
+            },
+            Err(e) => {
+              let rec: u8[] = step.client.alert(e);
+              return test.assert_eq(int.int_to_string(e.alert()) + " " + int.int_to_string(rec.len()) + " " + int.int_to_string(rec[0] as i32), "42 24 23");
+            }
+          }
+        },
+        Err(e) => {
+          return test.fail(e.message());
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function client_refusal(input: u8[]): string {
+  match (trace_client()) {
+    Ok(start) => {
+      match (start.client.read(input)) {
+        Ok(step) => {
+          return "accepted" + event_names(step.events);
+        },
+        Err(e) => {
+          return int.int_to_string(e.alert()) + " " + e.message();
+        }
+      }
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function test_client_refusals(): test.TestOutcome {
+  // Encrypted records before any ServerHello.
+  if (client_refusal(server_flight_record()) != "10 tls handshake: unexpected record of type 23") {
+    return test.fail("encrypted before ServerHello");
+  }
+  // One flipped bit in the encrypted flight.
+  let flight: u8[] = server_flight_record();
+  if (client_refusal(cat(server_hello_record(), flight.with(100, flight[100] ^ 1 as u8))) != "20 tls record: the record does not verify") {
+    return test.fail("tampered flight");
+  }
+  // A HelloRetryRequest is not answered yet.
+  let hrr: message.ServerHello = message.ServerHello { random: hex.hex_decode("cf21ad74e59a6111be1d8c021e65b891c2a211167abb8c5e079e09e2c8a8339c"), session_id: [], cipher_suite: 0x1301, extensions: [message.ext_selected_version(message.TLS13), message.ext_retry_group(0x0017)] };
+  let hrr_record: u8[] = record.frame(record.Handshake, 0x0303, message.encode(message.ServerHelloMsg(hrr)));
+  if (client_refusal(hrr_record) != "40 tls handshake: a HelloRetryRequest, which this client does not answer") {
+    return test.fail("HelloRetryRequest");
+  }
+  // A suite the ClientHello did not offer.
+  let sh: u8[] = server_hello_record();
+  return test.assert_eq(client_refusal(sh.with(5 + 4 + 2 + 32 + 1 + 1, 0x04 as u8)), "47 tls handshake: illegal cipher suite");
+}
+
+// The trace's ClientHello with the extensions of one kind dropped, and any
+// replaced by `add`.
+function hello_without(kind: i32, add: message.Extension[]): u8[] {
+  let h: message.ClientHello = trace_hello();
+  let exts: message.Extension[] = [];
+  let i: i32 = 0;
+  while (i < h.extensions.len()) {
+    if (h.extensions[i].kind != kind) {
+      exts = exts.append(h.extensions[i]);
+    }
+    i = i + 1;
+  }
+  i = 0;
+  while (i < add.len()) {
+    exts = exts.append(add[i]);
+    i = i + 1;
+  }
+  return record.frame(record.Handshake, 0x0301, message.encode(message.ClientHelloMsg(message.ClientHello { ...h, extensions: exts })));
+}
+
+function server_refusal(input: u8[]): string {
+  match (handshake.server_new(handshake.server_config([server_certificate()], [0x0804]), zeros(96))) {
+    Ok(s) => {
+      match (s.read(input)) {
+        Ok(step) => {
+          return "accepted" + event_names(step.events);
+        },
+        Err(e) => {
+          return int.int_to_string(e.alert()) + " " + e.message();
+        }
+      }
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function test_server_refusals(): test.TestOutcome {
+  if (server_refusal(client_hello_record()) != "accepted sign") {
+    return test.fail("the trace's ClientHello " + server_refusal(client_hello_record()));
+  }
+  if (server_refusal(hello_without(message.EXT_SUPPORTED_VERSIONS, [])) != "70 tls handshake: the peer does not speak TLS 1.3") {
+    return test.fail("no supported_versions");
+  }
+  if (server_refusal(hello_without(message.EXT_SIGNATURE_ALGORITHMS, [])) != "109 tls handshake: missing signature_algorithms") {
+    return test.fail("no signature_algorithms");
+  }
+  let stray: message.Extension = message.ext_key_shares([message.KeyShareEntry { group: 0x001d, key: pattern(3, 32) }, message.KeyShareEntry { group: 0x11ec, key: pattern(4, 1216) }]);
+  if (server_refusal(hello_without(message.EXT_KEY_SHARE, [stray])) != "47 tls handshake: illegal key share for a group not in supported_groups") {
+    return test.fail("a share outside supported_groups");
+  }
+  match (handshake.server_new(handshake.server_config([], [0x0804]), zeros(96))) {
+    Ok(s) => {
+      return test.fail("no chain accepted");
+    },
+    Err(e) => {
+      return test.assert_eq(e.message(), "tls handshake: a server needs a certificate, a signature scheme, a suite and a group");
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function test_out_of_turn(): test.TestOutcome {
+  match (trace_client()) {
+    Ok(start) => {
+      match (start.client.verdict(true)) {
+        Ok(s) => {
+          return test.fail("verdict accepted");
+        },
+        Err(e) => {
+          if (e.message() != "tls handshake: verdict called out of turn") {
+            return test.fail(e.message());
+          }
+        }
+      }
+      match (start.client.write(app_data())) {
+        Ok(s) => {
+          return test.fail("write accepted");
+        },
+        Err(e) => {
+          return test.assert_eq(e.message(), "tls handshake: write called out of turn");
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/tls/handshake");
+  r = r.it("the client's side of RFC 8448", test_client_trace);
+  r = r.it("the trace a byte at a time", test_client_trace_dribbled);
+  r = r.it("the server's ServerHello of RFC 8448", test_server_trace);
+  r = r.it("client and server across suites and groups", test_round_trips);
+  r = r.it("defaults, server name and ALPN", test_defaults_and_alpn);
+  r = r.it("no suite, group or protocol in common", test_no_common_ground);
+  r = r.it("a refused certificate", test_refused_certificate);
+  r = r.it("client refusals", test_client_refusals);
+  r = r.it("server refusals", test_server_refusals);
+  r = r.it("calls out of turn", test_out_of_turn);
+  return r.finish();
+}

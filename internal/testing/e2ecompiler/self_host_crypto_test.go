@@ -17,7 +17,7 @@ func TestSelfHostCryptoSuitesWasm(t *testing.T) {
 	wasmtime := e2eharness.Wasmtime(t)
 	cli := buildSelfHostCLI(t)
 	interp := buildLangBinForInterp(t)
-	for _, suite := range []string{"chacha20poly1305", "aes_gcm", "x25519", "ed25519", "mlkem768", "rsa", "tls_keyschedule", "tls_record"} {
+	for _, suite := range []string{"chacha20poly1305", "aes_gcm", "x25519", "ed25519", "mlkem768", "rsa", "tls_handshake", "tls_keyschedule", "tls_keyshare", "tls_message", "tls_record"} {
 		t.Run(suite, func(t *testing.T) {
 			src := langSrcAbs(t, "tests/stdlib/"+suite+"_test.fern")
 			want, err := exec.Command(interp, "-interp", src).Output()

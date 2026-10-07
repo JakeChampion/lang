@@ -458,11 +458,54 @@ function c_int(v: i64): i64 {
   return w;
 }
 
-// `c_year(year)` — the year as the C library prints it in `%c` and
-// under the `E` modifier: `tm_year + 1900` in int arithmetic, with no
-// padding.
-function c_year(year: i64): string {
+// `c_year(year)` — the year as the C library's strftime prints `%Y`,
+// which `%c` and the `E` modifier reach. glibc's is `tm_year + 1900` in
+// int arithmetic, with no padding; Apple's is the century and then the
+// year within it, each as `%02d`.
+pub function c_year(year: i64): string {
+  if (target_os() == "darwin") {
+    return apple_yconv(c_int(year - 1900 as i64), true);
+  }
   return c_int(c_int(year - 1900 as i64) + 1900 as i64).to_string();
+}
+
+// Apple's `_yconv(tm_year, 1900, true, yy)`: C's truncating division
+// splits the year into a century and a remainder of the same sign, and
+// `-0` marks a negative year in the zeroth century.
+pub function apple_yconv(tm_year: i64, yy: boolean): string {
+  let trail: i64 = tm_year % (100 as i64);
+  let lead: i64 = tm_year / (100 as i64) + 19 as i64;
+  if (trail < 0 as i64 && lead > 0 as i64) {
+    trail = trail + 100 as i64;
+    lead = lead - 1 as i64;
+  } else if (lead < 0 as i64 && trail > 0 as i64) {
+    trail = trail - 100 as i64;
+    lead = lead + 1 as i64;
+  }
+  let out: string = c_02d(lead);
+  if (lead == 0 as i64 && trail < 0 as i64) {
+    out = "-0";
+  }
+  if (yy) {
+    out = out + c_02d(abs64(trail));
+  }
+  return out;
+}
+
+// printf's `%02d`: the sign counts toward the width.
+function c_02d(v: i64): string {
+  if (v >= 0 as i64 && v < 10 as i64) {
+    return "0" + v.to_string();
+  }
+  return v.to_string();
+}
+
+// `%EC` through the C library: the century alone.
+function c_century(year: i64): string {
+  if (target_os() == "darwin") {
+    return apple_yconv(c_int(year - 1900 as i64), false);
+  }
+  return tz.floor_div(c_int(c_int(year - 1900 as i64) + 1900 as i64), 100 as i64).to_string();
 }
 
 function two_digit_year(y: i64): i64 {
@@ -550,7 +593,7 @@ function convert(h: usize, s: Spec, tm: Tm, t: i64, nsec: i64, yr_spec: i32): bo
   }
   if (c == 67) {
     if (e) {
-      text(h, s, tz.floor_div(c_int(c_int(year - 1900 as i64) + 1900 as i64), 100 as i64).to_string(), false, false);
+      text(h, s, c_century(year), false, false);
       return true;
     }
     let cen: (i64, boolean) = century(tm);

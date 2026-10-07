@@ -1151,14 +1151,15 @@ function reads_parts(g: ssa.SFunc): boolean {
   return false;
 }
 
-// Whether a read of `v` may be split: `v` is a construction or a phi, and
-// holds no view, since a view may only move and a part phi would retain it.
+// Whether a read of `v` may be split: `v` is a construction or a phi, holds
+// no view, since a view may only move and a part phi would retain it, and has
+// no finalizer, whose box has to live to its last read.
 function splittable(f: ssasem.Func, defs: Defs, v: i32): boolean {
   let k: i32 = def_inst(defs, through_copies(defs, v)).kind_tag;
   if (!builds(k) && k != 8) {
     return false;
   }
-  return !ssasem.holds_view(f, f.values[v]);
+  return !ssasem.holds_view(f, f.values[v]) && ssasem.finalizer_of(f, f.values[v]) == "";
 }
 
 // `v` past any copies.

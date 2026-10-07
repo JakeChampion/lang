@@ -66,8 +66,12 @@ pub function trim_context(text: string): string {
 // `context()` — getcon(3): the process's own security context, which the
 // kernel exposes as this file, NUL-terminated. libselinux reads
 // /proc/thread-self/attr/current; a Fern binary has one thread, for which
-// that is this same file.
+// that is this same file. Darwin has no libselinux, so a GNU built there
+// answers from gnulib's stub, ENOTSUP.
 pub function context(): Result[string, IoError] {
+  if (target_os() == "darwin") {
+    return Err(Unsupported);
+  }
   match (read_file("/proc/self/attr/current")) {
     Ok(text) => {
       return Ok(trim_context(text));

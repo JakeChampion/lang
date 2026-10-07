@@ -368,6 +368,9 @@ pub function gated_builtins(): Gate[] {
     Gate { builtin: "create_dir", capability: "fs" },
     Gate { builtin: "remove_dir", capability: "fs" },
     Gate { builtin: "create_link", capability: "fs" },
+    // WASI has no clone, and its answer is Unsupported, as a filesystem
+    // that cannot clone answers on a hosted target.
+    Gate { builtin: "clone_file", capability: "fs" },
     Gate { builtin: "create_symlink", capability: "fs" },
     Gate { builtin: "read_link", capability: "fs" },
     Gate { builtin: "rename", capability: "fs" },

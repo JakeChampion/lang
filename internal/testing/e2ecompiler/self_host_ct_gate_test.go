@@ -355,6 +355,71 @@ function main(): i32 {
   return 6;
 }
 `, false},
+	// The hybrid key exchange over secret entropy on both sides: the shares
+	// are public, and the two shared secrets must agree.
+	{"tls_keyshare", `import "std/tls/keyshare";
+
+function filled(n: i32, seed: i32): u8[] {
+  let b: u8[] = __alloc_u8(n);
+  let i: i32 = 0;
+  while (i < n) {
+    b = b.with(i, ((i * 29 + seed) & 255) as u8);
+    i = i + 1;
+  }
+  return b;
+}
+
+function same(a: u8[], b: u8[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  let i: i32 = 0;
+  while (i < a.len()) {
+    if (a[i] != b[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function main(): i32 {
+  let ce: u8[] = filled(96, 3);
+  let se: u8[] = filled(64, 7);
+  __ct_secret(ce);
+  __ct_secret(se);
+  match (keyshare.client_share(keyshare.X25519MlKem768, ce)) {
+    Ok(c) => {
+      __ct_public(c.public);
+      match (keyshare.server_share(keyshare.X25519MlKem768, c.public, se)) {
+        Ok(s) => {
+          __ct_public(s.public);
+          match (c.shared_secret(s.public)) {
+            Ok(got) => {
+              __ct_public(got);
+              __ct_public(s.shared_secret);
+              if (!same(got, s.shared_secret)) {
+                return 1;
+              }
+              return 0;
+            },
+            Err(e) => {
+              return 2;
+            }
+          }
+        },
+        Err(e) => {
+          return 3;
+        }
+      }
+    },
+    Err(e) => {
+      return 4;
+    }
+  }
+  return 5;
+}
+`, false},
 	// Signing under a secret seed: the base-point multiplication reads every
 	// table entry and keeps one by mask. The public key and the signature
 	// are public outputs, and verification runs on them alone.

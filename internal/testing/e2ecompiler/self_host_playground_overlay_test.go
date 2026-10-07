@@ -108,6 +108,7 @@ func TestSelfHostPlaygroundOverlay(t *testing.T) {
 	t.Run("reports-an-unresolvable-import", func(t *testing.T) { playgroundReportsMissing(t, bin) })
 	t.Run("check-accepts-a-valid-program", func(t *testing.T) { playgroundCheckAccepts(t, bin) })
 	t.Run("check-names-a-type-error", func(t *testing.T) { playgroundCheckRejects(t, bin) })
+	t.Run("check-demangles-an-imported-struct", func(t *testing.T) { playgroundCheckDemangles(t, bin) })
 	t.Run("interp-runs-and-prints", func(t *testing.T) { playgroundInterpRuns(t, bin) })
 	t.Run("interp-checks-first", func(t *testing.T) { playgroundInterpChecksFirst(t, bin) })
 	t.Run("interp-reaches-the-stdlib", func(t *testing.T) { playgroundInterpStdlib(t, bin) })
@@ -236,6 +237,19 @@ func playgroundInterpChecksFirst(t *testing.T, bin string) {
 	}
 	if !strings.Contains(stderr, "E009") || strings.Contains(stderr, "fern: interp:") {
 		t.Errorf("-interp did not report the type error as a diagnostic:\n%s", stderr)
+	}
+}
+
+// A struct from an imported module is named as the program spells it, never
+// by its mangled `iter__ArrayIter` (#11842).
+func playgroundCheckDemangles(t *testing.T, bin string) {
+	_, stderr, code := runPlayground(t, bin, t.TempDir(),
+		"import \"core/iter\" as it;\nfunction main(): i32 { let total: i32 = it.of([1, 2, 3]).sum(); return total; }\n", "-check")
+	if code == 0 {
+		t.Fatal("-check accepted a method ArrayIter does not have")
+	}
+	if !strings.Contains(stderr, `struct iter.ArrayIter has no field or method "sum"`) || strings.Contains(stderr, "__") {
+		t.Errorf("the diagnostic does not name iter.ArrayIter:\n%s", stderr)
 	}
 }
 

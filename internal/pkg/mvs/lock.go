@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/jakechampion/lang/internal/pkg/manifest"
 )
 
 // LockFileName is the resolved-version lockfile written next to a
@@ -59,8 +61,8 @@ func ReadLock(dir string) (map[string]Selected, error) {
 		return nil
 	}
 	for ln, raw := range strings.Split(string(b), "\n") {
-		line := strings.TrimSpace(raw)
-		if line == "" || strings.HasPrefix(line, "#") {
+		line := manifest.Line(raw)
+		if line == "" {
 			continue
 		}
 		if line == "[[package]]" {

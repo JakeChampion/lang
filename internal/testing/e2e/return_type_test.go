@@ -8,7 +8,7 @@ import "testing"
 // x86-64 / wasm and the interpreter must all agree).
 //
 // Replaces TestReturnInference: the programs are the same, but each function
-// now declares its return type, because omitting it is E070. The inference
+// now declares its return type, because omitting it is E081. The inference
 // premise is retired; the multi-backend coverage of these return shapes is not.
 func TestDeclaredReturnTypes(t *testing.T) {
 	cases := []struct {

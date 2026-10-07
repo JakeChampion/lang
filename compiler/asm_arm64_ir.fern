@@ -4436,6 +4436,11 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.need("heap");
     s = s.need("create_link");
     s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_create_link\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
+  } else if (o.kind_tag == 405) {  // clone_file
+    // [srcbox][destbox] -> Result[void, IoError].
+    s = s.need("heap");
+    s = s.need("clone_file");
+    s = s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n    bl __fn___fern_clone_file\n    add sp, sp, #32\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 267) {  // rename
     // [oldbox][newbox] -> Result[void, IoError].
     s = s.need("heap");
@@ -10814,6 +10819,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("create_link")) {
       fs_src = fs_src + " " + asmcore.rt_src_create_link(tgt);
     }
+    if (s.has_need("clone_file")) {
+      fs_src = fs_src + " " + asmcore.rt_src_clone_file(tgt);
+    }
     if (s.has_need("create_symlink")) {
       fs_src = fs_src + " " + asmcore.rt_src_create_symlink(tgt);
     }
@@ -12568,7 +12576,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
   return s.any_need([
     "read_file", "read_file_bytes", "read_file_bytes_u8", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec",
     "remove_file", "create_dir_all", "create_dir", "remove_dir",
-    "create_link", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at", "truncate",
+    "create_link", "clone_file", "create_symlink", "rename", "rename_noreplace", "rename_exchange", "getxattr", "getxattr_bytes", "getxattr_bytes_u8", "lgetxattr", "lgetxattr_bytes", "lgetxattr_bytes_u8", "setxattr", "setxattr_bytes", "setxattr_bytes_u8", "lsetxattr", "lsetxattr_bytes", "lsetxattr_bytes_u8", "chmod", "chmod_at", "truncate",
     "mknod", "chown_at", "window_size", "set_window_size", "termios_get", "termios_set", "set_file_times", "read_link",
     "getcwd", "chdir", "chroot", "setuid", "setgid", "setgroups", "umask", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "sync",
     "temp_dir", "stat", "lstat", "statfs", "mounts", "sysctl", "access", "read_dir", "read_dir_all", "read_dir_ino",

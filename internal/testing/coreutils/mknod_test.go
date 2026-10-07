@@ -126,6 +126,11 @@ func mknodCases(t *testing.T) []invocation {
 		add(invocation{name: fmt.Sprintf("major %q", n), args: []string{"n", "c", n, "3"}, seedTree: mknodBare})
 		add(invocation{name: fmt.Sprintf("minor %q", n), args: []string{"n", "c", "1", n}, seedTree: mknodBare})
 	}
+	// A pair that makedev turns into NODEV is refused as a device: two
+	// all-ones halves on Linux; on Darwin, whose dev_t is 32 bits, any
+	// minor that fills it with the major's low byte.
+	add(invocation{name: "a device that is NODEV", args: []string{"n", "c", "4294967295", "4294967295"}, seedTree: mknodBare})
+	add(invocation{name: "a device that is NODEV in hex", args: []string{"n", "c", "0xffffffff", "0xffffffff"}, seedTree: mknodBare})
 	// The major is read before the minor, so a pair that is wrong twice
 	// reports the first.
 	add(invocation{name: "both numbers wrong reports the major", args: []string{"n", "c", "a", "b"}, seedTree: mknodBare})

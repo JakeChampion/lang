@@ -145,7 +145,7 @@ function main(): i32 {
   }
 
   // ---- 2. the index --------------------------------------------------
-  let ix1: mvs.Index = mvs.parse_index("# registry\n[foo]\n\"1.0.0\" = { path = \"../foo-1.0.0\" }\n\"1.2.0\" = { url = \"https://x/foo.tar.gz\", hash = \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" }\n[bar]\n\"2.1.0\" = { path = \"bar\" }\n");
+  let ix1: mvs.Index = mvs.parse_index("# registry\n[foo]\n\"1.0.0\" = { path = \"../foo-1.0.0\" }\n\"1.2.0\" = { url = \"https://x/foo.tar.gz\", hash = \"sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\" }  # newest\n[bar]  # a second package\n\"2.1.0\" = { path = \"bar\" }\n");
   rc = check(7, "index parse", ix1.err, "");
   if (rc != 0) {
     return rc;
