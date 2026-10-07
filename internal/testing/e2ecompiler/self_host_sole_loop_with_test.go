@@ -109,6 +109,56 @@ function main(): i32 {
     let a: i32[] = grow_set(9);
     return a[0] + a[1] + a[10];
 }`},
+	// A helper that builds and returns its own array hands the caller a box
+	// no one else holds, so the caller's writes to it ask nothing.
+	{"fresh-helper", "squares", true, `@noinline
+function zeros(n: i32): i32[] {
+    let out: i32[] = [];
+    let i: i32 = 0;
+    while (i < n) {
+        out = out.append(0);
+        i = i + 1;
+    }
+    return out;
+}
+@noinline
+function squares(n: i32): i32[] {
+    let m: i32[] = zeros(n);
+    let i: i32 = 0;
+    while (i < n) {
+        m = m.with(i, i * i);
+        i = i + 1;
+    }
+    return m;
+}
+function main(): i32 {
+    let a: i32[] = squares(10);
+    return a[9];
+}`},
+	// The same through a second helper that only passes the result on.
+	{"fresh-chain", "cubes", true, `@noinline
+function zeros(n: i32): i32[] {
+    return __alloc_i32(n);
+}
+@noinline
+function table(n: i32): i32[] {
+    let t: i32[] = zeros(n + 1);
+    return t;
+}
+@noinline
+function cubes(n: i32): i32[] {
+    let m: i32[] = table(n);
+    let i: i32 = 0;
+    while (i < n) {
+        m = m.with(i, i * i * i);
+        i = i + 1;
+    }
+    return m;
+}
+function main(): i32 {
+    let a: i32[] = cubes(5);
+    return a[4] % 101;
+}`},
 	// A second name held across the write: the write must copy, and the kept
 	// name still reads the value before it.
 	{"aliased-in-loop", "alias", false, `@noinline
@@ -211,6 +261,41 @@ function main(): i32 {
     let c: i32[] = more(a, 3);
     return b.len() * 10 + c.len();
 }`},
+	// A helper that hands back the array it was given returns a box the
+	// caller may still hold under another name.
+	{"helper-returns-parameter", "via", false, `@noinline
+function same(own xs: i32[]): i32[] {
+    return xs;
+}
+@noinline
+function via(n: i32): i32 {
+    let a: i32[] = __alloc_i32(n);
+    let b: i32[] = a;
+    let c: i32[] = same(a);
+    let i: i32 = 0;
+    while (i < n) {
+        c = c.with(i, 5);
+        i = i + 1;
+    }
+    return b[0] * 10 + c[0];
+}
+function main(): i32 {
+    return via(3);
+}`},
+	// A helper that returns a constant literal returns the shared static box.
+	{"helper-returns-constant", "bump_base", false, `@noinline
+function base(): i32[] {
+    return [1, 2, 3];
+}
+@noinline
+function bump_base(n: i32): i32 {
+    let a: i32[] = base();
+    a = a.with(0, a[0] + n);
+    return a[0];
+}
+function main(): i32 {
+    return bump_base(10) + bump_base(10);
+}`},
 	// A parameter's box may have other holders in the caller.
 	{"parameter", "fill_in", false, `@noinline
 function fill_in(own xs: i32[]): i32[] {
@@ -234,7 +319,8 @@ function main(): i32 {
 //
 // TestSelfHostSoleLoopWithX86_64 pins the uniqueness proof behind a `with`
 // or an `append` in a loop (ssaunits.sole_boxes): an array a fresh or empty
-// allocation, a `with` or an `append` makes, carried around a loop, read,
+// allocation, a `with`, an `append` or a call to a row that always returns
+// such an array (ssaunits.fresh_rows) makes, carried around a loop, read,
 // written and returned but never lent, stored or retained, is written in
 // place with no test, and every other shape keeps the test. Each program's exit
 // is the interpreter's, run under

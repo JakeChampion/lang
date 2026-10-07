@@ -46,6 +46,8 @@ struct Rows {
   n2: string[],
   keep: boolean[],
   grows: ssaunits.GrowTable,
+  // The rows whose result is always a sole box (`ssaunits.fresh_rows`).
+  fresh: util.NameIndex,
   // The rows that reach no observable effect (`pure_rows`).
   pure: util.NameIndex,
   susp: suspend.Set,
@@ -210,7 +212,7 @@ function produced_at(built: semsource.Built, mod: parser.Module, i: i32): semsou
 // No rows to take back: what makes `rows_planned` plan every row.
 function no_reuse(): Rows {
   let no_names: string[] = [];
-  return Rows { body: [], n1: [], n2: [], keep: [], grows: ssaunits.no_grows(), pure: util.name_index(no_names), susp: suspend.none(), plans: [], why: [] };
+  return Rows { body: [], n1: [], n2: [], keep: [], grows: ssaunits.no_grows(), fresh: util.name_index(no_names), pure: util.name_index(no_names), susp: suspend.none(), plans: [], why: [] };
 }
 
 // Whether row `i`'s plan can be taken from `prev` unchanged. `changed` is
@@ -260,7 +262,13 @@ function rows_planned(mod: parser.Module, built: semsource.Built, prev: Rows, ch
     plans = plans.append(base_plan(prev, changed, i, produced_at(built, mod, i), views[i]));
     i = i + 1;
   }
-  r = Rows { ...r, grows: ssaunits.grow_table(keys, funcs, plans), pure: pure_rows(keys, funcs), susp: suspend.classify(keys, funcs), plans: plans };
+  let fresh: util.NameIndex = ssaunits.fresh_rows(keys, funcs, plans);
+  i = 0;
+  while (i < funcs.len()) {
+    plans = plans.with(i, ssaunits.with_fresh(plans[i], funcs[i], fresh));
+    i = i + 1;
+  }
+  r = Rows { ...r, grows: ssaunits.grow_table(keys, funcs, plans), fresh: fresh, pure: pure_rows(keys, funcs), susp: suspend.classify(keys, funcs), plans: plans };
   return Planned { r: r, views: views };
 }
 
@@ -275,15 +283,16 @@ function base_plan(prev: Rows, changed: boolean[], i: i32, p: semsource.Produced
 
 // The rows whose body under the inferred plans `inferred` differs from the
 // body under `prev`'s: those the inference moved, and those naming a callee
-// whose grow mask it moved. A body reads the module's grow table only through
-// the callees it names (`ssarc.bracketed`), and a moved row can grow a
-// callee's mask and change how every caller of it brackets.
+// whose grow mask or freshness it moved. A body reads the module's grow table
+// and fresh rows only through the callees it names (`ssarc.bracketed`,
+// `ssaunits.with_fresh`), and a moved row can change either for every caller.
 function relowered(built: semsource.Built, mod: parser.Module, inferred: Planned, prev: Rows, changed: boolean[]): boolean[] {
   let out: boolean[] = [];
   let i: i32 = 0;
   while (i < inferred.r.plans.len()) {
     let p: semsource.Produced = produced_at(built, mod, i);
-    out = out.append(!plan_reusable(prev, changed, i) || !ssaunits.grow_rows_agree(prev.grows, inferred.r.grows, ssasem.called_names(p.func)));
+    let callees: string[] = ssasem.called_names(p.func);
+    out = out.append(!plan_reusable(prev, changed, i) || !ssaunits.grow_rows_agree(prev.grows, inferred.r.grows, callees) || !ssaunits.fresh_rows_agree(prev.fresh, inferred.r.fresh, callees));
     i = i + 1;
   }
   return out;
