@@ -24,9 +24,19 @@ var abortReportCases = []struct{ name, src, cause string }{
 	{"array_oob", `function main(): i32 { let xs: i32[] = [10, 20, 30]; return xs[7]; }`, "fern: array index out of range"},
 	{"string_slice_oob", `function main(): i32 { let s: string = "hi"; let t: str = slice_unchecked(s, 1, 9); return t.len(); }`, "fern: string index out of range"},
 	{"slice_range_oob", `function main(): i32 { let xs: i32[] = [1, 2, 3]; let ys: [i32] = xs[1:9]; return ys.len(); }`, "fern: slice range out of bounds"},
+	// A byte view's read is one unsigned compare, so both ends must still trap.
+	{"byte_view_negative_oob", byteViewReadSrc("args().len() - 2"), "fern: array index out of range"},
+	{"byte_view_past_end_oob", byteViewReadSrc("args().len() + 2"), "fern: array index out of range"},
 }
 
 const abortInBoundsSrc = `function main(): i32 { let xs: i32[] = [10, 20, 30]; return xs[1]; }`
+
+// byteViewReadSrc reads a three-byte view at `index`; args() keeps the index
+// from folding.
+func byteViewReadSrc(index string) string {
+	return `function at(bs: [u8], i: i32): u8 { return bs[i]; }
+function main(): i32 { let xs: u8[] = [10, 20, 30]; return at(xs, ` + index + `) as i32; }`
+}
 
 var abortFrameRe = regexp.MustCompile(`(?m)^  0x[0-9a-f]{16}$`)
 
@@ -50,6 +60,12 @@ func checkAbortReports(t *testing.T, cli *selfHostCLI, target string) {
 		stderr, code := cli.exitOf(t, abortInBoundsSrc, target)
 		if code != 20 || stderr != "" {
 			t.Errorf("exit %d, stderr %q; want 20 and nothing on stderr", code, stderr)
+		}
+	})
+	t.Run("byte_view_last_in_bounds", func(t *testing.T) {
+		stderr, code := cli.exitOf(t, byteViewReadSrc("args().len() + 1"), target)
+		if code != 30 || stderr != "" {
+			t.Errorf("exit %d, stderr %q; want 30 and nothing on stderr", code, stderr)
 		}
 	})
 }

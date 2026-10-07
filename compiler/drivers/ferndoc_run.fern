@@ -175,6 +175,24 @@ function self_checks(): i32 {
   if (ferndoc.module_intro(hdr, 0) != "Package foo.\nSecond line.") {
     return 44;
   }
+  // The page description is the intro's first sentence, as cmd/ferndoc's
+  // moduleSummary has it: label dropped, capitalised unless the first word
+  // carries an upper-case letter or a digit.
+  if (ferndoc.module_summary("std/csv — CSV escape / join (RFC 4180).\n\nMore.") != "CSV escape / join (RFC 4180).") {
+    return 45;
+  }
+  if (ferndoc.module_summary("std/tz — the local time zone: a TZif file\n(RFC 8536). Second sentence.") != "The local time zone: a TZif file (RFC 8536).") {
+    return 46;
+  }
+  if (ferndoc.module_summary("Arbitrary-precision integers.") != "Arbitrary-precision integers.") {
+    return 47;
+  }
+  if (ferndoc.module_summary("std/float — f32 / f64 to-string formatting.") != "f32 / f64 to-string formatting.") {
+    return 48;
+  }
+  if (ferndoc.module_summary("") != "") {
+    return 49;
+  }
 
   // The page description is the intro's first sentence, without its label.
   if (ferndoc.module_summary("std/x — the thing it is. More.\nAnd more.") != "The thing it is.") {
