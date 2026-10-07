@@ -2152,38 +2152,38 @@ function needed_past(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], bi: 
 }
 
 // A block after bi reads v. The walk stops at the block defining v — a loop's
-// header, for a phi — since past that definition v is a new value, and only a
-// phi operand there can still read the old one. A later read of another of
-// v's slots is let through, as `reached_past_take` and `read_later_in_block`
-// do: what keeps v live is then not the slot taken. A read of the taken slot
-// itself still counts, so a take a loop would run again on the same box is
-// refused.
+// header, for a phi — since past that definition v is a new value. A phi reads
+// an operand only on its own incoming edge, so it counts where the walk enters
+// its block by that edge: an arm that rebuilt v hands the join its new value,
+// whatever the join takes from the arms that left v alone. A later read of
+// another of v's slots is let through, as `reached_past_take` and
+// `read_later_in_block` do: what keeps v live is then not the slot taken. A
+// read of the taken slot itself still counts, so a take a loop would run again
+// on the same box is refused.
 function named_after(f: ssasem.Func, fl: ssalive.Flow, bi: i32, v: i32, take: ssa.SInst): boolean {
   let seen: boolean[] = __alloc_bool(f.graph.blocks.len());
-  let work: i32[] = [];
-  for id in successors(f.graph.blocks[bi]) {
-    work = work.append(ssalive.position(fl, id));
-  }
+  let work: i32[] = [bi];
   let next: i32 = 0;
   while (next < work.len()) {
-    let k: i32 = work[next];
+    let from: ssa.SBlock = f.graph.blocks[work[next]];
     next = next + 1;
-    if (k < 0 || seen[k]) {
-      continue;
-    }
-    seen = seen.with(k, true);
-    let blk: ssa.SBlock = f.graph.blocks[k];
-    if (block_defines(blk, v)) {
-      if (phi_reads(blk, v)) {
-        return true;
+    for id in successors(from) {
+      let k: i32 = ssalive.position(fl, id);
+      if (k >= 0) {
+        let blk: ssa.SBlock = f.graph.blocks[k];
+        if (phi_reads_on(blk, from.id, v)) {
+          return true;
+        }
+        if (!seen[k]) {
+          seen = seen.with(k, true);
+          if (!block_defines(blk, v)) {
+            if (block_reads(blk, v, take)) {
+              return true;
+            }
+            work = work.append(k);
+          }
+        }
       }
-      continue;
-    }
-    if (block_reads(blk, v, take)) {
-      return true;
-    }
-    for id in successors(blk) {
-      work = work.append(ssalive.position(fl, id));
     }
   }
   return false;
@@ -2198,18 +2198,27 @@ function block_defines(blk: ssa.SBlock, v: i32): boolean {
   return false;
 }
 
-function phi_reads(blk: ssa.SBlock, v: i32): boolean {
+// A phi of blk takes v on the edge from block `pred`.
+function phi_reads_on(blk: ssa.SBlock, pred: i32, v: i32): boolean {
   for ins in blk.insts {
-    if (ins.kind_tag == 8 && ssa.reads_value(ins, v)) {
-      return true;
+    if (ins.kind_tag == 8) {
+      let i: i32 = 0;
+      while (i < blk.preds.len() && i < ins.args.len()) {
+        if (blk.preds[i] == pred && ins.args[i] == v) {
+          return true;
+        }
+        i = i + 1;
+      }
     }
   }
   return false;
 }
 
+// A non-phi instruction or the terminator of blk reads v other than through
+// another of its slots; a phi's reads are `phi_reads_on`'s, edge by edge.
 function block_reads(blk: ssa.SBlock, v: i32, take: ssa.SInst): boolean {
   for ins in blk.insts {
-    if (ssa.reads_value(ins, v) && !other_slot_get(ins, take)) {
+    if (ins.kind_tag != 8 && ssa.reads_value(ins, v) && !other_slot_get(ins, take)) {
       return true;
     }
   }

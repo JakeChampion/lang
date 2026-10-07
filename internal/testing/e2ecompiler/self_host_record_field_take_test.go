@@ -243,6 +243,109 @@ func TestSelfHostWithTakeAcrossBlocks(t *testing.T) {
 	}
 }
 
+// A record updated in one arm of a branch reaches the join beside the
+// unchanged record of the arms that leave it alone, and the join's phi reads
+// the old record only on those arms' edges. In `joined` the field `grow`
+// rebuilds is taken at its read: the phi's read of the old record is not on
+// the path from the take, so `grow`'s loop appends in place. Read as live,
+// the record kept a second count on the field and the first append of every
+// call copied it. In `kept` the arm that skips the update hands the join the
+// record the field was read from, so that field stays the record's.
+//
+// The exit code: 1 for a wrong value, 2 for an allocation per call in
+// `joined`, 99 for a count that went under.
+const recordFieldTakeArmJoinProg = `struct A { xs: i32[], n: i32, tag: string }
+@noinline function bump(own a: A): A { return A { ...a, n: a.n + 1 }; }
+function grow(own buf: i32[], line: string): i32[] {
+  let i: i32 = 0;
+  while (i < line.len()) {
+    if (line[i] == b'"') {
+      return buf;
+    }
+    buf = buf.append(line[i] as i32);
+    i = i + 1;
+  }
+  return buf;
+}
+@noinline function joined(own a: A, lines: string[], rounds: i32): A {
+  let j: i32 = 0;
+  while (j < rounds) {
+    let line: string = lines[j % 3];
+    if (line.len() == 2) {
+      a = bump(a);
+    } else if (line != "skip") {
+      a = A { ...a, xs: grow(a.xs, line) };
+    }
+    j = j + 1;
+  }
+  return a;
+}
+function grown(buf: i32[], line: string): i32[] {
+  return buf.append(line[0] as i32);
+}
+@noinline function kept(own a: A, line: string, rounds: i32): A {
+  let j: i32 = 0;
+  while (j < rounds) {
+    let xs: i32[] = a.xs;
+    if (j % 2 == 0) {
+      a = A { ...a, xs: grown(xs, line) };
+    }
+    j = j + 1;
+  }
+  return a;
+}
+function main(): i32 {
+  let lines: string[] = ["abc\"", "de", "skip"];
+  let c0: i64 = __heap_alloc_count();
+  let a: A = joined(A { xs: [], n: 0, tag: "t" }, lines, 3000);
+  let c1: i64 = __heap_alloc_count();
+  if (a.xs.len() != 3000 || a.xs[2999] != 99 || a.n != 1000 || a.tag != "t") {
+    return 1;
+  }
+  let b: A = kept(A { xs: [], n: 0, tag: "u" }, "x", 40);
+  if (b.xs.len() != 20 || b.xs[19] != 120 || b.n != 0 || b.tag != "u") {
+    return 1;
+  }
+  if (c1 - c0 > 32 as i64) {
+    return 2;
+  }
+  if (__rc_underflow_count() != 0) {
+    return 99;
+  }
+  return 0;
+}
+`
+
+func TestSelfHostRecordFieldTakeAtArmJoin(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "arm_join.fern")
+	if err := os.WriteFile(src, []byte(recordFieldTakeArmJoinProg), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, tg := range h.targets {
+		bin := filepath.Join(dir, tg.target+".bin")
+		build := exec.Command(h.cli, "-O", "-target", tg.target, "-o", bin, src, h.stdlib)
+		build.Env = append(os.Environ(), "FERN_LEAKCHECK=1")
+		if combined, err := build.CombinedOutput(); err != nil {
+			t.Fatalf("%s: building: %v\n%s", tg.target, err, combined)
+		}
+		run := exec.Command(bin)
+		if len(tg.runner) > 0 {
+			run = exec.Command(tg.runner[0], append(tg.runner[1:], bin)...)
+		}
+		var stderr strings.Builder
+		run.Stderr = &stderr
+		_ = run.Run()
+		if got := run.ProcessState.ExitCode(); got != 0 {
+			t.Errorf("%s: exit %d, want 0 (1: a value came back wrong, 2: the update copied, 99: a count went under)", tg.target, got)
+		}
+		if !strings.Contains(stderr.String(), "live_bytes=0") {
+			t.Errorf("%s: %q, want every block freed", tg.target, stderr.String())
+		}
+	}
+}
+
 func TestSelfHostRecordFieldTake(t *testing.T) {
 	h := selfHostCLIForHost(t)
 	dir := t.TempDir()

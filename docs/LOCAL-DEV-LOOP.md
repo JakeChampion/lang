@@ -537,17 +537,20 @@ queue: 3 GB of memcpy, but 33% of the compile in the rc traffic around it, and
 removing it took 19 s to 9.3 s. Rank by weight, but read the element type before
 estimating what a site is worth.
 
-**Attribute crossings by source instrumentation, not gdb.** Frame #2 resolves to
-`??` above the runtime helpers — they are hand-written asm with no frame pointers
-— so breaking on the counter bump cannot name the Fern caller. What works:
-bracket a suspect region with `__arr_push_shared_bytes()` reads and print the
-delta. Bisecting the self-host compiler that way costs about two minutes an
-iteration (15 s to rebuild `bin/fern-selfhost`, 20–100 s to compile
-`checker.fern`), and a probe printing only when the delta is non-zero — tagged
-with the source line being assembled — attributes 36k crossings in one run.
-Instrumentation is not free of observer effect: an added statement changes
-liveness, and so can change which appends reuse in place. Confirm a suspected
-site by *fixing* it and re-measuring an unprobed build.
+**Attribute crossings with gdb on the production binary first.** The push
+helpers' slow path sets up `%rbp` before the cliff branch, so a breakpoint on
+each `incq __fern_arr_push_shared(%rip)` (find them with `objdump -D -b binary
+-m i386:x86-64 --adjust-vma=0x400000`; the image has no section headers)
+reads the calling Fern function's return address at `*(long*)($rbp+8)` and the
+length about to be copied in `%r14`. A conditional breakpoint on a large
+`%r14` keeps it fast, and the hot return address's instruction sequence is
+found in the `-emit asm` listing of the same source. Neither a `-g` build nor a
+probe will do as a substitute: `-g` compiles the compiler differently, and an
+added statement changes liveness, so either can make the copy being chased
+disappear (`docs/rc-log/2026-10-07-f-a-join-reads-the-old-record-only-on-its-own-edge.md`).
+Bracketing a region with `__arr_push_shared_bytes()` reads still narrows a
+phase quickly; confirm the site by *fixing* it and re-measuring an unprobed
+build.
 
 ## arm64 / qemu locally: debug only, never a gate
 
