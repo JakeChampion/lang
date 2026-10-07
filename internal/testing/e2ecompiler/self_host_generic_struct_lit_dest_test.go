@@ -5,8 +5,8 @@ import "testing"
 // genericStructLitDestCases bind a generic struct literal to a destination
 // that names its instantiation: a `let` annotation, a function's return type,
 // an array annotation, a parameter reached through an array-literal argument,
-// a struct field, a method parameter, a value-position if's arms, or a
-// lambda's declared result. The destination fixes the type argument even where
+// a struct field, a method parameter, a value-position if's arms, a
+// lambda's declared result, or the variable an assignment writes. The destination fixes the type argument even where
 // an untyped field literal (`a: 3`) would default it to i32 (#10452, #10481,
 // #10537).
 var genericStructLitDestCases = []struct {
@@ -96,6 +96,14 @@ function main(): i32 {
     return (p.b / 1073741824 + p.a) as i32;
 }
 `, 7},
+	{"assignment", `struct Same[T] { a: T, b: T }
+function main(): i32 {
+    let p: Same[i64] = Same { a: 1, b: 1 };
+    p = Same { a: 3, b: 4 };
+    let w: i64 = p.b * 1073741824;
+    return (w / 536870912 + p.a) as i32;
+}
+`, 11},
 }
 
 // TestSelfHostGenericStructLitDest compiles each case with the self-host CLI
