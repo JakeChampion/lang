@@ -15,6 +15,7 @@
 // the construction is a constant there (`constructor_leaves`). A function
 // called from a few places that returns a box at every return is spliced
 // into the callers that read it apart (`shared_spliceable`).
+import "std/i32";
 import "./ssa";
 import "./util";
 import "./ssasem";
