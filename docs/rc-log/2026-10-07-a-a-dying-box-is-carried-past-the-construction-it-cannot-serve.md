@@ -37,10 +37,9 @@ treats a block as a target where it claims `n` and as passable where it does
 not, whatever else it builds, and `route_to` admits such a block on the way.
 The donor is handed to the first construction claiming `n` in the target
 (`first_claim_of`), not the first construction. A block on the way may now
-build: its constructions pair with nothing while the donor is held
-(`carry_way`, which switches `reuse_pairs` off there), since the frame has
-one token slot and a token written there would overwrite the donor's box,
-as the same-block rule already says.
+build, and its own pairings stand: the held donor stays in its local until
+the target's construction writes the token slot, and a pairing on the way
+writes and spends the slot within its block.
 
 The donor is chosen before the route rather than after: for each block, the
 first dying value whose count some construction ahead claims, each count

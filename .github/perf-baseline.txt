@@ -171,7 +171,7 @@ aarch64/map_probe_chain.ir	444259099
 aarch64/map_string.text	10837
 aarch64/map_string.ir	91222257	2
 aarch64/ordmap_insert.text	4934
-aarch64/ordmap_insert.ir	263280116
+aarch64/ordmap_insert.ir	247937830
 aarch64/pmap_insert.text	5927
 aarch64/pmap_insert.ir	113070646
 aarch64/pvec_with.text	3127
@@ -183,7 +183,7 @@ aarch64/sort_inplace.ir	54286058
 aarch64/sort_ints.text	4659
 aarch64/sort_ints.ir	37318031
 aarch64/sort_strings.text	5646
-aarch64/sort_strings.ir	141543740
+aarch64/sort_strings.ir	135864667
 aarch64/string_build.text	4033
 aarch64/string_build.ir	99475440
 aarch64/string_count_byte.text	3517
