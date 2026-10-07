@@ -248,3 +248,68 @@ function main(): i32 { return f(b = 2, a = 1); }`
 		}
 	}
 }
+
+// callArgCounts returns the argument count of every call to name, in
+// source order.
+func callArgCounts(prog *ast.Program, name string) []int {
+	var out []int
+	for _, f := range prog.Funcs {
+		ast.Walk(f, func(n ast.Node) bool {
+			if c, ok := n.(*ast.Call); ok {
+				if id, ok := c.Callee.(*ast.Ident); ok && id.Name == name {
+					out = append(out, len(c.Args))
+				}
+			}
+			return true
+		})
+	}
+	return out
+}
+
+// A call to a local binding is not a call to the top-level function it
+// shadows, so it gets none of that function's defaults (#11850). Each case
+// is the counts of every call to `f`, in source order.
+func TestShadowedCalleeGetsNoDefaults(t *testing.T) {
+	const top = "function f(a: i32, b: i32 = 5): i32 { return a + b; }\n"
+	cases := []struct {
+		name, src string
+		want      []int
+	}{
+		{"let-closure", "function main(): i32 { let f = (n: i32) => n; return f(0); }", []int{1}},
+		{"parameter", "function g(f: (i32) => i32): i32 { return f(1); }", []int{1}},
+		{"local-function", "function main(): i32 { function f(n: i32): i32 { return n * 2; } return f(4); }", []int{1}},
+		{"block-scoped", "function main(): i32 { let x: i32 = f(1); if (x > 0) { let f = (n: i32) => n; x = x + f(2); } return x + f(3); }", []int{2, 1, 2}},
+		{"loop-variable", "function main(): i32 { let s: i32 = 0; for f in [(n: i32) => n] { s = s + f(1); } return s + f(2); }", []int{1, 2}},
+		{"match-binder", "function main(): i32 { let o: Option[(i32) => i32] = Some((n: i32) => n); match (o) { Some(f) => { return f(1); }, None => { return f(2); } } }", []int{1, 2}},
+		{"lambda-parameter", "function main(): i32 { let h = (f: (i32) => i32) => f(1); return f(2); }", []int{1, 2}},
+		{"initialiser-sees-outer", "function main(): i32 { let f = f(1); return f; }", []int{2}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			prog, errs := fill(t, top+tc.src)
+			if len(errs) != 0 {
+				t.Fatalf("unexpected error: %s (%s)", errs[0].Msg, errs[0].Code)
+			}
+			got := callArgCounts(prog, "f")
+			if len(got) != len(tc.want) {
+				t.Fatalf("got %d calls to f, want %d", len(got), len(tc.want))
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("call %d to f has %d args, want %d (all: %v, want %v)", i, got[i], tc.want[i], got, tc.want)
+				}
+			}
+		})
+	}
+}
+
+// Named arguments on a local binding name no top-level function's
+// parameters, whatever the binding is called.
+func TestNamedArgumentOnShadowedCallee(t *testing.T) {
+	src := `function f(a: i32, b: i32 = 5): i32 { return a + b; }
+function main(): i32 { let f = (n: i32) => n; return f(n = 1); }`
+	_, errs := fill(t, src)
+	if len(errs) != 1 || errs[0].Code != "E077" || !strings.Contains(errs[0].Msg, `not supported for call to "f"`) {
+		t.Fatalf("got %v, want one E077 naming the call to f", errs)
+	}
+}

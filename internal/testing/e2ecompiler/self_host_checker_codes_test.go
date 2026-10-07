@@ -2876,6 +2876,10 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// written, so the arity check still sees its argument count, as native.
 		{"named-on-method", "struct S { v: i32 }\nimpl S { function m(self: Self, a: i32): i32 { return self.v + a; } }\nfunction main(): i32 { let s: S = S { v: 1 }; return s.m(a = 1); }\n", []string{"E077"}},
 		{"named-on-fn-value", "function main(): i32 { let g: (i32) => i32 = (x: i32) => x + 1; return g(x = 1); }\n", []string{"E077"}},
+		// A local binding named like a top-level function is not that
+		// function: no defaults, no parameter names (#11850).
+		{"named-on-shadowing-closure", "function f(a: i32, b: i32 = 5): i32 { return a + b; }\nfunction main(): i32 { let f = (n: i32) => n; return f(n = 1); }\n", []string{"E077"}},
+		{"shadowing-closure-gets-no-defaults-ok", "function f(a: i32, b: i32 = 0): i32 { return a + b; }\nfunction main(): i32 { let f = (n: i32) => n; return f(0); }\n", nil},
 		{"named-unknown-param", "function listen(port: i32, backlog: i32 = 128): i32 { return port + backlog; }\nfunction main(): i32 { return listen(port = 80, backlogg = 5); }\n", []string{"E077"}},
 		{"named-duplicate", "function f(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return f(a = 1, a = 2); }\n", []string{"E077"}},
 		{"positional-after-named", "function f(a: i32, b: i32): i32 { return a + b; }\nfunction main(): i32 { return f(a = 1, 2); }\n", []string{"E077"}},
