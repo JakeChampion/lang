@@ -1748,13 +1748,13 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
   }
   let takes: i32[] = tuple_takes(f, a, owned, defs);
   let held: boolean[] = held_elements(f, a, owned, defs);
-  // A taken payload is a unit of its own at the read already, moved out of
-  // the box or retained there by the lowering's uniqueness test
-  // (ssarc.steal); the hold read it as still anchored to its array, and
+  // A taken payload or slot is a unit of its own at the read already, moved
+  // out of the box or retained there by the lowering's uniqueness test
+  // (ssarc.steal); the hold read it as still anchored to its source, and
   // would retain it a second time.
   i = 0;
   while (i < held.len()) {
-    if (held[i] && payloads[i]) {
+    if (held[i] && (payloads[i] || takes[i] >= 0)) {
       held = held.with(i, false);
     }
     i = i + 1;
