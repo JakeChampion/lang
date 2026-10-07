@@ -924,7 +924,9 @@ function block_loop_weights(f: SFunc): i32[] {
   let depth: i32[] = __alloc_i32(f.blocks.len());
   let bi: i32 = 0;
   while (bi < f.blocks.len()) {
-    for tgt in successor_positions(f, at, bi) {
+    let which: i32 = 0;
+    while (which < 2) {
+      let tgt: i32 = distinct_successor_position(at, f.blocks[bi].term, which);
       if (tgt >= 0 && tgt <= bi) {
         let k: i32 = tgt;
         while (k <= bi) {
@@ -932,6 +934,7 @@ function block_loop_weights(f: SFunc): i32[] {
           k = k + 1;
         }
       }
+      which = which + 1;
     }
     bi = bi + 1;
   }
@@ -1725,6 +1728,35 @@ function successor_positions(f: SFunc, at: i32[], bi: i32): i32[] {
     }
   }
   return out;
+}
+
+// successor_id is branch `which` of `t` by block id, in branch order: a
+// plain branch has one, a conditional two, and -1 stands past them. A walk
+// over the two reads them without building a list.
+pub function successor_id(t: STerm, which: i32): i32 {
+  if (t.kind_tag == 2 && which == 0) {
+    return t.target;
+  }
+  if (t.kind_tag == 3) {
+    if (which == 0) {
+      return t.t;
+    }
+    if (which == 1) {
+      return t.f;
+    }
+  }
+  return 0 - 1;
+}
+
+// distinct_successor_position is successor_id's branch by position, or -1
+// for a second branch to the first's block, which successor_positions lists
+// once.
+function distinct_successor_position(at: i32[], t: STerm, which: i32): i32 {
+  let id: i32 = successor_id(t, which);
+  if (id < 0 || which == 1 && id == t.t) {
+    return 0 - 1;
+  }
+  return position_of(at, id);
 }
 
 function position_of(at: i32[], id: i32): i32 {
@@ -2630,8 +2662,13 @@ pub function thread_forwarding(f: SFunc): SFunc {
       continue;
     }
     live = live.with(b, true);
-    for s in successor_positions(g, at, b) {
-      work = work.append(s);
+    let which: i32 = 0;
+    while (which < 2) {
+      let id: i32 = successor_id(g.blocks[b].term, which);
+      if (id >= 0 && (which == 0 || id != g.blocks[b].term.t)) {
+        work = work.append(position_of(at, id));
+      }
+      which = which + 1;
     }
   }
   // `kept` is written from the first unreachable block on.
@@ -2702,10 +2739,13 @@ function refreshed_preds(f: SFunc): SBlock[] {
   }
   i = 0;
   while (i < f.blocks.len()) {
-    for s in successor_positions(f, at, i) {
+    let which: i32 = 0;
+    while (which < 2) {
+      let s: i32 = distinct_successor_position(at, f.blocks[i].term, which);
       if (s >= 0 && !has_pred(preds[s], f.blocks[i].id)) {
         preds = preds.with(s, preds[s].append(f.blocks[i].id));
       }
+      which = which + 1;
     }
     i = i + 1;
   }
