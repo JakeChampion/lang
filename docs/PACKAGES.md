@@ -41,13 +41,13 @@ lib = "lib.fern"      # entry module for `import "<name>"` (default)
 
 [dependencies]
 helper = { path = "../helper" }                    # local directory
-webkit = { url = "https://example.com/webkit.tar.gz",
-           hash = "sha256:<64 lowercase hex of the archive bytes>" }
+webkit = { url = "https://example.com/webkit.tar.gz", hash = "sha256:…" }  # 64 lowercase hex of the archive bytes
 kv = { path = "../kv", capabilities = ["net"] }    # capability grant
 ```
 
 The parser (`internal/pkg/manifest`) is a strict TOML subset — sections,
-quoted strings, inline tables — and rejects anything else with a
+quoted strings, arrays, inline tables and `#` comments (on their own line
+or after a value), each entry on one line — and rejects anything else with a
 pointed error. A bare `helper = "1.2.0"` is a versioned (MVS) dependency (see below);
 `helper = "1.2"` errors (versions are MAJOR.MINOR.PATCH).
 

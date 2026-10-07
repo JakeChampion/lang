@@ -1430,7 +1430,7 @@ function insert_dependency(src: string, line: string): string {
   let lines: string[] = mvs.split_char(src, b'\n');
   let i: i32 = 0;
   while (i < lines.len()) {
-    if (util.trim(lines[i]) == "[dependencies]") {
+    if (util.trim(fern_toml.line_content(lines[i])) == "[dependencies]") {
       let out: string = "";
       let k: i32 = 0;
       while (k < lines.len()) {
