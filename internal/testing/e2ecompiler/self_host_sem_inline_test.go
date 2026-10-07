@@ -124,6 +124,47 @@ function main(): i32 {
 var semInlineProduced = []string{"divmod", "scan", "clamp", "kept", "divmod_rounds", "scan_rounds", "clamp_rounds", "kept_rounds", "kind", "probe", "kind_rounds",
 	"span", "kept_span", "span_rounds", "kept_span_rounds", "pick", "pick_rounds"}
 
+// A function whose only calls are to leaves is a leaf once they are spliced
+// into it. parts calls first and second and returns a triple, which no pair
+// return carries; it has three callers, so neither the once nor the shared
+// splice takes it. As a leaf after the first round it is spliced into all
+// three and the triple is read apart, so the rounds allocate nothing; with the
+// pass off, every call boxes its triple.
+const grownLeafProgram = `struct Box3 { a: i32, b: i32, c: i32 }
+function first(r: Box3): i32 { return r.a; }
+function second(r: Box3): i32 { return r.b + r.c; }
+function parts(r: Box3): (i32, i32, i32) { return (first(r), second(r), r.c); }
+@noinline function one(r: Box3): i32 { let (x, y, z) = parts(r); return x + y + z; }
+@noinline function two(r: Box3): i32 { let (x, y, z) = parts(r); return x * y - z; }
+@noinline function rounds(r: Box3): i32 {
+    let before: i64 = __heap_alloc_count();
+    let t: i32 = 0;
+    let i: i32 = 0;
+    while (i < 100) { let (x, y, z) = parts(r); t = t + x + y + z + one(r) + two(r); i = i + 1; }
+    return t * 1000 + ((__heap_alloc_count() - before) as i32);
+}
+function print_int(n: i32): i32 {
+    if (n > 9) { print_int(n / 10); }
+    putchar(48 + n % 10);
+    return 0;
+}
+function main(): i32 {
+    print_int(rounds(Box3 { a: 1, b: 2, c: 3 })); print("");
+    return 0;
+}
+`
+
+var grownLeafProduced = []string{"first", "second", "parts", "one", "two", "rounds"}
+
+func TestSelfHostSemanticInlineGrownLeaf(t *testing.T) {
+	runSemanticProgram(t, "grownleaf", grownLeafProgram, grownLeafProduced, semInlineWants("2000000\n"))
+}
+
+func TestSelfHostSemanticInlineGrownLeafOff(t *testing.T) {
+	t.Setenv("FERN_SEM_INLINE", "")
+	runSemanticProgram(t, "grownleaf-off", grownLeafProgram, grownLeafProduced, semInlineWants("2000300\n"))
+}
+
 func semInlineWants(want string) map[string]string {
 	return map[string]string{"arm64-linux": want, "x86-64-linux": want, "x86-64-sanitize": want, "wasm32-wasi": want}
 }

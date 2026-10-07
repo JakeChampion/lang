@@ -119,3 +119,48 @@ func TestSelfHostDebugSymsFlag(t *testing.T) {
 		}
 	}
 }
+
+// A `-g` build carries a line mark ahead of every statement. The marks emit no
+// code, so they must not keep a leaf from being spliced into its callers:
+// `is_space` is a leaf called from two places, and neither build may name it.
+func TestSelfHostDebugSymsKeepSplices(t *testing.T) {
+	gcc, _ := x86_64Tooling(t)
+	dir := writeSelfHostAsmProject(t)
+	copySelfHostDriver(t, dir, "fern.fern")
+	cli := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
+
+	src := filepath.Join(dir, "leaf.fern")
+	if err := os.WriteFile(src, []byte(`function is_space(c: i32): boolean { return c == 32 || c >= 9 && c <= 13; }
+@noinline function count(buf: u8[]): i32 {
+    let n: i32 = 0;
+    let i: i32 = 0;
+    while (i < buf.len()) { if (is_space(buf[i] as i32)) { n = n + 1; } i = i + 1; }
+    return n;
+}
+@noinline function lead(buf: u8[]): i32 {
+    let i: i32 = 0;
+    while (i < buf.len() && is_space(buf[i] as i32)) { i = i + 1; }
+    return i;
+}
+function main(): i32 { let b: u8[] = [32, 9, 65, 9, 66]; return count(b) * 10 + lead(b); }
+`), 0o644); err != nil {
+		t.Fatalf("writing source: %v", err)
+	}
+	stdlib := langSrcAbs(t, "internal/stdlib")
+	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+		for _, flags := range [][]string{nil, {"-g"}} {
+			out := filepath.Join(dir, target+strings.Join(flags, "")+".s")
+			args := append(append([]string{}, flags...), "-target", target, "-emit", "asm", "-o", out, src, stdlib)
+			if b, err := exec.Command(cli, args...).CombinedOutput(); err != nil {
+				t.Fatalf("fern-selfhost %v: %v\n%s", args, err, b)
+			}
+			asm, err := os.ReadFile(out)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if n := strings.Count(string(asm), "__fn_is_space"); n != 0 {
+				t.Errorf("%s %v: %d references to the leaf is_space, want 0 (spliced into both callers)", target, flags, n)
+			}
+		}
+	}
+}
