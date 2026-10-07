@@ -1306,3 +1306,32 @@ function main(): i32 { return same(3, 3) + same("a", "b"); }`},
 		})
 	}
 }
+
+// A generic enum the monomorphizer keeps generic keeps its parametric impls
+// through the re-check. Dropping them left the re-check with no Eq or Hash
+// for `Slot[i32]`, so a map keyed by it was refused as E045 after the first
+// check had accepted it.
+func TestRunKeepsGenericEnumConformance(t *testing.T) {
+	src := `import "core/map";
+import "core/cmp";
+@derive(cmp.Eq, cmp.Hash)
+enum Slot[T] { Empty, One(T) }
+function main(): i32 {
+    let m: Map[Slot[i32], i32] = map_new(4);
+    m = m.insert(Slot.One(3), 1);
+    let e: Slot[i32] = Slot.Empty;
+    m = m.insert(e, 2);
+    return m.get_or(Slot.One(3), 0) + m.len();
+}`
+	prog, _, err := modload.LoadSource(src)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	info, err := checker.Check(prog)
+	if err != nil {
+		t.Fatalf("check: %v", err)
+	}
+	if err := monomorph.Run(prog, info); err != nil {
+		t.Fatalf("monomorph: %v", err)
+	}
+}
