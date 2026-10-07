@@ -62,7 +62,7 @@ function main(): i32 { print(g(3).to_string() + " " + g(0).to_string()); return 
 	{"views-of-two-sources", `function g(x: string, y: string): str[] { let o: str[] = []; o = o.append(slice_unchecked(x, 0, 1)); o = o.append(slice_unchecked(y, 0, 1)); return o; }
 function main(): i32 { let xs: str[] = g("ab", "cd"); return xs.len(); }
 `, 2},
-	// Every read of a view map value takes a fresh box (#10701).
+	// Every read of a view map value owns a unit of the entry (#10701).
 	{"view-map-value-reads", `import "core/map";
 function main(): i32 {
     let b: string = "abcdefgh";
