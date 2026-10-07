@@ -39,7 +39,10 @@ func selfHostSysinfoSource(t *testing.T, machine string) string {
     if (uname_field(4) != %q) { return 5; }
     if (uname_field(5) != "") { return 6; }
     if (uname_field(0 - 1) != "") { return 7; }
-    if (getcwd() != %q) { return 8; }
+    match (getcwd()) {
+        Ok(wd) => { if (wd != %q) { return 8; } },
+        Err(e) => { return 10; }
+    }
     if (cpu_count() != %d) { return 9; }
     return 0;
 }
@@ -144,7 +147,10 @@ func TestSelfHostSysinfoIRArm64Darwin(t *testing.T) {
 
 	const src = `function main(): i32 {
     print(uname_field(4));
-    print(getcwd());
+    match (getcwd()) {
+        Ok(wd) => { print(wd); },
+        Err(e) => { return 1; }
+    }
     return cpu_count();
 }
 `

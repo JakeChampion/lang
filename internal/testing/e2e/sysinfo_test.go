@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 )
 
@@ -86,36 +87,84 @@ func TestArm64UnameField(t *testing.T) {
 	checkUnameFieldOutput(t, out, "aarch64")
 }
 
-// getcwdProbeSource prints the working directory the process inherited.
+// getcwdProbeSource prints the working directory it starts in, removes
+// that directory, and prints what getcwd() answers then — the Ok and the
+// Err half of the builtin. The exit code names a step that went wrong.
 const getcwdProbeSource = `function main(): i32 {
-    print(getcwd());
+    let here: string = "";
+    match (getcwd()) {
+        Ok(p) => { here = p; },
+        Err(e) => { return 1; }
+    }
+    print(here);
+    match (remove_dir(here)) {
+        Ok(v) => {},
+        Err(e) => { return 2; }
+    }
+    match (getcwd()) {
+        Ok(p) => {
+            print(p);
+            return 3;
+        },
+        Err(e) => {
+            match (e) {
+                NotFound(_) => { print("ENOENT"); },
+                Other(_, m, _) => { print(m); },
+                _ => { print("another IoError"); }
+            }
+        }
+    }
     return 0;
 }
 `
 
-// The compiled probes run with the test process's own working
-// directory, which is this package's source directory.
+// checkGetcwdProbe runs the probe in a fresh directory: Ok has to be that
+// directory as the kernel names it, and Err the ENOENT a removed one is.
+func checkGetcwdProbe(t *testing.T, cmd *exec.Cmd) {
+	t.Helper()
+	dir, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatalf("resolve temp dir: %v", err)
+	}
+	dir = filepath.Join(dir, "cwd")
+	if err := os.Mkdir(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	cmd.Dir = dir
+	out, _ := cmd.CombinedOutput()
+	want := dir + "\nENOENT\n"
+	if code := cmd.ProcessState.ExitCode(); code != 0 || string(out) != want {
+		t.Errorf("getcwd probe (exit %d):\n got: %q\nwant: %q", code, out, want)
+	}
+}
+
+// hostCwd is the working directory as getcwd(2) names it. os.Getwd would
+// answer $PWD whenever it names the same directory, links and all.
 func hostCwd(t *testing.T) string {
 	t.Helper()
-	wd, err := os.Getwd()
+	wd, err := syscall.Getwd()
 	if err != nil {
-		t.Fatalf("os.Getwd: %v", err)
+		t.Fatalf("getcwd: %v", err)
 	}
 	return wd
 }
 
 func TestX86_64Getcwd(t *testing.T) {
-	out, code := compileAndRunX86_64(t, getcwdProbeSource)
-	if want := hostCwd(t); code != 0 || strings.TrimSpace(out) != want {
-		t.Errorf("getcwd() = %q (exit %d), want %q", strings.TrimSpace(out), code, want)
-	}
+	bin, runner := compileX86_64Bin(t, getcwdProbeSource)
+	checkGetcwdProbe(t, runX86_64Bin(runner, bin))
 }
 
 func TestArm64Getcwd(t *testing.T) {
-	out, code := compileAndRunArm64(t, getcwdProbeSource)
-	if want := hostCwd(t); code != 0 || strings.TrimSpace(out) != want {
-		t.Errorf("getcwd() = %q (exit %d), want %q", strings.TrimSpace(out), code, want)
+	bin, qemu := compileArm64Bin(t, getcwdProbeSource)
+	checkGetcwdProbe(t, runArm64Bin(qemu, bin))
+}
+
+func TestInterpGetcwd(t *testing.T) {
+	src := filepath.Join(t.TempDir(), "prog.fern")
+	if err := os.WriteFile(src, []byte(getcwdProbeSource), 0o644); err != nil {
+		t.Fatalf("write src: %v", err)
 	}
+	checkGetcwdProbe(t, exec.Command(buildLangBinForInterp(t), "-interp", src))
 }
 
 // cpuCountProbeSource exits with the count, so the assertion is the
@@ -158,7 +207,10 @@ func TestInterpSysinfo(t *testing.T) {
     if (uname_field(0) != %q) { return 1; }
     if (uname_field(4) != %q) { return 2; }
     if (uname_field(5) != "") { return 3; }
-    if (getcwd() != %q) { return 4; }
+    match (getcwd()) {
+        Ok(wd) => { if (wd != %q) { return 4; } },
+        Err(e) => { return 6; }
+    }
     if (cpu_count() != %d) { return 5; }
     return 0;
 }
@@ -177,12 +229,12 @@ func TestWasmSysinfoIsRefused(t *testing.T) {
 	bin := buildLangBinForCheck(t)
 	dir := t.TempDir()
 	for _, tc := range []struct{ name, call, capability string }{
-		{"uname_field", "uname_field(0).len()", "sysinfo"},
-		{"cpu_count", "cpu_count()", "sysinfo"},
-		{"getcwd", "getcwd().len()", "cwd"},
+		{"uname_field", "let n: i32 = uname_field(0).len()", "sysinfo"},
+		{"cpu_count", "let n: i32 = cpu_count()", "sysinfo"},
+		{"getcwd", "let r: Result[string, IoError] = getcwd()", "cwd"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			src := fmt.Sprintf("function main(): i32 {\n    return %s;\n}\n", tc.call)
+			src := fmt.Sprintf("function main(): i32 {\n    %s;\n    return 0;\n}\n", tc.call)
 			path := filepath.Join(dir, tc.name+".fern")
 			if err := os.WriteFile(path, []byte(src), 0o644); err != nil {
 				t.Fatalf("write %s: %v", path, err)
