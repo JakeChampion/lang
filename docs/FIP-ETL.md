@@ -2,7 +2,7 @@
 
 This experiment for #9591 compares four Fern implementations of the same
 decode, validate, normalize, filter, aggregate and encode pipeline. On the
-measured Apple M3 Pro, the ordinary per-record baseline was fastest. The current
+measured Apple M3 Pro, the ordinary per-record baseline was fastest. The measured
 compiler eliminated its record allocations; FIP and FBIP also allocated nothing
 in steady state. Their different throughput shows that allocation counts alone
 do not predict speed.
@@ -163,6 +163,43 @@ call boundary was added to force the baseline to keep allocating. This is why
 the report records the compiler revision as well as the source and workload.
 
 ## Reproduction and validation
+
+### Merged compiler checkpoint
+
+After this experiment merged, the compiler at
+`882e71060e9cde33b14a44103b1c99121091751c` produced a different executable.
+The same 4096-record pilot and all 60 two-million-record runs were repeated;
+every output and sample check passed. The original tables above remain labeled
+with their `f009e7a36` compiler. The new medians and ranges are:
+
+| Batch | Variant | Million records/s median | Observed range | Batch p99, ns |
+|---:|---|---:|---:|---:|
+| 1 | baseline | 25.130 | 24.861-25.951 | 83 |
+| 1 | batched | 17.141 | 16.184-17.788 | 84 |
+| 1 | fbip | 16.339 | 16.267-16.782 | 84 |
+| 1 | fip | 22.453 | 21.867-22.688 | 84 |
+| 64 | baseline | 56.506 | 54.387-58.056 | 1167 |
+| 64 | batched | 40.901 | 40.333-41.739 | 1708 |
+| 64 | fbip | 36.570 | 36.168-38.103 | 1917 |
+| 64 | fip | 51.255 | 51.046-53.528 | 1292 |
+| 1024 | baseline | 59.467 | 58.325-61.683 | 18792 |
+| 1024 | batched | 44.664 | 43.207-45.767 | 23583 |
+| 1024 | fbip | 38.519 | 37.775-39.529 | 28958 |
+| 1024 | fip | 55.984 | 54.287-56.217 | 18875 |
+
+Allocation counts and fresh-byte growth were unchanged. The ordinary baseline
+still leads throughput, and FBIP remains slower despite zero steady allocations.
+All per-run percentiles, startup and process resources are in the
+[merged-checkpoint results](benchmarks/etl-2026-10-07-main882/results.jsonl),
+with [metadata](benchmarks/etl-2026-10-07-main882/metadata.json),
+[oracle](benchmarks/etl-2026-10-07-main882/oracle.json) and
+[compiler record](benchmarks/etl-2026-10-07-main882/compiler.json).
+Full samples remain in `/tmp/fern-etl-main882-repeated/`.
+Compiler revision `97a6004e5a228d0dc7cafe2f6b669fea9b6e0c00` was subsequently
+verified to produce this same executable byte-for-byte, so those measurements
+also describe that build. Both compilers reached native stage 2/3 byte identity.
+
+### Commands and coverage
 
 Build the primary compiler and the example, then run the pilot before scaling:
 

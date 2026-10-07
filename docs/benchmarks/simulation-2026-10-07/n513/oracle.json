@@ -1,0 +1,14 @@
+{
+  "513-spread": {
+    "checksum": 946424203,
+    "snapshot_checks": 994943328,
+    "initial_tick": 1,
+    "final_tick": 1001
+  },
+  "513-cluster": {
+    "checksum": 797049480,
+    "snapshot_checks": 852717922,
+    "initial_tick": 1,
+    "final_tick": 1001
+  }
+}

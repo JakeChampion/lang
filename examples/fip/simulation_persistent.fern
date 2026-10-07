@@ -1,0 +1,159 @@
+import "./simulation_rules";
+import "./simulation_entity";
+import "std/pvec";
+
+pub struct World {
+  count: i32,
+  tick: i32,
+  entities: pvec.PVec[simulation_entity.Entity],
+  empty: simulation_entity.Entity,
+  heads: i32[],
+  next: i32[],
+  neighbors: i32[],
+  candidates: i64,
+  checksum: i64,
+  refused: i32,
+}
+
+pub function new_world(count: i32, clustered: boolean): Option[World] {
+  if (count < 0 || count > 4096) {
+    return None;
+  }
+  let entities: pvec.PVec[simulation_entity.Entity] = pvec.pvec_new[simulation_entity.Entity]();
+  let i: i32 = 0;
+  while (i < count) {
+    entities = entities.append(simulation_entity.initial(i, count, clustered));
+    i = i + 1;
+  }
+  return Some(World {
+    count: count, tick: 0, entities: entities,
+    empty: simulation_entity.Entity { x: 0, y: 0, vx: 0, vy: 0, health: 0, kind: 0, target: -1, mode: 0 },
+    heads: __alloc_i32(256), next: __alloc_i32(count), neighbors: __alloc_i32(count),
+    candidates: 0i64, checksum: 0i64, refused: 0,
+  });
+}
+
+pub function get(w: World, index: i32): simulation_entity.Entity {
+  return w.entities.get_or(index, w.empty);
+}
+
+pub function input_ai(own w: World): World {
+  let i: i32 = 0;
+  while (i < w.count) {
+    let row: simulation_entity.Entity = get(w, i);
+    let target: i32 = simulation_rules.target(row.target, i, w.tick, w.count);
+    let tx: i32 = 0;
+    let ty: i32 = 0;
+    if (target >= 0) {
+      let dest: simulation_entity.Entity = get(w, target);
+      tx = dest.x;
+      ty = dest.y;
+    }
+    // The persistent collection retains its old element during replacement.
+    row = simulation_entity.input_ai(row, i, w.tick, target, tx, ty);
+    w = World { ...w, entities: w.entities.with(i, row) };
+    i = i + 1;
+  }
+  return w;
+}
+
+pub function move(own w: World): World {
+  let i: i32 = 0;
+  while (i < w.count) {
+    let row: simulation_entity.Entity = get(w, i);
+    // The persistent collection retains its old element during replacement.
+    row = simulation_entity.move(row);
+    w = World { ...w, entities: w.entities.with(i, row) };
+    i = i + 1;
+  }
+  return w;
+}
+
+pub function rebuild(own w: World): World {
+  let cell: i32 = 0;
+  while (cell < 256) {
+    w = World { ...w, heads: w.heads.with(cell, -1) };
+    cell = cell + 1;
+  }
+  let i: i32 = 0;
+  while (i < w.count) {
+    let row: simulation_entity.Entity = get(w, i);
+    cell = row.y / 256 * 16 + row.x / 256;
+    let next: i32 = w.heads[cell];
+    w = World { ...w, next: w.next.with(i, next) };
+    w = World { ...w, heads: w.heads.with(cell, i) };
+    i = i + 1;
+  }
+  return w;
+}
+
+pub function proximity(own w: World): World {
+  let candidates: i64 = 0i64;
+  let i: i32 = 0;
+  while (i < w.count) {
+    let row: simulation_entity.Entity = get(w, i);
+    let neighbors: i32 = 0;
+    let oy: i32 = -1;
+    while (oy <= 1) {
+      let cy: i32 = row.y / 256 + oy & 15;
+      let ox: i32 = -1;
+      while (ox <= 1) {
+        let cx: i32 = row.x / 256 + ox & 15;
+        let j: i32 = w.heads[cy * 16 + cx];
+        while (j >= 0) {
+          candidates = candidates + 1i64;
+          if (i != j) {
+            let other: simulation_entity.Entity = get(w, j);
+            let dx: i32 = simulation_rules.delta(other.x, row.x);
+            let dy: i32 = simulation_rules.delta(other.y, row.y);
+            if (dx * dx + dy * dy <= 16384) {
+              neighbors = neighbors + 1;
+            }
+          }
+          j = w.next[j];
+        }
+        ox = ox + 1;
+      }
+      oy = oy + 1;
+    }
+    w = World { ...w, neighbors: w.neighbors.with(i, neighbors) };
+    i = i + 1;
+  }
+  return World { ...w, candidates: candidates };
+}
+
+pub function update(own w: World): World {
+  let i: i32 = 0;
+  while (i < w.count) {
+    let row: simulation_entity.Entity = get(w, i);
+    // The persistent collection retains its old element during replacement.
+    row = simulation_entity.update(row, w.neighbors[i]);
+    w = World { ...w, entities: w.entities.with(i, row) };
+    i = i + 1;
+  }
+  return w;
+}
+
+pub function checksum(w: World): i64 {
+  let hash: i64 = w.tick as i64;
+  let i: i32 = 0;
+  while (i < w.count) {
+    hash = simulation_entity.mix(hash, get(w, i), w.neighbors[i]);
+    i = i + 1;
+  }
+  return hash;
+}
+
+pub function step(own w: World): World {
+  if (w.tick >= 1000000) {
+    return World { ...w, refused: 1 };
+  }
+  w = input_ai(w);
+  w = move(w);
+  w = rebuild(w);
+  w = proximity(w);
+  w = update(w);
+  w = World { ...w, tick: w.tick + 1 };
+  let hash: i64 = checksum(w);
+  return World { ...w, checksum: hash };
+}

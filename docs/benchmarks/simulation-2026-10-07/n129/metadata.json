@@ -1,0 +1,35 @@
+{
+  "host": "macOS-15.8-arm64-arm-64bit-Mach-O",
+  "machine": "arm64",
+  "compiler": "/private/tmp/fern-fip-main882-native-compiler",
+  "compiler_sha256": "9f95e090d983014c82cd8c2b864d9d50fb570da9d5cf0bc377506f86bca05ff7",
+  "compile_command": [
+    "/private/tmp/fern-fip-main882-native-compiler",
+    "-target",
+    "arm64-darwin",
+    "-o",
+    "/private/tmp/fern-simulation-main882-n129-repeated/simulation",
+    "/Users/jakechampion/.codex/worktrees/fip-simulation-experiment/lang/examples/fip/simulation.fern",
+    "/Users/jakechampion/.codex/worktrees/fip-simulation-experiment/lang/internal/stdlib"
+  ],
+  "binary_sha256": "72b8bb78900dbb49eefdc2c3cd3b23368016bc40a030fb6a613c71478c9764d1",
+  "sources": {
+    "examples/fip/simulation.fern": "5886e734db418b3c44c0615b8c3a23276d9d74061ccfd0bf5a208938e34dc4ed",
+    "examples/fip/simulation_entity.fern": "b995f1354d4adaaebb99663d209bbae13e4e7c0e09f9ac4d9c63c7bcc73daede",
+    "examples/fip/simulation_fbip.fern": "500cf9ee81c0d7da6f72214c6f9b3130ea02a72d4553197b7a9770eb5a7472bf",
+    "examples/fip/simulation_fip.fern": "c7a4c6443cc087c8fcebfa1aaadfbdfb93446463b109d9e4eac6c65f6dc674a7",
+    "examples/fip/simulation_persistent.fern": "5c6be01f88df08528b66a1eb10f62aae22f1da1fd8dfd8f0db8f5e617ad8fae7",
+    "examples/fip/simulation_rules.fern": "60ad18455f2ede429f651521b789b05443c8d02a97e9180a65145320cbe9c461",
+    "scripts/bench-simulation.py": "63ac737bca7461a15f6bdae55b006e971d6fb09c6d6c7646b8390f4e3fe8be49",
+    "bootstrap/stage0.lock": "6cbf5f6d6b13a72c6f0c271655d37468021eb428b2b163364de1d2442ca4637e",
+    "internal/stdlib/std/bench.fern": "028d73d80366813b3d51676ed83cc2d0be41be8b4bf1fa0d7172fa35fe9904b5"
+  },
+  "revision": "882e71060e9cde33b14a44103b1c99121091751c",
+  "working_tree": "A  docs/FIP-SIMULATION.md\nA  docs/benchmarks/simulation-2026-10-07/n129/metadata.json\nA  docs/benchmarks/simulation-2026-10-07/n129/oracle.json\nA  docs/benchmarks/simulation-2026-10-07/n129/results.jsonl\nA  docs/benchmarks/simulation-2026-10-07/n33/metadata.json\nA  docs/benchmarks/simulation-2026-10-07/n33/oracle.json\nA  docs/benchmarks/simulation-2026-10-07/n33/results.jsonl\nA  docs/benchmarks/simulation-2026-10-07/n4096/metadata.json\nA  docs/benchmarks/simulation-2026-10-07/n4096/oracle.json\nA  docs/benchmarks/simulation-2026-10-07/n4096/results.jsonl\nA  docs/benchmarks/simulation-2026-10-07/n513/metadata.json\nA  docs/benchmarks/simulation-2026-10-07/n513/oracle.json\nA  docs/benchmarks/simulation-2026-10-07/n513/results.jsonl\nA  docs/contexts/runtime/specs/fip-simulation.md\nA  examples/fip/simulation.fern\nA  examples/fip/simulation_entity.fern\nA  examples/fip/simulation_fbip.fern\nA  examples/fip/simulation_fip.fern\nA  examples/fip/simulation_persistent.fern\nA  examples/fip/simulation_rules.fern\nA  internal/testing/e2ecompiler/self_host_fip_simulation_test.go\nA  scripts/bench-simulation.py\n?? AGENTS.md\n?? SPEC.md\n",
+  "entities": [
+    129
+  ],
+  "ticks": 1000,
+  "repeats": 5,
+  "measurement": "One warm-up tick is excluded. Tick samples include one additional checksum traversal in both sharing modes. Whole-process CPU/RSS/faults include startup, export and sorting. Fresh bytes are high-water growth, not total requested bytes. Page faults are not cache misses."
+}
