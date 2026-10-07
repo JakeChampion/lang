@@ -260,6 +260,22 @@ function main(): i32 { return level(Dim(42)) - 42; }`},
     }
     return 4;
 }`},
+		// A raise asks the kernel for this process's pid first.
+		{"raised signal", `function main(): i32 {
+    if (signal_catch(10) != 0) { return 1; }
+    if (signal_raise(10) != 0) { return 2; }
+    if (!signal_taken(10)) { return 3; }
+    print("raised");
+    return 0;
+}`},
+		// An interrupting catch is installed by the same sigaction.
+		{"interrupting catch", `function main(): i32 {
+    if (signal_catch_interrupting(10) != 0) { return 1; }
+    if (signal_raise(10) != 0) { return 2; }
+    if (!signal_taken(10)) { return 3; }
+    print("caught");
+    return 0;
+}`},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

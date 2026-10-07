@@ -24,6 +24,7 @@
 import "std/string";
 import "std/array";
 import "std/i32";
+import "std/signal";
 
 // `names()` — every signal this kernel has, in NUMBER order, without the `SIG`
 // prefix. Index i holds signal i+1's name.
@@ -416,6 +417,18 @@ function realtime_number(bare: string): i32 {
     return 0;
   }
   return n;
+}
+
+// `die_of(sig)` — end this process by `sig`, so the parent's wait sees a
+// death by that signal: the default disposition back, the signal unblocked,
+// then raised. GNU's dd and timeout end this way after a signal they caught.
+// A signal whose default does not end the process, or a raise the target
+// cannot deliver, falls through to exit with the shell's 128 + sig.
+pub function die_of(sig: i32): void {
+  signal.default(sig);
+  signal.unblock(signal.bit(sig));
+  signal.raise(sig);
+  exit(128 + sig);
 }
 
 // ASCII upper-casing, which is all a signal name can contain.

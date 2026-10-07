@@ -6718,6 +6718,12 @@ function os_floor_process_site(own r: irtables.LowerResult, ins: ssa.SInst): Low
   if (ins.str == "signal_taken") {
     return Lowered { found: true, r: emit(r, ir.op_signal_taken()) };
   }
+  if (ins.str == "signal_catch_interrupting") {
+    return Lowered { found: true, r: emit(r, ir.op_signal_catch_interrupting()) };
+  }
+  if (ins.str == "signal_raise") {
+    return Lowered { found: true, r: emit(r, ir.op_signal_raise()) };
+  }
   if (ins.str == "signal_disposition") {
     return Lowered { found: true, r: emit(r, ir.op_signal_disposition()) };
   }

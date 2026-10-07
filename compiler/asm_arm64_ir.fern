@@ -4149,15 +4149,24 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     }
     s = s.write("    bl __fn___fern_" + sig_fn + "\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
     s = s.need(sig_fn);
-  } else if (o.kind_tag == 392) {  // signal_catch
-    // [sig] -> __fern_signal_catch(sig, catcher, return path): the runtime
-    // floor cannot name a label, so the two code addresses go in as
+  } else if (o.kind_tag == 392 || o.kind_tag == 394) {  // signal_catch / signal_catch_interrupting
+    // [sig] -> __fern_signal_catch(sig, catcher, return path, restart): the
+    // runtime floor cannot name a label, so the two code addresses go in as
     // operands, param[0] on top. __fern_sig_return is Linux's restorer or
-    // XNU's trampoline.
-    s = s.write("    ldr x0, [sp], #16\n    adrp x1, __fern_sig_return\n    add x1, x1, :lo12:__fern_sig_return\n    str x1, [sp, #-16]!\n");
+    // XNU's trampoline. Only signal_catch restarts.
+    let restart: string = "1";
+    if (o.kind_tag == 394) {
+      restart = "0";
+    }
+    s = s.write("    ldr x0, [sp], #16\n    mov x1, #" + restart + "\n    str x1, [sp, #-16]!\n    adrp x1, __fern_sig_return\n    add x1, x1, :lo12:__fern_sig_return\n    str x1, [sp, #-16]!\n");
     s = s.write("    adrp x1, __fern_sig_catcher\n    add x1, x1, :lo12:__fern_sig_catcher\n    str x1, [sp, #-16]!\n    str x0, [sp, #-16]!\n");
-    s = s.write("    bl __fn___fern_signal_catch\n    add sp, sp, #48\n    str x0, [sp, #-16]!\n");
+    s = s.write("    bl __fn___fern_signal_catch\n    add sp, sp, #64\n    str x0, [sp, #-16]!\n");
     s = s.need("signal_catch");
+  } else if (o.kind_tag == 395) {  // signal_raise
+    // [sig] -> __fern_signal_raise(sig) -> kill(2)'s return, pushed as
+    // signal_ignore's is.
+    s = s.write("    bl __fn___fern_signal_raise\n    add sp, sp, #16\n    str x0, [sp, #-16]!\n");
+    s = s.need("signal_raise");
   } else if (o.kind_tag == 393) {  // signal_taken
     // [sig] -> __fern_signal_taken(x0=sig): the flag, cleared by the same
     // exchange that reads it.
@@ -11048,6 +11057,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_catch(tgt), s);
   }
   s = emit_rt_signal_flags(s, darwin);
+  if (s.has_need("signal_raise")) {
+    s = emit_ir_runtime_fern_fn(asmcore.rt_src_signal_raise(tgt), s);
+  }
   // tcp_listen: socket + bind + listen. The sockaddr_in's only per-target
   // difference is its first two bytes (XNU has sin_len), which sockaddr_head
   // supplies.
