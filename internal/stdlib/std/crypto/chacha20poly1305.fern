@@ -1,0 +1,497 @@
+// std/crypto/chacha20poly1305 — the ChaCha20-Poly1305 AEAD of RFC 8439,
+// and the ChaCha20 stream cipher and Poly1305 one-time authenticator it is
+// built from.
+//
+//   let sealed: u8[] = chacha20poly1305.seal(key, nonce, plaintext, aad)?;
+//   let opened: u8[] = chacha20poly1305.open(key, nonce, sealed, aad)?;
+//
+// The key is 32 bytes and the nonce 12. `seal` answers the ciphertext with
+// the 16-byte tag after it; `open` checks the tag before it decrypts, and a
+// sealed message whose tag does not verify, or that is shorter than a tag,
+// is `Forged`. A nonce must never be used twice under one key.
+//
+// Constant time by construction: the cipher is additions, rotations and
+// exclusive ors on `u32`, Poly1305 is 26-bit limbs multiplied as `u64` and
+// reduced with masks, and the tag is compared with no early exit. Nothing
+// branches on, or indexes memory with, a secret; only the lengths, which are
+// public, steer the loops.
+
+import "core/int";
+
+// AeadError — why a seal or an open was refused: a key or a nonce of the
+// wrong length (the length it had), or a sealed message that does not
+// verify.
+pub enum AeadError {
+  KeyLength(i32),
+  NonceLength(i32),
+  Forged,
+}
+
+pub function (e: AeadError) message(): string {
+  match (e) {
+    KeyLength(n) => {
+      return "chacha20poly1305: the key is " + int.int_to_string(n) + " bytes, want 32";
+    },
+    NonceLength(n) => {
+      return "chacha20poly1305: the nonce is " + int.int_to_string(n) + " bytes, want 12";
+    },
+    Forged => {
+      return "chacha20poly1305: the message does not verify";
+    }
+  }
+  return "";
+}
+
+// The key and the nonce as the cipher reads them: eight and three
+// little-endian words.
+struct Key { k0: u32, k1: u32, k2: u32, k3: u32, k4: u32, k5: u32, k6: u32, k7: u32, n0: u32, n1: u32, n2: u32 }
+
+function __le32(b: [u8], at: i32): u32 {
+  return b[at] as u32 | b[at + 1] as u32 << 8 | b[at + 2] as u32 << 16 | b[at + 3] as u32 << 24;
+}
+
+function __put_le32(own d: u8[], at: i32, v: u32): u8[] {
+  return d.with(at, (v & 255) as u8).with(at + 1, (v >> 8 & 255) as u8).with(at + 2, (v >> 16 & 255) as u8).with(at + 3, (v >> 24 & 255) as u8);
+}
+
+// __xor_word writes the four bytes of src at `at`, each exclusive-ored with
+// a byte of the keystream word w, into out at the same place.
+function __xor_word(own out: u8[], src: [u8], at: i32, w: u32): u8[] {
+  return out.with(at, src[at] ^ (w & 255) as u8).with(at + 1, src[at + 1] ^ (w >> 8 & 255) as u8).with(at + 2, src[at + 2] ^ (w >> 16 & 255) as u8).with(at + 3, src[at + 3] ^ (w >> 24 & 255) as u8);
+}
+
+function __key(key: [u8], nonce: [u8]): Result[Key, AeadError] {
+  if (key.len() != 32) {
+    return Err(KeyLength(key.len()));
+  }
+  if (nonce.len() != 12) {
+    return Err(NonceLength(nonce.len()));
+  }
+  return Ok(Key { k0: __le32(key, 0), k1: __le32(key, 4), k2: __le32(key, 8), k3: __le32(key, 12), k4: __le32(key, 16), k5: __le32(key, 20), k6: __le32(key, 24), k7: __le32(key, 28), n0: __le32(nonce, 0), n1: __le32(nonce, 4), n2: __le32(nonce, 8) });
+}
+
+// __xor_block exclusive-ors src[at, at+len), len at most 64, with the
+// keystream block `counter` and writes it into out at the same place.
+function __xor_block(own out: u8[], src: [u8], at: i32, len: i32, k0: u32, k1: u32, k2: u32, k3: u32, k4: u32, k5: u32, k6: u32, k7: u32, counter: u32, n0: u32, n1: u32, n2: u32): u8[] {
+  let x0: u32 = 0x61707865;
+  let x1: u32 = 0x3320646e;
+  let x2: u32 = 0x79622d32;
+  let x3: u32 = 0x6b206574;
+  let x4: u32 = k0;
+  let x5: u32 = k1;
+  let x6: u32 = k2;
+  let x7: u32 = k3;
+  let x8: u32 = k4;
+  let x9: u32 = k5;
+  let x10: u32 = k6;
+  let x11: u32 = k7;
+  let x12: u32 = counter;
+  let x13: u32 = n0;
+  let x14: u32 = n1;
+  let x15: u32 = n2;
+  let r: i32 = 0;
+  while (r < 10) {
+    x0 = x0 + x4;
+    x12 = x12 ^ x0;
+    x12 = x12 << 16 | x12 >> 16;
+    x8 = x8 + x12;
+    x4 = x4 ^ x8;
+    x4 = x4 << 12 | x4 >> 20;
+    x0 = x0 + x4;
+    x12 = x12 ^ x0;
+    x12 = x12 << 8 | x12 >> 24;
+    x8 = x8 + x12;
+    x4 = x4 ^ x8;
+    x4 = x4 << 7 | x4 >> 25;
+    x1 = x1 + x5;
+    x13 = x13 ^ x1;
+    x13 = x13 << 16 | x13 >> 16;
+    x9 = x9 + x13;
+    x5 = x5 ^ x9;
+    x5 = x5 << 12 | x5 >> 20;
+    x1 = x1 + x5;
+    x13 = x13 ^ x1;
+    x13 = x13 << 8 | x13 >> 24;
+    x9 = x9 + x13;
+    x5 = x5 ^ x9;
+    x5 = x5 << 7 | x5 >> 25;
+    x2 = x2 + x6;
+    x14 = x14 ^ x2;
+    x14 = x14 << 16 | x14 >> 16;
+    x10 = x10 + x14;
+    x6 = x6 ^ x10;
+    x6 = x6 << 12 | x6 >> 20;
+    x2 = x2 + x6;
+    x14 = x14 ^ x2;
+    x14 = x14 << 8 | x14 >> 24;
+    x10 = x10 + x14;
+    x6 = x6 ^ x10;
+    x6 = x6 << 7 | x6 >> 25;
+    x3 = x3 + x7;
+    x15 = x15 ^ x3;
+    x15 = x15 << 16 | x15 >> 16;
+    x11 = x11 + x15;
+    x7 = x7 ^ x11;
+    x7 = x7 << 12 | x7 >> 20;
+    x3 = x3 + x7;
+    x15 = x15 ^ x3;
+    x15 = x15 << 8 | x15 >> 24;
+    x11 = x11 + x15;
+    x7 = x7 ^ x11;
+    x7 = x7 << 7 | x7 >> 25;
+    x0 = x0 + x5;
+    x15 = x15 ^ x0;
+    x15 = x15 << 16 | x15 >> 16;
+    x10 = x10 + x15;
+    x5 = x5 ^ x10;
+    x5 = x5 << 12 | x5 >> 20;
+    x0 = x0 + x5;
+    x15 = x15 ^ x0;
+    x15 = x15 << 8 | x15 >> 24;
+    x10 = x10 + x15;
+    x5 = x5 ^ x10;
+    x5 = x5 << 7 | x5 >> 25;
+    x1 = x1 + x6;
+    x12 = x12 ^ x1;
+    x12 = x12 << 16 | x12 >> 16;
+    x11 = x11 + x12;
+    x6 = x6 ^ x11;
+    x6 = x6 << 12 | x6 >> 20;
+    x1 = x1 + x6;
+    x12 = x12 ^ x1;
+    x12 = x12 << 8 | x12 >> 24;
+    x11 = x11 + x12;
+    x6 = x6 ^ x11;
+    x6 = x6 << 7 | x6 >> 25;
+    x2 = x2 + x7;
+    x13 = x13 ^ x2;
+    x13 = x13 << 16 | x13 >> 16;
+    x8 = x8 + x13;
+    x7 = x7 ^ x8;
+    x7 = x7 << 12 | x7 >> 20;
+    x2 = x2 + x7;
+    x13 = x13 ^ x2;
+    x13 = x13 << 8 | x13 >> 24;
+    x8 = x8 + x13;
+    x7 = x7 ^ x8;
+    x7 = x7 << 7 | x7 >> 25;
+    x3 = x3 + x4;
+    x14 = x14 ^ x3;
+    x14 = x14 << 16 | x14 >> 16;
+    x9 = x9 + x14;
+    x4 = x4 ^ x9;
+    x4 = x4 << 12 | x4 >> 20;
+    x3 = x3 + x4;
+    x14 = x14 ^ x3;
+    x14 = x14 << 8 | x14 >> 24;
+    x9 = x9 + x14;
+    x4 = x4 ^ x9;
+    x4 = x4 << 7 | x4 >> 25;
+    r = r + 1;
+  }
+  x0 = x0 + 0x61707865;
+  x1 = x1 + 0x3320646e;
+  x2 = x2 + 0x79622d32;
+  x3 = x3 + 0x6b206574;
+  x4 = x4 + k0;
+  x5 = x5 + k1;
+  x6 = x6 + k2;
+  x7 = x7 + k3;
+  x8 = x8 + k4;
+  x9 = x9 + k5;
+  x10 = x10 + k6;
+  x11 = x11 + k7;
+  x12 = x12 + counter;
+  x13 = x13 + n0;
+  x14 = x14 + n1;
+  x15 = x15 + n2;
+  if (len == 64) {
+    out = __xor_word(out, src, at + 0, x0);
+    out = __xor_word(out, src, at + 4, x1);
+    out = __xor_word(out, src, at + 8, x2);
+    out = __xor_word(out, src, at + 12, x3);
+    out = __xor_word(out, src, at + 16, x4);
+    out = __xor_word(out, src, at + 20, x5);
+    out = __xor_word(out, src, at + 24, x6);
+    out = __xor_word(out, src, at + 28, x7);
+    out = __xor_word(out, src, at + 32, x8);
+    out = __xor_word(out, src, at + 36, x9);
+    out = __xor_word(out, src, at + 40, x10);
+    out = __xor_word(out, src, at + 44, x11);
+    out = __xor_word(out, src, at + 48, x12);
+    out = __xor_word(out, src, at + 52, x13);
+    out = __xor_word(out, src, at + 56, x14);
+    out = __xor_word(out, src, at + 60, x15);
+    return out;
+  }
+  let ks: u32[] = [x0, x1, x2, x3, x4, x5, x6, x7, x8, x9, x10, x11, x12, x13, x14, x15];
+  let i: i32 = 0;
+  while (i < len) {
+    let w: u32 = ks[i >> 2] >> ((i & 3) * 8) as u32;
+    out = out.with(at + i, src[at + i] ^ (w & 255) as u8);
+    i = i + 1;
+  }
+  return out;
+}
+
+// __xor_stream is src[from, from+len) exclusive-ored with the keystream
+// that starts at block `counter`, followed by `room` bytes left for the
+// caller to fill.
+function __xor_stream(k: Key, counter: u32, src: [u8], from: i32, len: i32, room: i32): u8[] {
+  let out: u8[] = __alloc_u8(len + room);
+  let view: [u8] = src[from:from + len];
+  let at: i32 = 0;
+  let block: u32 = counter;
+  while (at < len) {
+    let n: i32 = len - at;
+    if (n > 64) {
+      n = 64;
+    }
+    out = __xor_block(out, view, at, n, k.k0, k.k1, k.k2, k.k3, k.k4, k.k5, k.k6, k.k7, block, k.n0, k.n1, k.n2);
+    at = at + 64;
+    block = block + 1;
+  }
+  return out;
+}
+
+// chacha20_xor(key, nonce, counter, data) — data exclusive-ored with the
+// ChaCha20 keystream that starts at block `counter` (RFC 8439 §2.4):
+// encryption and decryption alike.
+pub function chacha20_xor(key: [u8], nonce: [u8], counter: u32, data: [u8]): Result[u8[], AeadError] {
+  let k: Key = __key(key, nonce)?;
+  return Ok(__xor_stream(k, counter, data, 0, data.len(), 0));
+}
+
+// Poly1305's state: r and r*5 in 26-bit limbs, and the accumulator h.
+struct Poly { r0: u32, r1: u32, r2: u32, r3: u32, r4: u32, h0: u32, h1: u32, h2: u32, h3: u32, h4: u32 }
+
+function __poly_new(k0: u32, k1: u32, k2: u32, k3: u32): Poly {
+  return Poly {
+    r0: k0 & 0x3ffffff,
+    r1: (k0 >> 26 | k1 << 6) & 0x3ffff03,
+    r2: (k1 >> 20 | k2 << 12) & 0x3ffc0ff,
+    r3: (k2 >> 14 | k3 << 18) & 0x3f03fff,
+    r4: k3 >> 8 & 0x00fffff,
+    h0: 0, h1: 0, h2: 0, h3: 0, h4: 0,
+  };
+}
+
+// __poly_blocks absorbs b[from, from+len). A last block shorter than 16
+// bytes is completed with zeros; with `pad_one` a 1 byte follows the
+// message first and the block carries no 2^128 bit, which is Poly1305 over
+// that exact message (RFC 8439 §2.5), and without it the zeros are part
+// of the message, which is how the AEAD pads its two parts (§2.8).
+function __poly_blocks(p: Poly, b: [u8], from: i32, len: i32, pad_one: boolean): Poly {
+  let r0: u64 = p.r0 as u64;
+  let r1: u64 = p.r1 as u64;
+  let r2: u64 = p.r2 as u64;
+  let r3: u64 = p.r3 as u64;
+  let r4: u64 = p.r4 as u64;
+  let s1: u64 = r1 * 5;
+  let s2: u64 = r2 * 5;
+  let s3: u64 = r3 * 5;
+  let s4: u64 = r4 * 5;
+  let h0: u32 = p.h0;
+  let h1: u32 = p.h1;
+  let h2: u32 = p.h2;
+  let h3: u32 = p.h3;
+  let h4: u32 = p.h4;
+  let tail: u8[] = __alloc_u8(16);
+  let at: i32 = 0;
+  while (at < len) {
+    let t0: u32 = 0;
+    let t1: u32 = 0;
+    let t2: u32 = 0;
+    let t3: u32 = 0;
+    let hibit: u32 = 1 << 24;
+    if (len - at >= 16) {
+      t0 = __le32(b, from + at);
+      t1 = __le32(b, from + at + 4);
+      t2 = __le32(b, from + at + 8);
+      t3 = __le32(b, from + at + 12);
+    } else {
+      let i: i32 = 0;
+      while (i < 16) {
+        if (at + i < len) {
+          tail = tail.with(i, b[from + at + i]);
+        } else {
+          tail = tail.with(i, 0 as u8);
+        }
+        i = i + 1;
+      }
+      if (pad_one) {
+        tail = tail.with(len - at, 1 as u8);
+        hibit = 0;
+      }
+      t0 = __le32(tail, 0);
+      t1 = __le32(tail, 4);
+      t2 = __le32(tail, 8);
+      t3 = __le32(tail, 12);
+    }
+    h0 = h0 + (t0 & 0x3ffffff);
+    h1 = h1 + ((t0 >> 26 | t1 << 6) & 0x3ffffff);
+    h2 = h2 + ((t1 >> 20 | t2 << 12) & 0x3ffffff);
+    h3 = h3 + ((t2 >> 14 | t3 << 18) & 0x3ffffff);
+    h4 = h4 + (t3 >> 8 | hibit);
+    let d0: u64 = h0 as u64 * r0 + h1 as u64 * s4 + h2 as u64 * s3 + h3 as u64 * s2 + h4 as u64 * s1;
+    let d1: u64 = h0 as u64 * r1 + h1 as u64 * r0 + h2 as u64 * s4 + h3 as u64 * s3 + h4 as u64 * s2;
+    let d2: u64 = h0 as u64 * r2 + h1 as u64 * r1 + h2 as u64 * r0 + h3 as u64 * s4 + h4 as u64 * s3;
+    let d3: u64 = h0 as u64 * r3 + h1 as u64 * r2 + h2 as u64 * r1 + h3 as u64 * r0 + h4 as u64 * s4;
+    let d4: u64 = h0 as u64 * r4 + h1 as u64 * r3 + h2 as u64 * r2 + h3 as u64 * r1 + h4 as u64 * r0;
+    let c: u64 = d0 >> 26;
+    h0 = (d0 & 0x3ffffff) as u32;
+    d1 = d1 + c;
+    c = d1 >> 26;
+    h1 = (d1 & 0x3ffffff) as u32;
+    d2 = d2 + c;
+    c = d2 >> 26;
+    h2 = (d2 & 0x3ffffff) as u32;
+    d3 = d3 + c;
+    c = d3 >> 26;
+    h3 = (d3 & 0x3ffffff) as u32;
+    d4 = d4 + c;
+    c = d4 >> 26;
+    h4 = (d4 & 0x3ffffff) as u32;
+    h0 = h0 + c as u32 * 5;
+    let c2: u32 = h0 >> 26;
+    h0 = h0 & 0x3ffffff;
+    h1 = h1 + c2;
+    at = at + 16;
+  }
+  return Poly { ...p, h0: h0, h1: h1, h2: h2, h3: h3, h4: h4 };
+}
+
+// __poly_finish is the tag: h fully reduced mod 2^130 - 5, chosen against
+// h - p by a mask rather than a branch, plus s, mod 2^128.
+function __poly_finish(p: Poly, s0: u32, s1: u32, s2: u32, s3: u32): u8[] {
+  let h0: u32 = p.h0;
+  let h1: u32 = p.h1;
+  let h2: u32 = p.h2;
+  let h3: u32 = p.h3;
+  let h4: u32 = p.h4;
+  let c: u32 = h1 >> 26;
+  h1 = h1 & 0x3ffffff;
+  h2 = h2 + c;
+  c = h2 >> 26;
+  h2 = h2 & 0x3ffffff;
+  h3 = h3 + c;
+  c = h3 >> 26;
+  h3 = h3 & 0x3ffffff;
+  h4 = h4 + c;
+  c = h4 >> 26;
+  h4 = h4 & 0x3ffffff;
+  h0 = h0 + c * 5;
+  c = h0 >> 26;
+  h0 = h0 & 0x3ffffff;
+  h1 = h1 + c;
+  let g0: u32 = h0 + 5;
+  c = g0 >> 26;
+  g0 = g0 & 0x3ffffff;
+  let g1: u32 = h1 + c;
+  c = g1 >> 26;
+  g1 = g1 & 0x3ffffff;
+  let g2: u32 = h2 + c;
+  c = g2 >> 26;
+  g2 = g2 & 0x3ffffff;
+  let g3: u32 = h3 + c;
+  c = g3 >> 26;
+  g3 = g3 & 0x3ffffff;
+  let g4: u32 = h4 + c - (1 << 26);
+  // All ones when h - p did not go negative, so g is the reduced value.
+  let keep_g: u32 = (g4 >> 31) - 1;
+  let keep_h: u32 = keep_g ^ 0xffffffff;
+  h0 = h0 & keep_h | g0 & keep_g;
+  h1 = h1 & keep_h | g1 & keep_g;
+  h2 = h2 & keep_h | g2 & keep_g;
+  h3 = h3 & keep_h | g3 & keep_g;
+  h4 = h4 & keep_h | g4 & keep_g;
+  let w0: u32 = h0 | h1 << 26;
+  let w1: u32 = h1 >> 6 | h2 << 20;
+  let w2: u32 = h2 >> 12 | h3 << 14;
+  let w3: u32 = h3 >> 18 | h4 << 8;
+  let f: u64 = w0 as u64 + s0 as u64;
+  w0 = f as u32;
+  f = w1 as u64 + s1 as u64 + (f >> 32);
+  w1 = f as u32;
+  f = w2 as u64 + s2 as u64 + (f >> 32);
+  w2 = f as u32;
+  f = w3 as u64 + s3 as u64 + (f >> 32);
+  w3 = f as u32;
+  let tag: u8[] = __alloc_u8(16);
+  tag = __put_le32(tag, 0, w0);
+  tag = __put_le32(tag, 4, w1);
+  tag = __put_le32(tag, 8, w2);
+  return __put_le32(tag, 12, w3);
+}
+
+// poly1305(key, msg) — the 16-byte Poly1305 tag of msg under a 32-byte
+// one-time key (RFC 8439 §2.5). A key authenticates one message only.
+pub function poly1305(key: [u8], msg: [u8]): Result[u8[], AeadError] {
+  if (key.len() != 32) {
+    return Err(KeyLength(key.len()));
+  }
+  let p: Poly = __poly_new(__le32(key, 0), __le32(key, 4), __le32(key, 8), __le32(key, 12));
+  p = __poly_blocks(p, msg, 0, msg.len(), true);
+  return Ok(__poly_finish(p, __le32(key, 16), __le32(key, 20), __le32(key, 24), __le32(key, 28)));
+}
+
+// __aead_tag is the AEAD's tag over aad and the ciphertext ct[from,
+// from+len) (RFC 8439 §2.8): Poly1305 keyed by the first half of keystream
+// block 0, over each part padded with zeros to 16 bytes and then the two
+// lengths as 64-bit little-endian words.
+function __aead_tag(k: Key, aad: [u8], ct: [u8], from: i32, len: i32): u8[] {
+  let zero: u8[] = __alloc_u8(32);
+  let i: i32 = 0;
+  while (i < 32) {
+    zero = zero.with(i, 0 as u8);
+    i = i + 1;
+  }
+  let otk: u8[] = __xor_stream(k, 0, zero, 0, 32, 0);
+  let p: Poly = __poly_new(__le32(otk, 0), __le32(otk, 4), __le32(otk, 8), __le32(otk, 12));
+  p = __poly_blocks(p, aad, 0, aad.len(), false);
+  p = __poly_blocks(p, ct, from, len, false);
+  let lens: u8[] = __alloc_u8(16);
+  lens = __put_le32(lens, 0, aad.len() as u32);
+  lens = __put_le32(lens, 4, 0);
+  lens = __put_le32(lens, 8, len as u32);
+  lens = __put_le32(lens, 12, 0);
+  p = __poly_blocks(p, lens, 0, 16, false);
+  return __poly_finish(p, __le32(otk, 16), __le32(otk, 20), __le32(otk, 24), __le32(otk, 28));
+}
+
+// seal(key, nonce, plaintext, aad) — the plaintext encrypted, with the
+// 16-byte tag over it and the additional data `aad` after it.
+pub function seal(key: [u8], nonce: [u8], plaintext: [u8], aad: [u8]): Result[u8[], AeadError] {
+  let k: Key = __key(key, nonce)?;
+  let n: i32 = plaintext.len();
+  let sealed: u8[] = __xor_stream(k, 1, plaintext, 0, n, 16);
+  let tag: u8[] = __aead_tag(k, aad, sealed, 0, n);
+  let i: i32 = 0;
+  while (i < 16) {
+    sealed = sealed.with(n + i, tag[i]);
+    i = i + 1;
+  }
+  return Ok(sealed);
+}
+
+// open(key, nonce, sealed, aad) — the plaintext of a message `seal` made
+// with the same key, nonce and aad, or `Forged`. The tag is checked, in
+// constant time, before anything is decrypted.
+pub function open(key: [u8], nonce: [u8], sealed: [u8], aad: [u8]): Result[u8[], AeadError] {
+  let k: Key = __key(key, nonce)?;
+  if (sealed.len() < 16) {
+    return Err(Forged);
+  }
+  let n: i32 = sealed.len() - 16;
+  let want: u8[] = __aead_tag(k, aad, sealed, 0, n);
+  let diff: u8 = 0;
+  let i: i32 = 0;
+  while (i < 16) {
+    diff = diff | want[i] ^ sealed[n + i];
+    i = i + 1;
+  }
+  if (diff != 0) {
+    return Err(Forged);
+  }
+  return Ok(__xor_stream(k, 1, sealed, 0, n, 0));
+}

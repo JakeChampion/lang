@@ -19,12 +19,10 @@ import (
 // before recv — no new non-blocking builtins, since a blocking
 // accept/recv won't block once poll reports the fd ready. This is the
 // shape a reactor-driven edge handler uses (docs/ASYNC-IMPLEMENTATION-PLAN.md
-// Phase 1c). x86-64 host-native (no qemu); poll on arm64 is the same
-// syscall path, validated deterministically on files + timers.
+// Phase 1c). Poll on arm64 is the same syscall path, validated
+// deterministically on files + timers.
 func TestPollDrivenTcpServerX86_64(t *testing.T) {
-	if qemu := x86QemuOrEmpty(t); qemu != "" {
-		t.Skip("poll TCP server test runs host-native only (avoids qemu socket nuances)")
-	}
+	qemu := x86QemuOrEmpty(t)
 	bin := buildFernCLI(t)
 
 	// Pick a free port, then let the compiled server re-bind it.
@@ -66,7 +64,7 @@ func TestPollDrivenTcpServerX86_64(t *testing.T) {
 		t.Fatalf("build failed: %v\n%s", err, o)
 	}
 
-	cmd := exec.Command(out)
+	cmd := runX86Bin(qemu, out)
 	if err := cmd.Start(); err != nil {
 		t.Fatalf("start server: %v", err)
 	}

@@ -65,3 +65,20 @@ Idle RSS before the first run was 104 KB. Without the #10599 credit the
 same binary grew by about 80 bytes per request, one serialised response
 each, 9.9 MB after the first 16-connection run and 19.2 MB after the
 second; the 2026-09-20 column above was 5.3 KB per request (#8003).
+
+## Rerun, 2026-10-07
+
+The same recipe on the same kind of box, Fern hello only, built by the
+self-host compiler at e054f1ac. One server process served the three runs
+back to back: 6.6 million requests, with `VmRSS` read before and after
+each run.
+
+| connections | c | requests | req/s | p50 | p99 | p99.9 | RSS after |
+|---|---|---|---|---|---|---|---|
+| keep-alive | 16 | 3,093,543 | 154,677 | 68 µs | 564 µs | 1.72 ms | 476 KB |
+| keep-alive | 16 | 3,138,866 | 156,943 | 65 µs | 596 µs | 1.77 ms | 476 KB |
+| close | 16 | 369,481 | 36,948 | 272 µs | 3.09 ms | 7.54 ms | 476 KB |
+
+RSS was 476 KB before the first run and did not move. The serve loop
+allocates nothing per request (`TestSelfHostServeAllocsPerRequest`), so
+nothing accumulates.

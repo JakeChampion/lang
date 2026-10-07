@@ -1066,6 +1066,19 @@ func TestRunnerDigestSm3ExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "digest_sm3", "std/crypto SM3", 8)
 }
 
+// `tests/stdlib/chacha20poly1305_test.fern` covers the RFC 8439 AEAD and
+// its two parts against the RFC's vectors and an independent
+// implementation's.
+func TestRunnerChaCha20Poly1305ExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "chacha20poly1305", "std/crypto/chacha20poly1305", 12)
+}
+
+// `tests/stdlib/x25519_test.fern` covers RFC 7748's vectors, a
+// non-canonical u-coordinate and the low-order refusal.
+func TestRunnerX25519ExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "x25519", "std/crypto/x25519", 8)
+}
+
 func TestRunnerHashChecksumsExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "hash_checksums", "std/hash checksums", 8)
 }
