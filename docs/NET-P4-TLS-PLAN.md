@@ -9,7 +9,7 @@ interpreter and the self-host compiler on x86-64, arm64 and wasm.
 `std/crypto.fern` is past the 4,000-line cap #9858 sets for any one
 module, so each primitive is a module of its own under `std/crypto/`:
 `std/crypto/chacha20poly1305`, then `aes_gcm`, `x25519`, `mlkem768`,
-`p256`, `ed25519` and `rsa`, with the field X25519 and Ed25519 share in
+`ecdsa`, `ed25519` and `rsa`, with the field X25519 and Ed25519 share in
 `field25519`. The existing digests, HMAC and HKDF stay in `std/crypto`.
 TLS itself is `std/tls/keyschedule`, `keyshare`, `message`, `record`,
 `handshake`, `client` and `server`, with X.509 in `std/tls/der`, `pem`,
@@ -114,7 +114,7 @@ TLS itself is `std/tls/keyschedule`, `keyshare`, `message`, `record`,
    at the caller's time. It checks validity, CA and path-length
    constraints, key usage, the leaf's server extended key usage, unknown
    critical extensions and every signature (RSA PKCS #1 v1.5 and PSS,
-   ECDSA P-256, Ed25519), and matches names against the subject
+   ECDSA P-256 and P-384, Ed25519), and matches names against the subject
    alternative names only. `verify_signed` checks a CertificateVerify.
    Gate: chains made with Python's `cryptography` covering every refusal,
    and RFC 8448's certificate and CertificateVerify. Then name constraints

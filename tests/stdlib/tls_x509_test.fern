@@ -1,6 +1,7 @@
 import "std/test";
 import "core/int";
 import "std/hex";
+import "std/crypto/ecdsa";
 import "std/i64";
 import "std/tls/pem";
 import "std/tls/x509";
@@ -139,8 +140,15 @@ function key_shape(k: x509.PublicKey): string {
     x509.RsaKey(n, e) => {
       return "rsa " + int.int_to_string(n.len()) + " " + hex.hex_encode(e);
     },
-    x509.P256Key(p) => {
-      return "p256 " + int.int_to_string(p.len()) + " " + hex.hex_encode(p.take(1));
+    x509.EcKey(curve, p) => {
+      match (curve) {
+        ecdsa.P256 => {
+          return "p256 " + int.int_to_string(p.len()) + " " + hex.hex_encode(p.take(1));
+        },
+        ecdsa.P384 => {
+          return "p384 " + int.int_to_string(p.len()) + " " + hex.hex_encode(p.take(1));
+        }
+      }
     },
     x509.Ed25519Key(k) => {
       return "ed25519 " + int.int_to_string(k.len());

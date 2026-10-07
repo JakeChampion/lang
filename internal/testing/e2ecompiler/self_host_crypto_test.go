@@ -69,16 +69,16 @@ function main(): i32 {
 	}
 }
 
-// The std/crypto/p256 suite, compiled on all three targets. Its verifications
-// run on core/bigint and take the interpreter tens of seconds, so it is not a
-// stdtest differential case; each target must pass every case instead.
-func TestSelfHostP256Suite(t *testing.T) {
+// The std/crypto/ecdsa suite, compiled on all three targets. Its verifications
+// run on core/bigint and take the interpreter minutes, so it is not a stdtest
+// differential case; each target must pass every case instead.
+func TestSelfHostECDSASuite(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	src := langSrcAbs(t, "tests/stdlib/p256_test.fern")
+	src := langSrcAbs(t, "tests/stdlib/ecdsa_test.fern")
 	check := func(t *testing.T, out []byte, err error) {
 		t.Helper()
-		if err != nil || !strings.Contains(string(out), "# pass 4\n# fail 0\n") {
-			t.Fatalf("p256 suite: %v\n%s", err, out)
+		if err != nil || !strings.Contains(string(out), "# pass 5\n# fail 0\n") {
+			t.Fatalf("ecdsa suite: %v\n%s", err, out)
 		}
 	}
 	t.Run("x86-64", func(t *testing.T) {

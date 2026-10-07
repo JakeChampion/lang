@@ -1,0 +1,155 @@
+import "std/test";
+import "std/hex";
+import "std/string";
+import "std/crypto/ecdsa";
+
+// tests/stdlib/ecdsa_test.fern — std/crypto/ecdsa against ECDSA signatures
+// Python's cryptography package made on P-256 over SHA-256 and SHA-384, and
+// on P-384 over SHA-384, SHA-256 and SHA-512 (the digest longer than the
+// order, so cut). Another message, another key, a flipped bit, a malformed
+// DER signature, a point off the curve, in the wrong encoding or on the
+// other curve are refused.
+
+function point_a(): string {
+  return "04a23b9022d49b897ce4b6226ea2eaa36dd59f277918f9898473c8ce63303383790df2d39e99356fefe7d0437f100e5db677df12dbbc6676242f6421ac1df486b5";
+}
+
+function point_b(): string {
+  return "04774b4b57e541af2d09b64e237491791181537742a0344af1166d21addbd63ae070e88fd056b5604e61b44bd7ed01994cfe7d0da40347ebdd71dd5bbf777f627c";
+}
+
+function compressed_a(): string {
+  return "02a23b9022d49b897ce4b6226ea2eaa36dd59f277918f9898473c8ce6330338379";
+}
+
+function sig256(): string {
+  return "3045022048904d4503626fdc06a955c8d520721abef0207349e167c61d5058ff7dd208d2022100deb3c0f1dd86a4b857c2d9735d719115d0dcda2d96aa7c04a68acfeb9e739509";
+}
+
+function sig384(): string {
+  return "304502203b50f948beff36ed1b3a2de838361ab73b2384e71cd4242022cada876ee24b040221009ac88530dcf6676c4325f34c6cfedae34e0d3f497a9b33c7f12c2b35fcf3604c";
+}
+
+const POINT_C: string = "0424d15cd6cf842cbd66ec6aebdfef6d4d5eefd3872704e2b0c4a22dab1139e3c7dd54cb6d0149c7456fbce2dcb3b55f9da8423fb1b1c42a0deaba26868f064c0d031d5aaf567ca9302aec61d59e9f67cce9e69aec9c9d0c0001be7df5d28d7c2c";
+
+const POINT_D: string = "04c6c94f31059183937d5ac80613a66b3afe1e257f1336246a962bfe8340e8b08db1c90accc568587d636322e4a8f1f4c1df68fefa3d27f97752794c5cab39df6063ea51453ba7a76db7349d42939d8c45505595a3c04720aa4667365d41aaeeac";
+
+const SIG384_384: string = "306402303772e985b5103c717ace546c4bd3a5146e9b8dad0cfa39e467649a9407b65c64769f21a9e2194db85c659895a04fbf95023004ef83c3bee35eafaeca79f02d2c01bbe8e6d96d86dd475ad7d6f0d5d36c52a152b0fdc5e5a5c74e5dad0efa5bbf89c5";
+
+const SIG384_256: string = "3065023006556c37920c25ca6552bcfe9a3a163b1c49c0763654c1bbef201cb840072fc5ba152c162055e27de954d0ab0178e77d023100b828ce01fda6ae81210456444b0e315181f9e751e467ecae5bb1e4daf2ba1a2e50e552de54828b5f6704706f43b99fbc";
+
+const SIG384_512: string = "3065023100d5d0b7849d83c8c13e60484a866095a7495167748a535f3169376baf27644676b87ea8f35e2d862a20b120f697a0d53202307c97ebb7ca3d8123b3a40ef967d9628dc4980512010b59cc2f5fd0282cc44a98180624de069c5081ab4a7685fcd70839";
+
+function message(): u8[] {
+  return "fern p256 verification".bytes();
+}
+
+function message384(): u8[] {
+  return "fern p384 verification".bytes();
+}
+
+function verified(point: string, h: ecdsa.Hash, msg: u8[], sig: string): boolean {
+  return verified_on(ecdsa.P256, point, h, msg, sig);
+}
+
+function verified_on(curve: ecdsa.Curve, point: string, h: ecdsa.Hash, msg: u8[], sig: string): boolean {
+  match (ecdsa.public_key(curve, hex.hex_decode(point))) {
+    Ok(k) => {
+      return ecdsa.verify(k, h, msg, hex.hex_decode(sig));
+    },
+    Err(e) => {
+      return false;
+    }
+  }
+  return false;
+}
+
+function key_error(point: string): string {
+  return key_error_on(ecdsa.P256, point);
+}
+
+function key_error_on(curve: ecdsa.Curve, point: string): string {
+  match (ecdsa.public_key(curve, hex.hex_decode(point))) {
+    Ok(k) => {
+      return "accepted";
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function test_sha256(): test.TestOutcome {
+  return test.assert_true(verified(point_a(), ecdsa.Sha256, message(), sig256()));
+}
+
+function test_sha384(): test.TestOutcome {
+  return test.assert_true(verified(point_a(), ecdsa.Sha384, message(), sig384()));
+}
+
+function test_refusals(): test.TestOutcome {
+  if (verified(point_a(), ecdsa.Sha256, "fern p256 verification!".bytes(), sig256())) {
+    return test.fail("a signature over another message verified");
+  }
+  if (verified(point_b(), ecdsa.Sha256, message(), sig256())) {
+    return test.fail("a signature verified under another key");
+  }
+  if (verified(point_a(), ecdsa.Sha384, message(), sig256())) {
+    return test.fail("a signature verified under the other digest");
+  }
+  let flipped: u8[] = hex.hex_decode(sig256());
+  flipped = flipped.with(20, flipped[20] ^ 1 as u8);
+  if (verified(point_a(), ecdsa.Sha256, message(), hex.hex_encode(flipped))) {
+    return test.fail("a flipped bit verified");
+  }
+  if (verified(point_a(), ecdsa.Sha256, message(), sig256() + "00")) {
+    return test.fail("a signature with a trailing byte verified");
+  }
+  return test.pass();
+}
+
+function test_p384(): test.TestOutcome {
+  if (!verified_on(ecdsa.P384, POINT_C, ecdsa.Sha384, message384(), SIG384_384)) {
+    return test.fail("SHA-384");
+  }
+  if (!verified_on(ecdsa.P384, POINT_C, ecdsa.Sha256, message384(), SIG384_256)) {
+    return test.fail("SHA-256");
+  }
+  if (!verified_on(ecdsa.P384, POINT_C, ecdsa.Sha512, message384(), SIG384_512)) {
+    return test.fail("SHA-512, cut to the order");
+  }
+  if (verified_on(ecdsa.P384, POINT_D, ecdsa.Sha384, message384(), SIG384_384) || verified_on(ecdsa.P384, POINT_C, ecdsa.Sha384, message(), SIG384_384) || verified_on(ecdsa.P384, POINT_C, ecdsa.Sha512, message384(), SIG384_384)) {
+    return test.fail("a refusal verified");
+  }
+  let flipped: u8[] = hex.hex_decode(SIG384_384);
+  flipped = flipped.with(30, flipped[30] ^ 1 as u8);
+  return test.assert_true(!verified_on(ecdsa.P384, POINT_C, ecdsa.Sha384, message384(), hex.hex_encode(flipped)));
+}
+
+function test_bad_keys(): test.TestOutcome {
+  if (key_error(compressed_a()) != "ecdsa: the key is not an uncompressed SEC 1 point on its curve") {
+    return test.fail("a compressed point was accepted");
+  }
+  if (key_error_on(ecdsa.P384, point_a()) != "ecdsa: the key is not an uncompressed SEC 1 point on its curve" || key_error(POINT_C) != "ecdsa: the key is not an uncompressed SEC 1 point on its curve") {
+    return test.fail("a point of the other curve's size was accepted");
+  }
+  let off384: u8[] = hex.hex_decode(POINT_C);
+  off384 = off384.with(96, off384[96] ^ 1 as u8);
+  if (key_error_on(ecdsa.P384, hex.hex_encode(off384)) != "ecdsa: the point is not on the curve") {
+    return test.fail("a P-384 point off the curve was accepted");
+  }
+  let off: u8[] = hex.hex_decode(point_a());
+  off = off.with(64, off[64] ^ 1 as u8);
+  return test.assert_eq(key_error(hex.hex_encode(off)), "ecdsa: the point is not on the curve");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/crypto/ecdsa");
+  r = r.it("P-256 SHA-256", test_sha256);
+  r = r.it("P-256 SHA-384", test_sha384);
+  r = r.it("P-384", test_p384);
+  r = r.it("refusals", test_refusals);
+  r = r.it("malformed keys", test_bad_keys);
+  return r.finish();
+}

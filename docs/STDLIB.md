@@ -1185,18 +1185,20 @@ per verification on x86-64.
   not verify.
 - `Ed25519Error` is `SeedLength(i32)`, with `message()`.
 
-### `std/crypto/p256`
+### `std/crypto/ecdsa`
 
-ECDSA signature verification over NIST P-256 (FIPS 186-5), the curve most TLS
-certificates and handshake signatures use. Verification handles only public
-values, so this first version is built on `core/bigint` in Jacobian
-coordinates, about 13 ms per verification on x86-64; constant-time limbs come
-with signing (#9858).
+ECDSA signature verification over NIST P-256 and P-384 (FIPS 186-5), the
+curves TLS certificates and handshake signatures use. Verification handles
+only public values, so it is built on `core/bigint` in Jacobian coordinates:
+about 7 ms per P-256 verification and 16 ms per P-384 one on x86-64.
+Constant-time limbs come with signing (#9858).
 
-- `public_key(point: [u8]): Result[PublicKey, P256Error]` — an uncompressed
-  SEC 1 point, checked to lie on the curve.
+- `public_key(curve, point: [u8]): Result[PublicKey, EcdsaError]` — `curve`
+  `P256` or `P384`, `point` an uncompressed SEC 1 point of that curve's size,
+  checked to lie on it.
 - `verify(key, hash, msg, sig): boolean` — `sig` a DER ECDSA-Sig-Value, as TLS
-  and X.509 carry it; `hash` `Sha256` or `Sha384`.
+  and X.509 carry it; `hash` `Sha256`, `Sha384` or `Sha512`, a digest longer
+  than the curve's order cut to its leftmost bytes.
 
 ### `std/crypto/rsa`
 
@@ -1458,7 +1460,8 @@ if (!verify.verify_signed(leaf, scheme, signed, signature)) { … }
   and macOS) that holds any, and is None when none does
   (`tests/stdlib/tls_roots_test.fern`).
 - `verify_signed(cert, scheme, signed, sig)` checks a CertificateVerify
-  (ecdsa_secp256r1_sha256, rsa_pss_rsae_sha256/384/512, ed25519).
+  (ecdsa_secp256r1_sha256 and ecdsa_secp384r1_sha384, each under a key on
+  its curve, rsa_pss_rsae_sha256/384/512, ed25519).
   `signature_ok(key, alg, msg, sig)` checks any signature this module
   knows, and `matches_name(cert, name)` is the name check alone.
 - `VerifyError` names the cause and the position up the path from the leaf,
@@ -1477,8 +1480,8 @@ X.509 certificates (RFC 5280) as TLS reads them. `parse(der)` answers a
 - `algorithm`, an `Algorithm` named by `algorithm_name`.
 - `issuer` and `subject`, each a `Name { raw, common_name }`.
 - `not_before` and `not_after`, in Unix seconds.
-- `key`: `RsaKey(n, e)`, `P256Key(point)`, `Ed25519Key(k)` or
-  `OtherKey(oid)`.
+- `key`: `RsaKey(n, e)`, `EcKey(curve, point)` on P-256 or P-384,
+  `Ed25519Key(k)` or `OtherKey(oid)`.
 - `ca`, `path_len`, `key_usage` (as `KU_*` bits) and `ext_key_usage`.
 - `permitted_dns`, `excluded_dns`, `permitted_ip` and `excluded_ip`, a CA's
   name constraints (each IP subtree an address then its mask).
