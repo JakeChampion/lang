@@ -15,7 +15,7 @@ func TestSelfHostFormerBailsRun(t *testing.T) {
 		src  string
 		want int
 	}{
-		{"nested-for", `function id(xs: i32[]): i32[] { return xs; }
+		{"nested-for", `@noinline function id(xs: i32[]): i32[] { return xs; }
 function main(): i32 {
     let hyper: i32[][][][] = [[[id([1])], [id([2, 3])]]];
     let sum = 0;

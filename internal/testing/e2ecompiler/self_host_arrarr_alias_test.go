@@ -23,14 +23,14 @@ var arrArrAliasCases = []struct {
 	// checked, not the census.
 	refused bool
 }{
-	{"alias", `function id(xs: i32[]): i32[] { return xs; }
+	{"alias", `@noinline function id(xs: i32[]): i32[] { return xs; }
 function main(): i32 {
     let g: i32[][] = [id([3, 1]), id([2, 3])];
     let h: i32[][] = g;
     return g.len() + h.len();
 }
 `, 4, false},
-	{"alias_chain", `function id(xs: i32[]): i32[] { return xs; }
+	{"alias_chain", `@noinline function id(xs: i32[]): i32[] { return xs; }
 function main(): i32 {
     let g: i32[][] = [id([3, 1]), id([2, 3])];
     let h: i32[][] = g;
@@ -38,7 +38,7 @@ function main(): i32 {
     return g.len() + h.len() + k[1][1];
 }
 `, 7, false},
-	{"field_bind", `function id(xs: i32[]): i32[] { return xs; }
+	{"field_bind", `@noinline function id(xs: i32[]): i32[] { return xs; }
 struct Bag { n: i32, grid: i32[][] }
 function main(): i32 {
     let r: Bag = Bag { n: 3, grid: [id([3, 1]), id([2, 3])] };
@@ -48,7 +48,7 @@ function main(): i32 {
     return r.n + p.len() + p[1][0] + junk.len();
 }
 `, 7, false},
-	{"field_bind_loop", `function id(xs: i32[]): i32[] { return xs; }
+	{"field_bind_loop", `@noinline function id(xs: i32[]): i32[] { return xs; }
 struct Bag { n: i32, grid: i32[][] }
 function main(): i32 {
     let acc: i32 = 0;
@@ -65,7 +65,7 @@ function main(): i32 {
 }
 `, 46, false},
 	// A string[][] field bind whose holder is rebound first (#10548).
-	{"field_bind_strings", `function ids(s: string): string { return s; }
+	{"field_bind_strings", `@noinline function ids(s: string): string { return s; }
 struct Names { n: i32, names: string[][] }
 function main(): i32 {
     let i: i32 = 0;
@@ -82,7 +82,7 @@ function main(): i32 {
 }
 `, 24, false},
 	// A literal rebound inside an `if` (#10497's remainder on the AST lowering).
-	{"literal_rebound_in_if", `function ids(s: string): string { return s; }
+	{"literal_rebound_in_if", `@noinline function ids(s: string): string { return s; }
 function main(): i32 {
     let q: string[][] = [[ids("a") + "b", "c"]];
     if (q.len() == 1) {
@@ -92,7 +92,7 @@ function main(): i32 {
     return q[0][0].len() + q.len() + junk.len();
 }
 `, 4, false},
-	{"literal_rebound_in_if_ints", `function id(xs: i32[]): i32[] { return xs; }
+	{"literal_rebound_in_if_ints", `@noinline function id(xs: i32[]): i32[] { return xs; }
 function main(): i32 {
     let q: i32[][] = [id([1, 2]), id([3])];
     if (q.len() == 2) {
@@ -103,7 +103,7 @@ function main(): i32 {
 }
 `, 10, false},
 	// A field bind whose holder is typed from a call result (#10548's remainder).
-	{"field_bind_call_holder", `function ids(s: string): string { return s; }
+	{"field_bind_call_holder", `@noinline function ids(s: string): string { return s; }
 struct Names { n: i32, names: string[][] }
 function mk(i: i32): Names {
     return Names { n: i, names: [[ids("a") + "b"], [ids("c") + ""]] };
@@ -173,7 +173,7 @@ function main(): i32 {
     return n;
 }
 `, 11, false},
-	{"alias_outlives_source", `function id(xs: i32[]): i32[] { return xs; }
+	{"alias_outlives_source", `@noinline function id(xs: i32[]): i32[] { return xs; }
 function main(): i32 {
     let g: i32[][] = [id([3, 1]), id([2, 3])];
     let h: i32[][] = g;
@@ -183,7 +183,7 @@ function main(): i32 {
     return n + h[1][0] + h[0][1] + junk.len() + more.len();
 }
 `, 10, false},
-	{"alias_takes_last_use", `function id(xs: i32[]): i32[] { return xs; }
+	{"alias_takes_last_use", `@noinline function id(xs: i32[]): i32[] { return xs; }
 function main(): i32 {
     let g: i32[][] = [id([3, 1]), id([2, 3])];
     let n: i32 = g.len();
@@ -192,7 +192,7 @@ function main(): i32 {
     return n + h[1][0] + h[0][1] + junk.len();
 }
 `, 7, false},
-	{"alias_returned", `function id(xs: i32[]): i32[] { return xs; }
+	{"alias_returned", `@noinline function id(xs: i32[]): i32[] { return xs; }
 function keep(k: i32): i32[][] {
     let g: i32[][] = [[k, 1], [2, 3]];
     let h: i32[][] = g;
@@ -210,7 +210,7 @@ function main(): i32 {
     return acc;
 }
 `, 18, false},
-	{"alias_loop_local", `function id(xs: i32[]): i32[] { return xs; }
+	{"alias_loop_local", `@noinline function id(xs: i32[]): i32[] { return xs; }
 function main(): i32 {
     let acc: i32 = 0;
     let i: i32 = 0;
@@ -224,7 +224,7 @@ function main(): i32 {
     return acc;
 }
 `, 45, false},
-	{"alias_rebound_in_loop", `function id(xs: i32[]): i32[] { return xs; }
+	{"alias_rebound_in_loop", `@noinline function id(xs: i32[]): i32[] { return xs; }
 function main(): i32 {
     let acc: i32 = 0;
     let h: i32[][] = [[0]];
@@ -239,7 +239,7 @@ function main(): i32 {
     return acc + h.len();
 }
 `, 37, false},
-	{"alias_swap", `function id(xs: i32[]): i32[] { return xs; }
+	{"alias_swap", `@noinline function id(xs: i32[]): i32[] { return xs; }
 function main(): i32 {
     let acc: i32 = 0;
     let a: i32[][] = [id([1, 2]), id([3, 4])];
@@ -256,7 +256,7 @@ function main(): i32 {
     return acc + a.len() + b.len();
 }
 `, 39, false},
-	{"alias_self_append", `function id(xs: i32[]): i32[] { return xs; }
+	{"alias_self_append", `@noinline function id(xs: i32[]): i32[] { return xs; }
 function grow(k: i32): i32 {
     let g: i32[][] = [[k, 1], [2, 3]];
     let h: i32[][] = g;
@@ -275,7 +275,7 @@ function main(): i32 {
     return acc;
 }
 `, 81, false},
-	{"alias_escapes", `function id(xs: i32[]): i32[] { return xs; }
+	{"alias_escapes", `@noinline function id(xs: i32[]): i32[] { return xs; }
 function pick(k: i32): i32[][] {
     let g: i32[][] = [[k, 1], [2, 3]];
     let h: i32[][] = g;
