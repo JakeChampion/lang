@@ -1,0 +1,14 @@
+{
+  "33-spread": {
+    "checksum": 898769127,
+    "snapshot_checks": 948133596,
+    "initial_tick": 1,
+    "final_tick": 1001
+  },
+  "33-cluster": {
+    "checksum": 569514895,
+    "snapshot_checks": 787021283,
+    "initial_tick": 1,
+    "final_tick": 1001
+  }
+}
