@@ -88,12 +88,11 @@ standalone (`TestStdlibModulesImportStandalone`).
    Landed: `std/tls/keyschedule`, the whole of RFC 8446 §7 and Finished's
    verify_data over HKDF-SHA256 and HKDF-SHA384, which `std/crypto` gained
    with HMAC-SHA384 for it; and `std/tls/record`, framing, deframing and
-   ChaCha20-Poly1305 record protection with padding and sequence numbers.
-   Gate: every derived value in RFC 8448 §3, ChaCha20-Poly1305 records from
-   a reference that reproduces the trace's AES-128-GCM records, and every
-   refusal, in the stdtest differential and `TestSelfHostCryptoSuitesWasm`.
-   The AES-GCM suites are one `CipherSuite` arm and one `Aead` arm each once
-   slice 4 lands. Remaining: `std/tls/handshake`, the state machine over
+   record protection under all three suites with padding and sequence
+   numbers. Gate: every derived value and protected record in RFC 8448 §3,
+   ChaCha20-Poly1305 and AES-256-GCM records from a reference that
+   reproduces the trace's, and every refusal, in the stdtest differential
+   and `TestSelfHostCryptoSuitesWasm`. Remaining: `std/tls/handshake`, the state machine over
    these two modules, and the X25519MLKEM768 key share.
 9. **`std/tls/der`, `pem` and `verify`.** Path building, name and SAN
    checks, and the root store (Linux bundle paths, `SSL_CERT_FILE`, a

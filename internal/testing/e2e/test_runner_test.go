@@ -1113,9 +1113,10 @@ func TestRunnerTLSKeyScheduleExamplePasses(t *testing.T) {
 }
 
 // `tests/stdlib/tls_record_test.fern` covers framing against RFC 8448's
-// records, ChaCha20-Poly1305 record protection, and every refusal.
+// records, record protection under each suite (RFC 8448's own AES-128-GCM
+// records among them), and every refusal.
 func TestRunnerTLSRecordExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "tls_record", "std/tls/record", 21)
+	runnerSuitePasses(t, "tls_record", "std/tls/record", 23)
 }
 
 func TestRunnerHashChecksumsExamplePasses(t *testing.T) {

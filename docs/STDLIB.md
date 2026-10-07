@@ -1227,10 +1227,10 @@ let hs: keyschedule.HandshakeSecret = early.handshake_secret(shared_secret);
 let keys: keyschedule.TrafficKeys = keyschedule.traffic_keys(suite, hs.server_traffic(transcript_hash));
 ```
 
-- `CipherSuite` is `ChaCha20Poly1305Sha256`, TLS_CHACHA20_POLY1305_SHA256;
-  `hash()` is its `Hash` (`Sha256` or `Sha384`, with `size()` and
-  `digest(msg)`), `aead()` its `Aead` (`ChaCha20Poly1305`, with `key_len()`).
-  The AES-GCM suites arrive with `std/crypto/aes_gcm`.
+- `CipherSuite` is `Aes128GcmSha256`, `Aes256GcmSha384` or
+  `ChaCha20Poly1305Sha256`, the three TLS 1.3 suites; `hash()` is its `Hash`
+  (`Sha256` or `Sha384`, with `size()` and `digest(msg)`), `aead()` its `Aead`
+  (`Aes128Gcm`, `Aes256Gcm` or `ChaCha20Poly1305`, with `key_len()`).
 - `hkdf_extract(h, salt, ikm)`, `hkdf_expand_label(h, secret, label, context,
   length)`, `derive_secret(h, secret, label, transcript_hash)` — §7.1's
   functions.
@@ -1251,9 +1251,9 @@ let keys: keyschedule.TrafficKeys = keyschedule.traffic_keys(suite, hs.server_tr
 ### `std/tls/record`
 
 The TLS 1.3 record layer of RFC 8446 §5, sans-IO: bytes in, records out, no
-sockets. Framing is checked against RFC 8448 §3's records, and protection
-against ChaCha20-Poly1305 records from a reference that reproduces the trace's
-AES-128-GCM ones (`tests/stdlib/tls_record_test.fern`).
+sockets. Framing and AES-128-GCM protection are checked against RFC 8448 §3's
+records, and the other two suites against records from a reference that
+reproduces the trace's (`tests/stdlib/tls_record_test.fern`).
 
 ```fern
 let d: record.Deframed = record.deframe(buffered)?;   // keep d.rest

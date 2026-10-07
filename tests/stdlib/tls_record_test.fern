@@ -7,11 +7,12 @@ import "std/tls/keyschedule";
 import "std/tls/record";
 
 // tests/stdlib/tls_record_test.fern — std/tls/record: framing against
-// RFC 8448 §3's plaintext records, and record protection under
-// TLS_CHACHA20_POLY1305_SHA256. RFC 8448 has no ChaCha20-Poly1305 trace,
-// so the protected records here were sealed by a Python reference, using
-// the `cryptography` package's AEAD, that reproduces every AES-128-GCM
-// record in RFC 8448 §3; the keys are the trace's traffic secrets.
+// RFC 8448 §3's plaintext records, and record protection under each
+// suite. The trace runs TLS_AES_128_GCM_SHA256, so its protected records
+// are checked as they appear there. It has no ChaCha20-Poly1305 or
+// AES-256-GCM records, so those were sealed by a Python reference, using
+// the `cryptography` package's AEADs, that reproduces every AES-128-GCM
+// record in the trace; the keys are the trace's traffic secrets.
 
 function client_hello(): u8[] {
   return hex.hex_decode("010000c00303cb34ecb1e78163ba1c38c6dacb196a6dffa21a8d9912ec18a2ef6283024dece7000006130113031302010000910000000b0009000006736572766572ff01000100000a00140012001d0017001800190100010101020103010400230000003300260024001d002099381de560e4bd43d23d8e435a7dbafeb3c06e51c13cae4d5413691e529aaf2c002b0003020304000d0020001e040305030603020308040805080604010501060102010402050206020202002d00020101001c00024001");
@@ -396,9 +397,75 @@ function test_sequence_exhausted(): test.TestOutcome {
   return test.assert_eq(opened(p.open(one(hex.hex_decode("17030300431fd0486e9713f060eaebc04aadd9df0a5448b51a6675c2deacc5c3f774203c979cf2e49f999bcf33e553e632e48ba372130aed733b75a8db3a214bd3cadf535cc92bd5")))), "tls record: the sequence number is exhausted");
 }
 
+// RFC 8448 §3's client application data and close_notify, and the server's
+// encrypted handshake flight, compared by its SHA-256.
+function test_aes_128_gcm_trace(): test.TestOutcome {
+  let secret: u8[] = hex.hex_decode("9e40646ce79a7f9dc05af8889bce6552875afa0b06df0087f792ebb7c17504a5");
+  let p: record.Protection = record.protection(keyschedule.Aes128GcmSha256, secret);
+  let app: string = "1703030043a23f7054b62c94d0affafe8228ba55cbefacea42f914aa66bcab3f2b9819a8a5b46b395bd54a9a20441e2b62974e1f5a6292a2977014bd1e3deae63aeebb21694915e4";
+  let alert: string = "1703030013c9872760655666b74d7ff1153efd6db6d0b0e3";
+  match (p.seal(record.ApplicationData, app_data(), 0)) {
+    Ok(s) => {
+      if (hex.hex_encode(s.record) != app) {
+        return test.fail("application data");
+      }
+      if (sealed(s.next.seal(record.Alert, close_notify(), 0)) != alert) {
+        return test.fail("close_notify");
+      }
+      if (opened(s.next.open(one(hex.hex_decode(alert)))) != "21 " + hex.hex_encode(close_notify())) {
+        return test.fail("open close_notify");
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  if (opened(p.open(one(hex.hex_decode(app)))) != "23 " + hex.hex_encode(app_data())) {
+    return test.fail("open application data");
+  }
+  let flight: record.Protection = record.protection(keyschedule.Aes128GcmSha256, hex.hex_decode("b67b7d690cc16c4e75e54213cb2d37b4e9c912bcded9105d42befd59d391ad38"));
+  match (flight.seal(record.Handshake, server_flight(), 0)) {
+    Ok(s) => {
+      if (s.record.len() != 679 || crypto.sha256_new().update_bytes(s.record).final_hex() != "a073d654259fa22ebda69c8b1207c06498a2619e8176e09575ff769dbe779f1e") {
+        return test.fail("handshake flight");
+      }
+      return test.assert_eq(opened(flight.open(one(s.record))), "22 " + hex.hex_encode(server_flight()));
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+// TLS_AES_256_GCM_SHA384 under the SHA-384 schedule's server application
+// traffic secret for the same handshake.
+function test_aes_256_gcm(): test.TestOutcome {
+  let p: record.Protection = record.protection(keyschedule.Aes256GcmSha384, hex.hex_decode("9aabfb28a3106d6af28555d12ee08fb6b233680580a2a2b7df5cce8742aeba5f8cc14daf944fa21ab06a713deaf829a7"));
+  let app: string = "17030300437d612b0a9ee647a72f72a6fd0ace618de23d41e6bc4524677da7e9cf1bf81eeca154b8f4d904d7439bbf07f92a3929639716695e84258b3e069cbfbd7d4fad064b289f";
+  match (p.seal(record.ApplicationData, app_data(), 0)) {
+    Ok(s) => {
+      if (hex.hex_encode(s.record) != app) {
+        return test.fail("application data");
+      }
+      if (sealed(s.next.seal(record.Alert, close_notify(), 0)) != "1703030013db44edf956e5922702279cecd2ec54643ce84e") {
+        return test.fail("close_notify");
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.assert_eq(opened(p.open(one(hex.hex_decode(app)))), "23 " + hex.hex_encode(app_data()));
+}
+
 function test_bad_keys(): test.TestOutcome {
   let p: record.Protection = record.Protection { ...client_write(), key: filled(16, 0) };
-  return test.assert_eq(sealed(p.seal(record.ApplicationData, app_data(), 0)), "tls record: a 16-byte key and a 12-byte iv do not fit the cipher suite");
+  if (sealed(p.seal(record.ApplicationData, app_data(), 0)) != "tls record: a 16-byte key and a 12-byte iv do not fit the cipher suite") {
+    return test.fail("ChaCha20-Poly1305");
+  }
+  let aes: record.Protection = record.Protection { ...client_write(), suite: keyschedule.Aes128GcmSha256 };
+  return test.assert_eq(sealed(aes.seal(record.ApplicationData, app_data(), 0)), "tls record: a 32-byte key and a 12-byte iv do not fit the cipher suite");
 }
 
 function main(): i32 {
@@ -423,6 +490,8 @@ function main(): i32 {
   r = r.it("seal refusals", test_seal_refusals);
   r = r.it("key update", test_key_update);
   r = r.it("sequence number exhausted", test_sequence_exhausted);
+  r = r.it("AES-128-GCM records of RFC 8448", test_aes_128_gcm_trace);
+  r = r.it("AES-256-GCM records", test_aes_256_gcm);
   r = r.it("keys that do not fit the suite", test_bad_keys);
   return r.finish();
 }
