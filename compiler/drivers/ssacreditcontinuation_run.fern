@@ -1,0 +1,220 @@
+import "../lexer";
+import "../parser";
+import "../semlower";
+import "../ircore";
+import "../ssa";
+import "../ssa_lift";
+import "../ssacreditcontinuation" as continuation;
+import "../ssacreditreuse" as reuse;
+import "../ssacredithelper" as helper;
+import "../util";
+
+function require(ok: boolean, code: i32): void {
+  if (!ok) {
+    exit(code);
+  }
+}
+
+function source(exiting: boolean): string {
+  let assertion = if (exiting) { "if (!ok) { exit(code); }" } else { "if (ok) { return; } return;" };
+  return "struct Leaf { n: i32 }\nstruct Parent { left: Leaf, right: Leaf }\nstruct Other { first: Leaf, second: Leaf }\n"
+    + "@noinline\nfunction require(ok: boolean, code: i32): void { " + assertion + " }\n"
+    + "@noinline\nfunction parent(left: Leaf, right: Leaf): Parent { return Parent { left: left, right: right }; }\n"
+    + "@noinline\nfunction replace(own p: Parent, child: Leaf): Other { let n = p.left.n + p.right.n; require(n > 0, 1); return Other { first: child, second: child }; }\n"
+    + "@noinline\nfunction handoff(flag: boolean, left: Leaf, right: Leaf, incoming: Leaf): Other { let p = if (flag) { parent(left, right) } else { parent(right, left) }; return replace(p, incoming); }\n"
+    + "function main(): i32 { let c = Leaf { n: 7 }; let p = handoff(true,c,c,c); return p.first.n - 7; }\n";
+}
+
+function body(sub: ircore.Sub, name: string): ssa.SFunc {
+  for b in util.append_all(sub.bodies, sub.extra) {
+    if (b.name == name) {
+      let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), b.name, b.n_params, b.n_locals, b.ops, false);
+      require(b.ok && lifted.ok, 1);
+      return lifted.func;
+    }
+  }
+  exit(2);
+  return ssa.SFunc { name: "", nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false };
+}
+
+function expect(p: helper.Proof, name: string, why: string): void {
+  let ok = why == "proved checked storage wrapper continuation";
+  if (p.ok != ok || p.function_name != name || p.message != why) {
+    print(p.function_name + ": " + p.message + " expected " + name + ": " + why);
+    exit(91);
+  }
+}
+
+function check(sub: ircore.Sub, wrapper: ssa.SFunc): helper.Proof {
+  let fields = [reuse.ScalarField { root: 3, offset: 8 }, reuse.ScalarField { root: 4, offset: 8 }, reuse.ScalarField { root: 5, offset: 8 }];
+  return continuation.check(wrapper, [body(sub, "parent")], body(sub, "replace"), body(sub, "__sem_drop_Parent"), body(sub, "__sem_release_Parent"), "Parent", "Other", fields, [body(sub, "require")]);
+}
+
+function consumer_call(f: ssa.SFunc): ssa.SInst {
+  for b in f.blocks {
+    for op in b.insts {
+      if (op.kind_tag == 11 && op.str == "replace") {
+        return op;
+      }
+    }
+  }
+  exit(3);
+  return ssa.SInst { kind_tag: 0, result: 0, args: [], imm: 0, str: "" };
+}
+
+function parameter(f: ssa.SFunc, index: i32): i32 {
+  for b in f.blocks {
+    for op in b.insts {
+      if (op.kind_tag == 6 && op.imm == index) {
+        return op.result;
+      }
+    }
+  }
+  exit(4);
+  return -1;
+}
+
+function copy(result: i32, arg: i32): ssa.SInst {
+  return ssa.SInst { kind_tag: 7, result: result, args: [arg], imm: 0, str: "" };
+}
+
+function suffix_instruction(f: ssa.SFunc, call: ssa.SInst, result: i32, mode: i32): ssa.SInst {
+  if (mode == 2) {
+    return ssa.SInst { kind_tag: 1, result: result, args: [], imm: 0, str: "" };
+  }
+  if (mode == 3) {
+    return ssa.SInst { ...call, result: result };
+  }
+  if (mode == 4) {
+    return ssa.SInst { ...call, result: result, str: "parent", args: [parameter(f, 1), parameter(f, 2)] };
+  }
+  if (mode == 5) {
+    return copy(result, call.args[0]);
+  }
+  if (mode == 7) {
+    return ssa.SInst { ...call, result: result, str: "unknown_effect" };
+  }
+  return copy(result, call.result);
+}
+
+function straight(f: ssa.SFunc, mode: i32): ssa.SFunc {
+  let call = consumer_call(f);
+  let blocks: ssa.SBlock[] = [];
+  let changed: i32 = 0;
+  let nvals = f.nvals;
+  for b in f.blocks {
+    let insts = b.insts;
+    let term = b.term;
+    if (term.kind_tag == 1) {
+      changed = changed + 1;
+      if (mode < 2) {
+        term = ssa.STerm { ...term, value: call.args[mode] };
+      } else {
+        let op = suffix_instruction(f, call, nvals, mode);
+        insts = insts.append(op);
+        nvals = nvals + 1;
+        if (mode == 2 || mode == 6) {
+          term = ssa.STerm { ...term, value: op.result };
+        }
+        if (mode == 8) {
+          insts = insts.append(copy(nvals, call.result));
+          term = ssa.STerm { ...term, value: nvals };
+          nvals = nvals + 1;
+        }
+      }
+    }
+    blocks = blocks.append(ssa.SBlock { ...b, insts: insts, term: term });
+  }
+  require(changed == 1, 5);
+  return ssa.SFunc { ...f, blocks: blocks, nvals: nvals };
+}
+
+function branched(f: ssa.SFunc, mode: i32): ssa.SFunc {
+  let call = consumer_call(f);
+  let next: i32 = 0;
+  for b in f.blocks {
+    if (b.id >= next) {
+      next = b.id + 1;
+    }
+  }
+  let blocks: ssa.SBlock[] = [];
+  let changed: i32 = 0;
+  for b in f.blocks {
+    if (b.term.kind_tag != 1) {
+      blocks = blocks.append(b);
+    } else {
+      changed = changed + 1;
+      let condition = if (mode == 4) { call.result } else { parameter(f, 0) };
+      blocks = blocks.append(ssa.SBlock { ...b, term: ssa.STerm { ...b.term, kind_tag: 3, cond: condition, t: next, f: next + 1 } });
+      let jump = ssa.STerm { kind_tag: 2, value: 0, target: next + 2, cond: 0, t: 0, f: 0 };
+      let left = ssa.SBlock { id: next, insts: [copy(f.nvals, call.result)], term: jump, preds: [b.id] };
+      let right_arg = if (mode == 1) { call.args[0] } else { call.result };
+      let right = ssa.SBlock { id: next + 1, insts: [copy(f.nvals + 1, right_arg)], term: jump, preds: [b.id] };
+      let right_phi = if (mode == 2) { call.args[1] } else { if (mode == 3) { f.nvals + 2 } else { f.nvals + 1 } };
+      let phi = ssa.SInst { kind_tag: 8, result: f.nvals + 2, args: [f.nvals, right_phi], imm: 0, str: "" };
+      let second = ssa.SInst { ...phi, result: f.nvals + 3, args: [f.nvals, f.nvals + 1] };
+      let join = ssa.SBlock { id: next + 2, insts: [phi, second], term: ssa.STerm { ...b.term, value: f.nvals + 3 }, preds: [next, next + 1] };
+      blocks = util.append_all(blocks, if (mode == 5) { [join, right, left] } else { [left, right, join] });
+    }
+  }
+  require(changed == 1, 6);
+  return ssa.SFunc { ...f, blocks: blocks, nvals: f.nvals + 4 };
+}
+
+function controls(sub: ircore.Sub, wrapper: ssa.SFunc): void {
+  let fields = [reuse.ScalarField { root: 3, offset: 8 }, reuse.ScalarField { root: 4, offset: 8 }, reuse.ScalarField { root: 5, offset: 8 }];
+  let invocation = reuse.check_invocations(straight(wrapper, 0), [body(sub, "parent")], body(sub, "replace"), body(sub, "__sem_drop_Parent"), body(sub, "__sem_release_Parent"), "Parent", "Other", fields, [body(sub, "require")]);
+  require(invocation.ok && invocation.function_name == "replace" && invocation.message == "proved checked-capacity consumer invocation", 7);
+  let reasons = ["continuation must return owned consumer result", "continuation must return owned consumer result", "continuation must return owned consumer result", "unsupported post-call continuation effect", "unsupported post-call continuation effect", "spent reference in wrapper continuation", "proved checked storage wrapper continuation", "caller origin producer binding", "proved checked storage wrapper continuation"];
+  let mode: i32 = 0;
+  for why in reasons {
+    expect(check(sub, straight(wrapper, mode)), "handoff", why);
+    mode = mode + 1;
+  }
+  let branches = ["proved checked storage wrapper continuation", "spent reference in wrapper continuation", "spent reference in wrapper continuation", "unavailable caller origin phi", "exact continuation Boolean required", "proved checked storage wrapper continuation"];
+  mode = 0;
+  for why in branches {
+    expect(check(sub, branched(wrapper, mode)), "handoff", why);
+    mode = mode + 1;
+  }
+  expect(check(sub, cycling(wrapper)), "handoff", "unsupported caller origin cycle");
+}
+
+function cycling(f: ssa.SFunc): ssa.SFunc {
+  let next: i32 = 0;
+  for b in f.blocks {
+    if (b.id >= next) {
+      next = b.id + 1;
+    }
+  }
+  let blocks: ssa.SBlock[] = [];
+  for b in f.blocks {
+    if (b.term.kind_tag == 1) {
+      let jump = ssa.STerm { ...b.term, kind_tag: 2, target: next };
+      blocks = blocks.append(ssa.SBlock { ...b, term: jump });
+      blocks = blocks.append(ssa.SBlock { id: next, insts: [], term: jump, preds: [b.id, next] });
+    } else {
+      blocks = blocks.append(b);
+    }
+  }
+  return ssa.SFunc { ...f, blocks: blocks };
+}
+
+function target_checks(target: string): void {
+  let original = semlower.driven(parser.parse_module(lexer.tokenize(source(true))), target).sub;
+  expect(check(original, body(original, "handoff")), "replace", "scalar call may exit with unproved caller obligations");
+  let sub = semlower.driven(parser.parse_module(lexer.tokenize(source(false))), target).sub;
+  let wrapper = body(sub, "handoff");
+  expect(check(sub, wrapper), "handoff", "proved checked storage wrapper continuation");
+  controls(sub, wrapper);
+  expect(check(sub, wrapper), "handoff", "proved checked storage wrapper continuation");
+  expect(check(original, body(original, "handoff")), "replace", "scalar call may exit with unproved caller obligations");
+}
+
+function main(): i32 {
+  target_checks("arm64-darwin");
+  target_checks("x86-64-linux");
+  target_checks("wasm32-wasi");
+  print("checked wrapper continuation controls passed");
+  return 0;
+}

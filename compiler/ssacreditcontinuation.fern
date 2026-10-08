@@ -1,0 +1,141 @@
+// Scoped raw wrapper proof. Recompute both incoming and consumer obligations;
+// never accept an externally supplied successful proof or unbound call site.
+// The caller still supplies the selected ABI/layout facts required by reuse.
+import "./ssa";
+import "./ssacreditflowgraph" as graph;
+import "./ssacreditincoming" as incoming;
+import "./ssacreditreuse" as reuse;
+import "./ssacredithelper" as helper;
+import "./util";
+
+// kind -1 is an unavailable or spent pre-call reference; 0 is a scalar;
+// 1 is an alias of the single owned consumer result. Copies create no credits.
+struct Value { kind: i32, scalar: i32 }
+
+struct State { values: Value[], called: boolean, live: boolean, error: string }
+
+function initial(f: ssa.SFunc): State {
+  let values: Value[] = [];
+  let index: i32 = 0;
+  while (index < f.nvals) {
+    values = values.append(Value { kind: -1, scalar: 0 });
+    index = index + 1;
+  }
+  return State { values: values, called: false, live: false, error: "" };
+}
+
+function call(s: State, op: ssa.SInst, block: i32, site: incoming.Site): State {
+  if (s.called) {
+    return State { ...s, error: "unsupported post-call continuation effect" };
+  }
+  if (block != site.block || op.result != site.call) {
+    return s;
+  }
+  if (op.str != site.consumer || op.args[0] != site.argument || op.args[1] != site.incoming || site.parameter != 0 || site.words != 3) {
+    return State { ...s, error: "continuation call site mismatch" };
+  }
+  // The recomputed invocation consumed all pre-call local credits and returned
+  // exactly one new-generation credit. Every pre-call reference stays invalid.
+  return State { ...s, values: s.values.with(op.result, Value { kind: 1, scalar: 0 }), called: true, live: true };
+}
+
+function instruction(s: State, op: ssa.SInst, b: ssa.SBlock, previous: ssa.SBlock, predecessor: State, site: incoming.Site): State {
+  if (op.kind_tag == 11) {
+    return call(s, op, b.id, site);
+  }
+  let value = Value { kind: -1, scalar: 0 };
+  if (op.kind_tag == 6 && op.imm == 0) {
+    value = Value { kind: 0, scalar: site.input };
+  } else if (op.kind_tag == 1) {
+    value = Value { kind: 0, scalar: op.imm };
+  } else if (op.kind_tag == 7) {
+    value = s.values[op.args[0]];
+  } else if (op.kind_tag == 8) {
+    let pos = util.index_of_i32(b.preds, previous.id);
+    value = predecessor.values[op.args[pos]];
+  }
+  if (s.called && value.kind < 0) {
+    return State { ...s, error: "spent reference in wrapper continuation" };
+  }
+  return State { ...s, values: s.values.with(op.result, value) };
+}
+
+function returned(s: State, value: i32): string {
+  if (!s.called || !s.live || s.values[value].kind != 1) {
+    return "continuation must return owned consumer result";
+  }
+  return "";
+}
+
+function input_case(f: ssa.SFunc, order: i32[], site: incoming.Site): string {
+  let empty = initial(f);
+  let rows: State[] = [];
+  let destinations: i32[] = [];
+  for b in f.blocks {
+    rows = rows.append(empty);
+    destinations = destinations.append(-1);
+  }
+  for index in order {
+    let b = f.blocks[index];
+    let s = empty;
+    let previous = index;
+    let active = b.id == f.entry;
+    for p in b.preds {
+      let pi = graph.block_index(f, p);
+      if (destinations[pi] == b.id) {
+        if (active) {
+          return "ambiguous wrapper continuation flow";
+        }
+        active = true;
+        previous = pi;
+        s = rows[pi];
+      }
+    }
+    if (active) {
+      // All phis read the predecessor snapshot, not preceding phi writes.
+      let predecessor = rows[previous];
+      for op in b.insts {
+        s = instruction(s, op, b, f.blocks[previous], predecessor, site);
+        if (s.error != "") {
+          return s.error;
+        }
+      }
+      if (b.term.kind_tag == 1) {
+        return returned(s, b.term.value);
+      }
+      let destination = b.term.target;
+      if (b.term.kind_tag == 3) {
+        let condition = s.values[b.term.cond];
+        if (condition.kind != 0 || condition.scalar < 0 || condition.scalar > 1) {
+          return "exact continuation Boolean required";
+        }
+        destination = if (condition.scalar == 1) { b.term.t } else { b.term.f };
+      }
+      rows = rows.with(index, s);
+      destinations = destinations.with(index, destination);
+    }
+  }
+  return "wrapper continuation return missing";
+}
+
+pub function check(wrapper: ssa.SFunc, producers: ssa.SFunc[], consumer: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, old_shape: string, new_shape: string, fields: reuse.ScalarField[], assertions: ssa.SFunc[]): helper.Proof {
+  let invocation = reuse.check_invocations(wrapper, producers, consumer, drop, release, old_shape, new_shape, fields, assertions);
+  if (!invocation.ok) {
+    return invocation;
+  }
+  let boundary = incoming.before_calls(wrapper, producers, [consumer], old_shape);
+  if (!boundary.proof.ok) {
+    return boundary.proof;
+  }
+  let checked = graph.check(wrapper, producers.append(consumer), 4);
+  if (checked.error != "") {
+    return helper.Proof { ok: false, function_name: wrapper.name, message: checked.error };
+  }
+  for site in boundary.sites {
+    let error = input_case(wrapper, checked.order, site);
+    if (error != "") {
+      return helper.Proof { ok: false, function_name: wrapper.name, message: error };
+    }
+  }
+  return helper.Proof { ok: true, function_name: wrapper.name, message: "proved checked storage wrapper continuation" };
+}
