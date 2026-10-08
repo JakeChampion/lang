@@ -1,0 +1,503 @@
+// Independent physical-credit pilot. No unit plan is accepted as input.
+// Flat-box programs with agreeing joins and stable loop accounts are admitted. Other
+// effects are explicit refusals, never successful coverage. Not a compile gate.
+import "./ssa";
+import "./ssadeps";
+import "./util";
+
+// Parameter modes: 0 scalar, 1 borrowed flat counted value, 2 owned flat
+// counted value. Flat means no owned payloads or user finalizer. These are
+// declared ABI/layout facts, not modes copied from a lowering plan. There is
+// no production adapter yet; composite layouts must not use this boundary.
+pub struct Boundary { params: i32[], owned_result: boolean }
+
+// 0 certified within the admitted fragment; 1 credit violation;
+// 2 unsupported effect; 3 malformed physical graph or boundary.
+pub struct Verdict { status: i32, function_name: string, point: i32, message: string }
+
+function verdict(f: ssa.SFunc, status: i32, point: i32, message: string): Verdict {
+  return Verdict { status: status, function_name: f.name, point: point, message: message };
+}
+
+pub function render(v: Verdict): string {
+  return v.function_name + ": physical credit at " + util.i32_to_string(v.point) + ": " + v.message;
+}
+
+function filled(n: i32, value: i32): i32[] {
+  let out: i32[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append(value);
+    i = i + 1;
+  }
+  return out;
+}
+
+struct Accounts { roots: i32[], credits: i32[], external: i32[], params: i32[] }
+
+struct Progress { accounts: Accounts, result: Verdict }
+
+function empty_accounts(): Accounts {
+  return Accounts { roots: [], credits: [], external: [], params: [] };
+}
+
+function rejected(f: ssa.SFunc, status: i32, point: i32, message: string): Progress {
+  return Progress { accounts: empty_accounts(), result: verdict(f, status, point, message) };
+}
+
+function initial(f: ssa.SFunc): Accounts {
+  return Accounts {
+    roots: filled(f.nvals, -2), credits: filled(f.nvals, 0),
+    external: filled(f.nvals, 0), params: filled(f.nparams, 0),
+  };
+}
+
+function boundary_error(f: ssa.SFunc, boundary: Boundary, ninst: i32): Verdict {
+  if (f.nparams != boundary.params.len() || f.nparams < 0 || f.nvals < f.nparams
+    || f.nvals > ninst + f.nparams) {
+    return verdict(f, 3, -1, "invalid boundary or value count");
+  }
+  let refs: i32 = 0;
+  for mode in boundary.params {
+    if (mode < 0 || mode > 2) {
+      return verdict(f, 3, -1, "invalid parameter mode");
+    }
+    if (mode != 0) {
+      refs = refs + 1;
+    }
+  }
+  // Multiple reference parameters may alias, including an owned and a
+  // borrowed parameter. Do not assume distinct roots without an alias proof.
+  if (refs > 1) {
+    return verdict(f, 2, -1, "parameter alias relationships not admitted");
+  }
+  return verdict(f, 0, -1, "");
+}
+
+// A borrowed anchor permits reads but never supplies a release credit.
+function transfer(f: ssa.SFunc, boundary: Boundary, ops: ssa.SInst[], state: Accounts): Progress {
+  let roots: i32[] = state.roots;
+  let credits: i32[] = state.credits;
+  let external: i32[] = state.external;
+  let params: i32[] = state.params;
+  let point: i32 = 0;
+  for op in ops {
+    let v: i32 = op.result;
+    if (v < 0 || v >= f.nvals || roots[v] != -2) {
+      return rejected(f, 3, point, "invalid or duplicate value definition");
+    }
+    for a in op.args {
+      if (a < 0 || a >= f.nvals || roots[a] == -2) {
+        return rejected(f, 3, point, "undefined operand");
+      }
+    }
+    let root: i32 = -1;
+    if (op.kind_tag == 6) {
+      if (op.args.len() != 0 || op.imm < 0 || op.imm >= f.nparams || params[op.imm] != 0) {
+        return rejected(f, 3, point, "invalid or duplicate parameter");
+      }
+      params = params.with(op.imm, 1);
+      let mode: i32 = boundary.params[op.imm];
+      if (mode != 0) {
+        root = v;
+        if (mode == 1) {
+          external = external.with(v, 1);
+        } else {
+          credits = credits.with(v, 1);
+        }
+      }
+    } else if (op.kind_tag >= 1 && op.kind_tag <= 4) {
+      if (op.args.len() != 0) {
+        return rejected(f, 3, point, "constant has operands");
+      }
+    } else if (op.kind_tag == 7) {
+      if (op.args.len() != 1) {
+        return rejected(f, 3, point, "copy arity");
+      }
+      root = roots[op.args[0]];
+    } else if (op.kind_tag == 48) {
+      if (op.args.len() != 0 || op.imm < 0) {
+        return rejected(f, 3, point, "box allocation shape");
+      }
+      root = v;
+      credits = credits.with(v, 1);
+    } else if (op.kind_tag == 11) {
+      if (op.str != "__fern_rc_inc" && op.str != "__fern_rc_dec" && op.str != "__fern_rc_is_unique") {
+        return rejected(f, 2, point, "unaudited call " + op.str);
+      }
+      if (op.args.len() != 1) {
+        return rejected(f, 3, point, "RC helper arity");
+      }
+      root = roots[op.args[0]];
+      if (root < 0) {
+        return rejected(f, 2, point, "RC operand lacks counted provenance");
+      }
+      if (op.str == "__fern_rc_dec") {
+        if (credits[root] <= 0) {
+          return rejected(f, 1, point, "release without owned credit");
+        }
+        credits = credits.with(root, credits[root] - 1);
+      } else {
+        if (credits[root] == 0 && external[root] == 0) {
+          return rejected(f, 1, point, "use after final owned credit");
+        }
+        if (op.str == "__fern_rc_inc") {
+          if (credits[root] == 2147483647) {
+            return rejected(f, 3, point, "credit count overflow");
+          }
+          credits = credits.with(root, credits[root] + 1);
+        } else {
+          root = -1;
+        }
+      }
+    } else {
+      return rejected(f, 2, point, "unsupported operation " + ssa.kind_name(op.kind_tag));
+    }
+    roots = roots.with(v, root);
+    point = point + 1;
+  }
+  return Progress {
+    accounts: Accounts { roots: roots, credits: credits, external: external, params: params },
+    result: verdict(f, 0, point, ""),
+  };
+}
+
+function finish(f: ssa.SFunc, boundary: Boundary, result: i32, state: Accounts, point: i32): Verdict {
+  let roots: i32[] = state.roots;
+  let credits: i32[] = state.credits;
+  let params: i32[] = state.params;
+  for seen in params {
+    if (seen == 0) {
+      return verdict(f, 3, point, "missing parameter definition");
+    }
+  }
+  if (result < 0 || result >= f.nvals || roots[result] == -2) {
+    return verdict(f, 3, point, "undefined return value");
+  }
+  let returned: i32 = roots[result];
+  if (boundary.owned_result) {
+    if (returned < 0) {
+      return verdict(f, 3, point, "owned result lacks counted provenance");
+    }
+    if (credits[returned] <= 0) {
+      return verdict(f, 1, point, "return without owned credit");
+    }
+    credits = credits.with(returned, credits[returned] - 1);
+  } else if (returned >= 0) {
+    return verdict(f, 2, point, "reference result requires an owned result contract");
+  }
+  for count in credits {
+    if (count != 0) {
+      return verdict(f, 1, point, "owned credit remains at return");
+    }
+  }
+  return verdict(f, 0, point, "certified physical credits");
+}
+
+// Positions, not external block IDs, size every array. This pilot's lookup
+// is linear; no arbitrary sparse ID can request an enormous allocation.
+function block_at(f: ssa.SFunc, id: i32): i32 {
+  let i: i32 = 0;
+  while (i < f.blocks.len()) {
+    if (f.blocks[i].id == id) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return -1;
+}
+
+function successors(t: ssa.STerm): i32[] {
+  if (t.kind_tag == 2) {
+    return [t.target];
+  }
+  if (t.kind_tag == 3) {
+    if (t.t == t.f) {
+      return [t.t];
+    }
+    return [t.t, t.f];
+  }
+  return [];
+}
+
+function structure(f: ssa.SFunc): Verdict {
+  let defined: i32[] = filled(f.nvals, -1);
+  let bi: i32 = 0;
+  for b in f.blocks {
+    if (b.id < 0 || block_at(f, b.id) != bi) {
+      return verdict(f, 3, bi, "invalid or duplicate block ID");
+    }
+    if (b.term.kind_tag < 1 || b.term.kind_tag > 3) {
+      return verdict(f, 2, bi, "unsupported terminator");
+    }
+    let pi: i32 = 0;
+    for pred in b.preds {
+      let pos: i32 = block_at(f, pred);
+      if (pos < 0 || util.index_of_i32(b.preds, pred) != pi) {
+        return verdict(f, 3, bi, "invalid predecessor");
+      }
+      if (util.index_of_i32(successors(f.blocks[pos].term), b.id) < 0) {
+        return verdict(f, 3, bi, "predecessor is not an edge");
+      }
+      pi = pi + 1;
+    }
+    for id in successors(b.term) {
+      let pos: i32 = block_at(f, id);
+      if (pos < 0) {
+        return verdict(f, 3, bi, "missing successor");
+      }
+      if (util.index_of_i32(f.blocks[pos].preds, b.id) < 0) {
+        return verdict(f, 3, bi, "missing predecessor edge");
+      }
+    }
+    let body: boolean = false;
+    for op in b.insts {
+      if (op.result < 0 || op.result >= f.nvals || defined[op.result] != -1) {
+        return verdict(f, 3, bi, "invalid or duplicate value definition");
+      }
+      defined = defined.with(op.result, bi);
+      if (op.kind_tag == 6 && b.id != f.entry) {
+        return verdict(f, 3, bi, "parameter outside entry");
+      }
+      if (op.kind_tag == 8) {
+        if (body || op.args.len() != b.preds.len() || b.preds.len() == 0) {
+          return verdict(f, 3, bi, "phi predecessor arity or position");
+        }
+      } else {
+        body = true;
+      }
+    }
+    bi = bi + 1;
+  }
+  return verdict(f, 0, -1, "");
+}
+
+// All phi sources are read from the unmodified predecessor state. A phi
+// renames an identity; it does not manufacture or consume an ownership unit.
+function edge(f: ssa.SFunc, b: ssa.SBlock, pred: i32, state: Accounts): Progress {
+  let at: i32 = util.index_of_i32(b.preds, pred);
+  let roots: i32[] = state.roots;
+  for op in b.insts {
+    if (op.kind_tag == 8) {
+      let a: i32 = op.args[at];
+      if (a < 0 || a >= f.nvals || state.roots[a] == -2) {
+        return rejected(f, 3, b.id, "unavailable phi operand");
+      }
+      roots = roots.with(op.result, state.roots[a]);
+    }
+  }
+  return Progress { accounts: Accounts { ...state, roots: roots }, result: verdict(f, 0, b.id, "") };
+}
+
+function join(f: ssa.SFunc, b: ssa.SBlock, a: Accounts, other: Accounts): Progress {
+  let roots: i32[] = a.roots;
+  let i: i32 = 0;
+  while (i < f.nvals) {
+    if (a.credits[i] != other.credits[i] || a.external[i] != other.external[i]) {
+      return rejected(f, 2, b.id, "path-dependent credit accounts not admitted");
+    }
+    if (roots[i] != other.roots[i]) {
+      roots = roots.with(i, -2);
+    }
+    i = i + 1;
+  }
+  for op in b.insts {
+    if (op.kind_tag == 8 && roots[op.result] == -2) {
+      return rejected(f, 2, b.id, "path-dependent phi identity not admitted");
+    }
+  }
+  return Progress { accounts: Accounts { ...a, roots: roots }, result: verdict(f, 0, b.id, "") };
+}
+
+// Normalize IDs before using the existing dominator analysis, whose lookup
+// arrays otherwise scale with the largest external ID rather than the graph.
+function dense(f: ssa.SFunc): ssa.SFunc {
+  let blocks: ssa.SBlock[] = [];
+  let i: i32 = 0;
+  for b in f.blocks {
+    let preds: i32[] = [];
+    for p in b.preds {
+      preds = preds.append(block_at(f, p));
+    }
+    let term: ssa.STerm = b.term;
+    if (term.kind_tag == 2) {
+      term = ssa.STerm { ...term, target: block_at(f, term.target) };
+    }
+    if (term.kind_tag == 3) {
+      term = ssa.STerm { ...term, t: block_at(f, term.t), f: block_at(f, term.f) };
+    }
+    blocks = blocks.append(ssa.SBlock { ...b, id: i, preds: preds, term: term });
+    i = i + 1;
+  }
+  return ssa.SFunc { ...f, blocks: blocks, entry: block_at(f, f.entry) };
+}
+
+// Mark the natural loops from their dominator backedges. An irreducible
+// cycle left after removing these edges will fail worklist coverage below.
+function loop_members(f: ssa.SFunc, dom: ssadeps.Dom): i32[] {
+  let members: i32[] = filled(f.blocks.len(), 0);
+  let from: i32 = 0;
+  for b in f.blocks {
+    for header in successors(b.term) {
+      if (ssadeps.dom_holds(dom, from, header)) {
+        let seen: i32[] = filled(f.blocks.len(), 0).with(header, 1);
+        let todo: i32[] = [from];
+        members = members.with(header, 1);
+        let i: i32 = 0;
+        while (i < todo.len()) {
+          let at: i32 = todo[i];
+          if (seen[at] == 0) {
+            seen = seen.with(at, 1);
+            members = members.with(at, 1);
+            for p in f.blocks[at].preds {
+              if (seen[p] == 0) {
+                todo = todo.append(p);
+              }
+            }
+          }
+          i = i + 1;
+        }
+      }
+    }
+    from = from + 1;
+  }
+  return members;
+}
+
+// The outside predecessors establish a header invariant. Every backedge
+// must preserve it. Names unavailable on the first iteration are forgotten:
+// only a phi can expose an iteration-local definition to the next iteration.
+// Scalar values are deliberately abstracted, so every branch is still checked.
+function invariant(f: ssa.SFunc, header: i32, initial: Accounts, back: Accounts): Verdict {
+  let i: i32 = 0;
+  while (i < f.nvals) {
+    if (initial.credits[i] != back.credits[i] || initial.external[i] != back.external[i]) {
+      return verdict(f, 1, header, "loop credit invariant is not preserved");
+    }
+    if (initial.roots[i] != -2 && initial.roots[i] != back.roots[i]) {
+      return verdict(f, 2, header, "loop alias invariant is not admitted");
+    }
+    i = i + 1;
+  }
+  return verdict(f, 0, header, "");
+}
+
+pub function check(f: ssa.SFunc, boundary: Boundary): Verdict {
+  if (f.takes_env) {
+    return verdict(f, 2, -1, "closure environment not admitted");
+  }
+  let count: i64 = 0i64;
+  for b in f.blocks {
+    count = count + b.insts.len() as i64;
+  }
+  if (count > 2147483647i64 - f.nparams as i64) {
+    return verdict(f, 3, -1, "instruction count overflow");
+  }
+  let admission = boundary_error(f, boundary, count as i32);
+  if (admission.status != 0) {
+    return admission;
+  }
+  let entry: i32 = block_at(f, f.entry);
+  if (entry < 0) {
+    return verdict(f, 3, -1, "missing entry");
+  }
+  if (f.blocks[entry].preds.len() != 0) {
+    return verdict(f, 2, -1, "entry backedge not admitted");
+  }
+  let valid = structure(f);
+  if (valid.status != 0) {
+    return valid;
+  }
+  let cfg = dense(f);
+  let dom = ssadeps.dominates(cfg);
+  let cyclic: i32[] = loop_members(cfg, dom);
+  let ci: i32 = 0;
+  for b in f.blocks {
+    if (cyclic[ci] != 0) {
+      for op in b.insts {
+        if (op.kind_tag == 48) {
+          return verdict(f, 2, b.id, "loop allocation identities not admitted");
+        }
+      }
+    }
+    ci = ci + 1;
+  }
+  let states: Accounts[] = [];
+  let pending: i32[] = [];
+  let received: i32[] = filled(f.blocks.len(), 0);
+  for b in f.blocks {
+    states = states.append(empty_accounts());
+    let count: i32 = 0;
+    let pos: i32 = block_at(f, b.id);
+    for pred in b.preds {
+      if (!ssadeps.dom_holds(dom, block_at(f, pred), pos)) {
+        count = count + 1;
+      }
+    }
+    pending = pending.append(count);
+  }
+  states = states.with(entry, initial(f));
+  let queue: i32[] = [entry];
+  let qi: i32 = 0;
+  while (qi < queue.len()) {
+    let bi: i32 = queue[qi];
+    let b: ssa.SBlock = f.blocks[bi];
+    let ops: ssa.SInst[] = [];
+    for op in b.insts {
+      if (op.kind_tag != 8) {
+        ops = ops.append(op);
+      }
+    }
+    let run = transfer(f, boundary, ops, states[bi]);
+    if (run.result.status != 0) {
+      return run.result;
+    }
+    if (b.term.kind_tag == 1) {
+      let done = finish(f, boundary, b.term.value, run.accounts, b.id);
+      if (done.status != 0) {
+        return done;
+      }
+    } else {
+      if (b.term.kind_tag == 3) {
+        let v: i32 = b.term.cond;
+        if (v < 0 || v >= f.nvals || run.accounts.roots[v] != -1) {
+          return verdict(f, 3, b.id, "condition lacks available scalar provenance");
+        }
+      }
+      for id in successors(b.term) {
+        let pos: i32 = block_at(f, id);
+        let next = edge(f, f.blocks[pos], b.id, run.accounts);
+        if (next.result.status != 0) {
+          return next.result;
+        }
+        if (ssadeps.dom_holds(dom, bi, pos)) {
+          if (states[pos].roots.len() != f.nvals) {
+            return verdict(f, 3, b.id, "backedge lacks header state");
+          }
+          let proof = invariant(f, f.blocks[pos].id, states[pos], next.accounts);
+          if (proof.status != 0) {
+            return proof;
+          }
+          continue;
+        }
+        if (received[pos] != 0) {
+          next = join(f, f.blocks[pos], states[pos], next.accounts);
+        }
+        if (next.result.status != 0) {
+          return next.result;
+        }
+        states = states.with(pos, next.accounts);
+        received = received.with(pos, received[pos] + 1);
+        pending = pending.with(pos, pending[pos] - 1);
+        if (pending[pos] == 0) {
+          queue = queue.append(pos);
+        }
+      }
+    }
+    qi = qi + 1;
+  }
+  if (qi != f.blocks.len()) {
+    return verdict(f, 2, -1, "cycle or unreachable block not admitted");
+  }
+  return verdict(f, 0, qi, "certified physical credits");
+}

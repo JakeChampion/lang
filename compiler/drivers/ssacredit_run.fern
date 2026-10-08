@@ -1,0 +1,196 @@
+import "../ssa";
+import "../ssa_lift";
+import "../ssacredit";
+import "../ir";
+import "../util";
+
+function inst(k: i32, v: i32, args: i32[], imm: i32, name: string): ssa.SInst {
+  return ssa.SInst { kind_tag: k, result: v, args: args, imm: imm, str: name };
+}
+
+function call(v: i32, a: i32, name: string): ssa.SInst {
+  return inst(11, v, [a], 0, name);
+}
+
+function graph(ops: ssa.SInst[], np: i32, nv: i32, result: i32): ssa.SFunc {
+  return ssa.SFunc {
+    name: "physical_mutation", nparams: np, nvals: nv, entry: 7, takes_env: false,
+    blocks: [ssa.SBlock {
+      id: 7, preds: [], insts: ops,
+      term: ssa.STerm { kind_tag: 1, value: result, target: 0, t: 0, f: 0, cond: 0 },
+    }],
+  };
+}
+
+function expect(f: ssa.SFunc, modes: i32[], owned: boolean, status: i32, phrase: string, id: i32): void {
+  let v = ssacredit.check(f, ssacredit.Boundary { params: modes, owned_result: owned });
+  if (v.status != status || v.function_name != f.name || !util.contains(ssacredit.render(v), phrase)) {
+    print(ssacredit.render(v) + "\n");
+    exit(id);
+  }
+}
+
+function br(id: i32): ssa.STerm {
+  return ssa.STerm { kind_tag: 2, value: 0, target: id, t: 0, f: 0, cond: 0 };
+}
+
+function ret(v: i32): ssa.STerm {
+  return ssa.STerm { kind_tag: 1, value: v, target: 0, t: 0, f: 0, cond: 0 };
+}
+
+function flow_checks(): void {
+  let entry = ssa.SBlock {
+    id: 7, preds: [], insts: [inst(6, 0, [], 0, ""), inst(6, 1, [], 1, ""), inst(1, 2, [], 0, "")],
+    term: ssa.STerm { kind_tag: 3, value: 0, target: 0, t: 17, f: 27, cond: 1 },
+  };
+  let left = ssa.SBlock { id: 17, preds: [7], insts: [inst(7, 3, [0], 0, ""), call(4, 3, "__fern_rc_inc"), call(5, 4, "__fern_rc_dec")], term: br(37) };
+  let right = ssa.SBlock { id: 27, preds: [7], insts: [inst(7, 6, [0], 0, "")], term: br(37) };
+  let merge = ssa.SBlock { id: 37, preds: [17, 27], insts: [inst(8, 7, [3, 6], 0, ""), call(8, 7, "__fern_rc_dec")], term: ret(2) };
+  let f = ssa.SFunc { name: "physical_diamond", nparams: 2, nvals: 9, entry: 7, takes_env: false, blocks: [merge, right, entry, left] };
+  expect(f, [2, 0], false, 0, "certified", 31);
+  // The predecessor order selects phi operands, not block storage order.
+  let reversed = ssa.SBlock { ...merge, preds: [27, 17], insts: [inst(8, 7, [6, 3], 0, ""), call(8, 7, "__fern_rc_dec")] };
+  expect(ssa.SFunc { ...f, blocks: [right, reversed, left, entry] }, [2, 0], false, 0, "certified", 32);
+  let missing = ssa.SBlock { ...left, insts: [inst(7, 3, [0], 0, ""), inst(7, 4, [3], 0, ""), call(5, 4, "__fern_rc_dec")] };
+  expect(ssa.SFunc { ...f, blocks: [merge, right, entry, missing] }, [2, 0], false, 2, "path-dependent credit", 33);
+  let extra = ssa.SBlock { ...left, insts: [inst(7, 3, [0], 0, ""), call(4, 3, "__fern_rc_inc"), inst(7, 5, [4], 0, "")] };
+  expect(ssa.SFunc { ...f, blocks: [merge, right, entry, extra] }, [2, 0], false, 2, "path-dependent credit", 34);
+  let badphi = ssa.SBlock { ...merge, insts: [inst(8, 7, [6, 3], 0, ""), call(8, 7, "__fern_rc_dec")] };
+  expect(ssa.SFunc { ...f, blocks: [badphi, right, entry, left] }, [2, 0], false, 3, "unavailable phi", 35);
+  let nodom = ssa.SBlock { ...merge, insts: [inst(8, 7, [3, 6], 0, ""), call(8, 3, "__fern_rc_dec")] };
+  expect(ssa.SFunc { ...f, blocks: [nodom, right, entry, left] }, [2, 0], false, 3, "undefined operand", 36);
+  let badpred = ssa.SBlock { ...merge, preds: [17] };
+  expect(ssa.SFunc { ...f, blocks: [badpred, right, entry, left] }, [2, 0], false, 3, "phi predecessor arity", 37);
+  let extra_pred = ssa.SBlock { ...merge, preds: [17, 27, 7] };
+  expect(ssa.SFunc { ...f, blocks: [extra_pred, right, entry, left] }, [2, 0], false, 3, "predecessor is not an edge", 38);
+  let big = ssa.SBlock { ...merge, id: 2147483647 };
+  expect(ssa.SFunc { ...f, blocks: [big, ssa.SBlock { ...right, term: br(2147483647) }, entry, ssa.SBlock { ...left, term: br(2147483647) }] }, [2, 0], false, 0, "certified", 39);
+  let missing_edge = ssa.SBlock { ...right, term: br(100) };
+  expect(ssa.SFunc { ...f, blocks: [entry, missing_edge, left, merge] }, [2, 0], false, 3, "missing successor", 40);
+  // Each return is checked, including the branch the supplied scalar does
+  // not take in a particular execution.
+  let goodexit = ssa.SBlock { ...left, insts: [call(3, 0, "__fern_rc_dec")], term: ret(2) };
+  let badexit = ssa.SBlock { ...right, insts: [], term: ret(2) };
+  let exits = ssa.SFunc { ...f, nvals: 4, blocks: [entry, goodexit, badexit] };
+  expect(exits, [2, 0], false, 1, "remains", 41);
+  expect(ssa.SFunc { ...exits, nvals: 5, blocks: [entry, goodexit, ssa.SBlock { ...badexit, insts: [call(4, 0, "__fern_rc_dec")] }] }, [2, 0], false, 0, "certified", 42);
+  let cycle = ssa.SBlock { id: 47, preds: [47], insts: [], term: br(47) };
+  expect(ssa.SFunc { ...f, blocks: [entry, left, right, merge, cycle] }, [2, 0], false, 2, "cycle or unreachable", 43);
+  let orphan = ssa.SBlock { id: 57, preds: [], insts: [], term: ret(2) };
+  expect(ssa.SFunc { ...f, blocks: [entry, left, right, merge, orphan] }, [2, 0], false, 2, "cycle or unreachable", 44);
+}
+
+function loop_checks(): void {
+  let entry = ssa.SBlock { id: 7, preds: [], insts: [inst(6, 0, [], 0, ""), inst(6, 1, [], 1, ""), inst(1, 2, [], 0, "")], term: br(17) };
+  let header = ssa.SBlock { id: 17, preds: [7, 27], insts: [inst(8, 3, [0, 5], 0, "")], term: ssa.STerm { kind_tag: 3, value: 0, target: 0, t: 27, f: 37, cond: 1 } };
+  let body = ssa.SBlock { id: 27, preds: [17], insts: [call(4, 3, "__fern_rc_inc"), call(5, 4, "__fern_rc_dec")], term: br(17) };
+  let done = ssa.SBlock { id: 37, preds: [17], insts: [call(6, 3, "__fern_rc_dec")], term: ret(2) };
+  let f = ssa.SFunc { name: "physical_loop", nparams: 2, nvals: 7, entry: 7, takes_env: false, blocks: [done, body, header, entry] };
+  expect(f, [2, 0], false, 0, "certified", 51);
+  let reversed = ssa.SBlock { ...header, preds: [27, 7], insts: [inst(8, 3, [5, 0], 0, "")] };
+  expect(ssa.SFunc { ...f, blocks: [entry, reversed, body, done] }, [2, 0], false, 0, "certified", 52);
+  let big = ssa.SBlock { ...header, id: 2147483647 };
+  expect(ssa.SFunc { ...f, blocks: [big, ssa.SBlock { ...entry, term: br(2147483647) }, ssa.SBlock { ...body, preds: [2147483647], term: br(2147483647) }, ssa.SBlock { ...done, preds: [2147483647] }] }, [2, 0], false, 0, "certified", 53);
+  let loss = ssa.SBlock { ...body, insts: [inst(7, 4, [3], 0, ""), call(5, 4, "__fern_rc_dec")] };
+  expect(ssa.SFunc { ...f, blocks: [entry, header, loss, done] }, [2, 0], false, 1, "loop credit invariant", 54);
+  let gain = ssa.SBlock { ...body, insts: [call(4, 3, "__fern_rc_inc"), inst(7, 5, [4], 0, "")] };
+  expect(ssa.SFunc { ...f, blocks: [entry, header, gain, done] }, [2, 0], false, 1, "loop credit invariant", 55);
+  let allocating = ssa.SBlock { ...body, insts: [inst(48, 4, [], 0, ""), call(5, 4, "__fern_rc_dec")] };
+  expect(ssa.SFunc { ...f, blocks: [entry, header, allocating, done] }, [2, 0], false, 2, "loop allocation identities", 56);
+  // A preheader allocation denotes one instance and is safe across iterations.
+  let fresh = ssa.SBlock { ...entry, insts: [inst(48, 0, [], 0, ""), inst(6, 1, [], 0, ""), inst(1, 2, [], 0, "")] };
+  expect(ssa.SFunc { ...f, nparams: 1, blocks: [fresh, header, body, done] }, [0], false, 0, "certified", 57);
+  // Credit agreement alone does not prove a loop-carried pointer identity.
+  let wrong_alias = ssa.SBlock { ...header, insts: [inst(8, 3, [0, 2], 0, "")] };
+  expect(ssa.SFunc { ...f, blocks: [entry, wrong_alias, body, done] }, [2, 0], false, 2, "loop alias invariant", 58);
+  let early_use = ssa.SBlock { ...header, insts: [inst(8, 3, [0, 5], 0, ""), call(7, 5, "__fern_rc_is_unique")] };
+  expect(ssa.SFunc { ...f, nvals: 8, blocks: [entry, early_use, body, done] }, [2, 0], false, 3, "undefined operand", 59);
+  // Both backedges must prove the same invariant, even when only one is bad.
+  let split = ssa.SBlock { ...body, term: ssa.STerm { kind_tag: 3, value: 0, target: 0, t: 17, f: 47, cond: 1 } };
+  let latch = ssa.SBlock { id: 47, preds: [27], insts: [], term: br(17) };
+  let multiple = ssa.SBlock { ...header, preds: [7, 27, 47], insts: [inst(8, 3, [0, 5, 5], 0, "")] };
+  expect(ssa.SFunc { ...f, blocks: [latch, done, multiple, split, entry] }, [2, 0], false, 0, "certified", 60);
+  expect(ssa.SFunc { ...f, nvals: 8, blocks: [ssa.SBlock { ...latch, insts: [call(7, 5, "__fern_rc_dec")] }, done, multiple, split, entry] }, [2, 0], false, 1, "loop credit invariant", 61);
+  // A nested loop reuses the outer invariant without enumerating iterations.
+  let inner = ssa.SBlock { id: 47, preds: [27, 57], insts: [], term: ssa.STerm { kind_tag: 3, value: 0, target: 0, t: 57, f: 17, cond: 1 } };
+  let inner_body = ssa.SBlock { id: 57, preds: [47], insts: [call(7, 5, "__fern_rc_inc"), call(8, 7, "__fern_rc_dec")], term: br(47) };
+  let outer = ssa.SBlock { ...header, preds: [7, 47] };
+  let nested = ssa.SFunc { ...f, nvals: 9, blocks: [inner_body, entry, outer, ssa.SBlock { ...body, term: br(47) }, inner, done] };
+  expect(nested, [2, 0], false, 0, "certified", 62);
+  expect(ssa.SFunc { ...nested, blocks: [ssa.SBlock { ...inner_body, insts: [inst(7, 7, [5], 0, ""), call(8, 7, "__fern_rc_dec")] }, entry, outer, ssa.SBlock { ...body, term: br(47) }, inner, done] }, [2, 0], false, 1, "loop credit invariant", 63);
+  let self = ssa.SBlock { ...header, preds: [7, 17], insts: [inst(8, 3, [0, 5], 0, ""), call(4, 3, "__fern_rc_inc"), call(5, 4, "__fern_rc_dec")], term: ssa.STerm { ...header.term, t: 17 } };
+  expect(ssa.SFunc { ...f, blocks: [done, self, entry] }, [2, 0], false, 0, "certified", 64);
+  expect(ssa.SFunc { ...f, blocks: [ssa.SBlock { ...done, insts: [call(6, 3, "__fern_rc_is_unique")] }, self, entry] }, [1, 0], false, 0, "certified", 65);
+  // Two-entry cycles have no dominating loop header and remain unsupported.
+  let fork = ssa.SBlock { ...entry, term: ssa.STerm { ...header.term, t: 17, f: 27 } };
+  let a = ssa.SBlock { id: 17, preds: [7, 27], insts: [], term: br(27) };
+  let b = ssa.SBlock { id: 27, preds: [7, 17], insts: [], term: ssa.STerm { ...header.term, t: 17, f: 37 } };
+  let out = ssa.SBlock { ...done, preds: [27], insts: [call(3, 0, "__fern_rc_dec")] };
+  expect(ssa.SFunc { ...f, nvals: 4, blocks: [fork, a, b, out] }, [2, 0], false, 2, "cycle or unreachable", 66);
+}
+
+function main(): i32 {
+  let p = inst(6, 0, [], 0, "");
+  let zero = inst(1, 1, [], 0, "");
+  let inc = call(2, 0, "__fern_rc_inc");
+  let dec = call(3, 0, "__fern_rc_dec");
+  let dec_alias = call(4, 2, "__fern_rc_dec");
+  // Multiple credits and helper-return aliases refer to one account.
+  expect(graph([p, zero, inc, dec, dec_alias], 1, 5, 1), [2], false, 0, "certified", 1);
+  expect(graph([p, zero, inc, dec], 1, 4, 1), [2], false, 1, "remains", 2);
+  expect(graph([p, zero, dec], 1, 4, 1), [2], false, 0, "certified", 3);
+  expect(graph([p, zero, dec, call(4, 3, "__fern_rc_dec")], 1, 5, 1), [2], false, 1, "release without", 4);
+  expect(graph([p, zero, dec, call(4, 3, "__fern_rc_inc")], 1, 5, 1), [2], false, 1, "use after", 5);
+  expect(graph([p, zero, dec, call(4, 0, "__fern_rc_is_unique")], 1, 5, 1), [2], false, 1, "use after", 6);
+  expect(graph([p, zero], 1, 2, 1), [2], false, 1, "remains", 7);
+  expect(graph([p], 1, 1, 0), [2], true, 0, "certified", 8);
+  expect(graph([p, zero, dec], 1, 4, 3), [2], true, 1, "return without", 9);
+  // A borrowed anchor can be read after a locally acquired unit is released.
+  expect(graph([p, zero, inc, dec, call(4, 3, "__fern_rc_is_unique")], 1, 5, 1), [1], false, 0, "certified", 10);
+  expect(graph([p, zero, dec], 1, 4, 1), [1], false, 1, "release without", 11);
+  expect(graph([p], 1, 1, 0), [1], true, 1, "return without", 12);
+  expect(graph([p, zero, inc], 1, 3, 2), [1], true, 0, "certified", 13);
+  expect(graph([p, zero, inst(7, 2, [0], 0, ""), call(3, 2, "__fern_rc_dec")], 1, 4, 1), [2], false, 0, "certified", 14);
+  expect(graph([inst(48, 0, [], 0, ""), zero, call(2, 0, "__fern_rc_dec")], 0, 3, 1), [], false, 0, "certified", 15);
+  expect(graph([inst(48, 0, [], 0, "")], 0, 1, 0), [], true, 0, "certified", 16);
+  expect(graph([p, zero, call(2, 0, "invented_retain")], 1, 3, 1), [2], false, 2, "unaudited call", 17);
+  expect(graph([p, zero, inst(41, 2, [0, 1], 0, "")], 1, 3, 1), [2], false, 2, "unsupported operation", 18);
+  expect(graph([p, inst(6, 1, [], 1, "")], 2, 2, 0), [2, 1], true, 2, "alias relationships", 19);
+  expect(graph([p, p], 1, 1, 0), [2], true, 3, "duplicate value", 20);
+  expect(graph([p, call(1, 99, "__fern_rc_dec")], 1, 2, 0), [2], true, 3, "undefined operand", 21);
+  expect(graph([p], 1, 1, 0), [7], true, 3, "parameter mode", 22);
+  expect(graph([p], 1, 1, 0), [0], true, 3, "counted provenance", 23);
+  expect(graph([p, zero, dec], 1, 4, 1), [0], false, 2, "counted provenance", 24);
+  expect(graph([p], 1, 1, 0), [2], false, 2, "result contract", 25);
+  // Actual physical stack operations go through the production lift. The
+  // extra emitted release is rejected independently of any unit plan.
+  let ops: ir.Op[] = [
+    ir.op_load_local(0), ir.op_call_direct("__fern_rc_inc", 1), ir.op_drop(),
+    ir.op_load_local(0), ir.op_call_direct("__fern_rc_dec", 1), ir.op_drop(),
+    ir.op_load_local(0), ir.op_return(),
+  ];
+  let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), "emitted_valid", 1, 1, ops, false);
+  if (!lifted.ok) {
+    print(lifted.bail + "\n");
+    return 26;
+  }
+  expect(lifted.func, [2], true, 0, "certified", 27);
+  let bad: ir.Op[] = [];
+  let i: i32 = 0;
+  while (i < 6) {
+    bad = bad.append(ops[i]);
+    i = i + 1;
+  }
+  bad = bad.append(ir.op_load_local(0)).append(ir.op_call_direct("__fern_rc_dec", 1)).append(ir.op_drop());
+  bad = bad.append(ir.op_load_local(0)).append(ir.op_return());
+  let mutated = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), "emitted_extra_release", 1, 1, bad, false);
+  if (!mutated.ok) {
+    print(mutated.bail + "\n");
+    return 28;
+  }
+  expect(mutated.func, [2], true, 1, "emitted_extra_release", 29);
+  flow_checks();
+  loop_checks();
+  print("physical credit pilot: all controls agree\n");
+  return 0;
+}
