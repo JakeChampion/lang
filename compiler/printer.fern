@@ -447,6 +447,49 @@ function iife_value_local(first: ast.Stmt, last: ast.Stmt): string {
   return "";
 }
 
+function print_if_value_branch(body: ast.Stmt[], dead: boolean, depth: i32): string {
+  if (body.len() == 0) {
+    return "";
+  }
+  if (body.len() == 1) {
+    if let ast.StmtIf(nested) = body[0] {
+      let value = print_if_value(nested, depth);
+      if (value == "") {
+        return "";
+      }
+      return "{ " + value + " }";
+    }
+  }
+  let tail = print_return_only([body[body.len() - 1]], depth);
+  if (tail == "") {
+    return "";
+  }
+  let out = "{ ";
+  let i: i32 = 0;
+  while (i + 1 < body.len()) {
+    out = out + print_stmt_inline(body[i], 0) + " ";
+    i = i + 1;
+  }
+  if (!dead) {
+    out = out + tail + " ";
+  }
+  return out + "}";
+}
+
+function print_if_value(f: ast.StmtIf, depth: i32): string {
+  if (f.origin != parser.ORIGIN_IF_EXPR && f.origin != parser.ORIGIN_IF_DEAD_THEN && f.origin != parser.ORIGIN_IF_DEAD_ELSE && f.origin != parser.ORIGIN_IF_DEAD_BOTH) {
+    return "";
+  }
+  let then_dead = f.origin == parser.ORIGIN_IF_DEAD_THEN || f.origin == parser.ORIGIN_IF_DEAD_BOTH;
+  let else_dead = f.origin == parser.ORIGIN_IF_DEAD_ELSE || f.origin == parser.ORIGIN_IF_DEAD_BOTH;
+  let tv = print_if_value_branch(f.then_body, then_dead, depth);
+  let ev = print_if_value_branch(f.else_body, else_dead, depth);
+  if (tv == "" || ev == "") {
+    return "";
+  }
+  return "if (" + print_expr(f.cond, depth) + ") " + tv + " else " + ev;
+}
+
 function print_expr_iife(c: ast.ExprCall, parent_prec: i32, depth: i32): string {
   if (c.args.len() != 0) {
     return "";
@@ -455,6 +498,15 @@ function print_expr_iife(c: ast.ExprCall, parent_prec: i32, depth: i32): string 
     ast.ExprLambda(lm) => {
       if (lm.params.len() != 0) {
         return "";
+      }
+      if (lm.origin == parser.ORIGIN_IF_EXPR && lm.body.len() == 1) {
+        if let ast.StmtIf(f) = lm.body[0] {
+          let text = print_if_value(f, depth);
+          if (text != "" && parent_prec > 3) {
+            return "(" + text + ")";
+          }
+          return text;
+        }
       }
       // The VALUE-LOCAL shape: a chain cannot `return` an arm's value the
       // way a match arm does, so the desugar declares a local, lets the

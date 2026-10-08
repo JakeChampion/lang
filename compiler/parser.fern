@@ -860,6 +860,14 @@ pub const ORIGIN_MATCH_EXPR: string = "match_expr";
 
 pub const ORIGIN_IF_EXPR: string = "if_expr";
 
+// Source provenance for an if-expression's branch tails. Divergent branches
+// receive an unreachable return for lowering; the formatter must not print it.
+pub const ORIGIN_IF_DEAD_THEN: string = "if_expr_dead_then";
+
+pub const ORIGIN_IF_DEAD_ELSE: string = "if_expr_dead_else";
+
+pub const ORIGIN_IF_DEAD_BOTH: string = "if_expr_dead_both";
+
 pub const ORIGIN_ARR_COMP: string = "arr_comp";
 
 pub const ORIGIN_MAP_COMP: string = "map_comp";
@@ -4905,12 +4913,17 @@ function parse_block_items(p: Par): (ast.Stmt[], boolean, ast.Expr, boolean, Par
 }
 
 function parse_branch_body(p: Par): (ast.Stmt[], string, Par) {
+  let (body, rt, dead, next) = parse_branch_body_written(p);
+  return (body, rt, next);
+}
+
+function parse_branch_body_written(p: Par): (ast.Stmt[], string, boolean, Par) {
   let rt: string = "i32";
   let (bi_leading, bi_have_tail, bi_tail, bi_ok, bi_p) = parse_block_items(p);
   if (!bi_ok) {
     let ebody: ast.Stmt[] = [];
     ebody = ebody.append(s_unknown(p, "missing { in branch body"));
-    return (ebody, rt, p);
+    return (ebody, rt, false, p);
   }
   let leading: ast.Stmt[] = bi_leading;
   let have_tail: boolean = bi_have_tail;
@@ -4931,15 +4944,15 @@ function parse_branch_body(p: Par): (ast.Stmt[], string, Par) {
   if (!have_tail) {
     if (!branch_stmts_diverge(leading)) {
       leading = leading.append(s_unknown(p, "value branch has no trailing expression"));
-      return (leading, rt, p);
+      return (leading, rt, false, p);
     }
     let dead: ast.Expr = branch_dead_tail(leading);
     rt = if_expr_rt(dead);
     leading = leading.append(s_return(dead));
-    return (leading, rt, p);
+    return (leading, rt, true, p);
   }
   leading = leading.append(s_return(tail));
-  return (leading, rt, p);
+  return (leading, rt, false, p);
 }
 
 // parse_if_chain parses `if (c) { E1 } else { E2 }` (and `else if`
@@ -4965,7 +4978,7 @@ function parse_if_chain(p: Par): IfChain {
   if (p.peek_punct() == ")") {
     p = p.advance();
   }
-  let (thenb_body, thenb_rt, thenb_p) = parse_branch_body(p);
+  let (thenb_body, thenb_rt, then_dead, thenb_p) = parse_branch_body_written(p);
   p = thenb_p;
   let then_body: ast.Stmt[] = thenb_body;
   let rt: string = thenb_rt;
@@ -4973,18 +4986,28 @@ function parse_if_chain(p: Par): IfChain {
     p = p.advance();
   }
   let else_body: ast.Stmt[] = [];
+  let else_dead = false;
   if (p.peek_keyword() == "if") {
     // `else if (…) { … }` — the else arm is itself an if-chain.
     let nested: IfChain = parse_if_chain(p);
     p = nested.par;
     else_body = [nested.stmt];
   } else {
-    let (elseb_body, elseb_rt, elseb_p) = parse_branch_body(p);
+    let (elseb_body, elseb_rt, elseb_dead, elseb_p) = parse_branch_body_written(p);
     p = elseb_p;
     else_body = elseb_body;
+    else_dead = elseb_dead;
     rt = wider_rt(rt, elseb_rt);
   }
-  return IfChain { par: p, stmt: s_if(condr_expr, then_body, else_body), rt: rt, needs_default_return: false, value_local: "", scrut_bind: [] };
+  let origin = ORIGIN_IF_EXPR;
+  if (then_dead && else_dead) {
+    origin = ORIGIN_IF_DEAD_BOTH;
+  } else if (then_dead) {
+    origin = ORIGIN_IF_DEAD_THEN;
+  } else if (else_dead) {
+    origin = ORIGIN_IF_DEAD_ELSE;
+  }
+  return IfChain { par: p, stmt: s_if_origin(condr_expr, then_body, else_body, origin), rt: rt, needs_default_return: false, value_local: "", scrut_bind: [] };
 }
 
 // parse_match_expr parses `match (e) { Pat => E, Pat when C => E, … }` in value

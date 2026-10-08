@@ -63,6 +63,17 @@ var fmtParityCases = []struct {
 	name string
 	src  string
 }{
+	{"if-expression-written-branches", `function branches(n: i32): string {
+  let chain = if (n == 0) { "zero" } else if (n == 1) { "one" } else { "other" };
+  let leading = if (n == 0) { let a = "a"; a } else { let b = "b"; b };
+  let first = if (n < 0) { return "negative"; } else { "positive" };
+  let last = if (n < 2) { "small" } else { return "large"; };
+  let explicit_tail = if (n == 9) { return "early"; "written unreachable" } else { "tail" };
+  let lambda = ((): string => if (n == 3) { return "three"; } else { if (n == 4) { return "four"; } else { return "five"; } })();
+  return chain + leading + first + last + explicit_tail + lambda;
+}
+function main(): i32 { return branches(0).len(); }
+`},
 	{"if-expression-precedence", `function choose(flag: boolean): i32 {
   let bare = if (flag) { 1 } else { 2 };
   let right = 10 + (if (flag) { 1 } else { 2 });
