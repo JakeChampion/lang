@@ -124,6 +124,43 @@ function controls(f: ssa.SFunc, shape: string, refs: boolean[]): void {
   expect(f, shape, refs, "", 50);
 }
 
+function sparse(f: ssa.SFunc): ssa.SFunc {
+  let b = f.blocks[0];
+  let insts: ssa.SInst[] = [];
+  for op in b.insts {
+    let args: i32[] = [];
+    for arg in op.args {
+      args = args.append((f.nvals - 1 - arg) * 17 + 1);
+    }
+    insts = insts.append(ssa.SInst { ...op, result: (f.nvals - 1 - op.result) * 17 + 1, args: args });
+  }
+  return ssa.SFunc { ...f, nvals: (f.nvals - 1) * 17 + 2, blocks: [ssa.SBlock { ...b, insts: insts, term: ssa.STerm { ...b.term, value: (f.nvals - 1 - b.term.value) * 17 + 1 } }] };
+}
+
+function sparse_controls(f: ssa.SFunc, shape: string, refs: boolean[]): void {
+  let formed = ssa.register_form(f).f;
+  require(formed.blocks[0].insts.len() < formed.nvals, 51);
+  expect(formed, shape, refs, "", 52);
+  let renamed = sparse(formed);
+  expect(renamed, shape, refs, "", 53);
+  let b = renamed.blocks[0];
+  let copy = ssa.SInst { kind_tag: 7, result: renamed.nvals, args: [0], imm: 0, str: "" };
+  let term = ssa.STerm { ...b.term, value: renamed.nvals };
+  let extended = ssa.SFunc { ...renamed, nvals: renamed.nvals + 1, blocks: [ssa.SBlock { ...b, insts: b.insts.append(copy), term: term }] };
+  expect(extended, shape, refs, "unavailable allocation producer operand", 54);
+  let good = ssa.SInst { ...copy, args: [b.term.value] };
+  expect(ssa.SFunc { ...extended, blocks: [ssa.SBlock { ...b, insts: b.insts.append(good), term: term }] }, shape, refs, "", 55);
+  expect(ssa.SFunc { ...renamed, blocks: [ssa.SBlock { ...b, term: ssa.STerm { ...b.term, value: 0 } }] }, shape, refs, "fresh allocation producer return required", 56);
+  expect(ssa.SFunc { ...renamed, blocks: [ssa.SBlock { ...b, insts: b.insts.append(b.insts[0]) }] }, shape, refs, "invalid allocation producer definition", 57);
+  expect(ssa.SFunc { ...renamed, nvals: 2147483647 }, shape, refs, "unsupported allocation producer graph", 58);
+  let high = ssa.SInst { ...good, result: 2147483646 };
+  let high_term = ssa.STerm { ...term, value: high.result };
+  expect(ssa.SFunc { ...renamed, nvals: 2147483647, blocks: [ssa.SBlock { ...b, insts: b.insts.append(high), term: high_term }] }, shape, refs, "", 59);
+  for unavailable in [copy.result, b.insts[b.insts.len() - 1].result] {
+    expect(ssa.SFunc { ...extended, blocks: [ssa.SBlock { ...b, insts: b.insts.append(ssa.SInst { ...copy, args: [unavailable] }), term: term }] }, shape, refs, "unavailable allocation producer operand", 60);
+  }
+}
+
 function target_checks(target: string): void {
   let source = "struct Leaf { n: i32 }\nstruct Parent { left: Leaf, right: Leaf }\n@noinline\nfunction leaf(n: i32): Leaf { return Leaf { n: n }; }\n@noinline\nfunction parent(own left: Leaf, own right: Leaf): Parent { return Parent { left: left, right: right }; }\nfunction main(): i32 { let p = parent(leaf(1), leaf(2)); return p.left.n + p.right.n - 3; }\n";
   let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
@@ -135,8 +172,10 @@ function target_checks(target: string): void {
       require(lifted.ok, 3);
       if (body.name == "leaf") {
         controls(lifted.func, "Leaf", [false]);
+        sparse_controls(lifted.func, "Leaf", [false]);
       } else {
         controls(lifted.func, "Parent", [true, true]);
+        sparse_controls(lifted.func, "Parent", [true, true]);
       }
       count = count + 1;
     }
