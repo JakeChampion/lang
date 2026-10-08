@@ -14,6 +14,10 @@ struct State { path: i32, parents: i32[], children: i32[], contents: i32[], cred
 
 struct Incoming { state: State, edges: phi.Edge[] }
 
+// Caller proves this exact child field is a concrete signed i32. Roots name
+// credit obligations (3 incoming, 4 old left, 5 old right), not unequal pointers.
+pub struct ScalarField { root: i32, offset: i32 }
+
 struct Context { arena: guard.Arena, values: phi.Value[], state: State, unique: i32, temp: i32, error: string }
 
 function failed(c: Context, why: string): Context {
@@ -166,7 +170,11 @@ function old_parent_on_path(c: Context, v: phi.Value): boolean {
   return out.error == "" && guard.is_constant(out.arena, out.temp, 1);
 }
 
-function transfer(c: Context, op: ssa.SInst, shape: string, drop: string, release: string): Context {
+function narrow_number(v: phi.Value): boolean {
+  return v.kind == 0 || v.kind == 3;
+}
+
+function transfer(c: Context, op: ssa.SInst, shape: string, drop: string, release: string, fields: ScalarField[]): Context {
   let out = c;
   for arg in op.args {
     out = available(out, arg);
@@ -197,6 +205,29 @@ function transfer(c: Context, op: ssa.SInst, shape: string, drop: string, releas
     if (kind == 1) {
       out = reference_copy(out, v);
     }
+  } else if (op.kind_tag == 9 && op.args.len() == 2 && op.str == "add" && op.imm == 0) {
+    if (!narrow_number(out.values[op.args[0]]) || !narrow_number(out.values[op.args[1]])) {
+      return failed(out, "integer add requires numeric operands");
+    }
+    // Default-width machine add is pure and non-trapping. Do not calculate a
+    // constant or claim signed i32 range before the explicit narrowing cast.
+    kind = 4;
+  } else if (op.kind_tag == 10 && op.args.len() == 1 && op.str == "int_cast:i32" && op.imm == 0) {
+    let v = out.values[op.args[0]];
+    if (!narrow_number(v) && v.kind != 4) {
+      return failed(out, "integer cast requires numeric operand");
+    }
+    kind = 3;
+  } else if (op.kind_tag == 9 && op.args.len() == 2 && op.str == "gt_s" && op.imm == 0) {
+    if (!narrow_number(out.values[op.args[0]]) || !narrow_number(out.values[op.args[1]])) {
+      return failed(out, "signed comparison requires narrowed numeric operands");
+    }
+    // Unique SSA definitions keep repeated uses correlated. Predicate zero is
+    // reserved for parent uniqueness; comparisons never establish that fact.
+    let p = guard.predicate(out.arena, op.result + 1);
+    out = Context { ...out, arena: p.arena, error: p.error };
+    kind = 0;
+    identity = p.id;
   } else if (op.kind_tag == 9 && op.args.len() == 2 && (op.str == "eq" || op.str == "ne")) {
     let a = out.values[op.args[0]];
     let b = out.values[op.args[1]];
@@ -224,6 +255,22 @@ function transfer(c: Context, op: ssa.SInst, shape: string, drop: string, releas
       out = calc(out, 1, 1, identity);
       identity = out.temp;
     }
+  } else if (op.kind_tag == 40 && op.args.len() == 1 && !old_parent_on_path(out, out.values[op.args[0]]) && fields.len() > 0 && op.str == "") {
+    let base = out.values[op.args[0]];
+    out = child(out, base);
+    let covered: i32 = 0;
+    for field in fields {
+      if (field.offset == op.imm) {
+        out = mask(out, base.identity, field.root);
+        out = calc(out, 0, covered, out.temp);
+        covered = out.temp;
+      }
+    }
+    out = equal(out, out.state.path, covered, 1, "missing scalar child field layout");
+    // Kind 3 is an unknown numeric value, never a zero, credit or heap identity.
+    // Only the explicit numeric rules above may consume it. Unknown numeric
+    // values cannot supply pointer identities, Boolean masks or phi references.
+    kind = 3;
   } else if (op.kind_tag == 40 && op.args.len() == 1 && (op.imm == 8 || op.imm == 16) && op.str == "") {
     let base = out.values[op.args[0]];
     out = parent(out, base);
@@ -534,6 +581,22 @@ function merged(c: Context, old: State, path: i32): Context {
 }
 
 pub function check(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: string): helper.Proof {
+  return check_fields(f, drop, release, shape, []);
+}
+
+pub function check_fields(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: string, fields: ScalarField[]): helper.Proof {
+  let seen: ScalarField[] = [];
+  for field in fields {
+    if (field.root < 3 || field.root > 5 || field.offset < 8 || field.offset % 8 != 0) {
+      return helper.Proof { ok: false, function_name: f.name, message: "invalid scalar child field layout" };
+    }
+    for old in seen {
+      if (old.root == field.root && old.offset == field.offset) {
+        return helper.Proof { ok: false, function_name: f.name, message: "duplicate scalar child field layout" };
+      }
+    }
+    seen = seen.append(field);
+  }
   if (shape == "" || f.name == "" || util.str_has_prefix(f.name, "__fern_") || f.name == drop.name || f.name == release.name) {
     return helper.Proof { ok: false, function_name: f.name, message: "invalid reuse identity" };
   }
@@ -599,7 +662,7 @@ pub function check(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: str
       }
       for op in b.insts {
         if (c.error == "" && op.kind_tag != 8) {
-          c = transfer(c, op, shape, drop.name, release.name);
+          c = transfer(c, op, shape, drop.name, release.name, fields);
         }
       }
       if (c.error == "" && b.term.kind_tag == 1) {

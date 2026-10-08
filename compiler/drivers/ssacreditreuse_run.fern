@@ -230,6 +230,135 @@ function child_drop_checks(body: irtables.LowerResult, d: ssa.SFunc, r: ssa.SFun
   }
 }
 
+// Keep the actual old-child release and clear transfer. Save its operand to
+// prove that a detached reference remains readable only while its credit lives.
+function scalar_read_mutation(body: irtables.LowerResult, field: i32, mode: i32): irtables.LowerResult {
+  let ops: ir.Op[] = [];
+  let hits: i32 = 0;
+  for op in body.ops {
+    if (op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_dec") {
+      hits = hits + 1;
+      ops = ops.append(ir.op_store_local(body.n_locals));
+      ops = clear_slot(ops, field, 0);
+      if (mode == 1) {
+        ops = ops.append(ir.op_load_local(body.n_locals)).append(op).append(ir.op_drop());
+      }
+      let index: i32 = 0;
+      if (mode == 2) {
+        index = 1;
+      }
+      ops = ops.append(ir.op_load_local(body.n_locals)).append(ir.op_struct_get(index, 0));
+      if (mode == 3) {
+        ops = ops.append(op);
+      }
+      ops = ops.append(ir.op_drop());
+      if (mode != 1) {
+        ops = ops.append(ir.op_load_local(body.n_locals)).append(op);
+      } else {
+        ops = ops.append(ir.op_const_i32(0));
+      }
+    } else {
+      ops = ops.append(op);
+    }
+  }
+  require(hits == 1, 100);
+  return irtables.LowerResult { ...body, ops: ops, n_locals: body.n_locals + 1 };
+}
+
+function scalar_reads(body: irtables.LowerResult, d: ssa.SFunc, r: ssa.SFunc, field: i32): void {
+  let facts = [reuse.ScalarField { root: 4 + field, offset: 8 }];
+  let reasons = ["proved guarded two-child partial replacement", "child used after final credit or anchor", "missing scalar child field layout", "flat child reference required"];
+  let mode: i32 = 0;
+  while (mode < reasons.len()) {
+    let f = lift(scalar_read_mutation(body, field, mode));
+    let p = reuse.check_fields(f, d, r, "Parent", facts);
+    if (p.ok != (mode == 0) || p.function_name != f.name || p.message != reasons[mode]) {
+      print(p.function_name + ": " + p.message);
+      exit(101 + mode);
+    }
+    mode = mode + 1;
+  }
+  let f = lift(scalar_read_mutation(body, field, 0));
+  let duplicate = reuse.check_fields(f, d, r, "Parent", facts.append(facts[0]));
+  require(!duplicate.ok && duplicate.function_name == f.name && duplicate.message == "duplicate scalar child field layout", 105);
+  for offset in [-2147483648, 0, 9, 2147483647] {
+    let invalid = reuse.check_fields(f, d, r, "Parent", [reuse.ScalarField { root: 4 + field, offset: offset }]);
+    require(!invalid.ok && invalid.function_name == f.name && invalid.message == "invalid scalar child field layout", 106);
+  }
+  let wrong = reuse.check_fields(f, d, r, "Parent", [reuse.ScalarField { root: 5 - field, offset: 8 }]);
+  require(!wrong.ok && wrong.function_name == f.name && wrong.message == "missing scalar child field layout", 107);
+  expect(f, d, r, false, "parent reference required", 108);
+  expect(lift(body), d, r, true, "proved guarded two-child partial replacement", 109);
+}
+
+function numeric_mutation(body: irtables.LowerResult, field: i32, mode: i32): irtables.LowerResult {
+  let reading = scalar_read_mutation(body, field, 0);
+  let ops: ir.Op[] = [];
+  let hits: i32 = 0;
+  let i: i32 = 0;
+  for op in reading.ops {
+    ops = ops.append(op);
+    if (op.kind_tag == ir.kind_id("struct_get") && i > 0 && reading.ops[i - 1].kind_tag == ir.kind_id("load_local") && reading.ops[i - 1].i32_imm == body.n_locals) {
+      hits = hits + 1;
+      if (mode == 2) {
+        ops = ops.append(ir.op_drop()).append(ir.op_load_local(0));
+      }
+      let width: i32 = 0;
+      if (mode == 5) {
+        width = 64;
+      }
+      let operation = "add";
+      if (mode == 7) {
+        operation = "div_s";
+      }
+      ops = ops.append(ir.op_const_i32(-2147483648)).append(ir.op_bin(operation, width, false));
+      if (mode == 8) {
+        ops = ops.append(ir.op_drop()).append(ir.op_load_local(0));
+      }
+      if (mode != 3) {
+        let cast = ir.op_int_cast("i32");
+        if (mode == 4) {
+          cast = ir.Op { ...cast, unsigned: true };
+        }
+        ops = ops.append(cast);
+      }
+      width = 0;
+      if (mode == 6) {
+        width = 64;
+      }
+      ops = ops.append(ir.op_const_i32(0)).append(ir.op_bin("gt_s", width, false)).append(ir.op_store_local(body.n_locals + 1));
+      ops = ops.append(ir.op_load_local(body.n_locals + 1)).append(ir.op_if(0));
+      ops = ops.append(ir.op_load_local(1)).append(ir.op_call_direct("__fern_rc_inc", 1)).append(ir.op_drop()).append(ir.op_end());
+      ops = ops.append(ir.op_load_local(body.n_locals + 1));
+      if (mode == 1 || mode == 9) {
+        ops = ops.append(ir.op_const_i32(0)).append(ir.op_bin("eq", 0, false));
+      }
+      if (mode == 9) {
+        ops = ops.append(ir.op_const_i32(0)).append(ir.op_bin("eq", 0, false));
+      }
+      ops = ops.append(ir.op_if(0)).append(ir.op_load_local(1)).append(ir.op_call_direct("__fern_rc_dec", 1)).append(ir.op_drop()).append(ir.op_end());
+      ops = ops.append(ir.op_load_local(body.n_locals + 1));
+    }
+    i = i + 1;
+  }
+  require(hits == 1, 110);
+  return irtables.LowerResult { ...reading, ops: ops, n_locals: body.n_locals + 2 };
+}
+
+function numeric_checks(body: irtables.LowerResult, d: ssa.SFunc, r: ssa.SFunc, field: i32): void {
+  let reasons = ["proved guarded two-child partial replacement", "child used after final credit or anchor", "integer add requires numeric operands", "signed comparison requires narrowed numeric operands", "unsupported reuse operation", "unsupported reuse operation", "unsupported reuse operation", "unsupported reuse operation", "integer cast requires numeric operand", "proved guarded two-child partial replacement"];
+  let mode: i32 = 0;
+  while (mode < reasons.len()) {
+    let f = lift(numeric_mutation(body, field, mode));
+    let p = reuse.check_fields(f, d, r, "Parent", [reuse.ScalarField { root: 4 + field, offset: 8 }]);
+    if (p.ok != (mode == 0 || mode == 9) || p.function_name != f.name || p.message != reasons[mode]) {
+      print(p.function_name + ": " + p.message);
+      exit(111 + mode);
+    }
+    mode = mode + 1;
+  }
+}
+
 function shallow_mutation(body: irtables.LowerResult, field: i32, mode: i32): irtables.LowerResult {
   let ops: ir.Op[] = [];
   let hits: i32 = 0;
@@ -304,6 +433,8 @@ function target_checks(target: string): void {
   let r = lift(releases[0]);
   child_drop_checks(body, d, r, 0);
   shallow_checks(body, d, r, 0);
+  scalar_reads(body, d, r, 0);
+  numeric_checks(body, d, r, 0);
   expect(f, d, r, true, "proved guarded two-child partial replacement", 10);
   let clearing_reasons = ["proved guarded two-child partial replacement", "unconsumed child credit", "clearing slot without contained credit", "clearing shared parent slot", "only null slot clearing admitted", "load from stale or uninitialized slot", "clearing slot without contained credit", "result has stale or uninitialized slot"];
   let clearing_mode: i32 = 0;
@@ -401,6 +532,8 @@ function right_checks(target: string): void {
   require(bodies.len() == 1 && drops.len() == 1 && releases.len() == 1, 52);
   child_drop_checks(bodies[0], lift(drops[0]), lift(releases[0]), 1);
   shallow_checks(bodies[0], lift(drops[0]), lift(releases[0]), 1);
+  scalar_reads(bodies[0], lift(drops[0]), lift(releases[0]), 1);
+  numeric_checks(bodies[0], lift(drops[0]), lift(releases[0]), 1);
   expect(lift(bodies[0]), lift(drops[0]), lift(releases[0]), true, "proved guarded two-child partial replacement", 53);
   let reasons = ["proved guarded two-child partial replacement", "unconsumed child credit", "clearing slot without contained credit", "clearing shared parent slot", "only null slot clearing admitted", "load from stale or uninitialized slot", "clearing slot without contained credit", "result has stale or uninitialized slot"];
   let mode: i32 = 0;
