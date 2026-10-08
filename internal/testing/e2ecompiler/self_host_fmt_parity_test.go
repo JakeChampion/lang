@@ -63,6 +63,19 @@ var fmtParityCases = []struct {
 	name string
 	src  string
 }{
+	{"if-expression-precedence", `function choose(flag: boolean): i32 {
+  let bare = if (flag) { 1 } else { 2 };
+  let right = 10 + (if (flag) { 1 } else { 2 });
+  let left = (if (flag) { 3 } else { 4 }) * 2;
+  let unary = -(if (flag) { 5 } else { 6 });
+  let nested = 1 + (if (flag) { 2 + (if (flag) { 3 } else { 4 }) } else { 5 });
+  let cast = (if (flag) { 7 } else { 8 }) as i64;
+  let index = (if (flag) { [9] } else { [10] })[0];
+  let size = (if (flag) { "yes" } else { "no" }).len();
+  let logic = !(if (flag) { true } else { false });
+  return bare + right + left + unary + nested + (cast as i32) + index + size + (if (logic) { 1 } else { 0 });
+}
+`},
 	{"nested-payloadless-variants", `enum Color { Red, Black }
 enum Tree { Leaf, Node(Color, Tree, Tree) }
 

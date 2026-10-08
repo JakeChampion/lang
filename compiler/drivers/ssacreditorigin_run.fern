@@ -1,0 +1,153 @@
+import "../lexer";
+import "../parser";
+import "../semlower";
+import "../ssa";
+import "../ssa_lift";
+import "../ssacreditorigin" as origin;
+
+function require(ok: boolean, id: i32): void {
+  if (!ok) {
+    exit(id);
+  }
+}
+
+function expect(f: ssa.SFunc, shape: string, refs: boolean[], why: string, id: i32): void {
+  let p = origin.producer(f, shape, refs);
+  let ok = why == "";
+  if (p.proof.ok != ok || p.proof.function_name != f.name || ok && (p.words != refs.len() + 1 || p.proof.message != "proved initialized allocation origin") || !ok && (p.words != 0 || p.proof.message != why)) {
+    print(p.proof.function_name + ": " + p.proof.message);
+    exit(id);
+  }
+}
+
+function changed(f: ssa.SFunc, mode: i32): ssa.SFunc {
+  let b = f.blocks[0];
+  let insts: ssa.SInst[] = [];
+  let term = b.term;
+  let used = false;
+  for original in b.insts {
+    let op = original;
+    if (op.kind_tag == 48) {
+      if (mode == 0) {
+        op = ssa.SInst { ...op, imm: op.imm + 1 };
+      }
+      if (mode == 1) {
+        op = ssa.SInst { ...op, kind_tag: 11, str: "unknown" };
+      }
+      if (mode == 2) {
+        op = ssa.SInst { ...op, kind_tag: 7, args: [0], imm: 0 };
+      }
+      if (mode == 17) {
+        op = ssa.SInst { ...op, args: [0] };
+      }
+    }
+    if (op.kind_tag == 46 && mode == 3) {
+      op = ssa.SInst { ...op, str: "Wrong" };
+    }
+    if (op.kind_tag == 6 && op.imm == 0) {
+      if (mode == 4) {
+        op = ssa.SInst { ...op, imm: -1 };
+      }
+      if (mode == 5) {
+        op = ssa.SInst { ...op, imm: 2147483647 };
+      }
+    }
+    if (op.kind_tag == 41 && op.imm == 8) {
+      if (mode == 6) {
+        op = ssa.SInst { ...op, kind_tag: 1, args: [], imm: 0 };
+      }
+      if (mode == 7) {
+        op = ssa.SInst { ...op, imm: 2147483647 };
+      }
+      if (mode == 8) {
+        op = ssa.SInst { ...op, args: [op.args[0], op.args[0]] };
+      }
+      if (mode == 9) {
+        op = ssa.SInst { ...op, args: [op.args[1], op.args[1]] };
+      }
+      if (mode == 10) {
+        op = ssa.SInst { ...op, args: [op.args[0], op.result] };
+      }
+      if (mode == 11) {
+        op = ssa.SInst { ...op, result: 0 };
+      }
+      if (mode == 12) {
+        term = ssa.STerm { ...term, value: op.result };
+      }
+      if (mode == 13) {
+        insts = insts.append(ssa.SInst { ...op, result: f.nvals });
+        used = true;
+      }
+      if (mode == 14) {
+        op = ssa.SInst { ...op, imm: 9 };
+      }
+      if (mode == 18) {
+        op = ssa.SInst { ...op, imm: -2147483647 };
+      }
+    }
+    if (op.kind_tag == 41 && op.imm == 0 && mode == 15) {
+      op = ssa.SInst { ...op, kind_tag: 1, args: [], imm: 0 };
+    }
+    if (op.kind_tag == 1 && !used && mode == 16) {
+      op = ssa.SInst { ...op, kind_tag: 48, imm: f.nparams + 1 };
+      used = true;
+    }
+    insts = insts.append(op);
+  }
+  let nvals = f.nvals + (if (mode == 13) { 1 } else { 0 });
+  return ssa.SFunc { ...f, nvals: nvals, blocks: [ssa.SBlock { ...b, insts: insts, term: term }] };
+}
+
+function controls(f: ssa.SFunc, shape: string, refs: boolean[]): void {
+  expect(f, shape, refs, "", 5);
+  let reasons = ["invalid allocation producer capacity or multiplicity", "unsupported allocation producer effect", "unsupported allocation producer effect", "unsupported allocation producer effect", "invalid allocation producer parameter", "invalid allocation producer parameter", "incomplete allocation producer initialization", "invalid allocation producer initialization", "invalid allocation producer initialization", "unsupported allocation producer effect", "unavailable allocation producer operand", "invalid allocation producer definition", "fresh allocation producer return required", "invalid allocation producer initialization", "invalid allocation producer initialization", "incomplete allocation producer initialization", "invalid allocation producer capacity or multiplicity", "unsupported allocation producer effect", "invalid allocation producer initialization"];
+  let i: i32 = 0;
+  for why in reasons {
+    expect(changed(f, i), shape, refs, why, 10 + i);
+    i = i + 1;
+  }
+  let b = f.blocks[0];
+  let term = ssa.STerm { ...b.term, value: 0 };
+  expect(ssa.SFunc { ...f, blocks: [ssa.SBlock { ...b, term: term }] }, shape, refs, "fresh allocation producer return required", 40);
+  expect(ssa.SFunc { ...f, nvals: 2147483647 }, shape, refs, "unsupported allocation producer graph", 41);
+  expect(ssa.SFunc { ...f, nparams: 0 }, shape, refs, "unsupported allocation producer boundary", 42);
+  expect(ssa.SFunc { ...f, takes_env: true }, shape, refs, "unsupported allocation producer boundary", 43);
+  expect(f, "", refs, "unsupported allocation producer boundary", 44);
+  expect(f, shape, [], "unsupported allocation producer boundary", 45);
+  expect(ssa.SFunc { ...f, name: "__fern_spoof" }, shape, refs, "unsupported allocation producer boundary", 46);
+  expect(ssa.SFunc { ...f, blocks: [b, b] }, shape, refs, "unsupported allocation producer boundary", 47);
+  expect(ssa.SFunc { ...f, blocks: [ssa.SBlock { ...b, preds: [b.id] }] }, shape, refs, "unsupported allocation producer graph", 48);
+  // A copy of the actual returned allocation carries the same origin, not a
+  // second allocation or ownership credit. Sparse block IDs need no allocation.
+  let copied = b.insts.append(ssa.SInst { kind_tag: 7, result: f.nvals, args: [b.term.value], imm: 0, str: "" });
+  expect(ssa.SFunc { ...f, name: "renamed", entry: 2147483647, nvals: f.nvals + 1, blocks: [ssa.SBlock { ...b, id: 2147483647, insts: copied, term: ssa.STerm { ...b.term, value: f.nvals } }] }, shape, refs, "", 49);
+  expect(f, shape, refs, "", 50);
+}
+
+function target_checks(target: string): void {
+  let source = "struct Leaf { n: i32 }\nstruct Parent { left: Leaf, right: Leaf }\n@noinline\nfunction leaf(n: i32): Leaf { return Leaf { n: n }; }\n@noinline\nfunction parent(own left: Leaf, own right: Leaf): Parent { return Parent { left: left, right: right }; }\nfunction main(): i32 { let p = parent(leaf(1), leaf(2)); return p.left.n + p.right.n - 3; }\n";
+  let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
+  let count: i32 = 0;
+  for body in sub.bodies {
+    if (body.name == "leaf" || body.name == "parent") {
+      require(body.ok, 2);
+      let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), body.name, body.n_params, body.n_locals, body.ops, false);
+      require(lifted.ok, 3);
+      if (body.name == "leaf") {
+        controls(lifted.func, "Leaf", [false]);
+      } else {
+        controls(lifted.func, "Parent", [true, true]);
+      }
+      count = count + 1;
+    }
+  }
+  require(count == 2, 4);
+}
+
+function main(): i32 {
+  target_checks("arm64-darwin");
+  target_checks("x86-64-linux");
+  target_checks("wasm32-wasi");
+  print("physical allocation origin controls passed");
+  return 0;
+}

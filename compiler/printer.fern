@@ -447,7 +447,7 @@ function iife_value_local(first: ast.Stmt, last: ast.Stmt): string {
   return "";
 }
 
-function print_expr_iife(c: ast.ExprCall, depth: i32): string {
+function print_expr_iife(c: ast.ExprCall, parent_prec: i32, depth: i32): string {
   if (c.args.len() != 0) {
     return "";
   }
@@ -487,7 +487,7 @@ function print_expr_iife(c: ast.ExprCall, depth: i32): string {
           }
           if let ast.StmtReturn(sr) = lm.body[1] {
             if let ast.ExprCall(ic) = sr.value {
-              return print_expr_iife(ic, depth);
+              return print_expr_iife(ic, parent_prec, depth);
             }
           }
         }
@@ -550,7 +550,13 @@ function print_expr_iife(c: ast.ExprCall, depth: i32): string {
           if (ev.len() == 0) {
             return "";
           }
-          return "if (" + print_expr(f.cond, depth) + ") { " + tv + " } else { " + ev + " }";
+          let text = "if (" + print_expr(f.cond, depth) + ") { " + tv + " } else { " + ev + " }";
+          // Native's if-expression precedence is 3, below binary operators.
+          // Recovering the expression from an IIFE must preserve that context.
+          if (parent_prec > 3) {
+            return "(" + text + ")";
+          }
+          return text;
         },
         _ => {
           return "";
@@ -879,7 +885,7 @@ function print_expr_c(e: ast.Expr, parent_prec: i32, depth: i32, f: Fmt): (strin
       if (vl.len() > 0) {
         return (vl, f);
       }
-      let iife: string = print_expr_iife(c, depth);
+      let iife: string = print_expr_iife(c, parent_prec, depth);
       if (iife.len() > 0) {
         return (iife, f);
       }
