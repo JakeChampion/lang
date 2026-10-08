@@ -32,13 +32,15 @@ upstream UInt32 leaf count and integer-power helper; the exercised workload
 has no constant-power calls and its final count fits UInt32. These are workload
 comparisons, not claims of identical general numeric APIs.
 
-`gates/` contains the small no-I/O candidate entry points. Their exact checksums
-are checked on all three targets. Native ARM Callgrind calibration placed them
-between 118 and 148 million instructions; half-round controls approximately
-halve every count. The manual `Perceus calibration` workflow measures both
-native ISAs and primary emitted sizes. These candidates are not yet in the
-root performance corpus: moving them and adding both baseline files requires
-the actual x86 measurements. The ordinary performance gates are unchanged.
+`bench/perceus_*.fern` contains the small no-I/O performance entry points. Their
+exact checksums are checked on all three targets. Native ARM Callgrind
+calibration placed them between 118 and 148 million instructions; half-round
+controls approximately halve every count. The manual `Perceus calibration`
+workflow measures both native ISAs and primary emitted sizes. Native
+instruction/size baselines and self-host emitted-size baselines now cover
+these root performance entries,
+using measurements from calibration run 37716073565. Existing tolerances are
+unchanged.
 
 `scripts/bench-perceus.py` records compiler hashes/versions, source snapshots,
 compile commands, executable hashes, raw output and per-run measurements.
