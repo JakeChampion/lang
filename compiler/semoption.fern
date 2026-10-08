@@ -14,7 +14,7 @@ function scalar(t: typeinfo.Type): boolean {
 // The resolved builtin schema, including its scalar payload, is the proof.
 function option_schema(f: ssasem.Func, t: typeinfo.Type): i32 {
   let at: i32 = semrecords.find_enum(f.enums, t);
-  if (at < 0 || ssasem.finalizer_of(f, t) != "") {
+  if (at < 0 || ssasem.has_finalizer(f, t)) {
     return 0 - 1;
   }
   let e: semrecords.Enum = f.enums[at];

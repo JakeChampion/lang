@@ -258,7 +258,7 @@ function shaped(f: ssasem.Func): boolean {
   if (e.views || e.variants.len() == 0 || e.variants.len() > max_variants()) {
     return false;
   }
-  return ssasem.finalizer_of(f, f.result) == "" && payloads_fit(f, e);
+  return !ssasem.has_finalizer(f, f.result) && payloads_fit(f, e);
 }
 
 // Whether `t` is a tuple of two elements that each fit a word.

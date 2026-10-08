@@ -1184,7 +1184,7 @@ function placeable(f: ssasem.Func, raw: boolean[], out: string[], ins: ssa.SInst
   if (!built.ok || built.fields.len() != ins.args.len() || raw[ins.result] || out[ins.result] != "") {
     return Construction { ...built, ok: false };
   }
-  if (ssasem.finalizer_of(f, f.values[ins.result]) != "") {
+  if (ssasem.has_finalizer(f, f.values[ins.result])) {
     return Construction { ...built, ok: false };
   }
   return built;

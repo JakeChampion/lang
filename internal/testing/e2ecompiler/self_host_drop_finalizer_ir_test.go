@@ -1,9 +1,15 @@
 package e2ecompiler
 
 import (
+	"bytes"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
 type dropCase struct {
@@ -17,6 +23,79 @@ type dropCase struct {
 // fields, so the output is compared as a multiset of lines; dropOrderCases
 // pin when it runs.
 var dropFinalizerCases = []dropCase{
+	// Monomorphized receivers keep their Drop trait membership. An inherent
+	// method with the same name does not establish that membership.
+	{"generic-specializations-and-aliases", `import "core/mem" as memory;
+struct Leaf[T] { n: T }
+impl[T] memory.Drop for Leaf[T] {
+    function drop(self: Self): void { print("drop Leaf"); }
+}
+struct Plain[T] { n: T }
+impl[T] Plain[T] {
+    function drop(self: Self): void { print("unexpected inherent drop"); }
+}
+@noinline function make(n: i32): Leaf[i32] { return Leaf { n: n }; }
+@noinline function read(l: Leaf[i32]): i32 { return l.n; }
+@noinline function text(s: string): Leaf[string] { return Leaf { n: s }; }
+function main(): i32 {
+    let a: Leaf[i32] = make(7);
+    let alias: Leaf[i32] = a;
+    let n = read(a) + read(alias);
+    let s: Leaf[string] = text("hello");
+    print(s.n);
+    let wide: Leaf[i64] = Leaf { n: 9 };
+    let p: Plain[i32] = Plain { n: 3 };
+    if (wide.n != 9) { return 5; }
+    print("used");
+    return n + p.n - 17;
+}
+`, "hello\nused\ndrop Leaf\ndrop Leaf\ndrop Leaf"},
+	{"trait-method-collision", `import "core/mem";
+trait Other { function drop(self: Self): void; }
+struct Leaf[T] { n: T }
+impl[T] Other for Leaf[T] {
+    function drop(self: Self): void { print("wrong generic Other"); }
+}
+impl[T] mem.Drop for Leaf[T] {
+    function drop(self: Self): void { print("generic Drop"); }
+}
+struct Plain { n: i32 }
+impl Other for Plain {
+    function drop(self: Self): void { print("wrong plain Other"); }
+}
+impl mem.Drop for Plain {
+    function drop(self: Self): void { print("plain Drop"); }
+}
+@noinline function make(n: i32): Leaf[i32] { return Leaf { n: n }; }
+function main(): i32 {
+    let a = make(7);
+    let b = Plain { n: 9 };
+    print("used");
+    return a.n + b.n - 16;
+}
+`, "used\ngeneric Drop\nplain Drop"},
+	// Generic enums must preserve Drop for both payload and payload-free variants.
+	{"generic-enum-specializations", `import "core/mem";
+enum Signal[T] { Value(T), Empty }
+impl[T] mem.Drop for Signal[T] {
+  function drop(self: Self): void { print("drop Signal"); }
+}
+@noinline function make(n: i32): Signal[i32] { return Signal.Value(n); }
+@noinline function read(s: Signal[i32]): i32 {
+  match (s) { Value(n) => { return n; }, Empty => { return 0; } }
+}
+function main(): i32 {
+  let a = make(7);
+  let alias = a;
+  let n = read(a) + read(alias);
+  let text: Signal[string] = Signal.Value("hello");
+  match (text) { Value(s) => { print(s); }, Empty => { return 2; } }
+  let empty: Signal[i32] = Signal.Empty();
+  if (read(empty) != 0) { return 3; }
+  print("used");
+  return n - 14;
+}
+`, "hello\nused\ndrop Signal\ndrop Signal\ndrop Signal"},
 	// An array element, a field, an enum payload and a returned value.
 	{"every-container-shape", `import "core/mem";
 import "std/i32";
@@ -275,6 +354,33 @@ func sortedLines(s string) string {
 	return strings.Join(lines, "\n")
 }
 
+func importedGenericDropProject(t *testing.T) string {
+	t.Helper()
+	module := filepath.Join(t.TempDir(), "leaf.fern")
+	source := `import "core/mem" as memory;
+pub struct Leaf[T] { n: T }
+impl[T] memory.Drop for Leaf[T] {
+    function drop(self: Self): void { print("imported Drop"); }
+}
+@noinline pub function make(n: i32): Leaf[i32] { return Leaf { n: n }; }
+`
+	if err := os.WriteFile(module, []byte(source), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	entry := filepath.Join(filepath.Dir(module), "main.fern")
+	main := `import "./leaf" as leaves;
+function main(): i32 {
+    let a: leaves.Leaf[i32] = leaves.make(7);
+    print("used");
+    return a.n - 7;
+}
+`
+	if err := os.WriteFile(entry, []byte(main), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	return entry
+}
+
 // runDropCases runs both tables through run, which compiles and executes a
 // program for one target.
 func runDropCases(t *testing.T, run func(t *testing.T, src string) (int, string)) {
@@ -312,4 +418,48 @@ func TestSelfHostDropFinalizersRunOnceWasmIR(t *testing.T) {
 	runDropCases(t, func(t *testing.T, src string) (int, string) {
 		return runWasm(t, cli.emit(t, "wasm32-wasi", src))
 	})
+}
+
+func TestSelfHostGenericDropCensus(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	for _, tc := range []dropCase{dropFinalizerCases[0], dropFinalizerCases[1], dropFinalizerCases[2]} {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, target := range []string{"arm64-linux", "x86-64-linux", "wasm32-wasi"} {
+				t.Run(target, func(t *testing.T) {
+					stderr, code := cli.exitOf(t, tc.src, target, "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+					if code != 0 {
+						t.Fatalf("generic finalizer exited %d: %s", code, stderr)
+					}
+					assertBalancedCensus(t, stderr)
+				})
+			}
+		})
+	}
+}
+
+func TestSelfHostImportedGenericDrop(t *testing.T) {
+	cli := buildSelfHostCLI(t)
+	entry := importedGenericDropProject(t)
+	env := []string{"FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1"}
+	for _, target := range []string{"arm64-linux", "x86-64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			var cmd *exec.Cmd
+			switch target {
+			case "arm64-linux":
+				_, qemu := arm64Tooling(t)
+				cmd = runArm64Bin(qemu, cli.arm64Binary(t, entry, env...))
+			case "x86-64-linux":
+				cmd = runX86_64Bin(cli.runner, cli.x86Binary(t, entry, env...))
+			case "wasm32-wasi":
+				cmd = exec.Command(e2eharness.Wasmtime(t), "run", cli.emit(t, entry, target, env...))
+			}
+			var stderr bytes.Buffer
+			cmd.Stderr = &stderr
+			out, err := cmd.Output()
+			if err != nil || string(out) != "used\nimported Drop\n" {
+				t.Fatalf("imported finalizer: %v; stdout %q; stderr %s", err, out, stderr.String())
+			}
+			assertBalancedCensus(t, stderr.String())
+		})
+	}
 }

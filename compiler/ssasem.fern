@@ -8,6 +8,29 @@ import "./semtypes";
 import "./semrecords";
 import "./typeinfo";
 
+// The selected Drop provider, after receiver specialization and trait-method
+// interposition. Its symbol need not be the receiver followed by .drop.
+pub struct Finalizer { receiver: string, symbol: string }
+
+pub function finalizer_index(rows: Finalizer[], receiver: string): i32 {
+  let i: i32 = 0;
+  while (i < rows.len()) {
+    if (rows[i].receiver == receiver) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+pub function finalizer_named(rows: Finalizer[], receiver: string): string {
+  let i = finalizer_index(rows, receiver);
+  if (i >= 0) {
+    return rows[i].symbol;
+  }
+  return "";
+}
+
 pub struct Func {
   graph: ssa.SFunc,
   values: typeinfo.Type[],
@@ -25,9 +48,9 @@ pub struct Func {
   // (semsource.shadowed_builtins): a call to one is an ordinary call, never
   // the builtin's op.
   shadows: string[],
-  // The records and enums an `impl mem.Drop` gives a finalizer, by name. The
+  // The records and enums an `impl mem.Drop` gives a finalizer and its symbol. The
   // whole module's, so every function's drop helper for a type agrees.
-  finalizers: string[],
+  finalizers: Finalizer[],
   // core/map is in the program's import closure, so a map may run on it
   // (ssarc.routed_map); without it every map stays on the runtime.
   map_module: boolean,
@@ -44,6 +67,18 @@ pub struct Func {
 // (`semsource.anchor_module`).
 pub struct Anchor { name: string, params: i32[] }
 
+// A presence query borrows the function. Retrieving the owned symbol is only
+// necessary when a drop helper emits the call, not for reuse eligibility.
+pub function has_finalizer(f: Func, t: typeinfo.Type): boolean {
+  if let typeinfo.TypeStruct(r) = t {
+    return finalizer_index(f.finalizers, r.name) >= 0;
+  }
+  if let typeinfo.TypeUnion(u) = t {
+    return finalizer_index(f.finalizers, u.name) >= 0;
+  }
+  return false;
+}
+
 // The `drop` method an `impl mem.Drop` gives a record or an enum, or "". A
 // value of such a type is always a counted box, so the finalizer runs at the
 // free: never a static constant, never a box handed on for reuse.
@@ -55,8 +90,8 @@ pub function finalizer_of(f: Func, t: typeinfo.Type): string {
   if let typeinfo.TypeUnion(u) = t {
     n = u.name;
   }
-  if (n != "" && util.index_of_str(f.finalizers, n) >= 0) {
-    return n + ".drop";
+  if (n != "") {
+    return finalizer_named(f.finalizers, n);
   }
   return "";
 }
