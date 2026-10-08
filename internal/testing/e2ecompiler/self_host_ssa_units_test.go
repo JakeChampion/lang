@@ -272,7 +272,45 @@ if (!supply(find(p, 7, ssaunits.return_point(), 0 - 1), 0, 0, 0, ssaunits.retain
 `, "", ""},
 	}
 	base = append(base, unitRecordCases()...)
+	base = append(base, unitReplayCases()...)
 	return append(base, unitEnumCases()...)
+}
+
+func unitReplayCases() []unitCase {
+	base := []unitCase{
+		{"indexed-reordered-sparse-loop", unitLoop, "", `let steps: ssaunits.Step[] = []; let i = p.steps.len(); while (i > 0) { i = i - 1; steps = steps.append(p.steps[i]); } p = ssaunits.Plan { ...p, steps: steps };`, ""},
+		{"indexed-missing-edge", unitLoop, "", `let steps: ssaunits.Step[] = []; for s in p.steps { if (s.block != 17 || s.point != ssaunits.edge_point() || s.target != 27) { steps = steps.append(s); } } p = ssaunits.Plan { ...p, steps: steps };`, "missing or duplicate edge step"},
+	}
+	for _, tc := range []struct{ name, setup, point, target, want string }{
+		{"entry", unitDuplicate, "ssaunits.entry_point()", "0 - 1", "entry"},
+		{"operation", unitDuplicate, "1", "0 - 1", "operation"},
+		{"return", unitDuplicate, "ssaunits.return_point()", "0 - 1", "return"},
+		{"edge", unitLoop, "ssaunits.edge_point()", "17", "edge"},
+	} {
+		for _, copies := range []int{2, 3} {
+			mutation := fmt.Sprintf("let s = find(p, 7, %s, %s); let steps = p.steps;", tc.point, tc.target)
+			for i := 1; i < copies; i++ {
+				mutation += " steps = steps.append(s);"
+			}
+			mutation += " p = ssaunits.Plan { ...p, steps: steps };"
+			base = append(base, unitCase{fmt.Sprintf("indexed-duplicate-%s-%d", tc.name, copies), tc.setup, "", mutation, "missing or duplicate " + tc.want + " step"})
+		}
+	}
+	for _, tc := range []struct{ name, block, point, target string }{
+		{"negative-block", "0 - 1", "0", "0 - 1"},
+		{"large-block", "2147483647", "0", "0 - 1"},
+		{"large-point", "7", "2147483647", "0 - 1"},
+		{"unknown-point", "7", "0 - 4", "0 - 1"},
+		{"parameter-step", "7", "0", "0 - 1"},
+		{"entry-target", "7", "ssaunits.entry_point()", "7"},
+		{"return-target", "7", "ssaunits.return_point()", "7"},
+		{"operation-target", "7", "1", "7"},
+		{"nonexistent-edge", "7", "ssaunits.edge_point()", "7"},
+	} {
+		mutation := fmt.Sprintf("let s = ssaunits.Step { block: %s, point: %s, target: %s, supplies: [], drops: [], hand_roots: [], hand_fields: [] }; p = ssaunits.Plan { ...p, steps: p.steps.append(s) };", tc.block, tc.point, tc.target)
+		base = append(base, unitCase{"indexed-extra-" + tc.name, unitDuplicate, "", mutation, "extra unit plan steps"})
+	}
+	return base
 }
 
 func unitSource(indices []int) (string, string) {
@@ -311,6 +349,10 @@ for opaque in opaque_types {
 `)
 		}
 		source.WriteString(tc.check + "\n" + tc.mutate + "\n")
+		if strings.HasPrefix(tc.name, "indexed-") {
+			fmt.Fprintf(&source, "if (ssaunits.verify_planned(f, modes, p) != %q) { return 91; }\n", tc.want)
+			fmt.Fprintf(&source, "if (ssaunits.verify(f, modes, p) != %q) { return 92; }\n", tc.want)
+		}
 		source.WriteString("print(ssaunits.verify(f, modes, p)); return 0; }\n")
 		fmt.Fprintf(&main, "if (unit_case_%d() != 0) { return %d; }\n", i, i+1)
 		want.WriteString(tc.want + "\n")
@@ -342,6 +384,32 @@ func TestSelfHostSSAUnits(t *testing.T) {
 func TestSelfHostSSAUnitsIRArm64(t *testing.T)  { testUnitsIR(t, "arm64-linux") }
 func TestSelfHostSSAUnitsIRX86_64(t *testing.T) { testUnitsIR(t, "x86-64-linux") }
 func TestSelfHostSSAUnitsIRWasm(t *testing.T)   { testUnitsIR(t, "wasm32-wasi") }
+
+func TestSelfHostSSAUnitsIndexedReplay(t *testing.T) {
+	dir := t.TempDir()
+	copySelfHostDriver(t, dir, "ssaunits.fern")
+	var indices []int
+	for i, tc := range unitCases() {
+		if strings.HasPrefix(tc.name, "indexed-") {
+			indices = append(indices, i)
+		}
+	}
+	source, _ := unitSource(indices)
+	path := filepath.Join(dir, "indexed.fern")
+	if err := os.WriteFile(path, []byte(source), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cli := buildSelfHostCLI(t)
+	for _, target := range []string{"arm64-linux", "x86-64-linux", "wasm32-wasi"} {
+		t.Run(target, func(t *testing.T) {
+			stderr, code := cli.exitOfFile(t, path, target, nil, "FERN_STRICT_IR=1", "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
+			if code != 0 {
+				t.Fatalf("exit %d: %s", code, stderr)
+			}
+			assertBalancedCensus(t, stderr)
+		})
+	}
+}
 
 func testUnitsIR(t *testing.T, target string) {
 	t.Helper()
