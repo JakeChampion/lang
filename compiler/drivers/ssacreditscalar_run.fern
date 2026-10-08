@@ -19,6 +19,65 @@ function expect(f: ssa.SFunc, ok: boolean, why: string, id: i32): void {
   }
 }
 
+function expect_outcomes(f: ssa.SFunc, no: boolean[], yes: boolean[], id: i32): void {
+  let p = scalar.outcomes(f);
+  if (!p.proof.ok || p.proof.function_name != f.name || p.returns.len() != 2 || p.exits.len() != 2 || p.returns[0] != no[0] || p.exits[0] != no[1] || p.returns[1] != yes[0] || p.exits[1] != yes[1]) {
+    print(f.name + ": incorrect normal-return/exit outcomes");
+    exit(id);
+  }
+}
+
+function outcome_controls(f: ssa.SFunc): void {
+  expect_outcomes(f, [false, true], [true, false], 40);
+  let reverse: ssa.SBlock[] = [];
+  for b in f.blocks {
+    let term = b.term;
+    if (term.kind_tag == 3) {
+      term = ssa.STerm { ...term, t: term.f, f: term.t };
+    }
+    reverse = reverse.append(ssa.SBlock { ...b, term: term });
+  }
+  expect_outcomes(ssa.SFunc { ...f, blocks: reverse }, [true, false], [false, true], 41);
+  // Unknown second-parameter conditions allow both outcomes for either Boolean
+  // input. A normal-return summary must never conceal the possible exit.
+  let unknown: ssa.SBlock[] = [];
+  for b in f.blocks {
+    let term = b.term;
+    if (term.kind_tag == 3) {
+      term = ssa.STerm { ...term, cond: 1 };
+    }
+    unknown = unknown.append(ssa.SBlock { ...b, term: term });
+  }
+  expect_outcomes(ssa.SFunc { ...f, blocks: unknown }, [true, true], [true, true], 42);
+  let unsafe = scalar.outcomes(changed(f, 0));
+  require(!unsafe.proof.ok && unsafe.proof.message == "unsupported scalar helper effect", 43);
+  let forced: ssa.SBlock[] = [];
+  for b in f.blocks {
+    let insts = b.insts;
+    if (b.id == f.entry) {
+      insts = insts.append(ssa.SInst { kind_tag: 50, result: f.nvals, args: [1], imm: 0, str: "exit" });
+    }
+    forced = forced.append(ssa.SBlock { ...b, insts: insts });
+  }
+  expect_outcomes(ssa.SFunc { ...f, blocks: forced, nvals: f.nvals + 1 }, [false, true], [false, true], 48);
+  let dead_effect = scalar.outcomes(changed(ssa.SFunc { ...f, blocks: forced, nvals: f.nvals + 1 }, 6));
+  require(!dead_effect.proof.ok && dead_effect.proof.message == "scalar helper return not proven zero", 49);
+
+  let params = [ssa.SInst { kind_tag: 6, result: 0, args: [], imm: 0, str: "" }, ssa.SInst { kind_tag: 6, result: 1, args: [], imm: 1, str: "" }, ssa.SInst { kind_tag: 1, result: 2, args: [], imm: 0, str: "" }, ssa.SInst { kind_tag: 1, result: 3, args: [], imm: -2147483648, str: "" }];
+  let branch = ssa.STerm { kind_tag: 3, cond: 0, target: 0, t: 1, f: 2, value: 0 };
+  let jump = ssa.STerm { ...branch, kind_tag: 2, target: 3 };
+  let ret = ssa.STerm { ...branch, kind_tag: 1, value: 2 };
+  let selected = ssa.SInst { kind_tag: 8, result: 4, args: [3, 2], imm: 0, str: "" };
+  let leave = ssa.SInst { kind_tag: 50, result: 5, args: [1], imm: 0, str: "exit" };
+  let blocks = [ssa.SBlock { id: 0, insts: params, preds: [], term: branch }, ssa.SBlock { id: 1, insts: [], preds: [0], term: jump }, ssa.SBlock { id: 2, insts: [], preds: [0], term: jump }, ssa.SBlock { id: 3, insts: [selected], preds: [1, 2], term: ssa.STerm { ...branch, cond: 4, t: 4, f: 5 } }, ssa.SBlock { id: 4, insts: [], preds: [3], term: ret }, ssa.SBlock { id: 5, insts: [leave], preds: [3], term: ret }];
+  let joined = ssa.SFunc { ...f, blocks: blocks, entry: 0, nvals: 6 };
+  expect_outcomes(joined, [false, true], [true, false], 44);
+  let b = blocks[3];
+  expect_outcomes(ssa.SFunc { ...joined, blocks: blocks.with(3, ssa.SBlock { ...b, insts: [ssa.SInst { ...selected, args: [2, 3] }] }) }, [true, false], [false, true], 45);
+  expect_outcomes(ssa.SFunc { ...joined, blocks: blocks.with(3, ssa.SBlock { ...b, insts: [ssa.SInst { ...selected, args: [1, 2] }] }) }, [false, true], [true, true], 46);
+  expect_outcomes(f, [false, true], [true, false], 47);
+}
+
 function changed(f: ssa.SFunc, mode: i32): ssa.SFunc {
   let blocks: ssa.SBlock[] = [];
   let hits: i32 = 0;
@@ -92,6 +151,7 @@ function target_checks(target: string): void {
   }
   require(funcs.len() == 1, 5);
   let f = funcs[0];
+  outcome_controls(f);
   expect(f, true, "proved scalar zero-or-exit effects", 6);
   let reasons = ["unsupported scalar helper effect", "unsupported scalar helper effect", "unsupported scalar helper effect", "unavailable scalar helper operand", "unsupported scalar helper effect", "unsupported scalar helper effect", "scalar helper return not proven zero", "unavailable scalar phi operand", "invalid scalar helper parameter", "invalid scalar helper phi", "unavailable scalar phi operand", "invalid scalar helper definition", "scalar helper return not proven zero", "unavailable scalar helper operand"];
   let i: i32 = 0;
@@ -106,6 +166,7 @@ function target_checks(target: string): void {
     reverse = reverse.append(f.blocks[i]);
   }
   expect(ssa.SFunc { ...f, blocks: reverse, name: "renamed_assertion" }, true, "proved scalar zero-or-exit effects", 30);
+  expect_outcomes(ssa.SFunc { ...f, blocks: reverse, name: "renamed_assertion" }, [false, true], [true, false], 50);
   expect(ssa.SFunc { ...f, name: "__fern_spoof" }, false, "invalid scalar helper boundary", 31);
   expect(ssa.SFunc { ...f, nvals: 2147483647 }, false, "invalid scalar helper boundary", 32);
   expect(ssa.SFunc { ...f, nparams: 1 }, false, "invalid scalar helper boundary", 33);
@@ -125,6 +186,7 @@ function target_checks(target: string): void {
     sparse = sparse.append(ssa.SBlock { ...b, id: 2147483647 - b.id, preds: preds, term: term });
   }
   expect(ssa.SFunc { ...f, blocks: sparse, entry: 2147483647 - f.entry }, true, "proved scalar zero-or-exit effects", 36);
+  expect_outcomes(ssa.SFunc { ...f, blocks: sparse, entry: 2147483647 - f.entry }, [false, true], [true, false], 51);
   let broken: ssa.SBlock[] = [];
   for b in f.blocks {
     let term = b.term;

@@ -206,3 +206,137 @@ pub function zero_or_exit(f: ssa.SFunc): helper.Proof {
   }
   return helper.Proof { ok: true, function_name: f.name, message: "proved scalar zero-or-exit effects" };
 }
+
+// Two fixed ABI input cases, first parameter false/true; the second parameter
+// remains unknown. These are conservative possible outcomes, not assertion
+// truth or a claim that the caller's credits are discharged on process exit.
+pub struct Outcomes { proof: helper.Proof, returns: boolean[], exits: boolean[] }
+
+struct Number { known: boolean, value: i32 }
+
+function follows(f: ssa.SFunc, rows: Number[][], live: boolean[], from: i32, to: i32): boolean {
+  let index = at(f, from);
+  if (!live[index]) {
+    return false;
+  }
+  let term = f.blocks[index].term;
+  if (term.kind_tag == 2) {
+    return term.target == to;
+  }
+  if (term.kind_tag == 3) {
+    let condition = rows[index][term.cond];
+    return term.t == to && (!condition.known || condition.value != 0) || term.f == to && (!condition.known || condition.value == 0);
+  }
+  return false;
+}
+
+function joined_number(a: Number, b: Number): Number {
+  if (a.known && b.known && a.value == b.value) {
+    return a;
+  }
+  return Number { known: false, value: 0 };
+}
+
+pub function outcomes(f: ssa.SFunc): Outcomes {
+  let proof = zero_or_exit(f);
+  let result = Outcomes { proof: proof, returns: [false, false], exits: [false, false] };
+  if (!proof.ok) {
+    return result;
+  }
+  let unknown = Number { known: false, value: 0 };
+  let empty: Number[] = [];
+  let i: i32 = 0;
+  while (i < f.nvals) {
+    empty = empty.append(unknown);
+    i = i + 1;
+  }
+  // Fixed two-case specialization, with joins over unknown branches. No CFG
+  // path enumeration. The full effect/SSA proof above checks even dead code.
+  for input in [0, 1] {
+    let rows: Number[][] = [];
+    let live: boolean[] = [];
+    let done: boolean[] = [];
+    for b in f.blocks {
+      rows = rows.append(empty);
+      live = live.append(false);
+      done = done.append(false);
+    }
+    let remaining = f.blocks.len();
+    while (remaining > 0) {
+      let chosen: i32 = -1;
+      i = 0;
+      for b in f.blocks {
+        let ready = !done[i];
+        for p in b.preds {
+          if (!done[at(f, p)]) {
+            ready = false;
+          }
+        }
+        if (ready && chosen < 0) {
+          chosen = i;
+        }
+        i = i + 1;
+      }
+      if (chosen < 0) {
+        return Outcomes { ...result, proof: refused(f, "unsupported scalar helper cycle") };
+      }
+      let b = f.blocks[chosen];
+      let row = empty;
+      let active = b.id == f.entry;
+      for p in b.preds {
+        if (follows(f, rows, live, p, b.id)) {
+          let previous = rows[at(f, p)];
+          if (!active) {
+            row = previous;
+          } else {
+            i = 0;
+            while (i < f.nvals) {
+              row = row.with(i, joined_number(row[i], previous[i]));
+              i = i + 1;
+            }
+          }
+          active = true;
+        }
+      }
+      for op in b.insts {
+        if (active) {
+          let value = unknown;
+          if (op.kind_tag == 8) {
+            let first = true;
+            i = 0;
+            for p in b.preds {
+              if (follows(f, rows, live, p, b.id)) {
+                let previous = rows[at(f, p)][op.args[i]];
+                if (first) {
+                  value = previous;
+                } else {
+                  value = joined_number(value, previous);
+                }
+                first = false;
+              }
+              i = i + 1;
+            }
+          } else if (op.kind_tag == 6 && op.imm == 0) {
+            value = Number { known: true, value: input };
+          } else if (op.kind_tag == 1) {
+            value = Number { known: true, value: op.imm };
+          } else if (op.kind_tag == 7) {
+            value = row[op.args[0]];
+          } else if (op.kind_tag == 50) {
+            result = Outcomes { ...result, exits: result.exits.with(input, true) };
+            active = false;
+          }
+          row = row.with(op.result, value);
+        }
+      }
+      if (active && b.term.kind_tag == 1) {
+        result = Outcomes { ...result, returns: result.returns.with(input, true) };
+      }
+      rows = rows.with(chosen, row);
+      live = live.with(chosen, active);
+      done = done.with(chosen, true);
+      remaining = remaining - 1;
+    }
+  }
+  return result;
+}
