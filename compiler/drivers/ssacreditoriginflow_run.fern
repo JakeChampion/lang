@@ -1,0 +1,260 @@
+import "../lexer";
+import "../parser";
+import "../semlower";
+import "../ssa";
+import "../ssa_lift";
+import "../ssacreditoriginflow" as flow;
+
+function require(ok: boolean, id: i32): void {
+  if (!ok) {
+    exit(id);
+  }
+}
+
+function expect(f: ssa.SFunc, producers: ssa.SFunc[], why: string, id: i32): void {
+  let p = flow.caller(f, producers, "Parent");
+  let ok = why == "";
+  if (p.proof.ok != ok || p.proof.function_name != f.name || ok && (p.words != 3 || p.proof.message != "proved caller allocation origin") || !ok && (p.words != 0 || p.proof.message != why)) {
+    print(p.proof.function_name + ": " + p.proof.message);
+    exit(id);
+  }
+}
+
+function changed(f: ssa.SFunc, mode: i32): ssa.SFunc {
+  let blocks: ssa.SBlock[] = [];
+  for b in f.blocks {
+    let insts: ssa.SInst[] = [];
+    let term = b.term;
+    for original in b.insts {
+      let op = original;
+      if (op.kind_tag == 11) {
+        if (mode == 0) {
+          op = ssa.SInst { ...op, str: "unknown" };
+        }
+        if (mode == 1) {
+          op = ssa.SInst { ...op, args: [op.args[0], op.args[0]] };
+        }
+        if (mode == 2) {
+          op = ssa.SInst { ...op, args: [0, op.args[1]] };
+        }
+        if (mode == 3) {
+          op = ssa.SInst { ...op, args: [op.args[0]] };
+        }
+        if (mode == 4) {
+          op = ssa.SInst { ...op, args: [op.result, op.args[1]] };
+        }
+        if (mode == 5) {
+          op = ssa.SInst { ...op, imm: 1 };
+        }
+        if (mode == 10) {
+          op = ssa.SInst { ...op, result: 0 };
+        }
+        if (mode == 12) {
+          op = ssa.SInst { ...op, kind_tag: 7, args: [op.args[0]], str: "" };
+        }
+        if (mode == 20) {
+          op = ssa.SInst { ...op, str: "renamed_producer" };
+        }
+      }
+      if (op.kind_tag == 8) {
+        if (mode == 8) {
+          op = ssa.SInst { ...op, args: [op.args[1], op.args[0]] };
+        }
+        if (mode == 9) {
+          op = ssa.SInst { ...op, args: [op.result, op.args[1]] };
+        }
+        if (mode == 19) {
+          op = ssa.SInst { ...op, args: [3, op.args[1]] };
+        }
+        if (mode == 6) {
+          op = ssa.SInst { ...op, args: [] };
+        }
+      }
+      if (op.kind_tag == 6 && op.imm == 2) {
+        if (mode == 17) {
+          op = ssa.SInst { ...op, kind_tag: 1, imm: 0 };
+        }
+        if (mode == 18) {
+          op = ssa.SInst { ...op, imm: 1 };
+        }
+      }
+      if (op.result == 3) {
+        if (mode == 11) {
+          op = ssa.SInst { ...op, kind_tag: 11, str: "parent", args: [1, 2] };
+        }
+        if (mode == 14) {
+          op = ssa.SInst { ...op, imm: 17 };
+        }
+        if (mode == 16) {
+          op = ssa.SInst { ...op, kind_tag: 50, str: "rc_dec", args: [1] };
+        }
+      }
+      insts = insts.append(op);
+    }
+    if (term.kind_tag == 1 && mode == 7) {
+      term = ssa.STerm { ...term, value: 1 };
+    }
+    if (term.kind_tag == 3) {
+      if (mode == 13) {
+        term = ssa.STerm { ...term, cond: 1 };
+      }
+      if (mode == 14) {
+        term = ssa.STerm { ...term, cond: 3 };
+      }
+      if (mode == 15) {
+        term = ssa.STerm { ...term, cond: 2147483647 };
+      }
+    }
+    blocks = blocks.append(ssa.SBlock { ...b, insts: insts, term: term });
+  }
+  return ssa.SFunc { ...f, blocks: blocks };
+}
+
+function copies(f: ssa.SFunc): ssa.SFunc {
+  let blocks: ssa.SBlock[] = [];
+  for b in f.blocks {
+    let insts: ssa.SInst[] = [];
+    let term = b.term;
+    for op in b.insts {
+      if (op.kind_tag == 11) {
+        // The same copy root cannot mint a second incoming child credit.
+        insts = insts.append(ssa.SInst { ...op, args: [if (op.args[0] == 1) { f.nvals } else { 2 }, if (op.args[1] == 1) { f.nvals } else { 2 }] });
+      } else {
+        insts = insts.append(op);
+      }
+    }
+    if (b.id == f.entry) {
+      insts = insts.append(ssa.SInst { kind_tag: 7, result: f.nvals, args: [1], imm: 0, str: "" });
+    }
+    if (term.kind_tag == 1) {
+      insts = insts.append(ssa.SInst { kind_tag: 7, result: f.nvals + 1, args: [term.value], imm: 0, str: "" });
+      term = ssa.STerm { ...term, value: f.nvals + 1 };
+    }
+    blocks = blocks.append(ssa.SBlock { ...b, insts: insts, term: term });
+  }
+  return ssa.SFunc { ...f, nvals: f.nvals + 2, blocks: blocks };
+}
+
+function sparse(f: ssa.SFunc): ssa.SFunc {
+  let blocks: ssa.SBlock[] = [];
+  let i = f.blocks.len();
+  while (i > 0) {
+    i = i - 1;
+    let b = f.blocks[i];
+    let preds: i32[] = [];
+    for p in b.preds {
+      preds = preds.append(2147483647 - p);
+    }
+    let term = b.term;
+    if (term.kind_tag == 2) {
+      term = ssa.STerm { ...term, target: 2147483647 - term.target };
+    }
+    if (term.kind_tag == 3) {
+      term = ssa.STerm { ...term, t: 2147483647 - term.t, f: 2147483647 - term.f };
+    }
+    blocks = blocks.append(ssa.SBlock { ...b, id: 2147483647 - b.id, preds: preds, term: term });
+  }
+  return ssa.SFunc { ...f, name: "renamed_wrapper", entry: 2147483647 - f.entry, blocks: blocks };
+}
+
+function phi_controls(f: ssa.SFunc, producer: ssa.SFunc): void {
+  let swapped: ssa.SBlock[] = [];
+  let chained: ssa.SBlock[] = [];
+  let duplicate: ssa.SBlock[] = [];
+  for b in f.blocks {
+    let insts: ssa.SInst[] = [];
+    let extra: ssa.SInst[] = [];
+    let preds = b.preds;
+    for op in b.insts {
+      if (op.kind_tag == 8) {
+        insts = insts.append(ssa.SInst { ...op, args: [op.args[1], op.args[0]] });
+        preds = [b.preds[1], b.preds[0]];
+        extra = extra.append(op);
+        extra = extra.append(ssa.SInst { ...op, result: f.nvals, args: [op.result, op.result] });
+      } else {
+        insts = insts.append(op);
+        extra = extra.append(op);
+      }
+    }
+    swapped = swapped.append(ssa.SBlock { ...b, insts: insts, preds: preds });
+    chained = chained.append(ssa.SBlock { ...b, insts: extra });
+    duplicate = duplicate.append(if (b.preds.len() == 2) { ssa.SBlock { ...b, preds: [b.preds[0], b.preds[0]] } } else { b });
+  }
+  expect(ssa.SFunc { ...f, blocks: swapped }, [producer], "", 51);
+  expect(ssa.SFunc { ...f, blocks: chained, nvals: f.nvals + 1 }, [producer], "unavailable caller origin phi", 52);
+  expect(ssa.SFunc { ...f, blocks: duplicate }, [producer], "invalid caller origin graph", 53);
+  let cyclic_block = ssa.SBlock { id: 2147483647, insts: [], preds: [2147483647], term: ssa.STerm { kind_tag: 2, cond: -1, target: 2147483647, t: -1, f: -1, value: -1 } };
+  expect(ssa.SFunc { ...f, blocks: f.blocks.append(cyclic_block) }, [producer], "unsupported caller origin cycle", 54);
+  expect(changed(copies(f), 1), [producer], "invalid caller origin credit transfer", 55);
+  // Even an infeasible call must have an independently checked body binding.
+  let dead: ssa.SBlock[] = [];
+  for b in f.blocks {
+    let term = b.term;
+    if (term.kind_tag == 3) {
+      term = ssa.STerm { ...term, cond: 3 };
+    }
+    let insts: ssa.SInst[] = [];
+    for op in b.insts {
+      insts = insts.append(if (op.kind_tag == 11 && op.args[0] == 1) { ssa.SInst { ...op, str: "unknown" } } else { op });
+    }
+    dead = dead.append(ssa.SBlock { ...b, insts: insts, term: term });
+  }
+  expect(ssa.SFunc { ...f, blocks: dead }, [producer], "caller origin producer binding", 56);
+}
+
+function controls(f: ssa.SFunc, producer: ssa.SFunc): void {
+  expect(f, [producer], "", 5);
+  let reasons = ["caller origin producer binding", "invalid caller origin credit transfer", "invalid caller origin credit transfer", "unsupported caller origin effect", "unavailable caller origin operand", "unsupported caller origin effect", "invalid caller origin phi", "owned caller allocation return required", "unavailable caller origin phi", "unavailable caller origin phi", "invalid caller origin definition", "invalid caller origin credit transfer", "owned caller allocation return required", "exact caller Boolean required", "exact caller Boolean required", "unavailable caller origin terminator", "unsupported caller origin effect", "invalid caller origin parameter", "invalid caller origin parameter", "owned caller allocation return required"];
+  let i: i32 = 0;
+  for why in reasons {
+    expect(changed(f, i), [producer], why, 10 + i);
+    i = i + 1;
+  }
+  expect(f, [], "caller origin producer binding", 40);
+  expect(f, [producer, producer], "caller origin producer binding", 41);
+  let pb = producer.blocks[0];
+  let insts: ssa.SInst[] = [];
+  for op in pb.insts {
+    insts = insts.append(if (op.kind_tag == 48) { ssa.SInst { ...op, imm: 4 } } else { op });
+  }
+  expect(f, [ssa.SFunc { ...producer, blocks: [ssa.SBlock { ...pb, insts: insts }] }], "unproved caller allocation producer", 42);
+  expect(f, [ssa.SFunc { ...producer, name: "wrong_binding" }], "caller origin producer binding", 43);
+  expect(changed(f, 20), [ssa.SFunc { ...producer, name: "renamed_producer" }], "", 44);
+  expect(copies(f), [producer], "", 45);
+  expect(sparse(f), [producer], "", 46);
+  expect(ssa.SFunc { ...f, nvals: 2147483647 }, [producer], "invalid caller origin graph", 47);
+  expect(ssa.SFunc { ...f, nparams: 2 }, [producer], "invalid caller origin graph", 48);
+  expect(ssa.SFunc { ...f, takes_env: true }, [producer], "invalid caller origin graph", 49);
+  phi_controls(f, producer);
+  expect(f, [producer], "", 50);
+}
+
+function target_checks(target: string): void {
+  let source = "struct Leaf { n: i32 }\nstruct Parent { left: Leaf, right: Leaf }\n@noinline\nfunction parent(left: Leaf, right: Leaf): Parent { return Parent { left: left, right: right }; }\n@noinline\nfunction select_parent(flag: boolean, a: Leaf, b: Leaf): Parent { let chosen = if (flag) { parent(a, b) } else { parent(b, a) }; return chosen; }\nfunction main(): i32 { let p = select_parent(true, Leaf { n: 1 }, Leaf { n: 2 }); return p.left.n + p.right.n - 3; }\n";
+  let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
+  let producers: ssa.SFunc[] = [];
+  let callers: ssa.SFunc[] = [];
+  for body in sub.bodies {
+    if (body.name == "parent" || body.name == "select_parent") {
+      require(body.ok, 2);
+      let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), body.name, body.n_params, body.n_locals, body.ops, false);
+      require(lifted.ok, 3);
+      if (body.name == "parent") {
+        producers = producers.append(lifted.func);
+      } else {
+        callers = callers.append(lifted.func);
+      }
+    }
+  }
+  require(producers.len() == 1 && callers.len() == 1, 4);
+  // Explicit fixture ABI/layout facts; selected typed binding is separate.
+  controls(callers[0], producers[0]);
+}
+
+function main(): i32 {
+  target_checks("arm64-darwin");
+  target_checks("x86-64-linux");
+  target_checks("wasm32-wasi");
+  print("caller allocation origin controls passed");
+  return 0;
+}

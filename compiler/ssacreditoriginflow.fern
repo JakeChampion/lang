@@ -1,0 +1,314 @@
+// Scoped caller origin proof. Caller binds Boolean/consume Child/consume Child
+// -> Parent and each producer's consume Child/consume Child -> Parent ABI, with
+// the same ordered two-flat-reference layout and no finalizers or views.
+import "./ssa";
+import "./ssacreditorigin" as origin;
+import "./ssacredithelper" as helper;
+import "./util";
+
+function refused(f: ssa.SFunc, why: string): origin.Origin {
+  return origin.Origin { proof: helper.Proof { ok: false, function_name: f.name, message: why }, words: 0 };
+}
+
+function at(f: ssa.SFunc, id: i32): i32 {
+  let i: i32 = 0;
+  for b in f.blocks {
+    if (b.id == id) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return -1;
+}
+
+function edge(t: ssa.STerm, id: i32): boolean {
+  return t.kind_tag == 2 && t.target == id || t.kind_tag == 3 && (t.t == id || t.f == id);
+}
+
+function readable(row: boolean[], id: i32): boolean {
+  return id >= 0 && id < row.len() && row[id];
+}
+
+struct Graph { order: i32[], error: string }
+
+// Check every block, including infeasible continuations. Index by block position,
+// never by external block ID; nvals is bounded by actual instruction count.
+function graph(f: ssa.SFunc, producers: ssa.SFunc[]): Graph {
+  let bad = Graph { order: [], error: "invalid caller origin graph" };
+  let count: i32 = 0;
+  for b in f.blocks {
+    count = count + b.insts.len();
+  }
+  if (f.name == "" || util.str_has_prefix(f.name, "__fern_") || f.nparams != 3 || f.takes_env || f.nvals < 3 || f.nvals > count || at(f, f.entry) < 0) {
+    return bad;
+  }
+  let blocks: i32[] = [];
+  let values: i32[] = [];
+  let params: i32[] = [];
+  for b in f.blocks {
+    if (b.id < 0 || util.index_of_i32(blocks, b.id) >= 0 || b.id == f.entry && b.preds.len() != 0 || b.id != f.entry && b.preds.len() == 0) {
+      return bad;
+    }
+    blocks = blocks.append(b.id);
+    let body = false;
+    for op in b.insts {
+      if (op.result < 0 || op.result >= f.nvals || util.index_of_i32(values, op.result) >= 0) {
+        return Graph { ...bad, error: "invalid caller origin definition" };
+      }
+      values = values.append(op.result);
+      if (op.kind_tag == 8) {
+        if (body || b.preds.len() == 0 || op.args.len() != b.preds.len() || op.imm != 0 || op.str != "") {
+          return Graph { ...bad, error: "invalid caller origin phi" };
+        }
+      } else {
+        body = true;
+        if (op.kind_tag == 6 && op.args.len() == 0 && op.str == "") {
+          if (b.id != f.entry || op.imm < 0 || op.imm > 2 || util.index_of_i32(params, op.imm) >= 0) {
+            return Graph { ...bad, error: "invalid caller origin parameter" };
+          }
+          params = params.append(op.imm);
+        } else if (op.kind_tag == 1 && op.args.len() == 0 && op.str == "") {} else if (op.kind_tag == 7 && op.args.len() == 1 && op.imm == 0 && op.str == "") {} else if (op.kind_tag == 11 && op.args.len() == 2 && op.imm == 0) {
+          let matches: i32 = 0;
+          for p in producers {
+            if (p.name == op.str) {
+              matches = matches + 1;
+            }
+          }
+          if (matches != 1) {
+            return Graph { ...bad, error: "caller origin producer binding" };
+          }
+        } else {
+          return Graph { ...bad, error: "unsupported caller origin effect" };
+        }
+      }
+    }
+    let seen: i32[] = [];
+    for p in b.preds {
+      let pi = at(f, p);
+      if (pi < 0 || util.index_of_i32(seen, p) >= 0 || !edge(f.blocks[pi].term, b.id)) {
+        return bad;
+      }
+      seen = seen.append(p);
+    }
+    if (b.term.kind_tag < 1 || b.term.kind_tag > 3 || b.term.kind_tag == 3 && b.term.t == b.term.f) {
+      return bad;
+    }
+    let targets: i32[] = [];
+    if (b.term.kind_tag == 2) {
+      targets = [b.term.target];
+    }
+    if (b.term.kind_tag == 3) {
+      targets = [b.term.t, b.term.f];
+    }
+    for t in targets {
+      let ti = at(f, t);
+      if (ti < 0 || util.index_of_i32(f.blocks[ti].preds, b.id) < 0) {
+        return bad;
+      }
+    }
+  }
+  if (params.len() != 3) {
+    return Graph { ...bad, error: "invalid caller origin parameter" };
+  }
+  let empty: boolean[] = [];
+  let i: i32 = 0;
+  while (i < f.nvals) {
+    empty = empty.append(false);
+    i = i + 1;
+  }
+  let rows: boolean[][] = [];
+  let done: boolean[] = [];
+  for b in f.blocks {
+    rows = rows.append(empty);
+    done = done.append(false);
+  }
+  let order: i32[] = [];
+  while (order.len() < f.blocks.len()) {
+    let chosen: i32 = -1;
+    i = 0;
+    for b in f.blocks {
+      let ready = !done[i];
+      for p in b.preds {
+        if (!done[at(f, p)]) {
+          ready = false;
+        }
+      }
+      if (ready && chosen < 0) {
+        chosen = i;
+      }
+      i = i + 1;
+    }
+    if (chosen < 0) {
+      return Graph { ...bad, error: "unsupported caller origin cycle" };
+    }
+    let b = f.blocks[chosen];
+    let row = empty;
+    if (b.preds.len() > 0) {
+      row = rows[at(f, b.preds[0])];
+      for p in b.preds {
+        i = 0;
+        while (i < f.nvals) {
+          row = row.with(i, row[i] && rows[at(f, p)][i]);
+          i = i + 1;
+        }
+      }
+    }
+    for op in b.insts {
+      if (op.kind_tag == 8) {
+        i = 0;
+        for p in b.preds {
+          if (!readable(rows[at(f, p)], op.args[i])) {
+            return Graph { ...bad, error: "unavailable caller origin phi" };
+          }
+          i = i + 1;
+        }
+      } else {
+        for arg in op.args {
+          if (!readable(row, arg)) {
+            return Graph { ...bad, error: "unavailable caller origin operand" };
+          }
+        }
+      }
+      row = row.with(op.result, true);
+    }
+    if (b.term.kind_tag == 1 && !readable(row, b.term.value) || b.term.kind_tag == 3 && !readable(row, b.term.cond)) {
+      return Graph { ...bad, error: "unavailable caller origin terminator" };
+    }
+    rows = rows.with(chosen, row);
+    done = done.with(chosen, true);
+    order = order.append(chosen);
+  }
+  return Graph { order: order, error: "" };
+}
+
+// Kind -1 unavailable, 0 exact scalar, 1 reference. Reference identities name
+// credit obligations, not unequal runtime pointers. Roots 0/1 are incoming
+// independent child credits; each call result has its own fresh storage root.
+struct Value { kind: i32, identity: i32, words: i32 }
+
+// Two fixed Boolean ABI cases. Admitted branches must remain exact Booleans;
+// no unknown-as-zero, path enumeration, numeric/reference conversion or loops.
+pub function caller(f: ssa.SFunc, producers: ssa.SFunc[], shape: string): origin.Origin {
+  if (producers.len() == 0) {
+    return refused(f, "caller origin producer binding");
+  }
+  let names: string[] = [];
+  for p in producers {
+    for name in names {
+      if (name == p.name) {
+        return refused(f, "caller origin producer binding");
+      }
+    }
+    names = names.append(p.name);
+    let checked = origin.producer(p, shape, [true, true]);
+    if (!checked.proof.ok || checked.words != 3) {
+      return refused(f, "unproved caller allocation producer");
+    }
+  }
+  let checked = graph(f, producers);
+  if (checked.error != "") {
+    return refused(f, checked.error);
+  }
+  let empty: Value[] = [];
+  let credits: i32[] = [1, 1];
+  let i: i32 = 0;
+  while (i < f.nvals) {
+    empty = empty.append(Value { kind: -1, identity: 0, words: 0 });
+    credits = credits.append(0);
+    i = i + 1;
+  }
+  for input in [0, 1] {
+    let rows: Value[][] = [];
+    let balances: i32[][] = [];
+    let destinations: i32[] = [];
+    for b in f.blocks {
+      rows = rows.append(empty);
+      balances = balances.append(credits);
+      destinations = destinations.append(-1);
+    }
+    let returned = false;
+    for index in checked.order {
+      let b = f.blocks[index];
+      let row = empty;
+      let balance = credits;
+      let previous: i32 = -1;
+      let active = b.id == f.entry;
+      for p in b.preds {
+        let pi = at(f, p);
+        if (destinations[pi] == b.id) {
+          // With exact deterministic branches each ABI case has one feasible
+          // predecessor. Refuse rather than approximate a broader domain.
+          if (active) {
+            return refused(f, "ambiguous caller origin flow");
+          }
+          active = true;
+          previous = pi;
+          row = rows[pi];
+          balance = balances[pi];
+        }
+      }
+      if (active) {
+        for op in b.insts {
+          let value = Value { kind: 0, identity: 0, words: 0 };
+          if (op.kind_tag == 8) {
+            let pos = util.index_of_i32(b.preds, f.blocks[previous].id);
+            // Read the immutable predecessor snapshot, not earlier phi results.
+            value = rows[previous][op.args[pos]];
+          } else if (op.kind_tag == 6) {
+            if (op.imm == 0) {
+              value = Value { ...value, identity: input };
+            } else {
+              value = Value { kind: 1, identity: op.imm - 1, words: 0 };
+            }
+          } else if (op.kind_tag == 1) {
+            value = Value { ...value, identity: op.imm };
+          } else if (op.kind_tag == 7) {
+            value = row[op.args[0]];
+          } else if (op.kind_tag == 11) {
+            for arg in op.args {
+              let child = row[arg];
+              if (child.kind != 1 || child.identity < 0 || child.identity > 1 || child.words != 0 || balance[child.identity] != 1) {
+                return refused(f, "invalid caller origin credit transfer");
+              }
+              balance = balance.with(child.identity, 0);
+            }
+            let root = op.result + 2;
+            if (balance[root] != 0) {
+              return refused(f, "duplicate caller allocation credit");
+            }
+            balance = balance.with(root, 1);
+            value = Value { kind: 1, identity: root, words: 3 };
+          }
+          row = row.with(op.result, value);
+        }
+        if (b.term.kind_tag == 1) {
+          let result = row[b.term.value];
+          if (result.kind != 1 || result.identity < 2 || result.words != 3 || balance[result.identity] != 1) {
+            return refused(f, "owned caller allocation return required");
+          }
+          balance = balance.with(result.identity, 0);
+          for credit in balance {
+            if (credit != 0) {
+              return refused(f, "leftover caller origin credits");
+            }
+          }
+          returned = true;
+        } else if (b.term.kind_tag == 2) {
+          destinations = destinations.with(index, b.term.target);
+        } else {
+          let condition = row[b.term.cond];
+          if (condition.kind != 0 || condition.identity < 0 || condition.identity > 1) {
+            return refused(f, "exact caller Boolean required");
+          }
+          destinations = destinations.with(index, if (condition.identity == 1) { b.term.t } else { b.term.f });
+        }
+        rows = rows.with(index, row);
+        balances = balances.with(index, balance);
+      }
+    }
+    if (!returned) {
+      return refused(f, "caller allocation return missing");
+    }
+  }
+  return origin.Origin { proof: helper.Proof { ok: true, function_name: f.name, message: "proved caller allocation origin" }, words: 3 };
+}
