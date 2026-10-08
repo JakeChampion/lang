@@ -1,0 +1,198 @@
+// Scoped PRE-CALL facts only. The caller supplies the selected Boolean/three
+// consuming flat-child ABI and matching producer/consumer types and layouts.
+// Sites describe the first consumer call reached by each Boolean ABI case.
+// No consumer effects, returned ownership, runtime uniqueness or reuse are proved.
+import "./ssa";
+import "./ssacreditflowgraph" as graph;
+import "./ssacreditorigin" as origin;
+import "./ssacredithelper" as helper;
+import "./util";
+
+pub struct Site {
+  input: i32,
+  block: i32,
+  call: i32,
+  consumer: string,
+  parameter: i32,
+  argument: i32,
+  incoming: i32,
+  words: i32,
+}
+
+pub struct Boundary { proof: helper.Proof, sites: Site[] }
+
+struct Value { kind: i32, identity: i32, words: i32 }
+
+struct State { values: Value[], credits: i32[], sites: Site[], error: string }
+
+function refused(f: ssa.SFunc, why: string): Boundary {
+  return Boundary { proof: helper.Proof { ok: false, function_name: f.name, message: why }, sites: [] };
+}
+
+function bindings(caller: string, producers: ssa.SFunc[], consumers: ssa.SFunc[], shape: string): string {
+  if (consumers.len() != 1 || producers.len() == 0) {
+    return "incoming boundary binding";
+  }
+  let c = consumers[0];
+  if (c.name == "" || util.str_has_prefix(c.name, "__fern_") || c.nparams != 2 || c.takes_env || c.blocks.len() == 0) {
+    return "incoming boundary consumer binding";
+  }
+  if (c.name == caller) {
+    return "incoming boundary binding";
+  }
+  let names = [caller, c.name];
+  for p in producers {
+    if (util.has_str(names, p.name)) {
+      return "incoming boundary binding";
+    }
+    names = names.append(p.name);
+    let checked = origin.producer(p, shape, [true, true]);
+    if (!checked.proof.ok || checked.words != 3) {
+      return "unproved incoming allocation producer";
+    }
+  }
+  return "";
+}
+
+function initial(f: ssa.SFunc): State {
+  let values: Value[] = [];
+  let credits: i32[] = [1, 1, 1];
+  let i: i32 = 0;
+  while (i < f.nvals) {
+    values = values.append(Value { kind: -1, identity: 0, words: 0 });
+    credits = credits.append(0);
+    i = i + 1;
+  }
+  return State { values: values, credits: credits, sites: [], error: "" };
+}
+
+function producer_call(s: State, op: ssa.SInst): State {
+  for arg in op.args {
+    let child = s.values[arg];
+    if (child.kind != 1 || child.identity < 0 || child.identity > 1 || child.words != 0 || s.credits[child.identity] != 1) {
+      return State { ...s, error: "invalid incoming producer credit transfer" };
+    }
+    s = State { ...s, credits: s.credits.with(child.identity, 0) };
+  }
+  let root = op.result + 3;
+  if (s.credits[root] != 0) {
+    return State { ...s, error: "duplicate incoming allocation credit" };
+  }
+  return State { ...s, values: s.values.with(op.result, Value { kind: 1, identity: root, words: 3 }), credits: s.credits.with(root, 1) };
+}
+
+function consumer_call(s: State, op: ssa.SInst, block: i32, input: i32): State {
+  let parent = s.values[op.args[0]];
+  let child = s.values[op.args[1]];
+  if (parent.kind != 1 || parent.identity < 3 || parent.words != 3 || s.credits[parent.identity] != 1) {
+    return State { ...s, error: "owned matching-capacity consumer argument required" };
+  }
+  if (child.kind != 1 || child.identity != 2 || child.words != 0 || s.credits[2] != 1) {
+    return State { ...s, error: "independent incoming child argument required" };
+  }
+  let index: i32 = 0;
+  for credit in s.credits {
+    if (index != parent.identity && index != 2 && credit != 0) {
+      return State { ...s, error: "leftover incoming boundary credits" };
+    }
+    index = index + 1;
+  }
+  let site = Site { input: input, block: block, call: op.result, consumer: op.str, parameter: 0, argument: op.args[0], incoming: op.args[1], words: 3 };
+  // Stop BEFORE the call. Neither consuming the credits nor a return from the
+  // opaque body is assumed. The exact call/argument identity scopes the fact.
+  return State { ...s, sites: [site] };
+}
+
+function instruction(s: State, op: ssa.SInst, b: ssa.SBlock, previous: ssa.SBlock, predecessor: State, consumer: string, input: i32): State {
+  if (op.kind_tag == 11) {
+    if (op.str == consumer) {
+      return consumer_call(s, op, b.id, input);
+    }
+    return producer_call(s, op);
+  }
+  let value = Value { kind: 0, identity: 0, words: 0 };
+  if (op.kind_tag == 8) {
+    let pos = util.index_of_i32(b.preds, previous.id);
+    value = predecessor.values[op.args[pos]];
+  } else if (op.kind_tag == 6) {
+    if (op.imm == 0) {
+      value = Value { ...value, identity: input };
+    } else {
+      value = Value { kind: 1, identity: op.imm - 1, words: 0 };
+    }
+  } else if (op.kind_tag == 1) {
+    value = Value { ...value, identity: op.imm };
+  } else if (op.kind_tag == 7) {
+    value = s.values[op.args[0]];
+  }
+  return State { ...s, values: s.values.with(op.result, value) };
+}
+
+function input_case(f: ssa.SFunc, order: i32[], consumer: string, input: i32): State {
+  let empty = initial(f);
+  let rows: State[] = [];
+  let destinations: i32[] = [];
+  for b in f.blocks {
+    rows = rows.append(empty);
+    destinations = destinations.append(-1);
+  }
+  for index in order {
+    let b = f.blocks[index];
+    let s = empty;
+    let previous = index;
+    let active = b.id == f.entry;
+    for p in b.preds {
+      let pi = graph.block_index(f, p);
+      if (destinations[pi] == b.id) {
+        if (active) {
+          return State { ...empty, error: "ambiguous incoming boundary flow" };
+        }
+        active = true;
+        previous = pi;
+        s = rows[pi];
+      }
+    }
+    if (active) {
+      for op in b.insts {
+        s = instruction(s, op, b, f.blocks[previous], rows[previous], consumer, input);
+        if (s.error != "" || s.sites.len() > 0) {
+          return s;
+        }
+      }
+      if (b.term.kind_tag == 1) {
+        return State { ...empty, error: "incoming consumer call missing" };
+      }
+      let destination = b.term.target;
+      if (b.term.kind_tag == 3) {
+        let condition = s.values[b.term.cond];
+        if (condition.kind != 0 || condition.identity < 0 || condition.identity > 1) {
+          return State { ...empty, error: "exact incoming Boolean required" };
+        }
+        destination = if (condition.identity == 1) { b.term.t } else { b.term.f };
+      }
+      rows = rows.with(index, s);
+      destinations = destinations.with(index, destination);
+    }
+  }
+  return State { ...empty, error: "incoming consumer call missing" };
+}
+
+pub function before_calls(f: ssa.SFunc, producers: ssa.SFunc[], consumers: ssa.SFunc[], shape: string): Boundary {
+  let error = bindings(f.name, producers, consumers, shape);
+  if (error != "") {
+    return refused(f, error);
+  }
+  let checked = graph.check(f, util.append_all(producers, consumers), 4);
+  if (checked.error != "") {
+    return refused(f, checked.error);
+  }
+  let sites: Site[] = [];
+  for input in [0, 1] {
+    let s = input_case(f, checked.order, consumers[0].name, input);
+    if (s.error != "") {
+      return refused(f, s.error);
+    }
+    sites = util.append_all(sites, s.sites);
+  }
+  return Boundary { proof: helper.Proof { ok: true, function_name: f.name, message: "proved pre-call incoming capacity" }, sites: sites };
+}
