@@ -1,0 +1,195 @@
+import "../ssa";
+import "../ssa_lift";
+import "../lexer";
+import "../parser";
+import "../semlower";
+import "../ssacreditguard" as guard;
+import "../ssacreditphi" as phi;
+
+function require(ok: boolean, id: i32): void {
+  if (!ok) {
+    exit(id);
+  }
+}
+
+function must(j: phi.Joined, id: i32): phi.Joined {
+  if (j.error != "") {
+    print(j.error);
+    exit(id);
+  }
+  return j;
+}
+
+function reject(j: phi.Joined, why: string, id: i32): void {
+  if (j.error != why || j.bindings.len() != 0) {
+    print(j.error);
+    exit(id);
+  }
+}
+
+function blank(n: i32): phi.Value[] {
+  let values: phi.Value[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    values = values.append(phi.Value { kind: -1, identity: -1, available: 0 });
+    i = i + 1;
+  }
+  return values;
+}
+
+function value(kind: i32, identity: i32, available: i32): phi.Value {
+  return phi.Value { kind: kind, identity: identity, available: available };
+}
+
+function inst(result: i32, args: i32[]): ssa.SInst {
+  return ssa.SInst { kind_tag: 8, result: result, args: args, imm: 0, str: "" };
+}
+
+function unit_checks(): void {
+  let zero = guard.constant(guard.empty(), 0);
+  let one = guard.constant(zero.arena, 1);
+  let u = guard.predicate(one.arena, 2147483647);
+  let shared = guard.combine(u.arena, 1, one.id, u.id);
+  let old = guard.constant(shared.arena, 17);
+  let fresh = guard.constant(old.arena, 29);
+  let block = ssa.SBlock { id: 2147483647, preds: [7, 19], insts: [inst(2, [0, 1])], term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 2 } };
+  let unique_values = blank(3).with(0, value(1, old.id, u.id));
+  let shared_values = blank(3).with(1, value(0, zero.id, shared.id));
+  let yes = phi.Edge { predecessor: 7, path: u.id, values: unique_values };
+  let no = phi.Edge { predecessor: 19, path: shared.id, values: shared_values };
+  let joined = must(phi.merge(fresh.arena, block, [no, yes], 3), 1);
+  require(joined.bindings.len() == 1 && joined.bindings[0].result == 2 && joined.bindings[0].value.kind == 1, 2);
+  let donor = joined.bindings[0].value;
+  let null = phi.is_null(joined.arena, donor, one.id);
+  require(null.error == "" && null.id == shared.id, 3);
+  let unique = guard.combine(null.arena, 1, one.id, null.id);
+  require(unique.id == u.id, 4);
+  let original = must(phi.merge(unique.arena, block, [yes, no], 3), 5);
+  require(original.bindings[0].value.identity == donor.identity, 6);
+  let scalar = phi.Edge { ...no, values: shared_values.with(1, value(0, old.id, shared.id)) };
+  reject(phi.merge(original.arena, block, [yes, scalar], 3), "non-null scalar phi reference", 7);
+  reject(phi.merge(original.arena, block, [yes, yes], 3), "invalid phi predecessor", 8);
+  reject(phi.merge(original.arena, block, [yes], 3), "phi predecessor count", 9);
+  reject(phi.merge(original.arena, block, [yes, phi.Edge { ...no, path: one.id }], 3), "overlapping phi edges", 10);
+  reject(phi.merge(original.arena, block, [phi.Edge { ...yes, values: blank(3) }, no], 3), "unreadable phi operand", 11);
+  reject(phi.merge(original.arena, block, [phi.Edge { ...yes, values: unique_values.with(0, value(1, old.id, shared.id)) }, no], 3), "unavailable phi operand", 12);
+  reject(phi.merge(original.arena, block, [phi.Edge { ...yes, path: old.id }, no], 3), "non-Boolean guarded mask", 13);
+  reject(phi.merge(original.arena, block, [phi.Edge { ...yes, values: unique_values.with(0, value(1, -1, u.id)) }, no], 3), "invalid guarded operation", 14);
+  let negative = guard.constant(original.arena, -1);
+  reject(phi.merge(negative.arena, block, [phi.Edge { ...yes, values: unique_values.with(0, value(1, negative.id, u.id)) }, no], 3), "invalid reference identity", 15);
+  reject(phi.merge(negative.arena, ssa.SBlock { ...block, insts: [inst(2, [0])] }, [yes, no], 3), "phi predecessor arity or position", 16);
+  reject(phi.merge(negative.arena, ssa.SBlock { ...block, insts: [inst(2, [2, 1])] }, [yes, no], 3), "invalid acyclic phi operand", 17);
+  reject(phi.merge(negative.arena, ssa.SBlock { ...block, insts: [inst(2, [2147483647, 1])] }, [yes, no], 3), "invalid acyclic phi operand", 18);
+  reject(phi.merge(negative.arena, ssa.SBlock { ...block, insts: [inst(2, [0, 1]), inst(2, [0, 1])] }, [yes, no], 3), "invalid phi block definition", 19);
+  let unreadable = phi.Edge { ...no, path: zero.id, values: blank(3) };
+  let partial = must(phi.merge(negative.arena, block, [yes, unreadable], 3), 20);
+  require(partial.path == u.id && partial.bindings[0].value.available == u.id, 21);
+  require(phi.is_null(partial.arena, partial.bindings[0].value, one.id).error == "unavailable null-test operand", 22);
+  // Nonzero scalars are fine for scalar phis, but cannot become references.
+  let scalar_yes = phi.Edge { ...yes, values: unique_values.with(0, value(0, old.id, u.id)) };
+  let scalars = must(phi.merge(partial.arena, block, [scalar_yes, scalar], 3), 23);
+  require(scalars.bindings[0].value.kind == 0 && scalars.bindings[0].value.identity == old.id, 24);
+  require(phi.is_null(scalars.arena, scalars.bindings[0].value, one.id).error == "reference null test required", 25);
+  // Two phis read different predecessor snapshots. Neither writes into the
+  // other's inputs; reordering the phi instructions leaves both facts intact.
+  let pair = ssa.SBlock { ...block, insts: [inst(2, [0, 1]), inst(3, [1, 0])] };
+  let pair_yes = phi.Edge { ...yes, values: blank(4).with(0, value(1, old.id, u.id)).with(1, value(1, fresh.id, u.id)) };
+  let pair_no = phi.Edge { ...no, values: blank(4).with(0, value(1, old.id, shared.id)).with(1, value(1, fresh.id, shared.id)) };
+  let pairs = must(phi.merge(scalars.arena, pair, [pair_yes, pair_no], 4), 26);
+  let swapped = must(phi.merge(pairs.arena, ssa.SBlock { ...pair, insts: [pair.insts[1], pair.insts[0]] }, [pair_no, pair_yes], 4), 27);
+  require(pairs.bindings[0].value.identity == swapped.bindings[1].value.identity && pairs.bindings[1].value.identity == swapped.bindings[0].value.identity, 28);
+  // A planted same-block dependency must not read a newly assigned phi.
+  reject(phi.merge(swapped.arena, ssa.SBlock { ...pair, insts: [pair.insts[0], inst(3, [2, 0])] }, [pair_yes, pair_no], 4), "invalid acyclic phi operand", 29);
+  reject(phi.merge(swapped.arena, block, [phi.Edge { ...yes, values: blank(2) }, no], 3), "invalid phi predecessor", 30);
+  reject(phi.merge(swapped.arena, block, [phi.Edge { ...yes, predecessor: -1 }, no], 3), "invalid phi predecessor", 31);
+  reject(phi.merge(swapped.arena, ssa.SBlock { ...block, preds: [7, 7] }, [yes, no], 3), "invalid phi predecessor", 32);
+  let nonphi = ssa.SInst { kind_tag: 1, result: 3, args: [], imm: 0, str: "" };
+  reject(phi.merge(swapped.arena, ssa.SBlock { ...pair, insts: [nonphi, pair.insts[0]] }, [pair_yes, pair_no], 4), "phi predecessor arity or position", 33);
+  reject(phi.merge(swapped.arena, block, [phi.Edge { ...yes, values: unique_values.with(0, value(1, old.id, old.id)) }, no], 3), "non-Boolean guarded mask", 34);
+  require(phi.is_null(swapped.arena, value(1, -1, one.id), one.id).error != "", 35);
+  require(phi.is_null(swapped.arena, value(1, negative.id, one.id), one.id).error == "invalid reference identity", 36);
+  // Disjoint extremes must not overflow as an intermediate subtraction.
+  let min = guard.constant(swapped.arena, -2147483648);
+  let max = guard.constant(min.arena, 2147483647);
+  let extremes = must(phi.merge(max.arena, block, [phi.Edge { ...yes, values: unique_values.with(0, value(0, min.id, u.id)) }, phi.Edge { ...no, values: shared_values.with(1, value(0, max.id, shared.id)) }], 3), 37);
+  let low = guard.evaluate(extremes.arena, extremes.bindings[0].value.identity, [2147483647], [true]);
+  let high = guard.evaluate(extremes.arena, extremes.bindings[0].value.identity, [2147483647], [false]);
+  require(low.ok && low.value == -2147483648 && high.ok && high.value == 2147483647, 38);
+}
+
+function actual_checks(target: string): void {
+  let source = "struct Leaf { n: i32 }\nstruct Parent { left: Leaf, right: Leaf }\n@noinline\nfunction replace(own p: Parent, child: Leaf): Parent { return Parent { ...p, left: child }; }\nfunction main(): i32 { return 0; }\n";
+  let lowered = semlower.driven(parser.parse_module(lexer.tokenize(source)), target);
+  let graphs: ssa.SFunc[] = [];
+  for body in lowered.sub.bodies {
+    if (body.name == "replace") {
+      require(body.ok, 40);
+      let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), body.name, body.n_params, body.n_locals, body.ops, false);
+      require(lifted.ok, 41);
+      graphs = graphs.append(lifted.func);
+    }
+  }
+  require(graphs.len() == 1, 42);
+  let graph = graphs[0];
+  let blocks: ssa.SBlock[] = [];
+  let fresh_value: i32 = -1;
+  for b in graph.blocks {
+    if (b.insts.len() > 0 && b.insts[0].kind_tag == 8) {
+      blocks = blocks.append(b);
+    }
+    for op in b.insts {
+      if (op.kind_tag == 11 && op.str == "__fern_alloc_reuse") {
+        fresh_value = op.result;
+      }
+    }
+  }
+  require(blocks.len() == 2 && fresh_value >= 0, 43);
+  let donor_block = blocks[0];
+  let result_block = blocks[1];
+  let donor_op = donor_block.insts[0];
+  let result_op = result_block.insts[0];
+  require(donor_op.args.len() == 2 && donor_op.args[0] == 0 && result_op.args.len() == 2 && result_op.args[0] == fresh_value && result_op.args[1] == donor_op.result, 44);
+  // These edge/value facts come from this fixture's known branch shape.
+  // The merger checks phi semantics, not the intervening RC operations. A
+  // later credit-flow proof must independently establish and consume them.
+  let zero = guard.constant(guard.empty(), 0);
+  let one = guard.constant(zero.arena, 1);
+  let u = guard.predicate(one.arena, 71);
+  let shared = guard.combine(u.arena, 1, one.id, u.id);
+  let old = guard.constant(shared.arena, 17);
+  let fresh = guard.constant(old.arena, 29);
+  let yes_values = blank(graph.nvals).with(0, value(1, old.id, u.id));
+  let no_values = blank(graph.nvals).with(donor_op.args[1], value(0, zero.id, shared.id));
+  let yes = phi.Edge { predecessor: donor_block.preds[0], path: u.id, values: yes_values };
+  let no = phi.Edge { predecessor: donor_block.preds[1], path: shared.id, values: no_values };
+  let donor = must(phi.merge(fresh.arena, donor_block, [yes, no], graph.nvals), 45);
+  let null = phi.is_null(donor.arena, donor.bindings[0].value, one.id);
+  require(null.error == "" && null.id == shared.id, 46);
+  let reused = phi.Edge { predecessor: result_block.preds[1], path: u.id, values: blank(graph.nvals).with(donor_op.result, donor.bindings[0].value) };
+  let allocated = phi.Edge { predecessor: result_block.preds[0], path: shared.id, values: blank(graph.nvals).with(fresh_value, value(1, fresh.id, shared.id)) };
+  let result = must(phi.merge(null.arena, result_block, [reused, allocated], graph.nvals), 47);
+  let result_null = phi.is_null(result.arena, result.bindings[0].value, one.id);
+  require(result_null.error == "" && guard.is_constant(result_null.arena, result_null.id, 0), 48);
+  for unique in [false, true] {
+    let got = guard.evaluate(result_null.arena, result.bindings[0].value.identity, [71], [unique]);
+    require(got.ok && (unique && got.value == 17 || !unique && got.value == 29), 49);
+  }
+  // Swapped predecessor identities cannot use values only defined on the
+  // opposite predecessor. Removing a phi input or forging its availability
+  // is a structural/fact error even when the other branch is valid.
+  let wrong = ssa.SBlock { ...result_block, preds: [result_block.preds[1], result_block.preds[0]] };
+  reject(phi.merge(result_null.arena, wrong, [reused, allocated], graph.nvals), "unreadable phi operand", 50);
+  let bad_allocated = phi.Edge { ...allocated, values: allocated.values.with(fresh_value, value(1, fresh.id, u.id)) };
+  reject(phi.merge(result_null.arena, result_block, [reused, bad_allocated], graph.nvals), "unavailable phi operand", 51);
+  let again = must(phi.merge(result_null.arena, result_block, [allocated, reused], graph.nvals), 52);
+  require(again.bindings[0].value.identity == result.bindings[0].value.identity, 53);
+}
+
+function main(): i32 {
+  unit_checks();
+  actual_checks("arm64-darwin");
+  actual_checks("x86-64-linux");
+  actual_checks("wasm32-wasi");
+  print("guarded physical phi identity controls passed\n");
+  return 0;
+}
