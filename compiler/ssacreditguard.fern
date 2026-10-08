@@ -1,0 +1,198 @@
+// Exact guarded integers for the physical-credit checker. This module knows
+// predicate identities, not where uniqueness facts come from. Not a compile gate.
+import "./util";
+
+struct Node { variable: i32, low: i32, high: i32, value: i32 }
+
+struct Memo { op: i32, a: i32, b: i32, result: i32 }
+
+pub struct Arena { nodes: Node[], memo: Memo[] }
+
+pub struct Built { arena: Arena, id: i32, error: string }
+
+pub function empty(): Arena {
+  return Arena { nodes: [], memo: [] };
+}
+
+function failed(a: Arena, why: string): Built {
+  return Built { arena: a, id: -1, error: why };
+}
+
+function valid(a: Arena, id: i32): boolean {
+  return id >= 0 && id < a.nodes.len();
+}
+
+function node(a: Arena, n: Node): Built {
+  let i: i32 = 0;
+  for old in a.nodes {
+    if (old.variable == n.variable && old.low == n.low && old.high == n.high && old.value == n.value) {
+      return Built { arena: a, id: i, error: "" };
+    }
+    i = i + 1;
+  }
+  return Built { arena: Arena { ...a, nodes: a.nodes.append(n) }, id: i, error: "" };
+}
+
+pub function constant(a: Arena, value: i32): Built {
+  return node(a, Node { variable: -1, low: -1, high: -1, value: value });
+}
+
+// Ordered nodes make equality canonical within one arena. Reduction removes
+// predicates whose outcomes agree. The arena owns all handles; never mix arenas.
+function choice(a: Arena, variable: i32, low: i32, high: i32): Built {
+  if (variable < 0 || !valid(a, low) || !valid(a, high)) {
+    return failed(a, "invalid guarded node");
+  }
+  if (low == high) {
+    return Built { arena: a, id: low, error: "" };
+  }
+  let l = a.nodes[low];
+  let h = a.nodes[high];
+  if (l.variable >= 0 && l.variable <= variable || h.variable >= 0 && h.variable <= variable) {
+    return failed(a, "unordered predicate");
+  }
+  return node(a, Node { variable: variable, low: low, high: high, value: 0 });
+}
+
+pub function predicate(a: Arena, variable: i32): Built {
+  if (variable < 0) {
+    return failed(a, "invalid predicate identity");
+  }
+  let zero = constant(a, 0);
+  let one = constant(zero.arena, 1);
+  return choice(one.arena, variable, zero.id, one.id);
+}
+
+// op 0 adds, 1 subtracts, 2 compares equality, 3 compares less-than.
+// op 4 masks the right value with a Boolean left value (exactly zero or one).
+// Operations are pointwise over the same predicate identities. Linear intern
+// and memo lookup are deliberate pilot limitations, with no cost-budget claim.
+pub function combine(a: Arena, op: i32, left: i32, right: i32): Built {
+  if (op < 0 || op > 4 || !valid(a, left) || !valid(a, right)) {
+    return failed(a, "invalid guarded operation");
+  }
+  for m in a.memo {
+    if (m.op == op && m.a == left && m.b == right) {
+      return Built { arena: a, id: m.result, error: "" };
+    }
+  }
+  let l = a.nodes[left];
+  let r = a.nodes[right];
+  let out = failed(a, "uncomputed guarded operation");
+  if (l.variable < 0 && r.variable < 0) {
+    let value: i64 = 0i64;
+    if (op == 0) {
+      value = l.value as i64 + r.value as i64;
+    } else if (op == 1) {
+      value = l.value as i64 - r.value as i64;
+    } else if (op == 2) {
+      if (l.value == r.value) {
+        value = 1i64;
+      }
+    } else if (op == 3) {
+      if (l.value < r.value) {
+        value = 1i64;
+      }
+    } else {
+      if (l.value != 0 && l.value != 1) {
+        return failed(a, "non-Boolean guarded mask");
+      }
+      if (l.value == 1) {
+        value = r.value as i64;
+      }
+    }
+    if (value < -2147483648i64 || value > 2147483647i64) {
+      return failed(a, "guarded credit overflow");
+    }
+    out = constant(a, value as i32);
+  } else {
+    let v: i32 = l.variable;
+    if (v < 0 || r.variable >= 0 && r.variable < v) {
+      v = r.variable;
+    }
+    let ll: i32 = left;
+    let lh: i32 = left;
+    let rl: i32 = right;
+    let rh: i32 = right;
+    if (l.variable == v) {
+      ll = l.low;
+      lh = l.high;
+    }
+    if (r.variable == v) {
+      rl = r.low;
+      rh = r.high;
+    }
+    let low = combine(a, op, ll, rl);
+    if (low.error != "") {
+      return low;
+    }
+    let high = combine(low.arena, op, lh, rh);
+    if (high.error != "") {
+      return high;
+    }
+    out = choice(high.arena, v, low.id, high.id);
+  }
+  if (out.error != "") {
+    return out;
+  }
+  let memo = out.arena.memo.append(Memo { op: op, a: left, b: right, result: out.id });
+  return Built { ...out, arena: Arena { ...out.arena, memo: memo } };
+}
+
+pub struct Value { ok: boolean, value: i32 }
+
+// Select correlated branch values without evaluating a subtraction between
+// them: INT_MIN and INT_MAX alternatives are valid even though their difference
+// overflows. Every terminal of the predicate must be Boolean, even for equal
+// branch values. Feasibility and predicate provenance remain the caller's job.
+pub function select(a: Arena, condition: i32, when_true: i32, when_false: i32): Built {
+  let yes = combine(a, 4, condition, when_true);
+  if (yes.error != "") {
+    return yes;
+  }
+  let one = constant(yes.arena, 1);
+  let negated = combine(one.arena, 1, one.id, condition);
+  if (negated.error != "") {
+    return negated;
+  }
+  let no = combine(negated.arena, 4, negated.id, when_false);
+  if (no.error != "") {
+    return no;
+  }
+  return combine(no.arena, 0, yes.id, no.id);
+}
+
+// Used by independent assignment tests, not by the symbolic certificate proof.
+pub function evaluate(a: Arena, id: i32, variables: i32[], values: boolean[]): Value {
+  if (!valid(a, id) || variables.len() != values.len()) {
+    return Value { ok: false, value: 0 };
+  }
+  let i: i32 = 0;
+  for v in variables {
+    if (v < 0 || util.index_of_i32(variables, v) != i) {
+      return Value { ok: false, value: 0 };
+    }
+    i = i + 1;
+  }
+  let at: i32 = id;
+  while (a.nodes[at].variable >= 0) {
+    let n = a.nodes[at];
+    let p: i32 = util.index_of_i32(variables, n.variable);
+    if (p < 0) {
+      return Value { ok: false, value: 0 };
+    }
+    at = n.low;
+    if (values[p]) {
+      at = n.high;
+    }
+  }
+  return Value { ok: true, value: a.nodes[at].value };
+}
+
+pub function is_constant(a: Arena, id: i32, value: i32): boolean {
+  return valid(a, id) && a.nodes[id].variable < 0 && a.nodes[id].value == value;
+}
+
+pub function node_count(a: Arena): i32 {
+  return a.nodes.len();
+}
