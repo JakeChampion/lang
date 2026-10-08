@@ -1,0 +1,565 @@
+// Scoped typed-boundary adapter for the independently checked extraction
+// fragment. This is not a whole-module admission or a default compile gate.
+import "./ircore";
+import "./irtables";
+import "./ssa_lift";
+import "./ssa";
+import "./ssasem";
+import "./semrecords";
+import "./semtypes";
+import "./typeinfo";
+import "./ssacredithelper" as helper;
+import "./ssacreditextract" as extract;
+import "./ssacreditreplace" as replace;
+import "./ssacreditreuse" as reuse;
+import "./ssacreditscalar" as scalar_effect;
+import "./ssacreditorigin" as origin;
+import "./ssacreditoriginflow" as origin_flow;
+import "./util";
+
+struct PhysicalBindings {
+  functions: ssa.SFunc[],
+  error: string,
+}
+
+// Resolve and lift all three unique produced bodies before ownership checking.
+function physical_bindings(sub: ircore.Sub, name: string, drop_name: string, release_name: string): PhysicalBindings {
+  let subjects = bodies(sub, name);
+  let drops = bodies(sub, drop_name);
+  let releases = bodies(sub, release_name);
+  if (subjects.len() != 1 || drops.len() != 1 || releases.len() != 1) {
+    return PhysicalBindings { functions: [], error: "missing or ambiguous physical binding" };
+  }
+  if (!subjects[0].ok || !drops[0].ok || !releases[0].ok) {
+    return PhysicalBindings { functions: [], error: "unproduced physical binding" };
+  }
+  let kt = ssa_lift.kind_table();
+  let f = ssa_lift.lift_from_ir_prod(kt, name, subjects[0].n_params, subjects[0].n_locals, subjects[0].ops, false);
+  let d = ssa_lift.lift_from_ir_prod(kt, drop_name, drops[0].n_params, drops[0].n_locals, drops[0].ops, false);
+  let r = ssa_lift.lift_from_ir_prod(kt, release_name, releases[0].n_params, releases[0].n_locals, releases[0].ops, false);
+  if (!f.ok || !d.ok || !r.ok) {
+    return PhysicalBindings { functions: [], error: "unsupported physical lift" };
+  }
+  return PhysicalBindings { functions: [f.func, d.func, r.func], error: "" };
+}
+
+function replacement_layout_error(sub: ircore.Sub, c: ssasem.Contract, parent: semrecords.Record, child: semrecords.Record, selected: i32): string {
+  if (parent.views || parent.nests_func || child.views || child.nests_func) {
+    return "unsupported record effects";
+  }
+  if (selected < 0) {
+    if (parent.fields.len() != 1 || !semtypes.equal(parent.fields[0].ty, c.params[1])) {
+      return "replacement parent must contain exactly the incoming child";
+    }
+  } else {
+    if (parent.fields.len() != 2) {
+      return "partial replacement requires exactly two child fields";
+    }
+    if (!semtypes.equal(parent.fields[selected].ty, c.params[1])) {
+      return "partial replacement field differs from incoming child";
+    }
+    for field in parent.fields {
+      let error = sibling_error(sub, field.ty);
+      if (error != "") {
+        return error;
+      }
+    }
+  }
+  for field in child.fields {
+    if (!scalar(field.ty)) {
+      return "child is not a flat scalar record";
+    }
+  }
+  return "";
+}
+
+struct ExtractionSlots {
+  offsets: i32[],
+  index: i32,
+  error: string,
+}
+
+struct ScalarFields {
+  fields: reuse.ScalarField[],
+  error: string,
+}
+
+function selected_contracts(sub: ircore.Sub, name: string): ssasem.Contract[] {
+  let contracts: ssasem.Contract[] = [];
+  for c in sub.physical_contracts {
+    if (c.name == name) {
+      contracts = contracts.append(c);
+    }
+  }
+  return contracts;
+}
+
+function sibling_error(sub: ircore.Sub, ty: typeinfo.Type): string {
+  if (!ordinary(ty, sub.physical_finalizers)) {
+    return "unsupported sibling type or user finalizer";
+  }
+  let sibling_index = semrecords.find(sub.physical_records, ty);
+  if (sibling_index < 0) {
+    return "missing resolved sibling schema";
+  }
+  let sibling = sub.physical_records.list[sibling_index];
+  if (sibling.views || sibling.nests_func) {
+    return "unsupported sibling effects";
+  }
+  for member in sibling.fields {
+    if (!scalar(member.ty)) {
+      return "sibling is not a flat scalar record";
+    }
+  }
+  return "";
+}
+
+function producer_child_error(sub: ircore.Sub, ty: typeinfo.Type): string {
+  if (!ordinary(ty, sub.physical_finalizers)) {
+    return "unsupported producer child or finalizer";
+  }
+  let ci = semrecords.find(sub.physical_records, ty);
+  if (ci < 0) {
+    return "missing producer child schema";
+  }
+  let child = sub.physical_records.list[ci];
+  if (child.views || child.nests_func) {
+    return "unsupported producer child effects";
+  }
+  for member in child.fields {
+    if (!scalar(member.ty)) {
+      return "producer child is not flat";
+    }
+  }
+  return "";
+}
+
+function origin_layout_error(parent: semrecords.Record, child: semrecords.Record, child_type: typeinfo.Type): string {
+  if (parent.views || parent.nests_func || child.views || child.nests_func || parent.fields.len() != 2) {
+    return "unsupported origin caller layout";
+  }
+  for field in parent.fields {
+    if (!semtypes.equal(field.ty, child_type)) {
+      return "origin caller result field differs from child";
+    }
+  }
+  for field in child.fields {
+    if (!scalar(field.ty)) {
+      return "origin caller child is not flat";
+    }
+  }
+  return "";
+}
+
+function origin_callee(sub: ircore.Sub, name: string, c: ssasem.Contract, callee: string): helper.Proof {
+  let selected = selected_contracts(sub, callee);
+  if (selected.len() != 1) {
+    return refused(name, "missing or ambiguous origin callee ABI");
+  }
+  let p = selected[0];
+  if (p.params.len() != 2 || p.modes.len() != 2 || p.modes[0] != 3 || p.modes[1] != 3 || !semtypes.equal(p.params[0], c.params[1]) || !semtypes.equal(p.params[1], c.params[2]) || !semtypes.equal(p.result, c.result)) {
+    return refused(name, "origin callee ABI differs from caller");
+  }
+  let checked = check_producer(sub, callee);
+  if (!checked.proof.ok || checked.words != 3) {
+    return refused(name, "origin callee proof refused: " + checked.proof.message);
+  }
+  return helper.Proof { ok: true, function_name: name, message: "" };
+}
+
+function assertion_signature_error(c: ssasem.Contract): string {
+  if (c.params.len() != 2 || c.modes.len() != 2 || c.modes[0] != 1 || c.modes[1] != 1) {
+    return "assertion requires two scalar parameters";
+  }
+  let boolean_param = false;
+  if let typeinfo.TypeBool(_) = c.params[0] {
+    boolean_param = true;
+  }
+  let signed_code = false;
+  if let typeinfo.TypeI32(i) = c.params[1] {
+    signed_code = i.width == 32 && !i.unsigned && !i.is_char && !i.polymorphic;
+  }
+  let void_result = false;
+  if let typeinfo.TypeVoid(_) = c.result {
+    void_result = true;
+  }
+  if (!boolean_param || !signed_code || !void_result) {
+    return "assertion requires boolean, concrete signed i32 and void result";
+  }
+  return "";
+}
+
+function replacement_scalar_fields(sub: ircore.Sub, c: ssasem.Contract, parent: semrecords.Record): ScalarFields {
+  let fields: reuse.ScalarField[] = [];
+  let types = [c.params[1], parent.fields[0].ty, parent.fields[1].ty];
+  let root: i32 = 3;
+  for ty in types {
+    let ri = semrecords.find(sub.physical_records, ty);
+    let index: i32 = 0;
+    for field in sub.physical_records.list[ri].fields {
+      if (index > 268435454) {
+        return ScalarFields { fields: [], error: "unrepresentable scalar child field" };
+      }
+      if let typeinfo.TypeI32(n) = field.ty {
+        if (n.width == 32 && !n.unsigned && !n.is_char && !n.polymorphic) {
+          fields = fields.append(reuse.ScalarField { root: root, offset: (index + 1) * 8 });
+        }
+      }
+      index = index + 1;
+    }
+    root = root + 1;
+  }
+  return ScalarFields { fields: fields, error: "" };
+}
+
+function extraction_slots(sub: ircore.Sub, c: ssasem.Contract, p: semrecords.Record, selected: i32): ExtractionSlots {
+  let index: i32 = -1;
+  let offsets: i32[] = [];
+  let i: i32 = 0;
+  for field in p.fields {
+    if (!scalar(field.ty)) {
+      if (selected < 0 && (index >= 0 || !semtypes.equal(field.ty, c.result))) {
+        return ExtractionSlots { offsets: [], index: -1, error: "parent must contain exactly the result child" };
+      }
+      let error = sibling_error(sub, field.ty);
+      if (error != "") {
+        return ExtractionSlots { offsets: [], index: -1, error: error };
+      }
+      if (i > 268435454) {
+        return ExtractionSlots { offsets: [], index: -1, error: "unrepresentable child slot" };
+      }
+      offsets = offsets.append((i + 1) * 8);
+      if (selected < 0 || selected == i) {
+        if (!semtypes.equal(field.ty, c.result)) {
+          return ExtractionSlots { offsets: [], index: -1, error: "selected child type differs from result" };
+        }
+        index = i;
+      }
+    }
+    i = i + 1;
+  }
+  if (index < 0 || index > 268435454) {
+    return ExtractionSlots { offsets: [], index: -1, error: "missing or unrepresentable child slot" };
+  }
+  return ExtractionSlots { offsets: offsets, index: index, error: "" };
+}
+
+function refused(name: string, why: string): helper.Proof {
+  return helper.Proof { ok: false, function_name: name, message: why };
+}
+
+function scalar(t: typeinfo.Type): boolean {
+  if (!semtypes.concrete(t, false)) {
+    return false;
+  }
+  if let typeinfo.TypeI32(_) = t {
+    return true;
+  }
+  if let typeinfo.TypeFloat(_) = t {
+    return true;
+  }
+  if let typeinfo.TypeBool(_) = t {
+    return true;
+  }
+  return false;
+}
+
+function ordinary(t: typeinfo.Type, finalized: ssasem.Finalizer[]): boolean {
+  if (!semtypes.concrete(t, false) || semtypes.is_env(t)) {
+    return false;
+  }
+  if let typeinfo.TypeStruct(s) = t {
+    return ssasem.finalizer_index(finalized, s.name) < 0;
+  }
+  return false;
+}
+
+// Require exactly one matching body. A missing body or an ambiguous binding
+// cannot be replaced with a trusted helper name or an external declaration.
+function bodies(sub: ircore.Sub, name: string): irtables.LowerResult[] {
+  let found: irtables.LowerResult[] = [];
+  for r in util.append_all(sub.bodies, sub.extra) {
+    if (r.name == name) {
+      found = found.append(r);
+    }
+  }
+  return found;
+}
+
+function no_origin(name: string, why: string): origin.Origin {
+  return origin.Origin { proof: refused(name, why), words: 0 };
+}
+
+// Bind the selected constructor ABI and resolved layout to its actual body.
+// Capacity comes from checked allocation instructions, never the type alone.
+pub function check_producer(sub: ircore.Sub, name: string): origin.Origin {
+  let contracts = selected_contracts(sub, name);
+  if (contracts.len() != 1) {
+    return no_origin(name, "missing or ambiguous producer ABI");
+  }
+  let c = contracts[0];
+  if (!ordinary(c.result, sub.physical_finalizers)) {
+    return no_origin(name, "unsupported producer result or finalizer");
+  }
+  let ri = semrecords.find(sub.physical_records, c.result);
+  if (ri < 0) {
+    return no_origin(name, "missing producer result schema");
+  }
+  let record = sub.physical_records.list[ri];
+  if (record.views || record.nests_func || record.fields.len() < 1 || record.fields.len() > 2 || c.params.len() != record.fields.len() || c.modes.len() != c.params.len()) {
+    return no_origin(name, "unsupported producer layout or ABI arity");
+  }
+  let refs: boolean[] = [];
+  let i: i32 = 0;
+  for field in record.fields {
+    if (!semtypes.equal(field.ty, c.params[i])) {
+      return no_origin(name, "producer parameter differs from field");
+    }
+    let ref = !scalar(field.ty);
+    if (c.modes[i] != (if (ref) { 3 } else { 1 })) {
+      return no_origin(name, "incorrect producer parameter ownership mode");
+    }
+    if (ref) {
+      let error = producer_child_error(sub, field.ty);
+      if (error != "") {
+        return no_origin(name, error);
+      }
+    }
+    refs = refs.append(ref);
+    i = i + 1;
+  }
+  let subjects = bodies(sub, name);
+  if (subjects.len() != 1) {
+    return no_origin(name, "missing or ambiguous producer body");
+  }
+  let body = subjects[0];
+  if (!body.ok) {
+    return no_origin(name, "unproduced producer body");
+  }
+  let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), name, body.n_params, body.n_locals, body.ops, false);
+  if (!lifted.ok) {
+    return no_origin(name, "unsupported producer lift");
+  }
+  return origin.producer(lifted.func, semrecords.name_of(record.ty), refs);
+}
+
+// Derive the narrow caller-flow obligations from selected metadata and actual
+// calls. The flow checker independently recomputes every producer body again.
+pub function check_origin_caller(sub: ircore.Sub, name: string): origin.Origin {
+  let contracts = selected_contracts(sub, name);
+  if (contracts.len() != 1) {
+    return no_origin(name, "missing or ambiguous origin caller ABI");
+  }
+  let c = contracts[0];
+  if (c.params.len() != 3 || c.modes.len() != 3 || c.modes[0] != 1 || c.modes[1] != 3 || c.modes[2] != 3) {
+    return no_origin(name, "origin caller requires scalar and two consuming parameters");
+  }
+  let boolean_param = false;
+  if let typeinfo.TypeBool(_) = c.params[0] {
+    boolean_param = true;
+  }
+  if (!boolean_param || !semtypes.equal(c.params[1], c.params[2]) || !ordinary(c.params[1], sub.physical_finalizers) || !ordinary(c.result, sub.physical_finalizers)) {
+    return no_origin(name, "unsupported origin caller types or finalizers");
+  }
+  let pi = semrecords.find(sub.physical_records, c.result);
+  let ci = semrecords.find(sub.physical_records, c.params[1]);
+  if (pi < 0 || ci < 0) {
+    return no_origin(name, "missing origin caller schema");
+  }
+  let parent = sub.physical_records.list[pi];
+  let child = sub.physical_records.list[ci];
+  let layout_error = origin_layout_error(parent, child, c.params[1]);
+  if (layout_error != "") {
+    return no_origin(name, layout_error);
+  }
+  let found = bodies(sub, name);
+  if (found.len() != 1 || !found[0].ok) {
+    return no_origin(name, "missing or ambiguous origin caller body");
+  }
+  let body = found[0];
+  let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), name, body.n_params, body.n_locals, body.ops, false);
+  if (!lifted.ok) {
+    return no_origin(name, "unsupported origin caller lift");
+  }
+  let names: string[] = [];
+  let producers: ssa.SFunc[] = [];
+  for block in lifted.func.blocks {
+    for op in block.insts {
+      if (op.kind_tag == 11 && !util.has_str(names, op.str)) {
+        names = names.append(op.str);
+        let checked = origin_callee(sub, name, c, op.str);
+        if (!checked.ok) {
+          return no_origin(name, checked.message);
+        }
+        let produced = bodies(sub, op.str);
+        let b = produced[0];
+        let actual = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), op.str, b.n_params, b.n_locals, b.ops, false);
+        if (!actual.ok) {
+          return no_origin(name, "unsupported origin callee lift");
+        }
+        producers = producers.append(actual.func);
+      }
+    }
+  }
+  return origin_flow.caller(lifted.func, producers, semrecords.name_of(parent.ty));
+}
+
+// Resolve the assertion's selected ABI and unique emitted body before using its
+// zero-or-exit summary. This does not prove a caller's assertion or live credits.
+pub function check_assertion(sub: ircore.Sub, name: string): helper.Proof {
+  let contracts = selected_contracts(sub, name);
+  if (contracts.len() != 1) {
+    return refused(name, "missing or ambiguous assertion ABI");
+  }
+  let c = contracts[0];
+  let error = assertion_signature_error(c);
+  if (error != "") {
+    return refused(name, error);
+  }
+  let found = bodies(sub, name);
+  if (found.len() != 1 || !found[0].ok) {
+    return refused(name, "missing or ambiguous assertion body");
+  }
+  let body = found[0];
+  let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), name, body.n_params, body.n_locals, body.ops, false);
+  if (!lifted.ok) {
+    return refused(name, "assertion production lift refused");
+  }
+  return scalar_effect.zero_or_exit(lifted.func);
+}
+
+pub function check(sub: ircore.Sub, name: string, drop_name: string, release_name: string): helper.Proof {
+  return extraction(sub, name, drop_name, release_name, -1);
+}
+
+// The selected index is a record field index, not a pointer identity. Every
+// sibling reference must independently meet the flat/no-finalizer contract.
+pub function check_selected(sub: ircore.Sub, name: string, drop_name: string, release_name: string, field_index: i32): helper.Proof {
+  if (field_index < 0) {
+    return refused(name, "invalid selected child field");
+  }
+  return extraction(sub, name, drop_name, release_name, field_index);
+}
+
+function extraction(sub: ircore.Sub, name: string, drop_name: string, release_name: string, selected: i32): helper.Proof {
+  let contracts = selected_contracts(sub, name);
+  if (contracts.len() != 1) {
+    return refused(name, "missing or ambiguous selected ABI");
+  }
+  let c = contracts[0];
+  if (c.params.len() != 1 || c.modes.len() != 1 || c.modes[0] != 3) {
+    return refused(name, "expected one consuming parent ABI");
+  }
+  if (!ordinary(c.params[0], sub.physical_finalizers) || !ordinary(c.result, sub.physical_finalizers)) {
+    return refused(name, "unsupported nominal type or user finalizer");
+  }
+  let pi = semrecords.find(sub.physical_records, c.params[0]);
+  let ci = semrecords.find(sub.physical_records, c.result);
+  if (pi < 0 || ci < 0) {
+    return refused(name, "missing resolved record schema");
+  }
+  let p = sub.physical_records.list[pi];
+  let child = sub.physical_records.list[ci];
+  if (p.views || p.nests_func || child.views || child.nests_func) {
+    return refused(name, "unsupported record effects");
+  }
+  for field in child.fields {
+    if (!scalar(field.ty)) {
+      return refused(name, "child is not a flat scalar record");
+    }
+  }
+  let slots = extraction_slots(sub, c, p, selected);
+  if (slots.error != "") {
+    return refused(name, slots.error);
+  }
+  let physical = physical_bindings(sub, name, drop_name, release_name);
+  if (physical.error != "") {
+    return refused(name, physical.error);
+  }
+  let f = physical.functions[0];
+  let d = physical.functions[1];
+  let r = physical.functions[2];
+  // Nominal records reserve word zero for the shape and use eight-byte
+  // slots on all admitted targets, including wide-slot WASI records.
+  return extract.check_selected(f, d, r, helper.FlatChildren { offsets: slots.offsets }, (slots.index + 1) * 8);
+}
+
+// Establish the independent facts needed by the fresh replacement fragment.
+// The incoming child may alias the old parent's child; its consuming ABI gives
+// it a separate owned credit. No inference or ownership plan is replayed here.
+pub function check_replace(sub: ircore.Sub, name: string, drop_name: string, release_name: string): helper.Proof {
+  return replacement(sub, name, drop_name, release_name, -1, []);
+}
+
+// Two flat fields with a selected replacement type. Field indices describe
+// typed layout obligations, never runtime pointer inequality or uniqueness.
+pub function check_partial(sub: ircore.Sub, name: string, drop_name: string, release_name: string, field_index: i32): helper.Proof {
+  if (field_index < 0 || field_index > 1) {
+    return refused(name, "invalid partial replacement field");
+  }
+  return replacement(sub, name, drop_name, release_name, field_index, []);
+}
+
+pub function check_partial_calls(sub: ircore.Sub, name: string, drop_name: string, release_name: string, field_index: i32, assertions: string[]): helper.Proof {
+  if (field_index < 0 || field_index > 1) {
+    return refused(name, "invalid partial replacement field");
+  }
+  return replacement(sub, name, drop_name, release_name, field_index, assertions);
+}
+
+function replacement(sub: ircore.Sub, name: string, drop_name: string, release_name: string, selected: i32, assertions: string[]): helper.Proof {
+  let contracts = selected_contracts(sub, name);
+  if (contracts.len() != 1) {
+    return refused(name, "missing or ambiguous selected ABI");
+  }
+  let c = contracts[0];
+  if (c.params.len() != 2 || c.modes.len() != 2 || c.modes[0] != 3 || c.modes[1] != 3) {
+    return refused(name, "expected consuming parent and child ABI");
+  }
+  if (!semtypes.equal(c.result, c.params[0])) {
+    return refused(name, "replacement result must be the parent type");
+  }
+  if (!ordinary(c.params[0], sub.physical_finalizers) || !ordinary(c.params[1], sub.physical_finalizers)) {
+    return refused(name, "unsupported nominal type or user finalizer");
+  }
+  let pi = semrecords.find(sub.physical_records, c.params[0]);
+  let ci = semrecords.find(sub.physical_records, c.params[1]);
+  if (pi < 0 || ci < 0) {
+    return refused(name, "missing resolved record schema");
+  }
+  let parent = sub.physical_records.list[pi];
+  let child = sub.physical_records.list[ci];
+  let layout_error = replacement_layout_error(sub, c, parent, child, selected);
+  if (layout_error != "") {
+    return refused(name, layout_error);
+  }
+  let physical = physical_bindings(sub, name, drop_name, release_name);
+  if (physical.error != "") {
+    return refused(name, physical.error);
+  }
+  let f = physical.functions[0];
+  let d = physical.functions[1];
+  let r = physical.functions[2];
+  if (selected >= 0) {
+    let numeric = replacement_scalar_fields(sub, c, parent);
+    if (numeric.error != "") {
+      return refused(name, numeric.error);
+    }
+    let fields = numeric.fields;
+    let checked_bodies: ssa.SFunc[] = [];
+    for assertion in assertions {
+      let proof = check_assertion(sub, assertion);
+      if (!proof.ok) {
+        return proof;
+      }
+      let body = bodies(sub, assertion)[0];
+      let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), assertion, body.n_params, body.n_locals, body.ops, false);
+      if (!lifted.ok) {
+        return refused(assertion, "assertion production lift refused");
+      }
+      checked_bodies = checked_bodies.append(lifted.func);
+    }
+    return reuse.check_calls(f, d, r, semrecords.name_of(parent.ty), fields, checked_bodies);
+  }
+  return replace.check(f, d, r, semrecords.name_of(parent.ty));
+}

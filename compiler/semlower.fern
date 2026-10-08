@@ -646,7 +646,7 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, debug
   // lives, so the emit path's tail is a plain append.
   let extra: irtables.LowerResult[] = ssarc.merge_helpers(instances, helpers.rows);
   let kept: semndprune.Result = semndprune.unused_adapter(mod, bodies, extra);
-  return ircore.Sub { ...ircore.no_sub(), bodies: kept.bodies, extra: kept.extra, contracts: contract_rows(built.contracts, r), records: inf.records };
+  return ircore.Sub { ...ircore.no_sub(), bodies: kept.bodies, extra: kept.extra, contracts: contract_rows(built.contracts, r), physical_contracts: built.contracts.list, physical_records: built.records, physical_finalizers: built.finalizers, records: inf.records };
 }
 
 // contract_rows spells what a caller's lowering reads of the functions it
