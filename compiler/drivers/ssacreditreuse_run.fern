@@ -594,7 +594,130 @@ function runtime_checks(): void {
   require(runtime_read(same, 155, 144) && overwritten.n == 144, 75);
 }
 
+// Each supplied assertion has the Boolean/i32-to-void ABI in this fixture.
+// The typed adapter proves that caller obligation separately.
+function named_body(rows: irtables.LowerResult[], name: string): ssa.SFunc {
+  let matches: irtables.LowerResult[] = [];
+  for row in rows {
+    if (row.name == name) {
+      matches = matches.append(row);
+    }
+  }
+  require(matches.len() == 1, 189);
+  return lift(matches[0]);
+}
+
+function caller_controls(target: string): void {
+  let text = "struct Leaf { n: i32 }\nstruct Parent { left: Leaf, right: Leaf }\n@noinline\nfunction partial_left(own p: Parent, child: Leaf): Parent { return Parent { ...p, left: child }; }\n@noinline\nfunction partial_right(own p: Parent, child: Leaf): Parent { return Parent { ...p, right: child }; }\nfunction main(): i32 { return 0; }\n" + "\n@noinline\nfunction assertion(ok: boolean, id: i32): void { if (!ok) { exit(id); } }\n";
+  let sub = semlower.driven(parser.parse_module(lexer.tokenize(text)), target).sub;
+  let d = named_body(sub.extra, "__sem_drop_Parent");
+  let r = named_body(sub.extra, "__sem_release_Parent");
+  let fields = [reuse.ScalarField { root: 3, offset: 8 }];
+  for field in [0, 1] {
+    let name = "partial_left";
+    if (field == 1) {
+      name = "partial_right";
+    }
+    let reasons = ["proved guarded two-child partial replacement", "scalar call may exit with unproved caller obligations", "scalar call requires Boolean operand", "scalar call requires Boolean and narrowed i32 operands", "scalar call requires Boolean and narrowed i32 operands", "scalar call may exit with unproved caller obligations", "proved guarded two-child partial replacement", "scalar call may exit with unproved caller obligations", "ambiguous scalar call binding", "unsupported reuse operation", "invalid scalar call arguments or flags", "scalar call requires Boolean and narrowed i32 operands", "scalar call may exit with unproved caller obligations", "proved guarded two-child partial replacement"];
+    let mode: i32 = 0;
+    while (mode < reasons.len()) {
+      let rows: irtables.LowerResult[] = [];
+      let hits: i32 = 0;
+      for body in sub.bodies {
+        if (body.name == name) {
+          let ops: ir.Op[] = [];
+          for op in body.ops {
+            if (op.kind_tag == ir.kind_id("return")) {
+              hits = hits + 1;
+              if (mode >= 5 && mode <= 7) {
+                ops = ops.append(ir.op_load_local(1)).append(ir.Op { ...op, kind_tag: ir.kind_id("struct_get"), i32_imm: 0 }).append(ir.op_const_i32(0)).append(ir.op_bin("gt_s", 0, false)).append(ir.op_store_local(body.n_locals));
+                if (mode >= 6) {
+                  ops = ops.append(ir.op_load_local(body.n_locals)).append(ir.op_if(0));
+                }
+                ops = ops.append(ir.op_load_local(body.n_locals));
+                if (mode == 7) {
+                  ops = ops.append(ir.op_const_i32(0)).append(ir.op_bin("eq", 0, false));
+                }
+              } else if (mode == 3) {
+                ops = ops.append(ir.op_load_local(1));
+              } else {
+                let value: i32 = 1;
+                if (mode == 1) {
+                  value = 0;
+                } else if (mode == 2) {
+                  value = 17;
+                }
+                ops = ops.append(ir.op_const_i32(value));
+              }
+              if (mode == 4) {
+                ops = ops.append(ir.op_load_local(1));
+              } else {
+                ops = ops.append(ir.op_const_i32(-2147483648));
+              }
+              let arity: i32 = 2;
+              if (mode == 10) {
+                ops = ops.append(ir.op_const_i32(7));
+                arity = 3;
+              } else if (mode == 11) {
+                ops = ops.append(ir.op_const_i32(1)).append(ir.op_bin("add", 0, false));
+              }
+              let callee = "assertion";
+              if (mode == 13) {
+                callee = "renamed_scalar";
+              }
+              ops = ops.append(ir.op_call_direct(callee, arity)).append(ir.op_drop());
+              if (mode == 6 || mode == 7) {
+                ops = ops.append(ir.op_end());
+              }
+            }
+            ops = ops.append(op);
+          }
+          rows = rows.append(irtables.LowerResult { ...body, ops: ops, n_locals: body.n_locals + 1 });
+        } else if (body.name == "assertion" && mode == 12) {
+          let ops: ir.Op[] = [];
+          for op in body.ops {
+            if (op.kind_tag == ir.kind_id("load_local") && op.i32_imm == 0) {
+              ops = ops.append(ir.op_const_i32(0));
+            } else {
+              ops = ops.append(op);
+            }
+          }
+          rows = rows.append(irtables.LowerResult { ...body, ops: ops });
+        } else if (body.name == "assertion" && mode == 13) {
+          rows = rows.append(irtables.LowerResult { ...body, name: "renamed_scalar" });
+        } else {
+          rows = rows.append(body);
+        }
+      }
+      require(hits == 1, 190);
+      let names = ["assertion"];
+      if (mode == 8) {
+        names = ["assertion", "assertion"];
+      } else if (mode == 9) {
+        names = [];
+      } else if (mode == 13) {
+        names = ["renamed_scalar"];
+      }
+      let assertions: ssa.SFunc[] = [];
+      for symbol in names {
+        assertions = assertions.append(named_body(rows, symbol));
+      }
+      let p = reuse.check_calls(named_body(rows, name), d, r, "Parent", fields, assertions);
+      if (p.ok != (mode == 0 || mode == 6 || mode == 13) || p.function_name != name || p.message != reasons[mode]) {
+        print(p.function_name + ": " + p.message);
+        exit(191 + mode);
+      }
+      mode = mode + 1;
+    }
+    let original = reuse.check_fields(named_body(sub.bodies, name), d, r, "Parent", fields);
+    require(original.ok, 205);
+  }
+}
+
 function main(): i32 {
+  caller_controls("arm64-darwin");
+  caller_controls("x86-64-linux");
+  caller_controls("wasm32-wasi");
   runtime_checks();
   target_checks("arm64-darwin");
   target_checks("x86-64-linux");

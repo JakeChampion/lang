@@ -6,6 +6,7 @@ import "./ssa";
 import "./ssacreditguard" as guard;
 import "./ssacreditphi" as phi;
 import "./ssacredithelper" as helper;
+import "./ssacreditscalar" as scalar_effect;
 import "./util";
 
 // Reference identities: 0=null, 1=old parent, 2=fresh parent, 3=incoming child,
@@ -17,6 +18,8 @@ struct Incoming { state: State, edges: phi.Edge[] }
 // Caller proves this exact child field is a concrete signed i32. Roots name
 // credit obligations (3 incoming, 4 old left, 5 old right), not unequal pointers.
 pub struct ScalarField { root: i32, offset: i32 }
+
+struct CheckedCall { name: string, returns: boolean[], exits: boolean[] }
 
 struct Context { arena: guard.Arena, values: phi.Value[], state: State, unique: i32, temp: i32, error: string }
 
@@ -174,7 +177,46 @@ function narrow_number(v: phi.Value): boolean {
   return v.kind == 0 || v.kind == 3;
 }
 
-function transfer(c: Context, op: ssa.SInst, shape: string, drop: string, release: string, fields: ScalarField[]): Context {
+function call_index(calls: CheckedCall[], name: string): i32 {
+  let i: i32 = 0;
+  for call in calls {
+    if (call.name == name) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return -1;
+}
+
+function scalar_call(c: Context, op: ssa.SInst, call: CheckedCall): Context {
+  if (op.args.len() != 2 || op.imm != 0) {
+    return failed(c, "invalid scalar call arguments or flags");
+  }
+  let condition = c.values[op.args[0]];
+  let code = c.values[op.args[1]];
+  if (condition.kind != 0 || !narrow_number(code)) {
+    return failed(c, "scalar call requires Boolean and narrowed i32 operands");
+  }
+  let out = c;
+  let covered: i32 = 0;
+  for input in [0, 1] {
+    out = mask(out, condition.identity, input);
+    let path = out.temp;
+    out = calc(out, 0, covered, path);
+    covered = out.temp;
+    if (call.exits[input]) {
+      // A non-returning process effect is not RC discharge. Keep the path,
+      // and refuse instead of silently erasing the caller's obligations.
+      out = equal(out, path, 0, 1, "scalar call may exit with unproved caller obligations");
+    }
+    if (!call.returns[input]) {
+      out = equal(out, path, 0, 1, "scalar call has no proved normal return");
+    }
+  }
+  return equal(out, out.state.path, covered, 1, "scalar call requires Boolean operand");
+}
+
+function transfer(c: Context, op: ssa.SInst, shape: string, drop: string, release: string, fields: ScalarField[], calls: CheckedCall[]): Context {
   let out = c;
   for arg in op.args {
     out = available(out, arg);
@@ -355,6 +397,9 @@ function transfer(c: Context, op: ssa.SInst, shape: string, drop: string, releas
     } else {
       return failed(out, "unsupported reuse store");
     }
+  } else if (op.kind_tag == 11 && call_index(calls, op.str) >= 0) {
+    out = scalar_call(out, op, calls[call_index(calls, op.str)]);
+    kind = 0;  // Checked normal-return value is zero; no credit is created.
   } else if (op.kind_tag == 11 && op.str == "__fern_alloc_reuse" && op.args.len() == 2 && op.imm == 0) {
     let donor = out.values[op.args[0]];
     let words = out.values[op.args[1]];
@@ -585,6 +630,23 @@ pub function check(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: str
 }
 
 pub function check_fields(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: string, fields: ScalarField[]): helper.Proof {
+  return check_calls(f, drop, release, shape, fields, []);
+}
+
+// Caller additionally proves each callee's selected Boolean/i32-to-void ABI.
+// Effects and outcomes are always recomputed from the supplied actual bodies.
+pub function check_calls(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: string, fields: ScalarField[], assertions: ssa.SFunc[]): helper.Proof {
+  let calls: CheckedCall[] = [];
+  for assertion in assertions {
+    if (assertion.name == f.name || assertion.name == drop.name || assertion.name == release.name || call_index(calls, assertion.name) >= 0) {
+      return helper.Proof { ok: false, function_name: f.name, message: "ambiguous scalar call binding" };
+    }
+    let checked = scalar_effect.outcomes(assertion);
+    if (!checked.proof.ok) {
+      return checked.proof;
+    }
+    calls = calls.append(CheckedCall { name: assertion.name, returns: checked.returns, exits: checked.exits });
+  }
   let seen: ScalarField[] = [];
   for field in fields {
     if (field.root < 3 || field.root > 5 || field.offset < 8 || field.offset % 8 != 0) {
@@ -662,7 +724,7 @@ pub function check_fields(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, sha
       }
       for op in b.insts {
         if (c.error == "" && op.kind_tag != 8) {
-          c = transfer(c, op, shape, drop.name, release.name, fields);
+          c = transfer(c, op, shape, drop.name, release.name, fields, calls);
         }
       }
       if (c.error == "" && b.term.kind_tag == 1) {
