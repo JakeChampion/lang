@@ -6,6 +6,7 @@ import "../ir";
 import "../ssa";
 import "../ssa_lift";
 import "../ssacredithelper" as proof;
+import "./ssacreditsparse" as sparse;
 
 function require(ok: boolean, id: i32): void {
   if (!ok) {
@@ -116,6 +117,7 @@ function target_checks(target: string): void {
   // Names and block storage order are not the proof. Value flow and edges are.
   let renamed = lift(rename_call(release, drop.name, "audited_child_drop"));
   expect(proof.release_body(renamed, ssa.SFunc { ...d, name: "audited_child_drop" }, layout), true, r.name, 22);
+  expect(proof.release_body(ssa.register_form(renamed).f, ssa.register_form(ssa.SFunc { ...d, name: "audited_child_drop" }).f, layout), true, r.name, 82);
   let reordered: ssa.SBlock[] = [];
   let i: i32 = r.blocks.len();
   while (i > 0) {
@@ -140,6 +142,7 @@ function target_checks(target: string): void {
   duplicate_values = duplicate_values.with(3, ssa.SInst { ...duplicate_values[3], result: duplicate_values[2].result });
   let malformed = ssa.SFunc { ...d, blocks: [ssa.SBlock { ...d.blocks[0], insts: duplicate_values }] };
   expect(proof.release_body(r, malformed, layout), false, d.name, 25);
+  optimized_checks(d, r, proof.FlatChildren { offsets: [8] });
 }
 
 function many_expect(p: proof.Proof, ok: boolean, name: string, why: string, id: i32): void {
@@ -240,6 +243,166 @@ function many_checks(target: string): void {
   // The old boundary cannot silently expand to cover the extra child.
   expect(proof.drop_body(d, proof.FlatChild { offset: 8 }), false, d.name, 47);
   expect(proof.release_body_many(r, d, layout), true, r.name, 48);
+  optimized_checks(d, r, layout);
+}
+
+function optimized_drop(d: ssa.SFunc, layout: proof.FlatChildren): void {
+  let b = d.blocks[0];
+  let ops = b.insts;
+  require(ops.len() == layout.offsets.len() * 2 + 2, 50);
+  let mode: i32 = 0;
+  while (mode < 10) {
+    let changed = ops;
+    let term = b.term;
+    if (mode == 0) {
+      changed = changed.with(2, ssa.SInst { ...ops[2], args: [ops[0].result] });
+    }
+    if (mode == 1) {
+      changed = changed.with(1, ssa.SInst { ...ops[1], imm: 0 });
+    }
+    if (mode == 2) {
+      changed = changed.with(2, ssa.SInst { ...ops[2], str: "__fern_rc_inc" });
+    }
+    if (mode == 3) {
+      changed = changed.with(1, ssa.SInst { ...ops[1], args: [ops[1].result] });
+    }
+    if (mode == 4) {
+      changed = changed.with(2, ssa.SInst { ...ops[2], result: ops[1].result });
+    }
+    if (mode == 5) {
+      term = ssa.STerm { ...term, value: ops[0].result };
+    }
+    if (mode == 6) {
+      changed = [ops[0], ops[ops.len() - 1]];
+    }
+    if (mode == 7) {
+      changed = changed.append(ssa.SInst { ...ops[2], result: d.nvals });
+    }
+    if (mode == 8) {
+      changed = changed.with(ops.len() - 1, ssa.SInst { ...ops[ops.len() - 1], imm: 1 });
+    }
+    if (mode == 9) {
+      changed = changed.with(2, ssa.SInst { ...ops[2], imm: 1 });
+    }
+    let bad = ssa.SFunc { ...d, nvals: d.nvals + 1, blocks: [ssa.SBlock { ...b, insts: changed, term: term }] };
+    expect(proof.drop_body_many(bad, layout), false, d.name, 51 + mode);
+    mode = mode + 1;
+  }
+  if (layout.offsets.len() == 2) {
+    let changed = ops.with(3, ssa.SInst { ...ops[3], imm: ops[1].imm });
+    expect(proof.drop_body_many(ssa.SFunc { ...d, blocks: [ssa.SBlock { ...b, insts: changed }] }, layout), false, d.name, 61);
+    changed = ops.with(4, ssa.SInst { ...ops[4], args: [ops[1].result] });
+    expect(proof.drop_body_many(ssa.SFunc { ...d, blocks: [ssa.SBlock { ...b, insts: changed }] }, layout), false, d.name, 62);
+  }
+}
+
+function guard_mutation(b: ssa.SBlock, mode: i32): ssa.SBlock {
+  let ops = b.insts;
+  let term = b.term;
+  if (mode == 0) {
+    term = ssa.STerm { ...term, t: term.f, f: term.t };
+  }
+  if (mode == 1) {
+    ops = ops.with(1, ssa.SInst { ...ops[1], args: [ops[1].result] });
+  }
+  if (mode == 2) {
+    ops = ops.with(1, ssa.SInst { ...ops[1], str: "__fern_rc_inc" });
+  }
+  if (mode == 12) {
+    term = ssa.STerm { ...term, cond: ops[0].result };
+  }
+  if (mode == 13) {
+    ops = ops.with(1, ssa.SInst { ...ops[1], imm: 0 });
+  }
+  return ssa.SBlock { ...b, insts: ops, term: term };
+}
+
+function unique_mutation(b: ssa.SBlock, entry: i32, mode: i32): ssa.SBlock {
+  let ops = b.insts;
+  let preds = b.preds;
+  let term = b.term;
+  if (mode == 3) {
+    ops = [];
+  }
+  if (mode == 4) {
+    ops = ops.with(0, ssa.SInst { ...ops[0], args: [ops[0].result] });
+  }
+  if (mode == 5) {
+    term = ssa.STerm { ...term, target: entry };
+  }
+  if (mode == 6) {
+    preds = [];
+  }
+  return ssa.SBlock { ...b, insts: ops, preds: preds, term: term };
+}
+
+function join_mutation(b: ssa.SBlock, r: ssa.SFunc, drop_name: string, mode: i32): ssa.SBlock {
+  let ops = b.insts;
+  let preds = b.preds;
+  let term = b.term;
+  if (mode == 7) {
+    preds = [r.entry, r.entry];
+  }
+  if (mode == 8) {
+    ops = ops.with(0, ssa.SInst { ...ops[0], str: drop_name });
+  }
+  if (mode == 9) {
+    ops = ops.with(0, ssa.SInst { ...ops[0], args: [ops[0].result] });
+  }
+  if (mode == 10) {
+    ops = ops.append(ssa.SInst { ...ops[0], result: r.nvals });
+  }
+  if (mode == 11) {
+    term = ssa.STerm { ...term, value: ops[0].result };
+  }
+  if (mode == 14) {
+    preds = [r.entry];
+  }
+  return ssa.SBlock { ...b, insts: ops, preds: preds, term: term };
+}
+
+function optimized_release(r: ssa.SFunc, d: ssa.SFunc, layout: proof.FlatChildren): void {
+  require(r.blocks.len() == 3, 63);
+  let mode: i32 = 0;
+  while (mode < 15) {
+    let blocks: ssa.SBlock[] = [];
+    for b in r.blocks {
+      if (b.id == r.entry) {
+        blocks = blocks.append(guard_mutation(b, mode));
+      } else {
+        if (b.term.kind_tag == 2) {
+          blocks = blocks.append(unique_mutation(b, r.entry, mode));
+        } else {
+          blocks = blocks.append(join_mutation(b, r, d.name, mode));
+        }
+      }
+    }
+    expect(proof.release_body_many(ssa.SFunc { ...r, nvals: r.nvals + 1, blocks: blocks }, d, layout), false, r.name, 64 + mode);
+    mode = mode + 1;
+  }
+}
+
+function optimized_checks(d: ssa.SFunc, r: ssa.SFunc, layout: proof.FlatChildren): void {
+  // Exercise the actual native transformation on each lowering form. This
+  // does not assert that WASI emits register-form SSA.
+  let final_drop = ssa.register_form(d).f;
+  let final_release = ssa.register_form(r).f;
+  expect(proof.drop_body_many(final_drop, layout), true, d.name, 76);
+  expect(proof.release_body_many(final_release, final_drop, layout), true, r.name, 77);
+  expect(proof.release_body_many(r, final_drop, layout), true, r.name, 78);
+  expect(proof.release_body_many(final_release, d, layout), true, r.name, 79);
+  let high_drop = sparse.rename(final_drop);
+  let high_release = sparse.rename(final_release);
+  expect(proof.release_body_many(high_release, high_drop, layout), true, r.name, 80);
+  let reordered: ssa.SBlock[] = [];
+  let i = final_release.blocks.len();
+  while (i > 0) {
+    i = i - 1;
+    reordered = reordered.append(final_release.blocks[i]);
+  }
+  expect(proof.release_body_many(ssa.SFunc { ...final_release, blocks: reordered }, final_drop, layout), true, r.name, 81);
+  optimized_drop(final_drop, layout);
+  optimized_release(final_release, final_drop, layout);
 }
 
 function main(): i32 {

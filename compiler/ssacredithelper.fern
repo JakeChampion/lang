@@ -91,16 +91,22 @@ pub function drop_body_many(f: ssa.SFunc, layout: FlatChildren): Proof {
     return refused(f, "unsupported drop graph");
   }
   let b = f.blocks[0];
-  if (b.preds.len() != 0 || b.insts.len() < 3 || (b.insts.len() - 3) % 2 != 0 || (b.insts.len() - 3) / 2 != seen.len()) {
+  // register_form removes the unused local-initialization zero. In either
+  // form, every remaining effect must be one complete child release pair.
+  let first: i32 = 1;
+  if (b.insts.len() % 2 != 0) {
+    first = 2;
+  }
+  if (b.preds.len() != 0 || b.insts.len() < 3 || (b.insts.len() - first - 1) / 2 != seen.len()) {
     return refused(f, "unsupported drop effects");
   }
   let p = b.insts[0];
   let result = b.insts[b.insts.len() - 1];
-  if (!parameter(p) || !zero(b.insts[1]) || !zero(result)) {
+  if (!parameter(p) || first == 2 && !zero(b.insts[1]) || !zero(result)) {
     return refused(f, "unsupported drop values");
   }
   let released: i32[] = [];
-  let i: i32 = 2;
+  let i: i32 = first;
   while (i < b.insts.len() - 1) {
     let load = b.insts[i];
     let dec = b.insts[i + 1];
@@ -130,7 +136,7 @@ pub function release_body_many(f: ssa.SFunc, drop: ssa.SFunc, layout: FlatChildr
   if (!child.ok) {
     return child;
   }
-  if (f.name == drop.name || !shape(f) || f.blocks.len() != 4) {
+  if (f.name == drop.name || !shape(f) || f.blocks.len() != 4 && f.blocks.len() != 3) {
     return refused(f, "unsupported release graph");
   }
   let entry = f.blocks[block_index(f, f.entry)];
@@ -142,6 +148,10 @@ pub function release_body_many(f: ssa.SFunc, drop: ssa.SFunc, layout: FlatChildr
   if (!parameter(p) || !unary(test, 11, p.result, "__fern_rc_is_unique") || test.imm != 4 || entry.term.cond != test.result) {
     return refused(f, "uniqueness subject mismatch");
   }
+  return release_edges(f, drop, entry, p);
+}
+
+function release_edges(f: ssa.SFunc, drop: ssa.SFunc, entry: ssa.SBlock, p: ssa.SInst): Proof {
   let ti = block_index(f, entry.term.t);
   let fi = block_index(f, entry.term.f);
   if (ti < 0 || fi < 0 || ti == fi) {
@@ -149,21 +159,30 @@ pub function release_body_many(f: ssa.SFunc, drop: ssa.SFunc, layout: FlatChildr
   }
   let yes = f.blocks[ti];
   let no = f.blocks[fi];
-  if (!single_pred(yes, entry.id) || !single_pred(no, entry.id) || yes.insts.len() != 1 || no.insts.len() != 0) {
+  let direct = f.blocks.len() == 3;
+  if (!single_pred(yes, entry.id) || yes.insts.len() != 1 || !direct && (!single_pred(no, entry.id) || no.insts.len() != 0)) {
     return refused(f, "conditional child drop mismatch");
   }
   if (!unary(yes.insts[0], 11, p.result, drop.name) || yes.insts[0].imm != 0) {
     return refused(f, "drop callee or subject mismatch");
   }
-  if (yes.term.kind_tag != 2 || no.term.kind_tag != 2 || yes.term.target != no.term.target) {
+  let target = no.term.target;
+  let shared = no.id;
+  if (direct) {
+    // The empty shared branch was bypassed; its edge must enter the same
+    // final release as the unique branch, with entry as its predecessor.
+    target = no.id;
+    shared = entry.id;
+  }
+  if (yes.term.kind_tag != 2 || !direct && no.term.kind_tag != 2 || yes.term.target != target) {
     return refused(f, "release join mismatch");
   }
   let ji = block_index(f, yes.term.target);
-  if (ji < 0 || ji == ti || ji == fi || f.blocks[ji].id == entry.id) {
+  if (ji < 0 || ji == ti || !direct && ji == fi || f.blocks[ji].id == entry.id) {
     return refused(f, "invalid release join");
   }
   let join = f.blocks[ji];
-  if (join.preds.len() != 2 || util.index_of_i32(join.preds, yes.id) < 0 || util.index_of_i32(join.preds, no.id) < 0 || join.insts.len() != 2) {
+  if (join.preds.len() != 2 || util.index_of_i32(join.preds, yes.id) < 0 || util.index_of_i32(join.preds, shared) < 0 || join.insts.len() != 2) {
     return refused(f, "unsupported final release effects");
   }
   let dec = join.insts[0];
