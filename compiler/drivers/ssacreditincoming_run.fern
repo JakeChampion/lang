@@ -1,0 +1,212 @@
+import "../lexer";
+import "../parser";
+import "../semlower";
+import "../ssa";
+import "../ssa_lift";
+import "../ssacreditincoming" as incoming;
+
+function require(ok: boolean, id: i32): void {
+  if (!ok) {
+    exit(id);
+  }
+}
+
+function expect(f: ssa.SFunc, producers: ssa.SFunc[], consumers: ssa.SFunc[], why: string): void {
+  let p = incoming.before_calls(f, producers, consumers, "Parent");
+  let ok = why == "";
+  if (p.proof.ok != ok || p.proof.function_name != f.name || !ok && (p.sites.len() != 0 || p.proof.message != why)) {
+    print(p.proof.function_name + ": " + p.proof.message + " expected: " + why);
+    exit(91);
+  }
+  if (ok) {
+    require(p.sites.len() == 2 && p.proof.message == "proved pre-call incoming capacity", 92);
+    let input: i32 = 0;
+    for site in p.sites {
+      require(site.input == input && site.words == 3 && site.parameter == 0 && site.consumer == consumers[0].name, 93);
+      let found: i32 = 0;
+      for b in f.blocks {
+        for op in b.insts {
+          if (b.id == site.block && op.result == site.call) {
+            require(op.kind_tag == 11 && op.str == site.consumer && op.args[0] == site.argument && op.args[1] == site.incoming, 94);
+            found = found + 1;
+          }
+        }
+      }
+      require(found == 1, 95);
+      input = input + 1;
+    }
+  }
+}
+
+function changed_call(op: ssa.SInst, mode: i32): ssa.SInst {
+  if (op.str == "parent") {
+    if (mode == 0) {
+      return ssa.SInst { ...op, args: [op.args[0], op.args[0]] };
+    }
+    if (mode == 1) {
+      return ssa.SInst { ...op, args: [3, op.args[1]] };
+    }
+    if (mode == 2) {
+      return ssa.SInst { ...op, str: "unknown" };
+    }
+    if (mode == 11) {
+      return ssa.SInst { ...op, kind_tag: 7, str: "", args: [op.args[0]] };
+    }
+  } else {
+    if (mode == 3) {
+      return ssa.SInst { ...op, args: [3, op.args[1]] };
+    }
+    if (mode == 4) {
+      return ssa.SInst { ...op, args: [op.args[0], 1] };
+    }
+    if (mode == 5) {
+      return ssa.SInst { ...op, args: [0, op.args[1]] };
+    }
+    if (mode == 6) {
+      return ssa.SInst { ...op, args: [op.args[0]] };
+    }
+    if (mode == 7) {
+      return ssa.SInst { ...op, imm: 1 };
+    }
+    if (mode == 8) {
+      return ssa.SInst { ...op, kind_tag: 7, str: "", args: [op.args[0]] };
+    }
+    if (mode == 12) {
+      return ssa.SInst { ...op, args: [op.result, op.args[1]] };
+    }
+    if (mode == 16) {
+      return ssa.SInst { ...op, result: 0 };
+    }
+  }
+  return op;
+}
+
+function changed(f: ssa.SFunc, mode: i32): ssa.SFunc {
+  let blocks: ssa.SBlock[] = [];
+  for b in f.blocks {
+    let insts: ssa.SInst[] = [];
+    for original in b.insts {
+      let op = original;
+      if (op.kind_tag == 11) {
+        op = changed_call(op, mode);
+      }
+      if (op.kind_tag == 8 && mode == 9) {
+        op = ssa.SInst { ...op, args: [op.args[1], op.args[0]] };
+      }
+      if (op.kind_tag == 8 && mode == 10) {
+        op = ssa.SInst { ...op, args: [3, op.args[1]] };
+      }
+      if (op.kind_tag == 6 && op.imm == 3 && mode == 14) {
+        op = ssa.SInst { ...op, kind_tag: 1, imm: 0 };
+      }
+      insts = insts.append(op);
+    }
+    let term = b.term;
+    if (term.kind_tag == 3 && mode == 13) {
+      term = ssa.STerm { ...term, cond: 1 };
+    }
+    blocks = blocks.append(ssa.SBlock { ...b, insts: insts, term: term });
+  }
+  return ssa.SFunc { ...f, blocks: blocks };
+}
+
+function copies(f: ssa.SFunc): ssa.SFunc {
+  let blocks: ssa.SBlock[] = [];
+  for b in f.blocks {
+    let insts: ssa.SInst[] = [];
+    for op in b.insts {
+      if (op.kind_tag == 11 && op.str == "replace") {
+        insts = insts.append(ssa.SInst { ...op, result: f.nvals, kind_tag: 7, str: "", args: [op.args[0]] });
+        insts = insts.append(ssa.SInst { ...op, result: f.nvals + 1, kind_tag: 7, str: "", args: [op.args[1]] });
+        insts = insts.append(ssa.SInst { ...op, args: [f.nvals, f.nvals + 1] });
+      } else {
+        insts = insts.append(op);
+      }
+    }
+    blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
+  }
+  return ssa.SFunc { ...f, blocks: blocks, nvals: f.nvals + 2 };
+}
+
+function renamed(f: ssa.SFunc): ssa.SFunc {
+  let blocks: ssa.SBlock[] = [];
+  for b in f.blocks {
+    let insts: ssa.SInst[] = [];
+    for op in b.insts {
+      insts = insts.append(if (op.kind_tag == 11) { ssa.SInst { ...op, str: "renamed_" + op.str } } else { op });
+    }
+    blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
+  }
+  return ssa.SFunc { ...f, blocks: blocks, name: "renamed_handoff" };
+}
+
+function controls(f: ssa.SFunc, p: ssa.SFunc, c: ssa.SFunc): void {
+  expect(f, [p], [c], "");
+  let reasons = ["invalid incoming producer credit transfer", "invalid incoming producer credit transfer", "caller origin producer binding", "owned matching-capacity consumer argument required", "independent incoming child argument required", "owned matching-capacity consumer argument required", "unsupported caller origin effect", "unsupported caller origin effect", "incoming consumer call missing", "unavailable caller origin phi", "owned matching-capacity consumer argument required", "owned matching-capacity consumer argument required", "unavailable caller origin operand", "exact incoming Boolean required", "invalid caller origin parameter", "", "invalid caller origin definition"];
+  let mode: i32 = 0;
+  for why in reasons {
+    expect(changed(f, mode), [p], [c], why);
+    mode = mode + 1;
+  }
+  expect(f, [], [c], "incoming boundary binding");
+  expect(f, [p, p], [c], "incoming boundary binding");
+  expect(f, [p], [], "incoming boundary binding");
+  expect(f, [p], [c, c], "incoming boundary binding");
+  expect(f, [p], [ssa.SFunc { ...c, nparams: 1 }], "incoming boundary consumer binding");
+  expect(f, [p], [ssa.SFunc { ...c, name: "unbound" }], "caller origin producer binding");
+  expect(f, [p], [ssa.SFunc { ...c, name: p.name }], "incoming boundary binding");
+  expect(f, [p], [ssa.SFunc { ...c, name: f.name }], "incoming boundary binding");
+  expect(f, [ssa.SFunc { ...p, name: f.name }], [c], "incoming boundary binding");
+  let pb = p.blocks[0];
+  let insts: ssa.SInst[] = [];
+  for op in pb.insts {
+    insts = insts.append(if (op.kind_tag == 48) { ssa.SInst { ...op, imm: 4 } } else { op });
+  }
+  expect(f, [ssa.SFunc { ...p, blocks: [ssa.SBlock { ...pb, insts: insts }] }], [c], "unproved incoming allocation producer");
+  expect(ssa.SFunc { ...f, nparams: 3 }, [p], [c], "invalid caller origin graph");
+  expect(ssa.SFunc { ...f, nvals: 2147483647 }, [p], [c], "invalid caller origin graph");
+  expect(copies(f), [p], [c], "");
+  expect(renamed(f), [ssa.SFunc { ...p, name: "renamed_parent" }], [ssa.SFunc { ...c, name: "renamed_replace" }], "");
+  expect(f, [p], [c], "");
+}
+
+function source(): string {
+  return "struct Leaf { n: i32 }\nstruct Parent { left: Leaf, right: Leaf }\nstruct Other { first: Leaf, second: Leaf }\n"
+    + "function require(ok: boolean, code: i32): void { if (!ok) { exit(code); } }\n"
+    + "@noinline\nfunction parent(left: Leaf, right: Leaf): Parent { return Parent { left: left, right: right }; }\n"
+    + "@noinline\nfunction replace(own p: Parent, child: Leaf): Other { let n = p.left.n + p.right.n; require(n > 0, 1); return Other { first: child, second: child }; }\n"
+    + "@noinline\nfunction handoff(flag: boolean, left: Leaf, right: Leaf, incoming: Leaf): Other { let p = if (flag) { parent(left, right) } else { parent(right, left) }; return replace(p, incoming); }\n"
+    + "function main(): i32 { let c = Leaf { n: 7 }; let p = handoff(true,c,c,c); return p.first.n - 7; }\n";
+}
+
+function target_checks(target: string): void {
+  let sub = semlower.driven(parser.parse_module(lexer.tokenize(source())), target).sub;
+  let producers: ssa.SFunc[] = [];
+  let consumers: ssa.SFunc[] = [];
+  let callers: ssa.SFunc[] = [];
+  for b in sub.bodies {
+    if (b.name == "parent" || b.name == "replace" || b.name == "handoff") {
+      require(b.ok, 1);
+      let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), b.name, b.n_params, b.n_locals, b.ops, false);
+      require(lifted.ok, 2);
+      if (b.name == "parent") {
+        producers = producers.append(lifted.func);
+      } else if (b.name == "replace") {
+        consumers = consumers.append(lifted.func);
+      } else {
+        callers = callers.append(lifted.func);
+      }
+    }
+  }
+  require(producers.len() == 1 && consumers.len() == 1 && callers.len() == 1, 3);
+  // These explicit fixture ABI facts are not a selected typed-adapter proof.
+  controls(callers[0], producers[0], consumers[0]);
+}
+
+function main(): i32 {
+  target_checks("arm64-darwin");
+  target_checks("x86-64-linux");
+  target_checks("wasm32-wasi");
+  print("pre-call incoming capacity controls passed");
+  return 0;
+}

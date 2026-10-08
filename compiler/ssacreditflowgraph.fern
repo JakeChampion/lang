@@ -1,0 +1,197 @@
+// Structural validation only: acyclic CFG, unique definitions and SSA availability.
+// Call bindings here establish names and arity, not callee effects or ownership.
+// A proof consumer must independently validate each selected ABI and actual body.
+import "./ssa";
+import "./util";
+
+pub function block_index(f: ssa.SFunc, id: i32): i32 {
+  let i: i32 = 0;
+  for b in f.blocks {
+    if (b.id == id) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return -1;
+}
+
+function edge(t: ssa.STerm, id: i32): boolean {
+  return t.kind_tag == 2 && t.target == id || t.kind_tag == 3 && (t.t == id || t.f == id);
+}
+
+function readable(row: boolean[], id: i32): boolean {
+  return id >= 0 && id < row.len() && row[id];
+}
+
+pub struct Graph { order: i32[], error: string }
+
+// Check every block, including infeasible continuations. Index by block position,
+// never by external block ID; nvals is bounded by actual instruction count.
+pub function check(f: ssa.SFunc, producers: ssa.SFunc[], parameter_count: i32): Graph {
+  let bad = Graph { order: [], error: "invalid caller origin graph" };
+  let count: i32 = 0;
+  for b in f.blocks {
+    count = count + b.insts.len();
+  }
+  if (f.name == "" || util.str_has_prefix(f.name, "__fern_") || f.nparams != parameter_count || f.takes_env || f.nvals < parameter_count || f.nvals > count || block_index(f, f.entry) < 0) {
+    return bad;
+  }
+  let error = declarations(f, producers, parameter_count);
+  if (error != "") {
+    return Graph { ...bad, error: error };
+  }
+  return availability(f);
+}
+
+function availability(f: ssa.SFunc): Graph {
+  let bad = Graph { order: [], error: "invalid caller origin graph" };
+  let empty: boolean[] = [];
+  let i: i32 = 0;
+  while (i < f.nvals) {
+    empty = empty.append(false);
+    i = i + 1;
+  }
+  let rows: boolean[][] = [];
+  let done: boolean[] = [];
+  for b in f.blocks {
+    rows = rows.append(empty);
+    done = done.append(false);
+  }
+  let order: i32[] = [];
+  while (order.len() < f.blocks.len()) {
+    let chosen: i32 = -1;
+    i = 0;
+    for b in f.blocks {
+      let ready = !done[i];
+      for p in b.preds {
+        if (!done[block_index(f, p)]) {
+          ready = false;
+        }
+      }
+      if (ready && chosen < 0) {
+        chosen = i;
+      }
+      i = i + 1;
+    }
+    if (chosen < 0) {
+      return Graph { ...bad, error: "unsupported caller origin cycle" };
+    }
+    let b = f.blocks[chosen];
+    let row = empty;
+    if (b.preds.len() > 0) {
+      row = rows[block_index(f, b.preds[0])];
+      for p in b.preds {
+        i = 0;
+        while (i < f.nvals) {
+          row = row.with(i, row[i] && rows[block_index(f, p)][i]);
+          i = i + 1;
+        }
+      }
+    }
+    for op in b.insts {
+      if (op.kind_tag == 8) {
+        i = 0;
+        for p in b.preds {
+          if (!readable(rows[block_index(f, p)], op.args[i])) {
+            return Graph { ...bad, error: "unavailable caller origin phi" };
+          }
+          i = i + 1;
+        }
+      } else {
+        for arg in op.args {
+          if (!readable(row, arg)) {
+            return Graph { ...bad, error: "unavailable caller origin operand" };
+          }
+        }
+      }
+      row = row.with(op.result, true);
+    }
+    if (b.term.kind_tag == 1 && !readable(row, b.term.value) || b.term.kind_tag == 3 && !readable(row, b.term.cond)) {
+      return Graph { ...bad, error: "unavailable caller origin terminator" };
+    }
+    rows = rows.with(chosen, row);
+    done = done.with(chosen, true);
+    order = order.append(chosen);
+  }
+  return Graph { order: order, error: "" };
+}
+
+function block_edges(f: ssa.SFunc, b: ssa.SBlock): string {
+  let seen: i32[] = [];
+  for p in b.preds {
+    let pi = block_index(f, p);
+    if (pi < 0 || util.index_of_i32(seen, p) >= 0 || !edge(f.blocks[pi].term, b.id)) {
+      return "invalid caller origin graph";
+    }
+    seen = seen.append(p);
+  }
+  if (b.term.kind_tag < 1 || b.term.kind_tag > 3 || b.term.kind_tag == 3 && b.term.t == b.term.f) {
+    return "invalid caller origin graph";
+  }
+  let targets: i32[] = [];
+  if (b.term.kind_tag == 2) {
+    targets = [b.term.target];
+  }
+  if (b.term.kind_tag == 3) {
+    targets = [b.term.t, b.term.f];
+  }
+  for t in targets {
+    let ti = block_index(f, t);
+    if (ti < 0 || util.index_of_i32(f.blocks[ti].preds, b.id) < 0) {
+      return "invalid caller origin graph";
+    }
+  }
+  return "";
+}
+
+function declarations(f: ssa.SFunc, producers: ssa.SFunc[], parameter_count: i32): string {
+  let blocks: i32[] = [];
+  let values: i32[] = [];
+  let params: i32[] = [];
+  for b in f.blocks {
+    if (b.id < 0 || util.index_of_i32(blocks, b.id) >= 0 || b.id == f.entry && b.preds.len() != 0 || b.id != f.entry && b.preds.len() == 0) {
+      return "invalid caller origin graph";
+    }
+    blocks = blocks.append(b.id);
+    let body = false;
+    for op in b.insts {
+      if (op.result < 0 || op.result >= f.nvals || util.index_of_i32(values, op.result) >= 0) {
+        return "invalid caller origin definition";
+      }
+      values = values.append(op.result);
+      if (op.kind_tag == 8) {
+        if (body || b.preds.len() == 0 || op.args.len() != b.preds.len() || op.imm != 0 || op.str != "") {
+          return "invalid caller origin phi";
+        }
+      } else {
+        body = true;
+        if (op.kind_tag == 6 && op.args.len() == 0 && op.str == "") {
+          if (b.id != f.entry || op.imm < 0 || op.imm >= parameter_count || util.index_of_i32(params, op.imm) >= 0) {
+            return "invalid caller origin parameter";
+          }
+          params = params.append(op.imm);
+        } else if (op.kind_tag == 1 && op.args.len() == 0 && op.str == "") {} else if (op.kind_tag == 7 && op.args.len() == 1 && op.imm == 0 && op.str == "") {} else if (op.kind_tag == 11 && op.args.len() == 2 && op.imm == 0) {
+          let matches: i32 = 0;
+          for p in producers {
+            if (p.name == op.str) {
+              matches = matches + 1;
+            }
+          }
+          if (matches != 1) {
+            return "caller origin producer binding";
+          }
+        } else {
+          return "unsupported caller origin effect";
+        }
+      }
+    }
+    let error = block_edges(f, b);
+    if (error != "") {
+      return error;
+    }
+  }
+  if (params.len() != parameter_count) {
+    return "invalid caller origin parameter";
+  }
+  return "";
+}
