@@ -262,13 +262,48 @@ func (r *ptyReader) holds(mark string) bool {
 // needs that yet: the terminal cases so far are about the answer to isatty,
 // and their stdin is empty.
 //
-// On its own goroutine for the same reason the drain is: the write blocks
-// once the terminal's buffer fills.
+// Empty input is one byte and must arrive before the child starts: XNU input
+// processing clears FLUSHO, so a late EOF can undo stty's setting. Nonempty
+// input still uses a goroutine because it can fill the terminal's buffer.
 func feedPty(master *os.File, text string) {
+	if text == "" {
+		_, _ = master.Write([]byte{4})
+		return
+	}
 	go func() {
-		if len(text) > 0 {
-			_, _ = io.WriteString(master, text)
-		}
+		_, _ = io.WriteString(master, text)
 		_, _ = master.Write([]byte{4})
 	}()
+}
+
+func TestEmptyPtyFeedPrecedesSettings(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("XNU clears FLUSHO when terminal input arrives")
+	}
+	// Keep the writer runnable until the terminal mutation, then give it a
+	// turn. An asynchronous EOF must not undo settings made after feedPty.
+	previous := runtime.GOMAXPROCS(1)
+	defer runtime.GOMAXPROCS(previous)
+	master, slave := openPty(t)
+	stopEcho := discardPtyEcho(master)
+	defer func() { slave.Close(); stopEcho() }()
+	feedPty(master, "")
+	fd := int(slave.Fd())
+	words, err := tty.Termios(fd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	const darwinFlusho = 0x800000
+	words[3] |= darwinFlusho
+	if err := tty.SetTermios(fd, 0, words); err != nil {
+		t.Fatal(err)
+	}
+	runtime.Gosched()
+	got, err := tty.Termios(fd)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got[3]&darwinFlusho == 0 {
+		t.Fatalf("input arriving after feedPty returned cleared FLUSHO: lflag=%x", got[3])
+	}
 }
