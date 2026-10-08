@@ -1,0 +1,172 @@
+// Acyclic physical phi identities. This does not certify credits or liveness.
+// Callers prove CFG edges, predicate provenance and the incoming value facts.
+// Positive identities distinguish obligations, not unequal runtime pointers.
+import "./ssa";
+import "./ssacreditguard" as guard;
+import "./util";
+
+pub struct Value { kind: i32, identity: i32, available: i32 }
+
+// kind 0 is a scalar, 1 a reference (identity 0 is null), -1 unreadable.
+// All guarded handles belong to the supplied arena and its immutable ancestors.
+pub struct Edge { predecessor: i32, path: i32, values: Value[] }
+
+pub struct Binding { result: i32, value: Value }
+
+pub struct Joined { arena: guard.Arena, bindings: Binding[], path: i32, error: string }
+
+function failed(a: guard.Arena, why: string): Joined {
+  return Joined { arena: a, bindings: [], path: -1, error: why };
+}
+
+function implies(a: guard.Arena, path: i32, condition: i32): guard.Built {
+  let one = guard.constant(a, 1);
+  let valid = guard.combine(one.arena, 4, condition, one.id);
+  if (valid.error != "") {
+    return valid;
+  }
+  let inverse = guard.combine(valid.arena, 1, one.id, condition);
+  return guard.combine(inverse.arena, 4, path, inverse.id);
+}
+
+// Read every operand from its predecessor snapshot. Newly produced bindings
+// never feed another phi in the same block. Cyclic phi facts require a separate
+// invariant proof and are deliberately outside this interface.
+pub function merge(a: guard.Arena, block: ssa.SBlock, edges: Edge[], nvals: i32): Joined {
+  if (nvals < 1 || block.preds.len() == 0 || edges.len() != block.preds.len()) {
+    return failed(a, "phi predecessor count");
+  }
+  let zero = guard.constant(a, 0);
+  let one = guard.constant(zero.arena, 1);
+  let arena = one.arena;
+  let path = zero.id;
+  let seen: i32[] = [];
+  for e in edges {
+    if (e.predecessor < 0 || util.index_of_i32(seen, e.predecessor) >= 0 || util.index_of_i32(block.preds, e.predecessor) < 0 || e.values.len() != nvals) {
+      return failed(arena, "invalid phi predecessor");
+    }
+    seen = seen.append(e.predecessor);
+    let mask = guard.combine(arena, 4, e.path, one.id);
+    if (mask.error != "") {
+      return failed(mask.arena, mask.error);
+    }
+    let overlap = guard.combine(mask.arena, 4, path, e.path);
+    if (overlap.error != "" || !guard.is_constant(overlap.arena, overlap.id, 0)) {
+      return failed(overlap.arena, "overlapping phi edges");
+    }
+    let joined = guard.combine(overlap.arena, 0, path, e.path);
+    arena = joined.arena;
+    path = joined.id;
+  }
+  seen = [];
+  for pred in block.preds {
+    if (util.index_of_i32(seen, pred) >= 0) {
+      return failed(arena, "duplicate phi predecessor");
+    }
+    seen = seen.append(pred);
+  }
+  let definitions: i32[] = [];
+  let body = false;
+  for op in block.insts {
+    if (op.result < 0 || op.result >= nvals || util.index_of_i32(definitions, op.result) >= 0) {
+      return failed(arena, "invalid phi block definition");
+    }
+    definitions = definitions.append(op.result);
+    if (op.kind_tag == 8) {
+      if (body || op.args.len() != block.preds.len()) {
+        return failed(arena, "phi predecessor arity or position");
+      }
+    } else {
+      body = true;
+    }
+  }
+  let bindings: Binding[] = [];
+  for op in block.insts {
+    if (op.kind_tag == 8) {
+      let identity = zero.id;
+      let kind: i32 = 0;
+      let scalar = zero.id;
+      for e in edges {
+        let pos = util.index_of_i32(block.preds, e.predecessor);
+        let arg = op.args[pos];
+        if (arg < 0 || arg >= nvals || util.index_of_i32(definitions, arg) >= 0) {
+          return failed(arena, "invalid acyclic phi operand");
+        }
+        // Structurally valid but infeasible edges carry no availability or
+        // identity obligations. They cannot manufacture a readable result.
+        if (!guard.is_constant(arena, e.path, 0)) {
+          let value = e.values[arg];
+          if (value.kind != 0 && value.kind != 1) {
+            return failed(arena, "unreadable phi operand");
+          }
+          let available = implies(arena, e.path, value.available);
+          if (available.error != "") {
+            return failed(available.arena, available.error);
+          }
+          if (!guard.is_constant(available.arena, available.id, 0)) {
+            return failed(available.arena, "unavailable phi operand");
+          }
+          let contribution = guard.combine(available.arena, 4, e.path, value.identity);
+          if (contribution.error != "") {
+            return failed(contribution.arena, contribution.error);
+          }
+          arena = contribution.arena;
+          if (value.kind == 1) {
+            kind = 1;
+            let negative = guard.combine(arena, 3, contribution.id, zero.id);
+            if (negative.error != "" || !guard.is_constant(negative.arena, negative.id, 0)) {
+              return failed(negative.arena, "invalid reference identity");
+            }
+            arena = negative.arena;
+          } else {
+            let sum = guard.combine(arena, 0, scalar, contribution.id);
+            if (sum.error != "") {
+              return failed(sum.arena, sum.error);
+            }
+            arena = sum.arena;
+            scalar = sum.id;
+          }
+          let sum = guard.combine(arena, 0, identity, contribution.id);
+          if (sum.error != "") {
+            return failed(sum.arena, sum.error);
+          }
+          arena = sum.arena;
+          identity = sum.id;
+        }
+      }
+      // Mixing scalar and reference edges admits only proven null scalars.
+      // Disjoint masks prevent nonzero scalar contributions from cancelling.
+      if (kind == 1 && !guard.is_constant(arena, scalar, 0)) {
+        return failed(arena, "non-null scalar phi reference");
+      }
+      bindings = bindings.append(Binding { result: op.result, value: Value { kind: kind, identity: identity, available: path } });
+    }
+  }
+  return Joined { arena: arena, bindings: bindings, path: path, error: "" };
+}
+
+// Abstract identities must never be compared to infer pointer inequality.
+// Nullness alone is justified for the admitted physical reference facts.
+pub function is_null(a: guard.Arena, value: Value, path: i32): guard.Built {
+  if (value.kind != 1) {
+    return guard.Built { arena: a, id: -1, error: "reference null test required" };
+  }
+  let available = implies(a, path, value.available);
+  if (available.error != "") {
+    return available;
+  }
+  if (!guard.is_constant(available.arena, available.id, 0)) {
+    return guard.Built { arena: available.arena, id: -1, error: "unavailable null-test operand" };
+  }
+  let zero = guard.constant(available.arena, 0);
+  let negative = guard.combine(zero.arena, 3, value.identity, zero.id);
+  let feasible = guard.combine(negative.arena, 4, path, negative.id);
+  if (feasible.error != "") {
+    return feasible;
+  }
+  if (!guard.is_constant(feasible.arena, feasible.id, 0)) {
+    return guard.Built { arena: feasible.arena, id: -1, error: "invalid reference identity" };
+  }
+  let eq = guard.combine(feasible.arena, 2, value.identity, zero.id);
+  return guard.combine(eq.arena, 4, path, eq.id);
+}
