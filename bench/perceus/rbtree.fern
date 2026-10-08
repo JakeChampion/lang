@@ -1,0 +1,132 @@
+// Port of Koka test/bench/koka/rbtree.kk at 9c55695dd2f7d4db8d93011693d37295e2b76c53.
+// Copyright Microsoft Research and Daan Leijen. Apache-2.0.
+pub enum Color { Red, Black }
+
+pub enum Tree {
+  Node(Color, Tree, i32, boolean, Tree),
+  Leaf,
+}
+
+function is_red(t: Tree): boolean {
+  match (t) {
+    Node(Red(), _, _, _, _) => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+}
+
+function balance_left(l: Tree, k: i32, v: boolean, r: Tree): Tree {
+  match (l) {
+    Node(_, Node(Red(), lx, kx, vx, rx), ky, vy, ry) => {
+      return Node(Red, Node(Black, lx, kx, vx, rx), ky, vy, Node(Black, ry, k, v, r));
+    },
+    Node(_, ly, ky, vy, Node(Red(), lx, kx, vx, rx)) => {
+      return Node(Red, Node(Black, ly, ky, vy, lx), kx, vx, Node(Black, rx, k, v, r));
+    },
+    Node(_, lx, kx, vx, rx) => {
+      return Node(Black, Node(Red, lx, kx, vx, rx), k, v, r);
+    },
+    Leaf => {
+      return Leaf;
+    }
+  }
+}
+
+function balance_right(l: Tree, k: i32, v: boolean, r: Tree): Tree {
+  match (r) {
+    Node(_, Node(Red(), lx, kx, vx, rx), ky, vy, ry) => {
+      return Node(Red, Node(Black, l, k, v, lx), kx, vx, Node(Black, rx, ky, vy, ry));
+    },
+    Node(_, lx, kx, vx, Node(Red(), ly, ky, vy, ry)) => {
+      return Node(Red, Node(Black, l, k, v, lx), kx, vx, Node(Black, ly, ky, vy, ry));
+    },
+    Node(_, lx, kx, vx, rx) => {
+      return Node(Black, l, k, v, Node(Red, lx, kx, vx, rx));
+    },
+    Leaf => {
+      return Leaf;
+    }
+  }
+}
+
+function ins(t: Tree, k: i32, v: boolean): Tree {
+  match (t) {
+    Node(Red(), l, kx, vx, r) => {
+      if (k < kx) {
+        return Node(Red, ins(l, k, v), kx, vx, r);
+      }
+      if (k > kx) {
+        return Node(Red, l, kx, vx, ins(r, k, v));
+      }
+      return Node(Red, l, k, v, r);
+    },
+    Node(Black(), l, kx, vx, r) => {
+      if (k < kx) {
+        if (is_red(l)) {
+          return balance_left(ins(l, k, v), kx, vx, r);
+        }
+        return Node(Black, ins(l, k, v), kx, vx, r);
+      }
+      if (k > kx) {
+        if (is_red(r)) {
+          return balance_right(l, kx, vx, ins(r, k, v));
+        }
+        return Node(Black, l, kx, vx, ins(r, k, v));
+      }
+      return Node(Black, l, k, v, r);
+    },
+    Leaf => {
+      return Node(Red, Leaf, k, v, Leaf);
+    }
+  }
+}
+
+function set_black(t: Tree): Tree {
+  match (t) {
+    Node(_, l, k, v, r) => {
+      return Node(Black, l, k, v, r);
+    },
+    _ => {
+      return t;
+    }
+  }
+}
+
+pub function insert(t: Tree, k: i32, v: boolean): Tree {
+  return set_black(ins(t, k, v));
+}
+
+pub function fold(t: Tree, b: i32, f: (i32, boolean, i32) => i32): i32 {
+  match (t) {
+    Node(_, l, k, v, r) => {
+      return fold(r, f(k, v, fold(l, b, f)), f);
+    },
+    Leaf => {
+      return b;
+    }
+  }
+}
+
+function make_tree_aux(n: i32, t: Tree): Tree {
+  if (n <= 0) {
+    return t;
+  }
+  let n1: i32 = n - 1;
+  return make_tree_aux(n1, insert(t, n1, n1 % 10 == 0));
+}
+
+pub function make_tree(n: i32): Tree {
+  return make_tree_aux(n, Leaf);
+}
+
+pub function count_true(t: Tree): i32 {
+  return fold(t, 0, (k: i32, v: boolean, r: i32): i32 => {
+    if (v) {
+      return r + 1;
+    }
+    return r;
+  });
+}
