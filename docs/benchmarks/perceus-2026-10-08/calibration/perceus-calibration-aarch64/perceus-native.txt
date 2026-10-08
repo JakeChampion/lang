@@ -1,0 +1,11 @@
+# scripts/perf-bench report — arch aarch64, target arm64-linux
+aarch64/perceus_cfold.text	2651
+aarch64/perceus_cfold.ir	118173402
+aarch64/perceus_deriv.text	2798
+aarch64/perceus_deriv.ir	118616504
+aarch64/perceus_nqueens.text	1600
+aarch64/perceus_nqueens.ir	132085204
+aarch64/perceus_rbtree.text	2771
+aarch64/perceus_rbtree.ir	139751314
+aarch64/perceus_rbtree_ck.text	3099
+aarch64/perceus_rbtree_ck.ir	148206250

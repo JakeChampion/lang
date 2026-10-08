@@ -137,11 +137,11 @@ func TestSelfHostPerceusPerformanceChecksums(t *testing.T) {
 			} {
 				t.Run(tc.name, func(t *testing.T) {
 					dir := t.TempDir()
-					if err := os.Mkdir(filepath.Join(dir, "gates"), 0700); err != nil {
+					if err := os.Mkdir(filepath.Join(dir, "perceus"), 0700); err != nil {
 						t.Fatal(err)
 					}
-					for _, rel := range []string{"gates/perceus_" + tc.name + ".fern", tc.name + ".fern"} {
-						data, err := os.ReadFile(filepath.Join("../../../bench/perceus", rel))
+					for _, rel := range []string{"perceus_" + tc.name + ".fern", "perceus/" + tc.name + ".fern"} {
+						data, err := os.ReadFile(filepath.Join("../../../bench", rel))
 						if err != nil {
 							t.Fatal(err)
 						}
@@ -149,7 +149,7 @@ func TestSelfHostPerceusPerformanceChecksums(t *testing.T) {
 							t.Fatal(err)
 						}
 					}
-					path := filepath.Join(dir, "gates", "perceus_"+tc.name+".fern")
+					path := filepath.Join(dir, "perceus_"+tc.name+".fern")
 					command := kvDriverCommand(t, cli, path, target)
 					cmd := command()
 					var stderr bytes.Buffer
