@@ -1,0 +1,272 @@
+import "../lexer";
+import "../parser";
+import "../semlower";
+import "../irtables";
+import "../ir";
+import "../ssa";
+import "../ssa_lift";
+import "../util";
+import "../ssacredithelper" as helper;
+import "../ssacreditextract" as extract;
+
+function require(ok: boolean, id: i32): void {
+  if (!ok) {
+    exit(id);
+  }
+}
+
+function lift(r: irtables.LowerResult): ssa.SFunc {
+  require(r.ok, 1);
+  let out = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), r.name, r.n_params, r.n_locals, r.ops, false);
+  if (!out.ok) {
+    print(out.bail);
+    exit(2);
+  }
+  return out.func;
+}
+
+function expect(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, ok: boolean, id: i32): void {
+  let p = extract.check(f, drop, release, helper.FlatChild { offset: 8 });
+  if (p.ok != ok || p.function_name != f.name || p.message == "") {
+    print(p.function_name + ": " + p.message);
+    exit(id);
+  }
+}
+
+// Start every mutation with the normal lowering's emitted stack operations.
+// Keep the stack balanced so the independent credit proof, not a parse error,
+// rejects missing clear/retain and duplicate releases.
+function mutate(r: irtables.LowerResult, mode: i32): irtables.LowerResult {
+  let ops: ir.Op[] = [];
+  let hits: i32 = 0;
+  let i: i32 = 0;
+  for op in r.ops {
+    if (mode == 0 && op.kind_tag == ir.kind_id("struct_set")) {
+      ops = ops.append(ir.op_drop()).append(ir.op_drop());
+      hits = hits + 1;
+    } else if (mode == 1 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_inc") {
+      hits = hits + 1;
+    } else if (mode == 2 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__sem_release_Parent") {
+      ops = ops.append(ir.op_load_local(0)).append(op).append(ir.op_drop()).append(op);
+      hits = hits + 1;
+    } else if (mode == 3 && op.kind_tag == ir.kind_id("const_i32") && i + 1 < r.ops.len() && r.ops[i + 1].kind_tag == ir.kind_id("eq")) {
+      ops = ops.append(ir.op_const_i32(1));
+      hits = hits + 1;
+    } else if (mode == 4 && op.kind_tag == ir.kind_id("struct_set")) {
+      ops = ops.append(ir.Op { ...op, i32_imm: 1 });
+      hits = hits + 1;
+    } else if (mode == 5 && op.kind_tag == ir.kind_id("return")) {
+      ops = ops.append(ir.op_load_local(1)).append(ir.op_call_direct("__fern_rc_dec", 1)).append(ir.op_drop()).append(op);
+      hits = hits + 1;
+    } else if (mode == 6 && op.kind_tag == ir.kind_id("if") && hits == 0) {
+      ops = ops.append(ir.op_const_i32(0)).append(ir.Op { ...op, kind_tag: ir.kind_id("eq"), i32_imm: 0 }).append(op);
+      hits = hits + 1;
+    } else {
+      ops = ops.append(op);
+    }
+    i = i + 1;
+  }
+  require(hits == 1, 3);
+  return irtables.LowerResult { ...r, ops: ops };
+}
+
+function target_checks(target: string): void {
+  let source = "struct Leaf { n: i32 }\nstruct Parent { child: Leaf }\n@noinline\nfunction extract(own p: Parent): Leaf { return p.child; }\nfunction main(): i32 { let p = Parent { child: Leaf { n: 7 } }; return extract(p).n; }\n";
+  let driven = semlower.driven(parser.parse_module(lexer.tokenize(source)), target);
+  let bodies: irtables.LowerResult[] = [];
+  let drops: irtables.LowerResult[] = [];
+  let releases: irtables.LowerResult[] = [];
+  for body in driven.sub.bodies {
+    if (body.name == "extract") {
+      bodies = bodies.append(body);
+    }
+  }
+  for body in driven.sub.extra {
+    if (body.name == "__sem_drop_Parent") {
+      drops = drops.append(body);
+    }
+    if (body.name == "__sem_release_Parent") {
+      releases = releases.append(body);
+    }
+  }
+  require(bodies.len() == 1 && drops.len() == 1 && releases.len() == 1, 4);
+  let body = bodies[0];
+  let d = lift(drops[0]);
+  let r = lift(releases[0]);
+  let f = lift(body);
+  expect(f, d, r, true, 10);
+  let absent = extract.check_selected(f, d, r, helper.FlatChildren { offsets: [8] }, 16);
+  require(!absent.ok && absent.function_name == f.name && absent.message == "selected child slot absent from layout", 33);
+  let reasons: string[] = ["return without child credit", "return without child credit", "parent used after release", "return without child credit", "unsupported containment operation", "return without child credit", "clearing a shared parent"];
+  let mode: i32 = 0;
+  while (mode < 7) {
+    let mutated = lift(mutate(body, mode));
+    expect(mutated, d, r, false, 11 + mode);
+    let rejected = extract.check(mutated, d, r, helper.FlatChild { offset: 8 });
+    if (!util.contains(rejected.message, reasons[mode])) {
+      print(rejected.message);
+      exit(40 + mode);
+    }
+    mode = mode + 1;
+  }
+  let reversed: ssa.SBlock[] = [];
+  let i: i32 = f.blocks.len();
+  while (i > 0) {
+    i = i - 1;
+    reversed = reversed.append(f.blocks[i]);
+  }
+  expect(ssa.SFunc { ...f, blocks: reversed }, d, r, true, 18);
+  let bad: ssa.SBlock[] = [];
+  for b in f.blocks {
+    let ops: ssa.SInst[] = [];
+    for op in b.insts {
+      if (op.kind_tag == 11 && op.str == "__fern_rc_inc") {
+        ops = ops.append(ssa.SInst { ...op, args: [f.nvals] });
+      } else {
+        ops = ops.append(op);
+      }
+    }
+    bad = bad.append(ssa.SBlock { ...b, insts: ops });
+  }
+  expect(ssa.SFunc { ...f, blocks: bad }, d, r, false, 19);
+  expect(ssa.SFunc { ...f, nvals: 2147483647 }, d, r, false, 20);
+  expect(ssa.SFunc { ...f, nparams: 2 }, d, r, false, 21);
+  // Releasing the parent before the shared-path child retain is valid: the
+  // external shared parent still supplies the child's borrowed anchor. The
+  // unique path already transferred its child credit before the release.
+  let early: ir.Op[] = [];
+  let inserted: i32 = 0;
+  let removed: i32 = 0;
+  i = 0;
+  while (i < body.ops.len()) {
+    let op = body.ops[i];
+    if (op.kind_tag == ir.kind_id("load_local") && op.i32_imm == 3) {
+      early = early.append(ir.op_load_local(0)).append(ir.op_call_direct(r.name, 1)).append(ir.op_drop());
+      inserted = inserted + 1;
+    }
+    if (op.kind_tag == ir.kind_id("load_local") && i + 2 < body.ops.len() && body.ops[i + 1].kind_tag == ir.kind_id("call_direct") && body.ops[i + 1].str == r.name) {
+      require(body.ops[i + 2].kind_tag == ir.kind_id("drop"), 22);
+      i = i + 3;
+      removed = removed + 1;
+    } else {
+      early = early.append(op);
+      i = i + 1;
+    }
+  }
+  require(inserted == 1 && removed == 1, 23);
+  expect(lift(irtables.LowerResult { ...body, ops: early }), d, r, true, 24);
+  let orphan = f.blocks[f.blocks.len() - 1];
+  expect(ssa.SFunc { ...f, blocks: f.blocks.append(ssa.SBlock { ...orphan, id: 2147483647, insts: [], preds: [] }) }, d, r, false, 25);
+  let missing_pred: ssa.SBlock[] = [];
+  for b in f.blocks {
+    missing_pred = missing_pred.append(ssa.SBlock { ...b, preds: [] });
+  }
+  expect(ssa.SFunc { ...f, blocks: missing_pred }, d, r, false, 26);
+  expect(ssa.SFunc { ...f, name: d.name }, d, r, false, 27);
+  expect(ssa.SFunc { ...f, name: r.name }, d, r, false, 28);
+  let reserved_release = extract.check(f, d, ssa.SFunc { ...r, name: "__fern_rc_dec" }, helper.FlatChild { offset: 8 });
+  require(!reserved_release.ok && reserved_release.function_name == "__fern_rc_dec", 29);
+  let reserved_drop = extract.check(f, ssa.SFunc { ...d, name: "__fern_rc_dec" }, r, helper.FlatChild { offset: 8 });
+  require(!reserved_drop.ok && reserved_drop.function_name == "__fern_rc_dec", 30);
+  let store_use: ssa.SBlock[] = [];
+  for b in f.blocks {
+    let ops: ssa.SInst[] = [];
+    for op in b.insts {
+      ops = ops.append(op);
+      if (op.kind_tag == 41) {
+        ops = ops.append(ssa.SInst { kind_tag: 7, result: f.nvals, args: [op.result], imm: 0, str: "" });
+      }
+    }
+    store_use = store_use.append(ssa.SBlock { ...b, insts: ops });
+  }
+  let unreadable = ssa.SFunc { ...f, nvals: f.nvals + 1, blocks: store_use };
+  expect(unreadable, d, r, false, 31);
+  require(extract.check(unreadable, d, r, helper.FlatChild { offset: 8 }).message == "undefined physical operand", 32);
+}
+
+function sibling_checks(target: string): void {
+  let source = "struct Leaf { n: i32 }\nstruct Parent { left: Leaf, marker: i32, right: Leaf }\n@noinline\nfunction left(own p: Parent): Leaf { return p.left; }\n@noinline\nfunction right(own p: Parent): Leaf { return p.right; }\nfunction main(): i32 { return 0; }\n";
+  let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
+  let drops: irtables.LowerResult[] = [];
+  let releases: irtables.LowerResult[] = [];
+  for b in sub.extra {
+    if (b.name == "__sem_drop_Parent") {
+      drops = drops.append(b);
+    }
+    if (b.name == "__sem_release_Parent") {
+      releases = releases.append(b);
+    }
+  }
+  require(drops.len() == 1 && releases.len() == 1, 60);
+  let d = lift(drops[0]);
+  let r = lift(releases[0]);
+  let layout = helper.FlatChildren { offsets: [8, 24] };
+  let checked: i32 = 0;
+  for body in sub.bodies {
+    if (body.name == "left" || body.name == "right") {
+      let offset: i32 = 8;
+      if (body.name == "right") {
+        offset = 24;
+      }
+      let f = lift(body);
+      let valid = extract.check_selected(f, d, r, layout, offset);
+      require(valid.ok && valid.function_name == f.name, 61);
+      require(!extract.check(f, d, r, helper.FlatChild { offset: offset }).ok, 62);
+      let reasons: string[] = ["return without child credit", "return without child credit", "parent used after release", "return without child credit", "unsupported containment operation", "return without child credit", "clearing a shared parent"];
+      let mode: i32 = 0;
+      while (mode < 7) {
+        let result = extract.check_selected(lift(mutate(body, mode)), d, r, layout, offset);
+        require(!result.ok && result.function_name == f.name && result.message == reasons[mode], 63 + mode);
+        mode = mode + 1;
+      }
+      // Clearing the other reference slot must not discharge the selected
+      // slot's credit, even though runtime child pointers may be equal.
+      let changed: ir.Op[] = [];
+      let hits: i32 = 0;
+      for op in body.ops {
+        if (op.kind_tag == ir.kind_id("struct_set")) {
+          changed = changed.append(ir.Op { ...op, i32_imm: 2 - op.i32_imm });
+          hits = hits + 1;
+        } else {
+          changed = changed.append(op);
+        }
+      }
+      require(hits == 1, 70);
+      let wrong = extract.check_selected(lift(irtables.LowerResult { ...body, ops: changed }), d, r, layout, offset);
+      require(!wrong.ok && wrong.function_name == f.name && wrong.message == "unsupported containment operation", 71);
+      // Corrupt only the sibling's actual release; its obligation cannot be
+      // ignored just because the other child is the function's result.
+      let ops: ir.Op[] = [];
+      let slot: i32 = -1;
+      hits = 0;
+      for op in drops[0].ops {
+        if (op.kind_tag == ir.kind_id("struct_get")) {
+          slot = (op.i32_imm + 1) * 8;
+        }
+        if (op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_dec" && slot != offset) {
+          ops = ops.append(ir.op_call_direct("__fern_rc_is_unique", 1));
+          hits = hits + 1;
+        } else {
+          ops = ops.append(op);
+        }
+      }
+      require(hits == 1, 72);
+      let corrupt = extract.check_selected(f, lift(irtables.LowerResult { ...drops[0], ops: ops }), r, layout, offset);
+      require(!corrupt.ok && corrupt.function_name == d.name && corrupt.message == "child release mismatch", 73);
+      require(extract.check_selected(f, d, r, helper.FlatChildren { offsets: [24, 8] }, offset).ok, 74);
+      checked = checked + 1;
+    }
+  }
+  require(checked == 2, 75);
+}
+
+function main(): i32 {
+  target_checks("arm64-darwin");
+  target_checks("x86-64-linux");
+  target_checks("wasm32-wasi");
+  sibling_checks("arm64-darwin");
+  sibling_checks("x86-64-linux");
+  sibling_checks("wasm32-wasi");
+  print("guarded physical extraction: all controls agree");
+  return 0;
+}
