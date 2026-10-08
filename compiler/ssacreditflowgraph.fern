@@ -54,6 +54,8 @@ pub function check(f: ssa.SFunc, producers: ssa.SFunc[], parameter_count: i32): 
       last = value;
     }
   }
+  // Unused trailing value capacity is outside this scoped boundary; the
+  // highest-numbered definition must survive, as ssacreditorigin requires.
   if (last < f.nvals - 1) {
     return bad;
   }
