@@ -1,12 +1,14 @@
 // Scoped physical proof for a three-word parent with two flat child slots.
 // Caller facts: consuming Parent/Child ABI, exact nominal shape, no finalizers.
 // Incoming child and either old slot may alias. Identity labels are obligations,
-// not pointer inequalities. Only a proven-null alloc_reuse donor is admitted.
+// not pointer inequalities. Legacy checks admit only proven-null donors;
+// check_invocations recomputes incoming capacity before matched storage transfer.
 import "./ssa";
 import "./ssacreditguard" as guard;
 import "./ssacreditphi" as phi;
 import "./ssacredithelper" as helper;
 import "./ssacreditscalar" as scalar_effect;
+import "./ssacreditincoming" as incoming_capacity;
 import "./util";
 
 // Reference identities: 0=null, 1=old parent, 2=fresh parent, 3=incoming child,
@@ -216,7 +218,36 @@ function scalar_call(c: Context, op: ssa.SInst, call: CheckedCall): Context {
   return equal(out, out.state.path, covered, 1, "scalar call requires Boolean operand");
 }
 
-function transfer(c: Context, op: ssa.SInst, shape: string, drop: string, release: string, fields: ScalarField[], calls: CheckedCall[]): Context {
+function reuse_donor(c: Context, donor: phi.Value, composed: boolean): Context {
+  let n = phi.is_null(c.arena, donor, c.state.path);
+  let out = Context { ...c, arena: n.arena, error: n.error };
+  if (!composed) {
+    return equal(out, out.state.path, n.id, 1, "nonnull reuse donor unsupported");
+  }
+  out = mask(out, donor.identity, 1);
+  let old = out.temp;
+  out = calc(out, 4, out.state.path, n.id);
+  out = calc(out, 0, old, out.temp);
+  out = equal(out, out.state.path, out.temp, 1, "invalid storage donor generation");
+  out = equal(out, old, out.state.parents[0], 1, "storage transfer requires one old parent credit");
+  out = equal(out, old, out.unique, 1, "storage transfer requires unique parent");
+  for slot in [0, 1] {
+    out = equal(out, old, out.state.credits[slot], 0, "storage transfer requires discharged children");
+    let cleared = guard.select(out.arena, old, 0, out.state.contents[slot]);
+    if (out.error == "") {
+      out = Context { ...out, arena: cleared.arena, error: cleared.error, state: State { ...out.state, contents: out.state.contents.with(slot, cleared.id) } };
+    }
+  }
+  out = calc(out, 1, out.state.parents[0], old);
+  out = Context { ...out, state: State { ...out.state, parents: out.state.parents.with(0, out.temp) } };
+  let shape = guard.select(out.arena, old, 0, out.state.shapes[0]);
+  if (out.error == "") {
+    out = Context { ...out, arena: shape.arena, error: shape.error, state: State { ...out.state, shapes: out.state.shapes.with(0, shape.id) } };
+  }
+  return out;
+}
+
+function transfer(c: Context, op: ssa.SInst, shape: string, drop: string, release: string, fields: ScalarField[], calls: CheckedCall[], composed: boolean): Context {
   let out = c;
   for arg in op.args {
     out = available(out, arg);
@@ -406,9 +437,7 @@ function transfer(c: Context, op: ssa.SInst, shape: string, drop: string, releas
     if (donor.kind != 1 || words.kind != 0) {
       return failed(out, "invalid reuse allocation operands");
     }
-    let n = phi.is_null(out.arena, donor, out.state.path);
-    out = Context { ...out, arena: n.arena, error: n.error };
-    out = equal(out, out.state.path, n.id, 1, "nonnull reuse donor unsupported");
+    out = reuse_donor(out, donor, composed);
     out = literal(out, 3);
     out = equal(out, out.state.path, words.identity, out.temp, "parent allocation size mismatch");
     out = equal(out, out.state.path, out.state.allocated, 0, "extra parent allocation");
@@ -636,6 +665,52 @@ pub function check_fields(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, sha
 // Caller additionally proves each callee's selected Boolean/i32-to-void ABI.
 // Effects and outcomes are always recomputed from the supplied actual bodies.
 pub function check_calls(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: string, fields: ScalarField[], assertions: ssa.SFunc[]): helper.Proof {
+  return check_body(f, drop, release, shape, fields, assertions, false);
+}
+
+// The raw ABI/layout obligations of before_calls and check_calls still apply.
+// Recompute the exact incoming boundary with this SAME consumer body. Success
+// proves only its invocation, never the wrapper suffix or wrapper return.
+pub function check_invocations(wrapper: ssa.SFunc, producers: ssa.SFunc[], f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, old_shape: string, new_shape: string, fields: ScalarField[], assertions: ssa.SFunc[]): helper.Proof {
+  let boundary = incoming_capacity.before_calls(wrapper, producers, [f], old_shape);
+  if (!boundary.proof.ok) {
+    return boundary.proof;
+  }
+  return check_body(f, drop, release, new_shape, fields, assertions, true);
+}
+
+function returned(c: Context, value: i32, composed: boolean): Context {
+  let result = c.values[value];
+  c = parent(c, result);
+  if (composed) {
+    c = literal(c, 2);
+    c = equal(c, c.state.path, result.identity, c.temp, "storage result requires new generation");
+  }
+  let p: i32 = 0;
+  while (p < 2 && c.error == "") {
+    c = mask(c, result.identity, p + 1);
+    let path = c.temp;
+    c = equal(c, path, c.state.parents[p], 1, "result parent credit mismatch");
+    c = equal(c, path, c.state.shapes[p], 1, "result shape not initialized");
+    let slot = p * 2;
+    while (slot < p * 2 + 2) {
+      c = equal(c, path, c.state.credits[slot], 1, "result has stale or uninitialized slot");
+      slot = slot + 1;
+    }
+    c = calc(c, 1, c.state.parents[p], path);
+    c = Context { ...c, state: State { ...c.state, parents: c.state.parents.with(p, c.temp) } };
+    p = p + 1;
+  }
+  for count in c.state.parents {
+    c = equal(c, c.state.path, count, 0, "unconsumed parent credit");
+  }
+  for count in c.state.children {
+    c = equal(c, c.state.path, count, 0, "unconsumed child credit");
+  }
+  return c;
+}
+
+function check_body(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: string, fields: ScalarField[], assertions: ssa.SFunc[], composed: boolean): helper.Proof {
   let calls: CheckedCall[] = [];
   for assertion in assertions {
     if (assertion.name == f.name || assertion.name == drop.name || assertion.name == release.name || call_index(calls, assertion.name) >= 0) {
@@ -724,35 +799,13 @@ pub function check_calls(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shap
       }
       for op in b.insts {
         if (c.error == "" && op.kind_tag != 8) {
-          c = transfer(c, op, shape, drop.name, release.name, fields, calls);
+          c = transfer(c, op, shape, drop.name, release.name, fields, calls, composed);
         }
       }
       if (c.error == "" && b.term.kind_tag == 1) {
         c = available(c, b.term.value);
         if (c.error == "") {
-          let result = c.values[b.term.value];
-          c = parent(c, result);
-          let p: i32 = 0;
-          while (p < 2 && c.error == "") {
-            c = mask(c, result.identity, p + 1);
-            let path = c.temp;
-            c = equal(c, path, c.state.parents[p], 1, "result parent credit mismatch");
-            c = equal(c, path, c.state.shapes[p], 1, "result shape not initialized");
-            let slot = p * 2;
-            while (slot < p * 2 + 2) {
-              c = equal(c, path, c.state.credits[slot], 1, "result has stale or uninitialized slot");
-              slot = slot + 1;
-            }
-            c = calc(c, 1, c.state.parents[p], path);
-            c = Context { ...c, state: State { ...c.state, parents: c.state.parents.with(p, c.temp) } };
-            p = p + 1;
-          }
-          for count in c.state.parents {
-            c = equal(c, c.state.path, count, 0, "unconsumed parent credit");
-          }
-          for count in c.state.children {
-            c = equal(c, c.state.path, count, 0, "unconsumed child credit");
-          }
+          c = returned(c, b.term.value, composed);
         }
       } else if (c.error == "") {
         let targets: i32[] = [b.term.target];
@@ -792,6 +845,9 @@ pub function check_calls(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shap
   let message = c.error;
   if (message == "") {
     message = "proved guarded two-child partial replacement";
+    if (composed) {
+      message = "proved checked-capacity consumer invocation";
+    }
   }
   return helper.Proof { ok: c.error == "", function_name: f.name, message: message };
 }

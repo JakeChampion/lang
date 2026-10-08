@@ -1,0 +1,220 @@
+import "../lexer";
+import "../parser";
+import "../semlower";
+import "../ircore";
+import "../ssa";
+import "../ssa_lift";
+import "../ssacreditreuse" as reuse;
+import "../ssacredithelper" as helper;
+import "../util";
+
+function require(ok: boolean, id: i32): void {
+  if (!ok) {
+    exit(id);
+  }
+}
+
+function body(sub: ircore.Sub, name: string): ssa.SFunc {
+  for b in util.append_all(sub.bodies, sub.extra) {
+    if (b.name == name) {
+      require(b.ok, 1);
+      let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), b.name, b.n_params, b.n_locals, b.ops, false);
+      require(lifted.ok, 2);
+      return lifted.func;
+    }
+  }
+  print(name);
+  exit(3);
+  return ssa.SFunc { name: "", nparams: 0, nvals: 0, blocks: [], entry: 0, takes_env: false };
+}
+
+function source(): string {
+  return "struct Leaf { n: i32 }\nstruct Parent { left: Leaf, right: Leaf }\nstruct Other { first: Leaf, second: Leaf }\n"
+    + "@noinline\nfunction require(ok: boolean, code: i32): void { if (!ok) { exit(code); } }\n"
+    + "@noinline\nfunction parent(left: Leaf, right: Leaf): Parent { return Parent { left: left, right: right }; }\n"
+    + "@noinline\nfunction replace(own p: Parent, child: Leaf): Other { let n = p.left.n + p.right.n; require(n > 0, 1); return Other { first: child, second: child }; }\n"
+    + "@noinline\nfunction handoff(flag: boolean, left: Leaf, right: Leaf, incoming: Leaf): Other { let p = if (flag) { parent(left, right) } else { parent(right, left) }; return replace(p, incoming); }\n"
+    + "function main(): i32 { let c = Leaf { n: 7 }; let p = handoff(true,c,c,c); return p.first.n - 7; }\n";
+}
+
+function expect(p: helper.Proof, name: string, why: string): void {
+  let ok = why == "proved checked-capacity consumer invocation";
+  if (p.ok != ok || p.function_name != name || p.message != why) {
+    print(p.function_name + ": " + p.message + " expected: " + why);
+    exit(91);
+  }
+}
+
+function check(sub: ircore.Sub, f: ssa.SFunc, assertion: ssa.SFunc): helper.Proof {
+  let fields = [reuse.ScalarField { root: 3, offset: 8 }, reuse.ScalarField { root: 4, offset: 8 }, reuse.ScalarField { root: 5, offset: 8 }];
+  return reuse.check_invocations(body(sub, "handoff"), [body(sub, "parent")], f, body(sub, "__sem_drop_Parent"), body(sub, "__sem_release_Parent"), "Parent", "Other", fields, [assertion]);
+}
+
+function reference_id(f: ssa.SFunc, allocation: boolean): i32 {
+  for b in f.blocks {
+    for op in b.insts {
+      if (allocation && op.kind_tag == 11 && op.str == "__fern_alloc_reuse" || !allocation && op.kind_tag == 6 && op.imm == 0) {
+        return op.result;
+      }
+    }
+  }
+  exit(4);
+  return -1;
+}
+
+function extra_use(op: ssa.SInst, old: i32, mode: i32, id: i32): ssa.SInst {
+  if (mode == 4) {
+    return ssa.SInst { ...op, result: id };
+  }
+  if (mode == 5) {
+    return ssa.SInst { kind_tag: 7, result: id, args: [old], imm: 0, str: "" };
+  }
+  if (mode == 6) {
+    return ssa.SInst { kind_tag: 40, result: id, args: [old], imm: 8, str: "" };
+  }
+  if (mode == 7) {
+    return ssa.SInst { kind_tag: 11, result: id, args: [old], imm: 0, str: "__fern_rc_is_unique" };
+  }
+  return ssa.SInst { kind_tag: 11, result: id, args: [old], imm: 0, str: "__sem_release_Parent" };
+}
+
+struct Edit { op: ssa.SInst, changed: boolean }
+
+function erased(op: ssa.SInst): Edit {
+  return Edit { op: ssa.SInst { kind_tag: 1, result: op.result, args: [], imm: 0, str: "" }, changed: true };
+}
+
+function call_edit(op: ssa.SInst, old: i32, mode: i32, count: i32): Edit {
+  if (mode == 0 && op.str == "__sem_drop_Parent") {
+    return erased(op);
+  }
+  if (mode == 14 && count == 0 && op.str == "__fern_rc_dec" && op.args[0] != old) {
+    return erased(op);
+  }
+  if (mode == 3 && op.str == "__fern_rc_is_unique") {
+    return Edit { op: ssa.SInst { kind_tag: 1, result: op.result, args: [], imm: 1, str: "" }, changed: true };
+  }
+  return Edit { op: op, changed: false };
+}
+
+function store_edit(op: ssa.SInst, old: i32, fresh: i32, mode: i32): Edit {
+  if (mode == 13 && op.args[0] == old && op.imm == 8) {
+    return erased(op);
+  }
+  if (op.args[0] == fresh) {
+    if (mode == 10 && op.imm == 0 || mode == 11 && op.imm == 16) {
+      return erased(op);
+    }
+  }
+  return Edit { op: op, changed: false };
+}
+
+function instruction_edit(op: ssa.SInst, old: i32, fresh: i32, mode: i32, count: i32): Edit {
+  if (op.result == fresh && mode == 1) {
+    return Edit { op: ssa.SInst { ...op, args: [1, op.args[1]] }, changed: true };
+  }
+  if (op.kind_tag == 1 && op.imm == 3 && mode == 2) {
+    return Edit { op: ssa.SInst { ...op, imm: 2 }, changed: true };
+  }
+  if (mode == 12 && op.kind_tag == 46) {
+    return Edit { op: ssa.SInst { ...op, str: "Parent" }, changed: true };
+  }
+  if (op.kind_tag == 11) {
+    return call_edit(op, old, mode, count);
+  }
+  if (op.kind_tag == 41) {
+    return store_edit(op, old, fresh, mode);
+  }
+  return Edit { op: op, changed: false };
+}
+
+function mutated(f: ssa.SFunc, mode: i32): ssa.SFunc {
+  let old = reference_id(f, false);
+  let fresh = reference_id(f, true);
+  let blocks: ssa.SBlock[] = [];
+  let count: i32 = 0;
+  let nvals = f.nvals;
+  for b in f.blocks {
+    let insts: ssa.SInst[] = [];
+    for original in b.insts {
+      let edit = instruction_edit(original, old, fresh, mode, count);
+      let op = edit.op;
+      let changed = edit.changed;
+      insts = insts.append(op);
+      if (op.result == fresh && mode >= 4 && mode <= 8) {
+        insts = insts.append(extra_use(op, old, mode, nvals));
+        nvals = nvals + 1;
+        changed = true;
+      }
+      if (changed) {
+        count = count + 1;
+      }
+    }
+    let term = b.term;
+    if (mode == 9 && term.kind_tag == 1) {
+      term = ssa.STerm { ...term, value: old };
+      count = count + 1;
+    }
+    blocks = blocks.append(ssa.SBlock { ...b, insts: insts, term: term });
+  }
+  require(count == 1 || mode == 3 && count > 0, 5);
+  return ssa.SFunc { ...f, blocks: blocks, nvals: nvals };
+}
+
+function controls(sub: ircore.Sub, f: ssa.SFunc, assertion: ssa.SFunc): void {
+  let reasons = ["proved checked-capacity consumer invocation", "invalid storage donor generation", "parent allocation size mismatch", "clearing shared parent slot", "storage transfer requires one old parent credit", "old parent used after release", "old parent used after release", "old parent used after release", "old parent used after release", "old parent used after release", "result shape not initialized", "result has stale or uninitialized slot", "unsupported reuse operation", "children-only drop with stale slot", "unconsumed child credit"];
+  let mode: i32 = 0;
+  while (mode < 15) {
+    let p = check(sub, mutated(f, mode), assertion);
+    expect(p, f.name, reasons[mode]);
+    mode = mode + 1;
+  }
+  let fields = [reuse.ScalarField { root: 3, offset: 8 }, reuse.ScalarField { root: 4, offset: 8 }, reuse.ScalarField { root: 5, offset: 8 }];
+  expect(reuse.check_calls(f, body(sub, "__sem_drop_Parent"), body(sub, "__sem_release_Parent"), "Other", fields, [assertion]), "replace", "nonnull reuse donor unsupported");
+  expect(check(sub, f, assertion), "replace", "proved checked-capacity consumer invocation");
+}
+
+// Deliberately incomplete physical bodies isolate the storage preconditions.
+// They do not replace or weaken the normal-lowered consumer controls.
+function unsafe_storage(name: string, unique: boolean): ssa.SFunc {
+  let p = ssa.SInst { kind_tag: 6, result: 0, args: [], imm: 0, str: "" };
+  let c = ssa.SInst { ...p, result: 1, imm: 1 };
+  let size = ssa.SInst { kind_tag: 1, result: 2, args: [], imm: 3, str: "" };
+  let alloc = ssa.SInst { kind_tag: 11, result: 3, args: [0, 2], imm: 0, str: "__fern_alloc_reuse" };
+  let ret = ssa.STerm { kind_tag: 1, value: 3, target: 0, cond: 0, t: 0, f: 0 };
+  let entry = ssa.SBlock { id: 0, insts: [p, c, size, alloc], term: ret, preds: [] };
+  if (!unique) {
+    return ssa.SFunc { name: name, nparams: 2, nvals: 4, blocks: [entry], entry: 0, takes_env: false };
+  }
+  let test = ssa.SInst { kind_tag: 11, result: 4, args: [0], imm: 0, str: "__fern_rc_is_unique" };
+  entry = ssa.SBlock { ...entry, insts: [p, c, size, test], term: ssa.STerm { ...ret, kind_tag: 3, cond: 4, t: 1, f: 2 } };
+  let yes = ssa.SBlock { id: 1, insts: [alloc], term: ret, preds: [0] };
+  let no = ssa.SBlock { id: 2, insts: [], term: ssa.STerm { ...ret, value: 0 }, preds: [0] };
+  return ssa.SFunc { name: name, nparams: 2, nvals: 5, blocks: [entry, yes, no], entry: 0, takes_env: false };
+}
+
+function target_checks(target: string): void {
+  let sub = semlower.driven(parser.parse_module(lexer.tokenize(source())), target).sub;
+  let f = body(sub, "replace");
+  let assertion = body(sub, "require");
+  expect(check(sub, f, assertion), "replace", "scalar call may exit with unproved caller obligations");
+  // A separate actual non-exiting callee is a positive control. The original
+  // consumer instructions, reads and call operands remain unchanged above.
+  let safe = semlower.driven(parser.parse_module(lexer.tokenize("@noinline\nfunction require(ok: boolean, code: i32): void { return; }\nfunction main(): i32 { require(true,1); return 0; }\n")), target).sub;
+  expect(check(sub, f, body(safe, "require")), "replace", "proved checked-capacity consumer invocation");
+  controls(sub, f, body(safe, "require"));
+  expect(check(sub, unsafe_storage("replace", false), body(safe, "require")), "replace", "storage transfer requires unique parent");
+  expect(check(sub, unsafe_storage("replace", true), body(safe, "require")), "replace", "storage transfer requires discharged children");
+  let stale = unsafe_storage("replace", false);
+  let entry = stale.blocks[0];
+  let old_return = ssa.SFunc { ...stale, nvals: 3, blocks: [ssa.SBlock { ...entry, insts: [entry.insts[0], entry.insts[1], entry.insts[2]], term: ssa.STerm { ...entry.term, value: 0 } }] };
+  expect(check(sub, old_return, body(safe, "require")), "replace", "storage result requires new generation");
+}
+
+function main(): i32 {
+  target_checks("arm64-darwin");
+  target_checks("x86-64-linux");
+  target_checks("wasm32-wasi");
+  print("checked storage invocation controls passed");
+  return 0;
+}
