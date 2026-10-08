@@ -1,0 +1,206 @@
+import "../lexer";
+import "../parser";
+import "../semlower";
+import "../irtables";
+import "../ir";
+import "../ssa";
+import "../ssa_lift";
+import "../ssacreditreplace" as replace;
+
+function require(ok: boolean, id: i32): void {
+  if (!ok) {
+    exit(id);
+  }
+}
+
+function lift(r: irtables.LowerResult): ssa.SFunc {
+  require(r.ok, 1);
+  let out = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), r.name, r.n_params, r.n_locals, r.ops, false);
+  if (!out.ok) {
+    print(out.bail);
+    exit(2);
+  }
+  return out.func;
+}
+
+function expect(f: ssa.SFunc, d: ssa.SFunc, r: ssa.SFunc, ok: boolean, id: i32): void {
+  let proof = replace.check(f, d, r, "Parent");
+  if (proof.ok != ok || proof.function_name != f.name || proof.message == "") {
+    print(proof.function_name + ": " + proof.message);
+    exit(id);
+  }
+}
+
+function mutate(body: irtables.LowerResult, mode: i32): irtables.LowerResult {
+  let ops: ir.Op[] = [];
+  let hits: i32 = 0;
+  for op in body.ops {
+    if (mode == 0 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__sem_release_Parent") {
+      // Keep the parent load and following drop: its credit is now leaked.
+      hits = hits + 1;
+    } else if (mode == 1 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__sem_release_Parent") {
+      ops = ops.append(ir.op_load_local(0)).append(op).append(ir.op_drop()).append(op);
+      hits = hits + 1;
+    } else if ((mode == 2 || mode == 3) && op.kind_tag == ir.kind_id("struct_make")) {
+      let call = "__fern_rc_dec";
+      if (mode == 3) {
+        call = "__fern_rc_inc";
+      }
+      ops = ops.append(ir.op_load_local(1)).append(ir.op_call_direct(call, 1)).append(ir.op_drop()).append(op);
+      hits = hits + 1;
+    } else if (mode == 4 && op.kind_tag == ir.kind_id("return")) {
+      ops = ops.append(ir.op_drop()).append(ir.op_load_local(1)).append(op);
+      hits = hits + 1;
+    } else {
+      ops = ops.append(op);
+    }
+  }
+  require(hits == 1, 3);
+  return irtables.LowerResult { ...body, ops: ops };
+}
+
+function physical_mutation(f: ssa.SFunc, mode: i32): ssa.SFunc {
+  let ops: ssa.SInst[] = [];
+  let hits: i32 = 0;
+  for op in f.blocks[0].insts {
+    let changed = op;
+    if (mode == 0 && op.kind_tag == 48) {
+      changed = ssa.SInst { ...op, imm: 1 };
+      hits = hits + 1;
+    } else if (mode == 1 && op.kind_tag == 46) {
+      changed = ssa.SInst { ...op, str: "Other" };
+      hits = hits + 1;
+    } else if (mode >= 2 && op.kind_tag == 41 && op.imm == 8) {
+      if (mode == 2) {
+        changed = ssa.SInst { ...op, kind_tag: 1, args: [], imm: 0 };
+      } else if (mode == 3) {
+        changed = ssa.SInst { ...op, imm: 16 };
+      } else if (mode == 4) {
+        changed = ssa.SInst { ...op, args: [op.args[0], 0] };
+      } else if (mode == 5) {
+        ops = ops.append(op);
+        changed = ssa.SInst { ...op, result: f.nvals };
+      } else {
+        ops = ops.append(op);
+        changed = ssa.SInst { kind_tag: 7, result: f.nvals, args: [op.result], imm: 0, str: "" };
+      }
+      hits = hits + 1;
+    }
+    ops = ops.append(changed);
+  }
+  require(hits == 1, 4);
+  let count = f.nvals;
+  if (mode >= 5) {
+    count = count + 1;
+  }
+  return ssa.SFunc { ...f, nvals: count, blocks: [ssa.SBlock { ...f.blocks[0], insts: ops }] };
+}
+
+function target_checks(target: string): void {
+  let source = "struct Leaf { n: i32 }\nstruct Parent { child: Leaf }\n@noinline\nfunction replace(own p: Parent, child: Leaf): Parent { return Parent { ...p, child: child }; }\nfunction main(): i32 { let l = Leaf { n: 7 }; let p = Parent { child: l }; return replace(p, l).child.n; }\n";
+  let driven = semlower.driven(parser.parse_module(lexer.tokenize(source)), target);
+  let subjects: irtables.LowerResult[] = [];
+  let drops: irtables.LowerResult[] = [];
+  let releases: irtables.LowerResult[] = [];
+  for body in driven.sub.bodies {
+    if (body.name == "replace") {
+      subjects = subjects.append(body);
+    }
+  }
+  for body in driven.sub.extra {
+    if (body.name == "__sem_drop_Parent") {
+      drops = drops.append(body);
+    }
+    if (body.name == "__sem_release_Parent") {
+      releases = releases.append(body);
+    }
+  }
+  require(subjects.len() == 1 && drops.len() == 1 && releases.len() == 1, 5);
+  let body = subjects[0];
+  let f = lift(body);
+  let d = lift(drops[0]);
+  let r = lift(releases[0]);
+  expect(f, d, r, true, 10);
+  let stack_reasons = ["unconsumed replacement credit", "old parent used after release", "child used after final credit", "unconsumed replacement credit", "owned fresh parent result required"];
+  let mode: i32 = 0;
+  while (mode < 5) {
+    let changed = lift(mutate(body, mode));
+    expect(changed, d, r, false, 11 + mode);
+    require(replace.check(changed, d, r, "Parent").message == stack_reasons[mode], 60 + mode);
+    mode = mode + 1;
+  }
+  let physical_reasons = ["unsupported replacement operation", "unsupported replacement operation", "incomplete parent construction", "invalid or duplicate parent initialization", "old parent used after release", "invalid or duplicate parent initialization", "undefined replacement operand"];
+  mode = 0;
+  while (mode < 7) {
+    let changed = physical_mutation(f, mode);
+    expect(changed, d, r, false, 20 + mode);
+    require(replace.check(changed, d, r, "Parent").message == physical_reasons[mode], 70 + mode);
+    mode = mode + 1;
+  }
+  expect(ssa.SFunc { ...f, nvals: 2147483647 }, d, r, false, 30);
+  expect(ssa.SFunc { ...f, nparams: 1 }, d, r, false, 31);
+  // Move the old-parent release after construction. Its child may alias the
+  // replacement child, whose credit is already anchored in the fresh parent.
+  require(body.ops.len() >= 4 && body.ops[0].kind_tag == ir.kind_id("load_local") && body.ops[1].str == r.name && body.ops[2].kind_tag == ir.kind_id("drop"), 32);
+  let late: ir.Op[] = [];
+  let i: i32 = 3;
+  while (i < body.ops.len()) {
+    let op = body.ops[i];
+    if (op.kind_tag == ir.kind_id("return")) {
+      late = late.append(body.ops[0]).append(body.ops[1]).append(body.ops[2]);
+    }
+    late = late.append(op);
+    i = i + 1;
+  }
+  expect(lift(irtables.LowerResult { ...body, ops: late }), d, r, true, 33);
+  let duplicate = f.blocks[0].insts[0];
+  expect(ssa.SFunc { ...f, blocks: [ssa.SBlock { ...f.blocks[0], insts: f.blocks[0].insts.append(duplicate) }] }, d, r, false, 34);
+  expect(ssa.SFunc { ...f, takes_env: true }, d, r, false, 35);
+  expect(ssa.SFunc { ...f, name: "__fern_rc_dec" }, d, r, false, 36);
+}
+
+struct Leaf { n: i32 }
+
+struct Parent { child: Leaf }
+
+@noinline
+function leaf(n: i32): Leaf {
+  return Leaf { n: n };
+}
+
+@noinline
+function parent(child: Leaf): Parent {
+  return Parent { child: child };
+}
+
+@noinline
+function updated(own p: Parent, child: Leaf): Parent {
+  return Parent { ...p, child: child };
+}
+
+function runtime_checks(): void {
+  let a = leaf(7);
+  let p = parent(a);
+  let old = p;
+  let q = updated(p, a);
+  require(old.child.n == 7 && q.child.n == 7 && a.n == 7, 50);
+  let b = leaf(19);
+  let snapshot = q;
+  let next = updated(q, b);
+  require(snapshot.child.n == 7 && next.child.n == 19 && b.n == 19, 51);
+  let unique = updated(parent(leaf(23)), leaf(31));
+  require(unique.child.n == 31, 52);
+  let shared_child = leaf(41);
+  let unique_parent = parent(shared_child);
+  let same_child = updated(unique_parent, shared_child);
+  require(same_child.child.n == 41, 53);
+}
+
+function main(): i32 {
+  target_checks("arm64-darwin");
+  target_checks("x86-64-linux");
+  target_checks("wasm32-wasi");
+  runtime_checks();
+  print("physical replacement: transfer and snapshot controls agree");
+  return 0;
+}
