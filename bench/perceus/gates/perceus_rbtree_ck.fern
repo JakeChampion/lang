@@ -1,0 +1,15 @@
+import "../rbtree_ck";
+
+function main(): i32 {
+  let sum: i64 = 0i64;
+  let round: i32 = 0;
+  while (round < 160) {
+    let answer: i64 = rbtree_ck.count_head(rbtree_ck.make_tree(5i64, 257i64));
+    if (answer != 25i64) {
+      return 125;
+    }
+    sum = sum + answer;
+    round = round + 1;
+  }
+  return (sum % 97i64) as i32;
+}

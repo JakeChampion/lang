@@ -1,0 +1,1277 @@
+[
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/fern-nqueens",
+      "13"
+    ],
+    "exit": 0,
+    "wall_ns": 689814583,
+    "user_seconds": 0.682774,
+    "system_seconds": 0.0060149999999999995,
+    "peak_rss_bytes": 195047424,
+    "minor_faults": 514,
+    "major_faults": 1,
+    "language": "fern",
+    "workload": "nqueens",
+    "size": 13,
+    "repeat": 0
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/koka-nqueens",
+      "13"
+    ],
+    "exit": 0,
+    "wall_ns": 506039750,
+    "user_seconds": 0.500939,
+    "system_seconds": 0.003991,
+    "peak_rss_bytes": 102780928,
+    "minor_faults": 552,
+    "major_faults": 7,
+    "language": "koka",
+    "workload": "nqueens",
+    "size": 13,
+    "repeat": 0
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/lean-nqueens",
+      "13"
+    ],
+    "exit": 0,
+    "wall_ns": 764874417,
+    "user_seconds": 0.749227,
+    "system_seconds": 0.013985,
+    "peak_rss_bytes": 138231808,
+    "minor_faults": 661,
+    "major_faults": 21,
+    "language": "lean",
+    "workload": "nqueens",
+    "size": 13,
+    "repeat": 0
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/koka-nqueens",
+      "13"
+    ],
+    "exit": 0,
+    "wall_ns": 501601959,
+    "user_seconds": 0.49688499999999997,
+    "system_seconds": 0.002993,
+    "peak_rss_bytes": 102764544,
+    "minor_faults": 551,
+    "major_faults": 7,
+    "language": "koka",
+    "workload": "nqueens",
+    "size": 13,
+    "repeat": 1
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/lean-nqueens",
+      "13"
+    ],
+    "exit": 0,
+    "wall_ns": 752781542,
+    "user_seconds": 0.7490589999999999,
+    "system_seconds": 0.002002,
+    "peak_rss_bytes": 138231808,
+    "minor_faults": 659,
+    "major_faults": 21,
+    "language": "lean",
+    "workload": "nqueens",
+    "size": 13,
+    "repeat": 1
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/fern-nqueens",
+      "13"
+    ],
+    "exit": 0,
+    "wall_ns": 691724250,
+    "user_seconds": 0.686797,
+    "system_seconds": 0.003998,
+    "peak_rss_bytes": 195043328,
+    "minor_faults": 507,
+    "major_faults": 1,
+    "language": "fern",
+    "workload": "nqueens",
+    "size": 13,
+    "repeat": 1
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/lean-nqueens",
+      "13"
+    ],
+    "exit": 0,
+    "wall_ns": 767469292,
+    "user_seconds": 0.743732,
+    "system_seconds": 0.021991999999999998,
+    "peak_rss_bytes": 138235904,
+    "minor_faults": 660,
+    "major_faults": 21,
+    "language": "lean",
+    "workload": "nqueens",
+    "size": 13,
+    "repeat": 2
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/fern-nqueens",
+      "13"
+    ],
+    "exit": 0,
+    "wall_ns": 699883709,
+    "user_seconds": 0.694851,
+    "system_seconds": 0.003999,
+    "peak_rss_bytes": 195043328,
+    "minor_faults": 514,
+    "major_faults": 1,
+    "language": "fern",
+    "workload": "nqueens",
+    "size": 13,
+    "repeat": 2
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/koka-nqueens",
+      "13"
+    ],
+    "exit": 0,
+    "wall_ns": 486764876,
+    "user_seconds": 0.48155699999999996,
+    "system_seconds": 0.0039959999999999996,
+    "peak_rss_bytes": 102780928,
+    "minor_faults": 562,
+    "major_faults": 7,
+    "language": "koka",
+    "workload": "nqueens",
+    "size": 13,
+    "repeat": 2
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/fern-nqueens",
+      "13"
+    ],
+    "exit": 0,
+    "wall_ns": 718044209,
+    "user_seconds": 0.7045669999999999,
+    "system_seconds": 0.012008999999999999,
+    "peak_rss_bytes": 195047424,
+    "minor_faults": 518,
+    "major_faults": 1,
+    "language": "fern",
+    "workload": "nqueens",
+    "size": 13,
+    "repeat": 3
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/koka-nqueens",
+      "13"
+    ],
+    "exit": 0,
+    "wall_ns": 496634166,
+    "user_seconds": 0.493718,
+    "system_seconds": 0.0019979999999999998,
+    "peak_rss_bytes": 102780928,
+    "minor_faults": 561,
+    "major_faults": 7,
+    "language": "koka",
+    "workload": "nqueens",
+    "size": 13,
+    "repeat": 3
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/lean-nqueens",
+      "13"
+    ],
+    "exit": 0,
+    "wall_ns": 741373917,
+    "user_seconds": 0.7335769999999999,
+    "system_seconds": 0.005996,
+    "peak_rss_bytes": 138211328,
+    "minor_faults": 666,
+    "major_faults": 21,
+    "language": "lean",
+    "workload": "nqueens",
+    "size": 13,
+    "repeat": 3
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/koka-nqueens",
+      "13"
+    ],
+    "exit": 0,
+    "wall_ns": 505983125,
+    "user_seconds": 0.5020749999999999,
+    "system_seconds": 0.0020039999999999997,
+    "peak_rss_bytes": 102764544,
+    "minor_faults": 560,
+    "major_faults": 7,
+    "language": "koka",
+    "workload": "nqueens",
+    "size": 13,
+    "repeat": 4
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/lean-nqueens",
+      "13"
+    ],
+    "exit": 0,
+    "wall_ns": 791297708,
+    "user_seconds": 0.7831239999999999,
+    "system_seconds": 0.005013,
+    "peak_rss_bytes": 138235904,
+    "minor_faults": 666,
+    "major_faults": 21,
+    "language": "lean",
+    "workload": "nqueens",
+    "size": 13,
+    "repeat": 4
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/fern-nqueens",
+      "13"
+    ],
+    "exit": 0,
+    "wall_ns": 720866375,
+    "user_seconds": 0.716603,
+    "system_seconds": 0.003002,
+    "peak_rss_bytes": 195043328,
+    "minor_faults": 517,
+    "major_faults": 1,
+    "language": "fern",
+    "workload": "nqueens",
+    "size": 13,
+    "repeat": 4
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/fern-rbtree",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 3214061168,
+    "user_seconds": 3.203072,
+    "system_seconds": 0.008997,
+    "peak_rss_bytes": 304103424,
+    "minor_faults": 572,
+    "major_faults": 1,
+    "language": "fern",
+    "workload": "rbtree",
+    "size": 4200000,
+    "repeat": 0
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/koka-rbtree",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 427306208,
+    "user_seconds": 0.423937,
+    "system_seconds": 0.001999,
+    "peak_rss_bytes": 138436608,
+    "minor_faults": 581,
+    "major_faults": 7,
+    "language": "koka",
+    "workload": "rbtree",
+    "size": 4200000,
+    "repeat": 0
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/lean-rbtree",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 1401777709,
+    "user_seconds": 1.38876,
+    "system_seconds": 0.01099,
+    "peak_rss_bytes": 209608704,
+    "minor_faults": 712,
+    "major_faults": 22,
+    "language": "lean",
+    "workload": "rbtree",
+    "size": 4200000,
+    "repeat": 0
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/koka-rbtree",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 423726209,
+    "user_seconds": 0.419612,
+    "system_seconds": 0.0029969999999999997,
+    "peak_rss_bytes": 138432512,
+    "minor_faults": 580,
+    "major_faults": 7,
+    "language": "koka",
+    "workload": "rbtree",
+    "size": 4200000,
+    "repeat": 1
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/lean-rbtree",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 1413699459,
+    "user_seconds": 1.400378,
+    "system_seconds": 0.010995,
+    "peak_rss_bytes": 209616896,
+    "minor_faults": 711,
+    "major_faults": 22,
+    "language": "lean",
+    "workload": "rbtree",
+    "size": 4200000,
+    "repeat": 1
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/fern-rbtree",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 3192325626,
+    "user_seconds": 3.186854,
+    "system_seconds": 0.003999,
+    "peak_rss_bytes": 304103424,
+    "minor_faults": 576,
+    "major_faults": 1,
+    "language": "fern",
+    "workload": "rbtree",
+    "size": 4200000,
+    "repeat": 1
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/lean-rbtree",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 1414565043,
+    "user_seconds": 1.402179,
+    "system_seconds": 0.010001,
+    "peak_rss_bytes": 211701760,
+    "minor_faults": 711,
+    "major_faults": 22,
+    "language": "lean",
+    "workload": "rbtree",
+    "size": 4200000,
+    "repeat": 2
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/fern-rbtree",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 3207264376,
+    "user_seconds": 3.198011,
+    "system_seconds": 0.008,
+    "peak_rss_bytes": 304099328,
+    "minor_faults": 572,
+    "major_faults": 1,
+    "language": "fern",
+    "workload": "rbtree",
+    "size": 4200000,
+    "repeat": 2
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/koka-rbtree",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 411389166,
+    "user_seconds": 0.406292,
+    "system_seconds": 0.003993,
+    "peak_rss_bytes": 138436608,
+    "minor_faults": 577,
+    "major_faults": 7,
+    "language": "koka",
+    "workload": "rbtree",
+    "size": 4200000,
+    "repeat": 2
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/fern-rbtree",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 3205738543,
+    "user_seconds": 3.196583,
+    "system_seconds": 0.007998,
+    "peak_rss_bytes": 304103424,
+    "minor_faults": 576,
+    "major_faults": 1,
+    "language": "fern",
+    "workload": "rbtree",
+    "size": 4200000,
+    "repeat": 3
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/koka-rbtree",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 424877458,
+    "user_seconds": 0.41868299999999997,
+    "system_seconds": 0.00502,
+    "peak_rss_bytes": 140525568,
+    "minor_faults": 585,
+    "major_faults": 7,
+    "language": "koka",
+    "workload": "rbtree",
+    "size": 4200000,
+    "repeat": 3
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/lean-rbtree",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 1415312000,
+    "user_seconds": 1.400446,
+    "system_seconds": 0.012976,
+    "peak_rss_bytes": 209620992,
+    "minor_faults": 716,
+    "major_faults": 22,
+    "language": "lean",
+    "workload": "rbtree",
+    "size": 4200000,
+    "repeat": 3
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/koka-rbtree",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 418685750,
+    "user_seconds": 0.414518,
+    "system_seconds": 0.002996,
+    "peak_rss_bytes": 138436608,
+    "minor_faults": 579,
+    "major_faults": 7,
+    "language": "koka",
+    "workload": "rbtree",
+    "size": 4200000,
+    "repeat": 4
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/lean-rbtree",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 1682352501,
+    "user_seconds": 1.665354,
+    "system_seconds": 0.014417999999999999,
+    "peak_rss_bytes": 209620992,
+    "minor_faults": 720,
+    "major_faults": 22,
+    "language": "lean",
+    "workload": "rbtree",
+    "size": 4200000,
+    "repeat": 4
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/fern-rbtree",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 3249182335,
+    "user_seconds": 3.234919,
+    "system_seconds": 0.012995,
+    "peak_rss_bytes": 304103424,
+    "minor_faults": 577,
+    "major_faults": 1,
+    "language": "fern",
+    "workload": "rbtree",
+    "size": 4200000,
+    "repeat": 4
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/fern-rbtree-ck",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 3733306377,
+    "user_seconds": 3.688528,
+    "system_seconds": 0.042994,
+    "peak_rss_bytes": 2157981696,
+    "minor_faults": 1458,
+    "major_faults": 1,
+    "language": "fern",
+    "workload": "rbtree-ck",
+    "size": 4200000,
+    "repeat": 0
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/koka-rbtree-ck",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 754685375,
+    "user_seconds": 0.7316499999999999,
+    "system_seconds": 0.020017,
+    "peak_rss_bytes": 1206018048,
+    "minor_faults": 1119,
+    "major_faults": 7,
+    "language": "koka",
+    "workload": "rbtree-ck",
+    "size": 4200000,
+    "repeat": 0
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/lean-rbtree-ck",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 1630991167,
+    "user_seconds": 1.594354,
+    "system_seconds": 0.029023999999999998,
+    "peak_rss_bytes": 1449119744,
+    "minor_faults": 1343,
+    "major_faults": 21,
+    "language": "lean",
+    "workload": "rbtree-ck",
+    "size": 4200000,
+    "repeat": 0
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/koka-rbtree-ck",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 755093250,
+    "user_seconds": 0.736502,
+    "system_seconds": 0.017011,
+    "peak_rss_bytes": 1206018048,
+    "minor_faults": 1121,
+    "major_faults": 7,
+    "language": "koka",
+    "workload": "rbtree-ck",
+    "size": 4200000,
+    "repeat": 1
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/lean-rbtree-ck",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 1608710459,
+    "user_seconds": 1.587164,
+    "system_seconds": 0.019013,
+    "peak_rss_bytes": 1449132032,
+    "minor_faults": 1339,
+    "major_faults": 21,
+    "language": "lean",
+    "workload": "rbtree-ck",
+    "size": 4200000,
+    "repeat": 1
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/fern-rbtree-ck",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 3732407751,
+    "user_seconds": 3.684609,
+    "system_seconds": 0.046007,
+    "peak_rss_bytes": 2157985792,
+    "minor_faults": 1458,
+    "major_faults": 1,
+    "language": "fern",
+    "workload": "rbtree-ck",
+    "size": 4200000,
+    "repeat": 1
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/lean-rbtree-ck",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 1598571876,
+    "user_seconds": 1.563969,
+    "system_seconds": 0.032019,
+    "peak_rss_bytes": 1449127936,
+    "minor_faults": 1347,
+    "major_faults": 21,
+    "language": "lean",
+    "workload": "rbtree-ck",
+    "size": 4200000,
+    "repeat": 2
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/fern-rbtree-ck",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 3768728168,
+    "user_seconds": 3.707023,
+    "system_seconds": 0.059968,
+    "peak_rss_bytes": 2157985792,
+    "minor_faults": 1461,
+    "major_faults": 1,
+    "language": "fern",
+    "workload": "rbtree-ck",
+    "size": 4200000,
+    "repeat": 2
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/koka-rbtree-ck",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 1077995626,
+    "user_seconds": 1.004445,
+    "system_seconds": 0.07196899999999999,
+    "peak_rss_bytes": 1206018048,
+    "minor_faults": 1123,
+    "major_faults": 7,
+    "language": "koka",
+    "workload": "rbtree-ck",
+    "size": 4200000,
+    "repeat": 2
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/fern-rbtree-ck",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 3929691835,
+    "user_seconds": 3.757123,
+    "system_seconds": 0.16996,
+    "peak_rss_bytes": 2157981696,
+    "minor_faults": 1454,
+    "major_faults": 1,
+    "language": "fern",
+    "workload": "rbtree-ck",
+    "size": 4200000,
+    "repeat": 3
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/koka-rbtree-ck",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 764282500,
+    "user_seconds": 0.745139,
+    "system_seconds": 0.017979,
+    "peak_rss_bytes": 1206001664,
+    "minor_faults": 1123,
+    "major_faults": 7,
+    "language": "koka",
+    "workload": "rbtree-ck",
+    "size": 4200000,
+    "repeat": 3
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/lean-rbtree-ck",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 1605122459,
+    "user_seconds": 1.579924,
+    "system_seconds": 0.021998,
+    "peak_rss_bytes": 1449127936,
+    "minor_faults": 1337,
+    "major_faults": 21,
+    "language": "lean",
+    "workload": "rbtree-ck",
+    "size": 4200000,
+    "repeat": 3
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/koka-rbtree-ck",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 769384709,
+    "user_seconds": 0.746902,
+    "system_seconds": 0.020968999999999998,
+    "peak_rss_bytes": 1206013952,
+    "minor_faults": 1119,
+    "major_faults": 7,
+    "language": "koka",
+    "workload": "rbtree-ck",
+    "size": 4200000,
+    "repeat": 4
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/lean-rbtree-ck",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 1633134542,
+    "user_seconds": 1.5995300000000001,
+    "system_seconds": 0.030046999999999997,
+    "peak_rss_bytes": 1449123840,
+    "minor_faults": 1337,
+    "major_faults": 21,
+    "language": "lean",
+    "workload": "rbtree-ck",
+    "size": 4200000,
+    "repeat": 4
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/fern-rbtree-ck",
+      "4200000"
+    ],
+    "exit": 0,
+    "wall_ns": 3744671002,
+    "user_seconds": 3.69606,
+    "system_seconds": 0.046987999999999995,
+    "peak_rss_bytes": 2157981696,
+    "minor_faults": 1455,
+    "major_faults": 1,
+    "language": "fern",
+    "workload": "rbtree-ck",
+    "size": 4200000,
+    "repeat": 4
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/fern-deriv",
+      "10"
+    ],
+    "exit": 0,
+    "wall_ns": 681460375,
+    "user_seconds": 0.66414,
+    "system_seconds": 0.016027,
+    "peak_rss_bytes": 983597056,
+    "minor_faults": 908,
+    "major_faults": 1,
+    "language": "fern",
+    "workload": "deriv",
+    "size": 10,
+    "repeat": 0
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/koka-deriv",
+      "10"
+    ],
+    "exit": 0,
+    "wall_ns": 516245375,
+    "user_seconds": 0.503888,
+    "system_seconds": 0.010974999999999999,
+    "peak_rss_bytes": 480350208,
+    "minor_faults": 766,
+    "major_faults": 7,
+    "language": "koka",
+    "workload": "deriv",
+    "size": 10,
+    "repeat": 0
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/lean-deriv",
+      "10"
+    ],
+    "exit": 0,
+    "wall_ns": 492460875,
+    "user_seconds": 0.47770599999999996,
+    "system_seconds": 0.011992,
+    "peak_rss_bytes": 578859008,
+    "minor_faults": 904,
+    "major_faults": 23,
+    "language": "lean",
+    "workload": "deriv",
+    "size": 10,
+    "repeat": 0
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/koka-deriv",
+      "10"
+    ],
+    "exit": 0,
+    "wall_ns": 533100875,
+    "user_seconds": 0.523458,
+    "system_seconds": 0.008007,
+    "peak_rss_bytes": 480350208,
+    "minor_faults": 766,
+    "major_faults": 7,
+    "language": "koka",
+    "workload": "deriv",
+    "size": 10,
+    "repeat": 1
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/lean-deriv",
+      "10"
+    ],
+    "exit": 0,
+    "wall_ns": 505141750,
+    "user_seconds": 0.483491,
+    "system_seconds": 0.01894,
+    "peak_rss_bytes": 578854912,
+    "minor_faults": 904,
+    "major_faults": 23,
+    "language": "lean",
+    "workload": "deriv",
+    "size": 10,
+    "repeat": 1
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/fern-deriv",
+      "10"
+    ],
+    "exit": 0,
+    "wall_ns": 691964250,
+    "user_seconds": 0.674389,
+    "system_seconds": 0.016033,
+    "peak_rss_bytes": 983597056,
+    "minor_faults": 907,
+    "major_faults": 1,
+    "language": "fern",
+    "workload": "deriv",
+    "size": 10,
+    "repeat": 1
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/lean-deriv",
+      "10"
+    ],
+    "exit": 0,
+    "wall_ns": 502455125,
+    "user_seconds": 0.492764,
+    "system_seconds": 0.007996,
+    "peak_rss_bytes": 578854912,
+    "minor_faults": 904,
+    "major_faults": 23,
+    "language": "lean",
+    "workload": "deriv",
+    "size": 10,
+    "repeat": 2
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/fern-deriv",
+      "10"
+    ],
+    "exit": 0,
+    "wall_ns": 683285375,
+    "user_seconds": 0.672839,
+    "system_seconds": 0.008997,
+    "peak_rss_bytes": 983597056,
+    "minor_faults": 906,
+    "major_faults": 1,
+    "language": "fern",
+    "workload": "deriv",
+    "size": 10,
+    "repeat": 2
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/koka-deriv",
+      "10"
+    ],
+    "exit": 0,
+    "wall_ns": 516351292,
+    "user_seconds": 0.5083,
+    "system_seconds": 0.007004,
+    "peak_rss_bytes": 480350208,
+    "minor_faults": 767,
+    "major_faults": 7,
+    "language": "koka",
+    "workload": "deriv",
+    "size": 10,
+    "repeat": 2
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/fern-deriv",
+      "10"
+    ],
+    "exit": 0,
+    "wall_ns": 684111333,
+    "user_seconds": 0.666812,
+    "system_seconds": 0.015995,
+    "peak_rss_bytes": 983597056,
+    "minor_faults": 909,
+    "major_faults": 1,
+    "language": "fern",
+    "workload": "deriv",
+    "size": 10,
+    "repeat": 3
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/koka-deriv",
+      "10"
+    ],
+    "exit": 0,
+    "wall_ns": 515853625,
+    "user_seconds": 0.5058239999999999,
+    "system_seconds": 0.008995999999999999,
+    "peak_rss_bytes": 482435072,
+    "minor_faults": 766,
+    "major_faults": 7,
+    "language": "koka",
+    "workload": "deriv",
+    "size": 10,
+    "repeat": 3
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/lean-deriv",
+      "10"
+    ],
+    "exit": 0,
+    "wall_ns": 498295208,
+    "user_seconds": 0.484409,
+    "system_seconds": 0.01196,
+    "peak_rss_bytes": 578859008,
+    "minor_faults": 909,
+    "major_faults": 23,
+    "language": "lean",
+    "workload": "deriv",
+    "size": 10,
+    "repeat": 3
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/koka-deriv",
+      "10"
+    ],
+    "exit": 0,
+    "wall_ns": 508365875,
+    "user_seconds": 0.497923,
+    "system_seconds": 0.008997999999999999,
+    "peak_rss_bytes": 480337920,
+    "minor_faults": 770,
+    "major_faults": 7,
+    "language": "koka",
+    "workload": "deriv",
+    "size": 10,
+    "repeat": 4
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/lean-deriv",
+      "10"
+    ],
+    "exit": 0,
+    "wall_ns": 497316876,
+    "user_seconds": 0.48557,
+    "system_seconds": 0.00997,
+    "peak_rss_bytes": 578854912,
+    "minor_faults": 909,
+    "major_faults": 23,
+    "language": "lean",
+    "workload": "deriv",
+    "size": 10,
+    "repeat": 4
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/fern-deriv",
+      "10"
+    ],
+    "exit": 0,
+    "wall_ns": 696212333,
+    "user_seconds": 0.678792,
+    "system_seconds": 0.015016999999999999,
+    "peak_rss_bytes": 983597056,
+    "minor_faults": 912,
+    "major_faults": 1,
+    "language": "fern",
+    "workload": "deriv",
+    "size": 10,
+    "repeat": 4
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/fern-cfold",
+      "20"
+    ],
+    "exit": 0,
+    "wall_ns": 146135792,
+    "user_seconds": 0.125312,
+    "system_seconds": 0.019889999999999998,
+    "peak_rss_bytes": 178270208,
+    "minor_faults": 20964,
+    "major_faults": 1,
+    "language": "fern",
+    "workload": "cfold",
+    "size": 20,
+    "repeat": 0
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/koka-cfold",
+      "20"
+    ],
+    "exit": 0,
+    "wall_ns": 94046250,
+    "user_seconds": 0.064881,
+    "system_seconds": 0.027948999999999998,
+    "peak_rss_bytes": 165666816,
+    "minor_faults": 29213,
+    "major_faults": 6,
+    "language": "koka",
+    "workload": "cfold",
+    "size": 20,
+    "repeat": 0
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/lean-cfold",
+      "20"
+    ],
+    "exit": 0,
+    "wall_ns": 160255125,
+    "user_seconds": 0.119436,
+    "system_seconds": 0.039143,
+    "peak_rss_bytes": 173887488,
+    "minor_faults": 21134,
+    "major_faults": 23,
+    "language": "lean",
+    "workload": "cfold",
+    "size": 20,
+    "repeat": 0
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/koka-cfold",
+      "20"
+    ],
+    "exit": 0,
+    "wall_ns": 92043500,
+    "user_seconds": 0.061357999999999996,
+    "system_seconds": 0.029689,
+    "peak_rss_bytes": 163590144,
+    "minor_faults": 29212,
+    "major_faults": 6,
+    "language": "koka",
+    "workload": "cfold",
+    "size": 20,
+    "repeat": 1
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/lean-cfold",
+      "20"
+    ],
+    "exit": 0,
+    "wall_ns": 139266167,
+    "user_seconds": 0.11502499999999999,
+    "system_seconds": 0.022806,
+    "peak_rss_bytes": 173826048,
+    "minor_faults": 21137,
+    "major_faults": 23,
+    "language": "lean",
+    "workload": "cfold",
+    "size": 20,
+    "repeat": 1
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/fern-cfold",
+      "20"
+    ],
+    "exit": 0,
+    "wall_ns": 149388375,
+    "user_seconds": 0.122997,
+    "system_seconds": 0.025412,
+    "peak_rss_bytes": 178266112,
+    "minor_faults": 20961,
+    "major_faults": 1,
+    "language": "fern",
+    "workload": "cfold",
+    "size": 20,
+    "repeat": 1
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/lean-cfold",
+      "20"
+    ],
+    "exit": 0,
+    "wall_ns": 173722167,
+    "user_seconds": 0.11430699999999999,
+    "system_seconds": 0.057658999999999995,
+    "peak_rss_bytes": 173830144,
+    "minor_faults": 21135,
+    "major_faults": 23,
+    "language": "lean",
+    "workload": "cfold",
+    "size": 20,
+    "repeat": 2
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/fern-cfold",
+      "20"
+    ],
+    "exit": 0,
+    "wall_ns": 150188083,
+    "user_seconds": 0.12116199999999999,
+    "system_seconds": 0.028037,
+    "peak_rss_bytes": 178266112,
+    "minor_faults": 20964,
+    "major_faults": 1,
+    "language": "fern",
+    "workload": "cfold",
+    "size": 20,
+    "repeat": 2
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/koka-cfold",
+      "20"
+    ],
+    "exit": 0,
+    "wall_ns": 93529584,
+    "user_seconds": 0.065562,
+    "system_seconds": 0.026820999999999998,
+    "peak_rss_bytes": 163590144,
+    "minor_faults": 29215,
+    "major_faults": 6,
+    "language": "koka",
+    "workload": "cfold",
+    "size": 20,
+    "repeat": 2
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/fern-cfold",
+      "20"
+    ],
+    "exit": 0,
+    "wall_ns": 140277416,
+    "user_seconds": 0.117411,
+    "system_seconds": 0.022077,
+    "peak_rss_bytes": 178270208,
+    "minor_faults": 20961,
+    "major_faults": 1,
+    "language": "fern",
+    "workload": "cfold",
+    "size": 20,
+    "repeat": 3
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/koka-cfold",
+      "20"
+    ],
+    "exit": 0,
+    "wall_ns": 90647666,
+    "user_seconds": 0.062477,
+    "system_seconds": 0.027207,
+    "peak_rss_bytes": 163577856,
+    "minor_faults": 29211,
+    "major_faults": 6,
+    "language": "koka",
+    "workload": "cfold",
+    "size": 20,
+    "repeat": 3
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/lean-cfold",
+      "20"
+    ],
+    "exit": 0,
+    "wall_ns": 131661917,
+    "user_seconds": 0.111452,
+    "system_seconds": 0.018907,
+    "peak_rss_bytes": 173817856,
+    "minor_faults": 21139,
+    "major_faults": 23,
+    "language": "lean",
+    "workload": "cfold",
+    "size": 20,
+    "repeat": 3
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/koka-cfold",
+      "20"
+    ],
+    "exit": 0,
+    "wall_ns": 89138083,
+    "user_seconds": 0.061036,
+    "system_seconds": 0.027016,
+    "peak_rss_bytes": 163590144,
+    "minor_faults": 29210,
+    "major_faults": 6,
+    "language": "koka",
+    "workload": "cfold",
+    "size": 20,
+    "repeat": 4
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/lean-cfold",
+      "20"
+    ],
+    "exit": 0,
+    "wall_ns": 133581250,
+    "user_seconds": 0.11130999999999999,
+    "system_seconds": 0.020685,
+    "peak_rss_bytes": 173826048,
+    "minor_faults": 21133,
+    "major_faults": 23,
+    "language": "lean",
+    "workload": "cfold",
+    "size": 20,
+    "repeat": 4
+  },
+  {
+    "command": [
+      "/evidence/fern-perceus-linux-repeated/fern-cfold",
+      "20"
+    ],
+    "exit": 0,
+    "wall_ns": 145510959,
+    "user_seconds": 0.1185,
+    "system_seconds": 0.026109999999999998,
+    "peak_rss_bytes": 178266112,
+    "minor_faults": 20960,
+    "major_faults": 1,
+    "language": "fern",
+    "workload": "cfold",
+    "size": 20,
+    "repeat": 4
+  }
+]

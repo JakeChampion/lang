@@ -1,0 +1,21 @@
+import "../deriv";
+import "./scale";
+import "std/i32";
+import "std/i64";
+
+function step(i: i32, e: deriv.Expr): deriv.Expr {
+  let next: deriv.Expr = deriv.d("x", e);
+  print((i + 1).to_string() + " count: " + deriv.count(next).to_string());
+  return next;
+}
+
+function main(): i32 {
+  let n: i32 = scale.read(10);
+  if (n < 0) {
+    return 2;
+  }
+  let x: deriv.Expr = deriv.Var("x");
+  deriv.nest(step, n, deriv.powr(x, x));
+  print("done");
+  return 0;
+}

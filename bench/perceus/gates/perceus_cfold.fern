@@ -1,0 +1,17 @@
+import "../cfold";
+
+function main(): i32 {
+  let sum: i64 = 0i64;
+  let round: i32 = 0;
+  while (round < 400) {
+    let e: cfold.Expr = cfold.mk_expr(8, 1i64);
+    let before: i64 = cfold.eval(e);
+    let after: i64 = cfold.eval(cfold.cfold(cfold.reassoc(e)));
+    if (before != after) {
+      return 125;
+    }
+    sum = sum + before + after;
+    round = round + 1;
+  }
+  return (sum % 97i64) as i32;
+}

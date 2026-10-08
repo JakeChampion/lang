@@ -1,0 +1,13 @@
+import "../nqueens";
+import "./scale";
+import "std/i32";
+import "std/i64";
+
+function main(): i32 {
+  let n: i32 = scale.read(13);
+  if (n < 0) {
+    return 2;
+  }
+  print(nqueens.queens(n).to_string());
+  return 0;
+}

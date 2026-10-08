@@ -1,0 +1,21 @@
+import "../deriv";
+
+function main(): i32 {
+  let sum: i64 = 0i64;
+  let round: i32 = 0;
+  while (round < 2400) {
+    let x: deriv.Expr = deriv.Var("x");
+    let e: deriv.Expr = deriv.powr(x, x);
+    let i: i32 = 0;
+    while (i < 3) {
+      e = deriv.d("x", e);
+      sum = sum + deriv.count(e);
+      i = i + 1;
+    }
+    if (deriv.count(e) != 90i64) {
+      return 125;
+    }
+    round = round + 1;
+  }
+  return (sum % 97i64) as i32;
+}

@@ -1,0 +1,48 @@
+name: Perceus calibration
+
+# Native measurements for new corpus entries before their baselines exist.
+# This workflow records evidence; the ordinary Perf workflow remains the gate.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  measure:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: ubuntu-latest, host: x86_64 }
+          - { runner: ubuntu-24.04-arm, host: aarch64 }
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: ./.github/actions/setup-fern
+      - uses: ./.github/actions/disable-chrome-apt
+      - name: Install native counter
+        run: sudo apt-get update && sudo apt-get install -y valgrind
+      - name: Measure candidate corpus
+        env:
+          FERN_BENCH_DIR: bench/perceus/gates
+        run: scripts/perf-bench "${{ runner.temp }}/perceus-native.txt"
+      - name: Measure primary compiler output
+        env:
+          FERN_BENCH_DIR: bench/perceus/gates
+        run: scripts/perf-bench-selfhost "${{ runner.temp }}/perceus-selfhost.txt"
+      - name: Save measurement provenance
+        run: |
+          {
+            git rev-parse HEAD
+            uname -a
+            valgrind --version
+            sha256sum bin/fern bin/fern-selfhost
+            find bench/perceus -type f -print0 | sort -z | xargs -0 sha256sum
+          } > "${{ runner.temp }}/perceus-provenance.txt"
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: perceus-calibration-${{ matrix.host }}
+          path: ${{ runner.temp }}/perceus-*.txt
+          if-no-files-found: error

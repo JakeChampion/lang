@@ -1,0 +1,392 @@
+[
+  {
+    "language": "fern",
+    "workload": "nqueens",
+    "commands": [
+      [
+        "/evidence/fern-pr11941-fmt-linux-compiler",
+        "-target",
+        "arm64-linux",
+        "-o",
+        "/evidence/fern-perceus-linux-pilot/fern-nqueens",
+        "/work/bench/perceus/fern/run_nqueens.fern",
+        "/work/internal/stdlib"
+      ]
+    ],
+    "binary_sha256": "6a30a32ff6677269515a1fb570f4d0707370da1dce67f7f2e7586a47a6cb3cb5",
+    "binary_bytes": 67344,
+    "reused_from": "/evidence/fern-perceus-linux-pilot/fern-nqueens"
+  },
+  {
+    "language": "fern-census",
+    "workload": "nqueens",
+    "commands": [
+      [
+        "/evidence/fern-pr11941-fmt-linux-compiler",
+        "-target",
+        "arm64-linux",
+        "-o",
+        "/evidence/fern-perceus-linux-pilot/fern-census-nqueens",
+        "/work/bench/perceus/fern/run_nqueens.fern",
+        "/work/internal/stdlib"
+      ]
+    ],
+    "environment": {
+      "FERN_LEAKCHECK": "1"
+    },
+    "binary_sha256": "68622b04bd42eace63fe9a7be3203ad9d9a5ab6e49117f68b97fa5e1ed6114d3",
+    "binary_bytes": 67344,
+    "reused_from": "/evidence/fern-perceus-linux-pilot/fern-census-nqueens"
+  },
+  {
+    "language": "koka",
+    "workload": "nqueens",
+    "commands": [
+      [
+        "/evidence/fern-perceus-linux-toolchains/koka/bin/koka",
+        "-O2",
+        "--builddir=/evidence/fern-perceus-linux-pilot/koka-build",
+        "-o",
+        "/evidence/fern-perceus-linux-pilot/koka-nqueens",
+        "/work/bench/perceus/koka/nqueens.kk"
+      ]
+    ],
+    "binary_sha256": "5da2283a4ddba8681afd5a28db2e087a6d1020bdebebf07460ce7cfa1c1cfeca",
+    "binary_bytes": 13956296,
+    "reused_from": "/evidence/fern-perceus-linux-pilot/koka-nqueens"
+  },
+  {
+    "language": "lean",
+    "workload": "nqueens",
+    "commands": [
+      [
+        "/evidence/fern-perceus-linux-toolchains/lean/lean-4.34.1-linux_aarch64/bin/lean",
+        "-c",
+        "/evidence/fern-perceus-linux-pilot/nqueens.c",
+        "/work/bench/perceus/lean/nqueens.lean"
+      ],
+      [
+        "/evidence/fern-perceus-linux-toolchains/lean/lean-4.34.1-linux_aarch64/bin/leanc",
+        "-O3",
+        "-o",
+        "/evidence/fern-perceus-linux-pilot/lean-nqueens",
+        "/evidence/fern-perceus-linux-pilot/nqueens.c"
+      ]
+    ],
+    "binary_sha256": "5e0e1cf8aec6d39fa0adcb1e7b4d484c3b6838510be086b92b292da3ec4da941",
+    "binary_bytes": 4984712,
+    "reused_from": "/evidence/fern-perceus-linux-pilot/lean-nqueens"
+  },
+  {
+    "language": "fern",
+    "workload": "rbtree",
+    "commands": [
+      [
+        "/evidence/fern-pr11941-fmt-linux-compiler",
+        "-target",
+        "arm64-linux",
+        "-o",
+        "/evidence/fern-perceus-linux-pilot/fern-rbtree",
+        "/work/bench/perceus/fern/run_rbtree.fern",
+        "/work/internal/stdlib"
+      ]
+    ],
+    "binary_sha256": "8c6409d153c8c430838e9cf6873c6bca5ee624163a5c1c7d70c78c9bf8dd0414",
+    "binary_bytes": 67584,
+    "reused_from": "/evidence/fern-perceus-linux-pilot/fern-rbtree"
+  },
+  {
+    "language": "fern-census",
+    "workload": "rbtree",
+    "commands": [
+      [
+        "/evidence/fern-pr11941-fmt-linux-compiler",
+        "-target",
+        "arm64-linux",
+        "-o",
+        "/evidence/fern-perceus-linux-pilot/fern-census-rbtree",
+        "/work/bench/perceus/fern/run_rbtree.fern",
+        "/work/internal/stdlib"
+      ]
+    ],
+    "environment": {
+      "FERN_LEAKCHECK": "1"
+    },
+    "binary_sha256": "d5976be4831c5f948ff8f01ccbda5d1fadc54db8512dc93696bd705db820db14",
+    "binary_bytes": 67584,
+    "reused_from": "/evidence/fern-perceus-linux-pilot/fern-census-rbtree"
+  },
+  {
+    "language": "koka",
+    "workload": "rbtree",
+    "commands": [
+      [
+        "/evidence/fern-perceus-linux-toolchains/koka/bin/koka",
+        "-O2",
+        "--builddir=/evidence/fern-perceus-linux-pilot/koka-build",
+        "-o",
+        "/evidence/fern-perceus-linux-pilot/koka-rbtree",
+        "/work/bench/perceus/koka/rbtree.kk"
+      ]
+    ],
+    "binary_sha256": "390149681e1b674b77ab6a200e8936bc02be727f55bacb0e36b1de9eb41cecec",
+    "binary_bytes": 14170576,
+    "reused_from": "/evidence/fern-perceus-linux-pilot/koka-rbtree"
+  },
+  {
+    "language": "lean",
+    "workload": "rbtree",
+    "commands": [
+      [
+        "/evidence/fern-perceus-linux-toolchains/lean/lean-4.34.1-linux_aarch64/bin/lean",
+        "-c",
+        "/evidence/fern-perceus-linux-pilot/rbtree.c",
+        "/work/bench/perceus/lean/rbtree.lean"
+      ],
+      [
+        "/evidence/fern-perceus-linux-toolchains/lean/lean-4.34.1-linux_aarch64/bin/leanc",
+        "-O3",
+        "-o",
+        "/evidence/fern-perceus-linux-pilot/lean-rbtree",
+        "/evidence/fern-perceus-linux-pilot/rbtree.c"
+      ]
+    ],
+    "binary_sha256": "460e9deb4b524b3b40536eac8a62215060ad46c2651a8da2acb21f980b175953",
+    "binary_bytes": 4994952,
+    "reused_from": "/evidence/fern-perceus-linux-pilot/lean-rbtree"
+  },
+  {
+    "language": "fern",
+    "workload": "rbtree-ck",
+    "commands": [
+      [
+        "/evidence/fern-pr11941-fmt-linux-compiler",
+        "-target",
+        "arm64-linux",
+        "-o",
+        "/evidence/fern-perceus-linux-pilot/fern-rbtree-ck",
+        "/work/bench/perceus/fern/run_rbtree_ck.fern",
+        "/work/internal/stdlib"
+      ]
+    ],
+    "binary_sha256": "fc3d70d3f06c3eb273c62bc2f05af799aa769017577e08b8c5ed18c74ebeaa22",
+    "binary_bytes": 67584,
+    "reused_from": "/evidence/fern-perceus-linux-pilot/fern-rbtree-ck"
+  },
+  {
+    "language": "fern-census",
+    "workload": "rbtree-ck",
+    "commands": [
+      [
+        "/evidence/fern-pr11941-fmt-linux-compiler",
+        "-target",
+        "arm64-linux",
+        "-o",
+        "/evidence/fern-perceus-linux-pilot/fern-census-rbtree-ck",
+        "/work/bench/perceus/fern/run_rbtree_ck.fern",
+        "/work/internal/stdlib"
+      ]
+    ],
+    "environment": {
+      "FERN_LEAKCHECK": "1"
+    },
+    "binary_sha256": "5dcd221307bfe6d4ab19b4bb5e862e34f654b8154d257c028078eb39aad90dc6",
+    "binary_bytes": 67584,
+    "reused_from": "/evidence/fern-perceus-linux-pilot/fern-census-rbtree-ck"
+  },
+  {
+    "language": "koka",
+    "workload": "rbtree-ck",
+    "commands": [
+      [
+        "/evidence/fern-perceus-linux-toolchains/koka/bin/koka",
+        "-O2",
+        "--builddir=/evidence/fern-perceus-linux-pilot/koka-build",
+        "-o",
+        "/evidence/fern-perceus-linux-pilot/koka-rbtree-ck",
+        "/work/bench/perceus/koka/rbtree-ck.kk"
+      ]
+    ],
+    "binary_sha256": "601217fc74c71dc07a418ffc5431c14655aca64f868fe1f01ba26306b458a4d7",
+    "binary_bytes": 14046040,
+    "reused_from": "/evidence/fern-perceus-linux-pilot/koka-rbtree-ck"
+  },
+  {
+    "language": "lean",
+    "workload": "rbtree-ck",
+    "commands": [
+      [
+        "/evidence/fern-perceus-linux-toolchains/lean/lean-4.34.1-linux_aarch64/bin/lean",
+        "-c",
+        "/evidence/fern-perceus-linux-pilot/rbtree-ck.c",
+        "/work/bench/perceus/lean/rbtree-ck.lean"
+      ],
+      [
+        "/evidence/fern-perceus-linux-toolchains/lean/lean-4.34.1-linux_aarch64/bin/leanc",
+        "-O3",
+        "-o",
+        "/evidence/fern-perceus-linux-pilot/lean-rbtree-ck",
+        "/evidence/fern-perceus-linux-pilot/rbtree-ck.c"
+      ]
+    ],
+    "binary_sha256": "50a1609fb14c8f5d76c1d51859829fa482b72ecad00fc248da365a24e1e5cf88",
+    "binary_bytes": 4995984,
+    "reused_from": "/evidence/fern-perceus-linux-pilot/lean-rbtree-ck"
+  },
+  {
+    "language": "fern",
+    "workload": "deriv",
+    "commands": [
+      [
+        "/evidence/fern-pr11941-fmt-linux-compiler",
+        "-target",
+        "arm64-linux",
+        "-o",
+        "/evidence/fern-perceus-linux-pilot/fern-deriv",
+        "/work/bench/perceus/fern/run_deriv.fern",
+        "/work/internal/stdlib"
+      ]
+    ],
+    "binary_sha256": "ff6112bb79ffc02075551d1bdbe29079b2051aa505db4c449b8eddab0ea83707",
+    "binary_bytes": 67848,
+    "reused_from": "/evidence/fern-perceus-linux-pilot/fern-deriv"
+  },
+  {
+    "language": "fern-census",
+    "workload": "deriv",
+    "commands": [
+      [
+        "/evidence/fern-pr11941-fmt-linux-compiler",
+        "-target",
+        "arm64-linux",
+        "-o",
+        "/evidence/fern-perceus-linux-pilot/fern-census-deriv",
+        "/work/bench/perceus/fern/run_deriv.fern",
+        "/work/internal/stdlib"
+      ]
+    ],
+    "environment": {
+      "FERN_LEAKCHECK": "1"
+    },
+    "binary_sha256": "d38b131ade8545b9c6294c990f4c3e0b14a9cb218fe944bf5921dd7019b60edb",
+    "binary_bytes": 67848,
+    "reused_from": "/evidence/fern-perceus-linux-pilot/fern-census-deriv"
+  },
+  {
+    "language": "koka",
+    "workload": "deriv",
+    "commands": [
+      [
+        "/evidence/fern-perceus-linux-toolchains/koka/bin/koka",
+        "-O2",
+        "--builddir=/evidence/fern-perceus-linux-pilot/koka-build",
+        "-o",
+        "/evidence/fern-perceus-linux-pilot/koka-deriv",
+        "/work/bench/perceus/koka/deriv.kk"
+      ]
+    ],
+    "binary_sha256": "333a6e952738ffa9c70c828078686256c4544bf350a5b3e1b72b217f97a823f9",
+    "binary_bytes": 13954296,
+    "reused_from": "/evidence/fern-perceus-linux-pilot/koka-deriv"
+  },
+  {
+    "language": "lean",
+    "workload": "deriv",
+    "commands": [
+      [
+        "/evidence/fern-perceus-linux-toolchains/lean/lean-4.34.1-linux_aarch64/bin/lean",
+        "-c",
+        "/evidence/fern-perceus-linux-pilot/deriv.c",
+        "/work/bench/perceus/lean/deriv.lean"
+      ],
+      [
+        "/evidence/fern-perceus-linux-toolchains/lean/lean-4.34.1-linux_aarch64/bin/leanc",
+        "-O3",
+        "-o",
+        "/evidence/fern-perceus-linux-pilot/lean-deriv",
+        "/evidence/fern-perceus-linux-pilot/deriv.c"
+      ]
+    ],
+    "binary_sha256": "82ae370d81053a4c21bd196237caa79259af0c659888c55e7c495076e1940563",
+    "binary_bytes": 5007104,
+    "reused_from": "/evidence/fern-perceus-linux-pilot/lean-deriv"
+  },
+  {
+    "language": "fern",
+    "workload": "cfold",
+    "commands": [
+      [
+        "/evidence/fern-pr11941-fmt-linux-compiler",
+        "-target",
+        "arm64-linux",
+        "-o",
+        "/evidence/fern-perceus-linux-pilot/fern-cfold",
+        "/work/bench/perceus/fern/run_cfold.fern",
+        "/work/internal/stdlib"
+      ]
+    ],
+    "binary_sha256": "5c9bddfb9e96924c12a436446ee6dc16cfe35a50f24edb65eb8f3022d103f506",
+    "binary_bytes": 66816,
+    "reused_from": "/evidence/fern-perceus-linux-pilot/fern-cfold"
+  },
+  {
+    "language": "fern-census",
+    "workload": "cfold",
+    "commands": [
+      [
+        "/evidence/fern-pr11941-fmt-linux-compiler",
+        "-target",
+        "arm64-linux",
+        "-o",
+        "/evidence/fern-perceus-linux-pilot/fern-census-cfold",
+        "/work/bench/perceus/fern/run_cfold.fern",
+        "/work/internal/stdlib"
+      ]
+    ],
+    "environment": {
+      "FERN_LEAKCHECK": "1"
+    },
+    "binary_sha256": "62d81f7145181a2781171222db22ea3a5ea5c15f7fd3bf3e0f93f539af8ff4e5",
+    "binary_bytes": 67072,
+    "reused_from": "/evidence/fern-perceus-linux-pilot/fern-census-cfold"
+  },
+  {
+    "language": "koka",
+    "workload": "cfold",
+    "commands": [
+      [
+        "/evidence/fern-perceus-linux-toolchains/koka/bin/koka",
+        "-O2",
+        "--builddir=/evidence/fern-perceus-linux-pilot/koka-build",
+        "-o",
+        "/evidence/fern-perceus-linux-pilot/koka-cfold",
+        "/work/bench/perceus/koka/cfold.kk"
+      ]
+    ],
+    "binary_sha256": "5518d973501ad1e23e5bc063fbe9047338b2c6d04061c9d1184e26bb17a09a89",
+    "binary_bytes": 13876744,
+    "reused_from": "/evidence/fern-perceus-linux-pilot/koka-cfold"
+  },
+  {
+    "language": "lean",
+    "workload": "cfold",
+    "commands": [
+      [
+        "/evidence/fern-perceus-linux-toolchains/lean/lean-4.34.1-linux_aarch64/bin/lean",
+        "-c",
+        "/evidence/fern-perceus-linux-pilot/cfold.c",
+        "/work/bench/perceus/lean/cfold.lean"
+      ],
+      [
+        "/evidence/fern-perceus-linux-toolchains/lean/lean-4.34.1-linux_aarch64/bin/leanc",
+        "-O3",
+        "-o",
+        "/evidence/fern-perceus-linux-pilot/lean-cfold",
+        "/evidence/fern-perceus-linux-pilot/cfold.c"
+      ]
+    ],
+    "binary_sha256": "c13d564e48b798e5ddb0104028ca0bf837a244b5ff9a78464b66009643c8dd8e",
+    "binary_bytes": 5000808,
+    "reused_from": "/evidence/fern-perceus-linux-pilot/lean-cfold"
+  }
+]
