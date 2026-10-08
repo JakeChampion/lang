@@ -1506,7 +1506,7 @@ function print_pattern_ctx(pat: ast.Pattern, always_parens: boolean): string {
             np = np + ", ";
           }
           if (pv_pattern_name(pv.nested[ni]).len() > 0) {
-            np = np + print_pattern(pv.nested[ni]);
+            np = np + print_pattern_ctx(pv.nested[ni], true);
           } else {
             np = np + payload_slot(pv, nested_slot_binder(pv, ni));
           }
