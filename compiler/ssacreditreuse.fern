@@ -1,0 +1,654 @@
+// Scoped physical proof for a three-word parent with two flat child slots.
+// Caller facts: consuming Parent/Child ABI, exact nominal shape, no finalizers.
+// Incoming child and either old slot may alias. Identity labels are obligations,
+// not pointer inequalities. Only a proven-null alloc_reuse donor is admitted.
+import "./ssa";
+import "./ssacreditguard" as guard;
+import "./ssacreditphi" as phi;
+import "./ssacredithelper" as helper;
+import "./util";
+
+// Reference identities: 0=null, 1=old parent, 2=fresh parent, 3=incoming child,
+// 4=old left child, 5=old right child. Slots 0/1 belong to old, 2/3 to fresh.
+struct State { path: i32, parents: i32[], children: i32[], contents: i32[], credits: i32[], shapes: i32[], allocated: i32 }
+
+struct Incoming { state: State, edges: phi.Edge[] }
+
+struct Context { arena: guard.Arena, values: phi.Value[], state: State, unique: i32, temp: i32, error: string }
+
+function failed(c: Context, why: string): Context {
+  if (c.error != "") {
+    return c;
+  }
+  return Context { ...c, error: why };
+}
+
+function calc(c: Context, op: i32, a: i32, b: i32): Context {
+  if (c.error != "") {
+    return c;
+  }
+  let r = guard.combine(c.arena, op, a, b);
+  return Context { ...c, arena: r.arena, temp: r.id, error: r.error };
+}
+
+function literal(c: Context, value: i32): Context {
+  let r = guard.constant(c.arena, value);
+  return Context { ...c, arena: r.arena, temp: r.id };
+}
+
+function equal(c: Context, path: i32, a: i32, b: i32, why: string): Context {
+  let out = calc(c, 2, a, b);
+  out = calc(out, 1, 1, out.temp);
+  out = calc(out, 4, path, out.temp);
+  if (out.error == "" && !guard.is_constant(out.arena, out.temp, 0)) {
+    return failed(out, why);
+  }
+  return out;
+}
+
+function positive(c: Context, path: i32, number: i32, why: string): Context {
+  let out = calc(c, 3, 0, number);
+  return equal(out, path, out.temp, 1, why);
+}
+
+function available(c: Context, id: i32): Context {
+  if (id < 0 || id >= c.values.len() || c.values[id].kind < 0) {
+    return failed(c, "undefined reuse operand");
+  }
+  return equal(c, c.state.path, c.values[id].available, 1, "unavailable reuse operand");
+}
+
+function mask(c: Context, identity: i32, root: i32): Context {
+  let out = literal(c, root);
+  out = calc(out, 2, identity, out.temp);
+  return calc(out, 4, c.state.path, out.temp);
+}
+
+function parent(c: Context, v: phi.Value): Context {
+  if (v.kind != 1) {
+    return failed(c, "parent reference required");
+  }
+  let out = mask(c, v.identity, 1);
+  let old = out.temp;
+  out = positive(out, old, out.state.parents[0], "old parent used after release");
+  out = mask(out, v.identity, 2);
+  let fresh = out.temp;
+  out = positive(out, fresh, out.state.parents[1], "fresh parent used before allocation");
+  out = calc(out, 0, old, fresh);
+  return equal(out, out.state.path, out.temp, 1, "parent reference required");
+}
+
+function child(c: Context, v: phi.Value): Context {
+  if (v.kind != 1) {
+    return failed(c, "flat child reference required");
+  }
+  let out = c;
+  let total: i32 = 0;
+  let root: i32 = 3;
+  while (root <= 5 && out.error == "") {
+    out = mask(out, v.identity, root);
+    let path = out.temp;
+    out = calc(out, 0, total, path);
+    total = out.temp;
+    let count = out.state.children[root - 3];
+    let slot: i32 = 0;
+    while (slot < 4) {
+      out = literal(out, root);
+      out = calc(out, 2, out.state.contents[slot], out.temp);
+      out = calc(out, 4, out.temp, out.state.credits[slot]);
+      out = calc(out, 0, count, out.temp);
+      count = out.temp;
+      slot = slot + 1;
+    }
+    out = positive(out, path, count, "child used after final credit or anchor");
+    root = root + 1;
+  }
+  return equal(out, out.state.path, total, 1, "flat child reference required");
+}
+
+function reference_copy(c: Context, v: phi.Value): Context {
+  let out = c;
+  let root: i32 = 0;
+  let total: i32 = 0;
+  while (root <= 5 && out.error == "") {
+    out = mask(out, v.identity, root);
+    let path = out.temp;
+    out = calc(out, 0, total, path);
+    total = out.temp;
+    let saved = out.state.path;
+    out = Context { ...out, state: State { ...out.state, path: path } };
+    if (root == 1 || root == 2) {
+      out = parent(out, v);
+    } else if (root >= 3) {
+      out = child(out, v);
+    }
+    out = Context { ...out, state: State { ...out.state, path: saved } };
+    root = root + 1;
+  }
+  return equal(out, out.state.path, total, 1, "unsupported reference identity");
+}
+
+// The checked helper reads stored pointers, not local credit balances. Null is
+// harmless; a non-null pointer without its contained credit is stale, even if
+// another local credit keeps an aliased allocation alive.
+function drop_children(c: Context, v: phi.Value): Context {
+  let out = parent(c, v);
+  out = equal(out, out.state.path, v.identity, 1, "only old-parent child drop admitted");
+  out = equal(out, out.state.path, out.unique, 1, "children-only drop requires unique parent");
+  let slot: i32 = 0;
+  while (slot < 2 && out.error == "") {
+    out = mask(out, out.state.contents[slot], 0);
+    let covered = out.temp;
+    out = equal(out, covered, out.state.credits[slot], 0, "null slot carries child credit");
+    let root: i32 = 3;
+    while (root <= 5 && out.error == "") {
+      out = mask(out, out.state.contents[slot], root);
+      let path = out.temp;
+      out = calc(out, 0, covered, path);
+      covered = out.temp;
+      out = equal(out, path, out.state.credits[slot], 1, "children-only drop with stale slot");
+      out = calc(out, 1, out.state.credits[slot], path);
+      out = Context { ...out, state: State { ...out.state, credits: out.state.credits.with(slot, out.temp) } };
+      root = root + 1;
+    }
+    out = equal(out, out.state.path, covered, 1, "invalid child-drop slot identity");
+    slot = slot + 1;
+  }
+  return out;
+}
+
+function transfer(c: Context, op: ssa.SInst, shape: string, drop: string, release: string): Context {
+  let out = c;
+  for arg in op.args {
+    out = available(out, arg);
+  }
+  if (out.error != "") {
+    return out;
+  }
+  let kind: i32 = -1;
+  let identity: i32 = 0;
+  if (op.kind_tag == 6 && op.args.len() == 0 && op.imm >= 0 && op.imm < 2 && op.str == "") {
+    kind = 1;
+    let root: i32 = 1;
+    if (op.imm == 1) {
+      root = 3;
+    }
+    out = literal(out, root);
+    identity = out.temp;
+  } else if (op.kind_tag == 1 && op.args.len() == 0 && op.str == "") {
+    kind = 0;
+    out = literal(out, op.imm);
+    identity = out.temp;
+  } else if (op.kind_tag == 46 && op.args.len() == 0 && op.imm == 0 && op.str == shape) {
+    kind = 2;  // Exact nominal shape, not a scalar or heap reference.
+  } else if (op.kind_tag == 7 && op.args.len() == 1 && op.imm == 0 && op.str == "") {
+    let v = out.values[op.args[0]];
+    kind = v.kind;
+    identity = v.identity;
+    if (kind == 1) {
+      out = reference_copy(out, v);
+    }
+  } else if (op.kind_tag == 9 && op.args.len() == 2 && (op.str == "eq" || op.str == "ne")) {
+    let a = out.values[op.args[0]];
+    let b = out.values[op.args[1]];
+    kind = 0;
+    if (a.kind == 0 && b.kind == 0) {
+      out = calc(out, 2, a.identity, b.identity);
+      identity = out.temp;
+    } else if (a.kind == 1 && b.kind == 0 || a.kind == 0 && b.kind == 1) {
+      let ref = a;
+      let scalar = b;
+      if (a.kind == 0) {
+        ref = b;
+        scalar = a;
+      }
+      out = equal(out, out.state.path, scalar.identity, 0, "only reference null comparisons admitted");
+      if (out.error == "") {
+        let n = phi.is_null(out.arena, ref, out.state.path);
+        out = Context { ...out, arena: n.arena, error: n.error };
+        identity = n.id;
+      }
+    } else {
+      return failed(out, "unsupported pointer comparison");
+    }
+    if (op.str == "ne") {
+      out = calc(out, 1, 1, identity);
+      identity = out.temp;
+    }
+  } else if (op.kind_tag == 40 && op.args.len() == 1 && (op.imm == 8 || op.imm == 16) && op.str == "") {
+    let base = out.values[op.args[0]];
+    out = parent(out, base);
+    kind = 1;
+    let p: i32 = 0;
+    while (p < 2 && out.error == "") {
+      out = mask(out, base.identity, p + 1);
+      let path = out.temp;
+      let slot = p * 2 + op.imm / 8 - 1;
+      out = equal(out, path, out.state.credits[slot], 1, "load from stale or uninitialized slot");
+      out = calc(out, 4, path, out.state.contents[slot]);
+      out = calc(out, 0, identity, out.temp);
+      identity = out.temp;
+      p = p + 1;
+    }
+  } else if (op.kind_tag == 41 && op.args.len() == 2 && op.str == "") {
+    let base = out.values[op.args[0]];
+    let source = out.values[op.args[1]];
+    out = parent(out, base);
+    if (op.imm == 0 && source.kind == 2) {
+      out = literal(out, 2);
+      out = equal(out, out.state.path, base.identity, out.temp, "only fresh shape initialization admitted");
+      out = equal(out, out.state.path, out.state.shapes[1], 0, "duplicate shape initialization");
+      out = calc(out, 0, out.state.shapes[1], out.state.path);
+      out = Context { ...out, state: State { ...out.state, shapes: out.state.shapes.with(1, out.temp) } };
+    } else if ((op.imm == 8 || op.imm == 16) && source.kind == 0) {
+      // Clearing a unique old slot transfers its contained credit. Unlike a
+      // release, it also removes the stored pointer. A later clear cannot
+      // manufacture another credit from either null or stale contents.
+      out = equal(out, out.state.path, source.identity, 0, "only null slot clearing admitted");
+      out = equal(out, out.state.path, base.identity, 1, "only old-parent clearing admitted");
+      out = equal(out, out.state.path, out.unique, 1, "clearing shared parent slot");
+      let slot = op.imm / 8 - 1;
+      out = equal(out, out.state.path, out.state.credits[slot], 1, "clearing slot without contained credit");
+      let transferred: i32 = 0;
+      let root: i32 = 3;
+      while (root <= 5 && out.error == "") {
+        out = mask(out, out.state.contents[slot], root);
+        let path = out.temp;
+        out = calc(out, 0, transferred, path);
+        transferred = out.temp;
+        out = calc(out, 0, out.state.children[root - 3], path);
+        out = Context { ...out, state: State { ...out.state, children: out.state.children.with(root - 3, out.temp) } };
+        root = root + 1;
+      }
+      out = equal(out, out.state.path, transferred, 1, "clearing slot without child identity");
+      let contents = guard.select(out.arena, out.state.path, 0, out.state.contents[slot]);
+      if (out.error == "") {
+        out = Context { ...out, arena: contents.arena, error: contents.error, state: State { ...out.state, contents: out.state.contents.with(slot, contents.id) } };
+      }
+      out = calc(out, 1, out.state.credits[slot], out.state.path);
+      out = Context { ...out, state: State { ...out.state, credits: out.state.credits.with(slot, out.temp) } };
+    } else if ((op.imm == 8 || op.imm == 16) && source.kind == 1) {
+      out = child(out, source);
+      let p: i32 = 0;
+      while (p < 2 && out.error == "") {
+        out = mask(out, base.identity, p + 1);
+        let path = out.temp;
+        let slot = p * 2 + op.imm / 8 - 1;
+        if (p == 0) {
+          out = equal(out, path, out.unique, 1, "overwriting shared parent");
+        }
+        out = equal(out, path, out.state.credits[slot], 0, "overwriting live slot credit");
+        let root: i32 = 3;
+        while (root <= 5 && out.error == "") {
+          out = mask(out, source.identity, root);
+          out = calc(out, 4, path, out.temp);
+          let consume = out.temp;
+          out = positive(out, consume, out.state.children[root - 3], "slot store without local child credit");
+          out = calc(out, 1, out.state.children[root - 3], consume);
+          out = Context { ...out, state: State { ...out.state, children: out.state.children.with(root - 3, out.temp) } };
+          root = root + 1;
+        }
+        let contents = guard.select(out.arena, path, source.identity, out.state.contents[slot]);
+        if (out.error == "") {
+          out = Context { ...out, arena: contents.arena, error: contents.error, state: State { ...out.state, contents: out.state.contents.with(slot, contents.id) } };
+        }
+        out = calc(out, 0, out.state.credits[slot], path);
+        out = Context { ...out, state: State { ...out.state, credits: out.state.credits.with(slot, out.temp) } };
+        p = p + 1;
+      }
+    } else {
+      return failed(out, "unsupported reuse store");
+    }
+  } else if (op.kind_tag == 11 && op.str == "__fern_alloc_reuse" && op.args.len() == 2 && op.imm == 0) {
+    let donor = out.values[op.args[0]];
+    let words = out.values[op.args[1]];
+    if (donor.kind != 1 || words.kind != 0) {
+      return failed(out, "invalid reuse allocation operands");
+    }
+    let n = phi.is_null(out.arena, donor, out.state.path);
+    out = Context { ...out, arena: n.arena, error: n.error };
+    out = equal(out, out.state.path, n.id, 1, "nonnull reuse donor unsupported");
+    out = literal(out, 3);
+    out = equal(out, out.state.path, words.identity, out.temp, "parent allocation size mismatch");
+    out = equal(out, out.state.path, out.state.allocated, 0, "extra parent allocation");
+    out = calc(out, 0, out.state.allocated, out.state.path);
+    out = Context { ...out, state: State { ...out.state, allocated: out.temp } };
+    out = calc(out, 0, out.state.parents[1], out.state.path);
+    out = Context { ...out, state: State { ...out.state, parents: out.state.parents.with(1, out.temp) } };
+    kind = 1;
+    out = literal(out, 2);
+    identity = out.temp;
+  } else if (op.kind_tag == 11 && op.args.len() == 1) {
+    let v = out.values[op.args[0]];
+    if (op.str == "__fern_rc_is_unique" && (op.imm == 0 || op.imm == 4)) {
+      out = parent(out, v);
+      out = equal(out, out.state.path, v.identity, 1, "only old-parent uniqueness admitted");
+      kind = 0;
+      identity = out.unique;
+    } else if (op.str == drop && op.imm == 0) {
+      out = drop_children(out, v);
+      kind = 0;  // The independently checked children-only helper returns zero.
+    } else if (op.str == release && op.imm == 0) {
+      out = parent(out, v);
+      out = equal(out, out.state.path, v.identity, 1, "only old-parent release admitted");
+      let slot: i32 = 0;
+      while (slot < 2) {
+        out = equal(out, out.state.path, out.state.credits[slot], 1, "parent release with stale slot");
+        out = calc(out, 4, out.state.path, out.unique);
+        out = calc(out, 1, out.state.credits[slot], out.temp);
+        out = Context { ...out, state: State { ...out.state, credits: out.state.credits.with(slot, out.temp) } };
+        slot = slot + 1;
+      }
+      out = calc(out, 1, out.state.parents[0], out.state.path);
+      out = Context { ...out, state: State { ...out.state, parents: out.state.parents.with(0, out.temp) } };
+      kind = 0;  // The independently checked helper returns scalar zero.
+    } else if (op.str == "__fern_rc_inc" && (op.imm == 0 || op.imm == 4) || op.str == "__fern_rc_dec" && op.imm == 0) {
+      out = child(out, v);
+      kind = 1;
+      identity = v.identity;
+      let root: i32 = 3;
+      while (root <= 5 && out.error == "") {
+        out = mask(out, v.identity, root);
+        let path = out.temp;
+        let local = out.state.children[root - 3];
+        if (op.str == "__fern_rc_inc") {
+          out = calc(out, 0, local, path);
+          out = Context { ...out, state: State { ...out.state, children: out.state.children.with(root - 3, out.temp) } };
+        } else {
+          out = calc(out, 3, 0, local);
+          out = calc(out, 4, path, out.temp);
+          let consume = out.temp;
+          out = calc(out, 1, local, consume);
+          out = Context { ...out, state: State { ...out.state, children: out.state.children.with(root - 3, out.temp) } };
+          out = calc(out, 1, path, consume);
+          let from_slot = out.temp;
+          if (root == 3) {
+            out = equal(out, from_slot, 0, 1, "incoming child release without local credit");
+          } else {
+            let slot = root - 4;
+            out = equal(out, from_slot, out.unique, 1, "releasing a shared child slot");
+            out = positive(out, from_slot, out.state.parents[0], "slot release after parent release");
+            out = literal(out, root);
+            out = equal(out, from_slot, out.state.contents[slot], out.temp, "slot release identity mismatch");
+            out = equal(out, from_slot, out.state.credits[slot], 1, "duplicate slot release");
+            out = calc(out, 1, out.state.credits[slot], from_slot);
+            out = Context { ...out, state: State { ...out.state, credits: out.state.credits.with(slot, out.temp) } };
+            // Contents deliberately remain: this is a stale pointer until a
+            // checked store replaces it, not a cleared/null field.
+          }
+        }
+        root = root + 1;
+      }
+    } else {
+      return failed(out, "unsupported reuse call");
+    }
+  } else {
+    return failed(out, "unsupported reuse operation");
+  }
+  if (out.error != "") {
+    return out;
+  }
+  return Context { ...out, values: out.values.with(op.result, phi.Value { kind: kind, identity: identity, available: out.state.path }) };
+}
+
+function at(f: ssa.SFunc, id: i32): i32 {
+  let i: i32 = 0;
+  for b in f.blocks {
+    if (b.id == id) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return -1;
+}
+
+function edge(t: ssa.STerm, id: i32): boolean {
+  return t.kind_tag == 2 && t.target == id || t.kind_tag == 3 && (t.t == id || t.f == id);
+}
+
+function input_error(f: ssa.SFunc): string {
+  let count: i32 = 0;
+  for b in f.blocks {
+    count = count + b.insts.len();
+  }
+  if (f.nparams != 2 || f.takes_env || f.nvals < 2 || f.nvals > count || at(f, f.entry) < 0) {
+    return "invalid reuse boundary";
+  }
+  let blocks: i32[] = [];
+  let definitions: i32[] = [];
+  let params: i32[] = [];
+  for b in f.blocks {
+    if (b.id < 0 || util.index_of_i32(blocks, b.id) >= 0 || b.id == f.entry && b.preds.len() != 0) {
+      return "invalid reuse block identity";
+    }
+    blocks = blocks.append(b.id);
+    let body = false;
+    for op in b.insts {
+      if (op.result < 0 || op.result >= f.nvals || util.index_of_i32(definitions, op.result) >= 0) {
+        return "invalid reuse value identity";
+      }
+      definitions = definitions.append(op.result);
+      if (op.kind_tag == 6) {
+        if (b.id != f.entry || op.imm < 0 || op.imm > 1 || util.index_of_i32(params, op.imm) >= 0) {
+          return "invalid reuse parameter";
+        }
+        params = params.append(op.imm);
+      }
+      if (op.kind_tag == 8) {
+        if (body || b.preds.len() == 0 || op.args.len() != b.preds.len()) {
+          return "invalid reuse phi position or arity";
+        }
+      } else {
+        body = true;
+      }
+    }
+    let seen: i32[] = [];
+    for p in b.preds {
+      let pi = at(f, p);
+      if (pi < 0 || util.index_of_i32(seen, p) >= 0 || !edge(f.blocks[pi].term, b.id)) {
+        return "invalid reuse predecessor";
+      }
+      seen = seen.append(p);
+    }
+    if (b.term.kind_tag < 1 || b.term.kind_tag > 3 || b.term.kind_tag == 3 && b.term.t == b.term.f) {
+      return "invalid reuse terminator";
+    }
+    let targets: i32[] = [];
+    if (b.term.kind_tag == 2) {
+      targets = [b.term.target];
+    } else if (b.term.kind_tag == 3) {
+      targets = [b.term.t, b.term.f];
+    }
+    for t in targets {
+      let ti = at(f, t);
+      if (ti < 0 || util.index_of_i32(f.blocks[ti].preds, b.id) < 0) {
+        return "invalid reuse successor";
+      }
+    }
+  }
+  if (params.len() != 2) {
+    return "reuse parameter count";
+  }
+  return "";
+}
+
+struct Numbers { arena: guard.Arena, values: i32[], error: string }
+
+function joined(a: guard.Arena, old: i32[], current: i32[], path: i32): Numbers {
+  let arena = a;
+  let values = old;
+  let i: i32 = 0;
+  while (i < old.len()) {
+    let masked = guard.combine(arena, 4, path, current[i]);
+    if (masked.error != "") {
+      return Numbers { arena: masked.arena, values: values, error: masked.error };
+    }
+    let sum = guard.combine(masked.arena, 0, old[i], masked.id);
+    if (sum.error != "") {
+      return Numbers { arena: sum.arena, values: values, error: sum.error };
+    }
+    arena = sum.arena;
+    values = values.with(i, sum.id);
+    i = i + 1;
+  }
+  return Numbers { arena: arena, values: values, error: "" };
+}
+
+function merged(c: Context, old: State, path: i32): Context {
+  let out = calc(c, 4, old.path, path);
+  out = equal(out, 1, out.temp, 0, "overlapping reuse edges");
+  let parents = joined(out.arena, old.parents, c.state.parents, path);
+  let children = joined(parents.arena, old.children, c.state.children, path);
+  let contents = joined(children.arena, old.contents, c.state.contents, path);
+  let credits = joined(contents.arena, old.credits, c.state.credits, path);
+  let shapes = joined(credits.arena, old.shapes, c.state.shapes, path);
+  for why in [parents.error, children.error, contents.error, credits.error, shapes.error] {
+    if (why != "") {
+      return failed(out, why);
+    }
+  }
+  out = Context { ...out, arena: shapes.arena };
+  out = calc(out, 4, path, c.state.allocated);
+  out = calc(out, 0, old.allocated, out.temp);
+  let allocated = out.temp;
+  out = calc(out, 0, old.path, path);
+  return Context { ...out, state: State { path: out.temp, parents: parents.values, children: children.values, contents: contents.values, credits: credits.values, shapes: shapes.values, allocated: allocated } };
+}
+
+pub function check(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: string): helper.Proof {
+  if (shape == "" || f.name == "" || util.str_has_prefix(f.name, "__fern_") || f.name == drop.name || f.name == release.name) {
+    return helper.Proof { ok: false, function_name: f.name, message: "invalid reuse identity" };
+  }
+  let summary = helper.release_body_many(release, drop, helper.FlatChildren { offsets: [8, 16] });
+  if (!summary.ok) {
+    return summary;
+  }
+  let error = input_error(f);
+  if (error != "") {
+    return helper.Proof { ok: false, function_name: f.name, message: error };
+  }
+  let zero = guard.constant(guard.empty(), 0);
+  let one = guard.constant(zero.arena, 1);
+  let left = guard.constant(one.arena, 4);
+  let right = guard.constant(left.arena, 5);
+  let u = guard.predicate(right.arena, 0);
+  let empty = State { path: 0, parents: [0, 0], children: [0, 0, 0], contents: [0, 0, 0, 0], credits: [0, 0, 0, 0], shapes: [0, 0], allocated: 0 };
+  let values: phi.Value[] = [];
+  let i: i32 = 0;
+  while (i < f.nvals) {
+    values = values.append(phi.Value { kind: -1, identity: 0, available: 0 });
+    i = i + 1;
+  }
+  let incoming: Incoming[] = [];
+  let done: boolean[] = [];
+  for b in f.blocks {
+    let state = empty;
+    if (b.id == f.entry) {
+      state = State { ...empty, path: 1, parents: [1, 0], children: [1, 0, 0], contents: [left.id, right.id, 0, 0], credits: [1, 1, 0, 0], shapes: [1, 0] };
+    }
+    incoming = incoming.append(Incoming { state: state, edges: [] });
+    done = done.append(false);
+  }
+  let c = Context { arena: u.arena, values: values, state: empty, unique: u.id, temp: 0, error: "" };
+  let remaining = f.blocks.len();
+  while (remaining > 0 && c.error == "") {
+    let chosen: i32 = -1;
+    i = 0;
+    for b in f.blocks {
+      let ready = !done[i] && (b.id == f.entry || b.preds.len() > 0);
+      for p in b.preds {
+        if (!done[at(f, p)]) {
+          ready = false;
+        }
+      }
+      if (ready && chosen < 0) {
+        chosen = i;
+      }
+      i = i + 1;
+    }
+    if (chosen < 0) {
+      c = failed(c, "unsupported reuse cycle or unreachable block");
+    } else {
+      let b = f.blocks[chosen];
+      c = Context { ...c, state: incoming[chosen].state };
+      if (b.id != f.entry) {
+        let phis = phi.merge(c.arena, b, incoming[chosen].edges, f.nvals);
+        c = Context { ...c, arena: phis.arena, error: phis.error };
+        c = equal(c, 1, phis.path, c.state.path, "phi edge coverage mismatch");
+        for binding in phis.bindings {
+          c = Context { ...c, values: c.values.with(binding.result, binding.value) };
+        }
+      }
+      for op in b.insts {
+        if (c.error == "" && op.kind_tag != 8) {
+          c = transfer(c, op, shape, drop.name, release.name);
+        }
+      }
+      if (c.error == "" && b.term.kind_tag == 1) {
+        c = available(c, b.term.value);
+        if (c.error == "") {
+          let result = c.values[b.term.value];
+          c = parent(c, result);
+          let p: i32 = 0;
+          while (p < 2 && c.error == "") {
+            c = mask(c, result.identity, p + 1);
+            let path = c.temp;
+            c = equal(c, path, c.state.parents[p], 1, "result parent credit mismatch");
+            c = equal(c, path, c.state.shapes[p], 1, "result shape not initialized");
+            let slot = p * 2;
+            while (slot < p * 2 + 2) {
+              c = equal(c, path, c.state.credits[slot], 1, "result has stale or uninitialized slot");
+              slot = slot + 1;
+            }
+            c = calc(c, 1, c.state.parents[p], path);
+            c = Context { ...c, state: State { ...c.state, parents: c.state.parents.with(p, c.temp) } };
+            p = p + 1;
+          }
+          for count in c.state.parents {
+            c = equal(c, c.state.path, count, 0, "unconsumed parent credit");
+          }
+          for count in c.state.children {
+            c = equal(c, c.state.path, count, 0, "unconsumed child credit");
+          }
+        }
+      } else if (c.error == "") {
+        let targets: i32[] = [b.term.target];
+        let paths: i32[] = [c.state.path];
+        if (b.term.kind_tag == 3) {
+          c = available(c, b.term.cond);
+          if (c.error == "" && c.values[b.term.cond].kind != 0) {
+            c = failed(c, "scalar reuse condition required");
+          }
+          if (c.error == "") {
+            let condition = c.values[b.term.cond].identity;
+            c = calc(c, 4, condition, c.state.path);
+            let yes = c.temp;
+            c = calc(c, 1, 1, condition);
+            c = calc(c, 4, c.temp, c.state.path);
+            targets = [b.term.t, b.term.f];
+            paths = [yes, c.temp];
+          }
+        }
+        let state = c.state;
+        i = 0;
+        for t in targets {
+          if (c.error == "") {
+            let ti = at(f, t);
+            c = merged(c, incoming[ti].state, paths[i]);
+            let edges = incoming[ti].edges.append(phi.Edge { predecessor: b.id, path: paths[i], values: c.values });
+            incoming = incoming.with(ti, Incoming { state: c.state, edges: edges });
+            c = Context { ...c, state: state };
+          }
+          i = i + 1;
+        }
+      }
+      done = done.with(chosen, true);
+      remaining = remaining - 1;
+    }
+  }
+  let message = c.error;
+  if (message == "") {
+    message = "proved guarded two-child partial replacement";
+  }
+  return helper.Proof { ok: c.error == "", function_name: f.name, message: message };
+}

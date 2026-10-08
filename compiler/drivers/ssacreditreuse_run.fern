@@ -1,0 +1,424 @@
+import "../lexer";
+import "../parser";
+import "../semlower";
+import "../irtables";
+import "../ir";
+import "../ssa";
+import "../ssa_lift";
+import "../ssacreditreuse" as reuse;
+
+function require(ok: boolean, id: i32): void {
+  if (!ok) {
+    exit(id);
+  }
+}
+
+function lift(r: irtables.LowerResult): ssa.SFunc {
+  require(r.ok, 1);
+  let out = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), r.name, r.n_params, r.n_locals, r.ops, false);
+  if (!out.ok) {
+    print(out.bail);
+    exit(2);
+  }
+  return out.func;
+}
+
+function expect(f: ssa.SFunc, d: ssa.SFunc, r: ssa.SFunc, ok: boolean, why: string, id: i32): void {
+  let p = reuse.check(f, d, r, "Parent");
+  if (p.ok != ok || p.function_name != f.name || p.message != why) {
+    print(p.function_name + ": " + p.message);
+    exit(id);
+  }
+}
+
+function mutation(body: irtables.LowerResult, mode: i32): irtables.LowerResult {
+  let ops: ir.Op[] = [];
+  let hits: i32 = 0;
+  for op in body.ops {
+    if (mode == 0 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_inc") {
+      hits = hits + 1;
+    } else if (mode == 1 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_dec") {
+      ops = ops.append(ir.op_load_local(0)).append(ir.Op { ...op, kind_tag: ir.kind_id("struct_get"), i32_imm: 0, str: "" }).append(op).append(ir.op_drop()).append(op);
+      hits = hits + 1;
+    } else if (mode == 2 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__sem_release_Parent") {
+      hits = hits + 1;
+    } else if (mode == 3 && op.kind_tag == ir.kind_id("struct_set") && op.i32_imm == 0) {
+      ops = ops.append(ir.op_drop()).append(ir.op_drop());
+      hits = hits + 1;
+    } else if (mode == 4 && op.kind_tag == ir.kind_id("struct_set") && op.i32_imm == 0) {
+      ops = ops.append(op).append(ir.op_load_local(3)).append(ir.op_load_local(1)).append(op);
+      hits = hits + 1;
+    } else if (mode == 5 && op.kind_tag == ir.kind_id("eq")) {
+      ops = ops.append(ir.Op { ...op, kind_tag: ir.kind_id("ne") });
+      hits = hits + 1;
+    } else if ((mode == 6 || mode == 7) && op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_dec") {
+      ops = ops.append(op).append(ir.op_load_local(0));
+      if (mode == 6) {
+        ops = ops.append(ir.Op { ...op, kind_tag: ir.kind_id("struct_get"), i32_imm: 0, str: "" });
+      } else {
+        ops = ops.append(ir.op_call_direct("__sem_release_Parent", 1));
+      }
+      ops = ops.append(ir.op_drop());
+      hits = hits + 1;
+    } else if (mode == 8 && op.kind_tag == ir.kind_id("const_i32") && op.i32_imm == 3) {
+      ops = ops.append(ir.op_const_i32(2));
+      hits = hits + 1;
+    } else {
+      ops = ops.append(op);
+    }
+  }
+  require(hits == 1, 3);
+  return irtables.LowerResult { ...body, ops: ops };
+}
+
+function physical_mutation(f: ssa.SFunc, mode: i32): ssa.SFunc {
+  let blocks: ssa.SBlock[] = [];
+  let hits: i32 = 0;
+  let nvals = f.nvals;
+  for b in f.blocks {
+    let ops: ssa.SInst[] = [];
+    for op in b.insts {
+      let changed = op;
+      if (mode == 0 && op.kind_tag == 46) {
+        changed = ssa.SInst { ...op, str: "Other" };
+        hits = hits + 1;
+      } else if (mode == 1 && op.kind_tag == 6 && op.imm == 1) {
+        changed = ssa.SInst { ...op, imm: 0 };
+        hits = hits + 1;
+      } else if (mode == 2 && op.kind_tag == 11 && op.str == "__fern_rc_inc") {
+        changed = ssa.SInst { ...op, str: "unknown_credit_effect" };
+        hits = hits + 1;
+      } else if (mode == 3 && op.kind_tag == 11 && op.str == "__fern_alloc_reuse") {
+        ops = ops.append(op);
+        changed = ssa.SInst { ...op, result: f.nvals };
+        nvals = f.nvals + 1;
+        hits = hits + 1;
+      } else if (mode == 4 && op.kind_tag == 41 && op.imm == 0) {
+        changed = ssa.SInst { kind_tag: 1, result: op.result, args: [], imm: 0, str: "" };
+        hits = hits + 1;
+      } else if (mode == 5 && op.kind_tag == 41 && op.imm == 8) {
+        changed = ssa.SInst { ...op, imm: 16 };
+        hits = hits + 1;
+      } else if (mode == 6 && op.kind_tag == 8 && hits == 0) {
+        changed = ssa.SInst { ...op, args: op.args.with(0, op.result) };
+        hits = hits + 1;
+      } else if (mode == 7 && op.kind_tag == 41 && op.imm == 0) {
+        ops = ops.append(op);
+        changed = ssa.SInst { kind_tag: 7, result: f.nvals, args: [op.result], imm: 0, str: "" };
+        nvals = f.nvals + 1;
+        hits = hits + 1;
+      } else if (mode == 8 && op.kind_tag == 40 && op.imm == 8) {
+        ops = ops.append(op);
+        // These provenance labels may refer to the same runtime child.
+        changed = ssa.SInst { kind_tag: 9, result: f.nvals, args: [1, op.result], imm: 0, str: "eq" };
+        nvals = f.nvals + 1;
+        hits = hits + 1;
+      }
+      ops = ops.append(changed);
+    }
+    blocks = blocks.append(ssa.SBlock { ...b, insts: ops });
+  }
+  require(hits == 1, 5);
+  return ssa.SFunc { ...f, blocks: blocks, nvals: nvals };
+}
+
+function clear_slot(ops: ir.Op[], field: i32, value: i32): ir.Op[] {
+  return ops.append(ir.op_load_local(0)).append(ir.op_const_i32(value)).append(ir.op_struct_set(field, 0));
+}
+
+// Start from the real unique-branch old-child release. Clearing first and
+// consuming the transferred local credit is equivalent. The negative controls
+// isolate duplicate transfer, lost credit, shared writes and stale/null reads.
+function clearing_mutation(body: irtables.LowerResult, field: i32, mode: i32): irtables.LowerResult {
+  let ops: ir.Op[] = [];
+  let releases: i32 = 0;
+  let retains: i32 = 0;
+  let stores: i32 = 0;
+  for op in body.ops {
+    if (op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_dec") {
+      releases = releases + 1;
+      if (mode == 6) {
+        ops = clear_slot(ops.append(op), field, 0);
+      } else if (mode == 3) {
+        ops = ops.append(op);
+      } else {
+        let value: i32 = 0;
+        if (mode == 4) {
+          value = 1;
+        }
+        ops = clear_slot(ops, field, value);
+        if (mode == 2) {
+          ops = clear_slot(ops, field, 0);
+        }
+        if (mode == 5) {
+          ops = ops.append(ir.op_load_local(0)).append(ir.op_struct_get(field, 0)).append(ir.op_drop());
+        }
+        if (mode != 1) {
+          ops = ops.append(op);
+        }
+      }
+    } else if (op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_inc") {
+      retains = retains + 1;
+      if (mode == 3) {
+        ops = clear_slot(ops, 1 - field, 0);
+      }
+      ops = ops.append(op);
+    } else if (op.kind_tag == ir.kind_id("struct_set") && op.i32_imm == field) {
+      stores = stores + 1;
+      if (mode == 7) {
+        ops = ops.append(ir.op_drop()).append(ir.op_drop());
+      } else {
+        ops = ops.append(op);
+      }
+    } else {
+      ops = ops.append(op);
+    }
+  }
+  require(releases == 1 && retains == 1 && stores == 1, 52);
+  return irtables.LowerResult { ...body, ops: ops };
+}
+
+// Preserve the actual unique/shared CFG. Extract the sibling into a temporary,
+// apply the checked children-only helper, then restore the sibling before the
+// original replacement. The helper must not consume detached local credits.
+function child_drop_mutation(body: irtables.LowerResult, field: i32, mode: i32): irtables.LowerResult {
+  let ops: ir.Op[] = [];
+  let hits: i32 = 0;
+  for op in body.ops {
+    if (mode == 5 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_inc") {
+      ops = ops.append(ir.op_load_local(0)).append(ir.op_call_direct("__sem_drop_Parent", 1)).append(ir.op_drop()).append(op);
+      hits = hits + 1;
+    } else if (mode != 5 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_dec") {
+      hits = hits + 1;
+      ops = ops.append(ir.op_load_local(0)).append(ir.op_struct_get(1 - field, 0)).append(ir.op_store_local(body.n_locals));
+      if (mode == 2 || mode == 3) {
+        ops = ops.append(ir.op_load_local(body.n_locals)).append(ir.op_call_direct("__fern_rc_inc", 1)).append(ir.op_drop());
+      } else {
+        ops = clear_slot(ops, 1 - field, 0);
+      }
+      if (mode == 6) {
+        ops = ops.append(op);
+      } else if (mode != 4) {
+        ops = clear_slot(ops, field, 0);
+      }
+      let arg: i32 = 0;
+      if (mode == 8) {
+        arg = 1;
+      }
+      ops = ops.append(ir.op_load_local(arg)).append(ir.op_call_direct("__sem_drop_Parent", 1)).append(ir.op_drop());
+      if (mode == 1 || mode == 3) {
+        ops = ops.append(ir.op_load_local(0)).append(ir.op_call_direct("__sem_drop_Parent", 1)).append(ir.op_drop());
+      }
+      ops = ops.append(ir.op_load_local(0)).append(ir.op_load_local(body.n_locals)).append(ir.op_struct_set(1 - field, 0));
+      if (mode != 6 && mode != 7) {
+        ops = ops.append(op);
+      }
+    } else {
+      ops = ops.append(op);
+    }
+  }
+  require(hits == 1, 80);
+  return irtables.LowerResult { ...body, ops: ops, n_locals: body.n_locals + 1 };
+}
+
+function child_drop_checks(body: irtables.LowerResult, d: ssa.SFunc, r: ssa.SFunc, field: i32): void {
+  let reasons = ["proved guarded two-child partial replacement", "proved guarded two-child partial replacement", "proved guarded two-child partial replacement", "children-only drop with stale slot", "child used after final credit or anchor", "children-only drop requires unique parent", "children-only drop with stale slot", "unconsumed child credit", "parent reference required"];
+  let mode: i32 = 0;
+  while (mode < reasons.len()) {
+    expect(lift(child_drop_mutation(body, field, mode)), d, r, mode < 3, reasons[mode], 81 + mode);
+    mode = mode + 1;
+  }
+}
+
+function target_checks(target: string): void {
+  let source = "struct Leaf { n: i32 }\nstruct Parent { left: Leaf, right: Leaf }\n@noinline\nfunction replace(own p: Parent, child: Leaf): Parent { return Parent { ...p, left: child }; }\nfunction main(): i32 { return 0; }\n";
+  let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
+  let bodies: irtables.LowerResult[] = [];
+  let drops: irtables.LowerResult[] = [];
+  let releases: irtables.LowerResult[] = [];
+  for b in sub.bodies {
+    if (b.name == "replace") {
+      bodies = bodies.append(b);
+    }
+  }
+  for b in sub.extra {
+    if (b.name == "__sem_drop_Parent") {
+      drops = drops.append(b);
+    }
+    if (b.name == "__sem_release_Parent") {
+      releases = releases.append(b);
+    }
+  }
+  require(bodies.len() == 1 && drops.len() == 1 && releases.len() == 1, 4);
+  let body = bodies[0];
+  let f = lift(body);
+  let d = lift(drops[0]);
+  let r = lift(releases[0]);
+  child_drop_checks(body, d, r, 0);
+  expect(f, d, r, true, "proved guarded two-child partial replacement", 10);
+  let clearing_reasons = ["proved guarded two-child partial replacement", "unconsumed child credit", "clearing slot without contained credit", "clearing shared parent slot", "only null slot clearing admitted", "load from stale or uninitialized slot", "clearing slot without contained credit", "result has stale or uninitialized slot"];
+  let clearing_mode: i32 = 0;
+  while (clearing_mode < clearing_reasons.len()) {
+    expect(lift(clearing_mutation(body, 0, clearing_mode)), d, r, clearing_mode == 0, clearing_reasons[clearing_mode], 53 + clearing_mode);
+    clearing_mode = clearing_mode + 1;
+  }
+  let reasons: string[] = ["slot store without local child credit", "child used after final credit or anchor", "unconsumed parent credit", "result has stale or uninitialized slot", "overwriting live slot credit", "nonnull reuse donor unsupported", "load from stale or uninitialized slot", "parent release with stale slot", "parent allocation size mismatch"];
+  let mode: i32 = 0;
+  while (mode < reasons.len()) {
+    expect(lift(mutation(body, mode)), d, r, false, reasons[mode], 11 + mode);
+    mode = mode + 1;
+  }
+  let reversed: ssa.SBlock[] = [];
+  let i = f.blocks.len();
+  while (i > 0) {
+    i = i - 1;
+    reversed = reversed.append(f.blocks[i]);
+  }
+  expect(ssa.SFunc { ...f, blocks: reversed }, d, r, true, "proved guarded two-child partial replacement", 30);
+  let wrong_phi: ssa.SBlock[] = [];
+  let hits: i32 = 0;
+  for b in f.blocks {
+    let ops: ssa.SInst[] = [];
+    for op in b.insts {
+      if (op.kind_tag == 8 && hits == 0) {
+        require(op.args.len() == 2, 31);
+        ops = ops.append(ssa.SInst { ...op, args: [op.args[1], op.args[0]] });
+        hits = hits + 1;
+      } else {
+        ops = ops.append(op);
+      }
+    }
+    wrong_phi = wrong_phi.append(ssa.SBlock { ...b, insts: ops });
+  }
+  require(hits == 1, 32);
+  expect(ssa.SFunc { ...f, blocks: wrong_phi }, d, r, false, "unreadable phi operand", 33);
+  // The shared anchor survives an early old-parent release. Retain the
+  // already loaded sibling afterward; no old-parent dereference is moved.
+  let early: ir.Op[] = [];
+  let inserted: i32 = 0;
+  let removed: i32 = 0;
+  i = 0;
+  while (i < body.ops.len()) {
+    let op = body.ops[i];
+    if (op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_inc") {
+      early = early.append(ir.op_load_local(0)).append(ir.op_call_direct(r.name, 1)).append(ir.op_drop());
+      inserted = inserted + 1;
+    }
+    if (op.kind_tag == ir.kind_id("load_local") && i + 2 < body.ops.len() && body.ops[i + 1].kind_tag == ir.kind_id("call_direct") && body.ops[i + 1].str == r.name) {
+      require(body.ops[i + 2].kind_tag == ir.kind_id("drop"), 34);
+      i = i + 3;
+      removed = removed + 1;
+    } else {
+      early = early.append(op);
+      i = i + 1;
+    }
+  }
+  require(inserted == 1 && removed == 1, 35);
+  expect(lift(irtables.LowerResult { ...body, ops: early }), d, r, true, "proved guarded two-child partial replacement", 36);
+  let physical_reasons: string[] = ["unsupported reuse operation", "invalid reuse parameter", "unsupported reuse call", "extra parent allocation", "result shape not initialized", "overwriting live slot credit", "invalid acyclic phi operand", "undefined reuse operand", "unsupported pointer comparison"];
+  mode = 0;
+  while (mode < physical_reasons.len()) {
+    expect(physical_mutation(f, mode), d, r, false, physical_reasons[mode], 40 + mode);
+    mode = mode + 1;
+  }
+  expect(ssa.SFunc { ...f, nvals: 2147483647 }, d, r, false, "invalid reuse boundary", 49);
+  expect(ssa.SFunc { ...f, nparams: 1 }, d, r, false, "invalid reuse boundary", 50);
+  let orphan = ssa.SBlock { id: 2147483647, insts: [], preds: [], term: ssa.STerm { kind_tag: 1, cond: 0, target: 0, t: 0, f: 0, value: 0 } };
+  expect(ssa.SFunc { ...f, blocks: f.blocks.append(orphan) }, d, r, false, "unsupported reuse cycle or unreachable block", 51);
+  expect(f, d, r, true, "proved guarded two-child partial replacement", 37);
+}
+
+function right_checks(target: string): void {
+  // Replacing the other slot is governed by its actual load/store identity,
+  // not a hardcoded assumption that only offset eight can be discharged.
+  let source = "struct Leaf { n: i32 }\nstruct Parent { left: Leaf, right: Leaf }\n@noinline\nfunction replace_right(own p: Parent, child: Leaf): Parent { return Parent { ...p, right: child }; }\nfunction main(): i32 { return 0; }\n";
+  let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
+  let bodies: irtables.LowerResult[] = [];
+  let drops: irtables.LowerResult[] = [];
+  let releases: irtables.LowerResult[] = [];
+  for b in sub.bodies {
+    if (b.name == "replace_right") {
+      bodies = bodies.append(b);
+    }
+  }
+  for b in sub.extra {
+    if (b.name == "__sem_drop_Parent") {
+      drops = drops.append(b);
+    }
+    if (b.name == "__sem_release_Parent") {
+      releases = releases.append(b);
+    }
+  }
+  require(bodies.len() == 1 && drops.len() == 1 && releases.len() == 1, 52);
+  child_drop_checks(bodies[0], lift(drops[0]), lift(releases[0]), 1);
+  expect(lift(bodies[0]), lift(drops[0]), lift(releases[0]), true, "proved guarded two-child partial replacement", 53);
+  let reasons = ["proved guarded two-child partial replacement", "unconsumed child credit", "clearing slot without contained credit", "clearing shared parent slot", "only null slot clearing admitted", "load from stale or uninitialized slot", "clearing slot without contained credit", "result has stale or uninitialized slot"];
+  let mode: i32 = 0;
+  while (mode < reasons.len()) {
+    expect(lift(clearing_mutation(bodies[0], 1, mode)), lift(drops[0]), lift(releases[0]), mode == 0, reasons[mode], 70 + mode);
+    mode = mode + 1;
+  }
+}
+
+struct RuntimeLeaf { n: i32 }
+
+struct RuntimeParent { left: RuntimeLeaf, right: RuntimeLeaf }
+
+@noinline
+function runtime_leaf(n: i32): RuntimeLeaf {
+  return RuntimeLeaf { n: n };
+}
+
+@noinline
+function runtime_parent(left: RuntimeLeaf, right: RuntimeLeaf): RuntimeParent {
+  return RuntimeParent { left: left, right: right };
+}
+
+@noinline
+function runtime_left(own p: RuntimeParent, child: RuntimeLeaf): RuntimeParent {
+  return RuntimeParent { ...p, left: child };
+}
+
+@noinline
+function runtime_right(own p: RuntimeParent, child: RuntimeLeaf): RuntimeParent {
+  return RuntimeParent { ...p, right: child };
+}
+
+@noinline
+function runtime_read(p: RuntimeParent, left: i32, right: i32): boolean {
+  return p.left.n == left && p.right.n == right;
+}
+
+function runtime_checks(): void {
+  let left = runtime_left(runtime_parent(runtime_leaf(11), runtime_leaf(22)), runtime_leaf(33));
+  require(runtime_read(left, 33, 22), 70);
+  let right = runtime_right(runtime_parent(runtime_leaf(44), runtime_leaf(55)), runtime_leaf(66));
+  require(runtime_read(right, 44, 66), 71);
+  let p = runtime_parent(runtime_leaf(77), runtime_leaf(88));
+  let snapshot = p;
+  let changed = runtime_right(p, runtime_leaf(99));
+  require(runtime_read(snapshot, 77, 88) && runtime_read(changed, 77, 99), 72);
+  let shared = runtime_leaf(111);
+  let both = runtime_parent(shared, shared);
+  let old_both = both;
+  let kept = runtime_left(both, shared);
+  require(runtime_read(old_both, 111, 111) && runtime_read(kept, 111, 111) && shared.n == 111, 73);
+  let sibling = runtime_leaf(122);
+  let alias = runtime_right(runtime_parent(sibling, runtime_leaf(133)), sibling);
+  require(runtime_read(alias, 122, 122) && sibling.n == 122, 74);
+  let overwritten = runtime_leaf(144);
+  let same = runtime_right(runtime_parent(runtime_leaf(155), overwritten), overwritten);
+  require(runtime_read(same, 155, 144) && overwritten.n == 144, 75);
+}
+
+function main(): i32 {
+  runtime_checks();
+  target_checks("arm64-darwin");
+  target_checks("x86-64-linux");
+  target_checks("wasm32-wasi");
+  right_checks("arm64-darwin");
+  right_checks("x86-64-linux");
+  right_checks("wasm32-wasi");
+  print("guarded physical partial replacement controls passed");
+  return 0;
+}
