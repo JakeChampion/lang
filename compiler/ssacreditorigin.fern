@@ -19,19 +19,18 @@ pub function producer(f: ssa.SFunc, shape: string, references: boolean[]): Origi
     return refused(f, "unsupported allocation producer boundary");
   }
   let b = f.blocks[0];
-  if (b.id < 0 || b.id != f.entry || b.preds.len() != 0 || b.term.kind_tag != 1 || f.nvals < f.nparams || f.nvals > b.insts.len()) {
+  if (b.id < 0 || b.id != f.entry || b.preds.len() != 0 || b.term.kind_tag != 1 || f.nvals < f.nparams) {
     return refused(f, "unsupported allocation producer graph");
   }
   // Undefined=-1, scalar literal=0, fresh allocation=1, shape address=2,
   // parameter identities=3+i. Store results remain unreadable.
   let values: i32[] = [];
-  let defined: boolean[] = [];
+  // Index proof state by encountered definitions, never the external value ID.
+  // register_form can remove definitions without renumbering surviving values.
+  // Unused trailing value capacity remains outside this scoped boundary.
+  let defined: i32[] = [];
+  let last: i32 = -1;
   let i: i32 = 0;
-  while (i < f.nvals) {
-    values = values.append(-1);
-    defined = defined.append(false);
-    i = i + 1;
-  }
   let params: boolean[] = [];
   let fields: boolean[] = [];
   let credits: i32[] = [];
@@ -43,17 +42,24 @@ pub function producer(f: ssa.SFunc, shape: string, references: boolean[]): Origi
   let words = references.len() + 1;
   let allocated = false;
   let shaped = false;
-  for op in b.insts {
-    if (op.result < 0 || op.result >= f.nvals || defined[op.result]) {
+  for original in b.insts {
+    if (original.result < 0 || original.result >= f.nvals || util.index_of_i32(defined, original.result) >= 0) {
       return refused(f, "invalid allocation producer definition");
     }
     // Read before defining the result, so self references cannot gain availability.
-    for arg in op.args {
-      if (arg < 0 || arg >= values.len() || values[arg] < 0) {
+    let args: i32[] = [];
+    for arg in original.args {
+      let position = util.index_of_i32(defined, arg);
+      if (position < 0 || values[position] < 0) {
         return refused(f, "unavailable allocation producer operand");
       }
+      args = args.append(position);
     }
-    defined = defined.with(op.result, true);
+    defined = defined.append(original.result);
+    if (original.result > last) {
+      last = original.result;
+    }
+    let op = ssa.SInst { ...original, args: args };
     let kind: i32 = -1;
     if (op.kind_tag == 6 && op.args.len() == 0 && op.str == "") {
       if (op.imm < 0 || op.imm >= params.len() || params[op.imm]) {
@@ -97,7 +103,10 @@ pub function producer(f: ssa.SFunc, shape: string, references: boolean[]): Origi
     } else {
       return refused(f, "unsupported allocation producer effect");
     }
-    values = values.with(op.result, kind);
+    values = values.append(kind);
+  }
+  if (last < f.nvals - 1) {
+    return refused(f, "unsupported allocation producer graph");
   }
   if (!allocated || !shaped) {
     return refused(f, "incomplete allocation producer initialization");
@@ -109,7 +118,8 @@ pub function producer(f: ssa.SFunc, shape: string, references: boolean[]): Origi
     }
     i = i + 1;
   }
-  if (b.term.value < 0 || b.term.value >= values.len() || values[b.term.value] != 1) {
+  let returned = util.index_of_i32(defined, b.term.value);
+  if (returned < 0 || values[returned] != 1) {
     return refused(f, "fresh allocation producer return required");
   }
   return Origin { proof: helper.Proof { ok: true, function_name: f.name, message: "proved initialized allocation origin" }, words: words };
