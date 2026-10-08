@@ -12,7 +12,7 @@ import "./util";
 // 1 is an alias of the single owned consumer result. Copies create no credits.
 struct Value { kind: i32, scalar: i32 }
 
-struct State { values: Value[], called: boolean, live: boolean, error: string }
+struct State { values: Value[], called: boolean, error: string }
 
 function initial(f: ssa.SFunc): State {
   let values: Value[] = [];
@@ -21,7 +21,7 @@ function initial(f: ssa.SFunc): State {
     values = values.append(Value { kind: -1, scalar: 0 });
     index = index + 1;
   }
-  return State { values: values, called: false, live: false, error: "" };
+  return State { values: values, called: false, error: "" };
 }
 
 function call(s: State, op: ssa.SInst, block: i32, site: incoming.Site): State {
@@ -36,7 +36,7 @@ function call(s: State, op: ssa.SInst, block: i32, site: incoming.Site): State {
   }
   // The recomputed invocation consumed all pre-call local credits and returned
   // exactly one new-generation credit. Every pre-call reference stays invalid.
-  return State { ...s, values: s.values.with(op.result, Value { kind: 1, scalar: 0 }), called: true, live: true };
+  return State { ...s, values: s.values.with(op.result, Value { kind: 1, scalar: 0 }), called: true };
 }
 
 function instruction(s: State, op: ssa.SInst, b: ssa.SBlock, previous: ssa.SBlock, predecessor: State, site: incoming.Site): State {
@@ -61,7 +61,7 @@ function instruction(s: State, op: ssa.SInst, b: ssa.SBlock, previous: ssa.SBloc
 }
 
 function returned(s: State, value: i32): string {
-  if (!s.called || !s.live || s.values[value].kind != 1) {
+  if (!s.called || s.values[value].kind != 1) {
     return "continuation must return owned consumer result";
   }
   return "";
