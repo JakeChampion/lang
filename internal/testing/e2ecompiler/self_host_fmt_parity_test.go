@@ -63,6 +63,24 @@ var fmtParityCases = []struct {
 	name string
 	src  string
 }{
+	{"nested-payloadless-variants", `enum Color { Red, Black }
+enum Tree { Leaf, Node(Color, Tree, Tree) }
+
+function classify(t: Tree): i32 {
+  match (t) {
+    Node(Red(), Node(Black(), Leaf(), Leaf()), _) => { return 1; },
+    Node(Black(), _, _) => { return 2; },
+    _ => { return 3; }
+  }
+}
+
+function main(): i32 {
+  if (classify(Node(Red, Node(Black, Leaf, Leaf), Leaf)) != 1) { return 1; }
+  if (classify(Node(Red, Node(Red, Leaf, Leaf), Leaf)) != 3) { return 2; }
+  if (classify(Node(Black, Leaf, Leaf)) != 2) { return 3; }
+  return 0;
+}
+`},
 	// An owned receiver keeps its `own`: dropping it turns a consuming
 	// method into a borrowing one, which the checker then rejects at every
 	// call that hands the receiver over.

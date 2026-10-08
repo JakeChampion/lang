@@ -1,0 +1,242 @@
+// Adapted from: https://raw.githubusercontent.com/leanprover/lean4/IFL19/tests/bench/deriv.ml
+// Port of Koka test/bench/koka/deriv.kk at 9c55695dd2f7d4db8d93011693d37295e2b76c53.
+// Copyright Microsoft Research and Daan Leijen. Apache-2.0.
+// The audited ten-derivative workload fits i64; this is not an unbounded integer API.
+pub enum Expr { Val(i64), Var(string), Add(Expr, Expr), Mul(Expr, Expr), Pow(Expr, Expr), Ln(Expr) }
+
+function pown(a: i64, b: i64): i64 {
+  if (b == 0i64) {
+    return 1i64;
+  }
+  if (a == 0i64 || a == 1i64) {
+    return a;
+  }
+  if (a == -1i64) {
+    if (b % 2i64 == 0i64) {
+      return 1i64;
+    }
+    return -1i64;
+  }
+  if (b < 0i64) {
+    return 0i64;
+  }
+  let result: i64 = 1i64;
+  while (b > 0i64) {
+    if (b % 2i64 != 0i64) {
+      result = result * a;
+      b = b - 1i64;
+    }
+    if (b > 0i64) {
+      b = b / 2i64;
+      a = a * a;
+    }
+  }
+  return result;
+}
+
+pub function add(left: Expr, right: Expr): Expr {
+  match (left) {
+    Val(n) => {
+      match (right) {
+        Val(m) => {
+          return Val(n + m);
+        },
+        _ => {}
+      }
+      if (n == 0i64) {
+        return right;
+      }
+    },
+    _ => {}
+  }
+  match (right) {
+    Val(m) => {
+      if (m == 0i64) {
+        return left;
+      }
+      return add(Val(m), left);
+    },
+    Add(Val(m), f) => {
+      match (left) {
+        Val(n) => {
+          return add(Val(n + m), f);
+        },
+        _ => {}
+      }
+      return add(Val(m), add(left, f));
+    },
+    _ => {}
+  }
+  match (left) {
+    Add(f, g) => {
+      return add(f, add(g, right));
+    },
+    _ => {}
+  }
+  return Add(left, right);
+}
+
+pub function mul(left: Expr, right: Expr): Expr {
+  match (left) {
+    Val(n) => {
+      match (right) {
+        Val(m) => {
+          return Val(n * m);
+        },
+        _ => {}
+      }
+      if (n == 0i64) {
+        return Val(0i64);
+      }
+    },
+    _ => {}
+  }
+  match (right) {
+    Val(m) => {
+      if (m == 0i64) {
+        return Val(0i64);
+      }
+    },
+    _ => {}
+  }
+  match (left) {
+    Val(n) => {
+      if (n == 1i64) {
+        return right;
+      }
+    },
+    _ => {}
+  }
+  match (right) {
+    Val(m) => {
+      if (m == 1i64) {
+        return left;
+      }
+      return mul(Val(m), left);
+    },
+    Mul(Val(m), f) => {
+      match (left) {
+        Val(n) => {
+          return mul(Val(n * m), f);
+        },
+        _ => {}
+      }
+      return mul(Val(m), mul(left, f));
+    },
+    _ => {}
+  }
+  match (left) {
+    Mul(f, g) => {
+      return mul(f, mul(g, right));
+    },
+    _ => {}
+  }
+  return Mul(left, right);
+}
+
+pub function powr(left: Expr, right: Expr): Expr {
+  match (left) {
+    Val(m) => {
+      match (right) {
+        Val(n) => {
+          return Val(pown(m, n));
+        },
+        _ => {}
+      }
+    },
+    _ => {}
+  }
+  match (right) {
+    Val(n) => {
+      if (n == 0i64) {
+        return Val(1i64);
+      }
+      if (n == 1i64) {
+        return left;
+      }
+    },
+    _ => {}
+  }
+  match (left) {
+    Val(m) => {
+      if (m == 0i64) {
+        return Val(0i64);
+      }
+    },
+    _ => {}
+  }
+  return Pow(left, right);
+}
+
+pub function ln(e: Expr): Expr {
+  match (e) {
+    Val(n) => {
+      if (n == 1i64) {
+        return Val(0i64);
+      }
+    },
+    _ => {}
+  }
+  return Ln(e);
+}
+
+pub function d(x: string, e: Expr): Expr {
+  match (e) {
+    Val(_) => {
+      return Val(0i64);
+    },
+    Var(y) => {
+      if (x == y) {
+        return Val(1i64);
+      }
+      return Val(0i64);
+    },
+    Add(f, g) => {
+      return add(d(x, f), d(x, g));
+    },
+    Mul(f, g) => {
+      return add(mul(f, d(x, g)), mul(g, d(x, f)));
+    },
+    Pow(f, g) => {
+      return mul(powr(f, g), add(mul(mul(g, d(x, f)), powr(f, Val(-1i64))), mul(ln(f), d(x, g))));
+    },
+    Ln(f) => {
+      return mul(d(x, f), powr(f, Val(-1i64)));
+    }
+  }
+}
+
+pub function count(e: Expr): i64 {
+  match (e) {
+    Val(_) => {
+      return 1i64;
+    },
+    Var(_) => {
+      return 1i64;
+    },
+    Add(f, g) => {
+      return count(f) + count(g);
+    },
+    Mul(f, g) => {
+      return count(f) + count(g);
+    },
+    Pow(f, g) => {
+      return count(f) + count(g);
+    },
+    Ln(f) => {
+      return count(f);
+    }
+  }
+}
+
+function nest_aux(s: i32, f: (i32, Expr) => Expr, n: i32, e: Expr): Expr {
+  if (n == 0) {
+    return e;
+  }
+  let next: Expr = f(s - n, e);
+  return nest_aux(s, f, n - 1, next);
+}
+
+pub function nest(f: (i32, Expr) => Expr, n: i32, e: Expr): Expr {
+  return nest_aux(n, f, n, e);
+}

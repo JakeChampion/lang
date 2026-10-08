@@ -1,0 +1,69 @@
+// Port of Koka test/bench/koka/nqueens.kk at 9c55695dd2f7d4db8d93011693d37295e2b76c53.
+// Copyright Microsoft Research and Daan Leijen. Apache-2.0.
+pub enum Positions {
+  NoPositions,
+  Position(i32, Positions),
+}
+
+pub enum Solutions {
+  NoSolutions,
+  Solution(Positions, Solutions),
+}
+
+pub function safe(queen: i32, diagonal: i32, xs: Positions): boolean {
+  match (xs) {
+    NoPositions => {
+      return true;
+    },
+    Position(q, qs) => {
+      return queen != q && queen != q + diagonal && queen != q - diagonal && safe(queen, diagonal + 1, qs);
+    }
+  }
+}
+
+function append_safe(queen: i32, xs: Positions, xss: Solutions): Solutions {
+  if (queen <= 0) {
+    return xss;
+  }
+  if (safe(queen, 1, xs)) {
+    return append_safe(queen - 1, xs, Solution(Position(queen, xs), xss));
+  }
+  return append_safe(queen - 1, xs, xss);
+}
+
+function extend(queen: i32, acc: Solutions, xss: Solutions): Solutions {
+  match (xss) {
+    NoSolutions => {
+      return acc;
+    },
+    Solution(xs, rest) => {
+      return extend(queen, append_safe(queen, xs, acc), rest);
+    }
+  }
+}
+
+pub function find_solutions(n: i32, queen: i32): Solutions {
+  if (queen == 0) {
+    return Solution(NoPositions, NoSolutions);
+  }
+  return extend(n, NoSolutions, find_solutions(n, queen - 1));
+}
+
+pub function length(xs: Solutions): i32 {
+  let count: i32 = 0;
+  while (true) {
+    match (xs) {
+      NoSolutions => {
+        return count;
+      },
+      Solution(_, rest) => {
+        count = count + 1;
+        xs = rest;
+      }
+    }
+  }
+}
+
+pub function queens(n: i32): i32 {
+  return length(find_solutions(n, n));
+}

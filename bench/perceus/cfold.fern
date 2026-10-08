@@ -1,0 +1,129 @@
+// Adapted from https://github.com/leanprover/lean4/blob/IFL19/tests/bench/const_fold.hs
+// Port of Koka test/bench/koka/cfold.kk at 9c55695dd2f7d4db8d93011693d37295e2b76c53.
+// Copyright Microsoft Research and Daan Leijen. Apache-2.0.
+pub enum Expr { Var(i64), Val(i64), Add(Expr, Expr), Mul(Expr, Expr) }
+
+pub function mk_expr(n: i32, v: i64): Expr {
+  if (n == 0) {
+    if (v == 0i64) {
+      return Var(1i64);
+    }
+    return Val(v);
+  }
+  let previous: i64 = v - 1i64;
+  if (previous < 0i64) {
+    previous = 0i64;
+  }
+  return Add(mk_expr(n - 1, v + 1i64), mk_expr(n - 1, previous));
+}
+
+function append_add(e0: Expr, e3: Expr): Expr {
+  match (e0) {
+    Add(e1, e2) => {
+      return Add(e1, append_add(e2, e3));
+    },
+    _ => {
+      return Add(e0, e3);
+    }
+  }
+}
+
+function append_mul(e0: Expr, e3: Expr): Expr {
+  match (e0) {
+    Mul(e1, e2) => {
+      return Mul(e1, append_mul(e2, e3));
+    },
+    _ => {
+      return Mul(e0, e3);
+    }
+  }
+}
+
+pub function reassoc(e: Expr): Expr {
+  match (e) {
+    Add(e1, e2) => {
+      return append_add(reassoc(e1), reassoc(e2));
+    },
+    Mul(e1, e2) => {
+      return append_mul(reassoc(e1), reassoc(e2));
+    },
+    _ => {
+      return e;
+    }
+  }
+}
+
+pub function cfold(e: Expr): Expr {
+  match (e) {
+    Add(e1, e2) => {
+      let left: Expr = cfold(e1);
+      let right: Expr = cfold(e2);
+      match (left) {
+        Val(a) => {
+          match (right) {
+            Val(b) => {
+              return Val(a + b);
+            },
+            Add(f, Val(b)) => {
+              return Add(Val(a + b), f);
+            },
+            Add(Val(b), f) => {
+              return Add(Val(a + b), f);
+            },
+            _ => {
+              return Add(left, right);
+            }
+          }
+        },
+        _ => {
+          return Add(left, right);
+        }
+      }
+    },
+    Mul(e1, e2) => {
+      let left: Expr = cfold(e1);
+      let right: Expr = cfold(e2);
+      match (left) {
+        Val(a) => {
+          match (right) {
+            Val(b) => {
+              return Val(a * b);
+            },
+            Mul(f, Val(b)) => {
+              return Mul(Val(a * b), f);
+            },
+            Mul(Val(b), f) => {
+              return Mul(Val(a * b), f);
+            },
+            _ => {
+              return Mul(left, right);
+            }
+          }
+        },
+        _ => {
+          return Mul(left, right);
+        }
+      }
+    },
+    _ => {
+      return e;
+    }
+  }
+}
+
+pub function eval(e: Expr): i64 {
+  match (e) {
+    Var(_) => {
+      return 0i64;
+    },
+    Val(v) => {
+      return v;
+    },
+    Add(l, r) => {
+      return eval(l) + eval(r);
+    },
+    Mul(l, r) => {
+      return eval(l) * eval(r);
+    }
+  }
+}
