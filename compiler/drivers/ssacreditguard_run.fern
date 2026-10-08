@@ -1,0 +1,128 @@
+import "../ssacreditguard" as guard;
+
+function must(r: guard.Built): guard.Built {
+  if (r.error != "") {
+    print(r.error);
+    exit(1);
+  }
+  return r;
+}
+
+function require(ok: boolean, id: i32): void {
+  if (!ok) {
+    exit(id);
+  }
+}
+
+function main(): i32 {
+  let p = must(guard.predicate(guard.empty(), 17));
+  let q = must(guard.predicate(p.arena, 3));
+  let r = must(guard.predicate(q.arena, 2147483647));
+  let one = must(guard.constant(r.arena, 1));
+  let zero = must(guard.constant(one.arena, 0));
+  let pq = must(guard.combine(zero.arena, 0, p.id, q.id));
+  let sum = must(guard.combine(pq.arena, 0, pq.id, r.id));
+  let qr = must(guard.combine(sum.arena, 0, q.id, r.id));
+  let associated = must(guard.combine(qr.arena, 0, p.id, qr.id));
+  require(associated.id == sum.id, 2);
+  let diff = must(guard.combine(associated.arena, 1, p.id, q.id));
+  let eq = must(guard.combine(diff.arena, 2, p.id, q.id));
+  let less = must(guard.combine(eq.arena, 3, p.id, q.id));
+  // Independent complete truth table for three deliberately unordered IDs.
+  let mask: i32 = 0;
+  while (mask < 8) {
+    let pv: i32 = mask & 1;
+    let qv: i32 = mask >> 1 & 1;
+    let rv: i32 = mask >> 2 & 1;
+    let values: boolean[] = [pv != 0, qv != 0, rv != 0];
+    let total = guard.evaluate(less.arena, sum.id, [17, 3, 2147483647], values);
+    let delta = guard.evaluate(less.arena, diff.id, [17, 3, 2147483647], values);
+    let equal = guard.evaluate(less.arena, eq.id, [17, 3, 2147483647], values);
+    let lt = guard.evaluate(less.arena, less.id, [17, 3, 2147483647], values);
+    require(total.ok && total.value == pv + qv + rv, 3);
+    require(delta.ok && delta.value == pv - qv, 4);
+    require(equal.ok && equal.value == 1 == (pv == qv), 5);
+    require(lt.ok && lt.value == 1 == pv < qv, 6);
+    mask = mask + 1;
+  }
+  // Extraction equation from the captured physical graph: uniqueness p
+  // transfers one contained credit; !p acquires one with a retain. Both must
+  // yield exactly one. This tests the algebra, not the containment adapter.
+  let shared = must(guard.combine(less.arena, 1, one.id, p.id));
+  let acquired = must(guard.combine(shared.arena, 0, p.id, shared.id));
+  require(guard.is_constant(acquired.arena, acquired.id, 1), 7);
+  require(!guard.is_constant(acquired.arena, p.id, 1), 8);  // missing shared retain
+  require(!guard.is_constant(acquired.arena, shared.id, 1), 9);  // missing unique transfer
+  let wrong = must(guard.combine(acquired.arena, 0, p.id, q.id));
+  require(!guard.is_constant(wrong.arena, wrong.id, 1), 10);
+  let doubled = must(guard.combine(wrong.arena, 0, acquired.id, shared.id));
+  require(!guard.is_constant(doubled.arena, doubled.id, 1), 11);
+  let consumed = must(guard.combine(doubled.arena, 1, acquired.id, one.id));
+  require(guard.is_constant(consumed.arena, consumed.id, 0), 12);
+  let extra_drop = must(guard.combine(consumed.arena, 1, consumed.id, p.id));
+  let negative = must(guard.combine(extra_drop.arena, 3, extra_drop.id, zero.id));
+  require(negative.id == p.id, 13);
+  // Repetition shares canonical nodes and memoized operations. Old immutable
+  // arena snapshots still evaluate their existing handles exactly.
+  let repeated = must(guard.combine(negative.arena, 0, p.id, shared.id));
+  require(repeated.id == acquired.id && guard.node_count(repeated.arena) == guard.node_count(negative.arena), 14);
+  let original = guard.evaluate(p.arena, p.id, [17], [true]);
+  require(original.ok && original.value == 1 && guard.node_count(p.arena) == 3, 15);
+  require(!guard.evaluate(p.arena, p.id, [], []).ok, 16);
+  require(!guard.evaluate(p.arena, p.id, [17, 17], [true, false]).ok, 17);
+  require(!guard.evaluate(p.arena, 99, [17], [true]).ok, 18);
+  require(guard.predicate(p.arena, -1).error != "", 19);
+  require(guard.combine(p.arena, 5, 0, 1).error != "", 20);
+  require(guard.combine(p.arena, 0, -1, 1).error != "", 21);
+  let max = must(guard.constant(repeated.arena, 2147483647));
+  require(guard.combine(max.arena, 0, max.id, one.id).error != "", 22);
+  let min = must(guard.constant(max.arena, -2147483648));
+  require(guard.combine(min.arena, 1, min.id, one.id).error != "", 23);
+  // Selection is correlated with the same predicate identities across joins.
+  // Extreme alternatives cannot be implemented as false + p*(true-false).
+  let extremes = must(guard.select(min.arena, p.id, max.id, min.id));
+  let nested = must(guard.select(extremes.arena, q.id, extremes.id, diff.id));
+  let feasible = must(guard.combine(nested.arena, 4, p.id, q.id));
+  let obligation = must(guard.combine(feasible.arena, 4, feasible.id, shared.id));
+  require(guard.is_constant(obligation.arena, obligation.id, 0), 24);
+  let wrong_obligation = must(guard.combine(obligation.arena, 4, feasible.id, one.id));
+  require(!guard.is_constant(wrong_obligation.arena, wrong_obligation.id, 0), 25);
+  let equal_branches = must(guard.select(wrong_obligation.arena, r.id, nested.id, nested.id));
+  require(equal_branches.id == nested.id, 26);
+  let joined = must(guard.select(equal_branches.arena, p.id, p.id, shared.id));
+  require(guard.is_constant(joined.arena, joined.id, 1), 27);
+  let false_path = must(guard.combine(joined.arena, 4, p.id, shared.id));
+  let unreachable = must(guard.combine(false_path.arena, 4, false_path.id, min.id));
+  require(guard.is_constant(unreachable.arena, unreachable.id, 0), 28);
+  let two = must(guard.constant(unreachable.arena, 2));
+  let invalid_mask = must(guard.select(two.arena, r.id, two.id, zero.id));
+  require(guard.combine(invalid_mask.arena, 4, invalid_mask.id, zero.id).error != "", 29);
+  require(guard.select(invalid_mask.arena, invalid_mask.id, one.id, one.id).error != "", 30);
+  require(guard.select(invalid_mask.arena, p.id, -1, zero.id).error != "", 31);
+  require(guard.select(invalid_mask.arena, zero.id, one.id, -1).error != "", 32);
+  let negative_mask = must(guard.constant(invalid_mask.arena, -1));
+  require(guard.combine(negative_mask.arena, 4, negative_mask.id, zero.id).error != "", 33);
+  mask = 0;
+  while (mask < 8) {
+    let pv: i32 = mask & 1;
+    let qv: i32 = mask >> 1 & 1;
+    let rv: i32 = mask >> 2 & 1;
+    let values: boolean[] = [pv != 0, qv != 0, rv != 0];
+    let expected: i32 = -2147483648;
+    if (pv != 0) {
+      expected = 2147483647;
+    }
+    let extreme_value = guard.evaluate(negative_mask.arena, extremes.id, [17, 3, 2147483647], values);
+    require(extreme_value.ok && extreme_value.value == expected, 34);
+    if (qv == 0) {
+      expected = pv - qv;
+    }
+    let nested_value = guard.evaluate(negative_mask.arena, nested.id, [17, 3, 2147483647], values);
+    let feasible_value = guard.evaluate(negative_mask.arena, feasible.id, [17, 3, 2147483647], values);
+    require(nested_value.ok && nested_value.value == expected, 35);
+    require(feasible_value.ok && feasible_value.value == pv * qv, 36);
+    mask = mask + 1;
+  }
+  print("guarded credit algebra: all controls agree");
+  return 0;
+}
