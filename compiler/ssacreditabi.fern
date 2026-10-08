@@ -16,6 +16,7 @@ import "./ssacreditscalar" as scalar_effect;
 import "./ssacreditorigin" as origin;
 import "./ssacreditoriginflow" as origin_flow;
 import "./ssacreditincoming" as incoming;
+import "./ssacreditcontinuation" as continuation;
 import "./util";
 
 struct PhysicalBindings {
@@ -440,6 +441,16 @@ function storage_assertions(sub: ircore.Sub, names: string[]): PhysicalBindings 
 // Bind the same selected incoming consumer to its independently checked storage
 // invocation. Success does not certify the wrapper's post-call continuation.
 pub function check_storage(sub: ircore.Sub, name: string, consumer: string, drop_name: string, release_name: string, assertions: string[]): helper.Proof {
+  return storage(sub, name, consumer, drop_name, release_name, assertions, false);
+}
+
+// Independently bind selected contracts and actual bodies for the complete
+// scoped wrapper. No caller-supplied proof or capacity establishes admission.
+pub function check_wrapper(sub: ircore.Sub, name: string, consumer: string, drop_name: string, release_name: string, assertions: string[]): helper.Proof {
+  return storage(sub, name, consumer, drop_name, release_name, assertions, true);
+}
+
+function storage(sub: ircore.Sub, name: string, consumer: string, drop_name: string, release_name: string, assertions: string[], wrapper_return: boolean): helper.Proof {
   let boundary = check_incoming(sub, name, consumer);
   if (!boundary.proof.ok) {
     return boundary.proof;
@@ -460,6 +471,9 @@ pub function check_storage(sub: ircore.Sub, name: string, consumer: string, drop
   let calls = storage_assertions(sub, assertions);
   if (calls.error != "") {
     return refused(consumer, calls.error);
+  }
+  if (wrapper_return) {
+    return continuation.check(wrapper.functions[0], producers.functions, physical.functions[0], physical.functions[1], physical.functions[2], semrecords.name_of(d.params[0]), semrecords.name_of(d.result), numeric.fields, calls.functions);
   }
   return reuse.check_invocations(wrapper.functions[0], producers.functions, physical.functions[0], physical.functions[1], physical.functions[2], semrecords.name_of(d.params[0]), semrecords.name_of(d.result), numeric.fields, calls.functions);
 }
