@@ -142,10 +142,113 @@ function target_checks(target: string): void {
   expect(proof.release_body(r, malformed, layout), false, d.name, 25);
 }
 
+function many_expect(p: proof.Proof, ok: boolean, name: string, why: string, id: i32): void {
+  expect(p, ok, name, id);
+  require(p.message == why, id);
+}
+
+function many_checks(target: string): void {
+  // The scalar between reference fields must not be treated as a child slot.
+  let source = "struct Leaf { n: i32 }\nstruct Parent { left: Leaf, marker: i32, right: Leaf }\n@noinline\nfunction extract(own p: Parent): Leaf { return p.left; }\nfunction main(): i32 { let p = Parent { left: Leaf { n: 7 }, marker: 9, right: Leaf { n: 8 } }; return extract(p).n; }\n";
+  let driven = semlower.driven(parser.parse_module(lexer.tokenize(source)), target);
+  let drops: irtables.LowerResult[] = [];
+  let releases: irtables.LowerResult[] = [];
+  for body in driven.sub.extra {
+    if (body.name == "__sem_drop_Parent") {
+      drops = drops.append(body);
+    }
+    if (body.name == "__sem_release_Parent") {
+      releases = releases.append(body);
+    }
+  }
+  require(drops.len() == 1 && releases.len() == 1, 30);
+  let drop = drops[0];
+  let d = lift(drop);
+  let r = lift(releases[0]);
+  let layout = proof.FlatChildren { offsets: [8, 24] };
+  many_expect(proof.drop_body_many(d, layout), true, d.name, "proved flat-child drop body", 31);
+  many_expect(proof.release_body_many(r, d, layout), true, r.name, "proved conditional parent release body", 32);
+  // Layout order and instruction storage order do not change the set of
+  // obligations. Every slot still needs its own release even if children alias.
+  expect(proof.drop_body_many(d, proof.FlatChildren { offsets: [24, 8] }), true, d.name, 33);
+  let b = d.blocks[0];
+  let ops = b.insts;
+  require(ops.len() == 7, 34);
+  let swapped = [ops[0], ops[1], ops[4], ops[5], ops[2], ops[3], ops[6]];
+  expect(proof.release_body_many(r, ssa.SFunc { ...d, blocks: [ssa.SBlock { ...b, insts: swapped }] }, layout), true, r.name, 35);
+  let layouts: proof.FlatChildren[] = [
+    proof.FlatChildren { offsets: [] }, proof.FlatChildren { offsets: [8, 8] },
+    proof.FlatChildren { offsets: [0, 24] }, proof.FlatChildren { offsets: [8, 23] },
+  ];
+  for bad in layouts {
+    many_expect(proof.release_body_many(r, d, bad), false, d.name, "unsupported child layout", 36);
+  }
+  many_expect(proof.drop_body_many(d, proof.FlatChildren { offsets: [8] }), false, d.name, "unsupported drop effects", 37);
+  many_expect(proof.drop_body_many(d, proof.FlatChildren { offsets: [8, 16] }), false, d.name, "child slot mismatch", 38);
+  // Change actual emitted helper operations before the production lift.
+  let mutation: i32 = 0;
+  while (mutation < 5) {
+    let changed: ir.Op[] = [];
+    let calls: i32 = 0;
+    let fields: i32 = 0;
+    for op in drop.ops {
+      if (op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_dec") {
+        calls = calls + 1;
+        if (calls == 2 && mutation == 0) {
+          changed = changed.append(ir.op_call_direct("__fern_rc_is_unique", 1));
+        } else {
+          if (calls == 2 && mutation == 1) {
+            changed = changed.append(ir.op_load_local(1)).append(ir.op_call_direct("__fern_rc_dec", 1)).append(ir.op_drop());
+          }
+          changed = changed.append(op);
+        }
+      } else {
+        if (op.kind_tag == ir.kind_id("struct_get")) {
+          fields = fields + 1;
+          if (fields == 2 && mutation >= 2) {
+            let field: i32 = 0;
+            if (mutation == 3) {
+              field = 1;
+            }
+            if (mutation == 4) {
+              field = 3;
+            }
+            changed = changed.append(ir.Op { ...op, i32_imm: field });
+          } else {
+            changed = changed.append(op);
+          }
+        } else {
+          changed = changed.append(op);
+        }
+      }
+    }
+    require(calls == 2 && fields == 2, 39);
+    let why = "child slot mismatch";
+    if (mutation == 0) {
+      why = "child release mismatch";
+    }
+    if (mutation == 1) {
+      why = "unsupported drop effects";
+    }
+    many_expect(proof.release_body_many(r, lift(irtables.LowerResult { ...drop, ops: changed }), layout), false, d.name, why, 40 + mutation);
+    mutation = mutation + 1;
+  }
+  let wrong_child = ops.with(5, ssa.SInst { ...ops[5], args: [ops[2].result] });
+  many_expect(proof.drop_body_many(ssa.SFunc { ...d, blocks: [ssa.SBlock { ...b, insts: wrong_child }] }, layout), false, d.name, "child release mismatch", 45);
+  let missing = [ops[0], ops[1], ops[2], ops[3], ops[6]];
+  many_expect(proof.drop_body_many(ssa.SFunc { ...d, blocks: [ssa.SBlock { ...b, insts: missing }] }, layout), false, d.name, "unsupported drop effects", 46);
+  // The old boundary cannot silently expand to cover the extra child.
+  expect(proof.drop_body(d, proof.FlatChild { offset: 8 }), false, d.name, 47);
+  expect(proof.release_body_many(r, d, layout), true, r.name, 48);
+}
+
 function main(): i32 {
   target_checks("arm64-darwin");
   target_checks("x86-64-linux");
   target_checks("wasm32-wasi");
+  many_checks("arm64-darwin");
+  many_checks("x86-64-linux");
+  many_checks("wasm32-wasi");
   print("physical containment helper proofs: all controls agree");
   return 0;
 }

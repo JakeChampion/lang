@@ -1,4 +1,4 @@
-// Independent body proofs for the one-flat-child containment pilot. The caller
+// Independent body proofs for flat-child containment. The caller
 // supplies an audited layout, not a planner verdict. No production adapter yet.
 import "./ssa";
 import "./util";
@@ -7,6 +7,11 @@ import "./util";
 // Other slots are scalar; neither type has a user-defined finalizer. These are
 // trusted boundary facts, not inferred here or from a successful plan verdict.
 pub struct FlatChild { offset: i32 }
+
+// Every reference slot exactly once. Children may alias, but each slot owns
+// its own credit. All children are flat and neither they nor the parent have
+// finalizers. These facts must come from an independently audited layout.
+pub struct FlatChildren { offsets: i32[] }
 
 pub struct Proof { ok: boolean, function_name: string, message: string }
 
@@ -68,28 +73,45 @@ function single_pred(b: ssa.SBlock, id: i32): boolean {
 // the parent credit, and its summary requires an independently proved unique
 // parent. Null cleared slots are valid inputs to the runtime flat release.
 pub function drop_body(f: ssa.SFunc, layout: FlatChild): Proof {
-  if (layout.offset < 8 || layout.offset % 8 != 0) {
+  return drop_body_many(f, FlatChildren { offsets: [layout.offset] });
+}
+
+pub function drop_body_many(f: ssa.SFunc, layout: FlatChildren): Proof {
+  let seen: i32[] = [];
+  for offset in layout.offsets {
+    if (offset < 8 || offset % 8 != 0 || util.index_of_i32(seen, offset) >= 0) {
+      return refused(f, "unsupported child layout");
+    }
+    seen = seen.append(offset);
+  }
+  if (seen.len() == 0) {
     return refused(f, "unsupported child layout");
   }
   if (!shape(f) || f.blocks.len() != 1) {
     return refused(f, "unsupported drop graph");
   }
   let b = f.blocks[0];
-  if (b.preds.len() != 0 || b.insts.len() != 5) {
+  if (b.preds.len() != 0 || b.insts.len() < 3 || (b.insts.len() - 3) % 2 != 0 || (b.insts.len() - 3) / 2 != seen.len()) {
     return refused(f, "unsupported drop effects");
   }
   let p = b.insts[0];
-  let load = b.insts[2];
-  let dec = b.insts[3];
-  let result = b.insts[4];
+  let result = b.insts[b.insts.len() - 1];
   if (!parameter(p) || !zero(b.insts[1]) || !zero(result)) {
     return refused(f, "unsupported drop values");
   }
-  if (!unary(load, 40, p.result, "") || load.imm != layout.offset) {
-    return refused(f, "child slot mismatch");
-  }
-  if (!unary(dec, 11, load.result, "__fern_rc_dec") || dec.imm != 0) {
-    return refused(f, "child release mismatch");
+  let released: i32[] = [];
+  let i: i32 = 2;
+  while (i < b.insts.len() - 1) {
+    let load = b.insts[i];
+    let dec = b.insts[i + 1];
+    if (!unary(load, 40, p.result, "") || util.index_of_i32(seen, load.imm) < 0 || util.index_of_i32(released, load.imm) >= 0) {
+      return refused(f, "child slot mismatch");
+    }
+    if (!unary(dec, 11, load.result, "__fern_rc_dec") || dec.imm != 0) {
+      return refused(f, "child release mismatch");
+    }
+    released = released.append(load.imm);
+    i = i + 2;
   }
   if (b.term.kind_tag != 1 || b.term.value != result.result) {
     return refused(f, "drop return mismatch");
@@ -100,7 +122,11 @@ pub function drop_body(f: ssa.SFunc, layout: FlatChild): Proof {
 // Prove the named callee's body before using it. Merely naming a helper
 // __sem_release_* or __sem_drop_* is not evidence of its ownership effects.
 pub function release_body(f: ssa.SFunc, drop: ssa.SFunc, layout: FlatChild): Proof {
-  let child = drop_body(drop, layout);
+  return release_body_many(f, drop, FlatChildren { offsets: [layout.offset] });
+}
+
+pub function release_body_many(f: ssa.SFunc, drop: ssa.SFunc, layout: FlatChildren): Proof {
+  let child = drop_body_many(drop, layout);
   if (!child.ok) {
     return child;
   }
