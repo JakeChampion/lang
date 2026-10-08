@@ -38,6 +38,8 @@ import "./astwalk";
 import "./treeshake";
 import "./flatten";
 import "./modloader";
+import "./ssasem";
+import "./semrecords";
 
 // A generated release whose final operation drops the argument's counted
 // block. This body contract excludes borrowed string descriptors and special
@@ -878,6 +880,15 @@ pub struct Sub {
   // One row per produced function, its key and parameter modes: what a
   // caller's lowering reads of its callees beyond their signatures.
   contracts: string[],
+  // The exact typed ABI selected when these bodies were lowered, after
+  // inferred-or-declared selection. Cache strings above are not type facts.
+  // This shares the immutable signature list, not semantic graphs or plans.
+  // Layout and helper effects still require independent certification.
+  physical_contracts: ssasem.Contract[],
+  // Resolved declaration facts, independent of the ownership plan. Missing
+  // records are unknown, never evidence of a flat payload or absent finalizer.
+  physical_records: semrecords.Records,
+  physical_finalizers: ssasem.Finalizer[],
   // The runtime helpers' lowering, handed to the emit's state.
   rt_lower: (string) => irtables.LowerResult[],
   // The typed module the producer lambda-lifted, which a register backend's
@@ -897,7 +908,7 @@ pub struct Sub {
 
 pub function no_sub(): Sub {
   let none: parser.Module = parser.Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [], enums: [], resources: [], exports: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [], todo_sites: [] };
-  return Sub { bodies: [], extra: [], contracts: [], rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false, records: [], checked: false, switches: asmcore.env_switches() };
+  return Sub { bodies: [], extra: [], contracts: [], physical_contracts: [], physical_records: semrecords.no_records(), physical_finalizers: [], rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false, records: [], checked: false, switches: asmcore.env_switches() };
 }
 
 // The register emit's lambda-lifted module: the producer's, erased, when it

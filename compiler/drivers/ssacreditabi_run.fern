@@ -1,0 +1,1011 @@
+import "../lexer";
+import "../parser";
+import "../semlower";
+import "../ircore";
+import "../irtables";
+import "../ir";
+import "../ssasem";
+import "../semrecords";
+import "../typeinfo";
+import "../ssacreditabi" as abi;
+import "../util";
+
+function require(ok: boolean, id: i32): void {
+  if (!ok) {
+    exit(id);
+  }
+}
+
+function expect(sub: ircore.Sub, ok: boolean, reason: string, id: i32): void {
+  let p = abi.check(sub, "extract", "__sem_drop_Parent", "__sem_release_Parent");
+  if (p.ok != ok || p.function_name != "extract" || !util.contains(p.message, reason)) {
+    print(p.function_name + ": " + p.message);
+    exit(id);
+  }
+}
+
+function source(mode: i32): string {
+  if (mode >= 6) {
+    let finalizer = "";
+    if (mode == 7 || mode == 9) {
+      finalizer = "trait Drop { function drop(self: Self): void; }\nimpl[T] Drop for Leaf[T] { function drop(self: Self): void {} }\n";
+    }
+    if (mode == 9) {
+      finalizer = "trait Other { function drop(self: Self): void; }\nimpl[T] Other for Leaf[T] { function drop(self: Self): void {} }\n" + finalizer;
+    }
+    if (mode == 8) {
+      finalizer = "impl[T] Leaf[T] { function drop(self: Self): void {} }\n";
+    }
+    return "struct Leaf[T] { n: T }\nstruct Parent { child: Leaf[i32] }\n" + finalizer
+      + "@noinline\nfunction extract(own p: Parent): Leaf[i32] { return p.child; }\n"
+      + "function main(): i32 { let l: Leaf[i32] = Leaf { n: 7 }; let p = Parent { child: l }; return extract(p).n; }\n";
+  }
+  let leaf = "struct Leaf { n: i32 }\n";
+  let parent = "struct Parent { child: Leaf }\n";
+  let value = "Leaf { n: 7 }";
+  let init = "Parent { child: l }";
+  let result = "extract(p).n";
+  let finalizer = "";
+  if (mode == 1) {
+    parent = "struct Parent { tag: i32, child: Leaf }\n";
+    init = "Parent { tag: 99, child: l }";
+  }
+  if (mode == 2 || mode == 3) {
+    let name = "Leaf";
+    if (mode == 3) {
+      name = "Parent";
+    }
+    finalizer = "trait Drop { function drop(self: Self): void; }\nimpl Drop for " + name + " { function drop(self: Self): void {} }\n";
+  }
+  if (mode == 4) {
+    leaf = "struct Leaf { n: string }\n";
+    value = "Leaf { n: \"seven\" }";
+    result = "extract(p).n.len()";
+  }
+  if (mode == 5) {
+    parent = "struct Parent { child: Leaf, other: Leaf }\n";
+    init = "Parent { child: l, other: l }";
+  }
+  return leaf + parent + finalizer
+    + "@noinline\nfunction extract(own p: Parent): Leaf { return p.child; }\n"
+    + "function main(): i32 { let l = " + value + "; let p = " + init + "; return " + result + "; }\n";
+}
+
+function target_checks(target: string): void {
+  let reasons = ["", "", "user finalizer", "user finalizer", "child is not a flat", "exactly the result child", "", "user finalizer", "", "user finalizer"];
+  let mode: i32 = 0;
+  while (mode < 10) {
+    let driven = semlower.driven(parser.parse_module(lexer.tokenize(source(mode))), target);
+    expect(driven.sub, mode < 2 || mode == 6 || mode == 8, reasons[mode], 10 + mode);
+    if (mode >= 6) {
+      require(ssasem.finalizer_named(driven.sub.physical_finalizers, "Leaf__i32") != "" == (mode == 7 || mode == 9), 31);
+      if (mode == 9) {
+        require(ssasem.finalizer_named(driven.sub.physical_finalizers, "Leaf__i32") == "Leaf__i32.Drop.drop", 32);
+      }
+    }
+    if (mode == 2 || mode == 3) {
+      let name = "Leaf";
+      if (mode == 3) {
+        name = "Parent";
+      }
+      require(ssasem.finalizer_named(driven.sub.physical_finalizers, name) != "", 20);
+    }
+    if (mode == 0) {
+      let sub = driven.sub;
+      expect(ircore.Sub { ...sub, physical_records: semrecords.no_records() }, false, "missing resolved", 21);
+      expect(ircore.Sub { ...sub, physical_contracts: [] }, false, "selected ABI", 22);
+      let changed: ssasem.Contract[] = [];
+      let selected: ssasem.Contract[] = [];
+      for c in sub.physical_contracts {
+        if (c.name == "extract") {
+          selected = selected.append(c);
+          changed = changed.append(ssasem.Contract { ...c, modes: [2] });
+        } else {
+          changed = changed.append(c);
+        }
+      }
+      require(selected.len() == 1, 23);
+      expect(ircore.Sub { ...sub, physical_contracts: changed }, false, "consuming parent", 24);
+      expect(ircore.Sub { ...sub, physical_contracts: sub.physical_contracts.append(selected[0]) }, false, "ambiguous selected ABI", 25);
+      let found: irtables.LowerResult[] = [];
+      for b in sub.bodies {
+        if (b.name == "extract") {
+          found = found.append(b);
+        }
+      }
+      require(found.len() == 1, 26);
+      expect(ircore.Sub { ...sub, extra: sub.extra.append(found[0]) }, false, "ambiguous physical binding", 27);
+      expect(ircore.Sub { ...sub, extra: [] }, false, "physical binding", 28);
+      expect(sub, true, "", 29);
+      require(ircore.no_sub().physical_records.list.len() == 0 && ircore.no_sub().physical_finalizers.len() == 0, 30);
+    }
+    mode = mode + 1;
+  }
+}
+
+function expect_replace(sub: ircore.Sub, ok: boolean, reason: string, id: i32): void {
+  let p = abi.check_replace(sub, "replace", "__sem_drop_Parent", "__sem_release_Parent");
+  if (p.ok != ok || p.function_name != "replace" || !util.contains(p.message, reason)) {
+    print(p.function_name + ": " + p.message);
+    exit(id);
+  }
+}
+
+function replacement_source(mode: i32): string {
+  let leaf = "struct Leaf { n: i32 }\n";
+  let child_type = "Leaf";
+  let value = "Leaf { n: 7 }";
+  let parent = "struct Parent { child: Leaf }\n";
+  let init = "Parent { child: l }";
+  let result = "replace(p, l).child.n";
+  let finalizer = "";
+  if (mode == 1 || mode == 2) {
+    let name = "Parent";
+    if (mode == 2) {
+      name = "Leaf";
+    }
+    finalizer = "trait Drop { function drop(self: Self): void; }\nimpl Drop for " + name + " { function drop(self: Self): void {} }\n";
+  }
+  if (mode == 3) {
+    leaf = "struct Leaf { n: string }\n";
+    value = "Leaf { n: \"seven\" }";
+    result = "replace(p, l).child.n.len()";
+  }
+  if (mode == 4) {
+    parent = "struct Parent { tag: i32, child: Leaf }\n";
+    init = "Parent { tag: 9, child: l }";
+  }
+  if (mode == 5) {
+    leaf = "struct Leaf[T] { n: T }\n";
+    child_type = "Leaf[i32]";
+    parent = "struct Parent { child: Leaf[i32] }\n";
+  }
+  return leaf + parent + finalizer
+    + "@noinline\nfunction replace(own p: Parent, child: " + child_type + "): Parent { return Parent { ...p, child: child }; }\n"
+    + "function main(): i32 { let l: " + child_type + " = " + value + "; let p = " + init + "; return " + result + "; }\n";
+}
+
+function replacement_checks(target: string): void {
+  let reasons = ["", "user finalizer", "user finalizer", "child is not a flat", "exactly the incoming child", ""];
+  let mode: i32 = 0;
+  while (mode < 6) {
+    let sub = semlower.driven(parser.parse_module(lexer.tokenize(replacement_source(mode))), target).sub;
+    expect_replace(sub, mode == 0 || mode == 5, reasons[mode], 100 + mode);
+    if (mode == 0) {
+      let contracts: ssasem.Contract[] = [];
+      for c in sub.physical_contracts {
+        if (c.name == "replace") {
+          contracts = contracts.append(c);
+        }
+      }
+      require(contracts.len() == 1, 106);
+      let selected = contracts[0];
+      // Neither source spelling nor the cache string supplies the consumed
+      // child fact: assert the normal lowering's chosen contract explicitly.
+      require(selected.params.len() == 2 && selected.modes.len() == 2 && selected.modes[0] == 3 && selected.modes[1] == 3, 107);
+      expect_replace(ircore.Sub { ...sub, physical_contracts: [] }, false, "selected ABI", 108);
+      expect_replace(ircore.Sub { ...sub, physical_contracts: contracts.append(selected) }, false, "selected ABI", 109);
+      expect_replace(ircore.Sub { ...sub, physical_contracts: [ssasem.Contract { ...selected, modes: [2, 3] }] }, false, "consuming", 110);
+      expect_replace(ircore.Sub { ...sub, physical_contracts: [ssasem.Contract { ...selected, modes: [3, 2] }] }, false, "consuming", 111);
+      expect_replace(ircore.Sub { ...sub, physical_contracts: [ssasem.Contract { ...selected, result: selected.params[1] }] }, false, "parent type", 112);
+      expect_replace(ircore.Sub { ...sub, physical_records: semrecords.no_records() }, false, "record schema", 113);
+      expect_replace(ircore.Sub { ...sub, extra: [] }, false, "physical binding", 114);
+      let bodies: irtables.LowerResult[] = [];
+      let changed: irtables.LowerResult[] = [];
+      for b in sub.bodies {
+        if (b.name == "replace") {
+          bodies = bodies.append(b);
+          let ops: ir.Op[] = [];
+          let removed: i32 = 0;
+          for op in b.ops {
+            if (op.kind_tag == ir.kind_id("call_direct") && op.str == "__sem_release_Parent") {
+              removed = removed + 1;
+            } else {
+              ops = ops.append(op);
+            }
+          }
+          require(removed == 1, 115);
+          changed = changed.append(irtables.LowerResult { ...b, ops: ops });
+        } else {
+          changed = changed.append(b);
+        }
+      }
+      require(bodies.len() == 1, 116);
+      expect_replace(ircore.Sub { ...sub, extra: sub.extra.append(bodies[0]) }, false, "ambiguous physical binding", 117);
+      expect_replace(ircore.Sub { ...sub, bodies: changed }, false, "unconsumed replacement credit", 118);
+      expect_replace(sub, true, "proved fresh", 119);
+    }
+    mode = mode + 1;
+  }
+}
+
+function selected_expect(sub: ircore.Sub, name: string, field: i32, ok: boolean, reason: string, id: i32): void {
+  let p = abi.check_selected(sub, name, "__sem_drop_Parent", "__sem_release_Parent", field);
+  if (p.ok != ok || p.function_name != name || !util.contains(p.message, reason)) {
+    print(p.function_name + ": " + p.message);
+    exit(id);
+  }
+}
+
+function selected_source(mode: i32): string {
+  let other = "Leaf";
+  let declarations = "";
+  let value = "l";
+  if (mode > 0) {
+    other = "Other";
+    declarations = "struct Other { n: i32 }\n";
+    value = "Other { n: 8 }";
+  }
+  if (mode == 2) {
+    declarations = declarations + "trait Drop { function drop(self: Self): void; }\nimpl Drop for Other { function drop(self: Self): void {} }\n";
+  }
+  if (mode == 3) {
+    declarations = "struct Other { n: string }\n";
+    value = "Other { n: \"eight\" }";
+  }
+  return "struct Leaf { n: i32 }\n" + declarations
+    + "struct Parent { left: Leaf, marker: i32, right: " + other + " }\n"
+    + "@noinline\nfunction extract_left(own p: Parent): Leaf { return p.left; }\n"
+    + "@noinline\nfunction extract_right(own p: Parent): " + other + " { return p.right; }\n"
+    + "function main(): i32 { let l = Leaf { n: 7 }; let p = Parent { left: l, marker: 9, right: " + value + " }; return extract_left(p).n; }\n";
+}
+
+function selected_checks(target: string): void {
+  let mode: i32 = 0;
+  while (mode < 4) {
+    let sub = semlower.driven(parser.parse_module(lexer.tokenize(selected_source(mode))), target).sub;
+    let left_reason = "";
+    let right_reason = "";
+    if (mode == 2) {
+      left_reason = "sibling type or user finalizer";
+      right_reason = "nominal type or user finalizer";
+    }
+    if (mode == 3) {
+      left_reason = "sibling is not a flat";
+      right_reason = "child is not a flat";
+    }
+    selected_expect(sub, "extract_left", 0, mode < 2, left_reason, 130 + mode);
+    selected_expect(sub, "extract_right", 2, mode < 2, right_reason, 134 + mode);
+    if (mode == 0) {
+      selected_expect(sub, "extract_left", -1, false, "invalid selected", 138);
+      selected_expect(sub, "extract_left", 1, false, "missing or unrepresentable", 139);
+      selected_expect(sub, "extract_left", 2147483647, false, "missing or unrepresentable", 140);
+      selected_expect(sub, "extract_left", 2, false, "unsupported containment operation", 141);
+      let mutation: i32 = 0;
+      while (mutation < 4) {
+        let bodies: irtables.LowerResult[] = [];
+        let hits: i32 = 0;
+        for b in sub.bodies {
+          if (b.name == "extract_left") {
+            let ops: ir.Op[] = [];
+            for op in b.ops {
+              if (mutation == 0 && op.kind_tag == ir.kind_id("struct_set")) {
+                ops = ops.append(ir.op_drop()).append(ir.op_drop());
+                hits = hits + 1;
+              } else if (mutation == 1 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_inc") {
+                hits = hits + 1;
+              } else if (mutation == 2 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__sem_release_Parent") {
+                ops = ops.append(ir.op_load_local(0)).append(op).append(ir.op_drop()).append(op);
+                hits = hits + 1;
+              } else if (mutation == 3 && op.kind_tag == ir.kind_id("struct_set")) {
+                ops = ops.append(ir.Op { ...op, i32_imm: 2 });
+                hits = hits + 1;
+              } else {
+                ops = ops.append(op);
+              }
+            }
+            bodies = bodies.append(irtables.LowerResult { ...b, ops: ops });
+          } else {
+            bodies = bodies.append(b);
+          }
+        }
+        require(hits == 1, 142);
+        let reason = "return without child credit";
+        if (mutation == 2) {
+          reason = "parent used after release";
+        }
+        if (mutation == 3) {
+          reason = "unsupported containment operation";
+        }
+        selected_expect(ircore.Sub { ...sub, bodies: bodies }, "extract_left", 0, false, reason, 143 + mutation);
+        mutation = mutation + 1;
+      }
+      // A sibling's dropped credit matters even when only the left child is
+      // returned. Corrupt the actual second child release in the helper.
+      let extra: irtables.LowerResult[] = [];
+      let releases: i32 = 0;
+      for b in sub.extra {
+        if (b.name == "__sem_drop_Parent") {
+          let ops: ir.Op[] = [];
+          for op in b.ops {
+            if (op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_dec") {
+              releases = releases + 1;
+              if (releases == 2) {
+                ops = ops.append(ir.op_call_direct("__fern_rc_is_unique", 1));
+              } else {
+                ops = ops.append(op);
+              }
+            } else {
+              ops = ops.append(op);
+            }
+          }
+          extra = extra.append(irtables.LowerResult { ...b, ops: ops });
+        } else {
+          extra = extra.append(b);
+        }
+      }
+      require(releases == 2, 147);
+      let refused = abi.check_selected(ircore.Sub { ...sub, extra: extra }, "extract_left", "__sem_drop_Parent", "__sem_release_Parent", 0);
+      require(!refused.ok && refused.function_name == "__sem_drop_Parent" && refused.message == "child release mismatch", 148);
+      selected_expect(sub, "extract_left", 0, true, "proved guarded", 149);
+    }
+    if (mode == 1) {
+      selected_expect(sub, "extract_left", 2, false, "selected child type differs", 150);
+      let kept: semrecords.Record[] = [];
+      let viewed: semrecords.Record[] = [];
+      let found: i32 = 0;
+      for record in sub.physical_records.list {
+        if (semrecords.name_of(record.ty) == "Other") {
+          viewed = viewed.append(semrecords.Record { ...record, views: true });
+          found = found + 1;
+        } else {
+          viewed = viewed.append(record);
+          kept = kept.append(record);
+        }
+      }
+      require(found == 1, 151);
+      selected_expect(ircore.Sub { ...sub, physical_records: semrecords.records_of(kept) }, "extract_left", 0, false, "missing resolved sibling schema", 152);
+      selected_expect(ircore.Sub { ...sub, physical_records: semrecords.records_of(viewed) }, "extract_left", 0, false, "unsupported sibling effects", 153);
+    }
+    mode = mode + 1;
+  }
+}
+
+struct RuntimeLeaf { n: i32 }
+
+struct RuntimeParent { left: RuntimeLeaf, marker: i32, right: RuntimeLeaf }
+
+@noinline
+function runtime_leaf(n: i32): RuntimeLeaf {
+  return RuntimeLeaf { n: n };
+}
+
+@noinline
+function runtime_parent(left: RuntimeLeaf, right: RuntimeLeaf): RuntimeParent {
+  return RuntimeParent { left: left, marker: 99, right: right };
+}
+
+@noinline
+function runtime_left(own p: RuntimeParent): RuntimeLeaf {
+  return p.left;
+}
+
+@noinline
+function runtime_right(own p: RuntimeParent): RuntimeLeaf {
+  return p.right;
+}
+
+function runtime_checks(): void {
+  let unique_left = runtime_left(runtime_parent(runtime_leaf(11), runtime_leaf(22)));
+  require(unique_left.n == 11, 160);
+  let unique_right = runtime_right(runtime_parent(runtime_leaf(33), runtime_leaf(44)));
+  require(unique_right.n == 44, 161);
+  let shared = runtime_parent(runtime_leaf(55), runtime_leaf(66));
+  let snapshot = shared;
+  let left = runtime_left(shared);
+  require(left.n == 55 && snapshot.left.n == 55 && snapshot.right.n == 66 && snapshot.marker == 99, 162);
+  let right = runtime_right(runtime_parent(runtime_leaf(55), runtime_leaf(66)));
+  require(right.n == 66 && left.n == 55, 163);
+  let child = runtime_leaf(77);
+  let aliased = runtime_parent(child, child);
+  let old = aliased;
+  let extracted = runtime_right(aliased);
+  require(extracted.n == 77 && old.left.n == 77 && old.right.n == 77 && child.n == 77, 164);
+  let remaining = runtime_left(runtime_parent(child, child));
+  require(remaining.n == 77 && extracted.n == 77, 165);
+}
+
+function partial_expect(sub: ircore.Sub, name: string, field: i32, ok: boolean, reason: string, id: i32): void {
+  let p = abi.check_partial(sub, name, "__sem_drop_Parent", "__sem_release_Parent", field);
+  if (p.ok != ok || p.function_name != name || !util.contains(p.message, reason)) {
+    print(p.function_name + ": " + p.message);
+    exit(id);
+  }
+}
+
+function partial_source(mode: i32): string {
+  let leaf = "struct Leaf { n: i32 }\n";
+  let child = "Leaf";
+  let other = "Leaf";
+  let declarations = "";
+  let value = "l";
+  let marker = "";
+  let marker_value = "";
+  if (mode == 1) {
+    leaf = "struct Leaf[T] { n: T }\n";
+    child = "Leaf[i32]";
+    other = child;
+  }
+  if (mode >= 2 && mode <= 4) {
+    other = "Other";
+    declarations = "struct Other { n: i32 }\n";
+    value = "Other { n: 8 }";
+  }
+  if (mode == 3) {
+    declarations = declarations + "trait Drop { function drop(self: Self): void; }\nimpl Drop for Other { function drop(self: Self): void {} }\n";
+  }
+  if (mode == 4) {
+    declarations = "struct Other { n: string }\n";
+    value = "Other { n: \"eight\" }";
+  }
+  if (mode == 5 || mode == 6) {
+    let name = "Parent";
+    if (mode == 6) {
+      name = "Leaf";
+    }
+    declarations = "trait Drop { function drop(self: Self): void; }\nimpl Drop for " + name + " { function drop(self: Self): void {} }\n";
+  }
+  if (mode == 7) {
+    marker = ", marker: i32";
+    marker_value = ", marker: 9";
+  }
+  return leaf + declarations + "struct Parent { left: " + child + ", right: " + other + marker + " }\n"
+    + "@noinline\nfunction partial_left(own p: Parent, child: " + child + "): Parent { return Parent { ...p, left: child }; }\n"
+    + "@noinline\nfunction partial_right(own p: Parent, child: " + other + "): Parent { return Parent { ...p, right: child }; }\n"
+    + "function main(): i32 { let l: " + child + " = Leaf { n: 7 }; let p = Parent { left: l, right: " + value + marker_value + " }; return partial_left(p, l).left.n; }\n";
+}
+
+function partial_read(sub: ircore.Sub, name: string, field: i32, mode: i32): ircore.Sub {
+  let bodies: irtables.LowerResult[] = [];
+  let hits: i32 = 0;
+  for body in sub.bodies {
+    if (body.name == name) {
+      let ops: ir.Op[] = [];
+      for op in body.ops {
+        if (op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_dec") {
+          hits = hits + 1;
+          ops = ops.append(ir.op_store_local(body.n_locals));
+          ops = ops.append(ir.op_load_local(0)).append(ir.op_const_i32(0)).append(ir.op_struct_set(field, 0));
+          if (mode == 1) {
+            ops = ops.append(ir.op_load_local(body.n_locals)).append(op).append(ir.op_drop());
+          }
+          let index: i32 = 0;
+          if (mode == 2) {
+            index = 1;
+          }
+          ops = ops.append(ir.op_load_local(body.n_locals)).append(ir.op_struct_get(index, 0)).append(ir.op_drop());
+          if (mode == 1) {
+            ops = ops.append(ir.op_const_i32(0));
+          } else {
+            ops = ops.append(ir.op_load_local(body.n_locals)).append(op);
+          }
+        } else {
+          ops = ops.append(op);
+        }
+      }
+      bodies = bodies.append(irtables.LowerResult { ...body, ops: ops, n_locals: body.n_locals + 1 });
+    } else {
+      bodies = bodies.append(body);
+    }
+  }
+  require(hits == 1, 230);
+  return ircore.Sub { ...sub, bodies: bodies };
+}
+
+function partial_checks(target: string): void {
+  let reasons = ["", "", "", "sibling type or user finalizer", "sibling is not a flat", "nominal type or user finalizer", "nominal type or user finalizer", "exactly two child fields"];
+  let mode: i32 = 0;
+  while (mode < 8) {
+    let sub = semlower.driven(parser.parse_module(lexer.tokenize(partial_source(mode))), target).sub;
+    partial_expect(sub, "partial_left", 0, mode < 3, reasons[mode], 170 + mode);
+    if (mode < 3) {
+      partial_expect(sub, "partial_right", 1, true, "proved guarded", 180 + mode);
+      let field: i32 = 0;
+      for name in ["partial_left", "partial_right"] {
+        partial_expect(partial_read(sub, name, field, 0), name, field, true, "proved guarded", 231);
+        partial_expect(partial_read(sub, name, field, 1), name, field, false, "child used after final credit or anchor", 232);
+        partial_expect(partial_read(sub, name, field, 2), name, field, false, "missing scalar child field layout", 233);
+        field = field + 1;
+      }
+    }
+    if (mode == 0) {
+      let contracts: ssasem.Contract[] = [];
+      for c in sub.physical_contracts {
+        if (c.name == "partial_left") {
+          contracts = contracts.append(c);
+        }
+      }
+      require(contracts.len() == 1, 183);
+      let selected = contracts[0];
+      require(selected.modes.len() == 2 && selected.modes[0] == 3 && selected.modes[1] == 3, 184);
+      let wide: semrecords.Record[] = [];
+      for record in sub.physical_records.list {
+        let fields: semrecords.Field[] = [];
+        for field in record.fields {
+          let ty = field.ty;
+          if let typeinfo.TypeI32(n) = ty {
+            ty = typeinfo.TypeI32 { ...n, width: 64 };
+          }
+          fields = fields.append(semrecords.Field { ...field, ty: ty });
+        }
+        wide = wide.append(semrecords.Record { ...record, fields: fields });
+      }
+      let reading = partial_read(sub, "partial_left", 0, 0);
+      partial_expect(ircore.Sub { ...reading, physical_records: semrecords.records_of(wide) }, "partial_left", 0, false, "parent reference required", 234);
+      partial_expect(sub, "partial_left", -1, false, "invalid partial", 185);
+      partial_expect(sub, "partial_left", 2147483647, false, "invalid partial", 186);
+      partial_expect(ircore.Sub { ...sub, physical_contracts: [] }, "partial_left", 0, false, "selected ABI", 187);
+      partial_expect(ircore.Sub { ...sub, physical_contracts: contracts.append(selected) }, "partial_left", 0, false, "selected ABI", 188);
+      partial_expect(ircore.Sub { ...sub, physical_contracts: [ssasem.Contract { ...selected, modes: [2, 3] }] }, "partial_left", 0, false, "consuming", 189);
+      partial_expect(ircore.Sub { ...sub, physical_contracts: [ssasem.Contract { ...selected, modes: [3, 2] }] }, "partial_left", 0, false, "consuming", 190);
+      partial_expect(ircore.Sub { ...sub, physical_contracts: [ssasem.Contract { ...selected, result: selected.params[1] }] }, "partial_left", 0, false, "parent type", 191);
+      partial_expect(ircore.Sub { ...sub, physical_records: semrecords.no_records() }, "partial_left", 0, false, "record schema", 192);
+      partial_expect(ircore.Sub { ...sub, extra: [] }, "partial_left", 0, false, "physical binding", 193);
+      let found: irtables.LowerResult[] = [];
+      let changed: irtables.LowerResult[] = [];
+      let hits: i32 = 0;
+      for body in sub.bodies {
+        if (body.name == "partial_left") {
+          found = found.append(body);
+          let ops: ir.Op[] = [];
+          for op in body.ops {
+            if (op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_inc") {
+              hits = hits + 1;
+            } else {
+              ops = ops.append(op);
+            }
+          }
+          changed = changed.append(irtables.LowerResult { ...body, ops: ops });
+        } else {
+          changed = changed.append(body);
+        }
+      }
+      require(found.len() == 1 && hits == 1, 194);
+      partial_expect(ircore.Sub { ...sub, extra: sub.extra.append(found[0]) }, "partial_left", 0, false, "ambiguous physical binding", 195);
+      partial_expect(ircore.Sub { ...sub, bodies: changed }, "partial_left", 0, false, "slot store without local child credit", 196);
+      partial_expect(sub, "partial_left", 0, true, "proved guarded", 197);
+    }
+    if (mode == 2) {
+      partial_expect(sub, "partial_left", 1, false, "field differs from incoming", 198);
+      let kept: semrecords.Record[] = [];
+      let viewed: semrecords.Record[] = [];
+      let found: i32 = 0;
+      for record in sub.physical_records.list {
+        if (semrecords.name_of(record.ty) == "Other") {
+          viewed = viewed.append(semrecords.Record { ...record, views: true });
+          found = found + 1;
+        } else {
+          kept = kept.append(record);
+          viewed = viewed.append(record);
+        }
+      }
+      require(found == 1, 199);
+      partial_expect(ircore.Sub { ...sub, physical_records: semrecords.records_of(kept) }, "partial_left", 0, false, "missing resolved sibling", 200);
+      partial_expect(ircore.Sub { ...sub, physical_records: semrecords.records_of(viewed) }, "partial_left", 0, false, "sibling effects", 201);
+    }
+    mode = mode + 1;
+  }
+}
+
+function assertion_expect(sub: ircore.Sub, name: string, ok: boolean, reason: string, id: i32): void {
+  let p = abi.check_assertion(sub, name);
+  if (p.ok != ok || p.function_name != name || !util.contains(p.message, reason)) {
+    print(p.function_name + ": " + p.message);
+    exit(id);
+  }
+}
+
+function assertion_checks(target: string): void {
+  let source = "@noinline\nfunction assertion(ok: boolean, id: i32): void { if (!ok) { exit(id); } }\nfunction main(): i32 { assertion(true, 9); return 0; }\n";
+  let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
+  assertion_expect(sub, "assertion", true, "proved scalar", 210);
+  let contracts: ssasem.Contract[] = [];
+  let bodies: irtables.LowerResult[] = [];
+  for c in sub.physical_contracts {
+    if (c.name == "assertion") {
+      contracts = contracts.append(c);
+    }
+  }
+  for b in sub.bodies {
+    if (b.name == "assertion") {
+      bodies = bodies.append(b);
+    }
+  }
+  require(contracts.len() == 1 && bodies.len() == 1, 211);
+  let c = contracts[0];
+  let b = bodies[0];
+  assertion_expect(ircore.Sub { ...sub, physical_contracts: [] }, "assertion", false, "assertion ABI", 212);
+  assertion_expect(ircore.Sub { ...sub, physical_contracts: contracts.append(c) }, "assertion", false, "assertion ABI", 213);
+  assertion_expect(ircore.Sub { ...sub, physical_contracts: [ssasem.Contract { ...c, params: [] }] }, "assertion", false, "two scalar", 214);
+  assertion_expect(ircore.Sub { ...sub, physical_contracts: [ssasem.Contract { ...c, modes: [1, 2] }] }, "assertion", false, "two scalar", 215);
+  assertion_expect(ircore.Sub { ...sub, physical_contracts: [ssasem.Contract { ...c, result: c.params[0] }] }, "assertion", false, "void result", 216);
+  assertion_expect(ircore.Sub { ...sub, physical_contracts: [ssasem.Contract { ...c, params: [c.params[1], c.params[0]] }] }, "assertion", false, "boolean", 217);
+  let reference: typeinfo.Type = typeinfo.TypeArray { elem: c.params[1], view: false };
+  assertion_expect(ircore.Sub { ...sub, physical_contracts: [ssasem.Contract { ...c, params: [c.params[0], reference] }] }, "assertion", false, "signed i32", 218);
+  if let typeinfo.TypeI32(i) = c.params[1] {
+    let wrong: typeinfo.Type[] = [typeinfo.TypeI32 { ...i, width: 64 }, typeinfo.TypeI32 { ...i, unsigned: true }, typeinfo.TypeI32 { ...i, is_char: true }, typeinfo.TypeI32 { ...i, polymorphic: true }];
+    for t in wrong {
+      assertion_expect(ircore.Sub { ...sub, physical_contracts: [ssasem.Contract { ...c, params: [c.params[0], t] }] }, "assertion", false, "signed i32", 219);
+    }
+  } else {
+    exit(220);
+  }
+  assertion_expect(ircore.Sub { ...sub, bodies: [], extra: [] }, "assertion", false, "assertion body", 221);
+  assertion_expect(ircore.Sub { ...sub, extra: sub.extra.append(b) }, "assertion", false, "assertion body", 222);
+  assertion_expect(ircore.Sub { ...sub, bodies: [irtables.LowerResult { ...b, ok: false }], extra: [] }, "assertion", false, "assertion body", 223);
+  let ops: ir.Op[] = [];
+  let hits: i32 = 0;
+  for op in b.ops {
+    if (op.kind_tag == ir.kind_id("exit")) {
+      ops = ops.append(ir.Op { ...op, kind_tag: ir.kind_id("call_direct"), str: "unknown_effect", i32_imm: 1 });
+      hits = hits + 1;
+    } else {
+      ops = ops.append(op);
+    }
+  }
+  require(hits == 1, 224);
+  assertion_expect(ircore.Sub { ...sub, bodies: [irtables.LowerResult { ...b, ops: ops }], extra: [] }, "assertion", false, "unsupported scalar", 225);
+  assertion_expect(ircore.Sub { ...sub, physical_contracts: [ssasem.Contract { ...c, name: "renamed" }], bodies: [irtables.LowerResult { ...b, name: "renamed" }], extra: [] }, "renamed", true, "proved scalar", 226);
+  assertion_expect(sub, "assertion", true, "proved scalar", 227);
+}
+
+function caller_controls(target: string): void {
+  let text = partial_source(0) + "\n@noinline\nfunction assertion(ok: boolean, id: i32): void { if (!ok) { exit(id); } }\n";
+  let sub = semlower.driven(parser.parse_module(lexer.tokenize(text)), target).sub;
+  for field in [0, 1] {
+    let name = "partial_left";
+    if (field == 1) {
+      name = "partial_right";
+    }
+    let reasons = ["proved guarded two-child partial replacement", "scalar call may exit with unproved caller obligations", "scalar call requires Boolean operand", "scalar call requires Boolean and narrowed i32 operands", "scalar call requires Boolean and narrowed i32 operands", "scalar call may exit with unproved caller obligations", "proved guarded two-child partial replacement", "scalar call may exit with unproved caller obligations", "ambiguous scalar call binding", "unsupported reuse operation", "invalid scalar call arguments or flags", "scalar call requires Boolean and narrowed i32 operands", "scalar call may exit with unproved caller obligations", "proved guarded two-child partial replacement"];
+    let mode: i32 = 0;
+    while (mode < reasons.len()) {
+      let rows: irtables.LowerResult[] = [];
+      let hits: i32 = 0;
+      for body in sub.bodies {
+        if (body.name == name) {
+          let ops: ir.Op[] = [];
+          for op in body.ops {
+            if (op.kind_tag == ir.kind_id("return")) {
+              hits = hits + 1;
+              if (mode >= 5 && mode <= 7) {
+                ops = ops.append(ir.op_load_local(1)).append(ir.Op { ...op, kind_tag: ir.kind_id("struct_get"), i32_imm: 0 }).append(ir.op_const_i32(0)).append(ir.op_bin("gt_s", 0, false)).append(ir.op_store_local(body.n_locals));
+                if (mode >= 6) {
+                  ops = ops.append(ir.op_load_local(body.n_locals)).append(ir.op_if(0));
+                }
+                ops = ops.append(ir.op_load_local(body.n_locals));
+                if (mode == 7) {
+                  ops = ops.append(ir.op_const_i32(0)).append(ir.op_bin("eq", 0, false));
+                }
+              } else if (mode == 3) {
+                ops = ops.append(ir.op_load_local(1));
+              } else {
+                let value: i32 = 1;
+                if (mode == 1) {
+                  value = 0;
+                } else if (mode == 2) {
+                  value = 17;
+                }
+                ops = ops.append(ir.op_const_i32(value));
+              }
+              if (mode == 4) {
+                ops = ops.append(ir.op_load_local(1));
+              } else {
+                ops = ops.append(ir.op_const_i32(-2147483648));
+              }
+              let arity: i32 = 2;
+              if (mode == 10) {
+                ops = ops.append(ir.op_const_i32(7));
+                arity = 3;
+              } else if (mode == 11) {
+                ops = ops.append(ir.op_const_i32(1)).append(ir.op_bin("add", 0, false));
+              }
+              let callee = "assertion";
+              if (mode == 13) {
+                callee = "renamed_scalar";
+              }
+              ops = ops.append(ir.op_call_direct(callee, arity)).append(ir.op_drop());
+              if (mode == 6 || mode == 7) {
+                ops = ops.append(ir.op_end());
+              }
+            }
+            ops = ops.append(op);
+          }
+          rows = rows.append(irtables.LowerResult { ...body, ops: ops, n_locals: body.n_locals + 1 });
+        } else if (body.name == "assertion" && mode == 12) {
+          let ops: ir.Op[] = [];
+          for op in body.ops {
+            if (op.kind_tag == ir.kind_id("load_local") && op.i32_imm == 0) {
+              ops = ops.append(ir.op_const_i32(0));
+            } else {
+              ops = ops.append(op);
+            }
+          }
+          rows = rows.append(irtables.LowerResult { ...body, ops: ops });
+        } else if (body.name == "assertion" && mode == 13) {
+          rows = rows.append(irtables.LowerResult { ...body, name: "renamed_scalar" });
+        } else {
+          rows = rows.append(body);
+        }
+      }
+      require(hits == 1, 190);
+      let names = ["assertion"];
+      if (mode == 8) {
+        names = ["assertion", "assertion"];
+      } else if (mode == 9) {
+        names = [];
+      } else if (mode == 13) {
+        names = ["renamed_scalar"];
+      }
+      let contracts: ssasem.Contract[] = [];
+      for c in sub.physical_contracts {
+        if (mode == 13 && c.name == "assertion") {
+          contracts = contracts.append(ssasem.Contract { ...c, name: "renamed_scalar" });
+        } else {
+          contracts = contracts.append(c);
+        }
+      }
+      let p = abi.check_partial_calls(ircore.Sub { ...sub, bodies: rows, physical_contracts: contracts }, name, "__sem_drop_Parent", "__sem_release_Parent", field, names);
+      if (p.ok != (mode == 0 || mode == 6 || mode == 13) || p.function_name != name || p.message != reasons[mode]) {
+        print(p.function_name + ": " + p.message);
+        exit(191 + mode);
+      }
+      mode = mode + 1;
+    }
+    let original = abi.check_partial(sub, name, "__sem_drop_Parent", "__sem_release_Parent", field);
+    require(original.ok, 205);
+  }
+}
+
+function producer_expect(sub: ircore.Sub, name: string, words: i32, why: string, id: i32): void {
+  let p = abi.check_producer(sub, name);
+  if (p.proof.ok != words > 0 || p.words != words || p.proof.function_name != name || p.proof.message != (if (words > 0) { "proved initialized allocation origin" } else { why })) {
+    print(p.proof.function_name + ": " + p.proof.message);
+    exit(id);
+  }
+}
+
+function producer_source(mode: i32): string {
+  let leaf = "struct Leaf { n: i32 }\n";
+  let child = "Leaf";
+  let number = "i32";
+  let value = "1";
+  if (mode == 1) {
+    leaf = "struct Leaf[T] { n: T }\n";
+    child = "Leaf[i32]";
+  }
+  if (mode == 5) {
+    leaf = "struct Leaf { n: string }\n";
+    number = "string";
+    value = "\"one\"";
+  }
+  let right = child;
+  let right_param = "own right: " + child;
+  let right_value = "leaf(" + value + ")";
+  if (mode == 2) {
+    right = "i32";
+    right_param = "right: i32";
+    right_value = "2";
+  }
+  let extra = "";
+  let init_extra = "";
+  if (mode == 6) {
+    extra = ", tag: i32";
+    init_extra = ", tag: 7";
+  }
+  let finalizer = "";
+  if (mode == 3 || mode == 4) {
+    let subject = if (mode == 3) { "Parent" } else { "Leaf" };
+    finalizer = "trait Drop { function drop(self: Self): void; }\nimpl Drop for " + subject + " { function drop(self: Self): void {} }\n";
+  }
+  return leaf + "struct Parent { left: " + child + ", right: " + right + extra + " }\n" + finalizer
+    + "@noinline\nfunction leaf(n: " + number + "): " + child + " { return Leaf { n: n }; }\n"
+    + "@noinline\nfunction parent(own left: " + child + ", " + right_param + "): Parent { return Parent { left: left, right: right" + init_extra + " }; }\n"
+    + "function main(): i32 { let p = parent(leaf(" + value + "), " + right_value + "); return 0; }\n";
+}
+
+function producer_checks(target: string): void {
+  let reasons = ["", "", "", "unsupported producer result or finalizer", "unsupported producer child or finalizer", "producer child is not flat", "unsupported producer layout or ABI arity"];
+  let mode: i32 = 0;
+  for why in reasons {
+    let sub = semlower.driven(parser.parse_module(lexer.tokenize(producer_source(mode))), target).sub;
+    producer_expect(sub, "parent", if (mode < 3) { 3 } else { 0 }, why, 210 + mode);
+    if (mode < 3) {
+      producer_expect(sub, "leaf", 2, "", 218);
+    }
+    if (mode == 0) {
+      let selected: ssasem.Contract[] = [];
+      let found: irtables.LowerResult[] = [];
+      for c in sub.physical_contracts {
+        if (c.name == "parent") {
+          selected = selected.append(c);
+        }
+      }
+      for b in sub.bodies {
+        if (b.name == "parent") {
+          found = found.append(b);
+        }
+      }
+      require(selected.len() == 1 && found.len() == 1, 219);
+      let c = selected[0];
+      let body = found[0];
+      producer_expect(ircore.Sub { ...sub, physical_contracts: [] }, "parent", 0, "missing or ambiguous producer ABI", 220);
+      producer_expect(ircore.Sub { ...sub, physical_contracts: [c, c] }, "parent", 0, "missing or ambiguous producer ABI", 221);
+      for modes in [[2, 3], [3, 2], [1, 3]] {
+        producer_expect(ircore.Sub { ...sub, physical_contracts: [ssasem.Contract { ...c, modes: modes }] }, "parent", 0, "incorrect producer parameter ownership mode", 222);
+      }
+      producer_expect(ircore.Sub { ...sub, physical_contracts: [ssasem.Contract { ...c, modes: [] }] }, "parent", 0, "unsupported producer layout or ABI arity", 223);
+      producer_expect(ircore.Sub { ...sub, physical_contracts: [ssasem.Contract { ...c, params: [c.result, c.params[1]] }] }, "parent", 0, "producer parameter differs from field", 224);
+      producer_expect(ircore.Sub { ...sub, physical_records: semrecords.no_records() }, "parent", 0, "missing producer result schema", 225);
+      let kept: semrecords.Record[] = [];
+      let viewed: semrecords.Record[] = [];
+      for record in sub.physical_records.list {
+        if (semrecords.name_of(record.ty) != "Leaf") {
+          kept = kept.append(record);
+        }
+        viewed = viewed.append(semrecords.Record { ...record, views: true });
+      }
+      producer_expect(ircore.Sub { ...sub, physical_records: semrecords.records_of(kept) }, "parent", 0, "missing producer child schema", 226);
+      producer_expect(ircore.Sub { ...sub, physical_records: semrecords.records_of(viewed) }, "parent", 0, "unsupported producer layout or ABI arity", 227);
+      producer_expect(ircore.Sub { ...sub, bodies: [], extra: [] }, "parent", 0, "missing or ambiguous producer body", 228);
+      producer_expect(ircore.Sub { ...sub, extra: sub.extra.append(body) }, "parent", 0, "missing or ambiguous producer body", 229);
+      producer_expect(ircore.Sub { ...sub, bodies: [irtables.LowerResult { ...body, ok: false }], extra: [] }, "parent", 0, "unproduced producer body", 230);
+      let ops: ir.Op[] = [];
+      for op in body.ops {
+        if (op.kind_tag == ir.kind_id("return")) {
+          ops = ops.append(ir.op_call_direct("unknown", 0)).append(ir.op_drop());
+        }
+        ops = ops.append(op);
+      }
+      producer_expect(ircore.Sub { ...sub, bodies: [irtables.LowerResult { ...body, ops: ops }], extra: [] }, "parent", 0, "unsupported allocation producer effect", 231);
+      producer_expect(ircore.Sub { ...sub, physical_contracts: [ssasem.Contract { ...c, name: "renamed_producer" }], bodies: [irtables.LowerResult { ...body, name: "renamed_producer" }], extra: [] }, "renamed_producer", 3, "", 232);
+      producer_expect(sub, "parent", 3, "", 233);
+    }
+    mode = mode + 1;
+  }
+}
+
+function origin_caller_expect(sub: ircore.Sub, name: string, why: string): void {
+  let p = abi.check_origin_caller(sub, name);
+  let ok = why == "";
+  if (p.proof.ok != ok || p.words != (if (ok) { 3 } else { 0 }) || p.proof.function_name != name || p.proof.message != (if (ok) { "proved caller allocation origin" } else { why })) {
+    print(p.proof.function_name + ": " + p.proof.message);
+    exit(234);
+  }
+}
+
+function origin_caller_checks(target: string): void {
+  for generic in [false, true] {
+    let leaf = if (generic) { "struct Leaf[T] { n: T }\n" } else { "struct Leaf { n: i32 }\n" };
+    let child = if (generic) { "Leaf[i32]" } else { "Leaf" };
+    let source = leaf + "struct Parent { left: " + child + ", right: " + child + " }\n"
+      + "@noinline\nfunction parent(a: " + child + ", b: " + child + "): Parent { return Parent { left: a, right: b }; }\n"
+      + "@noinline\nfunction select_parent(flag: boolean, a: " + child + ", b: " + child + "): Parent { let p = if (flag) { parent(a,b) } else { parent(b,a) }; return p; }\n"
+      + "function main(): i32 { let l: " + child + " = Leaf { n: 7 }; let p = select_parent(true,l,l); return p.left.n; }\n";
+    let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
+    origin_caller_expect(sub, "select_parent", "");
+    for r in sub.physical_records.list {
+      origin_caller_expect(ircore.Sub { ...sub, physical_finalizers: [ssasem.Finalizer { receiver: semrecords.name_of(r.ty), symbol: "checked_selected_drop" }] }, "select_parent", "unsupported origin caller types or finalizers");
+    }
+    for boundary in [0, 1, 2, 3] {
+      let changed: semrecords.Record[] = [];
+      for r in sub.physical_records.list {
+        if (semrecords.name_of(r.ty) == "Parent") {
+          changed = changed.append(r);
+        } else if (boundary == 0) {} else if (boundary == 1) {
+          changed = changed.append(semrecords.Record { ...r, nests_func: true });
+        } else if (boundary == 2) {
+          changed = changed.append(semrecords.Record { ...r, fields: [semrecords.Field { ...r.fields[0], ty: r.ty }] });
+        } else {
+          changed = changed.append(semrecords.Record { ...r, views: true });
+        }
+      }
+      let why = ((): string => if (boundary == 0) { return "missing origin caller schema"; } else { if (boundary == 2) { return "origin caller child is not flat"; } else { return "unsupported origin caller layout"; } })();
+      origin_caller_expect(ircore.Sub { ...sub, physical_records: semrecords.records_of(changed) }, "select_parent", why);
+    }
+    let reasons = ["missing or ambiguous origin caller ABI", "missing or ambiguous origin caller ABI", "origin caller requires scalar and two consuming parameters", "unsupported origin caller types or finalizers", "unsupported origin caller types or finalizers", "missing or ambiguous origin callee ABI", "missing or ambiguous origin callee ABI", "origin callee ABI differs from caller", "origin callee ABI differs from caller", "origin callee ABI differs from caller", "missing origin caller schema", "unsupported origin caller layout", "origin caller result field differs from child", "missing or ambiguous origin caller body", "missing or ambiguous origin caller body", "missing or ambiguous origin caller body", "origin callee proof refused: missing or ambiguous producer body", "origin callee proof refused: missing or ambiguous producer body", "origin callee proof refused: unproduced producer body", "missing or ambiguous origin callee ABI", "origin callee proof refused: unsupported allocation producer effect", ""];
+    let mode: i32 = 0;
+    for why in reasons {
+      let contracts: ssasem.Contract[] = [];
+      for c in sub.physical_contracts {
+        if (c.name == "select_parent") {
+          if (mode == 0) {} else if (mode == 1) {
+            contracts = contracts.append(c).append(c);
+          } else if (mode == 2) {
+            contracts = contracts.append(ssasem.Contract { ...c, modes: [1, 2, 3] });
+          } else if (mode == 3) {
+            contracts = contracts.append(ssasem.Contract { ...c, params: [c.params[1], c.params[1], c.params[2]] });
+          } else if (mode == 4) {
+            contracts = contracts.append(ssasem.Contract { ...c, params: [c.params[0], c.result, c.params[2]] });
+          } else {
+            contracts = contracts.append(ssasem.Contract { ...c, name: if (mode == 21) { "renamed_wrapper" } else { c.name } });
+          }
+        } else if (c.name == "parent") {
+          if (mode == 5) {} else if (mode == 6) {
+            contracts = contracts.append(c).append(c);
+          } else if (mode == 7) {
+            contracts = contracts.append(ssasem.Contract { ...c, modes: [3, 2] });
+          } else if (mode == 8) {
+            contracts = contracts.append(ssasem.Contract { ...c, result: c.params[0] });
+          } else if (mode == 9) {
+            contracts = contracts.append(ssasem.Contract { ...c, params: [c.result, c.params[1]] });
+          } else {
+            contracts = contracts.append(ssasem.Contract { ...c, name: if (mode == 21) { "renamed_constructor" } else { c.name } });
+          }
+        } else {
+          contracts = contracts.append(c);
+        }
+      }
+      let records: semrecords.Record[] = [];
+      for r in sub.physical_records.list {
+        if (mode == 10) {} else if (mode == 11) {
+          records = records.append(semrecords.Record { ...r, views: true });
+        } else if (mode == 12 && semrecords.name_of(r.ty) == "Parent") {
+          records = records.append(semrecords.Record { ...r, fields: [r.fields[0], semrecords.Field { ...r.fields[1], ty: r.ty }] });
+        } else {
+          records = records.append(r);
+        }
+      }
+      let rows: irtables.LowerResult[] = [];
+      for b in util.append_all(sub.bodies, sub.extra) {
+        if (mode == 13 && b.name == "select_parent" || mode == 16 && b.name == "parent") {} else {
+          let ops: ir.Op[] = [];
+          for op in b.ops {
+            if (b.name == "parent" && mode == 20 && op.kind_tag == ir.kind_id("return")) {
+              ops = ops.append(ir.op_call_direct("unknown", 0)).append(ir.op_drop());
+            }
+            if (b.name == "select_parent" && op.kind_tag == ir.kind_id("call_direct") && op.str == "parent" && (mode == 19 || mode == 21)) {
+              ops = ops.append(ir.Op { ...op, str: if (mode == 19) { "unbound" } else { "renamed_constructor" } });
+            } else {
+              ops = ops.append(op);
+            }
+          }
+          let name = b.name;
+          if (mode == 21 && name == "select_parent") {
+            name = "renamed_wrapper";
+          }
+          if (mode == 21 && name == "parent") {
+            name = "renamed_constructor";
+          }
+          rows = rows.append(irtables.LowerResult { ...b, name: name, ops: ops, ok: b.ok && !(mode == 15 && b.name == "select_parent" || mode == 18 && b.name == "parent") });
+          if (mode == 14 && b.name == "select_parent" || mode == 17 && b.name == "parent") {
+            rows = rows.append(b);
+          }
+        }
+      }
+      origin_caller_expect(ircore.Sub { ...sub, physical_contracts: contracts, physical_records: semrecords.records_of(records), bodies: rows, extra: [] }, if (mode == 21) { "renamed_wrapper" } else { "select_parent" }, why);
+      mode = mode + 1;
+    }
+    origin_caller_expect(sub, "select_parent", "");
+  }
+}
+
+function main(): i32 {
+  origin_caller_checks("arm64-darwin");
+  origin_caller_checks("x86-64-linux");
+  origin_caller_checks("wasm32-wasi");
+  producer_checks("arm64-darwin");
+  producer_checks("x86-64-linux");
+  producer_checks("wasm32-wasi");
+  caller_controls("arm64-darwin");
+  caller_controls("x86-64-linux");
+  caller_controls("wasm32-wasi");
+  assertion_checks("arm64-darwin");
+  assertion_checks("x86-64-linux");
+  assertion_checks("wasm32-wasi");
+  runtime_checks();
+  target_checks("arm64-darwin");
+  target_checks("x86-64-linux");
+  target_checks("wasm32-wasi");
+  replacement_checks("arm64-darwin");
+  replacement_checks("x86-64-linux");
+  replacement_checks("wasm32-wasi");
+  selected_checks("arm64-darwin");
+  selected_checks("x86-64-linux");
+  selected_checks("wasm32-wasi");
+  partial_checks("arm64-darwin");
+  partial_checks("x86-64-linux");
+  partial_checks("wasm32-wasi");
+  print("typed physical containment: layouts, finalizers and replacement ABI checked");
+  return 0;
+}
