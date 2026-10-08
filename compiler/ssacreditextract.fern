@@ -1,0 +1,353 @@
+// Guarded containment pilot over actual physical SSA. One owned parent with
+// a selected flat child slot, no allocations, parent retains, phis or cycles.
+// Sibling slot releases are discharged by the independently checked helper.
+// No compile gate.
+import "./ssa";
+import "./ssacreditguard" as guard;
+import "./ssacredithelper" as helper;
+import "./util";
+
+struct Value { kind: i32, number: i32, available: i32 }
+
+struct State { path: i32, parent: i32, child: i32, slot: i32 }
+
+struct Context { arena: guard.Arena, values: Value[], state: State, unique: i32, temp: i32, error: string }
+
+function failed(c: Context, why: string): Context {
+  if (c.error != "") {
+    return c;
+  }
+  return Context { ...c, error: why };
+}
+
+function calc(c: Context, op: i32, a: i32, b: i32): Context {
+  if (c.error != "") {
+    return c;
+  }
+  let out = guard.combine(c.arena, op, a, b);
+  return Context { ...c, arena: out.arena, temp: out.id, error: out.error };
+}
+
+function equal(c: Context, path: i32, a: i32, b: i32, why: string): Context {
+  let out = calc(c, 2, a, b);
+  out = calc(out, 1, 1, out.temp);
+  out = calc(out, 4, path, out.temp);
+  if (out.error == "" && !guard.is_constant(out.arena, out.temp, 0)) {
+    return failed(out, why);
+  }
+  return out;
+}
+
+function positive(c: Context, number: i32, why: string): Context {
+  let out = calc(c, 3, 0, number);
+  return equal(out, out.state.path, out.temp, 1, why);
+}
+
+function available(c: Context, id: i32): Context {
+  if (id < 0 || id >= c.values.len() || c.values[id].kind < 0) {
+    return failed(c, "undefined physical operand");
+  }
+  return equal(c, c.state.path, c.values[id].available, 1, "unavailable physical operand");
+}
+
+function live(c: Context, kind: i32): Context {
+  if (kind == 1) {
+    return positive(c, c.state.parent, "parent used after release");
+  }
+  if (kind == 2) {
+    let out = calc(c, 0, c.state.child, c.state.slot);
+    return positive(out, out.temp, "child used after final anchor");
+  }
+  return failed(c, "reference provenance required");
+}
+
+function transfer(c: Context, op: ssa.SInst, offset: i32, release: string): Context {
+  let out = c;
+  for arg in op.args {
+    out = available(out, arg);
+  }
+  if (out.error != "") {
+    return out;
+  }
+  let kind: i32 = 0;
+  let number: i32 = 0;
+  if (op.kind_tag == 6 && op.imm == 0 && op.args.len() == 0) {
+    kind = 1;
+  } else if (op.kind_tag == 1 && op.args.len() == 0) {
+    let constant = guard.constant(out.arena, op.imm);
+    out = Context { ...out, arena: constant.arena };
+    number = constant.id;
+  } else if (op.kind_tag == 7 && op.args.len() == 1) {
+    kind = out.values[op.args[0]].kind;
+    number = out.values[op.args[0]].number;
+    if (kind != 0) {
+      out = live(out, kind);
+    }
+  } else if (op.kind_tag == 40 && op.args.len() == 1 && op.imm == offset && out.values[op.args[0]].kind == 1) {
+    out = live(out, 1);
+    out = equal(out, out.state.path, out.state.slot, 1, "load from cleared child slot");
+    kind = 2;
+  } else if (op.kind_tag == 41 && op.args.len() == 2 && op.imm == offset && out.values[op.args[0]].kind == 1 && out.values[op.args[1]].kind == 0) {
+    // Physical stores have no readable result. Do not invent a scalar zero
+    // that a later condition could use to discard a feasible bad path.
+    kind = -1;
+    out = live(out, 1);
+    out = equal(out, out.state.path, out.values[op.args[1]].number, 0, "only child-slot clearing admitted");
+    out = equal(out, out.state.path, out.unique, 1, "clearing a shared parent");
+    out = equal(out, out.state.path, out.state.slot, 1, "duplicate child-slot transfer");
+    out = calc(out, 0, out.state.child, out.state.path);
+    out = Context { ...out, state: State { ...out.state, child: out.temp } };
+    out = calc(out, 1, out.state.slot, out.state.path);
+    out = Context { ...out, state: State { ...out.state, slot: out.temp } };
+  } else if (op.kind_tag == 9 && op.str == "eq" && op.args.len() == 2 && out.values[op.args[0]].kind == 0 && out.values[op.args[1]].kind == 0) {
+    out = calc(out, 2, out.values[op.args[0]].number, out.values[op.args[1]].number);
+    number = out.temp;
+  } else if (op.kind_tag == 11 && op.args.len() == 1) {
+    let subject = out.values[op.args[0]].kind;
+    out = live(out, subject);
+    if (op.str == "__fern_rc_is_unique" && subject == 1) {
+      // No admitted effect changes the parent's count except consuming its
+      // final local credit. Liveness rejects any subsequent use on that path.
+      number = out.unique;
+    } else if (op.str == "__fern_rc_inc" && subject == 2) {
+      kind = 2;
+      out = calc(out, 0, out.state.child, out.state.path);
+      out = Context { ...out, state: State { ...out.state, child: out.temp } };
+    } else if (op.str == "__fern_rc_dec" && subject == 2) {
+      kind = 2;
+      out = positive(out, out.state.child, "child release without local credit");
+      out = calc(out, 1, out.state.child, out.state.path);
+      out = Context { ...out, state: State { ...out.state, child: out.temp } };
+    } else if (op.str == release && subject == 1) {
+      out = calc(out, 1, out.state.parent, out.state.path);
+      out = Context { ...out, state: State { ...out.state, parent: out.temp } };
+      out = calc(out, 4, out.state.path, out.unique);
+      out = calc(out, 4, out.temp, out.state.slot);
+      out = calc(out, 1, out.state.slot, out.temp);
+      out = Context { ...out, state: State { ...out.state, slot: out.temp } };
+    } else {
+      return failed(out, "unsupported containment call");
+    }
+  } else {
+    return failed(out, "unsupported containment operation");
+  }
+  if (out.error != "") {
+    return out;
+  }
+  return Context { ...out, values: out.values.with(op.result, Value { kind: kind, number: number, available: out.state.path }) };
+}
+
+function at(f: ssa.SFunc, id: i32): i32 {
+  let i: i32 = 0;
+  for b in f.blocks {
+    if (b.id == id) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return -1;
+}
+
+function edge(t: ssa.STerm, id: i32): boolean {
+  return t.kind_tag == 2 && t.target == id || t.kind_tag == 3 && (t.t == id || t.f == id);
+}
+
+function input_error(f: ssa.SFunc): string {
+  let count: i32 = 0;
+  for b in f.blocks {
+    count = count + b.insts.len();
+  }
+  if (f.nparams != 1 || f.takes_env || f.nvals < 1 || f.nvals > count || at(f, f.entry) < 0) {
+    return "invalid extraction boundary";
+  }
+  let ids: i32[] = [];
+  let definitions: i32[] = [];
+  let parameters: i32 = 0;
+  for b in f.blocks {
+    if (b.id < 0 || util.index_of_i32(ids, b.id) >= 0) {
+      return "invalid block identity";
+    }
+    ids = ids.append(b.id);
+    if (b.id == f.entry && b.preds.len() != 0) {
+      return "entry predecessor";
+    }
+    for op in b.insts {
+      if (op.result < 0 || op.result >= f.nvals || util.index_of_i32(definitions, op.result) >= 0) {
+        return "invalid value identity";
+      }
+      definitions = definitions.append(op.result);
+      if (op.kind_tag == 6) {
+        parameters = parameters + 1;
+        if (b.id != f.entry) {
+          return "non-entry parameter";
+        }
+      }
+    }
+    let seen: i32[] = [];
+    for p in b.preds {
+      let pi = at(f, p);
+      if (pi < 0 || util.index_of_i32(seen, p) >= 0 || !edge(f.blocks[pi].term, b.id)) {
+        return "invalid predecessor";
+      }
+      seen = seen.append(p);
+    }
+    if (b.term.kind_tag < 1 || b.term.kind_tag > 3) {
+      return "unsupported containment terminator";
+    }
+    let targets: i32[] = [];
+    if (b.term.kind_tag == 2) {
+      targets = [b.term.target];
+    }
+    if (b.term.kind_tag == 3) {
+      if (b.term.t == b.term.f) {
+        return "duplicate conditional successor";
+      }
+      targets = [b.term.t, b.term.f];
+    }
+    for target in targets {
+      let ti = at(f, target);
+      if (ti < 0 || util.index_of_i32(f.blocks[ti].preds, b.id) < 0) {
+        return "missing successor predecessor";
+      }
+    }
+  }
+  if (parameters != 1) {
+    return "parameter definition count";
+  }
+  return "";
+}
+
+function merged(c: Context, old: State, path: i32): Context {
+  let s = c.state;
+  let out = calc(c, 4, path, s.parent);
+  out = calc(out, 0, old.parent, out.temp);
+  let parent = out.temp;
+  out = calc(out, 4, path, s.child);
+  out = calc(out, 0, old.child, out.temp);
+  let child = out.temp;
+  out = calc(out, 4, path, s.slot);
+  out = calc(out, 0, old.slot, out.temp);
+  let slot = out.temp;
+  out = calc(out, 0, old.path, path);
+  let joined = out.temp;
+  out = calc(out, 4, joined, 1);  // Refuse overlapping path contributions.
+  return Context { ...out, state: State { path: joined, parent: parent, child: child, slot: slot } };
+}
+
+pub function check(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, layout: helper.FlatChild): helper.Proof {
+  return check_selected(f, drop, release, helper.FlatChildren { offsets: [layout.offset] }, layout.offset);
+}
+
+pub function check_selected(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, layout: helper.FlatChildren, offset: i32): helper.Proof {
+  if (f.name == "" || f.name == drop.name || f.name == release.name) {
+    return helper.Proof { ok: false, function_name: f.name, message: "ambiguous physical function identity" };
+  }
+  let helpers = helper.release_body_many(release, drop, layout);
+  if (!helpers.ok) {
+    return helpers;
+  }
+  if (util.index_of_i32(layout.offsets, offset) < 0) {
+    return helper.Proof { ok: false, function_name: f.name, message: "selected child slot absent from layout" };
+  }
+  let error = input_error(f);
+  if (error != "") {
+    return helper.Proof { ok: false, function_name: f.name, message: error };
+  }
+  let zero = guard.constant(guard.empty(), 0);
+  let one = guard.constant(zero.arena, 1);
+  let unique = guard.predicate(one.arena, 0);
+  let values: Value[] = [];
+  let i: i32 = 0;
+  while (i < f.nvals) {
+    values = values.append(Value { kind: -1, number: 0, available: 0 });
+    i = i + 1;
+  }
+  let empty = State { path: 0, parent: 0, child: 0, slot: 0 };
+  let incoming: State[] = [];
+  let done: boolean[] = [];
+  for b in f.blocks {
+    let initial = empty;
+    if (b.id == f.entry) {
+      initial = State { path: 1, parent: 1, child: 0, slot: 1 };
+    }
+    incoming = incoming.append(initial);
+    done = done.append(false);
+  }
+  let c = Context { arena: unique.arena, values: values, state: empty, unique: unique.id, temp: 0, error: "" };
+  let remaining = f.blocks.len();
+  while (remaining > 0 && c.error == "") {
+    let chosen: i32 = -1;
+    i = 0;
+    for b in f.blocks {
+      let ready = !done[i] && (b.id == f.entry || b.preds.len() > 0);
+      for p in b.preds {
+        if (!done[at(f, p)]) {
+          ready = false;
+        }
+      }
+      if (ready && chosen < 0) {
+        chosen = i;
+      }
+      i = i + 1;
+    }
+    if (chosen < 0) {
+      c = failed(c, "unsupported containment cycle or unreachable block");
+    } else {
+      let b = f.blocks[chosen];
+      c = Context { ...c, state: incoming[chosen] };
+      for op in b.insts {
+        if (c.error == "") {
+          c = transfer(c, op, offset, release.name);
+        }
+      }
+      if (c.error == "" && b.term.kind_tag == 1) {
+        c = available(c, b.term.value);
+        if (c.error == "" && c.values[b.term.value].kind != 2) {
+          c = failed(c, "owned child result required");
+        }
+        c = positive(c, c.state.child, "return without child credit");
+        c = calc(c, 1, c.state.child, c.state.path);
+        c = Context { ...c, state: State { ...c.state, child: c.temp } };
+        c = equal(c, c.state.path, c.state.parent, 0, "parent credit remains");
+        c = equal(c, c.state.path, c.state.child, 0, "child credit remains");
+      } else if (c.error == "") {
+        let path = c.state.path;
+        let targets: i32[] = [b.term.target];
+        let paths: i32[] = [path];
+        if (b.term.kind_tag == 3) {
+          c = available(c, b.term.cond);
+          if (c.error == "" && c.values[b.term.cond].kind != 0) {
+            c = failed(c, "scalar condition required");
+          }
+          if (c.error == "") {
+            let condition = c.values[b.term.cond].number;
+            c = calc(c, 4, condition, path);
+            let yes = c.temp;
+            c = calc(c, 1, 1, condition);
+            c = calc(c, 4, c.temp, path);
+            targets = [b.term.t, b.term.f];
+            paths = [yes, c.temp];
+          }
+        }
+        let state = c.state;
+        i = 0;
+        for target in targets {
+          if (c.error == "") {
+            let ti = at(f, target);
+            c = merged(c, incoming[ti], paths[i]);
+            incoming = incoming.with(ti, c.state);
+            c = Context { ...c, state: state };
+          }
+          i = i + 1;
+        }
+      }
+      done = done.with(chosen, true);
+      remaining = remaining - 1;
+    }
+  }
+  let message = c.error;
+  if (message == "") {
+    message = "proved guarded flat-child extraction";
+  }
+  return helper.Proof { ok: c.error == "", function_name: f.name, message: message };
+}
