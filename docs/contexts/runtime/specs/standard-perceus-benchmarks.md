@@ -59,7 +59,7 @@ measurement. They do not require a product decision from the user.
 The arbitrary-precision derivative range audit reaches ten iterations with
 40,230,090 expanded leaves and exercised integer values between -1 and 1.
 The default workload therefore fits i64. Its port retains ordinary recursion;
-memoization belongs only to the audit. Constant folding's generated depth20
-tree uses addition and constants at most21, also within i64. Neither kernel
+memoization belongs only to the audit. Constant folding's generated depth 20
+tree uses addition and constants at most 21, also within i64. Neither kernel
 claims unbounded arithmetic for arbitrary external expressions. Full-scale
 resource use and comparative performance still need measurement.

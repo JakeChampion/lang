@@ -1,3 +1,4 @@
+// Adapted from: https://raw.githubusercontent.com/leanprover/lean4/IFL19/tests/bench/deriv.ml
 // Port of Koka test/bench/koka/deriv.kk at 9c55695dd2f7d4db8d93011693d37295e2b76c53.
 // Copyright Microsoft Research and Daan Leijen. Apache-2.0.
 // The audited ten-derivative workload fits i64; this is not an unbounded integer API.
