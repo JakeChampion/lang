@@ -1,0 +1,230 @@
+import "../lexer";
+import "../parser";
+import "../semlower";
+import "../ircore";
+import "../irtables";
+import "../ir";
+import "../ssa_lift";
+import "../ssasem";
+import "../semrecords";
+import "../ssacreditabi" as abi;
+import "../ssacreditincoming" as incoming;
+import "../util";
+
+function require(ok: boolean, id: i32): void {
+  if (!ok) {
+    exit(id);
+  }
+}
+
+function site_matches(b: irtables.LowerResult, site: incoming.Site): i32 {
+  let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), b.name, b.n_params, b.n_locals, b.ops, false);
+  require(lifted.ok, 93);
+  let found: i32 = 0;
+  for block in lifted.func.blocks {
+    for op in block.insts {
+      if (block.id == site.block && op.result == site.call) {
+        require(op.kind_tag == 11 && op.str == site.consumer && op.args.len() == 2 && op.args[0] == site.argument && op.args[1] == site.incoming, 94);
+        found = found + 1;
+      }
+    }
+  }
+  return found;
+}
+
+function check_sites(sub: ircore.Sub, name: string, consumer: string, sites: incoming.Site[]): void {
+  let input: i32 = 0;
+  for site in sites {
+    require(site.input == input && site.consumer == consumer && site.parameter == 0 && site.words == 3, 92);
+    let found: i32 = 0;
+    for b in util.append_all(sub.bodies, sub.extra) {
+      if (b.name == name) {
+        found = found + site_matches(b, site);
+      }
+    }
+    require(found == 1, 95);
+    input = input + 1;
+  }
+}
+
+function expect(sub: ircore.Sub, name: string, consumer: string, why: string): void {
+  let checked = abi.check_incoming(sub, name, consumer);
+  let ok = why == "";
+  if (checked.proof.ok != ok || checked.proof.function_name != name || checked.proof.message != (if (ok) { "proved pre-call incoming capacity" } else { why }) || checked.sites.len() != (if (ok) { 2 } else { 0 })) {
+    print(checked.proof.function_name + ": " + checked.proof.message + " expected: " + why);
+    exit(91);
+  }
+  check_sites(sub, name, consumer, checked.sites);
+}
+
+function source(generic: boolean): string {
+  let leaf = if (generic) { "struct Leaf[T] { n: T }\n" } else { "struct Leaf { n: i32 }\n" };
+  let child = if (generic) { "Leaf[i32]" } else { "Leaf" };
+  return leaf + "struct Parent { left: " + child + ", right: " + child + " }\nstruct Other { first: " + child + ", second: " + child + " }\n"
+    + "function require(ok: boolean, code: i32): void { if (!ok) { exit(code); } }\n"
+    + "@noinline\nfunction parent(left: " + child + ", right: " + child + "): Parent { return Parent { left: left, right: right }; }\n"
+    + "@noinline\nfunction replace(own p: Parent, child: " + child + "): Other { let n = p.left.n + p.right.n; require(n > 0, 1); return Other { first: child, second: child }; }\n"
+    + "@noinline\nfunction handoff(flag: boolean, left: " + child + ", right: " + child + ", incoming: " + child + "): Other { let p = if (flag) { parent(left, right) } else { parent(right, left) }; return replace(p, incoming); }\n"
+    + "function main(): i32 { let c: " + child + " = Leaf { n: 7 }; let p = handoff(true,c,c,c); return p.first.n - 7; }\n";
+}
+
+function other_contracts(sub: ircore.Sub, subject: string): ssasem.Contract[] {
+  let others: ssasem.Contract[] = [];
+  for keep in sub.physical_contracts {
+    if (keep.name != subject) {
+      others = others.append(keep);
+    }
+  }
+  return others;
+}
+
+function contract_controls(sub: ircore.Sub, subject: string): void {
+  for c in sub.physical_contracts {
+    if (c.name == subject) {
+      let others = other_contracts(sub, subject);
+      let missing = if (subject == "parent") { "missing or ambiguous origin callee ABI" } else { "missing or ambiguous incoming ABI" };
+      expect(ircore.Sub { ...sub, physical_contracts: others }, "handoff", "replace", missing);
+      expect(ircore.Sub { ...sub, physical_contracts: others.append(c).append(c) }, "handoff", "replace", missing);
+      let wrong = if (subject == "handoff") { "incoming wrapper requires scalar and three consuming parameters" } else { if (subject == "parent") { "origin callee ABI differs from caller" } else { "incoming consumer ABI differs from wrapper" } };
+      expect(ircore.Sub { ...sub, physical_contracts: others.append(ssasem.Contract { ...c, modes: [] }) }, "handoff", "replace", wrong);
+      expect(ircore.Sub { ...sub, physical_contracts: others.append(ssasem.Contract { ...c, params: [] }) }, "handoff", "replace", wrong);
+      let i: i32 = 0;
+      for mode in c.modes {
+        expect(ircore.Sub { ...sub, physical_contracts: others.append(ssasem.Contract { ...c, modes: c.modes.with(i, 2) }) }, "handoff", "replace", wrong);
+        i = i + 1;
+      }
+      if (subject == "handoff") {
+        for slot in [0, 1, 2, 3] {
+          expect(ircore.Sub { ...sub, physical_contracts: others.append(ssasem.Contract { ...c, params: c.params.with(slot, c.result) }) }, "handoff", "replace", "unsupported incoming wrapper types or finalizers");
+        }
+      } else {
+        expect(ircore.Sub { ...sub, physical_contracts: others.append(ssasem.Contract { ...c, params: c.params.with(1, c.result) }) }, "handoff", "replace", wrong);
+        expect(ircore.Sub { ...sub, physical_contracts: others.append(ssasem.Contract { ...c, result: c.params[1] }) }, "handoff", "replace", wrong);
+      }
+    }
+  }
+}
+
+function body_controls(sub: ircore.Sub, subject: string): void {
+  for b in util.append_all(sub.bodies, sub.extra) {
+    if (b.name == subject) {
+      let others: irtables.LowerResult[] = [];
+      for keep in util.append_all(sub.bodies, sub.extra) {
+        if (keep.name != subject) {
+          others = others.append(keep);
+        }
+      }
+      let missing = if (subject == "parent") { "origin callee proof refused: missing or ambiguous producer body" } else { "missing, ambiguous or mismatched incoming body" };
+      expect(ircore.Sub { ...sub, bodies: others, extra: [] }, "handoff", "replace", missing);
+      expect(ircore.Sub { ...sub, bodies: others.append(b), extra: [b] }, "handoff", "replace", missing);
+      let unproduced = if (subject == "parent") { "origin callee proof refused: unproduced producer body" } else { missing };
+      expect(ircore.Sub { ...sub, bodies: others.append(irtables.LowerResult { ...b, ok: false }), extra: [] }, "handoff", "replace", unproduced);
+      if (subject != "parent") {
+        expect(ircore.Sub { ...sub, bodies: others.append(irtables.LowerResult { ...b, n_params: 1 }), extra: [] }, "handoff", "replace", missing);
+      }
+    }
+  }
+}
+
+function other_records(sub: ircore.Sub, name: string): semrecords.Record[] {
+  let others: semrecords.Record[] = [];
+  for keep in sub.physical_records.list {
+    if (semrecords.name_of(keep.ty) != name) {
+      others = others.append(keep);
+    }
+  }
+  return others;
+}
+
+function schema_controls(sub: ircore.Sub): void {
+  for r in sub.physical_records.list {
+    let name = semrecords.name_of(r.ty);
+    let child = name != "Parent" && name != "Other";
+    let others = other_records(sub, name);
+    let missing = if (child) { "missing or ambiguous incoming child schema" } else { "missing or ambiguous incoming parent or result schema" };
+    expect(ircore.Sub { ...sub, physical_records: semrecords.records_of(others) }, "handoff", "replace", missing);
+    expect(ircore.Sub { ...sub, physical_records: semrecords.records_of(others.append(r).append(r)) }, "handoff", "replace", missing);
+    let effect = if (child) { "unsupported producer child effects" } else { "incoming layout refused: unsupported origin caller layout" };
+    expect(ircore.Sub { ...sub, physical_records: semrecords.records_of(others.append(semrecords.Record { ...r, views: true })) }, "handoff", "replace", effect);
+    expect(ircore.Sub { ...sub, physical_records: semrecords.records_of(others.append(semrecords.Record { ...r, nests_func: true })) }, "handoff", "replace", effect);
+    let field_error = if (child) { "producer child is not flat" } else { "incoming layout refused: origin caller result field differs from child" };
+    let fields = r.fields.with(0, semrecords.Field { ...r.fields[0], ty: r.ty });
+    expect(ircore.Sub { ...sub, physical_records: semrecords.records_of(others.append(semrecords.Record { ...r, fields: fields })) }, "handoff", "replace", field_error);
+    let finalized = if (child) { "unsupported producer child or finalizer" } else { if (name == "Parent") { "unsupported incoming parent type or finalizer" } else { "unsupported incoming wrapper types or finalizers" } };
+    expect(ircore.Sub { ...sub, physical_finalizers: [ssasem.Finalizer { receiver: name, symbol: "selected_finalizer" }] }, "handoff", "replace", finalized);
+    if (!child) {
+      expect(ircore.Sub { ...sub, physical_records: semrecords.records_of(others.append(semrecords.Record { ...r, fields: [r.fields[0]] })) }, "handoff", "replace", effect);
+    }
+  }
+}
+
+function changed_name(name: string, mode: i32): string {
+  return if (mode == 2 && util.has_str(["handoff", "parent", "replace"], name)) { "renamed_" + name } else { name };
+}
+
+function changed_construction(op: ir.Op, mode: i32): ir.Op {
+  if (op.kind_tag == ir.kind_id("struct_make")) {
+    if (mode == 3) {
+      return ir.Op { ...op, i32_imm: 1 };
+    }
+    if (mode == 4) {
+      return ir.Op { ...op, str: "Other" };
+    }
+  }
+  return op;
+}
+
+function changed_operations(b: irtables.LowerResult, mode: i32): ir.Op[] {
+  let ops: ir.Op[] = [];
+  for op in b.ops {
+    if (b.name == "parent" && mode == 0 && op.kind_tag == ir.kind_id("return")) {
+      ops = ops.append(ir.op_call_direct("unknown_effect", 0)).append(ir.op_drop());
+    }
+    let changed = if (b.name == "parent") { changed_construction(op, mode) } else { op };
+    if (op.kind_tag == ir.kind_id("call_direct")) {
+      let name = if (b.name == "handoff" && mode == 1) { "unbound" } else { changed_name(op.str, mode) };
+      changed = ir.Op { ...op, str: name };
+    }
+    ops = ops.append(changed);
+  }
+  return ops;
+}
+
+function emitted_controls(sub: ircore.Sub, mode: i32): ircore.Sub {
+  let rows: irtables.LowerResult[] = [];
+  for b in util.append_all(sub.bodies, sub.extra) {
+    rows = rows.append(irtables.LowerResult { ...b, name: changed_name(b.name, mode), ops: changed_operations(b, mode) });
+  }
+  let contracts: ssasem.Contract[] = [];
+  for c in sub.physical_contracts {
+    contracts = contracts.append(ssasem.Contract { ...c, name: changed_name(c.name, mode) });
+  }
+  return ircore.Sub { ...sub, bodies: rows, extra: [], physical_contracts: contracts };
+}
+
+function target_checks(target: string): void {
+  for generic in [false, true] {
+    let sub = semlower.driven(parser.parse_module(lexer.tokenize(source(generic))), target).sub;
+    expect(sub, "handoff", "replace", "");
+    expect(sub, "handoff", "handoff", "missing or ambiguous incoming ABI");
+    for subject in ["handoff", "parent", "replace"] {
+      contract_controls(sub, subject);
+      body_controls(sub, subject);
+    }
+    schema_controls(sub);
+    expect(emitted_controls(sub, 0), "handoff", "replace", "origin callee proof refused: unsupported allocation producer effect");
+    expect(emitted_controls(sub, 1), "handoff", "replace", "missing or ambiguous origin callee ABI");
+    expect(emitted_controls(sub, 2), "renamed_handoff", "renamed_replace", "");
+    expect(emitted_controls(sub, 3), "handoff", "replace", "origin callee proof refused: invalid allocation producer capacity or multiplicity");
+    expect(emitted_controls(sub, 4), "handoff", "replace", "origin callee proof refused: unsupported allocation producer effect");
+    expect(sub, "handoff", "replace", "");
+  }
+}
+
+function main(): i32 {
+  target_checks("arm64-darwin");
+  target_checks("x86-64-linux");
+  target_checks("wasm32-wasi");
+  print("typed incoming capacity controls passed");
+  return 0;
+}
