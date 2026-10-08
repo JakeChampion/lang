@@ -7431,7 +7431,7 @@ function terminator(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[],
     if (b.term.kind_tag == 1 && b.term.value >= 0) {
       e = Emit { ...e, r: emit(e.r, ir.op_load_local(b.term.value)) };
     } else {
-      e = Emit { ...e, r: emit(e.r, ir.op_const_i32(0)) };
+      e = Emit { ...e, r: emit(e.r, zero(f.result)) };
     }
     return Emit { ...e, r: emit(e.r, ir.op_return()) };
   }
