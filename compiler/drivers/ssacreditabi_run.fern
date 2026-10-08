@@ -10,6 +10,373 @@ import "../typeinfo";
 import "../ssacreditabi" as abi;
 import "../util";
 
+function partial_sibling_controls(sub: ircore.Sub): void {
+  partial_expect(sub, "partial_left", 1, false, "field differs from incoming", 198);
+  let kept: semrecords.Record[] = [];
+  let viewed: semrecords.Record[] = [];
+  let found: i32 = 0;
+  for record in sub.physical_records.list {
+    if (semrecords.name_of(record.ty) == "Other") {
+      viewed = viewed.append(semrecords.Record { ...record, views: true });
+      found = found + 1;
+    } else {
+      kept = kept.append(record);
+      viewed = viewed.append(record);
+    }
+  }
+  require(found == 1, 199);
+  partial_expect(ircore.Sub { ...sub, physical_records: semrecords.records_of(kept) }, "partial_left", 0, false, "missing resolved sibling", 200);
+  partial_expect(ircore.Sub { ...sub, physical_records: semrecords.records_of(viewed) }, "partial_left", 0, false, "sibling effects", 201);
+}
+
+function widened_records(sub: ircore.Sub): semrecords.Record[] {
+  let wide: semrecords.Record[] = [];
+  for record in sub.physical_records.list {
+    let fields: semrecords.Field[] = [];
+    for field in record.fields {
+      let ty = field.ty;
+      if let typeinfo.TypeI32(n) = ty {
+        ty = typeinfo.TypeI32 { ...n, width: 64 };
+      }
+      fields = fields.append(semrecords.Field { ...field, ty: ty });
+    }
+    wide = wide.append(semrecords.Record { ...record, fields: fields });
+  }
+  return wide;
+}
+
+function partial_metadata_controls(sub: ircore.Sub): void {
+  let contracts: ssasem.Contract[] = [];
+  for c in sub.physical_contracts {
+    if (c.name == "partial_left") {
+      contracts = contracts.append(c);
+    }
+  }
+  require(contracts.len() == 1, 183);
+  let selected = contracts[0];
+  require(selected.modes.len() == 2 && selected.modes[0] == 3 && selected.modes[1] == 3, 184);
+  let wide = widened_records(sub);
+  let reading = partial_read(sub, "partial_left", 0, 0);
+  partial_expect(ircore.Sub { ...reading, physical_records: semrecords.records_of(wide) }, "partial_left", 0, false, "parent reference required", 234);
+  partial_expect(sub, "partial_left", -1, false, "invalid partial", 185);
+  partial_expect(sub, "partial_left", 2147483647, false, "invalid partial", 186);
+  partial_expect(ircore.Sub { ...sub, physical_contracts: [] }, "partial_left", 0, false, "selected ABI", 187);
+  partial_expect(ircore.Sub { ...sub, physical_contracts: contracts.append(selected) }, "partial_left", 0, false, "selected ABI", 188);
+  partial_expect(ircore.Sub { ...sub, physical_contracts: [ssasem.Contract { ...selected, modes: [2, 3] }] }, "partial_left", 0, false, "consuming", 189);
+  partial_expect(ircore.Sub { ...sub, physical_contracts: [ssasem.Contract { ...selected, modes: [3, 2] }] }, "partial_left", 0, false, "consuming", 190);
+  partial_expect(ircore.Sub { ...sub, physical_contracts: [ssasem.Contract { ...selected, result: selected.params[1] }] }, "partial_left", 0, false, "parent type", 191);
+  partial_expect(ircore.Sub { ...sub, physical_records: semrecords.no_records() }, "partial_left", 0, false, "record schema", 192);
+  partial_expect(ircore.Sub { ...sub, extra: [] }, "partial_left", 0, false, "physical binding", 193);
+  let found: irtables.LowerResult[] = [];
+  let changed: irtables.LowerResult[] = [];
+  let hits: i32 = 0;
+  for body in sub.bodies {
+    if (body.name == "partial_left") {
+      found = found.append(body);
+      let ops: ir.Op[] = [];
+      for op in body.ops {
+        if (op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_inc") {
+          hits = hits + 1;
+        } else {
+          ops = ops.append(op);
+        }
+      }
+      changed = changed.append(irtables.LowerResult { ...body, ops: ops });
+    } else {
+      changed = changed.append(body);
+    }
+  }
+  require(found.len() == 1 && hits == 1, 194);
+  partial_expect(ircore.Sub { ...sub, extra: sub.extra.append(found[0]) }, "partial_left", 0, false, "ambiguous physical binding", 195);
+  partial_expect(ircore.Sub { ...sub, bodies: changed }, "partial_left", 0, false, "slot store without local child credit", 196);
+  partial_expect(sub, "partial_left", 0, true, "proved guarded", 197);
+}
+
+function selected_schema_controls(sub: ircore.Sub): void {
+  selected_expect(sub, "extract_left", 2, false, "selected child type differs", 150);
+  let kept: semrecords.Record[] = [];
+  let viewed: semrecords.Record[] = [];
+  let found: i32 = 0;
+  for record in sub.physical_records.list {
+    if (semrecords.name_of(record.ty) == "Other") {
+      viewed = viewed.append(semrecords.Record { ...record, views: true });
+      found = found + 1;
+    } else {
+      viewed = viewed.append(record);
+      kept = kept.append(record);
+    }
+  }
+  require(found == 1, 151);
+  selected_expect(ircore.Sub { ...sub, physical_records: semrecords.records_of(kept) }, "extract_left", 0, false, "missing resolved sibling schema", 152);
+  selected_expect(ircore.Sub { ...sub, physical_records: semrecords.records_of(viewed) }, "extract_left", 0, false, "unsupported sibling effects", 153);
+}
+
+function selected_sibling_release_control(sub: ircore.Sub): void {
+  // A sibling's dropped credit matters even when only the left child is
+  // returned. Corrupt the actual second child release in the helper.
+  let extra: irtables.LowerResult[] = [];
+  let releases: i32 = 0;
+  for b in sub.extra {
+    if (b.name == "__sem_drop_Parent") {
+      let ops: ir.Op[] = [];
+      for op in b.ops {
+        if (op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_dec") {
+          releases = releases + 1;
+          if (releases == 2) {
+            ops = ops.append(ir.op_call_direct("__fern_rc_is_unique", 1));
+          } else {
+            ops = ops.append(op);
+          }
+        } else {
+          ops = ops.append(op);
+        }
+      }
+      extra = extra.append(irtables.LowerResult { ...b, ops: ops });
+    } else {
+      extra = extra.append(b);
+    }
+  }
+  require(releases == 2, 147);
+  let refused = abi.check_selected(ircore.Sub { ...sub, extra: extra }, "extract_left", "__sem_drop_Parent", "__sem_release_Parent", 0);
+  require(!refused.ok && refused.function_name == "__sem_drop_Parent" && refused.message == "child release mismatch", 148);
+}
+
+function selected_body_controls(sub: ircore.Sub): void {
+  let mutation: i32 = 0;
+  while (mutation < 4) {
+    let bodies: irtables.LowerResult[] = [];
+    let hits: i32 = 0;
+    for b in sub.bodies {
+      if (b.name == "extract_left") {
+        let ops: ir.Op[] = [];
+        for op in b.ops {
+          if (mutation == 0 && op.kind_tag == ir.kind_id("struct_set")) {
+            ops = ops.append(ir.op_drop()).append(ir.op_drop());
+            hits = hits + 1;
+          } else if (mutation == 1 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_inc") {
+            hits = hits + 1;
+          } else if (mutation == 2 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__sem_release_Parent") {
+            ops = ops.append(ir.op_load_local(0)).append(op).append(ir.op_drop()).append(op);
+            hits = hits + 1;
+          } else if (mutation == 3 && op.kind_tag == ir.kind_id("struct_set")) {
+            ops = ops.append(ir.Op { ...op, i32_imm: 2 });
+            hits = hits + 1;
+          } else {
+            ops = ops.append(op);
+          }
+        }
+        bodies = bodies.append(irtables.LowerResult { ...b, ops: ops });
+      } else {
+        bodies = bodies.append(b);
+      }
+    }
+    require(hits == 1, 142);
+    let reason = "return without child credit";
+    if (mutation == 2) {
+      reason = "parent used after release";
+    }
+    if (mutation == 3) {
+      reason = "unsupported containment operation";
+    }
+    selected_expect(ircore.Sub { ...sub, bodies: bodies }, "extract_left", 0, false, reason, 143 + mutation);
+    mutation = mutation + 1;
+  }
+}
+
+function caller_mutated_bodies(sub: ircore.Sub, name: string, mode: i32): irtables.LowerResult[] {
+  let rows: irtables.LowerResult[] = [];
+  let hits: i32 = 0;
+  for body in sub.bodies {
+    if (body.name == name) {
+      let ops: ir.Op[] = [];
+      for op in body.ops {
+        if (op.kind_tag == ir.kind_id("return")) {
+          hits = hits + 1;
+          ops = caller_condition(ops, body, op, mode);
+          ops = caller_invocation(ops, mode);
+        }
+        ops = ops.append(op);
+      }
+      rows = rows.append(irtables.LowerResult { ...body, ops: ops, n_locals: body.n_locals + 1 });
+    } else if (body.name == "assertion" && mode == 12) {
+      let ops: ir.Op[] = [];
+      for op in body.ops {
+        if (op.kind_tag == ir.kind_id("load_local") && op.i32_imm == 0) {
+          ops = ops.append(ir.op_const_i32(0));
+        } else {
+          ops = ops.append(op);
+        }
+      }
+      rows = rows.append(irtables.LowerResult { ...body, ops: ops });
+    } else if (body.name == "assertion" && mode == 13) {
+      rows = rows.append(irtables.LowerResult { ...body, name: "renamed_scalar" });
+    } else {
+      rows = rows.append(body);
+    }
+  }
+  require(hits == 1, 190);
+  return rows;
+}
+
+function caller_invocation(ops: ir.Op[], mode: i32): ir.Op[] {
+  if (mode == 4) {
+    ops = ops.append(ir.op_load_local(1));
+  } else {
+    ops = ops.append(ir.op_const_i32(-2147483648));
+  }
+  let arity: i32 = 2;
+  if (mode == 10) {
+    ops = ops.append(ir.op_const_i32(7));
+    arity = 3;
+  } else if (mode == 11) {
+    ops = ops.append(ir.op_const_i32(1)).append(ir.op_bin("add", 0, false));
+  }
+  let callee = "assertion";
+  if (mode == 13) {
+    callee = "renamed_scalar";
+  }
+  ops = ops.append(ir.op_call_direct(callee, arity)).append(ir.op_drop());
+  if (mode == 6 || mode == 7) {
+    ops = ops.append(ir.op_end());
+  }
+  return ops;
+}
+
+function caller_condition(ops: ir.Op[], body: irtables.LowerResult, op: ir.Op, mode: i32): ir.Op[] {
+  if (mode >= 5 && mode <= 7) {
+    ops = ops.append(ir.op_load_local(1)).append(ir.Op { ...op, kind_tag: ir.kind_id("struct_get"), i32_imm: 0 }).append(ir.op_const_i32(0)).append(ir.op_bin("gt_s", 0, false)).append(ir.op_store_local(body.n_locals));
+    if (mode >= 6) {
+      ops = ops.append(ir.op_load_local(body.n_locals)).append(ir.op_if(0));
+    }
+    ops = ops.append(ir.op_load_local(body.n_locals));
+    if (mode == 7) {
+      ops = ops.append(ir.op_const_i32(0)).append(ir.op_bin("eq", 0, false));
+    }
+  } else if (mode == 3) {
+    ops = ops.append(ir.op_load_local(1));
+  } else {
+    let value: i32 = 1;
+    if (mode == 1) {
+      value = 0;
+    } else if (mode == 2) {
+      value = 17;
+    }
+    ops = ops.append(ir.op_const_i32(value));
+  }
+  return ops;
+}
+
+function origin_producer_contract(contracts: ssasem.Contract[], c: ssasem.Contract, mode: i32): ssasem.Contract[] {
+  if (mode == 5) {} else if (mode == 6) {
+    contracts = contracts.append(c).append(c);
+  } else if (mode == 7) {
+    contracts = contracts.append(ssasem.Contract { ...c, modes: [3, 2] });
+  } else if (mode == 8) {
+    contracts = contracts.append(ssasem.Contract { ...c, result: c.params[0] });
+  } else if (mode == 9) {
+    contracts = contracts.append(ssasem.Contract { ...c, params: [c.result, c.params[1]] });
+  } else {
+    contracts = contracts.append(ssasem.Contract { ...c, name: if (mode == 21) { "renamed_constructor" } else { c.name } });
+  }
+  return contracts;
+}
+
+function origin_wrapper_contract(contracts: ssasem.Contract[], c: ssasem.Contract, mode: i32): ssasem.Contract[] {
+  if (mode == 0) {} else if (mode == 1) {
+    contracts = contracts.append(c).append(c);
+  } else if (mode == 2) {
+    contracts = contracts.append(ssasem.Contract { ...c, modes: [1, 2, 3] });
+  } else if (mode == 3) {
+    contracts = contracts.append(ssasem.Contract { ...c, params: [c.params[1], c.params[1], c.params[2]] });
+  } else if (mode == 4) {
+    contracts = contracts.append(ssasem.Contract { ...c, params: [c.params[0], c.result, c.params[2]] });
+  } else {
+    contracts = contracts.append(ssasem.Contract { ...c, name: if (mode == 21) { "renamed_wrapper" } else { c.name } });
+  }
+  return contracts;
+}
+
+function origin_schema_controls(sub: ircore.Sub): void {
+  for r in sub.physical_records.list {
+    origin_caller_expect(ircore.Sub { ...sub, physical_finalizers: [ssasem.Finalizer { receiver: semrecords.name_of(r.ty), symbol: "checked_selected_drop" }] }, "select_parent", "unsupported origin caller types or finalizers");
+  }
+  for boundary in [0, 1, 2, 3] {
+    let changed: semrecords.Record[] = [];
+    for r in sub.physical_records.list {
+      if (semrecords.name_of(r.ty) == "Parent") {
+        changed = changed.append(r);
+      } else if (boundary == 0) {} else if (boundary == 1) {
+        changed = changed.append(semrecords.Record { ...r, nests_func: true });
+      } else if (boundary == 2) {
+        changed = changed.append(semrecords.Record { ...r, fields: [semrecords.Field { ...r.fields[0], ty: r.ty }] });
+      } else {
+        changed = changed.append(semrecords.Record { ...r, views: true });
+      }
+    }
+    let why = ((): string => if (boundary == 0) { return "missing origin caller schema"; } else { if (boundary == 2) { return "origin caller child is not flat"; } else { return "unsupported origin caller layout"; } })();
+    origin_caller_expect(ircore.Sub { ...sub, physical_records: semrecords.records_of(changed) }, "select_parent", why);
+  }
+}
+
+function origin_mutated_bodies(sub: ircore.Sub, mode: i32): irtables.LowerResult[] {
+  let rows: irtables.LowerResult[] = [];
+  for b in util.append_all(sub.bodies, sub.extra) {
+    if (mode == 13 && b.name == "select_parent" || mode == 16 && b.name == "parent") {} else {
+      let ops: ir.Op[] = [];
+      for op in b.ops {
+        if (b.name == "parent" && mode == 20 && op.kind_tag == ir.kind_id("return")) {
+          ops = ops.append(ir.op_call_direct("unknown", 0)).append(ir.op_drop());
+        }
+        if (b.name == "select_parent" && op.kind_tag == ir.kind_id("call_direct") && op.str == "parent" && (mode == 19 || mode == 21)) {
+          ops = ops.append(ir.Op { ...op, str: if (mode == 19) { "unbound" } else { "renamed_constructor" } });
+        } else {
+          ops = ops.append(op);
+        }
+      }
+      let name = b.name;
+      if (mode == 21 && name == "select_parent") {
+        name = "renamed_wrapper";
+      }
+      if (mode == 21 && name == "parent") {
+        name = "renamed_constructor";
+      }
+      rows = rows.append(irtables.LowerResult { ...b, name: name, ops: ops, ok: b.ok && !(mode == 15 && b.name == "select_parent" || mode == 18 && b.name == "parent") });
+      if (mode == 14 && b.name == "select_parent" || mode == 17 && b.name == "parent") {
+        rows = rows.append(b);
+      }
+    }
+  }
+  return rows;
+}
+
+function origin_mutated_records(sub: ircore.Sub, mode: i32): semrecords.Record[] {
+  let records: semrecords.Record[] = [];
+  for r in sub.physical_records.list {
+    if (mode == 10) {} else if (mode == 11) {
+      records = records.append(semrecords.Record { ...r, views: true });
+    } else if (mode == 12 && semrecords.name_of(r.ty) == "Parent") {
+      records = records.append(semrecords.Record { ...r, fields: [r.fields[0], semrecords.Field { ...r.fields[1], ty: r.ty }] });
+    } else {
+      records = records.append(r);
+    }
+  }
+  return records;
+}
+
+function origin_mutated_contracts(sub: ircore.Sub, mode: i32): ssasem.Contract[] {
+  let contracts: ssasem.Contract[] = [];
+  for c in sub.physical_contracts {
+    if (c.name == "select_parent") {
+      contracts = origin_wrapper_contract(contracts, c, mode);
+    } else if (c.name == "parent") {
+      contracts = origin_producer_contract(contracts, c, mode);
+    } else {
+      contracts = contracts.append(c);
+    }
+  }
+  return contracts;
+}
+
 function require(ok: boolean, id: i32): void {
   if (!ok) {
     exit(id);
@@ -271,91 +638,12 @@ function selected_checks(target: string): void {
       selected_expect(sub, "extract_left", 1, false, "missing or unrepresentable", 139);
       selected_expect(sub, "extract_left", 2147483647, false, "missing or unrepresentable", 140);
       selected_expect(sub, "extract_left", 2, false, "unsupported containment operation", 141);
-      let mutation: i32 = 0;
-      while (mutation < 4) {
-        let bodies: irtables.LowerResult[] = [];
-        let hits: i32 = 0;
-        for b in sub.bodies {
-          if (b.name == "extract_left") {
-            let ops: ir.Op[] = [];
-            for op in b.ops {
-              if (mutation == 0 && op.kind_tag == ir.kind_id("struct_set")) {
-                ops = ops.append(ir.op_drop()).append(ir.op_drop());
-                hits = hits + 1;
-              } else if (mutation == 1 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_inc") {
-                hits = hits + 1;
-              } else if (mutation == 2 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__sem_release_Parent") {
-                ops = ops.append(ir.op_load_local(0)).append(op).append(ir.op_drop()).append(op);
-                hits = hits + 1;
-              } else if (mutation == 3 && op.kind_tag == ir.kind_id("struct_set")) {
-                ops = ops.append(ir.Op { ...op, i32_imm: 2 });
-                hits = hits + 1;
-              } else {
-                ops = ops.append(op);
-              }
-            }
-            bodies = bodies.append(irtables.LowerResult { ...b, ops: ops });
-          } else {
-            bodies = bodies.append(b);
-          }
-        }
-        require(hits == 1, 142);
-        let reason = "return without child credit";
-        if (mutation == 2) {
-          reason = "parent used after release";
-        }
-        if (mutation == 3) {
-          reason = "unsupported containment operation";
-        }
-        selected_expect(ircore.Sub { ...sub, bodies: bodies }, "extract_left", 0, false, reason, 143 + mutation);
-        mutation = mutation + 1;
-      }
-      // A sibling's dropped credit matters even when only the left child is
-      // returned. Corrupt the actual second child release in the helper.
-      let extra: irtables.LowerResult[] = [];
-      let releases: i32 = 0;
-      for b in sub.extra {
-        if (b.name == "__sem_drop_Parent") {
-          let ops: ir.Op[] = [];
-          for op in b.ops {
-            if (op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_dec") {
-              releases = releases + 1;
-              if (releases == 2) {
-                ops = ops.append(ir.op_call_direct("__fern_rc_is_unique", 1));
-              } else {
-                ops = ops.append(op);
-              }
-            } else {
-              ops = ops.append(op);
-            }
-          }
-          extra = extra.append(irtables.LowerResult { ...b, ops: ops });
-        } else {
-          extra = extra.append(b);
-        }
-      }
-      require(releases == 2, 147);
-      let refused = abi.check_selected(ircore.Sub { ...sub, extra: extra }, "extract_left", "__sem_drop_Parent", "__sem_release_Parent", 0);
-      require(!refused.ok && refused.function_name == "__sem_drop_Parent" && refused.message == "child release mismatch", 148);
+      selected_body_controls(sub);
+      selected_sibling_release_control(sub);
       selected_expect(sub, "extract_left", 0, true, "proved guarded", 149);
     }
     if (mode == 1) {
-      selected_expect(sub, "extract_left", 2, false, "selected child type differs", 150);
-      let kept: semrecords.Record[] = [];
-      let viewed: semrecords.Record[] = [];
-      let found: i32 = 0;
-      for record in sub.physical_records.list {
-        if (semrecords.name_of(record.ty) == "Other") {
-          viewed = viewed.append(semrecords.Record { ...record, views: true });
-          found = found + 1;
-        } else {
-          viewed = viewed.append(record);
-          kept = kept.append(record);
-        }
-      }
-      require(found == 1, 151);
-      selected_expect(ircore.Sub { ...sub, physical_records: semrecords.records_of(kept) }, "extract_left", 0, false, "missing resolved sibling schema", 152);
-      selected_expect(ircore.Sub { ...sub, physical_records: semrecords.records_of(viewed) }, "extract_left", 0, false, "unsupported sibling effects", 153);
+      selected_schema_controls(sub);
     }
     mode = mode + 1;
   }
@@ -509,79 +797,10 @@ function partial_checks(target: string): void {
       }
     }
     if (mode == 0) {
-      let contracts: ssasem.Contract[] = [];
-      for c in sub.physical_contracts {
-        if (c.name == "partial_left") {
-          contracts = contracts.append(c);
-        }
-      }
-      require(contracts.len() == 1, 183);
-      let selected = contracts[0];
-      require(selected.modes.len() == 2 && selected.modes[0] == 3 && selected.modes[1] == 3, 184);
-      let wide: semrecords.Record[] = [];
-      for record in sub.physical_records.list {
-        let fields: semrecords.Field[] = [];
-        for field in record.fields {
-          let ty = field.ty;
-          if let typeinfo.TypeI32(n) = ty {
-            ty = typeinfo.TypeI32 { ...n, width: 64 };
-          }
-          fields = fields.append(semrecords.Field { ...field, ty: ty });
-        }
-        wide = wide.append(semrecords.Record { ...record, fields: fields });
-      }
-      let reading = partial_read(sub, "partial_left", 0, 0);
-      partial_expect(ircore.Sub { ...reading, physical_records: semrecords.records_of(wide) }, "partial_left", 0, false, "parent reference required", 234);
-      partial_expect(sub, "partial_left", -1, false, "invalid partial", 185);
-      partial_expect(sub, "partial_left", 2147483647, false, "invalid partial", 186);
-      partial_expect(ircore.Sub { ...sub, physical_contracts: [] }, "partial_left", 0, false, "selected ABI", 187);
-      partial_expect(ircore.Sub { ...sub, physical_contracts: contracts.append(selected) }, "partial_left", 0, false, "selected ABI", 188);
-      partial_expect(ircore.Sub { ...sub, physical_contracts: [ssasem.Contract { ...selected, modes: [2, 3] }] }, "partial_left", 0, false, "consuming", 189);
-      partial_expect(ircore.Sub { ...sub, physical_contracts: [ssasem.Contract { ...selected, modes: [3, 2] }] }, "partial_left", 0, false, "consuming", 190);
-      partial_expect(ircore.Sub { ...sub, physical_contracts: [ssasem.Contract { ...selected, result: selected.params[1] }] }, "partial_left", 0, false, "parent type", 191);
-      partial_expect(ircore.Sub { ...sub, physical_records: semrecords.no_records() }, "partial_left", 0, false, "record schema", 192);
-      partial_expect(ircore.Sub { ...sub, extra: [] }, "partial_left", 0, false, "physical binding", 193);
-      let found: irtables.LowerResult[] = [];
-      let changed: irtables.LowerResult[] = [];
-      let hits: i32 = 0;
-      for body in sub.bodies {
-        if (body.name == "partial_left") {
-          found = found.append(body);
-          let ops: ir.Op[] = [];
-          for op in body.ops {
-            if (op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_inc") {
-              hits = hits + 1;
-            } else {
-              ops = ops.append(op);
-            }
-          }
-          changed = changed.append(irtables.LowerResult { ...body, ops: ops });
-        } else {
-          changed = changed.append(body);
-        }
-      }
-      require(found.len() == 1 && hits == 1, 194);
-      partial_expect(ircore.Sub { ...sub, extra: sub.extra.append(found[0]) }, "partial_left", 0, false, "ambiguous physical binding", 195);
-      partial_expect(ircore.Sub { ...sub, bodies: changed }, "partial_left", 0, false, "slot store without local child credit", 196);
-      partial_expect(sub, "partial_left", 0, true, "proved guarded", 197);
+      partial_metadata_controls(sub);
     }
     if (mode == 2) {
-      partial_expect(sub, "partial_left", 1, false, "field differs from incoming", 198);
-      let kept: semrecords.Record[] = [];
-      let viewed: semrecords.Record[] = [];
-      let found: i32 = 0;
-      for record in sub.physical_records.list {
-        if (semrecords.name_of(record.ty) == "Other") {
-          viewed = viewed.append(semrecords.Record { ...record, views: true });
-          found = found + 1;
-        } else {
-          kept = kept.append(record);
-          viewed = viewed.append(record);
-        }
-      }
-      require(found == 1, 199);
-      partial_expect(ircore.Sub { ...sub, physical_records: semrecords.records_of(kept) }, "partial_left", 0, false, "missing resolved sibling", 200);
-      partial_expect(ircore.Sub { ...sub, physical_records: semrecords.records_of(viewed) }, "partial_left", 0, false, "sibling effects", 201);
+      partial_sibling_controls(sub);
     }
     mode = mode + 1;
   }
@@ -660,75 +879,7 @@ function caller_controls(target: string): void {
     let reasons = ["proved guarded two-child partial replacement", "scalar call may exit with unproved caller obligations", "scalar call requires Boolean operand", "scalar call requires Boolean and narrowed i32 operands", "scalar call requires Boolean and narrowed i32 operands", "scalar call may exit with unproved caller obligations", "proved guarded two-child partial replacement", "scalar call may exit with unproved caller obligations", "ambiguous scalar call binding", "unsupported reuse operation", "invalid scalar call arguments or flags", "scalar call requires Boolean and narrowed i32 operands", "scalar call may exit with unproved caller obligations", "proved guarded two-child partial replacement"];
     let mode: i32 = 0;
     while (mode < reasons.len()) {
-      let rows: irtables.LowerResult[] = [];
-      let hits: i32 = 0;
-      for body in sub.bodies {
-        if (body.name == name) {
-          let ops: ir.Op[] = [];
-          for op in body.ops {
-            if (op.kind_tag == ir.kind_id("return")) {
-              hits = hits + 1;
-              if (mode >= 5 && mode <= 7) {
-                ops = ops.append(ir.op_load_local(1)).append(ir.Op { ...op, kind_tag: ir.kind_id("struct_get"), i32_imm: 0 }).append(ir.op_const_i32(0)).append(ir.op_bin("gt_s", 0, false)).append(ir.op_store_local(body.n_locals));
-                if (mode >= 6) {
-                  ops = ops.append(ir.op_load_local(body.n_locals)).append(ir.op_if(0));
-                }
-                ops = ops.append(ir.op_load_local(body.n_locals));
-                if (mode == 7) {
-                  ops = ops.append(ir.op_const_i32(0)).append(ir.op_bin("eq", 0, false));
-                }
-              } else if (mode == 3) {
-                ops = ops.append(ir.op_load_local(1));
-              } else {
-                let value: i32 = 1;
-                if (mode == 1) {
-                  value = 0;
-                } else if (mode == 2) {
-                  value = 17;
-                }
-                ops = ops.append(ir.op_const_i32(value));
-              }
-              if (mode == 4) {
-                ops = ops.append(ir.op_load_local(1));
-              } else {
-                ops = ops.append(ir.op_const_i32(-2147483648));
-              }
-              let arity: i32 = 2;
-              if (mode == 10) {
-                ops = ops.append(ir.op_const_i32(7));
-                arity = 3;
-              } else if (mode == 11) {
-                ops = ops.append(ir.op_const_i32(1)).append(ir.op_bin("add", 0, false));
-              }
-              let callee = "assertion";
-              if (mode == 13) {
-                callee = "renamed_scalar";
-              }
-              ops = ops.append(ir.op_call_direct(callee, arity)).append(ir.op_drop());
-              if (mode == 6 || mode == 7) {
-                ops = ops.append(ir.op_end());
-              }
-            }
-            ops = ops.append(op);
-          }
-          rows = rows.append(irtables.LowerResult { ...body, ops: ops, n_locals: body.n_locals + 1 });
-        } else if (body.name == "assertion" && mode == 12) {
-          let ops: ir.Op[] = [];
-          for op in body.ops {
-            if (op.kind_tag == ir.kind_id("load_local") && op.i32_imm == 0) {
-              ops = ops.append(ir.op_const_i32(0));
-            } else {
-              ops = ops.append(op);
-            }
-          }
-          rows = rows.append(irtables.LowerResult { ...body, ops: ops });
-        } else if (body.name == "assertion" && mode == 13) {
-          rows = rows.append(irtables.LowerResult { ...body, name: "renamed_scalar" });
-        } else {
-          rows = rows.append(body);
-        }
-      }
-      require(hits == 1, 190);
+      let rows = caller_mutated_bodies(sub, name, mode);
       let names = ["assertion"];
       if (mode == 8) {
         names = ["assertion", "assertion"];
@@ -884,95 +1035,13 @@ function origin_caller_checks(target: string): void {
       + "function main(): i32 { let l: " + child + " = Leaf { n: 7 }; let p = select_parent(true,l,l); return p.left.n; }\n";
     let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
     origin_caller_expect(sub, "select_parent", "");
-    for r in sub.physical_records.list {
-      origin_caller_expect(ircore.Sub { ...sub, physical_finalizers: [ssasem.Finalizer { receiver: semrecords.name_of(r.ty), symbol: "checked_selected_drop" }] }, "select_parent", "unsupported origin caller types or finalizers");
-    }
-    for boundary in [0, 1, 2, 3] {
-      let changed: semrecords.Record[] = [];
-      for r in sub.physical_records.list {
-        if (semrecords.name_of(r.ty) == "Parent") {
-          changed = changed.append(r);
-        } else if (boundary == 0) {} else if (boundary == 1) {
-          changed = changed.append(semrecords.Record { ...r, nests_func: true });
-        } else if (boundary == 2) {
-          changed = changed.append(semrecords.Record { ...r, fields: [semrecords.Field { ...r.fields[0], ty: r.ty }] });
-        } else {
-          changed = changed.append(semrecords.Record { ...r, views: true });
-        }
-      }
-      let why = ((): string => if (boundary == 0) { return "missing origin caller schema"; } else { if (boundary == 2) { return "origin caller child is not flat"; } else { return "unsupported origin caller layout"; } })();
-      origin_caller_expect(ircore.Sub { ...sub, physical_records: semrecords.records_of(changed) }, "select_parent", why);
-    }
+    origin_schema_controls(sub);
     let reasons = ["missing or ambiguous origin caller ABI", "missing or ambiguous origin caller ABI", "origin caller requires scalar and two consuming parameters", "unsupported origin caller types or finalizers", "unsupported origin caller types or finalizers", "missing or ambiguous origin callee ABI", "missing or ambiguous origin callee ABI", "origin callee ABI differs from caller", "origin callee ABI differs from caller", "origin callee ABI differs from caller", "missing origin caller schema", "unsupported origin caller layout", "origin caller result field differs from child", "missing or ambiguous origin caller body", "missing or ambiguous origin caller body", "missing or ambiguous origin caller body", "origin callee proof refused: missing or ambiguous producer body", "origin callee proof refused: missing or ambiguous producer body", "origin callee proof refused: unproduced producer body", "missing or ambiguous origin callee ABI", "origin callee proof refused: unsupported allocation producer effect", ""];
     let mode: i32 = 0;
     for why in reasons {
-      let contracts: ssasem.Contract[] = [];
-      for c in sub.physical_contracts {
-        if (c.name == "select_parent") {
-          if (mode == 0) {} else if (mode == 1) {
-            contracts = contracts.append(c).append(c);
-          } else if (mode == 2) {
-            contracts = contracts.append(ssasem.Contract { ...c, modes: [1, 2, 3] });
-          } else if (mode == 3) {
-            contracts = contracts.append(ssasem.Contract { ...c, params: [c.params[1], c.params[1], c.params[2]] });
-          } else if (mode == 4) {
-            contracts = contracts.append(ssasem.Contract { ...c, params: [c.params[0], c.result, c.params[2]] });
-          } else {
-            contracts = contracts.append(ssasem.Contract { ...c, name: if (mode == 21) { "renamed_wrapper" } else { c.name } });
-          }
-        } else if (c.name == "parent") {
-          if (mode == 5) {} else if (mode == 6) {
-            contracts = contracts.append(c).append(c);
-          } else if (mode == 7) {
-            contracts = contracts.append(ssasem.Contract { ...c, modes: [3, 2] });
-          } else if (mode == 8) {
-            contracts = contracts.append(ssasem.Contract { ...c, result: c.params[0] });
-          } else if (mode == 9) {
-            contracts = contracts.append(ssasem.Contract { ...c, params: [c.result, c.params[1]] });
-          } else {
-            contracts = contracts.append(ssasem.Contract { ...c, name: if (mode == 21) { "renamed_constructor" } else { c.name } });
-          }
-        } else {
-          contracts = contracts.append(c);
-        }
-      }
-      let records: semrecords.Record[] = [];
-      for r in sub.physical_records.list {
-        if (mode == 10) {} else if (mode == 11) {
-          records = records.append(semrecords.Record { ...r, views: true });
-        } else if (mode == 12 && semrecords.name_of(r.ty) == "Parent") {
-          records = records.append(semrecords.Record { ...r, fields: [r.fields[0], semrecords.Field { ...r.fields[1], ty: r.ty }] });
-        } else {
-          records = records.append(r);
-        }
-      }
-      let rows: irtables.LowerResult[] = [];
-      for b in util.append_all(sub.bodies, sub.extra) {
-        if (mode == 13 && b.name == "select_parent" || mode == 16 && b.name == "parent") {} else {
-          let ops: ir.Op[] = [];
-          for op in b.ops {
-            if (b.name == "parent" && mode == 20 && op.kind_tag == ir.kind_id("return")) {
-              ops = ops.append(ir.op_call_direct("unknown", 0)).append(ir.op_drop());
-            }
-            if (b.name == "select_parent" && op.kind_tag == ir.kind_id("call_direct") && op.str == "parent" && (mode == 19 || mode == 21)) {
-              ops = ops.append(ir.Op { ...op, str: if (mode == 19) { "unbound" } else { "renamed_constructor" } });
-            } else {
-              ops = ops.append(op);
-            }
-          }
-          let name = b.name;
-          if (mode == 21 && name == "select_parent") {
-            name = "renamed_wrapper";
-          }
-          if (mode == 21 && name == "parent") {
-            name = "renamed_constructor";
-          }
-          rows = rows.append(irtables.LowerResult { ...b, name: name, ops: ops, ok: b.ok && !(mode == 15 && b.name == "select_parent" || mode == 18 && b.name == "parent") });
-          if (mode == 14 && b.name == "select_parent" || mode == 17 && b.name == "parent") {
-            rows = rows.append(b);
-          }
-        }
-      }
+      let contracts = origin_mutated_contracts(sub, mode);
+      let records = origin_mutated_records(sub, mode);
+      let rows = origin_mutated_bodies(sub, mode);
       origin_caller_expect(ircore.Sub { ...sub, physical_contracts: contracts, physical_records: semrecords.records_of(records), bodies: rows, extra: [] }, if (mode == 21) { "renamed_wrapper" } else { "select_parent" }, why);
       mode = mode + 1;
     }
