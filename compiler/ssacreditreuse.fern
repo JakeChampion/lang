@@ -157,6 +157,15 @@ function drop_children(c: Context, v: phi.Value): Context {
   return out;
 }
 
+function old_parent_on_path(c: Context, v: phi.Value): boolean {
+  if (v.kind != 1) {
+    return false;
+  }
+  let out = mask(c, v.identity, 1);
+  out = calc(out, 2, out.temp, out.state.path);
+  return out.error == "" && guard.is_constant(out.arena, out.temp, 1);
+}
+
 function transfer(c: Context, op: ssa.SInst, shape: string, drop: string, release: string): Context {
   let out = c;
   for arg in op.args {
@@ -342,6 +351,15 @@ function transfer(c: Context, op: ssa.SInst, shape: string, drop: string, releas
       out = calc(out, 1, out.state.parents[0], out.state.path);
       out = Context { ...out, state: State { ...out.state, parents: out.state.parents.with(0, out.temp) } };
       kind = 0;  // The independently checked helper returns scalar zero.
+    } else if (op.str == "__fern_rc_dec" && op.imm == 0 && old_parent_on_path(out, v)) {
+      out = parent(out, v);
+      out = equal(out, out.state.path, out.unique, 0, "shallow parent release requires shared parent");
+      out = calc(out, 1, out.state.parents[0], out.state.path);
+      out = Context { ...out, state: State { ...out.state, parents: out.state.parents.with(0, out.temp) } };
+      // External ownership keeps every shared slot alive. The returned pointer
+      // is only an alias: it creates no local parent or child credit.
+      kind = 1;
+      identity = v.identity;
     } else if (op.str == "__fern_rc_inc" && (op.imm == 0 || op.imm == 4) || op.str == "__fern_rc_dec" && op.imm == 0) {
       out = child(out, v);
       kind = 1;

@@ -230,6 +230,54 @@ function child_drop_checks(body: irtables.LowerResult, d: ssa.SFunc, r: ssa.SFun
   }
 }
 
+function shallow_mutation(body: irtables.LowerResult, field: i32, mode: i32): irtables.LowerResult {
+  let ops: ir.Op[] = [];
+  let hits: i32 = 0;
+  let i: i32 = 0;
+  while (i < body.ops.len()) {
+    let op = body.ops[i];
+    if (mode == 1 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_inc") {
+      // Release before retaining an already loaded sibling. Its external slot
+      // anchor must survive, without granting another local parent credit.
+      ops = ops.append(ir.op_load_local(0)).append(ir.op_call_direct("__fern_rc_dec", 1)).append(ir.op_drop());
+    }
+    if (mode == 1 && op.kind_tag == ir.kind_id("load_local") && i + 2 < body.ops.len() && body.ops[i + 1].kind_tag == ir.kind_id("call_direct") && body.ops[i + 1].str == "__sem_release_Parent") {
+      require(body.ops[i + 2].kind_tag == ir.kind_id("drop"), 90);
+      hits = hits + 1;
+      i = i + 3;
+    } else {
+      if (op.kind_tag == ir.kind_id("call_direct") && op.str == "__sem_release_Parent") {
+        hits = hits + 1;
+        ops = ops.append(ir.op_call_direct("__fern_rc_dec", 1));
+        if (mode == 2) {
+          ops = ops.append(ir.op_load_local(0)).append(ir.op_call_direct("__fern_rc_dec", 1)).append(ir.op_drop());
+        } else if (mode == 4) {
+          ops = ops.append(ir.op_load_local(0)).append(ir.op_struct_get(field, 0)).append(ir.op_drop());
+        } else if (mode == 5) {
+          ops = ops.append(ir.op_call_direct("__fern_rc_is_unique", 1));
+        }
+      } else {
+        if (mode == 3 && op.kind_tag == ir.kind_id("call_direct") && op.str == "__fern_rc_dec") {
+          ops = ops.append(ir.op_load_local(0)).append(ir.op_call_direct("__fern_rc_dec", 1)).append(ir.op_drop());
+        }
+        ops = ops.append(op);
+      }
+      i = i + 1;
+    }
+  }
+  require(hits == 1, 91);
+  return irtables.LowerResult { ...body, ops: ops };
+}
+
+function shallow_checks(body: irtables.LowerResult, d: ssa.SFunc, r: ssa.SFunc, field: i32): void {
+  let reasons = ["proved guarded two-child partial replacement", "proved guarded two-child partial replacement", "old parent used after release", "shallow parent release requires shared parent", "old parent used after release", "old parent used after release"];
+  let mode: i32 = 0;
+  while (mode < reasons.len()) {
+    expect(lift(shallow_mutation(body, field, mode)), d, r, mode < 2, reasons[mode], 92 + mode);
+    mode = mode + 1;
+  }
+}
+
 function target_checks(target: string): void {
   let source = "struct Leaf { n: i32 }\nstruct Parent { left: Leaf, right: Leaf }\n@noinline\nfunction replace(own p: Parent, child: Leaf): Parent { return Parent { ...p, left: child }; }\nfunction main(): i32 { return 0; }\n";
   let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
@@ -255,6 +303,7 @@ function target_checks(target: string): void {
   let d = lift(drops[0]);
   let r = lift(releases[0]);
   child_drop_checks(body, d, r, 0);
+  shallow_checks(body, d, r, 0);
   expect(f, d, r, true, "proved guarded two-child partial replacement", 10);
   let clearing_reasons = ["proved guarded two-child partial replacement", "unconsumed child credit", "clearing slot without contained credit", "clearing shared parent slot", "only null slot clearing admitted", "load from stale or uninitialized slot", "clearing slot without contained credit", "result has stale or uninitialized slot"];
   let clearing_mode: i32 = 0;
@@ -351,6 +400,7 @@ function right_checks(target: string): void {
   }
   require(bodies.len() == 1 && drops.len() == 1 && releases.len() == 1, 52);
   child_drop_checks(bodies[0], lift(drops[0]), lift(releases[0]), 1);
+  shallow_checks(bodies[0], lift(drops[0]), lift(releases[0]), 1);
   expect(lift(bodies[0]), lift(drops[0]), lift(releases[0]), true, "proved guarded two-child partial replacement", 53);
   let reasons = ["proved guarded two-child partial replacement", "unconsumed child credit", "clearing slot without contained credit", "clearing shared parent slot", "only null slot clearing admitted", "load from stale or uninitialized slot", "clearing slot without contained credit", "result has stale or uninitialized slot"];
   let mode: i32 = 0;
