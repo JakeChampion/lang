@@ -8,6 +8,7 @@ import "../ssacreditcontinuation" as continuation;
 import "../ssacreditreuse" as reuse;
 import "../ssacredithelper" as helper;
 import "../util";
+import "./ssacreditsparse" as sparse_ids;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -169,15 +170,22 @@ function controls(sub: ircore.Sub, wrapper: ssa.SFunc): void {
   let mode: i32 = 0;
   for why in reasons {
     expect(check(sub, straight(wrapper, mode)), "handoff", why);
+    expect(check(sub, sparse_ids.rename(straight(wrapper, mode))), "handoff", why);
     mode = mode + 1;
   }
   let branches = ["proved checked storage wrapper continuation", "spent reference in wrapper continuation", "spent reference in wrapper continuation", "unavailable caller origin phi", "exact continuation Boolean required", "proved checked storage wrapper continuation"];
   mode = 0;
   for why in branches {
     expect(check(sub, branched(wrapper, mode)), "handoff", why);
+    expect(check(sub, sparse_ids.rename(branched(wrapper, mode))), "handoff", why);
     mode = mode + 1;
   }
   expect(check(sub, cycling(wrapper)), "handoff", "unsupported caller origin cycle");
+  expect(check(sub, sparse_ids.rename(cycling(wrapper))), "handoff", "unsupported caller origin cycle");
+  expect(check(sub, ssa.register_form(wrapper).f), "handoff", "proved checked storage wrapper continuation");
+  expect(check(sub, sparse_ids.hole(sparse_ids.rename(wrapper), 0)), "handoff", "unavailable caller origin operand");
+  expect(check(sub, sparse_ids.hole(sparse_ids.rename(wrapper), 1)), "handoff", "unavailable caller origin phi");
+  expect(check(sub, sparse_ids.hole(sparse_ids.rename(wrapper), 2)), "handoff", "unavailable caller origin terminator");
 }
 
 function cycling(f: ssa.SFunc): ssa.SFunc {

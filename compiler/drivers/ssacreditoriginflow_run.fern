@@ -4,6 +4,7 @@ import "../semlower";
 import "../ssa";
 import "../ssa_lift";
 import "../ssacreditoriginflow" as flow;
+import "./ssacreditsparse" as sparse_ids;
 
 function require(ok: boolean, id: i32): void {
   if (!ok) {
@@ -181,7 +182,9 @@ function phi_controls(f: ssa.SFunc, producer: ssa.SFunc): void {
     duplicate = duplicate.append(if (b.preds.len() == 2) { ssa.SBlock { ...b, preds: [b.preds[0], b.preds[0]] } } else { b });
   }
   expect(ssa.SFunc { ...f, blocks: swapped }, [producer], "", 51);
+  expect(sparse_ids.rename(ssa.SFunc { ...f, blocks: swapped }), [producer], "", 51);
   expect(ssa.SFunc { ...f, blocks: chained, nvals: f.nvals + 1 }, [producer], "unavailable caller origin phi", 52);
+  expect(sparse_ids.rename(ssa.SFunc { ...f, blocks: chained, nvals: f.nvals + 1 }), [producer], "unavailable caller origin phi", 52);
   expect(ssa.SFunc { ...f, blocks: duplicate }, [producer], "invalid caller origin graph", 53);
   let cyclic_block = ssa.SBlock { id: 2147483647, insts: [], preds: [2147483647], term: ssa.STerm { kind_tag: 2, cond: -1, target: 2147483647, t: -1, f: -1, value: -1 } };
   expect(ssa.SFunc { ...f, blocks: f.blocks.append(cyclic_block) }, [producer], "unsupported caller origin cycle", 54);
@@ -208,6 +211,7 @@ function controls(f: ssa.SFunc, producer: ssa.SFunc): void {
   let i: i32 = 0;
   for why in reasons {
     expect(changed(f, i), [producer], why, 10 + i);
+    expect(sparse_ids.rename(changed(f, i)), [producer], why, 10 + i);
     i = i + 1;
   }
   expect(f, [], "caller origin producer binding", 40);
@@ -221,7 +225,13 @@ function controls(f: ssa.SFunc, producer: ssa.SFunc): void {
   expect(f, [ssa.SFunc { ...producer, name: "wrong_binding" }], "caller origin producer binding", 43);
   expect(changed(f, 20), [ssa.SFunc { ...producer, name: "renamed_producer" }], "", 44);
   expect(copies(f), [producer], "", 45);
+  expect(sparse_ids.rename(copies(f)), [producer], "", 45);
   expect(sparse(f), [producer], "", 46);
+  expect(sparse_ids.rename(sparse(f)), [producer], "", 46);
+  expect(ssa.register_form(f).f, [ssa.register_form(producer).f], "", 57);
+  expect(sparse_ids.hole(sparse_ids.rename(f), 0), [producer], "unavailable caller origin operand", 58);
+  expect(sparse_ids.hole(sparse_ids.rename(f), 1), [producer], "unavailable caller origin phi", 59);
+  expect(sparse_ids.hole(sparse_ids.rename(f), 2), [producer], "unavailable caller origin terminator", 60);
   expect(ssa.SFunc { ...f, nvals: 2147483647 }, [producer], "invalid caller origin graph", 47);
   expect(ssa.SFunc { ...f, nparams: 2 }, [producer], "invalid caller origin graph", 48);
   expect(ssa.SFunc { ...f, takes_env: true }, [producer], "invalid caller origin graph", 49);

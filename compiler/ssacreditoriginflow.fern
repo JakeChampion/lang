@@ -42,7 +42,7 @@ pub function caller(f: ssa.SFunc, producers: ssa.SFunc[], shape: string): origin
   let empty: Value[] = [];
   let credits: i32[] = [1, 1];
   let i: i32 = 0;
-  while (i < f.nvals) {
+  while (i < checked.values.len()) {
     empty = empty.append(Value { kind: -1, identity: 0, words: 0 });
     credits = credits.append(0);
     i = i + 1;
@@ -83,7 +83,7 @@ pub function caller(f: ssa.SFunc, producers: ssa.SFunc[], shape: string): origin
           if (op.kind_tag == 8) {
             let pos = util.index_of_i32(b.preds, f.blocks[previous].id);
             // Read the immutable predecessor snapshot, not earlier phi results.
-            value = rows[previous][op.args[pos]];
+            value = rows[previous][util.index_of_i32(checked.values, op.args[pos])];
           } else if (op.kind_tag == 6) {
             if (op.imm == 0) {
               value = Value { ...value, identity: input };
@@ -93,26 +93,26 @@ pub function caller(f: ssa.SFunc, producers: ssa.SFunc[], shape: string): origin
           } else if (op.kind_tag == 1) {
             value = Value { ...value, identity: op.imm };
           } else if (op.kind_tag == 7) {
-            value = row[op.args[0]];
+            value = row[util.index_of_i32(checked.values, op.args[0])];
           } else if (op.kind_tag == 11) {
             for arg in op.args {
-              let child = row[arg];
+              let child = row[util.index_of_i32(checked.values, arg)];
               if (child.kind != 1 || child.identity < 0 || child.identity > 1 || child.words != 0 || balance[child.identity] != 1) {
                 return refused(f, "invalid caller origin credit transfer");
               }
               balance = balance.with(child.identity, 0);
             }
-            let root = op.result + 2;
+            let root = util.index_of_i32(checked.values, op.result) + 2;
             if (balance[root] != 0) {
               return refused(f, "duplicate caller allocation credit");
             }
             balance = balance.with(root, 1);
             value = Value { kind: 1, identity: root, words: 3 };
           }
-          row = row.with(op.result, value);
+          row = row.with(util.index_of_i32(checked.values, op.result), value);
         }
         if (b.term.kind_tag == 1) {
-          let result = row[b.term.value];
+          let result = row[util.index_of_i32(checked.values, b.term.value)];
           if (result.kind != 1 || result.identity < 2 || result.words != 3 || balance[result.identity] != 1) {
             return refused(f, "owned caller allocation return required");
           }
@@ -126,7 +126,7 @@ pub function caller(f: ssa.SFunc, producers: ssa.SFunc[], shape: string): origin
         } else if (b.term.kind_tag == 2) {
           destinations = destinations.with(index, b.term.target);
         } else {
-          let condition = row[b.term.cond];
+          let condition = row[util.index_of_i32(checked.values, b.term.cond)];
           if (condition.kind != 0 || condition.identity < 0 || condition.identity > 1) {
             return refused(f, "exact caller Boolean required");
           }

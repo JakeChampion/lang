@@ -23,7 +23,7 @@ pub struct Boundary { proof: helper.Proof, sites: Site[] }
 
 struct Value { kind: i32, identity: i32, words: i32 }
 
-struct State { values: Value[], credits: i32[], sites: Site[], error: string }
+struct State { ids: i32[], values: Value[], credits: i32[], sites: Site[], error: string }
 
 function refused(f: ssa.SFunc, why: string): Boundary {
   return Boundary { proof: helper.Proof { ok: false, function_name: f.name, message: why }, sites: [] };
@@ -54,36 +54,37 @@ function bindings(caller: string, producers: ssa.SFunc[], consumers: ssa.SFunc[]
   return "";
 }
 
-function initial(f: ssa.SFunc): State {
+function initial(ids: i32[]): State {
   let values: Value[] = [];
   let credits: i32[] = [1, 1, 1];
   let i: i32 = 0;
-  while (i < f.nvals) {
+  while (i < ids.len()) {
     values = values.append(Value { kind: -1, identity: 0, words: 0 });
     credits = credits.append(0);
     i = i + 1;
   }
-  return State { values: values, credits: credits, sites: [], error: "" };
+  return State { ids: ids, values: values, credits: credits, sites: [], error: "" };
 }
 
 function producer_call(s: State, op: ssa.SInst): State {
   for arg in op.args {
-    let child = s.values[arg];
+    let child = s.values[util.index_of_i32(s.ids, arg)];
     if (child.kind != 1 || child.identity < 0 || child.identity > 1 || child.words != 0 || s.credits[child.identity] != 1) {
       return State { ...s, error: "invalid incoming producer credit transfer" };
     }
     s = State { ...s, credits: s.credits.with(child.identity, 0) };
   }
-  let root = op.result + 3;
+  let slot = util.index_of_i32(s.ids, op.result);
+  let root = slot + 3;
   if (s.credits[root] != 0) {
     return State { ...s, error: "duplicate incoming allocation credit" };
   }
-  return State { ...s, values: s.values.with(op.result, Value { kind: 1, identity: root, words: 3 }), credits: s.credits.with(root, 1) };
+  return State { ...s, values: s.values.with(slot, Value { kind: 1, identity: root, words: 3 }), credits: s.credits.with(root, 1) };
 }
 
 function consumer_call(s: State, op: ssa.SInst, block: i32, input: i32): State {
-  let parent = s.values[op.args[0]];
-  let child = s.values[op.args[1]];
+  let parent = s.values[util.index_of_i32(s.ids, op.args[0])];
+  let child = s.values[util.index_of_i32(s.ids, op.args[1])];
   if (parent.kind != 1 || parent.identity < 3 || parent.words != 3 || s.credits[parent.identity] != 1) {
     return State { ...s, error: "owned matching-capacity consumer argument required" };
   }
@@ -113,7 +114,7 @@ function instruction(s: State, op: ssa.SInst, b: ssa.SBlock, previous: ssa.SBloc
   let value = Value { kind: 0, identity: 0, words: 0 };
   if (op.kind_tag == 8) {
     let pos = util.index_of_i32(b.preds, previous.id);
-    value = predecessor.values[op.args[pos]];
+    value = predecessor.values[util.index_of_i32(s.ids, op.args[pos])];
   } else if (op.kind_tag == 6) {
     if (op.imm == 0) {
       value = Value { ...value, identity: input };
@@ -123,20 +124,20 @@ function instruction(s: State, op: ssa.SInst, b: ssa.SBlock, previous: ssa.SBloc
   } else if (op.kind_tag == 1) {
     value = Value { ...value, identity: op.imm };
   } else if (op.kind_tag == 7) {
-    value = s.values[op.args[0]];
+    value = s.values[util.index_of_i32(s.ids, op.args[0])];
   }
-  return State { ...s, values: s.values.with(op.result, value) };
+  return State { ...s, values: s.values.with(util.index_of_i32(s.ids, op.result), value) };
 }
 
-function input_case(f: ssa.SFunc, order: i32[], consumer: string, input: i32): State {
-  let empty = initial(f);
+function input_case(f: ssa.SFunc, checked: graph.Graph, consumer: string, input: i32): State {
+  let empty = initial(checked.values);
   let rows: State[] = [];
   let destinations: i32[] = [];
   for b in f.blocks {
     rows = rows.append(empty);
     destinations = destinations.append(-1);
   }
-  for index in order {
+  for index in checked.order {
     let b = f.blocks[index];
     let s = empty;
     let previous = index;
@@ -164,7 +165,7 @@ function input_case(f: ssa.SFunc, order: i32[], consumer: string, input: i32): S
       }
       let destination = b.term.target;
       if (b.term.kind_tag == 3) {
-        let condition = s.values[b.term.cond];
+        let condition = s.values[util.index_of_i32(s.ids, b.term.cond)];
         if (condition.kind != 0 || condition.identity < 0 || condition.identity > 1) {
           return State { ...empty, error: "exact incoming Boolean required" };
         }
@@ -188,7 +189,7 @@ pub function before_calls(f: ssa.SFunc, producers: ssa.SFunc[], consumers: ssa.S
   }
   let sites: Site[] = [];
   for input in [0, 1] {
-    let s = input_case(f, checked.order, consumers[0].name, input);
+    let s = input_case(f, checked, consumers[0].name, input);
     if (s.error != "") {
       return refused(f, s.error);
     }
