@@ -1,0 +1,150 @@
+import "../lexer";
+import "../parser";
+import "../semlower";
+import "../ssa";
+import "../ssa_lift";
+import "../ssacreditscalar" as scalar;
+
+function require(ok: boolean, id: i32): void {
+  if (!ok) {
+    exit(id);
+  }
+}
+
+function expect(f: ssa.SFunc, ok: boolean, why: string, id: i32): void {
+  let p = scalar.zero_or_exit(f);
+  if (p.ok != ok || p.function_name != f.name || p.message != why) {
+    print(p.function_name + ": " + p.message);
+    exit(id);
+  }
+}
+
+function changed(f: ssa.SFunc, mode: i32): ssa.SFunc {
+  let blocks: ssa.SBlock[] = [];
+  let hits: i32 = 0;
+  for b in f.blocks {
+    let insts: ssa.SInst[] = [];
+    for op in b.insts {
+      let next = op;
+      if (op.kind_tag == 50) {
+        if (mode == 0) {
+          next = ssa.SInst { ...op, str: "unknown_effect" };
+        } else if (mode == 1) {
+          next = ssa.SInst { ...op, kind_tag: 11, str: "__fern_rc_dec" };
+        } else if (mode == 2) {
+          next = ssa.SInst { ...op, kind_tag: 40, str: "", imm: 8 };
+        } else if (mode == 3) {
+          next = ssa.SInst { ...op, args: [op.result] };
+        } else if (mode == 4) {
+          next = ssa.SInst { ...op, args: [] };
+        } else if (mode == 5) {
+          next = ssa.SInst { ...op, imm: 4 };
+        }
+        if (mode < 6) {
+          hits = hits + 1;
+        }
+      }
+      if (mode == 6 && b.term.kind_tag == 1 && op.result == b.term.value) {
+        next = ssa.SInst { ...op, imm: 7 };
+        hits = hits + 1;
+      } else if (mode == 7 && op.kind_tag == 8) {
+        next = ssa.SInst { ...op, args: op.args.with(0, op.result) };
+        hits = hits + 1;
+      } else if (mode == 8 && op.kind_tag == 6 && op.imm == 1) {
+        next = ssa.SInst { ...op, imm: 0 };
+        hits = hits + 1;
+      } else if (mode == 9 && op.kind_tag == 8) {
+        next = ssa.SInst { ...op, args: [] };
+        hits = hits + 1;
+      } else if (mode == 10 && op.kind_tag == 8) {
+        require(op.args.len() == 2, 7);
+        next = ssa.SInst { ...op, args: [op.args[1], op.args[0]] };
+        hits = hits + 1;
+      } else if (mode == 11 && op.kind_tag == 6 && op.imm == 1) {
+        next = ssa.SInst { ...op, result: 0 };
+        hits = hits + 1;
+      } else if (mode == 12 && b.term.kind_tag == 1 && op.result == b.term.value) {
+        next = ssa.SInst { ...op, kind_tag: 7, args: [1] };
+        hits = hits + 1;
+      } else if (mode == 13 && op.kind_tag == 50) {
+        next = ssa.SInst { ...op, args: [f.nvals - 1] };
+        hits = hits + 1;
+      }
+      insts = insts.append(next);
+    }
+    blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
+  }
+  require(hits == 1, 2);
+  return ssa.SFunc { ...f, blocks: blocks };
+}
+
+function target_checks(target: string): void {
+  let source = "@noinline\nfunction require(ok: boolean, id: i32): void { if (!ok) { exit(id); } }\nfunction main(): i32 { require(true, 9); return 0; }\n";
+  let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
+  let funcs: ssa.SFunc[] = [];
+  for body in sub.bodies {
+    if (body.name == "require") {
+      require(body.ok, 3);
+      let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), body.name, body.n_params, body.n_locals, body.ops, false);
+      require(lifted.ok, 4);
+      funcs = funcs.append(lifted.func);
+    }
+  }
+  require(funcs.len() == 1, 5);
+  let f = funcs[0];
+  expect(f, true, "proved scalar zero-or-exit effects", 6);
+  let reasons = ["unsupported scalar helper effect", "unsupported scalar helper effect", "unsupported scalar helper effect", "unavailable scalar helper operand", "unsupported scalar helper effect", "unsupported scalar helper effect", "scalar helper return not proven zero", "unavailable scalar phi operand", "invalid scalar helper parameter", "invalid scalar helper phi", "unavailable scalar phi operand", "invalid scalar helper definition", "scalar helper return not proven zero", "unavailable scalar helper operand"];
+  let i: i32 = 0;
+  while (i < reasons.len()) {
+    expect(changed(f, i), false, reasons[i], 10 + i);
+    i = i + 1;
+  }
+  let reverse: ssa.SBlock[] = [];
+  i = f.blocks.len();
+  while (i > 0) {
+    i = i - 1;
+    reverse = reverse.append(f.blocks[i]);
+  }
+  expect(ssa.SFunc { ...f, blocks: reverse, name: "renamed_assertion" }, true, "proved scalar zero-or-exit effects", 30);
+  expect(ssa.SFunc { ...f, name: "__fern_spoof" }, false, "invalid scalar helper boundary", 31);
+  expect(ssa.SFunc { ...f, nvals: 2147483647 }, false, "invalid scalar helper boundary", 32);
+  expect(ssa.SFunc { ...f, nparams: 1 }, false, "invalid scalar helper boundary", 33);
+  expect(ssa.SFunc { ...f, takes_env: true }, false, "invalid scalar helper boundary", 34);
+  let sparse: ssa.SBlock[] = [];
+  for b in f.blocks {
+    let preds: i32[] = [];
+    for p in b.preds {
+      preds = preds.append(2147483647 - p);
+    }
+    let term = b.term;
+    if (term.kind_tag == 2) {
+      term = ssa.STerm { ...term, target: 2147483647 - term.target };
+    } else if (term.kind_tag == 3) {
+      term = ssa.STerm { ...term, t: 2147483647 - term.t, f: 2147483647 - term.f };
+    }
+    sparse = sparse.append(ssa.SBlock { ...b, id: 2147483647 - b.id, preds: preds, term: term });
+  }
+  expect(ssa.SFunc { ...f, blocks: sparse, entry: 2147483647 - f.entry }, true, "proved scalar zero-or-exit effects", 36);
+  let broken: ssa.SBlock[] = [];
+  for b in f.blocks {
+    let term = b.term;
+    if (term.kind_tag == 3) {
+      term = ssa.STerm { ...term, cond: f.nvals - 1 };
+    }
+    broken = broken.append(ssa.SBlock { ...b, term: term });
+  }
+  expect(ssa.SFunc { ...f, blocks: broken }, false, "unavailable scalar helper condition", 37);
+  let params = [ssa.SInst { kind_tag: 6, result: 0, args: [], imm: 0, str: "" }, ssa.SInst { kind_tag: 6, result: 1, args: [], imm: 1, str: "" }];
+  let jump = ssa.STerm { kind_tag: 2, cond: 0, target: 1, t: 0, f: 0, value: 0 };
+  let cycle = [ssa.SBlock { id: 0, insts: params, preds: [], term: jump }, ssa.SBlock { id: 1, insts: [], preds: [0, 1], term: jump }];
+  expect(ssa.SFunc { ...f, blocks: cycle, entry: 0, nvals: 2 }, false, "unsupported scalar helper cycle", 38);
+  expect(f, true, "proved scalar zero-or-exit effects", 35);
+}
+
+function main(): i32 {
+  target_checks("arm64-darwin");
+  target_checks("x86-64-linux");
+  target_checks("wasm32-wasi");
+  print("scalar assertion effect controls passed");
+  return 0;
+}
