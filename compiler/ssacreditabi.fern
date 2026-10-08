@@ -15,6 +15,7 @@ import "./ssacreditreuse" as reuse;
 import "./ssacreditscalar" as scalar_effect;
 import "./ssacreditorigin" as origin;
 import "./ssacreditoriginflow" as origin_flow;
+import "./ssacreditincoming" as incoming;
 import "./util";
 
 struct PhysicalBindings {
@@ -288,6 +289,136 @@ function bodies(sub: ircore.Sub, name: string): irtables.LowerResult[] {
 
 function no_origin(name: string, why: string): origin.Origin {
   return origin.Origin { proof: refused(name, why), words: 0 };
+}
+
+function no_incoming(name: string, why: string): incoming.Boundary {
+  return incoming.Boundary { proof: refused(name, why), sites: [] };
+}
+
+function incoming_schema_index(sub: ircore.Sub, ty: typeinfo.Type): i32 {
+  let found: i32 = -1;
+  let index: i32 = 0;
+  for record in sub.physical_records.list {
+    if (semtypes.equal(record.ty, ty)) {
+      if (found >= 0) {
+        return -1;
+      }
+      found = index;
+    }
+    index = index + 1;
+  }
+  return found;
+}
+
+function incoming_modes(c: ssasem.Contract): boolean {
+  return c.params.len() == 4 && c.modes.len() == 4 && c.modes[0] == 1 && c.modes[1] == 3 && c.modes[2] == 3 && c.modes[3] == 3;
+}
+
+function incoming_signature_error(sub: ircore.Sub, c: ssasem.Contract): string {
+  if (!incoming_modes(c)) {
+    return "incoming wrapper requires scalar and three consuming parameters";
+  }
+  let boolean_param = false;
+  if let typeinfo.TypeBool(_) = c.params[0] {
+    boolean_param = true;
+  }
+  if (!boolean_param || !semtypes.equal(c.params[1], c.params[2]) || !semtypes.equal(c.params[1], c.params[3]) || !ordinary(c.result, sub.physical_finalizers)) {
+    return "unsupported incoming wrapper types or finalizers";
+  }
+  if (incoming_schema_index(sub, c.params[1]) < 0) {
+    return "missing or ambiguous incoming child schema";
+  }
+  return producer_child_error(sub, c.params[1]);
+}
+
+function incoming_consumer_signature(c: ssasem.Contract, d: ssasem.Contract): boolean {
+  return d.params.len() == 2 && d.modes.len() == 2 && d.modes[0] == 3 && d.modes[1] == 3 && semtypes.equal(d.params[1], c.params[3]) && semtypes.equal(d.result, c.result);
+}
+
+function incoming_consumer_error(sub: ircore.Sub, c: ssasem.Contract, d: ssasem.Contract): string {
+  if (!incoming_consumer_signature(c, d)) {
+    return "incoming consumer ABI differs from wrapper";
+  }
+  if (!ordinary(d.params[0], sub.physical_finalizers)) {
+    return "unsupported incoming parent type or finalizer";
+  }
+  let ci = semrecords.find(sub.physical_records, c.params[1]);
+  for ty in [d.params[0], d.result] {
+    let pi = incoming_schema_index(sub, ty);
+    if (pi < 0) {
+      return "missing or ambiguous incoming parent or result schema";
+    }
+    let error = origin_layout_error(sub.physical_records.list[pi], sub.physical_records.list[ci], c.params[1]);
+    if (error != "") {
+      return "incoming layout refused: " + error;
+    }
+  }
+  return "";
+}
+
+function incoming_body(sub: ircore.Sub, name: string, parameters: i32): PhysicalBindings {
+  let found = bodies(sub, name);
+  if (found.len() != 1 || !found[0].ok || found[0].n_params != parameters) {
+    return PhysicalBindings { functions: [], error: "missing, ambiguous or mismatched incoming body" };
+  }
+  let b = found[0];
+  let actual = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), name, b.n_params, b.n_locals, b.ops, false);
+  if (!actual.ok) {
+    return PhysicalBindings { functions: [], error: "unsupported incoming body lift" };
+  }
+  return PhysicalBindings { functions: [actual.func], error: "" };
+}
+
+function incoming_producers(sub: ircore.Sub, f: ssa.SFunc, c: ssasem.Contract, consumer: string): PhysicalBindings {
+  let names: string[] = [];
+  let producers: ssa.SFunc[] = [];
+  for block in f.blocks {
+    for op in block.insts {
+      if (op.kind_tag == 11 && op.str != consumer && !util.has_str(names, op.str)) {
+        names = names.append(op.str);
+        let checked = origin_callee(sub, f.name, c, op.str);
+        if (!checked.ok) {
+          return PhysicalBindings { functions: [], error: checked.message };
+        }
+        let body = incoming_body(sub, op.str, 2);
+        if (body.error != "") {
+          return body;
+        }
+        producers = util.append_all(producers, body.functions);
+      }
+    }
+  }
+  return PhysicalBindings { functions: producers, error: "" };
+}
+
+// Bind selected types and actual bodies, then prove only the first pre-call
+// boundary. The consumer's effects, exit and return remain deliberately opaque.
+pub function check_incoming(sub: ircore.Sub, name: string, consumer: string): incoming.Boundary {
+  let wrappers = selected_contracts(sub, name);
+  let consumers = selected_contracts(sub, consumer);
+  if (wrappers.len() != 1 || consumers.len() != 1 || name == consumer) {
+    return no_incoming(name, "missing or ambiguous incoming ABI");
+  }
+  let c = wrappers[0];
+  let d = consumers[0];
+  let error = incoming_signature_error(sub, c);
+  if (error != "") {
+    return no_incoming(name, error);
+  }
+  error = incoming_consumer_error(sub, c, d);
+  if (error != "") {
+    return no_incoming(name, error);
+  }
+  let wrapper = incoming_body(sub, name, 4);
+  let callee = incoming_body(sub, consumer, 2);
+  if (wrapper.error != "" || callee.error != "") {
+    return no_incoming(name, if (wrapper.error != "") { wrapper.error } else { callee.error });
+  }
+  let producers = incoming_producers(sub, wrapper.functions[0], ssasem.Contract { ...c, result: d.params[0] }, consumer);
+  if (producers.error != "") {
+    return no_incoming(name, producers.error);
+  }
+  return incoming.before_calls(wrapper.functions[0], producers.functions, callee.functions, semrecords.name_of(d.params[0]));
 }
 
 // Bind the selected constructor ABI and resolved layout to its actual body.
