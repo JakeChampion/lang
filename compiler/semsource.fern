@@ -6734,22 +6734,25 @@ function generic_clones(base: string, s: State): typeinfo.Type[] {
   return out;
 }
 
-// The builtin names a module declaration takes over: any free function, and a
-// string method only when std/string is not loaded. std/string's own methods
-// are what the runtime helpers stand in for, and native rejects a second
-// declaration of one beside them (E006).
-// The types an `impl mem.Drop` gives a finalizer. The trait is matched by its
+// The receivers and symbols an `impl mem.Drop` gives a finalizer. The trait is matched by its
 // simple name, as native's hasDropImpl matches it.
-function finalized_types(impls: parser.ImplInfo[]): string[] {
-  let out: string[] = [];
-  for imp in impls {
-    if (imp.trait_name == "Drop") {
-      out = out.append(util.base_type_name(imp.impl_type));
+function finalized_types(funcs: parser.FuncDecl[]): ssasem.Finalizer[] {
+  let out: ssasem.Finalizer[] = [];
+  // Concrete clones preserve their trait provider and exact receiver. Adopted
+  // inherent methods carry the resolver's dyn_traits, not just a drop name.
+  for fd in funcs {
+    let provider = fd.impl_trait == "Drop" || fd.impl_trait == "" && util.index_of_str(fd.dyn_traits, "Drop") >= 0;
+    if (provider && parser.derive_simple_name(fd.name) == "drop" && fd.receiver_type != "" && !generic_decl(fd)) {
+      out = out.append(ssasem.Finalizer { receiver: fd.receiver_type, symbol: parser.decl_key(fd) });
     }
   }
   return out;
 }
 
+// The builtin names a module declaration takes over: any free function, and a
+// string method only when std/string is not loaded. std/string's own methods
+// are what the runtime helpers stand in for, and native rejects a second
+// declaration of one beside them (E006).
 function shadowed_builtins(mod: parser.Module): string[] {
   let out: string[] = [];
   let keys: string[] = [];
@@ -6931,7 +6934,7 @@ function contract_types(calls: ssasem.Contract[]): typeinfo.Type[] {
 // Made is one declaration's production and the schema memo as it leaves it.
 struct Made { p: Produced, memo: SchemaMemo }
 
-function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo): Made {
+function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo, finalizers: ssasem.Finalizer[]): Made {
   if (!s.ok) {
     return Made { p: refuse(s.why), memo: memo };
   }
@@ -6964,7 +6967,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo)
     return Made { p: refuse(table.why), memo: table.memo };
   }
   let graph: ssa.SFunc = ssa.SFunc { ...f.graph, name: name, nparams: params.len() };
-  f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: semrecords.records_of(table.records), enums: table.enums, calls: s.calls, envs: closed.rows, dyns: closed.dyns, shadows: s.shadows, finalizers: finalized_types(s.impls), map_module: s.scope.module_imported("core/map") };
+  f = ssasem.Func { ...f, graph: graph, params: params, result: s.result, records: semrecords.records_of(table.records), enums: table.enums, calls: s.calls, envs: closed.rows, dyns: closed.dyns, shadows: s.shadows, finalizers: finalizers, map_module: s.scope.module_imported("core/map") };
   // Before the verifier in anchor_module, so the rewritten graph is the one
   // it checks, and before anything downstream plans ownership over it (#9692).
   f = ssasem.tail_recursion(f, name);
@@ -6994,7 +6997,7 @@ function unresolved_result_spelling(fd: parser.FuncDecl, s: State): string {
 // the checker's function scope, the module's call contracts and — for a
 // template — the instantiation to produce it under, named `name`. Unsupported
 // constructs are explicit refusals, never a partial graph.
-function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contracts, binding: ssasem.Binding, name: string, handers: util.NameIndex, shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[], memo: SchemaMemo, debug_lines: boolean): Made {
+function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Contracts, binding: ssasem.Binding, name: string, handers: util.NameIndex, shadows: string[], views: string[], funcs: parser.FuncDecl[], impls: parser.ImplInfo[], finalizers: ssasem.Finalizer[], memo: SchemaMemo, debug_lines: boolean): Made {
   if (fd.import_iface.len() > 0) {
     return Made { p: external_entry(), memo: memo };
   }
@@ -7005,7 +7008,7 @@ function build(fd: parser.FuncDecl, scope: checker.Scope, contracts: ssasem.Cont
   let body: ast.Stmt[] = parser.elide_len_bounded_body(fd.body);
   s = learn_body(fd, body, s);
   s = stmts(body, prebind(parameters(fd, s)));
-  return complete(fd, s, name, memo);
+  return complete(fd, s, name, memo, finalizers);
 }
 
 // The defer desugar replays an action at every exit the arming scope can
@@ -8581,6 +8584,7 @@ pub function check_views(mod: parser.Module): util.Diag[] {
 }
 
 function produce_module(mod: parser.Module, verify: boolean, debug_lines: boolean): Built {
+  let finalizers: ssasem.Finalizer[] = finalized_types(mod.funcs);
   let scopes: checker.Scope[] = checker.module_scopes(mod);
   let table: ssasem.Contracts = contracts(mod, scopes);
   let handed_back: util.NameIndex = handers(mod);
@@ -8599,7 +8603,7 @@ function produce_module(mod: parser.Module, verify: boolean, debug_lines: boolea
     let fd: parser.FuncDecl = mod.funcs[i];
     let p: Produced = template_entry(parser.decl_key(fd), false, "uninstantiated generic", true);
     if (!generic_decl(fd)) {
-      let made: Made = build(fd, scopes[i], table, ssasem.unbound(), fd.name, handed_back, shadows, views, mod.funcs, mod.impls, memo, debug_lines);
+      let made: Made = build(fd, scopes[i], table, ssasem.unbound(), fd.name, handed_back, shadows, views, mod.funcs, mod.impls, finalizers, memo, debug_lines);
       p = made.p;
       memo = made.memo;
     }
@@ -8615,7 +8619,7 @@ function produce_module(mod: parser.Module, verify: boolean, debug_lines: boolea
     let di: i32 = util.index_of_str(names, r.key);
     let p: Produced = refuse("unbounded instantiation");
     if (at < instance_limit()) {
-      let made: Made = build(mod.funcs[di], scopes[di], table, r.binding, r.name, handed_back, shadows, views, mod.funcs, mod.impls, memo, debug_lines);
+      let made: Made = build(mod.funcs[di], scopes[di], table, r.binding, r.name, handed_back, shadows, views, mod.funcs, mod.impls, finalizers, memo, debug_lines);
       p = made.p;
       memo = made.memo;
     }

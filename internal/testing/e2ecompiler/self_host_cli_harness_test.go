@@ -138,7 +138,7 @@ func (c *selfHostCLI) exitOfFileArgs(t *testing.T, src, target string, stdin []b
 		if err != nil {
 			t.Fatal(err)
 		}
-		cmd = runArm64Bin(qemu, buildBinArm64(t, armgcc, filepath.Dir(src), "prog", string(asm)), args...)
+		cmd = runArm64Bin(qemu, buildBinArm64(t, armgcc, t.TempDir(), "prog", string(asm)), args...)
 	case "wasm32-wasi":
 		cmd = exec.Command(e2eharness.Wasmtime(t), append([]string{"run", c.emit(t, src, target, env...)}, args...)...)
 	default:

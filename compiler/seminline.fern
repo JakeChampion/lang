@@ -1159,7 +1159,7 @@ function splittable(f: ssasem.Func, defs: Defs, v: i32): boolean {
   if (!builds(k) && k != 8) {
     return false;
   }
-  return !ssasem.holds_view(f, f.values[v]) && ssasem.finalizer_of(f, f.values[v]) == "";
+  return !ssasem.holds_view(f, f.values[v]) && !ssasem.has_finalizer(f, f.values[v]);
 }
 
 // `v` past any copies.
@@ -1630,5 +1630,5 @@ function unread_build(f: ssasem.Func, built: typeinfo.Type[], reads: i32[], ins:
   if (!builds(ins.kind_tag) && ins.kind_tag != 7 && ins.kind_tag != 8) {
     return false;
   }
-  return built_type(f, built, f.values[ins.result]) && ssasem.finalizer_of(f, f.values[ins.result]) == "";
+  return built_type(f, built, f.values[ins.result]) && !ssasem.has_finalizer(f, f.values[ins.result]);
 }

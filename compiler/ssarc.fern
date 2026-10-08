@@ -907,7 +907,7 @@ function has_children(t: typeinfo.Type, f: ssasem.Func): boolean {
     return false;
   }
   // A finalizer is a child the box owes whatever its fields hold.
-  if (ssasem.finalizer_of(f, t) != "") {
+  if (ssasem.has_finalizer(f, t)) {
     return true;
   }
   if let typeinfo.TypeStruct(_) = t {
@@ -1408,7 +1408,7 @@ function reuse_slots(t: typeinfo.Type, f: ssasem.Func): i32 {
     return 0 - 1;
   }
   // A box handed on is not freed, and a finalizer is owed at the free.
-  if (ssasem.finalizer_of(f, t) != "") {
+  if (ssasem.has_finalizer(f, t)) {
     return 0 - 1;
   }
   if let typeinfo.TypeTuple(tup) = t {
@@ -1482,7 +1482,7 @@ function variant_slots(t: typeinfo.Type, name: string, f: ssasem.Func): i32 {
 function donor_slots(f: ssasem.Func, b: ssa.SBlock, d: i32): i32 {
   let t: typeinfo.Type = f.values[d];
   let n: i32 = reuse_slots(t, f);
-  if (n >= 0 || ssasem.finalizer_of(f, t) != "") {
+  if (n >= 0 || ssasem.has_finalizer(f, t)) {
     return n;
   }
   for ins in b.insts {
