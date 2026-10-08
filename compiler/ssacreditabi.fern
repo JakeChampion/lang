@@ -421,6 +421,49 @@ pub function check_incoming(sub: ircore.Sub, name: string, consumer: string): in
   return incoming.before_calls(wrapper.functions[0], producers.functions, callee.functions, semrecords.name_of(d.params[0]));
 }
 
+function storage_assertions(sub: ircore.Sub, names: string[]): PhysicalBindings {
+  let functions: ssa.SFunc[] = [];
+  for name in names {
+    let proof = check_assertion(sub, name);
+    if (!proof.ok) {
+      return PhysicalBindings { functions: [], error: name + ": " + proof.message };
+    }
+    let bound = incoming_body(sub, name, 2);
+    if (bound.error != "") {
+      return PhysicalBindings { functions: [], error: name + ": " + bound.error };
+    }
+    functions = util.append_all(functions, bound.functions);
+  }
+  return PhysicalBindings { functions: functions, error: "" };
+}
+
+// Bind the same selected incoming consumer to its independently checked storage
+// invocation. Success does not certify the wrapper's post-call continuation.
+pub function check_storage(sub: ircore.Sub, name: string, consumer: string, drop_name: string, release_name: string, assertions: string[]): helper.Proof {
+  let boundary = check_incoming(sub, name, consumer);
+  if (!boundary.proof.ok) {
+    return boundary.proof;
+  }
+  let c = selected_contracts(sub, name)[0];
+  let d = selected_contracts(sub, consumer)[0];
+  let wrapper = incoming_body(sub, name, 4);
+  let producers = incoming_producers(sub, wrapper.functions[0], ssasem.Contract { ...c, result: d.params[0] }, consumer);
+  let physical = physical_bindings(sub, consumer, drop_name, release_name);
+  if (physical.error != "") {
+    return refused(consumer, physical.error);
+  }
+  let parent = sub.physical_records.list[incoming_schema_index(sub, d.params[0])];
+  let numeric = replacement_scalar_fields(sub, d, parent);
+  if (numeric.error != "") {
+    return refused(consumer, numeric.error);
+  }
+  let calls = storage_assertions(sub, assertions);
+  if (calls.error != "") {
+    return refused(consumer, calls.error);
+  }
+  return reuse.check_invocations(wrapper.functions[0], producers.functions, physical.functions[0], physical.functions[1], physical.functions[2], semrecords.name_of(d.params[0]), semrecords.name_of(d.result), numeric.fields, calls.functions);
+}
+
 // Bind the selected constructor ABI and resolved layout to its actual body.
 // Capacity comes from checked allocation instructions, never the type alone.
 pub function check_producer(sub: ircore.Sub, name: string): origin.Origin {
