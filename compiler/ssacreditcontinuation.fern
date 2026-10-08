@@ -12,16 +12,16 @@ import "./util";
 // 1 is an alias of the single owned consumer result. Copies create no credits.
 struct Value { kind: i32, scalar: i32 }
 
-struct State { values: Value[], called: boolean, error: string }
+struct State { ids: i32[], values: Value[], called: boolean, error: string }
 
-function initial(f: ssa.SFunc): State {
+function initial(ids: i32[]): State {
   let values: Value[] = [];
   let index: i32 = 0;
-  while (index < f.nvals) {
+  while (index < ids.len()) {
     values = values.append(Value { kind: -1, scalar: 0 });
     index = index + 1;
   }
-  return State { values: values, called: false, error: "" };
+  return State { ids: ids, values: values, called: false, error: "" };
 }
 
 function call(s: State, op: ssa.SInst, block: i32, site: incoming.Site): State {
@@ -36,7 +36,7 @@ function call(s: State, op: ssa.SInst, block: i32, site: incoming.Site): State {
   }
   // The recomputed invocation consumed all pre-call local credits and returned
   // exactly one new-generation credit. Every pre-call reference stays invalid.
-  return State { ...s, values: s.values.with(op.result, Value { kind: 1, scalar: 0 }), called: true };
+  return State { ...s, values: s.values.with(util.index_of_i32(s.ids, op.result), Value { kind: 1, scalar: 0 }), called: true };
 }
 
 function instruction(s: State, op: ssa.SInst, b: ssa.SBlock, previous: ssa.SBlock, predecessor: State, site: incoming.Site): State {
@@ -49,33 +49,33 @@ function instruction(s: State, op: ssa.SInst, b: ssa.SBlock, previous: ssa.SBloc
   } else if (op.kind_tag == 1) {
     value = Value { kind: 0, scalar: op.imm };
   } else if (op.kind_tag == 7) {
-    value = s.values[op.args[0]];
+    value = s.values[util.index_of_i32(s.ids, op.args[0])];
   } else if (op.kind_tag == 8) {
     let pos = util.index_of_i32(b.preds, previous.id);
-    value = predecessor.values[op.args[pos]];
+    value = predecessor.values[util.index_of_i32(s.ids, op.args[pos])];
   }
   if (s.called && value.kind < 0) {
     return State { ...s, error: "spent reference in wrapper continuation" };
   }
-  return State { ...s, values: s.values.with(op.result, value) };
+  return State { ...s, values: s.values.with(util.index_of_i32(s.ids, op.result), value) };
 }
 
 function returned(s: State, value: i32): string {
-  if (!s.called || s.values[value].kind != 1) {
+  if (!s.called || s.values[util.index_of_i32(s.ids, value)].kind != 1) {
     return "continuation must return owned consumer result";
   }
   return "";
 }
 
-function input_case(f: ssa.SFunc, order: i32[], site: incoming.Site): string {
-  let empty = initial(f);
+function input_case(f: ssa.SFunc, checked: graph.Graph, site: incoming.Site): string {
+  let empty = initial(checked.values);
   let rows: State[] = [];
   let destinations: i32[] = [];
   for b in f.blocks {
     rows = rows.append(empty);
     destinations = destinations.append(-1);
   }
-  for index in order {
+  for index in checked.order {
     let b = f.blocks[index];
     let s = empty;
     let previous = index;
@@ -105,7 +105,7 @@ function input_case(f: ssa.SFunc, order: i32[], site: incoming.Site): string {
       }
       let destination = b.term.target;
       if (b.term.kind_tag == 3) {
-        let condition = s.values[b.term.cond];
+        let condition = s.values[util.index_of_i32(s.ids, b.term.cond)];
         if (condition.kind != 0 || condition.scalar < 0 || condition.scalar > 1) {
           return "exact continuation Boolean required";
         }
@@ -132,7 +132,7 @@ pub function check(wrapper: ssa.SFunc, producers: ssa.SFunc[], consumer: ssa.SFu
     return helper.Proof { ok: false, function_name: wrapper.name, message: checked.error };
   }
   for site in boundary.sites {
-    let error = input_case(wrapper, checked.order, site);
+    let error = input_case(wrapper, checked, site);
     if (error != "") {
       return helper.Proof { ok: false, function_name: wrapper.name, message: error };
     }

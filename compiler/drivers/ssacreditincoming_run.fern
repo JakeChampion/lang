@@ -4,6 +4,7 @@ import "../semlower";
 import "../ssa";
 import "../ssa_lift";
 import "../ssacreditincoming" as incoming;
+import "./ssacreditsparse" as sparse_ids;
 
 function require(ok: boolean, id: i32): void {
   if (!ok) {
@@ -146,6 +147,7 @@ function controls(f: ssa.SFunc, p: ssa.SFunc, c: ssa.SFunc): void {
   let mode: i32 = 0;
   for why in reasons {
     expect(changed(f, mode), [p], [c], why);
+    expect(sparse_ids.rename(changed(f, mode)), [p], [c], why);
     mode = mode + 1;
   }
   expect(f, [], [c], "incoming boundary binding");
@@ -166,6 +168,11 @@ function controls(f: ssa.SFunc, p: ssa.SFunc, c: ssa.SFunc): void {
   expect(ssa.SFunc { ...f, nparams: 3 }, [p], [c], "invalid caller origin graph");
   expect(ssa.SFunc { ...f, nvals: 2147483647 }, [p], [c], "invalid caller origin graph");
   expect(copies(f), [p], [c], "");
+  expect(sparse_ids.rename(copies(f)), [p], [c], "");
+  expect(ssa.register_form(f).f, [ssa.register_form(p).f], [c], "");
+  expect(sparse_ids.hole(sparse_ids.rename(f), 0), [p], [c], "unavailable caller origin operand");
+  expect(sparse_ids.hole(sparse_ids.rename(f), 1), [p], [c], "unavailable caller origin phi");
+  expect(sparse_ids.hole(sparse_ids.rename(f), 2), [p], [c], "unavailable caller origin terminator");
   expect(renamed(f), [ssa.SFunc { ...p, name: "renamed_parent" }], [ssa.SFunc { ...c, name: "renamed_replace" }], "");
   expect(f, [p], [c], "");
 }

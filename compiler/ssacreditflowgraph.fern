@@ -19,35 +19,54 @@ function edge(t: ssa.STerm, id: i32): boolean {
   return t.kind_tag == 2 && t.target == id || t.kind_tag == 3 && (t.t == id || t.f == id);
 }
 
-function readable(row: boolean[], id: i32): boolean {
-  return id >= 0 && id < row.len() && row[id];
+function readable(row: boolean[], values: i32[], id: i32): boolean {
+  let slot = util.index_of_i32(values, id);
+  return slot >= 0 && row[slot];
 }
 
-pub struct Graph { order: i32[], error: string }
+pub struct Graph { order: i32[], values: i32[], error: string }
+
+function value_ids(f: ssa.SFunc): i32[] {
+  let values: i32[] = [];
+  for b in f.blocks {
+    for op in b.insts {
+      values = values.append(op.result);
+    }
+  }
+  return values;
+}
 
 // Check every block, including infeasible continuations. Index by block position,
-// never by external block ID; nvals is bounded by actual instruction count.
+// never by external block or value ID. Values maps physical IDs to bounded slots.
 pub function check(f: ssa.SFunc, producers: ssa.SFunc[], parameter_count: i32): Graph {
-  let bad = Graph { order: [], error: "invalid caller origin graph" };
-  let count: i32 = 0;
-  for b in f.blocks {
-    count = count + b.insts.len();
-  }
-  if (f.name == "" || util.str_has_prefix(f.name, "__fern_") || f.nparams != parameter_count || f.takes_env || f.nvals < parameter_count || f.nvals > count || block_index(f, f.entry) < 0) {
+  let bad = Graph { order: [], values: [], error: "invalid caller origin graph" };
+  if (f.name == "" || util.str_has_prefix(f.name, "__fern_") || f.nparams != parameter_count || f.takes_env || f.nvals < parameter_count || block_index(f, f.entry) < 0) {
     return bad;
   }
   let error = declarations(f, producers, parameter_count);
   if (error != "") {
     return Graph { ...bad, error: error };
   }
-  return availability(f);
+  let values = value_ids(f);
+  let last: i32 = -1;
+  for value in values {
+    if (value > last) {
+      last = value;
+    }
+  }
+  // Unused trailing value capacity is outside this scoped boundary; the
+  // highest-numbered definition must survive, as ssacreditorigin requires.
+  if (last < f.nvals - 1) {
+    return bad;
+  }
+  return availability(f, values);
 }
 
-function availability(f: ssa.SFunc): Graph {
-  let bad = Graph { order: [], error: "invalid caller origin graph" };
+function availability(f: ssa.SFunc, values: i32[]): Graph {
+  let bad = Graph { order: [], values: [], error: "invalid caller origin graph" };
   let empty: boolean[] = [];
   let i: i32 = 0;
-  while (i < f.nvals) {
+  while (i < values.len()) {
     empty = empty.append(false);
     i = i + 1;
   }
@@ -82,7 +101,7 @@ function availability(f: ssa.SFunc): Graph {
       row = rows[block_index(f, b.preds[0])];
       for p in b.preds {
         i = 0;
-        while (i < f.nvals) {
+        while (i < values.len()) {
           row = row.with(i, row[i] && rows[block_index(f, p)][i]);
           i = i + 1;
         }
@@ -92,28 +111,28 @@ function availability(f: ssa.SFunc): Graph {
       if (op.kind_tag == 8) {
         i = 0;
         for p in b.preds {
-          if (!readable(rows[block_index(f, p)], op.args[i])) {
+          if (!readable(rows[block_index(f, p)], values, op.args[i])) {
             return Graph { ...bad, error: "unavailable caller origin phi" };
           }
           i = i + 1;
         }
       } else {
         for arg in op.args {
-          if (!readable(row, arg)) {
+          if (!readable(row, values, arg)) {
             return Graph { ...bad, error: "unavailable caller origin operand" };
           }
         }
       }
-      row = row.with(op.result, true);
+      row = row.with(util.index_of_i32(values, op.result), true);
     }
-    if (b.term.kind_tag == 1 && !readable(row, b.term.value) || b.term.kind_tag == 3 && !readable(row, b.term.cond)) {
+    if (b.term.kind_tag == 1 && !readable(row, values, b.term.value) || b.term.kind_tag == 3 && !readable(row, values, b.term.cond)) {
       return Graph { ...bad, error: "unavailable caller origin terminator" };
     }
     rows = rows.with(chosen, row);
     done = done.with(chosen, true);
     order = order.append(chosen);
   }
-  return Graph { order: order, error: "" };
+  return Graph { order: order, values: values, error: "" };
 }
 
 function block_edges(f: ssa.SFunc, b: ssa.SBlock): string {
