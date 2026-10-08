@@ -95,9 +95,45 @@ one recursion context of the generated drop helper for 14.51%, multiplication re
 10.80%, and allocation for 9.76%. At fold depth 14, reassociation accounts for
 30.22%, one recursion context of the generated drop helper for 18.73%, and folding for 8.09%.
 These identify concrete costs to investigate; they do not establish how much
-a future optimization will improve full-size wall time. Cause-specific issue
-links and both-ISA performance-gate evidence remain required before #11907 is
-complete.
+a future optimization will improve full-size wall time.
+
+Two follow-ups isolate generated work without changing the benchmark kernels:
+
+- [#11943](https://github.com/JakeChampion/lang/issues/11943) records lost node
+  reuse across nested constructor patterns. An isolated 1,000-update control
+  allocates 1,000 boxes with nested patterns and one with a flat pattern;
+  shared snapshots remain correct on all three required targets.
+- [#11944](https://github.com/JakeChampion/lang/issues/11944) records repeated
+  parent uniqueness checks while taking adjacent expression payloads in deriv
+  and cfold, with native instruction-level execution counts. Eliminating a
+  shared-path check still requires an alias and effect proof.
+
+These explain specific costs, not the entire cross-language timing gaps.
+
+## Regular performance gates
+
+The five `bench/perceus_*.fern` entries use smaller inputs and repeated rounds.
+Their checksums are independently checked on x86-64 Linux, ARM Linux and WASI.
+Native [calibration run 37716073565](https://github.com/JakeChampion/lang/actions/runs/37716073565)
+measured this exact compiler tree at `226b5d71636b42258e2d4d35688d455d21abc218`:
+
+| Entry | Rounds | x86-64 instructions | ARM instructions |
+| --- | ---: | ---: | ---: |
+| cfold | 400 | 108,160,067 | 118,173,402 |
+| deriv | 2,400 | 106,587,208 | 118,616,504 |
+| nqueens | 1,400 | 116,800,533 | 132,085,204 |
+| rbtree | 160 | 128,541,020 | 139,751,314 |
+| rbtree-ck | 160 | 136,899,157 | 148,206,250 |
+
+The ARM counts exactly match the earlier native calibration; halving the rounds
+produced 59,089,802, 59,308,904, 66,043,704, 69,877,314 and 74,107,850 instructions,
+respectively. Root-path moves preserve executable bytes. Both ordinary baseline
+files now include the measured instruction counts and emitted sizes, with their
+existing default tolerance. The regular performance lanes enforce these entries.
+[x86 evidence](benchmarks/perceus-2026-10-08/calibration/perceus-calibration-x86_64/perceus-native.txt),
+[ARM evidence](benchmarks/perceus-2026-10-08/calibration/perceus-calibration-aarch64/perceus-native.txt),
+and the adjacent self-host reports and provenance files retain the exact results.
+These small instruction gates do not replace the full-size comparison above.
 
 ## Reproduce
 

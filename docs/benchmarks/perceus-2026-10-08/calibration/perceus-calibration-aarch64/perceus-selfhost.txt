@@ -1,0 +1,17 @@
+# scripts/perf-bench-selfhost report — emitted size, self-hosted compiler
+# metric key: selfhost/<target>/<benchmark>.emit
+selfhost/x86-64-linux/perceus_cfold.emit	2486
+selfhost/arm64-linux/perceus_cfold.emit	2651
+selfhost/wasm32-wasi/perceus_cfold.emit	2810
+selfhost/x86-64-linux/perceus_deriv.emit	2598
+selfhost/arm64-linux/perceus_deriv.emit	2798
+selfhost/wasm32-wasi/perceus_deriv.emit	2928
+selfhost/x86-64-linux/perceus_nqueens.emit	1425
+selfhost/arm64-linux/perceus_nqueens.emit	1600
+selfhost/wasm32-wasi/perceus_nqueens.emit	1274
+selfhost/x86-64-linux/perceus_rbtree.emit	2642
+selfhost/arm64-linux/perceus_rbtree.emit	2771
+selfhost/wasm32-wasi/perceus_rbtree.emit	3417
+selfhost/x86-64-linux/perceus_rbtree_ck.emit	2955
+selfhost/arm64-linux/perceus_rbtree_ck.emit	3099
+selfhost/wasm32-wasi/perceus_rbtree_ck.emit	3819

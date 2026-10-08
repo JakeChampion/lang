@@ -1,4 +1,4 @@
-import "../rbtree_ck";
+import "./perceus/rbtree_ck";
 
 function main(): i32 {
   let sum: i64 = 0i64;

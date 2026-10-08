@@ -1,4 +1,4 @@
-import "../nqueens";
+import "./perceus/nqueens";
 
 function main(): i32 {
   let sum: i64 = 0i64;

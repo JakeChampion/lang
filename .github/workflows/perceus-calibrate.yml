@@ -1,6 +1,6 @@
 name: Perceus calibration
 
-# Native measurements for new corpus entries before their baselines exist.
+# Native measurements for the five standard Perceus corpus entries.
 # This workflow records evidence; the ordinary Perf workflow remains the gate.
 on:
   workflow_dispatch:
@@ -23,13 +23,18 @@ jobs:
       - uses: ./.github/actions/disable-chrome-apt
       - name: Install native counter
         run: sudo apt-get update && sudo apt-get install -y valgrind
-      - name: Measure candidate corpus
+      - name: Prepare Perceus corpus
+        run: |
+          mkdir -p "${{ runner.temp }}/perceus-corpus/perceus"
+          cp bench/perceus_*.fern "${{ runner.temp }}/perceus-corpus/"
+          cp bench/perceus/*.fern "${{ runner.temp }}/perceus-corpus/perceus/"
+      - name: Measure Perceus corpus
         env:
-          FERN_BENCH_DIR: bench/perceus/gates
+          FERN_BENCH_DIR: ${{ runner.temp }}/perceus-corpus
         run: scripts/perf-bench "${{ runner.temp }}/perceus-native.txt"
       - name: Measure primary compiler output
         env:
-          FERN_BENCH_DIR: bench/perceus/gates
+          FERN_BENCH_DIR: ${{ runner.temp }}/perceus-corpus
         run: scripts/perf-bench-selfhost "${{ runner.temp }}/perceus-selfhost.txt"
       - name: Save measurement provenance
         run: |
@@ -38,6 +43,7 @@ jobs:
             uname -a
             valgrind --version
             sha256sum bin/fern bin/fern-selfhost
+            sha256sum bench/perceus_*.fern
             find bench/perceus -type f -print0 | sort -z | xargs -0 sha256sum
           } > "${{ runner.temp }}/perceus-provenance.txt"
       - uses: actions/upload-artifact@v7
