@@ -1,0 +1,15 @@
+import "../nqueens";
+
+function main(): i32 {
+  let sum: i64 = 0i64;
+  let round: i32 = 0;
+  while (round < 1400) {
+    let answer: i32 = nqueens.queens(6);
+    if (answer != 4) {
+      return 125;
+    }
+    sum = sum + answer as i64;
+    round = round + 1;
+  }
+  return (sum % 97i64) as i32;
+}

@@ -1,0 +1,167 @@
+[
+  {
+    "workload": "rbtree",
+    "language": "fern",
+    "size": 4200000,
+    "wall_ns": {
+      "median": 3207264376,
+      "min": 3192325626,
+      "max": 3249182335
+    },
+    "rss_bytes_median": 304103424
+  },
+  {
+    "workload": "rbtree",
+    "language": "koka",
+    "size": 4200000,
+    "wall_ns": {
+      "median": 423726209,
+      "min": 411389166,
+      "max": 427306208
+    },
+    "rss_bytes_median": 138436608
+  },
+  {
+    "workload": "rbtree",
+    "language": "lean",
+    "size": 4200000,
+    "wall_ns": {
+      "median": 1414565043,
+      "min": 1401777709,
+      "max": 1682352501
+    },
+    "rss_bytes_median": 209620992
+  },
+  {
+    "workload": "rbtree-ck",
+    "language": "fern",
+    "size": 4200000,
+    "wall_ns": {
+      "median": 3744671002,
+      "min": 3732407751,
+      "max": 3929691835
+    },
+    "rss_bytes_median": 2157981696
+  },
+  {
+    "workload": "rbtree-ck",
+    "language": "koka",
+    "size": 4200000,
+    "wall_ns": {
+      "median": 764282500,
+      "min": 754685375,
+      "max": 1077995626
+    },
+    "rss_bytes_median": 1206018048
+  },
+  {
+    "workload": "rbtree-ck",
+    "language": "lean",
+    "size": 4200000,
+    "wall_ns": {
+      "median": 1608710459,
+      "min": 1598571876,
+      "max": 1633134542
+    },
+    "rss_bytes_median": 1449127936
+  },
+  {
+    "workload": "deriv",
+    "language": "fern",
+    "size": 10,
+    "wall_ns": {
+      "median": 684111333,
+      "min": 681460375,
+      "max": 696212333
+    },
+    "rss_bytes_median": 983597056
+  },
+  {
+    "workload": "deriv",
+    "language": "koka",
+    "size": 10,
+    "wall_ns": {
+      "median": 516245375,
+      "min": 508365875,
+      "max": 533100875
+    },
+    "rss_bytes_median": 480350208
+  },
+  {
+    "workload": "deriv",
+    "language": "lean",
+    "size": 10,
+    "wall_ns": {
+      "median": 498295208,
+      "min": 492460875,
+      "max": 505141750
+    },
+    "rss_bytes_median": 578854912
+  },
+  {
+    "workload": "nqueens",
+    "language": "fern",
+    "size": 13,
+    "wall_ns": {
+      "median": 699883709,
+      "min": 689814583,
+      "max": 720866375
+    },
+    "rss_bytes_median": 195043328
+  },
+  {
+    "workload": "nqueens",
+    "language": "koka",
+    "size": 13,
+    "wall_ns": {
+      "median": 501601959,
+      "min": 486764876,
+      "max": 506039750
+    },
+    "rss_bytes_median": 102780928
+  },
+  {
+    "workload": "nqueens",
+    "language": "lean",
+    "size": 13,
+    "wall_ns": {
+      "median": 764874417,
+      "min": 741373917,
+      "max": 791297708
+    },
+    "rss_bytes_median": 138231808
+  },
+  {
+    "workload": "cfold",
+    "language": "fern",
+    "size": 20,
+    "wall_ns": {
+      "median": 146135792,
+      "min": 140277416,
+      "max": 150188083
+    },
+    "rss_bytes_median": 178266112
+  },
+  {
+    "workload": "cfold",
+    "language": "koka",
+    "size": 20,
+    "wall_ns": {
+      "median": 92043500,
+      "min": 89138083,
+      "max": 94046250
+    },
+    "rss_bytes_median": 163590144
+  },
+  {
+    "workload": "cfold",
+    "language": "lean",
+    "size": 20,
+    "wall_ns": {
+      "median": 139266167,
+      "min": 131661917,
+      "max": 173722167
+    },
+    "rss_bytes_median": 173826048
+  }
+]

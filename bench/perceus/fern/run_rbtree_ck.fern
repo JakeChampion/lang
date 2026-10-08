@@ -1,0 +1,13 @@
+import "../rbtree_ck";
+import "./scale";
+import "std/i32";
+import "std/i64";
+
+function main(): i32 {
+  let n: i32 = scale.read(4200000);
+  if (n < 0) {
+    return 2;
+  }
+  print(rbtree_ck.count_head(rbtree_ck.make_tree(5i64, n as i64)).to_string());
+  return 0;
+}

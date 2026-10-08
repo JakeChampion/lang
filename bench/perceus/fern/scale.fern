@@ -1,0 +1,17 @@
+import "std/string";
+
+pub function read(maximum: i32): i32 {
+  let argv: string[] = args();
+  if (argv.len() != 2) {
+    return -1;
+  }
+  match (argv[1].parse_int()) {
+    Some(n) => {
+      if (n >= 0 && n <= maximum) {
+        return n;
+      }
+    },
+    None => {}
+  }
+  return -1;
+}
