@@ -1,0 +1,55 @@
+{
+  "base": "b752aec949c84fa37b688dfb08a044203a399e33",
+  "host": "native ARM Linux Docker VM",
+  "profiler": "Callgrind 3.19",
+  "microprobe": [
+    {
+      "instructions_in_block": 32,
+      "replays": 10,
+      "before": 557344,
+      "after": 392786
+    },
+    {
+      "instructions_in_block": 128,
+      "replays": 10,
+      "before": 4167017,
+      "after": 1421979
+    },
+    {
+      "instructions_in_block": 128,
+      "replays": 100,
+      "before": 37516836,
+      "after": 10059508
+    },
+    {
+      "instructions_in_block": 512,
+      "replays": 100,
+      "before": 483240258,
+      "after": 39219730
+    }
+  ],
+  "compiles_with_FERN_IR_VERIFY_quiet": [
+    {
+      "entry": "perceus_cfold",
+      "before": 67410623,
+      "after": 67383449,
+      "assembly_sha256": "47282bd7539eb4a95336f413db251771ebd045859f7ba8da6cc232fa498f57db"
+    },
+    {
+      "entry": "checker_run",
+      "before": 19559387419,
+      "after": 19540958474,
+      "assembly_sha256": "e218a5344a9e044463756857574c6f924ce2cd69c7d14c71785fabeebad81a92"
+    }
+  ],
+  "sha256": {
+    "/tmp/fern-pr11941-fmt-linux-compiler": "55c481de825af8445109c0c4f2c4ed7695aa26e0ae4f325613bffa6d514e2a5a",
+    "/tmp/fern-replay-index-linux-compiler": "066751b50def56d3e5ff969715528d8321feee5f0f6f9e36ee52c5e4df21897a",
+    "/tmp/fern-replay-index-native-compiler": "dbdbdbf52589f5f36450295d8e1e9116c1de6734d3b609813c4fe8ed797e8e63",
+    "/tmp/fern-replay-cost.fern": "ef252799abba14aeceee2488b0f4d24a3be3f200d0e45fee0dbc4c0359382502",
+    "/tmp/fern-replay-cost-before-linux": "1af57ab19a2d3c3c119fe5bdc96ae645e269d77ba45d86d241a11fe3cc8f2e3c",
+    "/tmp/fern-replay-cost-after-linux": "648ecdd9e6424e9e7b021cfab6b14fb17b1d3ab12b71c125f9f693ea427ea177",
+    "compiler/ssaunits.fern": "354cf82348a7aa80c6cca8bbf320331ff51ffee5a846f66cd2e52db5891b7f30",
+    "internal/testing/e2ecompiler/self_host_ssa_units_test.go": "437f4e11d8ddb989acebf1612b85aaf634a59a962f958502d15a941e50e302b7"
+  }
+}

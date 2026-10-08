@@ -1,0 +1,44 @@
+import "./fern-replay-modules/ssa";
+import "./fern-replay-modules/ssasem";
+import "./fern-replay-modules/ssaunits";
+import "./fern-replay-modules/semrecords";
+import "./fern-replay-modules/typeinfo";
+import "std/string";
+import "std/i32";
+
+function number(s: string): i32 {
+  match (s.parse_int()) { Some(n) => { return n; }, None => { return -1; } }
+}
+
+function main(): i32 {
+  let argv: string[] = args();
+  if (argv.len() != 3) { return 2; }
+  let n: i32 = number(argv[1]);
+  let rounds: i32 = number(argv[2]);
+  if (n < 1 || n > 4096 || rounds < 1 || rounds > 10000) { return 2; }
+  let scalar: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
+  let types: typeinfo.Type[] = [];
+  let ops: ssa.SInst[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    types = types.append(scalar);
+    ops = ops.append(ssa.SInst { kind_tag: 1, result: i, args: [], imm: i, str: "" });
+    i = i + 1;
+  }
+  let graph: ssa.SFunc = ssa.SFunc { name: "replay_cost", nparams: 0, nvals: n, entry: 7, takes_env: false, blocks: [
+    ssa.SBlock { id: 7, preds: [], insts: ops, term: ssa.STerm { kind_tag: 1, value: n - 1, cond: 0, target: 0, t: 0, f: 0 } }
+  ] };
+  let f: ssasem.Func = ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: graph, values: types, params: [], result: scalar, records: semrecords.no_records(), enums: [], calls: [] };
+  let p: ssaunits.Plan = ssaunits.plan(f, [], ssaunits.no_view());
+  if (!p.ok) { print(p.why); return 3; }
+  if (p.steps.len() != n + 2) { return 4; }
+  i = 0;
+  while (i < rounds) {
+    let why: string = ssaunits.verify_planned(f, [], p);
+    if (why != "") { print(why); return 5; }
+    i = i + 1;
+  }
+  print(p.steps.len().to_string());
+  print(i.to_string());
+  return 0;
+}
