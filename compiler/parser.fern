@@ -1470,22 +1470,6 @@ function defer_action(st: ast.Stmt, p: Par): ast.Stmt {
   return decl_sentinel(p, "unexpected token \"" + tok_spelling(p.peek()) + "\"");
 }
 
-// parse_defer_action reads a defer's action. A block is a branch body, as
-// native parses it, so its last item takes no `;`.
-function parse_defer_action(p: Par): (ast.Stmt, Par) {
-  if (p.peek_punct() != "{") {
-    return parse_stmt(p);
-  }
-  let (lead, has_tail, tail, ok, next) = parse_block_items(p);
-  if (!ok) {
-    return parse_stmt(p);
-  }
-  if (has_tail) {
-    lead = lead.append(s_expr(tail));
-  }
-  return (s_block(lead), next);
-}
-
 function s_defer(action: ast.Stmt): ast.Stmt {
   return ast.StmtDefer { action: action, on_error: 0, line: 0 };
 }
@@ -4928,16 +4912,11 @@ function parse_block_items(p: Par): (ast.Stmt[], boolean, ast.Expr, boolean, Par
       // and an `if` / `match` STATEMENT with more statements after it —
       // both stay on the expression path because either can also be the
       // block's trailing value, and only what follows tells them apart.
-      // Read the item again from the top as the statement it is. An
-      // assignment ending the block takes no `;`, as the block's value would.
-      let errs: i32 = before.type_errs.len();
+      // Read the item again from the top as the statement it is.
       let (asr_stmt, asr_p) = parse_stmt(before);
       if (asr_p.pos == before.pos) {
         p = p.advance();
         continue;
-      }
-      if (asr_p.peek_punct() == "}" && asr_p.type_errs.len() == errs + 1) {
-        asr_p = Par { ...asr_p, type_errs: before.type_errs };
       }
       p = asr_p;
       leading = leading.append(asr_stmt);
@@ -7190,14 +7169,14 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
     // `defer ACTION;` — the deferred action is a block, an expression or an
     // assignment; lower_defers schedules it at function exit.
     p = p.advance();  // consume `defer`
-    let (da_stmt, da_p) = parse_defer_action(p);
+    let (da_stmt, da_p) = parse_stmt(p);
     return (s_defer(defer_action(da_stmt, p)), da_p);
   }
   if (kw == "errdefer") {
     // `errdefer ACTION;` — like `defer`, but lower_defers schedules it
     // only on an error exit (a `return` of a None/Err value).
     p = p.advance();  // consume `errdefer`
-    let (ea_stmt, ea_p) = parse_defer_action(p);
+    let (ea_stmt, ea_p) = parse_stmt(p);
     return (s_errdefer(defer_action(ea_stmt, p)), ea_p);
   }
   if (kw == "function") {
