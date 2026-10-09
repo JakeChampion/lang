@@ -32,8 +32,13 @@ function view_funcs(): string {
     + "    (local.set $a (call $__fern_arr_elems (local.get $n) (i32.const 1)))\n"
     + "    (i32.store (local.get $a) (local.get $n))\n"
     + "    (i32.store offset=4 (local.get $a) (local.get $n))\n"
-    + "    (local.get $a))\n"
-    + "  (func $__fern_bswap32 (param $x i32) (result i32)\n"
+    + "    (local.get $a))\n";
+}
+
+// bswap_funcs are $__fern_bswap32 and $__fern_bswap64, which the kernels here
+// and the bswap op (wasm_ir) call; wasm_ir emits them once for both.
+pub function bswap_funcs(): string {
+  return "  (func $__fern_bswap32 (param $x i32) (result i32)\n"
     + "    (i32.or (i32.and (i32.rotr (local.get $x) (i32.const 8)) (i32.const -16711936))\n"
     + "      (i32.and (i32.rotl (local.get $x) (i32.const 8)) (i32.const 16711935))))\n"
     + "  (func $__fern_bswap64 (param $x i64) (result i64)\n"
@@ -430,8 +435,9 @@ pub function kernel_name(tag: i32): string {
   return "$__fern_ghash";
 }
 
-// funcs is every function the three kernels need, emitted once when any of
-// them is used. They call the runtime's $__fern_arr_elems and $__fern_arr_dec.
+// funcs is every function the three kernels need but the byte swaps, emitted
+// once when any of them is used. They call the runtime's $__fern_arr_elems
+// and $__fern_arr_dec.
 pub function funcs(): string {
   return view_funcs() + sbox_func() + ortho_func() + interleave_funcs() + shift_rows_func() + mix_columns_func()
     + encrypt_func() + sub_word_func() + expand_key_func() + ctr32_func() + ghash_func();

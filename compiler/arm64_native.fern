@@ -3048,6 +3048,49 @@ function arm64_aes_opcode(mnem: string): i32 {
   return 0 - 1;
 }
 
+// arm64_vecsha256 encodes the SHA-256 instructions, FEAT_SHA256 in the
+// ARMv8.2-A-with-crypto baseline. sha256h (opcode 4), sha256h2 (5) and
+// sha256su1 (6) are three-register; sha256su0 (2) is two-register.
+//   0x5E000000 | Rm<<16 | opcode<<12 | Rn<<5 | Rd
+//   0x5E280800 | opcode<<12 | Rn<<5 | Rd
+function arm64_vecsha256(buf: i32[], rd: i32, rn: i32, rm: i32, opcode: i32): i32[] {
+  let word: i64 = 0x5e000000 | (rm & 31) as i64 << 16;
+  if (opcode == 2) {
+    word = 0x5e280800;
+  }
+  word = word | (opcode & 7) as i64 << 12 | (rn & 31) as i64 << 5 | (rd & 31) as i64;
+  return arm64_le32(buf, word);
+}
+
+// arm64_sha256_opcode is a mnemonic's SHA-256 opcode, or -1.
+function arm64_sha256_opcode(mnem: string): i32 {
+  if (mnem == "sha256h") {
+    return 4;
+  }
+  if (mnem == "sha256h2") {
+    return 5;
+  }
+  if (mnem == "sha256su1") {
+    return 6;
+  }
+  if (mnem == "sha256su0") {
+    return 2;
+  }
+  return 0 - 1;
+}
+
+// arm64_gas_sha256_reg decodes operand i of a SHA-256 instruction: the hash
+// updates' first two are q registers, every other operand a vN.4s.
+function arm64_gas_sha256_reg(opcode: i32, i: i32, tok: string): i32 {
+  if ((opcode == 4 || opcode == 5) && i < 2) {
+    return arm64_gas_qreg(tok);
+  }
+  if (arm64_gas_vreg_arrof(tok) != 5) {
+    return 0 - 1;
+  }
+  return arm64_gas_vreg_any(tok);
+}
+
 // arm64_vectbl1 encodes `tbl Vd.<T>, {Vn.16b}, Vm.<T>` — the single-table
 // byte shuffle, pshufb's counterpart. The table is always .16b.
 //   0x0E000000 | Q<<30 | Rm<<16 | Rn<<5 | Rd
@@ -3455,6 +3498,15 @@ function arm64_gas_emit_vecgen(own a: Arm64Asm, mnem: string, ops: string[]): Ar
       return a;
     }
     arm64_push_arr(a.code, arm64_vecaes([], arm64_gas_vreg_any(ops[0]), arm64_gas_vreg_any(ops[1]), aes));
+    return a;
+  }
+  let sha: i32 = arm64_sha256_opcode(mnem);
+  if (sha >= 0) {
+    let rm: i32 = 0;
+    if (ops.len() == 3) {
+      rm = arm64_gas_sha256_reg(sha, 2, ops[2]);
+    }
+    arm64_push_arr(a.code, arm64_vecsha256([], arm64_gas_sha256_reg(sha, 0, ops[0]), arm64_gas_sha256_reg(sha, 1, ops[1]), rm, sha));
     return a;
   }
   if (mnem == "tbl") {
@@ -4067,6 +4119,10 @@ function arm64_gas_bad_reg_piece(s: string, lo: i32, hi: i32): string {
 // the only forms that encode one: a -1 would otherwise encode as register
 // 31 in the integer form.
 function arm64_gas_bad_ldst_reg(mnem: string, ops: string[]): string {
+  // sha256h and sha256h2 name q registers too; arm64_gas_bad_sha256 vets them.
+  if (arm64_sha256_opcode(mnem) >= 0) {
+    return "";
+  }
   let n: i32 = 0;
   if (mnem == "ldp" || mnem == "stp" || mnem == "ldpsw") {
     n = 2;
@@ -4348,6 +4404,13 @@ function arm64_gas_is_vecarr(tok: string): boolean {
     && arm64_str_indexof(tok, ".") > 0;
 }
 
+// arm64_gas_routes_vec reports an instruction for the SIMD encoders: its first
+// operand is an arranged vector register, or it is sha256h or sha256h2, whose
+// first operand is a q register.
+function arm64_gas_routes_vec(mnem: string, ops: string[]): boolean {
+  return ops.len() > 0 && (arm64_gas_is_vecarr(ops[0]) || arm64_sha256_opcode(mnem) >= 0);
+}
+
 // Element-size masks: bit 0 = byte, 1 = halfword, 2 = single, 3 = double.
 function arm64_gas_arr_allowed(sizes: i32, code: i32): boolean {
   let size: i32 = arm64_gas_arr_size(code);
@@ -4592,7 +4655,7 @@ function arm64_gas_bad_vec_token(mnem: string, ops: string[], lm: Arm64Mem): str
   if (arm64_across_entry(mnem) >= 0) {
     return arm64_gas_bad_across(mnem, ops);
   }
-  if (ops.len() > 0 && arm64_gas_is_vecarr(ops[0])) {
+  if (arm64_gas_routes_vec(mnem, ops)) {
     return arm64_gas_bad_vecgen(mnem, ops);
   }
   return "";
@@ -4670,6 +4733,10 @@ function arm64_gas_bad_vecgen(mnem: string, ops: string[]): string {
   let aesbad: string = arm64_gas_bad_aes(mnem, ops);
   if (aesbad != "-") {
     return aesbad;
+  }
+  let shabad: string = arm64_gas_bad_sha256(mnem, ops);
+  if (shabad != "-") {
+    return shabad;
   }
   let nwbad: string = arm64_gas_bad_narrowwide(mnem, ops);
   if (nwbad != "-") {
@@ -4799,6 +4866,31 @@ function arm64_gas_bad_aes(mnem: string, ops: string[]): string {
     }
     if (arm64_gas_vreg_arrof(ops[i]) != 1) {
       return mnem + ":arr";
+    }
+    i = i + 1;
+  }
+  return "";
+}
+
+// arm64_gas_bad_sha256 vets the SHA-256 instructions, answering "-" for
+// anything else: sha256su0 takes two vN.4s, sha256su1 three, and sha256h and
+// sha256h2 two q registers and a vN.4s.
+function arm64_gas_bad_sha256(mnem: string, ops: string[]): string {
+  let opcode: i32 = arm64_sha256_opcode(mnem);
+  if (opcode < 0) {
+    return "-";
+  }
+  let want: i32 = 3;
+  if (opcode == 2) {
+    want = 2;
+  }
+  if (ops.len() != want) {
+    return mnem + ":arity";
+  }
+  let i: i32 = 0;
+  while (i < want) {
+    if (arm64_gas_sha256_reg(opcode, i, ops[i]) < 0) {
+      return mnem + ":reg";
     }
     i = i + 1;
   }
@@ -5599,6 +5691,15 @@ function arm64_gas_family(mnem: string): i32 {
   }
   if (n == 6) {
     return arm64_gas_family_len6(mnem);
+  }
+  if (n == 7) {
+    return arm64_gas_family_len7(mnem);
+  }
+  if (n == 8) {
+    return arm64_gas_family_len8(mnem);
+  }
+  if (n == 9) {
+    return arm64_gas_family_len9(mnem);
   }
   return 0 - 1;
 }
@@ -6794,6 +6895,30 @@ function arm64_gas_family_len6_u(mnem: string): i32 {
   return 0 - 1;
 }
 
+function arm64_gas_family_len7(mnem: string): i32 {
+  if (mnem == "sha256h") {
+    return arm64_fam_vecext();
+  }
+  return 0 - 1;
+}
+
+function arm64_gas_family_len8(mnem: string): i32 {
+  if (mnem == "sha256h2") {
+    return arm64_fam_vecext();
+  }
+  return 0 - 1;
+}
+
+function arm64_gas_family_len9(mnem: string): i32 {
+  if (mnem == "sha256su0") {
+    return arm64_fam_vecext();
+  }
+  if (mnem == "sha256su1") {
+    return arm64_fam_vecext();
+  }
+  return 0 - 1;
+}
+
 // arm64_logical2_base maps a mnemonic to its base word (every register field zero); -1 = not one.
 function arm64_logical2_base(mnem: string): i64 {
   match (mnem) {
@@ -7093,7 +7218,7 @@ function arm64_gas_bad_ext_token(mnem: string, ops: string[], lm: Arm64Mem): str
   // scalar family checks do not apply — the dual-form ones (fadd, fmul,
   // fneg, add, …) would reject `v23.4s` as a bad scalar register. The
   // vector shapes are vetted by arm64_gas_bad_vecgen instead.
-  if (ops.len() > 0 && arm64_gas_is_vecarr(ops[0])) {
+  if (arm64_gas_routes_vec(mnem, ops)) {
     return "";
   }
   let fam: i32 = arm64_gas_family(mnem);
@@ -8116,7 +8241,7 @@ function arm64_gas_emit(own a: Arm64Asm, mnem: string, ops: string[], lm: Arm64M
   // SIMD forms are recognised by the first operand being an arranged vector
   // register, so the mnemonics that have both — add, sub, mul, and, orr,
   // eor, neg, mvn, cmeq — keep their scalar path on scalar operands.
-  if (ops.len() > 0 && arm64_gas_is_vecarr(ops[0]) && arm64_gas_vecgen_handles(mnem)) {
+  if (arm64_gas_routes_vec(mnem, ops) && arm64_gas_vecgen_handles(mnem)) {
     return arm64_gas_emit_vecgen(a, mnem, ops);
   }
   if (fam == arm64_fam_sys()) {

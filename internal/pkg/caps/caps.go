@@ -295,6 +295,9 @@ var Ungated = map[string]bool{
 	"__aes_expand_key": true,
 	"__aes_ctr32":      true,
 	"__ghash":          true,
+	// So does the SHA-256 kernel, and its predicate reads the target.
+	"__sha256_hw":        true,
+	"__sha256_hw_blocks": true,
 	// A signal disposition reconfigures how THIS process reacts to
 	// something delivered to it. It reaches nothing outside the
 	// process and confers no authority a dependency could escalate

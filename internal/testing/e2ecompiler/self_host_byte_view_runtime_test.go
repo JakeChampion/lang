@@ -154,6 +154,69 @@ function main(): i32 {
 }
 `
 
+// A sub-range of a string-backed view aliases the source's bytes on the
+// register backends: it is read after the source's last use, through a call,
+// a record, a nested sub-range and a phi, and must balance under the census.
+const byteViewSubRangeProgram = `import "std/i32";
+struct Hold { b: [u8], n: i32 }
+@noinline function join(a: string, b: string): string { return a + b; }
+@noinline function sum(v: [u8]): i32 {
+    let t: i32 = 0;
+    for x in v { t = t + (x as i32); }
+    return t;
+}
+@noinline function pick(v: [u8], i: i32): [u8] { return v[i:i + 2]; }
+@noinline function exercise(n: i32): i32 {
+    let s: string = join("abcdefgh", n.to_string());
+    let v: [u8] = s.as_bytes();
+    let sub: [u8] = v[2:6];
+    let junk: string[] = [];
+    let i: i32 = 0;
+    while (i < 20) { junk = junk.append("zz" + i.to_string()); i = i + 1; }
+    if (sub.len() != 4 || sub[0] != 99 as u8 || sub[3] != 102 as u8) { return 11; }
+    let h: Hold = Hold { b: sub, n: 1 };
+    let inner: [u8] = h.b[1:3];
+    if (inner[0] != 100 as u8 || inner.len() != 2) { return 12; }
+    if (sum(sub) != 99 + 100 + 101 + 102) { return 13; }
+    let p: [u8] = pick(v, 6);
+    if (p[0] != 103 as u8 || p[1] != 104 as u8) { return 14; }
+    let empty: [u8] = v[3:3];
+    if (empty.len() != 0) { return 15; }
+    let w: [u8] = sub;
+    if (n > 1) { w = v[0:1]; }
+    if (w[0] != 97 as u8 && w[0] != 99 as u8) { return 16; }
+    return 0;
+}
+function main(): i32 {
+    let i: i32 = 0;
+    while (i < 30) {
+        let r: i32 = exercise(i);
+        if (r != 0) { return r; }
+        i = i + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 25; }
+    return 0;
+}
+`
+
+// The sub-range's allocation does not grow with its length: 0 when the
+// window allocated under 1 KiB, 7 when it copied. Every intermediate string
+// stays alive, so no freed block can absorb a copy unseen.
+const byteViewSubRangeCopyProgram = `@noinline function window(v: [u8]): [u8] { return v[1:60001]; }
+function main(): i32 {
+    let parts: string[] = ["abcdefghijklmnop"];
+    let i: i32 = 0;
+    while (i < 13) { parts = parts.append(parts[i] + parts[i]); i = i + 1; }
+    let v: [u8] = parts[13].as_bytes();
+    let before: i64 = __heap_bump_bytes();
+    let w: [u8] = window(v);
+    let after: i64 = __heap_bump_bytes();
+    if (w.len() != 60000 || w[0] != 98 as u8 || w[59999] != 97 as u8) { return 3; }
+    if (after - before < 1024i64) { return 0; }
+    return 7;
+}
+`
+
 const byteViewChecksumProgram = `import "std/hash";
 import "std/string";
 function main(): i32 {
@@ -177,6 +240,7 @@ func TestSelfHostByteViewRuntime(t *testing.T) {
 			{"maps-options", byteViewContainersProgram},
 			{"loop-carried-backing-layout", byteViewLoopProgram},
 			{"crc32-consumer-allocation", byteViewChecksumProgram},
+			{"string-sub-range-aliases", byteViewSubRangeProgram},
 		} {
 			t.Run(target+"/"+tc.name, func(t *testing.T) {
 				stderr, code := cli.exitOf(t, tc.source, target, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
@@ -186,6 +250,17 @@ func TestSelfHostByteViewRuntime(t *testing.T) {
 				assertBalancedCensus(t, stderr)
 			})
 		}
+		// wasm's strings are inline blocks with no data pointer to share, so
+		// there a sub-range copies, as a string slice does.
+		t.Run(target+"/string-sub-range-zero-copy", func(t *testing.T) {
+			want := 0
+			if target == "wasm32-wasi" {
+				want = 7
+			}
+			if stderr, code := cli.exitOf(t, byteViewSubRangeCopyProgram, target); code != want {
+				t.Fatalf("sub-range: exit %d, want %d\n%s", code, want, stderr)
+			}
+		})
 		for _, storage := range []struct{ name, value string }{
 			{"string", `"abc".as_bytes()`},
 			{"array", "a"},

@@ -709,16 +709,18 @@ function silent(f: ssasem.Func, ins: ssa.SInst): boolean {
   return false;
 }
 
-// word_loads rewrites a little-endian word assembled from a byte array —
+// word_loads rewrites a word assembled from a byte array —
 // `b[x] as u32 | b[x + 1] as u32 << 8 | … | b[x + 3] as u32 << 24`, or the
 // eight-byte u64 form — into one load of the word, which every target reads
-// unaligned and stores little-endian (#8782). Only the `or` that completes the
-// word is replaced. The reads stay: the checked ones are the run's bounds
-// check, and the unchecked ones the word no longer uses are dead. `contracts`
-// are the calls the load is made of, which the function gains when it fuses;
-// `view_words` names the four- and eight-byte word reads of a `[u8]` view,
-// which reaches its bytes through a decoded data pointer rather than its box.
-pub function word_loads(f: ssasem.Func, contracts: ssasem.Contract[], view_words: string[]): ssasem.Func {
+// unaligned and stores little-endian (#8782). A big-endian word, the bytes'
+// places mirrored, is that load byte swapped (#10615). Only the `or` that
+// completes the word is replaced. The reads stay: the checked ones are the
+// run's bounds check, and the unchecked ones the word no longer uses are dead.
+// `contracts` are the calls the load is made of, which the function gains when
+// it fuses; `view_words` names the four- and eight-byte word reads of a `[u8]`
+// view, which reaches its bytes through a decoded data pointer rather than its
+// box, and `swaps` the four- and eight-byte byte swaps.
+pub function word_loads(f: ssasem.Func, contracts: ssasem.Contract[], view_words: string[], swaps: string[]): ssasem.Func {
   if (!any_checked_index(f)) {
     return f;
   }
@@ -757,8 +759,11 @@ pub function word_loads(f: ssasem.Func, contracts: ssasem.Contract[], view_words
           name = view_words[1];
         }
         insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v + 2, args: [w.arr, v + 1], imm: 0, str: name });
-        insts = insts.append(ssa.SInst { kind_tag: ssasem.cast(), result: ins.result, args: [v + 2], imm: 0, str: "" });
         values = values.append(wide);
+        insts = in_order(insts, w, swaps, v + 2, ins.result);
+        if (w.big) {
+          values = values.append(wide);
+        }
         continue;
       }
       let load: string = "__load_i32";
@@ -772,8 +777,11 @@ pub function word_loads(f: ssasem.Func, contracts: ssasem.Contract[], view_words
       insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v + 4, args: [v + 2, v + 3], imm: 0, str: "__raw_addr" });
       insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v + 5, args: [v + 4, v + 1], imm: 0, str: "__raw_addr" });
       insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v + 6, args: [v + 5], imm: 0, str: load });
-      insts = insts.append(ssa.SInst { kind_tag: ssasem.cast(), result: ins.result, args: [v + 6], imm: 0, str: "" });
       values = values.append(addr_t).append(i32_t).append(addr_t).append(addr_t).append(wide);
+      insts = in_order(insts, w, swaps, v + 6, ins.result);
+      if (w.big) {
+        values = values.append(wide);
+      }
     }
     if (fused) {
       blk = ssa.SBlock { ...blk, insts: insts };
@@ -792,6 +800,22 @@ pub function word_loads(f: ssasem.Func, contracts: ssasem.Contract[], view_words
     }
   }
   return ssasem.Func { ...f, values: values, calls: calls, graph: ssa.SFunc { ...f.graph, blocks: blocks, nvals: values.len() } };
+}
+
+// in_order appends the cast that gives the word `loaded` its unsigned type as
+// `result`, byte swapping it first, as value loaded + 1, when it is
+// big-endian.
+function in_order(own insts: ssa.SInst[], w: Word, swaps: string[], loaded: i32, result: i32): ssa.SInst[] {
+  let v: i32 = loaded;
+  if (w.big) {
+    let name: string = swaps[0];
+    if (w.bytes == 8) {
+      name = swaps[1];
+    }
+    v = loaded + 1;
+    insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v, args: [loaded], imm: 0, str: name });
+  }
+  return insts.append(ssa.SInst { kind_tag: ssasem.cast(), result: result, args: [v], imm: 0, str: "" });
 }
 
 // word_parts adds to `acc` the values a fused word was assembled from: its
@@ -890,14 +914,15 @@ function has_contract(calls: ssasem.Contract[], name: string): boolean {
 }
 
 // A word `ins` completes: `bytes` of a u8 array `arr` read at `x + off` up,
-// each shifted to its little-endian place; `bytes` 0 when `ins` is not one.
-struct Word { bytes: i32, arr: i32, x: i32, off: i32 }
+// each shifted to its little-endian place, or each to its big-endian one when
+// `big`; `bytes` 0 when `ins` is not one.
+struct Word { bytes: i32, arr: i32, x: i32, off: i32, big: boolean }
 
 // One byte of a word: array `arr` read at `x + off`, shifted left `shift`.
 struct WordByte { ok: boolean, arr: i32, x: i32, off: i32, shift: i32 }
 
 function word_of(f: ssasem.Func, defs: ssa.SInst[], ins: ssa.SInst): Word {
-  let none: Word = Word { bytes: 0, arr: 0, x: 0, off: 0 };
+  let none: Word = Word { bytes: 0, arr: 0, x: 0, off: 0, big: false };
   if (ins.kind_tag != 9 || ins.str != "|" || ins.result < 0) {
     return none;
   }
@@ -933,14 +958,21 @@ function word_of(f: ssasem.Func, defs: ssa.SInst[], ins: ssa.SInst): Word {
   }
   // Each byte sits at its own place, so n distinct places are the whole word.
   let seen: boolean[] = falses(n);
+  let le: boolean = true;
+  let be: boolean = true;
   for p in parts {
     let at: i32 = p.off - lo;
-    if (at >= n || p.shift != at * 8 || seen[at]) {
+    if (at >= n || seen[at]) {
       return none;
     }
+    le = le && p.shift == at * 8;
+    be = be && p.shift == (n - 1 - at) * 8;
     seen = seen.with(at, true);
   }
-  return Word { bytes: n, arr: parts[0].arr, x: parts[0].x, off: lo };
+  if (!le && !be) {
+    return none;
+  }
+  return Word { bytes: n, arr: parts[0].arr, x: parts[0].x, off: lo, big: !le };
 }
 
 // or_terms flattens the `|` tree of type `t` rooted at `v` into its leaves.

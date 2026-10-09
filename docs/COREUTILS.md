@@ -1383,8 +1383,10 @@ literals landed — `lib/bre.fern` now takes the literal each ALTERNATION
 branch opens with, of which every match begins with one, so a scan per
 branch rejects a line that carries none and the earliest hit is where the
 engine starts. What is left without a filter is a pattern whose branches
-open with a class rather than a literal (`/[0-9]zzz/`), which is the lazy
-DFA's job and not done.
+open with a class rather than a literal (`/[0-9]zzz/`), which the lazy
+DFA now answers (#8500): `csplit /[a-z]x/` over the same file retires
+11.7 G instructions where the simulation took 20.8 G and GNU takes 13.1 G
+(arm64 Darwin, `/usr/bin/time -l`, 2026-10-10).
 
 Measured again after that on the same 62 MiB file, 2026-09-11, on a
 DIFFERENT 4-core x86-64 host with no hyperfine on it — so these are the

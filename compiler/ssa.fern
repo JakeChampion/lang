@@ -3183,12 +3183,15 @@ function compose_repl(a: i32[], b: i32[]): i32[] {
 }
 
 // register_form is a lifted function as the register backends allocate it:
-// trivial phis folded, repeated pure operations merged, rotates fused, wraps nothing reads dropped, dead values
-// pruned, branches on boolean joins threaded and forwarding blocks threaded.
+// trivial phis folded, repeated pure operations merged, rotates fused, wraps
+// nothing reads dropped, dead values pruned, branches on boolean joins
+// threaded and forwarding blocks threaded.
+// Dead values are pruned before the wraps too: a fused rotate's right shift
+// would otherwise still read its operand's high half.
 pub function register_form(f: SFunc): Formed {
   let folded: Formed = prune_trivial_phis(f);
   let merged: Formed = merge_duplicates(folded.f);
-  let unwrapped: Formed = drop_low_wraps(fuse_rotates(merged.f));
+  let unwrapped: Formed = drop_low_wraps(prune_dead(fuse_rotates(merged.f)));
   let g: SFunc = prune_dead(unwrapped.f);
   let t: Threading = thread_bool_joins(g);
   if (t.changed) {
@@ -3197,17 +3200,18 @@ pub function register_form(f: SFunc): Formed {
   return Formed { f: thread_forwarding(g), repl: compose_repl(compose_repl(folded.repl, merged.repl), unwrapped.repl) };
 }
 
-// drop_low_wraps replaces a signed 32-bit wrap, extend or cast by its operand where
-// nothing reads the high half of its result. A sum, difference, product,
-// bitwise op or left shift reads only its operands' low halves when nothing
-// reads its own high half, as do a shift's count and the narrowing unaries, so
-// the wrap the lowering puts after each 32-bit op is needed only where the
-// value reaches a comparison, a division, a right shift, a call, a store, a
-// branch or a return. A loop counter's step goes too, read or not: `v + 1`
-// for a v that is below a 32-bit value cannot overflow (counter_step). The
-// register backends only: on wasm the wrap changes the value's type.
+// drop_low_wraps replaces a 32-bit wrap, extend or cast, signed or unsigned, by
+// its operand where nothing reads the high half of its result. A sum,
+// difference, product, bitwise op or left shift reads only its operands' low
+// halves when nothing reads its own high half, as do a shift's count, a 32-bit
+// rotate or byte swap and the narrowing unaries, so the wrap the lowering puts
+// after each 32-bit op is needed only where the value reaches a comparison, a
+// division, a right shift, a call, a store, a branch or a return. A signed
+// loop counter's step goes too, read or not: `v + 1` for a v that is below a
+// 32-bit value cannot overflow (counter_step). The register backends only: on
+// wasm the wrap changes the value's type.
 pub function drop_low_wraps(f: SFunc): Formed {
-  if (!has_signed_wrap(f)) {
+  if (!has_low_wrap(f)) {
     return Formed { f: f, repl: [] };
   }
   // prop[v] is how many leading operands of v's definition have their high
@@ -3240,7 +3244,7 @@ pub function drop_low_wraps(f: SFunc): Formed {
         }
         def_b = def_b.with(r, bi);
         def_k = def_k.with(r, k);
-        if (signed_wrap(ins)) {
+        if (low_wrap(ins)) {
           wraps = wraps.append(r);
           wrap_arg = wrap_arg.append(ins.args[0]);
         }
@@ -3287,7 +3291,7 @@ pub function drop_low_wraps(f: SFunc): Formed {
   let wj: i32 = 0;
   while (wj < wraps.len()) {
     let w: i32 = wraps[wj];
-    if (!high[w] || counter_step(f, at, def_b, def_k, wrap_arg[wj])) {
+    if (!high[w] || signed_wrap(def_at(f, def_b, def_k, w)) && counter_step(f, at, def_b, def_k, wrap_arg[wj])) {
       if (!dropped) {
         i = 0;
         while (i < f.nvals) {
@@ -3331,10 +3335,10 @@ pub function drop_low_wraps(f: SFunc): Formed {
   return formed_by(SFunc { ...f, blocks: nblocks }, repl);
 }
 
-function has_signed_wrap(f: SFunc): boolean {
+function has_low_wrap(f: SFunc): boolean {
   for blk in f.blocks {
     for ins in blk.insts {
-      if (signed_wrap(ins)) {
+      if (low_wrap(ins)) {
         return true;
       }
     }
@@ -3474,6 +3478,15 @@ function signed_wrap(ins: SInst): boolean {
   return ins.str == "int_wrap" || ins.str == "int_extend" || ins.str == "int_cast:i32";
 }
 
+// low_wrap is a signed wrap or a u32 one, which the register backends render
+// as a zero extension of the low half.
+function low_wrap(ins: SInst): boolean {
+  if (signed_wrap(ins)) {
+    return true;
+  }
+  return ins.kind_tag == 10 && ins.args.len() == 1 && (ins.str == "u32_wrap" || ins.str == "int_cast:u32");
+}
+
 // low_half_binary is a binary whose result's low half depends on its
 // operands' low halves alone.
 function low_half_binary(op: string): boolean {
@@ -3493,6 +3506,12 @@ function reads_low_half(ins: SInst, k: i32): boolean {
     return k == 1 && (ins.str == "shr_s" || ins.str == "shr_u");
   }
   if (ins.kind_tag == 10) {
+    if (util.str_has_prefix(ins.str, "rotr:")) {
+      return rotr_width(ins.str) == 32;
+    }
+    if (ins.str == "bswap:32") {
+      return true;
+    }
     return ins.str == "int_wrap" || ins.str == "int_extend" || ins.str == "u32_wrap" || ins.str == "int_cast:i32" || ins.str == "int_cast:u32" || ins.str == "int_cast:u8";
   }
   return false;
