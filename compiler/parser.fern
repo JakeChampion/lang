@@ -12729,8 +12729,7 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
         return n.suffix;
       }
       // A bare integer literal whose value exceeds i32-max is unambiguously
-      // an i64 value (the same magnitude rule infer_expr_width lowers it by),
-      // so a generic instantiation binds `T = i64`, not i32 — otherwise
+      // an i64 value, so a generic instantiation binds `T = i64`, not i32 — otherwise
       // `some1(5000000000)` (an erased `some1[T](x: T): Option[T]`) would
       // clone `some1__i32` and truncate the wide value.
       if (literal_is_i64(n.text)) {
