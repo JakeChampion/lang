@@ -126,8 +126,6 @@ pub function is_task_runtime_fn(name: string): boolean {
 pub function is_fern_helper(name: string): boolean {
   return name == "__fern_oob_abort" || name == "__fern_slice_abort" || is_rc_helper(name)
     || is_release_helper(name)
-    || is_map_release_helper(name)
-    || is_boxed_key_map_release_helper(name)
     || is_text_helper(name);
 }
 
@@ -178,8 +176,7 @@ function is_rc_helper(name: string): boolean {
     // snapshot-param consume-rebind reclaim (#3456 slice 2): frees the
     // superseded old box (rc-guarded shallow free) unless it is `new` or the
     // caller's snapshot; passes `new` back through. Body in emit_ir_runtime.
-    || name == "__fern_snapshot_dec"
-    || name == "__fern_mapiter_free";
+    || name == "__fern_snapshot_dec";
 }
 
 // The releases of strings and nested arrays.
@@ -218,66 +215,11 @@ function is_release_helper(name: string): boolean {
     || name == "__fern_optarrarr_free";
 }
 
-// The map releases whose key column is an integer or a string.
-function is_map_release_helper(name: string): boolean {
-  // map reclaim (Perceus map-local slice): frees a fresh, non-escaping map
-  // local's keys + values buffers AND the raw 16-byte mapbox. Default
-  // ir_helper_symbol maps it to __fn___fern_map_free; wasm_helper_symbol
-  // routes it to $__fern_map_release (which additionally deep-drops string
-  // K/V). Never user-callable — only the lowering emits it.
-  return name == "__fern_map_free"
-    // #4353: string-VALUE-column deep-release variant — frees the vals
-    // column via __fern_str_arr_free (each fresh value box + the buffer)
-    // instead of the shallow arr_dec; keys still shallow. Register-only;
-    // wasm_helper_symbol routes it to the already-deep $__fern_map_release.
-    || name == "__fern_map_free_vs"
-    // #4353: the KEY-column and both-column deep-release variants (siblings of
-    // _vs; free the keys column, resp. both, via __fern_str_arr_free).
-    || name == "__fern_map_free_ks"
-    || name == "__fern_map_free_kvs"
-    // #4353 item 3: the BOX-value-column variants — free the vals column via
-    // __fern_arrarr_free (one rc-guarded dec per element box) for a
-    // scalar-element array or all-scalar struct column, keys shallow resp.
-    // string-deep.
-    || name == "__fern_map_free_va"
-    || name == "__fern_map_free_ksva"
-    || name == "__fern_map_free_vsa"
-    || name == "__fern_map_free_ksvsa"
-    // The column-of-boxes pair (box, release): the runtime walks the value
-    // column calling the release the semantic lowering names for the
-    // value type. wasm_helper_symbol routes both to $__fern_map_release_vf.
-    || name == "__fern_map_free_vf"
-    || name == "__fern_map_free_ksvf";
-}
-
-// The map releases whose key column holds boxes.
-function is_boxed_key_map_release_helper(name: string): boolean {
-  // #9966: the BOX-KEY siblings — the key column freed via
-  // __fern_arrarr_free for an all-scalar struct or enum key, the value
-  // column as its own suffix says.
-  return name == "__fern_map_free_ka"
-    || name == "__fern_map_free_kavs"
-    || name == "__fern_map_free_kava"
-    || name == "__fern_map_free_kavsa"
-    // The keyed-column members (#9962): (box, key release), and for a
-    // column of boxes beside it (box, key release, value release).
-    || name == "__fern_map_free_kf"
-    || name == "__fern_map_free_kfvs"
-    || name == "__fern_map_free_kfvsa"
-    || name == "__fern_map_free_kfvf";
-}
-
-// The map key search and the helpers that convert to and from text.
+// The helpers that convert to and from text.
 function is_text_helper(name: string): boolean {
-  // the map runtime's shared key search (#2649): walk the keys array,
-  // return the hit's index or -1. Default ir_helper_symbol maps it to
-  // __fn___fern_map_find; body from asmcore.rt_src_map_find, gated on the
-  // "maps" need. Its only caller in Fern is __fern_map_delete — the
-  // hand-asm map_set / map_get / map_has reach it by symbol.
-  return name == "__fern_map_find"
-    // i32.to_string()'s decimal-text helper (emit_ir_runtime provides the
-    // stack-arg body under __fn___fern_i32_to_string).
-    || name == "__fern_i32_to_string"
+  // i32.to_string()'s decimal-text helper (emit_ir_runtime provides the
+  // stack-arg body under __fn___fern_i32_to_string).
+  return name == "__fern_i32_to_string"
     // u32.to_string()'s UNSIGNED decimal-text helper (#2649). Emitted as a
     // Fern runtime fn under __fn___fern_u32_to_string; the ir_helper_symbol
     // default (__fn_ + name) targets it. Heap-dep.
@@ -334,11 +276,6 @@ pub function ir_helper_symbol(name: string): string {
     return "__fn___fern_rc_inc";
   }
   if (name == "__fern_rc_dec") {
-    return "__fn___fern_arr_dec";
-  }
-  // A map cursor is a two-slot array box whose map the typed lowering
-  // releases; wasm's also owns its snapshots and has a release of its own.
-  if (name == "__fern_mapiter_free") {
     return "__fn___fern_arr_dec";
   }
   // #4873 grow-bracket share helpers: same runtime symbols as the plain rc
@@ -724,18 +661,8 @@ pub function all_runtime_need_roots(): string[] {
   return [
     "alloc_u8", "args", "set_args", "arr_push", "arr_push_owned", "arr_slice",
     "arr_str_join", "arr_inc_elems", "arr_own_elems", "str_own", "str_grow", "account", "arrarr_free", "env", "eprint", "heap",
-    "i32_to_string", "u32_to_string", "maps", "monotonic_ns", "now_ns", "now_unix_ms",
-    // The map roots that "maps" does NOT reach. Each is marked directly by
-    // the arm64 emitter, and runtime_need_deps declares no root with any of
-    // them as a dependency — map_delete's own edge points AT maps, pulling
-    // the bundle in behind itself, so the direction is the trap: listing
-    // maps reaches none of these. Same story as isatty and the platform
-    // helpers below, and the same reason nothing noticed — only a
-    // library-only caller finds out, which is now a fixture
-    // (TestSelfHostPerModuleArm64MapDeleteLinks).
-    "map_delete", "map_delete_rel", "map_free_va", "map_free_vsa", "map_free_vf", "map_hash_seed", "map_vfree",
-    "map_free_ka", "map_free_kavs", "map_free_kava", "map_free_kavsa",
-    "map_free_kf", "map_free_kfvs", "map_free_kfvsa", "map_free_kfvf",
+    "i32_to_string", "u32_to_string", "monotonic_ns", "now_ns", "now_unix_ms",
+    "map_hash_seed",
     "chdir", "chroot", "setuid", "setgid", "setgroups",
     "signal_mask", "signal_disposition",
     "proc_exec", "proc_exec_as", "proc_fork", "proc_waitpid", "proc_waitpid_nohang", "proc_waitpid_status", "putchar", "random_bytes", "random_i32", "read_file",

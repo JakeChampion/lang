@@ -13,10 +13,8 @@ import (
 // Every `m.iter()`, and so every `for (k, v) in m`, used to strand its cursor:
 // the register backends built it with a bare `__fern_alloc` and the typed
 // planner counted no unit of a MapIter. The cursor is now an rc-headed box the
-// planner owns, holding a unit of its map, released through
-// `__fern_mapiter_free` (on wasm it also frees the key and value snapshots the
-// cursor holds). Each shape runs 8 rounds, so
-// a stranded cursor shows as live bytes on every backend.
+// planner owns, holding a unit of its map. Each shape runs 8 rounds, so a
+// stranded cursor shows as live bytes on every backend.
 
 const mapIterReclaimProlog = "import \"core/map\";\n" +
 	"function drain(it: MapIter[string, i32]): i32 {\n" +

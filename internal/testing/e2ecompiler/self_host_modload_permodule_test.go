@@ -179,7 +179,7 @@ func TestSelfHostModloadPerModuleWholeCompilerX86_64(t *testing.T) {
 	if err != nil {
 		t.Fatalf("per-module-built compiler OOM/crash on its own -per-module-needs (#3456 regression): %v", err)
 	}
-	for _, root := range []string{"heap", "str_concat", "maps", "arr_push"} {
+	for _, root := range []string{"heap", "str_concat", "arr_push"} {
 		if !strings.Contains(string(selfNeeds), root) {
 			t.Errorf("self-driven -per-module-needs missing root %q (got %q)", root, strings.TrimSpace(string(selfNeeds)))
 		}

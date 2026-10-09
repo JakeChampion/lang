@@ -139,9 +139,8 @@ func TestSelfHostMapIterationOrderX86_64(t *testing.T) {
 	}
 }
 
-// The arm64 leg shares asmcore's `__fern_map_delete` source with x86-64, so it
-// cannot diverge from it on the delete — but it reaches that source through its
-// own emitter, and the array-box addressing the swap uses is per-backend.
+// The arm64 leg: core/map's delete is shared source, but each backend emits
+// it, so the addressing the swap uses is per-backend.
 func TestSelfHostMapIterationOrderArm64(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)

@@ -678,9 +678,7 @@ function saved_exec(path: string, text: string): i32 {
     return 0 - 1;
 }
 // A map is admitted at one shape: a string KEY column over a NARROW SCALAR
-// value column, which is what __fern_map_free_ks releases. Its box carries no
-// reference count on the register backends, so a unit of one is LINEAR: a plan
-// that would share it is refused. An insert is handed the receiver's unit and
+// value column. An insert is handed the receiver's unit and
 // the key's, which the key column owns until the map is released; has and
 // get_or borrow both and answer a scalar.
 function seen_twice(a: string, b: string): i32 {
@@ -3089,9 +3087,8 @@ function (p: Pt2) show(): void { print(p.tag + "!"); }
     m = m.insert(a + "", [b + a]);
     return m.get_or(a + "", []).len() + m.get_or("absent", [a + ""]).len();
 }
-// An integer key column holds no unit per key, so the map is freed whole with
-// __fern_map_free; a string value column beside it is still counted, released
-// on overwrite and with the map.
+// An integer key column holds no unit per key; a string value column beside
+// it is still counted, released on overwrite and with the map.
 @noinline function map_ints(n: i32): i32 {
     let m: Map[i32, i32] = map_new(4);
     let i: i32 = 0;

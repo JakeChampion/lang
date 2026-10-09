@@ -799,16 +799,13 @@ TestSelfHostMapKeyedTypedArm64 3
 TestSelfHostMapKeyedTypedWasm 3
 TestSelfHostMapKeyedTypedX86_64 3
 TestSelfHostMapKeysArm64 2
-TestSelfHostMapKeysSnapshotIRArm64 2
 TestSelfHostMapKeysValuesIR 3
 TestSelfHostMapKeysX86_64 2
-TestSelfHostMapKsReclaimIRArm64 2
 TestSelfHostMapLiteralArm64 2
 TestSelfHostMapLiteralComputedKeyIR_X86_64 5
 TestSelfHostMapLiteralComputedKeyWasmIR 4
 TestSelfHostMapLiteralX86_64 2
 TestSelfHostMapMemsetFreeIRProbeX86_64 2
-TestSelfHostMapMethodTupleElem 2
 TestSelfHostMapPayloadMatchIRArm64 2
 TestSelfHostMapPayloadMatchIRX86_64 2
 TestSelfHostMapPayloadMatchWasmIR 2
@@ -832,7 +829,6 @@ TestSelfHostMapValueAliasRetainIRWasm 2
 TestSelfHostMapValueAliasRetainIRX86_64 2
 TestSelfHostMapValuePtrIR 2
 TestSelfHostMapVerbsIR 2
-TestSelfHostMapVsReclaimIRArm64 3
 TestSelfHostMapW64IterIR 3
 TestSelfHostMapW64RecvIR 4
 TestSelfHostMapWideKeyIRArm64 3
@@ -997,7 +993,6 @@ TestSelfHostPatternHeadsWasm 3
 TestSelfHostPatternHeadsX86_64 2
 TestSelfHostPayloadTakeIR 2
 TestSelfHostPerModuleArm64LeafOnlyLinkRun 2
-TestSelfHostPerModuleArm64MapDeleteLinks 2
 TestSelfHostPerModuleBuiltinEnumMatchWasm 58
 TestSelfHostPerModuleCacheFollowsInlinedBodyX86_64 2
 TestSelfHostPerModuleCaptureTypes 67
@@ -1592,8 +1587,6 @@ TestSelfHostWasmIoErrorVariantLayout 2
 TestSelfHostWasmLinkFromCache 59
 TestSelfHostWasmLinkHitOnly 58
 TestSelfHostWasmLoadRunStdlib 27
-TestSelfHostWasmMapK64GateCountsEveryWideKeyOp 6
-TestSelfHostWasmMapW64GateCountsEveryWideOp 6
 TestSelfHostWasmOptionPayload 6
 TestSelfHostWasmPollDeadlines 5
 TestSelfHostWasmPollGuestStorage 2

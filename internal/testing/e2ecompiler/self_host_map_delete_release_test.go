@@ -10,12 +10,9 @@ import (
 // deleted slot again, so a box left in it is stranded for the life of the
 // program.
 //
-// The register backends route a delete that owes a release to
-// `__fern_map_delete_rel`, which releases the removed key and value through the
-// releases the op names; wasm's `$__fern_map_delete` releases under the box's
-// own column kinds before tombstoning. The assert is the churn gate's: over
-// 1000 build-and-drop rounds the heap bump is flat, `__rc_underflow_count()`
-// reads zero, and the module is produced whole by the typed path.
+// The assert is the churn gate's: over 1000 build-and-drop rounds the heap
+// bump is flat, `__rc_underflow_count()` reads zero, and the module is
+// produced whole by the typed path.
 var mapDeleteReleasePrograms = []mapChurnProgram{
 	// A string key column: the removed key takes __fern_str_free, and the
 	// re-insert of the same key afterwards proves the slot is reusable.

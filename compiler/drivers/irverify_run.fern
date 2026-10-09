@@ -181,10 +181,6 @@ function stack_checks(): i32 {
   if (sp_count([ir.op_const_i32(0), ir.op_const_i32(0), ir.op_store_i32(), ir.op_drop()]) != 0) {
     return 93;
   }
-  // map_new takes its size hint from the stack, unlike the nullary builtins.
-  if (sp_count([ir.op_const_i32(4), ir.op_map_new(1, ""), ir.op_return()]) != 0) {
-    return 94;
-  }
   // call_indirect pops its arguments AND the funcref pushed above them.
   if (sp_count([ir.op_const_i32(1), ir.op_const_func(0, "f"), ir.op_call_indirect(1), ir.op_return()]) != 0) {
     return 95;

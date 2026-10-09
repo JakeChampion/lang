@@ -76,10 +76,8 @@ func TestSelfHostMapColumnSnapshotX86_64(t *testing.T) {
 	runMapColumnSnapshot(t, runner, "x86-64-linux")
 }
 
-// The arm64 twin. The register backends dispatch flag 2 independently
-// (`asm_arm64_ir.fern` sends `i32_imm 2` to `__fern_map_snapshot_col_str`), and
-// no conformance struct-key case calls keys() or values(), so without this the
-// arm64 path is never exercised end to end.
+// The arm64 twin. No conformance struct-key case calls keys() or values(), so
+// without this the arm64 path is never exercised end to end.
 func TestSelfHostMapColumnSnapshotArm64(t *testing.T) {
 	_, qemu := arm64Tooling(t)
 	runMapColumnSnapshot(t, []string{qemu}, "arm64-linux")
