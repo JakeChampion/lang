@@ -95,9 +95,7 @@ const byteViewContainersProgram = `import "core/map";
   for (_, bytes) in m { total = total + bytes.len(); }
   if (total != 11) { return 32; }
   match (m.get(2)) { Some(bytes) => { if (bytes[9] != 106 as u8) { return 33; } }, None => { return 34; } }
-  let f = (): i32 => { return v.len() + (v[0] as i32); };
-  let g = f;
-  if (g() != 107 || f() != 107 || v[9] != 106 as u8) { return 41; }
+  if (v[9] != 106 as u8) { return 41; }
   let o = choose(v);
   let alias = o;
   match (o) { Some(bytes) => { if (bytes[0] != 97 as u8) { return 51; } }, None => { return 52; } }
@@ -176,7 +174,7 @@ func TestSelfHostByteViewRuntime(t *testing.T) {
 		for _, tc := range []struct{ name, source string }{
 			{"no-conversion-allocation", byteViewAllocationProgram},
 			{"aliases-and-slices", byteViewAliasesProgram},
-			{"maps-closures-options", byteViewContainersProgram},
+			{"maps-options", byteViewContainersProgram},
 			{"loop-carried-backing-layout", byteViewLoopProgram},
 			{"crc32-consumer-allocation", byteViewChecksumProgram},
 		} {

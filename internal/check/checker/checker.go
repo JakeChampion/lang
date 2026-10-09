@@ -12621,6 +12621,74 @@ func (c *checker) freshLambdaCannotReach(v ast.Expr, decl *ast.Var, s *scope) bo
 	return true
 }
 
+// typeHoldsView reports whether a value of type t carries a borrowed view: a
+// `str`, a `[T]` slice or a `MapIter` cursor, directly or through an element,
+// field, payload or type argument. `seen` breaks the recursion on a
+// self-referential struct or enum.
+func (c *checker) typeHoldsView(t ast.Type, seen map[string]bool) bool {
+	switch v := t.(type) {
+	case ast.StrType, ast.SliceType:
+		return true
+	case ast.ArrayType:
+		return c.typeHoldsView(v.Elem, seen)
+	case ast.TupleType:
+		for _, e := range v.Elems {
+			if c.typeHoldsView(e, seen) {
+				return true
+			}
+		}
+	case ast.StructType:
+		if v.Name == "MapIter" {
+			return true
+		}
+		if seen[v.Name] {
+			return false
+		}
+		seen[v.Name] = true
+		for _, a := range v.Args {
+			if c.typeHoldsView(a, seen) {
+				return true
+			}
+		}
+		if sd, ok := c.info.Structs[v.Name]; ok {
+			for _, f := range sd.Fields {
+				if c.typeHoldsView(f.Type, seen) {
+					return true
+				}
+			}
+		}
+	case ast.EnumType:
+		if seen[v.Name] {
+			return false
+		}
+		seen[v.Name] = true
+		for _, a := range v.Args {
+			if c.typeHoldsView(a, seen) {
+				return true
+			}
+		}
+		if ed, ok := c.info.Enums[v.Name]; ok {
+			for _, variant := range ed.Variants {
+				for _, pt := range variant.Payloads {
+					if c.typeHoldsView(pt, seen) {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+// captureView is E082: a closure may not capture a value holding a borrowed
+// view. A function value's type does not say what its environment holds, so a
+// view captured into one would leave every escape rule unable to see it.
+func (c *checker) captureView(p ast.Position, name string, t ast.Type) {
+	if c.typeHoldsView(t, map[string]bool{}) {
+		c.errfCode(p, "E082", "closure captures %q, which holds a borrowed view: a function value's environment cannot carry a view — copy it into an owned value before the closure (`.to_owned()` on a `str`)", name)
+	}
+}
+
 // typeReachesFunc reports whether a value of type t can transitively hold a
 // function value — the only kind of value that can point back at the closure
 // environment holding a capture cell, and therefore the only kind whose store
@@ -13154,7 +13222,8 @@ func (c *checker) sliceSourceRoots(src ast.Expr, env *escapeEnv, sums map[string
 // through a match is the only way to name the view, and the arm binding is
 // not a declared local.
 //
-// `return` remains the only checked escape position.
+// `return` is the only position this chase checks; a closure capturing a
+// view is refused outright (E082, captureView).
 func (c *checker) checkStrEscapes(prog *ast.Program) {
 	// `string`-returning functions are summarised alongside the `str` ones:
 	// a view of the owned string one of them BUILT dangles once this frame
@@ -17144,24 +17213,17 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 		if mySiblings[name] {
 			return
 		}
-		// Capture eligibility. Scalars (i32 / i64 / f32 / f64 /
-		// boolean) live directly in the env block; pointer-
-		// shaped types (string, T[], [T], structs, enums,
-		// tuples, function values) store their 4-byte heap
-		// reference in the same slot — the heap object itself
-		// stays where the outer scope put it. Lifetime is
-		// "captures must outlive the closure", same rule that
-		// applies to slices, enforced socially via the bump
-		// allocator's per-arena reset.
-		//
-		// Reject only the types that genuinely have no runtime
-		// representation: VoidType (no value) and ParamType
-		// (an unresolved generic placeholder — should never
-		// surface here in practice but guard for safety).
+		// Capture eligibility. Scalars live directly in the env
+		// block; reference types (string, T[], structs, enums,
+		// tuples, function values) store their reference in the
+		// same slot. A `void` has no value to store (E044), and a
+		// value holding a borrowed view may not be captured
+		// (E082).
 		switch t.(type) {
 		case ast.VoidType:
 			c.errfCode(fn.P, "E044", "captured variable %q has unsupported type %s", name, t)
 		default:
+			c.captureView(fn.P, name, t)
 			captured[name] = t
 			captureOrder = append(captureOrder, name)
 		}
@@ -19550,6 +19612,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			case ast.VoidType:
 				c.errfCode(n.P, "E044", "captured variable %q has unsupported type %s", name, t)
 			default:
+				c.captureView(n.P, name, t)
 				captured[name] = t
 				captureOrder = append(captureOrder, name)
 			}

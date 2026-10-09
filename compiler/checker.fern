@@ -14643,7 +14643,83 @@ pub function lambda_body_scope(lm: ast.ExprLambda, s: Scope): Scope {
 }
 
 function call_diags_lambda(lm: ast.ExprLambda, s: Scope, out: util.Diag[]): util.Diag[] {
-  return stmts_call_diags(lm.body, lambda_body_scope(lm, s));
+  if (parser.is_written_lambda_origin(lm.origin)) {
+    out = util.append_diags(out, capture_view_diags(lm, s));
+  }
+  return util.append_diags(out, stmts_call_diags(lm.body, lambda_body_scope(lm, s)));
+}
+
+// capture_view_diags is E082, native's captureView: a closure may not capture
+// a value holding a borrowed view. A function value's type does not say what
+// its environment holds, so a view captured into one would leave every escape
+// rule unable to see it. A nested lambda's captures count as the enclosing
+// one's too, as they do natively.
+function capture_view_diags(lm: ast.ExprLambda, s: Scope): util.Diag[] {
+  let out: util.Diag[] = [];
+  let seen: string[] = [];
+  for name in astwalk.collect_lambda_idents(lm, []) {
+    if (util.has_str(seen, name)) {
+      continue;
+    }
+    seen = seen.append(name);
+    if (s.is_bound(name) && type_holds_view(s.lookup(name), s, [])) {
+      out = out.append(dg_at("E082", "closure captures \"" + name + "\", which holds a borrowed view: a function value's environment cannot carry a view — copy it into an owned value before the closure (`.to_owned()` on a `str`)", lm.line, lm.col));
+    }
+  }
+  return out;
+}
+
+// type_holds_view mirrors native typeHoldsView: whether a value of `t` carries
+// a `str`, a `[T]` slice or a `MapIter` cursor, directly or through an element,
+// field, payload or type argument. `seen` breaks the recursion on a
+// self-referential struct or enum.
+function type_holds_view(t: typeinfo.Type, s: Scope, seen: string[]): boolean {
+  if (is_str_view(t) || is_arr_view(t)) {
+    return true;
+  }
+  if let typeinfo.TypeArray(a) = t {
+    return type_holds_view(a.elem, s, seen);
+  }
+  if let typeinfo.TypeTuple(tup) = t {
+    return any_holds_view(tup.elements, s, seen);
+  }
+  if let typeinfo.TypeMap(m) = t {
+    return type_holds_view(m.key, s, seen) || type_holds_view(m.value, s, seen);
+  }
+  if let typeinfo.TypeStruct(st) = t {
+    if (st.name == "MapIter") {
+      return true;
+    }
+    if (util.has_str(seen, st.name)) {
+      return false;
+    }
+    let inner: string[] = seen.append(st.name);
+    return any_holds_view(st.args, s, inner) || any_holds_view(s.lookup_struct(st.name).field_types, s, inner);
+  }
+  if let typeinfo.TypeUnion(u) = t {
+    if (util.has_str(seen, u.name)) {
+      return false;
+    }
+    let inner: string[] = seen.append(u.name);
+    if (any_holds_view(u.args, s, inner)) {
+      return true;
+    }
+    for v in s.lookup_union(u.name).variants {
+      if (any_holds_view(variant_shape_sig(s, v, u.name).field_types, s, inner)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function any_holds_view(ts: typeinfo.Type[], s: Scope, seen: string[]): boolean {
+  for t in ts {
+    if (type_holds_view(t, s, seen)) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function call_diags_ident(id: ast.ExprIdent, s: Scope, out: util.Diag[]): util.Diag[] {
