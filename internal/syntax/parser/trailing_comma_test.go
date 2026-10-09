@@ -42,6 +42,12 @@ function main(): i32 { return f(1, 2); }`},
 }`},
 		{"type parameters", `function id[T,](x: T): T { return x; }
 function main(): i32 { return id(1); }`},
+		{"struct type parameters", `struct Pair[A, B,] { a: A, b: B }
+function main(): i32 { let p: Pair[i32, i32] = Pair { a: 1, b: 2 }; return p.a; }`},
+		{"enum type parameters", `enum E[A, B,] { X(A), Y(B) }
+function main(): i32 { return 0; }`},
+		{"variant payload", `enum E { X(i32, i32,), Y }
+function main(): i32 { return 0; }`},
 		{"generic type arguments", `enum E[A, B] { X(A), Y(B) }
 function main(): i32 { let p: E[i32, i32,] = X(1); return 0; }`},
 		{"call type arguments", `function id[T](x: T): T { return x; }

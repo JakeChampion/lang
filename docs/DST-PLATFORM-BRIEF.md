@@ -148,9 +148,10 @@ results.
   `TestSimProperty` is the bounded 25-seed CI sweep,
   `TestSimProperty_Regressions` pins four generated programs
   verbatim, `FuzzSimProperty` is the deeper search entry point.
-- **Platform alignment**: when `PLATFORM-RESEARCH.md` Rec §1 lands a
-  `Platform` capability bag, the sim driver becomes the async face of
-  the mock platform (Rec §6) rather than a standalone object.
+- **Platform alignment**: `std/sim_platform` is a `platform.Platform`
+  over the simulation, the async face of the mock platform: the sim's
+  clock and PRNG, the scripted network, and the mock's call log
+  (`internal/testing/e2e/sim_platform_test.go`).
 
 ## Constraints
 

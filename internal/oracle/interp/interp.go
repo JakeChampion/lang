@@ -5163,16 +5163,13 @@ func builtinSubprocess(_ *Interp, args []Value) (Value, error) {
 		if exitErr, ok := runErr.(*exec.ExitError); ok {
 			exitCode = exitErr.ExitCode()
 		} else {
-			// Spawn failure (binary not found, permission
-			// denied, etc). Use 127 — the POSIX shell "command
-			// not found" convention — plus the OS error
-			// message in stderr so callers that don't gate on
-			// the exact code still see the reason.
+			// Spawn failure: exit 127 and `cmd: strerror(errno)` on stderr,
+			// as a shell reports a command it cannot run and as the compiled
+			// runtime's child does. A name the PATH search missed is ENOENT.
 			exitCode = 127
-			if errBuf.Len() > 0 {
-				errBuf.WriteByte('\n')
-			}
-			errBuf.WriteString(runErr.Error())
+			errno := syscall.ENOENT
+			errors.As(runErr, &errno)
+			errBuf.WriteString(string(cmdStr) + ": " + strerror.Text(runtime.GOOS, int(errno)) + "\n")
 		}
 	}
 	return &Struct{

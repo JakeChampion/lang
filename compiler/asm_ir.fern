@@ -8794,6 +8794,13 @@ function ssa_no_fuse(): SsaFuse {
   return SsaFuse { n: 0, tag: 0, inverted: false, a: 0, b: 0, unique: false, aligned: false };
 }
 
+function ssa_retain_fusion(rows: ssaprepare.Fusion[], fu: SsaFuse, retain: boolean): ssaprepare.Fusion[] {
+  if (!retain) {
+    return rows;
+  }
+  return rows.append(ssaprepare.Fusion { n: fu.n, tag: fu.tag, inverted: fu.inverted, a: fu.a, b: fu.b, unique: fu.unique, aligned: fu.aligned });
+}
+
 // ssa_fuse finds the compare a block's brif can read as flags: the block's
 // last instruction is an integer compare read only by the branch, or a `not`
 // read only by the branch whose operand is such a compare read only by it. A
@@ -9481,7 +9488,7 @@ function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
 
 // Allocate and emit the prepared register form, retaining its original lowering
 // for target entry paths and its lift mappings for debug locations.
-function emit_ssa_function_x86(prepared: ssaprepare.Body, label_name: string, entry: ssaprepare.ReleaseEntry, s: asmcore.EmitState): asmcore.EmitState {
+function emit_ssa_function_x86(prepared: ssaprepare.Body, label_name: string, entry: ssaprepare.ReleaseEntry, context: Option[ssaprepare.Context], s: asmcore.EmitState): asmcore.EmitState {
   let r = prepared.lowered;
   let seen_vals = prepared.seen_vals;
   let seen_slots = prepared.seen_slots;
@@ -9516,6 +9523,8 @@ function emit_ssa_function_x86(prepared: ssaprepare.Body, label_name: string, en
   let lbase: i32 = s.nlab;
   s = s.lab_take(bp.len());
   let fr: SsaFrame = SsaFrame { nspill: nspill, views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, saved: saved, leaf: leaf, epilogue: epilogue, imm: imm, lit0: ssa.literal_first_bytes(f), lbase: lbase };
+  let fusions: ssaprepare.Fusion[] = [];
+  let framed = !leaf;
   let frame: i32 = (fr.nspill + 3 * ssa_view_count(views)) * 8;
   // %rsp is 16-byte aligned at a call when the pushes and the frame together
   // are a multiple of 16.
@@ -9545,6 +9554,7 @@ function emit_ssa_function_x86(prepared: ssaprepare.Body, label_name: string, en
     s = ssa_x0_forget(s);
     s = s.lab_def(ssa_blab(fr, lp, blk.id));
     let fu: SsaFuse = ssa_fuse(fr, blk);
+    fusions = ssa_retain_fusion(fusions, fu, s.retain_prepared);
     let ii: i32 = 0;
     while (ii < blk.insts.len() - fu.n) {
       s = asmcore.dbg_label(s, dbg, fn_label, pos + ii);
@@ -9567,6 +9577,7 @@ function emit_ssa_function_x86(prepared: ssaprepare.Body, label_name: string, en
     buf_free(body);
     s = asmcore.EmitState { ...s, capture: outer };
     if (ssa_needs_frame(text)) {
+      framed = true;
       s = ssa_frame(s, saved, frame);
       s = s.write(ssa_replace_all(text, ssa_epilogue_mark(), ssa_epilogue_for(saved)));
     } else {
@@ -9576,7 +9587,16 @@ function emit_ssa_function_x86(prepared: ssaprepare.Body, label_name: string, en
     }
   }
   s = asmcore.EmitState { ...s, ssa_save: 0 };
-  return asmcore.dbg_rows(ssa_cfi(s, 2, "", 0), dbg);
+  s = asmcore.dbg_rows(ssa_cfi(s, 2, "", 0), dbg);
+  return ssa_retain_allocation(s, prepared, label_name, context, entry, alloc, fr, frame, framed, fusions);
+}
+
+function ssa_retain_allocation(s: asmcore.EmitState, prepared: ssaprepare.Body, label_name: string, context: Option[ssaprepare.Context], entry: ssaprepare.ReleaseEntry, alloc: ssa.Alloc, fr: SsaFrame, frame: i32, framed: boolean, fusions: ssaprepare.Fusion[]): asmcore.EmitState {
+  if (s.retain_prepared) {
+    let allocation = ssaprepare.Allocation { alloc: alloc, imm: fr.imm, saved: fr.saved, save_bytes: fr.nsave, frame_bytes: if (framed) { frame } else { 0 }, framed: framed, views: fr.views, block_positions: fr.blk_pos, block_label_base: fr.lbase, fusions: fusions };
+    s = asmcore.retain_body(s, prepared, label_name, context, entry, allocation);
+  }
+  return s;
 }
 
 // ssa_dbg_locs is each value's home as DWARF location bytes: DW_OP_reg<n> for
@@ -9737,8 +9757,7 @@ function emit_ssa_function(r: irtables.LowerResult, selected: physicalbody.Selec
   let prepared: ssaprepare.Body = ssaprepare.finish(r, selected, lifted, s.leaves);
   let context = asmcore.preparation_context(s, "x86-64");
   let entry = ircore.release_entry(r, "x86-64", s.rc_free_debug, s.reg_entries);
-  s = emit_ssa_function_x86(prepared, label_name, entry, s);
-  s = asmcore.retain_body(s, prepared, label_name, context, entry);
+  s = emit_ssa_function_x86(prepared, label_name, entry, context, s);
   // Under the report, a function whose lift or emit took over 200 ms is
   // named with both times: the whole-compiler build is where a phase's
   // cost shows, and this is how a slow one is found.

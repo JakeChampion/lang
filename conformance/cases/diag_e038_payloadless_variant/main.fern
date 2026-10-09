@@ -1,0 +1,12 @@
+// Pins E038 for a bare call of a payloadless variant: the variant is a
+// value, not a constructor, so `Red()` calls a value of the enum's type
+// whatever the argument count (#11922). The qualified `Color.Red()` is
+// accepted.
+enum Color { Red, Green }
+
+function main(): i32 {
+    let c = Red();                    // error[E038]: calling non-function value of type Color
+    let d = Green(1);                 // error[E038]: calling non-function value of type Color
+    let ok: Color = Color.Red();
+    return 0;
+}
