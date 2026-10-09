@@ -711,6 +711,17 @@ func New() *Interp {
 	i.Builtins["__method_Reader_read_chunk"] = &Builtin{Fn: builtinReaderReadChunk}
 	i.Builtins["__method_Reader_read_chunk_bytes"] = &Builtin{Fn: builtinReaderReadChunkBytes}
 	i.Builtins["__method_Reader_close"] = &Builtin{Fn: builtinReaderClose}
+	i.Builtins["open_dir"] = &Builtin{Fn: builtinOpenDir}
+	i.Builtins["__method_Dir_open_dir"] = &Builtin{Fn: builtinDirOpenDir}
+	i.Builtins["__method_Dir_entries"] = &Builtin{Fn: builtinDirEntries}
+	i.Builtins["__method_Dir_stat"] = &Builtin{Fn: builtinDirStat(true)}
+	i.Builtins["__method_Dir_lstat"] = &Builtin{Fn: builtinDirStat(false)}
+	i.Builtins["__method_Dir_access"] = &Builtin{Fn: builtinDirAccess}
+	i.Builtins["__method_Dir_remove_file"] = &Builtin{Fn: builtinDirRemove(false)}
+	i.Builtins["__method_Dir_remove_dir"] = &Builtin{Fn: builtinDirRemove(true)}
+	i.Builtins["__method_Dir_chmod"] = &Builtin{Fn: builtinDirChmod}
+	i.Builtins["__method_Dir_chown"] = &Builtin{Fn: builtinDirChown}
+	i.Builtins["__method_Dir_close"] = &Builtin{Fn: builtinReaderClose}
 	i.Builtins["__method_Reader_stat"] = &Builtin{Fn: builtinFdStat}
 	i.Builtins["__method_Writer_stat"] = &Builtin{Fn: builtinFdStat}
 	i.Builtins["__method_Reader_seek"] = &Builtin{Fn: builtinHandleSeek}

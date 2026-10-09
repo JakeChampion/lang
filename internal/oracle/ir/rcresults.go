@@ -244,47 +244,60 @@ var rcResultOwned = map[string]bool{
 	// native-only (E066 refuses them on the wasm worlds), so they are
 	// classified there under the builtin name, which is why they are
 	// spelled the builtin's way here too.
-	"access":            true,
-	"unix_listen":       true,
-	"unix_connect":      true,
-	"reactor_new":       true,
-	"reactor_ctl":       true,
-	"reactor_wait":      true,
-	"tcp_recv_into":     true,
-	"tcp_sendfile":      true,
-	"write_file_exec":   true,
-	"chmod":             true,
-	"rename_noreplace":  true,
-	"rename_exchange":   true,
-	"getxattr":          true,
-	"getxattr_bytes":    true,
-	"lgetxattr":         true,
-	"lgetxattr_bytes":   true,
-	"setxattr":          true,
-	"setxattr_bytes":    true,
-	"lsetxattr":         true,
-	"lsetxattr_bytes":   true,
-	"chmod_at":          true,
-	"mknod":             true,
-	"chown_at":          true,
-	"statfs":            true,
-	"mounts":            true,
-	"sysctl":            true,
-	"getcwd":            true,
-	"chdir":             true,
-	"chroot":            true,
-	"setuid":            true,
-	"setgid":            true,
-	"setgroups":         true,
-	"clock_set":         true,
-	"window_size":       true,
-	"pipe":              true,
-	"set_window_size":   true,
-	"termios_get":       true,
-	"termios_set":       true,
-	"set_extproc":       true,
-	"signal_send":       true,
-	"set_process_group": true,
+	"access":           true,
+	"unix_listen":      true,
+	"unix_connect":     true,
+	"reactor_new":      true,
+	"reactor_ctl":      true,
+	"reactor_wait":     true,
+	"tcp_recv_into":    true,
+	"tcp_sendfile":     true,
+	"write_file_exec":  true,
+	"chmod":            true,
+	"rename_noreplace": true,
+	"rename_exchange":  true,
+	"getxattr":         true,
+	"getxattr_bytes":   true,
+	"lgetxattr":        true,
+	"lgetxattr_bytes":  true,
+	"setxattr":         true,
+	"setxattr_bytes":   true,
+	"lsetxattr":        true,
+	"lsetxattr_bytes":  true,
+	"chmod_at":         true,
+	"mknod":            true,
+	"chown_at":         true,
+	"statfs":           true,
+	"mounts":           true,
+	"sysctl":           true,
+	"getcwd":           true,
+	"chdir":            true,
+	"chroot":           true,
+	"setuid":           true,
+	"setgid":           true,
+	"setgroups":        true,
+	"clock_set":        true,
+	"window_size":      true,
+	"pipe":             true,
+	// The directory handle's constructor and methods, native-only
+	// (`fsdir`) and so classified under the builtin names the same way.
+	"open_dir":                 true,
+	"__method_Dir_open_dir":    true,
+	"__method_Dir_entries":     true,
+	"__method_Dir_stat":        true,
+	"__method_Dir_lstat":       true,
+	"__method_Dir_access":      true,
+	"__method_Dir_remove_file": true,
+	"__method_Dir_remove_dir":  true,
+	"__method_Dir_chmod":       true,
+	"__method_Dir_chown":       true,
+	"__method_Dir_close":       true,
+	"set_window_size":          true,
+	"termios_get":              true,
+	"termios_set":              true,
+	"set_extproc":              true,
+	"signal_send":              true,
+	"set_process_group":        true,
 }
 
 // rcResultImmortal: fresh, pointer-shaped, static-sentinel header. The
@@ -364,6 +377,17 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"__method_Writer_write_some_bytes": true, // __fern_writer_write_some_bytes
 	"__method_Reader_stat":             true, // __fern_fd_stat
 	"__method_Writer_stat":             true, // __fern_fd_stat
+	"open_dir":                         true, // __fern_open_dir
+	"__method_Dir_open_dir":            true, // __fern_dir_open
+	"__method_Dir_entries":             true, // __fern_dir_entries
+	"__method_Dir_stat":                true, // __fern_dir_stat
+	"__method_Dir_lstat":               true, // __fern_dir_stat
+	"__method_Dir_access":              true, // __fern_dir_access
+	"__method_Dir_remove_file":         true, // __fern_dir_unlink
+	"__method_Dir_remove_dir":          true, // __fern_dir_unlink
+	"__method_Dir_chmod":               true, // __fern_dir_chmod
+	"__method_Dir_chown":               true, // __fern_dir_chown
+	"__method_Dir_close":               true, // __fern_reader_close
 	"__method_Reader_fsync":            true, // __fern_fd_fsync
 	"__method_Writer_fsync":            true, // __fern_fd_fsync
 	"__method_Reader_fdatasync":        true, // __fern_fd_fdatasync
@@ -633,10 +657,6 @@ var rcResultNonPointer = map[string]bool{
 	// The rc probes and the uniqueness test — counters and a boolean.
 	"__fern_rc_is_unique": true, "__fern_rc_underflow_count": true,
 	"__fern_arr_push_shared_count": true,
-
-	// File descriptors and errnos. `__fern_open_dir` answers an fd or
-	// -(errno) and `__fern_rmdir_rec` an errno; neither is an address.
-	"__fern_open_dir": true, "__fern_rmdir_rec": true,
 
 	// Byte counts and status codes from the socket layer.
 	"__fern_tcp_send": true, "__fern_udp_send": true, "__fern_tcp_close": true,

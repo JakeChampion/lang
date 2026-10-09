@@ -2148,6 +2148,9 @@ function oflag_darwin(name: string): string {
   if (name == "nofollow") {
     return "256";
   }
+  if (name == "cloexec") {
+    return "16777216";
+  }
   return "0";
 }
 
@@ -2197,6 +2200,9 @@ function oflag_x86_64(name: string): string {
   if (name == "nofollow") {
     return "131072";
   }
+  if (name == "cloexec") {
+    return "524288";
+  }
   return "0";
 }
 
@@ -2245,6 +2251,9 @@ function oflag_arm64(name: string): string {
   }
   if (name == "nofollow") {
     return "32768";
+  }
+  if (name == "cloexec") {
+    return "524288";
   }
   return "0";
 }
@@ -4075,7 +4084,113 @@ pub function rt_src_utf8_valid(): string {
 // FRESH path string, so the borrowed `path` param is never stored. Same body on
 // every native target; only the unlinkat number and AT_FDCWD come from `t`.
 pub function rt_src_remove_file(t: string): string {
-  return "function __fern_remove_file(path: string): Result[void, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let rc: i32 = __syscall3(" + sysno(t, "unlinkat") + ", " + at_fdcwd(t) + ", pathz as i64, 0) as i32; let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } return Ok(()); }";
+  return void_path_leaf_src("__fern_remove_file(path: string)", "", "__syscall3(" + sysno(t, "unlinkat") + ", " + at_fdcwd(t) + ", pathz as i64, 0)");
+}
+
+// void_path_leaf_src is the body every one-syscall leaf over a `path`
+// parameter shares: `prelude`, then `call` against the NUL-terminated copy
+// `pathz`, then Ok(()) or the errno classified against a fresh copy of the
+// path. `sig` is the name and parameter list.
+function void_path_leaf_src(sig: string, prelude: string, call: string): string {
+  return "function " + sig + ": Result[void, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); " + prelude + "let rc: i32 = " + call + " as i32; let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } return Ok(()); }";
+}
+
+// The Dir leaves: each is a path builtin's syscall with the handle's
+// descriptor where the path one passes AT_FDCWD, so `path` is a name inside
+// that directory and no walk forms a path longer than one component.
+
+// rt_src_open_dir backs `open_dir(path)` -> Result[Dir, IoError], a Dir being
+// its descriptor: openat(AT_FDCWD, path, O_RDONLY|O_DIRECTORY|O_CLOEXEC),
+// which follows a final symlink as opendir(3) does.
+pub function rt_src_open_dir(t: string): string {
+  return open_dir_src(t, "__fern_open_dir(path: string)", at_fdcwd(t), "");
+}
+
+// rt_src_dir_open backs `d.open_dir(name)`: the same open relative to `d`,
+// with O_NOFOLLOW, so a name that is a symlink is refused rather than
+// descended through — what a physical walk needs.
+pub function rt_src_dir_open(t: string): string {
+  return open_dir_src(t, "__fern_dir_open(dirfd: i32, path: string)", "dirfd", " | " + oflag(t, "nofollow"));
+}
+
+function open_dir_src(t: string, sig: string, dirfd: string, extra: string): string {
+  let flags: string = "(" + oflag(t, "rd_directory") + " | " + oflag(t, "cloexec") + extra + ")";
+  return "function " + sig + ": Result[i32, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let fd: i32 = __syscall3(" + sysno(t, "openat") + ", " + dirfd + " as i64, pathz as i64, " + flags + " as i64) as i32; let pathz_own: string = __raw_string(pathz, plen + 1); if (fd < 0) { return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz_own, plen))); } return Ok(fd); }";
+}
+
+// rt_src_dir_unlink backs `d.remove_file(name)` and `d.remove_dir(name)`:
+// unlinkat(d, name, 0), or with AT_REMOVEDIR when `dir`.
+pub function rt_src_dir_unlink(t: string): string {
+  return void_path_leaf_src("__fern_dir_unlink(dirfd: i32, path: string, dir: boolean)", "let fl: i32 = 0; if (dir) { fl = " + at_removedir(t) + "; } ", "__syscall3(" + sysno(t, "unlinkat") + ", dirfd as i64, pathz as i64, fl as i64)");
+}
+
+// rt_src_dir_access backs `d.access(name, mode)`: access(path, mode)'s
+// faccessat against the effective ids, relative to `d`.
+pub function rt_src_dir_access(t: string): string {
+  return void_path_leaf_src("__fern_dir_access(dirfd: i32, path: string, mode: i32)", "", faccessat_src(t, "dirfd"));
+}
+
+// rt_src_dir_chown backs `d.chown(name, uid, gid, follow)`: chown_at's
+// fchownat, relative to `d`.
+pub function rt_src_dir_chown(t: string): string {
+  return void_path_leaf_src("__fern_dir_chown(dirfd: i32, path: string, uid: i32, gid: i32, follow: boolean)", follow_flag_src(t), fchownat_src(t, "dirfd"));
+}
+
+// rt_src_dir_chmod backs `d.chmod(name, mode, follow)`: chmod_at's call,
+// relative to `d`.
+pub function rt_src_dir_chmod(t: string): string {
+  return void_path_leaf_src("__fern_dir_chmod(dirfd: i32, path: string, mode: i32, follow: boolean)", fchmodat_src(t, "dirfd"), "cr");
+}
+
+// rt_src_dir_entries backs `d.entries()` -> Result[string[], IoError]: the
+// directory rewound to its start, then read_dir's drain over the handle, so
+// every call lists what the directory holds now. A read the kernel refuses is
+// the Err, where read_dir stops at it.
+pub function rt_src_dir_entries(t: string): string {
+  return "function __fern_dir_entries(fd: i32): Result[string[], IoError] { let rw: i32 = __syscall3(" + sysno(t, "lseek") + ", fd as i64, 0, 0) as i32; if (rw < 0) { return Err(__fern_io_error(0 - rw, \"\")); } " + dir_drain_src(t, "string", true, false) + "if (bad < 0) { return Err(__fern_io_error(0 - bad, \"\")); } return Ok(names); }";
+}
+
+// rt_src_dir_stat backs `d.stat(name)` and `d.lstat(name)`: stat(path)'s
+// record for a name inside `d`, AT_SYMLINK_NOFOLLOW unless `follow`.
+pub function rt_src_dir_stat(t: string): string {
+  return rt_src_stat_like(t, "__fern_dir_stat(dirfd: i32, path: string, follow: boolean)", "dirfd as i64", follow_flag_src(t), "fl as i64");
+}
+
+// rt_src_dir_leaves is the source of every Dir leaf `s` needs, each need
+// being its IR kind's name.
+pub function rt_src_dir_leaves(t: string, s: EmitState): string {
+  let out: string = "";
+  if (s.has_need("open_dir")) {
+    out = out + " " + rt_src_open_dir(t);
+  }
+  if (s.has_need("dir_open")) {
+    out = out + " " + rt_src_dir_open(t);
+  }
+  if (s.has_need("dir_entries")) {
+    out = out + " " + rt_src_dir_entries(t);
+  }
+  if (s.has_need("dir_stat")) {
+    out = out + " " + rt_src_dir_stat(t);
+  }
+  if (s.has_need("dir_access")) {
+    out = out + " " + rt_src_dir_access(t);
+  }
+  if (s.has_need("dir_unlink")) {
+    out = out + " " + rt_src_dir_unlink(t);
+  }
+  if (s.has_need("dir_chmod")) {
+    out = out + " " + rt_src_dir_chmod(t);
+  }
+  if (s.has_need("dir_chown")) {
+    out = out + " " + rt_src_dir_chown(t);
+  }
+  return out;
+}
+
+// follow_flag_src binds `fl` to the *at() flags word a `follow` parameter
+// asks for: 0, or AT_SYMLINK_NOFOLLOW.
+function follow_flag_src(t: string): string {
+  return "let fl: i32 = " + at_symlink_nofollow(t) + "; if (follow) { fl = 0; } ";
 }
 
 // rt_src_create_dir_all backs `create_dir_all(path)` (#2649, syscall-leaf) →
@@ -4198,7 +4313,7 @@ pub function rt_src_create_dir(t: string): string {
 // rmdir(2): a non-empty directory is ENOTEMPTY and a regular file ENOTDIR,
 // both reaching the caller rather than being folded away.
 pub function rt_src_remove_dir(t: string): string {
-  return "function __fern_remove_dir(path: string): Result[void, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let rc: i32 = __syscall3(" + sysno(t, "unlinkat") + ", " + at_fdcwd(t) + ", pathz as i64, " + at_removedir(t) + ") as i32; let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } return Ok(()); }";
+  return void_path_leaf_src("__fern_remove_dir(path: string)", "", "__syscall3(" + sysno(t, "unlinkat") + ", " + at_fdcwd(t) + ", pathz as i64, " + at_removedir(t) + ")");
 }
 
 // rt_src_create_link backs `create_link(target, path)` (#8883, syscall-leaf) →
@@ -4406,12 +4521,16 @@ pub function rt_src_chmod(t: string): string {
 // has no mode on Linux, and the kernel's EOPNOTSUPP (ENOSYS below fchmodat2)
 // reaches the caller as the Err rather than a silent Ok.
 pub function rt_src_chmod_at(t: string): string {
-  let head: string = "function __fern_chmod_at(path: string, mode: i32, follow: boolean): Result[void, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let rc: i32 = 0; ";
-  let tail: string = " let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } return Ok(()); }";
+  return void_path_leaf_src("__fern_chmod_at(path: string, mode: i32, follow: boolean)", fchmodat_src(t, at_fdcwd(t)), "cr");
+}
+
+// fchmodat_src binds `cr` to chmod_at's syscall result against `dirfd`.
+function fchmodat_src(t: string, dirfd: string): string {
+  let at: string = dirfd + " as i64, pathz as i64, (mode & 4095) as i64, ";
   if (t == "arm64-darwin") {
-    return head + "let fl: i32 = " + at_symlink_nofollow(t) + "; if (follow) { fl = 0; } rc = __syscall4(" + sysno(t, "fchmodat") + ", " + at_fdcwd(t) + ", pathz as i64, (mode & 4095) as i64, fl as i64) as i32;" + tail;
+    return follow_flag_src(t) + "let cr: i64 = __syscall4(" + sysno(t, "fchmodat") + ", " + at + "fl as i64); ";
   }
-  return head + "if (follow) { rc = __syscall4(" + sysno(t, "fchmodat") + ", " + at_fdcwd(t) + ", pathz as i64, (mode & 4095) as i64, 0) as i32; } else { rc = __syscall4(" + sysno(t, "fchmodat2") + ", " + at_fdcwd(t) + ", pathz as i64, (mode & 4095) as i64, " + at_symlink_nofollow(t) + ") as i32; }" + tail;
+  return "let cr: i64 = 0 as i64; if (follow) { cr = __syscall4(" + sysno(t, "fchmodat") + ", " + at + "0); } else { cr = __syscall4(" + sysno(t, "fchmodat2") + ", " + at + at_symlink_nofollow(t) + "); } ";
 }
 
 // rt_src_truncate backs `truncate(path, length)` (syscall-leaf) →
@@ -4474,7 +4593,11 @@ pub function rt_src_mknod(t: string): string {
 // which is the 0xffffffff `uid_t` the kernel compares against — so `chgrp` is
 // this call with the uid left at -1 and no special case anywhere.
 pub function rt_src_chown_at(t: string): string {
-  return "function __fern_chown_at(path: string, uid: i32, gid: i32, follow: boolean): Result[void, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let fl: i32 = " + at_symlink_nofollow(t) + "; if (follow) { fl = 0; } let rc: i32 = __syscall5(" + sysno(t, "fchownat") + ", " + at_fdcwd(t) + ", pathz as i64, uid as i64, gid as i64, fl as i64) as i32; let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } return Ok(()); }";
+  return void_path_leaf_src("__fern_chown_at(path: string, uid: i32, gid: i32, follow: boolean)", follow_flag_src(t), fchownat_src(t, at_fdcwd(t)));
+}
+
+function fchownat_src(t: string, dirfd: string): string {
+  return "__syscall5(" + sysno(t, "fchownat") + ", " + dirfd + " as i64, pathz as i64, uid as i64, gid as i64, fl as i64)";
 }
 
 // rt_src_set_file_times backs `set_file_times(path, atime_sec, atime_nsec,
@@ -4726,11 +4849,20 @@ pub function rt_src_read_dir_ino(t: string): string {
 // rt_src_read_dir_like is the source all three share. `skip_dots` wraps the
 // per-entry append in the "." / ".." test; `ino` makes each entry a DirEntry.
 function rt_src_read_dir_like(t: string, fname: string, skip_dots: boolean, ino: boolean): string {
-  let nameoff: string = direntoff(t, "name");
   let elem: string = "string";
-  let entry: string = "__raw_string(nbuf, nlen)";
   if (ino) {
     elem = "DirEntry";
+  }
+  return "function " + fname + "(path: string): Result[" + elem + "[], IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let fd: i32 = __syscall3(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz as i64, " + oflag(t, "rd_directory") + ") as i32; let pathz_own: string = __raw_string(pathz, plen + 1); if (fd < 0) { return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz_own, plen))); } " + dir_drain_src(t, elem, skip_dots, ino) + "__syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return Ok(names); }";
+}
+
+// dir_drain_src reads the directory open on `fd` from its current position to
+// the end, leaving `names` bound to its entries and `bad` to the -errno of a
+// read the kernel refused, else 0.
+function dir_drain_src(t: string, elem: string, skip_dots: boolean, ino: boolean): string {
+  let nameoff: string = direntoff(t, "name");
+  let entry: string = "__raw_string(nbuf, nlen)";
+  if (ino) {
     entry = "DirEntry { name: __raw_string(nbuf, nlen), ino: __load_i64(__raw_addr(buf, pos + " + direntoff(t, "ino") + ")) }";
   }
   let guard_open: string = "";
@@ -4739,7 +4871,7 @@ function rt_src_read_dir_like(t: string, fname: string, skip_dots: boolean, ino:
     guard_open = "let skip: i32 = 0; if (nlen == 1) { if (__raw_load8(buf, pos + " + nameoff + ") == 46) { skip = 1; } } if (nlen == 2) { if (__raw_load8(buf, pos + " + nameoff + ") == 46) { if (__raw_load8(buf, pos + " + nameoff + " + 1) == 46) { skip = 1; } } } if (skip == 0) { ";
     guard_close = "} ";
   }
-  return "function " + fname + "(path: string): Result[" + elem + "[], IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let fd: i32 = __syscall3(" + sysno(t, "openat") + ", " + at_fdcwd(t) + ", pathz as i64, " + oflag(t, "rd_directory") + ") as i32; let pathz_own: string = __raw_string(pathz, plen + 1); if (fd < 0) { return Err(__fern_io_error(0 - fd, __fern_path_copy(pathz_own, plen))); } let basep: usize = __raw_alloc(8); let names: " + elem + "[] = []; let done: i32 = 0; while (done == 0) { let buf: usize = __raw_alloc(65536); let n: i32 = __syscall4(" + sysno(t, "getdents") + ", fd as i64, buf as i64, 65536, basep as i64) as i32; if (n <= 0) { done = 1; } else { let pos: i32 = 0; while (pos < n) { let reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256; let nlen: i32 = 0; while (__raw_load8(buf, pos + " + nameoff + " + nlen) != 0) { nlen = nlen + 1; } " + guard_open + "let nbuf: usize = __raw_alloc(nlen); let k: i32 = 0; while (k < nlen) { __raw_store8(nbuf, k, __raw_load8(buf, pos + " + nameoff + " + k)); k = k + 1; } names = names.append(" + entry + "); " + guard_close + "pos = pos + reclen; } } let buf_own: string = __raw_string(buf, 65536); } let basep_own: string = __raw_string(basep, 8); __syscall3(" + sysno(t, "close") + ", fd as i64, 0, 0); return Ok(names); }";
+  return "let basep: usize = __raw_alloc(8); let names: " + elem + "[] = []; let bad: i32 = 0; let done: i32 = 0; while (done == 0) { let buf: usize = __raw_alloc(65536); let n: i32 = __syscall4(" + sysno(t, "getdents") + ", fd as i64, buf as i64, 65536, basep as i64) as i32; if (n <= 0) { done = 1; bad = n; } else { let pos: i32 = 0; while (pos < n) { let reclen: i32 = __raw_load8(buf, pos + 16) + __raw_load8(buf, pos + 17) * 256; let nlen: i32 = 0; while (__raw_load8(buf, pos + " + nameoff + " + nlen) != 0) { nlen = nlen + 1; } " + guard_open + "let nbuf: usize = __raw_alloc(nlen); let k: i32 = 0; while (k < nlen) { __raw_store8(nbuf, k, __raw_load8(buf, pos + " + nameoff + " + k)); k = k + 1; } names = names.append(" + entry + "); " + guard_close + "pos = pos + reclen; } } let buf_own: string = __raw_string(buf, 65536); } let basep_own: string = __raw_string(basep, 8); ";
 }
 
 // rt_src_remove_dir_all backs `remove_dir_all(path)` (#2649, the last fs leaf) →
@@ -4882,7 +5014,7 @@ pub function rt_src_clock_set(t: string): string {
 // page-zero and `stat` segfaulted on every path that EXISTS (the Err arm returns
 // before the loads, which is why only stat_dir / fs_builtins_lifecycle failed).
 pub function rt_src_stat(t: string): string {
-  return rt_src_stat_like(t, "__fern_stat", "0");
+  return rt_src_stat_like(t, "__fern_stat(path: string)", at_fdcwd(t), "", "0");
 }
 
 // rt_src_lstat backs `lstat(path)` — the same body with fstatat's flags word set
@@ -4896,24 +5028,26 @@ pub function rt_src_stat(t: string): string {
 // The flag is per-kernel, and XNU rejects Linux's number outright — so a
 // hardcoded 0x100 makes every `lstat` on Darwin EINVAL, symlink or not.
 pub function rt_src_lstat(t: string): string {
-  return rt_src_stat_like(t, "__fern_lstat", atflag(t, "symlink_nofollow"));
+  return rt_src_stat_like(t, "__fern_lstat(path: string)", at_fdcwd(t), "", atflag(t, "symlink_nofollow"));
 }
 
 // XNU answers stat("link-to-file/") and lstat("link/") as though the slash
 // were absent; POSIX and gnulib's replacements require the slash to resolve a
 // symlink and the result to be a directory, else ENOTDIR.
-function stat_slash_fixup(t: string): string {
+function stat_slash_fixup(t: string, dirfd: string): string {
   let hi: string = "(__raw_load8(buf, " + statoff(t, "mode") + " + 1) & 240)";
-  return " if (rc >= 0 && plen > 0 && path[plen - 1] == 47) { if (" + hi + " == 160) { rc = __syscall4(" + sysno(t, "fstatat") + ", " + at_fdcwd(t) + ", pathz as i64, buf as i64, 0) as i32; } if (rc >= 0 && " + hi + " != 64) { rc = 0 - 20; } }";
+  return " if (rc >= 0 && plen > 0 && path[plen - 1] == 47) { if (" + hi + " == 160) { rc = __syscall4(" + sysno(t, "fstatat") + ", " + dirfd + ", pathz as i64, buf as i64, 0) as i32; } if (rc >= 0 && " + hi + " != 64) { rc = 0 - 20; } }";
 }
 
-function rt_src_stat_like(t: string, name: string, at_flags: string): string {
-  let head: string = "function " + name + "(path: string): Result[FileStat, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); ";
+// rt_src_stat_like is the stat-shaped leaf `sig` names: `prelude`, then the
+// record of `path` relative to `dirfd` under the *at() flags word `at_flags`.
+function rt_src_stat_like(t: string, sig: string, dirfd: string, prelude: string, at_flags: string): string {
+  let head: string = "function " + sig + ": Result[FileStat, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); " + prelude;
   let tail: string = " let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } ";
   if (t == "arm64-darwin") {
-    return head + "let buf: usize = __raw_scratch(160); let rc: i32 = __syscall4(" + sysno(t, "fstatat") + ", " + at_fdcwd(t) + ", pathz as i64, buf as i64, " + at_flags + ") as i32;" + stat_slash_fixup(t) + tail + stat_project_src(t) + " }";
+    return head + "let buf: usize = __raw_scratch(160); let rc: i32 = __syscall4(" + sysno(t, "fstatat") + ", " + dirfd + ", pathz as i64, buf as i64, " + at_flags + ") as i32;" + stat_slash_fixup(t, dirfd) + tail + stat_project_src(t) + " }";
   }
-  return head + "let buf: usize = __raw_scratch(256); let rc: i32 = __syscall5(" + sysno(t, "statx") + ", " + at_fdcwd(t) + ", pathz as i64, " + at_flags + ", " + statx_mask() + ", buf as i64) as i32;" + tail + statx_project_src() + " }";
+  return head + "let buf: usize = __raw_scratch(256); let rc: i32 = __syscall5(" + sysno(t, "statx") + ", " + dirfd + ", pathz as i64, " + at_flags + ", " + statx_mask() + ", buf as i64) as i32;" + tail + statx_project_src() + " }";
 }
 
 // stat_project_src is the tail Darwin's stat-shaped leaves share: the record
@@ -5451,7 +5585,11 @@ pub function rt_src_mounts(t: string): string {
 // One body for all three targets, same as stat: only the syscall number, the
 // AT_FDCWD constant and the AT_EACCESS constant come from `t`.
 pub function rt_src_access(t: string): string {
-  return "function __fern_access(path: string, mode: i32): Result[void, IoError] { let plen: i32 = path.len(); let pathz: usize = __raw_alloc(plen + 1); let i: i32 = 0; while (i < plen) { __raw_store8(pathz, i, path[i] as i32); i = i + 1; } __raw_store8(pathz, plen, 0); let rc: i32 = __syscall4(" + sysno(t, "faccessat") + ", " + at_fdcwd(t) + ", pathz as i64, mode as i64, " + at_eaccess(t) + ") as i32; let pathz_own: string = __raw_string(pathz, plen + 1); if (rc < 0) { return Err(__fern_io_error(0 - rc, __fern_path_copy(pathz_own, plen))); } return Ok(()); }";
+  return void_path_leaf_src("__fern_access(path: string, mode: i32)", "", faccessat_src(t, at_fdcwd(t)));
+}
+
+function faccessat_src(t: string, dirfd: string): string {
+  return "__syscall4(" + sysno(t, "faccessat") + ", " + dirfd + " as i64, pathz as i64, mode as i64, " + at_eaccess(t) + ")";
 }
 
 // rt_src_hostname backs `hostname()` on Linux → the kernel's node name as a
@@ -10440,6 +10578,8 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_chmod", "__fn___fern_chmod_at", "__fn___fern_set_file_times", "__fn___fern_truncate",
     "__fn___fern_mknod", "__fn___fern_chown_at",
     "__fn___fern_window_size", "__fn___fern_pipe",
+    "__fn___fern_open_dir", "__fn___fern_dir_open", "__fn___fern_dir_entries", "__fn___fern_dir_stat",
+    "__fn___fern_dir_access", "__fn___fern_dir_unlink", "__fn___fern_dir_chmod", "__fn___fern_dir_chown",
     "__fn___fern_env", "__fern_stat", "__fn___fern_stat", "__fn___fern_statfs", "__fn___fern_mounts", "__fn___fern_subprocess",
     "__fern_args", "__fern_arg_at", "__fern_strbuf_append",
     "__fn___fern_hostname",

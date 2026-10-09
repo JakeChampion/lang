@@ -1111,6 +1111,57 @@ pub function op_pipe(): Op {
   return op0(408);
 }
 
+// The Dir family, 420-427: a directory held open as its descriptor, and the
+// path builtins' syscalls aimed at a NAME inside it, so a walk never forms a
+// path longer than one component. Each pushes the Result or Option its
+// builtin answers; `d.close()` is reader_close. Refused on wasm (capability
+// `fsdir`).
+//
+// `open_dir` pops [path] and pushes Result[Dir, IoError], following a final
+// symlink as opendir(3) does.
+pub function op_open_dir(): Op {
+  return op0(420);
+}
+
+// `dir_open` pops [fd, name] -> Result[Dir, IoError]: `d.open_dir(name)`,
+// which refuses a symlink rather than following it.
+pub function op_dir_open(): Op {
+  return op0(421);
+}
+
+// `dir_entries` pops [fd] -> Result[string[], IoError]: every name but `.`
+// and `..`, read from the start, in the order the kernel reports them.
+pub function op_dir_entries(): Op {
+  return op0(422);
+}
+
+// `dir_stat` pops [fd, name] -> Result[FileStat, IoError]. The immediate is 1
+// for `d.stat(name)`, which follows a final symlink, and 0 for `d.lstat`.
+pub function op_dir_stat(follow: i32): Op {
+  return Op { decl: 0 - 1, kind_tag: 423, i32_imm: follow, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+
+// `dir_access` pops [fd, name, mode] -> Result[void, IoError].
+pub function op_dir_access(): Op {
+  return op0(424);
+}
+
+// `dir_unlink` pops [fd, name] -> Result[void, IoError]. The immediate is 1
+// for `d.remove_dir(name)` (AT_REMOVEDIR) and 0 for `d.remove_file`.
+pub function op_dir_unlink(dir: i32): Op {
+  return Op { decl: 0 - 1, kind_tag: 425, i32_imm: dir, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
+}
+
+// `dir_chmod` pops [fd, name, mode, follow] -> Result[void, IoError].
+pub function op_dir_chmod(): Op {
+  return op0(426);
+}
+
+// `dir_chown` pops [fd, name, uid, gid, follow] -> Result[void, IoError].
+pub function op_dir_chown(): Op {
+  return op0(427);
+}
+
 // `termios_get` pops [fd] and pushes Result[i64[], IoError]: the terminal's
 // line settings as the KERNEL's own words — four flag words, the line
 // discipline, then each control character. `termios_set` pops [fd, when,
@@ -3043,6 +3094,12 @@ pub function kind_retired(id: i32): boolean {
 // report after merging, never by adding up what each branch claimed.
 pub function kind_id(name: string): i32 {
   let n: i32 = name.len();
+  if (n >= 8 && n <= 11 && (name[0] == b'd' || name[0] == b'o')) {
+    let dir: i32 = kind_id_dir(name);
+    if (dir > 0) {
+      return dir;
+    }
+  }
   if (n == 2) {
     return kind_id_len2(name);
   }
@@ -3113,6 +3170,28 @@ pub function kind_id(name: string): i32 {
     return 394;
   }
   return 0;
+}
+
+// dir_kind_names is the Dir family in id order, from 420.
+function dir_kind_names(): string[] {
+  return ["open_dir", "dir_open", "dir_entries", "dir_stat", "dir_access", "dir_unlink", "dir_chmod", "dir_chown"];
+}
+
+// kind_id_dir is kind_id over the Dir family, 0 for any other name.
+function kind_id_dir(name: string): i32 {
+  let names: string[] = dir_kind_names();
+  let i: i32 = 0;
+  while (i < names.len()) {
+    if (name == names[i]) {
+      return 420 + i;
+    }
+    i = i + 1;
+  }
+  return 0;
+}
+
+function dir_kind_name(id: i32): string {
+  return dir_kind_names()[id - 420];
 }
 
 function kind_id_len2(name: string): i32 {
@@ -5494,6 +5573,9 @@ function buf_kind_name(id: i32): string {
 // extension tags beyond kind_count() (struct_copy=198 … buf_free=297)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
+  if (id >= 420 && id <= 427) {
+    return dir_kind_name(id);
+  }
   if (id == 408) {
     return "pipe";
   }
@@ -5898,6 +5980,24 @@ function pops_buf(t: i32): i32 {
   return 1;  // buf_new, buf_len, buf_take, buf_free
 }
 
+// pops_dir is the operand count of the Dir family, ids 420-427: the handle
+// and a name, plus the mode or the ids and follow flag the op takes.
+function pops_dir(t: i32): i32 {
+  if (t == 420 || t == 422) {  // open_dir (path), dir_entries (fd)
+    return 1;
+  }
+  if (t == 424) {  // dir_access (fd, name, mode)
+    return 3;
+  }
+  if (t == 426) {  // dir_chmod (fd, name, mode, follow)
+    return 4;
+  }
+  if (t == 427) {  // dir_chown (fd, name, uid, gid, follow)
+    return 5;
+  }
+  return 2;  // dir_open, dir_stat, dir_unlink (fd, name)
+}
+
 // op_pops is how many operand slots `o` consumes, or -1 when the op is not
 // modelled at all — callers must treat that as "stop tracking", never as zero.
 //
@@ -5957,6 +6057,9 @@ function kind_pops(t: i32): i32 {
   let bufn: i32 = pops_buf(t);
   if (bufn >= 0) {
     return bufn;
+  }
+  if (t >= 420 && t <= 427) {
+    return pops_dir(t);
   }
   if (pops0(t)) {
     return 0;
@@ -8372,6 +8475,10 @@ pub function op_allocates(tag: i32): boolean {
   // window_size boxes a fresh WinSize struct + a Result wrapper, and pipe a
   // fresh Pipe.
   if (tag == 276 || tag == 408) {
+    return true;
+  }
+  // Every Dir op boxes its Result.
+  if (tag >= 420 && tag <= 427) {
     return true;
   }
   // fd_stat boxes the same pair; reader_seek, reader_splice,

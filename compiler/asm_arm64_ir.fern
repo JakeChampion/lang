@@ -3954,6 +3954,30 @@ pub function emit_function_via_ir_named(r: irtables.LowerResult, selected: physi
   return emit_ssa_function(r, selected, label_name, s);
 }
 
+// emit_dir_op calls a Dir op's runtime leaf, __fern_<kind name>, on the stack
+// ABI: the operands re-pushed with param[0] on top, and the immediate, where
+// the op carries one (dir_stat's follow, dir_unlink's dir), passed last.
+function emit_dir_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+  let name: string = ir.kind_name(o.kind_tag);
+  let n: i32 = ir.op_pops(o);
+  let k: i32 = n - 1;
+  while (k >= 0) {
+    s = s.write("    ldr x" + util.i32_to_string(k) + ", [sp], #16\n");
+    k = k - 1;
+  }
+  if (o.kind_tag == 423 || o.kind_tag == 425) {
+    s = s.write("    mov x" + util.i32_to_string(n) + ", #" + util.i32_to_string(o.i32_imm) + "\n");
+    n = n + 1;
+  }
+  k = n - 1;
+  while (k >= 0) {
+    s = s.write("    str x" + util.i32_to_string(k) + ", [sp, #-16]!\n");
+    k = k - 1;
+  }
+  s = s.write("    bl __fn___fern_" + name + "\n    add sp, sp, #" + util.i32_to_string(16 * n) + "\n    str x0, [sp, #-16]!\n");
+  return s.need("heap").need(name);
+}
+
 // emit_stack_op emits one op on the machine stack, as asm_ir.fern's does:
 // operands popped, the result pushed. The register path runs it, between a
 // push of the operands and a pop of the result (ssa_flat_op), for every op
@@ -4121,6 +4145,8 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.need("heap");
     s = s.need("pipe");
     s = s.write("    bl __fn___fern_pipe\n    str x0, [sp, #-16]!\n");
+  } else if (o.kind_tag >= 420 && o.kind_tag <= 427) {  // the Dir family
+    s = emit_dir_op(o, s);
   } else if (o.kind_tag == 276) {  // window_size
     // [fd] -> __fern_window_size(x0=fd) -> Result[WinSize, IoError].
     s = s.need("heap");
@@ -5757,7 +5783,7 @@ function emit_rt_clock_and_print(s: asmcore.EmitState, darwin: boolean): asmcore
     ctgt = "arm64-darwin";
   }
   if (s.any_need([
-    "monotonic_ns", "now_unix_ms", "now_ns", "stat", "lstat",
+    "monotonic_ns", "now_unix_ms", "now_ns", "stat", "lstat", "dir_stat",
     "read_file", "read_file_bytes", "read_file_bytes_u8", "random_i32", "sleep_ms",
     "sleep_ns", "set_file_times", "statfs", "poll", "proc_waitpid",
     "proc_waitpid_nohang", "proc_waitpid_status", "disable_core_dumps",
@@ -10048,6 +10074,7 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
     if (s.has_need("pipe")) {
       fs_src = fs_src + " " + asmcore.rt_src_pipe(tgt);
     }
+    fs_src = fs_src + asmcore.rt_src_dir_leaves(tgt, s);
     if (s.has_need("chown_at")) {
       fs_src = fs_src + " " + asmcore.rt_src_chown_at(tgt);
     }
@@ -11756,6 +11783,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
     "temp_dir", "stat", "lstat", "statfs", "mounts", "sysctl", "access", "read_dir", "read_dir_all", "read_dir_ino",
     "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",
     "reader", "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8", "signal_send", "set_process_group", "set_priority", "clock_set",
+    "open_dir", "dir_open", "dir_entries", "dir_stat", "dir_access", "dir_unlink", "dir_chmod", "dir_chown",
   ]);
 }
 
