@@ -17,6 +17,17 @@ pub struct Origins { producers: Metadata[], declarations: Origin[], extra: Origi
 // was supplied; it must never resolve to a producer or approve a body.
 pub struct Collection { producers: Metadata[], rows: Origin[] }
 
+// One row selected in the same branch as the body that will be emitted.
+pub struct Selected { producers: Metadata[], origin: Origin }
+
+pub function select(collection: Collection, i: i32): Selected {
+  return Selected { producers: collection.producers, origin: origin_at(collection.rows, i) };
+}
+
+pub function collection(lowered: Lowered): Collection {
+  return Collection { producers: [metadata(lowered)], rows: lowered_origins(lowered, 0) };
+}
+
 pub function no_collection(): Collection {
   return Collection { producers: [], rows: [] };
 }

@@ -75,12 +75,12 @@ function main(): i32 {
     i = i + 1;
   }
   if (av[1] == "x86-64-linux") {
-    print(asm_ir.emit_module_ir_unit_flat(g.im, true, false, "", [], g.im.funcs, g.stab, 0, 0 - 1, cache, d.sub.rt_lower, 0 as usize, asmcore.env_switches()));
+    print(asm_ir.emit_module_ir_unit_flat(g.im, true, false, "", [], g.im.funcs, g.stab, 0, 0 - 1, cache, g.physical, d.sub.rt_lower, 0 as usize, asmcore.env_switches()));
   } else if (av[1] == "arm64-linux") {
     strbuf_reset();
     let state = asmcore.new_state();
     state = asmcore.EmitState { ...state, struct_decls: g.stab, funcs: g.im.funcs, rt_lower: d.sub.rt_lower };
-    state = asm_arm64_ir.emit_body(g.im, state, false, cache);
+    state = asm_arm64_ir.emit_body(g.im, state, false, cache, g.physical);
     state = asm_arm64_ir.emit_ir_runtime(state, false);
     print(strbuf_take());
   } else { print(wasm_ir.emit_ir_module_mode(g.im, cache, 0, asmcore.env_switches())); }

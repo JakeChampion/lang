@@ -1,0 +1,82 @@
+// Preparation retains the supplied effects and debug mappings, not an old body.
+import "../ir";
+import "../irtables";
+import "../ircore";
+import "../physicalbody";
+import "../semlower";
+import "../ssa";
+import "../ssa_lift";
+import "../ssaprepare";
+
+function require(ok: boolean, code: i32): void {
+  if (!ok) {
+    exit(code);
+  }
+}
+
+function same(a: i32[], b: i32[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  let i = 0;
+  for v in a {
+    if (v != b[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function calls(f: ssa.SFunc): i32 {
+  let n = 0;
+  for b in f.blocks {
+    for op in b.insts {
+      if (op.kind_tag == 11) {
+        n = n + 1;
+      }
+    }
+  }
+  return n;
+}
+
+function returned(p: ssaprepare.Body, value: i32): void {
+  require(p.formed.f.name == "actual" && calls(p.formed.f) == 0, 191);
+  let b = p.formed.f.blocks[p.formed.f.entry];
+  require(b.insts.len() == 2 && b.insts[0].kind_tag == 1 && b.insts[0].imm == value, 192);
+  require(b.insts[1].kind_tag == 7 && b.insts[1].args.len() == 1 && b.insts[1].args[0] == b.insts[0].result && b.term.value == b.insts[1].result, 199);
+}
+
+function prepared(base: irtables.LowerResult, selected: physicalbody.Selected, leaves: ssa.Leaf[], value: i32, debug: boolean): void {
+  let r = irtables.LowerResult { ...base, n_params: 0, n_locals: 1, ops: [ir.op_const_i32(value), ir.op_store_local(0), ir.op_load_local(0), ir.op_call_direct("leaf", 1), ir.op_return()], dbg_slots: [0], dbg_names: ["actual"], dbg_types: ["i32"] };
+  let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), "actual", r.n_params, r.n_locals, r.ops, debug);
+  require(lifted.ok && calls(lifted.func) == 1, 187);
+  let p = ssaprepare.finish(r, selected, lifted, leaves);
+  require(ircore.lowered_digest([p.lowered]) == ircore.lowered_digest([r]) && p.lowered.dbg_names[0] == "actual", 188);
+  require(p.selected.origin.producer == selected.origin.producer && p.selected.origin.symbol == selected.origin.symbol && p.selected.producers.len() == selected.producers.len(), 189);
+  let has_seen = p.seen_vals.len() > 0;
+  require(same(p.seen_vals, lifted.seen_vals) && same(p.seen_slots, lifted.seen_slots) && has_seen == debug, 190);
+  returned(p, value);
+  let no_leaves = ssaprepare.finish(r, selected, lifted, []);
+  require(calls(no_leaves.formed.f) == 1, 193);
+}
+
+pub function run(): void {
+  let lowered = semlower.runtime_lowering("function leaf(x: i32): i32 { return x; }\n");
+  let physical = physicalbody.collection(lowered);
+  let selected = physicalbody.select(physical, 0);
+  require(selected.origin.symbol == "leaf" && selected.origin.producer == 0 && selected.producers.len() == 1, 194);
+  let leaf = lowered.bodies[0];
+  let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), "leaf", leaf.n_params, leaf.n_locals, leaf.ops, false);
+  require(lifted.ok, 195);
+  let leaves = ssa.leaf_of("leaf", lifted.func);
+  require(leaves.len() == 1, 196);
+  for debug in [false, true] {
+    prepared(leaf, selected, leaves, 7, debug);
+    prepared(leaf, selected, leaves, 13, debug);
+  }
+  let missing = physicalbody.select(physicalbody.no_collection(), 0);
+  require(missing.origin.producer == 0 - 1 && missing.producers.len() == 0, 197);
+  prepared(leaf, missing, leaves, 19, true);
+  require(physicalbody.select(physical, 0 - 1).origin.producer == 0 - 1 && physicalbody.select(physical, physical.rows.len()).origin.producer == 0 - 1, 198);
+}

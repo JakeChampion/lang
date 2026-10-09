@@ -1,0 +1,20 @@
+// The native allocator and emitter consume this same prepared body. This is
+// not a certificate: target-specific release entry paths also have effects.
+import "./irtables";
+import "./physicalbody";
+import "./ssa";
+import "./ssa_lift";
+
+pub struct Body {
+  lowered: irtables.LowerResult,
+  selected: physicalbody.Selected,
+  formed: ssa.Formed,
+  seen_vals: i32[],
+  seen_slots: i32[],
+}
+
+// Called after the backend's lift checks, with that actual lift and its
+// current unit leaves. Never relower or look up an old body by symbol here.
+pub function finish(lowered: irtables.LowerResult, selected: physicalbody.Selected, lifted: ssa_lift.LResult, leaves: ssa.Leaf[]): Body {
+  return Body { lowered: lowered, selected: selected, formed: ssa.register_form(ssa.inline_leaves(lifted.func, leaves)), seen_vals: lifted.seen_vals, seen_slots: lifted.seen_slots };
+}
