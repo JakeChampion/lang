@@ -176,8 +176,8 @@ func FoldWith(prog *ast.Program, in Inputs) error {
 }
 
 // evalConstTyped is evalConst for a value whose declared type (nil when
-// undeclared) may be composite: an array or tuple literal of constant
-// elements folds element by element, each at its own declared width, and
+// undeclared) may be composite: an array, tuple or struct literal of
+// constant elements folds element by element, each at its own declared width, and
 // `__fern_assets()` folds to its array of tuples.
 func evalConstTyped(e ast.Expr, want ast.Type, values map[string]ast.Expr, types map[string]ast.Type, assets *embed.Set) (ast.Expr, error) {
 	switch n := e.(type) {
@@ -213,6 +213,22 @@ func evalConstTyped(e ast.Expr, want ast.Type, values map[string]ast.Expr, types
 			elems[i] = v
 		}
 		return &ast.TupleLit{P: n.P, Elems: elems}, nil
+	case *ast.StructLit:
+		// A struct literal of constant fields (#6685). The checker settles
+		// each field at its declared type, so none is folded to a width here.
+		if n.Base != nil {
+			break
+		}
+		fields := make([]ast.FieldInit, len(n.Fields))
+		for i, f := range n.Fields {
+			v, err := evalConstTyped(f.Value, nil, values, types, assets)
+			if err != nil {
+				return nil, err
+			}
+			fields[i] = f
+			fields[i].Value = v
+		}
+		return &ast.StructLit{P: n.P, TypeName: n.TypeName, Fields: fields, TypeArgs: n.TypeArgs}, nil
 	case *ast.Call:
 		if isAssetsCall(n) {
 			return resolveAssets(n, assets)
@@ -628,6 +644,12 @@ func settleConstLit(want ast.Type, val ast.Expr) error {
 			}
 		}
 		return nil
+	case ast.StructType:
+		// The checker settles each field of the inlined literal at its
+		// declared type, as it does a written one.
+		if lit, ok := val.(*ast.StructLit); ok && lit.TypeName == w.Name {
+			return nil
+		}
 	}
 	if got := litType(val); !ast.Equal(want, got) {
 		return fmt.Errorf("declared type %s does not match initialiser type %s", want, got)
@@ -1161,6 +1183,13 @@ func cloneLit(src ast.Expr, pos ast.Position) ast.Expr {
 			elems[i] = cloneLit(el, pos)
 		}
 		return &ast.TupleLit{P: pos, Elems: elems}
+	case *ast.StructLit:
+		fields := make([]ast.FieldInit, len(v.Fields))
+		for i, f := range v.Fields {
+			fields[i] = f
+			fields[i].Value = cloneLit(f.Value, pos)
+		}
+		return &ast.StructLit{P: pos, TypeName: v.TypeName, Fields: fields, TypeArgs: v.TypeArgs}
 	case *ast.NumberLit:
 		// Width / IsUnsigned carry the declared type settleConstLit stamped on
 		// the const's literal; ExceedsI64 says how to read a Value past i64

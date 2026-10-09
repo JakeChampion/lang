@@ -15344,16 +15344,16 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
             // hands back a StmtMatch for exactly the shapes this rule
             // and E026 refuse; a boolean match reaches here raw only
             // when a non-literal arm comes first.
-            out = scalar_match_exhaustive_diags(m, out);
+            out = scalar_match_exhaustive_diags(m, out, true);
           },
           typeinfo.TypeI32(_) => {
-            out = scalar_match_exhaustive_diags(m, out);
+            out = scalar_match_exhaustive_diags(m, out, false);
           },
           typeinfo.TypeString(_) => {
-            out = scalar_match_exhaustive_diags(m, out);
+            out = scalar_match_exhaustive_diags(m, out, false);
           },
           typeinfo.TypeFloat(_) => {
-            out = scalar_match_exhaustive_diags(m, out);
+            out = scalar_match_exhaustive_diags(m, out, false);
           },
           _ => {}
         }
@@ -15771,20 +15771,17 @@ function dg_at(code: string, message: string, line: i32, col: i32): util.Diag {
 // scalar_match_exhaustive_diags: E030 for a `match` on a number / string /
 // boolean scrutinee that carries no unguarded `_` arm.
 //
-// Native requires the wildcard across every scalar domain, and its
-// checkLiteralMatch comment records that boolean is deliberately not
-// special-cased — `true` / `false` arms do NOT make the match exhaustive
-// there, "the `_` arm covers it more uniformly". Without this rule the
-// self-host silently ACCEPTED `match (b) { true => …, false => … }` and then
-// compiled and ran it, so the same source built under one compiler and not
-// the other (#6594). Reported at the `match` keyword, Go's `n.P`.
+// Native requires the wildcard across every scalar domain but boolean, whose
+// unguarded `true` and `false` arms close it (#6685); build_literal_match
+// desugars that shape, so a boolean match reaching here is missing one.
+// Reported at the `match` keyword, Go's `n.P`.
 //
 // A GUARDED `_` may fall through, so it does not count — the same rule the
 // union arm above applies to a guarded variant arm.
 //
 // if-let / let-else desugars are skipped: their scrutinee is an enum and
 // native reports E022 on a non-enum source, from a different path.
-function scalar_match_exhaustive_diags(m: ast.StmtMatch, acc: util.Diag[]): util.Diag[] {
+function scalar_match_exhaustive_diags(m: ast.StmtMatch, acc: util.Diag[], boolean_tag: boolean): util.Diag[] {
   if (m.origin.len() > 0) {
     return acc;
   }
@@ -15801,6 +15798,9 @@ function scalar_match_exhaustive_diags(m: ast.StmtMatch, acc: util.Diag[]): util
   }
   if (saw_wild) {
     return acc;
+  }
+  if (boolean_tag) {
+    return acc.append(dg_at("E030", "match on boolean is not exhaustive — add the missing `true` or `false` arm, or an unguarded `_`", m.line, m.col));
   }
   return acc.append(dg_at("E030", "match on non-enum value is not exhaustive — add an unguarded `_` arm", m.line, m.col));
 }
@@ -15895,9 +15895,9 @@ function receiver_type_ok(rt: string, mod: parser.Module): boolean {
 
 // const_expr_ok reports whether `e` is inside native's constant grammar
 // (internal/check/constfold evalConst): a literal, a reference to an EARLIER const,
-// a unary / binary operation over those, or an array or tuple literal of them
-// (#7987). Everything else — a struct literal, a call, a field access, an
-// index — is not a constant.
+// a unary / binary operation over those, or an array (#7987), tuple or struct
+// (#6685) literal of them. Everything else — a call, a field access, an
+// index, a struct update — is not a constant.
 // `earlier` is the names of the consts declared before this one, so a forward
 // reference is rejected the way native's sequential fold rejects it.
 // Returns "" when `e` is constant, else the message tail native reports.
@@ -15924,22 +15924,16 @@ function const_expr_err(e: ast.Expr, earlier: string[]): string {
       return const_expr_err(u.operand, earlier);
     },
     ast.ExprArray(a) => {
-      for el in a.elements {
-        let ae: string = const_expr_err(el, earlier);
-        if (ae.len() > 0) {
-          return ae;
-        }
-      }
-      return "";
+      return const_elems_err(a.elements, earlier);
     },
     ast.ExprTuple(t) => {
-      for el in t.elements {
-        let te: string = const_expr_err(el, earlier);
-        if (te.len() > 0) {
-          return te;
-        }
+      return const_elems_err(t.elements, earlier);
+    },
+    ast.ExprStructLit(st) => {
+      if (st.has_base) {
+        return "expression is not a constant (only literals, earlier consts, and arithmetic / comparison / logical operations on them are allowed)";
       }
-      return "";
+      return const_elems_err(st.field_values, earlier);
     },
     ast.ExprBinary(b) => {
       if (const_refused_op(b.op)) {
@@ -15956,11 +15950,21 @@ function const_expr_err(e: ast.Expr, earlier: string[]): string {
   return "expression is not a constant (only literals, earlier consts, and arithmetic / comparison / logical operations on them are allowed)";
 }
 
-// const_grammar_diags: native rejects a const whose initialiser is outside its
-// deliberately narrow constant grammar, at the const's own position. The
-// self-host had no such rule, so it admitted a strictly LARGER const language —
-// `const C: Cfg = Cfg { n: 41 };` built here and not under native, which is the
-// divergence that blocks the self-host becoming the only compiler (#6618).
+// const_elems_err is const_expr_err's answer for the first element of an
+// array, tuple or struct literal that is not constant, "" when all are.
+function const_elems_err(elems: ast.Expr[], earlier: string[]): string {
+  for el in elems {
+    let ee: string = const_expr_err(el, earlier);
+    if (ee.len() > 0) {
+      return ee;
+    }
+  }
+  return "";
+}
+
+// const_grammar_diags: a const whose initialiser is outside the constant
+// grammar (const_expr_err) is refused at the const's own position, as native
+// refuses it (#6618).
 //
 // The diagnostic is UNCODED, matching native: an empty `code` renders as
 // `<line>:<col>: <message>` with no `error[…]` segment.
