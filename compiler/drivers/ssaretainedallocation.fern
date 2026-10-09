@@ -26,6 +26,15 @@ pub function consistent(row: ssaprepare.Emitted): void {
   let arm = row.context.architecture == "arm64";
   require(a.save_bytes == (if (arm) { (a.saved.len() + 1) / 2 * 16 } else { a.saved.len() * 8 }), 114);
   require(!arm || a.framed, 115);
+  unfused(a.fusions);
+}
+
+function unfused(fusions: ssaprepare.Fusion[]): void {
+  for fu in fusions {
+    if (fu.n == 0) {
+      require(fu.tag == 0 && !fu.inverted && fu.a == 0 && fu.b == 0 && !fu.unique && !fu.aligned, 127);
+    }
+  }
 }
 
 function emit(g: ircore.Gated, r: irtables.LowerResult, arm: boolean, retain: boolean): ssaprepare.Output {
@@ -48,15 +57,34 @@ function checked(g: ircore.Gated, r: irtables.LowerResult, arm: boolean): ssapre
   return on;
 }
 
-function spills(g: ircore.Gated, arm: boolean): void {
+function frame_matches(text: string, bytes: i32): boolean {
+  return text.contains("    subq $" + util.i32_to_string(bytes) + ", %rsp\n");
+}
+
+function spill_frame(out: ssaprepare.Output, arm: boolean): void {
+  if (arm) {
+    return;
+  }
+  let a = out.bodies[0].allocation;
+  let raw = ssa.spill_count(a.alloc.reg_of) * 8;
+  let padded = (raw + a.save_bytes + 15) / 16 * 16 - a.save_bytes;
+  require(a.frame_bytes == padded && frame_matches(out.text, a.frame_bytes), 128);
+  require(!frame_matches(out.text, a.frame_bytes + 8) && !frame_matches(out.text, a.frame_bytes - 8), 129);
+  if (raw != padded) {
+    require(!frame_matches(out.text, raw), 130);
+  }
+}
+
+function spills(g: ircore.Gated, arm: boolean, params: i32): void {
   let ops = [ir.op_load_local(0)];
   let i = 1;
-  while (i < 24) {
+  while (i < params) {
     ops = ops.append(ir.op_load_local(i)).append(ir.op_bin("add", 64, false));
     i = i + 1;
   }
-  let r = irtables.LowerResult { ...g.cache[0], n_params: 24, n_locals: 24, ops: ops.append(ir.op_return()) };
+  let r = irtables.LowerResult { ...g.cache[0], n_params: params, n_locals: params, ops: ops.append(ir.op_return()) };
   let out = checked(g, r, arm);
+  spill_frame(out, arm);
   let a = out.bodies[0].allocation;
   require(a.framed && ssa.spill_count(a.alloc.reg_of) > 0 && a.saved.len() > 0, 119);
   for home in a.alloc.reg_of {
@@ -96,6 +124,7 @@ function fusion(out: ssaprepare.Output, fused: boolean, inverted: boolean, align
       let blk = row.body.formed.f.blocks[bi];
       let ins = blk.insts[blk.insts.len() - fu.n];
       require(ins.str == "__fern_rc_is_unique" && ins.args[0] == fu.a, 122);
+      require(fu.tag == ir.kind_id("eq") && fu.b == 0, 131);
       require(out.text.contains(".Lssa_first_uq" + util.i32_to_string(blk.id)), 123);
     }
     bi = bi + 1;
@@ -104,11 +133,52 @@ function fusion(out: ssaprepare.Output, fused: boolean, inverted: boolean, align
   require(fused || out.text.contains(".Lssa_first_rcuniq"), 125);
 }
 
+function comparison(g: ircore.Gated, arm: boolean, mode: i32): void {
+  let left = if (mode == 2) { ir.op_const_i32(13) } else { ir.op_load_local(0) };
+  let right = if (mode == 1) { ir.op_const_i32(13) } else { ir.op_load_local(1) };
+  let ops = [left, right, ir.op_bin("gt_s", 64, false)];
+  if (mode == 1) {
+    ops = ops.append(ir.op_bin("not", 32, false));
+  }
+  ops = util.append_all(ops, [ir.op_if(0), ir.op_const_i32(7), ir.op_return(), ir.op_else(), ir.op_const_i32(9), ir.op_return(), ir.op_end()]);
+  let out = checked(g, irtables.LowerResult { ...g.cache[0], n_params: 2, n_locals: 2, ops: ops }, arm);
+  compare_fusion(out.bodies[0], mode);
+}
+
+function compare_fusion(row: ssaprepare.Emitted, mode: i32): void {
+  let count = 0;
+  let bi = 0;
+  for fu in row.allocation.fusions {
+    if (fu.n > 0) {
+      count = count + 1;
+      let blk = row.body.formed.f.blocks[bi];
+      compare_operands(blk, fu, mode);
+      require(row.allocation.imm.is_imm[fu.b] == (mode != 0) && !row.allocation.imm.is_imm[fu.a], 136);
+      require(mode == 0 || row.allocation.imm.value[fu.b] == 13i64, 137);
+    }
+    bi = bi + 1;
+  }
+  require(count == 1, 138);
+}
+
+function compare_operands(blk: ssa.SBlock, fu: ssaprepare.Fusion, mode: i32): void {
+  require(!fu.unique && !fu.aligned && fu.inverted == (mode == 1) && fu.n == (if (mode == 1) { 2 } else { 1 }), 132);
+  let cmp = blk.insts[blk.insts.len() - fu.n];
+  require(cmp.kind_tag == 9 && cmp.str == "gt_s", 133);
+  require(fu.tag == ir.kind_id(if (mode == 2) { "lt_s" } else { "gt_s" }), 134);
+  let first = if (mode == 2) { 1 } else { 0 };
+  require(fu.a == cmp.args[first] && fu.b == cmp.args[1 - first], 135);
+}
+
 pub function run(g: ircore.Gated, arm: boolean): void {
   let leaf = checked(g, g.cache[0], arm);
   require(arm || !leaf.bodies[0].allocation.framed, 126);
-  spills(g, arm);
+  spills(g, arm, 24);
+  spills(g, arm, 25);
   uniqueness(g, arm, false, false, false);
   uniqueness(g, arm, true, false, false);
   uniqueness(g, arm, true, true, true);
+  comparison(g, arm, 0);
+  comparison(g, arm, 1);
+  comparison(g, arm, 2);
 }
