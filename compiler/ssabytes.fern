@@ -16,6 +16,19 @@ pub function get_name(unchecked: boolean): string {
   return "__sem_byte_view_get";
 }
 
+// The little-endian word of `bytes` bytes a view holds at an index the caller
+// has already checked (ssabounds.word_loads).
+pub function word_name(bytes: i32): string {
+  if (bytes == 8) {
+    return "__sem_byte_view_word8";
+  }
+  return "__sem_byte_view_word4";
+}
+
+pub function read_word(value: i32, bytes: i32): ir.Op {
+  return ir.Op { ...ir.op_call_direct(word_name(bytes), 2), i64_imm: value as i64 + 1 };
+}
+
 // A temporary lowering annotation identifies the typed SSA value being read.
 // lower_reads consumes it before IR optimization, verification or caching;
 // ordinary helper calls (including slice's length read) have i64_imm == 0.
@@ -31,7 +44,7 @@ pub function read(value: i32, indexed: boolean, unchecked: boolean): ir.Op {
 // op kind's id.
 function read_value(op: ir.Op, call_direct: i32): i32 {
   if (op.kind_tag == call_direct && op.i64_imm > 0
-    && (op.str == length_name() || op.str == get_name(false) || op.str == get_name(true))) {
+    && (op.str == length_name() || op.str == get_name(false) || op.str == get_name(true) || op.str == word_name(4) || op.str == word_name(8))) {
     return (op.i64_imm - 1) as i32;
   }
   return 0 - 1;
@@ -60,6 +73,12 @@ function decoded_read(op: ir.Op, base: i32, index: i32): ir.Op[] {
     // One unsigned compare: a negative index reads as larger than any length.
     ops = joined(ops, [ir.op_load_local(index), ir.op_load_local(base + 1), ir.op_bin("ge_u", 0, false)]);
     ops = abort_if(ops);
+  }
+  if (op.str == word_name(4)) {
+    return joined(ops, [ir.op_load_local(base), ir.op_load_local(index), ir.op_raw_addr(), ir.op_load_i32()]);
+  }
+  if (op.str == word_name(8)) {
+    return joined(ops, [ir.op_load_local(base), ir.op_load_local(index), ir.op_raw_addr(), ir.op_load_i64()]);
   }
   return joined(ops, [ir.op_load_local(base), ir.op_load_local(index), ir.op_raw_load8()]);
 }

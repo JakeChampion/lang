@@ -706,7 +706,7 @@ pub function all_runtime_need_roots(): string[] {
     // caller. The two signal roots are marked through a VARIABLE rather
     // than a literal (`s.need(sig_fn)`), so a grep for `.need("` does not
     // find them either.
-    "isatty", "window_size", "set_window_size", "signal_ignore", "signal_default",
+    "isatty", "window_size", "set_window_size", "pipe", "signal_ignore", "signal_default",
     // The flag-raising catch and its poll, and a signal sent to this
     // process.
     "signal_catch", "signal_taken", "signal_raise",

@@ -441,6 +441,10 @@ var rcInertBuiltins = map[string]bool{
 	// world has a terminal to measure — so it is named here the way
 	// `statfs` is.
 	"window_size": true,
+	// () → Result[Pipe, IoError]: no arguments, and the two ends in the
+	// record are descriptors. Native-only (`proc`), named here the way
+	// `window_size` is.
+	"pipe": true,
 	// No arguments at all, so there is nothing to move.
 	// (mask) → the previous mask. A scalar in, a scalar out, and
 	// process state in between: nothing to move. Native-only — E066

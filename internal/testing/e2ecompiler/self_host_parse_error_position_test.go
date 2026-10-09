@@ -56,6 +56,10 @@ var parseErrPosCases = []struct {
 	// A sentinel planted from a nested position — the diagnostic has to
 	// survive the walk down through the enclosing statement.
 	{"nested-bad-punct", "function main(): i32 {\n  while (true) {\n    let y: i32 = @;\n  }\n  return 0;\n}\n"},
+	// Assignment is a statement, so an `=` where an expression is read is the
+	// token both parsers stop at.
+	{"assignment-in-let-init", "function main(): i32 {\n  let r = 0;\n  let a = r = 5;\n  return a;\n}\n"},
+	{"assignment-in-condition", "function main(): i32 {\n  let r = 0;\n  while ((r = r + 1) < 3) { }\n  return r;\n}\n"},
 }
 
 // TestSelfHostParseErrorPositions pins SH-041 (tracking #2849): a

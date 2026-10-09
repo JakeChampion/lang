@@ -4812,6 +4812,7 @@ function builtin_sigs(): string[] {
     "priority(): i32",
     "proc_exec(string, string[]): i32",
     "proc_exec_as(string, string[], string[]): i32",
+    "pipe(): Result[Pipe, IoError]",
     "proc_fork(): i32",
     "proc_waitpid(i32): i32",
     "proc_waitpid_status(i32): i32",
@@ -18724,7 +18725,7 @@ function ow_func_result_borrows(fn: parser.FuncDecl, mod: parser.Module, ofuncs:
 function ow_fresh_builtins(): string[] {
   let out: string[] = [
     "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_u8", "__task_wait", "args", "buf_take", "buf_take_bytes", "cell_new", "clock_set", "environ", "getcwd", "getgroups",
-    "hostname", "map_new", "mounts", "random_bytes", "read_line", "set_priority",
+    "hostname", "map_new", "mounts", "pipe", "random_bytes", "read_line", "set_priority",
     "setgid", "setuid",
     "signal_send", "set_extproc", "set_process_group", "set_window_size",
     "stderr", "stdin", "stdout", "strbuf_take", "target_arch", "target_os",

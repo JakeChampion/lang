@@ -265,6 +265,15 @@ function main(): i32 {
 	{name: "rotate_lookalikes_kept", fn: "notrot", exit: 170, src: rotateShapesSrc,
 		want:   map[string][]string{"x86-64-linux": {`shlq \$24,`, `sarq \$3,`}, "arm64-linux": {`lsl x\d+, x\d+, #24`, `asr x\d+, x\d+, #3`}},
 		forbid: map[string][]string{"x86-64-linux": {`\bror`}, "arm64-linux": {`\bror\b`}}},
+	// A little-endian word built from bytes, as std/crypto reads its message
+	// words, is one load of the word, from an owned array or a view (#8782).
+	// A big-endian word is not, and keeps its shifts.
+	{name: "le_word_owned_u32", fn: "word32", exit: 95, src: wordLoadSrc,
+		forbid: map[string][]string{"x86-64-linux": {`\bshl`}, "arm64-linux": {`\blsl\b`}}},
+	{name: "le_word_view_u64", fn: "word64", exit: 95, src: wordLoadSrc,
+		forbid: map[string][]string{"x86-64-linux": {`\bshl`, `\bmovzb`}, "arm64-linux": {`\blsl\b`, `\bldrb\b`}}},
+	{name: "be_word_kept", fn: "bigend", exit: 95, src: wordLoadSrc,
+		want: map[string][]string{"x86-64-linux": {`\bshl`}, "arm64-linux": {`\blsl\b`}}},
 	// A rotate whose operand is written out twice, as std/crypto's md5 rounds
 	// spell it: the two copies merge, so it is one sum and one rotate. Halves
 	// over different sums stay two shifts.
@@ -503,6 +512,25 @@ func TestSelfHostOptimisationShapes(t *testing.T) {
 		})
 	}
 }
+
+const wordLoadSrc = `
+@noinline function word32(bs: u8[], o: i32): u32 {
+    return bs[o] as u32 | bs[o + 1] as u32 << 8 | bs[o + 2] as u32 << 16 | bs[o + 3] as u32 << 24;
+}
+@noinline function word64(bs: [u8], o: i32): u64 {
+    return bs[o] as u64 | bs[o + 1] as u64 << 8 | bs[o + 2] as u64 << 16 | bs[o + 3] as u64 << 24 | bs[o + 4] as u64 << 32 | bs[o + 5] as u64 << 40 | bs[o + 6] as u64 << 48 | bs[o + 7] as u64 << 56;
+}
+@noinline function bigend(bs: u8[], o: i32): u32 {
+    return bs[o] as u32 << 24 | bs[o + 1] as u32 << 16 | bs[o + 2] as u32 << 8 | bs[o + 3] as u32;
+}
+function main(): i32 {
+    let b: u8[] = [];
+    let i: i32 = 0;
+    while (i < 24) { b = b.append(((i * 29 + 3) & 255) as u8); i = i + 1; }
+    let x: u32 = word32(b, 5) ^ (word64(b, 9) >> 24u64) as u32 ^ bigend(b, 2);
+    return (x & 127u32) as i32;
+}
+`
 
 const rotateShapesSrc = `
 @noinline function rot32(x: u32): u32 { return (x >> 7u32) | (x << 25u32); }
