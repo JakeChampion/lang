@@ -2319,6 +2319,16 @@ function ssa_push_operand(reg_of: i32[], v: i32, pushed: i32, s: asmcore.EmitSta
 // test no less than the retain (#9889). ssa.rc_inlined says which calls come
 // here and why.
 function ssa_rc_prim(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
+  if (!s.retain_sites || ins.str != "__fern_rc_is_unique") {
+    return ssa_rc_prim_emit(ins, reg_of, lp, s);
+  }
+  let h = buf_new(512);
+  let site = ssaprepare.UniqueSite { input: ins.args[0], result: ins.result, input_home: reg_of[ins.args[0]], result_home: reg_of[ins.result], cached: s.ssa_x0, flags: false, aligned: ins.imm == 4, inverted: false, join: lp + "rcuniq" + util.i32_to_string(ins.result), text: "" };
+  let out = ssa_rc_prim_emit(ins, reg_of, lp, asmcore.EmitState { ...s, capture: h });
+  return asmcore.finish_unique_site(out, h, s.capture, site);
+}
+
+function ssa_rc_prim_emit(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitState): asmcore.EmitState {
   s = helper_call_needs(ins.str, s);
   s = ssa_read(reg_of, ins.args[0], "x4", s);
   let p: string = ssa_src(reg_of, ins.args[0], "x4");
@@ -3547,6 +3557,16 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
 // (or brings a fused `not`'s operand into a register, for the value test).
 // `join` names the label a fused uniqueness test's guards meet at.
 function ssa_fused_test(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: string, s: asmcore.EmitState): asmcore.EmitState {
+  if (!s.retain_sites || !fu.unique) {
+    return ssa_fused_test_emit(fr, reg_of, fu, join, s);
+  }
+  let h = buf_new(512);
+  let site = ssaprepare.UniqueSite { input: fu.a, result: -1, input_home: reg_of[fu.a], result_home: -1, cached: s.ssa_x0, flags: true, aligned: fu.aligned, inverted: fu.inverted, join: join, text: "" };
+  let out = ssa_fused_test_emit(fr, reg_of, fu, join, asmcore.EmitState { ...s, capture: h });
+  return asmcore.finish_unique_site(out, h, s.capture, site);
+}
+
+function ssa_fused_test_emit(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: string, s: asmcore.EmitState): asmcore.EmitState {
   if (fu.n > 0 && fu.tag == 0) {
     return ssa_read(reg_of, fu.a, "x4", s);
   }
@@ -3761,6 +3781,15 @@ function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
 // Allocate and emit the prepared register form, retaining its original lowering
 // for target entry paths and its lift mappings for debug locations.
 function emit_ssa_function_arm64(prepared: ssaprepare.Body, label_name: string, entry: ssaprepare.ReleaseEntry, context: Option[ssaprepare.Context], s: asmcore.EmitState): asmcore.EmitState {
+  if (!s.retain_prepared || s.records()) {
+    return emit_ssa_allocated_arm64(prepared, label_name, entry, context, s);
+  }
+  let h = buf_new(4096);
+  let out = emit_ssa_allocated_arm64(prepared, label_name, entry, context, asmcore.EmitState { ...s, capture: h, native_sites: [], retain_sites: true });
+  return asmcore.finish_native_text(out, h, s.capture, s.native_sites, s.retain_sites);
+}
+
+function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string, entry: ssaprepare.ReleaseEntry, context: Option[ssaprepare.Context], s: asmcore.EmitState): asmcore.EmitState {
   let r = prepared.lowered;
   let seen_vals = prepared.seen_vals;
   let seen_slots = prepared.seen_slots;
