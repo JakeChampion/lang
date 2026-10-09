@@ -33,6 +33,36 @@ function implies(a: guard.Arena, path: i32, condition: i32): guard.Built {
 // never feed another phi in the same block. Cyclic phi facts require a separate
 // invariant proof and are deliberately outside this interface.
 pub function merge(a: guard.Arena, block: ssa.SBlock, edges: Edge[], nvals: i32): Joined {
+  return merge_values(a, block, edges, nvals, [], nvals);
+}
+
+// Edge rows use compact slots in ids; bindings retain the physical SSA IDs.
+// Validate this public mapping independently of the caller's graph checker.
+pub function merge_mapped(a: guard.Arena, block: ssa.SBlock, edges: Edge[], nvals: i32, ids: i32[]): Joined {
+  if (nvals < 1 || ids.len() == 0) {
+    return failed(a, "invalid phi value mapping");
+  }
+  let seen: i32[] = [];
+  for id in ids {
+    if (id < 0 || id >= nvals || util.index_of_i32(seen, id) >= 0) {
+      return failed(a, "invalid phi value mapping");
+    }
+    seen = seen.append(id);
+  }
+  return merge_values(a, block, edges, nvals, ids, ids.len());
+}
+
+function value_slot(ids: i32[], id: i32, nvals: i32): i32 {
+  if (id < 0 || id >= nvals) {
+    return -1;
+  }
+  if (ids.len() == 0) {
+    return id;
+  }
+  return util.index_of_i32(ids, id);
+}
+
+function merge_values(a: guard.Arena, block: ssa.SBlock, edges: Edge[], nvals: i32, ids: i32[], count: i32): Joined {
   if (nvals < 1 || block.preds.len() == 0 || edges.len() != block.preds.len()) {
     return failed(a, "phi predecessor count");
   }
@@ -42,7 +72,7 @@ pub function merge(a: guard.Arena, block: ssa.SBlock, edges: Edge[], nvals: i32)
   let path = zero.id;
   let seen: i32[] = [];
   for e in edges {
-    if (e.predecessor < 0 || util.index_of_i32(seen, e.predecessor) >= 0 || util.index_of_i32(block.preds, e.predecessor) < 0 || e.values.len() != nvals) {
+    if (e.predecessor < 0 || util.index_of_i32(seen, e.predecessor) >= 0 || util.index_of_i32(block.preds, e.predecessor) < 0 || e.values.len() != count) {
       return failed(arena, "invalid phi predecessor");
     }
     seen = seen.append(e.predecessor);
@@ -68,7 +98,7 @@ pub function merge(a: guard.Arena, block: ssa.SBlock, edges: Edge[], nvals: i32)
   let definitions: i32[] = [];
   let body = false;
   for op in block.insts {
-    if (op.result < 0 || op.result >= nvals || util.index_of_i32(definitions, op.result) >= 0) {
+    if (value_slot(ids, op.result, nvals) < 0 || util.index_of_i32(definitions, op.result) >= 0) {
       return failed(arena, "invalid phi block definition");
     }
     definitions = definitions.append(op.result);
@@ -89,13 +119,14 @@ pub function merge(a: guard.Arena, block: ssa.SBlock, edges: Edge[], nvals: i32)
       for e in edges {
         let pos = util.index_of_i32(block.preds, e.predecessor);
         let arg = op.args[pos];
-        if (arg < 0 || arg >= nvals || util.index_of_i32(definitions, arg) >= 0) {
+        let slot = value_slot(ids, arg, nvals);
+        if (slot < 0 || util.index_of_i32(definitions, arg) >= 0) {
           return failed(arena, "invalid acyclic phi operand");
         }
         // Structurally valid but infeasible edges carry no availability or
         // identity obligations. They cannot manufacture a readable result.
         if (!guard.is_constant(arena, e.path, 0)) {
-          let value = e.values[arg];
+          let value = e.values[slot];
           if (value.kind != 0 && value.kind != 1) {
             return failed(arena, "unreadable phi operand");
           }
