@@ -21,6 +21,7 @@ import "./checker";
 import "./constfold";
 import "./lexer";
 import "./irtables";
+import "./physicalbody";
 import "./lift";
 import "./parser";
 import "./platforms";
@@ -818,6 +819,12 @@ function element_hash(t: typeinfo.Type, x: string, sfx: string): string {
 // (asmcore.rt_src_*), one body per function the source defines and in its
 // order. A refusal, including a source that does not type-check, exits 3.
 pub function runtime_bodies(src: string): irtables.LowerResult[] {
+  return runtime_lowering(src).bodies;
+}
+
+// Retain selected facts from this invocation for a future physical proof.
+// The existing runtime callback still projects only the produced bodies.
+pub function runtime_lowering(src: string): physicalbody.Lowered {
   let parsed: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
   // The builtin enums' variants (IoError's NotFound, …), which a program's
   // module carries from module_with_builtins.
@@ -849,17 +856,21 @@ pub function runtime_bodies(src: string): irtables.LowerResult[] {
       return runtime_refused(h.name, h.why);
     }
   }
+  let declarations: string[] = [];
+  i = 0;
   for fd in im.funcs {
     tally("runtime " + fd.name, "produced");
+    declarations = declarations.append(inf.built.names[i]);
+    i = i + 1;
   }
-  return all;
+  return physicalbody.Lowered { bodies: all, declarations: declarations, contracts: inf.built.contracts.list, records: inf.built.records, finalizers: inf.built.finalizers };
 }
 
-function runtime_refused(name: string, why: string): irtables.LowerResult[] {
+function runtime_refused(name: string, why: string): physicalbody.Lowered {
   report("runtime " + name, why);
   eprint("FERN_SEM_IR: the typed lowering refused runtime helper " + name);
   exit(3);
-  return [];
+  return physicalbody.empty();
 }
 
 function first_name(mod: parser.Module): string {
