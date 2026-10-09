@@ -627,12 +627,17 @@ function put_stream(r: Reader, w: Writer, punch: boolean, bs: i32, zeros: u8[], 
     if (!punch && f.offload) {
       match (r.copy_range_to(w, want)) {
         Ok(n) => {
-          if (n == 0 as i64) {
+          if (n > 0 as i64) {
+            left = left - n;
+            f = Flow { ...f, offloaded: true, ended_in_hole: false };
+            continue;
+          }
+          if (left != limit) {
             return f;
           }
-          left = left - n;
-          f = Flow { ...f, offloaded: true, ended_in_hole: false };
-          continue;
+          // A first answer of 0 may be a /proc file the kernel calls empty,
+          // so reading decides, as GNU's does.
+          f = Flow { ...f, offload: false };
         },
         Err(e) => {
           match (e) {

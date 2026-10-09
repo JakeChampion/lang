@@ -138,3 +138,24 @@ func TestWASMPreview1CopyRangeToUnsupported(t *testing.T) {
 	}
 	spliceToCheckTree(t, dir)
 }
+
+// Preview 2's fallback reads and writes through streams, a separate body.
+func TestWASMCopyRangeToUnsupported(t *testing.T) {
+	dir := t.TempDir()
+	out := runResultStdout(t, copyRangeToSource("", false), runOpts{workDir: dir})
+	if got := parseMainResult(t, out); got != 0 {
+		t.Fatalf("main = %d, want 0 — the code names the step (see copyRangeToSource)", got)
+	}
+	spliceToCheckTree(t, dir)
+	spliceToCheckStdout(t, out)
+}
+
+// XNU has no copy_file_range: every call is refused and the fallback carries
+// the bytes. Built everywhere, run on Apple Silicon.
+func TestArm64DarwinCopyRangeToUnsupported(t *testing.T) {
+	dir := t.TempDir()
+	if !buildAndRunDarwin(t, dir, copyRangeToSource(dir, false)) {
+		return
+	}
+	spliceToCheckTree(t, dir)
+}
