@@ -268,23 +268,3 @@ func wasmStderr(t *testing.T, wat string) string {
 	_ = run.Run()
 	return stderr.String()
 }
-
-// A usize key is refused by the map-shape admission, which names the map: it
-// is an 8-byte key on the register targets and a 4-byte one on wasm.
-func TestSelfHostMapUsizeKeyRefusedIR(t *testing.T) {
-	cli := newStrictCLI(t)
-	src := `import "core/map";
-function main(): i32 {
-    let m: Map[usize, i32] = map_new(2);
-    m = m.insert(7 as usize, 3);
-    return m.get_or(7 as usize, 0) + 39;
-}
-`
-	_, diags, err := cli.tryEmit(t, "x86-64-linux", src)
-	if err == nil {
-		t.Fatal("the strict typed lowering accepted a usize-keyed map")
-	}
-	if !strings.Contains(diags, "unsupported map shape: Map[usize, i32]") {
-		t.Errorf("refusal does not name the map shape:\n%s", diags)
-	}
-}

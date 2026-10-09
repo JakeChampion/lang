@@ -80,7 +80,7 @@ function main(): i32 { return total(map_new(2)); }
 	{"method-on-a-parameter", `import "core/map";
 function total(m: Map[usize, i32]): i32 { return m.len() + 7; }
 function main(): i32 { return total(map_new(2)); }
-`, "refused", 7},
+`, "ir", 7},
 	// The control: the same iteration over a key that DOES fit the column.
 	{"pair-iteration-of-an-i32-parameter", `import "core/map";
 function total(m: Map[i32, i32]): i32 {

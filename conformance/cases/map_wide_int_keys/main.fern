@@ -6,9 +6,9 @@ import "core/map";
 // column that kept 32 bits of it would collide or miss, and the map is read
 // back through every shape a key column is consumed by: len, has, get,
 // get_or, the keys column, pair iteration, and without. The u64 key sits at
-// the top of its range. A usize key is not admitted (it is pointer-width, so
-// it would be a different key on wasm) and a float key is refused by the
-// checker (E045); `map_narrow_int_keys` is the case for the 4-byte keys.
+// the top of its range. A usize key is the target-width slot itself, and a
+// float key is refused by the checker (E045); `map_narrow_int_keys` is the
+// case for the 4-byte keys.
 function main(): i32 {
     let m: Map[i64, i32] = map_new(4);
     let big: i64 = 4294967296 + 7;
