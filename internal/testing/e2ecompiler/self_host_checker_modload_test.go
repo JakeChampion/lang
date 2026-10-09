@@ -43,11 +43,33 @@ func buildCheckerModloadDriverX86(t *testing.T) (gcc string, runner []string, dr
 // tolerated.
 func checkSourceModload(t *testing.T, runner []string, driverBin, entrySrc string) string {
 	t.Helper()
-	const entryPath = "/__fern_source__/main.fern"
 	_, srcs, err := modload.LoadSource(entrySrc)
 	if err != nil {
 		t.Fatalf("modload.LoadSource: %v", err)
 	}
+	return checkLoadedModload(t, runner, driverBin, "/__fern_source__/main.fern", entrySrc, srcs)
+}
+
+// checkFileModload is checkSourceModload for a program on disk, whose own
+// sibling modules (`import "./lib"`) load with it and vendor beside main.fern
+// as the stdlib's do.
+func checkFileModload(t *testing.T, runner []string, driverBin, entryPath string) string {
+	t.Helper()
+	_, srcs, err := modload.Load(entryPath)
+	if err != nil {
+		t.Fatalf("modload.Load: %v", err)
+	}
+	entrySrc, err := os.ReadFile(entryPath)
+	if err != nil {
+		t.Fatalf("read %s: %v", entryPath, err)
+	}
+	return checkLoadedModload(t, runner, driverBin, entryPath, string(entrySrc), srcs)
+}
+
+// checkLoadedModload vendors a loaded module closure flat beside the entry and
+// runs the file-based checker driver over it.
+func checkLoadedModload(t *testing.T, runner []string, driverBin, entryPath, entrySrc string, srcs map[string]string) string {
+	t.Helper()
 	progDir := t.TempDir()
 	bsrc, err := os.ReadFile("../../../compiler/builtins.fern")
 	if err != nil {
