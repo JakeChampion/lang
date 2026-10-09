@@ -2277,9 +2277,12 @@ string. `TestSelfHostRawFloorIsTypedWhole` fails when a helper source in
 
 The x86-64 and arm64 backends take a helper's body from the typed lowering:
 `emit_ir_runtime_fern_fn` calls `EmitState.rt_lower`, which the CLI sets to
-`semlower.runtime_bodies` through `ircore.Sub`, so no backend links the
-pipeline. A source that does not type-check, or that the typed path does not
-produce whole, fails the compile, and so does a helper appended by a driver
+`semlower.runtime_lowering` through `ircore.Sub`, so no backend links the
+pipeline. The callback returns bodies and their selected declaration names,
+contracts, records and finalizers in `physicalbody.Lowered`; each backend
+uses its bodies for emission. `runtime_bodies` remains a bodies-only
+projection of the same lowering. A source that does not type-check, or that
+the typed path does not produce whole, fails the compile, and so does a helper appended by a driver
 that set no `rt_lower` (`asmcore.no_rt_lower`). `FERN_SEM_IR_REPORT` prints `runtime <name>: produced` for each
 helper it took. Wasm compiles no
 Fern-source helper; it serves them as hand-written WAT.
@@ -2301,7 +2304,7 @@ What is left, in order:
    `__raw_call1` / `__raw_call2`. 112 of the 114 helper sources check on their
    own; the rest are listed below.
 
-   `runtime_bodies`
+   `runtime_lowering`
    checks a source with the builtin enums injected, as a program's module
    has them, and returns the drop helpers a body defines after the bodies;
    the backends emit each named body once per file. A typed body can call a
