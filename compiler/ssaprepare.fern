@@ -27,10 +27,19 @@ pub struct Context {
   needed: string[],
 }
 
+// Selection of the native entry template, not a proof of its effects.
+// Counted entries return for low/static pointers and shared decrements;
+// zero counts reach the body. Only x86 can shortcut count-one through Drop.
+pub struct ReleaseEntry {
+  counted: boolean,
+  unique_drop: string,
+}
+
 pub struct Emitted {
   label_name: string,
   body: Body,
   context: Context,
+  release_entry: ReleaseEntry,
 }
 
 pub struct Output {

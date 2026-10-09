@@ -205,10 +205,10 @@ pub function preparation_context(s: EmitState, architecture: string): Option[ssa
 
 // Keep only successful emission. Runtime settlement discards this array
 // together with a discarded trial, preserving the original pre-trial state.
-pub function retain_body(s: EmitState, body: ssaprepare.Body, label_name: string, context: Option[ssaprepare.Context]): EmitState {
+pub function retain_body(s: EmitState, body: ssaprepare.Body, label_name: string, context: Option[ssaprepare.Context], entry: ssaprepare.ReleaseEntry): EmitState {
   match (context) {
     Some(c) => {
-      let emitted = ssaprepare.Emitted { label_name: label_name, body: body, context: c };
+      let emitted = ssaprepare.Emitted { label_name: label_name, body: body, context: c, release_entry: entry };
       return EmitState { ...s, prepared: s.prepared.append(emitted) };
     },
     None => {

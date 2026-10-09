@@ -41,6 +41,23 @@ import "./modloader";
 import "./ssasem";
 import "./semrecords";
 import "./physicalbody";
+import "./ssaprepare";
+
+// Select once from the actual pre-emission inputs. The emitter consumes and
+// retains this same value; a retained choice is not an ownership certificate.
+pub function release_entry(r: irtables.LowerResult, architecture: string, debug: boolean, entries: irtables.SigReg): ssaprepare.ReleaseEntry {
+  if (debug || !counted_release_body(r)) {
+    return ssaprepare.ReleaseEntry { counted: false, unique_drop: "" };
+  }
+  let drop = "";
+  if (architecture == "x86-64") {
+    let candidate = nominal_release_drop(r);
+    if (candidate != "" && irtables.sig_reg_has_exact(entries, asmcore.sanitize_label(candidate))) {
+      drop = candidate;
+    }
+  }
+  return ssaprepare.ReleaseEntry { counted: true, unique_drop: drop };
+}
 
 // A generated release whose final operation drops the argument's counted
 // block. This body contract excludes borrowed string descriptors and special

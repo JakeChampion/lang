@@ -2521,8 +2521,8 @@ function ssa_reg_call_emit(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState):
 // Shared and static releases finish before allocating a frame. Keeping the
 // guard at the helper entry avoids repeating it at every call site; unique
 // and zero counts continue through the existing destructor/underflow path.
-function ssa_release_entry(r: irtables.LowerResult, lp: string, s: asmcore.EmitState): asmcore.EmitState {
-  if (s.rc_free_debug || !ircore.counted_release_body(r)) {
+function ssa_release_entry(entry: ssaprepare.ReleaseEntry, lp: string, s: asmcore.EmitState): asmcore.EmitState {
+  if (!entry.counted) {
     return s;
   }
   let dn: asmcore.LabNew = asmcore.lab_new(s, lp + "release_dec");
@@ -3786,7 +3786,7 @@ function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
 
 // Allocate and emit the prepared register form, retaining its original lowering
 // for target entry paths and its lift mappings for debug locations.
-function emit_ssa_function_arm64(prepared: ssaprepare.Body, label_name: string, s: asmcore.EmitState): asmcore.EmitState {
+function emit_ssa_function_arm64(prepared: ssaprepare.Body, label_name: string, entry: ssaprepare.ReleaseEntry, s: asmcore.EmitState): asmcore.EmitState {
   let r = prepared.lowered;
   let seen_vals = prepared.seen_vals;
   let seen_slots = prepared.seen_slots;
@@ -3799,7 +3799,7 @@ function emit_ssa_function_arm64(prepared: ssaprepare.Body, label_name: string, 
   let lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
   s = ssa_cfi(s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n"), 1, "", 0);
   s = ssa_entry_shim(f, asmcore.sanitize_label(label_name), s);
-  s = ssa_release_entry(r, lp, s);
+  s = ssa_release_entry(entry, lp, s);
   s = ssa_pair(s, false, 3, "x29", "x30", 0 - 16);
   s = ssa_cfi(ssa_cfi(ssa_cfi(s, 3, "", 16), 6, "x29", 0 - 16), 6, "x30", 0 - 8);
   s = ssa_mov_rr(s, "x29", "sp");
@@ -3903,8 +3903,9 @@ function emit_ssa_function(r: irtables.LowerResult, selected: physicalbody.Selec
   let t_emit: i64 = monotonic_ns();
   let prepared: ssaprepare.Body = ssaprepare.finish(r, selected, lifted, s.leaves);
   let context = asmcore.preparation_context(s, "arm64");
-  s = emit_ssa_function_arm64(prepared, label_name, s);
-  s = asmcore.retain_body(s, prepared, label_name, context);
+  let entry = ircore.release_entry(r, "arm64", s.rc_free_debug, s.reg_entries);
+  s = emit_ssa_function_arm64(prepared, label_name, entry, s);
+  s = asmcore.retain_body(s, prepared, label_name, context, entry);
   // Under the report, a function whose lift or emit took over 200 ms is
   // named with both times: the whole-compiler build is where a phase's
   // cost shows, and this is how a slow one is found.
