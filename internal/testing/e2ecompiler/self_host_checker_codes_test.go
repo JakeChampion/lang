@@ -546,7 +546,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e064-lambda-return-clean", "struct P { x: i32 }\nfunction main(): i32 { let f = ((n: i32): P => P { x: n }); return 0; }\n", nil},
 		// The same walk feeds E057, whose annotation form has the identical
 		// blind spot — native has reported it on a lambda parameter all along.
-		{"e057-lambda-param", "struct P { x: i32 }\nfunction main(): i32 { let f = ((c: Cell[P]) => 1); return 0; }\n", []string{"E057"}},
+		{"e057-lambda-param", "struct P { x: () => i32 }\nfunction main(): i32 { let f = ((c: Cell[P]) => 1); return 0; }\n", []string{"E057"}},
 		// E072 with the code written out. The differential below derives its
 		// expectation from the Go checker, so it cannot tell "both sides emit
 		// E072" from "neither side emits anything"; this row can.
@@ -2562,46 +2562,58 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"partial-result-branch-join", "function main(): i32 { let o = if (true) { Ok(3) } else { Err(\"x\") }; match (o) { Ok(v) => { return v + 1; }, Err(e) => { return e.len(); } } }\n", nil},
 		{"partial-result-join-known-error", "function main(): i32 { let o = if (true) { Ok(3) } else { Err(5) }; match (o) { Ok(v) => { return v + 1; }, Err(e) => { return e.len(); } } }\n", []string{"E043"}},
 		{"partial-result-generic-join-known-error", "function first[T](a: T, b: T): T { return a; } function main(): i32 { let o = first(Ok(3), Err(5)); match (o) { Ok(v) => { return v + 1; }, Err(e) => { return e.len(); } } }\n", []string{"E043"}},
-		// E057: `cell_new(v)` constructs a Cell[T]; T must be cycle-free:
-		// a scalar, string or owned scalar array. Other composite / reference
-		// arguments (struct, tuple, another cell) are E057, reported
-		// at the argument. Cross-checked against the Go checker.
+		// E057: `cell_new(v)` constructs a Cell[T]; T must be built from
+		// scalars, strings, arrays, tuples, maps, structs and enums, so no
+		// value of it can reach a cell. A function, a cell, a view or a type
+		// parameter anywhere in T is E057, reported at the argument.
+		// Cross-checked against the Go checker.
 		{"cellnew-i32-ok", "function main(): i32 { let c = cell_new(5); return 0; }\n", nil},
 		{"cellnew-bytes-ok", "function main(): i32 { let c = cell_new([255 as u8]); return 0; }\n", nil},
 		{"cellnew-empty-bytes-ok", "function main(): i32 { let a: u8[] = []; let c: Cell[u8[]] = cell_new(a); return 0; }\n", nil},
-		{"cellnew-nested-bytes-bad", "function main(): i32 { let a: u8[][] = [[255 as u8]]; let c = cell_new(a); return 0; }\n", []string{"E057"}},
+		{"cellnew-nested-bytes-ok", "function main(): i32 { let a: u8[][] = [[255 as u8]]; let c = cell_new(a); return 0; }\n", nil},
 		{"cellnew-byte-view-bad", "function f(c: Cell[[u8]]): i32 { return 0; } function main(): i32 { return 0; }\n", []string{"E057"}},
 		{"cellnew-string-ok", "function main(): i32 { let c = cell_new(\"x\"); return 0; }\n", nil},
+		{"cellnew-char-ok", "function main(): i32 { let c = cell_new(65 as char); return 0; }\n", nil},
 		{"cellnew-bool-ok", "function main(): i32 { let c = cell_new(1 < 2); return 0; }\n", nil},
-		{"cellnew-struct-bad", "struct P { x: i32 }\nfunction main(): i32 { let p: P = P { x: 1 }; let c = cell_new(p); return 0; }\n", []string{"E057"}},
+		{"cellnew-struct-ok", "struct P { x: i32 }\nfunction main(): i32 { let p: P = P { x: 1 }; let c = cell_new(p); return 0; }\n", nil},
+		{"cellnew-fn-field-bad", "struct P { f: () => i32 }\nfunction main(): i32 { let p: P = P { f: () => 1 }; let c = cell_new(p); return 0; }\n", []string{"E057"}},
+		{"cellnew-fn-bad", "function main(): i32 { let f: () => i32 = () => 1; let c = cell_new(f); return 0; }\n", []string{"E057"}},
+		{"cellnew-cell-payload-bad", "enum S { Empty, Full(Cell[i32]) }\nfunction main(): i32 { let c = cell_new(Empty); return 0; }\n", []string{"E057"}},
 		{"cellnew-array-ok", "function main(): i32 { let a: i32[] = [1]; let c = cell_new(a); return 0; }\n", nil},
-		{"cellnew-reference-array-bad", "function main(): i32 { let a: string[] = [\"a\"]; let c = cell_new(a); return 0; }\n", []string{"E057"}},
-		{"cellnew-tuple-bad", "function main(): i32 { let t = (1, 2); let c = cell_new(t); return 0; }\n", []string{"E057"}},
+		{"cellnew-reference-array-ok", "function main(): i32 { let a: string[] = [\"a\"]; let c = cell_new(a); return 0; }\n", nil},
+		{"cellnew-tuple-ok", "function main(): i32 { let t = (1, \"a\"); let c = cell_new(t); return 0; }\n", nil},
+		{"cellnew-recursive-enum-ok", "enum T { Leaf(i32), Node(T[]) }\nfunction main(): i32 { let c = cell_new(Node([Leaf(1)])); return 0; }\n", nil},
+		{"cellnew-map-ok", "import \"core/map\";\nfunction main(): i32 { let c: Cell[Map[string, i32]] = cell_new(map_new(8)); c.set(c.get().insert(\"k\", 1)); return 0; }\n", nil},
 		{"cellnew-nested-bad", "function main(): i32 { let c = cell_new(cell_new(5)); return 0; }\n", []string{"E057"}},
-		// E057 ANNOTATION form (#4363 item 2): `Cell[<composite>]` in a
-		// param / field / body-var / return annotation — including a Cell
-		// nested inside a generic argument, tuple element, or array element
-		// spelling — draws E057, anchored at the annotation (the native
-		// checker now reports the use site instead of the synthesised Cell
-		// decl at 0:0, so the code is visible to this differential). A
-		// generic's `Cell[T]` over an in-scope type parameter stays clean
-		// (natively a ParamType element; the self-host scopes the walk to
-		// non-generic decls). Cross-checked against the Go checker.
-		{"cell-annot-param-bad", "struct P { x: i32 }\nfunction f(c: Cell[P]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
-		{"cell-annot-field-bad", "struct P { x: i32 }\nstruct H { c: Cell[P] }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
-		{"cell-annot-var-bad", "struct P { x: i32 }\nfunction main(): i32 { let c: Cell[P] = cell_new(P { x: 1 }); return 0; }\n", []string{"E057"}},
+		{"cellnew-tparam-bad", "function mk[T](x: T): i32 { let c = cell_new(Some(x)); return 0; }\nfunction main(): i32 { return mk(1); }\n", []string{"E057"}},
+		// E057 ANNOTATION form (#4363 item 2): a refused element in a
+		// param / field / variant / body-var / return annotation — including
+		// a Cell nested inside a generic argument, tuple element, or array
+		// element spelling — draws E057, anchored at the annotation (the
+		// native checker reports the use site instead of the synthesised
+		// Cell decl at 0:0, so the code is visible to this differential). A
+		// generic's `Cell[T]` over its own type parameter is refused too.
+		// Cross-checked against the Go checker.
+		{"cell-annot-param-bad", "struct P { x: () => i32 }\nfunction f(c: Cell[P]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-field-bad", "struct P { x: () => i32 }\nstruct H { c: Cell[P] }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-var-bad", "struct P { x: () => i32 }\nfunction main(): i32 { let c: Cell[P] = cell_new(P { x: () => 1 }); return 0; }\n", []string{"E057"}},
+		{"cell-annot-struct-ok", "struct P { x: i32, tags: string[] }\nstruct H { c: Cell[P] }\nfunction main(): i32 { return 0; }\n", nil},
 		{"cell-annot-array-ok", "function f(c: Cell[i32[]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
-		{"cell-annot-char-array-bad", "function f(c: Cell[char[]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
-		{"cell-inferred-char-array-bad", "function main(): i32 { let a: char[] = [65 as char]; let c = cell_new(a); return 0; }\n", []string{"E057"}},
-		{"cell-inferred-empty-char-array-bad", "function main(): i32 { let a: char[] = []; let c = cell_new(a); return 0; }\n", []string{"E057"}},
+		{"cell-annot-char-array-ok", "function f(c: Cell[char[]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"cell-inferred-char-array-ok", "function main(): i32 { let a: char[] = [65 as char]; let c = cell_new(a); return 0; }\n", nil},
 		{"cell-annot-float-alias-array-ok", "function main(): i32 { let a: float[] = []; let c: Cell[float[]] = cell_new(a); return c.get().len(); }\n", nil},
 		{"cell-inferred-float-alias-array-ok", "function main(): i32 { let a: float[] = []; let c = cell_new(a); return c.get().len(); }\n", nil},
-		{"cell-annot-reference-array-bad", "function f(c: Cell[string[]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-reference-array-ok", "function f(c: Cell[string[]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"cell-annot-scalar-arrays-ok", "function f(a: Cell[u32[]], b: Cell[i64[]], c: Cell[u64[]], d: Cell[usize[]], e: Cell[f32[]], f: Cell[f64[]], g: Cell[boolean[]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
-		{"cell-annot-tuple-elem-bad", "struct P { x: i32 }\nfunction f(t: (i32, Cell[P])): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
-		{"cell-annot-generic-arg-bad", "struct P { x: i32 }\nfunction f(o: Option[Cell[P]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
-		{"cell-annot-cell-array-bad", "struct P { x: i32 }\nfunction f(a: Cell[P][]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-tuple-elem-bad", "struct P { x: () => i32 }\nfunction f(t: (i32, Cell[P])): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-generic-arg-bad", "struct P { x: () => i32 }\nfunction f(o: Option[Cell[P]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-cell-array-bad", "struct P { x: () => i32 }\nfunction f(a: Cell[P][]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
 		{"cell-annot-str-bad", "function f(c: Cell[str]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-map-fn-bad", "function f(c: Cell[Map[string, () => i32]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-tparam-bad", "function mk[T](x: T): Cell[T] { return cell_new(x); }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-generic-field-bad", "struct H[T] { c: Cell[T[]] }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-variant-bad", "enum E { A(Cell[() => i32]), B }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-method-bad", "struct B { v: i32 }\nfunction (b: B) m(c: Cell[() => void]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
 		// Every integer and float width is a scalar element, as natively.
 		{"cell-annot-scalars-ok", "function f(a: (i32, Cell[f32]), b: Cell[u8], c: Cell[usize]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		// E051 self-reassign move admission (#4873 step 0): a LOCAL passed
@@ -2648,7 +2660,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"own-field-move-nested-borrowed-bad", "struct Cfi { rules: i32[], n: i32 }\nstruct Asm { code: i32[], cfi: Cfi }\nfunction record(own s: Cfi, v: i32): Cfi { return Cfi { rules: s.rules.append(v), n: s.n + 1 }; }\nfunction main(): i32 {\n    let a: Asm = Asm { code: [], cfi: Cfi { rules: [], n: 0 } };\n    function inner(a: Asm): Asm {\n        a = Asm { ...a, cfi: record(a.cfi, 1) };\n        return a;\n    }\n    return inner(a).cfi.n;\n}\n", []string{"E051"}},
 		{"cell-annot-i32-ok", "function f(c: Cell[i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"cell-annot-string-ok", "function f(c: Cell[string]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
-		{"cell-annot-generic-param-ok", "function f[T](c: Cell[T]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
+		// A type parameter could be instantiated with a function, so a generic
+		// cell over one is refused at the declaration.
+		{"cell-annot-generic-param-bad", "function f[T](c: Cell[T]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
 		// `str` inside a generic ARGUMENT is a real native type, so no E064
 		// (regression pin for the generic-arg-widening false positive fixed
 		// alongside item 2).

@@ -16,9 +16,8 @@ import (
 // f64) are captured BY REFERENCE and a closure may write them —
 // closures-as-counters is a supported feature. Reference-typed captures are
 // read-only (E049), so a write-back cannot close a reference cycle; Fern has no
-// cycle collector, the same model Roc uses. `Cell`'s own element-type
-// restriction (E057 — scalars and strings only, for that same reason) lines up
-// exactly with E049's, which is why the interpreter's cell is scalar-shaped.
+// cycle collector, the same model Roc uses. A written capture is a scalar, which
+// is why the interpreter's capture cell is scalar-shaped.
 //
 // The bug survived a long time and was closed while half-open, which is what
 // makes it worth pinning on both engines:

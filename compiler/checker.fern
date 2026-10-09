@@ -8209,11 +8209,16 @@ function type_from_name_erasing_tparams(name: string, tparams: string[], tn: Typ
   if (tparams.len() == 0 || name.len() == 0 || name.len() >= 5 && slice_unchecked(name, 0, 4) == "dyn ") {
     return type_from_spelling(name, tn);
   }
+  return type_from_ref_subst(parser.parse_type_ref(name), tparams, erased_tparams(tparams), tn);
+}
+
+// erased_tparams is what each of `tparams` resolves to inside its generic.
+function erased_tparams(tparams: string[]): typeinfo.Type[] {
   let erased: typeinfo.Type[] = [];
   for tp in tparams {
     erased = erased.append(t_unknown(TPARAM_MARK + tp));
   }
-  return type_from_ref_subst(parser.parse_type_ref(name), tparams, erased, tn);
+  return erased;
 }
 
 // gc_is_typevar_name reports whether a bare type NAME is a type VARIABLE of the
@@ -13514,18 +13519,11 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
         out = out.append(dg_at("E056", "cannot assign to an array element: subscripts are read-only after construction; use `arr = arr.with(i, value)`", expr_line(c.args[0]), expr_col(c.args[0])));
       }
       // E057: cell_new(v) — a Cell's element type must be
-      // cycle-free: a scalar, string or owned scalar array.
-      // Other composite / reference values (struct, tuple,
-      // another Cell, …) could reconstruct a reference cycle,
-      // which the immutable-data model forbids so Perceus RC
-      // needs no cycle collector (docs/CELL-TYPE-PLAN.md).
-      // Reported at the argument, matching the Go checker
-      // (n.Args[0].Pos()). An unresolved arg type is skipped.
+      // cycle-free (cell_payload_risk). Reported at the argument,
+      // matching the Go checker (n.Args[0].Pos()).
       if (id.name == "cell_new" && c.args.len() == 1) {
         let cnat: typeinfo.Type = check_expr(c.args[0], s);
-        if (!is_unknown(cnat) && !is_primitive_type(cnat) && !is_scalar_array_cell_elem(cnat)) {
-          out = out.append(dg_at("E057", "Cell[" + type_label(cnat) + "] is not allowed: a cell's element type must be a scalar, string or owned array of scalars; other element types are not supported because cells must remain cycle-free", expr_line(c.args[0]), expr_col(c.args[0])));
-        }
+        out = util.append_diags(out, e057_diag(type_label(named_tparams(cnat)), cnat, s, expr_line(c.args[0]), expr_col(c.args[0])));
       }
       // E072: a void expression is not a value. Native's only
       // requireValue site is the variant-constructor payload
@@ -19916,87 +19914,217 @@ function e064_annot_diags(an: Annot[], tn: TypeNames, extra_known: string[], tpa
   return out;
 }
 
-// e057_cell_elem_ok reports whether a TypeRef is a permitted `Cell[T]`
-// element — the self-host analog of the native isCellElemType
-// (checker.go): a cycle-free scalar (any integer or float width, boolean) or
-// string or owned scalar array. Other composites and borrowed views remain outside
-// the supported cycle-free cell elements (docs/CELL-TYPE-PLAN.md).
-function e057_cell_elem_ok(a: parser.TypeRef): boolean {
-  if (a.array_depth > 1 || a.is_view || a.is_tuple || a.is_fn || a.args.len() > 0) {
-    return false;
+// cell_payload_risk returns "" when a value of `t` can never reach a Cell,
+// else the spelling of the first part of `t` that could: a Cell, a function
+// value (through its captures), a trait object (through what it erases), a
+// map cursor or resource handle, a borrowed view (which a cell would
+// outlive), or a type parameter, which could be instantiated with any of
+// those. Everything else is immutable data — scalars, strings, arrays,
+// tuples, maps, structs, enums — whose values form trees, so a cell can never
+// end up inside its own payload and RC needs no cycle collector
+// (docs/CELL-TYPE-PLAN.md §2). A recursive type is fine for the same reason:
+// `seen` stops the walk at a nominal type already on it. `own` is the type
+// parameters of the declaration whose fields are being walked, which its
+// arguments stand for and were checked as.
+function cell_payload_risk(t: typeinfo.Type, s: Scope, own: string[], seen: string[]): string {
+  match (t) {
+    typeinfo.TypeString(st) => {
+      if (st.tag == 1) {
+        return type_label(t);
+      }
+    },
+    typeinfo.TypeArray(a) => {
+      if (a.view) {
+        return type_label(t);
+      }
+      return cell_payload_risk(a.elem, s, own, seen);
+    },
+    typeinfo.TypeTuple(tt) => {
+      return cell_payload_risks(tt.elements, s, own, seen);
+    },
+    typeinfo.TypeMap(m) => {
+      return cell_payload_risks([m.key, m.value], s, own, seen);
+    },
+    typeinfo.TypeStruct(st) => {
+      if (st.name == "Cell" || st.name == "MapIter") {
+        return type_label(t);
+      }
+      let ar: string = cell_payload_risks(st.args, s, own, seen);
+      if (ar.len() > 0 || util.has_str(seen, st.name)) {
+        return ar;
+      }
+      let sig: StructSig = s.lookup_struct(st.name);
+      return cell_payload_risks(sig.field_types, s, sig.type_params, seen.append(st.name));
+    },
+    typeinfo.TypeUnion(u) => {
+      let ar: string = cell_payload_risks(u.args, s, own, seen);
+      let at: i32 = s.unions.index.find(u.name);
+      if (ar.len() > 0 || at < 0 || util.has_str(seen, u.name)) {
+        return ar;
+      }
+      return union_payload_risk(s.unions.unions[at], s, seen.append(u.name));
+    },
+    typeinfo.TypeUnknown(u) => {
+      let n: i32 = TPARAM_MARK.len();
+      if (u.reason.len() > n && slice_unchecked(u.reason, 0, n) == TPARAM_MARK) {
+        let tp: string = slice_unchecked(u.reason, n, u.reason.len()) + "";
+        if (!util.has_str(own, tp)) {
+          return tp;
+        }
+      }
+    },
+    typeinfo.TypeFunc(_) => {
+      return type_label(t);
+    },
+    typeinfo.TypeDyn(_) => {
+      return type_label(t);
+    },
+    typeinfo.TypeHandle(_) => {
+      return type_label(t);
+    },
+    _ => {}
   }
-  if (a.base == "i32" || a.base == "i64" || a.base == "u8" || a.base == "u32" || a.base == "u64" || a.base == "usize") {
-    return true;
-  }
-  return a.base == "f32" || a.base == "f64" || a.base == "float" || a.base == "boolean" || a.base == "string" && a.array_depth == 0;
+  return "";
 }
 
-function is_scalar_array_cell_elem(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeArray(a) = t {
-    if (a.view) {
-      return false;
-    }
-    match (a.elem) {
-      typeinfo.TypeI32(i) => {
-        return !i.is_char;
-      },
-      typeinfo.TypeFloat(_) => {
-        return true;
-      },
-      typeinfo.TypeBool(_) => {
-        return true;
-      },
-      _ => {}
+function cell_payload_risks(ts: typeinfo.Type[], s: Scope, own: string[], seen: string[]): string {
+  for t in ts {
+    let r: string = cell_payload_risk(t, s, own, seen);
+    if (r.len() > 0) {
+      return r;
     }
   }
-  return false;
+  return "";
 }
 
-// e057_annot_labels_tref walks a parsed annotation and collects the
-// rendered element spelling of every `Cell[X]` whose element is not a
-// permitted cell element — the ANNOTATION form of E057 (#4363 item 2).
-// Mirrors native resolveType's recursion into generic arguments and tuple
+// union_payload_risk walks every variant: an enum's variant is the struct
+// carrying its payload, an alias's is a type it names.
+function union_payload_risk(u: UnionSig, s: Scope, seen: string[]): string {
+  for v in u.variants {
+    let r: string = "";
+    if (u.is_enum) {
+      r = cell_payload_risks(s.lookup_owned_struct(v, u.name).field_types, s, u.type_params, seen);
+    } else {
+      r = cell_payload_risk(type_from_spelling(v, s.type_names()), s, u.type_params, seen);
+    }
+    if (r.len() > 0) {
+      return r;
+    }
+  }
+  return "";
+}
+
+// e057_diag is E057 at (line, col) for a `Cell[label]` whose element `elem`
+// is not cycle-free, else nothing. Matches native's cellElemError.
+function e057_diag(label: string, elem: typeinfo.Type, s: Scope, line: i32, col: i32): util.Diag[] {
+  let risk: string = cell_payload_risk(elem, s, [], []);
+  if (risk.len() == 0) {
+    return [];
+  }
+  let why: string = ", and " + label + " contains " + risk;
+  if (risk == type_label(named_tparams(elem))) {
+    why = ", which " + label + " is not";
+  }
+  return [dg_at("E057", "Cell[" + label + "] is not allowed: a cell's element must be built from scalars, strings, arrays, tuples, maps, structs and enums" + why, line, col)];
+}
+
+// named_tparams replaces each erased type parameter in `t` by a nominal of its
+// name, so type_label spells it as written rather than as `unknown`.
+function named_tparams(t: typeinfo.Type): typeinfo.Type {
+  match (t) {
+    typeinfo.TypeUnknown(u) => {
+      let n: i32 = TPARAM_MARK.len();
+      if (u.reason.len() > n && slice_unchecked(u.reason, 0, n) == TPARAM_MARK) {
+        return t_struct(slice_unchecked(u.reason, n, u.reason.len()) + "");
+      }
+    },
+    typeinfo.TypeArray(a) => {
+      return typeinfo.TypeArray { elem: named_tparams(a.elem), view: a.view };
+    },
+    typeinfo.TypeTuple(tt) => {
+      return t_tuple(named_tparams_all(tt.elements));
+    },
+    typeinfo.TypeMap(m) => {
+      return t_map(named_tparams(m.key), named_tparams(m.value));
+    },
+    typeinfo.TypeStruct(st) => {
+      return t_struct_g(st.name, named_tparams_all(st.args));
+    },
+    typeinfo.TypeUnion(u) => {
+      return t_union_g(u.name, named_tparams_all(u.args));
+    },
+    _ => {}
+  }
+  return t;
+}
+
+function named_tparams_all(ts: typeinfo.Type[]): typeinfo.Type[] {
+  let out: typeinfo.Type[] = [];
+  for t in ts {
+    out = out.append(named_tparams(t));
+  }
+  return out;
+}
+
+// e057_annot_diags_tref walks a parsed annotation and reports every `Cell[X]`
+// whose element is not cycle-free — the ANNOTATION form of E057 (#4363 item
+// 2). Mirrors native resolveType's recursion into generic arguments and tuple
 // elements, so a Cell nested anywhere in the spelling (`Option[Cell[P]]`,
-// `(i32, Cell[P])`, `Cell[P][]`) fires. The caller restricts this to
-// contexts with no type parameter in scope (the E064 scoping), so a
-// generic's `Cell[T]` — which native admits as a ParamType element — is
-// never flagged.
-function e057_annot_labels_tref(tr: parser.TypeRef): string[] {
-  let out: string[] = [];
-  if (!tr.is_tuple && tr.base == "Cell" && tr.args.len() == 1 && !e057_cell_elem_ok(tr.args[0])) {
-    out = out.append(parser.render_type_ref(tr.args[0]));
+// `(i32, Cell[P])`, `Cell[P][]`) fires. `tparams` are the type parameters in
+// scope, which the element is resolved with.
+function e057_annot_diags_tref(tr: parser.TypeRef, tparams: string[], s: Scope, line: i32, col: i32): util.Diag[] {
+  let out: util.Diag[] = [];
+  if (!tr.is_tuple && tr.base == "Cell" && tr.args.len() == 1) {
+    let elem: typeinfo.Type = type_from_ref_subst(tr.args[0], tparams, erased_tparams(tparams), s.type_names());
+    out = util.append_diags(out, e057_diag(parser.render_type_ref(tr.args[0]), elem, s, line, col));
   }
   for arg in tr.args {
-    let inner: string[] = e057_annot_labels_tref(arg);
-    for elem in inner {
-      out = out.append(elem);
+    out = util.append_diags(out, e057_annot_diags_tref(arg, tparams, s, line, col));
+  }
+  return out;
+}
+
+// e057_annot_diags parses one annotation spelling and emits E057 at the
+// caller-supplied anchor for each offending `Cell[X]` in it.
+function e057_annot_diags(type_name: string, tparams: string[], s: Scope, line: i32, col: i32): util.Diag[] {
+  if (type_name.len() == 0) {
+    return [];
+  }
+  return e057_annot_diags_tref(parser.parse_type_ref(type_name), tparams, s, line, col);
+}
+
+// e057_struct_diags reports the annotation-form E057 for a struct's fields,
+// or for a variant's payloads, which carry their enum's type parameters and
+// position.
+function e057_struct_diags(sd: parser.StructDecl, enums: parser.EnumDecl[], s: Scope): util.Diag[] {
+  let tps: string[] = sd.type_params;
+  let line: i32 = sd.line;
+  let col: i32 = sd.col;
+  for ed in enums {
+    if (sd.enum_owner.len() > 0 && ed.name == sd.enum_owner) {
+      tps = ed.type_params;
+      line = ed.line;
+      col = ed.col;
     }
   }
-  return out;
-}
-
-// e057_annot_diags parses one annotation spelling and emits E057 (at the
-// caller-supplied anchor) for each offending `Cell[X]` in it, byte-matching
-// the native message. An empty / un-annotated spelling emits nothing.
-function e057_annot_diags(type_name: string, line: i32, col: i32): util.Diag[] {
   let out: util.Diag[] = [];
-  if (type_name.len() == 0) {
-    return out;
-  }
-  let labels: string[] = e057_annot_labels_tref(parser.parse_type_ref(type_name));
-  for label in labels {
-    out = out.append(dg_at("E057", "Cell[" + label + "] is not allowed: a cell's element type must be a scalar, string or owned array of scalars; other element types are not supported because cells must remain cycle-free", line, col));
+  for field in sd.fields {
+    out = util.append_diags(out, e057_annot_diags(field.type_name, tps, s, line, col));
   }
   return out;
 }
 
-// e057_var_annot_diags reports the annotation-form E057 for any annotation
-// embedding a `Cell[<composite>]`. Reads the same annotation set E064 does,
-// which is why the caller collects it once and hands it to both.
-function e057_var_annot_diags(an: Annot[]): util.Diag[] {
+// e057_fn_diags reports the annotation-form E057 for a function's
+// parameters, result and every annotation in its body.
+function e057_fn_diags(fd: parser.FuncDecl, s: Scope): util.Diag[] {
+  let tps: string[] = e064_fn_tparams(fd);
   let out: util.Diag[] = [];
-  for elem in an {
-    out = util.append_diags(out, e057_annot_diags(elem.type_name, elem.line, elem.col));
+  for param in fd.params {
+    out = util.append_diags(out, e057_annot_diags(param.type_name, tps, s, fd.line, fd.col));
+  }
+  out = util.append_diags(out, e057_annot_diags(fd.ret_type, tps, s, fd.line, fd.col));
+  for elem in collect_annots(fd.body) {
+    out = util.append_diags(out, e057_annot_diags(elem.type_name, tps, s, elem.line, elem.col));
   }
   return out;
 }
@@ -22892,12 +23020,6 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
         if (pu.len() > 0) {
           body_diags = body_diags.append(dg_at("E064", "unknown type \"" + util.demangle(pu) + "\"" + unknown_type_hint(pu, e064_traits), efn.line, efn.col));
         }
-        // E057 annotation form: a `Cell[<composite>]` anywhere in a
-        // parameter annotation, in a non-generic function only, so a
-        // generic's `Cell[T]` is never flagged.
-        if (efn_tps.len() == 0) {
-          body_diags = util.append_diags(body_diags, e057_annot_diags(param.type_name, efn.line, efn.col));
-        }
       }
       let ru: string = e064_unknown_name(efn.ret_type, e064_tn, e064_extra, efn_tps);
       if (ru.len() > 0) {
@@ -22906,10 +23028,9 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
       // Body `let x: T` annotations.
       let efn_annots: Annot[] = collect_annots(efn.body);
       body_diags = util.append_diags(body_diags, e064_annot_diags(efn_annots, e064_tn, e064_extra, efn_tps, e064_traits));
-      if (efn_tps.len() == 0) {
-        body_diags = util.append_diags(body_diags, e057_annot_diags(efn.ret_type, efn.line, efn.col));
-        body_diags = util.append_diags(body_diags, e057_var_annot_diags(efn_annots));
-      }
+    }
+    if (in_focus(focus, efn)) {
+      body_diags = util.append_diags(body_diags, e057_fn_diags(efn, tsc));
     }
   }
   // E044: a closure capture of a value with no runtime representation, a
@@ -23037,11 +23158,9 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
         if (fu.len() > 0) {
           body_diags = body_diags.append(dg_at("E064", "unknown type \"" + util.demangle(fu) + "\"" + unknown_type_hint(fu, e064_traits), esd.line, esd.col));
         }
-        // E057 annotation form for a struct FIELD (`c: Cell[P]`),
-        // same non-generic, non-enum-variant scope as E064.
-        body_diags = util.append_diags(body_diags, e057_annot_diags(field.type_name, esd.line, esd.col));
       }
     }
+    body_diags = util.append_diags(body_diags, e057_struct_diags(esd, mod.enums, fld_scope));
   }
   // Native folds top-level consts BEFORE the checker runs, and a const the
   // fold refuses aborts it — so the checker never sees the module and nothing

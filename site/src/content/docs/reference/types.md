@@ -328,9 +328,29 @@ function main(): i32 {
 }
 ```
 
-`T` must be a scalar, a `string`, or an array of scalars. Anything that
-could hold a reference back to the cell — a struct, an enum, another
-cell — is rejected (`E057`).
+`T` must be built from scalars, strings, arrays, tuples, maps, structs
+and enums, so a cell can hold a counter, a log or a whole session table
+across the requests of a long-running server:
+
+```fern
+import "core/map";
+
+function main(): i32 {
+    let hits: Cell[Map[string, i32]] = cell_new(map_new(8));
+    let record = (path: string): void => {
+        let m: Map[string, i32] = hits.get();
+        hits.set(m.insert(path, m.get_or(path, 0) + 1));
+    };
+    record("/");
+    record("/");
+    return hits.get().get_or("/", 0);   // 2
+}
+```
+
+Each `get()` is a snapshot: a later `set` does not change a value already
+read. Anything that could hold a reference back to the cell — a function
+value, another cell, a `dyn` trait object, a type parameter — is rejected
+(`E057`), as is a borrowed view such as `str`.
 
 ## Built-in `Option` and `Result`
 

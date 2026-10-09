@@ -6248,7 +6248,7 @@ pub struct TyMapI32 { val: Ty }
 pub struct TyMapIter { val: Ty }
 
 // TyCell models Cell[T] (docs/CELL-TYPE-PLAN.md) — a single-slot mutable
-// box. v1 holds scalars only (the checker's E057 enforces cycle-free T);
+// box (the checker's E057 enforces a cycle-free T);
 // `val` records the element type for get()'s result + set()'s arg width.
 pub struct TyCell { val: Ty }
 
