@@ -9907,6 +9907,16 @@ func TestWasiHTTPStatefulHandlerIsE075(t *testing.T) {
 	if _, err := check(`function handle(req: HttpRequest, plat: platform__Host): HttpResponse { return ` + response + `; }`); err != nil {
 		t.Errorf("stateless handler: %v", err)
 	}
+	_, err = check(`function handle(req: HttpRequest): HttpResponse { return ` + response + `; }`)
+	if err == nil || strings.Count(err.Error(), "\n")+1 != 1 || !strings.Contains(err.Error(), "this `handle` takes 1 parameter(s)") {
+		t.Errorf("one-parameter handler: got %v, want one E075", err)
+	}
+	// The pairing rule still holds there: it is the self-host's too.
+	_, err = check(`function init(port: i32): i32 { return port; }
+function handle(req: HttpRequest, plat: platform__Host): HttpResponse { return ` + response + `; }`)
+	if err == nil || !strings.Contains(err.Error(), "`init` takes 1 parameters") {
+		t.Errorf("mispaired init on wasm32-wasi-http: got %v, want the pairing E075", err)
+	}
 }
 
 // A bare call of a payloadless variant is calling a value, as in the

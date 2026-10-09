@@ -266,20 +266,31 @@ function handle(n: i32, req: HttpRequest, plat: platform.Platform): (i32, HttpRe
     return (n + 1, http.ok("x"));
 }
 `
-	if err := os.WriteFile(prog, []byte(src), 0o644); err != nil {
-		t.Fatal(err)
-	}
-	want := prog + ":4:1: error[E075]: " + checker.WasiHTTPStatefulHandler + "\n"
-	for _, args := range [][]string{
-		{"-check", "-target", "wasm32-wasi-http", prog, stdlib},
-		{"-target", "wasm32-wasi-http", "-o", filepath.Join(dir, "x.wasm"), prog, stdlib},
-	} {
-		out, err := exec.Command(cli, args...).CombinedOutput()
-		if err == nil {
-			t.Errorf("%v: a stateful handler was accepted for wasm32-wasi-http", args)
+	refuses := func(t *testing.T, src, want string) {
+		t.Helper()
+		if err := os.WriteFile(prog, []byte(src), 0o644); err != nil {
+			t.Fatal(err)
 		}
-		if string(out) != want {
-			t.Errorf("%v:\n got %q\nwant %q", args, out, want)
+		for _, args := range [][]string{
+			{"-check", "-target", "wasm32-wasi-http", prog, stdlib},
+			{"-target", "wasm32-wasi-http", "-o", filepath.Join(dir, "x.wasm"), prog, stdlib},
+		} {
+			out, err := exec.Command(cli, args...).CombinedOutput()
+			if err == nil {
+				t.Errorf("%v: accepted for wasm32-wasi-http", args)
+			}
+			if string(out) != want {
+				t.Errorf("%v:\n got %q\nwant %q", args, out, want)
+			}
 		}
 	}
+	refuses(t, src, prog+":4:1: error[E075]: "+checker.WasiHTTPStatefulHandler+"\n")
+	// Any shape the stub cannot bind is refused there too, not as an error
+	// inside the stub.
+	refuses(t, `import "std/http";
+
+function handle(req: HttpRequest): HttpResponse {
+    return http.ok("x");
+}
+`, prog+":3:1: error[E075]: a wasi:http handler takes `(req, plat)`; this `handle` takes 1 parameter(s)\n")
 }

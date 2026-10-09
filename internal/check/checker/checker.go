@@ -1088,6 +1088,15 @@ func targetSupervises(target string) bool {
 // wasm32-wasi-http, which the self-host's driver reports in the same words.
 const WasiHTTPStatefulHandler = "a wasi:http handler takes `(req, plat)` and no state: the proxy world starts a fresh instance for every request, so nothing carries from one to the next; build a stateful handler for a native target"
 
+// wasiHTTPHandlerShape is E075's text for a `handle` of n parameters on
+// wasm32-wasi-http, in the self-host driver's words.
+func wasiHTTPHandlerShape(n int) string {
+	if n == 3 {
+		return WasiHTTPStatefulHandler
+	}
+	return fmt.Sprintf("a wasi:http handler takes `(req, plat)`; this `handle` takes %d parameter(s)", n)
+}
+
 func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, error) {
 	supervised := targetSupervises(target)
 	wasiHTTP := target == "wasm32-wasi-http"
@@ -5521,19 +5530,23 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		findDecl(prog, WasiHandleName) == nil && findDecl(prog, "platform__host") != nil {
 		prog.Funcs = append(prog.Funcs, synthesiseWasiHandle())
 	}
-	if h := findDecl(prog, "handle"); h != nil && h.Receiver == nil && len(h.Params) == 3 {
-		if wasiHTTP {
-			c.errfCode(h.P, "E075", WasiHTTPStatefulHandler)
-		}
+	h := findDecl(prog, "handle")
+	if h != nil && h.Receiver == nil && len(h.Params) == 3 {
 		c.info.StatefulHandler = true
 	}
-	// The proxy world serves through its incoming-handler export, so a
-	// wasi-http handler gets no serve loop.
-	if hasHandleDecl(prog) && !hasMainDecl(prog) && !wasiHTTP {
+	// The wasi-http stub binds `handle` as `(req, plat)`; any other shape is
+	// refused at the handler, and its init pairing goes unasked.
+	wasiRefused := wasiHTTP && h != nil && h.Receiver == nil && len(h.Params) != 2
+	if wasiRefused {
+		c.errfCode(h.P, "E075", "%s", wasiHTTPHandlerShape(len(h.Params)))
+	}
+	if hasHandleDecl(prog) && !hasMainDecl(prog) && !wasiRefused {
 		// A mispaired init/handle has already been reported against the
 		// declaration that is wrong; synthesising main on top of it adds
-		// a second, positionless error about a call nobody wrote.
-		if c.checkHandlerStatePairing(prog) {
+		// a second, positionless error about a call nobody wrote. The
+		// proxy world serves through its incoming-handler export, so a
+		// wasi-http handler gets no serve loop.
+		if c.checkHandlerStatePairing(prog) && !wasiHTTP {
 			prog.Funcs = append(prog.Funcs, synthesiseHandleMain(prog, supervised))
 		}
 	}
