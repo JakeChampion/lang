@@ -868,8 +868,9 @@ Where Fern loses, by cause:
   (0.04x: the long-double library's per-value formatting), and what is
   left of `join` (0.34x) and `cat -n` (0.49x). Each has had its per-line
   copies removed; the rest is codegen.
-- **The fd-relative filesystem primitive (#9074)** — `du` (0.5–0.9x), whose
-  full-path `stat` costs 9 µs a call against 4.
+- **`du` (0.5–0.9x, measured before #9074)** — its full-path `stat` cost
+  9 µs a call against GNU's 4 with a held descriptor. The walk is
+  fd-relative now; the row needs re-measuring.
 - **A format string re-parsed per record (#9281)** — `ls -l` and `vdir`
   (0.90x), where 8.7% of a long listing goes to reading `%b %e %H:%M`
   four thousand times. See the ls subsection below, which also carries
@@ -4016,14 +4017,19 @@ tree can reach. It costs one fork and one reap per
 invocation — measured at two tenths of a millisecond in the table above,
 against a startup lead that more than covers it.
 
-**`du` cannot walk past `PATH_MAX`.** Every filesystem primitive takes a PATH,
-so a component 8 KiB down is `File name too long` where GNU's fts, which opens
-each directory and reads it fd-relative, keeps going. Measured on a 40-level
-tree of 200-byte components: GNU 168, Fern 80 plus one `cannot access` per
-level it could not reach, exit 1 — the same shape an unreadable directory has,
-so it degrades rather than lying. #9078 and #9074 are the same `openat` /
-`fdopendir` / `fstatat` family, which `rm -r`, `ls -R`, `find` and `cp -r` all
-want too.
+**The fts walkers are fd-relative, as GNU's are (#9074).** `rm -r`, `du`,
+`chmod -R`, `chown -R` and `chgrp -R` hold the directory they are in (a `Dir`)
+and act on each entry by its base name, through `coreutils/lib/fts.fern`'s
+`At`. Only that one directory is held: the walk lets go of its parent while it
+is below it and climbs back through `..`, checking the device and inode, so
+neither PATH_MAX nor the descriptor limit bounds the depth, and a directory
+moved under a running walk stops it with `fts_read failed` rather than
+redirecting it. A `-L` walk reaches entries by path, as fts's logical walk
+does. The corpus pins a tree 60 levels of 100-byte names deep for each.
+
+`ls -R` and `cp -r` stay path-based because GNU's are: 9.12's `ls -R` stops
+with `cannot open directory` and `cp -r` with `cannot stat` at the same depth
+on the same tree (measured in the devbox image).
 
 **`dircolors -p` prints GNU 9.12's database.** The text `-p` prints is a data
 file that changes between coreutils releases — the copyright year on its third
@@ -4220,46 +4226,6 @@ system` and exits 125 where GNU would run the command, with every option
 still declared, since their getopt behaviour is observable either way.
 
 ## Open gaps
-
-**A directory walk is bounded by PATH_MAX (#9074).** Every filesystem builtin
-takes a path, so a recursive walk concatenates one per entry and the kernel
-refuses it past 4096 bytes. GNU's fts is fd-relative (FTS_CWDFD: openat /
-fdopendir / unlinkat against a held descriptor) and has no such bound: on a
-tree built with fd-relative mkdir to 80 levels of 100 characters, `rm -rf`
-removes it in silence while `rm.fern` stops at level 40 with `File name too
-long` and leaves the rest. Shallow ENAMETOOLONG is an ordinary error path both
-sides agree on. `remove_dir_all` is fd-relative already but offers no
-per-entry hook, so it cannot carry `-v`, `-i`, or the per-entry diagnostics
-that decide the exit status. `du`, `ls -R`, `cp -r`, `chmod -R` and `find`
-want the same primitive.
-
-It is also why `du` loses every bench row it has (0.29x to 0.73x). `du.fern`
-makes FEWER syscalls than GNU on the same tree (1505 against 2064 on a
-20-file directory 60 levels down: no fcntl, fstat or fdopendir), but each of
-its 1260 `newfstatat` calls carries the whole path, so the kernel walks every
-component again — 9 µs a call against GNU's 4 with a directory descriptor
-and a bare name. A `chdir` walk would recover the time and is not taken: it
-is the fts mode GNU abandoned, and it changes which path an error names.
-
-`chmod -R` is the second utility standing on it, and there the gap costs more
-than depth. strace shows GNU descends fd-relative below the top level —
-`fchmodat(4, "sub", …)` against a held descriptor, then `openat(4, "sub",
-O_NOFOLLOW|O_DIRECTORY)` — so renaming an interior directory under a running
-walk cannot redirect a chmod at anything outside the tree. `chmod.fern`
-rebuilds the path per entry, so it can. Nothing in the corpus renames anything
-under a running chmod, and the 333 cases agree on stdout, stderr, exit status
-and the mode of every entry; what is missing is a safety property no case
-asserts, which is why it is recorded here rather than left to the depth
-sentence above.
-
-`ls -R` is the fifth, and there the bound is only depth: it rebuilds the
-path per entry the way the other four do, and a tree deeper than PATH_MAX
-stops with `File name too long` where GNU keeps walking.
-
-`chown -R` and `chgrp -R` are the third and fourth, with the same shape: they
-rebuild the path per entry where GNU holds a descriptor, so a rename of an
-interior directory under a running walk can redirect a call outside the tree.
-Nothing in the corpus renames anything under a running chown.
 
 **`chown -v` on a dangling symlink it was told to FOLLOW is the one place the
 corpus deliberately does not compare stdout, and the reason is that GNU has no

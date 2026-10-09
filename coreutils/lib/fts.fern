@@ -34,6 +34,184 @@ pub function child_path(dir: string, name: string): string {
   return dir + "/" + name;
 }
 
+// ---- where an entry is ------------------------------------------------------
+//
+// GNU's fts is fd-relative: it holds the directory it is reading open and
+// passes each entry's base name to openat / fstatat / unlinkat, so a tree
+// deeper than PATH_MAX is walked whole and a parent renamed mid-walk does not
+// redirect it. `At` is that: a name inside a directory the walk holds, or —
+// for a command-line operand, and for everything under a walk that follows
+// symlinks, which fts reaches by path as well — the whole path.
+pub struct At { dir: Option[Dir], name: string }
+
+pub function at_path(path: string): At {
+  return At { dir: None, name: path };
+}
+
+pub function at_child(d: Dir, name: string): At {
+  return At { dir: Some(d), name: name };
+}
+
+pub function lstat_at(a: At): Result[FileStat, IoError] {
+  match (a.dir) {
+    Some(d) => {
+      return d.lstat(a.name);
+    },
+    None => {
+      return lstat(a.name);
+    }
+  }
+}
+
+pub function stat_at(a: At): Result[FileStat, IoError] {
+  match (a.dir) {
+    Some(d) => {
+      return d.stat(a.name);
+    },
+    None => {
+      return stat(a.name);
+    }
+  }
+}
+
+pub function access_at(a: At, mode: i32): Result[void, IoError] {
+  match (a.dir) {
+    Some(d) => {
+      return d.access(a.name, mode);
+    },
+    None => {
+      return access(a.name, mode);
+    }
+  }
+}
+
+pub function remove_file_at(a: At): Result[void, IoError] {
+  match (a.dir) {
+    Some(d) => {
+      return d.remove_file(a.name);
+    },
+    None => {
+      return remove_file(a.name);
+    }
+  }
+}
+
+pub function remove_dir_at(a: At): Result[void, IoError] {
+  match (a.dir) {
+    Some(d) => {
+      return d.remove_dir(a.name);
+    },
+    None => {
+      return remove_dir(a.name);
+    }
+  }
+}
+
+pub function chmod_at_at(a: At, mode: i32, follow: boolean): Result[void, IoError] {
+  match (a.dir) {
+    Some(d) => {
+      return d.chmod(a.name, mode, follow);
+    },
+    None => {
+      return chmod_at(a.name, mode, follow);
+    }
+  }
+}
+
+pub function chown_at_at(a: At, uid: i32, gid: i32, follow: boolean): Result[void, IoError] {
+  match (a.dir) {
+    Some(d) => {
+      return d.chown(a.name, uid, gid, follow);
+    },
+    None => {
+      return chown_at(a.name, uid, gid, follow);
+    }
+  }
+}
+
+// The directory `a` names, opened to read and to hold. A name inside a held
+// directory is never followed through a symlink; a path is, as fts follows a
+// command-line operand.
+pub function open_at(a: At): Result[Dir, IoError] {
+  match (a.dir) {
+    Some(d) => {
+      return d.open_dir(a.name);
+    },
+    None => {
+      return open_dir(a.name);
+    }
+  }
+}
+
+// ---- holding one directory at a time -----------------------------------------
+//
+// A walk that kept every ancestor open would trade PATH_MAX for the
+// descriptor limit. fts holds only the directory it is in and climbs back
+// through `..`, checking that what it reaches is the directory it left —
+// the tree moving under the walk is an error, never a redirection. `let_go`
+// and `take_back` are those two halves.
+
+// What a walk let go of while it is below it.
+pub struct Parent { at: At, closed: boolean, dev: i64, ino: i64 }
+
+// Closes the directory `a` is held by, remembering which directory it was.
+// One that cannot be told apart from another by its stat is kept open.
+pub function let_go(a: At): Parent {
+  match (a.dir) {
+    Some(d) => {
+      match (d.lstat(".")) {
+        Ok(st) => {
+          d.close();
+          return Parent { at: a, closed: true, dev: st.dev, ino: st.ino };
+        },
+        Err(_) => {}
+      }
+    },
+    None => {}
+  }
+  return Parent { at: a, closed: false, dev: 0 as i64, ino: 0 as i64 };
+}
+
+// `p`'s directory again, reopened as `child`'s `..`. NotFound when that is no
+// longer the directory let go of, which is the errno fts reports for it.
+pub function take_back(p: Parent, child: Dir): Result[At, IoError] {
+  if (!p.closed) {
+    return Ok(p.at);
+  }
+  match (climb(child, p.dev, p.ino)) {
+    Ok(up) => {
+      return Ok(At { dir: Some(up), name: p.at.name });
+    },
+    Err(e) => {
+      return Err(e);
+    }
+  }
+}
+
+// `child`'s `..`, which must be the directory `dev` / `ino` name.
+pub function climb(child: Dir, dev: i64, ino: i64): Result[Dir, IoError] {
+  match (child.open_dir("..")) {
+    Ok(up) => {
+      match (up.lstat(".")) {
+        Ok(st) => {
+          if (st.dev == dev && st.ino == ino) {
+            return Ok(up);
+          }
+          up.close();
+          return Err(NotFound(".."));
+        },
+        Err(e) => {
+          up.close();
+          return Err(e);
+        }
+      }
+    },
+    Err(e) => {
+      return Err(e);
+    }
+  }
+}
+
 // ---- components ------------------------------------------------------------
 //
 // The three rules for walking a path one component at a time, shared

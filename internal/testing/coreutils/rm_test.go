@@ -334,6 +334,10 @@ func rmCases(t *testing.T) []invocation {
 		{name: "a tree with -R", args: []string{"-Rv", "d"}, seedTree: rmTree},
 		{name: "a tree with --recursive", args: []string{"--recursive", "-v", "d"}, seedTree: rmTree},
 		{name: "a deep tree unwinds post-order", args: []string{"-rv", "d"}, seedTree: rmDeep},
+		// fd-relative, as GNU's fts is: the full path to the bottom is longer
+		// than PATH_MAX, and only the messages ever spell it out (#9074).
+		{name: "a tree deeper than PATH_MAX", args: []string{"-r", "deep"}, seedTree: seedDeepTree},
+		{name: "a tree deeper than PATH_MAX, verbosely", args: []string{"-rv", "deep"}, seedTree: seedDeepTree},
 		// Neither side sorts, so `-v` prints raw readdir order.
 		{name: "26 names in readdir order", args: []string{"-rv", "d"}, seedTree: rmWide},
 		{name: "files and directories interleaved", args: []string{"-rv", "d"}, seedTree: rmMixed},

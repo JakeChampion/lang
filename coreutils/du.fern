@@ -45,6 +45,7 @@ import "./lib/fnmatch";
 import "./lib/timefmt";
 import "std/tz";
 import "./lib/blocks";
+import "./lib/fts";
 
 function opt_null(): i32 {
   return 1;
@@ -259,13 +260,6 @@ function excluded(c: Conf, name: string): boolean {
 }
 
 // ---- the walk --------------------------------------------------------------
-function join_path(dir: string, name: string): string {
-  if (dir.len() > 0 && dir[dir.len() - 1] as i32 == 47) {
-    return dir + name;
-  }
-  return dir + "/" + name;
-}
-
 // The operand with every trailing slash removed — the prefix its
 // children are named with. A name that is nothing but slashes keeps
 // one, and `//` keeps both: the kernel treats it as a root of its own.
@@ -396,7 +390,14 @@ function emit(c: Conf, o: io_buffered.BufWriter, size: u64, tsec: i64, tnsec: i6
 // line will print, which is the same number unless -S left the
 // subdirectories out of it. Each carries the newest stamp counted into
 // it, for --time.
-struct Frame { path: string, display: string, names: string[], idx: i32, depth: i32, dev: i64, ino: i64, full: u64, shown: u64, ftime: i64, fnsec: i64, stime: i64, snsec: i64 }
+//
+// `dir` holds the directory open so its children are looked at by base
+// name. Only the top frame holds one: a frame below is `released` while
+// the walk is deeper, and climbed back to through `..` (fts.climb) when the
+// frame above it is done, so the walk is bounded by neither PATH_MAX nor
+// the descriptor limit. A -L walk follows symlinks, so it holds nothing and
+// reaches every entry by path, as fts's logical walk does.
+struct Frame { path: string, display: string, dir: Option[Dir], released: boolean, names: string[], idx: i32, depth: i32, dev: i64, ino: i64, full: u64, shown: u64, ftime: i64, fnsec: i64, stime: i64, snsec: i64 }
 
 // `walk` — every operand, and everything under each of them.
 //
@@ -407,24 +408,22 @@ struct Frame { path: string, display: string, names: string[], idx: i32, depth: 
 // stack is explicit for the same reason, and it costs nothing that
 // matters — a deep tree is a longer array rather than a deeper frame.
 //
-// The one thing this cannot do is walk PAST `PATH_MAX`: every primitive
-// here takes a path, so a component 8 KiB down is `File name too long`
-// where GNU's fts, which opens each directory and reads it fd-relative,
-// keeps going (#9078). That tree reports what it could read and exits 1,
-// the same shape an unreadable directory has.
+// A directory that moved under the walk, so that climbing back out of a
+// child does not reach it, stops the walk with `fts_read failed`, as GNU's.
 //
 // Returns the exit status.
 function walk(c: Conf, names: string[], have_files0: boolean, list_name: string, from_stdin: boolean): i32 {
   let out: io_buffered.BufWriter = gnu.out_new();
   let seen: Map[string, i32] = map_new(1024);
   let failed: boolean = false;
+  let aborted: boolean = false;
   let grand: u64 = 0 as u64;
   let gtime: i64 = 0 as i64;
   let gnsec: i64 = 0 as i64;
   let stack: Frame[] = [];
 
   let oi: i32 = 0;
-  while (oi < names.len()) {
+  while (oi < names.len() && !aborted) {
     let arg: string = names[oi];
     let ordinal: i32 = oi + 1;
     oi = oi + 1;
@@ -491,6 +490,7 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
     // child the stack's top frame hands over.
     let pending: boolean = true;
     let p_path: string = walk_base(arg);
+    let p_at: fts.At = fts.at_path(p_path);
     let p_display: string = display;
     let p_st: FileStat = st;
     let p_depth: i32 = 0;
@@ -506,7 +506,7 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
     let tnsec: i64 = 0 as i64;
     let thave: boolean = false;
 
-    while (pending || owed || sp > 0) {
+    while ((pending || owed || sp > 0) && !aborted) {
       if (owed) {
         owed = false;
         if (sp > 0) {
@@ -584,16 +584,59 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
             continue;
           }
           let kids: string[] = [];
-          match (read_dir(p_path)) {
-            Ok(es) => {
-              kids = es;
+          let held: Option[Dir] = None;
+          let unread: Option[IoError] = None;
+          match (fts.open_at(p_at)) {
+            Ok(d) => {
+              match (d.entries()) {
+                Ok(es) => {
+                  kids = es;
+                  held = Some(d);
+                },
+                Err(e) => {
+                  d.close();
+                  unread = Some(e);
+                }
+              }
             },
             Err(e) => {
-              out = gnu.error_out(out, "cannot read directory " + gnu.quotea(p_display) + ": " + gnu.io_error_text(e));
-              failed = true;
+              unread = Some(e);
             }
           }
-          let pushed: Frame = Frame { path: p_path, display: p_display, names: kids, idx: 0, depth: p_depth, dev: p_st.dev, ino: p_st.ino, full: own, shown: own, ftime: stamp.0, fnsec: stamp.1, stime: stamp.0, snsec: stamp.1 };
+          match (unread) {
+            Some(e) => {
+              out = gnu.error_out(out, "cannot read directory " + gnu.quotea(p_display) + ": " + gnu.io_error_text(e));
+              failed = true;
+            },
+            None => {}
+          }
+          if (c.deref == deref_all()) {
+            match (held) {
+              Some(d) => {
+                d.close();
+              },
+              None => {}
+            }
+            held = None;
+          }
+          // Holding this directory, the walk lets go of the one it is in
+          // until it climbs back out.
+          match (held) {
+            Some(_) => {
+              if (sp > 0) {
+                let par: Frame = stack[sp - 1];
+                match (par.dir) {
+                  Some(pd) => {
+                    pd.close();
+                    stack = stack.with(sp - 1, Frame { ...par, dir: None, released: true });
+                  },
+                  None => {}
+                }
+              }
+            },
+            None => {}
+          }
+          let pushed: Frame = Frame { path: p_path, display: p_display, dir: held, released: false, names: kids, idx: 0, depth: p_depth, dev: p_st.dev, ino: p_st.ino, full: own, shown: own, ftime: stamp.0, fnsec: stamp.1, stime: stamp.0, snsec: stamp.1 };
           if (sp < stack.len()) {
             stack = stack.with(sp, pushed);
           } else {
@@ -620,6 +663,25 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
         if (wants_line(c, top.depth, true) && passes_threshold(c, top.shown)) {
           out = emit(c, out, top.shown, top.stime, top.snsec, top.display);
         }
+        match (top.dir) {
+          Some(d) => {
+            if (sp > 0 && stack[sp - 1].released) {
+              let par: Frame = stack[sp - 1];
+              match (fts.climb(d, par.dev, par.ino)) {
+                Ok(up) => {
+                  stack = stack.with(sp - 1, Frame { ...par, dir: Some(up), released: false });
+                },
+                Err(e) => {
+                  out = gnu.error_out(out, "fts_read failed: " + gnu.quotef(par.display) + ": " + gnu.io_error_text(e));
+                  failed = true;
+                  aborted = true;
+                }
+              }
+            }
+            d.close();
+          },
+          None => {}
+        }
         owed = true;
         o_size = top.full;
         o_time = top.ftime;
@@ -629,14 +691,21 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
       }
       let nm: string = top.names[top.idx];
       stack = stack.with(sp - 1, Frame { ...top, idx: top.idx + 1 });
-      let cpath: string = join_path(top.path, nm);
-      let cname: string = join_path(top.display, nm);
+      let cpath: string = fts.child_path(top.path, nm);
+      let cname: string = fts.child_path(top.display, nm);
       if (excluded(c, cname)) {
         continue;
       }
+      let cat: fts.At = fts.at_path(cpath);
+      match (top.dir) {
+        Some(d) => {
+          cat = fts.at_child(d, nm);
+        },
+        None => {}
+      }
       let cst: FileStat = zero_stat();
       let cgot: boolean = false;
-      match (lstat(cpath)) {
+      match (fts.lstat_at(cat)) {
         Ok(s) => {
           cst = s;
           cgot = true;
@@ -651,7 +720,7 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
       }
       if (c.deref == deref_all() && is_symlink(cst)) {
         let cres: boolean = false;
-        match (stat(cpath)) {
+        match (fts.stat_at(cat)) {
           Ok(s) => {
             cst = s;
             cres = true;
@@ -672,6 +741,7 @@ function walk(c: Conf, names: string[], have_files0: boolean, list_name: string,
         continue;
       }
       p_path = cpath;
+      p_at = cat;
       p_display = cname;
       p_st = cst;
       p_depth = top.depth + 1;

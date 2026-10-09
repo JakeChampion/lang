@@ -372,6 +372,7 @@ func chmodCases(t *testing.T) []invocation {
 		{name: "nothing to block, nothing to say", args: []string{"-w", "f"}, seedTree: chmodFlat},
 		{name: "on a directory", args: []string{"-w", "sd"}, seedTree: chmodFlat},
 		{name: "under -R", args: []string{"-R", "-w", "t"}, seedTree: chmodTree},
+		{name: "under -R, deeper than PATH_MAX", args: []string{"-Rv", "go-rx", "deep"}, seedTree: seedDeepTree},
 
 		// ---- errors ------------------------------------------------------
 		{name: "a missing file", args: []string{"0644", "nosuch"}, seedTree: chmodFlat},

@@ -22,8 +22,10 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"sort"
@@ -1437,19 +1439,18 @@ func openTreeForCleanup(root string) {
 }
 
 // openTreeForWalk makes every entry under root readable and returns the
-// permission bits each one had, keyed by path, for the ones it changed.
+// permission bits each one had, keyed by its name relative to root, for the
+// ones it changed.
 //
 // A utility can be ASKED to leave an entry nobody may read — `mkdir -m 0`,
 // `chmod 0 f`, or any mode under a mask that takes owner r-x off — and the
 // tree still has to be compared. As root that is invisible, which is why this was missed
 // locally and failed on CI as an ordinary user.
 //
-// It cannot be done inside the walk: filepath.Walk reads a directory's names
-// BEFORE it calls the callback for that directory, so the callback only ever
-// sees the failure. The pass is therefore top-down and ahead of the walk,
-// recording each original mode before opening it, and the walk reports the
-// recorded one. Nothing is restored: the mode has been captured, and
-// t.TempDir's own cleanup has to get in here too.
+// The pass is top-down and ahead of the walk, recording each original mode
+// before opening it, and the walk reports the recorded one. Nothing is
+// restored: the mode has been captured, and t.TempDir's own cleanup has to
+// get in here too.
 func openTreeForWalk(t *testing.T, root string) map[string]uint32 {
 	t.Helper()
 	opened := map[string]uint32{}
@@ -1458,14 +1459,19 @@ func openTreeForWalk(t *testing.T, root string) map[string]uint32 {
 	// made it unsearchable — `chmod -R 0 .` — and then nothing below it
 	// can be reached at all.
 	_ = os.Chmod(root, 0o700)
-	var descend func(dir string)
-	descend = func(dir string) {
-		entries, err := os.ReadDir(dir)
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		return opened
+	}
+	defer r.Close()
+	var descend func(dir *os.Root, rel string)
+	descend = func(dir *os.Root, rel string) {
+		entries, err := fs.ReadDir(dir.FS(), ".")
 		if err != nil {
 			return
 		}
 		for _, entry := range entries {
-			path := filepath.Join(dir, entry.Name())
+			name := path.Join(rel, entry.Name())
 			info, err := entry.Info()
 			if err != nil {
 				continue
@@ -1481,80 +1487,107 @@ func openTreeForWalk(t *testing.T, root string) map[string]uint32 {
 				continue
 			}
 			if perm := permBits(mode); perm&need != need {
-				opened[path] = perm
-				if err := os.Chmod(path, os.FileMode(perm|0o700)); err != nil {
-					t.Fatalf("open %s so the tree can be read: %v", path, err)
+				opened[name] = perm
+				if err := dir.Chmod(entry.Name(), os.FileMode(perm|0o700)); err != nil {
+					t.Fatalf("open %s so the tree can be read: %v", name, err)
 				}
 			}
 			if entry.IsDir() {
-				descend(path)
+				sub, err := dir.OpenRoot(entry.Name())
+				if err != nil {
+					continue
+				}
+				descend(sub, name)
+				sub.Close()
 			}
 		}
 	}
-	descend(root)
+	descend(r, "")
 	return opened
 }
 
+// readTreeInto walks the tree a directory handle at a time (os.Root), so a
+// tree deeper than PATH_MAX — the one a walk that is not bounded by it
+// leaves behind — is compared like any other.
 func readTreeInto(t *testing.T, root, prefix string, groups map[[2]uint64]int, opts treeOpts) []treeEntry {
 	t.Helper()
 	opened := openTreeForWalk(t, root)
+	r, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatalf("read the tree under %s: %v", root, err)
+	}
+	defer r.Close()
 	var out []treeEntry
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+	var walk func(dir *os.Root, rel string) error
+	walk = func(dir *os.Root, rel string) error {
+		entries, err := fs.ReadDir(dir.FS(), ".")
 		if err != nil {
 			return err
 		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		if rel == "." {
-			return nil
-		}
-		mode := info.Mode()
-		e := treeEntry{name: prefix + rel, kind: treeKind(mode), mode: permBits(mode), blocks: -1}
-		if opts.ownership {
-			e.owner = ownerOf(t, path, info)
-		}
-		if opts.context {
-			e.selinux = entryContext(path)
-		}
-		if was, ok := opened[path]; ok {
-			// Reopened below so the walk could enter it; the mode the
-			// utility actually left is the one recorded here.
-			e.mode = was
-		}
-		switch {
-		case mode&os.ModeSymlink != 0:
-			target, err := os.Readlink(path)
+		for _, entry := range entries {
+			base := entry.Name()
+			name := path.Join(rel, base)
+			info, err := dir.Lstat(base)
 			if err != nil {
 				return err
 			}
-			e.target = target
-		case mode&os.ModeDevice != 0:
-			if st, ok := info.Sys().(*syscall.Stat_t); ok {
-				e.rdev = uint64(st.Rdev)
+			mode := info.Mode()
+			e := treeEntry{name: prefix + name, kind: treeKind(mode), mode: permBits(mode), blocks: -1}
+			if opts.ownership {
+				e.owner = ownerOf(t, name, info)
 			}
-		case mode.IsRegular():
-			e.group = linkGroup(info, groups)
-			if opts.sparse {
-				if st, ok := info.Sys().(*syscall.Stat_t); ok {
-					e.blocks = st.Blocks
-				}
+			if opts.context {
+				e.selinux = entryContext(filepath.Join(root, name))
 			}
-			if info.Size() > 1<<22 {
-				e.content = fmt.Sprintf("<%d bytes>", info.Size())
-			} else {
-				b, err := os.ReadFile(path)
+			if was, ok := opened[name]; ok {
+				// Reopened so the walk could enter it; the mode the
+				// utility actually left is the one recorded here.
+				e.mode = was
+			}
+			switch {
+			case mode&os.ModeSymlink != 0:
+				target, err := dir.Readlink(base)
 				if err != nil {
 					return err
 				}
-				e.content = string(b)
+				e.target = target
+			case mode&os.ModeDevice != 0:
+				if st, ok := info.Sys().(*syscall.Stat_t); ok {
+					e.rdev = uint64(st.Rdev)
+				}
+			case mode.IsRegular():
+				e.group = linkGroup(info, groups)
+				if opts.sparse {
+					if st, ok := info.Sys().(*syscall.Stat_t); ok {
+						e.blocks = st.Blocks
+					}
+				}
+				if info.Size() > 1<<22 {
+					e.content = fmt.Sprintf("<%d bytes>", info.Size())
+				} else {
+					b, err := dir.ReadFile(base)
+					if err != nil {
+						return err
+					}
+					e.content = string(b)
+				}
+			}
+			out = append(out, e)
+			if mode.IsDir() {
+				sub, err := dir.OpenRoot(base)
+				if err != nil {
+					return err
+				}
+				err = walk(sub, name)
+				sub.Close()
+				if err != nil {
+					return err
+				}
 			}
 		}
-		out = append(out, e)
 		return nil
-	})
-	if err != nil {
+	}
+	if err := walk(r, ""); err != nil {
 		t.Fatalf("read the tree under %s: %v", root, err)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })

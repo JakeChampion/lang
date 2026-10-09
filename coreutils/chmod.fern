@@ -45,17 +45,13 @@
 // joined with commas in argv order (`-r -w` is `-r,-w`), and once the mode
 // has come from options the first operand is a FILE rather than a mode.
 //
-// ---- the one thing this cannot do -------------------------------------------
+// ---- fd-relative ------------------------------------------------------------
 //
-// GNU's fts is fd-relative — it holds a descriptor on each directory and
-// calls fchmodat against it — so a tree renamed underneath a running
-// `chmod -R` cannot be tricked into chmod'ing something outside it, and a
-// path longer than PATH_MAX is still reachable. The runtime has no
-// fd-relative traversal (#9074 / #9078), so the walk below concatenates
-// paths: it meets ENAMETOOLONG partway down a tree GNU finishes, and a
-// concurrent rename of an interior directory can redirect a chmod to another
-// subtree. Nothing in the corpus renames anything under a running chmod, so
-// the two agree there; the gap is real all the same.
+// Like GNU's fts, a physical walk holds the directory it is in and calls
+// fchmodat against it by base name (lib/fts.fern's `At`), so a path longer
+// than PATH_MAX is reachable, and a directory renamed under a running
+// `chmod -R` stops the walk (`fts_read failed`) rather than redirecting it.
+// A logical walk (-L) reaches entries by path, as fts's does.
 import "std/array";
 import "std/errno";
 import "./lib/gnu";
@@ -161,7 +157,7 @@ struct Target { changes: mode.Changes, fixed: i32, has_fixed: boolean, mask: i32
 
 // The whole of the mutable state: the stdio stream `-v` writes through, and
 // the exit status a diagnostic turns to 1.
-struct St { out: gnu.Stdio, status: i32 }
+struct St { out: gnu.Stdio, status: i32, aborted: boolean }
 
 function help_text(): string {
   let out: string = "";
@@ -292,13 +288,13 @@ function fail_quiet(st: St, s: Settings, msg: string): St {
   if (s.quiet) {
     return St { ...st, status: 1 };
   }
-  return St { out: st.out.report(msg), status: 1 };
+  return St { ...st, out: st.out.report(msg), status: 1 };
 }
 
 // A diagnostic `-f` does NOT silence: the root failsafe, a `--reference` that
 // cannot be read, and the umask complaint.
 function fail_loud(st: St, msg: string): St {
-  return St { out: st.out.report(msg), status: 1 };
+  return St { ...st, out: st.out.report(msg), status: 1 };
 }
 
 function say(st: St, s: Settings, line: string): St {
@@ -364,7 +360,7 @@ function target_mode(t: Target, old: i32, is_dir: boolean): (i32, i32, boolean) 
 // command-line link is followed by the walk whatever the change lands
 // on, so `-hv` on one prints the referent's old mode on Darwin, as GNU's
 // fts entry does.
-function change_one(st0: St, s: Settings, t: Target, path: string, info: FileStat, link: Option[FileStat], follows: boolean): St {
+function change_one(st0: St, s: Settings, t: Target, a: fts.At, path: string, info: FileStat, link: Option[FileStat], follows: boolean): St {
   let st: St = st0;
   let on_link: boolean = false;
   match (link) {
@@ -379,7 +375,7 @@ function change_one(st0: St, s: Settings, t: Target, path: string, info: FileSta
   let is_dir: boolean = filetype.is_dir(info.mode);
   let r: (i32, i32, boolean) = target_mode(t, old, is_dir);
   let wanted: i32 = r.0;
-  match (chmod_at(path, wanted, !on_link)) {
+  match (fts.chmod_at_at(a, wanted, !on_link)) {
     Ok(_) => {
       if (s.verbosity == v_all() || s.verbosity == v_changes() && wanted != old) {
         st = St { ...st, out: st.out.fwrite(describe(path, old, wanted)) };
@@ -423,16 +419,16 @@ function describe(path: string, old: i32, wanted: i32): string {
 // the CHANGE lands on the link or on what it points at. `top` marks a
 // command-line operand, which is the level -H follows at and the only
 // one the root failsafe is asked about.
-function process(st0: St, s: Settings, t: Target, path: string, top: boolean): St {
+function process(st0: St, s: Settings, t: Target, a: fts.At, path: string, top: boolean): (St, fts.At) {
   let st: St = st0;
   // What the walk sees: the target's type when this link is one it
   // follows, and the link itself otherwise.
   let followed: boolean = s.traverse == trav_logical() || top && s.traverse != trav_physical();
   let lands: boolean = s.deref == 1 || s.deref == deref_unset() && top;
   if (followed) {
-    match (stat(path)) {
+    match (fts.stat_at(a)) {
       Ok(info) => {
-        return visit(st, s, t, path, info, link_stat(path), lands, top);
+        return visit(st, s, t, a, path, info, link_stat(a), lands, top);
       },
       Err(e) => {
         // A symlink whose target is not there is its own wording; every other
@@ -440,49 +436,50 @@ function process(st0: St, s: Settings, t: Target, path: string, top: boolean): S
         // directory — is the plain one. `-h` has nothing to dereference, so
         // the change lands on the dangling link itself.
         if (errno.of(e) == errno.ENOENT) {
-          match (link_stat(path)) {
+          match (link_stat(a)) {
             Some(l) => {
               if (s.deref == 0) {
-                return visit(st, s, t, path, l, Some(l), false, top);
+                return visit(st, s, t, a, path, l, Some(l), false, top);
               }
-              return unreachable(st, s, path, "cannot operate on dangling symlink " + gnu.quotea(path));
+              return (unreachable(st, s, path, "cannot operate on dangling symlink " + gnu.quotea(path)), a);
             },
             None => {}
           }
         }
-        return unreachable(st, s, path, "cannot access " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
+        return (unreachable(st, s, path, "cannot access " + gnu.quotea(path) + ": " + gnu.io_error_text(e)), a);
       }
     }
   }
-  match (lstat(path)) {
+  match (fts.lstat_at(a)) {
     Ok(info) => {
       if (!filetype.is_link(info.mode)) {
-        return visit(st, s, t, path, info, None, lands, top);
+        return visit(st, s, t, a, path, info, None, lands, top);
       }
       if (s.deref == 1) {
         // The walk did not follow it but the change does, so the mode
         // reported is the referent's.
-        match (stat(path)) {
+        match (fts.stat_at(a)) {
           Ok(target) => {
-            return visit(st, s, t, path, target, Some(info), true, top);
+            return visit(st, s, t, a, path, target, Some(info), true, top);
           },
           Err(e) => {
-            return unreachable(st, s, path, "cannot dereference " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
+            return (unreachable(st, s, path, "cannot dereference " + gnu.quotea(path) + ": " + gnu.io_error_text(e)), a);
           }
         }
       }
-      return visit(st, s, t, path, info, Some(info), lands, top);
+      return visit(st, s, t, a, path, info, Some(info), lands, top);
     },
     Err(e) => {
-      return unreachable(st, s, path, "cannot access " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
+      return (unreachable(st, s, path, "cannot access " + gnu.quotea(path) + ": " + gnu.io_error_text(e)), a);
     }
   }
+  return (st, a);
 }
 
-// The link's own stat when `path` names a symbolic link, which is what a
+// The link's own stat when `a` names a symbolic link, which is what a
 // change that does not follow it lands on.
-function link_stat(path: string): Option[FileStat] {
-  match (lstat(path)) {
+function link_stat(a: fts.At): Option[FileStat] {
+  match (fts.lstat_at(a)) {
     Ok(info) => {
       if (filetype.is_link(info.mode)) {
         return Some(info);
@@ -495,34 +492,88 @@ function link_stat(path: string): Option[FileStat] {
   }
 }
 
-// One entry that was reached. `info` is what the walk saw — the referent's
-// stat when it followed the link — and `link` the link's own when the name
-// is one. The directory is chmod'ed BEFORE its children are read, which is
-// the order GNU's pre-order walk imposes.
-function visit(st0: St, s: Settings, t: Target, path: string, info: FileStat, link: Option[FileStat], follows: boolean, top: boolean): St {
+// One entry that was reached, at `a` and named `path`. `info` is what the
+// walk saw — the referent's stat when it followed the link — and `link` the
+// link's own when the name is one. The directory is chmod'ed BEFORE its
+// children are read, which is the order GNU's pre-order walk imposes.
+//
+// Below a directory the walk holds only that directory: `a`'s is let go of
+// and climbed back to through `..`, and the `At` handed back holds it by the
+// descriptor that took it back. A logical walk (-L) reaches every entry by
+// path instead, as fts does.
+function visit(st0: St, s: Settings, t: Target, a: fts.At, path: string, info: FileStat, link: Option[FileStat], follows: boolean, top: boolean): (St, fts.At) {
   let st: St = st0;
   if (top && s.recursive && s.preserve_root && filetype.is_dir(info.mode) && is_root_dir(info)) {
-    return refuse_root(st, path);
+    return (refuse_root(st, path), a);
   }
-  st = change_one(st, s, t, path, info, link, follows);
+  st = change_one(st, s, t, a, path, info, link, follows);
   if (!s.recursive || !filetype.is_dir(info.mode)) {
-    return st;
+    return (st, a);
   }
-  match (read_dir(path)) {
-    Ok(names) => {
-      let i: i32 = 0;
-      while (i < names.len()) {
-        st = process(st, s, t, fts.child_path(path, names[i]), false);
-        i = i + 1;
+  match (fts.open_at(a)) {
+    Ok(d) => {
+      match (d.entries()) {
+        Ok(names) => {
+          return visit_children(st, s, t, a, path, d, names);
+        },
+        Err(e) => {
+          d.close();
+          return (cannot_read(st, s, path, e), a);
+        }
       }
     },
     Err(e) => {
-      // A directory whose children cannot be listed has its own wording,
-      // where an entry that could not be STATTED is `cannot access`.
-      st = unreachable(st, s, path, "cannot read directory " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
+      return (cannot_read(st, s, path, e), a);
     }
   }
-  return st;
+  return (st, a);
+}
+
+// A directory whose children cannot be listed has its own wording, where an
+// entry that could not be STATTED is `cannot access`.
+function cannot_read(st: St, s: Settings, path: string, e: IoError): St {
+  return unreachable(st, s, path, "cannot read directory " + gnu.quotea(path) + ": " + gnu.io_error_text(e));
+}
+
+// Every name in the directory `held`, which `a` names.
+function visit_children(st0: St, s: Settings, t: Target, a: fts.At, path: string, held: Dir, names: string[]): (St, fts.At) {
+  let st: St = st0;
+  let d: Dir = held;
+  let logical: boolean = s.traverse == trav_logical();
+  let parent: fts.Parent = fts.let_go(a);
+  let i: i32 = 0;
+  while (i < names.len() && !st.aborted) {
+    let cpath: string = fts.child_path(path, names[i]);
+    let ca: fts.At = fts.at_child(d, names[i]);
+    if (logical) {
+      ca = fts.at_path(cpath);
+    }
+    let r: (St, fts.At) = process(st, s, t, ca, cpath, false);
+    st = r.0;
+    if (!logical) {
+      match (r.1.dir) {
+        Some(back) => {
+          d = back;
+        },
+        None => {}
+      }
+    }
+    i = i + 1;
+  }
+  if (st.aborted) {
+    return (st, a);
+  }
+  match (fts.take_back(parent, d)) {
+    Ok(back) => {
+      d.close();
+      return (st, back);
+    },
+    Err(e) => {
+      d.close();
+      return (St { ...fail_quiet(st, s, "fts_read failed: " + gnu.io_error_text(e)), aborted: true }, a);
+    }
+  }
+  return (st, a);
 }
 
 // ---- main ------------------------------------------------------------------
@@ -569,7 +620,7 @@ pub function main(): i32 {
   } else if (files.len() == 0) {
     gnu.die_usage("missing operand", 1);
   }
-  let st: St = St { out: gnu.stdio_new(), status: 0 };
+  let st: St = St { out: gnu.stdio_new(), status: 0, aborted: false };
   let t: Target = Target { changes: mode.Changes { list: [] }, fixed: 0, has_fixed: false, mask: current_umask(), from_option: p.has_mode };
   if (p.has_reference) {
     match (stat(p.reference)) {
@@ -592,8 +643,9 @@ pub function main(): i32 {
     }
   }
   let i: i32 = 0;
-  while (i < files.len()) {
-    st = process(st, s, t, fts.trim(files[i]), true);
+  while (i < files.len() && !st.aborted) {
+    let path: string = fts.trim(files[i]);
+    st = process(st, s, t, fts.at_path(path), path, true).0;
     i = i + 1;
   }
   st.out.close_stdout();

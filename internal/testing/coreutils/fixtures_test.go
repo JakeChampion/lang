@@ -3,6 +3,7 @@ package coreutils
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -29,6 +30,45 @@ func seedWrite(t *testing.T, dir, name, content string) {
 	if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644); err != nil {
 		t.Fatalf("write %s: %v", name, err)
 	}
+}
+
+// seedDeep makes dir/name holding a chain of deepLevels directories named
+// deepName and a file at the bottom: about 6 KiB of path, past
+// PATH_MAX on both kernels. It is built a directory handle at a time, so no
+// path to the bottom is ever formed.
+func seedDeep(t *testing.T, dir, name string) {
+	t.Helper()
+	r, err := os.OpenRoot(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	step := name
+	for i := 0; i <= deepLevels; i++ {
+		if err := r.Mkdir(step, 0o755); err != nil {
+			t.Fatalf("seed the deep tree: %v", err)
+		}
+		next, err := r.OpenRoot(step)
+		r.Close()
+		if err != nil {
+			t.Fatalf("seed the deep tree: %v", err)
+		}
+		r = next
+		step = deepName
+	}
+	defer r.Close()
+	if err := r.WriteFile("leaf", []byte("leaf\n"), 0o644); err != nil {
+		t.Fatalf("seed the deep tree: %v", err)
+	}
+}
+
+const deepLevels = 60
+
+var deepName = strings.Repeat("d", 100)
+
+// seedDeepTree is seedDeep as a seedTree: the chain under `deep`.
+func seedDeepTree(t *testing.T, dir string) {
+	t.Helper()
+	seedDeep(t, dir, "deep")
 }
 
 func seedMkdir(t *testing.T, dir, name string) {

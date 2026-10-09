@@ -164,6 +164,7 @@ func chownOptionCases(add func(invocation), good string) {
 	add(invocation{name: "recursive dereference with a file", args: []string{"-R", "--dereference", good, "f"}, seedTree: chownTree, ownership: true})
 	add(invocation{name: "recursive dereference with H", args: []string{"-R", "--dereference", "-H", good, "d"}, seedTree: chownTree, ownership: true})
 	add(invocation{name: "recursive dereference with L", args: []string{"-R", "--dereference", "-L", good, "d"}, seedTree: chownTree, ownership: true})
+	add(invocation{name: "recursive, deeper than PATH_MAX", args: []string{"-Rv", good, "deep"}, seedTree: seedDeepTree, ownership: true})
 }
 
 // chownRootCases are the --preserve-root failsafe. They name `/` and are safe

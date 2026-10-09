@@ -110,6 +110,9 @@ func duTree(t *testing.T) string {
 	duWrite(t, j("a", "f2"), 5000)
 	duLink(t, "sub", j("a", "dirlink"))
 
+	// `pathmax` — a chain past PATH_MAX, which fts walks fd-relative (#9074).
+	seedDeep(t, dir, "pathmax")
+
 	// `b` — two names for one inode, which du counts once and `-l` twice.
 	duMkdir(t, j("b"))
 	duWrite(t, j("b", "file"), 3)
@@ -246,6 +249,8 @@ func duCases(t *testing.T) []invocation {
 	add("plain", "a")
 	add("all", "-a", "a")
 	add("summarize", "-s", "a")
+	add("deeper than PATH_MAX", "pathmax")
+	add("all, deeper than PATH_MAX", "-a", "pathmax")
 	add("empty-dir", "empty")
 	add("file-operand", "a/f1")
 	add("all-file-operand", "-a", "a/f1")

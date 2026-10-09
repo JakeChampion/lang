@@ -36,14 +36,12 @@
 //
 // Declining is never an error: every prompt path exits 0.
 //
-// ---- the one thing this cannot do -----------------------------------
+// ---- fd-relative ------------------------------------------------------
 //
-// GNU's fts is fd-relative (openat / unlinkat / fdopendir against a
-// directory descriptor), so it removes a tree whose full path is
-// longer than PATH_MAX. The runtime has no fd-relative traversal, so
-// the walk below concatenates paths and meets ENAMETOOLONG partway
-// down such a tree where GNU does not (#9074). Nothing shallower is
-// affected.
+// Like GNU's fts, the walk holds the directory it is in and removes each
+// entry by its base name inside it (lib/fts.fern's `At`), so a tree
+// whose full path is longer than PATH_MAX is removed whole. The path in
+// every message is only ever printed.
 import "std/errno";
 import "./lib/filetype";
 import "./lib/fts";
@@ -162,8 +160,9 @@ function res_mark(): i32 {
 struct Settings { interactive: i32, ignore_missing: boolean, one_file_system: boolean, preserve_root: boolean, preserve_all: boolean, recursive: boolean, dir: boolean, verbose: boolean, tty: boolean }
 
 // The whole of the mutable state: the stdio stream `-v` writes
-// through, and the exit status a diagnostic turns to 1.
-struct St { out: gnu.Stdio, status: i32 }
+// through, the exit status a diagnostic turns to 1, and whether the walk
+// stopped because the tree moved under it.
+struct St { out: gnu.Stdio, status: i32, aborted: boolean }
 
 function help_text(): string {
   let out: string = "";
@@ -241,7 +240,7 @@ function nonexistent_errno(e: IoError): boolean {
 }
 
 function fail(st: St, msg: string): St {
-  return St { out: st.out.report(msg), status: 1 };
+  return St { ...st, out: st.out.report(msg), status: 1 };
 }
 
 function cannot_remove(st: St, path: string, e: IoError): St {
@@ -253,11 +252,11 @@ function cannot_remove(st: St, path: string, e: IoError): St {
 // that decide whether the link can be unlinked — and only EACCES
 // counts, so a name that went away between the stat and here is left
 // to the removal to report.
-function write_protected(path: string, mode: u32): boolean {
+function write_protected(a: fts.At, mode: u32): boolean {
   if (filetype.is_link(mode)) {
     return false;
   }
-  match (access(path, 2)) {
+  match (fts.access_at(a, 2)) {
     Ok(_) => {
       return false;
     },
@@ -280,14 +279,14 @@ function prompt_stats(s: Settings, top: boolean): boolean {
   return s.interactive == rmi_sometimes() && s.tty && !top;
 }
 
-// Whether rm asks before removing `path`, and the prompt it asks with.
-// `verb` is "remove" or "descend into"; `what` names the file's kind.
-// Returns true to go ahead.
-function confirm(s: Settings, path: string, mode: u32, verb: string, what: string): boolean {
+// Whether rm asks before removing the entry at `a`, named `path`, and the
+// prompt it asks with. `verb` is "remove" or "descend into"; `what` names
+// the file's kind. Returns true to go ahead.
+function confirm(s: Settings, a: fts.At, path: string, mode: u32, verb: string, what: string): boolean {
   if (s.interactive == rmi_never()) {
     return true;
   }
-  let wp: boolean = write_protected(path, mode);
+  let wp: boolean = write_protected(a, mode);
   if (s.interactive != rmi_always()) {
     if (!wp || !s.tty) {
       return true;
@@ -316,47 +315,46 @@ function verbose(st: St, s: Settings, path: string, is_dir: boolean): St {
 // for the root directory and for --preserve-root=all are its alone,
 // and --one-file-system is the other way round, skipping only what is
 // found BELOW one. `cl_dev` is the device of the operand this entry
-// was reached through.
-function rm_entry(st0: St, s: Settings, path: string, top: boolean, cl_dev: i64): (St, i32) {
+// was reached through. The entry is at `a` and named `path` in every
+// message; the `At` handed back is `a` again, holding its directory by
+// whatever descriptor the walk below it took that directory back with.
+function rm_entry(st0: St, s: Settings, a: fts.At, path: string, top: boolean, cl_dev: i64): (St, i32, fts.At) {
   let st: St = st0;
-  match (lstat(path)) {
+  match (fts.lstat_at(a)) {
     Err(why) => {
       if (prompt_stats(s, top)) {
-        return (cannot_remove(st, path, why), res_keep());
+        return (cannot_remove(st, path, why), res_keep(), a);
       }
       // Nothing was going to be stat'ed, so rm tries the removal and
       // the errno THAT fails with is the one reported: a dangling
       // `sl/` is `Not a directory` rather than ENOENT.
-      match (remove_file(path)) {
-        Ok(_) => {
-          return (verbose(st, s, path, false), res_ok());
-        },
-        Err(e) => {
-          if (s.ignore_missing && nonexistent_errno(e)) {
-            return (st, res_ok());
-          }
-          return (cannot_remove(st, path, e), res_mark());
-        }
-      }
+      let r: (St, i32) = unlink_entry(st, s, a, path);
+      return (r.0, r.1, a);
     },
     Ok(info) => {
       if (filetype.is_dir(info.mode)) {
-        return rm_dir(st, s, path, top, cl_dev, info);
+        return rm_dir(st, s, a, path, top, cl_dev, info);
       }
-      if (!confirm(s, path, info.mode, "remove", filetype.type_name(info.mode, info.size))) {
-        return (st, res_keep());
+      if (!confirm(s, a, path, info.mode, "remove", filetype.type_name(info.mode, info.size))) {
+        return (st, res_keep(), a);
       }
-      match (remove_file(path)) {
-        Ok(_) => {
-          return (verbose(st, s, path, false), res_ok());
-        },
-        Err(e) => {
-          if (s.ignore_missing && nonexistent_errno(e)) {
-            return (st, res_ok());
-          }
-          return (cannot_remove(st, path, e), res_mark());
-        }
+      let r: (St, i32) = unlink_entry(st, s, a, path);
+      return (r.0, r.1, a);
+    }
+  }
+  return (st, res_ok(), a);
+}
+
+function unlink_entry(st: St, s: Settings, a: fts.At, path: string): (St, i32) {
+  match (fts.remove_file_at(a)) {
+    Ok(_) => {
+      return (verbose(st, s, path, false), res_ok());
+    },
+    Err(e) => {
+      if (s.ignore_missing && nonexistent_errno(e)) {
+        return (st, res_ok());
       }
+      return (cannot_remove(st, path, e), res_mark());
     }
   }
   return (st, res_ok());
@@ -422,89 +420,147 @@ function crosses_device(path: string, info: FileStat): boolean {
   }
 }
 
-function rm_dir(st0: St, s: Settings, path: string, top: boolean, cl_dev: i64, info: FileStat): (St, i32) {
+function rm_dir(st0: St, s: Settings, a: fts.At, path: string, top: boolean, cl_dev: i64, info: FileStat): (St, i32, fts.At) {
   let st: St = st0;
+  let at: fts.At = a;
   let unread: Option[IoError] = None;
   let names: string[] = [];
+  let held: Option[Dir] = None;
   if (s.recursive || s.dir) {
-    match (read_dir(path)) {
-      Ok(es) => {
-        names = es;
+    match (fts.open_at(at)) {
+      Ok(d) => {
+        match (d.entries()) {
+          Ok(es) => {
+            names = es;
+            held = Some(d);
+          },
+          Err(e) => {
+            unread = Some(e);
+            d.close();
+          }
+        }
       },
       Err(e) => {
         unread = Some(e);
       }
     }
   }
-  let empty: boolean = names.len() == 0;
+  let descended: boolean = s.recursive && names.len() > 0;
   match (refuse_dir(st, s, path, top, cl_dev, info)) {
     Some(next) => {
-      return (next, res_mark());
+      close_held(held);
+      return (next, res_mark(), at);
     },
     None => {}
   }
   match (unread) {
     Some(e) => {
-      return rm_unreadable_dir(st, s, path, info, e);
+      let r: (St, i32) = rm_unreadable_dir(st, s, at, path, info, e);
+      return (r.0, r.1, at);
     },
     None => {}
   }
-  let descended: boolean = s.recursive && !empty;
-  if (descended) {
-    if (!confirm(s, path, info.mode, "descend into", "directory")) {
-      return (st, res_mark());
+  if (!descended) {
+    close_held(held);
+  } else {
+    if (!confirm(s, at, path, info.mode, "descend into", "directory")) {
+      close_held(held);
+      return (st, res_mark(), at);
     }
     let dev: i64 = cl_dev;
     if (top) {
       dev = info.dev;
     }
-    let below: (St, boolean) = rm_children(st, s, path, names, dev);
-    st = below.0;
-    if (below.1) {
-      return (st, res_mark());
+    match (held) {
+      Some(c) => {
+        // The directory this one is in is let go of while the walk is
+        // below it, and climbed back to through `..` after.
+        let parent: fts.Parent = fts.let_go(at);
+        let below: (St, boolean, Dir) = rm_children(st, s, c, path, names, dev);
+        st = below.0;
+        if (st.aborted) {
+          return (st, res_mark(), at);
+        }
+        match (fts.take_back(parent, below.2)) {
+          Ok(back) => {
+            at = back;
+          },
+          Err(e) => {
+            below.2.close();
+            return (abort(st, e), res_mark(), at);
+          }
+        }
+        below.2.close();
+        if (below.1) {
+          return (st, res_mark(), at);
+        }
+      },
+      None => {}
     }
   }
-  if (!confirm(s, path, info.mode, "remove", "directory")) {
+  if (!confirm(s, at, path, info.mode, "remove", "directory")) {
     // Declining a directory's FIRST visit — which for an empty one is
     // this prompt — leaves its ancestors alone as well; declining the
     // visit on the way back UP does not.
     if (descended) {
-      return (st, res_keep());
+      return (st, res_keep(), at);
     }
-    return (st, res_mark());
+    return (st, res_mark(), at);
   }
-  match (remove_dir(path)) {
+  match (fts.remove_dir_at(at)) {
     Ok(_) => {
-      return (verbose(st, s, path, true), res_ok());
+      return (verbose(st, s, path, true), res_ok(), at);
     },
     Err(e) => {
       if (s.ignore_missing && nonexistent_errno(e)) {
-        return (st, res_ok());
+        return (st, res_ok(), at);
       }
-      return (cannot_remove(st, path, e), res_mark());
+      return (cannot_remove(st, path, e), res_mark(), at);
     }
   }
-  return (st, res_ok());
+  return (st, res_ok(), at);
 }
 
-// Every name inside `path`, in the order read_dir handed them back —
-// which is raw readdir order, the order GNU walks in because it passes
-// fts no comparator. Reports whether any of them left this directory
-// marked, which is what makes it go quietly rather than be prompted
-// for and fail.
-function rm_children(st0: St, s: Settings, path: string, names: string[], dev: i64): (St, boolean) {
+function close_held(held: Option[Dir]): void {
+  match (held) {
+    Some(d) => {
+      d.close();
+    },
+    None => {}
+  }
+}
+
+// The directory moved under the walk: fts stops, and so does rm, every
+// operand after this one included.
+function abort(st: St, e: IoError): St {
+  return St { ...fail(st, "fts_read failed: " + gnu.io_error_text(e)), aborted: true };
+}
+
+// Every name inside the directory `c`, named `path`, in the order the
+// kernel handed them back — the order GNU walks in because it passes fts
+// no comparator. Reports whether any of them left this directory marked,
+// which is what makes it go quietly rather than be prompted for and fail,
+// and hands back the descriptor `c` is held by after the walk below it.
+function rm_children(st0: St, s: Settings, c: Dir, path: string, names: string[], dev: i64): (St, boolean, Dir) {
   let st: St = st0;
+  let held: Dir = c;
   let marked: boolean = false;
   let i: i32 = 0;
-  while (i < names.len()) {
-    let r: (St, i32) = rm_entry(st, s, fts.child_path(path, names[i]), false, dev);
+  while (i < names.len() && !st.aborted) {
+    let r: (St, i32, fts.At) = rm_entry(st, s, fts.at_child(held, names[i]), fts.child_path(path, names[i]), false, dev);
     st = r.0;
     if (r.1 == res_mark()) {
       marked = true;
     }
+    match (r.2.dir) {
+      Some(d) => {
+        held = d;
+      },
+      None => {}
+    }
     i = i + 1;
   }
-  return (st, marked);
+  return (st, marked, held);
 }
 
 // A directory rm cannot read. GNU does not diagnose that while the
@@ -513,13 +569,13 @@ function rm_children(st0: St, s: Settings, path: string, names: string[], dev: i
 // reported, not the ENOTEMPTY the rmdir returned. A prompt has
 // nothing to ask about here — rm cannot tell whether the directory is
 // empty — so an interactive run reports the read error instead.
-function rm_unreadable_dir(st: St, s: Settings, path: string, info: FileStat, why: IoError): (St, i32) {
+function rm_unreadable_dir(st: St, s: Settings, a: fts.At, path: string, info: FileStat, why: IoError): (St, i32) {
   let asks: boolean = s.interactive == rmi_always();
   if (s.interactive == rmi_sometimes()) {
-    asks = s.tty && write_protected(path, info.mode);
+    asks = s.tty && write_protected(a, info.mode);
   }
   if (!asks) {
-    match (remove_dir(path)) {
+    match (fts.remove_dir_at(a)) {
       Ok(_) => {
         return (verbose(st, s, path, true), res_ok());
       },
@@ -663,11 +719,11 @@ pub function main(): i32 {
   if (s.interactive == rmi_once()) {
     s = Settings { ...s, interactive: rmi_sometimes() };
   }
-  let st: St = St { out: gnu.stdio_new(), status: 0 };
+  let st: St = St { out: gnu.stdio_new(), status: 0, aborted: false };
   let i: i32 = 0;
-  while (i < files.len()) {
+  while (i < files.len() && !st.aborted) {
     let path: string = fts.trim(files[i]);
-    let r: (St, i32) = rm_entry(st, s, path, true, 0 as i64);
+    let r: (St, i32, fts.At) = rm_entry(st, s, fts.at_path(path), path, true, 0 as i64);
     st = r.0;
     i = i + 1;
   }
