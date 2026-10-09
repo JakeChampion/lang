@@ -9,6 +9,7 @@ import "../semrecords";
 import "../ssacreditabi" as abi;
 import "../ssacredithelper" as helper;
 import "../util";
+import "./ssacreditfinal" as final_binding;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -184,6 +185,8 @@ function target_checks(target: string): void {
     // A separate coherent source graph supplies the non-exiting positive case.
     let sub = semlower.driven(parser.parse_module(lexer.tokenize(source(generic, false))), target).sub;
     check(sub, "handoff", "proved checked storage wrapper continuation");
+    final_binding.run(source(generic, false), target, false);
+    final_binding.run(source(generic, true), target, true);
     continuation_controls(sub);
     assertion_contracts(sub);
     for name in ["require", "__sem_drop_Parent", "__sem_release_Parent"] {

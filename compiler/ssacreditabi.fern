@@ -154,6 +154,18 @@ function origin_layout_error(parent: semrecords.Record, child: semrecords.Record
 }
 
 function origin_callee(sub: ircore.Sub, name: string, c: ssasem.Contract, callee: string): helper.Proof {
+  let signature = origin_callee_signature(sub, name, c, callee);
+  if (!signature.ok) {
+    return signature;
+  }
+  let checked = check_producer(sub, callee);
+  if (!checked.proof.ok || checked.words != 3) {
+    return refused(name, "origin callee proof refused: " + checked.proof.message);
+  }
+  return helper.Proof { ok: true, function_name: name, message: "" };
+}
+
+function origin_callee_signature(sub: ircore.Sub, name: string, c: ssasem.Contract, callee: string): helper.Proof {
   let selected = selected_contracts(sub, callee);
   if (selected.len() != 1) {
     return refused(name, "missing or ambiguous origin callee ABI");
@@ -161,10 +173,6 @@ function origin_callee(sub: ircore.Sub, name: string, c: ssasem.Contract, callee
   let p = selected[0];
   if (p.params.len() != 2 || p.modes.len() != 2 || p.modes[0] != 3 || p.modes[1] != 3 || !semtypes.equal(p.params[0], c.params[1]) || !semtypes.equal(p.params[1], c.params[2]) || !semtypes.equal(p.result, c.result)) {
     return refused(name, "origin callee ABI differs from caller");
-  }
-  let checked = check_producer(sub, callee);
-  if (!checked.proof.ok || checked.words != 3) {
-    return refused(name, "origin callee proof refused: " + checked.proof.message);
   }
   return helper.Proof { ok: true, function_name: name, message: "" };
 }
@@ -478,43 +486,138 @@ function storage(sub: ircore.Sub, name: string, consumer: string, drop_name: str
   return reuse.check_invocations(wrapper.functions[0], producers.functions, physical.functions[0], physical.functions[1], physical.functions[2], semrecords.name_of(d.params[0]), semrecords.name_of(d.result), numeric.fields, calls.functions);
 }
 
+// This resolver never reads Sub bodies. Empty or ambiguous supplied collections
+// refuse; a missing final dependency cannot fall back to a pre-transform body.
+function final_body(functions: ssa.SFunc[], name: string, parameters: i32): PhysicalBindings {
+  let found: ssa.SFunc[] = [];
+  for f in functions {
+    if (f.name == name) {
+      found = found.append(f);
+    }
+  }
+  if (found.len() != 1) {
+    return PhysicalBindings { functions: [], error: name + ": missing or ambiguous final body" };
+  }
+  if (found[0].nparams != parameters || found[0].takes_env) {
+    return PhysicalBindings { functions: [], error: name + ": mismatched final body boundary" };
+  }
+  return PhysicalBindings { functions: found, error: "" };
+}
+
+function final_producers(sub: ircore.Sub, functions: ssa.SFunc[], wrapper: ssa.SFunc, c: ssasem.Contract, consumer: string): PhysicalBindings {
+  let names: string[] = [];
+  let producers: ssa.SFunc[] = [];
+  for block in wrapper.blocks {
+    for op in block.insts {
+      if (op.kind_tag == 11 && op.str != consumer && !util.has_str(names, op.str)) {
+        names = names.append(op.str);
+        let body = final_producer(sub, functions, wrapper.name, c, op.str);
+        if (body.error != "") {
+          return body;
+        }
+        producers = util.append_all(producers, body.functions);
+      }
+    }
+  }
+  return PhysicalBindings { functions: producers, error: "" };
+}
+
+function final_producer(sub: ircore.Sub, functions: ssa.SFunc[], wrapper: string, c: ssasem.Contract, name: string): PhysicalBindings {
+  let signature = origin_callee_signature(sub, wrapper, c, name);
+  if (!signature.ok) {
+    return PhysicalBindings { functions: [], error: signature.message };
+  }
+  let layout = producer_layout(sub, name);
+  if (layout.error != "") {
+    return PhysicalBindings { functions: [], error: "origin callee proof refused: " + layout.error };
+  }
+  let body = final_body(functions, name, 2);
+  if (body.error != "") {
+    return body;
+  }
+  let checked = origin.producer(body.functions[0], layout.shape, layout.references);
+  if (!checked.proof.ok || checked.words != 3) {
+    return PhysicalBindings { functions: [], error: "origin callee proof refused: " + checked.proof.message };
+  }
+  return body;
+}
+
+function final_assertions(sub: ircore.Sub, functions: ssa.SFunc[], names: string[]): PhysicalBindings {
+  let calls: ssa.SFunc[] = [];
+  for name in names {
+    let contracts = selected_contracts(sub, name);
+    if (contracts.len() != 1) {
+      return PhysicalBindings { functions: [], error: name + ": missing or ambiguous assertion ABI" };
+    }
+    let error = assertion_signature_error(contracts[0]);
+    if (error != "") {
+      return PhysicalBindings { functions: [], error: name + ": " + error };
+    }
+    let body = final_body(functions, name, 2);
+    if (body.error != "") {
+      return body;
+    }
+    let proof = scalar_effect.zero_or_exit(body.functions[0]);
+    if (!proof.ok) {
+      return PhysicalBindings { functions: [], error: name + ": " + proof.message };
+    }
+    calls = util.append_all(calls, body.functions);
+  }
+  return PhysicalBindings { functions: calls, error: "" };
+}
+
+// Bind selected metadata to one supplied final function collection. This scoped
+// adapter does not establish that an emitter actually used that collection.
+pub function check_wrapper_final(sub: ircore.Sub, functions: ssa.SFunc[], name: string, consumer: string, drop_name: string, release_name: string, assertions: string[]): helper.Proof {
+  let wrappers = selected_contracts(sub, name);
+  let consumers = selected_contracts(sub, consumer);
+  if (wrappers.len() != 1 || consumers.len() != 1 || name == consumer) {
+    return refused(name, "missing or ambiguous incoming ABI");
+  }
+  let c = wrappers[0];
+  let d = consumers[0];
+  let error = incoming_signature_error(sub, c);
+  if (error != "") {
+    return refused(name, error);
+  }
+  error = incoming_consumer_error(sub, c, d);
+  if (error != "") {
+    return refused(name, error);
+  }
+  let wrapper = final_body(functions, name, 4);
+  let physical: ssa.SFunc[] = [];
+  for bound_name in [consumer, drop_name, release_name] {
+    let body = final_body(functions, bound_name, if (bound_name == consumer) { 2 } else { 1 });
+    if (body.error != "") {
+      return refused(consumer, body.error);
+    }
+    physical = util.append_all(physical, body.functions);
+  }
+  if (wrapper.error != "") {
+    return refused(name, wrapper.error);
+  }
+  let producers = final_producers(sub, functions, wrapper.functions[0], ssasem.Contract { ...c, result: d.params[0] }, consumer);
+  if (producers.error != "") {
+    return refused(name, producers.error);
+  }
+  let parent = sub.physical_records.list[incoming_schema_index(sub, d.params[0])];
+  let numeric = replacement_scalar_fields(sub, d, parent);
+  if (numeric.error != "") {
+    return refused(consumer, numeric.error);
+  }
+  let calls = final_assertions(sub, functions, assertions);
+  if (calls.error != "") {
+    return refused(consumer, calls.error);
+  }
+  return continuation.check(wrapper.functions[0], producers.functions, physical[0], physical[1], physical[2], semrecords.name_of(d.params[0]), semrecords.name_of(d.result), numeric.fields, calls.functions);
+}
+
 // Bind the selected constructor ABI and resolved layout to its actual body.
 // Capacity comes from checked allocation instructions, never the type alone.
 pub function check_producer(sub: ircore.Sub, name: string): origin.Origin {
-  let contracts = selected_contracts(sub, name);
-  if (contracts.len() != 1) {
-    return no_origin(name, "missing or ambiguous producer ABI");
-  }
-  let c = contracts[0];
-  if (!ordinary(c.result, sub.physical_finalizers)) {
-    return no_origin(name, "unsupported producer result or finalizer");
-  }
-  let ri = semrecords.find(sub.physical_records, c.result);
-  if (ri < 0) {
-    return no_origin(name, "missing producer result schema");
-  }
-  let record = sub.physical_records.list[ri];
-  if (record.views || record.nests_func || record.fields.len() < 1 || record.fields.len() > 2 || c.params.len() != record.fields.len() || c.modes.len() != c.params.len()) {
-    return no_origin(name, "unsupported producer layout or ABI arity");
-  }
-  let refs: boolean[] = [];
-  let i: i32 = 0;
-  for field in record.fields {
-    if (!semtypes.equal(field.ty, c.params[i])) {
-      return no_origin(name, "producer parameter differs from field");
-    }
-    let ref = !scalar(field.ty);
-    if (c.modes[i] != (if (ref) { 3 } else { 1 })) {
-      return no_origin(name, "incorrect producer parameter ownership mode");
-    }
-    if (ref) {
-      let error = producer_child_error(sub, field.ty);
-      if (error != "") {
-        return no_origin(name, error);
-      }
-    }
-    refs = refs.append(ref);
-    i = i + 1;
+  let layout = producer_layout(sub, name);
+  if (layout.error != "") {
+    return no_origin(name, layout.error);
   }
   let subjects = bodies(sub, name);
   if (subjects.len() != 1) {
@@ -528,7 +631,52 @@ pub function check_producer(sub: ircore.Sub, name: string): origin.Origin {
   if (!lifted.ok) {
     return no_origin(name, "unsupported producer lift");
   }
-  return origin.producer(lifted.func, semrecords.name_of(record.ty), refs);
+  return origin.producer(lifted.func, layout.shape, layout.references);
+}
+
+struct ProducerLayout { shape: string, references: boolean[], error: string }
+
+function no_producer_layout(error: string): ProducerLayout {
+  return ProducerLayout { shape: "", references: [], error: error };
+}
+
+function producer_layout(sub: ircore.Sub, name: string): ProducerLayout {
+  let contracts = selected_contracts(sub, name);
+  if (contracts.len() != 1) {
+    return no_producer_layout("missing or ambiguous producer ABI");
+  }
+  let c = contracts[0];
+  if (!ordinary(c.result, sub.physical_finalizers)) {
+    return no_producer_layout("unsupported producer result or finalizer");
+  }
+  let ri = semrecords.find(sub.physical_records, c.result);
+  if (ri < 0) {
+    return no_producer_layout("missing producer result schema");
+  }
+  let record = sub.physical_records.list[ri];
+  if (record.views || record.nests_func || record.fields.len() < 1 || record.fields.len() > 2 || c.params.len() != record.fields.len() || c.modes.len() != c.params.len()) {
+    return no_producer_layout("unsupported producer layout or ABI arity");
+  }
+  let refs: boolean[] = [];
+  let i: i32 = 0;
+  for field in record.fields {
+    if (!semtypes.equal(field.ty, c.params[i])) {
+      return no_producer_layout("producer parameter differs from field");
+    }
+    let ref = !scalar(field.ty);
+    if (c.modes[i] != (if (ref) { 3 } else { 1 })) {
+      return no_producer_layout("incorrect producer parameter ownership mode");
+    }
+    if (ref) {
+      let error = producer_child_error(sub, field.ty);
+      if (error != "") {
+        return no_producer_layout(error);
+      }
+    }
+    refs = refs.append(ref);
+    i = i + 1;
+  }
+  return ProducerLayout { shape: semrecords.name_of(record.ty), references: refs, error: "" };
 }
 
 // Derive the narrow caller-flow obligations from selected metadata and actual

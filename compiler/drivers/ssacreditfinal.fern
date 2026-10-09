@@ -1,0 +1,196 @@
+// Selected metadata with one actual supplied collection, independent of old bodies.
+import "../lexer";
+import "../parser";
+import "../semlower";
+import "../ircore";
+import "../irtables";
+import "../asmcore";
+import "../ssa";
+import "../ssa_lift";
+import "../ssasem";
+import "../ssacreditabi" as abi;
+import "./ssacreditsparse" as sparse;
+import "../util";
+
+function require(ok: boolean, code: i32): void {
+  if (!ok) {
+    exit(code);
+  }
+}
+
+function check(sub: ircore.Sub, fs: ssa.SFunc[], calls: string[], ok: boolean): void {
+  let p = abi.check_wrapper_final(sub, fs, "handoff", "replace", "__sem_drop_Parent", "__sem_release_Parent", calls);
+  if (p.ok != ok || p.function_name == "" || p.message == "" || ok && (p.function_name != "handoff" || p.message != "proved checked storage wrapper continuation")) {
+    print(p.function_name + ": " + p.message);
+    exit(101);
+  }
+}
+
+function without(fs: ssa.SFunc[], name: string): ssa.SFunc[] {
+  let out: ssa.SFunc[] = [];
+  for f in fs {
+    if (f.name != name) {
+      out = out.append(f);
+    }
+  }
+  return out;
+}
+
+function assertion_names(fs: ssa.SFunc[]): string[] {
+  for f in fs {
+    if (f.name == "require") {
+      return ["require"];
+    }
+  }
+  return [];
+}
+
+function ownership_effect(name: string, op: ssa.SInst): boolean {
+  if (name == "parent") {
+    return op.kind_tag == 41;
+  }
+  if (op.kind_tag != 11) {
+    return false;
+  }
+  if (name == "replace") {
+    return op.str == "__fern_rc_inc";
+  }
+  return (name == "__sem_drop_Parent" || name == "__sem_release_Parent") && op.str == "__fern_rc_dec";
+}
+
+function damaged(f: ssa.SFunc): ssa.SFunc {
+  let blocks: ssa.SBlock[] = [];
+  let changed = false;
+  for b in f.blocks {
+    let insts: ssa.SInst[] = [];
+    for op in b.insts {
+      // Remove an actual credit, store or release effect while retaining its
+      // result ID and otherwise valid topology. Missing effects must refuse.
+      if (!changed && ownership_effect(f.name, op)) {
+        insts = insts.append(ssa.SInst { kind_tag: 1, result: op.result, args: [], imm: 0, str: "" });
+        changed = true;
+      } else {
+        insts = insts.append(op);
+      }
+    }
+    let term = b.term;
+    if (f.name == "handoff" && term.kind_tag == 1) {
+      term = ssa.STerm { ...term, value: 1 };
+      changed = true;
+    }
+    if (f.name == "require" && !changed) {
+      insts = insts.append(ssa.SInst { kind_tag: 11, result: f.nvals, args: [], imm: 0, str: "unknown_effect" });
+      changed = true;
+    }
+    blocks = blocks.append(ssa.SBlock { ...b, insts: insts, term: term });
+  }
+  if (!changed) {
+    print("missing final mutation effect: " + f.name);
+    exit(102);
+  }
+  return ssa.SFunc { ...f, blocks: blocks, nvals: f.nvals + (if (f.name == "require") { 1 } else { 0 }) };
+}
+
+function body_controls(sub: ircore.Sub, fs: ssa.SFunc[], calls: string[]): void {
+  let wanted = ["handoff", "replace", "parent", "__sem_drop_Parent", "__sem_release_Parent"];
+  wanted = util.append_all(wanted, calls);
+  let hits: i32 = 0;
+  for f in fs {
+    if (util.has_str(wanted, f.name)) {
+      hits = hits + 1;
+      let rest = without(fs, f.name);
+      check(sub, rest, calls, false);
+      check(sub, fs.append(f), calls, false);
+      check(sub, rest.append(ssa.SFunc { ...f, nparams: f.nparams + 1 }), calls, false);
+      check(sub, rest.append(ssa.SFunc { ...f, takes_env: true }), calls, false);
+      check(sub, rest.append(damaged(f)), calls, false);
+    }
+  }
+  require(hits == wanted.len(), 103);
+}
+
+function metadata_controls(sub: ircore.Sub, fs: ssa.SFunc[], calls: string[]): void {
+  for name in util.append_all(["handoff", "replace", "parent"], calls) {
+    let rows: ssasem.Contract[] = [];
+    for c in sub.physical_contracts {
+      if (c.name != name) {
+        rows = rows.append(c);
+      }
+    }
+    check(ircore.Sub { ...sub, physical_contracts: rows }, fs, calls, false);
+    for c in sub.physical_contracts {
+      if (c.name == name) {
+        check(ircore.Sub { ...sub, physical_contracts: rows.append(c).append(c) }, fs, calls, false);
+        check(ircore.Sub { ...sub, physical_contracts: rows.append(ssasem.Contract { ...c, modes: [] }) }, fs, calls, false);
+      }
+    }
+  }
+  check(ircore.Sub { ...sub, physical_finalizers: [ssasem.Finalizer { receiver: "Parent", symbol: "finalize" }] }, fs, calls, false);
+}
+
+function controls(sub: ircore.Sub, fs: ssa.SFunc[], sparse_ids: boolean): void {
+  let actual: ssa.SFunc[] = [];
+  for f in fs {
+    // Scalar helpers retain their separate structural limit; do not silently
+    // admit sparse scalar bodies as part of this binding change.
+    actual = actual.append(if (sparse_ids && f.name != "require") { sparse.rename(f) } else { f });
+  }
+  let calls = assertion_names(actual);
+  check(sub, actual, calls, true);
+  let empty: ssa.SFunc[] = [];
+  check(sub, empty, calls, false);
+  check(ircore.Sub { ...sub, bodies: [], extra: [] }, actual, calls, true);
+  let broken: irtables.LowerResult[] = [];
+  for b in util.append_all(sub.bodies, sub.extra) {
+    broken = broken.append(irtables.LowerResult { ...b, ok: false, ops: [] });
+  }
+  check(ircore.Sub { ...sub, bodies: broken, extra: broken }, actual, calls, true);
+  body_controls(sub, actual, calls);
+  metadata_controls(sub, actual, calls);
+  let reversed: ssa.SFunc[] = [];
+  let i = actual.len();
+  while (i > 0) {
+    i = i - 1;
+    reversed = reversed.append(actual[i]);
+  }
+  check(sub, reversed, calls, true);
+  if (calls.len() > 0) {
+    check(sub, actual, [], false);
+    check(sub, actual, calls.append(calls[0]), false);
+  }
+}
+
+pub function run(source: string, target: string, exiting: boolean): void {
+  let driven = semlower.driven(parser.parse_module(lexer.tokenize(source)), target);
+  let sub = driven.sub;
+  let initial: ssa.SFunc[] = [];
+  for b in util.append_all(sub.bodies, sub.extra) {
+    if (b.ok) {
+      let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), b.name, b.n_params, b.n_locals, b.ops, false);
+      require(lifted.ok, 104);
+      initial = initial.append(lifted.func);
+    }
+  }
+  let g = ircore.gate_program(ircore.sub_lifted(sub, driven.full), sub);
+  require(g.ok, 105);
+  let cache = ircore.inline_tiny_leaves(g.im, g.cache);
+  let leaves = asmcore.unit_leaves(g.im, 0, g.im.funcs.len(), cache);
+  let final: ssa.SFunc[] = [];
+  for r in cache {
+    if (r.ok && !r.superseded) {
+      let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), r.name, r.n_params, r.n_locals, r.ops, false);
+      require(lifted.ok, 106);
+      final = final.append(ssa.register_form(ssa.inline_leaves(lifted.func, leaves)).f);
+    }
+  }
+  if (exiting) {
+    check(sub, initial, assertion_names(initial), false);
+    check(sub, final, assertion_names(final), false);
+    check(ircore.Sub { ...sub, bodies: [], extra: [] }, final, assertion_names(final), false);
+    return;
+  }
+  for sparse_ids in [false, true] {
+    controls(sub, initial, sparse_ids);
+    controls(sub, final, sparse_ids);
+  }
+}
