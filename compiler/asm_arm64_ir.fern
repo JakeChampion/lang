@@ -3901,7 +3901,10 @@ function emit_ssa_function(r: irtables.LowerResult, selected: physicalbody.Selec
   }
   let lift_ms: i64 = (monotonic_ns() - t_lift) / 1000000i64;
   let t_emit: i64 = monotonic_ns();
-  s = emit_ssa_function_arm64(ssaprepare.finish(r, selected, lifted, s.leaves), label_name, s);
+  let prepared: ssaprepare.Body = ssaprepare.finish(r, selected, lifted, s.leaves);
+  let context = asmcore.preparation_context(s, "arm64");
+  s = emit_ssa_function_arm64(prepared, label_name, s);
+  s = asmcore.retain_body(s, prepared, label_name, context);
   // Under the report, a function whose lift or emit took over 200 ms is
   // named with both times: the whole-compiler build is where a phase's
   // cost shows, and this is how a slow one is found.
@@ -12716,9 +12719,15 @@ function emit_module_ir_flat(mod: parser.Module, stab: irtables.StructTab, darwi
 // asm_ir.all_eligible_*_known_view(mod) and seeded nothing (we reset here).
 // The arm64 twin of asm_ir.emit_module_ir_unit_flat.
 pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, lo: i32, hi: i32, cache: irtables.LowerResult[], physical: physicalbody.Collection, rt: (string) => physicalbody.Lowered, sw: asmcore.Switches): string {
+  return emit_module_ir_unit_arm64_prepared(mod, is_entry, globl_defs, str_ns, extra_needs, all_funcs, all_structs, lo, hi, cache, physical, rt, sw, false).text;
+}
+
+// Retain the same bodies consumed by this emission, including its settled runtime.
+pub function emit_module_ir_unit_arm64_prepared(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, lo: i32, hi: i32, cache: irtables.LowerResult[], physical: physicalbody.Collection, rt: (string) => physicalbody.Lowered, sw: asmcore.Switches, retain: boolean): ssaprepare.Output {
   mod = parser.infer_ret_types_module(mod);
   strbuf_reset();
   let s: asmcore.EmitState = asmcore.new_state();
+  s = asmcore.EmitState { ...s, retain_prepared: retain };
   // struct_decls and funcs are the WHOLE-PROGRAM sets, so an imported struct's
   // layout resolves and a `dyn` dispatch has an arm for every impl (#10891);
   // str_ns namespaces this unit's pools.
@@ -12728,7 +12737,7 @@ pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolea
   if (derrs.len() > 0) {
     eprint(util.format_diags(derrs));
     exit(1);
-    return "";
+    return ssaprepare.Output { text: "", bodies: [] };
   }
   if (is_entry) {
     s = s.write("    .globl _start\n");
@@ -12798,7 +12807,7 @@ pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolea
   } else {
     s = emit_rodata_pools_arm64(s, false);
   }
-  return strbuf_take();
+  return ssaprepare.Output { text: strbuf_take(), bodies: s.prepared };
 }
 
 // ===================== arm64-darwin post-processor =====================
