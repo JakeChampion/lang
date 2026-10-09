@@ -30,17 +30,26 @@ pub function entry_source(src: string, target: string): string {
   return src + HTTP_ENTRY_STUB;
 }
 
-// http_entry_missing is the diagnostic for a wasm32-wasi-http entry that
-// declares no `handle` for the stub to bind, or "" when it does (or the
-// target is another). Checked on the parsed entry so the message names the
+// http_entry_refused is the diagnostic for a wasm32-wasi-http entry the stub
+// cannot bind, or "" when it can (or the target is another): no `handle`, or
+// a `handle` that does not take `(req, plat)` (E075 at `path`'s `handle`, in
+// the Go checker's words). Checked on the parsed entry so the message names the
 // program, not a line past its end.
-pub function http_entry_missing(entry: parser.Module, target: string): string {
+pub function http_entry_refused(entry: parser.Module, target: string, path: string): string {
   if (target != "wasm32-wasi-http") {
     return "";
   }
   let i: i32 = 0;
   while (i < entry.funcs.len()) {
-    if (entry.funcs[i].name == "handle" && entry.funcs[i].receiver_type.len() == 0) {
+    let fd: parser.FuncDecl = entry.funcs[i];
+    if (fd.name == "handle" && fd.receiver_type.len() == 0) {
+      let at: string = path + ":" + util.i32_to_string(fd.line) + ":" + util.i32_to_string(fd.col) + ": error[E075]: ";
+      if (fd.params.len() == 3) {
+        return at + "a wasi:http handler takes `(req, plat)` and no state: the proxy world starts a fresh instance for every request, so nothing carries from one to the next; build a stateful handler for a native target";
+      }
+      if (fd.params.len() != 2) {
+        return at + "a wasi:http handler takes `(req, plat)`; this `handle` takes " + util.i32_to_string(fd.params.len()) + " parameter(s)";
+      }
       return "";
     }
     i = i + 1;

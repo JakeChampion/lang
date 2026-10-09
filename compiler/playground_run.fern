@@ -242,7 +242,7 @@ function run(): i32 {
     }
   }
   let entry: parser.Module = parser.parse_module(lexer.tokenize(emitforms.entry_source(src, target)));
-  let missing_handle: string = emitforms.http_entry_missing(entry, target);
+  let missing_handle: string = emitforms.http_entry_refused(entry, target, "stdin");
   if (missing_handle.len() > 0) {
     eprint(missing_handle);
     return 1;

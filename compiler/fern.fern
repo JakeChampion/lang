@@ -2036,7 +2036,7 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
   let no_mods: flatten.LoadedModule[] = [];
   let no_files: string[] = [];
   let maps: util.LineMap[] = [s.maps[0]];
-  let missing: string = emitforms.http_entry_missing(entry_mod, target);
+  let missing: string = emitforms.http_entry_refused(entry_mod, target, entry_display(entry_path));
   if (missing.len() > 0) {
     return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: no_files, maps: maps, err: missing };
   }
