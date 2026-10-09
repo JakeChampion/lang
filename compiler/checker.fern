@@ -1156,8 +1156,6 @@ pub function raw_floor_sigs(): RawFloorSig[] {
     RawFloorSig { name: "__fern_str_free", params: [p], result: t_void() },
     RawFloorSig { name: "__fern_str_arr_free", params: [p], result: t_void() },
     RawFloorSig { name: "__fern_rc_dec", params: [p], result: t_void() },
-    RawFloorSig { name: "__fern_map_find", params: [p, p, n, p], result: n },
-    RawFloorSig { name: "__fern_map_delete", params: [p, p, n, p], result: p },
     // The slice-range abort the __fern_arr_slice bodies call (#11405): the
     // emitters' reporter, so it never returns.
     RawFloorSig { name: "__fern_slice_abort", params: [], result: t_void() },
@@ -12944,7 +12942,7 @@ function assoc_func_impls(impls: parser.ImplInfo[], funcs: parser.FuncDecl[]): p
   for fd in funcs {
     if (fd.receiver_name.len() == 0 && fd.receiver_type.len() > 0) {
       let noargs: string[] = [];
-      out = out.append(parser.ImplInfo { trait_name: "", impl_type: util.base_type_name(fd.receiver_type), type_params: noargs, all_type_params: noargs, bounds: noargs, method_names: [fd.name], trait_spelling: "", trait_ref: "", assoc_names: noargs, assoc_values: noargs, trait_module: "" });
+      out = out.append(parser.ImplInfo { trait_name: "", impl_type: util.base_type_name(fd.receiver_type), type_params: noargs, all_type_params: noargs, bounds: noargs, method_names: [fd.name], trait_spelling: "", trait_ref: "", assoc_names: noargs, assoc_values: noargs, trait_module: "", module: "", line: fd.line, col: fd.col });
     }
   }
   return out;
@@ -16220,7 +16218,7 @@ function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, di: i32): b
     if (f2.receiver_type.len() == 0 && pe.receiver_type.len() == 0 && pe.name == f2.name) {
       earlier = true;
     }
-    if (f2.receiver_type.len() > 0 && pe.receiver_type.len() > 0 && pe.name == f2.name && parser.receiver_namespace(pe.receiver_type) == parser.receiver_namespace(f2.receiver_type)) {
+    if (same_method_decl(pe, f2)) {
       earlier = true;
     }
     ej = names.next[ej];
@@ -16231,6 +16229,159 @@ function redeclares(funcs: parser.FuncDecl[], names: util.NameIndex, di: i32): b
     earlier = true;
   }
   return earlier;
+}
+
+// same_method_decl: two declarations of one method by the same provider, the
+// type itself or one trait. An inherent method and a trait's are an ambiguity
+// (method_ambiguity_diags), not a redeclaration.
+function same_method_decl(pe: parser.FuncDecl, f2: parser.FuncDecl): boolean {
+  if (f2.receiver_type.len() == 0 || pe.receiver_type.len() == 0 || pe.name != f2.name) {
+    return false;
+  }
+  return pe.impl_trait == f2.impl_trait && parser.receiver_namespace(pe.receiver_type) == parser.receiver_namespace(f2.receiver_type);
+}
+
+// method_ambiguity_diags reports E074 where one type gets a method name from
+// both an inherent declaration and a trait impl, in either order: a silent pick
+// would give one spelling two meanings. Declarations register in native's
+// order, the entry's first, and the later one of a clashing pair is reported,
+// at whichever of the two the program wrote rather than at a standard-library
+// one. Two traits providing one name are not ambiguous here; the call site
+// ranks them.
+function method_ambiguity_diags(mod: parser.Module): util.Diag[] {
+  let order: i32[] = [];
+  for entry in [true, false] {
+    let i: i32 = 0;
+    while (i < mod.funcs.len()) {
+      let in_entry: boolean = mod.funcs[i].module.len() == 0;
+      if (in_entry == entry && mod.funcs[i].receiver_type.len() > 0) {
+        order = order.append(i);
+      }
+      i = i + 1;
+    }
+  }
+  let keys: string[] = [];
+  let inherent: i32[] = [];
+  let traited: i32[] = [];
+  let out: util.Diag[] = [];
+  for fi in order {
+    let fd: parser.FuncDecl = mod.funcs[fi];
+    let key: string = parser.receiver_namespace(fd.receiver_type) + "." + method_simple_name(fd.name);
+    let k: i32 = util.index_of_str(keys, key);
+    if (k < 0) {
+      k = keys.len();
+      keys = keys.append(key);
+      inherent = inherent.append(0 - 1);
+      traited = traited.append(0 - 1);
+    }
+    let other: i32 = inherent[k];
+    if (fd.impl_trait.len() == 0) {
+      other = traited[k];
+    }
+    if (other >= 0) {
+      out = out.append(ambiguous_method_diag(mod, fd, mod.funcs[other]));
+    } else if (fd.impl_trait.len() == 0) {
+      inherent = inherent.with(k, fi);
+    } else if (traited[k] < 0) {
+      traited = traited.with(k, fi);
+    }
+  }
+  return out;
+}
+
+// A trait's method can be renamed `Trait.m` (claim_method_name) or interposed
+// `ns.m` (flatten); its name as written is the last segment.
+function method_simple_name(name: string): string {
+  let i: i32 = name.len() - 1;
+  while (i >= 0 && name[i] != b'.') {
+    i = i - 1;
+  }
+  return slice_unchecked(name, i + 1, name.len()) + "";
+}
+
+function ambiguous_method_diag(mod: parser.Module, pending: parser.FuncDecl, other: parser.FuncDecl): util.Diag {
+  let at: parser.FuncDecl = pending;
+  if (pending.stdlib.len() > 0 && other.stdlib.len() == 0) {
+    at = other;
+  }
+  let typ: string = util.demangle(parser.receiver_namespace(pending.receiver_type));
+  let msg: string = "ambiguous method \"" + method_simple_name(pending.name) + "\" on " + typ + ": provided by " + method_provider(mod, pending) + " and " + method_provider(mod, other);
+  return dg_at("E074", msg, at.line, at.col);
+}
+
+// method_provider names a candidate as native's E074 does: the trait, or "an
+// inherent method", and where it was declared. A module's file is labelled as
+// native labels it; the entry's position goes unlabelled, as the checker is
+// not told the entry's file name.
+function method_provider(mod: parser.Module, fd: parser.FuncDecl): string {
+  let what: string = "an inherent method";
+  if (fd.impl_trait.len() > 0) {
+    what = "trait " + impl_trait_spelling(mod, fd);
+  }
+  let file: string = "";
+  if (fd.stdlib.len() > 0) {
+    file = fd.stdlib + ".fern:";
+  } else if (fd.module.len() > 0) {
+    file = fd.module + ".fern:";
+  }
+  return what + " (declared at " + file + util.i32_to_string(util.pos_line(fd.line)) + ":" + util.i32_to_string(fd.col) + ")";
+}
+
+// The trait a method was written for, `module.Trait` when another module
+// declares it, as the impl that carries it records.
+function impl_trait_spelling(mod: parser.Module, fd: parser.FuncDecl): string {
+  let base: string = parser.receiver_namespace(fd.receiver_type);
+  for im in mod.impls {
+    if (im.trait_name == fd.impl_trait && im.trait_module.len() > 0 && parser.receiver_namespace(im.impl_type) == base) {
+      return im.trait_module + "." + fd.impl_trait;
+    }
+  }
+  return fd.impl_trait;
+}
+
+// orphan_impl_diags is native's coherence rule: an impl of a trait is legal
+// only in the module that declares the trait or the type. A built-in type is
+// declared in none, so a foreign trait's impl for one is an orphan anywhere.
+function orphan_impl_diags(mod: parser.Module): util.Diag[] {
+  let out: util.Diag[] = [];
+  for im in mod.impls {
+    if (im.trait_name.len() == 0 || im.trait_module == im.module || impl_type_is_local(mod, im)) {
+      continue;
+    }
+    let tr: string = im.trait_name;
+    if (im.trait_module.len() > 0) {
+      tr = im.trait_module + "." + tr;
+    }
+    out = out.append(dg_at("E021", "orphan impl: `impl " + tr + " for " + util.demangle(util.base_type_name(im.impl_type)) + "` must be declared in the module that defines the trait or the type", im.line, im.col));
+  }
+  return out;
+}
+
+// A module's own declarations carry its `prefix__` mangling; the entry's carry
+// none.
+function impl_type_is_local(mod: parser.Module, im: parser.ImplInfo): boolean {
+  let base: string = util.base_type_name(im.impl_type);
+  if (!declares_nominal(mod, base)) {
+    return false;
+  }
+  if (im.module.len() == 0) {
+    return !util.contains(base, "__");
+  }
+  return util.str_has_prefix(base, im.module + "__");
+}
+
+function declares_nominal(mod: parser.Module, name: string): boolean {
+  for sd in mod.structs {
+    if (sd.name == name && sd.enum_owner.len() == 0) {
+      return true;
+    }
+  }
+  for ed in mod.enums {
+    if (ed.name == name) {
+      return true;
+    }
+  }
+  return false;
 }
 
 function collect_decl_diags(mod: parser.Module): util.Diag[] {
@@ -16275,6 +16426,7 @@ function collect_decl_diags(mod: parser.Module): util.Diag[] {
   for fd in mod.funcs {
     decl_names = decl_names.append(fd.name);
   }
+  out = util.append_diags(out, method_ambiguity_diags(mod));
   let decl_index: util.NameIndex = util.name_index(decl_names);
   let di: i32 = 0;
   while (di < mod.funcs.len()) {
@@ -22813,7 +22965,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   // template module's, which the first pass found clean.
   let decl_diags: util.Diag[] = [];
   if (focus.len() == 0) {
-    decl_diags = util.append_diags(util.append_diags(collect_decl_diags(mod), e021_diags(mod)), derive_diags);
+    decl_diags = util.append_diags(util.append_diags(collect_decl_diags(mod), util.append_diags(orphan_impl_diags(mod), e021_diags(mod))), derive_diags);
   }
   let dd: util.Diag[] = thin_map_import_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(util.append_diags(fda_diags, decl_diags), body_diags), own_diags(mod, env, focus)), e049_diags(mod, env, focus)), e021_object_safety_diags(mod, focus)), e060_e062_diags(mod, focus)));
   if (dd.len() > 0) {

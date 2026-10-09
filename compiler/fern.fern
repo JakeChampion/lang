@@ -313,31 +313,17 @@ function words_of(recs: usize): u8[] {
   return words;
 }
 
-// comp_dir is the directory DWARF records the compile ran in: $PWD when it
-// names `.`, as GCC records it, else `.`. It calls no getcwd() until the
-// stage0 pin types that builtin as a Result (#11810).
+// comp_dir is the directory DWARF records the compile ran in, or `.` when
+// it cannot be read.
 function comp_dir(): string {
-  match (env("PWD")) {
-    Some(wd) => {
-      if (wd.len() > 0 && wd[0] as i32 == 47) {
-        match (stat(wd)) {
-          Ok(named) => {
-            match (stat(".")) {
-              Ok(here) => {
-                if (named.dev == here.dev && named.ino == here.ino) {
-                  return wd;
-                }
-              },
-              Err(_) => {}
-            }
-          },
-          Err(_) => {}
-        }
-      }
+  match (getcwd()) {
+    Ok(wd) => {
+      return wd;
     },
-    None => {}
+    Err(_) => {
+      return ".";
+    }
   }
-  return ".";
 }
 
 // arm64_elf_binary assembles arm64 Linux GAS text (from either the SSA or AST
@@ -2050,7 +2036,7 @@ function load_bundle(s: Sources, entry_mod: parser.Module, root: string, target:
   let no_mods: flatten.LoadedModule[] = [];
   let no_files: string[] = [];
   let maps: util.LineMap[] = [s.maps[0]];
-  let missing: string = emitforms.http_entry_missing(entry_mod, target);
+  let missing: string = emitforms.http_entry_refused(entry_mod, target, entry_display(entry_path));
   if (missing.len() > 0) {
     return Bundle { entry: entry_mod, entry_ident: "", root: root, loaded: no_mods, merged: entry_mod, pkgs: pkgs, files: no_files, maps: maps, err: missing };
   }

@@ -515,7 +515,7 @@ function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m
 function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 2); m = m.insert(2, 3); m = m.insert(3, 4); let s = 0; for (k, v) in m { s = s + k * v; } return s; }`, 20},
 		{"map-forkv-strkey", `import "core/map";
 function main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert("ab", 1); m = m.insert("cde", 2); let s = 0; for (k, v) in m { s = s + k.len() + v; } return s; }`, 8},
-		// m.without(k) -> (Map, existed), via asmcore.rt_src_map_delete (#2926).
+		// m.without(k) -> (Map, existed) (#2926).
 		{"map-without-len", `import "core/map";
 function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); let (m2, e) = m.without(1); return m2.len(); }`, 1},
 		{"map-without-existed", `import "core/map";

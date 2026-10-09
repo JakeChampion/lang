@@ -1822,6 +1822,15 @@ pub enum Direction { N, S, E, W }`)
 	}
 }
 
+// A payloadless variant is written bare: `R()` in a declaration is a parse
+// error, as it is in the self-host (#11922).
+func TestEnumVariantEmptyParensRejected(t *testing.T) {
+	_, err := Parse(`enum C { R(), B }`)
+	if err == nil || !strings.Contains(err.Error(), `expected type, got ")"`) {
+		t.Fatalf("`R()` in an enum declaration: got %v, want expected type", err)
+	}
+}
+
 // A named-field variant (`Rect { w: i32, h: i32 }`) parses with
 // FieldNames parallel to Payloads; the positional form leaves FieldNames
 // empty. See docs/NAMED-FIELD-VARIANTS.md.

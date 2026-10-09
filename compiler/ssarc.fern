@@ -316,76 +316,32 @@ function release_name(t: typeinfo.Type, f: ssasem.Func): string {
   if (ssasem.is_string(t)) {
     return "__fern_str_free";
   }
-  if (routed_map(t, f) && ssasem.keyed_map_key(ssasem.map_key(t))) {
+  if (unlinked_map(t, f)) {
+    return "__fern_rc_dec";
+  }
+  if (ssasem.is_map(t) && ssasem.keyed_map_key(ssasem.map_key(t))) {
     return "__map_drop_keyed_impl";
   }
-  if (routed_map(t, f) && routed_box(ssasem.map_value(t))) {
+  if (ssasem.is_map(t) && routed_box(ssasem.map_value(t))) {
     return "__map_drop_boxes_impl";
   }
-  if (routed_map(t, f) && owned_columns(t)) {
+  if (ssasem.is_map(t) && owned_columns(t)) {
     return "__map_drop_strcols_impl";
   }
-  if (routed_map(t, f)) {
+  if (ssasem.is_map(t)) {
     return "__map_drop_impl";
   }
-  if (ssasem.is_map(t)) {
-    return map_release_name(t);
-  }
-  if (routed_iter(t, f)) {
-    return "__mapiter_drop_impl";
-  }
   if (semtypes.is_map_iter(t)) {
-    return "__fern_mapiter_free";
+    return "__mapiter_drop_impl";
   }
   return "__fern_rc_dec";
 }
 
-// A string key column takes a `_ks` member, which walks the keys through the
-// string dec; a keyed column a `_kf` member, which walks them through the
-// key's release, passed as the second argument; an integer one is freed
-// whole. Which member of any depends on the value column, whose entries the
-// map owns when they are counted. The string and string-array members are the
-// AST path's, so the deep frees they reach are the ones the runtime already
-// provides; the `_vf` members take the value's release as a further argument
-// and call it on every entry.
-function map_release_name(t: typeinfo.Type): string {
-  let v: typeinfo.Type = ssasem.map_value(t);
-  let ks: boolean = ssasem.is_text(ssasem.map_key(t));
-  let kf: boolean = ssasem.keyed_map_key(ssasem.map_key(t));
-  if (ssasem.is_string(v)) {
-    if (kf) {
-      return "__fern_map_free_kfvs";
-    }
-    if (ks) {
-      return "__fern_map_free_kvs";
-    }
-    return "__fern_map_free_vs";
-  }
-  if (ssasem.is_string_array(v)) {
-    if (kf) {
-      return "__fern_map_free_kfvsa";
-    }
-    if (ks) {
-      return "__fern_map_free_ksvsa";
-    }
-    return "__fern_map_free_vsa";
-  }
-  if (ssasem.boxed_map_value(v)) {
-    if (kf) {
-      return "__fern_map_free_kfvf";
-    }
-    if (ks) {
-      return "__fern_map_free_ksvf";
-    }
-    return "__fern_map_free_vf";
-  }
-  if (kf) {
-    return "__fern_map_free_kf";
-  }
-  if (ks) {
-    return "__fern_map_free_ks";
-  }
-  return "__fern_map_free";
+// A map or cursor type in a program without core/map, which a field or a
+// variant payload can name with no map operation anywhere (#10851). No such
+// value can be built, so its release has only to link.
+function unlinked_map(t: typeinfo.Type, f: ssasem.Func): boolean {
+  return (ssasem.is_map(t) || semtypes.is_map_iter(t)) && !f.map_module;
 }
 
 // The one release of a unit in `slot`. A map with a keyed column hands its
@@ -393,133 +349,23 @@ function map_release_name(t: typeinfo.Type): string {
 // that releases one value — the key's first, the value's on top — so the
 // runtime can walk a column whose shape it does not know.
 function release(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, f: ssasem.Func): irtables.LowerResult {
-  if (routed_map(t, f) && ssasem.keyed_map_key(ssasem.map_key(t))) {
+  if (unlinked_map(t, f)) {
+    return helper(r, slot, release_name(t, f));
+  }
+  if (ssasem.is_map(t) && ssasem.keyed_map_key(ssasem.map_key(t))) {
     r = emit(r, ir.op_load_local(slot));
     r = emit(r, ir.op_const_closure(env_release_name(ssasem.map_key(t))));
     r = emit(r, ir.op_const_closure(value_env_release(ssasem.map_value(t))));
     r = emit(r, ir.op_call_direct(release_name(t, f), 3));
     return emit(r, ir.op_drop());
   }
-  if (routed_map(t, f) && routed_box(ssasem.map_value(t))) {
+  if (ssasem.is_map(t) && routed_box(ssasem.map_value(t))) {
     r = emit(r, ir.op_load_local(slot));
     r = emit(r, ir.op_const_closure(env_release_name(ssasem.map_value(t))));
     r = emit(r, ir.op_call_direct(release_name(t, f), 2));
     return emit(r, ir.op_drop());
   }
-  let fns: string[] = map_release_fns(t);
-  if (fns.len() == 0 || routed_map(t, f)) {
-    return helper(r, slot, release_name(t, f));
-  }
-  r = emit(r, ir.op_load_local(slot));
-  for fn in fns {
-    r = emit(r, ir.op_const_func(0, fn));
-  }
-  r = emit(r, ir.op_call_direct(release_name(t, f), fns.len() + 1));
-  return emit(r, ir.op_drop());
-}
-
-// The per-type releases a map's free is handed after the box: the key's for
-// a keyed column, then the value's for a column of boxes.
-function map_release_fns(t: typeinfo.Type): string[] {
-  let out: string[] = [];
-  if (!ssasem.is_map(t)) {
-    return out;
-  }
-  if (ssasem.keyed_map_key(ssasem.map_key(t))) {
-    out = out.append(release_helper_name(ssasem.map_key(t)));
-  }
-  if (ssasem.boxed_map_value(ssasem.map_value(t))) {
-    out = out.append(release_helper_name(ssasem.map_value(t)));
-  }
-  return out;
-}
-
-// The runtime's key kind: 0 a string column, whose unit the insert hands over
-// for the column to hold, 1 an integer column, which holds no unit, 2 a
-// keyed column of boxes, hashed and compared through the key type's derived
-// methods and owning one unit per entry as a string column does, and 3 a
-// wide integer column (i64 / u64), which the register backends treat as 1
-// and wasm keeps as cells it owns and compares by value (#10005).
-function map_key_kind(t: typeinfo.Type): i32 {
-  if (ssasem.is_text(ssasem.map_key(t))) {
-    return 0;
-  }
-  if (ssasem.keyed_map_key(ssasem.map_key(t))) {
-    return 2;
-  }
-  if (ssasem.wide_map_key(ssasem.map_key(t))) {
-    return 3;
-  }
-  return 1;
-}
-
-// Whether the typed insert hands the key column a unit: a string or keyed
-// column takes one per entry; the integer columns, narrow or wide, hold none
-// (wasm's wide-key cells are the runtime's own, taken on the insert).
-function key_column_counted(kkind: i32): boolean {
-  return kkind == 0 || kkind == 2;
-}
-
-// The key-width flag of op_map_keys, op_map_iter and op_mapiter_key: 1 for
-// an i64 / u64 key column.
-function map_keywide(t: typeinfo.Type): i32 {
-  if (ssasem.wide_map_key(ssasem.map_key(t))) {
-    return 1;
-  }
-  return 0;
-}
-
-// The derived equality a keyed column's probes compare through, named as the
-// AST lowering names it — the receiver method `K.eq`, which the backends
-// spell `__fn_K__eq` — and "" for any other key.
-function map_key_eq(t: typeinfo.Type): string {
-  if (!ssasem.keyed_map_key(ssasem.map_key(t))) {
-    return "";
-  }
-  return ssasem.keyed_map_key_fn(ssasem.map_key(t), "eq");
-}
-
-// The pair a keyed map's construction carries, `K.hash|K.eq`: wasm stores
-// their table slots on the box and dispatches every probe through them.
-function map_key_fns(t: typeinfo.Type): string {
-  if (!ssasem.keyed_map_key(ssasem.map_key(t))) {
-    return "";
-  }
-  return ssasem.keyed_map_key_fn(ssasem.map_key(t), "hash") + "|" + ssasem.keyed_map_key_fn(ssasem.map_key(t), "eq");
-}
-
-// The map ops' widekind: 1 for an i64 or u64 value column and 2 for a float
-// one, which wasm keeps in cells of their own; the register backends ignore it.
-function map_widekind(t: typeinfo.Type): i32 {
-  return value_widekind(ssasem.map_value(t));
-}
-
-function value_widekind(v: typeinfo.Type): i32 {
-  if (ssasem.wide_map_value(v)) {
-    return 1;
-  }
-  if (ssasem.float_map_value(v)) {
-    return 2;
-  }
-  return 0;
-}
-
-// The runtime's value-column kind: 0 the map owns nothing in it, 1 a string
-// column, 2 a column of string arrays, 3 a column of boxes released through
-// the function the insert names. It is what tells map_set which release the
-// value it supersedes on an overwrite is owed (#9300).
-function map_value_kind(t: typeinfo.Type): i32 {
-  let v: typeinfo.Type = ssasem.map_value(t);
-  if (ssasem.is_string(v)) {
-    return 1;
-  }
-  if (ssasem.is_string_array(v)) {
-    return 2;
-  }
-  if (ssasem.boxed_map_value(v)) {
-    return 3;
-  }
-  return 0;
+  return helper(r, slot, release_name(t, f));
 }
 
 function emit(own r: irtables.LowerResult, op: ir.Op): irtables.LowerResult {
@@ -630,9 +476,9 @@ function steal(own r: irtables.LowerResult, f: ssasem.Func, v: i32, unique: i32)
 // only where the plan admitted the field.
 //
 // A map mutation never defers. Its receiver's retain is what makes a map
-// the frame still reads count as shared, and `unshared_map` then copies:
-// `let n = m.insert(k, v)` leaves `m` as it was, which is the value the
-// checker's E055 promises for every collection operation.
+// the frame still reads count as shared, and core/map's copy-on-write then
+// copies: `let n = m.insert(k, v)` leaves `m` as it was, which is the value
+// the checker's E055 promises for every collection operation.
 //
 // A string append defers every retain of its left operand: a string the
 // frame still reads cannot grow in place, so it is lent to a plain
@@ -1050,6 +896,9 @@ function dyn_concretes(f: ssasem.Func, t: typeinfo.Type): typeinfo.Type[] {
 // already emitted the uniqueness test this belongs under: `drop_value` before
 // it releases the box, `reuse_token` before it hands the box on.
 function drop_children(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerResult {
+  if (unlinked_map(t, f)) {
+    return r;
+  }
   if (semtypes.is_map_iter(t)) {
     return drop_cursor_map(r, slot, t, scratch, f);
   }
@@ -1074,18 +923,12 @@ function drop_children(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type,
   return r;
 }
 
-// A cursor's one child is the map it holds a unit of: element 0 of a builtin
-// cursor's block on every backend, and read through core/map for a routed one.
+// A cursor's one child is the map it holds a unit of, read through core/map.
 function drop_cursor_map(own r: irtables.LowerResult, slot: i32, t: typeinfo.Type, scratch: i32, f: ssasem.Func): irtables.LowerResult {
   let m: typeinfo.Type = semtypes.map_iter_map(t);
   r = reserve(r, scratch + 1);
   r = emit(r, ir.op_load_local(slot));
-  if (routed_iter(t, f)) {
-    r = emit(r, ir.op_call_direct("__mapiter_map_impl", 1));
-  } else {
-    r = emit(r, ir.op_const_i32(0));
-    r = emit(r, arr_get_op(m, true));
-  }
+  r = emit(r, ir.op_call_direct("__mapiter_map_impl", 1));
   r = emit(r, ir.op_store_local(scratch));
   return drop_value(r, scratch, m, scratch + 1, f);
 }
@@ -2698,7 +2541,7 @@ function routed_box_columns(maps: typeinfo.Type[], f: ssasem.Func): typeinfo.Typ
   let out: typeinfo.Type[] = [];
   let names: string[] = [];
   for t in maps {
-    if (!routed_map(t, f) || !routed_box(ssasem.map_value(t))) {
+    if (!ssasem.is_map(t) || !routed_box(ssasem.map_value(t))) {
       continue;
     }
     let name: string = env_release_name(ssasem.map_value(t));
@@ -2756,7 +2599,7 @@ function routed_keyed_maps(maps: typeinfo.Type[], f: ssasem.Func): typeinfo.Type
   let out: typeinfo.Type[] = [];
   let names: string[] = [];
   for t in maps {
-    if (!routed_map(t, f) || !ssasem.keyed_map_key(ssasem.map_key(t))) {
+    if (!ssasem.is_map(t) || !ssasem.keyed_map_key(ssasem.map_key(t))) {
       continue;
     }
     let name: string = ssasem.type_key(t);
@@ -3156,7 +2999,7 @@ function container_op(k: i32): boolean {
       ssasem.str_bytes(), ssasem.str_byte_view(), ssasem.arr_join(), ssasem.arr_slice(),
     ],
     k,
-  ) || variant_op(k) || ssasem.is_cell_op(k) || ssasem.is_map_op(k) || ssasem.is_map_iter_op(k) || ssasem.is_hole_op(k);
+  ) || variant_op(k) || ssasem.is_cell_op(k) || ssasem.is_hole_op(k);
 }
 
 function variant_op(k: i32): boolean {
@@ -3172,7 +3015,7 @@ function identity_op(k: i32): boolean {
 }
 
 function supported_op(k: i32): boolean {
-  return value_op(k) || container_op(k);
+  return value_op(k) || container_op(k) || ssasem.is_map_op(k) || ssasem.is_map_iter_op(k);
 }
 
 // A value's SSA id is its local slot, so the slot lists are a walk of the
@@ -3904,9 +3747,6 @@ function container(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, 
   if (ins.kind_tag == ssasem.str_index()) {
     return emit(r, ir.op_str_index());
   }
-  if (ssasem.is_map_op(ins.kind_tag)) {
-    return map_op(r, ins, f);
-  }
   if (ins.kind_tag == ssasem.array_get()) {
     if (byte_view(f.values[ins.args[0]])) {
       return emit(r, ssabytes.read(ins.args[0], true, ins.imm == 1));
@@ -3919,149 +3759,16 @@ function container(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, 
   return field_get(r, f, ins);
 }
 
-// The map ops at the shapes this boundary admits: a string, integer or keyed
-// key column (keykind 0, 1 or 2 — the keyed one probed through the key's
-// derived equality) over a narrow scalar or a counted value column, both
-// narrow in the runtime's width sense (widekind 0). An insert is handed a
-// counted key's unit, which `kconsume` tells the runtime to hold rather than
-// retain and to release when an overwrite supersedes it — through the key's
-// own release for a keyed column, which the op names beside the value's — and
-// the value's unit too when the column is counted: `valptr` + `vconsume` for
-// the store, and `vkind` for the release an overwrite owes what it supersedes.
-// `owncols` makes the map the sole owner of both column buffers, so a grow
-// frees the buffer it replaced instead of leaking it.
-//
-// A read of a counted column RETAINS what it answers. The plan gives the
-// result a unit of its own because the value may be the column's or the
-// caller's default, and only a retain gives one owner to both.
-function map_op(own r: irtables.LowerResult, ins: ssa.SInst, f: ssasem.Func): irtables.LowerResult {
-  if (ins.kind_tag == ssasem.map_new()) {
-    return emit(r, ir.op_map_new(map_key_kind(f.values[ins.result]), map_key_fns(f.values[ins.result])));
-  }
-  if (ins.kind_tag == ssasem.map_len()) {
-    return emit(r, ir.op_map_len());
-  }
-  // A clear reads nothing from the receiver — this runtime's map box is the
-  // two columns and no capacity beside them, so an empty box of the same key
-  // kind is what clearing produces. The capacity the construction op pops is
-  // a hint every backend discards.
-  if (ins.kind_tag == ssasem.map_cleared()) {
-    r = emit(r, ir.op_const_i32(8));
-    return emit(r, ir.op_map_new(map_key_kind(f.values[ins.result]), map_key_fns(f.values[ins.result])));
-  }
-  let t: typeinfo.Type = f.values[ins.args[0]];
-  let kkind: i32 = map_key_kind(t);
-  let vkind: i32 = map_value_kind(t);
-  let eq: string = map_key_eq(t);
-  let vrel: string = "";
-  let krel: string = "";
-  if (vkind == 3) {
-    vrel = release_helper_name(ssasem.map_value(t));
-  }
-  if (kkind == 2) {
-    krel = release_helper_name(ssasem.map_key(t));
-  }
-  if (ins.kind_tag == ssasem.map_insert()) {
-    return emit(r, ir.op_map_set(kkind, vkind != 0, vkind != 0, key_column_counted(kkind), true, false, ir.map_op_packed(eq, vrel, krel), map_widekind(t), vkind));
-  }
-  if (ins.kind_tag == ssasem.map_has()) {
-    return emit(r, ir.op_map_has(kkind, eq));
-  }
-  if (ins.kind_tag == ssasem.map_get()) {
-    r = emit(r, ir.op_map_get(kkind, eq, map_widekind(t)));
-    if (vkind == 0) {
-      return r;
-    }
-    return retain_hit_payload(r, ins);
-  }
-  if (ins.kind_tag == ssasem.map_keys()) {
-    r = emit(r, ir.op_map_keys(column_flag(ssasem.map_key(t)), map_keywide(t)));
-    if (ssasem.is_u8(ssasem.map_key(t))) {
-      return packed_snapshot(r, f);
-    }
-    return r;
-  }
-  if (ins.kind_tag == ssasem.map_values()) {
-    let vt: typeinfo.Type = ssasem.map_value(t);
-    r = emit(r, ir.op_map_values(column_flag(vt), map_widekind(t)));
-    if (ssasem.is_u8(vt)) {
-      return packed_snapshot(r, f);
-    }
-    return r;
-  }
-  if (ins.kind_tag == ssasem.map_delete()) {
-    return emit(r, ir.op_map_delete(kkind, ir.map_op_packed(eq, vrel, krel), key_column_counted(kkind), vkind));
-  }
-  r = emit(r, ir.op_map_get_or(kkind, eq, map_widekind(t)));
-  if (vkind == 0) {
-    return r;
-  }
-  return emit(r, ir.op_call_direct("__fern_rc_inc", 1));
-}
-
-// A map whose key and value are both 32-bit integers or booleans runs on
-// core/map's hash table rather than the runtime's association list (#9608).
-// A program whose import closure has no core/map to run on keeps every map on
-// the runtime: a map-typed field needs no map op, so nothing in such a
-// program loads it (#10851).
-function routed_map(t: typeinfo.Type, f: ssasem.Func): boolean {
-  if (!ssasem.is_map(t)) {
-    return false;
-  }
-  return routed_key(ssasem.map_key(t)) && routed_value(ssasem.map_value(t)) && f.map_module;
-}
-
-function routed_iter(t: typeinfo.Type, f: ssasem.Func): boolean {
-  if (!semtypes.is_map_iter(t)) {
-    return false;
-  }
-  return routed_key(semtypes.map_iter_key(t)) && routed_value(semtypes.map_iter_value(t)) && f.map_module;
-}
-
-// A string column, of keys or values, holds one unit of each string, as the
-// runtime's does; a keyed column (a derived Eq + Hash nominal, or a tuple or
-// array key) one unit of each key, hashed and compared through closures over
-// the key type's own functions (key_closure).
-function routed_key(t: typeinfo.Type): boolean {
-  return routed_column(t) || ssasem.is_usize(t) || ssasem.is_text(t) || ssasem.wide_map_key(t) || ssasem.keyed_map_key(t);
-}
-
-// A value column may also hold boxes, one unit of each; core/map retains them
-// on every read and copy, and this lowering releases the ones it drops.
-// A view value column is a string column: an insert stores a unit of a
-// counted view descriptor, a counted string or a literal, never a view in its
-// maker's frame (ssaunits.frame_views). A usize value is the slot itself.
-function routed_value(t: typeinfo.Type): boolean {
-  return routed_column(t) || ssasem.is_char(t) || ssasem.is_usize(t) || ssasem.is_text(t) || routed_box(t) || cell_column(t);
-}
-
 // The boxes a routed value column can hold: any counted value but a string or
 // a view, released through the type's own release helper.
 function routed_box(t: typeinfo.Type): boolean {
   return ssasem.boxed_map_value(t) && !ssasem.is_view(t) || ssasem.is_string_array(t);
 }
 
-function routed_column(t: typeinfo.Type): boolean {
-  return ssasem.is_i32(t) || ssasem.is_u32(t) || ssasem.is_u8(t) || ssasem.is_bool(t);
-}
-
 // A key or value wider than four bytes, an i64 or u64 or a float, crosses
 // the slot as a cell holding its eight bytes (core/map's __map_cell).
 function cell_column(t: typeinfo.Type): boolean {
   return ssasem.wide_map_key(t) || ssasem.float_map_value(t);
-}
-
-function routed_map_op(f: ssasem.Func, ins: ssa.SInst): boolean {
-  if (ins.kind_tag == ssasem.map_new() || ins.kind_tag == ssasem.map_cleared()) {
-    return routed_map(f.values[ins.result], f);
-  }
-  if (ssasem.is_map_op(ins.kind_tag)) {
-    return routed_map(f.values[ins.args[0]], f);
-  }
-  if (ssasem.is_map_iter_op(ins.kind_tag)) {
-    return routed_iter(f.values[ins.args[0]], f) || routed_iter(f.values[ins.result], f);
-  }
-  return false;
 }
 
 // A routed map op as a call to the core/map function native's
@@ -4454,57 +4161,6 @@ function release_if_copied(own r: irtables.LowerResult, receiver: i32, handle: i
   return emit(r, ir.op_end());
 }
 
-// The runtime's column-snapshot flag: 2 copies a column of references — a
-// string column, a keyed column, a column of boxes — with a per-element
-// retain, 0 a column of scalars that holds no references. The raw alias (1)
-// every other element type would take is unreachable: semsource refuses those
-// columns rather than hand the frame elements the map still owns.
-// The runtime map's snapshot of a u8 column is a word array, where a u8[]
-// this lowering reads is packed (ir.packed), so it is copied into one and
-// released: fresh, it holds the only unit of itself and no counted element.
-function packed_snapshot(own r: irtables.LowerResult, f: ssasem.Func): irtables.LowerResult {
-  let src: i32 = scratch_base(f);
-  let dst: i32 = src + 1;
-  let index: i32 = src + 2;
-  r = reserve(r, index + 1);
-  r = emit(r, ir.op_store_local(src));
-  r = emit(r, ir.op_load_local(src));
-  r = emit(r, ir.op_arr_len());
-  r = emit(r, ir.packed(ir.op_alloc_u8()));
-  r = emit(r, ir.op_store_local(dst));
-  r = emit(r, ir.op_const_i32(0));
-  r = emit(r, ir.op_store_local(index));
-  r = emit(r, ir.op_block(0));
-  r = emit(r, ir.op_loop(0));
-  r = emit(r, ir.op_load_local(index));
-  r = emit(r, ir.op_load_local(src));
-  r = emit(r, ir.op_arr_len());
-  r = emit(r, ir.op_bin("ge_s", 0, false));
-  r = emit(r, ir.op_brif(1));
-  r = emit(r, ir.op_load_local(dst));
-  r = emit(r, ir.op_load_local(index));
-  r = emit(r, ir.op_load_local(src));
-  r = emit(r, ir.op_load_local(index));
-  r = emit(r, ir.op_arr_get_nc(32));
-  r = emit(r, ir.op_arr_set(8));
-  r = emit(r, ir.op_load_local(index));
-  r = emit(r, ir.op_const_i32(1));
-  r = emit(r, ir.op_bin("add", 0, false));
-  r = emit(r, ir.op_store_local(index));
-  r = emit(r, ir.op_br(0));
-  r = emit(r, ir.op_end());
-  r = emit(r, ir.op_end());
-  r = helper(r, src, "__fern_rc_dec");
-  return emit(r, ir.op_load_local(dst));
-}
-
-function column_flag(elem: typeinfo.Type): i32 {
-  if (ssasem.reference(elem)) {
-    return 2;
-  }
-  return 0;
-}
-
 // A get answers an Option box of the frame's own whose payload the runtime
 // copies out of the column without a retain, so a hit on a counted column
 // retains the payload here: the box then owns one unit of it, as any Option
@@ -4781,27 +4437,16 @@ function instruction(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pl
   if (ssasem.is_hole_op(ins.kind_tag)) {
     return hole_site(r, ins);
   }
-  if (routed_map_op(f, ins)) {
+  if (ssasem.is_map_op(ins.kind_tag) || ssasem.is_map_iter_op(ins.kind_tag)) {
     r = routed_map_site(r, f, ins);
     return emit(r, ir.op_store_local(ins.result));
-  }
-  if (ssasem.is_map_iter_op(ins.kind_tag)) {
-    return map_iter_site(r, f, ins);
   }
   if (ssasem.is_function_op(ins.kind_tag)) {
     r = function_site(r, f, ins);
     return emit(r, ir.op_store_local(ins.result));
   }
-  if (ins.kind_tag == ssasem.map_insert() || ins.kind_tag == ssasem.map_delete()) {
-    r = map_mutation(r, f, ins);
-    return emit(r, ir.op_store_local(ins.result));
-  }
   if (ins.kind_tag == ssasem.arr_join()) {
     r = join_call(r, ins);
-    return emit(r, ir.op_store_local(ins.result));
-  }
-  if (ins.kind_tag == ssasem.call() && fern_helper_call(ins.str, ins.args.len())) {
-    r = helper_call(r, ins);
     return emit(r, ir.op_store_local(ins.result));
   }
   if (ins.kind_tag == ssasem.append()) {
@@ -4884,24 +4529,6 @@ function held(own r: irtables.LowerResult, p: ssaunits.Plan, ins: ssa.SInst): ir
     return r;
   }
   return helper(r, ins.result, "__fern_rc_inc");
-}
-
-// A runtime helper (ircore.is_fern_helper) binds its parameters in reverse
-// push order (#5666): the backends push a helper call's operands as they come,
-// where a user call's go last first. So the last argument goes in first.
-// __fern_map_find is the one such helper a typed body
-// calls with more than one argument.
-function fern_helper_call(name: string, argc: i32): boolean {
-  return argc > 1 && name == "__fern_map_find";
-}
-
-function helper_call(own r: irtables.LowerResult, ins: ssa.SInst): irtables.LowerResult {
-  let i: i32 = ins.args.len() - 1;
-  while (i >= 0) {
-    r = emit(r, ir.op_load_local(ins.args[i]));
-    i = i - 1;
-  }
-  return emit(r, ir.op_call_direct(ins.str, ins.args.len()));
 }
 
 // A tuple read the plan admitted as a TAKE nulls the slot it read. The source
@@ -5184,7 +4811,7 @@ function link_kind(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): boolean {
     return p.grows[ins.result] < 0;
   }
   if (ins.kind_tag == ssasem.call()) {
-    return is_array_type(f.values[ins.result]) && !dyn_call(ins) && !fern_helper_call(ins.str, ins.args.len());
+    return is_array_type(f.values[ins.result]) && !dyn_call(ins);
   }
   return ins.kind_tag == 8 && is_array_type(f.values[ins.result]);
 }
@@ -5836,34 +5463,6 @@ function scale_in_place(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SI
   return emit(r, ir.op_end());
 }
 
-// The cursor cluster. `map_iter` is the only allocation of the five, a fresh
-// unit that takes a unit of its map (drop_cursor_map releases it). `key` and
-// `value` load the map's own column element at the cursor, so the value is the
-// map's and stays borrowed. `advance` moves the index in place and leaves the
-// dummy the statement stores.
-//
-// An i64 or u64 value column sets both width flags, which only the wasm
-// accessors read.
-function map_iter_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
-  r = emit(r, ir.op_load_local(ins.args[0]));
-  if (ins.kind_tag == ssasem.map_iter()) {
-    r = emit(r, ir.op_map_iter(map_widekind(f.values[ins.args[0]]), map_keywide(f.values[ins.args[0]])));
-  } else if (ins.kind_tag == ssasem.mapiter_has_next()) {
-    r = emit(r, ir.op_mapiter_has_next());
-  } else if (ins.kind_tag == ssasem.mapiter_key()) {
-    let kw: i32 = 0;
-    if (ssasem.wide_map_key(semtypes.map_iter_key(f.values[ins.args[0]]))) {
-      kw = 1;
-    }
-    r = emit(r, ir.op_mapiter_key(kw));
-  } else if (ins.kind_tag == ssasem.mapiter_value()) {
-    r = emit(r, ir.op_mapiter_value(value_widekind(semtypes.map_iter_value(f.values[ins.args[0]]))));
-  } else {
-    r = emit(r, ir.op_mapiter_advance());
-  }
-  return emit(r, ir.op_store_local(ins.result));
-}
-
 // A cell is a one-element array box shared by every holder, built over the
 // one element it takes.
 function cell_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
@@ -6003,118 +5602,6 @@ function width_char(t: typeinfo.Type): string {
     return "d";
   }
   return "w";
-}
-
-// A consuming map mutation — an insert or a `without` — runs on a box this
-// frame is the only holder of. A map's unit is counted, so the receiver's box
-// may be shared with another binding or frame, and a mutation in place would
-// show through every holder; when it is shared, the frame takes a fresh box
-// with the same entries first, the copy-on-write native's runtime makes.
-// The copy is `map_new` and one insert per entry over plain snapshots of the
-// two columns, supplying each entry's units as the typed insert takes them —
-// a string key's and a counted value's — since the register runtimes retain
-// nothing on an insert. The snapshots hold no units and are released
-// shallow; the shared box loses this frame's unit, which cannot be its last.
-function map_mutation(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst): irtables.LowerResult {
-  let box: i32 = scratch_base(f);
-  r = reserve(r, box + 1);
-  r = unshared_map(r, f, ins.args[0], box);
-  r = emit(r, ir.op_load_local(box));
-  let i: i32 = 1;
-  while (i < ins.args.len()) {
-    r = emit(r, ir.op_load_local(ins.args[i]));
-    i = i + 1;
-  }
-  return map_op(r, ins, f);
-}
-
-function unshared_map(own r: irtables.LowerResult, f: ssasem.Func, slot: i32, box: i32): irtables.LowerResult {
-  let t: typeinfo.Type = f.values[slot];
-  let kkind: i32 = map_key_kind(t);
-  let vkind: i32 = map_value_kind(t);
-  let keys: i32 = box + 1;
-  let vals: i32 = box + 2;
-  let index: i32 = box + 3;
-  // The key and value slots are one per width: the slots are the frame's,
-  // shared by every rebuild in it, and a slot's type is declared once, so
-  // a narrow column and a wide one in the same function cannot share a
-  // slot (wasm refuses an i32 stored into an i64 local).
-  let key: i32 = box + 4;
-  let value: i32 = box + 5;
-  if (map_keywide(t) == 1) {
-    key = box + 6;
-    r = irtables.LowerResult { ...r, i64_slots: r.i64_slots.append(key) };
-  }
-  if (map_widekind(t) == 1) {
-    value = box + 7;
-    r = irtables.LowerResult { ...r, i64_slots: r.i64_slots.append(value) };
-  }
-  if (map_widekind(t) == 2) {
-    value = box + 8;
-    r = irtables.LowerResult { ...r, f64_slots: r.f64_slots.append(value) };
-  }
-  r = reserve(r, box + 9);
-  r = emit(r, ir.op_load_local(slot));
-  r = emit(r, ir.op_call_direct("__fern_rc_is_unique", 1));
-  r = emit(r, ir.op_if(0));
-  r = emit(r, ir.op_load_local(slot));
-  r = emit(r, ir.op_store_local(box));
-  r = emit(r, ir.op_else());
-  r = emit(r, ir.op_load_local(slot));
-  r = emit(r, ir.op_map_len());
-  r = emit(r, ir.op_map_new(kkind, map_key_fns(t)));
-  r = emit(r, ir.op_store_local(box));
-  r = emit(r, ir.op_load_local(slot));
-  r = emit(r, ir.op_map_keys(0, map_keywide(t)));
-  r = emit(r, ir.op_store_local(keys));
-  r = emit(r, ir.op_load_local(slot));
-  r = emit(r, ir.op_map_values(0, map_widekind(t)));
-  r = emit(r, ir.op_store_local(vals));
-  r = emit(r, ir.op_const_i32(0));
-  r = emit(r, ir.op_store_local(index));
-  r = emit(r, ir.op_block(0));
-  r = emit(r, ir.op_loop(0));
-  r = emit(r, ir.op_load_local(index));
-  r = emit(r, ir.op_load_local(keys));
-  r = emit(r, ir.op_arr_len());
-  r = emit(r, ir.op_bin("ge_s", 0, false));
-  r = emit(r, ir.op_brif(1));
-  r = emit(r, ir.op_load_local(keys));
-  r = emit(r, ir.op_load_local(index));
-  if (map_keywide(t) == 1) {
-    r = emit(r, arr_get_op(ssasem.map_key(t), true));
-  } else {
-    r = emit(r, ir.op_arr_get_nc(32));
-  }
-  r = emit(r, ir.op_store_local(key));
-  r = emit(r, ir.op_load_local(vals));
-  r = emit(r, ir.op_load_local(index));
-  r = emit(r, arr_get_op(ssasem.map_value(t), true));
-  r = emit(r, ir.op_store_local(value));
-  if (key_column_counted(kkind)) {
-    r = helper(r, key, "__fern_rc_inc");
-  }
-  if (vkind != 0) {
-    r = helper(r, value, "__fern_rc_inc");
-  }
-  r = emit(r, ir.op_load_local(box));
-  r = emit(r, ir.op_load_local(key));
-  r = emit(r, ir.op_load_local(value));
-  // map_op reads the receiver's type off args[0] and nothing else of the
-  // instruction, so the result slot is a placeholder.
-  r = map_op(r, ssa.SInst { kind_tag: ssasem.map_insert(), result: 0 - 1, args: [slot, key, value], imm: 0, str: "" }, f);
-  r = emit(r, ir.op_store_local(box));
-  r = emit(r, ir.op_load_local(index));
-  r = emit(r, ir.op_const_i32(1));
-  r = emit(r, ir.op_bin("add", 0, false));
-  r = emit(r, ir.op_store_local(index));
-  r = emit(r, ir.op_br(0));
-  r = emit(r, ir.op_end());
-  r = emit(r, ir.op_end());
-  r = helper(r, keys, "__fern_rc_dec");
-  r = helper(r, vals, "__fern_rc_dec");
-  r = helper(r, slot, "__fern_rc_dec");
-  return emit(r, ir.op_end());
 }
 
 // A dyn method call dispatches on the receiver's shape, and every arm reloads

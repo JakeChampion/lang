@@ -11,29 +11,11 @@ import (
 // or enum compares its keys through K's derived `Eq` on the self-host ARM64
 // path, not by reinterpreting the key box.
 //
-// The arm64 map runtime had no keyed-compare path at all. The lowering threads the
-// derived equality symbol through every keyed map op (in
-// `Op.str`), and the x86-64 emitter loads it into %r8 for __fern_map_set /
-// _get / _has / _delete — but the arm64 emitter discarded it, so a
-// struct key fell through to the STRING loop and `__fern_str_eq` read the key
-// box as a `{data, len}` string box.
-//
-// A struct/enum box is {shape-ptr @0, field0 @8, …}, so read as a string box
-// its "data" is the SHAPE pointer and its "length" is field 0. __fern_str_eq
-// compares the lengths first, so on the broken runtime two keys of the same
-// type compared equal iff their FIRST FIELD was bit-identical — and when it
-// was, the byte loop then walked the shared shape pointer and trivially agreed.
-// That single fact explains every observed symptom:
-//   - `Name { first: string, … }` — field 0 is a string-box POINTER, so a
-//     freshly built value-equal key had a different "length" and missed. This
-//     is the one the fixture caught.
-//   - `P { a: i32, b: i32 }` — the positive probes hit for the right-looking
-//     reason, but `P { a: 1, b: 4 }` ALSO matched `P { a: 1, b: 2 }`: equal
-//     first field, and `b` was never read at all. Hence the scalar case below,
-//     with a negative probe that differs only in the second field.
-//
-// The issue read the miss as "does not hash structurally"; it was narrower and
-// worse than that — the runtime was comparing the wrong bytes entirely.
+// The broken runtime compared a key box as if it were a string box, so two
+// keys of one type compared equal iff their FIRST FIELD was bit-identical.
+// Hence a struct key with a string first field, whose fresh value-equal copy
+// missed, and a scalar case with a negative probe that differs only in the
+// second field.
 //
 // The programs import the real std/core modules (the checker requires
 // `@derive(Eq, Hash)` and `import "core/map"` for a struct key — there is no

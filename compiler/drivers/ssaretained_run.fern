@@ -15,6 +15,7 @@ import "./ssaretainedproof" as proof;
 import "./ssaretainedwrapper" as wrapper;
 import "./ssaretainedentry" as entry;
 import "./ssaretainedruntime" as runtimeproof;
+import "./ssaretainedallocation" as allocation;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -99,6 +100,7 @@ function settled(g: ircore.Gated, arm: boolean): void {
   for body in on.bodies {
     require(count(on.bodies, body.label_name) == 1, 26);
     entry.consistent(body);
+    allocation.consistent(body);
   }
 }
 
@@ -109,6 +111,7 @@ function direct(g: ircore.Gated): void {
   let out = asm_arm64_ir.emit_body(g.im, base, false, g.cache, g.physical);
   require(base.prepared.len() == 0 && out.prepared.len() == 3, 30);
   require(out.prepared[0].context.rc_free_debug && !out.prepared[0].context.records, 31);
+  allocation.consistent(out.prepared[0]);
   strbuf_reset();
   let disabled = asm_arm64_ir.emit_body(g.im, asmcore.EmitState { ...base, retain_prepared: false }, false, g.cache, g.physical);
   require(disabled.prepared.len() == 0, 32);
@@ -158,6 +161,7 @@ function debug_body(g: ircore.Gated, arm: boolean): void {
   require(rows.len() == 1 && rows[0].context.records, 40);
   require(rows[0].body.seen_vals.len() > 0 && rows[0].body.seen_slots.len() > 0, 41);
   require(rows[0].body.lowered.dbg_names[0] == "observed" && rows[0].body.lowered.ops[0].i32_imm == 43, 42);
+  allocation.consistent(rows[0]);
   let code = buf_take(recs);
   require(code.len() > 0, 43);
   buf_free(recs);
@@ -194,6 +198,8 @@ function main(): i32 {
   entry.run();
   runtimeproof.debug(g, false);
   runtimeproof.debug(g, true);
+  allocation.run(g, false);
+  allocation.run(g, true);
   print("retained native body controls passed");
   return 0;
 }

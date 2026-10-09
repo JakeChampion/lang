@@ -12,8 +12,8 @@ import (
 
 // A map whose key is a string, a 32-bit integer, a boolean or a keyed type,
 // and whose value is one of those or a box, runs on core/map's hash table
-// under the typed lowering (ssarc.routed_map, #9608). These cases pin what the routing has to
-// keep: the whole Map surface, copy-on-write under an alias, negative keys
+// under the typed lowering (ssarc.routed_map_site, #9608). These cases pin what
+// the routing has to keep: the whole Map surface, copy-on-write under an alias, negative keys
 // (which cross into core/map's usize slot and must be equal slots however they
 // were computed), u32 values past 2^31, boolean columns, and the units a string
 // or box column holds — on every target, with every allocation returned.
@@ -757,12 +757,10 @@ func TestSelfHostRoutedScalarMaps(t *testing.T) {
 		})
 	}
 
-	// Each routed program calls core/map and carries nothing of the runtime's
-	// map, so a value column that stopped routing turns its case red here
-	// rather than passing on the runtime map.
+	// Each program calls core/map.
 	for _, c := range cases {
 		asm := routedMapAsm(t, selfHostBin, stdlibRoot, c.src)
-		if !strings.Contains(asm, "call __fn___map_set_") || strings.Contains(asm, "__fern_map_find") {
+		if !strings.Contains(asm, "call __fn___map_set_") {
 			t.Fatalf("the %s program's maps are not routed onto core/map", c.name)
 		}
 	}

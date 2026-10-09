@@ -383,7 +383,7 @@ pub function op_arr_len(): Op {
 }
 
 // `arr_push` pops [arr, val] → a (possibly grown) array with `val` appended via
-// __fern_arr_push (the helper the AST `.append` and the map runtime use).
+// __fern_arr_push.
 // Lowered from a reassign-self `a = a.append(v)`; the result re-binds the slot.
 pub function op_arr_push(): Op {
   return op0(92);
@@ -1750,12 +1750,6 @@ pub function op_arr_push_shared_bytes(): Op {
 // after the first pays a load rather than a syscall. Never 0 — that is
 // core/map's "unseeded" sentinel, and a 0 reaching a map header would leave
 // that map unseeded.
-//
-// The self-host's own `Map[K, V]` lowers to the native `__fern_map_*` runtime
-// rather than to core/map's Fern bodies, so this op exists for those bodies to
-// COMPILE and LINK (see the `core/map` note in each backend's intrinsic
-// section) — the seed it returns is not what a self-host-compiled program's
-// maps hash with. Seeding the self-host map runtime is separate work.
 pub function op_map_hash_seed(): Op {
   return op0(222);
 }
@@ -1843,170 +1837,6 @@ pub function op_opt_payload(): Op {
 // 8-byte payload read: width 64 + the i64 flag select i64.load vs f64.load.
 pub function op_opt_payload_w(width: i32, is_i64: boolean): Op {
   return Op { decl: 0 - 1, kind_tag: 123, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: is_i64, str: "" };
-}
-
-// keykind 2 = struct/enum key: `fns` packs the derived "K.hash|K.eq" so the
-// wasm backend can thread their funcref-table indices into the hash-map box
-// (its hk/keq dispatch them via call_indirect). x86-64 ignores it — its
-// linear-scan map is key-type-agnostic and dispatches eq per op. "" otherwise.
-pub function op_map_new(keykind: i32, fns: string): Op {
-  return Op { decl: 0 - 1, kind_tag: 124, i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: fns };
-}
-
-// op_map_set: `i32_imm` is the KEY kind (0 = string, 1 = i32 — the x86-64
-// runtime's string-eq-vs-int loop selector); `unsigned` carries the VALUE
-// pointerness (the wasm runtime's `vis` RC-retain flag — true when the value
-// is a heap pointer: string / array / struct / enum / tuple / fn / unknown).
-// Without the value flag the wasm map_set leaves vis=0, never retaining a
-// pointer value, so the caller's dec frees it under the map → use-after-free /
-// sibling-key aliasing (#3495). x86-64 ignores `unsigned` (its runtime never
-// RC-manages values; its arr_dec is leak-only).
-// `eqfn` is the symbol of the key type's derived equality function
-// (`__fn_<K>__eq`) for a struct/enum key, or "" for a scalar/string key.
-// The x86-64 linear-scan runtime dispatches struct keys through it
-// (passed in %r8); wasm carries the derived hash and eq as funcref-table
-// slots on the map box instead ($__fern_map_new_struct, kis 2), so it takes
-// them from op_map_new rather than from here. #2671.
-// `str` carries up to THREE symbols, pipe-joined as `eq|vrel|krel`: the
-// derived equality, the release of one VALUE of a column of boxes (vkind 3)
-// and the release of one KEY of a keyed column (keykind 2), each "" where the
-// map has none. `map_op_symbols` splits them, and a bare name with no pipe
-// reads as the one symbol the op's kinds call for — the value release of a
-// column of boxes, else the eq of a keyed map (#9962).
-// `width` carries per-insert flags as bits. Bits 0/1 are the wasm-only
-// fresh-consume flags (bit 0 = `vconsume`, bit 1 = `kconsume`): a set bit means
-// the inserted VALUE (resp. KEY) is a FRESH pointer temp with no other owner,
-// so $__fern_map_set must TAKE its single ref instead of retaining — the
-// per-insert twin of the register MAPVS / MAPKS analyses. This balances
-// $__fern_map_release's per-slot dec so a fresh string key/value is reclaimed
-// rather than leaked by one (#4353 wasm bug 2). The x86-64 / arm64 runtimes
-// ignore bits 0/1's vconsume half (their maps don't rc-manage values
-// per-insert — the MAPVS/MAPKS credits free them at reclaim) but read bit 1
-// (kconsume: free the discarded fresh key on an overwrite, #4881/#4885).
-// Bit 2 = `owncols` (#4353 grow-leak, general case #5335): the map's key AND
-// value columns BOTH read back as snapshots (i32 columns snapshot-copy, string
-// columns snapshot with per-element retain), so no keys()/values() read aliases
-// the raw column buffers — the map is the SOLE owner of its keys[]/vals[]
-// buffers and the register map_set's grow path may free the superseded buffer
-// (__fern_arr_push_owned) instead of leaking it. A column whose reads still
-// raw-alias keeps owncols=0 — element flag 1, which is an
-// i64/f64/generic column, and a struct or enum VALUE column. A struct or enum
-// KEY column snapshots with per-element retain like a string one (#9962/#9965),
-// so it does not hold owncols back. wasm ignores bit 2 (its map already frees
-// old buffers on grow).
-// Bit 3 = `vretain` (#6880): the inserted VALUE is an ALIASED array — a local,
-// a param, a struct field, an element — so the register __fern_map_set, which
-// stores the pointer with no rc-inc of its own, must retain it. Without the
-// retain the exit dec-sweep (which releases every array slot) frees the buffer
-// the map's value column still names, and the next same-size-class allocation
-// recycles it under the map. wasm ignores bit 3: $__fern_map_set already
-// retains every `vis` value it is not told to consume.
-// Bits 4/5 = `vkind` (#9300): the value column OWNS one unit per live entry and
-// the superseded value on an overwrite must be released, since the reclaim
-// helper only ever reaches entries still in the column. 0 = the column owns
-// nothing (today's register behaviour, and what the AST path passes); 1 = a
-// string column, released through __fern_str_free; 2 = a string[] column,
-// through __fern_str_arr_free; 3 = a column of boxes released by calling the
-// function `str` names on each, which is how a record, union, array or tuple
-// column is owned (the semantic lowering names its own per-type release, and
-// its maps carry no derived key equality, so the field is free for it). wasm
-// releases the old value under `vis` for kinds 1 and 2 already, and calls
-// through the named function's table slot for kind 3.
-// `widekind` (carried in i64_imm) marks an 8-byte VALUE column: 0 = narrow
-// (i32/string pointer), 1 = i64/u64, 2 = f64. The x86-64 and arm64 runtimes store
-// the value 8-byte unconditionally (movq / str x), so they ignore it. On wasm the
-// i32-celled $__fern_map_set can't hold an 8-byte value directly: widekind 1
-// (i64/u64) routes to $__fern_map_set_w64 (an 8-byte cell boxed into the i32
-// column); widekind 2 (f64) is still refused via wasm_ir_deferrals_ok. #5253.
-// map_op_symbols answers an op_map_set's or op_map_delete's [eq, vrel, krel]
-// (see op_map_set); both carry the key kind in i32_imm and vkind in width.
-pub function map_op_symbols(o: Op): string[] {
-  let parts: string[] = split_pipes(o.str);
-  if (parts.len() >= 3) {
-    return [parts[0], parts[1], parts[2]];
-  }
-  let vkind3: boolean = o.width / 16 % 2 == 1 && o.width / 32 % 2 == 1;
-  if (parts.len() == 2) {
-    if (o.i32_imm == 2) {
-      return [parts[0], parts[1], ""];
-    }
-    return ["", parts[0], parts[1]];
-  }
-  if (vkind3) {
-    return ["", o.str, ""];
-  }
-  if (o.i32_imm == 2) {
-    return [o.str, "", ""];
-  }
-  return ["", "", ""];
-}
-
-// map_op_packed joins the three symbols of an op_map_set or op_map_delete
-// the way map_op_symbols reads them back: a lone eq or a lone value release
-// stays bare, and all three fields are written otherwise, so a name is never
-// taken for another slot's.
-pub function map_op_packed(eq: string, vrel: string, krel: string): string {
-  if (vrel == "" && krel == "") {
-    return eq;
-  }
-  if (eq == "" && krel == "") {
-    return vrel;
-  }
-  return eq + "|" + vrel + "|" + krel;
-}
-
-function split_pipes(s: string): string[] {
-  let out: string[] = [];
-  let start: i32 = 0;
-  let i: i32 = 0;
-  while (i < s.len()) {
-    if (s[i] == 124) {  // '|'
-      out = out.append(slice_unchecked(s, start, i) + "");
-      start = i + 1;
-    }
-    i = i + 1;
-  }
-  if (out.len() == 0) {
-    return [];
-  }
-  return out.append(slice_unchecked(s, start, s.len()) + "");
-}
-
-pub function op_map_set(keykind: i32, valptr: boolean, vconsume: boolean, kconsume: boolean, owncols: boolean, vretain: boolean, eqfn: string, widekind: i32, vkind: i32): Op {
-  let w: i32 = 0;
-  if (vconsume) {
-    w = w + 1;
-  }
-  if (kconsume) {
-    w = w + 2;
-  }
-  if (owncols) {
-    w = w + 4;
-  }
-  if (vretain) {
-    w = w + 8;
-  }
-  if (vkind == 1) {
-    w = w + 16;
-  }
-  if (vkind == 2) {
-    w = w + 32;
-  }
-  if (vkind == 3) {
-    w = w + 48;
-  }
-  let vw: i64 = 0;
-  if (widekind == 1) {
-    vw = 1;
-  }
-  if (widekind == 2) {
-    vw = 2;
-  }
-  return Op { decl: 0 - 1, kind_tag: 125, i32_imm: keykind, i64_imm: vw, f64_imm: 0.0, width: w, unsigned: valptr, str: eqfn };
-}
-
-pub function op_map_len(): Op {
-  return op0(126);
 }
 
 // `print_str` pops a string value and writes its bytes to stdout (no newline),
@@ -2677,164 +2507,6 @@ pub function op_proc_exec_as(): Op {
   return op0(280);
 }
 
-// `map_get` pops [map, key] → an Option box [tag@0, payload@8] (Some(value) on a
-// hit, None on a miss) — the SAME layout as opt_make, so it plugs into the
-// built-in Option match. `map_has` pops [map, key] → i32 0/1. Both carry the key
-// kind in i32_imm.
-// `widekind` (i64_imm) marks a map whose VALUE column is 8-byte — the twin of
-// op_map_set's: 0 narrow, 1 i64/u64, 2 f64. On wasm, widekind 1 boxes the
-// dereferenced 8-byte cell into a 16-byte Option[i64] via $__fern_map_get_w64;
-// widekind 2 (f64) stays deferred (wasm_ir_deferrals_ok). The register backends
-// ignore it. #5253.
-pub function op_map_get(keykind: i32, eqfn: string, widekind: i32): Op {
-  let vw: i64 = 0;
-  if (widekind == 1) {
-    vw = 1;
-  }
-  if (widekind == 2) {
-    vw = 2;
-  }
-  return Op { decl: 0 - 1, kind_tag: 127, i32_imm: keykind, i64_imm: vw, f64_imm: 0.0, width: 0, unsigned: false, str: eqfn };
-}
-
-pub function op_map_has(keykind: i32, eqfn: string): Op {
-  return Op { decl: 0 - 1, kind_tag: 128, i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: 0, unsigned: false, str: eqfn };
-}
-
-// `map_get_or` pops [map, key, default] → the value at key, or default on a miss.
-// `widekind` (i64_imm) is the twin of op_map_set's: 0 narrow, 1 i64/u64, 2 f64.
-// The register backends return the value full-width regardless; on wasm widekind 1
-// routes to $__fern_map_get_or_w64 (dereferences the boxed 8-byte cell) and
-// widekind 2 (f64) is still refused. #5253.
-pub function op_map_get_or(keykind: i32, eqfn: string, widekind: i32): Op {
-  let vw: i64 = 0;
-  if (widekind == 1) {
-    vw = 1;
-  }
-  if (widekind == 2) {
-    vw = 2;
-  }
-  return Op { decl: 0 - 1, kind_tag: 129, i32_imm: keykind, i64_imm: vw, f64_imm: 0.0, width: 0, unsigned: false, str: eqfn };
-}
-
-// `map_delete` pops [map, key] → the map with that key removed (Fern's functional
-// `m.without(k)`); reuses the same `__fern_map_delete` runtime as the AST path.
-// Key kind in i32_imm. `kfree` says the map owns one unit of every key, so the
-// removed key is released — a string key through __fern_str_free, a keyed
-// column's box through the key release `str` names — and `vkind` is
-// op_map_set's: the removed value is released through the column's release
-// (#9970). The AST path passes neither: its maps own their columns only
-// under a credit this op does not read, so it keeps the release-nothing
-// delete. `str` is packed as op_map_set's `eq|vrel|krel`, and the register
-// backends route a delete that releases anything to __fern_map_delete_rel.
-// On wasm every map owns its columns per insert, so its delete releases
-// under the box's own kis/vis whatever `kfree` says.
-pub function op_map_delete(keykind: i32, syms: string, kfree: boolean, vkind: i32): Op {
-  let w: i32 = 0;
-  if (kfree) {
-    w = w + 2;
-  }
-  if (vkind == 1) {
-    w = w + 16;
-  }
-  if (vkind == 2) {
-    w = w + 32;
-  }
-  if (vkind == 3) {
-    w = w + 48;
-  }
-  return Op { decl: 0 - 1, kind_tag: 130, i32_imm: keykind, i64_imm: 0, f64_imm: 0.0, width: w, unsigned: false, str: syms };
-}
-
-// map_delete_releases reports whether an op_map_delete releases anything it
-// removes — the register backends' switch to __fern_map_delete_rel.
-pub function map_delete_releases(o: Op): boolean {
-  return o.width != 0;
-}
-
-// `map_keys` / `map_values` pop [map] → the array of live keys / values.
-// `i32_imm` is the ELEMENT-kind flag (#4353 counted-reads slice 1+2):
-//   0 = scalar (i32) column → the register backends (x86-64 / arm64) SNAPSHOT
-//       the column into a fresh rc=1 array (__fern_map_snapshot_col), so the
-//       result is an owned copy the exit sweep reclaims and later `m.set`
-//       mutations don't leak into it (matching native + wasm semantics). This
-//       is what lets an i32/i32 map own + free its own buffers (op_map_set
-//       owncols) without dangling a live keys()/values() read.
-//   1 = pointer/string (or i64/f64/unknown) column → the register backends
-//       return the RAW keys[]@0 / vals[]@8 buffer pointer, an uncounted alias
-//       (today's historical behaviour; the string-column snapshot is slice 3).
-// wasm always snapshots (hash map, no raw column) and ignores the flag.
-// Order is backend-defined, so consumers must be order-independent.
-// `keywide` (width) is 1 for an i64 / u64 KEY column, the twin of op_map_values'
-// widekind for the other column: on wasm the keys are boxed 8-byte cells, which
-// the snapshot dereferences into a fresh i64[] ($__fern_map_keys_k64). The
-// register backends hold every key at eight bytes and ignore it.
-pub function op_map_keys(elemptr: i32, keywide: i32): Op {
-  return Op { decl: 0 - 1, kind_tag: 131, i32_imm: elemptr, i64_imm: 0, f64_imm: 0.0, width: keywide, unsigned: false, str: "" };
-}
-
-// op_map_values: `widekind` (i64_imm) marks an 8-byte VALUE column — the twin of
-// op_map_set's: 0 narrow, 1 i64/u64, 2 f64. The register backends read the column
-// with the 8-byte forms regardless and ignore it. On wasm, widekind 1 snapshots
-// the boxed 8-byte cells into a fresh i64[] ($__fern_map_values_w64); widekind 2
-// (f64) is still refused via wasm_ir_deferrals_ok. #5253.
-pub function op_map_values(elemptr: i32, widekind: i32): Op {
-  let vw: i64 = 0;
-  if (widekind == 1) {
-    vw = 1;
-  }
-  if (widekind == 2) {
-    vw = 2;
-  }
-  return Op { decl: 0 - 1, kind_tag: 132, i32_imm: elemptr, i64_imm: vw, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
-}
-
-// Map iteration (the parallel-array backends, x86-64 / arm64). `map_iter` pops
-// [map] and pushes a fresh 16-byte iterator box [map_ptr@0, cursor@8] (cursor 0)
-// — the ONLY allocating op of the cluster. `mapiter_has_next` pops [iter] -> i32
-// 0/1 (cursor < keys.len). `mapiter_key` / `mapiter_value` pop [iter] -> the
-// keys[cursor] / values[cursor] element (cursor is 0-based; the element load is
-// keys[cursor+1], the +1 skipping the array box's len header). `mapiter_advance`
-// pops [iter], bumps the stored cursor, and pushes a dummy result for the drop.
-// `widekind` (i64_imm) marks a map whose VALUE column is 8-byte — 0 narrow,
-// 1 i64/u64, 2 f64. On wasm, widekind 1 builds the iterator's value snapshot as a
-// fresh i64[] ($__fern_map_iter_w64 over $__fern_map_values_w64); widekind 2 (f64)
-// stays deferred (wasm_ir_deferrals_ok). The register backends ignore it. #5253.
-// `keywide` (width) is 1 for an i64 / u64 KEY column: on wasm the iterator's
-// key snapshot is then a fresh i64[] of the dereferenced key cells, and
-// `mapiter_key` reads its 8-byte element ($__fern_mapiter_key_w64). The
-// register backends ignore it.
-pub function op_map_iter(widekind: i32, keywide: i32): Op {
-  let vw: i64 = 0;
-  if (widekind == 1) {
-    vw = 1;
-  }
-  if (widekind == 2) {
-    vw = 2;
-  }
-  return Op { decl: 0 - 1, kind_tag: 133, i32_imm: 0, i64_imm: vw, f64_imm: 0.0, width: keywide, unsigned: false, str: "" };
-}
-
-pub function op_mapiter_has_next(): Op {
-  return op0(134);
-}
-
-pub function op_mapiter_key(keywide: i32): Op {
-  return Op { decl: 0 - 1, kind_tag: 135, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: keywide, unsigned: false, str: "" };
-}
-
-// `widekind` (i64_imm) is 1 for an i64/u64 VALUE column and 2 for an f64 one: on
-// wasm the accessor reads the 8-byte element via $__fern_mapiter_value_w64, and
-// reinterprets it for f64. The register backends ignore it. #5253.
-pub function op_mapiter_value(widekind: i32): Op {
-  let vw: i64 = widekind as i64;
-  return Op { decl: 0 - 1, kind_tag: 136, i32_imm: 0, i64_imm: vw, f64_imm: 0.0, width: 0, unsigned: false, str: "" };
-}
-
-pub function op_mapiter_advance(): Op {
-  return op0(137);
-}
-
 // high-level struct ops — layout-agnostic, like the array/string ops. `str`
 // carries the struct's type name, `i32_imm` the field count (struct_make) or
 // the field index in DECL order (struct_get). `struct_make` pops `i32_imm`
@@ -3296,10 +2968,11 @@ pub function kind_count(): i32 {
   return 188;
 }
 
-// kind_retired is an id in 1..kind_count() whose op is gone (121, opt_none).
+// kind_retired is an id in 1..kind_count() whose op is gone: 121 (opt_none) and
+// 124..137 (the runtime map and map-cursor ops, which core/map replaced).
 // The number is not reused, so the dense ids around it keep their meaning.
 pub function kind_retired(id: i32): boolean {
-  return id == 121;
+  return id == 121 || id >= 124 && id <= 137;
 }
 
 // kind_id maps an op-kind tag to its stable integer id (0 = KIND_INVALID for
@@ -3809,9 +3482,6 @@ function kind_id_len7(name: string): i32 {
   if (c == b'c' && name == "ct_mark") {
     return 399;
   }
-  if (c == b'm') {
-    return kind_id_len7_m(name);
-  }
   if (c == b'o' && name == "opt_tag") {
     return 122;
   }
@@ -3839,25 +3509,6 @@ function kind_id_len7_a(name: string): i32 {
   }
   if (name == "arr_len") {
     return 90;
-  }
-  return 0;
-}
-
-function kind_id_len7_m(name: string): i32 {
-  if (name == "map_new") {
-    return 124;
-  }
-  if (name == "map_set") {
-    return 125;
-  }
-  if (name == "map_len") {
-    return 126;
-  }
-  if (name == "map_get") {
-    return 127;
-  }
-  if (name == "map_has") {
-    return 128;
   }
   return 0;
 }
@@ -3966,12 +3617,6 @@ function kind_id_len8_b(name: string): i32 {
 }
 
 function kind_id_len8_m(name: string): i32 {
-  if (name == "map_keys") {
-    return 131;
-  }
-  if (name == "map_iter") {
-    return 133;
-  }
   if (name == "mismatch") {
     return 245;
   }
@@ -4261,9 +3906,6 @@ function kind_id_len10(name: string): i32 {
   if (c == b'l' && name == "load_local") {
     return 18;
   }
-  if (c == b'm') {
-    return kind_id_len10_m(name);
-  }
   if (c == b'r') {
     return kind_id_len10_r(name);
   }
@@ -4290,19 +3932,6 @@ function kind_id_len10(name: string): i32 {
   }
   if (c == b'w' && name == "wasm_block") {
     return 162;
-  }
-  return 0;
-}
-
-function kind_id_len10_m(name: string): i32 {
-  if (name == "map_get_or") {
-    return 129;
-  }
-  if (name == "map_delete") {
-    return 130;
-  }
-  if (name == "map_values") {
-    return 132;
   }
   return 0;
 }
@@ -4377,9 +4006,6 @@ function kind_id_len11(name: string): i32 {
   }
   if (c == b'c' && name == "create_link") {
     return 262;
-  }
-  if (c == b'm' && name == "mapiter_key") {
-    return 135;
   }
   if (c == b'n' && name == "now_unix_ms") {
     return 184;
@@ -4599,9 +4225,6 @@ function kind_id_len13(name: string): i32 {
   if (c == b'f' && name == "f64_from_bits") {
     return 17;
   }
-  if (c == b'm' && name == "mapiter_value") {
-    return 136;
-  }
   if (c == b't' && name == "tcp_recv_into") {
     return 344;
   }
@@ -4720,9 +4343,6 @@ function kind_id_len15(name: string): i32 {
   if (c == b'h' && name == "heap_release_to") {
     return 230;
   }
-  if (c == b'm' && name == "mapiter_advance") {
-    return 137;
-  }
   if (c == b'r' && name == "read_file_bytes") {
     return 233;
   }
@@ -4772,9 +4392,6 @@ function kind_id_len16(name: string): i32 {
   let c: u8 = name[0];
   if (c == b'h' && name == "heap_alloc_count") {
     return 315;
-  }
-  if (c == b'm' && name == "mapiter_has_next") {
-    return 134;
   }
   if (c == b's' && name == "struct_set_shape") {
     return 141;
@@ -5250,48 +4867,6 @@ function kind_name_3(id: i32): string {
   }
   if (id == 123) {
     return "opt_payload";
-  }
-  if (id == 124) {
-    return "map_new";
-  }
-  if (id == 125) {
-    return "map_set";
-  }
-  if (id == 126) {
-    return "map_len";
-  }
-  if (id == 127) {
-    return "map_get";
-  }
-  if (id == 128) {
-    return "map_has";
-  }
-  if (id == 129) {
-    return "map_get_or";
-  }
-  if (id == 130) {
-    return "map_delete";
-  }
-  if (id == 131) {
-    return "map_keys";
-  }
-  if (id == 132) {
-    return "map_values";
-  }
-  if (id == 133) {
-    return "map_iter";
-  }
-  if (id == 134) {
-    return "mapiter_has_next";
-  }
-  if (id == 135) {
-    return "mapiter_key";
-  }
-  if (id == 136) {
-    return "mapiter_value";
-  }
-  if (id == 137) {
-    return "mapiter_advance";
   }
   if (id == 138) {
     return "struct_make";
@@ -6152,9 +5727,6 @@ function pops1_mem(t: i32): boolean {
     || t == 113  // str_lines
     || t == 118  // strbuf_append
     || t == 120 || t == 122 || t == 123  // opt_make, opt_tag, opt_payload
-    || t == 124  // map_new (pops the size hint)
-    || t == 126 || t == 131 || t == 132 || t == 133  // map_len, map_keys, map_values, map_iter
-    || t == 134 || t == 135 || t == 136 || t == 137  // mapiter_*
     || t == 139 || t == 141 || t == 143 || t == 145  // struct_get, struct_set_shape, tuple_get, variant_is
     || t == 146 || t == 198;  // dyn_box, struct_copy
 }
@@ -6219,7 +5791,6 @@ function pops2_mem(t: i32): boolean {
     || t == 98 || t == 99 || t == 100 || t == 101  // str_concat, str_eq, str_cmp, str_index
     || t == 105 || t == 108  // str_split, str_repeat
     || pops2_kernel(t)
-    || t == 127 || t == 128 || t == 130  // map_get, map_has, map_delete
     || t == 140 || t == 144;  // struct_set, tuple_set
 }
 
@@ -6249,7 +5820,6 @@ function pops3(t: i32): boolean {
   return t == 379 || t == 361 || t == 360 || t == 358 || t == 74 || t == 75  // scan_set_bytes, rmemchr_bytes, memchr_bytes, memcpy, memset
     || t == 82 || t == 84  // raw_store8, raw_store_ptr
     || t == 89 || t == 96 || t == 102 || t == 111  // arr_set, arr_slice, str_slice, str_replace
-    || t == 125 || t == 129  // map_set, map_get_or
     || t == 177 || t == 208 || t == 225 || t == 234  // subprocess, udp_send, memchr, rmemchr
     || t == 333 || t == 335 || t == 337 || t == 338  // tcp_socket_ctl, udp_connect, udp_recvfrom, tcp_connect_with
     || t == 346  // tcp_sendfile (fd, file, max)
@@ -8554,33 +8124,6 @@ pub function render_op(o: Op): string {
   if (o.kind_tag == 123) {
     return "opt_payload";
   }
-  if (o.kind_tag == 124) {
-    return "map_new " + util.i32_to_string(o.i32_imm);
-  }
-  if (o.kind_tag == 125) {
-    return "map_set " + util.i32_to_string(o.i32_imm);
-  }
-  if (o.kind_tag == 126) {
-    return "map_len";
-  }
-  if (o.kind_tag == 127) {
-    return "map_get " + util.i32_to_string(o.i32_imm);
-  }
-  if (o.kind_tag == 128) {
-    return "map_has " + util.i32_to_string(o.i32_imm);
-  }
-  if (o.kind_tag == 129) {
-    return "map_get_or " + util.i32_to_string(o.i32_imm);
-  }
-  if (o.kind_tag == 130) {
-    return "map_delete " + util.i32_to_string(o.i32_imm);
-  }
-  if (o.kind_tag == 131) {
-    return "map_keys";
-  }
-  if (o.kind_tag == 132) {
-    return "map_values";
-  }
   if (o.kind_tag == 138) {
     return "struct_make " + o.str + "/" + util.i32_to_string(o.i32_imm);
   }
@@ -8666,11 +8209,7 @@ pub function call_needs_heap(name: string): boolean {
   if (name == "__fern_snapshot_dec" || name == "__fern_struct_copy" || name == "__fern_set_args") {
     return true;
   }
-  if (name == "__fern_str_free" || name == "__fern_str_view_free" || name == "__fern_str_arr_free") {
-    return true;
-  }
-  return name == "__fern_map_free" || name == "__fern_map_free_ks"
-    || name == "__fern_map_free_kvs" || name == "__fern_map_free_vs";
+  return name == "__fern_str_free" || name == "__fern_str_view_free" || name == "__fern_str_arr_free";
 }
 
 // op_needs_heap is the gate every emitter reads: the op allocates, or it calls
@@ -8719,20 +8258,6 @@ pub function op_allocates(tag: i32): boolean {
     return true;
   }
   if (tag == 120) {
-    return true;
-  }
-  if (tag == 124 || tag == 125) {
-    return true;
-  }
-  // map_iter allocates the 16-byte iterator box via __fern_alloc; the other
-  // mapiter ops are pure loads / a cursor store (no allocation).
-  if (tag == 133) {
-    return true;
-  }
-  // map_keys / map_values allocate on wasm (hash-map snapshot) and — for a
-  // scalar column (i32_imm 0, #4353) — on the register backends too
-  // (__fern_map_snapshot_col builds a fresh rc=1 copy via __fern_arr_box).
-  if (tag == 131 || tag == 132) {
     return true;
   }
   // Byte/string builders that materialise a fresh box.

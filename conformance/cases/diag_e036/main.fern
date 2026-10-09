@@ -3,11 +3,11 @@
 // also checks the catalogue's example really does produce the error
 // it documents.
 enum Color { Red, Green, Blue }
-enum Status { Ok, Err(string) }
+enum Shape { Circle(f64), Square }
 
 function main(): i32 {
-    let c = Red(1);                   // error[E036]: variant Red expects 0 argument(s), got 1
-    let s = Err();                    // error[E036]: variant Err expects 1 argument(s), got 0
-    let bad = Status.Pending;         // error[E036]: enum Status has no variant "Pending"
+    let s = Circle();                 // error[E036]: variant Circle expects 1 argument(s), got 0
+    let t = Circle(1.0, 2.0);         // error[E036]: variant Circle expects 1 argument(s), got 2
+    let bad = Color.Purple;           // error[E036]: enum Color has no variant "Purple"
     return 0;
 }

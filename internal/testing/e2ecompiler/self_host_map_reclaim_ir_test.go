@@ -2,17 +2,12 @@ package e2ecompiler
 
 import "testing"
 
-// mapReclaimIRCases exercise the Perceus map-local reclaim helper
-// (__fern_map_free / $__fern_map_release). Each `main` builds one or more FRESH,
-// borrow-only (method-call receivers are borrows), non-escaping map locals, whose
-// keys/values buffers and mapbox are freed at scope exit. The cases that build a
+// mapReclaimIRCases exercise the release of map locals. Each `main` builds
+// one or more FRESH, borrow-only (method-call receivers are borrows),
+// non-escaping map locals, released at scope exit. The cases that build a
 // SECOND map after the first goes dead stress the freelist: a double-free or
-// corrupted mapbox from the reclaim would poison the recycled block and skew the
+// corrupted map from the release would poison the recycled block and skew the
 // result.
-//
-// On wasm the release must route to $__fern_map_release; an op the wasm backend
-// does not select leaves the operand stack imbalanced and wasmtime rejects the
-// module ("values remaining on stack at end of block") (#6917 / #6946).
 var mapReclaimIRCases = []struct {
 	name string
 	main string
