@@ -423,6 +423,46 @@ function main(): i32 {
 }
 `
 
+// routedMapUsizeKeysSrc: a usize key is the slot itself, as a usize value
+// is. The checker admits it, and the lowering refused it until #11851.
+const routedMapUsizeKeysSrc = `import "core/map";
+import "std/i32";
+function main(): i32 {
+    let big: usize = (3000000000 as usize) * (4 as usize);
+    let m: Map[usize, i32] = Map {};
+    let i: i32 = 0;
+    while (i < 300) { m = m.insert(big + (i as usize), i * 2); i = i + 1; }
+    m = m.insert(big + (7 as usize), 1000);
+    let r: (Map[usize, i32], boolean) = m.without(big + (9 as usize));
+    let s: i32 = m.get_or(big + (7 as usize), 0) + m.get_or(5 as usize, -1) + r.0.len();
+    match (m.get(big + (299 as usize))) { Some(v) => { s = s + v; }, None => { s = s - 1; } }
+    let n: i32 = 0;
+    for (k, v) in r.0 { if (k >= big) { n = n + 1; } }
+    let ks: usize[] = m.keys();
+    print(s.to_string() + " " + n.to_string() + " " + ks.len().to_string() + " " + r.1.to_string());
+    return 0;
+}
+`
+
+// routedMapCharValuesSrc: a char value column is an i32 column, the values()
+// snapshot included.
+const routedMapCharValuesSrc = `import "core/map";
+import "std/i32";
+function main(): i32 {
+    let m: Map[i32, char] = Map {};
+    m = m.insert(1, 'a');
+    m = m.insert(2, 'β');
+    m = m.insert(1, 'z');
+    let s: string = "";
+    match (m.get(1)) { Some(c) => { s = s + (c as i32).to_string(); }, None => {} }
+    s = s + (m.get_or(2, '?') as i32).to_string() + "," + (m.get_or(3, '?') as i32).to_string();
+    let n: i32 = 0;
+    for c in m.values() { n = n + (c as i32); }
+    print(s + " " + n.to_string() + " " + m.has(2).to_string());
+    return 0;
+}
+`
+
 // routedMapStringValuesSrc: string value columns hold their strings in the
 // slots, so an overwrite, a delete, an alias's copy and the last drop each
 // release exactly the values they own, and a get hands out its own reference.
@@ -694,6 +734,8 @@ func TestSelfHostRoutedScalarMaps(t *testing.T) {
 		{"generic_keyed_keys", routedMapGenericKeyedKeysSrc, "784 twoempty-five! 31 1745"},
 		{"map_values", routedMapMapValuesSrc, "5706 8136 0"},
 		{"usize_values", routedMapUsizeValuesSrc, "true 3 598 2 0 299"},
+		{"usize_keys", routedMapUsizeKeysSrc, "1896 299 300 true"},
+		{"char_values", routedMapCharValuesSrc, "122946,63 1068 true"},
 		{"view_values", routedMapViewValuesSrc, "abc,over,gh7!,h7,lit,ite,abcdefgh7!,miss,gone,cde,a,true,abcdefgh7!,none,again,abcdefgh7!,cde,pt,abcdefgh7!,1\n2749"},
 	}
 	for _, c := range cases {
