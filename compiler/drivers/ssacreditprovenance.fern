@@ -1,0 +1,142 @@
+// Selection maps describe the actual merge/prune traversal, not a certificate.
+import "../ir";
+import "../irtables";
+import "../ircore";
+import "../ssarc";
+import "../semndprune";
+import "../semlower";
+import "../physicalbody";
+import "../lexer";
+import "../parser";
+
+function require(ok: boolean, code: i32): void {
+  if (!ok) {
+    exit(code);
+  }
+}
+
+function body(name: string, ops: ir.Op[]): irtables.LowerResult {
+  return irtables.LowerResult {
+    ok: true, ops: ops, n_locals: 0, n_params: 0,
+    erased_wide: false, superseded: false, arr_slots: [], i64_slots: [], f64_slots: [], str_slots: [],
+    why: "", name: name, result_kind: 0, dbg_slots: [], dbg_names: [], dbg_types: [],
+  };
+}
+
+function same(a: irtables.LowerResult[], b: irtables.LowerResult[]): void {
+  require(a.len() == b.len() && ircore.lowered_digest(a) == ircore.lowered_digest(b), 131);
+  let i = 0;
+  for x in a {
+    require(x.name == b[i].name && x.ok == b[i].ok && x.why == b[i].why && x.superseded == b[i].superseded, 132);
+    require(x.n_params == b[i].n_params && x.n_locals == b[i].n_locals, 147);
+    i = i + 1;
+  }
+}
+
+function merged(): void {
+  let first = body("same", [ir.op_const_i32(1), ir.op_return()]);
+  let other = body("same", [ir.op_const_i32(2), ir.op_return()]);
+  let failed = irtables.LowerResult { ...other, name: "failed", ok: false, why: "retained refusal" };
+  let fold = body("fold", [ir.op_const_i32(2), ir.op_const_i32(3), ir.op_bin("add", 0, false), ir.op_return()]);
+  let rows = [other, fold, first, failed, irtables.LowerResult { ...failed, ok: true, why: "" }];
+  let cache = [first, other, failed];
+  let m = ssarc.merge_helpers_mapped(cache, rows);
+  require(m.cache_len == 3 && m.helper_indices.len() == 1 && m.helper_indices[0] == 1, 133);
+  same(m.bodies, ssarc.merge_helpers(cache, rows));
+  same([m.bodies[0], m.bodies[1], m.bodies[2]], cache);
+  require(m.bodies[3].ops.len() < fold.ops.len(), 134);
+  let empty = ssarc.merge_helpers_mapped([], rows);
+  require(empty.cache_len == 0 && empty.helper_indices.len() == 3, 135);
+  require(empty.helper_indices[0] == 0 && empty.helper_indices[1] == 1 && empty.helper_indices[2] == 3, 136);
+  same([empty.bodies[0], empty.bodies[2]], [other, failed]);
+  same(empty.bodies, ssarc.merge_helpers([], rows));
+  let none = ssarc.merge_helpers_mapped([], []);
+  require(none.cache_len == 0 && none.helper_indices.len() == 0 && none.bodies.len() == 0, 137);
+  let cached = ssarc.merge_helpers_mapped(cache, []);
+  require(cached.cache_len == 3 && cached.helper_indices.len() == 0, 148);
+  same(cached.bodies, cache);
+}
+
+function frame(): void {
+  let ops = [
+    ir.op_block(0), ir.op_loop(0), ir.op_load_local(1), ir.op_load_local(0), ir.op_str_len(),
+    ir.op_bin("lt_s", 0, false), ir.op_bin("not", 0, false), ir.op_brif(1), ir.op_load_local(1), ir.op_const_i32(1),
+    ir.op_bin("add", 0, false), ir.op_store_local(1), ir.op_br(0), ir.op_end(), ir.op_end(),
+  ];
+  let h = irtables.LowerResult { ...body("loop", ops), n_params: 1, n_locals: 2 };
+  let m = ssarc.merge_helpers_mapped([], [h]);
+  let expected = ir.optimize_ops(h.ops, h.n_params, h.n_locals);
+  require(expected.n_locals > h.n_locals && m.helper_indices[0] == 0, 138);
+  let transformed = irtables.LowerResult { ...h, ops: expected.ops, n_locals: expected.n_locals };
+  same(m.bodies, [transformed]);
+}
+
+function check_prune(mod: parser.Module, bodies: irtables.LowerResult[], extra: irtables.LowerResult[], indices: i32[]): semndprune.MappedResult {
+  let mapped = semndprune.unused_adapter_mapped(mod, bodies, extra);
+  let old = semndprune.unused_adapter(mod, bodies, extra);
+  same(mapped.result.bodies, old.bodies);
+  same(mapped.result.extra, old.extra);
+  require(mapped.extra_indices.len() == indices.len() && mapped.result.extra.len() == indices.len(), 139);
+  let i = 0;
+  for at in indices {
+    require(mapped.extra_indices[i] == at, 140);
+    same([mapped.result.extra[i]], [extra[at]]);
+    i = i + 1;
+  }
+  return mapped;
+}
+
+function pruned(): void {
+  let mod = parser.parse_module(lexer.tokenize("function main(): i32 { return 0; } function ndarray__inner_kernel(): i32 { return 0; }"));
+  let bodies = [body("", []), body("", [ir.op_call_direct("ndarray__made", 0)])];
+  let gone = irtables.LowerResult { ...body("already_gone", []), superseded: true };
+  let extra = [
+    body("keep_first", []), body("ndarray__made", [ir.op_call_direct("ndarray__leaf", 0)]),
+    gone, body("ndarray__leaf", []), body("keep_last", []),
+  ];
+  let dead = check_prune(mod, bodies, extra, [0, 4]);
+  require(!dead.result.bodies[0].superseded && dead.result.bodies[1].superseded && dead.result.bodies[1].name == "", 141);
+  let live = bodies.with(0, body("", [ir.op_call_direct("ndarray__inner_kernel", 0)]));
+  let kept = check_prune(mod, live, extra, [0, 1, 2, 3, 4]);
+  require(kept.result.extra[2].superseded && !kept.result.bodies[1].superseded, 142);
+  let absent = parser.parse_module(lexer.tokenize(""));
+  check_prune(absent, bodies, extra, [0, 1, 2, 3, 4]);
+  check_prune(absent, [], [], []);
+  check_prune(mod, bodies, [], []);
+  let exported = parser.Module { ...mod, exports: [parser.ExportBinding { func_name: "ndarray__inner_kernel", iface: "", wit: "", c_abi: true }] };
+  check_prune(exported, bodies, extra, [0, 1, 2, 3, 4]);
+}
+
+function producers(): void {
+  let a = semlower.runtime_lowering("struct A { n: i32 } function identity(x: A): i32 { return x.n; }");
+  let b = semlower.runtime_lowering("struct B { n: i64 } function identity(x: B): i64 { return x.n + 1; }");
+  // Deliberately collide symbols from different actual selected metadata sets.
+  let origins: physicalbody.Lowered[] = [a, b];
+  let rows = [a.bodies[0], b.bodies[0]];
+  let m = ssarc.merge_helpers_mapped([], rows);
+  require(m.helper_indices.len() == 1 && m.helper_indices[0] == 0, 143);
+  let selected = origins[m.helper_indices[0]];
+  require(selected.declarations[0] == "identity" && selected.records.names.has("A") && !selected.records.names.has("B"), 144);
+  let reverse = ssarc.merge_helpers_mapped([], [rows[1], rows[0]]);
+  let reversed: physicalbody.Lowered[] = [b, a];
+  require(reversed[reverse.helper_indices[0]].records.names.has("B"), 149);
+  same(reverse.bodies, ssarc.merge_helpers([], [rows[1]]));
+  require(ircore.lowered_digest(m.bodies) != ircore.lowered_digest(reverse.bodies), 145);
+  let mod = parser.parse_module(lexer.tokenize(""));
+  let kept = check_prune(mod, [], m.bodies, [0]);
+  require(origins[m.helper_indices[kept.extra_indices[0]]].records.names.has("A"), 146);
+  let adapter = parser.parse_module(lexer.tokenize("function ndarray__inner_kernel(): i32 { return 0; }"));
+  let gone = body("ndarray__gone", []);
+  let with_tail = ssarc.merge_helpers_mapped([], [gone, rows[0], rows[1]]);
+  let pruned = check_prune(adapter, [body("", [ir.op_call_direct("ndarray__gone", 0)])], with_tail.bodies, [1]);
+  let inputs: physicalbody.Lowered[] = [physicalbody.empty(), a, b];
+  let origin = with_tail.helper_indices[pruned.extra_indices[0]];
+  require(origin == 1 && inputs[origin].records.names.has("A"), 150);
+}
+
+pub function run(): void {
+  merged();
+  frame();
+  pruned();
+  producers();
+}
