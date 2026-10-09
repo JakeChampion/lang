@@ -102,8 +102,8 @@ const vblockDeferUnliftedSrc = `@noinline function ids(s: string): string { retu
 function main(): i32 {
     let r = 0;
     let c = 1;
-    let d = { let q = [1, 2, 3]; if (c > 0) { defer { r = q[0] + q.len() } } q };
-    let e = { let s = [ids("ab"), "c"]; if (c > 5) { defer { r = r + s.len() } } s };
+    let d = { let q = [1, 2, 3]; if (c > 0) { defer { r = q[0] + q.len(); } } q };
+    let e = { let s = [ids("ab"), "c"]; if (c > 5) { defer { r = r + s.len(); } } s };
     return d[0] + r * 10 + e[0].len() * 50;
 }
 `
