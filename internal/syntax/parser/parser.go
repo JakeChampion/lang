@@ -5377,8 +5377,16 @@ func prependParamDestructures(body *ast.Block, destrs []*ast.Destructure) {
 // ---------- Expressions ----------
 
 // parseExpr parses an expression. An assignment is not one: it is a
-// statement, parsed by parseAssign where a statement stands.
-func (p *parser) parseExpr() (ast.Expr, error) { return p.parsePipe() }
+// statement, parsed by parseAssign where a statement stands. It is a nesting
+// level of its own, as the compiler's parse_binary is, so a parenthesised
+// level costs the same two units on both front ends.
+func (p *parser) parseExpr() (ast.Expr, error) {
+	if err := p.enter(); err != nil {
+		return nil, err
+	}
+	defer p.leave()
+	return p.parsePipe()
+}
 
 // compoundOps maps a compound-assignment punctuator to its underlying
 // binary operator. `x += y` desugars into `x = x + y` at parse time so
