@@ -226,6 +226,27 @@ function test_duration_full(): test.TestOutcome {
   return test.assert_eq(format.format_duration_ms(3661001), "1h 1m 1s 1ms");
 }
 
+// Past the ~24.8 days an i32 of milliseconds holds, which parse_duration_ms
+// already returned (#5347).
+function test_duration_past_i32(): test.TestOutcome {
+  return test.assert_eq(format.format_duration_ms(2592000001 as i64), "720h 1ms");
+}
+
+function test_duration_negative(): test.TestOutcome {
+  return test.assert_eq(format.format_duration_ms(0 - 1500), "-1s 500ms");
+}
+
+function test_duration_round_trips_parse(): test.TestOutcome {
+  match (format.parse_duration_ms("30d 1s")) {
+    Some(ms) => {
+      return test.assert_eq(format.format_duration_ms(ms), "720h 1s");
+    },
+    None => {
+      return test.fail("parse_duration_ms(\"30d 1s\") answered None");
+    }
+  }
+}
+
 // A longer, mixed template that exercises the growable-u8[] output buffer
 // across several reallocations in one call (#4379): a long literal run, many
 // placeholders, an escaped-brace pair, a non-placeholder `{"k":..}` JSON run
@@ -287,6 +308,9 @@ function main(): i32 {
   r = r.it("duration seconds and ms", test_duration_seconds_and_ms);
   r = r.it("duration minutes", test_duration_minutes);
   r = r.it("duration full", test_duration_full);
+  r = r.it("duration past i32", test_duration_past_i32);
+  r = r.it("duration negative", test_duration_negative);
+  r = r.it("duration round-trips parse", test_duration_round_trips_parse);
   r = r.it("format mixed long", test_format_mixed_long);
   return r.finish();
 }
