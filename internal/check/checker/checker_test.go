@@ -7355,6 +7355,20 @@ function main(): i32 { return last(RangeIter { cur: 0, end: 5 }, -1); }`
 	}
 }
 
+// An untyped integer literal argument does not decide a type parameter a
+// bound's impl pins: `has(I64Iter{..}, 2)` is over i64, the literal settling
+// there, not an i32 call the bound then rejects with E021.
+func TestCheckBoundDrivenInferenceBeatsLiteral(t *testing.T) {
+	src := `trait Iterator[T] { function next(self: Self): Option[(T, Self)]; }
+struct I64Iter { cur: i64 }
+impl Iterator[i64] for I64Iter { function next(self: Self): Option[(i64, Self)] { return None; } }
+function has[T, I: Iterator[T]](it: I, target: T): T { return target; }
+function main(): i32 { let v = has(I64Iter { cur: 0 }, 2); let w: i64 = v; if (w == 2) { return 0; } return 1; }`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("the bound's impl should decide T over the literal: %v", err)
+	}
+}
+
 // A bounded generic `T: Display` may forward its parameter straight to
 // `print`; the trait bound supplies the `to_string` the rewrite needs.
 func TestCheckPrintDisplayGeneric(t *testing.T) {

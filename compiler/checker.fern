@@ -5668,17 +5668,40 @@ function sig_call_type(sig: FuncSig, name: string, c: ast.ExprCall, s: Scope): t
 }
 
 // arg_bindings binds a generic call's type variables from its written type
-// arguments, then from its arguments; the written list wins.
+// arguments, then from its typed arguments, then from its integer literal
+// arguments; an earlier binding wins.
 function arg_bindings(sig: FuncSig, c: ast.ExprCall, s: Scope): (string[], typeinfo.Type[]) {
-  let (bn, bt) = written_type_bindings(sig, c, s);
+  let (wn, wt) = written_type_bindings(sig, c, s);
+  let (tn, tt) = bind_from_args(sig, c, s, false, wn, wt);
+  return bind_from_args(sig, c, s, true, tn, tt);
+}
+
+// bind_from_args binds type variables from the arguments that are integer
+// literal trees (`literals`) or from the rest.
+function bind_from_args(sig: FuncSig, c: ast.ExprCall, s: Scope, literals: boolean, names: string[], types: typeinfo.Type[]): (string[], typeinfo.Type[]) {
+  let bn: string[] = names;
+  let bt: typeinfo.Type[] = types;
   let i: i32 = 0;
   while (i < sig.param_type_names.len() && i < c.args.len()) {
-    let (bn2, bt2) = gc_bind_param(sig_param_ref(sig, i), check_expr(c.args[i], s), sig.type_params, s.type_names(), bn, bt);
-    bn = bn2;
-    bt = bt2;
+    if (int_literal_tree(c.args[i]) == literals) {
+      let (bn2, bt2) = gc_bind_param(sig_param_ref(sig, i), check_expr(c.args[i], s), sig.type_params, s.type_names(), bn, bt);
+      bn = bn2;
+      bt = bt2;
+    }
     i = i + 1;
   }
   return (bn, bt);
+}
+
+// call_bindings is arg_bindings with the bounds' impls consulted before the
+// literal arguments: in `contains(of(xs_i64), 2)` the iterator's impl, not the
+// literal, decides that `T` is i64.
+function call_bindings(sig: FuncSig, c: ast.ExprCall, s: Scope): (string[], typeinfo.Type[]) {
+  let (wn, wt) = written_type_bindings(sig, c, s);
+  let (tn, tt) = bind_from_args(sig, c, s, false, wn, wt);
+  let (bn, bt) = bound_bindings(sig, s, tn, tt);
+  let (ln, lt) = bind_from_args(sig, c, s, true, bn, bt);
+  return bound_bindings(sig, s, ln, lt);
 }
 
 // written_type_bindings binds each type parameter to the type argument written
@@ -5734,8 +5757,7 @@ function written_type_arg_diags(sig: FuncSig, c: ast.ExprCall, ai: i32, at: type
 // arguments is an integer literal settles at the widest reading, not the first
 // (#8722 part 4).
 function call_type_bindings(sig: FuncSig, c: ast.ExprCall, s: Scope): (string[], typeinfo.Type[]) {
-  let (an, at) = arg_bindings(sig, c, s);
-  let (bn, bt) = bound_bindings(sig, s, an, at);
+  let (bn, bt) = call_bindings(sig, c, s);
   let wbi: i32 = 0;
   while (wbi < bn.len()) {
     let (wty, wok) = shared_literal_typevar_width(sig, c, bn[wbi], s);
@@ -5948,11 +5970,11 @@ function dest_bound_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag
       if (sig.all_type_params.len() == 0 || sig.ret_type_name.len() == 0 || c.args.len() != sig.param_types.len()) {
         return none;
       }
-      let (bn, bt) = arg_bindings(sig, c, s);
-      let (cn, ct) = bound_bindings(sig, s, bn, bt);
+      let (cn, ct) = call_bindings(sig, c, s);
       if (bound_arg_diags(sig, c, cn, ct, s).len() > 0) {
         return none;
       }
+      let (bn, bt) = arg_bindings(sig, c, s);
       let (dn, dt) = gc_bind_param(sig_ret_ref(sig), dest, sig.type_params, s.type_names(), bn, bt);
       if (dn.len() == bn.len()) {
         return none;
@@ -13617,8 +13639,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
               ai = ai + 1;
             }
             if (sig.all_type_params.len() > 0) {
-              let (abn, abt) = arg_bindings(sig, c, s);
-              let (fbn, fbt) = bound_bindings(sig, s, abn, abt);
+              let (fbn, fbt) = call_bindings(sig, c, s);
               out = util.append_diags(out, bound_arg_diags(sig, c, fbn, fbt, s));
               out = util.append_diags(out, uninferred_call_diags(sig, c, fbn, id.name));
             }

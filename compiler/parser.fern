@@ -12192,11 +12192,43 @@ function func_param_types_of(decls: FuncDecl[], name: string): string[] {
 // not on it being the whole of it: `map_rank[T, U](f: (NdArray[T]) => NdArray[U])`
 // carries each inside a bracketed spelling, and bind_unify descends into one
 // (#9927).
+//
+// Typed arguments bind first, then the bounds' impls, then integer literal
+// arguments: in `contains(of(xs_i64), 2)` the iterator's impl decides that `T`
+// is i64, and the literal settles there.
 function full_ret_binds(fd: FuncDecl, args: ast.Expr[], env: MEnv, funcs: MFns, vars: string[]): MEnv {
-  let binds: MEnv = MEnv { mnames: [], mtypes: [] };
+  let typed: MEnv = arg_binds(fd, args, env, funcs, vars, MEnv { mnames: [], mtypes: [] }, false);
+  return arg_binds(fd, args, env, funcs, vars, bound_binds(fd, typed, funcs), true);
+}
+
+// bound_binds binds the type variables a bound names from the impl its
+// already-bound subject resolves to: `I: Iterator[T]` with I bound to
+// `iter__ArrayIter[i64]` binds T to i64.
+function bound_binds(fd: FuncDecl, binds: MEnv, funcs: MFns): MEnv {
+  let ns: string[] = binds.mnames;
+  let ts: string[] = binds.mtypes;
+  let k: i32 = 0;
+  while (k < fd.type_params.len() && k < fd.bound_traits.len()) {
+    let subject: string = binds.elook(fd.type_params[k]);
+    if (subject.len() > 0) {
+      for entry in split_plus_bounds(fd.bound_traits[k]) {
+        let (n2, t2) = bound_entry_substitutions(entry, subject, funcs.impls, ns, ts);
+        ns = n2;
+        ts = t2;
+      }
+    }
+    k = k + 1;
+  }
+  return MEnv { mnames: ns, mtypes: ts };
+}
+
+// arg_binds is full_ret_binds over the arguments that are integer literal
+// trees (`literals`) or over the rest.
+function arg_binds(fd: FuncDecl, args: ast.Expr[], env: MEnv, funcs: MFns, vars: string[], seed: MEnv, literals: boolean): MEnv {
+  let binds: MEnv = seed;
   let i: i32 = 0;
   while (i < fd.params.len()) {
-    if (i < args.len()) {
+    if (i < args.len() && int_literal_tree(args[i]) == literals) {
       let ct: string = mono_infer(args[i], env, funcs);
       // An array or view of callables unifies as its spelling, so the
       // variables in the callables' signature bind from the argument's.
@@ -14222,7 +14254,8 @@ function bound_entry_substitutions(entry: string, concrete: string, impls: ImplI
   if (bref.args.len() == 0) {
     return (names, types);
   }
-  let tr_name: string = util.base_type_name(entry);
+  // An impl records its trait's simple name; a bound may qualify it (`iter.Iterator[T]`).
+  let tr_name: string = derive_simple_name(util.base_type_name(entry));
   let cref: TypeRef = parse_type_ref(concrete);
   for im in impls {
     if (im.trait_name != tr_name) {
@@ -14322,7 +14355,7 @@ function clone_bg(fd: FuncDecl, key: string, impls: ImplInfo[]): FuncDecl {
   // A single type parameter's key IS the one concrete type, verbatim —
   // never split it. A multi-param key is joined by infer_inst with ';'
   // (split_inst_key), so a per-param module-mangled value (`iter__ArrayIter[i32]`,
-  // from an Iterator-bounded reducer `sum_iter[T: Add, I: Iterator[T]]` over
+  // from an Iterator-bounded reducer `sum[T: Add + Zero, I: Iterator[T]]` over
   // `iter.of(xs)`) keeps its embedded '__' intact — split_dunder would have
   // split it into the wrong arity and bound `I` to the bogus "iter".
   let cts: string[] = [key];
