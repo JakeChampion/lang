@@ -4699,6 +4699,7 @@ function builtin_sigs(): string[] {
     "__c_call4_f32(usize, usize, usize, usize, usize): f32",
     "__c_call4_f64(usize, usize, usize, usize, usize): f64",
     "__method_Reader_close(Reader): Option[IoError]",
+    "__method_Reader_copy_range_to(Reader, Writer, i32): Result[i64, IoError]",
     "__method_Reader_dup_onto(Reader, i32): Option[IoError]",
     "__method_Reader_fdatasync(Reader): Option[IoError]",
     "__method_Reader_drop_cache(Reader, i64, i64): Option[IoError]",

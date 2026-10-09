@@ -1224,16 +1224,17 @@ func treePaths(t *testing.T, root string) []string {
 }
 
 // `--debug` on a real copy: the exit status and the `-v` line it implies
-// are GNU's, and the report line is ours, naming the sparse detection the
-// copy used — SEEK_HOLE for a source the filesystem stored with a hole,
-// none otherwise. Whether the fixture's hole survives is the filesystem's
+// are GNU's, and the report line is ours: the kernel copies the data runs
+// (copy_file_range) on Linux, and it names the sparse detection the copy
+// used — SEEK_HOLE for a source the filesystem stored with a hole, none
+// otherwise. Whether the fixture's hole survives is the filesystem's
 // call (APFS on the macOS runner allocates it), so the expectation is read
 // off the seeded source rather than assumed. On Darwin the default
 // `--reflink=auto` clones on APFS, and the line says so instead.
 func TestCpDebug(t *testing.T) {
 	for _, src := range []string{"dense", "sp"} {
 		t.Run(src, func(t *testing.T) {
-			want := "copy offload: no, reflink: unsupported, sparse detection: no"
+			want := "copy offload: yes, reflink: unsupported, sparse detection: no"
 			run := func(bin string) []string {
 				dir := t.TempDir()
 				cpSparse(t, dir)
@@ -1242,7 +1243,7 @@ func TestCpDebug(t *testing.T) {
 					t.Fatal(err)
 				}
 				if st.Blocks*512 < st.Size {
-					want = "copy offload: no, reflink: unsupported, sparse detection: SEEK_HOLE"
+					want = "copy offload: yes, reflink: unsupported, sparse detection: SEEK_HOLE"
 				}
 				if runtime.GOOS == "darwin" {
 					want = "copy offload: no, reflink: yes, sparse detection: no"

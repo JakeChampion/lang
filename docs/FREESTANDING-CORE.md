@@ -574,7 +574,9 @@ stdio need not be a descriptor, so all of them answer `Unsupported`. The
 answer carries a promise the caller builds on: nothing was taken from the
 reader, so reading and writing from the same offset finishes the copy. A
 target that cannot splice is therefore slower but not wrong, which is why the
-method is ungated rather than a capability.
+method is ungated rather than a capability. `r.copy_range_to(w, max)` is copy_file_range(2)
+on Linux under the same contract, and `Unsupported` on Darwin, WASI and in the
+interpreter.
 
 **`termios_get` / `termios_set` surrender the KERNEL's words**, which is the
 one place here that does not invent Fern's own numbering, and `stty -g` is

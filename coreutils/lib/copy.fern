@@ -471,14 +471,17 @@ function verbose_dir_line(cfg: Cfg, s: State, src: string, dest: string): State 
   return verbose_line(cfg, s, src, dest, "");
 }
 
-// `--debug`'s second line. GNU's names ITS OWN offload — copy_file_range —
-// so reproducing the text would claim a mechanism this copy does not use.
-// Ours states what it actually did: `how` is the sparse detection.
-function debug_line(cfg: Cfg, s: State, how: string): State {
+// `--debug`'s second line, stating what this copy actually did: whether the
+// kernel copied the bytes (copy_file_range), and `how` the sparse detection.
+function debug_line(cfg: Cfg, s: State, b: Bytes): State {
   if (!cfg.debug) {
     return s;
   }
-  return State { ...s, out: gnu.put(s.out, "copy offload: no, reflink: unsupported, sparse detection: " + how + "\n") };
+  let offload: string = "no";
+  if (b.offloaded) {
+    offload = "yes";
+  }
+  return State { ...s, out: gnu.put(s.out, "copy offload: " + offload + ", reflink: unsupported, sparse detection: " + b.how + "\n") };
 }
 
 // ---- the bytes ----------------------------------------------------------------
@@ -562,12 +565,13 @@ function write_all(w: Writer, data: u8[], from: i32, to: i32): string {
   return "";
 }
 
-// The state of one copy: whether it failed, whether a hole was left, and
-// whether the last thing done was a seek, which leaves the length unset.
-struct Flow { ok: boolean, err: string, wrote_hole: boolean, ended_in_hole: boolean }
+// The state of one copy: whether it failed, whether a hole was left,
+// whether the last thing done was a seek, which leaves the length unset, and
+// whether the kernel copied bytes, which stops being asked once it refuses.
+struct Flow { ok: boolean, err: string, wrote_hole: boolean, ended_in_hole: boolean, offload: boolean, offloaded: boolean }
 
 function flow_new(): Flow {
-  return Flow { ok: true, err: "", wrote_hole: false, ended_in_hole: false };
+  return Flow { ok: true, err: "", wrote_hole: false, ended_in_hole: false, offload: true, offloaded: false };
 }
 
 function flow_fail(f: Flow, err: string): Flow {
@@ -618,6 +622,29 @@ function put_stream(r: Reader, w: Writer, punch: boolean, bs: i32, zeros: u8[], 
     let want: i32 = chunk_size();
     if (limit >= 0 as i64 && left < want as i64) {
       want = left as i32;
+    }
+    // Zeros to punch have to be seen, so only a plain copy is offloaded.
+    if (!punch && f.offload) {
+      match (r.copy_range_to(w, want)) {
+        Ok(n) => {
+          if (n == 0 as i64) {
+            return f;
+          }
+          left = left - n;
+          f = Flow { ...f, offloaded: true, ended_in_hole: false };
+          continue;
+        },
+        Err(e) => {
+          match (e) {
+            Unsupported => {
+              f = Flow { ...f, offload: false };
+            },
+            _ => {
+              return flow_fail(f, gnu.io_error_text(e));
+            }
+          }
+        }
+      }
     }
     match (r.read_chunk_bytes(want)) {
       Err(e) => {
@@ -716,7 +743,7 @@ function put_extents(r: Reader, w: Writer, punch: boolean, total: i64, bs: i32, 
 // and positioned at zero; `holes` says the source's holes stay holes, and
 // `punch` that any run of zero blocks becomes one too. `how` is what
 // `--debug` reports.
-struct Bytes { ok: boolean, err: string, wrote_hole: boolean, how: string }
+struct Bytes { ok: boolean, err: string, wrote_hole: boolean, how: string, offloaded: boolean }
 
 function write_data(r: Reader, w: Writer, holes: boolean, punch: boolean, total: i64, bs: i32): Bytes {
   // Reuse one zero block for bounded comparisons across reads and extents.
@@ -748,7 +775,7 @@ function write_data(r: Reader, w: Writer, holes: boolean, punch: boolean, total:
     f = put_stream(r, w, holes, bs, zeros, 0 as i64 - 1 as i64, f);
   }
   if (!f.ok) {
-    return Bytes { ok: false, err: f.err, wrote_hole: f.wrote_hole, how: how };
+    return Bytes { ok: false, err: f.err, wrote_hole: f.wrote_hole, how: how, offloaded: f.offloaded };
   }
   // A seek past the end does not extend the file, so a source ending in a
   // hole would leave the copy short. The length is what makes the last
@@ -756,12 +783,12 @@ function write_data(r: Reader, w: Writer, holes: boolean, punch: boolean, total:
   if (f.ended_in_hole) {
     match (w.truncate(total)) {
       Some(e) => {
-        return Bytes { ok: false, err: gnu.io_error_text(e), wrote_hole: f.wrote_hole, how: how };
+        return Bytes { ok: false, err: gnu.io_error_text(e), wrote_hole: f.wrote_hole, how: how, offloaded: f.offloaded };
       },
       None => {}
     }
   }
-  return Bytes { ok: true, err: "", wrote_hole: f.wrote_hole, how: how };
+  return Bytes { ok: true, err: "", wrote_hole: f.wrote_hole, how: how, offloaded: f.offloaded };
 }
 
 // existing_mode: what to apply to an EXISTING destination — the source's
@@ -915,7 +942,7 @@ function copy_file(cfg: Cfg, s: State, src_path: string, dest: string, src: Info
             },
             None => {}
           }
-          st = debug_line(cfg, st, b.how);
+          st = debug_line(cfg, st, b);
           if (!b.ok) {
             return fail(st, "error writing " + gnu.quotea(dest) + ": " + b.err);
           }

@@ -2140,6 +2140,14 @@ pub function op_reader_splice(): Op {
   return op0(330);
 }
 
+// `reader_copy_range` pops [fd, out_fd, max] and pushes Result[i64, IoError]:
+// up to max bytes copied from fd to out_fd by copy_file_range(2), inside the
+// kernel. Unsupported means nothing moved, and the caller copies the bytes
+// itself. Backs `r.copy_range_to(w, max)`.
+pub function op_reader_copy_range(): Op {
+  return op0(407);
+}
+
 // `fd_flags` pops [fd] and pushes Result[i64, IoError]: the handle's open
 // flags as Fern's own three bits (1 readable, 2 writable, 4 appending).
 // One op for both `r.flags()` and `w.flags()`, like reader_seek: a handle
@@ -4425,6 +4433,9 @@ function kind_id_len17(name: string): i32 {
   if (c == b'b' && name == "buf_push_expanded") {
     return 328;
   }
+  if (c == b'r' && name == "reader_copy_range") {
+    return 407;
+  }
   return 0;
 }
 
@@ -5265,6 +5276,9 @@ function kind_name_4(id: i32): string {
   if (id == 330) {
     return "reader_splice";
   }
+  if (id == 407) {
+    return "reader_copy_range";
+  }
   if (id == 307) {
     return "fd_flags";
   }
@@ -5828,6 +5842,7 @@ function pops3(t: i32): boolean {
     || t == 343  // reactor_wait (r, events, timeout_ms)
     || t == 242  // reader_seek (fd, offset, whence)
     || t == 330  // reader_splice (fd, out_fd, max)
+    || t == 407  // reader_copy_range (fd, out_fd, max)
     || t == 280  // proc_exec_as (path, argv, envp)
     || t == 313  // termios_set (fd, when, words)
     || t == 314  // set_window_size (fd, rows, cols)
@@ -8345,10 +8360,10 @@ pub function op_allocates(tag: i32): boolean {
   if (tag == 276) {
     return true;
   }
-  // fd_stat boxes the same pair; reader_seek, reader_splice and fd_flags
-  // box their Result[i64, IoError]; writer_truncate and fd_drop_cache box
-  // their Option[IoError].
-  if (tag == 241 || tag == 242 || tag == 281 || tag == 307 || tag == 330 || tag == 366) {
+  // fd_stat boxes the same pair; reader_seek, reader_splice,
+  // reader_copy_range and fd_flags box their Result[i64, IoError];
+  // writer_truncate and fd_drop_cache box their Option[IoError].
+  if (tag == 241 || tag == 242 || tag == 281 || tag == 307 || tag == 330 || tag == 407 || tag == 366) {
     return true;
   }
   // subprocess boxes a fresh ProcessResult struct + its two stdout/stderr

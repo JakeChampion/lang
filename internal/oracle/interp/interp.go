@@ -716,6 +716,7 @@ func New() *Interp {
 	i.Builtins["__method_Reader_seek"] = &Builtin{Fn: builtinHandleSeek}
 	i.Builtins["__method_Writer_seek"] = &Builtin{Fn: builtinHandleSeek}
 	i.Builtins["__method_Reader_splice_to"] = &Builtin{Fn: builtinReaderSpliceTo}
+	i.Builtins["__method_Reader_copy_range_to"] = &Builtin{Fn: builtinReaderSpliceTo}
 	i.Builtins["__method_Reader_flags"] = &Builtin{Fn: builtinFdFlags}
 	i.Builtins["__method_Writer_flags"] = &Builtin{Fn: builtinFdFlags}
 	i.Builtins["__method_Reader_isatty"] = &Builtin{Fn: builtinHandleIsatty}
@@ -4031,7 +4032,8 @@ func builtinHandleSeek(i *Interp, args []Value) (Value, error) {
 	return resultOk(Number(pos)), nil
 }
 
-// builtinReaderSpliceTo answers `r.splice_to(w, max)` with Unsupported,
+// builtinReaderSpliceTo answers `r.splice_to(w, max)` and
+// `r.copy_range_to(w, max)` with Unsupported,
 // the refusal that promises nothing moved, so the caller's read_chunk and
 // write fallback carries the bytes: the interpreter's stdio need not be a
 // descriptor at all.

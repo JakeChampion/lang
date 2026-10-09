@@ -4178,6 +4178,15 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// repair.
 	registerStructMethod("Reader", "splice_to",
 		[]ast.Type{writerType, ast.NumberType{}}, seekResult)
+	// copy_range_to(w, max) copies up to `max` bytes from this handle to `w`
+	// inside the kernel, copy_file_range(2) on Linux, from and to each
+	// handle's own offset, and answers how many; 0 is the end of the input.
+	// `Unsupported` means nothing moved and the caller copies the bytes
+	// itself: the target has no copy_file_range, or this pair of files
+	// cannot be copied in the kernel (different filesystems, a pipe or a
+	// terminal). Any other error is the copy's own failure.
+	registerStructMethod("Reader", "copy_range_to",
+		[]ast.Type{writerType, ast.NumberType{}}, seekResult)
 	// flags() is fcntl(fd, F_GETFL) reduced to what every target can
 	// answer, as a word of Fern's own — the query side of the flags word
 	// `open_reader_with` / `open_writer_with` take:
