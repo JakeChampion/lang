@@ -3899,6 +3899,23 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".Lsg_ret:\n");
     s = s.write("    ret\n");
   }
+  // __fern_str_borrow(data@16(%rsp), len@8(%rsp)) -> a counted box over bytes
+  // it does not own: rc = 1 and the borrowed-data marker, so its last release
+  // (__fern_str_free) frees the 24-byte box alone. The caller's lifetime
+  // anchors keep the bytes alive.
+  if (s.has_need("str_borrow")) {
+    s = s.write("__fn___fern_str_borrow:\n");
+    s = s.write("    movq $24, %rdi\n");
+    s = s.write("    call __fern_alloc\n");  // %rax = base
+    s = s.write("    movl $1, (%rax)\n");  // rc = 1 @ base
+    s = s.write("    movl $" + util.i32_to_string(borrowed_marker()) + ", 4(%rax)\n");
+    s = s.write("    movq 16(%rsp), %rcx\n");
+    s = s.write("    movq %rcx, 8(%rax)\n");  // data @ base+8
+    s = s.write("    movq 8(%rsp), %rcx\n");
+    s = s.write("    movq %rcx, 16(%rax)\n");  // len  @ base+16
+    s = s.write("    addq $8, %rax\n");  // box = base+8
+    s = s.write("    ret\n");
+  }
   // __fern_str_own(s@8(%rsp)) -> a string its holder owns a unit of. A
   // counted string or view descriptor is retained and answered. A legacy
   // arena view box with an immortal rc is answered as a fresh counted box
@@ -10838,6 +10855,9 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   }
   if (name == "__fern_str_own") {
     s = s.need("str_own");
+  }
+  if (name == "__fern_str_borrow") {
+    s = s.need("str_borrow");
   }
   if (name == "__fern_str_grow" || name == "__fern_str_grow_range") {
     s = s.need("str_grow");

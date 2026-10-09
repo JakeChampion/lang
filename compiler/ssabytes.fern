@@ -208,11 +208,13 @@ function abort_if(own ops: ir.Op[]): ir.Op[] {
   return joined(ops, [ir.op_if(0), ir.op_call_direct("__fern_oob_abort", 0), ir.op_drop(), ir.op_end()]);
 }
 
-// Slicing validates all bounds first. A string-backed view is sub-ranged by
-// the string slice, retagged: on the register backends that is a counted box
-// over the source's bytes, which its last release frees alone while the
-// semantic anchors keep the source alive; wasm's inline strings copy. An
-// array-backed view copies the selected bytes into one packed array.
+// Slicing validates all bounds first, then borrows the selected bytes in
+// place: `__fern_str_borrow` is a counted box over them on the register
+// backends, which its last release frees alone while the semantic anchors
+// keep the source alive, and a copy into an inline string on wasm, which has
+// no data pointer to share. The result is tagged as a string-backed view.
+// The source is any byte view, or an owned `u8[]`, whose bytes `data` finds
+// the same way.
 function slice(): irtables.LowerResult {
   let ops: ir.Op[] = [ir.op_load_local(1), ir.op_const_i32(0), ir.op_bin("lt_s", 0, false)];
   ops = abort_if(ops);
@@ -220,20 +222,16 @@ function slice(): irtables.LowerResult {
   ops = abort_if(ops);
   ops = joined(ops, [ir.op_load_local(2), ir.op_load_local(0), ir.op_call_direct(length_name(), 1), ir.op_bin("gt_s", 0, false)]);
   ops = abort_if(ops);
-  ops = joined(ops, tagged());
-  ops = joined(ops, string_base());
   ops = joined(ops, [
-    ir.op_load_local(1), ir.op_load_local(2), ir.op_str_slice(),
-    ir.op_const_i32(2), ir.op_raw_addr(), ir.op_return(), ir.op_end(),
-  ]);
-  ops = joined(ops, [
-    ir.op_load_local(2), ir.op_load_local(1), ir.op_bin("sub", 0, false), ir.op_store_local(3),
-    ir.op_load_local(3), ir.packed(ir.op_alloc_u8()), ir.op_store_local(4),
-    ir.op_load_local(4), ir.op_const_i32(8), ir.op_raw_addr(),
     ir.op_load_local(0), ir.op_call_direct(data_name(), 1), ir.op_load_local(1), ir.op_raw_addr(),
-    ir.op_load_local(3), ir.op_memcpy(), ir.op_drop(), ir.op_load_local(4), ir.op_return(),
+    ir.op_load_local(2), ir.op_load_local(1), ir.op_bin("sub", 0, false),
+    ir.op_call_direct(borrow_name(), 2), ir.op_const_i32(2), ir.op_raw_addr(), ir.op_return(),
   ]);
-  return body(slice_name(), 3, 5, ops);
+  return body(slice_name(), 3, 3, ops);
+}
+
+pub function borrow_name(): string {
+  return "__fern_str_borrow";
 }
 
 pub function helpers(): irtables.LowerResult[] {

@@ -8371,7 +8371,7 @@ pub function call_needs_heap(name: string): boolean {
   if (name == "__fern_arr_share_inc" || name == "__fern_arr_share_dec") {
     return true;
   }
-  if (name == "__fern_arr_inc_elems" || name == "__fern_arr_own_elems" || name == "__fern_str_own"
+  if (name == "__fern_arr_inc_elems" || name == "__fern_arr_own_elems" || name == "__fern_str_own" || name == "__fern_str_borrow"
     || name == "__fern_str_grow" || name == "__fern_str_grow_range") {
     return true;
   }
