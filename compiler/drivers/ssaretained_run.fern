@@ -16,6 +16,7 @@ import "./ssaretainedwrapper" as wrapper;
 import "./ssaretainedentry" as entry;
 import "./ssaretainedruntime" as runtimeproof;
 import "./ssaretainedallocation" as allocation;
+import "./ssaretainedsites" as sites;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -90,6 +91,7 @@ function settled(g: ircore.Gated, arm: boolean): void {
   let on = emit(g, g.cache, g.physical, arm, true, true, 0, -1);
   require(off.bodies.len() == 0 && off.text == on.text, 20);
   runtimeproof.run(on.text, arm);
+  sites.output(on);
   require(count(on.bodies, "__fern_str_cmp") == 1 && count(on.bodies, "first") == 1, 21);
   let at = find(on.bodies, "__fern_str_cmp");
   require(at >= 0, 22);
@@ -110,6 +112,7 @@ function direct(g: ircore.Gated): void {
   base = asmcore.EmitState { ...base, struct_decls: g.stab, rt_lower: runtime, retain_prepared: true, rc_free_debug: true };
   let out = asm_arm64_ir.emit_body(g.im, base, false, g.cache, g.physical);
   require(base.prepared.len() == 0 && out.prepared.len() == 3, 30);
+  require(out.native_sites.len() == 0 && !out.retain_sites && out.capture == base.capture, 164);
   require(out.prepared[0].context.rc_free_debug && !out.prepared[0].context.records, 31);
   allocation.consistent(out.prepared[0]);
   strbuf_reset();
@@ -126,6 +129,7 @@ function discarded_trial(): void {
   let at = find(trial.prepared, "__fern_str_cmp");
   require(at >= 0 && !util.has_str(trial.prepared[at].context.needed, "heap"), 35);
   require(util.has_str(trial.needed, "heap") && base.prepared.len() == 0, 36);
+  require(base.native_sites.len() == 0 && trial.native_sites.len() == 0 && !trial.retain_sites, 165);
   strbuf_reset();
 }
 
