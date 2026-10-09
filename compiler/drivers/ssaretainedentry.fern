@@ -8,6 +8,7 @@ import "../lexer";
 import "../parser";
 import "../semlower";
 import "../ssaprepare";
+import "../ssacreditbound" as bound;
 import "../util";
 
 function require(ok: boolean, code: i32): void {
@@ -20,6 +21,33 @@ pub function consistent(row: ssaprepare.Emitted): void {
   let c = row.context;
   let expected = ircore.release_entry(row.body.lowered, c.architecture, c.rc_free_debug, c.reg_entries);
   require(expected.counted == row.release_entry.counted && expected.unique_drop == row.release_entry.unique_drop, 71);
+}
+
+function stale(row: ssaprepare.Emitted): void {
+  let result = bound.resolve([row], row.label_name, row.context.architecture);
+  require(result.rows.len() == 0 && result.error == "mismatched native release entry selection", 80);
+}
+
+function bindings(row: ssaprepare.Emitted): void {
+  let entry = row.release_entry;
+  stale(ssaprepare.Emitted { ...row, release_entry: ssaprepare.ReleaseEntry { ...entry, counted: !entry.counted } });
+  stale(ssaprepare.Emitted { ...row, release_entry: ssaprepare.ReleaseEntry { ...entry, unique_drop: entry.unique_drop + "_wrong" } });
+  let result = bound.resolve([row], row.label_name, row.context.architecture);
+  if (entry.counted) {
+    require(result.rows.len() == 0 && result.error == "unproved native release entry effects", 81);
+  } else {
+    require(result.rows.len() == 1 && result.error == "", 82);
+  }
+}
+
+function contexts(row: ssaprepare.Emitted): void {
+  let c = row.context;
+  // The same actual release lowering changes selection when debug changes.
+  stale(ssaprepare.Emitted { ...row, context: ssaprepare.Context { ...c, rc_free_debug: !c.rc_free_debug } });
+  if (row.release_entry.unique_drop != "") {
+    stale(ssaprepare.Emitted { ...row, context: ssaprepare.Context { ...c, reg_entries: irtables.sig_reg_of([]) } });
+    stale(ssaprepare.Emitted { ...row, release_entry: ssaprepare.ReleaseEntry { counted: true, unique_drop: "" } });
+  }
 }
 
 function select(r: irtables.LowerResult, arch: string, debug: boolean, names: string[], counted: boolean, drop: string): void {
@@ -72,12 +100,14 @@ pub function run(): void {
       let hits = 0;
       for row in on.bodies {
         consistent(row);
+        bindings(row);
         if (row.label_name == "__sem_release_Parent") {
           hits = hits + 1;
           require(row.release_entry.counted == !debug, 77);
           let drop = if (arm || debug) { "" } else { "__sem_drop_Parent" };
           require(row.release_entry.unique_drop == drop, 78);
           selectors(row.body.lowered);
+          contexts(row);
         }
       }
       require(hits == 1, 79);

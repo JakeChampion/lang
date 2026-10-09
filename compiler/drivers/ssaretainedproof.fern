@@ -11,6 +11,7 @@ import "../ssasem";
 import "../ssa";
 import "../irtables";
 import "../ir";
+import "../ircore";
 import "../ssacreditabi" as abi;
 import "../ssacreditbound" as bound;
 
@@ -99,9 +100,13 @@ function entry(row: ssaprepare.Emitted, architecture: string): void {
   let f = ssa.SFunc { ...row.body.formed.f, nparams: 1 };
   let body = ssaprepare.Body { ...row.body, lowered: r, formed: ssa.Formed { ...row.body.formed, f: f } };
   let release = ssaprepare.Emitted { ...row, body: body, context: ssaprepare.Context { ...row.context, rc_free_debug: false } };
+  require(bound.resolve([release], row.label_name, architecture).error == "mismatched native release entry selection", 55);
+  release = ssaprepare.Emitted { ...release, release_entry: ircore.release_entry(r, architecture, false, release.context.reg_entries) };
   require(bound.resolve([release], row.label_name, architecture).error == "unproved native release entry effects", 55);
   // Disabling that fast path permits binding, not an allocation proof.
   release = ssaprepare.Emitted { ...release, context: ssaprepare.Context { ...release.context, rc_free_debug: true } };
+  require(bound.resolve([release], row.label_name, architecture).error == "mismatched native release entry selection", 56);
+  release = ssaprepare.Emitted { ...release, release_entry: ircore.release_entry(r, architecture, true, release.context.reg_entries) };
   require(bound.resolve([release], row.label_name, architecture).error == "", 56);
   check([release], row.label_name, architecture, false);
 }

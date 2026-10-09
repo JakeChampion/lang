@@ -32,6 +32,13 @@ function target_binding(found: ssaprepare.Emitted[], name: string, architecture:
   if (architecture != "arm64" && architecture != "x86-64" || row.context.architecture != architecture) {
     return Binding { rows: [], error: "mismatched native architecture" };
   }
+  // Even a disabled entry must agree with the actual selection inputs.
+  // This consistency check is necessary, but does not prove entry effects.
+  let c = row.context;
+  let expected = ircore.release_entry(row.body.lowered, c.architecture, c.rc_free_debug, c.reg_entries);
+  if (row.release_entry.counted != expected.counted || row.release_entry.unique_drop != expected.unique_drop) {
+    return Binding { rows: [], error: "mismatched native release entry selection" };
+  }
   // Both native backends add kept/shared early returns outside formed.f.
   // The x86 unique Drop shortcut is also covered by this refusal.
   if (!row.context.rc_free_debug && ircore.counted_release_body(row.body.lowered)) {
