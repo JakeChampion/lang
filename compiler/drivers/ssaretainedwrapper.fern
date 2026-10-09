@@ -13,6 +13,7 @@ import "../semrecords";
 import "../ssa";
 import "../util";
 import "./ssaretainedmutations" as mutations;
+import "./ssaretainednativewrapper" as nativewrapper;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -47,6 +48,7 @@ function emit_source(arm: boolean, src: string, debug: boolean): ssaprepare.Emit
 }
 
 function check(rows: ssaprepare.Emitted[], architecture: string, ok: boolean): void {
+  nativewrapper.check(rows, architecture, ok);
   let p = emitted.check_wrapper(rows, "handoff", "replace", "__sem_drop_Parent", "__sem_release_Parent", ["require"], architecture);
   if (p.ok != ok || p.function_name == "" || p.message == "") {
     print(p.function_name + ": " + p.message);
@@ -157,8 +159,11 @@ pub function run(arm: boolean): void {
   let renamed = mutations.renamed(rows, wanted());
   let proof = emitted.check_wrapper(renamed, "bound_handoff", "bound_replace", "bound___sem_drop_Parent", "bound___sem_release_Parent", ["bound_require"], architecture);
   require(proof.ok, 65);
-  let normal = emitted.check_wrapper(emit(arm, false, false), "handoff", "replace", "__sem_drop_Parent", "__sem_release_Parent", ["require"], architecture);
+  let normal_rows = emit(arm, false, false);
+  let normal = emitted.check_wrapper(normal_rows, "handoff", "replace", "__sem_drop_Parent", "__sem_release_Parent", ["require"], architecture);
   require(!normal.ok && normal.message == "__sem_release_Parent: unproved native release entry effects", 66);
+  nativewrapper.run(normal_rows, architecture);
+  nativewrapper.check(emit(arm, true, false), architecture, false);
   check(emit(arm, true, true), architecture, false);
 }
 

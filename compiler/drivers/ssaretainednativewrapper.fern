@@ -1,0 +1,132 @@
+import "../asmcore";
+import "../ir";
+import "../ircore";
+import "../irtables";
+import "../physicalbody";
+import "../semrecords";
+import "../ssasem";
+import "../ssaprepare";
+import "../ssacreditbound" as bound;
+import "../ssacreditemitted" as emitted;
+import "../ssacreditselected" as selected;
+import "../util";
+import "./ssaretainedmutations" as mutations;
+
+function require(ok: boolean, code: i32): void {
+  if (!ok) {
+    exit(code);
+  }
+}
+
+pub function check(rows: ssaprepare.Emitted[], arch: string, ok: boolean): void {
+  let p = emitted.check_wrapper_native(rows, "handoff", "replace", "__sem_drop_Parent", "__sem_release_Parent", ["require"], arch);
+  if (p.ok != ok || p.function_name == "" || p.message == "") {
+    print("native wrapper: " + p.function_name + ": " + p.message);
+    exit(89);
+  }
+}
+
+function wanted(name: string): boolean {
+  return name == "handoff" || name == "replace" || name == "parent" || name == "require" || name == "__sem_release_Parent" || name == "__sem_drop_Parent";
+}
+
+function without(rows: ssaprepare.Emitted[], name: string): ssaprepare.Emitted[] {
+  let out: ssaprepare.Emitted[] = [];
+  for row in rows {
+    if (row.label_name != name) {
+      out = out.append(row);
+    }
+  }
+  return out;
+}
+
+function metadata(row: ssaprepare.Emitted, m: physicalbody.Metadata): ssaprepare.Emitted {
+  let s = physicalbody.Selected { producers: [m], origin: physicalbody.Origin { producer: 0, symbol: row.body.selected.origin.symbol } };
+  return ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: s } };
+}
+
+function shortcut(rows: ssaprepare.Emitted[], row: ssaprepare.Emitted, arch: string): void {
+  if (row.release_entry.unique_drop == "") {
+    return;
+  }
+  let rest = without(rows, row.label_name);
+  let other = "__sem_drop_Different";
+  let lower = irtables.LowerResult { ...row.body.lowered, ops: row.body.lowered.ops.with(4, ir.op_call_direct(other, 1)) };
+  let context = ssaprepare.Context { ...row.context, reg_entries: irtables.sig_reg_of([asmcore.sanitize_label(other)]) };
+  let entry = ircore.release_entry(lower, arch, context.rc_free_debug, context.reg_entries);
+  require(entry.counted && entry.unique_drop == other, 90);
+  check(rest.append(ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, lowered: lower }, context: context, release_entry: entry }), arch, false);
+  context = ssaprepare.Context { ...row.context, reg_entries: irtables.sig_reg_of([]) };
+  entry = ircore.release_entry(row.body.lowered, arch, context.rc_free_debug, context.reg_entries);
+  check(rest.append(ssaprepare.Emitted { ...row, context: context, release_entry: entry }), arch, true);
+}
+
+function helper_schema(rows: ssaprepare.Emitted[], arch: string): void {
+  let changed: ssaprepare.Emitted[] = [];
+  for row in rows {
+    if (row.label_name == "__sem_release_Parent" || row.label_name == "__sem_drop_Parent") {
+      let m = selected.metadata(row);
+      let records: semrecords.Record[] = [];
+      for r in m.records.list {
+        if (semrecords.name_of(r.ty) == "Leaf") {
+          records = records.append(semrecords.Record { ...r, fields: [semrecords.Field { ...r.fields[0], name: "different" }] });
+        } else {
+          records = records.append(r);
+        }
+      }
+      changed = changed.append(metadata(row, physicalbody.Metadata { ...m, records: semrecords.records_of(records) }));
+    } else {
+      changed = changed.append(row);
+    }
+  }
+  let hits = 0;
+  for row in rows {
+    if (row.label_name == "replace") {
+      let cs = selected.contracts(row);
+      require(cs.len() == 1 && cs[0].params.len() == 2, 91);
+      // The two helpers agree with each other and their raw effects prove.
+      // Their shared incompatible child schema must not override the consumer.
+      let pair = bound.release(changed, "__sem_release_Parent", "__sem_drop_Parent", arch, cs[0].params[0]);
+      require(pair.error == "" && pair.rows.len() == 2, 92);
+      hits = hits + 1;
+    }
+  }
+  require(hits == 1, 93);
+  check(changed, arch, false);
+}
+
+function boundary(rows: ssaprepare.Emitted[], row: ssaprepare.Emitted, arch: string): void {
+  let rest = without(rows, row.label_name);
+  check(rest, arch, false);
+  check(rows.append(row), arch, false);
+  check(rest.append(mutations.damaged(row)), arch, false);
+  check(rest.append(ssaprepare.Emitted { ...row, release_entry: ssaprepare.ReleaseEntry { ...row.release_entry, counted: !row.release_entry.counted } }), arch, false);
+  check(rest.append(ssaprepare.Emitted { ...row, release_entry: ssaprepare.ReleaseEntry { ...row.release_entry, unique_drop: "wrong" } }), arch, false);
+  if (row.label_name != "require") {
+    let m = selected.metadata(row);
+    check(rest.append(metadata(row, physicalbody.Metadata { ...m, records: semrecords.no_records() })), arch, false);
+    check(rest.append(metadata(row, physicalbody.Metadata { ...m, finalizers: [ssasem.Finalizer { receiver: "Leaf", symbol: "drop_leaf" }] })), arch, false);
+  }
+  if (row.label_name == "__sem_release_Parent") {
+    check(rest.append(ssaprepare.Emitted { ...row, context: ssaprepare.Context { ...row.context, rc_free_debug: true } }), arch, false);
+    shortcut(rows, row, arch);
+  }
+}
+
+pub function run(rows: ssaprepare.Emitted[], arch: string): void {
+  check(rows, arch, true);
+  check([], arch, false);
+  check(rows, "wasm32-wasi", false);
+  let own: ssaprepare.Emitted[] = [];
+  for row in rows {
+    if (wanted(row.label_name)) {
+      boundary(rows, row, arch);
+      let m = selected.metadata(row);
+      let separate = metadata(row, physicalbody.Metadata { ...m, contracts: selected.contracts(row) });
+      own = util.append_all([separate], own);
+    }
+  }
+  require(own.len() == 6, 94);
+  check(own, arch, true);
+  helper_schema(own, arch);
+}

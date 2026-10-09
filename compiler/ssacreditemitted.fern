@@ -103,12 +103,27 @@ function assertions(rows: ssaprepare.Emitted[], names: string[], architecture: s
   return Functions { bodies: functions, error: "" };
 }
 
-function continuation_proof(rows: ssaprepare.Emitted[], w: ssaprepare.Emitted, c: ssaprepare.Emitted, d: ssasem.Contract, drop: string, release: string, calls: string[], architecture: string): helper.Proof {
+function checked_helpers(rows: ssaprepare.Emitted[], drop: string, release: string, architecture: string, consumer: ssaprepare.Emitted, d: ssasem.Contract): Functions {
+  let pair = bound.release(rows, release, drop, architecture, d.params[0]);
+  if (pair.error != "") {
+    return Functions { bodies: [], error: release + ": " + pair.error };
+  }
+  for row in pair.rows {
+    if (!selected.compatible(selected.metadata(row), selected.metadata(consumer), d.params[0], 1)) {
+      return Functions { bodies: [], error: row.label_name + ": incompatible retained helper schema" };
+    }
+  }
+  // The checked pair is release/Drop; continuation consumes Drop/release.
+  // Use these exact proved bodies, without an unchecked second resolution.
+  return Functions { bodies: [pair.rows[1].body.formed.f, pair.rows[0].body.formed.f], error: "" };
+}
+
+function continuation_proof(rows: ssaprepare.Emitted[], w: ssaprepare.Emitted, c: ssaprepare.Emitted, d: ssasem.Contract, drop: string, release: string, calls: string[], architecture: string, native_entry: boolean): helper.Proof {
   let ps = producers(rows, w, c, d, architecture);
   if (ps.error != "") {
     return refused(w.label_name, ps.error);
   }
-  let hs = helpers(rows, [drop, release], architecture, c, d);
+  let hs = if (native_entry) { checked_helpers(rows, drop, release, architecture, c, d) } else { helpers(rows, [drop, release], architecture, c, d) };
   if (hs.error != "") {
     return refused(c.label_name, hs.error);
   }
@@ -120,6 +135,17 @@ function continuation_proof(rows: ssaprepare.Emitted[], w: ssaprepare.Emitted, c
 }
 
 pub function check_wrapper(rows: ssaprepare.Emitted[], name: string, consumer: string, drop: string, release: string, calls: string[], architecture: string): helper.Proof {
+  return wrapper(rows, name, consumer, drop, release, calls, architecture, false);
+}
+
+// Compose the independently checked native release entry with this same
+// retained continuation. Runtime implementations and whole-module coverage
+// remain separate obligations; the legacy API keeps its entry refusal.
+pub function check_wrapper_native(rows: ssaprepare.Emitted[], name: string, consumer: string, drop: string, release: string, calls: string[], architecture: string): helper.Proof {
+  return wrapper(rows, name, consumer, drop, release, calls, architecture, true);
+}
+
+function wrapper(rows: ssaprepare.Emitted[], name: string, consumer: string, drop: string, release: string, calls: string[], architecture: string, native_entry: boolean): helper.Proof {
   let wrapper = resolve(rows, name, architecture, 4);
   let callee = resolve(rows, consumer, architecture, 2);
   if (wrapper.error != "") {
@@ -141,5 +167,5 @@ pub function check_wrapper(rows: ssaprepare.Emitted[], name: string, consumer: s
   if (!selected.consumer(selected.metadata(w), ws[0], selected.metadata(c), cs[0])) {
     return refused(consumer, "incompatible retained consumer metadata");
   }
-  return continuation_proof(rows, w, c, cs[0], drop, release, calls, architecture);
+  return continuation_proof(rows, w, c, cs[0], drop, release, calls, architecture, native_entry);
 }
