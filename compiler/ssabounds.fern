@@ -31,6 +31,7 @@ import "./ssa";
 import "./ssadeps";
 import "./ssasem";
 import "./typeinfo";
+import "./util";
 
 struct Rel { lo: i32, hi: i32, strict: boolean }
 
@@ -706,4 +707,303 @@ function silent(f: ssasem.Func, ins: ssa.SInst): boolean {
     return ins.args.len() == 1 && ssasem.is_integer(t) && ssasem.is_integer(f.values[ins.args[0]]);
   }
   return false;
+}
+
+// word_loads rewrites a little-endian word assembled from a byte array —
+// `b[x] as u32 | b[x + 1] as u32 << 8 | … | b[x + 3] as u32 << 24`, or the
+// eight-byte u64 form — into one load of the word, which every target reads
+// unaligned and stores little-endian (#8782). Only the `or` that completes the
+// word is replaced. The reads stay: the checked ones are the run's bounds
+// check, and the unchecked ones the word no longer uses are dead. `contracts`
+// are the calls the load is made of, which the function gains when it fuses;
+// `view_words` names the four- and eight-byte word reads of a `[u8]` view,
+// which reaches its bytes through a decoded data pointer rather than its box.
+pub function word_loads(f: ssasem.Func, contracts: ssasem.Contract[], view_words: string[]): ssasem.Func {
+  if (!any_checked_index(f)) {
+    return f;
+  }
+  let defs: ssa.SInst[] = definitions(f);
+  let values: typeinfo.Type[] = f.values;
+  let blocks: ssa.SBlock[] = [];
+  let changed: boolean = false;
+  let parts: i32[] = [];
+  for blk in f.graph.blocks {
+    let insts: ssa.SInst[] = [];
+    let fused: boolean = false;
+    for ins in blk.insts {
+      let w: Word = word_of(f, defs, ins);
+      if (w.bytes == 0) {
+        insts = insts.append(ins);
+        continue;
+      }
+      parts = word_parts(defs, ins.args, w, parts);
+      let v: i32 = values.len();
+      let wide: typeinfo.Type = typeinfo.TypeI32 { width: w.bytes * 8, unsigned: false, is_char: false, polymorphic: false };
+      let addr_t: typeinfo.Type = typeinfo.TypeI32 { width: typeinfo.width_ptr(), unsigned: true, is_char: false, polymorphic: false };
+      let i32_t: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
+      // v + 1 is the word's first index: the base plus the lowest offset, or
+      // that offset alone.
+      insts = insts.append(ssa.SInst { kind_tag: 1, result: v, args: [], imm: w.off, str: "" });
+      if (w.x < 0) {
+        insts = insts.append(ssa.SInst { kind_tag: 1, result: v + 1, args: [], imm: w.off, str: "" });
+      } else {
+        insts = insts.append(ssa.SInst { kind_tag: 9, result: v + 1, args: [w.x, v], imm: 0, str: "+" });
+      }
+      values = values.append(i32_t).append(i32_t);
+      fused = true;
+      if (is_byte_view(f.values[w.arr])) {
+        let name: string = view_words[0];
+        if (w.bytes == 8) {
+          name = view_words[1];
+        }
+        insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v + 2, args: [w.arr, v + 1], imm: 0, str: name });
+        insts = insts.append(ssa.SInst { kind_tag: ssasem.cast(), result: ins.result, args: [v + 2], imm: 0, str: "" });
+        values = values.append(wide);
+        continue;
+      }
+      let load: string = "__load_i32";
+      if (w.bytes == 8) {
+        load = "__load_i64";
+      }
+      // An array's bytes start eight bytes into its box on every target. The
+      // eight is added to the address, not the i32 index, so it cannot wrap.
+      insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v + 2, args: [w.arr], imm: 0, str: "__raw_arr_ptr" });
+      insts = insts.append(ssa.SInst { kind_tag: 1, result: v + 3, args: [], imm: 8, str: "" });
+      insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v + 4, args: [v + 2, v + 3], imm: 0, str: "__raw_addr" });
+      insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v + 5, args: [v + 4, v + 1], imm: 0, str: "__raw_addr" });
+      insts = insts.append(ssa.SInst { kind_tag: ssasem.call(), result: v + 6, args: [v + 5], imm: 0, str: load });
+      insts = insts.append(ssa.SInst { kind_tag: ssasem.cast(), result: ins.result, args: [v + 6], imm: 0, str: "" });
+      values = values.append(addr_t).append(i32_t).append(addr_t).append(addr_t).append(wide);
+    }
+    if (fused) {
+      blk = ssa.SBlock { ...blk, insts: insts };
+      changed = true;
+    }
+    blocks = blocks.append(blk);
+  }
+  if (!changed) {
+    return f;
+  }
+  blocks = without_unused(blocks, parts, values.len());
+  let calls: ssasem.Contract[] = f.calls;
+  for c in contracts {
+    if (!has_contract(calls, c.name)) {
+      calls = calls.append(c);
+    }
+  }
+  return ssasem.Func { ...f, values: values, calls: calls, graph: ssa.SFunc { ...f.graph, blocks: blocks, nvals: values.len() } };
+}
+
+// word_parts adds to `acc` the values a fused word was assembled from: its
+// `or`s, shifts and casts, the unchecked byte reads and their index arithmetic.
+// The array, the base index and a checked read are never among them.
+function word_parts(defs: ssa.SInst[], args: i32[], w: Word, acc: i32[]): i32[] {
+  for v in args {
+    if (v == w.arr || v == w.x || v < 0 || v >= defs.len() || has_value(acc, v)) {
+      continue;
+    }
+    let d: ssa.SInst = defs[v];
+    let part: boolean = d.kind_tag == 1 || d.kind_tag == ssasem.cast() || d.kind_tag == 9 && (d.str == "|" || d.str == "<<" || d.str == "+")
+      || d.kind_tag == ssasem.array_get() && d.imm == 1;
+    if (part) {
+      acc = word_parts(defs, d.args, w, acc.append(v));
+    }
+  }
+  return acc;
+}
+
+function has_value(xs: i32[], v: i32): boolean {
+  for x in xs {
+    if (x == v) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// without_unused drops the instructions defining `parts` that nothing reads,
+// until none is left to drop. `n` bounds the value numbers.
+function without_unused(blocks: ssa.SBlock[], parts: i32[], n: i32): ssa.SBlock[] {
+  let part: boolean[] = falses(n);
+  for v in parts {
+    part = part.with(v, true);
+  }
+  let dropped: boolean = true;
+  while (dropped) {
+    dropped = false;
+    let used: boolean[] = falses(n);
+    for blk in blocks {
+      for ins in blk.insts {
+        for a in ins.args {
+          if (a >= 0 && a < n) {
+            used = used.with(a, true);
+          }
+        }
+      }
+      for a in [blk.term.cond, blk.term.value] {
+        if (a >= 0 && a < n) {
+          used = used.with(a, true);
+        }
+      }
+    }
+    let out: ssa.SBlock[] = [];
+    for blk in blocks {
+      let insts: ssa.SInst[] = [];
+      for ins in blk.insts {
+        if (ins.result >= 0 && ins.result < n && part[ins.result] && !used[ins.result]) {
+          dropped = true;
+        } else {
+          insts = insts.append(ins);
+        }
+      }
+      out = out.append(ssa.SBlock { ...blk, insts: insts });
+    }
+    blocks = out;
+  }
+  return blocks;
+}
+
+function falses(n: i32): boolean[] {
+  let out: boolean[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append(false);
+    i = i + 1;
+  }
+  return out;
+}
+
+function is_byte_view(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeArray(a) = t {
+    return a.view && ssasem.is_u8(a.elem);
+  }
+  return false;
+}
+
+function has_contract(calls: ssasem.Contract[], name: string): boolean {
+  for c in calls {
+    if (c.name == name) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// A word `ins` completes: `bytes` of a u8 array `arr` read at `x + off` up,
+// each shifted to its little-endian place; `bytes` 0 when `ins` is not one.
+struct Word { bytes: i32, arr: i32, x: i32, off: i32 }
+
+// One byte of a word: array `arr` read at `x + off`, shifted left `shift`.
+struct WordByte { ok: boolean, arr: i32, x: i32, off: i32, shift: i32 }
+
+function word_of(f: ssasem.Func, defs: ssa.SInst[], ins: ssa.SInst): Word {
+  let none: Word = Word { bytes: 0, arr: 0, x: 0, off: 0 };
+  if (ins.kind_tag != 9 || ins.str != "|" || ins.result < 0) {
+    return none;
+  }
+  let t: typeinfo.Type = f.values[ins.result];
+  let n: i32 = 0;
+  if (ssasem.is_u32(t)) {
+    n = 4;
+  } else if (ssasem.is_u64(t)) {
+    n = 8;
+  } else {
+    return none;
+  }
+  let terms: i32[] = or_terms(defs, f.values, ins.result, t, []);
+  if (terms.len() != n) {
+    return none;
+  }
+  let parts: WordByte[] = [];
+  for v in terms {
+    let p: WordByte = word_byte(f, defs, v, t);
+    if (!p.ok) {
+      return none;
+    }
+    parts = parts.append(p);
+  }
+  let lo: i32 = parts[0].off;
+  for p in parts {
+    if (p.arr != parts[0].arr || p.x != parts[0].x) {
+      return none;
+    }
+    if (p.off < lo) {
+      lo = p.off;
+    }
+  }
+  // Each byte sits at its own place, so n distinct places are the whole word.
+  let seen: boolean[] = falses(n);
+  for p in parts {
+    let at: i32 = p.off - lo;
+    if (at >= n || p.shift != at * 8 || seen[at]) {
+      return none;
+    }
+    seen = seen.with(at, true);
+  }
+  return Word { bytes: n, arr: parts[0].arr, x: parts[0].x, off: lo };
+}
+
+// or_terms flattens the `|` tree of type `t` rooted at `v` into its leaves.
+function or_terms(defs: ssa.SInst[], values: typeinfo.Type[], v: i32, t: typeinfo.Type, acc: i32[]): i32[] {
+  let d: ssa.SInst = defs[v];
+  if (d.kind_tag == 9 && d.str == "|" && typeinfo.spelling(values[v]) == typeinfo.spelling(t) && acc.len() < 8) {
+    return or_terms(defs, values, d.args[1], t, or_terms(defs, values, d.args[0], t, acc));
+  }
+  return acc.append(v);
+}
+
+// word_byte reads one leaf: `b[i] as T`, or that shifted left by a constant.
+function word_byte(f: ssasem.Func, defs: ssa.SInst[], v: i32, t: typeinfo.Type): WordByte {
+  let no: WordByte = WordByte { ok: false, arr: 0, x: 0, off: 0, shift: 0 };
+  let d: ssa.SInst = defs[v];
+  let shift: i32 = 0;
+  if (d.kind_tag == 9 && d.str == "<<") {
+    shift = const_through_cast(defs, d.args[1]);
+    if (shift <= 0) {
+      return no;
+    }
+    d = defs[d.args[0]];
+  }
+  if (d.kind_tag != ssasem.cast() || d.args.len() != 1 || typeinfo.spelling(f.values[d.result]) != typeinfo.spelling(t)) {
+    return no;
+  }
+  let g: ssa.SInst = defs[d.args[0]];
+  if (g.kind_tag != ssasem.array_get() || g.args.len() != 2 || !ssasem.is_u8(f.values[g.result])) {
+    return no;
+  }
+  let x: i32 = g.args[1];
+  let off: i32 = 0;
+  let a: ssa.SInst = defs[x];
+  // A constant index is an offset from no base, which `x` -1 stands for.
+  if (a.kind_tag == 1) {
+    return WordByte { ok: true, arr: g.args[0], x: 0 - 1, off: a.imm, shift: shift };
+  }
+  if (a.kind_tag == 9 && a.str == "+") {
+    let c: ssa.SInst = defs[a.args[1]];
+    if (c.kind_tag == 1) {
+      x = a.args[0];
+      off = c.imm;
+    }
+  }
+  return WordByte { ok: true, arr: g.args[0], x: x, off: off, shift: shift };
+}
+
+// const_through_cast is an integer constant, read through one cast, or -1.
+function const_through_cast(defs: ssa.SInst[], v: i32): i32 {
+  let d: ssa.SInst = defs[v];
+  if (d.kind_tag == ssasem.cast() && d.args.len() == 1) {
+    d = defs[d.args[0]];
+  }
+  // A constant of an unsigned or wide type carries its value as its spelling.
+  if (d.kind_tag == 1 && d.str.len() > 0) {
+    let n: i64 = util.lit_to_i64(d.str);
+    if (n > 0i64 && n < 64i64) {
+      return n as i32;
+    }
+    return 0 - 1;
+  }
+  if (d.kind_tag == 1) {
+    return d.imm;
+  }
+  return 0 - 1;
 }
