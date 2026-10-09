@@ -5733,6 +5733,49 @@ function pair_payload(b: ssa.SBlock): i32 {
 // emitted, or the result untouched when the name is not one of this half's.
 struct Lowered { found: boolean, r: irtables.LowerResult }
 
+// The directory handle: a Dir is its descriptor too, so `open_dir` and every
+// method is one Dir-family op with the receiver as its first operand. Close
+// is close(2) on that descriptor, the op a Reader closes with.
+function dir_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
+  let m: string = ins.str;
+  if (m == "open_dir") {
+    return Lowered { found: true, r: emit(r, ir.op_open_dir()) };
+  }
+  if (m == "Dir.open_dir") {
+    return Lowered { found: true, r: emit(r, ir.op_dir_open()) };
+  }
+  if (m == "Dir.entries") {
+    return Lowered { found: true, r: emit(r, ir.op_dir_entries()) };
+  }
+  if (m == "Dir.stat" || m == "Dir.lstat") {
+    let follow: i32 = 0;
+    if (m == "Dir.stat") {
+      follow = 1;
+    }
+    return Lowered { found: true, r: emit(r, ir.op_dir_stat(follow)) };
+  }
+  if (m == "Dir.access") {
+    return Lowered { found: true, r: emit(r, ir.op_dir_access()) };
+  }
+  if (m == "Dir.remove_file" || m == "Dir.remove_dir") {
+    let dir: i32 = 0;
+    if (m == "Dir.remove_dir") {
+      dir = 1;
+    }
+    return Lowered { found: true, r: emit(r, ir.op_dir_unlink(dir)) };
+  }
+  if (m == "Dir.chmod") {
+    return Lowered { found: true, r: emit(r, ir.op_dir_chmod()) };
+  }
+  if (m == "Dir.chown") {
+    return Lowered { found: true, r: emit(r, ir.op_dir_chown()) };
+  }
+  if (m == "Dir.close") {
+    return Lowered { found: true, r: emit(r, ir.op_reader_close()) };
+  }
+  return Lowered { found: false, r: r };
+}
+
 // The builtins whose result is an instantiated builtin union: each is the
 // stack IR op the AST lowering emits for the same call. `read_line` reads a FD
 // operand and the bare builtin names none, so its lowering pushes the zero the
@@ -5741,6 +5784,9 @@ struct Lowered { found: boolean, r: irtables.LowerResult }
 // are constants and every method is the free op with the receiver as its
 // first operand. Writer.close shares Reader.close's op.
 function handle_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
+  if (ins.str == "open_dir" || util.str_has_prefix(ins.str, "Dir.")) {
+    return dir_site(r, ins);
+  }
   if (ins.str == "stdin") {
     return Lowered { found: true, r: emit(r, ir.op_const_i32(0)) };
   }

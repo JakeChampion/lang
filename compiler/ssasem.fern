@@ -2810,7 +2810,7 @@ pub function cast_admits(from: typeinfo.Type, to: typeinfo.Type): boolean {
     return true;
   }
   // A stream handle's descriptor read (`r.fd`): the handle IS the i32.
-  if (semtypes.is_stream(from) && is_i32(to)) {
+  if (semtypes.is_fd_handle(from) && is_i32(to)) {
     return true;
   }
   if (lends_handle(from, to)) {

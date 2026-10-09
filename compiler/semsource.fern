@@ -1347,7 +1347,7 @@ function record_field(fa: ast.ExprFieldAccess, s: State): Value {
   }
   // `r.fd` on a stream handle: the handle is its descriptor, so the
   // projection is the value itself read as the i32.
-  if (fa.field == "fd" && semtypes.is_stream(s.values[container.id])) {
+  if (fa.field == "fd" && semtypes.is_fd_handle(s.values[container.id])) {
     return define(s, ssasem.cast(), [container.id], 0, "", t_i32());
   }
   let sig: checker.StructSig = record_sig(s.values[container.id], s);
@@ -7595,12 +7595,38 @@ function t_file_stat(): typeinfo.Type {
   return typeinfo.TypeStruct { name: "FileStat", args: [] };
 }
 
+// The directory handle, a bare descriptor like a stream handle: the path and
+// every name are lent, the scalars are values, and each result box is fresh.
+function dir_contracts(): ssasem.Contract[] {
+  let v: i32 = ssaunits.value_mode();
+  let b: i32 = ssaunits.borrow_mode();
+  let dir: typeinfo.Type = t_handle("Dir");
+  let done: typeinfo.Type = t_io_result(t_void());
+  let stat: typeinfo.Type = t_io_result(t_file_stat());
+  return [
+    ssasem.Contract { name: "open_dir", params: [t_string()], modes: [b], result: t_io_result(dir) },
+    ssasem.Contract { name: "Dir.open_dir", params: [dir, t_string()], modes: [v, b], result: t_io_result(dir) },
+    ssasem.Contract { name: "Dir.entries", params: [dir], modes: [v], result: t_io_result(typeinfo.TypeArray { elem: t_string(), view: false }) },
+    ssasem.Contract { name: "Dir.stat", params: [dir, t_string()], modes: [v, b], result: stat },
+    ssasem.Contract { name: "Dir.lstat", params: [dir, t_string()], modes: [v, b], result: stat },
+    ssasem.Contract { name: "Dir.access", params: [dir, t_string(), t_i32()], modes: [v, b, v], result: done },
+    ssasem.Contract { name: "Dir.remove_file", params: [dir, t_string()], modes: [v, b], result: done },
+    ssasem.Contract { name: "Dir.remove_dir", params: [dir, t_string()], modes: [v, b], result: done },
+    ssasem.Contract { name: "Dir.chmod", params: [dir, t_string(), t_i32(), t_bool()], modes: [v, b, v, v], result: done },
+    ssasem.Contract { name: "Dir.chown", params: [dir, t_string(), t_i32(), t_i32(), t_bool()], modes: [v, b, v, v, v], result: done },
+    ssasem.Contract { name: "Dir.close", params: [dir], modes: [v], result: t_option(typeinfo.TypeUnion { name: "IoError", args: [] }) },
+  ];
+}
+
 // The runtime builtins with a contract here, each a stack IR op of its own
 // rather than a call. What each hands back is the op's own value; a void one
 // pushes the dummy every statement op pushes.
 function builtin_contracts(): ssasem.Contract[] {
   let out: ssasem.Contract[] = union_result_contracts();
   for c in handle_contracts() {
+    out = out.append(c);
+  }
+  for c in dir_contracts() {
     out = out.append(c);
   }
   for c in os_contracts() {

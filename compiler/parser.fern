@@ -10238,6 +10238,8 @@ pub function builtin_function_names(): string[] {
     "target_os", "target_arch",
     "open_reader", "open_writer", "open_appender", "open_exclusive",
     "open_reader_with", "open_writer_with",
+    // a directory held open, whose methods name entries relative to it
+    "open_dir",
     // filesystem
     "read_file", "read_file_bytes", "write_file", "write_file_bytes", "write_file_exec", "read_dir", "read_dir_all", "read_dir_ino", "remove_dir_all", "remove_file",
     "create_dir_all", "stat", "lstat", "access", "temp_dir",
@@ -20621,7 +20623,7 @@ pub function reserved_enum_tparams(name: string): string[] {
 // against builtinStructDecls() so the two cannot drift.
 pub function is_reserved_struct_name(name: string): boolean {
   let reserved: string[] = [
-    "BodySource", "BytesWriter", "Cell", "ChunkProducer", "Date", "DateTime", "DirEntry", "Duration", "FileStat",
+    "BodySource", "BytesWriter", "Cell", "ChunkProducer", "Date", "DateTime", "Dir", "DirEntry", "Duration", "FileStat",
     "FsStat", "HeaderMap", "HttpRequest", "HttpResponse", "Instant", "Map",
     "MapIter", "MountEntry", "Pipe", "ProcessResult",
     "Reader", "Span", "Stream", "Time", "TimeZone", "Url", "WinSize", "Writer",

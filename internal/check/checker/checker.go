@@ -552,6 +552,12 @@ func builtinStructDecls() []*ast.StructDecl {
 			Name:   "Writer",
 			Fields: []ast.Param{{Name: "fd", Type: ast.NumberType{}}},
 		},
+		// Dir — a directory held open by `open_dir`, whose methods name
+		// entries relative to it. Opaque by the same convention.
+		{
+			Name:   "Dir",
+			Fields: []ast.Param{{Name: "fd", Type: ast.NumberType{}}},
+		},
 		// HttpRequest / HttpResponse back the
 		// `fern -target wasi-http` mode (step 5 of
 		// docs/WASI-PREVIEW2.md). They're always available so
@@ -4161,6 +4167,40 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	fileStatResult := ast.EnumType{Name: "Result", Args: []ast.Type{
 		ast.StructType{Name: "FileStat"}, ioErrType}}
 	registerStructMethod("Reader", "stat", nil, fileStatResult)
+	// open_dir(path) holds a directory open: openat(2) with O_DIRECTORY,
+	// following a final symlink as opendir(3) does. Every Dir method takes
+	// a NAME inside that directory and acts on it through the descriptor
+	// — openat / fstatat / faccessat / unlinkat / fchmodat / fchownat — so
+	// a walk that descends handle by handle never forms a path longer than
+	// one component and is not bounded by PATH_MAX, and a parent renamed
+	// mid-walk does not redirect it. Err carries the errno and the name.
+	//
+	//   d.open_dir(name)  the child directory, refusing a symlink
+	//                     (O_NOFOLLOW) rather than descending through it
+	//   d.entries()       every name but `.` and `..`, read from the start
+	//                     in the order the kernel reports them
+	//   d.stat(name) / d.lstat(name)   the FileStat stat(path) answers
+	//   d.access(name, mode)           access(path, mode), effective ids
+	//   d.remove_file(name) / d.remove_dir(name)   unlink / rmdir
+	//   d.chmod(name, mode, follow) / d.chown(name, uid, gid, follow)
+	//   d.close()
+	//
+	// Gated on `fsdir`: no wasm backend lowers the handle (E066).
+	dirType := ast.StructType{Name: "Dir"}
+	dirResult := ast.EnumType{Name: "Result", Args: []ast.Type{dirType, ioErrType}}
+	voidResult := ast.EnumType{Name: "Result", Args: []ast.Type{ast.VoidType{}, ioErrType}}
+	c.info.FuncSigs["open_dir"] = &ast.FuncType{Params: []ast.Type{ast.StringType{}}, Result: dirResult}
+	registerStructMethod("Dir", "open_dir", []ast.Type{ast.StringType{}}, dirResult)
+	registerStructMethod("Dir", "entries", nil,
+		ast.EnumType{Name: "Result", Args: []ast.Type{ast.ArrayType{Elem: ast.StringType{}}, ioErrType}})
+	registerStructMethod("Dir", "stat", []ast.Type{ast.StringType{}}, fileStatResult)
+	registerStructMethod("Dir", "lstat", []ast.Type{ast.StringType{}}, fileStatResult)
+	registerStructMethod("Dir", "access", []ast.Type{ast.StringType{}, ast.NumberType{}}, voidResult)
+	registerStructMethod("Dir", "remove_file", []ast.Type{ast.StringType{}}, voidResult)
+	registerStructMethod("Dir", "remove_dir", []ast.Type{ast.StringType{}}, voidResult)
+	registerStructMethod("Dir", "chmod", []ast.Type{ast.StringType{}, ast.NumberType{}, ast.BoolType{}}, voidResult)
+	registerStructMethod("Dir", "chown", []ast.Type{ast.StringType{}, ast.NumberType{}, ast.NumberType{}, ast.BoolType{}}, voidResult)
+	registerStructMethod("Dir", "close", nil, optionIoErr)
 	registerStructMethod("Writer", "stat", nil, fileStatResult)
 	// seek(offset, whence) is lseek(2): whence 0 / 1 / 2 for SEEK_SET /
 	// SEEK_CUR / SEEK_END, the new offset back. A pipe answers ESPIPE
