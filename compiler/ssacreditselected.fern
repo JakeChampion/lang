@@ -1,5 +1,8 @@
 // Metadata obligations for the scoped retained wrapper. Each row owns its
 // producer store; equal local indices never imply equal layouts.
+// Keep predicates/offsets aligned with ssacreditabi: scalar, ordinary,
+// signed_code/assertion_signature_error, incoming_modes, incoming_schema_index
+// and replacement_scalar_fields; this adapter reads each row's own metadata.
 import "./physicalbody";
 import "./ssaprepare";
 import "./ssasem";

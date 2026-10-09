@@ -1,0 +1,86 @@
+import "../asmcore";
+import "../asm_ir";
+import "../asm_arm64_ir";
+import "../ir";
+import "../ircore";
+import "../irtables";
+import "../lexer";
+import "../parser";
+import "../semlower";
+import "../ssaprepare";
+import "../util";
+
+function require(ok: boolean, code: i32): void {
+  if (!ok) {
+    exit(code);
+  }
+}
+
+pub function consistent(row: ssaprepare.Emitted): void {
+  let c = row.context;
+  let expected = ircore.release_entry(row.body.lowered, c.architecture, c.rc_free_debug, c.reg_entries);
+  require(expected.counted == row.release_entry.counted && expected.unique_drop == row.release_entry.unique_drop, 71);
+}
+
+function select(r: irtables.LowerResult, arch: string, debug: boolean, names: string[], counted: boolean, drop: string): void {
+  let p = ircore.release_entry(r, arch, debug, irtables.sig_reg_of(names));
+  require(p.counted == counted && p.unique_drop == drop, 72);
+}
+
+function selectors(r: irtables.LowerResult): void {
+  let drop = ircore.nominal_release_drop(r);
+  require(drop != "", 73);
+  select(r, "arm64", false, [drop], true, "");
+  select(r, "x86-64", false, [drop], true, drop);
+  select(r, "x86-64", false, [], true, "");
+  select(r, "x86-64", false, [drop + "_other"], true, "");
+  for arch in ["arm64", "x86-64"] {
+    select(r, arch, true, [drop], false, "");
+    select(irtables.LowerResult { ...r, n_params: 2 }, arch, false, [drop], false, "");
+    select(irtables.LowerResult { ...r, name: "ordinary" }, arch, false, [drop], false, "");
+    let n = r.ops.len();
+    select(irtables.LowerResult { ...r, ops: r.ops.with(n - 4, ir.op_call_direct("different", 1)) }, arch, false, [drop], false, "");
+    // The counted suffix alone permits a kept/shared entry, but a changed
+    // prefix must disable the special count-one Drop shortcut.
+    select(irtables.LowerResult { ...r, ops: util.append_all([ir.op_const_i32(0), ir.op_drop()], r.ops) }, arch, false, [drop], true, "");
+  }
+  let dotted = "__sem_drop_Token.value";
+  let renamed = irtables.LowerResult { ...r, ops: r.ops.with(4, ir.op_call_direct(dotted, 1)) };
+  select(renamed, "x86-64", false, [asmcore.sanitize_label(dotted)], true, dotted);
+  select(renamed, "x86-64", false, [dotted], true, "");
+}
+
+function emit(g: ircore.Gated, arm: boolean, debug: boolean, retain: boolean): ssaprepare.Output {
+  let sw = asmcore.Switches { backtrace: false, sanitize: debug };
+  if (arm) {
+    return asm_arm64_ir.emit_module_ir_unit_arm64_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, -1, g.cache, g.physical, semlower.runtime_lowering, sw, retain);
+  }
+  return asm_ir.emit_module_ir_unit_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, -1, g.cache, g.physical, semlower.runtime_lowering, 0 as usize, sw, retain);
+}
+
+pub function run(): void {
+  let src = "struct Leaf { n: i32 } struct Parent { left: Leaf, right: Leaf } @noinline function consume(own p: Parent): i32 { return p.left.n + p.right.n; } function main(): i32 { let l = Leaf { n: 7 }; let p = Parent { left:l,right:l }; return consume(p) - 14; }";
+  let mod = parser.parse_module(lexer.tokenize(src));
+  require(!asmcore.refuse_parse_unknowns([mod]) && !asmcore.refuse_decl_names([mod]), 74);
+  let g = semlower.program(semlower.driven(mod, "x86-64-linux"));
+  require(g.ok, 75);
+  for arm in [false, true] {
+    for debug in [false, true] {
+      let on = emit(g, arm, debug, true);
+      let off = emit(g, arm, debug, false);
+      require(on.text == off.text && off.bodies.len() == 0, 76);
+      let hits = 0;
+      for row in on.bodies {
+        consistent(row);
+        if (row.label_name == "__sem_release_Parent") {
+          hits = hits + 1;
+          require(row.release_entry.counted == !debug, 77);
+          let drop = if (arm || debug) { "" } else { "__sem_drop_Parent" };
+          require(row.release_entry.unique_drop == drop, 78);
+          selectors(row.body.lowered);
+        }
+      }
+      require(hits == 1, 79);
+    }
+  }
+}

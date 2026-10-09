@@ -13,6 +13,7 @@ import "../ssaprepare";
 import "../util";
 import "./ssaretainedproof" as proof;
 import "./ssaretainedwrapper" as wrapper;
+import "./ssaretainedentry" as entry;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -95,6 +96,7 @@ function settled(g: ircore.Gated, arm: boolean): void {
   require(row.body.selected.producers[0].contracts.len() != g.physical.producers[0].contracts.len(), 25);
   for body in on.bodies {
     require(count(on.bodies, body.label_name) == 1, 26);
+    entry.consistent(body);
   }
 }
 
@@ -187,6 +189,7 @@ function main(): i32 {
   wrapper.run(true);
   proof.run(false);
   proof.run(true);
+  entry.run();
   print("retained native body controls passed");
   return 0;
 }
