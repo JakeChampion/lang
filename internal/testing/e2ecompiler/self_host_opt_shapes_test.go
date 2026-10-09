@@ -274,6 +274,29 @@ function main(): i32 {
 	{name: "rotate_of_different_operands_kept", fn: "notdup", exit: 47, src: mergedRotateSrc,
 		want:   map[string][]string{"x86-64-linux": {`shrq \$25,`, `shlq \$7,`}, "arm64-linux": {`lsr \w+, \w+, #25`, `lsl \w+, \w+, #7`}},
 		forbid: map[string][]string{"x86-64-linux": {`\bror`}, "arm64-linux": {`\bror\b`}}},
+	// A word read a byte at a time is one load: big-endian bytes at an offset
+	// are a 4-byte load and a byte swap, little-endian ones an 8-byte load.
+	// Lanes out of order stay byte loads.
+	{name: "word_be32", fn: "be32", exit: 26, src: wordLoadSrc,
+		want:   map[string][]string{"x86-64-linux": {`movl \(%\w+,%\w+\), (%e\w+)\n\s+bswap %e\w+`}, "arm64-linux": {`ldr (w\d+), \[x\d+, x\d+\]\n\s+rev w\d+, w\d+`}},
+		forbid: map[string][]string{"x86-64-linux": {`movzbl`, `\bor[lq]\b`}, "arm64-linux": {`\bldrb\b`, `\borr\b`}}},
+	{name: "word_le64", fn: "le64", exit: 26, src: wordLoadSrc,
+		want:   map[string][]string{"x86-64-linux": {`movq \(%\w+,%\w+\), %r\w+`}, "arm64-linux": {`ldr x\d+, \[x\d+, x\d+\]`}},
+		forbid: map[string][]string{"x86-64-linux": {`movzbl`, `\bbswap\b`, `\bor[lq]\b`}, "arm64-linux": {`\bldrb\b`, `\brev\b`, `\borr\b`}}},
+	{name: "word_lanes_out_of_order_kept", fn: "swapped", exit: 26, src: wordLoadSrc,
+		want:   map[string][]string{"x86-64-linux": {`movzbl`}, "arm64-linux": {`\bldrb\b`}},
+		forbid: map[string][]string{"x86-64-linux": {`\bbswap\b`, `movl \(%\w+,%\w+\)`}, "arm64-linux": {`\brev\b`, `ldr w\d+, \[x\d+, x\d+\]`}}},
+	// A u32 sum that only a 32-bit rotate and an exclusive-or read keeps no
+	// zero extension between its adds.
+	{name: "u32_wraps_nothing_reads_dropped", fn: "mix32", exit: 10, src: `
+@noinline function mix32(a: u32, b: u32, c: u32): u32 {
+    let s: u32 = a + b + c;
+    return (s >> 7u32 | s << 25u32) ^ (s >> 11u32 | s << 21u32);
+}
+function main(): i32 { return (mix32(4000000000u32, 3000000000u32, 123456789u32) % 101u32) as i32; }
+`,
+		want:   map[string][]string{"x86-64-linux": {`rorl \$7,`}, "arm64-linux": {`ror w\d+, w\d+, #7\b`}},
+		forbid: map[string][]string{"x86-64-linux": {`movl %(e\w+), %e\w+\n\s+(?:add|ror)`}, "arm64-linux": {`\bmov w\d+, w\d+\n\s+(?:add|ror)`, `\bmov x\d+, x\d+\n\s+ror`}}},
 	// Spilled values whose lifetimes do not meet share a frame slot: the
 	// second phase's spills reuse the first phase's slots.
 	{name: "spill_slots_shared", fn: "two_phase", exit: 57, src: `
@@ -513,6 +536,30 @@ function main(): i32 {
     let b: u64 = rot64(81985529216486895u64);
     let c: u32 = notrot(3000000000u32, 0 - 12345, 0i64 - 9876543210i64);
     return ((a % 97u32) as i32) + ((b % 89u64) as i32) + ((c % 83u32) as i32);
+}
+`
+
+const wordLoadSrc = `
+@noinline function be32(bs: [u8], off: i32): u32 {
+    return bs[off + 4] as u32 << 24 | bs[off + 5] as u32 << 16 | bs[off + 6] as u32 << 8 | bs[off + 7] as u32;
+}
+@noinline function le64(bs: [u8], off: i32): u64 {
+    return bs[off] as u64 | bs[off + 1] as u64 << 8u64 | bs[off + 2] as u64 << 16u64 | bs[off + 3] as u64 << 24u64
+        | bs[off + 4] as u64 << 32u64 | bs[off + 5] as u64 << 40u64 | bs[off + 6] as u64 << 48u64 | bs[off + 7] as u64 << 56u64;
+}
+@noinline function swapped(bs: [u8], off: i32): u32 {
+    return bs[off] as u32 | bs[off + 1] as u32 << 8 | bs[off + 3] as u32 << 16 | bs[off + 2] as u32 << 24;
+}
+function main(): i32 {
+    let b: u8[] = __alloc_u8(24);
+    let i: i32 = 0;
+    while (i < 24) {
+        b = b.with(i, (i * 37 + 11) as u8);
+        i = i + 1;
+    }
+    let x: u32 = be32(b, 3) ^ swapped(b, 9);
+    let y: u64 = le64(b[1:20], 5);
+    return ((x % 211u32) as i32 + (y % 199u64) as i32) % 128;
 }
 `
 
