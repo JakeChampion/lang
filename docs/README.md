@@ -124,7 +124,7 @@ so explicitly.
 | `ARENA-DECISION.md` | [record] | `arena {}` block — removed in full. |
 | `IMMUTABILITY-MIGRATION-PLAN.md` | [record] | Immutable-data migration — shipped native; self-host enforcement partial. |
 | `INTERP-MAP-COW-PLAN.md` | [record] | Interp Map copy-on-write (M1) — implemented. |
-| `CELL-TYPE-PLAN.md` | [record] | `Cell[T]` mutable cell — implemented for scalar + string. |
+| `CELL-TYPE-PLAN.md` | [record] | `Cell[T]` mutable cell — implemented for every cycle-free element type. |
 | `OWNERSHIP-INFERENCE-PLAN.md` | [tracker] | Ownership inference; slice 0 landed 2026-06-05. |
 | `OWNERSHIP-TYPES-PLAN.md` | [tracker] | Checked ownership axis (#4297; sub-issues #4812–#4814). |
 | `SSO-PLAN.md` | [record] | SSO migration roadmap — shipped on wasm + both natives. |

@@ -8877,31 +8877,95 @@ func orPos(p, fallback ast.Position) ast.Position {
 	return p
 }
 
-// isCellElemType reports whether T is permitted as Cell[T] (E057). The
-// element must be cycle-free: a cell over a value that can transitively
-// hold another cell could reconstruct a reference cycle, which the
-// immutable-data model forbids so Perceus RC needs no cycle collector.
-// Scalars (i32/i64/f64/bool) hold no pointer at all; `string` is a heap
-// buffer of bytes that references no other Fern value, so a Cell[string]
-// can never close a cycle either, and its owning slot participates in
-// string rc arc. Owned scalar arrays are equally cycle-free and participate
-// in array RC. Other composite/reference types remain unsupported.
-// An unresolved generic
-// param is allowed through here (there's no v1 generic-Cell use;
-// monomorph-time checking is a follow-up) so generic signatures still
-// resolve.
-func isCellElemType(t ast.Type) bool {
-	switch t.(type) {
-	case ast.NumberType, ast.FloatType, ast.BoolType, ast.StringType, ast.ParamType:
-		return true
+// cellPayloadRisk returns nil when a value of t can never reach a Cell, else
+// the first part of t that could (E057): a Cell, a function value (through
+// its captures), a trait object (through what it erases), a map cursor or
+// resource handle, a borrowed view (which a cell would outlive), or a type
+// parameter, which could be instantiated with any of those. Everything else
+// is immutable data — scalars, strings, arrays, tuples, maps, structs, enums —
+// whose values form trees, so a cell can never end up inside its own payload
+// and RC needs no cycle collector (docs/CELL-TYPE-PLAN.md §2). A recursive
+// type is fine for the same reason: `seen` stops the walk at a nominal type
+// already on it. `own` is the type parameters of the declaration whose fields
+// are being walked, which its arguments stand for and were checked as.
+func (c *checker) cellPayloadRisk(t ast.Type, own []string, seen map[string]bool) ast.Type {
+	switch v := t.(type) {
+	case ast.NumberType, ast.FloatType, ast.BoolType, ast.StringType, ast.CharType:
+		return nil
+	case ast.ArrayType:
+		return c.cellPayloadRisk(v.Elem, own, seen)
+	case ast.TupleType:
+		return c.cellPayloadRisks(v.Elems, own, seen)
+	case ast.StructType:
+		return c.cellNominalRisk(t, v.Name, v.Args, own, seen)
+	case ast.EnumType:
+		return c.cellNominalRisk(t, v.Name, v.Args, own, seen)
+	case ast.ParamType:
+		if slices.Contains(own, v.Name) {
+			return nil
+		}
+		return t
+	case *ast.FuncType, ast.DynTraitType, ast.HandleType, ast.StrType, ast.SliceType,
+		ast.StreamType, ast.SelfType, ast.ProjType:
+		return t
 	}
-	if a, ok := t.(ast.ArrayType); ok {
-		switch a.Elem.(type) {
-		case ast.NumberType, ast.FloatType, ast.BoolType:
-			return true
+	return nil
+}
+
+func (c *checker) cellPayloadRisks(ts []ast.Type, own []string, seen map[string]bool) ast.Type {
+	for _, t := range ts {
+		if r := c.cellPayloadRisk(t, own, seen); r != nil {
+			return r
 		}
 	}
-	return false
+	return nil
+}
+
+// cellNominalRisk is cellPayloadRisk for a named type. A field read before
+// resolution still spells the declaration's own parameter, or an enum, as a
+// StructType, so the name is looked up in every table rather than trusted.
+func (c *checker) cellNominalRisk(t ast.Type, name string, args []ast.Type, own []string, seen map[string]bool) ast.Type {
+	if len(args) == 0 && slices.Contains(own, name) {
+		return nil
+	}
+	if name == "Cell" || name == "MapIter" {
+		return t
+	}
+	if _, ok := c.info.Resources[name]; ok {
+		return t
+	}
+	if r := c.cellPayloadRisks(args, own, seen); r != nil || seen[name] {
+		return r
+	}
+	seen[name] = true
+	if sd, ok := c.info.Structs[name]; ok && name != "Map" {
+		for _, f := range sd.Fields {
+			if r := c.cellPayloadRisk(f.Type, sd.TypeParams, seen); r != nil {
+				return r
+			}
+		}
+	}
+	if ed, ok := c.info.Enums[name]; ok {
+		for _, variant := range ed.Variants {
+			if r := c.cellPayloadRisks(variant.Payloads, ed.TypeParams, seen); r != nil {
+				return r
+			}
+		}
+	}
+	return nil
+}
+
+// cellElemError reports E057 at `at` when elem cannot be a cell's element.
+func (c *checker) cellElemError(at ast.Position, elem ast.Type) {
+	risk := c.cellPayloadRisk(elem, nil, map[string]bool{})
+	if risk == nil {
+		return
+	}
+	why := fmt.Sprintf(", and %s contains %s", elem, risk)
+	if fmt.Sprint(risk) == fmt.Sprint(elem) {
+		why = fmt.Sprintf(", which %s is not", elem)
+	}
+	c.errfCode(at, "E057", "Cell[%s] is not allowed: a cell's element must be built from scalars, strings, arrays, tuples, maps, structs and enums%s", elem, why)
 }
 
 // resolveType canonicalises a parsed type annotation in place. `pos` is
@@ -8975,13 +9039,9 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Po
 				c.errfCode(sd.P, "E019", "struct %s has %d type parameter(s), %d supplied",
 					t.Name, len(sd.TypeParams), len(args))
 			}
-			// E057: a Cell[T] is only sound for a cycle-free T — a cell
-			// over a reference type could reconstruct a reference cycle,
-			// which is exactly what the immutable-data model forbids so
-			// Perceus RC needs no cycle collector (docs/CELL-TYPE-PLAN.md
-			// §1-2). Scalars, strings and owned byte arrays have the
-			// required owning-slot RC support; other types remain unsupported.
-			if t.Name == "Cell" && len(args) == 1 && !isCellElemType(args[0]) {
+			// E057: a Cell[T] is only sound for a cycle-free T
+			// (cellPayloadRisk).
+			if t.Name == "Cell" && len(args) == 1 {
 				// Anchor at the annotation's use site. Cell's decl is
 				// synthesized (sd.P is 0:0, which diag.Format renders
 				// without the error[E057] prefix), so the fallback only
@@ -8991,9 +9051,7 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Po
 				if at.Line == 0 {
 					at = sd.P
 				}
-				c.errfCode(at, "E057",
-					"Cell[%s] is not allowed: a cell's element type must be a scalar, string or owned array of scalars; other element types are not supported because cells must remain cycle-free",
-					args[0])
+				c.cellElemError(at, args[0])
 			}
 			*slot = ast.StructType{Name: t.Name, Args: args}
 			return
@@ -17813,24 +17871,38 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			c.needCoreMap(n.P)
 		}
 		// `cell_new(v)` — the Cell[T] constructor (docs/CELL-TYPE-PLAN.md).
-		// T is inferred from the argument (no destination relaxation needed:
-		// the value drives T), stamped on n.TypeArgs for the IR, and checked
-		// cycle-free (E057). Returns Cell[T].
+		// T is the argument's type, settled against a destination
+		// `Cell[X]`'s X the way a `let _: X` init is, so `map_new(8)`, `[]`
+		// and `None` take their arguments from it. Stamped on n.TypeArgs for
+		// the IR, and checked cycle-free (E057). Returns Cell[T].
 		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "cell_new" {
 			if len(n.Args) != 1 {
 				c.errfCode(n.P, "E004", "cell_new expects 1 argument, got %d", len(n.Args))
 				return ast.StructType{Name: "Cell"}
 			}
+			var want ast.Type
+			if ct, ok := callExpected.(ast.StructType); ok && ct.Name == "Cell" && len(ct.Args) == 1 {
+				want = ct.Args[0]
+			}
+			c.setElemHintFor(n.Args[0], want)
+			c.expectedType = want
 			at := c.checkExpr(n.Args[0], s)
+			c.expectedType = nil
+			c.elemHint = nil
+			if want != nil {
+				c.settleNumeric(n.Args[0], want)
+				at = c.postSettleType(n.Args[0], at)
+				c.stampStructTypeArgs(n.Args[0], want)
+				c.refineCallTypeArgsFromDest(n.Args[0], want)
+				if at != nil && c.assignable(want, at) {
+					at = want
+				}
+			}
 			at = c.postSettleType(n.Args[0], at)
 			if at == nil {
 				return ast.StructType{Name: "Cell"}
 			}
-			if !isCellElemType(at) {
-				c.errfCode(n.Args[0].Pos(), "E057",
-					"Cell[%s] is not allowed: a cell's element type must be a scalar, string or owned array of scalars; other element types are not supported because cells must remain cycle-free",
-					at)
-			}
+			c.cellElemError(n.Args[0].Pos(), at)
 			n.TypeArgs = []ast.Type{at}
 			return ast.StructType{Name: "Cell", Args: []ast.Type{at}}
 		}

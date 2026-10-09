@@ -314,8 +314,8 @@ cross-heap cycle). Positive interaction: a per-worker heap can be
 out, which even reclaims anything a leak-class bug retained —
 partial restoration of the arena's old safety valve.
 
-**C4 — `Cell[T]` is worker-local by construction.** `Cell` (scalar
-+ `string` payloads only) is the language's sanctioned shared
+**C4 — `Cell[T]` is worker-local by construction.** `Cell` (any
+cycle-free payload, E057) is the language's sanctioned shared
 mutable state — shared by *aliasing*, mutated in place, refcounted
 non-atomically (`CELL-TYPE-PLAN.md`). A cell reachable from two
 workers is a data race on the payload and on the rc word. So the

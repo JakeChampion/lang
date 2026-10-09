@@ -802,8 +802,8 @@ func Run(prog *ast.Program, info *checker.Info) error {
 	newInfo, err := checker.CheckTarget(prog, info.Target)
 	if err != nil {
 		// A coded diagnostic here is a USER error that only became
-		// visible once the type arguments were substituted — `Cell[T]`
-		// over a composite is the live one. Reporting it as a compiler
+		// visible once the type arguments were substituted — a trait bound
+		// reached generic-into-generic is the live one. Reporting it as a compiler
 		// bug gave the author a banner accusing the compiler and no code
 		// to look up, for a mistake in their own program (#8452). The
 		// banner is kept for a failure with no code, which is the only

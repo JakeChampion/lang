@@ -1,0 +1,5 @@
+Cell[Handler] is not allowed
+Cell[T] is not allowed
+Cell[Slot] is not allowed
+Slot contains Cell[i32]
+Cell[str] is not allowed

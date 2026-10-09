@@ -1,6 +1,5 @@
 // Accumulating into a Cell[string] — the shape a cell exists for, since a
-// cell is the language's one shared-mutable box and E057 restricts its
-// element to a scalar or a string.
+// cell is the language's one shared-mutable box.
 //
 // Three appends, not two: `c.set(c.get() + piece)` lowers the concat to the
 // in-place-when-unique __fern_str_append, which CONSUMES the slot's buffer,

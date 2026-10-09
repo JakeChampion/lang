@@ -350,9 +350,9 @@ Derived placements (all existing spellings, no new ones):
 
 Boundary cases, called explicitly:
 
-- **Cell / E057** (`isCellElemType` checker.go:4936, annotation
-  check 5021-5033, `cell_new` site 9982-9994; self-host
-  checker.fern:4403-4414): **not a mode.** It is a type-shape
+- **Cell / E057** (`cellPayloadRisk` in checker.go, reached from the
+  annotation check in `resolveType` and the `cell_new` site; self-host
+  `cell_payload_risk` in checker.fern): **not a mode.** It is a type-shape
   well-formedness rule (cycle-free element types only) that
   protects the lattice's precondition — cycle-freedom is what
   makes RC sound and borrowed references safe without a

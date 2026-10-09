@@ -8,7 +8,7 @@ checker — `E048` (struct fields immutable after construction), `E056`
 capture is read-only on both sides of the shared cell — the closure's
 write-back, and the enclosing scope's store of a value that can reach a
 closure), `E055` (discarded value-returning collection result),
-`E057` (`Cell[T]` restricted to cycle-free scalar/string `T`). The
+`E057` (`Cell[T]` restricted to a cycle-free `T`). The
 sanctioned mutable escape hatch is `Cell[T]` (see `docs/CELL-TYPE-PLAN.md`).
 Remaining work is **self-host parity**: not all self-host drivers gate on
 these rules yet and `checker.fern` does not enforce `E057` — see the

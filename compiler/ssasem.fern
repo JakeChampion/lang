@@ -3071,8 +3071,8 @@ function signature_slot(t: typeinfo.Type): boolean {
 // and `drop_tuple_fields` walk each through `drop_value`, which dispatches a
 // function type to `drop_captures`, and `ssasem.reference` counts a function
 // value, so the container knows it has children to walk. A Cell is not on the
-// list because the checker refuses a Cell of any composite type (E057), so
-// one never holds a function value.
+// list because the checker refuses a Cell whose element can hold a function
+// value (E057).
 pub function nests_func(t: typeinfo.Type): boolean {
   if let typeinfo.TypeArray(a) = t {
     return nests_func(a.elem);

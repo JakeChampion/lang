@@ -10,20 +10,19 @@ import (
 	"github.com/jakechampion/lang/internal/syntax/diag"
 )
 
-// Two ordinary user type errors used to be reported as
+// An ordinary user type error used to be reported as
 //
 //	monomorph: re-check failed (compiler bug): …
 //
 // with no diagnostic code — a banner accusing the compiler for a mistake in
-// the author's own program, and nothing to look up (#8452). Both are checks
-// that cannot run before instantiation:
-//
-//   - `Cell[T]` over a composite, where T is only known once substituted;
-//   - a trait bound violated through a generic-into-generic call, which the
-//     call-site check skips because the argument is still a type parameter
-//     and leaves "for the eventual monomorphic call" — nothing was that call,
-//     because monomorph clears the clone's TypeParams and the bound goes with
-//     them, so the body failed on whatever the missing impl was needed for.
+// the author's own program, and nothing to look up (#8452). The live one is a
+// check that cannot run before instantiation: a trait bound violated through
+// a generic-into-generic call, which the call-site check skips because the
+// argument is still a type parameter and leaves "for the eventual monomorphic
+// call" — nothing was that call, because monomorph clears the clone's
+// TypeParams and the bound goes with them, so the body failed on whatever the
+// missing impl was needed for. (`Cell[T]` was the other until E057 began
+// refusing a type parameter as a cell's element before instantiation.)
 //
 // spec/diagnostics.md's premise is that every user-facing error has a stable
 // code, so each row asserts the code AND that the banner is gone.
@@ -34,17 +33,6 @@ func TestUserErrorsFromMonomorphAreCodedDiagnostics(t *testing.T) {
 		wantCode string
 		wantMsg  string
 	}{
-		{
-			name: "Cell over a composite reached through a generic",
-			src: `struct Point { x: i32, y: i32 }
-function mk[T](v: T): Cell[T] { return cell_new(v); }
-function main(): i32 {
-  let c = mk(Point { x: 1, y: 2 });
-  return c.get().x;
-}`,
-			wantCode: "E057",
-			wantMsg:  "a cell's element type must be a scalar",
-		},
 		{
 			name: "trait bound violated generic-into-generic",
 			src: `trait Named { function name(self: Self): string; }
