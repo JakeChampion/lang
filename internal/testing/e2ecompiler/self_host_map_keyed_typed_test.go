@@ -12,9 +12,8 @@ import (
 // A struct- or enum-keyed map on the typed path (#9962). The key column is a
 // column of boxes the map owns one unit of per entry, hashed and compared
 // through the key type's derived `hash` and `eq`, and released through the
-// key type's own `__sem_release_<K>` — the `_kf` members of the map free
-// family walk the column calling it, and `op_map_set` names it so an
-// overwrite can release the consumed key it discards.
+// key type's own `__sem_release_<K>`, which core/map calls on the column at
+// release and on the consumed key an overwrite discards.
 //
 // The assert is ABSOLUTE and on every backend: the heap bump across 1000
 // build-and-drop rounds is flat, `__rc_underflow_count()` reads zero, and the
@@ -23,7 +22,7 @@ import (
 var mapKeyedTypedPrograms = []mapChurnProgram{
 	// A struct key carrying a STRING field, overwritten through a FRESH
 	// value-equal key: the map keeps its existing key and releases the one it
-	// discards through the key release op_map_set names — a shallow dec there
+	// discards through the key's release — a shallow dec there
 	// would strand the key's string. `keys()` is the retaining snapshot, read
 	// after the map is gone.
 	{"struct-key-string-field", `import "core/map";

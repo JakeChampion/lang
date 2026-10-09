@@ -1,0 +1,1 @@
+orphan impl: `impl cmp.Eq for lib.Box` must be declared in the module that defines the trait or the type

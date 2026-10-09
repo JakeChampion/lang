@@ -138,9 +138,7 @@ function main(): i32 {
 	}},
 	// A DISCARDED builder call (`mk(i);` as a bare statement) has no binding,
 	// so no slot reclaim fires and the whole fresh map leaks per call. The
-	// "MAPRET:" seeding (from the MAPF registry, the map
-	// sibling of TUPRET) now frees the result on the spot via
-	// __fern_map_free.
+	// result must be released on the spot.
 	{name: "mkcall-discard", src: func(n string) string {
 		return `import "core/map";
 function mk(k: i32): Map[i32, i32] {

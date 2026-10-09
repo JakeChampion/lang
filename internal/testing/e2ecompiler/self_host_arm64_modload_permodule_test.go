@@ -124,7 +124,7 @@ func TestSelfHostModloadPerModuleWholeCompilerArm64(t *testing.T) {
 	if err != nil {
 		t.Fatalf("per-module-built arm64 compiler OOM/crash on its own -per-module-needs (#3456): %v", err)
 	}
-	for _, root := range []string{"heap", "str_concat", "maps", "arr_push"} {
+	for _, root := range []string{"heap", "str_concat", "arr_push"} {
 		if !strings.Contains(string(selfNeeds), root) {
 			t.Errorf("self-driven -per-module-needs missing root %q", root)
 		}

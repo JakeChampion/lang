@@ -9883,3 +9883,61 @@ function main(): i32 { let b: Box = Box { m: map_new(4), tag: 2 }; return b.tag;
 		t.Errorf("key type argument = %v, want string", call.TypeArgs[0])
 	}
 }
+
+// A `handle` threading a state is refused on wasm32-wasi-http with one E075 at
+// the handler, and no serve loop is synthesised there, which reached stdlib
+// code the proxy world cannot run; a stateless handler still checks (#11856).
+func TestWasiHTTPStatefulHandlerIsE075(t *testing.T) {
+	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }`
+	check := func(src string) (*Info, error) {
+		prog, err := parser.Parse(serveStubDecls + src)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		info, err := CheckTarget(prog, "wasm32-wasi-http")
+		if main := findDecl(prog, "main"); main != nil {
+			t.Errorf("a main was synthesised for a wasm32-wasi-http handler")
+		}
+		return info, err
+	}
+	_, err := check(`function handle(n: i32, req: HttpRequest, plat: platform__Host): (i32, HttpResponse) { return (n, ` + response + `); }`)
+	if err == nil || strings.Count(err.Error(), "\n")+1 != 1 || !strings.Contains(err.Error(), WasiHTTPStatefulHandler) {
+		t.Errorf("stateful handler: got %v, want one E075", err)
+	}
+	if _, err := check(`function handle(req: HttpRequest, plat: platform__Host): HttpResponse { return ` + response + `; }`); err != nil {
+		t.Errorf("stateless handler: %v", err)
+	}
+	_, err = check(`function handle(req: HttpRequest): HttpResponse { return ` + response + `; }`)
+	if err == nil || strings.Count(err.Error(), "\n")+1 != 1 || !strings.Contains(err.Error(), "this `handle` takes 1 parameter(s)") {
+		t.Errorf("one-parameter handler: got %v, want one E075", err)
+	}
+	// The pairing rule still holds there: it is the self-host's too.
+	_, err = check(`function init(port: i32): i32 { return port; }
+function handle(req: HttpRequest, plat: platform__Host): HttpResponse { return ` + response + `; }`)
+	if err == nil || !strings.Contains(err.Error(), "`init` takes 1 parameters") {
+		t.Errorf("mispaired init on wasm32-wasi-http: got %v, want the pairing E075", err)
+	}
+}
+
+// A bare call of a payloadless variant is calling a value, as in the
+// self-host (#11922). The bare `R` and the qualified `C.R()` construct it.
+func TestPayloadlessVariantCallIsE038(t *testing.T) {
+	for _, tc := range []struct{ src, typ string }{
+		{`enum C { R, B } function main(): i32 { let c: C = R(); return 0; }`, "C"},
+		{`enum T[A] { L, N(A) } function main(): i32 { let x: T[i32] = L(); return 0; }`, "T"},
+		{`function main(): i32 { let x: Option[i32] = None(); return 0; }`, "Option"},
+	} {
+		err := checkSource(t, tc.src)
+		if err == nil || !strings.Contains(err.Error(), "calling non-function value of type "+tc.typ) {
+			t.Errorf("%s: got %v, want a non-function call of %s", tc.src, err, tc.typ)
+		}
+	}
+	for _, ok := range []string{
+		`enum C { R, B } function main(): i32 { let c: C = R; return 0; }`,
+		`enum C { R, B } function main(): i32 { let c: C = C.R(); return 0; }`,
+	} {
+		if err := checkSource(t, ok); err != nil {
+			t.Errorf("%s: rejected, want accepted: %v", ok, err)
+		}
+	}
+}

@@ -29,8 +29,7 @@ var mapBoxKeyReclaimPrograms = []struct {
 	name string
 	src  string
 }{
-	// An all-scalar struct key: one dec per key is its whole release, which is
-	// __fern_arrarr_free's element walk (__fern_map_free_ka).
+	// An all-scalar struct key: one dec per key is its whole release.
 	{"struct-key-flat", `import "core/map";
 import "core/cmp";
 
@@ -91,7 +90,7 @@ function main(): i32 {
     if (acc != 17600) { return 88; }
     return 0;
 }`},
-	// A struct KEY column over a string VALUE column (__fern_map_free_kavs):
+	// A struct KEY column over a string VALUE column:
 	// both columns are counted, and the two credits are independent.
 	{"struct-key-string-value-flat", `import "core/map";
 import "core/cmp";

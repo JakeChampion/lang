@@ -1048,7 +1048,7 @@ func checkTarget(ctx context.Context, prog *ast.Program, target string) (*Info, 
 	if targetHasEnv(target) {
 		configFromEnv(prog)
 	}
-	info, err := checkImpl(ctx, prog, targetSupervises(target))
+	info, err := checkImpl(ctx, prog, target)
 	if info != nil {
 		info.Target = target
 	}
@@ -1084,7 +1084,22 @@ func targetSupervises(target string) bool {
 	return d == nil || slices.Contains(d.Capabilities, "proc")
 }
 
-func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, error) {
+// WasiHTTPStatefulHandler is E075's text for a stateful `handle` on
+// wasm32-wasi-http, which the self-host's driver reports in the same words.
+const WasiHTTPStatefulHandler = "a wasi:http handler takes `(req, plat)` and no state: the proxy world starts a fresh instance for every request, so nothing carries from one to the next; build a stateful handler for a native target"
+
+// wasiHTTPHandlerShape is E075's text for a `handle` of n parameters on
+// wasm32-wasi-http, in the self-host driver's words.
+func wasiHTTPHandlerShape(n int) string {
+	if n == 3 {
+		return WasiHTTPStatefulHandler
+	}
+	return fmt.Sprintf("a wasi:http handler takes `(req, plat)`; this `handle` takes %d parameter(s)", n)
+}
+
+func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, error) {
+	supervised := targetSupervises(target)
+	wasiHTTP := target == "wasm32-wasi-http"
 	// Prepend the built-in Option / Result / IoError /
 	// JsonValue enums so user code (and the stdlib)
 	// can reference them without an explicit declaration.
@@ -5186,9 +5201,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 				typeLocal = true
 			}
 			if !traitLocal && !typeLocal {
-				c.errfCode(impl.P, "E021",
+				c.report(impl.SourceModule, impl.P, "E021", fmt.Sprintf(
 					"orphan impl: `impl %s for %s` must be declared in the module that defines the trait or the type",
-					demangle(impl.Trait), demangle(typeName))
+					demangle(impl.Trait), demangle(typeName)))
 				continue
 			}
 		}
@@ -5515,14 +5530,23 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		findDecl(prog, WasiHandleName) == nil && findDecl(prog, "platform__host") != nil {
 		prog.Funcs = append(prog.Funcs, synthesiseWasiHandle())
 	}
-	if h := findDecl(prog, "handle"); h != nil && h.Receiver == nil && len(h.Params) == 3 {
+	h := findDecl(prog, "handle")
+	if h != nil && h.Receiver == nil && len(h.Params) == 3 {
 		c.info.StatefulHandler = true
 	}
-	if hasHandleDecl(prog) && !hasMainDecl(prog) {
+	// The wasi-http stub binds `handle` as `(req, plat)`; any other shape is
+	// refused at the handler, and its init pairing goes unasked.
+	wasiRefused := wasiHTTP && h != nil && h.Receiver == nil && len(h.Params) != 2
+	if wasiRefused {
+		c.errfCode(h.P, "E075", "%s", wasiHTTPHandlerShape(len(h.Params)))
+	}
+	if hasHandleDecl(prog) && !hasMainDecl(prog) && !wasiRefused {
 		// A mispaired init/handle has already been reported against the
 		// declaration that is wrong; synthesising main on top of it adds
-		// a second, positionless error about a call nobody wrote.
-		if c.checkHandlerStatePairing(prog) {
+		// a second, positionless error about a call nobody wrote. The
+		// proxy world serves through its incoming-handler export, so a
+		// wasi-http handler gets no serve loop.
+		if c.checkHandlerStatePairing(prog) && !wasiHTTP {
 			prog.Funcs = append(prog.Funcs, synthesiseHandleMain(prog, supervised))
 		}
 	}
@@ -17901,6 +17925,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if id, ok := n.Callee.(*ast.Ident); ok {
 			vr, vrOk, vrMulti := c.resolveVariant(id.Name, id.EnumName)
 			nameTaken := c.isUserFuncOrLocal(id.Name, s)
+			qualified := id.EnumName != ""
 			// A bare variant shared by multiple enum clones (#3693) is
 			// disambiguated by the destination's expected enum, snapshotted
 			// into `callExpected` above (the live field was cleared there so
@@ -17929,6 +17954,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				return nil
 			}
 			if isVar {
+				// The self-host accepts `C.R()` and refuses a bare `R()`.
+				if len(vr.payloads) == 0 && !qualified {
+					c.errfCode(n.P, "E038", "calling non-function value of type %s", ast.EnumType{Name: vr.enumName})
+					return nil
+				}
 				if len(n.Args) != len(vr.payloads) {
 					c.errfCode(n.P, "E036", "variant %s expects %d argument(s), got %d",
 						id.Name, len(vr.payloads), len(n.Args))

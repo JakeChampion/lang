@@ -9,6 +9,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/syntax/parser"
 )
 
 // parseErrPosProbe is a driver over the self-host front end that prints the
@@ -318,6 +320,70 @@ func TestSelfHostCheckParseGatesLeadWithPositionX86_64(t *testing.T) {
 			}
 			if m[1] != wantLine || m[2] != wantCol {
 				t.Errorf("position %s:%s, want native's %s:%s\nstderr: %q", m[1], m[2], wantLine, wantCol, errb.String())
+			}
+		})
+	}
+}
+
+// TestSelfHostStatementTerminators: a simple statement or declaration ends
+// with `;`, as spec/grammar.ebnf has it and the Go parser enforces. The
+// self-host took the `;` as optional, so `break 5;` parsed as `break; 5;`
+// (#11851). Each row is held to the Go parser's verdict, and a `return;`, a
+// C-style `for` step and an expression refused at its `;` add no second error.
+func TestSelfHostStatementTerminators(t *testing.T) {
+	fernBin := buildLangBinForInterp(t)
+	stage := stageParseProbeTree(t)
+
+	cases := []struct {
+		name string
+		src  string
+		want string
+	}{
+		{"break-with-value", "function main(): i32 { while (true) { break 5; } return 0; }\n",
+			`error[P001]: at top level: expected ";", got "5" (1:45)`},
+		{"continue-with-value", "function main(): i32 { while (false) { continue 5; } return 0; }\n",
+			`error[P001]: at top level: expected ";", got "5" (1:49)`},
+		{"break-before-brace", "function main(): i32 { while (true) { break } return 0; }\n",
+			`error[P001]: at top level: expected ";", got "}" (1:45)`},
+		{"return-before-brace", "function main(): i32 { return 0 }\n",
+			`error[P001]: at top level: expected ";", got "}" (1:33)`},
+		{"let", "function main(): i32 { let x: i32 = 1 return x; }\n",
+			`error[P001]: at top level: expected ";", got "return" (1:39)`},
+		{"assign", "function main(): i32 { let x: i32 = 1; x = 2 return x; }\n",
+			`error[P001]: at top level: expected ";", got "return" (1:46)`},
+		{"compound-assign", "function main(): i32 { let x: i32 = 1; x += 2 return x; }\n",
+			`error[P001]: at top level: expected ";", got "return" (1:47)`},
+		{"expression-statement", "function f(): void { }\nfunction main(): i32 { f() return 0; }\n",
+			`error[P001]: at top level: expected ";", got "return" (2:28)`},
+		{"tuple-destructure", "function main(): i32 { let (a, b) = (1, 2) return a + b; }\n",
+			`error[P001]: at top level: expected ";", got "return" (1:44)`},
+		{"const", "const K: i32 = 1\nfunction main(): i32 { return K; }\n",
+			`error[P001]: at top level: expected ";", got "function" (2:1)`},
+		{"import", "import \"std/i32\"\nfunction main(): i32 { return 0; }\n",
+			`error[P001]: at top level: expected ";", got "function" (2:1)`},
+		{"tuple-type-trailing-comma", "function main(): i32 { let o: Option[(i32, i32,)] = None; return 0; }\n",
+			`error[P001]: at top level: expected type, got ")" (1:48)`},
+		{"bare-return-clean", "function f(): void { return; }\nfunction main(): i32 { f(); return 0; }\n", ""},
+		{"c-for-step-clean", "function main(): i32 { let t: i32 = 0; for (let i: i32 = 0; i < 3; i = i + 1) { t = t + i; } return t; }\n", ""},
+		{"refused-expression-one-error", "function main(): i32 { let x: i32 = 1; return x +; }\n",
+			"error[P001]: in fn 'main': parser-side unknown: punct:; (1:50)"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, goErr := parser.Parse(tc.src)
+			if (goErr != nil) != (tc.want != "") {
+				t.Fatalf("the Go parser's verdict (%v) disagrees with the row", goErr)
+			}
+			probe := filepath.Join(stage, "main.fern")
+			if err := os.WriteFile(probe, []byte(fmt.Sprintf(parseErrPosProbe, fernStringLit(tc.src))), 0o644); err != nil {
+				t.Fatalf("write probe: %v", err)
+			}
+			out, err := exec.Command(fernBin, "-interp", probe).Output()
+			if err != nil {
+				t.Fatalf("probe failed: %v\nstdout: %s", err, out)
+			}
+			if got := strings.TrimSpace(string(out)); got != tc.want {
+				t.Errorf("got  %q\nwant %q", got, tc.want)
 			}
 		})
 	}
