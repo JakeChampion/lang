@@ -77,10 +77,7 @@ pub struct FnSig { name: string, n_params: i32 }
 // linear scan per call op makes a pass quadratic on the one program it most
 // needs to check.
 //
-// It is a head/next chain over a name hash — checker.sig_table's idiom. The
-// builtin `Map` this replaced does not avoid the scan the paragraph above rules
-// out: that map is an association LIST (`__fern_map_find` in asmcore walks the
-// key column), so `has` and `get_or` WERE the linear scan, one layer down.
+// It is a head/next chain over a name hash — checker.sig_table's idiom.
 //
 // params[i] is the declared parameter count, or -1 where the caller only asked
 // for membership — which is also what a miss reads as, so index_params answers

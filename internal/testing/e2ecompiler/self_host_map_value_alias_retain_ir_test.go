@@ -5,29 +5,15 @@ import "testing"
 // mapValueAliasRetainIRCases pin the retain a map insert owes an ALIASED array
 // VALUE on the register backends (#6880).
 //
-// The register __fern_map_set stores the value pointer with no rc-inc of its
-// own, while the exit dec-sweep releases EVERY array slot unconditionally. So
-// `let a = [...]; m.insert(k, a);` left the map's value column naming a buffer
-// the sweep freed, and the next allocation of that size class handed the block
-// out again underneath the map — a read of the value then sees the recycled
-// block's contents, and nothing reports an over-release because the map's alias
-// was never counted at all. The lowering now records the verdict (op_map_set's
-// vretain bit) and both register backends retain, mirroring the native oracle's
-// emitMapSetValueRetain: alias shapes only, arrays only — a fresh value
-// transfers its sole rc=1 to the map and retaining one would leak.
+// `let a = [...]; m.insert(k, a);` must leave the map holding a unit of `a`:
+// the exit dec-sweep releases every array slot, so a value column naming a
+// buffer the sweep freed reads a recycled block's contents after the next
+// allocation of that size class, and nothing reports an over-release.
 //
 // Each program forces the recycle itself (a same-size-class array literal
 // allocated between the insert and the read) rather than relying on a size
-// class that happens to collide: as found, the `Map[string, string[]]` column
-// in url_codec only misread once __fern_map_get's Option box moved to a 32-byte
-// class, and reads clean at 40. Exit 0 is correct; each nonzero code names the
-// check that failed.
-//
-// The x86-64 and arm64 legs are the ones that fail without the retain (three of
-// the four cases each, the fourth being the fresh-value control). The wasm leg
-// is a PARITY gate, not a failing-before one: $__fern_map_set already retained
-// every `vis` value it was not told to consume, which is the divergence this
-// closes.
+// class that happens to collide. Exit 0 is correct; each nonzero code names
+// the check that failed.
 var mapValueAliasRetainIRCases = []struct {
 	name string
 	src  string
@@ -152,9 +138,7 @@ func TestSelfHostMapValueAliasRetainIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostMapValueAliasRetainIRWasm is the parity leg: $__fern_map_set has
-// always retained a `vis` value, so these pass either side of the fix and pin
-// that the register backends now agree with it.
+// TestSelfHostMapValueAliasRetainIRWasm is the wasm leg.
 func TestSelfHostMapValueAliasRetainIRWasm(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range mapValueAliasRetainIRCases {

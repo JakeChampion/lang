@@ -623,65 +623,31 @@ Unsupported constructs refuse the whole function with a reason.
   the checker's `builtin_sigs`, every argument a value and the result a
   scalar.
 
-- `Map[K, V]` at a string or narrow integer `K` and a `V` the runtime's free
-  family releases: a NARROW SCALAR column freed whole, a string column or a
-  column of string arrays walked entry by entry, or a column of BOXES — a
-  record, a union, an array of anything but strings, a tuple — walked with
-  the value type's own release. A string key column is walked through
-  the string dec (`__fern_map_free_ks` and its `_kvs` / `_ksvsa` / `_ksvf`
-  members); an integer one holds no unit and is freed whole (`__fern_map_free`,
-  `_vs`, `_vsa`, `_vf`). The `_vf` members take the release as a second
-  argument: `__sem_release_<T>`, a body the physical lowering emits beside the
-  drop helpers, which does for one value what the frame does for a unit of
-  its type. A value column of function values is a column of
-  environment boxes, and a value column of maps a column of map boxes, each
-  released through the `_vf` members like any other box. A key column of
+- `Map[K, V]` at every shape `ssasem.is_supported_map` admits runs on
+  core/map's hash table (#9608). Each map op is a direct call of the core/map
+  `_impl` function native's alias table names for it (`ssarc.routed_map_site`),
+  and every key and value crosses as core/map's `usize` slot. A key column of
   generic records stays refused ("unsupported map shape").
 
-  A map's unit is counted like any box's. The box carries the array header
-  on the register backends (`__fern_map_new` takes it from `__fern_arr_box`)
-  and the string box header on wasm, so a retain is the ordinary
-  `__fern_rc_inc`, and the free family releases one unit: a decrement while
-  the box is shared, and the columns and the block for the last. A consuming
-  mutation — `insert`, `without` — runs on a box the frame is the only holder
-  of: `ssarc.unshared_map` reads the count the receiver's unit is part of,
-  and copies the entries into a fresh box first when it is shared, so a
-  `snapshot = m` still reads what it held. The receiver's retain is never
-  held back the way an array append's is (`deferred_retain`): a map the frame
-  still reads counts as shared, and `let n = m.insert(k, v)` leaves `m` as it
-  was, which is what E055 promises. Native, the interpreter and the AST
-  lowering borrow the receiver and write a sole-held box in place instead
-  (#9834); the production row `a-map-the-frame-still-reads-is-not-written`
-  pins both answers.
+  A map's unit is counted like any box's. A consuming mutation — `insert`,
+  `without` — goes through core/map's copy-on-write (`__map_cow_inplace`),
+  which reads the handle's count, so a `snapshot = m` still reads what it held
+  and `let n = m.insert(k, v)` leaves `m` as it was, which is what E055
+  promises. Native, the interpreter and the AST lowering borrow the receiver
+  and write a sole-held box in place instead (#9834); the production row
+  `a-map-the-frame-still-reads-is-not-written` pins both answers. The last
+  unit is released by the `__map_drop_*_impl` member `ssarc.release_name`
+  picks from the columns: a keyed key column and a column of boxes hand
+  core/map their elements' releases as closures, and string and cell columns
+  are walked by core/map itself. A lookup borrows both operands; over a
+  counted column a read retains what it answers. A `str` column is a string
+  column: each entry is a unit of a counted view descriptor, a counted string
+  or a literal, so a read's retain counts it (#10701, #10867). `keys` and
+  `values` answer fresh arrays, and `for (k, v) in m` walks core/map's cursor.
 
-  The vocabulary is `map_new(cap)`, `insert` (spelled `set` too, as the AST
-  lowering admits both), `has`, `get_or`, `get` and `len`. An insert takes the receiver's
-  unit and the KEY's, which the key column owns until the map is released;
-  `kconsume` tells the runtime to hold that unit rather than retain it and to
-  release the key an overwrite supersedes, and `owncols` makes the map the sole
-  owner of both column buffers so a grow frees the one it replaced. An insert
-  into a counted column takes the value's unit too, and the runtime releases
-  the value an overwrite supersedes through the column's kind: the string
-  dec, the string array's deep dec, or the release the op names (value kind
-  3, the `_vf` members' function, reached through a pointer on the register
-  backends and a table slot on wasm). A lookup borrows both operands and
-  answers a scalar the map goes on owning; over a counted column `get_or`
-  retains what it answers. A `get` answers an `Option` of the value in a box
-  of the frame's own, released as any Option is; the runtime copies the
-  column's entry into it without a retain, so over a counted column the
-  lowering retains the payload on a hit, and the box owns one unit of it as
-  any Option this frame drops does. A `str` column is a string column on
-  core/map: each entry is a unit of a counted view descriptor, a counted
-  string or a literal, so a read's retain counts it (#10701, #10867). `without`
-  takes the receiver's unit and answers the map and a flag, releasing the
-  removed entry's key and value through the columns' releases on the way
-  (`__fern_map_delete_rel` on the register backends; wasm's delete reads the
-  box's own column kinds); `cleared` is a
-  fresh empty map; `keys` and `values` answer fresh arrays snapshotted from the
-  columns, which is also how `for (k, v) in m` walks a map: the key column is
-  what the loop indexes and the value column's element beside each key is the
-  second binding (`docs/rc-log/2026-09-20-a-map-is-walked-through-its-two-columns.md`).
-  The `op_map_iter` cluster itself is not admitted here.
+  A field or a payload can name a map type in a program that never imports
+  core/map (#10851). No map value can exist there, so its release is the
+  null-guarded `__fern_rc_dec` (`ssarc.unlinked_map`).
 
   A map names no element in its construction, so the DESTINATION is the only
   place its shape is written: `map_new(2)` at an annotated binding or a
@@ -2257,14 +2223,14 @@ What the typed path produced whole, 2026-09-24:
 ### The runtime helpers
 
 The Fern-source runtime functions (#2649, `asmcore.rt_src_*`: file open,
-writes, sockets, process control, the map finder and more) are appended to a
+writes, sockets, process control and more) are appended to a
 program on demand. `asm_ir` and `asm_arm64_ir` compile them through
 `emit_ir_runtime_fern_fn`, which takes their bodies from the typed lowering
 (below). They are written on the raw floor: `__raw_alloc`,
 `__raw_store8` / `__raw_load8`, `__raw_store_ptr` / `__raw_load_ptr`,
 `__raw_string`, `__raw_data`, `__raw_array`, `__raw_arr_box`, `__raw_addr`,
-`__raw_scratch`, `__raw_environ`, `__raw_splice_pipe`, `__syscall3`–`6`,
-`__fern_map_find` and `__fern_str_eq`.
+`__raw_scratch`, `__raw_environ`, `__raw_splice_pipe`, `__syscall3`–`6`
+and `__fern_str_eq`.
 
 The raw floor is typed and lowered on the typed path: one table,
 `checker.raw_floor_sigs`, gives the checker its signatures and `semsource` its

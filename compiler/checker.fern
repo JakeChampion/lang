@@ -1156,8 +1156,6 @@ pub function raw_floor_sigs(): RawFloorSig[] {
     RawFloorSig { name: "__fern_str_free", params: [p], result: t_void() },
     RawFloorSig { name: "__fern_str_arr_free", params: [p], result: t_void() },
     RawFloorSig { name: "__fern_rc_dec", params: [p], result: t_void() },
-    RawFloorSig { name: "__fern_map_find", params: [p, p, n, p], result: n },
-    RawFloorSig { name: "__fern_map_delete", params: [p, p, n, p], result: p },
     // The slice-range abort the __fern_arr_slice bodies call (#11405): the
     // emitters' reporter, so it never returns.
     RawFloorSig { name: "__fern_slice_abort", params: [], result: t_void() },

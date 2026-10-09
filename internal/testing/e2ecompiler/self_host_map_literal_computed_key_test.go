@@ -14,9 +14,9 @@ import (
 // it by matching the FIRST key against `ExprNumber` and nothing else, so every
 // non-literal key fell through to the STRING constructor (#6207).
 //
-// Two or more computed keys SIGSEGV'd at construction: `__fern_map_set`
-// compared the integer keys through `__fern_str_eq`, dereferencing them as
-// pointers. Nothing had to read the map — building it was enough.
+// Two or more computed keys SIGSEGV'd at construction: the integer keys were
+// compared as strings, dereferenced as pointers. Nothing had to read the map —
+// building it was enough.
 //
 // Three fixes stack here. The syntactic one walks each key down to a decisive
 // leaf (`(1 + 1)`, a cast's target) and takes the first key that answers.
@@ -282,10 +282,7 @@ func TestSelfHostMapLiteralComputedKeyIR_X86_64(t *testing.T) {
 }
 
 // TestSelfHostMapLiteralComputedKeyWasmIR is the wasm leg of the same corpus,
-// through asm_load_run's wasm32-wasi leg with the stdlib root. Not a duplicate
-// of the x86-64 one: the wasm map runtime is a different representation, so a
-// constructor that disagrees with its inserts on key kind can be invisible on
-// x86-64 and fatal here.
+// through asm_load_run's wasm32-wasi leg with the stdlib root.
 func TestSelfHostMapLiteralComputedKeyWasmIR(t *testing.T) {
 	if _, err := exec.LookPath("wasmtime"); err != nil {
 		t.Skip("wasmtime not on PATH; skipping self-host map-literal key-kind wasm e2e")

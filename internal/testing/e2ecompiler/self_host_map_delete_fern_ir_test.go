@@ -4,11 +4,7 @@ import (
 	"testing"
 )
 
-// `__fern_map_delete` is a Fern runtime source now (#2649), replacing the two
-// hand-written asm bodies. It is the last of the map ops to move, and the one
-// that needed the raw floor to grow a way to compare strings
-// (`__fern_str_eq` as surface syntax) and a way to call a bare code address
-// (an `i32` parameter, NOT an `fn` one).
+// `m.without(k)` removes a key and reports whether it was there.
 //
 // Each case deletes the middle key of three and then reads all three back, so
 // a botched shift shows up as a wrong digit rather than a crash:

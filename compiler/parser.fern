@@ -2509,11 +2509,8 @@ function map_key_kind_of_expr(e: ast.Expr): i32 {
 //
 // This used to match the FIRST key against `ExprNumber` and nothing else, so
 // every non-literal key — including `(1 + 1)` — fell through to map_new, the
-// STRING constructor. An i32-keyed map then built itself as string-keyed and
-// __fern_map_set compared its integer keys through __fern_str_eq, dereferencing
-// them as pointers: a SIGSEGV at construction, with no read of the map
-// anywhere (#6207). One computed key merely mistyped the map silently; two
-// reached the compare.
+// STRING constructor, and an i32-keyed map built itself as string-keyed
+// (#6207).
 //
 // The key walk below is the guess of last resort. A `let m: Map[K, V] = …`
 // declaration answers the same question exactly and arrives as Par.map_kind,

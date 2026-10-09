@@ -6,8 +6,7 @@ import "testing"
 // the map `m` has a lasting LOCAL alias (#3633 — the
 // map sibling of the array `.with` fix #3599).
 //
-// The builtin op_map_set mutates the map's parallel keys[]/values[] in place,
-// which is unsound once `m` is aliased (`let n = m`): the in-place write mutates
+// An insert that mutates the map's storage in place is unsound once `m` is aliased (`let n = m`): the in-place write mutates
 // the buffer `n` still references, so `n` observes the change. An aliased
 // self-reassign therefore inserts into a sole-owned clone and leaves `n`
 // unchanged, as the interpreter's copy-on-write does. The unaliased "no-alias"

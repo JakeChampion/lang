@@ -398,8 +398,9 @@ only". **79 lines deleted against 25 added**, no public signature changed, no
 call site touched, and the fixed 1024-bucket cap gone with it.
 
 **#8541 reverted this one**, and the reason is a fact about the feature rather
-than about the module: the builtin `Map` is an association LIST — `asmcore`'s
-`__fern_map_find` walks the key column comparing keys one at a time — so the
+than about the module: the self-host's builtin `Map` was then an association
+LIST, walking the key column one comparison at a time (since #9608 every `Map`
+runs on core/map's hash table) — so the
 probes were still the linear scan the index exists to remove, and the pass they
 feed stayed quadratic through the fix meant to cure it. 19,932 lookups drove
 14.3M key comparisons over a 961-entry index on the stage-2 compiler; a

@@ -13,9 +13,7 @@ import "testing"
 //     MAPKS:), so a box column kept the shallow buffer-only free and every
 //     element leaked. Measured against the native oracle (flat on all four
 //     shapes): 86 B/round for `Map[i32, i32[]]` and 94 B/round for `Map[i32, Q]`
-//     on x86-64, and 55 / 63 B/round on wasm. The wasm half was a second cause —
-//     op_map_set emitted vis=0 for a scalar-element array value, so
-//     $__fern_map_release never released that column at all.
+//     on x86-64, and 55 / 63 B/round on wasm.
 //
 //  2. USE-AFTER-FREE, pre-existing and independent of the leak. `let v: i32[] =
 //     m.get_or(k, d)` binds the column's RAW pointer — the register map read
@@ -211,10 +209,7 @@ func TestSelfHostMapBoxColumnReclaimIRArm64(t *testing.T) {
 	}
 }
 
-// TestSelfHostMapBoxColumnReclaimIRWasm is the wasm leg. It fails without the
-// fix for its own reason: op_map_set emitted vis=0 for a scalar-element array
-// value, so $__fern_map_release never released that column, and vconsume was
-// string-only, so a fresh box value was retained with nothing to balance it.
+// TestSelfHostMapBoxColumnReclaimIRWasm is the wasm leg.
 func TestSelfHostMapBoxColumnReclaimIRWasm(t *testing.T) {
 	cli := newStrictCLI(t)
 	for _, tc := range mapBoxColumnCases {

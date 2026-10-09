@@ -2541,9 +2541,9 @@ function array_elem_is_env_boxed(e: ast.Expr, fd: parser.FuncDecl, structs: irta
 // should be wrapped into an env box. Scoped to the map-value slice (#3445): an
 // inline lambda whose method param is NOT a declared user fn-param. The negation
 // is the key discriminator —
-//   * a Map value slot `Map[K, () => V]` lowers `.set`/`.insert` to the builtin
-//     op_map_set, and the method's value parameter is the GENERIC `V` (coarse
-//     type, not literally "fn"), so lift_callee_param_is_fn is FALSE → wrap the
+//   * a Map value slot `Map[K, () => V]`'s `.insert` takes the value at the
+//     GENERIC `V` (coarse type, not literally "fn"), so
+//     lift_callee_param_is_fn is FALSE → wrap the
 //     lambda into a box to STORE; the retrieval-side match-binding (#3466)
 //     dispatches it env-first.
 //   * a USER method with a DECLARED fn-param (`r.bench(name, iter, fn: () => void)`)
@@ -3078,8 +3078,8 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, vars: 
       // closure value is stored as a box the retrieval-side match-binding
       // (#3466) dispatches env-first (slice #3445 map-values). The wrap
       // decision (lift_method_arg_is_fn) fires only for a lambda whose method
-      // param is NOT a declared user fn-param — a map value lowers to the
-      // builtin op_map_set with a generic `V` param, whereas a user method's
+      // param is NOT a declared user fn-param — a map value goes in at the
+      // generic `V` param, whereas a user method's
       // declared fn-param keeps its existing bare-dispatch / AST-bail path
       // (env-box-unifying those would break the byte-identical fixpoint). A
       // numeric field (`t.0(args)`, a fn-valued tuple element call) is left
