@@ -1,0 +1,76 @@
+import "../ssaprepare";
+import "../ssa";
+import "../util";
+
+function effect(name: string, op: ssa.SInst): boolean {
+  if (name == "parent") {
+    return op.kind_tag == 41;
+  }
+  if (op.kind_tag != 11) {
+    return false;
+  }
+  if (name == "replace") {
+    return op.str == "__fern_rc_inc";
+  }
+  return (name == "__sem_drop_Parent" || name == "__sem_release_Parent") && op.str == "__fern_rc_dec";
+}
+
+function wrapper_return(name: string, term: ssa.STerm): boolean {
+  return name == "handoff" && term.kind_tag == 1;
+}
+
+pub function damaged(row: ssaprepare.Emitted): ssaprepare.Emitted {
+  let f = row.body.formed.f;
+  let blocks: ssa.SBlock[] = [];
+  let changed = false;
+  for b in f.blocks {
+    let insts: ssa.SInst[] = [];
+    for op in b.insts {
+      if (!changed && effect(f.name, op)) {
+        insts = insts.append(ssa.SInst { kind_tag: 1, result: op.result, args: [], imm: 0, str: "" });
+        changed = true;
+      } else {
+        insts = insts.append(op);
+      }
+    }
+    let term = b.term;
+    if (wrapper_return(f.name, term)) {
+      term = ssa.STerm { ...term, value: 1 };
+      changed = true;
+    }
+    if (f.name == "require" && !changed) {
+      insts = insts.append(ssa.SInst { kind_tag: 11, result: f.nvals, args: [], imm: 0, str: "unknown_effect" });
+      changed = true;
+    }
+    blocks = blocks.append(ssa.SBlock { ...b, insts: insts, term: term });
+  }
+  if (!changed) {
+    print("missing retained mutation: " + f.name);
+    exit(67);
+  }
+  let bad = ssa.SFunc { ...f, blocks: blocks, nvals: f.nvals + (if (f.name == "require") { 1 } else { 0 }) };
+  return ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, formed: ssa.Formed { ...row.body.formed, f: bad } } };
+}
+
+function name_of(name: string, names: string[]): string {
+  return if (util.has_str(names, name)) { "bound_" + name } else { name };
+}
+
+pub function renamed(rows: ssaprepare.Emitted[], names: string[]): ssaprepare.Emitted[] {
+  let out: ssaprepare.Emitted[] = [];
+  for row in rows {
+    let f = row.body.formed.f;
+    let blocks: ssa.SBlock[] = [];
+    for b in f.blocks {
+      let insts: ssa.SInst[] = [];
+      for op in b.insts {
+        insts = insts.append(if (op.kind_tag == 11) { ssa.SInst { ...op, str: name_of(op.str, names) } } else { op });
+      }
+      blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
+    }
+    let renamed = ssa.SFunc { ...f, name: name_of(f.name, names), blocks: blocks };
+    // Synthetic binding control: selected symbols retain their original names.
+    out = out.append(ssaprepare.Emitted { ...row, label_name: name_of(row.label_name, names), body: ssaprepare.Body { ...row.body, formed: ssa.Formed { ...row.body.formed, f: renamed } } });
+  }
+  return out;
+}

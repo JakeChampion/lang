@@ -12,6 +12,7 @@ import "../semlower";
 import "../ssaprepare";
 import "../util";
 import "./ssaretainedproof" as proof;
+import "./ssaretainedwrapper" as wrapper;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -182,6 +183,8 @@ function main(): i32 {
   require(needs.len() == 0, 33);
   let after = emit(g, g.cache, g.physical, false, true, false, 0, 1);
   require(after.bodies.len() == 1 && after.bodies[0].label_name == "first", 34);
+  wrapper.run(false);
+  wrapper.run(true);
   proof.run(false);
   proof.run(true);
   print("retained native body controls passed");
