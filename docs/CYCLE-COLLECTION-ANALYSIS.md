@@ -34,9 +34,11 @@ Status: design analysis. No compiler code changed by this doc.
 > - **E048's subscript counterpart** — the same ban for element
 >   assignment, completing the immutable-data enforcement.
 > - **E057** — `Cell[T]`, the sanctioned mutable box, restricts `T`
->   to scalars and `string` *explicitly* so "a cell can never
->   reconstruct a reference cycle" (`internal/check/checker/checker.go:635`).
->   `Cell[Node]` and `Cell[fn]` are both rejected.
+>   *explicitly* so "a cell can never reconstruct a reference cycle":
+>   scalars and `string` until #2679 widened it to every type built
+>   from scalars, strings, arrays, tuples, maps, structs and enums
+>   (`cellPayloadRisk`). `Cell[fn]`, a struct holding a function, a
+>   nested cell and a type parameter are all rejected.
 >
 > Re-verified 2026-08-06 by running the proof program below: it now
 > fails `-check` with two E048s. The remaining routes were probed and
@@ -47,10 +49,16 @@ Status: design analysis. No compiler code changed by this doc.
 >
 > **Consequence for the RC design: Fern needs no cycle collector.**
 > Not "not yet" — the constructs that could close a cycle are
-> rejected at check time. If a future feature reintroduces
-> interior mutability over composite types (a `Cell[T]` widened past
-> scalars, a `ref`/`weak` type, or bringing back field assignment),
-> that feature reopens this question and should cite this document.
+> rejected at check time. The composite `Cell[T]` (#2679) did not
+> reopen this: a cycle needs a back-edge into a cell, and the only
+> values that can hold one are a closure (through its captures), a
+> cell, or something that hides either (`dyn`, a type parameter).
+> Every other value is built bottom-up from values that already
+> existed, so it is a tree that cannot contain the cell it is stored
+> in; E057 refuses exactly the element types that could. A future
+> feature that adds another back-edge (a `ref`/`weak` type, field
+> assignment, a cell over a closure) reopens this question and should
+> cite this document.
 
 ## TL;DR (historical — see the update above)
 

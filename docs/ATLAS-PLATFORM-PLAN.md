@@ -216,8 +216,8 @@ collect cycles, so a long-running server would leak request-local cycles the
 arena reset used to reclaim. **That regression did not materialise, and this
 paragraph asserted it as live for one revision of this document.** Cycles are
 not constructible in Fern — E048 (fields immutable after construction), its
-subscript counterpart, and E057 (`Cell[T]` restricted to scalars and `string`
-so a cell cannot close a cycle) between them reject every route
+subscript counterpart, and E057 (a `Cell[T]` element can hold no function,
+cell or type parameter, so a cell cannot close a cycle) between them reject every route
 `CYCLE-COLLECTION-ANALYSIS.md`'s proof depends on. See §4's closed-questions
 list for the verification.
 
@@ -1624,16 +1624,18 @@ into an ordinary build item:
   cycle-free by construction, enforced by the checker — is what shipped. **E048**
   makes struct fields immutable after construction (killing `a.next = [b]`, the
   only mechanism that doc's proof relies on), its subscript counterpart does the
-  same for elements, and **E057** restricts `Cell[T]` to scalars and `string`
-  *explicitly* so a cell cannot reconstruct a cycle
-  (`internal/check/checker/checker.go:635`). Verified 2026-08-06: the proof program
-  now fails `-check`; `Cell[Node]` and `Cell[fn]` are rejected; a struct rebuild
-  captures a snapshot rather than a back-edge.
+  same for elements, and **E057** restricts a `Cell[T]` element to types built
+  from scalars, strings, arrays, tuples, maps, structs and enums, so a cell
+  cannot reconstruct a cycle (`cellPayloadRisk`). Verified 2026-08-06: the
+  proof program now fails `-check`; `Cell[fn]` is rejected; a struct rebuild
+  captures a snapshot rather than a back-edge. `Cell[Node]` for a plain
+  recursive struct has been admitted since #2679: with no function or cell in
+  it, a `Node` value is a tree and cannot reach the cell holding it.
 
   The one thing that keeps this live: a future feature reintroducing interior
-  mutability over composite types — `Cell[T]` widened past scalars, a `ref` or
-  `weak` type, or field assignment coming back — reopens it. Such a feature
-  should cite `CYCLE-COLLECTION-ANALYSIS.md` and this entry.
+  mutability past that rule — a cell over a function or a type parameter, a
+  `ref` or `weak` type, or field assignment coming back — reopens it. Such a
+  feature should cite `CYCLE-COLLECTION-ANALYSIS.md` and this entry.
 
 Still open, and still decisions rather than implementations:
 

@@ -699,21 +699,6 @@ var strictIRBailReasons = []struct {
 	fn     string
 	reason string
 }{
-	// A closure capturing a bare view is refused where it is built: returned,
-	// it would outlive the string it views.
-	{"closure-captures-a-view", `function mk(n: i32): string {
-    let s: string = "ab";
-    let i: i32 = 0;
-    while (i < n) { s = s + "c"; i = i + 1; }
-    return s;
-}
-function viewer(n: i32): () => i32 {
-    let s: string = mk(n);
-    let v: str = slice_unchecked(s, 1, 4);
-    return () => v.len() * 10 + (v[0] as i32) - 97;
-}
-function main(): i32 { let f: () => i32 = viewer(3); return f(); }
-`, "viewer", "closure capture type"},
 	// An instance bound to a view would hand out a view it was lent.
 	{"template-bound-to-a-view", `pub function first[T](f: () => T): T {
     let xs: T[] = [f()];

@@ -711,6 +711,17 @@ func New() *Interp {
 	i.Builtins["__method_Reader_read_chunk"] = &Builtin{Fn: builtinReaderReadChunk}
 	i.Builtins["__method_Reader_read_chunk_bytes"] = &Builtin{Fn: builtinReaderReadChunkBytes}
 	i.Builtins["__method_Reader_close"] = &Builtin{Fn: builtinReaderClose}
+	i.Builtins["open_dir"] = &Builtin{Fn: builtinOpenDir}
+	i.Builtins["__method_Dir_open_dir"] = &Builtin{Fn: builtinDirOpenDir}
+	i.Builtins["__method_Dir_entries"] = &Builtin{Fn: builtinDirEntries}
+	i.Builtins["__method_Dir_stat"] = &Builtin{Fn: builtinDirStat(true)}
+	i.Builtins["__method_Dir_lstat"] = &Builtin{Fn: builtinDirStat(false)}
+	i.Builtins["__method_Dir_access"] = &Builtin{Fn: builtinDirAccess}
+	i.Builtins["__method_Dir_remove_file"] = &Builtin{Fn: builtinDirRemove(false)}
+	i.Builtins["__method_Dir_remove_dir"] = &Builtin{Fn: builtinDirRemove(true)}
+	i.Builtins["__method_Dir_chmod"] = &Builtin{Fn: builtinDirChmod}
+	i.Builtins["__method_Dir_chown"] = &Builtin{Fn: builtinDirChown}
+	i.Builtins["__method_Dir_close"] = &Builtin{Fn: builtinReaderClose}
 	i.Builtins["__method_Reader_stat"] = &Builtin{Fn: builtinFdStat}
 	i.Builtins["__method_Writer_stat"] = &Builtin{Fn: builtinFdStat}
 	i.Builtins["__method_Reader_seek"] = &Builtin{Fn: builtinHandleSeek}
@@ -4023,14 +4034,27 @@ func builtinHandleSeek(i *Interp, args []Value) (Value, error) {
 	if !ok {
 		return nil, fmt.Errorf("seek: whence must be a number")
 	}
+	// Linux checks the whence before the descriptor's kind; XNU does not.
+	if whence < 0 || whence > 4 {
+		return resultErr(ioErrorOther("", syscall.EINVAL)), nil
+	}
 	if f == nil {
 		return resultErr(ioErrorOther("", syscall.ESPIPE)), nil
 	}
-	pos, serr := f.Seek(int64(off), int(whence))
+	pos, serr := f.Seek(int64(off), hostWhence(int(whence)))
 	if serr != nil {
 		return resultErr(classifyIoError("", serr)), nil
 	}
 	return resultOk(Number(pos)), nil
+}
+
+// hostWhence maps a Fern whence onto the host's: 3 and 4 are SEEK_DATA and
+// SEEK_HOLE on every target, and Darwin numbers the pair the other way round.
+func hostWhence(w int) int {
+	if runtime.GOOS == "darwin" && (w == 3 || w == 4) {
+		return 7 - w
+	}
+	return w
 }
 
 // builtinReaderSpliceTo answers `r.splice_to(w, max)` and

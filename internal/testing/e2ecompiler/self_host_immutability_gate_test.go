@@ -12,8 +12,8 @@ import (
 // (asm_load_run) ENFORCES the immutable-data cycle rules: a program that
 // violates E048 (field assign) / E049 (reference-capture write-back) / E055
 // (discarded pure result) / E056 (subscript assign) / E057 (Cell over a
-// composite) is rejected with a formatted diagnostic on stderr and a non-zero
-// exit, instead of silently compiling — the full cycle-rule set #2678 requires
+// value that can reach a cell) is rejected with a formatted diagnostic on
+// stderr and a non-zero exit, instead of silently compiling — the full cycle-rule set #2678 requires
 // the self-host drivers to gate. The valid (functional-update / scalar-Cell)
 // forms compile cleanly. This is the self-host enforcement that the Go
 // reference compiler has via its checker (docs/IMMUTABILITY-MIGRATION-PLAN.md
@@ -58,11 +58,11 @@ func TestSelfHostImmutabilityGateX86_64(t *testing.T) {
 			wantDiag: "error[E055]",
 		},
 		{
-			// E057: a Cell[T] element must be cycle-free — a composite element
-			// (here a struct) could reconstruct a reference cycle, so the
-			// build gate rejects it before codegen.
-			name:     "cell-composite-E057",
-			src:      "struct P { x: i32 }\nfunction main(): i32 { let c = cell_new(P { x: 1 }); return 0; }\n",
+			// E057: a Cell[T] element must be cycle-free — a struct holding a
+			// function value could capture the cell, so the build gate
+			// rejects it before codegen.
+			name:     "cell-fn-field-E057",
+			src:      "struct P { f: () => i32 }\nfunction main(): i32 { let c = cell_new(P { f: () => 1 }); return 0; }\n",
 			wantDiag: "error[E057]",
 		},
 		{

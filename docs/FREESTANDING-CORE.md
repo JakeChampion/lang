@@ -60,6 +60,7 @@ costs a silent failure on the first target that lacks it.
 | `fsmode` | `write_file_exec`, `access`, `chmod`, `chmod_at`, `umask` | permission bits on a filesystem entry, and the mask a creation keeps them through |
 | `fsinfo` | `statfs`, `mounts` | a filesystem with a size and a name-length limit, and the table of mounted ones, rather than files on one |
 | `fsrename` | `rename_noreplace`, `rename_exchange` | a rename the kernel conditions in one step: refuse an existing destination, or swap the two names |
+| `fsdir` | `open_dir` | a directory held open as a handle whose methods name entries relative to it (openat, fstatat, unlinkat), so a walk is not bounded by PATH_MAX |
 | `xattr` | `getxattr`, `lgetxattr`, `setxattr`, `lsetxattr` | an entry's extended attributes |
 | `fsnode` | `mknod` | a filesystem entry that is neither a file nor a directory: a FIFO, or a character or block device node |
 | `tty` | `window_size`, `set_window_size`, `termios_get`, `termios_set`, `set_extproc` | a terminal with a size and line settings, where `isatty` only asks whether there is one |
@@ -221,6 +222,14 @@ carries none, so every `ino` there is 0. Zero is the documented "not
 supplied" answer rather than a refusal, for the same reason as `read_dir_all`
 above: the names are still the whole listing, and a caller that needs the
 number falls back to `lstat` for the entries that came back without one.
+
+**`open_dir` is `fsdir`, and the `Dir` methods are ungated** (#9074).
+Authority lives on the constructor: a Dir can only come from `open_dir` or
+from another Dir, so gating `d.lstat` as well would count one authority
+twice. Both WASI previews are descriptor-relative underneath (`path_open`
+and `path_filestat_get` take a directory fd), so this is the family that maps
+most directly onto them, but neither wasm backend lowers the handle yet; a
+refusal is the truthful answer until one does.
 
 **`truncate` is plain `fs`, and `mknod` is the one that is not.** Both
 create or change an entry, which is why the pair is worth stating

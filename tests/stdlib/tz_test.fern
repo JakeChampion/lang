@@ -1,5 +1,6 @@
 import "std/test";
 import "std/tz";
+import "std/option";
 
 // tests/stdlib/tz_test.fern — std/tz without a clock and without the
 // host's zoneinfo: POSIX rules evaluated at the instants on either side of
@@ -71,6 +72,75 @@ function test_rule_quoted_fixed(): test.TestOutcome {
     return test.fail("dst");
   }
   return test.assert_eq(z.abbrev_at(0i64), "+0545");
+}
+
+// A rule time is not an offset: it runs to 167 hours either way rather
+// than clamping at 24. Jerusalem moves on the fourth Thursday of March at
+// 26:00, which in 2026 is 02:00 on Friday the 27th, 00:00 UTC.
+function test_rule_time_past_24_hours(): test.TestOutcome {
+  let z: tz.Zone = tz.zone_from_tz("IST-2IDT,M3.4.4/26,M10.5.0");
+  if (z.offset_at(1774569600i64 - 1i64) != 7200) {
+    return test.fail("IST before 26:00 on the Thursday");
+  }
+  return test.assert_eq(z.offset_at(1774569600i64), 10800);
+}
+
+// Nuuk's footer moves at -1:00 on the last Sunday of March: in 2400,
+// past every table, that is 23:00 on Saturday the 25th, 01:00 UTC on the
+// 26th. Read through the embedded zone, so the host's tzset is not asked.
+function test_rule_time_negative(): test.TestOutcome {
+  match (tz.iana_zone("America/Nuuk")) {
+    Some(z) => {
+      if (z.offset_at(13576813200i64 - 1i64) != 0 - 7200) {
+        return test.fail("-02 before -1:00 on the Sunday");
+      }
+      return test.assert_eq(z.offset_at(13576813200i64), 0 - 3600);
+    },
+    None => {
+      return test.fail("America/Nuuk missing");
+    }
+  }
+}
+
+function test_rule_time_past_167_hours_refused(): test.TestOutcome {
+  let r: tz.Rule = tz.parse_posix("IST-2IDT,M3.4.4/168,M10.5.0");
+  // The dates fall back to the POSIX default, the second Sunday of March.
+  return test.assert_eq(r.start.week, 2);
+}
+
+// The embedded table: a zone by IANA name on every target, an alias
+// sharing its zone's record, and a name the release does not have.
+function test_iana_zone_london(): test.TestOutcome {
+  match (tz.iana_zone("Europe/London")) {
+    Some(z) => {
+      if (z.abbrev_at(1720000000i64) != "BST" || z.offset_at(1720000000i64) != 3600) {
+        return test.fail("BST in July 2024");
+      }
+      return test.assert_eq(z.abbrev_at(1700000000i64), "GMT");
+    },
+    None => {
+      return test.fail("Europe/London missing");
+    }
+  }
+}
+
+function test_iana_zone_far_future(): test.TestOutcome {
+  // 2400-07-01 00:00 UTC, centuries past the table: the POSIX rule answers.
+  match (tz.iana_zone("US/Pacific")) {
+    Some(z) => {
+      return test.assert_eq(z.abbrev_at(13585190400i64), "PDT");
+    },
+    None => {
+      return test.fail("US/Pacific missing");
+    }
+  }
+}
+
+function test_iana_zone_unknown(): test.TestOutcome {
+  if (tz.iana_zone("Mars/Olympus").is_some() || tz.iana_zone("").is_some()) {
+    return test.fail("an unknown name answered");
+  }
+  return test.assert_eq(tz.iana_zone("UTC;Europe/London").is_some(), false);
 }
 
 // The bridge to std/time: the fixed offset valid at the instant.
@@ -302,6 +372,12 @@ function main(): i32 {
   t = t.it("fall back", test_rule_fall_back);
   t = t.it("southern hemisphere rule", test_rule_southern_hemisphere);
   t = t.it("quoted designation with a non-hour offset", test_rule_quoted_fixed);
+  t = t.it("rule time past 24 hours", test_rule_time_past_24_hours);
+  t = t.it("negative rule time", test_rule_time_negative);
+  t = t.it("rule time past 167 hours refused", test_rule_time_past_167_hours_refused);
+  t = t.it("iana zone by name", test_iana_zone_london);
+  t = t.it("iana zone past its table", test_iana_zone_far_future);
+  t = t.it("iana zone unknown name", test_iana_zone_unknown);
   t = t.it("at is the offset in force then", test_at_is_the_offset_then);
   t = t.it("tzif before and after its transition", test_tzif_before_and_after_transition);
   t = t.it("tzif reads the 64-bit table", test_tzif_reads_the_64_bit_table);

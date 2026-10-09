@@ -114,10 +114,9 @@ pub struct VErr { msg: string }
 // precisely so a write-back cannot close an RC cycle — the same no-cycles model
 // Roc uses. Env is persistent (bind/update return fresh copies), so there is no
 // shared mutable state to write through; a cell supplies exactly that, and only
-// for the scalar cases the language allows. Cell's own element-type restriction
-// (E057: scalars and strings, no composites, for the same cycle reason) lines up
-// with E049's, which is why this needs two scalar-shaped variants rather than a
-// single Cell[Value]. A program's own cells are VCell below.
+// for the scalar cases the language allows. A Value can hold a closure, so
+// E057 rejects a Cell[Value] for the same cycle reason, which is why this needs
+// two scalar-shaped variants. A program's own cells are VCell below.
 pub struct VCellI { c: Cell[i32], is_char: boolean, is_bool: boolean }
 
 pub struct VCellF { c: Cell[f64] }
@@ -125,7 +124,8 @@ pub struct VCellF { c: Cell[f64] }
 // VCell is a program's own `cell_new(v)`: a first-class value the program
 // reads with `.get()` and writes with `.set(v)`, distinct from the capture
 // cells above, which `lookup` reads through. `kind` names which host cell
-// holds the value, one per element type E057 admits.
+// holds the value: one per scalar width, and the string cell for a string or,
+// encoded, for any composite E057 admits (cell_value_text).
 pub struct VCell { kind: string, ci: Cell[i32], cl: Cell[i64], cf: Cell[f64], cs: Cell[string] }
 
 // VTry is the `expr?` early-return in flight. `?` on a None / Err unwinds to
@@ -1332,6 +1332,9 @@ function cell_value(v: Value): Value {
   match (v) {
     VInt(n) => {
       c.ci.set(n.v);
+      if (n.is_char) {
+        return VCell { ...c, kind: "char" };
+      }
       return VCell { ...c, kind: "i32" };
     },
     VUint(n) => {
@@ -1363,28 +1366,29 @@ function cell_value(v: Value): Value {
       c.cs.set(sv.v);
       return VCell { ...c, kind: "string" };
     },
-    VArr(a) => {
-      let encoded: Value = cell_array_text(a);
+    _ => {
+      let encoded: Value = cell_value_text(v);
       if let VString(s) = encoded {
         c.cs.set(s.v);
-        return VCell { ...c, kind: "array" };
+        return VCell { ...c, kind: "value" };
       }
       return encoded;
-    },
-    _ => {
-      return v_err("cell_new: a cell holds a scalar, string or owned scalar array");
     }
   }
 }
 
-// cell_method answers `c.get()` and `c.set(v)` on a program's cell.
-// Keep the interpreter itself buildable by the old scalar/string-cell pin.
-// Array slots store their element name followed by tagged scalar bit patterns
-// in ASCII hex. This retains unsigned/float identity without lossy text numeric
-// conversion. Compiled application cells hold the owned array directly.
-function cell_bits_text(h: usize, tag: i32, bits: i64): void {
+// A composite payload (array, tuple, map, struct or enum value) is held as
+// text in the cell's string slot, so the interpreter stays buildable by a pin
+// whose own E057 admits only scalar and string cells, and a read is a
+// snapshot by construction. Compiled application cells hold the value itself.
+//
+// The encoding is a tag byte per value: a scalar's tag is followed by its bit
+// pattern as 16 hex digits, which keeps unsigned and float identity exact; a
+// string, and every name (an array's element type, a struct's type and field
+// names), is a 16-digit length and its bytes; an array, tuple, map or struct
+// gives its count and then its parts.
+function cell_hex_text(h: usize, bits: i64): void {
   let digits: string = "0123456789abcdef";
-  buf_push_byte(h, tag);
   let shift: i32 = 60;
   while (shift >= 0) {
     let nibble: i32 = (bits >> shift as i64 & 15i64) as i32;
@@ -1393,10 +1397,24 @@ function cell_bits_text(h: usize, tag: i32, bits: i64): void {
   }
 }
 
+function cell_bits_text(h: usize, tag: i32, bits: i64): void {
+  buf_push_byte(h, tag);
+  cell_hex_text(h, bits);
+}
+
+function cell_name_text(h: usize, s: string): void {
+  cell_hex_text(h, s.len() as i64);
+  buf_push(h, s);
+}
+
 function cell_scalar_text(h: usize, v: Value): boolean {
   match (v) {
     VInt(n) => {
-      cell_bits_text(h, 105, n.v as i64);
+      let tag: i32 = 105;
+      if (n.is_char) {
+        tag = 99;
+      }
+      cell_bits_text(h, tag, n.v as i64);
     },
     VUint(n) => {
       cell_bits_text(h, 110, uint_zext(n.v));
@@ -1421,6 +1439,10 @@ function cell_scalar_text(h: usize, v: Value): boolean {
     VFloat32(f) => {
       cell_bits_text(h, 102, f32_bits(f.v as f32) as i64);
     },
+    VString(sv) => {
+      buf_push_byte(h, 115);
+      cell_name_text(h, sv.v);
+    },
     _ => {
       return false;
     }
@@ -1428,19 +1450,53 @@ function cell_scalar_text(h: usize, v: Value): boolean {
   return true;
 }
 
-function cell_array_text(a: VArr): Value {
-  let elem: string = a.elem;
-  if (elem != "" && elem != "u8" && elem != "i32" && elem != "u32" && elem != "i64" && elem != "u64" && elem != "usize" && elem != "f32" && elem != "f64" && elem != "float" && elem != "boolean") {
-    return v_err("Cell array: expected scalar elements");
-  }
-  let h: usize = buf_new(a.elements.len() * 17 + elem.len() + 1);
-  buf_push(h, elem);
-  buf_push_byte(h, 58);
-  for v in a.elements {
-    if (!cell_scalar_text(h, v)) {
-      buf_free(h);
-      return v_err("Cell array: expected scalar elements");
+// cell_parts_text writes `vs` after their count, or answers false at the first
+// one that cannot be held.
+function cell_parts_text(h: usize, vs: Value[]): boolean {
+  cell_hex_text(h, vs.len() as i64);
+  for v in vs {
+    if (!cell_any_text(h, v)) {
+      return false;
     }
+  }
+  return true;
+}
+
+function cell_any_text(h: usize, v: Value): boolean {
+  match (v) {
+    VArr(a) => {
+      buf_push_byte(h, 97);
+      cell_name_text(h, a.elem);
+      return cell_parts_text(h, a.elements);
+    },
+    VTuple(t) => {
+      buf_push_byte(h, 116);
+      return cell_parts_text(h, t.elements);
+    },
+    VMap(m) => {
+      buf_push_byte(h, 109);
+      return cell_parts_text(h, m.keys) && cell_parts_text(h, m.values);
+    },
+    VStruct(st) => {
+      buf_push_byte(h, 83);
+      cell_name_text(h, st.type_name);
+      cell_hex_text(h, st.field_names.len() as i64);
+      for name in st.field_names {
+        cell_name_text(h, name);
+      }
+      return cell_parts_text(h, st.field_values);
+    },
+    _ => {
+      return cell_scalar_text(h, v);
+    }
+  }
+}
+
+function cell_value_text(v: Value): Value {
+  let h: usize = buf_new(64);
+  if (!cell_any_text(h, v)) {
+    buf_free(h);
+    return v_err("Cell: the value holds a function or a cell, which E057 rejects");
   }
   let encoded: string = buf_take(h);
   buf_free(h);
@@ -1450,6 +1506,9 @@ function cell_array_text(a: VArr): Value {
 function cell_scalar_value(tag: i32, bits: i64): Value {
   if (tag == 105) {
     return v_int(bits as i32);
+  }
+  if (tag == 99) {
+    return VInt { v: bits as i32, is_char: true };
   }
   if (tag == 110) {
     return VUint { v: bits as i32 };
@@ -1466,44 +1525,80 @@ function cell_scalar_value(tag: i32, bits: i64): Value {
   return v_float32(f32_from_bits(bits as i32) as f64);
 }
 
-function cell_array_value(s: string): Value {
-  let sep: i32 = 0;
-  while (s[sep] != b':') {
-    sep = sep + 1;
-  }
-  let elem: string = slice_unchecked(s, 0, sep) + "";
-  let out: Value[] = [];
-  let i: i32 = sep + 1;
-  while (i < s.len()) {
-    let bits: i64 = 0i64;
-    let j: i32 = 1;
-    while (j <= 16) {
-      let digit: i32 = s[i + j] as i32 - 48;
-      if (digit > 9) {
-        digit = digit - 39;
-      }
-      bits = bits << 4i64 | digit as i64;
-      j = j + 1;
+// The decoder reads `s` from the cursor `at`, advancing it past what it reads.
+function cell_hex_value(s: string, at: Cell[i32]): i64 {
+  let i: i32 = at.get();
+  let bits: i64 = 0i64;
+  let j: i32 = 0;
+  while (j < 16) {
+    let digit: i32 = s[i + j] as i32 - 48;
+    if (digit > 9) {
+      digit = digit - 39;
     }
-    out = out.append(cell_scalar_value(s[i] as i32, bits));
-    i = i + 17;
+    bits = bits << 4i64 | digit as i64;
+    j = j + 1;
   }
-  return v_arr_of(out, elem);
+  at.set(i + 16);
+  return bits;
+}
+
+function cell_name_value(s: string, at: Cell[i32]): string {
+  let n: i32 = cell_hex_value(s, at) as i32;
+  let i: i32 = at.get();
+  at.set(i + n);
+  return slice_unchecked(s, i, i + n) + "";
+}
+
+function cell_parts_value(s: string, at: Cell[i32]): Value[] {
+  let n: i32 = cell_hex_value(s, at) as i32;
+  let out: Value[] = [];
+  let k: i32 = 0;
+  while (k < n) {
+    out = out.append(cell_any_value(s, at));
+    k = k + 1;
+  }
+  return out;
+}
+
+function cell_any_value(s: string, at: Cell[i32]): Value {
+  let tag: i32 = s[at.get()] as i32;
+  at.set(at.get() + 1);
+  if (tag == 115) {
+    return v_string(cell_name_value(s, at));
+  }
+  if (tag == 97) {
+    let elem: string = cell_name_value(s, at);
+    return v_arr_of(cell_parts_value(s, at), elem);
+  }
+  if (tag == 116) {
+    return v_tuple(cell_parts_value(s, at));
+  }
+  if (tag == 109) {
+    let keys: Value[] = cell_parts_value(s, at);
+    return v_map(keys, cell_parts_value(s, at));
+  }
+  if (tag == 83) {
+    let type_name: string = cell_name_value(s, at);
+    let n: i32 = cell_hex_value(s, at) as i32;
+    let names: string[] = [];
+    while (names.len() < n) {
+      names = names.append(cell_name_value(s, at));
+    }
+    return v_struct(type_name, names, cell_parts_value(s, at));
+  }
+  return cell_scalar_value(tag, cell_hex_value(s, at));
 }
 
 function cell_set_value(c: VCell, v: Value): Value {
-  if (c.kind == "array") {
-    if let VArr(a) = v {
-      let encoded: Value = cell_array_text(a);
-      if let VString(s) = encoded {
-        c.cs.set(s.v);
-        return v_void();
-      }
-      return encoded;
+  if (c.kind == "value") {
+    let encoded: Value = cell_value_text(v);
+    if let VString(s) = encoded {
+      c.cs.set(s.v);
+      return v_void();
     }
-    return v_err("Cell.set: the value is not a scalar array");
+    return encoded;
   }
-  if ((c.kind == "i32" || c.kind == "u32") && is_i32_arg(v)) {
+  if ((c.kind == "i32" || c.kind == "u32" || c.kind == "char") && is_i32_arg(v)) {
     c.ci.set(vint_bits(v));
     return v_void();
   }
@@ -1552,6 +1647,9 @@ function cell_method(c: VCell, name: string, args: Value[]): Value {
     if (c.kind == "i32") {
       return v_int(c.ci.get());
     }
+    if (c.kind == "char") {
+      return VInt { v: c.ci.get(), is_char: true };
+    }
     if (c.kind == "u32") {
       return v_uint(c.ci.get());
     }
@@ -1570,8 +1668,8 @@ function cell_method(c: VCell, name: string, args: Value[]): Value {
     if (c.kind == "f32") {
       return v_float32(c.cf.get());
     }
-    if (c.kind == "array") {
-      return cell_array_value(c.cs.get());
+    if (c.kind == "value") {
+      return cell_any_value(c.cs.get(), cell_new(0));
     }
     return v_string(c.cs.get());
   }

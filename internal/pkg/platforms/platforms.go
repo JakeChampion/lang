@@ -202,6 +202,10 @@ var capabilityProfiles = map[string]capabilityProfile{
 	//     refuse an existing destination, or exchange the two names.
 	//     Both previews' renames always replace, and a check before the
 	//     call would reopen the race the condition exists to close.
+	//   - `fsdir` — a directory held open as a handle, entries named
+	//     relative to it (`open_dir` and the Dir methods), so a walk is
+	//     not bounded by PATH_MAX. Both previews are descriptor-relative
+	//     underneath, but neither wasm backend lowers the handle.
 	//   - `xattr` — an entry's extended attributes. Neither preview
 	//     has them.
 	//   - `tty` — the geometry of the terminal a descriptor is connected
@@ -251,12 +255,12 @@ var capabilityProfiles = map[string]capabilityProfile{
 	//     socket endpoints. wasi:sockets has IP sockets only.
 	//   - `reactor` — a readiness set the host keeps between waits:
 	//     epoll, kqueue, or on wasm a table of wasi:io pollables.
-	"hosted-native": {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "xattr", "syscall", "unix", "reactor"},
+	"hosted-native": {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "unix", "reactor"},
 
 	// hosted-native plus `sysctl` — the kernel's named variables by MIB
 	// (load averages, boot time). Linux removed sysctl(2) and keeps the
 	// same facts in /proc, so only Darwin grants it.
-	"hosted-darwin": {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "xattr", "syscall", "unix", "reactor", "sysctl"},
+	"hosted-darwin": {"log", "now", "env", "config", "args", "random", "stdin", "stdout", "fs", "fsmode", "tcp", "proc", "arena", "pollfd", "cabi", "userid", "host", "sysinfo", "cwd", "signal", "rlimit", "sched", "fsinfo", "fsnode", "fsowner", "tty", "fssync", "fsrename", "fsdir", "xattr", "syscall", "unix", "reactor", "sysctl"},
 
 	// CLI-world wasm wires fs (the preview1 fd helpers) and tcp
 	// (wasi:sockets — wasmbin/wasi_tcp.go) but NOT subprocess:

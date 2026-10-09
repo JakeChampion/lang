@@ -14,11 +14,21 @@ func TestByteCellElementBoundary(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, ty := range []string{"string[]", "u8[][]", "[u8]", "Cell[u8[]]", "(u8, u8)"} {
-		t.Run(ty, func(t *testing.T) {
-			err := checkSource(t, "function f(c: Cell["+ty+"]): i32 { return 0; } function main(): i32 { return 0; }")
-			if err == nil || !strings.Contains(err.Error(), "must be a scalar") {
-				t.Fatalf("expected cell element refusal, got %v", err)
+	for _, tc := range []struct {
+		ty      string
+		refused bool
+	}{
+		{"string[]", false},
+		{"u8[][]", false},
+		{"(u8, u8)", false},
+		{"[u8]", true},
+		{"Cell[u8[]]", true},
+	} {
+		t.Run(tc.ty, func(t *testing.T) {
+			err := checkSource(t, "function f(c: Cell["+tc.ty+"]): i32 { return 0; } function main(): i32 { return 0; }")
+			refused := err != nil && strings.Contains(err.Error(), cellElemRefusal)
+			if refused != tc.refused || (err != nil && !refused) {
+				t.Fatalf("Cell[%s]: refused=%v, want %v (err %v)", tc.ty, refused, tc.refused, err)
 			}
 		})
 	}

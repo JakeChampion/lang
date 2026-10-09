@@ -22,12 +22,12 @@ func TestSelfHostLexicalCaptureTypesX86_64(t *testing.T) {
 		{"map loop shadows parameter", `function f(m: Map[string, i64], k: i32): i32 { for (k, v) in m { let cb = (): string => k; } return k; }`, "k:string;"},
 		{"pattern binder", `enum E { Full(i32), Empty } function f(e: E): i32 { match(e) { Full(n) => { let cb = (): i32 => n; }, Empty => {} } return 0; }`, "n:i32;"},
 		{"guarded binder", `enum E { Full(i32), Empty } function f(): i32 { match(E.Full(7)) { Full(n) when n == 7 => { let cb = (): i32 => n; }, _ => {} } return 0; }`, "n:i32;"},
-		{"callable and view", `function f(callback: (f32, str) => i64, text: str): i32 { let cb = (): i32 => { callback(1.0f32, text); return 0; }; return 0; }`, "callback:((f32, str) => i64);text:str;"},
+		{"callable and string", `function f(callback: (f32, string) => i64, text: string): i32 { let cb = (): i32 => { callback(1.0f32, text); return 0; }; return 0; }`, "callback:((f32, string) => i64);text:string;"},
 		{"nominal callable", `struct Node { value: i32 } function f(callback: (Node) => Node): i32 { let cb = (n: Node): Node => callback(n); return 0; }`, "callback:((Node) => Node);"},
 		{"nominal array", `enum Item { Value(i32), Empty } function f(items: Item[]): i32 { function cb(): i32 { return items.len(); } return 0; }`, "items:Item[];"},
 		{"opaque shadows global", `function f[T](opaque: T): i32 { let cb = (): i32 => { opaque; return 0; }; return 0; } function opaque(): i32 { return 1; }`, "opaque:unknown;"},
 		{"recursive binding", `function f(recur: str, outside: i64): i32 { function recur(n: i32): i32 { outside; return recur(n - 1); } return 0; }`, "outside:i64;"},
-		{"arrow reads outer binding", `function f(recur: str, outside: i64): i32 { let recur = (n: i32): i32 => { outside; return recur.len(); }; return 0; }`, "outside:i64;recur:str;"},
+		{"arrow reads outer binding", `function f(recur: string, outside: i64): i32 { let recur = (n: i32): i32 => { outside; return recur.len(); }; return 0; }`, "outside:i64;recur:string;"},
 		{"global is not capture", `function f(): i32 { let cb = (): i32 => global(); return 0; } function global(): i32 { return 7; }`, ""},
 	}
 	var src strings.Builder

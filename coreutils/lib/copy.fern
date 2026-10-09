@@ -677,14 +677,8 @@ function put_stream(r: Reader, w: Writer, punch: boolean, bs: i32, zeros: u8[], 
 // WASI handle, or a filesystem without the whence — for the caller to fall
 // back on reading everything. ENXIO is SEEK_DATA's "no data from here on".
 function put_extents(r: Reader, w: Writer, punch: boolean, total: i64, bs: i32, zeros: u8[]): Option[Flow] {
-  // Reader.seek passes native whence values through. Darwin reverses the
-  // two Linux extent constants; confusing them can turn data into holes.
   let seek_data: i32 = 3;
   let seek_hole: i32 = 4;
-  if (target_os() == "darwin") {
-    seek_data = 4;
-    seek_hole = 3;
-  }
   let f: Flow = flow_new();
   let pos: i64 = 0 as i64;
   while (pos < total) {

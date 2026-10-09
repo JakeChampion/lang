@@ -11,11 +11,10 @@ import (
 
 func TestSelfHostCaptureContractRewritesX86_64(t *testing.T) {
 	cases := []struct{ name, mode, source, want string }{
-		{"elide first capture", "elide", `function f(n: i64, text: str): i32 { let cb = (): i32 => { assert(n > 0); return text.len(); }; return cb(); }`, "text:str;"},
+		{"elide first capture", "elide", `function f(n: i64, text: string): i32 { let cb = (): i32 => { assert(n > 0); return text.len(); }; return cb(); }`, "text:string;"},
 		{"elide all captures", "elide", `function f(n: i64): i32 { let cb = (): i32 => { assert(n > 0); return 7; }; return cb(); }`, ""},
 		{"elide keeps unknown", "elide", `function f[T](n: i64, opaque: T): i32 { let cb = (): i32 => { assert(n > 0); opaque; return 7; }; return cb(); }`, "opaque:unknown;"},
 		{"cell keeps width", "box", `function f(): i64 { let n: i64 = 7i64; let cb = (): i64 => n; return cb(); }`, "$cell$n:Cell[i64];"},
-		{"cell keeps view", "box", `function f(text: str): i32 { let n: str = text; let cb = (): i32 => n.len(); return cb(); }`, "$cell$n:Cell[str];"},
 		{"cell keeps callable", "box", `function f(): i64 { let n: () => i64 = source; let cb = (): i64 => n(); return cb(); } function source(): i64 { return 7i64; }`, "$cell$n:Cell[(() => i64)];"},
 		{"substitution adds typed capture", "subst", `function f(n: f32, g: () => f32): f32 { let cb = (): f32 => g(); return cb(); }`, "n:f32;"},
 		{"missing injected contract declines", "missing", `function f(n: f32, g: () => f32): f32 { let cb = (): f32 => g(); return cb(); }`, "g:(() => f32);"},

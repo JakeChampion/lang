@@ -1,25 +1,63 @@
 # Cell[T] — a sanctioned mutable cell for the immutable-data world
 
-Date: 2026-06-07 (scalar-array extension 2026-10-06).
+Date: 2026-06-07 (scalar-array extension 2026-10-06, composite extension
+2026-10-09, #2679).
 
-The current extension admits **Cell[T[]]** for scalar `T`: `u8`, `i32`, `u32`,
-`i64`, `u64`, `usize`, `f32`, `f64` and `boolean`. Scalar arrays cannot reference
-cells. Construction retains an aliased array;
-get returns an owned snapshot; set evaluates and retains its replacement
-before releasing the old array; final cell drop releases its slot and box.
-The primary compiler uses typed IR's cell and array ownership operations.
-The bootstrap interpreter encodes its private array-cell slot as tagged scalar
-bits in ASCII hex, preserving element types and exact floating-point values
-while remaining buildable by the older pin. Compiled applications store arrays
-directly. String arrays, nested arrays, borrowed views and arrays of composite
-or reference elements remain rejected. See
+## The rule today
+
+`Cell[T]` admits every **cycle-free** `T`: a type built only from scalars
+(integers, floats, `boolean`, `char`), `string`, arrays, tuples, `Map[K, V]`,
+and structs and enums whose fields and payloads are built the same way.
+Recursive types are fine. The element is refused (E057) when any part of it
+is a function type, a `Cell`, `dyn Trait`, a type parameter, a borrowed view
+(`str`, `[T]`), a resource handle or a `MapIter` cursor.
+
+Why that line: a reference cycle under RC needs a back-edge into a mutable
+slot, and a cell is the only mutable slot the language has. Every value other
+than a closure is built bottom-up from values that already existed, so it is
+a tree and cannot contain the cell it is stored in. A closure is the
+exception, because it can capture the cell it is then stored in; a nested cell
+is a second slot that can point back; `dyn` and a type parameter can each hide
+either one. A view is refused for a different reason: the cell would outlive
+the buffer it borrows. A type parameter is refused at the generic's own
+declaration rather than at each instantiation, so the rule is checked once, in
+the checker, on both front ends (`cellPayloadRisk` in
+`internal/check/checker/checker.go`, `cell_payload_risk` in
+`compiler/checker.fern`), and a generic cell abstraction would need a bound to
+come back.
+
+This is what makes a long-running server's state expressible: a
+closure-captured `Cell[Map[string, Session]]` keeps a session table across
+requests, alongside `serve.run_with`, which threads state through the accept
+loop. `conformance/cases/cell_composite_state` is the server-shaped case and
+`diag_e057` the refusals.
+
+Ownership is the same contract the scalar-array extension set: `cell_new`
+retains an aliased element; `get` returns a retained snapshot; `set` evaluates
+and retains its replacement before releasing the value it replaces; the
+cell's last reference releases the element and the box. The self-host's typed
+lowering was already generic over the element type, so composite elements
+needed no lowering change; `FERN_LEAKCHECK` balances on x86-64, arm64 (Linux
+and Darwin) and wasm. The Go oracle IR routes a composite element through the
+deep drop an array of that element takes, since a cell is a one-element array
+box. The bootstrap interpreter (`compiler/interp.fern`) holds a composite
+element as tagged text in its string cell (`cell_value_text`), because it must
+stay buildable by a pin whose own E057 predates this rule; a read decodes a
+fresh value, so snapshots hold by construction.
+
+## The scalar-array extension (2026-10-06)
+
+It admitted **Cell[T[]]** for scalar `T`: `u8`, `i32`, `u32`,
+`i64`, `u64`, `usize`, `f32`, `f64` and `boolean`. See
 [the scalar-array specification](contexts/compiler/specs/scalar-array-cells.md)
-for the contract and validation status. The earlier
+for that contract. The earlier
 [byte-array slice](contexts/compiler/specs/byte-array-cells.md) also migrated
 HTTP stream buffers and simulated transport output away from unchecked strings.
 
+## History: the scalar and string cells
+
 The original scalar/string implementation history follows. Its narrower type
-table describes that implementation, before the array extensions above.
+table describes that implementation, before the extensions above.
 
 Status: implemented for scalar **and `string`** element types. The Go
 reference compiler does `cell_new` / `get` / `set` + cycle-free E057 + full

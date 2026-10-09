@@ -25,7 +25,7 @@ run against it. So a diagnostic rule with only Go-side coverage is a
 rule that stops being checked at exactly the moment it starts mattering
 most.
 
-**65 of 85** codes are pinned by a conformance case. The table
+**66 of 85** codes are pinned by a conformance case. The table
 below is verified against reality by `TestDiagnosticsIndexIsAccurate`:
 a code with no explanation, an explanation with no row, a claimed case
 that does not exist or does not actually emit the code, and a `—` on a
@@ -101,7 +101,7 @@ language does not have. It is deleted.
 | `E054` | an `@export` function cannot be generic | — |
 | `E055` | the result of a collection operation is unused | `diag_e055` |
 | `E056` | cannot assign to an array element | `diag_e056` |
-| `E057` | `Cell[T]` element type is not allowed | — |
+| `E057` | `Cell[T]` element type is not allowed | `diag_e057` |
 | `E058` | labelled `break` / `continue` names no enclosing loop | `diag_e058` |
 | `E059` | `as?` downcast requires a `dyn Trait` value | `diag_e059` |
 | `E060` | invalid `as?` downcast target | `diag_e060` |
@@ -126,6 +126,7 @@ language does not have. It is deleted.
 | `E079` | `?` inside a `defer` / `errdefer` action | `diag_e079` |
 | `E080` | a handler reaches a host effect around its `Platform` bag | — |
 | `E081` | a named function or `const` declares no type | — |
+| `E082` | a closure captures a borrowed view | `diag_e082` |
 | `P001` | Unexpected token (parse error) | `diag_p001` |
 | `P002` | Numeric literal error | `diag_p002` |
 | `P003` | Left-hand side of assignment is not assignable | `diag_p003` |

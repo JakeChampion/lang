@@ -445,6 +445,12 @@ var rcInertBuiltins = map[string]bool{
 	// record are descriptors. Native-only (`proc`), named here the way
 	// `window_size` is.
 	"pipe": true,
+	// The directory handle is its descriptor, and every name the methods
+	// take is read and copied: nothing to move. Native-only (`fsdir`).
+	"open_dir": true, "__method_Dir_open_dir": true, "__method_Dir_entries": true,
+	"__method_Dir_stat": true, "__method_Dir_lstat": true, "__method_Dir_access": true,
+	"__method_Dir_remove_file": true, "__method_Dir_remove_dir": true,
+	"__method_Dir_chmod": true, "__method_Dir_chown": true, "__method_Dir_close": true,
 	// No arguments at all, so there is nothing to move.
 	// (mask) → the previous mask. A scalar in, a scalar out, and
 	// process state in between: nothing to move. Native-only — E066
@@ -565,8 +571,8 @@ var rcInert = map[string]bool{
 	"__fern_mismatch":     true,
 	"__fern_monotonic_ns": true, "__fern_now_ns": true,
 	"__fern_now_unix_ms": true, "__fern_open_appender": true,
-	"__fern_open_dir": true, "__fern_open_exclusive": true,
-	"__fern_open_reader": true, "__fern_open_reader_with": true,
+	"__fern_open_exclusive": true,
+	"__fern_open_reader":    true, "__fern_open_reader_with": true,
 	"__fern_open_writer_with": true,
 	"__fern_open_writer":      true, "__fern_pow_f64": true, "__fern_print": true,
 	"__fern_putchar": true, "__fern_random_bytes": true,
@@ -591,8 +597,8 @@ var rcInert = map[string]bool{
 	"__fern_reader_read_chunk":      true, "__fern_reader_read_line": true,
 	"__fern_reader_read_chunk_bytes": true,
 	"__fern_reader_read_line_fd":     true, "__fern_remove_dir_all": true,
-	"__fern_remove_file": true, "__fern_rmdir_rec": true,
-	"__fern_create_dir": true, "__fern_remove_dir": true,
+	"__fern_remove_file": true,
+	"__fern_create_dir":  true, "__fern_remove_dir": true,
 	"__fern_create_link": true, "__fern_clone_file": true, "__fern_create_symlink": true,
 	"__fern_read_link":      true,
 	"__fern_rename":         true,

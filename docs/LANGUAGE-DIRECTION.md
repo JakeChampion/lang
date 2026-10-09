@@ -1023,17 +1023,22 @@ to smallest. Status pending unless marked.
   not the same as no process-lifetime state. Two mechanisms
   carry a value across the requests of a long-running server:
 
-  - a closure-captured `Cell[T]`, limited to the cycle-free
-    element types E057 admits: scalars, `string` and owned scalar arrays;
+  - a closure-captured `Cell[T]`, whose element is any cycle-free
+    type E057 admits: built from scalars, strings, arrays, tuples,
+    maps, structs and enums, so a session table
+    (`Cell[Map[string, Session]]`) works as well as a counter. The
+    element can never hold a function, a cell or a type parameter,
+    so no cell can end up inside its own payload and reference
+    counting still needs no collector (#2679);
   - `serve.run_with(port, cfg, init, handler)`, which threads a
     caller-owned `S` through the accept loop's own frame: the
     handler returns the state the next request sees, paired with
-    its response. `S` is unrestricted, so a `Map` accumulator
-    works here where a cell cannot hold one.
+    its response. `S` is unrestricted, so state that holds a
+    closure works here where a cell refuses it.
 
-  Threading is the recommended shape — it needs no language
-  feature and no collector, since the state is an ordinary local
-  in a frame that outlives every request.
+  Either shape needs no collector. A cell suits state several
+  closures share; threading suits state one handler owns, and is
+  the one to reach for when the state must carry a function.
 - **Numeric literal suffixes — shipped.** `42i64`, `7u8`,
   `0f32`, `1.5f64`, `42f64` (integer text + float suffix
   promotes to a float literal) all parse as the suffixed type
