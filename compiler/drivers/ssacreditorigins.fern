@@ -1,0 +1,107 @@
+import "../lexer";
+import "../parser";
+import "../semlower";
+import "../ircore";
+import "../physicalbody";
+import "../util";
+
+function require(ok: boolean, code: i32): void {
+  if (!ok) {
+    exit(code);
+  }
+}
+
+function validate(sub: ircore.Sub): void {
+  let origins = sub.physical_origins;
+  require(origins.declarations.len() == sub.bodies.len() && origins.extra.len() == sub.extra.len(), 151);
+  require(origins.producers.len() > 0, 152);
+  let app = origins.producers[0];
+  require(
+    app.contracts.len() == sub.physical_contracts.len() && app.records.list.len() == sub.physical_records.list.len()
+      && app.finalizers.len() == sub.physical_finalizers.len(),
+    153,
+  );
+  for origin in origins.declarations {
+    require(origin.producer == 0 && origin.symbol != "", 154);
+  }
+  let i = 0;
+  for origin in origins.extra {
+    require(origin.producer >= 0 && origin.producer < origins.producers.len() && origin.symbol == sub.extra[i].name, 155);
+    i = i + 1;
+  }
+}
+
+function selected(source: string, target: string): ircore.Sub {
+  let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
+  validate(sub);
+  return sub;
+}
+
+function keys(target: string): void {
+  let sub = selected("struct Marker { n: i32 } @noinline function read(m: Marker): i32 { return m.n; } function main(): i32 { let m: Map[(i32, i32), i32] = Map { (1, 2): 5 }; return m.len() + read(Marker { n: 1 }); }", target);
+  let origins = sub.physical_origins;
+  require(origins.producers.len() == 2 && origins.producers[0].records.names.has("Marker"), 156);
+  require(!origins.producers[1].records.names.has("Marker"), 157);
+  let key_count = 0;
+  let app_count = 0;
+  for origin in origins.extra {
+    if (origin.producer == 1) {
+      key_count = key_count + 1;
+      let matches = 0;
+      for c in origins.producers[1].contracts {
+        if (c.name == origin.symbol) {
+          matches = matches + 1;
+        }
+      }
+      require(matches == 1, 158);
+    } else {
+      app_count = app_count + 1;
+    }
+  }
+  require(key_count >= 2 && app_count > 0, 159);
+}
+
+function instances(target: string): void {
+  let sub = selected("@noinline function identity[T](x: T): T { return x; } function main(): i32 { return identity(1) + (identity(2i64) as i32); }", target);
+  require(sub.physical_origins.producers.len() == 1, 160);
+  let found = 0;
+  for origin in sub.physical_origins.extra {
+    if (util.str_has_prefix(origin.symbol, "identity")) {
+      require(origin.producer == 0, 161);
+      found = found + 1;
+    }
+  }
+  require(found == 2, 162);
+}
+
+function methods(target: string): void {
+  let source = "struct Token { n: i32 } struct Other { n: i64 } trait Drop { function drop(self: Self): void; } impl Drop for Token { function drop(self: Self): void {} } impl Drop for Other { function drop(self: Self): void {} } function main(): i32 { let a = Token { n: 1 }; let b = Other { n: 2i64 }; return a.n + (b.n as i32); }";
+  let sub = selected(source, target);
+  require(sub.physical_origins.producers[0].finalizers.len() == 2, 163);
+  let count = 0;
+  for origin in sub.physical_origins.declarations {
+    if (origin.symbol == "Token.drop" || origin.symbol == "Other.drop") {
+      count = count + 1;
+    }
+  }
+  require(count == 2, 164);
+  let lowered = semlower.runtime_lowering(source);
+  let origins = physicalbody.lowered_origins(lowered, 7);
+  require(origins.len() == lowered.bodies.len(), 165);
+  let i = 0;
+  for symbol in lowered.declarations {
+    require(origins[i].symbol == symbol && origins[i].producer == 7, 166);
+    i = i + 1;
+  }
+}
+
+pub function run(): void {
+  require(ircore.no_sub().physical_origins.producers.len() == 0, 167);
+  for target in ["arm64-linux", "x86-64-linux", "wasm32-wasi"] {
+    let empty = selected("", target);
+    require(empty.physical_origins.extra.len() == 0, 168);
+    keys(target);
+    instances(target);
+    methods(target);
+  }
+}

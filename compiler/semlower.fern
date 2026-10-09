@@ -601,6 +601,7 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, debug
     i = i + 1;
   }
   let instances: irtables.LowerResult[] = [];
+  let instance_origins: physicalbody.Origin[] = [];
   let unspliced: i32 = 0;
   let at: i32 = 0;
   while (at < built.instances.len()) {
@@ -609,6 +610,7 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, debug
     } else if (r.keep[mod.funcs.len() + at]) {
       helpers = ssarc.with_drop_helpers(helpers, built.instances[at].func);
       instances = instances.append(r.body[mod.funcs.len() + at]);
+      instance_origins = instance_origins.append(physicalbody.Origin { producer: 0, symbol: built.names[mod.funcs.len() + at] });
     }
     at = at + 1;
   }
@@ -633,6 +635,25 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, debug
     }
     i2 = i2 + 1;
   }
+  let selected: SelectedHelpers = selected_helpers(built, helpers.rows);
+  // The declaration-less bodies are merged by symbol here, where the rule
+  // lives, so the emit path's tail is a plain append.
+  let merged = ssarc.merge_helpers_mapped(instances, selected.rows);
+  let extra_origins = util.append_all(instance_origins, physicalbody.select_origins(selected.origins, merged.helper_indices));
+  let kept = semndprune.unused_adapter_mapped(mod, bodies, merged.bodies);
+  let declarations: string[] = [];
+  i = 0;
+  while (i < bodies.len()) {
+    declarations = declarations.append(built.names[i]);
+    i = i + 1;
+  }
+  let origins = physicalbody.Origins { producers: selected.producers, declarations: physicalbody.named_origins(declarations, 0), extra: physicalbody.select_origins(extra_origins, kept.extra_indices) };
+  return ircore.Sub { ...ircore.no_sub(), bodies: kept.result.bodies, extra: kept.result.extra, contracts: contract_rows(built.contracts, r), physical_contracts: built.contracts.list, physical_records: built.records, physical_finalizers: built.finalizers, physical_origins: origins, records: inf.records };
+}
+
+struct SelectedHelpers { rows: irtables.LowerResult[], origins: physicalbody.Origin[], producers: physicalbody.Metadata[] }
+
+function selected_helpers(built: semsource.Built, rows: irtables.LowerResult[]): SelectedHelpers {
   let keys: typeinfo.Type[] = [];
   for d in built.decls {
     keys = structural_keys(keys, d.func);
@@ -640,14 +661,19 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, debug
   for p in built.instances {
     keys = structural_keys(keys, p.func);
   }
-  if (keys.len() > 0) {
-    helpers = ssarc.Helpers { ...helpers, rows: util.append_all(helpers.rows, runtime_bodies(key_helper_source(keys))) };
+  let app = physicalbody.Metadata { contracts: built.contracts.list, records: built.records, finalizers: built.finalizers };
+  let producers: physicalbody.Metadata[] = [app];
+  let helper_origins: physicalbody.Origin[] = [];
+  for h in rows {
+    helper_origins = helper_origins.append(physicalbody.Origin { producer: 0, symbol: h.name });
   }
-  // The declaration-less bodies are merged by symbol here, where the rule
-  // lives, so the emit path's tail is a plain append.
-  let extra: irtables.LowerResult[] = ssarc.merge_helpers(instances, helpers.rows);
-  let kept: semndprune.Result = semndprune.unused_adapter(mod, bodies, extra);
-  return ircore.Sub { ...ircore.no_sub(), bodies: kept.bodies, extra: kept.extra, contracts: contract_rows(built.contracts, r), physical_contracts: built.contracts.list, physical_records: built.records, physical_finalizers: built.finalizers, records: inf.records };
+  if (keys.len() > 0) {
+    let lowered: physicalbody.Lowered = runtime_lowering(key_helper_source(keys));
+    helper_origins = util.append_all(helper_origins, physicalbody.lowered_origins(lowered, producers.len()));
+    producers = producers.append(physicalbody.metadata(lowered));
+    rows = util.append_all(rows, lowered.bodies);
+  }
+  return SelectedHelpers { rows: rows, origins: helper_origins, producers: producers };
 }
 
 // contract_rows spells what a caller's lowering reads of the functions it

@@ -4,6 +4,35 @@ import "./irtables";
 import "./ssasem";
 import "./semrecords";
 
+// Selected facts from one producer, without retaining its input body graphs.
+pub struct Metadata { contracts: ssasem.Contract[], records: semrecords.Records, finalizers: ssasem.Finalizer[] }
+
+// The selected symbol may differ from a method body's bare name.
+// An origin identifies metadata; it does not approve the body's effects.
+pub struct Origin { producer: i32, symbol: string }
+
+pub struct Origins { producers: Metadata[], declarations: Origin[], extra: Origin[] }
+
+pub function no_origins(): Origins {
+  return Origins { producers: [], declarations: [], extra: [] };
+}
+
+pub function named_origins(names: string[], producer: i32): Origin[] {
+  let out: Origin[] = [];
+  for name in names {
+    out = out.append(Origin { producer: producer, symbol: name });
+  }
+  return out;
+}
+
+pub function select_origins(rows: Origin[], indices: i32[]): Origin[] {
+  let out: Origin[] = [];
+  for i in indices {
+    out = out.append(rows[i]);
+  }
+  return out;
+}
+
 pub struct Lowered {
   bodies: irtables.LowerResult[],
   // Selected declaration symbols in body order; helpers follow this prefix.
@@ -16,4 +45,19 @@ pub struct Lowered {
 
 pub function empty(): Lowered {
   return Lowered { bodies: [], declarations: [], contracts: [], records: semrecords.no_records(), finalizers: [] };
+}
+
+pub function metadata(lowered: Lowered): Metadata {
+  return Metadata { contracts: lowered.contracts, records: lowered.records, finalizers: lowered.finalizers };
+}
+
+pub function lowered_origins(lowered: Lowered, producer: i32): Origin[] {
+  let out: Origin[] = [];
+  let i: i32 = 0;
+  for body in lowered.bodies {
+    let symbol: string = if (i < lowered.declarations.len()) { lowered.declarations[i] } else { body.name };
+    out = out.append(Origin { producer: producer, symbol: symbol });
+    i = i + 1;
+  }
+  return out;
 }
