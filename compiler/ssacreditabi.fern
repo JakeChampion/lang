@@ -18,6 +18,9 @@ import "./ssacreditoriginflow" as origin_flow;
 import "./ssacreditincoming" as incoming;
 import "./ssacreditcontinuation" as continuation;
 import "./util";
+import "./physicalbody";
+import "./ssaprepare";
+import "./ssacreditbound" as retained_binding;
 
 struct PhysicalBindings {
   functions: ssa.SFunc[],
@@ -87,8 +90,12 @@ struct ScalarFields {
 }
 
 function selected_contracts(sub: ircore.Sub, name: string): ssasem.Contract[] {
+  return named_contracts(sub.physical_contracts, name);
+}
+
+function named_contracts(all: ssasem.Contract[], name: string): ssasem.Contract[] {
   let contracts: ssasem.Contract[] = [];
-  for c in sub.physical_contracts {
+  for c in all {
     if (c.name == name) {
       contracts = contracts.append(c);
     }
@@ -117,14 +124,18 @@ function sibling_error(sub: ircore.Sub, ty: typeinfo.Type): string {
 }
 
 function producer_child_error(sub: ircore.Sub, ty: typeinfo.Type): string {
-  if (!ordinary(ty, sub.physical_finalizers)) {
+  return producer_metadata_child_error(producer_metadata(sub), ty);
+}
+
+function producer_metadata_child_error(metadata: physicalbody.Metadata, ty: typeinfo.Type): string {
+  if (!ordinary(ty, metadata.finalizers)) {
     return "unsupported producer child or finalizer";
   }
-  let ci = semrecords.find(sub.physical_records, ty);
+  let ci = semrecords.find(metadata.records, ty);
   if (ci < 0) {
     return "missing producer child schema";
   }
-  let child = sub.physical_records.list[ci];
+  let child = metadata.records.list[ci];
   if (child.views || child.nests_func) {
     return "unsupported producer child effects";
   }
@@ -641,19 +652,27 @@ function no_producer_layout(error: string): ProducerLayout {
 }
 
 function producer_layout(sub: ircore.Sub, name: string): ProducerLayout {
-  let contracts = selected_contracts(sub, name);
+  return producer_metadata_layout(producer_metadata(sub), name);
+}
+
+function producer_metadata(sub: ircore.Sub): physicalbody.Metadata {
+  return physicalbody.Metadata { contracts: sub.physical_contracts, records: sub.physical_records, finalizers: sub.physical_finalizers };
+}
+
+function producer_metadata_layout(metadata: physicalbody.Metadata, name: string): ProducerLayout {
+  let contracts = named_contracts(metadata.contracts, name);
   if (contracts.len() != 1) {
     return no_producer_layout("missing or ambiguous producer ABI");
   }
   let c = contracts[0];
-  if (!ordinary(c.result, sub.physical_finalizers)) {
+  if (!ordinary(c.result, metadata.finalizers)) {
     return no_producer_layout("unsupported producer result or finalizer");
   }
-  let ri = semrecords.find(sub.physical_records, c.result);
+  let ri = semrecords.find(metadata.records, c.result);
   if (ri < 0) {
     return no_producer_layout("missing producer result schema");
   }
-  let record = sub.physical_records.list[ri];
+  let record = metadata.records.list[ri];
   if (record.views || record.nests_func || record.fields.len() < 1 || record.fields.len() > 2 || c.params.len() != record.fields.len() || c.modes.len() != c.params.len()) {
     return no_producer_layout("unsupported producer layout or ABI arity");
   }
@@ -668,7 +687,7 @@ function producer_layout(sub: ircore.Sub, name: string): ProducerLayout {
       return no_producer_layout("incorrect producer parameter ownership mode");
     }
     if (ref) {
-      let error = producer_child_error(sub, field.ty);
+      let error = producer_metadata_child_error(metadata, field.ty);
       if (error != "") {
         return no_producer_layout(error);
       }
@@ -677,6 +696,23 @@ function producer_layout(sub: ircore.Sub, name: string): ProducerLayout {
     i = i + 1;
   }
   return ProducerLayout { shape: semrecords.name_of(record.ty), references: refs, error: "" };
+}
+
+// Constructor proof over the SAME graph retained by native emission. Metadata
+// belongs to this row's selected producer; no application Sub or old body exists
+// in this API. This does not certify callers, runtime/startup code or WASI.
+pub function check_emitted_producer(rows: ssaprepare.Emitted[], name: string, architecture: string): origin.Origin {
+  let binding = retained_binding.resolve(rows, name, architecture);
+  if (binding.error != "") {
+    return no_origin(name, binding.error);
+  }
+  let row = binding.rows[0];
+  let selected = row.body.selected;
+  let layout = producer_metadata_layout(selected.producers[selected.origin.producer], selected.origin.symbol);
+  if (layout.error != "") {
+    return no_origin(name, layout.error);
+  }
+  return origin.producer(row.body.formed.f, layout.shape, layout.references);
 }
 
 // Derive the narrow caller-flow obligations from selected metadata and actual

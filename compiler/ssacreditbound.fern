@@ -1,0 +1,52 @@
+// Resolve retained native rows without relowering or substituting old bodies.
+// A successful binding is not an ownership proof or a whole-module certificate.
+import "./asmcore";
+import "./ircore";
+import "./ssaprepare";
+
+pub struct Binding { rows: ssaprepare.Emitted[], error: string }
+
+pub function resolve(rows: ssaprepare.Emitted[], name: string, architecture: string): Binding {
+  let found: ssaprepare.Emitted[] = [];
+  let label = asmcore.sanitize_label(name);
+  for row in rows {
+    if (asmcore.sanitize_label(row.label_name) == label) {
+      found = found.append(row);
+    }
+  }
+  if (name == "" || found.len() != 1) {
+    return Binding { rows: [], error: "missing or ambiguous emitted body" };
+  }
+  let error = boundary_error(found[0]);
+  if (error != "") {
+    return Binding { rows: [], error: error };
+  }
+  return target_binding(found, name, architecture);
+}
+
+function target_binding(found: ssaprepare.Emitted[], name: string, architecture: string): Binding {
+  let row = found[0];
+  if (row.label_name != name || row.body.formed.f.name != name) {
+    return Binding { rows: [], error: "mismatched emitted label" };
+  }
+  if (architecture != "arm64" && architecture != "x86-64" || row.context.architecture != architecture) {
+    return Binding { rows: [], error: "mismatched native architecture" };
+  }
+  // Both native backends add kept/shared early returns outside formed.f.
+  // The x86 unique Drop shortcut is also covered by this refusal.
+  if (!row.context.rc_free_debug && ircore.counted_release_body(row.body.lowered)) {
+    return Binding { rows: [], error: "unproved native release entry effects" };
+  }
+  return Binding { rows: found, error: "" };
+}
+
+function boundary_error(row: ssaprepare.Emitted): string {
+  let selected = row.body.selected;
+  if (selected.origin.producer < 0 || selected.origin.producer >= selected.producers.len() || selected.origin.symbol == "") {
+    return "missing selected producer metadata";
+  }
+  if (!row.body.lowered.ok || row.body.lowered.n_params != row.body.formed.f.nparams || row.body.formed.f.takes_env) {
+    return "mismatched emitted body boundary";
+  }
+  return "";
+}

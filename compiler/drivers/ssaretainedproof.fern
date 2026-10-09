@@ -1,0 +1,141 @@
+import "../asmcore";
+import "../asm_ir";
+import "../asm_arm64_ir";
+import "../lexer";
+import "../parser";
+import "../semlower";
+import "../ssaprepare";
+import "../physicalbody";
+import "../semrecords";
+import "../ssasem";
+import "../ssa";
+import "../irtables";
+import "../ir";
+import "../ssacreditabi" as abi;
+import "../ssacreditbound" as bound;
+
+function require(ok: boolean, code: i32): void {
+  if (!ok) {
+    exit(code);
+  }
+}
+
+function emit(arm: boolean, scalar: boolean, single: boolean): ssaprepare.Emitted[] {
+  let child = if (scalar) { "i32" } else { "Leaf" };
+  let src = "struct Leaf { n: i32 } struct Parent { left: " + child + ", right: " + child + " } @noinline function parent(left: " + child + ", right: " + child + "): Parent { return Parent { left: left, right: right }; } function main(): i32 { return 0; }";
+  if (single) {
+    src = "struct Parent { left: i32 } @noinline function parent(left: i32): Parent { return Parent { left: left }; } function main(): i32 { return 0; }";
+  }
+  let mod = parser.parse_module(lexer.tokenize(src));
+  require(!asmcore.refuse_parse_unknowns([mod]) && !asmcore.refuse_decl_names([mod]), 51);
+  let g = semlower.program(semlower.driven(mod, "x86-64-linux"));
+  require(g.ok, 52);
+  let sw = asmcore.Switches { backtrace: false, sanitize: false };
+  if (arm) {
+    return asm_arm64_ir.emit_module_ir_unit_arm64_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, -1, g.cache, g.physical, semlower.runtime_lowering, sw, true).bodies;
+  }
+  return asm_ir.emit_module_ir_unit_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, -1, g.cache, g.physical, semlower.runtime_lowering, 0 as usize, sw, true).bodies;
+}
+
+function check(rows: ssaprepare.Emitted[], name: string, architecture: string, ok: boolean): void {
+  let p = abi.check_emitted_producer(rows, name, architecture);
+  if (p.proof.ok != ok || p.proof.function_name != name || ok && (p.words < 2 || p.words > 3)) {
+    print(p.proof.function_name + ": " + p.proof.message);
+    exit(53);
+  }
+}
+
+function metadata(row: ssaprepare.Emitted, m: physicalbody.Metadata): ssaprepare.Emitted {
+  let selected = physicalbody.Selected { producers: [m], origin: physicalbody.Origin { producer: 0, symbol: row.body.selected.origin.symbol } };
+  return ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: selected } };
+}
+
+function renamed(row: ssaprepare.Emitted, name: string): ssaprepare.Emitted {
+  let formed = ssa.Formed { ...row.body.formed, f: ssa.SFunc { ...row.body.formed.f, name: name } };
+  return ssaprepare.Emitted { ...row, label_name: name, body: ssaprepare.Body { ...row.body, formed: formed } };
+}
+
+function effects(row: ssaprepare.Emitted, architecture: string): void {
+  let f = row.body.formed.f;
+  let b = f.blocks[0];
+  let hits = 0;
+  let insts: ssa.SInst[] = [];
+  for op in b.insts {
+    if (op.kind_tag == 41) {
+      hits = hits + 1;
+      insts = insts.append(ssa.SInst { kind_tag: 1, result: op.result, args: [], imm: 0, str: "" });
+    } else {
+      insts = insts.append(op);
+    }
+  }
+  require(hits > 0, 54);
+  let bad = ssa.SFunc { ...f, blocks: [ssa.SBlock { ...b, insts: insts }] };
+  // The old LowerResult remains valid. Only the retained final effects change.
+  check([ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, formed: ssa.Formed { ...row.body.formed, f: bad } } }], row.label_name, architecture, false);
+  let boundaries = [ssa.SFunc { ...f, takes_env: true }, ssa.SFunc { ...f, nparams: 1 }];
+  for changed in boundaries {
+    check([ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, formed: ssa.Formed { ...row.body.formed, f: changed } } }], row.label_name, architecture, false);
+  }
+}
+
+function origins(row: ssaprepare.Emitted, architecture: string): void {
+  let selected = row.body.selected;
+  for index in [-1, selected.producers.len(), 2147483647] {
+    let changed = physicalbody.Selected { ...selected, origin: physicalbody.Origin { producer: index, symbol: selected.origin.symbol } };
+    check([ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: changed } }], row.label_name, architecture, false);
+  }
+  let m = selected.producers[selected.origin.producer];
+  check([metadata(row, physicalbody.Metadata { ...m, contracts: [] })], row.label_name, architecture, false);
+  check([metadata(row, physicalbody.Metadata { ...m, records: semrecords.no_records() })], row.label_name, architecture, false);
+  let contracts: ssasem.Contract[] = [];
+  for c in m.contracts {
+    contracts = contracts.append(c).append(c);
+  }
+  check([metadata(row, physicalbody.Metadata { ...m, contracts: contracts })], row.label_name, architecture, false);
+}
+
+function entry(row: ssaprepare.Emitted, architecture: string): void {
+  let r = irtables.LowerResult { ...row.body.lowered, name: "__sem_release_Parent", n_params: 1, ops: [ir.op_load_local(0), ir.op_call_direct("__fern_rc_dec", 1), ir.op_drop(), ir.op_const_i32(0), ir.op_return()] };
+  let f = ssa.SFunc { ...row.body.formed.f, nparams: 1 };
+  let body = ssaprepare.Body { ...row.body, lowered: r, formed: ssa.Formed { ...row.body.formed, f: f } };
+  let release = ssaprepare.Emitted { ...row, body: body, context: ssaprepare.Context { ...row.context, rc_free_debug: false } };
+  require(bound.resolve([release], row.label_name, architecture).error == "unproved native release entry effects", 55);
+  // Disabling that fast path permits binding, not an allocation proof.
+  release = ssaprepare.Emitted { ...release, context: ssaprepare.Context { ...release.context, rc_free_debug: true } };
+  require(bound.resolve([release], row.label_name, architecture).error == "", 56);
+  check([release], row.label_name, architecture, false);
+}
+
+pub function run(arm: boolean): void {
+  let architecture = if (arm) { "arm64" } else { "x86-64" };
+  let rows = emit(arm, false, false);
+  check(rows, "parent", architecture, true);
+  let binding = bound.resolve(rows, "parent", architecture);
+  require(binding.rows.len() == 1, 57);
+  let row = binding.rows[0];
+  let scalar = bound.resolve(emit(arm, true, true), "parent", architecture).rows[0];
+  check([scalar], "parent", architecture, true);
+  require(abi.check_emitted_producer([row], "parent", architecture).words == 3 && abi.check_emitted_producer([scalar], "parent", architecture).words == 2, 59);
+  // Both producers use local index zero and the same type/function names,
+  // but their layouts differ. Each row must keep its own metadata.
+  require(row.body.selected.origin.producer == 0 && scalar.body.selected.origin.producer == 0, 58);
+  let other = renamed(scalar, "Other.parent");
+  check([other, row], "parent", architecture, true);
+  check([other, row], "Other.parent", architecture, true);
+  check([metadata(row, scalar.body.selected.producers[0])], "parent", architecture, false);
+  // A coherent two-scalar ABI has the same untyped store graph as two owned
+  // references. The proof relies on the selected metadata's producer binding;
+  // it cannot authenticate a deliberately replaced, internally coherent ABI.
+  let same_graph = bound.resolve(emit(arm, true, false), "parent", architecture).rows[0];
+  check([same_graph], "parent", architecture, true);
+  check([metadata(row, same_graph.body.selected.producers[0])], "parent", architecture, true);
+  check([], "parent", architecture, false);
+  check([row, row], "parent", architecture, false);
+  check([other, renamed(scalar, "Other__parent")], "Other.parent", architecture, false);
+  check([other], "parent", architecture, false);
+  check([row], "parent", "wasm32-wasi", false);
+  check([row], "parent", if (arm) { "x86-64" } else { "arm64" }, false);
+  origins(row, architecture);
+  effects(row, architecture);
+  entry(row, architecture);
+}
