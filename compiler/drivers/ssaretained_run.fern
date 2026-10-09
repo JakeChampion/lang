@@ -159,6 +159,9 @@ function debug_body(g: ircore.Gated, arm: boolean): void {
 
 function main(): i32 {
   let mod = parser.parse_module(lexer.tokenize("@noinline function first(): i32 { return 7; } @noinline function second(): i32 { return first(); } function main(): i32 { return second(); }"));
+  if (asmcore.refuse_parse_unknowns([mod]) || asmcore.refuse_decl_names([mod])) {
+    return 1;
+  }
   let d = semlower.driven(mod, "x86-64-linux");
   let g = semlower.program(d);
   require(g.ok && g.im.funcs.len() == 3 && g.cache.len() == 3, 1);
