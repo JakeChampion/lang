@@ -9730,6 +9730,7 @@ function emit_rt_subprocess(own s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    ldr x2, [x9]\n");  // envp
   s = s.write("    mov x8, #221\n");
   s = s.write("    svc #0\n");
+  s = s.write("    mov x26, x0\n");  // -errno, for the report below
   // execve only returns on failure. Fall back to /bin/<cmd> and
   // /usr/bin/<cmd> so bare names like "echo" / "sh" / "cat"
   // resolve without re-implementing $PATH search.
@@ -9803,10 +9804,13 @@ function emit_rt_subprocess(own s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    ldr x2, [x9]\n");
   s = s.write("    mov x8, #221\n");
   s = s.write("    svc #0\n");
-  // All execve attempts failed → exit(127).
-  s = s.write("    mov x0, #127\n");
-  s = s.write("    mov x8, #93\n");
-  s = s.write("    svc #0\n");
+  // All execve attempts failed: report the first one's errno and exit 127,
+  // through the stack ABI (param i at [sp, #16*i]).
+  s = s.write("    sub sp, sp, #48\n");
+  s = s.write("    str x23, [sp]\n");  // cmdz
+  s = s.write("    str x22, [sp, #16]\n");  // cmd_len
+  s = s.write("    str x26, [sp, #32]\n");  // -errno
+  s = s.write("    bl __fn___fern_sp_exec_failed\n");
   // ---------- PARENT ----------
   s = s.write(".Lsp_parent:\n");
   s = s.write("    mov x22, x0\n");  // child pid
@@ -10018,6 +10022,7 @@ function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
     if (s.has_need("subprocess")) {
       if (darwin) {
         s = emit_rt_subprocess(s);
+        s = emit_ir_runtime_fern_fn(asmcore.rt_src_sp_exec_failed("arm64-darwin"), s);
       } else {
         s = emit_ir_runtime_fern_fn(asmcore.rt_src_subprocess("arm64-linux"), s);
       }
