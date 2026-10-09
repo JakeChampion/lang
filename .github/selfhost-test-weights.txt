@@ -823,7 +823,6 @@ TestSelfHostMapTupleElemHazardsX86_64 3
 TestSelfHostMapTupleElemReclaimArm64 3
 TestSelfHostMapTupleElemReclaimWasm 3
 TestSelfHostMapTupleElemReclaimX86_64 3
-TestSelfHostMapUsizeKeyRefusedIR 2
 TestSelfHostMapValueAliasRetainIRArm64 2
 TestSelfHostMapValueAliasRetainIRWasm 2
 TestSelfHostMapValueAliasRetainIRX86_64 2

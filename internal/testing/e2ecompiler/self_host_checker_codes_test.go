@@ -2401,6 +2401,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"str-view-array-literal-before-string-e034", "function main(): i32 { let t: string = \"abcdef\"; let xs: string[] = [slice_unchecked(t, 0, 3), \"a\"]; return xs.len(); }\n", []string{"E003", "E034"}},
 		{"mixed-array-literal-keeps-first-type", "function main(): i32 { let xs: string[] = [1, \"a\"]; return xs.len(); }\n", []string{"E003", "E034"}},
 		{"str-view-map-read-get-or-clean", "import \"core/map\";\nfunction main(): i32 { let t: string = \"abcdef\"; let m: Map[string, i32] = map_new(4); return m.get_or(slice_unchecked(t, 0, 3), 0); }\n", nil},
+		// A void value makes the map a set of keys, which std/set holds and
+		// no map column does (#11851).
+		{"e045-map-void-value", "import \"core/map\";\nfunction main(): i32 { let m: Map[i32, void] = map_new(2); return 0; }\n", []string{"E045"}},
+		{"e045-map-void-value-param", "import \"core/map\";\nfunction f(m: Map[string, void]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E045"}},
+		{"map-usize-key-char-value-clean", "import \"core/map\";\nfunction main(): i32 { let m: Map[usize, char] = map_new(2); return 0; }\n", nil},
 		{"e045-maplit-float-key", "import \"core/map\";\nfunction main(): i32 { let m = Map { 1.0: 10 }; return 0; }\n", []string{"E045"}},
 		{"e045-maplit-string-key-ok", "import \"core/map\";\nfunction main(): i32 { let m = Map { \"a\": 1, \"b\": 2 }; return 0; }\n", nil},
 		{"e045-maplit-i32-key-ok", "import \"core/map\";\nfunction main(): i32 { let m = Map { 1: 10, 2: 20 }; return 0; }\n", nil},

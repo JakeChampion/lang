@@ -60,12 +60,30 @@ pub struct Allocation {
   fusions: Fusion[],
 }
 
+// Observed text-mode occurrence, not an instruction or alignment proof.
+// A rotated loop test has its own join label and pre-emission cache state.
+pub struct UniqueSite {
+  input: i32,
+  result: i32,
+  input_home: i32,
+  result_home: i32,
+  cached: i32,
+  flags: boolean,
+  aligned: boolean,
+  inverted: boolean,
+  join: string,
+  text: string,
+}
+
 pub struct Emitted {
   label_name: string,
   body: Body,
   context: Context,
   release_entry: ReleaseEntry,
   allocation: Allocation,
+  // Empty for binary-record emission, whose instructions are not text.
+  assembly: string,
+  sites: UniqueSite[],
 }
 
 pub struct Output {
