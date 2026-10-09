@@ -35,11 +35,37 @@ pub struct ReleaseEntry {
   unique_drop: string,
 }
 
+// Actual backend choices consumed during emission, not independently checked
+// facts. Fusions correspond positionally to the formed body's blocks.
+pub struct Fusion {
+  n: i32,
+  tag: i32,
+  inverted: boolean,
+  a: i32,
+  b: i32,
+  unique: boolean,
+  aligned: boolean,
+}
+
+pub struct Allocation {
+  alloc: ssa.Alloc,
+  imm: ssa.Imms,
+  saved: i32[],
+  save_bytes: i32,
+  frame_bytes: i32,
+  framed: boolean,
+  views: i32[],
+  block_positions: i32[],
+  block_label_base: i32,
+  fusions: Fusion[],
+}
+
 pub struct Emitted {
   label_name: string,
   body: Body,
   context: Context,
   release_entry: ReleaseEntry,
+  allocation: Allocation,
 }
 
 pub struct Output {

@@ -1,0 +1,114 @@
+import "../asmcore";
+import "../asm_ir";
+import "../asm_arm64_ir";
+import "../ir";
+import "../ircore";
+import "../irtables";
+import "../semlower";
+import "../ssa";
+import "../ssaprepare";
+import "../util";
+import "std/string";
+
+function require(ok: boolean, code: i32): void {
+  if (!ok) {
+    exit(code);
+  }
+}
+
+pub function consistent(row: ssaprepare.Emitted): void {
+  let a = row.allocation;
+  let f = row.body.formed.f;
+  require(a.alloc.reg_of.len() == f.nvals && a.imm.is_imm.len() == f.nvals, 110);
+  require(a.alloc.def_pos.len() == f.nvals && a.alloc.hi.len() == f.nvals, 111);
+  require(a.fusions.len() == f.blocks.len(), 112);
+  require(a.frame_bytes >= ssa.spill_count(a.alloc.reg_of) * 8 && (a.framed || a.frame_bytes == 0), 113);
+  let arm = row.context.architecture == "arm64";
+  require(a.save_bytes == (if (arm) { (a.saved.len() + 1) / 2 * 16 } else { a.saved.len() * 8 }), 114);
+  require(!arm || a.framed, 115);
+}
+
+function emit(g: ircore.Gated, r: irtables.LowerResult, arm: boolean, retain: boolean): ssaprepare.Output {
+  let sw = asmcore.Switches { backtrace: false, sanitize: false };
+  let cache = g.cache.with(0, r);
+  if (arm) {
+    return asm_arm64_ir.emit_module_ir_unit_arm64_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, 1, cache, g.physical, semlower.runtime_lowering, sw, retain);
+  }
+  return asm_ir.emit_module_ir_unit_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, 1, cache, g.physical, semlower.runtime_lowering, 0 as usize, sw, retain);
+}
+
+function checked(g: ircore.Gated, r: irtables.LowerResult, arm: boolean): ssaprepare.Output {
+  let off = emit(g, r, arm, false);
+  let on = emit(g, r, arm, true);
+  require(off.bodies.len() == 0 && on.bodies.len() == 1 && off.text == on.text, 116);
+  consistent(on.bodies[0]);
+  require(!on.text.contains(".ssa_epilogue"), 117);
+  let framed = on.bodies[0].allocation.framed;
+  require(arm || framed == on.text.contains("movq %rsp, %rbp"), 118);
+  return on;
+}
+
+function spills(g: ircore.Gated, arm: boolean): void {
+  let ops = [ir.op_load_local(0)];
+  let i = 1;
+  while (i < 24) {
+    ops = ops.append(ir.op_load_local(i)).append(ir.op_bin("add", 64, false));
+    i = i + 1;
+  }
+  let r = irtables.LowerResult { ...g.cache[0], n_params: 24, n_locals: 24, ops: ops.append(ir.op_return()) };
+  let out = checked(g, r, arm);
+  let a = out.bodies[0].allocation;
+  require(a.framed && ssa.spill_count(a.alloc.reg_of) > 0 && a.saved.len() > 0, 119);
+  for home in a.alloc.reg_of {
+    if (home < -1) {
+      let offset = 0 - 8 * (ssa.spill_slot(home) + 1) - a.save_bytes;
+      let address = if (arm) { "[sp, #" + util.i32_to_string(a.frame_bytes + a.save_bytes + offset) + "]" } else { util.i32_to_string(offset) + "(%rbp)" };
+      require(out.text.contains(address), 120);
+    }
+  }
+}
+
+function uniqueness(g: ircore.Gated, arm: boolean, fused: boolean, inverted: boolean, aligned: boolean): void {
+  let call = ir.op_call_direct("__fern_rc_is_unique", 1);
+  call = ir.Op { ...call, i64_imm: if (aligned) { 4i64 } else { 0i64 } };
+  let ops = [ir.op_load_local(0), call];
+  if (inverted) {
+    ops = ops.append(ir.op_bin("not", 32, false));
+  }
+  if (fused) {
+    ops = util.append_all(ops, [ir.op_if(0), ir.op_const_i32(7), ir.op_return(), ir.op_else(), ir.op_const_i32(9), ir.op_return(), ir.op_end()]);
+  } else {
+    ops = ops.append(ir.op_return());
+  }
+  let r = irtables.LowerResult { ...g.cache[0], n_params: 1, n_locals: 1, ops: ops };
+  let out = checked(g, r, arm);
+  fusion(out, fused, inverted, aligned);
+}
+
+function fusion(out: ssaprepare.Output, fused: boolean, inverted: boolean, aligned: boolean): void {
+  let row = out.bodies[0];
+  let count = 0;
+  let bi = 0;
+  for fu in row.allocation.fusions {
+    if (fu.unique) {
+      count = count + 1;
+      require(fu.inverted == inverted && fu.aligned == aligned && fu.n == (if (inverted) { 2 } else { 1 }), 121);
+      let blk = row.body.formed.f.blocks[bi];
+      let ins = blk.insts[blk.insts.len() - fu.n];
+      require(ins.str == "__fern_rc_is_unique" && ins.args[0] == fu.a, 122);
+      require(out.text.contains(".Lssa_first_uq" + util.i32_to_string(blk.id)), 123);
+    }
+    bi = bi + 1;
+  }
+  require(count == (if (fused) { 1 } else { 0 }), 124);
+  require(fused || out.text.contains(".Lssa_first_rcuniq"), 125);
+}
+
+pub function run(g: ircore.Gated, arm: boolean): void {
+  let leaf = checked(g, g.cache[0], arm);
+  require(arm || !leaf.bodies[0].allocation.framed, 126);
+  spills(g, arm);
+  uniqueness(g, arm, false, false, false);
+  uniqueness(g, arm, true, false, false);
+  uniqueness(g, arm, true, true, true);
+}
