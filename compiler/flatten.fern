@@ -1545,6 +1545,9 @@ function mangle_impls(impls: parser.ImplInfo[], ctx: RewriteCtx): parser.ImplInf
       assoc_names: im.assoc_names,
       assoc_values: mangled_vals,
       trait_module: trait_module_of(im, ctx),
+      module: ctx.prefix,
+      line: im.line,
+      col: im.col,
     });
     i = i + 1;
   }

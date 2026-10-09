@@ -24763,7 +24763,7 @@ pub struct TraitDefault { trait_name: string, method: FuncDecl }
 // AT. `trait_name` has them stripped, so the two cannot be folded together.
 // trait_module is the bundle prefix of the module that declares the trait, as
 // TraitReq.module is (flatten sets it; "" for the entry's own traits).
-pub struct ImplInfo { trait_name: string, impl_type: string, type_params: string[], all_type_params: string[], bounds: string[], method_names: string[], trait_spelling: string, trait_ref: string, assoc_names: string[], assoc_values: string[], trait_module: string }
+pub struct ImplInfo { trait_name: string, impl_type: string, type_params: string[], all_type_params: string[], bounds: string[], method_names: string[], trait_spelling: string, trait_ref: string, assoc_names: string[], assoc_values: string[], trait_module: string, module: string, line: i32, col: i32 }
 
 // impl_trait_key spells the trait an impl implements the way flatten spells a
 // derive or a dyn trait: `module.Name`, or bare for one the entry declares.
@@ -28450,7 +28450,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
         funcs = funcs.append(im_cl.fn);
         mi = mi + 1;
       }
-      impl_infos = impl_infos.append(ImplInfo { trait_name: imr_trait_name, impl_type: imr_impl_type, type_params: imr_type_params, all_type_params: imr_decl.type_params, bounds: imr_bounds, method_names: imr_method_names, trait_spelling: imr_trait_spelling, trait_ref: imr_decl.trait_ref, assoc_names: imr_decl.assoc_names, assoc_values: imr_decl.assoc_values, trait_module: "" });
+      impl_infos = impl_infos.append(ImplInfo { trait_name: imr_trait_name, impl_type: imr_impl_type, type_params: imr_type_params, all_type_params: imr_decl.type_params, bounds: imr_bounds, method_names: imr_method_names, trait_spelling: imr_trait_spelling, trait_ref: imr_decl.trait_ref, assoc_names: imr_decl.assoc_names, assoc_values: imr_decl.assoc_values, trait_module: "", module: "", line: imr_decl.line, col: imr_decl.col });
       continue;
     }
     // `resource Name;` — a top-level WIT resource-handle declaration (P5).
