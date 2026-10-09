@@ -222,7 +222,7 @@ func TestRunnerFormatExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/format", "# pass 43", "# fail 0", "1..43"} {
+	for _, w := range []string{"# Suite: std/format", "# pass 46", "# fail 0", "1..46"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}

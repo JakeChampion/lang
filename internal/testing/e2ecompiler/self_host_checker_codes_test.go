@@ -1650,6 +1650,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"match-bool-two-literals-expr-no-wildcard", "function main(): i32 {\n    let b: boolean = true;\n    return (match (b) { true => 7i32, false => 1i32 });\n}\n", []string{"E030"}},
 		{"match-bool-two-literals-stmt-no-wildcard", "function main(): i32 { let b: boolean = true; match (b) { true => { return 1; }, false => { return 2; } } }\n", []string{"E030"}},
 		{"match-bool-with-wildcard-ok", "function main(): i32 { let b: boolean = true; match (b) { true => { return 7; }, _ => { return 1; } } }\n", nil},
+		// A failed arithmetic operator types its result as unknown, so the
+		// binding it initialises reports nothing further (#5317).
+		{"type-error-does-not-cascade", "function f(s: string): i32 { return s.len(); }\nfunction main(): i32 { let b = 1 + \"x\"; let c: string = b; return f(b); }\n", []string{"E009"}},
 		{"match-int-with-wildcard-ok", "function main(): i32 { let n: i32 = 1; match (n) { 0 => { return 5; }, _ => { return 6; } } }\n", nil},
 		{"match-enum-exhaustive-no-wildcard-ok", "enum Opt { Has(i32), Nil }\nfunction main(): i32 { let o: Opt = Nil; match (o) { Has(n) => { return n; }, Nil => { return 0; } } }\n", nil},
 		// The NUMERIC and STRING forms of the same rule (#6683). `true`/`false`

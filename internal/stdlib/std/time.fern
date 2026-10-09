@@ -160,10 +160,10 @@ pub function (d: Duration) as_millis(): i64 {
 // resolution: the sub-millisecond part of `nsec` is dropped, and a
 // duration under 1ms renders as `"0s"`.
 //
-// Distinct from `format_duration_ms(ms: i32)`, which is the
-// space-separated `"1h 23m 45s"` shape over an i32 millisecond count;
-// this is the i64-range, sign-aware method on the Duration type itself
-// (the Go / Rust `Duration.to_string()` idiom).
+// Distinct from `format_duration_ms(ms: i64)`, which is the
+// space-separated `"1h 23m 45s"` shape over a millisecond count; this is
+// the sign-aware method on the Duration type itself (the Go / Rust
+// `Duration.to_string()` idiom).
 pub function (d: Duration) to_string(): string {
   // Signed total milliseconds. `nsec` is 0..1e9 and non-negative even
   // for a negative duration (sec carries the borrow), so the two
@@ -961,8 +961,8 @@ pub function http_date_parse(s: string): Option[Instant] {
 
 // ============================================================
 // TimeZone + Zoned — Phase 5 per docs/STDLIB-DESIGN-RESEARCH.md
-// Rec §4. Fixed-offset zones only in this PR — IANA tzdb
-// lookup (with DST transition tables) lands separately.
+// Rec §4. Fixed-offset zones; IANA zones with their DST
+// transitions are std/tz's.
 // ============================================================
 
 // `timezone_fixed_offset(offset_seconds)` — construct a fixed-
