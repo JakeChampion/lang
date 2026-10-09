@@ -507,6 +507,12 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (module_uses_aes_gcm(cache)) {
     out = out.append("@uses_aes_gcm");
   }
+  if (module_emits_op_cached(cache, "sha256_hw_blocks")) {
+    out = out.append("@uses_sha256_hw_blocks");
+  }
+  if (module_uses_aes_gcm(cache) || module_emits_op_cached(cache, "bswap")) {
+    out = out.append("@uses_bswap");
+  }
   if (module_uses_ascii_run(cache)) {
     out = out.append("@uses_ascii_run");
   }
@@ -958,6 +964,16 @@ pub function module_uses_scale_f64(cache: irtables.LowerResult[]): boolean {
 // together.
 pub function module_uses_aes_gcm(cache: irtables.LowerResult[]): boolean {
   return module_emits_op_cached(cache, "aes_expand_key") || module_emits_op_cached(cache, "aes_ctr32") || module_emits_op_cached(cache, "ghash");
+}
+
+// sha256_hw_blocks_helper answers the empty u8[] sha256_hw's 0 promises:
+// wasm has no SHA-256 instructions, so std/crypto runs its own rounds.
+function sha256_hw_blocks_helper(): string {
+  return "  (func $__fern_sha256_hw_blocks (param $state i32) (param $data i32) (result i32) (local $a i32)\n"
+    + "    (local.set $a (call $__fern_arr_elems (i32.const 0) (i32.const 1)))\n"
+    + "    (i32.store (local.get $a) (i32.const 0))\n"
+    + "    (i32.store offset=4 (local.get $a) (i32.const 0))\n"
+    + "    (local.get $a))\n";
 }
 
 // module_uses_crc32_cksum gates $__fern_crc32_cksum, the CRC-32 fold of
@@ -6428,6 +6444,12 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     } else {
       parts = parts.append("    i32.ctz\n");
     }
+  } else if (o.kind_tag == 411) {  // bswap
+    if (o.width == 64) {
+      parts = parts.append("    call $__fern_bswap64\n");
+    } else {
+      parts = parts.append("    call $__fern_bswap32\n");
+    }
   } else if (o.kind_tag == 221) {  // popcount
     if (o.width == 64) {
       parts = parts.append("    i64.popcnt\n    i32.wrap_i64\n");
@@ -6489,6 +6511,9 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
   } else if (o.kind_tag == 79) {  // ptr_width
     // () -> heap-pointer width in bytes. 4 on wasm32 (NOT 8).
     parts = parts.append("    i32.const 4\n");
+  } else if (o.kind_tag == 409) {  // sha256_hw
+    // () -> 0: wasm has no SHA-256 instructions.
+    parts = parts.append("    i32.const 0\n");
   } else if (o.kind_tag == 345) {  // str_data
     // stack: block ptr -> its bytes, which follow the length at +0.
     parts = parts.append("    i32.const 4\n    i32.add\n");
@@ -6841,6 +6866,9 @@ function emit_str_op_wat(o: ir.Op): string {
   // parameter order.
   if (ir.is_aes_gcm_op(o.kind_tag)) {
     return "    call " + wasm_aes.kernel_name(o.kind_tag) + "\n";
+  }
+  if (o.kind_tag == 410) {  // sha256_hw_blocks
+    return "    call $__fern_sha256_hw_blocks\n";
   }
   if (o.kind_tag == 309) {  // crc32_cksum
     // stack: crc, s -> the incoming CRC-32 with s's bytes folded in.
@@ -13936,6 +13964,12 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   }
   if (need(needs, "@uses_aes_gcm")) {
     parts = parts.append(wasm_aes.funcs());
+  }
+  if (need(needs, "@uses_bswap")) {
+    parts = parts.append(wasm_aes.bswap_funcs());
+  }
+  if (need(needs, "@uses_sha256_hw_blocks")) {
+    parts = parts.append(sha256_hw_blocks_helper());
   }
   if (need(needs, "@uses_ascii_run")) {
     parts = parts.append(ascii_run_helper());

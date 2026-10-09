@@ -453,7 +453,7 @@ function prod_host_kind(k: string): boolean {
       return true;
     }
   }
-  return k == "clz" || k == "ctz" || k == "popcount";
+  return k == "clz" || k == "ctz" || k == "popcount" || k == "bswap";
 }
 
 // lift_prod_host lifts one host-floor op: a syscall is a register-ABI call
@@ -468,7 +468,7 @@ function lift_prod_host(k: string, op: ir.Op, lv: LiftVals): LiftVals {
   if (k == "line") {
     return lift_line(op, lv);
   }
-  if (k == "clz" || k == "ctz" || k == "popcount") {
+  if (k == "clz" || k == "ctz" || k == "popcount" || k == "bswap") {
     return lift_pop_push(lv, 1, 10, 0, k + ":" + util.i32_to_string(op.width));
   }
   if (k == "map_new") {

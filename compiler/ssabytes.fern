@@ -25,6 +25,15 @@ pub function word_name(bytes: i32): string {
   return "__sem_byte_view_word4";
 }
 
+// The byte swap that makes a big-endian word of the little-endian one a load
+// reads (ssabounds.word_loads); ssarc lowers it to ir.op_bswap.
+pub function swap_name(bytes: i32): string {
+  if (bytes == 8) {
+    return "__sem_bswap8";
+  }
+  return "__sem_bswap4";
+}
+
 pub function read_word(value: i32, bytes: i32): ir.Op {
   return ir.Op { ...ir.op_call_direct(word_name(bytes), 2), i64_imm: value as i64 + 1 };
 }

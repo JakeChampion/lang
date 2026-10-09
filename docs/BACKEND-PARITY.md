@@ -261,7 +261,7 @@ inside a codegen switch:
 
 | backend | baseline | what it buys |
 | ------- | -------- | ------------ |
-| arm64 / arm64-darwin | ARMv8.2-A with the cryptographic extensions | `clz`, `rbit`, the SIMD-side popcount (`cnt` + `addv`), `crc32`, LSE atomics, the carry-less multiply `pmull` / `pmull2` in its `.1q` form, and the AES rounds `aese` / `aesmc`. This one IS a raise: FEAT_AES (which carries FEAT_PMULL) stays optional in every ARMv8-A and ARMv9-A profile, and taking it is what drops the Raspberry Pi. |
+| arm64 / arm64-darwin | ARMv8.2-A with the cryptographic extensions | `clz`, `rbit`, the SIMD-side popcount (`cnt` + `addv`), `crc32`, LSE atomics, the carry-less multiply `pmull` / `pmull2` in its `.1q` form, the AES rounds `aese` / `aesmc`, and the SHA-256 instructions `sha256h` / `sha256h2` / `sha256su0` / `sha256su1` (the SHA-512 ones, FEAT_SHA512, are not in the baseline). This one IS a raise: FEAT_AES (which carries FEAT_PMULL) stays optional in every ARMv8-A and ARMv9-A profile, and taking it is what drops the Raspberry Pi. |
 | x86-64 | **x86-64-v3 plus AES-NI** — Haswell-class 2013 (AMD: Excavator 2015, Zen 2017) | `popcnt` (SSE4.2), `lzcnt` / `tzcnt` (BMI1), `pshufb` (SSSE3), the SSE4.1 `roundsd`, SSE2 floating point, `pclmulqdq`, `aesenc` / `aesenclast` / `aeskeygenassist`, and the **AVX2** 32-byte loops the byte kernels already emit. |
 | wasm | core wasm 2.0, fixed-width SIMD included | the `v128` family — `v128.load`, `i8x16.splat`, `i8x16.eq`, `i8x16.bitmask` and siblings. SIMD is part of the 2.0 standard rather than an option, and every engine Fern targets (wasmtime, and browsers since 2021) enables it unconditionally, so this is the same kind of floor as arm64's Advanced SIMD. |
 
@@ -300,6 +300,12 @@ wasm has no AES or carry-less multiply instruction, so its AES-GCM kernels are
 software that never branches on or indexes by a secret: a bitsliced AES over
 `i64`, four blocks a pass, and a GHASH that multiplies a bit at a time under
 masks (`compiler/wasm_aes.fern`).
+
+**The SHA extensions are not taken on x86-64.** Intel's client parts gained
+them only with Ice Lake (2019), so taking them would move the floor off every
+Haswell-to-Comet-Lake part. SHA-256 runs std/crypto's generated rounds there
+and on wasm, and the SHA-256 instructions on arm64, where the crypto baseline
+has them (`__sha256_hw`, #10615).
 
 Anything above this level (AVX-512, …) needs runtime dispatch first, and none
 of it is used. AVX-512 is deliberately not taken: Intel removed it from

@@ -17,6 +17,15 @@ func registerAESGCM(i *Interp) {
 	i.Builtins["__aes_expand_key"] = &Builtin{Fn: builtinAESExpandKey}
 	i.Builtins["__aes_ctr32"] = &Builtin{Fn: builtinAESCtr32}
 	i.Builtins["__ghash"] = &Builtin{Fn: builtinGHASH}
+	// The interpreter has no SHA-256 instructions, so std/crypto runs its own
+	// rounds here, as on x86-64 and wasm.
+	i.Builtins["__sha256_hw"] = &Builtin{Fn: func(_ *Interp, _ []Value) (Value, error) { return Bool(false), nil }}
+	i.Builtins["__sha256_hw_blocks"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if _, err := byteViews("__sha256_hw_blocks", args, 2); err != nil {
+			return nil, err
+		}
+		return newArray(0), nil
+	}}
 }
 
 // byteView reads a [u8] argument: a u8[] or a string's bytes.
