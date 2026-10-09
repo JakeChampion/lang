@@ -23,23 +23,24 @@
 //
 // MATCHING is POSIX leftmost-longest at a fixed start, and the pattern
 // is run as a program of the usual `Char` / `Split` / `Save` shape. The
-// engine that runs it is picked by the pattern: a Thompson simulation
-// with every thread in step for the regular ones, and a backtracking
-// search for the ones carrying a backreference, which is not a regular
-// language. `exec` and the engines below say what each costs and why the
-// captures come out where glibc puts them. `search_back` is glibc's
+// engine that runs it is picked by the pattern and the question: a lazy
+// DFA for a regular pattern where only the match's extent is wanted, a
+// Thompson simulation with every thread in step for a regular pattern's
+// groups, and a backtracking search for the ones carrying a
+// backreference, which is not a regular language. `exec` and the engines
+// below say what each costs and why the captures come out where glibc
+// puts them. `search_back` is glibc's
 // `re_search` with a negative range, which is the shape tac scans a
 // buffer backwards with; `search` and `search_range` are the same call
 // reduced to whether a line matches anywhere, which is all nl and csplit
 // ask of it, and `search_range` takes the line as bounds into a buffer
 // rather than as a string cut out of one.
 //
-// A search reaches an engine through four filters of decreasing
+// A search reaches an engine through three filters of decreasing
 // strength, laid out at `search_range`: a program that is nothing but a
-// literal run never enters one, a program that merely BEGINS with a
+// literal run never enters one, and a program that merely BEGINS with a
 // literal run — or with one literal per alternation branch — is
-// rejected over the whole range before one is entered, and the fastmap
-// skips the positions inside it where no match can start.
+// rejected over the whole range before one is entered.
 import "std/string";
 import "std/array";
 
@@ -258,7 +259,12 @@ function assert_buf_end(): i32 {
 // positions, so a cleared one is -1 whatever the search, and the
 // engine's first stamp copies this rather than filling a new array on
 // every line.
-pub struct Bre { insts: Inst[], classes: u8[], ngroups: i32, nmarks: i32, backref: boolean, err: string, newline_anchor: boolean, first: u8[], empty_ok: boolean, pre: u8[], pre_bol: boolean, pre_eol: boolean, literal: boolean, alts: u8[][], seen0: i32[] }
+//
+// `dfa` is the lazy DFA's cache (see `dfa_run`), `bclass` and `reps` its
+// byte classes and one byte of each (`byte_classes`), and `cx_lo` /
+// `cx_nl` / `cx_word` say which facts about the byte before a position
+// the program's zero-width tests read, so a DFA state carries only those.
+pub struct Bre { insts: Inst[], classes: u8[], ngroups: i32, nmarks: i32, backref: boolean, err: string, newline_anchor: boolean, first: u8[], empty_ok: boolean, pre: u8[], pre_bol: boolean, pre_eol: boolean, literal: boolean, alts: u8[][], seen0: i32[], dfa: DfaCache, bclass: u8[], reps: i32[], cx_lo: boolean, cx_nl: boolean, cx_word: boolean }
 
 // `Syntax` — which glibc dialect a pattern is read in, and whether a
 // newline anchors `$` at match time (the header has the three cases).
@@ -1452,7 +1458,7 @@ function compile_input(pat: Input, syntax: Syntax): Bre {
   }
   if (p.err.len() > 0) {
     let no_insts: Inst[] = [];
-    return Bre { insts: no_insts, classes: p.classes, ngroups: 0, nmarks: 0, backref: false, err: p.err, newline_anchor: syntax.newline_anchor, first: none_first, empty_ok: true, pre: none_first, pre_bol: false, pre_eol: false, literal: false, alts: no_alts, seen0: no_seen };
+    return Bre { insts: no_insts, classes: p.classes, ngroups: 0, nmarks: 0, backref: false, err: p.err, newline_anchor: syntax.newline_anchor, first: none_first, empty_ok: true, pre: none_first, pre_bol: false, pre_eol: false, literal: false, alts: no_alts, seen0: no_seen, dfa: dfa_cache(), bclass: none_first, reps: no_seen, cx_lo: false, cx_nl: false, cx_word: false };
   }
   let empty: Inst[] = [];
   let c: C = C { insts: empty, nmarks: 0, err: "" };
@@ -1463,7 +1469,7 @@ function compile_input(pat: Input, syntax: Syntax): Bre {
   c = emit(c, Inst { op: op_match(), a: 0, b: 0 });
   if (c.err.len() > 0) {
     let none: Inst[] = [];
-    return Bre { insts: none, classes: p.classes, ngroups: 0, nmarks: 0, backref: false, err: c.err, newline_anchor: syntax.newline_anchor, first: none_first, empty_ok: true, pre: none_first, pre_bol: false, pre_eol: false, literal: false, alts: no_alts, seen0: no_seen };
+    return Bre { insts: none, classes: p.classes, ngroups: 0, nmarks: 0, backref: false, err: c.err, newline_anchor: syntax.newline_anchor, first: none_first, empty_ok: true, pre: none_first, pre_bol: false, pre_eol: false, literal: false, alts: no_alts, seen0: no_seen, dfa: dfa_cache(), bclass: none_first, reps: no_seen, cx_lo: false, cx_nl: false, cx_word: false };
   }
   let fm: (u8[], boolean) = fastmap(c.insts, p.classes);
   let pre: (u8[], boolean, i32) = prefix_scan(c.insts);
@@ -1474,7 +1480,10 @@ function compile_input(pat: Input, syntax: Syntax): Bre {
   if (pre.0.len() == 0) {
     alts = branch_literals(c.insts);
   }
-  return Bre { insts: c.insts, classes: p.classes, ngroups: p.ngroups, nmarks: c.nmarks, backref: has_backref(p.nodes), err: "", newline_anchor: syntax.newline_anchor, first: fm.0, empty_ok: fm.1, pre: pre.0, pre_bol: pre.1, pre_eol: tail.0, literal: tail.1, alts: alts, seen0: fill(c.insts.len(), 0 - 1) };
+  let cx_nl: boolean = syntax.newline_anchor && has_op(c.insts, op_bol());
+  let cx_word: boolean = reads_word(c.insts);
+  let bclass: u8[] = byte_classes(c.insts, p.classes, cx_nl || syntax.newline_anchor && has_op(c.insts, op_eol()), cx_word);
+  return Bre { insts: c.insts, classes: p.classes, ngroups: p.ngroups, nmarks: c.nmarks, backref: has_backref(p.nodes), err: "", newline_anchor: syntax.newline_anchor, first: fm.0, empty_ok: fm.1, pre: pre.0, pre_bol: pre.1, pre_eol: tail.0, literal: tail.1, alts: alts, seen0: fill(c.insts.len(), 0 - 1), dfa: dfa_cache(), bclass: bclass, reps: class_reps(bclass), cx_lo: reads_lo(c.insts), cx_nl: cx_nl, cx_word: cx_word };
 }
 
 // ---- the fastmap -----------------------------------------------------------
@@ -1758,14 +1767,16 @@ function find_literal(text: Input, lit: u8[], lo: i32, hi: i32): i32 {
 }
 
 // ---- matching --------------------------------------------------------------
-// Two engines run these programs.
+// Three engines run these programs.
 //
-// Without a backreference the pattern is a regular language, and a
-// Thompson simulation runs it in ONE left-to-right pass: every thread
+// Without a backreference the pattern is a regular language. Where only
+// the match's extent is asked for, the lazy DFA (`dfa_run`) answers it.
+// Where groups are, a Thompson simulation runs it in ONE left-to-right
+// pass: every thread
 // advances together, a program counter is entered once per position —
 // which is also what stops an empty loop from going round for ever, and
 // a second time only where a path that crossed no zero-width assertion
-// overtakes one that did (`add_thread`) — and the last position at which
+// overtakes one that did (`pike_closure`) — and the last position at which
 // a thread reaches `Match` is the longest match. The captures reported
 // are the ones carried by the highest-priority thread to reach each
 // program counter, which is the greedy order the compiler laid the
@@ -1773,7 +1784,7 @@ function find_literal(text: Input, lit: u8[], lo: i32, hi: i32): i32 {
 //
 // A backreference is not regular: whether it matches depends on what an
 // earlier group captured, so a thread cannot be merged with another at
-// the same program counter. Those patterns take the second engine, a
+// the same program counter. Those patterns take the third engine, a
 // backtracking search asked for one end position at a time, longest
 // first. `M` is its state.
 // Every engine sees the string as `text[lo, hi)` and starts its match at
@@ -1961,7 +1972,7 @@ function branch(m0: M, pc: i32, pos: i32, in: Inst, zw: boolean): (boolean, M) {
   }
   if (in.op == op_save()) {
     let old: i32[] = m0.caps;
-    let r2: (boolean, M) = step(M { ...m0, caps: regs_at_save(m0.caps, in, pos, m0.re.ngroups) }, pc + 1, pos, zw);
+    let r2: (boolean, M) = step(M { ...m0, caps: regs_at_save(slice_i32(old, 0, old.len()), in, pos, m0.re.ngroups) }, pc + 1, pos, zw);
     if (r2.0) {
       return r2;
     }
@@ -1986,7 +1997,7 @@ function branch(m0: M, pc: i32, pos: i32, in: Inst, zw: boolean): (boolean, M) {
 // a group marked optional (compile_rep) that has matched before, where
 // every register goes back to the copy. That is how `\(a*\)*` keeps
 // its last non-empty pass, and inner groups go back with it.
-function regs_at_save(caps: i32[], in: Inst, pos: i32, ngroups: i32): i32[] {
+function regs_at_save(own caps: i32[], in: Inst, pos: i32, ngroups: i32): i32[] {
   let slot: i32 = in.a;
   if (slot % 2 == 0) {
     return caps.with(slot, pos).with(slot + 1, 0 - 1);
@@ -2005,7 +2016,7 @@ function regs_at_save(caps: i32[], in: Inst, pos: i32, ngroups: i32): i32[] {
     let back: i32[] = caps;
     let j: i32 = 0;
     while (j < n) {
-      back = back.with(j, caps[n + j]);
+      back = back.with(j, back[n + j]);
       j = j + 1;
     }
     return back;
@@ -2033,7 +2044,7 @@ function (re: Bre) exec_input(text: Input): BreMatch {
 // starting at `start` in `text[0, hi)`, or -1.
 function (re: Bre) match_at(text: Input, start: i32, hi: i32): i32 {
   if (!re.backref) {
-    return longest_at(re, text, start, 0, hi);
+    return dfa_run(re, text, start, 0, hi, false);
   }
   let m: BreMatch = exec_at(re, text, start, 0, hi);
   if (!m.matched) {
@@ -2042,69 +2053,550 @@ function (re: Bre) match_at(text: Input, start: i32, hi: i32): i32 {
   return m.end;
 }
 
-// The end of the longest match beginning at `start`, or -1: the thread
-// simulation with no captures, for a caller that asks only where a match
-// ends. Which path reached a program counter first decides the captures
-// and nothing else, so each counter is entered once per position. The
-// lists are sized once: a position holds each counter at most once, and
-// the closure's stack at most two entries per counter entered.
-function longest_at(re: Bre, text: Input, start: i32, lo: i32, hi: i32): i32 {
-  let n: i32 = re.insts.len();
-  let seen: i32[] = fill(n, 0 - 1);
-  let cur: i32[] = fill(n, 0);
-  let stack: i32[] = fill(2 * n + 2, 0);
-  let nc: i32 = 0;
-  let sp: i32 = 1;
+// ---- the lazy DFA ----------------------------------------------------------
+// Where only the END of a match is asked for — and where there are no
+// captures, that is all `exec` asks too — the thread list is a set: which
+// path reached a program counter first decides captures and nothing
+// else. So the simulation's states can be cached, the way glibc and RE2
+// do it. A DFA state is the set of program counters a byte has just
+// carried threads to, before their epsilon closure, plus what the
+// closure's zero-width tests need to know about the byte behind it
+// (`cx_*`). The closure also needs the byte AHEAD — `$`, `\>` and `\b`
+// read it — so it runs on the transition: the table cell for (state,
+// byte) holds the next state and whether the closure reached `Match`
+// before that byte.
+//
+// The table's columns are byte classes rather than bytes (`bclass`):
+// bytes no instruction or test tells apart share a column, which keeps a
+// state's row a few cells wide where 256 would make building one cost
+// more than running it. The last column is the end of the window, whose
+// cell says only whether a match ends there.
+//
+// States and transitions are built on first use and kept in `re.dfa`
+// across calls, so nl and csplit, which ask once per line, build the
+// states a pattern needs once per run rather than once per line. The
+// cache is bounded (`dfa_max_cells`, `dfa_max_words`): when it fills it
+// is emptied and the run goes on from the state it was in, so a pattern
+// whose DFA is exponential costs one closure per byte — the simulation's
+// cost — and never more memory than the bound.
+//
+// A backreference is not regular and never reaches here; captures take
+// the simulation (`exec_threads_from`), which this cannot stand in for.
+
+// The cache, held in cells so every copy of a `Bre` shares it. A run
+// takes the arrays out and puts them back (`dfa_take`, `dfa_put`), so
+// while it runs it holds the only reference and writes in place.
+//
+// `trans` is one row of cells per state, a cell per byte class and one
+// for the end: -1 where not yet built, else `next * 2 + matched`. `sets`
+// holds each state as its key, its length and its program counters,
+// starting at `offs[id]`. `slots` is an open-addressed hash of the
+// states, `id + 1` per slot, grown to stay at most half full.
+struct DfaCache { trans: Cell[i32[]], sets: Cell[i32[]], offs: Cell[i32[]], slots: Cell[i32[]] }
+
+// `found` is what the last call answered — a state id from `dfa_intern`,
+// a table cell from `dfa_step` — and `epoch` counts the times the cache
+// has been emptied, which invalidates every id taken before it. `seen`,
+// `gen` and `out` are the closure's (`dfa_closure`), and last one run.
+struct Dfa { trans: i32[], sets: i32[], offs: i32[], slots: i32[], found: i32, epoch: i32, seen: i32[], gen: i32, out: i32[] }
+
+function dfa_cache(): DfaCache {
+  let none: i32[] = [];
+  return DfaCache { trans: cell_new(none), sets: cell_new(none), offs: cell_new(none), slots: cell_new(none) };
+}
+
+// The cache's bounds: table cells, and program counters over all states.
+function dfa_max_cells(): i32 {
+  return 1048576;
+}
+
+function dfa_max_words(): i32 {
+  return 1048576;
+}
+
+function dfa_end(): i32 {
+  return 256;
+}
+
+// The state key's parts: the facts about the byte behind the position
+// (the start of the window, a newline, a word byte), and whether every
+// position seeds a new match (`dfa_run`'s `search`).
+function cx_lo(): i32 {
+  return 1;
+}
+
+function cx_nl(): i32 {
+  return 2;
+}
+
+function cx_word(): i32 {
+  return 4;
+}
+
+function cx_search(): i32 {
+  return 8;
+}
+
+function has_op(insts: Inst[], op: i32): boolean {
+  let k: i32 = 0;
+  while (k < insts.len()) {
+    if (insts[k].op == op) {
+      return true;
+    }
+    k = k + 1;
+  }
+  return false;
+}
+
+// Whether a zero-width test asks if a position is the window's start.
+function reads_lo(insts: Inst[]): boolean {
+  let k: i32 = 0;
+  while (k < insts.len()) {
+    let in: Inst = insts[k];
+    if (in.op == op_bol() || in.op == op_assert() && in.a == assert_buf_start()) {
+      return true;
+    }
+    k = k + 1;
+  }
+  return false;
+}
+
+// Whether a zero-width test asks if a byte either side of a position is
+// a word byte.
+function reads_word(insts: Inst[]): boolean {
+  let k: i32 = 0;
+  while (k < insts.len()) {
+    let in: Inst = insts[k];
+    if (in.op == op_assert() && in.a != assert_buf_start() && in.a != assert_buf_end()) {
+      return true;
+    }
+    k = k + 1;
+  }
+  return false;
+}
+
+function is_word_byte(b: i32): boolean {
+  return is_alpha(b) || is_digit(b) || b == 95;
+}
+
+// `byte_classes(...)` — a class id per byte, such that two bytes with
+// the same id satisfy the same `Char` and `Class` instructions and the
+// same zero-width tests: newline where `^` or `$` hold at one, word
+// bytes where a word test reads them. Each instruction splits every
+// class it cuts in two; a byte or a bracket table met before splits
+// nothing new, which keeps `a\{32767\}` one split.
+function byte_classes(insts: Inst[], classes: u8[], newline: boolean, word: boolean): u8[] {
+  let cls: u8[] = __alloc_u8(256);
+  let chars: u8[] = __alloc_u8(256);
+  let tables: u8[] = __alloc_u8(classes.len() / 256 + 1);
+  let k: i32 = 0;
+  while (k < insts.len()) {
+    let in: Inst = insts[k];
+    if (in.op == op_char() && chars[in.a] as i32 == 0) {
+      chars = chars.with(in.a, 1 as u8);
+      cls = split_classes(cls, classes, 0 - 1, in.a);
+    } else if (in.op == op_class() && tables[in.a] as i32 == 0) {
+      tables = tables.with(in.a, 1 as u8);
+      cls = split_classes(cls, classes, in.a, 0);
+    }
+    k = k + 1;
+  }
+  if (newline && chars[10] as i32 == 0) {
+    cls = split_classes(cls, classes, 0 - 1, 10);
+  }
+  if (word) {
+    cls = split_classes(cls, classes, 0 - 2, 0);
+  }
+  return cls;
+}
+
+// Split each class of `cls` by membership: of bracket table `idx`, of
+// the word bytes where `idx` is -2, else of the one byte `byte`. Ids are
+// renumbered in byte order, so they stay dense.
+function split_classes(own cls: u8[], classes: u8[], idx: i32, byte: i32): u8[] {
+  let remap: i32[] = fill(512, 0 - 1);
+  let next: i32 = 0;
+  let out: u8[] = cls;
+  let b: i32 = 0;
+  while (b < 256) {
+    let inside: i32 = 0;
+    if (idx >= 0 && classes[idx * 256 + b] as i32 != 0 || idx == 0 - 2 && is_word_byte(b) || idx == 0 - 1 && b == byte) {
+      inside = 1;
+    }
+    let key: i32 = out[b] as i32 * 2 + inside;
+    if (remap[key] < 0) {
+      remap = remap.with(key, next);
+      next = next + 1;
+    }
+    out = out.with(b, remap[key] as u8);
+    b = b + 1;
+  }
+  return out;
+}
+
+// One byte of each class, in class order: what a transition is built
+// with, since every byte of a class answers alike.
+function class_reps(cls: u8[]): i32[] {
+  let reps: i32[] = [];
+  let b: i32 = 0;
+  while (b < 256) {
+    if (cls[b] as i32 == reps.len()) {
+      reps = reps.append(b);
+    }
+    b = b + 1;
+  }
+  return reps;
+}
+
+// The key part for the byte behind `pos`, keeping only what the
+// program's tests read.
+function ctx_at(re: Bre, text: Input, pos: i32, lo: i32): i32 {
+  if (pos == lo) {
+    if (re.cx_lo) {
+      return cx_lo();
+    }
+    return 0;
+  }
+  return ctx_after(re, text.at(pos - 1) as i32);
+}
+
+function ctx_after(re: Bre, b: i32): i32 {
+  let c: i32 = 0;
+  if (re.cx_nl && b == 10) {
+    c = c + cx_nl();
+  }
+  if (re.cx_word && is_word_byte(b)) {
+    c = c + cx_word();
+  }
+  return c;
+}
+
+// A zero-width test between the byte behind (`ctx`) and `sym` ahead.
+// `cx_nl` is only ever set where newline_anchor is, so it answers `^`
+// alone.
+function dfa_zw_holds(re: Bre, in: Inst, ctx: i32, sym: i32): boolean {
+  let at_lo: boolean = ctx % 2 == 1;
+  if (in.op == op_bol()) {
+    return at_lo || ctx / 2 % 2 == 1;
+  }
+  if (in.op == op_eol()) {
+    return sym == dfa_end() || re.newline_anchor && sym == 10;
+  }
+  let before: boolean = ctx / 4 % 2 == 1;
+  let after: boolean = sym != dfa_end() && is_word_byte(sym);
+  let which: i32 = in.a;
+  if (which == assert_wordb()) {
+    return before != after;
+  }
+  if (which == assert_not_wordb()) {
+    return before == after;
+  }
+  if (which == assert_word_start()) {
+    return !before && after;
+  }
+  if (which == assert_word_end()) {
+    return before && !after;
+  }
+  if (which == assert_buf_start()) {
+    return at_lo;
+  }
+  return sym == dfa_end();
+}
+
+// The end of the longest match beginning at `start` in `text[lo, hi)`,
+// or -1. With `search`, a match may begin at any position from `start`
+// on — glibc's re_search reduced to whether there is one — and the
+// answer is where the first match found ends, or -1.
+function dfa_run(re: Bre, text: Input, start: i32, lo: i32, hi: i32, search: boolean): i32 {
+  let row: i32 = re.reps.len() + 1;
+  let endc: i32 = row - 1;
+  let d: Dfa = dfa_take(re);
+  let key: i32 = ctx_at(re, text, start, lo);
+  if (search) {
+    key = key + cx_search();
+  }
+  d = dfa_intern(d, key, [0], row);
+  let s: i32 = d.found;
   let best: i32 = 0 - 1;
   let pos: i32 = start;
+  // The input's bytes read directly, not through `at`'s match per byte.
+  let is_text: boolean = false;
+  let raw_t: string = "";
+  let raw_b: u8[] = [];
+  match (text) {
+    Text(t, _) => {
+      is_text = true;
+      raw_t = t;
+    },
+    Bytes(b, _) => {
+      raw_b = b;
+    }
+  }
   while (true) {
-    while (sp > 0) {
-      sp = sp - 1;
-      let pc: i32 = stack[sp];
-      if (seen[pc] == pos) {
-        continue;
-      }
-      seen = seen.with(pc, pos);
-      let op: i32 = re.insts[pc].op;
-      if (op == op_jmp()) {
-        stack = stack.with(sp, re.insts[pc].a);
-        sp = sp + 1;
-      } else if (op == op_split()) {
-        stack = stack.with(sp, re.insts[pc].b);
-        stack = stack.with(sp + 1, re.insts[pc].a);
-        sp = sp + 2;
-      } else if (op == op_save() || op == op_mark() || op == op_progress()) {
-        stack = stack.with(sp, pc + 1);
-        sp = sp + 1;
-      } else if (op == op_bol() || op == op_eol() || op == op_assert()) {
-        if (zero_width_holds(re, text, re.insts[pc], pos, lo, hi)) {
-          stack = stack.with(sp, pc + 1);
-          sp = sp + 1;
-        }
-      } else if (op == op_match()) {
-        best = pos;
+    let col: i32 = endc;
+    if (pos < hi) {
+      if (is_text) {
+        col = re.bclass[raw_t[pos] as i32] as i32;
       } else {
-        cur = cur.with(nc, pc);
-        nc = nc + 1;
+        col = re.bclass[raw_b[pos] as i32] as i32;
       }
     }
-    if (pos >= hi || nc == 0) {
+    let e: i32 = d.trans[s * row + col];
+    if (e < 0) {
+      d = dfa_step(d, re, s, col);
+      e = d.found;
+    }
+    if ((e & 1) == 1) {
+      best = pos;
+      if (search) {
+        break;
+      }
+    }
+    s = e >> 1;
+    if (col == endc || s == 0) {
       break;
     }
-    let b: i32 = text.at(pos) as i32;
-    let k: i32 = 0;
-    while (k < nc) {
-      let at: i32 = cur[k];
-      if (byte_matches(re, re.insts[at], b)) {
-        stack = stack.with(sp, at + 1);
-        sp = sp + 1;
-      }
-      k = k + 1;
-    }
-    nc = 0;
     pos = pos + 1;
   }
+  dfa_put(re, d);
   return best;
+}
+
+// Build the transition of state `s` on column `col`, record it, and
+// leave the cell's value in `found`.
+function dfa_step(own d0: Dfa, re: Bre, s: i32, col: i32): Dfa {
+  let row: i32 = re.reps.len() + 1;
+  let sym: i32 = dfa_end();
+  if (col < re.reps.len()) {
+    sym = re.reps[col];
+  }
+  let key: i32 = d0.sets[d0.offs[s]];
+  let d: Dfa = dfa_closure(d0, re, s, sym);
+  let bit: i32 = d.found;
+  let pcs: i32[] = d.out;
+  let none: i32[] = [];
+  d = Dfa { ...d, out: none };
+  let next: i32 = 0;
+  if (pcs.len() > 0) {
+    let nkey: i32 = ctx_after(re, sym);
+    if (key >= cx_search()) {
+      nkey = nkey + cx_search();
+    }
+    let epoch: i32 = d.epoch;
+    d = dfa_intern(d, nkey, pcs, row);
+    next = d.found;
+    if (d.epoch != epoch) {
+      // `s` went with the cache; the cell has nowhere to go.
+      return Dfa { ...d, found: next * 2 + bit };
+    }
+  }
+  let cell: i32 = next * 2 + bit;
+  return Dfa { ...d, trans: d.trans.with(s * row + col, cell), found: cell };
+}
+
+// The closure of state `s` with `sym` ahead: `found` says whether it
+// reaches `Match`, and `out` holds the program counters `sym` carries
+// its threads to. They are kept in the order the closure meets them
+// rather than sorted: the order follows from the state, so a state's
+// successor is still one state, and a pattern whose sets run to
+// thousands of counters does not pay a sort per byte.
+//
+// A search state seeds a new match at the next position too.
+//
+// `seen` is stamped per closure rather than cleared, since a program can
+// run to `inst_max` instructions and a pattern like `a\{32767\}` reaches
+// a new state at every byte: a counter at `4 * gen` or above belongs to
+// this closure, and the two bits over it say it was entered and that it
+// is already in `out`.
+function dfa_closure(own d0: Dfa, re: Bre, s: i32, sym: i32): Dfa {
+  let d: Dfa = d0;
+  let gen: i32 = d.gen + 1;
+  if (d.seen.len() == 0 || gen > 100000000) {
+    d = Dfa { ...d, seen: fill(re.insts.len() + 1, 0) };
+    gen = 1;
+  }
+  let base: i32 = gen * 4;
+  let off: i32 = d.offs[s];
+  let key: i32 = d.sets[off];
+  let len: i32 = d.sets[off + 1];
+  let ctx: i32 = key % cx_search();
+  // Pushed last to first, so the closure meets them in the state's order.
+  let stack: i32[] = [];
+  let sp: i32 = 0;
+  while (sp < len) {
+    stack = stack.append(d.sets[off + 1 + len - sp]);
+    sp = sp + 1;
+  }
+  let out: i32[] = [];
+  let matched: i32 = 0;
+  while (sp > 0) {
+    sp = sp - 1;
+    let pc: i32 = stack[sp];
+    let mark: i32 = stamp_bits(d.seen[pc], base);
+    if (mark % 2 == 1) {
+      continue;
+    }
+    d = Dfa { ...d, seen: d.seen.with(pc, base + mark + 1) };
+    let in: Inst = re.insts[pc];
+    let op: i32 = in.op;
+    if (op == op_char() || op == op_class()) {
+      let nx: i32 = stamp_bits(d.seen[pc + 1], base);
+      if (sym != dfa_end() && nx < 2 && byte_matches(re, in, sym)) {
+        d = Dfa { ...d, seen: d.seen.with(pc + 1, base + nx + 2) };
+        out = out.append(pc + 1);
+      }
+    } else if (op == op_jmp()) {
+      stack = push_at(stack, sp, in.a);
+      sp = sp + 1;
+    } else if (op == op_split()) {
+      stack = push_at(stack, sp, in.b);
+      stack = push_at(stack, sp + 1, in.a);
+      sp = sp + 2;
+    } else if (op == op_match()) {
+      matched = 1;
+    } else if (op == op_bol() || op == op_eol() || op == op_assert()) {
+      if (dfa_zw_holds(re, in, ctx, sym)) {
+        stack = push_at(stack, sp, pc + 1);
+        sp = sp + 1;
+      }
+    } else {
+      // Save, Mark and Progress: what they record is for captures.
+      stack = push_at(stack, sp, pc + 1);
+      sp = sp + 1;
+    }
+  }
+  if (key >= cx_search() && sym != dfa_end() && stamp_bits(d.seen[0], base) < 2) {
+    out = out.append(0);
+  }
+  return Dfa { ...d, gen: gen, out: out, found: matched };
+}
+
+// The bits a stamp holds for the closure whose stamps start at `base`;
+// an older stamp holds none.
+function stamp_bits(v: i32, base: i32): i32 {
+  if (v < base) {
+    return 0;
+  }
+  return v - base;
+}
+
+function dfa_hash(key: i32, pcs: i32[]): i32 {
+  let h: i32 = key + 7;
+  let k: i32 = 0;
+  while (k < pcs.len()) {
+    h = (h * 31 + pcs[k] + 1) % 1000003;
+    k = k + 1;
+  }
+  return h;
+}
+
+// `dfa_hash` of the state stored at `off`.
+function dfa_hash_at(sets: i32[], off: i32): i32 {
+  let h: i32 = sets[off] + 7;
+  let len: i32 = sets[off + 1];
+  let k: i32 = 0;
+  while (k < len) {
+    h = (h * 31 + sets[off + 2 + k] + 1) % 1000003;
+    k = k + 1;
+  }
+  return h;
+}
+
+// Whether the state at `off` is `key` over `pcs`.
+function dfa_same(sets: i32[], off: i32, key: i32, pcs: i32[]): boolean {
+  if (sets[off] != key || sets[off + 1] != pcs.len()) {
+    return false;
+  }
+  let k: i32 = 0;
+  while (k < pcs.len()) {
+    if (sets[off + 2 + k] != pcs[k]) {
+      return false;
+    }
+    k = k + 1;
+  }
+  return true;
+}
+
+// The id of the state `key` over `pcs`, added if it is new, in `found`.
+// A state is `row` table cells.
+function dfa_intern(own d0: Dfa, key: i32, pcs: i32[], row: i32): Dfa {
+  let d: Dfa = d0;
+  let i: i32 = dfa_hash(key, pcs) % d.slots.len();
+  while (d.slots[i] != 0) {
+    let id: i32 = d.slots[i] - 1;
+    if (dfa_same(d.sets, d.offs[id], key, pcs)) {
+      return Dfa { ...d, found: id };
+    }
+    i = (i + 1) % d.slots.len();
+  }
+  if (d.trans.len() + row > dfa_max_cells() || d.sets.len() + pcs.len() + 2 > dfa_max_words()) {
+    let fresh: Dfa = dfa_reset(d.epoch + 1, row);
+    return dfa_intern(Dfa { ...fresh, seen: d.seen, gen: d.gen }, key, pcs, row);
+  }
+  let id2: i32 = d.offs.len();
+  d = Dfa { ...d, offs: d.offs.append(d.sets.len()), slots: d.slots.with(i, id2 + 1) };
+  d = Dfa { ...d, sets: d.sets.append(key).append(pcs.len()) };
+  let k: i32 = 0;
+  while (k < pcs.len()) {
+    d = Dfa { ...d, sets: d.sets.append(pcs[k]) };
+    k = k + 1;
+  }
+  let c: i32 = 0;
+  while (c < row) {
+    d = Dfa { ...d, trans: d.trans.append(0 - 1) };
+    c = c + 1;
+  }
+  if (d.offs.len() * 2 > d.slots.len()) {
+    d = Dfa { ...d, slots: dfa_rehash(d.sets, d.offs, d.slots.len() * 2) };
+  }
+  return Dfa { ...d, found: id2 };
+}
+
+// The hash of every state, in `size` slots.
+function dfa_rehash(sets: i32[], offs: i32[], size: i32): i32[] {
+  let slots: i32[] = fill(size, 0);
+  let id: i32 = 0;
+  while (id < offs.len()) {
+    let i: i32 = dfa_hash_at(sets, offs[id]) % size;
+    while (slots[i] != 0) {
+      i = (i + 1) % size;
+    }
+    slots = slots.with(i, id + 1);
+    id = id + 1;
+  }
+  return slots;
+}
+
+// An empty cache holding only the dead state, id 0: no program counter,
+// so every cell leads back to it and no match ends anywhere.
+function dfa_reset(epoch: i32, row: i32): Dfa {
+  let none: i32[] = [];
+  let d: Dfa = Dfa { trans: none, sets: none, offs: none, slots: fill(16, 0), found: 0, epoch: epoch, seen: none, gen: 0, out: none };
+  let empty: i32[] = [];
+  return dfa_intern(d, 0 - 1, empty, row);
+}
+
+function dfa_take(re: Bre): Dfa {
+  let trans: i32[] = re.dfa.trans.get();
+  let none: i32[] = [];
+  if (trans.len() == 0) {
+    return dfa_reset(0, re.reps.len() + 1);
+  }
+  re.dfa.trans.set(none);
+  let sets: i32[] = re.dfa.sets.get();
+  re.dfa.sets.set(none);
+  let offs: i32[] = re.dfa.offs.get();
+  re.dfa.offs.set(none);
+  let slots: i32[] = re.dfa.slots.get();
+  re.dfa.slots.set(none);
+  return Dfa { trans: trans, sets: sets, offs: offs, slots: slots, found: 0, epoch: 0, seen: none, gen: 0, out: none };
+}
+
+function dfa_put(re: Bre, own d: Dfa): void {
+  re.dfa.trans.set(d.trans);
+  re.dfa.sets.set(d.sets);
+  re.dfa.offs.set(d.offs);
+  re.dfa.slots.set(d.slots);
 }
 
 // `(re).search_from(text, lo, hi)` — glibc's `re_search` over
@@ -2213,7 +2705,7 @@ function (re: Bre) search_input(text: Input): boolean {
 // the line out: csplit runs this once per line of its input, and a slice
 // materialised per line is the copy that costs more than the search.
 //
-// Four filters stand between the call and the simulation, strongest
+// Three filters stand between the call and the engine, strongest
 // first, each reached only where the one above it does not apply:
 //
 //   1. `literal` — the program is the prefix run and nothing else, so
@@ -2225,9 +2717,10 @@ function (re: Bre) search_input(text: Input): boolean {
 //   3. `alts` — the branches diverge before the first byte, so it takes
 //      one scan per branch to reject the range, and the earliest hit of
 //      any of them is where the engine starts.
-//   4. the fastmap, inside the engine, which skips the positions left
-//      that a match cannot start at (`can_start_at`, which is the
-//      literals again where there are any).
+//
+// Past them the DFA reads each byte once whatever it holds, so it takes
+// no fastmap; the backtracking engine, which a position costs a search
+// of its own, skips the positions `can_start_at` rules out.
 //
 // `^` and `$` pin a match to `lo` and `hi` only while `newline_anchor`
 // is off. With it on they hold at every newline too, so an anchored
@@ -2287,17 +2780,29 @@ function (re: Bre) search_range_input(text: Input, lo: i32, hi: i32): boolean {
     }
     return false;
   }
-  // One pass: a fresh thread is seeded at every position rather than the
-  // whole simulation being re-run from each of them, which is the
-  // difference between O(n·m) and O(n²·m) over a line.
-  return exec_threads_from(re, text, from, lo, hi, true).matched;
+  // One pass: the DFA seeds a match at every position rather than being
+  // re-run from each of them, which is the difference between O(n) and
+  // O(n²) over a line.
+  return dfa_run(re, text, from, lo, hi, true) >= 0;
 }
 
+// The DFA finds whether and where the match ends. A pattern with no
+// groups of its own reports nothing more: group 0 spans the start to
+// that end. One with groups takes the simulation for them, over the
+// match and no further.
 function exec_at(re: Bre, text: Input, start: i32, lo: i32, hi: i32): BreMatch {
   if (re.backref) {
     return exec_backtrack(re, text, start, lo, hi);
   }
-  return exec_threads_from(re, text, start, lo, hi, false);
+  let no: i32[] = [];
+  let end: i32 = dfa_run(re, text, start, lo, hi, false);
+  if (end < 0) {
+    return BreMatch { matched: false, end: 0, starts: no, ends: no };
+  }
+  if (re.ngroups == 0) {
+    return caps_to_match(no, re, start, end);
+  }
+  return exec_threads_from(re, text, start, end, lo, hi);
 }
 
 // The backtracking engine: ask for one end position at a time, longest
@@ -2319,14 +2824,6 @@ function exec_backtrack(re: Bre, text: Input, start: i32, lo: i32, hi: i32): Bre
   return BreMatch { matched: false, end: 0, starts: no, ends: no };
 }
 
-// `Threads` — one position's thread list: the program counters waiting
-// on a byte, each with its captures, plus the generation stamp that
-// keeps a program counter from being entered twice at one position.
-// `match_at` is the index of this position's match thread, or -1;
-// `add_thread` reaches back into it when a later path turns out to be
-// the one glibc reports.
-struct Threads { pcs: i32[], caps: i32[][], seen: i32[], match_at: i32 }
-
 // The stamp for a program counter entered on a path that has crossed a
 // zero-width assertion since it last consumed a byte.
 //
@@ -2342,96 +2839,17 @@ function zw_stamp(gen: i32): i32 {
   return 0 - gen - 2;
 }
 
-// The epsilon closure from `pc`: every program counter reachable
-// without consuming a byte, in priority order, stopping at each one
-// that does consume.
-// Every branch hands the stamped list straight to the next call rather
-// than naming it: a local would be a second reference to the stamp
-// array, and each stamp would then copy it (#8498) — one copy per
-// instruction of the closure, which a pattern like `\(a*\)\{3200\}`
-// walks in full at every position.
-function add_thread(re: Bre, own t0: Threads, gen: i32, pc: i32, caps: i32[], pos: i32, text: Input, lo: i32, hi: i32, zw: boolean): Threads {
-  let seen: i32 = t0.seen[pc];
-  if (seen == gen) {
-    return t0;
-  }
-  // `over`: this program counter was claimed at this position by a path
-  // that had crossed an assertion, and this one has not. It walks the
-  // same ground again only to reach the end node; the threads waiting on
-  // a byte stay as they are, since they are in priority order and this
-  // path does not outrank them. A pc is therefore entered at most twice
-  // per position, and the second entry stamps it plainly.
-  //
-  // A path carrying no assertion — the overwhelming majority — reaches
-  // the zw stamp only past a sign test, which a cleared -1 and every
-  // plain stamp fail.
-  let mark: i32 = gen;
-  let over: boolean = false;
-  if (zw) {
-    mark = zw_stamp(gen);
-    if (seen == mark) {
-      return t0;
-    }
-  } else if (seen < 0 - 1 && seen == zw_stamp(gen)) {
-    over = true;
-  }
-  let in: Inst = re.insts[pc];
-  if (in.op == op_jmp()) {
-    return add_thread(re, stamp(t0, pc, mark), gen, in.a, caps, pos, text, lo, hi, zw);
-  }
-  if (in.op == op_split()) {
-    return add_thread(re, add_thread(re, stamp(t0, pc, mark), gen, in.a, caps, pos, text, lo, hi, zw), gen, in.b, caps, pos, text, lo, hi, zw);
-  }
-  if (in.op == op_save()) {
-    return add_thread(re, stamp(t0, pc, mark), gen, pc + 1, regs_at_save(caps, in, pos, re.ngroups), pos, text, lo, hi, zw);
-  }
-  // A thread's loop marks ride after its registers (mark_base).
-  if (in.op == op_mark()) {
-    return add_thread(re, stamp(t0, pc, mark), gen, pc + 1, caps.with(mark_base(re) + in.a, pos), pos, text, lo, hi, zw);
-  }
-  if (in.op == op_progress()) {
-    let next: i32 = pc + 1;
-    if (caps[mark_base(re) + in.a] == pos) {
-      next = in.b;
-    }
-    return add_thread(re, stamp(t0, pc, mark), gen, next, caps, pos, text, lo, hi, zw);
-  }
-  if (in.op == op_bol() || in.op == op_eol() || in.op == op_assert()) {
-    if (!zero_width_holds(re, text, in, pos, lo, hi)) {
-      return stamp(t0, pc, mark);
-    }
-    return add_thread(re, stamp(t0, pc, mark), gen, pc + 1, caps, pos, text, lo, hi, true);
-  }
-  if (in.op == op_match()) {
-    if (over) {
-      let t1: Threads = stamp(t0, pc, mark);
-      return Threads { ...t1, caps: t1.caps.with(t1.match_at, caps) };
-    }
-    return append_match_thread(stamp(t0, pc, mark), pc, caps);
-  }
-  if (over) {
-    return stamp(t0, pc, mark);
-  }
-  return append_thread(stamp(t0, pc, mark), pc, caps);
+// The marker that makes a pair on the closure's stack a visit of
+// `pc * 2 + zw` rather than an undo of slot `x` back to value `y` (a
+// capture is -1 or more).
+function visit(): i32 {
+  return 0 - 2;
 }
 
 // Where a thread's loop marks start in its capture array: past the
 // registers and their copy (regs_at_save).
 function mark_base(re: Bre): i32 {
   return re.ngroups * 4;
-}
-
-function stamp(own t: Threads, pc: i32, mark: i32): Threads {
-  return Threads { ...t, seen: t.seen.with(pc, mark) };
-}
-
-function append_thread(own t: Threads, pc: i32, caps: i32[]): Threads {
-  return Threads { ...t, pcs: t.pcs.append(pc), caps: t.caps.append(caps) };
-}
-
-function append_match_thread(own t: Threads, pc: i32, caps: i32[]): Threads {
-  let at: i32 = t.pcs.len();
-  return Threads { ...t, pcs: t.pcs.append(pc), caps: t.caps.append(caps), match_at: at };
 }
 
 function zero_width_holds(re: Bre, text: Input, in: Inst, pos: i32, lo: i32, hi: i32): boolean {
@@ -2445,82 +2863,252 @@ function zero_width_holds(re: Bre, text: Input, in: Inst, pos: i32, lo: i32, hi:
 }
 
 // The Thompson simulation: one pass, every thread in step, over the
-// bytes `text[lo, hi)`.
+// bytes `text[lo, hi)`, for a match that must begin at `start` (glibc's
+// re_match) and whose groups are wanted. `end` is where the longest
+// match ends, which the DFA has already found, so the run stops there
+// and reads the captures of the first thread to reach `Match` at it.
+// `^` and `$` are asked about the position in `text[lo, hi)`, not about
+// where the scan began. The generation stamp is the position, so it
+// starts at `start` and `re.seen0` is below every one of them.
 //
-// `unanchored` seeds the start state at every position, which is
-// glibc's re_search; without it the match must begin at `start`, which
-// is re_match. `^` and `$` are unaffected either way: they are asked
-// about the position in `text[lo, hi)`, not about where the scan began.
-// The generation stamp is the position, so it starts at `start` and
-// `re.seen0` is below every one of them.
-function exec_threads_from(re: Bre, text: Input, start: i32, lo: i32, hi: i32, unanchored: boolean): BreMatch {
-  let no_pcs: i32[] = [];
-  let no_caps: i32[][] = [];
-  let t: Threads = Threads { pcs: no_pcs, caps: no_caps, seen: re.seen0, match_at: 0 - 1 };
-  // One seed vector for the whole search: it is never written through,
-  // since `.with` copies an array a second reference holds, so the
-  // thread seeded at each position can share it rather than allocate
-  // one per position — which for a pattern with no groups was an empty
-  // array per byte.
-  let seed: i32[] = fresh_caps(mark_base(re) + re.nmarks);
-  t = add_thread(re, t, start, 0, seed, start, text, lo, hi, false);
-  let best: i32 = 0 - 1;
-  let best_caps: i32[] = seed;
+// A position's threads are `pcs`, in priority order, with their
+// captures in `caps`, `w` slots per thread laid end to end; the next
+// position's are built in `npcs` and `ncaps`, and the two swap rather
+// than being allocated again. Everything is a local of this one
+// function so every write is in place.
+//
+// Each thread's epsilon closure is a depth-first walk on an explicit
+// stack, since a program can nest `inst_max` instructions deep and a
+// recursive walk ran out of stack on `\(a\)\{1,32767\}`. It writes the
+// path's captures into `cap` in place: a split pushes its second branch
+// under its first, and an instruction that writes a capture pushes the
+// undo of that write under its successor, so the branch taken next sees
+// the captures as they were at the split. A program counter is entered
+// once per position, and a second time only where a path that crossed
+// no zero-width assertion overtakes one that did (`over`): it walks the
+// same ground again only to reach the end node, and the threads waiting
+// on a byte stay as they are, since they are in priority order and this
+// path does not outrank them.
+function exec_threads_from(re: Bre, text: Input, start: i32, end: i32, lo: i32, hi: i32): BreMatch {
+  let nregs: i32 = re.ngroups * 4;
+  let w: i32 = mark_base(re) + re.nmarks;
+  let ni: i32 = re.insts.len();
+  let seen: i32[] = re.seen0;
+  let cap: i32[] = fresh_caps(w);
+  // Sized once for the worst case, so every write below is in place: a
+  // position holds each program counter at most once, and the walk
+  // enters each at most twice, pushing at most `nregs` undos and two
+  // visits per entry.
+  let stack: i32[] = fill(4 * ni * (nregs + 2) + 2, 0);
+  let pcs: i32[] = fill(ni, 0);
+  let caps: i32[] = fill(ni * w, 0);
+  let n: i32 = 0;
+  let npcs: i32[] = fill(ni, 0);
+  let ncaps: i32[] = fill(ni * w, 0);
+  let nn: i32 = 0;
+  let match_at: i32 = 0 - 1;
+  let best: i32[] = [];
   let pos: i32 = start;
+  // The first round has one source, the start of the program, and builds
+  // the list for `start` itself; every later one steps the list for
+  // `pos` over its byte.
+  let seeding: boolean = true;
   while (true) {
-    // The list being stepped is held apart from `t`, so `t` keeps sole
-    // ownership of the stamp array — its own copy of `re.seen0` from
-    // the first stamp — and updates it in place.
-    let pcs: i32[] = t.pcs;
-    let caps: i32[][] = t.caps;
-    let empty_pcs: i32[] = [];
-    let empty_caps: i32[][] = [];
-    t = Threads { ...t, pcs: empty_pcs, caps: empty_caps, match_at: 0 - 1 };
-    let found: boolean = false;
+    let sources: i32 = 1;
+    if (!seeding) {
+      let tp: i32[] = pcs;
+      pcs = npcs;
+      npcs = tp;
+      let tc: i32[] = caps;
+      caps = ncaps;
+      ncaps = tc;
+      n = nn;
+      nn = 0;
+      match_at = 0 - 1;
+      sources = n;
+    }
     let k: i32 = 0;
-    while (k < pcs.len()) {
-      let in: Inst = re.insts[pcs[k]];
-      if (in.op == op_match()) {
-        if (!found) {
-          best = pos;
-          best_caps = caps[k];
-          found = true;
+    while (k < sources) {
+      let pc0: i32 = 0;
+      let gen: i32 = start;
+      if (!seeding) {
+        let in0: Inst = re.insts[pcs[k]];
+        if (in0.op == op_match()) {
+          if (pos == end && best.len() == 0) {
+            best = slice_i32(caps, k * w, w);
+          }
+          k = k + 1;
+          continue;
         }
-      } else if (pos < hi && byte_matches(re, in, text.at(pos) as i32)) {
-        t = add_thread(re, t, pos + 1, pcs[k] + 1, caps[k], pos + 1, text, lo, hi, false);
+        if (!steps(re, in0, text, pos, end)) {
+          k = k + 1;
+          continue;
+        }
+        let j: i32 = 0;
+        while (j < w) {
+          cap = cap.with(j, caps[k * w + j]);
+          j = j + 1;
+        }
+        pc0 = pcs[k] + 1;
+        gen = pos + 1;
+      }
+      stack = stack.with(0, pc0 * 2).with(1, visit());
+      let sp: i32 = 2;
+      while (sp > 0) {
+        sp = sp - 2;
+        let x: i32 = stack[sp];
+        let y: i32 = stack[sp + 1];
+        if (y != visit()) {
+          cap = cap.with(x, y);
+          continue;
+        }
+        let pc: i32 = x >> 1;
+        let zb: i32 = x & 1;
+        let entry: i32 = entry_kind(seen[pc], gen, zb);
+        if (entry == 0) {
+          continue;
+        }
+        let over: boolean = entry == 2;
+        if (zb == 1) {
+          seen = seen.with(pc, zw_stamp(gen));
+        } else {
+          seen = seen.with(pc, gen);
+        }
+        let in: Inst = re.insts[pc];
+        let op: i32 = in.op;
+        if (op == op_split()) {
+          stack = stack.with(sp, in.b * 2 + zb).with(sp + 1, visit()).with(sp + 2, in.a * 2 + zb).with(sp + 3, visit());
+          sp = sp + 4;
+        } else if (op == op_save()) {
+          let r: i32 = undo_from(in);
+          let r_end: i32 = undo_to(in, nregs);
+          while (r < r_end) {
+            stack = stack.with(sp, r).with(sp + 1, cap[r]);
+            sp = sp + 2;
+            r = r + 1;
+          }
+          cap = regs_at_save(cap, in, gen, re.ngroups);
+          stack = stack.with(sp, (pc + 1) * 2 + zb).with(sp + 1, visit());
+          sp = sp + 2;
+        } else if (op == op_mark()) {
+          // A thread's loop marks ride after its registers.
+          let slot: i32 = mark_base(re) + in.a;
+          stack = stack.with(sp, slot).with(sp + 1, cap[slot]).with(sp + 2, (pc + 1) * 2 + zb).with(sp + 3, visit());
+          sp = sp + 4;
+          cap = cap.with(slot, gen);
+        } else if (passes_through(op)) {
+          let nv: i32 = successor(re, in, pc, zb, cap, text, gen, lo, hi);
+          if (nv >= 0) {
+            stack = stack.with(sp, nv).with(sp + 1, visit());
+            sp = sp + 2;
+          }
+        } else if (!over || op == op_match()) {
+          // A consuming instruction or the end becomes a thread; the end
+          // reached by an overtaking path rewrites the one already there.
+          let row: i32 = nn;
+          if (over) {
+            row = match_at;
+          } else {
+            if (op == op_match()) {
+              match_at = nn;
+            }
+            npcs = npcs.with(nn, pc);
+            nn = nn + 1;
+          }
+          let j2: i32 = 0;
+          while (j2 < w) {
+            ncaps = ncaps.with(row * w + j2, cap[j2]);
+            j2 = j2 + 1;
+          }
+        }
       }
       k = k + 1;
     }
-    if (pos >= hi || unanchored && best >= 0) {
+    if (seeding) {
+      seeding = false;
+      continue;
+    }
+    if (pos >= end) {
       break;
     }
     pos = pos + 1;
-    if (unanchored) {
-      // This seed shares generation `pos` with the byte-children added
-      // above, so a pc the byte-chain already stamped is skipped here. That
-      // costs the seed's captures at that pc, never a thread: the chain
-      // expanded the same split itself, so the set of pcs waiting on the
-      // next byte is identical. `search_range` reads only `.matched`,
-      // which is why it is sound to share the stamps rather than pay a
-      // second array.
-      //
-      // The fastmap gate is the last of `search_range`'s filters: a
-      // position no match can begin at is never seeded.
-      if (can_start_at(re, text, pos, hi)) {
-        t = add_thread(re, t, pos, 0, seed, pos, text, lo, hi, false);
-      }
-    }
-    // Out of threads ends an ANCHORED run, whose only start has died.
-    // An unanchored one seeds a new start at every position left, so
-    // there is nothing to conclude from the ones before it dying.
-    if (!unanchored && t.pcs.len() == 0) {
-      break;
-    }
   }
-  if (best < 0) {
-    return BreMatch { matched: false, end: 0, starts: no_pcs, ends: no_pcs };
+  return caps_to_match(best, re, start, end);
+}
+
+// Whether a thread waiting at `in` steps over the byte at `pos`: the run
+// ends at `end`, and a thread goes no further than the match.
+function steps(re: Bre, in: Inst, text: Input, pos: i32, end: i32): boolean {
+  return pos < end && byte_matches(re, in, text.at(pos) as i32);
+}
+
+// How the walk enters a program counter whose stamp is `was`: 0 not at
+// all, 1 plainly, 2 as a path with no assertion behind it overtaking one
+// that had one (`over` in exec_threads_from).
+function entry_kind(was: i32, gen: i32, zb: i32): i32 {
+  if (was == gen) {
+    return 0;
   }
-  return caps_to_match(best_caps, re, start, best);
+  if (zb == 1) {
+    if (was == zw_stamp(gen)) {
+      return 0;
+    }
+    return 1;
+  }
+  if (was < 0 - 1 && was == zw_stamp(gen)) {
+    return 2;
+  }
+  return 1;
+}
+
+// The registers a Save can write, as [undo_from, undo_to): opening a
+// group writes its own pair; closing one may write any (regs_at_save).
+function undo_from(in: Inst): i32 {
+  if (in.a % 2 == 0) {
+    return in.a;
+  }
+  return 0;
+}
+
+function undo_to(in: Inst, nregs: i32): i32 {
+  if (in.a % 2 == 0) {
+    return in.a + 2;
+  }
+  return nregs;
+}
+
+// The instructions with at most one successor and no capture to write.
+function passes_through(op: i32): boolean {
+  return op == op_jmp() || op == op_progress() || op == op_bol() || op == op_eol() || op == op_assert();
+}
+
+// That successor as a visit (`pc * 2 + zw`), or -1 where a zero-width
+// test fails. A test passed sets the zw bit; a pass through a loop that
+// consumed nothing leaves by the loop's exit (compile_star).
+function successor(re: Bre, in: Inst, pc: i32, zb: i32, cap: i32[], text: Input, pos: i32, lo: i32, hi: i32): i32 {
+  if (in.op == op_jmp()) {
+    return in.a * 2 + zb;
+  }
+  if (in.op == op_progress()) {
+    if (cap[mark_base(re) + in.a] == pos) {
+      return in.b * 2 + zb;
+    }
+    return (pc + 1) * 2 + zb;
+  }
+  if (zero_width_holds(re, text, in, pos, lo, hi)) {
+    return (pc + 1) * 2 + 1;
+  }
+  return 0 - 1;
+}
+
+function slice_i32(a: i32[], from: i32, n: i32): i32[] {
+  let out: i32[] = [];
+  let k: i32 = 0;
+  while (k < n) {
+    out = out.append(a[from + k]);
+    k = k + 1;
+  }
+  return out;
 }
 
 function fill(n: i32, v: i32): i32[] {
@@ -2534,9 +3122,7 @@ function fill(n: i32, v: i32): i32[] {
 }
 
 // Group 0 spans `start` to `end`; `caps` holds only the groups the
-// pattern wrote. An unanchored run has no start of its own to report,
-// so its group 0 begins where the scan did — `search_range`, the only
-// caller that runs one, reads nothing but `.matched`.
+// pattern wrote.
 function caps_to_match(caps: i32[], re: Bre, start: i32, end: i32): BreMatch {
   let starts: i32[] = [start];
   let ends: i32[] = [end];
