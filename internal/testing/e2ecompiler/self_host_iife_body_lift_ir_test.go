@@ -178,6 +178,28 @@ function main(): i32 {
     let h: (i32) => i32 = (if (b) { lf(3i32) } else { ((x: i32) => 216i32) });
     return h(1i32);
 }`, 4},
+	// A value-position `if` at a LOCAL function's fn-typed argument, one arm a
+	// call to that local function. The call yields the local's box, but the arm
+	// gate only counted calls to module functions. Reduced from nightly seed
+	// 90193.
+	{"local-fn-returning-call-arm-beside-lambda-arm", `function main(): i32 {
+    function g(p: (i32) => i32): (i32) => i32 { return p; }
+    let b: boolean = true;
+    return g((if (b) { g(((x: i32) => x + 4i32)) } else { ((x: i32) => 26i32) }))(3i32);
+}`, 7},
+	// The same with the lambda arm taken, nested one level in, and a capture.
+	{"lambda-arm-beside-local-fn-returning-call-arm", `function main(): i32 {
+    let k: i32 = 5i32;
+    function g(p: (i32) => i32): (i32) => i32 { return p; }
+    let b: boolean = false;
+    return g((if (b) { g(((x: i32) => x + k)) } else { (if (b) { ((x: i32) => 1i32) } else { ((x: i32) => x * k) }) }))(3i32);
+}`, 15},
+	// The seed's spelling: the arm reaches the local function through a pipe.
+	{"local-fn-returning-pipe-arm", `function main(): i32 {
+    function g(p: (i32) => i32): (i32) => i32 { return p; }
+    let b: boolean = true;
+    return g((if (b) { (((x: i32) => x + 2i32) |> g()) } else { ((x: i32) => x) }))(3i32);
+}`, 5},
 }
 
 // TestSelfHostIifeBodyLiftIRX86_64 drives the production x86-64 IR path and
