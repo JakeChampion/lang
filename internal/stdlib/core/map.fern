@@ -70,8 +70,8 @@
 //   the removed slot is backfilled with the array's LAST live
 //   entry, so that entry jumps to the deleted position and the
 //   sequence is no longer insertion order. There is no
-//   order-preserving delete (a shift-down `delete_ordered` is a
-//   possible future addition, #4388) and no shrink/rehash.
+//   order-preserving delete, and delete never shrinks or rehashes
+//   the table.
 //
 //   Consumers that depend on ordered iteration must therefore
 //   only rely on it for delete-free maps. `std/json`'s
