@@ -2682,16 +2682,43 @@ pub function rt_src_subprocess(t: string): string {
   // Child: wire the three pipe ends onto 0/1/2, close every original fd, then
   // exec cmd, /bin/cmd and /usr/bin/cmd in turn so bare names like "echo"
   // resolve without re-implementing a $PATH search. exec only returns on
-  // failure, so reaching the exit means all three missed.
+  // failure, so reaching the end means all three missed, and the child reports
+  // the first one's errno as a shell does.
   //
   // dup3, not dup2: arm64 Linux has no dup2 at all, and unifying on the form
   // both targets carry is what keeps this one body — the same move the `stat`
   // slice made onto the 4-argument fstatat family.
-  let child: string = "if (pid == 0) { __syscall3(" + sysno(t, "dup3") + ", in_r as i64, 0, 0); __syscall3(" + sysno(t, "dup3") + ", out_w as i64, 1, 0); __syscall3(" + sysno(t, "dup3") + ", err_w as i64, 2, 0); __syscall3(" + sysno(t, "close") + ", in_r as i64, 0, 0); __syscall3(" + sysno(t, "close") + ", in_w as i64, 0, 0); __syscall3(" + sysno(t, "close") + ", out_r as i64, 0, 0); __syscall3(" + sysno(t, "close") + ", out_w as i64, 0, 0); __syscall3(" + sysno(t, "close") + ", err_r as i64, 0, 0); __syscall3(" + sysno(t, "close") + ", err_w as i64, 0, 0); let envp: usize = __raw_environ(); __syscall3(" + sysno(t, "execve") + ", cmdz as i64, argv as i64, envp as i64); let pre: usize = __raw_alloc(9); __raw_store8(pre, 0, 47); __raw_store8(pre, 1, 98); __raw_store8(pre, 2, 105); __raw_store8(pre, 3, 110); __raw_store8(pre, 4, 47); __fern_sp_exec_at(pre, 5, cmdz, clen, argv, envp); __raw_store8(pre, 1, 117); __raw_store8(pre, 2, 115); __raw_store8(pre, 3, 114); __raw_store8(pre, 4, 47); __raw_store8(pre, 5, 98); __raw_store8(pre, 6, 105); __raw_store8(pre, 7, 110); __raw_store8(pre, 8, 47); __fern_sp_exec_at(pre, 9, cmdz, clen, argv, envp); __syscall3(" + sysno(t, "exit") + ", 127, 0, 0); } ";
+  let child: string = "if (pid == 0) { __syscall3(" + sysno(t, "dup3") + ", in_r as i64, 0, 0); __syscall3(" + sysno(t, "dup3") + ", out_w as i64, 1, 0); __syscall3(" + sysno(t, "dup3") + ", err_w as i64, 2, 0); __syscall3(" + sysno(t, "close") + ", in_r as i64, 0, 0); __syscall3(" + sysno(t, "close") + ", in_w as i64, 0, 0); __syscall3(" + sysno(t, "close") + ", out_r as i64, 0, 0); __syscall3(" + sysno(t, "close") + ", out_w as i64, 0, 0); __syscall3(" + sysno(t, "close") + ", err_r as i64, 0, 0); __syscall3(" + sysno(t, "close") + ", err_w as i64, 0, 0); let envp: usize = __raw_environ(); let rc0: i32 = __syscall3(" + sysno(t, "execve") + ", cmdz as i64, argv as i64, envp as i64) as i32; let pre: usize = __raw_alloc(9); __raw_store8(pre, 0, 47); __raw_store8(pre, 1, 98); __raw_store8(pre, 2, 105); __raw_store8(pre, 3, 110); __raw_store8(pre, 4, 47); __fern_sp_exec_at(pre, 5, cmdz, clen, argv, envp); __raw_store8(pre, 1, 117); __raw_store8(pre, 2, 115); __raw_store8(pre, 3, 114); __raw_store8(pre, 4, 47); __raw_store8(pre, 5, 98); __raw_store8(pre, 6, 105); __raw_store8(pre, 7, 110); __raw_store8(pre, 8, 47); __fern_sp_exec_at(pre, 9, cmdz, clen, argv, envp); __fern_sp_exec_failed(cmdz, clen, rc0); } ";
   // Parent: drop the ends the child owns (so its stdout/stderr reach EOF when
   // it exits), push the stdin payload, drain both streams, reap.
   let parent: string = "__syscall3(" + sysno(t, "close") + ", in_r as i64, 0, 0); __syscall3(" + sysno(t, "close") + ", out_w as i64, 0, 0); __syscall3(" + sysno(t, "close") + ", err_w as i64, 0, 0); if (input.len() > 0) { __syscall3(" + sysno(t, "write") + ", in_w as i64, __raw_data(input) as i64, input.len() as i64); } __syscall3(" + sysno(t, "close") + ", in_w as i64, 0, 0); let obuf: usize = __raw_alloc(65536); let olen: i32 = __fern_sp_drain(out_r, obuf); let ebuf: usize = __raw_alloc(65536); let elen: i32 = __fern_sp_drain(err_r, ebuf); __syscall4(" + sysno(t, "wait4") + ", pid as i64, __raw_addr(fds, 24) as i64, 0, 0); let w: i32 = __load_i32(__raw_addr(fds, 24)); let code: i32 = (w >> 8) & 255; if ((w & 127) != 0) { code = (w & 127) + 128; } let fds_own: string = __raw_string(fds, 32); let cmdz_own: string = __raw_string(cmdz, clen + 1); let ab_own: string = __raw_string(ab, total); let argv_own: string = __raw_string(argv, (n + 2) * 8); let sout: string = \"\"; if (olen > 0) { let so: usize = __raw_alloc(olen); __memcpy(so, obuf, olen); sout = __raw_string(so, olen); } let serr: string = \"\"; if (elen > 0) { let se: usize = __raw_alloc(elen); __memcpy(se, ebuf, elen); serr = __raw_string(se, elen); } let obuf_own: string = __raw_string(obuf, 65536); let ebuf_own: string = __raw_string(ebuf, 65536); return ProcessResult { stdout: sout, stderr: serr, exit_code: code }; }";
-  return drain + " " + execat + " " + setup + pipes + child + parent;
+  return drain + " " + execat + " " + rt_src_sp_exec_failed(t) + " " + setup + pipes + child + parent;
+}
+
+// The errnos execve(2) can fail with, by their Linux numbers: EPERM, ENOENT,
+// EIO, E2BIG, ENOEXEC, ENOMEM, EACCES, EFAULT, ENOTDIR, EISDIR, EINVAL,
+// ENFILE, EMFILE, ETXTBSY, ENAMETOOLONG and ELOOP.
+function exec_errnos(): i32[] {
+  return [1, 2, 5, 7, 8, 12, 13, 14, 20, 21, 22, 23, 24, 26, 36, 40];
+}
+
+// rt_src_sp_exec_failed is the end of a subprocess child whose every execve
+// failed: `cmd: strerror(errno)` on its stderr, then exit 127, which is what a
+// shell prints and returns for a command it cannot run. `rc` is the first
+// execve's -errno. Darwin's hand-written subprocess calls it too.
+pub function rt_src_sp_exec_failed(t: string): string {
+  let src: string = "function __fern_sp_exec_failed(cmdz: usize, clen: i32, rc: i32): void { let e: i32 = 0 - rc; " + strerror_unknown_text_src(t) + " let text: string = unknown;";
+  let linux: i32[] = strerror_linux();
+  for n in exec_errnos() {
+    let i: i32 = 0;
+    while (i < linux.len()) {
+      if (linux[i] == n) {
+        src = src + " if (e == " + util.i32_to_string(strerror_errno(t, i)) + ") { text = \"" + strerror_text(t, i) + "\"; }";
+      }
+      i = i + 1;
+    }
+  }
+  return src + " let tail: string = \": \" + text + \"\\n\"; __syscall3(" + sysno(t, "write") + ", 2, cmdz as i64, clen as i64); __syscall3(" + sysno(t, "write") + ", 2, __raw_data(tail) as i64, tail.len() as i64); __syscall3(" + sysno(t, "exit") + ", 127, 0, 0); }";
 }
 
 // rt_src_proc_fork backs `proc_fork()` (#2649, syscall-leaf) → 0 in the child,
@@ -3813,6 +3840,12 @@ pub function strerror_unknown_prefix(t: string): string {
 // `Other(path, "Unknown error N", 0)` for an errno past the table: count the
 // digits, then write them in from the end.
 function strerror_unknown_src(t: string): string {
+  return strerror_unknown_text_src(t) + " return Other(path, unknown, 0);";
+}
+
+// strerror_unknown_text_src binds `unknown` to the text for errno `e` past
+// the table.
+function strerror_unknown_text_src(t: string): string {
   let pfx: string = strerror_unknown_prefix(t);
   let plen: string = util.i32_to_string(pfx.len());
   let src: string = "let ndig: i32 = 1; let tt: i32 = e; while (tt >= 10) { ndig = ndig + 1; tt = tt / 10; } let total: i32 = " + plen + " + ndig; let buf: usize = __raw_alloc(total);";
@@ -3821,7 +3854,7 @@ function strerror_unknown_src(t: string): string {
     src = src + " __raw_store8(buf, " + util.i32_to_string(k) + ", " + util.i32_to_string(pfx[k] as i32) + ");";
     k = k + 1;
   }
-  return src + " let pos: i32 = total - 1; let v: i32 = e; while (pos >= " + plen + ") { __raw_store8(buf, pos, 48 + (v % 10)); v = v / 10; pos = pos - 1; } return Other(path, __raw_string(buf, total), 0);";
+  return src + " let pos: i32 = total - 1; let v: i32 = e; while (pos >= " + plen + ") { __raw_store8(buf, pos, 48 + (v % 10)); v = v / 10; pos = pos - 1; } let unknown: string = __raw_string(buf, total);";
 }
 
 // How the fs leaves give a __raw_alloc block back (#8813, the shape #8402

@@ -636,10 +636,12 @@ function main(): i32 { let e: Expr = Add { l: 40, r: 2 }; return eval(e); }`, 42
 
 	// subprocess spawn-failure: a command that resolves nowhere must hit
 	// the child's exit(127) after all execve attempts fail (POSIX
-	// convention), surfaced as exit_code 127.
+	// convention), surfaced as exit_code 127, with the first execve's
+	// errno on stderr as a shell reports it (#11855).
 	runCase("subprocess_missing",
 		`function main(): i32 {
   let r: ProcessResult = subprocess("fern-no-such-binary-zzz-7349", [], "");
+  if (r.stderr != "fern-no-such-binary-zzz-7349: No such file or directory\n") { return 90; }
   return r.exit_code;
 }`,
 		127)
