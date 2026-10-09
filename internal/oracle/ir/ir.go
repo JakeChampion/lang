@@ -19908,7 +19908,7 @@ func (b *builder) assign(n *ast.Assign) error {
 		// Node identity keeps a nested concat inside `piece` on the plain
 		// OpStrConcat path.
 		// Saved / restored around the RHS so an assignment nested INSIDE
-		// `piece` (assignment is an expression here) runs with its own
+		// `piece` (a block expression can hold one) runs with its own
 		// marking and hands this one's back untouched.
 		prevAppendBin, prevAppendDone := b.selfStrAppendBin, b.selfStrAppendDone
 		b.selfStrAppendBin, b.selfStrAppendDone = nil, false
@@ -20339,8 +20339,8 @@ func (b *builder) assign(n *ast.Assign) error {
 			// the new value underneath survives for the store below.
 			b.emitVarReinitDropOld(t.Name, idx)
 		}
-		// Tee semantics: leave a copy on the stack for callers that
-		// use the assignment as an expression. Plain ExprStmts drop it
+		// Tee semantics: leave a copy on the stack for the outer store
+		// of a chained `a = b = v`. Plain ExprStmts drop it
 		// via exprLeavesValue + OpDrop.
 		b.emit(Op{Kind: OpStoreLocal, I32: idx})
 		if src, moved := b.rc.overwriteMoves[n]; moved {

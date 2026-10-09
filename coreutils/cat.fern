@@ -428,26 +428,67 @@ function fail(st: State, msg: string): State {
   return State { ...s, w: gnu.error_out(s.w, msg), ok: false };
 }
 
-// `splice_all(r)` — the input moved to stdout by the kernel. False when
-// the pair cannot be spliced, which leaves the input where it stood for
-// the read loop to carry on from and meet any failure of its own.
-function splice_all(r: Reader): boolean {
+// `splice_all(r)` — the input moved to stdout by the kernel: copied
+// (copy_file_range) where both are files, as GNU 9.12 does, else spliced.
+// Ok(false) when the pair can be neither, which leaves the input where it
+// stood for the read loop to carry on from and meet any failure of its own;
+// Err is copy_all's.
+function splice_all(r: Reader): Result[boolean, IoError] {
   let out: Writer = stdout();
+  match (copy_all(r, out)) {
+    Ok(done) => {
+      if (done) {
+        return Ok(true);
+      }
+    },
+    Err(e) => {
+      return Err(e);
+    }
+  }
   while (true) {
     match (r.splice_to(out, splice_size())) {
       Ok(n) => {
         if (n == 0 as i64) {
-          return true;
+          return Ok(true);
         }
       },
       Err(e) => {
         match (e) {
           Unsupported => {
-            return false;
+            return Ok(false);
           },
           _ => {
             gnu.error("write error: " + gnu.io_error_text(e));
             exit(1);
+          }
+        }
+      }
+    }
+  }
+}
+
+// `copy_all(r, out)` — the input copied to `out` by copy_file_range.
+// Ok(false) when the pair cannot be copied that way, or the first answer is
+// 0, which a /proc file the kernel calls empty also gives; what was copied
+// before that has moved both offsets, so splicing or reading carries on from
+// there. Any other failure is the operand's, as GNU's copy_cat reports it.
+function copy_all(r: Reader, out: Writer): Result[boolean, IoError] {
+  let copied: boolean = false;
+  while (true) {
+    match (r.copy_range_to(out, splice_size())) {
+      Ok(n) => {
+        if (n == 0 as i64) {
+          return Ok(copied);
+        }
+        copied = true;
+      },
+      Err(e) => {
+        match (e) {
+          Unsupported => {
+            return Ok(false);
+          },
+          _ => {
+            return Err(e);
           }
         }
       }
@@ -502,7 +543,15 @@ function cat_file(path: string, st: State, f: Fmt, out_stat: FileStat): State {
   let done: boolean = false;
   if (plain && !small) {
     s = drain(s);
-    done = splice_all(r);
+    match (splice_all(r)) {
+      Ok(d) => {
+        done = d;
+      },
+      Err(e) => {
+        s = fail(s, gnu.quotef(path) + ": " + gnu.io_error_text(e));
+        done = true;
+      }
+    }
   }
   while (!done) {
     match (r.read_chunk_bytes(read_size())) {

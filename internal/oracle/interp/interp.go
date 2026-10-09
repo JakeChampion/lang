@@ -716,6 +716,7 @@ func New() *Interp {
 	i.Builtins["__method_Reader_seek"] = &Builtin{Fn: builtinHandleSeek}
 	i.Builtins["__method_Writer_seek"] = &Builtin{Fn: builtinHandleSeek}
 	i.Builtins["__method_Reader_splice_to"] = &Builtin{Fn: builtinReaderSpliceTo}
+	i.Builtins["__method_Reader_copy_range_to"] = &Builtin{Fn: builtinReaderSpliceTo}
 	i.Builtins["__method_Reader_flags"] = &Builtin{Fn: builtinFdFlags}
 	i.Builtins["__method_Writer_flags"] = &Builtin{Fn: builtinFdFlags}
 	i.Builtins["__method_Reader_isatty"] = &Builtin{Fn: builtinHandleIsatty}
@@ -1594,6 +1595,7 @@ func New() *Interp {
 	i.Builtins["proc_waitpid_status"] = &Builtin{Fn: builtinProcWaitpidStatus}
 	i.Builtins["proc_exec"] = &Builtin{Fn: builtinProcExec}
 	i.Builtins["proc_exec_as"] = &Builtin{Fn: builtinProcExecAs}
+	i.Builtins["pipe"] = &Builtin{Fn: builtinPipe}
 	i.Builtins["process_alive"] = &Builtin{Fn: builtinProcessAlive}
 	i.Builtins["signal_send"] = &Builtin{Fn: builtinSignalSend}
 	i.Builtins["set_process_group"] = &Builtin{Fn: builtinSetProcessGroup}
@@ -4031,7 +4033,8 @@ func builtinHandleSeek(i *Interp, args []Value) (Value, error) {
 	return resultOk(Number(pos)), nil
 }
 
-// builtinReaderSpliceTo answers `r.splice_to(w, max)` with Unsupported,
+// builtinReaderSpliceTo answers `r.splice_to(w, max)` and
+// `r.copy_range_to(w, max)` with Unsupported,
 // the refusal that promises nothing moved, so the caller's read_chunk and
 // write fallback carries the bytes: the interpreter's stdio need not be a
 // descriptor at all.
@@ -5372,6 +5375,28 @@ func openHelper(i *Interp, args []Value, structName string, flag int, perm os.Fi
 		Fields:   map[string]Value{"fd": Number(id)},
 	}
 	return resultOk(s), nil
+}
+
+// builtinPipe answers `pipe()` with a real pipe(2), both ends
+// close-on-exec and held in the open-file table like any opened file.
+func builtinPipe(i *Interp, args []Value) (Value, error) {
+	if len(args) != 0 {
+		return nil, fmt.Errorf("pipe: expected 0 args, got %d", len(args))
+	}
+	rf, wf, err := os.Pipe()
+	if err != nil {
+		return resultErr(classifyIoError("", err)), nil
+	}
+	end := func(name string, f *os.File) Value {
+		id := i.nextFd
+		i.nextFd++
+		i.openFiles[id] = f
+		return &Struct{TypeName: name, Fields: map[string]Value{"fd": Number(id)}}
+	}
+	return resultOk(&Struct{
+		TypeName: "Pipe",
+		Fields:   map[string]Value{"r": end("Reader", rf), "w": end("Writer", wf)},
+	}), nil
 }
 
 // readerStream / writerStream return the io.Reader / io.Writer

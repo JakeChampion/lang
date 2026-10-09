@@ -3744,6 +3744,43 @@ func TestStringLiteralMatchNonExhaustiveRejected(t *testing.T) {
 	}
 }
 
+// Unguarded `true` and `false` arms close a boolean's domain, in the
+// statement and the expression form alike; one missing or guarded does not
+// (#6685).
+func TestBoolLiteralMatchTrueFalseCloses(t *testing.T) {
+	ok := map[string]string{
+		"statement":  `function f(b: boolean): i32 { match (b) { true => { return 1; }, false => { return 2; } } }`,
+		"expression": `function f(b: boolean): i32 { return match (b) { false => 2, true => 1 }; }`,
+		"guarded arm before the pair": `function f(b: boolean, c: boolean): i32 {
+  return match (b) { true when c => 3, true => 1, false => 2 };
+}`,
+	}
+	for name, src := range ok {
+		t.Run(name, func(t *testing.T) {
+			if err := checkSource(t, src); err != nil {
+				t.Errorf("true/false arms should close a boolean match: %v", err)
+			}
+		})
+	}
+	bad := map[string]string{
+		"one literal": `function f(b: boolean): i32 { match (b) { true => { return 1; } } return 0; }`,
+		"guarded literal": `function f(b: boolean, c: boolean): i32 {
+  return match (b) { true => 1, false when c => 2 };
+}`,
+	}
+	for name, src := range bad {
+		t.Run(name, func(t *testing.T) {
+			err := checkSource(t, src)
+			if err == nil {
+				t.Fatal("expected E030: the boolean match is missing an arm")
+			}
+			if !strings.Contains(err.Error(), "match on boolean is not exhaustive") {
+				t.Errorf("want the boolean E030 text; got %v", err)
+			}
+		})
+	}
+}
+
 // A literal arm whose type doesn't match the scrutinee is rejected (E035):
 // an i32 literal on a string match is a type error, not a fallthrough.
 func TestStringLiteralMatchTypeMismatchRejected(t *testing.T) {

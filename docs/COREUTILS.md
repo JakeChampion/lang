@@ -127,20 +127,16 @@ implementation:
   `copy offload: yes, reflink: unsupported, sparse detection: SEEK_HOLE`
   for a sparse file, and for a dense one `sparse detection: no` or
   `SEEK_HOLE` depending on the host (both measured from GNU 9.4 on
-  ext4). The sparse detection is ours too now — a sparse source is
-  walked by SEEK_DATA / SEEK_HOLE — but the offload is
-  `copy_file_range`, which has no Fern primitive, and claiming it would
-  say something untrue about our own code. Ours states what the copy
-  actually did. No corpus case copies under `--debug`; `TestCpDebug`
-  holds the exit status and the `'src' -> 'dest'` line it implies to
-  GNU's and pins the report line to ours. Everything else about the
-  option IS byte-exact in the corpus: that a skip under `-n` or
-  `--update=none` is named, and that it stands in the ambiguity list
-  between `--copy-contents` and `--dereference`.
-
-  This one has a way out that `cksum --debug` does not: a
-  `copy_file_range` primitive would let the line be true rather than
-  ours. Until then it is an exemption, not a divergence to fix in cp.
+  ext4). Ours states what the copy actually did: the data runs go by
+  `copy_file_range` (`r.copy_range_to`) where the kernel takes the pair,
+  `copy offload: yes` on Linux and `no` on Darwin, and a sparse source is
+  walked by SEEK_DATA / SEEK_HOLE. GNU's vocabulary is its own (`unknown`,
+  `avoided`), so the line stays ours rather than byte-exact. No corpus case
+  copies under `--debug`; `TestCpDebug` holds the exit status and the
+  `'src' -> 'dest'` line it implies to GNU's and pins the report line to
+  ours. Everything else about the option IS byte-exact in the corpus: that
+  a skip under `-n` or `--update=none` is named, and that it stands in the
+  ambiguity list between `--copy-contents` and `--dereference`.
 
 Exempt is not unchecked. `requireHelp` / `requireVersion` in the harness
 still require the exit status and the stream to match GNU's for each — so
@@ -2739,8 +2735,9 @@ that path. wasm and the interpreter answer `Unsupported` to every call.
 
 `cat` passes 1 MiB, the kernel's default ceiling for a pipe. Against GNU's
 512 KiB it measured 3 ms to 4 ms on the bench file in a C loop of the same
-two splices. Regular file to regular file goes through the pipe too, rather
-than `copy_file_range`; the bench has no such row.
+two splices. Regular file to regular file goes by `copy_file_range`
+(`r.copy_range_to`) first, as GNU's does, and splices only when the kernel
+refuses that pair (#9309); the bench has no such row.
 
 | workload | before | after | GNU 9.12 |
 |---|---:|---:|---:|
@@ -4166,18 +4163,14 @@ connection returns at once trying nothing further, NXDOMAIN moves on, and
 anything else ends the loop.
 Neither changes the bytes on a host whose name resolves.
 
-**`split --filter=COMMAND` is refused.** GNU forks per piece, hands the child
-the read end of a pipe as its stdin, and streams the piece into the write
-end. Fern has `proc_fork` / `proc_exec` / `proc_waitpid` but no `pipe(2)`, no
-`dup2(2)` and no way to set a variable in a child's environment, and
-`subprocess()` is interp-only and takes the child's whole stdin as a string
-built in advance — which a piece that may be gigabytes is not. So the option
-is DECLARED, because its getopt behaviour is observable whether or not it
-runs (a required argument, a place in the `--f` prefix space, a position in
-the ambiguity list), and using it prints `split: --filter is not supported on
-this system` and exits 1 where GNU would run the command. The primitive is
-#8810; unlike `tail --pid`, GNU has no degraded path of its own here to
-borrow, so this one is a real divergence rather than a shared one.
+**`split --filter=COMMAND` reports an unrunnable shell the way glibc does.**
+GNU 9.12 starts each filter with `posix_spawn`, and what a failed exec looks
+like depends on the libc: glibc's reports it to the parent, which prints
+`failed to run command: "SHELL -c COMMAND"` and exits 1, while the gnulib
+replacement a macOS build uses lets the child exit 127, so GNU there says
+`with FILE=…, exit 127 from command: …`. This forks and execs, carries a failed
+exec's errno back over a close-on-exec pipe, and gives the glibc answer on
+every host.
 
 **`split --hex-suffixes=FROM` where FROM holds a hex LETTER is not
 reproduced.** GNU 9.4 seeds its suffix counter with `FROM[i] - '0'`, which is
@@ -4223,9 +4216,8 @@ argv[0] where `proc_exec` forces the resolved path it was handed; `-c` needs
 `security_check_context(3)` reads the kernel's verdict back off the descriptor
 it wrote the context to, which `write_file` cannot do. So a build on an SELinux
 host says `running a command in a security context is not supported on this
-system` and exits 125 where GNU would run the command — the shape `split
---filter` already uses — with every option still declared, since their getopt
-behaviour is observable either way.
+system` and exits 125 where GNU would run the command, with every option
+still declared, since their getopt behaviour is observable either way.
 
 ## Open gaps
 

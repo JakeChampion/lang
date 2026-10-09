@@ -293,6 +293,16 @@ func splitCases(*testing.T) []invocation {
 		splitCase("long lines wants a value", "--lines", "in"),
 		splitCase("short a wants a value", "-a"),
 		splitCase("long filter wants a value", "--filter"),
+		// --filter: each piece is the stdin of `sh -c COMMAND`, its name
+		// in $FILE. The filters write to split's own stdout, so the order
+		// of their output against the --verbose lines is stdio buffering's.
+		splitCase("filter sees FILE and its piece", "-l", "3", `--filter=echo "$FILE:"; cat`, "in"),
+		splitCase("filter verbose", "--verbose", "-l", "4", "--filter=wc -c", "in"),
+		splitCase("filter round robin", "-n", "r/3", `--filter=tr -d '\n'; echo " $FILE"`, "in"),
+		splitCase("filter exit status", "-l", "4", "--filter=exit 3", "in"),
+		splitCase("filter killed", "-l", "4", "--filter=kill -TERM $$", "in"),
+		splitCase("filter stops reading", "-b", "4", "--filter=head -c1 >/dev/null", "big"),
+		splitCase("filter not for a chunk on stdout", "-n", "1/2", "--filter=cat", "in"),
 		splitCase("verbose allows no value", "--verbose=x", "in"),
 		splitCase("help allows no value", "--help=x", "in"),
 		splitCase("invalid short option", "-Q", "in"),

@@ -686,7 +686,7 @@ pub function all_runtime_need_roots(): string[] {
     "chmod", "chmod_at", "set_file_times", "truncate", "mknod", "chown_at",
     "sync", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "fd_dup_onto",
     "termios_get", "termios_set", "set_extproc",
-    "temp_dir", "open_file", "open_with", "reader", "fd_stat", "reader_seek", "reader_splice", "fd_flags",
+    "temp_dir", "open_file", "open_with", "reader", "fd_stat", "reader_seek", "reader_splice", "reader_copy_range", "fd_flags",
     "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8",
     "writer_write", "write_some", "writer_truncate", "subprocess", "crc32_cksum", "sum_bytes", "aes_gcm",
     // The packed-byte twins a typed program's u8[] calls (asmcore.packed_suffix).
@@ -706,7 +706,7 @@ pub function all_runtime_need_roots(): string[] {
     // caller. The two signal roots are marked through a VARIABLE rather
     // than a literal (`s.need(sig_fn)`), so a grep for `.need("` does not
     // find them either.
-    "isatty", "window_size", "set_window_size", "signal_ignore", "signal_default",
+    "isatty", "window_size", "set_window_size", "pipe", "signal_ignore", "signal_default",
     // The flag-raising catch and its poll, and a signal sent to this
     // process.
     "signal_catch", "signal_taken", "signal_raise",
