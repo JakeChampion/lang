@@ -199,9 +199,11 @@ function abort_if(own ops: ir.Op[]): ir.Op[] {
   return joined(ops, [ir.op_if(0), ir.op_call_direct("__fern_oob_abort", 0), ir.op_drop(), ir.op_end()]);
 }
 
-// Slicing retains the existing copying contract: validate all bounds before
-// allocating, then copy exactly the selected bytes into one packed array.
-// No string descriptor is allocated for the temporary window.
+// Slicing validates all bounds first. A string-backed view is sub-ranged by
+// the string slice, retagged: on the register backends that is a counted box
+// over the source's bytes, which its last release frees alone while the
+// semantic anchors keep the source alive; wasm's inline strings copy. An
+// array-backed view copies the selected bytes into one packed array.
 function slice(): irtables.LowerResult {
   let ops: ir.Op[] = [ir.op_load_local(1), ir.op_const_i32(0), ir.op_bin("lt_s", 0, false)];
   ops = abort_if(ops);
@@ -209,6 +211,12 @@ function slice(): irtables.LowerResult {
   ops = abort_if(ops);
   ops = joined(ops, [ir.op_load_local(2), ir.op_load_local(0), ir.op_call_direct(length_name(), 1), ir.op_bin("gt_s", 0, false)]);
   ops = abort_if(ops);
+  ops = joined(ops, tagged());
+  ops = joined(ops, string_base());
+  ops = joined(ops, [
+    ir.op_load_local(1), ir.op_load_local(2), ir.op_str_slice(),
+    ir.op_const_i32(2), ir.op_raw_addr(), ir.op_return(), ir.op_end(),
+  ]);
   ops = joined(ops, [
     ir.op_load_local(2), ir.op_load_local(1), ir.op_bin("sub", 0, false), ir.op_store_local(3),
     ir.op_load_local(3), ir.packed(ir.op_alloc_u8()), ir.op_store_local(4),
