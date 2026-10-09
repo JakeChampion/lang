@@ -1064,6 +1064,20 @@ function f(): i32 {
     return got.get_or("a", 0) + c.n;
 }
 function main(): i32 { return f(); }`, 7},
+	{"reuse-differential/own-param-donor-map-field", `import "core/map";
+struct C { id: i32, m: Map[i32, i32] } function f(own d: C): i32 { let u: i32 = d.id + d.m.len(); let mm: Map[i32, i32] = map_new(4); mm = mm.insert(1, 5); let c = C { id: 10, m: mm }; return c.id + c.m.len() + u; } function main(): i32 { let m0: Map[i32, i32] = map_new(4); m0 = m0.insert(1, 1); return f(C { id: 3, m: m0 }); }`, 15},
+	{"reuse-differential/own-param-donor-map-field-call", `import "core/map";
+struct C { id: i32, m: Map[i32, i32] } function make_map(): Map[i32, i32] { let mm: Map[i32, i32] = map_new(4); mm = mm.insert(1, 5); return mm; } function f(own d: C): i32 { let u: i32 = d.id + d.m.len(); let c = C { id: 10, m: make_map() }; return c.id + c.m.len() + u; } function main(): i32 { let m0: Map[i32, i32] = map_new(4); m0 = m0.insert(1, 1); return f(C { id: 3, m: m0 }); }`, 15},
+	{"reuse-differential/self-overwrite-map-carried-detector", `import "core/map";
+struct P { id: i32, m: Map[i32, i32] } function main(): i32 { let d = P { id: 1, m: Map { 1: 10 } }; let c = P { ...d, id: 2 }; let s: i32 = c.m.get_or(1, 0) + c.id; if (s != 12) { return 99; } return __rc_underflow_count(); }`, 0},
+	{"reuse-differential/self-overwrite-map-override", `import "core/map";
+struct P { id: i32, m: Map[i32, i32] } function main(): i32 { let d = P { id: 1, m: Map { 1: 10 } }; let c = P { ...d, m: Map { 1: 39 } }; return c.m.get_or(1, 0) + c.id; }`, 40},
+	{"reuse-differential/self-overwrite-map-override-detector", `import "core/map";
+struct P { id: i32, m: Map[i32, i32] } function main(): i32 { let d = P { id: 1, m: Map { 1: 10 } }; let c = P { ...d, m: Map { 1: 39 } }; let s: i32 = c.m.get_or(1, 0) + c.id; if (s != 40) { return 99; } return __rc_underflow_count(); }`, 0},
+	{"reuse-differential/cross-struct-map-field-detector", `import "core/map";
+struct P { id: i32, m: Map[i32, i32] } function main(): i32 { let d = P { id: 1, m: Map { 1: 10 } }; let u: i32 = d.m.get_or(1, 0) + d.id; let c = P { id: 2, m: Map { 1: 7 } }; let s: i32 = c.m.get_or(1, 0) + c.id + u; if (s != 20) { return 99; } return __rc_underflow_count(); }`, 0},
+	{"ir-check-gate/literal-desugar", `import "core/map";
+function main(): i32 { let m: Map[i32, i32] = Map { 1: 40, 2: 2 }; return m.get_or(1, 0) + m.get_or(2, 0); }`, 42},
 }
 
 func TestSelfHostMapPrograms(t *testing.T) {

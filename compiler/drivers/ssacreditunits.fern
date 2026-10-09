@@ -20,8 +20,8 @@ function parts(g: ircore.Gated): parser.Module[] {
   for fd in g.im.funcs {
     if (fd.name == "first") {
       out = out.with(2, parser.Module { ...out[2], funcs: [fd] });
-    } else if (fd.name == "main") {
-      out = out.with(1, parser.Module { ...out[1], funcs: [fd] });
+    } else if (fd.name == "main" || fd.name == "keyed") {
+      out = out.with(1, parser.Module { ...out[1], funcs: out[1].funcs.append(fd) });
     }
   }
   return out;
@@ -73,7 +73,7 @@ function selected(g: ircore.Gated, u: ircore.Units): void {
 }
 
 function run_target(target: string): void {
-  let source = "struct Token { n: i32 } trait Drop { function drop(self: Self): void; } impl Drop for Token { function drop(self: Self): void {} } @noinline function first(): i32 { return loose(); } @noinline function loose(): i32 { return 7; } function main(): i32 { let t = Token { n: 3 }; let m: Map[(i32, i32), i32] = Map { (1, 2): 5 }; return first() + t.n + m.len(); }";
+  let source = "struct Token { n: i32 } trait Drop { function drop(self: Self): void; } impl Drop for Token { function drop(self: Self): void {} } @noinline function first(): i32 { return loose(); } @noinline function loose(): i32 { return 7; } @noinline function keyed(m: Map[(i32, i32), i32]): Map[(i32, i32), i32] { return m; } function main(): i32 { let t = Token { n: 3 }; return first() + t.n; }";
   let d = semlower.driven(parser.parse_module(lexer.tokenize(source)), target);
   let g = semlower.program(d);
   require(g.ok && g.physical.rows.len() == g.cache.len() && g.physical.producers.len() == 2, 169);
