@@ -4787,18 +4787,17 @@ func (p *parser) parseReturn() (ast.Stmt, error) {
 func (p *parser) parseDefer() (ast.Stmt, error) {
 	kw := p.advance()
 	// Block-shaped defer: `defer { … }` / `errdefer { … }`. The action is a
-	// brace block of statements (matching the self-host parser, which has
-	// long accepted this form — see #5153); it parses as a value-position
-	// BlockExpr via parseBranchBody, so every downstream ast.Defer consumer
-	// handles it unchanged, and — like `if (c) { … }` — it takes no trailing
-	// `;`. A block whose last element is a `;`-statement is a void BlockExpr,
-	// which is exactly what a side-effecting defer action wants.
+	// block of statements, as the grammar's DeferStmt has it: each ends with
+	// `;` as anywhere else, a statement `match` needs no arm values, and —
+	// like `if (c) { … }` — the block takes no trailing `;`. It is carried as
+	// a void BlockExpr, so every downstream ast.Defer consumer handles it
+	// unchanged.
 	if p.match(lexer.Punct, "{") {
-		body, err := p.parseBranchBody()
+		block, err := p.parseBlock()
 		if err != nil {
 			return nil, err
 		}
-		return &ast.Defer{P: kw.Pos, Expr: body, OnError: kw.Text == "errdefer"}, nil
+		return &ast.Defer{P: kw.Pos, Expr: &ast.BlockExpr{P: block.P, Stmts: block.Stmts}, OnError: kw.Text == "errdefer"}, nil
 	}
 	expr, err := p.parseExpr()
 	if err != nil {
