@@ -1,0 +1,108 @@
+import "../lexer";
+import "../parser";
+import "../semlower";
+import "../ircore";
+import "../physicalbody";
+
+function require(ok: boolean, code: i32): void {
+  if (!ok) {
+    exit(code);
+  }
+}
+
+function same(a: physicalbody.Origin, b: physicalbody.Origin): boolean {
+  return a.producer == b.producer && a.symbol == b.symbol;
+}
+
+function parts(g: ircore.Gated): parser.Module[] {
+  let empty = parser.Module { ...g.im, funcs: [], structs: [] };
+  let out = [parser.Module { ...empty, structs: g.im.structs }, empty, empty, empty];
+  for fd in g.im.funcs {
+    if (fd.name == "first") {
+      out = out.with(2, parser.Module { ...out[2], funcs: [fd] });
+    } else if (fd.name == "main") {
+      out = out.with(1, parser.Module { ...out[1], funcs: [fd] });
+    }
+  }
+  return out;
+}
+
+function declarations(u: ircore.Units, k: i32): i32 {
+  let rows = u.physical[k].rows;
+  let i = 0;
+  for fd in u.mods[k].funcs {
+    let expected = if (fd.name == "first" || fd.name == "loose") { 2 } else { if (fd.name == "drop") { 0 } else { 1 } };
+    require(k == expected, 177);
+    let symbol = if (fd.name == "drop") { "Token.drop" } else { fd.name };
+    require(rows[i].symbol == symbol && rows[i].producer == 0, 178);
+    require(u.caches[k][i].name == fd.name, 179);
+    i = i + 1;
+  }
+  return i;
+}
+
+function tail(g: ircore.Gated, u: ircore.Units, k: i32, start: i32): i32 {
+  let i = start;
+  if (k == 1) {
+    let at = g.im.funcs.len();
+    while (at < g.cache.len()) {
+      require(same(u.physical[k].rows[i], g.physical.rows[at]) && u.caches[k][i].name == g.cache[at].name, 180);
+      at = at + 1;
+      i = i + 1;
+    }
+  }
+  return i;
+}
+
+function selected(g: ircore.Gated, u: ircore.Units): void {
+  require(u.mods.len() == 4 && u.physical.len() == 4 && u.caches[3].len() == 0, 173);
+  require(u.physical[3].rows.len() == 0 && u.physical[3].producers.len() == 2, 174);
+  let seen = 0;
+  let k = 0;
+  for mod in u.mods {
+    let rows = u.physical[k].rows;
+    require(rows.len() == u.caches[k].len() && u.physical[k].producers.len() == 2, 175);
+    require(u.physical[k].producers[0].records.names.has("Token") && !u.physical[k].producers[1].records.names.has("Token"), 176);
+    let i = declarations(u, k);
+    seen = seen + mod.funcs.len();
+    i = tail(g, u, k, i);
+    require(i == rows.len(), 181);
+    k = k + 1;
+  }
+  require(seen == g.im.funcs.len() && u.loose.len() == 1 && u.loose[0].name == "loose" && g.cache.len() > g.im.funcs.len(), 182);
+}
+
+function run_target(target: string): void {
+  let source = "struct Token { n: i32 } trait Drop { function drop(self: Self): void; } impl Drop for Token { function drop(self: Self): void {} } @noinline function first(): i32 { return loose(); } @noinline function loose(): i32 { return 7; } function main(): i32 { let t = Token { n: 3 }; let m: Map[(i32, i32), i32] = Map { (1, 2): 5 }; return first() + t.n + m.len(); }";
+  let d = semlower.driven(parser.parse_module(lexer.tokenize(source)), target);
+  let g = semlower.program(d);
+  require(g.ok && g.physical.rows.len() == g.cache.len() && g.physical.producers.len() == 2, 169);
+  let i = 0;
+  for row in d.sub.physical_origins.declarations {
+    require(same(row, g.physical.rows[i]), 170);
+    i = i + 1;
+  }
+  for row in d.sub.physical_origins.extra {
+    require(same(row, g.physical.rows[i]), 171);
+    i = i + 1;
+  }
+  require(i == g.cache.len(), 172);
+  let tiny = ircore.Gated { ...g, cache: ircore.inline_tiny_leaves(g.im, g.cache) };
+  require(tiny.cache.len() == g.physical.rows.len(), 183);
+  selected(tiny, ircore.split_units(tiny, parts(g), 1));
+  let bare = ircore.gate(g.im, ircore.Sub { ...d.sub, physical_origins: physicalbody.no_origins() });
+  require(bare.ok && bare.cache.len() == g.cache.len() && bare.physical.producers.len() == 0, 184);
+  for row in bare.physical.rows {
+    require(row.producer == -1 && row.symbol == "", 185);
+  }
+}
+
+pub function run(): void {
+  for target in ["arm64-linux", "x86-64-linux", "wasm32-wasi"] {
+    run_target(target);
+    let d = semlower.driven(parser.parse_module(lexer.tokenize("")), target);
+    let g = semlower.program(d);
+    let u = ircore.split_units(g, [g.im, g.im], 1);
+    require(g.ok && g.physical.rows.len() == 0 && u.physical[0].rows.len() == 0 && u.physical[1].rows.len() == 0, 186);
+  }
+}

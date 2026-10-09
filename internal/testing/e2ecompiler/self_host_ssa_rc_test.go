@@ -113,11 +113,11 @@ function main(): i32 {
     // The rest of the program is the typed lowering's, as the emit entries
     // gate it; produce's body is the fixture's.
     let d = semlower.driven(mod, av[1]);
-    let g: ircore.Gated = ircore.Gated { ok: false, im: d.full, stab: irtables.struct_tab_empty(), cache: [] };
+    let g: ircore.Gated = ircore.Gated { ok: false, im: d.full, stab: irtables.struct_tab_empty(), cache: [], physical: physicalbody.no_collection() };
     if (av[1] == "wasm32-wasi") {
         let wm = ircore.with_records(wasm_ir.route_normalized(d.full), d.sub);
         let l = ircore.gate(wm, d.sub);
-        g = ircore.Gated { ok: l.ok, im: wm, stab: irtables.struct_tab(wm.structs), cache: l.cache };
+        g = ircore.Gated { ok: l.ok, im: wm, stab: irtables.struct_tab(wm.structs), cache: l.cache, physical: l.physical };
     } else { g = semlower.program(d); }
     if (!g.ok) { return 3; }
     let cache: irtables.LowerResult[] = [];
@@ -172,7 +172,7 @@ func physicalRCSource(setup, modes string) string {
 	return `import "./ssarc"; import "./suspend"; import "./ssasem"; import "./ssaunits"; import "./ssa";
 import "./typeinfo"; import "./semrecords"; import "./parser"; import "./lexer"; import "./irtables";
 import "./ir"; import "./util";
-import "./ircore"; import "./asmcore"; import "./asm_ir"; import "./asm_arm64_ir"; import "./wasm_ir"; import "./irverifyrc";
+import "./ircore"; import "./asmcore"; import "./asm_ir"; import "./asm_arm64_ir"; import "./wasm_ir"; import "./irverifyrc"; import "./physicalbody";
 import "./semlower";
 ` + source
 }
