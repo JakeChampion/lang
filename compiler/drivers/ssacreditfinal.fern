@@ -7,6 +7,8 @@ import "../irtables";
 import "../asmcore";
 import "../ssa";
 import "../ssa_lift";
+import "../ssaprepare";
+import "../physicalbody";
 import "../ssasem";
 import "../ssacreditabi" as abi;
 import "./ssacreditsparse" as sparse;
@@ -176,12 +178,14 @@ pub function run(source: string, target: string, exiting: boolean): void {
   let cache = ircore.inline_tiny_leaves(g.im, g.cache);
   let leaves = asmcore.unit_leaves(g.im, 0, g.im.funcs.len(), cache);
   let final: ssa.SFunc[] = [];
+  let position: i32 = 0;
   for r in cache {
     if (r.ok && !r.superseded) {
       let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), r.name, r.n_params, r.n_locals, r.ops, false);
       require(lifted.ok, 106);
-      final = final.append(ssa.register_form(ssa.inline_leaves(lifted.func, leaves)).f);
+      final = final.append(ssaprepare.finish(r, physicalbody.select(g.physical, position), lifted, leaves).formed.f);
     }
+    position = position + 1;
   }
   if (exiting) {
     check(sub, initial, assertion_names(initial), false);

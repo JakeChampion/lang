@@ -33,6 +33,7 @@ import "./ircore";
 import "./ssa";
 import "./ssa_lift";
 import "./physicalbody";
+import "./ssaprepare";
 
 // fr_ldr / fr_str load/store `reg` at the x29-relative frame offset `off`
 // (always <= 0 — locals live below the frame pointer). Inlined copies of
@@ -3783,15 +3784,14 @@ function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
   return pref;
 }
 
-// emit_ssa_function_arm64 emits one lifted function: the stack machine's frame
-// record, the parameters loaded from the caller's slots into their homes, each
-// block behind its label, and the literal pool the constants may have used.
-// The lift gives every declared local a zero and every loop a phi per local,
-// most of them never read; prune_dead takes those out before the allocator
-// sees them.
-function emit_ssa_function_arm64(lifted: ssa.SFunc, label_name: string, r: irtables.LowerResult, seen_vals: i32[], seen_slots: i32[], s: asmcore.EmitState): asmcore.EmitState {
+// Allocate and emit the prepared register form, retaining its original lowering
+// for target entry paths and its lift mappings for debug locations.
+function emit_ssa_function_arm64(prepared: ssaprepare.Body, label_name: string, s: asmcore.EmitState): asmcore.EmitState {
+  let r = prepared.lowered;
+  let seen_vals = prepared.seen_vals;
+  let seen_slots = prepared.seen_slots;
   s = asmcore.EmitState { ...s, dw_first: true };
-  let formed: ssa.Formed = ssa.register_form(lifted);
+  let formed: ssa.Formed = prepared.formed;
   let f: ssa.SFunc = formed.f;
   let imm: ssa.Imms = ssa.imm_operands(f, 0i64, 4095i64, ssa_imm_right(), ssa_imm_left());
   let alloc: ssa.Alloc = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, false, imm.is_imm, ssa_arg_prefs(f, s));
@@ -3885,7 +3885,7 @@ function ssa_dbg_locs(reg_of: i32[], save: i32, want: boolean): string[] {
 // is refused naming the op (ircore.ssa_refuse). Every op the lowering
 // produces has an arm, so a refusal here is a compiler bug, not a program
 // the backend does not cover.
-function emit_ssa_function(r: irtables.LowerResult, label_name: string, s: asmcore.EmitState): asmcore.EmitState {
+function emit_ssa_function(r: irtables.LowerResult, selected: physicalbody.Selected, label_name: string, s: asmcore.EmitState): asmcore.EmitState {
   let t_lift: i64 = monotonic_ns();
   let lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(s.kinds, label_name, r.n_params, r.n_locals, r.ops, r.dbg_slots.len() > 0 && s.records());
   let why: string = lifted.bail;
@@ -3901,7 +3901,7 @@ function emit_ssa_function(r: irtables.LowerResult, label_name: string, s: asmco
   }
   let lift_ms: i64 = (monotonic_ns() - t_lift) / 1000000i64;
   let t_emit: i64 = monotonic_ns();
-  s = emit_ssa_function_arm64(ssa.inline_leaves(lifted.func, s.leaves), label_name, r, lifted.seen_vals, lifted.seen_slots, s);
+  s = emit_ssa_function_arm64(ssaprepare.finish(r, selected, lifted, s.leaves), label_name, s);
   // Under the report, a function whose lift or emit took over 200 ms is
   // named with both times: the whole-compiler build is where a phase's
   // cost shows, and this is how a slow one is found.
@@ -3915,26 +3915,26 @@ function emit_ssa_function(r: irtables.LowerResult, label_name: string, s: asmco
 // emit_function_via_ir_pre emits declaration `fd`'s lowered body `r` through
 // the register path, as arm64: x29 frame pointer, params read from the
 // caller's rt-stack at [x29, #16+i*16], the result in x0.
-pub function emit_function_via_ir_pre(r: irtables.LowerResult, fd: parser.FuncDecl, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
+pub function emit_function_via_ir_pre(r: irtables.LowerResult, selected: physicalbody.Selected, fd: parser.FuncDecl, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
   // Methods get the receiver-type-qualified label `__fn_<Type>.<name>`.
   let label_name: string = fd.name;
   if (fd.receiver_type.len() > 0) {
     label_name = util.base_type_name(fd.receiver_type) + "." + fd.name;
   }
-  return emit_function_via_ir_named(r, label_name, false, s, vgate);
+  return emit_function_via_ir_named(r, selected, label_name, false, s, vgate);
 }
 
 // emit_function_via_ir_named is the body above with the label supplied rather
 // than read from a declaration, so a body the semantic pipeline produced — which
 // carries its own name — emits through the same path. The x86 twin is
 // asm_ir.emit_function_via_ir_named.
-pub function emit_function_via_ir_named(r: irtables.LowerResult, label_name: string, weak: boolean, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
+pub function emit_function_via_ir_named(r: irtables.LowerResult, selected: physicalbody.Selected, label_name: string, weak: boolean, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
   if (weak) {
     s = s.write(".weak __fn_" + asmcore.sanitize_label(label_name) + "\n");
   }
   ircore.lower_failed_refuse(label_name, r);
   irverifygate.verify_or_refuse(label_name, r.ops, r.n_params, r.n_locals, vgate);
-  return emit_ssa_function(r, label_name, s);
+  return emit_ssa_function(r, selected, label_name, s);
 }
 
 // emit_stack_op emits one op on the machine stack, as asm_ir.fern's does:
@@ -5779,7 +5779,7 @@ function emit_ir_start(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState
 // emit_body emits the whole-program function bodies and `_start`. `cache` is
 // the program's lowered bodies, indexed by mod.funcs position, with the
 // declaration-less bodies on its tail.
-pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean, cache: irtables.LowerResult[]): asmcore.EmitState {
+pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean, cache: irtables.LowerResult[], physical: physicalbody.Collection): asmcore.EmitState {
   s = asmcore.with_funcs(s, mod.funcs);
   s = s.write("    .globl _start\n");
   s = s.write("    .text\n");
@@ -5792,13 +5792,13 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
     // A template the substitution superseded has no body: its instances
     // are on the cache tail.
     if (!r.superseded) {
-      s = emit_function_via_ir_pre(r, mod.funcs[fi], s, vgate);
+      s = emit_function_via_ir_pre(r, physicalbody.select(physical, fi), mod.funcs[fi], s, vgate);
     }
     fi = fi + 1;
   }
   // Cache entries past the declarations are bodies with no FuncDecl, each
   // naming the symbol it defines.
-  s = emit_named_bodies(cache, mod.funcs.len(), s, vgate);
+  s = emit_named_bodies(cache, physical, mod.funcs.len(), s, vgate);
   irverifygate.report(vgate);
   // Ahead of _start, which gates its envp save on the heap need. close_needs
   // is what turns a root like str_concat into that heap need, so reading it
@@ -5866,11 +5866,11 @@ function rt_arm64_str_eq(): string {
 
 // Bodies with no FuncDecl, each naming the symbol it defines; `.weak`, so a
 // sibling unit emitting the same one co-links, and once per file.
-function emit_named_bodies(cache: irtables.LowerResult[], from: i32, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
+function emit_named_bodies(cache: irtables.LowerResult[], physical: physicalbody.Collection, from: i32, s: asmcore.EmitState, vgate: irverifygate.Gate): asmcore.EmitState {
   let xi: i32 = from;
   while (xi < cache.len()) {
     if (!s.has_named(cache[xi].name)) {
-      s = emit_function_via_ir_named(cache[xi], cache[xi].name, true, s, vgate).with_named(cache[xi].name);
+      s = emit_function_via_ir_named(cache[xi], physicalbody.select(physical, xi), cache[xi].name, true, s, vgate).with_named(cache[xi].name);
     }
     xi = xi + 1;
   }
@@ -5887,13 +5887,14 @@ pub function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore
   let vgate: irverifygate.Gate = irverifygate.gate_unreported(irtables.fn_sig_index(fns), s.kinds.pops);
   let lowered: physicalbody.Lowered = s.rt_lower(src);
   let bodies: irtables.LowerResult[] = lowered.bodies;
+  let physical = physicalbody.collection(lowered);
   let i: i32 = 0;
   while (i < fns.len()) {
-    s = emit_function_via_ir_pre(bodies[i], fns[i], s, vgate);
+    s = emit_function_via_ir_pre(bodies[i], physicalbody.select(physical, i), fns[i], s, vgate);
     i = i + 1;
   }
   // Past the declarations: the drop helpers the typed lowering defines.
-  return emit_named_bodies(bodies, fns.len(), s, vgate);
+  return emit_named_bodies(bodies, physical, fns.len(), s, vgate);
 }
 
 // ======================= IR-PATH RUNTIME =======================
@@ -12686,16 +12687,16 @@ pub function emit_module_ir_gated_sub(mod: parser.Module, darwin: boolean, sub: 
   if (!g.ok) {
     return "";
   }
-  return emit_module_ir_flat(g.im, g.stab, darwin, ircore.inline_tiny_leaves(g.im, g.cache), sub.rt_lower, recs, sub.switches);
+  return emit_module_ir_flat(g.im, g.stab, darwin, ircore.inline_tiny_leaves(g.im, g.cache), g.physical, sub.rt_lower, recs, sub.switches);
 }
 
-function emit_module_ir_flat(mod: parser.Module, stab: irtables.StructTab, darwin: boolean, cache: irtables.LowerResult[], rt: (string) => physicalbody.Lowered, recs: usize, sw: asmcore.Switches): string {
+function emit_module_ir_flat(mod: parser.Module, stab: irtables.StructTab, darwin: boolean, cache: irtables.LowerResult[], physical: physicalbody.Collection, rt: (string) => physicalbody.Lowered, recs: usize, sw: asmcore.Switches): string {
   strbuf_reset();
   let s: asmcore.EmitState = asmcore.new_state();
   s = asmcore.with_funcs(asmcore.with_switches(asmcore.EmitState { ...s, struct_decls: stab, rt_lower: rt, recs: recs }, sw), mod.funcs);
   // emit_body takes the runtime-dependency closure itself, ahead of the _start
   // it ends with.
-  s = emit_body(mod, s, darwin, cache);
+  s = emit_body(mod, s, darwin, cache, physical);
   s = emit_ir_runtime_settled(s, darwin);
   return strbuf_take();
 }
@@ -12714,7 +12715,7 @@ function emit_module_ir_flat(mod: parser.Module, stab: irtables.StructTab, darwi
 // emit_body (the proven single-unit IR path). Caller must have established
 // asm_ir.all_eligible_*_known_view(mod) and seeded nothing (we reset here).
 // The arm64 twin of asm_ir.emit_module_ir_unit_flat.
-pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, lo: i32, hi: i32, cache: irtables.LowerResult[], rt: (string) => physicalbody.Lowered, sw: asmcore.Switches): string {
+pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, lo: i32, hi: i32, cache: irtables.LowerResult[], physical: physicalbody.Collection, rt: (string) => physicalbody.Lowered, sw: asmcore.Switches): string {
   mod = parser.infer_ret_types_module(mod);
   strbuf_reset();
   let s: asmcore.EmitState = asmcore.new_state();
@@ -12768,10 +12769,10 @@ pub function emit_module_ir_unit_arm64_flat(mod: parser.Module, is_entry: boolea
       }
       s = s.write(".globl __fn_" + asmcore.sanitize_label(gname) + "\n");
     }
-    s = emit_function_via_ir_pre(r, mod.funcs[fi], s, vgate);
+    s = emit_function_via_ir_pre(r, physicalbody.select(physical, fi), mod.funcs[fi], s, vgate);
     fi = fi + 1;
   }
-  s = emit_named_bodies(cache, mod.funcs.len(), s, vgate);
+  s = emit_named_bodies(cache, physical, mod.funcs.len(), s, vgate);
   irverifygate.report(vgate);
   // Fold the whole-program need union (sibling modules' needs) into the entry's
   // single runtime BEFORE _start, so _start's args gating sees a sibling's

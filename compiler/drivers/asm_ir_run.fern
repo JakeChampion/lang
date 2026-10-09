@@ -137,7 +137,7 @@ function run(): i32 {
   // `-ir-needs`: report the module's closed runtime-need set, one per line.
   if (needs_probe) {
     let nt: TypedUnits = typed_units(mod, siblings, target);
-    for nd in asm_ir.module_runtime_needs(nt.u.mods[0], nt.g.im.funcs, nt.g.stab, nt.u.caches[0]) {
+    for nd in asm_ir.module_runtime_needs(nt.u.mods[0], nt.g.im.funcs, nt.g.stab, nt.u.caches[0], nt.u.physical[0]) {
       print(nd + "\n");
     }
     return 0;
@@ -179,7 +179,7 @@ function typed_unit(mod: parser.Module, siblings: parser.Module[], is_entry: boo
   if (is_entry) {
     needs = extra;
   }
-  return asm_ir.emit_module_ir_unit_flat(t.u.mods[0], is_entry, true, ns, needs, t.g.im.funcs, t.g.stab, 0, 0 - 1, t.u.caches[0], t.d.sub.rt_lower, 0 as usize, asmcore.env_switches());
+  return asm_ir.emit_module_ir_unit_flat(t.u.mods[0], is_entry, true, ns, needs, t.g.im.funcs, t.g.stab, 0, 0 - 1, t.u.caches[0], t.u.physical[0], t.d.sub.rt_lower, 0 as usize, asmcore.env_switches());
 }
 
 // The typed lowering checks a whole program, so it lowers `mod` together with

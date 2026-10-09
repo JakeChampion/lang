@@ -302,9 +302,9 @@ function view_keys(v: View, cache_dir: string): ircore.UnitKeys {
 // emit_unit emits unit `idx`'s [lo, hi) function window for `target`.
 function emit_unit(v: View, idx: i32, is_entry: boolean, ns: string, extra: string[], lo: i32, hi: i32, target: string): string {
   if (target == "arm64-linux") {
-    return asm_arm64_ir.emit_module_ir_unit_arm64_flat(v.u.mods[idx], is_entry, true, ns, extra, v.all_funcs, v.stab, lo, hi, v.u.caches[idx], v.rt, asmcore.env_switches());
+    return asm_arm64_ir.emit_module_ir_unit_arm64_flat(v.u.mods[idx], is_entry, true, ns, extra, v.all_funcs, v.stab, lo, hi, v.u.caches[idx], v.u.physical[idx], v.rt, asmcore.env_switches());
   }
-  return asm_ir.emit_module_ir_unit_flat(v.u.mods[idx], is_entry, true, ns, extra, v.all_funcs, v.stab, lo, hi, v.u.caches[idx], v.rt, 0 as usize, asmcore.env_switches());
+  return asm_ir.emit_module_ir_unit_flat(v.u.mods[idx], is_entry, true, ns, extra, v.all_funcs, v.stab, lo, hi, v.u.caches[idx], v.u.physical[idx], v.rt, 0 as usize, asmcore.env_switches());
 }
 
 // unit_cache_file returns the object path for ONE emitted unit, or "" when the
