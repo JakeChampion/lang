@@ -97,6 +97,28 @@ function main(): i32 {
 }`,
 			want: `undefined identifier "nosuch"`,
 		},
+		// The type-mismatch half: an arithmetic operator over a non-integer
+		// has no result type, so its binding carries none to mismatch later.
+		{
+			name: "failed arithmetic, then assigned and passed",
+			src: `function f(s: string): i32 { return s.len(); }
+function main(): i32 {
+    let b = 1 + "x";
+    let c: string = b;
+    return f(b);
+}`,
+			want: `operator "+" requires an integer type`,
+		},
+		{
+			name: "failed arithmetic, then compared and multiplied",
+			src: `function main(): i32 {
+    let b = 2 * "x";
+    let c: i32 = b * 2;
+    if (b > 3) { return c; }
+    return b;
+}`,
+			want: `operator "*" requires an integer type`,
+		},
 	}
 
 	for _, tc := range cases {

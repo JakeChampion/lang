@@ -18936,6 +18936,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				if isInteger(lt) && isInteger(rt) {
 					c.errfCode(n.P, "E009", "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
 				}
+				// A non-integer operand was reported above; its result is
+				// unknown, so nothing downstream reports it again (#5317).
+				if !isInteger(lt) || !isInteger(rt) {
+					return nil
+				}
 				return ast.NumberType{}
 			}
 			c.settleNumeric(n.Left, common)
@@ -18982,6 +18987,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				if isInteger(lt) && isInteger(rt) {
 					c.errfCode(n.P, "E009", "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
 				}
+				// A non-integer operand was reported above; its result is
+				// unknown, so nothing downstream reports it again (#5317).
+				if !isInteger(lt) || !isInteger(rt) {
+					return nil
+				}
 				return ast.NumberType{}
 			}
 			c.settleNumeric(n.Left, common)
@@ -19022,6 +19032,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				if isInteger(lt) && isInteger(rt) {
 					c.errfCode(n.P, "E009", "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
 				}
+				// A non-integer operand was reported above; its result is
+				// unknown, so nothing downstream reports it again (#5317).
+				if !isInteger(lt) || !isInteger(rt) {
+					return nil
+				}
 				return ast.EnumType{Name: "Option", Args: []ast.Type{ast.NumberType{}}}
 			}
 			// A pair of unsuffixed literals (`40 +? 2`) leaves `common`
@@ -19060,6 +19075,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				// typo (`i32 - "x"`).
 				if isInteger(lt) && isInteger(rt) {
 					c.errfCode(n.P, "E009", "operator %q requires both operands to share an integer type; got %s and %s — use `as` for explicit conversion", n.Op, lt, rt)
+				}
+				// A non-integer operand was reported above; its result is
+				// unknown, so nothing downstream reports it again (#5317).
+				if !isInteger(lt) || !isInteger(rt) {
+					return nil
 				}
 				return ast.NumberType{}
 			}
