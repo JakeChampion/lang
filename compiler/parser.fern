@@ -813,9 +813,7 @@ function parse_struct_destructure(p: Par, struct_name: string, at: string, line:
   }
   let (init_expr, ip) = parse_expr(p);
   p = ip;
-  if (p.peek_punct() == ";") {
-    p = p.advance();
-  }
+  p = p.end_of(init_expr);
   return (s_var_at(bindings, destr_marker(at, fields_rest, "@sd:" + struct_name + ":" + fields), init_expr, line, col), p);
 }
 
@@ -1822,6 +1820,32 @@ function (p: Par) advance(): Par {
 // required: native's P001 "expected type, got X".
 function (p: Par) expected_type(): Par {
   return Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:expected type, got \"" + tok_spelling(p.peek()) + "\"")) };
+}
+
+// expect_semi consumes the `;` a statement or declaration ends with, or
+// records native's P001 "expected \";\", got X" where it is missing.
+function (p: Par) expect_semi(): Par {
+  if (p.peek_punct() == ";") {
+    return p.advance();
+  }
+  // A refused expression can end by consuming the `;` itself, and no
+  // statement starts with `)` or `]`, so the next one reports that token.
+  if (p.pos > 0 && tok_spelling(p.toks[p.pos - 1]) == ";" || p.peek_punct() == ")" || p.peek_punct() == "]") {
+    return p;
+  }
+  return Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:expected \";\", got \"" + tok_spelling(p.peek()) + "\"")) };
+}
+
+// end_of is expect_semi after a statement ending in `e`. An expression the
+// parser refused has reported already.
+function (p: Par) end_of(e: ast.Expr): Par {
+  if let ast.ExprUnknown(_) = e {
+    if (p.peek_punct() == ";") {
+      return p.advance();
+    }
+    return p;
+  }
+  return p.expect_semi();
 }
 
 function (p: Par) with_no_struct(v: boolean): Par {
@@ -5625,9 +5649,7 @@ function parse_block_body_nested(p: Par, tail_value: boolean): (ast.Stmt[], Par)
       }
       let (usrc_expr, usrc_p) = parse_expr(p);
       p = usrc_p;
-      if (p.peek_punct() == ";") {
-        p = p.advance();
-      }
+      p = p.end_of(usrc_expr);
       // The rest of the block is the callback body (recurse so a further
       // `use` chains).
       let (rest_body, rest_p) = parse_block_body(p, false);
@@ -6815,9 +6837,7 @@ function parse_for_stmt(p: Par): (ast.Stmt, Par) {
         p = fccond_p;
         condexpr = fccond_expr;
       }
-      if (p.peek_punct() == ";") {
-        p = p.advance();
-      }
+      p = p.expect_semi();
       let stepone: ast.Stmt[] = [];  // STEP (no `;`, stops at `)`)
       if (p.peek_punct() != ")") {
         let (fcstep_stmt, fcstep_p) = parse_stmt(p);
@@ -7518,9 +7538,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
       }
       let (tdinit_expr, tdinit_p) = parse_expr(p);
       p = tdinit_p;
-      if (p.peek_punct() == ";") {
-        p = p.advance();
-      }
+      p = p.end_of(tdinit_expr);
       return (s_var_at(tdnames, destr_marker(at_bind, false, ""), tdinit_expr, vline, vcol), p);
     }
     // `let 3 = n else { … };` — a LITERAL or RANGE head, including
@@ -7544,9 +7562,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
           p = lel_p.advance();  // consume `else`
           let (lel_else, lel_ep) = parse_block(p);
           p = lel_ep;
-          if (p.peek_punct() == ";") {
-            p = p.advance();
-          }
+          p = p.expect_semi();
           let lel_rest: ast.Stmt[] = [];
           while (p.peek_punct() != "}" && !p.at_end()) {
             let (lel_rs, lel_rp) = parse_stmt(p);
@@ -7613,9 +7629,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
           p = lsp_p.advance();  // consume `else`
           let (lsp_else, lsp_ep) = parse_block(p);
           p = lsp_ep;
-          if (p.peek_punct() == ";") {
-            p = p.advance();
-          }
+          p = p.expect_semi();
           // The rest of the enclosing block is the success arm, so
           // the bindings stay live for it — see the note on the
           // single-binding path below.
@@ -7737,9 +7751,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
       p = p.advance();  // consume `else`
       let (le_else_body, le_else_p) = parse_block(p);
       p = le_else_p;
-      if (p.peek_punct() == ";") {
-        p = p.advance();
-      }
+      p = p.expect_semi();
       // Consume the rest of the enclosing block as the success
       // body, mirroring parse_block's loop (incl. its
       // progress guard so a malformed statement can't spin).
@@ -7764,9 +7776,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
       le_arms = le_arms.append(ast.MatchArm { pattern: p_wildcard(), body: le_else_body, line: vline, col: vcol, guard: e_bool(true), has_guard: false, alt_cont: false });
       return (s_match_origin(init_expr, le_arms, vline, vcol, "let_else"), p);
     }
-    if (p.peek_punct() == ";") {
-      p = p.advance();
-    }
+    p = p.end_of(init_expr);
     // `let f: () => f64 = () => <body>;` — the binding already states the
     // lambda's return type, so stamp it rather than leaving irt_guess to
     // reconstruct it from the body. Inference can only answer for the
@@ -7783,9 +7793,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
     p = p.advance();
     let (val_expr, val_p) = parse_expr(p);
     p = val_p;
-    if (p.peek_punct() == ";") {
-      p = p.advance();
-    }
+    p = p.end_of(val_expr);
     return (s_return_at(val_expr, rline, rcol), p);
   }
   if (kw == "break") {
@@ -7804,9 +7812,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
       blbl = bid;
       p = p.advance();
     }
-    if (p.peek_punct() == ";") {
-      p = p.advance();
-    }
+    p = p.expect_semi();
     return (ast.StmtBreak { tag: 0, line: bkline, col: bkcol, label: blbl }, p);
   }
   if (kw == "continue") {
@@ -7822,9 +7828,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
       clbl = cid;
       p = p.advance();
     }
-    if (p.peek_punct() == ";") {
-      p = p.advance();
-    }
+    p = p.expect_semi();
     return (ast.StmtContinue { tag: 0, line: ckline, col: ckcol, label: clbl }, p);
   }
   // Expression statement — or (compound) assignment if `=`,
@@ -7888,9 +7892,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
             }
           }
           if (okchain && chain.len() > 0) {
-            if (p.peek_punct() == ";") {
-              p = p.advance();
-            }
+            p = p.end_of(av_expr);
             let stmts: ast.Stmt[] = [];
             // innermost target gets the final value, then each
             // earlier target copies from the one to its right.
@@ -7907,9 +7909,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
         _ => {}
       }
     }
-    if (p.peek_punct() == ";") {
-      p = p.advance();
-    }
+    p = p.end_of(av_expr);
     let rhs: ast.Expr = av_expr;
     // Dispatch on the lvalue shape: bare ident → StmtAssign;
     // `arr[idx]` → desugar to the builtin __set_index(arr, idx,
@@ -7968,9 +7968,7 @@ function parse_stmt_at(p: Par): (ast.Stmt, Par) {
       }
     }
   }
-  if (p.peek_punct() == ";") {
-    p = p.advance();
-  }
+  p = p.end_of(e_expr);
   return (s_expr(e_expr), p);
 }
 
@@ -8662,8 +8660,14 @@ function parse_type_ident_led(p: Par, base: string): (string, string, Par) {
       continue;
     }
     if (pk == ",") {
-      inner = inner + ", ";
       p = p.advance();
+      // A tuple type takes no trailing comma; a type-argument list does.
+      if (p.peek_punct() == ")") {
+        p = p.expected_type();
+      }
+      if (p.peek_punct() != "]") {
+        inner = inner + ", ";
+      }
       prev_ident = false;
       continue;
     }
@@ -9825,9 +9829,7 @@ function parse_type_alias(p: Par): (TypeAlias, Par) {
     }
     break;
   }
-  if (p.peek_punct() == ";") {
-    p = p.advance();
-  }
+  p = p.expect_semi();
   return (TypeAlias { name: name, variants: variants, variant_args: vargs, variant_lines: vlines, type_params: tparams, line: taline, col: tacol, is_pub: true, is_package: false, module: "" }, p);
 }
 
@@ -9930,12 +9932,16 @@ function parse_enum_decl(p: Par): (string, StructDecl[], string[], i32[], Par) {
       // fire). Codegen indexes them by position.
       fields = fields.append(tr);
       let pnum: i32 = 1;
-      while (p.peek_punct() == ",") {
-        p = p.advance();
+      let (pmore, pmore_p) = p.more_elems(")");
+      p = pmore_p;
+      while (pmore) {
         let (tr2, tr2_p) = parse_field_type(p, "__ev" + dl_itoa(pnum));
         p = tr2_p;
         fields = fields.append(tr2);
         pnum = pnum + 1;
+        let (pm2, pm2_p) = p.more_elems(")");
+        pmore = pm2;
+        p = pm2_p;
       }
       if (p.peek_punct() == ")") {
         p = p.advance();
@@ -9992,9 +9998,7 @@ function parse_import(p: Par): (Import, ast.Stmt[], Par) {
       bad = bad.append(decl_sentinel(p, "malformed import alias: its name could not be read (a keyword such as `type` or `match` cannot be a name)"));
     }
   }
-  if (p.peek_punct() == ";") {
-    p = p.advance();
-  }
+  p = p.expect_semi();
   return (Import { path: path, is_reexport: false, reexport_names: [], alias: alias, line: imp_line, resolved: "" }, bad, p);
 }
 
@@ -10050,9 +10054,7 @@ function parse_pubuse(p: Par): (Import, ast.Stmt[], Par) {
       p = p.advance();
     }
   }
-  if (p.peek_punct() == ";") {
-    p = p.advance();
-  }
+  p = p.expect_semi();
   return (Import { path: path, is_reexport: true, reexport_names: names, alias: "", line: pu_line, resolved: "" }, bad, p);
 }
 
@@ -10088,9 +10090,7 @@ function parse_const_decl(p: Par): (FuncDecl, Par) {
   }
   let (er_expr, er_p) = parse_expr(p);
   p = er_p;
-  if (p.peek_punct() == ";") {
-    p = p.advance();
-  }
+  p = p.end_of(er_expr);
   let body: ast.Stmt[] = [];
   body = body.append(s_return(er_expr));
   let noparams: ast.ParamDecl[] = [];
@@ -26204,9 +26204,7 @@ function parse_impl_decl(p: Par): (FuncDecl[], string, string, string[], string[
       }
       let (ab_ty, ab_fnret, ab_p) = parse_type_name(p);
       p = ab_p;
-      if (p.peek_punct() == ";") {
-        p = p.advance();
-      }
+      p = p.expect_semi();
       if (ab_name.len() > 0) {
         assoc_names = assoc_names.append(ab_name);
         assoc_values = assoc_values.append(subst_self(ab_ty, impl_type));
@@ -27078,9 +27076,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
         } else {
           trait_bad = trait_bad.append(decl_sentinel(p, "malformed associated type declaration: its name could not be read (a keyword such as `type` or `match` cannot be a name)"));
         }
-        if (p.peek_punct() == ";") {
-          p = p.advance();
-        }
+        p = p.expect_semi();
         continue;
       }
       if (p.peek_keyword() == "function") {

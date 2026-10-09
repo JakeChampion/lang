@@ -1888,7 +1888,7 @@ func (p *parser) parseStructDecl() (*ast.StructDecl, error) {
 				return nil, err
 			}
 			typeParams = append(typeParams, pname.Text)
-			if _, ok := p.accept(lexer.Punct, ","); ok {
+			if p.moreElems("]") {
 				continue
 			}
 			break
@@ -1989,7 +1989,7 @@ func (p *parser) parseEnumDecl() (*ast.EnumDecl, error) {
 				return nil, err
 			}
 			typeParams = append(typeParams, pname.Text)
-			if _, ok := p.accept(lexer.Punct, ","); ok {
+			if p.moreElems("]") {
 				continue
 			}
 			break
