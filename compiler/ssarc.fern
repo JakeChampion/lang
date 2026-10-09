@@ -6325,6 +6325,9 @@ function os_floor_process_site(own r: irtables.LowerResult, ins: ssa.SInst): Low
   if (ins.str == "proc_exec_as") {
     return Lowered { found: true, r: emit(r, ir.op_proc_exec_as()) };
   }
+  if (ins.str == "pipe") {
+    return Lowered { found: true, r: emit(r, ir.op_pipe()) };
+  }
   if (ins.str == "wasm_timer_pollable") {
     return Lowered { found: true, r: emit(r, ir.op_wasm_timer_pollable()) };
   }

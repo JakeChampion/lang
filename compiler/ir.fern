@@ -1104,6 +1104,13 @@ pub function op_window_size(): Op {
   return op0(276);
 }
 
+// `pipe` pops nothing and pushes Result[Pipe, IoError]: one pipe(2), both
+// ends close-on-exec. Refused on wasm, which has no process to hand an end to
+// (capability `proc`).
+pub function op_pipe(): Op {
+  return op0(408);
+}
+
 // `termios_get` pops [fd] and pushes Result[i64[], IoError]: the terminal's
 // line settings as the KERNEL's own words — four flag words, the line
 // discipline, then each control character. `termios_set` pops [fd, when,
@@ -3211,6 +3218,9 @@ function kind_id_len4(name: string): i32 {
   }
   if (c == b'p' && name == "poll") {
     return 187;
+  }
+  if (c == b'p' && name == "pipe") {
+    return 408;
   }
   if (c == b's' && name == "stat") {
     return 175;
@@ -5470,6 +5480,9 @@ function buf_kind_name(id: i32): string {
 // extension tags beyond kind_count() (struct_copy=198 … buf_free=297)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
+  if (id == 408) {
+    return "pipe";
+  }
   if (id == 406) {
     return "set_extproc";
   }
@@ -5688,7 +5701,7 @@ function pops0(t: i32): boolean {
     || t == 180  // args
     || t == 182 || t == 183 || t == 184  // monotonic_ns, now_ns, now_unix_ms
     || t == 186  // random_i32
-    || t == 207 || t == 211  // raw_environ, proc_fork
+    || t == 207 || t == 211 || t == 408  // raw_environ, proc_fork, pipe
     || t == 331  // raw_splice_pipe
     || t == 287  // raw_cover
     || t == 288  // line
@@ -8341,8 +8354,9 @@ pub function op_allocates(tag: i32): boolean {
   if (tag == 401) {
     return true;
   }
-  // window_size boxes a fresh WinSize struct + a Result wrapper.
-  if (tag == 276) {
+  // window_size boxes a fresh WinSize struct + a Result wrapper, and pipe a
+  // fresh Pipe.
+  if (tag == 276 || tag == 408) {
     return true;
   }
   // fd_stat boxes the same pair; reader_seek, reader_splice and fd_flags
