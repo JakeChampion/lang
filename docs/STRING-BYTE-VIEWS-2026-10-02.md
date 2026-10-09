@@ -22,8 +22,11 @@ proof lets native count operations on ordinary references omit the mask.
 Typed source anchors keep backing storage live through calls, aliases,
 aggregates and returns. Descriptors that can be handed back through a byte
 view are excluded from frame placement. Array lending preserves its source's
-ownership. Byte-view slicing keeps the existing copying contract and checks
-bounds before allocating.
+ownership. Byte-view slicing checks bounds before allocating. A
+string-backed view's sub-range is the string slice, retagged: on x86-64 and
+arm64 a counted box over the source's bytes (#8635), on WASM a copy, since
+an inline string has no data pointer to share. An array-backed view's
+sub-range copies.
 
 For scalar reads, lowering decodes a view's data pointer and length where
 the value is defined, including parameter entry and phi-edge assignment.
@@ -34,8 +37,10 @@ slicing use the same bounds abort as other array operations.
 ## Validation
 
 `TestSelfHostByteViewRuntime` covers heap and literal strings, NUL, Unicode,
-empty input, both receivers, aliases, records, tuples, arrays, maps, closures,
-options, slices and loop-carried views that swap backing layouts. Allocation
+empty input, both receivers, aliases, records, tuples, arrays, maps,
+options, slices, sub-ranges read past their source's last use, and
+loop-carried views that swap backing layouts. A sub-range's allocation is
+pinned not to grow with its length on the register backends. Allocation
 counts exclude source construction. Sanitized runs require balanced counts
 and zero live bytes. `TestSelfHostByteViewRC` checks tagged and ordinary
 pointers through value and fused-branch uniqueness tests, alias retention,
