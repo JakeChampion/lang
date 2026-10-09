@@ -8,6 +8,7 @@ import "../ssacreditreuse" as reuse;
 import "../ssacredithelper" as helper;
 import "../util";
 import "./ssacreditsparse" as sparse;
+import "./ssacreditconverged" as converged;
 
 function require(ok: boolean, id: i32): void {
   if (!ok) {
@@ -30,8 +31,12 @@ function body(sub: ircore.Sub, name: string): ssa.SFunc {
 }
 
 function source(): string {
+  return source_with_assertion("@noinline\nfunction require(ok: boolean, code: i32): void { if (!ok) { exit(code); } }\n");
+}
+
+function source_with_assertion(assertion: string): string {
   return "struct Leaf { n: i32 }\nstruct Parent { left: Leaf, right: Leaf }\nstruct Other { first: Leaf, second: Leaf }\n"
-    + "@noinline\nfunction require(ok: boolean, code: i32): void { if (!ok) { exit(code); } }\n"
+    + assertion
     + "@noinline\nfunction parent(left: Leaf, right: Leaf): Parent { return Parent { left: left, right: right }; }\n"
     + "@noinline\nfunction replace(own p: Parent, child: Leaf): Other { let n = p.left.n + p.right.n; require(n > 0, 1); return Other { first: child, second: child }; }\n"
     + "@noinline\nfunction handoff(flag: boolean, left: Leaf, right: Leaf, incoming: Leaf): Other { let p = if (flag) { parent(left, right) } else { parent(right, left) }; return replace(p, incoming); }\n"
@@ -202,6 +207,7 @@ function unsafe_storage(name: string, unique: boolean): ssa.SFunc {
 
 function target_checks(target: string): void {
   let sub = semlower.driven(parser.parse_module(lexer.tokenize(source())), target).sub;
+  converged.run(source_with_assertion("function require(ok: boolean, code: i32): void { if (ok) { return; } return; }\n"), target);
   let f = body(sub, "replace");
   let assertion = body(sub, "require");
   expect(check(sub, f, assertion), "replace", "scalar call may exit with unproved caller obligations");
