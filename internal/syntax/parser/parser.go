@@ -2010,21 +2010,19 @@ func (p *parser) parseEnumDecl() (*ast.EnumDecl, error) {
 			}
 			variant := ast.EnumVariant{P: vname.Pos, Name: vname.Text}
 			if _, ok := p.accept(lexer.Punct, "("); ok {
-				if !p.match(lexer.Punct, ")") {
-					for {
-						pt, err := p.parseType()
-						if err != nil {
-							return nil, err
-						}
-						variant.Payloads = append(variant.Payloads, pt)
-						if _, ok := p.accept(lexer.Punct, ","); ok {
-							if p.match(lexer.Punct, ")") {
-								break
-							}
-							continue
-						}
-						break
+				for {
+					pt, err := p.parseType()
+					if err != nil {
+						return nil, err
 					}
+					variant.Payloads = append(variant.Payloads, pt)
+					if _, ok := p.accept(lexer.Punct, ","); ok {
+						if p.match(lexer.Punct, ")") {
+							break
+						}
+						continue
+					}
+					break
 				}
 				if _, err := p.expect(lexer.Punct, ")"); err != nil {
 					return nil, err

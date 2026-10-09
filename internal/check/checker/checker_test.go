@@ -9883,3 +9883,26 @@ function main(): i32 { let b: Box = Box { m: map_new(4), tag: 2 }; return b.tag;
 		t.Errorf("key type argument = %v, want string", call.TypeArgs[0])
 	}
 }
+
+// A bare call of a payloadless variant is calling a value, as in the
+// self-host (#11922). The bare `R` and the qualified `C.R()` construct it.
+func TestPayloadlessVariantCallIsE038(t *testing.T) {
+	for _, tc := range []struct{ src, typ string }{
+		{`enum C { R, B } function main(): i32 { let c: C = R(); return 0; }`, "C"},
+		{`enum T[A] { L, N(A) } function main(): i32 { let x: T[i32] = L(); return 0; }`, "T"},
+		{`function main(): i32 { let x: Option[i32] = None(); return 0; }`, "Option"},
+	} {
+		err := checkSource(t, tc.src)
+		if err == nil || !strings.Contains(err.Error(), "calling non-function value of type "+tc.typ) {
+			t.Errorf("%s: got %v, want a non-function call of %s", tc.src, err, tc.typ)
+		}
+	}
+	for _, ok := range []string{
+		`enum C { R, B } function main(): i32 { let c: C = R; return 0; }`,
+		`enum C { R, B } function main(): i32 { let c: C = C.R(); return 0; }`,
+	} {
+		if err := checkSource(t, ok); err != nil {
+			t.Errorf("%s: rejected, want accepted: %v", ok, err)
+		}
+	}
+}
