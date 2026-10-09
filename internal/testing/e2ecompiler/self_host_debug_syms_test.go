@@ -126,7 +126,7 @@ func TestSelfHostDebugSymsFlag(t *testing.T) {
 // `mix` is a leaf only while its marks stay out of the instruction budget: its
 // statements are under max_leaf_insts, its statements and marks over it.
 func TestSelfHostDebugSymsKeepSplices(t *testing.T) {
-	gcc, _ := x86_64Tooling(t)
+	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
 	cli := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
@@ -175,7 +175,7 @@ function main(): i32 { let b: u8[] = [32, 9, 65, 9, 66]; return count(b) * 10 + 
 		for _, flags := range [][]string{nil, {"-g"}} {
 			out := filepath.Join(dir, target+strings.Join(flags, "")+".s")
 			args := append(append([]string{}, flags...), "-target", target, "-emit", "asm", "-o", out, src, stdlib)
-			if b, err := exec.Command(cli, args...).CombinedOutput(); err != nil {
+			if b, err := runX86_64Bin(runner, cli, args...).CombinedOutput(); err != nil {
 				t.Fatalf("fern-selfhost %v: %v\n%s", args, err, b)
 			}
 			asm, err := os.ReadFile(out)
