@@ -13,6 +13,21 @@ pub struct Origin { producer: i32, symbol: string }
 
 pub struct Origins { producers: Metadata[], declarations: Origin[], extra: Origin[] }
 
+// Rows follow an actual emit cache. A negative producer means no metadata
+// was supplied; it must never resolve to a producer or approve a body.
+pub struct Collection { producers: Metadata[], rows: Origin[] }
+
+pub function no_collection(): Collection {
+  return Collection { producers: [], rows: [] };
+}
+
+pub function origin_at(rows: Origin[], i: i32): Origin {
+  if (i >= 0 && i < rows.len()) {
+    return rows[i];
+  }
+  return Origin { producer: -1, symbol: "" };
+}
+
 pub function no_origins(): Origins {
   return Origins { producers: [], declarations: [], extra: [] };
 }

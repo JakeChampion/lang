@@ -958,6 +958,7 @@ pub function produced(bodies: irtables.LowerResult[], i: i32, fd: parser.FuncDec
 pub struct Lowered {
   ok: boolean,
   cache: irtables.LowerResult[],
+  physical: physicalbody.Collection,
 }
 
 // gate is the eligibility verdict every whole-program emit path asks of the
@@ -967,6 +968,7 @@ pub struct Lowered {
 // The cache it returns is the one the emit reads.
 pub function gate(mod: parser.Module, sub: Sub): Lowered {
   let cache: irtables.LowerResult[] = [];
+  let origins: physicalbody.Origin[] = [];
   let freg: irtables.SigReg = defined_reg(mod, sub.extra);
   let i: i32 = 0;
   while (i < mod.funcs.len()) {
@@ -979,24 +981,31 @@ pub function gate(mod: parser.Module, sub: Sub): Lowered {
           if (strict_ir_on()) {
             strict_ir_refuse(mod.funcs[i].name + " (call to unknown symbol " + o.str + ")");
           }
-          return Lowered { ok: false, cache: [] };
+          return Lowered { ok: false, cache: [], physical: physicalbody.no_collection() };
         }
       } else if (o.kind_tag == 6) {  // const_func
         if (!irtables.sig_reg_has_exact(freg, o.str)) {
           if (strict_ir_on()) {
             strict_ir_refuse(mod.funcs[i].name + " (function value " + o.str + " not defined)");
           }
-          return Lowered { ok: false, cache: [] };
+          return Lowered { ok: false, cache: [], physical: physicalbody.no_collection() };
         }
       }
       j = j + 1;
     }
     cache = cache.append(r);
+    origins = origins.append(physicalbody.origin_at(sub.physical_origins.declarations, i));
     i = i + 1;
   }
   // Already deduped by symbol and conflict-checked where it was built
   // (ssarc.merge_helpers), so the tail is a plain append here.
-  return Lowered { ok: true, cache: util.append_all(cache, sub.extra) };
+  i = 0;
+  for r in sub.extra {
+    cache = cache.append(r);
+    origins = origins.append(physicalbody.origin_at(sub.physical_origins.extra, i));
+    i = i + 1;
+  }
+  return Lowered { ok: true, cache: cache, physical: physicalbody.Collection { producers: sub.physical_origins.producers, rows: origins } };
 }
 
 // Gated is the whole program a register backend emits: the module it gates,
@@ -1007,6 +1016,7 @@ pub struct Gated {
   im: parser.Module,
   stab: irtables.StructTab,
   cache: irtables.LowerResult[],
+  physical: physicalbody.Collection,
 }
 
 // gate_program is the gate both register backends' whole-module emits run, and
@@ -1016,7 +1026,7 @@ pub function gate_program(lifted: parser.Module, sub: Sub): Gated {
   let im: parser.Module = with_records(parser.infer_ret_types_module(script_normalized(lifted)), sub);
   let stab: irtables.StructTab = irtables.struct_tab(im.structs);
   let g: Lowered = gate(im, sub);
-  return Gated { ok: g.ok, im: im, stab: stab, cache: g.cache };
+  return Gated { ok: g.ok, im: im, stab: stab, cache: g.cache, physical: g.physical };
 }
 
 // Units is a gated program cut into one unit per module of a per-module build:
@@ -1024,7 +1034,7 @@ pub function gate_program(lifted: parser.Module, sub: Sub): Gated {
 // the entry's cache carrying the declaration-less bodies on its tail. `loose`
 // lists the functions no part declares (a lifted lambda, a generic clone),
 // which a unit can call whichever unit emits them.
-pub struct Units { mods: parser.Module[], caches: irtables.LowerResult[][], loose: parser.FuncDecl[] }
+pub struct Units { mods: parser.Module[], caches: irtables.LowerResult[][], loose: parser.FuncDecl[], physical: physicalbody.Collection[] }
 
 // split_units assigns every function of `g` to one of `parts` (the modules
 // flatten.bundle_per_module returns, the entry at `entry`). A declaration goes
@@ -1038,26 +1048,31 @@ pub function split_units(g: Gated, parts: parser.Module[], entry: i32): Units {
   let owner: i32[] = unit_owners(g, declared, entry);
   let mods: parser.Module[] = [];
   let caches: irtables.LowerResult[][] = [];
+  let physical: physicalbody.Collection[] = [];
   let k: i32 = 0;
   while (k < parts.len()) {
     let funcs: parser.FuncDecl[] = [];
     let cache: irtables.LowerResult[] = [];
+    let origins: physicalbody.Origin[] = [];
     let i: i32 = 0;
     while (i < g.im.funcs.len()) {
       if (owner[i] == k) {
         funcs = funcs.append(g.im.funcs[i]);
         cache = cache.append(g.cache[i]);
+        origins = origins.append(physicalbody.origin_at(g.physical.rows, i));
       }
       i = i + 1;
     }
     if (k == entry) {
       while (i < g.cache.len()) {
         cache = cache.append(g.cache[i]);
+        origins = origins.append(physicalbody.origin_at(g.physical.rows, i));
         i = i + 1;
       }
     }
     mods = mods.append(parser.Module { ...g.im, funcs: funcs, imports: parts[k].imports });
     caches = caches.append(cache);
+    physical = physical.append(physicalbody.Collection { producers: g.physical.producers, rows: origins });
     k = k + 1;
   }
   let loose: parser.FuncDecl[] = [];
@@ -1068,7 +1083,7 @@ pub function split_units(g: Gated, parts: parser.Module[], entry: i32): Units {
     }
     i = i + 1;
   }
-  return Units { mods: mods, caches: caches, loose: loose };
+  return Units { mods: mods, caches: caches, loose: loose, physical: physical };
 }
 
 // The lowering spells a `str` receiver `string`; a part's declaration still

@@ -58,7 +58,7 @@ function main(): i32 {
   if (av[1] == "wasm32-wasi") {
     let wm = ircore.with_records(wasm_ir.route_normalized(d.full), d.sub);
     let l = ircore.gate(wm, d.sub);
-    g = ircore.Gated { ok: l.ok, im: wm, stab: irtables.struct_tab(wm.structs), cache: l.cache };
+    g = ircore.Gated { ok: l.ok, im: wm, stab: irtables.struct_tab(wm.structs), cache: l.cache, physical: l.physical };
   }
   if (!g.ok) { return 3; }
   let cache: irtables.LowerResult[] = [];
