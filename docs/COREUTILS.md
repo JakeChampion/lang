@@ -4171,6 +4171,8 @@ replacement a macOS build uses lets the child exit 127, so GNU there says
 `with FILE=…, exit 127 from command: …`. This forks and execs, carries a failed
 exec's errno back over a close-on-exec pipe, and gives the glibc answer on
 every host.
+On wasm, which has no process to start, `--filter` says it is not supported
+on this system and exits 1; the rest of split builds and runs there.
 
 **`split --hex-suffixes=FROM` where FROM holds a hex LETTER is not
 reproduced.** GNU 9.4 seeds its suffix counter with `FROM[i] - '0'`, which is
