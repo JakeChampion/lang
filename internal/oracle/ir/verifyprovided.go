@@ -261,6 +261,8 @@ var providedSigs = map[string]providedSig{
 	"__aes_expand_key":                 {1, rWord},
 	"__aes_ctr32":                      {3, rWord},
 	"__ghash":                          {3, rWord},
+	"__sha256_hw":                      {0, rWord},
+	"__sha256_hw_blocks":               {2, rWord},
 	"__ct_public":                      {1, rVoid},
 	"__http_entry":                     {2, rVoid},
 	"__load_i32":                       {1, rWord},

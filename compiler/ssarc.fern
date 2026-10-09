@@ -6668,6 +6668,12 @@ function byte_scan_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "__ghash") {
     return Lowered { found: true, r: emit(r, ir.packed(ir.op_ghash())) };
   }
+  if (ins.str == "__sha256_hw") {
+    return Lowered { found: true, r: emit(r, ir.op_sha256_hw()) };
+  }
+  if (ins.str == "__sha256_hw_blocks") {
+    return Lowered { found: true, r: emit(r, ir.packed(ir.op_sha256_hw_blocks())) };
+  }
   if (ins.str == "__sum_bytes") {
     return Lowered { found: true, r: emit(r, ir.op_sum_bytes()) };
   }

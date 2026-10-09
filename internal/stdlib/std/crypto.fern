@@ -94,6 +94,11 @@ function __put_le32(own d: u8[], at: i32, v: u32): u8[] {
   return d;
 }
 
+// A little-endian word read back.
+function __get_le32(b: u8[], at: i32): u32 {
+  return b[at] as u32 | b[at + 1] as u32 << 8 | b[at + 2] as u32 << 16 | b[at + 3] as u32 << 24;
+}
+
 function __put_be64(own d: u8[], at: i32, v: u64): u8[] {
   let i: i32 = 0;
   while (i < 8) {
@@ -804,10 +809,30 @@ pub function sha224_new(): Sha256 {
 }
 
 // __sha256_blocks folds `nblocks` 64-byte blocks of `bs`, starting at byte
-// `from`, into the state. Generated: the rounds are unrolled with the working
-// variables renamed per round and the message schedule a rolling window of
-// locals, so the loop touches no array but the input.
+// `from`, into the state: with the target's instructions where it has them
+// (__sha256_hw), else with __sha256_soft_blocks's rounds.
 function __sha256_blocks(st: Sha256, bs: [u8], from: i32, nblocks: i32): Sha256 {
+  if (!__sha256_hw()) {
+    return __sha256_soft_blocks(st, bs, from, nblocks);
+  }
+  let words: u8[] = __alloc_u8(32);
+  words = __put_le32(words, 0, st.h0);
+  words = __put_le32(words, 4, st.h1);
+  words = __put_le32(words, 8, st.h2);
+  words = __put_le32(words, 12, st.h3);
+  words = __put_le32(words, 16, st.h4);
+  words = __put_le32(words, 20, st.h5);
+  words = __put_le32(words, 24, st.h6);
+  words = __put_le32(words, 28, st.h7);
+  let out: u8[] = __sha256_hw_blocks(words, bs[from:from + nblocks * 64]);
+  return Sha256 { ...st, h0: __get_le32(out, 0), h1: __get_le32(out, 4), h2: __get_le32(out, 8), h3: __get_le32(out, 12), h4: __get_le32(out, 16), h5: __get_le32(out, 20), h6: __get_le32(out, 24), h7: __get_le32(out, 28) };
+}
+
+// __sha256_soft_blocks is __sha256_blocks without the instructions.
+// Generated: the rounds are unrolled with the working variables renamed per
+// round and the message schedule a rolling window of locals, so the loop
+// touches no array but the input.
+function __sha256_soft_blocks(st: Sha256, bs: [u8], from: i32, nblocks: i32): Sha256 {
   let a: u32 = st.h0;
   let b: u32 = st.h1;
   let c: u32 = st.h2;

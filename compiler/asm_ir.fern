@@ -5676,6 +5676,11 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (ir.is_aes_gcm_op(o.kind_tag)) {
     return emit_aes_gcm_op(o, s);
   }
+  if (o.kind_tag == 410) {  // sha256_hw_blocks
+    // [state, data] -> empty, as sha256_hw's 0 promises: no SHA-256 instructions.
+    s = s.write("    addq $16, %rsp\n    xorl %edi, %edi\n    call __fern_arr_box\n    movq $0, (%rax)\n    pushq %rax\n");
+    return s.need("heap");
+  }
   if (o.kind_tag == 381) {
     return emit_outer_mul_f64(s);
   }
@@ -9858,6 +9863,9 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
   if (o.kind_tag == 79) {  // ptr_width
     // () -> heap-pointer width in bytes. 8 on x86-64.
     s = s.write("    pushq $8\n");
+  } else if (o.kind_tag == 409) {  // sha256_hw
+    // () -> 0: x86-64-v3 has no SHA-256 instructions.
+    s = s.write("    pushq $0\n");
   } else if (o.kind_tag == 74) {  // memcpy
     // [dst, src, n] -> copy n bytes src->dst (rep movsb), push dummy 0.
     // n is on top, then src, then dst (the lowering order). Mirrors the
