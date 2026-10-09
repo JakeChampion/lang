@@ -6,6 +6,7 @@ import "../ir";
 import "../ssa";
 import "../ssa_lift";
 import "../ssacreditreuse" as reuse;
+import "./ssacreditsparse" as sparse;
 
 function require(ok: boolean, id: i32): void {
   if (!ok) {
@@ -28,6 +29,10 @@ function expect(f: ssa.SFunc, d: ssa.SFunc, r: ssa.SFunc, ok: boolean, why: stri
   if (p.ok != ok || p.function_name != f.name || p.message != why) {
     print(p.function_name + ": " + p.message);
     exit(id);
+  }
+  if (f.nvals < 2147483647) {
+    let mapped = reuse.check(sparse.rename(f), d, r, "Parent");
+    require(mapped.ok == p.ok && mapped.function_name == p.function_name && mapped.message == p.message, id);
   }
 }
 
@@ -69,6 +74,26 @@ function mutation(body: irtables.LowerResult, mode: i32): irtables.LowerResult {
   }
   require(hits == 1, 3);
   return irtables.LowerResult { ...body, ops: ops };
+}
+
+function sparse_checks(f: ssa.SFunc, d: ssa.SFunc, r: ssa.SFunc): void {
+  let mapped = sparse.rename(f);
+  expect(sparse.hole(mapped, 0), d, r, false, "undefined reuse operand", 80);
+  expect(sparse.hole(mapped, 1), d, r, false, "invalid acyclic phi operand", 81);
+  expect(sparse.hole(mapped, 2), d, r, false, "undefined reuse operand", 82);
+  let blocks: ssa.SBlock[] = [];
+  let changed = false;
+  for b in mapped.blocks {
+    let term = b.term;
+    if (!changed && term.kind_tag == 3) {
+      term = ssa.STerm { ...term, cond: 0 };
+      changed = true;
+    }
+    blocks = blocks.append(ssa.SBlock { ...b, term: term });
+  }
+  require(changed, 83);
+  expect(ssa.SFunc { ...mapped, blocks: blocks }, d, r, false, "undefined reuse operand", 84);
+  expect(ssa.register_form(f).f, d, r, true, "proved guarded two-child partial replacement", 85);
 }
 
 function physical_mutation(f: ssa.SFunc, mode: i32): ssa.SFunc {
@@ -431,6 +456,7 @@ function target_checks(target: string): void {
   let f = lift(body);
   let d = lift(drops[0]);
   let r = lift(releases[0]);
+  sparse_checks(f, d, r);
   child_drop_checks(body, d, r, 0);
   shallow_checks(body, d, r, 0);
   scalar_reads(body, d, r, 0);

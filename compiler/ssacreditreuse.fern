@@ -23,7 +23,7 @@ pub struct ScalarField { root: i32, offset: i32 }
 
 struct CheckedCall { name: string, returns: boolean[], exits: boolean[] }
 
-struct Context { arena: guard.Arena, values: phi.Value[], state: State, unique: i32, temp: i32, error: string }
+struct Context { arena: guard.Arena, ids: i32[], values: phi.Value[], state: State, unique: i32, temp: i32, error: string }
 
 function failed(c: Context, why: string): Context {
   if (c.error != "") {
@@ -61,10 +61,11 @@ function positive(c: Context, path: i32, number: i32, why: string): Context {
 }
 
 function available(c: Context, id: i32): Context {
-  if (id < 0 || id >= c.values.len() || c.values[id].kind < 0) {
+  let slot = util.index_of_i32(c.ids, id);
+  if (slot < 0 || c.values[slot].kind < 0) {
     return failed(c, "undefined reuse operand");
   }
-  return equal(c, c.state.path, c.values[id].available, 1, "unavailable reuse operand");
+  return equal(c, c.state.path, c.values[slot].available, 1, "unavailable reuse operand");
 }
 
 function mask(c: Context, identity: i32, root: i32): Context {
@@ -247,14 +248,19 @@ function reuse_donor(c: Context, donor: phi.Value, composed: boolean): Context {
   return out;
 }
 
-function transfer(c: Context, op: ssa.SInst, shape: string, drop: string, release: string, fields: ScalarField[], calls: CheckedCall[], composed: boolean): Context {
+function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, release: string, fields: ScalarField[], calls: CheckedCall[], composed: boolean): Context {
   let out = c;
-  for arg in op.args {
+  let args: i32[] = [];
+  for arg in physical.args {
     out = available(out, arg);
+    args = args.append(util.index_of_i32(c.ids, arg));
   }
   if (out.error != "") {
     return out;
   }
+  // Definitions were validated before allocating state. Only this local
+  // instruction view uses slots; incoming sites and the supplied graph keep IDs.
+  let op = ssa.SInst { ...physical, result: util.index_of_i32(c.ids, physical.result), args: args };
   let kind: i32 = -1;
   let identity: i32 = 0;
   if (op.kind_tag == 6 && op.args.len() == 0 && op.imm >= 0 && op.imm < 2 && op.str == "") {
@@ -545,12 +551,22 @@ function edge(t: ssa.STerm, id: i32): boolean {
   return t.kind_tag == 2 && t.target == id || t.kind_tag == 3 && (t.t == id || t.f == id);
 }
 
-function input_error(f: ssa.SFunc): string {
-  let count: i32 = 0;
+function last_value(f: ssa.SFunc): i32 {
+  let last: i32 = -1;
   for b in f.blocks {
-    count = count + b.insts.len();
+    for op in b.insts {
+      if (op.result > last) {
+        last = op.result;
+      }
+    }
   }
-  if (f.nparams != 2 || f.takes_env || f.nvals < 2 || f.nvals > count || at(f, f.entry) < 0) {
+  return last;
+}
+
+function input_error(f: ssa.SFunc): string {
+  // Preserve the scoped refusal of unused trailing value capacity. Internal
+  // holes do not require state proportional to the external value extent.
+  if (f.nparams != 2 || f.takes_env || f.nvals < 2 || last_value(f) < f.nvals - 1 || at(f, f.entry) < 0) {
     return "invalid reuse boundary";
   }
   let blocks: i32[] = [];
@@ -680,7 +696,7 @@ pub function check_invocations(wrapper: ssa.SFunc, producers: ssa.SFunc[], f: ss
 }
 
 function returned(c: Context, value: i32, composed: boolean): Context {
-  let result = c.values[value];
+  let result = c.values[util.index_of_i32(c.ids, value)];
   c = parent(c, result);
   if (composed) {
     c = literal(c, 2);
@@ -752,10 +768,13 @@ function check_body(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: st
   let u = guard.predicate(right.arena, 0);
   let empty = State { path: 0, parents: [0, 0], children: [0, 0, 0], contents: [0, 0, 0, 0], credits: [0, 0, 0, 0], shapes: [0, 0], allocated: 0 };
   let values: phi.Value[] = [];
+  let ids: i32[] = [];
   let i: i32 = 0;
-  while (i < f.nvals) {
-    values = values.append(phi.Value { kind: -1, identity: 0, available: 0 });
-    i = i + 1;
+  for b in f.blocks {
+    for op in b.insts {
+      ids = ids.append(op.result);
+      values = values.append(phi.Value { kind: -1, identity: 0, available: 0 });
+    }
   }
   let incoming: Incoming[] = [];
   let done: boolean[] = [];
@@ -767,7 +786,7 @@ function check_body(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: st
     incoming = incoming.append(Incoming { state: state, edges: [] });
     done = done.append(false);
   }
-  let c = Context { arena: u.arena, values: values, state: empty, unique: u.id, temp: 0, error: "" };
+  let c = Context { arena: u.arena, ids: ids, values: values, state: empty, unique: u.id, temp: 0, error: "" };
   let remaining = f.blocks.len();
   while (remaining > 0 && c.error == "") {
     let chosen: i32 = -1;
@@ -790,11 +809,11 @@ function check_body(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: st
       let b = f.blocks[chosen];
       c = Context { ...c, state: incoming[chosen].state };
       if (b.id != f.entry) {
-        let phis = phi.merge(c.arena, b, incoming[chosen].edges, f.nvals);
+        let phis = phi.merge_mapped(c.arena, b, incoming[chosen].edges, f.nvals, c.ids);
         c = Context { ...c, arena: phis.arena, error: phis.error };
         c = equal(c, 1, phis.path, c.state.path, "phi edge coverage mismatch");
         for binding in phis.bindings {
-          c = Context { ...c, values: c.values.with(binding.result, binding.value) };
+          c = Context { ...c, values: c.values.with(util.index_of_i32(c.ids, binding.result), binding.value) };
         }
       }
       for op in b.insts {
@@ -812,11 +831,12 @@ function check_body(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: st
         let paths: i32[] = [c.state.path];
         if (b.term.kind_tag == 3) {
           c = available(c, b.term.cond);
-          if (c.error == "" && c.values[b.term.cond].kind != 0) {
+          let condition_slot = util.index_of_i32(c.ids, b.term.cond);
+          if (c.error == "" && c.values[condition_slot].kind != 0) {
             c = failed(c, "scalar reuse condition required");
           }
           if (c.error == "") {
-            let condition = c.values[b.term.cond].identity;
+            let condition = c.values[condition_slot].identity;
             c = calc(c, 4, condition, c.state.path);
             let yes = c.temp;
             c = calc(c, 1, 1, condition);
