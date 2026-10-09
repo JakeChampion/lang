@@ -2533,11 +2533,8 @@ function map_key_kind_of_expr(e: ast.Expr): i32 {
 //
 // This used to match the FIRST key against `ExprNumber` and nothing else, so
 // every non-literal key — including `(1 + 1)` — fell through to map_new, the
-// STRING constructor. An i32-keyed map then built itself as string-keyed and
-// __fern_map_set compared its integer keys through __fern_str_eq, dereferencing
-// them as pointers: a SIGSEGV at construction, with no read of the map
-// anywhere (#6207). One computed key merely mistyped the map silently; two
-// reached the compare.
+// STRING constructor, and an i32-keyed map built itself as string-keyed
+// (#6207).
 //
 // The key walk below is the guess of last resort. A `let m: Map[K, V] = …`
 // declaration answers the same question exactly and arrives as Par.map_kind,
@@ -12729,8 +12726,7 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
         return n.suffix;
       }
       // A bare integer literal whose value exceeds i32-max is unambiguously
-      // an i64 value (the same magnitude rule infer_expr_width lowers it by),
-      // so a generic instantiation binds `T = i64`, not i32 — otherwise
+      // an i64 value, so a generic instantiation binds `T = i64`, not i32 — otherwise
       // `some1(5000000000)` (an erased `some1[T](x: T): Option[T]`) would
       // clone `some1__i32` and truncate the wide value.
       if (literal_is_i64(n.text)) {

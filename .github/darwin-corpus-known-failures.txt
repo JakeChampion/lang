@@ -2,80 +2,15 @@
 #
 # The macOS lane runs the WHOLE catalogue and compares the set of test
 # functions that failed against this list. A name that fails and is not here
-# fails the lane — that is the ratchet, and it is what stops the Darwin
-# result from drifting while the divergences are worked through.
+# fails the lane. The list is empty: every utility's corpus passes on Darwin,
+# so any failure is a regression to fix, never a line to add. Cases where
+# macOS's own GNU build reproduces a libc defect are marked as Darwin-oracle
+# defects in the corpus, with the reason, rather than listed here (#9714).
 #
-# Entries only ever LEAVE. When a utility's Darwin branch lands, its line is
-# deleted in the same change, and the lane starts holding it to GNU from then
-# on. Nothing is ever added to buy a green lane: a new name here means a
-# utility that used to pass on Darwin now does not, which is a regression to
-# fix rather than to record.
-#
-# Thirteen more left when the fixture work was finished properly. The first
-# pass converted the sites matching one spelling; there were four more, and a
-# harness that never consulted the skip flag at all. What was left after that
-# was not GNU divergence either: a Linux-only path the harness opens, a unix
-# socket address longer than Darwin's 104-byte limit, a cross-device case with
-# no second filesystem to reach, and `stat -f %c` — the filesystem's live inode
-# total, which the corpus listed as stable because ext4 fixes it at mkfs time
-# and APFS does not.
-#
-# TestMulticallParity was briefly listed here and should not have been. It
-# compares the standalone binary against the multicall one and never consults
-# GNU, so it does not belong in a ledger of GNU divergences; it was failing on
-# the fixtures above, and it passes now.
-#
-# Eight names left in one change: their only Darwin failure was a fixture —
-# the corpus builds a file whose NAME is not valid UTF-8, APFS refuses it with
-# EILSEQ, and the t.Fatal fired while the corpus was being BUILT, taking the
-# utility's whole parity test down before a case ran. Those cases skip on such
-# a filesystem now and the rest are held to GNU, which also put 3186
-# comparisons back that had never run.
-#
-# Four more left together: whoami and chown print owner names, which come
-# from libSystem's getpwuid since #9815, and uniq and tail passed every
-# complete macOS round from 29a15546a on.
-#
-# One test function per line, so the granularity is a utility rather than a
-# case. The case counts behind these names, and the clusters they fall into,
-# are in #9714; the largest by far is the listing code behind vdir, ls and
-# dir, which is one program and 43% of the failures.
+# One test function per line.
 
 # min-tests: 19000
 #
 # A run that executed fewer tests than this is not a measurement, and the
-# gate refuses it rather than believing its narrower failure set. This file
-# is the reason that check exists.
-#
-# The first 51 entries came from a run described as complete which was not:
-# it executed 14814 of 19913 tests. `numfmt --padding=99999999999999999999`
-# is a valid invocation that GNU answers with about 10^20 spaces, and the
-# harness captured it unbounded — 95 GB and climbing at 400 MB/s, with
-# enough memory pressure to get tests running beside it killed. So the run
-# died away in the tail, every file from pwd_test.go onward went unmeasured,
-# and 32 utilities were recorded as PASSING without ever having run. 5a6dcb7
-# capped the capture; the first round after it completed, and those 32
-# surfaced at once and read as regressions (#9721 and #9740 both hit that).
-#
-# They are pre-existing divergences, and the proof is in the source rather
-# than in a log: utmpx is unimplemented, so who, users and uptime print
-# nothing at all, and the non-UTF-8 filename fixtures cannot be created on
-# APFS. #9714 owns all of it.
-#
-# The errno WORDING was a third such cause and is now fixed: both copies of
-# the strerror text — internal/tables/strerror for the runtime's IoError.Other, and
-# coreutils/lib/gnu.fern for the errnos a utility names itself — carry the
-# Darwin libc's words on a Darwin build. Whichever of the names below were
-# failing on that alone now pass, and the lane reports a listed utility that
-# passes as a warning; each one it names leaves this file.
-#
-# Re-seeded from two independent complete runs that agreed on this set
-# byte-for-byte: 35356807225 and 35372825718, 1887 failures over 19913 tests.
-#
-# Ten left when the errno WORDING was fixed (#9964): b2sum, cksum, dd, fmt,
-# fold, mkfifo, nl, shuf, split and truncate. Each of them names an errno in
-# a diagnostic of its own — most of them EOVERFLOW or ERANGE, which the
-# Darwin libc words differently — and comparing glibc's words against a
-# Darwin GNU was their whole divergence. Removed on the lane's own evidence:
-# run 35687742755 warned for exactly these ten, and the round went from 1887
-# failures to 1647.
+# gate refuses it rather than believing its narrower failure set: a runaway
+# case can take the tail of a run down and still leave a DONE line behind.

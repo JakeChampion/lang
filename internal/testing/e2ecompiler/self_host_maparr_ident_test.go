@@ -6,7 +6,7 @@ import "testing"
 //
 // `ms` is an array whose ELEMENTS are maps, so `ms[i].get(k)` resolves K/V from
 // the element type while `ms.len()` is the array's length. Typed as one
-// `Map[K, V]`, `ms.len()` lowers to op_map_len over array memory — a SEGFAULT
+// `Map[K, V]`, `ms.len()` reads a map length out of array memory — a SEGFAULT
 // where the interpreter answers 1. The element reads are controls.
 var mapArrIdentCases = []struct {
 	name string

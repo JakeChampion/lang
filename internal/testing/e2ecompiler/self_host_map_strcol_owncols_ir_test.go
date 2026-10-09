@@ -123,8 +123,8 @@ function main(): i32 {
     return 0;
 }`
 	}},
-	// String-KEY twin of the alias probe (keys() snapshots via
-	// __fern_map_snapshot_col_str before the growing inserts).
+	// String-KEY twin of the alias probe (keys() snapshots before the growing
+	// inserts).
 	{name: "keyalias-snapshot-safe", fixed: true, want: 0, src: func(string) string {
 		return `import "core/map";
 function main(): i32 {

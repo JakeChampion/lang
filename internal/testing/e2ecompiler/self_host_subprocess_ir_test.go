@@ -46,6 +46,7 @@ func TestSelfHostSubprocessIR(t *testing.T) {
     if (c.stdout != "piped-input") { return 4; }
     let n = subprocess("/nonexistent_binary_xyz", [], "");
     if (n.exit_code != 127) { return 5; }
+    if (n.stderr != "/nonexistent_binary_xyz: No such file or directory\n") { return 10; }
     let e = subprocess("sh", ["-c", "echo oops 1>&2"], "");
     if (e.exit_code != 0) { return 6; }
     if (e.stdout != "") { return 7; }
@@ -71,7 +72,7 @@ func TestSelfHostSubprocessIR(t *testing.T) {
 	run := exec.Command(progBin)
 	_ = run.Run()
 	if code := run.ProcessState.ExitCode(); code != 0 {
-		t.Errorf("subprocess IR program exited %d, want 0 (echo stdout / cat stdin-pipe / missing=127)", code)
+		t.Errorf("subprocess IR program exited %d, want 0 (echo stdout / cat stdin-pipe / missing=127 and its errno on stderr)", code)
 	}
 }
 
@@ -100,6 +101,7 @@ func TestSelfHostSubprocessIRArm64(t *testing.T) {
     if (c.stdout != "piped-input") { return 4; }
     let n = subprocess("/nonexistent_binary_xyz", [], "");
     if (n.exit_code != 127) { return 5; }
+    if (n.stderr != "/nonexistent_binary_xyz: No such file or directory\n") { return 10; }
     return 0;
 }`
 
@@ -124,7 +126,7 @@ func TestSelfHostSubprocessIRArm64(t *testing.T) {
 	cmd := runArm64Bin(qemu, buildBinArm64(t, arm64gcc, dir, "subprocess_prog", asm))
 	_ = cmd.Run()
 	if got := cmd.ProcessState.ExitCode(); got != 0 {
-		t.Errorf("self-host arm64 binary exited %d, want 0 (echo stdout / cat stdin-pipe / missing=127)", got)
+		t.Errorf("self-host arm64 binary exited %d, want 0 (echo stdout / cat stdin-pipe / missing=127 and its errno on stderr)", got)
 	}
 }
 

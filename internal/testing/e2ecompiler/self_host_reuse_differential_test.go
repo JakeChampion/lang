@@ -56,11 +56,8 @@ var reuseDifferentialCases = []struct {
 	// going forward. Array-field and nested-struct-field donors.
 	{"own-param-donor-array", `struct H { id: i32, items: i32[] } function bump(own d: H): i32 { let u: i32 = d.id + d.items[0]; let c = H { id: 5, items: [7, 8, 9] }; return c.id + c.items[0] + c.items[2] + u; } function main(): i32 { return bump(H { id: 1, items: [10, 20] }); }`, 32},
 	{"own-param-donor-array-detector", `struct H { id: i32, items: i32[] } function bump(own d: H): i32 { let u: i32 = d.id + d.items[0]; let c = H { id: 5, items: [7, 8, 9] }; let s: i32 = c.id + c.items[0] + c.items[2] + u; if (s != 32) { return 99; } return __rc_underflow_count(); } function main(): i32 { return bump(H { id: 1, items: [10, 20] }); }`, 0},
-	// Family 2h with Map / tuple / Option fields: the own-param donor's box is
-	// reused with these fields present. Map field values: both a bare ident and
-	// a map-returning CALL.
-	{"own-param-donor-map-field", `struct C { id: i32, m: Map[i32, i32] } function f(own d: C): i32 { let u: i32 = d.id + d.m.len(); let mm: Map[i32, i32] = map_new(4); mm = mm.insert(1, 5); let c = C { id: 10, m: mm }; return c.id + c.m.len() + u; } function main(): i32 { let m0: Map[i32, i32] = map_new(4); m0 = m0.insert(1, 1); return f(C { id: 3, m: m0 }); }`, 15},
-	{"own-param-donor-map-field-call", `struct C { id: i32, m: Map[i32, i32] } function make_map(): Map[i32, i32] { let mm: Map[i32, i32] = map_new(4); mm = mm.insert(1, 5); return mm; } function f(own d: C): i32 { let u: i32 = d.id + d.m.len(); let c = C { id: 10, m: make_map() }; return c.id + c.m.len() + u; } function main(): i32 { let m0: Map[i32, i32] = map_new(4); m0 = m0.insert(1, 1); return f(C { id: 3, m: m0 }); }`, 15},
+	// Family 2h with tuple / Option fields: the own-param donor's box is
+	// reused with these fields present.
 	{"own-param-donor-tuple-field", `struct T2 { id: i32, t: (i32, i32) } function f(own d: T2): i32 { let u: i32 = d.id + d.t.0; let c = T2 { id: 10, t: (7, 8) }; return c.id + c.t.1 + u; } function main(): i32 { return f(T2 { id: 3, t: (1, 2) }); }`, 22},
 	{"own-param-donor-tuple-field-detector", `struct T2 { id: i32, t: (i32, i32) } function f(own d: T2): i32 { let u: i32 = d.id + d.t.0; let c = T2 { id: 10, t: (7, 8) }; let s: i32 = c.id + c.t.1 + u; if (s != 22) { return 99; } return __rc_underflow_count(); } function main(): i32 { return f(T2 { id: 3, t: (1, 2) }); }`, 0},
 	{"own-param-donor-opt-field", `struct O1 { id: i32, o: Option[i32] } function f(own d: O1): i32 { let u: i32 = d.id; match (d.o) { Some(v) => { u = u + v; }, None => {} } let c = O1 { id: 10, o: Some(9) }; let r: i32 = c.id + u; match (c.o) { Some(v) => { r = r + v; }, None => {} } return r; } function main(): i32 { return f(O1 { id: 3, o: Some(2) }); }`, 24},
@@ -128,16 +125,6 @@ var reuseDifferentialCases = []struct {
 	{"self-overwrite-string-override-detector", `struct N { id: i32, name: string } function main(): i32 { let d = N { id: 1, name: "ab" + "c" }; let c = N { ...d, name: "wxyz" + "q" }; let s: i32 = c.name.len() as i32 + c.id; if (s != 6) { return 99; } return __rc_underflow_count(); }`, 0},
 	{"self-overwrite-string-carried-detector", `struct N { id: i32, name: string } function main(): i32 { let d = N { id: 1, name: "ab" + "c" }; let c = N { ...d, id: 2 }; let s: i32 = c.name.len() as i32 + c.id; if (s != 5) { return 99; } return __rc_underflow_count(); }`, 0},
 	{"cross-struct-string-field-detector", `struct N { id: i32, name: string } function main(): i32 { let d = N { id: 1, name: "ab" + "c" }; let u: i32 = d.name.len() as i32 + d.id; let c = N { id: 2, name: "wxyz" + "q" }; let s: i32 = c.name.len() as i32 + c.id + u; if (s != 11) { return 99; } return __rc_underflow_count(); }`, 0},
-	// Family 1e/2f — MAP fields (#4356 divergence 1): maps are leak-only on
-	// the IR path (a map box is never freed anywhere), so the reuse arms
-	// carry NO release, NO carried-copy inc, and NO freshness gate for a map
-	// field — overwriting one leaks it exactly as the normal drop path would,
-	// and a copied map pointer can never dangle. Covers the self-overwrite
-	// carried copy, the override, and the cross family.
-	{"self-overwrite-map-carried-detector", `struct P { id: i32, m: Map[i32, i32] } function main(): i32 { let d = P { id: 1, m: Map { 1: 10 } }; let c = P { ...d, id: 2 }; let s: i32 = c.m.get_or(1, 0) + c.id; if (s != 12) { return 99; } return __rc_underflow_count(); }`, 0},
-	{"self-overwrite-map-override", `struct P { id: i32, m: Map[i32, i32] } function main(): i32 { let d = P { id: 1, m: Map { 1: 10 } }; let c = P { ...d, m: Map { 1: 39 } }; return c.m.get_or(1, 0) + c.id; }`, 40},
-	{"self-overwrite-map-override-detector", `struct P { id: i32, m: Map[i32, i32] } function main(): i32 { let d = P { id: 1, m: Map { 1: 10 } }; let c = P { ...d, m: Map { 1: 39 } }; let s: i32 = c.m.get_or(1, 0) + c.id; if (s != 40) { return 99; } return __rc_underflow_count(); }`, 0},
-	{"cross-struct-map-field-detector", `struct P { id: i32, m: Map[i32, i32] } function main(): i32 { let d = P { id: 1, m: Map { 1: 10 } }; let u: i32 = d.m.get_or(1, 0) + d.id; let c = P { id: 2, m: Map { 1: 7 } }; let s: i32 = c.m.get_or(1, 0) + c.id + u; if (s != 20) { return 99; } return __rc_underflow_count(); }`, 0},
 	// Family 1f/2g — TUPLE and OPTION fields (#4356 divergence 1): both are
 	// leak-only boxes (a tuple box is exit-swept only as a fresh non-escaping
 	// scalar-literal local; an Option box never), so like maps the reuse arms

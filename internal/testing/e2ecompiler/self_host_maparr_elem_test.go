@@ -8,8 +8,8 @@ import "testing"
 // A `for` loop variable, `t.0[i].get(k)` and `r.rows[i].get(k)` must dispatch
 // map ops on the element rather than fail with `unknown symbol i32.get_or`
 // (#7195 was the ident half). A `Map[K, V][]` struct field or tuple element
-// must still dispatch as an array: `r.rows.len()` lowered to op_map_len over
-// array memory segfaults.
+// must still dispatch as an array: `r.rows.len()` read as a map's length
+// segfaults.
 var mapArrElemCases = []struct {
 	name string
 	src  string

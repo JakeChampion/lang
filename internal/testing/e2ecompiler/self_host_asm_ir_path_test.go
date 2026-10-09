@@ -997,7 +997,7 @@ function main(): i32 { let m: Map[string, i32] = map_new(8); m = m.insert("x", 5
 function main(): i32 { let m: Map[string, i32] = Map { "a": 1, "b": 2 }; return m.get_or("b", 0) + m.len(); }`, 4},
 		{"map-insert-has", `import "core/map";
 function main(): i32 { let m: Map[string, i32] = map_new(4); m = m.insert("k", 9); let r = 0; if (m.has("k")) { r = r + 1; } if (m.has("z")) { r = r + 10; } return r; }`, 1},
-		// m.without(k) -> (Map, existed), via asmcore.rt_src_map_delete (#2926).
+		// m.without(k) -> (Map, existed) (#2926).
 		// Later ops on the destructured map work.
 		{"map-without-len", `import "core/map";
 function main(): i32 { let m: Map[i32, i32] = map_new(8); m = m.insert(1, 10); m = m.insert(2, 20); let (m2, e) = m.without(1); return m2.len(); }`, 1},
@@ -1769,8 +1769,8 @@ function main(): i32 { let ms = [Map { 1: "abcd" }]; return ms[0].get_or(1, "z")
 		{"match-opt-fn-call-outer-local", `function mk(): Option[() => i32] { return Some((): i32 => { return 7; }); } function main(): i32 { let base = 100; match (mk()) { Some(f) => { return f() + base; }, None => { return 0; } } }`, 107},
 		// A closure stored as a MAP VALUE, retrieved and called (slice #3445
 		// map-values): `m = m.insert(1, <lambda>)` wraps the lambda into an env box (the
-		// lift method-callee arm — `.set` lowers to the builtin op_map_set whose
-		// value param is the generic `V`, the wrap trigger), the map stores the box
+		// lift method-callee arm — `.insert`'s value param is the generic `V`, the
+		// wrap trigger), the map stores the box
 		// pointer, `m.get(1)` returns it, and the `Some(f) => f()` match-binding
 		// (slice #3445 match-fn) dispatches it env-first. Was `route=ir` but
 		// SEGFAULTED when compiled (the closure was stored unboxed). The capturing

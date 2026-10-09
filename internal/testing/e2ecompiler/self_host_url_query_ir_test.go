@@ -14,10 +14,8 @@ import "testing"
 // small deterministic int (kept <= 126); expectations are hardcoded, verified
 // against the native interp + x86-64 backends. The `dup-keys` case (append to
 // an existing `string[]` map value) is the #3495 regression guard: it corrupts
-// a sibling key's array on the wasm IR backend (returning 22 not 21) if
-// `op_map_set` leaves the wasm `vis` RC-retain flag at 0 for a pointer value;
-// fixed by threading value-pointerness through `op_map_set`. FEATURE-AUDIT
-// std/url row.
+// a sibling key's array (returning 22 not 21) if the map does not retain a
+// pointer value. FEATURE-AUDIT std/url row.
 const urlQueryIRPrelude = `function url_hex_val(c: i32): i32 {
     if (c >= 48 && c <= 57) { return c - 48; }
     if (c >= 97 && c <= 102) { return c - 87; }

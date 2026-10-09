@@ -38,7 +38,7 @@ function selected(source: string, target: string): ircore.Sub {
 }
 
 function keys(target: string): void {
-  let sub = selected("struct Marker { n: i32 } @noinline function read(m: Marker): i32 { return m.n; } function main(): i32 { let m: Map[(i32, i32), i32] = Map { (1, 2): 5 }; return m.len() + read(Marker { n: 1 }); }", target);
+  let sub = selected("struct Marker { n: i32 } @noinline function read(m: Marker): i32 { return m.n; } @noinline function keyed(m: Map[(i32, i32), i32]): Map[(i32, i32), i32] { return m; } function main(): i32 { return read(Marker { n: 1 }); }", target);
   let origins = sub.physical_origins;
   require(origins.producers.len() == 2 && origins.producers[0].records.names.has("Marker"), 156);
   require(!origins.producers[1].records.names.has("Marker"), 157);

@@ -1034,8 +1034,8 @@ function main(): i32 {
     let fnKeyTy: typeinfo.Type = typeinfo.TypeMap { key: typeinfo.TypeFunc { param_types: [i32ty], param_own: [false], ret_type: i32ty, params_known: true }, value: i32ty };
     let fnKeyFunc = ssasem.Func { ...mapFunc, values: [fnKeyTy], params: [fnKeyTy], result: fnKeyTy };
     if (ssaunits.plan(fnKeyFunc, [3], ssaunits.no_view()).why != "function value is not an element") { return 235; }
-    // A map over 32-bit integer or boolean columns runs on core/map
-    // (ssarc.routed_map): it is admitted, and dropped whole through
+    // A map over 32-bit integer or boolean columns runs on core/map: it is
+    // admitted, and dropped whole through
     // __map_drop_impl. A string value column runs there too, and its drop
     // releases the column's strings through __map_drop_strcols_impl.
     let intMapTy: typeinfo.Type = typeinfo.TypeMap { key: i32ty, value: i32ty };
