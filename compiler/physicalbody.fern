@@ -1,0 +1,19 @@
+// Physical bodies and the selected metadata from the same lowering invocation.
+// This carrier is not an ownership certificate or a final-emission collection.
+import "./irtables";
+import "./ssasem";
+import "./semrecords";
+
+pub struct Lowered {
+  bodies: irtables.LowerResult[],
+  // Selected declaration symbols in body order; helpers follow this prefix.
+  // Method bodies retain their bare names; these symbols include the receiver.
+  declarations: string[],
+  contracts: ssasem.Contract[],
+  records: semrecords.Records,
+  finalizers: ssasem.Finalizer[],
+}
+
+pub function empty(): Lowered {
+  return Lowered { bodies: [], declarations: [], contracts: [], records: semrecords.no_records(), finalizers: [] };
+}

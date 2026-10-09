@@ -1,0 +1,109 @@
+// Runtime metadata is retained from the invocation that produced these bodies.
+import "../semlower";
+import "../physicalbody";
+import "../ircore";
+import "../irtables";
+import "../ssa";
+import "../ssa_lift";
+import "../ssacreditabi" as abi;
+import "../semrecords";
+import "../ssasem";
+import "../asmcore";
+import "../util";
+
+function require(ok: boolean, code: i32): void {
+  if (!ok) {
+    exit(code);
+  }
+}
+
+function declaration(selected: physicalbody.Lowered, i: i32, arity: i32): void {
+  require(selected.declarations[i].len() > 0, 115);
+  let matches = 0;
+  for c in selected.contracts {
+    if (c.name == selected.declarations[i]) {
+      matches = matches + 1;
+      require(c.params.len() == arity && c.modes.len() == arity, 116);
+    }
+  }
+  require(matches == 1, 117);
+}
+
+function symbol(selected: physicalbody.Lowered, i: i32): string {
+  return if (i < selected.declarations.len()) { selected.declarations[i] } else { selected.bodies[i].name };
+}
+
+function parity(src: string, selected: physicalbody.Lowered): void {
+  let legacy = semlower.runtime_bodies(src);
+  require(ircore.lowered_digest(legacy) == ircore.lowered_digest(selected.bodies), 111);
+  require(legacy.len() == selected.bodies.len(), 112);
+  let i = 0;
+  for b in selected.bodies {
+    require(b.ok && b.why == "" && !b.superseded && b.dbg_slots.len() == 0 && b.dbg_names.len() == 0 && b.dbg_types.len() == 0, 113);
+    require(b.name == legacy[i].name, 114);
+    if (i < selected.declarations.len()) {
+      declaration(selected, i, b.n_params);
+    }
+    let j = 0;
+    while (j < i) {
+      require(symbol(selected, j) != symbol(selected, i), 118);
+      j = j + 1;
+    }
+    i = i + 1;
+  }
+}
+
+function graphs(selected: physicalbody.Lowered): ssa.SFunc[] {
+  let out: ssa.SFunc[] = [];
+  let kt = ssa_lift.kind_table();
+  for b in selected.bodies {
+    let lifted = ssa_lift.lift_from_ir_prod(kt, b.name, b.n_params, b.n_locals, b.ops, false);
+    require(lifted.ok, 119);
+    out = out.append(lifted.func);
+  }
+  return out;
+}
+
+function wrapper(src: string, exiting: boolean): void {
+  let selected = semlower.runtime_lowering(src);
+  parity(src, selected);
+  require(selected.declarations.len() == 5 && selected.bodies.len() > selected.declarations.len(), 120);
+  // No old bodies: the proof binds only these graphs and this selected metadata.
+  let sub = ircore.Sub { ...ircore.no_sub(), physical_contracts: selected.contracts, physical_records: selected.records, physical_finalizers: selected.finalizers };
+  let fs = graphs(selected);
+  let p = abi.check_wrapper_final(sub, fs, "handoff", "replace", "__sem_drop_Parent", "__sem_release_Parent", ["require"]);
+  if (p.ok == exiting) {
+    print(p.function_name + ": " + p.message);
+    exit(121);
+  }
+  require(selected.finalizers.len() == 0, 122);
+  let missing = ircore.Sub { ...sub, physical_contracts: [] };
+  let records = ircore.Sub { ...sub, physical_records: semrecords.no_records() };
+  let finalizer = ircore.Sub { ...sub, physical_finalizers: [ssasem.Finalizer { receiver: "Parent", symbol: "selected_drop" }] };
+  for bad in [missing, records, finalizer] {
+    require(!abi.check_wrapper_final(bad, fs, "handoff", "replace", "__sem_drop_Parent", "__sem_release_Parent", ["require"]).ok, 123);
+  }
+  // A later lowering must not replace this invocation's immutable selected facts.
+  let unrelated = semlower.runtime_lowering("function identity(x: i64): i64 { return x; }");
+  require(unrelated.declarations.len() == 1 && unrelated.declarations[0] == "identity", 124);
+  require(abi.check_wrapper_final(sub, fs, "handoff", "replace", "__sem_drop_Parent", "__sem_release_Parent", ["require"]).ok == !exiting, 125);
+}
+
+pub function run(src: string, exiting: boolean): void {
+  wrapper(src, exiting);
+  let raw = asmcore.rt_src_str_cmp();
+  let selected = semlower.runtime_lowering(raw);
+  parity(raw, selected);
+  require(selected.declarations.len() == 1 && selected.declarations[0] == "__fern_str_cmp", 126);
+  let empty = semlower.runtime_lowering("");
+  require(empty.declarations.len() == 0 && empty.bodies.len() == 0, 127);
+  let finalizing = "struct Token { n: i32 }\nstruct Other { n: i64 }\ntrait Drop { function drop(self: Self): void; }\nimpl Drop for Token { function drop(self: Self): void {} }\nimpl Drop for Other { function drop(self: Self): void {} }\nfunction read(own x: Token): i32 { return x.n; }\nfunction read_other(own x: Other): i64 { return x.n; }\n";
+  let owned = semlower.runtime_lowering(finalizing);
+  parity(finalizing, owned);
+  require(owned.finalizers.len() == 2 && owned.finalizers[0].receiver == "Token" && owned.finalizers[1].receiver == "Other", 128);
+  for f in owned.finalizers {
+    let at = util.index_of_str(owned.declarations, f.symbol);
+    require(at >= 0 && owned.bodies[at].name == "drop" && f.symbol == f.receiver + ".drop", 129);
+  }
+  require(selected.finalizers.len() == 0, 130);
+}
