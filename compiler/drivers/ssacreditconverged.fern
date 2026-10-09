@@ -1,0 +1,195 @@
+// Actual final native transformation controls under the raw ABI/layout contract.
+import "../lexer";
+import "../parser";
+import "../semlower";
+import "../ircore";
+import "../asmcore";
+import "../ssa";
+import "../ssa_lift";
+import "../ssacreditreuse" as reuse;
+import "./ssacreditsparse" as sparse;
+
+function require(ok: boolean, id: i32): void {
+  if (!ok) {
+    exit(id);
+  }
+}
+
+function found(fs: ssa.SFunc[], name: string): ssa.SFunc {
+  for f in fs {
+    if (f.name == name) {
+      return f;
+    }
+  }
+  exit(93);
+  return fs[0];
+}
+
+function check(fs: ssa.SFunc[], f: ssa.SFunc, why: string): void {
+  let fields = [reuse.ScalarField { root: 3, offset: 8 }, reuse.ScalarField { root: 4, offset: 8 }, reuse.ScalarField { root: 5, offset: 8 }];
+  let empty: ssa.SFunc[] = [];
+  for consumer in [f, sparse.rename(f)] {
+    let p = reuse.check_invocations(found(fs, "handoff"), [found(fs, "parent")], consumer, found(fs, "__sem_drop_Parent"), found(fs, "__sem_release_Parent"), "Parent", "Other", fields, empty);
+    if (p.ok != (why == "proved checked-capacity consumer invocation") || p.function_name != "replace" || p.message != why) {
+      print(p.function_name + ": " + p.message + " expected: " + why);
+      exit(94);
+    }
+  }
+}
+
+function conditional(f: ssa.SFunc): ssa.SBlock {
+  for b in f.blocks {
+    if (b.term.kind_tag == 3 && b.term.t == b.term.f) {
+      return b;
+    }
+  }
+  exit(95);
+  return f.blocks[0];
+}
+
+// Change only the condition, retaining the real downstream ownership effects.
+function condition(f: ssa.SFunc, mode: i32): ssa.SFunc {
+  let selected = conditional(f);
+  let blocks: ssa.SBlock[] = [];
+  let nvals = f.nvals;
+  for b in f.blocks {
+    let changed = b;
+    if (b.id == selected.id) {
+      let id = f.nvals;
+      let insts = b.insts;
+      if (mode < 3) {
+        insts = insts.append(ssa.SInst { kind_tag: 1, result: id, args: [], imm: mode, str: "" });
+        nvals = nvals + 1;
+      } else if (mode == 3) {
+        id = 0;
+      } else if (mode == 5) {
+        for target in f.blocks {
+          if (target.id == selected.term.t) {
+            id = target.insts[0].result;
+          }
+        }
+      } else if (mode == 6) {
+        for before in f.blocks {
+          for op in before.insts {
+            if (id == f.nvals && before.id != f.entry && op.kind_tag == 1 && op.imm == 0) {
+              id = op.result;
+            }
+          }
+        }
+      }
+      changed = ssa.SBlock { ...b, insts: insts, term: ssa.STerm { ...b.term, cond: id } };
+    }
+    blocks = blocks.append(changed);
+  }
+  return ssa.SFunc { ...f, nvals: nvals, blocks: blocks };
+}
+
+function topology(f: ssa.SFunc, mode: i32): ssa.SFunc {
+  let selected = conditional(f);
+  let blocks: ssa.SBlock[] = [];
+  for b in f.blocks {
+    let changed = b;
+    if (b.id == selected.term.t) {
+      if (mode == 0) {
+        changed = ssa.SBlock { ...b, preds: b.preds.append(selected.id) };
+      } else if (mode == 1) {
+        changed = ssa.SBlock { ...b, preds: [] };
+      } else {
+        let args: i32[] = if (mode == 2) { [0, 0] } else { [0] };
+        let phi = ssa.SInst { kind_tag: 8, result: f.nvals, args: args, imm: 0, str: "" };
+        let insts = [phi];
+        for op in b.insts {
+          insts = insts.append(op);
+        }
+        changed = ssa.SBlock { ...b, insts: insts };
+      }
+    }
+    blocks = blocks.append(changed);
+  }
+  return ssa.SFunc { ...f, blocks: blocks, nvals: f.nvals + (if (mode >= 2) { 1 } else { 0 }) };
+}
+
+// A zero-path predecessor still has to provide a valid Boolean condition.
+function infeasible(f: ssa.SFunc, value: i32): ssa.SFunc {
+  let selected = conditional(f);
+  let id: i32 = 0;
+  for b in f.blocks {
+    if (b.id >= id) {
+      id = b.id + 1;
+    }
+  }
+  let zero = ssa.SInst { kind_tag: 1, result: f.nvals, args: [], imm: 0, str: "" };
+  let bad = ssa.SInst { ...zero, result: f.nvals + 1, imm: value };
+  let dead = ssa.SBlock { id: id, preds: [selected.id], insts: [bad], term: ssa.STerm { ...selected.term, cond: bad.result } };
+  let blocks: ssa.SBlock[] = [];
+  for b in f.blocks {
+    let changed = b;
+    if (b.id == selected.id) {
+      changed = ssa.SBlock { ...b, insts: b.insts.append(zero), term: ssa.STerm { ...b.term, cond: zero.result, t: id } };
+    } else if (b.id == selected.term.t) {
+      changed = ssa.SBlock { ...b, preds: b.preds.append(id) };
+    }
+    blocks = blocks.append(changed);
+  }
+  return ssa.SFunc { ...f, nvals: f.nvals + 2, blocks: blocks.append(dead) };
+}
+
+function credit(f: ssa.SFunc): ssa.SFunc {
+  let blocks: ssa.SBlock[] = [];
+  let hits: i32 = 0;
+  for b in f.blocks {
+    let insts: ssa.SInst[] = [];
+    for op in b.insts {
+      let changed = op;
+      if (op.kind_tag == 11 && op.str == "__fern_rc_inc" && op.args[0] == 1) {
+        changed = ssa.SInst { kind_tag: 1, result: op.result, args: [], imm: 0, str: "" };
+        hits = hits + 1;
+      }
+      insts = insts.append(changed);
+    }
+    blocks = blocks.append(ssa.SBlock { ...b, insts: insts });
+  }
+  require(hits == 1, 96);
+  return ssa.SFunc { ...f, blocks: blocks };
+}
+
+pub function run(source: string, target: string): void {
+  let driven = semlower.driven(parser.parse_module(lexer.tokenize(source)), target);
+  let g = ircore.gate_program(ircore.sub_lifted(driven.sub, driven.full), driven.sub);
+  require(g.ok, 97);
+  let cache = ircore.inline_tiny_leaves(g.im, g.cache);
+  let leaves = asmcore.unit_leaves(g.im, 0, g.im.funcs.len(), cache);
+  let fs: ssa.SFunc[] = [];
+  for r in cache {
+    if (r.ok && !r.superseded) {
+      let lifted = ssa_lift.lift_from_ir_prod(ssa_lift.kind_table(), r.name, r.n_params, r.n_locals, r.ops, false);
+      require(lifted.ok, 98);
+      fs = fs.append(ssa.register_form(ssa.inline_leaves(lifted.func, leaves)).f);
+    }
+  }
+  let f = found(fs, "replace");
+  let selected = conditional(f);
+  require(selected.preds.len() > 0, 99);
+  check(fs, f, "proved checked-capacity consumer invocation");
+  let reversed: ssa.SBlock[] = [];
+  let i = f.blocks.len();
+  while (i > 0) {
+    i = i - 1;
+    reversed = reversed.append(f.blocks[i]);
+  }
+  check(fs, ssa.SFunc { ...f, blocks: reversed }, "proved checked-capacity consumer invocation");
+  check(fs, condition(f, 0), "proved checked-capacity consumer invocation");
+  check(fs, condition(f, 1), "proved checked-capacity consumer invocation");
+  check(fs, condition(f, 2), "non-Boolean guarded mask");
+  check(fs, condition(f, 3), "scalar reuse condition required");
+  check(fs, condition(f, 4), "undefined reuse operand");
+  check(fs, condition(f, 5), "undefined reuse operand");
+  check(fs, condition(f, 6), "unavailable reuse operand");
+  check(fs, topology(f, 0), "invalid reuse predecessor");
+  check(fs, topology(f, 1), "invalid reuse successor");
+  check(fs, topology(f, 2), "invalid reuse phi position or arity");
+  check(fs, topology(f, 3), "proved checked-capacity consumer invocation");
+  check(fs, infeasible(f, 0), "proved checked-capacity consumer invocation");
+  check(fs, infeasible(f, 2), "non-Boolean guarded mask");
+  check(fs, credit(f), "slot store without local child credit");
+}

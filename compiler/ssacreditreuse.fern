@@ -551,6 +551,39 @@ function edge(t: ssa.STerm, id: i32): boolean {
   return t.kind_tag == 2 && t.target == id || t.kind_tag == 3 && (t.t == id || t.f == id);
 }
 
+struct Outgoing { context: Context, targets: i32[], paths: i32[] }
+
+function outgoing(c: Context, term: ssa.STerm): Outgoing {
+  let targets: i32[] = [term.target];
+  let paths: i32[] = [c.state.path];
+  if (term.kind_tag == 3) {
+    c = available(c, term.cond);
+    let condition_slot = util.index_of_i32(c.ids, term.cond);
+    if (c.error == "" && c.values[condition_slot].kind != 0) {
+      c = failed(c, "scalar reuse condition required");
+    }
+    if (c.error == "") {
+      let condition = c.values[condition_slot].identity;
+      c = calc(c, 4, condition, c.state.path);
+      let yes = c.temp;
+      c = calc(c, 1, 1, condition);
+      c = calc(c, 4, c.temp, c.state.path);
+      targets = [term.t, term.f];
+      paths = [yes, c.temp];
+      if (term.t == term.f) {
+        // Both masks above must validate the condition, even on an
+        // infeasible path. A predecessor has one immutable phi row.
+        c = calc(c, 0, yes, c.temp);
+        let joined = c.temp;
+        c = equal(c, 1, joined, c.state.path, "converged reuse edge coverage mismatch");
+        targets = [term.t];
+        paths = [joined];
+      }
+    }
+  }
+  return Outgoing { context: c, targets: targets, paths: paths };
+}
+
 function last_value(f: ssa.SFunc): i32 {
   let last: i32 = -1;
   for b in f.blocks {
@@ -605,7 +638,7 @@ function input_error(f: ssa.SFunc): string {
       }
       seen = seen.append(p);
     }
-    if (b.term.kind_tag < 1 || b.term.kind_tag > 3 || b.term.kind_tag == 3 && b.term.t == b.term.f) {
+    if (b.term.kind_tag < 1 || b.term.kind_tag > 3) {
       return "invalid reuse terminator";
     }
     let targets: i32[] = [];
@@ -827,31 +860,15 @@ function check_body(f: ssa.SFunc, drop: ssa.SFunc, release: ssa.SFunc, shape: st
           c = returned(c, b.term.value, composed);
         }
       } else if (c.error == "") {
-        let targets: i32[] = [b.term.target];
-        let paths: i32[] = [c.state.path];
-        if (b.term.kind_tag == 3) {
-          c = available(c, b.term.cond);
-          let condition_slot = util.index_of_i32(c.ids, b.term.cond);
-          if (c.error == "" && c.values[condition_slot].kind != 0) {
-            c = failed(c, "scalar reuse condition required");
-          }
-          if (c.error == "") {
-            let condition = c.values[condition_slot].identity;
-            c = calc(c, 4, condition, c.state.path);
-            let yes = c.temp;
-            c = calc(c, 1, 1, condition);
-            c = calc(c, 4, c.temp, c.state.path);
-            targets = [b.term.t, b.term.f];
-            paths = [yes, c.temp];
-          }
-        }
+        let next = outgoing(c, b.term);
+        c = next.context;
         let state = c.state;
         i = 0;
-        for t in targets {
+        for t in next.targets {
           if (c.error == "") {
             let ti = at(f, t);
-            c = merged(c, incoming[ti].state, paths[i]);
-            let edges = incoming[ti].edges.append(phi.Edge { predecessor: b.id, path: paths[i], values: c.values });
+            c = merged(c, incoming[ti].state, next.paths[i]);
+            let edges = incoming[ti].edges.append(phi.Edge { predecessor: b.id, path: next.paths[i], values: c.values });
             incoming = incoming.with(ti, Incoming { state: c.state, edges: edges });
             c = Context { ...c, state: state };
           }
