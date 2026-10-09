@@ -3902,7 +3902,51 @@ function parse_lit_alts(p: Par): (ast.Expr[], ast.Expr[], boolean[], boolean[], 
 // exactly the one code native produces. Neither shape ever type-checks, so
 // this StmtMatch never reaches codegen, and a well-formed literal match
 // (an unguarded wildcard, last) still desugars unchanged.
+// bool_closing_arm is the index of the arm whose literal completes an
+// unguarded `true` and `false` pair, -1 when none does. The pair closes a
+// boolean's domain as an unguarded `_` does (#6685); a non-boolean
+// scrutinee is refused against those literals by the checker (E035).
+function bool_closing_arm(arms: ast.LitArm[]): i32 {
+  let t: boolean = false;
+  let f: boolean = false;
+  let i: i32 = 0;
+  while (i < arms.len()) {
+    let a: ast.LitArm = arms[i];
+    if (a.is_wild && !a.has_guard) {
+      return 0 - 1;
+    }
+    if let ast.ExprBool(b) = a.lit {
+      if (!a.is_wild && !a.has_guard && !a.has_range && a.at_binding.len() == 0) {
+        t = t || b.value;
+        f = f || !b.value;
+      }
+    }
+    if (t && f) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// The arm completing a `true` / `false` pair stands in for the `_`, and the
+// arms after it, which nothing can reach, go.
+function close_bool_arms(arms: ast.LitArm[]): ast.LitArm[] {
+  let k: i32 = bool_closing_arm(arms);
+  if (k < 0) {
+    return arms;
+  }
+  let out: ast.LitArm[] = [];
+  let i: i32 = 0;
+  while (i < k) {
+    out = out.append(arms[i]);
+    i = i + 1;
+  }
+  return out.append(ast.LitArm { ...arms[k], is_wild: true });
+}
+
 function build_literal_match(scrut: ast.Expr, arms: ast.LitArm[], mkline: i32, mkcol: i32): ast.Stmt {
+  arms = close_bool_arms(arms);
   let wi: i32 = 0;
   let non_last_wild: boolean = false;
   let saw_wild: boolean = false;
