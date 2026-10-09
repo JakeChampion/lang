@@ -236,6 +236,10 @@ var Ungated = map[string]bool{
 	// its geometry is one more fact about it, so a dependency that asks
 	// reaches nothing `isatty` did not already let it reach.
 	"window_size": true,
+	// Two descriptors joined to each other and to nothing else. A pipe
+	// reaches nothing outside the process until something is spawned
+	// with an end of it, and spawning is what `subprocess` gates.
+	"pipe": true,
 	// The line settings of the same descriptor, read and written. Ungated
 	// for the reason `window_size` is — the descriptor was handed to the
 	// process and its configuration is one more fact about it — and the

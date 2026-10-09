@@ -3902,7 +3902,51 @@ function parse_lit_alts(p: Par): (ast.Expr[], ast.Expr[], boolean[], boolean[], 
 // exactly the one code native produces. Neither shape ever type-checks, so
 // this StmtMatch never reaches codegen, and a well-formed literal match
 // (an unguarded wildcard, last) still desugars unchanged.
+// bool_closing_arm is the index of the arm whose literal completes an
+// unguarded `true` and `false` pair, -1 when none does. The pair closes a
+// boolean's domain as an unguarded `_` does (#6685); a non-boolean
+// scrutinee is refused against those literals by the checker (E035).
+function bool_closing_arm(arms: ast.LitArm[]): i32 {
+  let t: boolean = false;
+  let f: boolean = false;
+  let i: i32 = 0;
+  while (i < arms.len()) {
+    let a: ast.LitArm = arms[i];
+    if (a.is_wild && !a.has_guard) {
+      return 0 - 1;
+    }
+    if let ast.ExprBool(b) = a.lit {
+      if (!a.is_wild && !a.has_guard && !a.has_range && a.at_binding.len() == 0) {
+        t = t || b.value;
+        f = f || !b.value;
+      }
+    }
+    if (t && f) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// The arm completing a `true` / `false` pair stands in for the `_`, and the
+// arms after it, which nothing can reach, go.
+function close_bool_arms(arms: ast.LitArm[]): ast.LitArm[] {
+  let k: i32 = bool_closing_arm(arms);
+  if (k < 0) {
+    return arms;
+  }
+  let out: ast.LitArm[] = [];
+  let i: i32 = 0;
+  while (i < k) {
+    out = out.append(arms[i]);
+    i = i + 1;
+  }
+  return out.append(ast.LitArm { ...arms[k], is_wild: true });
+}
+
 function build_literal_match(scrut: ast.Expr, arms: ast.LitArm[], mkline: i32, mkcol: i32): ast.Stmt {
+  arms = close_bool_arms(arms);
   let wi: i32 = 0;
   let non_last_wild: boolean = false;
   let saw_wild: boolean = false;
@@ -10166,6 +10210,8 @@ pub function builtin_function_names(): string[] {
     // than the resolved path, and an environment the caller built
     // rather than its own (#9090).
     "proc_exec_as",
+    // pipe(2): the Reader and Writer a parent hands a child one end of.
+    "pipe",
     // chdir(2), the move getcwd only ever reported, and the mask and
     // read side of the signal dispositions (#9090).
     "chdir", "signal_mask", "signal_disposition",
@@ -10398,6 +10444,13 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     wsf = wsf.append(StructFieldDecl { name: "rows", type_name: "i64", fn_ret: "", fn_param_types: "" });
     wsf = wsf.append(StructFieldDecl { name: "cols", type_name: "i64", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "WinSize", fields: wsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
+  }
+  // Pipe: the builtin struct returned by pipe(), its read and write ends.
+  if (!name_declared(structs, "Pipe")) {
+    let pf: StructFieldDecl[] = [];
+    pf = pf.append(StructFieldDecl { name: "r", type_name: "Reader", fn_ret: "", fn_param_types: "" });
+    pf = pf.append(StructFieldDecl { name: "w", type_name: "Writer", fn_ret: "", fn_param_types: "" });
+    structs = structs.append(StructDecl { name: "Pipe", fields: pf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
   }
   // ProcessResult — returned by `subprocess(cmd, args, stdin)`.
   // Same injection pattern as FileStat: the __fern_subprocess
@@ -20570,7 +20623,7 @@ pub function is_reserved_struct_name(name: string): boolean {
   let reserved: string[] = [
     "BodySource", "BytesWriter", "Cell", "ChunkProducer", "Date", "DateTime", "DirEntry", "Duration", "FileStat",
     "FsStat", "HeaderMap", "HttpRequest", "HttpResponse", "Instant", "Map",
-    "MapIter", "MountEntry", "ProcessResult",
+    "MapIter", "MountEntry", "Pipe", "ProcessResult",
     "Reader", "Span", "Stream", "Time", "TimeZone", "Url", "WinSize", "Writer",
     "Zoned",
   ];

@@ -261,12 +261,48 @@ function main(): i32 { let a: i32[] = XS; let b: i32[] = XS; let e: i32[] = E; l
 	}
 }
 
+// A const may hold a struct literal of constant fields, nested ones included
+// (#6685); each reference gets its own copy of the tree.
+func TestFoldStructConsts(t *testing.T) {
+	prog := fold(t, `struct P { x: i32, y: i32 }
+struct C { p: P, s: string }
+const B: i32 = 40;
+const O: P = P { x: 1, y: B + 1 };
+const K: C = C { p: O, s: "k" };
+function main(): i32 { let a: P = O; let b: P = O; let k: C = K; return 0; }`)
+	inits := map[string]ast.Expr{}
+	for _, st := range prog.Funcs[0].Body.Stmts {
+		if v, ok := st.(*ast.Var); ok {
+			inits[v.Name] = v.Init
+		}
+	}
+	a, ok := inits["a"].(*ast.StructLit)
+	if !ok || a.TypeName != "P" || len(a.Fields) != 2 {
+		t.Fatalf("O should substitute a P literal, got %#v", inits["a"])
+	}
+	if n, ok := a.Fields[1].Value.(*ast.NumberLit); !ok || n.Value != 41 {
+		t.Errorf("O.y = %#v, want the folded literal 41", a.Fields[1].Value)
+	}
+	if b, _ := inits["b"].(*ast.StructLit); b == a || b == nil || b.Fields[0].Value == a.Fields[0].Value {
+		t.Error("two references to O share a tree; each substitution must be its own copy")
+	}
+	k, ok := inits["k"].(*ast.StructLit)
+	if !ok || len(k.Fields) != 2 {
+		t.Fatalf("K should substitute a C literal, got %#v", inits["k"])
+	}
+	if p, ok := k.Fields[0].Value.(*ast.StructLit); !ok || p.TypeName != "P" {
+		t.Errorf("K.p should be O's P literal, got %#v", k.Fields[0].Value)
+	}
+}
+
 func TestFoldCompositeConstRefusals(t *testing.T) {
 	for src, want := range map[string]string{
-		`const XS: i32[] = ["a"];`:                                  "declared type i32 does not match initialiser type string",
-		"function f(): i32 { return 1; }\nconst XS: i32[] = [f()];": "not a constant",
-		`const T: (i32, string) = (1, 2);`:                          "declared type string does not match initialiser type i32",
-		`const XS: i32[] = [1]; const Y: i32 = XS + 1;`:             "operands aren't both numbers",
+		`const XS: i32[] = ["a"];`:                                                                    "declared type i32 does not match initialiser type string",
+		"function f(): i32 { return 1; }\nconst XS: i32[] = [f()];":                                   "not a constant",
+		"struct P { x: i32 }\nfunction f(): i32 { return 1; }\nconst C: P = P { x: f() };":            "not a constant",
+		"struct P { x: i32, y: i32 }\nconst A: P = P { x: 1, y: 2 };\nconst C: P = P { ...A, x: 3 };": "not a constant",
+		`const T: (i32, string) = (1, 2);`:                                                            "declared type string does not match initialiser type i32",
+		`const XS: i32[] = [1]; const Y: i32 = XS + 1;`:                                               "operands aren't both numbers",
 	} {
 		if got := foldErr(t, src); !strings.Contains(got, want) {
 			t.Errorf("%s\n  error %q, want it to contain %q", src, got, want)

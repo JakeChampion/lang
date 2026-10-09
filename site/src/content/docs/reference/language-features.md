@@ -245,8 +245,9 @@ fallback like the `Temp(_)` above.
 
 A `match` also dispatches on literals: integers, characters, bytes,
 strings, and ranges of signed integers (`1..=9 =>`). Several patterns can
-share an arm with `|`. A string scrutinee always needs a final `_` arm,
-since no list of literals covers every string.
+share an arm with `|`. A number or string scrutinee always needs a final
+`_` arm, since no list of literals covers every number or string. A
+`boolean` is the exception: unguarded `true` and `false` arms cover it.
 
 ```fern
 function classify(n: i32): string {

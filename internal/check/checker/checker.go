@@ -923,6 +923,15 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "cols", Type: ast.NumberType{Width: 64, Signed: true}},
 			},
 		},
+		// Pipe — `pipe()` shape: the two ends of one pipe(2), bytes
+		// written to `w` coming out of `r`.
+		{
+			Name: "Pipe",
+			Fields: []ast.Param{
+				{Name: "r", Type: ast.StructType{Name: "Reader"}},
+				{Name: "w", Type: ast.StructType{Name: "Writer"}},
+			},
+		},
 		// Map[i32, i32] — first cut of the IndexMap-shaped Map
 		// from PR 4 (docs/LANGUAGE-DIRECTION.md). Concrete-typed
 		// (i32 keys, i32 values) for now; generic K / V comes in
@@ -2790,6 +2799,14 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.StringType{}, ast.ArrayType{Elem: ast.StringType{}}, ast.ArrayType{Elem: ast.StringType{}}},
 		Result: ast.NumberType{},
 	}
+	// pipe(): Result[Pipe, IoError] — pipe(2): a Reader and a Writer joined
+	// by the kernel, so a child process can be handed one end. Both ends
+	// are close-on-exec; `dup_onto` is how a forked child makes one its
+	// standard stream, and the copy it makes survives the exec. Same `proc`
+	// gate as fork and exec, whose plumbing it is.
+	c.info.FuncSigs["pipe"] = &ast.FuncType{
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{ast.StructType{Name: "Pipe"}, ioErrType}},
+	}
 	// statfs(path): Result[FsStat, IoError] — the geometry and the
 	// length limits of the filesystem `path` resolves on (#9062).
 	// `pathchk` needs the limits, `df` needs the counts, and one
@@ -4184,6 +4201,15 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// writing `w` after bytes were taken, the one case a fallback cannot
 	// repair.
 	registerStructMethod("Reader", "splice_to",
+		[]ast.Type{writerType, ast.NumberType{}}, seekResult)
+	// copy_range_to(w, max) copies up to `max` bytes from this handle to `w`
+	// inside the kernel, copy_file_range(2) on Linux, from and to each
+	// handle's own offset, and answers how many; 0 is the end of the input.
+	// `Unsupported` means nothing moved and the caller copies the bytes
+	// itself: the target has no copy_file_range, or this pair of files
+	// cannot be copied in the kernel (different filesystems, a pipe or a
+	// terminal). Any other error is the copy's own failure.
+	registerStructMethod("Reader", "copy_range_to",
 		[]ast.Type{writerType, ast.NumberType{}}, seekResult)
 	// flags() is fcntl(fd, F_GETFL) reduced to what every target can
 	// answer, as a word of Fern's own — the query side of the flags word
@@ -15833,13 +15859,13 @@ func literalPatternExprs(arms []*ast.MatchExprArm) []ast.Expr {
 // the scrutinee is a number / string / bool. Every arm must
 // carry a literal pattern or be a wildcard; literals must
 // type-check against the scrutinee's type. Exhaustiveness:
-// a trailing unguarded `_` is required (we don't enumerate
-// integer / string domains, and bool exhaustiveness via the
-// two-literal form is intentionally NOT special-cased — the
-// `_` arm covers it more uniformly).
+// a trailing unguarded `_` is required, except that `true` and
+// `false` arms close a boolean's domain (closesBool); integer and
+// string domains are not enumerated.
 func (c *checker) checkLiteralMatch(n *ast.Match, tagT ast.Type, s *scope) {
 	tagT = c.settlePolymorphicScrutinee(n.Tag, tagT, literalPatterns(n.Arms))
 	sawWildcard := false
+	var closing []ast.Expr
 	for i, arm := range n.Arms {
 		if arm.IsWildcard {
 			if i != len(n.Arms)-1 {
@@ -15861,6 +15887,9 @@ func (c *checker) checkLiteralMatch(n *ast.Match, tagT ast.Type, s *scope) {
 			c.errfCode(arm.P, "E035", "match on non-enum value `%s` only accepts literal patterns or `_`", tagT)
 			c.checkBlock(arm.Body, s)
 			continue
+		}
+		if arm.Guard == nil && arm.RangeHi == nil && arm.AtBinding == "" {
+			closing = append(closing, arm.Literal)
 		}
 		litT := c.checkExpr(arm.Literal, s)
 		if litT != nil {
@@ -15905,9 +15934,32 @@ func (c *checker) checkLiteralMatch(n *ast.Match, tagT ast.Type, s *scope) {
 		}
 		c.checkBlock(arm.Body, armScope)
 	}
-	if !sawWildcard {
-		c.errfCode(n.P, "E030", "match on non-enum value is not exhaustive — add an unguarded `_` arm")
+	if !sawWildcard && !closesBool(tagT, closing) {
+		c.errfCode(n.P, "E030", "%s", literalMatchNotExhaustive(tagT))
 	}
+}
+
+// closesBool reports whether a boolean scrutinee's unguarded literal arms
+// name both `true` and `false`, which close its domain as `_` does (#6685).
+func closesBool(tagT ast.Type, lits []ast.Expr) bool {
+	if _, ok := tagT.(ast.BoolType); !ok {
+		return false
+	}
+	seen := map[bool]bool{}
+	for _, l := range lits {
+		if b, ok := l.(*ast.BoolLit); ok {
+			seen[b.Value] = true
+		}
+	}
+	return seen[true] && seen[false]
+}
+
+// literalMatchNotExhaustive is E030's text for a literal match on tagT.
+func literalMatchNotExhaustive(tagT ast.Type) string {
+	if _, ok := tagT.(ast.BoolType); ok {
+		return "match on boolean is not exhaustive — add the missing `true` or `false` arm, or an unguarded `_`"
+	}
+	return "match on non-enum value is not exhaustive — add an unguarded `_` arm"
 }
 
 // checkTupleMatch handles `match (pair) { (0, y) => …, (x, y) => … }`
@@ -16113,6 +16165,7 @@ func (c *checker) checkStructMatch(n *ast.Match, st ast.StructType, s *scope) {
 func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scope) ast.Type {
 	tagT = c.settlePolymorphicScrutinee(n.Tag, tagT, literalPatternExprs(n.Arms))
 	sawWildcard := false
+	var closing []ast.Expr
 	var result ast.Type
 	unify := func(armT ast.Type, p ast.Position) {
 		if armT == nil {
@@ -16167,6 +16220,9 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 			c.errfCode(arm.P, "E035", "match on non-enum value `%s` only accepts literal patterns or `_`", tagT)
 			continue
 		}
+		if arm.Guard == nil && arm.RangeHi == nil && arm.AtBinding == "" {
+			closing = append(closing, arm.Literal)
+		}
 		litT := c.checkExpr(arm.Literal, s)
 		if litT != nil {
 			c.settleNumeric(arm.Literal, tagT)
@@ -16210,8 +16266,8 @@ func (c *checker) checkLiteralMatchExpr(n *ast.MatchExpr, tagT ast.Type, s *scop
 		}
 		unify(c.checkExpr(arm.Body, armScope), arm.P)
 	}
-	if !sawWildcard {
-		c.errfCode(n.P, "E030", "match on non-enum value is not exhaustive — add an unguarded `_` arm")
+	if !sawWildcard && !closesBool(tagT, closing) {
+		c.errfCode(n.P, "E030", "%s", literalMatchNotExhaustive(tagT))
 	}
 	return result
 }

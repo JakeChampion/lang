@@ -57,7 +57,7 @@ func TestSelfHostConstRefCheckX86_64(t *testing.T) {
 		// A const naming a type the checker genuinely cannot model must still be
 		// refused, and by BOTH — reading the sig's return type unconditionally
 		// would have made this one pass here while native rejects it.
-		{"const-outside-the-grammar", "struct Cfg { n: i32 }\nconst C: Cfg = Cfg { n: 41 };\nfunction main(): i32 { return C.n; }\n"},
+		{"const-outside-the-grammar", "struct Cfg { n: i32 }\nfunction f(): i32 { return 1; }\nconst C: Cfg = Cfg { n: f() };\nfunction main(): i32 { return C.n; }\n"},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			src := filepath.Join(dir, "cref_"+c.name+".fern")

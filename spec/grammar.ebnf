@@ -168,10 +168,10 @@ IfStmt      = 'if' 'let' ArmPatterns '=' NoStructExpr Stmt [ 'else' Stmt ]
 WhileStmt   = 'while' '(' Expr ')' Block ;
 LoopStmt    = 'loop' Block ;
 
-ForStmt     = 'for' '(' [ ForInit ] ';' Expr ';' [ Expr ] ')' Block
+ForStmt     = 'for' '(' [ ForInit ] ';' Expr ';' [ Assign ] ')' Block
             | 'for' ForBinding 'in' NoStructExpr Block
             ;
-ForInit     = LetNoSemi | Expr ;
+ForInit     = LetNoSemi | Assign ;
 # A shape binder is a BindPattern, the same production `let (a, b) = e;` and a
 # destructuring parameter take, and irrefutable for the same reason: a loop
 # body has no else branch. Which loop it lowers to is a typing question, not a
@@ -208,10 +208,19 @@ ReturnStmt  = 'return' [ Expr ] ';' ;
 BreakStmt   = 'break' [ IDENT ] ';' ;
 ContinueStmt
             = 'continue' [ IDENT ] ';' ;
-DeferStmt   = ( 'defer' | 'errdefer' ) ( Block | Expr ';' ) ;
+DeferStmt   = ( 'defer' | 'errdefer' ) ( Block | Assign ';' ) ;
 LocalFunc   = 'function' IDENT [ TypeParams ] '(' [ ParamList ] ')' [ ':' Type ] Block ;
 
-ExprStmt    = Expr ';' ;
+# Assignment is a statement, not an expression: it yields no value, so
+# `let a = b = 1;` and `while ((n = n - 1) > 0)` do not derive. It is
+# right-associative, so `a = b = 1;` assigns both. The grammar is a
+# SUPERSET here: `1 = 2;` derives, and the parser rejects it as P003.
+# Assignability is a static rule, not a syntactic one: see spec/README.md.
+ExprStmt    = Assign ';' ;
+Assign      = Expr [ AssignOp Assign ] ;
+AssignOp    = '=' | '+=' | '-=' | '*=' | '/=' | '%='
+            | '&=' | '|=' | '^=' | '<<=' | '>>='
+            ;
 
 # ----------------------------------------------------------------- patterns
 
@@ -254,19 +263,10 @@ QualName    = PrimitiveType '.' IDENT { '.' IDENT }
 # -------------------------------------------------------------- expressions
 #
 # One rule per precedence tier, mirroring the parser's ladder from
-# parseAssign down to parsePrimary. Assignment is right-associative;
-# every binary tier is left-associative, written as a repetition so the
-# grammar stays non-left-recursive.
-#
-# The grammar is deliberately a SUPERSET here: `1 = 2` derives, and the
-# parser rejects it as P003. Assignability is a static rule, not a
-# syntactic one — see spec/README.md.
+# parsePipe down to parsePrimary. Every binary tier is left-associative,
+# written as a repetition so the grammar stays non-left-recursive.
 
-Expr        = Assign ;
-Assign      = Pipe [ AssignOp Assign ] ;
-AssignOp    = '=' | '+=' | '-=' | '*=' | '/=' | '%='
-            | '&=' | '|=' | '^=' | '<<=' | '>>='
-            ;
+Expr        = Pipe ;
 Pipe        = Range { '|>' Range } ;
 Range       = LogicOr [ ( '..=' | '..' ) LogicOr ] ;
 LogicOr     = LogicAnd { '||' LogicAnd } ;
@@ -306,13 +306,11 @@ TypeArgList = Type { ',' Type } [ ',' ] ;
 
 # NoStructExpr is Expr with the brace-suffixed struct literal withheld,
 # for the positions where a `{` opens a block instead: `for x in E {`
-# and `if let P = E {`. Merely aliasing Assign would still
+# and `if let P = E {`. Merely aliasing Pipe would still
 # let StructLit consume an empty body. Keep the precedence ladder but
 # withhold brace-suffixed literals from every unparenthesized operand.
 NoStructExpr
-            = NoStructAssign ;
-NoStructAssign
-            = NoStructPipe [ AssignOp NoStructAssign ] ;
+            = NoStructPipe ;
 NoStructPipe = NoStructRange { '|>' NoStructRange } ;
 NoStructRange
             = NoStructLogicOr [ ( '..=' | '..' ) NoStructLogicOr ] ;

@@ -215,6 +215,7 @@ var rcResultOwned = map[string]bool{
 	"__fern_handle_set_extproc":      true,
 	"__fern_reader_seek":             true,
 	"__fern_reader_splice":           true,
+	"__fern_reader_copy_range":       true,
 	"__fern_writer_seek":             true,
 	"__fern_reader_flags":            true,
 	"__fern_writer_flags":            true,
@@ -278,6 +279,7 @@ var rcResultOwned = map[string]bool{
 	"setgroups":         true,
 	"clock_set":         true,
 	"window_size":       true,
+	"pipe":              true,
 	"set_window_size":   true,
 	"termios_get":       true,
 	"termios_set":       true,
@@ -354,6 +356,7 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"__method_Writer_truncate":         true, // __fern_writer_truncate
 	"__method_Reader_seek":             true, // __fern_reader_seek
 	"__method_Reader_splice_to":        true, // __fern_reader_splice
+	"__method_Reader_copy_range_to":    true, // __fern_reader_copy_range
 	"__method_Writer_seek":             true, // __fern_writer_seek
 	"__method_Reader_flags":            true, // __fern_reader_flags
 	"__method_Writer_flags":            true, // __fern_writer_flags
@@ -425,6 +428,7 @@ var rcOwnedResultBuiltins = map[string]bool{
 	"temp_dir":                         true,
 	"read_dir":                         true,
 	"window_size":                      true,
+	"pipe":                             true,
 	"set_window_size":                  true,
 	"termios_get":                      true,
 	"termios_set":                      true,

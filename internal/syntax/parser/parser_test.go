@@ -983,6 +983,31 @@ func TestNonLvalueAssignTargetsRejected(t *testing.T) {
 	}
 }
 
+// Assignment is a statement: it yields no value, so it cannot stand where an
+// expression is read. The statement positions still take it, chained ones
+// included.
+func TestAssignmentIsAStatement(t *testing.T) {
+	for _, src := range []string{
+		`function f(): i32 { let r = 0; let a = r = 5; return a; }`,
+		`function f(): i32 { let r = 0; while ((r = r + 1) < 3) { } return r; }`,
+		`function f(): i32 { let r = 0; return r += 1; }`,
+		`function f(): i32 { let r = 0; let g = (x: i32) => r = x; return r; }`,
+	} {
+		if _, err := Parse(src); err == nil {
+			t.Errorf("assignment in expression position parsed: %s", src)
+		}
+	}
+	for _, src := range []string{
+		`function f(): i32 { let r = 0; let s = 0; r = s = 3; return r; }`,
+		`function f(): i32 { let r = 0; for (r = 1; r < 3; r += 1) { } return r; }`,
+		`function f(): i32 { let r = 0; defer r = 9; return r; }`,
+	} {
+		if _, err := Parse(src); err != nil {
+			t.Errorf("assignment statement refused: %s: %v", src, err)
+		}
+	}
+}
+
 // A union alias may carry its own type parameters, and each member may
 // be instantiated with them (#7737). Both halves are the parser's job:
 // the checker only ever sees what this produced.

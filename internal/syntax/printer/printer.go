@@ -406,11 +406,10 @@ func printExpr(b *strings.Builder, e ast.Expr) {
 		}
 		b.WriteByte(']')
 	case *ast.Assign:
-		b.WriteByte('(')
+		// A statement, so never parenthesised: `(x = 1)` does not parse.
 		printExpr(b, x.Target)
 		b.WriteString(" = ")
 		printExpr(b, x.Value)
-		b.WriteByte(')')
 	case *ast.IfExpr:
 		b.WriteString("if (")
 		printExpr(b, x.Cond)

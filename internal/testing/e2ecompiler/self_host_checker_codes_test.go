@@ -1637,18 +1637,18 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// dangerous direction, since the same source builds under one compiler
 		// and not the other.
 		//
-		// `boolean` is the interesting row: `true` / `false` really are the
-		// whole domain, and native still requires the wildcard (its
-		// checkLiteralMatch comment records that as deliberate). Widening the
-		// language to accept it is a change to BOTH compilers; this is parity
-		// with what native does today.
+		// `boolean` is the exception: unguarded `true` and `false` arms are its
+		// whole domain, so they close it in both frontends (#6685). One missing,
+		// or one guarded, still needs the other or a `_`.
 		//
 		// The guarded-wildcard row is what stops `has_guard` being ignored — a
 		// guarded `_` may fall through, so it does not make the match
 		// exhaustive. The accept rows are what stop the rule being a blanket
 		// rejection of every scalar match.
-		{"match-bool-two-literals-expr-no-wildcard", "function main(): i32 {\n    let b: boolean = true;\n    return (match (b) { true => 7i32, false => 1i32 });\n}\n", []string{"E030"}},
-		{"match-bool-two-literals-stmt-no-wildcard", "function main(): i32 { let b: boolean = true; match (b) { true => { return 1; }, false => { return 2; } } }\n", []string{"E030"}},
+		{"match-bool-two-literals-expr-no-wildcard", "function main(): i32 {\n    let b: boolean = true;\n    return (match (b) { true => 7i32, false => 1i32 });\n}\n", nil},
+		{"match-bool-two-literals-stmt-no-wildcard", "function main(): i32 { let b: boolean = true; match (b) { true => { return 1; }, false => { return 2; } } }\n", nil},
+		{"match-bool-one-literal-no-wildcard", "function main(): i32 { let b: boolean = true; match (b) { true => { return 1; } } return 0; }\n", []string{"E030"}},
+		{"match-bool-guarded-literal-no-wildcard", "function main(): i32 { let b: boolean = true; let c: boolean = false; match (b) { true => { return 1; }, false when c => { return 2; } } return 0; }\n", []string{"E030"}},
 		{"match-bool-with-wildcard-ok", "function main(): i32 { let b: boolean = true; match (b) { true => { return 7; }, _ => { return 1; } } }\n", nil},
 		// A failed arithmetic operator types its result as unknown, so the
 		// binding it initialises reports nothing further (#5317).
