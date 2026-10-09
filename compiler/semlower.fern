@@ -822,8 +822,8 @@ pub function runtime_bodies(src: string): irtables.LowerResult[] {
   return runtime_lowering(src).bodies;
 }
 
-// Retain selected facts from this invocation for a future physical proof.
-// The existing runtime callback still projects only the produced bodies.
+// The runtime callback carries bodies and selected facts from this invocation
+// for a future physical proof. runtime_bodies is the bodies-only projection.
 pub function runtime_lowering(src: string): physicalbody.Lowered {
   let parsed: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
   // The builtin enums' variants (IoError's NotFound, …), which a program's
@@ -925,7 +925,7 @@ function substitution_of(im: parser.Module, debug_lines: boolean): ircore.Sub {
   let stab: irtables.StructTab = irtables.struct_tab(parser.erase_view_structs(im.structs));
   util.arr_push_cliff_report("sem:gated", 0);
   let sub: ircore.Sub = substitution(im, stab, debug_lines);
-  return ircore.Sub { ...sub, rt_lower: runtime_bodies };
+  return ircore.Sub { ...sub, rt_lower: runtime_lowering };
 }
 
 // Driven is what a driver hands an emit entry for a module it parsed without
