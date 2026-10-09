@@ -961,8 +961,8 @@ pub function http_date_parse(s: string): Option[Instant] {
 
 // ============================================================
 // TimeZone + Zoned — Phase 5 per docs/STDLIB-DESIGN-RESEARCH.md
-// Rec §4. Fixed-offset zones only in this PR — IANA tzdb
-// lookup (with DST transition tables) lands separately.
+// Rec §4. Fixed-offset zones; IANA zones with their DST
+// transitions are std/tz's.
 // ============================================================
 
 // `timezone_fixed_offset(offset_seconds)` — construct a fixed-

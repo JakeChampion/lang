@@ -13,10 +13,11 @@
 // (docs/PRELUDE-TO-MODULES.md, Phase 5).
 
 // std/format's bodies dispatch (i32) `.abs()` (for negative
-// sign handling) and (i32) `.to_string()` (in format_bytes /
-// format_duration_ms). Declare std/i32 so those methods
-// register under no-prelude.
+// sign handling) and `.to_string()` on i32 (format_bytes) and i64
+// (format_duration_ms). Declare both so those methods register under
+// no-prelude.
 import "std/i32";
+import "std/i64";
 // `.slice_snap` for precision truncation, `utf8_decode_at` for the
 // (possibly multibyte) fill character in a format spec.
 import "std/string";
@@ -500,25 +501,25 @@ pub function format_bytes(n: i32): string {
 // "1h 23m 45s" / "500ms". Components are emitted only when
 // non-zero, separated by spaces; "0" alone returns "0ms".
 // Negative ms gets a leading "-" before the magnitude.
-pub function format_duration_ms(ms: i32): string {
+pub function format_duration_ms(ms: i64): string {
   if (ms == 0) {
     return "0ms";
   }
   let neg: boolean = ms < 0;
-  let mag: i32 = ms;
+  let mag: i64 = ms;
   if (neg) {
-    mag = ms.abs();
+    mag = 0 - ms;
   }
   let sign: string = "";
   if (neg) {
     sign = "-";
   }
-  let h: i32 = mag / 3600000;
-  let rem: i32 = mag - h * 3600000;
-  let m: i32 = rem / 60000;
+  let h: i64 = mag / 3600000;
+  let rem: i64 = mag - h * 3600000;
+  let m: i64 = rem / 60000;
   rem = rem - m * 60000;
-  let s: i32 = rem / 1000;
-  let msPart: i32 = rem - s * 1000;
+  let s: i64 = rem / 1000;
+  let msPart: i64 = rem - s * 1000;
   let out: string = "";
   if (h > 0) {
     out = out + h.to_string() + "h";
@@ -549,8 +550,7 @@ pub function format_duration_ms(ms: i32): string {
 // `<integer><unit>` parts (optionally space-separated), with units
 // `ms` / `s` / `m` / `h` / `d`; e.g. `"500ms"`, `"1h30m"`, `"1h 30m"`,
 // `"2d12h"`. Returns `None` on empty input, a missing/unknown unit, or a
-// part with no number. The `i64` result holds durations far beyond the
-// i32 that `format_duration_ms` takes.
+// part with no number.
 pub function parse_duration_ms(s: string): Option[i64] {
   let n: i32 = s.len();
   let i: i32 = 0;
