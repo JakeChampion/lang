@@ -134,10 +134,11 @@ type, giving `Option[T]` — see [Traits](../traits/#runtime-dispatch--dyn-trait
 
 A trailing comma is legal in the comma-separated lists you write most —
 array literals, call arguments (positional and named), function and
-lambda parameters, a function's type parameters, explicit call type
-arguments (`id[i32,](x)`), struct literals and declarations, enum
-variant lists, match arms, variant and tuple patterns, tuple literals,
-map literals, and the map-foreach binder (`for (k, v,) in m`):
+lambda parameters, type parameters (`struct Pair[A, B,]`), type
+arguments (`Pair[i32, i32,]`, `id[i32,](x)`), struct literals and
+declarations, enum variant lists and variant payloads (`X(i32,)`), match
+arms, variant and tuple patterns, tuple literals, map literals, and the
+map-foreach binder (`for (k, v,) in m`):
 
 ```fern
 let xs: i32[] = [
