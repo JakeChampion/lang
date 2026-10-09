@@ -119,3 +119,26 @@ func TestCheckWarnsOfTodoStubs(t *testing.T) {
 		t.Errorf("a positionless warning: got %q, want %q", got, want)
 	}
 }
+
+// A generic body is checked once with its type parameters open, so a capture
+// of `x: T` is a view only in the instance at `str`: E082 comes from the
+// re-check monomorphisation runs on that instance.
+func TestCheckRefusesAGenericCaptureInstantiatedAtAView(t *testing.T) {
+	const src = `function keep[T](x: T): () => T { return () => x; }
+function main(): i32 {
+    let s: string = "abc";
+    let v: str = slice_unchecked(s, 0, 1);
+    let g: () => str = keep(v);
+    let n: () => i32 = keep(1);
+    return g().len() + n();
+}
+`
+	prog, _, err := modload.LoadSource(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Check("-", prog, "", nil)
+	if err == nil || !strings.Contains(diag.Format("main.fern", src, err), "error[E082]") {
+		t.Fatalf("want E082 on the str instance, got %v", err)
+	}
+}

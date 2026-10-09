@@ -1410,6 +1410,26 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e065-callee-method", "function mk(): string { return \"ab\"; }\nfunction (s: string) view(): str { return s; }\nfunction f(): str { let s: string = mk(); return s.view(); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		{"e065-callee-other-arg-ok", "function mk(): string { return \"ab\"; }\nfunction second(a: str, b: str): str { return b; }\nfunction f(): str { let s: string = mk(); return second(slice_unchecked(s, 0, 1), \"lit\"); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e065-callee-param-ok", "function idv(s: str): str { return s; }\nfunction f(p: string): str { return idv(slice_unchecked(p, 0, 1)); }\nfunction main(): i32 { return 0; }\n", nil},
+		// E082: a closure may not capture a value holding a view, bare or
+		// through a record, tuple, enum payload or Option, by an arrow, a
+		// nested function or a `use` callback. The record row is #10878's
+		// program: the lowering refused it as a function value merged past
+		// its source with no copy.
+		{"e082-str-parameter", "function f(sep: str): i32 { let g = (): i32 => sep.len(); return g(); }\nfunction main(): i32 { return f(\",\"); }\n", []string{"E082"}},
+		{"e082-local-view", "function f(s: string): i32 { let v: str = slice_unchecked(s, 0, 1); let g = (): i32 => v.len() + v.len(); return g(); }\nfunction main(): i32 { return f(\"ab\"); }\n", []string{"E082"}},
+		{"e082-byte-view", "function f(s: string): i32 { let b: [u8] = s.as_bytes(); let g = (): i32 => b.len(); return g(); }\nfunction main(): i32 { return f(\"ab\"); }\n", []string{"E082"}},
+		{"e082-array-slice", "function f(xs: i32[]): i32 { let w: [i32] = xs[0:2]; let g = (): i32 => w.len(); return g(); }\nfunction main(): i32 { return f([1, 2, 3]); }\n", []string{"E082"}},
+		{"e082-record-merged-past-its-source", "struct P { a: str }\nstruct Holder { f: () => i32, n: i32 }\nfunction mk(n: i32): string { let s: string = \"ab\"; let i: i32 = 0; while (i < n) { s = s + \"c\"; i = i + 1; } return s; }\nfunction g(n: i32): i32 {\n    let h: Holder = Holder { f: () => 0, n: 0 };\n    if (n != 0) {\n        let s: string = mk(n);\n        let p: P = P { a: slice_unchecked(s, 1, 4) };\n        h = Holder { f: () => p.a.len() * 10 + (p.a[0] as i32) - 97, n: n };\n    }\n    return h.f() * 10 + h.n;\n}\nfunction main(): i32 { return g(3) + g(0); }\n", []string{"E082"}},
+		{"e082-tuple", "function f(s: string): i32 { let t: (str, i32) = (slice_unchecked(s, 0, 1), 1); let g = (): i32 => t.1; return g(); }\nfunction main(): i32 { return f(\"ab\"); }\n", []string{"E082"}},
+		{"e082-enum-payload", "enum Tok { Word(str), Num(i32) }\nfunction f(s: string): i32 { let t: Tok = Word(slice_unchecked(s, 0, 1)); let g = (): i32 => match (t) { Word(w) => w.len(), Num(n) => n }; return g(); }\nfunction main(): i32 { return f(\"ab\"); }\n", []string{"E082"}},
+		{"e082-option", "function f(s: string): i32 { let o: Option[str] = Some(slice_unchecked(s, 0, 1)); let g = (): i32 => match (o) { Some(x) => x.len(), None => 0 }; return g(); }\nfunction main(): i32 { return f(\"ab\"); }\n", []string{"E082"}},
+		{"e082-nested-function", "function f(s: string): i32 { let v: str = slice_unchecked(s, 0, 1); function inner(): i32 { return v.len(); } return inner(); }\nfunction main(): i32 { return f(\"ab\"); }\n", []string{"E082"}},
+		{"e082-nested-lambdas", "function f(s: string): i32 { let v: str = slice_unchecked(s, 0, 1); let g = (): i32 => { let h = (): i32 => v.len(); return h(); }; return g(); }\nfunction main(): i32 { return f(\"ab\"); }\n", []string{"E082"}},
+		{"e082-use-callback", "function apply(x: i32, k: (i32) => i32): i32 { return k(x); }\nfunction f(s: str): i32 { use n <- apply(41); return n + s.len(); }\nfunction main(): i32 { return f(\"ab\"); }\n", []string{"E082"}},
+		{"e082-owned-copy", "function f(sep: str): i32 { let owned: string = sep + \"\"; let g = (): i32 => owned.len(); return g(); }\nfunction main(): i32 { return f(\",\"); }\n", nil},
+		{"e082-view-without-a-closure", "function f(s: string, c: boolean): i32 { let v: str = slice_unchecked(s, 0, 1); let n: i32 = if (c) { v.len() } else { 0 }; return n; }\nfunction main(): i32 { return f(\"ab\", true); }\n", nil},
+		{"e082-parameter-shadows-a-view", "function f(s: string): i32 { let v: str = slice_unchecked(s, 0, 1); let g = (v: i32): i32 => v + 1; return g(v.len()); }\nfunction main(): i32 { return f(\"ab\"); }\n", nil},
+		{"e082-recursive-viewless-enum", "enum L { Cons(i32, L), Nil }\nfunction f(): i32 { let l: L = Cons(1, Nil); let g = (): i32 => match (l) { Cons(x, r) => x, Nil => 0 }; return g(); }\nfunction main(): i32 { return f(); }\n", nil},
 		{"e065-callee-var-binding", "function mk(): string { return \"ab\"; }\nfunction idv(s: str): str { return s; }\nfunction f(): str { let s: string = mk(); let t: str = idv(slice_unchecked(s, 0, 1)); return t; }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		// `x.len()` in METHOD spelling. Both receivers resolve through a
 		// table that is empty without the stdlib in scope, so the

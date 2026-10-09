@@ -126,6 +126,7 @@ language does not have. It is deleted.
 | `E079` | `?` inside a `defer` / `errdefer` action | `diag_e079` |
 | `E080` | a handler reaches a host effect around its `Platform` bag | — |
 | `E081` | a named function or `const` declares no type | — |
+| `E082` | a closure captures a borrowed view | `diag_e082` |
 | `P001` | Unexpected token (parse error) | `diag_p001` |
 | `P002` | Numeric literal error | `diag_p002` |
 | `P003` | Left-hand side of assignment is not assignable | `diag_p003` |
