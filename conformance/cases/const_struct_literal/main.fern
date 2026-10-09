@@ -1,0 +1,31 @@
+// A const may be a struct literal whose fields are constants (#6685),
+// including earlier consts and a nested struct. Each use is its own value:
+// reading a field from one use and passing another to a function leave the
+// const intact for the uses after them.
+import "core/int";
+
+struct Point { x: i32, y: i32 }
+
+struct Cfg { name: string, origin: Point, scale: i32 }
+
+const BASE: i32 = 40;
+
+const ORIGIN: Point = Point { x: 1, y: 2 };
+
+const CFG: Cfg = Cfg { name: "grid", origin: Point { x: 3, y: BASE + 1 }, scale: BASE / 10 };
+
+function sum(p: Point): i32 {
+  return p.x + p.y;
+}
+
+function main(): i32 {
+  print(int.int_to_string(ORIGIN.x));
+  print(int.int_to_string(sum(ORIGIN)));
+  print(int.int_to_string(ORIGIN.y));
+  print(CFG.name);
+  print(int.int_to_string(CFG.origin.y));
+  let c: Cfg = CFG;
+  print(int.int_to_string(sum(c.origin) * c.scale));
+  print(CFG.name);
+  return sum(ORIGIN) + CFG.scale;
+}

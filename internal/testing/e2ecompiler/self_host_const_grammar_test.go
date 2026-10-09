@@ -8,12 +8,11 @@ import (
 	"testing"
 )
 
-// Native defines a deliberately narrow constant grammar — literals, earlier
-// consts, and arithmetic / comparison / logical operations on them. The
-// self-host enforced none of it, so it admitted a strictly LARGER const
-// language: `const C: Cfg = Cfg { n: 41 };` built here and not under native
-// (#6618). That is the dangerous direction — the same source builds under one
-// compiler and not the other, and nothing fails loudly.
+// Both front ends share one constant grammar — literals, earlier consts,
+// arithmetic / comparison / logical operations on them, and array, tuple and
+// struct literals of those. The self-host once enforced none of it and
+// admitted a strictly larger const language (#6618); struct literals of
+// constant fields then joined the grammar on both sides at once (#6685).
 //
 // The diagnostic is UNCODED on both sides, so the checker-code differential
 // cannot gate it: an uncoded diagnostic contributes no code, and a row there
@@ -39,8 +38,8 @@ func TestSelfHostConstGrammarX86_64(t *testing.T) {
 	}{
 		// Rejected — outside the grammar. Each is a distinct AST shape, so a
 		// fix that only special-cased struct literals would fail the others.
-		{"struct-literal", "struct Cfg { n: i32 }\nconst C: Cfg = Cfg { n: 41 };\nfunction main(): i32 { return C.n; }\n"},
-		{"array-literal", "const XS: i32[] = [1, 2];\nfunction main(): i32 { return 0; }\n"},
+		{"struct-literal-call-field", "struct Cfg { n: i32 }\nfunction f(): i32 { return 1; }\nconst C: Cfg = Cfg { n: f() };\nfunction main(): i32 { return C.n; }\n"},
+		{"struct-update", "struct Cfg { n: i32, m: i32 }\nconst A: Cfg = Cfg { n: 1, m: 2 };\nconst C: Cfg = Cfg { ...A, n: 41 };\nfunction main(): i32 { return C.n; }\n"},
 		{"call", "function f(): i32 { return 1; }\nconst C: i32 = f();\nfunction main(): i32 { return C; }\n"},
 		// Native words the non-earlier IDENT case differently, so these pin
 		// that the second message is reproduced rather than folded into the
@@ -59,6 +58,8 @@ func TestSelfHostConstGrammarX86_64(t *testing.T) {
 		{"checked-div", "const B: i32 = 6 /? 2;\nfunction main(): i32 { return B; }\n"},
 
 		// Accepted — what stops the rule being a blanket rejection of consts.
+		{"struct-literal-ok", "struct Cfg { n: i32 }\nconst B: i32 = 40;\nconst C: Cfg = Cfg { n: B + 1 };\nfunction main(): i32 { return C.n; }\n"},
+		{"array-literal-ok", "const XS: i32[] = [1, 2];\nfunction main(): i32 { return 0; }\n"},
 		{"plain-literal-ok", "const N: i32 = 41;\nfunction main(): i32 { return N; }\n"},
 		{"arith-over-earlier-const-ok", "const A: i32 = 2;\nconst B: i32 = A * 3 + 1;\nfunction main(): i32 { return B; }\n"},
 		{"unary-ok", "const A: i32 = 0 - 5;\nfunction main(): i32 { return A; }\n"},

@@ -247,7 +247,10 @@ function main(): i32 {
 - **Generic** functions take type parameters in `[...]` after the name;
   see [Generics](../types/#generics).
 - **`const NAME: T = expr;`** declares a top-level constant. It may be
-  `pub`, and the annotation may be omitted.
+  `pub`, and the annotation may be omitted. `expr` is a literal, an
+  earlier `const`, an arithmetic, comparison or logical operation on
+  those, or an array, tuple or struct literal of them:
+  `const ORIGIN: Point = Point { x: 0, y: 0 };`.
 - **Nested functions** — a `function` declared inside a body is local to
   it and can read the enclosing function's bindings.
 
