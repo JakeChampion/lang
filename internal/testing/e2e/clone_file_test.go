@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"syscall"
 	"testing"
 
 	"github.com/jakechampion/lang/internal/testing/e2eharness"
@@ -105,15 +106,65 @@ func TestArm64DarwinCloneFile(t *testing.T) {
 	}
 }
 
-// Whatever the filesystem under the test directory answers, a refused clone
-// leaves no destination behind.
+// hostClones is what clone_file must answer in a test directory on this
+// host: whether FICLONE works on the filesystem under it, asked by Go in a
+// sibling directory, and on Darwin a clone, since APFS has one.
+func hostClones(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS == "darwin" {
+		return "cloned\n"
+	}
+	dir := t.TempDir()
+	src, err := os.Create(filepath.Join(dir, "a"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer src.Close()
+	if _, err := src.WriteString("hello\n"); err != nil {
+		t.Fatal(err)
+	}
+	dst, err := os.Create(filepath.Join(dir, "b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dst.Close()
+	const ficlone = 0x40049409
+	if _, _, e := syscall.Syscall(syscall.SYS_IOCTL, dst.Fd(), ficlone, src.Fd()); e != 0 {
+		return "refused\n"
+	}
+	return "cloned\n"
+}
+
+// A Linux runtime clones exactly where the filesystem can, and a refused
+// clone leaves no destination behind.
 func TestCloneFileX86_64(t *testing.T) {
 	runner := e2eharness.X86_64Runner(t)
 	if runner == nil {
 		runner = []string{}
 	}
-	if got := runCloneFile(t, "x86-64-linux", runner); got != "cloned\n" && got != "refused\n" {
-		t.Errorf("clone_file: %q", got)
+	if got, want := runCloneFile(t, "x86-64-linux", runner), hostClones(t); got != want {
+		t.Errorf("clone_file: %q, want %q", got, want)
+	}
+}
+
+// The interpreter asks the host's own call (clonefile_*.go).
+func TestInterpCloneFile(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "src.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := filepath.Join(dir, "prog.fern")
+	if err := os.WriteFile(src, []byte(cloneFileSource), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(e2eharness.BuildLangBinForInterp(t), "-interp", src)
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("run: %v (an exit code names the failing step)", err)
+	}
+	if got, want := string(out), hostClones(t); got != want {
+		t.Errorf("clone_file: %q, want %q", got, want)
 	}
 }
 
@@ -135,7 +186,7 @@ func TestCloneFileArm64Linux(t *testing.T) {
 	} else {
 		runner = []string{}
 	}
-	if got := runCloneFile(t, "arm64-linux", runner); got != "cloned\n" && got != "refused\n" {
-		t.Errorf("clone_file: %q", got)
+	if got, want := runCloneFile(t, "arm64-linux", runner), hostClones(t); got != want {
+		t.Errorf("clone_file: %q, want %q", got, want)
 	}
 }

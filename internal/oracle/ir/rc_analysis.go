@@ -3900,7 +3900,7 @@ func (b *builder) rhsTainted(e ast.Expr, tainted map[string]bool) bool {
 		if id, ok := x.Callee.(*ast.Ident); ok {
 			switch id.Name {
 			case "__method_Cell_get":
-				if isCellBytesGet(x) {
+				if isCellBoxGet(x) {
 					return false
 				}
 			case "map_new":

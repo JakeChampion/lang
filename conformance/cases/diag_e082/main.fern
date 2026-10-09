@@ -1,0 +1,17 @@
+// spec: ML-07
+//
+// Pins E082. The program is the second example from that code's entry
+// in the diagnostic catalogue (`fern explain E082`): the view sits in
+// a record, so the closure's type says nothing about it.
+// error[E082]: closure captures "sp", which holds a borrowed view
+struct Word { text: str }
+
+function make(s: string): () => i32 {
+    let sp: Word = Word { text: slice_unchecked(s, 0, 2) };
+    return () => sp.text.len();
+}
+
+function main(): i32 {
+    let f: () => i32 = make("hello");
+    return f();
+}

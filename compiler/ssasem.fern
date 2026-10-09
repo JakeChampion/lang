@@ -2810,7 +2810,7 @@ pub function cast_admits(from: typeinfo.Type, to: typeinfo.Type): boolean {
     return true;
   }
   // A stream handle's descriptor read (`r.fd`): the handle IS the i32.
-  if (semtypes.is_stream(from) && is_i32(to)) {
+  if (semtypes.is_fd_handle(from) && is_i32(to)) {
     return true;
   }
   if (lends_handle(from, to)) {
@@ -3071,8 +3071,8 @@ function signature_slot(t: typeinfo.Type): boolean {
 // and `drop_tuple_fields` walk each through `drop_value`, which dispatches a
 // function type to `drop_captures`, and `ssasem.reference` counts a function
 // value, so the container knows it has children to walk. A Cell is not on the
-// list because the checker refuses a Cell of any composite type (E057), so
-// one never holds a function value.
+// list because the checker refuses a Cell whose element can hold a function
+// value (E057).
 pub function nests_func(t: typeinfo.Type): boolean {
   if let typeinfo.TypeArray(a) = t {
     return nests_func(a.elem);
@@ -4044,8 +4044,8 @@ function i32_type(): typeinfo.Type {
 // enum answers from its schema entry, which the module worked out once
 // (semsource.view_types), so a `str` payload of `enum E { A(str) }` counts as
 // the one in `Option[str]` does. A dyn holds one when a box it can be holding
-// does (`dyns`), and a function value when an environment it can carry does
-// (`envs`).
+// does (`dyns`). A function value holds none: the checker refuses a closure
+// that captures one (E082).
 pub function holds_view(f: Func, t: typeinfo.Type): boolean {
   if let typeinfo.TypeString(st) = t {
     return st.tag == 1;
@@ -4083,27 +4083,14 @@ pub function holds_view(f: Func, t: typeinfo.Type): boolean {
     }
   }
   if (is_dyn(t)) {
-    return boxes_hold_view(f, f.dyns, t);
-  }
-  if (is_func(t)) {
-    return boxes_hold_view(f, f.envs, t);
-  }
-  return false;
-}
-
-function boxes_hold_view(f: Func, rows: EnvRow[], t: typeinfo.Type): boolean {
-  for row in rows {
-    if (semtypes.equal(row.fn_ty, t) && !semtypes.equal(row.env_ty, t) && holds_view(f, row.env_ty)) {
-      return true;
-    }
+    return dyn_view_concretes(f, t).len() > 0;
   }
   return false;
 }
 
 // Why a value of `t` cannot be rebuilt holding counted strings in place of
 // its views, or "" when it can: a `str`, and an array, tuple, record, enum,
-// map or dyn of such. A cell is shared storage, which a copy would split. A
-// function value carries no shape a test could read to find its environment.
+// map or dyn of such. A cell is shared storage, which a copy would split.
 // A type that holds itself is copied by a helper calling itself, so its parts
 // are checked once. `open` is the nominal and dyn types being copied around `t`.
 function copy_refusal(f: Func, t: typeinfo.Type, open: typeinfo.Type[]): string {
@@ -4118,9 +4105,6 @@ function copy_refusal(f: Func, t: typeinfo.Type, open: typeinfo.Type[]): string 
   }
   if (semtypes.is_cell(t)) {
     return "a cell " + typeinfo.spelling(t) + " is shared storage a copy would split";
-  }
-  if (is_func(t)) {
-    return "a function value " + typeinfo.spelling(t) + " has no shape to rebuild its environment by";
   }
   if (is_map(t)) {
     return map_refusal(f, t, open);

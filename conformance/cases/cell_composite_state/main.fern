@@ -1,0 +1,94 @@
+// Process-lifetime state in a cell whose element is a composite (#2679): the
+// shape a long-running server keeps across requests. E057 admits any element
+// built from scalars, strings, arrays, tuples, maps, structs and enums, since
+// none of those can hold a reference back to a cell; diag_e057 is the half
+// that is refused.
+//
+// `serve` stands in for an accept loop: one handler closure, built once,
+// captures the cells and is called per request, so every request reads the
+// state the previous ones left. Each `get()` is a snapshot: the `before`
+// read below must not see the writes that follow it.
+import "core/map";
+import "std/i32";
+
+struct Req { path: string, user: string }
+
+struct Session { user: string, visits: i32, paths: string[], last: Option[Req] }
+
+enum Tree { Leaf(i32), Node(Tree[]) }
+
+function hits(m: Map[string, i32], path: string): i32 {
+    if let Some(n) = m.get(path) {
+        return n;
+    }
+    return 0;
+}
+
+function sum(t: Tree): i32 {
+    match (t) {
+        Leaf(n) => {
+            return n;
+        },
+        Node(kids) => {
+            let total: i32 = 0;
+            for k in kids {
+                total = total + sum(k);
+            }
+            return total;
+        }
+    }
+}
+
+function serve(reqs: Req[], handle: (Req) => i32): i32 {
+    let status: i32 = 0;
+    for r in reqs {
+        status = status + handle(r);
+    }
+    return status;
+}
+
+function main(): i32 {
+    let counts: Cell[Map[string, i32]] = cell_new(map_new(8));
+    let log: Cell[string[]] = cell_new([]);
+    let session: Cell[Session] = cell_new(Session { user: "", visits: 0, paths: [], last: None });
+    let handle = (r: Req): i32 => {
+        let m: Map[string, i32] = counts.get();
+        counts.set(m.insert(r.path, hits(m, r.path) + 1));
+        log.set(log.get().append(r.user + " " + r.path));
+        let s: Session = session.get();
+        session.set(Session { user: r.user, visits: s.visits + 1, paths: s.paths.append(r.path), last: Some(r) });
+        return 200;
+    };
+    let reqs: Req[] = [Req { path: "/", user: "ann" }, Req { path: "/a", user: "bob" }, Req { path: "/", user: "cy" }];
+    let before: Map[string, i32] = counts.get();
+    let i: i32 = 0;
+    let status: i32 = 0;
+    while (i < 4) {
+        status = status + serve(reqs, handle);
+        i = i + 1;
+    }
+    print(status.to_string());
+    print(hits(counts.get(), "/").to_string() + " " + hits(counts.get(), "/a").to_string() + " " + hits(before, "/").to_string());
+    print(log.get().len().to_string() + " " + log.get()[0] + " " + log.get()[11]);
+    let s: Session = session.get();
+    let last: string = "none";
+    if let Some(r) = s.last {
+        last = r.user + r.path;
+    }
+    print(s.user + " " + s.visits.to_string() + " " + s.paths.len().to_string() + " " + last);
+
+    let grid: Cell[i32[][]] = cell_new([[1, 2], [3]]);
+    let rows: i32[][] = grid.get();
+    grid.set(rows.append([4, 5, 6]));
+    print(rows.len().to_string() + " " + grid.get().len().to_string() + " " + grid.get()[2][2].to_string());
+
+    let tree: Cell[Tree] = cell_new(Leaf(1));
+    tree.set(Node([tree.get(), Leaf(2), Node([Leaf(3)])]));
+    tree.set(Node([tree.get(), tree.get()]));
+    print(sum(tree.get()).to_string());
+
+    let pair: Cell[(string, char)] = cell_new(("a", 'x'));
+    pair.set((pair.get().0 + "b", 'y'));
+    print(pair.get().0 + " " + (pair.get().1 as i32).to_string());
+    return 0;
+}

@@ -1416,6 +1416,17 @@ function piece_open(s: Settings, so: io_buffered.BufWriter, name: string): Piece
   if (!s.filter) {
     return Piece { w: open_out(name), pid: 0 };
   }
+  // No wasi world has a process to start; the arm the target does not take
+  // is pruned before the capability gate, so the spawn compiles elsewhere.
+  if (target_os() == "wasi") {
+    fail(so, "--filter is not supported on this system", 1);
+    return Piece { w: stdout(), pid: 0 };
+  } else {
+    return spawn_filter(s, so, name);
+  }
+}
+
+function spawn_filter(s: Settings, so: io_buffered.BufWriter, name: string): Piece {
   let envp: string[] = with_file(environ(), name);
   let shell: (string, boolean) = gnu.env_value(envp, "SHELL");
   let prog: string = "/bin/sh";
@@ -1500,6 +1511,12 @@ function piece_wait(s: Settings, so: io_buffered.BufWriter, name: string, pid: i
   if (pid <= 0) {
     return;
   }
+  if (target_os() != "wasi") {
+    reap(s, so, name, pid);
+  }
+}
+
+function reap(s: Settings, so: io_buffered.BufWriter, name: string, pid: i32): void {
   let st: i32 = proc_waitpid_status(pid);
   if (st < 0) {
     fail(so, "waiting for child process: " + gnu.exec_errno_text(0 - st), 1);

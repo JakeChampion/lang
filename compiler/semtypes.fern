@@ -336,15 +336,15 @@ pub function cell_elem(t: typeinfo.Type): typeinfo.Type {
 }
 
 // A HANDLE is REPRESENTED by its bare descriptor, an i32: it holds no box,
-// anchors nothing, and carries no unit to release. A stream handle — the
-// `Reader` / `Writer` the front end injects, never declared by a module — is
-// the value the resource ops take directly, the same one `stdin()` answers,
-// and wears a record's nominal only in the type system. A WIT resource handle
-// (`own R` / `borrow R`) is the i32 the host names the resource by; dropping
-// an owned one is a call to its `[resource-drop]` import, which the front end
-// inserts, not a release.
+// anchors nothing, and carries no unit to release. A descriptor handle — the
+// `Reader` / `Writer` / `Dir` the front end injects, never declared by a
+// module — is the value the resource ops take directly, the same one
+// `stdin()` answers, and wears a record's nominal only in the type system. A
+// WIT resource handle (`own R` / `borrow R`) is the i32 the host names the
+// resource by; dropping an owned one is a call to its `[resource-drop]`
+// import, which the front end inserts, not a release.
 pub function is_handle(t: typeinfo.Type): boolean {
-  return is_resource_handle(t) || is_stream(t);
+  return is_resource_handle(t) || is_fd_handle(t);
 }
 
 pub function is_resource_handle(t: typeinfo.Type): boolean {
@@ -354,9 +354,9 @@ pub function is_resource_handle(t: typeinfo.Type): boolean {
   return false;
 }
 
-pub function is_stream(t: typeinfo.Type): boolean {
+pub function is_fd_handle(t: typeinfo.Type): boolean {
   if let typeinfo.TypeStruct(s) = t {
-    return s.name == "Reader" || s.name == "Writer";
+    return s.name == "Reader" || s.name == "Writer" || s.name == "Dir";
   }
   return false;
 }

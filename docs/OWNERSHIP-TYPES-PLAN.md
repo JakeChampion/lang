@@ -283,7 +283,8 @@ precompute shape.
   `sliceBorrowsLocal`). Call results are not chased (today every callee
   returns an owned `string`, a move — the same documented intraprocedural
   hole as the slice rule; both tighten together with the producer flip).
-  `return` is the only checked escape position, matching the E063 precedent.
+  `return` is the position this chase checks, matching the E063 precedent;
+  capture is refused outright (E082).
   This answers #4297's open question for the current model: immutability +
   bump-arena + "views don't escape their source" suffices without lifetime
   annotations, at the cost of the conservative local-source rejection.

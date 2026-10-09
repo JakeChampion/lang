@@ -552,6 +552,12 @@ func builtinStructDecls() []*ast.StructDecl {
 			Name:   "Writer",
 			Fields: []ast.Param{{Name: "fd", Type: ast.NumberType{}}},
 		},
+		// Dir — a directory held open by `open_dir`, whose methods name
+		// entries relative to it. Opaque by the same convention.
+		{
+			Name:   "Dir",
+			Fields: []ast.Param{{Name: "fd", Type: ast.NumberType{}}},
+		},
 		// HttpRequest / HttpResponse back the
 		// `fern -target wasi-http` mode (step 5 of
 		// docs/WASI-PREVIEW2.md). They're always available so
@@ -4168,6 +4174,40 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	fileStatResult := ast.EnumType{Name: "Result", Args: []ast.Type{
 		ast.StructType{Name: "FileStat"}, ioErrType}}
 	registerStructMethod("Reader", "stat", nil, fileStatResult)
+	// open_dir(path) holds a directory open: openat(2) with O_DIRECTORY,
+	// following a final symlink as opendir(3) does. Every Dir method takes
+	// a NAME inside that directory and acts on it through the descriptor
+	// — openat / fstatat / faccessat / unlinkat / fchmodat / fchownat — so
+	// a walk that descends handle by handle never forms a path longer than
+	// one component and is not bounded by PATH_MAX, and a parent renamed
+	// mid-walk does not redirect it. Err carries the errno and the name.
+	//
+	//   d.open_dir(name)  the child directory, refusing a symlink
+	//                     (O_NOFOLLOW) rather than descending through it
+	//   d.entries()       every name but `.` and `..`, read from the start
+	//                     in the order the kernel reports them
+	//   d.stat(name) / d.lstat(name)   the FileStat stat(path) answers
+	//   d.access(name, mode)           access(path, mode), effective ids
+	//   d.remove_file(name) / d.remove_dir(name)   unlink / rmdir
+	//   d.chmod(name, mode, follow) / d.chown(name, uid, gid, follow)
+	//   d.close()
+	//
+	// Gated on `fsdir`: no wasm backend lowers the handle (E066).
+	dirType := ast.StructType{Name: "Dir"}
+	dirResult := ast.EnumType{Name: "Result", Args: []ast.Type{dirType, ioErrType}}
+	voidResult := ast.EnumType{Name: "Result", Args: []ast.Type{ast.VoidType{}, ioErrType}}
+	c.info.FuncSigs["open_dir"] = &ast.FuncType{Params: []ast.Type{ast.StringType{}}, Result: dirResult}
+	registerStructMethod("Dir", "open_dir", []ast.Type{ast.StringType{}}, dirResult)
+	registerStructMethod("Dir", "entries", nil,
+		ast.EnumType{Name: "Result", Args: []ast.Type{ast.ArrayType{Elem: ast.StringType{}}, ioErrType}})
+	registerStructMethod("Dir", "stat", []ast.Type{ast.StringType{}}, fileStatResult)
+	registerStructMethod("Dir", "lstat", []ast.Type{ast.StringType{}}, fileStatResult)
+	registerStructMethod("Dir", "access", []ast.Type{ast.StringType{}, ast.NumberType{}}, voidResult)
+	registerStructMethod("Dir", "remove_file", []ast.Type{ast.StringType{}}, voidResult)
+	registerStructMethod("Dir", "remove_dir", []ast.Type{ast.StringType{}}, voidResult)
+	registerStructMethod("Dir", "chmod", []ast.Type{ast.StringType{}, ast.NumberType{}, ast.BoolType{}}, voidResult)
+	registerStructMethod("Dir", "chown", []ast.Type{ast.StringType{}, ast.NumberType{}, ast.NumberType{}, ast.BoolType{}}, voidResult)
+	registerStructMethod("Dir", "close", nil, optionIoErr)
 	registerStructMethod("Writer", "stat", nil, fileStatResult)
 	// seek(offset, whence) is lseek(2): whence 0 / 1 / 2 for SEEK_SET /
 	// SEEK_CUR / SEEK_END, the new offset back. A pipe answers ESPIPE
@@ -4176,11 +4216,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// the offset moves as lseek's does and the writes keep landing at
 	// the end, O_APPEND's rule on every target.
 	//
-	// Those three are the whole domain, and anything else is EINVAL on
-	// every target. A Linux kernel takes two more — 3 and 4 are
-	// SEEK_DATA and SEEK_HOLE — which the natives pass through and
-	// neither WASI preview can answer, so a program that wants a hole
-	// is target-specific and has to say so.
+	// 3 and 4 are SEEK_DATA and SEEK_HOLE on every native target (Darwin's
+	// runtime maps them onto its own reversed numbers); a filesystem
+	// without holes answers them as one data run. Neither WASI preview has
+	// them, so there they are EINVAL, as is any whence past 4 everywhere.
 	seekResult := ast.EnumType{Name: "Result", Args: []ast.Type{
 		ast.NumberType{Width: 64, Signed: true}, ioErrType}}
 	registerStructMethod("Reader", "seek",
@@ -8910,31 +8949,95 @@ func orPos(p, fallback ast.Position) ast.Position {
 	return p
 }
 
-// isCellElemType reports whether T is permitted as Cell[T] (E057). The
-// element must be cycle-free: a cell over a value that can transitively
-// hold another cell could reconstruct a reference cycle, which the
-// immutable-data model forbids so Perceus RC needs no cycle collector.
-// Scalars (i32/i64/f64/bool) hold no pointer at all; `string` is a heap
-// buffer of bytes that references no other Fern value, so a Cell[string]
-// can never close a cycle either, and its owning slot participates in
-// string rc arc. Owned scalar arrays are equally cycle-free and participate
-// in array RC. Other composite/reference types remain unsupported.
-// An unresolved generic
-// param is allowed through here (there's no v1 generic-Cell use;
-// monomorph-time checking is a follow-up) so generic signatures still
-// resolve.
-func isCellElemType(t ast.Type) bool {
-	switch t.(type) {
-	case ast.NumberType, ast.FloatType, ast.BoolType, ast.StringType, ast.ParamType:
-		return true
+// cellPayloadRisk returns nil when a value of t can never reach a Cell, else
+// the first part of t that could (E057): a Cell, a function value (through
+// its captures), a trait object (through what it erases), a map cursor or
+// resource handle, a borrowed view (which a cell would outlive), or a type
+// parameter, which could be instantiated with any of those. Everything else
+// is immutable data — scalars, strings, arrays, tuples, maps, structs, enums —
+// whose values form trees, so a cell can never end up inside its own payload
+// and RC needs no cycle collector (docs/CELL-TYPE-PLAN.md §2). A recursive
+// type is fine for the same reason: `seen` stops the walk at a nominal type
+// already on it. `own` is the type parameters of the declaration whose fields
+// are being walked, which its arguments stand for and were checked as.
+func (c *checker) cellPayloadRisk(t ast.Type, own []string, seen map[string]bool) ast.Type {
+	switch v := t.(type) {
+	case ast.NumberType, ast.FloatType, ast.BoolType, ast.StringType, ast.CharType:
+		return nil
+	case ast.ArrayType:
+		return c.cellPayloadRisk(v.Elem, own, seen)
+	case ast.TupleType:
+		return c.cellPayloadRisks(v.Elems, own, seen)
+	case ast.StructType:
+		return c.cellNominalRisk(t, v.Name, v.Args, own, seen)
+	case ast.EnumType:
+		return c.cellNominalRisk(t, v.Name, v.Args, own, seen)
+	case ast.ParamType:
+		if slices.Contains(own, v.Name) {
+			return nil
+		}
+		return t
+	case *ast.FuncType, ast.DynTraitType, ast.HandleType, ast.StrType, ast.SliceType,
+		ast.StreamType, ast.SelfType, ast.ProjType:
+		return t
 	}
-	if a, ok := t.(ast.ArrayType); ok {
-		switch a.Elem.(type) {
-		case ast.NumberType, ast.FloatType, ast.BoolType:
-			return true
+	return nil
+}
+
+func (c *checker) cellPayloadRisks(ts []ast.Type, own []string, seen map[string]bool) ast.Type {
+	for _, t := range ts {
+		if r := c.cellPayloadRisk(t, own, seen); r != nil {
+			return r
 		}
 	}
-	return false
+	return nil
+}
+
+// cellNominalRisk is cellPayloadRisk for a named type. A field read before
+// resolution still spells the declaration's own parameter, or an enum, as a
+// StructType, so the name is looked up in every table rather than trusted.
+func (c *checker) cellNominalRisk(t ast.Type, name string, args []ast.Type, own []string, seen map[string]bool) ast.Type {
+	if len(args) == 0 && slices.Contains(own, name) {
+		return nil
+	}
+	if name == "Cell" || name == "MapIter" {
+		return t
+	}
+	if _, ok := c.info.Resources[name]; ok {
+		return t
+	}
+	if r := c.cellPayloadRisks(args, own, seen); r != nil || seen[name] {
+		return r
+	}
+	seen[name] = true
+	if sd, ok := c.info.Structs[name]; ok && name != "Map" {
+		for _, f := range sd.Fields {
+			if r := c.cellPayloadRisk(f.Type, sd.TypeParams, seen); r != nil {
+				return r
+			}
+		}
+	}
+	if ed, ok := c.info.Enums[name]; ok {
+		for _, variant := range ed.Variants {
+			if r := c.cellPayloadRisks(variant.Payloads, ed.TypeParams, seen); r != nil {
+				return r
+			}
+		}
+	}
+	return nil
+}
+
+// cellElemError reports E057 at `at` when elem cannot be a cell's element.
+func (c *checker) cellElemError(at ast.Position, elem ast.Type) {
+	risk := c.cellPayloadRisk(elem, nil, map[string]bool{})
+	if risk == nil {
+		return
+	}
+	why := fmt.Sprintf(", and %s contains %s", elem, risk)
+	if fmt.Sprint(risk) == fmt.Sprint(elem) {
+		why = fmt.Sprintf(", which %s is not", elem)
+	}
+	c.errfCode(at, "E057", "Cell[%s] is not allowed: a cell's element must be built from scalars, strings, arrays, tuples, maps, structs and enums%s", elem, why)
 }
 
 // resolveType canonicalises a parsed type annotation in place. `pos` is
@@ -9008,13 +9111,9 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Po
 				c.errfCode(sd.P, "E019", "struct %s has %d type parameter(s), %d supplied",
 					t.Name, len(sd.TypeParams), len(args))
 			}
-			// E057: a Cell[T] is only sound for a cycle-free T — a cell
-			// over a reference type could reconstruct a reference cycle,
-			// which is exactly what the immutable-data model forbids so
-			// Perceus RC needs no cycle collector (docs/CELL-TYPE-PLAN.md
-			// §1-2). Scalars, strings and owned byte arrays have the
-			// required owning-slot RC support; other types remain unsupported.
-			if t.Name == "Cell" && len(args) == 1 && !isCellElemType(args[0]) {
+			// E057: a Cell[T] is only sound for a cycle-free T
+			// (cellPayloadRisk).
+			if t.Name == "Cell" && len(args) == 1 {
 				// Anchor at the annotation's use site. Cell's decl is
 				// synthesized (sd.P is 0:0, which diag.Format renders
 				// without the error[E057] prefix), so the fallback only
@@ -9024,9 +9123,7 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Po
 				if at.Line == 0 {
 					at = sd.P
 				}
-				c.errfCode(at, "E057",
-					"Cell[%s] is not allowed: a cell's element type must be a scalar, string or owned array of scalars; other element types are not supported because cells must remain cycle-free",
-					args[0])
+				c.cellElemError(at, args[0])
 			}
 			*slot = ast.StructType{Name: t.Name, Args: args}
 			return
@@ -12588,6 +12685,74 @@ func (c *checker) freshLambdaCannotReach(v ast.Expr, decl *ast.Var, s *scope) bo
 	return true
 }
 
+// typeHoldsView reports whether a value of type t carries a borrowed view: a
+// `str`, a `[T]` slice or a `MapIter` cursor, directly or through an element,
+// field, payload or type argument. `seen` breaks the recursion on a
+// self-referential struct or enum.
+func (c *checker) typeHoldsView(t ast.Type, seen map[string]bool) bool {
+	switch v := t.(type) {
+	case ast.StrType, ast.SliceType:
+		return true
+	case ast.ArrayType:
+		return c.typeHoldsView(v.Elem, seen)
+	case ast.TupleType:
+		for _, e := range v.Elems {
+			if c.typeHoldsView(e, seen) {
+				return true
+			}
+		}
+	case ast.StructType:
+		if v.Name == "MapIter" {
+			return true
+		}
+		if seen[v.Name] {
+			return false
+		}
+		seen[v.Name] = true
+		for _, a := range v.Args {
+			if c.typeHoldsView(a, seen) {
+				return true
+			}
+		}
+		if sd, ok := c.info.Structs[v.Name]; ok {
+			for _, f := range sd.Fields {
+				if c.typeHoldsView(f.Type, seen) {
+					return true
+				}
+			}
+		}
+	case ast.EnumType:
+		if seen[v.Name] {
+			return false
+		}
+		seen[v.Name] = true
+		for _, a := range v.Args {
+			if c.typeHoldsView(a, seen) {
+				return true
+			}
+		}
+		if ed, ok := c.info.Enums[v.Name]; ok {
+			for _, variant := range ed.Variants {
+				for _, pt := range variant.Payloads {
+					if c.typeHoldsView(pt, seen) {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
+// captureView is E082: a closure may not capture a value holding a borrowed
+// view. A function value's type does not say what its environment holds, so a
+// view captured into one would leave every escape rule unable to see it.
+func (c *checker) captureView(p ast.Position, name string, t ast.Type) {
+	if c.typeHoldsView(t, map[string]bool{}) {
+		c.errfCode(p, "E082", "closure captures %q, which holds a borrowed view: a function value's environment cannot carry a view — copy it into an owned value before the closure (`.to_owned()` on a `str`)", name)
+	}
+}
+
 // typeReachesFunc reports whether a value of type t can transitively hold a
 // function value — the only kind of value that can point back at the closure
 // environment holding a capture cell, and therefore the only kind whose store
@@ -13121,7 +13286,8 @@ func (c *checker) sliceSourceRoots(src ast.Expr, env *escapeEnv, sums map[string
 // through a match is the only way to name the view, and the arm binding is
 // not a declared local.
 //
-// `return` remains the only checked escape position.
+// `return` is the only position this chase checks; a closure capturing a
+// view is refused outright (E082, captureView).
 func (c *checker) checkStrEscapes(prog *ast.Program) {
 	// `string`-returning functions are summarised alongside the `str` ones:
 	// a view of the owned string one of them BUILT dangles once this frame
@@ -17111,24 +17277,17 @@ func (c *checker) checkLocalFunc(fn *ast.FuncDecl, outer *scope) {
 		if mySiblings[name] {
 			return
 		}
-		// Capture eligibility. Scalars (i32 / i64 / f32 / f64 /
-		// boolean) live directly in the env block; pointer-
-		// shaped types (string, T[], [T], structs, enums,
-		// tuples, function values) store their 4-byte heap
-		// reference in the same slot — the heap object itself
-		// stays where the outer scope put it. Lifetime is
-		// "captures must outlive the closure", same rule that
-		// applies to slices, enforced socially via the bump
-		// allocator's per-arena reset.
-		//
-		// Reject only the types that genuinely have no runtime
-		// representation: VoidType (no value) and ParamType
-		// (an unresolved generic placeholder — should never
-		// surface here in practice but guard for safety).
+		// Capture eligibility. Scalars live directly in the env
+		// block; reference types (string, T[], structs, enums,
+		// tuples, function values) store their reference in the
+		// same slot. A `void` has no value to store (E044), and a
+		// value holding a borrowed view may not be captured
+		// (E082).
 		switch t.(type) {
 		case ast.VoidType:
 			c.errfCode(fn.P, "E044", "captured variable %q has unsupported type %s", name, t)
 		default:
+			c.captureView(fn.P, name, t)
 			captured[name] = t
 			captureOrder = append(captureOrder, name)
 		}
@@ -17876,24 +18035,38 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			c.needCoreMap(n.P)
 		}
 		// `cell_new(v)` — the Cell[T] constructor (docs/CELL-TYPE-PLAN.md).
-		// T is inferred from the argument (no destination relaxation needed:
-		// the value drives T), stamped on n.TypeArgs for the IR, and checked
-		// cycle-free (E057). Returns Cell[T].
+		// T is the argument's type, settled against a destination
+		// `Cell[X]`'s X the way a `let _: X` init is, so `map_new(8)`, `[]`
+		// and `None` take their arguments from it. Stamped on n.TypeArgs for
+		// the IR, and checked cycle-free (E057). Returns Cell[T].
 		if id, ok := n.Callee.(*ast.Ident); ok && id.Name == "cell_new" {
 			if len(n.Args) != 1 {
 				c.errfCode(n.P, "E004", "cell_new expects 1 argument, got %d", len(n.Args))
 				return ast.StructType{Name: "Cell"}
 			}
+			var want ast.Type
+			if ct, ok := callExpected.(ast.StructType); ok && ct.Name == "Cell" && len(ct.Args) == 1 {
+				want = ct.Args[0]
+			}
+			c.setElemHintFor(n.Args[0], want)
+			c.expectedType = want
 			at := c.checkExpr(n.Args[0], s)
+			c.expectedType = nil
+			c.elemHint = nil
+			if want != nil {
+				c.settleNumeric(n.Args[0], want)
+				at = c.postSettleType(n.Args[0], at)
+				c.stampStructTypeArgs(n.Args[0], want)
+				c.refineCallTypeArgsFromDest(n.Args[0], want)
+				if at != nil && c.assignable(want, at) {
+					at = want
+				}
+			}
 			at = c.postSettleType(n.Args[0], at)
 			if at == nil {
 				return ast.StructType{Name: "Cell"}
 			}
-			if !isCellElemType(at) {
-				c.errfCode(n.Args[0].Pos(), "E057",
-					"Cell[%s] is not allowed: a cell's element type must be a scalar, string or owned array of scalars; other element types are not supported because cells must remain cycle-free",
-					at)
-			}
+			c.cellElemError(n.Args[0].Pos(), at)
 			n.TypeArgs = []ast.Type{at}
 			return ast.StructType{Name: "Cell", Args: []ast.Type{at}}
 		}
@@ -19517,6 +19690,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			case ast.VoidType:
 				c.errfCode(n.P, "E044", "captured variable %q has unsupported type %s", name, t)
 			default:
+				c.captureView(n.P, name, t)
 				captured[name] = t
 				captureOrder = append(captureOrder, name)
 			}

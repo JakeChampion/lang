@@ -2490,6 +2490,7 @@ function needs_fs_runtime(s: asmcore.EmitState): boolean {
     "umask", "write_file", "write_file_bytes", "write_file_bytes_u8", "write_file_exec", "temp_dir", "read_dir", "read_dir_all", "read_dir_ino",
     "remove_dir_all", "open_file", "open_with", "writer_write", "write_some",
     "reader", "read_chunk_bytes", "read_chunk_bytes_u8", "write_bytes", "write_bytes_u8", "write_some_bytes", "write_some_bytes_u8", "signal_send", "set_process_group", "set_priority", "clock_set",
+    "open_dir", "dir_open", "dir_entries", "dir_stat", "dir_access", "dir_unlink", "dir_chmod", "dir_chown",
   ]);
 }
 
@@ -2509,6 +2510,7 @@ function needs_heap_runtime(s: asmcore.EmitState): boolean {
     "umask", "env", "environ", "raw_environ", "getgroups", "stat", "lstat", "statfs", "mounts", "sysctl",
     "access", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache", "subprocess",
     "signal_send", "set_process_group", "set_priority", "clock_set",
+    "open_dir", "dir_open", "dir_entries", "dir_stat", "dir_access", "dir_unlink", "dir_chmod", "dir_chown",
   ]);
 }
 
@@ -9858,6 +9860,31 @@ function emit_function_via_ir_named(r: irtables.LowerResult, selected: physicalb
   return emit_ssa_function(r, selected, label_name, s);
 }
 
+// emit_dir_op calls a Dir op's runtime leaf, __fern_<kind name>, on the stack
+// ABI: the operands re-pushed with param[0] on top, and the immediate, where
+// the op carries one (dir_stat's follow, dir_unlink's dir), passed last.
+function emit_dir_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+  let name: string = ir.kind_name(o.kind_tag);
+  let regs: string[] = ["%rdi", "%rsi", "%rdx", "%rcx", "%r8"];
+  let n: i32 = ir.op_pops(o);
+  let k: i32 = n - 1;
+  while (k >= 0) {
+    s = s.write("    popq " + regs[k] + "\n");
+    k = k - 1;
+  }
+  if (o.kind_tag == 423 || o.kind_tag == 425) {
+    s = s.write("    movq $" + util.i32_to_string(o.i32_imm) + ", " + regs[n] + "\n");
+    n = n + 1;
+  }
+  k = n - 1;
+  while (k >= 0) {
+    s = s.write("    pushq " + regs[k] + "\n");
+    k = k - 1;
+  }
+  s = s.write("    call __fn___fern_" + name + "\n    addq $" + util.i32_to_string(8 * n) + ", %rsp\n    pushq %rax\n");
+  return s.need("heap").need(name);
+}
+
 // emit_stack_op emits one op on the machine stack: it pops the op's operands
 // and pushes its result. The register path runs it, between a push of the
 // operands and a pop of the result (ssa_flat_op), for every op the lift has
@@ -10012,6 +10039,8 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.write("    call __fn___fern_pipe\n    pushq %rax\n");
     s = s.need("heap");
     s = s.need("pipe");
+  } else if (o.kind_tag >= 420 && o.kind_tag <= 427) {  // the Dir family
+    s = emit_dir_op(o, s);
   } else if (o.kind_tag == 276) {  // window_size
     // [fd]; __fern_window_size(fd) -> Result[WinSize, IoError].
     // [fd] IS param[0] already; the stack ABI needs no marshalling.
@@ -11753,7 +11782,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // poll program, and a divergence here is a link failure, which is how this
   // list grew the last three entries.
   if (s.any_need([
-    "monotonic_ns", "now_unix_ms", "now_ns", "stat", "lstat",
+    "monotonic_ns", "now_unix_ms", "now_ns", "stat", "lstat", "dir_stat",
     "read_file", "read_file_bytes", "read_file_bytes_u8", "random_i32", "sleep_ms",
     "sleep_ns", "set_file_times", "statfs", "poll", "proc_waitpid",
     "proc_waitpid_nohang", "proc_waitpid_status", "disable_core_dumps",
@@ -11861,6 +11890,7 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     if (s.has_need("pipe")) {
       fs_src = fs_src + " " + asmcore.rt_src_pipe("x86_64");
     }
+    fs_src = fs_src + asmcore.rt_src_dir_leaves("x86_64", s);
     if (s.has_need("access")) {
       fs_src = fs_src + " " + asmcore.rt_src_access("x86_64");
     }

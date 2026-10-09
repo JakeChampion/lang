@@ -4171,6 +4171,8 @@ replacement a macOS build uses lets the child exit 127, so GNU there says
 `with FILE=…, exit 127 from command: …`. This forks and execs, carries a failed
 exec's errno back over a close-on-exec pipe, and gives the glibc answer on
 every host.
+On wasm, which has no process to start, `--filter` says it is not supported
+on this system and exits 1; the rest of split builds and runs there.
 
 **`split --hex-suffixes=FROM` where FROM holds a hex LETTER is not
 reproduced.** GNU 9.4 seeds its suffix counter with `FROM[i] - '0'`, which is
@@ -4541,8 +4543,8 @@ groups are the order of work. Each sub-issue names its group.
   is the one quirk the corpus does not reach, for the reason `cp -f`'s
   retry does not: as root it needs a destination whose mode cannot be
   set. Faster than GNU on 11 of its 12 bench rows and at parity on the
-  64 MiB throughput row, which is #9309's copy_file_range gap and not
-  install's)
+  64 MiB throughput row, measured before lib/copy.fern's data runs went
+  by copy_file_range (#9309))
   `touch` (done — the open that creates the file is `open_writer_with` under the create and non-blocking bits, GNU's `O_WRONLY|O_CREAT|O_NONBLOCK`, so a FIFO or socket operand opens or fails exactly as GNU's does; `-` reaches standard output as /proc/self/fd/1 — see `touch.fern`'s header) `truncate` (#9142) `mkfifo` (done) `mknod` (done)
   `sync` (done, on `sync()`, the fsync / fdatasync / syncfs handle
   methods from #9181 and the non-blocking `open_reader_with` /

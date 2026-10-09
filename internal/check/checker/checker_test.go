@@ -7138,46 +7138,78 @@ func TestArrayElementImmutabilityE056(t *testing.T) {
 	}
 }
 
-// E057: Cell[T] is only allowed for a cycle-free T — a scalar or a
-// `string`. A composite / reference element type could reconstruct a
-// reference cycle, which the immutable-data model forbids
-// (docs/CELL-TYPE-PLAN.md, docs/RC-STRINGS-PLAN.md).
+// cellElemRefusal is the part of E057's message every refusal carries.
+const cellElemRefusal = "a cell's element must be built from scalars, strings, arrays, tuples, maps, structs and enums"
+
+// E057: Cell[T] is allowed exactly when no value of T can reach a cell — T is
+// built from scalars, strings, arrays, tuples, maps, structs and enums — so a
+// cell can never sit inside its own payload (docs/CELL-TYPE-PLAN.md §2).
 func TestCellElemTypeE057(t *testing.T) {
-	// Cell[i32] — scalar, fine. cell_new infers T; get/set type-check.
-	if err := checkSource(t, `function main(): i32 {
-	let c: Cell[i32] = cell_new(0);
-	c.set(c.get() + 1);
-	return c.get();
-}`); err != nil {
-		t.Errorf("Cell[i32] should check, got %v", err)
+	const decls = `import "core/map";
+struct Point { x: i32, name: string }
+struct Session { user: string, seen: Map[string, i32], last: Option[Point], trail: Point[] }
+struct Box[T] { v: T }
+struct Thunk { run: () => i32 }
+enum Tree { Leaf(i32), Node(Tree[]) }
+enum Slot { Empty, Full(Cell[i32]) }
+trait Shape { function area(self: Self): i32; }
+`
+	cases := []struct {
+		name, body string
+		risk       string // "" when admitted, else what the message names
+	}{
+		{"scalar", `let c: Cell[i32] = cell_new(0); c.set(c.get() + 1);`, ""},
+		{"string", `let c = cell_new("x"); c.set("yy");`, ""},
+		{"char", `let c = cell_new('a');`, ""},
+		{"struct", `let c: Cell[Point] = cell_new(Point { x: 1, name: "p" });`, ""},
+		{"string-array", `let c: Cell[string[]] = cell_new(["a", "b"]);`, ""},
+		{"nested-array", `let c: Cell[i32[][]] = cell_new([[1], []]);`, ""},
+		{"tuple", `let c = cell_new(("a", 1));`, ""},
+		{"map-by-destination", `let c: Cell[Map[string, i32]] = cell_new(map_new(8)); c.set(c.get().insert("k", 1));`, ""},
+		{"empty-array-by-destination", `let c: Cell[Point[]] = cell_new([]);`, ""},
+		{"none-by-destination", `let c: Cell[Option[Point]] = cell_new(None);`, ""},
+		{"nested-struct", `let s: Session = Session { user: "u", seen: map_new(4), last: None, trail: [] }; let c = cell_new(s);`, ""},
+		{"recursive-enum", `let c: Cell[Tree] = cell_new(Node([Leaf(1)]));`, ""},
+		{"generic-struct", `let c: Cell[Box[string]] = cell_new(Box { v: "s" });`, ""},
+		{"function", `let c: Cell[() => i32] = cell_new(() => 1);`, "() => i32"},
+		{"function-field", `let c = cell_new(Thunk { run: () => 1 });`, "() => i32"},
+		{"function-arg", `let b: Box[() => i32] = Box { v: () => 1 }; let c = cell_new(b);`, "() => i32"},
+		{"function-in-map", `let c: Cell[Map[string, () => i32]] = cell_new(map_new(4));`, "() => i32"},
+		{"cell", `let c = cell_new(cell_new(1));`, "Cell[i32]"},
+		{"cell-payload", `let c = cell_new(Empty);`, "Cell[i32]"},
+		{"dyn", `let c: Cell[(dyn Shape)[]] = cell_new([]);`, "dyn Shape"},
+		{"view", `let c: Cell[str] = cell_new("v");`, "str"},
 	}
-	// Cell[string] — string is cycle-free (a buffer of bytes, references no
-	// other value) and its owning slot is rc-tracked, so it's allowed.
-	if err := checkSource(t, `
-import "std/string";
-function main(): i32 {
-	let c: Cell[string] = cell_new("x");
-	c.set("yy");
-	return c.get().len();
-}`); err != nil {
-		t.Errorf("Cell[string] should check, got %v", err)
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := checkSource(t, decls+"function main(): i32 { "+tc.body+" return 0; }")
+			if tc.risk == "" {
+				if err != nil {
+					t.Fatalf("should check, got %v", err)
+				}
+				return
+			}
+			if err == nil || !strings.Contains(err.Error(), cellElemRefusal) || !strings.Contains(err.Error(), tc.risk) {
+				t.Fatalf("want E057 naming %s, got %v", tc.risk, err)
+			}
+		})
 	}
-	// Inferred Cell[string] from the cell_new arg — also allowed.
-	if err := checkSource(t, `
-import "std/string";
-function main(): i32 { let c = cell_new("x"); return c.get().len(); }`); err != nil {
-		t.Errorf("inferred Cell[string] should check, got %v", err)
-	}
-	// Cell[Point] (struct) — a composite type can form a cycle: rejected.
-	err := checkSource(t, `struct Point { x: i32 }
-function main(): i32 { let c: Cell[Point] = cell_new(Point { x: 1 }); return 0; }`)
-	if err == nil || !strings.Contains(err.Error(), "must be a scalar") {
-		t.Errorf("Cell[Point] should be E057, got %v", err)
-	}
-	// Arrays of reference elements remain outside scalar-array cell support.
-	err = checkSource(t, `function main(): i32 { let c: Cell[string[]] = cell_new(["a", "b"]); return 0; }`)
-	if err == nil || !strings.Contains(err.Error(), "must be a scalar") {
-		t.Errorf("Cell[string[]] should be E057, got %v", err)
+}
+
+// A type parameter is refused as (part of) a cell's element: it could be
+// instantiated with a function or a cell, and the check does not wait for
+// the instantiation to see which.
+func TestCellElemTypeParamE057(t *testing.T) {
+	for _, src := range []string{
+		"function mk[T](x: T): Cell[T] { return cell_new(x); }",
+		"function mk[T](x: T): i32 { let c = cell_new(Some(x)); return 0; }",
+		"struct Holder[T] { c: Cell[T[]] }",
+		"enum E[T] { A(Cell[T]), B }",
+	} {
+		err := checkSource(t, src+"\nfunction main(): i32 { return 0; }")
+		if err == nil || !strings.Contains(err.Error(), cellElemRefusal) || !strings.Contains(err.Error(), "T") {
+			t.Errorf("%s: want E057 naming T, got %v", src, err)
+		}
 	}
 }
 
@@ -7192,9 +7224,9 @@ func TestCellElemTypeE057AnnotationPosition(t *testing.T) {
 		name, src string
 		line, col int
 	}{
-		{"field", "struct Point { x: i32 }\nstruct Holder {\n    c: Cell[Point],\n}\nfunction main(): i32 { return 0; }", 3, 5},
-		{"param", "struct Point { x: i32 }\nfunction f(c: Cell[Point]): i32 { return 0; }\nfunction main(): i32 { return 0; }", 2, 12},
-		{"let", "struct Point { x: i32 }\nfunction main(): i32 {\n    let c: Cell[Point] = cell_new(Point { x: 1 });\n    return 0;\n}", 3, 5},
+		{"field", "struct Point { x: () => i32 }\nstruct Holder {\n    c: Cell[Point],\n}\nfunction main(): i32 { return 0; }", 3, 5},
+		{"param", "struct Point { x: () => i32 }\nfunction f(c: Cell[Point]): i32 { return 0; }\nfunction main(): i32 { return 0; }", 2, 12},
+		{"let", "struct Point { x: () => i32 }\nfunction main(): i32 {\n    let c: Cell[Point] = cell_new(Point { x: () => 1 });\n    return 0;\n}", 3, 5},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

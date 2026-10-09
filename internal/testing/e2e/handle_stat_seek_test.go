@@ -149,10 +149,9 @@ func handleStatSeekSource(path, out, app string) string {
             }
         }
     }
-    // Three whence values and no more: 5 is EINVAL on every target, and
-    // it beats a pipe's ESPIPE because the kernel checks the whence
-    // first. (3 and 4 are SEEK_DATA / SEEK_HOLE, which the natives pass
-    // through and no WASI preview has, so nothing here asks for them.)
+    // 5 is EINVAL on every target, and it beats a pipe's ESPIPE because
+    // the kernel checks the whence first. (3 and 4, SEEK_DATA and
+    // SEEK_HOLE, are seek_hole_test.go's.)
     match (stdout().seek(0 as i64, 5)) {
         Ok(_) => { return 80; },
         Err(e) => {
@@ -443,10 +442,9 @@ func handleStatSeekWasmSource() string {
             }
         }
     }
-    // Three whence values and no more: 5 is EINVAL on every target, and
-    // it beats a pipe's ESPIPE because the kernel checks the whence
-    // first. (3 and 4 are SEEK_DATA / SEEK_HOLE, which the natives pass
-    // through and no WASI preview has, so nothing here asks for them.)
+    // 5 is EINVAL on every target, and it beats a pipe's ESPIPE because
+    // the kernel checks the whence first. (3 and 4, SEEK_DATA and
+    // SEEK_HOLE, are seek_hole_test.go's.)
     match (stdout().seek(0 as i64, 5)) {
         Ok(_) => { return 80; },
         Err(e) => {

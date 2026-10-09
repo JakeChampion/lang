@@ -546,7 +546,7 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e064-lambda-return-clean", "struct P { x: i32 }\nfunction main(): i32 { let f = ((n: i32): P => P { x: n }); return 0; }\n", nil},
 		// The same walk feeds E057, whose annotation form has the identical
 		// blind spot — native has reported it on a lambda parameter all along.
-		{"e057-lambda-param", "struct P { x: i32 }\nfunction main(): i32 { let f = ((c: Cell[P]) => 1); return 0; }\n", []string{"E057"}},
+		{"e057-lambda-param", "struct P { x: () => i32 }\nfunction main(): i32 { let f = ((c: Cell[P]) => 1); return 0; }\n", []string{"E057"}},
 		// E072 with the code written out. The differential below derives its
 		// expectation from the Go checker, so it cannot tell "both sides emit
 		// E072" from "neither side emits anything"; this row can.
@@ -1410,6 +1410,26 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"e065-callee-method", "function mk(): string { return \"ab\"; }\nfunction (s: string) view(): str { return s; }\nfunction f(): str { let s: string = mk(); return s.view(); }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		{"e065-callee-other-arg-ok", "function mk(): string { return \"ab\"; }\nfunction second(a: str, b: str): str { return b; }\nfunction f(): str { let s: string = mk(); return second(slice_unchecked(s, 0, 1), \"lit\"); }\nfunction main(): i32 { return 0; }\n", nil},
 		{"e065-callee-param-ok", "function idv(s: str): str { return s; }\nfunction f(p: string): str { return idv(slice_unchecked(p, 0, 1)); }\nfunction main(): i32 { return 0; }\n", nil},
+		// E082: a closure may not capture a value holding a view, bare or
+		// through a record, tuple, enum payload or Option, by an arrow, a
+		// nested function or a `use` callback. The record row is #10878's
+		// program: the lowering refused it as a function value merged past
+		// its source with no copy.
+		{"e082-str-parameter", "function f(sep: str): i32 { let g = (): i32 => sep.len(); return g(); }\nfunction main(): i32 { return f(\",\"); }\n", []string{"E082"}},
+		{"e082-local-view", "function f(s: string): i32 { let v: str = slice_unchecked(s, 0, 1); let g = (): i32 => v.len() + v.len(); return g(); }\nfunction main(): i32 { return f(\"ab\"); }\n", []string{"E082"}},
+		{"e082-byte-view", "function f(s: string): i32 { let b: [u8] = s.as_bytes(); let g = (): i32 => b.len(); return g(); }\nfunction main(): i32 { return f(\"ab\"); }\n", []string{"E082"}},
+		{"e082-array-slice", "function f(xs: i32[]): i32 { let w: [i32] = xs[0:2]; let g = (): i32 => w.len(); return g(); }\nfunction main(): i32 { return f([1, 2, 3]); }\n", []string{"E082"}},
+		{"e082-record-merged-past-its-source", "struct P { a: str }\nstruct Holder { f: () => i32, n: i32 }\nfunction mk(n: i32): string { let s: string = \"ab\"; let i: i32 = 0; while (i < n) { s = s + \"c\"; i = i + 1; } return s; }\nfunction g(n: i32): i32 {\n    let h: Holder = Holder { f: () => 0, n: 0 };\n    if (n != 0) {\n        let s: string = mk(n);\n        let p: P = P { a: slice_unchecked(s, 1, 4) };\n        h = Holder { f: () => p.a.len() * 10 + (p.a[0] as i32) - 97, n: n };\n    }\n    return h.f() * 10 + h.n;\n}\nfunction main(): i32 { return g(3) + g(0); }\n", []string{"E082"}},
+		{"e082-tuple", "function f(s: string): i32 { let t: (str, i32) = (slice_unchecked(s, 0, 1), 1); let g = (): i32 => t.1; return g(); }\nfunction main(): i32 { return f(\"ab\"); }\n", []string{"E082"}},
+		{"e082-enum-payload", "enum Tok { Word(str), Num(i32) }\nfunction f(s: string): i32 { let t: Tok = Word(slice_unchecked(s, 0, 1)); let g = (): i32 => match (t) { Word(w) => w.len(), Num(n) => n }; return g(); }\nfunction main(): i32 { return f(\"ab\"); }\n", []string{"E082"}},
+		{"e082-option", "function f(s: string): i32 { let o: Option[str] = Some(slice_unchecked(s, 0, 1)); let g = (): i32 => match (o) { Some(x) => x.len(), None => 0 }; return g(); }\nfunction main(): i32 { return f(\"ab\"); }\n", []string{"E082"}},
+		{"e082-nested-function", "function f(s: string): i32 { let v: str = slice_unchecked(s, 0, 1); function inner(): i32 { return v.len(); } return inner(); }\nfunction main(): i32 { return f(\"ab\"); }\n", []string{"E082"}},
+		{"e082-nested-lambdas", "function f(s: string): i32 { let v: str = slice_unchecked(s, 0, 1); let g = (): i32 => { let h = (): i32 => v.len(); return h(); }; return g(); }\nfunction main(): i32 { return f(\"ab\"); }\n", []string{"E082"}},
+		{"e082-use-callback", "function apply(x: i32, k: (i32) => i32): i32 { return k(x); }\nfunction f(s: str): i32 { use n <- apply(41); return n + s.len(); }\nfunction main(): i32 { return f(\"ab\"); }\n", []string{"E082"}},
+		{"e082-owned-copy", "function f(sep: str): i32 { let owned: string = sep + \"\"; let g = (): i32 => owned.len(); return g(); }\nfunction main(): i32 { return f(\",\"); }\n", nil},
+		{"e082-view-without-a-closure", "function f(s: string, c: boolean): i32 { let v: str = slice_unchecked(s, 0, 1); let n: i32 = if (c) { v.len() } else { 0 }; return n; }\nfunction main(): i32 { return f(\"ab\", true); }\n", nil},
+		{"e082-parameter-shadows-a-view", "function f(s: string): i32 { let v: str = slice_unchecked(s, 0, 1); let g = (v: i32): i32 => v + 1; return g(v.len()); }\nfunction main(): i32 { return f(\"ab\"); }\n", nil},
+		{"e082-recursive-viewless-enum", "enum L { Cons(i32, L), Nil }\nfunction f(): i32 { let l: L = Cons(1, Nil); let g = (): i32 => match (l) { Cons(x, r) => x, Nil => 0 }; return g(); }\nfunction main(): i32 { return f(); }\n", nil},
 		{"e065-callee-var-binding", "function mk(): string { return \"ab\"; }\nfunction idv(s: str): str { return s; }\nfunction f(): str { let s: string = mk(); let t: str = idv(slice_unchecked(s, 0, 1)); return t; }\nfunction main(): i32 { return 0; }\n", []string{"E065"}},
 		// `x.len()` in METHOD spelling. Both receivers resolve through a
 		// table that is empty without the stdlib in scope, so the
@@ -2542,46 +2562,58 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"partial-result-branch-join", "function main(): i32 { let o = if (true) { Ok(3) } else { Err(\"x\") }; match (o) { Ok(v) => { return v + 1; }, Err(e) => { return e.len(); } } }\n", nil},
 		{"partial-result-join-known-error", "function main(): i32 { let o = if (true) { Ok(3) } else { Err(5) }; match (o) { Ok(v) => { return v + 1; }, Err(e) => { return e.len(); } } }\n", []string{"E043"}},
 		{"partial-result-generic-join-known-error", "function first[T](a: T, b: T): T { return a; } function main(): i32 { let o = first(Ok(3), Err(5)); match (o) { Ok(v) => { return v + 1; }, Err(e) => { return e.len(); } } }\n", []string{"E043"}},
-		// E057: `cell_new(v)` constructs a Cell[T]; T must be cycle-free:
-		// a scalar, string or owned scalar array. Other composite / reference
-		// arguments (struct, tuple, another cell) are E057, reported
-		// at the argument. Cross-checked against the Go checker.
+		// E057: `cell_new(v)` constructs a Cell[T]; T must be built from
+		// scalars, strings, arrays, tuples, maps, structs and enums, so no
+		// value of it can reach a cell. A function, a cell, a view or a type
+		// parameter anywhere in T is E057, reported at the argument.
+		// Cross-checked against the Go checker.
 		{"cellnew-i32-ok", "function main(): i32 { let c = cell_new(5); return 0; }\n", nil},
 		{"cellnew-bytes-ok", "function main(): i32 { let c = cell_new([255 as u8]); return 0; }\n", nil},
 		{"cellnew-empty-bytes-ok", "function main(): i32 { let a: u8[] = []; let c: Cell[u8[]] = cell_new(a); return 0; }\n", nil},
-		{"cellnew-nested-bytes-bad", "function main(): i32 { let a: u8[][] = [[255 as u8]]; let c = cell_new(a); return 0; }\n", []string{"E057"}},
+		{"cellnew-nested-bytes-ok", "function main(): i32 { let a: u8[][] = [[255 as u8]]; let c = cell_new(a); return 0; }\n", nil},
 		{"cellnew-byte-view-bad", "function f(c: Cell[[u8]]): i32 { return 0; } function main(): i32 { return 0; }\n", []string{"E057"}},
 		{"cellnew-string-ok", "function main(): i32 { let c = cell_new(\"x\"); return 0; }\n", nil},
+		{"cellnew-char-ok", "function main(): i32 { let c = cell_new(65 as char); return 0; }\n", nil},
 		{"cellnew-bool-ok", "function main(): i32 { let c = cell_new(1 < 2); return 0; }\n", nil},
-		{"cellnew-struct-bad", "struct P { x: i32 }\nfunction main(): i32 { let p: P = P { x: 1 }; let c = cell_new(p); return 0; }\n", []string{"E057"}},
+		{"cellnew-struct-ok", "struct P { x: i32 }\nfunction main(): i32 { let p: P = P { x: 1 }; let c = cell_new(p); return 0; }\n", nil},
+		{"cellnew-fn-field-bad", "struct P { f: () => i32 }\nfunction main(): i32 { let p: P = P { f: () => 1 }; let c = cell_new(p); return 0; }\n", []string{"E057"}},
+		{"cellnew-fn-bad", "function main(): i32 { let f: () => i32 = () => 1; let c = cell_new(f); return 0; }\n", []string{"E057"}},
+		{"cellnew-cell-payload-bad", "enum S { Empty, Full(Cell[i32]) }\nfunction main(): i32 { let c = cell_new(Empty); return 0; }\n", []string{"E057"}},
 		{"cellnew-array-ok", "function main(): i32 { let a: i32[] = [1]; let c = cell_new(a); return 0; }\n", nil},
-		{"cellnew-reference-array-bad", "function main(): i32 { let a: string[] = [\"a\"]; let c = cell_new(a); return 0; }\n", []string{"E057"}},
-		{"cellnew-tuple-bad", "function main(): i32 { let t = (1, 2); let c = cell_new(t); return 0; }\n", []string{"E057"}},
+		{"cellnew-reference-array-ok", "function main(): i32 { let a: string[] = [\"a\"]; let c = cell_new(a); return 0; }\n", nil},
+		{"cellnew-tuple-ok", "function main(): i32 { let t = (1, \"a\"); let c = cell_new(t); return 0; }\n", nil},
+		{"cellnew-recursive-enum-ok", "enum T { Leaf(i32), Node(T[]) }\nfunction main(): i32 { let c = cell_new(Node([Leaf(1)])); return 0; }\n", nil},
+		{"cellnew-map-ok", "import \"core/map\";\nfunction main(): i32 { let c: Cell[Map[string, i32]] = cell_new(map_new(8)); c.set(c.get().insert(\"k\", 1)); return 0; }\n", nil},
 		{"cellnew-nested-bad", "function main(): i32 { let c = cell_new(cell_new(5)); return 0; }\n", []string{"E057"}},
-		// E057 ANNOTATION form (#4363 item 2): `Cell[<composite>]` in a
-		// param / field / body-var / return annotation — including a Cell
-		// nested inside a generic argument, tuple element, or array element
-		// spelling — draws E057, anchored at the annotation (the native
-		// checker now reports the use site instead of the synthesised Cell
-		// decl at 0:0, so the code is visible to this differential). A
-		// generic's `Cell[T]` over an in-scope type parameter stays clean
-		// (natively a ParamType element; the self-host scopes the walk to
-		// non-generic decls). Cross-checked against the Go checker.
-		{"cell-annot-param-bad", "struct P { x: i32 }\nfunction f(c: Cell[P]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
-		{"cell-annot-field-bad", "struct P { x: i32 }\nstruct H { c: Cell[P] }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
-		{"cell-annot-var-bad", "struct P { x: i32 }\nfunction main(): i32 { let c: Cell[P] = cell_new(P { x: 1 }); return 0; }\n", []string{"E057"}},
+		{"cellnew-tparam-bad", "function mk[T](x: T): i32 { let c = cell_new(Some(x)); return 0; }\nfunction main(): i32 { return mk(1); }\n", []string{"E057"}},
+		// E057 ANNOTATION form (#4363 item 2): a refused element in a
+		// param / field / variant / body-var / return annotation — including
+		// a Cell nested inside a generic argument, tuple element, or array
+		// element spelling — draws E057, anchored at the annotation (the
+		// native checker reports the use site instead of the synthesised
+		// Cell decl at 0:0, so the code is visible to this differential). A
+		// generic's `Cell[T]` over its own type parameter is refused too.
+		// Cross-checked against the Go checker.
+		{"cell-annot-param-bad", "struct P { x: () => i32 }\nfunction f(c: Cell[P]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-field-bad", "struct P { x: () => i32 }\nstruct H { c: Cell[P] }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-var-bad", "struct P { x: () => i32 }\nfunction main(): i32 { let c: Cell[P] = cell_new(P { x: () => 1 }); return 0; }\n", []string{"E057"}},
+		{"cell-annot-struct-ok", "struct P { x: i32, tags: string[] }\nstruct H { c: Cell[P] }\nfunction main(): i32 { return 0; }\n", nil},
 		{"cell-annot-array-ok", "function f(c: Cell[i32[]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
-		{"cell-annot-char-array-bad", "function f(c: Cell[char[]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
-		{"cell-inferred-char-array-bad", "function main(): i32 { let a: char[] = [65 as char]; let c = cell_new(a); return 0; }\n", []string{"E057"}},
-		{"cell-inferred-empty-char-array-bad", "function main(): i32 { let a: char[] = []; let c = cell_new(a); return 0; }\n", []string{"E057"}},
+		{"cell-annot-char-array-ok", "function f(c: Cell[char[]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
+		{"cell-inferred-char-array-ok", "function main(): i32 { let a: char[] = [65 as char]; let c = cell_new(a); return 0; }\n", nil},
 		{"cell-annot-float-alias-array-ok", "function main(): i32 { let a: float[] = []; let c: Cell[float[]] = cell_new(a); return c.get().len(); }\n", nil},
 		{"cell-inferred-float-alias-array-ok", "function main(): i32 { let a: float[] = []; let c = cell_new(a); return c.get().len(); }\n", nil},
-		{"cell-annot-reference-array-bad", "function f(c: Cell[string[]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-reference-array-ok", "function f(c: Cell[string[]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"cell-annot-scalar-arrays-ok", "function f(a: Cell[u32[]], b: Cell[i64[]], c: Cell[u64[]], d: Cell[usize[]], e: Cell[f32[]], f: Cell[f64[]], g: Cell[boolean[]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
-		{"cell-annot-tuple-elem-bad", "struct P { x: i32 }\nfunction f(t: (i32, Cell[P])): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
-		{"cell-annot-generic-arg-bad", "struct P { x: i32 }\nfunction f(o: Option[Cell[P]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
-		{"cell-annot-cell-array-bad", "struct P { x: i32 }\nfunction f(a: Cell[P][]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-tuple-elem-bad", "struct P { x: () => i32 }\nfunction f(t: (i32, Cell[P])): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-generic-arg-bad", "struct P { x: () => i32 }\nfunction f(o: Option[Cell[P]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-cell-array-bad", "struct P { x: () => i32 }\nfunction f(a: Cell[P][]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
 		{"cell-annot-str-bad", "function f(c: Cell[str]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-map-fn-bad", "function f(c: Cell[Map[string, () => i32]]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-tparam-bad", "function mk[T](x: T): Cell[T] { return cell_new(x); }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-generic-field-bad", "struct H[T] { c: Cell[T[]] }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-variant-bad", "enum E { A(Cell[() => i32]), B }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
+		{"cell-annot-method-bad", "struct B { v: i32 }\nfunction (b: B) m(c: Cell[() => void]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
 		// Every integer and float width is a scalar element, as natively.
 		{"cell-annot-scalars-ok", "function f(a: (i32, Cell[f32]), b: Cell[u8], c: Cell[usize]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		// E051 self-reassign move admission (#4873 step 0): a LOCAL passed
@@ -2628,7 +2660,9 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		{"own-field-move-nested-borrowed-bad", "struct Cfi { rules: i32[], n: i32 }\nstruct Asm { code: i32[], cfi: Cfi }\nfunction record(own s: Cfi, v: i32): Cfi { return Cfi { rules: s.rules.append(v), n: s.n + 1 }; }\nfunction main(): i32 {\n    let a: Asm = Asm { code: [], cfi: Cfi { rules: [], n: 0 } };\n    function inner(a: Asm): Asm {\n        a = Asm { ...a, cfi: record(a.cfi, 1) };\n        return a;\n    }\n    return inner(a).cfi.n;\n}\n", []string{"E051"}},
 		{"cell-annot-i32-ok", "function f(c: Cell[i32]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
 		{"cell-annot-string-ok", "function f(c: Cell[string]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
-		{"cell-annot-generic-param-ok", "function f[T](c: Cell[T]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", nil},
+		// A type parameter could be instantiated with a function, so a generic
+		// cell over one is refused at the declaration.
+		{"cell-annot-generic-param-bad", "function f[T](c: Cell[T]): i32 { return 0; }\nfunction main(): i32 { return 0; }\n", []string{"E057"}},
 		// `str` inside a generic ARGUMENT is a real native type, so no E064
 		// (regression pin for the generic-arg-widening false positive fixed
 		// alongside item 2).

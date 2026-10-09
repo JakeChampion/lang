@@ -247,6 +247,14 @@ Guarantee: a borrowed view never outlives the frame that owns
 its backing store — the one place Fern needs a locality-style
 rule (§1).
 
+Capture (E082): a closure may not capture a value holding a view,
+whatever its root. A function value's type does not record what
+its environment holds, so a captured view would leave every rule
+above unable to follow it; refusing the capture keeps "a view is
+visible in its type" true, which is what the return chase leans
+on. Swift's `~Escapable` makes the capturing closure non-escaping
+instead; Fern has no non-escaping closure type to put it in.
+
 Lending in (#6798): an owned `T[]` argument reaching a `[T]`
 parameter is accepted and rewritten by the checker
 (`lendArrayAsView`, `unifyArrayArg` for a generic `[T]`) into
@@ -350,9 +358,9 @@ Derived placements (all existing spellings, no new ones):
 
 Boundary cases, called explicitly:
 
-- **Cell / E057** (`isCellElemType` checker.go:4936, annotation
-  check 5021-5033, `cell_new` site 9982-9994; self-host
-  checker.fern:4403-4414): **not a mode.** It is a type-shape
+- **Cell / E057** (`cellPayloadRisk` in checker.go, reached from the
+  annotation check in `resolveType` and the `cell_new` site; self-host
+  `cell_payload_risk` in checker.fern): **not a mode.** It is a type-shape
   well-formedness rule (cycle-free element types only) that
   protects the lattice's precondition — cycle-freedom is what
   makes RC sound and borrowed references safe without a
@@ -395,6 +403,7 @@ Transitions and their violations:
   (today: `own` array param in `fip`; the COW branch elsewhere).
   Write through a Borrowed capture → **E049**.
 - `return` of View whose root is frame-local → **E063/E065**.
+- capture of a View (or a value holding one) by a closure → **E082**.
 - scope exit with Owned{live, obligation} → **E067** (also
   overwrite and laundering, which are stores that fail to
   transfer the obligation).
@@ -413,6 +422,7 @@ E-code → lattice-rule table:
 | E068 | E053's refinement: a mint that consumed no reuse token, beyond allowance n (IR-verified) |
 | E063 | View of frame-local storage escapes via return (borrow outliving its owner) — array/slice spelling |
 | E065 | same rule, `str` view of a local `string` |
+| E082 | a View captured into a closure environment, where no type records it |
 | E067 | Owned value of a must-consume type reaches implicit drop (scope exit / overwrite / laundering store / capture) |
 | E049 | write through a binding at mode ≤ borrowed (pointer-shaped closure capture) |
 | E048 / E056 | not per-binding: the global no-mutation law that keeps the lattice one-dimensional (fields / subscripts frozen) |

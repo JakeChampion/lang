@@ -33,14 +33,14 @@ func irProbeCases() []irProbeCase {
 			wantLines:   []string{"mystery"},
 		},
 		{
-			// A closure capturing a view of a local string is refused where it
-			// is built (TestSelfHostSemIRStrict's closure-captures-a-view, which
-			// the CLI fails with exit 3); the probe names the declaration and
+			// An instance bound to a view would retain a view it was lent
+			// (TestSelfHostStrictIRNamesBailReason's template-bound-to-a-view,
+			// which the CLI fails with exit 3); the probe names the instance and
 			// the reason and still answers.
 			name:        "typed-refusal-names-its-reason",
-			src:         viewCaptureSrc,
+			src:         viewTemplateSrc,
 			wantVerdict: "module: refused",
-			wantLines:   []string{"mk: ir", "viewer: refused: closure capture type"},
+			wantLines:   []string{"main: ir", "first$str: refused: a view is lent, never retained"},
 		},
 		{
 			// A MAIN-LESS module is produced: the entry's `_start` exits 0 when
@@ -206,11 +206,11 @@ func TestSelfHostIRPipelineProbe(t *testing.T) {
 		if got := decide(t, produced); got != "ir" {
 			t.Errorf("-decide on a module produced whole = %q, want \"ir\"", got)
 		}
-		rep := probe(t, viewCaptureSrc, "")
-		if !strings.Contains(rep, "viewer: refused: closure capture type") || !strings.HasSuffix(rep, "module: refused\n") {
+		rep := probe(t, viewTemplateSrc, "")
+		if !strings.Contains(rep, "first$str: refused: a view is lent, never retained") || !strings.HasSuffix(rep, "module: refused\n") {
 			t.Errorf("probe of a refused module\n--- report ---\n%s", rep)
 		}
-		if got := decide(t, viewCaptureSrc); got != "refused" {
+		if got := decide(t, viewTemplateSrc); got != "refused" {
 			t.Errorf("-decide on a refused module = %q, want \"refused\"", got)
 		}
 	})
@@ -289,11 +289,10 @@ function main(): i32 {
 	}
 }
 
-// viewCaptureSrc is a module the typed lowering refuses: viewer's closure
-// captures a view of a local string, which is refused where it is built.
-const viewCaptureSrc = "function mk(n: i32): string {\n let s: string = \"ab\";\n let i: i32 = 0;\n while (i < n) { s = s + \"c\"; i = i + 1; }\n return s;\n}\n" +
-	"function viewer(n: i32): () => i32 {\n let s: string = mk(n);\n let v: str = slice_unchecked(s, 1, 4);\n return () => v.len();\n}\n" +
-	"function main(): i32 { let f: () => i32 = viewer(3); return f(); }\n"
+// viewTemplateSrc is a module the typed lowering refuses: first's instance at
+// `str` would keep, in an array, a view it was only lent.
+const viewTemplateSrc = "pub function first[T](f: () => T): T {\n let xs: T[] = [f()];\n return xs[0];\n}\n" +
+	"function main(): i32 {\n let b: string = \"abcdefgh\";\n print(first((): str => slice_unchecked(b, 2, 5)));\n return 0;\n}\n"
 
 // firstNLines returns the first n newline-delimited lines of s (for compact
 // failure output on a large report).

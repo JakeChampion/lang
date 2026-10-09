@@ -242,6 +242,12 @@ var gatedBuiltins = map[string]string{
 	// would reopen the window the call exists to close.
 	"rename_noreplace": "fsrename",
 	"rename_exchange":  "fsrename",
+	// A directory held open as a handle that names entries relative to
+	// itself (openat, fstatat, unlinkat). Authority lives on this
+	// constructor; the Dir methods need none of their own. Both WASI
+	// previews are descriptor-relative underneath, but neither backend
+	// lowers the handle, so refusing it is the truthful answer.
+	"open_dir": "fsdir",
 	// An entry's extended attributes. Neither WASI preview has them, and
 	// an empty answer would claim an attribute is absent from a
 	// filesystem nobody asked.

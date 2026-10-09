@@ -35,8 +35,10 @@ func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 	// disable_core_dumps, proc_waitpid_status and mounts are eleven more, the
 	// constant-time gate's ct_mark and vg_request two more, sysctl one more,
 	// and the AES-GCM kernels aes_expand_key, aes_ctr32 and ghash three more.
-	// clone_file and set_extproc are two more, reader_copy_range and pipe two
-	// more, sha256_hw and sha256_hw_blocks two more, and bswap one more.
+	// clone_file and set_extproc are two more.
+	// reader_copy_range and pipe add two admitted kinds with three and zero
+	// inputs respectively; each pushes one Result and has a modelled effect.
+	// sha256_hw and sha256_hw_blocks are two more, and bswap one more.
 	const want = "load pops=-1 pushes=1\n" +
 		"store pops=-1 pushes=1\n" +
 		"call_closure_direct pops=-1 pushes=1\n" +

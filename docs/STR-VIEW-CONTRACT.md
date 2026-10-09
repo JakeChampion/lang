@@ -130,6 +130,9 @@ Concretely, in order:
    is refused by both checkers: an array literal of views is a `str[]`
    (E003 / E034), and `append`, `with` and a map `insert` store their
    argument, so the parameter borrow does not reach them (E038, #8635).
+   Capture position is refused by both checkers whatever the view's root
+   (E082): a function value's type does not record its environment, so no
+   return or merge rule could follow a captured view.
 4. Leak-matrix cells for the view kind (producer, escape shapes), so the
    contract stays measured.
 
