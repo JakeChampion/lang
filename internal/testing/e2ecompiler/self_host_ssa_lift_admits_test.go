@@ -38,8 +38,9 @@ func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 	// clone_file and set_extproc are two more.
 	// reader_copy_range and pipe add two admitted kinds with three and zero
 	// inputs respectively; each pushes one Result and has a modelled effect.
-	// The eight Dir ops, open_dir to dir_chown, are eight more, sha256_hw and
-	// sha256_hw_blocks two more, and bswap one more.
+	// The eight Dir kinds (420-427) each have a modelled pop count and push
+	// one Result, so all eight are admitted through the flat arm.
+	// sha256_hw and sha256_hw_blocks are two more, and bswap one more.
 	const want = "load pops=-1 pushes=1\n" +
 		"store pops=-1 pushes=1\n" +
 		"call_closure_direct pops=-1 pushes=1\n" +
