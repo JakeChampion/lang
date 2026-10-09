@@ -806,7 +806,7 @@ function main(): i32 { let mm: Map[i32, i32] = map_new(8); let (m2, e) = mm.with
 		{"iife-match-tuple-payload-elem-value", `enum E { V((i32, i32)), N } function main(): i32 { let e: E = E.V((3, 4)); let r = match (e) { V(t) => t.0 + t.1, N => 0 }; return r; }`, 7},
 		// Enum payload with a METHOD returning i32 (`t.sum()`): result is i32 — the
 		// method's i32 return is recovered by exclusion from the wider-result registries.
-		{"iife-match-enum-payload-method-value", `enum Tree { Leaf(i32), Node(Tree, Tree) } function (t: Tree) sum(): i32 { return match (t) { Leaf(v) => v, Node(l, r) => l.sum() + r.sum() } } enum E { V(Tree), N } function main(): i32 { let tr: Tree = Tree.Leaf(7); let e: E = E.V(tr); let r = match (e) { V(t) => t.sum(), N => 0 }; return r; }`, 7},
+		{"iife-match-enum-payload-method-value", `enum Tree { Leaf(i32), Node(Tree, Tree) } function (t: Tree) sum(): i32 { return match (t) { Leaf(v) => v, Node(l, r) => l.sum() + r.sum() }; } enum E { V(Tree), N } function main(): i32 { let tr: Tree = Tree.Leaf(7); let e: E = E.V(tr); let r = match (e) { V(t) => t.sum(), N => 0 }; return r; }`, 7},
 		// Leak-safety detector: the STRING payload box is bound + borrow-read through the
 		// IIFE path then leaked-with-the-enum; the over-release detector reads 0 (the
 		// borrowed payload is never double-freed through the IIFE path).
