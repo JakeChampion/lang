@@ -3,10 +3,24 @@
 import "./asmcore";
 import "./ircore";
 import "./ssaprepare";
+import "./ssacreditselected" as selection;
+import "./ssacredithelper" as helper;
+import "./typeinfo";
 
 pub struct Binding { rows: ssaprepare.Emitted[], error: string }
 
 pub function resolve(rows: ssaprepare.Emitted[], name: string, architecture: string): Binding {
+  let result = binding(rows, name, architecture);
+  if (result.error != "") {
+    return result;
+  }
+  if (result.rows[0].release_entry.counted) {
+    return Binding { rows: [], error: "unproved native release entry effects" };
+  }
+  return result;
+}
+
+function binding(rows: ssaprepare.Emitted[], name: string, architecture: string): Binding {
   let found: ssaprepare.Emitted[] = [];
   let label = asmcore.sanitize_label(name);
   for row in rows {
@@ -39,12 +53,48 @@ function target_binding(found: ssaprepare.Emitted[], name: string, architecture:
   if (row.release_entry.counted != expected.counted || row.release_entry.unique_drop != expected.unique_drop) {
     return Binding { rows: [], error: "mismatched native release entry selection" };
   }
-  // Both native backends add kept/shared early returns outside formed.f.
-  // The x86 unique Drop shortcut is also covered by this refusal.
-  if (!row.context.rc_free_debug && ircore.counted_release_body(row.body.lowered)) {
-    return Binding { rows: [], error: "unproved native release entry effects" };
-  }
   return Binding { rows: found, error: "" };
+}
+
+// Scoped composition under the ordinary, untagged record-pointer ABI. This
+// proves the supplied release/Drop pair, not a runtime implementation or an
+// arbitrary function with a counted suffix. No caller-supplied proof flag.
+pub function release(rows: ssaprepare.Emitted[], name: string, drop: string, architecture: string, parent: typeinfo.Type): Binding {
+  let r = binding(rows, name, architecture);
+  let d = resolve(rows, drop, architecture);
+  if (r.error != "") {
+    return r;
+  }
+  if (d.error != "") {
+    return d;
+  }
+  let row = r.rows[0];
+  let dependency = d.rows[0];
+  let m = selection.metadata(row);
+  if (!selection.compatible(m, selection.metadata(dependency), parent, 1)) {
+    return Binding { rows: [], error: "incompatible retained release layout" };
+  }
+  let layout = helper.FlatChildren { offsets: selection.child_offsets(m, parent) };
+  let proof = helper.release_body_many(row.body.formed.f, dependency.body.formed.f, layout);
+  if (!proof.ok) {
+    return Binding { rows: [], error: proof.function_name + ": " + proof.message };
+  }
+  return release_entry(row, dependency);
+}
+
+function release_entry(row: ssaprepare.Emitted, drop: ssaprepare.Emitted): Binding {
+  // Both fields already agree with the actual LowerResult and PRE context.
+  // For untagged records, low pointers and negative RC skip both operations;
+  // RC>1 skips Drop and decrements once. These are exactly the proved body's
+  // shared paths. RC==0 enters that SAME body and retains runtime underflow.
+  // ARM RC==1 also enters it. The x86 shortcut must invoke the SAME proved
+  // Drop, then __fern_rc_dec (mapped to __fn___fern_arr_dec.r), on the saved
+  // parent pointer and return zero, matching the body's unique path.
+  let entry = row.release_entry;
+  if (entry.unique_drop != "" && entry.unique_drop != drop.label_name) {
+    return Binding { rows: [], error: "mismatched proved release entry Drop" };
+  }
+  return Binding { rows: [row, drop], error: "" };
 }
 
 function boundary_error(row: ssaprepare.Emitted): string {

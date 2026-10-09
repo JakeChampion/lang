@@ -101,6 +101,26 @@ function compatible_fields(a: physicalbody.Metadata, b: physicalbody.Metadata, f
   return true;
 }
 
+// Derive every reference offset from a checked ordinary record schema. An
+// empty result refuses unsupported layouts as well as records without children.
+pub function child_offsets(m: physicalbody.Metadata, t: typeinfo.Type): i32[] {
+  if (!compatible(m, m, t, 1)) {
+    return [];
+  }
+  let offsets: i32[] = [];
+  let i: i32 = 0;
+  for field in m.records.list[index(m, t)].fields {
+    if (i > 268435454) {
+      return [];
+    }
+    if (!scalar(field.ty)) {
+      offsets = offsets.append((i + 1) * 8);
+    }
+    i = i + 1;
+  }
+  return offsets;
+}
+
 function wrapper_modes(c: ssasem.Contract): boolean {
   return c.params.len() == 4 && c.modes.len() == 4 && c.modes[0] == 1 && c.modes[1] == 3 && c.modes[2] == 3 && c.modes[3] == 3;
 }
