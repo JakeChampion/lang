@@ -10543,6 +10543,13 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
     s = s.need("heap");
     s = s.need("reader");
     s = s.need("reader_splice");
+  } else if (o.kind_tag == 407) {  // reader_copy_range
+    // [fd][out_fd][max] -> Result[i64, IoError], called as reader_splice is.
+    s = s.write("    popq %rdx\n    popq %rsi\n    popq %rdi\n");
+    s = s.write("    pushq %rdx\n    pushq %rsi\n    pushq %rdi\n    call __fn___fern_reader_copy_range\n    addq $24, %rsp\n    pushq %rax\n");
+    s = s.need("heap");
+    s = s.need("reader");
+    s = s.need("reader_copy_range");
   } else if (o.kind_tag == 281) {  // writer_truncate
     // [fd][length]; the Fern __fn___fern_writer_truncate(fd, length)
     // pushes a fresh Option[IoError]. The length is on top but param[0]
@@ -12044,6 +12051,9 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
     }
     if (s.has_need("reader_splice")) {
       fs_src = fs_src + " " + asmcore.rt_src_reader_splice("x86_64");
+    }
+    if (s.has_need("reader_copy_range")) {
+      fs_src = fs_src + " " + asmcore.rt_src_reader_copy_range("x86_64");
     }
     if (s.has_need("fd_flags")) {
       fs_src = fs_src + " " + asmcore.rt_src_fd_flags("x86_64");

@@ -313,7 +313,7 @@ pub function need_ops(): string[] {
     "arr_push_owned_f64", "env", "environ", "eprint_str", "exit", "fcos", "fexp", "flog",
     "fpow", "fsin", "monotonic_ns", "now_ns", "now_unix_ms", "clock_resolution", "clock_set", "clone_file", "poll", "print_str", "putchar",
     "random_bytes", "read_chunk", "read_chunk_bytes", "fd_stat", "fd_fsync", "fd_fdatasync", "fd_syncfs", "fd_drop_cache",
-    "fd_dup_onto", "reader_seek", "reader_splice", "fd_flags", "writer_truncate", "read_dir",
+    "fd_dup_onto", "reader_seek", "reader_splice", "reader_copy_range", "fd_flags", "writer_truncate", "read_dir",
     "read_dir_all", "read_dir_ino", "read_file", "read_file_bytes", "read_line",
     "reader_close", "remove_dir_all", "remove_file", "create_dir_all", "create_dir",
     "remove_dir", "create_link", "create_symlink", "rename", "read_link", "set_file_times",
@@ -2727,7 +2727,7 @@ function component_fs_needs(): string[] {
 // The three past component_fs_needs answer Unsupported on every WASI target
 // and import nothing.
 function component_admits_fs(n: string): boolean {
-  return util.has_str(component_fs_needs(), n) || util.has_str(["fd_syncfs", "fd_dup_onto", "reader_splice"], n);
+  return util.has_str(component_fs_needs(), n) || util.has_str(["fd_syncfs", "fd_dup_onto", "reader_splice", "reader_copy_range"], n);
 }
 
 // component_framable reports whether a fixed framing can wire a component
@@ -6250,6 +6250,10 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
     // r.splice_to(w, max) -> Result[i64, IoError]: always Err(Unsupported),
     // which promises nothing moved; the operands are dropped by the callee.
     parts = parts.append("    call $__fern_reader_splice\n");
+  } else if (o.kind_tag == 407) {  // reader_copy_range
+    // r.copy_range_to(w, max) -> Result[i64, IoError]: always
+    // Err(Unsupported), as reader_splice is.
+    parts = parts.append("    call $__fern_reader_copy_range\n");
   } else if (o.kind_tag == 242) {  // reader_seek
     // r.seek(offset, whence) -> Result[i64, IoError]: fd, i64 offset and
     // whence are on the stack in param order.
@@ -7185,7 +7189,7 @@ function io_err_field_off(i: i32): string {
 function needs_fd_sync(needs: string[]): boolean {
   return need(needs, "fd_fsync") || need(needs, "fd_fdatasync") || need(needs, "fd_syncfs")
     || need(needs, "fd_drop_cache") || need(needs, "fd_dup_onto") || need(needs, "reader_splice")
-    || need(needs, "clock_set") || need(needs, "clone_file");
+    || need(needs, "reader_copy_range") || need(needs, "clock_set") || need(needs, "clone_file");
 }
 
 // needs_io_error reports whether the module carries any fs op — the gate on
@@ -8150,7 +8154,10 @@ pub function fd_sync_funcs(needs: string[]): string {
     o = o + fd_dup_onto_func();
   }
   if (need(needs, "reader_splice")) {
-    o = o + reader_splice_func();
+    o = o + refused_copy_func("$__fern_reader_splice");
+  }
+  if (need(needs, "reader_copy_range")) {
+    o = o + refused_copy_func("$__fern_reader_copy_range");
   }
   return o;
 }
@@ -8275,12 +8282,13 @@ pub function clone_file_func(): string {
   return o;
 }
 
-// reader_splice_func emits $__fern_reader_splice(fd, out, max) ->
-// Result[i64, IoError]: always Err(Unsupported), which promises nothing
-// moved. Neither preview can splice, so the caller reads and writes.
-pub function reader_splice_func(): string {
+// refused_copy_func emits `name`(fd, out, max) -> Result[i64, IoError] for
+// reader_splice and reader_copy_range: always Err(Unsupported), which
+// promises nothing moved. Neither preview can splice or copy between handles
+// in the host, so the caller reads and writes.
+function refused_copy_func(name: string): string {
   let o: string = "";
-  o = o + "  (func $__fern_reader_splice (param $fd i32) (param $out i32) (param $max i32) (result i32)\n";
+  o = o + "  (func " + name + " (param $fd i32) (param $out i32) (param $max i32) (result i32)\n";
   o = o + "    (local $res i32)\n";
   o = o + "    (local.set $res (call $__fern_str_box (i32.const 8)))\n";
   o = o + "    (i32.store (local.get $res) (i32.const 1))\n";

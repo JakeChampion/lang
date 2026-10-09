@@ -1125,6 +1125,9 @@ function sysno_x86_64(name: string): string {
   if (name == "splice") {
     return "275";
   }
+  if (name == "copy_file_range") {
+    return "326";
+  }
   if (name == "sendfile") {
     return "40";
   }
@@ -1721,6 +1724,9 @@ function sysno_arm64_linux(name: string): string {
   }
   if (name == "splice") {
     return "76";
+  }
+  if (name == "copy_file_range") {
+    return "285";
   }
   if (name == "sendfile") {
     return "71";
@@ -5049,10 +5055,22 @@ pub function rt_src_sync_family(s: EmitState, t: string): string {
   return out;
 }
 
-// rt_src_reader_seek backs `r.seek(offset, whence)` -> Result[i64, IoError]:
-// lseek(2), the new offset back. The result is bound to an i64 rather than
-// cast from an i32: the register backends' `as i64` sign-extends the low 32
-// bits, which would fold an offset past 2 GiB.
+// rt_src_reader_copy_range backs `r.copy_range_to(w, max)` -> Result[i64,
+// IoError], the codegens' __fern_reader_copy_range: one copy_file_range(2)
+// from both handles' own offsets. The errnos GNU's cat takes to mean this
+// pair cannot be copied in the kernel (EPERM, EBADF, ETXTBSY, EXDEV, EINVAL,
+// ENOSYS, EOPNOTSUPP) answer Unsupported, so the caller copies the bytes
+// itself; any other is the copy's own failure. XNU has no copy_file_range, so Darwin answers
+// Unsupported.
+pub function rt_src_reader_copy_range(t: string): string {
+  let head: string = "function __fern_reader_copy_range(fd: i32, out: i32, max: i32): Result[i64, IoError] { ";
+  if (t == "arm64-darwin") {
+    return head + "return Err(Unsupported); }";
+  }
+  return head + "let n: i32 = __syscall6(" + sysno(t, "copy_file_range") + ", fd as i64, 0, out as i64, 0, max as i64, 0) as i32; if (n >= 0) { return Ok(n as i64); } "
+    + "let e: i32 = 0 - n; if (e == 1 || e == 9 || e == 26 || e == 18 || e == 22 || e == 38 || e == 95) { return Err(Unsupported); } return Err(__fern_io_error(e, \"\")); }";
+}
+
 // rt_src_reader_splice backs `r.splice_to(w, max)` -> Result[i64, IoError], the
 // native codegens' __fern_reader_splice: a direct splice(2), after which a
 // writer that is a pipe grows to hold max (asked once per writer, the third
@@ -5076,6 +5094,10 @@ pub function rt_src_reader_splice(t: string): string {
   return o + "return Ok(got as i64); }";
 }
 
+// rt_src_reader_seek backs `r.seek(offset, whence)` -> Result[i64, IoError]:
+// lseek(2), the new offset back. The result is bound to an i64 rather than
+// cast from an i32: the register backends' `as i64` sign-extends the low 32
+// bits, which would fold an offset past 2 GiB.
 pub function rt_src_reader_seek(t: string): string {
   return "function __fern_reader_seek(fd: i32, off: i64, whence: i32): Result[i64, IoError] { let r: i64 = __syscall3(" + sysno(t, "lseek") + ", fd as i64, off as i64, whence as i64); if (r < (0 as i64)) { return Err(__fern_io_error(((0 as i64) - r) as i32, \"\")); } return Ok(r); }";
 }

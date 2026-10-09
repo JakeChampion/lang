@@ -127,20 +127,16 @@ implementation:
   `copy offload: yes, reflink: unsupported, sparse detection: SEEK_HOLE`
   for a sparse file, and for a dense one `sparse detection: no` or
   `SEEK_HOLE` depending on the host (both measured from GNU 9.4 on
-  ext4). The sparse detection is ours too now — a sparse source is
-  walked by SEEK_DATA / SEEK_HOLE — but the offload is
-  `copy_file_range`, which has no Fern primitive, and claiming it would
-  say something untrue about our own code. Ours states what the copy
-  actually did. No corpus case copies under `--debug`; `TestCpDebug`
-  holds the exit status and the `'src' -> 'dest'` line it implies to
-  GNU's and pins the report line to ours. Everything else about the
-  option IS byte-exact in the corpus: that a skip under `-n` or
-  `--update=none` is named, and that it stands in the ambiguity list
-  between `--copy-contents` and `--dereference`.
-
-  This one has a way out that `cksum --debug` does not: a
-  `copy_file_range` primitive would let the line be true rather than
-  ours. Until then it is an exemption, not a divergence to fix in cp.
+  ext4). Ours states what the copy actually did: the data runs go by
+  `copy_file_range` (`r.copy_range_to`) where the kernel takes the pair,
+  `copy offload: yes` on Linux and `no` on Darwin, and a sparse source is
+  walked by SEEK_DATA / SEEK_HOLE. GNU's vocabulary is its own (`unknown`,
+  `avoided`), so the line stays ours rather than byte-exact. No corpus case
+  copies under `--debug`; `TestCpDebug` holds the exit status and the
+  `'src' -> 'dest'` line it implies to GNU's and pins the report line to
+  ours. Everything else about the option IS byte-exact in the corpus: that
+  a skip under `-n` or `--update=none` is named, and that it stands in the
+  ambiguity list between `--copy-contents` and `--dereference`.
 
 Exempt is not unchecked. `requireHelp` / `requireVersion` in the harness
 still require the exit status and the stream to match GNU's for each — so
@@ -2739,8 +2735,9 @@ that path. wasm and the interpreter answer `Unsupported` to every call.
 
 `cat` passes 1 MiB, the kernel's default ceiling for a pipe. Against GNU's
 512 KiB it measured 3 ms to 4 ms on the bench file in a C loop of the same
-two splices. Regular file to regular file goes through the pipe too, rather
-than `copy_file_range`; the bench has no such row.
+two splices. Regular file to regular file goes by `copy_file_range`
+(`r.copy_range_to`) first, as GNU's does, and splices only when the kernel
+refuses that pair (#9309); the bench has no such row.
 
 | workload | before | after | GNU 9.12 |
 |---|---:|---:|---:|

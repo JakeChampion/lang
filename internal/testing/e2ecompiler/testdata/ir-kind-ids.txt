@@ -368,4 +368,5 @@ aes_ctr32=403
 ghash=404
 clone_file=405
 set_extproc=406
+reader_copy_range=407
 pipe=408

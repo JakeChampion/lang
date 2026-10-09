@@ -101,7 +101,7 @@ function main(): i32 {
     "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "str_data", "tcp_sendfile", "tcp_send_bytes",
     "udp_send_bytes", "udp_sendto_bytes", "read_dir_ino",
     "disable_core_dumps", "proc_waitpid_status", "mounts", "ct_mark", "vg_request", "sysctl",
-    "aes_expand_key", "aes_ctr32", "ghash", "clone_file", "set_extproc", "pipe",
+    "aes_expand_key", "aes_ctr32", "ghash", "clone_file", "set_extproc", "reader_copy_range", "pipe",
   ];
   let ext_max: i32 = n;
   let ext_ok: i32 = 0;
@@ -236,7 +236,7 @@ function main(): i32 {
     ir.op_reactor_new(), ir.op_reactor_ctl(), ir.op_reactor_wait(), ir.op_tcp_recv_into(), ir.op_str_data(), ir.op_tcp_sendfile(), ir.op_tcp_send_bytes(),
     ir.op_udp_send_bytes(), ir.op_udp_sendto_bytes(), ir.op_read_dir_ino(),
     ir.op_disable_core_dumps(), ir.op_proc_waitpid_status(), ir.op_mounts(), ir.op_ct_mark(0), ir.op_vg_request(), ir.op_sysctl(),
-    ir.op_aes_expand_key(), ir.op_aes_ctr32(), ir.op_ghash(), ir.op_clone_file(), ir.op_set_extproc(), ir.op_pipe(),
+    ir.op_aes_expand_key(), ir.op_aes_ctr32(), ir.op_ghash(), ir.op_clone_file(), ir.op_set_extproc(), ir.op_reader_copy_range(), ir.op_pipe(),
   ];
   let names: string[] = [
     "const_i32", "const_str", "load_local",
@@ -273,7 +273,7 @@ function main(): i32 {
     "reactor_new", "reactor_ctl", "reactor_wait", "tcp_recv_into", "str_data", "tcp_sendfile", "tcp_send_bytes",
     "udp_send_bytes", "udp_sendto_bytes", "read_dir_ino",
     "disable_core_dumps", "proc_waitpid_status", "mounts", "ct_mark", "vg_request", "sysctl",
-    "aes_expand_key", "aes_ctr32", "ghash", "clone_file", "set_extproc", "pipe",
+    "aes_expand_key", "aes_ctr32", "ghash", "clone_file", "set_extproc", "reader_copy_range", "pipe",
   ];
   let tag_ok: i32 = 0;
   let tag_bad: i32 = 0;

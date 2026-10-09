@@ -2,7 +2,9 @@ package coreutils
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -235,4 +237,25 @@ func TestCatHelpVersion(t *testing.T) {
 	requireHelp(t, "cat", []string{"--help", "ignored"}, 0)
 	requireVersion(t, "cat", []string{"--version"}, 0)
 	requireVersion(t, "cat", []string{"--vers"}, 0)
+}
+
+// A /proc file has size 0 and its content is made on read; an older kernel's
+// copy_file_range answers 0 for it, which must not end the copy.
+func TestCatProcFile(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("/proc is Linux's")
+	}
+	want, err := os.ReadFile("/proc/version")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command(fernBin(t, "cat"), "/proc/version")
+	cmd.Args[0] = "cat"
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("cat /proc/version: %v", err)
+	}
+	if string(out) != string(want) {
+		t.Errorf("cat /proc/version printed %q, want %q", out, want)
+	}
 }

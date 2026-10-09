@@ -5795,6 +5795,9 @@ function handle_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == "Reader.splice_to") {
     return Lowered { found: true, r: emit(r, ir.op_reader_splice()) };
   }
+  if (ins.str == "Reader.copy_range_to") {
+    return Lowered { found: true, r: emit(r, ir.op_reader_copy_range()) };
+  }
   if (ins.str == "Writer.truncate") {
     return Lowered { found: true, r: emit(r, ir.op_writer_truncate()) };
   }
