@@ -7,6 +7,7 @@ import "../ssa_lift";
 import "../ssacreditreuse" as reuse;
 import "../ssacredithelper" as helper;
 import "../util";
+import "./ssacreditsparse" as sparse;
 
 function require(ok: boolean, id: i32): void {
   if (!ok) {
@@ -47,7 +48,13 @@ function expect(p: helper.Proof, name: string, why: string): void {
 
 function check(sub: ircore.Sub, f: ssa.SFunc, assertion: ssa.SFunc): helper.Proof {
   let fields = [reuse.ScalarField { root: 3, offset: 8 }, reuse.ScalarField { root: 4, offset: 8 }, reuse.ScalarField { root: 5, offset: 8 }];
-  return reuse.check_invocations(body(sub, "handoff"), [body(sub, "parent")], f, body(sub, "__sem_drop_Parent"), body(sub, "__sem_release_Parent"), "Parent", "Other", fields, [assertion]);
+  let p = reuse.check_invocations(body(sub, "handoff"), [body(sub, "parent")], f, body(sub, "__sem_drop_Parent"), body(sub, "__sem_release_Parent"), "Parent", "Other", fields, [assertion]);
+  let mapped = reuse.check_invocations(sparse.rename(body(sub, "handoff")), [sparse.rename(body(sub, "parent"))], sparse.rename(f), body(sub, "__sem_drop_Parent"), body(sub, "__sem_release_Parent"), "Parent", "Other", fields, [assertion]);
+  if (mapped.ok != p.ok || mapped.function_name != p.function_name || mapped.message != p.message) {
+    print(mapped.function_name + ": " + mapped.message + " expected: " + p.message);
+    exit(92);
+  }
+  return p;
 }
 
 function reference_id(f: ssa.SFunc, allocation: boolean): i32 {
@@ -202,6 +209,7 @@ function target_checks(target: string): void {
   // consumer instructions, reads and call operands remain unchanged above.
   let safe = semlower.driven(parser.parse_module(lexer.tokenize("@noinline\nfunction require(ok: boolean, code: i32): void { return; }\nfunction main(): i32 { require(true,1); return 0; }\n")), target).sub;
   expect(check(sub, f, body(safe, "require")), "replace", "proved checked-capacity consumer invocation");
+  expect(check(sub, ssa.register_form(f).f, body(safe, "require")), "replace", "proved checked-capacity consumer invocation");
   controls(sub, f, body(safe, "require"));
   expect(check(sub, unsafe_storage("replace", false), body(safe, "require")), "replace", "storage transfer requires unique parent");
   expect(check(sub, unsafe_storage("replace", true), body(safe, "require")), "replace", "storage transfer requires discharged children");
