@@ -1,0 +1,119 @@
+import "../asmcore";
+import "../ir";
+import "../ircore";
+import "../irtables";
+import "../physicalbody";
+import "../semrecords";
+import "../ssasem";
+import "../ssa";
+import "../ssaprepare";
+import "../ssacreditbound" as bound;
+import "../ssacreditselected" as selected;
+import "../typeinfo";
+import "./ssaretainedmutations" as mutations;
+
+function require(ok: boolean, code: i32): void {
+  if (!ok) {
+    exit(code);
+  }
+}
+
+function check(rows: ssaprepare.Emitted[], architecture: string, parent: typeinfo.Type, ok: boolean): void {
+  let p = bound.release(rows, "__sem_release_Parent", "__sem_drop_Parent", architecture, parent);
+  if ((p.error == "" && p.rows.len() == 2) != ok) {
+    print("retained release: " + p.error);
+    exit(83);
+  }
+}
+
+function without(rows: ssaprepare.Emitted[], name: string): ssaprepare.Emitted[] {
+  let rest: ssaprepare.Emitted[] = [];
+  for row in rows {
+    if (row.label_name != name) {
+      rest = rest.append(row);
+    }
+  }
+  return rest;
+}
+
+function metadata(row: ssaprepare.Emitted, m: physicalbody.Metadata): ssaprepare.Emitted {
+  let s = physicalbody.Selected { producers: [m], origin: physicalbody.Origin { producer: 0, symbol: row.body.selected.origin.symbol } };
+  return ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: s } };
+}
+
+function schema(rows: ssaprepare.Emitted[], row: ssaprepare.Emitted, arch: string, parent: typeinfo.Type): void {
+  let rest = without(rows, row.label_name);
+  let m = selected.metadata(row);
+  check(rest.append(metadata(row, physicalbody.Metadata { ...m, records: semrecords.no_records() })), arch, parent, false);
+  check(rest.append(metadata(row, physicalbody.Metadata { ...m, finalizers: [ssasem.Finalizer { receiver: "Leaf", symbol: "drop_leaf" }] })), arch, parent, false);
+  let records = m.records.list;
+  for r in m.records.list {
+    if (semrecords.name_of(r.ty) == "Parent") {
+      records = records.append(r);
+    }
+  }
+  check(rest.append(metadata(row, physicalbody.Metadata { ...m, records: semrecords.records_of(records) })), arch, parent, false);
+}
+
+function shortcut(rows: ssaprepare.Emitted[], row: ssaprepare.Emitted, arch: string, parent: typeinfo.Type): void {
+  if (row.release_entry.unique_drop == "") {
+    return;
+  }
+  let rest = without(rows, row.label_name);
+  let other = "__sem_drop_Different";
+  let lower = irtables.LowerResult { ...row.body.lowered, ops: row.body.lowered.ops.with(4, ir.op_call_direct(other, 1)) };
+  let context = ssaprepare.Context { ...row.context, reg_entries: irtables.sig_reg_of([asmcore.sanitize_label(other)]) };
+  let entry = ircore.release_entry(lower, arch, context.rc_free_debug, context.reg_entries);
+  require(entry.counted && entry.unique_drop == other, 84);
+  let changed = ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, lowered: lower }, context: context, release_entry: entry };
+  let p = bound.release(rest.append(changed), row.label_name, "__sem_drop_Parent", arch, parent);
+  require(p.error == "mismatched proved release entry Drop" && p.rows.len() == 0, 85);
+  // With no register entry, production uses the SAME proved original body.
+  context = ssaprepare.Context { ...row.context, reg_entries: irtables.sig_reg_of([]) };
+  entry = ircore.release_entry(row.body.lowered, arch, context.rc_free_debug, context.reg_entries);
+  check(rest.append(ssaprepare.Emitted { ...row, context: context, release_entry: entry }), arch, parent, true);
+}
+
+function controls(rows: ssaprepare.Emitted[], arch: string, parent: typeinfo.Type): void {
+  check(rows, arch, parent, true);
+  check([], arch, parent, false);
+  check(rows, "wasm32-wasi", parent, false);
+  let pair: ssaprepare.Emitted[] = [];
+  for row in rows {
+    if (row.label_name == "__sem_release_Parent" || row.label_name == "__sem_drop_Parent") {
+      let rest = without(rows, row.label_name);
+      check(rest, arch, parent, false);
+      check(rows.append(row), arch, parent, false);
+      check(rest.append(mutations.damaged(row)), arch, parent, false);
+      let f = row.body.formed.f;
+      check(rest.append(ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, formed: ssa.Formed { ...row.body.formed, f: ssa.SFunc { ...f, takes_env: true } } } }), arch, parent, false);
+      let entry = row.release_entry;
+      check(rest.append(ssaprepare.Emitted { ...row, release_entry: ssaprepare.ReleaseEntry { ...entry, counted: !entry.counted } }), arch, parent, false);
+      check(rest.append(ssaprepare.Emitted { ...row, release_entry: ssaprepare.ReleaseEntry { ...entry, unique_drop: "wrong" } }), arch, parent, false);
+      check(rest.append(ssaprepare.Emitted { ...row, context: ssaprepare.Context { ...row.context, architecture: "wasm32-wasi" } }), arch, parent, false);
+      schema(rows, row, arch, parent);
+      if (row.label_name == "__sem_release_Parent") {
+        check(rest.append(ssaprepare.Emitted { ...row, context: ssaprepare.Context { ...row.context, rc_free_debug: !row.context.rc_free_debug } }), arch, parent, false);
+        shortcut(rows, row, arch, parent);
+      }
+      // Each helper's metadata lives at local index zero, without contracts.
+      let m = selected.metadata(row);
+      pair = pair.append(metadata(row, physicalbody.Metadata { ...m, contracts: [] }));
+    }
+  }
+  require(pair.len() == 2, 86);
+  check([pair[1], pair[0]], arch, parent, true);
+}
+
+pub function run(rows: ssaprepare.Emitted[], architecture: string): void {
+  let hits = 0;
+  for row in rows {
+    if (row.label_name == "consume") {
+      let cs = selected.contracts(row);
+      require(cs.len() == 1 && cs[0].params.len() == 1, 87);
+      controls(rows, architecture, cs[0].params[0]);
+      hits = hits + 1;
+    }
+  }
+  require(hits == 1, 88);
+}
