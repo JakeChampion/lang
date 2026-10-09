@@ -192,7 +192,7 @@ pub function kind_name(id: i32): string {
   if (id >= 28 && id <= 34) {
     return buf_kind_name(id);
   }
-  if (id >= 40 && id <= 61) {
+  if (id >= 40 && id <= 60) {
     return prod_kind_name(id);
   }
   return "invalid";
@@ -293,11 +293,10 @@ pub function print_func(f: SFunc): string {
 //   55 st_byte    args [base, idx, val] byte store at base + idx
 //   56 call_ind   args [target, a0..]   a call through a function value, on the stack ABI
 //   57 agg_lit    str = packed constant a static record or variant box (ir.const_struct_*), by address
-//   61 ld_word    args [base, idx]      imm-bit word at base + idx, str "le" or "be" (combine_loads)
 function prod_kind_name(id: i32): string {
   let names: string[] = [
     "ld_at", "st_at", "arr_at", "arr_st", "str_at", "fn_addr", "shape_addr", "str_lit", "arr_box", "str_call", "rt_call", "str_view",
-    "ld_idx", "st_idx", "ld_byte", "st_byte", "call_ind", "agg_lit", "sym_addr", "flat_op", "dyn_dispatch", "ld_word",
+    "ld_idx", "st_idx", "ld_byte", "st_byte", "call_ind", "agg_lit", "sym_addr", "flat_op", "dyn_dispatch",
   ];
   return names[id - 40];
 }
@@ -3184,15 +3183,15 @@ function compose_repl(a: i32[], b: i32[]): i32[] {
 }
 
 // register_form is a lifted function as the register backends allocate it:
-// trivial phis folded, repeated pure operations merged, rotates fused, byte
-// reads combined into word loads, wraps nothing reads dropped, dead values
-// pruned, branches on boolean joins threaded and forwarding blocks threaded.
+// trivial phis folded, repeated pure operations merged, rotates fused, wraps
+// nothing reads dropped, dead values pruned, branches on boolean joins
+// threaded and forwarding blocks threaded.
 // Dead values are pruned before the wraps too: a fused rotate's right shift
 // would otherwise still read its operand's high half.
 pub function register_form(f: SFunc): Formed {
   let folded: Formed = prune_trivial_phis(f);
   let merged: Formed = merge_duplicates(folded.f);
-  let unwrapped: Formed = drop_low_wraps(prune_dead(combine_loads(fuse_rotates(merged.f))));
+  let unwrapped: Formed = drop_low_wraps(prune_dead(fuse_rotates(merged.f)));
   let g: SFunc = prune_dead(unwrapped.f);
   let t: Threading = thread_bool_joins(g);
   if (t.changed) {
@@ -3205,12 +3204,12 @@ pub function register_form(f: SFunc): Formed {
 // its operand where nothing reads the high half of its result. A sum,
 // difference, product, bitwise op or left shift reads only its operands' low
 // halves when nothing reads its own high half, as do a shift's count, a 32-bit
-// rotate and the narrowing unaries, so the wrap the lowering puts after each
-// 32-bit op is needed only where the value reaches a comparison, a division, a
-// right shift, a call, a store, a branch or a return. A signed loop counter's
-// step goes too, read or not: `v + 1` for a v that is below a 32-bit value
-// cannot overflow (counter_step). The register backends only: on wasm the wrap
-// changes the value's type.
+// rotate or byte swap and the narrowing unaries, so the wrap the lowering puts
+// after each 32-bit op is needed only where the value reaches a comparison, a
+// division, a right shift, a call, a store, a branch or a return. A signed
+// loop counter's step goes too, read or not: `v + 1` for a v that is below a
+// 32-bit value cannot overflow (counter_step). The register backends only: on
+// wasm the wrap changes the value's type.
 pub function drop_low_wraps(f: SFunc): Formed {
   if (!has_low_wrap(f)) {
     return Formed { f: f, repl: [] };
@@ -3510,6 +3509,9 @@ function reads_low_half(ins: SInst, k: i32): boolean {
     if (util.str_has_prefix(ins.str, "rotr:")) {
       return rotr_width(ins.str) == 32;
     }
+    if (ins.str == "bswap:32") {
+      return true;
+    }
     return ins.str == "int_wrap" || ins.str == "int_extend" || ins.str == "u32_wrap" || ins.str == "int_cast:i32" || ins.str == "int_cast:u32" || ins.str == "int_cast:u8";
   }
   return false;
@@ -3607,270 +3609,6 @@ pub function fuse_rotates(f: SFunc): SFunc {
     return f;
   }
   return SFunc { ...f, blocks: nblocks };
-}
-
-// combine_loads rewrites a word read a byte at a time -- n byte loads at base
-// + i, base + i + 1, ..., base + i + n - 1, each shifted into its lane and
-// or-ed together -- into one n-byte load (#10615): an ld_word whose imm is the
-// width in bits and whose str is "le" when byte i + k lands in bits 8k, "be"
-// when it lands in bits 8(n - 1 - k). n is 4 or 8. The loads and the or-tree
-// sit in one block with nothing that writes memory or calls between the first
-// load and the root, so the word read at the root holds the bytes the loads
-// read. A raw byte load is unchecked only where its index was proved in range,
-// so i + k does not wrap. The byte loads are left to prune_dead.
-pub function combine_loads(f: SFunc): SFunc {
-  if (!has_or(f) || !has_byte_load(f)) {
-    return f;
-  }
-  let defs: SInst[] = [];
-  let def_b: i32[] = [];
-  let def_k: i32[] = [];
-  let none: SInst = SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
-  let i: i32 = 0;
-  while (i < f.nvals) {
-    defs = defs.append(none);
-    def_b = def_b.append(0 - 1);
-    def_k = def_k.append(0 - 1);
-    i = i + 1;
-  }
-  let bi: i32 = 0;
-  while (bi < f.blocks.len()) {
-    let k: i32 = 0;
-    while (k < f.blocks[bi].insts.len()) {
-      let ins: SInst = f.blocks[bi].insts[k];
-      if (ins.result >= 0 && ins.result < f.nvals) {
-        defs = defs.with(ins.result, ins);
-        def_b = def_b.with(ins.result, bi);
-        def_k = def_k.with(ins.result, k);
-      }
-      k = k + 1;
-    }
-    bi = bi + 1;
-  }
-  let nblocks: SBlock[] = [];
-  let changed: boolean = false;
-  let done: boolean[] = __alloc_bool(f.nvals);
-  bi = 0;
-  while (bi < f.blocks.len()) {
-    let blk: SBlock = f.blocks[bi];
-    let ninsts: SInst[] = blk.insts;
-    let k: i32 = blk.insts.len() - 1;
-    while (k >= 0) {
-      let ins: SInst = blk.insts[k];
-      if (ins.kind_tag == 9 && ins.str == "or" && ins.args.len() == 2 && !done[ins.result]) {
-        let t: WordTree = word_tree(defs, ins.result);
-        let w: SInst = word_load(defs, t, ins.result);
-        if (w.kind_tag != 0 && word_tree_local(defs, def_b, def_k, blk, bi, k, t)) {
-          ninsts = ninsts.with(k, w);
-          changed = true;
-          for o in t.ors {
-            done = done.with(o, true);
-          }
-        }
-      }
-      k = k - 1;
-    }
-    nblocks = nblocks.append(SBlock { ...blk, insts: ninsts });
-    bi = bi + 1;
-  }
-  if (!changed) {
-    return f;
-  }
-  return SFunc { ...f, blocks: nblocks };
-}
-
-function has_byte_load(f: SFunc): boolean {
-  for blk in f.blocks {
-    for ins in blk.insts {
-      if (ins.kind_tag == 54) {
-        return true;
-      }
-    }
-  }
-  return false;
-}
-
-// WordTree is the or-tree under one `or`: its or nodes, its leaves, and
-// whether a u32 wrap around an or was looked through on the way, which only a
-// 4-byte word may have, its lanes all below bit 32.
-struct WordTree { ors: i32[], leaves: i32[], wrapped: boolean }
-
-// word_tree gathers the or-tree rooted at v, giving up past eight leaves.
-function word_tree(defs: SInst[], v: i32): WordTree {
-  let t: WordTree = WordTree { ors: [], leaves: [], wrapped: false };
-  let work: i32[] = [v];
-  let at: i32 = 0;
-  while (at < work.len() && t.leaves.len() <= 8) {
-    let x: i32 = work[at];
-    at = at + 1;
-    let y: i32 = strip_u32_wraps(defs, x);
-    let d: SInst = def_of(defs, y);
-    if (d.kind_tag == 9 && d.str == "or" && d.args.len() == 2) {
-      t = WordTree { ...t, ors: t.ors.append(y), wrapped: t.wrapped || y != copy_root(defs, x) };
-      work = work.append(d.args[1]);
-      work = work.append(d.args[0]);
-    } else {
-      t = WordTree { ...t, leaves: t.leaves.append(copy_root(defs, x)) };
-    }
-  }
-  return t;
-}
-
-// strip_u32_wraps follows copies and u32 zero extensions back to their
-// operand.
-function strip_u32_wraps(defs: SInst[], v: i32): i32 {
-  let r: i32 = copy_root(defs, v);
-  let steps: i32 = 0;
-  while (steps < defs.len() && zero_extends_u32(def_of(defs, r))) {
-    r = copy_root(defs, def_of(defs, r).args[0]);
-    steps = steps + 1;
-  }
-  return r;
-}
-
-// ByteLane is one leaf: the byte load it reads (kind 0 when it is not one),
-// that load's index split as root + k, and the left shift putting it in its
-// lane.
-struct ByteLane { load: SInst, root: i32, k: i32, shift: i32 }
-
-function byte_lane(defs: SInst[], leaf: i32, n: i32): ByteLane {
-  let no: ByteLane = ByteLane { load: SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" }, root: 0 - 1, k: 0, shift: 0 };
-  let x: i32 = leaf;
-  let shift: i32 = 0;
-  let d: SInst = def_of(defs, x);
-  if (zero_extends_u32(d)) {
-    let inner: SInst = def_of(defs, copy_root(defs, d.args[0]));
-    if (inner.kind_tag == 9 && inner.str == "shl") {
-      if (n == 8) {
-        return no;
-      }
-      d = inner;
-    }
-  }
-  if (d.kind_tag == 9 && d.str == "shl" && d.args.len() == 2) {
-    let c: i64 = const_value(defs, d.args[1]);
-    if (c < 0i64 || c > 56i64 || n == 8 && d.imm != 64) {
-      return no;
-    }
-    shift = c as i32;
-    x = d.args[0];
-  }
-  let ld: SInst = def_of(defs, byte_root(defs, x));
-  if (ld.kind_tag != 54 || ld.args.len() != 2) {
-    return no;
-  }
-  let at: i32 = copy_root(defs, ld.args[1]);
-  let root: i32 = at;
-  let k: i64 = 0i64;
-  let w: SInst = def_of(defs, at);
-  let sum: SInst = w;
-  if (signed_wrap(w)) {
-    sum = def_of(defs, copy_root(defs, w.args[0]));
-  } else if (w.imm != 64) {
-    sum = no.load;
-  }
-  if (sum.kind_tag == 9 && sum.str == "add" && sum.args.len() == 2) {
-    k = const_value(defs, sum.args[1]);
-    root = copy_root(defs, sum.args[0]);
-    if (k < 0i64) {
-      k = const_value(defs, sum.args[0]);
-      root = copy_root(defs, sum.args[1]);
-    }
-    if (k < 1i64 || k > 2147483647i64) {
-      return no;
-    }
-  }
-  return ByteLane { load: ld, root: root, k: k as i32, shift: shift };
-}
-
-// byte_root follows the integer casts a loaded byte passes through on its way
-// to a lane, each the identity on 0..255, back to the load.
-function byte_root(defs: SInst[], v: i32): i32 {
-  let r: i32 = copy_root(defs, v);
-  let steps: i32 = 0;
-  while (steps < defs.len()) {
-    let d: SInst = def_of(defs, r);
-    if (d.kind_tag != 10 || d.args.len() != 1) {
-      return r;
-    }
-    if (d.str != "u32_wrap" && d.str != "int_wrap" && d.str != "int_extend" && (!util.str_has_prefix(d.str, "int_cast:") || d.str == "int_cast:i8")) {
-      return r;
-    }
-    r = copy_root(defs, d.args[0]);
-    steps = steps + 1;
-  }
-  return r;
-}
-
-// word_load is the ld_word `t` reads, defining `result`, or an instruction of
-// kind 0 when its leaves are not the n bytes of one word in one order: the
-// bytes at root + c .. root + c + n - 1 for the smallest c among them, read
-// at the index the load of byte root + c used.
-function word_load(defs: SInst[], t: WordTree, result: i32): SInst {
-  let no: SInst = SInst { kind_tag: 0, result: 0 - 1, args: [], imm: 0, str: "" };
-  let n: i32 = t.leaves.len();
-  if (n != 4 && n != 8 || n == 8 && t.wrapped) {
-    return no;
-  }
-  let lanes: ByteLane[] = [];
-  let low: i32 = 0;
-  for leaf in t.leaves {
-    let l: ByteLane = byte_lane(defs, leaf, n);
-    if (l.load.kind_tag == 0) {
-      return no;
-    }
-    if (lanes.len() == 0 || l.k < lanes[low].k) {
-      low = lanes.len();
-    }
-    lanes = lanes.append(l);
-  }
-  let first: ByteLane = lanes[low];
-  let base: i32 = copy_root(defs, first.load.args[0]);
-  let seen: boolean[] = __alloc_bool(n);
-  let le: boolean = true;
-  let be: boolean = true;
-  for l in lanes {
-    let at: i32 = l.k - first.k;
-    if (at >= n || seen[at] || l.root != first.root || copy_root(defs, l.load.args[0]) != base) {
-      return no;
-    }
-    seen = seen.with(at, true);
-    le = le && l.shift == 8 * at;
-    be = be && l.shift == 8 * (n - 1 - at);
-  }
-  if (!le && !be) {
-    return no;
-  }
-  let order: string = "le";
-  if (!le) {
-    order = "be";
-  }
-  return SInst { kind_tag: 61, result: result, args: [base, first.load.args[1]], imm: 8 * n, str: order };
-}
-
-// word_tree_local says the tree's byte loads are all in block `bi`, before
-// the root at `at`, with nothing between the first of them and the root that
-// writes memory or calls.
-function word_tree_local(defs: SInst[], def_b: i32[], def_k: i32[], blk: SBlock, bi: i32, at: i32, t: WordTree): boolean {
-  let first: i32 = at;
-  for leaf in t.leaves {
-    let ld: i32 = byte_lane(defs, leaf, t.leaves.len()).load.result;
-    if (ld < 0 || def_b[ld] != bi) {
-      return false;
-    }
-    if (def_k[ld] < first) {
-      first = def_k[ld];
-    }
-  }
-  let k: i32 = first;
-  while (k < at) {
-    let kt: i32 = blk.insts[k].kind_tag;
-    if (inst_is_call(kt) || kt == 14 || kt == 16 || kt == 41 || kt == 43 || kt == 53 || kt == 55) {
-      return false;
-    }
-    k = k + 1;
-  }
-  return true;
 }
 
 // has_or reports whether `f` holds a two-operand `or`, the only instruction
@@ -4061,7 +3799,7 @@ function inst_has_effect(k: i32): boolean {
   if (k < 19) {
     return k == 6 || k == 11 || k == 12 || k == 14 || k == 16 || k == 17;
   }
-  return k != 40 && k != 45 && k != 46 && k != 47 && k != 52 && k != 54 && k != 57 && k != 58 && k != 61;
+  return k != 40 && k != 45 && k != 46 && k != 47 && k != 52 && k != 54 && k != 57 && k != 58;
 }
 
 // prune_roots is every value an effectful instruction or a terminator reads.

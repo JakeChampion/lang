@@ -510,6 +510,9 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (module_emits_op_cached(cache, "sha256_hw_blocks")) {
     out = out.append("@uses_sha256_hw_blocks");
   }
+  if (module_uses_aes_gcm(cache) || module_emits_op_cached(cache, "bswap")) {
+    out = out.append("@uses_bswap");
+  }
   if (module_uses_ascii_run(cache)) {
     out = out.append("@uses_ascii_run");
   }
@@ -6440,6 +6443,12 @@ function emit_ir_op(o: ir.Op, cx: WasmOpCtx): string {
       parts = parts.append("    i64.ctz\n    i32.wrap_i64\n");
     } else {
       parts = parts.append("    i32.ctz\n");
+    }
+  } else if (o.kind_tag == 411) {  // bswap
+    if (o.width == 64) {
+      parts = parts.append("    call $__fern_bswap64\n");
+    } else {
+      parts = parts.append("    call $__fern_bswap32\n");
     }
   } else if (o.kind_tag == 221) {  // popcount
     if (o.width == 64) {
@@ -13955,6 +13964,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   }
   if (need(needs, "@uses_aes_gcm")) {
     parts = parts.append(wasm_aes.funcs());
+  }
+  if (need(needs, "@uses_bswap")) {
+    parts = parts.append(wasm_aes.bswap_funcs());
   }
   if (need(needs, "@uses_sha256_hw_blocks")) {
     parts = parts.append(sha256_hw_blocks_helper());

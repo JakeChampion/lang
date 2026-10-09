@@ -1720,6 +1720,12 @@ pub function op_popcount(width: i32): Op {
   return Op { decl: 0 - 1, kind_tag: kind_id("popcount"), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }
 
+// `bswap` reverses the bytes of the `width`-bit (32 or 64) integer on top: a
+// big-endian word read in one load (ssabounds.word_loads).
+pub function op_bswap(width: i32): Op {
+  return Op { decl: 0 - 1, kind_tag: kind_id("bswap"), i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+}
+
 // `__arr_push_shared_count` takes no operands → an i32: the number of appends
 // that copied a buffer which still had SPARE CAPACITY, i.e. the copy was bought
 // by an extra reference rather than by a full buffer. `__fern_arr_push` mutates
@@ -3338,6 +3344,9 @@ function kind_id_len5(name: string): i32 {
   let c: u8 = name[0];
   if (c == b'a' && name == "alloc") {
     return 76;
+  }
+  if (c == b'b' && name == "bswap") {
+    return 411;
   }
   if (c == b'b' && name == "block") {
     return 152;
@@ -5514,6 +5523,9 @@ function buf_kind_name(id: i32): string {
 // extension tags beyond kind_count() (struct_copy=198 … buf_free=297)
 // — lives in kind_name_4, whose fallthrough is the "invalid" sentinel.
 pub function kind_name(id: i32): string {
+  if (id == 411) {
+    return "bswap";
+  }
   if (id == 410) {
     return "sha256_hw_blocks";
   }
@@ -5766,7 +5778,8 @@ function pops1_conv(t: i32): boolean {
     || t == 19 || t == 20  // store_local, tee_local
     || t == 34  // not
     || t >= 55 && t <= 65  // fneg … fcos (fpow is binary)
-    || t == 219 || t == 220 || t == 221;  // clz, ctz, popcount
+    || t == 219 || t == 220 || t == 221  // clz, ctz, popcount
+    || t == 411;  // bswap
 }
 
 function pops1_mem(t: i32): boolean {

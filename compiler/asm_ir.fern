@@ -7428,7 +7428,7 @@ function ssa_inst_known(ins: ssa.SInst): boolean {
   if (k == 10) {
     return ssa_unary_known(ins.str);
   }
-  if (k >= 40 && k <= 61) {
+  if (k >= 40 && k <= 60) {
     return true;
   }
   return k == 1 || k == 3 || k == 4 || k == 6 || k == 7 || k == 8 || k == 9 || k == 11 || k == 35;
@@ -7570,6 +7570,12 @@ function ssa_bits_asm(what: string, d: string): string {
   }
   if (what == "popcount:32") {
     return "    popcntl " + ssa_r32(d) + ", " + ssa_r32(d) + "\n";
+  }
+  if (what == "bswap:64") {
+    return "    bswap " + d + "\n";
+  }
+  if (what == "bswap:32") {
+    return "    bswap " + ssa_r32(d) + "\n";
   }
   return "";
 }
@@ -8899,27 +8905,6 @@ function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   return s.write("    movb " + ssa_r8(c) + ", (" + a + "," + b + ")\n");
 }
 
-// ssa_word_load selects ld_word (61): a 4- or 8-byte load at base + idx, byte
-// swapped for a big-endian word. A 4-byte load zero-extends.
-function ssa_word_load(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  let a: string = ssa_src(reg_of, ins.args[0], "%r11");
-  s = ssa_load(reg_of, ins.args[0], a, s);
-  let b: string = ssa_src(reg_of, ins.args[1], "%rcx");
-  s = ssa_load(reg_of, ins.args[1], b, s);
-  let d: string = ssa_dst(reg_of, ins.result);
-  let r: string = d;
-  let mov: string = "movq";
-  if (ins.imm == 32) {
-    r = ssa_r32(d);
-    mov = "movl";
-  }
-  s = s.write("    " + mov + " (" + a + "," + b + "), " + r + "\n");
-  if (ins.str == "be") {
-    s = s.write("    bswap " + r + "\n");
-  }
-  return ssa_store(reg_of, ins.result, d, s);
-}
-
 // ssa_call_ind is the stack machine's call through a function value: the
 // arguments pushed with the first on top, the target in %r11, which nothing
 // live can occupy at a call.
@@ -9032,9 +9017,6 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
   }
   if (k >= 52 && k <= 55) {
     return ssa_raw_inst(ins, reg_of, s);
-  }
-  if (k == 61) {
-    return ssa_word_load(ins, reg_of, s);
   }
   if (k == 56) {
     return ssa_call_ind(ins, reg_of, s);

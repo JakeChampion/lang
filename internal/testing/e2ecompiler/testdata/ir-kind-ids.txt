@@ -372,3 +372,4 @@ reader_copy_range=407
 pipe=408
 sha256_hw=409
 sha256_hw_blocks=410
+bswap=411

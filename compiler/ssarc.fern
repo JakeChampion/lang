@@ -6524,6 +6524,12 @@ function raw_memory_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (ins.str == ssabytes.word_name(4) || ins.str == ssabytes.word_name(8)) {
     return Lowered { found: true, r: emit(r, ssabytes.read_word(ins.args[0], word_bytes(ins.str))) };
   }
+  if (ins.str == ssabytes.swap_name(4)) {
+    return Lowered { found: true, r: emit(r, ir.op_bswap(32)) };
+  }
+  if (ins.str == ssabytes.swap_name(8)) {
+    return Lowered { found: true, r: emit(r, ir.op_bswap(64)) };
+  }
   if (ins.str == "__alloc") {
     return Lowered { found: true, r: emit(r, ir.op_alloc()) };
   }

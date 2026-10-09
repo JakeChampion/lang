@@ -265,15 +265,23 @@ function main(): i32 {
 	{name: "rotate_lookalikes_kept", fn: "notrot", exit: 170, src: rotateShapesSrc,
 		want:   map[string][]string{"x86-64-linux": {`shlq \$24,`, `sarq \$3,`}, "arm64-linux": {`lsl x\d+, x\d+, #24`, `asr x\d+, x\d+, #3`}},
 		forbid: map[string][]string{"x86-64-linux": {`\bror`}, "arm64-linux": {`\bror\b`}}},
-	// A little-endian word built from bytes, as std/crypto reads its message
-	// words, is one load of the word, from an owned array or a view (#8782).
-	// A big-endian word is not, and keeps its shifts.
-	{name: "le_word_owned_u32", fn: "word32", exit: 95, src: wordLoadSrc,
+	// A word built from bytes, as std/crypto reads its message words, is one
+	// load of the word, from an owned array or a view (#8782); a big-endian
+	// word is that load byte swapped (#10615). Bytes out of their places stay
+	// byte reads.
+	{name: "le_word_owned_u32", fn: "word32", exit: 5, src: wordLoadSrc,
 		forbid: map[string][]string{"x86-64-linux": {`\bshl`}, "arm64-linux": {`\blsl\b`}}},
-	{name: "le_word_view_u64", fn: "word64", exit: 95, src: wordLoadSrc,
+	{name: "le_word_view_u64", fn: "word64", exit: 5, src: wordLoadSrc,
 		forbid: map[string][]string{"x86-64-linux": {`\bshl`, `\bmovzb`}, "arm64-linux": {`\blsl\b`, `\bldrb\b`}}},
-	{name: "be_word_kept", fn: "bigend", exit: 95, src: wordLoadSrc,
-		want: map[string][]string{"x86-64-linux": {`\bshl`}, "arm64-linux": {`\blsl\b`}}},
+	{name: "be_word_owned_u32", fn: "bigend", exit: 5, src: wordLoadSrc,
+		want:   map[string][]string{"x86-64-linux": {`\bbswap %e\w+`}, "arm64-linux": {`\brev w\d+, w\d+`}},
+		forbid: map[string][]string{"x86-64-linux": {`\bshl`}, "arm64-linux": {`\blsl\b`}}},
+	{name: "be_word_view_u64", fn: "bigend64", exit: 5, src: wordLoadSrc,
+		want:   map[string][]string{"x86-64-linux": {`\bbswap %r\w+`}, "arm64-linux": {`\brev x\d+, x\d+`}},
+		forbid: map[string][]string{"x86-64-linux": {`\bshl`, `\bmovzb`}, "arm64-linux": {`\blsl\b`, `\bldrb\b`}}},
+	{name: "word_bytes_out_of_place_kept", fn: "swapped", exit: 5, src: wordLoadSrc,
+		want:   map[string][]string{"x86-64-linux": {`\bmovzb`}, "arm64-linux": {`\bldrb\b`}},
+		forbid: map[string][]string{"x86-64-linux": {`\bbswap\b`}, "arm64-linux": {`\brev\b`}}},
 	// A rotate whose operand is written out twice, as std/crypto's md5 rounds
 	// spell it: the two copies merge, so it is one sum and one rotate. Halves
 	// over different sums stay two shifts.
@@ -283,18 +291,6 @@ function main(): i32 {
 	{name: "rotate_of_different_operands_kept", fn: "notdup", exit: 47, src: mergedRotateSrc,
 		want:   map[string][]string{"x86-64-linux": {`shrq \$25,`, `shlq \$7,`}, "arm64-linux": {`lsr \w+, \w+, #25`, `lsl \w+, \w+, #7`}},
 		forbid: map[string][]string{"x86-64-linux": {`\bror`}, "arm64-linux": {`\bror\b`}}},
-	// A word read a byte at a time is one load: big-endian bytes at an offset
-	// are a 4-byte load and a byte swap, little-endian ones an 8-byte load.
-	// Lanes out of order stay byte loads.
-	{name: "word_be32", fn: "be32", exit: 26, src: wordLoadSrc,
-		want:   map[string][]string{"x86-64-linux": {`movl \(%\w+,%\w+\), (%e\w+)\n\s+bswap %e\w+`}, "arm64-linux": {`ldr (w\d+), \[x\d+, x\d+\]\n\s+rev w\d+, w\d+`}},
-		forbid: map[string][]string{"x86-64-linux": {`movzbl`, `\bor[lq]\b`}, "arm64-linux": {`\bldrb\b`, `\borr\b`}}},
-	{name: "word_le64", fn: "le64", exit: 26, src: wordLoadSrc,
-		want:   map[string][]string{"x86-64-linux": {`movq \(%\w+,%\w+\), %r\w+`}, "arm64-linux": {`ldr x\d+, \[x\d+, x\d+\]`}},
-		forbid: map[string][]string{"x86-64-linux": {`movzbl`, `\bbswap\b`, `\bor[lq]\b`}, "arm64-linux": {`\bldrb\b`, `\brev\b`, `\borr\b`}}},
-	{name: "word_lanes_out_of_order_kept", fn: "swapped", exit: 26, src: wordLoadSrc,
-		want:   map[string][]string{"x86-64-linux": {`movzbl`}, "arm64-linux": {`\bldrb\b`}},
-		forbid: map[string][]string{"x86-64-linux": {`\bbswap\b`, `movl \(%\w+,%\w+\)`}, "arm64-linux": {`\brev\b`, `ldr w\d+, \[x\d+, x\d+\]`}}},
 	// A u32 sum that only a 32-bit rotate and an exclusive-or read keeps no
 	// zero extension between its adds.
 	{name: "u32_wraps_nothing_reads_dropped", fn: "mix32", exit: 10, src: `
@@ -546,12 +542,19 @@ const wordLoadSrc = `
 @noinline function bigend(bs: u8[], o: i32): u32 {
     return bs[o] as u32 << 24 | bs[o + 1] as u32 << 16 | bs[o + 2] as u32 << 8 | bs[o + 3] as u32;
 }
+@noinline function bigend64(bs: [u8], o: i32): u64 {
+    return bs[o + 4] as u64 << 56 | bs[o + 5] as u64 << 48 | bs[o + 6] as u64 << 40 | bs[o + 7] as u64 << 32 | bs[o + 8] as u64 << 24 | bs[o + 9] as u64 << 16 | bs[o + 10] as u64 << 8 | bs[o + 11] as u64;
+}
+@noinline function swapped(bs: [u8], o: i32): u32 {
+    return bs[o] as u32 | bs[o + 1] as u32 << 8 | bs[o + 3] as u32 << 16 | bs[o + 2] as u32 << 24;
+}
 function main(): i32 {
     let b: u8[] = [];
     let i: i32 = 0;
     while (i < 24) { b = b.append(((i * 29 + 3) & 255) as u8); i = i + 1; }
     let x: u32 = word32(b, 5) ^ (word64(b, 9) >> 24u64) as u32 ^ bigend(b, 2);
-    return (x & 127u32) as i32;
+    let y: u64 = bigend64(b[1:20], 3) ^ swapped(b, 11) as u64;
+    return ((x ^ (y >> 13u64) as u32 ^ y as u32) & 127u32) as i32;
 }
 `
 
@@ -564,30 +567,6 @@ function main(): i32 {
     let b: u64 = rot64(81985529216486895u64);
     let c: u32 = notrot(3000000000u32, 0 - 12345, 0i64 - 9876543210i64);
     return ((a % 97u32) as i32) + ((b % 89u64) as i32) + ((c % 83u32) as i32);
-}
-`
-
-const wordLoadSrc = `
-@noinline function be32(bs: [u8], off: i32): u32 {
-    return bs[off + 4] as u32 << 24 | bs[off + 5] as u32 << 16 | bs[off + 6] as u32 << 8 | bs[off + 7] as u32;
-}
-@noinline function le64(bs: [u8], off: i32): u64 {
-    return bs[off] as u64 | bs[off + 1] as u64 << 8u64 | bs[off + 2] as u64 << 16u64 | bs[off + 3] as u64 << 24u64
-        | bs[off + 4] as u64 << 32u64 | bs[off + 5] as u64 << 40u64 | bs[off + 6] as u64 << 48u64 | bs[off + 7] as u64 << 56u64;
-}
-@noinline function swapped(bs: [u8], off: i32): u32 {
-    return bs[off] as u32 | bs[off + 1] as u32 << 8 | bs[off + 3] as u32 << 16 | bs[off + 2] as u32 << 24;
-}
-function main(): i32 {
-    let b: u8[] = __alloc_u8(24);
-    let i: i32 = 0;
-    while (i < 24) {
-        b = b.with(i, (i * 37 + 11) as u8);
-        i = i + 1;
-    }
-    let x: u32 = be32(b, 3) ^ swapped(b, 9);
-    let y: u64 = le64(b[1:20], 5);
-    return ((x % 211u32) as i32 + (y % 199u64) as i32) % 128;
 }
 `
 

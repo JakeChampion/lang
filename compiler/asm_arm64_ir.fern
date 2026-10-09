@@ -1985,7 +1985,7 @@ function ssa_inst_known(ins: ssa.SInst): boolean {
   if (k == 10) {
     return ssa_unary_known(ins.str);
   }
-  if (k >= 40 && k <= 61) {
+  if (k >= 40 && k <= 60) {
     return true;
   }
   return k == 1 || k == 3 || k == 4 || k == 6 || k == 7 || k == 8 || k == 9 || k == 11 || k == 35;
@@ -2111,6 +2111,12 @@ function ssa_unary_from(what: string, unsigned: boolean, src: string, d: string)
   if (what == "clz:64") {
     return "    clz " + d + ", " + src + "\n";
   }
+  if (what == "bswap:64") {
+    return "    rev " + d + ", " + src + "\n";
+  }
+  if (what == "bswap:32") {
+    return "    rev " + w + ", " + ws + "\n";
+  }
   if (what == "clz:32") {
     return "    clz " + w + ", " + ws + "\n";
   }
@@ -2144,6 +2150,12 @@ function ssa_bits_asm(what: string, d: string): string {
   }
   if (what == "popcount:32") {
     return "    fmov s0, " + w + "\n    cnt v0.8b, v0.8b\n    addv b0, v0.8b\n    fmov " + w + ", s0\n";
+  }
+  if (what == "bswap:64") {
+    return "    rev " + d + ", " + d + "\n";
+  }
+  if (what == "bswap:32") {
+    return "    rev " + w + ", " + w + "\n";
   }
   return "";
 }
@@ -3183,25 +3195,6 @@ function ssa_raw_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   return s.write("    strb " + ssa_wreg(c) + ", [" + a + ", " + b + "]\n");
 }
 
-// ssa_word_load selects ld_word (61): a 4- or 8-byte load at base + idx, byte
-// reversed for a big-endian word. A 4-byte load zero-extends.
-function ssa_word_load(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  let a: string = ssa_src(reg_of, ins.args[0], "x4");
-  s = ssa_load(reg_of, ins.args[0], a, s);
-  let b: string = ssa_src(reg_of, ins.args[1], "x5");
-  s = ssa_load(reg_of, ins.args[1], b, s);
-  let d: string = ssa_dst(reg_of, ins.result);
-  let r: string = d;
-  if (ins.imm == 32) {
-    r = ssa_wreg(d);
-  }
-  s = s.write("    ldr " + r + ", [" + a + ", " + b + "]\n");
-  if (ins.str == "be") {
-    s = s.write("    rev " + r + ", " + r + "\n");
-  }
-  return ssa_store(reg_of, ins.result, d, s);
-}
-
 // ssa_call_ind is the stack machine's call through a function value: the
 // arguments pushed with the first on top, the target in x9, which nothing
 // live can occupy at a call.
@@ -3316,9 +3309,6 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
   }
   if (k >= 52 && k <= 55) {
     return ssa_raw_inst(ins, reg_of, s);
-  }
-  if (k == 61) {
-    return ssa_word_load(ins, reg_of, s);
   }
   if (k == 56) {
     return ssa_call_ind(ins, reg_of, s);
