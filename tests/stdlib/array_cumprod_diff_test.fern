@@ -1,13 +1,12 @@
 import "std/test";
-import "std/array" as array;
+import "std/array";
 
 // tests/stdlib/array_cumprod_diff_test.fern — pure-Fern coverage of
-// std/array's cumprod_f64 (running product) and diff_f64 (successive
+// std/array's `cumproduct` (running product) and `adjacent_diff` (successive
 // differences, one shorter than the input; the discrete derivative and
-// left-inverse of cumsum). Both are scan-style ops that need sequential context
-// and return an f64[] (scalar payload), so this runs on all four native backends
-// and both self-host gates. The Go-side TestArrayCumprodDiff pins the native
-// backends; this is the migration-shaped companion.
+// left-inverse of cumsum) at an f64 element. Both are bounded generics, so this
+// exercises their f64 instantiation. The Go-side TestArrayCumprodDiff pins the
+// same behaviour.
 
 function near(a: f64, b: f64): boolean {
   let d: f64 = a - b;
@@ -19,7 +18,7 @@ function near(a: f64, b: f64): boolean {
 
 function test_cumprod(): test.TestOutcome {
   // 1, 1*2, 1*2*3, 1*2*3*4 = 1, 2, 6, 24
-  let cp: f64[] = array.cumprod_f64([1.0, 2.0, 3.0, 4.0]);
+  let cp: f64[] = [1.0, 2.0, 3.0, 4.0].cumproduct();
   if (!near(cp[0], 1.0)) {
     return test.fail("first");
   }
@@ -30,7 +29,7 @@ function test_cumprod(): test.TestOutcome {
 }
 
 function test_diff(): test.TestOutcome {
-  let df: f64[] = array.diff_f64([1.0, 3.0, 6.0, 10.0]);
+  let df: f64[] = [1.0, 3.0, 6.0, 10.0].adjacent_diff();
   if (df.len() != 3) {
     return test.fail("length one shorter");
   }
@@ -41,13 +40,13 @@ function test_diff(): test.TestOutcome {
 }
 
 function test_diff_negatives(): test.TestOutcome {
-  return test.assert_eq_f64_near(array.diff_f64([10.0, 4.0])[0], 0.0 - 6.0, 0.0001);
+  return test.assert_eq_f64_near([10.0, 4.0].adjacent_diff()[0], 0.0 - 6.0, 0.0001);
 }
 
 function test_diff_inverts_cumsum(): test.TestOutcome {
   // diff(cumsum(xs)) recovers xs (minus its first element).
   let xs: f64[] = [1.0, 2.0, 3.0, 4.0];
-  let d2: f64[] = array.diff_f64(array.cumsum_f64(xs));
+  let d2: f64[] = xs.cumsum().adjacent_diff();
   if (!near(d2[0], 2.0)) {
     return test.fail("recover 2");
   }
@@ -55,13 +54,14 @@ function test_diff_inverts_cumsum(): test.TestOutcome {
 }
 
 function test_edge_cases(): test.TestOutcome {
-  if (array.diff_f64([5.0]).len() != 0) {
+  if ([5.0].adjacent_diff().len() != 0) {
     return test.fail("single diff");
   }
-  if (array.diff_f64([]).len() != 0) {
+  let empty: f64[] = [];
+  if (empty.adjacent_diff().len() != 0) {
     return test.fail("empty diff");
   }
-  return test.assert_true(array.cumprod_f64([]).len() == 0);
+  return test.assert_true(empty.cumproduct().len() == 0);
 }
 
 function main(): i32 {

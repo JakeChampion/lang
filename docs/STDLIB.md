@@ -284,9 +284,11 @@ element in one step and would resolve a level too deep.
 - **Element-polymorphic reductions** (one bounded generic each, so the same
   call works for i32 / i64 / u32 / u64 / f32 / f64 / string and
   `@derive(Ord)` / `@derive(Eq)` element types alike):
-  `sum` (`Add + Zero`) / `product` (`Mul + One`),
+  `sum` (`Add + Zero`) / `product` (`Mul + One`), the running
+  `cumsum` (`Add + Zero`) / `cumproduct` (`Mul + One`), `adjacent_diff`
+  (`Sub`; one shorter, the inverse of `cumsum`),
   `max` / `min` (`Ord` → `Option[T]`, `None`
-  when empty), `sorted_asc` / `sorted_desc` (`Ord`, fresh array, input
+  when empty), `range` (`Ord + Sub`; `max - min`, `None` when empty), `sorted_asc` / `sorted_desc` (`Ord`, fresh array, input
   untouched), `count(target)` / `index_of(target)` (`Eq`; the latter
   → `Option[i32]`, `None` when absent),
   `distinct` (`Eq`), and the structural `reverse` / `take(n)` / `drop(n)`.
@@ -309,10 +311,9 @@ element in one step and would resolve a level too deep.
   alongside your own `add` for i32 and the two tie, which is `E074` — an
   ambiguity naming both traits, not a redeclaration at your definition.
 
-- **i32[]-specific:** `avg`, `range`, `gcd_all`, `lcm_all`, `abs_each`,
-  `pairwise_diffs`, `min_max`, `every_positive`, `cumsum`, `sum_squared`,
-  `sum_abs`, `all_zero`, `median`, `mode`. These need integer division or an
-  i32 identity, so they stay pinned to the element type.
+- **i32[]-specific:** `avg`, `gcd_all`, `lcm_all`, `abs_each`,
+  `min_max`, `every_positive`, `sum_squared`,
+  `sum_abs`, `all_zero`, `median`, `mode`.
 
 - **string[]-specific:** `join`, `join_with_last`, `filter_non_empty`,
   `count_non_empty`, `distinct_count`, `max_by_len`, `min_by_len`,
@@ -321,13 +322,12 @@ element in one step and would resolve a level too deep.
 
 - **i64 / f64 free functions** (statistical and vector reductions with no
   generic bounded equivalent — `avg` in particular cannot be written
-  generically without a numeric conversion trait): `avg_i64`;
-  `cumsum_f64` (running prefix sum),
-  `cumprod_f64` (running product), `diff_f64` (successive differences, one
-  shorter; inverse of `cumsum`), `avg_f64`, `variance_f64` / `stddev_f64`
+  generically without a numeric conversion trait, and the rest need float
+  division or `sqrt`): `avg_i64`;
+  `avg_f64`, `variance_f64` / `stddev_f64`
   (population variance and its square root, `Option[f64]`, `None` for
   empty), `median_f64` (averages the two middles for even length),
-  `range_f64` (`max - min` spread), `dot_f64(a, b)` (dot product, runs to
+  `dot_f64(a, b)` (dot product, runs to
   the shorter length), `norm_f64` (Euclidean / L2 norm,
   `sqrt(dot(self, self))`), `distance_f64(a, b)` (Euclidean distance
   `norm(a - b)`), `normalize_f64` (unit vector; zero / empty returned

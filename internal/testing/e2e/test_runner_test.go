@@ -1527,7 +1527,7 @@ func TestRunnerNumReducersExamplePasses(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("exit = %d, want 0\nstdout: %s\nstderr: %s", code, out, errOut)
 	}
-	for _, w := range []string{"# Suite: std/num reducers", "# pass 8", "# fail 0", "1..8"} {
+	for _, w := range []string{"# Suite: std/num reducers", "# pass 10", "# fail 0", "1..10"} {
 		if !strings.Contains(out, w) {
 			t.Errorf("stdout missing %q\nfull output:\n%s", w, out)
 		}
@@ -2737,7 +2737,7 @@ func TestRunnerSortF64Example(t *testing.T) {
 }
 
 // `tests/stdlib/array_median_range_test.fern` covers std/array's median_f64
-// (averaging the two middles for even length) and range_f64 (max - min), both
+// (averaging the two middles for even length) and `range` (max - min), both
 // Option[f64]. On the interp gate and both self-host gates; the Go-side
 // TestArrayMedianRange pins native compilation on interp/x86-64/arm64 (the
 // wasmbin leg skips Option over a 64-bit payload). Passing → exit 0.
@@ -2795,7 +2795,7 @@ func TestRunnerArrayDistanceNormalizeExample(t *testing.T) {
 }
 
 // `tests/stdlib/array_product_cumsum_test.fern` covers std/array's `product`
-// at an f64 element (empty = 1) and cumsum_f64 (running prefix sum).
+// and `cumsum` (running prefix sum) at an f64 element (empty product = 1).
 // product returns f64, cumsum an f64[] — both scalar payload, so on the interp
 // gate and both self-host gates; the Go-side TestArrayProductCumsum pins native
 // compilation on all four backends (no wasm skip). Passing → exit 0.
@@ -2832,9 +2832,9 @@ func TestRunnerArrayScaleAddExample(t *testing.T) {
 	}
 }
 
-// `tests/stdlib/array_cumprod_diff_test.fern` covers std/array's cumprod_f64
-// (running product) and diff_f64 (successive differences, one shorter than the
-// input) — scan-style ops, both f64[] returns. On the interp gate and both
+// `tests/stdlib/array_cumprod_diff_test.fern` covers std/array's `cumproduct`
+// (running product) and `adjacent_diff` (successive differences, one shorter
+// than the input) at an f64 element — scan-style ops, both f64[] returns. On the interp gate and both
 // self-host gates; the Go-side TestArrayCumprodDiff pins native compilation on
 // all four backends (no wasm skip). Passing → exit 0.
 func TestRunnerArrayCumprodDiffExample(t *testing.T) {
