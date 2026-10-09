@@ -2588,7 +2588,7 @@ built-in `Instant`, `Date`, `Time`, `DateTime`, `Zoned`, `Span`,
   `_weeks`/`_months`/`_years(n)`, `duration_seconds(s)`,
   `duration_millis(ms)`, `(d: Duration).to_string()` — compact
   canonical form (`"1h30m45s"`, `"-500ms"`, `"0s"`; ms resolution),
-  distinct from the space-separated i32-ms `format_duration_ms`.
+  distinct from the space-separated millisecond `format_duration_ms`.
 - **Humanised relative time:** `(i: Instant).relative_to(now)` — the
   `fromNow` shape, e.g. `"5 minutes ago"`, `"in 2 days"`, `"just now"`
   (coarse units: month ≈ 30 days, year = 365 days).
