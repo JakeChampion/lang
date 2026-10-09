@@ -1517,7 +1517,7 @@ function iife_arm_values_boxable(stmts: ast.Stmt[], seen: i32, fd: parser.FuncDe
                 n = deep;
               },
               ast.ExprIdent(cid) => {
-                if (!passthrough_call_boxable(rc, cid.name, fd, mfuncs) && !arm_calls_fn_returning(cid.name, fd, mfuncs)) {
+                if (!passthrough_call_boxable(rc, cid.name, fd, mfuncs) && !arm_calls_fn_returning(rc, cid, fd, mfuncs)) {
                   return 0 - 1;
                 }
                 n = n + 1;
@@ -1682,7 +1682,7 @@ function expr_is_marked(e: ast.Expr, mfuncs: MFuncs): boolean {
       if (cid.name.len() > 8 && slice_unchecked(cid.name, 0, 8) == "__mkclo$") {
         return true;
       }
-      if (lift_callee_returns_fn(mfuncs, cid.name)) {
+      if (lift_callee_returns_fn(mfuncs, cid.name) || calls_local_fn_returning(c, cid, mfuncs)) {
         return true;
       }
       return passthrough_call_marked(c, cid.name, mfuncs);
@@ -2541,9 +2541,9 @@ function array_elem_is_env_boxed(e: ast.Expr, fd: parser.FuncDecl, structs: irta
 // should be wrapped into an env box. Scoped to the map-value slice (#3445): an
 // inline lambda whose method param is NOT a declared user fn-param. The negation
 // is the key discriminator —
-//   * a Map value slot `Map[K, () => V]` lowers `.set`/`.insert` to the builtin
-//     op_map_set, and the method's value parameter is the GENERIC `V` (coarse
-//     type, not literally "fn"), so lift_callee_param_is_fn is FALSE → wrap the
+//   * a Map value slot `Map[K, () => V]`'s `.insert` takes the value at the
+//     GENERIC `V` (coarse type, not literally "fn"), so
+//     lift_callee_param_is_fn is FALSE → wrap the
 //     lambda into a box to STORE; the retrieval-side match-binding (#3466)
 //     dispatches it env-first.
 //   * a USER method with a DECLARED fn-param (`r.bench(name, iter, fn: () => void)`)
@@ -2683,11 +2683,19 @@ function arm_names_module_fn(name: string, fd: parser.FuncDecl, mfuncs: MFuncs):
   return !lift_ident_is_param(fd, name) && lift_names_fn_value(mfuncs, name);
 }
 
-// arm_calls_fn_returning: an arm calling a module function that returns a
-// function yields that function's env box, so it needs no boxing of its own;
-// its arguments go through the ordinary expression lift.
-function arm_calls_fn_returning(name: string, fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
-  return !lift_ident_is_param(fd, name) && lift_callee_returns_fn(mfuncs, name);
+// arm_calls_fn_returning: an arm calling a module function, or a fn-valued
+// local (a nested `function` declaration), that returns a function yields that
+// function's env box, so it needs no boxing of its own; its arguments go
+// through the ordinary expression lift.
+function arm_calls_fn_returning(rc: ast.ExprCall, cid: ast.ExprIdent, fd: parser.FuncDecl, mfuncs: MFuncs): boolean {
+  if (lift_ident_is_param(fd, cid.name)) {
+    return calls_local_fn_returning(rc, cid, mfuncs);
+  }
+  return lift_callee_returns_fn(mfuncs, cid.name);
+}
+
+function calls_local_fn_returning(rc: ast.ExprCall, cid: ast.ExprIdent, mfuncs: MFuncs): boolean {
+  return rc.ty == "fn" && names_local_fn_value(cid, mfuncs);
 }
 
 // passthrough_arg_has_lambda reports whether `e` is a raw lambda, directly or at
@@ -3078,8 +3086,8 @@ function ilc_expr_at(e: ast.Expr, acc: InlineCloAcc, fd: parser.FuncDecl, vars: 
       // closure value is stored as a box the retrieval-side match-binding
       // (#3466) dispatches env-first (slice #3445 map-values). The wrap
       // decision (lift_method_arg_is_fn) fires only for a lambda whose method
-      // param is NOT a declared user fn-param — a map value lowers to the
-      // builtin op_map_set with a generic `V` param, whereas a user method's
+      // param is NOT a declared user fn-param — a map value goes in at the
+      // generic `V` param, whereas a user method's
       // declared fn-param keeps its existing bare-dispatch / AST-bail path
       // (env-box-unifying those would break the byte-identical fixpoint). A
       // numeric field (`t.0(args)`, a fn-valued tuple element call) is left

@@ -44,21 +44,11 @@ func goFrontEndCodes(t *testing.T, src string) []string {
 // the largest finite double, and UNDERFLOW is not a range error at all
 // (strconv returns a subnormal / ±0 with no error there).
 func TestSelfHostFrontEndNumericLiteralCodes(t *testing.T) {
-	interpBin := buildLangBinForInterp(t)
-	driver, err := filepath.Abs("../../../compiler/drivers/checker_codes_run.fern")
-	if err != nil {
-		t.Fatalf("abs driver path: %v", err)
-	}
-
 	// prog wraps a float literal in the smallest program that binds it.
 	prog := func(lit string) string {
 		return "function main(): i32 { let x: f64 = " + lit + "; return 0; }\n"
 	}
-	cases := []struct {
-		name string
-		src  string
-		want []string
-	}{
+	cases := []frontEndCodeCase{
 		{"overflow-exponent", prog("1e309"), []string{"P002"}},
 		{"overflow-far", prog("1e999"), []string{"P002"}},
 		// The sign is a separate unary-minus token, so the literal the front
@@ -90,7 +80,24 @@ func TestSelfHostFrontEndNumericLiteralCodes(t *testing.T) {
 			"function f(x: f64 = 1.5): i32 { return 0; }\nfunction main(): i32 { return 0; }\n",
 			nil},
 	}
+	runFrontEndCodeCases(t, cases)
+}
 
+type frontEndCodeCase struct {
+	name string
+	src  string
+	want []string
+}
+
+// runFrontEndCodeCases asserts each case's self-host code set is both the
+// table's and the Go front end's.
+func runFrontEndCodeCases(t *testing.T, cases []frontEndCodeCase) {
+	t.Helper()
+	interpBin := buildLangBinForInterp(t)
+	driver, err := filepath.Abs("../../../compiler/drivers/checker_codes_run.fern")
+	if err != nil {
+		t.Fatalf("abs driver path: %v", err)
+	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			cmd := exec.Command(interpBin, "-interp", driver)
@@ -106,4 +113,16 @@ func TestSelfHostFrontEndNumericLiteralCodes(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestSelfHostFrontEndTrailingCommas: a trailing comma is legal in every list
+// (internal/syntax/parser/trailing_comma_test.go), including the three the two
+// front ends disagreed on (#11851).
+func TestSelfHostFrontEndTrailingCommas(t *testing.T) {
+	runFrontEndCodeCases(t, []frontEndCodeCase{
+		{"struct-type-parameters", "struct Pair[A, B,] { a: A, b: B }\nfunction main(): i32 { let p: Pair[i32, i32] = Pair { a: 1, b: 2 }; return p.a; }\n", nil},
+		{"enum-type-parameters", "enum E[A, B,] { X(A), Y(B) }\nfunction main(): i32 { return 0; }\n", nil},
+		{"type-arguments", "struct Pair[A, B] { a: A, b: B }\nfunction main(): i32 { let p: Pair[i32, i32,] = Pair { a: 1, b: 2 }; return p.a; }\n", nil},
+		{"variant-payload", "enum E { X(i32, i32,), Y }\nfunction main(): i32 { let e: E = X(1, 2); return 0; }\n", nil},
+	})
 }

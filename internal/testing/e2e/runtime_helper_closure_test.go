@@ -15,8 +15,7 @@ import (
 // are tracked out-of-band: a helper body that `call`s another helper creates a
 // link-time dependency that nothing in the compiler statically checks. Miss one
 // and the result is an *undefined-symbol link failure* — historically a garbage
-// exit code, not a clean error (e.g. `__fern_map_set` → `__fern_str_eq` not
-// emitted for i32-only map programs).
+// exit code, not a clean error.
 //
 // These tests assert the property the dependency machinery exists to guarantee:
 // the emitted runtime is *symbol-closed* — every `call/bl __fern_*` resolves to
@@ -34,7 +33,7 @@ import (
 var allRuntimeNeedRoots = []string{
 	"alloc_u8", "args", "arr_own_elems", "arr_push", "arr_push_owned", "arr_slice",
 	"arr_str_join", "eprint", "heap",
-	"i32_to_string", "maps", "monotonic_ns", "now_ns", "now_unix_ms",
+	"i32_to_string", "monotonic_ns", "now_ns", "now_unix_ms",
 	"putchar", "random_bytes", "random_i32", "read_file",
 	"read_file_bytes", "sleep_ms", "str_bytes", "str_case", "str_cmp",
 	"str_concat", "str_eq", "str_from_bytes", "str_lines", "str_print",
@@ -59,10 +58,9 @@ func assertAsmLinks(t *testing.T, gcc, dir, name, asm string) {
 
 // closureMatrix is a spread of programs that, between them, exercise runtime
 // helper clusters with inter-helper dependencies the compiler must keep closed:
-// string concat (__fern_str_concat → __fern_alloc), string-keyed maps
-// (__fern_map_set → __fern_str_eq + __fern_arr_push — the exact edge whose
-// omission for i32-only maps motivated #2649), i32-keyed maps, and dynamic
-// arrays (push/grow → __fern_alloc). Each program's exit code is its answer,
+// string concat (__fern_str_concat → __fern_alloc), string- and i32-keyed
+// maps (core/map's bodies over the raw-memory helpers), and dynamic arrays
+// (push/grow → __fern_alloc). Each program's exit code is its answer,
 // so a link that succeeds against the wrong helper is caught as well.
 var closureMatrix = []struct {
 	name string

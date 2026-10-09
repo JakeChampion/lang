@@ -8,8 +8,9 @@ import (
 // A map-typed field in a program that never imports core/map (#10851). The
 // checker's E001 rule fires on a map operation, and a field needs none, so
 // nothing loads core/map; the typed lowering nevertheless routed the field's
-// drop onto core/map's helpers, which were not in the bundle to link. A map
-// in such a program stays on the runtime, whose releases every program has.
+// drop onto core/map's helpers, which were not in the bundle to link. No map
+// value can exist in such a program, so its release is __fern_rc_dec, which
+// every program has.
 const mapFieldNoImportSrc = `enum E { A(i32), B(Map[string, i32]) }
 struct Holder { n: i32, counts: Map[i32, i32] }
 function pick(h: Holder): i32 { return h.n; }

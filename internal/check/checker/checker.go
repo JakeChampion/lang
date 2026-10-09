@@ -5192,9 +5192,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 				typeLocal = true
 			}
 			if !traitLocal && !typeLocal {
-				c.errfCode(impl.P, "E021",
+				c.report(impl.SourceModule, impl.P, "E021", fmt.Sprintf(
 					"orphan impl: `impl %s for %s` must be declared in the module that defines the trait or the type",
-					demangle(impl.Trait), demangle(typeName))
+					demangle(impl.Trait), demangle(typeName)))
 				continue
 			}
 		}
@@ -17912,6 +17912,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if id, ok := n.Callee.(*ast.Ident); ok {
 			vr, vrOk, vrMulti := c.resolveVariant(id.Name, id.EnumName)
 			nameTaken := c.isUserFuncOrLocal(id.Name, s)
+			qualified := id.EnumName != ""
 			// A bare variant shared by multiple enum clones (#3693) is
 			// disambiguated by the destination's expected enum, snapshotted
 			// into `callExpected` above (the live field was cleared there so
@@ -17940,6 +17941,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				return nil
 			}
 			if isVar {
+				// The self-host accepts `C.R()` and refuses a bare `R()`.
+				if len(vr.payloads) == 0 && !qualified {
+					c.errfCode(n.P, "E038", "calling non-function value of type %s", ast.EnumType{Name: vr.enumName})
+					return nil
+				}
 				if len(n.Args) != len(vr.payloads) {
 					c.errfCode(n.P, "E036", "variant %s expects %d argument(s), got %d",
 						id.Name, len(vr.payloads), len(n.Args))

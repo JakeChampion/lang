@@ -1,0 +1,9 @@
+import "core/cmp";
+import "./lib";
+
+// core/cmp declares Eq and lib declares Box, so this module may not pair them.
+impl cmp.Eq for lib.Box { function eq(self: lib.Box, other: lib.Box): boolean { return self.v == other.v; } }
+
+pub function f(): i32 {
+    return 1;
+}

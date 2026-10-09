@@ -84,22 +84,14 @@ func TestSelfHostIRCheckGate(t *testing.T) {
 
 	t.Run("accept-map-literal-desugar", func(t *testing.T) {
 		// The Map{…} literal desugars to the SAME chain shape with a
-		// kind-consistent ctor (__map_new_i32 for number keys) — it must stay
-		// accepted and correct (the chain gate flags only mismatched kinds).
-		out, errOut, code := run(t, `function main(): i32 { let m: Map[i32, i32] = Map { 1: 40, 2: 2 }; return m.get_or(1, 0) + m.get_or(2, 0); }`)
-		if code != 0 {
-			t.Fatalf("driver exited %d (stderr %q), want 0 — Map literal desugar false-positived the chain gate", code, errOut)
-		}
-		progBin := buildBin(t, gcc, dir, "gate_maplit", string(out))
-		var cmd *exec.Cmd
-		if len(runner) == 0 {
-			cmd = exec.Command(progBin)
-		} else {
-			cmd = exec.Command(runner[0], append(runner[1:], progBin)...)
-		}
-		_ = cmd.Run()
-		if c := cmd.ProcessState.ExitCode(); c != 42 {
-			t.Errorf("Map-literal program exited %d, want 42", c)
+		// kind-consistent ctor (__map_new_i32 for number keys) — the chain gate
+		// flags only mismatched kinds, so it must not raise a diagnostic. This
+		// driver loads no imports, so the lowering then refuses core/map's
+		// calls; the program's answer is TestSelfHostMapPrograms'
+		// ir-check-gate/literal-desugar row.
+		_, errOut, _ := run(t, `function main(): i32 { let m: Map[i32, i32] = Map { 1: 40, 2: 2 }; return m.get_or(1, 0) + m.get_or(2, 0); }`)
+		if strings.Contains(string(errOut), "error[") {
+			t.Fatalf("stderr = %q — Map literal desugar false-positived the chain gate", errOut)
 		}
 	})
 

@@ -51,8 +51,8 @@ pub struct Func {
   // The records and enums an `impl mem.Drop` gives a finalizer and its symbol. The
   // whole module's, so every function's drop helper for a type agrees.
   finalizers: Finalizer[],
-  // core/map is in the program's import closure, so a map may run on it
-  // (ssarc.routed_map); without it every map stays on the runtime.
+  // core/map is in the program's import closure. Without it no map value can
+  // exist, so a map type's release has only to link (ssarc.unlinked_map).
   map_module: boolean,
   // Under `-g`, the values source variables are bound to and their names,
   // parallel (semsource.note_binding). Empty otherwise.

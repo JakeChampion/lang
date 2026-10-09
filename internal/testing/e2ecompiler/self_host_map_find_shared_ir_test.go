@@ -4,16 +4,12 @@ import (
 	"testing"
 )
 
-// The map runtime's key search is ONE Fern helper now (#2649):
-// `__fern_map_find(keys, key, keykind, eqfn) -> i32`, the index of the key or
-// -1. It replaces eighteen hand-written copies of itself — map_set, map_get and
-// map_has each carried a string, an i32 and a struct/enum variant of the same
-// loop, per register backend — plus the fourth copy `__fern_map_delete`'s Fern
-// body had inlined.
+// A map's key search, per key kind, through all four operations that probe
+// it: insert, get_or, has and without.
 //
 // Three programs, one per key kind, each driving the search through all four
-// callers so a variant that only map_set (or only map_delete) reaches cannot
-// pass on a sibling's coverage:
+// operations so one that only insert (or only without) reaches cannot pass on a
+// sibling's coverage:
 //
 //	152 = present*100 + absent-defaults-to-5 *10 + overwritten-then-read 2
 //

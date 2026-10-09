@@ -205,10 +205,10 @@ pub function preparation_context(s: EmitState, architecture: string): Option[ssa
 
 // Keep only successful emission. Runtime settlement discards this array
 // together with a discarded trial, preserving the original pre-trial state.
-pub function retain_body(s: EmitState, body: ssaprepare.Body, label_name: string, context: Option[ssaprepare.Context], entry: ssaprepare.ReleaseEntry): EmitState {
+pub function retain_body(s: EmitState, body: ssaprepare.Body, label_name: string, context: Option[ssaprepare.Context], entry: ssaprepare.ReleaseEntry, allocation: ssaprepare.Allocation): EmitState {
   match (context) {
     Some(c) => {
-      let emitted = ssaprepare.Emitted { label_name: label_name, body: body, context: c, release_entry: entry };
+      let emitted = ssaprepare.Emitted { label_name: label_name, body: body, context: c, release_entry: entry, allocation: allocation };
       return EmitState { ...s, prepared: s.prepared.append(emitted) };
     },
     None => {
@@ -857,75 +857,6 @@ pub function (s: EmitState) mark_str_concat(): EmitState {
 // byte count has no `+`.
 pub function rt_src_str_concat(): string {
   return "function __fern_str_concat(a: string, b: string): string { let la: i32 = a.len(); let lb: i32 = b.len(); let p: usize = __raw_alloc(la + lb); __memcpy(p, __raw_data(a), la); __memcpy(__raw_addr(p, la), __raw_data(b), lb); return __raw_string(p, la + lb); }";
-}
-
-// rt_src_map_find (#2649): the map runtime's ONE key-search loop — walk the
-// keys array comparing against `key`, return the hit's index or -1.
-//
-// It replaces eighteen copies of itself: map_set, map_get and map_has each
-// carried a string, an i32 and a struct/enum variant of this loop, hand-written
-// per register backend, and __fern_map_delete carried a fourth in Fern. The
-// three variants collapse into one `if` chain here because the dispatch is a
-// per-call test rather than three entry points; the wasm backend's
-// $__fern_map_find has had that shape all along.
-//
-// All four are raw words: `keys` and `key` are box pointers (or a scalar key),
-// and `eqfn` is a bare code address the op site supplies for a struct/enum key
-// (0 otherwise), called through __raw_call2. It is not a Fern function value:
-// that is a closure, which dispatches env-first through box[0].
-//
-// `keys` is the keys ARRAY, not the map box: map_set needs the index against a
-// buffer it is about to append to, and map_delete walks both columns, so the
-// callers own the [keys, values] indirection. An array box holds its length at
-// word 0 and element i at word i+1.
-//
-// The struct/enum arm is tested FIRST and the eq fn wins over keykind, which is
-// the precedence the hand-asm dispatched on: a struct key's op site passes a
-// keykind alongside the address, and comparing those box pointers with `==`
-// would miss a freshly built key that compares equal by value (#6081).
-pub function rt_src_map_find(): string {
-  return "function __fern_map_find(keys: usize, key: usize, keykind: i32, eqfn: usize): i32 { let n: i32 = __raw_load_ptr(keys, 0) as i32; let i: i32 = 0; let found: i32 = 0 - 1; while (i < n) { let k: usize = __raw_load_ptr(keys, i + 1); let hit: i32 = 0; if (eqfn != (0 as usize)) { if (__raw_call2(k, key, eqfn) != 0) { hit = 1; } } else { if (keykind != 0) { if (k == key) { hit = 1; } } else { if (__fern_str_eq(k, key)) { hit = 1; } } } if (hit == 1) { found = i; i = n; } else { i = i + 1; } } return found; }";
-}
-
-// rt_src_map_delete (#2649): `m.without(k)` — the map with the key removed,
-// paired with whether it was there.
-//
-// The parameters are __fern_map_find's raw words, with the map box in place
-// of the keys array.
-//
-// Layouts: the map box is [keys, values]; an array box holds its length at
-// word 0 and element i at word i+1. The RESULT is a two-element TUPLE, whose
-// layout is NOT the array one — a tuple's element i sits at word i, element 0
-// deliberately overwriting the length word (see op_tuple_make). __raw_arr_box
-// gives it the refcount header the old bare __fern_alloc(16) left off.
-//
-// The search is __fern_map_find's; what is left here is the removal, which
-// moves the LAST entry into the hole in both columns. That is core/map's
-// delete, which native lowers `.without` to, and the orders have to agree:
-// a map iterates in insertion order, so a shift-down here and a swap-with-last
-// there made the same program print its keys differently on the two compilers
-// (#8839).
-//
-// The tuple carries the removed key and value at words 2 and 3 (zero when the
-// key was absent), where only __fern_map_delete_rel reads them: the entry is
-// overwritten by the swap, so this is the one place it is still in hand.
-pub function rt_src_map_delete(): string {
-  return "function __fern_map_delete(mapbox: usize, key: usize, keykind: i32, eqfn: usize): usize { let keys: usize = __raw_load_ptr(mapbox, 0); let found: i32 = __fern_map_find(keys, key, keykind, eqfn); let existed: usize = 0 as usize; let gone_k: usize = 0 as usize; let gone_v: usize = 0 as usize; if (found >= 0) { let ks: usize = __raw_load_ptr(mapbox, 0); let m: i32 = __raw_load_ptr(ks, 0) as i32; gone_k = __raw_load_ptr(ks, found + 1); __raw_store_ptr(ks, found + 1, __raw_load_ptr(ks, m)); __raw_store_ptr(ks, 0, (m - 1) as usize); let vs: usize = __raw_load_ptr(mapbox, 1); gone_v = __raw_load_ptr(vs, found + 1); __raw_store_ptr(vs, found + 1, __raw_load_ptr(vs, m)); __raw_store_ptr(vs, 0, (m - 1) as usize); existed = 1 as usize; } let r: usize = __raw_arr_box(4); __raw_store_ptr(r, 0, mapbox); __raw_store_ptr(r, 1, existed); __raw_store_ptr(r, 2, gone_k); __raw_store_ptr(r, 3, gone_v); return r; }";
-}
-
-// rt_src_map_delete_rel (#9970): __fern_map_delete, then the release of what
-// it removed, for a map that owns one unit of every entry — the typed path's.
-// `kfree` says the key column is owned: a string key (keykind 0) takes
-// __fern_str_free and a keyed column's box (keykind 2) the release `krel`
-// addresses, or the shallow dec when the op site passed none. `vkind` is
-// op_map_set's: 1 a string, 2 a string array, 3 a box released through
-// `vrel`. `krel` and `vrel` are bare code addresses, called through
-// __raw_call1 as `eqfn` is through __raw_call2. The tuple comes back with
-// words 2 and 3 still set; the caller reads the map and the flag alone. The
-// source carries __fern_map_delete too, so the call has its callee in the same
-// module; a program that needs both emits this source alone.
-pub function rt_src_map_delete_rel(): string {
-  return rt_src_map_delete() + " function __fern_map_delete_rel(mapbox: usize, key: usize, keykind: i32, eqfn: usize, kfree: i32, vkind: i32, krel: usize, vrel: usize): usize { let r: usize = __fern_map_delete(mapbox, key, keykind, eqfn); if (__raw_load_ptr(r, 1) == (1 as usize)) { let k: usize = __raw_load_ptr(r, 2); let v: usize = __raw_load_ptr(r, 3); if (kfree == 1) { if (keykind == 0) { __fern_str_free(k); } else if (keykind == 2) { if (krel != (0 as usize)) { __raw_call1(k, krel); } else { __fern_rc_dec(k); } } } if (vkind == 1) { __fern_str_free(v); } else if (vkind == 2) { __fern_str_arr_free(v); } else if (vkind == 3) { __raw_call1(v, vrel); } } return r; }";
 }
 
 pub function (s: EmitState) mark_str_eq(): EmitState {
@@ -2751,16 +2682,43 @@ pub function rt_src_subprocess(t: string): string {
   // Child: wire the three pipe ends onto 0/1/2, close every original fd, then
   // exec cmd, /bin/cmd and /usr/bin/cmd in turn so bare names like "echo"
   // resolve without re-implementing a $PATH search. exec only returns on
-  // failure, so reaching the exit means all three missed.
+  // failure, so reaching the end means all three missed, and the child reports
+  // the first one's errno as a shell does.
   //
   // dup3, not dup2: arm64 Linux has no dup2 at all, and unifying on the form
   // both targets carry is what keeps this one body — the same move the `stat`
   // slice made onto the 4-argument fstatat family.
-  let child: string = "if (pid == 0) { __syscall3(" + sysno(t, "dup3") + ", in_r as i64, 0, 0); __syscall3(" + sysno(t, "dup3") + ", out_w as i64, 1, 0); __syscall3(" + sysno(t, "dup3") + ", err_w as i64, 2, 0); __syscall3(" + sysno(t, "close") + ", in_r as i64, 0, 0); __syscall3(" + sysno(t, "close") + ", in_w as i64, 0, 0); __syscall3(" + sysno(t, "close") + ", out_r as i64, 0, 0); __syscall3(" + sysno(t, "close") + ", out_w as i64, 0, 0); __syscall3(" + sysno(t, "close") + ", err_r as i64, 0, 0); __syscall3(" + sysno(t, "close") + ", err_w as i64, 0, 0); let envp: usize = __raw_environ(); __syscall3(" + sysno(t, "execve") + ", cmdz as i64, argv as i64, envp as i64); let pre: usize = __raw_alloc(9); __raw_store8(pre, 0, 47); __raw_store8(pre, 1, 98); __raw_store8(pre, 2, 105); __raw_store8(pre, 3, 110); __raw_store8(pre, 4, 47); __fern_sp_exec_at(pre, 5, cmdz, clen, argv, envp); __raw_store8(pre, 1, 117); __raw_store8(pre, 2, 115); __raw_store8(pre, 3, 114); __raw_store8(pre, 4, 47); __raw_store8(pre, 5, 98); __raw_store8(pre, 6, 105); __raw_store8(pre, 7, 110); __raw_store8(pre, 8, 47); __fern_sp_exec_at(pre, 9, cmdz, clen, argv, envp); __syscall3(" + sysno(t, "exit") + ", 127, 0, 0); } ";
+  let child: string = "if (pid == 0) { __syscall3(" + sysno(t, "dup3") + ", in_r as i64, 0, 0); __syscall3(" + sysno(t, "dup3") + ", out_w as i64, 1, 0); __syscall3(" + sysno(t, "dup3") + ", err_w as i64, 2, 0); __syscall3(" + sysno(t, "close") + ", in_r as i64, 0, 0); __syscall3(" + sysno(t, "close") + ", in_w as i64, 0, 0); __syscall3(" + sysno(t, "close") + ", out_r as i64, 0, 0); __syscall3(" + sysno(t, "close") + ", out_w as i64, 0, 0); __syscall3(" + sysno(t, "close") + ", err_r as i64, 0, 0); __syscall3(" + sysno(t, "close") + ", err_w as i64, 0, 0); let envp: usize = __raw_environ(); let rc0: i32 = __syscall3(" + sysno(t, "execve") + ", cmdz as i64, argv as i64, envp as i64) as i32; let pre: usize = __raw_alloc(9); __raw_store8(pre, 0, 47); __raw_store8(pre, 1, 98); __raw_store8(pre, 2, 105); __raw_store8(pre, 3, 110); __raw_store8(pre, 4, 47); __fern_sp_exec_at(pre, 5, cmdz, clen, argv, envp); __raw_store8(pre, 1, 117); __raw_store8(pre, 2, 115); __raw_store8(pre, 3, 114); __raw_store8(pre, 4, 47); __raw_store8(pre, 5, 98); __raw_store8(pre, 6, 105); __raw_store8(pre, 7, 110); __raw_store8(pre, 8, 47); __fern_sp_exec_at(pre, 9, cmdz, clen, argv, envp); __fern_sp_exec_failed(cmdz, clen, rc0); } ";
   // Parent: drop the ends the child owns (so its stdout/stderr reach EOF when
   // it exits), push the stdin payload, drain both streams, reap.
   let parent: string = "__syscall3(" + sysno(t, "close") + ", in_r as i64, 0, 0); __syscall3(" + sysno(t, "close") + ", out_w as i64, 0, 0); __syscall3(" + sysno(t, "close") + ", err_w as i64, 0, 0); if (input.len() > 0) { __syscall3(" + sysno(t, "write") + ", in_w as i64, __raw_data(input) as i64, input.len() as i64); } __syscall3(" + sysno(t, "close") + ", in_w as i64, 0, 0); let obuf: usize = __raw_alloc(65536); let olen: i32 = __fern_sp_drain(out_r, obuf); let ebuf: usize = __raw_alloc(65536); let elen: i32 = __fern_sp_drain(err_r, ebuf); __syscall4(" + sysno(t, "wait4") + ", pid as i64, __raw_addr(fds, 24) as i64, 0, 0); let w: i32 = __load_i32(__raw_addr(fds, 24)); let code: i32 = (w >> 8) & 255; if ((w & 127) != 0) { code = (w & 127) + 128; } let fds_own: string = __raw_string(fds, 32); let cmdz_own: string = __raw_string(cmdz, clen + 1); let ab_own: string = __raw_string(ab, total); let argv_own: string = __raw_string(argv, (n + 2) * 8); let sout: string = \"\"; if (olen > 0) { let so: usize = __raw_alloc(olen); __memcpy(so, obuf, olen); sout = __raw_string(so, olen); } let serr: string = \"\"; if (elen > 0) { let se: usize = __raw_alloc(elen); __memcpy(se, ebuf, elen); serr = __raw_string(se, elen); } let obuf_own: string = __raw_string(obuf, 65536); let ebuf_own: string = __raw_string(ebuf, 65536); return ProcessResult { stdout: sout, stderr: serr, exit_code: code }; }";
-  return drain + " " + execat + " " + setup + pipes + child + parent;
+  return drain + " " + execat + " " + rt_src_sp_exec_failed(t) + " " + setup + pipes + child + parent;
+}
+
+// The errnos execve(2) can fail with, by their Linux numbers: EPERM, ENOENT,
+// EIO, E2BIG, ENOEXEC, ENOMEM, EACCES, EFAULT, ENOTDIR, EISDIR, EINVAL,
+// ENFILE, EMFILE, ETXTBSY, ENAMETOOLONG and ELOOP.
+function exec_errnos(): i32[] {
+  return [1, 2, 5, 7, 8, 12, 13, 14, 20, 21, 22, 23, 24, 26, 36, 40];
+}
+
+// rt_src_sp_exec_failed is the end of a subprocess child whose every execve
+// failed: `cmd: strerror(errno)` on its stderr, then exit 127, which is what a
+// shell prints and returns for a command it cannot run. `rc` is the first
+// execve's -errno. Darwin's hand-written subprocess calls it too.
+pub function rt_src_sp_exec_failed(t: string): string {
+  let src: string = "function __fern_sp_exec_failed(cmdz: usize, clen: i32, rc: i32): void { let e: i32 = 0 - rc; " + strerror_unknown_text_src(t) + " let text: string = unknown;";
+  let linux: i32[] = strerror_linux();
+  for n in exec_errnos() {
+    let i: i32 = 0;
+    while (i < linux.len()) {
+      if (linux[i] == n) {
+        src = src + " if (e == " + util.i32_to_string(strerror_errno(t, i)) + ") { text = \"" + strerror_text(t, i) + "\"; }";
+      }
+      i = i + 1;
+    }
+  }
+  return src + " let tail: string = \": \" + text + \"\\n\"; __syscall3(" + sysno(t, "write") + ", 2, cmdz as i64, clen as i64); __syscall3(" + sysno(t, "write") + ", 2, __raw_data(tail) as i64, tail.len() as i64); __syscall3(" + sysno(t, "exit") + ", 127, 0, 0); }";
 }
 
 // rt_src_proc_fork backs `proc_fork()` (#2649, syscall-leaf) → 0 in the child,
@@ -3882,6 +3840,12 @@ pub function strerror_unknown_prefix(t: string): string {
 // `Other(path, "Unknown error N", 0)` for an errno past the table: count the
 // digits, then write them in from the end.
 function strerror_unknown_src(t: string): string {
+  return strerror_unknown_text_src(t) + " return Other(path, unknown, 0);";
+}
+
+// strerror_unknown_text_src binds `unknown` to the text for errno `e` past
+// the table.
+function strerror_unknown_text_src(t: string): string {
   let pfx: string = strerror_unknown_prefix(t);
   let plen: string = util.i32_to_string(pfx.len());
   let src: string = "let ndig: i32 = 1; let tt: i32 = e; while (tt >= 10) { ndig = ndig + 1; tt = tt / 10; } let total: i32 = " + plen + " + ndig; let buf: usize = __raw_alloc(total);";
@@ -3890,7 +3854,7 @@ function strerror_unknown_src(t: string): string {
     src = src + " __raw_store8(buf, " + util.i32_to_string(k) + ", " + util.i32_to_string(pfx[k] as i32) + ");";
     k = k + 1;
   }
-  return src + " let pos: i32 = total - 1; let v: i32 = e; while (pos >= " + plen + ") { __raw_store8(buf, pos, 48 + (v % 10)); v = v / 10; pos = pos - 1; } return Other(path, __raw_string(buf, total), 0);";
+  return src + " let pos: i32 = total - 1; let v: i32 = e; while (pos >= " + plen + ") { __raw_store8(buf, pos, 48 + (v % 10)); v = v / 10; pos = pos - 1; } let unknown: string = __raw_string(buf, total);";
 }
 
 // How the fs leaves give a __raw_alloc block back (#8813, the shape #8402
@@ -5641,8 +5605,7 @@ pub function rt_src_str_replace(): string {
 //
 // Its construction-time bounds check (#5419) traps through
 // __fern_slice_abort, the emitters' slice-range reporter (#11405): a
-// raw-floor signature (checker.raw_floor_sigs) lets a Fern body call it,
-// the way __fern_map_delete calls __fern_map_find.
+// raw-floor signature (checker.raw_floor_sigs) lets a Fern body call it.
 //
 // The hand-asm's two traps were UNSIGNED compares (`ja`), which is how a
 // negative bound aborted rather than wrapping the copy loop; Fern's i32
@@ -7775,11 +7738,6 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   if (id.name == "__fern_str_eq") {
     return ty_bool();
   }
-  // Runtime-symbol spelling of the map runtime's shared key search
-  // (#2649) — the index of `key` in the keys array, or -1.
-  if (id.name == "__fern_map_find") {
-    return ty_i32();
-  }
   // i64-typed raw word load (kernel-written tv_sec / tv_nsec).
   if (id.name == "__load_i64") {
     return ty_i64();
@@ -8401,7 +8359,7 @@ pub function (s: EmitState) need(name: string): EmitState {
 // direct deps of `name` are the other needs whose helpers `name`'s helper calls
 // (links against). This is the single source of truth replacing the old, fragile
 // "remember to mark every transitively-needed helper by hand" — a backend marks
-// only the top-level need (e.g. "maps") and close_needs() pulls in the rest. Add
+// only the top-level need (e.g. "str_trim") and close_needs() pulls in the rest. Add
 // an edge here whenever a helper gains a `call __fern_*` to another helper.
 // (End goal: when the runtime moves into Fern — issue #2649 — this table and
 // close_needs disappear, replaced by the real call graph + the deadcode pass.)
@@ -8450,25 +8408,6 @@ pub function runtime_need_deps(name: string): string[] {
     // which route the need came in by.
     let dtrim: string[] = ["heap", "str_concat"];
     return dtrim;
-  }
-  if (name == "map_delete") {
-    // The Fern __fern_map_delete body calls __fern_map_find and walks the
-    // same parallel arrays the rest of the map runtime does, so it needs
-    // the whole maps bundle behind it.
-    let dmd: string[] = ["maps"];
-    return dmd;
-  }
-  if (name == "map_delete_rel") {
-    // The releasing delete (#9970) calls __fern_map_delete, and the
-    // string, string-array and shallow frees, which ride the heap bundle.
-    let dmr: string[] = ["map_delete", "heap"];
-    return dmr;
-  }
-  if (name == "maps") {
-    // The bundle's shared __fern_map_find calls __fern_str_eq (string-key
-    // path) and __fern_map_set calls __fern_arr_push.
-    let d: string[] = ["str_eq", "arr_push", "heap"];
-    return d;
   }
   if (name == "arr_push_u8") {
     // The packed pushes grow through __fern_arr_box and count the shared
@@ -10403,13 +10342,6 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fern_str_oob_abort",
     // The raw_alloc size trap (#8519), for the same reason.
     "__fern_alloc_size_abort",
-    // The map free family: a library unit that releases a map it owns
-    // calls one of these, and only the entry defines them.
-    "__fn___fern_map_free", "__fn___fern_map_free_ka", "__fn___fern_map_free_kava", "__fn___fern_map_free_kavs",
-    "__fn___fern_map_free_kavsa", "__fn___fern_map_free_ks", "__fn___fern_map_free_ksva", "__fn___fern_map_free_ksvsa",
-    "__fn___fern_map_free_kvs", "__fn___fern_map_free_va", "__fn___fern_map_free_vs", "__fn___fern_map_free_vsa",
-    "__fn___fern_map_free_kf", "__fn___fern_map_free_kfvf", "__fn___fern_map_free_kfvs", "__fn___fern_map_free_kfvsa",
-    "__fn___fern_map_free_ksvf", "__fn___fern_map_free_vf",
     "__fern_arr_push_owned",
     // The helpers only a typed body calls: the packed-byte twins, a dead
     // string view's release, the raw floor's free and the map hash seed.
@@ -10495,16 +10427,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_tcp_connect_with", "__fn___fern_unix_listen", "__fn___fern_unix_connect",
     "__fn___fern_reactor_new", "__fn___fern_reactor_ctl", "__fn___fern_reactor_wait", "__fn___fern_tcp_recv_into", "__fn___fern_tcp_sendfile", "__fn___fern_tcp_send_buf",
     "__fn___fern_open_res", "__fn___fern_writer_write",
-    "__fern_now_unix_ms", "__fn___fern_sleep_ms", "__fn___fern_sleep_ns", "__fern_map_new",
-    "__fern_map_set", "__fern_map_get", "__fern_map_has", "__fn___fern_map_delete",
-    // the shared key search all four of those reach (#2649); the entry owns
-    // the single definition, so the per-module link needs it exported like
-    // every other Fern-written runtime helper.
-    "__fn___fern_map_find",
-    // scalar / string keys()/values() snapshots (#4353): a library
-    // module's kind 131/132 flag-0/flag-2 read calls these; the entry
-    // owns the definitions.
-    "__fern_map_snapshot_col", "__fern_map_snapshot_col_str",
+    "__fern_now_unix_ms", "__fn___fern_sleep_ms", "__fn___fern_sleep_ns",
     "__fn___fern_rc_inc", "__fn___fern_arr_dec", "__fn___fern_rc_is_unique", "__fn___fern_arr_inc_elems", "__fn___fern_arr_own_elems",
     "__fn___fern_str_own", "__fn___fern_str_grow", "__fn___fern_str_grow_range", "__fn___fern_account_entry",
     "__fn___fern_set_args",

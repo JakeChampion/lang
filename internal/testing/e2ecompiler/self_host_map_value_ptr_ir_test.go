@@ -2,17 +2,13 @@ package e2ecompiler
 
 import "testing"
 
-// mapValuePtrIRCases pin the #3495 fix: a `Map[K, <pointer>]` value (string /
-// array / …) must be RC-retained by `__fern_map_set` on the wasm IR backend.
-// Pre-fix, `op_map_set` left the wasm `vis` flag hardcoded 0, so a pointer value
-// inserted through a map-threading helper was freed by the caller's `dec` under
-// the map; the next allocation reused the buffer, aliasing a sibling key's
-// value. The trigger needs the get/insert to happen inside a helper that returns
-// the map (the inline form decremented differently and stayed correct), with the
-// value array built in the helper's `None` branch and a later append observed on
-// a sibling key. x86-64 was always correct (its map runtime never RC-manages
-// values; its `arr_dec` is leak-only). Each case returns a small deterministic
-// int; expectations verified against native + x86-64.
+// mapValuePtrIRCases pin #3495: a `Map[K, <pointer>]` value (string / array /
+// …) inserted through a map-threading helper must be retained by the map, or
+// the caller's `dec` frees it under the map and the next allocation aliases a
+// sibling key's value. The trigger needs the get/insert inside a helper that
+// returns the map, with the value array built in the helper's `None` branch and
+// a later append observed on a sibling key. Each case returns a small
+// deterministic int; expectations verified against native.
 const mapValuePtrIRPrelude = `function ap(m: Map[string, string[]], k: string, v: string): Map[string, string[]] {
     match (m.get(k)) {
         Some(e) => { return m.insert(k, e.append(v)); },
