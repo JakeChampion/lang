@@ -1798,6 +1798,13 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.FuncSigs["__aes_expand_key"] = &ast.FuncType{Params: []ast.Type{u8View}, Result: u8Arr}
 	c.info.FuncSigs["__aes_ctr32"] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8View}, Result: u8Arr}
 	c.info.FuncSigs["__ghash"] = &ast.FuncType{Params: []ast.Type{u8View, u8View, u8View}, Result: u8Arr}
+	// The SHA-256 kernel (std/crypto): __sha256_hw() says whether the target
+	// has the SHA-256 instructions (arm64 does; x86-64-v3 and wasm do not), and
+	// __sha256_hw_blocks(state, data) folds data's whole 64-byte blocks into the
+	// 32-byte state, eight little-endian words, with them. It answers empty
+	// where __sha256_hw is false or the state is short.
+	c.info.FuncSigs["__sha256_hw"] = &ast.FuncType{Params: []ast.Type{}, Result: ast.BoolType{}}
+	c.info.FuncSigs["__sha256_hw_blocks"] = &ast.FuncType{Params: []ast.Type{u8View, u8View}, Result: u8Arr}
 	// Bit-counting intrinsics: __clz32 / __ctz32 / __popcount32 and their
 	// 64-bit siblings. Each takes one integer of its width and returns an
 	// i32 count. clz/ctz of 0 return the operand width (32 or 64), matching

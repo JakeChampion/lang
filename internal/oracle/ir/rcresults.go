@@ -123,6 +123,7 @@ var rcResultOwned = map[string]bool{
 	"__aes_expand_key":         true, // a fresh u8[] of round keys
 	"__aes_ctr32":              true, // a fresh u8[], the data exclusive-ored with the keystream
 	"__ghash":                  true, // a fresh 16-byte u8[], the GHASH state
+	"__sha256_hw_blocks":       true, // a fresh u8[], the SHA-256 state or empty
 
 	// String production. Each is three-way — empty, inline-packed (<=7
 	// bytes), or an rc1 heap copy — and "owned" is the right answer for

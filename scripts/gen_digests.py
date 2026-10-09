@@ -130,10 +130,12 @@ def load_word(i, bpw, big_endian, ty, width):
     return " | ".join(parts)
 
 
-def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endian, ivs, rounds_body, doc):
+def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endian, ivs, rounds_body, doc, hw=False):
     """Everything but the block function's round body: struct, constructors,
     absorb, update, final and the one-shot wrappers. `ivs` maps a constructor
-    name to (iv words, output length)."""
+    name to (iv words, output length). With `hw`, __{tag}_blocks takes the
+    target's instructions through __{tag}_hw_blocks where __{tag}_hw says it
+    has them, and the rounds are __{tag}_soft_blocks."""
     zero = "0" if width == 32 else "(0 as u64)"
     p(f"// === {doc} ===")
     p("")
@@ -154,11 +156,20 @@ def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endi
         p(f"        buf: __zero_u8({block}), buf_len: 0, total: 0 as u64, out_len: {out_len} }};")
         p("}")
         p("")
-    p(f"// __{tag}_blocks folds `nblocks` {block}-byte blocks of `bs`, starting at byte")
-    p(f"// `from`, into the state. Generated: the rounds are unrolled with the working")
-    p(f"// variables renamed per round and the message schedule a rolling window of")
-    p(f"// locals, so the loop touches no array but the input.")
-    p(f"function __{tag}_blocks(st: {struct}, bs: [u8], from: i32, nblocks: i32): {struct} {{")
+    rounds = f"__{tag}_blocks"
+    if hw:
+        rounds = f"__{tag}_soft_blocks"
+        emit_hw_blocks(p, tag, struct, nwords, block)
+        p(f"// {rounds} is __{tag}_blocks without the instructions.")
+        p(f"// Generated: the rounds are unrolled with the working variables renamed per")
+        p(f"// round and the message schedule a rolling window of locals, so the loop")
+        p(f"// touches no array but the input.")
+    else:
+        p(f"// __{tag}_blocks folds `nblocks` {block}-byte blocks of `bs`, starting at byte")
+        p(f"// `from`, into the state. Generated: the rounds are unrolled with the working")
+        p(f"// variables renamed per round and the message schedule a rolling window of")
+        p(f"// locals, so the loop touches no array but the input.")
+    p(f"function {rounds}(st: {struct}, bs: [u8], from: i32, nblocks: i32): {struct} {{")
     rounds_body(p)
     fields = ", ".join(f"h{i}: {'abcdefgh'[i]}" for i in range(nwords))
     p(f"    return {struct} {{ ...st, {fields} }};")
@@ -231,6 +242,24 @@ def emit_family(p, *, tag, struct, ty, width, nwords, block, len_bytes, big_endi
         p(f"    return __bytes_to_hex({name}().update(s).final_bytes());")
         p("}")
         p("")
+
+
+def emit_hw_blocks(p, tag, struct, nwords, block):
+    """__{tag}_blocks over __{tag}_hw_blocks, which takes the state as
+    little-endian u32 words, or over the rounds where __{tag}_hw is false."""
+    p(f"// __{tag}_blocks folds `nblocks` {block}-byte blocks of `bs`, starting at byte")
+    p(f"// `from`, into the state: with the target's instructions where it has them")
+    p(f"// (__{tag}_hw), else with __{tag}_soft_blocks's rounds.")
+    p(f"function __{tag}_blocks(st: {struct}, bs: [u8], from: i32, nblocks: i32): {struct} {{")
+    p(f"    if (!__{tag}_hw()) {{ return __{tag}_soft_blocks(st, bs, from, nblocks); }}")
+    p(f"    let words: u8[] = __alloc_u8({4 * nwords});")
+    for i in range(nwords):
+        p(f"    words = __put_le32(words, {4 * i}, st.h{i});")
+    p(f"    let out: u8[] = __{tag}_hw_blocks(words, bs[from:from + nblocks * {block}]);")
+    fields = ", ".join(f"h{i}: __get_le32(out, {4 * i})" for i in range(nwords))
+    p(f"    return {struct} {{ ...st, {fields} }};")
+    p("}")
+    p("")
 
 
 def emit_update(p, struct, tag):
@@ -582,7 +611,7 @@ def unformatted():
     emit_family(p, tag="sha256", struct="Sha256", ty="u32", width=32, nwords=8, block=64, len_bytes=8,
                 big_endian=True, ivs={"sha256_new": (SHA256_IV, 32), "sha224_new": (SHA224_IV, 28)},
                 rounds_body=sha2_rounds(32, 64, SHA256_K, (2, 13, 22), (6, 11, 25), (7, 18, 3), (17, 19, 10)),
-                doc="SHA-224 / SHA-256 (FIPS 180-4) — one state type, the IV and output length differ")
+                doc="SHA-224 / SHA-256 (FIPS 180-4) — one state type, the IV and output length differ", hw=True)
     emit_family(p, tag="sha512", struct="Sha512", ty="u64", width=64, nwords=8, block=128, len_bytes=16,
                 big_endian=True, ivs={"sha512_new": (SHA512_IV, 64), "sha384_new": (SHA384_IV, 48)},
                 rounds_body=sha2_rounds(64, 80, SHA512_K, (28, 34, 39), (14, 18, 41), (1, 8, 7), (19, 61, 6)),

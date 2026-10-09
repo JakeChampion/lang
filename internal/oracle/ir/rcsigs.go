@@ -271,6 +271,7 @@ var rcInertBuiltins = map[string]bool{
 	"__ct_secret": true, "__ct_public": true,
 	// The AES-GCM kernels read their byte views and answer a fresh array.
 	"__aes_expand_key": true, "__aes_ctr32": true, "__ghash": true,
+	"__sha256_hw": true, "__sha256_hw_blocks": true,
 
 	"__method_Array_len": true, "__method_slice_len": true,
 	"__method_string_len": true, "__method_Cell_get": true,

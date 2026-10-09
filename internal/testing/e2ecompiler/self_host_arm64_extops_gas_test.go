@@ -511,6 +511,15 @@ func TestSelfHostArm64VectorWidenAcrossGas(t *testing.T) {
 		{"aese v31.16b, v30.16b", 0x4e284bdf},
 		{"aesmc v31.16b, v29.16b", 0x4e286bbf},
 		{"aese v17.16b, v5.16b", 0x4e2848b1},
+
+		{"sha256h q0, q1, v2.4s", 0x5e024020},
+		{"sha256h2 q0, q1, v2.4s", 0x5e025020},
+		{"sha256su0 v0.4s, v1.4s", 0x5e282820},
+		{"sha256su1 v0.4s, v1.4s, v2.4s", 0x5e026020},
+		{"sha256h q31, q30, v29.4s", 0x5e1d43df},
+		{"sha256h2 q1, q3, v2.4s", 0x5e025061},
+		{"sha256su0 v17.4s, v5.4s", 0x5e2828b1},
+		{"sha256su1 v7.4s, v30.4s, v18.4s", 0x5e1263c7},
 	})
 	checkRefusedSelfHost(t, bin, runner, []string{
 		// The pair must differ by exactly one element size.
@@ -569,6 +578,15 @@ func TestSelfHostArm64VectorWidenAcrossGas(t *testing.T) {
 		"aesmc v0.16b, v1.8b",
 		"aese v0.16b, v1.16b, v2.16b",
 		"aesmc v0.16b",
+		// The SHA-256 hash updates take two q registers and a .4s; the
+		// schedule updates only .4s registers.
+		"sha256h v0.4s, v1.4s, v2.4s",
+		"sha256h2 q0, q1, v2.16b",
+		"sha256h q0, q1",
+		"sha256su0 v0.16b, v1.16b",
+		"sha256su0 v0.4s, v1.4s, v2.4s",
+		"sha256su1 v0.4s, v1.4s",
+		"sha256su1 q0, v1.4s, v2.4s",
 	})
 }
 

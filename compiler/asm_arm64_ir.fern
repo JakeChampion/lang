@@ -454,6 +454,10 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   if (ir.is_aes_gcm_op(o.kind_tag)) {
     return emit_aes_gcm_op(o, s);
   }
+  if (o.kind_tag == 410) {  // sha256_hw_blocks
+    s = s.need("sha256").mark_heap();
+    return s.write("    ldr x1, [sp], #16\n    ldr x0, [sp], #16\n    bl __fern_sha256_hw_blocks\n    str x0, [sp, #-16]!\n");
+  }
   if (o.kind_tag == 381) {
     return emit_outer_mul_f64(s);
   }
@@ -2097,8 +2101,21 @@ function ssa_unary_from(what: string, unsigned: boolean, src: string, d: string)
   if (what == "int_cast:u8") {
     return "    and " + d + ", " + src + ", #255\n";
   }
+  if (util.str_has_prefix(what, "rotr:")) {
+    let n: string = util.i32_to_string(ssa.rotr_count(what));
+    if (ssa.rotr_width(what) == 64) {
+      return "    ror " + d + ", " + src + ", #" + n + "\n";
+    }
+    return "    ror " + w + ", " + ws + ", #" + n + "\n";
+  }
   if (what == "clz:64") {
     return "    clz " + d + ", " + src + "\n";
+  }
+  if (what == "bswap:64") {
+    return "    rev " + d + ", " + src + "\n";
+  }
+  if (what == "bswap:32") {
+    return "    rev " + w + ", " + ws + "\n";
   }
   if (what == "clz:32") {
     return "    clz " + w + ", " + ws + "\n";
@@ -2133,6 +2150,12 @@ function ssa_bits_asm(what: string, d: string): string {
   }
   if (what == "popcount:32") {
     return "    fmov s0, " + w + "\n    cnt v0.8b, v0.8b\n    addv b0, v0.8b\n    fmov " + w + ", s0\n";
+  }
+  if (what == "bswap:64") {
+    return "    rev " + d + ", " + d + "\n";
+  }
+  if (what == "bswap:32") {
+    return "    rev " + w + ", " + w + "\n";
   }
   return "";
 }
@@ -3989,6 +4012,9 @@ function emit_stack_op(o: ir.Op, i: i32, lp: string, r: irtables.LowerResult, s:
   if (o.kind_tag == 79) {  // ptr_width
     // () -> heap-pointer width in bytes. 8 on arm64.
     s = s.write("    mov x0, #8\n    str x0, [sp, #-16]!\n");
+  } else if (o.kind_tag == 409) {  // sha256_hw
+    // () -> 1: the SHA-256 instructions are in the ARMv8.2-A crypto baseline.
+    s = s.write("    mov x0, #1\n    str x0, [sp, #-16]!\n");
   } else if (o.kind_tag == 74) {  // memcpy
     s = emit_arm64_op_memcpy(o, i, lp, s);
   } else if (o.kind_tag == 75) {  // memset
@@ -9545,6 +9571,9 @@ function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): as
   if (s.has_need("aes_gcm")) {
     s = emit_rt_aes_gcm(s);
   }
+  if (s.has_need("sha256")) {
+    s = s.write("    .arch_extension sha2\n" + a64_sha256_blocks());
+  }
   if (s.has_need("sum_bytes")) {
     s = emit_rt_sum_bytes(s);
   }
@@ -10837,6 +10866,103 @@ function emit_aes_gcm_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 
 function emit_rt_aes_gcm(s: asmcore.EmitState): asmcore.EmitState {
   return s.write("    .arch_extension aes\n" + a64_aes_expand_key() + a64_aes_ctr32() + a64_ghash());
+}
+
+// __fern_sha256_hw_blocks(x0 = state, x1 = data), the SHA-256 compression
+// over each whole 64-byte block of data, answering a fresh 32-byte packed u8[]
+// in x0, or an empty one for a state under 32 bytes. The state is eight
+// little-endian words, so ABCD and EFGH load straight into v0 and v1.
+// SHA256H/H2/SU0/SU1 are in the ARMv8.2-A crypto baseline. The round
+// constants live in v16-v31, a block's message words in v4-v7, and the
+// state a block starts from in the frame; x16-x28 and v8-v15 are untouched.
+function a64_sha256_blocks(): string {
+  let o: string = "    .global __fern_sha256_hw_blocks\n    .type __fern_sha256_hw_blocks, %function\n__fern_sha256_hw_blocks:\n"
+    + "    stp x29, x30, [sp, #-96]!\n    mov x29, sp\n"
+    + a64_aes_view("x1", "x3", "x4", ".Lsha_data") + "    str x3, [x29, #16]\n    str x4, [x29, #24]\n"
+    + a64_aes_view("x0", "x3", "x5", ".Lsha_st") + "    str x3, [x29, #32]\n"
+    + "    mov x0, #32\n    cmp x5, #32\n    b.hs .Lsha_stok\n    mov x0, #0\n.Lsha_stok:\n"
+    + a64_aes_alloc("40") + "    ldr x4, [x0]\n    cbz x4, .Lsha_ret\n"
+    + "    ldr x3, [x29, #32]\n    ld1 {v0.16b}, [x3]\n    add x3, x3, #16\n    ld1 {v1.16b}, [x3]\n"
+    + a64_sha256_load_k() + "    ldr x1, [x29, #16]\n    ldr x4, [x29, #24]\n    add x10, x29, #48\n    add x11, x29, #64\n";
+  o = o + ".Lsha_loop:\n    cmp x4, #64\n    b.lo .Lsha_done\n";
+  let j: i32 = 4;
+  while (j < 8) {
+    let v: string = "v" + util.i32_to_string(j);
+    o = o + "    ld1 {" + v + ".16b}, [x1]\n    add x1, x1, #16\n    rev32 " + v + ".16b, " + v + ".16b\n";
+    j = j + 1;
+  }
+  o = o + "    st1 {v0.16b}, [x10]\n    st1 {v1.16b}, [x11]\n" + a64_sha256_rounds()
+    + "    ld1 {v2.16b}, [x10]\n    ld1 {v3.16b}, [x11]\n    add v0.4s, v0.4s, v2.4s\n    add v1.4s, v1.4s, v3.4s\n"
+    + "    sub x4, x4, #64\n    b .Lsha_loop\n";
+  return o + ".Lsha_done:\n    ldr x0, [x29, #40]\n    add x3, x0, #8\n    st1 {v0.16b}, [x3]\n    add x3, x3, #16\n    st1 {v1.16b}, [x3]\n"
+    + ".Lsha_ret:\n    ldr x0, [x29, #40]\n    ldp x29, x30, [sp], #96\n    ret\n    .size __fern_sha256_hw_blocks, .-__fern_sha256_hw_blocks\n";
+}
+
+// a64_sha256_k is FIPS 180-4's sixty-four round constants.
+function a64_sha256_k(): u32[] {
+  return [
+    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
+    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
+    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
+    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
+    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
+    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
+    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
+    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2,
+  ];
+}
+
+// a64_sha256_pair builds k[at] | k[at + 1] << 32 in x.
+function a64_sha256_pair(x: string, k: u32[], at: i32): string {
+  let o: string = "";
+  let h: i32 = 0;
+  while (h < 4) {
+    let word: u32 = k[at + h / 2];
+    let half: i32 = (word >> (16 * (h % 2)) as u32 & 0xffff) as i32;
+    if (h == 0) {
+      o = o + "    movz " + x + ", #" + util.i32_to_string(half) + "\n";
+    } else {
+      o = o + "    movk " + x + ", #" + util.i32_to_string(half) + ", lsl #" + util.i32_to_string(16 * h) + "\n";
+    }
+    h = h + 1;
+  }
+  return o;
+}
+
+// a64_sha256_load_k puts round constants 4i..4i+3 in v(16 + i).
+function a64_sha256_load_k(): string {
+  let k: u32[] = a64_sha256_k();
+  let o: string = "";
+  let i: i32 = 0;
+  while (i < 16) {
+    let v: string = "v" + util.i32_to_string(16 + i);
+    o = o + a64_sha256_pair("x8", k, 4 * i) + a64_sha256_pair("x9", k, 4 * i + 2)
+      + "    ins " + v + ".d[0], x8\n    ins " + v + ".d[1], x9\n";
+    i = i + 1;
+  }
+  return o;
+}
+
+// a64_sha256_rounds is one block's sixty-four rounds, four a step: v2 is the
+// step's words plus constants and v3 the ABCD that SHA256H2 reads. The first
+// twelve steps also extend the schedule in place, w(i) from w(i+1), w(i+2)
+// and w(i+3), the four registers taken in rotation.
+function a64_sha256_rounds(): string {
+  let o: string = "";
+  let i: i32 = 0;
+  while (i < 16) {
+    let w: string = "v" + util.i32_to_string(4 + i % 4);
+    o = o + "    add v2.4s, " + w + ".4s, v" + util.i32_to_string(16 + i) + ".4s\n";
+    if (i < 12) {
+      o = o + "    sha256su0 " + w + ".4s, v" + util.i32_to_string(4 + (i + 1) % 4) + ".4s\n";
+    }
+    o = o + "    orr v3.16b, v0.16b, v0.16b\n    sha256h q0, q1, v2.4s\n    sha256h2 q1, q3, v2.4s\n";
+    if (i < 12) {
+      o = o + "    sha256su1 " + w + ".4s, v" + util.i32_to_string(4 + (i + 2) % 4) + ".4s, v" + util.i32_to_string(4 + (i + 3) % 4) + ".4s\n";
+    }
+    i = i + 1;
+  }
+  return o;
 }
 
 // emit_rt_crc32_cksum emits `__fern_crc32_cksum(crc, box) -> i32`: the bytes of
