@@ -923,6 +923,15 @@ func builtinStructDecls() []*ast.StructDecl {
 				{Name: "cols", Type: ast.NumberType{Width: 64, Signed: true}},
 			},
 		},
+		// Pipe — `pipe()` shape: the two ends of one pipe(2), bytes
+		// written to `w` coming out of `r`.
+		{
+			Name: "Pipe",
+			Fields: []ast.Param{
+				{Name: "r", Type: ast.StructType{Name: "Reader"}},
+				{Name: "w", Type: ast.StructType{Name: "Writer"}},
+			},
+		},
 		// Map[i32, i32] — first cut of the IndexMap-shaped Map
 		// from PR 4 (docs/LANGUAGE-DIRECTION.md). Concrete-typed
 		// (i32 keys, i32 values) for now; generic K / V comes in
@@ -2782,6 +2791,14 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.FuncSigs["proc_exec_as"] = &ast.FuncType{
 		Params: []ast.Type{ast.StringType{}, ast.ArrayType{Elem: ast.StringType{}}, ast.ArrayType{Elem: ast.StringType{}}},
 		Result: ast.NumberType{},
+	}
+	// pipe(): Result[Pipe, IoError] — pipe(2): a Reader and a Writer joined
+	// by the kernel, so a child process can be handed one end. Both ends
+	// are close-on-exec; `dup_onto` is how a forked child makes one its
+	// standard stream, and the copy it makes survives the exec. Same `proc`
+	// gate as fork and exec, whose plumbing it is.
+	c.info.FuncSigs["pipe"] = &ast.FuncType{
+		Result: ast.EnumType{Name: "Result", Args: []ast.Type{ast.StructType{Name: "Pipe"}, ioErrType}},
 	}
 	// statfs(path): Result[FsStat, IoError] — the geometry and the
 	// length limits of the filesystem `path` resolves on (#9062).

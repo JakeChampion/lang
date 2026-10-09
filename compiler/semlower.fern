@@ -848,13 +848,27 @@ pub function runtime_bodies(src: string): irtables.LowerResult[] {
   return runtime_lowering(src).bodies;
 }
 
+// unpositioned marks the runtime source's own records as the compiler's
+// injection rather than a user's declaration, the way the checker tells them
+// apart, so one may take a reserved name: asmcore.rt_src_pipe's Pipe spells
+// its two ends as the descriptors they are.
+function unpositioned(structs: parser.StructDecl[]): parser.StructDecl[] {
+  let out: parser.StructDecl[] = [];
+  let i: i32 = 0;
+  while (i < structs.len()) {
+    out = out.append(parser.StructDecl { ...structs[i], line: 0, col: 0 });
+    i = i + 1;
+  }
+  return out;
+}
+
 // The runtime callback carries bodies and selected facts from this invocation
 // for a future physical proof. runtime_bodies is the bodies-only projection.
 pub function runtime_lowering(src: string): physicalbody.Lowered {
   let parsed: parser.Module = parser.infer_ret_types_module(parser.parse_module(lexer.tokenize(src)));
   // The builtin enums' variants (IoError's NotFound, …), which a program's
   // module carries from module_with_builtins.
-  let mod: parser.Module = parser.Module { ...parsed, structs: parser.inject_builtin_enums(parsed.structs) };
+  let mod: parser.Module = parser.Module { ...parsed, structs: parser.inject_builtin_enums(unpositioned(parsed.structs)) };
   let diags: util.Diag[] = checker.build_gate_diags(mod);
   if (diags.len() > 0) {
     return runtime_refused(first_name(mod), "does not type-check: " + diags[0].message);

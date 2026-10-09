@@ -2887,6 +2887,24 @@ pub function rt_src_set_extproc(t: string): string {
   return "function __fern_set_extproc(fd: i32, on: boolean): Result[void, IoError] { let buf: usize = __raw_scratch(16); let v: i32 = 0; if (on) { v = 1; } __raw_store8(buf, 0, v); __raw_store8(buf, 1, 0); __raw_store8(buf, 2, 0); __raw_store8(buf, 3, 0); let rc: i32 = __syscall3(" + sysno(t, "ioctl") + ", fd as i64, (2147775584 as i64), buf as i64) as i32; if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } return Ok(()); }";
 }
 
+// rt_src_pipe backs `pipe()` -> Result[Pipe, IoError]: pipe2(2) with both
+// ends close-on-exec. A Reader/Writer IS its fd, so the runtime's own Pipe
+// spells the two ends as i32, the way __fern_open_res answers Result[i32].
+// __fern_pipe_from is the half every target shares; on arm64-darwin the
+// __fern_pipe that calls it is hand-written, since XNU has no pipe2 and its
+// pipe() reports the second fd in x1, which no __syscall* intrinsic can see.
+pub function rt_src_pipe(t: string): string {
+  let cloexec: string = "";
+  if (t == "arm64-darwin") {
+    cloexec = "__syscall3(" + sysno(t, "fcntl") + ", r as i64, 2, 1); __syscall3(" + sysno(t, "fcntl") + ", w as i64, 2, 1); ";
+  }
+  let from: string = "struct Pipe { r: i32, w: i32 } function __fern_pipe_from(rc: i32, r: i32, w: i32): Result[Pipe, IoError] { if (rc < 0) { return Err(__fern_io_error(0 - rc, \"\")); } " + cloexec + "return Ok(Pipe { r: r, w: w }); }";
+  if (t == "arm64-darwin") {
+    return from;
+  }
+  return from + " function __fern_pipe(): Result[Pipe, IoError] { let fds: usize = __raw_scratch(8); let rc: i32 = __syscall3(" + sysno(t, "pipe2") + ", fds as i64, 524288, 0) as i32; return __fern_pipe_from(rc, __load_i32(fds), __load_i32(__raw_addr(fds, 4))); }";
+}
+
 // rt_src_set_window_size backs `set_window_size(fd, rows, cols)` ->
 // Result[void, IoError]: TIOCGWINSZ first, so the pixel pair the kernel keeps
 // beside the two cell counts survives, then the two counts replaced and
@@ -10399,7 +10417,7 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_read_link", "__fn___fern_getxattr", "__fn___fern_getxattr_bytes", "__fn___fern_getxattr_bytes_u8", "__fn___fern_lgetxattr", "__fn___fern_lgetxattr_bytes", "__fn___fern_lgetxattr_bytes_u8", "__fn___fern_setxattr", "__fn___fern_setxattr_bytes", "__fn___fern_setxattr_bytes_u8", "__fn___fern_lsetxattr", "__fn___fern_lsetxattr_bytes", "__fn___fern_lsetxattr_bytes_u8", "__fn___fern_umask",
     "__fn___fern_chmod", "__fn___fern_chmod_at", "__fn___fern_set_file_times", "__fn___fern_truncate",
     "__fn___fern_mknod", "__fn___fern_chown_at",
-    "__fn___fern_window_size",
+    "__fn___fern_window_size", "__fn___fern_pipe",
     "__fn___fern_env", "__fern_stat", "__fn___fern_stat", "__fn___fern_statfs", "__fn___fern_mounts", "__fn___fern_subprocess",
     "__fern_args", "__fern_arg_at", "__fern_strbuf_append",
     "__fn___fern_hostname",

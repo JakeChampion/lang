@@ -7524,6 +7524,7 @@ function os_floor_contracts(done: typeinfo.Type, strs: typeinfo.Type): ssasem.Co
     ssasem.Contract { name: "signal_mask", params: [t_i32(), t_i64()], modes: [v, v], result: t_i64() },
     ssasem.Contract { name: "proc_exec", params: [t_string(), strs], modes: [b, b], result: t_i32() },
     ssasem.Contract { name: "proc_exec_as", params: [t_string(), strs, strs], modes: [b, b, b], result: t_i32() },
+    ssasem.Contract { name: "pipe", params: [], modes: [], result: t_io_result(typeinfo.TypeStruct { name: "Pipe", args: [] }) },
     ssasem.Contract { name: "wasm_timer_pollable", params: [t_i64()], modes: [v], result: t_i32() },
     ssasem.Contract { name: "wasm_pollable_drop", params: [t_i32()], modes: [v], result: t_i32() },
     ssasem.Contract { name: "wasm_block", params: [t_i32()], modes: [v], result: t_i32() },

@@ -10187,6 +10187,8 @@ pub function builtin_function_names(): string[] {
     // than the resolved path, and an environment the caller built
     // rather than its own (#9090).
     "proc_exec_as",
+    // pipe(2): the Reader and Writer a parent hands a child one end of.
+    "pipe",
     // chdir(2), the move getcwd only ever reported, and the mask and
     // read side of the signal dispositions (#9090).
     "chdir", "signal_mask", "signal_disposition",
@@ -10419,6 +10421,13 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
     wsf = wsf.append(StructFieldDecl { name: "rows", type_name: "i64", fn_ret: "", fn_param_types: "" });
     wsf = wsf.append(StructFieldDecl { name: "cols", type_name: "i64", fn_ret: "", fn_param_types: "" });
     structs = structs.append(StructDecl { name: "WinSize", fields: wsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
+  }
+  // Pipe: the builtin struct returned by pipe(), its read and write ends.
+  if (!name_declared(structs, "Pipe")) {
+    let pf: StructFieldDecl[] = [];
+    pf = pf.append(StructFieldDecl { name: "r", type_name: "Reader", fn_ret: "", fn_param_types: "" });
+    pf = pf.append(StructFieldDecl { name: "w", type_name: "Writer", fn_ret: "", fn_param_types: "" });
+    structs = structs.append(StructDecl { name: "Pipe", fields: pf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
   }
   // ProcessResult — returned by `subprocess(cmd, args, stdin)`.
   // Same injection pattern as FileStat: the __fern_subprocess
@@ -20591,7 +20600,7 @@ pub function is_reserved_struct_name(name: string): boolean {
   let reserved: string[] = [
     "BodySource", "BytesWriter", "Cell", "ChunkProducer", "Date", "DateTime", "DirEntry", "Duration", "FileStat",
     "FsStat", "HeaderMap", "HttpRequest", "HttpResponse", "Instant", "Map",
-    "MapIter", "MountEntry", "ProcessResult",
+    "MapIter", "MountEntry", "Pipe", "ProcessResult",
     "Reader", "Span", "Stream", "Time", "TimeZone", "Url", "WinSize", "Writer",
     "Zoned",
   ];
