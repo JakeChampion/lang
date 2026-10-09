@@ -11145,10 +11145,11 @@ function macho_dysymtab(buf: i32[], nlocal: i32): i32[] {
   return macho_zeros(buf, 64);  // extdef/undef ranges, toc, modtab, refsyms, indirect, ext/loc rel
 }
 
-function macho_has_dot(s: string): boolean {
+// macho_inner_label reports a label with a `.` or a `#` in it: not a function.
+function macho_inner_label(s: string): boolean {
   let i: i32 = 0;
   while (i < s.len()) {
-    if (s[i] == b'.') {
+    if (s[i] == b'.' || s[i] == b'#') {
       return true;
     }
     i = i + 1;
@@ -11163,13 +11164,14 @@ function macho_has_dot(s: string): boolean {
 // emitters already rewrite their dotted labels to an `L` prefix
 // (`darwin_retarget_locals`); the dot rule is ELF's, kept for hand-written
 // input, whose dotted labels are branch targets inside a function and as
-// symbols would end its extent there.
+// symbols would end its extent there. A numeric local label `N:`, which the
+// assembler records as `N#k`, is dropped for the same reason.
 function macho_sym_order(names: string[], offs: i32[]): i32[] {
   let idx: i32[] = [];
   let i: i32 = 0;
   while (i < names.len() && i < offs.len()) {
     let n: string = names[i];
-    if (n.len() > 0 && n[0] != b'L' && !macho_has_dot(n)) {
+    if (n.len() > 0 && n[0] != b'L' && !macho_inner_label(n)) {
       idx = idx.append(i);
     }
     i = i + 1;

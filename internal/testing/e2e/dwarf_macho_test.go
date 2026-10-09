@@ -12,19 +12,23 @@ import (
 )
 
 // machoDwarfSrc gives helper's statements lines 2 and 3 and main's call line
-// 6; f carries two scalar locals for the variable DIEs.
+// 6; f carries two scalar locals for the variable DIEs, and pick's bounds
+// check a numeric local label (`1:`) in the emitted text.
 const machoDwarfSrc = `@noinline function helper(x: i32): i32 {
     let y: i32 = x * 2;
     return y + 1;
 }
 function main(): i32 {
     let a: i32 = helper(20);
-    return a + f(41);
+    return a + f(41) + pick([1, 2, 3], 2) - 3;
 }
 @noinline function f(n: i32): i32 {
     let m: i32 = n + 1;
     let k: i64 = (m as i64) * 3;
     return m + (k as i32) - 168;
+}
+@noinline function pick(xs: i32[], i: i32): i32 {
+    return xs[i];
 }
 `
 
@@ -129,7 +133,19 @@ func TestDWARFMachO(t *testing.T) {
 			vars[fn+"."+name] = true
 		}
 	}
-	for _, name := range []string{"main", "helper", "f"} {
+	// An inner label is no function: as a symbol or a subprogram it would end
+	// the extent of the function it sits in.
+	for name := range subs {
+		if strings.ContainsAny(name, ".#") {
+			t.Errorf("inner label %q is a subprogram", name)
+		}
+	}
+	for _, s := range g.Symtab.Syms {
+		if strings.ContainsAny(s.Name, ".#") {
+			t.Errorf("inner label %q is a symbol", s.Name)
+		}
+	}
+	for _, name := range []string{"main", "helper", "f", "pick"} {
 		pc, ok := subs[name]
 		if !ok {
 			t.Errorf("no subprogram DIE for %q (have %v)", name, keys(subs))

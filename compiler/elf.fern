@@ -1852,10 +1852,11 @@ pub function elf_func_sym_sizes(lab_names: string[], lab_offs: i32[], lab_secs: 
   return out;
 }
 
-function elf_has_dot(s: string): boolean {
+// elf_inner_label reports a label with a `.` or a `#` in it: not a function.
+function elf_inner_label(s: string): boolean {
   let i: i32 = 0;
   while (i < s.len()) {
-    if (s[i] == b'.') {
+    if (s[i] == b'.' || s[i] == b'#') {
       return true;
     }
     i = i + 1;
@@ -1867,14 +1868,15 @@ function elf_has_dot(s: string): boolean {
 // sorted by offset then name. A label with a dot anywhere is not a function:
 // `.L…` is local, and `f.r` (a function's register-ABI entry) or
 // `__fern_oob_abort.l0` is a label inside the function before it, which as a
-// symbol would end that function's extent there. Insertion sort: a label
+// symbol would end that function's extent there. Neither is the arm64
+// assembler's `N#k`, its name for a numeric local label `N:`. Insertion sort: a label
 // table is small and already close to offset-ordered, since labels are
 // recorded as code is emitted.
 function elf_func_sym_order(lab_names: string[], lab_offs: i32[], lab_secs: i32[], sec_filter: i32): i32[] {
   let idx: i32[] = [];
   let i: i32 = 0;
   while (i < lab_names.len()) {
-    let keep: boolean = lab_names[i].len() > 0 && !elf_has_dot(lab_names[i]);
+    let keep: boolean = lab_names[i].len() > 0 && !elf_inner_label(lab_names[i]);
     if (keep && sec_filter >= 0) {
       if (i >= lab_secs.len() || lab_secs[i] != sec_filter) {
         keep = false;
