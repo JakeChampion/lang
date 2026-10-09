@@ -26,15 +26,14 @@
 //     does the same through `open_exclusive` (#8776). `-n r/…` is the
 //     exception — round robin needs no size and streams.
 //
-// `--filter=COMMAND` is DECLARED but not implemented: it needs a child
-// process whose stdin is a pipe the parent writes, which Fern has no
-// primitive for (#8810). Using it reports that and exits 1, so the
-// option's getopt behaviour — its place in the ambiguity list, its
-// required argument — is still GNU's.
+// `--filter=COMMAND` makes each piece the stdin of `$SHELL -c COMMAND`
+// rather than a file, with the name it would have had in `$FILE`.
 import "std/string";
 import "std/array";
+import "std/i32";
 import "std/io_buffered";
 import "./lib/gnu";
+import "./lib/signals";
 
 // ---- options ---------------------------------------------------------------
 // Ids in GNU's DECLARATION order, which is visible: the ambiguity list
@@ -172,7 +171,7 @@ function style_round(): i32 {
 // `Settings` — everything the option scan decides. `units` is lines,
 // bytes or chunks by `mode`; `chunk_k` is 0 unless `-n K/N` asked for one
 // chunk on stdout.
-struct Settings { mode: i32, units: u64, chunk_k: u64, style: i32, alpha: string, suffix_len: i32, start: u64, have_start: boolean, add_suffix: string, sep: i32, elide: boolean, verbose: boolean, filter: boolean, prefix: string }
+struct Settings { mode: i32, units: u64, chunk_k: u64, style: i32, alpha: string, suffix_len: i32, start: u64, have_start: boolean, add_suffix: string, sep: i32, elide: boolean, verbose: boolean, filter: boolean, command: string, sigpipe_default: boolean, prefix: string }
 
 function alpha_alpha(): string {
   return "abcdefghijklmnopqrstuvwxyz";
@@ -187,7 +186,7 @@ function alpha_hex(): string {
 }
 
 function settings_new(): Settings {
-  return Settings { mode: mode_none(), units: 1000 as u64, chunk_k: 0 as u64, style: style_bytes(), alpha: alpha_alpha(), suffix_len: 0, start: 0 as u64, have_start: false, add_suffix: "", sep: 10, elide: false, verbose: false, filter: false, prefix: "x" };
+  return Settings { mode: mode_none(), units: 1000 as u64, chunk_k: 0 as u64, style: style_bytes(), alpha: alpha_alpha(), suffix_len: 0, start: 0 as u64, have_start: false, add_suffix: "", sep: 10, elide: false, verbose: false, filter: false, command: "", sigpipe_default: false, prefix: "x" };
 }
 
 // One split mode may be chosen; a second is GNU's `cannot split in more
@@ -512,14 +511,14 @@ function suffix_needed(n: u64, base: i32): i32 {
 // costs no file unless one is due), or stdout for `-n K/N`. `w` is the
 // buffered file and `so` the buffered stdout, which `--verbose` also
 // writes to.
-struct Out { s: Settings, sfx: Suffix, w: io_buffered.BufWriter, open: boolean, name: string, so: io_buffered.BufWriter, to_stdout: boolean }
+struct Out { s: Settings, sfx: Suffix, w: io_buffered.BufWriter, open: boolean, name: string, so: io_buffered.BufWriter, to_stdout: boolean, pid: i32 }
 
 // Until a piece is open, `w` borrows the stdout buffer as its placeholder.
 // This avoids allocating a separate buffer that never receives output.
 // `open` guards every use and close of the piece writer.
 function out_new(s: Settings, sfx: Suffix, to_stdout: boolean): Out {
   let so: io_buffered.BufWriter = gnu.out_with(65536);
-  return Out { s: s, sfx: sfx, w: so, open: false, name: "", so: so, to_stdout: to_stdout };
+  return Out { s: s, sfx: sfx, w: so, open: false, name: "", so: so, to_stdout: to_stdout, pid: 0 };
 }
 
 // The name a piece would take, and the counter moved on. Running out of
@@ -547,23 +546,12 @@ function out_begin(o: Out): Out {
   let r: (string, Out) = out_name(closed);
   let name: string = r.0;
   let next: Out = r.1;
-  if (next.s.verbose) {
-    // Flushed per line rather than at the end: GNU prints the line before
-    // the open, so a piece whose open FAILS has still announced itself,
-    // and the diagnostic below exits without a chance to flush.
-    next = Out { ...next, so: gnu.put(next.so, "creating file " + gnu.quote(name) + "\n") };
-    next = Out { ...next, so: gnu.flush(next.so) };
-  }
-  match (open_writer(name)) {
-    Ok(f) => {
-      return Out { ...next, w: io_buffered.buf_writer_new(f, 65536), open: true, name: name };
-    },
-    Err(e) => {
-      gnu.error(name + ": " + gnu.io_error_text(e));
-      exit(1);
-    }
-  }
-  return next;
+  // Flushed per line rather than at the end: GNU prints the line before
+  // the open, so a piece whose open FAILS has still announced itself, and
+  // the diagnostic exits without a chance to flush.
+  next = out_verbose(next, name);
+  let pc: Piece = piece_open(next.s, next.so, name);
+  return Out { ...next, w: io_buffered.buf_writer_new(pc.w, 65536), open: true, name: name, pid: pc.pid };
 }
 
 function out_put(o: Out, data: u8[]): Out {
@@ -580,8 +568,7 @@ function out_put_range(o: Out, data: u8[], lo: i32, hi: i32): Out {
   let w: io_buffered.BufWriter = o.w.write_bytes_range(data, lo, hi);
   match (w.error()) {
     Some(e) => {
-      gnu.error(o.name + ": " + gnu.io_error_text(e));
-      exit(1);
+      write_failed(o.s, o.so, o.name, e);
     },
     None => {}
   }
@@ -594,12 +581,12 @@ function out_end(o: Out): Out {
   }
   match (o.w.close()) {
     Some(e) => {
-      gnu.error(o.name + ": " + gnu.io_error_text(e));
-      exit(1);
+      write_failed(o.s, o.so, o.name, e);
     },
     None => {}
   }
-  return Out { ...o, open: false };
+  piece_wait(o.s, o.so, o.name, o.pid);
+  return Out { ...o, open: false, pid: 0 };
 }
 
 function out_finish(o: Out): void {
@@ -1226,6 +1213,7 @@ function split_round(s: Settings, o: Out, src: Src): Out {
   // Every file exists up front unless -e says an unused one should not,
   // which is also the order GNU opens them in.
   let ws: Writer[] = [];
+  let pids: i32[] = [];
   let names: string[] = [];
   let live: boolean[] = [];
   let i: u64 = 0 as u64;
@@ -1236,10 +1224,13 @@ function split_round(s: Settings, o: Out, src: Src): Out {
     names = names.append(name);
     if (s.elide) {
       ws = ws.append(stdout());
+      pids = pids.append(0);
       live = live.append(false);
     } else {
       out = out_verbose(out, name);
-      ws = ws.append(open_out(name));
+      let pc: Piece = piece_open(s, out.so, name);
+      ws = ws.append(pc.w);
+      pids = pids.append(pc.pid);
       live = live.append(true);
     }
     i = i + 1 as u64;
@@ -1285,10 +1276,12 @@ function split_round(s: Settings, o: Out, src: Src): Out {
       let target: i32 = (slot + k) % n;
       if (!live[target]) {
         out = out_verbose(out, names[target]);
-        ws = ws.with(target, open_out(names[target]));
+        let pc: Piece = piece_open(s, out.so, names[target]);
+        ws = ws.with(target, pc.w);
+        pids = pids.with(target, pc.pid);
         live = live.with(target, true);
       }
-      write_fd(ws[target], names[target], share);
+      write_fd(s, out.so, ws[target], names[target], share);
       k = k + 1;
     }
     slot = (slot + completed) % n;
@@ -1299,11 +1292,11 @@ function split_round(s: Settings, o: Out, src: Src): Out {
     if (live[c]) {
       match (ws[c].close()) {
         Some(e) => {
-          gnu.error(names[c] + ": " + gnu.io_error_text(e));
-          exit(1);
+          write_failed(s, out.so, names[c], e);
         },
         None => {}
       }
+      piece_wait(s, out.so, names[c], pids[c]);
     }
     c = c + 1;
   }
@@ -1354,7 +1347,16 @@ function out_verbose(o: Out, name: string): Out {
   if (!o.s.verbose) {
     return o;
   }
-  let so: io_buffered.BufWriter = gnu.put(o.so, "creating file " + gnu.quote(name) + "\n");
+  let line: string = "creating file " + gnu.quote(name);
+  if (o.s.filter) {
+    line = "executing with FILE=" + gnu.quotef(name);
+  }
+  let so: io_buffered.BufWriter = gnu.put(o.so, line + "\n");
+  // A filter's output shares stdout, so the line is buffered the way GNU's
+  // stdio buffers it: line by line only on a terminal.
+  if (o.s.filter && !isatty(1)) {
+    return Out { ...o, so: so };
+  }
   return Out { ...o, so: gnu.flush(so) };
 }
 
@@ -1371,16 +1373,148 @@ function open_out(name: string): Writer {
   return stdout();
 }
 
-function write_fd(w: Writer, name: string, data: u8[]): void {
+function write_fd(s: Settings, so: io_buffered.BufWriter, w: Writer, name: string, data: u8[]): void {
   if (data.len() == 0) {
     return;
   }
   match (w.write_bytes(data)) {
     Some(e) => {
-      gnu.error(name + ": " + gnu.io_error_text(e));
-      exit(1);
+      write_failed(s, so, name, e);
     },
     None => {}
+  }
+}
+
+// A failed write or close ends the program, except a filter that stopped
+// reading: the rest of its piece is dropped, as GNU's `ignorable` does.
+function write_failed(s: Settings, so: io_buffered.BufWriter, name: string, e: IoError): void {
+  if (s.filter && gnu.is_broken_pipe(e)) {
+    return;
+  }
+  fail(so, name + ": " + gnu.io_error_text(e), 1);
+}
+
+// gnulib's error() flushes stdout first, so a --verbose line still buffered
+// is not overtaken by the diagnostic.
+function fail(so: io_buffered.BufWriter, msg: string, status: i32): void {
+  gnu.flush(so);
+  gnu.error(msg);
+  exit(status);
+}
+
+// ---- filters ---------------------------------------------------------------
+// With --filter a piece is the stdin of `$SHELL -c COMMAND` (/bin/sh when
+// SHELL is unset), started when the piece is and reaped when it is closed.
+// `pid` is 0 for a plain output file.
+struct Piece { w: Writer, pid: i32 }
+
+function sig_pipe(): i32 {
+  return 13;
+}
+
+function piece_open(s: Settings, so: io_buffered.BufWriter, name: string): Piece {
+  if (!s.filter) {
+    return Piece { w: open_out(name), pid: 0 };
+  }
+  let envp: string[] = with_file(environ(), name);
+  let shell: (string, boolean) = gnu.env_value(envp, "SHELL");
+  let prog: string = "/bin/sh";
+  if (shell.1) {
+    prog = shell.0;
+  }
+  let p: Pipe = open_pipe(so);
+  // GNU spawns with posix_spawn, which reports a failed exec to the parent
+  // rather than as the child's status. A close-on-exec pipe carries the errno
+  // back the same way: it reads EOF when the exec succeeds.
+  let ep: Pipe = open_pipe(so);
+  let pid: i32 = proc_fork();
+  if (pid == 0) {
+    p.r.dup_onto(0);
+    if (s.sigpipe_default) {
+      signal_default(sig_pipe());
+    }
+    let rc: i32 = proc_exec_as(prog, [gnu.base_name(prog), "-c", s.command], envp);
+    ep.w.write((0 - rc).to_string());
+    exit(127);
+  }
+  if (pid < 0) {
+    fail(so, "fork system call failed: " + gnu.exec_errno_text(0 - pid), 1);
+  }
+  p.r.close();
+  ep.w.close();
+  let errno: i32 = exec_errno(ep.r);
+  ep.r.close();
+  if (errno != 0) {
+    proc_waitpid_status(pid);
+    fail(so, "failed to run command: \"" + prog + " -c " + s.command + "\": " + gnu.exec_errno_text(errno), 1);
+  }
+  return Piece { w: p.w, pid: pid };
+}
+
+function open_pipe(so: io_buffered.BufWriter): Pipe {
+  match (pipe()) {
+    Ok(p) => {
+      return p;
+    },
+    Err(e) => {
+      fail(so, "failed to create pipe: " + gnu.io_error_text(e), 1);
+    }
+  }
+  return open_pipe(so);
+}
+
+// The errno a child wrote before its exec failed, or 0 at EOF.
+function exec_errno(r: Reader): i32 {
+  let text: string = "";
+  match (r.read_chunk(16)) {
+    Ok(chunk) => {
+      text = chunk;
+    },
+    Err(_) => {}
+  }
+  let n: i32 = 0;
+  let i: i32 = 0;
+  while (i < text.len()) {
+    n = n * 10 + (text[i] as i32 - 48);
+    i = i + 1;
+  }
+  return n;
+}
+
+// `envp` with FILE set to `name`, replacing any FILE already there.
+function with_file(envp: string[], name: string): string[] {
+  let out: string[] = [];
+  let i: i32 = 0;
+  while (i < envp.len()) {
+    if (!envp[i].starts_with("FILE=")) {
+      out = out.append(envp[i]);
+    }
+    i = i + 1;
+  }
+  return out.append("FILE=" + name);
+}
+
+// Reap a piece's filter. A non-zero exit ends split with that status, and
+// a signal other than SIGPIPE with 128 + its number, as GNU's closeout does.
+function piece_wait(s: Settings, so: io_buffered.BufWriter, name: string, pid: i32): void {
+  if (pid <= 0) {
+    return;
+  }
+  let st: i32 = proc_waitpid_status(pid);
+  if (st < 0) {
+    fail(so, "waiting for child process: " + gnu.exec_errno_text(0 - st), 1);
+  }
+  let sig: i32 = st & 127;
+  if (sig != 0 && sig != sig_pipe()) {
+    let signame: string = signals.name(sig);
+    if (signame == "") {
+      signame = sig.to_string();
+    }
+    fail(so, "with FILE=" + gnu.quotef(name) + ", signal " + signame + " from command: " + s.command, 128 + sig);
+  }
+  let code: i32 = st >> 8 & 255;
+  if (sig == 0 && code != 0) {
+    fail(so, "with FILE=" + gnu.quotef(name) + ", exit " + code.to_string() + " from command: " + s.command, code);
   }
 }
 
@@ -1442,7 +1576,7 @@ function scan(argv: string[]): (Settings, string[]) {
             s = Settings { ...s, start: start_operand(m.value, true), have_start: true };
           }
         } else if (m.id == opt_filter()) {
-          s = Settings { ...s, filter: true };
+          s = Settings { ...s, filter: true, command: m.value };
         } else if (m.id == opt_verbose()) {
           s = Settings { ...s, verbose: true };
         } else if (m.id == opt_separator()) {
@@ -1525,9 +1659,12 @@ pub function main(): i32 {
   if (s.mode == mode_none()) {
     s = Settings { ...s, mode: mode_lines(), units: 1000 as u64 };
   }
+  if (s.filter && s.mode == mode_chunks() && s.chunk_k != 0 as u64) {
+    gnu.die_usage("--filter does not process a chunk extracted to standard output", 1);
+  }
   if (s.filter) {
-    gnu.error("--filter is not supported on this system");
-    exit(1);
+    s = Settings { ...s, sigpipe_default: signal_disposition(sig_pipe()) == 0 };
+    signal_ignore(sig_pipe());
   }
 
   let reader: Reader = open_input(path);

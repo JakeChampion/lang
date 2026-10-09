@@ -4166,18 +4166,14 @@ connection returns at once trying nothing further, NXDOMAIN moves on, and
 anything else ends the loop.
 Neither changes the bytes on a host whose name resolves.
 
-**`split --filter=COMMAND` is refused.** GNU forks per piece, hands the child
-the read end of a pipe as its stdin, and streams the piece into the write
-end. Fern has `proc_fork` / `proc_exec` / `proc_waitpid` but no `pipe(2)`, no
-`dup2(2)` and no way to set a variable in a child's environment, and
-`subprocess()` is interp-only and takes the child's whole stdin as a string
-built in advance — which a piece that may be gigabytes is not. So the option
-is DECLARED, because its getopt behaviour is observable whether or not it
-runs (a required argument, a place in the `--f` prefix space, a position in
-the ambiguity list), and using it prints `split: --filter is not supported on
-this system` and exits 1 where GNU would run the command. The primitive is
-#8810; unlike `tail --pid`, GNU has no degraded path of its own here to
-borrow, so this one is a real divergence rather than a shared one.
+**`split --filter=COMMAND` reports an unrunnable shell the way glibc does.**
+GNU 9.12 starts each filter with `posix_spawn`, and what a failed exec looks
+like depends on the libc: glibc's reports it to the parent, which prints
+`failed to run command: "SHELL -c COMMAND"` and exits 1, while the gnulib
+replacement a macOS build uses lets the child exit 127, so GNU there says
+`with FILE=…, exit 127 from command: …`. This forks and execs, carries a failed
+exec's errno back over a close-on-exec pipe, and gives the glibc answer on
+every host.
 
 **`split --hex-suffixes=FROM` where FROM holds a hex LETTER is not
 reproduced.** GNU 9.4 seeds its suffix counter with `FROM[i] - '0'`, which is
@@ -4223,9 +4219,8 @@ argv[0] where `proc_exec` forces the resolved path it was handed; `-c` needs
 `security_check_context(3)` reads the kernel's verdict back off the descriptor
 it wrote the context to, which `write_file` cannot do. So a build on an SELinux
 host says `running a command in a security context is not supported on this
-system` and exits 125 where GNU would run the command — the shape `split
---filter` already uses — with every option still declared, since their getopt
-behaviour is observable either way.
+system` and exits 125 where GNU would run the command, with every option
+still declared, since their getopt behaviour is observable either way.
 
 ## Open gaps
 
