@@ -147,6 +147,8 @@ pub struct EmitState {
   // Opt-in evidence follows immutable state, including runtime trial rollback.
   retain_prepared: boolean,
   prepared: ssaprepare.Emitted[],
+  retain_sites: boolean,
+  native_sites: ssaprepare.UniqueSite[],
   // capture is a builder handle that write() appends to instead of the
   // module's text, 0 when none: the register path reads an arm back to
   // take its operands in registers.
@@ -208,13 +210,33 @@ pub function preparation_context(s: EmitState, architecture: string): Option[ssa
 pub function retain_body(s: EmitState, body: ssaprepare.Body, label_name: string, context: Option[ssaprepare.Context], entry: ssaprepare.ReleaseEntry, allocation: ssaprepare.Allocation): EmitState {
   match (context) {
     Some(c) => {
-      let emitted = ssaprepare.Emitted { label_name: label_name, body: body, context: c, release_entry: entry, allocation: allocation };
+      let emitted = ssaprepare.Emitted { label_name: label_name, body: body, context: c, release_entry: entry, allocation: allocation, assembly: "", sites: [] };
       return EmitState { ...s, prepared: s.prepared.append(emitted) };
     },
     None => {
       return s;
     }
   }
+}
+
+// Restore the enclosing buffer after observing the single actual emission.
+pub function finish_unique_site(s: EmitState, h: usize, outer: usize, site: ssaprepare.UniqueSite): EmitState {
+  let text = buf_take(h);
+  buf_free(h);
+  let captured = ssaprepare.UniqueSite { ...site, text: text };
+  s = EmitState { ...s, capture: outer, native_sites: s.native_sites.append(captured) };
+  return s.write(text);
+}
+
+// Called outside the backend's final leaf/frame rewrites. The retained row
+// and final text come from the same emission and remain in its trial state.
+pub function finish_native_text(s: EmitState, h: usize, outer: usize, sites: ssaprepare.UniqueSite[], retaining: boolean): EmitState {
+  let text = buf_take(h);
+  buf_free(h);
+  let at = s.prepared.len() - 1;
+  let row = ssaprepare.Emitted { ...s.prepared[at], assembly: text, sites: s.native_sites };
+  s = EmitState { ...s, prepared: s.prepared.with(at, row), capture: outer, native_sites: sites, retain_sites: retaining };
+  return s.write(text);
 }
 
 // syscall writes an x86-64 `syscall` that issues `nr`, already in %rax, and
@@ -361,6 +383,8 @@ pub function new_state(): EmitState {
     leaves: [],
     retain_prepared: false,
     prepared: [],
+    retain_sites: false,
+    native_sites: [],
     capture: 0 as usize,
     nlab: 0,
     recs: 0 as usize,

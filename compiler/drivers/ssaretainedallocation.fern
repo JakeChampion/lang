@@ -9,6 +9,7 @@ import "../ssa";
 import "../ssaprepare";
 import "../util";
 import "std/string";
+import "./ssaretainedsites" as sites;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -27,6 +28,7 @@ pub function consistent(row: ssaprepare.Emitted): void {
   require(a.save_bytes == (if (arm) { (a.saved.len() + 1) / 2 * 16 } else { a.saved.len() * 8 }), 114);
   require(!arm || a.framed, 115);
   unfused(a.fusions);
+  sites.consistent(row);
 }
 
 function unfused(fusions: ssaprepare.Fusion[]): void {
@@ -51,6 +53,7 @@ function checked(g: ircore.Gated, r: irtables.LowerResult, arm: boolean): ssapre
   let on = emit(g, r, arm, true);
   require(off.bodies.len() == 0 && on.bodies.len() == 1 && off.text == on.text, 116);
   consistent(on.bodies[0]);
+  sites.output(on);
   require(!on.text.contains(".ssa_epilogue"), 117);
   let framed = on.bodies[0].allocation.framed;
   require(arm || framed == on.text.contains("movq %rsp, %rbp"), 118);
@@ -111,6 +114,7 @@ function uniqueness(g: ircore.Gated, arm: boolean, fused: boolean, inverted: boo
   let r = irtables.LowerResult { ...g.cache[0], n_params: 1, n_locals: 1, ops: ops };
   let out = checked(g, r, arm);
   fusion(out, fused, inverted, aligned);
+  sites.unique(out.bodies[0], fused, inverted, aligned);
 }
 
 function fusion(out: ssaprepare.Output, fused: boolean, inverted: boolean, aligned: boolean): void {
@@ -170,6 +174,32 @@ function compare_operands(blk: ssa.SBlock, fu: ssaprepare.Fusion, mode: i32): vo
   require(fu.a == cmp.args[first] && fu.b == cmp.args[1 - first], 135);
 }
 
+function unique_pressure(g: ircore.Gated, arm: boolean): void {
+  let ops: ir.Op[] = [];
+  let i = 0;
+  while (i < 25) {
+    ops = util.append_all(ops, [ir.op_load_local(i), ir.op_call_direct("__fern_rc_is_unique", 1), ir.op_store_local(25 + i)]);
+    i = i + 1;
+  }
+  ops = ops.append(ir.op_const_i32(0));
+  i = 0;
+  while (i < 50) {
+    ops = util.append_all(ops, [ir.op_load_local(i), ir.op_bin("add", 64, false)]);
+    i = i + 1;
+  }
+  let r = irtables.LowerResult { ...g.cache[0], n_params: 25, n_locals: 50, ops: ops.append(ir.op_return()) };
+  sites.pressure(checked(g, r, arm).bodies[0]);
+}
+
+function rotated(g: ircore.Gated, arm: boolean): void {
+  let ops = [
+    ir.op_block(0), ir.op_loop(0), ir.op_load_local(0), ir.op_call_direct("__fern_rc_is_unique", 1), ir.op_bin("not", 32, false), ir.op_brif(1),
+    ir.op_load_local(0), ir.op_const_i32(8), ir.op_bin("add", 64, false), ir.op_store_local(0), ir.op_br(0), ir.op_end(), ir.op_end(), ir.op_const_i32(9), ir.op_return(),
+  ];
+  let out = checked(g, irtables.LowerResult { ...g.cache[0], n_params: 1, n_locals: 1, ops: ops }, arm);
+  sites.rotated(out.bodies[0]);
+}
+
 pub function run(g: ircore.Gated, arm: boolean): void {
   let leaf = checked(g, g.cache[0], arm);
   require(arm || !leaf.bodies[0].allocation.framed, 126);
@@ -181,4 +211,6 @@ pub function run(g: ircore.Gated, arm: boolean): void {
   comparison(g, arm, 0);
   comparison(g, arm, 1);
   comparison(g, arm, 2);
+  rotated(g, arm);
+  unique_pressure(g, arm);
 }

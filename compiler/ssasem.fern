@@ -813,11 +813,10 @@ pub function wide_map_value(v: typeinfo.Type): boolean {
   return is_integer(v) && is_wide(v);
 }
 
-// A boolean or 32-bit integer key column. A usize key is refused here: it is
-// pointer-width, an 8-byte key on the natives and a 4-byte one on wasm, and a
-// map keyed by raw addresses is not a shape the language commits to.
+// A boolean, 32-bit or pointer-width integer key column. The checker refuses
+// a char key (E045), so a char reaching here is a value.
 pub function narrow_map_key(k: typeinfo.Type): boolean {
-  return narrow_map_value(k) && !is_usize(k);
+  return narrow_map_value(k) && !is_char(k);
 }
 
 // An i64 or u64 key column (#10005). The register runtimes' integer column is
@@ -930,12 +929,12 @@ pub function retained_column(elem: typeinfo.Type): boolean {
 }
 
 function narrow_column(t: typeinfo.Type): boolean {
-  return is_i32(t) || is_u8(t) || is_u32(t) || is_bool(t) || is_usize(t);
+  return is_i32(t) || is_char(t) || is_u8(t) || is_u32(t) || is_bool(t) || is_usize(t);
 }
 
 // A value column the map releases by freeing the buffer alone.
 pub function narrow_map_value(v: typeinfo.Type): boolean {
-  return is_bool(v) || is_integer(v) && !is_wide(v);
+  return is_bool(v) || is_char(v) || is_integer(v) && !is_wide(v);
 }
 
 // A value column the map owns a unit of per entry, released with the map: a

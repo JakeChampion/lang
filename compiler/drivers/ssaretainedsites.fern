@@ -1,0 +1,107 @@
+import "../asmcore";
+import "../ssa";
+import "../ssaprepare";
+import "std/string";
+
+function require(ok: boolean, code: i32): void {
+  if (!ok) {
+    exit(code);
+  }
+}
+
+pub function consistent(row: ssaprepare.Emitted): void {
+  if (row.context.records) {
+    require(row.assembly == "" && row.sites.len() == 0, 140);
+    return;
+  }
+  require(row.assembly.starts_with("__fn_" + asmcore.sanitize_label(row.label_name) + ":\n"), 141);
+  require(!row.assembly.contains(".ssa_epilogue"), 142);
+  let homes = row.allocation.alloc.reg_of;
+  let previous = -1;
+  for site in row.sites {
+    require(site.input >= 0 && site.input < homes.len() && site.input_home == homes[site.input], 143);
+    require(site.text != "" && site.text.contains(site.join + ":\n"), 144);
+    let at = row.assembly.index_of(site.text);
+    require(at > previous && at == row.assembly.last_index_of(site.text), 145);
+    previous = at;
+    require(site.cached >= -1 && site.cached < homes.len(), 146);
+    if (site.flags) {
+      require(site.result == -1 && site.result_home == -1, 147);
+    } else {
+      require(site.result >= 0 && site.result < homes.len() && site.result_home == homes[site.result] && !site.inverted, 148);
+    }
+  }
+}
+
+pub function output(out: ssaprepare.Output): void {
+  for row in out.bodies {
+    consistent(row);
+    require(row.assembly != "" && out.text.index_of(row.assembly) >= 0 && out.text.index_of(row.assembly) == out.text.last_index_of(row.assembly), 149);
+  }
+}
+
+pub function unique(row: ssaprepare.Emitted, fused: boolean, inverted: boolean, aligned: boolean): void {
+  require(row.sites.len() == 1, 150);
+  let site = row.sites[0];
+  require(site.flags == fused && site.inverted == (fused && inverted) && site.aligned == aligned, 151);
+  let count = 0;
+  for blk in row.body.formed.f.blocks {
+    for ins in blk.insts {
+      if (ins.str == "__fern_rc_is_unique") {
+        require(ins.args[0] == site.input && (fused || ins.result == site.result), 152);
+        count = count + 1;
+      }
+    }
+  }
+  require(count == 1, 153);
+}
+
+pub function pressure(row: ssaprepare.Emitted): void {
+  let input_spills = 0;
+  let result_spills = 0;
+  let cached_results = 0;
+  let previous_spill = -1;
+  require(row.sites.len() == 25, 158);
+  for site in row.sites {
+    if (previous_spill >= 0 && row.context.architecture == "x86-64") {
+      require(site.cached == previous_spill, 162);
+      cached_results = cached_results + 1;
+    }
+    previous_spill = -1;
+    if (site.input_home < -1) {
+      input_spills = input_spills + 1;
+      require(site.text.contains(spill_address(row, site.input_home)), 159);
+    }
+    if (site.result_home < -1) {
+      result_spills = result_spills + 1;
+      previous_spill = site.result;
+      require(site.text.contains(spill_address(row, site.result_home)), 160);
+    }
+  }
+  require(input_spills > 0 && result_spills > 0, 161);
+  require(row.context.architecture != "x86-64" || cached_results > 0, 163);
+}
+
+function spill_address(row: ssaprepare.Emitted, home: i32): string {
+  let a = row.allocation;
+  let offset = 0 - 8 * (ssa.spill_slot(home) + 1) - a.save_bytes;
+  if (row.context.architecture == "arm64") {
+    return "[sp, #" + (a.frame_bytes + a.save_bytes + offset).to_string() + "]";
+  }
+  return offset.to_string() + "(%rbp)";
+}
+
+pub function rotated(row: ssaprepare.Emitted): void {
+  require(row.sites.len() == 2, 154);
+  let a = row.sites[0];
+  let b = row.sites[1];
+  require(a.flags && b.flags && a.input == b.input && a.join != b.join, 155);
+  require(a.inverted == b.inverted && a.aligned == b.aligned, 156);
+  let count = 0;
+  for fu in row.allocation.fusions {
+    if (fu.unique) {
+      count = count + 1;
+    }
+  }
+  require(count == 1, 157);
+}

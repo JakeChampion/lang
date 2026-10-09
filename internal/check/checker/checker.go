@@ -6836,6 +6836,10 @@ func (c *checker) typeImplsEqAndHash(typeName string) bool {
 	return hasEq && hasHash
 }
 
+// MapVoidValue is E045's text for a `Map[K, void]`, a set of keys: std/set
+// holds one, and no compiled map has a column for a void value.
+const MapVoidValue = "map value type void is not supported — a set of keys is std/set's `Set`"
+
 // mapKeyTypeError returns an E045 message describing why `k` cannot be
 // a Map key, or "" if it is a usable key. Usable keys are integers,
 // strings (owned or borrowed), booleans, struct/enum types that
@@ -9153,6 +9157,9 @@ func (c *checker) checkMapKeyTypes(t ast.Type, mod string, pos ast.Position) {
 		if x.Name == "Map" && len(x.Args) == 2 {
 			if msg := c.mapKeyTypeError(x.Args[0]); msg != "" {
 				c.report(mod, pos, "E045", msg)
+			}
+			if _, void := x.Args[1].(ast.VoidType); void {
+				c.report(mod, pos, "E045", MapVoidValue)
 			}
 		}
 		for _, a := range x.Args {
