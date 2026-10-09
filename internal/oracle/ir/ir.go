@@ -13219,6 +13219,9 @@ func (b *builder) sigResultFor(c *ast.Call, name string) (ast.Type, bool) {
 	if len(c.TypeArgs) >= 2 && isMapCallName(name) {
 		return substituteTypeParamsDeep(sig.Result, []string{"K", "V"}, c.TypeArgs[:2]), true
 	}
+	if len(c.TypeArgs) == 1 && name == "__method_Cell_get" {
+		return c.TypeArgs[0], true
+	}
 	return sig.Result, true
 }
 
@@ -22755,9 +22758,10 @@ func cellElemOf(t ast.Type) ast.Type {
 // on the operand stack. A cell IS a one-element array box (the same
 // [cap|rc|len|slot] layout emitCellNew writes), so it reclaims through the
 // ARRAY machinery — never the struct/box_free path, whose data-8 base
-// assumption mis-frees the cell's 16-byte (array-style) header. A `string`
-// element dec's through the string-aware per-element walk; a scalar element
-// just frees the box. A non-eligible (borrowed / escaped) cell leaks-safe
+// assumption mis-frees the cell's 16-byte (array-style) header. An array,
+// struct, enum, tuple or Map element drops through the deep per-element drop
+// an array of it takes; a `string` element dec's through the string-aware
+// per-element walk; a scalar element just frees the box. A non-eligible (borrowed / escaped) cell leaks-safe
 // via a plain rc_dec on the box (its rc word lives at data-8, like an
 // array's). Net-zero on the operand stack.
 func (b *builder) emitCellDropOnStack(elem ast.Type, eligible bool) {
@@ -22766,12 +22770,12 @@ func (b *builder) emitCellDropOnStack(elem ast.Type, eligible bool) {
 		b.emit(Op{Kind: OpDrop})
 		return
 	}
-	helper, stride := cellDropHelper(elem, b.ptrW)
-	if _, bytes := elem.(ast.ArrayType); bytes {
-		b.emit(Op{Kind: OpCallDirect, Str: "__drop_arr_arr_1", Width: ResAddr, I32: 1})
+	if name, ok := arrElemStructDropName(elem, b.info, b.genEnumDrops, b.genTupleDrops, b.ptrW, b.dynRcSupported); ok {
+		b.emit(Op{Kind: OpCallDirect, Str: name, Width: ResAddr, I32: 1})
 		b.emit(Op{Kind: OpDrop})
 		return
 	}
+	helper, stride := cellDropHelper(elem, b.ptrW)
 	b.emit(Op{Kind: OpConstI32, I32: stride})
 	b.emit(Op{Kind: OpCallDirect, Str: helper, Width: ResAddr, I32: 2})
 	b.emit(Op{Kind: OpDrop})
@@ -22893,8 +22897,11 @@ func isCellStringGet(e ast.Expr) bool {
 	return isStr
 }
 
-// Cell byte reads carry their own reference, just like string reads.
-func isCellBytesGet(e ast.Expr) bool {
+// isCellBoxGet reports whether `e` is `c.get()` on a cell whose element is
+// a counted pointer other than a string — an array, struct, enum, tuple or
+// Map. emitCellGet retains it, so the read carries its own reference, just
+// like a string read.
+func isCellBoxGet(e ast.Expr) bool {
 	c, ok := e.(*ast.Call)
 	if !ok || len(c.Args) != 1 || len(c.TypeArgs) != 1 {
 		return false
@@ -22903,21 +22910,18 @@ func isCellBytesGet(e ast.Expr) bool {
 	if !ok || id.Name != "__method_Cell_get" {
 		return false
 	}
-	_, bytes := c.TypeArgs[0].(ast.ArrayType)
-	return bytes
+	return arrElemIsRcTracked(c.TypeArgs[0])
 }
 
+// cellElemCounted reports whether the cell's slot holds a reference the cell
+// co-owns: a string or any rc-tracked pointer.
 func cellElemCounted(t ast.Type) bool {
-	switch t.(type) {
-	case ast.StringType, ast.ArrayType:
-		return true
-	}
-	return false
+	return rcTrackedSlotType(t)
 }
 
 // emitCellGet lowers `c.get()` to a load of slot 0 (the data pointer is
-// the slot address). A `string` element is returned BORROWED — the cell
-// still owns its slot copy — so retain the returned buffer (the caller's
+// the slot address). A counted element is returned BORROWED — the cell
+// still owns its slot copy — so retain the returned value (the caller's
 // binding / drop balances it), exactly as `m.get` / `arr[i]` reads do.
 func (b *builder) emitCellGet(n *ast.Call) error {
 	elemType := b.cellElemType(n)
@@ -22925,7 +22929,7 @@ func (b *builder) emitCellGet(n *ast.Call) error {
 		return err
 	}
 	b.emit(payloadLoadOpFor(elemType, b.ptrW))
-	if _, bytes := elemType.(ast.ArrayType); bytes {
+	if arrElemIsRcTracked(elemType) {
 		b.emit(Op{Kind: OpRcInc, Str: "__fern_rc_inc", I32: 1})
 	}
 	if _, isStr := elemType.(ast.StringType); isStr {
@@ -22993,13 +22997,12 @@ func (b *builder) emitCellSet(n *ast.Call) error {
 		// pair, and native single-word frees the overwritten buffer at rc==1
 		// (deferring to __fern_rc_dec otherwise). A bare __fern_rc_dec never
 		// frees, so each overwrite would strand the old buffer.
-		if _, bytes := elemType.(ast.ArrayType); bytes {
-			b.emit(Op{Kind: OpConstI32, I32: 1})
-			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_arr_dec", Width: ResAddr, I32: 2})
-		} else {
+		if _, isStr := elemType.(ast.StringType); isStr {
 			b.emit(Op{Kind: OpCallDirect, Runtime: true, Str: "__fern_str_dec", Width: ResAddr, I32: 1})
+			b.emit(Op{Kind: OpDrop})
+		} else {
+			b.emitFieldDropOnStack(elemType)
 		}
-		b.emit(Op{Kind: OpDrop})
 	}
 	// Store the new value (addr, value).
 	b.emit(Op{Kind: OpLoadLocal, I32: ptrSlot})
