@@ -1,7 +1,7 @@
 // Package parser is a hand-written recursive-descent parser that turns a
 // token stream into an *ast.Program.
 //
-// Precedence climbs from `parseAssign` (lowest) down through logical-or,
+// Precedence climbs from `parsePipe` (lowest) down through logical-or,
 // logical-and, equality, relational, additive, multiplicative, unary,
 // and finally `parseCall` / `parsePrimary`.
 package parser
@@ -2756,7 +2756,7 @@ func (p *parser) parseStmt() (ast.Stmt, error) {
 		}
 	}
 	// expression statement
-	e, err := p.parseExpr()
+	e, err := p.parseAssign()
 	if err != nil {
 		return nil, err
 	}
@@ -3329,7 +3329,7 @@ func (p *parser) parseFor(label string) (ast.Stmt, error) {
 	} else if p.match(lexer.Punct, ";") {
 		p.advance()
 	} else {
-		e, err := p.parseExpr()
+		e, err := p.parseAssign()
 		if err != nil {
 			return nil, err
 		}
@@ -3349,7 +3349,7 @@ func (p *parser) parseFor(label string) (ast.Stmt, error) {
 
 	var step ast.Stmt
 	if !p.match(lexer.Punct, ")") {
-		stepExpr, err := p.parseExpr()
+		stepExpr, err := p.parseAssign()
 		if err != nil {
 			return nil, err
 		}
@@ -4799,7 +4799,7 @@ func (p *parser) parseDefer() (ast.Stmt, error) {
 		}
 		return &ast.Defer{P: kw.Pos, Expr: &ast.BlockExpr{P: block.P, Stmts: block.Stmts}, OnError: kw.Text == "errdefer"}, nil
 	}
-	expr, err := p.parseExpr()
+	expr, err := p.parseAssign()
 	if err != nil {
 		return nil, err
 	}
@@ -5376,7 +5376,9 @@ func prependParamDestructures(body *ast.Block, destrs []*ast.Destructure) {
 
 // ---------- Expressions ----------
 
-func (p *parser) parseExpr() (ast.Expr, error) { return p.parseAssign() }
+// parseExpr parses an expression. An assignment is not one: it is a
+// statement, parsed by parseAssign where a statement stands.
+func (p *parser) parseExpr() (ast.Expr, error) { return p.parsePipe() }
 
 // compoundOps maps a compound-assignment punctuator to its underlying
 // binary operator. `x += y` desugars into `x = x + y` at parse time so
