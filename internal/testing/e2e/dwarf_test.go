@@ -3,6 +3,7 @@ package e2e
 import (
 	"debug/dwarf"
 	goelf "debug/elf"
+	"debug/macho"
 	"encoding/binary"
 	"fmt"
 	"os"
@@ -131,23 +132,15 @@ func TestDWARFLineTable(t *testing.T) {
 		t.Fatalf("write src: %v", err)
 	}
 
-	// The line table is target-independent (address_size 8 both ways) and
+	// The line table is target-independent (address_size 8 every way) and
 	// decoded host-side, so we build for each target and parse without running.
-	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+	for _, target := range []string{"x86-64-linux", "arm64-linux", "arm64-darwin"} {
 		t.Run(target, func(t *testing.T) {
 			out := filepath.Join(dir, "g-"+target+".bin")
 			if o, err := exec.Command(bin, "-g", "-target", target, "-o", out, p).CombinedOutput(); err != nil {
 				t.Fatalf("-g build: %v\n%s", err, o)
 			}
-			f, err := goelf.Open(out)
-			if err != nil {
-				t.Fatalf("open ELF: %v", err)
-			}
-			defer f.Close()
-			d, err := f.DWARF()
-			if err != nil {
-				t.Fatalf("DWARF(): %v", err)
-			}
+			d := openDWARF(t, out)
 
 			// Subprogram PC ranges per function.
 			r := d.Reader()
@@ -236,6 +229,27 @@ func TestDWARFLineTable(t *testing.T) {
 		}
 		pf.Close()
 	}
+}
+
+// openDWARF decodes a -g image's DWARF, from the ELF sections or the Mach-O
+// __DWARF segment as the file's magic says.
+func openDWARF(t *testing.T, path string) *dwarf.Data {
+	t.Helper()
+	var d *dwarf.Data
+	var err error
+	if f, oerr := goelf.Open(path); oerr == nil {
+		defer f.Close()
+		d, err = f.DWARF()
+	} else if m, merr := macho.Open(path); merr == nil {
+		defer m.Close()
+		d, err = m.DWARF()
+	} else {
+		t.Fatalf("%s is neither ELF (%v) nor Mach-O (%v)", path, oerr, merr)
+	}
+	if err != nil {
+		t.Fatalf("DWARF(): %v", err)
+	}
+	return d
 }
 
 func keys(m map[string][2]uint64) []string {

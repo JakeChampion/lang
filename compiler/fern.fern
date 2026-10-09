@@ -389,6 +389,34 @@ function arm64_elf_binary(asm: string, words: u8[], emit_syms: boolean, cu_name:
   return string_from_bytes_unchecked(util.to_u8(wide));
 }
 
+// darwin_dwarf is an arm64-darwin `-g` image's DWARF over its linked code at
+// `tv`, one blob per arm64_native.macho_dwarf_sects name. The `L` labels
+// darwinize gives a function's branch targets are left out of the
+// subprograms, as ELF's dotted ones are.
+function darwin_dwarf(p: arm64_native.Arm64GasProg, tv: i64, dv: i64, cu_name: string): i32[][] {
+  let a: arm64_native.Arm64Asm = p.asm;
+  let names: string[] = [];
+  for n in a.lab_names {
+    if (n.len() > 0 && n[0] == b'L') {
+      names = names.append("");
+    } else {
+      names = names.append(n);
+    }
+  }
+  let nosec: i32[] = [];
+  let end: i32 = a.text.len();
+  let dw: elf.DwSections = elf.dw_sections(
+    tv, end,
+    elf.elf_func_sym_names(names, a.lab_offs, nosec, 0 - 1, end),
+    elf.elf_func_sym_offs(names, a.lab_offs, nosec, 0 - 1, end),
+    elf.elf_func_sym_sizes(names, a.lab_offs, nosec, 0 - 1, end),
+    cu_name, comp_dir(),
+    a.files, a.loc_offs, a.loc_files, a.loc_lines, a.loc_cols, a.loc_flags,
+    arm64_var_ranges(p, tv, dv),
+  );
+  return [dw.abbrev, dw.info, dw.line, dw.loc];
+}
+
 // arm64_elf_binary_pie is arm64_elf_binary as a static position-independent
 // executable (the -target arm64-android path): ET_DYN at a load base of 0 so
 // the kernel can map it anywhere (Android rejects non-PIE for normal exec).
@@ -3135,10 +3163,10 @@ function run(): i32 {
     } else if (a == "-cover") {
       cover_on = true;
     } else if (a == "-g") {
-      // A static symbol table naming the functions: `.symtab` in the ELF
-      // targets' images (#6637), LC_SYMTAB in arm64-darwin's (#11409), and
-      // in the ELF images the DWARF compilation unit naming them for a
-      // debugger (#11410).
+      // A static symbol table naming the functions (`.symtab` in the ELF
+      // targets' images, LC_SYMTAB in arm64-darwin's) and the DWARF a
+      // debugger reads: the compilation unit, a line table and variables
+      // (ELF sections, or a __DWARF segment in the Mach-O image).
       emit_syms = true;
     } else if (a == "-backtrace" || a == "-backtrace=true" || a == "-backtrace=1") {
       backtrace = true;
@@ -3652,11 +3680,11 @@ function run(): i32 {
   let typed: parser.Module = parser.module_with_builtins_typed(merged);
   let full: parser.Module = parser.erase_view_module(typed);
   // The typed semantic lowering, threaded into whichever emit path runs.
-  // `-g` on an ELF target carries the line table: the lowering marks each
+  // `-g` on a native target carries the line table: the lowering marks each
   // statement, the emitter renders the marks as `.loc` rows over the `.file`
-  // table prepended below, and the ELF writer encodes .debug_line (#11410).
-  let debug_lines: boolean = emit_syms && (target == "x86-64-linux" || target == "arm64-linux");
-  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target, debug_lines), switches: asmcore.Switches { backtrace: backtrace, sanitize: sanitize_flag || asmcore.sanitize_on() } };
+  // table prepended below, and the image writer encodes .debug_line (#11410).
+  let debug_lines: boolean = emit_syms && (target == "x86-64-linux" || target == "arm64-linux" || target == "arm64-darwin");
+  let sub: ircore.Sub = ircore.Sub { ...semlower.target_substitution(typed, target, debug_lines), switches: asmcore.Switches { backtrace: backtrace, sanitize: sanitize_flag || asmcore.sanitize_on(), var_rows: debug_lines && emit != "asm" } };
   let out_asm: string = "";
   let emit_text: boolean = emit == "asm";
   if (target == "arm64-linux") {
@@ -3748,6 +3776,9 @@ function run(): i32 {
     if (out_asm.len() == 0) {
       return 2;
     }
+    if (debug_lines) {
+      out_asm = dw_file_table(entry_path, b.files) + out_asm;
+    }
     if (!emit_text) {
       let prog: arm64_native.Arm64GasProg = arm64_native.arm64_gas_program(out_asm);
       util.arr_push_cliff_report("darwin:assembled", 0);
@@ -3762,9 +3793,9 @@ function run(): i32 {
       // address, so rendering it once at the final length and again at
       // the final addresses is exact rather than a fixpoint.
       let deh_len: i32 = arm64_native.arm64_eh_frame_darwin_len(prog);
-      let tv: i64 = arm64_native.macho_text_vaddr(pa.text.len(), deh_len, prog.data.len(), prog.bss_size);
-      let ev: i64 = arm64_native.macho_eh_vaddr(pa.text.len(), deh_len, prog.data.len(), prog.bss_size);
-      let dv: i64 = arm64_native.macho_data_vaddr(pa.text.len(), deh_len, prog.data.len(), prog.bss_size);
+      let tv: i64 = arm64_native.macho_text_vaddr_dw(pa.text.len(), deh_len, prog.data.len(), prog.bss_size, emit_syms);
+      let ev: i64 = arm64_native.macho_eh_vaddr_dw(pa.text.len(), deh_len, prog.data.len(), prog.bss_size, emit_syms);
+      let dv: i64 = arm64_native.macho_data_vaddr_dw(pa.text.len(), deh_len, prog.data.len(), prog.bss_size, emit_syms);
       let deh: i32[] = arm64_native.arm64_eh_frame_darwin(prog, tv, ev);
       util.arr_push_cliff_report("darwin:unwind", 0);
       prog = arm64_native.arm64_gas_link(prog, tv, dv);
@@ -3780,14 +3811,17 @@ function run(): i32 {
       let deoff: i32 = arm64_native.macho_entry_off(pa2);
       let dreb: i32[] = arm64_native.arm64_gas_rebase_offs(prog);
       // `-g`: the function labels into LC_SYMTAB (#11409), as the ELF
-      // targets' .symtab; a default build writes none.
+      // targets' .symtab, and the DWARF into a __DWARF segment; a default
+      // build writes neither.
       let dsym_names: string[] = [];
       let dsym_offs: i32[] = [];
+      let dwarf: i32[][] = [];
       if (emit_syms) {
         dsym_names = pa2.lab_names;
         dsym_offs = pa2.lab_offs;
+        dwarf = darwin_dwarf(prog, tv, dv, entry_path);
       }
-      out_asm = string_from_bytes_unchecked(util.to_u8(arm64_native.macho_executable_binds(pa2.text, deh, prog.data, "fern", deoff, prog.bss_size, dreb, prog.bind_offs, prog.bind_syms, dsym_names, dsym_offs)));
+      out_asm = string_from_bytes_unchecked(util.to_u8(arm64_native.macho_executable_binds(pa2.text, deh, prog.data, "fern", deoff, prog.bss_size, dreb, prog.bind_offs, prog.bind_syms, dsym_names, dsym_offs, dwarf)));
       util.arr_push_cliff_report("darwin:image", 0);
     }
   } else if (target == "wasm32-wasi" && emit_text) {

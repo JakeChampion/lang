@@ -1401,15 +1401,15 @@ function dw_source_name(b: i32[], sym: string): i32[] {
 // it and `comp_dir` the directory it was compiled in, which is how a
 // debugger finds the source. The language is DW_LANG_C99: no DWARF code
 // exists for Fern. With a line table (`lines`) the unit points at it.
-function elf_debug_info(text_vaddr: i32, text_len: i32, sym_names: string[], sym_offs: i32[], sym_sizes: i32[], cu_name: string, comp_dir: string, lines: boolean, vars: DwVars): i32[] {
+function elf_debug_info(text_vaddr: i64, text_len: i32, sym_names: string[], sym_offs: i32[], sym_sizes: i32[], cu_name: string, comp_dir: string, lines: boolean, vars: DwVars): i32[] {
   let die: i32[] = [];
   die = dw_uleb(die, 1);
   die = elf_str_bytes(die, "fern");
   die = elf_le16(die, 12);
   die = elf_str_bytes(die, cu_name);
   die = elf_str_bytes(die, comp_dir);
-  die = elf_le64(die, text_vaddr as i64);
-  die = elf_le64(die, (text_vaddr + text_len) as i64);
+  die = elf_le64(die, text_vaddr);
+  die = elf_le64(die, text_vaddr + text_len as i64);
   if (lines) {
     die = elf_le32(die, 0);  // DW_AT_stmt_list: .debug_line offset 0
   }
@@ -1433,8 +1433,8 @@ function elf_debug_info(text_vaddr: i32, text_len: i32, sym_names: string[], sym
       die = dw_uleb(die, 2);
     }
     die = dw_source_name(die, sym_names[i]);
-    die = elf_le64(die, (text_vaddr + sym_offs[i]) as i64);
-    die = elf_le64(die, (text_vaddr + sym_offs[i] + sym_sizes[i]) as i64);
+    die = elf_le64(die, text_vaddr + sym_offs[i] as i64);
+    die = elf_le64(die, text_vaddr + (sym_offs[i] + sym_sizes[i]) as i64);
     if (has_vars) {
       let v: i32 = 0;
       while (v < vars.fns.len()) {
@@ -1498,7 +1498,7 @@ function dw_dir_index(dirs: string[], dir: string): i32 {
 // advance as a special opcode where one fits, else advance_pc +
 // advance_line + copy, and finally an advance to the end of .text and
 // end_sequence. Each row's position holds until the next row's address.
-function elf_debug_line(text_vaddr: i32, text_len: i32, files: string[], loc_offs: i32[], loc_files: i32[], loc_lines: i32[], loc_cols: i32[], loc_flags: i32[]): i32[] {
+function elf_debug_line(text_vaddr: i64, text_len: i32, files: string[], loc_offs: i32[], loc_files: i32[], loc_lines: i32[], loc_cols: i32[], loc_flags: i32[]): i32[] {
   // The program parameters: minimum_instruction_length 1,
   // maximum_operations_per_instruction 1, default_is_stmt 1, line_base -5,
   // line_range 14, opcode_base 13, and the standard opcodes' operand counts.
@@ -1553,7 +1553,7 @@ function elf_debug_line(text_vaddr: i32, text_len: i32, files: string[], loc_off
     prog = prog.append(0);
     prog = prog.append(9);
     prog = prog.append(2);  // DW_LNE_set_address
-    prog = elf_le64(prog, (text_vaddr + addr) as i64);
+    prog = elf_le64(prog, text_vaddr + addr as i64);
     let ri: i32 = 0;
     while (ri < loc_offs.len()) {
       if (loc_files[ri] != file) {
@@ -1600,6 +1600,29 @@ function elf_debug_line(text_vaddr: i32, text_len: i32, files: string[], loc_off
   body = elf_cat(body, prog);
   let out: i32[] = elf_le32([], body.len());  // unit_length
   return elf_cat(out, body);
+}
+
+// DwSections is the DWARF a `-g` image carries, rendered for whichever
+// container writes it: .debug_abbrev, .debug_info, .debug_line (empty
+// without rows) and .debug_loc (empty without variables). The ELF writer
+// files them as sections, the Mach-O writer in its __DWARF segment.
+pub struct DwSections { abbrev: i32[], info: i32[], line: i32[], loc: i32[] }
+
+// dw_sections renders the DWARF over .text loaded at `text_vaddr`; the
+// arguments are elf_append_debug's, which documents them.
+pub function dw_sections(text_vaddr: i64, text_len: i32, sym_names: string[], sym_offs: i32[], sym_sizes: i32[], cu_name: string, comp_dir: string, files: string[], loc_offs: i32[], loc_files: i32[], loc_lines: i32[], loc_cols: i32[], loc_flags: i32[], vars: VarRanges): DwSections {
+  let lines: boolean = loc_offs.len() > 0;
+  let dv: DwVars = dw_vars(vars);
+  let dline: i32[] = [];
+  if (lines) {
+    dline = elf_debug_line(text_vaddr, text_len, files, loc_offs, loc_files, loc_lines, loc_cols, loc_flags);
+  }
+  return DwSections {
+    abbrev: elf_debug_abbrev(lines, dv.fns.len() > 0),
+    info: elf_debug_info(text_vaddr, text_len, sym_names, sym_offs, sym_sizes, cu_name, comp_dir, lines, dv),
+    line: dline,
+    loc: dv.loc,
+  };
 }
 
 // elf_append_debug appends what a `-g` image carries beyond its loadable
@@ -1666,9 +1689,9 @@ pub function elf_append_debug(img: i32[], text_vaddr: i32, text_off: i32, text_l
   shstrtab = elf_opt_str(shstrtab, ".debug_line", lines);
   let n_debug_frame: i32 = shstrtab.len();
   shstrtab = elf_opt_str(shstrtab, ".debug_frame", frame.len() > 0);
-  let dv: DwVars = dw_vars(vars);
+  let dw: DwSections = dw_sections(text_vaddr as i64, text_len, sym_names, sym_offs, sym_sizes, cu_name, comp_dir, files, loc_offs, loc_files, loc_lines, loc_cols, loc_flags, vars);
   let n_debug_loc: i32 = shstrtab.len();
-  shstrtab = elf_opt_str(shstrtab, ".debug_loc", dv.fns.len() > 0);
+  shstrtab = elf_opt_str(shstrtab, ".debug_loc", dw.loc.len() > 0);
 
   let out: i32[] = elf_align8_buf(img);
 
@@ -1697,23 +1720,17 @@ pub function elf_append_debug(img: i32[], text_vaddr: i32, text_off: i32, text_l
   out = elf_cat(out, strtab);
   let shstrtab_off: i32 = out.len();
   out = elf_cat(out, shstrtab);
-  let abbrev: i32[] = elf_debug_abbrev(lines, dv.fns.len() > 0);
   let abbrev_off: i32 = out.len();
-  out = elf_cat(out, abbrev);
-  let info: i32[] = elf_debug_info(text_vaddr, text_len, sym_names, sym_offs, sym_sizes, cu_name, comp_dir, lines, dv);
+  out = elf_cat(out, dw.abbrev);
   let info_off: i32 = out.len();
-  out = elf_cat(out, info);
-  let dline: i32[] = [];
-  if (lines) {
-    dline = elf_debug_line(text_vaddr, text_len, files, loc_offs, loc_files, loc_lines, loc_cols, loc_flags);
-  }
+  out = elf_cat(out, dw.info);
   let dline_off: i32 = out.len();
-  out = elf_cat(out, dline);
+  out = elf_cat(out, dw.line);
   out = elf_align8_buf(out);
   let frame_off: i32 = out.len();
   out = elf_cat(out, frame);
   let loc_off: i32 = out.len();
-  out = elf_cat(out, dv.loc);
+  out = elf_cat(out, dw.loc);
 
   out = elf_align8_buf(out);
   let sh_off: i32 = out.len();
@@ -1731,11 +1748,11 @@ pub function elf_append_debug(img: i32[], text_vaddr: i32, text_off: i32, text_l
   out = elf_shdr(out, n_shstrtab, 3, zero64, zero64, shstrtab_off as i64, shstrtab.len() as i64, 0, 0, 1, zero64);
   // .debug_abbrev / .debug_info — SHT_PROGBITS, not allocated, so the loaded
   // image is unchanged.
-  out = elf_shdr(out, n_debug_abbrev, 1, zero64, zero64, abbrev_off as i64, abbrev.len() as i64, 0, 0, 1, zero64);
-  out = elf_shdr(out, n_debug_info, 1, zero64, zero64, info_off as i64, info.len() as i64, 0, 0, 1, zero64);
-  out = elf_opt_shdr(out, lines, n_debug_line, dline_off, dline.len(), 1);
+  out = elf_shdr(out, n_debug_abbrev, 1, zero64, zero64, abbrev_off as i64, dw.abbrev.len() as i64, 0, 0, 1, zero64);
+  out = elf_shdr(out, n_debug_info, 1, zero64, zero64, info_off as i64, dw.info.len() as i64, 0, 0, 1, zero64);
+  out = elf_opt_shdr(out, lines, n_debug_line, dline_off, dw.line.len(), 1);
   out = elf_opt_shdr(out, frame.len() > 0, n_debug_frame, frame_off, frame.len(), 8);
-  out = elf_opt_shdr(out, dv.fns.len() > 0, n_debug_loc, loc_off, dv.loc.len(), 1);
+  out = elf_opt_shdr(out, dw.loc.len() > 0, n_debug_loc, loc_off, dw.loc.len(), 1);
   let nsh: i32 = (out.len() - sh_off) / elf_sh_size();
 
   // Point the header at the table just written. e_shoff is 8 bytes at
