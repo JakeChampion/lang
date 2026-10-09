@@ -8,6 +8,7 @@ import "./irtables";
 import "./ssa";
 import "./ssa_lift";
 import "./physicalbody";
+import "./ssaprepare";
 
 // asmcore — the emitter-side layer the three IR backends (asm_ir,
 // asm_arm64_ir, wasm_ir) share: the Ty type system, EmitState + its
@@ -143,6 +144,9 @@ pub struct EmitState {
   reg_entries: irtables.SigReg,
   // leaves are the unit's functions a call may take inline (ssa.Leaf).
   leaves: ssa.Leaf[],
+  // Opt-in evidence follows immutable state, including runtime trial rollback.
+  retain_prepared: boolean,
+  prepared: ssaprepare.Emitted[],
   // capture is a builder handle that write() appends to instead of the
   // module's text, 0 when none: the register path reads an arm back to
   // take its operands in registers.
@@ -188,6 +192,29 @@ pub struct EmitState {
   // raw_syscall names the first `__syscall3` … `__syscall6` whose number is
   // a run-time value, which no allowlist can hold; "" when there is none.
   raw_syscall: string,
+}
+
+// Snapshot before emission only when requested. Do not keep the entire old
+// EmitState alive across emission on the ordinary, retention-disabled path.
+pub function preparation_context(s: EmitState, architecture: string): Option[ssaprepare.Context] {
+  if (!s.retain_prepared) {
+    return None;
+  }
+  return Some(ssaprepare.Context { architecture: architecture, reg_entries: s.reg_entries, leaves: s.leaves, records: s.records(), rc_free_debug: s.rc_free_debug, sanitize: s.sanitize, leak_check: s.leak_check, rt_owned_allocs: s.rt_owned_allocs, needed: s.needed });
+}
+
+// Keep only successful emission. Runtime settlement discards this array
+// together with a discarded trial, preserving the original pre-trial state.
+pub function retain_body(s: EmitState, body: ssaprepare.Body, label_name: string, context: Option[ssaprepare.Context]): EmitState {
+  match (context) {
+    Some(c) => {
+      let emitted = ssaprepare.Emitted { label_name: label_name, body: body, context: c };
+      return EmitState { ...s, prepared: s.prepared.append(emitted) };
+    },
+    None => {
+      return s;
+    }
+  }
 }
 
 // syscall writes an x86-64 `syscall` that issues `nr`, already in %rax, and
@@ -332,6 +359,8 @@ pub function new_state(): EmitState {
     ssa_x0: 0 - 1,
     reg_entries: irtables.sig_reg_of([]),
     leaves: [],
+    retain_prepared: false,
+    prepared: [],
     capture: 0 as usize,
     nlab: 0,
     recs: 0 as usize,

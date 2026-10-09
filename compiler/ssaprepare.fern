@@ -13,6 +13,31 @@ pub struct Body {
   seen_slots: i32[],
 }
 
+// The pre-emission context needed to interpret target-specific entry paths.
+// These records describe emitted bodies; they do not certify their effects.
+pub struct Context {
+  architecture: string,
+  reg_entries: irtables.SigReg,
+  leaves: ssa.Leaf[],
+  records: boolean,
+  rc_free_debug: boolean,
+  sanitize: boolean,
+  leak_check: boolean,
+  rt_owned_allocs: boolean,
+  needed: string[],
+}
+
+pub struct Emitted {
+  label_name: string,
+  body: Body,
+  context: Context,
+}
+
+pub struct Output {
+  text: string,
+  bodies: Emitted[],
+}
+
 // Called after the backend's lift checks, with that actual lift and its
 // current unit leaves. Never relower or look up an old body by symbol here.
 pub function finish(lowered: irtables.LowerResult, selected: physicalbody.Selected, lifted: ssa_lift.LResult, leaves: ssa.Leaf[]): Body {

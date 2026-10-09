@@ -10313,7 +10313,10 @@ function emit_ssa_function(r: irtables.LowerResult, selected: physicalbody.Selec
   }
   let lift_ms: i64 = (monotonic_ns() - t_lift) / 1000000i64;
   let t_emit: i64 = monotonic_ns();
-  s = emit_ssa_function_x86(ssaprepare.finish(r, selected, lifted, s.leaves), label_name, s);
+  let prepared: ssaprepare.Body = ssaprepare.finish(r, selected, lifted, s.leaves);
+  let context = asmcore.preparation_context(s, "x86-64");
+  s = emit_ssa_function_x86(prepared, label_name, s);
+  s = asmcore.retain_body(s, prepared, label_name, context);
   // Under the report, a function whose lift or emit took over 200 ms is
   // named with both times: the whole-compiler build is where a phase's
   // cost shows, and this is how a slow one is found.
@@ -11987,7 +11990,7 @@ function emit_named_bodies(cache: irtables.LowerResult[], physical: physicalbody
 pub function module_runtime_needs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, cache: irtables.LowerResult[], physical: physicalbody.Collection): string[] {
   strbuf_reset();
   let s: asmcore.EmitState = asmcore.new_state();
-  s = asmcore.with_funcs(asmcore.EmitState { ...s, struct_decls: all_structs }, all_funcs);
+  s = asmcore.with_funcs(asmcore.EmitState { ...s, struct_decls: all_structs, retain_prepared: false }, all_funcs);
   s = emit_module_funcs(mod, all_funcs, s, false, 0, 0 - 1, cache, physical, false);
   s = s.close_needs();
   strbuf_reset();
@@ -12052,6 +12055,11 @@ pub function emit_module_ir_gated_sub(mod: parser.Module, sub: ircore.Sub, recs:
 
 // `rt` lowers the runtime helpers this unit appends (asmcore.EmitState.rt_lower).
 pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, lo: i32, hi: i32, cache: irtables.LowerResult[], physical: physicalbody.Collection, rt: (string) => physicalbody.Lowered, recs: usize, sw: asmcore.Switches): string {
+  return emit_module_ir_unit_prepared(mod, is_entry, globl_defs, str_ns, extra_needs, all_funcs, all_structs, lo, hi, cache, physical, rt, recs, sw, false).text;
+}
+
+// Retain the same bodies consumed by this emission, including its settled runtime.
+pub function emit_module_ir_unit_prepared(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, lo: i32, hi: i32, cache: irtables.LowerResult[], physical: physicalbody.Collection, rt: (string) => physicalbody.Lowered, recs: usize, sw: asmcore.Switches, retain: boolean): ssaprepare.Output {
   // Infer return types for unannotated functions so the IR path's
   // ret-type-keyed call tagging matches what module_with_builtins supplies.
   // (#4394 lever 3: `cache`, when non-empty, is the caller's pre-lowered
@@ -12061,6 +12069,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
   // re-infer is a no-op there and the cache indices stay aligned.)
   strbuf_reset();
   let s: asmcore.EmitState = asmcore.new_state();
+  s = asmcore.EmitState { ...s, retain_prepared: retain };
   // struct_decls and funcs are the WHOLE-PROGRAM sets, so an imported struct's
   // layout resolves and a `dyn` dispatch has an arm for every impl (#10891).
   s = asmcore.with_funcs(asmcore.with_switches(asmcore.EmitState { ...s, struct_decls: all_structs, str_ns: str_ns, rt_lower: rt, recs: recs }, sw), all_funcs);
@@ -12071,14 +12080,14 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
   if (derrs.len() > 0) {
     eprint(util.format_diags(derrs));
     exit(1);
-    return "";
+    return ssaprepare.Output { text: "", bodies: [] };
   }
   // A unit cannot see the syscalls its sibling units issue, so only the
   // whole-program emit can derive the sandbox's allowlist.
   if (globl_defs && asmcore.sandbox_on()) {
     eprint("fern: FERN_SANDBOX=1 needs the whole-program emit; a per-module unit cannot see its siblings' syscalls");
     exit(1);
-    return "";
+    return ssaprepare.Output { text: "", bodies: [] };
   }
   if (is_entry) {
     s = s.write("    .globl _start\n");
@@ -12251,7 +12260,7 @@ pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, glo
       s = emit_seccomp_install(s);
     }
   }
-  return strbuf_take();
+  return ssaprepare.Output { text: strbuf_take(), bodies: s.prepared };
 }
 
 // emit_seccomp_install writes `__fern_seccomp_install` and the seccomp-bpf

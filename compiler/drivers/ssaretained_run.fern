@@ -1,0 +1,183 @@
+import "../asmcore";
+import "../asm_ir";
+import "../asm_arm64_ir";
+import "../ir";
+import "../ircore";
+import "../irtables";
+import "../irverifygate";
+import "../lexer";
+import "../parser";
+import "../physicalbody";
+import "../semlower";
+import "../ssaprepare";
+import "../util";
+
+function require(ok: boolean, code: i32): void {
+  if (!ok) {
+    exit(code);
+  }
+}
+
+// This controlled producer adds a need during the first runtime trial.
+// The final str_cmp record must therefore have heap in its BEFORE context.
+function runtime(src: string): physicalbody.Lowered {
+  if (src == asmcore.rt_src_str_cmp()) {
+    return semlower.runtime_lowering("function __fern_str_cmp(a: string, b: string): i32 { let p = __raw_alloc(1); let text = __raw_string(p, 1); return text.len(); }");
+  }
+  return semlower.runtime_lowering(src);
+}
+
+function emit(g: ircore.Gated, cache: irtables.LowerResult[], physical: physicalbody.Collection, arm: boolean, retain: boolean, entry: boolean, lo: i32, hi: i32): ssaprepare.Output {
+  let sw = asmcore.Switches { backtrace: false, sanitize: false };
+  if (arm) {
+    return asm_arm64_ir.emit_module_ir_unit_arm64_prepared(g.im, entry, false, "", ["str_cmp"], g.im.funcs, g.stab, lo, hi, cache, physical, runtime, sw, retain);
+  }
+  return asm_ir.emit_module_ir_unit_prepared(g.im, entry, false, "", ["str_cmp"], g.im.funcs, g.stab, lo, hi, cache, physical, runtime, 0 as usize, sw, retain);
+}
+
+function count(rows: ssaprepare.Emitted[], name: string): i32 {
+  let n = 0;
+  for row in rows {
+    if (row.label_name == name) {
+      n = n + 1;
+    }
+  }
+  return n;
+}
+
+function find(rows: ssaprepare.Emitted[], name: string): i32 {
+  let i = 0;
+  for row in rows {
+    if (row.label_name == name) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return -1;
+}
+
+function selection(g: ircore.Gated, arm: boolean): void {
+  let changed = irtables.LowerResult { ...g.cache[0], ops: [ir.op_const_i32(37), ir.op_return()] };
+  let tail = irtables.LowerResult { ...changed, name: "retained_tail" };
+  let loser = irtables.LowerResult { ...tail, ops: [ir.op_const_i32(99), ir.op_return()] };
+  let cache = g.cache.with(0, changed).append(tail).append(loser);
+  let physical = physicalbody.Collection { ...g.physical, rows: g.physical.rows.append(physicalbody.Origin { producer: 0, symbol: "tail-first" }).append(physicalbody.Origin { producer: 0, symbol: "tail-loser" }) };
+  let off = emit(g, cache, physical, arm, false, false, 0, 1);
+  let on = emit(g, cache, physical, arm, true, false, 0, 1);
+  require(off.bodies.len() == 0 && off.text == on.text, 10);
+  require(on.bodies.len() == 2 && count(on.bodies, "first") == 1 && count(on.bodies, "retained_tail") == 1, 11);
+  require(on.bodies[0].body.lowered.ops[0].i32_imm == 37, 12);
+  require(on.bodies[1].body.lowered.ops[0].i32_imm == 37 && on.bodies[1].body.selected.origin.symbol == "tail-first", 13);
+  require(on.bodies[0].body.selected.origin.symbol == g.physical.rows[0].symbol, 14);
+  require(on.bodies[0].context.architecture == (if (arm) { "arm64" } else { "x86-64" }), 15);
+  require(irtables.sig_reg_has_exact(on.bodies[0].context.reg_entries, "first"), 16);
+  let next = emit(g, cache, physical, arm, true, false, 1, 2);
+  require(count(next.bodies, "first") == 0 && count(next.bodies, "second") == 1 && count(next.bodies, "retained_tail") == 1, 17);
+  let skipped = cache.with(0, irtables.LowerResult { ...changed, superseded: true });
+  let none = emit(g, skipped, physical, arm, true, false, 0, 1);
+  require(none.bodies.len() == 1 && none.bodies[0].label_name == "retained_tail", 18);
+  let unknown = emit(g, cache, physicalbody.no_collection(), arm, true, false, 0, 1);
+  require(unknown.bodies[0].body.selected.origin.producer < 0, 19);
+}
+
+function settled(g: ircore.Gated, arm: boolean): void {
+  let off = emit(g, g.cache, g.physical, arm, false, true, 0, -1);
+  let on = emit(g, g.cache, g.physical, arm, true, true, 0, -1);
+  require(off.bodies.len() == 0 && off.text == on.text, 20);
+  require(count(on.bodies, "__fern_str_cmp") == 1 && count(on.bodies, "first") == 1, 21);
+  let at = find(on.bodies, "__fern_str_cmp");
+  require(at >= 0, 22);
+  let row = on.bodies[at];
+  require(util.has_str(row.context.needed, "heap"), 23);
+  require(row.body.selected.origin.symbol == "__fern_str_cmp" && row.body.selected.producers.len() == 1, 24);
+  require(row.body.selected.producers[0].contracts.len() != g.physical.producers[0].contracts.len(), 25);
+  for body in on.bodies {
+    require(count(on.bodies, body.label_name) == 1, 26);
+  }
+}
+
+function direct(g: ircore.Gated): void {
+  strbuf_reset();
+  let base = asmcore.new_state();
+  base = asmcore.EmitState { ...base, struct_decls: g.stab, rt_lower: runtime, retain_prepared: true, rc_free_debug: true };
+  let out = asm_arm64_ir.emit_body(g.im, base, false, g.cache, g.physical);
+  require(base.prepared.len() == 0 && out.prepared.len() == 3, 30);
+  require(out.prepared[0].context.rc_free_debug && !out.prepared[0].context.records, 31);
+  strbuf_reset();
+  let disabled = asm_arm64_ir.emit_body(g.im, asmcore.EmitState { ...base, retain_prepared: false }, false, g.cache, g.physical);
+  require(disabled.prepared.len() == 0, 32);
+  strbuf_reset();
+}
+
+function discarded_trial(): void {
+  strbuf_reset();
+  let base = asmcore.new_state();
+  base = asmcore.EmitState { ...base, rt_lower: runtime, retain_prepared: true, needed: ["str_cmp"], sanitize: false, leak_check: false, rc_free_debug: false };
+  let trial = asm_arm64_ir.emit_ir_runtime(base, false);
+  let at = find(trial.prepared, "__fern_str_cmp");
+  require(at >= 0 && !util.has_str(trial.prepared[at].context.needed, "heap"), 35);
+  require(util.has_str(trial.needed, "heap") && base.prepared.len() == 0, 36);
+  strbuf_reset();
+}
+
+function renamed(g: ircore.Gated): void {
+  strbuf_reset();
+  let base = asmcore.new_state();
+  base = asmcore.EmitState { ...base, retain_prepared: true, reg_entries: irtables.sig_reg_of(["Token.first"]) };
+  let gate = irverifygate.gate_unreported(irtables.fn_sig_index(g.im.funcs), base.kinds.pops);
+  let fd = parser.FuncDecl { ...g.im.funcs[0], receiver_type: "Token" };
+  let out = asm_arm64_ir.emit_function_via_ir_pre(g.cache[0], physicalbody.select(g.physical, 0), fd, base, gate);
+  require(out.prepared.len() == 1 && out.prepared[0].label_name == "Token.first", 37);
+  require(out.prepared[0].body.lowered.name == g.cache[0].name && out.prepared[0].body.formed.f.name == "Token.first", 38);
+  require(irtables.sig_reg_has_exact(out.prepared[0].context.reg_entries, "Token.first"), 39);
+  strbuf_reset();
+}
+
+function debug_body(g: ircore.Gated, arm: boolean): void {
+  let recs = buf_new(4096);
+  let r = irtables.LowerResult { ...g.cache[0], n_locals: 1, ops: [ir.op_const_i32(43), ir.op_store_local(0), ir.op_load_local(0), ir.op_return()], dbg_slots: [0], dbg_names: ["observed"], dbg_types: ["i32"] };
+  let rows: ssaprepare.Emitted[] = [];
+  if (arm) {
+    strbuf_reset();
+    let s = asmcore.new_state();
+    s = asmcore.EmitState { ...s, recs: recs, retain_prepared: true };
+    let gate = irverifygate.gate_unreported(irtables.fn_sig_index(g.im.funcs), s.kinds.pops);
+    let out = asm_arm64_ir.emit_function_via_ir_pre(r, physicalbody.select(g.physical, 0), g.im.funcs[0], s, gate);
+    rows = out.prepared;
+    strbuf_reset();
+  } else {
+    let out = asm_ir.emit_module_ir_unit_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, 1, g.cache.with(0, r), g.physical, runtime, recs, asmcore.env_switches(), true);
+    rows = out.bodies;
+  }
+  require(rows.len() == 1 && rows[0].context.records, 40);
+  require(rows[0].body.seen_vals.len() > 0 && rows[0].body.seen_slots.len() > 0, 41);
+  require(rows[0].body.lowered.dbg_names[0] == "observed" && rows[0].body.lowered.ops[0].i32_imm == 43, 42);
+  let code = buf_take(recs);
+  require(code.len() > 0, 43);
+  buf_free(recs);
+}
+
+function main(): i32 {
+  let mod = parser.parse_module(lexer.tokenize("@noinline function first(): i32 { return 7; } @noinline function second(): i32 { return first(); } function main(): i32 { return second(); }"));
+  let d = semlower.driven(mod, "x86-64-linux");
+  let g = semlower.program(d);
+  require(g.ok && g.im.funcs.len() == 3 && g.cache.len() == 3, 1);
+  require(!asmcore.new_state().retain_prepared, 2);
+  selection(g, false);
+  selection(g, true);
+  settled(g, false);
+  settled(g, true);
+  direct(g);
+  discarded_trial();
+  renamed(g);
+  debug_body(g, false);
+  debug_body(g, true);
+  // The need probe has no retained-result API and must not contaminate a
+  // subsequent real emission through a shared accumulator.
+  let needs = asm_ir.module_runtime_needs(g.im, g.im.funcs, g.stab, g.cache, g.physical);
+  require(needs.len() == 0, 33);
+  let after = emit(g, g.cache, g.physical, false, true, false, 0, 1);
+  require(after.bodies.len() == 1 && after.bodies[0].label_name == "first", 34);
+  print("retained native body controls passed");
+  return 0;
+}
