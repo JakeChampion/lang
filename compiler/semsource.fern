@@ -11,6 +11,7 @@ import "./semtypes";
 import "./semrecords";
 import "./ssa";
 import "./ssabounds";
+import "./ssabytes";
 import "./ssasem";
 import "./ssaunits";
 import "./ownership";
@@ -6971,7 +6972,7 @@ function complete(fd: parser.FuncDecl, s: State, name: string, memo: SchemaMemo,
   // Before the verifier in anchor_module, so the rewritten graph is the one
   // it checks, and before anything downstream plans ownership over it (#9692).
   f = ssasem.tail_recursion(f, name);
-  f = ssabounds.grouped_reads(ssabounds.proven_indices(f));
+  f = ssabounds.word_loads(ssabounds.grouped_reads(ssabounds.proven_indices(f)), word_load_contracts(), [ssabytes.word_name(4), ssabytes.word_name(8)]);
   return Made { p: Produced { ok: true, why: "", func: f, modes: modes, template: false, key: "", requests: s.requests, bodyless: false, analysis: None, view_escape: 0, dropped: false }, memo: table.memo };
 }
 
@@ -7701,6 +7702,23 @@ function c_call_contracts(): ssasem.Contract[] {
     }
   }
   return out;
+}
+
+// The calls ssabounds.word_loads builds a word load from: an owned byte
+// array's address (lent), the offset into it and the load, or a view's word
+// read, which reaches the bytes through its decoded data pointer.
+function word_load_contracts(): ssasem.Contract[] {
+  let v: i32 = ssaunits.value_mode();
+  let b: i32 = ssaunits.borrow_mode();
+  let view: typeinfo.Type = typeinfo.TypeArray { elem: t_u8(), view: true };
+  return [
+    ssasem.Contract { name: "__raw_arr_ptr", params: [typeinfo.TypeArray { elem: t_u8(), view: false }], modes: [b], result: t_usize() },
+    ssasem.Contract { name: "__raw_addr", params: [t_usize(), t_i32()], modes: [v, v], result: t_usize() },
+    ssasem.Contract { name: "__load_i32", params: [t_usize()], modes: [v], result: t_i32() },
+    ssasem.Contract { name: "__load_i64", params: [t_usize()], modes: [v], result: t_i64() },
+    ssasem.Contract { name: ssabytes.word_name(4), params: [view, t_i32()], modes: [b, v], result: t_i32() },
+    ssasem.Contract { name: ssabytes.word_name(8), params: [view, t_i32()], modes: [b, v], result: t_i64() },
+  ];
 }
 
 // The raw floor, typed by the checker's one table. Every operand is a value
