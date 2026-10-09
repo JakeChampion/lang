@@ -341,30 +341,15 @@ version on stderr.
 
 ### The Darwin ratchet
 
-Running the whole catalogue on macOS surfaces 1,887 failing cases over 19,913
-tests, across 83 utilities — divergences the Linux lanes never see, because
-Darwin has no `/proc`, a different `struct stat`, a different `getgrouplist`,
-and a case-insensitive filesystem by default. Holding the lane to zero would
-leave it red indefinitely, so it is gated by a ratchet instead:
-`.github/darwin-corpus-known-failures.txt` names the test functions allowed
-to fail, and the lane fails when a name NOT on that list fails. Entries only
-ever leave the file — a utility that starts failing is a regression to fix,
-never a line to add. The case counts behind those names and the order worth
-working them in are #9714.
-
-That rule has been broken exactly once, and the reason is why the gate looks
-the way it does. The list was first seeded at 51 names from a run reported as
-complete which had executed 14,814 of 19,913 tests: `numfmt --padding` with a
-20-digit width is a valid invocation GNU answers with about 10^20 spaces, the
-harness captured it unbounded, and the resulting memory pressure killed tests
-running beside it. Every file from `pwd_test.go` onward went unmeasured, so 32
-utilities were recorded as passing without ever having run, and the first
-round after the capture was capped reported all 32 at once — as regressions.
-They were not: their causes are a `strerror` table carrying one message text
-per errno across all three platforms, an unimplemented `utmpx`, and filename
-fixtures APFS will not create. So the list was re-seeded to 83 from two
-independent complete runs that agreed byte-for-byte. A re-seed is a repair of
-a baseline that was never measured, not a licence to record a regression.
+The macOS lane runs the whole catalogue against the GNU build on macOS.
+`.github/darwin-corpus-known-failures.txt` names the test functions allowed to
+fail, and the lane fails when a name NOT on that list fails. Entries only ever
+leave the file. It is empty: every utility's corpus passes on Darwin (#9714),
+so a Darwin failure is a regression to fix, never a line to add. Where macOS's
+GNU output reflects a libc defect (`%r` printing nothing, Apple's long-double
+and NaN `printf`), the corpus marks the case as a Darwin-oracle defect with the
+reason instead of reproducing it; where it reflects the platform's real data or
+semantics (utmpx, Apple's handling of an invalid `TZ`), Fern matches macOS.
 
 The gate reads the corpus log rather than the corpus step's exit status: that
 step deliberately does not propagate it, because the whole point is that a
