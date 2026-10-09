@@ -1,0 +1,116 @@
+import "../asmcore";
+import "../asm_ir";
+import "../asm_arm64_ir";
+import "../ircore";
+import "../semlower";
+import "../ssaruntimeunique" as unique;
+import "../util";
+import "std/string";
+
+function require(ok: boolean, code: i32): void {
+  if (!ok) {
+    exit(code);
+  }
+}
+
+function check(text: string, arm: boolean, ok: boolean): void {
+  let p = unique.check(text, if (arm) { "arm64" } else { "x86-64" });
+  if (p.ok != ok || p.function_name != "__fn___fern_rc_is_unique" || p.message == "") {
+    print(p.function_name + ": " + p.message);
+    exit(95);
+  }
+}
+
+function change(text: string, old: string, replacement: string): string {
+  let parts = text.split(old);
+  require(parts.len() > 1, 96);
+  let out = parts[0];
+  let i = 1;
+  while (i < parts.len()) {
+    out = out + replacement + parts[i];
+    i = i + 1;
+  }
+  return out;
+}
+
+function fragment(text: string): string {
+  let out = "";
+  let inside = false;
+  for raw in text.split("\n") {
+    let line = util.trim(raw);
+    if (line == "__fn___fern_rc_is_unique:") {
+      inside = true;
+    }
+    if (inside) {
+      out = out + line + "\n";
+      if (line == "ret") {
+        return out;
+      }
+    }
+  }
+  return "";
+}
+
+function instructions(text: string, arm: boolean): void {
+  let from = if (arm) { ["ldr x2, [sp]", "mov x0, #0", "mov x0, #1", "tbnz x2, #0,", "blo ", "and x2, x2, #0xfffffffffffffffd", "ldur w3, [x2, #-8]", "cmp w3, #1", "bne "] } else { ["movq 8(%rsp), %rcx", "movq $0, %rax", "movq $1, %rax", "jnz ", "jb ", "andq $-3, %rcx", "movl -8(%rcx), %edx", "cmpl $1, %edx", "jne "] };
+  let to = if (arm) { ["ldr x2, [sp, #8]", "mov x0, #1", "mov x0, #0", "tbz x2, #0,", "b ", "", "ldur w3, [x2, #-4]", "cmp w3, #2", "beq "] } else { ["movq 16(%rsp), %rcx", "movq $1, %rax", "movq $0, %rax", "jz ", "jmp ", "", "movl -4(%rcx), %edx", "cmpl $2, %edx", "je "] };
+  let i = 0;
+  while (i < from.len()) {
+    check(change(text, from[i], to[i]), arm, false);
+    i = i + 1;
+  }
+  let read = from[6];
+  // A real header read before either pointer guard must refuse even if its
+  // value is overwritten by the later correct load.
+  check(change(text, from[1], read + "\n" + from[1]), arm, false);
+  let write = if (arm) { "stur w3, [x2, #-8]" } else { "movl %edx, -8(%rcx)" };
+  check(change(text, read, read + "\n" + write), arm, false);
+  check(change(text, read, read + "\n" + (if (arm) { "bl unexpected" } else { "call unexpected" })), arm, false);
+  let sign = if (arm) { "tbnz w3, #31, .Lshuniq_ret\n" } else { "testl %edx, %edx\njs .Lshuniq_ret\n" };
+  // Equality with one already excludes every negative signed32 count.
+  check(change(text, sign, ""), arm, true);
+  guards(text, arm);
+}
+
+function guards(text: string, arm: boolean): void {
+  let tag = if (arm) { "tbnz x2, #0, .Lshuniq_ret\n" } else { "testb $1, %cl\njnz .Lshuniq_ret\n" };
+  let low = if (arm) { "blo .Lshuniq_ret\n" } else { "jb .Lshuniq_ret\n" };
+  let one = if (arm) { "cmp w3, #1\n" } else { "cmpl $1, %edx\n" };
+  check(change(text, tag, ""), arm, false);
+  check(change(text, low, ""), arm, false);
+  check(change(text, one, ""), arm, false);
+  check(change(text, "ret\n", ""), arm, false);
+}
+
+pub function run(output: string, arm: boolean): void {
+  check(output, arm, true);
+  check(output, !arm, false);
+  let text = fragment(output);
+  require(text != "", 97);
+  check(text, arm, true);
+  check(change(text, ".Lshuniq_ret", ".Lrenamed_unique_return"), arm, true);
+  check(change(text, "\n", "\r\n\t"), arm, true);
+  check("", arm, false);
+  check(text + text, arm, false);
+  check(text + "__next:\n.Lshuniq_ret:\nret\n", arm, false);
+  check(text + "__next:\n.Lshuniq_ret: .byte 0\n", arm, false);
+  check(text + ".set .Lshuniq_ret, external\n", arm, false);
+  check(text + "__next:\n.Lshuniq_ret = external\n", arm, false);
+  check(".code32\n" + text, arm, false);
+  check(text + "__fn___fern_rc_is_unique: ret\n", arm, false);
+  check(change(text, ".Lshuniq_ret:", ".Lwrong:"), arm, false);
+  check(change(text, "ret\n", ".Lcycle:\n" + (if (arm) { "b .Lcycle\n" } else { "jmp .Lcycle\n" })), arm, false);
+  require(!unique.check(text, "wasm32-wasi").ok, 98);
+  instructions(text, arm);
+}
+
+pub function debug(g: ircore.Gated, arm: boolean): void {
+  let sw = asmcore.Switches { backtrace: false, sanitize: true };
+  if (arm) {
+    let out = asm_arm64_ir.emit_module_ir_unit_arm64_prepared(g.im, true, false, "", ["heap"], g.im.funcs, g.stab, 0, -1, g.cache, g.physical, semlower.runtime_lowering, sw, true);
+    check(out.text, arm, false);
+  } else {
+    let out = asm_ir.emit_module_ir_unit_prepared(g.im, true, false, "", ["heap"], g.im.funcs, g.stab, 0, -1, g.cache, g.physical, semlower.runtime_lowering, 0 as usize, sw, true);
+    check(out.text, arm, false);
+  }
+}

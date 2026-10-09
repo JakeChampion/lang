@@ -14,6 +14,7 @@ import "../util";
 import "./ssaretainedproof" as proof;
 import "./ssaretainedwrapper" as wrapper;
 import "./ssaretainedentry" as entry;
+import "./ssaretainedruntime" as runtimeproof;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -87,6 +88,7 @@ function settled(g: ircore.Gated, arm: boolean): void {
   let off = emit(g, g.cache, g.physical, arm, false, true, 0, -1);
   let on = emit(g, g.cache, g.physical, arm, true, true, 0, -1);
   require(off.bodies.len() == 0 && off.text == on.text, 20);
+  runtimeproof.run(on.text, arm);
   require(count(on.bodies, "__fern_str_cmp") == 1 && count(on.bodies, "first") == 1, 21);
   let at = find(on.bodies, "__fern_str_cmp");
   require(at >= 0, 22);
@@ -190,6 +192,8 @@ function main(): i32 {
   proof.run(false);
   proof.run(true);
   entry.run();
+  runtimeproof.debug(g, false);
+  runtimeproof.debug(g, true);
   print("retained native body controls passed");
   return 0;
 }

@@ -1,0 +1,136 @@
+// Instruction semantics used by the scoped runtime uniqueness proof. No
+// emitter imports or expected-template comparison. All other effects refuse.
+import "./util";
+
+pub struct Op { kind: i32, target: i32 }
+
+pub struct Decoded { kind: i32, target: string }
+
+function instructions(arm: boolean): string[] {
+  if (arm) {
+    return ["ldr x2, [sp]", "mov x0, #0", "mov x0, #1", "and x2, x2, #0xfffffffffffffffd", "ldur w3, [x2, #-8]", "mov x9, #0x10000", "", "cmp x2, x9", "", "cmp w3, #1", "ret"];
+  }
+  return ["movq 8(%rsp), %rcx", "movq $0, %rax", "movq $1, %rax", "andq $-3, %rcx", "movl -8(%rcx), %edx", "", "testb $1, %cl", "cmpq $0x10000, %rcx", "testl %edx, %edx", "cmpl $1, %edx", "ret"];
+}
+
+function branches(arm: boolean): string[] {
+  if (arm) {
+    return ["", "blo ", "", "bne ", "tbnz x2, #0, ", "tbnz w3, #31, ", "b ", "", "beq ", "tbz x2, #0, "];
+  }
+  return ["jnz ", "jb ", "js ", "jne ", "", "", "jmp ", "jz ", "je ", ""];
+}
+
+pub function decode(line: string, arm: boolean): Decoded {
+  let i = 1;
+  for instruction in instructions(arm) {
+    if (instruction != "" && instruction == line) {
+      return Decoded { kind: i, target: "" };
+    }
+    i = i + 1;
+  }
+  i = 20;
+  for prefix in branches(arm) {
+    if (prefix != "" && util.str_has_prefix(line, prefix)) {
+      return Decoded { kind: i, target: slice_unchecked(line, prefix.len(), line.len()) + "" };
+    }
+    i = i + 1;
+  }
+  return Decoded { kind: 0, target: "" };
+}
+
+struct State { pointer: i32, result: i32, count: boolean, floor: boolean, flags: i32, ok: boolean }
+
+// pointer: unknown/original/normalized. flags: unknown/tag/floor/sign/one.
+// Register definitions and flag producers must dominate every use. x86 AND
+// destroys the previous flags; ARM AND (without S) preserves NZCV.
+function step(s: State, kind: i32, tagged: boolean, low: boolean, arm: boolean): State {
+  if (kind == 1) {
+    return State { ...s, pointer: 1 };
+  }
+  if (kind == 2 || kind == 3) {
+    return State { ...s, result: kind - 2 };
+  }
+  if (kind == 4) {
+    return State { ...s, pointer: 2, flags: if (arm) { s.flags } else { 0 }, ok: s.pointer > 0 };
+  }
+  if (kind == 5) {
+    return State { ...s, count: true, ok: s.pointer == 2 && !tagged && !low };
+  }
+  return flags(s, kind, arm);
+}
+
+function flags(s: State, kind: i32, arm: boolean): State {
+  if (kind == 6) {
+    return State { ...s, floor: true };
+  }
+  if (kind == 7 || kind == 8) {
+    return State { ...s, flags: kind - 6, ok: s.pointer > 0 && (kind != 8 || !arm || s.floor) };
+  }
+  if (kind == 9 || kind == 10) {
+    return State { ...s, flags: kind - 6, ok: s.count };
+  }
+  return State { ...s, ok: kind == 30 };
+}
+
+// -1 refuses an undefined/unsupported condition, 0 falls through, 1 jumps.
+function branch(s: State, kind: i32, tagged: boolean, low: boolean, rc: i32): i32 {
+  let expected = branch_flags(kind);
+  if (expected > 0 && s.flags != expected) {
+    return -1;
+  }
+  if ((kind == 24 || kind == 29) && s.pointer < 1) {
+    return -1;
+  }
+  if (kind == 25 && !s.count) {
+    return -1;
+  }
+  let outcomes = [tagged, low, rc < 0, rc != 1, tagged, rc < 0, true, !tagged, rc == 1, !tagged];
+  let take = outcomes[kind - 20];
+  return if (take) { 1 } else { 0 };
+}
+
+function branch_flags(kind: i32): i32 {
+  if (kind == 27) {
+    return 1;
+  }
+  if (kind == 28) {
+    return 4;
+  }
+  return if (kind < 24) { kind - 19 } else { 0 };
+}
+
+function result(s: State, tagged: boolean, low: boolean, rc: i32): boolean {
+  let expected = if (!tagged && !low && rc == 1) { 1 } else { 0 };
+  return s.result == expected;
+}
+
+pub function path(ops: Op[], tagged: boolean, low: boolean, rc: i32, arm: boolean): boolean {
+  let s = State { pointer: 0, result: -1, count: false, floor: false, flags: 0, ok: true };
+  let pc = 0;
+  let seen: i32[] = [];
+  while (pc >= 0 && pc < ops.len()) {
+    // Cycles are unadmitted, rather than stopped at an arbitrary path limit.
+    if (util.index_of_i32(seen, pc) >= 0) {
+      return false;
+    }
+    seen = seen.append(pc);
+    let op = ops[pc];
+    if (op.kind == 11) {
+      return result(s, tagged, low, rc);
+    }
+    if (op.kind >= 20 && op.kind < 30) {
+      let next = branch(s, op.kind, tagged, low, rc);
+      if (next < 0) {
+        return false;
+      }
+      pc = if (next == 1) { op.target } else { pc + 1 };
+    } else {
+      s = step(s, op.kind, tagged, low, arm);
+      if (!s.ok) {
+        return false;
+      }
+      pc = pc + 1;
+    }
+  }
+  return false;
+}
