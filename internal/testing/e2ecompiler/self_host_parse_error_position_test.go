@@ -363,6 +363,12 @@ func TestSelfHostStatementTerminators(t *testing.T) {
 			`error[P001]: at top level: expected ";", got "function" (2:1)`},
 		{"tuple-type-trailing-comma", "function main(): i32 { let o: Option[(i32, i32,)] = None; return 0; }\n",
 			`error[P001]: at top level: expected type, got ")" (1:48)`},
+		// A defer block is a branch body: an assignment ending it takes no
+		// `;`, as native's parseBranchBody reads it. A keyword statement
+		// there still does.
+		{"defer-block-trailing-assign-clean", "function main(): i32 { let r: i32 = 0; defer { r = 2 } return r; }\n", ""},
+		{"defer-block-trailing-let", "function main(): i32 { defer { let z: i32 = 1 } return 0; }\n",
+			`error[P001]: at top level: expected ";", got "}" (1:47)`},
 		{"bare-return-clean", "function f(): void { return; }\nfunction main(): i32 { f(); return 0; }\n", ""},
 		{"c-for-step-clean", "function main(): i32 { let t: i32 = 0; for (let i: i32 = 0; i < 3; i = i + 1) { t = t + i; } return t; }\n", ""},
 		{"refused-expression-one-error", "function main(): i32 { let x: i32 = 1; return x +; }\n",
