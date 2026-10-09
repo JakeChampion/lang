@@ -4169,11 +4169,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	// the offset moves as lseek's does and the writes keep landing at
 	// the end, O_APPEND's rule on every target.
 	//
-	// Those three are the whole domain, and anything else is EINVAL on
-	// every target. A Linux kernel takes two more — 3 and 4 are
-	// SEEK_DATA and SEEK_HOLE — which the natives pass through and
-	// neither WASI preview can answer, so a program that wants a hole
-	// is target-specific and has to say so.
+	// 3 and 4 are SEEK_DATA and SEEK_HOLE on every native target (Darwin's
+	// runtime maps them onto its own reversed numbers); a filesystem
+	// without holes answers them as one data run. Neither WASI preview has
+	// them, so there they are EINVAL, as is any whence past 4 everywhere.
 	seekResult := ast.EnumType{Name: "Result", Args: []ast.Type{
 		ast.NumberType{Width: 64, Signed: true}, ioErrType}}
 	registerStructMethod("Reader", "seek",

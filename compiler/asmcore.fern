@@ -5097,9 +5097,16 @@ pub function rt_src_reader_splice(t: string): string {
 // rt_src_reader_seek backs `r.seek(offset, whence)` -> Result[i64, IoError]:
 // lseek(2), the new offset back. The result is bound to an i64 rather than
 // cast from an i32: the register backends' `as i64` sign-extends the low 32
-// bits, which would fold an offset past 2 GiB.
+// bits, which would fold an offset past 2 GiB. Whence 3 and 4 are SEEK_DATA
+// and SEEK_HOLE on every target; Darwin numbers the pair the other way round.
+// Any other whence is EINVAL here, ahead of the kernel, because XNU answers a
+// pipe's ESPIPE first where Linux checks the whence first.
 pub function rt_src_reader_seek(t: string): string {
-  return "function __fern_reader_seek(fd: i32, off: i64, whence: i32): Result[i64, IoError] { let r: i64 = __syscall3(" + sysno(t, "lseek") + ", fd as i64, off as i64, whence as i64); if (r < (0 as i64)) { return Err(__fern_io_error(((0 as i64) - r) as i32, \"\")); } return Ok(r); }";
+  let swap: string = "";
+  if (t == "arm64-darwin") {
+    swap = "if (w == 3) { w = 4; } else if (w == 4) { w = 3; } ";
+  }
+  return "function __fern_reader_seek(fd: i32, off: i64, whence: i32): Result[i64, IoError] { if (whence < 0 || whence > 4) { return Err(__fern_io_error(22, \"\")); } let w: i32 = whence; " + swap + "let r: i64 = __syscall3(" + sysno(t, "lseek") + ", fd as i64, off as i64, w as i64); if (r < (0 as i64)) { return Err(__fern_io_error(((0 as i64) - r) as i32, \"\")); } return Ok(r); }";
 }
 
 // rt_src_fd_flags backs `r.flags()` / `w.flags()` -> Result[i64, IoError]:
