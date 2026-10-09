@@ -31,6 +31,7 @@ import "../asm_arm64_ir";
 import "../asm_ir";
 import "../asmcore";
 import "../irtables";
+import "../physicalbody";
 import "../ir";
 import "../irverify";
 import "./irverifyprovided";
@@ -163,7 +164,7 @@ struct View {
   all_funcs: parser.FuncDecl[],
   stab: irtables.StructTab,
   contracts: string[],
-  rt: (string) => irtables.LowerResult[],
+  rt: (string) => physicalbody.Lowered,
 }
 
 // per_module_view builds the units of `parts`: the typed lowering lowers the

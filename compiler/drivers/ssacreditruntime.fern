@@ -10,6 +10,8 @@ import "../semrecords";
 import "../ssasem";
 import "../asmcore";
 import "../util";
+import "../lexer";
+import "../parser";
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -64,8 +66,8 @@ function graphs(selected: physicalbody.Lowered): ssa.SFunc[] {
   return out;
 }
 
-function wrapper(src: string, exiting: boolean): void {
-  let selected = semlower.runtime_lowering(src);
+function wrapper(src: string, exiting: boolean, state: asmcore.EmitState): void {
+  let selected = state.rt_lower(src);
   parity(src, selected);
   require(selected.declarations.len() == 5 && selected.bodies.len() > selected.declarations.len(), 120);
   // No old bodies: the proof binds only these graphs and this selected metadata.
@@ -84,21 +86,25 @@ function wrapper(src: string, exiting: boolean): void {
     require(!abi.check_wrapper_final(bad, fs, "handoff", "replace", "__sem_drop_Parent", "__sem_release_Parent", ["require"]).ok, 123);
   }
   // A later lowering must not replace this invocation's immutable selected facts.
-  let unrelated = semlower.runtime_lowering("function identity(x: i64): i64 { return x; }");
+  let unrelated = state.rt_lower("function identity(x: i64): i64 { return x; }");
   require(unrelated.declarations.len() == 1 && unrelated.declarations[0] == "identity", 124);
   require(abi.check_wrapper_final(sub, fs, "handoff", "replace", "__sem_drop_Parent", "__sem_release_Parent", ["require"]).ok == !exiting, 125);
 }
 
 pub function run(src: string, exiting: boolean): void {
-  wrapper(src, exiting);
+  // The application has no runtime declarations or record metadata to borrow.
+  // Carry the installed callback through Sub and EmitState, as native emit does.
+  let application = semlower.driven(parser.parse_module(lexer.tokenize("")), "x86_64-linux");
+  let state = asmcore.EmitState { ...asmcore.new_state(), rt_lower: application.sub.rt_lower };
+  wrapper(src, exiting, state);
   let raw = asmcore.rt_src_str_cmp();
-  let selected = semlower.runtime_lowering(raw);
+  let selected = state.rt_lower(raw);
   parity(raw, selected);
   require(selected.declarations.len() == 1 && selected.declarations[0] == "__fern_str_cmp", 126);
-  let empty = semlower.runtime_lowering("");
+  let empty = state.rt_lower("");
   require(empty.declarations.len() == 0 && empty.bodies.len() == 0, 127);
   let finalizing = "struct Token { n: i32 }\nstruct Other { n: i64 }\ntrait Drop { function drop(self: Self): void; }\nimpl Drop for Token { function drop(self: Self): void {} }\nimpl Drop for Other { function drop(self: Self): void {} }\nfunction read(own x: Token): i32 { return x.n; }\nfunction read_other(own x: Other): i64 { return x.n; }\n";
-  let owned = semlower.runtime_lowering(finalizing);
+  let owned = state.rt_lower(finalizing);
   parity(finalizing, owned);
   require(owned.finalizers.len() == 2 && owned.finalizers[0].receiver == "Token" && owned.finalizers[1].receiver == "Other", 128);
   for f in owned.finalizers {

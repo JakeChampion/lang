@@ -29,6 +29,7 @@ import "./irverifygate";
 import "./ircore";
 import "./ssa";
 import "./ssa_lift";
+import "./physicalbody";
 
 // __fern_str_to_upper / _to_lower were hand-written here through #2649; they are
 // now Fern runtime functions (asmcore.rt_src_str_to_upper/_lower) lowered through
@@ -11867,7 +11868,8 @@ function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.Emi
   let lit0: i32 = s.string_lits.len();
   let agg0: i32 = s.const_aggs.len();
   let sh0: i32 = s.shape_lits.len();
-  let bodies: irtables.LowerResult[] = s.rt_lower(src);
+  let lowered: physicalbody.Lowered = s.rt_lower(src);
+  let bodies: irtables.LowerResult[] = lowered.bodies;
   let i: i32 = 0;
   while (i < fns.len()) {
     s = emit_function_via_ir_pre(bodies[i], fns[i], s, vgate);
@@ -12046,7 +12048,7 @@ pub function emit_module_ir_gated_sub(mod: parser.Module, sub: ircore.Sub, recs:
 }
 
 // `rt` lowers the runtime helpers this unit appends (asmcore.EmitState.rt_lower).
-pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, lo: i32, hi: i32, cache: irtables.LowerResult[], rt: (string) => irtables.LowerResult[], recs: usize, sw: asmcore.Switches): string {
+pub function emit_module_ir_unit_flat(mod: parser.Module, is_entry: boolean, globl_defs: boolean, str_ns: string, extra_needs: string[], all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, lo: i32, hi: i32, cache: irtables.LowerResult[], rt: (string) => physicalbody.Lowered, recs: usize, sw: asmcore.Switches): string {
   // Infer return types for unannotated functions so the IR path's
   // ret-type-keyed call tagging matches what module_with_builtins supplies.
   // (#4394 lever 3: `cache`, when non-empty, is the caller's pre-lowered

@@ -40,6 +40,7 @@ import "./flatten";
 import "./modloader";
 import "./ssasem";
 import "./semrecords";
+import "./physicalbody";
 
 // A generated release whose final operation drops the argument's counted
 // block. This body contract excludes borrowed string descriptors and special
@@ -890,7 +891,7 @@ pub struct Sub {
   physical_records: semrecords.Records,
   physical_finalizers: ssasem.Finalizer[],
   // The runtime helpers' lowering, handed to the emit's state.
-  rt_lower: (string) => irtables.LowerResult[],
+  rt_lower: (string) => physicalbody.Lowered,
   // The typed module the producer lambda-lifted, which a register backend's
   // emit reads erased rather than lifting again; `has_lifted` says it is set.
   lifted: parser.Module,

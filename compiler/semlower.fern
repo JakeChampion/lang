@@ -925,7 +925,7 @@ function substitution_of(im: parser.Module, debug_lines: boolean): ircore.Sub {
   let stab: irtables.StructTab = irtables.struct_tab(parser.erase_view_structs(im.structs));
   util.arr_push_cliff_report("sem:gated", 0);
   let sub: ircore.Sub = substitution(im, stab, debug_lines);
-  return ircore.Sub { ...sub, rt_lower: runtime_bodies };
+  return ircore.Sub { ...sub, rt_lower: runtime_lowering };
 }
 
 // Driven is what a driver hands an emit entry for a module it parsed without
