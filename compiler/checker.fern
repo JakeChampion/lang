@@ -3083,10 +3083,7 @@ function e045_map_key_msgs(t: typeinfo.Type, s: Scope): string[] {
   let out: string[] = [];
   match (t) {
     typeinfo.TypeMap(mt) => {
-      let msg: string = map_key_type_error(s, mt.key);
-      if (msg != "") {
-        out = out.append(msg);
-      }
+      out = util.append_all(out, map_shape_msgs(s, mt));
       out = util.append_all(out, e045_map_key_msgs(mt.key, s));
       out = util.append_all(out, e045_map_key_msgs(mt.value, s));
     },
@@ -3115,6 +3112,20 @@ function e045_map_key_msgs(t: typeinfo.Type, s: Scope): string[] {
       out = util.append_all(out, e045_map_key_msgs(f.ret_type, s));
     },
     _ => {}
+  }
+  return out;
+}
+
+// map_shape_msgs is E045's messages for one map's own key and value: a value
+// of void makes it a set of keys, which std/set holds and no column does.
+function map_shape_msgs(s: Scope, mt: typeinfo.TypeMap): string[] {
+  let out: string[] = [];
+  let msg: string = map_key_type_error(s, mt.key);
+  if (msg != "") {
+    out = out.append(msg);
+  }
+  if (is_void(mt.value)) {
+    out = out.append("map value type void is not supported — a set of keys is std/set's `Set`");
   }
   return out;
 }

@@ -4023,7 +4023,7 @@ function routed_iter(t: typeinfo.Type, f: ssasem.Func): boolean {
 // array key) one unit of each key, hashed and compared through closures over
 // the key type's own functions (key_closure).
 function routed_key(t: typeinfo.Type): boolean {
-  return routed_column(t) || ssasem.is_text(t) || ssasem.wide_map_key(t) || ssasem.keyed_map_key(t);
+  return routed_column(t) || ssasem.is_usize(t) || ssasem.is_text(t) || ssasem.wide_map_key(t) || ssasem.keyed_map_key(t);
 }
 
 // A value column may also hold boxes, one unit of each; core/map retains them
@@ -4032,7 +4032,7 @@ function routed_key(t: typeinfo.Type): boolean {
 // counted view descriptor, a counted string or a literal, never a view in its
 // maker's frame (ssaunits.frame_views). A usize value is the slot itself.
 function routed_value(t: typeinfo.Type): boolean {
-  return routed_column(t) || ssasem.is_usize(t) || ssasem.is_text(t) || routed_box(t) || cell_column(t);
+  return routed_column(t) || ssasem.is_char(t) || ssasem.is_usize(t) || ssasem.is_text(t) || routed_box(t) || cell_column(t);
 }
 
 // The boxes a routed value column can hold: any counted value but a string or
