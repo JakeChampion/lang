@@ -6,6 +6,21 @@ import "./util";
 
 pub struct Result { bodies: irtables.LowerResult[], extra: irtables.LowerResult[] }
 
+// Declaration positions stay fixed. Each extra index names its input row.
+pub struct MappedResult { result: Result, extra_indices: i32[] }
+
+function unchanged(bodies: irtables.LowerResult[], extra: irtables.LowerResult[], mapped: boolean): MappedResult {
+  let indices: i32[] = [];
+  let i: i32 = 0;
+  if (mapped) {
+    while (i < extra.len()) {
+      indices = indices.append(i);
+      i = i + 1;
+    }
+  }
+  return MappedResult { result: Result { bodies: bodies, extra: extra }, extra_indices: indices };
+}
+
 function exported(mod: parser.Module, name: string): boolean {
   for x in mod.exports {
     if (x.func_name == name) {
@@ -56,9 +71,17 @@ function adapter_index(mod: parser.Module, bodies: irtables.LowerResult[]): i32 
 }
 
 pub function unused_adapter(mod: parser.Module, bodies: irtables.LowerResult[], extra: irtables.LowerResult[]): Result {
+  return pruned_adapter(mod, bodies, extra, false).result;
+}
+
+pub function unused_adapter_mapped(mod: parser.Module, bodies: irtables.LowerResult[], extra: irtables.LowerResult[]): MappedResult {
+  return pruned_adapter(mod, bodies, extra, true);
+}
+
+function pruned_adapter(mod: parser.Module, bodies: irtables.LowerResult[], extra: irtables.LowerResult[], mapped: boolean): MappedResult {
   let adapter: i32 = adapter_index(mod, bodies);
   if (adapter < 0) {
-    return Result { bodies: bodies, extra: extra };
+    return unchanged(bodies, extra, mapped);
   }
   let all: irtables.LowerResult[] = util.append_all(bodies, extra);
   let declared: i32 = 0;
@@ -67,7 +90,7 @@ pub function unused_adapter(mod: parser.Module, bodies: irtables.LowerResult[], 
     declared = declared + 1;
   }
   if (!ordinary_candidate(mod, all[adapter]) || referenced(all, adapter)) {
-    return Result { bodies: bodies, extra: extra };
+    return unchanged(bodies, extra, mapped);
   }
   let candidates: boolean[] = [];
   for r in all {
@@ -94,14 +117,18 @@ pub function unused_adapter(mod: parser.Module, bodies: irtables.LowerResult[], 
     }
   }
   let kept: irtables.LowerResult[] = [];
+  let indices: i32[] = [];
   let i: i32 = 0;
   while (i < all.len()) {
     if (i < bodies.len()) {
       bodies = bodies.with(i, irtables.LowerResult { ...all[i], name: bodies[i].name });
     } else if (!all[i].superseded) {
       kept = kept.append(all[i]);
+      if (mapped) {
+        indices = indices.append(i - bodies.len());
+      }
     }
     i = i + 1;
   }
-  return Result { bodies: bodies, extra: kept };
+  return MappedResult { result: Result { bodies: bodies, extra: kept }, extra_indices: indices };
 }

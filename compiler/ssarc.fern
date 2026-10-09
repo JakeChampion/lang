@@ -3021,7 +3021,20 @@ function row_names(rows: irtables.LowerResult[]): string[] {
 // first of a symbol handed to it twice rather than co-linking both under the
 // .weak linkage, which would pick one silently.
 pub function merge_helpers(cache: irtables.LowerResult[], helpers: irtables.LowerResult[]): irtables.LowerResult[] {
+  return merged_helpers(cache, helpers, false).bodies;
+}
+
+// The unchanged cache prefix is followed by one body per helper_indices entry.
+// Each index names the selected input helper, before its ops are optimized.
+pub struct MergedHelpers { bodies: irtables.LowerResult[], cache_len: i32, helper_indices: i32[] }
+
+pub function merge_helpers_mapped(cache: irtables.LowerResult[], helpers: irtables.LowerResult[]): MergedHelpers {
+  return merged_helpers(cache, helpers, true);
+}
+
+function merged_helpers(cache: irtables.LowerResult[], helpers: irtables.LowerResult[], mapped: boolean): MergedHelpers {
   let out: irtables.LowerResult[] = cache;
+  let selected: i32[] = [];
   let cached: util.NameIndex = util.name_index(row_names(cache));
   let names: util.NameIndex = util.name_index(row_names(helpers));
   let k: i32 = 0;
@@ -3033,10 +3046,13 @@ pub function merge_helpers(cache: irtables.LowerResult[], helpers: irtables.Lowe
       } else {
         out = out.append(h);
       }
+      if (mapped) {
+        selected = selected.append(k);
+      }
     }
     k = k + 1;
   }
-  return out;
+  return MergedHelpers { bodies: out, cache_len: cache.len(), helper_indices: selected };
 }
 
 function types_error(f: ssasem.Func, view: ssaunits.SchemaView): string {

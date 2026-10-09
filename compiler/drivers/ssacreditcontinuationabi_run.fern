@@ -11,6 +11,7 @@ import "../ssacredithelper" as helper;
 import "../util";
 import "./ssacreditfinal" as final_binding;
 import "./ssacreditruntime" as runtime_binding;
+import "./ssacreditprovenance" as provenance;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -203,6 +204,7 @@ function target_checks(target: string): void {
 }
 
 function main(): i32 {
+  provenance.run();
   runtime_binding.run(source(false, false), false);
   runtime_binding.run(source(false, true), true);
   target_checks("arm64-darwin");
