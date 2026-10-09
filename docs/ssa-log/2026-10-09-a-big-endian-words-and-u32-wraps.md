@@ -62,4 +62,4 @@ compiler built with it rebuilds itself byte for byte.
   arrays and wasm. It went in favour of the big-endian case here.
 - A checked read that `word_loads` keeps as the bounds check still loads its
   byte, which nothing reads. Removing that load needs the check split from
-  the read.
+  the read: done in `2026-10-10-a-a-word-is-one-check-and-one-load.md`.

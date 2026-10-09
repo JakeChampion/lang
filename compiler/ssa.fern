@@ -277,7 +277,7 @@ pub function print_func(f: SFunc): string {
 //
 //   40 ld_at      args [base]           imm = byte offset; 8-byte load
 //   41 st_at      args [base, val]      imm = byte offset; 8-byte store, no result read
-//   42 arr_at     args [base, idx]      element idx of a length-prefixed box, bounds-checked (imm 1: unchecked)
+//   42 arr_at     args [base, idx]      element idx of a length-prefixed box, bounds-checked (imm 1: unchecked; imm 2: the check alone, no load or result)
 //   43 arr_st     args [base, idx, val] the checked store
 //   44 str_at     args [box, idx]       byte idx of a string box, bounds-checked
 //   45 fn_addr    str = function name   the address of __fn_<name>

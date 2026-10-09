@@ -3749,7 +3749,13 @@ function container(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, 
   }
   if (ins.kind_tag == ssasem.array_get()) {
     if (byte_view(f.values[ins.args[0]])) {
+      if (ins.imm == ssasem.check_only()) {
+        return emit(r, ssabytes.check(ins.args[0]));
+      }
       return emit(r, ssabytes.read(ins.args[0], true, ins.imm == 1));
+    }
+    if (ins.imm == ssasem.check_only()) {
+      return emit(r, ir.check_only(arr_get_op(f.values[ins.result], false)));
     }
     return emit(r, arr_get_op(f.values[ins.result], ins.imm == 1));
   }

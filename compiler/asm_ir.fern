@@ -8029,6 +8029,9 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     if (ins.imm != 1) {
       s = ssa_jump_sym(ssa_alu_rm0(s, 7, 64, true, b, a), "jae", "__fern_oob_abort");
     }
+    if (ins.imm == 2) {
+      return s;
+    }
     if (ins.str == "u8") {
       s = ssa_movzb_mi(s, 0, d, a, b, 8);
     } else {
