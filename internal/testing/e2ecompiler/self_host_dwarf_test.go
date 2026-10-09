@@ -77,8 +77,11 @@ func TestSelfHostDWARFDebugInfo(t *testing.T) {
 					if nm, _ := e.Val(dwarf.AttrName).(string); nm != src {
 						t.Errorf("CU name = %q, want the entry path %q", nm, src)
 					}
-					if cd, _ := e.Val(dwarf.AttrCompDir).(string); cd == "" {
-						t.Errorf("CU comp_dir is empty; want the compile directory")
+					cd, _ := e.Val(dwarf.AttrCompDir).(string)
+					named, nerr := os.Stat(cd)
+					here, herr := os.Stat(".")
+					if nerr != nil || herr != nil || !os.SameFile(named, here) {
+						t.Errorf("CU comp_dir = %q; want the directory the compile ran in", cd)
 					}
 				case dwarf.TagSubprogram:
 					name, _ := e.Val(dwarf.AttrName).(string)
