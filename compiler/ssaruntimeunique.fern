@@ -1,0 +1,156 @@
+// Scoped proof of the native stack-entry uniqueness helper's actual assembly.
+// Not a proof of native inline templates, call sites, or the whole runtime.
+import "./util";
+import "std/string";
+import "./ssacredithelper" as helper;
+import "./ssaruntimeuniqueflow" as flow;
+
+function verdict(ok: boolean, message: string): helper.Proof {
+  return helper.Proof { ok: ok, function_name: "__fn___fern_rc_is_unique", message: message };
+}
+
+function symbol_byte(c: u8): boolean {
+  return c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c >= b'0' && c <= b'9' || c == b'_' || c == b'.' || c == b'$';
+}
+
+function definition(line: string): string {
+  let i = 0;
+  while (i < line.len()) {
+    let c = line[i];
+    if (c == b':') {
+      return slice_unchecked(line, 0, i) + "";
+    }
+    if (!symbol_byte(c)) {
+      return "";
+    }
+    i = i + 1;
+  }
+  return "";
+}
+
+function index(lines: string[], wanted: string): i32 {
+  let found = -1;
+  let i = 0;
+  for line in lines {
+    if (definition(line) + ":" == wanted) {
+      if (found >= 0) {
+        return -2;
+      }
+      found = i;
+    }
+    i = i + 1;
+  }
+  return found;
+}
+
+function assignment(line: string): boolean {
+  let i = 0;
+  while (i < line.len() && symbol_byte(line[i])) {
+    i = i + 1;
+  }
+  let rest = util.trim(slice_unchecked(line, i, line.len()) + "");
+  return i > 0 && util.str_has_prefix(rest, "=");
+}
+
+// Full final output is supplied, so duplicate helper/local labels elsewhere
+// cannot silently bind a branch to a different definition. Assembly aliases,
+// macros and includes could replace definitions outside this body: refuse them.
+function lines(text: string): string[] {
+  let out: string[] = [];
+  for raw in text.split("\n") {
+    let line = util.trim(raw);
+    if (assignment(line)) {
+      return [];
+    }
+    for directive in [".set", ".equ", ".equiv", ".macro", ".include", ".if", ".rept", ".irp", ".symver", ".weakref", ".code", ".intel_syntax", ".att_syntax", ".arch", ".syntax", ".thumb", ".arm", ".altmacro"] {
+      if (util.str_has_prefix(line, directive)) {
+        return [];
+      }
+    }
+    if (line != "") {
+      out = out.append(line);
+    }
+  }
+  return out;
+}
+
+function body(all: string[], start: i32): string[] {
+  let out: string[] = [];
+  let at = start + 1;
+  while (at < all.len()) {
+    let line = all[at];
+    if (definition(line) != "" && !util.str_has_prefix(line, ".L")) {
+      return out;
+    }
+    out = out.append(line);
+    at = at + 1;
+  }
+  return out;
+}
+
+// Boundary ABI: non-inline pointers at or above 65536 name a readable
+// normalized header (bit1 cleared), with a signed32 RC at offset -8. This
+// checker proves no heap writes and the exact borrowed Boolean result; it
+// does not establish pointer validity or credit ownership at a caller.
+struct Program { ops: flow.Op[], error: string }
+
+function program(all: string[], code: string[], arm: boolean): Program {
+  let ops: flow.Op[] = [];
+  for line in code {
+    let name = definition(line);
+    if (name != "") {
+      if (line != name + ":" || !util.str_has_prefix(line, ".L") || index(all, line) < 0) {
+        return Program { ops: [], error: "ambiguous uniqueness branch label" };
+      }
+      ops = ops.append(flow.Op { kind: 30, target: -1 });
+    } else {
+      let decoded = flow.decode(line, arm);
+      let target = -1;
+      if (decoded.kind >= 20) {
+        target = index(code, decoded.target + ":");
+        if (target < 0 || !util.str_has_prefix(decoded.target, ".L")) {
+          return Program { ops: [], error: "missing or ambiguous uniqueness branch target" };
+        }
+      }
+      if (decoded.kind < 1) {
+        return Program { ops: [], error: "unsupported uniqueness instruction" };
+      }
+      ops = ops.append(flow.Op { kind: decoded.kind, target: target });
+    }
+  }
+  return Program { ops: ops, error: "" };
+}
+
+pub function check(text: string, architecture: string): helper.Proof {
+  if (architecture != "x86-64" && architecture != "arm64") {
+    return verdict(false, "unsupported uniqueness architecture");
+  }
+  let all = lines(text);
+  let start = index(all, "__fn___fern_rc_is_unique:");
+  if (start < 0) {
+    return verdict(false, "missing or ambiguous uniqueness implementation");
+  }
+  if (all[start] != "__fn___fern_rc_is_unique:") {
+    return verdict(false, "unsupported uniqueness entry definition");
+  }
+  let p = program(all, body(all, start), architecture == "arm64");
+  if (p.error != "") {
+    return verdict(false, p.error);
+  }
+  return paths(p.ops, architecture == "arm64");
+}
+
+function paths(ops: flow.Op[], arm: boolean): helper.Proof {
+  // Exhaustive abstract classes, not representative numeric test samples.
+  // Every recognized predicate is constant on each of these 2*2*4 classes.
+  for tagged in [false, true] {
+    for low in [false, true] {
+      for rc in [-1, 0, 1, 2] {
+        if (!flow.path(ops, tagged, low, rc, arm)) {
+          return verdict(false, "unproved uniqueness path");
+        }
+      }
+    }
+  }
+  return verdict(true, "borrowed native uniqueness implementation proved");
+}
