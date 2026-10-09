@@ -1,0 +1,10 @@
+// Pins the orphan rule: an impl of a trait belongs in the module that declares
+// the trait or the type. core/cmp declares Display and i32 is built in, so this
+// module may implement neither for it (#11851).
+import "core/cmp";
+
+impl cmp.Display for i32 {}         // error[E021]: orphan impl: `impl cmp.Display for i32` must be declared in the module that defines the trait or the type
+
+function main(): i32 {
+    return 0;
+}

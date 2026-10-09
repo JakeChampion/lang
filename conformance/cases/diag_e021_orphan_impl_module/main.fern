@@ -1,0 +1,8 @@
+// Pins the orphan rule across modules: the impl sits in neither the module
+// that declares the trait (core/cmp) nor the one that declares the type (lib),
+// so it is refused even though the entry never names it (#11851).
+import "./other";
+
+function main(): i32 {
+    return other.f();
+}

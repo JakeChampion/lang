@@ -1,0 +1,17 @@
+// Pins E074 for a method name provided by both the type itself and a trait
+// impl, in either order. Picking one silently would give `p.show()` two
+// meanings: the trait's inside a generic body bound by Show, the inherent one
+// at a concrete call (#11851).
+trait Show { function show(self: Self): string; }
+
+struct P { a: i32 }
+impl Show for P { function show(self: Self): string { return "trait"; } }
+function (p: P) show(): string { return "inherent"; }     // error[E074]: ambiguous method "show" on P
+
+struct Q { a: i32 }
+function (q: Q) show(): string { return "inherent"; }
+impl Show for Q { function show(self: Self): string { return "trait"; } }     // error[E074]: ambiguous method "show" on Q
+
+function main(): i32 {
+    return 0;
+}

@@ -104,11 +104,12 @@ func TestSelfHostRejectsConformanceErrorCasesX86_64(t *testing.T) {
 		name := filepath.Base(dir)
 		seen[name] = true
 		t.Run(name, func(t *testing.T) {
-			src, err := os.ReadFile(filepath.Join(dir, "main.fern"))
+			entry, err := filepath.Abs(filepath.Join(dir, "main.fern"))
 			if err != nil {
-				t.Fatalf("read main.fern: %v", err)
+				t.Fatalf("abs main.fern: %v", err)
 			}
-			if _, _, lerr := modload.LoadSource(string(src)); lerr != nil {
+			// Loaded from its directory, so a case's own modules come with it.
+			if _, _, lerr := modload.Load(entry); lerr != nil {
 				// A parse error: the program has no module set to check.
 				if !parseOnly[name] {
 					t.Errorf("the Go loader cannot parse %s (%v) — add `parse:%s` to %s, since a parse case is outside what this gate reads", name, lerr, name, rejectionGapFile)
@@ -119,7 +120,7 @@ func TestSelfHostRejectsConformanceErrorCasesX86_64(t *testing.T) {
 				t.Errorf("%s now parses — drop its `parse:` line from %s so the checker verdict is pinned instead", name, rejectionGapFile)
 				return
 			}
-			rejected := len(driverDiags(checkSourceModload(t, runner, driverBin, string(src)))) > 0
+			rejected := len(driverDiags(checkFileModload(t, runner, driverBin, entry))) > 0
 			switch {
 			case rejected && gaps[name]:
 				t.Errorf("the self-host now rejects %s — delete its line from %s (a gap file that lists fixed cases stops being a gap list)", name, rejectionGapFile)
