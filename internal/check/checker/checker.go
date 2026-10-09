@@ -5186,9 +5186,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 				typeLocal = true
 			}
 			if !traitLocal && !typeLocal {
-				c.errfCode(impl.P, "E021",
+				c.report(impl.SourceModule, impl.P, "E021", fmt.Sprintf(
 					"orphan impl: `impl %s for %s` must be declared in the module that defines the trait or the type",
-					demangle(impl.Trait), demangle(typeName))
+					demangle(impl.Trait), demangle(typeName)))
 				continue
 			}
 		}

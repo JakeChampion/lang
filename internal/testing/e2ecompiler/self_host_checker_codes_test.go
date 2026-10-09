@@ -762,6 +762,11 @@ func TestSelfHostCheckerCodesX86_64(t *testing.T) {
 		// E021 (#4347): an impl that omits a REQUIRED (abstract) trait method.
 		// A complete impl and a default-only trait (whose default is synthesised
 		// onto the omitting impl) stay clean, matching the Go oracle.
+		// E074 (#11851): one method name from the type itself and from a trait
+		// impl, in either order. Two traits providing it is legal on its own.
+		{"e074-trait-then-inherent", "trait Show { function show(self: Self): i32; }\nstruct P { a: i32 }\nimpl Show for P { function show(self: Self): i32 { return 1; } }\nfunction (p: P) show(): i32 { return 2; }\nfunction main(): i32 { return 0; }\n", []string{"E074"}},
+		{"e074-inherent-then-trait", "trait Show { function show(self: Self): i32; }\nstruct P { a: i32 }\nfunction (p: P) show(): i32 { return 2; }\nimpl Show for P { function show(self: Self): i32 { return 1; } }\nfunction main(): i32 { return 0; }\n", []string{"E074"}},
+		{"two-traits-one-method-name-ok", "trait A { function show(self: Self): i32; }\ntrait B { function show(self: Self): i32; }\nstruct P { a: i32 }\nimpl A for P { function show(self: Self): i32 { return 1; } }\nimpl B for P { function show(self: Self): i32 { return 2; } }\nfunction main(): i32 { return 0; }\n", nil},
 		{"impl-missing-method", "trait Greet { function hello(): i32; }\nstruct Dog {}\nimpl Greet for Dog {}\nfunction main(): i32 { return 0; }\n", []string{"E021"}},
 		{"impl-complete-ok", "trait Greet { function hello(): i32; }\nstruct Dog {}\nimpl Greet for Dog { function hello(): i32 { return 1; } }\nfunction main(): i32 { return 0; }\n", nil},
 		{"impl-default-omitted-ok", "trait Greet { function hi(): i32 { return 9; } }\nstruct Dog {}\nimpl Greet for Dog {}\nfunction main(): i32 { return 0; }\n", nil},
@@ -3827,6 +3832,13 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"derive-qualified-field-no-impl", "import \"core/cmp\";\nstruct Q { n: i32 }\n@derive(cmp.Eq)\nstruct P { q: Q }\nfunction main(): i32 { return 0; }\n"},
 		{"derive-aliased-bound-ok", "import \"core/cmp\" as c;\n@derive(c.Eq)\nstruct P { n: i32 }\nfunction same[T: c.Eq](a: T, b: T): boolean { return a.eq(b); }\nfunction main(): i32 { let p: P = P { n: 1 }; if (same(p, p)) { return 3; } return 0; }\n"},
 		{"derive-unknown-qualifier", "@derive(cmp.Eq)\nstruct P { n: i32 }\nfunction main(): i32 { return 0; }\n"},
+		// Coherence (#11851): an impl of core/cmp's trait for a built-in type is
+		// an orphan here, and a method name the type has inherently and the impl
+		// provides again is E074, in either order, imported trait or not.
+		{"orphan-impl-imported-trait-builtin-type", "import \"core/cmp\";\nimpl cmp.Display for i32 {}\nfunction main(): i32 { return 0; }\n"},
+		{"orphan-impl-clashing-with-builtin-inherent", "import \"core/cmp\";\nimpl cmp.Display for i32 { function to_string(self: i32): string { return \"x\"; } }\nfunction main(): i32 { return 0; }\n"},
+		{"e074-imported-trait-then-inherent", "import \"core/cmp\";\nstruct P { a: i32 }\nimpl cmp.Display for P { function to_string(self: P): string { return \"t\"; } }\nfunction (p: P) to_string(): string { return \"i\"; }\nfunction main(): i32 { return 0; }\n"},
+		{"e074-inherent-then-imported-trait", "import \"core/cmp\";\nstruct P { a: i32 }\nfunction (p: P) to_string(): string { return \"i\"; }\nimpl cmp.Display for P { function to_string(self: P): string { return \"t\"; } }\nfunction main(): i32 { return 0; }\n"},
 		// An entry const named like an imported variant shadows it in the
 		// entry and never reaches the importing module's bodies (#11143).
 		{"entry-const-named-like-imported-variant", "import \"std/dns\";\nconst A: i32 = 1;\nfunction main(): i32 { print(A.to_string()); return 0; }\n"},
