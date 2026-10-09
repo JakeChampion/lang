@@ -87,6 +87,7 @@ audit_types_match                                    0
 base64_roundtrip                                     0
 binding_site_pattern_grammar                         0
 bool_in_tuple_with_i64                               0
+bool_match_true_false_closes                         0
 bool_to_string                                       0
 bool_to_string_receivers                             0
 boolean_logic                                        0
@@ -126,6 +127,7 @@ const_settles_across_modules                         0
 const_settles_where_it_is_read                       0
 const_shadowed_by_binder                             0
 const_shadowed_by_pattern_binder                     0
+const_struct_literal                                 0
 const_struct_negative_fields                         0
 const_without_a_type                                 0
 consuming_method                                     0

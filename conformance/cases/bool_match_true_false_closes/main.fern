@@ -1,0 +1,26 @@
+// Unguarded `true` and `false` arms close a boolean's domain, so neither the
+// statement nor the expression form needs a `_` arm (#6685).
+import "core/int";
+
+function pick(b: boolean): i32 {
+  match (b) {
+    true => {
+      return 7;
+    },
+    false => {
+      return 3;
+    }
+  }
+}
+
+function name(b: boolean): string {
+  return match (b) { false => "no", true => "yes" };
+}
+
+function main(): i32 {
+  print(int.int_to_string(pick(true)));
+  print(int.int_to_string(pick(false)));
+  print(name(true));
+  print(name(false));
+  return pick(true) + pick(false);
+}
