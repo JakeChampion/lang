@@ -1048,7 +1048,7 @@ func checkTarget(ctx context.Context, prog *ast.Program, target string) (*Info, 
 	if targetHasEnv(target) {
 		configFromEnv(prog)
 	}
-	info, err := checkImpl(ctx, prog, targetSupervises(target))
+	info, err := checkImpl(ctx, prog, target)
 	if info != nil {
 		info.Target = target
 	}
@@ -1084,7 +1084,13 @@ func targetSupervises(target string) bool {
 	return d == nil || slices.Contains(d.Capabilities, "proc")
 }
 
-func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, error) {
+// WasiHTTPStatefulHandler is E075's text for a stateful `handle` on
+// wasm32-wasi-http, which the self-host's driver reports in the same words.
+const WasiHTTPStatefulHandler = "a wasi:http handler takes `(req, plat)` and no state: the proxy world starts a fresh instance for every request, so nothing carries from one to the next; build a stateful handler for a native target"
+
+func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, error) {
+	supervised := targetSupervises(target)
+	wasiHTTP := target == "wasm32-wasi-http"
 	// Prepend the built-in Option / Result / IoError /
 	// JsonValue enums so user code (and the stdlib)
 	// can reference them without an explicit declaration.
@@ -5516,9 +5522,14 @@ func checkImpl(ctx context.Context, prog *ast.Program, supervised bool) (*Info, 
 		prog.Funcs = append(prog.Funcs, synthesiseWasiHandle())
 	}
 	if h := findDecl(prog, "handle"); h != nil && h.Receiver == nil && len(h.Params) == 3 {
+		if wasiHTTP {
+			c.errfCode(h.P, "E075", WasiHTTPStatefulHandler)
+		}
 		c.info.StatefulHandler = true
 	}
-	if hasHandleDecl(prog) && !hasMainDecl(prog) {
+	// The proxy world serves through its incoming-handler export, so a
+	// wasi-http handler gets no serve loop.
+	if hasHandleDecl(prog) && !hasMainDecl(prog) && !wasiHTTP {
 		// A mispaired init/handle has already been reported against the
 		// declaration that is wrong; synthesising main on top of it adds
 		// a second, positionless error about a call nobody wrote.

@@ -9883,3 +9883,28 @@ function main(): i32 { let b: Box = Box { m: map_new(4), tag: 2 }; return b.tag;
 		t.Errorf("key type argument = %v, want string", call.TypeArgs[0])
 	}
 }
+
+// A `handle` threading a state is refused on wasm32-wasi-http with one E075 at
+// the handler, and no serve loop is synthesised there, which reached stdlib
+// code the proxy world cannot run; a stateless handler still checks (#11856).
+func TestWasiHTTPStatefulHandlerIsE075(t *testing.T) {
+	const response = `HttpResponse { status: 200, body: BodyText("ok"), headers: HeaderMap { names: [], values: [] }, trailers: HeaderMap { names: [], values: [] } }`
+	check := func(src string) (*Info, error) {
+		prog, err := parser.Parse(serveStubDecls + src)
+		if err != nil {
+			t.Fatalf("parse: %v", err)
+		}
+		info, err := CheckTarget(prog, "wasm32-wasi-http")
+		if main := findDecl(prog, "main"); main != nil {
+			t.Errorf("a main was synthesised for a wasm32-wasi-http handler")
+		}
+		return info, err
+	}
+	_, err := check(`function handle(n: i32, req: HttpRequest, plat: platform__Host): (i32, HttpResponse) { return (n, ` + response + `); }`)
+	if err == nil || strings.Count(err.Error(), "\n")+1 != 1 || !strings.Contains(err.Error(), WasiHTTPStatefulHandler) {
+		t.Errorf("stateful handler: got %v, want one E075", err)
+	}
+	if _, err := check(`function handle(req: HttpRequest, plat: platform__Host): HttpResponse { return ` + response + `; }`); err != nil {
+		t.Errorf("stateless handler: %v", err)
+	}
+}

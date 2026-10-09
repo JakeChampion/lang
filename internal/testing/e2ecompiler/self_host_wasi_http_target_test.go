@@ -8,6 +8,8 @@ import (
 	"regexp"
 	"strings"
 	"testing"
+
+	"github.com/jakechampion/lang/internal/check/checker"
 )
 
 // wasiHttpRouterSrc is the handler the wasm32-wasi-http gates serve: it
@@ -245,5 +247,39 @@ func TestSelfHostWasiHttpTargetNeedsHandle(t *testing.T) {
 	}
 	if !strings.Contains(string(out), "declares no `function handle(") {
 		t.Fatalf("refusal does not name the missing handle:\n%s", out)
+	}
+}
+
+// TestSelfHostWasiHttpTargetRefusesStatefulHandler: a `handle` that threads
+// a state cannot be a wasi:http handler, since the proxy world starts a fresh
+// instance per request. The refusal is one E075 at `handle`, in the Go
+// checker's words, from both -check and a compile; it was an E040 at a line
+// past the end of the file, from the stub that binds the handler (#11856).
+func TestSelfHostWasiHttpTargetRefusesStatefulHandler(t *testing.T) {
+	cli, stdlib := witSelfHostCLI(t)
+	dir := t.TempDir()
+	prog := filepath.Join(dir, "main.fern")
+	src := `import "std/http";
+import "std/platform";
+
+function handle(n: i32, req: HttpRequest, plat: platform.Platform): (i32, HttpResponse) {
+    return (n + 1, http.ok("x"));
+}
+`
+	if err := os.WriteFile(prog, []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	want := prog + ":4:1: error[E075]: " + checker.WasiHTTPStatefulHandler + "\n"
+	for _, args := range [][]string{
+		{"-check", "-target", "wasm32-wasi-http", prog, stdlib},
+		{"-target", "wasm32-wasi-http", "-o", filepath.Join(dir, "x.wasm"), prog, stdlib},
+	} {
+		out, err := exec.Command(cli, args...).CombinedOutput()
+		if err == nil {
+			t.Errorf("%v: a stateful handler was accepted for wasm32-wasi-http", args)
+		}
+		if string(out) != want {
+			t.Errorf("%v:\n got %q\nwant %q", args, out, want)
+		}
 	}
 }
