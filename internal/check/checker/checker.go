@@ -10398,8 +10398,19 @@ func normalizeParamRefs(t ast.Type, tpSet map[string]bool) ast.Type {
 // bounds (`I: Iterator[Box[T]]`) recurse positionally. See #2691.
 func bindBoundParam(boundArg, implArg ast.Type, tpSet map[string]bool, sub map[string]ast.Type) bool {
 	bind := func(name string) bool {
-		if tpSet[name] {
-			if _, done := sub[name]; !done {
+		if !tpSet[name] {
+			return false
+		}
+		existing, done := sub[name]
+		if !done {
+			sub[name] = implArg
+			return true
+		}
+		// An untyped integer literal argument bound the parameter first; the
+		// impl's typed integer decides it, as a later typed argument would
+		// (`contains(of(xs_i64), 2)` is over i64).
+		if en, ok := existing.(ast.NumberType); ok && en.Polymorphic {
+			if an, ok := implArg.(ast.NumberType); ok && !an.Polymorphic {
 				sub[name] = implArg
 				return true
 			}

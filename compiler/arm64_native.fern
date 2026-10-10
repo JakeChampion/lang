@@ -10983,24 +10983,27 @@ function macho_lcstr_cmd_len(cmd: i32, path: string): i32 {
 }
 
 // macho_load_cmds_len is the total size of all load commands: __PAGEZERO
-// + __TEXT (1 section) + optional __DATA (1 section) + __LINKEDIT +
+// + __TEXT (1 section) + optional __DATA (1 section) + optional __DWARF
+// (macho_dwarf_sects sections, under `-g`) + __LINKEDIT +
 // LC_DYLD_INFO_ONLY + LC_SYMTAB + LC_DYSYMTAB + LC_BUILD_VERSION +
 // LC_LOAD_DYLINKER + LC_LOAD_DYLIB + LC_MAIN + LC_CODE_SIGNATURE.
 // (segCmd=72, section=80, dyldInfo=48, symtab=24, dysymtab=80,
 // buildVersion=24, main=24, codeSig=16.)
 //
 // The trailing `+ 48` is 48 bytes of zero slack between the last load
-// command and the first code byte: the native writer's loadCommandsLen
-// counts dyldInfoCmdLen twice, and this figure is what fixes text_off
-// (hence every address), so the two writers agree on layout only if this
-// one does too. Removing it belongs in a change that moves both.
-function macho_load_cmds_len(has_data: boolean, has_eh: boolean): i32 {
+// command and the first code byte, the layout the retired native writer
+// fixed (it counted dyldInfoCmdLen twice). It fixes text_off and so every
+// address; dropping it is a layout change of its own.
+function macho_load_cmds_len(has_data: boolean, has_eh: boolean, dwarf: boolean): i32 {
   let n: i32 = 72 + (72 + 80) + 72;  // PAGEZERO + TEXT(1 sect) + LINKEDIT
   if (has_eh) {
     n = n + 80;  // __TEXT's second section header, __eh_frame
   }
   if (has_data) {
     n = n + (72 + 80);  // DATA(1 sect)
+  }
+  if (dwarf) {
+    n = n + 72 + 80 * macho_dwarf_sects().len();
   }
   n = n + 48 + 24 + 80 + 24;  // DYLD_INFO_ONLY + SYMTAB + DYSYMTAB + BUILD_VERSION
   n = n + macho_lcstr_cmd_len(14, macho_dylinker_path());
@@ -11015,27 +11018,35 @@ function macho_load_cmds_len(has_data: boolean, has_eh: boolean): i32 {
 // resolve @PAGE / @PAGEOFF references before the same blobs are laid out
 // here at the same address. The __eh_frame section header is one of those
 // load commands, so unwind data shifts the first code byte.
-function macho_text_off(has_data: boolean, has_eh: boolean): i32 {
-  return 32 + macho_load_cmds_len(has_data, has_eh);
+function macho_text_off(has_data: boolean, has_eh: boolean, dwarf: boolean): i32 {
+  return 32 + macho_load_cmds_len(has_data, has_eh, dwarf);
+}
+
+// macho_dwarf_sects names the __DWARF segment's sections, in the order a
+// `-g` build's DWARF blobs are passed (elf.DwSections' fields). Every one is
+// written, an empty one with size 0, so the load commands' length is known
+// before the link that the DWARF depends on.
+function macho_dwarf_sects(): string[] {
+  return ["__debug_abbrev", "__debug_info", "__debug_line", "__debug_loc"];
 }
 
 // macho_eh_off is the file offset of __eh_frame: it follows the code inside
 // __TEXT, 8-aligned because its FDEs carry 8-byte pcrel pointers. Sharing
 // the segment is what keeps the R+X mapping libunwind reads it through.
-function macho_eh_off(text_len: i32, has_data: boolean, has_eh: boolean): i32 {
+function macho_eh_off(text_len: i32, has_data: boolean, has_eh: boolean, dwarf: boolean): i32 {
   if (!has_eh) {
     return 0;
   }
-  return macho_align_up(macho_text_off(has_data, has_eh) + text_len, 8);
+  return macho_align_up(macho_text_off(has_data, has_eh, dwarf) + text_len, 8);
 }
 
 // macho_text_end is the file offset one past the last byte inside __TEXT.
-function macho_text_end(text_len: i32, eh_len: i32, has_data: boolean): i32 {
+function macho_text_end(text_len: i32, eh_len: i32, has_data: boolean, dwarf: boolean): i32 {
   let has_eh: boolean = eh_len > 0;
   if (has_eh) {
-    return macho_eh_off(text_len, has_data, has_eh) + eh_len;
+    return macho_eh_off(text_len, has_data, has_eh, dwarf) + eh_len;
   }
-  return macho_text_off(has_data, has_eh) + text_len;
+  return macho_text_off(has_data, has_eh, dwarf) + text_len;
 }
 
 // macho_needs_data decides whether the image gets a __DATA segment. Zero-init
@@ -11053,9 +11064,14 @@ function macho_needs_data(data_len: i32, bss: i32): boolean {
 // macho_text_vaddr returns the address of the first code byte (== entry)
 // for the given code/unwind/data/bss sizes. eh_len is 0 for an image with no
 // unwind data; a nonzero one shifts every address, so an assembler resolving
-// @PAGE / @PAGEOFF must pass the same answer the writer will.
+// @PAGE / @PAGEOFF must pass the same answer the writer will. A `-g` image's
+// __DWARF segment shifts them too; the _dw forms take that as `dwarf`.
 pub function macho_text_vaddr(text_len: i32, eh_len: i32, data_len: i32, bss: i32): i64 {
-  return macho_base_vaddr() + macho_text_off(macho_needs_data(data_len, bss), eh_len > 0) as i64;
+  return macho_text_vaddr_dw(text_len, eh_len, data_len, bss, false);
+}
+
+pub function macho_text_vaddr_dw(text_len: i32, eh_len: i32, data_len: i32, bss: i32, dwarf: boolean): i64 {
+  return macho_base_vaddr() + macho_text_off(macho_needs_data(data_len, bss), eh_len > 0, dwarf) as i64;
 }
 
 // macho_eh_vaddr returns the address __eh_frame is loaded at, 0 without it.
@@ -11063,19 +11079,27 @@ pub function macho_text_vaddr(text_len: i32, eh_len: i32, data_len: i32, bss: i3
 // pointers are pcrel; neither address depends on eh_len itself, so a caller
 // renders with a placeholder length and places with the real one.
 pub function macho_eh_vaddr(text_len: i32, eh_len: i32, data_len: i32, bss: i32): i64 {
+  return macho_eh_vaddr_dw(text_len, eh_len, data_len, bss, false);
+}
+
+pub function macho_eh_vaddr_dw(text_len: i32, eh_len: i32, data_len: i32, bss: i32, dwarf: boolean): i64 {
   if (eh_len <= 0) {
     return 0 as i64;
   }
-  return macho_base_vaddr() + macho_eh_off(text_len, macho_needs_data(data_len, bss), true) as i64;
+  return macho_base_vaddr() + macho_eh_off(text_len, macho_needs_data(data_len, bss), true, dwarf) as i64;
 }
 
 // macho_data_vaddr returns the __DATA segment base for the given
 // code/unwind/data/bss sizes (0 when the image has neither).
 pub function macho_data_vaddr(text_len: i32, eh_len: i32, data_len: i32, bss: i32): i64 {
+  return macho_data_vaddr_dw(text_len, eh_len, data_len, bss, false);
+}
+
+pub function macho_data_vaddr_dw(text_len: i32, eh_len: i32, data_len: i32, bss: i32, dwarf: boolean): i64 {
   if (!macho_needs_data(data_len, bss)) {
     return 0;
   }
-  let text_vmsize: i32 = macho_align_up(macho_text_end(text_len, eh_len, true), macho_page_size());
+  let text_vmsize: i32 = macho_align_up(macho_text_end(text_len, eh_len, true, dwarf), macho_page_size());
   return macho_base_vaddr() + text_vmsize as i64;
 }
 
@@ -11246,10 +11270,11 @@ function macho_dysymtab(buf: i32[], nlocal: i32): i32[] {
   return macho_zeros(buf, 64);  // extdef/undef ranges, toc, modtab, refsyms, indirect, ext/loc rel
 }
 
-function macho_has_dot(s: string): boolean {
+// macho_inner_label reports a label with a `.` or a `#` in it: not a function.
+function macho_inner_label(s: string): boolean {
   let i: i32 = 0;
   while (i < s.len()) {
-    if (s[i] == b'.') {
+    if (s[i] == b'.' || s[i] == b'#') {
       return true;
     }
     i = i + 1;
@@ -11264,13 +11289,14 @@ function macho_has_dot(s: string): boolean {
 // emitters already rewrite their dotted labels to an `L` prefix
 // (`darwin_retarget_locals`); the dot rule is ELF's, kept for hand-written
 // input, whose dotted labels are branch targets inside a function and as
-// symbols would end its extent there.
+// symbols would end its extent there. A numeric local label `N:`, which the
+// assembler records as `N#k`, is dropped for the same reason.
 function macho_sym_order(names: string[], offs: i32[]): i32[] {
   let idx: i32[] = [];
   let i: i32 = 0;
   while (i < names.len() && i < offs.len()) {
     let n: string = names[i];
-    if (n.len() > 0 && n[0] != b'L' && !macho_has_dot(n)) {
+    if (n.len() > 0 && n[0] != b'L' && !macho_inner_label(n)) {
       idx = idx.append(i);
     }
     i = i + 1;
@@ -11516,7 +11542,7 @@ pub function macho_entry_off(a: Arm64Asm): i32 {
 // LC_DYLD_INFO_ONLY rebase stream is how the image asks for that. Pass an
 // empty array when the data blob holds no absolute addresses.
 pub function macho_executable(text: u8[], eh: i32[], data: i32[], ident: string, entry_off: i32, bss: i32, rebase_offs: i32[]): i32[] {
-  return macho_executable_binds(text, eh, data, ident, entry_off, bss, rebase_offs, [], [], [], []);
+  return macho_executable_binds(text, eh, data, ident, entry_off, bss, rebase_offs, [], [], [], [], []);
 }
 
 // macho_executable_binds is macho_executable plus the `.quad` slots dyld binds
@@ -11526,16 +11552,23 @@ pub function macho_executable(text: u8[], eh: i32[], data: i32[], ident: string,
 // LC_SYMTAB as nlist_64 entries so lldb, nm and a crash backtrace can name a
 // code address (#11409, the Mach-O counterpart of elf_append_debug). Empty
 // arrays write the degenerate LC_SYMTAB a default build has, byte for byte.
-pub function macho_executable_binds(text: u8[], eh: i32[], data: i32[], ident: string, entry_off: i32, bss: i32, rebase_offs: i32[], bind_offs: i32[], bind_syms: string[], sym_names: string[], sym_offs: i32[]): i32[] {
+//
+// `dwarf` is the `-g` build's DWARF, one blob per macho_dwarf_sects name, or
+// empty for none. It goes in a __DWARF segment between the data and
+// __LINKEDIT, as Go's linker lays a static Mach-O out: unmapped (vmsize 0,
+// no protections), its sections S_ATTR_DEBUG, and read by lldb and dsymutil
+// straight from the executable, with no dSYM.
+pub function macho_executable_binds(text: u8[], eh: i32[], data: i32[], ident: string, entry_off: i32, bss: i32, rebase_offs: i32[], bind_offs: i32[], bind_syms: string[], sym_names: string[], sym_offs: i32[], dwarf: i32[][]): i32[] {
   let text_len: i32 = text.len();
   let eh_len: i32 = eh.len();
   let has_eh: boolean = eh_len > 0;
   let data_len: i32 = data.len();
   let has_data: boolean = macho_needs_data(data_len, bss);
-  let text_off: i32 = macho_text_off(has_data, has_eh);
-  let eh_off: i32 = macho_eh_off(text_len, has_data, has_eh);
+  let has_dwarf: boolean = dwarf.len() > 0;
+  let text_off: i32 = macho_text_off(has_data, has_eh, has_dwarf);
+  let eh_off: i32 = macho_eh_off(text_len, has_data, has_eh, has_dwarf);
   let page: i32 = macho_page_size();
-  let text_vmsize: i32 = macho_align_up(macho_text_end(text_len, eh_len, has_data), page);
+  let text_vmsize: i32 = macho_align_up(macho_text_end(text_len, eh_len, has_data, has_dwarf), page);
   let data_file_len: i32 = 0;
   let data_vm_len: i32 = 0;
   if (has_data) {
@@ -11553,7 +11586,18 @@ pub function macho_executable_binds(text: u8[], eh: i32[], data: i32[], ident: s
     rebase = macho_rebase_opcodes(2, rebase_offs);
     bind = macho_bind_opcodes(2, bind_offs, bind_syms);
   }
-  let linkedit_off: i32 = text_vmsize + data_file_len;
+  // The DWARF sections back to back, each 8-aligned, from the page past the
+  // data; __LINKEDIT starts on the page past them.
+  let dwarf_off: i32 = text_vmsize + data_file_len;
+  let dwarf_len: i32 = 0;
+  let dwarf_at: i32[] = [];
+  for blob in dwarf {
+    dwarf_len = macho_align_up(dwarf_len, 8);
+    dwarf_at = dwarf_at.append(dwarf_len);
+    dwarf_len = dwarf_len + blob.len();
+  }
+  let dwarf_file_len: i32 = macho_align_up(dwarf_len, page);
+  let linkedit_off: i32 = dwarf_off + dwarf_file_len;
   // The symbol table follows the dyld streams: the nlist_64 array 8-aligned,
   // the string table right after it, and the signature's 16-aligned start
   // past both, so the signed region covers them (ld64's layout). With no
@@ -11567,7 +11611,8 @@ pub function macho_executable_binds(text: u8[], eh: i32[], data: i32[], ident: s
   let base: i64 = macho_base_vaddr();
   let text_vaddr: i64 = base + text_off as i64;
   let data_vaddr: i64 = base + text_vmsize as i64;
-  let linkedit_vaddr: i64 = data_vaddr + data_vm_len as i64;
+  let dwarf_vaddr: i64 = data_vaddr + data_vm_len as i64;
+  let linkedit_vaddr: i64 = dwarf_vaddr + dwarf_file_len as i64;
 
   let sig_len: i32 = macho_sig_len(code_limit, ident.len());
   let linkedit_file_len: i32 = code_limit - linkedit_off + sig_len;
@@ -11575,11 +11620,14 @@ pub function macho_executable_binds(text: u8[], eh: i32[], data: i32[], ident: s
 
   let ncmds: i32 = 11;
   if (has_data) {
-    ncmds = 12;
+    ncmds = ncmds + 1;
+  }
+  if (has_dwarf) {
+    ncmds = ncmds + 1;
   }
   // sizeofcmds is the size of the commands ACTUALLY written, which is
   // macho_load_cmds_len minus its 48 bytes of layout slack.
-  let sizeofcmds: i32 = macho_load_cmds_len(has_data, has_eh) - 48;
+  let sizeofcmds: i32 = macho_load_cmds_len(has_data, has_eh, has_dwarf) - 48;
 
   let buf: i32[] = [];
 
@@ -11626,6 +11674,18 @@ pub function macho_executable_binds(text: u8[], eh: i32[], data: i32[], ident: s
     buf = macho_sect(buf, "__data", "__DATA", data_vaddr, data_len, text_vmsize, 3, 0);
   }
 
+  // ---- __DWARF (unmapped), one section per blob (optional) ----
+  if (has_dwarf) {
+    let names: string[] = macho_dwarf_sects();
+    buf = macho_seg(buf, "__DWARF", dwarf_vaddr, 0 as i64, dwarf_off as i64, dwarf_file_len as i64, 0, 0, names.len());
+    let ds: i32 = 0;
+    while (ds < names.len()) {
+      // flags = S_ATTR_DEBUG
+      buf = macho_sect(buf, names[ds], "__DWARF", dwarf_vaddr + dwarf_at[ds] as i64, dwarf[ds].len(), dwarf_off + dwarf_at[ds], 0, 0x02000000);
+      ds = ds + 1;
+    }
+  }
+
   // ---- __LINKEDIT (r) ----
   buf = macho_seg(buf, "__LINKEDIT", linkedit_vaddr, linkedit_vmsize as i64, linkedit_off as i64, linkedit_file_len as i64, 1, 1, 0);
 
@@ -11662,8 +11722,15 @@ pub function macho_executable_binds(text: u8[], eh: i32[], data: i32[], ident: s
   buf = macho_pad_to(buf, text_vmsize);
   if (has_data) {
     buf = macho_cat(buf, data);
-    buf = macho_pad_to(buf, linkedit_off);
+    buf = macho_pad_to(buf, dwarf_off);
   }
+  let k: i32 = 0;
+  while (k < dwarf.len()) {
+    buf = macho_pad_to(buf, dwarf_off + dwarf_at[k]);
+    buf = macho_cat(buf, dwarf[k]);
+    k = k + 1;
+  }
+  buf = macho_pad_to(buf, linkedit_off);
   buf = macho_cat(buf, rebase);
   buf = macho_cat(buf, bind);
   if (sym_idx.len() > 0) {

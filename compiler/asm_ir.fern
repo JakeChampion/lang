@@ -7574,10 +7574,10 @@ function ssa_bits_asm(what: string, d: string): string {
     return "    popcntl " + ssa_r32(d) + ", " + ssa_r32(d) + "\n";
   }
   if (what == "bswap:64") {
-    return "    bswap " + d + "\n";
+    return "    bswapq " + d + "\n";
   }
   if (what == "bswap:32") {
-    return "    bswap " + ssa_r32(d) + "\n";
+    return "    bswapl " + ssa_r32(d) + "\n";
   }
   return "";
 }
@@ -9782,7 +9782,7 @@ function ssa_replace_all(text: string, mark: string, with: string): string {
 // the backend does not cover.
 function emit_ssa_function(r: irtables.LowerResult, selected: physicalbody.Selected, label_name: string, s: asmcore.EmitState): asmcore.EmitState {
   let t_lift: i64 = monotonic_ns();
-  let lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(s.kinds, label_name, r.n_params, r.n_locals, r.ops, r.dbg_slots.len() > 0 && s.records());
+  let lifted: ssa_lift.LResult = ssa_lift.lift_from_ir_prod(s.kinds, label_name, r.n_params, r.n_locals, r.ops, r.dbg_slots.len() > 0 && s.var_rows);
   let why: string = lifted.bail;
   if (lifted.ok) {
     let collision: i32 = ssa.repeated_block_id(lifted.func);

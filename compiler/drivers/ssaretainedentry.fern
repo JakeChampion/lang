@@ -80,7 +80,7 @@ function selectors(r: irtables.LowerResult): void {
 }
 
 function emit(g: ircore.Gated, arm: boolean, debug: boolean, retain: boolean): ssaprepare.Output {
-  let sw = asmcore.Switches { backtrace: false, sanitize: debug };
+  let sw = asmcore.Switches { backtrace: false, sanitize: debug, var_rows: false };
   if (arm) {
     return asm_arm64_ir.emit_module_ir_unit_arm64_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, -1, g.cache, g.physical, semlower.runtime_lowering, sw, retain);
   }

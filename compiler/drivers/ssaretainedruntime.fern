@@ -105,7 +105,7 @@ pub function run(output: string, arm: boolean): void {
 }
 
 pub function debug(g: ircore.Gated, arm: boolean): void {
-  let sw = asmcore.Switches { backtrace: false, sanitize: true };
+  let sw = asmcore.Switches { backtrace: false, sanitize: true, var_rows: false };
   if (arm) {
     let out = asm_arm64_ir.emit_module_ir_unit_arm64_prepared(g.im, true, false, "", ["heap"], g.im.funcs, g.stab, 0, -1, g.cache, g.physical, semlower.runtime_lowering, sw, true);
     check(out.text, arm, false);
