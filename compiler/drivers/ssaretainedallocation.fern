@@ -15,6 +15,9 @@ import "./ssauniquecaller" as callerproof;
 import "./ssauniqueunit" as unitproof;
 import "./ssauniquephi" as phiproof;
 import "./ssauniquecollection" as collectionproof;
+import "./ssaretainedalignment" as alignmentproof;
+import "../lexer";
+import "../parser";
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -104,7 +107,7 @@ function spills(g: ircore.Gated, arm: boolean, params: i32): void {
   }
 }
 
-function uniqueness(g: ircore.Gated, arm: boolean, fused: boolean, inverted: boolean, aligned: boolean): void {
+function uniqueness(g: ircore.Gated, arm: boolean, fused: boolean, inverted: boolean, aligned: boolean): ssaprepare.Emitted {
   let call = ir.op_call_direct("__fern_rc_is_unique", 1);
   call = ir.Op { ...call, i64_imm: if (aligned) { 4i64 } else { 0i64 } };
   let ops = [ir.op_load_local(0), call];
@@ -123,6 +126,20 @@ function uniqueness(g: ircore.Gated, arm: boolean, fused: boolean, inverted: boo
   inlineproof.run(out.bodies[0], true);
   callerproof.run(out.bodies[0], aligned);
   unitproof.run(out, aligned);
+  return out.bodies[0];
+}
+
+function selected_uniqueness(arm: boolean): void {
+  // Keep actual selected type/mode metadata from this producer. Replace only
+  // its physical body with the same controlled uniqueness cases used above.
+  let mod = parser.parse_module(lexer.tokenize("function first(xs: i32[]): i32 { return 0; } function main(): i32 { return 0; }"));
+  let g = semlower.program(semlower.driven(mod, "x86-64-linux"));
+  require(g.ok, 139);
+  for fused in [false, true] {
+    for inverted in [false, true] {
+      alignmentproof.run(uniqueness(g, arm, fused, inverted, true));
+    }
+  }
 }
 
 function phi_join(g: ircore.Gated, arm: boolean, inverted: boolean): void {
@@ -222,6 +239,7 @@ function rotated(g: ircore.Gated, arm: boolean): void {
 }
 
 pub function run(g: ircore.Gated, arm: boolean): void {
+  selected_uniqueness(arm);
   collectionproof.run(g, arm);
   phi_join(g, arm, false);
   phi_join(g, arm, true);

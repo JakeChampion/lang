@@ -1,0 +1,150 @@
+import "../ssauniquecaller" as caller;
+import "../ssacreditselected" as selected;
+import "../ssaprepare";
+import "../physicalbody";
+import "../ssasem";
+import "../typeinfo";
+import "../ssa";
+import "std/string";
+
+function require(ok: boolean): void {
+  if (!ok) {
+    exit(192);
+  }
+}
+
+function check(row: ssaprepare.Emitted, expected: boolean): void {
+  let p = caller.check_selected([row], row.label_name, row.context.architecture);
+  if (p.ok != expected) {
+    print(if (expected) { "expected admission" } else { "expected refusal" });
+    print(row.assembly);
+    print(p.message);
+    exit(193);
+  }
+  require(p.function_name == row.label_name && (p.ok || p.message != ""));
+}
+
+function contracts(row: ssaprepare.Emitted, cs: ssasem.Contract[]): ssaprepare.Emitted {
+  let m = selected.metadata(row);
+  let origin = physicalbody.Origin { producer: 0, symbol: row.body.selected.origin.symbol };
+  let s = physicalbody.Selected { producers: [physicalbody.Metadata { ...m, contracts: cs }], origin: origin };
+  return ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: s } };
+}
+
+function text(row: ssaprepare.Emitted, old: string, replacement: string): ssaprepare.Emitted {
+  let parts = row.assembly.split(old);
+  if (parts.len() <= 1) {
+    print("missing mutation input: " + old);
+    print(row.assembly);
+  }
+  require(parts.len() > 1);
+  let out = parts[0];
+  let i = 1;
+  while (i < parts.len()) {
+    out = out + replacement + parts[i];
+    i = i + 1;
+  }
+  return ssaprepare.Emitted { ...row, assembly: out };
+}
+
+function signatures(row: ssaprepare.Emitted): void {
+  let cs = selected.contracts(row);
+  require(cs.len() == 1);
+  let c = cs[0];
+  let byte = typeinfo.TypeI32 { is_char: false, width: 8, unsigned: true, polymorphic: false };
+  check(contracts(row, []), false);
+  check(contracts(row, [c, c]), false);
+  check(contracts(row, [ssasem.Contract { ...c, modes: [] }]), false);
+  for mode in [1, 3, -1] {
+    check(contracts(row, [ssasem.Contract { ...c, modes: [mode] }]), false);
+  }
+  let bad_types: typeinfo.Type[] = [c.result, typeinfo.TypeArray { elem: byte, view: true }, typeinfo.TypeArray { elem: typeinfo.TypeUnknown { reason: "unresolved" }, view: false }];
+  for t in bad_types {
+    check(contracts(row, [ssasem.Contract { ...c, params: [t] }]), false);
+  }
+  check(contracts(row, [ssasem.Contract { ...c, params: [] }]), false);
+  check(contracts(row, [ssasem.Contract { ...c, params: [c.params[0], c.params[0]] }]), false);
+  check(contracts(row, [ssasem.Contract { ...c, result: c.params[0] }]), false);
+  check(contracts(row, [ssasem.Contract { ...c, name: "other" }]), false);
+  // Coherently supplied ABI alternatives are inputs, not authenticated types.
+  // Owned byte arrays and ordinary strings do not carry a byte-view descriptor.
+  let good_types: typeinfo.Type[] = [typeinfo.TypeString { tag: 0 }, typeinfo.TypeArray { elem: byte, view: false }];
+  for t in good_types {
+    check(contracts(row, [ssasem.Contract { ...c, params: [t] }]), true);
+  }
+}
+
+function boundaries(row: ssaprepare.Emitted): void {
+  let name = row.label_name;
+  let arch = row.context.architecture;
+  require(!caller.check_selected([], name, arch).ok);
+  require(!caller.check_selected([row, row], name, arch).ok);
+  require(!caller.check_selected([row], name, "wasi").ok);
+  require(!caller.check_selected([row], name, if (arch == "arm64") { "x86-64" } else { "arm64" }).ok);
+  let s = row.body.selected;
+  for index in [-1, s.producers.len(), 2147483647] {
+    let changed = physicalbody.Selected { ...s, origin: physicalbody.Origin { ...s.origin, producer: index } };
+    check(ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: changed } }, false);
+  }
+  let f = row.body.formed.f;
+  let changed_functions = [ssa.SFunc { ...f, name: "other" }, ssa.SFunc { ...f, nparams: 2 }, ssa.SFunc { ...f, takes_env: true }];
+  for changed in changed_functions {
+    check(ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, formed: ssa.Formed { ...row.body.formed, f: changed } } }, false);
+  }
+}
+
+function annotations(row: ssaprepare.Emitted): void {
+  let f = row.body.formed.f;
+  let blocks = f.blocks;
+  let hits = 0;
+  let i = 0;
+  for block in f.blocks {
+    let ops = block.insts;
+    let j = 0;
+    for op in ops {
+      if (op.kind_tag == 11 && op.str == "__fern_rc_is_unique") {
+        require(op.imm == 4);
+        ops = ops.with(j, ssa.SInst { ...op, imm: 0 });
+        hits = hits + 1;
+      }
+      j = j + 1;
+    }
+    blocks = blocks.with(i, ssa.SBlock { ...block, insts: ops });
+    i = i + 1;
+  }
+  require(hits == 1);
+  let changed = ssa.SFunc { ...f, blocks: blocks };
+  let zero = ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, formed: ssa.Formed { ...row.body.formed, f: changed } } };
+  check(zero, true);
+  require(!caller.check_body(zero.assembly, zero.context.architecture, changed).ok);
+}
+
+function tag_guard(row: ssaprepare.Emitted, arm: boolean): string {
+  if (arm) {
+    for line in row.assembly.split("\n") {
+      if (line.starts_with("    tbnz x0, #0, ")) {
+        return line + "\n";
+      }
+    }
+    return "    tst x0, #1\n";
+  }
+  return "    testb $1, %al\n";
+}
+
+pub function run(row: ssaprepare.Emitted): void {
+  check(row, true);
+  require(!caller.check_body(row.assembly, row.context.architecture, row.body.formed.f).ok);
+  signatures(row);
+  boundaries(row);
+  annotations(row);
+  let arm = row.context.architecture == "arm64";
+  let load = if (arm) { "    ldr x0, [sp, #0]\n" } else { "    movq 8(%rsp), %rax\n" };
+  check(text(row, load, ""), false);
+  check(text(row, "__fn_" + row.label_name + ".r:\n", "__fn_" + row.label_name + ".r:\n    " + (if (arm) { "mov x0, #0" } else { "movq $0, %rax" }) + "\n"), false);
+  check(text(row, "    ret\n", ""), false);
+  // Omitting view normalization does not permit removing either safety guard.
+  check(text(row, tag_guard(row, arm), ""), false);
+  let floor = if (arm) { "    cmp x0, #16, lsl #12\n" } else { "    cmpq $0x10000, %rax\n" };
+  check(text(row, floor, ""), false);
+  check(ssaprepare.Emitted { ...row, assembly: row.assembly + ".set hidden, 0\n" }, false);
+}
