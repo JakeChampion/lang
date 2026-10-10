@@ -7,7 +7,8 @@ import "./ssalargepushmachine" as large;
 
 // Half kinds: invalid, numeric, original GPR, S+offset, outer return,
 // arbitrary original cell, P+offset, small freelist, old head, inner return,
-// large freelist.
+// large freelist, buffer, heap base, heap end, negative length, remainder shape.
+// The private remainder shape is any unsigned32 value except BOX and FUSED.
 struct Half { kind: i32, identity: i32, part: i32, number: value.Value }
 
 struct Word { low: Half, high: Half }
@@ -79,7 +80,7 @@ function initial(r: value.Interval, register_entry: boolean, family: i32): State
     regs = regs.with(0, identity(6, 0));
   }
   let length = family_length(r, family);
-  let cells = [numeric_half(value.number(r, 1 as i64)), zero(r), token(11, 0, 0), token(11, 0, 1), length.low, length.high];
+  let cells = [numeric_half(value.number(r, 1 as i64)), token(15, 0, 0), token(11, 0, 0), token(11, 0, 1), length.low, length.high];
   i = 6;
   while (i < 16) {
     cells = cells.append(token(5, i, 0));
@@ -272,6 +273,9 @@ function pointer_lea(s: State, op: isa.Op): State {
 
 function comparison(s: State, r: value.Interval, op: isa.Op): State {
   let w = s.regs[op.source];
+  if (same_half(w.low, token(15, 0, 0))) {
+    return State { ...s, flags: shape_comparison(r, w, op) };
+  }
   if (op.width == 64 && same_word(w, identity(6, 0)) && op.immediate == 65536) {
     return State { ...s, flags: Flags { order: value.Comparison { less: 0, equal: -1, less_equal: -1 }, signed: unknown_order(), sign: -1 } };
   }
@@ -282,6 +286,19 @@ function comparison(s: State, r: value.Interval, op: isa.Op): State {
   let order = value.compare(r, v, op.immediate as i64);
   let signed = if (positive_signed(r, v, op.width)) { order } else { unknown_order() };
   return State { ...s, flags: Flags { order: order, signed: signed, sign: signed.less } };
+}
+
+function shape_comparison(r: value.Interval, w: Word, op: isa.Op): Flags {
+  if (op.width != 32 && !same_half(w.high, zero(r))) {
+    return unknown_flags();
+  }
+  if (op.immediate != 1112494674 && op.immediate != 1934589965) {
+    return unknown_flags();
+  }
+  // Tag inequality proves only ZF=0. The remainder spans both sides of each
+  // tag, including signed-negative shapes: CF, SF and signed order are unknown.
+  let different = value.Comparison { less: -1, equal: 0, less_equal: -1 };
+  return Flags { order: different, signed: different, sign: -1 };
 }
 
 function positive_signed(r: value.Interval, v: value.Value, width: i32): boolean {
@@ -602,7 +619,8 @@ function path(p: isa.ArrayProgram, r: value.Interval, register_entry: boolean, f
 // Preconditions: canonical aligned disjoint descriptor P-8..P+15, stack
 // S-40..S+15, ordered heap-bound globals, small slot3, and derived buffer slot.
 // The W=3 small buffer slot aliases slot3 exactly; all other slots are disjoint.
-// P>=65536, RC1/shape0. Buffer B is writable/aligned/disjoint only for inside-heap
+// P>=65536, RC1 and any32-bit shape except BOX1112494674/FUSED1934589965.
+// Buffer B is writable/aligned/disjoint only for inside-heap
 // positive signed lengths; other families grant no buffer access. Descriptor
 // metadata, outer RET/argument and heap globals are read-only. Header, scratch,
 // selected slots and permitted buffer word are writable. Actual allocation,

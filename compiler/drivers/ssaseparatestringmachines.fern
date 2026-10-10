@@ -139,7 +139,29 @@ function identities(s: string): void {
   mutation(s, "    ret\n", "ret $8\n", false);
 }
 
+function shapes(s: string): void {
+  let fused = "cmpl $1934589965, %edx";
+  let boxed = "cmpl $1112494674, %edx";
+  mutation(s, fused, "cmpq $1934589965, %rdx", true);
+  mutation(s, boxed, "cmpq $1112494674, %rdx", true);
+  mutation(s, fused, "movl %edx, %edx\n" + fused, true);
+  mutation(s, fused, "movq %rdx, %rdx\n" + fused, true);
+  mutation(s, fused, "cmpl $1934589964, %edx", false);
+  mutation(s, boxed, "cmpl $1112494675, %edx", false);
+  for edge in ["jb", "jbe", "ja", "jae", "jl", "jle", "jg", "jge", "js", "jns"] {
+    mutation(s, "je .Lstrfree_fused", edge + " .Lstrfree_fused", false);
+  }
+  mutation(s, "je .Lstrfree_fused", "jz .Lstrfree_fused", true);
+  // The wider load also reads permitted descriptor bytes, which CMP32 ignores.
+  let wide = change(s, "movl -4(%rax), %edx", "movq -4(%rax), %rdx");
+  require(machine.check(wide), "wide shape load with narrow tag comparisons");
+  mutation(wide, fused, "cmpq $1934589965, %rdx", false);
+  mutation(s, boxed, "cmpl $42, %edx", false);
+  mutation(s, boxed, "cmpl $-1, %edx", false);
+}
+
 pub function run(output: string): void {
+  shapes(output);
   require(machine.check(output), "actual complete output, both entries, all families and intervals");
   bounds(output);
   arithmetic(output);
