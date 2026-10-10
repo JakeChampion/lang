@@ -9,6 +9,11 @@ pub function length_name(): string {
   return "__sem_byte_view_len";
 }
 
+// A view's index check alone, which reads no byte (ssabounds.grouped_reads).
+function check_name(): string {
+  return "__sem_byte_view_check";
+}
+
 pub function get_name(unchecked: boolean): string {
   if (unchecked) {
     return "__sem_byte_view_get_nc";
@@ -49,11 +54,15 @@ pub function read(value: i32, indexed: boolean, unchecked: boolean): ir.Op {
   return ir.Op { ...op, i64_imm: value as i64 + 1 };
 }
 
+pub function check(value: i32): ir.Op {
+  return ir.Op { ...ir.op_call_direct(check_name(), 2), i64_imm: value as i64 + 1 };
+}
+
 // read_value is the view a read call reads, or -1; `call_direct` is that
 // op kind's id.
 function read_value(op: ir.Op, call_direct: i32): i32 {
   if (op.kind_tag == call_direct && op.i64_imm > 0
-    && (op.str == length_name() || op.str == get_name(false) || op.str == get_name(true) || op.str == word_name(4) || op.str == word_name(8))) {
+    && (op.str == length_name() || op.str == get_name(false) || op.str == get_name(true) || op.str == check_name() || op.str == word_name(4) || op.str == word_name(8))) {
     return (op.i64_imm - 1) as i32;
   }
   return 0 - 1;
@@ -78,10 +87,13 @@ function decoded_read(op: ir.Op, base: i32, index: i32): ir.Op[] {
     return [ir.op_drop(), ir.op_load_local(base + 1)];
   }
   let ops: ir.Op[] = [ir.op_store_local(index), ir.op_drop()];
-  if (op.str == get_name(false)) {
+  if (op.str == get_name(false) || op.str == check_name()) {
     // One unsigned compare: a negative index reads as larger than any length.
     ops = joined(ops, [ir.op_load_local(index), ir.op_load_local(base + 1), ir.op_bin("ge_u", 0, false)]);
     ops = abort_if(ops);
+  }
+  if (op.str == check_name()) {
+    return ops.append(ir.op_const_i32(0));
   }
   if (op.str == word_name(4)) {
     return joined(ops, [ir.op_load_local(base), ir.op_load_local(index), ir.op_raw_addr(), ir.op_load_i32()]);

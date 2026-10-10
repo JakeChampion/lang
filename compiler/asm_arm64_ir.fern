@@ -2586,6 +2586,9 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
       s = ssa_cmp_rr(s, b, "x6");
       s = ssa_trap_guard(s, CC_LO, "__fern_oob_abort");
     }
+    if (ins.imm == 2) {
+      return s;
+    }
     if (ins.str == "u8") {
       s = ssa_addsub_rr(s, false, "x5", a, b);
       s = ssa_ldrb(s, ssa_wreg(d), "x5", 8);

@@ -338,11 +338,17 @@ pub function op_arr_get(width: i32): Op {
 
 // Unchecked `arr_get` (#4380 lever 3, self-host port): i32_imm == 1 flags a read
 // the emitter has statically proven in bounds — the foreach counted loops, whose
-// `idx < arr_len` guard runs immediately before the read every iteration. The
-// x86 backend skips the bounds compare + oob trap for it; arm64 / wasm read only
-// kind_tag and keep their checks (a safe no-op there until they honour the flag).
+// `idx < arr_len` guard runs immediately before the read every iteration. Every
+// backend skips the bounds compare + oob trap for it.
 pub function op_arr_get_nc(width: i32): Op {
   return Op { decl: 0 - 1, kind_tag: 88, i32_imm: 1, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
+}
+
+// An `arr_get` that only checks its index (i32_imm == 2): it aborts as the
+// read would and loads nothing, pushing a zero of the element's type that
+// nothing reads in place of the element.
+pub function check_only(op: Op): Op {
+  return Op { ...op, i32_imm: 2 };
 }
 
 // An `arr_set` whose index the lowering has already checked against an array

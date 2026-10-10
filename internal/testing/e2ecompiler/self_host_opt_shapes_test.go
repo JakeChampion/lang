@@ -266,22 +266,31 @@ function main(): i32 {
 		want:   map[string][]string{"x86-64-linux": {`shlq \$24,`, `sarq \$3,`}, "arm64-linux": {`lsl x\d+, x\d+, #24`, `asr x\d+, x\d+, #3`}},
 		forbid: map[string][]string{"x86-64-linux": {`\bror`}, "arm64-linux": {`\bror\b`}}},
 	// A word built from bytes, as std/crypto reads its message words, is one
-	// load of the word, from an owned array or a view (#8782); a big-endian
+	// bounds check and one load of the word, from an owned array or a view
+	// (#8782), its bytes in any order or at constant indexes; a big-endian
 	// word is that load byte swapped (#10615). Bytes out of their places stay
 	// byte reads.
 	{name: "le_word_owned_u32", fn: "word32", exit: 5, src: wordLoadSrc,
-		forbid: map[string][]string{"x86-64-linux": {`\bshl`}, "arm64-linux": {`\blsl\b`}}},
+		want:   oneCheck,
+		forbid: wordForbid},
 	{name: "le_word_view_u64", fn: "word64", exit: 5, src: wordLoadSrc,
-		forbid: map[string][]string{"x86-64-linux": {`\bshl`, `\bmovzb`}, "arm64-linux": {`\blsl\b`, `\bldrb\b`}}},
+		want:   oneCheck,
+		forbid: wordForbid},
 	{name: "be_word_owned_u32", fn: "bigend", exit: 5, src: wordLoadSrc,
-		want:   map[string][]string{"x86-64-linux": {`\bbswapl %e\w+`}, "arm64-linux": {`\brev w\d+, w\d+`}},
-		forbid: map[string][]string{"x86-64-linux": {`\bshl`}, "arm64-linux": {`\blsl\b`}}},
+		want:   map[string][]string{"x86-64-linux": {`\bbswapl %e\w+`, `__fern_oob_abort`}, "arm64-linux": {`\brev w\d+, w\d+`, `__fern_oob_abort`}},
+		forbid: wordForbid},
 	{name: "be_word_view_u64", fn: "bigend64", exit: 5, src: wordLoadSrc,
-		want:   map[string][]string{"x86-64-linux": {`\bbswapq %r\w+`}, "arm64-linux": {`\brev x\d+, x\d+`}},
-		forbid: map[string][]string{"x86-64-linux": {`\bshl`, `\bmovzb`}, "arm64-linux": {`\blsl\b`, `\bldrb\b`}}},
+		want:   map[string][]string{"x86-64-linux": {`\bbswapq %r\w+`, `__fern_oob_abort`}, "arm64-linux": {`\brev x\d+, x\d+`, `__fern_oob_abort`}},
+		forbid: wordForbid},
+	{name: "le_word_bytes_scrambled", fn: "scrambled", exit: 5, src: wordLoadSrc,
+		want:   oneCheck,
+		forbid: wordForbid},
+	{name: "be_word_constant_indexes", fn: "header", exit: 5, src: wordLoadSrc,
+		want:   map[string][]string{"x86-64-linux": {`\bbswapl %e\w+`, `__fern_oob_abort`}, "arm64-linux": {`\brev w\d+, w\d+`, `__fern_oob_abort`}},
+		forbid: wordForbid},
 	{name: "word_bytes_out_of_place_kept", fn: "swapped", exit: 5, src: wordLoadSrc,
 		want:   map[string][]string{"x86-64-linux": {`\bmovzb`}, "arm64-linux": {`\bldrb\b`}},
-		forbid: map[string][]string{"x86-64-linux": {`\bbswap\b`}, "arm64-linux": {`\brev\b`}}},
+		forbid: map[string][]string{"x86-64-linux": {`\bbswap[lq]?\b`}, "arm64-linux": {`\brev\b`}}},
 	// A rotate whose operand is written out twice, as std/crypto's md5 rounds
 	// spell it: the two copies merge, so it is one sum and one rotate. Halves
 	// over different sums stay two shifts.
@@ -532,6 +541,15 @@ func TestSelfHostOptimisationShapes(t *testing.T) {
 	}
 }
 
+// oneCheck and wordForbid pin a fused word: a bounds check, and no shift,
+// byte load or second check left over from its bytes.
+var oneCheck = map[string][]string{"x86-64-linux": {`__fern_oob_abort`}, "arm64-linux": {`__fern_oob_abort`}}
+
+var wordForbid = map[string][]string{
+	"x86-64-linux": {`\bshl`, `\bmovzb`, `(?s)__fern_oob_abort.*__fern_oob_abort`},
+	"arm64-linux":  {`\blsl\b`, `\bldrb\b`, `(?s)__fern_oob_abort.*__fern_oob_abort`},
+}
+
 const wordLoadSrc = `
 @noinline function word32(bs: u8[], o: i32): u32 {
     return bs[o] as u32 | bs[o + 1] as u32 << 8 | bs[o + 2] as u32 << 16 | bs[o + 3] as u32 << 24;
@@ -548,13 +566,20 @@ const wordLoadSrc = `
 @noinline function swapped(bs: [u8], o: i32): u32 {
     return bs[o] as u32 | bs[o + 1] as u32 << 8 | bs[o + 3] as u32 << 16 | bs[o + 2] as u32 << 24;
 }
+@noinline function scrambled(bs: u8[], o: i32): u32 {
+    return bs[o + 2] as u32 << 16 | bs[o] as u32 | bs[o + 3] as u32 << 24 | bs[o + 1] as u32 << 8;
+}
+@noinline function header(bs: u8[]): u32 {
+    return bs[4] as u32 << 24 | bs[5] as u32 << 16 | bs[6] as u32 << 8 | bs[7] as u32;
+}
 function main(): i32 {
     let b: u8[] = [];
     let i: i32 = 0;
     while (i < 24) { b = b.append(((i * 29 + 3) & 255) as u8); i = i + 1; }
     let x: u32 = word32(b, 5) ^ (word64(b, 9) >> 24u64) as u32 ^ bigend(b, 2);
     let y: u64 = bigend64(b[1:20], 3) ^ swapped(b, 11) as u64;
-    return ((x ^ (y >> 13u64) as u32 ^ y as u32) & 127u32) as i32;
+    let z: u32 = scrambled(b, 7) ^ header(b);
+    return ((x ^ (y >> 13u64) as u32 ^ y as u32 ^ z) & 127u32) as i32;
 }
 `
 
