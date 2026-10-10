@@ -15,6 +15,7 @@ import "./ssacreditbound" as bound;
 import "./ssacreditselected" as selected;
 import "./ssasem";
 import "./semtypes";
+import "./semrecords";
 import "./typeinfo";
 import "std/string";
 
@@ -301,8 +302,43 @@ function parameter(t: typeinfo.Type): boolean {
   return false;
 }
 
-function signature(c: ssasem.Contract): boolean {
-  if (c.params.len() != 1 || c.modes.len() != 1 || c.modes[0] != ssasem.borrow_mode() || !parameter(c.params[0])) {
+function record_fields(fields: semrecords.Field[]): boolean {
+  let labels: string[] = [];
+  for field in fields {
+    if (field.name == "" || !semtypes.concrete(field.ty, false)) {
+      return false;
+    }
+    labels = labels.append(field.name);
+  }
+  return names.index(labels).duplicate < 0;
+}
+
+function record_parameter(row: ssaprepare.Emitted, t: typeinfo.Type): boolean {
+  // A selected ordinary record is an outer box even if a field holds a view.
+  // Its schema does not prove release effects, field accesses or finalizers.
+  if (!semtypes.concrete(t, false) || semtypes.is_handle(t) || semtypes.is_env(t)) {
+    return false;
+  }
+  if let typeinfo.TypeStruct(_) = t {
+    let count = 0;
+    let valid = false;
+    // Metadata indices and nominal names from other rows imply no identity.
+    for record in selected.metadata(row).records.list {
+      if (semtypes.equal(record.ty, t)) {
+        count = count + 1;
+        valid = record_fields(record.fields);
+      }
+    }
+    return count == 1 && valid;
+  }
+  return false;
+}
+
+function signature(row: ssaprepare.Emitted, c: ssasem.Contract): boolean {
+  if (c.params.len() != 1 || c.modes.len() != 1 || c.modes[0] != ssasem.borrow_mode()) {
+    return false;
+  }
+  if (!parameter(c.params[0]) && !record_parameter(row, c.params[0])) {
     return false;
   }
   if let typeinfo.TypeI32(i) = c.result {
@@ -335,7 +371,7 @@ pub function check_selected_lines(lines: string[], rows: ssaprepare.Emitted[], n
 
 function selected_lines(lines: string[], row: ssaprepare.Emitted, architecture: string): helper.Proof {
   let contracts = selected.contracts(row);
-  if (contracts.len() != 1 || !signature(contracts[0])) {
+  if (contracts.len() != 1 || !signature(row, contracts[0])) {
     return helper.Proof { ok: false, function_name: row.label_name, message: "unsupported selected uniqueness signature" };
   }
   return check(lines, architecture, row.body.formed.f, false);

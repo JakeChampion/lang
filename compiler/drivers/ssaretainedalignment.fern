@@ -4,6 +4,9 @@ import "../ssaprepare";
 import "../physicalbody";
 import "../ssasem";
 import "../typeinfo";
+import "../semtypes";
+import "../semrecords";
+import "../ssauniqueunit" as unit;
 import "../ssa";
 import "./ssauniqueselectedunit" as finalproof;
 import "std/string";
@@ -16,6 +19,20 @@ function require(ok: boolean): void {
 
 pub function final_output(out: ssaprepare.Output): void {
   finalproof.run(out);
+}
+
+pub function record_output(out: ssaprepare.Output): void {
+  let row = out.bodies[0];
+  let arch = row.context.architecture;
+  require(caller.check_selected(out.bodies, row.label_name, arch).ok);
+  require(caller.check_selected_lines(row.assembly.split("\n"), out.bodies, row.label_name, arch).ok);
+  if (out.bodies.len() == 1) {
+    finalproof.run(out);
+  } else {
+    // Generated drop/release bodies need their own effect proof. Certifying
+    // the selected leaf cannot certify this larger final output.
+    require(!unit.check_selected_collection(out.text, arch, out.bodies).ok);
+  }
 }
 
 function check(row: ssaprepare.Emitted, expected: boolean): void {
@@ -110,6 +127,81 @@ function containers(row: ssaprepare.Emitted, c: ssasem.Contract): void {
   }
 }
 
+function metadata(row: ssaprepare.Emitted, m: physicalbody.Metadata): ssaprepare.Emitted {
+  let selected = physicalbody.Selected { producers: [m], origin: physicalbody.Origin { producer: 0, symbol: row.body.selected.origin.symbol } };
+  return ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: selected } };
+}
+
+function record_schema(row: ssaprepare.Emitted, c: ssasem.Contract, record: semrecords.Record): void {
+  let m = selected.metadata(row);
+  let fields = record.fields;
+  require(fields.len() > 0);
+  check(metadata(row, physicalbody.Metadata { ...m, records: semrecords.Records { ...m.records, list: [] } }), false);
+  check(metadata(row, physicalbody.Metadata { ...m, records: semrecords.records_of([record, record]) }), false);
+  let unknown: typeinfo.Type = typeinfo.TypeUnknown { reason: "unresolved field" };
+  let malformed = [
+    semrecords.Record { ...record, fields: [semrecords.Field { name: "", ty: c.result }] },
+    semrecords.Record { ...record, fields: [semrecords.Field { ...fields[0], ty: unknown }] },
+    semrecords.Record { ...record, fields: [fields[0], fields[0]] },
+  ];
+  for r in malformed {
+    check(metadata(row, physicalbody.Metadata { ...m, records: semrecords.records_of([r]) }), false);
+  }
+  let byte: typeinfo.Type = typeinfo.TypeI32 { is_char: false, width: 8, unsigned: true, polymorphic: false };
+  let view: typeinfo.Type = typeinfo.TypeArray { elem: byte, view: true };
+  let outer_boxes = [
+    semrecords.Record { ...record, fields: [] },
+    semrecords.Record { ...record, fields: [semrecords.Field { ...fields[0], ty: view }], views: true },
+  ];
+  for r in outer_boxes {
+    check(metadata(row, physicalbody.Metadata { ...m, records: semrecords.records_of([r]) }), true);
+  }
+  // A scalar descriptor or closure environment cannot become an ordinary box
+  // merely because a caller supplies a matching schema.
+  for name in ["Reader", "Writer", "Dir", "__env$first"] {
+    let t: typeinfo.Type = typeinfo.TypeStruct { name: name, args: [] };
+    let r = semrecords.Record { ...record, ty: t };
+    let changed = contracts(row, [ssasem.Contract { ...c, params: [t] }]);
+    let own_metadata = selected.metadata(changed);
+    check(metadata(changed, physicalbody.Metadata { ...own_metadata, records: semrecords.records_of([r]) }), false);
+  }
+  let other: typeinfo.Type = typeinfo.TypeStruct { name: "Different", args: [] };
+  check(metadata(row, physicalbody.Metadata { ...m, records: semrecords.records_of([semrecords.Record { ...record, ty: other }]) }), false);
+  record_producer(row, record);
+}
+
+function record_producer(row: ssaprepare.Emitted, record: semrecords.Record): void {
+  let m = selected.metadata(row);
+  let empty = physicalbody.Metadata { ...m, records: semrecords.no_records() };
+  let own_selection = physicalbody.Selected { ...row.body.selected, producers: [empty, m], origin: physicalbody.Origin { producer: 0, symbol: row.body.selected.origin.symbol } };
+  check(ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: own_selection } }, false);
+  let correct = physicalbody.Selected { ...own_selection, origin: physicalbody.Origin { ...own_selection.origin, producer: 1 } };
+  check(ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: correct } }, true);
+  if let typeinfo.TypeStruct(s) = record.ty {
+    // Finalizers are not invoked by this borrowed uniqueness-only leaf.
+    check(metadata(row, physicalbody.Metadata { ...m, finalizers: [ssasem.Finalizer { receiver: s.name, symbol: "destroy" }] }), true);
+    if (s.args.len() > 0) {
+      let wrong = semrecords.Record { ...record, ty: typeinfo.TypeStruct { ...s, args: [] } };
+      check(metadata(row, physicalbody.Metadata { ...m, records: semrecords.records_of([wrong]) }), false);
+    }
+  }
+}
+
+function records(row: ssaprepare.Emitted): void {
+  let cs = selected.contracts(row);
+  let c = cs[0];
+  if let typeinfo.TypeStruct(_) = c.params[0] {
+    let hits = 0;
+    for r in selected.metadata(row).records.list {
+      if (semtypes.equal(r.ty, c.params[0])) {
+        hits = hits + 1;
+        record_schema(row, c, r);
+      }
+    }
+    require(hits == 1);
+  }
+}
+
 function boundaries(row: ssaprepare.Emitted): void {
   let name = row.label_name;
   let arch = row.context.architecture;
@@ -171,6 +263,7 @@ pub function run(row: ssaprepare.Emitted): void {
   check(row, true);
   require(!caller.check_body(row.assembly, row.context.architecture, row.body.formed.f).ok);
   signatures(row);
+  records(row);
   boundaries(row);
   annotations(row);
   let arm = row.context.architecture == "arm64";
