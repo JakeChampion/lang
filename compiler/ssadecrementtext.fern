@@ -317,6 +317,12 @@ function writable_declarations(s: Scan): boolean {
 
 // A declaration proof only: not an instruction, relocation, linked-address,
 // caller-disjointness or ownership certificate. Always rescan supplied text.
+// Scope excludes writable bare labels, including the compiler's static
+// aggregate blocks and box-field labels, even with allocation on the next
+// line. Supporting those modules requires a separate declaration/alias proof;
+// this predicate is not yet suitable for general production admission.
+// The shared scanner also refuses signed data literals such as the immortal
+// aggregate RC header `.quad -1`; a bare-label extension alone is insufficient.
 pub function counter_storage(text: string): boolean {
   let s = scan(text);
   if (s.error != "" || !writable_declarations(s)) {
