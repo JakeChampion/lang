@@ -7,6 +7,7 @@ import "../ssaprepare";
 import "../ssacredittext" as binding;
 import "../ssadecrementtext" as text;
 import "./ssastaticshapes" as shapes;
+import "./ssaconstructorbounds" as constructors;
 import "std/string";
 
 function require(ok: boolean, group: string): void {
@@ -82,6 +83,7 @@ pub function run(): void {
   let output = emit();
   check(output, true, "actual constructor with static shape pool");
   shapes.run(output);
+  constructors.run(output);
   let found = binding.resolve(output, "parent");
   let row = found.rows[0];
   require(binding.resolve(output, "absent").error != "", "missing name");
