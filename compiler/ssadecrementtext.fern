@@ -6,6 +6,9 @@ import "std/string";
 
 pub struct Body { lines: string[], register_entry: i32, error: string }
 
+// Declaration bytes only, not linked contents, permissions or shape identity.
+pub struct Literal { bytes: u8[], error: string }
+
 // Section identities: text=1, data=2, BSS=3, read-only data=4.
 struct Scan { lines: string[], sections: i32[], error: string }
 
@@ -570,4 +573,105 @@ pub function native_body(text: string, entry: string): Body {
     return failure("missing or ambiguous retained function definition");
   }
   return retained_lines(s, start, entry);
+}
+
+function no_literal(message: string): Literal {
+  return Literal { bytes: [], error: message };
+}
+
+function escaped_byte(c: u8): i32 {
+  if (c == b'"' || c == b'\\') {
+    return c as i32;
+  }
+  if (c == b'n') {
+    return 10;
+  }
+  if (c == b'r') {
+    return 13;
+  }
+  if (c == b't') {
+    return 9;
+  }
+  return -1;
+}
+
+function octal_byte(arg: string, at: i32): i32 {
+  if (at > arg.len() - 4) {
+    return -1;
+  }
+  let value = 0;
+  for offset in [0, 1, 2] {
+    let c = arg[at + offset];
+    if (c < b'0' || c > b'7') {
+      return -1;
+    }
+    value = value * 8 + (c as i32 - 48);
+  }
+  return if (value <= 255) { value } else { -1 };
+}
+
+function ascii_bytes(arg: string): Literal {
+  if (!quoted_data(arg)) {
+    return no_literal("malformed ASCII declaration");
+  }
+  let bytes: u8[] = [];
+  let at = 1;
+  while (at < arg.len() - 1) {
+    let c = arg[at];
+    if (c == b'\\') {
+      at = at + 1;
+      let value = escaped_byte(arg[at]);
+      if (value < 0) {
+        value = octal_byte(arg, at);
+        at = at + 2;
+      }
+      if (value < 0) {
+        return no_literal("unsupported ASCII escape");
+      }
+      bytes = bytes.append(value as u8);
+    } else {
+      if (c < 32 || c > 126) {
+        return no_literal("unsupported literal ASCII byte");
+      }
+      bytes = bytes.append(c);
+    }
+    at = at + 1;
+  }
+  return Literal { bytes: bytes, error: "" };
+}
+
+function literal_at(s: Scan, start: i32, entry: string): Literal {
+  let tail = util.trim(slice_unchecked(s.lines[start], entry.len() + 1, s.lines[start].len()) + "");
+  if (tail == "") {
+    let next = start + 1;
+    if (next >= s.lines.len() || s.sections[next] != 4) {
+      return no_literal("missing contiguous ASCII declaration");
+    }
+    tail = s.lines[next];
+  }
+  let op = word(tail);
+  if (op != ".ascii") {
+    return no_literal("unsupported read-only literal declaration");
+  }
+  return ascii_bytes(util.trim(slice_unchecked(tail, op.len(), tail.len()) + ""));
+}
+
+// Resolve ONE symbol in the same closed complete-output namespace. Both inline
+// and bare labels may precede a single contiguous .ascii declaration in rodata.
+// No assembler, linker, relocation, interning or runtime identity is proved.
+// Weak module shapes and other escape dialects remain outside this grammar.
+pub function readonly_ascii(text: string, entry: string): Literal {
+  if (!symbol(entry)) {
+    return no_literal("unsupported literal symbol");
+  }
+  let s = scan_mode(text, true);
+  if (s.error != "") {
+    return no_literal(s.error);
+  }
+  let ix = definition_index(s.lines);
+  let start = names.unique_position(ix, entry);
+  if (ix.duplicate >= 0 || start < 0 || s.sections[start] != 4) {
+    return no_literal("missing or ambiguous read-only literal");
+  }
+  return literal_at(s, start, entry);
 }
