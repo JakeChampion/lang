@@ -21,6 +21,8 @@ import "std/string";
 // 35 unbound branch outside the contiguous entry fragment: condition and
 // symbol are data only. Taking it requires refusal, not an external effect.
 // PUSH/POP retain effective-address operands; records do not execute them.
+// Caller-only: 39 immediate memory CMP, 40 immediate memory SUB. Direct
+// call symbols remain unbound data; no callee effects follow from decoding.
 // Arithmetic source -1 is immediate.
 // Widths are bits; addresses retain signed byte offsets and scaled indices.
 pub struct Op { kind: i32, width: i32, source: i32, destination: i32, base: i32, index: i32, scale: i32, offset: i32, immediate: i32, condition: string, target: i32, symbol: string }
@@ -307,6 +309,15 @@ pub function constructor_program(output: string, entry: string): ArrayProgram {
   return ArrayProgram { ops: p.ops, register_entry: if (p.error == "") { body.register_entry } else { -1 }, error: p.error };
 }
 
+// Complete ordinary caller syntax, including its inline RC guards. This is
+// DATA only: the consumer must bind the SAME final SSA, derive every reachable
+// effect and independently check each dependency. Old modes stay unchanged.
+pub function caller_program(output: string, entry: string): ArrayProgram {
+  let body = text.native_body(output, entry);
+  let p = selected_program(body, 7);
+  return ArrayProgram { ops: p.ops, register_entry: if (p.error == "") { body.register_entry } else { -1 }, error: p.error };
+}
+
 // Fixed helper syntax only. A call names the allocator without proving it.
 pub function array_box_program(output: string): Program {
   return selected_program(text.array_box(output), 5);
@@ -346,6 +357,9 @@ function selected_program(body: text.Body, mode: i32): Program {
 }
 
 function extended_decode(line: string, mode: i32): Op {
+  if (mode == 7) {
+    return caller_decode(line);
+  }
   if (mode == 6) {
     return allocator_decode(line);
   }
@@ -502,6 +516,41 @@ function constructor_address(address: string, destination: string): Op {
   }
   let symbol = slice_unchecked(address, 0, address.len() - suffix.len()) + "";
   return if (constructor_symbol(symbol)) { Op { ...empty(19), width: 64, destination: reg, symbol: symbol } } else { empty(0) };
+}
+
+function caller_decode(line: string): Op {
+  let constructor = constructor_decode(line);
+  if (constructor.kind > 0) {
+    return constructor;
+  }
+  let large = large_decode(line);
+  if (large.kind > 0) {
+    return large;
+  }
+  let at = 0;
+  while (at < line.len() && line[at] != b' ' && line[at] != b'\t') {
+    at = at + 1;
+  }
+  if (at == line.len()) {
+    return empty(0);
+  }
+  let name = slice_unchecked(line, 0, at) + "";
+  let rest = util.trim(slice_unchecked(line, at + 1, line.len()) + "");
+  if (name == "call" && constructor_symbol(rest)) {
+    return Op { ...empty(25), symbol: rest };
+  }
+  let args = operands(rest);
+  return if (args.len() == 2) { caller_memory(name, args[0], args[1]) } else { empty(0) };
+}
+
+function caller_memory(name: string, source: string, destination: string): Op {
+  let kind = if (name == "cmpq" || name == "cmpl") { 39 } else { if (name == "subq" || name == "subl") { 40 } else { 0 } };
+  let imm = large_literal(source);
+  let addr = address(destination);
+  if (kind == 0 || imm == "" || addr.base < 0) {
+    return empty(0);
+  }
+  return Op { ...empty(kind), width: width(name), immediate: util.digits_to_i32(imm), base: addr.base, index: addr.index, scale: addr.scale, offset: addr.offset };
 }
 
 function string_decode(line: string): Op {

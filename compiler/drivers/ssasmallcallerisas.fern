@@ -1,0 +1,128 @@
+import "../ssacapacityisa" as isa;
+import "../ssadecrementtext" as text;
+import "../ssaprepare";
+import "../ssainlineuniqueisa" as registers;
+import "std/string";
+
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("small caller instruction controls failed: " + group);
+    exit(180);
+  }
+}
+
+function fixture(code: string): string {
+  return ".text\n__fn_caller:\n.cfi_startproc\n__fn_caller.r:\n" + code + "\nret\n.cfi_endproc\n";
+}
+
+function sample(line: string): isa.Op {
+  let p = isa.caller_program(fixture(line), "__fn_caller");
+  require(p.error == "" && p.register_entry == 2 && p.ops.len() == 6, "sample extent " + line);
+  return p.ops[3];
+}
+
+function calls(): void {
+  for name in ["__fn_parent", "__fn_parent.r", "__fn___fern_arr_dec.r", ".Llocal", "arbitrary$callee"] {
+    let op = sample("call " + name);
+    require(op.kind == 25 && op.symbol == name, "direct symbol data");
+    require(isa.constructor_program(fixture("call " + name), "__fn_caller").ops[3].kind == 0, "old constructor call policy");
+  }
+  for line in ["call *%rax", "call parent@PLT", "call 123", "call name, other", "call name+8", "callq name", "call name#comment"] {
+    require(sample(line).kind == 0, "unsupported call " + line);
+  }
+}
+
+function memory(): void {
+  let i = 0;
+  for reg in registers.registers(false, 64) {
+    for name in ["cmpl", "cmpq", "subl", "subq"] {
+      let op = sample(name + " $1, -8(" + reg + ")");
+      memory_op(op, name, i);
+      require(isa.constructor_program(fixture(name + " $1, -8(" + reg + ")"), "__fn_caller").ops[3].kind == 0, "old memory policy");
+    }
+    i = i + 1;
+  }
+  extremes();
+}
+
+function memory_op(op: isa.Op, name: string, i: i32): void {
+  require(op.kind == (if (name.starts_with("cmp")) { 39 } else { 40 }) && op.width == (if (name.ends_with("q")) { 64 } else { 32 }), "memory operation and width");
+  require(op.base == i && op.offset == -8 && op.index == -1 && op.immediate == 1, "memory address and immediate");
+}
+
+function extremes(): void {
+  let low = sample("cmpl $-2147483648, -2147483648(%rax)");
+  let high = sample("subq $2147483647, 2147483647(%rbx,%rcx,8)");
+  require(low.kind == 39 && low.immediate == -2147483647 - 1 && low.offset == -2147483647 - 1, "signed minima");
+  require(high.kind == 40 && high.immediate == 2147483647 && high.offset == 2147483647 && high.base == 3 && high.index == 1 && high.scale == 8, "signed maxima and index");
+  hexadecimal();
+}
+
+function hexadecimal(): void {
+  require(sample("cmpl $0x7fffffff, (%rax)").immediate == 2147483647, "hex bound");
+  let floor = sample("cmpq $0x10000, %rax");
+  require(floor.kind == 16 && floor.width == 64 && floor.source == 0 && floor.immediate == 65536, "actual pointer floor");
+}
+
+function refusals(): void {
+  for line in ["cmpl $2147483648, (%rax)", "cmpl $-2147483649, (%rax)", "cmpl $0x80000000, (%rax)", "cmpl $1, 2147483648(%rax)", "cmpl $1, -2147483649(%rax)", "cmpl $1, (%eax)", "cmpl $1, (%rax,%rsp,8)", "cmpl $1, (%rax,%rcx,3)", "cmpw $1, (%rax)", "cmpb $1, (%rax)", "subl %ecx, (%rax)", "subl $1, (%rax), %ebx", "subl $1, global(%rip)", "subl $1, (%rax", "subl $1, (%rax))"] {
+    require(sample(line).kind == 0, "unknown memory syntax " + line);
+  }
+}
+
+function same(a: isa.Op, b: isa.Op): boolean {
+  return a.kind == b.kind && a.width == b.width && a.source == b.source && a.destination == b.destination && address_same(a, b) && a.immediate == b.immediate && a.condition == b.condition && a.target == b.target && a.symbol == b.symbol;
+}
+
+function address_same(a: isa.Op, b: isa.Op): boolean {
+  return a.base == b.base && a.index == b.index && a.scale == b.scale && a.offset == b.offset;
+}
+
+function actual(output: ssaprepare.Output): void {
+  let p = isa.caller_program(output.text, "__fn_caller");
+  let body = text.native_body(output.text, "__fn_caller");
+  let crlf = isa.caller_program(output.text.split("\n").join("\r\n"), "__fn_caller");
+  require(p.error == "" && body.error == "" && crlf.error == "" && p.ops.len() == body.lines.len() && p.ops.len() == crlf.ops.len(), "actual body correspondence");
+  require(p.register_entry == body.register_entry && p.register_entry == crlf.register_entry && p.register_entry > 0, "both actual entries");
+  actual_ops(p, crlf, body.lines);
+}
+
+function actual_ops(p: isa.ArrayProgram, crlf: isa.ArrayProgram, lines: string[]): void {
+  let calls = 0;
+  let comparisons = 0;
+  let i = 0;
+  for op in p.ops {
+    require(op.kind > 0 && same(op, crlf.ops[i]), "actual operation and every CRLF field: " + lines[i]);
+    if (op.kind == 25) {
+      require(op.symbol == "__fn_parent.r" || op.symbol == "__fn___fern_arr_dec.r", "actual call names");
+      calls = calls + 1;
+    }
+    if (op.kind == 39) {
+      actual_compare(op);
+      comparisons = comparisons + 1;
+    }
+    i = i + 1;
+  }
+  require(calls == 4 && comparisons == 4, "actual inline guard census");
+}
+
+function actual_compare(op: isa.Op): void {
+  require(op.width == 32 && op.base == 0 && op.offset == -8 && op.index == -1 && (op.immediate == 0 || op.immediate == 1), "actual RC comparisons");
+}
+
+function structure(): void {
+  require(isa.caller_program(fixture("jmp .Lmissing"), "__fn_caller").error != "", "missing branch");
+  require(isa.caller_program(fixture(".Lloop:\njmp .Lloop"), "__fn_caller").error == "", "cycle remains data");
+  require(isa.caller_program(fixture("call __fn_missing"), "__fn_caller").error == "", "unlinked call remains data");
+  require(isa.caller_program(fixture("ret") + ".data\n__fn_caller: .quad 0\n", "__fn_caller").error != "", "code-data collision");
+  require(isa.caller_program(fixture("ret") + fixture("ret"), "__fn_caller").error != "", "duplicate definition");
+  require(sample("unknown_instruction").kind == 0, "unknown retained");
+}
+
+pub function run(output: ssaprepare.Output): void {
+  calls();
+  memory();
+  refusals();
+  actual(output);
+  structure();
+}
