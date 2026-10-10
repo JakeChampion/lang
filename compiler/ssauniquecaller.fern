@@ -336,11 +336,74 @@ function record_parameter(row: ssaprepare.Emitted, t: typeinfo.Type): boolean {
   return false;
 }
 
+function same_fields(a: semrecords.Field[], b: semrecords.Field[]): boolean {
+  if (a.len() != b.len()) {
+    return false;
+  }
+  let i = 0;
+  for field in a {
+    if (field.name != b[i].name || !semtypes.equal(field.ty, b[i].ty)) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function member_parameter(row: ssaprepare.Emitted, v: semrecords.Variant): boolean {
+  // enum_members produces this exact member type, not a name-index proof.
+  let t: typeinfo.Type = typeinfo.TypeStruct { name: v.name, args: [] };
+  if (!record_parameter(row, t)) {
+    return false;
+  }
+  for record in selected.metadata(row).records.list {
+    if (semtypes.equal(record.ty, t)) {
+      return same_fields(record.fields, v.fields);
+    }
+  }
+  return false;
+}
+
+function enum_schema(row: ssaprepare.Emitted, e: semrecords.Enum): boolean {
+  if (e.variants.len() == 0 || e.layout != semrecords.layout_variant() && e.layout != semrecords.layout_member()) {
+    return false;
+  }
+  let labels: string[] = [];
+  for v in e.variants {
+    if (v.name == "" || !record_fields(v.fields)) {
+      return false;
+    }
+    if (e.layout == semrecords.layout_member() && !member_parameter(row, v)) {
+      return false;
+    }
+    labels = labels.append(v.name);
+  }
+  return names.index(labels).duplicate < 0;
+}
+
+function union_parameter(row: ssaprepare.Emitted, t: typeinfo.Type): boolean {
+  if (!semtypes.concrete(t, false)) {
+    return false;
+  }
+  if let typeinfo.TypeUnion(_) = t {
+    let count = 0;
+    let valid = false;
+    for e in selected.metadata(row).enums {
+      if (semtypes.equal(e.ty, t)) {
+        count = count + 1;
+        valid = enum_schema(row, e);
+      }
+    }
+    return count == 1 && valid;
+  }
+  return false;
+}
+
 function signature(row: ssaprepare.Emitted, c: ssasem.Contract): boolean {
   if (c.params.len() != 1 || c.modes.len() != 1 || c.modes[0] != ssasem.borrow_mode()) {
     return false;
   }
-  if (!parameter(c.params[0]) && !record_parameter(row, c.params[0])) {
+  if (!parameter(c.params[0]) && !record_parameter(row, c.params[0]) && !union_parameter(row, c.params[0])) {
     return false;
   }
   if let typeinfo.TypeI32(i) = c.result {

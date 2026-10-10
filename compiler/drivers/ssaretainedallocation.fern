@@ -140,6 +140,10 @@ function selected_uniqueness(arm: boolean): void {
   selected_parameter(arm, "struct Marker { a: i32, b: string } ", "Marker");
   selected_parameter(arm, "struct Box[T] { value: T } ", "Box[i32]");
   selected_parameter(arm, "struct Box[T] { value: T } ", "Box[string]");
+  selected_parameter(arm, "enum Choice { Full(i32), Empty } ", "Choice");
+  selected_parameter(arm, "enum Box[T] { Full(T), Empty } ", "Box[i32]");
+  selected_parameter(arm, "enum Box[T] { Full(T), Empty } ", "Box[string]");
+  selected_parameter(arm, "struct Left { n: i32, text: string } struct Right { flag: boolean } type Choice = Left | Right; ", "Choice");
 }
 
 function selected_parameter(arm: boolean, prelude: string, parameter: string): void {

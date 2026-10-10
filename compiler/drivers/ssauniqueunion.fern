@@ -1,0 +1,123 @@
+import "../ssauniquecaller" as caller;
+import "../ssacreditselected" as selected;
+import "../ssaprepare";
+import "../physicalbody";
+import "../semrecords";
+import "../semtypes";
+import "../typeinfo";
+
+function require(ok: boolean): void {
+  if (!ok) {
+    exit(196);
+  }
+}
+
+function metadata(row: ssaprepare.Emitted, m: physicalbody.Metadata): ssaprepare.Emitted {
+  let s = physicalbody.Selected { producers: [m], origin: physicalbody.Origin { producer: 0, symbol: row.body.selected.origin.symbol } };
+  return ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: s } };
+}
+
+function check(row: ssaprepare.Emitted, expected: boolean): void {
+  let p = caller.check_selected([row], row.label_name, row.context.architecture);
+  require(p.ok == expected && p.function_name == row.label_name);
+}
+
+function schema(row: ssaprepare.Emitted, e: semrecords.Enum, expected: boolean): void {
+  let m = selected.metadata(row);
+  check(metadata(row, physicalbody.Metadata { ...m, enums: [e] }), expected);
+}
+
+function variants(row: ssaprepare.Emitted, e: semrecords.Enum): void {
+  require(e.variants.len() >= 2 && e.variants[0].fields.len() > 0);
+  let v = e.variants[0];
+  let f = v.fields[0];
+  let unknown: typeinfo.Type = typeinfo.TypeUnknown { reason: "unresolved union field" };
+  let bad = [
+    semrecords.Variant { ...v, name: "" },
+    semrecords.Variant { ...v, fields: [semrecords.Field { ...f, name: "" }] },
+    semrecords.Variant { ...v, fields: [semrecords.Field { ...f, ty: unknown }] },
+    semrecords.Variant { ...v, fields: [f, f] },
+  ];
+  for changed in bad {
+    schema(row, semrecords.Enum { ...e, variants: [changed, e.variants[1]] }, false);
+  }
+  schema(row, semrecords.Enum { ...e, variants: [] }, false);
+  schema(row, semrecords.Enum { ...e, variants: [v, v] }, false);
+  for layout in [-1, 0, 3, 4] {
+    schema(row, semrecords.Enum { ...e, layout: layout }, false);
+  }
+  // Flags do not supply the box representation or release-effect proof.
+  schema(row, semrecords.Enum { ...e, views: !e.views, nests_func: !e.nests_func }, true);
+}
+
+function producers(row: ssaprepare.Emitted, e: semrecords.Enum): void {
+  let m = selected.metadata(row);
+  let empty = physicalbody.Metadata { ...m, enums: [] };
+  check(metadata(row, empty), false);
+  check(metadata(row, physicalbody.Metadata { ...m, enums: [e, e] }), false);
+  let s = physicalbody.Selected { producers: [empty, m], origin: physicalbody.Origin { producer: 0, symbol: row.body.selected.origin.symbol } };
+  check(ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: s } }, false);
+  let correct = physicalbody.Selected { ...s, origin: physicalbody.Origin { ...s.origin, producer: 1 } };
+  check(ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: correct } }, true);
+  if let typeinfo.TypeUnion(u) = e.ty {
+    schema(row, semrecords.Enum { ...e, ty: typeinfo.TypeUnion { ...u, name: "Different" } }, false);
+    schema(row, semrecords.Enum { ...e, ty: typeinfo.TypeUnion { ...u, args: [typeinfo.TypeString { tag: 0 }] } }, false);
+  }
+}
+
+function member_records(row: ssaprepare.Emitted, e: semrecords.Enum): void {
+  if (e.layout != semrecords.layout_member()) {
+    return;
+  }
+  let m = selected.metadata(row);
+  let v = e.variants[0];
+  let ty: typeinfo.Type = typeinfo.TypeStruct { name: v.name, args: [] };
+  let hits = 0;
+  let i = 0;
+  for r in m.records.list {
+    if (semtypes.equal(r.ty, ty)) {
+      hits = hits + 1;
+      require(r.fields.len() == 2);
+      let changed = [
+        semrecords.Record { ...r, fields: [] },
+        semrecords.Record { ...r, fields: [r.fields[1], r.fields[0]] },
+        semrecords.Record { ...r, fields: [semrecords.Field { ...r.fields[0], name: "wrong" }, r.fields[1]] },
+        semrecords.Record { ...r, fields: [semrecords.Field { ...r.fields[0], ty: r.fields[1].ty }, r.fields[1]] },
+        semrecords.Record { ...r, ty: typeinfo.TypeStruct { name: v.name, args: [r.fields[0].ty] } },
+      ];
+      for bad in changed {
+        check(metadata(row, physicalbody.Metadata { ...m, records: semrecords.Records { ...m.records, list: m.records.list.with(i, bad) } }), false);
+      }
+      check(metadata(row, physicalbody.Metadata { ...m, records: semrecords.records_of(m.records.list.append(r)) }), false);
+    }
+    i = i + 1;
+  }
+  require(hits == 1);
+  // A valid name index cannot rescue absent record schemas; an absent index
+  // cannot invalidate complete independently checked record facts.
+  check(metadata(row, physicalbody.Metadata { ...m, records: semrecords.Records { ...m.records, list: [] } }), false);
+  let no_records = semrecords.no_records();
+  check(metadata(row, physicalbody.Metadata { ...m, records: semrecords.Records { ...m.records, names: no_records.names } }), true);
+  for name in ["Reader", "__env$first"] {
+    let t: typeinfo.Type = typeinfo.TypeStruct { name: name, args: [] };
+    let record = semrecords.Record { ty: t, fields: v.fields, views: false, nests_func: false };
+    let bad = semrecords.Enum { ...e, variants: [semrecords.Variant { ...v, name: name }] };
+    check(metadata(row, physicalbody.Metadata { ...m, enums: [bad], records: semrecords.records_of([record]) }), false);
+  }
+}
+
+pub function run(row: ssaprepare.Emitted): void {
+  let cs = selected.contracts(row);
+  if let typeinfo.TypeUnion(_) = cs[0].params[0] {
+    let count = 0;
+    for e in selected.metadata(row).enums {
+      if (semtypes.equal(e.ty, cs[0].params[0])) {
+        count = count + 1;
+        variants(row, e);
+        producers(row, e);
+        member_records(row, e);
+      }
+    }
+    require(count == 1);
+  }
+}
