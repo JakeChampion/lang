@@ -2756,6 +2756,11 @@ pub function drop_helpers(f: ssasem.Func): irtables.LowerResult[] {
   return helpers_not_in(f, util.name_index(none), util.name_index(none)).rows;
 }
 
+// Sparse provenance for nominal helpers, recorded where the body is made.
+// `row` is a position in Helpers.rows, not a symbol lookup. Other helper
+// families have no descriptor. These facts do not certify ABI or effects.
+pub struct HelperType { row: i32, ty: typeinfo.Type, children_only: boolean }
+
 // Helpers is the drop helpers collected over a module's bodies, with an index
 // over their symbols: a helper is generated once per module, by the first
 // function whose schema names its type. Every function's table is built from
@@ -2763,11 +2768,6 @@ pub function drop_helpers(f: ssasem.Func): irtables.LowerResult[] {
 // same one. `seen` holds the record and enum types (ssasem.type_key) an
 // earlier function's schema held: their helpers are in `rows`, or they have
 // none.
-// Sparse provenance for nominal helpers, recorded where the body is made.
-// `row` is a position in Helpers.rows, not a symbol lookup. Other helper
-// families have no descriptor. These facts do not certify ABI or effects.
-pub struct HelperType { row: i32, ty: typeinfo.Type, children_only: boolean }
-
 pub struct Helpers { rows: irtables.LowerResult[], types: HelperType[], done: util.NameIndex, seen: util.NameIndex }
 
 pub function no_helpers(): Helpers {
