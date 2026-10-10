@@ -5693,14 +5693,22 @@ function bind_from_args(sig: FuncSig, c: ast.ExprCall, s: Scope, literals: boole
   return (bn, bt);
 }
 
-// call_bindings is arg_bindings with the bounds' impls consulted before the
-// literal arguments: in `contains(of(xs_i64), 2)` the iterator's impl, not the
-// literal, decides that `T` is i64.
+// A bound's integer type can settle an integer literal, but a different kind
+// cannot: `C[string]` must not turn the argument `5` into a string. Recompute
+// the bounds from the argument seeds after choosing the literal widths.
 function call_bindings(sig: FuncSig, c: ast.ExprCall, s: Scope): (string[], typeinfo.Type[]) {
   let (wn, wt) = written_type_bindings(sig, c, s);
   let (tn, tt) = bind_from_args(sig, c, s, false, wn, wt);
   let (bn, bt) = bound_bindings(sig, s, tn, tt);
-  let (ln, lt) = bind_from_args(sig, c, s, true, bn, bt);
+  let (ln, lt) = bind_from_args(sig, c, s, true, tn, tt);
+  let i: i32 = tn.len();
+  while (i < ln.len()) {
+    let bi: i32 = util.index_of_str(bn, ln[i]);
+    if (bi >= 0 && is_integer(lt[i]) && is_integer(bt[bi])) {
+      lt = lt.with(i, bt[bi]);
+    }
+    i = i + 1;
+  }
   return bound_bindings(sig, s, ln, lt);
 }
 

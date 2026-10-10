@@ -1180,36 +1180,47 @@ struct P { id: i32, m: Map[i32, i32] } function main(): i32 { let d = P { id: 1,
 		})
 	}
 
-	// #4350: the self-overwrite reuse site is RUNTIME-GUARDED — the emitted asm
-	// must carry the uniqueness probe and the token-degrade allocator (reused =
-	// __fern_rc_is_unique(d); box = __fern_alloc_reuse(token, nfields)). The
-	// degrade arm is unreachable from any valid program today (only sole-owner
-	// donors reuse), so it is pinned structurally here — and at scale by the
-	// self-compile fixpoints, which run every self-overwrite site in the
-	// compiler's own source through the guard — rather than by an end-to-end
-	// case.
-	t.Run("self-overwrite-guard-emitted", func(t *testing.T) {
-		asm := emit(t, `struct Point { x: i32, y: i32 } function main(): i32 { let d = Point { x: 3, y: 4 }; let c = Point { ...d, x: 10 }; return c.x + c.y; }`)
-		if rcIsUniqueSites(asm) == 0 {
-			t.Error("self-overwrite reuse site emitted no __fern_rc_is_unique guard")
-		}
-		if !strings.Contains(asm, "call __fn___fern_alloc_reuse") {
-			t.Error("self-overwrite reuse site emitted no __fern_alloc_reuse token-degrade call")
-		}
-	})
-
-	// #4350 slice 5: the in-arm consuming-match reuse is RUNTIME-GUARDED too —
-	// same token shape, with __fern_alloc_reuse called PER ARM (sized by the
-	// matched variant). The degrade arm is unreachable from any statically
-	// admitted program (sole-owner donors only), so it is pinned structurally
-	// here and at scale by the self-compile fixpoints.
-	t.Run("inarm-reuse-guard-emitted", func(t *testing.T) {
-		asm := emit(t, `enum E { V(i32, i32), W(i32, i32) } function go(): i32 { let x = V(3, 4); let y = match (x) { V(a, b) => W(a + 1, b + 1), W(c, d) => V(c, d) }; let r = match (y) { V(a, b) => a + b, W(c, d) => c + d }; return r; } function main(): i32 { return go(); }`)
-		if rcIsUniqueSites(asm) == 0 {
-			t.Error("in-arm match reuse site emitted no __fern_rc_is_unique guard")
-		}
-		if !strings.Contains(asm, "call __fn___fern_alloc_reuse") {
-			t.Error("in-arm match reuse site emitted no __fern_alloc_reuse token-degrade call")
-		}
-	})
+	// Constant donors use static data and cannot be reused. Keep those programs
+	// alongside runtime donors that must carry the uniqueness guard and
+	// token-degrade allocator. Scope checks to the tested body so argv cleanup
+	// and unrelated runtime helpers cannot satisfy them.
+	guardCases := []struct {
+		name, src, body string
+		want            int
+		heapDonor       bool
+	}{
+		{"self-overwrite-guard-emitted/original",
+			`struct Point { x: i32, y: i32 } function main(): i32 { let d = Point { x: 3, y: 4 }; let c = Point { ...d, x: 10 }; return c.x + c.y; }`, "main", 14, false},
+		{"self-overwrite-guard-emitted/runtime",
+			`struct Point { x: i32, y: i32 } @noinline function probe(n: i32): i32 { let d = Point { x: n, y: n + 1 }; let c = Point { ...d, x: 10 }; return c.x + c.y; } function main(): i32 { return probe(args().len() + 2); }`, "probe", 14, true},
+		{"inarm-reuse-guard-emitted/original",
+			`enum E { V(i32, i32), W(i32, i32) } function go(): i32 { let x = V(3, 4); let y = match (x) { V(a, b) => W(a + 1, b + 1), W(c, d) => V(c, d) }; let r = match (y) { V(a, b) => a + b, W(c, d) => c + d }; return r; } function main(): i32 { return go(); }`, "go", 9, false},
+		{"inarm-reuse-guard-emitted/runtime-v",
+			`enum E { V(i32, i32), W(i32, i32) } @noinline function probe(n: i32): i32 { let x = V(n, n + 1); let y = match (x) { V(a, b) => W(a + 1, b + 1), W(c, d) => V(c, d) }; let r = match (y) { V(a, b) => a + b, W(c, d) => c + d }; return r; } function main(): i32 { return probe(args().len() + 2); }`, "probe", 9, true},
+		{"inarm-reuse-guard-emitted/runtime-w",
+			`enum E { V(i32, i32), W(i32, i32) } @noinline function probe(n: i32): i32 { let x = W(n, n + 1); let y = match (x) { V(a, b) => W(a + 1, b + 1), W(c, d) => V(c, d) }; let r = match (y) { V(a, b) => a + b, W(c, d) => c + d }; return r; } function main(): i32 { return probe(args().len() + 2); }`, "probe", 7, true},
+	}
+	for _, tc := range guardCases {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := emit(t, tc.src)
+			body := selfHostFnBody(t, []byte(asm), tc.body)
+			guard := rcIsUniqueSites(body) > 0
+			reuse := strings.Contains(body, "call __fn___fern_alloc_reuse")
+			if guard != tc.heapDonor || reuse != tc.heapDonor {
+				t.Errorf("uniqueness guard=%v, reuse allocator=%v; heap donor=%v:\n%s", guard, reuse, tc.heapDonor, body)
+			}
+			for _, call := range []string{"call __fern_arr_box", "call __fn___fern_arr_dec"} {
+				if !strings.Contains(body, call) {
+					t.Errorf("missing %s:\n%s", call, body)
+				}
+			}
+			if !tc.heapDonor && !strings.Contains(body, ".K0(%rip)") {
+				t.Errorf("original donor has no static-data load:\n%s", body)
+			}
+			// With only the program name in args, probe receives n=3.
+			if code, out := cli.runX86(t, asm); code != tc.want {
+				t.Errorf("exit %d, want %d: %s", code, tc.want, out)
+			}
+		})
+	}
 }

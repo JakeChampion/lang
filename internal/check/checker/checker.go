@@ -1084,6 +1084,7 @@ func configFromEnv(prog *ast.Program) {
 	ast.WalkProgram(prog, func(n ast.Node) bool {
 		if call, ok := n.(*ast.Call); ok {
 			if id, ok := call.Callee.(*ast.Ident); ok && id.Name == "config_get" {
+				call.SourceCallee = id.Name
 				id.Name = "env"
 			}
 		}
@@ -8142,7 +8143,16 @@ func synthEnumJson(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
 // `mod__Name`. A no-op for single-file / same-module names. See
 // docs/TRAITS.md (Phase 3).
 func demangle(s string) string {
-	return strings.Replace(s, "__", ".", 1)
+	// Match the self-host's util.dunder_at: a separator at index zero is
+	// the builtin/internal prefix, not a module name.
+	if len(s) < 2 {
+		return s
+	}
+	if cut := strings.Index(s[1:], "__"); cut >= 0 {
+		cut++
+		return s[:cut] + "." + s[cut+2:]
+	}
+	return s
 }
 
 // checkOpaqueAccess rejects reaching into an `opaque` struct's fields
@@ -11878,6 +11888,8 @@ func argSubject(n *ast.Call, num int) string {
 	name := ""
 	if n.Method != nil {
 		name = n.Method.Field
+	} else if n.SourceCallee != "" {
+		name = n.SourceCallee
 	} else if id, ok := n.Callee.(*ast.Ident); ok && !strings.HasPrefix(id.Name, "__") {
 		name = demangle(id.Name)
 	}
@@ -18689,6 +18701,8 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			subject, want, got := "this function", len(ft.Params), len(n.Args)
 			if recvIsArg0 && n.Method != nil {
 				subject, want, got = fmt.Sprintf("method %q", n.Method.Field), want-1, got-1
+			} else if n.SourceCallee != "" {
+				subject = fmt.Sprintf("function %q", n.SourceCallee)
 			} else if id, ok := n.Callee.(*ast.Ident); ok {
 				subject = fmt.Sprintf("function %q", demangle(id.Name))
 			}

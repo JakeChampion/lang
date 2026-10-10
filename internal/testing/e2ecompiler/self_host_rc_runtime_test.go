@@ -225,15 +225,40 @@ func TestSelfHostRcExitSweepX86_64(t *testing.T) {
 		})
 	}
 
-	// Emission: a function with an array local releases it at exit (the
-	// __fern_arr_dec sweep).
-	t.Run("emits-exit-sweep", func(t *testing.T) {
-		asm := cli.emit(t, "x86-64-linux",
-			"function main(): i32 { let xs: i32[] = [1, 2]; return xs[0]; }")
-		if !strings.Contains(asm, "call __fn___fern_arr_dec") {
-			t.Errorf("expected the exit-dec sweep (__fern_arr_dec) for the array local")
-		}
-	})
+	// Static arrays need no exit release. A runtime array must allocate and
+	// release inside probe; main's argv cleanup cannot satisfy these checks.
+	for _, tc := range []struct {
+		name, src, body string
+		heap            bool
+	}{
+		{"original", "function main(): i32 { let xs: i32[] = [1, 2]; return xs[0]; }", "main", false},
+		{"runtime", "@noinline function probe(n: i32): i32 { let xs: i32[] = [n, n + 1]; return xs[0]; } function main(): i32 { return probe(args().len()); }", "probe", true},
+	} {
+		t.Run("emits-exit-sweep/"+tc.name, func(t *testing.T) {
+			asm := cli.emit(t, "x86-64-linux", tc.src)
+			body := selfHostFnBody(t, []byte(asm), tc.body)
+			for _, call := range []string{"call __fern_arr_box", "call __fn___fern_arr_dec"} {
+				if strings.Contains(body, call) != tc.heap {
+					t.Errorf("%s: expected %s presence=%v:\n%s", tc.name, call, tc.heap, body)
+				}
+			}
+			if !tc.heap && !strings.Contains(body, ".K0(%rip)") {
+				t.Errorf("original array has no static-data load:\n%s", body)
+			}
+			// args includes only the program name, so probe receives n=1.
+			if code, out := cli.runX86(t, asm); code != 1 {
+				t.Errorf("exit %d, want 1: %s", code, out)
+			}
+			if tc.heap {
+				checked := cli.emit(t, "x86-64-linux", tc.src, "FERN_LEAKCHECK=1")
+				stderr, code := hevRun(t, cli.runner, buildBin(t, cli.gcc, t.TempDir(), "sweep", checked))
+				if code != 1 {
+					t.Errorf("leakcheck exit %d, want 1", code)
+				}
+				assertBalancedCensus(t, stderr)
+			}
+		})
+	}
 }
 
 // Phase 4 (Perceus move-on-return): `return xs` where xs is a bare

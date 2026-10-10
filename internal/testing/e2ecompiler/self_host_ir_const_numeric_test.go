@@ -48,7 +48,10 @@ func irConstNumericEmit(t *testing.T, runner []string, bin, target string) strin
 	if err := cmd.Run(); err != nil {
 		t.Fatalf("ir_const_numeric_run -target %s: %v\n%s", target, err, errb.String())
 	}
-	if !strings.Contains(errb.String(), "rebuilt i64=29 f64=10") {
+	// Folding -0.0 flips its sign bit into a value-form constant before the
+	// driver runs. Account for it alongside all nine rebuilt text floats;
+	// the original program below still checks its exact negative-zero bits.
+	if !strings.Contains(errb.String(), "rebuilt i64=29 f64=9 value-f64=1") {
 		t.Fatalf("-target %s: the driver rebuilt a different set of constants: %q", target, errb.String())
 	}
 	return out.String()

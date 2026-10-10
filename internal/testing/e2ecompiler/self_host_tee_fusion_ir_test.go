@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -24,25 +25,25 @@ import (
 // and then `propagate_copies` drops it whenever the slot has no other reader —
 // which is most scalar code. A case that emits no `local.tee` is therefore the
 // pipeline working correctly, not the fusion failing, and `wantTee` records which
-// shapes measurably retain one: only the pointer-valued case, where the slots are
-// read again. The instruction assertion is kept exactly where it is meaningful.
+// shapes measurably retain one: the runtime pointer-valued case, where the
+// allocated array is read and released. Keep the original static pointer case.
 //
 // The VALUE assertions carry the weight on every case and every backend. They are
 // what would have caught the missing lowering, and `tee-reread-slot` is the sharp
 // one: a tee that wrote the operand stack but not the frame passes the others and
 // fails that.
 //
-// # Every case takes an opaque input
+// # Parameters and runtime input
 //
 // These programs used to bind literals (`let a: i32 = 7; ...`). Constant
 // propagation then folded them whole — correct, faster, and no longer a test of
-// codegen, since nothing survived to the backend but a constant. Parameters keep
-// the values opaque so the emitted code is what is actually under test.
+// codegen, since nothing survived to the backend but a constant. Keep those
+// parameterized programs and add an opaque runtime pointer input for tee coverage.
 var teeFusionCases = []struct {
 	name     string
 	src      string
 	expected int
-	// wantTee: measured, not assumed. Only the pointer-valued shape retains a
+	// wantTee: measured, not assumed. Only the runtime pointer shape retains a
 	// `local.tee` after copy propagation; asserting it on a shape whose tee is
 	// correctly dropped would pin the absence of an optimisation.
 	wantTee bool
@@ -83,15 +84,25 @@ function callarg(x: i32): i32 {
     return y + x;
 }
 function main(): i32 { return callarg(6); }`, 18, false},
-	// Pointer-width values use the same slots, and this is the shape whose tees
-	// SURVIVE copy propagation — so it is the one that pins `local.tee` reaching
-	// the wasm backend, and the peek forms reaching the register backends.
+	// Preserve the original pointer-width values and result. The array is now
+	// static, and the inlined body no longer retains a tee.
 	{"tee-ptr-values", `function ptrs(s: string, xs: i32[]): i32 {
     let n: i32 = s.len();
     let m: i32 = xs[2];
     return n + m;
 }
-function main(): i32 { return ptrs("hello", [3, 4, 5]); }`, 10, true},
+function main(): i32 { return ptrs("hello", [3, 4, 5]); }`, 10, false},
+	// Program-name-only argv supplies n=1, preserving the original array values.
+	// The single-argument reader keeps the pointer store/reload adjacent before
+	// the call. The caller must still read that saved pointer to release it.
+	{"tee-runtime-ptr-values", `@noinline function ptrs(s: string, xs: i32[]): i32 {
+    let n: i32 = s.len();
+    let m: i32 = xs[2];
+    return n + m;
+}
+@noinline function read(xs: i32[]): i32 { return ptrs("hello", xs); }
+@noinline function probe(n: i32): i32 { return read([n + 2, n + 3, n + 4]); }
+function main(): i32 { return probe(args().len()); }`, 10, true},
 }
 
 // TestSelfHostTeeFusionIRX86_64 runs the cases through the self-hosted x86-64
@@ -179,8 +190,25 @@ func TestSelfHostTeeFusionWasmIR(t *testing.T) {
 			if err != nil || len(wat) == 0 {
 				t.Fatalf("driver failed for %q: %v", tc.name, err)
 			}
-			if tc.wantTee && !strings.Contains(string(wat), "local.tee") {
-				t.Errorf("%q emitted no local.tee — the fusion did not reach the wasm backend", tc.name)
+			if tc.wantTee {
+				bodies := wasmFuncBodies(string(wat), "$probe ")
+				if len(bodies) != 1 {
+					t.Fatalf("%q: want one probe body, got %d", tc.name, len(bodies))
+				}
+				body := bodies[0]
+				tee := regexp.MustCompile(`local\.tee ([0-9]+)\s+call \$read`).FindStringSubmatch(body)
+				if len(tee) != 2 {
+					t.Fatalf("%q emitted no pointer tee feeding read\n%s", tc.name, body)
+				}
+				if !strings.Contains(body, "call $__fern_arr_box") || !regexp.MustCompile(`local\.get `+tee[1]+`\s+call \$__fern_arr_dec`).MatchString(body) {
+					t.Errorf("%q must allocate and release the pointer saved by tee\n%s", tc.name, body)
+				}
+			}
+			if tc.name == "tee-ptr-values" {
+				bodies := wasmFuncBodies(string(wat), "$main ")
+				if len(bodies) != 1 || !strings.Contains(bodies[0], "global.get $__cagg_base") || strings.Contains(bodies[0], "local.tee") {
+					t.Errorf("%q lost its static no-tee control\n%s", tc.name, wat)
+				}
 			}
 			watFile := filepath.Join(dir, tc.name+".wat")
 			if err := os.WriteFile(watFile, wat, 0o644); err != nil {
