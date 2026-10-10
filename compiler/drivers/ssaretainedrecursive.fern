@@ -82,6 +82,7 @@ function refusals(out: ssaprepare.Output, name: string): void {
   require(release.release_entry.counted && bound.resolve(out.bodies, release.label_name, arch).error == "unproved native release entry effects", 212);
   require(!caller.check_selected(out.bodies, release.label_name, arch).ok, 213);
   require(!unit.check_selected_collection(out.text, arch, out.bodies).ok, 214);
+  require(bound.release_selected(out.bodies, release.label_name, drop.label_name, arch).error != "", 224);
 }
 
 function program(source: string, name: string, arm: boolean): void {

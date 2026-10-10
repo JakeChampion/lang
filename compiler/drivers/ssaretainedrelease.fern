@@ -11,6 +11,7 @@ import "../ssacreditbound" as bound;
 import "../ssacreditselected" as selected;
 import "../typeinfo";
 import "./ssaretainedmutations" as mutations;
+import "./ssaretainedselectedrelease" as selected_release;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -68,6 +69,8 @@ function shortcut(rows: ssaprepare.Emitted[], row: ssaprepare.Emitted, arch: str
   let changed = ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, lowered: lower }, context: context, release_entry: entry };
   let p = bound.release(rest.append(changed), row.label_name, "__sem_drop_Parent", arch, parent);
   require(p.error == "mismatched proved release entry Drop" && p.rows.len() == 0, 85);
+  let derived = bound.release_selected(rest.append(changed), row.label_name, "__sem_drop_Parent", arch);
+  require(derived.error == p.error && derived.rows.len() == 0, 225);
   // With no register entry, production uses the SAME proved original body.
   context = ssaprepare.Context { ...row.context, reg_entries: irtables.sig_reg_of([]) };
   entry = ircore.release_entry(row.body.lowered, arch, context.rc_free_debug, context.reg_entries);
@@ -106,6 +109,7 @@ function controls(rows: ssaprepare.Emitted[], arch: string, parent: typeinfo.Typ
 }
 
 pub function run(rows: ssaprepare.Emitted[], architecture: string): void {
+  selected_release.run(rows, architecture);
   let hits = 0;
   for row in rows {
     if (row.label_name == "consume") {

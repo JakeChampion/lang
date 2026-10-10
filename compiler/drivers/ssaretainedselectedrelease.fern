@@ -1,0 +1,94 @@
+// Descriptor-derived release binding must still prove both actual bodies.
+import "../physicalbody";
+import "../semrecords";
+import "../ssasem";
+import "../ssaprepare";
+import "../ssacreditbound" as bound;
+import "../ssacreditselected" as selected;
+import "../typeinfo";
+import "../util";
+import "./ssaretainedmutations" as mutations;
+
+function require(ok: boolean, code: i32): void {
+  if (!ok) {
+    exit(code);
+  }
+}
+
+function check(rows: ssaprepare.Emitted[], arch: string, ok: boolean): void {
+  let p = bound.release_selected(rows, "__sem_release_Parent", "__sem_drop_Parent", arch);
+  if ((p.error == "" && p.rows.len() == 2) != ok) {
+    print("selected release: " + p.error);
+    exit(220);
+  }
+}
+
+function described(row: ssaprepare.Emitted, helper: Option[physicalbody.Helper]): ssaprepare.Emitted {
+  let s = row.body.selected;
+  let origin = physicalbody.Origin { ...s.origin, helper: helper };
+  return ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: physicalbody.Selected { ...s, origin: origin } } };
+}
+
+function metadata(row: ssaprepare.Emitted, m: physicalbody.Metadata): ssaprepare.Emitted {
+  let s = row.body.selected;
+  // Preserve the descriptor while isolating this row's producer store.
+  let origin = physicalbody.Origin { ...s.origin, producer: 0 };
+  return ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: physicalbody.Selected { producers: [m], origin: origin } } };
+}
+
+function controls(pair: ssaprepare.Emitted[], arch: string): void {
+  check(pair, arch, true);
+  check([pair[1], pair[0]], arch, true);
+  check([], arch, false);
+  check(pair, "wasm32-wasi", false);
+  let i = 0;
+  for row in pair {
+    check([row], arch, false);
+    check(pair.append(row), arch, false);
+    check(pair.with(i, described(row, None)), arch, false);
+    check(pair.with(i, mutations.damaged(row)), arch, false);
+    let entry = row.release_entry;
+    check(pair.with(i, ssaprepare.Emitted { ...row, release_entry: ssaprepare.ReleaseEntry { ...entry, counted: !entry.counted } }), arch, false);
+    check(pair.with(i, ssaprepare.Emitted { ...row, release_entry: ssaprepare.ReleaseEntry { ...entry, unique_drop: "wrong" } }), arch, false);
+    if let Some(h) = row.body.selected.origin.helper {
+      check(pair.with(i, described(row, Some(physicalbody.Helper { ...h, children_only: !h.children_only }))), arch, false);
+      check(pair.with(i, described(row, Some(physicalbody.Helper { ...h, ty: typeinfo.TypeStruct { name: "Missing", args: [] } }))), arch, false);
+    } else {
+      require(false, 221);
+    }
+    let m = selected.metadata(row);
+    check(pair.with(i, metadata(row, physicalbody.Metadata { ...m, records: semrecords.no_records() })), arch, false);
+    check(pair.with(i, metadata(row, physicalbody.Metadata { ...m, finalizers: [ssasem.Finalizer { receiver: "Leaf", symbol: "drop_leaf" }] })), arch, false);
+    check(pair.with(i, metadata(row, physicalbody.Metadata { ...m, records: semrecords.records_of(util.append_all(m.records.list, m.records.list)) })), arch, false);
+    // Invalid producer indices must refuse before reading their descriptors.
+    let s = row.body.selected;
+    let origin = physicalbody.Origin { ...s.origin, producer: s.producers.len() };
+    check(pair.with(i, ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: physicalbody.Selected { ...s, origin: origin } } }), arch, false);
+    i = i + 1;
+  }
+  // Agreeing descriptors cannot manufacture a missing nominal schema.
+  let wrong: ssaprepare.Emitted[] = [];
+  for row in pair {
+    if let Some(h) = row.body.selected.origin.helper {
+      wrong = wrong.append(described(row, Some(physicalbody.Helper { ...h, ty: typeinfo.TypeStruct { name: "Missing", args: [] } })));
+    }
+  }
+  check(wrong, arch, false);
+  check([described(pair[0], None), described(pair[1], None)], arch, false);
+}
+
+pub function run(rows: ssaprepare.Emitted[], arch: string): void {
+  let pair: ssaprepare.Emitted[] = [];
+  for row in rows {
+    if (row.label_name == "__sem_release_Parent" || row.label_name == "__sem_drop_Parent") {
+      let m = selected.metadata(row);
+      pair = pair.append(metadata(row, physicalbody.Metadata { ...m, contracts: [] }));
+      if (row.release_entry.counted) {
+        require(bound.resolve(rows, row.label_name, arch).error == "unproved native release entry effects", 222);
+      }
+    }
+  }
+  require(pair.len() == 2, 223);
+  check(rows, arch, true);
+  controls(pair, arch);
+}
