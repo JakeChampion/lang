@@ -183,7 +183,32 @@ function raw_line(raw: string): boolean {
   return true;
 }
 
+// Retained native functions may refer to the ordinary static shape pool.
+// These tokens identify declarations only: they grant no writable extent,
+// relocation, linked-address or shape-content permission.
+function native_data(line: string, section: i32): boolean {
+  if (section < 2 || word(line) != ".quad") {
+    return false;
+  }
+  let arg = util.trim(slice_unchecked(line, 5, line.len()) + "");
+  if (symbol(arg)) {
+    return true;
+  }
+  if (arg.len() > 1 && arg[0] == b'-') {
+    return decimal(slice_unchecked(arg, 1, arg.len()) + "");
+  }
+  return false;
+}
+
 function scan(text: string): Scan {
+  return scan_mode(text, false);
+}
+
+function scan_directive(tail: string, section: i32, native: boolean): i32 {
+  return if (native && native_data(tail, section)) { section } else { directive(tail, section) };
+}
+
+function scan_mode(text: string, native: boolean): Scan {
   let lines: string[] = [];
   let sections: i32[] = [];
   let section = 0;
@@ -201,7 +226,7 @@ function scan(text: string): Scan {
       }
       let here = section;
       if (util.str_has_prefix(tail, ".")) {
-        section = directive(tail, section);
+        section = scan_directive(tail, section, native);
         if (section < 0) {
           return Scan { lines: [], sections: [], error: "unsupported decrement assembly directive: " + tail };
         }
@@ -458,4 +483,75 @@ pub function dependency(text: string, entry: string): Body {
   }
   // No second nonlocal entry is part of a dependency body.
   return body(s, ix, start, -1, "");
+}
+
+function retained_line_error(line: string, name: string, section: i32, position: i32, ended: boolean): string {
+  if (ended || section != 1 || name != "" && line != name + ":") {
+    return "invalid retained function extent";
+  }
+  if (name == "" && util.str_has_prefix(line, ".")) {
+    return retained_directive_error(line, position);
+  }
+  return "";
+}
+
+function retained_directive_error(line: string, position: i32): string {
+  let op = word(line);
+  let arg = util.trim(slice_unchecked(line, op.len(), line.len()) + "");
+  if (!metadata(line, op, arg, 1) || !util.str_has_prefix(line, ".cfi_")) {
+    return "unsupported retained function directive";
+  }
+  if (line == ".cfi_startproc" && position != 1) {
+    return "nested retained function frame";
+  }
+  return "";
+}
+
+function retained_lines(s: Scan, start: i32, entry: string): Body {
+  let code: string[] = [s.lines[start]];
+  let reg = -1;
+  let ended = false;
+  let at = start + 1;
+  while (at < s.lines.len()) {
+    let line = s.lines[at];
+    let name = definition(line);
+    if (ends_body(line, name, entry) || util.str_has_prefix(line, ".globl ")) {
+      break;
+    }
+    let error = retained_line_error(line, name, s.sections[at], code.len(), ended);
+    if (error != "") {
+      return failure(error);
+    }
+    if (name == entry + ".r") {
+      reg = code.len();
+    }
+    ended = line == ".cfi_endproc";
+    code = code.append(line);
+    at = at + 1;
+  }
+  if (!ended || code.len() < 3 || code[1] != ".cfi_startproc") {
+    return failure("missing retained function frame");
+  }
+  return Body { lines: code, register_entry: reg, error: "" };
+}
+
+// Extract an ordinary x86 text-mode retained function from the complete unit.
+// Unlike the decrement APIs, this declaration-only path admits signed/symbolic
+// quad data and bare static-pool labels. It never invokes writable_declarations
+// or establishes storage, runtime, instruction, unwind or ownership effects.
+// CFI bounds are checked in addition to the complete unique symbol namespace.
+pub function native_body(text: string, entry: string): Body {
+  if (!util.str_has_prefix(entry, "__fn_") || entry.len() <= 5 || !symbol(entry)) {
+    return failure("unsupported retained function name");
+  }
+  let s = scan_mode(text, true);
+  if (s.error != "") {
+    return failure(s.error);
+  }
+  let ix = definition_index(s.lines);
+  let start = names.unique_position(ix, entry);
+  if (ix.duplicate >= 0 || start < 0 || !exact_entry(s, start, entry)) {
+    return failure("missing or ambiguous retained function definition");
+  }
+  return retained_lines(s, start, entry);
 }
