@@ -3,6 +3,7 @@ import "../ssauniquecaller" as caller;
 import "../ssaprepare";
 import "../ssa";
 import "../physicalbody";
+import "../asmcore";
 import "std/string";
 
 function require(ok: boolean): void {
@@ -35,7 +36,9 @@ function change(text: string, old: string, replacement: string): string {
 
 function renamed(row: ssaprepare.Emitted, name: string): ssaprepare.Emitted {
   let f = row.body.formed.f;
-  let text = change(change(row.assembly, "__fn_" + f.name, "__fn_" + name), ".Lssa_" + f.name + "_", ".Lssa_" + name + "_");
+  let old_label = asmcore.sanitize_label(f.name);
+  let new_label = asmcore.sanitize_label(name);
+  let text = change(change(row.assembly, "__fn_" + old_label, "__fn_" + new_label), ".Lssa_" + old_label + "_", ".Lssa_" + new_label + "_");
   let formed = ssa.Formed { ...row.body.formed, f: ssa.SFunc { ...f, name: name } };
   return ssaprepare.Emitted { ...row, label_name: name, assembly: text, body: ssaprepare.Body { ...row.body, formed: formed } };
 }
@@ -81,6 +84,26 @@ function normalized_names(out: ssaprepare.Output): void {
   check(parts[0] + dotted.assembly + parts[1], arch, [mismatch], false);
   let swapped = ssaprepare.Emitted { ...dotted, body: underscored.body };
   check(both, arch, [swapped, underscored], false);
+  check(parts[0] + dotted.assembly + parts[1], arch, [swapped], false);
+}
+
+pub function dotted_output(out: ssaprepare.Output, aligned: boolean): void {
+  require(out.bodies.len() == 1);
+  let row = out.bodies[0];
+  let f = row.body.formed.f;
+  let arch = row.context.architecture;
+  require(f.name == "Token.first" && row.label_name == f.name);
+  require(row.assembly.starts_with("__fn_Token__first:\n") && row.assembly.contains("__fn_Token__first.r:\n"));
+  require(caller.check_body(row.assembly, arch, f).ok == !aligned);
+  require(unit.check_collection(out.text, arch, [f]).ok == !aligned);
+  require(caller.check_selected([row], f.name, arch).ok);
+  check(out.text, arch, [row], true);
+  let wrong = change(out.text, "__fn_Token__first", "__fn_Token.first");
+  check(wrong, arch, [row], false);
+  require(!caller.check_body(change(row.assembly, "__fn_Token__first", "__fn_Token.first"), arch, f).ok);
+  let collision = renamed(row, "Token__first");
+  check(out.text, arch, [row, collision], false);
+  check(out.text, arch, [collision, row], false);
 }
 
 function many_rows(out: ssaprepare.Output): void {

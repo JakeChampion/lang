@@ -122,7 +122,7 @@ function collection(output: string, architecture: string, functions: ssa.SFunc[]
   let entries: string[] = [];
   let seen: boolean[] = [];
   for f in functions {
-    let entry = "__fn_" + f.name + ":";
+    let entry = "__fn_" + asmcore.sanitize_label(f.name) + ":";
     entries = entries.append(entry);
     seen = seen.append(false);
   }

@@ -136,6 +136,9 @@ function record_schema(row: ssaprepare.Emitted, c: ssasem.Contract, record: semr
   let m = selected.metadata(row);
   let fields = record.fields;
   require(fields.len() > 0);
+  check(metadata(row, physicalbody.Metadata { ...m, records: semrecords.no_records() }), false);
+  // Deliberately inconsistent metadata: a stale name index must not rescue
+  // missing schemas. Admission derives facts from the actual record list.
   check(metadata(row, physicalbody.Metadata { ...m, records: semrecords.Records { ...m.records, list: [] } }), false);
   check(metadata(row, physicalbody.Metadata { ...m, records: semrecords.records_of([record, record]) }), false);
   let unknown: typeinfo.Type = typeinfo.TypeUnknown { reason: "unresolved field" };

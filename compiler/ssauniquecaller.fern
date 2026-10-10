@@ -17,6 +17,7 @@ import "./ssasem";
 import "./semtypes";
 import "./semrecords";
 import "./typeinfo";
+import "./asmcore";
 import "std/string";
 
 struct Program { lines: string[], labels: string[], ops: isa.Op[], targets: i32[], entry: i32, register_entry: i32, ok: boolean }
@@ -53,6 +54,7 @@ function program(input: string[], name: string, arm: boolean): Program {
   let entry = -1;
   let reg = -1;
   let ok = symbol(name);
+  let entry_label = "__fn_" + asmcore.sanitize_label(name);
   for raw in input {
     if (raw.contains("\n")) {
       ok = false;
@@ -65,9 +67,9 @@ function program(input: string[], name: string, arm: boolean): Program {
         if (!symbol(label)) {
           ok = false;
         }
-        if (label == "__fn_" + name) {
+        if (label == entry_label) {
           entry = lines.len();
-        } else if (label == "__fn_" + name + ".r") {
+        } else if (label == entry_label + ".r") {
           reg = lines.len();
         } else if (!label.starts_with(".L")) {
           ok = false;
