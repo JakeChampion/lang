@@ -35,6 +35,13 @@ import "./ssaarrayreleaseisas" as arrayreleaseisas;
 import "./ssasmallarraymachines" as smallarraymachines;
 import "./ssalargepushpartitions" as largepushpartitions;
 import "./ssalargepushvalues" as largepushvalues;
+import "./ssalargearrayvalues" as largearrayvalues;
+import "./ssalargearraymachines" as largearraymachines;
+import "./ssastringreleaseisas" as stringreleaseisas;
+import "./ssaboxstringmachines" as boxstringmachines;
+import "./ssastringvalues" as stringvalues;
+import "./ssafusedstringmachines" as fusedstringmachines;
+import "./ssaseparatestringmachines" as separatestringmachines;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -121,6 +128,12 @@ function settled(g: ircore.Gated, arm: boolean): void {
     largepushisas.run(on.text);
     arrayreleaseisas.run(on.text);
     smallarraymachines.run(on.text);
+    largearraymachines.run(on.text);
+    stringreleaseisas.run(on.text);
+    boxstringmachines.run(on.text);
+    stringvalues.run();
+    fusedstringmachines.run(on.text);
+    separatestringmachines.run(on.text);
     largepushmachines.run(on.text);
   }
   sites.output(on);
@@ -250,6 +263,7 @@ function main(): i32 {
   capacityvalues.run();
   largepushpartitions.run();
   largepushvalues.run();
+  largearrayvalues.run();
   print("retained native body controls passed");
   return 0;
 }

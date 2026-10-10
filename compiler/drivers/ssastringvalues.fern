@@ -1,0 +1,164 @@
+import "../ssastringvalue" as value;
+
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("string-length arithmetic controls failed: " + group);
+    exit(180);
+  }
+}
+
+function row(low: i64, high: i64, first: i32, last: i32): value.Interval {
+  return value.Interval { low: low, high: high, min_residue: first, max_residue: last };
+}
+
+// Independent scalar oracle: split W at32 bits, multiply its low word with
+// carry, then subtract d with borrow. Production splits W at29 bits instead.
+function bytes(w: i64, d: i32): value.Parts {
+  let low_product = w % (4294967296 as i64) * (8 as i64);
+  let high = w / (4294967296 as i64) * (8 as i64) + low_product / (4294967296 as i64);
+  let low = low_product % (4294967296 as i64) - d as i64;
+  if (low < 0) {
+    low = low + 4294967296 as i64;
+    high = high - 1 as i64;
+  }
+  return value.Parts { low: low, high: high, valid: high >= 0 && high <= 4294967295 as i64 };
+}
+
+function same(a: value.Parts, b: value.Parts): boolean {
+  return a.valid && b.valid && a.low == b.low && a.high == b.high;
+}
+
+function scalar_round(n: i64): i64 {
+  if (n <= 256 as i64) {
+    return n;
+  }
+  let power = 256 as i64;
+  while (power * (2 as i64) <= n) {
+    power = power * (2 as i64);
+  }
+  let quantum = power / (4 as i64);
+  let rounded = (n / quantum + (if (n % quantum == 0) { 0 as i64 } else { 1 as i64 })) * quantum;
+  return if (rounded > 65535 as i64) { 65535 as i64 } else { rounded };
+}
+
+function scalar_class(n: i64): i32 {
+  if (n <= 65535 as i64) {
+    return -3;
+  }
+  let quarter = 16384 as i64;
+  let index = 0;
+  while (index < 45) {
+    if (n <= (4 + index % 4) as i64 * quarter) {
+      return index;
+    }
+    if (index % 4 == 3) {
+      quarter = quarter * (2 as i64);
+    }
+    index = index + 1;
+  }
+  return -2;
+}
+
+function sample(r: value.Interval, fused: boolean, w: i64, d: i32): void {
+  let original = value.length(r);
+  require(same(value.point(r, original, w, d), bytes(w, d)), "full-width length limbs");
+  let shifted = value.shift_three(r, value.add(r, original, 7 as i64));
+  require(same(value.point(r, shifted, w, d), value.Parts { low: w % (4294967296 as i64), high: w / (4294967296 as i64), valid: true }), "rounded words derived from length");
+  let n = w + (if (fused) { 3 as i64 } else { 0 as i64 });
+  let words = value.add(r, shifted, if (fused) { 3 as i64 } else { 0 as i64 });
+  require(same(value.point(r, value.times_eight(r, words), w, d), bytes(n, 0)), "full-width allocation bytes");
+  require(value.expected_class(r, fused) == scalar_class(n), "independent bin");
+  if (n <= 65535 as i64) {
+    let expected = value.point(r, value.expected_small(r, fused), w, d);
+    require(expected.valid && expected.high == 0 && expected.low == scalar_round(n), "independent small rounding");
+  } else {
+    require(!value.valid(r, value.expected_small(r, fused)), "large is not small");
+  }
+}
+
+function interval(r: value.Interval, fused: boolean): void {
+  require(value.valid_interval(r), "partition validity");
+  for w in [r.low, r.low + (r.high - r.low) / (2 as i64), r.high] {
+    let d = r.min_residue;
+    while (d <= r.max_residue) {
+      sample(r, fused, w, d);
+      d = d + 1;
+    }
+  }
+}
+
+// The standalone audit changes only this bound between pilot and full runs.
+pub function run_limit(limit: i32): void {
+  let index = 0;
+  for fused in [true, false] {
+    for r in value.intervals(fused) {
+      if (index < limit) {
+        interval(r, fused);
+      }
+      index = index + 1;
+    }
+  }
+}
+
+function residue_coverage(r: value.Interval, fused: boolean): void {
+  if (r.low == 0) {
+    require(r.high == 0 && r.min_residue == 0 && r.max_residue == 0, "empty fused length");
+  } else if (!fused && r.high == 1152921504606846976 as i64) {
+    require(r.low == r.high && r.min_residue == 1 && r.max_residue == 7, "positive signed endpoint");
+  } else {
+    require(r.min_residue == 0 && r.max_residue == 7, "all byte residues");
+  }
+}
+
+function coverage(): void {
+  for fused in [true, false] {
+    let next = if (fused) { 0 as i64 } else { 1 as i64 };
+    let ranges = value.intervals(fused);
+    for r in ranges {
+      require(r.low == next && r.high >= r.low, "adjacent word coverage");
+      next = r.high + 1 as i64;
+      residue_coverage(r, fused);
+    }
+    require(next == (if (fused) { 2305843009213693949 as i64 } else { 1152921504606846977 as i64 }), "full endpoint");
+  }
+}
+
+function invalid(): void {
+  let good = row(1 as i64, 10 as i64, 0, 7);
+  for r in [row(-(1 as i64), 1 as i64, 0, 7), row(2 as i64, 1 as i64, 0, 7), row(0 as i64, 10 as i64, 0, 7), row(1 as i64, 10 as i64, -1, 7), row(1 as i64, 10 as i64, 0, 8), row(1 as i64, 10 as i64, 4, 3), row(1 as i64, 9223372036854775807 as i64, 0, 7)] {
+    require(!value.valid_interval(r) && !value.valid(r, value.words(r)), "malformed interval");
+  }
+  let malformed: value.Value[] = [value.unknown(), value.Value { factor: 2147483647, offset: 0 as i64, residue: 0 }, value.Value { factor: 8, offset: 9223372036854775807 as i64, residue: -1 }, value.Value { factor: 1, offset: 0 as i64, residue: -2 }, value.Value { factor: 1, offset: 0 as i64, residue: 1 }];
+  for v in malformed {
+    require(!value.valid(good, v) && !value.point(good, v, 1 as i64, 0).valid, "malformed value");
+  }
+  require(!value.valid(good, value.add(good, value.words(good), 9223372036854775807 as i64)), "addition guard before arithmetic");
+  require(!value.valid(good, value.times_eight(good, value.length(good))), "unsupported factor before multiplication");
+  require(!value.valid(good, value.shift_three(good, value.add(good, value.length(good), 6 as i64))), "residue-crossing quotient");
+  require(!value.point(good, value.words(good), 0 as i64, 0).valid && !value.point(good, value.words(good), 1 as i64, 8).valid, "point outside domain");
+  require(value.expected_class(row(65532 as i64, 65533 as i64, 0, 7), true) == -1, "mixed small and large");
+}
+
+function boundaries(): void {
+  let wrap = row(536870912 as i64, 536870912 as i64, 0, 7);
+  interval(wrap, true);
+  require(!value.valid(wrap, value.zero32(wrap, value.length(wrap))), "crossing low32 truncation");
+  let before = row(wrap.low, wrap.high, 1, 7);
+  require(value.valid(before, value.zero32(before, value.length(before))), "borrow below low32 boundary");
+  let last = row(2305843009213693948 as i64, 2305843009213693948 as i64, 0, 7);
+  let n = value.add(last, value.words(last), 3 as i64);
+  let b = value.times_eight(last, n);
+  require(value.valid(last, value.add(last, b, 7 as i64)) && !value.valid(last, value.add(last, b, 8 as i64)), "exact unsigned64 overflow boundary");
+  require(value.compare(last, b, 1073741824 as i64).less == 0, "oversized full-width comparison");
+  let uncertain = row(1 as i64, 10 as i64, 0, 7);
+  let c = value.compare(uncertain, value.words(uncertain), 5 as i64);
+  require(c.less == -1 && c.equal == -1 && c.less_equal == -1, "uncertain correlated predicate");
+  require(value.compare(uncertain, value.words(uncertain), -(1 as i64)).less == -1, "unsupported comparison bound");
+}
+
+pub function run(): void {
+  invalid();
+  coverage();
+  boundaries();
+  run_limit(2147483647);
+}

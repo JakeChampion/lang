@@ -1,0 +1,164 @@
+import "../ssalargearrayvalue" as value;
+
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("large-array capacity controls failed: " + group);
+    // All nonzero statuses are occupied. The printed module/case identifies
+    // this shared status, including on targets with collapsed exit codes.
+    exit(180);
+  }
+}
+
+function same(a: value.Value, b: value.Value): boolean {
+  return a.factor == b.factor && a.offset == b.offset;
+}
+
+function invalid(): void {
+  let r = value.Interval { low: 65533 as i64, high: 4294967295 as i64 };
+  let bad: value.Value[] = [value.unknown(), value.Value { factor: 2, offset: 0 as i64 }, value.Value { factor: 2147483647, offset: 0 as i64 }, value.Value { factor: 0, offset: -(9223372036854775807 as i64) }, value.Value { factor: 0, offset: 9223372036854775807 as i64 }, value.Value { factor: 1, offset: -(65534 as i64) }, value.Value { factor: 8, offset: 25 as i64 }];
+  for v in bad {
+    require(!value.valid(r, v), "invalid value");
+    require(!value.valid(r, value.add(r, v, 0 as i64)) && !value.valid(r, value.times_eight(r, v)), "invalid arithmetic");
+    require(!value.valid(r, value.low32(r, v)) && !value.valid(r, value.high32(r, v)), "invalid halves");
+    require(!value.valid(r, value.join32(r, v, value.number(r, 0 as i64))), "invalid low half");
+    require(!value.valid(r, value.join32(r, value.number(r, 0 as i64), v)), "invalid high half");
+    let c = value.compare(r, v, 0 as i64);
+    require(c.less == -1 && c.equal == -1 && c.less_equal == -1, "invalid comparison");
+  }
+}
+
+function bounds(): void {
+  let bad: value.Interval[] = [value.Interval { low: 65532 as i64, high: 65533 as i64 }, value.Interval { low: 65534 as i64, high: 65533 as i64 }, value.Interval { low: 65533 as i64, high: 4294967296 as i64 }, value.Interval { low: -(9223372036854775807 as i64), high: 9223372036854775807 as i64 }];
+  for r in bad {
+    require(!value.valid_interval(r) && !value.valid(r, value.capacity(r)) && value.expected_class(r) == -1, "invalid interval");
+  }
+  let r = value.Interval { low: 65533 as i64, high: 4294967295 as i64 };
+  let n = value.add(r, value.capacity(r), 3 as i64);
+  let bytes = value.times_eight(r, n);
+  require(value.valid(r, bytes) && bytes.factor == 8 && bytes.offset == 24 as i64, "exact widened byte size");
+  require(!value.valid(r, value.add(r, bytes, 1 as i64)), "upper bound");
+  require(!value.valid(r, value.add(r, n, -(9223372036854775807 as i64))), "extreme delta");
+  require(!value.valid(r, value.times_eight(r, bytes)), "unsupported factor");
+  require(!value.valid(r, value.times_eight(r, value.number(r, 34359738384 as i64))), "constant multiply bound");
+  require(!value.valid(r, value.low32(r, n)) && !value.valid(r, value.high32(r, bytes)), "unsplit wraps refuse");
+  require(value.expected_class(r) == -1, "mixed recycling classes");
+}
+
+function halves(): void {
+  let r = value.Interval { low: 4294967293 as i64, high: 4294967295 as i64 };
+  let n = value.add(r, value.capacity(r), 3 as i64);
+  let bytes = value.times_eight(r, n);
+  require(same(value.high32(r, n), value.number(r, 1 as i64)), "word count high half");
+  require(same(value.high32(r, bytes), value.number(r, 8 as i64)), "byte count high half");
+  require(!same(value.low32(r, n), n) && !same(value.low32(r, bytes), bytes), "truncation changes values");
+  require(same(value.join32(r, value.low32(r, n), value.high32(r, n)), n), "word count reconstruction");
+  require(same(value.join32(r, value.low32(r, bytes), value.high32(r, bytes)), bytes), "byte count reconstruction");
+  require(!value.valid(r, value.join32(r, n, value.number(r, 0 as i64))), "non-half low operand");
+  require(!value.valid(r, value.join32(r, value.number(r, 17 as i64), value.number(r, 8 as i64))), "reconstructed bound");
+  require(!value.valid(r, value.join32(r, value.number(r, 0 as i64), value.number(r, 9 as i64))), "high half bound");
+  require(!value.valid(r, value.join32(r, value.number(r, 0 as i64), value.capacity(r))), "affine high half refuses");
+}
+
+function predicates(): void {
+  let r = value.Interval { low: 65533 as i64, high: 65534 as i64 };
+  let n = value.capacity(r);
+  let c = value.compare(r, n, r.high);
+  require(c.less == -1 && c.equal == -1 && c.less_equal == 1, "correlated upper endpoint");
+  c = value.compare(r, n, r.low);
+  require(c.less == 0 && c.equal == -1 && c.less_equal == -1, "correlated lower endpoint");
+  constant_predicates(r, n);
+}
+
+function constant_predicates(r: value.Interval, n: value.Value): void {
+  let c = value.compare(r, n, r.low - 1 as i64);
+  require(c.less == 0 && c.equal == 0 && c.less_equal == 0, "lower exterior");
+  c = value.compare(r, n, r.high + 1 as i64);
+  require(c.less == 1 && c.equal == 0 && c.less_equal == 1, "upper exterior");
+  c = value.compare(r, value.number(r, 0 as i64), 0 as i64);
+  require(c.less == 0 && c.equal == 1 && c.less_equal == 1, "constant equality");
+  c = value.compare(r, n, 9223372036854775807 as i64);
+  require(c.less == -1 && c.equal == -1 && c.less_equal == -1, "extreme comparison");
+}
+
+// Scalar geometric-bin oracle, separate from the interval constructor.
+function scalar_class(bytes: i64): i32 {
+  if (bytes > 1073741824 as i64) {
+    return -2;
+  }
+  let quantum = 131072 as i64;
+  let octave = 0;
+  while (bytes > quantum * (8 as i64)) {
+    quantum = quantum * (2 as i64);
+    octave = octave + 1;
+  }
+  let count = (bytes + quantum - 1 as i64) / quantum;
+  return octave * 4 + count as i32 - 4;
+}
+
+function scalar_halves(r: value.Interval, v: value.Value, c: i64): void {
+  let exact = v.factor as i64 * c + v.offset;
+  let low = value.low32(r, v);
+  let high = value.high32(r, v);
+  require(value.valid(r, low) && value.valid(r, high), "whole interval halves");
+  require(low.factor as i64 * c + low.offset == exact % (4294967296 as i64), "scalar low half");
+  require(high.factor == 0 && high.offset == exact / (4294967296 as i64), "scalar high half");
+  require(same(value.join32(r, low, high), v), "whole interval reconstruction");
+}
+
+function row(r: value.Interval): void {
+  require(value.valid_interval(r), "valid generated interval");
+  let n = value.add(r, value.capacity(r), 3 as i64);
+  let bytes = value.times_eight(r, n);
+  let expected = value.expected_class(r);
+  require(expected >= 0 || expected == -2, "uniform class");
+  for c in [r.low, r.low + (r.high - r.low) / (2 as i64), r.high] {
+    scalar_halves(r, n, c);
+    scalar_halves(r, bytes, c);
+    require(expected == scalar_class((c + 3 as i64) * (8 as i64)), "independent scalar class");
+  }
+  let order = value.compare(r, bytes, 1073741824 as i64);
+  require(order.less_equal == (if (expected == -2) { 0 } else { 1 }), "oversized predicate");
+}
+
+function wrap_boundaries(): void {
+  let k = 1 as i64;
+  while (k <= 8 as i64) {
+    let cut = k * (536870912 as i64) - 3 as i64;
+    let crossing = value.Interval { low: cut - 1 as i64, high: cut };
+    let bytes = value.times_eight(crossing, value.add(crossing, value.capacity(crossing), 3 as i64));
+    require(!value.valid(crossing, value.low32(crossing, bytes)) && !value.valid(crossing, value.high32(crossing, bytes)), "each byte-size wrap refuses");
+    let before = value.Interval { low: cut - 1 as i64, high: cut - 1 as i64 };
+    let after = value.Interval { low: cut, high: cut };
+    row(before);
+    row(after);
+    k = k + 1 as i64;
+  }
+  let crossing = value.Interval { low: 4294967292 as i64, high: 4294967293 as i64 };
+  let n = value.add(crossing, value.capacity(crossing), 3 as i64);
+  require(!value.valid(crossing, value.low32(crossing, n)) && !value.valid(crossing, value.high32(crossing, n)), "word-count wrap refuses");
+}
+
+pub function audit(limit: i32): void {
+  let rows = value.intervals();
+  require(limit >= 1 && limit <= rows.len(), "audit bound");
+  let next = 65533 as i64;
+  let at = 0;
+  for r in rows {
+    require(r.low == next, "adjacent complete partition");
+    next = r.high + 1 as i64;
+    if (at < limit) {
+      row(r);
+    }
+    at = at + 1;
+  }
+  require(next == 4294967296 as i64, "full unsigned capacity coverage");
+}
+
+pub function run(): void {
+  invalid();
+  bounds();
+  halves();
+  predicates();
+  wrap_boundaries();
+  audit(value.intervals().len());
+}

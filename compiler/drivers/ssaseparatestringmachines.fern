@@ -1,0 +1,155 @@
+import "../ssaseparatestringmachine" as machine;
+import "../ssainlineuniqueisa" as registers;
+import "std/string";
+
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("separate-string machine controls failed: " + group);
+    exit(180);
+  }
+}
+
+function change(s: string, from: string, to: string): string {
+  let outer = s.split("__fn___fern_str_free:\n");
+  require(outer.len() == 2, "unique string fixture");
+  let next = outer[1].split("__fn___fern_str_view_free:\n");
+  require(next.len() == 2, "following helper fixture");
+  let parts = next[0].split(from);
+  require(parts.len() > 1, "mutation present: " + from);
+  return outer[0] + "__fn___fern_str_free:\n" + parts.join(to) + "__fn___fern_str_view_free:\n" + next[1];
+}
+
+function mutation(s: string, from: string, to: string, expected: boolean): void {
+  require(machine.check(change(s, from, to)) == expected, from + " -> " + to);
+}
+
+function bounds(s: string): void {
+  mutation(s, "movq __fern_heap_base(%rip), %rsi", "movl __fern_heap_base(%rip), %esi", false);
+  mutation(s, "movq __fern_heap_base(%rip), %rsi", "movq __fern_heap_end(%rip), %rsi", false);
+  mutation(s, "cmpq %rsi, %rcx", "cmpl %esi, %ecx", false);
+  mutation(s, "cmpq %rsi, %rcx", "cmpq %rcx, %rsi", false);
+  mutation(s, "cmpq __fern_heap_end(%rip), %rcx", "cmpl __fern_heap_end(%rip), %ecx", false);
+  mutation(s, "cmpq __fern_heap_end(%rip), %rcx", "cmpq __fern_heap_base(%rip), %rcx", false);
+  mutation(s, "jb .Lstrfree_box", "jae .Lstrfree_box", false);
+  mutation(s, "jb .Lstrfree_box", "jc .Lstrfree_box", true);
+  mutation(s, "jae .Lstrfree_box", "jb .Lstrfree_box", false);
+  mutation(s, "jae .Lstrfree_box", "jnb .Lstrfree_box", true);
+  mutation(s, "jae .Lstrfree_box", "ja .Lstrfree_box", false);
+  mutation(s, "testq %rdx, %rdx", "testl %edx, %edx", false);
+  mutation(s, "testq %rdx, %rdx", "testq %rcx, %rcx", false);
+  mutation(s, "jle .Lstrfree_box", "jbe .Lstrfree_box", false);
+  mutation(s, "jle .Lstrfree_box", "jl .Lstrfree_box", false);
+  mutation(s, "jle .Lstrfree_box", "jng .Lstrfree_box", true);
+  mutation(s, "movq (%rax), %rcx", "movl (%rax), %ecx", false);
+  mutation(s, "movq 8(%rax), %rdx", "movl 8(%rax), %edx", false);
+  mutation(s, "movl -8(%rax), %ecx", "movq -8(%rax), %rcx", true);
+}
+
+function arithmetic(s: string): void {
+  mutation(s, "addq $7, %rdx", "addl $7, %edx", false);
+  mutation(s, "addq $7, %rdx", "addq $6, %rdx", false);
+  mutation(s, "addq $7, %rdx", "addq $8, %rdx", false);
+  mutation(s, "shrq $3, %rdx", "shrl $3, %edx", false);
+  mutation(s, "shrq $3, %rdx", "shrq $67, %rdx", true);
+  mutation(s, "shrq $3, %rdx", "shrq $2, %rdx", false);
+  mutation(s, "cmpq $65536, %rdx", "cmpl $65536, %edx", false);
+  mutation(s, "cmpq $65536, %rdx", "cmpq $65537, %rdx", false);
+  mutation(s, "cmpq $256, %rdx", "cmpq $257, %rdx", false);
+  mutation(s, "leaq 0(,%rdx,8), %rsi", "leaq 0(,%rdx,4), %rsi", false);
+  mutation(s, "leaq 0(,%rdx,8), %rsi", "leaq 8(,%rdx,8), %rsi", false);
+  mutation(s, "jae .Lstrfree_large", "addq $0, %rdx\njae .Lstrfree_large", false);
+  mutation(s, "jae .Lstrfree_large", "shrq $64, %rdx\njae .Lstrfree_large", true);
+}
+
+function buffer(s: string): void {
+  let link = "movq %rsi, (%rcx)";
+  let slot = "movq %rcx, (%r8,%rdx,8)";
+  for line in ["", "movl %esi, (%rcx)", "movq %rax, (%rcx)", "movq %rsi, 4(%rcx)", link + "\n" + link] {
+    mutation(s, link, line, false);
+  }
+  for line in ["", "movl %ecx, (%r8,%rdx,8)", "movq %rax, (%r8,%rdx,8)", "movq %rcx, 8(%r8,%rdx,8)", slot + "\n" + slot] {
+    mutation(s, slot, line, false);
+  }
+  mutation(s, link + "\n    " + slot, slot + "\n" + link, true);
+  mutation(s, slot, slot + "\nmovq (%rcx), %rsi", true);
+  let end = slot + "\n.Lstrfree_box:";
+  let guard = "cmpq $3, %rdx\nje .Lseparate_shared_slot\n" + slot + "\njmp .Lseparate_after_slot\n.Lseparate_shared_slot:\n";
+  mutation(s, end, guard + slot + "\n.Lseparate_after_slot:\n.Lstrfree_box:", true);
+  mutation(s, end, guard + ".Lseparate_after_slot:\n.Lstrfree_box:", false);
+  mutation(s, "movq (%r8,%rdx,8), %rsi", "movq 24(%r8), %rsi", false);
+  mutation(s, "movq 24(%r8), %rsi", "movq (%rcx), %rsi", false);
+}
+
+function box(s: string): void {
+  let zero = "movl $0, -8(%rax)";
+  for line in ["", "movq $0, -8(%rax)", "movl $1, -8(%rax)", "movl $0, -4(%rax)", zero + "\n" + zero] {
+    mutation(s, zero, line, false);
+  }
+  let link = "movq %rsi, (%rdx)";
+  let slot = "movq %rdx, 24(%r8)";
+  for line in ["", "movl %esi, (%rdx)", "movq %rax, (%rdx)", "movq %rsi, 4(%rdx)", link + "\n" + link] {
+    mutation(s, link, line, false);
+  }
+  for line in ["", "movl %edx, 24(%r8)", "movq %rax, 24(%r8)", "movq %rdx, 16(%r8)", slot + "\n" + slot] {
+    mutation(s, slot, line, false);
+  }
+  mutation(s, link + "\n    " + slot, slot + "\n" + link, true);
+  mutation(s, slot, slot + "\nmovq (%rdx), %rsi", true);
+  mutation(s, slot, slot + "\nmovq 24(%r8), %rsi", false);
+  mutation(s, "leaq -8(%rax), %rdx", "leaq -16(%rax), %rdx", false);
+}
+
+function calls(s: string): void {
+  for line in ["", "call __other", "call __fern_large_push", "call __fern_capw\ncall __fern_capw"] {
+    mutation(s, "call __fern_capw", line, false);
+  }
+  for line in ["", "call __other", "call __fern_capw", "call __fern_large_push\ncall __fern_large_push"] {
+    mutation(s, "call __fern_large_push", line, false);
+  }
+  mutation(s, "pushq %rax\n    call __fern_large_push\n    popq %rax", "call __fern_large_push", false);
+  mutation(s, "pushq %rax\n    call __fern_large_push\n    popq %rax", "pushq %rcx\ncall __fern_large_push\npopq %rax", false);
+  mutation(s, "movq %rcx, %r8", "movq %rax, %r8", false);
+  for offset in ["-32", "-28", "-24", "-20", "-16", "-12", "-8", "-4", "0", "4"] {
+    mutation(s, "call __fern_capw", "call __fern_capw\nmovl $7, " + offset + "(%rsp)", false);
+  }
+  for offset in ["-32", "-28", "-24", "-20", "-16", "-12", "-8", "-4", "0", "4"] {
+    mutation(s, "call __fern_large_push", "call __fern_large_push\nmovl $7, " + offset + "(%rsp)", false);
+  }
+  mutation(s, "call __fern_large_push", "call __fern_large_push\nje .Lstrfree_ret", false);
+  mutation(s, "call __fern_capw", "call __fern_capw\nje .Lstrfree_ret", false);
+  for pair in [["movq %rcx, (%r8)", ""], ["subq $72, %rdx", "subq $71, %rdx"], ["movq %rax, 32(%rsp)", "movq %rax, 24(%rsp)"]] {
+    let parts = s.split(pair[0]);
+    require(parts.len() > 1, "dependency mutation present: " + pair[0]);
+    require(!machine.check(parts.join(pair[1])), "dependency " + pair[0]);
+  }
+}
+
+function identities(s: string): void {
+  let regs = registers.registers(false, 64);
+  let words = registers.registers(false, 32);
+  let i = 0;
+  while (i < regs.len()) {
+    mutation(s, "    ret\n", "movq " + regs[i] + ", " + regs[i] + "\nret\n", true);
+    mutation(s, "    ret\n", "movl " + words[i] + ", " + words[i] + "\nret\n", false);
+    mutation(s, "    ret\n", "movq " + regs[(i + 1) % regs.len()] + ", " + regs[i] + "\nret\n", false);
+    i = i + 1;
+  }
+  mutation(s, "movq 8(%rsp), %rax", "movq (%rsp), %rax", false);
+  mutation(s, "    ret\n", "movq 8(%rsp), %rax\nret\n", false);
+  mutation(s, "    ret\n", "ret $8\n", false);
+}
+
+pub function run(output: string): void {
+  require(machine.check(output), "actual complete output, both entries, all families and intervals");
+  bounds(output);
+  arithmetic(output);
+  buffer(output);
+  box(output);
+  calls(output);
+  identities(output);
+  mutation(output, "cmpl $1934589965, %edx", "cmpl $0, %edx", false);
+  mutation(output, "cmpl $1112494674, %edx", "cmpl $0, %edx", false);
+  mutation(output, "    ret\n", "unknown_instruction\nret\n", false);
+  mutation(output, "    ret\n", "jmp .Lstrfree_ret\n", false);
+  require(!machine.check(".set alias, __fern_capw\n" + output), "closed namespace");
+}

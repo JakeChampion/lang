@@ -1,0 +1,109 @@
+import "../ssalargearraymachine" as machine;
+import "../ssainlineuniqueisa" as registers;
+import "std/string";
+
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("large-array machine controls failed: " + group);
+    // Shared native status; printed module and mutation identify the failure.
+    exit(180);
+  }
+}
+
+function change(s: string, from: string, to: string): string {
+  let outer = s.split("__fn___fern_arr_dec:\n");
+  require(outer.len() == 2, "unique array fixture");
+  let next = outer[1].split("__fn___fern_str_free:\n");
+  require(next.len() == 2, "following helper fixture");
+  let parts = next[0].split(from);
+  require(parts.len() > 1, "mutation present: " + from);
+  return outer[0] + "__fn___fern_arr_dec:\n" + parts.join(to) + "__fn___fern_str_free:\n" + next[1];
+}
+
+function mutation(s: string, from: string, to: string, expected: boolean): void {
+  require(machine.check(change(s, from, to)) == expected, from + " -> " + to);
+}
+
+function memory(s: string): void {
+  let clear = "movl $0, -8(%rax)";
+  for line in ["", "movl $1, -8(%rax)", "movq $0, -8(%rax)", "movl $0, -4(%rax)", "movl $0, -12(%rax)", clear + "\n" + clear] {
+    mutation(s, clear, line, false);
+  }
+  mutation(s, clear, clear + "\nmovl -8(%rax), %ecx", true);
+  mutation(s, "movl -16(%rax), %ecx", "movq -16(%rax), %rcx", false);
+  mutation(s, "movl -16(%rax), %ecx", "movl -12(%rax), %ecx", false);
+  mutation(s, "leaq -16(%rax), %r8", "leaq -8(%rax), %r8", false);
+  // Current block contents differ between recycled and oversized paths.
+  mutation(s, "call __fern_large_push", "call __fern_large_push\nmovq (%r8), %rax", false);
+  for offset in ["-8", "-4", "0", "4", "8", "12"] {
+    mutation(s, "call __fern_large_push", "call __fern_large_push\nmovl $7, " + offset + "(%rsp)", false);
+  }
+}
+
+function arithmetic(s: string): void {
+  // These fail only when the internally generated full domain reaches the
+  // relevant word or byte wrap; low capacities alone would miss truncation.
+  mutation(s, "addq $3, %rcx", "addl $3, %ecx", false);
+  mutation(s, "addq $3, %rcx", "addq $2, %rcx", false);
+  mutation(s, "addq $3, %rcx", "addq $3, %rcx\nmovl %ecx, %ecx", false);
+  mutation(s, "leaq 0(,%rcx,8), %rsi", "leaq (,%rcx,4), %rsi", false);
+  mutation(s, "leaq 0(,%rcx,8), %rsi", "leaq 8(,%rcx,8), %rsi", false);
+  mutation(s, "leaq 0(,%rcx,8), %rsi", "leaq (,%rax,8), %rsi", false);
+  mutation(s, "leaq 0(,%rcx,8), %rsi", "leaq 0(,%rcx,8), %rsi\nmovl %esi, %esi", false);
+  mutation(s, "cmpq $65536, %rcx", "cmpl $65536, %ecx", false);
+  mutation(s, "cmpq $65536, %rcx", "cmpq $65537, %rcx", false);
+  // Lowering the threshold changes only the excluded small-capacity domain.
+  mutation(s, "cmpq $65536, %rcx", "cmpq $65535, %rcx", true);
+  mutation(s, "jae .Larrdec_large", "jnb .Larrdec_large", true);
+  mutation(s, "jae .Larrdec_large", "ja .Larrdec_large", false);
+  mutation(s, "jae .Larrdec_large", "jo .Larrdec_large", false);
+  mutation(s, "jae .Larrdec_large", "addq $0, %rcx\njae .Larrdec_large", false);
+}
+
+function calls(s: string): void {
+  let call = "call __fern_large_push";
+  for line in ["", "call __fern_capw", "call __other", call + "\n" + call, "pushq %rax\n" + call + "\npopq %rax", "leaq -8(%rsp), %rsp\n" + call, "movq %rax, (%rsp)\n" + call] {
+    mutation(s, call, line, false);
+  }
+  mutation(s, call, call + "\nje .Larrdec_ret", false);
+  mutation(s, call, call + "\nmovq -8(%rsp), %rax", false);
+  let outer = s.split("__fern_large_push:\n");
+  require(outer.len() == 2, "unique large dependency");
+  let next = outer[1].split("__fern_capw:\n");
+  require(next.len() == 2, "dependency following helper");
+  for pair in [["cmpq $0x40000000, %rsi", "cmpl $0x40000000, %esi"], ["subq $72, %rdx", "subq $71, %rdx"], ["movq %rcx, (%r8)", ""], ["movq %r8, (%rdx,%rax,8)", ""], ["movq %rdx, %rax", "movq %rdx, %rbx"], ["    ret\n", "ret $8\n"]] {
+    let parts = next[0].split(pair[0]);
+    require(parts.len() > 1, "dependency mutation present");
+    require(!machine.check(outer[0] + "__fern_large_push:\n" + parts.join(pair[1]) + "__fern_capw:\n" + next[1]), "dependency: " + pair[0]);
+  }
+}
+
+function identities(s: string): void {
+  let regs = registers.registers(false, 64);
+  let words = registers.registers(false, 32);
+  let i = 0;
+  while (i < regs.len()) {
+    mutation(s, "    ret\n", "movq " + regs[i] + ", " + regs[i] + "\nret\n", true);
+    mutation(s, "    ret\n", "movl " + words[i] + ", " + words[i] + "\nret\n", false);
+    mutation(s, "    ret\n", "movq " + regs[(i + 1) % regs.len()] + ", " + regs[i] + "\nret\n", false);
+    i = i + 1;
+  }
+  mutation(s, "movl -8(%rax), %ecx", "movq %rbx, %rcx\nmovq %rcx, %rbx\nmovl -8(%rax), %ecx", true);
+  mutation(s, "movl -8(%rax), %ecx", "movl %ebx, %ecx\nmovq %rcx, %rbx\nmovl -8(%rax), %ecx", false);
+  mutation(s, "movq 8(%rsp), %rax", "movq (%rsp), %rax", false);
+  mutation(s, "    ret\n", "movq 8(%rsp), %rax\nret\n", false);
+  mutation(s, "    ret\n", "ret $8\n", false);
+}
+
+pub function run(output: string): void {
+  require(machine.check(output), "actual complete output, both entries, all intervals");
+  memory(output);
+  arithmetic(output);
+  calls(output);
+  identities(output);
+  mutation(output, "testl %ecx, %ecx", "testl %edx, %edx", false);
+  mutation(output, "    ret\n", "unknown_instruction\nret\n", false);
+  mutation(output, "    ret\n", "jmp .Larrdec_ret\n", false);
+  require(!machine.check(".set alias, __fern_large_push\n" + output), "closed namespace");
+  require(!machine.check(".text\n__fn___fern_arr_dec:\n__fn___fern_arr_dec.r:\nret\n"), "missing dependency and effects");
+}
