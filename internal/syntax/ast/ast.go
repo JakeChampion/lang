@@ -2247,6 +2247,9 @@ type Call struct {
 	P      Position
 	Callee Expr
 	Args   []Expr
+	// SourceCallee preserves the written builtin name when target adaptation
+	// rewrites Callee. It is diagnostic metadata, not the resolved call target.
+	SourceCallee string
 	// ArgNames, when non-nil, is parallel to Args: ArgNames[i] is the
 	// parameter name a named argument `name = expr` targets, or "" for a
 	// positional argument. nil when the call is all-positional (the common
