@@ -16,6 +16,7 @@ import "std/string";
 // String-only: 26 TEST8 immediate, 27 self TEST64, 28 register CMP,
 // 29 heap-bound global load, 30 heap-bound global CMP. For kind 28,
 // flags describe destination minus source; for 30, source minus global.
+// Constructor-only: 31 CFI metadata (condition retains the complete line).
 // Arithmetic source -1 is immediate.
 // Widths are bits; addresses retain signed byte offsets and scaled indices.
 pub struct Op { kind: i32, width: i32, source: i32, destination: i32, base: i32, index: i32, scale: i32, offset: i32, immediate: i32, condition: string, target: i32, symbol: string }
@@ -286,6 +287,15 @@ pub function string_program(output: string): ArrayProgram {
   return ArrayProgram { ops: p.ops, register_entry: if (p.error == "") { body.register_entry } else { -1 }, error: p.error };
 }
 
+// Ordinary retained constructor syntax, not a constructor effect certificate.
+// CFI and symbol addresses remain data, without unwind or linked-address facts.
+// The consumer must independently bind this SAME output to the selected row.
+pub function constructor_program(output: string, entry: string): ArrayProgram {
+  let body = text.native_body(output, entry);
+  let p = selected_program(body, 4);
+  return ArrayProgram { ops: p.ops, register_entry: if (p.error == "") { body.register_entry } else { -1 }, error: p.error };
+}
+
 function selected_program(body: text.Body, mode: i32): Program {
   if (body.error != "") {
     return Program { ops: [], error: body.error };
@@ -308,6 +318,9 @@ function selected_program(body: text.Body, mode: i32): Program {
 }
 
 function extended_decode(line: string, mode: i32): Op {
+  if (mode == 4) {
+    return constructor_decode(line);
+  }
   if (mode == 0) {
     return empty(0);
   }
@@ -317,6 +330,53 @@ function extended_decode(line: string, mode: i32): Op {
   }
   let array = array_decode(line);
   return if (array.kind == 0 && mode == 3) { string_decode(line) } else { array };
+}
+
+function constructor_symbol_byte(c: u8): boolean {
+  return c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c >= b'0' && c <= b'9' || c == b'_' || c == b'.' || c == b'$';
+}
+
+function constructor_symbol(s: string): boolean {
+  if (s == "" || s[0] >= b'0' && s[0] <= b'9') {
+    return false;
+  }
+  for c in s {
+    if (!constructor_symbol_byte(c)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function constructor_decode(line: string): Op {
+  // native_body already validated the closed CFI grammar and frame bounds.
+  if (line.starts_with(".cfi_")) {
+    return Op { ...empty(31), condition: line };
+  }
+  let at = 0;
+  while (at < line.len() && line[at] != b' ' && line[at] != b'\t') {
+    at = at + 1;
+  }
+  if (at == line.len()) {
+    return empty(0);
+  }
+  let name = slice_unchecked(line, 0, at) + "";
+  let rest = util.trim(slice_unchecked(line, at + 1, line.len()) + "");
+  if (name == "call" && rest == "__fern_arr_box") {
+    return Op { ...empty(25), symbol: rest };
+  }
+  let args = operands(rest);
+  return if (name == "leaq" && args.len() == 2) { constructor_address(args[0], args[1]) } else { empty(0) };
+}
+
+function constructor_address(address: string, destination: string): Op {
+  let reg = registers.reg(destination, false, 64);
+  let suffix = "(%rip)";
+  if (reg < 0 || !address.ends_with(suffix)) {
+    return empty(0);
+  }
+  let symbol = slice_unchecked(address, 0, address.len() - suffix.len()) + "";
+  return if (constructor_symbol(symbol)) { Op { ...empty(19), width: 64, destination: reg, symbol: symbol } } else { empty(0) };
 }
 
 function string_decode(line: string): Op {
