@@ -35,6 +35,7 @@ func TestDemangleModuleSeparator(t *testing.T) {
 		{"module__Type", "module.Type"},
 		{"module__Type__method", "module.Type__method"},
 		{"__arr_push_shared_bytes", "__arr_push_shared_bytes"},
+		{"__a__b", "__a.b"},
 		{"__method_P_eq", "__method_P_eq"},
 		{"_module__Type", "_module.Type"},
 	} {
