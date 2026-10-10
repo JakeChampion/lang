@@ -8,7 +8,7 @@ import "../typeinfo";
 
 function require(ok: boolean): void {
   if (!ok) {
-    exit(194);
+    exit(196);
   }
 }
 
