@@ -1,0 +1,60 @@
+import "../ssastringrelease" as release;
+import "../ssaboxstringmachine" as boxed;
+import "../ssafusedstringmachine" as fused;
+import "../ssaseparatestringmachine" as separate;
+import "std/string";
+
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("string release composition controls failed: " + group);
+    exit(180);
+  }
+}
+
+function change(s: string, from: string, to: string): string {
+  let parts = s.split(from);
+  require(parts.len() > 1, "mutation present: " + from);
+  return parts.join(to);
+}
+
+function string_change(s: string, from: string, to: string): string {
+  let outer = s.split("__fn___fern_str_free:\n");
+  require(outer.len() == 2, "unique string entry");
+  let body = outer[1].split("__fn___fern_str_view_free:\n");
+  require(body.len() == 2, "following string entry");
+  return outer[0] + "__fn___fern_str_free:\n" + change(body[0], from, to) + "__fn___fern_str_view_free:\n" + body[1];
+}
+
+function paths(s: string): void {
+  let broken = string_change(s, "subl $1, %ecx", "");
+  require(boxed.check(broken) && fused.check(broken) && separate.check(broken), "all count-one shapes remain valid");
+  require(!release.check(broken), "shared count remains independently required");
+  for from in ["jnz .Lstrfree_ret", "jb .Lstrfree_ret", "incl __fern_rc_underflow(%rip)", "movl $0, -8(%rax)", "movq %rsi, (%rdx)", "movq %rsi, (%rcx)", "call __fern_capw", "call __fern_large_push"] {
+    require(!release.check(string_change(s, from, "")), "required path or effect: " + from);
+  }
+  require(!release.check(string_change(s, "cmpl $1934589965, %edx", "cmpl $0, %edx")), "fused shape partition");
+  require(!release.check(string_change(s, "cmpl $1112494674, %edx", "cmpl $0, %edx")), "boxed shape partition");
+  require(!release.check(string_change(s, "movq 8(%rsp), %rax", "movq (%rsp), %rax")), "stack entry identity");
+  require(!release.check(string_change(s, "    ret\n", "ret $8\n")), "return identity");
+  require(release.check(string_change(s, "jnz .Lstrfree_ret", "jne .Lstrfree_ret")), "equivalent odd-pointer guard");
+  require(release.check(string_change(s, "cmpl $1112494674, %edx", "movl %edx, %edx\ncmpl $1112494674, %edx")), "all shape halves survive identity");
+}
+
+function dependencies(s: string): void {
+  for name in ["__fern_heap_base", "__fern_heap_end", "__fern_freelist", "__fern_large_freelist", "__fern_rc_underflow"] {
+    require(!release.check(change(s, name + ":", "missing_" + name + ":")), "required declaration: " + name);
+  }
+  for name in ["__fern_capw", "__fern_large_push"] {
+    require(!release.check(change(s, name + ":\n", name + ":\nmovq %rax, (%rsp)\n")), "dependency return corruption: " + name);
+  }
+  require(!release.check(change(s, "__fern_freelist: .skip 524288", "__fern_freelist: .skip 524280")), "small table extent");
+  require(!release.check(change(s, "__fern_large_freelist: .skip 20480", "__fern_large_freelist: .skip 359")), "large table extent");
+  require(!release.check(".set alias, __fn___fern_str_free\n" + s), "closed namespace");
+}
+
+pub function run(output: string): void {
+  require(release.check(output), "actual complete output");
+  require(!release.check(""), "empty output");
+  paths(output);
+  dependencies(output);
+}

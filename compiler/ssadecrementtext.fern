@@ -335,6 +335,90 @@ pub function counter_storage(text: string): boolean {
   return s.lines[at] == "__fern_rc_underflow: .quad 0" && s.lines[at - 1] == ".align 8" && s.sections[at - 1] == s.sections[at];
 }
 
+function storage_alignment(s: Scan, at: i32, name: string): boolean {
+  let section = s.sections[at];
+  let before = at - 1;
+  // Only the target's non-allocating visibility declaration can intervene.
+  while (before >= 0 && s.sections[before] == section && s.lines[before] == ".globl " + name) {
+    before = before - 1;
+  }
+  if (before < 0 || s.sections[before] != section) {
+    return false;
+  }
+  let line = s.lines[before];
+  if (word(line) != ".align") {
+    return false;
+  }
+  let arg = util.trim(slice_unchecked(line, 6, line.len()) + "");
+  if (!decimal(arg) || arg.len() > 9) {
+    return false;
+  }
+  let n = util.digits_to_i32(arg);
+  return n >= 8 && (n & n - 1) == 0;
+}
+
+function space_extent(arg: string, minimum: i32): boolean {
+  let parts = arg.split(",");
+  if (parts.len() > 2 || parts.len() == 2 && util.trim(parts[1]) != "0") {
+    return false;
+  }
+  let count = util.trim(parts[0]);
+  if (!decimal(count) || count.len() > 9) {
+    return false;
+  }
+  return util.digits_to_i32(count) >= minimum;
+}
+
+function storage_extent(tail: string, minimum: i32): boolean {
+  if (tail == ".quad 0") {
+    return minimum <= 8;
+  }
+  let op = word(tail);
+  if (op != ".skip" && op != ".zero") {
+    return false;
+  }
+  return space_extent(util.trim(slice_unchecked(tail, op.len(), tail.len()) + ""), minimum);
+}
+
+function storage_at(s: Scan, ix: names.Names, name: string, minimum: i32): boolean {
+  let at = names.unique_position(ix, name);
+  if (at < 1 || s.sections[at] != 2 && s.sections[at] != 3 || !storage_alignment(s, at, name)) {
+    return false;
+  }
+  let tail = util.trim(slice_unchecked(s.lines[at], name.len() + 1, s.lines[at].len()) + "");
+  return storage_extent(tail, minimum);
+}
+
+function unique_writable(s: Scan, ix: names.Names): boolean {
+  let at = 0;
+  for line in s.lines {
+    if (s.sections[at] == 2 || s.sections[at] == 3) {
+      let name = definition(line);
+      if (name != "" && names.unique_position(ix, name) != at) {
+        return false;
+      }
+    }
+    at = at + 1;
+  }
+  return true;
+}
+
+// Declaration facts only, in the scanner's normal ELF/AT&T section dialect.
+// Establishes aligned writable extents for two heap-bound words, all65536 small
+// slots and the45 large slots used by the currently proved release domain.
+// Does not prove the complete allocator's larger reserved table, successful
+// assembly/linking, linked addresses/disjointness, initialized ordered bounds,
+// metadata validity, freelist integrity or any instruction/ownership effect.
+// Retains counter_storage's bare writable label and signed literal limitations.
+pub function release_storage(text: string): boolean {
+  let s = scan(text);
+  if (s.error != "" || !writable_declarations(s)) {
+    return false;
+  }
+  let ix = definition_index(s.lines);
+  return unique_writable(s, ix) && storage_at(s, ix, "__fern_heap_base", 8) && storage_at(s, ix, "__fern_heap_end", 8) && storage_at(s, ix, "__fern_freelist", 65536 * 8) && storage_at(s, ix, "__fern_large_freelist", 45 * 8);
+}
+
 // Returned lines remain unproved. A semantic checker must call this itself,
 // decode these exact lines, and derive all machine states internally.
 pub function select(text: string, entry: string): Body {

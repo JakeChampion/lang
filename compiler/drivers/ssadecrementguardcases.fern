@@ -1,0 +1,80 @@
+import "../ssadecrementguards" as machine;
+import "../ssainlineuniqueisa" as registers;
+import "std/string";
+
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("decrement guard controls failed: " + group);
+    exit(180);
+  }
+}
+
+function change(s: string, string_entry: boolean, from: string, to: string): string {
+  let name = if (string_entry) { "__fn___fern_str_free" } else { "__fn___fern_arr_dec" };
+  let after = if (string_entry) { "__fn___fern_str_view_free" } else { "__fn___fern_str_free" };
+  let outer = s.split(name + ":\n");
+  require(outer.len() == 2, "unique entry");
+  let body = outer[1].split(after + ":\n");
+  require(body.len() == 2, "following definition");
+  let parts = body[0].split(from);
+  require(parts.len() > 1, "mutation present: " + from);
+  return outer[0] + name + ":\n" + parts.join(to) + after + ":\n" + body[1];
+}
+
+function mutation(s: string, string_entry: boolean, from: string, to: string, expected: boolean): void {
+  require(machine.check(change(s, string_entry, from, to), string_entry) == expected, if (string_entry) { "string: " + from + " -> " + to } else { "array: " + from + " -> " + to });
+}
+
+function identities(s: string, string_entry: boolean): void {
+  let regs = registers.registers(false, 64);
+  let words = registers.registers(false, 32);
+  let i = 0;
+  while (i < regs.len()) {
+    mutation(s, string_entry, "    ret\n", "movq " + regs[i] + ", " + regs[i] + "\nret\n", true);
+    mutation(s, string_entry, "    ret\n", "movl " + words[i] + ", " + words[i] + "\nret\n", i == 0 && !string_entry);
+    mutation(s, string_entry, "    ret\n", "movq " + regs[(i + 1) % regs.len()] + ", " + regs[i] + "\nret\n", false);
+    i = i + 1;
+  }
+  mutation(s, string_entry, "movq 8(%rsp), %rax", "movl 8(%rsp), %eax", !string_entry);
+  mutation(s, string_entry, "movq 8(%rsp), %rax", "movq (%rsp), %rax", false);
+  mutation(s, string_entry, "movq 8(%rsp), %rax", "movq 12(%rsp), %rax", false);
+  mutation(s, string_entry, "    ret\n", "movq 8(%rsp), %rax\nret\n", false);
+  mutation(s, string_entry, "    ret\n", "ret $8\n", false);
+  mutation(s, string_entry, "    ret\n", "movq %rax, (%rsp)\nret\n", false);
+}
+
+function guards(s: string, string_entry: boolean): void {
+  let prefix = if (string_entry) { ".Lstrfree" } else { ".Larrdec" };
+  let edge = "jb " + prefix + "_ret";
+  mutation(s, string_entry, edge, "", false);
+  mutation(s, string_entry, edge, "jae " + prefix + "_ret", false);
+  mutation(s, string_entry, edge, "jnae " + prefix + "_ret", true);
+  mutation(s, string_entry, edge, "jl " + prefix + "_ret", true);
+  mutation(s, string_entry, "cmpq $0x10000, %rax", "cmpl $65536, %eax", true);
+  mutation(s, string_entry, "cmpq $0x10000, %rax", "cmpq $65535, %rax", string_entry);
+  mutation(s, string_entry, "cmpq $0x10000, %rax", "cmpq $65534, %rax", false);
+  mutation(s, string_entry, "cmpq $0x10000, %rax", "cmpq $65536, %rbx", false);
+  mutation(s, string_entry, "    ret\n", "movq -8(%rax), %rcx\nret\n", false);
+  mutation(s, string_entry, "    ret\n", "movq %rax, -8(%rax)\nret\n", false);
+  mutation(s, string_entry, "    ret\n", "call __fern_capw\nret\n", false);
+  mutation(s, string_entry, "    ret\n", "testb $128, %al\njs " + prefix + "_dec\nret\n", false);
+  mutation(s, string_entry, "    ret\n", "unknown_instruction\nret\n", false);
+  mutation(s, string_entry, "    ret\n", "jmp " + prefix + "_ret\n", false);
+  mutation(s, string_entry, "    ret\n", "cmpq $65536, %rbx\nje " + prefix + "_ret\nret\n", false);
+}
+
+pub function run(output: string): void {
+  for string_entry in [false, true] {
+    require(machine.check(output, string_entry), "actual complete output, both entries and pointer families");
+    identities(output, string_entry);
+    guards(output, string_entry);
+    require(!machine.check(".set alias, __fn___fern_arr_dec\n" + output, string_entry), "closed namespace");
+    let name = if (string_entry) { "__fn___fern_str_free" } else { "__fn___fern_arr_dec" };
+    let minimal = ".text\n" + name + ":\nmovq 8(%rsp), %rax\n" + name + ".r:\nret\n";
+    require(machine.check(minimal, string_entry), "guard-only return needs no heap/dependency certificate");
+  }
+  mutation(output, true, "testb $1, %al", "testb $0, %al", false);
+  mutation(output, true, "testb $1, %al", "testb $1, %bl", false);
+  mutation(output, true, "jnz .Lstrfree_ret", "jz .Lstrfree_ret", false);
+  mutation(output, true, "jnz .Lstrfree_ret", "jne .Lstrfree_ret", true);
+}

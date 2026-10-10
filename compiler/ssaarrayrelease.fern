@@ -1,0 +1,30 @@
+// Conditional normal-x86 array effects from ONE complete supplied output.
+import "./ssadecrementtext" as text;
+import "./ssadecrementguards" as guards;
+import "./ssadecrementmachine" as decrement;
+import "./ssasmallarraymachine" as small;
+import "./ssalargearraymachine" as large;
+
+// Both stack/register entries: low pointers return without heap access;
+// aligned canonical heap pointers cover every signed32 RC class. Negative
+// counts preserve the header, shared counts decrement, zero increments the
+// underflow counter, and one follows small/large capacity release effects.
+// Count-one capacity is the unsigned low32 word, with arbitrary upper32.
+// Small/large helpers are independently derived by their machine checkers.
+//
+// This conjunction retains EACH checker's memory preconditions. In particular,
+// caller-supplied canonical aligned disjoint object/header, stack/scratch and
+// linked global permissions, valid allocation/capacity extents and freelist
+// integrity remain assumptions. Declaration alignment/extent does not prove
+// linked addresses or separation. No caller credit is discharged by this API;
+// zero reports underflow and oversized no-recycle is not a free. No string,
+// debug, ARM/WASI runtime, linked-byte or production admission is established.
+// Public records and caller-supplied success flags are never accepted.
+pub function check(output: string): boolean {
+  return text.release_storage(output)
+    && guards.check(output, false)
+    && decrement.check(output, "__fn___fern_arr_dec")
+    && decrement.check_zero(output, "__fn___fern_arr_dec")
+    && small.check(output)
+    && large.check(output);
+}
