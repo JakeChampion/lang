@@ -1,0 +1,128 @@
+import "../ssaallocatorinitisa" as init;
+import "../ssacapacityisa" as isa;
+import "../ssadecrementtext" as text;
+import "../ssainlineuniqueisa" as registers;
+import "std/string";
+
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("allocator initialization instruction controls failed: " + group);
+    exit(180);
+  }
+}
+
+function fixture(code: string): string {
+  return ".text\n__fern_alloc:\n" + code + "\nret\n";
+}
+
+function sample(code: string): isa.Op {
+  let p = init.program(fixture(code));
+  require(p.error == "" && p.ops.len() == 2 && p.ops[1].kind == 18, "sample: " + code);
+  return p.ops[0];
+}
+
+function same(a: isa.Op, b: isa.Op): void {
+  require(a.kind == b.kind && a.width == b.width && a.source == b.source && a.destination == b.destination, "same operation");
+  require(a.base == b.base && a.index == b.index && a.scale == b.scale && a.offset == b.offset, "same address");
+  require(a.immediate == b.immediate && a.condition == b.condition && a.target == b.target && a.symbol == b.symbol, "same operands");
+}
+
+function wide(): void {
+  let i = 0;
+  for reg in registers.registers(false, 64) {
+    for literal in ["0", "-1", "2147483647", "2147483648", "4294967296", "17179869184", "9223372036854775807", "-9223372036854775808"] {
+      let line = "movabs $" + literal + ", " + reg;
+      let op = sample(line);
+      require(op.kind == 36 && op.width == 64 && op.destination == i && op.symbol == literal && op.immediate == 0, "full literal: " + line);
+      let old = isa.allocator_program(fixture(line));
+      require(old.error == "" && old.ops[0].kind == 0, "old allocator syntax unchanged");
+    }
+    i = i + 1;
+  }
+  for literal in ["", "-", "00", "01", "-0", "+1", "1.0", "1x", "0x400000000", "9223372036854775808", "-9223372036854775809", "18446744073709551615", "999999999999999999999999999999"] {
+    require(sample("movabs $" + literal + ", %rax").kind == 0, "refused literal: " + literal);
+  }
+  for line in ["movabs $1, %eax", "movabs $1, (%rax)", "movabs %rax, %rcx", "movabs label, %rax", "movabs $1, %rax, %rcx", "movabsq $1, %rax"] {
+    require(sample(line).kind == 0, "refused wide operand: " + line);
+  }
+}
+
+function xor_and_syscall(): void {
+  let i = 0;
+  for reg in registers.registers(false, 32) {
+    let op = sample("xorl " + reg + ", " + reg);
+    require(op.kind == 38 && op.width == 32 && op.source == i && op.destination == i, "self XOR: " + reg);
+    i = i + 1;
+  }
+  require(sample("syscall").kind == 37, "syscall is data");
+  for line in ["syscall $9", "syscallq", "sysenter", "int $128", "xorq %rax, %rax", "xorw %ax, %ax", "xorl %eax, %ecx", "xorl %eax, %rax", "xorl $0, %eax", "xorl (%rax), %eax", "xorl %eax"] {
+    require(sample(line).kind == 0, "unsupported initialization instruction: " + line);
+  }
+  for line in ["syscall", "xorl %r9d, %r9d", "movabs $17179869184, %rsi"] {
+    let old = isa.allocator_program(fixture(line));
+    require(old.error == "" && old.ops[0].kind == 0, "old unsupported instruction remains unknown");
+    let other = isa.array_box_program(".text\n__fern_arr_box:\n" + line + "\nret\n");
+    require(other.error == "" && other.ops[0].kind == 0, "other decoder isolation");
+  }
+}
+
+function actual(output: string): void {
+  let p = init.program(output);
+  let old = isa.allocator_program(output);
+  let body = text.allocator(output);
+  let crlf = init.program(output.split("\n").join("\r\n\t"));
+  require(p.error == "" && old.error == "" && body.error == "" && crlf.error == "", "actual complete output");
+  require(p.ops.len() == old.ops.len() && p.ops.len() == body.lines.len() && p.ops.len() == crlf.ops.len(), "actual positions");
+  let added = 0;
+  let i = 0;
+  for op in p.ops {
+    same(op, crlf.ops[i]);
+    if (old.ops[i].kind != 0) {
+      same(op, old.ops[i]);
+    } else {
+      added = added + actual_added(op, body.lines[i]);
+    }
+    i = i + 1;
+  }
+  require(added == 4, "two wide sizes, self XOR and syscall retained");
+}
+
+function actual_added(op: isa.Op, line: string): i32 {
+  if (line == "movabs $17179869184, %rsi" || line == "movabs $17179869184, %rcx") {
+    actual_wide(op, line);
+    return 1;
+  }
+  if (line == "xorl %r9d, %r9d") {
+    require(op.kind == 38 && op.source == 9 && op.destination == 9 && op.width == 32, "actual zero offset");
+    return 1;
+  }
+  if (line == "syscall") {
+    require(op.kind == 37, "actual syscall remains data");
+    return 1;
+  }
+  require(op.kind == 0, "other unknown remains visible: " + line);
+  return 0;
+}
+
+function actual_wide(op: isa.Op, line: string): void {
+  require(op.kind == 36 && op.symbol == "17179869184" && op.width == 64, "actual wide size");
+  require(op.destination == (if (line.ends_with("%rsi")) { 6 } else { 1 }), "actual wide destination");
+}
+
+function selection(): void {
+  let cycle = init.program(fixture(".Lcycle:\njmp .Lcycle\nsyscall"));
+  require(cycle.error == "" && cycle.ops[1].target == 0 && cycle.ops[2].kind == 37, "cycle remains data");
+  let outbound = sample("ja .Loutside");
+  require(outbound.kind == 35 && outbound.target == -1 && outbound.symbol == ".Loutside", "outbound remains unbound");
+  require(init.program(".text\n__fern_alloc:\n").error == "", "empty is data");
+  for suffix in ["__fern_alloc:\nret\n", ".data\n__fern_alloc: .quad 0\n", ".weak __fern_alloc\n", ".set alias, __fern_alloc\n", ".intel_syntax noprefix\n"] {
+    require(init.program(fixture("syscall") + suffix).error != "", "same complete namespace: " + suffix);
+  }
+}
+
+pub function run(output: string): void {
+  actual(output);
+  wide();
+  xor_and_syscall();
+  selection();
+}

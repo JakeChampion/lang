@@ -1,0 +1,72 @@
+// Allocator initialization instruction DATA only. No syscall, mapping,
+// permissions, success, terminal or allocator invariant is certified here.
+import "./ssacapacityisa" as isa;
+import "./ssadecrementtext" as text;
+import "./ssainlineuniqueisa" as registers;
+import "./util";
+import "std/string";
+
+// Reuses existing operand records without narrowing a wide literal into the
+// i32 immediate field. Kind36: movabs, canonical signed-i64 decimal in symbol,
+// width64 and destination. Kind37: exact syscall. Kind38: self-XOR32, source
+// and destination identical. A machine must independently interpret these.
+function decode(line: string, unknown: isa.Op): isa.Op {
+  if (line == "syscall") {
+    return isa.Op { ...unknown, kind: 37 };
+  }
+  let at = 0;
+  while (at < line.len() && line[at] != b' ' && line[at] != b'\t') {
+    at = at + 1;
+  }
+  if (at == line.len()) {
+    return unknown;
+  }
+  let name = slice_unchecked(line, 0, at) + "";
+  let args = util.trim(slice_unchecked(line, at + 1, line.len()) + "").split(",");
+  if (args.len() != 2) {
+    return unknown;
+  }
+  let a = util.trim(args[0]);
+  let b = util.trim(args[1]);
+  return if (name == "movabs") { wide_move(a, b, unknown) } else { self_xor(name, a, b, unknown) };
+}
+
+function wide_move(a: string, b: string, unknown: isa.Op): isa.Op {
+  let dst = registers.reg(b, false, 64);
+  if (!a.starts_with("$") || dst < 0) {
+    return unknown;
+  }
+  let literal = slice_unchecked(a, 1, a.len()) + "";
+  if (!util.is_decimal_i64(literal)) {
+    return unknown;
+  }
+  return isa.Op { ...unknown, kind: 36, width: 64, destination: dst, symbol: literal };
+}
+
+function self_xor(name: string, a: string, b: string, unknown: isa.Op): isa.Op {
+  let src = registers.reg(a, false, 32);
+  let dst = registers.reg(b, false, 32);
+  return if (name == "xorl" && src >= 0 && src == dst) { isa.Op { ...unknown, kind: 38, width: 32, source: src, destination: dst } } else { unknown };
+}
+
+// Derive BOTH selections internally from the same complete output. Existing
+// allocator_program and all other decoder APIs retain their syntax policies.
+// Old resolved/unbound branches, calls and unknown operations keep positions
+// and fields. Initialization operations remain data even on reachable paths.
+pub function program(output: string): isa.Program {
+  let selected = text.allocator(output);
+  let old = isa.allocator_program(output);
+  if (selected.error != "" || old.error != "") {
+    return isa.Program { ops: [], error: if (selected.error != "") { selected.error } else { old.error } };
+  }
+  if (selected.lines.len() != old.ops.len()) {
+    return isa.Program { ops: [], error: "allocator initialization selection mismatch" };
+  }
+  let ops: isa.Op[] = [];
+  let i = 0;
+  for op in old.ops {
+    ops = ops.append(if (op.kind == 0) { decode(selected.lines[i], op) } else { op });
+    i = i + 1;
+  }
+  return isa.Program { ops: ops, error: "" };
+}

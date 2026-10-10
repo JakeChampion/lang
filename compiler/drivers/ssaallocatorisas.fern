@@ -9,6 +9,7 @@ import "../ssainlineuniqueisa" as registers;
 import "../util";
 import "./ssaallocatorstorage" as storage;
 import "./ssaallocatormachines" as machine;
+import "./ssaallocatorinitisas" as init;
 import "std/string";
 
 function require(ok: boolean, group: string): void {
@@ -41,6 +42,7 @@ function actual(): void {
   actual_operations(p, body);
   storage.run(output.text);
   machine.run(output.text);
+  init.run(output.text);
   let crlf = isa.allocator_program(output.text.split("\n").join("\r\n\t"));
   require(crlf.error == "" && crlf.ops.len() == p.ops.len(), "CRLF extent");
   let i = 0;
