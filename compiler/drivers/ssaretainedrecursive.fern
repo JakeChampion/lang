@@ -42,8 +42,8 @@ function loaded_link(row: ssaprepare.Emitted): void {
       if (op.kind_tag == 11 && op.str == "__fern_rc_is_unique") {
         require(op.args.len() == 1, 203);
         let joined = false;
-        for pred in row.body.formed.f.blocks {
-          for phi in pred.insts {
+        for definer in row.body.formed.f.blocks {
+          for phi in definer.insts {
             if (phi.result == op.args[0] && phi.kind_tag == 8) {
               joined = true;
             }
