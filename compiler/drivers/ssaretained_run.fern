@@ -40,6 +40,7 @@ import "./ssalargearraymachines" as largearraymachines;
 import "./ssastringreleaseisas" as stringreleaseisas;
 import "./ssaboxstringmachines" as boxstringmachines;
 import "./ssastringvalues" as stringvalues;
+import "./ssafusedstringmachines" as fusedstringmachines;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -130,6 +131,7 @@ function settled(g: ircore.Gated, arm: boolean): void {
     stringreleaseisas.run(on.text);
     boxstringmachines.run(on.text);
     stringvalues.run();
+    fusedstringmachines.run(on.text);
     largepushmachines.run(on.text);
   }
   sites.output(on);
