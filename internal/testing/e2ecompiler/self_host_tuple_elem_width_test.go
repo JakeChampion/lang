@@ -325,6 +325,7 @@ func TestSelfHostTupleFieldTypeLabelParity(t *testing.T) {
 
 	for _, tc := range tupleFieldTypeLabelCases {
 		t.Run(tc.name, func(t *testing.T) {
+			want := `variable "bad": ` + tc.want
 			src := "struct P { f: " + tc.field + " }\n" +
 				"function mkp(): P { return P { f: mkf() }; }\n" +
 				"function mkf(): " + tc.field + " { return mkf(); }\n" +
@@ -339,14 +340,14 @@ func TestSelfHostTupleFieldTypeLabelParity(t *testing.T) {
 			cmd.Stdin = bytes.NewReader([]byte(src))
 			got := driverDiags(runCheckerDriver(t, cmd, tc.name))
 
-			if len(got) != 1 || got[0].code != "E003" || got[0].msg != tc.want {
-				t.Errorf("%s: self-host diagnostics = %v, want one E003 %q", tc.name, got, tc.want)
+			if len(got) != 1 || got[0].code != "E003" || got[0].msg != want {
+				t.Errorf("%s: self-host diagnostics = %v, want one E003 %q", tc.name, got, want)
 			}
 			// Differential: native must say the same thing, so the row cannot
 			// decay into pinning a spelling only the self-host uses.
 			goDiags := goCheckerDiags(t, dir, src)
-			if len(goDiags) != 1 || goDiags[0].code != "E003" || goDiags[0].msg != tc.want {
-				t.Errorf("%s: native diagnostics = %v, want one E003 %q", tc.name, goDiags, tc.want)
+			if len(goDiags) != 1 || goDiags[0].code != "E003" || goDiags[0].msg != want {
+				t.Errorf("%s: native diagnostics = %v, want one E003 %q", tc.name, goDiags, want)
 			}
 		})
 	}

@@ -49,7 +49,7 @@ func TestSelfHostDisplayArgGate(t *testing.T) {
 
 	// native's E038 text, which display_arg_diags reproduces word for word.
 	noDisplay := func(fn, ty string) string {
-		return "argument 1 to " + fn + ": " + ty + " does not implement `Display` (no `to_string(): string` in scope)"
+		return "argument 1 to \"" + fn + "\": " + ty + " does not implement `Display` (no `to_string(): string` in scope)"
 	}
 	rejects := []struct {
 		name string
