@@ -25,6 +25,7 @@ import "./ssadecrementisas" as decrementisas;
 import "./ssadecrementmachines" as decrementmachines;
 import "./ssadecrementdata" as decrementdata;
 import "./ssadecrementzeros" as decrementzeros;
+import "./ssadecrementdependencies" as decrementdependencies;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -105,6 +106,7 @@ function settled(g: ircore.Gated, arm: boolean): void {
     decrementmachines.run(on.text);
     decrementdata.run(on.text);
     decrementzeros.run(on.text);
+    decrementdependencies.run(on.text);
   }
   sites.output(on);
   require(count(on.bodies, "__fern_str_cmp") == 1 && count(on.bodies, "first") == 1, 21);

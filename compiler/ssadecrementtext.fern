@@ -1,4 +1,4 @@
-// Select two entries from ONE supplied normal x86 assembly output. This is
+// Select decrement entries and dependencies from ONE normal x86 output. This is
 // namespace and section validation only, not an instruction/effect proof.
 import "./ssaproofnames" as names;
 import "./util";
@@ -215,7 +215,7 @@ function scan(text: string): Scan {
 
 function ends_body(line: string, name: string, entry: string): boolean {
   if (name != "") {
-    return name != entry + ".r" && !util.str_has_prefix(name, ".L");
+    return (entry == "" || name != entry + ".r") && !util.str_has_prefix(name, ".L");
   }
   return one_of(line, [".text", ".data", ".bss"]) || util.str_has_prefix(line, ".section");
 }
@@ -253,7 +253,7 @@ function body(s: Scan, ix: names.Names, start: i32, register: i32, entry: string
     code = code.append(line);
     at = at + 1;
   }
-  if (reg < 0) {
+  if (register >= 0 && reg < 0) {
     return failure("decrement register entry outside body");
   }
   return Body { lines: code, register_entry: reg, error: "" };
@@ -349,4 +349,23 @@ pub function select(text: string, entry: string): Body {
     return failure("decrement entry is not an exact executable definition");
   }
   return body(s, ix, start, register, entry);
+}
+
+// Single-entry dependencies share the complete-output namespace policy.
+// Their lines are unproved; register_entry is always -1.
+pub function dependency(text: string, entry: string): Body {
+  if (entry != "__fern_capw" && entry != "__fern_large_push") {
+    return failure("unsupported decrement dependency");
+  }
+  let s = scan(text);
+  if (s.error != "") {
+    return failure(s.error);
+  }
+  let ix = definition_index(s.lines);
+  let start = names.unique_position(ix, entry);
+  if (start < 0 || !exact_entry(s, start, entry)) {
+    return failure("missing or ambiguous executable decrement dependency");
+  }
+  // No second nonlocal entry is part of a dependency body.
+  return body(s, ix, start, -1, "");
 }
