@@ -8,6 +8,7 @@ import "../ssaconstructormachine" as machine;
 import "../ssaconstructorbound" as boundary;
 import "../ssacredittext" as retained;
 import "../ssainlineuniqueisa" as registers;
+import "./ssaallocationchains" as chains;
 import "std/string";
 
 function require(ok: boolean, group: string): void {
@@ -154,6 +155,7 @@ pub function run(): void {
   for single in [true, false] {
     let output = emit(single, true);
     require(machine.check(output, "parent"), "actual complete constructor");
+    chains.run(output);
     let capacity = if (single) { "2" } else { "3" };
     boundary_only(output, capacity);
     stores(output, single);

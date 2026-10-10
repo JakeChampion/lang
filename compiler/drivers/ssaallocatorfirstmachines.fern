@@ -1,0 +1,124 @@
+import "../ssaallocatorfirstmachine" as machine;
+import "../ssadecrementtext" as text;
+import "../ssainlineuniqueisa" as registers;
+import "std/string";
+
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("allocator first mapping controls failed: " + group);
+    exit(180);
+  }
+}
+
+function change(s: string, from: string, to: string): string {
+  require(s.contains(from), "mutation present: " + from);
+  return s.split(from).join(to);
+}
+
+function mutation(s: string, from: string, to: string, expected: boolean): void {
+  require(machine.check(change(s, from, to)) == expected, from + " -> " + to);
+}
+
+function arguments(s: string): void {
+  for line in ["movl $0x10000000, %edi", "movabs $17179869184, %rsi", "movl $3, %edx", "movl $0x4022, %r10d", "movq $-1, %r8", "xorl %r9d, %r9d", "movl $9, %eax"] {
+    mutation(s, line, "", false);
+  }
+  mutation(s, "movl $0x10000000, %edi", "movl $0, %edi", false);
+  mutation(s, "movl $3, %edx", "movl $1, %edx", false);
+  mutation(s, "movl $0x4022, %r10d", "movl $0x4022, %ecx", false);
+  mutation(s, "movq $-1, %r8", "movl $-1, %r8d", false);
+  mutation(s, "xorl %r9d, %r9d", "movq $0, %r9", true);
+  mutation(s, "movl $9, %eax", "movq $9, %rax", true);
+  mutation(s, "syscall", "", false);
+  mutation(s, "syscall", ["syscall", "syscall"].join("\n"), false);
+  mutation(s, "syscall", "unknown_instruction", false);
+}
+
+function wide_values(s: string): void {
+  for literal in ["0", "4294967296", "17179869183", "17179869185", "9223372036854775807", "-9223372036854775808", "9223372036854775808", "-9223372036854775809"] {
+    mutation(s, "17179869184", literal, false);
+  }
+  mutation(s, "movabs $17179869184, %rcx", "movq %rsi, %rcx", true);
+  mutation(s, "movabs $17179869184, %rcx", "movl %esi, %ecx", false);
+  mutation(s, "addq %rax, %rcx", "addl %eax, %ecx", false);
+  mutation(s, "addq %rax, %rcx", "addq %rcx, %rax", false);
+  mutation(s, "movq %rax, __fern_heap_base(%rip)", "movl $0x10000000, %eax\nmovq %rax, __fern_heap_base(%rip)", false);
+}
+
+function globals(s: string): void {
+  for symbol in ["__fern_heap_ptr", "__fern_heap_base"] {
+    let line = "movq %rax, " + symbol + "(%rip)";
+    mutation(s, line, "", false);
+    mutation(s, line, line + "\n" + line, false);
+    mutation(s, line, "movl %eax, " + symbol + "(%rip)", false);
+  }
+  mutation(s, "movq %rcx, __fern_heap_end(%rip)", "movq %rax, __fern_heap_end(%rip)", false);
+  mutation(s, "movq %rcx, __fern_heap_end(%rip)", "", false);
+  mutation(s, "movq %rdi, __fern_heap_ptr(%rip)", "movq %rax, __fern_heap_ptr(%rip)", false);
+  mutation(s, "movq %rdi, __fern_heap_ptr(%rip)", "", false);
+  mutation(s, "movq __fern_heap_ptr(%rip), %rax", "movl __fern_heap_ptr(%rip), %eax", false);
+  mutation(s, "movq __fern_heap_ptr(%rip), %rax", "movq __fern_heap_base(%rip), %rax", true);
+  // A post-store reload observes the current end, not its initial zero.
+  mutation(s, "movq %rcx, __fern_heap_end(%rip)", "movq %rcx, __fern_heap_end(%rip)\nmovq __fern_heap_end(%rip), %rax\nsubq %rcx, %rax\ncmpq $0, %rax\njne .Lbad_current", true);
+  mutation(s, "movq %rcx, __fern_heap_end(%rip)", "movq %rcx, __fern_heap_end(%rip)\nmovq __fern_heap_end(%rip), %rax\ncmpq $0, %rax\njne .Lbad_current", false);
+}
+
+function stack_and_registers(s: string): void {
+  for reg in ["%rbp", "%rdi", "%rsi", "%rcx", "%rdx", "%r8", "%r9", "%r10", "%r11"] {
+    mutation(s, "popq " + reg, "addq $8, %rsp", false);
+    mutation(s, "pushq " + reg, "subq $8, %rsp", false);
+  }
+  let wide = registers.registers(false, 64);
+  let narrow = registers.registers(false, 32);
+  let i = 0;
+  for reg in wide {
+    mutation(s, "ret", "movq " + reg + ", " + reg + "\nret", true);
+    mutation(s, "ret", "movl " + narrow[i] + ", " + narrow[i] + "\nret", false);
+    i = i + 1;
+  }
+  for code in ["movq %rax, (%rsp)", "movq %rax, 8(%rsp)", "pushq %rax", "popq %rax", "movq (%rax), %rcx", "movq %rax, (%rax)"] {
+    mutation(s, "ret", code + "\nret", false);
+  }
+  mutation(s, "pushq %rbp", "pushq %rcx\npushq (%rsp)\npopq (%rsp)\npopq %rcx\npushq %rbp", true);
+  mutation(s, "pushq %rbp", "pushq %rcx\npushq -8(%rsp)\npopq (%rsp)\npopq %rcx\npushq %rbp", false);
+  mutation(s, "syscall", ["syscall", "movq %r11, -64(%rsp)"].join("\n"), false);
+}
+
+function flow(s: string): void {
+  mutation(s, "addq $7, %rdi", "movq $40, %rdi", false);
+  mutation(s, "shrq $3, %rcx", "shrq $2, %rcx", false);
+  mutation(s, "shrq $3, %rcx", "shrq $67, %rcx", true);
+  mutation(s, "shrq $3, %rcx", "shrl $35, %ecx", true);
+  mutation(s, "shrq $3, %rcx", "shrq $-1, %rcx", false);
+  mutation(s, "leaq 0(,%rcx,8), %rdi", "leaq 0(,%rcx,4), %rdi", false);
+  mutation(s, "jl .Lalloc_oom", "jg .Lalloc_oom", false);
+  mutation(s, "jl .Lalloc_oom", "jne .Lalloc_oom", false);
+  mutation(s, "jl .Lalloc_oom", "jle .Lalloc_oom", true);
+  mutation(s, "ja .Lalloc_oom", "jae .Lalloc_oom", true);
+  mutation(s, "cmpq __fern_heap_end(%rip), %rdi", "cmpl __fern_heap_end(%rip), %edi", false);
+  mutation(s, "ret", "jmp .Loutside\nret", false);
+  mutation(s, "ret", ".Lcycle:\njmp .Lcycle\nret", false);
+  mutation(s, "ret", "unknown_instruction\nret", false);
+  mutation(s, "cmpq $0, %rax", "cmpq $0, %rax\nmovq %rax, %rax", true);
+  mutation(s, "cmpq $0, %rax", "cmpq $0, %rax\naddq $0, %rax", false);
+  mutation(s, "cmpq $0, %rax", "cmpl $0, %eax", false);
+}
+
+pub function run(output: string): void {
+  require(machine.check(output), "actual complete primary output");
+  mutation(output, "movl $9, %eax", "movl $10, %eax", false);
+  mutation(output, "movq %rax, __fern_heap_base(%rip)", "movl %eax, __fern_heap_base(%rip)", false);
+  let selected = text.allocator(output);
+  let declarations = "\n.bss\n.align 8\n__fern_heap_ptr: .quad 0\n.align 8\n__fern_heap_base: .quad 0\n.align 8\n__fern_heap_end: .quad 0\n.align 8\n__fern_freelist: .skip 524288\n";
+  let s = ".text\n__fern_alloc:\n" + selected.lines.join("\n") + declarations;
+  require(machine.check(s), "same selected instructions with explicit storage");
+  mutation(s, "\n", "\r\n\t", true);
+  mutation(s, "__fern_heap_ptr: .quad 0", "__fern_heap_ptr: .quad 1", false);
+  mutation(s, "__fern_freelist: .skip 524288", "__fern_freelist: .skip 8", false);
+  mutation(s, "__fern_alloc:", "other_allocator:", false);
+  arguments(s);
+  wide_values(s);
+  globals(s);
+  stack_and_registers(s);
+  flow(s);
+}

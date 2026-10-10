@@ -1,0 +1,50 @@
+// Conditional allocation composition from one complete emitted output.
+import "./ssaallocatormachine" as initialized;
+import "./ssaallocatorfirstmachine" as first;
+import "./ssaarrayboxmachine" as box;
+import "./ssaconstructormachine" as constructor;
+import "./ssaprepare";
+
+// Requests40/48 under THREE alternative incoming states: an owned nonempty
+// selected slot; an empty slot and initialized in-bounds bump storage; or an
+// empty slot with zero heap globals and successful Linux x86-64 mmap. Each
+// implementation and its declarations are independently derived from this
+// SAME text. These alternatives are premises, not a global allocator invariant.
+// Canonical aligned disjoint linked storage, valid owned block extents and
+// fresh writable bump/mapping storage remain unproved. The syscall ABI and
+// successful mapping are explicit premises: Output retains no OS identity.
+// Writable stack at allocator entry A covers A-80..A+15. AX/DI results, other
+// GPR preservation, global/slot updates and normal RET are derived; lower
+// scratch is unconstrained. Unknown or possibly failing paths still refuse.
+pub function allocator(output: string): boolean {
+  return initialized.check(output) && first.check(output);
+}
+
+// Capacities2/3. In addition to the allocator domains above, the ENTIRE helper
+// stack H-96..H+15 is canonical, aligned, writable and disjoint from globals,
+// the returned allocation and linked shape data. The helper machine derives
+// callSP=H-8 and allocator entry A=H-16, hence A-80=H-96. Opaque scratch alone
+// grants no permission. The allocator preserves the capacity at A+8; the
+// helper independently derives its request and exact header/return effects.
+// No unknown allocator register/return contract is accepted from the caller.
+pub function array_box(output: string): boolean {
+  return allocator(output) && box.check(output);
+}
+
+// One/two-i32 constructors, both entries. This API has a STRONGER stack premise
+// than constructor.check: the whole S-144..S+23 is writable and disjoint from
+// every linked global/slot, allocation and shape extent. The constructor's
+// private machine derives actual callSP=S+d with aligned d in [-40,0]. The
+// helper entry is S+d-8 and allocator entry S+d-24. Its required floor is
+// S+d-104, always within S-144. Actual d=-24 needs S-128; accepted alternate
+// frames derive their own d. The uniform envelope is a sufficient permission
+// premise, not a claim that all144 scratch bytes are written or needed.
+// Constructor instructions still access only their original bounded cells;
+// lower allocator scratch is opaque and cannot restore stale saved values.
+// Shape relocation/identity, OS success and allocator ownership/freshness
+// remain assumptions. This composes instruction effects, not caller credits,
+// linked-byte certification, unwind, terminal, other targets or production
+// admission. Standalone conditional APIs and counted-entry refusal are intact.
+pub function record(output: ssaprepare.Output, name: string): boolean {
+  return allocator(output.text) && constructor.check(output, name);
+}
