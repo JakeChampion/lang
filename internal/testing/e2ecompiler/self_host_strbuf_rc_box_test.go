@@ -94,25 +94,43 @@ func strbufTakeBody(t *testing.T, asm string) string {
 // never touches the string-builder must not reserve its .bss words or emit
 // its bodies. Asserted in both directions so the gate cannot be vacuous.
 func TestSelfHostStrbufNeedGatedArm64(t *testing.T) {
+	arm64gcc, arm64runner := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	// Allocates (a heap string array) but never uses the string-builder.
+	// Constant arrays use static storage; retain this as the no-heap control.
 	const noStrbuf = `function main(): i32 {
     let xs: string[] = ["a", "b"];
     return xs.len() - 2;
 }`
-	asm := string(runCapture(t, x86gcc, x86runner, driverBin, []byte(noStrbuf+"\n"), "-target", "arm64-linux"))
-	if !strings.Contains(asm, "__fern_alloc") {
-		t.Fatal("the no-strbuf program did not emit the heap runtime — the gate under test is vacuous")
-	}
-	if strings.Contains(asm, "__fern_strbuf_ptr") {
-		t.Error("a heap-using program that never uses the string-builder still reserves its .bss words")
-	}
-	if strings.Contains(asm, "__fern_strbuf_take:") {
-		t.Error("a heap-using program that never uses the string-builder still emits __fern_strbuf_take")
+	const dynamic = `function main(): i32 {
+    let xs: string[] = [];
+    for a in args() { xs = xs.append(a); }
+    return xs.len() - args().len();
+}`
+	for _, tc := range []struct {
+		name, src string
+		heap      bool
+	}{{"static", noStrbuf, false}, {"dynamic", dynamic, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := string(runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src+"\n"), "-target", "arm64-linux"))
+			if got := strings.Contains(asm, "__fern_alloc"); got != tc.heap {
+				t.Fatalf("heap runtime present = %v, want %v\n%s", got, tc.heap, asm)
+			}
+			if strings.Contains(asm, "__fern_strbuf_ptr") {
+				t.Error("a program that never uses the string-builder still reserves its .bss words")
+			}
+			if strings.Contains(asm, "__fern_strbuf_take:") {
+				t.Error("a program that never uses the string-builder still emits __fern_strbuf_take")
+			}
+			cmd := runArm64Bin(arm64runner, buildBinArm64(t, arm64gcc, t.TempDir(), "no_strbuf", asm))
+			cmd.Args = append(cmd.Args, "a", "bb", "ccc")
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("no-strbuf program: %v\n%s", err, out)
+			}
+		})
 	}
 
 	// The other direction: a program that DOES use it still gets the bundle.

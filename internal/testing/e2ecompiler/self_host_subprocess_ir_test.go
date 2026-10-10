@@ -135,21 +135,39 @@ func TestSelfHostSubprocessIRArm64(t *testing.T) {
 // allocating program carried ~400 instructions nothing branched to — the same
 // unconditional emission the Reader bodies had (#6921).
 func TestSelfHostSubprocessNeedGatedArm64(t *testing.T) {
+	arm64gcc, arm64runner := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/asm_ir_run.fern")
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_ir_run.fern", "driver")
 
-	// Allocates (a heap string array) but never spawns.
+	// Constant arrays use static storage; retain this as the no-heap control.
 	const noSpawn = `function main(): i32 {
     let xs: string[] = ["a", "b"];
     return xs.len() - 2;
 }`
-	asm := string(runCapture(t, x86gcc, x86runner, driverBin, []byte(noSpawn+"\n"), "-target", "arm64-linux"))
-	if !strings.Contains(asm, "__fern_alloc") {
-		t.Fatal("the no-spawn program did not emit the heap runtime — the gate under test is vacuous")
-	}
-	if strings.Contains(asm, "__fn___fern_subprocess") {
-		t.Error("a heap-using program that never spawns still emits the subprocess helper")
+	const dynamic = `function main(): i32 {
+    let xs: string[] = [];
+    for a in args() { xs = xs.append(a); }
+    return xs.len() - args().len();
+}`
+	for _, tc := range []struct {
+		name, src string
+		heap      bool
+	}{{"static", noSpawn, false}, {"dynamic", dynamic, true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			asm := string(runCapture(t, x86gcc, x86runner, driverBin, []byte(tc.src+"\n"), "-target", "arm64-linux"))
+			if got := strings.Contains(asm, "__fern_alloc"); got != tc.heap {
+				t.Fatalf("heap runtime present = %v, want %v\n%s", got, tc.heap, asm)
+			}
+			if strings.Contains(asm, "__fn___fern_subprocess") {
+				t.Error("a program that never spawns still emits the subprocess helper")
+			}
+			cmd := runArm64Bin(arm64runner, buildBinArm64(t, arm64gcc, t.TempDir(), "no_spawn", asm))
+			cmd.Args = append(cmd.Args, "a", "bb", "ccc")
+			if out, err := cmd.CombinedOutput(); err != nil {
+				t.Fatalf("no-spawn program: %v\n%s", err, out)
+			}
+		})
 	}
 }
