@@ -8451,11 +8451,11 @@ func TestSliceUncheckedMisuseRejected(t *testing.T) {
 		{`function f(s: string): str { return slice_unchecked(s, 0, 1, 2); }`,
 			"takes 3 arguments but was given 4"},
 		{`function f(): str { return slice_unchecked(7, 0, 1); }`,
-			"argument 1: expected string"},
+			"argument 1 to \"slice_unchecked\": expected string"},
 		{`function f(s: string): str { return slice_unchecked(s, "a", 1); }`,
-			"argument 2: expected i32"},
+			"argument 2 to \"slice_unchecked\": expected i32"},
 		{`function f(s: string): str { return slice_unchecked(s, 0, "b"); }`,
-			"argument 3: expected i32"},
+			"argument 3 to \"slice_unchecked\": expected i32"},
 	}
 	for _, c := range bad {
 		err := checkSource(t, c.src)
@@ -8586,7 +8586,7 @@ function main(): i32 {
 		{"nothing pins it", `function first[T](own x: T, n: i32): i32 { return n; }
 function main(): i32 { return first([], 3); }`, "could not infer type parameter T for first"},
 		{"pinned to a scalar", `function pair[T](own a: T, own b: T): T { return b; }
-function main(): i32 { return pair([], 3); }`, "argument 1: expected i32, got []"},
+function main(): i32 { return pair([], 3); }`, "argument 1 to \"pair\": expected i32, got []"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			err := checkSource(t, tc.src)

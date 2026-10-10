@@ -5747,7 +5747,7 @@ function written_type_arg_diags(sig: FuncSig, c: ast.ExprCall, ai: i32, at: type
   }
   let out: util.Diag[] = int_dest_range_diags(c.args[ai], want);
   if (out.len() == 0 && !is_unknown(at) && !settles_to(c.args[ai], want, s) && !view_arg_borrow(at, want) && !coercible(at, want, s)) {
-    out = out.append(dg_at("E038", "argument " + util.i32_to_string(ai + 1) + ": expected " + type_label(want) + ", got " + type_label(at), expr_line(c.args[ai]), expr_col(c.args[ai])));
+    out = out.append(dg_at("E038", arg_subject(c, ai + 1) + ": expected " + type_label(want) + ", got " + type_label(at), expr_line(c.args[ai]), expr_col(c.args[ai])));
   }
   return out;
 }
@@ -13121,6 +13121,18 @@ function payload_count_message(variant: string, want: i32, got: i32): string {
   return "variant " + variant + " carries " + util.i32_to_string(want) + " " + values + ", but the pattern binds " + util.i32_to_string(got);
 }
 
+// arg_subject names argument n of a call, with its callee when the callee is a
+// name the reader wrote, as the native checker's argSubject does.
+function arg_subject(c: ast.ExprCall, n: i32): string {
+  let arg: string = "argument " + util.i32_to_string(n);
+  if let ast.ExprIdent(id) = c.callee {
+    if (!util.str_has_prefix(id.name, "__")) {
+      return arg + " to \"" + util.demangle(id.name) + "\"";
+    }
+  }
+  return arg;
+}
+
 // call_subject names a call's callee the way an arity diagnostic does: a
 // function by name when the callee is one, "this function" for any other
 // callable expression.
@@ -13157,7 +13169,7 @@ function cell_call_diags(c: ast.ExprCall, mfa: ast.ExprFieldAccess, recv: typein
     // The cell keeps the value, so a `str` view is not lent here: native's
     // storesArgument.
     if (!is_unknown(at) && !is_unknown(pt) && !settles_to(c.args[0], pt, s) && !coercible(at, pt, s)) {
-      out = out.append(dg_at("E038", "argument 1: expected " + type_label(pt) + ", got " + type_label(at) + str_copy_hint(at, pt), expr_line(c.args[0]), expr_col(c.args[0])));
+      out = out.append(dg_at("E038", "argument 1 to \"" + mfa.field + "\": expected " + type_label(pt) + ", got " + type_label(at) + str_copy_hint(at, pt), expr_line(c.args[0]), expr_col(c.args[0])));
     }
     out = util.append_diags(out, array_elem_check(array_elem_type_of(pt), c.args[0], s));
   }
@@ -13183,7 +13195,7 @@ function callable_arg_diags(c: ast.ExprCall, ft: typeinfo.Type, s: Scope): util.
         let at: typeinfo.Type = check_expr(c.args[i], s);
         out = util.append_diags(out, int_dest_range_diags(c.args[i], pt));
         if (!is_unknown(at) && !is_unknown(pt) && !settles_to(c.args[i], pt, s) && !view_arg_borrow(at, pt) && !coercible(at, pt, s)) {
-          out = out.append(dg_at("E038", "argument " + util.i32_to_string(i + 1) + ": expected " + type_label(pt) + ", got " + type_label(at), expr_line(c.args[i]), expr_col(c.args[i])));
+          out = out.append(dg_at("E038", arg_subject(c, i + 1) + ": expected " + type_label(pt) + ", got " + type_label(at), expr_line(c.args[i]), expr_col(c.args[i])));
         }
         out = util.append_diags(out, array_elem_check(array_elem_type_of(pt), c.args[i], s));
         i = i + 1;
@@ -13321,7 +13333,7 @@ function display_arg_diags(c: ast.ExprCall, s: Scope): util.Diag[] {
   }
   let label: string = type_label(at);
   return [dg_at(
-    "E038", "argument 1 to " + name + ": " + label + " does not implement `Display` (no `to_string(): string` in scope) — give "
+    "E038", "argument 1 to \"" + name + "\": " + label + " does not implement `Display` (no `to_string(): string` in scope) — give "
       + label + " a `to_string(): string` method, or " + util.derive_hint(display_dispatch_name(at), "cmp.Display", "cmp.Display"),
     expr_line(c.args[0]), expr_col(c.args[0]),
   )];
@@ -13652,7 +13664,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
               // it, so skip rather than mis-flag E038. (An
               // unknown ARG is already skipped above.)
               if (!is_unknown(at) && !is_unknown(sig.param_types[ai]) && !settles_to(c.args[ai], sig.param_types[ai], s) && !view_arg_borrow(at, sig.param_types[ai]) && !coercible(at, sig.param_types[ai], s)) {
-                out = out.append(dg_at("E038", "argument " + util.i32_to_string(ai + 1) + ": expected " + type_label(sig.param_types[ai]) + ", got " + type_label(at), expr_line(c.args[ai]), expr_col(c.args[ai])));
+                out = out.append(dg_at("E038", arg_subject(c, ai + 1) + ": expected " + type_label(sig.param_types[ai]) + ", got " + type_label(at), expr_line(c.args[ai]), expr_col(c.args[ai])));
               }
               // E034: a composite-array literal argument's
               // elements checked against the parameter's
@@ -21264,7 +21276,7 @@ function e032_call_check(c: ast.ExprCall, lastfn: string[], cur: Scope): util.Di
       if (last < sig.param_type_names.len()) {
         expected = sig.param_type_names[last];
       }
-      out = out.append(dg_at("E038", "argument " + util.i32_to_string(c.args.len()) + ": expected " + expected + ", got " + use_callback_label(c.args[c.args.len() - 1], cur), c.line, c.col));
+      out = out.append(dg_at("E038", arg_subject(c, c.args.len()) + ": expected " + expected + ", got " + use_callback_label(c.args[c.args.len() - 1], cur), c.line, c.col));
     }
     return out;
   }
