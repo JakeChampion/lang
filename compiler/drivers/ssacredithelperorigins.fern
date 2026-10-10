@@ -1,0 +1,133 @@
+// Helper construction facts follow the selected row, not a name lookup.
+import "../lexer";
+import "../parser";
+import "../semlower";
+import "../physicalbody";
+import "../ircore";
+import "../irtables";
+import "../ssarc";
+import "../semtypes";
+import "../typeinfo";
+
+function require(ok: boolean, code: i32): void {
+  if (!ok) {
+    exit(code);
+  }
+}
+
+pub function same(a: physicalbody.Origin, b: physicalbody.Origin): boolean {
+  if (a.producer != b.producer || a.symbol != b.symbol) {
+    return false;
+  }
+  if let Some(x) = a.helper {
+    if let Some(y) = b.helper {
+      return x.children_only == y.children_only && semtypes.equal(x.ty, y.ty);
+    }
+    return false;
+  }
+  if let Some(_) = b.helper {
+    return false;
+  }
+  return true;
+}
+
+function unknown(origin: physicalbody.Origin): boolean {
+  if let Some(_) = origin.helper {
+    return false;
+  }
+  return true;
+}
+
+function nominal(rows: physicalbody.Origin[], ty: typeinfo.Type): void {
+  let drops = 0;
+  let releases = 0;
+  for row in rows {
+    if let Some(h) = row.helper {
+      let name = if (h.children_only) { ssarc.drop_helper_name(h.ty) } else { ssarc.release_helper_name(h.ty) };
+      require(row.symbol == name, 236);
+      if (semtypes.equal(h.ty, ty)) {
+        if (h.children_only) {
+          drops = drops + 1;
+        } else {
+          releases = releases + 1;
+        }
+      }
+    }
+  }
+  require(drops == 1 && releases == 1, 237);
+}
+
+function runtime(source: string): void {
+  let lowered = semlower.runtime_lowering(source);
+  let rows = physicalbody.lowered_origins(lowered, 7);
+  require(rows.len() == lowered.bodies.len() && lowered.helper_types.len() == rows.len(), 238);
+  let i = 0;
+  for row in rows {
+    require(row.producer == 7, 239);
+    if (i < lowered.declarations.len()) {
+      require(unknown(row), 240);
+    }
+    i = i + 1;
+  }
+  nominal(rows, typeinfo.TypeUnion { name: "List", args: [] });
+  require(ircore.lowered_digest(lowered.bodies) == ircore.lowered_digest(semlower.runtime_bodies(source)), 241);
+  // Identical local names in a later producer must not mutate retained facts.
+  let other = semlower.runtime_lowering("enum List { Last(i32), Empty } function read(x: List): List { return x; }");
+  require(other.enums.len() > 0 && lowered.enums[0].variants[0].name == "Cons", 242);
+  nominal(physicalbody.collection(lowered).rows, typeinfo.TypeUnion { name: "List", args: [] });
+}
+
+function mapping(source: string): void {
+  let lowered = semlower.runtime_lowering(source);
+  let rows = physicalbody.collection(lowered).rows;
+  let at = lowered.declarations.len();
+  require(at < rows.len(), 243);
+  let body = lowered.bodies[at];
+  let first = rows[at];
+  let loser = physicalbody.Origin { ...first, producer: 9, helper: None };
+  let renamed = physicalbody.Origin { ...first, symbol: "different" };
+  let bodies = [body, body, body];
+  bodies = bodies.with(2, irtables.LowerResult { ...body, name: "different" });
+  let origins = [first, loser, renamed];
+  let merged = ssarc.merge_helpers_mapped([], bodies);
+  let selected = physicalbody.select_origins(origins, merged.helper_indices);
+  require(selected.len() == 2 && same(selected[0], first) && same(selected[1], renamed), 244);
+  let reversed = physicalbody.select_origins([loser, first, renamed], merged.helper_indices);
+  require(same(reversed[0], loser), 245);
+  let cached = ssarc.merge_helpers_mapped([body], bodies);
+  let kept = physicalbody.select_origins(origins, cached.helper_indices);
+  require(cached.cache_len == 1 && kept.len() == 1 && same(kept[0], renamed), 246);
+  let pruned = physicalbody.select_origins(selected, [1, 0]);
+  require(same(pruned[0], renamed) && same(pruned[1], first), 247);
+}
+
+function generic(target: string): void {
+  let source = "struct Box[T] { value: T } @noinline function discard(own x: Box[string]): i32 { return 0; } @noinline function keyed(m: Map[(i32, i32), i32]): Map[(i32, i32), i32] { return m; } function main(): i32 { return discard(Box { value: \"x\" }); }";
+  let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
+  nominal(sub.physical_origins.extra, typeinfo.TypeStruct { name: "Box__string", args: [] });
+  require(sub.physical_origins.producers.len() == 2, 251);
+  let keys = 0;
+  for origin in sub.physical_origins.extra {
+    if (origin.producer == 1) {
+      require(unknown(origin), 252);
+      keys = keys + 1;
+    }
+  }
+  require(keys > 0, 253);
+}
+
+pub function run(target: string): void {
+  let source = "enum List { Cons(string, List), Nil } @noinline function discard(own x: List): i32 { return 0; } function main(): i32 { return discard(Cons(\"x\", Nil)); }";
+  let d = semlower.driven(parser.parse_module(lexer.tokenize(source)), target);
+  let g = semlower.program(d);
+  require(g.ok && g.physical.rows.len() == g.cache.len(), 248);
+  nominal(d.sub.physical_origins.extra, typeinfo.TypeUnion { name: "List", args: [] });
+  nominal(g.physical.rows, typeinfo.TypeUnion { name: "List", args: [] });
+  for row in d.sub.physical_origins.declarations {
+    require(unknown(row), 249);
+  }
+  require(unknown(physicalbody.origin_at([], 0)), 250);
+  runtime(source);
+  mapping(source);
+  generic(target);
+}

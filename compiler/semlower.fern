@@ -610,7 +610,7 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, debug
     } else if (r.keep[mod.funcs.len() + at]) {
       helpers = ssarc.with_drop_helpers(helpers, built.instances[at].func);
       instances = instances.append(r.body[mod.funcs.len() + at]);
-      instance_origins = instance_origins.append(physicalbody.Origin { producer: 0, symbol: built.names[mod.funcs.len() + at] });
+      instance_origins = instance_origins.append(physicalbody.Origin { producer: 0, symbol: built.names[mod.funcs.len() + at], helper: None });
     }
     at = at + 1;
   }
@@ -635,7 +635,7 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, debug
     }
     i2 = i2 + 1;
   }
-  let selected: SelectedHelpers = selected_helpers(built, helpers.rows);
+  let selected: SelectedHelpers = selected_helpers(built, helpers);
   // The declaration-less bodies are merged by symbol here, where the rule
   // lives, so the emit path's tail is a plain append.
   let merged = ssarc.merge_helpers_mapped(instances, selected.rows);
@@ -653,7 +653,25 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, debug
 
 struct SelectedHelpers { rows: irtables.LowerResult[], origins: physicalbody.Origin[], producers: physicalbody.Metadata[] }
 
-function selected_helpers(built: semsource.Built, rows: irtables.LowerResult[]): SelectedHelpers {
+function helper_origins(helpers: ssarc.Helpers): physicalbody.Origin[] {
+  let out: physicalbody.Origin[] = [];
+  let row = 0;
+  let at = 0;
+  for body in helpers.rows {
+    let helper: Option[physicalbody.Helper] = None;
+    if (at < helpers.types.len() && helpers.types[at].row == row) {
+      let entry = helpers.types[at];
+      helper = Some(physicalbody.Helper { ty: entry.ty, children_only: entry.children_only });
+      at = at + 1;
+    }
+    out = out.append(physicalbody.Origin { producer: 0, symbol: body.name, helper: helper });
+    row = row + 1;
+  }
+  return out;
+}
+
+function selected_helpers(built: semsource.Built, helpers: ssarc.Helpers): SelectedHelpers {
+  let rows = helpers.rows;
   let keys: typeinfo.Type[] = [];
   for d in built.decls {
     keys = structural_keys(keys, d.func);
@@ -663,17 +681,14 @@ function selected_helpers(built: semsource.Built, rows: irtables.LowerResult[]):
   }
   let app = physicalbody.Metadata { contracts: built.contracts.list, records: built.records, enums: built.enums, finalizers: built.finalizers };
   let producers: physicalbody.Metadata[] = [app];
-  let helper_origins: physicalbody.Origin[] = [];
-  for h in rows {
-    helper_origins = helper_origins.append(physicalbody.Origin { producer: 0, symbol: h.name });
-  }
+  let origins = helper_origins(helpers);
   if (keys.len() > 0) {
     let lowered: physicalbody.Lowered = runtime_lowering(key_helper_source(keys));
-    helper_origins = util.append_all(helper_origins, physicalbody.lowered_origins(lowered, producers.len()));
+    origins = util.append_all(origins, physicalbody.lowered_origins(lowered, producers.len()));
     producers = producers.append(physicalbody.metadata(lowered));
     rows = util.append_all(rows, lowered.bodies);
   }
-  return SelectedHelpers { rows: rows, origins: helper_origins, producers: producers };
+  return SelectedHelpers { rows: rows, origins: origins, producers: producers };
 }
 
 // contract_rows spells what a caller's lowering reads of the functions it
@@ -890,7 +905,15 @@ pub function runtime_lowering(src: string): physicalbody.Lowered {
     i = i + 1;
   }
   // The drop helpers follow the bodies, deduplicated by symbol.
-  let all: irtables.LowerResult[] = ssarc.merge_helpers(out, helpers.rows);
+  let merged = ssarc.merge_helpers_mapped(out, helpers.rows);
+  let all = merged.bodies;
+  let helper_types: Option[physicalbody.Helper][] = [];
+  for body in out {
+    helper_types = helper_types.append(None);
+  }
+  for origin in physicalbody.select_origins(helper_origins(helpers), merged.helper_indices) {
+    helper_types = helper_types.append(origin.helper);
+  }
   for h in all {
     if (!h.ok) {
       return runtime_refused(h.name, h.why);
@@ -903,7 +926,7 @@ pub function runtime_lowering(src: string): physicalbody.Lowered {
     declarations = declarations.append(inf.built.names[i]);
     i = i + 1;
   }
-  return physicalbody.Lowered { bodies: all, declarations: declarations, contracts: inf.built.contracts.list, records: inf.built.records, enums: inf.built.enums, finalizers: inf.built.finalizers };
+  return physicalbody.Lowered { bodies: all, declarations: declarations, helper_types: helper_types, contracts: inf.built.contracts.list, records: inf.built.records, enums: inf.built.enums, finalizers: inf.built.finalizers };
 }
 
 function runtime_refused(name: string, why: string): physicalbody.Lowered {

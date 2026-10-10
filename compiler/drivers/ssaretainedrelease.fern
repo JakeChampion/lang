@@ -37,7 +37,7 @@ function without(rows: ssaprepare.Emitted[], name: string): ssaprepare.Emitted[]
 }
 
 function metadata(row: ssaprepare.Emitted, m: physicalbody.Metadata): ssaprepare.Emitted {
-  let s = physicalbody.Selected { producers: [m], origin: physicalbody.Origin { producer: 0, symbol: row.body.selected.origin.symbol } };
+  let s = physicalbody.Selected { producers: [m], origin: physicalbody.Origin { producer: 0, symbol: row.body.selected.origin.symbol, helper: None } };
   return ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: s } };
 }
 

@@ -13,7 +13,7 @@ function require(ok: boolean): void {
 }
 
 function metadata(row: ssaprepare.Emitted, m: physicalbody.Metadata): ssaprepare.Emitted {
-  let s = physicalbody.Selected { producers: [m], origin: physicalbody.Origin { producer: 0, symbol: row.body.selected.origin.symbol } };
+  let s = physicalbody.Selected { producers: [m], origin: physicalbody.Origin { producer: 0, symbol: row.body.selected.origin.symbol, helper: None } };
   return ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: s } };
 }
 
@@ -55,7 +55,7 @@ function producers(row: ssaprepare.Emitted, e: semrecords.Enum): void {
   let empty = physicalbody.Metadata { ...m, enums: [] };
   check(metadata(row, empty), false);
   check(metadata(row, physicalbody.Metadata { ...m, enums: [e, e] }), false);
-  let s = physicalbody.Selected { producers: [empty, m], origin: physicalbody.Origin { producer: 0, symbol: row.body.selected.origin.symbol } };
+  let s = physicalbody.Selected { producers: [empty, m], origin: physicalbody.Origin { producer: 0, symbol: row.body.selected.origin.symbol, helper: None } };
   check(ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: s } }, false);
   let correct = physicalbody.Selected { ...s, origin: physicalbody.Origin { ...s.origin, producer: 1 } };
   check(ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: correct } }, true);

@@ -68,7 +68,7 @@ function selection(g: ircore.Gated, arm: boolean): void {
   let tail = irtables.LowerResult { ...changed, name: "retained_tail" };
   let loser = irtables.LowerResult { ...tail, ops: [ir.op_const_i32(99), ir.op_return()] };
   let cache = g.cache.with(0, changed).append(tail).append(loser);
-  let physical = physicalbody.Collection { ...g.physical, rows: g.physical.rows.append(physicalbody.Origin { producer: 0, symbol: "tail-first" }).append(physicalbody.Origin { producer: 0, symbol: "tail-loser" }) };
+  let physical = physicalbody.Collection { ...g.physical, rows: g.physical.rows.append(physicalbody.Origin { producer: 0, symbol: "tail-first", helper: None }).append(physicalbody.Origin { producer: 0, symbol: "tail-loser", helper: None }) };
   let off = emit(g, cache, physical, arm, false, false, 0, 1);
   let on = emit(g, cache, physical, arm, true, false, 0, 1);
   require(off.bodies.len() == 0 && off.text == on.text, 10);

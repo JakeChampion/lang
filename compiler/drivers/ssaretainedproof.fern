@@ -47,7 +47,7 @@ function check(rows: ssaprepare.Emitted[], name: string, architecture: string, o
 }
 
 function metadata(row: ssaprepare.Emitted, m: physicalbody.Metadata): ssaprepare.Emitted {
-  let selected = physicalbody.Selected { producers: [m], origin: physicalbody.Origin { producer: 0, symbol: row.body.selected.origin.symbol } };
+  let selected = physicalbody.Selected { producers: [m], origin: physicalbody.Origin { producer: 0, symbol: row.body.selected.origin.symbol, helper: None } };
   return ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: selected } };
 }
 
@@ -82,7 +82,7 @@ function effects(row: ssaprepare.Emitted, architecture: string): void {
 function origins(row: ssaprepare.Emitted, architecture: string): void {
   let selected = row.body.selected;
   for index in [-1, selected.producers.len(), 2147483647] {
-    let changed = physicalbody.Selected { ...selected, origin: physicalbody.Origin { producer: index, symbol: selected.origin.symbol } };
+    let changed = physicalbody.Selected { ...selected, origin: physicalbody.Origin { producer: index, symbol: selected.origin.symbol, helper: None } };
     check([ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: changed } }], row.label_name, architecture, false);
   }
   let m = selected.producers[selected.origin.producer];

@@ -187,8 +187,8 @@ function selected_record(g: ircore.Gated, arm: boolean, fused: boolean, inverted
   let body = uniqueness_body(g, fused, inverted, true);
   let off = emit(g, body, arm, false);
   let on = emit(g, body, arm, true);
-  require(off.bodies.len() == 0 && on.bodies.len() > 0 && off.text == on.text, 140);
-  require(on.bodies[0].label_name == "first", 141);
+  require(off.bodies.len() == 0 && on.bodies.len() > 0 && off.text == on.text, 218);
+  require(on.bodies[0].label_name == "first", 219);
   consistent(on.bodies[0]);
   sites.output(on);
   fusion(on, fused, inverted, true);

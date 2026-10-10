@@ -7,6 +7,8 @@ import "../lexer";
 import "../parser";
 import "../semlower";
 import "../ssaprepare";
+import "../typeinfo";
+import "../semtypes";
 import "../ssacreditbound" as bound;
 import "../ssacreditselected" as selected;
 import "../ssauniquecaller" as caller;
@@ -61,6 +63,15 @@ function refusals(out: ssaprepare.Output, name: string): void {
   let drop = out.bodies[find(out.bodies, "__sem_drop_" + name)];
   let release = out.bodies[find(out.bodies, "__sem_release_" + name)];
   let arch = drop.context.architecture;
+  let described = 0;
+  for row in [drop, release] {
+    if let Some(helper) = row.body.selected.origin.helper {
+      require(semtypes.equal(helper.ty, typeinfo.TypeUnion { name: name, args: [] }), 215);
+      require(helper.children_only == (row.label_name == drop.label_name), 216);
+      described = described + 1;
+    }
+  }
+  require(described == 2, 217);
   require(selected.metadata(drop).enums.len() > 0 && selected.contracts(drop).len() == 0, 206);
   require(bound.resolve(out.bodies, drop.label_name, arch).error == "", 207);
   loaded_link(drop);

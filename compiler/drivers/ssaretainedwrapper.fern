@@ -71,7 +71,7 @@ function without(rows: ssaprepare.Emitted[], name: string): ssaprepare.Emitted[]
 }
 
 function metadata(row: ssaprepare.Emitted, m: physicalbody.Metadata): ssaprepare.Emitted {
-  let s = physicalbody.Selected { producers: [m], origin: physicalbody.Origin { producer: 0, symbol: row.body.selected.origin.symbol } };
+  let s = physicalbody.Selected { producers: [m], origin: physicalbody.Origin { producer: 0, symbol: row.body.selected.origin.symbol, helper: None } };
   return ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: s } };
 }
 
@@ -89,7 +89,7 @@ function boundaries(rows: ssaprepare.Emitted[], architecture: string): void {
       for changed in bad {
         check(rest.append(ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, formed: ssa.Formed { ...row.body.formed, f: changed } } }), architecture, false);
       }
-      check(rest.append(ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: physicalbody.Selected { producers: [], origin: physicalbody.Origin { producer: -1, symbol: "" } } } }), architecture, false);
+      check(rest.append(ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: physicalbody.Selected { producers: [], origin: physicalbody.Origin { producer: -1, symbol: "", helper: None } } } }), architecture, false);
       check(rest.append(ssaprepare.Emitted { ...row, context: ssaprepare.Context { ...row.context, architecture: "wasm32-wasi" } }), architecture, false);
     }
   }
