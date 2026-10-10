@@ -41,10 +41,13 @@ func TestSelfHostSSALiftAdmitsEveryOp(t *testing.T) {
 	// The eight Dir kinds (420-427) each have a modelled pop count and push
 	// one Result, so all eight are admitted through the flat arm.
 	// sha256_hw and sha256_hw_blocks are two more, and bswap one more.
+	// The five transcendental kinds (62-66) are retired: std/float now
+	// computes them in Fern. mulhi_u (430) adds one admitted binary operation
+	// with two inputs and one result.
 	const want = "load pops=-1 pushes=1\n" +
 		"store pops=-1 pushes=1\n" +
 		"call_closure_direct pops=-1 pushes=1\n" +
-		"registered=383 declined=3\n"
+		"registered=379 declined=3\n"
 
 	cmd := runX86_64Bin(runner, bin)
 	out, err := cmd.Output()
