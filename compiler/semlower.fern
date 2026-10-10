@@ -648,7 +648,7 @@ pub function substitution(mod: parser.Module, structs: irtables.StructTab, debug
     i = i + 1;
   }
   let origins = physicalbody.Origins { producers: selected.producers, declarations: physicalbody.named_origins(declarations, 0), extra: physicalbody.select_origins(extra_origins, kept.extra_indices) };
-  return ircore.Sub { ...ircore.no_sub(), bodies: kept.result.bodies, extra: kept.result.extra, contracts: contract_rows(built.contracts, r), physical_contracts: built.contracts.list, physical_records: built.records, physical_finalizers: built.finalizers, physical_origins: origins, records: inf.records };
+  return ircore.Sub { ...ircore.no_sub(), bodies: kept.result.bodies, extra: kept.result.extra, contracts: contract_rows(built.contracts, r), physical_contracts: built.contracts.list, physical_records: built.records, physical_enums: built.enums, physical_finalizers: built.finalizers, physical_origins: origins, records: inf.records };
 }
 
 struct SelectedHelpers { rows: irtables.LowerResult[], origins: physicalbody.Origin[], producers: physicalbody.Metadata[] }
@@ -661,7 +661,7 @@ function selected_helpers(built: semsource.Built, rows: irtables.LowerResult[]):
   for p in built.instances {
     keys = structural_keys(keys, p.func);
   }
-  let app = physicalbody.Metadata { contracts: built.contracts.list, records: built.records, finalizers: built.finalizers };
+  let app = physicalbody.Metadata { contracts: built.contracts.list, records: built.records, enums: built.enums, finalizers: built.finalizers };
   let producers: physicalbody.Metadata[] = [app];
   let helper_origins: physicalbody.Origin[] = [];
   for h in rows {
@@ -903,7 +903,7 @@ pub function runtime_lowering(src: string): physicalbody.Lowered {
     declarations = declarations.append(inf.built.names[i]);
     i = i + 1;
   }
-  return physicalbody.Lowered { bodies: all, declarations: declarations, contracts: inf.built.contracts.list, records: inf.built.records, finalizers: inf.built.finalizers };
+  return physicalbody.Lowered { bodies: all, declarations: declarations, contracts: inf.built.contracts.list, records: inf.built.records, enums: inf.built.enums, finalizers: inf.built.finalizers };
 }
 
 function runtime_refused(name: string, why: string): physicalbody.Lowered {

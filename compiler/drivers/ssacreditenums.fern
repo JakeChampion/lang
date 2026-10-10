@@ -1,0 +1,106 @@
+// Enum facts stay with the producer that resolved their concrete schemas.
+import "../lexer";
+import "../parser";
+import "../semlower";
+import "../physicalbody";
+import "../ircore";
+import "../asmcore";
+import "../semrecords";
+import "../semtypes";
+import "../typeinfo";
+
+function require(ok: boolean, code: i32): void {
+  if (!ok) {
+    exit(code);
+  }
+}
+
+function i32_type(): typeinfo.Type {
+  return typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
+}
+
+function count(rows: semrecords.Enum[], name: string): i32 {
+  let found = 0;
+  for e in rows {
+    if (semrecords.union_name_of(e.ty) == name) {
+      found = found + 1;
+    }
+  }
+  return found;
+}
+
+function box(rows: semrecords.Enum[], name: string, arg: typeinfo.Type): void {
+  let ty = typeinfo.TypeUnion { name: name, args: [] };
+  let at = semrecords.find_enum(rows, ty);
+  require(at >= 0, 171);
+  let e = rows[at];
+  require(e.layout == semrecords.layout_variant() && !e.views && !e.nests_func, 172);
+  let suffix = "__" + typeinfo.spelling(arg);
+  require(e.variants.len() == 2 && e.variants[0].name == "Full" + suffix && e.variants[1].name == "Empty" + suffix, 173);
+  require(e.variants[0].fields.len() == 1 && e.variants[1].fields.len() == 0, 174);
+  require(e.variants[0].fields[0].name == "__ev" && semtypes.equal(e.variants[0].fields[0].ty, arg), 175);
+}
+
+function application(target: string): void {
+  let source = "enum Box[T] { Full(T), Empty } @noinline function identity[T](x: Box[T]): Box[T] { return x; } @noinline function again(x: Box[i32]): Box[i32] { return x; } @noinline function keyed(m: Map[(i32, i32), i32]): Map[(i32, i32), i32] { return m; } function main(): i32 { let a: Box[i32] = Full(1); let b: Box[string] = Full(\"text\"); let c = identity(a); let d = identity(b); return 0; }";
+  let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
+  require(sub.physical_origins.producers.len() == 2 && sub.physical_enums.len() == 2, 176);
+  let app = sub.physical_origins.producers[0];
+  require(app.enums.len() == 2 && count(sub.physical_origins.producers[1].enums, "Box__i32") == 0 && count(sub.physical_origins.producers[1].enums, "Box__string") == 0, 177);
+  let args: typeinfo.Type[] = [i32_type(), typeinfo.TypeString { tag: 0 }];
+  let names = ["Box__i32", "Box__string"];
+  let i = 0;
+  for arg in args {
+    require(count(app.enums, names[i]) == 1 && count(sub.physical_enums, names[i]) == 1, 193);
+    box(sub.physical_enums, names[i], arg);
+    box(app.enums, names[i], arg);
+    i = i + 1;
+  }
+  require(semrecords.verify(app.records, app.enums) == "", 178);
+  // A different producer with the same local index and nominal spelling
+  // carries its own layout. It must not replace the first producer's facts.
+  let other = semlower.driven(parser.parse_module(lexer.tokenize("enum Box__i32 { Full(i64), Empty } function read(x: Box__i32): Box__i32 { return x; }")), target).sub;
+  require(count(other.physical_enums, "Box__i32") == 1, 179);
+  box(app.enums, "Box__i32", i32_type());
+  box(sub.physical_enums, "Box__string", typeinfo.TypeString { tag: 0 });
+}
+
+function members(target: string): void {
+  let source = "struct Left { n: i32 } struct Right { text: string } type Choice = Left | Right; function read(x: Choice): Choice { return x; }";
+  let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
+  let at = semrecords.find_enum(sub.physical_enums, typeinfo.TypeUnion { name: "Choice", args: [] });
+  require(at >= 0 && count(sub.physical_enums, "Choice") == 1, 180);
+  let e = sub.physical_enums[at];
+  require(e.layout == semrecords.layout_member() && e.variants.len() == 2, 181);
+  require(e.variants[0].name == "Left" && e.variants[0].fields[0].name == "n" && semtypes.equal(e.variants[0].fields[0].ty, i32_type()), 182);
+  require(e.variants[1].name == "Right" && e.variants[1].fields[0].name == "text" && semtypes.equal(e.variants[1].fields[0].ty, typeinfo.TypeString { tag: 0 }), 183);
+  require(semrecords.verify(sub.physical_records, sub.physical_enums) == "", 184);
+}
+
+function runtime(target: string): void {
+  let app = semlower.driven(parser.parse_module(lexer.tokenize("")), target).sub;
+  let state = asmcore.EmitState { ...asmcore.new_state(), rt_lower: app.rt_lower };
+  let source = "enum Box { Full(i32), Empty } function first(x: Box): Box { return x; } function second(x: Box): Box { return x; }";
+  let lowered = state.rt_lower(source);
+  require(count(app.physical_enums, "Box") == 0 && count(lowered.enums, "Box") == 1, 185);
+  let m = physicalbody.metadata(lowered);
+  let collection = physicalbody.collection(lowered);
+  require(count(m.enums, "Box") == 1 && collection.rows.len() == lowered.bodies.len(), 186);
+  for origin in collection.rows {
+    require(origin.producer == 0 && count(collection.producers[origin.producer].enums, "Box") == 1, 187);
+  }
+  let at = semrecords.find_enum(m.enums, typeinfo.TypeUnion { name: "Box", args: [] });
+  require(at >= 0 && m.enums[at].layout == semrecords.layout_variant(), 188);
+  require(semtypes.equal(m.enums[at].variants[0].fields[0].ty, i32_type()), 189);
+  require(ircore.lowered_digest(lowered.bodies) == ircore.lowered_digest(semlower.runtime_bodies(source)), 190);
+  let unrelated = state.rt_lower("function scalar(x: i64): i64 { return x; }");
+  require(count(unrelated.enums, "Box") == 0 && count(lowered.enums, "Box") == 1, 191);
+  require(semrecords.verify(m.records, m.enums) == "", 192);
+}
+
+pub function run(target: string): void {
+  require(ircore.no_sub().physical_enums.len() == 0 && physicalbody.empty().enums.len() == 0, 170);
+  application(target);
+  members(target);
+  runtime(target);
+}

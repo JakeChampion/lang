@@ -52,7 +52,7 @@ pub struct Request { key: string, name: string, binding: ssasem.Binding }
 // `dyn_arms` is every implementation a produced body dispatches to through a
 // dyn call: the ownership inference leaves their modes as declared, since the
 // dispatch lends every operand.
-pub struct Built { decls: Produced[], instances: Produced[], contracts: ssasem.Contracts, names: string[], dyn_arms: string[], records: semrecords.Records, finalizers: ssasem.Finalizer[] }
+pub struct Built { decls: Produced[], instances: Produced[], contracts: ssasem.Contracts, names: string[], dyn_arms: string[], records: semrecords.Records, enums: semrecords.Enum[], finalizers: ssasem.Finalizer[] }
 
 // Environments are the values of the bindings visible at loop entry, in
 // binding order, captured where a body leaves the loop.
@@ -8705,7 +8705,7 @@ function produce_module(mod: parser.Module, verify: boolean, debug_lines: boolea
   }
   // Keep the existing resolved module memo, not copies of each function's
   // reachable schema subset. Inlining only unions schemas already in this memo.
-  return Built { decls: decls, instances: instances, contracts: table, names: names, dyn_arms: dispatched_arms(util.append_all(decls, instances)), records: semrecords.Records { list: memo.records, names: memo.record_names }, finalizers: finalizers };
+  return Built { decls: decls, instances: instances, contracts: table, names: names, dyn_arms: dispatched_arms(util.append_all(decls, instances)), records: semrecords.Records { list: memo.records, names: memo.record_names }, enums: memo.enums, finalizers: finalizers };
 }
 
 // Translate proven source escapes while the original declaration still
