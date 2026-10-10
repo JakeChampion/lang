@@ -6,7 +6,8 @@ import "std/string";
 
 pub struct Body { lines: string[], register_entry: i32, error: string }
 
-struct Scan { lines: string[], executable: boolean[], error: string }
+// Section identities: text=1, data=2, BSS=3, read-only data=4.
+struct Scan { lines: string[], sections: i32[], error: string }
 
 function failure(message: string): Body {
   return Body { lines: [], register_entry: -1, error: message };
@@ -116,7 +117,7 @@ function quoted_data(arg: string): boolean {
 
 function literal_data(line: string, section: i32): boolean {
   let op = word(line);
-  if (section != 2 || !one_of(op, [".ascii", ".asciz"])) {
+  if (section < 2 || !one_of(op, [".ascii", ".asciz"])) {
     return false;
   }
   return quoted_data(util.trim(slice_unchecked(line, op.len(), line.len()) + ""));
@@ -129,8 +130,14 @@ function directive(line: string, section: i32): i32 {
   if (one_of(line, [".text", ".section .text"])) {
     return 1;
   }
-  if (one_of(line, [".data", ".bss", ".section .data", ".section .bss", ".section .rodata"])) {
+  if (one_of(line, [".data", ".section .data"])) {
     return 2;
+  }
+  if (one_of(line, [".bss", ".section .bss"])) {
+    return 3;
+  }
+  if (line == ".section .rodata") {
+    return 4;
   }
   let op = word(line);
   let arg = util.trim(slice_unchecked(line, op.len(), line.len()) + "");
@@ -140,7 +147,7 @@ function directive(line: string, section: i32): i32 {
   if (literal_data(line, section)) {
     return section;
   }
-  if (section == 2 && data_values(arg) && one_of(op, [".quad", ".long", ".byte", ".skip", ".zero"])) {
+  if (section >= 2 && data_values(arg) && one_of(op, [".quad", ".long", ".byte", ".skip", ".zero"])) {
     return section;
   }
   return -1;
@@ -178,11 +185,11 @@ function raw_line(raw: string): boolean {
 
 function scan(text: string): Scan {
   let lines: string[] = [];
-  let executable: boolean[] = [];
+  let sections: i32[] = [];
   let section = 0;
   for raw in text.split("\n") {
     if (!raw_line(raw)) {
-      return Scan { lines: [], executable: [], error: "unsupported decrement control byte" };
+      return Scan { lines: [], sections: [], error: "unsupported decrement control byte" };
     }
     let line = util.trim(raw);
     if (line != "" && !util.str_has_prefix(line, "#")) {
@@ -190,20 +197,20 @@ function scan(text: string): Scan {
       let tail = if (name == "") { line } else { util.trim(slice_unchecked(line, name.len() + 1, line.len()) + "") };
       // No secondary definitions or statement separators hidden on a line.
       if (!literal_data(tail, section) && ambiguous_syntax(tail)) {
-        return Scan { lines: [], executable: [], error: "unsupported decrement assembly syntax" };
+        return Scan { lines: [], sections: [], error: "unsupported decrement assembly syntax" };
       }
-      let here = section == 1;
+      let here = section;
       if (util.str_has_prefix(tail, ".")) {
         section = directive(tail, section);
         if (section < 0) {
-          return Scan { lines: [], executable: [], error: "unsupported decrement assembly directive: " + tail };
+          return Scan { lines: [], sections: [], error: "unsupported decrement assembly directive: " + tail };
         }
       }
       lines = lines.append(line);
-      executable = executable.append(here);
+      sections = sections.append(here);
     }
   }
-  return Scan { lines: lines, executable: executable, error: "" };
+  return Scan { lines: lines, sections: sections, error: "" };
 }
 
 function ends_body(line: string, name: string, entry: string): boolean {
@@ -215,7 +222,7 @@ function ends_body(line: string, name: string, entry: string): boolean {
 
 function body_error(s: Scan, ix: names.Names, at: i32, name: string): string {
   let line = s.lines[at];
-  if (!s.executable[at] || name == "" && util.str_has_prefix(line, ".")) {
+  if (s.sections[at] != 1 || name == "" && util.str_has_prefix(line, ".")) {
     return "unsupported decrement body directive";
   }
   if (name != "" && (line != name + ":" || names.unique_position(ix, name) != at)) {
@@ -253,7 +260,73 @@ function body(s: Scan, ix: names.Names, start: i32, register: i32, entry: string
 }
 
 function exact_entry(s: Scan, at: i32, name: string): boolean {
-  return s.executable[at] && s.lines[at] == name + ":";
+  return s.sections[at] == 1 && s.lines[at] == name + ":";
+}
+
+function definition_index(lines: string[]): names.Names {
+  let definitions: string[] = [];
+  for line in lines {
+    definitions = definitions.append(definition(line));
+  }
+  return names.index(definitions);
+}
+
+function positive_space(arg: string): boolean {
+  // A bounded decimal count avoids assembler integer overflow/truncation.
+  let count = util.trim(arg.split(",")[0]);
+  if (!decimal(count) || count.len() > 9) {
+    return false;
+  }
+  for c in count {
+    if (c != b'0') {
+      return true;
+    }
+  }
+  return false;
+}
+
+function allocation(tail: string): boolean {
+  let op = word(tail);
+  let arg = util.trim(slice_unchecked(tail, op.len(), tail.len()) + "");
+  if (!data_values(arg)) {
+    return false;
+  }
+  return one_of(op, [".quad", ".long", ".byte"]) || one_of(op, [".skip", ".zero"]) && positive_space(arg);
+}
+
+function writable_declarations(s: Scan): boolean {
+  let at = 0;
+  for line in s.lines {
+    if (s.sections[at] == 2 || s.sections[at] == 3) {
+      let name = definition(line);
+      if (name != "") {
+        // Every writable label must consume storage immediately. Refuse
+        // bare/zero-size labels even in another fragment of the section.
+        let tail = util.trim(slice_unchecked(line, name.len() + 1, line.len()) + "");
+        if (!allocation(tail)) {
+          return false;
+        }
+      } else if (!util.str_has_prefix(line, ".")) {
+        return false;
+      }
+    }
+    at = at + 1;
+  }
+  return true;
+}
+
+// A declaration proof only: not an instruction, relocation, linked-address,
+// caller-disjointness or ownership certificate. Always rescan supplied text.
+pub function counter_storage(text: string): boolean {
+  let s = scan(text);
+  if (s.error != "" || !writable_declarations(s)) {
+    return false;
+  }
+  let at = names.unique_position(definition_index(s.lines), "__fern_rc_underflow");
+  if (at < 1 || s.sections[at] != 2 && s.sections[at] != 3) {
+    return false;
+  }
+  return s.lines[at] == "__fern_rc_underflow: .quad 0" && s.lines[at - 1] == ".align 8" && s.sections[at - 1] == s.sections[at];
 }
 
 // Returned lines remain unproved. A semantic checker must call this itself,
@@ -266,11 +339,7 @@ pub function select(text: string, entry: string): Body {
   if (s.error != "") {
     return failure(s.error);
   }
-  let definitions: string[] = [];
-  for line in s.lines {
-    definitions = definitions.append(definition(line));
-  }
-  let ix = names.index(definitions);
+  let ix = definition_index(s.lines);
   let start = names.unique_position(ix, entry);
   let register = names.unique_position(ix, entry + ".r");
   if (start < 0 || register < 0) {
