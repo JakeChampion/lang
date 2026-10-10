@@ -40,7 +40,7 @@ function emit_source(arm: boolean, src: string, debug: boolean): ssaprepare.Emit
   require(!asmcore.refuse_parse_unknowns([mod]) && !asmcore.refuse_decl_names([mod]), 61);
   let g = semlower.program(semlower.driven(mod, "x86-64-linux"));
   require(g.ok, 62);
-  let sw = asmcore.Switches { backtrace: false, sanitize: debug };
+  let sw = asmcore.Switches { backtrace: false, sanitize: debug, var_rows: false };
   if (arm) {
     return asm_arm64_ir.emit_module_ir_unit_arm64_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, -1, g.cache, g.physical, semlower.runtime_lowering, sw, true).bodies;
   }

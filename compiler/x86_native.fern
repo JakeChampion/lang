@@ -5147,9 +5147,15 @@ function x86_gas_imul_family(own a: X86Asm, mnem: string, size: i32, rest: strin
   return a;
 }
 
-// x86_gas_bswap: bswap r32/r64 (0F C8+rd). The 16-bit form is
-// architecturally undefined and there is no byte form — both refuse.
+// x86_gas_bswap: bswap r32/r64 (0F C8+rd). Unsuffixed, the register names
+// the width, as GAS reads it. The 16-bit form is architecturally undefined
+// and there is no byte form — both refuse.
 function x86_gas_bswap(own a: X86Asm, mnem: string, size: i32, op: string): X86Asm {
+  if (size == 0 && x86_gas_reg32(op) >= 0) {
+    size = 32;
+  } else if (size == 0 && x86_gas_reg64(op) >= 0) {
+    size = 64;
+  }
   if (size != 32 && size != 64) {
     return x86_gas_bad(a, mnem + " " + op);
   }
@@ -7335,6 +7341,9 @@ function x86_gas_mnem_verdict(mnem: string): MnemVerdict {
     if (sho >= 0) {
       return MnemVerdict { ...v, a_kind: GK_SHLD, a_ext: sho };
     }
+  }
+  if (x86_gas_is_bswap(mnem)) {
+    return MnemVerdict { ...v, a_kind: GK_BSWAP };
   }
   if (x86_gas_imm3a_op(mnem) >= 0 || x86_gas_shuf_op(mnem) >= 0) {
     return MnemVerdict { ...v, a_kind: GK_SSE_IMM3 };
