@@ -77,14 +77,14 @@ pub function index(names: string[]): Names {
   return Names { names: names, order: order, duplicate: duplicate_name(names, order) };
 }
 
-pub function position(ix: Names, name: string): i32 {
+function sorted_position(ix: Names, name: string): i32 {
   let lo = 0;
   let hi = ix.order.len();
   while (lo < hi) {
     let mid = lo + (hi - lo) / 2;
     let at = ix.order[mid];
     if (ix.names[at] == name) {
-      return at;
+      return mid;
     }
     if (before(ix.names[at], name)) {
       lo = mid + 1;
@@ -93,4 +93,22 @@ pub function position(ix: Names, name: string): i32 {
     }
   }
   return -1;
+}
+
+pub function position(ix: Names, name: string): i32 {
+  let at = sorted_position(ix, name);
+  return if (at < 0) { -1 } else { ix.order[at] };
+}
+
+// Some scoped proofs reject ambiguity only for names they actually bind.
+// Equal names are adjacent even when the original definitions are far apart.
+pub function unique_position(ix: Names, name: string): i32 {
+  let at = sorted_position(ix, name);
+  if (at < 0) {
+    return -1;
+  }
+  if (at > 0 && ix.names[ix.order[at - 1]] == name || at + 1 < ix.order.len() && ix.names[ix.order[at + 1]] == name) {
+    return -2;
+  }
+  return ix.order[at];
 }
