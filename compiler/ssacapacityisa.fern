@@ -283,6 +283,13 @@ pub function array_program(output: string): ArrayProgram {
   return ArrayProgram { ops: p.ops, register_entry: if (p.error == "") { body.register_entry } else { -1 }, error: p.error };
 }
 
+// Same instruction grammar, separate complete-native declaration boundary.
+pub function native_array_program(output: string): ArrayProgram {
+  let body = text.native_array_release(output);
+  let p = selected_program(body, 2);
+  return ArrayProgram { ops: p.ops, register_entry: if (p.error == "") { body.register_entry } else { -1 }, error: p.error };
+}
+
 // Both string entries come from this same closed-namespace text selection.
 // Globals and calls are names only, not linked permissions or effect proofs.
 pub function string_program(output: string): ArrayProgram {

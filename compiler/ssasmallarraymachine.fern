@@ -518,3 +518,21 @@ pub function check(output: string): boolean {
   }
   return true;
 }
+
+// Same conditional permissions and exact effects, restricted to C=2/3 in a
+// complete native constructor output. N=C+3 is5/6, so these paths must return
+// without calling capw; finished independently enforces zero dependency calls.
+// No public decoded program or dependency-success flag is accepted.
+pub function check_native_record(output: string): boolean {
+  let p = isa.native_array_program(output);
+  if (p.error != "" || p.register_entry < 0) {
+    return false;
+  }
+  for n in [5, 6] {
+    let r = value.Interval { low: n, high: n };
+    if (!path(p, r, false) || !path(p, r, true)) {
+      return false;
+    }
+  }
+  return true;
+}
