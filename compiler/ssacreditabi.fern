@@ -656,7 +656,7 @@ function producer_layout(sub: ircore.Sub, name: string): ProducerLayout {
 }
 
 function producer_metadata(sub: ircore.Sub): physicalbody.Metadata {
-  return physicalbody.Metadata { contracts: sub.physical_contracts, records: sub.physical_records, finalizers: sub.physical_finalizers };
+  return physicalbody.Metadata { contracts: sub.physical_contracts, records: sub.physical_records, enums: sub.physical_enums, finalizers: sub.physical_finalizers };
 }
 
 function producer_metadata_layout(metadata: physicalbody.Metadata, name: string): ProducerLayout {

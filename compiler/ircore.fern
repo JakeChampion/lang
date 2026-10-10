@@ -834,6 +834,7 @@ pub struct Sub {
   // Resolved declaration facts, independent of the ownership plan. Missing
   // records are unknown, never evidence of a flat payload or absent finalizer.
   physical_records: semrecords.Records,
+  physical_enums: semrecords.Enum[],
   physical_finalizers: ssasem.Finalizer[],
   // Origins follow the retained body positions; producer facts stay separate.
   physical_origins: physicalbody.Origins,
@@ -856,7 +857,7 @@ pub struct Sub {
 
 pub function no_sub(): Sub {
   let none: parser.Module = parser.Module { funcs: [], structs: [], aliases: [], imports: [], top_stmts: [], enums: [], resources: [], exports: [], impls: [], trait_reqs: [], trait_decls: [], inferred_consts: [], todo_sites: [] };
-  return Sub { bodies: [], extra: [], contracts: [], physical_contracts: [], physical_records: semrecords.no_records(), physical_finalizers: [], physical_origins: physicalbody.no_origins(), rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false, records: [], checked: false, switches: asmcore.env_switches() };
+  return Sub { bodies: [], extra: [], contracts: [], physical_contracts: [], physical_records: semrecords.no_records(), physical_enums: [], physical_finalizers: [], physical_origins: physicalbody.no_origins(), rt_lower: asmcore.no_rt_lower, lifted: none, has_lifted: false, records: [], checked: false, switches: asmcore.env_switches() };
 }
 
 // The register emit's lambda-lifted module: the producer's, erased, when it

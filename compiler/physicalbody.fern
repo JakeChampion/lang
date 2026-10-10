@@ -5,7 +5,7 @@ import "./ssasem";
 import "./semrecords";
 
 // Selected facts from one producer, without retaining its input body graphs.
-pub struct Metadata { contracts: ssasem.Contract[], records: semrecords.Records, finalizers: ssasem.Finalizer[] }
+pub struct Metadata { contracts: ssasem.Contract[], records: semrecords.Records, enums: semrecords.Enum[], finalizers: ssasem.Finalizer[] }
 
 // The selected symbol may differ from a method body's bare name.
 // An origin identifies metadata; it does not approve the body's effects.
@@ -66,15 +66,16 @@ pub struct Lowered {
   declarations: string[],
   contracts: ssasem.Contract[],
   records: semrecords.Records,
+  enums: semrecords.Enum[],
   finalizers: ssasem.Finalizer[],
 }
 
 pub function empty(): Lowered {
-  return Lowered { bodies: [], declarations: [], contracts: [], records: semrecords.no_records(), finalizers: [] };
+  return Lowered { bodies: [], declarations: [], contracts: [], records: semrecords.no_records(), enums: [], finalizers: [] };
 }
 
 pub function metadata(lowered: Lowered): Metadata {
-  return Metadata { contracts: lowered.contracts, records: lowered.records, finalizers: lowered.finalizers };
+  return Metadata { contracts: lowered.contracts, records: lowered.records, enums: lowered.enums, finalizers: lowered.finalizers };
 }
 
 pub function lowered_origins(lowered: Lowered, producer: i32): Origin[] {
