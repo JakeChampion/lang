@@ -63,6 +63,67 @@ function collection(out: ssaprepare.Output): void {
   check(both + label + ":\n", arch, [a, b], false);
 }
 
+function normalized_names(out: ssaprepare.Output): void {
+  let row = out.bodies[0];
+  let arch = row.context.architecture;
+  let parts = out.text.split(row.assembly);
+  let dotted = renamed(row, "name.part");
+  let underscored = renamed(row, "name__part");
+  check(parts[0] + dotted.assembly + parts[1], arch, [dotted], true);
+  check(parts[0] + underscored.assembly + parts[1], arch, [underscored], true);
+  let both = parts[0] + dotted.assembly + underscored.assembly + parts[1];
+  check(both, arch, [dotted, underscored], false);
+  check(both, arch, [underscored, dotted], false);
+  require(!caller.check_selected_lines(dotted.assembly.split("\n"), [dotted, underscored], dotted.label_name, arch).ok);
+  let empty = ssaprepare.Emitted { ...row, label_name: "" };
+  check(out.text, arch, [empty], false);
+  let mismatch = ssaprepare.Emitted { ...dotted, label_name: "different" };
+  check(parts[0] + dotted.assembly + parts[1], arch, [mismatch], false);
+  let swapped = ssaprepare.Emitted { ...dotted, body: underscored.body };
+  check(both, arch, [swapped, underscored], false);
+}
+
+function many_rows(out: ssaprepare.Output): void {
+  let row = out.bodies[0];
+  let arch = row.context.architecture;
+  let parts = out.text.split(row.assembly);
+  let rows: ssaprepare.Emitted[] = [];
+  let reverse: ssaprepare.Emitted[] = [];
+  let forward_text = "";
+  let reverse_text = "";
+  let i = 0;
+  while (i < 65) {
+    let next = renamed(row, "selected" + i.to_string());
+    rows = rows.append(next);
+    forward_text = forward_text + next.assembly;
+    reverse_text = next.assembly + reverse_text;
+    i = i + 1;
+  }
+  i = rows.len();
+  while (i > 0) {
+    i = i - 1;
+    reverse = reverse.append(rows[i]);
+  }
+  let text = parts[0] + forward_text + parts[1];
+  check(text, arch, rows, true);
+  check(text, arch, reverse, true);
+  check(parts[0] + reverse_text + parts[1], arch, rows, true);
+  check(text, arch, rows.append(rows[0]), false);
+  check(text, arch, rows.with(64, rows[0]), false);
+  check(text, arch, rows.with(64, renamed(row, "missing")), false);
+  let selected = physicalbody.Selected { ...row.body.selected, producers: [] };
+  let last = rows[64];
+  let bad = ssaprepare.Emitted { ...last, body: ssaprepare.Body { ...last.body, selected: selected } };
+  check(text, arch, rows.with(64, bad), false);
+  check(text, arch, rows.with(64, ssaprepare.Emitted { ...last, label_name: "" }), false);
+  // Distinct exact names at distant positions still share one sanitized name.
+  let first = renamed(row, "selected.part");
+  let collision = renamed(row, "selected__part");
+  let colliding = rows.with(0, first).with(64, collision);
+  let collision_text = change(change(text, rows[0].assembly, first.assembly), last.assembly, collision.assembly);
+  check(collision_text, arch, colliding, false);
+}
+
 pub function run(out: ssaprepare.Output): void {
   require(out.bodies.len() == 1);
   let row = out.bodies[0];
@@ -98,4 +159,6 @@ pub function run(out: ssaprepare.Output): void {
   let wrong = ssa.Formed { ...row.body.formed, f: ssa.SFunc { ...f, nparams: 2 } };
   check(out.text, arch, [ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, formed: wrong } }], false);
   collection(out);
+  normalized_names(out);
+  many_rows(out);
 }
