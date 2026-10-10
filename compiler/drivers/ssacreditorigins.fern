@@ -5,6 +5,7 @@ import "../ircore";
 import "../physicalbody";
 import "../util";
 import "./ssacreditenums" as enums;
+import "./ssacredithelpertypes" as helper_types;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -105,5 +106,6 @@ pub function run(): void {
     instances(target);
     methods(target);
     enums.run(target);
+    helper_types.run(target);
   }
 }
