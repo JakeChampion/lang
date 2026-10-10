@@ -75,7 +75,8 @@ func TestSelfHostIntToF64X86_64IR(t *testing.T) {
 // TestSelfHostIntToF64Arm64IR — CI-gated arm64 counterpart. arm64 has both
 // conversions, so the u64 case is one instruction (ucvtf) rather than x86's
 // halving sequence, but the bug was identical: an unconditional `scvtf` read
-// u64::MAX as -1.0. The register path converts in the value's own register.
+// u64::MAX as -1.0. The destination may be any allocated double register;
+// the opcode and integer source width must still match the conversion.
 func TestSelfHostIntToF64Arm64IR(t *testing.T) {
 	arm64gcc, qemu := arm64Tooling(t)
 	x86gcc, x86runner := x86_64Tooling(t)
@@ -94,7 +95,7 @@ func TestSelfHostIntToF64Arm64IR(t *testing.T) {
 			}
 			for _, w := range tc.arm64Want {
 				if !regexp.MustCompile(w).MatchString(string(asm)) {
-					t.Errorf("%s: emitted arm64 asm lacks %q", tc.name, w)
+					t.Errorf("%s: emitted arm64 asm lacks %q\n%s", tc.name, w, asm)
 				}
 			}
 			progBin := buildBin(t, arm64gcc, dir, "i2farm_"+tc.name, string(asm))
@@ -134,7 +135,7 @@ func intToF64Cases() []struct {
     let threshold: f64 = 10000000000000000000.0f64;
     if (f > threshold) { return 0; }
     return 1;
-}`, []string{`shrq \$1, %rcx`, `addsd %xmm0, %xmm0`}, nil, []string{`ucvtf d0, x\d+\b`}},
+}`, []string{`shrq \$1, %rcx`, `addsd %xmm0, %xmm0`}, nil, []string{`ucvtf d\d+, x\d+\b`}},
 		// A u64 BELOW 2^63 must still take the plain signed convert — the
 		// halving path is only for the values it cannot express.
 		{"u64-below-2p63", `function main(): i32 {
@@ -142,7 +143,7 @@ func intToF64Cases() []struct {
     let f: f64 = u as f64;
     if (f > 9000000000000000000.0f64) { return 0; }
     return 1;
-}`, []string{`cvtsi2sd`}, nil, []string{`ucvtf d0, x\d+\b`}},
+}`, []string{`cvtsi2sd`}, nil, []string{`ucvtf d\d+, x\d+\b`}},
 		// u32 with bit 31 set: zero-extended into the 64-bit source, so the
 		// signed convert is exact.
 		{"u32-roundtrips-through-f64", `function main(): i32 {
@@ -151,18 +152,18 @@ func intToF64Cases() []struct {
     let back: u32 = f as u32;
     if (back == u) { return 0; }
     return 1;
-}`, []string{`movl %[a-z0-9]+, %[a-z0-9]+\n\s+cvtsi2sd %[a-z0-9]+, %xmm0`}, nil, []string{`ucvtf d0, w\d+\b`}},
+}`, []string{`movl %[a-z0-9]+, %[a-z0-9]+\n\s+cvtsi2sd %[a-z0-9]+, %xmm0`}, nil, []string{`ucvtf d\d+, w\d+\b`}},
 		{"negative-i32-stays-signed", `function main(): i32 {
     let n: i32 = 0 - 5;
     let f: f64 = n as f64;
     if (f < 0.0) { return 0; }
     return 1;
-}`, []string{`cvtsi2sd %[a-z0-9]+, %xmm0`}, []string{`movl %[a-z0-9]+, %[a-z0-9]+\n\s+cvtsi2sd`}, []string{`scvtf d0, x\d+\b`}},
+}`, []string{`cvtsi2sd %[a-z0-9]+, %xmm0`}, []string{`movl %[a-z0-9]+, %[a-z0-9]+\n\s+cvtsi2sd`}, []string{`scvtf d\d+, x\d+\b`}},
 		{"negative-i64-stays-signed", `function main(): i32 {
     let n: i64 = 0 - 5000000000;
     let f: f64 = n as f64;
     if (f < 0.0) { return 0; }
     return 1;
-}`, []string{`cvtsi2sd %[a-z0-9]+, %xmm0`}, []string{`shrq \$1, %rcx`}, []string{`scvtf d0, x\d+\b`}},
+}`, []string{`cvtsi2sd %[a-z0-9]+, %xmm0`}, []string{`shrq \$1, %rcx`}, []string{`scvtf d\d+, x\d+\b`}},
 	}
 }
