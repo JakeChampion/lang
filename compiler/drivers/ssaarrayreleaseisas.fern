@@ -1,0 +1,150 @@
+import "../ssacapacityisa" as isa;
+import "../ssadecrementtext" as text;
+import "../ssainlineuniqueisa" as registers;
+import "std/string";
+
+// Native status bytes are shared; the printed module and case identify failure.
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("array-release instruction controls failed: " + group);
+    exit(180);
+  }
+}
+
+function prefix(): string {
+  return ".text\n__fn___fern_arr_dec:\n__fn___fern_arr_dec.r:\n";
+}
+
+function sample(line: string): isa.Op {
+  let p = isa.array_program(prefix() + line + "\nret\n");
+  require(p.error == "" && p.ops.len() == 3 && p.ops[0].kind == 1 && p.ops[2].kind == 18, "sample " + line);
+  return p.ops[1];
+}
+
+function symbols(): void {
+  for symbol in ["__fern_capw", "__fern_large_push"] {
+    let op = sample("call " + symbol);
+    require(op.kind == 25 && op.symbol == symbol, "call " + symbol);
+  }
+  let inc = sample("incl __fern_rc_underflow(%rip)");
+  require(inc.kind == 24 && inc.width == 32 && inc.symbol == "__fern_rc_underflow", "counter");
+  let regs = registers.registers(false, 64);
+  let i = 0;
+  for reg in regs {
+    let global = sample("leaq __fern_freelist(%rip), " + reg);
+    require(global.kind == 19 && global.width == 64 && global.destination == i && global.symbol == "__fern_freelist", "freelist " + reg);
+    i = i + 1;
+  }
+}
+
+function immediate_store(reg: string, i: i32, w: i32, n: i32): void {
+  let name = if (w == 32) { "movl" } else { "movq" };
+  let line = name + " $" + n.to_string() + ", -2147483648(" + reg + ")";
+  let op = sample(line);
+  require(op.kind == 22 && op.width == w && op.immediate == n && op.base == i && op.index == -1 && op.offset == -2147483648, line);
+}
+
+function immediate_stores(): void {
+  let regs = registers.registers(false, 64);
+  let i = 0;
+  for reg in regs {
+    for w in [32, 64] {
+      for n in [-2147483648, 0, 2147483647] {
+        immediate_store(reg, i, w, n);
+      }
+    }
+    i = i + 1;
+  }
+  let indexed = sample("movq $0x7fffffff, 2147483647(%r8,%r12,4)");
+  require(indexed.kind == 22 && indexed.immediate == 2147483647 && indexed.base == 8 && indexed.index == 12 && indexed.scale == 4 && indexed.offset == 2147483647, "indexed store");
+}
+
+function scaled_index(reg: string, i: i32, scale: i32): void {
+  let line = "leaq -2147483648(," + reg + "," + scale.to_string() + "), " + reg;
+  let op = sample(line);
+  if (i == 4) {
+    require(op.kind == 0, "SP index");
+  } else {
+    require(op.kind == 15 && op.width == 64 && op.base == -1 && op.index == i && op.destination == i && op.scale == scale && op.offset == -2147483648, line);
+  }
+}
+
+function index_lea(): void {
+  let regs = registers.registers(false, 64);
+  let i = 0;
+  for reg in regs {
+    for scale in [1, 2, 4, 8] {
+      scaled_index(reg, i, scale);
+    }
+    i = i + 1;
+  }
+  let zero = sample("leaq (,%rcx,8), %rsi");
+  require(zero.kind == 15 && zero.offset == 0 && zero.index == 1 && zero.destination == 6, "zero displacement");
+}
+
+function flags(): void {
+  let regs = registers.registers(false, 32);
+  let i = 0;
+  for reg in regs {
+    let op = sample("testl " + reg + ", " + reg);
+    require(op.kind == 23 && op.width == 32 && op.source == i, "self test " + reg);
+    i = i + 1;
+  }
+}
+
+function unsupported(): void {
+  for line in ["callq __fern_capw", "call *__fern_capw", "call __fern_capw+0", "call __fern_capw@PLT", "call __fern_capw.r", "call __other", "call %rax", "call __fern_large_push, %rax", "incq __fern_rc_underflow(%rip)", "incl __fern_rc_underflow+0(%rip)", "incl __fern_rc_underflow(%rax)", "incl __other(%rip)", "leaq __fern_freelist+0(%rip), %rax", "leal __fern_freelist(%rip), %eax", "leaq __fern_freelist(%rip), %eax", "movl $2147483648, (%rax)", "movq $-2147483649, (%rax)", "movq $0x80000000, (%rax)", "movl $0, 2147483648(%rax)", "movl $0, (%eax)", "movl $0, (%rax,%rsp,8)", "movl $0, (%rax), %rcx", "movl $0, ((%rax))", "testl %eax, %ecx", "testq %rax, %rax", "testl %rax, %rax", "leaq 0(,%ecx,8), %rsi", "leal 0(,%rcx,8), %esi", "leaq 0(,%rcx,3), %rsi", "leaq 0(,%rcx,8), %esi", "leaq 0(,%rcx,8,8), %rsi", "leaq 2147483648(,%rcx,8), %rsi", "ret $8", "unknown_instruction"] {
+    require(sample(line).kind == 0, line);
+  }
+}
+
+function isolation(): void {
+  for line in ["call __fern_capw", "incl __fern_rc_underflow(%rip)", "movl $0, -8(%rax)", "leaq __fern_freelist(%rip), %r8", "leaq 0(,%rcx,8), %rsi", "testl %ecx, %ecx"] {
+    let cap = isa.program(".text\n__fern_capw:\n" + line + "\nret\n");
+    let large = isa.large_program(".text\n__fern_large_push:\n" + line + "\nret\n");
+    require(cap.error == "" && cap.ops[0].kind == 0 && large.error == "" && large.ops[0].kind == 0, "old API isolation " + line);
+  }
+}
+
+function boundaries(): void {
+  require(isa.array_program(prefix() + "jmp .Lmissing\n").error != "", "missing branch");
+  require(isa.array_program(prefix() + "jmp .Loutside\n__other:\n.Loutside:\nret\n").error != "", "cross-body branch");
+  require(isa.array_program(prefix() + "ret\n.data\n__fn___fern_arr_dec: .quad 0\n").error != "", "duplicate entry");
+  require(isa.array_program(prefix() + ".Ldup:\nret\n__other:\n.Ldup:\nret\n").error != "", "duplicate local");
+  require(isa.array_program(".set alias, __fern_capw\n" + prefix() + "ret\n").error != "", "namespace alias");
+  require(isa.array_program(".text\n__fn___fern_arr_dec:\nret\n").error != "", "missing register entry");
+  let cycle = isa.array_program(prefix() + ".Lcycle:\njmp .Lcycle\n");
+  require(cycle.error == "" && cycle.ops[2].target == 1, "cycles are data");
+  let empty = isa.array_program(prefix() + "__next:\nret\n");
+  require(empty.error == "" && empty.ops.len() == 1, "empty entry is data");
+}
+
+function actual_branch(op: isa.Op, p: isa.ArrayProgram, body: text.Body, i: i32): void {
+  if (op.kind == 17) {
+    require(op.target >= 0 && op.target < p.ops.len() && p.ops[op.target].kind == 1, "actual branch " + i.to_string());
+    require(body.lines[i].ends_with(body.lines[op.target].split(":")[0]), "actual target " + i.to_string());
+  }
+}
+
+pub function run(output: string): void {
+  let body = text.select(output, "__fn___fern_arr_dec");
+  let p = isa.array_program(output);
+  let kinds = [3, 1, 16, 17, 3, 23, 17, 16, 17, 17, 24, 17, 1, 9, 4, 17, 1, 22, 3, 10, 16, 17, 15, 16, 17, 6, 25, 7, 1, 19, 3, 4, 4, 1, 18, 1, 15, 15, 25, 18];
+  require(p.error == "" && body.error == "" && p.ops.len() == kinds.len() && p.ops.len() == body.lines.len(), "actual length");
+  require(p.register_entry == body.register_entry && p.register_entry == 1, "actual dual entry");
+  let i = 0;
+  for op in p.ops {
+    require(op.kind == kinds[i], "actual kind " + i.to_string());
+    actual_branch(op, p, body, i);
+    i = i + 1;
+  }
+  require(p.ops[26].symbol == "__fern_capw" && p.ops[38].symbol == "__fern_large_push", "actual calls");
+  require(p.ops[37].base == -1 && p.ops[37].index == 1 && p.ops[37].scale == 8 && p.ops[37].destination == 6, "actual byte argument");
+  symbols();
+  immediate_stores();
+  index_lea();
+  flags();
+  unsupported();
+  isolation();
+  boundaries();
+}

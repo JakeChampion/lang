@@ -11,11 +11,15 @@ import "std/string";
 // 5 immediate move, 6 push, 7 pop, 8 BSR, 9 SUB, 10 ADD, 11 AND,
 // 12 NEG, 13 SHL by CL, 14 SHR by CL, 15 LEA, 16 CMP immediate,
 // 17 branch, 18 plain RET. Large-push only: 19 RIP-relative global LEA,
-// 20 immediate SHL, 21 immediate SHR. Arithmetic source -1 is immediate.
+// 20 immediate SHL, 21 immediate SHR. Array-only: 22 immediate store,
+// 23 self TEST32, 24 underflow INC32, 25 direct dependency call.
+// Arithmetic source -1 is immediate.
 // Widths are bits; addresses retain signed byte offsets and scaled indices.
 pub struct Op { kind: i32, width: i32, source: i32, destination: i32, base: i32, index: i32, scale: i32, offset: i32, immediate: i32, condition: string, target: i32, symbol: string }
 
 pub struct Program { ops: Op[], error: string }
+
+pub struct ArrayProgram { ops: Op[], register_entry: i32, error: string }
 
 struct Address { base: i32, index: i32, scale: i32, offset: i32 }
 
@@ -253,18 +257,25 @@ function decode_operands(name: string, args: string[]): Op {
 // same complete supplied text. Empty error proves syntax/binding only. Cycles,
 // unknown instructions and empty streams remain unproved for semantic refusal.
 pub function program(output: string): Program {
-  return selected_program(output, "__fern_capw", false);
+  return selected_program(text.dependency(output, "__fern_capw"), 0);
 }
 
 // This fixed-entry API additionally decodes large-push addressing and shifts.
 // A future semantic checker must invoke it internally on the same supplied
 // output. Empty error does not prove any register, memory or ownership effect.
 pub function large_program(output: string): Program {
-  return selected_program(output, "__fern_large_push", true);
+  return selected_program(text.dependency(output, "__fern_large_push"), 1);
 }
 
-function selected_program(output: string, entry: string, large: boolean): Program {
-  let body = text.dependency(output, entry);
+// Call records name dependencies but do not establish their definitions or
+// effects. The semantic checker must derive both from this same output.
+pub function array_program(output: string): ArrayProgram {
+  let body = text.select(output, "__fn___fern_arr_dec");
+  let p = selected_program(body, 2);
+  return ArrayProgram { ops: p.ops, register_entry: if (p.error == "") { body.register_entry } else { -1 }, error: p.error };
+}
+
+function selected_program(body: text.Body, mode: i32): Program {
   if (body.error != "") {
     return Program { ops: [], error: body.error };
   }
@@ -276,13 +287,90 @@ function selected_program(output: string, entry: string, large: boolean): Progra
   let ops: Op[] = [];
   for line in body.lines {
     let ordinary = decode(line, labels);
-    let op = if (large && ordinary.kind == 0) { large_decode(line) } else { ordinary };
+    let op = if (ordinary.kind == 0) { extended_decode(line, mode) } else { ordinary };
     if (op.kind == 17 && op.target < 0) {
       return Program { ops: [], error: "capacity branch target outside selected body" };
     }
     ops = ops.append(op);
   }
   return Program { ops: ops, error: "" };
+}
+
+function extended_decode(line: string, mode: i32): Op {
+  if (mode == 0) {
+    return empty(0);
+  }
+  let large = large_decode(line);
+  return if (large.kind == 0 && mode == 2) { array_decode(line) } else { large };
+}
+
+function array_dependency(name: string): boolean {
+  return name == "__fern_capw" || name == "__fern_large_push";
+}
+
+function array_decode(line: string): Op {
+  let at = 0;
+  while (at < line.len() && line[at] != b' ' && line[at] != b'\t') {
+    at = at + 1;
+  }
+  if (at == line.len()) {
+    return empty(0);
+  }
+  let name = slice_unchecked(line, 0, at) + "";
+  let rest = util.trim(slice_unchecked(line, at + 1, line.len()) + "");
+  if (name == "call" && array_dependency(rest)) {
+    return Op { ...empty(25), symbol: rest };
+  }
+  if (name == "incl" && rest == "__fern_rc_underflow(%rip)") {
+    return Op { ...empty(24), width: 32, symbol: "__fern_rc_underflow" };
+  }
+  let args = operands(rest);
+  return if (args.len() == 2) { array_operands(name, args[0], args[1]) } else { empty(0) };
+}
+
+function array_operands(name: string, a: string, b: string): Op {
+  if (name == "testl" && a == b && registers.reg(a, false, 32) >= 0) {
+    return Op { ...empty(23), width: 32, source: registers.reg(a, false, 32) };
+  }
+  if (name == "leaq" && a == "__fern_freelist(%rip)" && registers.reg(b, false, 64) >= 0) {
+    return Op { ...empty(19), width: 64, destination: registers.reg(b, false, 64), symbol: "__fern_freelist" };
+  }
+  let store = immediate_store(name, a, b);
+  return if (store.kind > 0) { store } else { index_only_lea(name, a, b) };
+}
+
+function immediate_store(name: string, a: string, b: string): Op {
+  let imm = large_literal(a);
+  let addr = address(b);
+  if ((name == "movq" || name == "movl") && imm != "" && addr.base >= 0) {
+    return Op { ...empty(22), width: width(name), immediate: util.digits_to_i32(imm), base: addr.base, index: addr.index, scale: addr.scale, offset: addr.offset };
+  }
+  return empty(0);
+}
+
+function index_only_lea(name: string, a: string, b: string): Op {
+  let dst = registers.reg(b, false, 64);
+  let at = a.index_of("(");
+  if (name != "leaq" || dst < 0 || at < 0 || !a.ends_with(")")) {
+    return empty(0);
+  }
+  let displacement = slice_unchecked(a, 0, at) + "";
+  if (displacement != "" && !util.is_decimal_i32(displacement)) {
+    return empty(0);
+  }
+  let parts = (slice_unchecked(a, at + 1, a.len() - 1) + "").split(",");
+  return index_only_parts(parts, displacement, dst);
+}
+
+function index_only_parts(parts: string[], displacement: string, dst: i32): Op {
+  if (parts.len() != 3 || util.trim(parts[0]) != "" || !valid_scale(util.trim(parts[2]))) {
+    return empty(0);
+  }
+  let index = registers.reg(util.trim(parts[1]), false, 64);
+  if (index < 0 || index == 4) {
+    return empty(0);
+  }
+  return Op { ...empty(15), width: 64, destination: dst, index: index, scale: util.digits_to_i32(util.trim(parts[2])), offset: if (displacement == "") { 0 } else { util.digits_to_i32(displacement) } };
 }
 
 function large_decode(line: string): Op {
