@@ -15,7 +15,9 @@ import "./ssacreditbound" as bound;
 import "./ssacreditselected" as selected;
 import "./ssasem";
 import "./semtypes";
+import "./semrecords";
 import "./typeinfo";
+import "./asmcore";
 import "std/string";
 
 struct Program { lines: string[], labels: string[], ops: isa.Op[], targets: i32[], entry: i32, register_entry: i32, ok: boolean }
@@ -52,6 +54,7 @@ function program(input: string[], name: string, arm: boolean): Program {
   let entry = -1;
   let reg = -1;
   let ok = symbol(name);
+  let entry_label = "__fn_" + asmcore.sanitize_label(name);
   for raw in input {
     if (raw.contains("\n")) {
       ok = false;
@@ -64,9 +67,9 @@ function program(input: string[], name: string, arm: boolean): Program {
         if (!symbol(label)) {
           ok = false;
         }
-        if (label == "__fn_" + name) {
+        if (label == entry_label) {
           entry = lines.len();
-        } else if (label == "__fn_" + name + ".r") {
+        } else if (label == entry_label + ".r") {
           reg = lines.len();
         } else if (!label.starts_with(".L")) {
           ok = false;
@@ -276,6 +279,8 @@ pub function check_body(text: string, architecture: string, f: ssa.SFunc): helpe
 // under the native parameter ABI. Native ssa_str_view preserves that form.
 // Converting either to a string-backed [u8] view adds bit 1 in str_byte_view;
 // that TypeArray descriptor is excluded here. Tag/floor cases remain mandatory.
+// Concrete tuples, maps and other arrays are outer box pointers even when a
+// contained value is a byte view.
 // Generated child-release bodies and other signatures need separate proofs.
 function parameter(t: typeinfo.Type): boolean {
   if (!semtypes.concrete(t, false)) {
@@ -290,11 +295,52 @@ function parameter(t: typeinfo.Type): boolean {
     }
     return true;
   }
+  if let typeinfo.TypeTuple(_) = t {
+    return true;
+  }
+  if let typeinfo.TypeMap(_) = t {
+    return true;
+  }
   return false;
 }
 
-function signature(c: ssasem.Contract): boolean {
-  if (c.params.len() != 1 || c.modes.len() != 1 || c.modes[0] != ssasem.borrow_mode() || !parameter(c.params[0])) {
+function record_fields(fields: semrecords.Field[]): boolean {
+  let labels: string[] = [];
+  for field in fields {
+    if (field.name == "" || !semtypes.concrete(field.ty, false)) {
+      return false;
+    }
+    labels = labels.append(field.name);
+  }
+  return names.index(labels).duplicate < 0;
+}
+
+function record_parameter(row: ssaprepare.Emitted, t: typeinfo.Type): boolean {
+  // A selected ordinary record is an outer box even if a field holds a view.
+  // Its schema does not prove release effects, field accesses or finalizers.
+  if (!semtypes.concrete(t, false) || semtypes.is_handle(t) || semtypes.is_env(t)) {
+    return false;
+  }
+  if let typeinfo.TypeStruct(_) = t {
+    let count = 0;
+    let valid = false;
+    // Metadata indices and nominal names from other rows imply no identity.
+    for record in selected.metadata(row).records.list {
+      if (semtypes.equal(record.ty, t)) {
+        count = count + 1;
+        valid = record_fields(record.fields);
+      }
+    }
+    return count == 1 && valid;
+  }
+  return false;
+}
+
+function signature(row: ssaprepare.Emitted, c: ssasem.Contract): boolean {
+  if (c.params.len() != 1 || c.modes.len() != 1 || c.modes[0] != ssasem.borrow_mode()) {
+    return false;
+  }
+  if (!parameter(c.params[0]) && !record_parameter(row, c.params[0])) {
     return false;
   }
   if let typeinfo.TypeI32(i) = c.result {
@@ -312,10 +358,23 @@ pub function check_selected(rows: ssaprepare.Emitted[], name: string, architectu
   if (binding.error != "") {
     return helper.Proof { ok: false, function_name: name, message: binding.error };
   }
-  let row = binding.rows[0];
-  let contracts = selected.contracts(row);
-  if (contracts.len() != 1 || !signature(contracts[0])) {
-    return helper.Proof { ok: false, function_name: name, message: "unsupported selected uniqueness signature" };
+  return selected_lines(binding.rows[0].assembly.split("\n"), binding.rows[0], architecture);
+}
+
+// The final-output binder supplies actual body lines. Retained assembly is
+// deliberately unused; binding and ABI checks still use the same final graph.
+pub function check_selected_lines(lines: string[], rows: ssaprepare.Emitted[], name: string, architecture: string): helper.Proof {
+  let binding = bound.resolve(rows, name, architecture);
+  if (binding.error != "") {
+    return helper.Proof { ok: false, function_name: name, message: binding.error };
   }
-  return check(row.assembly.split("\n"), architecture, row.body.formed.f, false);
+  return selected_lines(lines, binding.rows[0], architecture);
+}
+
+function selected_lines(lines: string[], row: ssaprepare.Emitted, architecture: string): helper.Proof {
+  let contracts = selected.contracts(row);
+  if (contracts.len() != 1 || !signature(row, contracts[0])) {
+    return helper.Proof { ok: false, function_name: row.label_name, message: "unsupported selected uniqueness signature" };
+  }
+  return check(lines, architecture, row.body.formed.f, false);
 }

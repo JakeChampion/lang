@@ -1,12 +1,14 @@
 // Independent final-text binding for a uniqueness leaf library collection.
 // This scope excludes exports, inter-function calls, runtime code and nonempty
 // pools. It inherits check_body's explicit pointer/header and stack ABI.
-// No retained body text, site spans, allocation or emitter imports are used.
+// No retained body text, site spans or allocation are used as proof inputs.
 import "./ssa";
 import "./ssauniquecaller" as caller;
 import "./ssacredithelper" as helper;
 import "./util";
 import "./ssaproofnames" as names;
+import "./ssaprepare";
+import "./asmcore";
 import "std/string";
 
 struct Unit { lines: string[], ok: boolean }
@@ -78,6 +80,41 @@ function text_unit(output: string, architecture: string): Unit {
 // Resolve by the supplied final graph's exact symbol, never by retained body
 // text or collection position. Every supplied function must occur once.
 pub function check_collection(output: string, architecture: string, functions: ssa.SFunc[]): helper.Proof {
+  return collection(output, architecture, functions, []);
+}
+
+// Selected parameter ABI and final SSA come from the supplied rows. Actual
+// instructions come only from output, under the same complete unit grammar.
+pub function check_selected_collection(output: string, architecture: string, rows: ssaprepare.Emitted[]): helper.Proof {
+  if (rows.len() == 0) {
+    return refuse("");
+  }
+  let functions: ssa.SFunc[] = [];
+  let labels: string[] = [];
+  for row in rows {
+    if (row.label_name == "") {
+      return refuse("");
+    }
+    labels = labels.append(asmcore.sanitize_label(row.label_name));
+    functions = functions.append(row.body.formed.f);
+  }
+  if (names.index(labels).duplicate >= 0) {
+    return refuse("");
+  }
+  return collection(output, architecture, functions, rows);
+}
+
+function body_proof(body: string[], architecture: string, f: ssa.SFunc, rows: ssaprepare.Emitted[], position: i32): helper.Proof {
+  if (rows.len() > 0) {
+    // The complete sanitized row namespace was checked before collection.
+    // Its exact-function index retains original row positions. Singleton
+    // binding still checks this row's exact label, ABI and final graph.
+    return caller.check_selected_lines(body, [rows[position]], f.name, architecture);
+  }
+  return caller.check_lines(body, architecture, f);
+}
+
+function collection(output: string, architecture: string, functions: ssa.SFunc[], rows: ssaprepare.Emitted[]): helper.Proof {
   let unit = text_unit(output, architecture);
   if (!unit.ok || functions.len() == 0) {
     return refuse("");
@@ -85,7 +122,7 @@ pub function check_collection(output: string, architecture: string, functions: s
   let entries: string[] = [];
   let seen: boolean[] = [];
   for f in functions {
-    let entry = "__fn_" + f.name + ":";
+    let entry = "__fn_" + asmcore.sanitize_label(f.name) + ":";
     entries = entries.append(entry);
     seen = seen.append(false);
   }
@@ -103,7 +140,7 @@ pub function check_collection(output: string, architecture: string, functions: s
         return refuse(functions[at].name);
       }
       if (current >= 0) {
-        let proof = caller.check_lines(body, architecture, functions[current]);
+        let proof = body_proof(body, architecture, functions[current], rows, current);
         if (!proof.ok) {
           return proof;
         }
@@ -121,7 +158,7 @@ pub function check_collection(output: string, architecture: string, functions: s
   if (current < 0 || count != functions.len()) {
     return refuse("");
   }
-  let proof = caller.check_lines(body, architecture, functions[current]);
+  let proof = body_proof(body, architecture, functions[current], rows, current);
   if (!proof.ok) {
     return proof;
   }
