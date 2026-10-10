@@ -1,0 +1,130 @@
+import "../ssacapacitymachine" as machine;
+import "../ssainlineuniqueisa" as registers;
+import "std/string";
+
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("capacity machine controls failed: " + group);
+    // Native status space is shared with other retained-driver modules.
+    // The module and exact mutation above identify failures on every target.
+    exit(180);
+  }
+}
+
+// Mutate only the selected dependency inside the actual complete output.
+function change(s: string, from: string, to: string): string {
+  let outer = s.split("__fern_capw:\n");
+  require(outer.len() == 2, "unique capacity fixture");
+  let next = outer[1].split("__fern_raw_free:\n");
+  require(next.len() == 2, "following helper fixture");
+  let parts = next[0].split(from);
+  require(parts.len() == 2, "unique mutation: " + from);
+  return outer[0] + "__fern_capw:\n" + parts.join(to) + "__fern_raw_free:\n" + next[1];
+}
+
+function check(s: string, ok: boolean, group: string): void {
+  require(machine.check(s) == ok, group);
+}
+
+function mutation(s: string, from: string, to: string, ok: boolean): void {
+  check(change(s, from, to), ok, from + " -> " + to);
+}
+
+function arithmetic(s: string): void {
+  for line in ["bsrq %rdx, %rcx", "movl $0, %ecx", "movl $8, %ecx", "movl $0, %eax\nbsrq %rax, %rcx"] {
+    mutation(s, "bsrq %rax, %rcx", line, false);
+  }
+  for line in ["subl $1, %ecx", "subl $3, %ecx", "subl $2147483647, %ecx"] {
+    mutation(s, "subl $2, %ecx", line, false);
+  }
+  mutation(s, "subl $2, %ecx", "subq $2, %rcx", true);
+  mutation(s, "subl $2, %ecx", "subl $2, %ecx\naddq $64, %rcx", true);
+  mutation(s, "bsrq %rax, %rcx", "bsrl %eax, %ecx", true);
+  mutation(s, "shlq %cl, %rdx", "shll %cl, %edx", true);
+  mutation(s, "shlq %cl, %rdx", "shrq %cl, %rdx", false);
+  mutation(s, "leaq -1(%rax,%rdx), %rax", "leaq (%rax,%rdx), %rax", false);
+  mutation(s, "leaq -1(%rax,%rdx), %rax", "leaq -1(%rax,%rdx,2), %rax", false);
+  mutation(s, "negq %rdx", "negl %edx", false);
+  mutation(s, "andq %rdx, %rax", "andq $-3, %rax", false);
+  mutation(s, "movl $65535, %eax", "movl $65534, %eax", false);
+  mutation(s, "cmpq $65536, %rax", "cmpq $65537, %rax", false);
+}
+
+function memory(s: string): void {
+  mutation(s, "movq 32(%rsp), %rax", "movl 32(%rsp), %eax", true);
+  mutation(s, "movq %rax, 32(%rsp)", "movl %eax, 32(%rsp)", true);
+  for line in ["movq 24(%rsp), %rax", "movq 28(%rsp), %rax", "movq 36(%rsp), %rax", "movq 32(%rax), %rax", "movq 33(%rsp), %rax"] {
+    mutation(s, "movq 32(%rsp), %rax", line, false);
+  }
+  for line in ["movq %rax, 24(%rsp)", "movl %eax, 28(%rsp)", "movq %rax, 36(%rsp)", "movl %eax, 36(%rsp)", "movq %rax, 28(%rsp)", "movq %rax, 32(%rax)", "movq %rax, %rax"] {
+    mutation(s, "movq %rax, 32(%rsp)", line, false);
+  }
+  mutation(s, "movq %rax, 32(%rsp)", "movq %rax, 32(%rsp)\nmovq 24(%rsp), %rax", true);
+  mutation(s, "movq %rax, 32(%rsp)", "movq %rax, 32(%rsp)\nmovl $-1, %eax\nmovl %eax, 36(%rsp)", false);
+  let load = "movq 32(%rsp), %rax";
+  mutation(s, load, "movl 16(%rsp), %edx\nmovl %edx, 16(%rsp)\nmovl 20(%rsp), %edx\nmovl %edx, 20(%rsp)\n" + load, true);
+  mutation(s, load, "movl 16(%rsp), %edx\nmovl %edx, 20(%rsp)\n" + load, false);
+}
+
+function preserved(s: string): void {
+  let regs = registers.registers(false, 64);
+  let words = registers.registers(false, 32);
+  let i = 0;
+  while (i < regs.len()) {
+    mutation(s, "    ret\n", "movl " + words[i] + ", " + words[i] + "\nret\n", false);
+    mutation(s, "    ret\n", "movq " + regs[i] + ", " + regs[i] + "\nret\n", true);
+    let other = (i + 1) % regs.len();
+    mutation(s, "    ret\n", "movq " + regs[other] + ", " + regs[i] + "\nret\n", false);
+    i = i + 1;
+  }
+  mutation(s, "pushq %rax", "pushq %rsp", false);
+  mutation(s, "pushq %rax", "pushq %rcx", false);
+  mutation(s, "popq %rdx", "popq %rcx", false);
+  mutation(s, "popq %rax", "popq %rsp", false);
+  mutation(s, "pushq %rdx", "pushq %rdx\npushq %rax", false);
+  mutation(s, "popq %rax", "popq %rax\npopq %rcx", false);
+  // Split loads must recover both original halves; MOV32 alone cannot.
+  mutation(s, "popq %rdx", "movl (%rsp), %edx\npopq %rdx", true);
+  // PUSH SP saves its pre-decrement value. Restoring SP from that word
+  // returns to S-8 before the original second push; scratch is overwritten.
+  mutation(s, "pushq %rcx", "pushq %rsp\nmovq (%rsp), %rsp\npushq %rcx", true);
+}
+
+function flags(s: string): void {
+  mutation(s, "cmpq $256, %rax", "cmpl $256, %eax", true);
+  mutation(s, "jbe .Lcapw_ret", "jna .Lcapw_ret", true);
+  for line in ["jb .Lcapw_ret", "je .Lcapw_ret", "js .Lcapw_ret", "jo .Lcapw_ret"] {
+    mutation(s, "jbe .Lcapw_ret", line, false);
+  }
+  for line in ["addq $0, %rax", "bsrq %rax, %rcx", "negq %rdx", "movl $1, %ecx\nshlq %cl, %rdx"] {
+    mutation(s, "jbe .Lcapw_ret", line + "\njbe .Lcapw_ret", false);
+  }
+  mutation(s, "jbe .Lcapw_ret", "movl $64, %ecx\nshlq %cl, %rax\njbe .Lcapw_ret", true);
+  mutation(s, "jbe .Lcapw_ret", "movl $32, %ecx\nshll %cl, %eax\njbe .Lcapw_ret", true);
+  mutation(s, "jbe .Lcapw_ret", "movq %rax, %rax\nleaq (%rax), %rax\njbe .Lcapw_ret", true);
+  for line in ["jc .Lcapw_store", "jnae .Lcapw_store"] {
+    mutation(s, "jb .Lcapw_store", line, true);
+  }
+  mutation(s, "cmpq $256, %rax", "cmpq $-1, %rax", false);
+}
+
+function refusals(s: string): void {
+  for line in ["ret $8\n", "retq\n", "unknown_instruction\nret\n", ".Lcapacity_cycle:\njmp .Lcapacity_cycle\n", ""] {
+    mutation(s, "    ret\n", line, false);
+  }
+  mutation(s, "    ret\n", "ret\nunknown_instruction\n", true);
+  check(s + "\n.data\n__fern_capw: .quad 0\n", false, "duplicate data entry");
+  check(".set hidden, __fern_capw\n" + s, false, "alias");
+  check(".text\n__fern_capw:\nret\n", false, "missing effects");
+  check(".text\n__fern_capw:\n__next:\nret\n", false, "empty body");
+  check(s.split(".Lcapw").join(".Lrenamed_capacity"), true, "renamed labels");
+}
+
+pub function run(s: string): void {
+  check(s, true, "actual complete emission");
+  arithmetic(s);
+  memory(s);
+  preserved(s);
+  flags(s);
+  refusals(s);
+}
