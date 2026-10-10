@@ -1,0 +1,252 @@
+// Scoped normal-x86 kept/shared decrement effects. All states are private
+// and derived from the same complete supplied text, never public proof data.
+import "./ssadecrementisa" as isa;
+import "./ssadecrementcount" as count;
+import "./ssadecrementmemory" as memory;
+
+// kind: unknown, original GPR, pointer P, original SP, return address,
+// zero-extended 32-bit count. Original GPR identities remain distinct.
+struct Value { kind: i32, identity: i32, rc: count.Value }
+
+struct State { regs: Value[], heap: memory.Memory, flags: count.Flags, ok: boolean }
+
+function token(kind: i32, identity: i32): Value {
+  return Value { kind: kind, identity: identity, rc: count.unknown() };
+}
+
+function unknown_flags(): count.Flags {
+  return count.Flags { zero: -1, negative: -1, carry: -1, overflow: -1, signed_less: -1 };
+}
+
+function initial(shared: boolean, register_entry: boolean): State {
+  let regs: Value[] = [];
+  let i = 0;
+  while (i < 16) {
+    regs = regs.append(token(if (i == 4) { 3 } else { 1 }, i));
+    i = i + 1;
+  }
+  if (register_entry) {
+    regs = regs.with(0, token(2, 0));
+  }
+  return State { regs: regs, heap: memory.initial(shared), flags: unknown_flags(), ok: true };
+}
+
+function word(v: Value): count.Value {
+  return if (v.kind == 5) { v.rc } else { count.unknown() };
+}
+
+function counted(v: count.Value): Value {
+  return Value { kind: 5, identity: 0, rc: v };
+}
+
+function write(s: State, reg: i32, v: Value): State {
+  return State { ...s, regs: s.regs.with(reg, v) };
+}
+
+function load(s: State, op: isa.Op, register_entry: boolean): State {
+  let base = s.regs[op.base];
+  if (base.kind == 2 && op.width == 32 && op.offset == -8) {
+    let v = memory.load(s.heap, op.offset, 4);
+    return write(State { ...s, ok: count.valid(v) }, op.destination, counted(v));
+  }
+  if (base.kind == 3 && op.width == 64) {
+    if (op.offset == 0) {
+      return write(s, op.destination, token(4, 0));
+    }
+    if (op.offset == 8) {
+      return write(s, op.destination, token(if (register_entry) { 0 } else { 2 }, 0));
+    }
+  }
+  return State { ...s, ok: false };
+}
+
+function store(s: State, op: isa.Op): State {
+  if (s.regs[op.base].kind != 2 || op.width != 32) {
+    return State { ...s, ok: false };
+  }
+  let heap = memory.store(s.heap, op.offset, 4, word(s.regs[op.source]));
+  return State { ...s, heap: heap, ok: memory.valid(heap) };
+}
+
+function flags(s: State, op: isa.Op): State {
+  let v = s.regs[op.source];
+  if (op.kind == 5) {
+    return State { ...s, flags: count.test(word(v)) };
+  }
+  if (op.kind == 7) {
+    return State { ...s, flags: count.compare(word(v), op.immediate) };
+  }
+  if ((op.kind == 6 || op.kind == 8) && v.kind == 2) {
+    // P is aligned and in [65536, 2^47). Equality with the floor is unknown.
+    return State { ...s, flags: count.Flags { zero: if (op.kind == 6) { 1 } else { -1 }, negative: 0, carry: 0, overflow: 0, signed_less: 0 } };
+  }
+  return State { ...s, flags: unknown_flags() };
+}
+
+function step(s: State, op: isa.Op, register_entry: boolean): State {
+  if (op.kind == 1) {
+    return s;
+  }
+  if (op.kind == 2) {
+    let v = s.regs[op.source];
+    // MOV32 zero-extends; it cannot preserve an arbitrary 64-bit identity.
+    return write(s, op.destination, if (op.width == 64 || v.kind == 5) { v } else { token(0, 0) });
+  }
+  if (op.kind == 3) {
+    return load(s, op, register_entry);
+  }
+  if (op.kind == 4) {
+    return store(s, op);
+  }
+  if (op.kind == 9) {
+    let old = word(s.regs[op.source]);
+    let v = count.decrement(old);
+    return write(State { ...s, ok: count.valid(v), flags: count.decrement_flags(old) }, op.destination, counted(v));
+  }
+  if (op.kind >= 5 && op.kind <= 8) {
+    return flags(s, op);
+  }
+  return State { ...s, ok: false };
+}
+
+function invert(flag: i32): i32 {
+  return if (flag < 0) { -1 } else { 1 - flag };
+}
+
+function either(a: i32, b: i32): i32 {
+  if (a == 1 || b == 1) {
+    return 1;
+  }
+  return if (a == 0 && b == 0) { 0 } else { -1 };
+}
+
+function signed_branch(f: count.Flags, name: string): i32 {
+  if (name == "jl" || name == "jnge") {
+    return f.signed_less;
+  }
+  if (name == "jge" || name == "jnl") {
+    return invert(f.signed_less);
+  }
+  if (name == "jle" || name == "jng") {
+    return either(f.zero, f.signed_less);
+  }
+  if (name == "jg" || name == "jnle") {
+    return invert(either(f.zero, f.signed_less));
+  }
+  return -1;
+}
+
+function status_branch(f: count.Flags, name: string): i32 {
+  if (name == "js") {
+    return f.negative;
+  }
+  if (name == "jns") {
+    return invert(f.negative);
+  }
+  if (name == "jo") {
+    return f.overflow;
+  }
+  if (name == "jno") {
+    return invert(f.overflow);
+  }
+  return signed_branch(f, name);
+}
+
+function carry_branch(f: count.Flags, name: string): i32 {
+  if (name == "jb" || name == "jc" || name == "jnae") {
+    return f.carry;
+  }
+  if (name == "jae" || name == "jnb" || name == "jnc") {
+    return invert(f.carry);
+  }
+  return status_branch(f, name);
+}
+
+function branch(f: count.Flags, name: string): i32 {
+  if (name == "jmp") {
+    return 1;
+  }
+  if (name == "je" || name == "jz") {
+    return f.zero;
+  }
+  if (name == "jne" || name == "jnz") {
+    return invert(f.zero);
+  }
+  return carry_branch(f, name);
+}
+
+function finished(s: State): boolean {
+  if (!memory.finished(s.heap) || s.regs[0].kind != 2 || s.regs[4].kind != 3) {
+    return false;
+  }
+  let i = 2;
+  while (i < 16) {
+    if (i != 4 && (s.regs[i].kind != 1 || s.regs[i].identity != i)) {
+      return false;
+    }
+    i = i + 1;
+  }
+  // No stack write is admitted. Plain RET therefore reads the original
+  // return address at original SP and leaves SP at original SP + 8.
+  return true;
+}
+
+function in_program(pc: i32, length: i32): boolean {
+  return pc >= 0 && pc < length;
+}
+
+function path(p: isa.Program, shared: boolean, register_entry: boolean): boolean {
+  let s = initial(shared, register_entry);
+  let visited: boolean[] = [];
+  for op in p.ops {
+    visited = visited.append(false);
+  }
+  let pc = if (register_entry) { p.register_entry } else { 0 };
+  while (in_program(pc, p.ops.len())) {
+    if (visited[pc]) {
+      return false;
+    }
+    visited = visited.with(pc, true);
+    let op = p.ops[pc];
+    if (op.kind == 11) {
+      return finished(s);
+    }
+    if (op.kind == 10) {
+      let taken = branch(s.flags, op.condition);
+      if (taken < 0) {
+        return false;
+      }
+      pc = if (taken == 1) { op.target } else { pc + 1 };
+    } else {
+      s = step(s, op, register_entry);
+      if (!s.ok) {
+        return false;
+      }
+      pc = pc + 1;
+    }
+  }
+  return false;
+}
+
+// Explicit preconditions: P is eight-byte aligned in [65536, 2^47), its
+// four-byte RC at P-8 is readable/writable and disjoint from the readable
+// incoming 16-byte stack. Original signed32 RC is negative or greater than
+// one. Stack entry supplies P at SP+8; register entry supplies P in RAX and
+// leaves SP+8 unconstrained. Both preserve every GPR except RAX/RCX, return
+// P in RAX, and return through the original stack word with SP advanced 8.
+// This does not establish caller credits, zero/one/free/debug behavior or
+// any other target, and is not wired into production admission.
+pub function check(output: string, entry: string): boolean {
+  let p = isa.program(output, entry);
+  if (p.error != "") {
+    return false;
+  }
+  for shared in [false, true] {
+    for register_entry in [false, true] {
+      if (!path(p, shared, register_entry)) {
+        return false;
+      }
+    }
+  }
+  return true;
+}
