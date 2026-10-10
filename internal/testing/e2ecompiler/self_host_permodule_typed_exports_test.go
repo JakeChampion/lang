@@ -21,8 +21,7 @@ func TestSelfHostPerModuleTypedHelpersLink(t *testing.T) {
 	dir := writeSelfHostModloadProject(t)
 	driverBin := buildSelfHostBin(t, x86gcc, dir, "drivers/asm_modload_run.fern", "typedexportsdriver")
 
-	proj := t.TempDir()
-	mustWrite(t, proj, "leaf.fern", `import "core/map";
+	const viewLeaf = `import "core/map";
 
 function (s: string) tail(n: i32): str { return slice_unchecked(s, n, s.len()); }
 
@@ -39,72 +38,106 @@ function (s: string) tail(n: i32): str { return slice_unchecked(s, n, s.len()); 
     }
     return head.len() + text.len() + seen.get_or("ab", 0) + t;
 }
-`)
-	mustWrite(t, proj, "main.fern", `import "./leaf";
+`
+	const viewMain = `import "./leaf";
 
 function main(): i32 { return leaf.score(["ab", "cb", "abc"]); }
-`)
-	copyStdlibTree(t, proj)
-	entry := filepath.Join(proj, "main.fern")
+`
 	helpers := []string{
 		"__fern_alloc_bytes", "__fern_arr_push_u8", "__fern_arr_push_owned_u8",
-		"__fn___fern_arr_slice_u8", "__fn___fern_string_from_bytes_u8",
+		"__fn___sem_byte_view_slice", "__fn___fern_string_from_bytes_u8",
 		"__fn___fern_str_view_free", "__fern_raw_free", "__fern_map_hash_seed",
 	}
+	// Byte subranges now use views. A shared owned-array update still needs
+	// the packed copy helper, so exercise its export in a separate program.
+	const copyLeaf = `@noinline pub function replace(own a: u8[]): u8[] {
+    return a.with(0, 99 as u8);
+}
+`
+	const copyMain = `import "./leaf";
+function main(): i32 {
+    let a: u8[] = [];
+    for word in args() { a = a.append((word.len() % 10) as u8); }
+    let first: u8 = a[0];
+    let saved = a;
+    let changed = leaf.replace(a);
+    if (saved[0] != first || changed[0] != 99 as u8) { return 21; }
+    if (saved.len() != changed.len()) { return 22; }
+    let unique = leaf.replace(changed);
+    if (unique[0] != 99 as u8 || unique.len() != saved.len()) { return 23; }
+    return 0;
+}
+`
+	for _, tc := range []struct {
+		name, leaf, main string
+		helpers          []string
+		exit             int
+	}{
+		{"byte-view", viewLeaf, viewMain, helpers, 10},
+		{"byte-copy", copyLeaf, copyMain, []string{"__fn___fern_arr_slice_u8"}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			proj := t.TempDir()
+			mustWrite(t, proj, "leaf.fern", tc.leaf)
+			mustWrite(t, proj, "main.fern", tc.main)
+			copyStdlibTree(t, proj)
+			entry := filepath.Join(proj, "main.fern")
 
-	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
-		t.Run(target, func(t *testing.T) {
-			gcc := x86gcc
-			var qemu string
-			if target == "arm64-linux" {
-				gcc, qemu = arm64Tooling(t)
-			}
-			outDir := filepath.Join(proj, target)
-			if err := os.MkdirAll(outDir, 0o755); err != nil {
-				t.Fatal(err)
-			}
-			if out, err := runX86_64Bin(x86runner, driverBin, entry, "-target", target, "-per-module-emit-all", "-out-dir", outDir).CombinedOutput(); err != nil {
-				t.Fatalf("emit-all: %v\n%s", err, out)
-			}
-			ents, err := os.ReadDir(outDir)
-			if err != nil {
-				t.Fatal(err)
-			}
-			var objs []string
-			library := ""
-			for _, e := range ents {
-				p := filepath.Join(outDir, e.Name())
-				objs = append(objs, p)
-				b, err := os.ReadFile(p)
-				if err != nil {
-					t.Fatal(err)
-				}
-				if !strings.Contains(string(b), ".globl _start") {
-					library += string(b)
-				}
-			}
-			sort.Strings(objs)
-			// Without these the fixture no longer reaches the helpers from a
-			// library unit, and cannot catch a missing export.
-			for _, h := range helpers {
-				if !strings.Contains(library, h) {
-					t.Errorf("no library unit references %s", h)
-				}
-			}
-			bin := filepath.Join(proj, target+"_prog")
-			linkArgs := append([]string{"-static", "-nostdlib", "-no-pie"}, append(objs, "-o", bin)...)
-			if lout, err := exec.Command(gcc, linkArgs...).CombinedOutput(); err != nil {
-				t.Fatalf("per-module link failed — a library unit's helper has no exported definer: %v\n%s", err, lout)
-			}
-			var cmd *exec.Cmd
-			if target == "arm64-linux" {
-				cmd = runArm64Bin(qemu, bin)
-			} else {
-				cmd = runX86_64Bin(x86runner, bin)
-			}
-			_ = cmd.Run()
-			if code := cmd.ProcessState.ExitCode(); code != 10 {
-				t.Errorf("per-module %s program exited %d, want 10", target, code)
+			for _, target := range []string{"x86-64-linux", "arm64-linux"} {
+				t.Run(target, func(t *testing.T) {
+					gcc := x86gcc
+					var qemu string
+					if target == "arm64-linux" {
+						gcc, qemu = arm64Tooling(t)
+					}
+					outDir := filepath.Join(proj, target)
+					if err := os.MkdirAll(outDir, 0o755); err != nil {
+						t.Fatal(err)
+					}
+					if out, err := runX86_64Bin(x86runner, driverBin, entry, "-target", target, "-per-module-emit-all", "-out-dir", outDir).CombinedOutput(); err != nil {
+						t.Fatalf("emit-all: %v\n%s", err, out)
+					}
+					ents, err := os.ReadDir(outDir)
+					if err != nil {
+						t.Fatal(err)
+					}
+					var objs []string
+					library := ""
+					for _, e := range ents {
+						p := filepath.Join(outDir, e.Name())
+						objs = append(objs, p)
+						b, err := os.ReadFile(p)
+						if err != nil {
+							t.Fatal(err)
+						}
+						if !strings.Contains(string(b), ".globl _start") {
+							library += string(b)
+						}
+					}
+					sort.Strings(objs)
+					// Without these the fixture no longer reaches the helpers from a
+					// library unit, and cannot catch a missing export.
+					for _, h := range tc.helpers {
+						if !strings.Contains(library, h) {
+							t.Errorf("no library unit references %s", h)
+						}
+					}
+					bin := filepath.Join(proj, target+"_prog")
+					linkArgs := append([]string{"-static", "-nostdlib", "-no-pie"}, append(objs, "-o", bin)...)
+					if lout, err := exec.Command(gcc, linkArgs...).CombinedOutput(); err != nil {
+						t.Fatalf("per-module link failed — a library unit's helper has no exported definer: %v\n%s", err, lout)
+					}
+					var cmd *exec.Cmd
+					if target == "arm64-linux" {
+						cmd = runArm64Bin(qemu, bin)
+					} else {
+						cmd = runX86_64Bin(x86runner, bin)
+					}
+					_ = cmd.Run()
+					if code := cmd.ProcessState.ExitCode(); code != tc.exit {
+						t.Errorf("per-module %s program exited %d, want %d", target, code, tc.exit)
+					}
+				})
 			}
 		})
 	}
