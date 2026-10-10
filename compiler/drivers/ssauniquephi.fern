@@ -137,6 +137,59 @@ function queue_controls(row: ssaprepare.Emitted, f: ssa.SFunc, join: i32): void 
   check(row, ssa.SFunc { ...diamond, blocks: cycle_first }, false);
 }
 
+function predecessor_graph(f: ssa.SFunc, join: i32, take_first: boolean): ssa.SFunc {
+  let b = f.blocks[join];
+  let branch = ssa.SInst { kind_tag: 2, result: f.nvals, args: [], imm: if (take_first) { 1 } else { 0 }, str: "" };
+  let blocks = f.blocks.with(join, ssa.SBlock { ...b, insts: b.insts.append(branch), term: ssa.STerm { ...b.term, kind_tag: 2, target: 200000 } });
+  let preds: i32[] = [];
+  let args: i32[] = [];
+  let i = 65;
+  // Reverse physical and predecessor order relative to the branching spine.
+  // Each predecessor defines its own value, so a sorted-index position must
+  // never be confused with the original phi argument position.
+  while (i > 0) {
+    i = i - 1;
+    let leaf = 100000 + i * 31;
+    let spine = 200000 + i * 31;
+    let copy = ssa.SInst { kind_tag: 7, result: f.nvals + 1 + i, args: [b.term.value], imm: 0, str: "" };
+    let term = if (i == 64) { ssa.STerm { ...b.term, kind_tag: 2, target: leaf } } else { ssa.STerm { ...b.term, kind_tag: 3, cond: branch.result, t: leaf, f: spine + 31 } };
+    blocks = blocks.append(ssa.SBlock { id: leaf, insts: [copy], preds: [spine], term: ssa.STerm { ...b.term, kind_tag: 2, target: 300000 } });
+    blocks = blocks.append(ssa.SBlock { id: spine, insts: [], preds: [if (i == 0) { b.id } else { spine - 31 }], term: term });
+    preds = preds.append(leaf);
+    args = args.append(copy.result);
+  }
+  let phi = ssa.SInst { kind_tag: 8, result: f.nvals + 66, args: args, imm: 0, str: "" };
+  blocks = blocks.append(ssa.SBlock { id: 300000, insts: [phi], preds: preds, term: ssa.STerm { ...b.term, value: phi.result } });
+  return ssa.SFunc { ...f, nvals: f.nvals + 67, blocks: blocks };
+}
+
+function predecessor_controls(row: ssaprepare.Emitted, f: ssa.SFunc, join: i32): void {
+  let good = predecessor_graph(f, join, true);
+  check(row, good, true);
+  check(row, predecessor_graph(f, join, false), true);
+  check(row, sparse_blocks(sparse(good)), true);
+  let tail = good.blocks.len() - 1;
+  let b = good.blocks[tail];
+  let phi = b.insts[0];
+  let last = b.preds.len() - 1;
+  check(row, replace(good, tail, phi, b.preds.with(last, b.preds[0])), false);
+  check(row, replace(good, tail, phi, b.preds.with(last, 2147483647)), false);
+  check(row, replace(good, tail, phi, b.preds.with(last, -1)), false);
+  check(row, replace(good, tail, ssa.SInst { ...phi, args: phi.args.with(last, phi.args[0]) }, b.preds), false);
+  // A declared predecessor must actually target this block, and every
+  // outgoing edge must appear in its destination's predecessor list.
+  check(row, replace(good, tail, phi, b.preds.with(last, f.blocks[join].id)), false);
+  let args: i32[] = [];
+  let preds: i32[] = [];
+  let i = 0;
+  while (i < last) {
+    args = args.append(phi.args[i]);
+    preds = preds.append(b.preds[i]);
+    i = i + 1;
+  }
+  check(row, replace(good, tail, ssa.SInst { ...phi, args: args }, preds), false);
+}
+
 pub function run(out: ssaprepare.Output): void {
   let row = out.bodies[0];
   let f = row.body.formed.f;
@@ -155,6 +208,7 @@ pub function run(out: ssaprepare.Output): void {
   require(b.preds.len() == 2 && phi.args.len() == 2);
   check(row, f, true);
   queue_controls(row, f, join);
+  predecessor_controls(row, f, join);
   index_controls(row, f, join);
   block_controls(row, f);
   unit.run(out, false);
