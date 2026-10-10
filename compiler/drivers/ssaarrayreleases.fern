@@ -1,0 +1,67 @@
+import "../ssaarrayrelease" as release;
+import "../ssadecrementguards" as guards;
+import "../ssasmallarraymachine" as small;
+import "../ssalargearraymachine" as large;
+import "../ssadecrementtext" as text;
+import "std/string";
+
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("array release composition controls failed: " + group);
+    exit(180);
+  }
+}
+
+function change(s: string, from: string, to: string): string {
+  let parts = s.split(from);
+  require(parts.len() > 1, "mutation present: " + from);
+  return parts.join(to);
+}
+
+function array_change(s: string, from: string, to: string): string {
+  let outer = s.split("__fn___fern_arr_dec:\n");
+  require(outer.len() == 2, "unique array entry");
+  let body = outer[1].split("__fn___fern_str_free:\n");
+  require(body.len() == 2, "following string entry");
+  return outer[0] + "__fn___fern_arr_dec:\n" + change(body[0], from, to) + "__fn___fern_str_free:\n" + body[1];
+}
+
+function paths(s: string): void {
+  // Count-one success alone cannot rescue corrupted guard/shared/zero paths.
+  for from in ["jb .Larrdec_ret", "subl $1, %ecx", "incl __fern_rc_underflow(%rip)"] {
+    let broken = array_change(s, from, "");
+    require(small.check(broken) && large.check(broken), "count-one remains valid: " + from);
+    require(!release.check(broken), "missing other RC family: " + from);
+  }
+  for from in ["movl $0, -8(%rax)", "movq %rdi, (%rdx)", "movq %rdx, (%r8,%rcx,8)", "call __fern_capw", "call __fern_large_push"] {
+    require(!release.check(array_change(s, from, "")), "required count-one effect: " + from);
+  }
+  require(!release.check(array_change(s, "movq 8(%rsp), %rax", "movq (%rsp), %rax")), "stack entry identity");
+  require(!release.check(array_change(s, "    ret\n", "ret $8\n")), "original return and stack advance");
+  require(release.check(array_change(s, "subl $1, %ecx", "subl $1, %ecx\nmovl %ecx, %ecx")), "equivalent shared decrement");
+  require(release.check(array_change(s, "jb .Larrdec_ret", "jnae .Larrdec_ret")), "equivalent low-pointer branch");
+}
+
+function dependencies(s: string): void {
+  for name in ["__fern_heap_base", "__fern_heap_end", "__fern_freelist", "__fern_large_freelist", "__fern_rc_underflow"] {
+    require(!release.check(change(s, name + ":", "missing_" + name + ":")), "required declaration: " + name);
+  }
+  for name in ["__fern_capw", "__fern_large_push"] {
+    require(!release.check(change(s, name + ":\n", name + ":\nmovq %rax, (%rsp)\n")), "dependency return corruption: " + name);
+  }
+  require(!release.check(change(s, "__fern_freelist: .skip 524288", "__fern_freelist: .skip 524280")), "small table extent");
+  require(!release.check(change(s, "__fern_large_freelist: .skip 20480", "__fern_large_freelist: .skip 359")), "large table extent");
+  require(release.check(change(s, "__fern_large_freelist: .skip 20480", "__fern_large_freelist: .skip 360")), "release classes require only45 slots");
+  require(!release.check(".set alias, __fn___fern_arr_dec\n" + s), "closed namespace");
+}
+
+pub function run(output: string): void {
+  require(release.check(output), "actual complete output");
+  require(!release.check(""), "empty output");
+  let minimal = ".text\n__fn___fern_arr_dec:\nmovq 8(%rsp), %rax\n__fn___fern_arr_dec.r:\nret\n";
+  require(guards.check(minimal, false) && !release.check(minimal), "conditional guard is not full composition");
+  let data = ".bss\n.align 8\n__fern_heap_base: .quad 0\n.align 8\n__fern_heap_end: .quad 0\n.align 8\n__fern_freelist: .skip 524288\n.align 8\n__fern_large_freelist: .skip 360\n";
+  require(text.release_storage(data) && !release.check(data), "declarations alone are not effects");
+  paths(output);
+  dependencies(output);
+}
