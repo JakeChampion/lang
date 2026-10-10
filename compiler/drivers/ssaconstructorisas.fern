@@ -1,0 +1,167 @@
+import "../asmcore";
+import "../asm_ir";
+import "../lexer";
+import "../parser";
+import "../semlower";
+import "../ssaprepare";
+import "../ssacredittext" as binding;
+import "../ssacapacityisa" as isa;
+import "../ssadecrementtext" as text;
+import "../ssainlineuniqueisa" as registers;
+import "std/string";
+
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("constructor instruction controls failed: " + group);
+    exit(180);
+  }
+}
+
+function fixture(code: string): string {
+  return ".text\n__fn_parent:\n.cfi_startproc\n__fn_parent.r:\n" + code + "\nret\n.cfi_endproc\n";
+}
+
+function sample(line: string): isa.Op {
+  let p = isa.constructor_program(fixture(line), "__fn_parent");
+  require(p.error == "" && p.register_entry == 2 && p.ops.len() == 6, "sample extent: " + line);
+  require(p.ops[0].kind == 1 && p.ops[1].kind == 31 && p.ops[4].kind == 18 && p.ops[5].kind == 31, "sample bounds: " + line);
+  return p.ops[3];
+}
+
+function emit(): ssaprepare.Output {
+  let source = "struct Parent { left: i32, right: i32 } @noinline function parent(left: i32, right: i32): Parent { return Parent { left: left, right: right }; } function main(): i32 { return 0; }";
+  let m = parser.parse_module(lexer.tokenize(source));
+  require(!asmcore.refuse_parse_unknowns([m]) && !asmcore.refuse_decl_names([m]), "source parsed");
+  let g = semlower.program(semlower.driven(m, "x86-64-linux"));
+  require(g.ok, "source lowered");
+  let sw = asmcore.Switches { backtrace: false, sanitize: false, var_rows: false };
+  return asm_ir.emit_module_ir_unit_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, -1, g.cache, g.physical, semlower.runtime_lowering, 0 as usize, sw, true);
+}
+
+function actual(): void {
+  let output = emit();
+  let bound = binding.resolve(output, "parent");
+  let body = text.native_body(output.text, "__fn_parent");
+  let p = isa.constructor_program(output.text, "__fn_parent");
+  require(bound.error == "" && p.error == "" && body.error == "", "same final output");
+  require(p.register_entry == body.register_entry && p.ops.len() == bound.lines.len(), "actual positions");
+  actual_operations(p, body);
+  // Unit output intentionally has no allocator implementation. A decoded call
+  // does not establish linkage, successful allocation or any memory permission.
+  require(!output.text.contains("\n__fern_arr_box:\n"), "dependency remains unproved");
+}
+
+function actual_store(op: isa.Op, stores: i32): void {
+  require(op.width == 64 && op.base == 0 && op.index == -1 && op.offset == stores * 8, "actual record stores");
+}
+
+function actual_operations(p: isa.ArrayProgram, body: text.Body): void {
+  let calls = 0;
+  let stores = 0;
+  let shapes = 0;
+  let i = 0;
+  for op in p.ops {
+    require(op.kind > 0, "actual operation: " + body.lines[i]);
+    if (op.kind == 25) {
+      require(op.symbol == "__fern_arr_box", "actual dependency name");
+      calls = calls + 1;
+    }
+    if (op.kind == 4) {
+      actual_store(op, stores);
+      stores = stores + 1;
+    }
+    if (op.kind == 19) {
+      require(op.width == 64 && op.destination == 6 && op.symbol == ".S0", "actual shape address");
+      shapes = shapes + 1;
+    }
+    if (op.kind == 31) {
+      require(op.condition == body.lines[i], "CFI retained as data");
+    }
+    i = i + 1;
+  }
+  require(calls == 1 && stores == 3 && shapes == 1, "actual constructor syntax");
+}
+
+function stack_and_symbols(): void {
+  let i = 0;
+  for reg in registers.registers(false, 64) {
+    let shape = sample("leaq .arbitrary_symbol(%rip), " + reg);
+    require(shape.kind == 19 && shape.width == 64 && shape.destination == i && shape.symbol == ".arbitrary_symbol", "symbol address " + reg);
+    let push = sample("pushq " + reg);
+    let pop = sample("popq " + reg);
+    require(push.kind == 6 && push.source == i && pop.kind == 7 && pop.destination == i, "stack register " + reg);
+    i = i + 1;
+  }
+}
+
+function move_operand(reg: string, suffix: string, width: i32, i: i32): void {
+  let moved = sample("mov" + suffix + " " + reg + ", " + reg);
+  require(moved.kind == 2 && moved.width == width && moved.source == i && moved.destination == i, "move " + reg);
+}
+
+function load_operand(reg: string, suffix: string, width: i32, i: i32): void {
+  let load = sample("mov" + suffix + " 16(%rsp), " + reg);
+  require(load.kind == 3 && load.width == width && load.base == 4 && load.offset == 16 && load.destination == i, "load " + reg);
+}
+
+function store_operand(reg: string, suffix: string, width: i32, i: i32): void {
+  let store = sample("mov" + suffix + " " + reg + ", -8(%rax)");
+  require(store.kind == 4 && store.width == width && store.base == 0 && store.offset == -8 && store.source == i, "store " + reg);
+}
+
+function operands(): void {
+  stack_and_symbols();
+  for width in [32, 64] {
+    let regs = registers.registers(false, width);
+    let suffix = if (width == 64) { "q" } else { "l" };
+    let i = 0;
+    for reg in regs {
+      move_operand(reg, suffix, width, i);
+      load_operand(reg, suffix, width, i);
+      store_operand(reg, suffix, width, i);
+      i = i + 1;
+    }
+  }
+  let frame = sample("leaq -16(%rbp), %rsp");
+  require(frame.kind == 15 && frame.base == 5 && frame.destination == 4 && frame.offset == -16 && frame.index == -1, "frame address");
+  let call = sample("call\t__fern_arr_box");
+  require(call.kind == 25 && call.symbol == "__fern_arr_box", "allocation call syntax");
+}
+
+function unsupported(): void {
+  for line in ["call __fern_alloc", "call __fern_capw", "call __fern_large_push", "call __fern_arr_box.r", "call *__fern_arr_box", "call __fern_arr_box+1", "call __fern_arr_box, %rax", "leaq .S0+8(%rip), %rax", "leaq .S0(%rip,%rcx), %rax", "leal .S0(%rip), %eax", "leaq .S0(%rip), %eax", "leaq 123(%rip), %rax", "leaq (%rip), %rax", "leaq .S0@GOTPCREL(%rip), %rax", "leaq .S0(%rip), %rax, %rcx", "unknown_instruction", "leave"] {
+    require(sample(line).kind == 0, "unknown retained: " + line);
+  }
+  // Constructor additions do not silently extend existing runtime decoders.
+  for line in ["call __fern_arr_box", "leaq .S0(%rip), %rax"] {
+    let old = isa.program(".text\n__fern_capw:\n" + line + "\nret\n");
+    require(old.error == "" && old.ops[0].kind == 0, "capacity policy isolated");
+    let release = isa.array_program(".text\n__fn___fern_arr_dec:\n__fn___fern_arr_dec.r:\n" + line + "\nret\n");
+    require(release.error == "" && release.ops[1].kind == 0, "array policy isolated");
+  }
+}
+
+function boundaries(): void {
+  let cycle = isa.constructor_program(fixture(".Lagain:\njmp .Lagain"), "__fn_parent");
+  require(cycle.error == "" && cycle.ops[4].kind == 17 && cycle.ops[4].target == 3, "cycles remain data");
+  let forward = isa.constructor_program(fixture("jmp .Lend\n.Lend:"), "__fn_parent");
+  require(forward.error == "" && forward.ops[3].target == 4, "forward branch bound once");
+  for code in ["jmp absent", "jmp __fn_other", ".Ltwice:\n.Ltwice:", ".cfi_startproc", ".data\n.text", ".unknown_directive"] {
+    let p = isa.constructor_program(fixture(code) + "__fn_other:\n.cfi_startproc\nret\n.cfi_endproc\n", "__fn_parent");
+    require(p.error != "" && p.ops.len() == 0 && p.register_entry == -1, "invalid binding " + code);
+  }
+  for suffix in [".text\n__fn_parent:\nret\n", ".data\n__fn_parent: .quad 0\n", ".set alias, __fn_parent\n"] {
+    require(isa.constructor_program(fixture("movq %rax, %rax") + suffix, "__fn_parent").error != "", "closed namespace");
+  }
+  let unknown = isa.constructor_program(fixture("unknown_instruction"), "__fn_parent");
+  require(unknown.error == "" && unknown.ops[3].kind == 0, "not an effect certificate");
+  let crlf = isa.constructor_program(fixture("movq %rax, %rax").split("\n").join("\r\n\t"), "__fn_parent");
+  require(crlf.error == "" && crlf.ops[3].kind == 2, "CRLF syntax");
+}
+
+pub function run(): void {
+  actual();
+  operands();
+  unsupported();
+  boundaries();
+}

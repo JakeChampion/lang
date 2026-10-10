@@ -1,0 +1,144 @@
+// Selected i32 constructor boundary from one retained output. This binds SSA
+// and declaration data, not executed stores, allocation or linked addresses.
+import "./asmcore";
+import "./physicalbody";
+import "./semrecords";
+import "./semtypes";
+import "./ssacapacityisa" as isa;
+import "./ssacreditorigin" as origin;
+import "./ssacreditselected" as selected;
+import "./ssacredittext" as retained;
+import "./ssadecrementtext" as text;
+import "./ssaprepare";
+import "./ssasem";
+import "./typeinfo";
+import "std/string";
+
+pub struct Boundary { shape: string, symbol: string, fields: string[], words: i32, error: string }
+
+function failure(message: string): Boundary {
+  return Boundary { shape: "", symbol: "", fields: [], words: 0, error: message };
+}
+
+function integer(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeI32(n) = t {
+    return n.width == 32 && !n.unsigned && !n.is_char && !n.polymorphic;
+  }
+  return false;
+}
+
+function schema(m: physicalbody.Metadata, c: ssasem.Contract): semrecords.Record[] {
+  if (!selected.compatible(m, m, c.result, 0)) {
+    return [];
+  }
+  let found: semrecords.Record[] = [];
+  for record in m.records.list {
+    if (semtypes.equal(record.ty, c.result)) {
+      found = found.append(record);
+    }
+  }
+  return found;
+}
+
+function field_matches(field: semrecords.Field, parameter: typeinfo.Type, mode: i32): boolean {
+  return field.name != "" && integer(field.ty) && semtypes.equal(field.ty, parameter) && mode == 1;
+}
+
+function fields(record: semrecords.Record, c: ssasem.Contract): string[] {
+  if (record.fields.len() < 1 || record.fields.len() > 2 || record.fields.len() != c.params.len() || c.params.len() != c.modes.len()) {
+    return [];
+  }
+  let names: string[] = [];
+  let i = 0;
+  for field in record.fields {
+    if (!field_matches(field, c.params[i], c.modes[i])) {
+      return [];
+    }
+    for name in names {
+      if (name == field.name) {
+        return [];
+      }
+    }
+    names = names.append(field.name);
+    i = i + 1;
+  }
+  return names;
+}
+
+function shape_symbol(output: string, name: string): string {
+  let p = isa.constructor_program(output, "__fn_" + asmcore.sanitize_label(name));
+  if (p.error != "") {
+    return "";
+  }
+  let found = "";
+  for op in p.ops {
+    if (op.kind == 19) {
+      if (found != "") {
+        return "";
+      }
+      found = op.symbol;
+    }
+  }
+  return found;
+}
+
+function shape_bytes(output: string, symbol: string, shape: string): boolean {
+  let literal = text.readonly_ascii(output, symbol);
+  if (literal.error != "" || literal.bytes.len() != shape.len()) {
+    return false;
+  }
+  let i = 0;
+  for c in shape {
+    if (literal.bytes[i] != c) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// Returned records are data, never caller-supplied machine certificates. A
+// machine checker must invoke this on its own same complete output. Even an
+// unused LEA can bind here; proving its stored address is a separate obligation.
+pub function resolve(output: ssaprepare.Output, name: string): Boundary {
+  let binding = retained.resolve(output, name);
+  if (binding.error != "") {
+    return failure(binding.error);
+  }
+  let row = binding.rows[0];
+  if (row.context.rc_free_debug || row.context.sanitize || row.context.leak_check) {
+    return failure("unsupported constructor runtime mode");
+  }
+  let contracts = selected.contracts(row);
+  if (contracts.len() != 1) {
+    return failure("missing or ambiguous constructor ABI");
+  }
+  let records = schema(selected.metadata(row), contracts[0]);
+  if (records.len() != 1) {
+    return failure("missing or ambiguous ordinary constructor schema");
+  }
+  return bind_fields(output, name, row, records[0], contracts[0]);
+}
+
+function bind_fields(output: ssaprepare.Output, name: string, row: ssaprepare.Emitted, record: semrecords.Record, c: ssasem.Contract): Boundary {
+  let names = fields(record, c);
+  if (names.len() == 0) {
+    return failure("unsupported ordered i32 constructor fields");
+  }
+  let shape = semrecords.name_of(record.ty);
+  let refs: boolean[] = [];
+  for field in names {
+    refs = refs.append(false);
+  }
+  // Use the independently resolved schema and SAME formed graph directly;
+  // no cached record-name index, old lowering or broader scalar ABI is trusted.
+  let proof = origin.producer(row.body.formed.f, shape, refs);
+  if (!proof.proof.ok || proof.words != names.len() + 1) {
+    return failure("unproved same-graph constructor origin");
+  }
+  let symbol = shape_symbol(output.text, name);
+  if (symbol == "" || !shape_bytes(output.text, symbol, shape)) {
+    return failure("constructor shape declaration differs from selected schema");
+  }
+  return Boundary { shape: shape, symbol: symbol, fields: names, words: proof.words, error: "" };
+}

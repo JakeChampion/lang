@@ -1,0 +1,101 @@
+import "../asmcore";
+import "../asm_ir";
+import "../lexer";
+import "../parser";
+import "../semlower";
+import "../ssaprepare";
+import "../ssacredittext" as binding;
+import "../ssadecrementtext" as text;
+import "./ssastaticshapes" as shapes;
+import "./ssaconstructorbounds" as constructors;
+import "./ssaconstructormachines" as machines;
+import "std/string";
+
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("retained final-text controls failed: " + group);
+    exit(180);
+  }
+}
+
+function change(s: string, from: string, to: string): string {
+  let parts = s.split(from);
+  require(parts.len() > 1, "mutation present: " + from);
+  return parts.join(to);
+}
+
+function emit(): ssaprepare.Output {
+  let source = "struct Parent { left: i32, right: i32 } @noinline function parent(left: i32, right: i32): Parent { return Parent { left: left, right: right }; } function main(): i32 { return 0; }";
+  let m = parser.parse_module(lexer.tokenize(source));
+  require(!asmcore.refuse_parse_unknowns([m]) && !asmcore.refuse_decl_names([m]), "source parsed");
+  let g = semlower.program(semlower.driven(m, "x86-64-linux"));
+  require(g.ok, "source lowered");
+  let sw = asmcore.Switches { backtrace: false, sanitize: false, var_rows: false };
+  return asm_ir.emit_module_ir_unit_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, -1, g.cache, g.physical, semlower.runtime_lowering, 0 as usize, sw, true);
+}
+
+function check(output: ssaprepare.Output, ok: boolean, group: string): void {
+  let result = binding.resolve(output, "parent");
+  require(result.error == "" == ok, group + ": " + result.error);
+  require(if (ok) { result.rows.len() == 1 && result.lines.len() > 3 } else { result.rows.len() == 0 && result.lines.len() == 0 }, "result extent: " + group);
+}
+
+function boundaries(output: ssaprepare.Output, row: ssaprepare.Emitted): void {
+  for from in [".cfi_startproc", ".cfi_endproc", "__fn_parent:", "__fn_parent.r:"] {
+    check(ssaprepare.Output { ...output, text: change(output.text, from, "") }, false, "missing boundary: " + from);
+  }
+  for addition in [".cfi_startproc\n", ".align 8\n", ".data\n.text\n", "other_entry:\n", "__fn_parent.r:\n"] {
+    check(ssaprepare.Output { ...output, text: change(output.text, "__fn_parent.r:\n", "__fn_parent.r:\n" + addition) }, false, "interior boundary: " + addition);
+  }
+  check(ssaprepare.Output { ...output, text: change(output.text, ".cfi_endproc\n", ".cfi_endproc\nret\n") }, false, "trailing instructions outside frame");
+  check(ssaprepare.Output { ...output, bodies: [ssaprepare.Emitted { ...row, assembly: row.assembly + "other:\nret\n" }] }, false, "extra captured body");
+  check(ssaprepare.Output { ...output, bodies: [ssaprepare.Emitted { ...row, assembly: "" }] }, false, "missing capture");
+}
+
+function namespace(output: ssaprepare.Output, row: ssaprepare.Emitted): void {
+  for suffix in [".set alias, __fn_parent\n", "alias = __fn_parent\n", ".intel_syntax noprefix\n", ".include \"other.s\"\n", ".text\n__fn_parent:\nret\n", ".data\n__fn_parent: .quad 0\n", ".data\n.S0: .quad 0\n", ".data\nunrelated: .quad 0\nunrelated: .quad 0\n"] {
+    check(ssaprepare.Output { ...output, text: output.text + suffix }, false, "complete namespace: " + suffix);
+  }
+  check(ssaprepare.Output { ...output, bodies: output.bodies.append(row) }, false, "duplicate row");
+  check(ssaprepare.Output { ...output, bodies: [] }, false, "missing row");
+  let contexts: ssaprepare.Context[] = [ssaprepare.Context { ...row.context, architecture: "arm64" }, ssaprepare.Context { ...row.context, records: true }];
+  for context in contexts {
+    check(ssaprepare.Output { ...output, bodies: [ssaprepare.Emitted { ...row, context: context }] }, false, "unsupported context");
+  }
+}
+
+function correspondence(output: ssaprepare.Output, row: ssaprepare.Emitted): void {
+  let from = "movq $3, %rdi";
+  let to = "unknown_instruction";
+  check(ssaprepare.Output { ...output, text: change(output.text, from, to) }, false, "changed final instructions");
+  let changed = ssaprepare.Emitted { ...row, assembly: change(row.assembly, from, to) };
+  check(ssaprepare.Output { ...output, bodies: [changed] }, false, "changed captured instructions");
+  // Agreement is explicitly not an instruction, allocator or ownership proof.
+  // The same unknown operation in both texts remains extractable unproved data.
+  check(ssaprepare.Output { text: change(output.text, from, to), bodies: [changed] }, true, "coherent text is not effects");
+  check(ssaprepare.Output { ...output, text: change(output.text, "\n", "\r\n\t") }, true, "CRLF and whitespace");
+  check(ssaprepare.Output { ...output, text: "# ordinary comment\n" + output.text }, true, "ordinary comment");
+  check(ssaprepare.Output { ...output, bodies: [row] }, true, "unselected function remains outside binding");
+  let selected = text.native_body(output.text, "__fn_parent");
+  require(selected.error == "" && selected.register_entry > 1, "both entries selected");
+}
+
+pub function run(): void {
+  let output = emit();
+  check(output, true, "actual constructor with static shape pool");
+  shapes.run(output);
+  constructors.run(output);
+  machines.run();
+  let found = binding.resolve(output, "parent");
+  let row = found.rows[0];
+  require(binding.resolve(output, "absent").error != "", "missing name");
+  boundaries(output, row);
+  namespace(output, row);
+  correspondence(output, row);
+  // New declaration support must not broaden the old runtime/storage APIs.
+  let minimal = ".text\n__fn___fern_arr_dec:\nmovq 8(%rsp), %rax\n__fn___fern_arr_dec.r:\nret\n";
+  require(text.select(minimal, "__fn___fern_arr_dec").error == "", "old selector control");
+  for data in [".data\n.quad -1\n", ".data\n.quad .S0\n"] {
+    require(text.select(minimal + data, "__fn___fern_arr_dec").error != "", "old declaration policy retained");
+  }
+}

@@ -1,0 +1,395 @@
+// Conditional machine effects of selected normal-x86 one/two-i32 constructors.
+// Allocator and linked shape guarantees remain explicit unproved premises.
+import "./asmcore";
+import "./ssacapacityisa" as isa;
+import "./ssaarrayboxmachine" as helper;
+import "./ssaconstructorbound" as boundary;
+import "./ssaprepare";
+
+// Half kinds: numeric, original register, stack pointer, fresh base, outer
+// return, initial stack, initial allocation, shape address, helper successor,
+// parameter carrier, allocator successor, opaque allocator scratch.
+struct Half { kind: i32, identity: i64, high: boolean }
+
+struct Word { low: Half, high: Half }
+
+struct State { regs: Word[], memory: Half[], writes: i32[], calls: i32, ok: boolean }
+
+function half(kind: i32, identity: i64, high: boolean): Half {
+  return Half { kind: kind, identity: identity, high: high };
+}
+
+function token(kind: i32, identity: i64): Word {
+  return Word { low: half(kind, identity, false), high: half(kind, identity, true) };
+}
+
+function number(n: i64): Word {
+  let low = n % 4294967296;
+  return Word { low: half(0, if (low < 0) { low + 4294967296 } else { low }, false), high: half(0, if (n < 0) { 4294967295 } else { n / 4294967296 }, false) };
+}
+
+function same(a: Half, b: Half): boolean {
+  return a.kind == b.kind && a.identity == b.identity && a.high == b.high;
+}
+
+function equal(a: Word, b: Word): boolean {
+  return same(a.low, b.low) && same(a.high, b.high);
+}
+
+function narrowed(w: Word, width: i32): Word {
+  return if (width == 32) { Word { ...w, high: number(0).high } } else { w };
+}
+
+function initial_register(capacity: i32, register_entry: boolean, i: i32): Word {
+  if (register_entry && i == 0) {
+    return token(9, 0);
+  }
+  if (register_entry && i == 6 && capacity == 3) {
+    return token(9, 1);
+  }
+  return if (i == 4) { token(2, 0) } else { token(1, i as i64) };
+}
+
+function initial_word(capacity: i32, register_entry: boolean, i: i32): Word {
+  if (i == 16 || i == 17) {
+    return token(4, 0);
+  }
+  if (!register_entry && i >= 18 && i < 18 + (capacity - 1) * 2) {
+    return token(9, ((i - 18) / 2) as i64);
+  }
+  return if (i < 22) { token(5, (i / 2) as i64) } else { token(6, ((i - 22) / 2) as i64) };
+}
+
+function initial(capacity: i32, register_entry: boolean): State {
+  let regs: Word[] = [];
+  let memory: Half[] = [];
+  let writes: i32[] = [];
+  let i = 0;
+  while (i < 16) {
+    regs = regs.append(initial_register(capacity, register_entry, i));
+    i = i + 1;
+  }
+  i = 0;
+  while (i < 22 + (capacity + 3) * 2) {
+    let w = initial_word(capacity, register_entry, i);
+    memory = memory.append(if (i % 2 == 0) { w.low } else { w.high });
+    writes = writes.append(0);
+    i = i + 1;
+  }
+  return State { regs: regs, memory: memory, writes: writes, calls: 0, ok: true };
+}
+
+function write(s: State, reg: i32, w: Word): State {
+  return State { ...s, regs: s.regs.with(reg, w) };
+}
+
+function pointer(w: Word): boolean {
+  return (w.low.kind == 2 || w.low.kind == 3) && equal(w, token(w.low.kind, w.low.identity));
+}
+
+function unsigned(w: Word): boolean {
+  return w.low.kind == 0 && same(w.high, number(0).high);
+}
+
+function displaced(w: Word, offset: i64): Word {
+  return token(w.low.kind, w.low.identity + offset);
+}
+
+function add(s: State, op: isa.Op): State {
+  let w = s.regs[op.destination];
+  let delta = if (op.kind == 9) { -(op.immediate as i64) } else { op.immediate as i64 };
+  if (op.source >= 0) {
+    return State { ...s, ok: false };
+  }
+  if (pointer(w) && op.width == 64 && delta >= -64 && delta <= 64) {
+    let next = w.low.identity + delta;
+    return if (next >= -64 && next <= 64) { write(s, op.destination, displaced(w, delta)) } else { State { ...s, ok: false } };
+  }
+  return numeric_add(s, op.destination, w, delta);
+}
+
+function numeric_add(s: State, reg: i32, w: Word, delta: i64): State {
+  if (unsigned(w)) {
+    let n = w.low.identity + delta;
+    if (n >= 0 && n <= 4294967295) {
+      return write(s, reg, number(n));
+    }
+  }
+  return State { ...s, ok: false };
+}
+
+function cell(s: State, base: Word, offset: i32, width: i32): i32 {
+  if (!pointer(base) || offset < -64 || offset > 64) {
+    return -1;
+  }
+  let at = base.low.identity + offset as i64;
+  let bytes = width / 8;
+  if (at % 4 != 0) {
+    return -1;
+  }
+  return cell_extent(s, base.low.kind, at, bytes);
+}
+
+function cell_extent(s: State, kind: i32, at: i64, bytes: i32): i32 {
+  if (kind == 2 && at >= -64 && at + bytes <= 24) {
+    return ((at + 64) / 4) as i32;
+  }
+  if (kind == 3 && s.calls == 1 && at >= 0 && at + bytes <= ((s.memory.len() - 22) * 4) as i64) {
+    return 22 + (at / 4) as i32;
+  }
+  return -1;
+}
+
+function writable(s: State, at: i32): boolean {
+  // Constructor writes only scratch below S and the selected shape/fields.
+  // The last allocated word, capacity and RC are never writable here.
+  return at >= 0 && at < 16 || s.calls == 1 && at >= 26 && at < s.memory.len() - 2;
+}
+
+function store_at(s: State, at: i32, width: i32, w: Word): State {
+  if (!writable(s, at)) {
+    return State { ...s, ok: false };
+  }
+  let count = width / 32;
+  let i = 0;
+  let memory = s.memory;
+  let writes = s.writes;
+  while (i < count) {
+    let pos = at + i;
+    if (!writable(s, pos) || pos >= 26 && writes[pos] != 0) {
+      return State { ...s, ok: false };
+    }
+    memory = memory.with(pos, if (i == 0) { w.low } else { w.high });
+    writes = writes.with(pos, writes[pos] + 1);
+    i = i + 1;
+  }
+  return State { ...s, memory: memory, writes: writes };
+}
+
+function load_at(s: State, at: i32, width: i32, reg: i32): State {
+  if (at < 0 || s.memory[at].kind == 11 || width == 64 && s.memory[at + 1].kind == 11) {
+    return State { ...s, ok: false };
+  }
+  return write(s, reg, Word { low: s.memory[at], high: if (width == 64) { s.memory[at + 1] } else { number(0).high } });
+}
+
+function memory_step(s: State, op: isa.Op): State {
+  if (op.index >= 0) {
+    return State { ...s, ok: false };
+  }
+  let at = cell(s, s.regs[op.base], op.offset, op.width);
+  if (op.kind == 3) {
+    return load_at(s, at, op.width, op.destination);
+  }
+  let w = if (op.kind == 22) { number(op.immediate as i64) } else { s.regs[op.source] };
+  return store_at(s, at, op.width, w);
+}
+
+function stack_step(s: State, op: isa.Op): State {
+  let sp = s.regs[4];
+  if (!pointer(sp) || sp.low.kind != 2) {
+    return State { ...s, ok: false };
+  }
+  if (op.kind == 6) {
+    let next = displaced(sp, -8);
+    let stored = store_at(s, cell(s, next, 0, 64), 64, s.regs[op.source]);
+    return write(stored, 4, next);
+  }
+  let advanced = write(s, 4, displaced(sp, 8));
+  return load_at(advanced, cell(s, sp, 0, 64), 64, op.destination);
+}
+
+function allocation(s: State, capacity: i32, pc: i32, successor: i32, op: isa.Op): State {
+  if (op.symbol != "__fern_arr_box" || s.calls != 0 || !equal(s.regs[7], number(capacity as i64))) {
+    return State { ...s, ok: false };
+  }
+  let sp = s.regs[4];
+  if (!pointer(sp) || sp.low.kind != 2 || sp.low.identity < -40 || sp.low.identity > 0 || sp.low.identity % 8 != 0) {
+    return State { ...s, ok: false };
+  }
+  // All addresses derive from the actual current SP. The helper's own proof
+  // derives request8*(C+3); its allocator normal-return contract is a premise.
+  let called = store_at(s, cell(s, sp, -8, 64), 64, token(8, (pc + 1) as i64));
+  called = store_at(called, cell(called, sp, -16, 64), 64, number(capacity as i64));
+  called = store_at(called, cell(called, sp, -24, 64), 64, token(10, successor as i64));
+  return write(State { ...called, memory: helper_memory(called.memory, sp, capacity), calls: 1 }, 0, token(3, 16));
+}
+
+function helper_memory(memory: Half[], sp: Word, capacity: i32): Half[] {
+  let i = 0;
+  while (i < (sp.low.identity + 40) as i32 / 4) {
+    memory = memory.with(i, half(11, i as i64, false));
+    i = i + 1;
+  }
+  i = 0;
+  while (i < 6) {
+    let w = number(if (i == 2 || i == 3) { 1 } else { capacity as i64 });
+    memory = memory.with(22 + i, if (i % 2 == 0) { w.low } else { w.high });
+    i = i + 1;
+  }
+  return memory;
+}
+
+function lea(s: State, op: isa.Op): State {
+  let w = s.regs[op.base];
+  if (op.index >= 0 || !pointer(w) || op.offset < -64 || op.offset > 64) {
+    return State { ...s, ok: false };
+  }
+  let next = w.low.identity + op.offset as i64;
+  return if (next >= -64 && next <= 64) { write(s, op.destination, displaced(w, op.offset as i64)) } else { State { ...s, ok: false } };
+}
+
+function simple(s: State, op: isa.Op): State {
+  if (op.kind == 1 || op.kind == 31) {
+    return s;
+  }
+  if (op.kind == 2) {
+    return write(s, op.destination, narrowed(s.regs[op.source], op.width));
+  }
+  if (op.kind == 5) {
+    return write(s, op.destination, narrowed(number(op.immediate as i64), op.width));
+  }
+  if (op.kind == 6 || op.kind == 7) {
+    return stack_step(s, op);
+  }
+  return State { ...s, ok: false };
+}
+
+function step(s: State, capacity: i32, symbol: string, successor: i32, pc: i32, op: isa.Op): State {
+  if (op.kind == 3 || op.kind == 4 || op.kind == 22) {
+    return memory_step(s, op);
+  }
+  if (op.kind == 9 || op.kind == 10) {
+    return add(s, op);
+  }
+  if (op.kind == 15) {
+    return lea(s, op);
+  }
+  if (op.kind == 19) {
+    return if (op.symbol == symbol) { write(s, op.destination, token(7, 0)) } else { State { ...s, ok: false } };
+  }
+  return if (op.kind == 25) { allocation(s, capacity, pc, successor, op) } else { simple(s, op) };
+}
+
+function expected_memory(original: State, capacity: i32, i: i32): Half {
+  if (i < 22 || i >= original.memory.len() - 2) {
+    return original.memory[i];
+  }
+  let w = number(if (i < 24) { capacity as i64 } else { 1 });
+  if (i >= 26) {
+    w = if (i < 28) { token(7, 0) } else { token(9, ((i - 28) / 2) as i64) };
+  }
+  return if (i % 2 == 0) { w.low } else { w.high };
+}
+
+function finished(s: State, capacity: i32, register_entry: boolean): boolean {
+  if (s.calls != 1 || !s.ok) {
+    return false;
+  }
+  let original = initial(capacity, register_entry);
+  let i = 0;
+  while (i < 16) {
+    let expected = original.regs[i];
+    if (i == 0) {
+      expected = token(3, 16);
+    }
+    if (i == 6) {
+      expected = token(7, 0);
+    }
+    if (i == 7) {
+      expected = number(capacity as i64);
+    }
+    if (!equal(s.regs[i], expected)) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return finished_memory(s, original, capacity);
+}
+
+function finished_memory(s: State, original: State, capacity: i32): boolean {
+  // Scratch below S may change, including opaque lower allocator scratch.
+  // All outer return/argument cells and allocation cells have exact outcomes.
+  let i = 16;
+  while (i < s.memory.len()) {
+    if (!same(s.memory[i], expected_memory(original, capacity, i))) {
+      return false;
+    }
+    if (i >= 26 && i < s.memory.len() - 2 && s.writes[i] != 1) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function path(p: isa.ArrayProgram, capacity: i32, symbol: string, successor: i32, register_entry: boolean): boolean {
+  let s = initial(capacity, register_entry);
+  let visited: boolean[] = [];
+  for op in p.ops {
+    visited = visited.append(false);
+  }
+  let pc = if (register_entry) { p.register_entry } else { 0 };
+  while (pc >= 0 && pc < p.ops.len()) {
+    if (visited[pc]) {
+      return false;
+    }
+    visited = visited.with(pc, true);
+    let op = p.ops[pc];
+    if (op.kind == 18) {
+      return finished(s, capacity, register_entry);
+    }
+    if (op.kind == 17) {
+      if (op.condition != "jmp") {
+        return false;
+      }
+      pc = op.target;
+    } else {
+      s = step(s, capacity, symbol, successor, pc, op);
+      if (!s.ok) {
+        return false;
+      }
+      pc = pc + 1;
+    }
+  }
+  return false;
+}
+
+function allocator_successor(output: string): i32 {
+  let p = isa.array_box_program(output);
+  if (p.error != "") {
+    return -1;
+  }
+  let successor = -1;
+  let i = 0;
+  for op in p.ops {
+    if (op.kind == 25) {
+      if (successor >= 0 || op.symbol != "__fern_alloc") {
+        return -1;
+      }
+      successor = i + 1;
+    }
+    i = i + 1;
+  }
+  return successor;
+}
+
+// Conditional normal-return implication, never a production certificate.
+// Canonical aligned writable stack S-64..S+23 is disjoint from the fresh
+// 8*(C+3)-byte allocation. Allocator success, freshness, alignment, permissions,
+// register/return preservation and symbolic shape relocation/identity are
+// UNPROVED premises. Lower allocator scratch is opaque. Full arbitrary64-bit
+// parameter carriers are preserved; selected i32 does not justify narrowing.
+// Both entries derive AX=B+16, SI=shape, DI=C, other original registers,
+// capacityC/RC1/shape/ordered fields and untouched extra word. The original
+// return and arguments survive, SP=S at RET then advances8. Scratch below S,
+// flags, unwind, terminal paths and other targets are not certified.
+pub function check(output: ssaprepare.Output, name: string): boolean {
+  let bound = boundary.resolve(output, name);
+  if (bound.error != "" || !helper.check(output.text)) {
+    return false;
+  }
+  let p = isa.constructor_program(output.text, "__fn_" + asmcore.sanitize_label(name));
+  let successor = allocator_successor(output.text);
+  return p.error == "" && successor >= 0 && path(p, bound.words, bound.symbol, successor, false) && path(p, bound.words, bound.symbol, successor, true);
+}

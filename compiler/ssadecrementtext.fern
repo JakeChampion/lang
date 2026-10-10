@@ -6,6 +6,9 @@ import "std/string";
 
 pub struct Body { lines: string[], register_entry: i32, error: string }
 
+// Declaration bytes only, not linked contents, permissions or shape identity.
+pub struct Literal { bytes: u8[], error: string }
+
 // Section identities: text=1, data=2, BSS=3, read-only data=4.
 struct Scan { lines: string[], sections: i32[], error: string }
 
@@ -183,7 +186,32 @@ function raw_line(raw: string): boolean {
   return true;
 }
 
+// Retained native functions may refer to the ordinary static shape pool.
+// These tokens identify declarations only: they grant no writable extent,
+// relocation, linked-address or shape-content permission.
+function native_data(line: string, section: i32): boolean {
+  if (section < 2 || word(line) != ".quad") {
+    return false;
+  }
+  let arg = util.trim(slice_unchecked(line, 5, line.len()) + "");
+  if (symbol(arg)) {
+    return true;
+  }
+  if (arg.len() > 1 && arg[0] == b'-') {
+    return decimal(slice_unchecked(arg, 1, arg.len()) + "");
+  }
+  return false;
+}
+
 function scan(text: string): Scan {
+  return scan_mode(text, false);
+}
+
+function scan_directive(tail: string, section: i32, native: boolean): i32 {
+  return if (native && native_data(tail, section)) { section } else { directive(tail, section) };
+}
+
+function scan_mode(text: string, native: boolean): Scan {
   let lines: string[] = [];
   let sections: i32[] = [];
   let section = 0;
@@ -201,7 +229,7 @@ function scan(text: string): Scan {
       }
       let here = section;
       if (util.str_has_prefix(tail, ".")) {
-        section = directive(tail, section);
+        section = scan_directive(tail, section, native);
         if (section < 0) {
           return Scan { lines: [], sections: [], error: "unsupported decrement assembly directive: " + tail };
         }
@@ -458,4 +486,192 @@ pub function dependency(text: string, entry: string): Body {
   }
   // No second nonlocal entry is part of a dependency body.
   return body(s, ix, start, -1, "");
+}
+
+// Fixed normal array-box boundary. Native static pools are declaration data;
+// this does not grant allocator linkage, effects or permissions. Keep the
+// older decrement dependency selector's syntax and entry set unchanged.
+pub function array_box(text: string): Body {
+  let s = scan_mode(text, true);
+  if (s.error != "") {
+    return failure(s.error);
+  }
+  let ix = definition_index(s.lines);
+  let start = names.unique_position(ix, "__fern_arr_box");
+  if (ix.duplicate >= 0 || start < 0 || !exact_entry(s, start, "__fern_arr_box")) {
+    return failure("missing or ambiguous array-box definition");
+  }
+  return body(s, ix, start, -1, "");
+}
+
+function retained_line_error(line: string, name: string, section: i32, position: i32, ended: boolean): string {
+  if (ended || section != 1 || name != "" && line != name + ":") {
+    return "invalid retained function extent";
+  }
+  if (name == "" && util.str_has_prefix(line, ".")) {
+    return retained_directive_error(line, position);
+  }
+  return "";
+}
+
+function retained_directive_error(line: string, position: i32): string {
+  let op = word(line);
+  let arg = util.trim(slice_unchecked(line, op.len(), line.len()) + "");
+  if (!metadata(line, op, arg, 1) || !util.str_has_prefix(line, ".cfi_")) {
+    return "unsupported retained function directive";
+  }
+  if (line == ".cfi_startproc" && position != 1) {
+    return "nested retained function frame";
+  }
+  return "";
+}
+
+function retained_lines(s: Scan, start: i32, entry: string): Body {
+  let code: string[] = [s.lines[start]];
+  let reg = -1;
+  let ended = false;
+  let at = start + 1;
+  while (at < s.lines.len()) {
+    let line = s.lines[at];
+    let name = definition(line);
+    if (ends_body(line, name, entry) || util.str_has_prefix(line, ".globl ")) {
+      break;
+    }
+    let error = retained_line_error(line, name, s.sections[at], code.len(), ended);
+    if (error != "") {
+      return failure(error);
+    }
+    if (name == entry + ".r") {
+      reg = code.len();
+    }
+    ended = line == ".cfi_endproc";
+    code = code.append(line);
+    at = at + 1;
+  }
+  if (!ended || code.len() < 3 || code[1] != ".cfi_startproc") {
+    return failure("missing retained function frame");
+  }
+  return Body { lines: code, register_entry: reg, error: "" };
+}
+
+// Extract an ordinary x86 text-mode retained function from the complete unit.
+// Unlike the decrement APIs, this declaration-only path admits signed/symbolic
+// quad data and bare static-pool labels. It never invokes writable_declarations
+// or establishes storage, runtime, instruction, unwind or ownership effects.
+// CFI bounds are checked in addition to the complete unique symbol namespace.
+pub function native_body(text: string, entry: string): Body {
+  if (!util.str_has_prefix(entry, "__fn_") || entry.len() <= 5 || !symbol(entry)) {
+    return failure("unsupported retained function name");
+  }
+  let s = scan_mode(text, true);
+  if (s.error != "") {
+    return failure(s.error);
+  }
+  let ix = definition_index(s.lines);
+  let start = names.unique_position(ix, entry);
+  if (ix.duplicate >= 0 || start < 0 || !exact_entry(s, start, entry)) {
+    return failure("missing or ambiguous retained function definition");
+  }
+  return retained_lines(s, start, entry);
+}
+
+function no_literal(message: string): Literal {
+  return Literal { bytes: [], error: message };
+}
+
+function escaped_byte(c: u8): i32 {
+  if (c == b'"' || c == b'\\') {
+    return c as i32;
+  }
+  if (c == b'n') {
+    return 10;
+  }
+  if (c == b'r') {
+    return 13;
+  }
+  if (c == b't') {
+    return 9;
+  }
+  return -1;
+}
+
+function octal_byte(arg: string, at: i32): i32 {
+  if (at > arg.len() - 4) {
+    return -1;
+  }
+  let value = 0;
+  for offset in [0, 1, 2] {
+    let c = arg[at + offset];
+    if (c < b'0' || c > b'7') {
+      return -1;
+    }
+    value = value * 8 + (c as i32 - 48);
+  }
+  return if (value <= 255) { value } else { -1 };
+}
+
+function ascii_bytes(arg: string): Literal {
+  if (!quoted_data(arg)) {
+    return no_literal("malformed ASCII declaration");
+  }
+  let bytes: u8[] = [];
+  let at = 1;
+  while (at < arg.len() - 1) {
+    let c = arg[at];
+    if (c == b'\\') {
+      at = at + 1;
+      let value = escaped_byte(arg[at]);
+      if (value < 0) {
+        value = octal_byte(arg, at);
+        at = at + 2;
+      }
+      if (value < 0) {
+        return no_literal("unsupported ASCII escape");
+      }
+      bytes = bytes.append(value as u8);
+    } else {
+      if (c < 32 || c > 126) {
+        return no_literal("unsupported literal ASCII byte");
+      }
+      bytes = bytes.append(c);
+    }
+    at = at + 1;
+  }
+  return Literal { bytes: bytes, error: "" };
+}
+
+function literal_at(s: Scan, start: i32, entry: string): Literal {
+  let tail = util.trim(slice_unchecked(s.lines[start], entry.len() + 1, s.lines[start].len()) + "");
+  if (tail == "") {
+    let next = start + 1;
+    if (next >= s.lines.len() || s.sections[next] != 4) {
+      return no_literal("missing contiguous ASCII declaration");
+    }
+    tail = s.lines[next];
+  }
+  let op = word(tail);
+  if (op != ".ascii") {
+    return no_literal("unsupported read-only literal declaration");
+  }
+  return ascii_bytes(util.trim(slice_unchecked(tail, op.len(), tail.len()) + ""));
+}
+
+// Resolve ONE symbol in the same closed complete-output namespace. Both inline
+// and bare labels may precede a single contiguous .ascii declaration in rodata.
+// No assembler, linker, relocation, interning or runtime identity is proved.
+// Weak module shapes and other escape dialects remain outside this grammar.
+pub function readonly_ascii(text: string, entry: string): Literal {
+  if (!symbol(entry)) {
+    return no_literal("unsupported literal symbol");
+  }
+  let s = scan_mode(text, true);
+  if (s.error != "") {
+    return no_literal(s.error);
+  }
+  let ix = definition_index(s.lines);
+  let start = names.unique_position(ix, entry);
+  if (ix.duplicate >= 0 || start < 0 || s.sections[start] != 4) {
+    return no_literal("missing or ambiguous read-only literal");
+  }
+  return literal_at(s, start, entry);
 }

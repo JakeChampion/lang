@@ -46,6 +46,9 @@ import "./ssadecrementguardcases" as decrementguardcases;
 import "./ssareleasestorage" as releasestorage;
 import "./ssaarrayreleases" as arrayreleases;
 import "./ssastringreleases" as stringreleases;
+import "./ssaretainedtext" as retainedtext;
+import "./ssaconstructorisas" as constructorisas;
+import "./ssaarrayboxmachines" as arrayboxmachines;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -142,6 +145,7 @@ function settled(g: ircore.Gated, arm: boolean): void {
     releasestorage.run(on.text);
     arrayreleases.run(on.text);
     stringreleases.run(on.text);
+    arrayboxmachines.run(on.text);
     largepushmachines.run(on.text);
   }
   sites.output(on);
@@ -230,6 +234,8 @@ function debug_body(g: ircore.Gated, arm: boolean, var_rows: boolean): void {
 }
 
 function main(): i32 {
+  constructorisas.run();
+  retainedtext.run();
   let mod = parser.parse_module(lexer.tokenize("@noinline function first(): i32 { return 7; } @noinline function second(): i32 { return first(); } function main(): i32 { return second(); }"));
   if (asmcore.refuse_parse_unknowns([mod]) || asmcore.refuse_decl_names([mod])) {
     return 1;

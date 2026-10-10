@@ -1,0 +1,339 @@
+// Conditional normal-x86 array-box effects for ordinary scalar record sizes.
+// The allocator contract below is a premise, not an implemented allocator proof.
+import "./ssacapacityisa" as isa;
+
+// Half kinds: numeric, original register, stack pointer, fresh base, outer
+// return, initial stack, initial allocation, allocator DI, inner successor.
+struct Half { kind: i32, identity: i64, high: boolean }
+
+struct Word { low: Half, high: Half }
+
+struct State { regs: Word[], memory: Half[], writes: i32[], calls: i32, successor: i32, ok: boolean }
+
+function half(kind: i32, identity: i64, high: boolean): Half {
+  return Half { kind: kind, identity: identity, high: high };
+}
+
+function token(kind: i32, identity: i64): Word {
+  return Word { low: half(kind, identity, false), high: half(kind, identity, true) };
+}
+
+function number(n: i64): Word {
+  let low = n % 4294967296;
+  return Word { low: half(0, if (low < 0) { low + 4294967296 } else { low }, false), high: half(0, if (n < 0) { 4294967295 } else { n / 4294967296 }, false) };
+}
+
+function same(a: Half, b: Half): boolean {
+  return a.kind == b.kind && a.identity == b.identity && a.high == b.high;
+}
+
+function equal(a: Word, b: Word): boolean {
+  return same(a.low, b.low) && same(a.high, b.high);
+}
+
+function narrowed(w: Word, width: i32): Word {
+  return if (width == 32) { Word { ...w, high: number(0).high } } else { w };
+}
+
+function initial(capacity: i32): State {
+  let regs: Word[] = [];
+  let memory: Half[] = [];
+  let writes: i32[] = [];
+  let i = 0;
+  while (i < 16) {
+    regs = regs.append(if (i == 4) { token(2, 0) } else { if (i == 7) { number(capacity as i64) } else { token(1, i as i64) } });
+    i = i + 1;
+  }
+  i = 0;
+  while (i < 8 + (capacity + 3) * 2) {
+    let w = if (i < 8) { token(5, (i / 2) as i64) } else { token(6, ((i - 8) / 2) as i64) };
+    if (i == 4 || i == 5) {
+      w = token(4, 0);
+    }
+    memory = memory.append(if (i % 2 == 0) { w.low } else { w.high });
+    writes = writes.append(0);
+    i = i + 1;
+  }
+  return State { regs: regs, memory: memory, writes: writes, calls: 0, successor: -1, ok: true };
+}
+
+function write(s: State, reg: i32, w: Word): State {
+  return State { ...s, regs: s.regs.with(reg, w) };
+}
+
+function pointer(w: Word): boolean {
+  return (w.low.kind == 2 || w.low.kind == 3) && equal(w, token(w.low.kind, w.low.identity));
+}
+
+function unsigned(w: Word): boolean {
+  return w.low.kind == 0 && same(w.high, number(0).high);
+}
+
+function displaced(w: Word, offset: i64): Word {
+  return token(w.low.kind, w.low.identity + offset);
+}
+
+function add(s: State, op: isa.Op): State {
+  let w = s.regs[op.destination];
+  let delta = if (op.kind == 9) { -(op.immediate as i64) } else { op.immediate as i64 };
+  if (op.source >= 0) {
+    return State { ...s, ok: false };
+  }
+  if (pointer(w) && op.width == 64 && delta >= -64 && delta <= 64) {
+    let next = w.low.identity + delta;
+    return if (next >= -64 && next <= 64) { write(s, op.destination, displaced(w, delta)) } else { State { ...s, ok: false } };
+  }
+  return numeric_add(s, op.destination, w, delta);
+}
+
+function numeric_add(s: State, reg: i32, w: Word, delta: i64): State {
+  if (unsigned(w)) {
+    let n = w.low.identity + delta;
+    if (n >= 0 && n <= 4294967295) {
+      return write(s, reg, number(n));
+    }
+  }
+  return State { ...s, ok: false };
+}
+
+function shift(s: State, op: isa.Op): State {
+  let w = s.regs[op.destination];
+  let count = op.immediate % op.width;
+  if (count == 0) {
+    return write(s, op.destination, narrowed(w, op.width));
+  }
+  if (!unsigned(w)) {
+    return State { ...s, ok: false };
+  }
+  let n = w.low.identity;
+  while (count > 0) {
+    if (op.kind == 20 && n > 2147483647) {
+      return State { ...s, ok: false };
+    }
+    n = if (op.kind == 20) { n * 2 } else { n / 2 };
+    count = count - 1;
+  }
+  return write(s, op.destination, number(n));
+}
+
+function cell(s: State, base: Word, offset: i32, width: i32): i32 {
+  if (!pointer(base) || offset < -64 || offset > 64) {
+    return -1;
+  }
+  let at = base.low.identity + offset as i64;
+  let bytes = width / 8;
+  if (at % 4 != 0) {
+    return -1;
+  }
+  return cell_extent(s, base.low.kind, at, bytes);
+}
+
+function cell_extent(s: State, kind: i32, at: i64, bytes: i32): i32 {
+  if (kind == 2 && at >= -16 && at + bytes <= 16) {
+    return ((at + 16) / 4) as i32;
+  }
+  if (kind == 3 && s.calls == 1 && at >= 0 && at + bytes <= ((s.memory.len() - 8) * 4) as i64) {
+    return 8 + (at / 4) as i32;
+  }
+  return -1;
+}
+
+function writable(at: i32): boolean {
+  return at >= 0 && at < 4 || at >= 8 && at < 14;
+}
+
+function store_at(s: State, at: i32, width: i32, w: Word): State {
+  if (!writable(at)) {
+    return State { ...s, ok: false };
+  }
+  let count = width / 32;
+  let i = 0;
+  let memory = s.memory;
+  let writes = s.writes;
+  while (i < count) {
+    let pos = at + i;
+    if (!writable(pos) || pos >= 8 && writes[pos] != 0) {
+      return State { ...s, ok: false };
+    }
+    memory = memory.with(pos, if (i == 0) { w.low } else { w.high });
+    writes = writes.with(pos, writes[pos] + 1);
+    i = i + 1;
+  }
+  return State { ...s, memory: memory, writes: writes };
+}
+
+function load_at(s: State, at: i32, width: i32, reg: i32): State {
+  if (at < 0) {
+    return State { ...s, ok: false };
+  }
+  return write(s, reg, Word { low: s.memory[at], high: if (width == 64) { s.memory[at + 1] } else { number(0).high } });
+}
+
+function memory_step(s: State, op: isa.Op): State {
+  if (op.index >= 0) {
+    return State { ...s, ok: false };
+  }
+  let at = cell(s, s.regs[op.base], op.offset, op.width);
+  if (op.kind == 3) {
+    return load_at(s, at, op.width, op.destination);
+  }
+  let w = if (op.kind == 22) { number(op.immediate as i64) } else { s.regs[op.source] };
+  return store_at(s, at, op.width, w);
+}
+
+function stack_step(s: State, op: isa.Op): State {
+  let sp = s.regs[4];
+  if (!pointer(sp) || sp.low.kind != 2) {
+    return State { ...s, ok: false };
+  }
+  if (op.kind == 6) {
+    let next = displaced(sp, -8);
+    let stored = store_at(s, cell(s, next, 0, 64), 64, s.regs[op.source]);
+    return write(stored, 4, next);
+  }
+  let advanced = write(s, 4, displaced(sp, 8));
+  return load_at(advanced, cell(s, sp, 0, 64), 64, op.destination);
+}
+
+function allocation(s: State, capacity: i32, pc: i32, op: isa.Op): State {
+  if (op.symbol != "__fern_alloc" || s.calls != 0 || !equal(s.regs[4], token(2, -8))) {
+    return State { ...s, ok: false };
+  }
+  // Derive the request before invoking the conditional boundary. The six-word
+  // C=3 allocation is48 bytes, including the unused last record word.
+  if (!equal(s.regs[7], number((capacity as i64 + 3) * 8))) {
+    return State { ...s, ok: false };
+  }
+  let called = store_at(s, 0, 64, token(8, (pc + 1) as i64));
+  called = write(write(called, 0, token(3, 0)), 7, token(7, 0));
+  return State { ...called, calls: 1, successor: pc + 1 };
+}
+
+function lea(s: State, op: isa.Op): State {
+  let w = s.regs[op.base];
+  if (op.index >= 0 || !pointer(w) || op.offset < -64 || op.offset > 64) {
+    return State { ...s, ok: false };
+  }
+  let next = w.low.identity + op.offset as i64;
+  return if (next >= -64 && next <= 64) { write(s, op.destination, displaced(w, op.offset as i64)) } else { State { ...s, ok: false } };
+}
+
+function simple(s: State, op: isa.Op): State {
+  if (op.kind == 1) {
+    return s;
+  }
+  if (op.kind == 2) {
+    return write(s, op.destination, narrowed(s.regs[op.source], op.width));
+  }
+  if (op.kind == 5) {
+    return write(s, op.destination, narrowed(number(op.immediate as i64), op.width));
+  }
+  if (op.kind == 6 || op.kind == 7) {
+    return stack_step(s, op);
+  }
+  return State { ...s, ok: false };
+}
+
+function step(s: State, capacity: i32, pc: i32, op: isa.Op): State {
+  if (op.kind == 3 || op.kind == 4 || op.kind == 22) {
+    return memory_step(s, op);
+  }
+  if (op.kind == 9 || op.kind == 10) {
+    return add(s, op);
+  }
+  if (op.kind == 20 || op.kind == 21) {
+    return shift(s, op);
+  }
+  if (op.kind == 15) {
+    return lea(s, op);
+  }
+  return if (op.kind == 25) { allocation(s, capacity, pc, op) } else { simple(s, op) };
+}
+
+function expected_memory(s: State, original: State, capacity: i32, i: i32): Half {
+  let w = if (i < 2) { token(8, s.successor as i64) } else { number(capacity as i64) };
+  if (i == 10 || i == 11) {
+    w = number(1);
+  }
+  if (i >= 4 && i < 8 || i >= 14) {
+    return original.memory[i];
+  }
+  return if (i % 2 == 0) { w.low } else { w.high };
+}
+
+function finished(s: State, capacity: i32): boolean {
+  if (s.calls != 1 || !s.ok) {
+    return false;
+  }
+  let original = initial(capacity);
+  let i = 0;
+  while (i < 16) {
+    let expected = if (i == 0) { token(3, 16) } else { original.regs[i] };
+    if (!equal(s.regs[i], expected)) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return finished_memory(s, original, capacity);
+}
+
+function finished_memory(s: State, original: State, capacity: i32): boolean {
+  let i = 0;
+  while (i < s.memory.len()) {
+    if (!same(s.memory[i], expected_memory(s, original, capacity, i))) {
+      return false;
+    }
+    if (i >= 8 && i < 14 && s.writes[i] != 1) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function path(p: isa.Program, capacity: i32): boolean {
+  let s = initial(capacity);
+  let visited: boolean[] = [];
+  for op in p.ops {
+    visited = visited.append(false);
+  }
+  let pc = 0;
+  while (pc >= 0 && pc < p.ops.len()) {
+    if (visited[pc]) {
+      return false;
+    }
+    visited = visited.with(pc, true);
+    let op = p.ops[pc];
+    if (op.kind == 18) {
+      return finished(s, capacity);
+    }
+    if (op.kind == 17) {
+      if (op.condition != "jmp") {
+        return false;
+      }
+      pc = op.target;
+    } else {
+      s = step(s, capacity, pc, op);
+      if (!s.ok) {
+        return false;
+      }
+      pc = pc + 1;
+    }
+  }
+  return false;
+}
+
+// Conditional implication ONLY, for C=2 and C=3. Incoming DI=C, canonical
+// aligned stack S-16..S+15, original return at S. The one allocator call must
+// return successfully with AX=B, a fresh aligned disjoint writable extent of
+// 8*(C+3) bytes, arbitrary DI, other GPRs preserved, and its return/higher stack
+// preserved. Allocator scratch below S-16 is unconstrained. These are UNPROVED
+// premises: no allocator implementation, linkage or caller credit is certified.
+// Derives AX=B+16, DI=C, other registers preserved, capacity/RC1/length headers,
+// untouched remaining allocation cells, C at S-8 and actual successor at S-16.
+// Normal RET consumes the original return at S and advances SP by8. No flag,
+// unwind, terminal, debug, other-capacity or ARM/WASI-runtime claim is made.
+pub function check(output: string): boolean {
+  let p = isa.array_box_program(output);
+  return p.error == "" && path(p, 2) && path(p, 3);
+}

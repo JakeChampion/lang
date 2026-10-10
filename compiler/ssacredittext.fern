@@ -1,0 +1,63 @@
+// Retained-row/final-text correspondence only. A matching row remains data;
+// neither its final SSA nor these instructions have their effects proved here.
+import "./asmcore";
+import "./ssacreditbound" as bound;
+import "./ssadecrementtext" as text;
+import "./ssaprepare";
+import "./ssaproofnames" as names;
+import "./util";
+import "std/string";
+
+pub struct Binding { rows: ssaprepare.Emitted[], lines: string[], error: string }
+
+function failure(message: string): Binding {
+  return Binding { rows: [], lines: [], error: message };
+}
+
+function normalized(fragment: string): string {
+  let lines: string[] = [];
+  for raw in fragment.split("\n") {
+    let line = util.trim(raw);
+    if (line != "" && !util.str_has_prefix(line, "#")) {
+      lines = lines.append(line);
+    }
+  }
+  return lines.join("\n");
+}
+
+function matches(fragment: string, actual: string[], entry: string): boolean {
+  let captured = text.native_body(".text\n" + fragment, entry);
+  return captured.error == "" && actual.join("\n") == captured.lines.join("\n") && normalized(fragment) == captured.lines.join("\n");
+}
+
+// This scope is ordinary x86 text-mode functions, with a closed complete-unit
+// syntax. Counted release entries retain bound.resolve's refusal. No relowering,
+// name-based old-body fallback, public success flag or linked permission.
+pub function resolve(output: ssaprepare.Output, name: string): Binding {
+  let labels: string[] = [];
+  for row in output.bodies {
+    if (row.label_name == "" || row.context.architecture != "x86-64" || row.context.records) {
+      return failure("unsupported retained text collection");
+    }
+    labels = labels.append(asmcore.sanitize_label(row.label_name));
+  }
+  if (names.index(labels).duplicate >= 0) {
+    return failure("ambiguous retained text collection");
+  }
+  let binding = bound.resolve(output.bodies, name, "x86-64");
+  if (binding.error != "") {
+    return failure(binding.error);
+  }
+  let row = binding.rows[0];
+  let entry = "__fn_" + asmcore.sanitize_label(name);
+  let actual = text.native_body(output.text, entry);
+  if (actual.error != "") {
+    return failure(actual.error);
+  }
+  // Independently parse the captured fragment under the same body grammar.
+  // Matching this fragment establishes correspondence, not semantic validity.
+  if (!matches(row.assembly, actual.lines, entry)) {
+    return failure("retained function text differs from final output");
+  }
+  return Binding { rows: binding.rows, lines: actual.lines, error: "" };
+}

@@ -1,0 +1,144 @@
+import "../asmcore";
+import "../asm_ir";
+import "../lexer";
+import "../parser";
+import "../semlower";
+import "../ssaprepare";
+import "../physicalbody";
+import "../semrecords";
+import "../ssasem";
+import "../ssa";
+import "../typeinfo";
+import "../ssaconstructorbound" as boundary;
+import "../ssacreditselected" as selected;
+import "../ssacredittext" as retained;
+import "std/string";
+
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("selected constructor boundary controls failed: " + group);
+    exit(180);
+  }
+}
+
+function check(output: ssaprepare.Output, ok: boolean, group: string): boundary.Boundary {
+  let b = boundary.resolve(output, "parent");
+  require(b.error == "" == ok, group + ": " + b.error);
+  if (!ok) {
+    require(b.shape == "" && b.symbol == "" && b.fields.len() == 0 && b.words == 0, "refused data empty");
+  }
+  return b;
+}
+
+function metadata(output: ssaprepare.Output, row: ssaprepare.Emitted, m: physicalbody.Metadata): ssaprepare.Output {
+  let s = row.body.selected;
+  let changed = physicalbody.Selected { ...s, producers: s.producers.with(s.origin.producer, m) };
+  return ssaprepare.Output { ...output, bodies: [ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: changed } }] };
+}
+
+function coherent(output: ssaprepare.Output, row: ssaprepare.Emitted, from: string, to: string): ssaprepare.Output {
+  require(output.text.contains(from) && row.assembly.contains(from), "coherent mutation present " + from);
+  let changed = ssaprepare.Emitted { ...row, assembly: row.assembly.split(from).join(to) };
+  return ssaprepare.Output { text: output.text.split(from).join(to), bodies: [changed] };
+}
+
+function declarations(output: ssaprepare.Output, row: ssaprepare.Emitted): void {
+  for literal in ["Other", "Paren", "Parents", "parent", "", "Paren\\000"] {
+    check(ssaprepare.Output { ...output, text: output.text.split(".ascii \"Parent\"").join(".ascii \"" + literal + "\"") }, false, "selected shape bytes " + literal);
+  }
+  check(ssaprepare.Output { ...output, text: output.text.split(".ascii \"Parent\"").join(".ascii \"\\120arent\"") }, true, "decoded byte equivalence");
+  let renamed = coherent(output, row, ".S0", ".chosen_shape");
+  require(check(renamed, true, "actual symbol rather than guessed pool index").symbol == ".chosen_shape", "derived symbol");
+  let lea = "leaq .S0(%rip), %rsi";
+  check(coherent(output, row, lea, ""), false, "missing symbol");
+  check(coherent(output, row, lea, lea + "\n" + lea), false, "ambiguous symbol use");
+  check(coherent(output, row, lea, "leaq absent(%rip), %rsi"), false, "missing declaration");
+  check(coherent(output, row, lea, "leaq .SB0(%rip), %rsi"), false, "descriptor is not shape bytes");
+  // This API deliberately does not prove reachability, effects or stored shape.
+  check(coherent(output, row, lea, "leaq .S0(%rip), %rcx"), true, "unused address remains boundary data");
+  check(coherent(output, row, "movq $3, %rdi", "unknown_instruction"), true, "not a machine certificate");
+  check(coherent(output, row, "movq %rsi, 0(%rax)", ""), true, "missing emitted store still requires machine proof");
+  check(ssaprepare.Output { ...output, text: output.text.split(lea).join("") }, false, "capture mismatch");
+}
+
+function schemas(output: ssaprepare.Output, row: ssaprepare.Emitted): void {
+  let m = selected.metadata(row);
+  let c = selected.contracts(row)[0];
+  let r = m.records.list[semrecords.find(m.records, c.result)];
+  let contract_sets: ssasem.Contract[][] = [[], [c, c], [ssasem.Contract { ...c, params: [] }], [ssasem.Contract { ...c, modes: [] }], [ssasem.Contract { ...c, modes: [3, 1] }]];
+  for cs in contract_sets {
+    check(metadata(output, row, physicalbody.Metadata { ...m, contracts: cs }), false, "contract uniqueness and arity");
+  }
+  let malformed = [semrecords.Record { ...r, fields: [] }, semrecords.Record { ...r, fields: [r.fields[0], r.fields[0]] }, semrecords.Record { ...r, fields: r.fields.with(0, semrecords.Field { ...r.fields[0], name: "" }) }, semrecords.Record { ...r, views: true }, semrecords.Record { ...r, nests_func: true }];
+  for record in malformed {
+    check(metadata(output, row, physicalbody.Metadata { ...m, records: semrecords.records_of([record]) }), false, "ordinary unique fields");
+  }
+  let record_sets: semrecords.Record[][] = [[], [r, r]];
+  for records in record_sets {
+    check(metadata(output, row, physicalbody.Metadata { ...m, records: semrecords.Records { ...m.records, list: records } }), false, "stale schema name index");
+  }
+  check(metadata(output, row, physicalbody.Metadata { ...m, finalizers: [ssasem.Finalizer { receiver: "Parent", symbol: "drop" }] }), false, "finalizer");
+  let swapped = semrecords.Record { ...r, fields: [r.fields[1], r.fields[0]] };
+  let bound = check(metadata(output, row, physicalbody.Metadata { ...m, records: semrecords.records_of([swapped]) }), true, "ordered selected schema data");
+  require(bound.fields[0] == "right" && bound.fields[1] == "left", "schema order retained");
+  integer_types(output, row, m, c, r);
+}
+
+function integer_types(output: ssaprepare.Output, row: ssaprepare.Emitted, m: physicalbody.Metadata, c: ssasem.Contract, r: semrecords.Record): void {
+  let wrong: typeinfo.Type[] = [typeinfo.TypeFloat { width: 64, polymorphic: false }, typeinfo.TypeBool { tag: 0 }];
+  if let typeinfo.TypeI32(n) = c.params[0] {
+    wrong = wrong.append(typeinfo.TypeI32 { ...n, width: 64 }).append(typeinfo.TypeI32 { ...n, unsigned: true }).append(typeinfo.TypeI32 { ...n, is_char: true }).append(typeinfo.TypeI32 { ...n, polymorphic: true });
+  }
+  for t in wrong {
+    let record = semrecords.Record { ...r, fields: r.fields.with(0, semrecords.Field { ...r.fields[0], ty: t }) };
+    let contract = ssasem.Contract { ...c, params: c.params.with(0, t) };
+    check(metadata(output, row, physicalbody.Metadata { ...m, contracts: [contract], records: semrecords.records_of([record]) }), false, "coherent wider scalar ABI is not i32");
+  }
+}
+
+function graph(output: ssaprepare.Output, row: ssaprepare.Emitted): void {
+  let f = row.body.formed.f;
+  let b = f.blocks[0];
+  let at = 0;
+  let changed_count = 0;
+  for op in b.insts {
+    if (op.kind_tag == 41 || op.kind_tag == 46 || op.kind_tag == 48) {
+      let bad = ssa.SInst { ...op, kind_tag: 1, args: [], imm: 0, str: "" };
+      let formed = ssa.Formed { ...row.body.formed, f: ssa.SFunc { ...f, blocks: [ssa.SBlock { ...b, insts: b.insts.with(at, bad) }] } };
+      check(ssaprepare.Output { ...output, bodies: [ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, formed: formed } }] }, false, "same formed origin, old body cannot rescue");
+      changed_count = changed_count + 1;
+    }
+    at = at + 1;
+  }
+  require(changed_count == 5, "all allocation, shape and field effects controlled");
+  let contexts = [ssaprepare.Context { ...row.context, rc_free_debug: true }, ssaprepare.Context { ...row.context, sanitize: true }, ssaprepare.Context { ...row.context, leak_check: true }, ssaprepare.Context { ...row.context, architecture: "arm64" }, ssaprepare.Context { ...row.context, records: true }];
+  for context in contexts {
+    check(ssaprepare.Output { ...output, bodies: [ssaprepare.Emitted { ...row, context: context }] }, false, "unsupported runtime or target");
+  }
+  let a = row.allocation;
+  let arbitrary = ssaprepare.Allocation { ...a, saved: [], frame_bytes: 2147483647, save_bytes: -1, framed: !a.framed };
+  check(ssaprepare.Output { ...output, bodies: [ssaprepare.Emitted { ...row, allocation: arbitrary }] }, true, "allocation metadata grants no machine facts");
+}
+
+function single(): void {
+  let source = "struct Parent { only: i32 } @noinline function parent(value: i32): Parent { return Parent { only: value }; } function main(): i32 { return 0; }";
+  let m = parser.parse_module(lexer.tokenize(source));
+  require(!asmcore.refuse_parse_unknowns([m]) && !asmcore.refuse_decl_names([m]), "single source parsed");
+  let g = semlower.program(semlower.driven(m, "x86-64-linux"));
+  require(g.ok, "single source lowered");
+  let sw = asmcore.Switches { backtrace: false, sanitize: false, var_rows: false };
+  let output = asm_ir.emit_module_ir_unit_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, -1, g.cache, g.physical, semlower.runtime_lowering, 0 as usize, sw, true);
+  let bound = check(output, true, "actual one-field constructor");
+  require(bound.words == 2 && bound.fields.len() == 1 && bound.fields[0] == "only", "single-field extent");
+}
+
+pub function run(output: ssaprepare.Output): void {
+  let bound = check(output, true, "actual two-field constructor");
+  require(bound.shape == "Parent" && bound.words == 3 && bound.fields.len() == 2 && bound.fields[0] == "left" && bound.fields[1] == "right", "selected extent and order");
+  require(!output.text.contains("\n__fern_arr_box:\n"), "allocator intentionally absent");
+  let row = retained.resolve(output, "parent").rows[0];
+  declarations(output, row);
+  schemas(output, row);
+  graph(output, row);
+  single();
+}

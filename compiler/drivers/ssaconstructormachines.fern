@@ -1,0 +1,167 @@
+import "../asmcore";
+import "../asm_ir";
+import "../lexer";
+import "../parser";
+import "../semlower";
+import "../ssaprepare";
+import "../ssaconstructormachine" as machine;
+import "../ssaconstructorbound" as boundary;
+import "../ssacredittext" as retained;
+import "../ssainlineuniqueisa" as registers;
+import "std/string";
+
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("constructor machine controls failed: " + group);
+    exit(180);
+  }
+}
+
+function change(s: string, from: string, to: string): string {
+  require(s.contains(from), "mutation present " + from);
+  return s.split(from).join(to);
+}
+
+function emit(single: boolean, runtime: boolean): ssaprepare.Output {
+  let record = if (single) { "struct Parent { only: i32 } @noinline function parent(value: i32): Parent { return Parent { only: value }; }" } else { "struct Parent { left: i32, right: i32 } @noinline function parent(left: i32, right: i32): Parent { return Parent { left: left, right: right }; }" };
+  let m = parser.parse_module(lexer.tokenize(record + " function main(): i32 { return 0; }"));
+  require(!asmcore.refuse_parse_unknowns([m]) && !asmcore.refuse_decl_names([m]), "parsed");
+  let g = semlower.program(semlower.driven(m, "x86-64-linux"));
+  require(g.ok, "lowered");
+  let sw = asmcore.Switches { backtrace: false, sanitize: false, var_rows: false };
+  return asm_ir.emit_module_ir_unit_prepared(g.im, runtime, false, "", [], g.im.funcs, g.stab, 0, -1, g.cache, g.physical, semlower.runtime_lowering, 0 as usize, sw, true);
+}
+
+function coherent(output: ssaprepare.Output, from: string, to: string): ssaprepare.Output {
+  let bound = retained.resolve(output, "parent");
+  require(bound.error == "", "base binding");
+  let row = bound.rows[0];
+  let assembly = change(row.assembly, from, to);
+  return ssaprepare.Output { text: change(output.text, row.assembly, assembly), bodies: [ssaprepare.Emitted { ...row, assembly: assembly }] };
+}
+
+function altered(output: ssaprepare.Output, from: string, to: string, expected: boolean): void {
+  require(machine.check(coherent(output, from, to), "parent") == expected, from + " -> " + to);
+}
+
+function boundary_only(output: ssaprepare.Output, capacity: string): void {
+  let froms = ["movq $" + capacity + ", %rdi", "leaq .S0(%rip), %rsi", "movq %rsi, 0(%rax)"];
+  let tos = ["unknown_instruction", "leaq .S0(%rip), %rcx", ""];
+  let i = 0;
+  for from in froms {
+    let changed = coherent(output, from, tos[i]);
+    require(boundary.resolve(changed, "parent").error == "", "boundary remains data");
+    require(!machine.check(changed, "parent"), "machine rejects boundary-only positive");
+    i = i + 1;
+  }
+}
+
+function stores(output: ssaprepare.Output, single: boolean): void {
+  let stores = ["movq %rsi, 0(%rax)", "movq %rbx, 8(%rax)"];
+  if (!single) {
+    stores = stores.append("movq %r12, 16(%rax)");
+  }
+  for store in stores {
+    altered(output, store, "", false);
+    altered(output, store, store + "\n" + store, false);
+  }
+  for to in ["movq %rsi, 8(%rax)", "movq %rsi, -8(%rax)", "movq %rsi, -16(%rax)", "movl %esi, 0(%rax)", "movq %rax, 0(%rax)", "movq %rsi, 4(%rax)"] {
+    altered(output, "movq %rsi, 0(%rax)", to, false);
+  }
+  for to in ["movq %rsi, 8(%rax)", "movl %ebx, 8(%rax)", "movq %rbx, 12(%rax)", "movq %rbx, 24(%rax)"] {
+    altered(output, "movq %rbx, 8(%rax)", to, false);
+  }
+  altered(output, "movq %rsi, 0(%rax)", "movq %rsi, 0(%rax)\nmovq 0(%rax), %rsi", true);
+  altered(output, "movq %rsi, 0(%rax)", "movq %rsi, 0(%rax)\nmovq 8(%rax), %rsi", false);
+  altered(output, "movq %rbx, 8(%rax)", "movq 8(%rax), %rbx\nmovq %rbx, 8(%rax)", false);
+  altered(output, "movq %rbx, 8(%rax)", "movq %rbx, 8(%rax)\nmovq 8(%rax), %rbx", true);
+  if (!single) {
+    altered(output, "movq %rbx, 8(%rax)", "movq %r12, 8(%rax)", false);
+    altered(output, "movq %r12, 16(%rax)", "movq %rbx, 16(%rax)", false);
+  }
+}
+
+function frame(output: ssaprepare.Output, single: boolean): void {
+  for from in ["pushq %rbp", "pushq %rbx", "popq %rbx", "popq %rbp"] {
+    altered(output, from, "", false);
+  }
+  for to in ["movq %rax, %rbp", "movl %esp, %ebp"] {
+    altered(output, "movq %rsp, %rbp", to, false);
+  }
+  let offset = if (single) { "-8" } else { "-16" };
+  altered(output, "leaq " + offset + "(%rbp), %rsp", "movq %rbp, %rsp\nsubq $" + (if (single) { "8" } else { "16" }) + ", %rsp", true);
+  altered(output, "popq %rbx", "movq (%rsp), %rbx\naddq $8, %rsp", true);
+  for to in ["movq $0, (%rsp)\nret", "movq $0, 8(%rsp)\nret", "movq -64(%rsp), %rbx\nret", "ret $8", "unknown_instruction\nret"] {
+    altered(output, "ret\n", to + "\n", false);
+  }
+  altered(output, "call __fern_arr_box", "call __fern_arr_box\nmovq -24(%rsp), %rbx", false);
+  altered(output, "movq %rax, %rbx", "movl %eax, %ebx", false);
+  altered(output, "movq 8(%rsp), %rax", "movq 16(%rsp), %rax", false);
+  if (!single) {
+    altered(output, "movq 16(%rsp), %rsi", "movq 8(%rsp), %rsi", false);
+  }
+}
+
+function identities(output: ssaprepare.Output): void {
+  let wide = registers.registers(false, 64);
+  let narrow = registers.registers(false, 32);
+  let i = 0;
+  for reg in wide {
+    altered(output, "ret\n", "movq " + reg + ", " + reg + "\nret\n", true);
+    altered(output, "ret\n", "movl " + narrow[i] + ", " + narrow[i] + "\nret\n", i == 7);
+    i = i + 1;
+  }
+}
+
+function dependency_frame(output: ssaprepare.Output): void {
+  // A different call SP must relocate all helper scratch effects. These
+  // positives concern the stated aligned-stack implication, not a system ABI.
+  altered(output, "call __fern_arr_box", "subq $8, %rsp\ncall __fern_arr_box\nmovq -16(%rsp), %rdi\naddq $8, %rsp", true);
+  altered(output, "call __fern_arr_box", "subq $24, %rsp\ncall __fern_arr_box\naddq $24, %rsp", false);
+  altered(output, "call __fern_arr_box", "movq %rbx, -32(%rsp)\ncall __fern_arr_box\nmovq -32(%rsp), %rbx", false);
+  altered(output, "call __fern_arr_box", "call __fern_arr_box\nmovq %rbx, -32(%rsp)\nmovq -32(%rsp), %rbx", true);
+  altered(output, "call __fern_arr_box", "call __fern_arr_box\nmovq -16(%rsp), %rdi", true);
+  altered(output, "call __fern_arr_box", "call __fern_arr_box\nmovq -8(%rsp), %rdi", false);
+  // The actual allocator definition is deliberately absent in this positive:
+  // its successful-return contract remains a premise, not linkage proof.
+  require(machine.check(ssaprepare.Output { ...output, text: change(output.text, "__fern_alloc:", "__unproved_allocator:") }, "parent"), "allocator contract is conditional");
+  require(!machine.check(ssaprepare.Output { ...output, text: output.text + "\n.text\n__fern_arr_box:\nret\n" }, "parent"), "duplicate helper");
+  let row = retained.resolve(output, "parent").rows[0];
+  let allocation = ssaprepare.Allocation { ...row.allocation, saved: [], frame_bytes: 2147483647, save_bytes: -1, framed: !row.allocation.framed };
+  require(machine.check(ssaprepare.Output { ...output, bodies: [ssaprepare.Emitted { ...row, allocation: allocation }] }, "parent"), "derive frame without emitter metadata");
+  require(machine.check(ssaprepare.Output { ...output, text: change(output.text, "\n", "\r\n") }, "parent"), "CRLF");
+}
+
+function control(output: ssaprepare.Output, capacity: string): void {
+  for to in ["", "call __fern_arr_box\ncall __fern_arr_box", "call __fern_alloc", "call absent"] {
+    altered(output, "call __fern_arr_box", to, false);
+  }
+  for n in ["0", "1", "4", "-1"] {
+    altered(output, "movq $" + capacity + ", %rdi", "movq $" + n + ", %rdi", false);
+  }
+  altered(output, "movq $" + capacity + ", %rdi", "movl $" + capacity + ", %edi", true);
+  altered(output, "call __fern_arr_box", "jmp .Lmachine_forward\n.Lmachine_forward:\ncall __fern_arr_box", true);
+  altered(output, "call __fern_arr_box", ".Lmachine_cycle:\njmp .Lmachine_cycle\ncall __fern_arr_box", false);
+  altered(output, "call __fern_arr_box", "jne .Lmachine_forward\n.Lmachine_forward:\ncall __fern_arr_box", false);
+  altered(output, "call __fern_arr_box", "jmp absent\ncall __fern_arr_box", false);
+  require(!machine.check(ssaprepare.Output { ...output, text: change(output.text, "__fern_arr_box:", "__fern_missing_box:") }, "parent"), "missing same-output helper");
+  require(!machine.check(ssaprepare.Output { ...output, text: change(output.text, "addq $3, %rdi", "addq $2, %rdi") }, "parent"), "wrong helper request");
+  require(!machine.check(ssaprepare.Output { ...output, text: change(output.text, ".ascii \"Parent\"", ".ascii \"Other\"") }, "parent"), "wrong shape");
+  require(!machine.check(ssaprepare.Output { ...output, bodies: [] }, "parent"), "missing retained graph");
+}
+
+pub function run(): void {
+  for single in [true, false] {
+    let output = emit(single, true);
+    require(machine.check(output, "parent"), "actual complete constructor");
+    let capacity = if (single) { "2" } else { "3" };
+    boundary_only(output, capacity);
+    stores(output, single);
+    frame(output, single);
+    identities(output);
+    dependency_frame(output);
+    control(output, capacity);
+    let missing = emit(single, false);
+    require(boundary.resolve(missing, "parent").error == "" && !machine.check(missing, "parent"), "unit without runtime remains boundary-only");
+  }
+}
