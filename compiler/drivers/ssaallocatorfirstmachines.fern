@@ -30,7 +30,7 @@ function arguments(s: string): void {
   mutation(s, "xorl %r9d, %r9d", "movq $0, %r9", true);
   mutation(s, "movl $9, %eax", "movq $9, %rax", true);
   mutation(s, "syscall", "", false);
-  mutation(s, "syscall", "syscall\nsyscall", false);
+  mutation(s, "syscall", ["syscall", "syscall"].join("\n"), false);
   mutation(s, "syscall", "unknown_instruction", false);
 }
 
@@ -81,7 +81,7 @@ function stack_and_registers(s: string): void {
   }
   mutation(s, "pushq %rbp", "pushq %rcx\npushq (%rsp)\npopq (%rsp)\npopq %rcx\npushq %rbp", true);
   mutation(s, "pushq %rbp", "pushq %rcx\npushq -8(%rsp)\npopq (%rsp)\npopq %rcx\npushq %rbp", false);
-  mutation(s, "syscall", "syscall\nmovq %r11, -64(%rsp)", false);
+  mutation(s, "syscall", ["syscall", "movq %r11, -64(%rsp)"].join("\n"), false);
 }
 
 function flow(s: string): void {
