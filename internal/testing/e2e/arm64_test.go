@@ -9341,7 +9341,7 @@ function main(): i32 {
 //  1. `ast.ArrayType.String()` panicked with "invalid
 //     memory address or nil pointer dereference" when
 //     `Elem == nil`. The error formatter for the
-//     checker's "array element type X, expected Y"
+//     checker's "array element: expected Y, got X"
 //     message tried to format the empty-array literal's
 //     pre-settle type — which is `ArrayType{Elem: nil}`
 //     because the empty `[]` has no element. The result

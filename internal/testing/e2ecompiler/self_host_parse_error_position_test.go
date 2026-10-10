@@ -172,25 +172,25 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 			""},
 		{"var-init-sentinel",
 			"function main(): i32 {\n  let x: i32 = ;\n  return 0;\n}\n",
-			"error[P001]: in fn 'main': parser-side unknown: punct:; (2:16)"},
+			"error[P001]: in fn 'main': expected an expression, got \";\" (2:16)"},
 		{"sentinel-nested-in-return",
 			"function main(): i32 {\n  return 1 + ;\n}\n",
-			"error[P001]: in fn 'main': parser-side unknown: punct:; (2:14)"},
+			"error[P001]: in fn 'main': expected an expression, got \";\" (2:14)"},
 		// Functions in declaration order, then top-level statements LAST —
 		// parse_unknown_errors_module's own loop order — with a multi-error
 		// function reporting in source order. Count and order both pinned.
 		{"multi-error-two-fns-and-toplevel",
 			"let g: i32 = ;\nfunction a(): i32 {\n  let x: i32 = ;\n  let y: i32 = @;\n  return 0;\n}\nfunction b(): i32 {\n  if x > 1) { return 1; }\n  return 1 + ;\n}\nfunction main(): i32 {\n  return a() + b() + g;\n}\n",
-			"error[P001]: in fn 'a': parser-side unknown: punct:; (3:16)\n" +
-				"error[P001]: in fn 'a': parser-side unknown: punct:@ (4:16)\n" +
-				"error[P001]: in fn 'b': parser-side unknown: stmt: missing ( in if (8:6)\n" +
-				"error[P001]: in fn 'b': parser-side unknown: punct:) (8:11)\n" +
-				"error[P001]: in fn 'b': parser-side unknown: punct:; (9:14)\n" +
-				"error[P001]: at top level: parser-side unknown: punct:; (1:14)"},
+			"error[P001]: in fn 'a': expected an expression, got \";\" (3:16)\n" +
+				"error[P001]: in fn 'a': expected an expression, got \"@\" (4:16)\n" +
+				"error[P001]: in fn 'b': expected \"(\" after \"if\" (8:6)\n" +
+				"error[P001]: in fn 'b': expected an expression, got \")\" (8:11)\n" +
+				"error[P001]: in fn 'b': expected an expression, got \";\" (9:14)\n" +
+				"error[P001]: at top level: expected an expression, got \";\" (1:14)"},
 		// A sentinel inside a defer's action: the walk descends StmtDefer.
 		{"defer-action-sentinel",
 			"function main(): i32 {\n  defer print(;);\n  return 0;\n}\n",
-			"error[P001]: in fn 'main': parser-side unknown: punct:; (2:15)"},
+			"error[P001]: in fn 'main': expected an expression, got \";\" (2:15)"},
 		// A sentinel inside a lambda body, reachable only through expression
 		// descent. Column 37 is the sentinel `;` itself, which is where native
 		// points and where every sibling row above points; the 42 this pinned
@@ -198,7 +198,7 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 		// inside the following `return`.
 		{"lambda-body-sentinel",
 			"function main(): i32 {\n  let f = (): i32 => { let z: i32 = ;; return 0; };\n  return f();\n}\n",
-			"error[P001]: in fn 'main': parser-side unknown: punct:; (2:37)"},
+			"error[P001]: in fn 'main': expected an expression, got \";\" (2:37)"},
 		// A sentinel in a parameter DEFAULT. Defaults hang off the
 		// declaration, not off any statement, so neither the body walk nor the
 		// top-level one reaches them: until #8739 the only thing refusing this
@@ -207,19 +207,19 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 		// sentinel, because that is where the author has to go and edit.
 		{"param-default-sentinel",
 			"function f(x: i32 = ;): i32 {\n  return x;\n}\nfunction main(): i32 {\n  return 0;\n}\n",
-			"error[P001]: in fn 'f': parser-side unknown: punct:; (1:21)"},
+			"error[P001]: in fn 'f': expected an expression, got \";\" (1:21)"},
 		// Nested inside the default rather than being all of it, so the
 		// fold is held to descending a default and not merely to testing its
 		// root node.
 		{"param-default-nested-sentinel",
 			"function f(x: i32 = 1 + ;): i32 {\n  return x;\n}\nfunction main(): i32 {\n  return 0;\n}\n",
-			"error[P001]: in fn 'f': parser-side unknown: punct:; (1:25)"},
+			"error[P001]: in fn 'f': expected an expression, got \";\" (1:25)"},
 		// A default is not a body: the bare-`return;` exemption that
 		// unknown_error_stmt_at arms must not leak across into one, and a
 		// second parameter's default is reached as well as the first.
 		{"param-default-two-params",
 			"function f(a: i32 = 1, b: i32 = @): i32 {\n  return a + b;\n}\nfunction main(): i32 {\n  return 0;\n}\n",
-			"error[P001]: in fn 'f': parser-side unknown: punct:@ (1:33)"},
+			"error[P001]: in fn 'f': expected an expression, got \"@\" (1:33)"},
 		// A clean default stays clean — the walk adds no diagnostic of its own.
 		{"param-default-clean",
 			"function f(x: i32 = 41): i32 {\n  return x;\n}\nfunction main(): i32 {\n  return f();\n}\n",
@@ -236,7 +236,7 @@ func TestSelfHostParseUnknownDiagSequence(t *testing.T) {
 		// function expression #2673 retired, so it does not migrate to an
 		// arrow lambda: `(): i32 => {…}` at top level parses cleanly into
 		// top_stmts and raises neither diagnostic. Native still rejects this
-		// source with `expected "Ident", got "("`.
+		// source with `expected a name, got "("`.
 		{"malformed-fn-decl",
 			"function (): i32 {\n  return 1;\n}\nfunction main(): i32 {\n  return 0;\n}\n",
 			"error[P001]: malformed function declaration: its name or signature could not be read (a keyword such as `use`, `type` or `match` cannot be a name) (1:1)"},
@@ -366,7 +366,7 @@ func TestSelfHostStatementTerminators(t *testing.T) {
 		{"import", "import \"std/i32\"\nfunction main(): i32 { return 0; }\n",
 			`error[P001]: at top level: expected ";", got "function" (2:1)`},
 		{"tuple-type-trailing-comma", "function main(): i32 { let o: Option[(i32, i32,)] = None; return 0; }\n",
-			`error[P001]: at top level: expected type, got ")" (1:48)`},
+			`error[P001]: at top level: expected a type, got ")" (1:48)`},
 		// A defer block is a block of statements like any other: each ends
 		// with `;`, and a statement match needs no arm values.
 		{"defer-block-trailing-assign", "function main(): i32 { let r: i32 = 0; defer { r = 2 } return r; }\n",
@@ -377,7 +377,7 @@ func TestSelfHostStatementTerminators(t *testing.T) {
 		{"bare-return-clean", "function f(): void { return; }\nfunction main(): i32 { f(); return 0; }\n", ""},
 		{"c-for-step-clean", "function main(): i32 { let t: i32 = 0; for (let i: i32 = 0; i < 3; i = i + 1) { t = t + i; } return t; }\n", ""},
 		{"refused-expression-one-error", "function main(): i32 { let x: i32 = 1; return x +; }\n",
-			"error[P001]: in fn 'main': parser-side unknown: punct:; (1:50)"},
+			"error[P001]: in fn 'main': expected an expression, got \";\" (1:50)"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

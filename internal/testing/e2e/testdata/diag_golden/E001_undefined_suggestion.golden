@@ -1,4 +1,4 @@
-E001_undefined_suggestion.fern:1:46: error[E001]: undefined identifier "kount"
+E001_undefined_suggestion.fern:1:46: error[E001]: cannot find "kount" in this scope
     function main(): i32 { let count = 1; return kount; }
                                                  ^~~~~
     help: replace `kount` with `count`

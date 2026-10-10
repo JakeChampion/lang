@@ -1851,7 +1851,7 @@ pub enum Direction { N, S, E, W }`)
 // error, as it is in the self-host (#11922).
 func TestEnumVariantEmptyParensRejected(t *testing.T) {
 	_, err := Parse(`enum C { R(), B }`)
-	if err == nil || !strings.Contains(err.Error(), `expected type, got ")"`) {
+	if err == nil || !strings.Contains(err.Error(), `expected a type, got ")"`) {
 		t.Fatalf("`R()` in an enum declaration: got %v, want expected type", err)
 	}
 }

@@ -177,7 +177,7 @@ function main(): i32 {
     return mid.len();
 }`,
 		code:     "E003",
-		spelling: "cannot assign [string] to variable of type string[]",
+		spelling: "expected string[], got [string]",
 	},
 	// A `[T]` view of a local array returned from a `[T]` function (#9944):
 	// the hint names the two shapes that do not dangle.
@@ -211,7 +211,7 @@ function main(): i32 {
     return 0;
 }`,
 		code:     "E030",
-		spelling: "use `_`",
+		spelling: "or a `_` arm",
 	},
 	{
 		// The one hint that ECHOES the reader's own spelling rather than

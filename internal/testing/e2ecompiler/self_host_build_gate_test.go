@@ -283,7 +283,7 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			// unrecorded rather than arity 0 (TypeFunc.params_known). Without
 			// that distinction the rule above reads it as arity 0 and rejects
 			// this program — which native accepts — with a false
-			// "expects 0 arguments, got 1".
+			// "takes 0 arguments but was given 1".
 			//
 			// This pins the checker's silence, not the binary: the self-host
 			// MISCOMPILES the rebind (#7862) — it calls the closure box address
@@ -361,7 +361,7 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			// an exclusion: the checker registers the front end's built-in
 			// struct declarations before it types anything, the way native's
 			// builtinStructDecls does, so a valid stdlib import draws no
-			// "unknown type" at all. Before that, `import "std/platform"` drew
+			// "cannot find type" at all. Before that, `import "std/platform"` drew
 			// 7 E021 + 2 E064 and `import "std/time"` 18 + 24, on programs
 			// whose only content was the import.
 			name:     "unknown-stdlib-type-not-reported-E064",

@@ -1,1 +1,1 @@
-is not exhaustive
+match does not cover variant Blue of enum Color

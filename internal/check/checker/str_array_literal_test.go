@@ -19,7 +19,7 @@ func TestStrArrayDestinationTypesTheLiteral(t *testing.T) {
 		pre + `let xs: str[] = ["x", 5]; return xs.len(); }`,
 		pre + `let xs = ["x", s]; return xs.len(); }`,
 	} {
-		if err := checkSource(t, src); err == nil || !strings.Contains(err.Error(), "array element type") {
+		if err := checkSource(t, src); err == nil || !strings.Contains(err.Error(), "array element:") {
 			t.Errorf("want E034 for %s, got %v", src, err)
 		}
 	}

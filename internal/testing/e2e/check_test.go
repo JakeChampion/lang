@@ -82,7 +82,7 @@ func TestCheckTypeError(t *testing.T) {
 	if !strings.Contains(msg, "bad.fern") {
 		t.Errorf("stderr did not mention source file: %q", msg)
 	}
-	if !strings.Contains(msg, "return type mismatch") {
+	if !strings.Contains(msg, "return value: expected") {
 		t.Errorf("stderr did not mention return-type mismatch: %q", msg)
 	}
 }
@@ -187,7 +187,7 @@ function main(): i32 {
 //
 // The diagnostic used to come out as
 //
-//	main.fern:2:15: error[P001]: unexpected token ";"
+//	main.fern:2:15: error[P001]: expected an expression, got ";"
 //	function main(): i32 { return util.thing(); }
 //	              ^
 //

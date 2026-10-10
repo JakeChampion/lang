@@ -1,2 +1,2 @@
 has no field
-struct literal missing field "y"
+missing field "y" in this Point literal

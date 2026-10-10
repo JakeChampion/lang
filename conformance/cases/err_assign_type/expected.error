@@ -1,1 +1,1 @@
-cannot assign
+variable "x": expected i32, got boolean

@@ -13,7 +13,7 @@ import (
 // unaffected because it coerces through the Call-argument path. The fix wraps
 // each element when the array's element-type hint is a union enum — which also
 // makes a mixed-variant literal `[A { … }, B { … }]` type-check rather than
-// being rejected with E034 "array element type B, expected A".
+// being rejected with E034 "array element: expected A, got B".
 //
 // Each program reads every element back through a match and returns 0 only when
 // all values are correct (a mismatch returns the 99 sentinel, surviving the

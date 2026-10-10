@@ -90,7 +90,7 @@ function mk(a: i32): P { return P { n: a }; }
 			}
 			n := 0
 			for _, e := range flattenErrors(err) {
-				if strings.Contains(e.Error(), "undefined identifier") {
+				if strings.Contains(e.Error(), "cannot find") {
 					n++
 				}
 			}
