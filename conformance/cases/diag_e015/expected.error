@@ -1,1 +1,1 @@
-variant Rect has 2 payload(s), got 1 binding(s)
+variant Rect carries 2 values, but the pattern binds 1

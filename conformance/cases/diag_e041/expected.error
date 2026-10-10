@@ -1,1 +1,1 @@
-cannot compare i32 and string
+cannot compare i32 with string: both sides of "==" must have the same type

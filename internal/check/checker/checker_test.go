@@ -151,7 +151,7 @@ function main(): i32 { return apply([k], 0); }`,
 		`function main(): i32 { return id[Box](5).n; }`:                            "expected Box, got i32",
 		`function main(): i32 { return id[Nope](5); }`:                             "cannot be used as a value",
 		`function main(): i32 { let x = 0; return id[x](5); }`:                     "cannot be used as a value",
-		`function main(): i32 { let b = Box { n: 1 }; return id[Box, Box](b).n; }`: "expects 1 type argument",
+		`function main(): i32 { let b = Box { n: 1 }; return id[Box, Box](b).n; }`: "takes 1 type argument",
 	}
 	for src, want := range bad {
 		err := checkSource(t, decls+src)
@@ -259,7 +259,7 @@ function main(): i32 { match (g(40)) { Ok(v) => { return (v / 8) as i32; }, Err(
 			t.Errorf("a surplus type argument should not type-check\nsrc: %s", src)
 			continue
 		}
-		if !strings.Contains(err.Error(), "expects 3 type argument(s), got 4") {
+		if !strings.Contains(err.Error(), "takes 3 type arguments but was given 4") {
 			t.Errorf("error %q does not report the written list's arity\nsrc: %s", err.Error(), src)
 		}
 	}
@@ -295,9 +295,9 @@ function empty[T](): T[] { return []; }
 			"for Wrap.pick — supply it explicitly at the call site (e.g. .pick[i32](...))"},
 		// The arity half of E040 shares the rendering.
 		{`function main(): i32 { let h = Holder { n: 1 }; let xs = h.make[i32, i32](); return 0; }`,
-			"Holder.make expects 1 type argument(s), got 2"},
+			"Holder.make takes 1 type argument but was given 2"},
 		{`function main(): i32 { return empty[i32, i32]().len(); }`,
-			"empty expects 1 type argument(s), got 2"},
+			"empty takes 1 type argument but was given 2"},
 	}
 	for _, tc := range bad {
 		err := checkSource(t, decls+tc.body)
@@ -350,13 +350,13 @@ func TestStructLitConstructionSiteTypeArgs(t *testing.T) {
 
 	bad := []struct{ body, want string }{
 		{`function main(): i32 { let b = Box[i32, string] { val: 1 }; return 0; }`,
-			"Box expects 1 type argument(s), got 2"},
+			"Box takes 1 type argument but was given 2"},
 		{`function main(): i32 { let p = Point[i32] { x: 1 }; return 0; }`,
-			"Point expects 0 type argument(s), got 1"},
+			"Point takes 0 type arguments but was given 1"},
 		// The written args, not the destination, drive the literal — so a
 		// disagreement is a plain assignment error rather than a silent retype.
 		{`function main(): i32 { let b: Box[i64] = Box[i32] { val: 1 }; return 0; }`,
-			"cannot assign Box[i32] to variable of type Box[i64]"},
+			"expected Box[i64], got Box[i32]"},
 		{`function main(): i32 { let b = Box[i32] { val: "x" }; return 0; }`,
 			`field "val": expected i32, got string`},
 	}
@@ -542,7 +542,7 @@ func TestUnknownTypeReported(t *testing.T) {
 	mustE064 := func(src string) {
 		t.Helper()
 		err := checkSource(t, src)
-		if err == nil || !strings.Contains(err.Error(), "unknown type") {
+		if err == nil || !strings.Contains(err.Error(), "cannot find type") {
 			t.Errorf("expected E064 unknown type for %q, got: %v", src, err)
 		}
 	}
@@ -591,7 +591,7 @@ func TestUnknownTypeReachesLambdaAnnotations(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			err := checkSource(t, src)
-			if err == nil || !strings.Contains(err.Error(), "unknown type") {
+			if err == nil || !strings.Contains(err.Error(), "cannot find type") {
 				t.Errorf("expected E064 unknown type, got: %v", err)
 			}
 		})
@@ -732,7 +732,7 @@ func TestUnannotatedCompoundWithBigLiteralDefaultsToI64(t *testing.T) {
 			t.Errorf("%s: should be i64 (assignable to i64), got: %v", decl, err)
 		}
 		err := checkSource(t, "function main(): i32 { "+decl+" let u: i32 = t; return 0; }")
-		if err == nil || !strings.Contains(err.Error(), "cannot assign i64") {
+		if err == nil || !strings.Contains(err.Error(), "got i64") {
 			t.Errorf("%s: into an i32 slot should be E003 naming i64, got: %v", decl, err)
 		}
 	}
@@ -764,7 +764,7 @@ func TestUnannotatedCompoundWithBigLiteralDefaultsToI64(t *testing.T) {
 		t.Errorf("generic call on a wide literal should be i64, got: %v", err)
 	}
 	err = checkSource(t, id+"function main(): i32 { let t = id("+big+"); let u: i32 = t; return 0; }")
-	if err == nil || !strings.Contains(err.Error(), "cannot assign i64") {
+	if err == nil || !strings.Contains(err.Error(), "got i64") {
 		t.Errorf("generic call on a wide literal into an i32 slot should be E003 naming i64, got: %v", err)
 	}
 	if err := checkSource(t, id+"function main(): i32 { let t = id(5); let u: i32 = t; return u; }"); err != nil {
@@ -797,7 +797,7 @@ func TestUnannotatedCompositeInitWidensElementToI64(t *testing.T) {
 			t.Errorf("%s: %s should be i64, got: %v", c.decl, c.read, err)
 		}
 		err := checkSource(t, "function main(): i32 { "+c.decl+" let u: i32 = "+c.read+"; return 0; }")
-		if err == nil || !strings.Contains(err.Error(), "cannot assign i64") {
+		if err == nil || !strings.Contains(err.Error(), "got i64") {
 			t.Errorf("%s: %s into an i32 slot should be E003 naming i64, got: %v", c.decl, c.read, err)
 		}
 	}
@@ -863,7 +863,7 @@ func TestGenericCallScrutineeWidensLiteralBoundT(t *testing.T) {
 // and re-derives the result from it (#8668): the binding is `(i64, string)`,
 // not a tuple whose first element the monomorphiser defaults to i32 while a
 // comparison against the same literal widens its own side to i64 (that was
-// E041 "cannot compare i32 and i64" on `p.0 == 4611686018427387904`).
+// E041 "cannot compare i32 with i64" on `p.0 == 4611686018427387904`).
 func TestGenericCallResultCarryingWideLiteralTWidens(t *testing.T) {
 	const big = "4611686018427387904"
 	const decls = "function pair[A, B](a: A, b: B): (A, B) { return (a, b); } function both[T](a: T, b: T): (T, T) { return (a, b); } "
@@ -882,8 +882,8 @@ func TestGenericCallResultCarryingWideLiteralTWidens(t *testing.T) {
 		}
 	}
 	rejected := []struct{ src, want string }{
-		{`let p = pair(` + big + `, "hello"); let q: i32 = p.0;`, "cannot assign i64"},
-		{`let q = both(1, ` + big + `); let a: i32 = q.0;`, "cannot assign i64"},
+		{`let p = pair(` + big + `, "hello"); let q: i32 = p.0;`, "got i64"},
+		{`let q = both(1, ` + big + `); let a: i32 = q.0;`, "got i64"},
 		// An argument with a type of its own pins T; the literal is judged there.
 		{`let a: i32 = 1; let q = both(a, ` + big + `);`, "does not fit in i32"},
 	}
@@ -1001,7 +1001,7 @@ func TestGenericStructLiteralLocalTakesOneWidth(t *testing.T) {
 		`let q = Same { a: 1, b: 4611686018427387904 }; let z: i32 = q.a; return 0;`,
 	} {
 		err := checkSource(t, decls+"function main(): i32 { "+body+" }")
-		if err == nil || !strings.Contains(err.Error(), "cannot assign i64 to variable of type i32") {
+		if err == nil || !strings.Contains(err.Error(), "expected i32, got i64") {
 			t.Errorf("%s: want the i32 read refused, got: %v", body, err)
 		}
 	}
@@ -1207,7 +1207,7 @@ func TestTypedFieldRebindStaysInsideTheLiteral(t *testing.T) {
 	if err := checkSource(t, decls+"function main(): i32 { let q = Same { a: 1, b: 2 }; let r = q; let z: i64 = r.a; let w: i32 = q.b; return 0; }"); err == nil || !strings.Contains(err.Error(), "already inferred") {
 		t.Errorf("a copy and its source read at two widths: want E003, got %v", err)
 	}
-	if err := checkSource(t, decls+"function main(): i32 { let xs = [Same { a: 1, b: 2 }, Same { a: \"x\", b: \"y\" }]; return 0; }"); err == nil || !strings.Contains(err.Error(), "array element type") {
+	if err := checkSource(t, decls+"function main(): i32 { let xs = [Same { a: 1, b: 2 }, Same { a: \"x\", b: \"y\" }]; return 0; }"); err == nil || !strings.Contains(err.Error(), "array element:") {
 		t.Errorf("an array of two instantiations no literal reconciles: want E034, got %v", err)
 	}
 }
@@ -1459,12 +1459,12 @@ func TestTypeErrors(t *testing.T) {
 		src  string
 		want string
 	}{
-		{`function f(): i32 { return true; }`, "return type mismatch"},
+		{`function f(): i32 { return true; }`, "return value: expected"},
 		{`function f(): i32 { return 1 + true; }`, "requires an integer type"},
-		{`function f(): boolean { return 1; }`, "return type mismatch"},
-		{`function f(): void { x; }`, "undefined identifier"},
+		{`function f(): boolean { return 1; }`, "return value: expected"},
+		{`function f(): void { x; }`, "cannot find"},
 		{`function f(n: i32): i32 { if (n) { return 0; } return 1; }`, "if condition must be boolean"},
-		{`function f(): void { let x: i32 = true; }`, "cannot assign boolean"},
+		{`function f(): void { let x: i32 = true; }`, "got boolean"},
 	}
 	for _, c := range cases {
 		err := checkSource(t, c.src)
@@ -1872,10 +1872,10 @@ func TestMultipleErrorsAreReported(t *testing.T) {
 		t.Fatal("expected errors")
 	}
 	msg := err.Error()
-	if !strings.Contains(msg, "return type mismatch") {
+	if !strings.Contains(msg, "return value: expected") {
 		t.Errorf("missing return mismatch: %s", msg)
 	}
-	if !strings.Contains(msg, "undefined identifier") {
+	if !strings.Contains(msg, "cannot find") {
 		t.Errorf("missing undefined identifier: %s", msg)
 	}
 }
@@ -2120,7 +2120,7 @@ func TestLenOnSlice(t *testing.T) {
 
 // `len` is no longer a free builtin — only the method form
 // `x.len()` resolves. Calling it as a free function must surface
-// the same "undefined identifier" diagnostic any unknown name
+// the same "cannot find" diagnostic any unknown name
 // would.
 func TestFreeLenIsRejected(t *testing.T) {
 	cases := []string{
@@ -2133,8 +2133,8 @@ func TestFreeLenIsRejected(t *testing.T) {
 			t.Errorf("%s: expected error, got none", src)
 			continue
 		}
-		if !strings.Contains(err.Error(), "undefined identifier \"len\"") {
-			t.Errorf("%s: expected `undefined identifier \"len\"` diagnostic, got %v", src, err)
+		if !strings.Contains(err.Error(), "cannot find \"len\" in this scope") {
+			t.Errorf("%s: expected `cannot find \"len\" in this scope` diagnostic, got %v", src, err)
 		}
 	}
 }
@@ -3548,7 +3548,7 @@ func TestNestedArrayReceiverRejected(t *testing.T) {
 	if !strings.Contains(err.Error(), "nested array/slice element") {
 		t.Errorf("want the nested-element reason, got: %v", err)
 	}
-	if strings.Contains(err.Error(), "undefined identifier") {
+	if strings.Contains(err.Error(), "cannot find") {
 		t.Errorf("rejected receiver must still be hoisted for the body walk, got: %v", err)
 	}
 }
@@ -5710,7 +5710,7 @@ function main(): i32 {
     let b: Box[i32] = Box { v: 7 };
     let s: string = b.get();
     return 0;
-}`, "cannot assign i32"},
+}`, "got i32"},
 		{`trait Carrier { type Ok; function get(self: Self): Self::Ok; }
 struct Box[T] { v: T }
 impl[T] Carrier for Box[T] {
@@ -5722,7 +5722,7 @@ function main(): i32 {
     let b: Box[string] = Box { v: "hi" };
     let n: i32 = unwrap(b);
     return 0;
-}`, "cannot assign string"},
+}`, "got string"},
 	}
 	for _, c := range cases {
 		err := checkSource(t, c.src)
@@ -5850,7 +5850,7 @@ function pick[H: Holder](h: H, d: H::Item): H::Item { return h.get(d); }
 func TestArrayLiteralElementsAreChecked(t *testing.T) {
 	cases := []struct{ name, src, want string }{
 		{"let destination", `function main(): i32 { let xs: i32[] = ["ab", "cd"]; return xs.len(); }`,
-			"cannot assign string[] to variable of type i32[]"},
+			"expected i32[], got string[]"},
 		{"argument", `function total(xs: i32[]): i32 { return xs.len(); }
 function main(): i32 { return total(["ab", "cd"]); }`,
 			"expected i32[], got string[]"},
@@ -5862,9 +5862,9 @@ function main(): i32 { return take([1, 2, 3]); }`,
 		// already E003 as a scalar, and the array literal must not be the one
 		// way round it.
 		{"float literals into i64[]", `function main(): i32 { let xs: i64[] = [1.5, 2.5]; return xs.len(); }`,
-			"cannot assign f64[] to variable of type i64[]"},
+			"expected i64[], got f64[]"},
 		{"float literal into u8[]", `function main(): i32 { let xs: u8[] = [1.5]; return xs.len(); }`,
-			"cannot assign f64[] to variable of type u8[]"},
+			"expected u8[], got f64[]"},
 		{"float literals into an i64[] argument", `function total(xs: i64[]): i32 { return xs.len(); }
 function main(): i32 { return total([1.5, 2.5]); }`,
 			"expected i64[], got f64[]"},
@@ -5872,7 +5872,7 @@ function main(): i32 { return total([1.5, 2.5]); }`,
 		// narrows it, which takes an `as u8` as `let x: u8 = b` does (#11392).
 		{"i32 variable into u8[]", `function f(b: i32): i32 { let xs: u8[] = [b]; return xs.len(); }
 function main(): i32 { return f(300); }`,
-			"cannot assign i32[] to variable of type u8[]"},
+			"expected u8[], got i32[]"},
 		{"i32 variable into a u8[] argument", `function g(b: i32): i32 { return string_from_bytes_unchecked([b]).len(); }
 function main(): i32 { return g(65); }`,
 			"expected u8[], got i32[]"},
@@ -6583,7 +6583,7 @@ function main(): i32 { let b: Box = Wrap(Circle { r: 4 }); match (b) { Wrap(d) =
 		{"non-impl coercion",
 			prelude + `struct NoShape { z: i32 }
 function main(): i32 { let d: dyn Shape = NoShape { z: 1 }; return 0; }`,
-			"cannot assign NoShape"},
+			"got NoShape"},
 		{"unknown method",
 			prelude + `function f(d: dyn Shape): i32 { return d.perimeter(); }
 function main(): i32 { return 0; }`,
@@ -6662,7 +6662,7 @@ function main(): i32 { let d: dyn Container[i32] = BoxI { v: 7 }; return take(d)
 	cases := []struct{ name, src, want string }{
 		{"argument mismatch",
 			prelude + `function main(): i32 { let d: dyn Container[string] = BoxI { v: 1 }; return 0; }`,
-			"cannot assign BoxI"},
+			"got BoxI"},
 		{"unpinned generic trait",
 			prelude + `function f(d: dyn Container): i32 { return 0; }
 function main(): i32 { return 0; }`,
@@ -6715,7 +6715,7 @@ function main(): i32 { return 0; }`,
 			"is not pinned"},
 		{"wrong pin coercion",
 			prelude + `function main(): i32 { let d: dyn Producer[Item = string] = IntBox { v: 1 }; return 0; }`,
-			"cannot assign IntBox"},
+			"got IntBox"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -7010,7 +7010,7 @@ function main(): i32 { return 0; }`,
 	let n: i32 = p;
 	return n;
 }`,
-			"cannot"},
+			"expected i32, got own Pollable"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -7545,7 +7545,7 @@ func TestBlockExprCheckerErrors(t *testing.T) {
 				let x: i32 = if (true) { let k = 1; k } else { 0 };
 				return k;
 			}`,
-			"undefined identifier",
+			"cannot find",
 		},
 		{
 			"value-less-block-in-value-position",
@@ -7624,7 +7624,7 @@ function main(): i32 { return 0; }`
 // (one with no `self` receiver) through a VALUE whose type is a bounded type
 // parameter. checkExpr sliced the resolved signature's Params[1:] "to drop
 // self", which panicked with `slice bounds out of range [1:0]` on the no-arg
-// form and reported a nonsense arity ("expects 0 argument(s), got 1") on any
+// form and reported a nonsense arity ("takes 0 arguments but was given 1") on any
 // other. The no-self form is not exotic — std/num's `Num { function zero():
 // Self; }` and std/convert's `From { function from(v: T): Self; }` are both
 // associated functions.
@@ -8376,11 +8376,11 @@ func TestFloatAliasAndDefaultWidth(t *testing.T) {
 	mustOK(`function main(): i32 { let x: float = 1.5; let y: f64 = x; let z: float = y; return 0; }`)
 	// ... and is NOT f32: the mismatch names f64.
 	mustErr(`function main(): i32 { let x: float = 1.5; let y: f32 = x; return 0; }`,
-		"cannot assign f64 to variable of type f32")
+		"expected f32, got f64")
 	// A bare literal defaults to f64 — the unsettled-literal mismatch
 	// message names f64, not f32.
 	mustErr(`function main(): i32 { let s: string = 1.5; return 0; }`,
-		"cannot assign f64 to variable of type string")
+		"expected string, got f64")
 	// `float` is no longer an unknown type name, so E064's old
 	// `float` hint path is gone; `double` still draws the f64 hint.
 	mustErr(`function f(a: double): i32 { return 0; } function main(): i32 { return 0; }`,
@@ -8447,9 +8447,9 @@ func TestRetiredNameSuggestsReplacement(t *testing.T) {
 func TestSliceUncheckedMisuseRejected(t *testing.T) {
 	bad := []struct{ src, want string }{
 		{`function f(s: string): str { return slice_unchecked(s, 0); }`,
-			"expects 3 arguments, got 2"},
+			"takes 3 arguments but was given 2"},
 		{`function f(s: string): str { return slice_unchecked(s, 0, 1, 2); }`,
-			"expects 3 arguments, got 4"},
+			"takes 3 arguments but was given 4"},
 		{`function f(): str { return slice_unchecked(7, 0, 1); }`,
 			"argument 1: expected string"},
 		{`function f(s: string): str { return slice_unchecked(s, "a", 1); }`,
@@ -8721,7 +8721,7 @@ function main(): i32 {
 // nothing downstream cascades either.
 func TestCastOnUntypedOperandDoesNotCascade(t *testing.T) {
 	for _, tc := range []struct{ name, src, wantCode string }{
-		{"undefined identifier",
+		{"cannot find",
 			`function main(): i32 { return undefined_thing as i32; }`, "E001"},
 		{"unknown call",
 			`function main(): i32 { return nosuchfn() as i32; }`, "E001"},
@@ -9336,7 +9336,7 @@ function main(): i32 { return 0; }`,
 			t.Fatalf("%s: expected a diagnostic, got nil", name)
 		}
 		got := err.Error()
-		if strings.Contains(got, "E001") || strings.Contains(got, `undefined identifier "self"`) {
+		if strings.Contains(got, "E001") || strings.Contains(got, `cannot find "self" in this scope`) {
 			t.Errorf("%s: the rejected declaration's body leaked a second diagnostic: %q", name, got)
 		}
 	}

@@ -16,7 +16,7 @@ func TestColorOffIsPlainDefault(t *testing.T) {
 		t.Fatal("colour should be OFF by default")
 	}
 	err := &fakeCodedErr{
-		fakeErr: fakeErr{pos: ast.Position{Line: 1, Col: 23}, msg: "undefined identifier \"x\""},
+		fakeErr: fakeErr{pos: ast.Position{Line: 1, Col: 23}, msg: "cannot find \"x\" in this scope"},
 		code:    "E001",
 	}
 	out := Format("", "function f() { return x; }\n", err)
@@ -31,7 +31,7 @@ func TestColorOffIsPlainDefault(t *testing.T) {
 func TestColorWrapsPrefix(t *testing.T) {
 	defer SetColor(SetColor(true))
 	err := &fakeCodedErr{
-		fakeErr: fakeErr{pos: ast.Position{Line: 1, Col: 23}, msg: "undefined identifier \"x\""},
+		fakeErr: fakeErr{pos: ast.Position{Line: 1, Col: 23}, msg: "cannot find \"x\" in this scope"},
 		code:    "E001",
 	}
 	out := Format("", "function f() { return x; }\n", err)
@@ -44,7 +44,7 @@ func TestColorWrapsPrefix(t *testing.T) {
 func TestColorWrapsCaret(t *testing.T) {
 	defer SetColor(SetColor(true))
 	err := &fakeSpanErr{
-		fakeErr: fakeErr{pos: ast.Position{Line: 1, Col: 23}, msg: "undefined identifier \"x\""},
+		fakeErr: fakeErr{pos: ast.Position{Line: 1, Col: 23}, msg: "cannot find \"x\" in this scope"},
 		span:    3,
 	}
 	out := Format("", "function f() { return xyz; }\n", err)
@@ -57,7 +57,7 @@ func TestColorWrapsCaret(t *testing.T) {
 func TestColorWrapsNote(t *testing.T) {
 	defer SetColor(SetColor(true))
 	err := &fakeHintErr{
-		fakeErr: fakeErr{pos: ast.Position{Line: 1, Col: 23}, msg: "undefined identifier \"x\""},
+		fakeErr: fakeErr{pos: ast.Position{Line: 1, Col: 23}, msg: "cannot find \"x\" in this scope"},
 		hint:    "did you mean \"y\"?",
 	}
 	out := Format("", "function f() { return x; }\n", err)
@@ -72,7 +72,7 @@ func TestColorWrapsNote(t *testing.T) {
 func TestColorRendersGutter(t *testing.T) {
 	defer SetColor(SetColor(true))
 	err := &fakeCodedErr{
-		fakeErr: fakeErr{pos: ast.Position{Line: 1, Col: 23}, msg: "undefined identifier \"x\""},
+		fakeErr: fakeErr{pos: ast.Position{Line: 1, Col: 23}, msg: "cannot find \"x\" in this scope"},
 		code:    "E001",
 	}
 	out := Format("", "function f() { return x; }\n", err)
@@ -86,7 +86,7 @@ func TestColorRendersGutter(t *testing.T) {
 func TestASCIIGutterFallback(t *testing.T) {
 	defer SetColor(SetColor(true))
 	err := &fakeCodedErr{
-		fakeErr: fakeErr{pos: ast.Position{Line: 1, Col: 23}, msg: "undefined identifier \"x\""},
+		fakeErr: fakeErr{pos: ast.Position{Line: 1, Col: 23}, msg: "cannot find \"x\" in this scope"},
 		code:    "E001",
 	}
 	defer SetASCII(SetASCII(true))

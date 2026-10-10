@@ -32,8 +32,8 @@ func (e *fakeHintErr) Hint() string { return e.hint }
 
 func TestFormatRendersSnippetAndCaret(t *testing.T) {
 	src := "function f() {\n    return x + 1;\n}\n"
-	out := Format("", src, &fakeErr{pos: ast.Position{Line: 2, Col: 12}, msg: "undefined identifier \"x\""})
-	want := "2:12: error: undefined identifier \"x\"\n    " +
+	out := Format("", src, &fakeErr{pos: ast.Position{Line: 2, Col: 12}, msg: "cannot find \"x\" in this scope"})
+	want := "2:12: error: cannot find \"x\" in this scope\n    " +
 		"    return x + 1;\n" +
 		"               ^"
 	if out != want {
@@ -216,11 +216,11 @@ func TestFormatRendersHelpLabel(t *testing.T) {
 func TestFormatLabeledWithOnlyPrimaryMatchesNonLabeled(t *testing.T) {
 	src := "function f() {\n    return x + 1;\n}\n"
 	pos := ast.Position{Line: 2, Col: 12}
-	plain := &fakeErr{pos: pos, msg: "undefined identifier \"x\""}
+	plain := &fakeErr{pos: pos, msg: "cannot find \"x\" in this scope"}
 	labeled := &fakeLabeledErr{
 		fakeErr: *plain,
 		labels: []Label{
-			{Pos: pos, Length: 1, Message: "undefined identifier \"x\"", Kind: LabelPrimary},
+			{Pos: pos, Length: 1, Message: "cannot find \"x\" in this scope", Kind: LabelPrimary},
 		},
 	}
 	if Format("", src, plain) != Format("", src, labeled) {
@@ -268,12 +268,12 @@ func TestFormatRendersErrorCode(t *testing.T) {
 	err := &fakeCodedErr{
 		fakeErr: fakeErr{
 			pos: ast.Position{Line: 1, Col: 23},
-			msg: "undefined identifier \"x\"",
+			msg: "cannot find \"x\" in this scope",
 		},
 		code: "E001",
 	}
 	out := Format("", src, err)
-	if !strings.Contains(out, "1:23: error[E001]: undefined identifier") {
+	if !strings.Contains(out, "1:23: error[E001]: cannot find") {
 		t.Errorf("missing coded header in:\n%s", out)
 	}
 }
@@ -281,7 +281,7 @@ func TestFormatRendersErrorCode(t *testing.T) {
 func TestFormatEmptyCodeFallsBackToPlainError(t *testing.T) {
 	src := "function f() { return x; }\n"
 	err := &fakeCodedErr{
-		fakeErr: fakeErr{pos: ast.Position{Line: 1, Col: 23}, msg: "undefined identifier \"x\""},
+		fakeErr: fakeErr{pos: ast.Position{Line: 1, Col: 23}, msg: "cannot find \"x\" in this scope"},
 		code:    "",
 	}
 	out := Format("", src, err)
@@ -289,7 +289,7 @@ func TestFormatEmptyCodeFallsBackToPlainError(t *testing.T) {
 	if strings.Contains(out, "error[]:") {
 		t.Errorf("empty Code() should not produce `error[]:`:\n%s", out)
 	}
-	if !strings.Contains(out, "1:23: error: undefined identifier") {
+	if !strings.Contains(out, "1:23: error: cannot find") {
 		t.Errorf("missing plain header in:\n%s", out)
 	}
 }
@@ -369,7 +369,7 @@ func TestFormatExplainWrapsBody(t *testing.T) {
 // FormatRemapped with a nil remap is identical to Format.
 func TestFormatRemappedNilIsIdentity(t *testing.T) {
 	src := "function f() {\n    return x + 1;\n}\n"
-	e := &fakeErr{pos: ast.Position{Line: 2, Col: 12}, msg: "undefined identifier \"x\""}
+	e := &fakeErr{pos: ast.Position{Line: 2, Col: 12}, msg: "cannot find \"x\" in this scope"}
 	if got, want := FormatRemapped("", src, nil, e), Format("", src, e); got != want {
 		t.Errorf("FormatRemapped(nil) =\n%s\n--- want (Format) ---\n%s", got, want)
 	}
@@ -391,7 +391,7 @@ func TestFormatRemappedRewritesPosition(t *testing.T) {
 		}
 		return p
 	}
-	e := &fakeErr{pos: ast.Position{Line: 2, Col: 9}, msg: "undefined identifier \"y\""}
+	e := &fakeErr{pos: ast.Position{Line: 2, Col: 9}, msg: "cannot find \"y\" in this scope"}
 	out := FormatRemapped("prog.fern.md", displaySrc, remap, e)
 	if !strings.HasPrefix(out, "prog.fern.md:4:5: error:") {
 		t.Errorf("expected remapped header prog.fern.md:4:5, got:\n%s", out)

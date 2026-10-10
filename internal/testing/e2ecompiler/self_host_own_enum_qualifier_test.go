@@ -349,7 +349,7 @@ pub function probe(n: i32): i32 {
 
 	// And the other direction for the count: two enums whose same-named
 	// variants have DIFFERENT arities. Reading the first-declared decl made
-	// `B.W(1, 2)` an E036 "expects 1 argument(s), got 2" against A's arity,
+	// `B.W(1, 2)` an E036 "takes 1 argument but was given 2" against A's arity,
 	// on a program native accepts.
 	t.Run("shared-variant-name-arity-resolves-per-owner", func(t *testing.T) {
 		out, code := check(t, `enum A { W(i32), P }

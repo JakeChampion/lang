@@ -67,17 +67,17 @@ func TestTraitParamErrors(t *testing.T) {
 		{"argument without the impl", traitParamDecls + `function total(a: Shape): i32 { return a.area(); }
 function main(): i32 { return total(5); }`, "type argument T_a = i32 does not implement trait Shape required by total"},
 		{"an array of a trait is not the trait", traitParamDecls + `function total(xs: Shape[]): i32 { return 7; }
-function main(): i32 { return 0; }`, "unknown type \"Shape\" (`Shape` is a trait"},
+function main(): i32 { return 0; }`, "cannot find type \"Shape\" in this scope (`Shape` is a trait"},
 		{"an undeclared type beside a trait-typed parameter", traitParamDecls + `function total(a: Shape, b: Wibble): i32 { return a.area(); }
-function main(): i32 { return 0; }`, "unknown type \"Wibble\""},
+function main(): i32 { return 0; }`, "cannot find type \"Wibble\" in this scope"},
 		// A trait's methods are not generic, so an impl's method keeps the
 		// parameter as written and is told what to write instead, rather than
 		// failing conformance against a generated name.
 		{"a trait-typed parameter in an impl method", traitParamDecls + `trait Cmp { function eqto(self: Self, o: Shape): boolean; }
 impl Cmp for Sq { function eqto(self: Sq, o: Shape): boolean { return self.s == o.area(); } }
-function main(): i32 { return 0; }`, "unknown type \"Shape\" (`Shape` is a trait"},
+function main(): i32 { return 0; }`, "cannot find type \"Shape\" in this scope (`Shape` is a trait"},
 		{"trait as a return type", traitParamDecls + `function make(): Shape { return Sq { s: 1 }; }
-function main(): i32 { return 0; }`, "unknown type \"Shape\" (`Shape` is a trait: a parameter of trait type makes the function generic over it; anywhere else write `dyn Shape`)"},
+function main(): i32 { return 0; }`, "cannot find type \"Shape\" in this scope (`Shape` is a trait: a parameter of trait type makes the function generic over it; anywhere else write `dyn Shape`)"},
 		{"trait as a local's type", traitParamDecls + `function main(): i32 { let x: Shape = Sq { s: 2 }; return 0; }`, "`Shape` is a trait"},
 	}
 	for _, tc := range cases {
@@ -109,7 +109,7 @@ function main(): i32 { return 0; }`)
 	if err == nil {
 		t.Fatal("a trait as a return type should be E064")
 	}
-	for _, want := range []string{"unknown type \"cmp.Display\"", "write `dyn cmp.Display`"} {
+	for _, want := range []string{"cannot find type \"cmp.Display\" in this scope", "write `dyn cmp.Display`"} {
 		if !strings.Contains(err.Error(), want) {
 			t.Errorf("want %q in:\n%v", want, err)
 		}

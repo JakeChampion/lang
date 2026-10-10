@@ -205,7 +205,7 @@ func Fill(p *ast.Program) []Error {
 					return e
 				}
 				if pos >= len(params) {
-					errs = append(errs, Error{call.P, "E004", fmt.Sprintf("function %q expects %d argument(s), got more", id.Name, len(params))})
+					errs = append(errs, Error{call.P, "E004", fmt.Sprintf("function %q takes at most %d arguments but was given more", id.Name, len(params))})
 					return e
 				}
 				result[pos] = a

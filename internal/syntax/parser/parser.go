@@ -410,14 +410,35 @@ func (p *parser) fipModifierShapeAt(i int) (name string, allowance int, next int
 	return name, allowance, j, true
 }
 
+// expectedDesc names what expect wanted: the exact token text when there is
+// one, otherwise the token kind in words.
+func expectedDesc(kind lexer.Kind, text string) string {
+	if text != "" {
+		return strconv.Quote(text)
+	}
+	switch kind {
+	case lexer.Ident:
+		return "a name"
+	case lexer.String:
+		return "a string literal"
+	case lexer.Number:
+		return "a number"
+	}
+	return strconv.Quote(kind.String())
+}
+
+// tokenDesc names the token a parse error stopped at.
+func tokenDesc(t lexer.Token) string {
+	if t.Kind == lexer.EOF {
+		return "the end of the file"
+	}
+	return strconv.Quote(t.Text)
+}
+
 func (p *parser) expect(kind lexer.Kind, text string) (lexer.Token, error) {
 	t := p.peek()
 	if t.Kind != kind || (text != "" && t.Text != text) {
-		want := text
-		if want == "" {
-			want = kind.String()
-		}
-		return lexer.Token{}, p.errorfCode(t.Pos, "P001", "expected %q, got %q", want, t.Text)
+		return lexer.Token{}, p.errorfCode(t.Pos, "P001", "expected %s, got %s", expectedDesc(kind, text), tokenDesc(t))
 	}
 	return p.advance(), nil
 }
@@ -2518,7 +2539,7 @@ func (p *parser) parseTypeArrow(topArrow bool) (ast.Type, error) {
 			base = ast.StructType{Name: name}
 		}
 	default:
-		return nil, p.errorfCode(t.Pos, "P001", "expected type, got %q", t.Text)
+		return nil, p.errorfCode(t.Pos, "P001", "expected a type, got %s", tokenDesc(t))
 	}
 	// Associated-type projection `Base::Name` (`Self::Item`, `T::Item`,
 	// `Foo::Item`), repeatable for chained projections. Binds tighter
@@ -3666,7 +3687,7 @@ func (p *parser) parseForEachPattern(kw lexer.Token, label string) (ast.Stmt, er
 		return nil, err
 	}
 	if p.peek().Kind != lexer.Ident || p.peek().Text != "in" {
-		return nil, p.errorfCode(p.peek().Pos, "P001", "expected %q after the `for` pattern, got %q", "in", p.peek().Text)
+		return nil, p.errorfCode(p.peek().Pos, "P001", "expected \"in\" after the `for` pattern, got %s", tokenDesc(p.peek()))
 	}
 	p.advance() // `in`
 
@@ -4410,7 +4431,7 @@ func (p *parser) parseTuplePatElem() (ast.TuplePatElem, error) {
 		p.advance()
 		elem.Name = et.Text
 	default:
-		return elem, p.errorfCode(et.Pos, "P001", "expected binder, literal, variant sub-pattern, nested tuple pattern, or `_` in tuple pattern, got %s", et.Text)
+		return elem, p.errorfCode(et.Pos, "P001", "expected a tuple element (a name, a literal, a variant, a nested tuple, or `_`), got %s", tokenDesc(et))
 	}
 	return elem, nil
 }
@@ -4585,7 +4606,7 @@ func (p *parser) parseMatchPattern() (matchPattern, error) {
 			pat.restWritten = nf.rest
 		}
 	} else {
-		return pat, p.errorfCode(t.Pos, "P001", "expected variant pattern, literal, or `_` in match arm, got %s", t.Text)
+		return pat, p.errorfCode(t.Pos, "P001", "expected a match arm pattern (a variant, a literal, or `_`), got %s", tokenDesc(t))
 	}
 	return pat, nil
 }
@@ -6504,5 +6525,5 @@ func (p *parser) parsePrimary() (ast.Expr, error) {
 			}
 		}
 	}
-	return nil, p.errorfCode(t.Pos, "P001", "unexpected token %q", t.Text)
+	return nil, p.errorfCode(t.Pos, "P001", "expected an expression, got %s", tokenDesc(t))
 }

@@ -5,6 +5,6 @@
 struct Pair[A, B] { first: A, second: B }
 
 function main(): i32 {
-    let p: Pair[i32] = Pair { first: 1, second: 2 };   // error[E019]: struct Pair has 2 type parameter(s), 1 supplied
+    let p: Pair[i32] = Pair { first: 1, second: 2 };   // error[E019]: struct Pair takes 2 type arguments but was given 1
     return p.first;
 }

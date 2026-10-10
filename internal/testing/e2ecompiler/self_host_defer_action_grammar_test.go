@@ -59,7 +59,7 @@ func TestSelfHostDeferActionGrammar(t *testing.T) {
 				t.Fatal(err)
 			}
 			col := 4 + len(kw) + 2
-			want := fmt.Sprintf(":6:%d: error[P001]: in fn 'main': unexpected token %q", col, r.token)
+			want := fmt.Sprintf(":6:%d: error[P001]: in fn 'main': expected an expression, got %q", col, r.token)
 			out, err := check(h.cli, src, h.stdlib)
 			if err == nil || !strings.Contains(out, want) {
 				t.Errorf("self-host on `%s %s`: want %q, got (%v)\n%s", kw, r.action, want, err, out)
