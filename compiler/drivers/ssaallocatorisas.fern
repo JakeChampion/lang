@@ -10,6 +10,7 @@ import "../util";
 import "./ssaallocatorstorage" as storage;
 import "./ssaallocatormachines" as machine;
 import "./ssaallocatorinitisas" as init;
+import "./ssaallocatorfirstmachines" as first;
 import "std/string";
 
 function require(ok: boolean, group: string): void {
@@ -43,6 +44,7 @@ function actual(): void {
   storage.run(output.text);
   machine.run(output.text);
   init.run(output.text);
+  first.run(output.text);
   let crlf = isa.allocator_program(output.text.split("\n").join("\r\n\t"));
   require(crlf.error == "" && crlf.ops.len() == p.ops.len(), "CRLF extent");
   let i = 0;
