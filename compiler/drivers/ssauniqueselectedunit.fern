@@ -1,0 +1,101 @@
+import "../ssauniqueunit" as unit;
+import "../ssauniquecaller" as caller;
+import "../ssaprepare";
+import "../ssa";
+import "../physicalbody";
+import "std/string";
+
+function require(ok: boolean): void {
+  if (!ok) {
+    exit(194);
+  }
+}
+
+function check(text: string, arch: string, rows: ssaprepare.Emitted[], expected: boolean): void {
+  let p = unit.check_selected_collection(text, arch, rows);
+  if (p.ok != expected) {
+    print(p.function_name + ": " + p.message);
+    print(text);
+    exit(195);
+  }
+  require(p.ok || p.message != "");
+}
+
+function change(text: string, old: string, replacement: string): string {
+  let parts = text.split(old);
+  require(parts.len() > 1);
+  let out = parts[0];
+  let i = 1;
+  while (i < parts.len()) {
+    out = out + replacement + parts[i];
+    i = i + 1;
+  }
+  return out;
+}
+
+function renamed(row: ssaprepare.Emitted, name: string): ssaprepare.Emitted {
+  let f = row.body.formed.f;
+  let text = change(change(row.assembly, "__fn_" + f.name, "__fn_" + name), ".Lssa_" + f.name + "_", ".Lssa_" + name + "_");
+  let formed = ssa.Formed { ...row.body.formed, f: ssa.SFunc { ...f, name: name } };
+  return ssaprepare.Emitted { ...row, label_name: name, assembly: text, body: ssaprepare.Body { ...row.body, formed: formed } };
+}
+
+function collection(out: ssaprepare.Output): void {
+  let a = out.bodies[0];
+  let b = renamed(a, "second");
+  let arch = a.context.architecture;
+  let parts = out.text.split(a.assembly);
+  require(parts.len() == 2);
+  let both = parts[0] + a.assembly + b.assembly + parts[1];
+  check(both, arch, [a, b], true);
+  check(both, arch, [b, a], true);
+  check(parts[0] + b.assembly + a.assembly + parts[1], arch, [a, b], true);
+  check(both, arch, [a], false);
+  check(both, arch, [b], false);
+  check(both, arch, [a, b, b], false);
+  check(both, arch, [a, b, renamed(b, "missing")], false);
+  check(parts[0] + a.assembly + a.assembly + parts[1], arch, [a, b], false);
+  let label = ".Lssa_" + a.label_name + "_" + a.body.formed.f.entry.to_string();
+  let branch = if (arch == "arm64") { "b " } else { "jmp " };
+  let entry = "__fn_" + b.label_name + ":\n";
+  let cross = change(b.assembly, entry, entry + "    " + branch + label + "\n");
+  check(parts[0] + a.assembly + cross + parts[1], arch, [a, b], false);
+  check(both + label + ":\n", arch, [a, b], false);
+}
+
+pub function run(out: ssaprepare.Output): void {
+  require(out.bodies.len() == 1);
+  let row = out.bodies[0];
+  let arch = row.context.architecture;
+  let f = row.body.formed.f;
+  check(out.text, arch, [row], true);
+  require(!unit.check_collection(out.text, arch, [f]).ok);
+  check(out.text, arch, [], false);
+  check(out.text, arch, [row, row], false);
+  check(out.text, "wasi", [row], false);
+  check(out.text, if (arch == "arm64") { "x86-64" } else { "arm64" }, [row], false);
+  // Retained strings cannot rescue bad output or invalidate good output.
+  for text in ["", ".set hidden, 0\n", change(row.assembly, "    ret\n", "")] {
+    let stale = ssaprepare.Emitted { ...row, assembly: text };
+    require(!caller.check_selected([stale], row.label_name, arch).ok);
+    check(out.text, arch, [stale], true);
+  }
+  let parts = out.text.split(row.assembly);
+  require(parts.len() == 2);
+  check(parts[0] + parts[1], arch, [row], false);
+  check(change(out.text, "    ret\n", ""), arch, [row], false);
+  let floor = if (arch == "arm64") { "    cmp x0, #16, lsl #12\n" } else { "    cmpq $0x10000, %rax\n" };
+  check(change(out.text, floor, ""), arch, [row], false);
+  check(".set hidden, 0\n" + out.text, arch, [row], false);
+  check(out.text + ".quad 1\n", arch, [row], false);
+  if (arch == "arm64") {
+    check(change(out.text, ".Lfern_sbox_end:", "__fn_" + f.name + ":"), arch, [row], false);
+  }
+  let bad = ssaprepare.Emitted { ...row, label_name: "wrong" };
+  check(out.text, arch, [bad], false);
+  let selected = physicalbody.Selected { ...row.body.selected, producers: [] };
+  check(out.text, arch, [ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: selected } }], false);
+  let wrong = ssa.Formed { ...row.body.formed, f: ssa.SFunc { ...f, nparams: 2 } };
+  check(out.text, arch, [ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, formed: wrong } }], false);
+  collection(out);
+}

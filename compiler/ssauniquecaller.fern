@@ -312,10 +312,23 @@ pub function check_selected(rows: ssaprepare.Emitted[], name: string, architectu
   if (binding.error != "") {
     return helper.Proof { ok: false, function_name: name, message: binding.error };
   }
-  let row = binding.rows[0];
+  return selected_lines(binding.rows[0].assembly.split("\n"), binding.rows[0], architecture);
+}
+
+// The final-output binder supplies actual body lines. Retained assembly is
+// deliberately unused; binding and ABI checks still use the same final graph.
+pub function check_selected_lines(lines: string[], rows: ssaprepare.Emitted[], name: string, architecture: string): helper.Proof {
+  let binding = bound.resolve(rows, name, architecture);
+  if (binding.error != "") {
+    return helper.Proof { ok: false, function_name: name, message: binding.error };
+  }
+  return selected_lines(lines, binding.rows[0], architecture);
+}
+
+function selected_lines(lines: string[], row: ssaprepare.Emitted, architecture: string): helper.Proof {
   let contracts = selected.contracts(row);
   if (contracts.len() != 1 || !signature(contracts[0])) {
-    return helper.Proof { ok: false, function_name: name, message: "unsupported selected uniqueness signature" };
+    return helper.Proof { ok: false, function_name: row.label_name, message: "unsupported selected uniqueness signature" };
   }
-  return check(row.assembly.split("\n"), architecture, row.body.formed.f, false);
+  return check(lines, architecture, row.body.formed.f, false);
 }

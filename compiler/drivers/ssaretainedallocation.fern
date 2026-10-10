@@ -107,7 +107,7 @@ function spills(g: ircore.Gated, arm: boolean, params: i32): void {
   }
 }
 
-function uniqueness(g: ircore.Gated, arm: boolean, fused: boolean, inverted: boolean, aligned: boolean): ssaprepare.Emitted {
+function uniqueness(g: ircore.Gated, arm: boolean, fused: boolean, inverted: boolean, aligned: boolean): ssaprepare.Output {
   let call = ir.op_call_direct("__fern_rc_is_unique", 1);
   call = ir.Op { ...call, i64_imm: if (aligned) { 4i64 } else { 0i64 } };
   let ops = [ir.op_load_local(0), call];
@@ -126,7 +126,7 @@ function uniqueness(g: ircore.Gated, arm: boolean, fused: boolean, inverted: boo
   inlineproof.run(out.bodies[0], true);
   callerproof.run(out.bodies[0], aligned);
   unitproof.run(out, aligned);
-  return out.bodies[0];
+  return out;
 }
 
 function selected_uniqueness(arm: boolean): void {
@@ -143,7 +143,9 @@ function selected_parameter(arm: boolean, parameter: string): void {
   require(g.ok, 139);
   for fused in [false, true] {
     for inverted in [false, true] {
-      alignmentproof.run(uniqueness(g, arm, fused, inverted, true));
+      let out = uniqueness(g, arm, fused, inverted, true);
+      alignmentproof.run(out.bodies[0]);
+      alignmentproof.final_output(out);
     }
   }
 }

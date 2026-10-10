@@ -1,12 +1,13 @@
 // Independent final-text binding for a uniqueness leaf library collection.
 // This scope excludes exports, inter-function calls, runtime code and nonempty
 // pools. It inherits check_body's explicit pointer/header and stack ABI.
-// No retained body text, site spans, allocation or emitter imports are used.
+// No retained body text, site spans or allocation are used as proof inputs.
 import "./ssa";
 import "./ssauniquecaller" as caller;
 import "./ssacredithelper" as helper;
 import "./util";
 import "./ssaproofnames" as names;
+import "./ssaprepare";
 import "std/string";
 
 struct Unit { lines: string[], ok: boolean }
@@ -78,6 +79,30 @@ function text_unit(output: string, architecture: string): Unit {
 // Resolve by the supplied final graph's exact symbol, never by retained body
 // text or collection position. Every supplied function must occur once.
 pub function check_collection(output: string, architecture: string, functions: ssa.SFunc[]): helper.Proof {
+  return collection(output, architecture, functions, []);
+}
+
+// Selected parameter ABI and final SSA come from the supplied rows. Actual
+// instructions come only from output, under the same complete unit grammar.
+pub function check_selected_collection(output: string, architecture: string, rows: ssaprepare.Emitted[]): helper.Proof {
+  if (rows.len() == 0) {
+    return refuse("");
+  }
+  let functions: ssa.SFunc[] = [];
+  for row in rows {
+    functions = functions.append(row.body.formed.f);
+  }
+  return collection(output, architecture, functions, rows);
+}
+
+function body_proof(body: string[], architecture: string, f: ssa.SFunc, rows: ssaprepare.Emitted[]): helper.Proof {
+  if (rows.len() > 0) {
+    return caller.check_selected_lines(body, rows, f.name, architecture);
+  }
+  return caller.check_lines(body, architecture, f);
+}
+
+function collection(output: string, architecture: string, functions: ssa.SFunc[], rows: ssaprepare.Emitted[]): helper.Proof {
   let unit = text_unit(output, architecture);
   if (!unit.ok || functions.len() == 0) {
     return refuse("");
@@ -103,7 +128,7 @@ pub function check_collection(output: string, architecture: string, functions: s
         return refuse(functions[at].name);
       }
       if (current >= 0) {
-        let proof = caller.check_lines(body, architecture, functions[current]);
+        let proof = body_proof(body, architecture, functions[current], rows);
         if (!proof.ok) {
           return proof;
         }
@@ -121,7 +146,7 @@ pub function check_collection(output: string, architecture: string, functions: s
   if (current < 0 || count != functions.len()) {
     return refuse("");
   }
-  let proof = caller.check_lines(body, architecture, functions[current]);
+  let proof = body_proof(body, architecture, functions[current], rows);
   if (!proof.ok) {
     return proof;
   }

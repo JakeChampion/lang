@@ -5,12 +5,17 @@ import "../physicalbody";
 import "../ssasem";
 import "../typeinfo";
 import "../ssa";
+import "./ssauniqueselectedunit" as finalproof;
 import "std/string";
 
 function require(ok: boolean): void {
   if (!ok) {
     exit(192);
   }
+}
+
+pub function final_output(out: ssaprepare.Output): void {
+  finalproof.run(out);
 }
 
 function check(row: ssaprepare.Emitted, expected: boolean): void {
