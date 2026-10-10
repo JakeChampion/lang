@@ -1,0 +1,62 @@
+import "../ssadecrementcount" as count;
+import "../ssadecrementmemory" as memory;
+
+function require(ok: boolean, code: i32): void {
+  if (!ok) {
+    print("decrement header effect controls failed");
+    exit(code);
+  }
+}
+
+function refused(m: memory.Memory, code: i32): void {
+  require(!memory.valid(m) && !memory.finished(m), code);
+  require(!count.valid(memory.load(m, -8, 4)), code);
+  let repaired = memory.store(m, -8, 4, count.decrement(count.original(true)));
+  require(!memory.valid(repaired) && !memory.finished(repaired), code);
+}
+
+function addresses(m: memory.Memory, value: count.Value, code: i32): void {
+  let offsets: i32[] = [-2147483648, -16, -12, -9, -7, -4, 0, 8, 2147483647];
+  for offset in offsets {
+    require(!count.valid(memory.load(m, offset, 4)), code);
+    refused(memory.store(m, offset, 4, value), code);
+  }
+  let widths: i32[] = [-2147483648, -1, 0, 1, 2, 3, 5, 8, 16, 2147483647];
+  for width in widths {
+    require(!count.valid(memory.load(m, -8, width)), code);
+    refused(memory.store(m, -8, width, value), code);
+  }
+}
+
+pub function run(): void {
+  let kept = memory.initial(false);
+  let shared = memory.initial(true);
+  require(memory.valid(kept) && memory.finished(kept), 198);
+  require(memory.valid(shared) && !memory.finished(shared), 3);
+  let old = memory.load(shared, -8, 4);
+  let next = count.decrement(old);
+  let changed = memory.store(shared, -8, 4, next);
+  require(memory.valid(changed) && memory.finished(changed), 4);
+  let current = memory.load(changed, -8, 4);
+  require(count.is_decremented(current) && !count.is_original(current), 5);
+  require(!count.valid(count.decrement(current)), 6);
+  // The count-two case now includes one, so CMP 1 has an unknown zero flag.
+  require(count.compare(current, 1).zero == -1, 7);
+  require(count.is_original(memory.load(shared, -8, 4)), 8);
+  require(count.is_original(memory.load(kept, -8, 4)), 9);
+  refused(memory.store(changed, -8, 4, count.decrement(current)), 27);
+  refused(memory.store(changed, -8, 4, next), 28);
+  refused(memory.store(changed, -8, 4, old), 29);
+  refused(memory.store(shared, -8, 4, old), 45);
+  refused(memory.store(shared, -8, 4, count.original(false)), 46);
+  refused(memory.store(shared, -8, 4, count.Value { family: 2, delta: -2 }), 47);
+  refused(memory.store(shared, -8, 4, count.unknown()), 48);
+  refused(memory.store(kept, -8, 4, next), 49);
+  refused(memory.store(kept, -8, 4, count.original(false)), 50);
+  refused(memory.Memory { shared: false, stored: next }, 168);
+  refused(memory.Memory { shared: true, stored: count.original(false) }, 169);
+  refused(memory.Memory { shared: true, stored: count.Value { family: 2, delta: 1 } }, 175);
+  addresses(shared, next, 176);
+  addresses(changed, next, 177);
+  addresses(kept, next, 178);
+}

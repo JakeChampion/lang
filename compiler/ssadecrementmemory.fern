@@ -1,0 +1,48 @@
+import "./ssadecrementcount" as count;
+
+// Symbolic memory relative to ONE fixed pointer, under a readable/writable
+// four-byte header at pointer-8, disjoint from the incoming stack. All other
+// bytes retain their original values: no other write is admitted here.
+// This domain is not an instruction decoder or a caller/entry certificate.
+pub struct Memory { shared: boolean, stored: count.Value }
+
+pub function initial(shared: boolean): Memory {
+  return Memory { shared: shared, stored: count.original(shared) };
+}
+
+pub function valid(m: Memory): boolean {
+  return count.valid(m.stored) && m.stored.family == count.original(m.shared).family;
+}
+
+function poison(m: Memory): Memory {
+  return Memory { ...m, stored: count.unknown() };
+}
+
+// The caller must establish that the address base is the same fixed pointer.
+// A successful load observes the most recent store, never the initial count.
+pub function load(m: Memory, offset: i32, width: i32): count.Value {
+  if (!valid(m) || offset != -8 || width != 4) {
+    return count.unknown();
+  }
+  return m.stored;
+}
+
+// Admit exactly one four-byte little-endian store of original shared RC-1.
+// Refuse stale originals, other families and repeated stores as well as all
+// unknown writes. A refused state cannot later become valid through a store.
+pub function store(m: Memory, offset: i32, width: i32, value: count.Value): Memory {
+  if (!valid(m) || offset != -8 || width != 4 || !m.shared) {
+    return poison(m);
+  }
+  if (!count.is_original(m.stored) || !count.is_decremented(value)) {
+    return poison(m);
+  }
+  return Memory { ...m, stored: value };
+}
+
+pub function finished(m: Memory): boolean {
+  if (!valid(m)) {
+    return false;
+  }
+  return if (m.shared) { count.is_decremented(m.stored) } else { count.is_original(m.stored) };
+}
