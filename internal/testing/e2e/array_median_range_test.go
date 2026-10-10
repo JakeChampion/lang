@@ -2,11 +2,12 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/array.median_f64 / range_f64 — the median
+// Differential coverage for std/array.median_f64 and the generic `range` at
+// f64 — the median
 // (averaging the two middles for even length) and the max-min spread. Both
 // return Option[f64] (None for empty), so the wasmbin leg skips (the enum-i64/
 // f64 gap avg_f64 / variance_f64 already carry). median_f64 uses cmp.sort;
-// range_f64 is a single pass. Returns 42 iff every check holds across interp /
+// `range` is a single pass. Returns 42 iff every check holds across interp /
 // x86-64 / wasm / arm64; each leg skips itself when its toolchain is absent.
 const arrayMedianRangeProg = `
 import "std/array" as array;
@@ -24,13 +25,13 @@ function main(): i32 {
     if (!approx(unwrap(array.median_f64(even2)), 6.0)) { return 3; }   // sorted 2,4,8,10 -> (4+8)/2
     if (!approx(unwrap(array.median_f64([42.0])), 42.0)) { return 4; }
     // range = max - min
-    if (!approx(unwrap(array.range_f64(odd)), 4.0)) { return 5; }
-    if (!approx(unwrap(array.range_f64([7.0])), 0.0)) { return 6; }
-    if (!approx(unwrap(array.range_f64([0.0 - 3.0, 5.0, 1.0])), 8.0)) { return 7; }
+    if (!approx(unwrap(odd.range()), 4.0)) { return 5; }
+    if (!approx(unwrap([7.0].range()), 0.0)) { return 6; }
+    if (!approx(unwrap([0.0 - 3.0, 5.0, 1.0].range()), 8.0)) { return 7; }
     // empty -> None
     let empty: f64[] = [];
     match (array.median_f64(empty)) { Some(v) => { return 8; }, None => {} }
-    match (array.range_f64(empty)) { Some(v) => { return 9; }, None => {} }
+    match (empty.range()) { Some(v) => { return 9; }, None => {} }
     return 42;
 }
 `

@@ -6510,7 +6510,7 @@ function main(): i32 {
 
 // Thirtieth stdlib bundle: string replace_first /
 // is_kebab_case / is_snake_case / shift_byte, i32[]
-// index_of / pairwise_diffs, i32 factorial / is_prime.
+// index_of / adjacent_diff, i32 factorial / is_prime.
 // 8 helpers.
 //
 // `factorial` caps at 12! (largest factorial that fits in
@@ -6555,11 +6555,11 @@ function main(): i32 {
     let empty: i32[] = [];
     match (empty.index_of(0)) { Some(_) => { return 33; }, None => { } }
 
-    let d: i32[] = [10, 12, 15, 20].pairwise_diffs();
+    let d: i32[] = [10, 12, 15, 20].adjacent_diff();
     if (d.len() != 3) { return 40; }
     if (d[0] != 2 || d[1] != 3 || d[2] != 5) { return 41; }
-    if ((empty.pairwise_diffs()).len() != 0) { return 42; }
-    let single: i32[] = [5].pairwise_diffs();
+    if ((empty.adjacent_diff()).len() != 0) { return 42; }
+    let single: i32[] = [5].adjacent_diff();
     if (single.len() != 0) { return 43; }
 
     if ((0).factorial() != 1) { return 50; }

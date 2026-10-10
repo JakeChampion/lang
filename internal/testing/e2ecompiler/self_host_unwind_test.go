@@ -4,7 +4,6 @@ import (
 	goelf "debug/elf"
 	"encoding/binary"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -21,7 +20,7 @@ import (
 // binary. The bytes themselves are pinned to GNU as and ld's by
 // TestSelfHostCfiMatchesGas*.
 func TestSelfHostUnwindData(t *testing.T) {
-	gcc, _ := x86_64Tooling(t)
+	gcc, runner := x86_64Tooling(t)
 	dir := writeSelfHostAsmProject(t)
 	copySelfHostDriver(t, dir, "fern.fern")
 	cli := buildSelfHostBin(t, gcc, dir, "fern.fern", "fern")
@@ -42,7 +41,7 @@ func TestSelfHostUnwindData(t *testing.T) {
 				out := filepath.Join(dir, strings.ReplaceAll(name, "-", "_")+".bin")
 				args := []string{"-g", "-target", target}
 				args = append(args, "-o", out, src, stdlib)
-				if b, err := exec.Command(cli, args...).CombinedOutput(); err != nil {
+				if b, err := runX86_64Bin(runner, cli, args...).CombinedOutput(); err != nil {
 					t.Fatalf("fern-selfhost %v: %v\n%s", args, err, b)
 				}
 				img, err := os.ReadFile(out)

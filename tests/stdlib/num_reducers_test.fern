@@ -4,10 +4,9 @@ import "core/iter" as iter;
 
 // tests/stdlib/num_reducers_test.fern — pure-Fern coverage of std/num's
 // generic numeric reducers: the trait-bounded array forms (sum_with / sum [Add
-// (+ Zero)], product_with / product [Mul (+ One)]) and the Iterator-bounded
-// forms (sum_iter / product_iter over `I: iter.Iterator[T]`). The iter forms are
-// exactly the shape #3915 (Iterator-bounded reducers) just lowered; this probes
-// whether std/num benefits from that fix. Driven over i32.
+// (+ Zero)], product_with / product [Mul (+ One)]) and core/iter's
+// `iter.sum` / `iter.product`, bounded on the same traits, over i32, i64 and
+// f64.
 
 function test_sum_with(): test.TestOutcome {
   let xs: i32[] = [1, 2, 3, 4];
@@ -36,17 +35,34 @@ function test_sum_empty(): test.TestOutcome {
 
 function test_sum_iter(): test.TestOutcome {
   let xs: i32[] = [1, 2, 3, 4, 5];
-  return test.assert_eq(num.sum_iter(iter.of(xs), 0), 15);
+  return test.assert_eq(iter.sum(iter.of(xs)), 15);
 }
 
 function test_product_iter(): test.TestOutcome {
   let xs: i32[] = [1, 2, 3, 4];
-  return test.assert_eq(num.product_iter(iter.of(xs), 1), 24);
+  return test.assert_eq(iter.product(iter.of(xs)), 24);
 }
 
 function test_sum_iter_range(): test.TestOutcome {
   // sum 0..5 = 0+1+2+3+4 = 10.
-  return test.assert_eq(num.sum_iter(iter.range(0, 5), 0), 10);
+  return test.assert_eq(iter.sum(iter.range(0, 5)), 10);
+}
+
+function test_sum_iter_i64(): test.TestOutcome {
+  let xs: i64[] = [3000000000, 3000000000];
+  return test.assert_eq(iter.sum(iter.of(xs)), 6000000000);
+}
+
+function test_iter_f64(): test.TestOutcome {
+  let xs: f64[] = [1.5, 2.5, 4.0];
+  if (iter.product(iter.of(xs)) != 15.0) {
+    return test.fail("product");
+  }
+  let empty: f64[] = [];
+  if (iter.product(iter.of(empty)) != 1.0) {
+    return test.fail("empty product");
+  }
+  return test.assert_eq_f64_near(iter.sum(iter.of(xs)), 8.0, 0.0001);
 }
 
 function main(): i32 {
@@ -56,8 +72,10 @@ function main(): i32 {
   r = r.it("sum", test_sum);
   r = r.it("product", test_product);
   r = r.it("sum empty", test_sum_empty);
-  r = r.it("sum_iter", test_sum_iter);
-  r = r.it("product_iter", test_product_iter);
-  r = r.it("sum_iter range", test_sum_iter_range);
+  r = r.it("iter.sum", test_sum_iter);
+  r = r.it("iter.product", test_product_iter);
+  r = r.it("iter.sum range", test_sum_iter_range);
+  r = r.it("iter.sum i64", test_sum_iter_i64);
+  r = r.it("iter.sum / product f64", test_iter_f64);
   return r.finish();
 }
