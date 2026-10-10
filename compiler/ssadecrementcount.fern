@@ -3,6 +3,8 @@
 // family 1: original in [INT_MIN, -1]; family 2: original in [2, INT_MAX].
 pub struct Value { family: i32, delta: i32 }
 
+// Flags use x86-64 32-bit CMP, TEST and SUB semantics. carry is x86 CF
+// (unsigned borrow), not a portable carry or an ARM condition flag.
 // Each flag is -1 (unknown), 0 or 1. signed_less preserves SF xor OF even
 // when an interval crosses the signed-overflow boundary of a comparison.
 pub struct Flags { zero: i32, negative: i32, carry: i32, overflow: i32, signed_less: i32 }

@@ -1,57 +1,60 @@
 import "../ssadecrementcount" as count;
 
-function require(ok: boolean): void {
+function require(ok: boolean, code: i32): void {
   if (!ok) {
-    print("bounded decrement count controls failed");
-    exit(197);
+    print("bounded decrement count control " + code.to_string() + " failed");
+    exit(code);
   }
 }
 
-function flags(f: count.Flags, z: i32, s: i32, c: i32, o: i32, l: i32): void {
-  require(f.zero == z && f.negative == s && f.carry == c && f.overflow == o && f.signed_less == l);
+function flags(f: count.Flags, z: i32, s: i32, c: i32, o: i32, l: i32, code: i32): void {
+  require(f.zero == z && f.negative == s && f.carry == c && f.overflow == o && f.signed_less == l, code);
 }
 
-function invalid(v: count.Value): void {
-  require(!count.valid(v) && !count.is_original(v) && !count.is_decremented(v));
-  require(!count.valid(count.decrement(v)));
-  flags(count.test(v), -1, -1, -1, -1, -1);
-  flags(count.compare(v, 1), -1, -1, -1, -1, -1);
-  flags(count.decrement_flags(v), -1, -1, -1, -1, -1);
+function invalid(v: count.Value, code: i32): void {
+  require(!count.valid(v) && !count.is_original(v) && !count.is_decremented(v), code);
+  require(!count.valid(count.decrement(v)), code);
+  flags(count.test(v), -1, -1, -1, -1, -1, code);
+  flags(count.compare(v, 1), -1, -1, -1, -1, -1, code);
+  flags(count.decrement_flags(v), -1, -1, -1, -1, -1, code);
 }
 
 pub function run(): void {
   let kept = count.original(false);
   let shared = count.original(true);
   let decremented = count.decrement(shared);
-  require(count.is_original(kept) && count.is_original(shared));
-  require(!count.is_decremented(kept) && !count.is_decremented(shared));
-  require(count.valid(decremented) && count.is_decremented(decremented) && !count.is_original(decremented));
-  invalid(count.unknown());
-  invalid(count.decrement(kept));
-  invalid(count.decrement(decremented));
+  require(count.is_original(kept) && count.is_original(shared), 197);
+  require(!count.is_decremented(kept) && !count.is_decremented(shared), 231);
+  require(count.valid(decremented) && count.is_decremented(decremented) && !count.is_original(decremented), 232);
+  invalid(count.unknown(), 99);
+  invalid(count.decrement(kept), 100);
+  invalid(count.decrement(decremented), 101);
   let malformed: count.Value[] = [count.Value { family: 0, delta: -1 }, count.Value { family: 1, delta: -1 }, count.Value { family: 1, delta: 1 }, count.Value { family: 2, delta: -2 }, count.Value { family: 2, delta: 1 }, count.Value { family: 3, delta: 0 }, count.Value { family: -1, delta: 0 }, count.Value { family: 2, delta: -2147483648 }];
+  // Codes 102..109 identify the eight malformed input cases.
+  let code = 102;
   for v in malformed {
-    invalid(v);
+    invalid(v, code);
+    code = code + 1;
   }
-  flags(count.test(kept), 0, 1, 0, 0, 1);
-  flags(count.test(shared), 0, 0, 0, 0, 0);
-  flags(count.test(decremented), 0, 0, 0, 0, 0);
-  flags(count.decrement_flags(shared), 0, 0, 0, 0, 0);
-  flags(count.decrement_flags(kept), -1, -1, -1, -1, -1);
-  flags(count.decrement_flags(decremented), -1, -1, -1, -1, -1);
-  flags(count.compare(kept, 0), 0, 1, 0, 0, 1);
+  flags(count.test(kept), 0, 1, 0, 0, 1, 233);
+  flags(count.test(shared), 0, 0, 0, 0, 0, 234);
+  flags(count.test(decremented), 0, 0, 0, 0, 0, 235);
+  flags(count.decrement_flags(shared), 0, 0, 0, 0, 0, 240);
+  flags(count.decrement_flags(kept), -1, -1, -1, -1, -1, 241);
+  flags(count.decrement_flags(decremented), -1, -1, -1, -1, -1, 242);
+  flags(count.compare(kept, 0), 0, 1, 0, 0, 1, 243);
   // INT_MIN - 1 overflows, while every kept count still compares less.
-  flags(count.compare(kept, 1), 0, -1, 0, -1, 1);
-  flags(count.compare(shared, 1), 0, 0, 0, 0, 0);
+  flags(count.compare(kept, 1), 0, -1, 0, -1, 1, 244);
+  flags(count.compare(shared, 1), 0, 0, 0, 0, 0, 245);
   // Original count 2 becomes exactly 1; larger shared counts do not.
-  flags(count.compare(decremented, 1), -1, 0, 0, 0, 0);
-  flags(count.compare(kept, -2147483648), -1, 0, 0, 0, 0);
-  flags(count.compare(kept, -1), -1, -1, -1, 0, -1);
-  flags(count.compare(shared, -2147483648), 0, 1, 1, 1, 0);
-  flags(count.compare(decremented, -2147483648), 0, 1, 1, 1, 0);
-  flags(count.compare(shared, -1), 0, -1, 1, -1, 0);
-  flags(count.compare(decremented, -1), 0, 0, 1, 0, 0);
-  flags(count.compare(shared, 2147483647), -1, -1, -1, 0, -1);
-  flags(count.compare(decremented, 2147483647), 0, 1, 1, 0, 1);
-  flags(count.compare(kept, 2147483647), 0, -1, 0, -1, 1);
+  flags(count.compare(decremented, 1), -1, 0, 0, 0, 0, 246);
+  flags(count.compare(kept, -2147483648), -1, 0, 0, 0, 0, 247);
+  flags(count.compare(kept, -1), -1, -1, -1, 0, -1, 248);
+  flags(count.compare(shared, -2147483648), 0, 1, 1, 1, 0, 249);
+  flags(count.compare(decremented, -2147483648), 0, 1, 1, 1, 0, 250);
+  flags(count.compare(shared, -1), 0, -1, 1, -1, 0, 251);
+  flags(count.compare(decremented, -1), 0, 0, 1, 0, 0, 252);
+  flags(count.compare(shared, 2147483647), -1, -1, -1, 0, -1, 253);
+  flags(count.compare(decremented, 2147483647), 0, 1, 1, 0, 1, 254);
+  flags(count.compare(kept, 2147483647), 0, -1, 0, -1, 1, 255);
 }
