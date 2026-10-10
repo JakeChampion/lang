@@ -6,6 +6,7 @@ import "./ssaprepare";
 import "./ssacreditselected" as selection;
 import "./ssacredithelper" as helper;
 import "./typeinfo";
+import "./semtypes";
 
 pub struct Binding { rows: ssaprepare.Emitted[], error: string }
 
@@ -62,6 +63,33 @@ function target_binding(found: ssaprepare.Emitted[], name: string, architecture:
 pub function release(rows: ssaprepare.Emitted[], name: string, drop: string, architecture: string, parent: typeinfo.Type): Binding {
   let r = binding(rows, name, architecture);
   let d = resolve(rows, drop, architecture);
+  return release_pair(r, d, parent);
+}
+
+// Derive the ordinary record ABI from the SAME selected helper descriptors.
+// Descriptors identify construction inputs, not effects: the complete formed
+// bodies, each producer's schema and native entry must still pass below.
+// Like other selected APIs, this requires integrity of the supplied carrier.
+pub function release_selected(rows: ssaprepare.Emitted[], name: string, drop: string, architecture: string): Binding {
+  let r = binding(rows, name, architecture);
+  let d = resolve(rows, drop, architecture);
+  if (r.error != "") {
+    return r;
+  }
+  if (d.error != "") {
+    return d;
+  }
+  if let Some(release_type) = r.rows[0].body.selected.origin.helper {
+    if let Some(drop_type) = d.rows[0].body.selected.origin.helper {
+      if (!release_type.children_only && drop_type.children_only && semtypes.equal(release_type.ty, drop_type.ty)) {
+        return release_pair(r, d, release_type.ty);
+      }
+    }
+  }
+  return Binding { rows: [], error: "missing or mismatched selected helper type" };
+}
+
+function release_pair(r: Binding, d: Binding, parent: typeinfo.Type): Binding {
   if (r.error != "") {
     return r;
   }
