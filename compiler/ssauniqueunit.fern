@@ -10,6 +10,97 @@ import "std/string";
 
 struct Unit { lines: string[], ok: boolean }
 
+// Built privately from this unit's exact names. Sorting changes only the
+// position index; function and text order remain untouched.
+struct Names { names: string[], order: i32[], duplicate: i32 }
+
+function before(a: string, b: string): boolean {
+  let i = 0;
+  while (i < a.len() && i < b.len()) {
+    if (a[i] != b[i]) {
+      return a[i] < b[i];
+    }
+    i = i + 1;
+  }
+  return a.len() < b.len();
+}
+
+function merge_names(names: string[], order: i32[], left: i32, mid: i32, end: i32, output: i32[]): i32[] {
+  let out = output;
+  let a = left;
+  let b = mid;
+  let at = left;
+  while (at < end) {
+    if (b >= end || a < mid && !before(names[order[b]], names[order[a]])) {
+      out = out.with(at, order[a]);
+      a = a + 1;
+    } else {
+      out = out.with(at, order[b]);
+      b = b + 1;
+    }
+    at = at + 1;
+  }
+  return out;
+}
+
+function names_pass(names: string[], order: i32[], width: i32): i32[] {
+  let out = order;
+  let left = 0;
+  while (left < names.len()) {
+    let mid = left + (if (width < names.len() - left) { width } else { names.len() - left });
+    let end = mid + (if (width < names.len() - mid) { width } else { names.len() - mid });
+    out = merge_names(names, order, left, mid, end, out);
+    left = end;
+  }
+  return out;
+}
+
+function duplicate_name(names: string[], order: i32[]): i32 {
+  let duplicate = -1;
+  let i = 1;
+  while (i < order.len()) {
+    let at = order[i];
+    if (names[at] == names[order[i - 1]] && (duplicate < 0 || at < duplicate)) {
+      duplicate = at;
+    }
+    i = i + 1;
+  }
+  return duplicate;
+}
+
+function name_index(names: string[]): Names {
+  let order: i32[] = [];
+  let i = 0;
+  while (i < names.len()) {
+    order = order.append(i);
+    i = i + 1;
+  }
+  let width = 1;
+  while (width < names.len()) {
+    order = names_pass(names, order, width);
+    width = if (width > names.len() / 2) { names.len() } else { width * 2 };
+  }
+  return Names { names: names, order: order, duplicate: duplicate_name(names, order) };
+}
+
+function position(ix: Names, name: string): i32 {
+  let lo = 0;
+  let hi = ix.order.len();
+  while (lo < hi) {
+    let mid = lo + (hi - lo) / 2;
+    let at = ix.order[mid];
+    if (ix.names[at] == name) {
+      return at;
+    }
+    if (before(ix.names[at], name)) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return -1;
+}
+
 function refuse(name: string): helper.Proof {
   return helper.Proof { ok: false, function_name: name, message: "unproved uniqueness final unit" };
 }
@@ -44,15 +135,12 @@ function text_unit(output: string, architecture: string): Unit {
     if (line != "") {
       // Body and pool labels share one assembler namespace.
       if (line.ends_with(":")) {
-        if (util.has_str(labels, line)) {
-          return Unit { lines: [], ok: false };
-        }
         labels = labels.append(line);
       }
       lines = lines.append(line);
     }
   }
-  if (lines.len() < 2 || lines[0] != ".text") {
+  if (name_index(labels).duplicate >= 0 || lines.len() < 2 || lines[0] != ".text") {
     return Unit { lines: [], ok: false };
   }
   let body: string[] = [];
@@ -85,20 +173,23 @@ pub function check_collection(output: string, architecture: string, functions: s
     return refuse("");
   }
   let entries: string[] = [];
+  let seen: boolean[] = [];
   for f in functions {
     let entry = "__fn_" + f.name + ":";
-    if (util.has_str(entries, entry)) {
-      return refuse(f.name);
-    }
     entries = entries.append(entry);
+    seen = seen.append(false);
   }
-  let seen: i32[] = [];
+  let names = name_index(entries);
+  if (names.duplicate >= 0) {
+    return refuse(functions[names.duplicate].name);
+  }
+  let count = 0;
   let current = -1;
   let body: string[] = [];
   for line in unit.lines {
-    let at = util.index_of_str(entries, line);
+    let at = position(names, line);
     if (at >= 0) {
-      if (util.index_of_i32(seen, at) >= 0) {
+      if (seen[at]) {
         return refuse(functions[at].name);
       }
       if (current >= 0) {
@@ -107,7 +198,8 @@ pub function check_collection(output: string, architecture: string, functions: s
           return proof;
         }
       }
-      seen = seen.append(at);
+      seen = seen.with(at, true);
+      count = count + 1;
       current = at;
       body = [];
     }
@@ -116,7 +208,7 @@ pub function check_collection(output: string, architecture: string, functions: s
     }
     body = body.append(line);
   }
-  if (current < 0 || seen.len() != functions.len()) {
+  if (current < 0 || count != functions.len()) {
     return refuse("");
   }
   let proof = caller.check_lines(body, architecture, functions[current]);
