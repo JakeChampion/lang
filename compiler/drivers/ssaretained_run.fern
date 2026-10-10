@@ -32,6 +32,7 @@ import "./ssacapacitymachines" as capacitymachines;
 import "./ssalargepushisas" as largepushisas;
 import "./ssalargepushmachines" as largepushmachines;
 import "./ssaarrayreleaseisas" as arrayreleaseisas;
+import "./ssasmallarraymachines" as smallarraymachines;
 import "./ssalargepushpartitions" as largepushpartitions;
 import "./ssalargepushvalues" as largepushvalues;
 
@@ -119,6 +120,7 @@ function settled(g: ircore.Gated, arm: boolean): void {
     capacitymachines.run(on.text);
     largepushisas.run(on.text);
     arrayreleaseisas.run(on.text);
+    smallarraymachines.run(on.text);
     largepushmachines.run(on.text);
   }
   sites.output(on);
