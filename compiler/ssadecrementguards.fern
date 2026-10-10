@@ -1,0 +1,267 @@
+// Guard-only normal-x86 effects. Private states grant no heap permission.
+import "./ssacapacityisa" as isa;
+import "./ssadecrementcount" as flags;
+
+// Half kinds: original register, pointer, stack, return, arbitrary argument,
+// known zero. Pointer families: low even, low odd, arbitrary odd64.
+struct Half { kind: i32, identity: i32, high: boolean }
+
+struct Word { low: Half, high: Half }
+
+struct State { regs: Word[], flags: flags.Flags, ok: boolean }
+
+function half(kind: i32, identity: i32, high: boolean): Half {
+  return Half { kind: kind, identity: identity, high: high };
+}
+
+function token(kind: i32, identity: i32): Word {
+  return Word { low: half(kind, identity, false), high: half(kind, identity, true) };
+}
+
+function zero(): Half {
+  return half(6, 0, false);
+}
+
+function pointer(family: i32): Word {
+  let w = token(2, family);
+  return if (family == 2) { w } else { Word { ...w, high: zero() } };
+}
+
+function same_half(a: Half, b: Half): boolean {
+  return a.kind == b.kind && a.identity == b.identity && a.high == b.high;
+}
+
+function same_word(a: Word, b: Word): boolean {
+  return same_half(a.low, b.low) && same_half(a.high, b.high);
+}
+
+function unknown(): flags.Flags {
+  return flags.Flags { zero: -1, negative: -1, carry: -1, overflow: -1, signed_less: -1 };
+}
+
+function initial(family: i32, register_entry: boolean): State {
+  let regs: Word[] = [];
+  let i = 0;
+  while (i < 16) {
+    regs = regs.append(if (i == 4) { token(3, 0) } else { token(1, i) });
+    i = i + 1;
+  }
+  if (register_entry) {
+    regs = regs.with(0, pointer(family));
+  }
+  return State { regs: regs, flags: unknown(), ok: true };
+}
+
+function narrowed(w: Word, width: i32): Word {
+  return if (width == 32) { Word { ...w, high: zero() } } else { w };
+}
+
+function write(s: State, reg: i32, w: Word): State {
+  return State { ...s, regs: s.regs.with(reg, w) };
+}
+
+function load(s: State, family: i32, register_entry: boolean, op: isa.Op): State {
+  if (op.index >= 0 || !same_word(s.regs[op.base], token(3, 0))) {
+    return State { ...s, ok: false };
+  }
+  let argument = if (register_entry) { token(5, 0) } else { pointer(family) };
+  if (op.offset == 0 || op.offset == 8) {
+    let w = if (op.offset == 0) { token(4, 0) } else { argument };
+    return write(s, op.destination, narrowed(w, op.width));
+  }
+  return load_high(s, argument, op);
+}
+
+function load_high(s: State, argument: Word, op: isa.Op): State {
+  if (op.width == 32 && (op.offset == 4 || op.offset == 12)) {
+    let w = if (op.offset == 4) { token(4, 0) } else { argument };
+    return write(s, op.destination, Word { low: w.high, high: zero() });
+  }
+  return State { ...s, ok: false };
+}
+
+function test(s: State, op: isa.Op): State {
+  let low = s.regs[op.source].low;
+  let eq = -1;
+  if (op.immediate == 0) {
+    eq = 1;
+  }
+  if (op.immediate == 1 && low.kind == 2 && !low.high) {
+    eq = if (low.identity == 0) { 1 } else { 0 };
+  }
+  let sign = if (op.immediate < 128) { 0 } else { -1 };
+  return State { ...s, flags: flags.Flags { zero: eq, negative: sign, carry: 0, overflow: 0, signed_less: sign } };
+}
+
+function compare(s: State, family: i32, op: isa.Op): State {
+  if (family == 2 || op.immediate < 0 || !same_word(s.regs[op.source], pointer(family))) {
+    return State { ...s, flags: unknown() };
+  }
+  // Both low families have a known zero high half; CMP32 and CMP64 agree.
+  let lo = family;
+  let hi = 65534 + family;
+  let less = if (hi < op.immediate) { 1 } else { if (lo >= op.immediate) { 0 } else { -1 } };
+  let eq = if (op.immediate < lo || op.immediate > hi || op.immediate % 2 != family) { 0 } else { -1 };
+  return State { ...s, flags: flags.Flags { zero: eq, negative: less, carry: less, overflow: 0, signed_less: less } };
+}
+
+function step(s: State, family: i32, register_entry: boolean, op: isa.Op): State {
+  if (op.kind == 1) {
+    return s;
+  }
+  if (op.kind == 2) {
+    return write(s, op.destination, narrowed(s.regs[op.source], op.width));
+  }
+  if (op.kind == 3) {
+    return load(s, family, register_entry, op);
+  }
+  if (op.kind == 26) {
+    return test(s, op);
+  }
+  if (op.kind == 16) {
+    return compare(s, family, op);
+  }
+  return State { ...s, ok: false };
+}
+
+function invert(v: i32): i32 {
+  return if (v < 0) { -1 } else { 1 - v };
+}
+
+function either(a: i32, b: i32): i32 {
+  if (a == 1 || b == 1) {
+    return 1;
+  }
+  return if (a == 0 && b == 0) { 0 } else { -1 };
+}
+
+function branch(f: flags.Flags, name: string): i32 {
+  if (name == "jmp") {
+    return 1;
+  }
+  if (name == "je" || name == "jz") {
+    return f.zero;
+  }
+  if (name == "jne" || name == "jnz") {
+    return invert(f.zero);
+  }
+  if (name == "js") {
+    return f.negative;
+  }
+  if (name == "jns") {
+    return invert(f.negative);
+  }
+  return ordered(f, name);
+}
+
+function ordered(f: flags.Flags, name: string): i32 {
+  if (name == "jb" || name == "jc" || name == "jnae") {
+    return f.carry;
+  }
+  if (name == "jae" || name == "jnb" || name == "jnc") {
+    return invert(f.carry);
+  }
+  return inclusive(f, name);
+}
+
+function inclusive(f: flags.Flags, name: string): i32 {
+  if (name == "jbe" || name == "jna") {
+    return either(f.carry, f.zero);
+  }
+  if (name == "ja" || name == "jnbe") {
+    return invert(either(f.carry, f.zero));
+  }
+  return signed_branch(f, name);
+}
+
+function signed_branch(f: flags.Flags, name: string): i32 {
+  if (name == "jl" || name == "jnge") {
+    return f.signed_less;
+  }
+  if (name == "jge" || name == "jnl") {
+    return invert(f.signed_less);
+  }
+  if (name == "jle" || name == "jng") {
+    return either(f.signed_less, f.zero);
+  }
+  if (name == "jg" || name == "jnle") {
+    return invert(either(f.signed_less, f.zero));
+  }
+  return overflow(f, name);
+}
+
+function overflow(f: flags.Flags, name: string): i32 {
+  if (name == "jo") {
+    return f.overflow;
+  }
+  return if (name == "jno") { invert(f.overflow) } else { -1 };
+}
+
+function finished(s: State, family: i32): boolean {
+  let i = 0;
+  while (i < 16) {
+    let expected = if (i == 0) { pointer(family) } else { if (i == 4) { token(3, 0) } else { token(1, i) } };
+    if (!same_word(s.regs[i], expected)) {
+      return false;
+    }
+    i = i + 1;
+  }
+  // No write has been permitted. RET reads the original word at proven S.
+  return true;
+}
+
+function in_program(p: isa.ArrayProgram, pc: i32): boolean {
+  return pc >= 0 && pc < p.ops.len();
+}
+
+function path(p: isa.ArrayProgram, family: i32, register_entry: boolean): boolean {
+  let s = initial(family, register_entry);
+  let visited: boolean[] = [];
+  for op in p.ops {
+    visited = visited.append(false);
+  }
+  let pc = if (register_entry) { p.register_entry } else { 0 };
+  while (in_program(p, pc)) {
+    if (visited[pc]) {
+      return false;
+    }
+    visited = visited.with(pc, true);
+    let op = p.ops[pc];
+    if (op.kind == 18) {
+      return finished(s, family);
+    }
+    if (op.kind == 17) {
+      let taken = branch(s.flags, op.condition);
+      if (taken < 0) {
+        return false;
+      }
+      pc = if (taken == 1) { op.target } else { pc + 1 };
+    } else {
+      s = step(s, family, register_entry, op);
+      if (!s.ok) {
+        return false;
+      }
+      pc = pc + 1;
+    }
+  }
+  return false;
+}
+
+// Only canonical readable incoming stack S..S+15 is assumed; all heap accesses
+// and writes refuse. Array covers P0..65535. String covers low even pointers
+// plus all odd64 pointers. Both entries preserve other GPRs/memory, return P
+// in AX and consume original RET with SP+8. The .r stack argument is arbitrary.
+// This is conditional supplied-text behavior, not a caller-credit, linked,
+// allocation, ordinary heap-pointer or full runtime certificate.
+pub function check(output: string, string_entry: boolean): boolean {
+  let p = if (string_entry) { isa.string_program(output) } else { isa.array_program(output) };
+  if (p.error != "" || p.register_entry < 0) {
+    return false;
+  }
+  for family in [0, if (string_entry) { 2 } else { 1 }] {
+    if (!path(p, family, false) || !path(p, family, true)) {
+      return false;
+    }
+  }
+  return true;
+}
