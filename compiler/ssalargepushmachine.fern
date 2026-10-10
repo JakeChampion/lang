@@ -1,0 +1,418 @@
+// Scoped normal-x86 large-push effects, derived only from supplied text.
+// Private halves preserve arbitrary original register and return identities.
+import "./ssacapacityisa" as isa;
+import "./ssalargepushvalue" as value;
+import "./ssalargepushranges" as ranges;
+
+// Kinds: invalid, numeric, original GPR, SP, RET, original block, old head,
+// true unsigned oversized size, block P, freelist L. All tokens retain halves.
+struct Half { kind: i32, identity: i32, part: i32, number: value.Value }
+
+struct Word { low: Half, high: Half }
+
+struct State { regs: Word[], cells: Half[], flags: value.Comparison, ok: boolean, oversized: boolean, block_writes: i32, slot_writes: i32 }
+
+function token(kind: i32, identity: i32, part: i32): Half {
+  return Half { kind: kind, identity: identity, part: part, number: value.unknown() };
+}
+
+function identity(kind: i32, id: i32): Word {
+  return Word { low: token(kind, id, 0), high: token(kind, id, 1) };
+}
+
+function numeric_half(v: value.Value): Half {
+  return Half { kind: 1, identity: 0, part: 0, number: v };
+}
+
+function zero(r: ranges.Interval): Half {
+  return numeric_half(value.number(r, 0 as i64));
+}
+
+function nonnegative(r: ranges.Interval, v: value.Value): boolean {
+  return value.valid(r, v) && v.factor as i64 * (r.low as i64) + v.offset >= 0;
+}
+
+function numeric(r: ranges.Interval, v: value.Value): Word {
+  if (!value.valid(r, v)) {
+    return identity(0, 0);
+  }
+  let low = value.zero32(r, v);
+  if (!value.valid(r, low)) {
+    return identity(0, 0);
+  }
+  let high = if (nonnegative(r, v)) { 0 as i64 } else { 4294967295 as i64 };
+  return Word { low: numeric_half(low), high: numeric_half(value.number(r, high)) };
+}
+
+function number(r: ranges.Interval, w: Word, width: i32): value.Value {
+  if (w.low.kind != 1 || !nonnegative(r, w.low.number)) {
+    return value.unknown();
+  }
+  if (width == 32) {
+    return w.low.number;
+  }
+  if (w.high.kind != 1 || w.high.number.factor != 0) {
+    return value.unknown();
+  }
+  if (w.high.number.offset == 0) {
+    return w.low.number;
+  }
+  if (w.high.number.offset == 4294967295 as i64) {
+    let v = value.Value { factor: w.low.number.factor, offset: w.low.number.offset - 4294967296 as i64 };
+    return if (value.valid(r, v)) { v } else { value.unknown() };
+  }
+  return value.unknown();
+}
+
+function same_half(a: Half, b: Half): boolean {
+  return a.kind == b.kind && a.identity == b.identity && a.part == b.part && a.number.factor == b.number.factor && a.number.offset == b.number.offset;
+}
+
+function same_word(a: Word, b: Word): boolean {
+  return same_half(a.low, b.low) && same_half(a.high, b.high);
+}
+
+function unknown_flags(): value.Comparison {
+  return value.Comparison { less: -1, equal: -1, less_equal: -1 };
+}
+
+function initial_register(r: ranges.Interval, reg: i32, oversized: boolean): Word {
+  if (reg == 4) {
+    return identity(3, 0);
+  }
+  if (reg == 8) {
+    return identity(8, 0);
+  }
+  if (reg == 6) {
+    return if (oversized) { identity(7, 0) } else { numeric(r, value.original(r)) };
+  }
+  return identity(2, reg);
+}
+
+function initial(r: ranges.Interval, oversized: boolean): State {
+  let regs: Word[] = [];
+  let i = 0;
+  while (i < 16) {
+    regs = regs.append(initial_register(r, i, oversized));
+    i = i + 1;
+  }
+  let cells = [token(5, 0, 0), token(5, 0, 1), token(6, 0, 0), token(6, 0, 1), token(4, 0, 0), token(4, 0, 1)];
+  return State { regs: regs, cells: cells, flags: unknown_flags(), ok: true, oversized: oversized, block_writes: 0, slot_writes: 0 };
+}
+
+function write(s: State, reg: i32, w: Word): State {
+  return State { ...s, regs: s.regs.with(reg, w), ok: s.ok && w.low.kind != 0 && w.high.kind != 0 };
+}
+
+function narrowed(r: ranges.Interval, w: Word, width: i32): Word {
+  return if (width == 32) { Word { low: w.low, high: zero(r) } } else { w };
+}
+
+function slot(s: State, r: ranges.Interval, op: isa.Op): boolean {
+  if (s.oversized || op.index < 0 || op.scale != 8 || !same_word(s.regs[op.base], identity(9, 0))) {
+    return false;
+  }
+  let index = number(r, s.regs[op.index], 64);
+  // Only an actually derived constant class can address the selected slot.
+  return value.valid(r, index) && index.factor == 0 && index.offset >= 0 as i64 && index.offset <= 44 as i64 && index.offset == ranges.expected_class(r) as i64;
+}
+
+function cell_extent(op: isa.Op): boolean {
+  return (op.width == 32 || op.width == 64) && op.offset >= 0 && op.offset <= 8 - op.width / 8 && op.offset % 4 == 0;
+}
+
+function address(s: State, r: ranges.Interval, op: isa.Op): i32 {
+  if (!cell_extent(op)) {
+    return -1;
+  }
+  let half = op.offset / 4;
+  if (op.index < 0 && same_word(s.regs[op.base], identity(3, 0))) {
+    return 4 + half;
+  }
+  if (op.index < 0 && same_word(s.regs[op.base], identity(8, 0))) {
+    return half;
+  }
+  return if (slot(s, r, op)) { 2 + half } else { -1 };
+}
+
+function read(s: State, r: ranges.Interval, at: i32, width: i32): Word {
+  if (at < 0) {
+    return identity(0, 0);
+  }
+  return Word { low: s.cells[at], high: if (width == 64) { s.cells[at + 1] } else { zero(r) } };
+}
+
+function store(s: State, at: i32, width: i32, w: Word): State {
+  // Deliberately require exactly one complete write to each of the two cells.
+  // Return memory, partial writes and oversized writes are not admitted.
+  if (s.oversized || width != 64 || at != 0 && at != 2) {
+    return State { ...s, ok: false };
+  }
+  let count = if (at == 0) { s.block_writes } else { s.slot_writes };
+  if (count != 0) {
+    return State { ...s, ok: false };
+  }
+  let cells = s.cells.with(at, w.low).with(at + 1, w.high);
+  return State { ...s, cells: cells, block_writes: s.block_writes + (if (at == 0) { 1 } else { 0 }), slot_writes: s.slot_writes + (if (at == 2) { 1 } else { 0 }) };
+}
+
+function movement(s: State, r: ranges.Interval, op: isa.Op): State {
+  if (op.kind == 2) {
+    return write(s, op.destination, narrowed(r, s.regs[op.source], op.width));
+  }
+  if (op.kind == 3) {
+    return write(s, op.destination, read(s, r, address(s, r, op), op.width));
+  }
+  if (op.kind == 4) {
+    return store(s, address(s, r, op), op.width, s.regs[op.source]);
+  }
+  if (op.kind == 5) {
+    let w = numeric(r, value.number(r, op.immediate as i64));
+    return write(s, op.destination, narrowed(r, w, op.width));
+  }
+  return State { ...s, ok: false };
+}
+
+function arithmetic_source(s: State, r: ranges.Interval, op: isa.Op): value.Value {
+  return if (op.source < 0) { value.number(r, op.immediate as i64) } else { number(r, s.regs[op.source], op.width) };
+}
+
+function add_sub(r: ranges.Interval, a: value.Value, b: value.Value, subtract: boolean, width: i32): value.Value {
+  if (!value.valid(r, b) || b.factor != 0) {
+    return value.unknown();
+  }
+  let v = value.add(r, a, if (subtract) { -b.offset } else { b.offset });
+  // Conservative 32-bit domain: prove no wrap; flags remain unknown.
+  return if (width == 64 || nonnegative(r, v)) { v } else { value.unknown() };
+}
+
+function shift(r: ranges.Interval, v: value.Value, count: value.Value, left: boolean): value.Value {
+  if (!nonnegative(r, v) || v.factor != 0 || !value.valid(r, count) || count.factor != 0) {
+    return value.unknown();
+  }
+  let n = v.offset;
+  let i = 0 as i64;
+  while (i < count.offset) {
+    n = if (left) { n * (2 as i64) } else { n / (2 as i64) };
+    if (n > 4294967295 as i64) {
+      return value.unknown();
+    }
+    i = i + 1 as i64;
+  }
+  return value.number(r, n);
+}
+
+function shifted(s: State, r: ranges.Interval, op: isa.Op): State {
+  let count = if (op.kind == 20 || op.kind == 21) { value.number(r, op.immediate as i64) } else { number(r, s.regs[1], 32) };
+  if (!value.valid(r, count) || count.factor != 0) {
+    return State { ...s, ok: false };
+  }
+  let masked = value.number(r, count.offset % (op.width as i64));
+  let flags = if (masked.offset == 0) { s.flags } else { unknown_flags() };
+  let v = number(r, s.regs[op.destination], op.width);
+  let result = if (masked.offset == 0) { narrowed(r, s.regs[op.destination], op.width) } else { numeric(r, shift(r, v, masked, op.kind == 13 || op.kind == 20)) };
+  return write(State { ...s, flags: flags }, op.destination, result);
+}
+
+function calculated(s: State, r: ranges.Interval, op: isa.Op): value.Value {
+  let a = number(r, s.regs[op.destination], op.width);
+  if (op.kind == 12) {
+    return value.negate(r, a);
+  }
+  let b = arithmetic_source(s, r, op);
+  if (op.kind == 11) {
+    return if (op.width == 64) { value.mask(r, a, b) } else { value.unknown() };
+  }
+  return add_sub(r, a, b, op.kind == 9, op.width);
+}
+
+function arithmetic(s: State, r: ranges.Interval, op: isa.Op): State {
+  if (op.kind == 13 || op.kind == 14 || op.kind == 20 || op.kind == 21) {
+    return shifted(s, r, op);
+  }
+  let v = value.unknown();
+  if (op.kind == 8) {
+    let bit = value.bit_scan(r, number(r, s.regs[op.source], op.width));
+    if (bit >= 0) {
+      v = value.number(r, bit as i64);
+    }
+  } else {
+    v = calculated(s, r, op);
+  }
+  let w = narrowed(r, numeric(r, v), op.width);
+  return write(State { ...s, flags: unknown_flags() }, op.destination, w);
+}
+
+function lea(s: State, r: ranges.Interval, op: isa.Op): State {
+  let base = number(r, s.regs[op.base], 64);
+  let index = if (op.index < 0) { value.number(r, 0 as i64) } else { number(r, s.regs[op.index], 64) };
+  if (!value.valid(r, index) || index.factor != 0) {
+    return State { ...s, ok: false };
+  }
+  let result = value.add(r, base, index.offset * (op.scale as i64) + op.offset as i64);
+  return write(s, op.destination, numeric(r, result));
+}
+
+function comparison(s: State, r: ranges.Interval, op: isa.Op): State {
+  // The oversized family is unsigned [1073741825, UINT64_MAX]. Its high
+  // bit is not a signed negative arithmetic value. Narrowing loses this fact.
+  if (op.width == 64 && same_word(s.regs[op.source], identity(7, 0)) && op.immediate >= 0 && op.immediate <= 1073741824) {
+    return State { ...s, flags: value.Comparison { less: 0, equal: 0, less_equal: 0 } };
+  }
+  let v = number(r, s.regs[op.source], op.width);
+  if (!nonnegative(r, v) || op.immediate < 0) {
+    return State { ...s, flags: unknown_flags() };
+  }
+  // Both operands are nonnegative width-fitting bit patterns. These facts
+  // justify unsigned predicates only; no signed/overflow flags are invented.
+  return State { ...s, flags: value.compare(r, v, op.immediate as i64) };
+}
+
+function step(s: State, r: ranges.Interval, op: isa.Op): State {
+  if (op.kind == 1) {
+    return s;
+  }
+  if (op.kind >= 2 && op.kind <= 7) {
+    return movement(s, r, op);
+  }
+  if (op.kind >= 8 && op.kind <= 14 || op.kind == 20 || op.kind == 21) {
+    return arithmetic(s, r, op);
+  }
+  return addressing_or_comparison(s, r, op);
+}
+
+function addressing_or_comparison(s: State, r: ranges.Interval, op: isa.Op): State {
+  if (op.kind == 19 && op.width == 64 && op.symbol == "__fern_large_freelist") {
+    return write(s, op.destination, identity(9, 0));
+  }
+  if (op.kind == 15) {
+    return lea(s, r, op);
+  }
+  if (op.kind == 16) {
+    return comparison(s, r, op);
+  }
+  return State { ...s, ok: false };
+}
+
+function invert(v: i32): i32 {
+  return if (v < 0) { -1 } else { 1 - v };
+}
+
+function ordered(f: value.Comparison, name: string): i32 {
+  if (name == "jb" || name == "jc" || name == "jnae") {
+    return f.less;
+  }
+  if (name == "jae" || name == "jnb" || name == "jnc") {
+    return invert(f.less);
+  }
+  return inclusive(f, name);
+}
+
+function inclusive(f: value.Comparison, name: string): i32 {
+  if (name == "jbe" || name == "jna") {
+    return f.less_equal;
+  }
+  if (name == "ja" || name == "jnbe") {
+    return invert(f.less_equal);
+  }
+  return -1;
+}
+
+function branch(f: value.Comparison, name: string): i32 {
+  if (name == "jmp") {
+    return 1;
+  }
+  if (name == "je" || name == "jz") {
+    return f.equal;
+  }
+  if (name == "jne" || name == "jnz") {
+    return invert(f.equal);
+  }
+  return ordered(f, name);
+}
+
+function final_register(s: State, r: ranges.Interval, reg: i32): Word {
+  if (!s.oversized) {
+    if (reg == 0) {
+      return numeric(r, value.number(r, ranges.expected_class(r) as i64));
+    }
+    if (reg == 1) {
+      return identity(6, 0);
+    }
+    if (reg == 2) {
+      return identity(9, 0);
+    }
+  }
+  return initial_register(r, reg, s.oversized);
+}
+
+function finished(s: State, r: ranges.Interval): boolean {
+  let i = 0;
+  while (i < 16) {
+    if (!same_word(s.regs[i], final_register(s, r, i))) {
+      return false;
+    }
+    i = i + 1;
+  }
+  let block = if (s.oversized) { identity(5, 0) } else { identity(6, 0) };
+  let head = if (s.oversized) { identity(6, 0) } else { identity(8, 0) };
+  let writes = if (s.oversized) { 0 } else { 1 };
+  // Plain RET consumes the original word from S and advances SP to S+8.
+  return s.block_writes == writes && s.slot_writes == writes && same_word(read(s, r, 0, 64), block) && same_word(read(s, r, 2, 64), head) && same_word(read(s, r, 4, 64), identity(4, 0));
+}
+
+function path(p: isa.Program, r: ranges.Interval, oversized: boolean): boolean {
+  let s = initial(r, oversized);
+  let visited: boolean[] = [];
+  for op in p.ops {
+    visited = visited.append(false);
+  }
+  let pc = 0;
+  while (pc >= 0 && pc < p.ops.len()) {
+    if (visited[pc]) {
+      return false;
+    }
+    visited = visited.with(pc, true);
+    let op = p.ops[pc];
+    if (op.kind == 18) {
+      return finished(s, r);
+    }
+    if (op.kind == 17) {
+      let taken = branch(s.flags, op.condition);
+      if (taken < 0) {
+        return false;
+      }
+      pc = if (taken == 1) { op.target } else { pc + 1 };
+    } else {
+      s = step(s, r, op);
+      if (!s.ok) {
+        return false;
+      }
+      pc = pc + 1;
+    }
+  }
+  return false;
+}
+
+// Explicit preconditions: aligned canonical, mutually disjoint readable and
+// writable block P..P+7 and freelist L..L+20479, and readable return S..S+7.
+// R8=P, RSI=B. Every bounded interval is derived here from the independent
+// ordered capacities. Oversized B spans 1073741825..UINT64_MAX separately.
+// Proves the selected old head at P, P at its slot, AX=class, CX=old head,
+// DX=L and other original registers/bytes preserved. Oversized preserves all
+// original registers and memory. Both return through original RET with SP+8.
+// Oversized is no recycle, not a proven free. Linked permissions, allocation
+// validity, metadata, caller credits and freelist integrity remain obligations.
+// This is supplied-text semantics, not production/default or ARM/WASI proof.
+pub function check(output: string): boolean {
+  let p = isa.large_program(output);
+  if (p.error != "") {
+    return false;
+  }
+  for r in ranges.intervals() {
+    if (!path(p, r, false)) {
+      return false;
+    }
+  }
+  return path(p, ranges.Interval { low: 0, high: 0 }, true);
+}
