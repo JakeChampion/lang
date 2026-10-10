@@ -49,7 +49,7 @@ function check(row: ssaprepare.Emitted, expected: boolean): void {
 
 function contracts(row: ssaprepare.Emitted, cs: ssasem.Contract[]): ssaprepare.Emitted {
   let m = selected.metadata(row);
-  let origin = physicalbody.Origin { producer: 0, symbol: row.body.selected.origin.symbol };
+  let origin = physicalbody.Origin { producer: 0, symbol: row.body.selected.origin.symbol, helper: None };
   let s = physicalbody.Selected { producers: [physicalbody.Metadata { ...m, contracts: cs }], origin: origin };
   return ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: s } };
 }
@@ -129,7 +129,7 @@ function containers(row: ssaprepare.Emitted, c: ssasem.Contract): void {
 }
 
 function metadata(row: ssaprepare.Emitted, m: physicalbody.Metadata): ssaprepare.Emitted {
-  let selected = physicalbody.Selected { producers: [m], origin: physicalbody.Origin { producer: 0, symbol: row.body.selected.origin.symbol } };
+  let selected = physicalbody.Selected { producers: [m], origin: physicalbody.Origin { producer: 0, symbol: row.body.selected.origin.symbol, helper: None } };
   return ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: selected } };
 }
 
@@ -177,7 +177,7 @@ function record_schema(row: ssaprepare.Emitted, c: ssasem.Contract, record: semr
 function record_producer(row: ssaprepare.Emitted, record: semrecords.Record): void {
   let m = selected.metadata(row);
   let empty = physicalbody.Metadata { ...m, records: semrecords.no_records() };
-  let own_selection = physicalbody.Selected { ...row.body.selected, producers: [empty, m], origin: physicalbody.Origin { producer: 0, symbol: row.body.selected.origin.symbol } };
+  let own_selection = physicalbody.Selected { ...row.body.selected, producers: [empty, m], origin: physicalbody.Origin { producer: 0, symbol: row.body.selected.origin.symbol, helper: None } };
   check(ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: own_selection } }, false);
   let correct = physicalbody.Selected { ...own_selection, origin: physicalbody.Origin { ...own_selection.origin, producer: 1 } };
   check(ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, selected: correct } }, true);

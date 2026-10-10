@@ -3,13 +3,16 @@
 import "./irtables";
 import "./ssasem";
 import "./semrecords";
+import "./typeinfo";
 
 // Selected facts from one producer, without retaining its input body graphs.
 pub struct Metadata { contracts: ssasem.Contract[], records: semrecords.Records, enums: semrecords.Enum[], finalizers: ssasem.Finalizer[] }
 
 // The selected symbol may differ from a method body's bare name.
 // An origin identifies metadata; it does not approve the body's effects.
-pub struct Origin { producer: i32, symbol: string }
+pub struct Helper { ty: typeinfo.Type, children_only: boolean }
+
+pub struct Origin { producer: i32, symbol: string, helper: Option[Helper] }
 
 pub struct Origins { producers: Metadata[], declarations: Origin[], extra: Origin[] }
 
@@ -36,7 +39,7 @@ pub function origin_at(rows: Origin[], i: i32): Origin {
   if (i >= 0 && i < rows.len()) {
     return rows[i];
   }
-  return Origin { producer: -1, symbol: "" };
+  return Origin { producer: -1, symbol: "", helper: None };
 }
 
 pub function no_origins(): Origins {
@@ -46,7 +49,7 @@ pub function no_origins(): Origins {
 pub function named_origins(names: string[], producer: i32): Origin[] {
   let out: Origin[] = [];
   for name in names {
-    out = out.append(Origin { producer: producer, symbol: name });
+    out = out.append(Origin { producer: producer, symbol: name, helper: None });
   }
   return out;
 }
@@ -64,6 +67,9 @@ pub struct Lowered {
   // Selected declaration symbols in body order; helpers follow this prefix.
   // Method bodies retain their bare names; these symbols include the receiver.
   declarations: string[],
+  // Same body positions after helper selection, including the declaration
+  // prefix. None means construction supplied no nominal helper provenance.
+  helper_types: Option[Helper][],
   contracts: ssasem.Contract[],
   records: semrecords.Records,
   enums: semrecords.Enum[],
@@ -71,7 +77,7 @@ pub struct Lowered {
 }
 
 pub function empty(): Lowered {
-  return Lowered { bodies: [], declarations: [], contracts: [], records: semrecords.no_records(), enums: [], finalizers: [] };
+  return Lowered { bodies: [], declarations: [], helper_types: [], contracts: [], records: semrecords.no_records(), enums: [], finalizers: [] };
 }
 
 pub function metadata(lowered: Lowered): Metadata {
@@ -83,7 +89,8 @@ pub function lowered_origins(lowered: Lowered, producer: i32): Origin[] {
   let i: i32 = 0;
   for body in lowered.bodies {
     let symbol: string = if (i < lowered.declarations.len()) { lowered.declarations[i] } else { body.name };
-    out = out.append(Origin { producer: producer, symbol: symbol });
+    let helper: Option[Helper] = if (i < lowered.helper_types.len()) { lowered.helper_types[i] } else { None };
+    out = out.append(Origin { producer: producer, symbol: symbol, helper: helper });
     i = i + 1;
   }
   return out;

@@ -3,6 +3,7 @@ import "../parser";
 import "../semlower";
 import "../ircore";
 import "../physicalbody";
+import "./ssacredithelperorigins" as helpers;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -11,7 +12,7 @@ function require(ok: boolean, code: i32): void {
 }
 
 function same(a: physicalbody.Origin, b: physicalbody.Origin): boolean {
-  return a.producer == b.producer && a.symbol == b.symbol;
+  return helpers.same(a, b);
 }
 
 function parts(g: ircore.Gated): parser.Module[] {
