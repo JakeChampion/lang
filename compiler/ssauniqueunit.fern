@@ -1,0 +1,132 @@
+// Independent final-text binding for a uniqueness leaf library collection.
+// This scope excludes exports, inter-function calls, runtime code and nonempty
+// pools. It inherits check_body's explicit pointer/header and stack ABI.
+// No retained body text, site spans, allocation or emitter imports are used.
+import "./ssa";
+import "./ssauniquecaller" as caller;
+import "./ssacredithelper" as helper;
+import "./util";
+import "std/string";
+
+struct Unit { lines: string[], ok: boolean }
+
+function refuse(name: string): helper.Proof {
+  return helper.Proof { ok: false, function_name: name, message: "unproved uniqueness final unit" };
+}
+
+// These sections contain only a self-address anchor and empty table bounds.
+// Accepting a precise grammar prevents a data directive from changing the
+// section or assembler interpretation of the executable body.
+function empty_pools(): string {
+  return ".section .data\n.align 8\n.Lfern_relanchor:\n.quad .Lfern_relanchor\n.align 8\n.Lfern_sbox_begin:\n.section .data\n.Lfern_sbox_end:\n.align 8\n.Lfern_cagg_begin:\n.section .data\n.Lfern_cagg_end:\n.align 8\n.Lfern_cfn_begin:\n.section .data\n.Lfern_cfn_end:\n.align 8\n.Lfern_cref_begin:\n.Lfern_cref_end:\n.text\n";
+}
+
+function pools_match(tail: string[], architecture: string): boolean {
+  let expected = if (architecture == "arm64") { empty_pools().split("\n") } else { [""] };
+  if (tail.len() != expected.len() - 1) {
+    return false;
+  }
+  let i = 0;
+  while (i < tail.len()) {
+    if (tail[i] != expected[i]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function text_unit(output: string, architecture: string): Unit {
+  let lines: string[] = [];
+  let labels: string[] = [];
+  for raw in output.split("\n") {
+    let line = util.trim(raw);
+    if (line != "") {
+      // Body and pool labels share one assembler namespace.
+      if (line.ends_with(":")) {
+        if (util.has_str(labels, line)) {
+          return Unit { lines: [], ok: false };
+        }
+        labels = labels.append(line);
+      }
+      lines = lines.append(line);
+    }
+  }
+  if (lines.len() < 2 || lines[0] != ".text") {
+    return Unit { lines: [], ok: false };
+  }
+  let body: string[] = [];
+  let tail: string[] = [];
+  let in_pools = false;
+  let i = 1;
+  while (i < lines.len()) {
+    let line = lines[i];
+    if (line == ".section .data") {
+      in_pools = true;
+    }
+    if (in_pools) {
+      tail = tail.append(line);
+    } else {
+      body = body.append(line);
+    }
+    i = i + 1;
+  }
+  if (!pools_match(tail, architecture)) {
+    return Unit { lines: [], ok: false };
+  }
+  return Unit { lines: body, ok: true };
+}
+
+// Resolve by the supplied final graph's exact symbol, never by retained body
+// text or collection position. Every supplied function must occur once.
+pub function check_collection(output: string, architecture: string, functions: ssa.SFunc[]): helper.Proof {
+  let unit = text_unit(output, architecture);
+  if (!unit.ok || functions.len() == 0) {
+    return refuse("");
+  }
+  let entries: string[] = [];
+  for f in functions {
+    let entry = "__fn_" + f.name + ":";
+    if (util.has_str(entries, entry)) {
+      return refuse(f.name);
+    }
+    entries = entries.append(entry);
+  }
+  let seen: i32[] = [];
+  let current = -1;
+  let body: string[] = [];
+  for line in unit.lines {
+    let at = util.index_of_str(entries, line);
+    if (at >= 0) {
+      if (util.index_of_i32(seen, at) >= 0) {
+        return refuse(functions[at].name);
+      }
+      if (current >= 0) {
+        let proof = caller.check_lines(body, architecture, functions[current]);
+        if (!proof.ok) {
+          return proof;
+        }
+      }
+      seen = seen.append(at);
+      current = at;
+      body = [];
+    }
+    if (current < 0) {
+      return refuse("");
+    }
+    body = body.append(line);
+  }
+  if (current < 0 || seen.len() != functions.len()) {
+    return refuse("");
+  }
+  let proof = caller.check_lines(body, architecture, functions[current]);
+  if (!proof.ok) {
+    return proof;
+  }
+  return helper.Proof { ok: true, function_name: "", message: "" };
+}
+
+pub function check_unit(output: string, architecture: string, f: ssa.SFunc): helper.Proof {
+  let proof = check_collection(output, architecture, [f]);
+  return helper.Proof { ...proof, function_name: f.name };
+}

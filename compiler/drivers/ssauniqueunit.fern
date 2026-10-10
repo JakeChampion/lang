@@ -1,0 +1,45 @@
+import "../ssauniqueunit" as unit;
+import "../ssaprepare";
+import "std/string";
+
+function check(text: string, row: ssaprepare.Emitted, expected: boolean): void {
+  let p = unit.check_unit(text, row.context.architecture, row.body.formed.f);
+  if (p.ok != expected || p.function_name != row.body.formed.f.name || !p.ok && p.message == "") {
+    print(text);
+    print(p.message);
+    exit(184);
+  }
+}
+
+pub function run(out: ssaprepare.Output, aligned: boolean): void {
+  let row = out.bodies[0];
+  check(out.text, row, !aligned);
+  if (aligned) {
+    return;
+  }
+  check("\n" + out.text + "\n", row, true);
+  // Retained assembly stays correct in every negative control: the proof
+  // must inspect the supplied final output instead of rescuing it from row.
+  check(row.assembly, row, false);
+  check(".data\n" + out.text, row, false);
+  check(".intel_syntax noprefix\n" + out.text, row, false);
+  check(".if 0\n" + out.text + ".endif\n", row, false);
+  check(out.text + ".set __fn_alias, __fn_" + row.body.formed.f.name + "\n", row, false);
+  check(out.text + row.assembly, row, false);
+  check(out.text + ".Lunreachable:\ncall opaque\n", row, false);
+  check(out.text + ".section .data\n.byte 0\n", row, false);
+  // x86 has no relocation anchor: a fresh inert label is valid there.
+  check(out.text + ".Lfern_relanchor:\n", row, row.context.architecture == "x86-64");
+  check(out.text + ".Lssa_" + row.body.formed.f.name + "_" + row.body.formed.f.entry.to_string() + ":\n", row, false);
+  let parts = out.text.split("    ret\n");
+  if (parts.len() < 2) {
+    exit(185);
+  }
+  let changed = parts[0];
+  let i = 1;
+  while (i < parts.len()) {
+    changed = changed + "    " + (if (row.context.architecture == "arm64") { "mov x0, #0" } else { "movq $0, %rax" }) + "\n    ret\n" + parts[i];
+    i = i + 1;
+  }
+  check(changed, row, false);
+}

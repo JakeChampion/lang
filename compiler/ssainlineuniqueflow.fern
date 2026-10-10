@@ -1,0 +1,163 @@
+import "./ssainlineuniqueisa" as isa;
+import "std/string";
+
+// Values: unknown, original pointer, normalized pointer, zero, one, RC word.
+// Only equality with one is admitted for RC words, so all other signed values
+// share that outcome. Flags are unknown (-1), false (0), or true (1).
+pub struct State { regs: i32[], slot: i32, zero: i32, below: i32, ok: boolean }
+
+pub struct Case { tagged: boolean, view: boolean, low: boolean, one: boolean }
+
+pub struct Boundary { arm: boolean, input: string, result: string, flags: boolean }
+
+pub function initial(b: Boundary): State {
+  let regs: i32[] = [];
+  let i = 0;
+  while (i < 31) {
+    regs = regs.append(0);
+    i = i + 1;
+  }
+  let r = isa.reg(b.input, b.arm, 64);
+  if (r >= 0) {
+    regs = regs.with(r, 1);
+  }
+  return State { regs: regs, slot: 0, zero: -1, below: -1, ok: true };
+}
+
+function slot_value(s: State, name: string, b: Boundary, width: i32): i32 {
+  if (width == 64 && isa.frame_slot(name, b.arm)) {
+    if (name == b.result && s.slot > 0) {
+      return s.slot;
+    }
+    if (name == b.input) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+function value(s: State, name: string, b: Boundary, width: i32): i32 {
+  let r = isa.reg(name, b.arm, width);
+  if (r >= 0) {
+    let v = s.regs[r];
+    return if (width == 64 || v >= 3) { v } else { 0 };
+  }
+  if (name == (if (b.arm) { "#0" } else { "$0" })) {
+    return 3;
+  }
+  if (name == (if (b.arm) { "#1" } else { "$1" })) {
+    return 4;
+  }
+  return slot_value(s, name, b, width);
+}
+
+function writable(r: i32, b: Boundary): boolean {
+  if (isa.reg(b.result, b.arm, 64) == r && r >= 0) {
+    return true;
+  }
+  return if (b.arm) { r >= 4 && r <= 7 } else { r == 1 || r == 2 || r == 11 };
+}
+
+function write(s: State, name: string, v: i32, b: Boundary, width: i32): State {
+  let r = isa.reg(name, b.arm, width);
+  if (r >= 0 && writable(r, b)) {
+    return State { ...s, regs: s.regs.with(r, v), ok: v > 0 };
+  }
+  if (width == 64 && isa.frame_slot(name, b.arm) && name == b.result) {
+    return State { ...s, slot: v, ok: v == 3 || v == 4 };
+  }
+  return State { ...s, ok: false };
+}
+
+function pointer(s: State, name: string, b: Boundary, width: i32): i32 {
+  let r = isa.reg(name, b.arm, width);
+  if (r < 0) {
+    return 0;
+  }
+  let v = s.regs[r];
+  return if (v == 1 || v == 2) { v } else { 0 };
+}
+
+function header(s: State, address: string, b: Boundary, c: Case): boolean {
+  if (c.tagged || c.low) {
+    return false;
+  }
+  for r in isa.registers(b.arm, 64) {
+    let expected = if (b.arm) { "[" + r + ", #-8]" } else { "-8(" + r + ")" };
+    if (address == expected) {
+      let p = pointer(s, r, b, 64);
+      return p == 2 || p == 1 && !c.view;
+    }
+  }
+  return false;
+}
+
+pub function step(s: State, op: isa.Op, b: Boundary, c: Case): State {
+  if (op.kind == 1 || op.kind == 2) {
+    let width = if (op.kind == 1) { 64 } else { 32 };
+    return write(s, op.b, value(s, op.a, b, width), b, width);
+  }
+  if (op.kind == 3) {
+    return write(State { ...s, zero: 1, below: 0 }, op.b, 3, b, 32);
+  }
+  if (op.kind == 4) {
+    if (pointer(s, op.a, b, 64) == 0) {
+      return State { ...s, ok: false };
+    }
+    let next = write(s, op.b, 2, b, 64);
+    return State { ...next, zero: if (b.arm) { s.zero } else { -1 }, below: if (b.arm) { s.below } else { 0 } };
+  }
+  if (op.kind == 5) {
+    if (!header(s, op.a, b, c)) {
+      return State { ...s, ok: false };
+    }
+    return write(s, op.b, 5, b, 32);
+  }
+  return flags(s, op, b, c);
+}
+
+function flags(s: State, op: isa.Op, b: Boundary, c: Case): State {
+  if (op.kind == 6) {
+    let valid = if (b.arm) { value(s, op.a, b, 32) == 5 } else { header(s, op.a, b, c) };
+    return State { ...s, ok: valid, zero: if (c.one) { 1 } else { 0 }, below: -1 };
+  }
+  if (op.kind == 7) {
+    let p = pointer(s, op.a, b, if (b.arm) { 64 } else { 8 });
+    // A64 TST clears C, so LO (C == 0) is true. x86 TEST clears CF,
+    // making JB (CF == 1) false. The abstract branch condition differs.
+    return State { ...s, ok: p > 0, zero: if (c.tagged) { 0 } else { 1 }, below: if (b.arm) { 1 } else { 0 } };
+  }
+  if (op.kind == 8) {
+    let p = pointer(s, op.a, b, 64);
+    // Above the floor includes equality and greater-than; retain no guessed Z.
+    return State { ...s, ok: p > 0, zero: if (c.low) { 0 } else { -1 }, below: if (c.low) { 1 } else { 0 } };
+  }
+  return State { ...s, ok: op.kind == 30 };
+}
+
+pub function branch(s: State, op: isa.Op, b: Boundary, c: Case): i32 {
+  if (op.kind == 20) {
+    return if (s.zero < 0) { -1 } else { 1 - s.zero };
+  }
+  if (op.kind == 21) {
+    return s.zero;
+  }
+  if (op.kind == 22) {
+    return s.below;
+  }
+  if (op.kind == 24) {
+    return 1;
+  }
+  if (op.kind == 23 && pointer(s, op.a, b, 64) > 0) {
+    return if (c.tagged) { 1 } else { 0 };
+  }
+  return -1;
+}
+
+pub function result(s: State, b: Boundary, c: Case): boolean {
+  let expected = !c.tagged && !c.low && c.one;
+  if (b.flags) {
+    return s.zero == (if (expected) { 1 } else { 0 });
+  }
+  return value(s, b.result, b, 64) == (if (expected) { 4 } else { 3 });
+}

@@ -1,0 +1,143 @@
+// Scoped machine-fragment proof, not a caller/SSA/whole-output certificate.
+// Boundary obligations: input names the actual incoming pointer location;
+// aligned eight-byte frame slots remain stable and disjoint from the heap;
+// non-tagged pointers >=65536 have a readable
+// signed32 RC header at (pointer & ~2)-8. ARM x4..x7 or x86 rcx/rdx/r11
+// scratch registers are dead; only these and the declared result may change. No
+// cached-input or alignment annotation is accepted as evidence here.
+import "./util";
+import "./ssacredithelper" as helper;
+import "./ssainlineuniqueisa" as isa;
+import "./ssainlineuniqueflow" as flow;
+import "std/string";
+
+struct Program { ops: isa.Op[], targets: i32[], ok: boolean }
+
+function label_char(c: u8): boolean {
+  return c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c >= b'0' && c <= b'9' || c == b'_' || c == b'.' || c == b'$';
+}
+
+function label(line: string): boolean {
+  if (!line.starts_with(".L") || !line.ends_with(":")) {
+    return false;
+  }
+  let i = 2;
+  while (i < line.len() - 1) {
+    let c = line[i];
+    if (!label_char(c)) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return line.len() > 3;
+}
+
+function location(name: string, arm: boolean): boolean {
+  let r = isa.reg(name, arm, 64);
+  // Frame base changes would invalidate the independent slot model.
+  if (r >= 0) {
+    return if (arm) { r != 29 && r != 30 } else { r != 4 && r != 5 };
+  }
+  return isa.frame_slot(name, arm);
+}
+
+function program(text: string, arm: boolean): Program {
+  let ops: isa.Op[] = [];
+  let labels: string[] = [];
+  for raw in text.split("\n") {
+    let line = util.trim(raw);
+    if (line != "") {
+      let name = "";
+      let decoded = isa.Op { kind: 30, a: "", b: "", target: "" };
+      if (label(line)) {
+        name = slice_unchecked(line, 0, line.len() - 1) + "";
+        if (util.has_str(labels, name)) {
+          return Program { ops: [], targets: [], ok: false };
+        }
+      } else {
+        decoded = isa.decode(line, arm);
+        if (decoded.kind == 0) {
+          return Program { ops: [], targets: [], ok: false };
+        }
+      }
+      ops = ops.append(decoded);
+      labels = labels.append(name);
+    }
+  }
+  return resolve(ops, labels);
+}
+
+function resolve(ops: isa.Op[], labels: string[]): Program {
+  let targets: i32[] = [];
+  for op in ops {
+    let dest = -1;
+    if (op.kind >= 20 && op.kind < 30) {
+      dest = util.index_of_str(labels, op.target);
+      if (!label(op.target + ":") || dest < 0) {
+        return Program { ops: [], targets: [], ok: false };
+      }
+    }
+    targets = targets.append(dest);
+  }
+  return Program { ops: ops, targets: targets, ok: ops.len() > 0 };
+}
+
+function path(p: Program, b: flow.Boundary, c: flow.Case): boolean {
+  let seen: boolean[] = [];
+  for op in p.ops {
+    seen = seen.append(false);
+  }
+  let pc = 0;
+  let s = flow.initial(b);
+  while (pc < p.ops.len()) {
+    if (pc < 0 || seen[pc]) {
+      return false;
+    }
+    seen = seen.with(pc, true);
+    let op = p.ops[pc];
+    if (op.kind >= 20 && op.kind < 30) {
+      let take = flow.branch(s, op, b, c);
+      if (take < 0) {
+        return false;
+      }
+      pc = if (take == 1) { p.targets[pc] } else { pc + 1 };
+    } else {
+      s = flow.step(s, op, b, c);
+      if (!s.ok) {
+        return false;
+      }
+      pc = pc + 1;
+    }
+  }
+  return flow.result(s, b, c);
+}
+
+function paths(p: Program, b: flow.Boundary): boolean {
+  // The admitted ISA only compares RC with one, making these two RC classes
+  // exhaustive (including negative/static, zero, and shared positive counts).
+  for tagged in [false, true] {
+    for view in [false, true] {
+      for low in [false, true] {
+        for one in [false, true] {
+          if (!path(p, b, flow.Case { tagged: tagged, view: view, low: low, one: one })) {
+            return false;
+          }
+        }
+      }
+    }
+  }
+  return true;
+}
+
+pub function check_fragment(text: string, architecture: string, input: string, result: string, flags: boolean): helper.Proof {
+  let arm = architecture == "arm64";
+  let b = flow.Boundary { arm: arm, input: input, result: result, flags: flags };
+  let supported = architecture == "arm64" || architecture == "x86-64";
+  let valid = supported && location(input, arm) && (if (flags) { result == "" } else { location(result, arm) });
+  if (!valid) {
+    return helper.Proof { ok: false, function_name: "inline __fern_rc_is_unique", message: "unsupported uniqueness machine boundary" };
+  }
+  let p = program(text, arm);
+  let ok = p.ok && paths(p, b);
+  return helper.Proof { ok: ok, function_name: "inline __fern_rc_is_unique", message: if (ok) { "" } else { "unproved uniqueness instruction effects" } };
+}

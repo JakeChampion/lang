@@ -1,0 +1,253 @@
+// A deliberately small instruction language for independent uniqueness proofs.
+// Registers are decoded by ISA spelling, without importing either emitter.
+import "./util";
+import "std/string";
+
+pub struct Op { kind: i32, a: string, b: string, target: string }
+
+pub function registers(arm: boolean, width: i32): string[] {
+  if (arm) {
+    let out: string[] = [];
+    let i = 0;
+    while (i < 31) {
+      out = out.append((if (width == 64) { "x" } else { "w" }) + i.to_string());
+      i = i + 1;
+    }
+    return out;
+  }
+  if (width == 64) {
+    return ["%rax", "%rcx", "%rdx", "%rbx", "%rsp", "%rbp", "%rsi", "%rdi", "%r8", "%r9", "%r10", "%r11", "%r12", "%r13", "%r14", "%r15"];
+  }
+  if (width == 32) {
+    return ["%eax", "%ecx", "%edx", "%ebx", "%esp", "%ebp", "%esi", "%edi", "%r8d", "%r9d", "%r10d", "%r11d", "%r12d", "%r13d", "%r14d", "%r15d"];
+  }
+  return ["%al", "%cl", "%dl", "%bl", "%spl", "%bpl", "%sil", "%dil", "%r8b", "%r9b", "%r10b", "%r11b", "%r12b", "%r13b", "%r14b", "%r15b"];
+}
+
+pub function reg(name: string, arm: boolean, width: i32): i32 {
+  let i = 0;
+  for r in registers(arm, width) {
+    if (r == name) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return -1;
+}
+
+// Split commas only outside an address expression. Reject malformed nesting.
+function operands(text: string): string[] {
+  let out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  let i = 0;
+  while (i < text.len()) {
+    let c = text[i];
+    if (c == b'[' || c == b'(') {
+      depth = depth + 1;
+    }
+    if (c == b']' || c == b')') {
+      depth = depth - 1;
+    }
+    if (depth < 0 || depth > 1) {
+      return [];
+    }
+    if (c == b',' && depth == 0) {
+      out = out.append(util.trim(slice_unchecked(text, start, i) + ""));
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  if (depth != 0) {
+    return [];
+  }
+  return out.append(util.trim(slice_unchecked(text, start, text.len()) + ""));
+}
+
+function op(kind: i32, a: string, b: string): Op {
+  return Op { kind: kind, a: a, b: b, target: "" };
+}
+
+function arm_source(b: string): boolean {
+  return reg(b, true, 64) >= 0 || b == "#0" || b == "#1";
+}
+
+function arm_move(name: string, a: string, b: string): Op {
+  if (name == "mov" && reg(a, true, 64) >= 0 && arm_source(b)) {
+    return op(1, b, a);
+  }
+  if (name == "ldr" && reg(a, true, 64) >= 0 && frame_slot(b, true)) {
+    return op(1, b, a);
+  }
+  if (name == "str" && reg(a, true, 64) >= 0 && frame_slot(b, true)) {
+    return op(1, a, b);
+  }
+  return op(0, "", "");
+}
+
+function arm_flags(name: string, a: string, b: string): Op {
+  if (name == "ldur" && reg(a, true, 32) >= 0 && header_address(b, true)) {
+    return op(5, b, a);
+  }
+  if (name == "cmp" && b == "#1" && reg(a, true, 32) >= 0) {
+    return op(6, a, "");
+  }
+  if (name == "tst" && b == "#1" && reg(a, true, 64) >= 0) {
+    return op(7, a, "");
+  }
+  return op(0, "", "");
+}
+
+function arm_branch(name: string, args: string[]): Op {
+  if (name == "tbnz" && args[1] == "#0" && reg(args[0], true, 64) >= 0) {
+    return Op { kind: 23, a: args[0], b: "", target: args[2] };
+  }
+  return op(0, "", "");
+}
+
+function arm_three(name: string, args: string[]): Op {
+  if (name == "and" && args[2] == "#0xfffffffffffffffd" && reg(args[0], true, 64) >= 0 && reg(args[1], true, 64) >= 0) {
+    return op(4, args[1], args[0]);
+  }
+  if (name == "cmp" && args[1] == "#16" && args[2] == "lsl #12" && reg(args[0], true, 64) >= 0) {
+    return op(8, args[0], "");
+  }
+  return arm_branch(name, args);
+}
+
+function arm_op(name: string, args: string[]): Op {
+  if (args.len() == 2) {
+    let move = arm_move(name, args[0], args[1]);
+    return if (move.kind > 0) { move } else { arm_flags(name, args[0], args[1]) };
+  }
+  return if (args.len() == 3) { arm_three(name, args) } else { op(0, "", "") };
+}
+
+function x86_move(name: string, a: string, b: string): Op {
+  if (name == "movq" && (reg(a, false, 64) >= 0 || reg(b, false, 64) >= 0) && source(a, 64) && (reg(b, false, 64) >= 0 || frame_slot(b, false))) {
+    return op(1, a, b);
+  }
+  if (name == "movl" && reg(b, false, 32) >= 0 && source(a, 32)) {
+    return op(2, a, b);
+  }
+  return op(0, "", "");
+}
+
+function x86_bits(name: string, a: string, b: string): Op {
+  if (name == "xorl" && a == b && reg(a, false, 32) >= 0) {
+    return op(3, a, b);
+  }
+  if (name == "andq" && a == "$-3" && reg(b, false, 64) >= 0) {
+    return op(4, b, b);
+  }
+  return op(0, "", "");
+}
+
+function x86_flags(name: string, a: string, b: string): Op {
+  if (name == "cmpl" && a == "$1" && header_address(b, false)) {
+    return op(6, b, "");
+  }
+  if (name == "testb" && a == "$1" && reg(b, false, 8) >= 0) {
+    return op(7, b, "");
+  }
+  if (name == "cmpq" && (a == "$0x10000" || a == "$65536") && reg(b, false, 64) >= 0) {
+    return op(8, b, "");
+  }
+  return op(0, "", "");
+}
+
+function x86_op(name: string, args: string[]): Op {
+  if (args.len() != 2) {
+    return op(0, "", "");
+  }
+  let move = x86_move(name, args[0], args[1]);
+  if (move.kind > 0) {
+    return move;
+  }
+  let bits = x86_bits(name, args[0], args[1]);
+  return if (bits.kind > 0) { bits } else { x86_flags(name, args[0], args[1]) };
+}
+
+function source(name: string, width: i32): boolean {
+  return reg(name, false, width) >= 0 || name == "$0" || name == "$1" || width == 64 && frame_slot(name, false);
+}
+
+function header_address(address: string, arm: boolean): boolean {
+  for r in registers(arm, 64) {
+    if (address == (if (arm) { "[" + r + ", #-8]" } else { "-8(" + r + ")" })) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function equal_branch(name: string, arm: boolean): i32 {
+  let kind = 0;
+  if (name == (if (arm) { "b.ne" } else { "jne" }) || !arm && name == "jnz") {
+    kind = 20;
+  }
+  if (name == (if (arm) { "b.eq" } else { "je" }) || !arm && name == "jz") {
+    kind = 21;
+  }
+  return kind;
+}
+
+function branch_kind(name: string, arm: boolean): i32 {
+  let kind = equal_branch(name, arm);
+  if (name == (if (arm) { "b.lo" } else { "jb" })) {
+    kind = 22;
+  }
+  if (name == (if (arm) { "b" } else { "jmp" })) {
+    kind = 24;
+  }
+  return kind;
+}
+
+pub function decode(line: string, arm: boolean): Op {
+  let at = line.index_of(" ");
+  if (at < 0) {
+    return op(0, "", "");
+  }
+  let name = slice_unchecked(line, 0, at) + "";
+  let args = operands(slice_unchecked(line, at + 1, line.len()) + "");
+  if (args.len() == 1) {
+    let kind = branch_kind(name, arm);
+    if (kind > 0) {
+      return Op { kind: kind, a: "", b: "", target: args[0] };
+    }
+  }
+  return if (arm) { arm_op(name, args) } else { x86_op(name, args) };
+}
+
+function slot_prefix(name: string, prefix: string, suffix: string, arm: boolean): boolean {
+  if (!name.starts_with(prefix) || !name.ends_with(suffix) || name.len() <= prefix.len() + suffix.len()) {
+    return false;
+  }
+  let digits = name.len() - prefix.len() - suffix.len();
+  return !(name[prefix.len()] == b'0' && (digits > 1 || !arm));
+}
+
+pub function frame_slot(name: string, arm: boolean): boolean {
+  let prefix = if (arm) { "[sp, #" } else { "-" };
+  let suffix = if (arm) { "]" } else { "(%rbp)" };
+  if (!slot_prefix(name, prefix, suffix, arm)) {
+    return false;
+  }
+  let i = prefix.len();
+  let remainder = 0;
+  let offset = 0;
+  while (i < name.len() - suffix.len()) {
+    let c = name[i];
+    if (c < b'0' || c > b'9') {
+      return false;
+    }
+    let digit = (c - b'0') as i32;
+    if (offset > (2147483647 - digit) / 10) {
+      return false;
+    }
+    offset = offset * 10 + digit;
+    remainder = (remainder * 10 + (c - b'0') as i32) % 8;
+    i = i + 1;
+  }
+  return remainder == 0 && (!arm || offset <= 32760);
+}
