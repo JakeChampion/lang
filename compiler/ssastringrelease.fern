@@ -1,0 +1,28 @@
+// Conditional normal-x86 string effects from ONE complete supplied output.
+import "./ssadecrementtext" as text;
+import "./ssadecrementguards" as guards;
+import "./ssadecrementmachine" as decrement;
+import "./ssaboxstringmachine" as boxed;
+import "./ssafusedstringmachine" as fused;
+import "./ssaseparatestringmachine" as separate;
+
+// Both stack/register entries, low-even/odd64 guards, negative/shared/zero
+// counts and all32-bit count-one shapes. The three count-one models partition
+// BOX, FUSED and every remaining shape; no constructor flag is trusted here.
+// Each constituent model retains its explicit pointer, length and permission
+// domain. In particular, fused length bounds are mathematical preconditions,
+// not derived allocation validity. Separate buffers retain ordered heap bounds
+// and exact shared slot3 alias behavior. Stack scratch, linked globals, valid
+// descriptor/allocation extents and freelist integrity remain assumptions.
+// No caller credit is discharged, oversized no-recycle is not a free, and
+// declaration checks do not authenticate linked addresses or machine bytes.
+// This does not establish debug/ARM/WASI runtime or production admission.
+pub function check(output: string): boolean {
+  return text.release_storage(output)
+    && guards.check(output, true)
+    && decrement.check(output, "__fn___fern_str_free")
+    && decrement.check_zero(output, "__fn___fern_str_free")
+    && boxed.check(output)
+    && fused.check(output)
+    && separate.check(output);
+}

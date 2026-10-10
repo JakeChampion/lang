@@ -45,6 +45,7 @@ import "./ssaseparatestringmachines" as separatestringmachines;
 import "./ssadecrementguardcases" as decrementguardcases;
 import "./ssareleasestorage" as releasestorage;
 import "./ssaarrayreleases" as arrayreleases;
+import "./ssastringreleases" as stringreleases;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -140,6 +141,7 @@ function settled(g: ircore.Gated, arm: boolean): void {
     decrementguardcases.run(on.text);
     releasestorage.run(on.text);
     arrayreleases.run(on.text);
+    stringreleases.run(on.text);
     largepushmachines.run(on.text);
   }
   sites.output(on);
