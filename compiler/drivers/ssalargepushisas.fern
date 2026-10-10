@@ -1,0 +1,139 @@
+import "../ssacapacityisa" as isa;
+import "../ssadecrementtext" as text;
+import "../ssainlineuniqueisa" as registers;
+import "std/string";
+
+// All nonzero native status bytes are occupied in the composed driver.
+// The printed module and case identify a failure even with collapsed status.
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("large-push instruction controls failed: " + group);
+    exit(180);
+  }
+}
+
+function sample(line: string): isa.Op {
+  let p = isa.large_program(".text\n__fern_large_push:\n" + line + "\nret\n");
+  require(p.error == "" && p.ops.len() == 2 && p.ops[1].kind == 18, "sample " + line);
+  return p.ops[0];
+}
+
+function exact_address(op: isa.Op, width: i32, base: i32, index: i32, scale: i32, offset: i32): boolean {
+  return op.width == width && op.base == base && op.index == index && op.scale == scale && op.offset == offset;
+}
+
+function global_address(reg: string, i: i32): void {
+  let global = sample("leaq __fern_large_freelist(%rip), " + reg);
+  require(global.kind == 19 && global.width == 64 && global.destination == i && global.symbol == "__fern_large_freelist", "global " + reg);
+}
+
+function indexed_pair(addr: string, value: string, suffix: string, i: i32, width: i32, scale: i32): void {
+  let load = sample("mov" + suffix + " " + addr + ", " + value);
+  let store = sample("mov" + suffix + " " + value + ", " + addr);
+  let group = "indexed " + i.to_string() + "/" + width.to_string() + "/" + scale.to_string();
+  require(load.kind == 3 && load.destination == i && exact_address(load, width, 4, i, scale, -2147483648), group + " load");
+  require(store.kind == 4 && store.source == i && exact_address(store, width, 4, i, scale, -2147483648), group + " store");
+}
+
+function addresses(): void {
+  let regs = registers.registers(false, 64);
+  let i = 0;
+  while (i < regs.len()) {
+    for width in [32, 64] {
+      let values = registers.registers(false, width);
+      let suffix = if (width == 32) { "l" } else { "q" };
+      for scale in [1, 2, 4, 8] {
+        if (i != 4) {
+          let addr = "-2147483648(%rsp," + regs[i] + "," + scale.to_string() + ")";
+          indexed_pair(addr, values[i], suffix, i, width, scale);
+        }
+      }
+    }
+    global_address(regs[i], i);
+    i = i + 1;
+  }
+  let default_scale = sample("movq 2147483647(%r15,%r12), %rax");
+  require(default_scale.kind == 3 && exact_address(default_scale, 64, 15, 12, 1, 2147483647), "default scale");
+}
+
+function shifts(): void {
+  for width in [32, 64] {
+    let regs = registers.registers(false, width);
+    let suffix = if (width == 32) { "l" } else { "q" };
+    let i = 0;
+    while (i < regs.len()) {
+      for count in [0, 1, 2, 31, 32, 63, 64, 255] {
+        for direction in ["shl", "shr"] {
+          let line = direction + suffix + " $" + count.to_string() + ", " + regs[i];
+          let op = sample(line);
+          require(op.kind == (if (direction == "shl") { 20 } else { 21 }) && op.width == width && op.destination == i && op.immediate == count, line);
+        }
+      }
+      i = i + 1;
+    }
+  }
+}
+
+function literals(): void {
+  for literal in ["0x40000000", "0X40000000"] {
+    let op = sample("cmpq $" + literal + ", %rsi");
+    require(op.kind == 16 && op.width == 64 && op.source == 6 && op.immediate == 1073741824, literal);
+  }
+  require(sample("movq $0x7fFfFfFf, %rax").immediate == 2147483647, "hex upper bound");
+  require(sample("movl $0x00000000, %eax").kind == 5, "hex zero");
+  require(sample("addq $0Xff, %r15").immediate == 255, "hex arithmetic");
+  require(sample("shlq $0xff, %r15").kind == 20, "hex shift");
+  for line in ["cmpq $0x80000000, %rsi", "cmpq $0x100000000, %rsi", "cmpq $0x, %rsi", "cmpq $0x1G, %rsi", "cmpq $0x1+1, %rsi", "cmpq $-0x1, %rsi", "cmpq $2147483648, %rsi", "cmpq $-2147483649, %rsi", "cmpq $01, %rsi", "shlq $256, %rax", "shlq $-1, %rax", "shlq $0x100, %rax"] {
+    require(sample(line).kind == 0, line);
+  }
+}
+
+function unsupported(): void {
+  for line in ["leaq __fern_large_freelist+8(%rip), %rax", "leaq wrong(%rip), %rax", "leaq __fern_large_freelist(%rax), %rax", "leaq __fern_large_freelist(%eip), %rax", "leal __fern_large_freelist(%rip), %eax", "leaq __fern_large_freelist(%rip), %eax", "movq __fern_large_freelist(%rip), %rax", "movq (%rax,%rsp,8), %rcx", "movq (%rax,%rdx,3), %rcx", "movq (%rax,%edx,8), %rcx", "movq (,%rdx,8), %rcx", "movq ((%rax,%rdx,8)), %rcx", "movq (%rax,,8), %rcx", "movq (%rax,%rdx,8), %ecx", "movl %rcx, (%rax,%rdx,8)", "movq (%rax,%rdx,8), (%r8)", "movq 2147483648(%rax,%rdx,8), %rcx", "movq (%rax,%rdx,8), %rcx, %rdx", "shlq $2, %eax", "shll $2, %rax", "sarq $2, %rax", "shlq %dl, %rax", "ret $8", "retq", "call __fern_large_push", "unknown_instruction"] {
+    require(sample(line).kind == 0, line);
+  }
+  for line in ["movq (%rdx,%rax,8), %rcx", "leaq __fern_large_freelist(%rip), %rdx", "shlq $2, %rcx", "cmpq $0x40000000, %rsi"] {
+    let capacity = isa.program(".text\n__fern_capw:\n" + line + "\nret\n");
+    require(capacity.error == "" && capacity.ops[0].kind == 0, "capacity isolation " + line);
+  }
+}
+
+function boundaries(): void {
+  let prefix = ".text\n__fern_large_push:\n";
+  require(isa.large_program(prefix + "jmp .Lmissing\n").error != "", "missing branch");
+  require(isa.large_program(prefix + "jmp .Loutside\n__other:\n.Loutside:\nret\n").error != "", "cross-body branch");
+  require(isa.large_program(prefix + "ret\n.data\n__fern_large_push: .quad 0\n").error != "", "duplicate data definition");
+  require(isa.large_program(prefix + ".Ldup:\nret\n__other:\n.Ldup:\nret\n").error != "", "duplicate local");
+  require(isa.large_program(".set alias, __fern_large_push\n" + prefix + "ret\n").error != "", "alias namespace");
+  let cycle = isa.large_program(prefix + ".Lcycle:\njmp .Lcycle\n");
+  require(cycle.error == "" && cycle.ops.len() == 2 && cycle.ops[1].target == 0, "cycles are data");
+  let empty = isa.large_program(prefix + "__next:\nret\n");
+  require(empty.error == "" && empty.ops.len() == 0, "empty is data");
+}
+
+function actual_branch(p: isa.Program, body: text.Body, at: i32, op: isa.Op): void {
+  if (op.kind == 17) {
+    require(op.target >= 0 && op.target < p.ops.len() && p.ops[op.target].kind == 1, "actual branch " + at.to_string());
+    require(body.lines[at].ends_with(body.lines[op.target].split(":")[0]), "actual branch identity " + at.to_string());
+  }
+}
+
+pub function run(output: string): void {
+  let body = text.dependency(output, "__fern_large_push");
+  let p = isa.large_program(output);
+  let kinds = [16, 17, 2, 16, 17, 5, 1, 8, 9, 5, 13, 15, 12, 11, 8, 9, 2, 14, 20, 10, 9, 2, 19, 3, 4, 4, 1, 18];
+  require(p.error == "" && body.error == "" && p.ops.len() == kinds.len() && p.ops.len() == body.lines.len(), "actual emission length");
+  let at = 0;
+  for op in p.ops {
+    require(op.kind == kinds[at], "actual kind " + at.to_string());
+    actual_branch(p, body, at, op);
+    at = at + 1;
+  }
+  require(p.ops[0].immediate == 1073741824 && p.ops[22].symbol == "__fern_large_freelist", "actual threshold/global");
+  require(p.ops[23].base == 2 && p.ops[23].index == 0 && p.ops[23].scale == 8 && p.ops[25].source == 8, "actual freelist operands");
+  addresses();
+  shifts();
+  literals();
+  unsupported();
+  boundaries();
+}

@@ -29,6 +29,7 @@ import "./ssadecrementdependencies" as decrementdependencies;
 import "./ssacapacityisas" as capacityisas;
 import "./ssacapacityvalues" as capacityvalues;
 import "./ssacapacitymachines" as capacitymachines;
+import "./ssalargepushisas" as largepushisas;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -112,6 +113,7 @@ function settled(g: ircore.Gated, arm: boolean): void {
     decrementdependencies.run(on.text);
     capacityisas.run(on.text);
     capacitymachines.run(on.text);
+    largepushisas.run(on.text);
   }
   sites.output(on);
   require(count(on.bodies, "__fern_str_cmp") == 1 && count(on.bodies, "first") == 1, 21);
