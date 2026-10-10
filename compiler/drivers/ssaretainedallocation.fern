@@ -26,7 +26,7 @@ pub function consistent(row: ssaprepare.Emitted): void {
   require(a.frame_bytes >= ssa.spill_count(a.alloc.reg_of) * 8 && (a.framed || a.frame_bytes == 0), 113);
   let arm = row.context.architecture == "arm64";
   require(a.save_bytes == (if (arm) { (a.saved.len() + 1) / 2 * 16 } else { a.saved.len() * 8 }), 114);
-  require(!arm || a.framed, 115);
+  require(!arm || a.framed == row.assembly.contains("    stp x29, x30, [sp, #-16]!\n"), 115);
   unfused(a.fusions);
   sites.consistent(row);
 }
@@ -202,7 +202,7 @@ function rotated(g: ircore.Gated, arm: boolean): void {
 
 pub function run(g: ircore.Gated, arm: boolean): void {
   let leaf = checked(g, g.cache[0], arm);
-  require(arm || !leaf.bodies[0].allocation.framed, 126);
+  require(!leaf.bodies[0].allocation.framed, 126);
   spills(g, arm, 24);
   spills(g, arm, 25);
   uniqueness(g, arm, false, false, false);

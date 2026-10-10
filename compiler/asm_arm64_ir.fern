@@ -1580,6 +1580,20 @@ function ssa_tail_call(blk: ssa.SBlock, ins: ssa.SInst, s: asmcore.EmitState, ta
   return tails && blk.insts.len() > 0 && ssa.returns_call(blk, blk.insts.len() - 1) && blk.insts[blk.insts.len() - 1].result == ins.result && ssa_reg_call(ins, s);
 }
 
+// Debug builds carry source positions even when no variable has a supported
+// debugger type or the function has no bindings. An empty dbg_slots list
+// therefore does not establish that tail calls may discard its frame.
+function ssa_source_lines(f: ssa.SFunc): boolean {
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (ins.kind_tag == 35) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 // ssa_calls_besides_tails reports a call in `f` that is not a tail call.
 function ssa_calls_besides_tails(f: ssa.SFunc, s: asmcore.EmitState, tails: boolean): boolean {
   for blk in f.blocks {
@@ -4219,7 +4233,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   let saved: i32[] = ssa_saved_regs(reg_of);
   let save: i32 = ssa_save_bytes(saved);
   let views: i32[] = ssa_view_slots(f);
-  let tails: boolean = r.dbg_slots.len() == 0;
+  let tails: boolean = r.dbg_slots.len() == 0 && !ssa_source_lines(f);
   // A function with no frame slots and no call but a tail call is emitted into
   // a buffer first, its exits marked; its text decides whether it needs a frame
   // at all.
