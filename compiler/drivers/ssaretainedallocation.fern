@@ -130,7 +130,7 @@ function uniqueness(g: ircore.Gated, arm: boolean, fused: boolean, inverted: boo
 }
 
 function selected_uniqueness(arm: boolean): void {
-  for parameter in ["i32[]", "string", "str"] {
+  for parameter in ["i32[]", "string", "str", "(i32, string)", "Map[string, i32]"] {
     selected_parameter(arm, parameter);
   }
 }

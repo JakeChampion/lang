@@ -276,6 +276,8 @@ pub function check_body(text: string, architecture: string, f: ssa.SFunc): helpe
 // under the native parameter ABI. Native ssa_str_view preserves that form.
 // Converting either to a string-backed [u8] view adds bit 1 in str_byte_view;
 // that TypeArray descriptor is excluded here. Tag/floor cases remain mandatory.
+// Concrete tuples, maps and other arrays are outer box pointers even when a
+// contained value is a byte view.
 // Generated child-release bodies and other signatures need separate proofs.
 function parameter(t: typeinfo.Type): boolean {
   if (!semtypes.concrete(t, false)) {
@@ -288,6 +290,12 @@ function parameter(t: typeinfo.Type): boolean {
     if let typeinfo.TypeI32(i) = a.elem {
       return !(a.view && i.width == 8 && i.unsigned);
     }
+    return true;
+  }
+  if let typeinfo.TypeTuple(_) = t {
+    return true;
+  }
+  if let typeinfo.TypeMap(_) = t {
     return true;
   }
   return false;

@@ -78,6 +78,36 @@ function signatures(row: ssaprepare.Emitted): void {
   for t in good_types {
     check(contracts(row, [ssasem.Contract { ...c, params: [t] }]), true);
   }
+  containers(row, c);
+}
+
+function containers(row: ssaprepare.Emitted, c: ssasem.Contract): void {
+  let unknown: typeinfo.Type = typeinfo.TypeUnknown { reason: "unresolved container" };
+  let scalar = c.result;
+  let byte: typeinfo.Type = typeinfo.TypeI32 { is_char: false, width: 8, unsigned: true, polymorphic: false };
+  let view: typeinfo.Type = typeinfo.TypeArray { elem: byte, view: true };
+  let bad_types: typeinfo.Type[] = [
+    typeinfo.TypeTuple { elements: [] },
+    typeinfo.TypeTuple { elements: [scalar] },
+    typeinfo.TypeTuple { elements: [scalar, unknown] },
+    typeinfo.TypeMap { key: unknown, value: scalar },
+    typeinfo.TypeMap { key: scalar, value: unknown },
+    typeinfo.TypeMap { key: scalar, value: typeinfo.TypeTuple { elements: [scalar] } },
+    typeinfo.TypeTuple { elements: [scalar, typeinfo.TypeMap { key: unknown, value: scalar }] },
+    typeinfo.TypeStruct { name: "Record", args: [] },
+    typeinfo.TypeHandle { resource: "file", borrowed: false },
+  ];
+  for t in bad_types {
+    check(contracts(row, [ssasem.Contract { ...c, params: [t] }]), false);
+  }
+  let good_types: typeinfo.Type[] = [
+    typeinfo.TypeTuple { elements: [scalar, view] },
+    typeinfo.TypeMap { key: scalar, value: view },
+    typeinfo.TypeTuple { elements: [scalar, typeinfo.TypeMap { key: scalar, value: view }] },
+  ];
+  for t in good_types {
+    check(contracts(row, [ssasem.Contract { ...c, params: [t] }]), true);
+  }
 }
 
 function boundaries(row: ssaprepare.Emitted): void {
