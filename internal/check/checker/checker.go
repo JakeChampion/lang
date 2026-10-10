@@ -11878,8 +11878,23 @@ func (c *checker) errArgMismatch(n *ast.Call, i int, recvIsArg0 bool, expected, 
 	if recvIsArg0 {
 		num = i
 	}
-	c.errfCode(n.Args[i].Pos(), "E038", "argument %d: expected %s, got %s%s",
-		num, expected, at, assignHint(expected, at))
+	c.errfCode(n.Args[i].Pos(), "E038", "%s: expected %s, got %s%s",
+		argSubject(n, num), expected, at, assignHint(expected, at))
+}
+
+// argSubject names argument num of a call, with its callee when the callee is
+// a name the reader wrote: "argument 2 to \"f\"", else "argument 2".
+func argSubject(n *ast.Call, num int) string {
+	name := ""
+	if n.Method != nil {
+		name = n.Method.Field
+	} else if id, ok := n.Callee.(*ast.Ident); ok && !strings.HasPrefix(id.Name, "__") {
+		name = demangle(id.Name)
+	}
+	if name == "" {
+		return fmt.Sprintf("argument %d", num)
+	}
+	return fmt.Sprintf("argument %d to %q", num, name)
 }
 
 // moduleAlreadyImports reports whether the module being checked names `mod`
@@ -18039,7 +18054,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					// is writable here. It is offered first for that reason.
 					atn, _ := methodTypeName(at)
 					c.errfCode(n.Args[0].Pos(), "E038",
-						"argument 1 to %s: %s does not implement `Display` (no `to_string(): string` in scope) — give %s a `to_string(): string` method, or %s",
+						"argument 1 to %q: %s does not implement `Display` (no `to_string(): string` in scope) — give %s a `to_string(): string` method, or %s",
 						id.Name, typeLabel(at), typeLabel(at), deriveHint(atn, "cmp.Display", "cmp.Display"))
 					return ast.VoidType{}
 				}

@@ -12,13 +12,13 @@ func TestStrIntoAStoringBuiltinIsRefused(t *testing.T) {
 	const hint = "add `.to_owned()`"
 	bad := []struct{ name, body, want string }{
 		{"append", `let out: string[] = []; out = out.append(slice_unchecked(s, 0, 1)); return out.len();`,
-			"argument 1: expected string, got str"},
+			"argument 1 to \"append\": expected string, got str"},
 		{"with", `let out: string[] = ["x"]; out = out.with(0, slice_unchecked(s, 0, 1)); return out.len();`,
-			"argument 2: expected string, got str"},
+			"argument 2 to \"with\": expected string, got str"},
 		{"map key", `let m: Map[string, i32] = map_new(2); m = m.insert(slice_unchecked(s, 0, 1), 1); return m.len();`,
-			"argument 1: expected string, got str"},
+			"argument 1 to \"insert\": expected string, got str"},
 		{"map value", `let m: Map[string, string] = map_new(2); m = m.insert("k", slice_unchecked(s, 0, 1)); return m.len();`,
-			"argument 2: expected string, got str"},
+			"argument 2 to \"insert\": expected string, got str"},
 	}
 	for _, c := range bad {
 		src := "function f(s: string): i32 { " + c.body + " }\nfunction main(): i32 { return f(\"ab\"); }"

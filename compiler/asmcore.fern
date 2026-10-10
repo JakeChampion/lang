@@ -9302,8 +9302,8 @@ function display_arg_errs(e: ast.Expr, fname: string, st: EmitState): util.Diag[
               tn = "";
             }
             return [util.Diag {
-              code: "E038", message: "in fn '" + fname + "': argument 1 to "
-                + id.name + ": " + an
+              code: "E038", message: "in fn '" + fname + "': argument 1 to \""
+                + id.name + "\": " + an
                 + " does not implement `Display` (no `to_string(): string` in scope)"
                 + " — give " + an + " a `to_string(): string` method, or "
                 + util.derive_hint(tn, "cmp.Display", "cmp.Display"),

@@ -35,7 +35,7 @@ import (
 // Each program calls one builtin with every argument deliberately mistyped, in
 // statement position so no destination type of the test's own invention can
 // colour the answer. The Go checker is the sole oracle, and what is compared is
-// the whole DIAGNOSTIC — "argument 2: expected i32, got string" — not the code
+// the whole DIAGNOSTIC — `argument 2 to "f": expected i32, got string` — not the code
 // set.
 //
 // The codes alone are not enough, and the difference is the accept-what-native-
