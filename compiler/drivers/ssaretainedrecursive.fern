@@ -1,0 +1,88 @@
+// Actual generated recursive helpers remain outside the leaf proof. A
+// parameter schema or an alignment annotation cannot certify their effects.
+import "../asmcore";
+import "../asm_ir";
+import "../asm_arm64_ir";
+import "../lexer";
+import "../parser";
+import "../semlower";
+import "../ssaprepare";
+import "../ssacreditbound" as bound;
+import "../ssacreditselected" as selected;
+import "../ssauniquecaller" as caller;
+import "../ssauniquemeaning" as meaning;
+import "../ssauniqueunit" as unit;
+
+function require(ok: boolean, code: i32): void {
+  if (!ok) {
+    exit(code);
+  }
+}
+
+function find(rows: ssaprepare.Emitted[], name: string): i32 {
+  let at = -1;
+  let i = 0;
+  for row in rows {
+    if (row.label_name == name) {
+      require(at < 0, 201);
+      at = i;
+    }
+    i = i + 1;
+  }
+  require(at >= 0, 202);
+  return at;
+}
+
+function loaded_link(row: ssaprepare.Emitted): void {
+  // Match identities in the actual final graph, not the numeric IDs or
+  // offsets printed by an earlier diagnostic capture.
+  let calls = 0;
+  for block in row.body.formed.f.blocks {
+    for op in block.insts {
+      if (op.kind_tag == 11 && op.str == "__fern_rc_is_unique") {
+        require(op.args.len() == 1, 203);
+        let joined = false;
+        for pred in row.body.formed.f.blocks {
+          for phi in pred.insts {
+            if (phi.result == op.args[0] && phi.kind_tag == 8) {
+              joined = true;
+            }
+          }
+        }
+        require(joined, 204);
+        calls = calls + 1;
+      }
+    }
+  }
+  require(calls > 0 && row.sites.len() > 0, 205);
+}
+
+function refusals(out: ssaprepare.Output, name: string): void {
+  let drop = out.bodies[find(out.bodies, "__sem_drop_" + name)];
+  let release = out.bodies[find(out.bodies, "__sem_release_" + name)];
+  let arch = drop.context.architecture;
+  require(selected.metadata(drop).enums.len() > 0 && selected.contracts(drop).len() == 0, 206);
+  require(bound.resolve(out.bodies, drop.label_name, arch).error == "", 207);
+  loaded_link(drop);
+  require(!meaning.check(drop.body.formed.f).ok, 208);
+  require(!caller.check_body(drop.assembly, arch, drop.body.formed.f).ok, 209);
+  require(!caller.check_selected(out.bodies, drop.label_name, arch).ok, 210);
+  require(!caller.check_selected_lines(drop.assembly.split("\n"), out.bodies, drop.label_name, arch).ok, 211);
+  require(release.release_entry.counted && bound.resolve(out.bodies, release.label_name, arch).error == "unproved native release entry effects", 212);
+  require(!caller.check_selected(out.bodies, release.label_name, arch).ok, 213);
+  require(!unit.check_selected_collection(out.text, arch, out.bodies).ok, 214);
+}
+
+function program(source: string, name: string, arm: boolean): void {
+  let target = if (arm) { "arm64-darwin" } else { "x86-64-linux" };
+  let g = semlower.program(semlower.driven(parser.parse_module(lexer.tokenize(source)), target));
+  require(g.ok, 200);
+  let sw = asmcore.Switches { backtrace: false, sanitize: false, var_rows: false };
+  let out = if (arm) { asm_arm64_ir.emit_module_ir_unit_arm64_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, -1, g.cache, g.physical, semlower.runtime_lowering, sw, true) } else { asm_ir.emit_module_ir_unit_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, -1, g.cache, g.physical, semlower.runtime_lowering, 0 as usize, sw, true) };
+  refusals(out, name);
+}
+
+pub function run(arm: boolean): void {
+  program("enum List { Cons(string, List), Nil } @noinline function discard(own xs: List): i32 { return 0; } function main(): i32 { return discard(Cons(\"one\", Cons(\"two\", Nil))); }", "List", arm);
+  program("enum Tree { Branch(Tree, string, Tree), Leaf(string), Empty } @noinline function discard(own tree: Tree): i32 { return 0; } function main(): i32 { return discard(Branch(Leaf(\"left\"), \"node\", Leaf(\"right\"))); }", "Tree", arm);
+}
