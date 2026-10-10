@@ -272,15 +272,17 @@ pub function check_body(text: string, architecture: string, f: ssa.SFunc): helpe
 }
 
 // The selected producer supplies the parameter ABI, not an alignment flag.
-// This scope admits borrowed strings and concrete arrays except byte views,
-// whose descriptor carries bit 1. Tag and heap-floor cases remain mandatory.
+// Both string (tag 0) and str (tag 1) use a bit-clear box handle, base + 8,
+// under the native parameter ABI. Native ssa_str_view preserves that form.
+// Converting either to a string-backed [u8] view adds bit 1 in str_byte_view;
+// that TypeArray descriptor is excluded here. Tag/floor cases remain mandatory.
 // Generated child-release bodies and other signatures need separate proofs.
 function parameter(t: typeinfo.Type): boolean {
   if (!semtypes.concrete(t, false)) {
     return false;
   }
-  if let typeinfo.TypeString(_) = t {
-    return true;
+  if let typeinfo.TypeString(s) = t {
+    return s.tag == 0 || s.tag == 1;
   }
   if let typeinfo.TypeArray(a) = t {
     if let typeinfo.TypeI32(i) = a.elem {
