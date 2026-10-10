@@ -447,6 +447,57 @@ pub function release_storage(text: string): boolean {
   return unique_writable(s, ix) && storage_at(s, ix, "__fern_heap_base", 8) && storage_at(s, ix, "__fern_heap_end", 8) && storage_at(s, ix, "__fern_freelist", 65536 * 8) && storage_at(s, ix, "__fern_large_freelist", 45 * 8);
 }
 
+function native_allocation(line: string): boolean {
+  // The emitted immortal descriptor uses a signed header and a relocation.
+  // Each of these declarations consumes one word, without proving its value.
+  if (line == ".quad -1") {
+    return true;
+  }
+  return allocation(line) || word(line) == ".quad" && symbol(util.trim(slice_unchecked(line, 5, line.len()) + ""));
+}
+
+function native_writable_label(s: Scan, at: i32, name: string): boolean {
+  let tail = util.trim(slice_unchecked(s.lines[at], name.len() + 1, s.lines[at].len()) + "");
+  if (tail != "") {
+    return native_allocation(tail);
+  }
+  // A bare descriptor label must immediately precede consuming data in the
+  // same section. Another label, alignment or section would allow aliases.
+  return at + 1 < s.lines.len() && s.sections[at + 1] == s.sections[at] && native_allocation(s.lines[at + 1]);
+}
+
+function native_writable(s: Scan): boolean {
+  let at = 0;
+  for line in s.lines {
+    if (s.sections[at] == 2 || s.sections[at] == 3) {
+      let name = definition(line);
+      if (name != "") {
+        if (!native_writable_label(s, at, name)) {
+          return false;
+        }
+      } else if (directive(line, s.sections[at]) < 0 && !native_allocation(line)) {
+        return false;
+      }
+    }
+    at = at + 1;
+  }
+  return true;
+}
+
+// Same-output declaration facts for the restricted small allocator boundary.
+// Native shape names and consuming writable descriptors may coexist with them.
+// No allocator code, linked permissions/disjointness, live heap ordering,
+// free-list integrity, fresh allocation or successful return is certified.
+// Larger allocator tables and initialization remain separate obligations.
+pub function allocator_storage(text: string): boolean {
+  let s = scan_mode(text, true);
+  if (s.error != "" || !native_writable(s)) {
+    return false;
+  }
+  let ix = definition_index(s.lines);
+  return ix.duplicate < 0 && storage_at(s, ix, "__fern_heap_ptr", 8) && storage_at(s, ix, "__fern_heap_base", 8) && storage_at(s, ix, "__fern_heap_end", 8) && storage_at(s, ix, "__fern_freelist", 65536 * 8);
+}
+
 // Returned lines remain unproved. A semantic checker must call this itself,
 // decode these exact lines, and derive all machine states internally.
 pub function select(text: string, entry: string): Body {
@@ -492,14 +543,25 @@ pub function dependency(text: string, entry: string): Body {
 // this does not grant allocator linkage, effects or permissions. Keep the
 // older decrement dependency selector's syntax and entry set unchanged.
 pub function array_box(text: string): Body {
+  return native_dependency(text, "__fern_arr_box");
+}
+
+// Contiguous allocator entry-fragment data, ending at a section transition.
+// Later terminal blocks are outside it. This grants no global invariant,
+// linked storage, operating-system contract or allocation effect.
+pub function allocator(text: string): Body {
+  return native_dependency(text, "__fern_alloc");
+}
+
+function native_dependency(text: string, entry: string): Body {
   let s = scan_mode(text, true);
   if (s.error != "") {
     return failure(s.error);
   }
   let ix = definition_index(s.lines);
-  let start = names.unique_position(ix, "__fern_arr_box");
-  if (ix.duplicate >= 0 || start < 0 || !exact_entry(s, start, "__fern_arr_box")) {
-    return failure("missing or ambiguous array-box definition");
+  let start = names.unique_position(ix, entry);
+  if (ix.duplicate >= 0 || start < 0 || !exact_entry(s, start, entry)) {
+    return failure(if (entry == "__fern_arr_box") { "missing or ambiguous array-box definition" } else { "missing or ambiguous allocator definition" });
   }
   return body(s, ix, start, -1, "");
 }

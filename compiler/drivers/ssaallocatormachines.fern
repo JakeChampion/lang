@@ -1,0 +1,156 @@
+import "../ssaallocatormachine" as machine;
+import "../ssadecrementtext" as text;
+import "../ssainlineuniqueisa" as registers;
+import "std/string";
+
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("allocator machine controls failed: " + group);
+    exit(180);
+  }
+}
+
+function change(s: string, from: string, to: string): string {
+  require(s.contains(from), "mutation present: " + from);
+  return s.split(from).join(to);
+}
+
+function mutation(s: string, from: string, to: string, expected: boolean): void {
+  require(machine.check(change(s, from, to)) == expected, from + " -> " + to);
+}
+
+function fixture(): string {
+  return ".text\n__fern_alloc:\naddq $7, %rdi\nandq $-8, %rdi\ncmpq $2048, %rdi\nja .Lfull\nleaq __fern_freelist(%rip), %rax\naddq %rax, %rdi\nmovq (%rdi), %rax\ntestq %rax, %rax\njz .Lmiss\npushq (%rax)\npopq (%rdi)\nret\n.Lmiss:\nleaq __fern_freelist(%rip), %rax\nsubq %rax, %rdi\nmovq __fern_heap_ptr(%rip), %rax\ntestq %rax, %rax\njz .Lfull\naddq %rax, %rdi\ncmpq __fern_heap_end(%rip), %rdi\nja .Loom\nmovq %rdi, __fern_heap_ptr(%rip)\nret\n.Lfull:\nunknown_instruction\n.section .rodata\n.message:\n.ascii \"oom\"\n.text\n.Loom:\nunknown_instruction\n.bss\n.align 8\n__fern_heap_ptr: .quad 0\n.align 8\n__fern_heap_base: .quad 0\n.align 8\n__fern_heap_end: .quad 0\n.align 8\n__fern_freelist: .skip 524288\n";
+}
+
+function request_and_slot(s: string): void {
+  mutation(s, "addq $7, %rdi", "", true);
+  mutation(s, "addq $7, %rdi", "addl $7, %edi", true);
+  mutation(s, "addq $7, %rdi", "addq $8, %rdi", false);
+  mutation(s, "addq $7, %rdi", "movq $40, %rdi", false);
+  mutation(s, "andq $-8, %rdi", "", false);
+  mutation(s, "cmpq $2048, %rdi", "cmpl $2048, %edi", true);
+  mutation(s, "cmpq $2048, %rdi", "cmpq $40, %rdi", false);
+  mutation(s, "leaq __fern_freelist(%rip), %rax", "leaq __fern_freelist(%rip), %rcx", false);
+  mutation(s, "movq (%rdi), %rax", "movl (%rdi), %eax", false);
+  mutation(s, "movq (%rdi), %rax", "movq 8(%rdi), %rax", false);
+  mutation(s, "subq %rax, %rdi", "", false);
+  mutation(s, "subq %rax, %rdi", "subl %eax, %edi", false);
+  mutation(s, "movq __fern_heap_ptr(%rip), %rax", "movl __fern_heap_ptr(%rip), %eax", false);
+  mutation(s, "movq __fern_heap_ptr(%rip), %rax", "movq __fern_heap_base(%rip), %rax", false);
+}
+
+function writes(s: string): void {
+  for code in ["", "popq 8(%rdi)", "popq (%rax)", "popq 0(%rsp)", "popq %rax"] {
+    mutation(s, "popq (%rdi)", code, false);
+  }
+  for code in ["", "movl %edi, __fern_heap_ptr(%rip)", "movq %rax, __fern_heap_ptr(%rip)", "movq %rdi, __fern_heap_base(%rip)", "movq %rdi, __fern_heap_ptr(%rip)\nmovq %rdi, __fern_heap_ptr(%rip)"] {
+    mutation(s, "movq %rdi, __fern_heap_ptr(%rip)", code, false);
+  }
+  let pop = "pushq %rcx\nmovq (%rax), %rcx\nmovq %rcx, (%rdi)\npopq %rcx";
+  mutation(s, "pushq (%rax)\npopq (%rdi)", pop, true);
+  mutation(s, "pushq (%rax)\npopq (%rdi)", change(pop, "movq %rcx, (%rdi)", "movl %ecx, (%rdi)"), false);
+  mutation(s, "pushq (%rax)\npopq (%rdi)", change(pop, "movq %rcx, (%rdi)", "movq %rcx, (%rdi)\nmovq %rcx, (%rdi)"), false);
+  mutation(s, "pushq (%rax)", "pushq 8(%rax)", false);
+  mutation(s, "pushq (%rax)", "pushq %rax", false);
+}
+
+function current_memory(s: string): void {
+  // The slot is now next, so loading it into AX loses the returned block.
+  mutation(s, "popq (%rdi)", "popq (%rdi)\nmovq (%rdi), %rax", false);
+  let pop = "pushq %rcx\npushq %rdx\nmovq (%rax), %rdx\nmovq %rdx, (%rdi)\nmovq $0, %rcx\nmovq (%rdi), %rcx\ncmpq %rdx, %rcx\njne .Lbadnext\npopq %rdx\npopq %rcx";
+  mutation(s, "pushq (%rax)\npopq (%rdi)", pop, true);
+  mutation(s, "pushq (%rax)\npopq (%rdi)", change(pop, "movq (%rdi), %rcx", "movq %rax, %rcx"), false);
+  // Same current heap pointer can reconstruct B without trusting old contents.
+  mutation(s, "movq %rdi, __fern_heap_ptr(%rip)", "movq %rdi, __fern_heap_ptr(%rip)\nmovq __fern_heap_ptr(%rip), %rax\nsubq $40, %rax", false);
+  let prefix = "pushq %rcx\nmovq %rdi, %rcx\n";
+  let suffix = "\nmovq __fern_heap_ptr(%rip), %rax\nsubq %rcx, %rax\npopq %rcx";
+  let saved = change(s, "addq %rax, %rdi\ncmpq __fern_heap_end", prefix + "addq %rax, %rdi\ncmpq __fern_heap_end");
+  mutation(saved, "movq %rdi, __fern_heap_ptr(%rip)", "movq %rdi, __fern_heap_ptr(%rip)" + suffix, true);
+  mutation(saved, "movq %rdi, __fern_heap_ptr(%rip)", "movq %rdi, __fern_heap_ptr(%rip)" + change(suffix, "subq %rcx, %rax", "addq %rcx, %rax"), false);
+}
+
+function stack_order(s: string): void {
+  // The second PUSH must read S-8 before writing S-16. POP (%rsp) uses
+  // S-8 after increment, preserving the next head for the final POP.
+  mutation(s, "pushq (%rax)\npopq (%rdi)", "pushq (%rax)\npushq (%rsp)\npopq (%rsp)\npopq (%rdi)", true);
+  mutation(s, "pushq (%rax)\npopq (%rdi)", "pushq (%rax)\npushq -8(%rsp)\npopq (%rsp)\npopq (%rdi)", false);
+  mutation(s, "pushq (%rax)\npopq (%rdi)", "pushq (%rax)\npushq %rcx\npopq (%rsp)\npopq (%rdi)", false);
+  mutation(s, "pushq (%rax)\npopq (%rdi)", "pushq (%rax)\npushq (%rsp)\npopq -8(%rsp)\npopq (%rdi)", true);
+  mutation(s, "pushq (%rax)\npopq (%rdi)", "pushq (%rax)\npopq 8(%rsp)\npopq (%rdi)", false);
+  for code in ["movq %rax, (%rsp)", "movl %eax, 4(%rsp)", "addq $8, %rsp", "pushq %rbx", "popq %rbx"] {
+    mutation(s, "ret", code + "\nret", false);
+  }
+}
+
+function identities(s: string): void {
+  let wide = registers.registers(false, 64);
+  let narrow = registers.registers(false, 32);
+  let i = 0;
+  for reg in wide {
+    mutation(s, "ret", "movq " + reg + ", " + reg + "\nret", true);
+    mutation(s, "ret", "movl " + narrow[i] + ", " + narrow[i] + "\nret", false);
+    if (i != 4) {
+      mutation(s, "ret", "pushq " + reg + "\npopq " + reg + "\nret", true);
+    }
+    i = i + 1;
+  }
+}
+
+function flags_and_flow(s: string): void {
+  for condition in ["je", "jne", "jb", "jae", "js", "jns", "jl", "jge", "jg", "jle", "jo", "jno", "jmp"] {
+    mutation(s, "ja .Loom", condition + " .Loom", false);
+  }
+  mutation(s, "ja .Loom", "jbe .Linbounds\nunknown_instruction\n.Linbounds:", true);
+  mutation(s, "cmpq __fern_heap_end(%rip), %rdi", "cmpq __fern_heap_end(%rip), %rdi\nmovq %rax, %rax", true);
+  mutation(s, "cmpq __fern_heap_end(%rip), %rdi", "cmpq __fern_heap_end(%rip), %rdi\naddq $0, %rdi", false);
+  mutation(s, "cmpq __fern_heap_end(%rip), %rdi", "cmpl __fern_heap_end(%rip), %edi", false);
+  mutation(s, "testq %rax, %rax", "testl %eax, %eax", false);
+  mutation(s, "ret", "unknown_instruction\nret", false);
+  mutation(s, "ret", ".Lcycle:\njmp .Lcycle\nret", false);
+  mutation(s, "ja .Lfull", "ja .Lmissing", true);
+  mutation(s, "jz .Lmiss", "jz .Lmissing", false);
+  mutation(s, "ret", "jmp .Lmissing\nret", false);
+}
+
+function numeric_flags(s: string): void {
+  let setups = ["movl $-2147483648, %eax\ncmpl $1, %eax", "movl $2147483647, %eax\ncmpl $-1, %eax", "movl $-1, %eax\ncmpl $1, %eax", "movq $40, %rax\ncmpq $40, %rax", "movq $40, %rax\ncmpq $48, %rax", "movq $48, %rax\ncmpq $40, %rax", "movl $-2147483648, %eax\ntestl %eax, %eax", "movl $-2147483648, %eax\ntestq %rax, %rax"];
+  let untaken = ["jge", "jl", "jbe", "jne", "jae", "jle", "jns", "js"];
+  let taken = ["jl", "jge", "ja", "je", "jb", "jg", "js", "jns"];
+  let i = 0;
+  for code in setups {
+    let prefix = code + "\n";
+    mutation(s, "addq $7, %rdi", prefix + untaken[i] + " .Lnumeric_outside\naddq $7, %rdi", true);
+    mutation(s, "addq $7, %rdi", prefix + taken[i] + " .Lnumeric_outside\naddq $7, %rdi", false);
+    i = i + 1;
+  }
+  mutation(s, "addq $7, %rdi", "movl $-2147483648, %eax\ncmpl $1, %eax\njno .Lnumeric_outside\naddq $7, %rdi", true);
+  mutation(s, "addq $7, %rdi", "movl $-2147483648, %eax\ncmpl $1, %eax\njo .Lnumeric_outside\naddq $7, %rdi", false);
+}
+
+function actual_mutations(output: string): void {
+  mutation(output, "pushq (%rax)", "pushq %rax", false);
+  mutation(output, "popq (%rdi)", "popq 8(%rdi)", false);
+  mutation(output, "movq %rdi, __fern_heap_ptr(%rip)", "movq %rax, __fern_heap_ptr(%rip)", false);
+  mutation(output, "cmpq __fern_heap_end(%rip), %rdi", "cmpl __fern_heap_end(%rip), %edi", false);
+  mutation(output, "pushq (%rax)", "pushq (%rax)\n\tpushq (%rsp)\n\tpopq (%rsp)", true);
+}
+
+pub function run(output: string): void {
+  require(machine.check(output), "actual complete primary output");
+  actual_mutations(output);
+  mutation(output, "__fern_heap_ptr: .quad 0", "__fern_heap_ptr: .long 0", false);
+  mutation(output, "__fern_freelist: .skip 524288", "__fern_freelist: .skip 8", false);
+  mutation(output, "__fern_alloc:", "missing_allocator:", false);
+  let s = fixture();
+  require(machine.check(s) && text.allocator_storage(s), "conditional fast-path fixture");
+  mutation(s, "unknown_instruction", "syscall", true);
+  mutation(s, "\n", "\r\n\t", true);
+  request_and_slot(s);
+  writes(s);
+  current_memory(s);
+  stack_order(s);
+  identities(s);
+  flags_and_flow(s);
+  numeric_flags(s);
+}

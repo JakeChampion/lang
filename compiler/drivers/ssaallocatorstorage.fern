@@ -1,0 +1,100 @@
+import "../ssadecrementtext" as text;
+import "std/string";
+
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("allocator storage controls failed: " + group);
+    exit(180);
+  }
+}
+
+function change(s: string, from: string, to: string): string {
+  let parts = s.split(from);
+  require(parts.len() > 1, "mutation present: " + from);
+  return parts.join(to);
+}
+
+function mutation(s: string, from: string, to: string, expected: boolean): void {
+  require(text.allocator_storage(change(s, from, to)) == expected, from + " -> " + to);
+}
+
+function fixture(): string {
+  return ".bss\n.align 8\n__fern_heap_ptr: .quad 0\n.align 8\n__fern_heap_base: .quad 0\n.align 8\n.globl __fern_heap_end\n__fern_heap_end: .quad 0\n.align 8\n__fern_freelist: .skip 524288\n";
+}
+
+function extents(s: string): void {
+  for tail in [".skip 524287", ".skip 0", ".skip 4294967296", ".skip 9999999999", ".skip -1", ".quad 0", ".zero 1", "", ".align 8", ".skip 524288,1", ".skip 524288,0,0"] {
+    mutation(s, "__fern_freelist: .skip 524288", "__fern_freelist: " + tail, false);
+  }
+  for tail in [".zero 524288", ".skip 524288,0", ".skip 524296", ".skip 999999999"] {
+    mutation(s, "__fern_freelist: .skip 524288", "__fern_freelist: " + tail, true);
+  }
+  for name in ["__fern_heap_ptr", "__fern_heap_base", "__fern_heap_end"] {
+    for tail in [".long 0", ".byte 0", ".skip 7", ".quad 1", ".quad -1", ".quad other", ".quad 0,0", ".skip 8,0,0", ".skip 8,1"] {
+      mutation(s, name + ": .quad 0", name + ": " + tail, false);
+    }
+    mutation(s, name + ": .quad 0", name + ": .zero 8", true);
+    mutation(s, name + ": .quad 0", name + ": .skip 16,0", true);
+  }
+}
+
+function alignments(s: string): void {
+  for line in ["", ".align 0", ".align 1", ".align 4", ".align 24", ".align 8,0", ".align 4294967296", ".align 8\n.byte 0", ".align 8\nother: .quad 0", ".align 8\n.text", ".align 8\n.section .rodata"] {
+    mutation(s, ".align 8", line, false);
+  }
+  for line in [".align 16", ".align 32", ".align 64", ".align 0008"] {
+    mutation(s, ".align 8", line, true);
+  }
+  mutation(s, ".globl __fern_heap_end", ".globl __fern_heap_end\n.globl __fern_heap_end", true);
+  mutation(s, ".globl __fern_heap_end", ".globl __fern_heap_base", false);
+  mutation(s, ".globl __fern_heap_end", ".globl __fern_heap_end\n.byte 0", false);
+  mutation(s, ".globl __fern_heap_end", "alias: .globl __fern_heap_end", false);
+}
+
+function namespace(s: string): void {
+  for name in ["__fern_heap_ptr", "__fern_heap_base", "__fern_heap_end", "__fern_freelist"] {
+    mutation(s, name + ":", "missing_" + name + ":", false);
+    require(!text.allocator_storage(s + ".text\n" + name + ":\nret\n"), "duplicate executable: " + name);
+    require(!text.allocator_storage(s + ".data\n" + name + ": .quad 0\n"), "duplicate data: " + name);
+    require(!text.allocator_storage(".set alias, " + name + "\n" + s), "symbol alias");
+  }
+  for suffix in [".text\nother:\nret\nother:\nret\n", ".section .rodata\nother:\n.ascii \"a\"\nother:\n.ascii \"b\"\n", ".weak __fern_heap_ptr\n", ".intel_syntax noprefix\n", ".include \"other.s\"\n"] {
+    require(!text.allocator_storage(s + suffix), "complete namespace: " + suffix);
+  }
+  require(text.allocator_storage(".bss\nneighbor: .byte 0\n" + s), "distinct writable neighbor");
+  require(!text.allocator_storage(".bss\nneighbor: .byte 0\n" + s + "neighbor: .quad 0\n"), "duplicate writable neighbor");
+  require(!text.allocator_storage(".bss\nneighbor: .byte 0\n" + s + ".text\nneighbor:\nret\n"), "code and writable collision");
+  mutation(s, ".bss", ".data", true);
+  mutation(s, ".bss", ".section .rodata", false);
+  mutation(s, ".bss", ".text", false);
+  mutation(s, "\n", "\r\n\t", true);
+}
+
+function pools(s: string): void {
+  let pool = ".section .rodata\n.name:\n.ascii \"Parent\"\n.data\n.align 8\n.quad -1\n.shape:\n.quad .name\n.quad 6\n";
+  require(text.allocator_storage(s + pool), "actual writable descriptor coexists with allocator extents");
+  require(!text.release_storage(s + ".align 8\n__fern_large_freelist: .skip 360\n" + pool), "old release scanner unchanged");
+  require(!text.counter_storage(s + ".align 8\n__fern_rc_underflow: .quad 0\n" + pool), "old counter scanner unchanged");
+  for section in [".data\n", ".bss\n"] {
+    for declaration in [".quad -1\n", "other: .quad -1\n", "other:\n.quad 0\n", "other:\n.skip 8\n"] {
+      require(text.allocator_storage(s + section + declaration), "consuming writable declaration: " + declaration);
+    }
+    for declaration in ["other:\n", "other:\nnext: .quad 0\n", "other:\n.align 8\n.quad 0\n", "other:\n.text\nret\n", "other:\n.skip 0\n", "other: .skip 0\n", ".quad -4294967296\n"] {
+      require(!text.allocator_storage(s + section + declaration), "unproved writable declaration refused: " + declaration);
+    }
+  }
+}
+
+pub function run(output: string): void {
+  require(text.allocator_storage(output), "one actual complete primary output");
+  mutation(output, "__fern_heap_ptr: .quad 0", "__fern_heap_ptr: .long 0", false);
+  mutation(output, "__fern_freelist: .skip 524288", "__fern_freelist: .skip 524280", false);
+  mutation(output, "__fern_alloc:", "renamed_allocator:", true);
+  let s = fixture();
+  require(text.allocator_storage(s), "declarations without code are data only");
+  require(!text.allocator_storage(""), "empty input");
+  extents(s);
+  alignments(s);
+  namespace(s);
+  pools(s);
+}

@@ -1,0 +1,530 @@
+// Conditional small-request allocator effects. Linked storage, canonical
+// disjoint permissions, free-list ownership and ordered heap bounds remain
+// premises. This is not a global allocator invariant or freshness certificate.
+import "./ssacapacityisa" as isa;
+import "./ssadecrementtext" as text;
+
+// Half kinds: number, original register, stack, block, small-list base, end,
+// return, original stack, next head, original block, other global.
+struct Half { kind: i32, identity: i64, high: boolean }
+
+struct Word { low: Half, high: Half }
+
+struct State { regs: Word[], memory: Half[], writes: i32[], zero: i32, carry: i32, sign: i32, overflow: i32, bounded: boolean, ok: boolean }
+
+function half(kind: i32, identity: i64, high: boolean): Half {
+  return Half { kind: kind, identity: identity, high: high };
+}
+
+function token(kind: i32, identity: i64): Word {
+  return Word { low: half(kind, identity, false), high: half(kind, identity, true) };
+}
+
+function number(n: i64): Word {
+  let low = n % 4294967296;
+  return Word { low: half(0, if (low < 0) { low + 4294967296 } else { low }, false), high: half(0, if (n < 0) { 4294967295 } else { n / 4294967296 }, false) };
+}
+
+function same(a: Half, b: Half): boolean {
+  return a.kind == b.kind && a.identity == b.identity && a.high == b.high;
+}
+
+function equal(a: Word, b: Word): boolean {
+  return same(a.low, b.low) && same(a.high, b.high);
+}
+
+function unsigned(w: Word): boolean {
+  return w.low.kind == 0 && same(w.high, number(0).high);
+}
+
+function narrowed(w: Word, width: i32): Word {
+  return if (width == 32) { Word { ...w, high: number(0).high } } else { w };
+}
+
+function pointer(w: Word): boolean {
+  return w.low.kind >= 2 && w.low.kind <= 4 && equal(w, token(w.low.kind, w.low.identity));
+}
+
+function unknown(s: State): State {
+  return State { ...s, zero: -1, carry: -1, sign: -1, overflow: -1, bounded: false };
+}
+
+function write(s: State, reg: i32, value: Word): State {
+  return State { ...s, regs: s.regs.with(reg, value) };
+}
+
+function initial_word(i: i32, bump: boolean): Word {
+  if (i < 16) {
+    return token(7, (i / 2) as i64);
+  }
+  if (i < 18) {
+    return token(6, 0);
+  }
+  if (i < 20) {
+    return token(7, 8);
+  }
+  return initial_heap_word(i, bump);
+}
+
+function initial_heap_word(i: i32, bump: boolean): Word {
+  if (i < 22) {
+    return if (bump) { number(0) } else { token(3, 0) };
+  }
+  if (i < 24) {
+    return if (bump) { token(3, 0) } else { token(10, 0) };
+  }
+  if (i < 26) {
+    return token(10, 1);
+  }
+  if (i < 28) {
+    return if (bump) { token(5, 0) } else { token(10, 2) };
+  }
+  return if (i < 30 && !bump) { token(8, 0) } else { token(9, ((i - 28) / 2) as i64) };
+}
+
+function initial(request: i32, bump: boolean): State {
+  let regs: Word[] = [];
+  let memory: Half[] = [];
+  let writes: i32[] = [];
+  let i = 0;
+  while (i < 16) {
+    regs = regs.append(if (i == 4) { token(2, 0) } else { if (i == 7) { number(request as i64) } else { token(1, i as i64) } });
+    i = i + 1;
+  }
+  i = 0;
+  while (i < 28 + request / 4) {
+    let w = initial_word(i, bump);
+    memory = memory.append(if (i % 2 == 0) { w.low } else { w.high });
+    writes = writes.append(0);
+    i = i + 1;
+  }
+  return State { regs: regs, memory: memory, writes: writes, zero: -1, carry: -1, sign: -1, overflow: -1, bounded: false, ok: true };
+}
+
+function cell(base: Word, offset: i64, width: i32, request: i32): i32 {
+  if (!pointer(base) || offset < -64 || offset > 64) {
+    return -1;
+  }
+  let at = base.low.identity + offset;
+  let bytes = width / 8;
+  if (at % 4 != 0) {
+    return -1;
+  }
+  return cell_extent(base.low.kind, at, bytes, request);
+}
+
+function cell_extent(kind: i32, at: i64, bytes: i32, request: i32): i32 {
+  if (kind == 2 && at >= -64 && at + bytes <= 16) {
+    return ((at + 64) / 4) as i32;
+  }
+  if (kind == 3 && at >= 0 && at + bytes <= request as i64) {
+    return 28 + (at / 4) as i32;
+  }
+  if (kind == 4 && at >= request as i64 && at + bytes <= request as i64 + 8) {
+    return 20 + ((at - request as i64) / 4) as i32;
+  }
+  return -1;
+}
+
+function address(s: State, op: isa.Op, request: i32): i32 {
+  let offset = op.offset as i64;
+  if (op.index >= 0) {
+    let index = s.regs[op.index];
+    if (!unsigned(index) || index.low.identity > 64) {
+      return -1;
+    }
+    offset = offset + index.low.identity * (op.scale as i64);
+  }
+  return cell(s.regs[op.base], offset, op.width, request);
+}
+
+function load(s: State, at: i32, width: i32): Word {
+  return Word { low: s.memory[at], high: if (width == 64) { s.memory[at + 1] } else { number(0).high } };
+}
+
+function read(s: State, at: i32, width: i32, reg: i32): State {
+  return if (at < 0) { State { ...s, ok: false } } else { write(s, reg, load(s, at, width)) };
+}
+
+function writable(at: i32, bump: boolean): boolean {
+  return at >= 0 && at < 16 || at >= (if (bump) { 22 } else { 20 }) && at < (if (bump) { 24 } else { 22 });
+}
+
+function store(s: State, at: i32, width: i32, w: Word, bump: boolean): State {
+  let memory = s.memory;
+  let writes = s.writes;
+  let i = 0;
+  while (i < width / 32) {
+    let pos = at + i;
+    if (!writable(pos, bump) || pos >= 20 && writes[pos] != 0) {
+      return State { ...s, ok: false };
+    }
+    memory = memory.with(pos, if (i == 0) { w.low } else { w.high });
+    writes = writes.with(pos, writes[pos] + 1);
+    i = i + 1;
+  }
+  return State { ...s, memory: memory, writes: writes };
+}
+
+function stack(s: State, op: isa.Op, request: i32, bump: boolean): State {
+  let sp = s.regs[4];
+  if (!pointer(sp) || sp.low.kind != 2) {
+    return State { ...s, ok: false };
+  }
+  if (op.kind == 6 || op.kind == 32) {
+    let at = if (op.kind == 32) { address(s, op, request) } else { 0 };
+    if (at < 0) {
+      return State { ...s, ok: false };
+    }
+    // Read the source before changing SP, including a source based on SP.
+    let w = if (op.kind == 32) { load(s, at, 64) } else { s.regs[op.source] };
+    let next = token(2, sp.low.identity - 8);
+    return write(store(s, cell(next, 0, 64, request), 64, w, bump), 4, next);
+  }
+  return pop(s, op, request, bump);
+}
+
+function pop(s: State, op: isa.Op, request: i32, bump: boolean): State {
+  let sp = s.regs[4];
+  let at = cell(sp, 0, 64, request);
+  if (at < 0) {
+    return State { ...s, ok: false };
+  }
+  let w = load(s, at, 64);
+  let advanced = write(s, 4, token(2, sp.low.identity + 8));
+  // Intel POP memory computes the destination using the incremented SP.
+  return if (op.kind == 33) { store(advanced, address(advanced, op, request), 64, w, bump) } else { write(advanced, op.destination, w) };
+}
+
+function shifted(s: State, reg: i32, w: Word, delta: i64, request: i32): State {
+  let at = w.low.identity + delta;
+  let low = if (w.low.kind == 2) { -(64 as i64) } else { 0 as i64 };
+  let high = if (w.low.kind == 3) { request as i64 } else { if (w.low.kind == 2) { 16 as i64 } else { 64 as i64 } };
+  return if (at >= low && at <= high) { write(s, reg, token(w.low.kind, at)) } else { State { ...s, ok: false } };
+}
+
+function immediate_add(s: State, op: isa.Op, request: i32): State {
+  let w = s.regs[op.destination];
+  let delta = if (op.kind == 9) { -(op.immediate as i64) } else { op.immediate as i64 };
+  if (pointer(w) && op.width == 64) {
+    return shifted(s, op.destination, w, delta, request);
+  }
+  if (!unsigned(w)) {
+    return State { ...s, ok: false };
+  }
+  let n = w.low.identity + delta;
+  return if (n >= 0 && n <= 4294967295) { write(s, op.destination, number(n)) } else { State { ...s, ok: false } };
+}
+
+function arithmetic(s: State, op: isa.Op, request: i32): State {
+  let cleared = unknown(s);
+  if (op.source < 0) {
+    return immediate_add(cleared, op, request);
+  }
+  if (op.width != 64) {
+    return State { ...s, ok: false };
+  }
+  let a = s.regs[op.destination];
+  let b = s.regs[op.source];
+  return register_arithmetic(cleared, op, a, b, request);
+}
+
+function register_arithmetic(s: State, op: isa.Op, a: Word, b: Word, request: i32): State {
+  if (op.kind == 10 && pointer(b) && unsigned(a)) {
+    return shifted(s, op.destination, b, a.low.identity, request);
+  }
+  if (pointer(a) && unsigned(b)) {
+    return shifted(s, op.destination, a, if (op.kind == 9) { -b.low.identity } else { b.low.identity }, request);
+  }
+  return pointer_difference(s, op, a, b);
+}
+
+function pointer_difference(s: State, op: isa.Op, a: Word, b: Word): State {
+  if (op.kind == 9 && pointer(a) && pointer(b) && a.low.kind == b.low.kind && a.low.identity >= b.low.identity) {
+    return write(s, op.destination, number(a.low.identity - b.low.identity));
+  }
+  return State { ...s, ok: false };
+}
+
+function flags(s: State, a: i64, b: i64, width: i32): State {
+  let difference = a - b;
+  let bits = if (width == 32) { if (difference < 0) { difference + 4294967296 } else { difference } } else { difference };
+  let sign = if (width == 32) { bits >= 2147483648 } else { difference < 0 };
+  let overflow = width == 32 && a >= 2147483648 != b >= 2147483648 && sign != a >= 2147483648;
+  return State { ...s, zero: if (difference == 0) { 1 } else { 0 }, carry: if (a < b) { 1 } else { 0 }, sign: if (sign) { 1 } else { 0 }, overflow: if (overflow) { 1 } else { 0 }, bounded: false };
+}
+
+function comparison(s: State, a: Word, b: Word, width: i32, request: i32): State {
+  let left = narrowed(a, width);
+  let right = narrowed(b, width);
+  if (unsigned(left) && unsigned(right)) {
+    return flags(s, left.low.identity, right.low.identity, width);
+  }
+  if (equal(left, right)) {
+    return flags(s, 0, 0, width);
+  }
+  if (width == 64 && equal(left, token(3, request as i64)) && equal(right, token(5, 0))) {
+    return State { ...unknown(s), bounded: true };
+  }
+  return unknown(s);
+}
+
+function global_cell(symbol: string): i32 {
+  if (symbol == "__fern_heap_ptr") {
+    return 22;
+  }
+  if (symbol == "__fern_heap_base") {
+    return 24;
+  }
+  return if (symbol == "__fern_heap_end") { 26 } else { -1 };
+}
+
+function global_step(s: State, op: isa.Op, request: i32, bump: boolean): State {
+  let at = global_cell(op.symbol);
+  if (at < 0) {
+    return State { ...s, ok: false };
+  }
+  if (op.kind == 29) {
+    return read(s, at, op.width, op.destination);
+  }
+  if (op.kind == 34) {
+    return store(s, at, op.width, s.regs[op.source], bump);
+  }
+  return comparison(s, s.regs[op.source], load(s, at, op.width), op.width, request);
+}
+
+function test(s: State, op: isa.Op): State {
+  let w = narrowed(s.regs[op.source], op.width);
+  if (unsigned(w)) {
+    let result = flags(s, w.low.identity, 0, op.width);
+    return State { ...result, carry: 0, overflow: 0 };
+  }
+  // Only the block's nonzero address is supplied by the domain; no sign fact.
+  return State { ...unknown(s), zero: if (equal(w, token(3, 0))) { 0 } else { -1 }, carry: 0, overflow: 0 };
+}
+
+function mask(s: State, op: isa.Op): State {
+  let w = s.regs[op.destination];
+  if (op.source >= 0 || op.immediate != -8 || !unsigned(w)) {
+    return State { ...s, ok: false };
+  }
+  let n = w.low.identity - w.low.identity % 8;
+  return write(flags(s, n, 0, op.width), op.destination, number(n));
+}
+
+function memory_step(s: State, op: isa.Op, request: i32, bump: boolean): State {
+  let at = address(s, op, request);
+  if (op.kind == 3) {
+    return read(s, at, op.width, op.destination);
+  }
+  let w = if (op.kind == 22) { number(op.immediate as i64) } else { s.regs[op.source] };
+  return store(s, at, op.width, w, bump);
+}
+
+function simple(s: State, op: isa.Op, request: i32): State {
+  if (op.kind == 1) {
+    return s;
+  }
+  if (op.kind == 2) {
+    return write(s, op.destination, narrowed(s.regs[op.source], op.width));
+  }
+  if (op.kind == 5) {
+    return write(s, op.destination, narrowed(number(op.immediate as i64), op.width));
+  }
+  if (op.kind == 19 && op.symbol == "__fern_freelist") {
+    return write(s, op.destination, token(4, 0));
+  }
+  if (op.kind == 15 && op.index < 0 && pointer(s.regs[op.base])) {
+    return shifted(s, op.destination, s.regs[op.base], op.offset as i64, request);
+  }
+  return State { ...s, ok: false };
+}
+
+function step(s: State, op: isa.Op, request: i32, bump: boolean): State {
+  if (op.kind == 3 || op.kind == 4 || op.kind == 22) {
+    return memory_step(s, op, request, bump);
+  }
+  if (op.kind == 6 || op.kind == 7 || op.kind == 32 || op.kind == 33) {
+    return stack(s, op, request, bump);
+  }
+  return other_step(s, op, request, bump);
+}
+
+function other_step(s: State, op: isa.Op, request: i32, bump: boolean): State {
+  if (op.kind == 9 || op.kind == 10) {
+    return arithmetic(s, op, request);
+  }
+  if (op.kind == 11) {
+    return mask(s, op);
+  }
+  if (op.kind == 23 || op.kind == 27) {
+    return test(s, op);
+  }
+  if (op.kind >= 29 && op.kind <= 30 || op.kind == 34) {
+    return global_step(s, op, request, bump);
+  }
+  return compare_or_simple(s, op, request);
+}
+
+function compare_or_simple(s: State, op: isa.Op, request: i32): State {
+  if (op.kind == 16) {
+    return comparison(s, s.regs[op.source], number(op.immediate as i64), op.width, request);
+  }
+  if (op.kind == 28) {
+    return comparison(s, s.regs[op.destination], s.regs[op.source], op.width, request);
+  }
+  return simple(s, op, request);
+}
+
+function inverse(value: i32): i32 {
+  return if (value < 0) { -1 } else { 1 - value };
+}
+
+function disjunction(a: i32, b: i32): i32 {
+  return if (a == 1 || b == 1) { 1 } else { if (a == 0 && b == 0) { 0 } else { -1 } };
+}
+
+function branch(s: State, condition: string): i32 {
+  if (condition == "jmp") {
+    return 1;
+  }
+  if (condition == "je" || condition == "jz") {
+    return s.zero;
+  }
+  if (condition == "jne" || condition == "jnz") {
+    return inverse(s.zero);
+  }
+  if (condition == "jb") {
+    return s.carry;
+  }
+  if (condition == "jae") {
+    return inverse(s.carry);
+  }
+  return ordered_branch(s, condition);
+}
+
+function ordered_branch(s: State, condition: string): i32 {
+  if (condition == "ja" || condition == "jbe") {
+    let below = if (s.bounded) { 1 } else { disjunction(s.zero, s.carry) };
+    return if (condition == "jbe") { below } else { inverse(below) };
+  }
+  return signed_branch(s, condition);
+}
+
+function signed_branch(s: State, condition: string): i32 {
+  if (condition == "js") {
+    return s.sign;
+  }
+  if (condition == "jns") {
+    return inverse(s.sign);
+  }
+  if (condition == "jo") {
+    return s.overflow;
+  }
+  if (condition == "jno") {
+    return inverse(s.overflow);
+  }
+  let less = if (s.sign < 0 || s.overflow < 0) { -1 } else { if (s.sign != s.overflow) { 1 } else { 0 } };
+  if (condition == "jl") {
+    return less;
+  }
+  if (condition == "jge") {
+    return inverse(less);
+  }
+  return signed_order(s, condition, less);
+}
+
+function signed_order(s: State, condition: string, less: i32): i32 {
+  let below = disjunction(less, s.zero);
+  if (condition == "jle") {
+    return below;
+  }
+  return if (condition == "jg") { inverse(below) } else { -1 };
+}
+
+function finished_memory(s: State, original: State, request: i32, bump: boolean): boolean {
+  let start = if (bump) { 22 } else { 20 };
+  let changed = if (bump) { token(3, request as i64) } else { token(8, 0) };
+  let i = 16;
+  while (i < s.memory.len()) {
+    let selected = i == start || i == start + 1;
+    let expected = if (selected) { if (i % 2 == 0) { changed.low } else { changed.high } } else { original.memory[i] };
+    if (!same(s.memory[i], expected) || s.writes[i] != (if (selected) { 1 } else { 0 })) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function finished(s: State, request: i32, bump: boolean): boolean {
+  let original = initial(request, bump);
+  let i = 0;
+  while (i < 16) {
+    let expected = original.regs[i];
+    if (i == 0) {
+      expected = token(3, 0);
+    }
+    if (i == 7) {
+      expected = token(if (bump) { 3 } else { 4 }, request as i64);
+    }
+    if (!equal(s.regs[i], expected)) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return s.ok && finished_memory(s, original, request, bump);
+}
+
+function path(p: isa.Program, request: i32, bump: boolean): boolean {
+  let s = initial(request, bump);
+  let visited: boolean[] = [];
+  for op in p.ops {
+    visited = visited.append(false);
+  }
+  let pc = 0;
+  while (pc >= 0 && pc < p.ops.len()) {
+    if (visited[pc]) {
+      return false;
+    }
+    visited = visited.with(pc, true);
+    let op = p.ops[pc];
+    if (op.kind == 18) {
+      return finished(s, request, bump);
+    }
+    if (op.kind == 17 || op.kind == 35) {
+      pc = next_pc(s, op, pc);
+    } else {
+      s = step(s, op, request, bump);
+      if (!s.ok) {
+        return false;
+      }
+      pc = pc + 1;
+    }
+  }
+  return false;
+}
+
+function next_pc(s: State, op: isa.Op, pc: i32): i32 {
+  let taken = branch(s, op.condition);
+  if (taken < 0 || taken == 1 && op.kind == 35) {
+    return -1;
+  }
+  return if (taken == 1) { op.target } else { pc + 1 };
+}
+
+// DI is40 or48. Canonical aligned disjoint stack S-64..S+15, linked globals
+// and selected slot L+DI are readable; lower stack and the selected update
+// are writable. Nonempty slot contains a valid owned block B of DI bytes,
+// whose first word is the arbitrary next head. Empty slot has initialized
+// nonzero heap_ptr B and unsigned B+DI<=end without wrap, with DI bytes of
+// available storage. These permissions and global invariants are UNPROVED.
+// Derives AX=B, DI=L+request (pop) or B+request (bump), the exact single slot
+// or heap_ptr update, all other registers and original return/argument intact.
+// Lower stack is scratch; RET consumes the original word and advances SP8.
+// No initialization, general size, terminal, flags, unwind, default or target
+// runtime certificate, and no discharge of constructor freshness premises.
+pub function check(output: string): boolean {
+  let p = isa.allocator_program(output);
+  return p.error == "" && text.allocator_storage(output) && path(p, 40, false) && path(p, 40, true) && path(p, 48, false) && path(p, 48, true);
+}
