@@ -1,0 +1,65 @@
+// These scoped SSA proofs must not depend on a decrement's returned value.
+// Native helper result preservation is a separate implementation obligation.
+import "../ssa";
+import "../ssaprepare";
+import "../ssacreditbound" as bound;
+import "../typeinfo";
+
+function require(ok: boolean, code: i32): void {
+  if (!ok) {
+    exit(code);
+  }
+}
+
+function changed(row: ssaprepare.Emitted, f: ssa.SFunc): ssaprepare.Emitted {
+  return ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, formed: ssa.Formed { ...row.body.formed, f: f } } };
+}
+
+function check(rows: ssaprepare.Emitted[], arch: string, error: string): void {
+  let p = bound.release_selected(rows, "__sem_release_Parent", "__sem_drop_Parent", arch);
+  let raw = bound.release(rows, "__sem_release_Parent", "__sem_drop_Parent", arch, typeinfo.TypeStruct { name: "Parent", args: [] });
+  require(p.error == error && raw.error == error, 226);
+  require(p.rows.len() == (if (error == "") { 2 } else { 0 }) && raw.rows.len() == p.rows.len(), 227);
+}
+
+function results(pair: ssaprepare.Emitted[], row_index: i32, arch: string): void {
+  let row = pair[row_index];
+  let f = row.body.formed.f;
+  let hits = 0;
+  let bi = 0;
+  for b in f.blocks {
+    let oi = 0;
+    for op in b.insts {
+      if (op.kind_tag == 11 && op.str == "__fern_rc_dec") {
+        require(b.term.kind_tag == 1, 228);
+        // A fresh unused identity leaves both body proofs valid.
+        let fresh = ssa.SInst { ...op, result: f.nvals };
+        let block = ssa.SBlock { ...b, insts: b.insts.with(oi, fresh) };
+        let renamed = ssa.SFunc { ...f, nvals: f.nvals + 1, blocks: f.blocks.with(bi, block) };
+        check(pair.with(row_index, changed(row, renamed)), arch, "");
+        // Keep the original zero instruction, but expose the decrement result.
+        let returned = ssa.SBlock { ...block, term: ssa.STerm { ...block.term, value: fresh.result } };
+        let bad = ssa.SFunc { ...renamed, blocks: renamed.blocks.with(bi, returned) };
+        let error = if (row.label_name == "__sem_drop_Parent") { "drop return mismatch" } else { "release return mismatch" };
+        check(pair.with(row_index, changed(row, bad)), arch, row.label_name + ": " + error);
+        if (oi + 1 < b.insts.len() && b.insts[oi + 1].kind_tag == 40) {
+          let load = ssa.SInst { ...b.insts[oi + 1], args: [fresh.result] };
+          let used = ssa.SBlock { ...block, insts: block.insts.with(oi + 1, load) };
+          bad = ssa.SFunc { ...renamed, blocks: renamed.blocks.with(bi, used) };
+          check(pair.with(row_index, changed(row, bad)), arch, row.label_name + ": child slot mismatch");
+          hits = hits + 1;
+        }
+        hits = hits + 1;
+      }
+      oi = oi + 1;
+    }
+    bi = bi + 1;
+  }
+  require(hits == (if (row.label_name == "__sem_drop_Parent") { 3 } else { 1 }), 229);
+}
+
+pub function run(pair: ssaprepare.Emitted[], arch: string): void {
+  require(pair.len() == 2, 230);
+  results(pair, 0, arch);
+  results(pair, 1, arch);
+}

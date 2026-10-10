@@ -8,6 +8,7 @@ import "../ssacreditselected" as selected;
 import "../typeinfo";
 import "../util";
 import "./ssaretainedmutations" as mutations;
+import "./ssaretainedreleaseresults" as release_results;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -91,4 +92,5 @@ pub function run(rows: ssaprepare.Emitted[], arch: string): void {
   require(pair.len() == 2, 223);
   check(rows, arch, true);
   controls(pair, arch);
+  release_results.run(pair, arch);
 }
