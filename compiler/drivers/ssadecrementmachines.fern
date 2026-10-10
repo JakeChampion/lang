@@ -1,0 +1,119 @@
+import "../ssadecrementmachine" as machine;
+import "../ssainlineuniqueisa" as registers;
+import "std/string";
+
+function require(ok: boolean): void {
+  if (!ok) {
+    print("decrement entry machine controls failed");
+    exit(237);
+  }
+}
+
+function change(s: string, from: string, to: string): string {
+  let parts = s.split(from);
+  if (parts.len() <= 1) {
+    print("missing mutation source: " + from);
+  }
+  require(parts.len() > 1);
+  return parts.join(to);
+}
+
+function check(s: string, entry: string, ok: boolean): void {
+  let result = machine.check(s, entry);
+  if (result != ok) {
+    print(entry + ": expected " + ok.to_string());
+  }
+  require(result == ok);
+}
+
+function actual(s: string, entry: string, local: string): void {
+  check(s, entry, true);
+  let store = "movl %ecx, -8(%rax)";
+  for replacement in ["movl %ecx, -16(%rax)", "movq %rcx, -8(%rax)", "movl %ecx, -8(%rdx)", "movl %ecx, (%rsp)", "movl %eax, -8(%rax)", "movl %ecx, %ecx", store + "\n" + store, "movl -8(%rax), %ecx\n" + store, store + "\nmovl -8(%rax), %ecx\nsubl $1, %ecx\n" + store] {
+    check(change(s, store, replacement), entry, false);
+  }
+  for replacement in ["movq -8(%rax), %rcx", "movl -16(%rax), %ecx", "movl -8(%rdx), %ecx"] {
+    check(change(s, "movl -8(%rax), %ecx", replacement), entry, false);
+  }
+  for replacement in ["subq $1, %rcx", "subl $2, %ecx", "movl %ecx, %ecx"] {
+    check(change(s, "subl $1, %ecx", replacement), entry, false);
+  }
+  check(change(s, "subl $1, %ecx", "subl $1, %ecx\nsubl $1, %ecx"), entry, false);
+  check(change(s, local + "_ret:\n    ret", local + "_ret:\nret $8"), entry, false);
+  check(change(s, local + "_ret:\n    ret", local + "_ret:\nmovl %eax, %eax\nret"), entry, false);
+  // Reload sees the current decremented expression, including its zero extension.
+  check(change(s, store, store + "\nmovl -8(%rax), %ecx\nmovl %ecx, %ecx\nmovq %rcx, %rcx"), entry, true);
+  // Unsupported free/underflow instructions remain outside these families.
+  check(change(s, local + "_ret:\n    ret", local + "_ret:\nret\nunknown_instruction"), entry, true);
+}
+
+function prefix(s: string, entry: string, lines: string): string {
+  return change(s, entry + ".r:\n", entry + ".r:\n" + lines + "\n");
+}
+
+function registers_preserved(s: string, entry: string): void {
+  let regs = registers.registers(false, 64);
+  let words = registers.registers(false, 32);
+  let i = 2;
+  while (i < regs.len()) {
+    // Every non-scratch identity matters, including RSP. A saved original
+    // may be restored, but a 32-bit save cannot recover its high half.
+    check(prefix(s, entry, "movq %rax, " + regs[i]), entry, false);
+    check(prefix(s, entry, "movq " + regs[i] + ", %rcx\nmovq %rax, " + regs[i] + "\nmovq %rcx, " + regs[i]), entry, true);
+    check(prefix(s, entry, "movl " + words[i] + ", %ecx\nmovq %rcx, " + regs[i]), entry, false);
+    let other = if (i == 15) { 2 } else { i + 1 };
+    check(prefix(s, entry, "movq " + regs[other] + ", " + regs[i]), entry, false);
+    i = i + 1;
+  }
+}
+
+function entry_mutations(s: string, entry: string): void {
+  for line in ["movl %eax, %eax", "movq (%rsp), %rax", "movq 8(%rsp), %rax", "movq 16(%rsp), %rcx", "movl (%rsp), %ecx", "movl -16(%rax), %ecx", "movq %rax, (%rsp)", "movq %rax, 8(%rsp)", "call hidden", "unknown_instruction", "jmp " + entry + ".r"] {
+    check(prefix(s, entry, line), entry, false);
+  }
+  check(prefix(s, entry, "movq (%rsp), %rcx"), entry, true);
+  check(prefix(s, entry, "movq 8(%rsp), %rcx"), entry, true);
+  check(prefix(s, entry, "movq %rax, %rcx\nmovq %rcx, %rax"), entry, true);
+  check(change(s, entry + ":\n    movq 8(%rsp), %rax", entry + ":\nmovq 16(%rsp), %rax"), entry, false);
+  check(change(s, entry + ":\n    movq 8(%rsp), %rax", entry + ":\nmovl 8(%rsp), %eax"), entry, false);
+  check(s + "\n.data\n" + entry + ".r: .quad 0\n", entry, false);
+  check(".set hidden, " + entry + "\n" + s, entry, false);
+}
+
+function flag_mutations(s: string, entry: string, local: string): void {
+  for line in ["je", "jz", "jne", "jnz"] {
+    // P can equal the floor. Never invent ZF from the known non-borrow.
+    check(prefix(s, entry, "cmpq $65536, %rax\n" + line + " " + local + "_ret"), entry, false);
+  }
+  check(prefix(s, entry, "je " + local + "_ret"), entry, false);
+  check(prefix(s, entry, "testl %edx, %edx\nje " + local + "_ret"), entry, false);
+  check(change(s, "cmpl $1, %ecx", "cmpl $2, %ecx"), entry, false);
+  check(change(s, "testl %ecx, %ecx", "testl %eax, %eax"), entry, false);
+}
+
+function aliases(s: string, entry: string, local: string): void {
+  // Each always-false predicate must fall through; its inverse must jump
+  // over an unsupported operation. This checks every accepted alias.
+  let false_names = ["jne", "jnz", "js", "jb", "jc", "jnae", "jl", "jnge", "jg", "jnle", "jo"];
+  let true_names = ["je", "jz", "jns", "jae", "jnb", "jnc", "jge", "jnl", "jle", "jng", "jno", "jmp"];
+  for name in false_names {
+    check(prefix(s, entry, "testb $1, %al\n" + name + " " + local + "_ret"), entry, true);
+  }
+  for name in true_names {
+    check(prefix(s, entry, "testb $1, %al\n" + name + " .Lmachine_skip\nunknown_instruction\n.Lmachine_skip:"), entry, true);
+  }
+  // CMP's signed-less correlation remains exact across overflow even
+  // though SF and OF individually vary over the negative-count interval.
+  check(change(s, "testl %ecx, %ecx\n    js " + local + "_ret", "cmpl $1, %ecx\njl " + local + "_ret"), entry, true);
+  check(change(s, "cmpl $1, %ecx", "cmpl $2147483647, %ecx"), entry, false);
+}
+
+pub function run(output: string): void {
+  actual(output, "__fn___fern_arr_dec", ".Larrdec");
+  actual(output, "__fn___fern_str_free", ".Lstrfree");
+  let entry = "__fn___fern_arr_dec";
+  registers_preserved(output, entry);
+  entry_mutations(output, entry);
+  flag_mutations(output, entry, ".Larrdec");
+  aliases(output, entry, ".Larrdec");
+}
