@@ -82,6 +82,19 @@ function guards(text: string, arm: boolean): void {
   check(change(text, "ret\n", ""), arm, false);
 }
 
+function feasible_paths(text: string, arm: boolean): void {
+  let jump = if (arm) { "b " } else { "jmp " };
+  let entry = "__fn___fern_rc_is_unique:\n";
+  let cycle = ".Lunreachable_a:\n" + jump + ".Lunreachable_b\n.Lunreachable_b:\n" + jump + ".Lunreachable_a\n";
+  // Only a cycle reached by a feasible execution refuses. Disconnected
+  // cycles before the body and after its return remain harmless.
+  let before = change(text, entry, entry + jump + ".Lbody\n" + cycle + ".Lbody:\n");
+  check(before, arm, true);
+  check(change(before, jump + ".Lbody\n", jump + ".Lunreachable_a\n"), arm, false);
+  check(text + cycle, arm, true);
+  check(change(text, "ret\n", jump + ".Lunreachable_a\n") + cycle, arm, false);
+}
+
 function indexed_paths(text: string, arm: boolean): void {
   let jump = if (arm) { "b " } else { "jmp " };
   let entry = "__fn___fern_rc_is_unique:\n";
@@ -126,6 +139,7 @@ pub function run(output: string, arm: boolean): void {
   check(change(text, "ret\n", ".Lcycle:\n" + (if (arm) { "b .Lcycle\n" } else { "jmp .Lcycle\n" })), arm, false);
   require(!unique.check(text, "wasm32-wasi").ok, 98);
   indexed_paths(text, arm);
+  feasible_paths(text, arm);
   instructions(text, arm);
 }
 

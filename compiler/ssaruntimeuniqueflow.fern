@@ -104,16 +104,26 @@ function result(s: State, tagged: boolean, low: boolean, rc: i32): boolean {
   return s.result == expected;
 }
 
+function path_marks(size: i32): boolean[] {
+  let marks: boolean[] = [];
+  let i = 0;
+  while (i < size) {
+    marks = marks.append(false);
+    i = i + 1;
+  }
+  return marks;
+}
+
 pub function path(ops: Op[], tagged: boolean, low: boolean, rc: i32, arm: boolean): boolean {
   let s = State { pointer: 0, result: -1, count: false, floor: false, flags: 0, ok: true };
   let pc = 0;
-  let seen: i32[] = [];
+  let seen = path_marks(ops.len());
   while (pc >= 0 && pc < ops.len()) {
     // Cycles are unadmitted, rather than stopped at an arbitrary path limit.
-    if (util.index_of_i32(seen, pc) >= 0) {
+    if (seen[pc]) {
       return false;
     }
-    seen = seen.append(pc);
+    seen = seen.with(pc, true);
     let op = ops[pc];
     if (op.kind == 11) {
       return result(s, tagged, low, rc);
