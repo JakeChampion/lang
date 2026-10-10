@@ -58,7 +58,7 @@ function signatures(row: ssaprepare.Emitted): void {
   for mode in [1, 3, -1] {
     check(contracts(row, [ssasem.Contract { ...c, modes: [mode] }]), false);
   }
-  let bad_types: typeinfo.Type[] = [c.result, typeinfo.TypeArray { elem: byte, view: true }, typeinfo.TypeArray { elem: typeinfo.TypeUnknown { reason: "unresolved" }, view: false }];
+  let bad_types: typeinfo.Type[] = [c.result, typeinfo.TypeString { tag: -1 }, typeinfo.TypeString { tag: 2 }, typeinfo.TypeArray { elem: byte, view: true }, typeinfo.TypeArray { elem: typeinfo.TypeUnknown { reason: "unresolved" }, view: false }];
   for t in bad_types {
     check(contracts(row, [ssasem.Contract { ...c, params: [t] }]), false);
   }
@@ -67,8 +67,9 @@ function signatures(row: ssaprepare.Emitted): void {
   check(contracts(row, [ssasem.Contract { ...c, result: c.params[0] }]), false);
   check(contracts(row, [ssasem.Contract { ...c, name: "other" }]), false);
   // Coherently supplied ABI alternatives are inputs, not authenticated types.
-  // Owned byte arrays and ordinary strings do not carry a byte-view descriptor.
-  let good_types: typeinfo.Type[] = [typeinfo.TypeString { tag: 0 }, typeinfo.TypeArray { elem: byte, view: false }];
+  // string and str both use bit-clear box handles. Only conversion to [u8]
+  // adds the descriptor tag refused above; owned byte arrays remain bit-clear.
+  let good_types: typeinfo.Type[] = [typeinfo.TypeString { tag: 0 }, typeinfo.TypeString { tag: 1 }, typeinfo.TypeArray { elem: byte, view: false }];
   for t in good_types {
     check(contracts(row, [ssasem.Contract { ...c, params: [t] }]), true);
   }
