@@ -48,6 +48,7 @@ import "./ssaarrayreleases" as arrayreleases;
 import "./ssastringreleases" as stringreleases;
 import "./ssaretainedtext" as retainedtext;
 import "./ssaconstructorisas" as constructorisas;
+import "./ssaarrayboxmachines" as arrayboxmachines;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -144,6 +145,7 @@ function settled(g: ircore.Gated, arm: boolean): void {
     releasestorage.run(on.text);
     arrayreleases.run(on.text);
     stringreleases.run(on.text);
+    arrayboxmachines.run(on.text);
     largepushmachines.run(on.text);
   }
   sites.output(on);

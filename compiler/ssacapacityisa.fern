@@ -296,6 +296,11 @@ pub function constructor_program(output: string, entry: string): ArrayProgram {
   return ArrayProgram { ops: p.ops, register_entry: if (p.error == "") { body.register_entry } else { -1 }, error: p.error };
 }
 
+// Fixed helper syntax only. A call names the allocator without proving it.
+pub function array_box_program(output: string): Program {
+  return selected_program(text.array_box(output), 5);
+}
+
 function selected_program(body: text.Body, mode: i32): Program {
   if (body.error != "") {
     return Program { ops: [], error: body.error };
@@ -318,6 +323,9 @@ function selected_program(body: text.Body, mode: i32): Program {
 }
 
 function extended_decode(line: string, mode: i32): Op {
+  if (mode == 5) {
+    return array_box_decode(line);
+  }
   if (mode == 4) {
     return constructor_decode(line);
   }
@@ -330,6 +338,28 @@ function extended_decode(line: string, mode: i32): Op {
   }
   let array = array_decode(line);
   return if (array.kind == 0 && mode == 3) { string_decode(line) } else { array };
+}
+
+function array_box_decode(line: string): Op {
+  let at = 0;
+  while (at < line.len() && line[at] != b' ' && line[at] != b'\t') {
+    at = at + 1;
+  }
+  if (at == line.len()) {
+    return empty(0);
+  }
+  let name = slice_unchecked(line, 0, at) + "";
+  let rest = util.trim(slice_unchecked(line, at + 1, line.len()) + "");
+  if (name == "call" && rest == "__fern_alloc") {
+    return Op { ...empty(25), symbol: rest };
+  }
+  let args = operands(rest);
+  if (args.len() != 2) {
+    return empty(0);
+  }
+  let stored = immediate_store(name, args[0], args[1]);
+  let imm = large_literal(args[0]);
+  return if (stored.kind > 0) { stored } else { if (imm != "") { immediate_shift(name, imm, args[1]) } else { empty(0) } };
 }
 
 function constructor_symbol_byte(c: u8): boolean {

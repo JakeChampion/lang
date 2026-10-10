@@ -485,6 +485,22 @@ pub function dependency(text: string, entry: string): Body {
   return body(s, ix, start, -1, "");
 }
 
+// Fixed normal array-box boundary. Native static pools are declaration data;
+// this does not grant allocator linkage, effects or permissions. Keep the
+// older decrement dependency selector's syntax and entry set unchanged.
+pub function array_box(text: string): Body {
+  let s = scan_mode(text, true);
+  if (s.error != "") {
+    return failure(s.error);
+  }
+  let ix = definition_index(s.lines);
+  let start = names.unique_position(ix, "__fern_arr_box");
+  if (ix.duplicate >= 0 || start < 0 || !exact_entry(s, start, "__fern_arr_box")) {
+    return failure("missing or ambiguous array-box definition");
+  }
+  return body(s, ix, start, -1, "");
+}
+
 function retained_line_error(line: string, name: string, section: i32, position: i32, ended: boolean): string {
   if (ended || section != 1 || name != "" && line != name + ":") {
     return "invalid retained function extent";

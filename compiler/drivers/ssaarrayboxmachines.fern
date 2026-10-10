@@ -1,0 +1,134 @@
+import "../ssaarrayboxmachine" as machine;
+import "../ssacapacityisa" as isa;
+import "../ssadecrementtext" as text;
+import "../ssainlineuniqueisa" as registers;
+import "std/string";
+
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("array-box machine controls failed: " + group);
+    exit(180);
+  }
+}
+
+function change(s: string, from: string, to: string): string {
+  let parts = s.split(from);
+  require(parts.len() > 1, "mutation present: " + from);
+  return parts.join(to);
+}
+
+function fixture(code: string): string {
+  return ".text\n__fern_arr_box:\n" + code + "\n";
+}
+
+function altered(body: string, from: string, to: string, expected: boolean): void {
+  require(machine.check(fixture(change(body, from, to))) == expected, from + " -> " + to);
+}
+
+function sizes(body: string): void {
+  for to in ["addq $2, %rdi", "addq $4, %rdi", "movq $6, %rdi", "addq $3, %rsi"] {
+    altered(body, "addq $3, %rdi", to, false);
+  }
+  for to in ["shlq $2, %rdi", "shlq $4, %rdi", "shrq $3, %rdi", "shlq $255, %rdi"] {
+    altered(body, "shlq $3, %rdi", to, false);
+  }
+  // Both concrete record capacities fit32 bits; these are semantic positives.
+  altered(body, "addq $3, %rdi", "addl $3, %edi", true);
+  altered(body, "shlq $3, %rdi", "shll $3, %edi", true);
+  altered(body, "shlq $3, %rdi", "shlq $67, %rdi", true);
+  altered(body, "shlq $3, %rdi", "shlq $3, %rdi\nshlq $64, %rdi", true);
+  altered(body, "addq $16, %rax", "leaq 16(%rax), %rax", true);
+  for to in ["addq $8, %rax", "addq $24, %rax", "addl $16, %eax"] {
+    altered(body, "addq $16, %rax", to, false);
+  }
+}
+
+function memory(body: string): void {
+  for from in ["movq %rdi, (%rax)", "movq $1, 8(%rax)", "movq %rdi, 16(%rax)"] {
+    altered(body, from, "", false);
+    altered(body, from, from + "\n" + from, false);
+  }
+  for to in ["movl $1, 8(%rax)", "movq $2, 8(%rax)", "movq $1, 12(%rax)", "movq $1, 24(%rax)", "movq $1, -8(%rax)"] {
+    altered(body, "movq $1, 8(%rax)", to, false);
+  }
+  altered(body, "movq $1, 8(%rax)", "movl $1, 8(%rax)\nmovl $0, 12(%rax)", true);
+  altered(body, "movq %rdi, (%rax)", "movl %edi, (%rax)\nmovl $0, 4(%rax)", true);
+  altered(body, "movq %rdi, 16(%rax)", "movq %rdi, 16(%rax)\nmovq (%rax), %rdi", true);
+  altered(body, "movq %rdi, 16(%rax)", "movq %rdi, 16(%rax)\nmovq 8(%rax), %rdi", false);
+  altered(body, "movq %rdi, 16(%rax)", "movq 8(%rax), %rdi\nmovq %rdi, 16(%rax)", false);
+  altered(body, "movq %rdi, 16(%rax)", "movq %rdi, 16(%rax)\nmovq %rdi, 24(%rax)", false);
+  altered(body, "movq %rdi, 16(%rax)", "movq %rdi, 16(%rax)\nmovq %rdi, (%rsp)", false);
+}
+
+function calls_and_stack(body: string): void {
+  for to in ["", "call __fern_capw", "call __fern_alloc.r", "call *__fern_alloc", "call __fern_alloc+1", "call __fern_alloc\ncall __fern_alloc"] {
+    altered(body, "call __fern_alloc", to, false);
+  }
+  altered(body, "call __fern_alloc", "call\t__fern_alloc", true);
+  altered(body, "call __fern_alloc", "movq %rdi, (%rsp)\ncall __fern_alloc", false);
+  altered(body, "call __fern_alloc", "movq (%rsp), %rdi\ncall __fern_alloc", false);
+  for to in ["", "pushq %rax", "pushq %rsp"] {
+    altered(body, "pushq %rdi", to, false);
+  }
+  for to in ["", "popq %rax", "popq %rsp"] {
+    altered(body, "popq %rdi", to, false);
+  }
+  altered(body, "popq %rdi", "movq (%rsp), %rdi\naddq $8, %rsp", true);
+  altered(body, "ret", "movq $0, -16(%rsp)\nret", false);
+  altered(body, "ret", "movq $0, -8(%rsp)\nret", false);
+  altered(body, "ret", "movq $0, 8(%rsp)\nret", false);
+  altered(body, "ret", "ret $8", false);
+}
+
+function identities(body: string): void {
+  let narrow = registers.registers(false, 32);
+  let i = 0;
+  for reg in registers.registers(false, 64) {
+    altered(body, "ret", "movq " + reg + ", " + reg + "\nret", true);
+    altered(body, "ret", "movl " + narrow[i] + ", " + narrow[i] + "\nret", i == 7);
+    if (i != 4) {
+      altered(body, "ret", "movq $0, " + reg + "\nret", false);
+    }
+    i = i + 1;
+  }
+  // An early save is valid because the subsequent capacity save overwrites
+  // its scratch. Restoring a register alone cannot rescue damaged return data.
+  altered(body, "pushq %rdi", "pushq %rcx\nmovq $0, %rcx\npopq %rcx\npushq %rdi", true);
+  altered(body, "movq %rdi, (%rax)", "movq %rcx, -16(%rsp)\nmovq %rdi, %rcx\nmovq %rcx, (%rax)\nmovq -16(%rsp), %rcx", false);
+  altered(body, "popq %rdi", "movq %rdi, %rcx\npopq %rdi", false);
+}
+
+function boundaries(body: string): void {
+  altered(body, "ret", "jmp .Ldone\nunknown_instruction\n.Ldone:\nret", true);
+  altered(body, "ret", ".Lagain:\njmp .Lagain", false);
+  altered(body, "ret", "je .Ldone\n.Ldone:\nret", false);
+  for line in ["unknown_instruction", "call __fern_arr_box", "leaq .S0(%rip), %rax", "movq (%rsi), %rax"] {
+    altered(body, "ret", line + "\nret", false);
+  }
+  for suffix in ["__fern_arr_box:\nret\n", ".data\n__fern_arr_box: .quad 0\n", ".set alias, __fern_arr_box\n", ".text\n.Lduplicate:\nret\n.Lduplicate:\nret\n"] {
+    require(!machine.check(fixture(body) + suffix), "closed namespace");
+  }
+  require(!machine.check(fixture(change(body, "ret", "jmp __fern_other")) + "__fern_other:\nret\n"), "cross-body branch");
+  require(!machine.check(fixture(change(body, "ret", "jmp missing"))), "missing branch");
+  require(machine.check(fixture(body).split("\n").join("\r\n\t")), "CRLF");
+  require(machine.check(fixture(body) + ".data\n.S0:\n.quad -1\n.S1:\n.quad .S0\n"), "native static data is not permissions");
+  require(text.dependency(fixture(body), "__fern_arr_box").error != "", "old selector unchanged");
+  let old = isa.program(".text\n__fern_capw:\ncall __fern_alloc\nret\n");
+  require(old.error == "" && old.ops[0].kind == 0, "old decoder unchanged");
+}
+
+pub function run(output: string): void {
+  let selected = text.array_box(output);
+  require(selected.error == "" && selected.register_entry == -1, "actual selection");
+  require(machine.check(output), "actual complete output");
+  let body = selected.lines.join("\n");
+  // This deliberately omits the allocator definition. Success is ONLY the
+  // documented implication under the unproved allocator boundary contract.
+  require(!fixture(body).contains("__fern_alloc:") && machine.check(fixture(body)), "conditional premise, not linkage");
+  require(!machine.check("") && !machine.check(fixture("ret")), "missing effects");
+  sizes(body);
+  memory(body);
+  calls_and_stack(body);
+  identities(body);
+  boundaries(body);
+}
