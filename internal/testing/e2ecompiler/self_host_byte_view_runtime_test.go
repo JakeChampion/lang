@@ -199,21 +199,75 @@ function main(): i32 {
 }
 `
 
-// The sub-range's allocation does not grow with its length: 0 when the
-// window allocated under 1 KiB, 7 when it copied. Every intermediate string
-// stays alive, so no freed block can absorb a copy unseen.
-const byteViewSubRangeCopyProgram = `@noinline function window(v: [u8]): [u8] { return v[1:60001]; }
+// A sub-range's allocation does not grow with its length: 0 when both
+// windows allocated under 1 KiB, 7 when the string-backed one copied, 8 when
+// the array-backed one did. Every intermediate stays alive, and the array is
+// one block the size of the string, so no freed block can absorb a copy unseen.
+const byteViewSubRangeCopyProgram = `import "std/string";
+@noinline function window(v: [u8]): [u8] { return v[1:60001]; }
 function main(): i32 {
     let parts: string[] = ["abcdefghijklmnop"];
     let i: i32 = 0;
     while (i < 13) { parts = parts.append(parts[i] + parts[i]); i = i + 1; }
     let v: [u8] = parts[13].as_bytes();
+    let a: u8[] = parts[13].bytes();
     let before: i64 = __heap_bump_bytes();
     let w: [u8] = window(v);
+    let mid: i64 = __heap_bump_bytes();
+    let x: [u8] = a[1:60001];
     let after: i64 = __heap_bump_bytes();
     if (w.len() != 60000 || w[0] != 98 as u8 || w[59999] != 97 as u8) { return 3; }
-    if (after - before < 1024i64) { return 0; }
-    return 7;
+    if (x.len() != 60000 || x[0] != 98 as u8 || x[59999] != 97 as u8) { return 4; }
+    if (mid - before >= 1024i64) { return 7; }
+    if (after - mid >= 1024i64) { return 8; }
+    return 0;
+}
+`
+
+// Sub-ranges of an owned u8[] and of a lent one alias the array's bytes: read
+// after the array is rebound, nested, through a call, a record and a phi.
+const byteViewArraySubRangeProgram = `struct Hold { b: [u8] }
+@noinline function mk(n: i32): u8[] {
+    let a: u8[] = [];
+    let i: i32 = 0;
+    while (i < n) { a = a.append((97 + i % 26) as u8); i = i + 1; }
+    return a;
+}
+@noinline function mid(v: [u8]): [u8] { return v[1:4]; }
+@noinline function sum(v: [u8]): i32 {
+    let t: i32 = 0;
+    for x in v { t = t + (x as i32); }
+    return t;
+}
+@noinline function exercise(n: i32): i32 {
+    let a: u8[] = mk(10 + n);
+    let w: [u8] = a[2:7];
+    let m: [u8] = mid(a);
+    let nested: [u8] = w[1:3];
+    let h: Hold = Hold { b: nested };
+    a = mk(3);
+    let junk: u8[][] = [];
+    let i: i32 = 0;
+    while (i < 10) { junk = junk.append(mk(12)); i = i + 1; }
+    if (w.len() != 5 || w[0] != 99 as u8 || w[4] != 103 as u8) { return 21; }
+    if (m.len() != 3 || m[0] != 98 as u8) { return 22; }
+    if (h.b[0] != 100 as u8 || h.b.len() != 2) { return 23; }
+    if (sum(w) != 99 + 100 + 101 + 102 + 103) { return 24; }
+    let sel: [u8] = w;
+    if (n % 2 == 0) { sel = mid(w); }
+    if (sel[0] != 99 as u8 && sel[0] != 100 as u8) { return 27; }
+    if (a.len() != 3) { return 28; }
+    return 0;
+}
+function main(): i32 {
+    let i: i32 = 0;
+    while (i < 30) {
+        let r: i32 = exercise(i);
+        if (r != 0) { return r; }
+        i = i + 1;
+    }
+    if (__rc_underflow_count() != 0) { return 25; }
+    return 0;
 }
 `
 
@@ -241,6 +295,7 @@ func TestSelfHostByteViewRuntime(t *testing.T) {
 			{"loop-carried-backing-layout", byteViewLoopProgram},
 			{"crc32-consumer-allocation", byteViewChecksumProgram},
 			{"string-sub-range-aliases", byteViewSubRangeProgram},
+			{"array-sub-range-aliases", byteViewArraySubRangeProgram},
 		} {
 			t.Run(target+"/"+tc.name, func(t *testing.T) {
 				stderr, code := cli.exitOf(t, tc.source, target, "FERN_SANITIZE=1", "FERN_LEAKCHECK=1")
@@ -252,7 +307,7 @@ func TestSelfHostByteViewRuntime(t *testing.T) {
 		}
 		// wasm's strings are inline blocks with no data pointer to share, so
 		// there a sub-range copies, as a string slice does.
-		t.Run(target+"/string-sub-range-zero-copy", func(t *testing.T) {
+		t.Run(target+"/sub-range-zero-copy", func(t *testing.T) {
 			want := 0
 			if target == "wasm32-wasi" {
 				want = 7

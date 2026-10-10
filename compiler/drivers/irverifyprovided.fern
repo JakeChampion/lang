@@ -71,6 +71,7 @@ pub function provided_names(): string[] {
     "__fern_arr_inc_elems",
     "__fern_arr_own_elems",
     "__fern_str_own",
+    "__fern_str_borrow",
     "__fern_str_grow",
     "__fern_str_grow_range",
     // Suspension lowering saves and restores frame slots through these

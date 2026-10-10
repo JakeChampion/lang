@@ -438,6 +438,9 @@ pub function needs_of(cache: irtables.LowerResult[]): string[] {
   if (module_uses_str_slice(cache)) {
     out = out.append("@uses_str_slice");
   }
+  if (module_calls_direct(cache, "__fern_str_borrow")) {
+    out = out.append("@uses_str_borrow");
+  }
   if (module_uses_memchr(cache)) {
     out = out.append("@uses_memchr");
   }
@@ -1248,6 +1251,9 @@ function wasm_helper_symbol(name: string): string {
   // A wasm view is a counted block of its own bytes, so its unit is a retain.
   if (name == "__fern_rc_inc" || name == "__fern_str_own") {
     return "$__fern_rc_inc";
+  }
+  if (name == "__fern_str_borrow") {
+    return "$__fern_str_borrow";
   }
   if (name == "__fern_rc_dec") {
     return "$__fern_arr_dec";
@@ -9135,6 +9141,19 @@ pub function substr_helper(): string {
   return o;
 }
 
+// str_borrow_helper emits $__fern_str_borrow(data, len): a fresh inline string
+// holding a copy of the bytes. The register backends' borrow shares them; a
+// wasm string has no data pointer to share.
+pub function str_borrow_helper(): string {
+  let o: string = "  (func $__fern_str_borrow (param $data i32) (param $len i32) (result i32)\n";
+  o = o + "    (local $p i32)\n";
+  o = o + "    (local.set $p (call $__fern_str_box (i32.add (i32.const 4) (local.get $len))))\n";
+  o = o + "    (i32.store (local.get $p) (local.get $len))\n";
+  o = o + "    (memory.copy (i32.add (local.get $p) (i32.const 4)) (local.get $data) (local.get $len))\n";
+  o = o + "    (local.get $p))\n";
+  return o;
+}
+
 // Like the other byte builtins, scan the packed [len][cap][bytes] u8[]
 // representation. Typed lowering marks byte-array operations with width 8.
 pub function count_byte_bytes_helper(): string {
@@ -13957,6 +13976,9 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
   // segment), so emit it for either — but only ONCE.
   if (need(needs, "@uses_str_slice") || need(needs, "str_split") || need(needs, "@uses_str_lines")) {
     parts = parts.append(substr_helper());
+  }
+  if (need(needs, "@uses_str_borrow")) {
+    parts = parts.append(str_borrow_helper());
   }
   parts = kernel_helper_parts(needs, parts);
   if (need(needs, "arr_reserve")) {

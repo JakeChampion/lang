@@ -22,11 +22,12 @@ proof lets native count operations on ordinary references omit the mask.
 Typed source anchors keep backing storage live through calls, aliases,
 aggregates and returns. Descriptors that can be handed back through a byte
 view are excluded from frame placement. Array lending preserves its source's
-ownership. Byte-view slicing checks bounds before allocating. A
-string-backed view's sub-range is the string slice, retagged: on x86-64 and
-arm64 a counted box over the source's bytes (#8635), on WASM a copy, since
-an inline string has no data pointer to share. An array-backed view's
-sub-range copies.
+ownership. Byte-view slicing checks bounds before allocating. A sub-range
+of a byte view or of an owned `u8[]` is `__fern_str_borrow` over the
+selected bytes, tagged as a string-backed view (#8635): on x86-64 and arm64
+a counted box carrying the borrowed-data marker, whose last release frees
+the box alone while the semantic anchors keep the source alive; on WASM a
+copy, since an inline string has no data pointer to share.
 
 For scalar reads, lowering decodes a view's data pointer and length where
 the value is defined, including parameter entry and phi-edge assignment.

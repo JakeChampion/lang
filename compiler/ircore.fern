@@ -156,6 +156,9 @@ function is_rc_helper(name: string): boolean {
     // One string's unit of its own: the retain, or a fresh box for an arena
     // view. ssarc's reads out of a view map column emit it.
     || name == "__fern_str_own"
+    // A counted box over bytes it does not own: a byte view's sub-range.
+    // Its last release frees the box alone. Only ssabytes emits it.
+    || name == "__fern_str_borrow"
     // A string append's in-place arm: grows a sole-owned fused box when its
     // block has room and answers whether it did; the range form copies a
     // range of a source string. Only ssarc emits them.
@@ -660,7 +663,7 @@ function with_builtin_enums(lifted: parser.Module): parser.Module {
 pub function all_runtime_need_roots(): string[] {
   return [
     "alloc_u8", "args", "set_args", "arr_push", "arr_push_owned", "arr_slice",
-    "arr_str_join", "arr_inc_elems", "arr_own_elems", "str_own", "str_grow", "account", "arrarr_free", "env", "eprint", "heap",
+    "arr_str_join", "arr_inc_elems", "arr_own_elems", "str_own", "str_borrow", "str_grow", "account", "arrarr_free", "env", "eprint", "heap",
     "i32_to_string", "u32_to_string", "monotonic_ns", "now_ns", "now_unix_ms",
     "map_hash_seed",
     "chdir", "chroot", "setuid", "setgid", "setgroups",

@@ -5165,6 +5165,9 @@ function helper_call_needs(name: string, s: asmcore.EmitState): asmcore.EmitStat
   if (name == "__fern_str_own") {
     s = s.need("str_own");
   }
+  if (name == "__fern_str_borrow") {
+    s = s.need("str_borrow");
+  }
   if (name == "__fern_str_grow" || name == "__fern_str_grow_range") {
     s = s.need("str_grow");
   }
@@ -8384,6 +8387,27 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
     s = s.write("    ret\n");
     s = s.write(".Lsg_no:\n");
     s = s.write("    mov x0, #0\n");
+    s = s.write("    ret\n");
+  }
+  // __fern_str_borrow(data@[sp, #16], len@[sp]) -> a counted box over bytes it
+  // does not own, the arm64 sibling of the x86-64 body: rc = 1 and the
+  // borrowed-data marker, so its last release frees the box alone.
+  if (s.has_need("str_borrow")) {
+    s = s.write("__fn___fern_str_borrow:\n");
+    s = s.write("    stp x29, x30, [sp, #-16]!\n");
+    s = s.write("    mov x29, sp\n");
+    s = s.write("    mov x0, #24\n");
+    s = s.write("    bl __fern_alloc\n");  // x0 = base
+    s = s.write("    mov w2, #1\n");
+    s = s.write("    str w2, [x0]\n");  // rc = 1 @ base
+    s = mov_borrowed_marker(s, "w3");
+    s = s.write("    stur w3, [x0, #4]\n");
+    s = s.write("    ldr x2, [sp, #32]\n");  // data, past the saved frame pair
+    s = s.write("    str x2, [x0, #8]\n");
+    s = s.write("    ldr x3, [sp, #16]\n");  // len
+    s = s.write("    str x3, [x0, #16]\n");
+    s = s.write("    add x0, x0, #8\n");  // box = base+8
+    s = s.write("    ldp x29, x30, [sp], #16\n");
     s = s.write("    ret\n");
   }
   // __fern_str_own(s@[sp]) -> a string its holder owns a unit of, the arm64

@@ -3728,7 +3728,7 @@ function container(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, 
     return emit(r, ir.op_str_slice());
   }
   if (ins.kind_tag == ssasem.arr_slice()) {
-    if (byte_view(f.values[ins.args[0]])) {
+    if (byte_view(f.values[ins.result])) {
       return emit(r, ir.op_call_direct(ssabytes.slice_name(), 3));
     }
     return arr_slice(r, f, elem_type(f.values[ins.result]));
