@@ -1,0 +1,423 @@
+// Supplied-text boxed-string effects under explicit disjoint permissions.
+// Decoder records are data; this module constructs every machine state.
+import "./ssacapacityisa" as isa;
+
+// invalid, numeric limb, original GPR, S+offset, return, arbitrary cell,
+// P+offset, small freelist+offset, original selected head.
+struct Half { kind: i32, id: i32, part: i32, number: i64 }
+
+struct Word { low: Half, high: Half }
+
+struct Flags { zero: i32, carry: i32, sign: i32, overflow: i32 }
+
+struct State { regs: Word[], cells: Half[], flags: Flags, ok: boolean, zeros: i32, links: i32, slots: i32 }
+
+function token(kind: i32, id: i32, part: i32): Half {
+  return Half { kind: kind, id: id, part: part, number: 0 as i64 };
+}
+
+function identity(kind: i32, id: i32): Word {
+  return Word { low: token(kind, id, 0), high: token(kind, id, 1) };
+}
+
+function limb(n: i64): Half {
+  return Half { kind: if (n >= 0 && n <= 4294967295 as i64) { 1 } else { 0 }, id: 0, part: 0, number: n };
+}
+
+function immediate(n: i32): Word {
+  return Word { low: limb(if (n < 0) { n as i64 + 4294967296 as i64 } else { n as i64 }), high: limb(if (n < 0) { 4294967295 as i64 } else { 0 as i64 }) };
+}
+
+function same_half(a: Half, b: Half): boolean {
+  return a.kind == b.kind && a.id == b.id && a.part == b.part && a.number == b.number;
+}
+
+function same_word(a: Word, b: Word): boolean {
+  return same_half(a.low, b.low) && same_half(a.high, b.high);
+}
+
+function pointer(w: Word, kind: i32): boolean {
+  return w.low.kind == kind && same_word(w, identity(kind, w.low.id));
+}
+
+function unknown_flags(): Flags {
+  return Flags { zero: -1, carry: -1, sign: -1, overflow: -1 };
+}
+
+function narrowed(w: Word, width: i32): Word {
+  return if (width == 32) { Word { low: w.low, high: limb(0 as i64) } } else { w };
+}
+
+function initial(register_entry: boolean): State {
+  let regs: Word[] = [];
+  let i = 0;
+  while (i < 16) {
+    regs = regs.append(if (i == 4) { identity(3, 0) } else { identity(2, i) });
+    i = i + 1;
+  }
+  if (register_entry) {
+    regs = regs.with(0, identity(6, 0));
+  }
+  let argument = if (register_entry) { identity(5, 4) } else { identity(6, 0) };
+  let cells = [limb(1 as i64), limb(1112494674 as i64), token(4, 0, 0), token(4, 0, 1), argument.low, argument.high, token(8, 0, 0), token(8, 0, 1)];
+  return State { regs: regs, cells: cells, flags: unknown_flags(), ok: true, zeros: 0, links: 0, slots: 0 };
+}
+
+function write(s: State, reg: i32, w: Word): State {
+  return State { ...s, regs: s.regs.with(reg, w), ok: s.ok && w.low.kind != 0 && w.high.kind != 0 };
+}
+
+function extent(at: i64, low: i32, high: i32, width: i32): boolean {
+  return (width == 32 || width == 64) && at >= low as i64 && at + (width / 8) as i64 <= high as i64 && at % (4 as i64) == 0;
+}
+
+function simple_address(w: Word, offset: i32, width: i32): i32 {
+  let at = w.low.id as i64 + offset as i64;
+  if (pointer(w, 3) && extent(at, 0, 16, width)) {
+    return 2 + at as i32 / 4;
+  }
+  if (pointer(w, 6) && extent(at, -8, 0, width)) {
+    return (at as i32 + 8) / 4;
+  }
+  if (pointer(w, 7) && extent(at, 24, 32, width)) {
+    return 6 + (at as i32 - 24) / 4;
+  }
+  return -1;
+}
+
+function address(s: State, op: isa.Op): i32 {
+  if (op.base < 0) {
+    return -1;
+  }
+  if (op.index < 0) {
+    return simple_address(s.regs[op.base], op.offset, op.width);
+  }
+  if (!same_word(s.regs[op.base], identity(7, 0)) || op.scale != 8 || !same_word(s.regs[op.index], immediate(3)) || !extent(op.offset as i64, 0, 8, op.width)) {
+    return -1;
+  }
+  return 6 + op.offset / 4;
+}
+
+function read(s: State, at: i32, width: i32): Word {
+  if (at < 0) {
+    return identity(0, 0);
+  }
+  return Word { low: s.cells[at], high: if (width == 64) { s.cells[at + 1] } else { limb(0 as i64) } };
+}
+
+function put(s: State, at: i32, width: i32, w: Word): State {
+  let cells = s.cells.with(at, w.low);
+  if (width == 64) {
+    cells = cells.with(at + 1, w.high);
+  }
+  return State { ...s, cells: cells };
+}
+
+function store(s: State, at: i32, width: i32, w: Word): State {
+  if (at == 0) {
+    return header_store(s, width, w);
+  }
+  if (at == 6 && width == 64 && s.slots == 0 && same_word(w, identity(6, -8))) {
+    return put(State { ...s, slots: 1 }, at, width, w);
+  }
+  return State { ...s, ok: false };
+}
+
+function header_store(s: State, width: i32, w: Word): State {
+  if (s.links != 0) {
+    return State { ...s, ok: false };
+  }
+  if (width == 32 && s.zeros == 0 && same_half(w.low, limb(0 as i64))) {
+    return put(State { ...s, zeros: 1 }, 0, width, w);
+  }
+  if (width == 64 && s.zeros == 1 && same_word(w, identity(8, 0))) {
+    return put(State { ...s, links: 1 }, 0, width, w);
+  }
+  return State { ...s, ok: false };
+}
+
+function movement(s: State, op: isa.Op): State {
+  if (op.kind == 2) {
+    return write(s, op.destination, narrowed(s.regs[op.source], op.width));
+  }
+  if (op.kind == 3) {
+    return write(s, op.destination, read(s, address(s, op), op.width));
+  }
+  if (op.kind == 4) {
+    return store(s, address(s, op), op.width, s.regs[op.source]);
+  }
+  if (op.kind == 5) {
+    return write(s, op.destination, narrowed(immediate(op.immediate), op.width));
+  }
+  return State { ...s, ok: false };
+}
+
+function lea(s: State, op: isa.Op): State {
+  if (op.base < 0 || op.index >= 0 || op.width != 64) {
+    return State { ...s, ok: false };
+  }
+  let w = s.regs[op.base];
+  let at = w.low.id as i64 + op.offset as i64;
+  if (pointer(w, 6) && at >= -(8 as i64) && at <= 0 as i64) {
+    return write(s, op.destination, identity(6, at as i32));
+  }
+  if (pointer(w, 3) && at >= 0 as i64 && at <= 8 as i64) {
+    return write(s, op.destination, identity(3, at as i32));
+  }
+  return State { ...s, ok: false };
+}
+
+function bit(b: boolean): i32 {
+  return if (b) { 1 } else { 0 };
+}
+
+function numeric(w: Word): boolean {
+  return w.low.kind == 1 && w.high.kind == 1;
+}
+
+function compare(a: Word, b: Word, width: i32): Flags {
+  let x = narrowed(a, width);
+  let y = narrowed(b, width);
+  if (!numeric(x) || !numeric(y)) {
+    return unknown_flags();
+  }
+  // Each subtraction fits signed i64, including the low-limb borrow.
+  let lo = x.low.number - y.low.number;
+  let hi = x.high.number - y.high.number - bit(lo < 0) as i64;
+  let result = if (width == 32) { lo } else { hi };
+  let wrapped = if (result < 0) { result + 4294967296 as i64 } else { result };
+  let ax = if (width == 32) { x.low.number } else { x.high.number };
+  let bx = if (width == 32) { y.low.number } else { y.high.number };
+  let sign = wrapped >= 2147483648 as i64;
+  let asigned = ax >= 2147483648 as i64;
+  let bsigned = bx >= 2147483648 as i64;
+  return Flags { zero: bit(same_word(x, y)), carry: bit(result < 0), sign: bit(sign), overflow: bit(asigned != bsigned && sign != asigned) };
+}
+
+function comparison(s: State, op: isa.Op): State {
+  let w = s.regs[op.source];
+  if (op.width == 64 && same_word(w, identity(6, 0)) && op.immediate == 65536) {
+    // Only unsigned lower-bound knowledge is needed. Do not infer equality.
+    return State { ...s, flags: Flags { zero: -1, carry: 0, sign: -1, overflow: -1 } };
+  }
+  return State { ...s, flags: compare(w, immediate(op.immediate), op.width) };
+}
+
+function test(s: State, op: isa.Op): State {
+  let w = narrowed(s.regs[op.source], op.width);
+  if (!numeric(w)) {
+    return State { ...s, flags: unknown_flags() };
+  }
+  let top = if (op.width == 32) { w.low.number } else { w.high.number };
+  return State { ...s, flags: Flags { zero: bit(same_word(w, immediate(0))), carry: 0, sign: bit(top >= 2147483648 as i64), overflow: 0 } };
+}
+
+function byte_test(s: State, op: isa.Op): State {
+  let w = s.regs[op.source];
+  if (!pointer(w, 6) || op.immediate > 7) {
+    return State { ...s, flags: unknown_flags() };
+  }
+  let low = (w.low.id % 8 + 8) % 8;
+  return State { ...s, flags: Flags { zero: bit((low & op.immediate) == 0), carry: 0, sign: 0, overflow: 0 } };
+}
+
+function extended(s: State, op: isa.Op): State {
+  if (op.kind == 19 && op.symbol == "__fern_freelist" && op.width == 64) {
+    return write(s, op.destination, identity(7, 0));
+  }
+  if (op.kind == 22) {
+    return store(s, address(s, op), op.width, immediate(op.immediate));
+  }
+  if (op.kind == 23 || op.kind == 27) {
+    return test(s, op);
+  }
+  if (op.kind == 26) {
+    return byte_test(s, op);
+  }
+  if (op.kind == 28) {
+    return State { ...s, flags: compare(s.regs[op.destination], s.regs[op.source], op.width) };
+  }
+  return State { ...s, ok: false };
+}
+
+function step(s: State, op: isa.Op): State {
+  if (op.kind == 1) {
+    return s;
+  }
+  if (op.kind >= 2 && op.kind <= 5) {
+    return movement(s, op);
+  }
+  if (op.kind == 15) {
+    return lea(s, op);
+  }
+  if (op.kind == 16) {
+    return comparison(s, op);
+  }
+  return extended(s, op);
+}
+
+function invert(v: i32): i32 {
+  return if (v < 0) { -1 } else { 1 - v };
+}
+
+function either(a: i32, b: i32): i32 {
+  return if (a == 1 || b == 1) { 1 } else { if (a == 0 && b == 0) { 0 } else { -1 } };
+}
+
+function ordered(f: Flags, name: string): i32 {
+  if (name == "jb" || name == "jc" || name == "jnae") {
+    return f.carry;
+  }
+  if (name == "jae" || name == "jnb" || name == "jnc") {
+    return invert(f.carry);
+  }
+  return inclusive(f, name);
+}
+
+function inclusive(f: Flags, name: string): i32 {
+  if (name == "jbe" || name == "jna") {
+    return either(f.carry, f.zero);
+  }
+  if (name == "ja" || name == "jnbe") {
+    return invert(either(f.carry, f.zero));
+  }
+  return -1;
+}
+
+function signed_branch(f: Flags, name: string): i32 {
+  let less = signed_less(f);
+  if (name == "jl" || name == "jnge") {
+    return less;
+  }
+  if (name == "jge" || name == "jnl") {
+    return invert(less);
+  }
+  if (name == "jle" || name == "jng") {
+    return either(less, f.zero);
+  }
+  if (name == "jg" || name == "jnle") {
+    return invert(either(less, f.zero));
+  }
+  return ordered(f, name);
+}
+
+function signed_less(f: Flags): i32 {
+  return if (f.sign < 0 || f.overflow < 0) { -1 } else { bit(f.sign != f.overflow) };
+}
+
+function branch(f: Flags, name: string): i32 {
+  if (name == "jmp") {
+    return 1;
+  }
+  if (name == "je" || name == "jz") {
+    return f.zero;
+  }
+  if (name == "jne" || name == "jnz") {
+    return invert(f.zero);
+  }
+  if (name == "js") {
+    return f.sign;
+  }
+  if (name == "jns") {
+    return invert(f.sign);
+  }
+  if (name == "jo") {
+    return f.overflow;
+  }
+  if (name == "jno") {
+    return invert(f.overflow);
+  }
+  return signed_branch(f, name);
+}
+
+function expected_register(reg: i32): Word {
+  if (reg == 0) {
+    return identity(6, 0);
+  }
+  if (reg == 1) {
+    return immediate(1);
+  }
+  if (reg == 2) {
+    return identity(6, -8);
+  }
+  if (reg == 4) {
+    return identity(3, 0);
+  }
+  if (reg == 6) {
+    return identity(8, 0);
+  }
+  if (reg == 8) {
+    return identity(7, 0);
+  }
+  return identity(2, reg);
+}
+
+function finished(s: State, register_entry: boolean): boolean {
+  if (s.zeros != 1 || s.links != 1 || s.slots != 1) {
+    return false;
+  }
+  let i = 0;
+  while (i < 16) {
+    if (!same_word(s.regs[i], expected_register(i))) {
+      return false;
+    }
+    i = i + 1;
+  }
+  let expected = put(put(initial(register_entry), 0, 64, identity(8, 0)), 6, 64, identity(6, -8));
+  i = 0;
+  while (i < 8) {
+    if (!same_half(s.cells[i], expected.cells[i])) {
+      return false;
+    }
+    i = i + 1;
+  }
+  // Plain RET consumes the original word at proven S and ends S+8.
+  return true;
+}
+
+function in_program(p: isa.ArrayProgram, pc: i32): boolean {
+  return pc >= 0 && pc < p.ops.len();
+}
+
+function path(p: isa.ArrayProgram, register_entry: boolean): boolean {
+  let s = initial(register_entry);
+  let visited: boolean[] = [];
+  for op in p.ops {
+    visited = visited.append(false);
+  }
+  let pc = if (register_entry) { p.register_entry } else { 0 };
+  while (in_program(p, pc)) {
+    if (visited[pc]) {
+      return false;
+    }
+    visited = visited.with(pc, true);
+    let op = p.ops[pc];
+    if (op.kind == 18) {
+      return finished(s, register_entry);
+    }
+    if (op.kind == 17) {
+      let taken = branch(s.flags, op.condition);
+      if (taken < 0) {
+        return false;
+      }
+      pc = if (taken == 1) { op.target } else { pc + 1 };
+    } else {
+      s = step(s, op);
+      if (!s.ok) {
+        return false;
+      }
+      pc = pc + 1;
+    }
+  }
+  return false;
+}
+
+// RC=1, BOX=1112494674, aligned canonical P>=65536, disjoint writable
+// P-8..P-1 and small-freelist slot3, readable S..S+15. The .r argument is
+// arbitrary. No permission to read buffer/length is assumed. Linked
+// permissions, valid allocation/metadata, caller credits and freelist
+// integrity remain unproved. Public records never supply effect evidence.
+pub function check(output: string): boolean {
+  let p = isa.string_program(output);
+  return p.error == "" && p.register_entry >= 0 && path(p, false) && path(p, true);
+}

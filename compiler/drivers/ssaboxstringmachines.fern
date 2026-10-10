@@ -1,0 +1,151 @@
+import "../ssaboxstringmachine" as machine;
+import "../ssainlineuniqueisa" as registers;
+import "std/string";
+
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("boxed-string machine controls failed: " + group);
+    // Native status is shared; the printed module and case identify failure.
+    exit(180);
+  }
+}
+
+function change(s: string, from: string, to: string): string {
+  let outer = s.split("__fn___fern_str_free:\n");
+  require(outer.len() == 2, "unique string fixture");
+  let next = outer[1].split("__fn___fern_str_view_free:\n");
+  require(next.len() == 2, "following helper fixture");
+  let parts = next[0].split(from);
+  require(parts.len() > 1, "mutation present: " + from);
+  return outer[0] + "__fn___fern_str_free:\n" + parts.join(to) + "__fn___fern_str_view_free:\n" + next[1];
+}
+
+function mutation(s: string, from: string, to: string, expected: boolean): void {
+  require(machine.check(change(s, from, to)) == expected, from + " -> " + to);
+}
+
+function writes(s: string): void {
+  let zero = "movl $0, -8(%rax)";
+  for line in ["", "movl $1, -8(%rax)", "movq $0, -8(%rax)", "movl $0, -4(%rax)", "movl $0, -12(%rax)", zero + "\n" + zero] {
+    mutation(s, zero, line, false);
+  }
+  let link = "movq %rsi, (%rdx)";
+  for line in ["", "movl %esi, (%rdx)", "movq %rax, (%rdx)", "movq %rsi, 4(%rdx)", "movq %rsi, -4(%rdx)", link + "\n" + link, link + "\n" + zero] {
+    mutation(s, link, line, false);
+  }
+  let slot = "movq %rdx, 24(%r8)";
+  for line in ["", "movl %edx, 24(%r8)", "movq %rax, 24(%r8)", "movq %rdx, 16(%r8)", "movq %rdx, 32(%r8)", slot + "\n" + slot] {
+    mutation(s, slot, line, false);
+  }
+  mutation(s, link + "\n    " + slot, slot + "\n" + link, true);
+  mutation(s, zero, zero + "\nmovl -8(%rax), %edx", true);
+  mutation(s, link, link + "\nmovq -8(%rax), %rsi", true);
+  mutation(s, link, link + "\nmovl -8(%rax), %esi", false);
+  mutation(s, slot, slot + "\nmovq 24(%r8), %rsi", false);
+  mutation(s, slot, slot + "\nmovq -8(%rax), %rsi", true);
+  mutation(s, "movq 24(%r8), %rsi", "movq -8(%rax), %rsi", false);
+  mutation(s, link, "movq 24(%r8), %rsi\n" + link, true);
+}
+
+function reads(s: string): void {
+  let rc = "movl -8(%rax), %ecx";
+  for line in ["movq -8(%rax), %rcx", "movl -4(%rax), %ecx", "movl -12(%rax), %ecx"] {
+    mutation(s, rc, line, false);
+  }
+  for line in ["movq (%rax), %rcx", "movq 8(%rax), %rdx", "movq __fern_heap_base(%rip), %rsi", "call __fern_capw", "call __fern_large_push", "pushq %rax\npopq %rax"] {
+    mutation(s, rc, line + "\n" + rc, false);
+  }
+  mutation(s, "movl -4(%rax), %edx", "movq -4(%rax), %rdx", false);
+  mutation(s, "leaq -8(%rax), %rdx", "leaq -4(%rax), %rdx", false);
+  mutation(s, "leaq __fern_freelist(%rip), %r8", "leaq __fern_large_freelist(%rip), %r8", false);
+  mutation(s, "movq 24(%r8), %rsi", "movq 28(%r8), %rsi", false);
+  mutation(s, "movq 24(%r8), %rsi", "movl 24(%r8), %esi", false);
+  // A derived index must select the same slot, without leaking its temporary.
+  for index in [2, 3, 4] {
+    mutation(s, "movq 24(%r8), %rsi", "movq $" + index.to_string() + ", %rcx\nmovq (%r8,%rcx,8), %rsi\nmovq $1, %rcx", index == 3);
+  }
+}
+
+function paths(s: string): void {
+  for pair in [["jnz .Lstrfree_ret", "jz .Lstrfree_ret"], ["jb .Lstrfree_ret", "jae .Lstrfree_ret"], ["js .Lstrfree_ret", "jns .Lstrfree_ret"], ["jg .Lstrfree_dec", "jge .Lstrfree_dec"], ["jl .Lstrfree_uf", "jle .Lstrfree_uf"], ["je .Lstrfree_fused", "jne .Lstrfree_fused"], ["je .Lstrfree_box", "jne .Lstrfree_box"]] {
+    mutation(s, pair[0], pair[1], false);
+  }
+  mutation(s, "testb $1, %al", "testb $7, %al", true);
+  mutation(s, "testb $1, %al", "testb $8, %al", false);
+  mutation(s, "testb $1, %al", "testb $1, %bl", false);
+  mutation(s, "cmpq $0x10000, %rax", "cmpl $0x10000, %eax", false);
+  mutation(s, "jb .Lstrfree_ret", "je .Lstrfree_ret", false);
+  mutation(s, "jb .Lstrfree_ret", "jo .Lstrfree_ret", false);
+  mutation(s, "testl %ecx, %ecx", "testq %rcx, %rcx", true);
+  mutation(s, "testl %ecx, %ecx", "testl %ebx, %ebx", false);
+  mutation(s, "cmpl $1112494674, %edx", "cmpl $1112494675, %edx", false);
+  mutation(s, "cmpl $1934589965, %edx", "cmpl $1112494674, %edx", false);
+  mutation(s, "jg .Lstrfree_dec", "movq %rax, %rax\njg .Lstrfree_dec", true);
+  mutation(s, "jg .Lstrfree_dec", "addq $0, %rcx\njg .Lstrfree_dec", false);
+}
+
+function identities(s: string): void {
+  let regs = registers.registers(false, 64);
+  let words = registers.registers(false, 32);
+  let i = 0;
+  while (i < regs.len()) {
+    mutation(s, "    ret\n", "movq " + regs[i] + ", " + regs[i] + "\nret\n", true);
+    // CX is the known zero-extended count 1; all other halves are identities.
+    mutation(s, "    ret\n", "movl " + words[i] + ", " + words[i] + "\nret\n", i == 1);
+    mutation(s, "    ret\n", "movq " + regs[(i + 1) % regs.len()] + ", " + regs[i] + "\nret\n", false);
+    i = i + 1;
+  }
+  let rc = "movl -8(%rax), %ecx";
+  mutation(s, rc, "movq %rbx, %rcx\nmovq %rcx, %rbx\n" + rc, true);
+  mutation(s, rc, "movl %ebx, %ecx\nmovq %rcx, %rbx\n" + rc, false);
+  mutation(s, "movq 8(%rsp), %rax", "movq (%rsp), %rax", false);
+  mutation(s, "    ret\n", "movq 8(%rsp), %rax\nret\n", false);
+  mutation(s, "    ret\n", "leaq 8(%rsp), %rsp\nret\n", false);
+  mutation(s, "    ret\n", "ret $8\n", false);
+  for offset in ["-8", "0", "4", "8", "12"] {
+    mutation(s, rc, "movl $0, " + offset + "(%rsp)\n" + rc, false);
+  }
+}
+
+function flag_case(s: string, a: i32, b: i32, width: i32): void {
+  let difference = a as i64 - b as i64;
+  let over = width == 32 && (difference < -(2147483648 as i64) || difference > 2147483647 as i64);
+  let sign = if (over) { difference > 0 } else { difference < 0 };
+  let ua = if (a < 0) { a as i64 + 4294967296 as i64 } else { a as i64 };
+  let ub = if (b < 0) { b as i64 + 4294967296 as i64 } else { b as i64 };
+  // Sign extension preserves unsigned order among these signed32 operands.
+  let conditions = [a == b, a != b, ua < ub, ua >= ub, a < b, a >= b, a <= b, a > b, sign, !sign, over, !over];
+  let names = ["je", "jne", "jb", "jae", "jl", "jge", "jle", "jg", "js", "jns", "jo", "jno"];
+  let ax = if (width == 32) { "%ecx" } else { "%rcx" };
+  let bx = if (width == 32) { "%edx" } else { "%rdx" };
+  let suffix = if (width == 32) { "l" } else { "q" };
+  let prefix = "mov" + suffix + " $" + a.to_string() + ", " + ax + "\nmov" + suffix + " $" + b.to_string() + ", " + bx + "\ncmp" + suffix + " " + bx + ", " + ax + "\n";
+  let i = 0;
+  while (i < names.len()) {
+    mutation(s, "movl -8(%rax), %ecx", prefix + names[i] + " .Lstrfree_ret\nmovl -8(%rax), %ecx", !conditions[i]);
+    i = i + 1;
+  }
+}
+
+function flags(s: string): void {
+  for width in [32, 64] {
+    for a in [-2147483648, -1, 0, 1, 2147483647] {
+      for b in [-2147483648, -1, 0, 1, 2147483647] {
+        flag_case(s, a, b, width);
+      }
+    }
+  }
+}
+
+pub function run(output: string): void {
+  require(machine.check(output), "actual complete output, both entries");
+  writes(output);
+  reads(output);
+  paths(output);
+  identities(output);
+  flags(output);
+  mutation(output, "    ret\n", "unknown_instruction\nret\n", false);
+  mutation(output, "    ret\n", "jmp .Lstrfree_ret\n", false);
+  require(!machine.check(".set alias, __fn___fern_str_free\n" + output), "closed namespace");
+  require(!machine.check(".text\n__fn___fern_str_free:\n__fn___fern_str_free.r:\nret\n"), "missing effects");
+}
