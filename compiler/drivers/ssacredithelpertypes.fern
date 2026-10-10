@@ -1,0 +1,121 @@
+// Construction provenance stays positional through incremental collection.
+// No descriptor is an ownership certificate or a selected ABI contract.
+import "../lexer";
+import "../parser";
+import "../semlower";
+import "../semsource";
+import "../ssasem";
+import "../ssarc";
+import "../ssabytes";
+import "../semtypes";
+import "../typeinfo";
+import "../ircore";
+
+function require(ok: boolean, code: i32): void {
+  if (!ok) {
+    exit(code);
+  }
+}
+
+function validate(h: ssarc.Helpers): void {
+  let previous = -1;
+  for entry in h.types {
+    require(entry.row > previous && entry.row < h.rows.len(), 224);
+    let name = if (entry.children_only) { ssarc.drop_helper_name(entry.ty) } else { ssarc.release_helper_name(entry.ty) };
+    require(h.rows[entry.row].name == name && h.rows[entry.row].n_params == 1, 225);
+    previous = entry.row;
+  }
+}
+
+function same(a: ssarc.Helpers, b: ssarc.Helpers): boolean {
+  if (a.types.len() != b.types.len() || ircore.lowered_digest(a.rows) != ircore.lowered_digest(b.rows)) {
+    return false;
+  }
+  let i = 0;
+  for entry in a.types {
+    let other = b.types[i];
+    if (entry.row != other.row || entry.children_only != other.children_only || !semtypes.equal(entry.ty, other.ty)) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function pair(h: ssarc.Helpers, ty: typeinfo.Type): void {
+  let drops = 0;
+  let releases = 0;
+  for entry in h.types {
+    if (semtypes.equal(entry.ty, ty)) {
+      if (entry.children_only) {
+        drops = drops + 1;
+      } else {
+        releases = releases + 1;
+      }
+    }
+  }
+  require(drops == 1 && releases == 1, 226);
+}
+
+function collect(h: ssarc.Helpers, f: ssasem.Func): ssarc.Helpers {
+  let fresh = ssarc.with_drop_helpers(ssarc.no_helpers(), f);
+  validate(fresh);
+  require(ircore.lowered_digest(fresh.rows) == ircore.lowered_digest(ssarc.drop_helpers(f)), 227);
+  let next = ssarc.with_drop_helpers(h, f);
+  validate(next);
+  require(same(next, ssarc.with_drop_helpers(next, f)), 228);
+  // Suppress one actual generated body before collection. The remaining
+  // role must keep its own row and type, even when it is the first row.
+  if (fresh.types.len() > 0) {
+    let first = fresh.types[0];
+    let empty = ssarc.no_helpers();
+    let partial = ssarc.with_drop_helpers(ssarc.Helpers { ...empty, done: empty.done.added(fresh.rows[first.row].name) }, f);
+    validate(partial);
+    require(partial.rows.len() == fresh.rows.len() - 1 && partial.types.len() == fresh.types.len() - 1, 229);
+  }
+  return next;
+}
+
+function byte_prefix(): ssarc.Helpers {
+  let h = ssarc.no_helpers();
+  for row in ssabytes.helpers() {
+    h = ssarc.Helpers { ...h, rows: h.rows.append(row), done: h.done.added(row.name) };
+  }
+  require(h.rows.len() > 0 && h.types.len() == 0, 234);
+  return h;
+}
+
+pub function run(target: string): void {
+  let source = "enum List { Cons(string, List), Nil } enum Tree { Branch(Tree, string, Tree), Leaf(string), Empty } struct Box[T] { value: T } function list(own x: List): i32 { return 0; } function tree(own x: Tree): i32 { return 0; } function box(own x: Box[string]): i32 { return 0; } function box_list(own x: Box[List]): i32 { return 0; } function bytes(own x: u8[]): i32 { return 0; }";
+  let driven = semlower.driven(parser.parse_module(lexer.tokenize(source)), target);
+  let built = semsource.build_module(driven.full);
+  let helpers = ssarc.no_helpers();
+  require(helpers.rows.len() == 0 && helpers.types.len() == 0, 230);
+  helpers = byte_prefix();
+  let prefix_len = helpers.rows.len();
+  for d in built.decls {
+    require(d.ok || d.template || d.bodyless, 231);
+    if (d.ok) {
+      helpers = collect(helpers, d.func);
+    }
+  }
+  for d in built.instances {
+    require(d.ok, 232);
+    helpers = collect(helpers, d.func);
+  }
+  pair(helpers, typeinfo.TypeUnion { name: "List", args: [] });
+  pair(helpers, typeinfo.TypeUnion { name: "Tree", args: [] });
+  pair(helpers, typeinfo.TypeStruct { name: "Box__string", args: [] });
+  pair(helpers, typeinfo.TypeStruct { name: "Box__List", args: [] });
+  require(helpers.types.len() > 0 && helpers.types[0].row >= prefix_len, 235);
+  let original = helpers;
+  // Reverse encounter order after all schemas were seen changes nothing.
+  let i = built.decls.len();
+  while (i > 0) {
+    i = i - 1;
+    if (built.decls[i].ok) {
+      helpers = collect(helpers, built.decls[i].func);
+    }
+  }
+  require(same(original, helpers), 233);
+}

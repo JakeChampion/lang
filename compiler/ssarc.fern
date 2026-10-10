@@ -2763,11 +2763,16 @@ pub function drop_helpers(f: ssasem.Func): irtables.LowerResult[] {
 // same one. `seen` holds the record and enum types (ssasem.type_key) an
 // earlier function's schema held: their helpers are in `rows`, or they have
 // none.
-pub struct Helpers { rows: irtables.LowerResult[], done: util.NameIndex, seen: util.NameIndex }
+// Sparse provenance for nominal helpers, recorded where the body is made.
+// `row` is a position in Helpers.rows, not a symbol lookup. Other helper
+// families have no descriptor. These facts do not certify ABI or effects.
+pub struct HelperType { row: i32, ty: typeinfo.Type, children_only: boolean }
+
+pub struct Helpers { rows: irtables.LowerResult[], types: HelperType[], done: util.NameIndex, seen: util.NameIndex }
 
 pub function no_helpers(): Helpers {
   let none: string[] = [];
-  return Helpers { rows: [], done: util.name_index(none), seen: util.name_index(none) };
+  return Helpers { rows: [], types: [], done: util.name_index(none), seen: util.name_index(none) };
 }
 
 // with_drop_helpers adds the helpers of f whose symbols h does not carry yet,
@@ -2778,23 +2783,26 @@ pub function with_drop_helpers(h: Helpers, f: ssasem.Func): Helpers {
   for row in fresh.rows {
     out = Helpers { ...out, rows: out.rows.append(row), done: out.done.added(row.name) };
   }
+  for entry in fresh.types {
+    out = Helpers { ...out, types: out.types.append(HelperType { ...entry, row: h.rows.len() + entry.row }) };
+  }
   return out;
 }
 
 // Fresh is helpers_not_in's answer: the helpers, and `seen` with the record
 // and enum types of the schema added.
-struct Fresh { rows: irtables.LowerResult[], seen: util.NameIndex }
+struct Fresh { rows: irtables.LowerResult[], types: HelperType[], seen: util.NameIndex }
 
 // helpers_not_in is drop_helpers less the symbols `done` carries, and less the
 // record and enum types `seen` holds.
 function helpers_not_in(f: ssasem.Func, done: util.NameIndex, seen: util.NameIndex): Fresh {
-  let out: irtables.LowerResult[] = [];
+  let out = Fresh { rows: [], types: [], seen: seen };
   let grown: util.NameIndex = seen;
   let sc: SchemaScan = schema_scan(f);
   if (sc.bytes) {
     for h in ssabytes.helpers() {
       if (!done.has(h.name)) {
-        out = out.append(h);
+        out = Fresh { ...out, rows: out.rows.append(h) };
       }
     }
   }
@@ -2814,37 +2822,37 @@ function helpers_not_in(f: ssasem.Func, done: util.NameIndex, seen: util.NameInd
   }
   for v in boxed_columns(sc.maps) {
     if (!outlined_release(v, f) && !done.has(release_helper_name(v))) {
-      out = out.append(release_helper(v, f));
+      out = Fresh { ...out, rows: out.rows.append(release_helper(v, f)) };
     }
   }
   for v in routed_box_columns(sc.maps, f) {
     if (ssasem.is_string_array(v) && !done.has(release_helper_name(v))) {
-      out = out.append(release_helper(v, f));
+      out = Fresh { ...out, rows: out.rows.append(release_helper(v, f)) };
     }
     if (!done.has(env_release_name(v))) {
-      out = out.append(env_release_helper(v));
+      out = Fresh { ...out, rows: out.rows.append(env_release_helper(v)) };
     }
   }
   for t in routed_keyed_maps(sc.maps, f) {
-    out = append_keyed_closures(out, t, done);
+    out = Fresh { ...out, rows: append_keyed_closures(out.rows, t, done) };
   }
-  return Fresh { rows: out, seen: grown };
+  return Fresh { ...out, seen: grown };
 }
 
 // append_helpers adds t's drop and release helpers when t has children, each
 // unless done has it. Most of a module's bodies find both done, so that is
 // asked first.
-function append_helpers(own out: irtables.LowerResult[], t: typeinfo.Type, f: ssasem.Func, done: util.NameIndex): irtables.LowerResult[] {
+function append_helpers(own out: Fresh, t: typeinfo.Type, f: ssasem.Func, done: util.NameIndex): Fresh {
   let need_drop: boolean = !done.has(drop_helper_name(t));
   let need_release: boolean = !done.has(release_helper_name(t));
   if (!need_drop && !need_release || !has_children(t, f)) {
     return out;
   }
   if (need_drop) {
-    out = out.append(one_helper(t, f));
+    out = Fresh { ...out, types: out.types.append(HelperType { row: out.rows.len(), ty: t, children_only: true }), rows: out.rows.append(one_helper(t, f)) };
   }
   if (need_release) {
-    out = out.append(release_helper(t, f));
+    out = Fresh { ...out, types: out.types.append(HelperType { row: out.rows.len(), ty: t, children_only: false }), rows: out.rows.append(release_helper(t, f)) };
   }
   return out;
 }
