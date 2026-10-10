@@ -1113,7 +1113,7 @@ function main(): i32 { let b: Box[string] = Box.default(); return b.v.len(); }`}
 // width switch that only knew 32 and 64, so a byte was named `u32` here
 // while the checker named it `u8`, and `zero[u8]()` failed with
 // "undefined identifier u32" — or, once a u32 impl existed to land on,
-// "function returns u8 but expression is u32". Every width is listed so
+// "return value: expected u8, got u32". Every width is listed so
 // the next one to arrive is a one-line addition, not another skew.
 func TestAssocCallRewriteNamesEveryScalarWidth(t *testing.T) {
 	scalars := []struct{ ty, zero, use string }{

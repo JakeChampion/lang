@@ -24,7 +24,7 @@ func TestSelfHostRetiredArgvBuiltinsUndefined(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			src := mustWrite(t, t.TempDir(), "main.fern", tc.src)
-			want := `error[E001]: undefined function "` + tc.name + `"`
+			want := `error[E001]: cannot find "` + tc.name + `" in this scope`
 			for _, mode := range [][]string{
 				{"-check", src, stdlibRoot},
 				{"-target", "x86-64-linux", "-emit", "asm", "-o", filepath.Join(t.TempDir(), "out.s"), src, stdlibRoot},

@@ -14,6 +14,16 @@
 // churn in the Go-side test staging lists (each test that
 // compiles a converted module must also stage util.fern).
 
+// arity_message is the one wording every count mismatch uses: "SUBJECT takes
+// N UNITs but was given M". Kept in lockstep with the native checker's arityMsg.
+pub function arity_message(subject: string, want: i32, got: i32, unit: string): string {
+  let units: string = unit;
+  if (want != 1) {
+    units = unit + "s";
+  }
+  return subject + " takes " + i32_to_string(want) + " " + units + " but was given " + i32_to_string(got);
+}
+
 // i32_to_string renders a signed 32-bit integer in base 10 — the
 // LSB-first digit loop the printer / disassembler / constfold /
 // vm / wasm / ssa backends each used to carry their own copy of.

@@ -9,7 +9,7 @@ package modload_test
 //
 // In expression position the qualifier is a plain Ident target, so the
 // checker looked up `MyEnum` in c.info.Enums, missed, and fell through
-// to E001 "undefined identifier". In pattern position the qualifier
+// to E001 "cannot find". In pattern position the qualifier
 // reached checkVariantQualifier unmangled, missed the enum branch the
 // same way, and was diagnosed as a MODULE qualifier: E029 "names module
 // MyEnum, but enum mod__MyEnum lives in module …".

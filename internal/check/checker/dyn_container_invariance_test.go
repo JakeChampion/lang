@@ -116,7 +116,7 @@ function main(): i32 { let s: str = "ab"; let d: dyn Shape = s; return d.area();
 			if err == nil {
 				t.Fatal("accepted")
 			}
-			if !strings.Contains(err.Error(), "cannot assign") {
+			if !strings.Contains(err.Error(), "variable \"d\": expected dyn Shape") {
 				t.Errorf("want the assignment refusal: %v", err)
 			}
 			if strings.Contains(err.Error(), "inside a container") {

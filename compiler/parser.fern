@@ -1449,6 +1449,14 @@ function tok_spelling(t: lexer.Token): string {
   return "";
 }
 
+// tok_desc names the token a parse error stopped at, as native's tokenDesc does.
+function tok_desc(t: lexer.Token): string {
+  if let lexer.TokEof(_) = t {
+    return "the end of the file";
+  }
+  return "\"" + tok_spelling(t) + "\"";
+}
+
 // defer_action is `st`, parsed at `p` after `defer`, when it is a block, an
 // expression (`assert(...)` among them, which parses to its desugared `if`) or
 // an assignment, and a P001 at its first token otherwise.
@@ -1467,7 +1475,7 @@ function defer_action(st: ast.Stmt, p: Par): ast.Stmt {
       return st;
     }
   }
-  return decl_sentinel(p, "unexpected token \"" + tok_spelling(p.peek()) + "\"");
+  return decl_sentinel(p, "expected an expression, got " + tok_desc(p.peek()));
 }
 
 function s_defer(action: ast.Stmt): ast.Stmt {
@@ -1696,7 +1704,7 @@ function keep_flag(e: ast.Expr, own acc: boolean): boolean {
 // what every downstream `== "fn"` dispatch site reads, and the formatter is
 // the one consumer that parses without compiling.
 // type_errs holds a `decl:` sentinel for each type position whose token
-// starts no type (native's P001 "expected type"); parse_module_flagged reports
+// starts no type (native's P001 "expected a type"); parse_module_flagged reports
 // them with the top-level statements.
 // todos is the position of every `todo` stub parsed so far (Module.todo_sites).
 struct Par { toks: lexer.Token[], pos: i32, no_struct: boolean, map_kind: i32, structnames: string[], verbatim: boolean, depth: i32, type_errs: ast.Stmt[], todos: TodoSite[] }
@@ -1817,9 +1825,9 @@ function (p: Par) advance(): Par {
 // with_no_struct returns a cursor with the struct-literal-suppression
 // flag set as given (position unchanged).
 // expected_type records that the cursor's token starts no type, where one is
-// required: native's P001 "expected type, got X".
+// required: native's P001 "expected a type, got X".
 function (p: Par) expected_type(): Par {
-  return Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:expected type, got \"" + tok_spelling(p.peek()) + "\"")) };
+  return Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:expected a type, got " + tok_desc(p.peek()))) };
 }
 
 // expect_semi consumes the `;` a statement or declaration ends with, or
@@ -1833,7 +1841,7 @@ function (p: Par) expect_semi(): Par {
   if (p.pos > 0 && tok_spelling(p.toks[p.pos - 1]) == ";" || p.peek_punct() == ")" || p.peek_punct() == "]") {
     return p;
   }
-  return Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:expected \";\", got \"" + tok_spelling(p.peek()) + "\"")) };
+  return Par { ...p, type_errs: p.type_errs.append(s_unknown(p, "decl:expected \";\", got " + tok_desc(p.peek()))) };
 }
 
 // end_of is expect_semi after a statement ending in `e`. An expression the
@@ -22372,7 +22380,7 @@ function fda_call_error(c: ast.ExprCall, funcs: FuncDecl[], local: string[]): (s
         return ("E077", "positional argument after named argument");
       }
       if (pos >= params.len()) {
-        return ("E004", "function \"" + callee + "\" expects " + util.i32_to_string(params.len()) + " argument(s), got more");
+        return ("E004", "function \"" + callee + "\" takes at most " + util.i32_to_string(params.len()) + " arguments but was given more");
       }
       filled = filled.with(pos, true);
       pos = pos + 1;

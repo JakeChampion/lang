@@ -1,1 +1,1 @@
-cannot assign i32 to variable of type i64
+variable "b": expected i64, got i32

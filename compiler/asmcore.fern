@@ -8934,7 +8934,111 @@ function parse_unknown_error(where: string, kind: string, line: i32, col: i32): 
   if (decl.len() > 0) {
     return util.Diag { code: "P001", message: where + ": " + decl, line: line, col: col };
   }
-  return util.Diag { code: "P001", message: where + ": parser-side unknown: " + kind, line: line, col: col };
+  return util.Diag { code: "P001", message: where + ": " + sentinel_message(kind), line: line, col: col };
+}
+
+// sentinel_message words a parser sentinel's kind the way native's parser
+// words the same mistake ("expected …, got …"). The statement-level scan
+// prefixes a statement sentinel's kind with "stmt: ".
+function sentinel_message(kind: string): string {
+  let k: string = kind;
+  if (util.str_has_prefix(k, "stmt: ")) {
+    k = slice_unchecked(k, 6, k.len()) + "";
+  }
+  if (util.str_has_prefix(k, "punct:")) {
+    return "expected an expression, got \"" + slice_unchecked(k, 6, k.len()) + "\"";
+  }
+  if (util.str_has_prefix(k, "keyword:")) {
+    return "expected an expression, got \"" + slice_unchecked(k, 8, k.len()) + "\"";
+  }
+  if (util.str_has_prefix(k, "lex error: ")) {
+    return slice_unchecked(k, 11, k.len()) + "";
+  }
+  if (util.str_has_prefix(k, "missing ")) {
+    return missing_message(slice_unchecked(k, 8, k.len()) + "");
+  }
+  if (k == "eof") {
+    return "expected an expression, got the end of the file";
+  }
+  if (k == "primary") {
+    return "expected an expression";
+  }
+  if (k == "match: missing (") {
+    return "expected \"(\" after \"match\"";
+  }
+  if (k == "lambda: bad destructuring param") {
+    return "expected a parameter name or a destructuring pattern";
+  }
+  if (k == "bad tuple pattern") {
+    return "expected a tuple pattern";
+  }
+  if (k == "lhs of assign must be ident, index, or field") {
+    return "only a variable, an index, or a field can be assigned to";
+  }
+  return k;
+}
+
+// missing_message words a "missing X in Y" sentinel; `what` is the text after
+// "missing ".
+function missing_message(what: string): string {
+  if (what == "( in if") {
+    return "expected \"(\" after \"if\"";
+  }
+  if (what == "( in while") {
+    return "expected \"(\" after \"while\"";
+  }
+  if (what == "= in let") {
+    return "expected \"=\" after the name in this declaration";
+  }
+  if (what == "`in` in for") {
+    return "expected \"in\" after the `for` pattern";
+  }
+  if (what == "for-let name") {
+    return "expected a name after \"let\" in this `for` loop";
+  }
+  if (what == "binding name") {
+    return "expected a name to bind";
+  }
+  if (what == "statement in braceless body") {
+    return "expected a statement";
+  }
+  if (what == "{ in block") {
+    return "expected \"{\" to open a block";
+  }
+  if (what == "{ in lambda body") {
+    return "expected \"{\" to open the lambda body";
+  }
+  if (what == "{ in branch body") {
+    return "expected \"{\" to open the branch body";
+  }
+  if (what == "field name in struct lit") {
+    return "expected a field name in this struct literal";
+  }
+  if (what == ": in struct lit") {
+    return "expected \":\" after the field name in this struct literal";
+  }
+  if (what == "} in struct lit") {
+    return "expected \"}\" to close this struct literal";
+  }
+  if (what == "} in struct update") {
+    return "expected \"}\" to close this struct update";
+  }
+  if (what == ") in call") {
+    return "expected \")\" to close this call";
+  }
+  if (what == "] in slice") {
+    return "expected \"]\" to close this slice";
+  }
+  if (what == "] in index") {
+    return "expected \"]\" to close this index";
+  }
+  if (what == "] in array literal") {
+    return "expected \"]\" to close this array literal";
+  }
+  if (what == "field name after .") {
+    return "expected a field or method name after \".\"";
+  }
+  return "expected " + what;
 }
 
 // decl_sentinel_text is the message of a `decl:` sentinel, in either spelling
@@ -9266,8 +9370,8 @@ pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): C
           st: ctx.st,
           diags: ctx.diags.append(util.Diag {
             code: "E002", message: "in fn '" + fname
-              + "': returns " + ty_friendly(want)
-              + " but expression has type " + ty_friendly(got),
+              + "': return value: expected " + ty_friendly(want)
+              + ", got " + ty_friendly(got),
             line: r.line, col: r.col,
           }),
         };
@@ -9301,8 +9405,8 @@ pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): C
             st: ctx.st,
             diags: ctx.diags.append(util.Diag {
               code: "E003", message: "in fn '" + fname
-                + "': variable '" + v.name + "' declared "
-                + ty_friendly(declared) + " but initializer has type "
+                + "': variable \"" + v.name + "\": expected "
+                + ty_friendly(declared) + ", got "
                 + ty_friendly(got),
               line: v.line, col: v.col,
             }),
@@ -9322,8 +9426,8 @@ pub function check_stmt(st: ast.Stmt, want: Ty, fname: string, ctx: CheckCtx): C
           st: ctx.st,
           diags: ctx.diags.append(util.Diag {
             code: "E003", message: "in fn '" + fname
-              + "': assignment to '" + a.target + "' of type "
-              + ty_friendly(tt) + " from expression of type "
+              + "': variable \"" + a.target + "\": expected "
+              + ty_friendly(tt) + ", got "
               + ty_friendly(got),
             line: a.line, col: a.col,
           }),
@@ -9862,7 +9966,7 @@ function callgate_ns_present(pfx: string, names: string[]): boolean {
 }
 
 function callgate_undefined_error(g: CallGate, where: string, name: string, line: i32, col: i32): util.Diag {
-  let out: string = where + ": call to undefined function '" + name + "'";
+  let out: string = where + ": cannot find \"" + name + "\" in this scope";
   let ns: string = callgate_module_ns(name, g.names, g.known);
   if (ns.len() > 0) {
     out = out + " — no module '" + ns + "' was loaded (a std/ or core/ import is"
@@ -9884,9 +9988,7 @@ function callgate_expr(e: ast.Expr, g: CallGate, where: string, bound: string[],
             let found: boolean = ti >= 0;
             if (found && g.check_arity && c.args.len() != g.argc[ti]) {
               errs = errs.append(util.Diag {
-                code: "E004", message: "function '" + id.name
-                  + "' expects " + util.i32_to_string(g.argc[ti])
-                  + " argument(s), got " + util.i32_to_string(c.args.len()),
+                code: "E004", message: util.arity_message("function \"" + id.name + "\"", g.argc[ti], c.args.len(), "argument"),
                 line: id.line, col: id.col,
               });
             }

@@ -6665,7 +6665,7 @@ func (c *checker) checkDynMethodCall(n *ast.Call, fa *ast.FieldAccess, dt ast.Dy
 		}
 	}
 	if len(n.Args) != len(wantParams) {
-		c.errfCode(n.P, "E004", "method %q expects %d argument(s), got %d", fa.Field, len(wantParams), len(n.Args))
+		c.errfCode(n.P, "E004", "%s", arityMsg(fmt.Sprintf("method %q", fa.Field), len(wantParams), len(n.Args), "argument"))
 		return ast.SubstSelf(tm.Result, dt)
 	}
 	for i, arg := range n.Args {
@@ -9108,8 +9108,7 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Po
 		}
 		if sd, ok := c.info.Structs[t.Name]; ok {
 			if len(sd.TypeParams) != len(args) && !c.reservedShadows[t.Name] {
-				c.errfCode(sd.P, "E019", "struct %s has %d type parameter(s), %d supplied",
-					t.Name, len(sd.TypeParams), len(args))
+				c.errfCode(sd.P, "E019", "%s", arityMsg("struct "+t.Name, len(sd.TypeParams), len(args), "type argument"))
 			}
 			// E057: a Cell[T] is only sound for a cycle-free T
 			// (cellPayloadRisk).
@@ -9130,8 +9129,7 @@ func (c *checker) resolveType(slot *ast.Type, params map[string]bool, pos ast.Po
 		}
 		if ed, ok := c.info.Enums[t.Name]; ok {
 			if len(ed.TypeParams) != len(args) && !c.reservedShadows[t.Name] {
-				c.errfCode(ed.P, "E019", "enum %s has %d type parameter(s), %d supplied",
-					t.Name, len(ed.TypeParams), len(args))
+				c.errfCode(ed.P, "E019", "%s", arityMsg("enum "+t.Name, len(ed.TypeParams), len(args), "type argument"))
 			}
 		}
 		*slot = ast.EnumType{Name: t.Name, Args: args}
@@ -9324,7 +9322,7 @@ func (c *checker) checkTypeKnown(t ast.Type, params map[string]bool, pos ast.Pos
 	switch x := t.(type) {
 	case ast.StructType:
 		if !c.knownTypeName(x.Name, params) {
-			c.errfCode(pos, "E064", "unknown type %q%s", demangle(x.Name), c.unknownTypeHint(x.Name))
+			c.errfCode(pos, "E064", "cannot find type %q in this scope%s", demangle(x.Name), c.unknownTypeHint(x.Name))
 			return
 		}
 		for _, a := range x.Args {
@@ -9332,7 +9330,7 @@ func (c *checker) checkTypeKnown(t ast.Type, params map[string]bool, pos ast.Pos
 		}
 	case ast.EnumType:
 		if !c.knownTypeName(x.Name, params) {
-			c.errfCode(pos, "E064", "unknown type %q%s", demangle(x.Name), c.unknownTypeHint(x.Name))
+			c.errfCode(pos, "E064", "cannot find type %q in this scope%s", demangle(x.Name), c.unknownTypeHint(x.Name))
 			return
 		}
 		for _, a := range x.Args {
@@ -11218,7 +11216,7 @@ func (c *checker) unifyArrayArg(arg *ast.Expr, want, got ast.Type, sub map[strin
 // ordinary string expression there is:
 //
 //	let t: string = s.trim();
-//	error[E003]: cannot assign str to variable of type string
+//	error[E003]: variable "t": expected string, got str
 //
 // `.to_owned()` is the materialiser, and the stdlib already uses it at every
 // such site. Empty for any other pair, so it only fires where it applies.
@@ -11514,6 +11512,25 @@ func (c *checker) assignableWith(dst, src ast.Type, dynBox bool) bool {
 		}
 	}
 	return false
+}
+
+// payloadCountMsg is E015's wording for a pattern that binds a different
+// number of values than its variant carries.
+func payloadCountMsg(variant string, want, got int) string {
+	values := "values"
+	if want == 1 {
+		values = "value"
+	}
+	return fmt.Sprintf("variant %s carries %d %s, but the pattern binds %d", variant, want, values, got)
+}
+
+// arityMsg is the one wording every count mismatch uses: "SUBJECT takes N
+// UNITs but was given M".
+func arityMsg(subject string, want, got int, unit string) string {
+	if want != 1 {
+		unit += "s"
+	}
+	return fmt.Sprintf("%s takes %d %s but was given %d", subject, want, unit, got)
 }
 
 // errfCode is the code-stamping sibling of errf — assigns a
@@ -14856,7 +14873,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		// concrete before monomorph runs.
 		c.refineCallTypeArgsFromDest(n.Value, want)
 		if got != nil && !c.assignable(want, got) {
-			c.errfCode(n.P, "E002", "return type mismatch: function returns %s but expression is %s%s", want, got, assignHint(want, got))
+			c.errfCode(n.P, "E002", "return value: expected %s, got %s%s", want, got, assignHint(want, got))
 		}
 	case *ast.Defer:
 		// `?` leaves by the failure edge, and that edge replays the deferred
@@ -14969,7 +14986,7 @@ func (c *checker) checkStmt(st ast.Stmt, s *scope) {
 		} else if got != nil {
 			got = c.maybeWrapForUnion(n.Type, &n.Init, got, s)
 			if !c.assignable(n.Type, got) {
-				c.errfCode(n.P, "E003", "cannot assign %s to variable of type %s%s", got, n.Type, assignHint(n.Type, got))
+				c.errfCode(n.P, "E003", "variable %q: expected %s, got %s%s", n.Name, n.Type, got, assignHint(n.Type, got))
 			}
 		}
 		s.bindVar(n.Name, n.Type, n)
@@ -15105,7 +15122,7 @@ func (c *checker) checkStructDestructure(n *ast.Destructure, got ast.Type, s *sc
 	}
 	sd := c.info.Structs[st.Name]
 	if sd == nil {
-		c.errfCode(n.P, "E043", "unknown struct type %q", st.Name)
+		c.errfCode(n.P, "E043", "cannot find struct %q in this scope", demangle(st.Name))
 		s.poisonAll(n.Names)
 		return
 	}
@@ -15358,8 +15375,7 @@ func (c *checker) resolveVariantBindings(pos ast.Position, variant *ast.EnumVari
 			variant.Name, variant.Name, variant.Name)
 	}
 	if len(bindings) != len(variant.Payloads) {
-		c.errfCode(pos, "E015", "variant %s has %d payload(s), got %d binding(s)",
-			variant.Name, len(variant.Payloads), len(bindings))
+		c.errfCode(pos, "E015", "%s", payloadCountMsg(variant.Name, len(variant.Payloads), len(bindings)))
 	}
 	outTypes := make([]ast.Type, len(bindings))
 	for k := range bindings {
@@ -15474,7 +15490,7 @@ func (c *checker) checkTuplePatStructElem(pos ast.Position, el *ast.TuplePatElem
 	}
 	sd, known := c.info.Structs[st.Name]
 	if !known {
-		c.errfCode(pos, "E043", "unknown struct type %q", st.Name)
+		c.errfCode(pos, "E043", "cannot find struct %q in this scope", demangle(st.Name))
 		return true
 	}
 	var sub map[string]ast.Type
@@ -15956,7 +15972,7 @@ func (c *checker) checkMatch(n *ast.Match, s *scope) {
 		}
 		for _, v := range ed.Variants {
 			if !covered[v.Name] {
-				c.errfCode(n.P, "E030", "match is not exhaustive — variant %s of enum %s is not covered (add an arm or use `_`)",
+				c.errfCode(n.P, "E030", "match does not cover variant %s of enum %s — add an arm for it, or a `_` arm",
 					v.Name, ed.Name)
 			}
 		}
@@ -16206,7 +16222,7 @@ func (c *checker) checkTupleMatch(n *ast.Match, tup ast.TupleType, s *scope) {
 func (c *checker) checkStructMatch(n *ast.Match, st ast.StructType, s *scope) {
 	sd := c.info.Structs[st.Name]
 	if sd == nil {
-		c.errfCode(n.Tag.Pos(), "E043", "unknown struct type %q", st.Name)
+		c.errfCode(n.Tag.Pos(), "E043", "cannot find struct %q in this scope", demangle(st.Name))
 		return
 	}
 	n.StructMatch = st.Name
@@ -16540,7 +16556,7 @@ func (c *checker) checkTupleMatchExpr(n *ast.MatchExpr, tup ast.TupleType, s *sc
 func (c *checker) checkStructMatchExpr(n *ast.MatchExpr, st ast.StructType, s *scope) ast.Type {
 	sd := c.info.Structs[st.Name]
 	if sd == nil {
-		c.errfCode(n.Tag.Pos(), "E043", "unknown struct type %q", st.Name)
+		c.errfCode(n.Tag.Pos(), "E043", "cannot find struct %q in this scope", demangle(st.Name))
 		return nil
 	}
 	n.StructMatch = st.Name
@@ -16852,7 +16868,7 @@ func (c *checker) checkMatchExpr(n *ast.MatchExpr, s *scope) ast.Type {
 		}
 		for _, v := range ed.Variants {
 			if !covered[v.Name] {
-				c.errfCode(n.P, "E030", "match-expression is not exhaustive — variant %s of enum %s is not covered (add an arm or use `_`)",
+				c.errfCode(n.P, "E030", "match does not cover variant %s of enum %s — add an arm for it, or a `_` arm",
 					v.Name, ed.Name)
 			}
 		}
@@ -17584,7 +17600,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if inner == nil {
 			return n.Target
 		}
-		c.errfCode(n.P, "E033", "cannot cast %s to %s; only numeric casts (and [u8]/u8[]/string ↔ i32 data-pointer hops, plus i32 → T[]) are supported", inner, n.Target)
+		c.errfCode(n.P, "E033", "cannot cast %s to %s: `as` converts only between numeric types", inner, n.Target)
 		return n.Target
 	case *ast.BoolLit:
 		return ast.BoolType{}
@@ -17761,7 +17777,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			c.errfCode(n.P, "E036", "enum %s has no variant %q", c.enumHintName(n.EnumName), n.Name)
 			return nil
 		}
-		c.errIdent(n, s, "undefined identifier %q", n.Name)
+		c.errIdent(n, s, "cannot find %q in this scope", n.Name)
 		return nil
 	case *ast.ArrayLit:
 		// Consume any element-type hint set by a coercion site
@@ -17834,7 +17850,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				et := checkElem(n.Elems[i])
 				et = c.maybeWrapForUnion(eu, &n.Elems[i], et, s)
 				if et != nil && !c.assignable(eu, et) {
-					c.errfCode(n.Elems[i].Pos(), "E034", "array element type %s, expected %s", et, eu)
+					c.errfCode(n.Elems[i].Pos(), "E034", "array element: expected %s, got %s", eu, et)
 				}
 			}
 			n.ElemType = eu
@@ -17846,7 +17862,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if _, ok := elemExpected.(ast.StrType); ok {
 			for _, el := range n.Elems {
 				if t := checkElem(el); t != nil && !c.assignable(elemExpected, t) {
-					c.errfCode(el.Pos(), "E034", "array element type %s, expected %s", t, elemExpected)
+					c.errfCode(el.Pos(), "E034", "array element: expected %s, got %s", elemExpected, t)
 				}
 			}
 			n.ElemType = elemExpected
@@ -17874,7 +17890,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				elemT = unified
 				continue
 			}
-			c.errfCode(el.Pos(), "E034", "array element type %s, expected %s", t, elemT)
+			c.errfCode(el.Pos(), "E034", "array element: expected %s, got %s", elemT, t)
 		}
 		if elemT == nil {
 			// The first element failed to check and reported. Return the
@@ -18117,7 +18133,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 						if tm, boundTrait, found := c.resolveTraitMethodForParam(tid.Name, fa.Field); found && tm.Assoc {
 							tp := ast.ParamType{Name: tid.Name}
 							if len(n.Args) != len(tm.Params) {
-								c.errfCode(n.P, "E004", "associated function %q expects %d argument(s), got %d", fa.Field, len(tm.Params), len(n.Args))
+								c.errfCode(n.P, "E004", "%s", arityMsg(fmt.Sprintf("associated function %q", fa.Field), len(tm.Params), len(n.Args), "argument"))
 								return ast.SubstSelf(tm.Result, tp)
 							}
 							for i, arg := range n.Args {
@@ -18203,8 +18219,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					return nil
 				}
 				if len(n.Args) != len(vr.payloads) {
-					c.errfCode(n.P, "E036", "variant %s expects %d argument(s), got %d",
-						id.Name, len(vr.payloads), len(n.Args))
+					c.errfCode(n.P, "E036", "%s", arityMsg("variant "+id.Name, len(vr.payloads), len(n.Args), "argument"))
 				}
 				id.EnumName = vr.enumName
 				ed := c.info.Enums[vr.enumName]
@@ -18425,7 +18440,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 				// so dropping it here is safe.
 				wantParams := tm.Params[1:]
 				if len(n.Args) != len(wantParams) {
-					c.errfCode(n.P, "E004", "method %q expects %d argument(s), got %d", fa.Field, len(wantParams), len(n.Args))
+					c.errfCode(n.P, "E004", "%s", arityMsg(fmt.Sprintf("method %q", fa.Field), len(wantParams), len(n.Args), "argument"))
 					return ast.SubstSelf(tm.Result, tt)
 				}
 				for i, arg := range n.Args {
@@ -18655,7 +18670,13 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		}
 		_ = methodSubResult
 		if len(n.Args) != len(ft.Params) {
-			c.errfCode(n.P, "E004", "function expects %d arguments, got %d", len(ft.Params), len(n.Args))
+			subject, want, got := "this function", len(ft.Params), len(n.Args)
+			if recvIsArg0 && n.Method != nil {
+				subject, want, got = fmt.Sprintf("method %q", n.Method.Field), want-1, got-1
+			} else if id, ok := n.Callee.(*ast.Ident); ok {
+				subject = fmt.Sprintf("function %q", demangle(id.Name))
+			}
+			c.errfCode(n.P, "E004", "%s", arityMsg(subject, want, got, "argument"))
 		}
 		// If the callee resolves to a generic FuncDecl, build its
 		// type-arg substitution. Two source shapes:
@@ -18716,8 +18737,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 					tooFew := count < len(fn.TypeParams)
 					if tooMany || (tooFew && n.Method == nil) {
 						display, _ := callSiteName(fn)
-						c.errfCode(n.P, "E040", "%s expects %d type argument(s), got %d",
-							display, len(fn.TypeParams), count)
+						c.errfCode(n.P, "E040", "%s", arityMsg(display, len(fn.TypeParams), count, "type argument"))
 					}
 					// The receiver's arguments are the LEADING parameters.
 					for i, ta := range recvArgs {
@@ -19417,7 +19437,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			// views) — comparison READS both operands' bytes (#4813);
 			// after erasure both sides are the same string comparison.
 			if lt != nil && rt != nil && !ast.Equal(lt, rt) && !(isStringLike(lt) && isStringLike(rt)) {
-				c.errfCode(n.P, "E041", "cannot compare %s and %s", lt, rt)
+				c.errfCode(n.P, "E041", "cannot compare %s with %s: both sides of %q must have the same type", lt, rt, n.Op)
 			}
 			// Composite-type equality. `==` / `!=` on a struct or
 			// enum is STRUCTURAL equality via the type's `Eq` impl —
@@ -19562,7 +19582,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			rt = c.maybeWrapForUnion(lt, &n.Value, rt, s)
 		}
 		if lt != nil && rt != nil && !ast.Equal(lt, rt) && !c.assignable(lt, rt) {
-			c.errfCode(n.P, "E003", "cannot assign %s to %s%s", rt, lt, assignHint(lt, rt))
+			what := "assignment"
+			if id, ok := n.Target.(*ast.Ident); ok {
+				what = fmt.Sprintf("variable %q", id.Name)
+			}
+			c.errfCode(n.P, "E003", "%s: expected %s, got %s%s", what, lt, rt, assignHint(lt, rt))
 		}
 		// Fields are immutable after construction: a struct value
 		// can't have a field reassigned in place. This is the
@@ -19843,7 +19867,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 	case *ast.StructLit:
 		sd, ok := c.info.Structs[n.TypeName]
 		if !ok {
-			c.errfCode(n.P, "E043", "unknown struct type %q", n.TypeName)
+			c.errfCode(n.P, "E043", "cannot find struct %q in this scope", demangle(n.TypeName))
 			return nil
 		}
 		c.checkOpaqueAccess(sd, n.P, "construct")
@@ -19861,8 +19885,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		// (`Box[i32] { … }`) must match the decl's parameter count —
 		// including a count of zero, for a non-generic struct.
 		if n.TypeArgsWritten && len(n.TypeArgs) != len(sd.TypeParams) {
-			c.errfCode(n.P, "E040", "%s expects %d type argument(s), got %d",
-				sd.Name, len(sd.TypeParams), len(n.TypeArgs))
+			c.errfCode(n.P, "E040", "%s", arityMsg(sd.Name, len(sd.TypeParams), len(n.TypeArgs), "type argument"))
 			n.TypeArgs = nil
 			n.TypeArgsWritten = false
 		}
@@ -20042,7 +20065,7 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		if n.Base == nil {
 			for _, f := range sd.Fields {
 				if !seen[f.Name] {
-					c.errfCode(n.P, "E005", "struct literal missing field %q", f.Name)
+					c.errfCode(n.P, "E005", "missing field %q in this %s literal", f.Name, demangle(n.TypeName))
 				}
 			}
 		}
@@ -20256,7 +20279,7 @@ func (c *checker) fieldAccessType(n *ast.FieldAccess, s *scope, tt ast.Type) ast
 	}
 	sd := c.info.Structs[st.Name]
 	if sd == nil {
-		c.errfCode(n.P, "E043", "unknown struct type %q", st.Name)
+		c.errfCode(n.P, "E043", "cannot find struct %q in this scope", demangle(st.Name))
 		return nil
 	}
 	c.checkOpaqueAccess(sd, n.P, "access a field of")

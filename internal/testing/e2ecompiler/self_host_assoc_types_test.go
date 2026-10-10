@@ -307,7 +307,7 @@ func onlyCascadeSurplus(goMsgs, shMsgs []string) bool {
 			have[m]--
 			continue
 		}
-		if !strings.HasPrefix(m, "E002: return type mismatch") {
+		if !strings.HasPrefix(m, "E002: return value: expected") {
 			return false
 		}
 	}

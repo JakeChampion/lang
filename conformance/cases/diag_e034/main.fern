@@ -3,7 +3,7 @@
 // also checks the catalogue's example really does produce the error
 // it documents.
 function main(): i32 {
-    let xs: i32[] = [1, "two"];   // error[E034]: array element type string, expected i32
+    let xs: i32[] = [1, "two"];   // error[E034]: array element: expected i32, got string
 
     let i: f32 = 0.5;
     let x: i32 = xs[i];           // error[E034]: index must be i32, got f32

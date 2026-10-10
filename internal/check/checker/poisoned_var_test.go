@@ -39,7 +39,7 @@ func TestFailedVarInitPoisonsTheBinding(t *testing.T) {
     let b = nosuch();
     return b;
 }`,
-			want: `undefined identifier "nosuch"`,
+			want: `cannot find "nosuch" in this scope`,
 		},
 		{
 			name: "read in every shape a value fits",
@@ -55,7 +55,7 @@ function main(): i32 {
     while (b) { }
     return b;
 }`,
-			want: `undefined identifier "nosuch"`,
+			want: `cannot find "nosuch" in this scope`,
 		},
 		{
 			name: "poison transfers to the bindings that read it",
@@ -65,7 +65,7 @@ function main(): i32 {
     let d = c * 2;
     return d;
 }`,
-			want: `undefined identifier "nosuch"`,
+			want: `cannot find "nosuch" in this scope`,
 		},
 		{
 			// A capture records the name's type in the enclosing
@@ -79,7 +79,7 @@ function main(): i32 {
     let f = (x: i32) => x + b;
     return inner();
 }`,
-			want: `undefined identifier "nosuch"`,
+			want: `cannot find "nosuch" in this scope`,
 		},
 		{
 			name: "un-annotated empty array",
@@ -95,7 +95,7 @@ function main(): i32 {
     let xs = [nosuch(), 1];
     return xs.len();
 }`,
-			want: `undefined identifier "nosuch"`,
+			want: `cannot find "nosuch" in this scope`,
 		},
 		// The type-mismatch half: an arithmetic operator over a non-integer
 		// has no result type, so its binding carries none to mismatch later.
@@ -153,7 +153,7 @@ func TestFailedDestructurePoisonsEveryName(t *testing.T) {
     let (a, b) = nosuch();
     return a + b;
 }`,
-			want: `undefined identifier "nosuch"`,
+			want: `cannot find "nosuch" in this scope`,
 		},
 		{
 			name: "tuple pattern, init is not a tuple",
@@ -179,7 +179,7 @@ function main(): i32 {
     let S { n } = nosuch();
     return n;
 }`,
-			want: `undefined identifier "nosuch"`,
+			want: `cannot find "nosuch" in this scope`,
 		},
 		{
 			name: "struct pattern, unknown field",
@@ -236,7 +236,7 @@ func TestPoisonDoesNotSwallowIndependentErrors(t *testing.T) {
 	if n := diagCount(err); n != 3 {
 		t.Fatalf("want 3 diagnostics, got %d:\n%v", n, err)
 	}
-	for _, w := range []string{`"nosuch"`, `"alsonosuch"`, "cannot assign string to variable of type i32"} {
+	for _, w := range []string{`"nosuch"`, `"alsonosuch"`, "expected i32, got string"} {
 		if !strings.Contains(err.Error(), w) {
 			t.Errorf("missing %q, got: %v", w, err)
 		}

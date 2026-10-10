@@ -1,3 +1,3 @@
-struct Pair has 2 type parameter(s), 1 supplied
-cannot assign Pair[i32, i32] to variable of type Pair[i32]
-return type mismatch: function returns i32 but expression is A
+struct Pair takes 2 type arguments but was given 1
+variable "p": expected Pair[i32], got Pair[i32, i32]
+return value: expected i32, got A

@@ -4220,7 +4220,7 @@ function ctor_payload_diags(e: ast.Expr, to: typeinfo.Type, s: Scope): util.Diag
         if let typeinfo.TypeDyn(_) = pt {
           let at: typeinfo.Type = check_expr(c.args[k], s);
           if (!is_unknown(at) && !dyn_conforms(at, pt, s)) {
-            out = out.append(dg_at("E033", "cannot cast " + type_label(at) + " to " + type_label(pt) + "; only numeric casts (and [u8]/u8[]/string ↔ i32 data-pointer hops, plus i32 → T[]) are supported", expr_line(c.args[k]), expr_col(c.args[k])));
+            out = out.append(dg_at("E033", "cannot cast " + type_label(at) + " to " + type_label(pt) + ": `as` converts only between numeric types", expr_line(c.args[k]), expr_col(c.args[k])));
           }
         }
       }
@@ -7600,7 +7600,7 @@ function method_type_arg_diags(c: ast.ExprCall, method: string, msig: MethodSig,
   }
   let mb: MethodBinding = method_binding(c, msig, recv_args, s);
   if (c.type_args.len() > mb.full.len()) {
-    return [dg_at("E040", method + " expects " + util.i32_to_string(mb.full.len()) + " type argument(s), got " + util.i32_to_string(c.type_args.len()), c.line, c.col)];
+    return [dg_at("E040", util.arity_message(method, mb.full.len(), c.type_args.len(), "type argument"), c.line, c.col)];
   }
   let ai: i32 = 0;
   while (ai < c.args.len() && ai < msig.param_type_names.len()) {
@@ -8742,10 +8742,10 @@ function ret_diags(stmts: ast.Stmt[], s: Scope, ret_ty: typeinfo.Type, unions: U
           let rbound: util.Diag[] = dest_bound_diags(r.value, ret_ty, cur);
           out = util.append_diags(out, rbound);
           if (rbound.len() == 0 && !is_unknown(t) && !settles_to(r.value, ret_ty, cur) && !(type_assignable(t, ret_ty, unions) && dyn_conforms(t, ret_ty, cur))) {
-            out = out.append(dg_at("E002", "return type mismatch: function returns " + type_label(ret_ty) + " but expression is " + type_label(t) + str_copy_hint(t, ret_ty), r.line, r.col));
+            out = out.append(dg_at("E002", "return value: expected " + type_label(ret_ty) + ", got " + type_label(t) + str_copy_hint(t, ret_ty), r.line, r.col));
           }
           if (tvar_meets_concrete(t, ret_ty, cur)) {
-            out = out.append(dg_at("E002", "return type mismatch: function returns " + type_label(ret_ty) + " but expression is " + tvar_name(t), r.line, r.col));
+            out = out.append(dg_at("E002", "return value: expected " + type_label(ret_ty) + ", got " + tvar_name(t), r.line, r.col));
           }
         }
       },
@@ -8922,7 +8922,7 @@ function void_ret_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): util.D
         }
         if (!bare) {
           let t: typeinfo.Type = check_expr(r.value, cur);
-          out = out.append(dg_at("E002", "return type mismatch: function returns void but expression is " + type_label(t), r.line, r.col));
+          out = out.append(dg_at("E002", "return value: expected void, got " + type_label(t), r.line, r.col));
         }
       },
       ast.StmtIf(f) => {
@@ -10816,7 +10816,7 @@ function slit_diags(e: ast.Expr, structs: StructSig[]): util.Diag[] {
       // reserved built-in struct is declared by the front end rather than
       // by a module, so it is not unknown here.
       if (lit_names_no_struct(sl.type_name, structs)) {
-        out = out.append(dg_at("E043", "unknown struct type \"" + sl.type_name + "\"", sl.line, sl.col));
+        out = out.append(dg_at("E043", "cannot find struct \"" + util.demangle(sl.type_name) + "\" in this scope", sl.line, sl.col));
       }
       // E043: a struct-literal field whose name isn't declared on the
       // struct. Mirrors the Go checker (per-literal-field "struct S has no
@@ -10831,7 +10831,7 @@ function slit_diags(e: ast.Expr, structs: StructSig[]): util.Diag[] {
           }
         }
       } else if (slit_names_no_struct(structs, sl.type_name)) {
-        out = out.append(dg_at("E043", "unknown struct type \"" + sl.type_name + "\"", sl.line, sl.col));
+        out = out.append(dg_at("E043", "cannot find struct \"" + util.demangle(sl.type_name) + "\" in this scope", sl.line, sl.col));
       }
       if (sl.has_base) {
         out = util.append_diags(out, slit_diags(sl.base, structs));
@@ -10840,7 +10840,7 @@ function slit_diags(e: ast.Expr, structs: StructSig[]): util.Diag[] {
         if (ssig.name.len() > 0) {
           for field_name in ssig.field_names {
             if (!util.has_str(sl.field_names, field_name)) {
-              out = out.append(dg_at("E005", "struct literal missing field \"" + field_name + "\"", sl.line, sl.col));
+              out = out.append(dg_at("E005", "missing field \"" + field_name + "\" in this " + util.demangle(sl.type_name) + " literal", sl.line, sl.col));
             }
           }
         }
@@ -11419,7 +11419,7 @@ function type_arity_diag(t: string, structs: parser.StructDecl[], enums: parser.
   let tpc: i32 = struct_type_param_count(structs, base);
   if (tpc >= 0) {
     if (nargs != tpc && !shadows) {
-      out = out.append(dg_at("E019", "struct " + base + " has " + util.i32_to_string(tpc) + " type parameter(s), " + util.i32_to_string(nargs) + " supplied", struct_decl_line(structs, base), struct_decl_col(structs, base)));
+      out = out.append(dg_at("E019", util.arity_message("struct " + base, tpc, nargs, "type argument"), struct_decl_line(structs, base), struct_decl_col(structs, base)));
     }
     return out;
   }
@@ -11427,20 +11427,20 @@ function type_arity_diag(t: string, structs: parser.StructDecl[], enums: parser.
   if (parser.is_reserved_struct_name(base)) {
     let stp: i32 = parser.reserved_struct_tparams(base).len();
     if (nargs != stp) {
-      out = out.append(dg_at("E019", "struct " + base + " has " + util.i32_to_string(stp) + " type parameter(s), " + util.i32_to_string(nargs) + " supplied", 0, 0));
+      out = out.append(dg_at("E019", util.arity_message("struct " + base, stp, nargs, "type argument"), 0, 0));
     }
     return out;
   }
   if (parser.is_reserved_enum_name(base)) {
     let etp: i32 = parser.reserved_enum_tparams(base).len();
     if (nargs != etp) {
-      out = out.append(dg_at("E019", "enum " + base + " has " + util.i32_to_string(etp) + " type parameter(s), " + util.i32_to_string(nargs) + " supplied", 0, 0));
+      out = out.append(dg_at("E019", util.arity_message("enum " + base, etp, nargs, "type argument"), 0, 0));
     }
     return out;
   }
   for ed in enums {
     if (ed.name == base && ed.type_params.len() != nargs && !shadows) {
-      return out.append(dg_at("E019", "enum " + base + " has " + util.i32_to_string(ed.type_params.len()) + " type parameter(s), " + util.i32_to_string(nargs) + " supplied", ed.line, ed.col));
+      return out.append(dg_at("E019", util.arity_message("enum " + base, ed.type_params.len(), nargs, "type argument"), ed.line, ed.col));
     }
   }
   return out;
@@ -11686,7 +11686,7 @@ function match_diags(stmts: ast.Stmt[], structs: StructSig[], unions: UnionTable
                       nb = nb + 1;
                     }
                     if (nb != pc) {
-                      out = out.append(dg_at("E015", "variant " + pv.type_name + " has " + util.i32_to_string(pc) + " payload(s), got " + util.i32_to_string(nb) + " binding(s)", m.arms[a].line, m.arms[a].col));
+                      out = out.append(dg_at("E015", payload_count_message(pv.type_name, pc, nb), m.arms[a].line, m.arms[a].col));
                     }
                   }
                 }
@@ -12615,7 +12615,7 @@ function variant_ctor_diags(qname: string, c: ast.ExprCall, s: Scope): util.Diag
     return out;
   }
   if (c.args.len() != want) {
-    out = out.append(dg_at("E036", "variant " + vname + " expects " + util.i32_to_string(want) + " argument(s), got " + util.i32_to_string(c.args.len()), c.line, c.col));
+    out = out.append(dg_at("E036", util.arity_message("variant " + vname, want, c.args.len(), "argument"), c.line, c.col));
   }
   let i: i32 = 0;
   while (i < c.args.len() && i < want) {
@@ -12826,7 +12826,7 @@ function dyn_call_diags(c: ast.ExprCall, mfa: ast.ExprFieldAccess, traits: strin
       }
       let want: i32 = m.params.len() - 1;
       if (c.args.len() != want) {
-        return [dg_at("E004", "method \"" + mfa.field + "\" expects " + util.i32_to_string(want) + " argument(s), got " + util.i32_to_string(c.args.len()), c.line, c.col)];
+        return [dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", want, c.args.len(), "argument"), c.line, c.col)];
       }
       return [];
     },
@@ -13089,6 +13089,30 @@ function call_diags(e: ast.Expr, s: Scope): util.Diag[] {
 // plain functions whose first parameter is the cell — so `c.set(v)` is two
 // arguments and `c.get()` is one. A wrong value is numbered among the written
 // arguments, as every method call's is, so on `set` it is "argument 1".
+// payload_count_message is E015's wording for a pattern that binds a different
+// number of values than its variant carries, as the native checker words it.
+function payload_count_message(variant: string, want: i32, got: i32): string {
+  let values: string = "values";
+  if (want == 1) {
+    values = "value";
+  }
+  return "variant " + variant + " carries " + util.i32_to_string(want) + " " + values + ", but the pattern binds " + util.i32_to_string(got);
+}
+
+// call_subject names a call's callee the way an arity diagnostic does: a
+// function by name when the callee is one, "this function" for any other
+// callable expression.
+function call_subject(c: ast.ExprCall): string {
+  match (c.callee) {
+    ast.ExprIdent(id) => {
+      return "function \"" + util.demangle(id.name) + "\"";
+    },
+    _ => {
+      return "this function";
+    }
+  }
+}
+
 function cell_call_diags(c: ast.ExprCall, mfa: ast.ExprFieldAccess, recv: typeinfo.Type, s: Scope): util.Diag[] {
   let out: util.Diag[] = [];
   let want: i32 = 0 - 1;
@@ -13102,7 +13126,7 @@ function cell_call_diags(c: ast.ExprCall, mfa: ast.ExprFieldAccess, recv: typein
     return [dg_at("E043", "struct Cell has no field or method \"" + mfa.field + "\"", mfa.line, mfa.col)];
   }
   if (c.args.len() != want) {
-    return [dg_at("E004", "function expects " + util.i32_to_string(want + 1) + " arguments, got " + util.i32_to_string(c.args.len() + 1), c.line, c.col)];
+    return [dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", want, c.args.len(), "argument"), c.line, c.col)];
   }
   if (want == 1) {
     let pt: typeinfo.Type = cell_elem_type(recv);
@@ -13129,7 +13153,7 @@ function callable_arg_diags(c: ast.ExprCall, ft: typeinfo.Type, s: Scope): util.
         return out;
       }
       if (c.args.len() != f.param_types.len()) {
-        return [dg_at("E004", "function expects " + util.i32_to_string(f.param_types.len()) + " arguments, got " + util.i32_to_string(c.args.len()), c.line, c.col)];
+        return [dg_at("E004", util.arity_message(call_subject(c), f.param_types.len(), c.args.len(), "argument"), c.line, c.col)];
       }
       let i: i32 = 0;
       while (i < c.args.len()) {
@@ -13438,7 +13462,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
       // intrinsic (`__`-prefixed), or a builtin function — is an
       // undefined call, reported at the callee.
       if (!is_resolvable_callee(cid.name, s)) {
-        out = out.append(dg_at("E001", "undefined function \"" + cid.name + "\"", cid.line, cid.col));
+        out = out.append(dg_at("E001", "cannot find \"" + cid.name + "\" in this scope", cid.line, cid.col));
       }
       // E001: a Map built without `core/map` in the program's import closure.
       // Every Map operation lowers to that module's runtime helpers, so
@@ -13561,11 +13585,11 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
         // (uninferred_call_diags), and type args on a non-generic
         // function are ignored (matching the Go checker).
         if (sig.name.len() > 0 && sig.all_type_params.len() > 0 && c.type_args.len() > 0 && c.type_args.len() != sig.all_type_params.len()) {
-          out = out.append(dg_at("E040", id.name + " expects " + util.i32_to_string(sig.all_type_params.len()) + " type argument(s), got " + util.i32_to_string(c.type_args.len()), c.line, c.col));
+          out = out.append(dg_at("E040", util.arity_message(id.name, sig.all_type_params.len(), c.type_args.len(), "type argument"), c.line, c.col));
         }
         if (sig.name.len() > 0) {
           if (c.args.len() != sig.param_types.len()) {
-            out = out.append(dg_at("E004", "function expects " + util.i32_to_string(sig.param_types.len()) + " arguments, got " + util.i32_to_string(c.args.len()), c.line, c.col));
+            out = out.append(dg_at("E004", util.arity_message(call_subject(c), sig.param_types.len(), c.args.len(), "argument"), c.line, c.col));
           } else {
             // E038: per-argument type mismatch (only when
             // the arity matches, so indices line up).
@@ -13638,7 +13662,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           // The Display builtins' arity, which free_builtin_sig leaves to this
           // pass: native reports E004 at the call (#7311).
           if (is_display_builtin(id.name) && c.args.len() != 1) {
-            out = out.append(dg_at("E004", "function expects 1 arguments, got " + util.i32_to_string(c.args.len()), c.line, c.col));
+            out = out.append(dg_at("E004", util.arity_message(call_subject(c), 1, c.args.len(), "argument"), c.line, c.col));
           }
         }
         if (s.lookup_sig(id.name).name.len() == 0) {
@@ -13708,7 +13732,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
           // `(s: string) len(…)` resolves through the MethodSig path below,
           // which has its own arity rule.
           if ((mfa.field == "len" || mfa.field == "as_bytes") && c.args.len() != 0 && s.lookup_method(mfa.field, "string").name.len() == 0) {
-            out = out.append(dg_at("E004", "method \"" + mfa.field + "\" expects 0 argument(s), got " + util.i32_to_string(c.args.len()), c.line, c.col));
+            out = out.append(dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", 0, c.args.len(), "argument"), c.line, c.col));
           }
           out = util.append_diags(out, uninferred_method_diags(c, "string", mfa.field, s.lookup_method(mfa.field, "string")));
         },
@@ -13780,7 +13804,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
             abw = 2;
           }
           if (abw >= 0 && c.args.len() != abw) {
-            out = out.append(dg_at("E004", "method \"" + mfa.field + "\" expects " + util.i32_to_string(abw) + " argument(s), got " + util.i32_to_string(c.args.len()), c.line, c.col));
+            out = out.append(dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", abw, c.args.len(), "argument"), c.line, c.col));
           }
         },
         typeinfo.TypeMap(mt) => {
@@ -13819,7 +13843,7 @@ function call_diags_call(c: ast.ExprCall, s: Scope, out: util.Diag[]): util.Diag
             let msig: MethodSig = s.lookup_method(mfa.field, sn.name);
             if (msig.name.len() > 0) {
               if (c.args.len() != msig.param_types.len()) {
-                out = out.append(dg_at("E004", "method \"" + mfa.field + "\" expects " + util.i32_to_string(msig.param_types.len()) + " argument(s), got " + util.i32_to_string(c.args.len()), c.line, c.col));
+                out = out.append(dg_at("E004", util.arity_message("method \"" + mfa.field + "\"", msig.param_types.len(), c.args.len(), "argument"), c.line, c.col));
               } else {
                 // E038: per-argument type mismatch on a
                 // user-defined method. Now that
@@ -13991,7 +14015,7 @@ function call_diags_binary(b: ast.ExprBinary, s: Scope, out: util.Diag[]): util.
     let eq_widths: boolean = type_eq(elt, ert)
       || settles_to(b.left, ert, s) || settles_to(b.right, elt, s);
     if (!is_unknown(elt) && !is_unknown(ert) && !eq_widths) {
-      out = out.append(dg_at("E041", "cannot compare " + type_label(elt) + " and " + type_label(ert), b.line, b.col));
+      out = out.append(dg_at("E041", "cannot compare " + type_label(elt) + " with " + type_label(ert) + ": both sides of \"" + b.op + "\" must have the same type", b.line, b.col));
     } else if (!is_unknown(elt) && eq_widths && is_composite_type(elt)) {
       // Composite `==` / `!=` is STRUCTURAL equality via the
       // type's `Eq` impl — it desugars to `a.eq(b)`, so a struct
@@ -14207,7 +14231,7 @@ function call_diags_unary(u: ast.ExprUnary, s: Scope, out: util.Diag[]): util.Di
       if (type_eq(tgt, t_string()) && !is_usize(cot) && (is_integer(cot) || type_eq(cot, t_u32()))) {
         out = out.append(dg_at("E069", "reinterpreting a 32-bit " + type_label(cot) + " value as the pointer-shaped type string via `as` truncates the address; carry pointer-shaped values in a usize local/param instead", u.line, u.col));
       } else if (!as_cast_allowed(cot, tgt)) {
-        out = out.append(dg_at("E033", "cannot cast " + type_label(cot) + " to " + type_label(tgt) + "; only numeric casts (and [u8]/u8[]/string ↔ i32 data-pointer hops, plus i32 → T[]) are supported", u.line, u.col));
+        out = out.append(dg_at("E033", "cannot cast " + type_label(cot) + " to " + type_label(tgt) + ": `as` converts only between numeric types", u.line, u.col));
       }
     }
   }
@@ -14355,7 +14379,7 @@ function call_diags_array(a: ast.ExprArray, s: Scope, out: util.Diag[]): util.Di
             anchor = etk;
             anchor_lit = lit;
           } else {
-            out = out.append(dg_at("E034", "array element type " + type_label(etk) + ", expected " + type_label(anchor), expr_line(a.elements[k]), expr_col(a.elements[k])));
+            out = out.append(dg_at("E034", "array element: expected " + type_label(anchor) + ", got " + type_label(etk), expr_line(a.elements[k]), expr_col(a.elements[k])));
             flagged = true;
           }
         }
@@ -14384,7 +14408,7 @@ function struct_instance_mix(a: ast.ExprArray, first: typeinfo.Type, s: Scope, o
         anchor = etk;
         anchor_expr = a.elements[k];
       } else if (!struct_lit_yields(a.elements[k], etk, anchor, s, true)) {
-        return out.append(dg_at("E034", "array element type " + type_label(etk) + ", expected " + type_label(anchor), expr_line(a.elements[k]), expr_col(a.elements[k])));
+        return out.append(dg_at("E034", "array element: expected " + type_label(anchor) + ", got " + type_label(etk), expr_line(a.elements[k]), expr_col(a.elements[k])));
       }
     }
     k = k + 1;
@@ -14551,7 +14575,7 @@ function call_diags_struct_lit(sl: ast.ExprStructLit, dest_args: typeinfo.Type[]
   if (sl.written.len() > 0 && fsig.name.len() > 0) {
     let wn: i32 = parser.parse_type_ref(sl.written).args.len();
     if (wn != fsig.type_params.len()) {
-      out = out.append(dg_at("E040", fsig.name + " expects " + util.i32_to_string(fsig.type_params.len()) + " type argument(s), got " + util.i32_to_string(wn), sl.line, sl.col));
+      out = out.append(dg_at("E040", util.arity_message(fsig.name, fsig.type_params.len(), wn, "type argument"), sl.line, sl.col));
     } else {
       args = written_struct_args(sl, fsig, s);
     }
@@ -14762,7 +14786,7 @@ function call_diags_ident(id: ast.ExprIdent, s: Scope, out: util.Diag[]): util.D
     // ExprCall arm (a bare-ident callee is skipped here), so this
     // fires only on value reads, matching where the Go checker's
     // errIdent reports E001.
-    out = out.append(dg_at("E001", "undefined name \"" + id.name + "\"", id.line, id.col));
+    out = out.append(dg_at("E001", "cannot find \"" + id.name + "\" in this scope", id.line, id.col));
   }
 
   return out;
@@ -14982,7 +15006,7 @@ function array_elem_check(elem_ty: typeinfo.Type, init: ast.Expr, s: Scope): uti
       for element in arr.elements {
         let ekt: typeinfo.Type = check_expr(element, s);
         if (!is_unknown(ekt) && !settles_to(element, elem_ty, s) && !coercible(ekt, elem_ty, s) && dest_bound_diags(element, elem_ty, s).len() == 0) {
-          out = out.append(dg_at("E034", "array element type " + type_label(ekt) + ", expected " + type_label(elem_ty), expr_line(element), expr_col(element)));
+          out = out.append(dg_at("E034", "array element: expected " + type_label(elem_ty) + ", got " + type_label(ekt), expr_line(element), expr_col(element)));
         }
       }
     },
@@ -15037,7 +15061,7 @@ function dest_call_diags(e: ast.Expr, dest: typeinfo.Type, s: Scope): util.Diag[
         out = util.append_diags(out, call_diags(element, s));
         let et: typeinfo.Type = check_expr(element, s);
         if (!is_unknown(et) && !coercible(et, elem, s)) {
-          out = out.append(dg_at("E034", "array element type " + type_label(et) + ", expected " + type_label(elem), expr_line(element), expr_col(element)));
+          out = out.append(dg_at("E034", "array element: expected " + type_label(elem) + ", got " + type_label(et), expr_line(element), expr_col(element)));
         }
       }
       return out;
@@ -15424,7 +15448,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
               if (!saw_wild) {
                 for variant in usig.variants {
                   if (!util.has_str(covered, variant)) {
-                    out = out.append(dg_at("E030", "match is not exhaustive — variant " + variant + " of enum " + mun.name + " is not covered (add an arm or use `_`)", m.line, m.col));
+                    out = out.append(dg_at("E030", "match does not cover variant " + variant + " of enum " + mun.name + " — add an arm for it, or a `_` arm", m.line, m.col));
                   }
                 }
               }
@@ -15699,17 +15723,17 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
           let vbound: util.Diag[] = dest_bound_diags(v.init, declared, cur);
           out = util.append_diags(out, vbound);
           if (vbound.len() == 0 && !is_unknown(declared) && !is_unknown(initt) && !settles_to(v.init, declared, cur) && !(type_assignable(initt, declared, unions) && dyn_conforms(initt, declared, cur))) {
-            out = out.append(dg_at("E003", "cannot assign " + type_label(initt) + " to variable of type " + type_label(declared) + str_copy_hint(initt, declared), v.line, v.col));
+            out = out.append(dg_at("E003", "variable \"" + v.name + "\": expected " + type_label(declared) + ", got " + type_label(initt) + str_copy_hint(initt, declared), v.line, v.col));
           }
           if (tvar_meets_concrete(initt, declared, cur)) {
-            out = out.append(dg_at("E003", "cannot assign " + tvar_name(initt) + " to variable of type " + type_label(declared), v.line, v.col));
+            out = out.append(dg_at("E003", "variable \"" + v.name + "\": expected " + type_label(declared) + ", got " + tvar_name(initt), v.line, v.col));
           }
           // An annotation naming no declared type (the E064 case) is a type
           // native cannot assign a typed init to either, so E003 stands
           // beside the E064 (#10965). An annotation this resolver merely
           // does not model stays unknown without either diagnostic.
           if (vbound.len() == 0 && is_unknown(declared) && !is_unknown(initt) && util.index_of_str(cur.tparams, v.type_name) < 0 && e064_unknown_bare(v.type_name, cur.type_names())) {
-            out = out.append(dg_at("E003", "cannot assign " + type_label(initt) + " to variable of type " + v.type_name, v.line, v.col));
+            out = out.append(dg_at("E003", "variable \"" + v.name + "\": expected " + v.type_name + ", got " + type_label(initt), v.line, v.col));
           }
         }
         // E047: an unannotated binding settles its literal-only init at i64
@@ -15748,17 +15772,17 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
           // variant / builtin to confuse it with, hence no
           // allowlist needed. Reported at the `=` token (the
           // assignment position the parser captured).
-          out = out.append(dg_at("E001", "undefined name \"" + a.target + "\"", a.target_line, a.target_col));
+          out = out.append(dg_at("E001", "cannot find \"" + a.target + "\" in this scope", a.target_line, a.target_col));
         } else {
           let tt: typeinfo.Type = cur.lookup(a.target);
           let vt: typeinfo.Type = check_expr(a.value, cur);
           out = util.append_diags(out, int_dest_range_diags(a.value, tt));
           out = util.append_diags(out, ctor_payload_diags(a.value, tt, cur));
           if (!is_unknown(tt) && !is_unknown(vt) && !settles_to(a.value, tt, cur) && !(type_assignable(vt, tt, unions) && dyn_conforms(vt, tt, cur))) {
-            out = out.append(dg_at("E003", "cannot assign " + type_label(vt) + " to " + type_label(tt) + str_copy_hint(vt, tt), a.line, a.col));
+            out = out.append(dg_at("E003", "variable \"" + a.target + "\": expected " + type_label(tt) + ", got " + type_label(vt) + str_copy_hint(vt, tt), a.line, a.col));
           }
           if (tvar_meets_concrete(vt, tt, cur)) {
-            out = out.append(dg_at("E003", "cannot assign " + tvar_name(vt) + " to " + type_label(tt), a.line, a.col));
+            out = out.append(dg_at("E003", "variable \"" + a.target + "\": expected " + type_label(tt) + ", got " + tvar_name(vt), a.line, a.col));
           }
         }
       },
@@ -19918,7 +19942,7 @@ function e064_annot_diags(an: Annot[], tn: TypeNames, extra_known: string[], tpa
   for elem in an {
     let vu: string = e064_unknown_name(elem.type_name, tn, extra_known, tparams);
     if (vu.len() > 0) {
-      out = out.append(dg_at("E064", "unknown type \"" + util.demangle(vu) + "\"" + unknown_type_hint(vu, traits), elem.line, elem.col));
+      out = out.append(dg_at("E064", "cannot find type \"" + util.demangle(vu) + "\" in this scope" + unknown_type_hint(vu, traits), elem.line, elem.col));
     }
   }
   return out;
@@ -23028,12 +23052,12 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
       for param in efn.params {
         let pu: string = e064_unknown_name(param.type_name, e064_tn, e064_extra, efn_tps);
         if (pu.len() > 0) {
-          body_diags = body_diags.append(dg_at("E064", "unknown type \"" + util.demangle(pu) + "\"" + unknown_type_hint(pu, e064_traits), efn.line, efn.col));
+          body_diags = body_diags.append(dg_at("E064", "cannot find type \"" + util.demangle(pu) + "\" in this scope" + unknown_type_hint(pu, e064_traits), efn.line, efn.col));
         }
       }
       let ru: string = e064_unknown_name(efn.ret_type, e064_tn, e064_extra, efn_tps);
       if (ru.len() > 0) {
-        body_diags = body_diags.append(dg_at("E064", "unknown type \"" + util.demangle(ru) + "\"" + unknown_type_hint(ru, e064_traits), efn.line, efn.col));
+        body_diags = body_diags.append(dg_at("E064", "cannot find type \"" + util.demangle(ru) + "\" in this scope" + unknown_type_hint(ru, e064_traits), efn.line, efn.col));
       }
       // Body `let x: T` annotations.
       let efn_annots: Annot[] = collect_annots(efn.body);
@@ -23166,7 +23190,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
       for field in esd.fields {
         let fu: string = e064_unknown_name(field.type_name, e064_tn, e064_extra, esd.type_params);
         if (fu.len() > 0) {
-          body_diags = body_diags.append(dg_at("E064", "unknown type \"" + util.demangle(fu) + "\"" + unknown_type_hint(fu, e064_traits), esd.line, esd.col));
+          body_diags = body_diags.append(dg_at("E064", "cannot find type \"" + util.demangle(fu) + "\" in this scope" + unknown_type_hint(fu, e064_traits), esd.line, esd.col));
         }
       }
     }

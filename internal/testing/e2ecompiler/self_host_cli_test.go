@@ -82,7 +82,7 @@ func TestSelfHostCLIX86_64(t *testing.T) {
 		// recognised at the decl dispatch does not fail the parse: it falls
 		// through to `parse_stmt` as a bare identifier expression and the
 		// declaration behind it parses normally, so the run still exits 0
-		// while the checker reports `undefined name "async"` on stderr.
+		// while the checker reports `cannot find "async" in this scope` on stderr.
 		// Exit status alone therefore proves nothing here (#6659).
 		checkCmd := exec.Command(fernBin, "-check", path)
 		var checkErr bytes.Buffer
