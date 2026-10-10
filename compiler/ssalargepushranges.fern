@@ -1,0 +1,101 @@
+// Input partitions and an independent ordered-bin specification for large
+// recycling. These records are mathematical data, not instruction effects or
+// ownership certificates. The unsigned oversized family is deliberately not
+// represented by a signed interval here.
+import "core/cmp";
+
+pub struct Interval { low: i32, high: i32 }
+
+pub function valid(r: Interval): boolean {
+  return r.low >= 0 && r.low <= r.high && r.high <= 1073741824;
+}
+
+// Ascending capacities: four quarter-power bins per octave, ending at 1 GiB.
+// This specification does not compute the instruction sequence's class.
+pub function capacities(): i32[] {
+  let result: i32[] = [];
+  let quarter = 131072;
+  let index = 0;
+  while (index < 45) {
+    result = result.append((4 + index % 4) * quarter);
+    if (index % 4 == 3) {
+      quarter = quarter * 2;
+    }
+    index = index + 1;
+  }
+  return result;
+}
+
+function class_at(n: i32, bins: i32[]): i32 {
+  let at = 0;
+  while (at < bins.len()) {
+    if (n <= bins[at]) {
+      return at;
+    }
+    at = at + 1;
+  }
+  return -1;
+}
+
+pub function expected_class(r: Interval): i32 {
+  if (!valid(r)) {
+    return -1;
+  }
+  let bins = capacities();
+  let low = class_at(r.low, bins);
+  return if (low == class_at(r.high, bins)) { low } else { -1 };
+}
+
+// Split each independent bin at original-input highest-bit boundaries. The
+// initial clamp boundary is included even though both sides round alike.
+pub function intervals(): Interval[] {
+  let result: Interval[] = [];
+  let low = 0;
+  for cap in capacities() {
+    let cut = 524288 as i64;
+    while (cut <= cap as i64) {
+      if (cut > low as i64) {
+        result = result.append(Interval { low: low, high: cut as i32 - 1 });
+        low = cut as i32;
+      }
+      cut = cut * (2 as i64);
+    }
+    result = result.append(Interval { low: low, high: cap });
+    low = cap + 1;
+  }
+  return result;
+}
+
+function highest(n: i64): i32 {
+  let rest = n;
+  let bit = -1;
+  while (rest > 0) {
+    rest = rest / (2 as i64);
+    bit = bit + 1;
+  }
+  return bit;
+}
+
+// Rounded capacity through ceiling division, separate from the machine's
+// negative-mask implementation. Equal monotone endpoint quotients establish
+// the result for every input in the interval, not just sampled endpoints.
+pub function rounded(r: Interval): i64 {
+  if (!valid(r)) {
+    return -(1 as i64);
+  }
+  let low = cmp.max(r.low, 524288) as i64;
+  let high = cmp.max(r.high, 524288) as i64;
+  let bit = highest(low);
+  if (bit != highest(high)) {
+    return -(1 as i64);
+  }
+  let quantum = 131072 as i64;
+  let at = 19;
+  while (at < bit) {
+    quantum = quantum * (2 as i64);
+    at = at + 1;
+  }
+  let a = ((low - 1 as i64) / quantum + 1 as i64) * quantum;
+  let b = ((high - 1 as i64) / quantum + 1 as i64) * quantum;
+  return if (a == b) { a } else { -(1 as i64) };
+}

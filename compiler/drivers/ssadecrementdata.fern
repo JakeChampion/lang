@@ -1,0 +1,79 @@
+import "../ssadecrementtext" as text;
+import "std/string";
+
+function require(ok: boolean): void {
+  if (!ok) {
+    print("decrement counter storage controls failed");
+    exit(238);
+  }
+}
+
+function check(s: string, ok: boolean): void {
+  require(text.counter_storage(s) == ok);
+}
+
+function change(s: string, from: string, to: string): string {
+  let parts = s.split(from);
+  require(parts.len() > 1);
+  return parts.join(to);
+}
+
+function storage(s: string): void {
+  for value in [".long 0", ".byte 0", ".skip 8", ".zero 8", ".quad 1", ".quad 0,0", ".quad 0; .byte 0", "", ".align 8", ".quad 0\n__fern_rc_underflow: .quad 0"] {
+    check(change(s, "__fern_rc_underflow: .quad 0", "__fern_rc_underflow: " + value), false);
+  }
+  for align in ["", ".align 1", ".align 4", ".align 16", ".align 8\n.byte 0", ".align 8\n.text", ".align 8\n.section .rodata", ".align 8\nalias:"] {
+    check(change(s, ".align 8\n", align + "\n"), false);
+  }
+  check(change(s, "__fern_rc_underflow", "__different_counter"), false);
+  check(s + "\n.text\n__fern_rc_underflow:\nret\n", false);
+  check(s + "\n.section .rodata\n__fern_rc_underflow: .quad 0\n", false);
+  check(s + "\n.set alias, __fern_rc_underflow\n", false);
+  check(s + "\n.globl __fern_rc_underflow\n", true);
+}
+
+function aliases(s: string): void {
+  for alias in ["alias:", "alias: .skip 0", "alias: .zero 000", "alias: .skip 4294967296", "alias: .ascii \"\"", "alias: .globl __fern_rc_underflow", "alias: hidden: .quad 0"] {
+    check(change(s, ".align 8\n", alias + "\n.align 8\n"), false);
+    check(".bss\n" + alias + "\n.text\nret\n" + s, false);
+  }
+  for before in ["alias: .byte 0", "alias: .long 0", "alias: .quad 0", "alias: .skip 1", "alias: .zero 8,0"] {
+    check(change(s, ".align 8\n", before + "\n.align 8\n"), true);
+  }
+  check(change(s, ".align 8\n", "unknown_data_instruction\n.align 8\n"), false);
+  check(change(s, ".align 8\n", "alias = __fern_rc_underflow\n.align 8\n"), false);
+}
+
+function static_aggregates(s: string): void {
+  // emit_const_agg_blocks places the immortal header before a bare data
+  // label. Both its signed header and its bare label are outside scope, even
+  // though the separately declared underflow counter is unchanged.
+  let bare = ".data\n.quad 2\n.quad -1\n.Kscope:\n.quad 1\n.quad 0\n";
+  let combined = bare + s;
+  require(text.select(combined, "__fn___fern_arr_dec").error != "");
+  check(combined, false);
+  // Isolate the independent bare-label restriction with unsigned data.
+  let unsigned = change(combined, ".quad -1", ".quad 1");
+  require(text.select(unsigned, "__fn___fern_arr_dec").error == "");
+  check(unsigned, false);
+  check(change(unsigned, ".Kscope:\n.quad 1", ".Kscope: .quad 1"), true);
+}
+
+pub function run(output: string): void {
+  check(output, true);
+  static_aggregates(output);
+  check(change(output, "__fern_rc_underflow: .quad 0", "__fern_rc_underflow: .long 0"), false);
+  check(change(output, ".section .bss", ".section .rodata"), false);
+  check(change(output, ".section .bss", ".section .data"), true);
+  check("", false);
+  for section in [".bss", ".data", ".section .bss", ".section .data"] {
+    let s = section + "\n.align 8\n__fern_rc_underflow: .quad 0\n";
+    check(s, true);
+    check(change(s, "\n", "\r\n\t"), true);
+    check(change(s, section, ".section .rodata"), false);
+    check(change(s, section, ".text"), false);
+    check(change(s, section, ""), false);
+    storage(s);
+    aliases(s);
+  }
+}

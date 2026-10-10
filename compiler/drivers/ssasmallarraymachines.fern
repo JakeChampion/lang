@@ -1,0 +1,124 @@
+import "../ssasmallarraymachine" as machine;
+import "../ssainlineuniqueisa" as registers;
+import "std/string";
+
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("small-array machine controls failed: " + group);
+    // Shared native status; the printed module and mutation identify failure.
+    exit(180);
+  }
+}
+
+function change(s: string, from: string, to: string): string {
+  let outer = s.split("__fn___fern_arr_dec:\n");
+  require(outer.len() == 2, "unique array fixture");
+  let next = outer[1].split("__fn___fern_str_free:\n");
+  require(next.len() == 2, "following helper fixture");
+  let parts = next[0].split(from);
+  require(parts.len() > 1, "mutation present: " + from);
+  return outer[0] + "__fn___fern_arr_dec:\n" + parts.join(to) + "__fn___fern_str_free:\n" + next[1];
+}
+
+function mutation(s: string, from: string, to: string, expected: boolean): void {
+  require(machine.check(change(s, from, to)) == expected, from + " -> " + to);
+}
+
+function heap(s: string): void {
+  let clear = "movl $0, -8(%rax)";
+  for line in ["", "movl $1, -8(%rax)", "movq $0, -8(%rax)", "movl $0, -4(%rax)", "movl $0, -12(%rax)", "movl $0, -8(%rax)\nmovl $0, -8(%rax)"] {
+    mutation(s, clear, line, false);
+  }
+  let link = "movq %rdi, (%rdx)";
+  for line in ["", "movl %edi, (%rdx)", "movq %rax, (%rdx)", "movq %rdi, 4(%rdx)", "movq %rdi, (%rax)", "movq %rdi, (%rdx)\nmovq %rdi, (%rdx)"] {
+    mutation(s, link, line, false);
+  }
+  mutation(s, link, link + "\nmovq (%rdx), %rdi", true);
+  mutation(s, link, link + "\nmovl 4(%rdx), %edi", false);
+  mutation(s, clear, clear + "\nmovl -8(%rax), %ecx", true);
+  mutation(s, "movl -16(%rax), %ecx", "movq -16(%rax), %rcx", false);
+  mutation(s, "movl -16(%rax), %ecx", "movl -12(%rax), %ecx", false);
+  mutation(s, "addq $3, %rcx", "addl $3, %ecx", true);
+  mutation(s, "addq $3, %rcx", "addq $2, %rcx", false);
+  mutation(s, "leaq -16(%rax), %rdx", "leaq -8(%rax), %rdx", false);
+}
+
+function slots(s: string): void {
+  let load = "movq (%r8,%rcx,8), %rdi";
+  for line in ["movl (%r8,%rcx,8), %edi", "movq 4(%r8,%rcx,8), %rdi", "movq (%r8,%rcx,4), %rdi", "movq (%r8,%rax,8), %rdi", "movq (%rdx), %rdi"] {
+    mutation(s, load, line, false);
+  }
+  let slot = "movq %rdx, (%r8,%rcx,8)";
+  for line in ["", "movl %edx, (%r8,%rcx,8)", "movq %rax, (%r8,%rcx,8)", "movq %rdx, 8(%r8,%rcx,8)", "movq %rdx, (%r8,%rcx,4)", "movq %rdx, (%r8,%rcx,8)\nmovq %rdx, (%r8,%rcx,8)"] {
+    mutation(s, slot, line, false);
+  }
+  mutation(s, slot, slot + "\nmovq (%r8,%rcx,8), %rdx", true);
+  mutation(s, slot, slot + "\nmovq (%r8,%rcx,8), %rdi", false);
+  mutation(s, "leaq __fern_freelist(%rip), %r8", "leaq __fern_large_freelist(%rip), %r8", false);
+}
+
+function calls(s: string): void {
+  let call = "call __fern_capw";
+  for line in ["", "call __fern_large_push", "call __other", "call __fern_capw\ncall __fern_capw", "movq %rax, (%rsp)\ncall __fern_capw", "movq $3, (%rsp)\ncall __fern_capw"] {
+    mutation(s, call, line, false);
+  }
+  mutation(s, "pushq %rcx", "pushq %rax", false);
+  mutation(s, "pushq %rcx", "pushq %rsp", false);
+  mutation(s, "popq %rcx", "popq %rdx", false);
+  mutation(s, "popq %rcx", "popq %rsp", false);
+  mutation(s, "popq %rcx", "movl (%rsp), %ecx\nleaq 8(%rsp), %rsp", true);
+  mutation(s, "jbe .L4", "", false);
+  mutation(s, call, call + "\nje .L4", false);
+  mutation(s, "popq %rcx", "popq %rcx\nmovq %rax, -16(%rsp)", false);
+  // All ten scratch halves matter, including upper halves and the inner RET.
+  for offset in ["-40", "-36", "-32", "-28", "-24", "-20", "-16", "-12", "-8", "-4"] {
+    mutation(s, "popq %rcx", "popq %rcx\nmovl $7, " + offset + "(%rsp)", false);
+  }
+  mutation(s, "jbe .L4", "movq %rax, -40(%rsp)\njbe .L4", false);
+  // Mutate only the dependency body, preserving the caller instruction stream.
+  let parts = s.split("__fern_capw:\n");
+  require(parts.len() == 2, "unique capw fixture");
+  let body = parts[1].split("__fern_raw_free:\n");
+  require(body.len() == 2, "capw following helper fixture");
+  for pair in [["movq 32(%rsp), %rax", "movq 24(%rsp), %rax"], ["popq %rax", "popq %rbx"], ["movq %rax, 32(%rsp)", "movq %rax, 24(%rsp)"], ["    ret\n", "ret $8\n"]] {
+    let changed = body[0].split(pair[0]);
+    require(changed.len() > 1, "dependency mutation present: " + pair[0]);
+    require(!machine.check(parts[0] + "__fern_capw:\n" + changed.join(pair[1]) + "__fern_raw_free:\n" + body[1]), "dependency effects: " + pair[0]);
+  }
+}
+
+function identities(s: string): void {
+  let regs = registers.registers(false, 64);
+  let words = registers.registers(false, 32);
+  let i = 0;
+  while (i < regs.len()) {
+    mutation(s, "    ret\n", "movq " + regs[i] + ", " + regs[i] + "\nret\n", true);
+    mutation(s, "    ret\n", "movl " + words[i] + ", " + words[i] + "\nret\n", i == 1);
+    mutation(s, "    ret\n", "movq " + regs[(i + 1) % regs.len()] + ", " + regs[i] + "\nret\n", false);
+    i = i + 1;
+  }
+  mutation(s, "    ret\n", "ret $8\n", false);
+  mutation(s, "    ret\n", "movq %rax, (%rsp)\nret\n", false);
+  mutation(s, "    ret\n", "movq 8(%rsp), %rax\nret\n", false);
+  mutation(s, "movq 8(%rsp), %rax", "movq (%rsp), %rax", false);
+  mutation(s, "movl -8(%rax), %ecx", "movq %rbx, %rcx\nmovq %rcx, %rbx\nmovl -8(%rax), %ecx", true);
+  mutation(s, "movl -8(%rax), %ecx", "movl %ebx, %ecx\nmovq %rcx, %rbx\nmovl -8(%rax), %ecx", false);
+}
+
+pub function run(output: string): void {
+  require(machine.check(output), "actual complete output, both entries");
+  heap(output);
+  slots(output);
+  calls(output);
+  identities(output);
+  mutation(output, "    ret\n", "unknown_instruction\nret\n", false);
+  mutation(output, "    ret\n", "jmp .Larrdec_ret\n", false);
+  mutation(output, "cmpq $256, %rcx", "cmpq $255, %rcx", false);
+  mutation(output, "cmpq $65536, %rcx", "cmpq $65535, %rcx", false);
+  mutation(output, "testl %ecx, %ecx", "testl %edx, %edx", false);
+  mutation(output, "jbe .L4", "jna .L4", true);
+  mutation(output, "jbe .L4", "jo .L4", false);
+  mutation(output, "jbe .L4", "addq $0, %rcx\njbe .L4", false);
+  require(!machine.check(".set alias, __fern_capw\n" + output), "closed namespace");
+  require(!machine.check(".text\n__fn___fern_arr_dec:\n__fn___fern_arr_dec.r:\nret\n"), "missing dependency and effects");
+}

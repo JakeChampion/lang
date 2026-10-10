@@ -1,0 +1,128 @@
+import "../ssadecrementmachine" as machine;
+import "../ssainlineuniqueisa" as registers;
+import "std/string";
+
+function require(ok: boolean): void {
+  if (!ok) {
+    print("decrement zero machine controls failed");
+    exit(239);
+  }
+}
+
+function change(s: string, from: string, to: string): string {
+  let parts = s.split(from);
+  if (parts.len() <= 1) {
+    print("missing zero mutation source: " + from);
+  }
+  require(parts.len() > 1);
+  return parts.join(to);
+}
+
+function check(s: string, entry: string, ok: boolean): void {
+  let result = machine.check_zero(s, entry);
+  if (result != ok) {
+    print(entry + ": expected zero proof " + ok.to_string());
+  }
+  require(result == ok);
+}
+
+function prefix(s: string, entry: string, lines: string): string {
+  return change(s, entry + ".r:\n", entry + ".r:\n" + lines + "\n");
+}
+
+function effects(s: string, entry: string, local: string): void {
+  check(s, entry, true);
+  let inc = "incl __fern_rc_underflow(%rip)";
+  for line in ["movl %ecx, %ecx", inc + "\n" + inc, "incq __fern_rc_underflow(%rip)", "incb __fern_rc_underflow(%rip)", "incl __fern_rc_underflow+4(%rip)", "incl __different_counter(%rip)", "incl __fern_rc_underflow(%rax)", "incl -8(%rax)", "lock " + inc, "call hidden", "subl $1, %ecx", "movl %ecx, -8(%rax)", "unknown_instruction"] {
+    check(change(s, inc, line), entry, false);
+  }
+  for line in ["ret $8", "movl %eax, %eax\nret", "movq %rax, (%rsp)\nret", "movq %rax, 8(%rsp)\nret"] {
+    check(change(s, local + "_ret:\n    ret", local + "_ret:\n" + line), entry, false);
+  }
+  // The object header stays exactly zero; reloading or zero-extending it
+  // is safe, while even storing zero back to it is outside this proof.
+  check(change(s, inc, inc + "\nmovl -8(%rax), %ecx\nmovl %ecx, %ecx"), entry, true);
+  check(change(s, inc, inc + "\nmovl %ecx, -8(%rax)"), entry, false);
+  for line in ["movq -8(%rax), %rcx", "movl -16(%rax), %ecx", "movl -8(%rdx), %ecx"] {
+    check(change(s, "movl -8(%rax), %ecx", line), entry, false);
+  }
+  check(change(s, "__fern_rc_underflow: .quad 0", "__fern_rc_underflow: .long 0"), entry, false);
+  check(change(s, ".section .bss", ".section .rodata"), entry, false);
+  check(s + "\n.data\n__fern_rc_underflow: .quad 0\n", entry, false);
+  check(change(s, "__fern_rc_underflow", "__different_counter"), entry, false);
+  check(".set hidden, __fern_rc_underflow\n" + s, entry, false);
+}
+
+function entries(s: string, entry: string): void {
+  for line in ["movl %eax, %eax", "movq (%rsp), %rax", "movq 8(%rsp), %rax", "movq 16(%rsp), %rcx", "movl (%rsp), %ecx", "jmp " + entry + ".r"] {
+    check(prefix(s, entry, line), entry, false);
+  }
+  check(prefix(s, entry, "movq (%rsp), %rcx"), entry, true);
+  check(prefix(s, entry, "movq 8(%rsp), %rcx"), entry, true);
+  check(change(s, entry + ":\n    movq 8(%rsp), %rax", entry + ":\nmovq 16(%rsp), %rax"), entry, false);
+  let regs = registers.registers(false, 64);
+  let words = registers.registers(false, 32);
+  let i = 2;
+  while (i < regs.len()) {
+    check(prefix(s, entry, "movq %rax, " + regs[i]), entry, false);
+    check(prefix(s, entry, "movq " + regs[i] + ", %rcx\nmovq %rax, " + regs[i] + "\nmovq %rcx, " + regs[i]), entry, true);
+    check(prefix(s, entry, "movl " + words[i] + ", %ecx\nmovq %rcx, " + regs[i]), entry, false);
+    i = i + 1;
+  }
+}
+
+function increment(s: string, entry: string, to: string): string {
+  // Mutate only this helper's increment so inserted labels stay unique
+  // across the complete output, which also contains the other helper.
+  let marker = entry + ".r:\n";
+  let bodies = s.split(marker);
+  require(bodies.len() == 2);
+  let inc = "incl __fern_rc_underflow(%rip)";
+  let pieces = bodies[1].split(inc);
+  require(pieces.len() > 1);
+  let tail = pieces[0] + to + pieces[1];
+  let i = 2;
+  while (i < pieces.len()) {
+    tail = tail + inc + pieces[i];
+    i = i + 1;
+  }
+  return bodies[0] + marker + tail;
+}
+
+function counter_flags(s: string, entry: string): void {
+  let inc = "incl __fern_rc_underflow(%rip)";
+  // Unknown counter flags cannot inherit zero-header flags, even if both
+  // syntactic branches happen to rejoin. This checker conservatively refuses.
+  for name in ["je", "jne", "js", "jns", "jo", "jno", "jl", "jge", "jg", "jle"] {
+    check(increment(s, entry, inc + "\n" + name + " .Lzero_join\n.Lzero_join:"), entry, false);
+  }
+  // CMP 0,1 sets CF; INC must preserve it. TEST zero clears CF, which INC
+  // must also preserve. A taken branch safely bypasses an unknown opcode.
+  check(increment(s, entry, inc + "\njb .Lzero_skip\nunknown_instruction\n.Lzero_skip:"), entry, true);
+  check(increment(s, entry, "testl %ecx, %ecx\n" + inc + "\njae .Lzero_skip\nunknown_instruction\n.Lzero_skip:"), entry, true);
+  check(increment(s, entry, inc + "\njae .Lzero_skip\nunknown_instruction\n.Lzero_skip:"), entry, false);
+  check(increment(s, entry, "testl %edx, %edx\n" + inc + "\njb .Lzero_skip\n.Lzero_skip:"), entry, false);
+}
+
+function comparisons(s: string, entry: string): void {
+  let values = [-2147483648, -1, 0, 1, 2147483647];
+  let truths: string[][] = [["jne", "js", "jb", "jo", "jge", "jg"], ["jne", "jns", "jb", "jno", "jge", "jg"], ["je", "jns", "jae", "jno", "jge", "jle"], ["jne", "js", "jb", "jno", "jl", "jle"], ["jne", "js", "jb", "jno", "jl", "jle"]];
+  let i = 0;
+  while (i < values.len()) {
+    for name in truths[i] {
+      let lines = "movl -8(%rax), %ecx\ncmpl $" + values[i].to_string() + ", %ecx\n" + name + " .Lzero_cmp\nunknown_instruction\n.Lzero_cmp:";
+      check(prefix(s, entry, lines), entry, true);
+    }
+    i = i + 1;
+  }
+}
+
+pub function run(output: string): void {
+  effects(output, "__fn___fern_arr_dec", ".Larrdec");
+  effects(output, "__fn___fern_str_free", ".Lstrfree");
+  for entry in ["__fn___fern_arr_dec", "__fn___fern_str_free"] {
+    entries(output, entry);
+    counter_flags(output, entry);
+    comparisons(output, entry);
+  }
+}

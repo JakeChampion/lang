@@ -1,0 +1,146 @@
+import "../ssacapacityisa" as isa;
+import "../ssadecrementtext" as text;
+import "../ssainlineuniqueisa" as registers;
+import "std/string";
+
+function require(ok: boolean): void {
+  if (!ok) {
+    print("capacity instruction program controls failed");
+    exit(167);
+  }
+}
+
+function sample(line: string): isa.Op {
+  let p = isa.program(".text\n__fern_capw:\n" + line + "\nret\n");
+  require(p.error == "" && p.ops.len() == 2 && p.ops[1].kind == 18);
+  return p.ops[0];
+}
+
+function move_pair(width: i32, suffix: string, regs: string[], i: i32, j: i32): void {
+  let op = sample("mov" + suffix + " " + regs[i] + ", " + regs[j]);
+  require(op.kind == 2 && op.width == width && op.source == i && op.destination == j);
+  let imm = sample("mov" + suffix + " $-1, " + regs[i]);
+  require(imm.kind == 5 && imm.width == width && imm.destination == i && imm.immediate == -1);
+}
+
+function arithmetic_pairs(width: i32, suffix: string, regs: string[], i: i32, j: i32): void {
+  let kind = 9;
+  for mnemonic in ["sub", "add", "and", "bsr"] {
+    let a = sample(mnemonic + suffix + " " + regs[i] + ", " + regs[j]);
+    require(a.kind == kind && a.width == width && a.source == i && a.destination == j);
+    kind = if (kind == 11) { 8 } else { kind + 1 };
+  }
+}
+
+function shifts(width: i32, suffix: string, reg: string, i: i32): void {
+  for mnemonic in ["shl", "shr"] {
+    let shift = sample(mnemonic + suffix + " %cl, " + reg);
+    require(shift.kind == (if (mnemonic == "shl") { 13 } else { 14 }) && shift.width == width && shift.source == 1 && shift.destination == i);
+  }
+}
+
+function unary_moves(width: i32, suffix: string, reg: string, i: i32): void {
+  let neg = sample("neg" + suffix + " " + reg);
+  require(neg.kind == 12 && neg.width == width && neg.source == i && neg.destination == i);
+  shifts(width, suffix, reg, i);
+  if (width == 64) {
+    let push = sample("pushq " + reg);
+    let pop = sample("popq " + reg);
+    require(push.kind == 6 && push.width == 64 && push.source == i);
+    require(pop.kind == 7 && pop.width == 64 && pop.destination == i);
+  }
+}
+
+function moves(): void {
+  for width in [32, 64] {
+    let regs = registers.registers(false, width);
+    let suffix = if (width == 32) { "l" } else { "q" };
+    let i = 0;
+    while (i < regs.len()) {
+      let j = (i + 1) % regs.len();
+      move_pair(width, suffix, regs, i, j);
+      arithmetic_pairs(width, suffix, regs, i, j);
+      unary_moves(width, suffix, regs[i], i);
+      i = i + 1;
+    }
+  }
+}
+
+function memory(): void {
+  let load = sample("movq\t32(%rsp),\t%rax");
+  require(load.kind == 3 && load.width == 64 && load.base == 4 && load.offset == 32 && load.destination == 0);
+  let store = sample("movl %r14d, -24(%r15)");
+  require(store.kind == 4 && store.width == 32 && store.base == 15 && store.offset == -24 && store.source == 14);
+  require(sample("movq (%rsp), %rax").offset == 0);
+}
+
+function indexed_address(): void {
+  for scale in [1, 2, 4, 8] {
+    let op = sample("leaq -1(%rax,%rdx," + scale.to_string() + "), %r15");
+    require(op.kind == 15 && op.width == 64 && op.base == 0 && op.index == 2 && op.scale == scale && op.offset == -1 && op.destination == 15);
+  }
+  let actual = sample("leaq -1(%rax,%rdx), %rax");
+  require(actual.kind == 15 && actual.index == 2 && actual.scale == 1);
+  require(sample("leaq 8(%rsp), %rax").index == -1);
+}
+
+function immediates(): void {
+  for n in [-2147483648, -1, 0, 1, 256, 65535, 65536, 2147483647] {
+    for suffix in ["q", "l"] {
+      let reg = if (suffix == "q") { "%rcx" } else { "%ecx" };
+      let w = if (suffix == "q") { 64 } else { 32 };
+      immediate_pair(suffix, reg, w, n);
+    }
+  }
+}
+
+function immediate_pair(suffix: string, reg: string, w: i32, n: i32): void {
+  let cmp = sample("cmp" + suffix + " $" + n.to_string() + ", " + reg);
+  require(cmp.kind == 16 && cmp.width == w && cmp.source == 1 && cmp.immediate == n);
+  let sub = sample("sub" + suffix + " $" + n.to_string() + ", " + reg);
+  require(sub.kind == 9 && sub.width == w && sub.source == -1 && sub.destination == 1 && sub.immediate == n);
+}
+
+function unsupported(): void {
+  for line in ["pushl %eax", "pushq $1", "popl %eax", "popq (%rsp)", "negq %eax", "bsrq %eax, %rcx", "bsrq (%rax), %rcx", "shlq %dl, %rax", "shlq $1, %rax", "shlq %rcx, %rax", "shlq %cl, %eax", "sarq %cl, %rax", "movl %rax, %ecx", "movq %eax, %rcx", "movq $2147483648, %rax", "movq $-2147483649, %rax", "movq $01, %rax", "movq $1junk, %rax", "cmpl $1, %rcx", "cmpq %rax, %rcx", "addq $1, (%rax)", "lock addq $1, %rax", "leal (%rax), %eax", "leaq -1(%rax,%rsp), %rax", "leaq (%rax,%rdx,3), %rax", "leaq (,%rax,8), %rax", "leaq (%eax,%rdx), %rax", "leaq (%rax,,8), %rax", "leaq ((%rax)), %rax", "leaq (%rax)), %rax", "leaq (%rax, %rdx, 4, 8), %rax", "movq 8(%rsp,%rcx,8), %rax", "movq %rax, 8(%rsp,%rcx,8)", "movq (%rsp), (%rax)", "movq (%rsp), %rax, %rcx", "movq -2147483649(%rsp), %rax", "leaq $1, %rax", "ret $8", "retq", "call __fern_capw", "unknown_instruction"] {
+    require(sample(line).kind == 0);
+  }
+}
+
+function branches(): void {
+  let prefix = ".text\n__fern_capw:\n";
+  for condition in ["jmp", "je", "jz", "jne", "jnz", "js", "jns", "jb", "jc", "jnae", "jae", "jnb", "jnc", "jbe", "jna", "ja", "jnbe", "jl", "jnge", "jge", "jnl", "jg", "jnle", "jle", "jng", "jo", "jno"] {
+    let p = isa.program(prefix + condition + " .Lreturn\n.Lreturn:\nret\n");
+    require(p.error == "" && p.ops[0].kind == 17 && p.ops[0].condition == condition && p.ops[0].target == 1 && p.ops[1].kind == 1);
+  }
+  require(isa.program(prefix + "jmp .Lmissing\n").error != "");
+  require(isa.program(prefix + "jmp .Loutside\n__other:\n.Loutside:\nret\n").error != "");
+  require(isa.program(prefix + "jmp .Lreturn\n.Lreturn:\nret\n.data\n.Lreturn: .quad 0\n").error != "");
+  let cycle = isa.program(prefix + ".Lcycle:\njmp .Lcycle\n");
+  require(cycle.error == "" && cycle.ops[1].target == 0);
+  require(isa.program(prefix + "__next:\nret\n").ops.len() == 0);
+  require(isa.program(".set alias, __fern_capw\n" + prefix + "ret\n").error != "");
+}
+
+pub function run(output: string): void {
+  let body = text.dependency(output, "__fern_capw");
+  let p = isa.program(output);
+  require(p.error == "" && body.error == "" && p.ops.len() == body.lines.len());
+  let kinds = [6, 6, 6, 3, 16, 17, 8, 9, 5, 13, 15, 12, 11, 16, 17, 5, 1, 4, 1, 7, 7, 7, 18];
+  require(p.ops.len() == kinds.len());
+  let at = 0;
+  for op in p.ops {
+    require(op.kind == kinds[at]);
+    if (op.kind == 17) {
+      require(op.target >= 0 && op.target < p.ops.len() && p.ops[op.target].kind == 1);
+      require(body.lines[at].ends_with(body.lines[op.target].split(":")[0]));
+    }
+    at = at + 1;
+  }
+  moves();
+  memory();
+  indexed_address();
+  immediates();
+  unsupported();
+  branches();
+}

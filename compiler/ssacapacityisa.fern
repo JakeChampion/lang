@@ -1,0 +1,476 @@
+// Independent normal-x86 capacity-helper syntax. Decoded records are data,
+// never effect certificates. A checker must derive this program internally
+// from its own complete text and independently prove every reachable effect.
+import "./ssadecrementtext" as text;
+import "./ssainlineuniqueisa" as registers;
+import "./ssaproofnames" as names;
+import "./util";
+import "std/string";
+
+// kind: 0 unsupported, 1 label, 2 register move, 3 load, 4 store,
+// 5 immediate move, 6 push, 7 pop, 8 BSR, 9 SUB, 10 ADD, 11 AND,
+// 12 NEG, 13 SHL by CL, 14 SHR by CL, 15 LEA, 16 CMP immediate,
+// 17 branch, 18 plain RET. Large-push only: 19 RIP-relative global LEA,
+// 20 immediate SHL, 21 immediate SHR. Array-only: 22 immediate store,
+// 23 self TEST32, 24 underflow INC32, 25 direct dependency call.
+// Arithmetic source -1 is immediate.
+// Widths are bits; addresses retain signed byte offsets and scaled indices.
+pub struct Op { kind: i32, width: i32, source: i32, destination: i32, base: i32, index: i32, scale: i32, offset: i32, immediate: i32, condition: string, target: i32, symbol: string }
+
+pub struct Program { ops: Op[], error: string }
+
+pub struct ArrayProgram { ops: Op[], register_entry: i32, error: string }
+
+struct Address { base: i32, index: i32, scale: i32, offset: i32 }
+
+function empty(kind: i32): Op {
+  return Op { kind: kind, width: 0, source: -1, destination: -1, base: -1, index: -1, scale: 1, offset: 0, immediate: 0, condition: "", target: -1, symbol: "" };
+}
+
+function invalid_address(): Address {
+  return Address { base: -1, index: -1, scale: 1, offset: 0 };
+}
+
+function address(s: string): Address {
+  let at = s.index_of("(");
+  if (at < 0 || !s.ends_with(")")) {
+    return invalid_address();
+  }
+  let displacement = slice_unchecked(s, 0, at) + "";
+  if (displacement != "" && !util.is_decimal_i32(displacement)) {
+    return invalid_address();
+  }
+  let parts = (slice_unchecked(s, at + 1, s.len() - 1) + "").split(",");
+  if (parts.len() < 1 || parts.len() > 3) {
+    return invalid_address();
+  }
+  return address_parts(parts, displacement);
+}
+
+function address_parts(parts: string[], displacement: string): Address {
+  let base = registers.reg(util.trim(parts[0]), false, 64);
+  let index = if (parts.len() > 1) { registers.reg(util.trim(parts[1]), false, 64) } else { -1 };
+  let scale = if (parts.len() > 2) { util.trim(parts[2]) } else { "1" };
+  if (base < 0 || parts.len() > 1 && (index < 0 || index == 4)) {
+    return invalid_address();
+  }
+  if (!valid_scale(scale)) {
+    return invalid_address();
+  }
+  return Address { base: base, index: index, scale: util.digits_to_i32(scale), offset: if (displacement == "") { 0 } else { util.digits_to_i32(displacement) } };
+}
+
+function valid_scale(scale: string): boolean {
+  return scale == "1" || scale == "2" || scale == "4" || scale == "8";
+}
+
+// Split only at top-level commas, rejecting malformed parentheses instead of
+// silently losing an index or treating a third operand as trailing metadata.
+function operands(s: string): string[] {
+  let result: string[] = [];
+  let start = 0;
+  let depth = 0;
+  let i = 0;
+  while (i < s.len()) {
+    if (s[i] == b'(') {
+      depth = depth + 1;
+    }
+    if (s[i] == b')') {
+      depth = depth - 1;
+    }
+    if (depth < 0 || depth > 1) {
+      return [];
+    }
+    if (s[i] == b',' && depth == 0) {
+      result = result.append(util.trim(slice_unchecked(s, start, i) + ""));
+      start = i + 1;
+    }
+    i = i + 1;
+  }
+  if (depth != 0) {
+    return [];
+  }
+  return result.append(util.trim(slice_unchecked(s, start, s.len()) + ""));
+}
+
+function literal(s: string): string {
+  if (!s.starts_with("$")) {
+    return "";
+  }
+  let n = slice_unchecked(s, 1, s.len()) + "";
+  return if (util.is_decimal_i32(n)) { n } else { "" };
+}
+
+function width(name: string): i32 {
+  return if (name.ends_with("q")) { 64 } else { if (name.ends_with("l")) { 32 } else { 0 } };
+}
+
+function movement(name: string, a: string, b: string): Op {
+  let w = width(name);
+  if (name != "movq" && name != "movl") {
+    return empty(0);
+  }
+  let src = registers.reg(a, false, w);
+  let dst = registers.reg(b, false, w);
+  let imm = literal(a);
+  if (dst >= 0 && imm != "") {
+    return Op { ...empty(5), width: w, destination: dst, immediate: util.digits_to_i32(imm) };
+  }
+  if (src >= 0 && dst >= 0) {
+    return Op { ...empty(2), width: w, source: src, destination: dst };
+  }
+  return memory_movement(w, src, dst, address(a), address(b));
+}
+
+function memory_movement(w: i32, src: i32, dst: i32, from: Address, to: Address): Op {
+  if (from.base >= 0 && from.index < 0 && dst >= 0) {
+    return Op { ...empty(3), width: w, destination: dst, base: from.base, offset: from.offset };
+  }
+  if (src >= 0 && to.base >= 0 && to.index < 0) {
+    return Op { ...empty(4), width: w, source: src, base: to.base, offset: to.offset };
+  }
+  return empty(0);
+}
+
+function arithmetic_kind(name: string): i32 {
+  if (name == "subq" || name == "subl") {
+    return 9;
+  }
+  if (name == "addq" || name == "addl") {
+    return 10;
+  }
+  if (name == "andq" || name == "andl") {
+    return 11;
+  }
+  return 0;
+}
+
+function arithmetic(name: string, a: string, b: string): Op {
+  let w = width(name);
+  let dst = registers.reg(b, false, w);
+  if (dst < 0 || w == 0) {
+    return empty(0);
+  }
+  let imm = literal(a);
+  if ((name == "cmpq" || name == "cmpl") && imm != "") {
+    return Op { ...empty(16), width: w, source: dst, immediate: util.digits_to_i32(imm) };
+  }
+  let kind = arithmetic_kind(name);
+  let src = registers.reg(a, false, w);
+  if (kind > 0 && (src >= 0 || imm != "")) {
+    return Op { ...empty(kind), width: w, source: src, destination: dst, immediate: if (imm == "") { 0 } else { util.digits_to_i32(imm) } };
+  }
+  return bit_arithmetic(name, a, w, src, dst);
+}
+
+function bit_arithmetic(name: string, a: string, w: i32, src: i32, dst: i32): Op {
+  if ((name == "bsrq" || name == "bsrl") && src >= 0) {
+    return Op { ...empty(8), width: w, source: src, destination: dst };
+  }
+  if ((name == "shlq" || name == "shll" || name == "shrq" || name == "shrl") && a == "%cl") {
+    return Op { ...empty(if (name.starts_with("shl")) { 13 } else { 14 }), width: w, source: 1, destination: dst };
+  }
+  return empty(0);
+}
+
+function lea(name: string, a: string, b: string): Op {
+  if (name != "leaq") {
+    return empty(0);
+  }
+  let addr = address(a);
+  let dst = registers.reg(b, false, 64);
+  if (addr.base < 0 || dst < 0) {
+    return empty(0);
+  }
+  return Op { ...empty(15), width: 64, destination: dst, base: addr.base, index: addr.index, scale: addr.scale, offset: addr.offset };
+}
+
+function unary(name: string, rest: string): Op {
+  let w = width(name);
+  let reg = registers.reg(rest, false, w);
+  if (reg < 0 || w == 0) {
+    return empty(0);
+  }
+  if (name == "pushq") {
+    return Op { ...empty(6), width: 64, source: reg };
+  }
+  if (name == "popq") {
+    return Op { ...empty(7), width: 64, destination: reg };
+  }
+  if (name == "negq" || name == "negl") {
+    return Op { ...empty(12), width: w, source: reg, destination: reg };
+  }
+  return empty(0);
+}
+
+function branch(name: string): boolean {
+  for candidate in ["jmp", "je", "jz", "jne", "jnz", "js", "jns", "jb", "jc", "jnae", "jae", "jnb", "jnc", "jbe", "jna", "ja", "jnbe", "jl", "jnge", "jge", "jnl", "jg", "jnle", "jle", "jng", "jo", "jno"] {
+    if (name == candidate) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function label(line: string): string {
+  return if (line.ends_with(":")) { slice_unchecked(line, 0, line.len() - 1) + "" } else { "" };
+}
+
+function decode(line: string, labels: names.Names): Op {
+  if (label(line) != "") {
+    return empty(1);
+  }
+  if (line == "ret") {
+    return empty(18);
+  }
+  let at = 0;
+  while (at < line.len() && line[at] != b' ' && line[at] != b'\t') {
+    at = at + 1;
+  }
+  if (at == line.len()) {
+    return empty(0);
+  }
+  let name = slice_unchecked(line, 0, at) + "";
+  let rest = util.trim(slice_unchecked(line, at + 1, line.len()) + "");
+  if (branch(name)) {
+    return Op { ...empty(17), condition: name, target: names.unique_position(labels, rest) };
+  }
+  return decode_operands(name, operands(rest));
+}
+
+function decode_operands(name: string, args: string[]): Op {
+  if (args.len() == 1) {
+    return unary(name, args[0]);
+  }
+  if (args.len() != 2) {
+    return empty(0);
+  }
+  let moved = movement(name, args[0], args[1]);
+  if (moved.kind > 0) {
+    return moved;
+  }
+  let calculated = arithmetic(name, args[0], args[1]);
+  return if (calculated.kind > 0) { calculated } else { lea(name, args[0], args[1]) };
+}
+
+// Selection, instruction positions and branch destinations derive from the
+// same complete supplied text. Empty error proves syntax/binding only. Cycles,
+// unknown instructions and empty streams remain unproved for semantic refusal.
+pub function program(output: string): Program {
+  return selected_program(text.dependency(output, "__fern_capw"), 0);
+}
+
+// This fixed-entry API additionally decodes large-push addressing and shifts.
+// A future semantic checker must invoke it internally on the same supplied
+// output. Empty error does not prove any register, memory or ownership effect.
+pub function large_program(output: string): Program {
+  return selected_program(text.dependency(output, "__fern_large_push"), 1);
+}
+
+// Call records name dependencies but do not establish their definitions or
+// effects. The semantic checker must derive both from this same output.
+pub function array_program(output: string): ArrayProgram {
+  let body = text.select(output, "__fn___fern_arr_dec");
+  let p = selected_program(body, 2);
+  return ArrayProgram { ops: p.ops, register_entry: if (p.error == "") { body.register_entry } else { -1 }, error: p.error };
+}
+
+function selected_program(body: text.Body, mode: i32): Program {
+  if (body.error != "") {
+    return Program { ops: [], error: body.error };
+  }
+  let definitions: string[] = [];
+  for line in body.lines {
+    definitions = definitions.append(label(line));
+  }
+  let labels = names.index(definitions);
+  let ops: Op[] = [];
+  for line in body.lines {
+    let ordinary = decode(line, labels);
+    let op = if (ordinary.kind == 0) { extended_decode(line, mode) } else { ordinary };
+    if (op.kind == 17 && op.target < 0) {
+      return Program { ops: [], error: "capacity branch target outside selected body" };
+    }
+    ops = ops.append(op);
+  }
+  return Program { ops: ops, error: "" };
+}
+
+function extended_decode(line: string, mode: i32): Op {
+  if (mode == 0) {
+    return empty(0);
+  }
+  let large = large_decode(line);
+  return if (large.kind == 0 && mode == 2) { array_decode(line) } else { large };
+}
+
+function array_dependency(name: string): boolean {
+  return name == "__fern_capw" || name == "__fern_large_push";
+}
+
+function array_decode(line: string): Op {
+  let at = 0;
+  while (at < line.len() && line[at] != b' ' && line[at] != b'\t') {
+    at = at + 1;
+  }
+  if (at == line.len()) {
+    return empty(0);
+  }
+  let name = slice_unchecked(line, 0, at) + "";
+  let rest = util.trim(slice_unchecked(line, at + 1, line.len()) + "");
+  if (name == "call" && array_dependency(rest)) {
+    return Op { ...empty(25), symbol: rest };
+  }
+  if (name == "incl" && rest == "__fern_rc_underflow(%rip)") {
+    return Op { ...empty(24), width: 32, symbol: "__fern_rc_underflow" };
+  }
+  let args = operands(rest);
+  return if (args.len() == 2) { array_operands(name, args[0], args[1]) } else { empty(0) };
+}
+
+function array_operands(name: string, a: string, b: string): Op {
+  if (name == "testl" && a == b && registers.reg(a, false, 32) >= 0) {
+    return Op { ...empty(23), width: 32, source: registers.reg(a, false, 32) };
+  }
+  if (name == "leaq" && a == "__fern_freelist(%rip)" && registers.reg(b, false, 64) >= 0) {
+    return Op { ...empty(19), width: 64, destination: registers.reg(b, false, 64), symbol: "__fern_freelist" };
+  }
+  let store = immediate_store(name, a, b);
+  return if (store.kind > 0) { store } else { index_only_lea(name, a, b) };
+}
+
+function immediate_store(name: string, a: string, b: string): Op {
+  let imm = large_literal(a);
+  let addr = address(b);
+  if ((name == "movq" || name == "movl") && imm != "" && addr.base >= 0) {
+    return Op { ...empty(22), width: width(name), immediate: util.digits_to_i32(imm), base: addr.base, index: addr.index, scale: addr.scale, offset: addr.offset };
+  }
+  return empty(0);
+}
+
+function index_only_lea(name: string, a: string, b: string): Op {
+  let dst = registers.reg(b, false, 64);
+  let at = a.index_of("(");
+  if (name != "leaq" || dst < 0 || at < 0 || !a.ends_with(")")) {
+    return empty(0);
+  }
+  let displacement = slice_unchecked(a, 0, at) + "";
+  if (displacement != "" && !util.is_decimal_i32(displacement)) {
+    return empty(0);
+  }
+  let parts = (slice_unchecked(a, at + 1, a.len() - 1) + "").split(",");
+  return index_only_parts(parts, displacement, dst);
+}
+
+function index_only_parts(parts: string[], displacement: string, dst: i32): Op {
+  if (parts.len() != 3 || util.trim(parts[0]) != "" || !valid_scale(util.trim(parts[2]))) {
+    return empty(0);
+  }
+  let index = registers.reg(util.trim(parts[1]), false, 64);
+  if (index < 0 || index == 4) {
+    return empty(0);
+  }
+  return Op { ...empty(15), width: 64, destination: dst, index: index, scale: util.digits_to_i32(util.trim(parts[2])), offset: if (displacement == "") { 0 } else { util.digits_to_i32(displacement) } };
+}
+
+function large_decode(line: string): Op {
+  let at = 0;
+  while (at < line.len() && line[at] != b' ' && line[at] != b'\t') {
+    at = at + 1;
+  }
+  if (at == line.len()) {
+    return empty(0);
+  }
+  let name = slice_unchecked(line, 0, at) + "";
+  let args = operands(util.trim(slice_unchecked(line, at + 1, line.len()) + ""));
+  if (args.len() != 2) {
+    return empty(0);
+  }
+  return large_operands(name, args[0], args[1]);
+}
+
+function hex_digit(c: u8): i32 {
+  if (c >= b'0' && c <= b'9') {
+    return c as i32 - b'0' as i32;
+  }
+  if (c >= b'a' && c <= b'f') {
+    return c as i32 - b'a' as i32 + 10;
+  }
+  if (c >= b'A' && c <= b'F') {
+    return c as i32 - b'A' as i32 + 10;
+  }
+  return -1;
+}
+
+// Only a bounded nonnegative signed-i32 hexadecimal literal is represented.
+// Larger/negative hexadecimal operands conservatively remain unsupported.
+function large_literal(s: string): string {
+  let decimal = literal(s);
+  if (decimal != "") {
+    return decimal;
+  }
+  if (s.len() < 4 || s.len() > 11 || !(s.starts_with("$0x") || s.starts_with("$0X"))) {
+    return "";
+  }
+  let n: i64 = 0;
+  let i = 3;
+  while (i < s.len()) {
+    let digit = hex_digit(s[i]);
+    if (digit < 0) {
+      return "";
+    }
+    n = n * 16 + digit as i64;
+    if (n > 2147483647) {
+      return "";
+    }
+    i = i + 1;
+  }
+  return n.to_string();
+}
+
+function large_operands(name: string, a: string, b: string): Op {
+  let imm = large_literal(a);
+  if (imm != "") {
+    let shifted = immediate_shift(name, imm, b);
+    if (shifted.kind > 0) {
+      return shifted;
+    }
+    return decode_operands(name, ["$" + imm, b]);
+  }
+  let dst = registers.reg(b, false, 64);
+  if (name == "leaq" && a == "__fern_large_freelist(%rip)" && dst >= 0) {
+    return Op { ...empty(19), width: 64, destination: dst, symbol: "__fern_large_freelist" };
+  }
+  return indexed_movement(name, a, b);
+}
+
+function immediate_shift(name: string, imm: string, b: string): Op {
+  if (name != "shlq" && name != "shll" && name != "shrq" && name != "shrl") {
+    return empty(0);
+  }
+  let n = util.digits_to_i32(imm);
+  let w = width(name);
+  let dst = registers.reg(b, false, w);
+  if (n < 0 || n > 255 || dst < 0) {
+    return empty(0);
+  }
+  return Op { ...empty(if (name.starts_with("shl")) { 20 } else { 21 }), width: w, destination: dst, immediate: n };
+}
+
+function indexed_movement(name: string, a: string, b: string): Op {
+  if (name != "movq" && name != "movl") {
+    return empty(0);
+  }
+  let w = width(name);
+  let src = registers.reg(a, false, w);
+  let dst = registers.reg(b, false, w);
+  let from = address(a);
+  let to = address(b);
+  if (from.base >= 0 && from.index >= 0 && dst >= 0) {
+    return Op { ...empty(3), width: w, destination: dst, base: from.base, index: from.index, scale: from.scale, offset: from.offset };
+  }
+  if (src >= 0 && to.base >= 0 && to.index >= 0) {
+    return Op { ...empty(4), width: w, source: src, base: to.base, index: to.index, scale: to.scale, offset: to.offset };
+  }
+  return empty(0);
+}

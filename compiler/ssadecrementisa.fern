@@ -9,7 +9,8 @@ import "std/string";
 
 // kind: 0 unsupported, 1 label, 2 register move, 3 load, 4 store,
 // 5 self TEST32, 6 TEST8 bit zero, 7 CMP32 immediate, 8 CMP64 floor,
-// 9 SUB32 one, 10 branch, 11 plain RET. Width is in bits. Register numbers
+// 9 SUB32 one, 10 branch, 11 plain RET, 12 exact underflow-counter INC32.
+// Width is in bits. Register numbers
 // use the independent ISA table; offsets are signed byte displacements.
 pub struct Op { kind: i32, width: i32, source: i32, destination: i32, base: i32, offset: i32, immediate: i32, condition: string, target: i32 }
 
@@ -123,6 +124,9 @@ function decode(line: string, labels: names.Names): Op {
   }
   let name = slice_unchecked(line, 0, at) + "";
   let rest = util.trim(slice_unchecked(line, at + 1, line.len()) + "");
+  if (name == "incl" && rest == "__fern_rc_underflow(%rip)") {
+    return Op { ...empty(12), width: 32 };
+  }
   if (branch(name)) {
     return Op { ...empty(10), condition: name, target: names.unique_position(labels, rest) };
   }

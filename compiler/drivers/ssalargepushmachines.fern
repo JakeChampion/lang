@@ -1,0 +1,127 @@
+import "../ssalargepushmachine" as machine;
+import "../ssainlineuniqueisa" as registers;
+import "std/string";
+
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("large-push machine controls failed: " + group);
+    // Status space is shared. Module and mutation identify every failure.
+    exit(180);
+  }
+}
+
+function change(s: string, from: string, to: string): string {
+  let outer = s.split("__fern_large_push:\n");
+  require(outer.len() == 2, "unique helper fixture");
+  let next = outer[1].split("__fern_capw:\n");
+  require(next.len() == 2, "following helper fixture");
+  let parts = next[0].split(from);
+  require(parts.len() > 1, "mutation present: " + from);
+  return outer[0] + "__fern_large_push:\n" + parts.join(to) + "__fern_capw:\n" + next[1];
+}
+
+function mutation(s: string, from: string, to: string, expected: boolean): void {
+  require(machine.check(change(s, from, to)) == expected, from + " -> " + to);
+}
+
+function arithmetic(s: string): void {
+  for line in ["bsrq %rdx, %rcx", "movl $0, %ecx", "movl $19, %ecx"] {
+    mutation(s, "bsrq %rax, %rcx", line, false);
+  }
+  mutation(s, "bsrq %rax, %rcx", "bsrl %eax, %ecx", true);
+  mutation(s, "subl $2, %ecx", "subq $2, %rcx", true);
+  mutation(s, "subl $2, %ecx", "subl $1, %ecx", false);
+  mutation(s, "shlq %cl, %rdx", "shll %cl, %edx", true);
+  mutation(s, "shrq %cl, %rdx", "shrl %cl, %edx", true);
+  mutation(s, "shlq $2, %rcx", "shlq $66, %rcx", true);
+  mutation(s, "shlq $2, %rcx", "shll $34, %ecx", true);
+  mutation(s, "shlq $2, %rcx", "shlq $1, %rcx", false);
+  mutation(s, "leaq -1(%rax,%rdx), %rax", "leaq (%rax,%rdx), %rax", false);
+  mutation(s, "leaq -1(%rax,%rdx), %rax", "leaq -1(%rax,%rdx,2), %rax", false);
+  mutation(s, "negq %rdx", "negl %edx", false);
+  mutation(s, "andq %rdx, %rax", "andq $-3, %rax", false);
+  mutation(s, "subq $72, %rdx", "subq $71, %rdx", false);
+  mutation(s, "subq $72, %rdx", "subq $2147483647, %rdx", false);
+  // One byte below the clamp still rounds to the same minimum class.
+  mutation(s, "movl $524288, %eax", "movl $524287, %eax", true);
+  mutation(s, "movl $524288, %eax", "movl $524289, %eax", false);
+}
+
+function memory(s: string): void {
+  let load = "movq (%rdx,%rax,8), %rcx";
+  for line in ["movl (%rdx,%rax,8), %ecx", "movq 4(%rdx,%rax,8), %rcx", "movq (%rdx,%rax,4), %rcx", "movq (%rdx,%rsi,8), %rcx", "movq (%r8), %rcx", "movq (%rcx,%rax,8), %rcx", "movq 2147483647(%rdx,%rax,8), %rcx"] {
+    mutation(s, load, line, false);
+  }
+  let block = "movq %rcx, (%r8)";
+  for line in ["", "movl %ecx, (%r8)", "movq %rax, (%r8)", "movq %rcx, 4(%r8)", "movq %rcx, (%rsp)", "movq %rcx, (%r8)\nmovq %rcx, (%r8)"] {
+    mutation(s, block, line, false);
+  }
+  let slot = "movq %r8, (%rdx,%rax,8)";
+  for line in ["", "movl %r8d, (%rdx,%rax,8)", "movq %rcx, (%rdx,%rax,8)", "movq %r8, 8(%rdx,%rax,8)", "movq %r8, (%rdx,%rax,4)", "movq %r8, (%rdx,%rax,8)\nmovq %r8, (%rdx,%rax,8)"] {
+    mutation(s, slot, line, false);
+  }
+  mutation(s, block, block + "\nmovq (%r8), %rcx", true);
+  mutation(s, slot, slot + "\nmovq (%rdx,%rax,8), %rcx", false);
+  mutation(s, slot, slot + "\nmovq (%rdx,%rax,8), %r8", true);
+  mutation(s, block, block + "\nmovl 4(%r8), %ecx", false);
+  mutation(s, "leaq __fern_large_freelist(%rip), %rdx", "leaq __fern_small_freelist(%rip), %rdx", false);
+}
+
+function registers_and_return(s: string): void {
+  let regs = registers.registers(false, 64);
+  let words = registers.registers(false, 32);
+  let i = 0;
+  while (i < regs.len()) {
+    let r = regs[i];
+    mutation(s, "    ret\n", "movq " + r + ", " + r + "\nret\n", true);
+    mutation(s, "    ret\n", "movl " + words[i] + ", " + words[i] + "\nret\n", false);
+    mutation(s, "    ret\n", "movq " + regs[(i + 1) % regs.len()] + ", " + r + "\nret\n", false);
+    i = i + 1;
+  }
+  mutation(s, "    ret\n", "ret $8\n", false);
+  mutation(s, "    ret\n", "movq (%rsp), %rsp\nret\n", false);
+  mutation(s, "    ret\n", "movq %rax, (%rsp)\nret\n", false);
+  mutation(s, "    ret\n", "movq %rsp, %r8\nret\n", false);
+  mutation(s, "    ret\n", "movq 8(%rsp), %rax\nret\n", false);
+  let load = "movq (%rdx,%rax,8), %rcx";
+  mutation(s, load, "movq (%rsp), %rcx\n" + load, true);
+  mutation(s, load, "movl 4(%rsp), %ecx\n" + load, true);
+  mutation(s, load, "movq %rbx, %rcx\nmovq %rcx, %rbx\n" + load, true);
+  mutation(s, load, "movl %ebx, %ecx\nmovq %rcx, %rbx\n" + load, false);
+}
+
+function flags_and_oversized(s: string): void {
+  let cmp = "cmpq $0x40000000, %rsi";
+  mutation(s, cmp, "cmpl $0x40000000, %esi", false);
+  mutation(s, cmp, "cmpq $1073741823, %rsi", false);
+  mutation(s, cmp, "cmpq $1073741825, %rsi", false);
+  mutation(s, "ja .Llpush_ret", "jae .Llpush_ret", false);
+  mutation(s, "ja .Llpush_ret", "jnbe .Llpush_ret", true);
+  mutation(s, "ja .Llpush_ret", "jg .Llpush_ret", false);
+  mutation(s, "ja .Llpush_ret", "jo .Llpush_ret", false);
+  mutation(s, cmp, "movl %esi, %esi\n" + cmp, false);
+  mutation(s, cmp, "shlq $0, %rsi\n" + cmp, true);
+  mutation(s, cmp, "shlq $64, %rsi\n" + cmp, true);
+  mutation(s, cmp, "shll $32, %esi\n" + cmp, false);
+  mutation(s, cmp, cmp + "\nshlq $64, %rax", true);
+  mutation(s, cmp, cmp + "\naddq $0, %rax", false);
+  mutation(s, "jae .L2", "jnb .L2", true);
+  mutation(s, "jae .L2", "jge .L2", false);
+  mutation(s, "jae .L2", "je .L2", false);
+  mutation(s, "cmpq $524288, %rax", "cmpl $524288, %eax", true);
+  mutation(s, "cmpq $524288, %rax", "cmpq $524288, %rax\nshlq $1, %rax\nshrq $1, %rax", false);
+}
+
+pub function run(output: string): void {
+  require(machine.check(output), "actual complete output");
+  require(!machine.check(".text\n__fern_large_push:\nret\n"), "empty effects");
+  arithmetic(output);
+  memory(output);
+  registers_and_return(output);
+  flags_and_oversized(output);
+  mutation(output, "    ret\n", "jmp .Llpush_ret\n", false);
+  mutation(output, "    ret\n", "unknown_instruction\nret\n", false);
+  mutation(output, "    ret\n", "call __fern_capw\nret\n", false);
+  mutation(output, "    ret\n", "__other:\nret\n", false);
+  require(!machine.check(".set alias, __fern_large_push\n" + output), "namespace alias");
+}

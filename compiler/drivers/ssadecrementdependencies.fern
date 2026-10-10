@@ -1,0 +1,84 @@
+import "../ssadecrementtext" as text;
+import "std/string";
+
+function require(ok: boolean): void {
+  if (!ok) {
+    print("decrement dependency boundary controls failed");
+    exit(166);
+  }
+}
+
+function change(s: string, from: string, to: string): string {
+  let parts = s.split(from);
+  require(parts.len() > 1);
+  return parts.join(to);
+}
+
+function check(s: string, entry: string, ok: boolean): void {
+  let p = text.dependency(s, entry);
+  if (p.error == "" != ok) {
+    print(entry + ": expected " + ok.to_string() + ": " + p.error);
+  }
+  require(p.error == "" == ok && p.register_entry == -1);
+  if (!ok) {
+    require(p.lines.len() == 0);
+  }
+}
+
+function namespace(s: string, entry: string, local: string): void {
+  for section in [".text", ".data", ".bss", ".section .rodata"] {
+    check(s + "\n" + section + "\n" + entry + ":\nret\n", entry, false);
+    check(s + "\n" + section + "\n" + local + ":\nret\n", entry, false);
+  }
+  check(change(s, entry + ":", entry + ": ret"), entry, false);
+  check(change(s, local + ":", local + ": ret"), entry, false);
+  check(change(s, entry + ":", "__other_dependency:"), entry, false);
+  check(change(s, ".text", ".data"), entry, false);
+  check(change(s, ".text\n", ""), entry, false);
+  for directive in [".set alias, " + entry, ".equ alias, " + entry, ".macro hidden", ".include \"hidden.s\"", ".if 0", ".intel_syntax noprefix", ".pushsection .text", ".previous", ".subsection 1", ".weakref alias, " + entry] {
+    check(directive + "\n" + s, entry, false);
+    check(s + "\n" + directive, entry, false);
+  }
+  for directive in [".align 8", ".cfi_startproc", ".byte 0"] {
+    check(change(s, entry + ":\n", entry + ":\n" + directive + "\n"), entry, false);
+  }
+  check(".data\n.ascii \"unterminated\n" + s, entry, false);
+  check(".data\n.ascii \"complete\"; .set alias, hidden\n" + s, entry, false);
+  for code in [0, 1, 11, 12, 31, 127] {
+    check(string.string_from_codepoint(code as char) + "\n" + s, entry, false);
+  }
+}
+
+function boundaries(s: string, entry: string, lines: string[]): void {
+  for boundary in ["__next:", entry + ".r:", ".r:", ".data", ".bss", ".section .rodata", ".text"] {
+    let p = text.dependency(s + boundary + "\nret\n", entry);
+    require(p.error == "" && p.lines.join("\n") == lines.join("\n"));
+  }
+  let unknown = text.dependency(change(s, lines[0], "unknown_instruction"), entry);
+  require(unknown.error == "" && unknown.lines[0] == "unknown_instruction");
+  // Selection must not certify an empty or truncated instruction stream.
+  // It preserves that stream for the subsequent semantic checker to refuse.
+  let empty = text.dependency(".text\n" + entry + ":\n__next:\nret\n", entry);
+  require(empty.error == "" && empty.lines.len() == 0);
+}
+
+pub function run(output: string): void {
+  for entry in ["__fern_capw", "__fern_large_push"] {
+    check(output, entry, true);
+    let p = text.dependency(output, entry);
+    require(p.lines.len() > 15 && p.lines[p.lines.len() - 1] == "ret");
+    require(p.lines[0] == (if (entry == "__fern_capw") { "pushq %rax" } else { "cmpq $0x40000000, %rsi" }));
+    let s = ".text\n" + entry + ":\n" + p.lines.join("\n") + "\n";
+    require(text.dependency(s, entry).lines.join("\n") == p.lines.join("\n"));
+    check(change(s, "\n", "\r\n\t"), entry, true);
+    check("# ordinary comment\n" + s, entry, true);
+    check(".data\n.ascii \"escaped \\\"; " + entry + ": .set alias, hidden\\n\"\n" + s, entry, true);
+    check("", entry, false);
+    check(s, "__fn___fern_arr_dec", false);
+    require(text.select(s, entry).error != "");
+    let local = if (entry == "__fern_capw") { ".Lcapw_ret" } else { ".Llpush_ret" };
+    check(change(s, local, ".Lrenamed_dependency_return"), entry, true);
+    namespace(s, entry, local);
+    boundaries(s, entry, p.lines);
+  }
+}

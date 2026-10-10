@@ -1,0 +1,184 @@
+// Bounded arithmetic facts for the capacity-helper proof. Values denote
+// constants or N + offset for ONE original N in the supplied interval.
+// These public records are checked on every operation, not certificates of
+// decoded instructions, machine widths, flags, memory or caller ownership.
+import "core/cmp";
+
+pub struct Interval { low: i32, high: i32 }
+
+pub struct Value { factor: i32, offset: i64 }
+
+pub struct Comparison { less: i32, equal: i32, less_equal: i32 }
+
+pub function unknown(): Value {
+  return Value { factor: -1, offset: 0 as i64 };
+}
+
+pub function valid_interval(r: Interval): boolean {
+  return r.low >= 1 && r.low <= r.high && r.high <= 65535;
+}
+
+function bounded(n: i64): boolean {
+  return n >= -(4294967295 as i64) && n <= 4294967295 as i64;
+}
+
+function endpoint(v: Value, n: i32): i64 {
+  return v.factor as i64 * (n as i64) + v.offset;
+}
+
+pub function valid(r: Interval, v: Value): boolean {
+  if (!valid_interval(r) || v.factor != 0 && v.factor != 1 || !bounded(v.offset)) {
+    return false;
+  }
+  return bounded(endpoint(v, r.low)) && bounded(endpoint(v, r.high));
+}
+
+function checked(r: Interval, v: Value): Value {
+  return if (valid(r, v)) { v } else { unknown() };
+}
+
+pub function number(r: Interval, n: i64): Value {
+  return checked(r, Value { factor: 0, offset: n });
+}
+
+pub function original(r: Interval): Value {
+  return checked(r, Value { factor: 1, offset: 0 as i64 });
+}
+
+// Mathematical addition only. A machine consumer must separately establish
+// the instruction width and its overflow/flag behavior.
+pub function add(r: Interval, v: Value, delta: i64): Value {
+  if (!valid(r, v) || !bounded(delta)) {
+    return unknown();
+  }
+  return checked(r, Value { factor: v.factor, offset: v.offset + delta });
+}
+
+pub function negate(r: Interval, v: Value): Value {
+  if (!valid(r, v) || v.factor != 0) {
+    return unknown();
+  }
+  return number(r, -v.offset);
+}
+
+// Exact low-32 truncation followed by zero extension when the complete
+// interval stays on one side of zero. Crossing the wrap boundary refuses.
+pub function zero32(r: Interval, v: Value): Value {
+  if (!valid(r, v)) {
+    return unknown();
+  }
+  if (endpoint(v, r.low) >= 0) {
+    return v;
+  }
+  if (endpoint(v, r.high) < 0) {
+    return checked(r, Value { factor: v.factor, offset: v.offset + 4294967296 as i64 });
+  }
+  return unknown();
+}
+
+pub function power(bit: i32): i64 {
+  if (bit < 0 || bit > 31) {
+    return 0 as i64;
+  }
+  let result = 1 as i64;
+  let at = 0;
+  while (at < bit) {
+    result = result * (2 as i64);
+    at = at + 1;
+  }
+  return result;
+}
+
+function highest(n: i64): i32 {
+  let rest = n;
+  let bit = -1;
+  while (rest > 0) {
+    rest = rest / (2 as i64);
+    bit = bit + 1;
+  }
+  return bit;
+}
+
+// A zero input or a range crossing a highest-bit boundary has no known BSR
+// result here. This makes no claim about BSR's undefined destination/flags.
+pub function bit_scan(r: Interval, v: Value): i32 {
+  if (!valid(r, v) || endpoint(v, r.low) <= 0) {
+    return -1;
+  }
+  let bit = highest(endpoint(v, r.low));
+  return if (bit == highest(endpoint(v, r.high))) { bit } else { -1 };
+}
+
+// For nonnegative operands, AND with exactly -2^k clears the low k bits.
+// Reduce to a constant only if both endpoints lie in the same quotient.
+// An arbitrary mask does not satisfy this monotonicity argument.
+pub function mask(r: Interval, v: Value, m: Value): Value {
+  if (!valid(r, v) || !valid(r, m) || m.factor != 0 || m.offset >= 0) {
+    return unknown();
+  }
+  let step = -m.offset;
+  if (power(highest(step)) != step || endpoint(v, r.low) < 0) {
+    return unknown();
+  }
+  let low = endpoint(v, r.low) / step;
+  let high = endpoint(v, r.high) / step;
+  return if (low == high) { number(r, low * step) } else { unknown() };
+}
+
+function truth(always: boolean, never: boolean): i32 {
+  return if (always) { 1 } else { if (never) { 0 } else { -1 } };
+}
+
+// Correlated mathematical predicates, not independently combined flag bits.
+// In particular N <= 256 is known on [1,256] although < and == each vary.
+pub function compare(r: Interval, v: Value, n: i64): Comparison {
+  if (!valid(r, v) || !bounded(n)) {
+    return Comparison { less: -1, equal: -1, less_equal: -1 };
+  }
+  let low = endpoint(v, r.low);
+  let high = endpoint(v, r.high);
+  return Comparison { less: truth(high < n, low >= n), equal: truth(low == n && high == n, n < low || n > high), less_equal: truth(high <= n, low > n) };
+}
+
+// Generate disjoint adjacent intervals from the input domain, without an
+// external table of expected results. The first interval keeps N unchanged.
+pub function intervals(): Interval[] {
+  let result = [Interval { low: 1, high: 256 }];
+  let bit = 8;
+  while (bit < 16) {
+    let step = power(bit - 2) as i32;
+    let low = power(bit) as i32;
+    let high = power(bit + 1) as i32 - 1;
+    low = cmp.max(low, 257);
+    while (low <= high) {
+      let rounded = ((low - 1) / step + 1) * step;
+      let end = cmp.min(rounded, high);
+      result = result.append(Interval { low: low, high: end });
+      low = end + 1;
+    }
+    bit = bit + 1;
+  }
+  return result;
+}
+
+// Independent ceiling-division specification. This does not replay or trust
+// a decoded helper instruction sequence. A crossing interval refuses.
+pub function expected(r: Interval): Value {
+  if (!valid_interval(r)) {
+    return unknown();
+  }
+  if (r.high <= 256) {
+    return original(r);
+  }
+  let bit = bit_scan(r, original(r));
+  if (r.low <= 256 || bit < 8) {
+    return unknown();
+  }
+  let step = power(bit - 2);
+  let low = ((r.low as i64 - 1 as i64) / step + 1 as i64) * step;
+  let high = ((r.high as i64 - 1 as i64) / step + 1 as i64) * step;
+  if (low != high) {
+    return unknown();
+  }
+  return number(r, cmp.min(low, 65535 as i64));
+}

@@ -1,14 +1,15 @@
-// Scoped normal-x86 kept/shared decrement effects. All states are private
+// Scoped normal-x86 decrement effects. All states are private
 // and derived from the same complete supplied text, never public proof data.
 import "./ssadecrementisa" as isa;
 import "./ssadecrementcount" as count;
 import "./ssadecrementmemory" as memory;
+import "./ssadecrementtext" as text;
 
 // kind: unknown, original GPR, pointer P, original SP, return address,
-// zero-extended 32-bit count. Original GPR identities remain distinct.
+// zero-extended 32-bit count, exact zero. Original GPR identities remain distinct.
 struct Value { kind: i32, identity: i32, rc: count.Value }
 
-struct State { regs: Value[], heap: memory.Memory, flags: count.Flags, ok: boolean }
+struct State { regs: Value[], heap: memory.Memory, flags: count.Flags, zero: boolean, increments: i32, ok: boolean }
 
 function token(kind: i32, identity: i32): Value {
   return Value { kind: kind, identity: identity, rc: count.unknown() };
@@ -18,7 +19,7 @@ function unknown_flags(): count.Flags {
   return count.Flags { zero: -1, negative: -1, carry: -1, overflow: -1, signed_less: -1 };
 }
 
-function initial(shared: boolean, register_entry: boolean): State {
+function initial(shared: boolean, register_entry: boolean, zero: boolean): State {
   let regs: Value[] = [];
   let i = 0;
   while (i < 16) {
@@ -28,7 +29,7 @@ function initial(shared: boolean, register_entry: boolean): State {
   if (register_entry) {
     regs = regs.with(0, token(2, 0));
   }
-  return State { regs: regs, heap: memory.initial(shared), flags: unknown_flags(), ok: true };
+  return State { regs: regs, heap: memory.initial(shared), flags: unknown_flags(), zero: zero, increments: 0, ok: true };
 }
 
 function word(v: Value): count.Value {
@@ -46,6 +47,9 @@ function write(s: State, reg: i32, v: Value): State {
 function load(s: State, op: isa.Op, register_entry: boolean): State {
   let base = s.regs[op.base];
   if (base.kind == 2 && op.width == 32 && op.offset == -8) {
+    if (s.zero) {
+      return write(s, op.destination, token(6, 0));
+    }
     let v = memory.load(s.heap, op.offset, 4);
     return write(State { ...s, ok: count.valid(v) }, op.destination, counted(v));
   }
@@ -61,26 +65,58 @@ function load(s: State, op: isa.Op, register_entry: boolean): State {
 }
 
 function store(s: State, op: isa.Op): State {
-  if (s.regs[op.base].kind != 2 || op.width != 32) {
+  if (s.zero || s.regs[op.base].kind != 2 || op.width != 32) {
     return State { ...s, ok: false };
   }
   let heap = memory.store(s.heap, op.offset, 4, word(s.regs[op.source]));
   return State { ...s, heap: heap, ok: memory.valid(heap) };
 }
 
+function zero_flags(immediate: i32): count.Flags {
+  // Exact modular32 subtraction 0 - immediate. Only INT_MIN overflows.
+  let over = immediate == -2147483648;
+  let neg = immediate > 0 || over;
+  return count.Flags { zero: if (immediate == 0) { 1 } else { 0 }, negative: if (neg) { 1 } else { 0 }, carry: if (immediate != 0) { 1 } else { 0 }, overflow: if (over) { 1 } else { 0 }, signed_less: if (immediate > 0) { 1 } else { 0 } };
+}
+
+function pointer_flags(s: State, op: isa.Op, v: Value): State {
+  if ((op.kind == 6 || op.kind == 8) && v.kind == 2) {
+    // P is aligned and in [65536, 2^47). Equality with the floor is unknown.
+    return State { ...s, flags: count.Flags { zero: if (op.kind == 6) { 1 } else { -1 }, negative: 0, carry: 0, overflow: 0, signed_less: 0 } };
+  }
+  return State { ...s, flags: unknown_flags() };
+}
+
 function flags(s: State, op: isa.Op): State {
   let v = s.regs[op.source];
+  if (v.kind == 6 && (op.kind == 5 || op.kind == 7)) {
+    return State { ...s, flags: zero_flags(if (op.kind == 5) { 0 } else { op.immediate }) };
+  }
   if (op.kind == 5) {
     return State { ...s, flags: count.test(word(v)) };
   }
   if (op.kind == 7) {
     return State { ...s, flags: count.compare(word(v), op.immediate) };
   }
-  if ((op.kind == 6 || op.kind == 8) && v.kind == 2) {
-    // P is aligned and in [65536, 2^47). Equality with the floor is unknown.
-    return State { ...s, flags: count.Flags { zero: if (op.kind == 6) { 1 } else { -1 }, negative: 0, carry: 0, overflow: 0, signed_less: 0 } };
+  return pointer_flags(s, op, v);
+}
+
+function arithmetic(s: State, op: isa.Op): State {
+  if (op.kind == 9) {
+    let old = word(s.regs[op.source]);
+    let v = count.decrement(old);
+    return write(State { ...s, ok: count.valid(v), flags: count.decrement_flags(old) }, op.destination, counted(v));
   }
-  return State { ...s, flags: unknown_flags() };
+  if (op.kind >= 5 && op.kind <= 8) {
+    return flags(s, op);
+  }
+  if (op.kind == 12 && s.zero && s.increments == 0) {
+    // The sole admitted counter write maps arbitrary original low32 C to
+    // C+1 modulo 2^32, leaving upper32 and all other memory unchanged.
+    // INC preserves CF. Its other flags describe C+1, not the zero header.
+    return State { ...s, increments: 1, flags: count.Flags { ...unknown_flags(), carry: s.flags.carry } };
+  }
+  return State { ...s, ok: false };
 }
 
 function step(s: State, op: isa.Op, register_entry: boolean): State {
@@ -90,7 +126,7 @@ function step(s: State, op: isa.Op, register_entry: boolean): State {
   if (op.kind == 2) {
     let v = s.regs[op.source];
     // MOV32 zero-extends; it cannot preserve an arbitrary 64-bit identity.
-    return write(s, op.destination, if (op.width == 64 || v.kind == 5) { v } else { token(0, 0) });
+    return write(s, op.destination, if (op.width == 64 || v.kind == 5 || v.kind == 6) { v } else { token(0, 0) });
   }
   if (op.kind == 3) {
     return load(s, op, register_entry);
@@ -98,15 +134,7 @@ function step(s: State, op: isa.Op, register_entry: boolean): State {
   if (op.kind == 4) {
     return store(s, op);
   }
-  if (op.kind == 9) {
-    let old = word(s.regs[op.source]);
-    let v = count.decrement(old);
-    return write(State { ...s, ok: count.valid(v), flags: count.decrement_flags(old) }, op.destination, counted(v));
-  }
-  if (op.kind >= 5 && op.kind <= 8) {
-    return flags(s, op);
-  }
-  return State { ...s, ok: false };
+  return arithmetic(s, op);
 }
 
 function invert(flag: i32): i32 {
@@ -175,8 +203,12 @@ function branch(f: count.Flags, name: string): i32 {
   return carry_branch(f, name);
 }
 
+function heap_finished(s: State): boolean {
+  return if (s.zero) { s.increments == 1 } else { memory.finished(s.heap) };
+}
+
 function finished(s: State): boolean {
-  if (!memory.finished(s.heap) || s.regs[0].kind != 2 || s.regs[4].kind != 3) {
+  if (!heap_finished(s) || s.regs[0].kind != 2 || s.regs[4].kind != 3) {
     return false;
   }
   let i = 2;
@@ -195,8 +227,8 @@ function in_program(pc: i32, length: i32): boolean {
   return pc >= 0 && pc < length;
 }
 
-function path(p: isa.Program, shared: boolean, register_entry: boolean): boolean {
-  let s = initial(shared, register_entry);
+function path(p: isa.Program, shared: boolean, register_entry: boolean, zero: boolean): boolean {
+  let s = initial(shared, register_entry, zero);
   let visited: boolean[] = [];
   for op in p.ops {
     visited = visited.append(false);
@@ -243,10 +275,28 @@ pub function check(output: string, entry: string): boolean {
   }
   for shared in [false, true] {
     for register_entry in [false, true] {
-      if (!path(p, shared, register_entry)) {
+      if (!path(p, shared, register_entry, false)) {
         return false;
       }
     }
   }
   return true;
+}
+
+// Same entry/register/return contract, but original RC is exactly zero.
+// The declared counter must resolve to an aligned writable eight-byte
+// allocation, disjoint from object/header and stack in the linked image.
+// Those address/permission preconditions are NOT established by text parsing.
+// The counter's original contents are arbitrary, despite its initializer.
+// Proves only one low32 increment with unchanged upper32/object/other memory.
+// Underflow reporting does not discharge an ownership credit.
+pub function check_zero(output: string, entry: string): boolean {
+  if (!text.counter_storage(output)) {
+    return false;
+  }
+  let p = isa.program(output, entry);
+  if (p.error != "") {
+    return false;
+  }
+  return path(p, false, false, true) && path(p, false, true, true);
 }
