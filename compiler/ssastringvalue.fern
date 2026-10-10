@@ -1,0 +1,226 @@
+// Checked unsigned length arithmetic. These public values are mathematical
+// data, never instruction, metadata, allocation or ownership certificates.
+import "./ssacapacityvalue" as small;
+import "./ssalargepushranges" as large;
+
+// W=ceil(L/8), d=8W-L. A rectangle describes correlated L=8W-d values.
+pub struct Interval { low: i64, high: i64, min_residue: i32, max_residue: i32 }
+
+pub struct Value { factor: i32, offset: i64, residue: i32 }
+
+pub struct Parts { low: i64, high: i64, valid: boolean }
+
+pub struct Comparison { less: i32, equal: i32, less_equal: i32 }
+
+pub function unknown(): Value {
+  return Value { factor: -1, offset: 0 as i64, residue: 0 };
+}
+
+pub function valid_interval(r: Interval): boolean {
+  return r.low >= 0 && r.low <= r.high && r.high <= 2305843009213693948 as i64 && r.min_residue >= 0 && r.min_residue <= r.max_residue && r.max_residue <= 7 && (r.low > 0 || r.max_residue == 0);
+}
+
+function bounded(n: i64): boolean {
+  return n >= -(4294967295 as i64) && n <= 4294967295 as i64;
+}
+
+function shape(v: Value): boolean {
+  return (v.factor == 0 || v.factor == 1 || v.factor == 8) && bounded(v.offset) && (v.residue == 0 || v.residue == -1);
+}
+
+function floor_div(n: i64, divisor: i64): i64 {
+  return if (n >= 0) { n / divisor } else { -((-n + divisor - 1 as i64) / divisor) };
+}
+
+function normalize(low: i64, high: i64): Parts {
+  let carry = floor_div(low, 4294967296 as i64);
+  let h = high + carry;
+  return Parts { low: low - carry * (4294967296 as i64), high: h, valid: h >= 0 && h <= 4294967295 as i64 };
+}
+
+function endpoint(v: Value, w: i64, d: i32): Parts {
+  let extra = v.offset + v.residue as i64 * (d as i64);
+  if (v.factor == 8) {
+    // Neither 8*W nor a full unsigned64 value is formed in signed i64.
+    return normalize(w % (536870912 as i64) * (8 as i64) + extra, w / (536870912 as i64));
+  }
+  let n = v.factor as i64 * w + extra;
+  return normalize(n % (4294967296 as i64), n / (4294967296 as i64));
+}
+
+pub function valid(r: Interval, v: Value): boolean {
+  if (!valid_interval(r) || !shape(v)) {
+    return false;
+  }
+  // Both factors are monotone nonnegative; the residue coefficient is 0/-1.
+  return endpoint(v, r.low, r.max_residue).valid && endpoint(v, r.high, r.min_residue).valid;
+}
+
+function checked(r: Interval, v: Value): Value {
+  return if (valid(r, v)) { v } else { unknown() };
+}
+
+pub function number(r: Interval, n: i64): Value {
+  return checked(r, Value { factor: 0, offset: n, residue: 0 });
+}
+
+pub function words(r: Interval): Value {
+  return checked(r, Value { factor: 1, offset: 0 as i64, residue: 0 });
+}
+
+pub function length(r: Interval): Value {
+  return checked(r, Value { factor: 8, offset: 0 as i64, residue: -1 });
+}
+
+pub function add(r: Interval, v: Value, n: i64): Value {
+  if (!valid(r, v) || !bounded(n)) {
+    return unknown();
+  }
+  return checked(r, Value { ...v, offset: v.offset + n });
+}
+
+pub function times_eight(r: Interval, v: Value): Value {
+  if (!valid(r, v) || v.factor != 0 && v.factor != 1 || v.residue != 0) {
+    return unknown();
+  }
+  return checked(r, Value { factor: v.factor * 8, offset: v.offset * (8 as i64), residue: 0 });
+}
+
+// Exact unsigned SHR3 when the residue contributes one constant quotient.
+pub function shift_three(r: Interval, v: Value): Value {
+  if (!valid(r, v) || v.factor != 8) {
+    return unknown();
+  }
+  let low = floor_div(v.offset + v.residue as i64 * (r.max_residue as i64), 8 as i64);
+  let high = floor_div(v.offset + v.residue as i64 * (r.min_residue as i64), 8 as i64);
+  return if (low == high) { checked(r, Value { factor: 1, offset: low, residue: 0 }) } else { unknown() };
+}
+
+pub function lower(r: Interval, v: Value): Parts {
+  return if (valid(r, v)) { endpoint(v, r.low, r.max_residue) } else { Parts { low: 0 as i64, high: 0 as i64, valid: false } };
+}
+
+pub function upper(r: Interval, v: Value): Parts {
+  return if (valid(r, v)) { endpoint(v, r.high, r.min_residue) } else { Parts { low: 0 as i64, high: 0 as i64, valid: false } };
+}
+
+pub function point(r: Interval, v: Value, w: i64, d: i32): Parts {
+  if (!valid(r, v) || w < r.low || w > r.high || d < r.min_residue || d > r.max_residue) {
+    return Parts { low: 0 as i64, high: 0 as i64, valid: false };
+  }
+  return endpoint(v, w, d);
+}
+
+// A conservative whole-value zero extension. A machine must retain separate
+// projections for other low32 values; it cannot silently restore a lost high.
+pub function zero32(r: Interval, v: Value): Value {
+  let hi = upper(r, v);
+  return if (hi.valid && hi.high == 0) { v } else { unknown() };
+}
+
+function truth(always: boolean, never: boolean): i32 {
+  return if (always) { 1 } else { if (never) { 0 } else { -1 } };
+}
+
+function below(p: Parts, n: i64): boolean {
+  return p.high == 0 && p.low < n;
+}
+
+function equal(p: Parts, n: i64): boolean {
+  return p.high == 0 && p.low == n;
+}
+
+pub function compare(r: Interval, v: Value, n: i64): Comparison {
+  let lo = lower(r, v);
+  let hi = upper(r, v);
+  if (!lo.valid || !hi.valid || n < 0 || n > 4294967295 as i64) {
+    return Comparison { less: -1, equal: -1, less_equal: -1 };
+  }
+  let above_low = !below(lo, n) && !equal(lo, n);
+  return Comparison { less: truth(below(hi, n), !below(lo, n)), equal: truth(equal(lo, n) && equal(hi, n), below(hi, n) || above_low), less_equal: truth(below(hi, n) || equal(hi, n), above_low) };
+}
+
+function extra_words(fused: boolean): i64 {
+  return if (fused) { 3 as i64 } else { 0 as i64 };
+}
+
+function row(low: i64, high: i64): Interval {
+  return Interval { low: low, high: high, min_residue: 0, max_residue: 7 };
+}
+
+function small_intervals(fused: boolean): Interval[] {
+  let result: Interval[] = [];
+  if (fused) {
+    result = result.append(Interval { low: 0 as i64, high: 0 as i64, min_residue: 0, max_residue: 0 });
+  }
+  let extra = extra_words(fused);
+  for r in small.intervals() {
+    let low = r.low as i64 - extra;
+    if (low < 1 as i64) {
+      low = 1 as i64;
+    }
+    let high = r.high as i64 - extra;
+    if (low <= high) {
+      result = result.append(row(low, high));
+    }
+  }
+  return result;
+}
+
+pub function intervals(fused: boolean): Interval[] {
+  let result = small_intervals(fused);
+  let extra = extra_words(fused);
+  let low = 65536 as i64 - extra;
+  for size in large.capacities() {
+    let high = size as i64 / (8 as i64) - extra;
+    result = result.append(row(low, high));
+    low = high + 1 as i64;
+  }
+  if (fused) {
+    return result.append(row(low, 2305843009213693948 as i64));
+  }
+  result = result.append(row(low, 1152921504606846975 as i64));
+  return result.append(Interval { low: 1152921504606846976 as i64, high: 1152921504606846976 as i64, min_residue: 1, max_residue: 7 });
+}
+
+function class_at(w: i64, fused: boolean, bins: i32[]): i32 {
+  let n = w + extra_words(fused);
+  if (n <= 65535 as i64) {
+    return -3;
+  }
+  let i = 0;
+  for size in bins {
+    if (n <= size as i64 / (8 as i64)) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return -2;
+}
+
+// -3 small, -2 uniformly oversized, -1 invalid/mixed; otherwise bin index.
+pub function expected_class(r: Interval, fused: boolean): i32 {
+  if (!valid_interval(r)) {
+    return -1;
+  }
+  let bins = large.capacities();
+  let low = class_at(r.low, fused, bins);
+  return if (low == class_at(r.high, fused, bins)) { low } else { -1 };
+}
+
+pub function expected_small(r: Interval, fused: boolean): Value {
+  if (!valid_interval(r) || expected_class(r, fused) != -3) {
+    return unknown();
+  }
+  let extra = extra_words(fused);
+  let lo = r.low + extra;
+  if (lo < 1) {
+    return unknown();
+  }
+  let s = small.Interval { low: lo as i32, high: (r.high + extra) as i32 };
+  let v = small.expected(s);
+  if (!small.valid(s, v)) {
+    return unknown();
+  }
+  return checked(r, Value { factor: v.factor, offset: v.offset + v.factor as i64 * extra, residue: 0 });
+}
