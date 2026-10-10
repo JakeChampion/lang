@@ -9,6 +9,7 @@ import "../semrecords";
 import "../ssauniqueunit" as unit;
 import "../ssa";
 import "./ssauniqueselectedunit" as finalproof;
+import "./ssauniqueunion" as unionproof;
 import "std/string";
 
 function require(ok: boolean): void {
@@ -267,6 +268,7 @@ pub function run(row: ssaprepare.Emitted): void {
   require(!caller.check_body(row.assembly, row.context.architecture, row.body.formed.f).ok);
   signatures(row);
   records(row);
+  unionproof.run(row);
   boundaries(row);
   annotations(row);
   let arm = row.context.architecture == "arm64";
