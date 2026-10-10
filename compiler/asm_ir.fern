@@ -7574,10 +7574,10 @@ function ssa_bits_asm(what: string, d: string): string {
     return "    popcntl " + ssa_r32(d) + ", " + ssa_r32(d) + "\n";
   }
   if (what == "bswap:64") {
-    return "    bswap " + d + "\n";
+    return "    bswapq " + d + "\n";
   }
   if (what == "bswap:32") {
-    return "    bswap " + ssa_r32(d) + "\n";
+    return "    bswapl " + ssa_r32(d) + "\n";
   }
   return "";
 }
