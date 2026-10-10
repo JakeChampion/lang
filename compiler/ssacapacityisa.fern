@@ -544,6 +544,9 @@ function caller_decode(line: string): Op {
 }
 
 function caller_memory(name: string, source: string, destination: string): Op {
+  // Kind 40 retains the inline shared-RC subtraction as data. The selected
+  // count-one caller machine refuses it if reachable; decoding is not an
+  // execution proof for that shared path.
   let kind = if (name == "cmpq" || name == "cmpl") { 39 } else { if (name == "subq" || name == "subl") { 40 } else { 0 } };
   let imm = large_literal(source);
   let addr = address(destination);
