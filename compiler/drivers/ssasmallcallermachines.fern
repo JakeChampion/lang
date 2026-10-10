@@ -1,0 +1,131 @@
+import "../ssaprepare";
+import "../ssacredittext" as retained;
+import "../ssasmallcallerflow" as flow;
+import "../ssasmallcallermachine" as machine;
+import "../ssasmallheap" as heap;
+import "std/string";
+
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("small caller machine controls failed: " + group);
+    exit(180);
+  }
+}
+
+function initial(): heap.Heap {
+  return heap.Heap { base: 1048576, cursor: 1048576, end: 17180917760 as i64, head: 0, blocks: [] };
+}
+
+function changed(output: ssaprepare.Output, old: string, replacement: string): ssaprepare.Output {
+  let row = retained.resolve(output, "caller").rows[0];
+  let assembly = row.assembly.split(old).join(replacement);
+  require(assembly != row.assembly, "mutation present");
+  return assembled(output, assembly);
+}
+
+function assembled(output: ssaprepare.Output, assembly: string): ssaprepare.Output {
+  let row = retained.resolve(output, "caller").rows[0];
+  let rows: ssaprepare.Emitted[] = [];
+  for r in output.bodies {
+    rows = rows.append(if (r.label_name == "caller") { ssaprepare.Emitted { ...r, assembly: assembly } } else { r });
+  }
+  return ssaprepare.Output { text: output.text.split(row.assembly).join(assembly), bodies: rows };
+}
+
+function first(text: string, old: string, replacement: string): string {
+  let parts = text.split(old);
+  require(parts.len() > 1, "first mutation present");
+  let result = parts[0] + replacement + parts[1];
+  let i = 2;
+  while (i < parts.len()) {
+    result = result + old + parts[i];
+    i = i + 1;
+  }
+  return result;
+}
+
+function heaps(output: ssaprepare.Output, capacity: i32): void {
+  let h = initial();
+  let size = 8 as i64 * ((capacity + 3) as i64);
+  let a = heap.Block { address: h.base, header: h.base + size, rc: 0, generation: 4, live: false };
+  let b = heap.Block { address: h.base + size, header: 0, rc: 0, generation: 7, live: false };
+  let free = heap.Heap { ...h, cursor: h.base + 2 * size, head: h.base, blocks: [a, b] };
+  require(machine.check(output, "caller", "parent", free), "current free head and generations");
+  let one = heap.construct(capacity, free);
+  let two = heap.construct(capacity, one.heap);
+  let back = heap.consume(capacity, two.heap, one.address, one.generation);
+  require(one.ok && two.ok && back.ok && one.address == h.base && two.address == b.address, "derived pop order");
+  require(back.heap.head == one.address && back.heap.blocks[0].header == 0, "release uses current head");
+  let reused = heap.construct(capacity, back.heap);
+  require(reused.ok && reused.address == one.address && reused.generation == one.generation + 1, "derived generation");
+  require(!heap.consume(capacity, reused.heap, one.address, one.generation).ok, "old generation refused");
+  require(!machine.check(output, "caller", "parent", heap.Heap { ...h, cursor: h.end }), "bump exhausted");
+  require(!machine.check(output, "caller", "parent", heap.Heap { ...free, blocks: [heap.Block { ...a, generation: 2147483647 }, b] }), "generation exhausted");
+  let live = heap.Heap { ...h, cursor: h.base + size, blocks: [heap.Block { ...a, header: capacity as i64, rc: 1, live: true }] };
+  require(machine.check(output, "caller", "parent", live), "unrelated initial live block");
+}
+
+function ghost(output: ssaprepare.Output): void {
+  let original = retained.resolve(output, "caller").rows[0].assembly;
+  let captured = first(original, "call __fn_parent.r", "call __fn_parent.r\nmovq %rax, %r11");
+  let parts = captured.split("call __fn___fern_arr_dec.r");
+  require(parts.len() == 3, "two releases");
+  let stale = parts[0] + "call __fn___fern_arr_dec.r" + parts[1] + "movq %r11, %rax\ncall __fn___fern_arr_dec.r" + parts[2];
+  require(machine.check(assembled(output, captured), "caller", "parent", initial()), "copied alias alone creates no credit");
+  require(!machine.check(assembled(output, stale), "caller", "parent", initial()), "reused address cannot revive stale ghost alias");
+}
+
+function flags(output: ssaprepare.Output): void {
+  let cases: string[][] = [["1", "0", "jg"], ["0", "1", "jb"], ["-2147483648", "1", "jl"], ["2147483647", "-1", "jg"], ["-2147483648", "1", "jns"], ["0", "1", "js"], ["1", "1", "je"]];
+  for c in cases {
+    let prefix = "movl $" + c[0] + ", %r10d\ncmpl $" + c[1] + ", %r10d\n" + c[2] + " .Lmachine_ok\nunknown_instruction\n.Lmachine_ok:\n";
+    mutation(output, "ret\n", prefix + "ret\n", true, "numeric flags " + c[2]);
+  }
+  mutation(output, "ret\n", "cmpq $0, %rax\nje .Lmachine_unknown\n.Lmachine_unknown:\nret\n", false, "unknown parameter flags");
+  mutation(output, "ret\n", ".Lmachine_cycle:\njmp .Lmachine_cycle\nret\n", false, "cycle");
+}
+
+function frames(output: ssaprepare.Output, single: boolean): void {
+  mutation(output, "call __fn_parent.r", "movq %rbx, -16(%rsp)\ncall __fn_parent.r\nmovq -16(%rsp), %rbx", false, "lower scratch is opaque");
+  mutation(output, "call __fn_parent.r", "movq %rbx, -16(%rsp)\ncall __fn_parent.r\nmovq %rbx, -16(%rsp)\nmovq -16(%rsp), %rbx", true, "current scratch rewriting");
+  mutation(output, "call __fn___fern_arr_dec.r", "pushq %rax\ncall __fn___fern_arr_dec\naddq $8, %rsp", true, "ordinary release entry");
+  if (single) {
+    mutation(output, "subq $8, %rsp", "subq $16, %rsp", true, "alternate call frame");
+    mutation(output, "call __fn_parent.r", "pushq %rax\ncall __fn_parent\naddq $8, %rsp", true, "ordinary constructor entry");
+  }
+}
+
+function mutation(output: ssaprepare.Output, old: string, replacement: string, expected: boolean, group: string): void {
+  let out = changed(output, old, replacement);
+  require(flow.derive(out, "caller", "parent").error == "", "SSA still valid: " + group);
+  require(machine.check(out, "caller", "parent", initial()) == expected, group);
+}
+
+pub function run(output: ssaprepare.Output, single: boolean): void {
+  require(machine.check(output, "caller", "parent", initial()), if (single) { "actual one field" } else { "actual two fields" });
+  mutation(output, "ret\n", "unknown_instruction\nret\n", false, "reachable unknown");
+  mutation(output, "ret\n", "movq $0, %rax\nret\n", false, "wrong return");
+  mutation(output, "call __fn_parent.r", "movq $0, %rax\ncall __fn_parent.r", false, "wrong constructor argument");
+  mutation(output, "call __fn___fern_arr_dec.r", "movq $0, %rax\ncall __fn___fern_arr_dec.r", false, "wrong released pointer");
+  mutation(output, "call __fn___fern_arr_dec.r", "", false, "missing release");
+  mutation(output, "call __fn___fern_arr_dec.r", "call __fn___fern_arr_dec.r\ncall __fn___fern_arr_dec.r", false, "repeated release");
+  mutation(output, "ret\n", "movq $0, %r12\nret\n", false, "callee saved register");
+  mutation(output, "ret\n", "movq $0, 0(%rsp)\nret\n", false, "return memory");
+  mutation(output, "cmpl $1, -8(%rax)", "cmpl $0, -8(%rax)", false, "shared branch becomes reachable");
+  mutation(output, "cmpl $0, -8(%rax)", "cmpl $2, -8(%rax)", false, "release skipped");
+  mutation(output, "ret\n", "movq %rax, %rax\nret\n", true, "equivalent full move");
+  mutation(output, "ret\n", "movl %eax, %eax\nret\n", false, "unknown upper parameter half");
+  mutation(output, "call __fn___fern_arr_dec.r", "movl %eax, %eax\ncall __fn___fern_arr_dec.r", false, "pointer upper half lost");
+  mutation(output, "call __fn___fern_arr_dec.r", "call __fn___fern_arr_dec.r\nmovq 8(%rax), %r11", false, "field read after release");
+  mutation(output, "movq 8(%rax),", "movq 16(%rax),", false, "wrong ordered field");
+  mutation(output, "movq 8(%rsp), %rax", "movq 16(%rsp), %rax", false, "ordinary entry parameter");
+  mutation(output, "cmpl $1, -8(%rax)", "cmpq $1, -8(%rax)", false, "unsupported header width");
+  let corrupt = ssaprepare.Output { ...output, text: output.text.split("syscall").join("unknown_instruction") };
+  require(!machine.check(corrupt, "caller", "parent", initial()), "independently corrupt allocator dependency");
+  heaps(output, if (single) { 2 } else { 3 });
+  ghost(output);
+  frames(output, single);
+  if (single) {
+    flags(output);
+  }
+}

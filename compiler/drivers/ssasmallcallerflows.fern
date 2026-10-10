@@ -8,6 +8,7 @@ import "../ssaprepare";
 import "../ssacredittext" as retained;
 import "../ssasmallcallerflow" as flow;
 import "./ssasmallcallerisas" as instructions;
+import "./ssasmallcallermachines" as machines;
 import "../util";
 import "std/string";
 
@@ -186,6 +187,7 @@ pub function run(): void {
   for single in [true, false] {
     let output = emit(single);
     instructions.run(output);
+    machines.run(output, single);
     let relation = flow.derive(output, "caller", "parent");
     require(relation.error == "", "actual caller " + relation.error);
     require(relation.words == (if (single) { 2 } else { 3 }) && relation.events.len() == 4, "actual shape and events");

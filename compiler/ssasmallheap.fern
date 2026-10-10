@@ -17,6 +17,35 @@ pub struct Action { kind: i32, address: i64, generation: i32 }
 
 struct Next { heap: Heap, ok: boolean }
 
+// Transition data, never an accepted instruction or ownership certificate.
+pub struct Transition { heap: Heap, address: i64, generation: i32, ok: boolean }
+
+pub function construct(capacity: i32, h: Heap): Transition {
+  let bad = Transition { heap: h, address: 0, generation: 0, ok: false };
+  if (!valid(capacity, h)) {
+    return bad;
+  }
+  let address = if (h.head == 0) { h.cursor } else { h.head };
+  let generation = 1;
+  if (h.head != 0) {
+    let i = find(h.blocks, h.head);
+    if (i < 0 || h.blocks[i].generation == 2147483647) {
+      return bad;
+    }
+    generation = h.blocks[i].generation + 1;
+  }
+  let n = step(capacity, h, Action { kind: 0, address: address, generation: generation });
+  return Transition { heap: n.heap, address: address, generation: generation, ok: n.ok && valid(capacity, n.heap) };
+}
+
+pub function consume(capacity: i32, h: Heap, address: i64, generation: i32): Transition {
+  if (!valid(capacity, h)) {
+    return Transition { heap: h, address: address, generation: generation, ok: false };
+  }
+  let n = step(capacity, h, Action { kind: 1, address: address, generation: generation });
+  return Transition { heap: n.heap, address: address, generation: generation, ok: n.ok && valid(capacity, n.heap) };
+}
+
 function find(blocks: Block[], address: i64): i32 {
   let i = 0;
   while (i < blocks.len()) {
