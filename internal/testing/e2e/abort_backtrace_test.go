@@ -146,6 +146,57 @@ func TestArm64AbortBacktrace(t *testing.T) {
 	})
 }
 
+// Source positions, not the availability of debugger variable types, keep
+// debug callers in the frame chain. The normal build still takes tail calls.
+func TestArm64DebugTailFrames(t *testing.T) {
+	bin := buildFernCLI(t)
+	for _, tc := range []struct {
+		name, source string
+		register     bool
+	}{
+		{"array_parameter", deepAbortSrc, true},
+		{"no_parameters", `@noinline function inner(): i32 { return 7; }
+@noinline function mid(): i32 { return inner(); }
+function main(): i32 { return mid(); }
+`, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			src := filepath.Join(dir, "chain.fern")
+			if err := os.WriteFile(src, []byte(tc.source), 0o644); err != nil {
+				t.Fatal(err)
+			}
+			for _, debug := range []bool{false, true} {
+				out := filepath.Join(dir, strconv.FormatBool(debug)+".s")
+				args := []string{"-target", "arm64-linux", "-emit", "asm", "-o", out}
+				if debug {
+					args = append(args, "-g")
+				}
+				if o, err := exec.Command(bin, append(args, src)...).CombinedOutput(); err != nil {
+					t.Fatalf("debug=%v: build: %v\n%s", debug, err, o)
+				}
+				data, err := os.ReadFile(out)
+				if err != nil {
+					t.Fatal(err)
+				}
+				for _, callee := range []string{"inner", "mid"} {
+					symbol := symname.Fn(callee)
+					if tc.register {
+						symbol += ".r"
+					}
+					// Zero-argument calls use the stack entry in both modes.
+					wantTail := tc.register && !debug
+					tail := "    b " + symbol + "\n"
+					call := "    bl " + symbol + "\n"
+					if strings.Contains(string(data), tail) != wantTail || strings.Contains(string(data), call) == wantTail {
+						t.Errorf("debug=%v: wrong call form for %s\n%s", debug, callee, data)
+					}
+				}
+			}
+		})
+	}
+}
+
 // runBacktraceOffCase is the #5538 slice-4 opt-out: with the walk suppressed at
 // compile time the abort keeps its exit code and its cause line, but writes no
 // backtrace header and no addresses at all. Run for both surfaces — the

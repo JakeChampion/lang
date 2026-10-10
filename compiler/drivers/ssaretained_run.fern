@@ -146,24 +146,29 @@ function renamed(g: ircore.Gated): void {
   strbuf_reset();
 }
 
-function debug_body(g: ircore.Gated, arm: boolean): void {
+function debug_body(g: ircore.Gated, arm: boolean, var_rows: boolean): void {
   let recs = buf_new(4096);
   let r = irtables.LowerResult { ...g.cache[0], n_locals: 1, ops: [ir.op_const_i32(43), ir.op_store_local(0), ir.op_load_local(0), ir.op_return()], dbg_slots: [0], dbg_names: ["observed"], dbg_types: ["i32"] };
   let rows: ssaprepare.Emitted[] = [];
   if (arm) {
     strbuf_reset();
     let s = asmcore.new_state();
-    s = asmcore.EmitState { ...s, recs: recs, retain_prepared: true };
+    s = asmcore.EmitState { ...s, recs: recs, retain_prepared: true, var_rows: var_rows };
     let gate = irverifygate.gate_unreported(irtables.fn_sig_index(g.im.funcs), s.kinds.pops);
     let out = asm_arm64_ir.emit_function_via_ir_pre(r, physicalbody.select(g.physical, 0), g.im.funcs[0], s, gate);
     rows = out.prepared;
     strbuf_reset();
   } else {
-    let out = asm_ir.emit_module_ir_unit_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, 1, g.cache.with(0, r), g.physical, runtime, recs, asmcore.env_switches(), true);
+    let sw = asmcore.Switches { ...asmcore.env_switches(), var_rows: var_rows };
+    let out = asm_ir.emit_module_ir_unit_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, 1, g.cache.with(0, r), g.physical, runtime, recs, sw, true);
     rows = out.bodies;
   }
   require(rows.len() == 1 && rows[0].context.records, 40);
-  require(rows[0].body.seen_vals.len() > 0 && rows[0].body.seen_slots.len() > 0, 41);
+  if (var_rows) {
+    require(rows[0].body.seen_vals.len() > 0 && rows[0].body.seen_slots.len() > 0, 41);
+  } else {
+    require(rows[0].body.seen_vals.len() == 0 && rows[0].body.seen_slots.len() == 0, 44);
+  }
   require(rows[0].body.lowered.dbg_names[0] == "observed" && rows[0].body.lowered.ops[0].i32_imm == 43, 42);
   allocation.consistent(rows[0]);
   let code = buf_take(recs);
@@ -187,8 +192,10 @@ function main(): i32 {
   direct(g);
   discarded_trial();
   renamed(g);
-  debug_body(g, false);
-  debug_body(g, true);
+  debug_body(g, false, true);
+  debug_body(g, true, true);
+  debug_body(g, false, false);
+  debug_body(g, true, false);
   // The need probe has no retained-result API and must not contaminate a
   // subsequent real emission through a shared accumulator.
   let needs = asm_ir.module_runtime_needs(g.im, g.im.funcs, g.stab, g.cache, g.physical);
