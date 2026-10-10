@@ -1,0 +1,81 @@
+import "../asmcore";
+import "../asm_ir";
+import "../asm_arm64_ir";
+import "../ir";
+import "../ircore";
+import "../irtables";
+import "../semlower";
+import "../ssa";
+import "../ssaprepare";
+import "../ssauniqueunit" as unit;
+import "std/string";
+
+function require(ok: boolean): void {
+  if (!ok) {
+    exit(187);
+  }
+}
+
+function check(text: string, arch: string, fs: ssa.SFunc[], expected: boolean): void {
+  let proof = unit.check_collection(text, arch, fs);
+  require(proof.ok == expected && (proof.ok || proof.message != ""));
+}
+
+function emit(g: ircore.Gated, arm: boolean): ssaprepare.Output {
+  let ops = [ir.op_load_local(0), ir.op_call_direct("__fern_rc_is_unique", 1)];
+  let first = irtables.LowerResult { ...g.cache[0], n_params: 1, n_locals: 1, ops: ops.append(ir.op_return()) };
+  let second = irtables.LowerResult { ...g.cache[1], n_params: 1, n_locals: 2, ops: ops.append(ir.op_bin("not", 32, false)).append(ir.op_if(0)).append(ir.op_const_i32(7)).append(ir.op_store_local(1)).append(ir.op_else()).append(ir.op_const_i32(9)).append(ir.op_store_local(1)).append(ir.op_end()).append(ir.op_load_local(1)).append(ir.op_return()) };
+  let cache = g.cache.with(0, first).with(1, second);
+  let sw = asmcore.Switches { backtrace: false, sanitize: false, var_rows: false };
+  if (arm) {
+    return asm_arm64_ir.emit_module_ir_unit_arm64_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, 2, cache, g.physical, semlower.runtime_lowering, sw, true);
+  }
+  return asm_ir.emit_module_ir_unit_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, 2, cache, g.physical, semlower.runtime_lowering, 0 as usize, sw, true);
+}
+
+pub function run(g: ircore.Gated, arm: boolean): void {
+  let out = emit(g, arm);
+  require(out.bodies.len() == 2);
+  let a = out.bodies[0];
+  let b = out.bodies[1];
+  let f = a.body.formed.f;
+  let h = b.body.formed.f;
+  let arch = a.context.architecture;
+  require(f.name != h.name);
+  check(out.text, arch, [f, h], true);
+  check(out.text, arch, [h, f], true);
+  check(out.text, arch, [], false);
+  check(out.text, arch, [f], false);
+  check(out.text, arch, [h], false);
+  check(out.text, arch, [f, h, h], false);
+  check(out.text, arch, [f, h, ssa.SFunc { ...h, name: "missing" }], false);
+  // Both retained body strings stay valid throughout final-output mutations.
+  let parts = out.text.split(b.assembly);
+  require(parts.len() == 2);
+  check(parts[0] + parts[1], arch, [f, h], false);
+  check(parts[0] + b.assembly + b.assembly + parts[1], arch, [f, h], false);
+  let prefix = "__fn_" + h.name + ":\n";
+  let body = b.assembly.split(prefix);
+  require(body.len() == 2);
+  check(parts[0] + "__fn_unlisted:\n" + body[1] + parts[1], arch, [f, h], false);
+  let returns = b.assembly.split("    ret\n");
+  require(returns.len() >= 2);
+  let changed = returns[0];
+  let i = 1;
+  while (i < returns.len()) {
+    changed = changed + "    " + (if (arm) { "mov x0, #0" } else { "movq $0, %rax" }) + "\n    ret\n" + returns[i];
+    i = i + 1;
+  }
+  check(parts[0] + changed + parts[1], arch, [f, h], false);
+  let wrong = ssa.SFunc { ...f, name: h.name };
+  check(out.text, arch, [f, wrong], false);
+  // Physical order and supplied graph order are independent.
+  let whole = out.text.split(a.assembly + b.assembly);
+  require(whole.len() == 2);
+  check(whole[0] + b.assembly + a.assembly + whole[1], arch, [f, h], true);
+  let label = ".Lssa_" + f.name + "_" + f.entry.to_string();
+  check(parts[0] + b.assembly + label + ":\n" + parts[1], arch, [f, h], false);
+  let branch = if (arm) { "b " } else { "jmp " };
+  check(parts[0] + prefix + "    " + branch + label + "\n" + body[1] + parts[1], arch, [f, h], false);
+  check(".set __fn_alias, __fn_" + f.name + "\n" + out.text, arch, [f, h], false);
+}

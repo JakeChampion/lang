@@ -1,0 +1,141 @@
+import "../ssainlineunique" as unique;
+import "../ssaprepare";
+import "../ssa";
+import "../util";
+import "std/string";
+
+function require(ok: boolean, code: i32): void {
+  if (!ok) {
+    exit(code);
+  }
+}
+
+// These are explicit test boundary assumptions, not a proof of allocation or
+// of the preceding caller instructions. The checker never reads UniqueSite.
+function home(row: ssaprepare.Emitted, h: i32): string {
+  let arm = row.context.architecture == "arm64";
+  if (h >= 0) {
+    let names = if (arm) { ["x0", "x9", "x10", "x11", "x12", "x13", "x14", "x15", "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28"] } else { ["%rax", "%rsi", "%rdi", "%r8", "%r9", "%r10", "%rbx", "%r12", "%r13", "%r14", "%r15"] };
+    require(h < names.len(), 170);
+    return names[h];
+  }
+  require(h < -1, 171);
+  let a = row.allocation;
+  let offset = 0 - 8 * (ssa.spill_slot(h) + 1) - a.save_bytes;
+  return if (arm) { "[sp, #" + (a.frame_bytes + a.save_bytes + offset).to_string() + "]" } else { offset.to_string() + "(%rbp)" };
+}
+
+function check(text: string, arch: string, input: string, result: string, flags: boolean, expected: boolean): void {
+  let p = unique.check_fragment(text, arch, input, result, flags);
+  if (p.ok != expected) {
+    print(arch + " " + input + " -> " + result + ": " + p.message + "\n" + text);
+    exit(172);
+  }
+  require(p.function_name == "inline __fern_rc_is_unique" && (p.ok || p.message != ""), 173);
+}
+
+function change(text: string, old: string, replacement: string): string {
+  let parts = text.split(old);
+  require(parts.len() > 1, 174);
+  let out = parts[0];
+  let i = 1;
+  while (i < parts.len()) {
+    out = out + replacement + parts[i];
+    i = i + 1;
+  }
+  return out;
+}
+
+function paths(site: ssaprepare.UniqueSite, arch: string, input: string, result: string): void {
+  let text = site.text;
+  let jump = if (arch == "arm64") { "    b " } else { "    jmp " };
+  let prefix = jump + ".Lpath_first\n.Lpath_back:\n" + jump + ".Lpath_body\n.Lpath_first:\n" + jump + ".Lpath_back\n.Lpath_body:\n";
+  check(prefix + text, arch, input, result, site.flags, true);
+  check(prefix + jump + ".Lpath_first\n" + text, arch, input, result, site.flags, false);
+  check(jump + ".Lpath_missing\n" + text, arch, input, result, site.flags, false);
+}
+
+function corruptions(site: ssaprepare.UniqueSite, arch: string, input: string, result: string): void {
+  let arm = arch == "arm64";
+  let text = site.text;
+  paths(site, arch, input, result);
+  check("\n\t" + text + "\n", arch, input, result, site.flags, true);
+  check(change(text, site.join, ".Lrenamed_unique"), arch, input, result, site.flags, true);
+  check(text + site.join + ":\n", arch, input, result, site.flags, false);
+  check(change(text, site.join + ":", site.join + ":\n    " + (if (arm) { "b " } else { "jmp " }) + site.join), arch, input, result, site.flags, false);
+  check(text + (if (arm) { "    bl opaque\n" } else { "    call opaque\n" }), arch, input, result, site.flags, false);
+  check(text + ".set .Lalias, " + site.join + "\n", arch, input, result, site.flags, false);
+  check(change(text, if (arm) { "#-8]" } else { "-8(" }, if (arm) { "#-16]" } else { "-16(" }), arch, input, result, site.flags, false);
+  check(change(text, if (arm) { "#0xfffffffffffffffd" } else { "$-3" }, if (arm) { "#0xffffffffffffffff" } else { "$-1" }), arch, input, result, site.flags, false);
+  check(change(text, if (arm) { "b.lo " } else { "jb " }, if (arm) { "b.eq " } else { "je " }), arch, input, result, site.flags, false);
+  check((if (arm) { "    ldur w5, [x0, #-8]\n" } else { "    cmpl $1, -8(%rax)\n" }) + text, arch, input, result, site.flags, false);
+  check(text + (if (arm) { "    str x6, [x0, #0]\n" } else { "    movq %rcx, 0(%rax)\n" }), arch, input, result, site.flags, false);
+  check(text, "wasi", input, result, site.flags, false);
+  semantic_changes(site, arch, input, result);
+  if (site.flags) {
+    check(text + (if (arm) { "    tst x6, #1\n" } else { "    xorl %ecx, %ecx\n" }), arch, input, result, true, false);
+  } else {
+    check(change(text, if (arm) { "mov x6, #1" } else { "movl $1, %ecx" }, if (arm) { "mov x6, #0" } else { "movl $0, %ecx" }), arch, input, result, false, false);
+  }
+}
+
+function without_guard(text: string, arm: boolean, tag: boolean): string {
+  let out = "";
+  for raw in text.split("\n") {
+    let line = util.trim(raw);
+    let omit = if (tag) { line.starts_with(if (arm) { "tbnz " } else { "testb " }) || line.starts_with(if (arm) { "tst " } else { "jnz " }) || line.starts_with("b.ne ") } else { line.starts_with(if (arm) { "cmp " } else { "cmpq " }) || line.starts_with(if (arm) { "b.lo " } else { "jb " }) };
+    if (!omit) {
+      out = out + raw + "\n";
+    }
+  }
+  return out;
+}
+
+function semantic_changes(site: ssaprepare.UniqueSite, arch: string, input: string, result: string): void {
+  let arm = arch == "arm64";
+  let text = site.text;
+  let normalize = if (arm) { "and x7, " + input + ", #0xfffffffffffffffd" } else { "andq $-3, %rdx" };
+  let copy = if (arm) { "mov x7, " + input } else { "movq %rdx, %rdx" };
+  check(change(text, normalize, copy), arch, input, result, site.flags, false);
+  check(without_guard(text, arm, true), arch, input, result, site.flags, false);
+  check(without_guard(text, arm, false), arch, input, result, site.flags, false);
+  let other = if (arm) { "x28" } else { "%r15" };
+  check(text, arch, other, result, site.flags, false);
+  check(text + (if (arm) { "    mov x28, #0\n" } else { "    movq $0, %r15\n" }), arch, input, result, site.flags, false);
+  if (!arm) {
+    // A 32-bit write destroys the upper pointer bits, even for the same
+    // physical register. It cannot establish the normalized pointer fact.
+    check(change(text, "andq $-3, %rdx", "movl %edx, %edx"), arch, input, result, site.flags, false);
+    check("    xorl %ecx, %ecx\n    jne \n" + text, arch, input, result, site.flags, false);
+    check("    jmp .Lstart\n    movq bogus, %rax\n.Lstart:\n" + text, arch, input, result, site.flags, false);
+  }
+  if (!site.flags) {
+    check(text + (if (arm) { "    mov x6, x6\n" } else { "    movq %rcx, %rcx\n" }), arch, input, result, false, true);
+  }
+}
+
+function slot_controls(site: ssaprepare.UniqueSite, arch: string, input: string, result: string): void {
+  let arm = arch == "arm64";
+  check(site.text, arch, if (arm) { "[sp, #00]" } else { "-08(%rbp)" }, result, false, false);
+  check(site.text, arch, if (arm) { "[sp, #1]" } else { "-1(%rbp)" }, result, false, false);
+  check(site.text, arch, if (arm) { "[sp, #32768]" } else { "-2147483648(%rbp)" }, result, false, false);
+  let load = if (arm) { "    ldr x4, " + input + "\n" } else { "    movq " + input + ", %r11\n" };
+  // Omitted loads cannot be rescued by a caller's unverified cache annotation.
+  check(change(site.text, load, ""), arch, input, result, false, false);
+}
+
+pub function run(row: ssaprepare.Emitted, mutations: boolean): void {
+  let checked_slot = false;
+  for site in row.sites {
+    let input = home(row, site.input_home);
+    let result = if (site.flags) { "" } else { home(row, site.result_home) };
+    check(site.text, row.context.architecture, input, result, site.flags, !site.aligned);
+    if (!site.aligned && mutations) {
+      corruptions(site, row.context.architecture, input, result);
+    }
+    if (!site.flags && site.input_home < -1 && !checked_slot) {
+      slot_controls(site, row.context.architecture, input, result);
+      checked_slot = true;
+    }
+  }
+}

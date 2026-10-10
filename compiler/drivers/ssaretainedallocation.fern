@@ -10,6 +10,11 @@ import "../ssaprepare";
 import "../util";
 import "std/string";
 import "./ssaretainedsites" as sites;
+import "./ssaretainedinline" as inlineproof;
+import "./ssauniquecaller" as callerproof;
+import "./ssauniqueunit" as unitproof;
+import "./ssauniquephi" as phiproof;
+import "./ssauniquecollection" as collectionproof;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -115,6 +120,19 @@ function uniqueness(g: ircore.Gated, arm: boolean, fused: boolean, inverted: boo
   let out = checked(g, r, arm);
   fusion(out, fused, inverted, aligned);
   sites.unique(out.bodies[0], fused, inverted, aligned);
+  inlineproof.run(out.bodies[0], true);
+  callerproof.run(out.bodies[0], aligned);
+  unitproof.run(out, aligned);
+}
+
+function phi_join(g: ircore.Gated, arm: boolean, inverted: boolean): void {
+  let ops = [ir.op_load_local(0), ir.op_call_direct("__fern_rc_is_unique", 1)];
+  if (inverted) {
+    ops = ops.append(ir.op_bin("not", 32, false));
+  }
+  ops = util.append_all(ops, [ir.op_if(0), ir.op_const_i32(7), ir.op_store_local(1), ir.op_else(), ir.op_const_i32(9), ir.op_store_local(1), ir.op_end(), ir.op_load_local(1), ir.op_return()]);
+  let r = irtables.LowerResult { ...g.cache[0], n_params: 1, n_locals: 2, ops: ops };
+  phiproof.run(checked(g, r, arm));
 }
 
 function fusion(out: ssaprepare.Output, fused: boolean, inverted: boolean, aligned: boolean): void {
@@ -188,7 +206,9 @@ function unique_pressure(g: ircore.Gated, arm: boolean): void {
     i = i + 1;
   }
   let r = irtables.LowerResult { ...g.cache[0], n_params: 25, n_locals: 50, ops: ops.append(ir.op_return()) };
-  sites.pressure(checked(g, r, arm).bodies[0]);
+  let row = checked(g, r, arm).bodies[0];
+  sites.pressure(row);
+  inlineproof.run(row, false);
 }
 
 function rotated(g: ircore.Gated, arm: boolean): void {
@@ -198,15 +218,21 @@ function rotated(g: ircore.Gated, arm: boolean): void {
   ];
   let out = checked(g, irtables.LowerResult { ...g.cache[0], n_params: 1, n_locals: 1, ops: ops }, arm);
   sites.rotated(out.bodies[0]);
+  inlineproof.run(out.bodies[0], false);
 }
 
 pub function run(g: ircore.Gated, arm: boolean): void {
+  collectionproof.run(g, arm);
+  phi_join(g, arm, false);
+  phi_join(g, arm, true);
   let leaf = checked(g, g.cache[0], arm);
   require(!leaf.bodies[0].allocation.framed, 126);
   spills(g, arm, 24);
   spills(g, arm, 25);
   uniqueness(g, arm, false, false, false);
+  uniqueness(g, arm, false, true, false);
   uniqueness(g, arm, true, false, false);
+  uniqueness(g, arm, true, true, false);
   uniqueness(g, arm, true, true, true);
   comparison(g, arm, 0);
   comparison(g, arm, 1);

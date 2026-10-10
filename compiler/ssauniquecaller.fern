@@ -1,0 +1,259 @@
+// Whole native body proof for the one-pointer uniqueness leaf and its two
+// acyclic pure SSA continuations. This does not bind a body to a module's final
+// output or certify ownership, arbitrary CFGs, alignment, or unwind metadata.
+// The incoming ABI supplies a readable normalized RC header for heap pointers.
+import "./ssa";
+import "./ssauniquemeaning" as semantics;
+import "./ssacredithelper" as helper;
+import "./ssainlineuniqueisa" as isa;
+import "./ssainlineuniqueflow" as flow;
+import "./util";
+import "std/string";
+
+struct Program { lines: string[], labels: string[], ops: isa.Op[], targets: i32[], entry: i32, register_entry: i32, ok: boolean }
+
+struct Destinations { targets: i32[], ok: boolean }
+
+function symbol_char(c: u8): boolean {
+  return c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c >= b'0' && c <= b'9' || c == b'_' || c == b'.' || c == b'$';
+}
+
+function symbol(s: string): boolean {
+  if (s == "") {
+    return false;
+  }
+  for c in s {
+    if (!symbol_char(c)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function directive(s: string, arm: boolean): boolean {
+  if (s == ".cfi_startproc" || s == ".cfi_endproc") {
+    return true;
+  }
+  return arm && util.has_str([".cfi_def_cfa_offset 16", ".cfi_offset x29, -16", ".cfi_offset x30, -8", ".cfi_def_cfa_register x29", ".cfi_remember_state", ".cfi_def_cfa sp, 0", ".cfi_restore_state", ".ltorg"], s);
+}
+
+function program(input: string[], name: string, arm: boolean): Program {
+  let lines: string[] = [];
+  let labels: string[] = [];
+  let ops: isa.Op[] = [];
+  let entry = -1;
+  let reg = -1;
+  let ok = symbol(name);
+  for raw in input {
+    if (raw.contains("\n")) {
+      ok = false;
+    }
+    let line = util.trim(raw);
+    if (line != "") {
+      let label = "";
+      if (line.ends_with(":")) {
+        label = slice_unchecked(line, 0, line.len() - 1) + "";
+        if (!symbol(label) || util.has_str(labels, label)) {
+          ok = false;
+        }
+        if (label == "__fn_" + name) {
+          entry = lines.len();
+        } else if (label == "__fn_" + name + ".r") {
+          reg = lines.len();
+        } else if (!label.starts_with(".L")) {
+          ok = false;
+        }
+      } else if (!directive(line, arm) && !instruction(line, arm)) {
+        ok = false;
+      }
+      lines = lines.append(line);
+      labels = labels.append(label);
+      ops = ops.append(isa.decode(line, arm));
+    }
+  }
+  let resolved = destinations(ops, labels);
+  return Program { lines: lines, labels: labels, ops: ops, targets: resolved.targets, entry: entry, register_entry: reg, ok: ok && resolved.ok && entry == 0 && reg > 0 };
+}
+
+// Resolve targets once into the bounded line array. Each abstract case uses
+// the same checked instruction and target, without repeated symbol scans.
+function destinations(ops: isa.Op[], labels: string[]): Destinations {
+  let targets: i32[] = [];
+  let ok = true;
+  for op in ops {
+    let dest = -1;
+    if (op.kind >= 20 && op.kind < 30) {
+      dest = util.index_of_str(labels, op.target);
+      if (!op.target.starts_with(".L") || dest < 0) {
+        ok = false;
+      }
+    }
+    targets = targets.append(dest);
+  }
+  return Destinations { targets: targets, ok: ok };
+}
+
+function instruction(line: string, arm: boolean): boolean {
+  if (line == "ret" || isa.decode(line, arm).kind > 0) {
+    return true;
+  }
+  if (arm) {
+    return util.has_str(["ldr x0, [sp, #0]", "stp x29, x30, [sp, #-16]!", "mov x29, sp", "mov sp, x29", "ldp x29, x30, [sp], #16", "cmp x0, #0", "cset x0, eq", "mov x0, #7", "mov x0, #9"], line);
+  }
+  return util.has_str(["movq 8(%rsp), %rax", "testq %rax, %rax", "setz %al", "movzbq %al, %rax", "movl $7, %eax", "movl $9, %eax"], line);
+}
+
+function immediate(s: flow.State, line: string, arm: boolean): flow.State {
+  for n in [7, 9] {
+    if (line == (if (arm) { "mov x0, #" + n.to_string() } else { "movl $" + n.to_string() + ", %eax" })) {
+      // Abstract values 6 and 7 represent only the two admitted constants.
+      return flow.State { ...s, regs: s.regs.with(0, if (n == 7) { 6 } else { 7 }) };
+    }
+  }
+  return flow.State { ...s, ok: false };
+}
+
+function set_equal(s: flow.State, arm: boolean): flow.State {
+  // x86's other bits are known zero from the preceding Boolean value.
+  let v = s.regs[0];
+  return flow.State { ...s, ok: s.zero >= 0 && (arm || v == 3 || v == 4), regs: s.regs.with(0, if (s.zero == 1) { 4 } else { 3 }) };
+}
+
+function boolean_op(s: flow.State, line: string, arm: boolean): flow.State {
+  if (line == (if (arm) { "cmp x0, #0" } else { "testq %rax, %rax" })) {
+    let v = s.regs[0];
+    return flow.State { ...s, ok: v == 3 || v == 4, zero: if (v == 3) { 1 } else { 0 }, below: 0 };
+  }
+  if (line == (if (arm) { "cset x0, eq" } else { "setz %al" })) {
+    return set_equal(s, arm);
+  }
+  if (!arm && line == "movzbq %al, %rax") {
+    return flow.State { ...s, ok: s.regs[0] == 3 || s.regs[0] == 4 };
+  }
+  return immediate(s, line, arm);
+}
+
+function frame_step(line: string, frame: i32): i32 {
+  if (line == "stp x29, x30, [sp, #-16]!" && frame == 0) {
+    return 1;
+  }
+  if (line == "mov x29, sp" && frame == 1) {
+    return 2;
+  }
+  if (line == "mov sp, x29" && frame == 2) {
+    return 3;
+  }
+  if (line == "ldp x29, x30, [sp], #16" && frame == 3) {
+    return 0;
+  }
+  return -1;
+}
+
+function parameter_load(p: Program, pc: i32, b: flow.Boundary, s: flow.State, register_entry: boolean, frame: i32): boolean {
+  return pc < p.register_entry && p.lines[pc] == (if (b.arm) { "ldr x0, [sp, #0]" } else { "movq 8(%rsp), %rax" }) && !register_entry && s.regs[0] == 0 && frame == 0;
+}
+
+function result(s: flow.State, c: flow.Case, m: semantics.Meaning, frame: i32): boolean {
+  let unique = !c.tagged && !c.low && c.one;
+  return frame == 0 && s.ok && s.regs[0] == (if (unique) { m.yes } else { m.no });
+}
+
+function branch_pc(p: Program, pc: i32, s: flow.State, b: flow.Boundary, c: flow.Case): i32 {
+  let dest = p.targets[pc];
+  let take = flow.branch(s, p.ops[pc], b, c);
+  if (dest < p.register_entry || take < 0) {
+    return -1;
+  }
+  return if (take == 1) { dest } else { pc + 1 };
+}
+
+function step(s: flow.State, op: isa.Op, line: string, b: flow.Boundary, c: flow.Case): flow.State {
+  // This leaf scope has no local stack slots. A frame-slot spelling
+  // must never be rescued by the fragment checker's boundary model.
+  if (isa.frame_slot(op.a, b.arm) || isa.frame_slot(op.b, b.arm)) {
+    return flow.State { ...s, ok: false };
+  }
+  return if (op.kind == 0) { boolean_op(s, line, b.arm) } else { flow.step(s, op, b, c) };
+}
+
+function path(p: Program, b: flow.Boundary, c: flow.Case, m: semantics.Meaning, register_entry: boolean): boolean {
+  let s = flow.initial(b);
+  if (!register_entry) {
+    s = flow.State { ...s, regs: s.regs.with(0, 0) };
+  }
+  let pc = if (register_entry) { p.register_entry } else { p.entry };
+  let seen: boolean[] = [];
+  for line in p.lines {
+    seen = seen.append(false);
+  }
+  // ARM states: original SP/frame/link, saved pair, established frame,
+  // restored SP at saved pair, restored original SP/frame/link.
+  let frame = 0;
+  while (pc >= 0 && pc < p.lines.len()) {
+    if (seen[pc]) {
+      return false;
+    }
+    seen = seen.with(pc, true);
+    let line = p.lines[pc];
+    if (p.labels[pc] != "" || directive(line, b.arm)) {
+      pc = pc + 1;
+    } else if (line == "ret") {
+      return result(s, c, m, frame);
+    } else if (parameter_load(p, pc, b, s, register_entry, frame)) {
+      s = flow.State { ...s, regs: s.regs.with(0, 1) };
+      pc = pc + 1;
+    } else if (b.arm && frame_step(line, frame) >= 0) {
+      frame = frame_step(line, frame);
+      pc = pc + 1;
+    } else {
+      let op = p.ops[pc];
+      if (op.kind >= 20 && op.kind < 30) {
+        pc = branch_pc(p, pc, s, b, c);
+      } else {
+        s = step(s, op, line, b, c);
+        if (!s.ok) {
+          return false;
+        }
+        pc = pc + 1;
+      }
+    }
+  }
+  return false;
+}
+
+function cases(p: Program, b: flow.Boundary, m: semantics.Meaning): boolean {
+  let ok = true;
+  for tagged in [false, true] {
+    for view in [false, true] {
+      for low in [false, true] {
+        for one in [false, true] {
+          let c = flow.Case { tagged: tagged, view: view, low: low, one: one };
+          for reg in [false, true] {
+            if (!path(p, b, c, m, reg)) {
+              ok = false;
+            }
+          }
+        }
+      }
+    }
+  }
+  return ok;
+}
+
+// Each supplied row is still parsed and checked. This API accepts no decoded
+// instructions or trusted validation flags from the final-output binder.
+pub function check_lines(lines: string[], architecture: string, f: ssa.SFunc): helper.Proof {
+  let arm = architecture == "arm64";
+  let m = semantics.check(f);
+  let p = program(lines, f.name, arm);
+  let ok = m.ok && p.ok && (arm || architecture == "x86-64");
+  let b = flow.Boundary { arm: arm, input: if (arm) { "x0" } else { "%rax" }, result: if (arm) { "x0" } else { "%rax" }, flags: false };
+  if (ok) {
+    ok = cases(p, b, m);
+  }
+  return helper.Proof { ok: ok, function_name: f.name, message: if (ok) { "" } else { "unproved uniqueness caller body" } };
+}
+
+pub function check_body(text: string, architecture: string, f: ssa.SFunc): helper.Proof {
+  return check_lines(text.split("\n"), architecture, f);
+}

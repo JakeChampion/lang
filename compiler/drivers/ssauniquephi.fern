@@ -1,0 +1,183 @@
+import "../ssa";
+import "../ssaprepare";
+import "../ssauniquecaller" as caller;
+import "./ssauniqueunit" as unit;
+
+function require(ok: boolean): void {
+  if (!ok) {
+    exit(186);
+  }
+}
+
+function check(row: ssaprepare.Emitted, f: ssa.SFunc, expected: boolean): void {
+  let p = caller.check_body(row.assembly, row.context.architecture, f);
+  require(p.ok == expected && p.function_name == f.name && (p.ok || p.message != ""));
+}
+
+function replace(f: ssa.SFunc, join: i32, inst: ssa.SInst, preds: i32[]): ssa.SFunc {
+  let b = f.blocks[join];
+  return ssa.SFunc { ...f, blocks: f.blocks.with(join, ssa.SBlock { ...b, insts: [inst], preds: preds }) };
+}
+
+function sparse(f: ssa.SFunc): ssa.SFunc {
+  let blocks: ssa.SBlock[] = [];
+  for b in f.blocks {
+    let insts: ssa.SInst[] = [];
+    for op in b.insts {
+      let args: i32[] = [];
+      for arg in op.args {
+        args = args.append(2147483646 - arg);
+      }
+      insts = insts.append(ssa.SInst { ...op, result: 2147483646 - op.result, args: args });
+    }
+    let preds: i32[] = [];
+    for p in b.preds {
+      preds = preds.append(p + 100000);
+    }
+    let t = b.term;
+    t = ssa.STerm { ...t, value: if (t.kind_tag == 1) { 2147483646 - t.value } else { t.value }, cond: if (t.kind_tag == 3) { 2147483646 - t.cond } else { t.cond }, target: t.target + 100000, t: t.t + 100000, f: t.f + 100000 };
+    blocks = blocks.append(ssa.SBlock { ...b, id: b.id + 100000, preds: preds, insts: insts, term: t });
+  }
+  return ssa.SFunc { ...f, nvals: 2147483647, entry: f.entry + 100000, blocks: blocks };
+}
+
+function sparse_blocks(f: ssa.SFunc): ssa.SFunc {
+  let blocks: ssa.SBlock[] = [];
+  for b in f.blocks {
+    let preds: i32[] = [];
+    for p in b.preds {
+      preds = preds.append(2147483646 - p);
+    }
+    let t = b.term;
+    t = ssa.STerm { ...t, target: 2147483646 - t.target, t: 2147483646 - t.t, f: 2147483646 - t.f };
+    blocks = blocks.append(ssa.SBlock { ...b, id: 2147483646 - b.id, preds: preds, term: t });
+  }
+  return ssa.SFunc { ...f, entry: 2147483646 - f.entry, blocks: blocks };
+}
+
+function block_controls(row: ssaprepare.Emitted, f: ssa.SFunc): void {
+  let high = sparse_blocks(f);
+  check(row, high, true);
+  check(row, sparse_blocks(sparse(f)), true);
+  check(row, ssa.SFunc { ...high, blocks: [high.blocks[3], high.blocks[2], high.blocks[1], high.blocks[0]] }, true);
+  check(row, ssa.SFunc { ...high, entry: 2147483647 }, false);
+  check(row, ssa.SFunc { ...high, blocks: high.blocks.with(1, ssa.SBlock { ...high.blocks[1], id: high.blocks[0].id }) }, false);
+  let b = high.blocks[0];
+  check(row, ssa.SFunc { ...high, blocks: high.blocks.with(0, ssa.SBlock { ...b, term: ssa.STerm { ...b.term, kind_tag: 2, target: 2147483647 } }) }, false);
+}
+
+// Exercise growing indexes with sparse IDs, physical order unrelated to CFG
+// order, and a late duplicate or missing use. The original graph stays intact.
+function index_controls(row: ssaprepare.Emitted, f: ssa.SFunc, join: i32): void {
+  let b = f.blocks[join];
+  let insts = b.insts;
+  let last = b.term.value;
+  let i = 0;
+  while (i < 65) {
+    let id = 2147483646 - i * 17;
+    insts = insts.append(ssa.SInst { kind_tag: 7, result: id, args: [last], imm: 0, str: "" });
+    last = id;
+    i = i + 1;
+  }
+  let copied = ssa.SFunc { ...f, nvals: 2147483647, blocks: f.blocks.with(join, ssa.SBlock { ...b, insts: insts, term: ssa.STerm { ...b.term, value: last } }) };
+  check(row, copied, true);
+  let tail = insts[insts.len() - 1];
+  check(row, ssa.SFunc { ...copied, blocks: copied.blocks.with(join, ssa.SBlock { ...copied.blocks[join], insts: insts.with(insts.len() - 1, ssa.SInst { ...tail, result: insts[1].result }) }) }, false);
+  check(row, ssa.SFunc { ...copied, blocks: copied.blocks.with(join, ssa.SBlock { ...copied.blocks[join], insts: insts.with(insts.len() - 1, ssa.SInst { ...tail, args: [2147483647] }) }) }, false);
+  let blocks = copied.blocks;
+  let prior = blocks[join].id;
+  let ret = blocks[join].term;
+  blocks = blocks.with(join, ssa.SBlock { ...blocks[join], term: ssa.STerm { ...ret, kind_tag: 2, target: 100000 } });
+  i = 0;
+  while (i < 65) {
+    let id = 100000 + i * 31;
+    let term = if (i == 64) { ret } else { ssa.STerm { ...ret, kind_tag: 2, target: id + 31 } };
+    blocks = blocks.append(ssa.SBlock { ...b, id: id, insts: [], preds: [prior], term: term });
+    prior = id;
+    i = i + 1;
+  }
+  let reversed: ssa.SBlock[] = [];
+  i = blocks.len();
+  while (i > 0) {
+    i = i - 1;
+    reversed = reversed.append(blocks[i]);
+  }
+  let chained = ssa.SFunc { ...copied, blocks: reversed };
+  check(row, chained, true);
+  check(row, ssa.SFunc { ...chained, blocks: reversed.append(reversed[0]) }, false);
+  check(row, ssa.SFunc { ...chained, blocks: reversed.with(0, ssa.SBlock { ...reversed[0], preds: [2147483647] }) }, false);
+}
+
+function queue_controls(row: ssaprepare.Emitted, f: ssa.SFunc, join: i32): void {
+  let b = f.blocks[join];
+  let branch = ssa.SInst { kind_tag: 2, result: f.nvals, args: [], imm: 1, str: "" };
+  let split = ssa.SBlock { ...b, insts: b.insts.append(branch), term: ssa.STerm { ...b.term, kind_tag: 3, cond: branch.result, t: 10000, f: 10001 } };
+  let left = ssa.SBlock { id: 10000, insts: [], preds: [b.id], term: ssa.STerm { ...b.term, kind_tag: 2, target: 10002 } };
+  let right = ssa.SBlock { ...left, id: 10001 };
+  let tail = ssa.SBlock { ...b, id: 10002, insts: [], preds: [left.id, right.id] };
+  let blocks = [tail, right, left];
+  for original in f.blocks {
+    blocks = blocks.append(if (original.id == b.id) { split } else { original });
+  }
+  let diamond = ssa.SFunc { ...f, nvals: f.nvals + 1, blocks: blocks };
+  check(row, diamond, true);
+  // A completed predecessor is not enough: tail must intersect both rows.
+  let copy = ssa.SInst { kind_tag: 7, result: f.nvals + 1, args: [b.term.value], imm: 0, str: "" };
+  let bad = blocks.with(2, ssa.SBlock { ...left, insts: [copy] });
+  bad = bad.with(0, ssa.SBlock { ...tail, term: ssa.STerm { ...tail.term, value: copy.result } });
+  check(row, ssa.SFunc { ...diamond, nvals: f.nvals + 2, blocks: bad }, false);
+  // Finishing the entry component must not hide a disconnected cycle.
+  let c = ssa.SBlock { ...left, id: 20000, preds: [20001], term: ssa.STerm { ...left.term, target: 20001 } };
+  let d = ssa.SBlock { ...c, id: 20001, preds: [c.id], term: ssa.STerm { ...c.term, target: c.id } };
+  check(row, ssa.SFunc { ...diamond, blocks: blocks.append(c).append(d) }, false);
+  let cycle_first = [d, c];
+  for block in blocks {
+    cycle_first = cycle_first.append(block);
+  }
+  check(row, ssa.SFunc { ...diamond, blocks: cycle_first }, false);
+}
+
+pub function run(out: ssaprepare.Output): void {
+  let row = out.bodies[0];
+  let f = row.body.formed.f;
+  require(f.blocks.len() == 4);
+  let join = -1;
+  let i = 0;
+  for b in f.blocks {
+    if (b.insts.len() == 1 && b.insts[0].kind_tag == 8) {
+      join = i;
+    }
+    i = i + 1;
+  }
+  require(join >= 0);
+  let b = f.blocks[join];
+  let phi = b.insts[0];
+  require(b.preds.len() == 2 && phi.args.len() == 2);
+  check(row, f, true);
+  queue_controls(row, f, join);
+  index_controls(row, f, join);
+  block_controls(row, f);
+  unit.run(out, false);
+  check(row, sparse(f), true);
+  check(row, ssa.SFunc { ...f, blocks: [f.blocks[3], f.blocks[2], f.blocks[1], f.blocks[0]] }, true);
+  check(row, replace(f, join, ssa.SInst { ...phi, args: [phi.args[1], phi.args[0]] }, [b.preds[1], b.preds[0]]), true);
+  check(row, replace(f, join, ssa.SInst { ...phi, args: [phi.args[1], phi.args[0]] }, b.preds), false);
+  check(row, replace(f, join, phi, [b.preds[1], b.preds[0]]), false);
+  check(row, replace(f, join, phi, [b.preds[0], b.preds[0]]), false);
+  check(row, replace(f, join, ssa.SInst { ...phi, args: [phi.args[0]] }, b.preds), false);
+  check(row, replace(f, join, ssa.SInst { ...phi, args: [phi.result, phi.args[1]] }, b.preds), false);
+  check(row, replace(f, join, ssa.SInst { ...phi, args: [f.nvals, phi.args[1]] }, b.preds), false);
+  check(row, replace(f, join, ssa.SInst { ...phi, kind_tag: 7 }, b.preds), false);
+  // Another valid phi reads the same immutable predecessor snapshots. A phi
+  // cannot instead read that newly defined same-block value.
+  let extra = ssa.SInst { ...phi, result: f.nvals };
+  let two = ssa.SFunc { ...f, nvals: f.nvals + 1, blocks: f.blocks.with(join, ssa.SBlock { ...b, insts: [extra, phi] }) };
+  check(row, two, true);
+  check(row, ssa.SFunc { ...two, blocks: two.blocks.with(join, ssa.SBlock { ...b, insts: [extra, ssa.SInst { ...phi, args: [extra.result, phi.args[1]] }] }) }, false);
+  // Copies preserve values; they do not manufacture a parameter or a credit.
+  let copy = ssa.SInst { kind_tag: 7, result: f.nvals, args: [phi.result], imm: 0, str: "" };
+  let copied = ssa.SFunc { ...f, nvals: f.nvals + 1, blocks: f.blocks.with(join, ssa.SBlock { ...b, insts: [phi, copy], term: ssa.STerm { ...b.term, value: copy.result } }) };
+  check(row, copied, true);
+  check(row, ssa.SFunc { ...copied, blocks: copied.blocks.with(join, ssa.SBlock { ...b, insts: [copy, phi] }) }, false);
+  check(row, ssa.SFunc { ...f, blocks: f.blocks.with(join, ssa.SBlock { ...b, term: ssa.STerm { ...b.term, kind_tag: 2, target: b.id }, preds: b.preds.append(b.id), insts: [ssa.SInst { ...phi, args: phi.args.append(phi.result) }] }) }, false);
+}

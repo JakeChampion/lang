@@ -1,0 +1,399 @@
+// Pure SSA semantics for one-pointer uniqueness leaves. All arrays use actual
+// definition/block counts, not the external value extent. Cycles refuse.
+import "./ssa";
+import "./util";
+
+pub struct Meaning { ok: boolean, yes: i32, no: i32 }
+
+// Sort positions, keeping the supplied graph's identities and order intact.
+// External IDs never size an array. Only this module constructs these indexes.
+struct IdIndex { ids: i32[], order: i32[], ok: boolean }
+
+struct Graph { values: i32[], slots: IdIndex, blocks: IdIndex, ok: boolean }
+
+function merge_order(ids: i32[], order: i32[], left: i32, mid: i32, end: i32, output: i32[]): i32[] {
+  let out = output;
+  let a = left;
+  let b = mid;
+  let at = left;
+  while (at < end) {
+    if (b >= end || a < mid && ids[order[a]] <= ids[order[b]]) {
+      out = out.with(at, order[a]);
+      a = a + 1;
+    } else {
+      out = out.with(at, order[b]);
+      b = b + 1;
+    }
+    at = at + 1;
+  }
+  return out;
+}
+
+function distinct_ids(ids: i32[], order: i32[]): boolean {
+  let i = 0;
+  for at in order {
+    if (ids[at] < 0 || i > 0 && ids[order[i - 1]] == ids[at]) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function merge_pass(ids: i32[], order: i32[], width: i32): i32[] {
+  let out = order;
+  let left = 0;
+  while (left < ids.len()) {
+    let mid = left + (if (width < ids.len() - left) { width } else { ids.len() - left });
+    let end = mid + (if (width < ids.len() - mid) { width } else { ids.len() - mid });
+    out = merge_order(ids, order, left, mid, end, out);
+    left = end;
+  }
+  return out;
+}
+
+function id_index(ids: i32[]): IdIndex {
+  let order: i32[] = [];
+  let i = 0;
+  for id in ids {
+    order = order.append(i);
+    i = i + 1;
+  }
+  let width = 1;
+  while (width < ids.len()) {
+    order = merge_pass(ids, order, width);
+    width = if (width > ids.len() / 2) { ids.len() } else { width * 2 };
+  }
+  return IdIndex { ids: ids, order: order, ok: distinct_ids(ids, order) };
+}
+
+function position(ix: IdIndex, id: i32): i32 {
+  let lo = 0;
+  let hi = ix.order.len();
+  while (lo < hi) {
+    let mid = lo + (hi - lo) / 2;
+    let at = ix.order[mid];
+    if (ix.ids[at] == id) {
+      return at;
+    }
+    if (ix.ids[at] < id) {
+      lo = mid + 1;
+    } else {
+      hi = mid;
+    }
+  }
+  return -1;
+}
+
+function block_positions(f: ssa.SFunc): Graph {
+  let ids: i32[] = [];
+  for b in f.blocks {
+    ids = ids.append(b.id);
+  }
+  let blocks = id_index(ids);
+  return Graph { values: [], slots: id_index([]), blocks: blocks, ok: blocks.ok };
+}
+
+function targets(t: ssa.STerm): i32[] {
+  if (t.kind_tag == 2) {
+    return [t.target];
+  }
+  if (t.kind_tag == 3) {
+    return [t.t, t.f];
+  }
+  return [];
+}
+
+function constant(op: ssa.SInst): boolean {
+  return op.args.len() == 0 && op.str == "" && (op.imm == 0 || op.imm == 1 || op.kind_tag == 1 && (op.imm == 7 || op.imm == 9));
+}
+
+function unary(op: ssa.SInst): boolean {
+  return op.args.len() == 1 && (op.kind_tag == 7 && op.str == "" || op.kind_tag == 10 && op.str == "!" || op.kind_tag == 11 && op.str == "__fern_rc_is_unique");
+}
+
+function operation(op: ssa.SInst, b: ssa.SBlock, entry: i32): boolean {
+  if (op.kind_tag == 6) {
+    return b.id == entry && op.imm == 0 && op.str == "" && op.args.len() == 0;
+  }
+  if (op.kind_tag == 1 || op.kind_tag == 2) {
+    return constant(op);
+  }
+  if (op.imm != 0) {
+    return false;
+  }
+  if (op.kind_tag == 8) {
+    return b.preds.len() > 0 && op.args.len() == b.preds.len() && op.str == "";
+  }
+  return unary(op);
+}
+
+function edges(f: ssa.SFunc, b: ssa.SBlock, blocks: IdIndex): boolean {
+  if (b.term.kind_tag < 1 || b.term.kind_tag > 3 || b.term.kind_tag == 3 && b.term.t == b.term.f) {
+    return false;
+  }
+  let preds: i32[] = [];
+  for pred in b.preds {
+    let at = position(blocks, pred);
+    if (at < 0 || util.index_of_i32(preds, pred) >= 0) {
+      return false;
+    }
+    if (util.index_of_i32(targets(f.blocks[at].term), b.id) < 0) {
+      return false;
+    }
+    preds = preds.append(pred);
+  }
+  for dest in targets(b.term) {
+    let at = position(blocks, dest);
+    if (at < 0) {
+      return false;
+    }
+    if (util.index_of_i32(f.blocks[at].preds, b.id) < 0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function definitions(f: ssa.SFunc, b: ssa.SBlock, prior: Graph): Graph {
+  let bad = Graph { ...prior, ok: false };
+  let values = prior.values;
+  let body = false;
+  for op in b.insts {
+    if (op.result < 0 || op.result >= f.nvals || !operation(op, b, f.entry)) {
+      return bad;
+    }
+    if (op.kind_tag == 8 && body) {
+      return bad;
+    }
+    if (op.kind_tag != 8) {
+      body = true;
+    }
+    values = values.append(op.result);
+  }
+  return Graph { ...prior, values: values, ok: true };
+}
+
+function block_declared(b: ssa.SBlock, entry: i32): boolean {
+  return !(b.id == entry && b.preds.len() != 0 || b.id != entry && b.preds.len() == 0);
+}
+
+function entry_declared(f: ssa.SFunc, g: Graph): boolean {
+  return g.ok && f.name != "" && f.nparams == 1 && !f.takes_env && position(g.blocks, f.entry) >= 0;
+}
+
+function declarations(f: ssa.SFunc): Graph {
+  let g = block_positions(f);
+  let bad = Graph { ...g, ok: false };
+  if (!entry_declared(f, g)) {
+    return bad;
+  }
+  let params = 0;
+  for b in f.blocks {
+    if (!block_declared(b, f.entry)) {
+      return bad;
+    }
+    if (!edges(f, b, g.blocks)) {
+      return bad;
+    }
+    g = definitions(f, b, g);
+    if (!g.ok) {
+      return bad;
+    }
+    for op in b.insts {
+      if (op.kind_tag == 6) {
+        params = params + 1;
+      }
+    }
+  }
+  let slots = id_index(g.values);
+  return Graph { ...g, slots: slots, ok: params == 1 && slots.ok };
+}
+
+function readable(row: boolean[], ids: IdIndex, id: i32): boolean {
+  let at = position(ids, id);
+  return at >= 0 && row[at];
+}
+
+// Edges and duplicate predecessors were checked against this same graph.
+// Each declared edge discharges one predecessor, and each block queues once.
+function block_order(f: ssa.SFunc, blocks: IdIndex): i32[] {
+  let remaining: i32[] = [];
+  let order: i32[] = [];
+  let i = 0;
+  for b in f.blocks {
+    remaining = remaining.append(b.preds.len());
+    if (b.preds.len() == 0) {
+      order = order.append(i);
+    }
+    i = i + 1;
+  }
+  i = 0;
+  while (i < order.len()) {
+    for dest in targets(f.blocks[order[i]].term) {
+      let at = position(blocks, dest);
+      if (at < 0 || remaining[at] <= 0) {
+        return [];
+      }
+      let count = remaining[at] - 1;
+      remaining = remaining.with(at, count);
+      if (count == 0) {
+        order = order.append(at);
+      }
+    }
+    i = i + 1;
+  }
+  return order;
+}
+
+function incoming_row(blocks: IdIndex, b: ssa.SBlock, rows: boolean[][], empty: boolean[]): boolean[] {
+  let row = empty;
+  if (b.preds.len() > 0) {
+    row = rows[position(blocks, b.preds[0])];
+    for p in b.preds {
+      let incoming = rows[position(blocks, p)];
+      let i = 0;
+      while (i < row.len()) {
+        row = row.with(i, row[i] && incoming[i]);
+        i = i + 1;
+      }
+    }
+  }
+  return row;
+}
+
+function term_readable(t: ssa.STerm, row: boolean[], ids: IdIndex): boolean {
+  return !(t.kind_tag == 1 && !readable(row, ids, t.value) || t.kind_tag == 3 && !readable(row, ids, t.cond));
+}
+
+function available(f: ssa.SFunc, g: Graph): Graph {
+  let order = block_order(f, g.blocks);
+  if (order.len() != f.blocks.len()) {
+    return Graph { ...g, ok: false };
+  }
+  let empty: boolean[] = [];
+  for id in g.values {
+    empty = empty.append(false);
+  }
+  let rows: boolean[][] = [];
+  for b in f.blocks {
+    rows = rows.append(empty);
+  }
+  for chosen in order {
+    let b = f.blocks[chosen];
+    let row = incoming_row(g.blocks, b, rows, empty);
+    for op in b.insts {
+      let i = 0;
+      for arg in op.args {
+        let source = if (op.kind_tag == 8) { rows[position(g.blocks, b.preds[i])] } else { row };
+        if (!readable(source, g.slots, arg)) {
+          return Graph { ...g, ok: false };
+        }
+        i = i + 1;
+      }
+      row = row.with(position(g.slots, op.result), true);
+    }
+    if (!term_readable(b.term, row, g.slots)) {
+      return Graph { ...g, ok: false };
+    }
+    rows = rows.with(chosen, row);
+  }
+  return g;
+}
+
+function constant_value(n: i32): i32 {
+  return if (n == 0) { 3 } else { if (n == 1) { 4 } else { if (n == 7) { 6 } else { 7 } } };
+}
+
+function unary_value(kind: i32, v: i32, unique: boolean): i32 {
+  if (kind == 7 || kind == 8) {
+    return v;
+  }
+  if (kind == 10 && (v == 3 || v == 4)) {
+    return if (v == 3) { 4 } else { 3 };
+  }
+  if (kind == 11 && v == 1) {
+    return if (unique) { 4 } else { 3 };
+  }
+  return 0;
+}
+
+// Values match the machine proof: 1 pointer, 3 zero, 4 one, 6 seven, 7 nine.
+function value(op: ssa.SInst, source: i32[], ids: IdIndex, pred: i32, b: ssa.SBlock, unique: boolean): i32 {
+  if (op.kind_tag == 6) {
+    return 1;
+  }
+  if (op.kind_tag == 1 || op.kind_tag == 2) {
+    return constant_value(op.imm);
+  }
+  let pos = if (op.kind_tag == 8) { util.index_of_i32(b.preds, pred) } else { 0 };
+  if (pos < 0) {
+    return 0;
+  }
+  let v = source[position(ids, op.args[pos])];
+  return unary_value(op.kind_tag, v, unique);
+}
+
+function path_marks(f: ssa.SFunc): boolean[] {
+  let seen: boolean[] = [];
+  for b in f.blocks {
+    seen = seen.append(false);
+  }
+  return seen;
+}
+
+function successor(t: ssa.STerm, values: i32[], ids: IdIndex): i32 {
+  if (t.kind_tag == 2) {
+    return t.target;
+  }
+  let v = values[position(ids, t.cond)];
+  if (v != 3 && v != 4) {
+    return -1;
+  }
+  return if (v == 4) { t.t } else { t.f };
+}
+
+function run(f: ssa.SFunc, g: Graph, unique: boolean): i32 {
+  let values: i32[] = [];
+  for id in g.values {
+    values = values.append(0);
+  }
+  let current = f.entry;
+  let pred = -1;
+  let seen = path_marks(f);
+  while (true) {
+    let at = position(g.blocks, current);
+    if (at < 0 || seen[at]) {
+      return 0;
+    }
+    seen = seen.with(at, true);
+    let b = f.blocks[at];
+    let incoming = values;
+    for op in b.insts {
+      let v = value(op, if (op.kind_tag == 8) { incoming } else { values }, g.slots, pred, b, unique);
+      if (v == 0) {
+        return 0;
+      }
+      values = values.with(position(g.slots, op.result), v);
+    }
+    if (b.term.kind_tag == 1) {
+      return values[position(g.slots, b.term.value)];
+    }
+    pred = current;
+    current = successor(b.term, values, g.slots);
+  }
+  return 0;
+}
+
+pub function check(f: ssa.SFunc): Meaning {
+  let g = declarations(f);
+  if (g.ok) {
+    g = available(f, g);
+  }
+  if (!g.ok) {
+    return Meaning { ok: false, yes: 0, no: 0 };
+  }
+  let yes = run(f, g, true);
+  let no = run(f, g, false);
+  return Meaning { ok: yes >= 3 && no >= 3, yes: yes, no: no };
+}

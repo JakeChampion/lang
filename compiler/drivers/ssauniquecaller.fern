@@ -1,0 +1,131 @@
+import "../ssauniquecaller" as caller;
+import "../ssaprepare";
+import "../ssa";
+import "std/string";
+
+function require(ok: boolean, code: i32): void {
+  if (!ok) {
+    exit(code);
+  }
+}
+
+function check(text: string, arch: string, f: ssa.SFunc, expected: boolean): void {
+  let p = caller.check_body(text, arch, f);
+  let rows = caller.check_lines(text.split("\n"), arch, f);
+  require(rows.ok == p.ok && rows.function_name == p.function_name && rows.message == p.message, 188);
+  if (p.ok != expected) {
+    print(text);
+    print(p.message);
+    exit(180);
+  }
+  require(p.function_name == f.name && (p.ok || p.message != ""), 181);
+}
+
+function change(text: string, old: string, replacement: string): string {
+  let parts = text.split(old);
+  require(parts.len() > 1, 182);
+  let out = parts[0];
+  let i = 1;
+  while (i < parts.len()) {
+    out = out + replacement + parts[i];
+    i = i + 1;
+  }
+  return out;
+}
+
+function paths(text: string, arch: string, f: ssa.SFunc): void {
+  let jump = if (arch == "arm64") { "    b " } else { "    jmp " };
+  let reg = "__fn_" + f.name + ".r:\n";
+  let prefix = jump + ".Lpath_first\n.Lpath_back:\n" + jump + ".Lpath_body\n.Lpath_first:\n" + jump + ".Lpath_back\n.Lpath_body:\n";
+  check(change(text, reg, reg + prefix), arch, f, true);
+  check(change(text, reg, reg + prefix + jump + ".Lpath_first\n"), arch, f, false);
+  check(change(text, reg, reg + jump + ".Lpath_missing\n"), arch, f, false);
+}
+
+pub function run(row: ssaprepare.Emitted, aligned: boolean): void {
+  let f = row.body.formed.f;
+  let text = row.assembly;
+  let arch = row.context.architecture;
+  let arm = arch == "arm64";
+  check(text, arch, f, !aligned);
+  if (aligned) {
+    return;
+  }
+  paths(text, arch, f);
+  let padded: string[] = ["", " \t"];
+  for row in text.split("\n") {
+    padded = padded.append(" \t" + row + " \t");
+  }
+  require(caller.check_lines(padded, arch, f).ok, 189);
+  require(!caller.check_lines([text], arch, f).ok, 190);
+  require(!caller.check_lines(padded.append(".set hidden, 0"), arch, f).ok, 191);
+  check("\n" + text + "\n", arch, f, true);
+  check(text, "wasi", f, false);
+  check(text, arch, ssa.SFunc { ...f, nparams: 2 }, false);
+  check(text, arch, ssa.SFunc { ...f, takes_env: true }, false);
+  check(text, arch, ssa.SFunc { ...f, name: "other" }, false);
+  check(change(text, "__fn_" + f.name, "__fn_renamed"), arch, ssa.SFunc { ...f, name: "renamed" }, true);
+  check(text + ".set __fn_alias, __fn_" + f.name + "\n", arch, f, false);
+  check(text + ".Lunreachable:\n    " + (if (arm) { "bl opaque" } else { "call opaque" }) + "\n", arch, f, false);
+  check(text + "__fn_" + f.name + ":\n", arch, f, false);
+  check(change(text, "    ret\n", ""), arch, f, false);
+  let load = if (arm) { "    ldr x0, [sp, #0]\n" } else { "    movq 8(%rsp), %rax\n" };
+  check(change(text, load, ""), arch, f, false);
+  check(change(text, load, if (arm) { "    ldr x0, [sp, #8]\n" } else { "    movq 16(%rsp), %rax\n" }), arch, f, false);
+  // A correct stack entry must not hide a broken direct register entry.
+  check(change(text, "__fn_" + f.name + ".r:", "__fn_" + f.name + ".r:\n    " + (if (arm) { "mov x0, #0" } else { "movq $0, %rax" })), arch, f, false);
+  if (arm) {
+    // TST clears C on A64, so B.LO is taken. The x86 TEST/CF rule differs.
+    let wrong = ".Lwrong_carry_" + f.name;
+    check(change(text, load, load + "    tst x0, #1\n    b.lo " + wrong + "\n") + wrong + ":\n    mov x0, #0\n    ret\n", arch, f, false);
+    let right = ".Lright_carry_" + f.name;
+    let reg = "__fn_" + f.name + ".r:\n";
+    let good = change(text, reg, reg + right + ":\n");
+    check(change(good, load, load + "    tst x0, #1\n    b.lo " + right + "\n    mov x0, #0\n"), arch, f, true);
+    // Restoring the frame later cannot make a load from the saved frame
+    // pointer into a load of the original incoming parameter.
+    let save = "    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n";
+    let restore = "    mov sp, x29\n    ldp x29, x30, [sp], #16\n";
+    check(change(text, load, save + load + restore), arch, f, false);
+    check(change(text, load, save + restore + load), arch, f, true);
+    let framed = change(change(text, reg, reg + save), "    ret\n", restore + "    ret\n");
+    check(framed, arch, f, true);
+    check(change(framed, "    ldp x29, x30, [sp], #16\n", ""), arch, f, false);
+    check(change(framed, "    mov sp, x29\n", ""), arch, f, false);
+    check(change(text, "    ret\n", "    mov x19, #0\n    ret\n"), arch, f, false);
+  } else {
+    let wrong = ".Lwrong_carry_" + f.name;
+    check(change(text, load, load + "    testb $1, %al\n    jb " + wrong + "\n") + wrong + ":\n    movq $0, %rax\n    ret\n", arch, f, true);
+    check(change(text, "    ret\n", "    movq $0, %r12\n    ret\n"), arch, f, false);
+  }
+  if (f.blocks.len() == 3) {
+    successors(text, arch, f);
+  }
+}
+
+function successors(text: string, arch: string, f: ssa.SFunc): void {
+  let arm = arch == "arm64";
+  let seven = if (arm) { "mov x0, #7" } else { "movl $7, %eax" };
+  let nine = if (arm) { "mov x0, #9" } else { "movl $9, %eax" };
+  check(change(text, seven, nine), arch, f, false);
+  let entry = f.blocks[0];
+  require(entry.id == f.entry, 183);
+  let term = ssa.STerm { ...entry.term, t: entry.term.f, f: entry.term.t };
+  check(text, arch, ssa.SFunc { ...f, blocks: f.blocks.with(0, ssa.SBlock { ...entry, term: term }) }, false);
+  // The oracle follows the supplied final SSA, including reordered blocks
+  // and coherent changes to the returned constants.
+  check(text, arch, ssa.SFunc { ...f, blocks: [f.blocks[2], f.blocks[0], f.blocks[1]] }, true);
+  let changed = f.blocks;
+  let i = 1;
+  while (i < changed.len()) {
+    let child = changed[i];
+    let op = child.insts[0];
+    changed = changed.with(i, ssa.SBlock { ...child, insts: [ssa.SInst { ...op, imm: if (op.imm == 7) { 9 } else { 7 } }] });
+    i = i + 1;
+  }
+  let swapped = change(change(change(text, seven, "TEMP_CONSTANT"), nine, seven), "TEMP_CONSTANT", nine);
+  check(swapped, arch, ssa.SFunc { ...f, blocks: changed }, true);
+  let branch = if (arm) { "    b.ne .Lssa_" + f.name + "_2" } else { "    jne .Lssa_" + f.name + "_2" };
+  let inverse = if (arm) { "    b.eq .Lssa_" + f.name + "_2" } else { "    je .Lssa_" + f.name + "_2" };
+  check(if (text.contains(branch)) { change(text, branch, inverse) } else { change(text, inverse, branch) }, arch, f, false);
+}
