@@ -6,6 +6,7 @@ import "./ssa";
 import "./ssauniquecaller" as caller;
 import "./ssacredithelper" as helper;
 import "./util";
+import "./ssaproofnames" as names;
 import "std/string";
 
 struct Unit { lines: string[], ok: boolean }
@@ -44,15 +45,12 @@ function text_unit(output: string, architecture: string): Unit {
     if (line != "") {
       // Body and pool labels share one assembler namespace.
       if (line.ends_with(":")) {
-        if (util.has_str(labels, line)) {
-          return Unit { lines: [], ok: false };
-        }
         labels = labels.append(line);
       }
       lines = lines.append(line);
     }
   }
-  if (lines.len() < 2 || lines[0] != ".text") {
+  if (names.index(labels).duplicate >= 0 || lines.len() < 2 || lines[0] != ".text") {
     return Unit { lines: [], ok: false };
   }
   let body: string[] = [];
@@ -85,20 +83,23 @@ pub function check_collection(output: string, architecture: string, functions: s
     return refuse("");
   }
   let entries: string[] = [];
+  let seen: boolean[] = [];
   for f in functions {
     let entry = "__fn_" + f.name + ":";
-    if (util.has_str(entries, entry)) {
-      return refuse(f.name);
-    }
     entries = entries.append(entry);
+    seen = seen.append(false);
   }
-  let seen: i32[] = [];
+  let ix = names.index(entries);
+  if (ix.duplicate >= 0) {
+    return refuse(functions[ix.duplicate].name);
+  }
+  let count = 0;
   let current = -1;
   let body: string[] = [];
   for line in unit.lines {
-    let at = util.index_of_str(entries, line);
+    let at = names.position(ix, line);
     if (at >= 0) {
-      if (util.index_of_i32(seen, at) >= 0) {
+      if (seen[at]) {
         return refuse(functions[at].name);
       }
       if (current >= 0) {
@@ -107,7 +108,8 @@ pub function check_collection(output: string, architecture: string, functions: s
           return proof;
         }
       }
-      seen = seen.append(at);
+      seen = seen.with(at, true);
+      count = count + 1;
       current = at;
       body = [];
     }
@@ -116,7 +118,7 @@ pub function check_collection(output: string, architecture: string, functions: s
     }
     body = body.append(line);
   }
-  if (current < 0 || seen.len() != functions.len()) {
+  if (current < 0 || count != functions.len()) {
     return refuse("");
   }
   let proof = caller.check_lines(body, architecture, functions[current]);

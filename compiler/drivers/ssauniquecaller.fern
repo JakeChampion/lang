@@ -40,6 +40,25 @@ function paths(text: string, arch: string, f: ssa.SFunc): void {
   check(change(text, reg, reg + prefix), arch, f, true);
   check(change(text, reg, reg + prefix + jump + ".Lpath_first\n"), arch, f, false);
   check(change(text, reg, reg + jump + ".Lpath_missing\n"), arch, f, false);
+  indexed_paths(text, arch, f);
+}
+
+function indexed_paths(text: string, arch: string, f: ssa.SFunc): void {
+  let jump = if (arch == "arm64") { "    b " } else { "    jmp " };
+  let reg = "__fn_" + f.name + ".r:\n";
+  let prefix = jump + ".Lindexed0\n";
+  let i = 65;
+  while (i > 0) {
+    i = i - 1;
+    let target = if (i == 64) { ".Lindexed_end" } else { ".Lindexed" + (i + 1).to_string() };
+    prefix = prefix + ".Lindexed" + i.to_string() + ":\n" + jump + target + "\n";
+  }
+  let good = change(text, reg, reg + prefix + ".Lindexed_end:\n");
+  check(good, arch, f, true);
+  check(good + ".Lindexed64:\n", arch, f, false);
+  check(change(good, jump + ".Lindexed_end\n", jump + ".Lindexed_missing\n"), arch, f, false);
+  check(change(good, jump + ".Lindexed_end\n", jump + ".Lindexed0\n"), arch, f, false);
+  check(change(text, reg, reg + jump + "\n"), arch, f, false);
 }
 
 pub function run(row: ssaprepare.Emitted, aligned: boolean): void {

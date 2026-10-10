@@ -1,6 +1,7 @@
 // Scoped proof of the native stack-entry uniqueness helper's actual assembly.
 // Not a proof of native inline templates, call sites, or the whole runtime.
 import "./util";
+import "./ssaproofnames" as names;
 import "std/string";
 import "./ssacredithelper" as helper;
 import "./ssaruntimeuniqueflow" as flow;
@@ -28,19 +29,12 @@ function definition(line: string): string {
   return "";
 }
 
-function index(lines: string[], wanted: string): i32 {
-  let found = -1;
-  let i = 0;
+function index(lines: string[]): names.Names {
+  let definitions: string[] = [];
   for line in lines {
-    if (definition(line) + ":" == wanted) {
-      if (found >= 0) {
-        return -2;
-      }
-      found = i;
-    }
-    i = i + 1;
+    definitions = definitions.append(definition(line));
   }
-  return found;
+  return names.index(definitions);
 }
 
 function assignment(line: string): boolean {
@@ -94,12 +88,13 @@ function body(all: string[], start: i32): string[] {
 // does not establish pointer validity or credit ownership at a caller.
 struct Program { ops: flow.Op[], error: string }
 
-function program(all: string[], code: string[], arm: boolean): Program {
+function program(all: names.Names, code: string[], arm: boolean): Program {
   let ops: flow.Op[] = [];
+  let local = index(code);
   for line in code {
     let name = definition(line);
     if (name != "") {
-      if (line != name + ":" || !util.str_has_prefix(line, ".L") || index(all, line) < 0) {
+      if (line != name + ":" || !util.str_has_prefix(line, ".L") || names.unique_position(all, name) < 0) {
         return Program { ops: [], error: "ambiguous uniqueness branch label" };
       }
       ops = ops.append(flow.Op { kind: 30, target: -1 });
@@ -107,7 +102,7 @@ function program(all: string[], code: string[], arm: boolean): Program {
       let decoded = flow.decode(line, arm);
       let target = -1;
       if (decoded.kind >= 20) {
-        target = index(code, decoded.target + ":");
+        target = names.unique_position(local, decoded.target);
         if (target < 0 || !util.str_has_prefix(decoded.target, ".L")) {
           return Program { ops: [], error: "missing or ambiguous uniqueness branch target" };
         }
@@ -126,14 +121,15 @@ pub function check(text: string, architecture: string): helper.Proof {
     return verdict(false, "unsupported uniqueness architecture");
   }
   let all = lines(text);
-  let start = index(all, "__fn___fern_rc_is_unique:");
+  let ix = index(all);
+  let start = names.unique_position(ix, "__fn___fern_rc_is_unique");
   if (start < 0) {
     return verdict(false, "missing or ambiguous uniqueness implementation");
   }
   if (all[start] != "__fn___fern_rc_is_unique:") {
     return verdict(false, "unsupported uniqueness entry definition");
   }
-  let p = program(all, body(all, start), architecture == "arm64");
+  let p = program(ix, body(all, start), architecture == "arm64");
   if (p.error != "") {
     return verdict(false, p.error);
   }

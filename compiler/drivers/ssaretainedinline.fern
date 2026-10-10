@@ -53,6 +53,26 @@ function paths(site: ssaprepare.UniqueSite, arch: string, input: string, result:
   check(prefix + text, arch, input, result, site.flags, true);
   check(prefix + jump + ".Lpath_first\n" + text, arch, input, result, site.flags, false);
   check(jump + ".Lpath_missing\n" + text, arch, input, result, site.flags, false);
+  indexed_paths(site, arch, input, result);
+}
+
+function indexed_paths(site: ssaprepare.UniqueSite, arch: string, input: string, result: string): void {
+  let jump = if (arch == "arm64") { "    b " } else { "    jmp " };
+  let prefix = jump + ".Lindexed0\n";
+  let i = 65;
+  // Execution order opposes physical order, with instruction placeholders
+  // between labels and prefix-related decimal names.
+  while (i > 0) {
+    i = i - 1;
+    let target = if (i == 64) { ".Lindexed_end" } else { ".Lindexed" + (i + 1).to_string() };
+    prefix = prefix + ".Lindexed" + i.to_string() + ":\n" + jump + target + "\n";
+  }
+  let text = prefix + ".Lindexed_end:\n" + site.text;
+  check(text, arch, input, result, site.flags, true);
+  check(text + ".Lindexed64:\n", arch, input, result, site.flags, false);
+  check(change(text, jump + ".Lindexed_end\n", jump + ".Lindexed_missing\n"), arch, input, result, site.flags, false);
+  check(change(text, jump + ".Lindexed_end\n", jump + ".Lindexed0\n"), arch, input, result, site.flags, false);
+  check(jump + "\n" + site.text, arch, input, result, site.flags, false);
 }
 
 function corruptions(site: ssaprepare.UniqueSite, arch: string, input: string, result: string): void {

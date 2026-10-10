@@ -6,6 +6,7 @@
 // scratch registers are dead; only these and the declared result may change. No
 // cached-input or alignment annotation is accepted as evidence here.
 import "./util";
+import "./ssaproofnames" as names;
 import "./ssacredithelper" as helper;
 import "./ssainlineuniqueisa" as isa;
 import "./ssainlineuniqueflow" as flow;
@@ -51,9 +52,6 @@ function program(text: string, arm: boolean): Program {
       let decoded = isa.Op { kind: 30, a: "", b: "", target: "" };
       if (label(line)) {
         name = slice_unchecked(line, 0, line.len() - 1) + "";
-        if (util.has_str(labels, name)) {
-          return Program { ops: [], targets: [], ok: false };
-        }
       } else {
         decoded = isa.decode(line, arm);
         if (decoded.kind == 0) {
@@ -68,11 +66,15 @@ function program(text: string, arm: boolean): Program {
 }
 
 function resolve(ops: isa.Op[], labels: string[]): Program {
+  let ix = names.index(labels);
+  if (ix.duplicate >= 0) {
+    return Program { ops: [], targets: [], ok: false };
+  }
   let targets: i32[] = [];
   for op in ops {
     let dest = -1;
     if (op.kind >= 20 && op.kind < 30) {
-      dest = util.index_of_str(labels, op.target);
+      dest = names.position(ix, op.target);
       if (!label(op.target + ":") || dest < 0) {
         return Program { ops: [], targets: [], ok: false };
       }

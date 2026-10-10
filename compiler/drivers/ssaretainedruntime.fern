@@ -82,6 +82,30 @@ function guards(text: string, arm: boolean): void {
   check(change(text, "ret\n", ""), arm, false);
 }
 
+function indexed_paths(text: string, arm: boolean): void {
+  let jump = if (arm) { "b " } else { "jmp " };
+  let entry = "__fn___fern_rc_is_unique:\n";
+  let prefix = jump + ".Lindexed0\n";
+  let i = 65;
+  while (i > 0) {
+    i = i - 1;
+    let target = if (i == 64) { ".Lindexed_end" } else { ".Lindexed" + (i + 1).to_string() };
+    prefix = prefix + ".Lindexed" + i.to_string() + ":\n" + jump + target + "\n";
+  }
+  let good = change(text, entry, entry + prefix + ".Lindexed_end:\n");
+  check(good, arm, true);
+  check(good + "__next:\n.Lindexed64:\n", arm, false);
+  check(change(good, jump + ".Lindexed_end\n", jump + ".Lindexed_missing\n"), arm, false);
+  check(change(good, jump + ".Lindexed_end\n", jump + ".Lindexed0\n"), arm, false);
+  // Unrelated definitions retain the existing scoped admission policy.
+  let unrelated = "__unrelated:\n.Lunrelated:\n.Lunrelated: ret\n__unrelated:\n";
+  check(unrelated + good, arm, true);
+  check(good + unrelated, arm, true);
+  check(change(good, entry, "__fn___fern_rc_is_unique: ret\n"), arm, false);
+  check(change(good, ".Lindexed64:", ".Lindexed64: ret"), arm, false);
+  check(change(text, entry, entry + jump + "\n"), arm, false);
+}
+
 pub function run(output: string, arm: boolean): void {
   check(output, arm, true);
   check(output, !arm, false);
@@ -101,6 +125,7 @@ pub function run(output: string, arm: boolean): void {
   check(change(text, ".Lshuniq_ret:", ".Lwrong:"), arm, false);
   check(change(text, "ret\n", ".Lcycle:\n" + (if (arm) { "b .Lcycle\n" } else { "jmp .Lcycle\n" })), arm, false);
   require(!unique.check(text, "wasm32-wasi").ok, 98);
+  indexed_paths(text, arm);
   instructions(text, arm);
 }
 

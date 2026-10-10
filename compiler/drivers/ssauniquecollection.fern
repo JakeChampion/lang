@@ -33,6 +33,52 @@ function emit(g: ircore.Gated, arm: boolean): ssaprepare.Output {
   return asm_ir.emit_module_ir_unit_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, 2, cache, g.physical, semlower.runtime_lowering, 0 as usize, sw, true);
 }
 
+function change(text: string, old: string, replacement: string): string {
+  let parts = text.split(old);
+  require(parts.len() > 1);
+  let out = parts[0];
+  let i = 1;
+  while (i < parts.len()) {
+    out = out + replacement + parts[i];
+    i = i + 1;
+  }
+  return out;
+}
+
+function indexed(a: ssaprepare.Emitted, prefix: string, suffix: string): void {
+  let f = a.body.formed.f;
+  let arch = a.context.architecture;
+  let fs: ssa.SFunc[] = [];
+  let bodies: string[] = [];
+  let text = prefix;
+  let i = 0;
+  while (i < 65) {
+    // Prefix-related names and decimal order differ from encounter order.
+    let name = "probe" + (if (i == 0) { "" } else { i.to_string() });
+    let body = change(change(a.assembly, "__fn_" + f.name, "__fn_" + name), ".Lssa_" + f.name + "_", ".Lssa_" + name + "_");
+    bodies = bodies.append(body);
+    text = text + body;
+    fs = fs.append(ssa.SFunc { ...f, name: name });
+    i = i + 1;
+  }
+  let reversed: ssa.SFunc[] = [];
+  let backwards = prefix;
+  while (i > 0) {
+    i = i - 1;
+    reversed = reversed.append(fs[i]);
+    backwards = backwards + bodies[i];
+  }
+  check(text + suffix, arch, fs, true);
+  check(text + suffix, arch, reversed, true);
+  check(backwards + suffix, arch, fs, true);
+  check(text + suffix, arch, fs.append(fs[64]), false);
+  check(text + suffix, arch, fs.with(64, ssa.SFunc { ...fs[64], name: "probe_missing" }), false);
+  check(text + bodies[64] + suffix, arch, fs, false);
+  check(text + ".Lssa_probe_" + f.entry.to_string() + ":\n" + suffix, arch, fs, false);
+  let duplicate = unit.check_collection(text + suffix, arch, [fs[64], fs[0], fs[0], fs[64]]);
+  require(!duplicate.ok && duplicate.function_name == fs[0].name);
+}
+
 pub function run(g: ircore.Gated, arm: boolean): void {
   let out = emit(g, arm);
   require(out.bodies.len() == 2);
@@ -72,6 +118,7 @@ pub function run(g: ircore.Gated, arm: boolean): void {
   // Physical order and supplied graph order are independent.
   let whole = out.text.split(a.assembly + b.assembly);
   require(whole.len() == 2);
+  indexed(a, whole[0], whole[1]);
   check(whole[0] + b.assembly + a.assembly + whole[1], arch, [f, h], true);
   let label = ".Lssa_" + f.name + "_" + f.entry.to_string();
   check(parts[0] + b.assembly + label + ":\n" + parts[1], arch, [f, h], false);
