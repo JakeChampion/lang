@@ -271,6 +271,10 @@ func hexVal(r rune) int {
 	return 0
 }
 
+// tokenSourceBytesPerSlot is a starting reserve, not a per-file bound. The
+// corpus-density test keeps it tied to the current self-host source population.
+const tokenSourceBytesPerSlot = 5
+
 // Tokenize turns src into a slice of tokens terminated by an EOF
 // token, plus the `//` line comments encountered along the way (in
 // source order). Comments are returned separately rather than as a
@@ -281,12 +285,9 @@ func Tokenize(src string) ([]Token, []ast.Comment, error) {
 		return nil, nil, err
 	}
 	l := &lexer{src: src, line: 1, col: 1}
-	// One token per 6 source bytes, plus a floor for files too short for the
-	// division to reserve anything. The self-host compiler's sources average
-	// 6.94 bytes per token by volume, so the reserve covers 115% of the
-	// corpus's tokens and nearly all the growth goes away in aggregate. It is
-	// not a bound per file: 44 of the 117 sources are denser than 6 and grow once.
-	out := make([]Token, 0, len(src)/6+16)
+	// Reserve from source size, with a floor for short files. Dense individual
+	// files can still grow; tokenization does not depend on this estimate.
+	out := make([]Token, 0, len(src)/tokenSourceBytesPerSlot+16)
 	for {
 		tok, err := l.next()
 		if err != nil {
