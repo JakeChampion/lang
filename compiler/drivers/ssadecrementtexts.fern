@@ -1,0 +1,104 @@
+import "../ssadecrementtext" as text;
+import "std/string";
+
+function require(ok: boolean): void {
+  if (!ok) {
+    print("decrement final-text boundary controls failed");
+    exit(199);
+  }
+}
+
+function change(s: string, from: string, to: string): string {
+  let parts = s.split(from);
+  require(parts.len() > 1);
+  return parts.join(to);
+}
+
+function check(s: string, entry: string, ok: boolean): void {
+  let p = text.select(s, entry);
+  if (p.error == "" != ok) {
+    print(entry + ": expected " + ok.to_string() + ": " + p.error);
+  }
+  require(p.error == "" == ok);
+  if (ok) {
+    require(p.register_entry >= 0 && p.register_entry < p.lines.len());
+    require(p.lines[p.register_entry] == entry + ".r:");
+  } else {
+    require(p.lines.len() == 0 && p.register_entry == -1);
+  }
+}
+
+function directives(s: string, entry: string): void {
+  for directive in [".set alias, " + entry, ".equ alias, " + entry, ".macro hidden", ".include \"hidden.s\"", ".if 0", ".rept 1", ".irp arg,1", ".intel_syntax noprefix", ".att_syntax", ".code32", ".arch i386", ".pushsection .text", ".popsection", ".previous", ".subsection 1", ".section .text,\"aw\"", ".weakref alias, " + entry, ".symver alias, " + entry, ".incbin \"hidden\"", ".org 0", ".unknown"] {
+    check(directive + "\n" + s, entry, false);
+    check(s + "\n" + directive + "\n", entry, false);
+  }
+  check("alias = " + entry + "\n" + s, entry, false);
+  check("alias: .set hidden, " + entry + "\n" + s, entry, false);
+  check("alias: hidden: ret\n" + s, entry, false);
+  check(".data\n.ascii \"unterminated\n" + s, entry, false);
+  check(".data\n.ascii \"escaped end\\\"\n" + s, entry, false);
+  check(".data\n.ascii \"complete\"; .set hidden, " + entry + "\n" + s, entry, false);
+  check(".data\n.ascii \"complete\" garbage\n" + s, entry, false);
+  check(".data\n.quad 0\\\n" + s, entry, false);
+  check("\"quoted_alias\": .set hidden, " + entry + "\n" + s, entry, false);
+  check(s + "\n.text\n.byte 0\n", entry, false);
+  check(change(s, entry + ".r:\n", entry + ".r:\n.align 8\n"), entry, false);
+  check(change(s, entry + ".r:\n", entry + ".r:\n.cfi_startproc\n"), entry, false);
+}
+
+function entries(s: string, entry: string, local: string): void {
+  check(s + "\n.text\n" + entry + ":\nret\n", entry, false);
+  check(s + "\n.data\n" + entry + ".r: .quad 0\n", entry, false);
+  check(s + "\n.data\n" + local + ": .quad 0\n", entry, false);
+  check(change(s, entry + ":", entry + ": ret"), entry, false);
+  check(change(s, entry + ".r:", entry + ".r: ret"), entry, false);
+  check(change(s, local + ":", local + ": ret"), entry, false);
+  check(change(s, entry + ":", ".data\n" + entry + ":"), entry, false);
+  check(change(s, entry + ".r:", ".data\n" + entry + ".r:"), entry, false);
+  check(change(s, entry + ".r:", ".data\n.quad 0\n.text\n" + entry + ".r:"), entry, false);
+  check(change(s, entry + ".r:", "__unrelated:\n" + entry + ".r:"), entry, false);
+  check(change(s, entry + ".r:", "__renamed_register:"), entry, false);
+  check(change(s, entry + ".r:", entry + ".r:; ret"), entry, false);
+}
+
+function control_bytes(s: string, entry: string): void {
+  for code in [0, 1, 8, 11, 12, 14, 31, 127] {
+    let byte = string.string_from_codepoint(code as char);
+    check(byte + "\n" + s, entry, false);
+    check("# comment " + byte + "\n" + s, entry, false);
+  }
+  check(change(s, entry + ".r:", entry + ".r:\rret"), entry, false);
+  check("\r" + s, entry, false);
+}
+
+pub function run(output: string): void {
+  for entry in ["__fn___fern_arr_dec", "__fn___fern_str_free"] {
+    let original = text.select(output, entry);
+    check(output, entry, true);
+    // Selection preserves every body line, including the second nonlocal
+    // entry and the zero/one/free effects that still need semantic checking.
+    require(original.lines[0] == "movq 8(%rsp), %rax" && original.register_entry == 1);
+    require(original.lines.len() > 20);
+    let s = ".text\n" + entry + ":\n" + original.lines.join("\n") + "\n";
+    let selected = text.select(s, entry);
+    check(s, entry, true);
+    require(selected.lines.join("\n") == original.lines.join("\n"));
+    check(change(s, "\n", "\r\n\t"), entry, true);
+    check("# ordinary comment\n" + s, entry, true);
+    check(".data\n.ascii \"escaped \\\"; " + entry + ": .set alias, hidden\\n\"\n" + s, entry, true);
+    check(change(s, ".text\n", ""), entry, false);
+    check("", entry, false);
+    check(s, "__fn_arbitrary", false);
+    let local = if (entry == "__fn___fern_arr_dec") { ".Larrdec_ret" } else { ".Lstrfree_ret" };
+    check(change(s, local, ".Lrenamed_decrement_return"), entry, true);
+    // Unknown instructions remain literal unproved text, never a successful
+    // machine certificate. The next checker must refuse them when reachable.
+    let unknown = text.select(change(s, "movq 8(%rsp), %rax", "unknown_instruction"), entry);
+    require(unknown.error == "" && unknown.lines[0] == "unknown_instruction");
+    check(s + "\n.data\n__data: .quad 0\n.text\n__next:\nret\n", entry, true);
+    entries(s, entry, local);
+    directives(s, entry);
+    control_bytes(s, entry);
+  }
+}

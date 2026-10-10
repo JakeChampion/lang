@@ -1,0 +1,283 @@
+// Select two entries from ONE supplied normal x86 assembly output. This is
+// namespace and section validation only, not an instruction/effect proof.
+import "./ssaproofnames" as names;
+import "./util";
+import "std/string";
+
+pub struct Body { lines: string[], register_entry: i32, error: string }
+
+struct Scan { lines: string[], executable: boolean[], error: string }
+
+function failure(message: string): Body {
+  return Body { lines: [], register_entry: -1, error: message };
+}
+
+function symbol_byte(c: u8): boolean {
+  return c >= b'a' && c <= b'z' || c >= b'A' && c <= b'Z' || c >= b'0' && c <= b'9' || c == b'_' || c == b'.' || c == b'$';
+}
+
+function symbol(s: string): boolean {
+  if (s.len() == 0 || s[0] >= b'0' && s[0] <= b'9') {
+    return false;
+  }
+  for c in s {
+    if (!symbol_byte(c)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function definition(line: string): string {
+  let at = 0;
+  while (at < line.len() && symbol_byte(line[at])) {
+    at = at + 1;
+  }
+  let name = slice_unchecked(line, 0, at) + "";
+  return if (at < line.len() && line[at] == b':' && symbol(name)) { name } else { "" };
+}
+
+function word(line: string): string {
+  let at = 0;
+  while (at < line.len() && line[at] != b' ' && line[at] != b'\t') {
+    at = at + 1;
+  }
+  return slice_unchecked(line, 0, at) + "";
+}
+
+function decimal(s: string): boolean {
+  if (s == "") {
+    return false;
+  }
+  for c in s {
+    if (c < b'0' || c > b'9') {
+      return false;
+    }
+  }
+  return true;
+}
+
+function one_of(s: string, choices: string[]): boolean {
+  for choice in choices {
+    if (s == choice) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function data_values(arg: string): boolean {
+  for value in arg.split(",") {
+    if (!decimal(util.trim(value))) {
+      return false;
+    }
+  }
+  return arg != "";
+}
+
+function metadata(line: string, op: string, arg: string, section: i32): boolean {
+  if (op == ".globl" && symbol(arg) || op == ".align" && decimal(arg)) {
+    return true;
+  }
+  if (section != 1) {
+    return false;
+  }
+  if (one_of(line, [".cfi_startproc", ".cfi_endproc", ".cfi_remember_state", ".cfi_restore_state"])) {
+    return true;
+  }
+  // These directives change unwind metadata only. Unwinding is outside
+  // this boundary; no CFI directive is allowed inside the selected body.
+  return arg != "" && one_of(op, [".cfi_def_cfa_offset", ".cfi_def_cfa_register", ".cfi_def_cfa", ".cfi_offset"]);
+}
+
+function quoted_data(arg: string): boolean {
+  if (arg.len() < 2 || arg[0] != b'"') {
+    return false;
+  }
+  let at = 1;
+  while (at < arg.len()) {
+    let c = arg[at];
+    if (c == b'"') {
+      return at == arg.len() - 1;
+    }
+    if (c < 32) {
+      return false;
+    }
+    if (c == b'\\') {
+      at = at + 1;
+      if (at >= arg.len() || arg[at] < 32) {
+        return false;
+      }
+    }
+    at = at + 1;
+  }
+  return false;
+}
+
+function literal_data(line: string, section: i32): boolean {
+  let op = word(line);
+  if (section != 2 || !one_of(op, [".ascii", ".asciz"])) {
+    return false;
+  }
+  return quoted_data(util.trim(slice_unchecked(line, op.len(), line.len()) + ""));
+}
+
+// Closed policy, including directives outside the selected body. Section
+// stacks, aliases, macros, includes, conditional assembly and dialect changes
+// must not alter the interpretation of a later definition or instruction.
+function directive(line: string, section: i32): i32 {
+  if (one_of(line, [".text", ".section .text"])) {
+    return 1;
+  }
+  if (one_of(line, [".data", ".bss", ".section .data", ".section .bss", ".section .rodata"])) {
+    return 2;
+  }
+  let op = word(line);
+  let arg = util.trim(slice_unchecked(line, op.len(), line.len()) + "");
+  if (metadata(line, op, arg, section)) {
+    return section;
+  }
+  if (literal_data(line, section)) {
+    return section;
+  }
+  if (section == 2 && data_values(arg) && one_of(op, [".quad", ".long", ".byte", ".skip", ".zero"])) {
+    return section;
+  }
+  return -1;
+}
+
+function ambiguous_syntax(tail: string): boolean {
+  // Quoted/multiline symbols and escaped newlines require their own lexer.
+  // Refusing them also prevents data strings from swallowing later labels.
+  for forbidden in [":", ";", "=", "/*", "*/", "\\", "\"", "'"] {
+    if (util.contains(tail, forbidden)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function raw_line(raw: string): boolean {
+  let at = 0;
+  while (at < raw.len()) {
+    let c = raw[at];
+    if (c < 32 && c != b'\t') {
+      // Accept CRLF only. An interior or leading CR must not be trimmed
+      // into a different assembler statement or definition.
+      if (c != b'\r' || at != raw.len() - 1) {
+        return false;
+      }
+    }
+    if (c == 127) {
+      return false;
+    }
+    at = at + 1;
+  }
+  return true;
+}
+
+function scan(text: string): Scan {
+  let lines: string[] = [];
+  let executable: boolean[] = [];
+  let section = 0;
+  for raw in text.split("\n") {
+    if (!raw_line(raw)) {
+      return Scan { lines: [], executable: [], error: "unsupported decrement control byte" };
+    }
+    let line = util.trim(raw);
+    if (line != "" && !util.str_has_prefix(line, "#")) {
+      let name = definition(line);
+      let tail = if (name == "") { line } else { util.trim(slice_unchecked(line, name.len() + 1, line.len()) + "") };
+      // No secondary definitions or statement separators hidden on a line.
+      if (!literal_data(tail, section) && ambiguous_syntax(tail)) {
+        return Scan { lines: [], executable: [], error: "unsupported decrement assembly syntax" };
+      }
+      let here = section == 1;
+      if (util.str_has_prefix(tail, ".")) {
+        section = directive(tail, section);
+        if (section < 0) {
+          return Scan { lines: [], executable: [], error: "unsupported decrement assembly directive: " + tail };
+        }
+      }
+      lines = lines.append(line);
+      executable = executable.append(here);
+    }
+  }
+  return Scan { lines: lines, executable: executable, error: "" };
+}
+
+function ends_body(line: string, name: string, entry: string): boolean {
+  if (name != "") {
+    return name != entry + ".r" && !util.str_has_prefix(name, ".L");
+  }
+  return one_of(line, [".text", ".data", ".bss"]) || util.str_has_prefix(line, ".section");
+}
+
+function body_error(s: Scan, ix: names.Names, at: i32, name: string): string {
+  let line = s.lines[at];
+  if (!s.executable[at] || name == "" && util.str_has_prefix(line, ".")) {
+    return "unsupported decrement body directive";
+  }
+  if (name != "" && (line != name + ":" || names.unique_position(ix, name) != at)) {
+    return "ambiguous decrement body definition";
+  }
+  return "";
+}
+
+function body(s: Scan, ix: names.Names, start: i32, register: i32, entry: string): Body {
+  let code: string[] = [];
+  let at = start + 1;
+  let reg = -1;
+  while (at < s.lines.len()) {
+    let line = s.lines[at];
+    let name = definition(line);
+    // A section transition ends the contiguous executable body. It cannot
+    // move .r into data or splice later text into this body.
+    if (ends_body(line, name, entry)) {
+      break;
+    }
+    let error = body_error(s, ix, at, name);
+    if (error != "") {
+      return failure(error);
+    }
+    if (at == register) {
+      reg = code.len();
+    }
+    code = code.append(line);
+    at = at + 1;
+  }
+  if (reg < 0) {
+    return failure("decrement register entry outside body");
+  }
+  return Body { lines: code, register_entry: reg, error: "" };
+}
+
+function exact_entry(s: Scan, at: i32, name: string): boolean {
+  return s.executable[at] && s.lines[at] == name + ":";
+}
+
+// Returned lines remain unproved. A semantic checker must call this itself,
+// decode these exact lines, and derive all machine states internally.
+pub function select(text: string, entry: string): Body {
+  if (entry != "__fn___fern_arr_dec" && entry != "__fn___fern_str_free") {
+    return failure("unsupported decrement helper");
+  }
+  let s = scan(text);
+  if (s.error != "") {
+    return failure(s.error);
+  }
+  let definitions: string[] = [];
+  for line in s.lines {
+    definitions = definitions.append(definition(line));
+  }
+  let ix = names.index(definitions);
+  let start = names.unique_position(ix, entry);
+  let register = names.unique_position(ix, entry + ".r");
+  if (start < 0 || register < 0) {
+    return failure("missing or ambiguous decrement entry");
+  }
+  if (!exact_entry(s, start, entry) || !exact_entry(s, register, entry + ".r")) {
+    return failure("decrement entry is not an exact executable definition");
+  }
+  return body(s, ix, start, register, entry);
+}
