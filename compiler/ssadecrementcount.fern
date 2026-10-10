@@ -1,0 +1,117 @@
+// Exact expressions over one original signed32 reference count. These
+// arithmetic facts alone do not certify an instruction, store or caller.
+// family 1: original in [INT_MIN, -1]; family 2: original in [2, INT_MAX].
+pub struct Value { family: i32, delta: i32 }
+
+// Flags use x86-64 32-bit CMP, TEST and SUB semantics. carry is x86 CF
+// (unsigned borrow), not a portable carry or an ARM condition flag.
+// Each flag is -1 (unknown), 0 or 1. signed_less preserves SF xor OF even
+// when an interval crosses the signed-overflow boundary of a comparison.
+pub struct Flags { zero: i32, negative: i32, carry: i32, overflow: i32, signed_less: i32 }
+
+struct Range { low: i64, high: i64 }
+
+pub function unknown(): Value {
+  return Value { family: 0, delta: 0 };
+}
+
+pub function original(shared: boolean): Value {
+  return Value { family: if (shared) { 2 } else { 1 }, delta: 0 };
+}
+
+pub function valid(v: Value): boolean {
+  return v.family == 1 && v.delta == 0 || v.family == 2 && (v.delta == 0 || v.delta == -1);
+}
+
+pub function decrement(v: Value): Value {
+  if (v.family == 2 && v.delta == 0) {
+    return Value { family: 2, delta: -1 };
+  }
+  return unknown();
+}
+
+pub function is_original(v: Value): boolean {
+  return valid(v) && v.delta == 0;
+}
+
+pub function is_decremented(v: Value): boolean {
+  return v.family == 2 && v.delta == -1;
+}
+
+function range(v: Value): Range {
+  if (v.family == 1) {
+    return Range { low: -(2147483648 as i64), high: -(1 as i64) };
+  }
+  return Range { low: 2 as i64 + v.delta as i64, high: 2147483647 as i64 + v.delta as i64 };
+}
+
+function unknown_flags(): Flags {
+  return Flags { zero: -1, negative: -1, carry: -1, overflow: -1, signed_less: -1 };
+}
+
+function less(r: Range, n: i64): i32 {
+  if (r.high < n) {
+    return 1;
+  }
+  return if (r.low >= n) { 0 } else { -1 };
+}
+
+function equal(r: Range, n: i64): i32 {
+  if (r.low == n && r.high == n) {
+    return 1;
+  }
+  return if (n < r.low || n > r.high) { 0 } else { -1 };
+}
+
+// TEST with the same 32-bit register clears CF and OF. The represented
+// expressions never contain zero, including shared original count 2 - 1.
+pub function test(v: Value): Flags {
+  if (!valid(v)) {
+    return unknown_flags();
+  }
+  let r = range(v);
+  return Flags { zero: equal(r, 0 as i64), negative: less(r, 0 as i64), carry: 0, overflow: 0, signed_less: less(r, 0 as i64) };
+}
+
+function overflow(r: Range): i32 {
+  if (r.high < -(2147483648 as i64) || r.low > 2147483647 as i64) {
+    return 1;
+  }
+  return if (r.low >= -(2147483648 as i64) && r.high <= 2147483647 as i64) { 0 } else { -1 };
+}
+
+function negative(r: Range, over: i32): i32 {
+  if (over == 0) {
+    return less(r, 0 as i64);
+  }
+  // A uniformly overflowing positive difference wraps negative; a
+  // uniformly overflowing negative difference wraps positive.
+  if (over == 1) {
+    return if (r.low > 0) { 1 } else { 0 };
+  }
+  return -1;
+}
+
+// CMP computes 32-bit subtraction flags without changing the expression.
+// i64 holds the complete mathematical difference of two signed32 values.
+pub function compare(v: Value, immediate: i32): Flags {
+  if (!valid(v)) {
+    return unknown_flags();
+  }
+  let r = range(v);
+  let n = immediate as i64;
+  let difference = Range { low: r.low - n, high: r.high - n };
+  let over = overflow(difference);
+  let unsigned = if (r.high < 0) { Range { low: r.low + 4294967296 as i64, high: r.high + 4294967296 as i64 } } else { r };
+  let operand = if (n < 0) { n + 4294967296 as i64 } else { n };
+  return Flags { zero: equal(r, n), negative: negative(difference, over), carry: less(unsigned, operand), overflow: over, signed_less: less(r, n) };
+}
+
+// These are exactly SUB $1 flags on the only admitted arithmetic step.
+// All original shared values are >=2, so subtraction cannot wrap or hit 0.
+pub function decrement_flags(v: Value): Flags {
+  if (!is_decremented(decrement(v))) {
+    return unknown_flags();
+  }
+  return Flags { zero: 0, negative: 0, carry: 0, overflow: 0, signed_less: 0 };
+}

@@ -18,6 +18,7 @@ import "./ssaretainedruntime" as runtimeproof;
 import "./ssaretainedallocation" as allocation;
 import "./ssaretainedsites" as sites;
 import "./ssaretainedrecursive" as recursive;
+import "./ssadecrementcounts" as decrementcounts;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -214,6 +215,7 @@ function main(): i32 {
   allocation.run(g, true);
   recursive.run(false);
   recursive.run(true);
+  decrementcounts.run();
   print("retained native body controls passed");
   return 0;
 }

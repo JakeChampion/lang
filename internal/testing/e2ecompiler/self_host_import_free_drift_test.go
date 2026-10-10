@@ -86,7 +86,7 @@ func TestImportFreeModulesDoNotDrift(t *testing.T) {
 	sort.Strings(free)
 	wantFree := []string{
 		"aesref", "arm64_native", "builtins", "docprintable", "elf", "lexer", "literate",
-		"typeinfo", "util", "watbin", "wit_fern_world", "wit_proxy_world", "x86_native",
+		"ssadecrementcount", "typeinfo", "util", "watbin", "wit_fern_world", "wit_proxy_world", "x86_native",
 	}
 	if strings.Join(free, ",") != strings.Join(wantFree, ",") {
 		t.Errorf("the import-free module set changed.\n  got:  %v\n  want: %v\n"+
