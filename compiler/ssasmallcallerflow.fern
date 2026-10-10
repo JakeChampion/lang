@@ -1,0 +1,232 @@
+// Linear scalar-record caller relation from SAME-output retained final SSA.
+// This is not an instruction proof, concrete heap trace or production gate.
+import "./ssa";
+import "./ssaprepare";
+import "./ssacredittext" as retained;
+import "./ssacreditselected" as selected;
+import "./ssaconstructorbound" as constructor;
+import "./typeinfo";
+import "./ssasem";
+import "./util";
+
+// Values are data: literal, parameter identity, allocation identity, unreadable.
+// Allocation identity is a compact construction index, never a machine address.
+pub struct Value { kind: i32, identity: i32 }
+
+// kind0 constructs with ordered scalar fields; kind1 consumes that allocation.
+pub struct Event { kind: i32, allocation: i32, fields: Value[] }
+
+pub struct Relation { events: Event[], result: Value, words: i32, error: string }
+
+struct Object { fields: Value[], live: boolean }
+
+struct State { ids: i32[], values: Value[], objects: Object[], events: Event[], params: boolean[], ok: boolean }
+
+function value(kind: i32, identity: i32): Value {
+  return Value { kind: kind, identity: identity };
+}
+
+function failure(message: string): Relation {
+  return Relation { events: [], result: value(3, 0), words: 0, error: message };
+}
+
+function integer(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeI32(n) = t {
+    return n.width == 32 && !n.unsigned && !n.is_char && !n.polymorphic;
+  }
+  return false;
+}
+
+function abi(row: ssaprepare.Emitted): boolean {
+  if (row.context.rc_free_debug || row.context.sanitize || row.context.leak_check) {
+    return false;
+  }
+  let cs = selected.contracts(row);
+  if (cs.len() != 1) {
+    return false;
+  }
+  let c = cs[0];
+  return integer(c.result) && c.params.len() == row.body.formed.f.nparams && parameters(c);
+}
+
+function parameters(c: ssasem.Contract): boolean {
+  if (c.params.len() < 1 || c.params.len() > 2 || c.modes.len() != c.params.len()) {
+    return false;
+  }
+  let i = 0;
+  for p in c.params {
+    if (!integer(p) || c.modes[i] != 1) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function live(s: State, v: Value): boolean {
+  return v.kind == 2 && v.identity >= 0 && v.identity < s.objects.len() && s.objects[v.identity].live;
+}
+
+function read(s: State, id: i32): Value {
+  let at = util.index_of_i32(s.ids, id);
+  return if (at < 0) { value(3, 0) } else { s.values[at] };
+}
+
+function scalar(v: Value): boolean {
+  return v.kind == 0 || v.kind == 1;
+}
+
+function define(s: State, result: Value): State {
+  return State { ...s, values: s.values.append(result) };
+}
+
+function parameter(s: State, op: ssa.SInst): State {
+  if (op.args.len() != 0 || op.str != "" || op.imm < 0 || op.imm >= s.params.len() || s.params[op.imm]) {
+    return State { ...s, ok: false };
+  }
+  return define(State { ...s, params: s.params.with(op.imm, true) }, value(1, op.imm));
+}
+
+function allocate(s: State, args: Value[], words: i32): State {
+  if (args.len() != words - 1) {
+    return State { ...s, ok: false };
+  }
+  for arg in args {
+    if (!scalar(arg)) {
+      return State { ...s, ok: false };
+    }
+  }
+  let id = s.objects.len();
+  let event = Event { kind: 0, allocation: id, fields: args };
+  return define(State { ...s, objects: s.objects.append(Object { fields: args, live: true }), events: s.events.append(event) }, value(2, id));
+}
+
+function release(s: State, args: Value[]): State {
+  if (args.len() != 1 || !live(s, args[0])) {
+    return State { ...s, ok: false };
+  }
+  let id = args[0].identity;
+  let object = Object { ...s.objects[id], live: false };
+  let event = Event { kind: 1, allocation: id, fields: [] };
+  return define(State { ...s, objects: s.objects.with(id, object), events: s.events.append(event) }, value(3, 0));
+}
+
+function load(s: State, op: ssa.SInst, args: Value[]): State {
+  if (args.len() != 1 || op.str != "" || !live(s, args[0])) {
+    return State { ...s, ok: false };
+  }
+  let fields = s.objects[args[0].identity].fields;
+  if (op.imm < 8 || op.imm > fields.len() * 8 || op.imm % 8 != 0) {
+    return State { ...s, ok: false };
+  }
+  return define(s, fields[op.imm / 8 - 1]);
+}
+
+function operation(s: State, op: ssa.SInst, args: Value[], name: string, words: i32): State {
+  if (op.kind_tag == 7 && args.len() == 1 && op.str == "" && op.imm == 0) {
+    return define(s, args[0]);
+  }
+  if (op.kind_tag == 1 && args.len() == 0 && op.str == "") {
+    return define(s, value(0, op.imm));
+  }
+  if (op.kind_tag == 40) {
+    return load(s, op, args);
+  }
+  return call(s, op, args, name, words);
+}
+
+function call(s: State, op: ssa.SInst, args: Value[], name: string, words: i32): State {
+  if (op.kind_tag == 11 && op.imm == 0) {
+    if (op.str == name) {
+      return allocate(s, args, words);
+    }
+    if (op.str == "__fern_rc_dec") {
+      return release(s, args);
+    }
+  }
+  return State { ...s, ok: false };
+}
+
+function step(s: State, op: ssa.SInst, name: string, words: i32): State {
+  let args: Value[] = [];
+  for id in op.args {
+    let v = read(s, id);
+    if (!scalar(v) && !live(s, v)) {
+      return State { ...s, ok: false };
+    }
+    args = args.append(v);
+  }
+  let next = if (op.kind_tag == 6) { parameter(s, op) } else { operation(s, op, args, name, words) };
+  return State { ...next, ids: next.ids.append(op.result) };
+}
+
+function finished(s: State, f: ssa.SFunc, last: i32, words: i32): Relation {
+  for p in s.params {
+    if (!p) {
+      return failure("missing scalar caller parameter");
+    }
+  }
+  for object in s.objects {
+    if (object.live) {
+      return failure("undisposed scalar caller allocation");
+    }
+  }
+  let result = read(s, f.blocks[0].term.value);
+  if (!scalar(result) || last < f.nvals - 1 || s.objects.len() == 0) {
+    return failure("unsupported scalar caller return or extent");
+  }
+  return Relation { events: s.events, result: result, words: words, error: "" };
+}
+
+function graph(f: ssa.SFunc, name: string, words: i32): Relation {
+  if (f.blocks.len() != 1 || f.nvals < f.nparams || f.takes_env) {
+    return failure("unsupported scalar caller graph");
+  }
+  let b = f.blocks[0];
+  if (b.id < 0 || b.id != f.entry || b.preds.len() != 0 || b.term.kind_tag != 1) {
+    return failure("unsupported scalar caller graph");
+  }
+  return body(f, name, words);
+}
+
+function body(f: ssa.SFunc, name: string, words: i32): Relation {
+  let params: boolean[] = [];
+  for i in 0..f.nparams {
+    params = params.append(false);
+  }
+  let s = State { ids: [], values: [], objects: [], events: [], params: params, ok: true };
+  let last = -1;
+  for op in f.blocks[0].insts {
+    if (op.result < 0 || op.result >= f.nvals || util.index_of_i32(s.ids, op.result) >= 0) {
+      return failure("invalid scalar caller definition");
+    }
+    s = step(s, op, name, words);
+    if (!s.ok) {
+      return failure("unsupported scalar caller effect or consumed credit");
+    }
+    if (op.result > last) {
+      last = op.result;
+    }
+  }
+  return finished(s, f, last, words);
+}
+
+// Derive this relation afresh inside a future instruction checker. Supplying a
+// Relation cannot authenticate native calls or concrete block generations.
+// The selected constructor's final SSA/schema is checked, but native runtime
+// effects, caller instructions, linking and mapping remain separate obligations.
+pub function derive(output: ssaprepare.Output, caller: string, producer: string): Relation {
+  let binding = retained.resolve(output, caller);
+  if (binding.error != "" || caller == producer) {
+    return failure("missing or ambiguous scalar caller binding");
+  }
+  let row = binding.rows[0];
+  if (!abi(row)) {
+    return failure("unsupported selected scalar caller ABI");
+  }
+  let bound = constructor.resolve(output, producer);
+  if (bound.error != "") {
+    return failure(bound.error);
+  }
+  return graph(row.body.formed.f, producer, bound.words);
+}
