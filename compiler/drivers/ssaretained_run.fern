@@ -21,6 +21,7 @@ import "./ssaretainedrecursive" as recursive;
 import "./ssadecrementcounts" as decrementcounts;
 import "./ssadecrementmemories" as decrementmemories;
 import "./ssadecrementtexts" as decrementtexts;
+import "./ssadecrementisas" as decrementisas;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -97,6 +98,7 @@ function settled(g: ircore.Gated, arm: boolean): void {
   runtimeproof.run(on.text, arm);
   if (!arm) {
     decrementtexts.run(on.text);
+    decrementisas.run(on.text);
   }
   sites.output(on);
   require(count(on.bodies, "__fern_str_cmp") == 1 && count(on.bodies, "first") == 1, 21);

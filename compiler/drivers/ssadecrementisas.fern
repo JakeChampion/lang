@@ -1,0 +1,124 @@
+import "../ssadecrementisa" as isa;
+import "../ssadecrementtext" as text;
+import "../ssainlineuniqueisa" as registers;
+import "std/string";
+
+function require(ok: boolean): void {
+  if (!ok) {
+    print("decrement instruction program controls failed");
+    exit(236);
+  }
+}
+
+function sample(line: string): isa.Op {
+  let entry = "__fn___fern_arr_dec";
+  let p = isa.program(".text\n" + entry + ":\n" + line + "\n" + entry + ".r:\nret\n", entry);
+  require(p.error == "" && p.ops.len() == 3 && p.register_entry == 1);
+  return p.ops[0];
+}
+
+function register_moves(): void {
+  for width in [32, 64] {
+    let regs = registers.registers(false, width);
+    let mnemonic = if (width == 32) { "movl" } else { "movq" };
+    let i = 0;
+    while (i < regs.len()) {
+      let j = (i + 1) % regs.len();
+      let op = sample(mnemonic + " " + regs[i] + ", " + regs[j]);
+      require(op.kind == 2 && op.width == width && op.source == i && op.destination == j);
+      i = i + 1;
+    }
+  }
+}
+
+function memory_moves(): void {
+  let load = sample("movl -8(%r15), %ecx");
+  require(load.kind == 3 && load.width == 32 && load.base == 15 && load.offset == -8 && load.destination == 1);
+  let store = sample("movl %ecx, -8(%rax)");
+  require(store.kind == 4 && store.width == 32 && store.base == 0 && store.offset == -8 && store.source == 1);
+  // Syntax retains wrong widths/addresses for the future semantic checker.
+  require(sample("movq %rcx, -8(%rax)").width == 64);
+  require(sample("movl %ecx, -16(%rax)").offset == -16);
+}
+
+function stack_moves(): void {
+  let stack = sample("movq\t8(%rsp),\t%rax");
+  require(stack.kind == 3 && stack.width == 64 && stack.base == 4 && stack.offset == 8 && stack.destination == 0);
+  require(sample("movq (%rsp), %rax").offset == 0);
+}
+
+function flags(): void {
+  for n in [-2147483648, -1, 0, 1, 2147483647] {
+    let op = sample("cmpl $" + n.to_string() + ", %r14d");
+    require(op.kind == 7 && op.width == 32 && op.source == 14 && op.immediate == n);
+  }
+  require(sample("cmpq $0x10000, %rax").kind == 8);
+  require(sample("cmpq $65536, %rax").immediate == 65536);
+  require(sample("testl %ecx, %ecx").kind == 5);
+  require(sample("testb $1, %al").kind == 6);
+  let sub = sample("subl $1, %ecx");
+  require(sub.kind == 9 && sub.source == 1 && sub.destination == 1 && sub.width == 32);
+  for line in ["subl $2, %ecx", "subq $1, %rcx", "testl %ecx, %edx", "testb $2, %al", "testb $1, %ah", "cmpq $65535, %rax", "cmpl $2147483648, %ecx", "cmpl $-2147483649, %ecx", "cmpl $01, %ecx", "cmpl $1junk, %ecx", "cmpl $1, %rcx", "lock subl $1, %ecx", "ret $8", "retq", "call hidden", "unknown_instruction", "movl %eax, %rcx", "movq %eax, %rcx", "movq $0, %rax", "movl -8(%rax,%rdx,4), %ecx", "movl -8(%eax), %ecx", "movl -8(%rax)), %ecx", "movl -8(%rax), %ecx, %edx", "movl -8(%rax), -8(%rdx)", "movl -2147483649(%rax), %ecx"] {
+    require(sample(line).kind == 0);
+  }
+}
+
+function branches(): void {
+  let entry = "__fn___fern_arr_dec";
+  let prefix = ".text\n" + entry + ":\n" + entry + ".r:\n";
+  for condition in ["jmp", "je", "jz", "jne", "jnz", "js", "jns", "jb", "jc", "jnae", "jae", "jnb", "jnc", "jl", "jnge", "jge", "jnl", "jg", "jnle", "jle", "jng", "jo", "jno"] {
+    let p = isa.program(prefix + condition + " .Lreturn\n.Lreturn:\nret\n", entry);
+    require(p.error == "" && p.ops[1].kind == 10 && p.ops[1].condition == condition && p.ops[1].target == 2 && p.ops[3].kind == 11);
+  }
+  require(isa.program(prefix + "jmp .Lmissing\n", entry).error != "");
+  require(isa.program(prefix + "jmp .Loutside\n__other:\n.Loutside:\nret\n", entry).error != "");
+  require(isa.program(prefix + "jmp .Lreturn\n.Lreturn:\nret\n.data\n.Lreturn: .quad 0\n", entry).error != "");
+  // Cycles and unknown operations are represented, not certified or erased.
+  let cycle = isa.program(prefix + "jmp " + entry + ".r\n", entry);
+  require(cycle.error == "" && cycle.ops[1].target == 0);
+  require(isa.program(prefix + "ret\nunknown_instruction\n", entry).ops[2].kind == 0);
+}
+
+function actual_store(op: isa.Op): void {
+  require(op.kind == 4 && op.width == 32 && op.source == 1 && op.base == 0 && op.offset == -8);
+}
+
+function actual_entry(p: isa.Program, body: text.Body): void {
+  require(p.error == "" && p.ops.len() == body.lines.len() && p.register_entry == body.register_entry);
+  require(p.ops[0].kind == 3 && p.ops[0].base == 4 && p.ops[0].offset == 8 && p.ops[0].width == 64 && p.ops[0].destination == 0);
+}
+
+function actual(output: string, entry: string): void {
+  let body = text.select(output, entry);
+  let p = isa.program(output, entry);
+  actual_entry(p, body);
+  let stores = 0;
+  let unknown = 0;
+  let at = 0;
+  for op in p.ops {
+    if (op.kind == 10) {
+      require(op.target >= 0 && op.target < p.ops.len() && p.ops[op.target].kind == 1);
+      require(body.lines[at].ends_with(body.lines[op.target].split(":")[0]));
+    }
+    if (body.lines[at] == "movl %ecx, -8(%rax)") {
+      actual_store(op);
+      stores = stores + 1;
+    }
+    if (op.kind == 0) {
+      unknown = unknown + 1;
+    }
+    at = at + 1;
+  }
+  require(stores == 1 && unknown > 0);
+}
+
+pub function run(output: string): void {
+  for entry in ["__fn___fern_arr_dec", "__fn___fern_str_free"] {
+    actual(output, entry);
+  }
+  register_moves();
+  memory_moves();
+  stack_moves();
+  flags();
+  branches();
+}
