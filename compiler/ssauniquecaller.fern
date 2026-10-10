@@ -1,6 +1,7 @@
 // Whole native body proof for the one-pointer uniqueness leaf and its two
 // acyclic pure SSA continuations. This does not bind a body to a module's final
-// output or certify ownership, arbitrary CFGs, alignment, or unwind metadata.
+// output or certify ownership, arbitrary CFGs, or unwind metadata. The selected
+// API below derives a restricted parameter ABI; the raw APIs remain generic.
 // The incoming ABI supplies a readable normalized RC header for heap pointers.
 import "./ssa";
 import "./ssauniquemeaning" as semantics;
@@ -9,6 +10,12 @@ import "./ssainlineuniqueisa" as isa;
 import "./ssainlineuniqueflow" as flow;
 import "./util";
 import "./ssaproofnames" as names;
+import "./ssaprepare";
+import "./ssacreditbound" as bound;
+import "./ssacreditselected" as selected;
+import "./ssasem";
+import "./semtypes";
+import "./typeinfo";
 import "std/string";
 
 struct Program { lines: string[], labels: string[], ops: isa.Op[], targets: i32[], entry: i32, register_entry: i32, ok: boolean }
@@ -223,7 +230,7 @@ function path(p: Program, b: flow.Boundary, c: flow.Case, m: semantics.Meaning, 
   return false;
 }
 
-function cases(p: Program, b: flow.Boundary, m: semantics.Meaning): boolean {
+function cases(p: Program, b: flow.Boundary, m: semantics.Meaning, views: boolean): boolean {
   let ok = true;
   for tagged in [false, true] {
     for view in [false, true] {
@@ -231,7 +238,7 @@ function cases(p: Program, b: flow.Boundary, m: semantics.Meaning): boolean {
         for one in [false, true] {
           let c = flow.Case { tagged: tagged, view: view, low: low, one: one };
           for reg in [false, true] {
-            if (!path(p, b, c, m, reg)) {
+            if ((!view || views) && !path(p, b, c, m, reg)) {
               ok = false;
             }
           }
@@ -245,17 +252,68 @@ function cases(p: Program, b: flow.Boundary, m: semantics.Meaning): boolean {
 // Each supplied row is still parsed and checked. This API accepts no decoded
 // instructions or trusted validation flags from the final-output binder.
 pub function check_lines(lines: string[], architecture: string, f: ssa.SFunc): helper.Proof {
+  return check(lines, architecture, f, true);
+}
+
+function check(lines: string[], architecture: string, f: ssa.SFunc, views: boolean): helper.Proof {
   let arm = architecture == "arm64";
   let m = semantics.check(f);
   let p = program(lines, f.name, arm);
   let ok = m.ok && p.ok && (arm || architecture == "x86-64");
   let b = flow.Boundary { arm: arm, input: if (arm) { "x0" } else { "%rax" }, result: if (arm) { "x0" } else { "%rax" }, flags: false };
   if (ok) {
-    ok = cases(p, b, m);
+    ok = cases(p, b, m, views);
   }
   return helper.Proof { ok: ok, function_name: f.name, message: if (ok) { "" } else { "unproved uniqueness caller body" } };
 }
 
 pub function check_body(text: string, architecture: string, f: ssa.SFunc): helper.Proof {
   return check_lines(text.split("\n"), architecture, f);
+}
+
+// The selected producer supplies the parameter ABI, not an alignment flag.
+// This scope admits borrowed strings and concrete arrays except byte views,
+// whose descriptor carries bit 1. Tag and heap-floor cases remain mandatory.
+// Generated child-release bodies and other signatures need separate proofs.
+function parameter(t: typeinfo.Type): boolean {
+  if (!semtypes.concrete(t, false)) {
+    return false;
+  }
+  if let typeinfo.TypeString(_) = t {
+    return true;
+  }
+  if let typeinfo.TypeArray(a) = t {
+    if let typeinfo.TypeI32(i) = a.elem {
+      return !(a.view && i.width == 8 && i.unsigned);
+    }
+    return true;
+  }
+  return false;
+}
+
+function signature(c: ssasem.Contract): boolean {
+  if (c.params.len() != 1 || c.modes.len() != 1 || c.modes[0] != ssasem.borrow_mode() || !parameter(c.params[0])) {
+    return false;
+  }
+  if let typeinfo.TypeI32(i) = c.result {
+    return i.width == 32 && !i.unsigned && !i.is_char && !i.polymorphic;
+  }
+  return false;
+}
+
+// Bind the same retained final graph and assembly before deriving the only
+// restricted input partition. SSA validation independently tracks that one
+// parameter through copies/phis and checks every operation and predecessor.
+// The raw APIs above remain generic. This is not a whole-output certificate.
+pub function check_selected(rows: ssaprepare.Emitted[], name: string, architecture: string): helper.Proof {
+  let binding = bound.resolve(rows, name, architecture);
+  if (binding.error != "") {
+    return helper.Proof { ok: false, function_name: name, message: binding.error };
+  }
+  let row = binding.rows[0];
+  let contracts = selected.contracts(row);
+  if (contracts.len() != 1 || !signature(contracts[0])) {
+    return helper.Proof { ok: false, function_name: name, message: "unsupported selected uniqueness signature" };
+  }
+  return check(row.assembly.split("\n"), architecture, row.body.formed.f, false);
 }
