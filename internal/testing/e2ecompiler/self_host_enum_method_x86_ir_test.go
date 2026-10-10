@@ -10,8 +10,8 @@ import (
 )
 
 // enumMethodIRCases call a method on an enum-typed RECEIVER: an enum-valued
-// LOCAL (`let d = Dir.N; d.code()`, qualified or bare, unit or payload), a
-// method's enum result, or a FRESH variant (`Dir.N.code()`). Each needs the
+// LOCAL (`let d = Heading.N; d.code()`, qualified or bare, unit or payload), a
+// method's enum result, or a FRESH variant (`Heading.N.code()`). Each needs the
 // receiver's enum type to form the `<Enum>.<method>` label and dispatch
 // through the IR path.
 var enumMethodIRCases = []struct {
@@ -19,11 +19,11 @@ var enumMethodIRCases = []struct {
 	src      string
 	expected int
 }{
-	{"qual-unit-local", `enum Dir { N, S } function (d: Dir) code(): i32 { match (d) { Dir.N => { return 7; }, Dir.S => { return 9; } } } function main(): i32 { let d = Dir.S; return d.code(); }`, 9},
-	{"bare-unit-local", `enum Dir { N, S } function (d: Dir) code(): i32 { return 7; } function main(): i32 { let d = N; return d.code(); }`, 7},
+	{"qual-unit-local", `enum Heading { N, S } function (d: Heading) code(): i32 { match (d) { Heading.N => { return 7; }, Heading.S => { return 9; } } } function main(): i32 { let d = Heading.S; return d.code(); }`, 9},
+	{"bare-unit-local", `enum Heading { N, S } function (d: Heading) code(): i32 { return 7; } function main(): i32 { let d = N; return d.code(); }`, 7},
 	{"payload-local", `enum E { A(i32), B } function (e: E) get(): i32 { match (e) { E.A(n) => { return n; }, E.B => { return 0; } } } function main(): i32 { let e = E.A(42); return e.get(); }`, 42},
-	{"method-returns-enum", `enum Dir { N, S } function (d: Dir) opp(): Dir { match (d) { Dir.N => { return Dir.S; }, Dir.S => { return Dir.N; } } } function main(): i32 { let d = Dir.N; match (d.opp()) { Dir.N => { return 0; }, Dir.S => { return 1; } } }`, 1},
-	{"fresh-variant-method", `enum Dir { N, S } function (d: Dir) code(): i32 { return 7; } function main(): i32 { return Dir.N.code(); }`, 7},
+	{"method-returns-enum", `enum Heading { N, S } function (d: Heading) opp(): Heading { match (d) { Heading.N => { return Heading.S; }, Heading.S => { return Heading.N; } } } function main(): i32 { let d = Heading.N; match (d.opp()) { Heading.N => { return 0; }, Heading.S => { return 1; } } }`, 1},
+	{"fresh-variant-method", `enum Heading { N, S } function (d: Heading) code(): i32 { return 7; } function main(): i32 { return Heading.N.code(); }`, 7},
 }
 
 // TestSelfHostEnumMethodX86IR gates enum-receiver method dispatch on x86-64:
