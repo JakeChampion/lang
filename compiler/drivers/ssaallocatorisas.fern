@@ -7,6 +7,7 @@ import "../ssacapacityisa" as isa;
 import "../ssadecrementtext" as text;
 import "../ssainlineuniqueisa" as registers;
 import "../util";
+import "./ssaallocatorstorage" as storage;
 import "std/string";
 
 function require(ok: boolean, group: string): void {
@@ -37,6 +38,7 @@ function actual(): void {
   let p = isa.allocator_program(output.text);
   require(body.error == "" && body.register_entry == -1 && p.error == "" && p.ops.len() == body.lines.len(), "same complete output: " + body.error + ": " + p.error);
   actual_operations(p, body);
+  storage.run(output.text);
   let crlf = isa.allocator_program(output.text.split("\n").join("\r\n\t"));
   require(crlf.error == "" && crlf.ops.len() == p.ops.len(), "CRLF extent");
   let i = 0;
