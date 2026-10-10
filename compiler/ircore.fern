@@ -739,9 +739,6 @@ pub function all_runtime_need_roots(): string[] {
     // `__fern_alloc`, so a module that asks for the number and nothing else
     // is the one that dangles.
     "alloc_count",
-    // the f64 transcendental bundle (sin/cos/exp/log/pow), on both register
-    // backends.
-    "float_transcendentals",
   ];
 }
 

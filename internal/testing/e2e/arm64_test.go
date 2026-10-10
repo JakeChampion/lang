@@ -112,29 +112,26 @@ func TestArm64StringLiteralLen(t *testing.T) {
 	}
 }
 
-// arm64 f64 transcendentals (gcc-linked path). sin/cos/exp/log/pow
-// have no hardware instruction on arm64, so they lower to calls into
-// runtime helpers (argument reduction + fdlibm kernels), pulled in via
-// the .rodata coefficient table.
-// Tolerance contract — a few ulp, not bit-exact with the interp's Go
-// math. Mirrors TestX86_64Transcendentals.
+// arm64 f64 transcendentals: std/float's sin/cos/exp/log/pow, compiled.
+// Tolerance comparisons; the accuracy contract is f64_ulp_test.go's.
+// Mirrors TestX86_64Transcendentals.
 func TestArm64Transcendentals(t *testing.T) {
 	for _, c := range []struct {
 		name string
 		src  string
 		want int
 	}{
-		{"sin_0", "function main(): i32 { return __sin_f64(0.0) as i32; }", 0},
-		{"cos_0", "function main(): i32 { return __cos_f64(0.0) as i32; }", 1},
-		{"sin_halfpi", "function main(): i32 { let r: f64 = __sin_f64(1.5707963267948966); if (r > 0.999 && r < 1.001) { return 7; } return 0; }", 7},
-		{"cos_pi", "function main(): i32 { let r: f64 = __cos_f64(3.141592653589793); if (r > 0.0 - 1.001 && r < 0.0 - 0.999) { return 7; } return 0; }", 7},
-		{"exp_0", "function main(): i32 { return __exp_f64(0.0) as i32; }", 1},
-		{"exp_2", "function main(): i32 { return __exp_f64(2.0) as i32; }", 7},
-		{"log_10", "function main(): i32 { return __log_f64(10.0) as i32; }", 2},
-		{"exp_log_roundtrip", "function main(): i32 { let r: f64 = __log_f64(__exp_f64(3.0)); if (r > 2.999 && r < 3.001) { return 7; } return 0; }", 7},
-		{"pow_int", "function main(): i32 { return __pow_f64(2.0, 5.0) as i32; }", 32},
-		{"pow_3_2", "function main(): i32 { return __pow_f64(3.0, 2.0) as i32; }", 9},
-		{"pow_sqrt", "function main(): i32 { let r: f64 = __pow_f64(2.0, 0.5); if (r > 1.41 && r < 1.42) { return 7; } return 0; }", 7},
+		{"sin_0", "import \"std/float\"; function main(): i32 { return (0.0).sin() as i32; }", 0},
+		{"cos_0", "import \"std/float\"; function main(): i32 { return (0.0).cos() as i32; }", 1},
+		{"sin_halfpi", "import \"std/float\"; function main(): i32 { let r: f64 = (1.5707963267948966).sin(); if (r > 0.999 && r < 1.001) { return 7; } return 0; }", 7},
+		{"cos_pi", "import \"std/float\"; function main(): i32 { let r: f64 = (3.141592653589793).cos(); if (r > 0.0 - 1.001 && r < 0.0 - 0.999) { return 7; } return 0; }", 7},
+		{"exp_0", "import \"std/float\"; function main(): i32 { return (0.0).exp() as i32; }", 1},
+		{"exp_2", "import \"std/float\"; function main(): i32 { return (2.0).exp() as i32; }", 7},
+		{"log_10", "import \"std/float\"; function main(): i32 { return (10.0).log() as i32; }", 2},
+		{"exp_log_roundtrip", "import \"std/float\"; function main(): i32 { let r: f64 = ((3.0).exp()).log(); if (r > 2.999 && r < 3.001) { return 7; } return 0; }", 7},
+		{"pow_int", "import \"std/float\"; function main(): i32 { return (2.0).pow(5.0) as i32; }", 32},
+		{"pow_3_2", "import \"std/float\"; function main(): i32 { return (3.0).pow(2.0) as i32; }", 9},
+		{"pow_sqrt", "import \"std/float\"; function main(): i32 { let r: f64 = (2.0).pow(0.5); if (r > 1.41 && r < 1.42) { return 7; } return 0; }", 7},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			_, code := compileAndRunArm64(t, c.src)

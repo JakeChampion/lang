@@ -35,8 +35,7 @@ digest-check:
 	uv run --no-project scripts/gen_digests.py --check
 	uv run --no-project python -B -m unittest discover -s scripts -p test_gen_digests.py
 
-# The same for the table-driven log's generated data: internal/tables/fdlibm/logtab.go
-# and the regions the three self-host emitters carry.
+# The same for the table-driven log's generated data, the region std/float carries.
 log-table-check:
 	uv run --no-project scripts/gen_log_table.py --check
 	uv run --no-project python -B -m unittest discover -s scripts -p test_gen_log_table.py

@@ -261,7 +261,7 @@ var rcInertBuiltins = map[string]bool{
 	"__syscall3": true, "__syscall4": true, "__syscall5": true, "__syscall6": true,
 
 	"__clz32": true, "__clz64": true, "__ctz32": true, "__ctz64": true,
-	"__popcount32": true, "__popcount64": true, "__round_f64": true,
+	"__popcount32": true, "__popcount64": true, "__mulhi_u64": true, "__round_f64": true,
 	"f32_bits": true, "f32_from_bits": true,
 	"f64_bits": true, "f64_from_bits": true,
 

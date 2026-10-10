@@ -886,6 +886,19 @@ func New() *Interp {
 	registerBitCount("__ctz64", 64, ctzOf)
 	registerBitCount("__popcount32", 32, popOf)
 	registerBitCount("__popcount64", 64, popOf)
+	// __mulhi_u64(a, b) — the high 64 bits of the 128-bit product.
+	i.Builtins["__mulhi_u64"] = &Builtin{Fn: func(_ *Interp, args []Value) (Value, error) {
+		if len(args) != 2 {
+			return nil, fmt.Errorf("__mulhi_u64: expected 2 args, got %d", len(args))
+		}
+		a, ok1 := args[0].(Number)
+		b, ok2 := args[1].(Number)
+		if !ok1 || !ok2 {
+			return nil, fmt.Errorf("__mulhi_u64: expected integers, got %T, %T", args[0], args[1])
+		}
+		hi, _ := bits.Mul64(uint64(int64(a)), uint64(int64(b)))
+		return Number(int64(hi)), nil
+	}}
 	// __memchr(s, byte, from) — first index of `byte` at or after `from`,
 	// or -1. This is the interpreter's reference semantics for the SIMD
 	// kernel the compiled backends vectorise (docs/ATLAS-PLATFORM-PLAN.md
@@ -1561,29 +1574,17 @@ func New() *Interp {
 	i.Builtins["f32_from_bits"] = &Builtin{Fn: builtinF32FromBits}
 	i.Builtins["f64_bits"] = &Builtin{Fn: builtinF64Bits}
 	i.Builtins["f64_from_bits"] = &Builtin{Fn: builtinF64FromBits}
-	// f64 math primitives. The Go-side implementation routes
-	// through `math.*` wherever that is exact or correctly rounded,
-	// and through this package's own fdlibm kernels where it is
-	// not — see the transcendentals below. User code
-	// reaches these through receiver methods in `std/float`
-	// (`(x).sqrt()`, `.floor()`, …); the underscore-prefixed
-	// bare names are the IR-level entry points.
+	// f64 math primitives, each exact or correctly rounded in `math`.
+	// User code reaches these through receiver methods in `std/float`
+	// (`(x).sqrt()`, `.floor()`, …); the underscore-prefixed bare names
+	// are the IR-level entry points. The transcendentals are std/float's
+	// own Fern, which this interprets like any other code.
 	i.Builtins["__sqrt_f64"] = mkUnaryF64Builtin("__sqrt_f64", math.Sqrt)
 	i.Builtins["__floor_f64"] = mkUnaryF64Builtin("__floor_f64", math.Floor)
 	i.Builtins["__ceil_f64"] = mkUnaryF64Builtin("__ceil_f64", math.Ceil)
 	i.Builtins["__round_f64"] = mkUnaryF64Builtin("__round_f64", math.Round)
 	i.Builtins["__trunc_f64"] = mkUnaryF64Builtin("__trunc_f64", math.Trunc)
 	i.Builtins["__abs_f64"] = mkUnaryF64Builtin("__abs_f64", math.Abs)
-	i.Builtins["__log_f64"] = mkUnaryF64Builtin("__log_f64", fernLog)
-	i.Builtins["__exp_f64"] = mkUnaryF64Builtin("__exp_f64", fernExp)
-	// sin/cos carry their own fdlibm reduction (trig.go) rather than Go's:
-	// math.Sin's argument reduction is unboundedly wrong in ulp terms near
-	// the function's zeros, and the compiled backends all implement the
-	// fdlibm algorithm — so -interp matches them bit for bit instead. exp
-	// (exp.go) and log (log.go) are here for the same reason.
-	i.Builtins["__sin_f64"] = mkUnaryF64Builtin("__sin_f64", fernSin)
-	i.Builtins["__cos_f64"] = mkUnaryF64Builtin("__cos_f64", fernCos)
-	i.Builtins["__pow_f64"] = &Builtin{Fn: builtinPowF64}
 	// `temp_dir(prefix)` + `exec(cmd, args, stdin)` back the
 	// test-runner migration: ports of the Go-side e2e suite need
 	// somewhere to write fixture files and a way to spawn the
@@ -2549,21 +2550,6 @@ func mkUnaryF64Builtin(name string, fn func(float64) float64) *Builtin {
 // rest fit `unaryF64`'s shape. Mirrors `math.Pow` semantics,
 // including the IEEE-754 special cases (pow(NaN, 0) == 1,
 // pow(±0, negative) == ±Inf, etc.).
-func builtinPowF64(_ *Interp, args []Value) (Value, error) {
-	if len(args) != 2 {
-		return nil, fmt.Errorf("__pow_f64: expected 2 args, got %d", len(args))
-	}
-	x, ok := args[0].(Float)
-	if !ok {
-		return nil, fmt.Errorf("__pow_f64: expected float arg 0, got %T", args[0])
-	}
-	y, ok := args[1].(Float)
-	if !ok {
-		return nil, fmt.Errorf("__pow_f64: expected float arg 1, got %T", args[1])
-	}
-	return Float{V: math.Pow(x.V, y.V), Width: 64}, nil
-}
-
 func builtinIntToString(_ *Interp, args []Value) (Value, error) {
 	if len(args) != 1 {
 		return nil, fmt.Errorf("int_to_string: expected 1 arg, got %d", len(args))

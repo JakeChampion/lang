@@ -634,12 +634,12 @@ function cell_method_type(recv: typeinfo.Type, name: string, argc: i32): typeinf
   return t_unknown("not a cell method");
 }
 
-// The ten f64 primitives `std/float`'s methods dispatch to. Every backend
+// The six f64 primitives `std/float`'s methods dispatch to. Every backend
 // implements all of them.
 function is_f64_primitive(name: string): boolean {
   let names: string[] = [
     "__sqrt_f64", "__floor_f64", "__ceil_f64", "__round_f64", "__trunc_f64",
-    "__abs_f64", "__log_f64", "__exp_f64", "__sin_f64", "__cos_f64",
+    "__abs_f64",
   ];
   for n in names {
     if (n == name) {
@@ -675,11 +675,11 @@ function intrinsic_result(name: string, argc: i32): typeinfo.Type {
   if (argc == 1 && is_f64_primitive(name)) {
     return t_float();
   }
-  if (argc == 2 && name == "__pow_f64") {
-    return t_float();
-  }
   if (argc == 1 && is_bit_count(name)) {
     return t_i32();
+  }
+  if (argc == 2 && name == "__mulhi_u64") {
+    return t_u64();
   }
   if (argc == 1 && name == "__alloc") {
     return t_usize();
@@ -928,14 +928,14 @@ function intrinsic_params(name: string): (typeinfo.Type[], boolean) {
   if (is_f64_primitive(name)) {
     return ([t_float()], true);
   }
-  if (name == "__pow_f64") {
-    return ([t_float(), t_float()], true);
-  }
   if (name == "__clz32" || name == "__ctz32" || name == "__popcount32") {
     return ([t_u32()], true);
   }
   if (name == "__clz64" || name == "__ctz64" || name == "__popcount64") {
     return ([t_u64()], true);
+  }
+  if (name == "__mulhi_u64") {
+    return ([t_u64(), t_u64()], true);
   }
   if (name == "__alloc") {
     return ([t_i32()], true);
@@ -16334,13 +16334,13 @@ function registered_intrinsics(): string[] {
     "__abs_f64", "__aes_ctr32", "__aes_expand_key", "__ghash", "__sha256_hw", "__sha256_hw_blocks", "__alloc", "__alloc_bool", "__alloc_i32", "__alloc_i64", "__alloc_reuse", "__alloc_u8", "__arr_push_shared_bytes", "__arr_push_shared_count", "__arr_set_len",
     "__ascii_run", "__bsd_sum", "__c_call0", "__c_call0_f32", "__c_call0_f64", "__c_call1", "__c_call1_f32",
     "__c_call1_f64", "__c_call2", "__c_call2_f32", "__c_call2_f64", "__c_call3", "__c_call3_f32", "__c_call3_f64",
-    "__c_call4", "__c_call4_f32", "__c_call4_f64", "__ceil_f64", "__clz32", "__clz64", "__cos_f64", "__count_byte",
-    "__count_runs", "__count_runs_bytes", "__crc32_cksum", "__ct_public", "__ct_secret", "__ctz32", "__ctz64", "__exp_f64", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr",
+    "__c_call4", "__c_call4_f32", "__c_call4_f64", "__ceil_f64", "__clz32", "__clz64", "__count_byte",
+    "__count_runs", "__count_runs_bytes", "__crc32_cksum", "__ct_public", "__ct_secret", "__ctz32", "__ctz64", "__fern_arr_dec", "__fern_box_free", "__fern_drop_arr_ptr",
     "__fern_rc_dec", "__fern_rc_inc", "__fern_str_dec", "__floor_f64", "__free", "__heap_alloc_count", "__heap_bump_bytes",
-    "__account_entry", "__heap_mark", "__heap_release_to", "__load_i32", "__load_i64", "__load_ptr", "__load_u8", "__log_f64",
-    "__map_hash_seed", "__memchr", "__count_byte_bytes", "__crc32_cksum_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__mismatch_bytes", "__rmemchr_bytes", "__memcpy", "__memset", "__mismatch", "__popcount32", "__popcount64",
-    "__pow_f64", "__ptr_width", "__rc_dec", "__rc_get", "__rc_inc", "__rc_underflow_count", "__rmemchr",
-    "__round_f64", "__scale_f64", "__outer_mul_f64", "__inner_mul_add_f64", "__scan_set", "__scan_set_bytes", "__sin_f64", "__sqrt_f64", "__store_i32", "__store_i64",
+    "__account_entry", "__heap_mark", "__heap_release_to", "__load_i32", "__load_i64", "__load_ptr", "__load_u8",
+    "__map_hash_seed", "__memchr", "__mulhi_u64", "__count_byte_bytes", "__crc32_cksum_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__mismatch_bytes", "__rmemchr_bytes", "__memcpy", "__memset", "__mismatch", "__popcount32", "__popcount64",
+    "__ptr_width", "__rc_dec", "__rc_get", "__rc_inc", "__rc_underflow_count", "__rmemchr",
+    "__round_f64", "__scale_f64", "__outer_mul_f64", "__inner_mul_add_f64", "__scan_set", "__scan_set_bytes", "__sqrt_f64", "__store_i32", "__store_i64",
     "__store_ptr", "__store_u8", "__str_bytes", "__str_hash", "__sum_bytes", "__syscall3", "__syscall4", "__syscall5", "__syscall6", "__trunc_f64",
   ];
 }
@@ -20681,7 +20681,7 @@ function fip_builtin_callees(funcs: parser.FuncDecl[]): string[] {
   for name in [
     "__memchr", "__mismatch_bytes", "__count_byte_bytes", "__crc32_cksum_array", "__sum_bytes_array", "__bsd_sum_bytes", "__memchr_bytes", "__rmemchr_bytes", "__rmemchr", "__ascii_run", "__count_byte", "__sum_bytes", "__scan_set", "__scan_set_bytes",
     "__bsd_sum", "__str_hash", "__count_runs", "__count_runs_bytes", "__crc32_cksum", "__clz32", "__ctz32", "__popcount32", "__clz64",
-    "__ctz64", "__popcount64", "__ptr_width", "__heap_bump_bytes", "__heap_alloc_count", "monotonic_ns",
+    "__ctz64", "__popcount64", "__mulhi_u64", "__ptr_width", "__heap_bump_bytes", "__heap_alloc_count", "monotonic_ns",
   ] {
     let declared: boolean = false;
     for fd in funcs {

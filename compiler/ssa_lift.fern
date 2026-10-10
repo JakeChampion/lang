@@ -184,6 +184,9 @@ function bin_sym(k: string): string {
   if (k == "shr_u") {
     return ">>";
   }
+  if (k == "mulhi_u") {
+    return "*hi";
+  }
   return "";
 }
 
@@ -338,12 +341,11 @@ function kind_class(k: string): i32 {
 }
 
 // prod_float_kind is the f64 vocabulary: the literal, the arithmetic and
-// compares, the single-instruction math, the conversions and reinterprets,
-// and the transcendentals the stack machine calls the runtime for. A value
-// is its 8-byte IEEE pattern in an integer register throughout, as on the
-// stack machine, so the emitters need no float register class.
+// compares, the single-instruction math, and the conversions and
+// reinterprets. Which register class holds a value is the allocator's choice
+// (ssa.float_values).
 function prod_float_kind(k: string): boolean {
-  if (fbin_sym(k) != "" || prod_float_call_argc(k) > 0) {
+  if (fbin_sym(k) != "") {
     return true;
   }
   let un: string[] = [
@@ -358,32 +360,18 @@ function prod_float_kind(k: string): boolean {
   return false;
 }
 
-// prod_float_call_argc is the operand count of a transcendental, which
-// every backend calls a runtime helper for (kind 50 with the op's name).
-function prod_float_call_argc(k: string): i32 {
-  if (k == "fpow") {
-    return 2;
-  }
-  if (k == "fsin" || k == "fcos" || k == "fexp" || k == "flog") {
-    return 1;
-  }
-  return 0;
-}
-
 // lift_float_prod lifts one f64 op: a binary carries its kind name and width
 // 64 like the integer binaries, a unary its kind name (an int-to-float
-// conversion also its source width) with the unsigned flag in `imm`, and a
-// reinterpret between f64 and i64 moves nothing.
+// conversion also its source width) with the unsigned flag in `imm`; a
+// reinterpret between f64 and i64 is a unary too, which a register backend with
+// a float register class makes the move between the classes.
 function lift_float_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: ssa.SInst[]): LiftVals {
   let argc: i32 = 1;
-  if (fbin_sym(k) != "" || k == "fpow") {
+  if (fbin_sym(k) != "") {
     argc = 2;
   }
   if (stack.len() < argc) {
     return LiftVals { nvals: nvals, stack: stack, insts: insts, ok: false };
-  }
-  if (k == "f64_bits" || k == "f64_from_bits") {
-    return LiftVals { nvals: nvals, stack: stack, insts: insts, ok: true };
   }
   let args: i32[] = [];
   let i: i32 = stack.len() - argc;
@@ -396,8 +384,6 @@ function lift_float_prod(k: string, op: ir.Op, nvals: i32, stack: i32[], insts: 
   nvals = nvals + 1;
   if (fbin_sym(k) != "") {
     insts = insts.append(ssa.SInst { kind_tag: 9, result: v, args: args, imm: 64, str: k });
-  } else if (prod_float_call_argc(k) > 0) {
-    insts = insts.append(ssa.SInst { kind_tag: 50, result: v, args: args, imm: 0, str: k });
   } else {
     let what: string = k;
     if (k == "i32_to_f64") {

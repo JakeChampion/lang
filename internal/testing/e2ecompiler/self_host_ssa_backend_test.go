@@ -325,8 +325,6 @@ function main(): i32 {
 	// width and signedness including the saturating ones and the widening
 	// the lowering inserts for an integer literal at an f64 parameter, the
 	// f32 and i64 reinterprets, and the transcendentals the runtime supplies.
-	// A value is its bit pattern in an integer register, as on the stack
-	// machine.
 	{name: "floats", src: `
 import "std/float";
 function area(r: f64): f64 { return 3.141592653589793 * r * r; }
@@ -384,6 +382,82 @@ function main(): i32 {
     acc = acc + trans(1.5) as i64;
     acc = acc + (widen(1.5) * 10.0) as i64 + signs() as i64;
     return (acc % 251) as i32;
+}
+`},
+	// The float register class: more f64s live across a call than the
+	// callee-saved float registers hold, so some spill; a loop-carried f64 phi
+	// beside an integer one; an f64 phi with a constant operand; an f64 whose
+	// bits an integer op reads, which keeps it in an integer register; ten f64
+	// parameters, two past the register ABI; and the results printed as bit
+	// patterns, so a rounding difference shows.
+	{name: "float_registers", src: `
+import "std/i64";
+import "std/float";
+function show(x: f64): void { print(f64_bits(x).to_string() + "\n"); }
+function idn(x: f64, n: i32): f64 { if (n == 0) { return x; } return idn(x, n - 1); }
+function poke(n: i32): i32 { if (n > 100) { return n; } return poke(n + 50) - 49; }
+function pressure(x: f64): f64 {
+    let a: f64 = x * 1.5;
+    let b: f64 = x + 2.25;
+    let c: f64 = x - 3.125;
+    let d: f64 = x * x;
+    let e: f64 = a / 7.0;
+    let f: f64 = b * c;
+    let g: f64 = d - e;
+    let h: f64 = f + g;
+    let i: f64 = a * b;
+    let j: f64 = c * d;
+    let k: f64 = e - f;
+    let l: f64 = g / 3.0;
+    let n: i32 = poke(3);
+    let m: f64 = idn(h + i, 3);
+    let o: f64 = idn(m * 0.5, 2);
+    return a + b + c + d + e + f + g + h + i + j + k + l + m + o + (n as f64);
+}
+function series(n: i32): f64 {
+    let s: f64 = 0.0;
+    let t: f64 = 1.0;
+    let i: i32 = 0;
+    while (i < n) {
+        s = s + t / (i as f64 + 1.0);
+        if (i % 3 == 0) { t = 0.0 - t; }
+        i = i + 1;
+    }
+    return s;
+}
+function pick(c: boolean, a: f64, b: f64): f64 {
+    let r: f64 = 0.5;
+    if (c) { r = b * a; }
+    return r - 1.0;
+}
+function mixed(x: f64): f64 {
+    let b: i64 = f64_bits(x);
+    let y: f64 = f64_from_bits(b + 1);
+    return y * 2.0 + x;
+}
+function cmp(a: f64, b: f64): i32 {
+    let r: i32 = 0;
+    if (a < b) { r = r + 1; }
+    if (a <= b) { r = r + 2; }
+    if (a > b) { r = r + 4; }
+    if (a >= b) { r = r + 8; }
+    if (a == b) { r = r + 16; }
+    if (a != b) { r = r + 32; }
+    return r;
+}
+function many(a: f64, b: f64, c: f64, d: f64, e: f64, f: f64, g: f64, h: f64, i: f64, j: f64): f64 {
+    return a - b + c * d - e / f + g * h - i + j;
+}
+function main(): i32 {
+    show(pressure(1.75));
+    show(series(1000));
+    show(pick(true, 3.0, 2.0) + pick(false, 3.0, 2.0));
+    show(mixed(3.0));
+    show(many(1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0));
+    show(0.0 - idn(2.5, 1));
+    show((2.0).sqrt() + (2.5).floor() + (2.5).ceil() + (0.0 - 2.5).trunc() + (0.0 - 2.5).abs());
+    let nan: f64 = 0.0 / 0.0;
+    return cmp(1.0, 2.0) + cmp(2.0, 2.0) * 3 + cmp(nan, 2.0) * 5;
 }
 `},
 	// The host floor: env, read_file and stat through their Fern helpers on
@@ -1315,6 +1389,57 @@ function main(): i32 { return (count(3000i64) % 97i64) as i32; }
 		}
 		if c.move.MatchString(loop) {
 			t.Errorf("%s: the loop of count still copies between registers:\n%s", c.target, loop)
+		}
+	}
+}
+
+// An f64 computed and consumed only by float instructions lives in a float
+// register: the loop of a Horner step multiplies and adds there, and never
+// moves the running value out to an integer register and back.
+func TestSelfHostSSAFloatsStayInFloatRegisters(t *testing.T) {
+	h := selfHostCLIForHost(t)
+	dir := t.TempDir()
+	src := filepath.Join(dir, "horner.fern")
+	prog := `@noinline function horner(x: f64, n: i32): f64 {
+    let p: f64 = 0.5;
+    let i: i32 = 0;
+    while (i < n) { p = p * x + 0.25; i = i + 1; }
+    return p;
+}
+function main(): i32 { return (horner(0.5, 40) * 100.0) as i32; }
+`
+	if err := os.WriteFile(src, []byte(prog), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cases := []struct {
+		target string
+		arith  *regexp.Regexp
+		out    *regexp.Regexp
+	}{
+		{"x86-64-linux", regexp.MustCompile(`(?m)^\s+(mulsd|addsd) %xmm\d+, %xmm([3-9]|1[0-5])$`), regexp.MustCompile(`(?m)^\s+movq %xmm\d+, %r\w+$`)},
+		{"arm64-linux", regexp.MustCompile(`(?m)^\s+(fmul|fadd) d(1[6-9]|2\d|3[01]|[89]|1[0-5]), d\d+, d\d+$`), regexp.MustCompile(`(?m)^\s+fmov x\d+, d\d+$`)},
+	}
+	for _, c := range cases {
+		out := filepath.Join(dir, "horner-"+c.target+".s")
+		cmd := exec.Command(h.cli, "-target", c.target, "-emit", "asm", "-o", out, src, h.stdlib)
+		report, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s: %v\n%s", c.target, err, report)
+		}
+		asm, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fn := functionListing(string(asm), "__fn_horner")
+		if fn == "" {
+			t.Fatalf("%s: no __fn_horner in the listing:\n%s", c.target, asm)
+		}
+		if n := len(c.arith.FindAllString(fn, -1)); n != 2 {
+			t.Errorf("%s: horner has %d multiplies and adds into a float register, want 2:\n%s", c.target, n, fn)
+		}
+		// Only the return may move the result out of its float register.
+		if n := len(c.out.FindAllString(fn, -1)); n > 1 {
+			t.Errorf("%s: horner moves an f64 between register classes %d times:\n%s", c.target, n, fn)
 		}
 	}
 }

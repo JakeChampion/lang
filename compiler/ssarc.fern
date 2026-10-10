@@ -4388,9 +4388,18 @@ function static_box(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
   return emit(r, ir.op_const_struct(static_name(f, ins), nfields, static_values(f, p, p.constants[ins.result])));
 }
 
+// An element in a 64-bit slot on every backend: wasm's i64, u64 and f64 arrays
+// have an 8-byte stride where its other scalars' is 4.
+function wide_elem(t: typeinfo.Type): boolean {
+  return ssasem.is_wide(t) || ssasem.is_f64(t);
+}
+
 function static_name(f: ssasem.Func, ins: ssa.SInst): string {
   if (ins.kind_tag == ssasem.array_new() && ssasem.is_u8(elem_type(f.values[ins.result]))) {
     return "&bytes";
+  }
+  if (ins.kind_tag == ssasem.array_new() && wide_elem(elem_type(f.values[ins.result]))) {
+    return "&arr64";
   }
   if (ins.kind_tag == ssasem.array_new()) {
     return "&arr";
@@ -6463,9 +6472,6 @@ function intrinsic_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   if (kind != "") {
     return Lowered { found: true, r: emit(r, ir.op_funary(kind)) };
   }
-  if (ins.str == "__pow_f64") {
-    return Lowered { found: true, r: emit(r, ir.op_fbin("fpow")) };
-  }
   let bits: Lowered = bit_count_site(r, ins);
   if (bits.found) {
     return bits;
@@ -6498,6 +6504,9 @@ function bit_count_site(own r: irtables.LowerResult, ins: ssa.SInst): Lowered {
   }
   if (ins.str == "__popcount64") {
     return Lowered { found: true, r: emit(r, ir.op_popcount(64)) };
+  }
+  if (ins.str == "__mulhi_u64") {
+    return Lowered { found: true, r: emit(r, ir.op_bin("mulhi_u", 64, true)) };
   }
   return Lowered { found: false, r: r };
 }
@@ -7219,6 +7228,7 @@ pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irta
   if (why != "") {
     return empty(why);
   }
+  p = ssaunits.without_constant_drops(p);
   let layout: ssalayout.Layout = ssalayout.compute(f.graph);
   if (!layout.ok) {
     return empty("physical RC needs reducible graph");

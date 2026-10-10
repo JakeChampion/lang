@@ -227,7 +227,7 @@ var selfHostTypedRE = regexp.MustCompile(`"(__[A-Za-z0-9_]+)"`)
 func selfHostTypedIntrinsics(t *testing.T) map[string]bool {
 	t.Helper()
 	body := selfHostSection(t, "checker.fern",
-		regexp.MustCompile(`(?s)// The ten f64 primitives.*?\n// The builtin results a call carries`))
+		regexp.MustCompile(`(?s)// The six f64 primitives.*?\n// The builtin results a call carries`))
 	out := map[string]bool{}
 	for _, m := range selfHostTypedRE.FindAllStringSubmatch(body, -1) {
 		out[m[1]] = true
@@ -301,7 +301,7 @@ func selfHostSection(t *testing.T, file string, re *regexp.Regexp) string {
 // result table for its own return type. Surface builtins are builtin_sigs'
 // rows, which carry both halves in one spelling.
 func TestSelfHostParameterisesEveryTypedBuiltin(t *testing.T) {
-	typed := selfHostTypedBuiltins(t, `(?s)// The ten f64 primitives.*?\n// The builtin results a call carries`, false)
+	typed := selfHostTypedBuiltins(t, `(?s)// The six f64 primitives.*?\n// The builtin results a call carries`, false)
 	parameterised := selfHostTypedBuiltins(t, `(?s)function intrinsic_params\(.*?\n// type_debug renders a Type`, true)
 	if len(typed) == 0 || len(parameterised) == 0 {
 		t.Fatal("one of the two builtin tables read empty — this test would pass on anything")

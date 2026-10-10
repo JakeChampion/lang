@@ -142,6 +142,11 @@ pub struct EmitState {
   // arguments in registers. Every function keeps its stack-ABI entry, so a
   // callee missing from it is still called correctly, only more slowly.
   reg_entries: irtables.SigReg,
+  // float_abi names the functions of this unit with an f64 parameter or
+  // result, sanitized, and float_abi_masks the shape of each (unit_float_abi):
+  // their register entries take those parameters in float registers.
+  float_abi: irtables.SigReg,
+  float_abi_masks: string[],
   // leaves are the unit's functions a call may take inline (ssa.Leaf).
   leaves: ssa.Leaf[],
   // Opt-in evidence follows immutable state, including runtime trial rollback.
@@ -318,6 +323,81 @@ pub function unit_labels(mod: parser.Module, lo: i32, hi: i32, cache: irtables.L
   return out;
 }
 
+// FloatAbi is unit_float_abi's answer: the functions with an f64 parameter or
+// result, and the shape of each, one character per parameter (`f` for an f64,
+// `x` for anything else), a `|`, and the result's.
+pub struct FloatAbi { names: irtables.SigReg, masks: string[] }
+
+// unit_float_abi reads the shapes off the unit's lowered bodies, as
+// unit_labels names them: an f64 is a parameter slot among the body's f64
+// slots, and its result one when the body says so.
+pub function unit_float_abi(mod: parser.Module, lo: i32, hi: i32, cache: irtables.LowerResult[]): FloatAbi {
+  let names: string[] = [];
+  let masks: string[] = [];
+  let fi: i32 = 0;
+  while (fi < cache.len()) {
+    let inside: boolean = fi >= mod.funcs.len() || fi >= lo && fi < hi;
+    if (inside && !cache[fi].superseded && cache[fi].ok) {
+      let name: string = cache[fi].name;
+      if (fi < mod.funcs.len()) {
+        name = mod.funcs[fi].name;
+        if (mod.funcs[fi].receiver_type.len() > 0) {
+          name = util.base_type_name(mod.funcs[fi].receiver_type) + "." + name;
+        }
+      }
+      let mask: string = float_mask_of(cache[fi]);
+      if (mask != "") {
+        names = names.append(sanitize_label(name));
+        masks = masks.append(mask);
+      }
+    }
+    fi = fi + 1;
+  }
+  return FloatAbi { names: irtables.sig_reg_of(names), masks: masks };
+}
+
+function float_mask_of(r: irtables.LowerResult): string {
+  let any: boolean = r.result_kind == irtables.result_f64();
+  let mask: string = "";
+  let p: i32 = 0;
+  while (p < r.n_params) {
+    if (util.index_of_i32(r.f64_slots, p) >= 0) {
+      mask = mask + "f";
+      any = true;
+    } else {
+      mask = mask + "x";
+    }
+    p = p + 1;
+  }
+  if (!any) {
+    return "";
+  }
+  if (r.result_kind == irtables.result_f64()) {
+    return mask + "|f";
+  }
+  return mask + "|x";
+}
+
+// float_mask is function `label`'s shape (FloatAbi), or "" for one with no
+// f64 parameter or result.
+pub function (s: EmitState) float_mask(label: string): string {
+  let i: i32 = irtables.sig_reg_index(s.float_abi, label);
+  if (i < 0) {
+    return "";
+  }
+  return s.float_abi_masks[i];
+}
+
+// float_param reports parameter p of a function of shape `mask` passed in a
+// float register, and float_result an f64 result.
+pub function float_param(mask: string, p: i32): boolean {
+  return p < mask.len() && mask[p] == b'f';
+}
+
+pub function float_result(mask: string): boolean {
+  return mask.len() > 0 && mask[mask.len() - 1] == b'f';
+}
+
 // unit_leaves lifts every small body in the unit's cache (the same bodies
 // unit_labels names) and keeps the ones a caller may take inline. A body
 // declared `@noinline` stays a call.
@@ -383,6 +463,8 @@ pub function new_state(): EmitState {
     ssa_save: 0,
     ssa_x0: 0 - 1,
     reg_entries: irtables.sig_reg_of([]),
+    float_abi: irtables.sig_reg_of([]),
+    float_abi_masks: [],
     leaves: [],
     retain_prepared: false,
     prepared: [],
@@ -7982,6 +8064,9 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
     || id.name == "__clz64" || id.name == "__ctz64" || id.name == "__popcount64") {
     return ty_i32();
   }
+  if (id.name == "__mulhi_u64") {
+    return ty_u64();
+  }
   // __arr_push_shared_bytes(): the SAME cliff weighted by the
   // bytes each crossing copied. i64, like the bump mark and
   // for the same reason — the quantity is arena-scale, and an
@@ -8016,10 +8101,7 @@ function infer_call_named_type(id: ast.ExprIdent, c: ast.ExprCall, s: EmitState)
   }
   if (id.name == "__abs_f64" || id.name == "__sqrt_f64"
     || id.name == "__floor_f64" || id.name == "__ceil_f64"
-    || id.name == "__trunc_f64" || id.name == "__round_f64"
-    || id.name == "__sin_f64" || id.name == "__cos_f64"
-    || id.name == "__exp_f64" || id.name == "__log_f64"
-    || id.name == "__pow_f64") {
+    || id.name == "__trunc_f64" || id.name == "__round_f64") {
     return ty_f64();
   }
   if (id.name == "str_split") {

@@ -1136,9 +1136,9 @@ function text_lens(f: ssasem.Func): i32[] {
 }
 
 // Per record, variant or array construction whose every field or element is a
-// narrow scalar constant: "|" and its words, which is a static box's whole
-// content; "" for any other value. An empty array literal is one whatever its
-// element type. A field or element may also hold another such box, as the
+// narrow scalar constant, or an array's a 64-bit integer or f64 constant: "|"
+// and its words, which is a static box's whole content; "" for any other
+// value. An empty array literal is one whatever its element type. A field or element may also hold another such box, as the
 // word `@<value>`, or a string literal's static box, as `$<value>`. A static
 // box's rc is immortal, so its releases and uniqueness tests leave it alone.
 //
@@ -1199,6 +1199,9 @@ function box_words(f: ssasem.Func, defs: ssa.SInst[], raw: boolean[], out: strin
   let j: i32 = 0;
   while (j < fields.len()) {
     let w: string = constant_word(defs, ins.args[j], fields[j].ty);
+    if (w == "" && ins.kind_tag == ssasem.array_new()) {
+      w = wide_word(defs, ins.args[j], fields[j].ty);
+    }
     if (w == "") {
       w = literal_word(defs, ins.args[j]);
     }
@@ -1358,6 +1361,48 @@ function constant_word(defs: ssa.SInst[], v: i32, t: typeinfo.Type): string {
     return "";
   }
   return negated_word(defs, d);
+}
+
+// A 64-bit element's word: an i64 or u64 literal's value, or an f64 literal's
+// bit pattern, as signed decimal; a negation of one negated; "" for anything
+// else. Only an array's elements take one, since a record's field words are
+// laid out at the narrow width on wasm.
+function wide_word(defs: ssa.SInst[], v: i32, t: typeinfo.Type): string {
+  let f: boolean = ssasem.is_f64(t);
+  if (!f && !ssasem.is_wide(t)) {
+    return "";
+  }
+  let d: ssa.SInst = through_copies(defs, v);
+  let neg: boolean = false;
+  if (d.kind_tag == 10 && d.str == "-" && d.args.len() == 1 && d.args[0] >= 0) {
+    neg = true;
+    d = through_copies(defs, d.args[0]);
+  }
+  if (d.kind_tag != 1) {
+    return "";
+  }
+  let bits: i64 = d.imm as i64;
+  if (f) {
+    bits = util.parse_f64_bits(d.str);
+  } else if (d.str != "") {
+    bits = util.lit_to_i64(d.str);
+  }
+  if (neg && f) {
+    bits = bits ^ 1i64 << 63i64;
+  } else if (neg) {
+    bits = 0 - bits;
+  }
+  return util.i64_to_string(bits);
+}
+
+function through_copies(defs: ssa.SInst[], v: i32): ssa.SInst {
+  let d: ssa.SInst = defs[v];
+  let hops: i32 = 0;
+  while (d.kind_tag == 7 && d.args.len() == 1 && d.args[0] >= 0 && hops < 16) {
+    d = defs[d.args[0]];
+    hops = hops + 1;
+  }
+  return d;
 }
 
 // A negative i32 literal is `0 - k` in source, which arrives as that
@@ -2698,6 +2743,23 @@ pub function plan_analyzed(f: ssasem.Func, modes: i32[], semantic: ssasem.Analys
   }
   let consts: string[] = constants(f, defs);
   return Plan { ok: true, why: "", steps: steps, owned: owned, literal: literal, grows: grows, grow_fields: grow_fields, takes: takes, held: units.held, payloads: units.payloads, kept: kept, entry_kept: entry_kept, frame_views: frame_views(f, defs), constants: consts, text_lens: text_lens(f), analysis: semantic, defs: defs, modes: modes, unit_analysis: analysis, unique_receivers: unique_receivers(f, steps, consts, no_fresh()), fresh_seeded: false, checked_writes: checked_writes(f) };
+}
+
+// without_constant_drops is `p` less its drops of static boxes, whose count is
+// immortal so that dropping one releases nothing. The ledger the verifier
+// replays still holds those drops; only the lowering skips them.
+pub function without_constant_drops(p: Plan): Plan {
+  let out: Step[] = [];
+  for st in p.steps {
+    let kept: i32[] = [];
+    for d in st.drops {
+      if (d < 0 || d >= p.constants.len() || p.constants[d] == "") {
+        kept = kept.append(d);
+      }
+    }
+    out = out.append(Step { ...st, drops: kept });
+  }
+  return Plan { ...p, steps: out };
 }
 
 // checked_writes marks, at a `with`'s result, a `with` whose index an element

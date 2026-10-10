@@ -596,8 +596,8 @@ Unsupported constructs refuse the whole function with a reason.
   callee `(result i32)` like any other), so a `(K, V) => void` callback's
   call stands in statement position like any void call.
 
-- The runtime INTRINSICS, typed as native's `FuncSigs` types them: the ten f64
-  primitives `std/float` dispatches to and `__pow_f64`, the six bit counts, the
+- The runtime INTRINSICS, typed as native's `FuncSigs` types them: the six f64
+  primitives `std/float` dispatches to, the six bit counts, the
   raw-memory escape hatches (`__alloc`, `__alloc_u8`, `__free`, the loads and
   stores, `__memcpy` / `__memset`, `__ptr_width`, the heap marks), and the byte
   scans over a LENT string (`__sum_bytes`, `__ascii_run`, `__count_byte`,

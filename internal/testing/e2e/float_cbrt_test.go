@@ -3,11 +3,10 @@ package e2e
 import "testing"
 
 // Differential coverage for std/float.cbrt — the real cube root, defined for
-// negative inputs (unlike pow with a fractional exponent). Built on __pow_f64
-// around a peeled-off sign, so like the other transcendentals its wasmbin leg
-// skips (the legacy AST backend doesn't wire libm pow). Tolerance-banded. Both
-// f64 and f32. Returns 42 iff every check holds across interp / x86-64 / wasm /
-// arm64; each leg skips itself when its toolchain is absent.
+// negative inputs (unlike pow with a fractional exponent). Built on pow around
+// a peeled-off sign. Tolerance-banded. Both f64 and f32. Returns 42 iff every
+// check holds across interp / x86-64 / wasm / arm64; each leg skips itself when
+// its toolchain is absent.
 const floatCbrtProg = `
 import "std/float" as float;
 function approx(a: f64, b: f64): boolean { let d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.001; }

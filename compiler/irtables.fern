@@ -92,6 +92,18 @@ pub function sig_reg_has_exact(r: SigReg, name: string): boolean {
   return false;
 }
 
+// sig_reg_index is the row `name` is in a registry, or -1.
+pub function sig_reg_index(r: SigReg, name: string): i32 {
+  let i: i32 = r.head[sig_key_bucket(name, r.head.len())];
+  while (i >= 0) {
+    if (r.rows[i] == name) {
+      return i;
+    }
+    i = r.next[i];
+  }
+  return 0 - 1;
+}
+
 // csv_nth returns the Nth comma-separated field of `enc` (0-based), or "". The
 // split is depth-aware (counting `(`/`[` … `)`/`]`) so a nested tuple element tag
 // — `(i32,i32),i64` → field 0 is `(i32,i32)`, field 1 is `i64` — is recovered
@@ -1031,8 +1043,6 @@ pub function map_fbinop(op: string): string {
 // instruction on arm64 (frinta) but on x86 (roundsd has no ties-away mode) and
 // wasm (f64.nearest is ties-to-even, not -away) it is emulated as trunc plus an
 // exact fractional-part test — see ir_fround / emit_wasm_fround.
-// The libm transcendentals log/exp/sin/cos lower here too; `pow`, the only
-// two-argument one, lowers as an `fpow` fbin instead (the __pow_f64 call case).
 pub function f64_math_builtin_kind(name: string): string {
   if (name == "__sqrt_f64") {
     return "fsqrt";
@@ -1051,21 +1061,6 @@ pub function f64_math_builtin_kind(name: string): string {
   }
   if (name == "__round_f64") {
     return "fround";
-  }
-  // The libm transcendentals. No target has an instruction for these, so every
-  // backend calls the same-named runtime helper its emitter emits —
-  // `__fern_<op>_f64` on the two register backends, `$__fern_<op>_f64` on wasm.
-  if (name == "__sin_f64") {
-    return "fsin";
-  }
-  if (name == "__cos_f64") {
-    return "fcos";
-  }
-  if (name == "__exp_f64") {
-    return "fexp";
-  }
-  if (name == "__log_f64") {
-    return "flog";
   }
   return "";
 }

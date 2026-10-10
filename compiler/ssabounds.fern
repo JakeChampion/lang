@@ -18,7 +18,9 @@
 //   - `x` is `y - c` for a constant `c >= 0`, with `y` below `length(b)` and at
 //     least zero where `x` is computed, so the subtraction cannot wrap;
 //   - `x` is a phi whose operands are all below `length(b)`, the phi itself
-//     assumed to be: induction over the loop's trips.
+//     assumed to be: induction over the loop's trips;
+//   - `x` is a constant, or `y & c` for a constant `c`, below the element
+//     count of the array literal `b` is.
 // An index `x` is at least zero when
 //   - it is a constant at least zero, or a `length`;
 //   - a fact says `c <= x` or `c < x` for a constant `c` that settles it, or
@@ -26,7 +28,8 @@
 //   - `x` is `y + 1` with `y` at least zero and, where `x` is computed, below a
 //     length, so the addition cannot wrap;
 //   - `x` is `length(b) - c` with a fact putting `length(b)` at `c` or more;
-//   - `x` is a phi whose operands are all at least zero, assuming the phi is.
+//   - `x` is a phi whose operands are all at least zero, assuming the phi is;
+//   - `x` is `y & c` for a constant `c` at least zero.
 import "./ssa";
 import "./ssadeps";
 import "./ssasem";
@@ -47,9 +50,6 @@ pub function proven_indices(f: ssasem.Func): ssasem.Func {
     return f;
   }
   let g: Graph = graph_of(f);
-  if (g.rels.len() == 0) {
-    return f;
-  }
   let blocks: ssa.SBlock[] = [];
   let changed: boolean = false;
   let b: i32 = 0;
@@ -338,6 +338,30 @@ function assumed(assume: i32[], v: i32): boolean {
   return false;
 }
 
+// masked is the constant `c` of `x = y & c`, or -1.
+function masked(g: Graph, x: i32): i32 {
+  let d: ssa.SInst = g.defs[x];
+  if (!binary(d, "&")) {
+    return 0 - 1;
+  }
+  if (is_const(g, d.args[1])) {
+    return const_value(g, d.args[1]);
+  }
+  if (is_const(g, d.args[0])) {
+    return const_value(g, d.args[0]);
+  }
+  return 0 - 1;
+}
+
+// literal_len is the element count of the array literal `base` is, or -1.
+function literal_len(g: Graph, base: i32): i32 {
+  let d: ssa.SInst = def_of(g, base);
+  if (d.kind_tag == ssasem.array_new()) {
+    return d.args.len();
+  }
+  return 0 - 1;
+}
+
 // below reports whether `x` is less than `length(base)` wherever block b runs.
 function below(g: Graph, b: i32, x: i32, base: i32, assume: i32[], steps: i32): boolean {
   if (steps <= 0) {
@@ -345,6 +369,13 @@ function below(g: Graph, b: i32, x: i32, base: i32, assume: i32[], steps: i32): 
   }
   x = root(g, x);
   let d: ssa.SInst = g.defs[x];
+  let m: i32 = masked(g, x);
+  if (is_const(g, x)) {
+    m = const_value(g, x);
+  }
+  if (m >= 0 && m < literal_len(g, base)) {
+    return true;
+  }
   if (binary(d, "-") && is_const(g, d.args[1])) {
     let c: i32 = const_value(g, d.args[1]);
     if (c >= 1 && is_length_of(g, d.args[0], base)) {
@@ -402,7 +433,7 @@ function nonneg(g: Graph, b: i32, x: i32, assume: i32[], steps: i32): boolean {
   if (is_const(g, x)) {
     return const_value(g, x) >= 0;
   }
-  if (is_length(g, x)) {
+  if (is_length(g, x) || masked(g, x) >= 0) {
     return true;
   }
   let d: ssa.SInst = g.defs[x];

@@ -548,17 +548,31 @@ function inst_is_call(k: i32): boolean {
   return k >= 19 && k <= 27;
 }
 
+// returns_call reports a call at `k` that ends `blk`, which returns its
+// result: nothing but that result is live past it, so no value needs a
+// register the call preserves. Whatever else holds a register over it lives
+// only on paths that do not run it.
+pub function returns_call(blk: SBlock, k: i32): boolean {
+  let ins: SInst = blk.insts[k];
+  return k == blk.insts.len() - 1 && blk.term.kind_tag == 1 && ins.result >= 0 && blk.term.value == ins.result;
+}
+
 // calls_out reports an instruction that is a call wherever it is emitted. An
 // inlined rc primitive is not one, though its slow path may still call.
 pub function calls_out(f: SFunc): boolean {
   for blk in f.blocks {
     for ins in blk.insts {
-      if (inst_is_call(ins.kind_tag) && !rc_inlined(ins)) {
+      if (calls(ins)) {
         return true;
       }
     }
   }
   return false;
+}
+
+// calls reports one instruction calls_out counts.
+pub function calls(ins: SInst): boolean {
+  return inst_is_call(ins.kind_tag) && !rc_inlined(ins);
 }
 
 // rc_inlined names a call both register-path emitters render at the site
@@ -775,7 +789,7 @@ function first_above(xs: i32[], v: i32): i32 {
 // registry's (kind ids 24-27); arm64's sdiv/udiv take any registers, so its
 // emitter names none.
 pub function binary_fixes_abi(op: string): boolean {
-  return op == "div_s" || op == "div_u" || op == "rem_s" || op == "rem_u";
+  return op == "div_s" || op == "div_u" || op == "rem_s" || op == "rem_u" || op == "mulhi_u";
 }
 
 // `abi_reg` is the pool index of the register the target's ABI returns a
@@ -967,6 +981,186 @@ function drop_active_at(a: i32[], k: i32): i32[] {
 // variable's location from it (#11410).
 pub struct Alloc { reg_of: i32[], def_pos: i32[], hi: i32[] }
 
+// float_values marks the values that live in the float register class: an
+// f64 an f64 operation defines (or a parameter, phi, word load, or the result
+// of a call `fcalls` marks) that f64 operations (the reinterpret to
+// its bits among them), phis of the class and a return read, and, on an
+// emitter whose calls take a float home (`tolerant`), direct call arguments as
+// well. A parameter, phi or call result also needs one f64
+// operation or float phi among its readers, or nothing is gained by a float
+// home. Anything else that reads it — a store, say — keeps it in an integer
+// register, so that only the emitters' class-aware paths ever meet a float
+// home. Empty when no value qualifies.
+pub function float_values(f: SFunc, fcalls: boolean[], tolerant: boolean): boolean[] {
+  let fl: boolean[] = __alloc_bool(f.nvals);
+  let derived: boolean[] = __alloc_bool(f.nvals);
+  let any: boolean = false;
+  for blk in f.blocks {
+    for ins in blk.insts {
+      let fcall: boolean = ins.kind_tag == 11 && ins.result >= 0 && ins.result < fcalls.len() && fcalls[ins.result];
+      if (ins.result >= 0 && ins.result < f.nvals && (float_def(ins) || fcall)) {
+        fl = fl.with(ins.result, true);
+        derived = derived.with(ins.result, ins.kind_tag == 6 || ins.kind_tag == 8 || ins.kind_tag == 11 || float_load(ins));
+        any = true;
+      }
+    }
+  }
+  if (!any) {
+    return [];
+  }
+  // A value leaves the class when anything outside it reads it, which can
+  // take a phi out and with it the values only that phi read.
+  let changed: boolean = true;
+  while (changed) {
+    changed = false;
+    let strong: boolean[] = float_strong(f, fl, derived);
+    for blk in f.blocks {
+      for ins in blk.insts {
+        let keeps: boolean = float_use(ins) || ins.kind_tag == 8 && fl[ins.result] || tolerant && float_tolerant(ins);
+        for a in ins.args {
+          if (!keeps && a >= 0 && a < f.nvals && fl[a]) {
+            fl = fl.with(a, false);
+            changed = true;
+          }
+        }
+      }
+      let t: STerm = blk.term;
+      if (t.kind_tag == 3 && t.cond >= 0 && t.cond < f.nvals && fl[t.cond]) {
+        fl = fl.with(t.cond, false);
+        changed = true;
+      }
+    }
+    let v: i32 = 0;
+    while (v < f.nvals) {
+      if (fl[v] && derived[v] && !strong[v]) {
+        fl = fl.with(v, false);
+        changed = true;
+      }
+      v = v + 1;
+    }
+  }
+  for x in fl {
+    if (x) {
+      return fl;
+    }
+  }
+  return [];
+}
+
+// float_strong marks the derived values (parameters, phis, call results) a
+// float home serves: one an f64 operation reads, or a phi joining one that is
+// an f64 operation's result or is itself served so.
+function float_strong(f: SFunc, fl: boolean[], derived: boolean[]): boolean[] {
+  let strong: boolean[] = __alloc_bool(f.nvals);
+  let changed: boolean = true;
+  while (changed) {
+    changed = false;
+    for blk in f.blocks {
+      for ins in blk.insts {
+        let fop: boolean = float_use(ins) || ins.kind_tag == 8 && fl[ins.result] && strong[ins.result];
+        for a in ins.args {
+          if (fop && a >= 0 && a < f.nvals && fl[a] && !strong[a]) {
+            strong = strong.with(a, true);
+            changed = true;
+          }
+        }
+        if (ins.kind_tag == 8 && ins.result >= 0 && fl[ins.result] && !strong[ins.result]) {
+          for a in ins.args {
+            if (a >= 0 && a < f.nvals && fl[a] && (!derived[a] || strong[a]) && !strong[ins.result]) {
+              strong = strong.with(ins.result, true);
+              changed = true;
+            }
+          }
+        }
+      }
+    }
+  }
+  return strong;
+}
+
+// float_tolerant names a reader that takes a float home through a scratch:
+// a direct call's argument.
+function float_tolerant(ins: SInst): boolean {
+  return ins.kind_tag == 11 && !rc_inlined(ins);
+}
+
+// float_def names an instruction whose result is an f64 the float class can
+// hold: the literal, the arithmetic, the one-instruction math, the widening to
+// f64 and the reinterpret from its bits, a word load, a parameter and a phi.
+// The last three are only candidates (float_strong).
+function float_def(ins: SInst): boolean {
+  let k: i32 = ins.kind_tag;
+  if (k == 4 || k == 6 || k == 8 || float_load(ins)) {
+    return true;
+  }
+  if (k == 9) {
+    return float_arith(ins.str);
+  }
+  if (k == 10) {
+    return float_math(ins.str) || util.str_has_prefix(ins.str, "i32_to_f64:") || ins.str == "f64_from_bits";
+  }
+  return false;
+}
+
+// float_load names a word load, from a field or an array element, whose word
+// an f64 operation may be what reads.
+function float_load(ins: SInst): boolean {
+  return ins.kind_tag == 40 || ins.kind_tag == 42 && ins.str != "u8";
+}
+
+// float_use names an instruction that reads its operands as f64s: the float
+// arithmetic and compares, the math, and the conversions and the reinterpret
+// out of f64.
+function float_use(ins: SInst): boolean {
+  let k: i32 = ins.kind_tag;
+  if (k == 9) {
+    return float_arith(ins.str) || float_cmp(ins.str);
+  }
+  if (k == 10) {
+    return float_math(ins.str) || ins.str == "f64_to_i32" || ins.str == "f64_to_i64" || ins.str == "f64_bits";
+  }
+  return false;
+}
+
+pub function float_arith(op: string): boolean {
+  return op == "fadd" || op == "fsub" || op == "fmul" || op == "fdiv";
+}
+
+pub function float_cmp(op: string): boolean {
+  return op == "feq" || op == "fne" || op == "flt" || op == "fle" || op == "fgt" || op == "fge";
+}
+
+pub function float_math(op: string): boolean {
+  return op == "fsqrt" || op == "ffloor" || op == "fceil" || op == "ftrunc" || op == "fabs" || op == "fround" || op == "fneg";
+}
+
+// class_order is `order` with the float values moved after every other value,
+// each part still in its own order; the second result is where they start.
+function class_order(order: i32[], fl: boolean[]): i32[] {
+  let out: i32[] = [];
+  for v in order {
+    if (!fl[v]) {
+      out = out.append(v);
+    }
+  }
+  for v in order {
+    if (fl[v]) {
+      out = out.append(v);
+    }
+  }
+  return out;
+}
+
+function count_false(fl: boolean[]): i32 {
+  let n: i32 = 0;
+  for x in fl {
+    if (!x) {
+      n = n + 1;
+    }
+  }
+  return n;
+}
+
 // regalloc_linear assigns each value a register index or a spill slot. The
 // indices below `nregs` are the caller-saved registers, the `nsaved` above
 // them the callee-saved ones: a value live across a call takes one of the
@@ -974,12 +1168,16 @@ pub struct Alloc { reg_of: i32[], def_pos: i32[], hi: i32[] }
 // register first, a callee-saved one when those are out, a slot last. The
 // lowest indices go first, so an emitter that saves the callee-saved
 // registers a function uses saves a dense prefix of them.
+// The values `fl` marks (float_values) are the float class: they take the
+// `nf` caller-saved float registers numbered from nregs + nsaved and the `nfs`
+// callee-saved ones above those, by the same rules. The classes share no
+// register, so each is scanned on its own, the float values last.
 // `pref[v]`, when not -1, is the caller-saved register v would rather have:
 // the one a register-ABI parameter arrives in or a call argument leaves in. It
 // is taken when free and v does not live across a call; an empty `pref` asks
 // for nothing. A value a block returns that names no register asks for
 // `abi_reg`, where the return reads it (`return_prefs`).
-pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[]): Alloc {
+pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, abi_fixed_by_div: boolean, no_home: boolean[], pref: i32[], fl: boolean[], nf: i32, nfs: i32): Alloc {
   let wish: i32[] = return_prefs(f, pref, abi_reg);
   let big: i32 = 2000000000;
   let lo: i32[] = __alloc_i32(f.nvals);
@@ -1049,7 +1247,9 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
         a = a + 1;
       }
       if (inst_is_call(ins.kind_tag)) {
-        calls = calls.append(pos);
+        if (!returns_call(blk, k)) {
+          calls = calls.append(pos);
+        }
         if (ins.result >= 0 && ins.result < call_def.len()) {
           call_def = call_def.with(ins.result, 1);
         }
@@ -1144,6 +1344,11 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
 
   // Linear scan in order of interval start.
   let order: i32[] = order_by_lo(f.nvals, lo);
+  let split: i32 = order.len();
+  if (fl.len() > 0) {
+    order = class_order(order, fl);
+    split = count_false(fl);
+  }
   let act_val: i32[] = [];
   let act_hi: i32[] = [];
   let act_reg: i32[] = [];
@@ -1160,8 +1365,33 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
     r = r - 1;
   }
 
+  // The integer class's bounds first: its pool starts at 0, its callee-saved
+  // registers at `sat`, and its call results arrive in `cabi`.
+  let cbase: i32 = 0;
+  let sat: i32 = nregs;
+  let cabi: i32 = abi_reg;
   let oi: i32 = 0;
   while (oi < order.len()) {
+    if (oi == split) {
+      cbase = nregs + nsaved;
+      sat = cbase + nf;
+      cabi = 0 - 1;
+      act_val = [];
+      act_hi = [];
+      act_reg = [];
+      free = [];
+      r = sat - 1;
+      while (r >= cbase) {
+        free = free.append(r);
+        r = r - 1;
+      }
+      free_s = [];
+      r = sat + nfs - 1;
+      while (r >= sat) {
+        free_s = free_s.append(r);
+        r = r - 1;
+      }
+    }
     let v: i32 = order[oi];
     if (hi[v] < 0) {  // never referenced
       oi = oi + 1;
@@ -1175,7 +1405,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
       let ai: i32 = 0;
       while (ai < act_val.len()) {
         if (act_hi[ai] < lo[v]) {
-          if (act_reg[ai] >= nregs) {
+          if (act_reg[ai] >= sat) {
             free_s = free_s.append(act_reg[ai]);
           } else {
             free = free.append(act_reg[ai]);
@@ -1266,7 +1496,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
       if (call_def[v] == 1 && h != mates.hint[v] && hr != abi_reg) {
         continue;
       }
-      if (spans_call(cum, lo[v], hi[v]) && hr < nregs || hr == abi_reg && !abi_ok) {
+      if (hr < cbase || spans_call(cum, lo[v], hi[v]) && hr < sat || hr == cabi && !abi_ok) {
         continue;
       }
       let fi: i32 = index_of_reg(free, hr);
@@ -1318,7 +1548,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
       oi = oi + 1;
       continue;
     }
-    let pick: i32 = pick_caller_reg(free, abi_reg, call_def[v] == 1 && abi_ok, abi_ok);
+    let pick: i32 = pick_caller_reg(free, cabi, call_def[v] == 1 && abi_ok, abi_ok);
     let from_caller: boolean = !spans_call(cum, lo[v], hi[v]) && pick >= 0;
     if (!from_caller && free_s.len() == 0) {
       // Nothing free: take the register from the active interval whose
@@ -1326,7 +1556,7 @@ pub function regalloc_linear(f: SFunc, nregs: i32, nsaved: i32, abi_reg: i32, ab
       // instead. `need_saved` keeps the two pools apart, since a value
       // live across a call may only sit in a callee-saved register.
       let need_saved: boolean = spans_call(cum, lo[v], hi[v]);
-      let fa: i32 = cheapest_active(act_val, act_reg, act_hi, shared_with, weight, lo, hi, lo[v], nregs, need_saved);
+      let fa: i32 = cheapest_active(act_val, act_reg, act_hi, shared_with, weight, lo, hi, lo[v], sat, need_saved);
       let cmp: i32 = 0;
       if (fa >= 0) {
         let fw: i32 = chain_weight(act_val[fa], shared_with, weight, hi, lo[v]);

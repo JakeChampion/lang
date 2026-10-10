@@ -231,8 +231,8 @@ and K/V type combinations (string→string vs string→i32) need handling.
 ## Item 4 — `std/float` → libm intrinsics ✅
 
 **Blocker.** `std/float` calls `__abs_f64`, `__sqrt_f64`, `__floor_f64`,
-`__ceil_f64`, `__round_f64`, `__trunc_f64`, `__sin_f64`, `__cos_f64`,
-`__exp_f64`, `__log_f64`, `__pow_f64`.
+`__ceil_f64`, `__round_f64`, `__trunc_f64`, and (then) `__sin_f64`,
+`__cos_f64`, `__exp_f64`, `__log_f64`, `__pow_f64`.
 
 **Plan.** Split by difficulty:
 - **Cheap (single SSE / arm64 instr):** `abs` (andpd sign mask), `sqrt`
@@ -254,12 +254,9 @@ links once all 11 exist.
 inlined as single SSE / FP instructions on both backends, except `round`
 (ties-away-from-zero), which is `frinta` on arm64 but `trunc` plus an exact
 fractional-part test on x86 — `roundsd` has no ties-away mode, and the
-shorter `trunc(x + copysign(0.5, x))` identity is not equivalent (#7880). Transcendentals (sin/cos/exp/log/pow): neither ISA has an
-instruction, so both backends call the fdlibm bundle their emitter emits
-(`__fern_<op>_f64`, Cody-Waite reduction + domain guards, <=1 ulp). x86-64
-was on the x87 FPU until #5541's self-host half landed; the accuracy gate
-for both is `internal/testing/e2e/f64_ulp_test.go`, with behaviour in
-`self_host_float_intrinsics_test.go` (x86 + CI-gated arm64); fixpoint stays
+shorter `trunc(x + copysign(0.5, x))` identity is not equivalent (#7880). Transcendentals (sin/cos/exp/log/pow) are std/float's own Fern since #5541,
+which retired their builtins and the per-backend bundles; the accuracy gate is
+`internal/testing/e2e/f64_ulp_test.go`; fixpoint stays
 byte-identical.
 
 ---

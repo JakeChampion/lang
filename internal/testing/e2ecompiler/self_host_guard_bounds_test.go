@@ -12,7 +12,8 @@ import (
 // ssabounds.proven_indices marks an index read unchecked when the branches
 // into its block prove `0 <= i < len`: a guard on both bounds, the length minus
 // a constant, a loop index stepped by one under its guard or stepped down under
-// `i >= 0`, and the same field read twice from one value. Each case reads in
+// `i >= 0`, the same field read twice from one value, and a constant or a
+// masked index into an array literal shorter than neither. Each case reads in
 // range on every path the program takes, so it must answer what the
 // interpreter answers on every backend.
 var guardBoundsCases = []struct {
@@ -69,6 +70,10 @@ function main(): i32 { let s: i32[] = [11, 22, 33]; return slot(s, Op { imm: 2 }
     return t;
 }
 function main(): i32 { return total([1, 2, 3, 4, 5]); }`},
+	{"constant_into_literal", `@noinline function coef(k: i32): i32 { let c: i32[] = [2, 3, 5, 7]; return c[0] + c[3] * k; }
+function main(): i32 { return coef(2); }`},
+	{"masked_into_literal", `@noinline function look(k: i32): i32 { let c: i32[] = [2, 3, 5, 7]; return c[k & 3]; }
+function main(): i32 { return look(6) + look(0 - 1) * 10; }`},
 	// grouped_reads: a run at one index plus constants, or at constants, is
 	// checked once.
 	{"grouped_view_reads", `function word(bs: [u8], off: i32): i32 { return bs[off] as i32 + bs[off + 1] as i32 + bs[off + 2] as i32 + bs[off + 3] as i32; }
@@ -82,28 +87,36 @@ function main(): i32 { return around([1, 2, 3], 1); }`},
 }
 
 // guardBoundsTwins pairs each proven program with one whose guard proves
-// nothing about the length: the same reads behind a literal bound.
+// nothing about the length: the same reads behind a literal bound. The reader
+// stays out of line where splicing it would hand both twins the array
+// literal, whose length proves the read without the guard.
 var guardBoundsTwins = []struct{ name, proven, unproven string }{
 	{"guard_and",
-		`function pick(xs: i32[], k: i32): i32 { if (k >= 0 && k < xs.len()) { return xs[k]; } return 9; } function main(): i32 { return pick([1, 2, 3], 1); }`,
-		`function pick(xs: i32[], k: i32): i32 { if (k >= 0 && k < 3) { return xs[k]; } return 9; } function main(): i32 { return pick([1, 2, 3], 1); }`},
+		`@noinline function pick(xs: i32[], k: i32): i32 { if (k >= 0 && k < xs.len()) { return xs[k]; } return 9; } function main(): i32 { return pick([1, 2, 3], 1); }`,
+		`@noinline function pick(xs: i32[], k: i32): i32 { if (k >= 0 && k < 3) { return xs[k]; } return 9; } function main(): i32 { return pick([1, 2, 3], 1); }`},
 	{"last_element",
 		`function last(xs: i32[]): i32 { if (xs.len() < 1) { return 9; } return xs[xs.len() - 1]; } function main(): i32 { return last([1, 2, 3]); }`,
 		`function last(xs: i32[]): i32 { if (xs.len() < 0) { return 9; } return xs[xs.len() - 1]; } function main(): i32 { return last([1, 2, 3]); }`},
 	{"descending_scan",
-		`function find(xs: i32[], n: i32): i32 { let i: i32 = xs.len() - 1; while (i >= 0) { if (xs[i] == n) { return i; } i = i - 1; } return 0; } function main(): i32 { return find([5, 6, 7], 6); }`,
-		`function find(xs: i32[], n: i32): i32 { let i: i32 = 2; while (i >= 0) { if (xs[i] == n) { return i; } i = i - 1; } return 0; } function main(): i32 { return find([5, 6, 7], 6); }`},
+		`@noinline function find(xs: i32[], n: i32): i32 { let i: i32 = xs.len() - 1; while (i >= 0) { if (xs[i] == n) { return i; } i = i - 1; } return 0; } function main(): i32 { return find([5, 6, 7], 6); }`,
+		`@noinline function find(xs: i32[], n: i32): i32 { let i: i32 = 2; while (i >= 0) { if (xs[i] == n) { return i; } i = i - 1; } return 0; } function main(): i32 { return find([5, 6, 7], 6); }`},
 	{"field_guard",
-		`struct Op { imm: i32 } function slot(s: i32[], op: Op): i32 { if (op.imm < 0 || op.imm >= s.len()) { return 0; } return s[op.imm]; } function main(): i32 { return slot([4, 5], Op { imm: 1 }); }`,
-		`struct Op { imm: i32 } function slot(s: i32[], op: Op): i32 { if (op.imm < 0 || op.imm >= 2) { return 0; } return s[op.imm]; } function main(): i32 { return slot([4, 5], Op { imm: 1 }); }`},
+		`struct Op { imm: i32 } @noinline function slot(s: i32[], op: Op): i32 { if (op.imm < 0 || op.imm >= s.len()) { return 0; } return s[op.imm]; } function main(): i32 { return slot([4, 5], Op { imm: 1 }); }`,
+		`struct Op { imm: i32 } @noinline function slot(s: i32[], op: Op): i32 { if (op.imm < 0 || op.imm >= 2) { return 0; } return s[op.imm]; } function main(): i32 { return slot([4, 5], Op { imm: 1 }); }`},
+	{"masked_into_literal",
+		`@noinline function look(k: i32): i32 { let c: i32[] = [2, 3, 5, 7]; return c[k & 3]; } function main(): i32 { return look(5); }`,
+		`@noinline function look(k: i32): i32 { let c: i32[] = [2, 3, 5, 7]; return c[k % 4]; } function main(): i32 { return look(5); }`},
+	{"constant_into_literal",
+		`@noinline function coef(k: i32): i32 { let c: i32[] = [2, 3, 5, 7]; return c[3] * k; } function main(): i32 { return coef(2); }`,
+		`@noinline function coef(k: i32): i32 { let c: i32[] = [2, 3, 5, 7]; return c[k + 1] * k; } function main(): i32 { return coef(2); }`},
 	// A division between the reads could abort first, so the twin keeps
 	// every read's check.
 	{"grouped_scrambled_reads",
 		`function word(bs: u8[], off: i32, d: i32): i32 { return bs[off + 3] as i32 + bs[off] as i32 + bs[off + 2] as i32 + bs[off + 1] as i32 + 10 / d; } function main(): i32 { let xs: u8[] = [1, 2, 3, 4]; return word(xs, 0, 5); }`,
 		`function word(bs: u8[], off: i32, d: i32): i32 { return bs[off + 3] as i32 + bs[off] as i32 / d + bs[off + 2] as i32 / d + bs[off + 1] as i32; } function main(): i32 { let xs: u8[] = [1, 2, 3, 4]; return word(xs, 0, 1) + 2; }`},
 	{"grouped_constant_reads",
-		`function head(xs: u8[], d: i32): i32 { return xs[3] as i32 + xs[1] as i32 + xs[2] as i32 + 10 / d; } function main(): i32 { let xs: u8[] = [1, 2, 3, 4]; return head(xs, 5); }`,
-		`function head(xs: u8[], d: i32): i32 { return xs[3] as i32 + xs[1] as i32 / d + xs[2] as i32; } function main(): i32 { let xs: u8[] = [1, 2, 3, 4]; return head(xs, 1) + 2; }`},
+		`@noinline function head(xs: u8[], d: i32): i32 { return xs[3] as i32 + xs[1] as i32 + xs[2] as i32 + 10 / d; } function main(): i32 { let xs: u8[] = [1, 2, 3, 4]; return head(xs, 5); }`,
+		`@noinline function head(xs: u8[], d: i32): i32 { return xs[3] as i32 + xs[1] as i32 / d + xs[2] as i32; } function main(): i32 { let xs: u8[] = [1, 2, 3, 4]; return head(xs, 1) + 2; }`},
 	{"grouped_reads",
 		`function word(bs: [u8], off: i32, d: i32): i32 { return bs[off] as i32 + bs[off + 1] as i32 + bs[off + 2] as i32 + bs[off + 3] as i32 + 10 / d; } function main(): i32 { let xs: u8[] = [1, 2, 3, 4]; return word(xs, 0, 5); }`,
 		`function word(bs: [u8], off: i32, d: i32): i32 { return bs[off] as i32 + bs[off + 1] as i32 / d + bs[off + 2] as i32 / d + bs[off + 3] as i32; } function main(): i32 { let xs: u8[] = [1, 2, 3, 4]; return word(xs, 0, 1) + 2; }`},
@@ -128,6 +141,10 @@ function main(): i32 { return walk([1, 2, 3]); }`},
 function main(): i32 { return total([1, 2, 3, 4]); }`},
 	{"read_after_loop", `function past(xs: i32[]): i32 { let i: i32 = 0; while (i < xs.len()) { i = i + 1; } return xs[i]; }
 function main(): i32 { return past([1, 2, 3]); }`},
+	{"mask_past_literal", `@noinline function look(k: i32): i32 { let c: i32[] = [2, 3, 5, 7]; return c[k & 7]; }
+function main(): i32 { return look(6); }`},
+	{"constant_past_literal", `@noinline function look(k: i32): i32 { let c: i32[] = [2, 3, 5, 7]; return c[4] + k; }
+function main(): i32 { return look(1); }`},
 	{"grouped_far_end", `function word(bs: [u8], off: i32): i32 { return bs[off] as i32 + bs[off + 1] as i32 + bs[off + 2] as i32 + bs[off + 3] as i32; }
 function main(): i32 { let xs: u8[] = [1, 2, 3, 4, 5]; return word(xs, 2); }`},
 	{"grouped_negative_base", `function word(bs: [u8], off: i32): i32 { return bs[off] as i32 + bs[off + 1] as i32 + bs[off + 2] as i32 + bs[off + 3] as i32; }
