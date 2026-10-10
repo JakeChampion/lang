@@ -10,9 +10,12 @@ import "std/string";
 // kind: 0 unsupported, 1 label, 2 register move, 3 load, 4 store,
 // 5 immediate move, 6 push, 7 pop, 8 BSR, 9 SUB, 10 ADD, 11 AND,
 // 12 NEG, 13 SHL by CL, 14 SHR by CL, 15 LEA, 16 CMP immediate,
-// 17 branch, 18 plain RET. Large-push only: 19 RIP-relative global LEA,
-// 20 immediate SHL, 21 immediate SHR. Array-only: 22 immediate store,
+// 17 branch, 18 plain RET. Extended: 19 RIP-relative global LEA,
+// 20 immediate SHL, 21 immediate SHR. Release: 22 immediate store,
 // 23 self TEST32, 24 underflow INC32, 25 direct dependency call.
+// String-only: 26 TEST8 immediate, 27 self TEST64, 28 register CMP,
+// 29 heap-bound global load, 30 heap-bound global CMP. For kind 28,
+// flags describe destination minus source; for 30, source minus global.
 // Arithmetic source -1 is immediate.
 // Widths are bits; addresses retain signed byte offsets and scaled indices.
 pub struct Op { kind: i32, width: i32, source: i32, destination: i32, base: i32, index: i32, scale: i32, offset: i32, immediate: i32, condition: string, target: i32, symbol: string }
@@ -275,6 +278,14 @@ pub function array_program(output: string): ArrayProgram {
   return ArrayProgram { ops: p.ops, register_entry: if (p.error == "") { body.register_entry } else { -1 }, error: p.error };
 }
 
+// Both string entries come from this same closed-namespace text selection.
+// Globals and calls are names only, not linked permissions or effect proofs.
+pub function string_program(output: string): ArrayProgram {
+  let body = text.select(output, "__fn___fern_str_free");
+  let p = selected_program(body, 3);
+  return ArrayProgram { ops: p.ops, register_entry: if (p.error == "") { body.register_entry } else { -1 }, error: p.error };
+}
+
 function selected_program(body: text.Body, mode: i32): Program {
   if (body.error != "") {
     return Program { ops: [], error: body.error };
@@ -301,7 +312,64 @@ function extended_decode(line: string, mode: i32): Op {
     return empty(0);
   }
   let large = large_decode(line);
-  return if (large.kind == 0 && mode == 2) { array_decode(line) } else { large };
+  if (large.kind > 0 || mode == 1) {
+    return large;
+  }
+  let array = array_decode(line);
+  return if (array.kind == 0 && mode == 3) { string_decode(line) } else { array };
+}
+
+function string_decode(line: string): Op {
+  let at = 0;
+  while (at < line.len() && line[at] != b' ' && line[at] != b'\t') {
+    at = at + 1;
+  }
+  if (at == line.len()) {
+    return empty(0);
+  }
+  let name = slice_unchecked(line, 0, at) + "";
+  let args = operands(util.trim(slice_unchecked(line, at + 1, line.len()) + ""));
+  return if (args.len() == 2) { string_operands(name, args[0], args[1]) } else { empty(0) };
+}
+
+function byte_test(a: string, b: string): Op {
+  let imm = large_literal(a);
+  let reg = registers.reg(b, false, 8);
+  if (imm == "" || reg < 0) {
+    return empty(0);
+  }
+  let n = util.digits_to_i32(imm);
+  // Accept only the unsigned spelling of an encodable byte, never truncate.
+  return if (n >= 0 && n <= 255) { Op { ...empty(26), width: 8, source: reg, immediate: n } } else { empty(0) };
+}
+
+function string_operands(name: string, a: string, b: string): Op {
+  if (name == "testb") {
+    return byte_test(a, b);
+  }
+  let w = width(name);
+  let src = registers.reg(a, false, w);
+  let dst = registers.reg(b, false, w);
+  if (name == "testq" && a == b && src >= 0) {
+    return Op { ...empty(27), width: 64, source: src };
+  }
+  if ((name == "cmpq" || name == "cmpl") && src >= 0 && dst >= 0) {
+    return Op { ...empty(28), width: w, source: src, destination: dst };
+  }
+  return heap_operand(name, a, b);
+}
+
+function heap_operand(name: string, a: string, b: string): Op {
+  let symbol = if (a == "__fern_heap_base(%rip)") { "__fern_heap_base" } else { if (a == "__fern_heap_end(%rip)") { "__fern_heap_end" } else { "" } };
+  let w = width(name);
+  let reg = registers.reg(b, false, w);
+  if (symbol == "" || reg < 0 || w == 0) {
+    return empty(0);
+  }
+  if (name == "movq" || name == "movl") {
+    return Op { ...empty(29), width: w, destination: reg, symbol: symbol };
+  }
+  return if (name == "cmpq" || name == "cmpl") { Op { ...empty(30), width: w, source: reg, symbol: symbol } } else { empty(0) };
 }
 
 function array_dependency(name: string): boolean {

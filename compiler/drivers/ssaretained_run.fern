@@ -37,6 +37,7 @@ import "./ssalargepushpartitions" as largepushpartitions;
 import "./ssalargepushvalues" as largepushvalues;
 import "./ssalargearrayvalues" as largearrayvalues;
 import "./ssalargearraymachines" as largearraymachines;
+import "./ssastringreleaseisas" as stringreleaseisas;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -124,6 +125,7 @@ function settled(g: ircore.Gated, arm: boolean): void {
     arrayreleaseisas.run(on.text);
     smallarraymachines.run(on.text);
     largearraymachines.run(on.text);
+    stringreleaseisas.run(on.text);
     largepushmachines.run(on.text);
   }
   sites.output(on);

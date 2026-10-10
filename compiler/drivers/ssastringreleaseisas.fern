@@ -1,0 +1,163 @@
+import "../ssacapacityisa" as isa;
+import "../ssadecrementtext" as text;
+import "../ssainlineuniqueisa" as registers;
+import "std/string";
+
+// Native status bytes are shared; the printed module and case identify failure.
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("string-release instruction controls failed: " + group);
+    exit(180);
+  }
+}
+
+function prefix(): string {
+  return ".text\n__fn___fern_str_free:\n__fn___fern_str_free.r:\n";
+}
+
+function sample(line: string): isa.Op {
+  let p = isa.string_program(prefix() + line + "\nret\n");
+  require(p.error == "" && p.ops.len() == 3 && p.ops[0].kind == 1 && p.ops[2].kind == 18, "sample " + line);
+  return p.ops[1];
+}
+
+function byte_tests(): void {
+  let regs = registers.registers(false, 8);
+  let i = 0;
+  for reg in regs {
+    for n in [0, 1, 127, 128, 255] {
+      let line = "testb $" + n.to_string() + ", " + reg;
+      let op = sample(line);
+      require(op.kind == 26 && op.width == 8 && op.source == i && op.immediate == n, line);
+    }
+    i = i + 1;
+  }
+  let hex = sample("testb $0xFF, %r15b");
+  require(hex.kind == 26 && hex.immediate == 255 && hex.source == 15, "byte hex");
+}
+
+function comparisons(): void {
+  for width in [32, 64] {
+    let regs = registers.registers(false, width);
+    let name = if (width == 32) { "cmpl" } else { "cmpq" };
+    let i = 0;
+    for src in regs {
+      let j = 0;
+      for dst in regs {
+        let line = name + " " + src + ", " + dst;
+        let op = sample(line);
+        require(op.kind == 28 && op.width == width && op.source == i && op.destination == j, line);
+        j = j + 1;
+      }
+      i = i + 1;
+    }
+  }
+}
+
+function wide_tests(): void {
+  let i = 0;
+  for reg in registers.registers(false, 64) {
+    let op = sample("testq " + reg + ", " + reg);
+    require(op.kind == 27 && op.width == 64 && op.source == i, "test64 " + reg);
+    i = i + 1;
+  }
+}
+
+function heap_pair(symbol: string, reg: string, suffix: string, width: i32, i: i32): void {
+  let load = sample("mov" + suffix + " " + symbol + "(%rip), " + reg);
+  let cmp = sample("cmp" + suffix + " " + symbol + "(%rip), " + reg);
+  let group = symbol + " " + reg;
+  require(load.kind == 29 && load.width == width && load.destination == i && load.symbol == symbol, "load " + group);
+  require(cmp.kind == 30 && cmp.width == width && cmp.source == i && cmp.symbol == symbol, "cmp " + group);
+}
+
+function heap_bounds(): void {
+  for width in [32, 64] {
+    let regs = registers.registers(false, width);
+    let suffix = if (width == 32) { "l" } else { "q" };
+    let i = 0;
+    for reg in regs {
+      for symbol in ["__fern_heap_base", "__fern_heap_end"] {
+        heap_pair(symbol, reg, suffix, width, i);
+      }
+      i = i + 1;
+    }
+  }
+}
+
+function fixed_load(): void {
+  let load = sample("movq 24(%r8), %rsi");
+  require(load.kind == 3 && load.width == 64 && load.base == 8 && load.index == -1 && load.offset == 24 && load.destination == 6, "fixed slot load");
+}
+
+function fixed_store(): void {
+  let store = sample("movq %rdx, 24(%r8)");
+  require(store.kind == 4 && store.width == 64 && store.base == 8 && store.index == -1 && store.offset == 24 && store.source == 2, "fixed slot store");
+}
+
+function unsupported(): void {
+  for line in ["testb $-1, %al", "testb $256, %al", "testb $0x100, %al", "testb $2147483648, %al", "testb $1, %ah", "testb $1, %eax", "testb $1, %rax", "testb %al, %al", "testb $1, (%rax)", "testb $1, %al, %cl", "testq %rax, %rcx", "testq %eax, %eax", "testq $1, %rax", "cmpq %eax, %rcx", "cmpl %rax, %ecx", "cmpq (%rax), %rcx", "cmpq %rax, (%rcx)", "cmpq %rax, %rcx, %rdx", "movq __fern_heap_base+0(%rip), %rax", "movq __fern_heap_base(%eip), %rax", "movq __fern_heap_base(%rax), %rax", "movq __fern_heap_base(%rip), %eax", "movl __fern_heap_end(%rip), %rax", "movb __fern_heap_end(%rip), %al", "cmpq __fern_heap_end+8(%rip), %rcx", "cmpq __other(%rip), %rcx", "movq __fern_freelist(%rip), %rax", "movq %rax, __fern_heap_base(%rip)", "leaq __fern_heap_base(%rip), %rax", "cmpq __fern_heap_end((%rip)), %rcx", "cmpq __fern_heap_end(%rip), %ecx", "call __fn___fern_str_free", "ret $8", "unknown_instruction"] {
+    require(sample(line).kind == 0, line);
+  }
+}
+
+function isolation(): void {
+  for line in ["testb $1, %al", "testq %rdx, %rdx", "cmpq %rsi, %rcx", "cmpl %esi, %ecx", "movq __fern_heap_base(%rip), %rsi", "cmpq __fern_heap_end(%rip), %rcx"] {
+    let cap = isa.program(".text\n__fern_capw:\n" + line + "\nret\n");
+    let large = isa.large_program(".text\n__fern_large_push:\n" + line + "\nret\n");
+    let array = isa.array_program(".text\n__fn___fern_arr_dec:\n__fn___fern_arr_dec.r:\n" + line + "\nret\n");
+    require(cap.error == "" && cap.ops[0].kind == 0 && large.error == "" && large.ops[0].kind == 0, "helper isolation " + line);
+    require(array.error == "" && array.ops[1].kind == 0, "array isolation " + line);
+  }
+}
+
+function boundaries(): void {
+  require(isa.string_program(prefix() + "jmp .Lmissing\n").error != "", "missing branch");
+  require(isa.string_program(prefix() + "jmp .Loutside\n__other:\n.Loutside:\nret\n").error != "", "cross-body branch");
+  require(isa.string_program(prefix() + "ret\n.data\n__fn___fern_str_free: .quad 0\n").error != "", "duplicate entry");
+  require(isa.string_program(prefix() + ".Ldup:\nret\n__other:\n.Ldup:\nret\n").error != "", "duplicate local");
+  require(isa.string_program(".set alias, __fern_heap_base\n" + prefix() + "ret\n").error != "", "namespace alias");
+  require(isa.string_program(".text\n__fn___fern_str_free:\nret\n").error != "", "missing register entry");
+  let cycle = isa.string_program(prefix() + ".Lcycle:\njmp .Lcycle\n");
+  require(cycle.error == "" && cycle.ops[2].target == 1, "cycles are data");
+  let empty = isa.string_program(prefix() + "__next:\nret\n");
+  require(empty.error == "" && empty.ops.len() == 1, "empty entry is data");
+  // These syntax samples deliberately lack global and dependency definitions.
+  require(sample("call __fern_capw").kind == 25 && sample("call __fern_large_push").kind == 25, "calls are data");
+}
+
+function actual_branch(op: isa.Op, p: isa.ArrayProgram, body: text.Body, i: i32): void {
+  if (op.kind == 17) {
+    require(op.target >= 0 && op.target < p.ops.len() && p.ops[op.target].kind == 1, "actual branch " + i.to_string());
+    require(body.lines[i].ends_with(body.lines[op.target].split(":")[0]), "actual target " + i.to_string());
+  }
+}
+
+function actual(output: string): void {
+  let body = text.select(output, "__fn___fern_str_free");
+  let p = isa.string_program(output);
+  let kinds = [3, 1, 26, 17, 16, 17, 3, 23, 17, 16, 17, 17, 3, 16, 17, 16, 17, 3, 3, 29, 28, 17, 30, 17, 27, 17, 10, 21, 16, 17, 16, 17, 6, 25, 7, 1, 19, 3, 4, 4, 1, 22, 15, 19, 3, 4, 4, 17, 1, 2, 15, 6, 25, 7, 17, 1, 3, 10, 21, 10, 15, 16, 17, 22, 16, 17, 6, 25, 7, 1, 19, 3, 4, 4, 17, 1, 22, 2, 15, 25, 17, 1, 9, 4, 17, 1, 24, 1, 18];
+  require(p.error == "" && body.error == "" && p.ops.len() == kinds.len() && p.ops.len() == body.lines.len(), "actual length");
+  require(p.register_entry == body.register_entry && p.register_entry == 1, "actual dual entry");
+  let i = 0;
+  for op in p.ops {
+    require(op.kind == kinds[i], "actual kind " + i.to_string());
+    actual_branch(op, p, body, i);
+    i = i + 1;
+  }
+  require(p.ops[19].symbol == "__fern_heap_base" && p.ops[22].symbol == "__fern_heap_end", "actual heap bounds");
+  require(p.ops[33].symbol == "__fern_capw" && p.ops[52].symbol == "__fern_large_push" && p.ops[67].symbol == "__fern_capw" && p.ops[79].symbol == "__fern_large_push", "actual dependencies");
+}
+
+pub function run(output: string): void {
+  actual(output);
+  byte_tests();
+  comparisons();
+  wide_tests();
+  heap_bounds();
+  fixed_load();
+  fixed_store();
+  unsupported();
+  isolation();
+  boundaries();
+}
