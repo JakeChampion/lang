@@ -1,0 +1,199 @@
+import "../asmcore";
+import "../asm_ir";
+import "../lexer";
+import "../parser";
+import "../semlower";
+import "../ssacapacityisa" as isa;
+import "../ssadecrementtext" as text;
+import "../ssainlineuniqueisa" as registers;
+import "../util";
+import "std/string";
+
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("allocator instruction controls failed: " + group);
+    exit(180);
+  }
+}
+
+function fixture(code: string): string {
+  return ".text\n__fern_alloc:\n" + code + "\nret\n";
+}
+
+function sample(code: string): isa.Op {
+  let p = isa.allocator_program(fixture(code));
+  require(p.error == "" && p.ops.len() == 2 && p.ops[1].kind == 18, "sample: " + code);
+  return p.ops[0];
+}
+
+function actual(): void {
+  let m = parser.parse_module(lexer.tokenize("struct Parent { left: i32, right: i32 } @noinline function parent(left: i32, right: i32): Parent { return Parent { left: left, right: right }; } function main(): i32 { return 0; }"));
+  require(!asmcore.refuse_parse_unknowns([m]) && !asmcore.refuse_decl_names([m]), "parsed");
+  let g = semlower.program(semlower.driven(m, "x86-64-linux"));
+  require(g.ok, "lowered");
+  let sw = asmcore.Switches { backtrace: false, sanitize: false, var_rows: false };
+  let output = asm_ir.emit_module_ir_unit_prepared(g.im, true, false, "", [], g.im.funcs, g.stab, 0, -1, g.cache, g.physical, semlower.runtime_lowering, 0 as usize, sw, true);
+  let body = text.allocator(output.text);
+  let p = isa.allocator_program(output.text);
+  require(body.error == "" && body.register_entry == -1 && p.error == "" && p.ops.len() == body.lines.len(), "same complete output: " + body.error + ": " + p.error);
+  actual_operations(p, body);
+  let crlf = isa.allocator_program(output.text.split("\n").join("\r\n\t"));
+  require(crlf.error == "" && crlf.ops.len() == p.ops.len(), "CRLF extent");
+  let i = 0;
+  for op in p.ops {
+    same_op(crlf.ops[i], op);
+    i = i + 1;
+  }
+}
+
+function same_op(a: isa.Op, b: isa.Op): void {
+  require(a.kind == b.kind && a.width == b.width && a.source == b.source && a.destination == b.destination, "CRLF operation");
+  same_address(a, b);
+  require(a.immediate == b.immediate && a.condition == b.condition && a.target == b.target && a.symbol == b.symbol, "CRLF operands");
+}
+
+function same_address(a: isa.Op, b: isa.Op): void {
+  require(a.base == b.base && a.index == b.index && a.scale == b.scale && a.offset == b.offset, "CRLF address");
+}
+
+function actual_operations(p: isa.Program, body: text.Body): void {
+  let full = false;
+  let special = 0;
+  let i = 0;
+  for op in p.ops {
+    let line = body.lines[i];
+    if (line == ".Lalloc_full:") {
+      full = true;
+    }
+    if (!full) {
+      require(op.kind > 0, "fast-path instruction: " + line);
+    }
+    special = special + actual_special(op, line);
+    if (op.kind == 17) {
+      require(op.target >= 0 && op.target < p.ops.len() && p.ops[op.target].kind == 1, "actual branch binding");
+    }
+    i = i + 1;
+  }
+  require(full && special == 3, "entry fragment retained, syscall unproved");
+}
+
+function actual_special(op: isa.Op, line: string): i32 {
+  if (line == "pushq (%rax)" || line == "popq (%rdi)") {
+    let push = line == "pushq (%rax)";
+    require(op.kind == (if (push) { 32 } else { 33 }) && op.base == (if (push) { 0 } else { 7 }), "actual memory stack operation");
+    require(op.index == -1 && op.width == 64 && op.offset == 0, "actual memory stack address");
+    return 1;
+  }
+  if (line == "syscall") {
+    require(op.kind == 0, "syscall remains unproved");
+    return 1;
+  }
+  return 0;
+}
+
+function stack_base(reg: string, i: i32, displacement: string): void {
+  let push = sample("pushq " + displacement + "(" + reg + ")");
+  let pop = sample("popq " + displacement + "(" + reg + ")");
+  require(push.kind == 32 && pop.kind == 33 && push.base == i && pop.base == i, "stack base " + reg);
+  require(push.width == 64 && pop.width == 64 && push.index == -1 && pop.index == -1 && push.offset == pop.offset, "stack displacement");
+  require(push.offset == (if (displacement == "") { 0 } else { util.digits_to_i32(displacement) }), "exact signed displacement");
+}
+
+function stack_index(reg: string, i: i32): void {
+  let indexed = sample("popq -8(%rsp," + reg + ",8)");
+  require(if (i == 4) { indexed.kind == 0 } else { indexed.kind == 33 && indexed.base == 4 && indexed.index == i && indexed.scale == 8 && indexed.offset == -8 }, "stack index " + reg);
+}
+
+function stack(): void {
+  let i = 0;
+  for reg in registers.registers(false, 64) {
+    for displacement in ["", "0", "-8", "2147483647", "-2147483648"] {
+      stack_base(reg, i, displacement);
+    }
+    stack_index(reg, i);
+    i = i + 1;
+  }
+  for scale in ["1", "2", "4", "8"] {
+    let op = sample("pushq 16(%r12,%r13," + scale + ")");
+    require(op.kind == 32 && op.base == 12 && op.index == 13 && op.offset == 16 && op.scale == util.digits_to_i32(scale), "scaled memory push");
+  }
+}
+
+function global_operands(symbol: string, suffix: string, reg: string, w: i32, i: i32): void {
+  let load = sample("mov" + suffix + " " + symbol + "(%rip), " + reg);
+  let store = sample("mov" + suffix + " " + reg + ", " + symbol + "(%rip)");
+  let compare = sample("cmp" + suffix + " " + symbol + "(%rip), " + reg);
+  require(load.kind == 29 && load.width == w && load.destination == i && load.symbol == symbol, "global load");
+  require(store.kind == 34 && store.width == w && store.source == i && store.symbol == symbol, "global store");
+  require(compare.kind == 30 && compare.width == w && compare.source == i && compare.symbol == symbol, "global compare");
+}
+
+function globals(): void {
+  for symbol in ["__fern_heap_ptr", "__fern_heap_base", "__fern_heap_end"] {
+    for w in [32, 64] {
+      let suffix = if (w == 64) { "q" } else { "l" };
+      let i = 0;
+      for reg in registers.registers(false, w) {
+        global_operands(symbol, suffix, reg, w, i);
+        i = i + 1;
+      }
+    }
+  }
+}
+
+function unsupported(): void {
+  for line in ["pushl (%rax)", "popl (%rax)", "pushq (%eax)", "popq 2147483648(%rsp)", "pushq -2147483649(%rsp)", "popq (%rax,%rsp,8)", "pushq (%rax,%rcx,3)", "popq (,%rcx,8)", "pushq (%rax), %rbx", "pushq (%rax", "popq __fern_heap_ptr(%rip)", "movq __fern_heap_ptr+8(%rip), %rax", "movq %rax, __fern_heap_ptr@GOTPCREL(%rip)", "movw %ax, __fern_heap_ptr(%rip)", "movq $1, __fern_heap_ptr(%rip)", "movq __fern_unknown(%rip), %rax", "cmpq %rax, __fern_heap_ptr(%rip)", "movabs $17179869184, %rsi", "call __fern_alloc", "syscall", "unknown_instruction"] {
+    require(sample(line).kind == 0, "unsupported: " + line);
+  }
+}
+
+function selection(): void {
+  let base = fixture("ret");
+  for suffix in [".text\n__fern_alloc:\nret\n", ".data\n__fern_alloc: .quad 0\n", ".text\n.Lcollision:\n.Lcollision:\n", ".set alias, __fern_alloc\n", ".weak __fern_alloc\n", ".intel_syntax noprefix\n"] {
+    require(isa.allocator_program(base + suffix).error != "", "namespace: " + suffix);
+  }
+  require(isa.allocator_program(".data\n__fern_alloc: .quad 0\n").error != "", "data is not code");
+  let missing = sample("jmp .Lmissing");
+  require(missing.kind == 35 && missing.target == -1 && missing.condition == "jmp" && missing.symbol == ".Lmissing", "missing target remains unbound");
+  let external = isa.allocator_program(fixture("ja other") + "other:\nret\n");
+  require(external.error == "" && external.ops[0].kind == 35 && external.ops[0].symbol == "other", "cross-body target remains unbound");
+  let forward = isa.allocator_program(fixture("jmp .Lforward\nunknown_instruction\n.Lforward:"));
+  require(forward.error == "" && forward.ops[0].target == 2 && forward.ops[1].kind == 0, "unreachable unknown retained");
+  let cycle = isa.allocator_program(fixture(".Lcycle:\njmp .Lcycle"));
+  require(cycle.error == "" && cycle.ops[1].target == 0, "cycle is data");
+  require(isa.allocator_program(".text\n__fern_alloc:\n").error == "", "empty body is data");
+}
+
+function isolation(): void {
+  for line in ["pushq (%rax)", "popq (%rdi)", "movq __fern_heap_ptr(%rip), %rax", "movq %rax, __fern_heap_end(%rip)"] {
+    let old = isa.array_box_program(".text\n__fern_arr_box:\n" + line + "\nret\n");
+    require(old.error == "" && old.ops[0].kind == 0, "array-box syntax unchanged");
+    let capacity = isa.program(".text\n__fern_capw:\n" + line + "\nret\n");
+    require(capacity.error == "" && capacity.ops[0].kind == 0, "capacity syntax unchanged");
+    let release = isa.string_program(".text\n__fn___fern_str_free:\n__fn___fern_str_free.r:\n" + line + "\nret\n");
+    require(release.error == "" && release.ops[1].kind == 0, "string syntax unchanged");
+  }
+  require(text.dependency(fixture("ret"), "__fern_alloc").error != "", "old entry set unchanged");
+  require(isa.array_box_program(".text\n__fern_arr_box:\njmp absent\n").error != "", "old branch refusal unchanged");
+}
+
+function terminal_boundary(): void {
+  let suffix = ".section .rodata\n.Lmessage:\n.ascii \"failure\"\n.section .text\n.Lterminal:\nret\n";
+  let p = isa.allocator_program(fixture("ja .Lterminal") + suffix);
+  require(p.error == "" && p.ops.len() == 2, "section ends entry fragment");
+  require(p.ops[0].kind == 35 && p.ops[0].condition == "ja" && p.ops[0].target == -1 && p.ops[0].symbol == ".Lterminal", "terminal transfer has no bound effect");
+  for condition in ["jmp", "je", "jne", "jz", "jnz", "js", "jns", "jb", "jae", "jbe", "ja", "jl", "jge", "jg", "jle", "jo", "jno"] {
+    let op = sample(condition + " .Loutside");
+    require(op.kind == 35 && op.condition == condition && op.target == -1 && op.symbol == ".Loutside", "unbound condition " + condition);
+  }
+}
+
+pub function run(): void {
+  actual();
+  stack();
+  globals();
+  unsupported();
+  selection();
+  isolation();
+  terminal_boundary();
+}

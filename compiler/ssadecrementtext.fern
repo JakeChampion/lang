@@ -492,14 +492,25 @@ pub function dependency(text: string, entry: string): Body {
 // this does not grant allocator linkage, effects or permissions. Keep the
 // older decrement dependency selector's syntax and entry set unchanged.
 pub function array_box(text: string): Body {
+  return native_dependency(text, "__fern_arr_box");
+}
+
+// Contiguous allocator entry-fragment data, ending at a section transition.
+// Later terminal blocks are outside it. This grants no global invariant,
+// linked storage, operating-system contract or allocation effect.
+pub function allocator(text: string): Body {
+  return native_dependency(text, "__fern_alloc");
+}
+
+function native_dependency(text: string, entry: string): Body {
   let s = scan_mode(text, true);
   if (s.error != "") {
     return failure(s.error);
   }
   let ix = definition_index(s.lines);
-  let start = names.unique_position(ix, "__fern_arr_box");
-  if (ix.duplicate >= 0 || start < 0 || !exact_entry(s, start, "__fern_arr_box")) {
-    return failure("missing or ambiguous array-box definition");
+  let start = names.unique_position(ix, entry);
+  if (ix.duplicate >= 0 || start < 0 || !exact_entry(s, start, entry)) {
+    return failure(if (entry == "__fern_arr_box") { "missing or ambiguous array-box definition" } else { "missing or ambiguous allocator definition" });
   }
   return body(s, ix, start, -1, "");
 }

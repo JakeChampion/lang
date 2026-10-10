@@ -17,6 +17,10 @@ import "std/string";
 // 29 heap-bound global load, 30 heap-bound global CMP. For kind 28,
 // flags describe destination minus source; for 30, source minus global.
 // Constructor-only: 31 CFI metadata (condition retains the complete line).
+// Allocator-only: 32 memory PUSH, 33 memory POP, 34 heap-global store.
+// 35 unbound branch outside the contiguous entry fragment: condition and
+// symbol are data only. Taking it requires refusal, not an external effect.
+// PUSH/POP retain effective-address operands; records do not execute them.
 // Arithmetic source -1 is immediate.
 // Widths are bits; addresses retain signed byte offsets and scaled indices.
 pub struct Op { kind: i32, width: i32, source: i32, destination: i32, base: i32, index: i32, scale: i32, offset: i32, immediate: i32, condition: string, target: i32, symbol: string }
@@ -301,6 +305,15 @@ pub function array_box_program(output: string): Program {
   return selected_program(text.array_box(output), 5);
 }
 
+// Select the allocator's contiguous executable entry fragment from complete
+// output. Its later terminal block follows a rodata section and is outside
+// this fragment: outbound transfers remain explicit unbound kind 35 records.
+// Unsupported operations remain kind 0, never silently omitted.
+// Heap/global names and stack operands grant no linked permissions or effects.
+pub function allocator_program(output: string): Program {
+  return selected_program(text.allocator(output), 6);
+}
+
 function selected_program(body: text.Body, mode: i32): Program {
   if (body.error != "") {
     return Program { ops: [], error: body.error };
@@ -315,7 +328,10 @@ function selected_program(body: text.Body, mode: i32): Program {
     let ordinary = decode(line, labels);
     let op = if (ordinary.kind == 0) { extended_decode(line, mode) } else { ordinary };
     if (op.kind == 17 && op.target < 0) {
-      return Program { ops: [], error: "capacity branch target outside selected body" };
+      if (mode != 6) {
+        return Program { ops: [], error: "capacity branch target outside selected body" };
+      }
+      op = Op { ...op, kind: 35, symbol: util.trim(slice_unchecked(line, op.condition.len(), line.len()) + "") };
     }
     ops = ops.append(op);
   }
@@ -323,6 +339,9 @@ function selected_program(body: text.Body, mode: i32): Program {
 }
 
 function extended_decode(line: string, mode: i32): Op {
+  if (mode == 6) {
+    return allocator_decode(line);
+  }
   if (mode == 5) {
     return array_box_decode(line);
   }
@@ -338,6 +357,75 @@ function extended_decode(line: string, mode: i32): Op {
   }
   let array = array_decode(line);
   return if (array.kind == 0 && mode == 3) { string_decode(line) } else { array };
+}
+
+function allocator_decode(line: string): Op {
+  let at = 0;
+  while (at < line.len() && line[at] != b' ' && line[at] != b'\t') {
+    at = at + 1;
+  }
+  if (at == line.len()) {
+    return empty(0);
+  }
+  let name = slice_unchecked(line, 0, at) + "";
+  let args = operands(util.trim(slice_unchecked(line, at + 1, line.len()) + ""));
+  if (args.len() == 1) {
+    return allocator_stack(name, args[0]);
+  }
+  return if (args.len() == 2) { allocator_operands(name, args[0], args[1]) } else { empty(0) };
+}
+
+function allocator_stack(name: string, operand: string): Op {
+  let addr = address(operand);
+  if (addr.base < 0 || name != "pushq" && name != "popq") {
+    return empty(0);
+  }
+  return Op { ...empty(if (name == "pushq") { 32 } else { 33 }), width: 64, base: addr.base, index: addr.index, scale: addr.scale, offset: addr.offset };
+}
+
+function allocator_global(operand: string): string {
+  for name in ["__fern_heap_ptr", "__fern_heap_base", "__fern_heap_end"] {
+    if (operand == name + "(%rip)") {
+      return name;
+    }
+  }
+  return "";
+}
+
+function allocator_heap(name: string, a: string, b: string): Op {
+  let w = width(name);
+  let from = allocator_global(a);
+  let to = allocator_global(b);
+  let src = registers.reg(a, false, w);
+  let dst = registers.reg(b, false, w);
+  let move = name == "movq" || name == "movl";
+  if (move && to != "" && src >= 0) {
+    return Op { ...empty(34), width: w, source: src, symbol: to };
+  }
+  return allocator_heap_read(name, from, dst, w, move);
+}
+
+function allocator_heap_read(name: string, from: string, dst: i32, w: i32, move: boolean): Op {
+  if (from == "" || dst < 0 || w == 0) {
+    return empty(0);
+  }
+  if (move) {
+    return Op { ...empty(29), width: w, destination: dst, symbol: from };
+  }
+  return if (name == "cmpq" || name == "cmpl") { Op { ...empty(30), width: w, source: dst, symbol: from } } else { empty(0) };
+}
+
+function allocator_operands(name: string, a: string, b: string): Op {
+  let heap = allocator_heap(name, a, b);
+  if (heap.kind > 0) {
+    return heap;
+  }
+  let large = large_operands(name, a, b);
+  if (large.kind > 0) {
+    return large;
+  }
+  let array = array_operands(name, a, b);
+  return if (array.kind > 0) { array } else { string_operands(name, a, b) };
 }
 
 function array_box_decode(line: string): Op {
