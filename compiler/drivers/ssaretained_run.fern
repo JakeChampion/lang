@@ -35,6 +35,7 @@ import "./ssaarrayreleaseisas" as arrayreleaseisas;
 import "./ssasmallarraymachines" as smallarraymachines;
 import "./ssalargepushpartitions" as largepushpartitions;
 import "./ssalargepushvalues" as largepushvalues;
+import "./ssalargearrayvalues" as largearrayvalues;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -250,6 +251,7 @@ function main(): i32 {
   capacityvalues.run();
   largepushpartitions.run();
   largepushvalues.run();
+  largearrayvalues.run();
   print("retained native body controls passed");
   return 0;
 }
