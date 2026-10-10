@@ -40,7 +40,7 @@ function unfused(fusions: ssaprepare.Fusion[]): void {
 }
 
 function emit(g: ircore.Gated, r: irtables.LowerResult, arm: boolean, retain: boolean): ssaprepare.Output {
-  let sw = asmcore.Switches { backtrace: false, sanitize: false };
+  let sw = asmcore.Switches { backtrace: false, sanitize: false, var_rows: false };
   let cache = g.cache.with(0, r);
   if (arm) {
     return asm_arm64_ir.emit_module_ir_unit_arm64_prepared(g.im, false, false, "", [], g.im.funcs, g.stab, 0, 1, cache, g.physical, semlower.runtime_lowering, sw, retain);
