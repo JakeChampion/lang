@@ -137,23 +137,11 @@ function _db_log10_pow2_m43(e: i32): i32 {
   return e * 631305 - 261663 >> 21;
 }
 
-// _db_mul64 is the 64x64 -> 128 widening multiply, returned as
-// the high half; the low half is the machine's wrapping product. Fern has
-// no 128-bit integer, so it is assembled from four 32x32 -> 64 partial
-// products; each fits u64 exactly. Scalar results throughout this file
+// _db_mul_hi is the high half of the 64x64 -> 128 widening multiply; the low
+// half is the machine's wrapping product. Scalar results throughout this file
 // rather than pairs, because a returned tuple is a heap cell.
 function _db_mul_hi(x: u64, y: u64): u64 {
-  let m: u64 = 4294967295 as u64;
-  let sh: u64 = 32 as u64;
-  let a: u64 = x >> sh;
-  let b: u64 = x & m;
-  let c: u64 = y >> sh;
-  let d: u64 = y & m;
-  let bd: u64 = b * d;
-  let ad: u64 = a * d;
-  let bc: u64 = b * c;
-  let mid: u64 = (bd >> sh) + (ad & m) + (bc & m);
-  return a * c + (mid >> sh) + (ad >> sh) + (bc >> sh);
+  return __mulhi_u64(x, y);
 }
 
 // _db_mul192_hi / _db_mul192_lo are the upper 128 bits of (64-bit x) *
@@ -700,55 +688,481 @@ pub function (x: f64) sqrt(): f64 {
   return __sqrt_f64(x);
 }
 
-pub function (x: f64) log(): f64 {
-  return __log_f64(x);
-}
-
 // `log2(x)` / `log10(x)` — logarithms in base 2 and base 10, derived from
-// the natural log by dividing by `ln(2)` / `ln(10)` (change-of-base). No new
-// primitive needed — they use the same `__log_f64` the wasm-IR backend
-// already lowers. `log2(8)` is `3`, `log10(1000)` is `3`; `log2` of a power
-// of two and `log10` of a power of ten come out exact up to rounding.
+// the natural log by dividing by `ln(2)` / `ln(10)` (change-of-base).
+// `log2(8)` is `3`, `log10(1000)` is `3`; `log2` of a power of two and
+// `log10` of a power of ten come out exact up to rounding.
 pub function (x: f64) log2(): f64 {
-  return __log_f64(x) / 0.6931471805599453;
+  return x.log() / 0.6931471805599453;
 }
 
 pub function (x: f64) log10(): f64 {
-  return __log_f64(x) / 2.302585092994046;
-}
-
-pub function (x: f64) exp(): f64 {
-  return __exp_f64(x);
+  return x.log() / 2.302585092994046;
 }
 
 // `exp2(x)` / `exp10(x)` — base-2 and base-10 exponentials, the inverses of
-// `log2` / `log10`. Built on the natural `exp` via `2^x == e^(x*ln2)` and
-// `10^x == e^(x*ln10)`, so — like the logs — they reuse the `__exp_f64` the
-// wasm-IR backend already lowers rather than needing a new primitive.
+// `log2` / `log10`, via `2^x == e^(x*ln2)` and `10^x == e^(x*ln10)`.
 // `exp2(3)` is `8`, `exp2(10)` is `1024`, `exp10(3)` is `1000`; `exp2` of a
 // whole number and `exp10` of a whole number land on the exact power up to
 // rounding, and both round-trip with their logs (`exp2(x).log2() == x`).
 pub function (x: f64) exp2(): f64 {
-  return __exp_f64(x * 0.6931471805599453);
+  return (x * 0.6931471805599453).exp();
 }
 
 pub function (x: f64) exp10(): f64 {
-  return __exp_f64(x * 2.302585092994046);
+  return (x * 2.302585092994046).exp();
 }
 
 pub function (x: f64) sin(): f64 {
-  return __sin_f64(x);
+  return _fd_trig(x, 0);
 }
 
 pub function (x: f64) cos(): f64 {
-  return __cos_f64(x);
+  return _fd_trig(x, 1);
 }
 
-// `tan(x)` — tangent, as `sin(x) / cos(x)`; the missing sibling of the
-// existing `sin` / `cos`. Blows up to ±Inf near the odd multiples of π/2
-// where `cos` crosses zero, as expected.
+// `tan(x)` — tangent, as `sin(x) / cos(x)`. Blows up to ±Inf near the odd
+// multiples of π/2 where `cos` crosses zero, as expected.
 pub function (x: f64) tan(): f64 {
-  return __sin_f64(x) / __cos_f64(x);
+  return _fd_trig(x, 0) / _fd_trig(x, 1);
+}
+
+// ---- exp, log, sin, cos and pow ---------------------------------------------
+//
+// The one definition of these five: every backend compiles these kernels and
+// -interp runs them, so each target computes the same separately rounded
+// operations in the same order and they agree bit for bit. exp, sin and cos
+// are fdlibm's, reduced Cody-Waite (and Payne-Hanek for a trig argument at or
+// past 2^20); log is the table-driven no-FMA algorithm glibc and ARM's
+// optimized-routines use, its data generated below; pow is exact repeated
+// squaring for an integral exponent and sign * exp(y * log|x|) otherwise.
+
+// _fd_rint is v rounded to an integer, ties to even, for |v| < 2^51: at
+// 1.5 * 2^52 a double has no fraction bits left, so the add rounds and the
+// subtraction is exact.
+function _fd_rint(v: f64): f64 {
+  return v + 6755399441055744.0 - 6755399441055744.0;
+}
+
+// e^x = 2^k e^r: k = rint(x / ln2), and r = x - k ln2 against ln2 split so
+// that k * ln2_hi is exact. 2^k is two half-scales, since one exponent field
+// cannot hold a k below -1022 and a multiply by a power of two is exact until
+// the result is itself subnormal.
+pub function (x: f64) exp(): f64 {
+  if (x != x) {
+    return x;
+  }
+  if (x > 709.782712893383973096) {
+    return f64_from_bits(0x7ff0000000000000);
+  }
+  if (x < -745.133219101941108420) {
+    return 0.0;
+  }
+  let kf: f64 = _fd_rint(x * 1.44269504088896338700e+00);
+  let hi: f64 = x - kf * 6.93147180369123816490e-01;
+  let lo: f64 = kf * 1.90821492927058770002e-10;
+  let r: f64 = hi - lo;
+  let t: f64 = r * r;
+  let c: f64 = r - t * (1.66666666666666019037e-01 + t * (-2.77777777770155933842e-03 + t * (6.61375632143793436117e-05 + t * (-1.65339022054652515390e-06 + t * 4.13813679705723846039e-08))));
+  let e: f64 = 1.0 - (lo - r * c / (2.0 - c) - hi);
+  let k: i64 = kf as i64;
+  let k1: i64 = k >> 1;
+  return e * f64_from_bits(k1 + 1023 << 52) * f64_from_bits(k - k1 + 1023 << 52);
+}
+
+// >>> generated by scripts/gen_log_table.py — do not edit by hand
+// _log_poly is the main path's coefficients of r^3 .. r^6, minimax on absolute
+// error over |r| <= 0.00389105. Max error after rounding: 2^-64.1.
+function _log_poly(): f64[] {
+  return [
+    0.3333333333164825, -0.24999999997762484, 0.20000321945931823, -0.16667003716456866,
+  ];
+}
+
+// _log_near1_poly is the near-1 path's coefficients of r^3 .. r^12, minimax on
+// error relative to log1p(r). Max relative error after rounding: 2^-61.9.
+function _log_near1_poly(): f64[] {
+  return [
+    0.3333333333333352, -0.24999999999998365, 0.19999999999321497, -0.1666666667002245,
+    0.14285715076213892, -0.12499997818236687, 0.11110712055095802, -0.10000496442458157,
+    0.09181996510658455, -0.08327617265899454,
+  ];
+}
+
+// _log_invc, _log_logc_hi and _log_logc_lo are the 128 rows of the table, each
+// a column: row i covers the z whose bits(z) - bits(0x1.6p-1) has i in its
+// top 7 mantissa bits, c is the midpoint of the row's subinterval, invc =
+// RN(1/c), and logc_hi + logc_lo is log(c) with logc_hi on the 2^-43 grid.
+function _log_invc(): f64[] {
+  return [
+    1.4504249291784703, 1.4422535211267606, 1.4341736694677871, 1.426183844011142,
+    1.4182825484764543, 1.4104683195592287, 1.4027397260273973, 1.3950953678474114,
+    1.3875338753387534, 1.3800539083557952, 1.3726541554959786, 1.3653333333333333,
+    1.3580901856763925, 1.3509234828496042, 1.3438320209973753, 1.3368146214099217,
+    1.3298701298701299, 1.322997416020672, 1.3161953727506426, 1.3094629156010231,
+    1.3027989821882953, 1.2962025316455696, 1.2896725440806045, 1.2832080200501252,
+    1.2768079800498753, 1.2704714640198511, 1.2641975308641975, 1.257985257985258,
+    1.2518337408312958, 1.245742092457421, 1.2397094430992737, 1.2337349397590363,
+    1.2278177458033572, 1.2219570405727924, 1.2161520190023754, 1.210401891252955,
+    1.204705882352941, 1.199063231850117, 1.1934731934731935, 1.1879350348027842,
+    1.1824480369515011, 1.1770114942528735, 1.17162471395881, 1.1662870159453302,
+    1.1609977324263039, 1.1557562076749435, 1.150561797752809, 1.145413870246085,
+    1.1403118040089086, 1.1352549889135255, 1.130242825607064, 1.1252747252747253,
+    1.1203501094091903, 1.1154684095860568, 1.1106290672451193, 1.1058315334773219,
+    1.1010752688172043, 1.0963597430406853, 1.091684434968017, 1.0870488322717622,
+    1.0824524312896406, 1.0778947368421052, 1.0733752620545074, 1.068893528183716,
+    1.0644490644490645, 1.060041407867495, 1.0556701030927835, 1.051334702258727,
+    1.047034764826176, 1.0427698574338085, 1.0385395537525355, 1.0343434343434343,
+    1.0301810865191148, 1.0260521042084167, 1.0219560878243512, 1.0178926441351888,
+    1.0138613861386139, 1.009861932938856, 1.005893909626719, 1.0019569471624266,
+    0.9961089494163424, 0.9884169884169884, 0.9808429118773946, 0.973384030418251,
+    0.9660377358490566, 0.9588014981273408, 0.9516728624535316, 0.9446494464944649,
+    0.9377289377289377, 0.9309090909090909, 0.924187725631769, 0.9175627240143369,
+    0.9110320284697508, 0.9045936395759717, 0.8982456140350877, 0.89198606271777,
+    0.8858131487889274, 0.8797250859106529, 0.8737201365187713, 0.8677966101694915,
+    0.8619528619528619, 0.8561872909698997, 0.8504983388704319, 0.8448844884488449,
+    0.839344262295082, 0.8338762214983714, 0.8284789644012945, 0.8231511254019293,
+    0.8178913738019169, 0.8126984126984127, 0.807570977917981, 0.8025078369905956,
+    0.7975077881619937, 0.7925696594427245, 0.7876923076923077, 0.7828746177370031,
+    0.7781155015197568, 0.7734138972809668, 0.7687687687687688, 0.764179104477612,
+    0.7596439169139466, 0.7551622418879056, 0.750733137829912, 0.7463556851311953,
+    0.7420289855072464, 0.7377521613832853, 0.7335243553008596, 0.7293447293447294,
+  ];
+}
+
+function _log_logc_hi(): f64[] {
+  return [
+    -0.37185656810618184, -0.3662068355640713, -0.36058884325984764, -0.35500223655117225,
+    -0.3494466667066263, -0.3439217907746297, -0.33842727145702156, -0.33296277698491394,
+    -0.32752798099897973, -0.3221225624321278, -0.3167462053957024, -0.3113985990690935,
+    -0.3060794375915066, -0.3007884199570299, -0.29552524991277096, -0.2902896358588123,
+    -0.2850812907516911, -0.2798999320096982, -0.27474528142101917, -0.26961706505414895,
+    -0.2645150131702394, -0.25943886013840256, -0.25438834435226454, -0.2493632081495889,
+    -0.24436319773292325, -0.23938806309286065, -0.23443755793300625, -0.2295114395968767,
+    -0.22460946899673218, -0.2197314105433179, -0.21487703207844788, -0.21004610480883912,
+    -0.20523840324074172, -0.20045370511741112, -0.19569179135714876, -0.19095244599327543,
+    -0.18623545611512782, -0.181540611810874, -0.17686770611146585, -0.1722165349357283,
+    -0.16758689703704022, -0.16297859395081105, -0.15839142994389022, -0.15382521196431753,
+    -0.1492797495926652, -0.1447548549944031, -0.14025034287328708, -0.1357660304258843,
+    -0.13130173729723538, -0.1268572855368575, -0.12243249955645297, -0.11802720608852724,
+    -0.11364123414534788, -0.10927441497892687, -0.10492658204282179, -0.10059757095325494,
+    -0.09628721945216512, -0.09199536737060043, -0.08772185659324805, -0.08346653102307755,
+    -0.07922923654757597, -0.07500982100486908, -0.07080813415120701, -0.06662402762856345,
+    -0.06245735493371285, -0.05830797138696653, -0.05417573410204568, -0.050060501956863845,
+    -0.04596213556465045, -0.04188049724496068, -0.03781545099684536, -0.03376686247077032,
+    -0.029734598942923185, -0.02571852928804219, -0.021718523954632474, -0.017734454939727584,
+    -0.01376619576410576, -0.009813621448302001, -0.00587660848896121, -0.0019550348357597613,
+    0.0038986404156275967, 0.011650617219970627, 0.019342962843097666, 0.02697658769818645,
+    0.03455238150661444, 0.04207121392073532, 0.04953393512232651, 0.056941376400118315,
+    0.06429435070538148, 0.07159365318705113, 0.07884006170775137, 0.08603433734185728,
+    0.09317722485423019, 0.10026945316371894, 0.10731173578903963, 0.11430477128010352,
+    0.12124924363286027, 0.12814582269197672, 0.13499516453748583, 0.14179791186029433,
+    0.1485546943231384, 0.15526612891108016, 0.16193282026927136, 0.16855536102980295,
+    0.17513433212786822, 0.18167030310758037, 0.18816383241812673, 0.19461546769969118,
+    0.20102574606062262, 0.207395194346077, 0.21372432939767805, 0.2200136583053336,
+    0.22626367865041175, 0.232474878743119, 0.23864773785021498, 0.24478272641772492,
+    0.2508803062858078, 0.2569409308974855, 0.2629650455008914, 0.26895308734549417,
+    0.27490548587275043, 0.2808226629008459, 0.2867050328039795, 0.29255300268641804,
+    0.2983669725517757, 0.30414733546729167, 0.30989447772287804, 0.31560877898630224,
+  ];
+}
+
+function _log_logc_lo(): f64[] {
+  return [
+    -2.917782016518313e-14, -2.0690830060414247e-14, -2.1072368850361424e-14, -5.666618030989675e-14,
+    -5.90346888093064e-16, -2.730651892134709e-14, 5.280156204729064e-15, -2.3569101751290204e-14,
+    -8.694871147607923e-16, 5.513366979452188e-14, 1.0174753377507561e-14, -3.4627161112015905e-15,
+    9.55418156600115e-15, -5.156360724077389e-14, -3.586053092023274e-14, -4.950539134501487e-14,
+    -3.247552597199063e-14, -2.7773853785330568e-14, -4.2320076202145394e-14, 6.9384868403307704e-15,
+    -7.150023153018402e-15, 1.6644569800942458e-14, -5.28323330087437e-14, -5.5428558531117086e-14,
+    -1.534482475891825e-14, 3.58451122258674e-14, 3.76018844589075e-14, -3.609783714592133e-14,
+    2.6136541452968644e-14, 4.472851385991314e-14, -2.714636557077735e-14, 2.963137108814568e-14,
+    3.5381865529344065e-14, 4.106468604422827e-14, 2.239166785505485e-14, 4.5617412753988695e-14,
+    3.68623071742394e-14, -9.23344241877159e-15, -2.496327254846418e-14, -3.1692162607002785e-14,
+    2.2278638826701906e-14, -1.2645632984431417e-14, -2.7417702840424895e-14, -1.890279666965485e-14,
+    3.420067547474917e-15, 3.0957104865969887e-14, 1.9509765515283165e-14, -5.4642560554597724e-14,
+    -1.811460150533731e-14, 2.805237904905099e-14, -2.0797337102277177e-14, -3.013227959910772e-14,
+    4.479469580153128e-14, -3.575992997726754e-14, -3.747425340236654e-14, -1.8766204996520735e-14,
+    1.3645297675434837e-14, -1.003943822681932e-14, 1.9628759377779776e-14, -1.2485591229479935e-14,
+    1.1480123784812178e-15, 2.5061174934837362e-15, 4.044610866761576e-14, -2.909602043987124e-14,
+    -3.375459077303842e-14, 3.143092323816711e-14, 2.1092591481336484e-14, -5.414861768112409e-14,
+    1.4693284460141064e-14, -2.6526639278629226e-14, 2.7679390301009576e-14, -4.7163087098896744e-14,
+    4.4126629622863087e-14, 5.307171319656295e-14, -1.0512339808596024e-14, -4.0994203403301545e-14,
+    -4.2199534446651115e-14, -2.262002617558127e-14, -2.3831678683970623e-14, -4.3589221833609635e-14,
+    2.972634690092895e-14, 4.6470880042567115e-15, 3.3268299216390166e-14, 1.5626332553184267e-14,
+    4.5295440298328256e-14, -4.826314000551128e-14, -4.9880309107981426e-14, 2.0109399435564958e-14,
+    1.5781652601713863e-14, -4.231375546818425e-14, 2.465018906176612e-14, -5.412760784535961e-14,
+    -4.6899752549987047e-14, -4.378637617078398e-14, 4.842004969430532e-14, -4.488953352238699e-14,
+    9.414424938885947e-15, -4.668031403945796e-14, 1.8996158041578768e-14, -3.698459506697097e-14,
+    -1.24915489807516e-15, 4.3792508292406054e-14, 4.1892937528659257e-14, 3.714397754170472e-15,
+    -1.9071671914965212e-14, 5.4311774387769015e-14, 5.625605378960847e-14, -1.952145626443353e-14,
+    -3.188184937543774e-14, -6.418161948718703e-15, 4.0091035857210887e-14, -5.149667234141408e-14,
+    4.1641267302872263e-14, -2.4941764741869717e-14, -3.997050909530134e-14, -3.399981108361833e-14,
+    1.5973663463624904e-15, 1.493880756195212e-14, -1.0040473122649404e-14, 9.790529881586156e-15,
+    4.8816703646769986e-14, 4.188609137863701e-14, -2.5205741681547825e-14, -4.0599978860151284e-14,
+    2.159269374197349e-14, 5.0485509245369e-15, -1.3348867901223884e-14, 1.0940914748077484e-15,
+  ];
+}
+
+// <<< generated
+
+// log x = k ln2 + log c + log1p(r) for x = 2^k z, with c the midpoint of the
+// table row z falls in and r = (z - c) / c; near 1, where those terms cancel,
+// log1p(x - 1) directly.
+pub function (x: f64) log(): f64 {
+  let ix: i64 = f64_bits(x);
+  if (ix >= 0x3fee000000000000 && ix < 0x3ff1090000000000) {
+    return _fd_log_near1(x - 1.0);
+  }
+  let top: i64 = ix >> 52 & 0xfff;
+  if (top == 0 || top >= 0x7ff) {
+    return _fd_log_special(x);
+  }
+  return _fd_log_main(ix);
+}
+
+// _fd_log_special is log of ±0, a subnormal, a negative, ±Inf or a NaN. A
+// subnormal stores its magnitude in leading zeros: scaling by 2^52 moves it
+// into the exponent, and taking 52 back off the field hands the reduction a k
+// no exponent field could hold.
+@noinline
+function _fd_log_special(x: f64): f64 {
+  let ix: i64 = f64_bits(x);
+  if (ix << 1 == 0) {
+    return -f64_from_bits(0x7ff0000000000000);
+  }
+  if (x != x || ix == 0x7ff0000000000000) {
+    return x;
+  }
+  if (ix < 0) {
+    return f64_from_bits(0x7ff8000000000000);
+  }
+  return _fd_log_main(f64_bits(x * 4503599627370496.0) - 0x0340000000000000);
+}
+
+// _fd_log_main is log x for the bits of a normal positive x away from 1. z - c
+// is exact, and k * ln2_hi + logc_hi is too, both being on the 2^-43 grid.
+function _fd_log_main(ix: i64): f64 {
+  let tmp: i64 = ix - 0x3fe6000000000000;
+  let i: i32 = (tmp >> 45) as i32 & 127;
+  let iz: i64 = ix - (tmp >> 52 << 52);
+  let z: f64 = f64_from_bits(iz);
+  let c: f64 = f64_from_bits(iz >> 45 << 45 | 0x100000000000);
+  let r: f64 = (z - c) * _log_invc()[i];
+  let kd: f64 = (tmp >> 52) as f64;
+  let w: f64 = kd * 6.93147180369123816490e-01 + _log_logc_hi()[i];
+  let hi: f64 = w + r;
+  let lo: f64 = w - hi + r + (kd * 1.90821492927058770002e-10 + _log_logc_lo()[i]);
+  let r2: f64 = r * r;
+  let a: f64[] = _log_poly();
+  let p: f64 = a[0] + r * a[1] + r2 * (a[2] + r * a[3]);
+  return lo - r2 * 0.5 + r * r2 * p + hi;
+}
+
+// _fd_log_near1 is log1p(r) for the exact r = x - 1 of an x in
+// [1 - 2^-4, 1 + 0x1.09p-4], with r - r^2/2 carried as hi + lo: rhi keeps r's
+// top 26 bits, so rhi * rhi is exact.
+function _fd_log_near1(r: f64): f64 {
+  let r2: f64 = r * r;
+  let r3: f64 = r * r2;
+  let b: f64[] = _log_near1_poly();
+  let p: f64 = b[6] + r * b[7] + r2 * b[8] + r3 * b[9];
+  p = b[3] + r * b[4] + r2 * b[5] + r3 * p;
+  p = b[0] + r * b[1] + r2 * b[2] + r3 * p;
+  let y: f64 = r3 * p;
+  let w: f64 = r * 134217728.0;
+  let rhi: f64 = r + w - w;
+  let rlo: f64 = r - rhi;
+  let h: f64 = rhi * rhi * 0.5;
+  let hi: f64 = r - h;
+  let lo: f64 = r - hi - h - rlo * 0.5 * (rhi + r);
+  return y + lo + hi;
+}
+
+// _fd_trig is sin x for shift 0 and cos x for shift 1: cos's quadrant table is
+// sin's one quadrant on. NaN returns itself and ±Inf becomes NaN, there being
+// no reduction of an infinity; sin returns a tiny x itself, which is what it
+// rounds to and keeps the sign of a -0. Below 2^20 the reduction is
+// Cody-Waite, with pi/2 in three 33-bit chunks: k * pio2_h is exact while k
+// fits pio2_h's 22 trailing zero bits, and near a zero of sin the reduced
+// argument is the answer, so two chunks are not enough.
+function _fd_trig(x: f64, shift: i64): f64 {
+  if (x != x) {
+    return x;
+  }
+  let ab: i64 = f64_bits(x) & 0x7fffffffffffffff;
+  if (ab == 0x7ff0000000000000) {
+    return f64_from_bits(0x7ff8000000000000);
+  }
+  if (shift == 0 && ab < 0x3e40000000000000) {
+    return x;
+  }
+  if (ab >= 0x4130000000000000) {
+    return _fd_trig_large(x, shift);
+  }
+  let kf: f64 = _fd_rint(x * 6.36619772367581382433e-01);
+  let r: f64 = x - kf * 1.57079632673412561417e+00 - kf * 6.07710050630396597660e-11 - kf * 2.02226624879595063154e-21;
+  // Quadrant n of r takes sin r, cos r, -sin r, -cos r, here and in
+  // _fd_trig_large; the select is spelled in both so neither path calls it.
+  let n: i64 = kf as i64 + shift;
+  let y: f64 = 0.0;
+  if ((n & 1) == 0) {
+    y = _fd_ksin(r);
+  } else {
+    y = _fd_kcos(r);
+  }
+  if ((n & 2) != 0) {
+    return -y;
+  }
+  return y;
+}
+
+function _fd_ksin(r: f64): f64 {
+  let z: f64 = r * r;
+  let p: f64 = -1.66666666666666324348e-01 + z * (8.33333333332248946124e-03 + z * (-1.98412698298579493134e-04 + z * (2.75573137070700676789e-06 + z * (-2.50507602534068634195e-08 + z * 1.58969099521155010221e-10))));
+  return r + p * (z * r);
+}
+
+// The (1 - w) - hz rewrite recovers the bits 1 - hz discards.
+function _fd_kcos(r: f64): f64 {
+  let z: f64 = r * r;
+  let p: f64 = 4.16666666666666019037e-02 + z * (-1.38888888888741095749e-03 + z * (2.48015872894767294178e-05 + z * (-2.75573143513906633035e-07 + z * (2.08757232129817482790e-09 + z * -1.13596475577881948265e-11))));
+  let hz: f64 = 0.5 * z;
+  let w: f64 = 1.0 - hz;
+  return w + (1.0 - w - hz + z * p * z);
+}
+
+// _two_over_pi is 2/pi in binary, one limb per 64 fraction bits from 2^-1 in
+// limb 1; the leading zero limb lets the window start above 2^-1.
+function _two_over_pi(): u64[] {
+  return [
+    0x0000000000000000, 0xa2f9836e4e441529, 0xfc2757d1f534ddc0,
+    0xdb6295993c439041, 0xfe5163abdebbc561, 0xb7246e3a424dd2e0,
+    0x06492eea09d1921c, 0xfe1deb1cb129a73e, 0xe88235f52ebb4484,
+    0xe99c7026b45f7e41, 0x3991d639835339f4, 0x9c845f8bbdf9283b,
+    0x1ff897ffde05980f, 0xef2f118b5a0a6d1f, 0x6d367ecf27cb09b7,
+    0x4f463f669e5fea2d, 0x7527bac7ebe5f17b, 0x3d0739f78a5292ea,
+    0x6bfb5fb11f8d5d08, 0x56033046fc7b6bab, 0xf0cfbc209af4361d,
+  ];
+}
+
+// _fd_trig_large is _fd_trig for |x| >= 2^20, reduced Payne-Hanek: the
+// significand times the window of 2/pi the exponent selects is a Q126 whose
+// top two bits are the quadrant and the rest the fraction of x / (pi/2),
+// neither of which loses accuracy with the magnitude. A fraction at or past a
+// half belongs to the next quadrant, as the negative remainder below it. It
+// stays a call, so that the common case keeps no register for it.
+@noinline
+function _fd_trig_large(x: f64, shift: i64): f64 {
+  let b: i64 = f64_bits(x);
+  let m: u64 = (b & 0x000fffffffffffff | 0x0010000000000000) as u64;
+  let idx: i64 = (b >> 52 & 0x7ff) - 1013;
+  let off: u64 = (idx & 63) as u64;
+  let rest: u64 = 63 as u64 - off;
+  let one: u64 = 1 as u64;
+  let limb: i32 = (idx >> 6) as i32;
+  let t: u64[] = _two_over_pi();
+  let w0: u64 = t[limb] << off | t[limb + 1] >> one >> rest;
+  let w1: u64 = t[limb + 1] << off | t[limb + 2] >> one >> rest;
+  let w2: u64 = t[limb + 2] << off | t[limb + 3] >> one >> rest;
+  let p1lo: u64 = m * w1;
+  let lo: u64 = p1lo + _db_mul_hi(m, w2);
+  let hi: u64 = m * w0 + _db_mul_hi(m, w1);
+  if (lo < p1lo) {
+    hi = hi + one;
+  }
+  let q: i64 = (hi >> 62 as u64) as i64;
+  hi = hi & 0x3fffffffffffffff as u64;
+  let neg: boolean = hi >= 0x2000000000000000 as u64;
+  if (neg) {
+    q = q + 1;
+    hi = 0x4000000000000000 as u64 - hi;
+    if (lo != 0 as u64) {
+      hi = hi - one;
+    }
+    lo = 0 as u64 - lo;
+  }
+  // The low word's bottom 11 bits fall off the double anyway; dropping them
+  // keeps its conversion exact.
+  let fr: f64 = (hi as i64) as f64 * 2.168404344971009e-19 + ((lo >> 11 as u64) as i64) as f64 * 2.407412430484045e-35;
+  if (neg) {
+    fr = -fr;
+  }
+  if (b < 0) {
+    fr = -fr;
+    q = 0 - q;
+  }
+  let r: f64 = fr * 1.5707963267948966 + fr * 6.123233995736766e-17;
+  let n: i64 = q + shift;
+  let y: f64 = 0.0;
+  if ((n & 1) == 0) {
+    y = _fd_ksin(r);
+  } else {
+    y = _fd_kcos(r);
+  }
+  if ((n & 2) != 0) {
+    return -y;
+  }
+  return y;
+}
+
+// pow's integral y is repeated squaring, exact wherever the result is
+// representable, up to |y| = 1074, past which no base outside (0.5, 2) has a
+// finite non-zero result; any other y is sign * exp(y * log|x|) (below). A
+// negative n takes the reciprocal; when that underflows because x^|n|
+// overflowed, (1/x)^|n| is what is representable.
+function _fd_pow_int(x: f64, n: i64): f64 {
+  if (n >= 0) {
+    return _fd_pow_sq(x, n);
+  }
+  let q: f64 = 1.0 / _fd_pow_sq(x, 0 - n);
+  if (q != 0.0) {
+    return q;
+  }
+  return _fd_pow_sq(1.0 / x, 0 - n);
+}
+
+function _fd_pow_sq(b: f64, n: i64): f64 {
+  let r: f64 = 1.0;
+  let p: f64 = b;
+  let k: i64 = n;
+  while (k != 0) {
+    if ((k & 1) != 0) {
+      r = r * p;
+    }
+    p = p * p;
+    k = k >> 1;
+  }
+  return r;
+}
+
+// A negative base has a real power only for an integral y, whose parity is
+// the sign; every |y| >= 2^53 is an even integer, which leaves pow(-x, ±Inf)
+// a magnitude. |x| == 1 is 1 for every y, the NaN and ±Inf that y * log|x|
+// would turn into NaN included.
+function _fd_pow_general(x: f64, y: f64): f64 {
+  let sign: f64 = 1.0;
+  let ax: f64 = x;
+  if (f64_bits(x) < 0) {
+    ax = -x;
+    let ay: i64 = f64_bits(y) & 0x7fffffffffffffff;
+    if (ay > 0x7ff0000000000000) {
+      return f64_from_bits(0x7ff8000000000000);
+    }
+    if (ay < 0x4340000000000000) {
+      let ny: i64 = y as i64;
+      if (ny as f64 != y) {
+        return f64_from_bits(0x7ff8000000000000);
+      }
+      if ((ny & 1) != 0) {
+        sign = -1.0;
+      }
+    }
+  }
+  if (ax == 1.0) {
+    return sign;
+  }
+  return (y * ax.log()).exp() * sign;
 }
 
 // ---- inverse trig, expm1 and log1p ------------------------------------------
@@ -1201,19 +1615,18 @@ pub function (x: f64) log1p(): f64 {
 }
 
 // `sinh(x)` / `cosh(x)` / `tanh(x)` — the hyperbolic trig functions, built on
-// the natural `exp` (`sinh = (eˣ - e⁻ˣ)/2`, `cosh = (eˣ + e⁻ˣ)/2`) so — like
-// `exp2` / `log2` — they need no new primitive and reuse the `__exp_f64` the
-// wasm-IR backend already lowers. `sinh(0)` is `0`, `cosh(0)` is `1`,
+// the natural `exp` (`sinh = (eˣ - e⁻ˣ)/2`, `cosh = (eˣ + e⁻ˣ)/2`).
+// `sinh(0)` is `0`, `cosh(0)` is `1`,
 // `tanh(0)` is `0`, and the identity `cosh² - sinh² == 1` holds. `tanh` uses
 // the stable `(e²ˣ - 1)/(e²ˣ + 1)` form and saturates to `±1` past `|x| = 20`
 // (where it already equals `±1` to f64 precision), avoiding the `Inf/Inf` NaN
 // that `sinh/cosh` would give for large magnitudes.
 pub function (x: f64) sinh(): f64 {
-  return (__exp_f64(x) - __exp_f64(0.0 - x)) * 0.5;
+  return (x.exp() - (0.0 - x).exp()) * 0.5;
 }
 
 pub function (x: f64) cosh(): f64 {
-  return (__exp_f64(x) + __exp_f64(0.0 - x)) * 0.5;
+  return (x.exp() + (0.0 - x).exp()) * 0.5;
 }
 
 pub function (x: f64) tanh(): f64 {
@@ -1223,14 +1636,18 @@ pub function (x: f64) tanh(): f64 {
   if (x < 0.0 - 20.0) {
     return 0.0 - 1.0;
   }
-  let e2: f64 = __exp_f64(x * 2.0);
+  let e2: f64 = (x * 2.0).exp();
   return (e2 - 1.0) / (e2 + 1.0);
 }
 
 // `pow(x, y)` — two-argument form; method receiver is the
 // base. Use `(b).pow(e)` for `b ^ e`.
 pub function (x: f64) pow(y: f64): f64 {
-  return __pow_f64(x, y);
+  let n: i64 = y as i64;
+  if (n as f64 == y && n <= 1074 && n >= -1074) {
+    return _fd_pow_int(x, n);
+  }
+  return _fd_pow_general(x, y);
 }
 
 // `cbrt(x)` — the real cube root, the companion to `sqrt` but defined for
@@ -1245,9 +1662,9 @@ pub function (x: f64) cbrt(): f64 {
     return x;
   }
   if (x < 0.0) {
-    return 0.0 - __pow_f64(0.0 - x, 1.0 / 3.0);
+    return 0.0 - (0.0 - x).pow(1.0 / 3.0);
   }
-  return __pow_f64(x, 1.0 / 3.0);
+  return x.pow(1.0 / 3.0);
 }
 
 // `hypot(x, y)` — the Euclidean length `sqrt(x*x + y*y)`, computed via the
@@ -1497,39 +1914,39 @@ pub function (x: f32) sqrt(): f32 {
 }
 
 pub function (x: f32) log(): f32 {
-  return __log_f64(x as f64) as f32;
+  return (x as f64).log() as f32;
 }
 
 pub function (x: f32) log2(): f32 {
-  return (__log_f64(x as f64) / 0.6931471805599453) as f32;
+  return ((x as f64).log() / 0.6931471805599453) as f32;
 }
 
 pub function (x: f32) log10(): f32 {
-  return (__log_f64(x as f64) / 2.302585092994046) as f32;
+  return ((x as f64).log() / 2.302585092994046) as f32;
 }
 
 pub function (x: f32) exp(): f32 {
-  return __exp_f64(x as f64) as f32;
+  return (x as f64).exp() as f32;
 }
 
 pub function (x: f32) exp2(): f32 {
-  return __exp_f64(x as f64 * 0.6931471805599453) as f32;
+  return (x as f64 * 0.6931471805599453).exp() as f32;
 }
 
 pub function (x: f32) exp10(): f32 {
-  return __exp_f64(x as f64 * 2.302585092994046) as f32;
+  return (x as f64 * 2.302585092994046).exp() as f32;
 }
 
 pub function (x: f32) sin(): f32 {
-  return __sin_f64(x as f64) as f32;
+  return _fd_trig(x as f64, 0) as f32;
 }
 
 pub function (x: f32) cos(): f32 {
-  return __cos_f64(x as f64) as f32;
+  return _fd_trig(x as f64, 1) as f32;
 }
 
 pub function (x: f32) tan(): f32 {
-  return (__sin_f64(x as f64) / __cos_f64(x as f64)) as f32;
+  return (_fd_trig(x as f64, 0) / _fd_trig(x as f64, 1)) as f32;
 }
 
 pub function (x: f32) sinh(): f32 {
@@ -1569,7 +1986,7 @@ pub function (y: f32) atan2(x: f32): f32 {
 }
 
 pub function (x: f32) pow(y: f32): f32 {
-  return __pow_f64(x as f64, y as f64) as f32;
+  return (x as f64).pow(y as f64) as f32;
 }
 
 pub function (x: f32) cbrt(): f32 {

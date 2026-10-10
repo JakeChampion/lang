@@ -103,6 +103,7 @@ function main(): i32 {
     "disable_core_dumps", "proc_waitpid_status", "mounts", "ct_mark", "vg_request", "sysctl",
     "aes_expand_key", "aes_ctr32", "ghash", "clone_file", "set_extproc", "reader_copy_range", "pipe", "sha256_hw", "sha256_hw_blocks", "bswap",
     "open_dir", "dir_open", "dir_entries", "dir_stat", "dir_access", "dir_unlink", "dir_chmod", "dir_chown",
+    "mulhi_u",
   ];
   let ext_max: i32 = n;
   let ext_ok: i32 = 0;
@@ -239,6 +240,7 @@ function main(): i32 {
     ir.op_disable_core_dumps(), ir.op_proc_waitpid_status(), ir.op_mounts(), ir.op_ct_mark(0), ir.op_vg_request(), ir.op_sysctl(),
     ir.op_aes_expand_key(), ir.op_aes_ctr32(), ir.op_ghash(), ir.op_clone_file(), ir.op_set_extproc(), ir.op_reader_copy_range(), ir.op_pipe(), ir.op_sha256_hw(), ir.op_sha256_hw_blocks(), ir.op_bswap(32),
     ir.op_open_dir(), ir.op_dir_open(), ir.op_dir_entries(), ir.op_dir_stat(0), ir.op_dir_access(), ir.op_dir_unlink(0), ir.op_dir_chmod(), ir.op_dir_chown(),
+    ir.op_bin("mulhi_u", 64, true),
   ];
   let names: string[] = [
     "const_i32", "const_str", "load_local",
@@ -277,6 +279,7 @@ function main(): i32 {
     "disable_core_dumps", "proc_waitpid_status", "mounts", "ct_mark", "vg_request", "sysctl",
     "aes_expand_key", "aes_ctr32", "ghash", "clone_file", "set_extproc", "reader_copy_range", "pipe", "sha256_hw", "sha256_hw_blocks", "bswap",
     "open_dir", "dir_open", "dir_entries", "dir_stat", "dir_access", "dir_unlink", "dir_chmod", "dir_chown",
+    "mulhi_u",
   ];
   let tag_ok: i32 = 0;
   let tag_bad: i32 = 0;

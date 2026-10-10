@@ -9,7 +9,8 @@ import (
 )
 
 // Pin every bit position, zero, complements and mixed patterns against Go's
-// integer oracle. In particular, u64 values must retain their high 32 bits.
+// integer oracle, and __mulhi_u64 against bits.Mul64. In particular, u64
+// values must retain their high 32 bits.
 func TestSelfHostInterpBitCounts(t *testing.T) {
 	dir := t.TempDir()
 	copySelfHostDriver(t, dir, "drivers/interp_run.fern")
@@ -48,6 +49,8 @@ func TestSelfHostInterpBitCounts(t *testing.T) {
 				for j, check := range checks {
 					fmt.Fprintf(&src, "if (%s(x%d as %s) != %d) { return %d; }\n", check.name, i, check.cast, check.want, i*len(checks)+j+1)
 				}
+				hi, _ := bits.Mul64(value, 0xa2f9836e4e441529)
+				fmt.Fprintf(&src, "if (__mulhi_u64(x%d, 11743562013128004905u64) != %du64) { return %d; }\n", i, hi, 100+i)
 			}
 			src.WriteString("return 0;\n}\n")
 			if got := interpExitStdin(t, oracle, src.String(), ""); got != 0 {

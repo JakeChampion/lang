@@ -10236,7 +10236,12 @@ pub function arm64_gas_program_words(src: string, words: u8[]): Arm64GasProg {
     if (mnem == "ldr" && arm64_str_indexof(rest, "=") >= 0) {
       let litok: string = arm64_gas_trim(ops[1]);
       let nval: i64 = arm64_gas_atoi64(arm64_gas_trim(slice_unchecked(litok, 1, litok.len())));
-      arm64_push_arr(a.code, arm64_ldr_lit([], arm64_gas_reg(ops[0]), 0));
+      // A d register takes the SIMD&FP form of the literal load.
+      let lw: i64 = arm64_ldr_lit_word(arm64_gas_reg(ops[0]), 0);
+      if (arm64_gas_trim(ops[0])[0] == b'd') {
+        lw = lw | 0x04000000;
+      }
+      arm64_push_word(a.code, lw);
       p = Arm64GasProg { ...p, lit_sites: p.lit_sites.append(buf_len(a.code) - 4) };
       p = Arm64GasProg { ...p, lit_vals: p.lit_vals.append(nval) };
       continue;

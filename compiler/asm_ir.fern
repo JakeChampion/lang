@@ -1317,18 +1317,6 @@ function hev_restore(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
-// fc_ld loads a `.Lfc_*` double from .rodata into an xmm register.
-function fc_ld(reg: string, lbl: string): string {
-  return "    movsd " + lbl + "(%rip), " + reg + "\n";
-}
-
-// fc_horner is one Horner step: acc = acc*x + coeff.
-function fc_horner(acc: string, x: string, scratch: string, lbl: string): string {
-  return "    mulsd " + x + ", " + acc + "\n" + fc_ld(scratch, lbl) + "    addsd " + scratch + ", " + acc + "\n";
-}
-
-// fc_negate flips %xmm0's sign bit through a mask in `scratch` — x86-64 has no
-// scalar fneg.
 // rt_x86_str_eq is __fn___fern_str_eq: 1 when two string boxes hold equal
 // bytes, else 0. A string box is [data ptr, length]; the caller pushes b then
 // a, and the result goes in %rax.
@@ -1388,57 +1376,6 @@ function rt_x86_str_eq(): string {
   s = s + ".Lseq_no:\n    xorl %eax, %eax\n    ret\n";
   s = s + ".size __fn___fern_str_eq, .-__fn___fern_str_eq\n";
   return s;
-}
-
-function fc_negate(scratch: string): string {
-  return "    movabsq $0x8000000000000000, %rdx\n    movq %rdx, " + scratch + "\n    xorpd " + scratch + ", %xmm0\n";
-}
-
-// fc_retbits returns the f64 with the given bit pattern. Built from bits, not a
-// `.double`: an assembler has no spelling for infinity.
-function fc_retbits(bits: string): string {
-  return "    movabsq $" + bits + ", %rax\n    movq %rax, %xmm0\n    ret\n";
-}
-
-// fc_trig_guard: NaN returns itself, ±Inf becomes NaN. An infinite argument has
-// no meaningful reduction — x·2/pi is Inf and the quadrant falls out as garbage.
-// NaN is the one value a compare reports UNORDERED, in the parity flag, which ZF
-// alone cannot tell apart from equality.
-function fc_trig_guard(ret: string, nan: string): string {
-  return "    ucomisd %xmm0, %xmm0\n    jp " + ret + "\n"
-    + "    movq %xmm0, %rax\n"
-    + "    movabsq $0x7fffffffffffffff, %rcx\n    andq %rcx, %rax\n"
-    + "    movabsq $0x7ff0000000000000, %rcx\n    cmpq %rcx, %rax\n"
-    + "    jae " + nan + "\n";
-}
-
-// fc_pio2_reduce: %xmm0 = x -> %rax = quadrant (k&3), %xmm0 = r with |r| <= pi/4.
-// prefix keeps the local labels unique across the two emission sites.
-//
-// |x| >= 2^20 (biased exponent >= 1043) puts k past pio2h's 22 exact mantissa
-// bits, so the Cody-Waite chain below reduces against noise there and calls
-// __fern_rem_pio2_large instead. The trig guard already returned Inf/NaN.
-function fc_pio2_reduce(prefix: string): string {
-  return "    movq %xmm0, %rax\n"
-    + "    shrq $52, %rax\n"
-    + "    andq $0x7ff, %rax\n"
-    + "    cmpq $1043, %rax\n"
-    + "    jb .L" + prefix + "_cw\n"
-    + "    call __fern_rem_pio2_large\n"
-    + "    jmp .L" + prefix + "_red\n"
-    + ".L" + prefix + "_cw:\n"
-    + fc_ld("%xmm1", ".Lfc_2opi")
-    + "    mulsd %xmm0, %xmm1\n"
-    + "    roundsd $0, %xmm1, %xmm1\n"
-    + "    cvttsd2si %xmm1, %rax\n"
-    + "    movapd %xmm1, %xmm2\n" + fc_ld("%xmm3", ".Lfc_pio2h")
-    + "    mulsd %xmm3, %xmm2\n    subsd %xmm2, %xmm0\n"
-    + "    movapd %xmm1, %xmm2\n" + fc_ld("%xmm3", ".Lfc_pio2m")
-    + "    mulsd %xmm3, %xmm2\n    subsd %xmm2, %xmm0\n"
-    + fc_ld("%xmm3", ".Lfc_pio2l")
-    + "    mulsd %xmm3, %xmm1\n    subsd %xmm1, %xmm0\n"
-    + "    andq $3, %rax\n"
-    + ".L" + prefix + "_red:\n";
 }
 
 // emit_rt_signal_flags appends what signal_catch / signal_taken share: one
@@ -1907,572 +1844,6 @@ function emit_rt_crc32_cksum(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    popq %rbp\n");
   s = s.write("    ret\n");
   s = s.write("    .size __fern_crc32_cksum, .-__fern_crc32_cksum\n");
-  return s;
-}
-
-// emit_rt_float_transcendentals emits the f64 transcendental bundle — sin, cos,
-// exp, log and pow, none of which x86-64 has an instruction for. Gated on the
-// "float_transcendentals" need, which the op_funary / op_fbin lowerings mark;
-// native x86-64 gates the same bundle on usesFloatTranscendentals. Emitted by
-// the ENTRY module only (like the heap runtime), so a per-module sibling's
-// `call` resolves against this one definition.
-//
-// These are fdlibm's kernels, log's table-driven one aside, rounding the
-// reduction with `roundsd $0` (ties-to-EVEN, matching asm_arm64_ir.fern's
-// `frintn`; the reductions pick a different k otherwise). The self-host cannot import Go, so the .Lfc_* table below is a
-// literal copy of internal/tables/fdlibm's — whose selfhost_parity_test pins
-// it entry for entry, so editing one side alone fails a test rather than
-// diverging quietly. They replace the x87 sequences this backend inlined
-// (`fsin` / `fcos`, `fyl2x` for log, `f2xm1` + `fscale` for exp), which were
-// the last copy of the pre-#6270 math in the tree. x87 reduces against a 66-bit
-// pi, which is not enough near a zero of sine, where the reduced argument IS
-// the answer: that path measured 1.6e11 ulp at sin(pi) and 21 ulp at sin(1e6),
-// and it returned a finite number for exp(+Inf).
-//
-// Register discipline differs from native's deliberately: x86_gas
-// (x86_native.fern, the self-host assembler) encodes addsd / mulsd / ucomisd
-// register-register only, so every coefficient is LOADED into a scratch xmm
-// where native uses a rip-relative memory operand. Same arithmetic, same bits.
-//
-// Register copies are movapd, and cvtsi2sd's destination is zeroed first:
-// movsd between registers and cvtsi2sd write only the low lane and keep the
-// rest, so each would wait on whatever last wrote that register, which in a
-// loop is the previous call (#11320).
-//
-// Arg in %xmm0 (pow also %xmm1), result in %xmm0. %rax/%rcx/%rdx and %xmm0-7
-// are clobbered — all caller-saved under SysV.
-function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("    .section .rodata\n");
-  s = s.write("    .align 8\n");
-  s = s.write(".Lfc_one: .double 1.0\n");
-  s = s.write(".Lfc_half: .double 0.5\n");
-  s = s.write(".Lfc_two: .double 2.0\n");
-  // Cody-Waite splits. ln2_hi / pio2_h carry zeroed low mantissa bits so the
-  // first subtraction is exact.
-  s = s.write(".Lfc_invln2: .double 1.44269504088896338700e+00\n");
-  s = s.write(".Lfc_ln2hi: .double 6.93147180369123816490e-01\n");
-  s = s.write(".Lfc_ln2lo: .double 1.90821492927058770002e-10\n");
-  s = s.write(".Lfc_2opi: .double 6.36619772367581382433e-01\n");
-  // pi/2 as THREE 33-bit chunks (~99 bits). Two chunks leave sin(pi) 285k ulp
-  // out: near a zero of sin the reduced argument IS the answer, so the
-  // reduction's absolute error becomes the result's relative error. A fourth
-  // chunk makes it worse — it perturbs the cancellation the third sets up.
-  s = s.write(".Lfc_pio2h: .double 1.57079632673412561417e+00\n");
-  s = s.write(".Lfc_pio2m: .double 6.07710050630396597660e-11\n");
-  s = s.write(".Lfc_pio2l: .double 2.02226624879595063154e-21\n");
-  // pi/2 as an unevaluated double-double, plus the two scales that turn
-  // __fern_rem_pio2_large's 126-bit fraction into a double.
-  s = s.write(".Lfc_pio2hi: .double 1.5707963267948966\n");
-  s = s.write(".Lfc_pio2lo: .double 6.123233995736766e-17\n");
-  s = s.write(".Lfc_2m62: .double 2.168404344971009e-19\n");
-  s = s.write(".Lfc_2m115: .double 2.407412430484045e-35\n");
-  // 2/pi in binary, MSB-first, one limb per 64 fraction bits starting at
-  // 2^-1 in limb 1 — the window Payne-Hanek indexes with the argument's own
-  // exponent. The leading zero limb lets that index start above 2^-1 without
-  // a bounds test; the length covers the largest finite double. Same table
-  // as the native backends'.
-  s = s.write(".Lfc_2opi_bits:\n");
-  s = s.write("    .quad 0x0000000000000000\n    .quad 0xa2f9836e4e441529\n    .quad 0xfc2757d1f534ddc0\n");
-  s = s.write("    .quad 0xdb6295993c439041\n    .quad 0xfe5163abdebbc561\n    .quad 0xb7246e3a424dd2e0\n");
-  s = s.write("    .quad 0x06492eea09d1921c\n    .quad 0xfe1deb1cb129a73e\n    .quad 0xe88235f52ebb4484\n");
-  s = s.write("    .quad 0xe99c7026b45f7e41\n    .quad 0x3991d639835339f4\n    .quad 0x9c845f8bbdf9283b\n");
-  s = s.write("    .quad 0x1ff897ffde05980f\n    .quad 0xef2f118b5a0a6d1f\n    .quad 0x6d367ecf27cb09b7\n");
-  s = s.write("    .quad 0x4f463f669e5fea2d\n    .quad 0x7527bac7ebe5f17b\n    .quad 0x3d0739f78a5292ea\n");
-  s = s.write("    .quad 0x6bfb5fb11f8d5d08\n    .quad 0x56033046fc7b6bab\n    .quad 0xf0cfbc209af4361d\n");
-  s = s.write(".Lfc_s1: .double -1.66666666666666324348e-01\n");
-  s = s.write(".Lfc_s2: .double 8.33333333332248946124e-03\n");
-  s = s.write(".Lfc_s3: .double -1.98412698298579493134e-04\n");
-  s = s.write(".Lfc_s4: .double 2.75573137070700676789e-06\n");
-  s = s.write(".Lfc_s5: .double -2.50507602534068634195e-08\n");
-  s = s.write(".Lfc_s6: .double 1.58969099521155010221e-10\n");
-  s = s.write(".Lfc_c1: .double 4.16666666666666019037e-02\n");
-  s = s.write(".Lfc_c2: .double -1.38888888888741095749e-03\n");
-  s = s.write(".Lfc_c3: .double 2.48015872894767294178e-05\n");
-  s = s.write(".Lfc_c4: .double -2.75573143513906633035e-07\n");
-  s = s.write(".Lfc_c5: .double 2.08757232129817482790e-09\n");
-  s = s.write(".Lfc_c6: .double -1.13596475577881948265e-11\n");
-  s = s.write(".Lfc_p1: .double 1.66666666666666019037e-01\n");
-  s = s.write(".Lfc_p2: .double -2.77777777770155933842e-03\n");
-  s = s.write(".Lfc_p3: .double 6.61375632143793436117e-05\n");
-  s = s.write(".Lfc_p4: .double -1.65339022054652515390e-06\n");
-  s = s.write(".Lfc_p5: .double 4.13813679705723846039e-08\n");
-  // exp's finite range. Above the first e^x is not representable; below the
-  // second it rounds to zero. They bound the domain only; the 2^k
-  // reconstruction below is what keeps k inside one exponent field.
-  s = s.write(".Lfc_expovf: .double 709.782712893383973096\n");
-  s = s.write(".Lfc_expunf: .double -745.133219101941108420\n");
-  // The table-driven log's coefficients and rows, laid out as
-  // internal/tables/fdlibm.LogData: main path at +0, near-1 path at +32, rows at +112.
-  // >>> generated by scripts/gen_log_table.py — do not edit by hand
-  s = s.write(".Lfc_logtab:\n");
-  s = s.write("    .quad 0x3fd555555550b390\n    .quad 0xbfcffffffff3b2fa\n    .quad 0x3fc999b49b5613e9\n    .quad 0xbfc555719b6c2691\n");
-  s = s.write("    .quad 0x3fd5555555555577\n    .quad 0xbfcffffffffffdb3\n    .quad 0x3fc999999995deb1\n    .quad 0xbfc555555567c82e\n    .quad 0x3fc24924a342f5dd\n");
-  s = s.write("    .quad 0xbfbfffffa24b4239\n    .quad 0x3fbc7184291e7cf5\n    .quad 0xbfb999ece3a42714\n    .quad 0x3fb781836340ad22\n    .quad 0xbfb55196561b3f0e\n");
-  s = s.write("    .quad 0x3ff734f0c541fe8d\n    .quad 0xbfd7cc7f7db46800\n    .quad 0xbd206cf78ffb8648\n");
-  s = s.write("    .quad 0x3ff713786d9c7c09\n    .quad 0xbfd76feecb947000\n    .quad 0xbd174bb9c9852c57\n");
-  s = s.write("    .quad 0x3ff6f26016f26017\n    .quad 0xbfd713e33a46a000\n    .quad 0xbd17b9b2617e9472\n");
-  s = s.write("    .quad 0x3ff6d1a62681c861\n    .quad 0xbfd6b85b4cffa000\n    .quad 0xbd2fe6750d372503\n");
-  s = s.write("    .quad 0x3ff6b1490aa31a3d\n    .quad 0xbfd65d558d4ce000\n    .quad 0xbcc544fd2dc5bdc0\n");
-  s = s.write("    .quad 0x3ff691473a88d0c0\n    .quad 0xbfd602d08af09000\n    .quad 0xbd1ebe9176df3f65\n");
-  s = s.write("    .quad 0x3ff6719f3601671a\n    .quad 0xbfd5a8cadbbee000\n    .quad 0x3cf7c79b0af7ecf8\n");
-  s = s.write("    .quad 0x3ff6524f853b4aa3\n    .quad 0xbfd54f431b7be000\n    .quad 0xbd1a8954c0910952\n");
-  s = s.write("    .quad 0x3ff63356b88ac0de\n    .quad 0xbfd4f637ebba9800\n    .quad 0xbccf539a676da36e\n");
-  s = s.write("    .quad 0x3ff614b36831ae94\n    .quad 0xbfd49da7f3bcc800\n    .quad 0x3d2f099964a168cd\n");
-  s = s.write("    .quad 0x3ff5f66434292dfc\n    .quad 0xbfd44591e053a000\n    .quad 0x3d06e95892923d88\n");
-  s = s.write("    .quad 0x3ff5d867c3ece2a5\n    .quad 0xbfd3edf463c16800\n    .quad 0xbcef307ad01a7821\n");
-  s = s.write("    .quad 0x3ff5babcc647fa91\n    .quad 0xbfd396ce359bc000\n    .quad 0x3d05839c5663663d\n");
-  s = s.write("    .quad 0x3ff59d61f123ccaa\n    .quad 0xbfd3401e12aec800\n    .quad 0xbd2d07195523adc6\n");
-  s = s.write("    .quad 0x3ff5805601580560\n    .quad 0xbfd2e9e2bce12000\n    .quad 0xbd24300c128d1dc2\n");
-  s = s.write("    .quad 0x3ff56397ba7c52e2\n    .quad 0xbfd2941afb186800\n    .quad 0xbd2bde7a919e3aeb\n");
-  s = s.write("    .quad 0x3ff54725e6bb82fe\n    .quad 0xbfd23ec5991eb800\n    .quad 0xbd2248376eba35bc\n");
-  s = s.write("    .quad 0x3ff52aff56a8054b\n    .quad 0xbfd1e9e167889800\n    .quad 0xbd1f4544b0dd2688\n");
-  s = s.write("    .quad 0x3ff50f22e111c4c5\n    .quad 0xbfd1956d3b9bc000\n    .quad 0xbd27d2f73ad1aa14\n");
-  s = s.write("    .quad 0x3ff4f38f62dd4c9b\n    .quad 0xbfd14167ef367800\n    .quad 0x3cff3f87db2550ac\n");
-  s = s.write("    .quad 0x3ff4d843bedc2c4c\n    .quad 0xbfd0edd060b78000\n    .quad 0xbd0019b52d8435f5\n");
-  s = s.write("    .quad 0x3ff4bd3edda68fe1\n    .quad 0xbfd09aa572e6c800\n    .quad 0x3d12bd787a32f2f6\n");
-  s = s.write("    .quad 0x3ff4a27fad76014a\n    .quad 0xbfd047e60cde8000\n    .quad 0xbd2dbdf10d397f3c\n");
-  s = s.write("    .quad 0x3ff4880522014880\n    .quad 0xbfcfeb2233ea0000\n    .quad 0xbd2f3418de00938b\n");
-  s = s.write("    .quad 0x3ff46dce34596066\n    .quad 0xbfcf474b134df000\n    .quad 0xbd1146d838821289\n");
-  s = s.write("    .quad 0x3ff453d9e2c776ca\n    .quad 0xbfcea4449f04b000\n    .quad 0x3d242dd33919ab94\n");
-  s = s.write("    .quad 0x3ff43a2730abee4d\n    .quad 0xbfce020cc6236000\n    .quad 0x3d252b00adb91424\n");
-  s = s.write("    .quad 0x3ff420b5265e5951\n    .quad 0xbfcd60a17f903000\n    .quad 0xbd24523f207be58e\n");
-  s = s.write("    .quad 0x3ff40782d10e6566\n    .quad 0xbfccc000c9db4000\n    .quad 0x3d1d6d585d57aff9\n");
-  s = s.write("    .quad 0x3ff3ee8f42a5af07\n    .quad 0xbfcc2028ab180000\n    .quad 0x3d292e0ee55c7ac6\n");
-  s = s.write("    .quad 0x3ff3d5d991aa75c6\n    .quad 0xbfcb811730b82000\n    .quad 0xbd1e90683b9cd768\n");
-  s = s.write("    .quad 0x3ff3bd60d9232955\n    .quad 0xbfcae2ca6f673000\n    .quad 0x3d20ae54a356155f\n");
-  s = s.write("    .quad 0x3ff3a524387ac822\n    .quad 0xbfca454082e6b000\n    .quad 0x3d23eb106fc11d1e\n");
-  s = s.write("    .quad 0x3ff38d22d366088e\n    .quad 0xbfc9a8778debb000\n    .quad 0x3d271e0b820278e0\n");
-  s = s.write("    .quad 0x3ff3755bd1c945ee\n    .quad 0xbfc90c6db9fcc000\n    .quad 0x3d1935f57718d7ca\n");
-  s = s.write("    .quad 0x3ff35dce5f9f2af8\n    .quad 0xbfc871213750f000\n    .quad 0x3d29ae297a0ca116\n");
-  s = s.write("    .quad 0x3ff34679ace01346\n    .quad 0xbfc7d6903caf6000\n    .quad 0x3d24c06b17c301d7\n");
-  s = s.write("    .quad 0x3ff32f5ced6a1dfa\n    .quad 0xbfc73cb9074fd000\n    .quad 0xbd04cab797ffd2cc\n");
-  s = s.write("    .quad 0x3ff3187758e9ebb6\n    .quad 0xbfc6a399dabbd000\n    .quad 0xbd1c1b2c6657a967\n");
-  s = s.write("    .quad 0x3ff301c82ac40260\n    .quad 0xbfc60b3100b09000\n    .quad 0xbd21d7526cee0fd8\n");
-  s = s.write("    .quad 0x3ff2eb4ea1fed14b\n    .quad 0xbfc5737cc9019000\n    .quad 0x3d191561651de028\n");
-  s = s.write("    .quad 0x3ff2d50a012d50a0\n    .quad 0xbfc4dc7b897bc000\n    .quad 0xbd0c79b60ae1ff0f\n");
-  s = s.write("    .quad 0x3ff2bef98e5a3711\n    .quad 0xbfc4462b9dc9b000\n    .quad 0xbd1ede9d63b93e7a\n");
-  s = s.write("    .quad 0x3ff2a91c92f3c105\n    .quad 0xbfc3b08b6757f000\n    .quad 0xbd15485c35b37c15\n");
-  s = s.write("    .quad 0x3ff293725bb804a5\n    .quad 0xbfc31b994d3a5000\n    .quad 0x3ceece238b5efe06\n");
-  s = s.write("    .quad 0x3ff27dfa38a1ce4d\n    .quad 0xbfc28753bc11b000\n    .quad 0x3d216d6394d9fa33\n");
-  s = s.write("    .quad 0x3ff268b37cd60127\n    .quad 0xbfc1f3b925f26000\n    .quad 0x3d15f74e9b083633\n");
-  s = s.write("    .quad 0x3ff2539d7e9177b2\n    .quad 0xbfc160c8024b2000\n    .quad 0xbd2ec2d2a9009e3d\n");
-  s = s.write("    .quad 0x3ff23eb79717605b\n    .quad 0xbfc0ce7ecdccc000\n    .quad 0xbd14652dabff5447\n");
-  s = s.write("    .quad 0x3ff22a0122a0122a\n    .quad 0xbfc03cdc0a51f000\n    .quad 0x3d1f958c3a580e90\n");
-  s = s.write("    .quad 0x3ff21579804855e6\n    .quad 0xbfbf57bc7d900000\n    .quad 0xbd176a6c9ea8b04e\n");
-  s = s.write("    .quad 0x3ff2012012012012\n    .quad 0xbfbe3707ee304000\n    .quad 0xbd20f684e6766abd\n");
-  s = s.write("    .quad 0x3ff1ecf43c7fb84c\n    .quad 0xbfbd17978821a000\n    .quad 0x3d29379894208225\n");
-  s = s.write("    .quad 0x3ff1d8f5672e4abd\n    .quad 0xbfbbf968769fc000\n    .quad 0xbd24218c8d824283\n");
-  s = s.write("    .quad 0x3ff1c522fc1ce059\n    .quad 0xbfbadc77ee5ae000\n    .quad 0xbd25189bec79cdf7\n");
-  s = s.write("    .quad 0x3ff1b17c67f2bae3\n    .quad 0xbfb9c0c32d4d2000\n    .quad 0xbd1520fd85f1e661\n");
-  s = s.write("    .quad 0x3ff19e0119e0119e\n    .quad 0xbfb8a6477a91e000\n    .quad 0x3d0eb9fa83214905\n");
-  s = s.write("    .quad 0x3ff18ab083902bdb\n    .quad 0xbfb78d02263d8000\n    .quad 0xbd069b5794b69fb7\n");
-  s = s.write("    .quad 0x3ff1778a191bd684\n    .quad 0xbfb674f089366000\n    .quad 0x3d16199acd8b33f9\n");
-  s = s.write("    .quad 0x3ff1648d50fc3201\n    .quad 0xbfb55e10050e0000\n    .quad 0xbd0c1d740c53c72e\n");
-  s = s.write("    .quad 0x3ff151b9a3fdd5c9\n    .quad 0xbfb4485e03dbe000\n    .quad 0x3cd4ae45cb655244\n");
-  s = s.write("    .quad 0x3ff13f0e8d344724\n    .quad 0xbfb333d7f8184000\n    .quad 0x3ce692b6a81b8848\n");
-  s = s.write("    .quad 0x3ff12c8b89edc0ac\n    .quad 0xbfb2207b5c786000\n    .quad 0x3d26c4e607de7082\n");
-  s = s.write("    .quad 0x3ff11a3019a74826\n    .quad 0xbfb10e45b3cae000\n    .quad 0xbd20612daf6b9737\n");
-  s = s.write("    .quad 0x3ff107fbbe011080\n    .quad 0xbfaffa6911ab8000\n    .quad 0xbd23008c98381a8f\n");
-  s = s.write("    .quad 0x3ff0f5edfab325a2\n    .quad 0xbfadda8adc680000\n    .quad 0x3d21b1ac64d9e42f\n");
-  s = s.write("    .quad 0x3ff0e40655826011\n    .quad 0xbfabbcebfc690000\n    .quad 0x3d17bf868c317c2a\n");
-  s = s.write("    .quad 0x3ff0d24456359e3a\n    .quad 0xbfa9a187b573c000\n    .quad 0xbd2e7ba362764de5\n");
-  s = s.write("    .quad 0x3ff0c0a7868b4171\n    .quad 0xbfa788595a358000\n    .quad 0x3d108b0d083b3a4c\n");
-  s = s.write("    .quad 0x3ff0af2f722eecb5\n    .quad 0xbfa5715c4c03c000\n    .quad 0xbd1dddc880ee2760\n");
-  s = s.write("    .quad 0x3ff09ddba6af8360\n    .quad 0xbfa35c8bfaa14000\n    .quad 0x3d1f2a0a8418532b\n");
-  s = s.write("    .quad 0x3ff08cabb37565e2\n    .quad 0xbfa149e3e4004000\n    .quad 0xbd2a8ceacb7d2e06\n");
-  s = s.write("    .quad 0x3ff07b9f29b8eae2\n    .quad 0xbf9e72bf28140000\n    .quad 0x3d28d75149774d47\n");
-  s = s.write("    .quad 0x3ff06ab59c7912fb\n    .quad 0xbf9a55f548c60000\n    .quad 0x3d2de0709f2d03c9\n");
-  s = s.write("    .quad 0x3ff059eea0727586\n    .quad 0xbf963d6178690000\n    .quad 0xbd07abf389596542\n");
-  s = s.write("    .quad 0x3ff04949cc1664c5\n    .quad 0xbf9228fb1fea0000\n    .quad 0xbd2713e3284991fe\n");
-  s = s.write("    .quad 0x3ff038c6b78247fc\n    .quad 0xbf8c317384c70000\n    .quad 0xbd27c19806208c05\n");
-  s = s.write("    .quad 0x3ff02864fc7729e9\n    .quad 0xbf841929f9680000\n    .quad 0xbd1977c755d01368\n");
-  s = s.write("    .quad 0x3ff0182436517a37\n    .quad 0xbf78121214580000\n    .quad 0xbd1ad50382973f27\n");
-  s = s.write("    .quad 0x3ff0080402010080\n    .quad 0xbf60040155d40000\n    .quad 0xbd2889de70671eef\n");
-  s = s.write("    .quad 0x3fefe01fe01fe020\n    .quad 0x3f6ff00aa2b00000\n    .quad 0x3d20bc04a086b56a\n");
-  s = s.write("    .quad 0x3fefa11caa01fa12\n    .quad 0x3f87dc475f810000\n    .quad 0x3cf4edba4a25e0b1\n");
-  s = s.write("    .quad 0x3fef6310aca0dbb5\n    .quad 0x3f93cea443468000\n    .quad 0x3d22ba779a52b7ea\n");
-  s = s.write("    .quad 0x3fef25f644230ab5\n    .quad 0x3f9b9fc027af8000\n    .quad 0x3d1197fbd465b759\n");
-  s = s.write("    .quad 0x3feee9c7f8458e02\n    .quad 0x3fa1b0d98923c000\n    .quad 0x3d297fc2ca2eec8a\n");
-  s = s.write("    .quad 0x3feeae807aba01eb\n    .quad 0x3fa58a5bafc90000\n    .quad 0xbd2b2b739570ad39\n");
-  s = s.write("    .quad 0x3fee741aa59750e4\n    .quad 0x3fa95c830ec90000\n    .quad 0xbd2c148297c5feb8\n");
-  s = s.write("    .quad 0x3fee3a9179dc1a73\n    .quad 0x3fad276b8adb0000\n    .quad 0x3d16a423c78a64b0\n");
-  s = s.write("    .quad 0x3fee01e01e01e01e\n    .quad 0x3fb075983598e000\n    .quad 0x3d11c4c06d2999e2\n");
-  s = s.write("    .quad 0x3fedca01dca01dca\n    .quad 0x3fb253f62f0a2000\n    .quad 0xbd27d20e092cb1fe\n");
-  s = s.write("    .quad 0x3fed92f2231e7f8a\n    .quad 0x3fb42edcbea64000\n    .quad 0x3d1bc0eeea7c9acd\n");
-  s = s.write("    .quad 0x3fed5cac807572b2\n    .quad 0x3fb60658a9376000\n    .quad 0xbd2e789c422c7611\n");
-  s = s.write("    .quad 0x3fed272ca3fc5b1a\n    .quad 0x3fb7da766d7b2000\n    .quad 0xbd2a66f776fe6eca\n");
-  s = s.write("    .quad 0x3fecf26e5c44bfc6\n    .quad 0x3fb9ab4246204000\n    .quad 0xbd28a64826787061\n");
-  s = s.write("    .quad 0x3fecbe6d9601cbe7\n    .quad 0x3fbb78c82bb0e000\n    .quad 0x3d2b4210878cf032\n");
-  s = s.write("    .quad 0x3fec8b265afb8a42\n    .quad 0x3fbd4313d66cc000\n    .quad 0xbd29454379135713\n");
-  s = s.write("    .quad 0x3fec5894d10d4986\n    .quad 0x3fbf0a30c0116000\n    .quad 0x3d05330be64b8b77\n");
-  s = s.write("    .quad 0x3fec26b5392ea01c\n    .quad 0x3fc0671512ca6000\n    .quad 0xbd2a47579cdc0a3d\n");
-  s = s.write("    .quad 0x3febf583ee868d8b\n    .quad 0x3fc1478584674000\n    .quad 0x3d1563451027c750\n");
-  s = s.write("    .quad 0x3febc4fd65883e7b\n    .quad 0x3fc2266f190a6000\n    .quad 0xbd24d20ab840e7f6\n");
-  s = s.write("    .quad 0x3feb951e2b18ff23\n    .quad 0x3fc303d718e48000\n    .quad 0xbcd680b5ce3ecb05\n");
-  s = s.write("    .quad 0x3feb65e2e3beee05\n    .quad 0x3fc3dfc2b0ecc000\n    .quad 0x3d28a72a62b8c13f\n");
-  s = s.write("    .quad 0x3feb37484ad806ce\n    .quad 0x3fc4ba36f39a5000\n    .quad 0x3d279568981bcc36\n");
-  s = s.write("    .quad 0x3feb094b31d922a4\n    .quad 0x3fc59338d9982000\n    .quad 0x3cf0ba68b7555d4a\n");
-  s = s.write("    .quad 0x3feadbe87f94905e\n    .quad 0x3fc66acd4272b000\n    .quad 0xbd15790900e4e1eb\n");
-  s = s.write("    .quad 0x3feaaf1d2f87ebfd\n    .quad 0x3fc740f8f5403000\n    .quad 0x3d2e9326cdfceabe\n");
-  s = s.write("    .quad 0x3fea82e65130e159\n    .quad 0x3fc815c0a1435000\n    .quad 0x3d2fab5a0dbfc630\n");
-  s = s.write("    .quad 0x3fea574107688a4a\n    .quad 0x3fc8e928de887000\n    .quad 0xbd15faad3b0a34ad\n");
-  s = s.write("    .quad 0x3fea2c2a87c51ca0\n    .quad 0x3fc9bb362e7e0000\n    .quad 0xbd21f2a8a1ce0ffc\n");
-  s = s.write("    .quad 0x3fea01a01a01a01a\n    .quad 0x3fca8becfc883000\n    .quad 0xbcfce7a30de4630e\n");
-  s = s.write("    .quad 0x3fe9d79f176b682d\n    .quad 0x3fcb5b519e8fb000\n    .quad 0x3d2691ba27fdc19e\n");
-  s = s.write("    .quad 0x3fe9ae24ea5510da\n    .quad 0x3fcc2968558c2000\n    .quad 0xbd2cfd73dee38a40\n");
-  s = s.write("    .quad 0x3fe9852f0d8ec0ff\n    .quad 0x3fccf6354e09c000\n    .quad 0x3d2771239a07d55b\n");
-  s = s.write("    .quad 0x3fe95cbb0be377ae\n    .quad 0x3fcdc1bca0abf000\n    .quad 0xbd1c14f9675ccce9\n");
-  s = s.write("    .quad 0x3fe934c67f9b2ce6\n    .quad 0x3fce8c0252aa6000\n    .quad 0xbd26805b80e8e6ff\n");
-  s = s.write("    .quad 0x3fe90d4f120190d5\n    .quad 0x3fcf550a564b8000\n    .quad 0xbd2323e3a09202fe\n");
-  s = s.write("    .quad 0x3fe8e6527af1373f\n    .quad 0x3fd00e6c45ad5000\n    .quad 0x3cdcc68d52e01203\n");
-  s = s.write("    .quad 0x3fe8bfce8062ff3a\n    .quad 0x3fd071b85fcd5800\n    .quad 0x3d10d1d1707f97be\n");
-  s = s.write("    .quad 0x3fe899c0f601899c\n    .quad 0x3fd0d46b579ab800\n    .quad 0xbd069bf04df8f0d1\n");
-  s = s.write("    .quad 0x3fe87427bcc092b9\n    .quad 0x3fd136870293a800\n    .quad 0x3d060bdb314c76e9\n");
-  s = s.write("    .quad 0x3fe84f00c2780614\n    .quad 0x3fd1980d2dd42000\n    .quad 0x3d2b7b3a7a361c9a\n");
-  s = s.write("    .quad 0x3fe82a4a0182a4a0\n    .quad 0x3fd1f8ff9e48a000\n    .quad 0x3d27946c040cbe77\n");
-  s = s.write("    .quad 0x3fe8060180601806\n    .quad 0x3fd2596010df7800\n    .quad 0xbd1c610f76c57076\n");
-  s = s.write("    .quad 0x3fe7e225515a4f1d\n    .quad 0x3fd2b9303ab8a000\n    .quad 0xbd26db12d6bfb0a5\n");
-  s = s.write("    .quad 0x3fe7beb3922e017c\n    .quad 0x3fd31871c9544000\n    .quad 0x3d184fab94cecfd9\n");
-  s = s.write("    .quad 0x3fe79baa6bb6398b\n    .quad 0x3fd3772662bfd800\n    .quad 0x3cf6bc953ac4fdd0\n");
-  s = s.write("    .quad 0x3fe77908119ac60d\n    .quad 0x3fd3d54fa5c1f800\n    .quad 0xbd0e0f1932e350e5\n");
-  s = s.write("    .quad 0x3fe756cac201756d\n    .quad 0x3fd432ef2a04e800\n    .quad 0x3cd3b59b3a3a94dc\n");
-  // <<< generated
-  s = s.write("    .section .text\n");
-
-  // __fern_rem_pio2_large(%xmm0 = x, |x| >= 2^20 and finite) -> %rax = k&3,
-  // %xmm0 = r. Payne-Hanek: multiply the significand by the window of 2/pi
-  // its exponent selects, keeping 128 bits about the binary point — the top
-  // two bits are the quadrant and the rest the fraction of x/(pi/2), which
-  // stays fully accurate however large x is. Kept in lockstep with the
-  // native x86-64 backend's __fern_rem_pio2_large, register for register,
-  // except that the copy and the two conversions write whole registers here
-  // (movapd, and xorps first) where native writes the low lane.
-  s = s.write("__fern_rem_pio2_large:\n");
-  s = s.write("    movq %xmm0, %rdx\n");
-  s = s.write("    movq %rdx, %r8\n    shrq $63, %r8\n");  // sign of x
-  s = s.write("    movq %rdx, %rcx\n    shrq $52, %rcx\n    andq $0x7ff, %rcx\n");
-  s = s.write("    movabsq $0x000fffffffffffff, %rax\n    andq %rax, %rdx\n");
-  s = s.write("    movabsq $0x0010000000000000, %rax\n    orq %rax, %rdx\n");  // m, the 53-bit significand
-  // x = m*2^(e-1075), and the fraction of x*(2/pi) starts at bit
-  // (e-1075)+62 of the table once the product is read as a Q126.
-  s = s.write("    subq $1013, %rcx\n");
-  s = s.write("    movq %rcx, %r9\n    andq $63, %r9\n");  // bit offset within the limb
-  s = s.write("    shrq $6, %rcx\n");  // limb index
-  s = s.write("    leaq .Lfc_2opi_bits(%rip), %r10\n");
-  s = s.write("    leaq (%r10,%rcx,8), %r10\n");
-  s = s.write("    movq (%r10), %rsi\n    movq 8(%r10), %rdi\n");
-  s = s.write("    movq 16(%r10), %r11\n    movq 24(%r10), %rax\n");
-  s = s.write("    movq %r9, %rcx\n");
-  s = s.write("    shldq %cl, %rdi, %rsi\n");  // w0
-  s = s.write("    shldq %cl, %r11, %rdi\n");  // w1
-  s = s.write("    shldq %cl, %rax, %r11\n");  // w2
-  s = s.write("    movq %rdx, %r9\n");
-  s = s.write("    movq %r9, %rax\n    mulq %rsi\n    movq %rax, %rsi\n");  // low(m*w0)
-  s = s.write("    movq %r9, %rax\n    mulq %rdi\n    movq %rax, %rdi\n    movq %rdx, %r10\n");  // low/high(m*w1)
-  s = s.write("    movq %r9, %rax\n    mulq %r11\n");  // high(m*w2) in %rdx
-  s = s.write("    addq %rdx, %rdi\n");  // fraction, low 64
-  s = s.write("    adcq %r10, %rsi\n");  // fraction, high 64
-  s = s.write("    movq %rsi, %rax\n    shrq $62, %rax\n");  // k
-  s = s.write("    movabsq $0x3fffffffffffffff, %rcx\n    andq %rcx, %rsi\n");
-  s = s.write("    xorpd %xmm3, %xmm3\n");
-  // A fraction past 1/2 belongs to the next quadrant, as 1 minus itself.
-  s = s.write("    movabsq $0x2000000000000000, %r10\n");
-  s = s.write("    cmpq %r10, %rsi\n    jb .Lfph_pos\n");
-  s = s.write("    incq %rax\n");
-  s = s.write("    movq %rsi, %r11\n    movq %rdi, %rcx\n");
-  s = s.write("    xorq %rdi, %rdi\n    subq %rcx, %rdi\n");
-  // movabsq, not mov+shl: a shift writes CF, and the borrow from the sub
-  // above has to survive to the sbbq below.
-  s = s.write("    movabsq $0x4000000000000000, %rsi\n");
-  s = s.write("    sbbq %r11, %rsi\n");
-  s = s.write("    movabsq $0x8000000000000000, %rcx\n    movq %rcx, %xmm3\n");
-  s = s.write(".Lfph_pos:\n");
-  // The low half only contributes below 2^-64, so 11 of its bits fall off
-  // the end of the double anyway; dropping them keeps the conversion inside
-  // the signed range cvtsi2sd works in.
-  s = s.write("    shrq $11, %rdi\n");
-  s = s.write("    xorps %xmm1, %xmm1\n    cvtsi2sd %rsi, %xmm1\n");
-  s = s.write(fc_ld("%xmm4", ".Lfc_2m62") + "    mulsd %xmm4, %xmm1\n");
-  s = s.write("    xorps %xmm2, %xmm2\n    cvtsi2sd %rdi, %xmm2\n");
-  s = s.write(fc_ld("%xmm4", ".Lfc_2m115") + "    mulsd %xmm4, %xmm2\n");
-  s = s.write("    addsd %xmm2, %xmm1\n");
-  s = s.write("    xorpd %xmm3, %xmm1\n");
-  s = s.write("    testq %r8, %r8\n    jz .Lfph_nn\n");
-  s = s.write("    movabsq $0x8000000000000000, %rdx\n    movq %rdx, %xmm5\n    xorpd %xmm5, %xmm1\n");
-  s = s.write("    negq %rax\n");
-  s = s.write(".Lfph_nn:\n");
-  s = s.write("    andq $3, %rax\n");
-  s = s.write("    movapd %xmm1, %xmm0\n");
-  s = s.write(fc_ld("%xmm4", ".Lfc_pio2hi") + "    mulsd %xmm4, %xmm0\n");
-  s = s.write(fc_ld("%xmm4", ".Lfc_pio2lo") + "    mulsd %xmm4, %xmm1\n");
-  s = s.write("    addsd %xmm1, %xmm0\n");
-  s = s.write("    ret\n");
-
-  // __fern_ksin(%xmm0 = r, |r| <= pi/4) -> sin r. Internal, not exported: sin
-  // and cos both reach it after reduction, so the kernel exists once rather
-  // than once per quadrant arm.
-  //   z = r*r; v = z*r; sin = r + v*(S1 + z*(S2+z*(S3+z*(S4+z*(S5+z*S6)))))
-  s = s.write("__fern_ksin:\n");
-  s = s.write("    movapd %xmm0, %xmm1\n    mulsd %xmm0, %xmm1\n");  // z
-  s = s.write("    movapd %xmm1, %xmm2\n    mulsd %xmm0, %xmm2\n");  // v = z*r
-  s = s.write(fc_ld("%xmm3", ".Lfc_s6"));
-  s = s.write(fc_horner("%xmm3", "%xmm1", "%xmm4", ".Lfc_s5"));
-  s = s.write(fc_horner("%xmm3", "%xmm1", "%xmm4", ".Lfc_s4"));
-  s = s.write(fc_horner("%xmm3", "%xmm1", "%xmm4", ".Lfc_s3"));
-  s = s.write(fc_horner("%xmm3", "%xmm1", "%xmm4", ".Lfc_s2"));
-  s = s.write(fc_horner("%xmm3", "%xmm1", "%xmm4", ".Lfc_s1"));
-  s = s.write("    mulsd %xmm2, %xmm3\n    addsd %xmm3, %xmm0\n    ret\n");
-
-  // __fern_kcos(%xmm0 = r, |r| <= pi/4) -> cos r.
-  //   z = r*r; p = C1+z*(C2+…+z*C6); hz = z/2; w = 1-hz
-  //   cos = w + (((1-w) - hz) + z*(z*p))
-  // The (1-w)-hz rewrite recovers the bits 1-hz threw away; computing
-  // 1 - hz + z*z*p directly loses them and costs ~2 ulp.
-  s = s.write("__fern_kcos:\n");
-  s = s.write("    movapd %xmm0, %xmm1\n    mulsd %xmm0, %xmm1\n");  // z
-  s = s.write(fc_ld("%xmm3", ".Lfc_c6"));
-  s = s.write(fc_horner("%xmm3", "%xmm1", "%xmm2", ".Lfc_c5"));
-  s = s.write(fc_horner("%xmm3", "%xmm1", "%xmm2", ".Lfc_c4"));
-  s = s.write(fc_horner("%xmm3", "%xmm1", "%xmm2", ".Lfc_c3"));
-  s = s.write(fc_horner("%xmm3", "%xmm1", "%xmm2", ".Lfc_c2"));
-  s = s.write(fc_horner("%xmm3", "%xmm1", "%xmm2", ".Lfc_c1"));
-  s = s.write("    mulsd %xmm1, %xmm3\n    mulsd %xmm1, %xmm3\n");  // z*(z*p)
-  s = s.write("    movapd %xmm1, %xmm4\n" + fc_ld("%xmm2", ".Lfc_half") + "    mulsd %xmm2, %xmm4\n");  // hz
-  s = s.write(fc_ld("%xmm5", ".Lfc_one") + "    subsd %xmm4, %xmm5\n");  // w = 1-hz
-  s = s.write(fc_ld("%xmm6", ".Lfc_one") + "    subsd %xmm5, %xmm6\n");  // 1-w
-  s = s.write("    subsd %xmm4, %xmm6\n");  // (1-w)-hz
-  s = s.write("    addsd %xmm3, %xmm6\n");  // + z*z*p
-  s = s.write("    movapd %xmm5, %xmm0\n    addsd %xmm6, %xmm0\n    ret\n");
-
-  // __fern_sin_f64: quadrant 0..3 -> sin r, cos r, -sin r, -cos r. The odd
-  // quadrant picks the cos kernel and quadrant >= 2 flips the sign, so exactly
-  // one kernel runs.
-  s = s.write(".globl __fern_sin_f64\n");
-  s = s.write(".type __fern_sin_f64, @function\n");
-  s = s.write("__fern_sin_f64:\n");
-  s = s.write(fc_trig_guard(".Lfsin_ret", ".Lfsin_nan"));
-  s = s.write(fc_pio2_reduce("fsin"));
-  s = s.write("    testq $1, %rax\n    jnz .Lfsin_usecos\n");
-  s = s.write("    call __fern_ksin\n    jmp .Lfsin_neg\n");
-  s = s.write(".Lfsin_usecos:\n    call __fern_kcos\n");
-  s = s.write(".Lfsin_neg:\n    cmpq $2, %rax\n    jb .Lfsin_ret\n");
-  s = s.write(fc_negate("%xmm1"));
-  s = s.write(".Lfsin_ret:\n    ret\n");
-  s = s.write(".Lfsin_nan:\n" + fc_retbits("0x7ff8000000000000"));
-  s = s.write(".size __fern_sin_f64, .-__fern_sin_f64\n");
-
-  // __fern_cos_f64: quadrant 0..3 -> cos r, -sin r, -cos r, sin r. The even
-  // quadrant picks the cos kernel; quadrants 1 and 2 flip the sign.
-  s = s.write(".globl __fern_cos_f64\n");
-  s = s.write(".type __fern_cos_f64, @function\n");
-  s = s.write("__fern_cos_f64:\n");
-  s = s.write(fc_trig_guard(".Lfcos_ret", ".Lfcos_nan"));
-  s = s.write(fc_pio2_reduce("fcos"));
-  s = s.write("    testq $1, %rax\n    jnz .Lfcos_usesin\n");
-  s = s.write("    call __fern_kcos\n    jmp .Lfcos_chk\n");
-  s = s.write(".Lfcos_usesin:\n    call __fern_ksin\n");
-  s = s.write(".Lfcos_chk:\n    cmpq $1, %rax\n    jb .Lfcos_ret\n");  // q0 -> +cos
-  s = s.write("    cmpq $2, %rax\n    ja .Lfcos_ret\n");  // q3 -> +sin
-  s = s.write(fc_negate("%xmm1"));
-  s = s.write(".Lfcos_ret:\n    ret\n");
-  s = s.write(".Lfcos_nan:\n" + fc_retbits("0x7ff8000000000000"));
-  s = s.write(".size __fern_cos_f64, .-__fern_cos_f64\n");
-
-  // __fern_exp_f64(%xmm0 = x) -> e^x.
-  //   k = round(x/ln2); hi = x - k*ln2_hi; lo = k*ln2_lo; r = hi - lo
-  //   c = r - t*(P1+t*(P2+…)), t = r*r
-  //   e^r = 1 - ((lo - (r*c)/(2-c)) - hi);  e^x = e^r * 2^k
-  // +Inf trips the overflow branch and -Inf the underflow one, so only NaN
-  // needs its own test.
-  s = s.write(".globl __fern_exp_f64\n");
-  s = s.write(".type __fern_exp_f64, @function\n");
-  s = s.write("__fern_exp_f64:\n");
-  s = s.write("    ucomisd %xmm0, %xmm0\n    jp .Lfexp_ret\n");
-  s = s.write(fc_ld("%xmm1", ".Lfc_expovf") + "    ucomisd %xmm1, %xmm0\n    ja .Lfexp_inf\n");
-  s = s.write(fc_ld("%xmm1", ".Lfc_expunf") + "    ucomisd %xmm1, %xmm0\n    jb .Lfexp_zero\n");
-  s = s.write(fc_ld("%xmm1", ".Lfc_invln2") + "    mulsd %xmm0, %xmm1\n");
-  s = s.write("    roundsd $0, %xmm1, %xmm1\n    cvttsd2si %xmm1, %rax\n");  // k
-  s = s.write("    movapd %xmm1, %xmm2\n" + fc_ld("%xmm7", ".Lfc_ln2hi") + "    mulsd %xmm7, %xmm2\n");
-  s = s.write("    movapd %xmm0, %xmm3\n    subsd %xmm2, %xmm3\n");  // hi
-  s = s.write(fc_ld("%xmm7", ".Lfc_ln2lo") + "    mulsd %xmm7, %xmm1\n");  // lo
-  s = s.write("    movapd %xmm3, %xmm0\n    subsd %xmm1, %xmm0\n");  // r
-  s = s.write("    movapd %xmm0, %xmm4\n    mulsd %xmm0, %xmm4\n");  // t
-  s = s.write(fc_ld("%xmm5", ".Lfc_p5"));
-  s = s.write(fc_horner("%xmm5", "%xmm4", "%xmm7", ".Lfc_p4"));
-  s = s.write(fc_horner("%xmm5", "%xmm4", "%xmm7", ".Lfc_p3"));
-  s = s.write(fc_horner("%xmm5", "%xmm4", "%xmm7", ".Lfc_p2"));
-  s = s.write(fc_horner("%xmm5", "%xmm4", "%xmm7", ".Lfc_p1"));
-  s = s.write("    mulsd %xmm4, %xmm5\n");  // t*(…)
-  s = s.write("    movapd %xmm0, %xmm6\n    subsd %xmm5, %xmm6\n");  // c
-  s = s.write("    movapd %xmm0, %xmm7\n    mulsd %xmm6, %xmm7\n");  // r*c
-  s = s.write(fc_ld("%xmm2", ".Lfc_two") + "    subsd %xmm6, %xmm2\n");  // 2-c
-  s = s.write("    divsd %xmm2, %xmm7\n");
-  s = s.write("    movapd %xmm1, %xmm2\n    subsd %xmm7, %xmm2\n");  // lo - …
-  s = s.write("    subsd %xmm3, %xmm2\n");  // - hi
-  s = s.write(fc_ld("%xmm0", ".Lfc_one") + "    subsd %xmm2, %xmm0\n");
-  // 2^k as two half-scales; one exponent field cannot hold the subnormal
-  // band, where the low bits of k land in the sign bit.
-  s = s.write("    movq %rax, %rcx\n    sarq $1, %rcx\n    subq %rcx, %rax\n");
-  s = s.write("    addq $1023, %rcx\n    shlq $52, %rcx\n    movq %rcx, %xmm1\n");
-  s = s.write("    addq $1023, %rax\n    shlq $52, %rax\n    movq %rax, %xmm2\n");
-  s = s.write("    mulsd %xmm1, %xmm0\n    mulsd %xmm2, %xmm0\n");
-  s = s.write(".Lfexp_ret:\n    ret\n");
-  s = s.write(".Lfexp_inf:\n" + fc_retbits("0x7ff0000000000000"));
-  s = s.write(".Lfexp_zero:\n    xorpd %xmm0, %xmm0\n    ret\n");
-  s = s.write(".size __fern_exp_f64, .-__fern_exp_f64\n");
-
-  // __fern_log_f64(%xmm0 = x) -> ln x, the table-driven kernel
-  // internal/tables/fdlibm/logtab.go documents; instruction for instruction native
-  // x86-64's, with each table operand loaded into %xmm1 first. %r8 holds
-  // .Lfc_logtab's address throughout, %rdx is 3·i, the row's index in doubles.
-  s = s.write(".globl __fern_log_f64\n");
-  s = s.write(".type __fern_log_f64, @function\n");
-  s = s.write("__fern_log_f64:\n");
-  s = s.write("    leaq .Lfc_logtab(%rip), %r8\n    movq %xmm0, %rax\n");
-  s = s.write("    movabsq $0x3fee000000000000, %rcx\n    movq %rax, %rdx\n    subq %rcx, %rdx\n");
-  s = s.write("    movabsq $0x0003090000000000, %rcx\n    cmpq %rcx, %rdx\n    jb .Lflog_near1\n");
-  s = s.write("    movq %rax, %rcx\n    shrq $52, %rcx\n    subq $1, %rcx\n");
-  s = s.write("    cmpq $0x7fe, %rcx\n    jae .Lflog_special\n");  // zero, subnormal, negative, Inf or NaN
-  s = s.write(".Lflog_main:\n");
-  s = s.write("    movabsq $0x3fe6000000000000, %rcx\n    movq %rax, %rsi\n    subq %rcx, %rsi\n");  // tmp
-  s = s.write("    movq %rsi, %rcx\n    sarq $52, %rcx\n");
-  s = s.write("    xorps %xmm4, %xmm4\n    cvtsi2sd %rcx, %xmm4\n");  // k
-  s = s.write("    shlq $52, %rcx\n    subq %rcx, %rax\n");  // bits(z)
-  s = s.write("    movq %rsi, %rdx\n    shrq $45, %rdx\n    andq $127, %rdx\n    leaq (%rdx,%rdx,2), %rdx\n");
-  s = s.write("    movq %rax, %xmm0\n");  // z
-  s = s.write("    shrq $44, %rax\n    orq $1, %rax\n    shlq $44, %rax\n    movq %rax, %xmm1\n");  // c
-  s = s.write("    subsd %xmm1, %xmm0\n    movsd 112(%r8,%rdx,8), %xmm1\n    mulsd %xmm1, %xmm0\n");  // r
-  s = s.write("    movapd %xmm4, %xmm2\n" + fc_ld("%xmm1", ".Lfc_ln2hi") + "    mulsd %xmm1, %xmm2\n");
-  s = s.write("    movsd 120(%r8,%rdx,8), %xmm1\n    addsd %xmm1, %xmm2\n");  // w
-  s = s.write("    movapd %xmm2, %xmm3\n    addsd %xmm0, %xmm3\n");  // hi
-  s = s.write("    subsd %xmm3, %xmm2\n    addsd %xmm0, %xmm2\n");
-  s = s.write(fc_ld("%xmm1", ".Lfc_ln2lo") + "    mulsd %xmm1, %xmm4\n");
-  s = s.write("    movsd 128(%r8,%rdx,8), %xmm1\n    addsd %xmm1, %xmm4\n    addsd %xmm4, %xmm2\n");  // lo
-  s = s.write("    movapd %xmm0, %xmm5\n    mulsd %xmm0, %xmm5\n");  // r2
-  s = s.write("    movapd %xmm0, %xmm6\n    movsd 8(%r8), %xmm1\n    mulsd %xmm1, %xmm6\n");
-  s = s.write("    movsd (%r8), %xmm1\n    addsd %xmm1, %xmm6\n");
-  s = s.write("    movapd %xmm0, %xmm7\n    movsd 24(%r8), %xmm1\n    mulsd %xmm1, %xmm7\n");
-  s = s.write("    movsd 16(%r8), %xmm1\n    addsd %xmm1, %xmm7\n");
-  s = s.write("    mulsd %xmm5, %xmm7\n    addsd %xmm7, %xmm6\n");  // p
-  s = s.write("    movapd %xmm5, %xmm7\n" + fc_ld("%xmm1", ".Lfc_half") + "    mulsd %xmm1, %xmm7\n    subsd %xmm7, %xmm2\n");
-  s = s.write("    mulsd %xmm0, %xmm5\n    mulsd %xmm6, %xmm5\n    addsd %xmm5, %xmm2\n");
-  s = s.write("    addsd %xmm3, %xmm2\n    movapd %xmm2, %xmm0\n    ret\n");
-  // log1p(r) for r = x - 1, which is exact here. p = ((B[a] + r*B[a+1]) +
-  // r2*B[a+2]) + r3*tail, innermost first.
-  s = s.write(".Lflog_near1:\n");
-  s = s.write(fc_ld("%xmm1", ".Lfc_one") + "    subsd %xmm1, %xmm0\n");  // r
-  s = s.write("    movapd %xmm0, %xmm1\n    mulsd %xmm0, %xmm1\n");  // r2
-  s = s.write("    movapd %xmm0, %xmm2\n    mulsd %xmm1, %xmm2\n");  // r3
-  let a: i32 = 6;
-  while (a >= 0) {
-    s = s.write("    movapd %xmm0, %xmm4\n    movsd " + util.i32_to_string(32 + 8 * (a + 1)) + "(%r8), %xmm6\n    mulsd %xmm6, %xmm4\n");
-    s = s.write("    movsd " + util.i32_to_string(32 + 8 * a) + "(%r8), %xmm6\n    addsd %xmm6, %xmm4\n");
-    s = s.write("    movapd %xmm1, %xmm5\n    movsd " + util.i32_to_string(32 + 8 * (a + 2)) + "(%r8), %xmm6\n    mulsd %xmm6, %xmm5\n    addsd %xmm5, %xmm4\n");
-    if (a == 6) {
-      s = s.write("    movapd %xmm2, %xmm3\n    movsd 104(%r8), %xmm6\n    mulsd %xmm6, %xmm3\n");
-    } else {
-      s = s.write("    mulsd %xmm2, %xmm3\n");
-    }
-    s = s.write("    addsd %xmm4, %xmm3\n");
-    a = a - 3;
-  }
-  s = s.write("    mulsd %xmm2, %xmm3\n");  // y
-  s = s.write("    movabsq $0x41a0000000000000, %rax\n    movq %rax, %xmm1\n    mulsd %xmm0, %xmm1\n");  // r·2^27
-  s = s.write("    movapd %xmm0, %xmm4\n    addsd %xmm1, %xmm4\n    subsd %xmm1, %xmm4\n");  // rhi
-  s = s.write("    movapd %xmm0, %xmm5\n    subsd %xmm4, %xmm5\n");  // rlo
-  s = s.write(fc_ld("%xmm7", ".Lfc_half"));
-  s = s.write("    movapd %xmm4, %xmm6\n    mulsd %xmm4, %xmm6\n    mulsd %xmm7, %xmm6\n");  // h
-  s = s.write("    movapd %xmm0, %xmm2\n    subsd %xmm6, %xmm2\n");  // hi
-  s = s.write("    movapd %xmm0, %xmm1\n    subsd %xmm2, %xmm1\n    subsd %xmm6, %xmm1\n");  // lo
-  s = s.write("    addsd %xmm0, %xmm4\n    mulsd %xmm7, %xmm5\n    mulsd %xmm4, %xmm5\n    subsd %xmm5, %xmm1\n");
-  s = s.write("    addsd %xmm1, %xmm3\n    addsd %xmm2, %xmm3\n    movapd %xmm3, %xmm0\n    ret\n");
-  // %rax = bits(x), %rcx = top-1 with top the sign and exponent.
-  s = s.write(".Lflog_special:\n");
-  s = s.write("    movq %rax, %rdx\n    addq %rdx, %rdx\n    jz .Lflog_neginf\n");  // ±0
-  s = s.write("    ucomisd %xmm0, %xmm0\n    jp .Lflog_ret\n");
-  s = s.write("    testq %rax, %rax\n    js .Lflog_nan\n");
-  s = s.write("    cmpq $0x7fe, %rcx\n    je .Lflog_ret\n");  // +Inf
-  // Subnormal: scale into the normal range, then take the 52 back off the
-  // exponent field so the reduction's k comes out right.
-  s = s.write("    movabsq $0x4330000000000000, %rdx\n    movq %rdx, %xmm1\n    mulsd %xmm1, %xmm0\n");
-  s = s.write("    movq %xmm0, %rax\n    movabsq $0x0340000000000000, %rdx\n    subq %rdx, %rax\n");
-  s = s.write("    jmp .Lflog_main\n");
-  s = s.write(".Lflog_ret:\n    ret\n");
-  s = s.write(".Lflog_nan:\n" + fc_retbits("0x7ff8000000000000"));
-  s = s.write(".Lflog_neginf:\n" + fc_retbits("0xfff0000000000000"));
-  s = s.write(".size __fern_log_f64, .-__fern_log_f64\n");
-
-  // __fern_pow_f64(%xmm0 = x, %xmm1 = y) -> x^y.
-  //
-  // Integer-exponent fast path. exp(y·ln x) CANNOT return exactly 9 for
-  // pow(3,2): a 1-ulp error in ln 3 is amplified by the exponential to ~4e-15
-  // on a result of 9, so it lands just under and `as i32` truncates to 8.
-  // Repeated squaring is exact wherever the result is representable, and
-  // cheaper than two transcendental calls for small |n|.
-  //
-  // Integrality is tested by an i64 round-trip rather than a compare against
-  // trunc(y), so a NaN or out-of-range y falls out as a huge |n| and the range
-  // check catches it instead of needing a parity branch.
-  s = s.write(".globl __fern_pow_f64\n");
-  s = s.write(".type __fern_pow_f64, @function\n");
-  s = s.write("__fern_pow_f64:\n");
-  s = s.write("    cvttsd2si %xmm1, %rax\n    xorps %xmm2, %xmm2\n    cvtsi2sd %rax, %xmm2\n");
-  s = s.write("    ucomisd %xmm1, %xmm2\n    jne .Lfpow_general\n");
-  // |n|, branch-free: (n ^ (n>>63)) - (n>>63). Re-entered once with a
-  // reciprocated base and a negated n; see the overflow retry below.
-  s = s.write(".Lfpow_retry:\n");
-  s = s.write("    movq %rax, %rcx\n    movq %rax, %rdx\n    sarq $63, %rdx\n");
-  s = s.write("    xorq %rdx, %rcx\n    subq %rdx, %rcx\n");
-  s = s.write("    cmpq $1074, %rcx\n    ja .Lfpow_general\n");
-  s = s.write(fc_ld("%xmm3", ".Lfc_one") + "    movapd %xmm0, %xmm4\n");
-  s = s.write(".Lfpow_loop:\n    testq $1, %rcx\n    jz .Lfpow_skip\n");
-  s = s.write("    mulsd %xmm4, %xmm3\n");
-  s = s.write(".Lfpow_skip:\n    mulsd %xmm4, %xmm4\n    shrq $1, %rcx\n    jnz .Lfpow_loop\n");
-  s = s.write("    testq %rax, %rax\n    jns .Lfpow_done\n");
-  s = s.write(fc_ld("%xmm5", ".Lfc_one") + "    divsd %xmm3, %xmm5\n");
-  // 1/acc is zero only when acc reached an infinity, so the magnitude
-  // overflowed on the way to a result that may itself be representable.
-  // Redo on 1/x; negating n makes the second pass return the accumulator
-  // directly, so the retry runs at most once and needs no flag.
-  s = s.write("    xorpd %xmm6, %xmm6\n    ucomisd %xmm6, %xmm5\n");
-  s = s.write("    jne .Lfpow_recip\n    jp .Lfpow_recip\n");
-  s = s.write(fc_ld("%xmm5", ".Lfc_one") + "    divsd %xmm0, %xmm5\n    movapd %xmm5, %xmm0\n");
-  s = s.write("    negq %rax\n    jmp .Lfpow_retry\n");
-  s = s.write(".Lfpow_recip:\n    movapd %xmm5, %xmm3\n");
-  s = s.write(".Lfpow_done:\n    movapd %xmm3, %xmm0\n    ret\n");
-  // General case: x^y = sign · exp(y·ln|x|). ln is defined only for x > 0, so
-  // a negative base is split into a sign and |x| first: for an integral y the
-  // sign is (-1)^y, and a non-integral y makes the result NaN. Every |y| >= 2^53
-  // is an even integer, which is what leaves pow(x<0, ±Inf) a magnitude rather
-  // than a NaN.
-  //
-  // The only non-leaf helper: SysV has no callee-saved xmm registers, so y and
-  // the sign multiplier are stashed on the stack across the log call, where
-  // arm64 can use callee-saved d8.
-  s = s.write(".Lfpow_general:\n    subq $16, %rsp\n    movsd %xmm1, (%rsp)\n");
-  s = s.write(fc_ld("%xmm2", ".Lfc_one") + "    movsd %xmm2, 8(%rsp)\n");  // sign of the result
-  s = s.write("    movq %xmm0, %rax\n    testq %rax, %rax\n    jns .Lfpow_mag\n");  // +0 or a positive base
-  s = s.write("    movabsq $0x7fffffffffffffff, %rcx\n    andq %rcx, %rax\n");
-  s = s.write("    movq %rax, %xmm0\n");  // |x|
-  s = s.write("    movq %xmm1, %rdx\n    andq %rcx, %rdx\n");  // |y|
-  s = s.write("    movabsq $0x4340000000000000, %rcx\n    cmpq %rcx, %rdx\n    jb .Lfpow_parity\n");
-  s = s.write("    movabsq $0x7ff0000000000000, %rcx\n    cmpq %rcx, %rdx\n    jbe .Lfpow_mag\n");  // |y| >= 2^53, finite or ±Inf: an even integer
-  s = s.write("    jmp .Lfpow_nan\n");  // y is NaN
-  s = s.write(".Lfpow_parity:\n    cvttsd2si %xmm1, %rdx\n    xorps %xmm2, %xmm2\n    cvtsi2sd %rdx, %xmm2\n");
-  s = s.write("    ucomisd %xmm1, %xmm2\n    jne .Lfpow_nan\n");  // y is not an integer
-  s = s.write("    testq $1, %rdx\n    jz .Lfpow_mag\n");  // even exponent
-  s = s.write("    movabsq $0xbff0000000000000, %rcx\n    movq %rcx, %xmm2\n    movsd %xmm2, 8(%rsp)\n");
-  // |x| == 1 is 1 for every y, including the NaN and ±Inf that exp(y·ln|x|)
-  // would turn into NaN through y·0.
-  s = s.write(".Lfpow_mag:\n    movq %xmm0, %rax\n");
-  s = s.write("    movabsq $0x3ff0000000000000, %rcx\n    cmpq %rcx, %rax\n    je .Lfpow_sign\n");
-  s = s.write("    call __fern_log_f64\n");
-  s = s.write("    movsd (%rsp), %xmm1\n    mulsd %xmm1, %xmm0\n");
-  s = s.write("    call __fern_exp_f64\n");
-  s = s.write(".Lfpow_sign:\n    mulsd 8(%rsp), %xmm0\n");
-  s = s.write("    addq $16, %rsp\n    ret\n");
-  s = s.write(".Lfpow_nan:\n    addq $16, %rsp\n" + fc_retbits("0x7ff8000000000000"));
-  s = s.write(".size __fern_pow_f64, .-__fern_pow_f64\n");
   return s;
 }
 
@@ -4971,6 +4342,11 @@ function emit_ir_runtime(s: asmcore.EmitState): asmcore.EmitState {
 // machine passes %rax and %rcx; the register path passes its own working
 // register, since %rax is a value home there.
 function ir_bin_asm(tag: i32, width: i32, d: string, r: string): string {
+  // mulq takes the left operand in %rax (ssa_bin_work) and leaves the high
+  // half in %rdx.
+  if (tag == 430) {
+    return "    mulq " + r + "\n    movq %rdx, " + d + "\n";
+  }
   if (tag == 21) {
     return "    addq " + r + ", " + d + "\n";
   }
@@ -6275,7 +5651,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     // A CALL rather than an inline body, which the fold forces: its
     // constants live in a .rodata block, and a label cannot be defined
     // once per call site. The helper is emitted once under the
-    // "crc32_cksum" need, the same shape the float transcendentals use.
+    // "crc32_cksum" need.
     //
     // The box is popped FIRST because it is the second operand: the crc
     // was pushed before it. Every other kernel in this family pops its
@@ -6452,8 +5828,12 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
 // value lives below the save area by its allocator slot (ssa_slot).
 
 // Pool index 0 is %rax, the register the ABI returns a call's result in, so a
-// call result allocated there needs no move.
+// call result allocated there needs no move. Above the integer pools, the
+// float class's %xmm3-%xmm15 (ssa_fbase).
 function ssa_reg(k: i32): string {
+  if (k >= ssa_fbase()) {
+    return "%xmm" + util.i32_to_string(3 + k - ssa_fbase());
+  }
   if (k == 0) {
     return "%rax";
   }
@@ -6493,6 +5873,37 @@ function ssa_nregs(): i32 {
 
 function ssa_nsaved(): i32 {
   return 5;
+}
+
+// The float class (ssa.float_values) is %xmm3-%xmm15, every one caller-saved
+// under the System V ABI, so an f64 live across a call is spilled. %xmm0-%xmm2
+// stay scratch, as the float arms and the conversion cores use them.
+function ssa_fbase(): i32 {
+  return ssa_nregs() + ssa_nsaved();
+}
+
+function ssa_nfregs(): i32 {
+  return 13;
+}
+
+// ssa_is_xmm reports a register name of the float class.
+function ssa_is_xmm(r: string): boolean {
+  return r.len() > 4 && r[1] == b'x' && r[2] == b'm';
+}
+
+// ssa_fhome is value v's float register, or "" when it has none.
+function ssa_fhome(reg_of: i32[], v: i32): string {
+  if (reg_of[v] >= ssa_fbase()) {
+    return ssa_reg(reg_of[v]);
+  }
+  return "";
+}
+
+// ssa_in_x reports value v homed in an integer register: what an arm that
+// names v's home in an integer instruction needs. A float home is read and
+// written through a scratch, as a slot is.
+function ssa_in_x(reg_of: i32[], v: i32): boolean {
+  return reg_of[v] >= 0 && reg_of[v] < ssa_fbase();
 }
 
 // A slot sits below the callee-saved registers' save area of `save` bytes.
@@ -6776,6 +6187,12 @@ function ssa_alu_text(ext: i32, size: i32): string {
 
 // ssa_mov_rr writes `movq src, dst`.
 function ssa_mov_rr(s: asmcore.EmitState, dst: string, src: string): asmcore.EmitState {
+  if (ssa_is_xmm(dst) && ssa_is_xmm(src)) {
+    return s.write("    movapd " + src + ", " + dst + "\n");
+  }
+  if (ssa_is_xmm(dst) || ssa_is_xmm(src)) {
+    return s.write("    movq " + src + ", " + dst + "\n");
+  }
   if (s.records()) {
     let d: i32 = ssa_xreg(dst);
     let r: i32 = ssa_xreg(src);
@@ -6789,6 +6206,12 @@ function ssa_mov_rr(s: asmcore.EmitState, dst: string, src: string): asmcore.Emi
 // ssa_mov_slot writes the load `movq disp(%rbp), reg` or the store `movq
 // reg, disp(%rbp)`.
 function ssa_mov_slot(s: asmcore.EmitState, load: boolean, reg: string, disp: i32): asmcore.EmitState {
+  if (ssa_is_xmm(reg) && load) {
+    return s.write("    movsd " + ssa_mem("%rbp", disp, false) + ", " + reg + "\n");
+  }
+  if (ssa_is_xmm(reg)) {
+    return s.write("    movsd " + reg + ", " + ssa_mem("%rbp", disp, false) + "\n");
+  }
   return ssa_mov_rm(s, 64, load, reg, "%rbp", disp);
 }
 
@@ -6999,6 +6422,9 @@ function ssa_cfi(s: asmcore.EmitState, kind: i32, reg: string, n: i32): asmcore.
 // rbp and rsp differently from their encoding; 0 for a name ssa_xreg does not
 // know, which no directive here names.
 function ssa_dwarf(reg: string): i32 {
+  if (ssa_is_xmm(reg)) {
+    return 17 + util.digits_to_i32(slice_unchecked(reg, 4, reg.len()) + "");
+  }
   let m: i32 = ssa_xreg(reg);
   if (m < 0) {
     return 0;
@@ -7199,14 +6625,14 @@ function ssa_store(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): as
 // written; the allocator frees any other operand's register only after the
 // instruction that last reads it.
 function ssa_dst(reg_of: i32[], v: i32): string {
-  if (reg_of[v] >= 0) {
+  if (ssa_in_x(reg_of, v)) {
     return ssa_reg(reg_of[v]);
   }
   return "%r11";
 }
 
 function ssa_src(reg_of: i32[], v: i32, scratch: string): string {
-  if (reg_of[v] >= 0) {
+  if (ssa_in_x(reg_of, v)) {
     return ssa_reg(reg_of[v]);
   }
   return scratch;
@@ -7215,7 +6641,7 @@ function ssa_src(reg_of: i32[], v: i32, scratch: string): string {
 // ssa_read brings a spilled operand into `scratch`, so ssa_src names where it
 // is; a register-homed operand is read from its home and needs nothing.
 function ssa_read(reg_of: i32[], v: i32, scratch: string, s: asmcore.EmitState): asmcore.EmitState {
-  if (reg_of[v] >= 0) {
+  if (ssa_in_x(reg_of, v)) {
     return s;
   }
   return ssa_load(reg_of, v, scratch, s);
@@ -7433,7 +6859,7 @@ function ssa_unary_known(what: string): boolean {
 
 // ssa_funary_known is the f64 unary vocabulary lift_float_prod produces.
 function ssa_funary_known(what: string): boolean {
-  let un: string[] = ["fsqrt", "ffloor", "fceil", "ftrunc", "fabs", "fround", "fneg", "f64_to_i32", "f64_to_i64", "f32_bits", "f32_from_bits"];
+  let un: string[] = ["fsqrt", "ffloor", "fceil", "ftrunc", "fabs", "fround", "fneg", "f64_to_i32", "f64_to_i64", "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits"];
   for x in un {
     if (x == what) {
       return true;
@@ -7599,22 +7025,9 @@ function ssa_bits_asm(what: string, d: string): string {
   return "";
 }
 
-// ssa_fmath_asm is the single-instruction f64 math on the pattern in %rax,
-// as the stack machine's arms select it; "" for any other op.
+// ssa_fmath_asm is the f64 math that works on the pattern in %rax: the sign
+// masks; "" for any other op.
 function ssa_fmath_asm(what: string, d: string): string {
-  let xmm: string = "";
-  if (what == "fsqrt") {
-    xmm = "    sqrtsd %xmm0, %xmm0\n";
-  } else if (what == "ffloor") {
-    xmm = "    roundsd $1, %xmm0, %xmm0\n";
-  } else if (what == "fceil") {
-    xmm = "    roundsd $2, %xmm0, %xmm0\n";
-  } else if (what == "ftrunc") {
-    xmm = "    roundsd $3, %xmm0, %xmm0\n";
-  }
-  if (xmm != "") {
-    return "    movq " + d + ", %xmm0\n" + xmm + "    movq %xmm0, " + d + "\n";
-  }
   if (what == "fabs") {
     return "    movabsq $0x7fffffffffffffff, %rcx\n    andq %rcx, " + d + "\n";
   }
@@ -7656,76 +7069,119 @@ function ssa_fconv_asm(what: string, unsigned: boolean, lb: string, d: string): 
   return "";
 }
 
-// ssa_fbin_asm is one f64 binary with the patterns in %rax (lhs) and %rcx
-// (rhs), the result pattern or 0/1 in %rax; "" for an integer op. The
-// compares are the stack machine's NaN-correct ucomisd forms.
-function ssa_fbin_asm(what: string, d: string): string {
-  let ld: string = "    movq " + d + ", %xmm0\n    movq %rcx, %xmm1\n";
-  let arith: string = "";
-  if (what == "fadd") {
-    arith = "addsd";
-  } else if (what == "fsub") {
-    arith = "subsd";
-  } else if (what == "fmul") {
-    arith = "mulsd";
-  } else if (what == "fdiv") {
-    arith = "divsd";
+// The float arms read an f64 operand from its float home, or from %xmm0 /
+// %xmm1 once ssa_fread has loaded it there from an integer home or a slot,
+// and write an f64 result into its float home, or into %xmm0 for ssa_fput to
+// move.
+function ssa_fsrc(reg_of: i32[], v: i32, scratch: string): string {
+  let h: string = ssa_fhome(reg_of, v);
+  if (h != "") {
+    return h;
   }
-  if (arith != "") {
-    return ld + "    " + arith + " %xmm1, %xmm0\n    movq %xmm0, " + d + "\n";
-  }
-  let cc: string = "";
-  if (what == "flt") {
-    cc = "    setb " + ssa_r8(d) + "\n    setnp %dl\n    andb %dl, " + ssa_r8(d) + "\n";
-  } else if (what == "fle") {
-    cc = "    setbe " + ssa_r8(d) + "\n    setnp %dl\n    andb %dl, " + ssa_r8(d) + "\n";
-  } else if (what == "fgt") {
-    cc = "    seta " + ssa_r8(d) + "\n";
-  } else if (what == "fge") {
-    cc = "    setae " + ssa_r8(d) + "\n";
-  } else if (what == "feq") {
-    cc = "    sete " + ssa_r8(d) + "\n    setnp %dl\n    andb %dl, " + ssa_r8(d) + "\n";
-  } else if (what == "fne") {
-    cc = "    setne " + ssa_r8(d) + "\n    setp %dl\n    orb %dl, " + ssa_r8(d) + "\n";
-  }
-  if (cc == "") {
-    return "";
-  }
-  return ld + "    ucomisd %xmm1, %xmm0\n    movq $0, " + d + "\n" + cc + "    movzbq " + ssa_r8(d) + ", " + d + "\n";
+  return scratch;
 }
 
-// ssa_fcall_sym is the runtime helper for a transcendental, "" otherwise.
-function ssa_fcall_sym(what: string): string {
-  if (what == "fsin") {
-    return "__fern_sin_f64";
+function ssa_fread(reg_of: i32[], v: i32, scratch: string, s: asmcore.EmitState): asmcore.EmitState {
+  if (ssa_fhome(reg_of, v) != "") {
+    return s;
   }
-  if (what == "fcos") {
-    return "__fern_cos_f64";
+  return ssa_load(reg_of, v, scratch, s);
+}
+
+function ssa_fput(reg_of: i32[], v: i32, d: string, s: asmcore.EmitState): asmcore.EmitState {
+  if (d == "%xmm0") {
+    return ssa_store(reg_of, v, "%xmm0", s);
   }
-  if (what == "fexp") {
-    return "__fern_exp_f64";
+  return s;
+}
+
+// ssa_fbin is one f64 binary: the arithmetic into the result's float home, a
+// compare's 0/1 into its integer one. SSE's arithmetic is two-operand, so
+// the left operand is copied to the result first, through %xmm0 when the
+// result's register holds the right operand. The compares are the stack
+// machine's NaN-correct ucomisd forms.
+function ssa_fbin(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_fread(reg_of, ins.args[0], "%xmm0", s);
+  s = ssa_fread(reg_of, ins.args[1], "%xmm1", s);
+  let a: string = ssa_fsrc(reg_of, ins.args[0], "%xmm0");
+  let b: string = ssa_fsrc(reg_of, ins.args[1], "%xmm1");
+  if (ssa.float_arith(ins.str)) {
+    let d: string = ssa_fsrc(reg_of, ins.result, "%xmm0");
+    if (d == b && d != a) {
+      d = "%xmm0";
+    }
+    if (d != a) {
+      s = ssa_mov_rr(s, d, a);
+    }
+    s = s.write("    " + ssa_sse_arith(ins.str) + " " + b + ", " + d + "\n");
+    if (d == "%xmm0" && ssa_fhome(reg_of, ins.result) != "") {
+      return ssa_mov_rr(s, ssa_fhome(reg_of, ins.result), d);
+    }
+    return ssa_fput(reg_of, ins.result, d, s);
   }
-  if (what == "flog") {
-    return "__fern_log_f64";
+  let d: string = ssa_dst(reg_of, ins.result);
+  let r8: string = ssa_r8(d);
+  let cc: string = "";
+  if (ins.str == "flt") {
+    cc = "    setb " + r8 + "\n    setnp %dl\n    andb %dl, " + r8 + "\n";
+  } else if (ins.str == "fle") {
+    cc = "    setbe " + r8 + "\n    setnp %dl\n    andb %dl, " + r8 + "\n";
+  } else if (ins.str == "fgt") {
+    cc = "    seta " + r8 + "\n";
+  } else if (ins.str == "fge") {
+    cc = "    setae " + r8 + "\n";
+  } else if (ins.str == "feq") {
+    cc = "    sete " + r8 + "\n    setnp %dl\n    andb %dl, " + r8 + "\n";
+  } else {
+    cc = "    setne " + r8 + "\n    setp %dl\n    orb %dl, " + r8 + "\n";
   }
-  if (what == "fpow") {
-    return "__fern_pow_f64";
+  s = s.write("    ucomisd " + b + ", " + a + "\n    movq $0, " + d + "\n" + cc + "    movzbq " + r8 + ", " + d + "\n");
+  return ssa_store(reg_of, ins.result, d, s);
+}
+
+function ssa_sse_arith(what: string): string {
+  if (what == "fadd") {
+    return "addsd";
+  }
+  if (what == "fsub") {
+    return "subsd";
+  }
+  if (what == "fmul") {
+    return "mulsd";
+  }
+  return "divsd";
+}
+
+// ssa_fmath_op is the one SSE instruction behind an f64 math unary, "" for
+// the ones that work on the pattern in an integer register.
+function ssa_fmath_op(what: string): string {
+  if (what == "fsqrt") {
+    return "sqrtsd";
+  }
+  if (what == "ffloor") {
+    return "roundsd $1,";
+  }
+  if (what == "fceil") {
+    return "roundsd $2,";
+  }
+  if (what == "ftrunc") {
+    return "roundsd $3,";
   }
   return "";
 }
 
-// ssa_fcall calls a transcendental helper: the operand patterns in %xmm0 (and
-// %xmm1 for fpow), the result pattern back from %xmm0.
-function ssa_fcall(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  s = ssa_x0_forget(s);
-  s = s.need("float_transcendentals");
-  s = ssa_load(reg_of, ins.args[0], "%r11", s);
-  if (ins.args.len() > 1) {
-    s = ssa_load(reg_of, ins.args[1], "%rcx", s);
-    s = s.write("    movq %rcx, %xmm1\n");
+function ssa_fmath(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_fread(reg_of, ins.args[0], "%xmm0", s);
+  let d: string = ssa_fsrc(reg_of, ins.result, "%xmm0");
+  let a: string = ssa_fsrc(reg_of, ins.args[0], "%xmm0");
+  // sqrtsd and roundsd write the low lane and keep the rest, so a destination
+  // they do not read is zeroed first rather than left to wait on its last
+  // writer (#11320).
+  if (d != a) {
+    s = s.write("    xorpd " + d + ", " + d + "\n");
   }
-  s = s.write("    movq %r11, %xmm0\n    call " + ssa_fcall_sym(ins.str) + "\n    movq %xmm0, %rax\n");
-  return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));
+  s = s.write("    " + ssa_fmath_op(ins.str) + " " + a + ", " + d + "\n");
+  return ssa_fput(reg_of, ins.result, d, s);
 }
 
 // ssa_bin_work is the register a binary computes in: %rax for the four
@@ -7733,7 +7189,7 @@ function ssa_fcall(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore
 // scratch for everything else.
 function ssa_bin_work(op: string): string {
   let tag: i32 = ir.kind_id(op);
-  if (tag == 24 || tag == 25 || tag == 26 || tag == 27) {
+  if (tag == 24 || tag == 25 || tag == 26 || tag == 27 || tag == 430) {
     return "%rax";
   }
   return "%r11";
@@ -7742,13 +7198,8 @@ function ssa_bin_work(op: string): string {
 // ssa_binary is one binary op with the operands in %rax and %rcx: for the
 // four div/rem kinds the literal-divisor forms when the divisor is a constant
 // (ir_div_const, which reads nothing but %rax) and the guarded division
-// otherwise (a per-op-unique label base), the f64 forms, ir_bin_asm for the
-// rest.
+// otherwise (a per-op-unique label base), ir_bin_asm for the rest.
 function ssa_binary(ins: ssa.SInst, fr: SsaFrame, lp: string, d: string, s: asmcore.EmitState): asmcore.EmitState {
-  let fb: string = ssa_fbin_asm(ins.str, d);
-  if (fb != "") {
-    return s.write(fb);
-  }
   let tag: i32 = ir.kind_id(ins.str);
   if (tag == 24 || tag == 25 || tag == 26 || tag == 27) {
     let b: i32 = ins.args[1];
@@ -8749,10 +8200,10 @@ function push_count_test(unique: boolean, ls: ArrPushLabs, s: asmcore.EmitState)
   return ssa_branch(ssa_test_rr(s, 32, "%rcx", "%rcx"), J_JNS, ls.slow);
 }
 
-// ssa_is_rt_call is a kind-50 call that ssa_rt_call emits: neither a
-// transcendental nor a host call, which stage their own arguments.
+// ssa_is_rt_call is a kind-50 call that ssa_rt_call emits: not a host call,
+// which stages its own arguments.
 function ssa_is_rt_call(ins: ssa.SInst): boolean {
-  return ins.kind_tag == 50 && ssa_fcall_sym(ins.str) == "" && !ssa_host_kind(ins.str);
+  return ins.kind_tag == 50 && !ssa_host_kind(ins.str);
 }
 
 // ssa_rt_arg_reg is the allocator index of argument `a`'s register.
@@ -9025,9 +8476,6 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
   if (k == 49) {
     return ssa_str_call(ins, reg_of, s);
   }
-  if (k == 50 && ssa_fcall_sym(ins.str) != "") {
-    return ssa_fcall(ins, reg_of, s);
-  }
   if (k == 50 && ssa_host_kind(ins.str)) {
     return ssa_host_call(ins, reg_of, fr.imm, s);
   }
@@ -9051,6 +8499,12 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
   }
   if ((k == 1 || k == 3) && fr.imm.is_imm[ins.result]) {
     return s;
+  }
+  if (k == 9 && (ssa.float_arith(ins.str) || ssa.float_cmp(ins.str))) {
+    return ssa_fbin(ins, reg_of, s);
+  }
+  if (k == 10 && ssa_fmath_op(ins.str) != "") {
+    return ssa_fmath(ins, reg_of, s);
   }
   let d: string = ssa_dst(reg_of, ins.result);
   if (k == 1) {
@@ -9082,7 +8536,7 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], lp: string, fr: SsaFrame, r: ir
     s = ssa_binary(ins, fr, lp, d, s);
   } else {
     let src: string = "";
-    if (reg_of[ins.args[0]] >= 0 && ssa_reg(reg_of[ins.args[0]]) != d) {
+    if (ssa_in_x(reg_of, ins.args[0]) && ssa_reg(reg_of[ins.args[0]]) != d) {
       src = ssa_reg(reg_of[ins.args[0]]);
     }
     let from: string = "";
@@ -9146,6 +8600,10 @@ function ssa_phi_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, suc
 // ssa_imm_to loads an immediate into a location: a register, or a frame slot,
 // which takes a sign-extended 32-bit immediate directly.
 function ssa_imm_to(c: i64, loc: i32, s: asmcore.EmitState): asmcore.EmitState {
+  if (loc >= ssa_fbase()) {
+    s = ssa_const_reg(util.i64_to_string(c), false, "%rcx", s);
+    return ssa_mov_rr(s, ssa_reg(loc), "%rcx");
+  }
   if (loc >= 0) {
     return ssa_const_reg(util.i64_to_string(c), false, ssa_reg(loc), s);
   }
@@ -9558,7 +9016,7 @@ function emit_ssa_allocated_x86(prepared: ssaprepare.Body, label_name: string, e
   let formed: ssa.Formed = prepared.formed;
   let f: ssa.SFunc = formed.f;
   let imm: ssa.Imms = ssa.imm_operands(f, 0i64 - 2147483648i64, 2147483647i64, ssa_imm_right(), ssa_imm_left());
-  let alloc: ssa.Alloc = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, ssa_arg_prefs(f, s));
+  let alloc: ssa.Alloc = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, true, imm.is_imm, ssa_arg_prefs(f, s), ssa.float_values(f, [], false), ssa_nfregs(), 0);
   let reg_of: i32[] = alloc.reg_of;
   let lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
   s = ssa_cfi(s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n"), 1, "", 0);
@@ -11547,13 +11005,6 @@ function emit_entry_runtime(s: asmcore.EmitState): asmcore.EmitState {
   // so its emit-time need pulls the runtime in too (its body calls __fern_alloc).
   if (needs_heap_runtime(s)) {
     s = emit_ir_runtime(s);
-  }
-  // The f64 transcendental bundle (sin/cos/exp/log/pow). Deliberately NOT
-  // inside the heap gate above: a program that only does float maths
-  // allocates nothing, and would otherwise `call __fern_sin_f64` with no
-  // definition anywhere in the link.
-  if (s.has_need("float_transcendentals")) {
-    s = emit_rt_float_transcendentals(s);
   }
   // The CRC fold. Its own gate rather than the heap one: a program that
   // hashes a borrowed string allocates nothing, and would otherwise

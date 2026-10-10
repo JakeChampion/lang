@@ -5152,6 +5152,12 @@ function call_func(name: string, args: Value[], funcs: parser.FuncDecl[], aliase
   if (is_buf_builtin(name)) {
     return call_buf_builtin(name, args);
   }
+  if (name == "__mulhi_u64") {
+    if (args.len() != 2 || !is_int_like(args[0]) || !is_int_like(args[1])) {
+      return v_err(name + ": expected 2 integer args");
+    }
+    return v_int64(interp_mulhi(vint_as_i64(args[0]) as u64, vint_as_i64(args[1]) as u64) as i64);
+  }
   if (name == "__clz32" || name == "__ctz32" || name == "__popcount32" || name == "__clz64" || name == "__ctz64" || name == "__popcount64") {
     if (args.len() != 1) {
       return v_err(name + ": expected 1 arg");
@@ -7891,4 +7897,18 @@ function check_numeric_widths(): i32 {
   }
 
   return 0;
+}
+
+// interp_mulhi is the high 64 bits of the unsigned 128-bit product, in four
+// 32x32 partial products: written out rather than through __mulhi_u64, which
+// a compiler older than the builtin cannot compile.
+function interp_mulhi(a: u64, b: u64): u64 {
+  let m: u64 = 4294967295 as u64;
+  let sh: u64 = 32 as u64;
+  let al: u64 = a & m;
+  let ah: u64 = a >> sh;
+  let bl: u64 = b & m;
+  let bh: u64 = b >> sh;
+  let mid: u64 = ah * bl + (al * bl >> sh);
+  return ah * bh + (mid >> sh) + ((mid & m) + al * bh >> sh);
 }

@@ -1000,8 +1000,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     //
     // A CALL rather than an inline body: the fold is ~150 instructions
     // and wants one definition, not one per call site. The helper is
-    // emitted once under the "crc32_cksum" need, the shape the float
-    // transcendentals already use.
+    // emitted once under the "crc32_cksum" need.
     //
     // The box is popped FIRST because it is the second operand: the crc
     // was pushed before it. Every other kernel in this family pops its
@@ -1198,8 +1197,12 @@ function movn_text_ok(text: string): boolean {
 // call result allocated there needs no move at all. The arms that are calls
 // may write it, since the allocator never leaves a caller-saved value live
 // across one.
-// x0 and x9-x15 are the caller-saved registers, x19-x28 the callee-saved.
+// x0 and x9-x15 are the caller-saved registers, x19-x28 the callee-saved;
+// above them the float class's d16-d31, then its callee-saved d8-d15.
 function ssa_reg(k: i32): string {
+  if (k >= ssa_fbase()) {
+    return ssa_freg(k);
+  }
   if (k == 0) {
     return "x0";
   }
@@ -1262,12 +1265,75 @@ function ssa_nsaved(): i32 {
   return 10;
 }
 
+// The float class (ssa.float_values): d16-d31 caller-saved, numbered from
+// ssa_fbase(), then d8-d15, whose low halves AAPCS64 has the callee save.
+// d0-d7 stay scratch, as the float arms and the runtime's helpers use them.
+function ssa_fbase(): i32 {
+  return ssa_nregs() + ssa_nsaved();
+}
+
+function ssa_nfregs(): i32 {
+  return 16;
+}
+
+function ssa_nfsaved(): i32 {
+  return 8;
+}
+
+function ssa_freg(k: i32): string {
+  let i: i32 = k - ssa_fbase();
+  if (i < ssa_nfregs()) {
+    return "d" + util.i32_to_string(16 + i);
+  }
+  if (i < ssa_nfregs() + ssa_nfsaved()) {
+    return "d" + util.i32_to_string(8 + i - ssa_nfregs());
+  }
+  return "d" + util.i32_to_string(i - ssa_nfregs() - ssa_nfsaved());
+}
+
+// ssa_farg is the location of d0-d7, which the register ABI passes an f64
+// parameter in (asmcore.FloatAbi); no value is ever homed there.
+function ssa_farg(p: i32): i32 {
+  return ssa_fbase() + ssa_nfregs() + ssa_nfsaved() + p;
+}
+
+// ssa_arg_loc is where the register ABI passes parameter p of a function of
+// shape `mask`: x<p>, or d<p> for an f64.
+function ssa_arg_loc(mask: string, p: i32): i32 {
+  if (asmcore.float_param(mask, p)) {
+    return ssa_farg(p);
+  }
+  return p;
+}
+
+// ssa_is_d reports a register name of the float class.
+function ssa_is_d(r: string): boolean {
+  return r.len() > 1 && r[0] == b'd';
+}
+
+// ssa_fhome is value v's float register, or "" when it has none.
+function ssa_fhome(reg_of: i32[], v: i32): string {
+  if (reg_of[v] >= ssa_fbase()) {
+    return ssa_freg(reg_of[v]);
+  }
+  return "";
+}
+
 // ssa_saved_regs is the callee-saved registers a function's allocation uses,
 // lowest first; ssa_save_bytes their save area, a 16-byte pair per two.
 function ssa_saved_regs(reg_of: i32[]): i32[] {
+  let used: i32[] = ssa_used_in(reg_of, ssa_nregs(), ssa_nregs() + ssa_nsaved());
+  let fs: i32 = ssa_fbase() + ssa_nfregs();
+  for k in ssa_used_in(reg_of, fs, fs + ssa_nfsaved()) {
+    used = used.append(k);
+  }
+  return used;
+}
+
+function ssa_used_in(reg_of: i32[], from: i32, to: i32): i32[] {
   let used: i32[] = [];
-  let k: i32 = ssa_nregs();
-  while (k < ssa_nregs() + ssa_nsaved()) {
+  let k: i32 = from;
+  while (k < to) {
     let found: boolean = false;
     for h in reg_of {
       if (h == k) {
@@ -1282,22 +1348,53 @@ function ssa_saved_regs(reg_of: i32[]): i32[] {
   return used;
 }
 
+// A pair never mixes the classes, so each class's odd register out takes a
+// 16-byte slot of its own.
 function ssa_save_bytes(saved: i32[]): i32 {
-  return (saved.len() + 1) / 2 * 16;
+  let nf: i32 = ssa_count_f(saved);
+  return (saved.len() - nf + 1) / 2 * 16 + nf * 16;
+}
+
+function ssa_count_f(saved: i32[]): i32 {
+  let n: i32 = 0;
+  for k in saved {
+    if (k >= ssa_fbase()) {
+      n = n + 1;
+    }
+  }
+  return n;
+}
+
+// ssa_save_runs splits the saved registers into the runs that pair: the
+// integer ones, then the float ones.
+function ssa_save_runs(saved: i32[]): i32[][] {
+  let ints: i32[] = [];
+  let fls: i32[] = [];
+  for k in saved {
+    if (k >= ssa_fbase()) {
+      fls = fls.append(k);
+    } else {
+      ints = ints.append(k);
+    }
+  }
+  return [ints, fls];
 }
 
 // ssa_save pushes the saved registers in pairs below the frame record;
-// ssa_emit_epilogue restores them in the reverse order after cutting sp back
+// ssa_emit_unwind restores them in the reverse order after cutting sp back
 // to the save area, then the frame record, and returns as the stack machine
 // does.
 function ssa_save(saved: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  let i: i32 = 0;
-  while (i + 1 < saved.len()) {
-    s = ssa_pair(s, false, 3, ssa_reg(saved[i]), ssa_reg(saved[i + 1]), 0 - 16);
-    i = i + 2;
-  }
-  if (i < saved.len()) {
-    s = ssa_ldst_wb(s, false, true, ssa_reg(saved[i]), 0 - 16);
+  for run in ssa_save_runs(saved) {
+    let i: i32 = 0;
+    while (i + 1 < run.len() && run[i] < ssa_fbase()) {
+      s = ssa_pair(s, false, 3, ssa_reg(run[i]), ssa_reg(run[i + 1]), 0 - 16);
+      i = i + 2;
+    }
+    while (i < run.len()) {
+      s = ssa_ldst_wb(s, false, true, ssa_reg(run[i]), 0 - 16);
+      i = i + 1;
+    }
   }
   return s;
 }
@@ -1343,29 +1440,175 @@ function ssa_dwarf(reg: string): i32 {
   if (reg.len() < 2) {
     return 0;
   }
-  return util.digits_to_i32(slice_unchecked(reg, 1, reg.len()) + "");
+  let n: i32 = util.digits_to_i32(slice_unchecked(reg, 1, reg.len()) + "");
+  if (ssa_is_d(reg)) {
+    return 64 + n;
+  }
+  return n;
 }
 
-function ssa_emit_epilogue(saved: i32[], s: asmcore.EmitState): asmcore.EmitState {
+// ssa_emit_unwind takes down the frame and leaves through `tail`: a tail
+// call's branch to its callee, or `ret` when it is "".
+function ssa_emit_unwind(saved: i32[], s: asmcore.EmitState, tail: string): asmcore.EmitState {
   s = ssa_cfi(s, 7, "", 0);
   if (saved.len() == 0) {
     s = ssa_mov_rr(s, "sp", "x29");
   } else {
     s = ssa_addsub_imm(s, true, "sp", "x29", ssa_save_bytes(saved));
-    let i: i32 = saved.len();
-    if (i % 2 == 1) {
-      i = i - 1;
-      s = ssa_ldst_wb(s, true, false, ssa_reg(saved[i]), 16);
-    }
-    while (i >= 2) {
-      i = i - 2;
-      s = ssa_pair(s, true, 1, ssa_reg(saved[i]), ssa_reg(saved[i + 1]), 16);
+    let runs: i32[][] = ssa_save_runs(saved);
+    let ri: i32 = runs.len();
+    while (ri > 0) {
+      ri = ri - 1;
+      let run: i32[] = runs[ri];
+      let i: i32 = run.len();
+      while (i > 0 && run[0] >= ssa_fbase()) {
+        i = i - 1;
+        s = ssa_ldst_wb(s, true, false, ssa_reg(run[i]), 16);
+      }
+      if (i % 2 == 1) {
+        i = i - 1;
+        s = ssa_ldst_wb(s, true, false, ssa_reg(run[i]), 16);
+      }
+      while (i >= 2) {
+        i = i - 2;
+        s = ssa_pair(s, true, 1, ssa_reg(run[i]), ssa_reg(run[i + 1]), 16);
+      }
     }
   }
   s = ssa_pair(s, true, 1, "x29", "x30", 16);
   s = ssa_cfi(s, 5, "sp", 0);
-  s = ssa_ret(s);
+  if (tail == "") {
+    s = ssa_ret(s);
+  } else {
+    s = ssa_b_sym(s, tail);
+  }
   return ssa_cfi(s, 8, "", 0);
+}
+
+// ssa_exit leaves the function through `tail` (ssa_emit_unwind). A function
+// emitted without a frame yet (fr.leaf) writes a mark in the exit's place,
+// which ssa_resolve_exits turns into the exit once the body says whether it
+// needs one.
+function ssa_exit(fr: SsaFrame, s: asmcore.EmitState, tail: string): asmcore.EmitState {
+  if (fr.leaf) {
+    return s.write(ssa_exit_mark() + tail + "\n");
+  }
+  return ssa_emit_unwind(fr.saved, s, tail);
+}
+
+function ssa_exit_mark(): string {
+  return "    .ssa_exit ";
+}
+
+// ssa_needs_frame reports a buffered body with an instruction that calls or
+// names sp or the frame record's registers. One with none of these runs with
+// no frame: it has no slots and saves nothing, and returns through x30 as it
+// arrived.
+function ssa_needs_frame(text: string): boolean {
+  let start: i32 = 0;
+  while (start < text.len()) {
+    let end: i32 = start;
+    while (end < text.len() && text[end] != 10) {
+      end = end + 1;
+    }
+    let line: string = slice_unchecked(text, start, end) + "";
+    if (util.str_has_prefix(line, "    ") && !util.str_has_prefix(line, ssa_exit_mark()) && ssa_line_needs_frame(line)) {
+      return true;
+    }
+    start = end + 1;
+  }
+  return false;
+}
+
+// One instruction's tokens, split at the separators an operand list uses.
+function ssa_line_needs_frame(line: string): boolean {
+  let from: i32 = 0;
+  let i: i32 = 0;
+  while (i <= line.len()) {
+    if (i == line.len() || ssa_operand_sep(line[i])) {
+      let tok: string = slice_unchecked(line, from, i) + "";
+      if (tok == "bl" || tok == "blr" || tok == "sp" || tok == "wsp" || tok == "x29" || tok == "x30" || tok == "w29" || tok == "w30") {
+        return true;
+      }
+      from = i + 1;
+    }
+    i = i + 1;
+  }
+  return false;
+}
+
+function ssa_operand_sep(c: u8): boolean {
+  return c == b' ' || c == b',' || c == b'[' || c == b']' || c == b'!' || c == b'\t';
+}
+
+// ssa_resolve_exits replaces each exit mark of a buffered body: a frameless
+// one returns or branches straight to its tail callee, and an array bounds
+// trap goes through __fern_oob_abort_leaf, which gives the backtrace the frame
+// this function did not make; a framed one takes the frame down first.
+function ssa_resolve_exits(text: string, framed: boolean, saved: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let start: i32 = 0;
+  while (start < text.len()) {
+    let end: i32 = start;
+    while (end < text.len() && text[end] != 10) {
+      end = end + 1;
+    }
+    let line: string = slice_unchecked(text, start, end) + "";
+    if (util.str_has_prefix(line, ssa_exit_mark())) {
+      let tail: string = slice_unchecked(line, ssa_exit_mark().len(), line.len()) + "";
+      if (framed) {
+        s = ssa_emit_unwind(saved, s, tail);
+      } else if (tail == "") {
+        s = s.write("    ret\n");
+      } else {
+        s = s.write("    b " + tail + "\n");
+      }
+    } else if (!framed && line == "    b __fern_oob_abort") {
+      s = s.write("    b __fern_oob_abort_leaf\n");
+    } else {
+      s = s.write(line + "\n");
+    }
+    start = end + 1;
+  }
+  return s;
+}
+
+// ssa_tail_call reports the call `ins` at the end of `blk` that it returns
+// as it is, through a register entry: the function can leave through a
+// branch to it, which returns to this function's caller. A `-g` build keeps
+// every frame, so it takes none.
+function ssa_tail_call(blk: ssa.SBlock, ins: ssa.SInst, s: asmcore.EmitState, tails: boolean): boolean {
+  return tails && blk.insts.len() > 0 && ssa.returns_call(blk, blk.insts.len() - 1) && blk.insts[blk.insts.len() - 1].result == ins.result && ssa_reg_call(ins, s);
+}
+
+// ssa_calls_besides_tails reports a call in `f` that is not a tail call.
+function ssa_calls_besides_tails(f: ssa.SFunc, s: asmcore.EmitState, tails: boolean): boolean {
+  for blk in f.blocks {
+    let k: i32 = 0;
+    while (k < blk.insts.len()) {
+      let ins: ssa.SInst = blk.insts[k];
+      if (ssa.calls(ins) && !(k == blk.insts.len() - 1 && ssa_tail_call(blk, ins, s, tails))) {
+        return true;
+      }
+      k = k + 1;
+    }
+  }
+  return false;
+}
+
+// ssa_emit_tail_call moves a tail call's arguments into the register entry's
+// registers and leaves through a branch to it.
+function ssa_emit_tail_call(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcore.EmitState): asmcore.EmitState {
+  let mask: string = s.float_mask(asmcore.sanitize_label(ins.str));
+  let srcs: i32[] = [];
+  let dsts: i32[] = [];
+  let a: i32 = 0;
+  while (a < ins.args.len()) {
+    srcs = srcs.append(reg_of[ins.args[a]]);
+    dsts = dsts.append(ssa_arg_loc(mask, a));
+    a = a + 1;
+  }
+  s = ssa_parallel_moves(srcs, dsts, ssa_x0_forget(s));
+  return ssa_exit(fr, s, "__fn_" + asmcore.sanitize_label(ins.str) + ".r");
 }
 
 // ssa_pair writes `stp|ldp a, b, [sp, #off]!` (mode 3) or `[sp], #off`
@@ -1635,6 +1878,9 @@ function ssa_store(reg_of: i32[], v: i32, reg: string, s: asmcore.EmitState): as
 
 // ssa_mov_rr copies register `src` into `dst`.
 function ssa_mov_rr(s: asmcore.EmitState, dst: string, src: string): asmcore.EmitState {
+  if (ssa_is_d(dst) || ssa_is_d(src)) {
+    return s.write("    fmov " + dst + ", " + src + "\n");
+  }
   if (s.records()) {
     let w: i64 = arm64_native.arm64_rec_mov(dst, src);
     if (w >= 0) {
@@ -1712,6 +1958,14 @@ function ssa_cmp_floor(s: asmcore.EmitState, n: string): asmcore.EmitState {
 }
 
 // ssa_bl_sym calls a function symbol, which keeps its name.
+// ssa_b_sym branches to a function symbol, which keeps its name.
+function ssa_b_sym(s: asmcore.EmitState, name: string): asmcore.EmitState {
+  if (s.records() && arm64_native.arm64_rec_label(name)) {
+    return s.branch(arm64_native.arm64_rec_b(false), name);
+  }
+  return s.write("    b " + name + "\n");
+}
+
 function ssa_bl_sym(s: asmcore.EmitState, name: string): asmcore.EmitState {
   if (s.records() && arm64_native.arm64_rec_label(name)) {
     return s.branch(arm64_native.arm64_rec_b(true), name);
@@ -1787,23 +2041,30 @@ function ssa_x0_forget(s: asmcore.EmitState): asmcore.EmitState {
 // written; the allocator frees any other operand's register only after the
 // instruction that last reads it.
 function ssa_dst(reg_of: i32[], v: i32): string {
-  if (reg_of[v] >= 0) {
+  if (ssa_in_x(reg_of, v)) {
     return ssa_reg(reg_of[v]);
   }
   return "x4";
 }
 
 function ssa_src(reg_of: i32[], v: i32, scratch: string): string {
-  if (reg_of[v] >= 0) {
+  if (ssa_in_x(reg_of, v)) {
     return ssa_reg(reg_of[v]);
   }
   return scratch;
 }
 
+// ssa_in_x reports value v homed in an integer register: what an arm that
+// names v's home in an integer instruction needs. A float home is read and
+// written through a scratch, as a slot is.
+function ssa_in_x(reg_of: i32[], v: i32): boolean {
+  return reg_of[v] >= 0 && reg_of[v] < ssa_fbase();
+}
+
 // ssa_read brings a spilled operand into `scratch`, so ssa_src names where it
 // is; a register-homed operand is read from its home and needs nothing.
 function ssa_read(reg_of: i32[], v: i32, scratch: string, s: asmcore.EmitState): asmcore.EmitState {
-  if (reg_of[v] >= 0) {
+  if (ssa_in_x(reg_of, v)) {
     return s;
   }
   return ssa_load(reg_of, v, scratch, s);
@@ -1813,12 +2074,13 @@ function ssa_read(reg_of: i32[], v: i32, scratch: string, s: asmcore.EmitState):
 // home straight from the operands' homes; division, remainder and the shifts
 // keep the scratch path for their extra instructions.
 function ssa_direct_bin(tag: i32): boolean {
-  return tag == 21 || tag == 22 || tag == 23 || tag == 28 || tag == 29 || tag == 30 || ircore.is_int_cmp_kind(tag);
+  return tag == 21 || tag == 22 || tag == 23 || tag == 28 || tag == 29 || tag == 30 || tag == 430 || ircore.is_int_cmp_kind(tag);
 }
 
-// A shift computes in the destination too, but only with the count known: the
-// variable-count form masks the count in place, which would write an operand's
-// home.
+// A shift computes in the destination too when the count is known, or at 64
+// bits, where the instruction's own mod-64 count is the operator's masking; a
+// narrower variable-count form masks the count in place, which would write an
+// operand's home.
 function ssa_shift_tag(tag: i32): boolean {
   return tag == 31 || tag == 32 || tag == 33;
 }
@@ -1843,6 +2105,20 @@ function ssa_bin3_asm(tag: i32, d: string, a: string, b: string): string {
   }
   if (tag == 30) {
     return "    eor " + d + ", " + a + ", " + b + "\n";
+  }
+  if (tag == 430) {
+    return "    umulh " + d + ", " + a + ", " + b + "\n";
+  }
+  // A 64-bit shift by a register: the instruction takes the count mod 64,
+  // which is the operator's own masking.
+  if (tag == 31) {
+    return "    lsl " + d + ", " + a + ", " + b + "\n";
+  }
+  if (tag == 32) {
+    return "    asr " + d + ", " + a + ", " + b + "\n";
+  }
+  if (tag == 33) {
+    return "    lsr " + d + ", " + a + ", " + b + "\n";
   }
   return "    cmp " + a + ", " + b + "\n    cset " + d + ", " + ir_cmp_cond(tag, true) + "\n";
 }
@@ -1892,7 +2168,7 @@ function ssa_bin_in_place(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, s: asmcor
   let dh: string = ssa_dst(reg_of, ins.result);
   s = ssa_read(reg_of, a, "x4", s);
   s = ssa_read_rhs(fr, reg_of, b, "x5", s);
-  if (ssa_shift_tag(tag)) {
+  if (ssa_shift_tag(tag) && fr.imm.is_imm[b]) {
     s = s.write(shift_imm_asm(tag, ins.imm, fr.imm.value[b], dh, ssa_src(reg_of, a, "x4")));
     return ssa_store(reg_of, ins.result, dh, s);
   }
@@ -1971,7 +2247,7 @@ function ssa_unary_known(what: string): boolean {
 
 // ssa_funary_known is the f64 unary vocabulary lift_float_prod produces.
 function ssa_funary_known(what: string): boolean {
-  let un: string[] = ["fsqrt", "ffloor", "fceil", "ftrunc", "fabs", "fround", "fneg", "f64_to_i32", "f64_to_i64", "f32_bits", "f32_from_bits"];
+  let un: string[] = ["fsqrt", "ffloor", "fceil", "ftrunc", "fabs", "fround", "fneg", "f64_to_i32", "f64_to_i64", "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits"];
   for x in un {
     if (x == what) {
       return true;
@@ -2034,10 +2310,7 @@ function ssa_has_phis(f: ssa.SFunc, fr: SsaFrame, id: i32): boolean {
 // moves nothing there either.
 function ssa_unary_asm(what: string, unsigned: boolean, d: string): string {
   let w: string = ssa_wreg(d);
-  let f: string = ssa_fmath_asm(what, d);
-  if (f == "") {
-    f = ssa_fconv_asm(what, unsigned, d);
-  }
+  let f: string = ssa_fconv_asm(what, d);
   if (f == "") {
     f = ssa_bits_asm(what, d);
   }
@@ -2160,60 +2433,9 @@ function ssa_bits_asm(what: string, d: string): string {
   return "";
 }
 
-// ssa_fmath_asm is the single-instruction f64 math on the pattern in `d`, as
-// the stack machine's arms select it; "" for any other op.
-function ssa_fmath_asm(what: string, d: string): string {
-  let op: string = "";
-  if (what == "fsqrt") {
-    op = "fsqrt";
-  } else if (what == "ffloor") {
-    op = "frintm";
-  } else if (what == "fceil") {
-    op = "frintp";
-  } else if (what == "ftrunc") {
-    op = "frintz";
-  } else if (what == "fround") {
-    op = "frinta";
-  } else if (what == "fneg") {
-    op = "fneg";
-  } else if (what == "fabs") {
-    op = "fabs";
-  }
-  if (op == "") {
-    return "";
-  }
-  return "    fmov d0, " + d + "\n    " + op + " d0, d0\n    fmov " + d + ", d0\n";
-}
-
-// ssa_fconv_asm is the f64 conversions and reinterprets on `d`: the saturating
-// fcvtz forms and the width-selected scvtf/ucvtf, as the stack machine's arms
-// select them; "" for any other op.
-function ssa_fconv_asm(what: string, unsigned: boolean, d: string): string {
+// ssa_fconv_asm is the f64 to f32 round trips on `d`; "" for any other op.
+function ssa_fconv_asm(what: string, d: string): string {
   let w: string = ssa_wreg(d);
-  if (what == "i32_to_f64:64") {
-    if (unsigned) {
-      return "    ucvtf d0, " + d + "\n    fmov " + d + ", d0\n";
-    }
-    return "    scvtf d0, " + d + "\n    fmov " + d + ", d0\n";
-  }
-  if (what == "i32_to_f64:32") {
-    if (unsigned) {
-      return "    ucvtf d0, " + w + "\n    fmov " + d + ", d0\n";
-    }
-    return "    scvtf d0, " + d + "\n    fmov " + d + ", d0\n";
-  }
-  if (what == "f64_to_i32") {
-    if (unsigned) {
-      return "    fmov d0, " + d + "\n    fcvtzu " + w + ", d0\n";
-    }
-    return "    fmov d0, " + d + "\n    fcvtzs " + w + ", d0\n    sxtw " + d + ", " + w + "\n";
-  }
-  if (what == "f64_to_i64") {
-    if (unsigned) {
-      return "    fmov d0, " + d + "\n    fcvtzu " + d + ", d0\n";
-    }
-    return "    fmov d0, " + d + "\n    fcvtzs " + d + ", d0\n";
-  }
   if (what == "f32_bits") {
     return "    fmov d0, " + d + "\n    fcvt s0, d0\n    fmov " + w + ", s0\n    sxtw " + d + ", " + w + "\n";
   }
@@ -2223,75 +2445,144 @@ function ssa_fconv_asm(what: string, unsigned: boolean, d: string): string {
   return "";
 }
 
-// ssa_fbin_asm is one f64 binary with the patterns in x0 (lhs) and x1 (rhs),
-// the result pattern or 0/1 in x0; "" for an integer op. fcmp's condition
-// codes are NaN-aware, as the stack machine's compare arm relies on.
-function ssa_fbin_asm(what: string): string {
-  let ld: string = "    fmov d0, x4\n    fmov d1, x5\n";
-  let arith: string = "";
-  if (what == "fadd") {
-    arith = "fadd";
-  } else if (what == "fsub") {
-    arith = "fsub";
-  } else if (what == "fmul") {
-    arith = "fmul";
-  } else if (what == "fdiv") {
-    arith = "fdiv";
+// The float arms read an f64 operand from its float home, or from d0 / d1
+// once ssa_fread has loaded it there from an integer home or a slot, and
+// write an f64 result into its float home, or into d0 for ssa_fput to move.
+function ssa_fsrc(reg_of: i32[], v: i32, scratch: string): string {
+  let h: string = ssa_fhome(reg_of, v);
+  if (h != "") {
+    return h;
   }
-  if (arith != "") {
-    return ld + "    " + arith + " d0, d0, d1\n    fmov x4, d0\n";
-  }
-  let cc: string = "";
-  if (what == "flt") {
-    cc = "mi";
-  } else if (what == "fle") {
-    cc = "ls";
-  } else if (what == "fgt") {
-    cc = "gt";
-  } else if (what == "fge") {
-    cc = "ge";
-  } else if (what == "feq") {
-    cc = "eq";
-  } else if (what == "fne") {
-    cc = "ne";
-  }
-  if (cc == "") {
-    return "";
-  }
-  return ld + "    fcmp d0, d1\n    cset w4, " + cc + "\n";
+  return scratch;
 }
 
-// ssa_fcall_sym is the runtime helper for a transcendental, "" otherwise.
-function ssa_fcall_sym(what: string): string {
-  if (what == "fsin") {
-    return "__fern_sin_f64";
+function ssa_fread(reg_of: i32[], v: i32, scratch: string, s: asmcore.EmitState): asmcore.EmitState {
+  if (ssa_fhome(reg_of, v) != "") {
+    return s;
   }
-  if (what == "fcos") {
-    return "__fern_cos_f64";
+  return ssa_load(reg_of, v, scratch, s);
+}
+
+function ssa_fdst(reg_of: i32[], v: i32): string {
+  return ssa_fsrc(reg_of, v, "d0");
+}
+
+function ssa_fput(reg_of: i32[], v: i32, d: string, s: asmcore.EmitState): asmcore.EmitState {
+  if (d == "d0") {
+    return ssa_store(reg_of, v, "d0", s);
   }
-  if (what == "fexp") {
-    return "__fern_exp_f64";
+  return s;
+}
+
+// ssa_fbin is one f64 binary: the arithmetic into the result's float home,
+// a compare's 0/1 into its integer one. fcmp's condition codes are NaN-aware,
+// as the stack machine's compare arm relies on.
+function ssa_fbin(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_fread(reg_of, ins.args[0], "d0", s);
+  s = ssa_fread(reg_of, ins.args[1], "d1", s);
+  let a: string = ssa_fsrc(reg_of, ins.args[0], "d0");
+  let b: string = ssa_fsrc(reg_of, ins.args[1], "d1");
+  if (ssa.float_arith(ins.str)) {
+    let d: string = ssa_fdst(reg_of, ins.result);
+    s = s.write("    " + ins.str + " " + d + ", " + a + ", " + b + "\n");
+    return ssa_fput(reg_of, ins.result, d, s);
   }
-  if (what == "flog") {
-    return "__fern_log_f64";
+  let d: string = ssa_dst(reg_of, ins.result);
+  s = s.write("    fcmp " + a + ", " + b + "\n    cset " + ssa_wreg(d) + ", " + ssa_fcc(ins.str) + "\n");
+  return ssa_store(reg_of, ins.result, d, s);
+}
+
+// ssa_fcc is a float compare's condition code: the ordered forms, so a NaN
+// operand answers false to all but fne.
+function ssa_fcc(what: string): string {
+  if (what == "flt") {
+    return "mi";
   }
-  if (what == "fpow") {
-    return "__fern_pow_f64";
+  if (what == "fle") {
+    return "ls";
+  }
+  if (what == "fgt") {
+    return "gt";
+  }
+  if (what == "fge") {
+    return "ge";
+  }
+  if (what == "feq") {
+    return "eq";
+  }
+  return "ne";
+}
+
+// ssa_fmath_op is the one instruction behind an f64 math unary, "" otherwise.
+function ssa_fmath_op(what: string): string {
+  if (what == "fsqrt") {
+    return "fsqrt";
+  }
+  if (what == "ffloor") {
+    return "frintm";
+  }
+  if (what == "fceil") {
+    return "frintp";
+  }
+  if (what == "ftrunc") {
+    return "frintz";
+  }
+  if (what == "fround") {
+    return "frinta";
+  }
+  if (what == "fneg") {
+    return "fneg";
+  }
+  if (what == "fabs") {
+    return "fabs";
   }
   return "";
 }
 
-// ssa_fcall calls a transcendental helper: the operand patterns in d0 (and d1
-// for fpow), the result pattern back from d0.
-function ssa_fcall(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
-  s = ssa_x0_forget(s);
-  s = s.need("float_transcendentals");
-  s = ssa_load_abi_args(reg_of, ins.args, ["x0", "x1"], s);
-  if (ins.args.len() > 1) {
-    s = s.write("    fmov d1, x1\n");
+// ssa_funary is an f64 math unary or a conversion between f64 and an
+// integer: the saturating fcvtz forms and the width-selected scvtf/ucvtf.
+function ssa_funary(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let what: string = ins.str;
+  let unsigned: boolean = ins.imm == 1;
+  let v: i32 = ins.args[0];
+  if (ssa_fmath_op(what) != "") {
+    s = ssa_fread(reg_of, v, "d0", s);
+    let d: string = ssa_fdst(reg_of, ins.result);
+    s = s.write("    " + ssa_fmath_op(what) + " " + d + ", " + ssa_fsrc(reg_of, v, "d0") + "\n");
+    return ssa_fput(reg_of, ins.result, d, s);
   }
-  s = s.write("    fmov d0, x0\n    bl " + ssa_fcall_sym(ins.str) + "\n    fmov x0, d0\n");
-  return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
+  if (what == "i32_to_f64:64" || what == "i32_to_f64:32") {
+    s = ssa_read(reg_of, v, "x4", s);
+    let src: string = ssa_src(reg_of, v, "x4");
+    let op: string = "scvtf";
+    if (unsigned) {
+      op = "ucvtf";
+      if (what == "i32_to_f64:32") {
+        src = ssa_wreg(src);
+      }
+    }
+    let d: string = ssa_fdst(reg_of, ins.result);
+    s = s.write("    " + op + " " + d + ", " + src + "\n");
+    return ssa_fput(reg_of, ins.result, d, s);
+  }
+  s = ssa_fread(reg_of, v, "d0", s);
+  let f: string = ssa_fsrc(reg_of, v, "d0");
+  let d: string = ssa_dst(reg_of, ins.result);
+  if (what == "f64_to_i64" && unsigned) {
+    s = s.write("    fcvtzu " + d + ", " + f + "\n");
+  } else if (what == "f64_to_i64") {
+    s = s.write("    fcvtzs " + d + ", " + f + "\n");
+  } else if (unsigned) {
+    s = s.write("    fcvtzu " + ssa_wreg(d) + ", " + f + "\n");
+  } else {
+    s = s.write("    fcvtzs " + ssa_wreg(d) + ", " + f + "\n    sxtw " + d + ", " + ssa_wreg(d) + "\n");
+  }
+  return ssa_store(reg_of, ins.result, d, s);
+}
+
+// ssa_funary_direct names the unaries ssa_funary selects.
+function ssa_funary_direct(what: string): boolean {
+  return ssa_fmath_op(what) != "" || what == "i32_to_f64:64" || what == "i32_to_f64:32" || what == "f64_to_i32" || what == "f64_to_i64";
 }
 
 // With x0 an allocatable home, an arm that fills the ABI's argument
@@ -2473,8 +2764,13 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
   if (ircore.is_fern_helper(ins.str) && ssa_reg_helper(ircore.ir_helper_symbol(ins.str), ins.args.len())) {
     return ssa_helper_call(ins, reg_of, s);
   }
+  // An f64 result comes back in d0 as well as x0.
+  let rr: string = "x0";
+  if (ssa_f64_call(ins, s) && ssa_fhome(reg_of, ins.result) != "") {
+    rr = "d0";
+  }
   if (ssa_reg_call(ins, s)) {
-    return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(ssa_reg_call_emit(ins, reg_of, s)));
+    return ssa_store(reg_of, ins.result, rr, ssa_x0_forget(ssa_reg_call_emit(ins, reg_of, s)));
   }
   let argc: i32 = ins.args.len();
   let helper: boolean = ircore.is_fern_helper(ins.str);
@@ -2502,19 +2798,20 @@ function ssa_call(ins: ssa.SInst, reg_of: i32[], lp: string, s: asmcore.EmitStat
   if (argc > 0) {
     s = ssa_addsub_imm(s, false, "sp", "sp", argc * 16);
   }
-  return ssa_store(reg_of, ins.result, "x0", ssa_x0_forget(s));
+  return ssa_store(reg_of, ins.result, rr, ssa_x0_forget(s));
 }
 
 // ssa_reg_call_emit calls a function through its register entry. Only this
 // call's own arguments can be in the pool's registers here: anything live
 // across it is callee-saved or in a slot.
 function ssa_reg_call_emit(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+  let mask: string = s.float_mask(asmcore.sanitize_label(ins.str));
   let srcs: i32[] = [];
   let dsts: i32[] = [];
   let a: i32 = 0;
   while (a < ins.args.len()) {
     srcs = srcs.append(reg_of[ins.args[a]]);
-    dsts = dsts.append(a);
+    dsts = dsts.append(ssa_arg_loc(mask, a));
     a = a + 1;
   }
   s = ssa_parallel_moves(srcs, dsts, s);
@@ -2557,6 +2854,10 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
   let a: string = ssa_src(reg_of, ins.args[0], "x4");
   s = ssa_load(reg_of, ins.args[0], a, s);
   let d: string = ssa_dst(reg_of, ins.result);
+  // A word an f64 operation reads loads straight into its float home.
+  if (ins.result >= 0 && ssa_fhome(reg_of, ins.result) != "") {
+    d = ssa_fhome(reg_of, ins.result);
+  }
   if (k == 40) {
     s = ssa_ldst(s, true, d, a, ins.imm);
     return ssa_store(reg_of, ins.result, d, s);
@@ -2592,6 +2893,10 @@ function ssa_mem_inst(ins: ssa.SInst, reg_of: i32[], s: asmcore.EmitState): asmc
     if (ins.str == "u8") {
       s = ssa_addsub_rr(s, false, "x5", a, b);
       s = ssa_ldrb(s, ssa_wreg(d), "x5", 8);
+    } else if (ssa_is_d(d)) {
+      // A float register has no register-offset load here.
+      s = s.write("    add x5, " + a + ", " + b + ", lsl #3\n");
+      s = ssa_ldst(s, true, d, "x5", 8);
     } else {
       s = ssa_addsub_imm(s, false, "x5", b, 1);
       s = ssa_ldst_reg(s, true, d, a, "x5");
@@ -3092,7 +3397,7 @@ function ssa_str_view(ins: ssa.SInst, reg_of: i32[], base_off: i32, s: asmcore.E
 // SsaFrame is the frame below the values: three words per frame-resident
 // string view after the values. ssa_view_off is the offset of a view's lowest
 // word, the base the view kernel writes at.
-struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, saved: i32[], imm: ssa.Imms, lit0: i32[], lbase: i32 }
+struct SsaFrame { nspill: i32, views: i32[], blk_pos: i32[], uses: i32[], nsave: i32, saved: i32[], imm: ssa.Imms, lit0: i32[], lbase: i32, leaf: boolean, fmask: string }
 
 // SsaFuse is a block's compare consumed as flags by its branch: `n` trailing
 // instructions (the compare, and the `not` between it and the branch when
@@ -3140,7 +3445,7 @@ function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {
     if (cmp.result != last.args[0] || fr.uses[cmp.result] != 1) {
       return value_test;
     }
-    if (!ssa_unique_test(cmp) && (cmp.kind_tag != 9 || !ircore.is_int_cmp_kind(ir.kind_id(cmp.str)))) {
+    if (!ssa_unique_test(cmp) && !ssa_fusable_cmp(cmp)) {
       return value_test;
     }
     n = 2;
@@ -3149,13 +3454,21 @@ function ssa_fuse(fr: SsaFrame, blk: ssa.SBlock): SsaFuse {
   if (ssa_unique_test(cmp)) {
     return SsaFuse { n: n, tag: ir.kind_id("eq"), inverted: inverted, a: cmp.args[0], b: 0, unique: true, aligned: cmp.imm == 4 };
   }
-  if (cmp.kind_tag != 9 || !ircore.is_int_cmp_kind(ir.kind_id(cmp.str))) {
+  if (!ssa_fusable_cmp(cmp)) {
     return ssa_no_fuse();
+  }
+  if (ssa.float_cmp(cmp.str)) {
+    return SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false };
   }
   if (fr.imm.is_imm[cmp.args[0]]) {
     return SsaFuse { n: n, tag: ircore.flip_int_cmp_kind(ir.kind_id(cmp.str)), inverted: inverted, a: cmp.args[1], b: cmp.args[0], unique: false, aligned: false };
   }
   return SsaFuse { n: n, tag: ir.kind_id(cmp.str), inverted: inverted, a: cmp.args[0], b: cmp.args[1], unique: false, aligned: false };
+}
+
+// An integer or f64 compare, whose result a branch can read as flags.
+function ssa_fusable_cmp(cmp: ssa.SInst): boolean {
+  return cmp.kind_tag == 9 && (ircore.is_int_cmp_kind(ir.kind_id(cmp.str)) || ssa.float_cmp(cmp.str));
 }
 
 // ssa_join is the label a block's fused test joins at; a rotated latch
@@ -3298,9 +3611,6 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
   if (k == 49) {
     return ssa_str_call(ins, reg_of, s);
   }
-  if (k == 50 && ssa_fcall_sym(ins.str) != "") {
-    return ssa_fcall(ins, reg_of, s);
-  }
   if (k == 50 && ssa_host_kind(ins.str)) {
     return ssa_host_call(ins, reg_of, s);
   }
@@ -3325,6 +3635,23 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
   if ((k == 1 || k == 3) && fr.imm.is_imm[ins.result]) {
     return s;
   }
+  if (k == 9 && (ssa.float_arith(ins.str) || ssa.float_cmp(ins.str))) {
+    return ssa_fbin(ins, reg_of, s);
+  }
+  if (k == 10 && ssa_funary_direct(ins.str)) {
+    return ssa_funary(ins, reg_of, s);
+  }
+  if (k == 10 && (ins.str == "f64_bits" || ins.str == "f64_from_bits")) {
+    // A reinterpret is the move between the two values' homes.
+    let rd: string = ssa_fhome(reg_of, ins.result);
+    if (rd == "") {
+      rd = ssa_dst(reg_of, ins.result);
+    }
+    return ssa_store(reg_of, ins.result, rd, ssa_load(reg_of, ins.args[0], rd, s));
+  }
+  if (k == 4 && ssa_fhome(reg_of, ins.result) != "") {
+    return s.write("    ldr " + ssa_fhome(reg_of, ins.result) + ", =" + ins.str + "\n");
+  }
   let d: string = ssa_dst(reg_of, ins.result);
   if (k == 1) {
     s = ssa_const_reg(util.i32_to_string(ins.imm), d, s);
@@ -3336,18 +3663,13 @@ function ssa_inst(ins: ssa.SInst, reg_of: i32[], fr: SsaFrame, lp: string, r: ir
     s = ssa_load(reg_of, ins.args[0], d, s);
   } else if (k == 9 && ssa_direct_bin(ir.kind_id(ins.str))) {
     return ssa_bin_in_place(ins, reg_of, fr, s);
-  } else if (k == 9 && ssa_shift_tag(ir.kind_id(ins.str)) && fr.imm.is_imm[ins.args[1]]) {
+  } else if (k == 9 && ssa_shift_tag(ir.kind_id(ins.str)) && (fr.imm.is_imm[ins.args[1]] || ins.imm == 64)) {
     return ssa_bin_in_place(ins, reg_of, fr, s);
   } else if (k == 9) {
     d = "x4";
     s = ssa_load(reg_of, ins.args[0], "x4", s);
     s = ssa_load(reg_of, ins.args[1], "x5", s);
-    let fb: string = ssa_fbin_asm(ins.str);
-    if (fb != "") {
-      s = s.write(fb);
-    } else {
-      s = s.write(ir_bin_asm(ir.kind_id(ins.str), ins.imm, "x4", "x5", "x6"));
-    }
+    s = s.write(ir_bin_asm(ir.kind_id(ins.str), ins.imm, "x4", "x5", "x6"));
   } else {
     let src: string = "";
     if (reg_of[ins.args[0]] >= 0 && ssa_reg(reg_of[ins.args[0]]) != d) {
@@ -3421,8 +3743,12 @@ function ssa_phi_moves(f: ssa.SFunc, fr: SsaFrame, reg_of: i32[], pred: i32, suc
 // ssa_imm_to loads an immediate into a location: a register, or a frame slot
 // through x5.
 function ssa_imm_to(c: i64, loc: i32, s: asmcore.EmitState): asmcore.EmitState {
-  if (loc >= 0) {
+  if (loc >= 0 && loc < ssa_fbase()) {
     return ssa_const_reg(util.i64_to_string(c), ssa_reg(loc), s);
+  }
+  if (loc >= 0) {
+    s = ssa_const_reg(util.i64_to_string(c), "x5", s);
+    return ssa_mov_rr(s, ssa_reg(loc), "x5");
   }
   s = ssa_const_reg(util.i64_to_string(c), "x5", s);
   return ssa_loc_str(loc, "x5", s);
@@ -3557,14 +3883,14 @@ function ssa_brif(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
       return ssa_cbz(s, false, tr, tl);
     }
     if (fu.n > 0) {
-      return ssa_bcond(s, ir_cmp_cc(fu.tag, !fu.inverted), tl);
+      return ssa_bcond(s, ssa_fuse_cc(fu, !fu.inverted), tl);
     }
     return ssa_cbz(s, true, tr, tl);
   }
   if (fu.n > 0 && fu.tag == 0) {
     s = ssa_cbz(s, true, tr, fl);
   } else if (fu.n > 0) {
-    s = ssa_bcond(s, ir_cmp_cc(fu.tag, fu.inverted), fl);
+    s = ssa_bcond(s, ssa_fuse_cc(fu, fu.inverted), fl);
   } else {
     s = ssa_cbz(s, false, tr, fl);
   }
@@ -3592,6 +3918,32 @@ function ssa_fused_test(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: string, 
   return asmcore.finish_unique_site(out, h, s.capture, site);
 }
 
+// ssa_fuse_cc is the condition a fused compare's branch takes when the
+// compare is `when_true`. An f64 compare's codes are fcmp's ordered ones, and
+// each one's inverse is true for an unordered pair, as its negation is.
+function ssa_fuse_cc(fu: SsaFuse, when_true: boolean): i32 {
+  let k: string = ir.kind_name(fu.tag);
+  if (!ssa.float_cmp(k)) {
+    return ir_cmp_cc(fu.tag, when_true);
+  }
+  let cc: i32 = CC_NE;
+  if (k == "flt") {
+    cc = 4;
+  } else if (k == "fle") {
+    cc = CC_LS;
+  } else if (k == "fgt") {
+    cc = CC_GT;
+  } else if (k == "fge") {
+    cc = CC_GE;
+  } else if (k == "feq") {
+    cc = CC_EQ;
+  }
+  if (when_true) {
+    return cc;
+  }
+  return cc ^ 1;
+}
+
 function ssa_fused_test_emit(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: string, s: asmcore.EmitState): asmcore.EmitState {
   if (fu.n > 0 && fu.tag == 0) {
     return ssa_read(reg_of, fu.a, "x4", s);
@@ -3601,6 +3953,11 @@ function ssa_fused_test_emit(fr: SsaFrame, reg_of: i32[], fu: SsaFuse, join: str
   }
   if (fu.unique) {
     return ssa_unique_flags(reg_of, fu.a, fu.aligned, join, s);
+  }
+  if (ssa.float_cmp(ir.kind_name(fu.tag))) {
+    s = ssa_fread(reg_of, fu.a, "d0", s);
+    s = ssa_fread(reg_of, fu.b, "d1", s);
+    return s.write("    fcmp " + ssa_fsrc(reg_of, fu.a, "d0") + ", " + ssa_fsrc(reg_of, fu.b, "d1") + "\n");
   }
   s = ssa_read(reg_of, fu.a, "x4", s);
   s = ssa_read_rhs(fr, reg_of, fu.b, "x5", s);
@@ -3675,7 +4032,15 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
     } else {
       s = ssa_load(reg_of, t.value, "x0", s);
     }
-    return ssa_emit_epilogue(fr.saved, s);
+    // An f64 result goes back in d0 too, for a register-ABI caller.
+    if (asmcore.float_result(fr.fmask)) {
+      let h: string = "x0";
+      if (t.value >= 0 && ssa_fhome(reg_of, t.value) != "") {
+        h = ssa_fhome(reg_of, t.value);
+      }
+      s = s.write("    fmov d0, " + h + "\n");
+    }
+    return ssa_exit(fr, s, "");
   }
   if (t.kind_tag == 2) {
     s = ssa_phi_moves(f, fr, reg_of, blk.id, t.target, s);
@@ -3691,7 +4056,7 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
   }
   // A block the lift left unterminated is one nothing reaches; the stack
   // machine's fallback return keeps the text well formed here too.
-  return ssa_emit_epilogue(fr.saved, ssa_mov_imm(s, "x0", "0"));
+  return ssa_exit(fr, ssa_mov_imm(s, "x0", "0"), "");
 }
 
 // ssa_load_params moves each parameter from the caller's slot to its home;
@@ -3700,14 +4065,14 @@ function ssa_term(f: ssa.SFunc, fr: SsaFrame, blk: ssa.SBlock, reg_of: i32[], lp
 // (a stack caller's are loaded there by the entry shim); the rest stay in the
 // caller's slots. The register moves go first, since a later parameter's home
 // may be a register still holding an earlier one.
-function ssa_load_params(f: ssa.SFunc, reg_of: i32[], s: asmcore.EmitState): asmcore.EmitState {
+function ssa_load_params(f: ssa.SFunc, reg_of: i32[], mask: string, s: asmcore.EmitState): asmcore.EmitState {
   let k: i32 = ssa_reg_params(f);
   let srcs: i32[] = [];
   let dsts: i32[] = [];
   let p: i32 = 0;
   while (p < k) {
     if (reg_of[p] != 0 - 1) {
-      srcs = srcs.append(p);
+      srcs = srcs.append(ssa_arg_loc(mask, p));
       dsts = dsts.append(reg_of[p]);
     }
     p = p + 1;
@@ -3744,9 +4109,10 @@ function ssa_entry_shim(f: ssa.SFunc, name: string, s: asmcore.EmitState): asmco
   if (k == 0) {
     return s;
   }
+  let mask: string = s.float_mask(name);
   let p: i32 = 0;
   while (p < k) {
-    s = ssa_ldst(s, true, ssa_reg(p), "sp", 16 * p);
+    s = ssa_ldst(s, true, ssa_reg(ssa_arg_loc(mask, p)), "sp", 16 * p);
     p = p + 1;
   }
   return s.write("__fn_" + name + ".r:\n");
@@ -3779,6 +4145,27 @@ function ssa_reg_call(ins: ssa.SInst, s: asmcore.EmitState): boolean {
 // ssa_arg_prefs asks the allocator for the register each parameter arrives in
 // and each register call's argument leaves in, so neither needs a move when
 // the value has nowhere better to be.
+// ssa_float_calls marks the results of the direct calls to a function of this
+// unit with an f64 result, which comes back in d0 (asmcore.FloatAbi).
+function ssa_float_calls(f: ssa.SFunc, s: asmcore.EmitState): boolean[] {
+  let out: boolean[] = __alloc_bool(f.nvals);
+  for blk in f.blocks {
+    for ins in blk.insts {
+      if (ssa_f64_call(ins, s)) {
+        out = out.with(ins.result, true);
+      }
+    }
+  }
+  return out;
+}
+
+function ssa_f64_call(ins: ssa.SInst, s: asmcore.EmitState): boolean {
+  if (ins.kind_tag != 11 || ins.result < 0 || ssa.rc_inlined(ins) || ircore.is_fern_helper(ins.str) || ircore.is_c_call(ins.str)) {
+    return false;
+  }
+  return asmcore.float_result(s.float_mask(asmcore.sanitize_label(ins.str)));
+}
+
 function ssa_arg_prefs(f: ssa.SFunc, s: asmcore.EmitState): i32[] {
   let pref: i32[] = util.minus_ones(f.nvals);
   let p: i32 = 0;
@@ -3823,29 +4210,38 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
   let formed: ssa.Formed = prepared.formed;
   let f: ssa.SFunc = formed.f;
   let imm: ssa.Imms = ssa.imm_operands(f, 0i64, 4095i64, ssa_imm_right(), ssa_imm_left());
-  let alloc: ssa.Alloc = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, false, imm.is_imm, ssa_arg_prefs(f, s));
+  let alloc: ssa.Alloc = ssa.regalloc_linear(f, ssa_nregs(), ssa_nsaved(), 0, false, imm.is_imm, ssa_arg_prefs(f, s), ssa.float_values(f, ssa_float_calls(f, s), true), ssa_nfregs(), ssa_nfsaved());
   let reg_of: i32[] = alloc.reg_of;
   let lp: string = ".Lssa_" + asmcore.sanitize_label(label_name) + "_";
   s = ssa_cfi(s.write("__fn_" + asmcore.sanitize_label(label_name) + ":\n"), 1, "", 0);
   s = ssa_entry_shim(f, asmcore.sanitize_label(label_name), s);
   s = ssa_release_entry(entry, lp, s);
-  s = ssa_pair(s, false, 3, "x29", "x30", 0 - 16);
-  s = ssa_cfi(ssa_cfi(ssa_cfi(s, 3, "", 16), 6, "x29", 0 - 16), 6, "x30", 0 - 8);
-  s = ssa_mov_rr(s, "x29", "sp");
-  s = ssa_cfi(s, 4, "x29", 0);
   let saved: i32[] = ssa_saved_regs(reg_of);
   let save: i32 = ssa_save_bytes(saved);
-  s = ssa_save(saved, s);
+  let views: i32[] = ssa_view_slots(f);
+  let tails: boolean = r.dbg_slots.len() == 0;
+  // A function with no frame slots and no call but a tail call is emitted into
+  // a buffer first, its exits marked; its text decides whether it needs a frame
+  // at all.
+  let leaf: boolean = ssa.spill_count(reg_of) == 0 && ssa_view_count(views) == 0 && saved.len() == 0 && !ssa_calls_besides_tails(f, s, tails);
+  let outer: usize = s.capture;
+  let body: usize = 0 as usize;
+  if (leaf) {
+    body = buf_new(4096);
+    s = asmcore.EmitState { ...s, capture: body };
+  } else {
+    s = ssa_frame_record(s);
+    s = ssa_save(saved, s);
+  }
   let fn_label: string = "__fn_" + asmcore.sanitize_label(label_name);
   let dbg_out: asmcore.DbgOut = asmcore.dbg_shaped_vars(s, fn_label, alloc, r, formed.repl, seen_vals, seen_slots, ssa_dbg_locs(reg_of, save, seen_vals.len() > 0), ssa.position_count(f));
   s = dbg_out.state;
   let dbg: asmcore.DbgVars = dbg_out.dbg;
-  let views: i32[] = ssa_view_slots(f);
   // The blocks' labels take one id each, from lbase.
   let bp: i32[] = ssa.block_positions(f);
   let lbase: i32 = s.nlab;
   s = s.lab_take(bp.len());
-  let fr: SsaFrame = SsaFrame { nspill: ssa.spill_count(reg_of), views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, saved: saved, imm: imm, lit0: ssa.literal_first_bytes(f), lbase: lbase };
+  let fr: SsaFrame = SsaFrame { nspill: ssa.spill_count(reg_of), views: views, blk_pos: bp, uses: ssa.use_counts(f), nsave: save, saved: saved, imm: imm, lit0: ssa.literal_first_bytes(f), lbase: lbase, leaf: leaf, fmask: s.float_mask(asmcore.sanitize_label(label_name)) };
   let fusions: ssaprepare.Fusion[] = [];
   let frame: i32 = (fr.nspill + 3 * ssa_view_count(views)) * 8;
   if (frame % 16 != 0) {
@@ -3855,7 +4251,7 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
     s = fr_sub_imm(s, "sp", "sp", frame);
   }
   s = asmcore.EmitState { ...s, ssa_frame: frame + save, ssa_save: save };
-  s = ssa_load_params(f, reg_of, s);
+  s = ssa_load_params(f, reg_of, fr.fmask, s);
   // `pos` numbers the instructions and terminators as the allocator does, so
   // a `-g` variable range's labels land where its home takes and drops it.
   let pos: i32 = 0;
@@ -3871,10 +4267,14 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
     let fu: SsaFuse = ssa_fuse(fr, blk);
     fusions = ssa_retain_fusion(fusions, fu, s.retain_prepared);
     let ii: i32 = 0;
+    let tailed: boolean = false;
     while (ii < blk.insts.len() - fu.n) {
       s = asmcore.dbg_label(s, dbg, fn_label, pos + ii);
       let ins: ssa.SInst = blk.insts[ii];
-      if (ins.kind_tag != 6 && ins.kind_tag != 8) {
+      if (ii == blk.insts.len() - 1 && ssa_tail_call(blk, ins, s, tails)) {
+        s = ssa_emit_tail_call(ins, reg_of, fr, s);
+        tailed = true;
+      } else if (ins.kind_tag != 6 && ins.kind_tag != 8) {
         s = ssa_inst(ins, reg_of, fr, lp, r, s);
       }
       ii = ii + 1;
@@ -3882,19 +4282,40 @@ function emit_ssa_allocated_arm64(prepared: ssaprepare.Body, label_name: string,
     s = asmcore.dbg_labels(s, dbg, fn_label, pos + ii, pos + blk.insts.len());
     s = ssa_fused_test(fr, reg_of, fu, ssa_join(lp, blk.id), s);
     s = asmcore.dbg_label(s, dbg, fn_label, pos + blk.insts.len());
-    s = ssa_term(f, fr, blk, reg_of, lp, next, fu, s);
+    if (!tailed) {
+      s = ssa_term(f, fr, blk, reg_of, lp, next, fu, s);
+    }
     pos = pos + blk.insts.len() + 1;
     bi = bi + 1;
   }
   s = asmcore.dbg_label(s, dbg, fn_label, pos);
+  let framed: boolean = !leaf;
+  if (leaf) {
+    let text: string = buf_take(body);
+    buf_free(body);
+    s = asmcore.EmitState { ...s, capture: outer };
+    framed = ssa_needs_frame(text);
+    if (framed) {
+      s = ssa_frame_record(s);
+    }
+    s = ssa_resolve_exits(text, framed, saved, s);
+  }
   s = asmcore.EmitState { ...s, ssa_frame: 0, ssa_save: 0 };
   s = asmcore.dbg_rows(ssa_cfi(s, 2, "", 0), dbg).write("    .ltorg\n");
-  return ssa_retain_allocation(s, prepared, label_name, context, entry, alloc, fr, frame, fusions);
+  return ssa_retain_allocation(s, prepared, label_name, context, entry, alloc, fr, frame, framed, fusions);
 }
 
-function ssa_retain_allocation(s: asmcore.EmitState, prepared: ssaprepare.Body, label_name: string, context: Option[ssaprepare.Context], entry: ssaprepare.ReleaseEntry, alloc: ssa.Alloc, fr: SsaFrame, frame: i32, fusions: ssaprepare.Fusion[]): asmcore.EmitState {
+// ssa_frame_record pushes the frame record and points x29 at it.
+function ssa_frame_record(s: asmcore.EmitState): asmcore.EmitState {
+  s = ssa_pair(s, false, 3, "x29", "x30", 0 - 16);
+  s = ssa_cfi(ssa_cfi(ssa_cfi(s, 3, "", 16), 6, "x29", 0 - 16), 6, "x30", 0 - 8);
+  s = ssa_mov_rr(s, "x29", "sp");
+  return ssa_cfi(s, 4, "x29", 0);
+}
+
+function ssa_retain_allocation(s: asmcore.EmitState, prepared: ssaprepare.Body, label_name: string, context: Option[ssaprepare.Context], entry: ssaprepare.ReleaseEntry, alloc: ssa.Alloc, fr: SsaFrame, frame: i32, framed: boolean, fusions: ssaprepare.Fusion[]): asmcore.EmitState {
   if (s.retain_prepared) {
-    let allocation = ssaprepare.Allocation { alloc: alloc, imm: fr.imm, saved: fr.saved, save_bytes: fr.nsave, frame_bytes: frame, framed: true, views: fr.views, block_positions: fr.blk_pos, block_label_base: fr.lbase, fusions: fusions };
+    let allocation = ssaprepare.Allocation { alloc: alloc, imm: fr.imm, saved: fr.saved, save_bytes: fr.nsave, frame_bytes: frame, framed: framed, views: fr.views, block_positions: fr.blk_pos, block_label_base: fr.lbase, fusions: fusions };
     s = asmcore.retain_body(s, prepared, label_name, context, entry, allocation);
   }
   return s;
@@ -5547,6 +5968,8 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
   let vgate: irverifygate.Gate = irverifygate.gate(irtables.fn_sig_index(mod.funcs), s.kinds.pops);
   ircore.check_fip_claims(mod.funcs, 0, mod.funcs.len(), cache);
   s = asmcore.EmitState { ...s, reg_entries: irtables.sig_reg_of(asmcore.unit_labels(mod, 0, mod.funcs.len(), cache)), leaves: asmcore.unit_leaves(mod, 0, mod.funcs.len(), cache) };
+  let fabi: asmcore.FloatAbi = asmcore.unit_float_abi(mod, 0, mod.funcs.len(), cache);
+  s = asmcore.EmitState { ...s, float_abi: fabi.names, float_abi_masks: fabi.masks };
   let fi: i32 = 0;
   while (fi < mod.funcs.len()) {
     let r: irtables.LowerResult = ircore.produced(cache, fi, mod.funcs[fi]);
@@ -5663,15 +6086,8 @@ pub function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore
 // bodies (the sibling of x86's asm_ir.emit_ir_runtime), a near-verbatim copy
 // of asm_arm64.emit_runtime differing only in that its Fern-source helpers
 // lower through emit_ir_runtime_fern_fn (the IR selector) rather than the AST
-// emit_function. emit_ldc / emit_ccall_shim1_arm64 / emit_ccall_shims_arm64 /
+// emit_function. emit_ccall_shim1_arm64 / emit_ccall_shims_arm64 /
 // emit_rodata_pools_arm64 live alongside it because emit_ir_runtime calls them.
-
-function emit_ldc(s: asmcore.EmitState, reg: string, lbl: string): asmcore.EmitState {
-  s = s.write("    adrp x12, " + lbl + "\n");
-  s = s.write("    add x12, x12, :lo12:" + lbl + "\n");
-  s = s.write("    ldr " + reg + ", [x12]\n");
-  return s;
-}
 
 function emit_ccall_shim1_arm64(s: asmcore.EmitState, variant: string, n: i32): asmcore.EmitState {
   s = s.write("\n__fn_" + variant + ":\n");
@@ -7519,6 +7935,11 @@ function emit_rt_arena_and_alloc(s: asmcore.EmitState, darwin: boolean): asmcore
   // native backends'. __fern_report itself is emitted outside the heap gate
   // (emit_rt_report), where the sanitizer's reports can reach it too.
   s = abort_trap(s, "__fern_oob_abort", ".Lmsg_arr_oob", asmcore.msg_arr_oob(), 134);
+  // A function with no frame (ssa_needs_frame) traps with x29 still its
+  // caller's frame record, so the backtrace walk would start one frame too far
+  // out and lose the caller; its trap comes through here, which makes the
+  // record it did not.
+  s = s.write("__fern_oob_abort_leaf:\n    stp x29, x30, [sp, #-16]!\n    mov x29, sp\n    b __fern_oob_abort\n");
   s = abort_trap(s, "__fern_str_oob_abort", ".Lmsg_str_oob", asmcore.msg_str_oob(), 134);
   s = abort_trap(s, "__fern_slice_abort", ".Lmsg_slice", asmcore.msg_slice_range(), 134);
   s = abort_trap(s, "__fern_alloc_size_abort", ".Lmsg_alloc_size", asmcore.msg_alloc_size(), 134);
@@ -9586,9 +10007,6 @@ function emit_rt_heap(own s: asmcore.EmitState, darwin: boolean): asmcore.EmitSt
 // the fold helpers), the integer-math helpers, the remaining
 // string builtins, argv, random, and the subprocess primitives.
 function emit_rt_collections_and_proc(s: asmcore.EmitState, darwin: boolean): asmcore.EmitState {
-  if (s.has_need("float_transcendentals")) {
-    s = emit_rt_float_transcendentals(s);
-  }
   // The CRC fold. Its own gate rather than the heap one: a program that
   // hashes a borrowed string allocates nothing, and would otherwise
   // `bl __fern_crc32_cksum` with no definition anywhere in the link.
@@ -11186,741 +11604,6 @@ function emit_rt_crc32_cksum(s: asmcore.EmitState): asmcore.EmitState {
   return s;
 }
 
-// emit_rt_float_transcendentals emits the f64 transcendental bundle — arm64 has
-// no transcendental instruction, so sin/cos/exp/log/pow are calls into these.
-// Gated on the "float_transcendentals" need, which the op_funary/op_fbin
-// lowerings mark; native arm64 gates the same bundle on usesFloatTranscendentals.
-// These are fdlibm's kernels, log's table-driven one aside, and they replace
-// polynomials whose own comment here claimed "<1e-5 against libm" while
-// measuring 3.2e10 ulp for sin, 4.5e7 for exp and 9844 for log.
-//
-// Same reduction as asm_ir.fern's x86-64 kernels, rounding with `frintn`
-// (ties-to-EVEN, matching x86's `roundsd …, 0`; the more familiar `frinta`
-// rounds ties away and would disagree). The self-host cannot import Go, so the .Lfc_* table below is a
-// literal copy of internal/tables/fdlibm's — whose selfhost_parity_test pins
-// it entry for entry. internal/testing/e2e/f64_ulp_test.go is the gate for the native
-// pair.
-//
-// Two things that are corrections rather than refinements:
-//
-//   - pi/2 is carried as THREE 33-bit chunks (~99 bits). Two is not enough near
-//     a zero of sine, where the reduced argument IS the answer, so the
-//     reduction's absolute error becomes the result's relative error: sin(pi)
-//     measured 285,696 ulp. A fourth chunk makes it worse, not better.
-//   - Every function guards its domain: log(0) returned -709.09 and log(-1)
-//     returned 0 without it. The domain guard is not what keeps 2^k in range —
-//     that is the two half-scales the reconstruction is built from.
-//
-// fc_pio2_reduce: d0 = x -> x10 = quadrant (k&3), d0 = r with |r| <= pi/4.
-// prefix keeps the local labels unique across the two emission sites (sin and
-// cos), which previously each carried their own inlined copy of this chain.
-//
-// |x| >= 2^20 (biased exponent >= 1043) puts k past pio2h's 22 exact mantissa
-// bits, so the Cody-Waite chain below reduces against noise there and calls
-// __fern_rem_pio2_large instead. The trig guard already returned Inf/NaN, and
-// the caller's frame is already pushed.
-function fc_pio2_reduce(s: asmcore.EmitState, prefix: string): asmcore.EmitState {
-  s = s.write("    fmov x13, d0\n");
-  s = s.write("    ubfx x13, x13, #52, #11\n");
-  s = s.write("    cmp x13, #1043\n");
-  s = s.write("    b.lt .L" + prefix + "_cw\n");
-  s = s.write("    bl __fern_rem_pio2_large\n");
-  s = s.write("    b .L" + prefix + "_red\n");
-  s = s.write(".L" + prefix + "_cw:\n");
-  s = emit_ldc(s, "d1", ".Lfc_2opi");
-  s = s.write("    fmul d1, d1, d0\n");
-  s = s.write("    frintn d1, d1\n");
-  s = s.write("    fcvtzs x10, d1\n");
-  s = emit_ldc(s, "d2", ".Lfc_pio2h");
-  s = s.write("    fmul d2, d1, d2\n");
-  s = s.write("    fsub d0, d0, d2\n");
-  s = emit_ldc(s, "d2", ".Lfc_pio2m");
-  s = s.write("    fmul d2, d1, d2\n");
-  s = s.write("    fsub d0, d0, d2\n");
-  s = emit_ldc(s, "d2", ".Lfc_pio2l");
-  s = s.write("    fmul d1, d1, d2\n");
-  s = s.write("    fsub d0, d0, d1\n");
-  s = s.write("    and x10, x10, #3\n");
-  s = s.write(".L" + prefix + "_red:\n");
-  return s;
-}
-
-// Arg in d0 (pow also d1), result in d0; x12 is emit_ldc's scratch.
-function emit_rt_float_transcendentals(s: asmcore.EmitState): asmcore.EmitState {
-  s = s.write("    .section .rodata\n");
-  s = s.write("    .align 8\n");
-  s = s.write(".Lfc_one: .double 1.0\n");
-  s = s.write(".Lfc_half: .double 0.5\n");
-  s = s.write(".Lfc_two: .double 2.0\n");
-  s = s.write(".Lfc_invln2: .double 1.44269504088896338700e+00\n");
-  s = s.write(".Lfc_ln2hi: .double 6.93147180369123816490e-01\n");
-  s = s.write(".Lfc_ln2lo: .double 1.90821492927058770002e-10\n");
-  s = s.write(".Lfc_2opi: .double 6.36619772367581382433e-01\n");
-  s = s.write(".Lfc_pio2h: .double 1.57079632673412561417e+00\n");
-  s = s.write(".Lfc_pio2m: .double 6.07710050630396597660e-11\n");
-  s = s.write(".Lfc_pio2l: .double 2.02226624879595063154e-21\n");
-  // pi/2 as an unevaluated double-double, plus the two scales that turn
-  // __fern_rem_pio2_large's 126-bit fraction into a double.
-  s = s.write(".Lfc_pio2hi: .double 1.5707963267948966\n");
-  s = s.write(".Lfc_pio2lo: .double 6.123233995736766e-17\n");
-  s = s.write(".Lfc_2m62: .double 2.168404344971009e-19\n");
-  s = s.write(".Lfc_2m115: .double 2.407412430484045e-35\n");
-  // 2/pi in binary, MSB-first, one limb per 64 fraction bits starting at
-  // 2^-1 in limb 1 — the window Payne-Hanek indexes with the argument's own
-  // exponent. The leading zero limb lets that index start above 2^-1 without
-  // a bounds test; the length covers the largest finite double. Same table
-  // as the native backends'.
-  s = s.write(".Lfc_2opi_bits:\n");
-  s = s.write("    .quad 0x0000000000000000\n    .quad 0xa2f9836e4e441529\n    .quad 0xfc2757d1f534ddc0\n");
-  s = s.write("    .quad 0xdb6295993c439041\n    .quad 0xfe5163abdebbc561\n    .quad 0xb7246e3a424dd2e0\n");
-  s = s.write("    .quad 0x06492eea09d1921c\n    .quad 0xfe1deb1cb129a73e\n    .quad 0xe88235f52ebb4484\n");
-  s = s.write("    .quad 0xe99c7026b45f7e41\n    .quad 0x3991d639835339f4\n    .quad 0x9c845f8bbdf9283b\n");
-  s = s.write("    .quad 0x1ff897ffde05980f\n    .quad 0xef2f118b5a0a6d1f\n    .quad 0x6d367ecf27cb09b7\n");
-  s = s.write("    .quad 0x4f463f669e5fea2d\n    .quad 0x7527bac7ebe5f17b\n    .quad 0x3d0739f78a5292ea\n");
-  s = s.write("    .quad 0x6bfb5fb11f8d5d08\n    .quad 0x56033046fc7b6bab\n    .quad 0xf0cfbc209af4361d\n");
-  s = s.write(".Lfc_s1: .double -1.66666666666666324348e-01\n");
-  s = s.write(".Lfc_s2: .double 8.33333333332248946124e-03\n");
-  s = s.write(".Lfc_s3: .double -1.98412698298579493134e-04\n");
-  s = s.write(".Lfc_s4: .double 2.75573137070700676789e-06\n");
-  s = s.write(".Lfc_s5: .double -2.50507602534068634195e-08\n");
-  s = s.write(".Lfc_s6: .double 1.58969099521155010221e-10\n");
-  s = s.write(".Lfc_c1: .double 4.16666666666666019037e-02\n");
-  s = s.write(".Lfc_c2: .double -1.38888888888741095749e-03\n");
-  s = s.write(".Lfc_c3: .double 2.48015872894767294178e-05\n");
-  s = s.write(".Lfc_c4: .double -2.75573143513906633035e-07\n");
-  s = s.write(".Lfc_c5: .double 2.08757232129817482790e-09\n");
-  s = s.write(".Lfc_c6: .double -1.13596475577881948265e-11\n");
-  s = s.write(".Lfc_p1: .double 1.66666666666666019037e-01\n");
-  s = s.write(".Lfc_p2: .double -2.77777777770155933842e-03\n");
-  s = s.write(".Lfc_p3: .double 6.61375632143793436117e-05\n");
-  s = s.write(".Lfc_p4: .double -1.65339022054652515390e-06\n");
-  s = s.write(".Lfc_p5: .double 4.13813679705723846039e-08\n");
-  s = s.write(".Lfc_expovf: .double 709.782712893383973096\n");
-  s = s.write(".Lfc_expunf: .double -745.133219101941108420\n");
-  // The table-driven log's coefficients and rows, laid out as
-  // internal/tables/fdlibm.LogData: main path at +0, near-1 path at +32, rows at +112.
-  // >>> generated by scripts/gen_log_table.py — do not edit by hand
-  s = s.write(".Lfc_logtab:\n");
-  s = s.write("    .quad 0x3fd555555550b390\n    .quad 0xbfcffffffff3b2fa\n    .quad 0x3fc999b49b5613e9\n    .quad 0xbfc555719b6c2691\n");
-  s = s.write("    .quad 0x3fd5555555555577\n    .quad 0xbfcffffffffffdb3\n    .quad 0x3fc999999995deb1\n    .quad 0xbfc555555567c82e\n    .quad 0x3fc24924a342f5dd\n");
-  s = s.write("    .quad 0xbfbfffffa24b4239\n    .quad 0x3fbc7184291e7cf5\n    .quad 0xbfb999ece3a42714\n    .quad 0x3fb781836340ad22\n    .quad 0xbfb55196561b3f0e\n");
-  s = s.write("    .quad 0x3ff734f0c541fe8d\n    .quad 0xbfd7cc7f7db46800\n    .quad 0xbd206cf78ffb8648\n");
-  s = s.write("    .quad 0x3ff713786d9c7c09\n    .quad 0xbfd76feecb947000\n    .quad 0xbd174bb9c9852c57\n");
-  s = s.write("    .quad 0x3ff6f26016f26017\n    .quad 0xbfd713e33a46a000\n    .quad 0xbd17b9b2617e9472\n");
-  s = s.write("    .quad 0x3ff6d1a62681c861\n    .quad 0xbfd6b85b4cffa000\n    .quad 0xbd2fe6750d372503\n");
-  s = s.write("    .quad 0x3ff6b1490aa31a3d\n    .quad 0xbfd65d558d4ce000\n    .quad 0xbcc544fd2dc5bdc0\n");
-  s = s.write("    .quad 0x3ff691473a88d0c0\n    .quad 0xbfd602d08af09000\n    .quad 0xbd1ebe9176df3f65\n");
-  s = s.write("    .quad 0x3ff6719f3601671a\n    .quad 0xbfd5a8cadbbee000\n    .quad 0x3cf7c79b0af7ecf8\n");
-  s = s.write("    .quad 0x3ff6524f853b4aa3\n    .quad 0xbfd54f431b7be000\n    .quad 0xbd1a8954c0910952\n");
-  s = s.write("    .quad 0x3ff63356b88ac0de\n    .quad 0xbfd4f637ebba9800\n    .quad 0xbccf539a676da36e\n");
-  s = s.write("    .quad 0x3ff614b36831ae94\n    .quad 0xbfd49da7f3bcc800\n    .quad 0x3d2f099964a168cd\n");
-  s = s.write("    .quad 0x3ff5f66434292dfc\n    .quad 0xbfd44591e053a000\n    .quad 0x3d06e95892923d88\n");
-  s = s.write("    .quad 0x3ff5d867c3ece2a5\n    .quad 0xbfd3edf463c16800\n    .quad 0xbcef307ad01a7821\n");
-  s = s.write("    .quad 0x3ff5babcc647fa91\n    .quad 0xbfd396ce359bc000\n    .quad 0x3d05839c5663663d\n");
-  s = s.write("    .quad 0x3ff59d61f123ccaa\n    .quad 0xbfd3401e12aec800\n    .quad 0xbd2d07195523adc6\n");
-  s = s.write("    .quad 0x3ff5805601580560\n    .quad 0xbfd2e9e2bce12000\n    .quad 0xbd24300c128d1dc2\n");
-  s = s.write("    .quad 0x3ff56397ba7c52e2\n    .quad 0xbfd2941afb186800\n    .quad 0xbd2bde7a919e3aeb\n");
-  s = s.write("    .quad 0x3ff54725e6bb82fe\n    .quad 0xbfd23ec5991eb800\n    .quad 0xbd2248376eba35bc\n");
-  s = s.write("    .quad 0x3ff52aff56a8054b\n    .quad 0xbfd1e9e167889800\n    .quad 0xbd1f4544b0dd2688\n");
-  s = s.write("    .quad 0x3ff50f22e111c4c5\n    .quad 0xbfd1956d3b9bc000\n    .quad 0xbd27d2f73ad1aa14\n");
-  s = s.write("    .quad 0x3ff4f38f62dd4c9b\n    .quad 0xbfd14167ef367800\n    .quad 0x3cff3f87db2550ac\n");
-  s = s.write("    .quad 0x3ff4d843bedc2c4c\n    .quad 0xbfd0edd060b78000\n    .quad 0xbd0019b52d8435f5\n");
-  s = s.write("    .quad 0x3ff4bd3edda68fe1\n    .quad 0xbfd09aa572e6c800\n    .quad 0x3d12bd787a32f2f6\n");
-  s = s.write("    .quad 0x3ff4a27fad76014a\n    .quad 0xbfd047e60cde8000\n    .quad 0xbd2dbdf10d397f3c\n");
-  s = s.write("    .quad 0x3ff4880522014880\n    .quad 0xbfcfeb2233ea0000\n    .quad 0xbd2f3418de00938b\n");
-  s = s.write("    .quad 0x3ff46dce34596066\n    .quad 0xbfcf474b134df000\n    .quad 0xbd1146d838821289\n");
-  s = s.write("    .quad 0x3ff453d9e2c776ca\n    .quad 0xbfcea4449f04b000\n    .quad 0x3d242dd33919ab94\n");
-  s = s.write("    .quad 0x3ff43a2730abee4d\n    .quad 0xbfce020cc6236000\n    .quad 0x3d252b00adb91424\n");
-  s = s.write("    .quad 0x3ff420b5265e5951\n    .quad 0xbfcd60a17f903000\n    .quad 0xbd24523f207be58e\n");
-  s = s.write("    .quad 0x3ff40782d10e6566\n    .quad 0xbfccc000c9db4000\n    .quad 0x3d1d6d585d57aff9\n");
-  s = s.write("    .quad 0x3ff3ee8f42a5af07\n    .quad 0xbfcc2028ab180000\n    .quad 0x3d292e0ee55c7ac6\n");
-  s = s.write("    .quad 0x3ff3d5d991aa75c6\n    .quad 0xbfcb811730b82000\n    .quad 0xbd1e90683b9cd768\n");
-  s = s.write("    .quad 0x3ff3bd60d9232955\n    .quad 0xbfcae2ca6f673000\n    .quad 0x3d20ae54a356155f\n");
-  s = s.write("    .quad 0x3ff3a524387ac822\n    .quad 0xbfca454082e6b000\n    .quad 0x3d23eb106fc11d1e\n");
-  s = s.write("    .quad 0x3ff38d22d366088e\n    .quad 0xbfc9a8778debb000\n    .quad 0x3d271e0b820278e0\n");
-  s = s.write("    .quad 0x3ff3755bd1c945ee\n    .quad 0xbfc90c6db9fcc000\n    .quad 0x3d1935f57718d7ca\n");
-  s = s.write("    .quad 0x3ff35dce5f9f2af8\n    .quad 0xbfc871213750f000\n    .quad 0x3d29ae297a0ca116\n");
-  s = s.write("    .quad 0x3ff34679ace01346\n    .quad 0xbfc7d6903caf6000\n    .quad 0x3d24c06b17c301d7\n");
-  s = s.write("    .quad 0x3ff32f5ced6a1dfa\n    .quad 0xbfc73cb9074fd000\n    .quad 0xbd04cab797ffd2cc\n");
-  s = s.write("    .quad 0x3ff3187758e9ebb6\n    .quad 0xbfc6a399dabbd000\n    .quad 0xbd1c1b2c6657a967\n");
-  s = s.write("    .quad 0x3ff301c82ac40260\n    .quad 0xbfc60b3100b09000\n    .quad 0xbd21d7526cee0fd8\n");
-  s = s.write("    .quad 0x3ff2eb4ea1fed14b\n    .quad 0xbfc5737cc9019000\n    .quad 0x3d191561651de028\n");
-  s = s.write("    .quad 0x3ff2d50a012d50a0\n    .quad 0xbfc4dc7b897bc000\n    .quad 0xbd0c79b60ae1ff0f\n");
-  s = s.write("    .quad 0x3ff2bef98e5a3711\n    .quad 0xbfc4462b9dc9b000\n    .quad 0xbd1ede9d63b93e7a\n");
-  s = s.write("    .quad 0x3ff2a91c92f3c105\n    .quad 0xbfc3b08b6757f000\n    .quad 0xbd15485c35b37c15\n");
-  s = s.write("    .quad 0x3ff293725bb804a5\n    .quad 0xbfc31b994d3a5000\n    .quad 0x3ceece238b5efe06\n");
-  s = s.write("    .quad 0x3ff27dfa38a1ce4d\n    .quad 0xbfc28753bc11b000\n    .quad 0x3d216d6394d9fa33\n");
-  s = s.write("    .quad 0x3ff268b37cd60127\n    .quad 0xbfc1f3b925f26000\n    .quad 0x3d15f74e9b083633\n");
-  s = s.write("    .quad 0x3ff2539d7e9177b2\n    .quad 0xbfc160c8024b2000\n    .quad 0xbd2ec2d2a9009e3d\n");
-  s = s.write("    .quad 0x3ff23eb79717605b\n    .quad 0xbfc0ce7ecdccc000\n    .quad 0xbd14652dabff5447\n");
-  s = s.write("    .quad 0x3ff22a0122a0122a\n    .quad 0xbfc03cdc0a51f000\n    .quad 0x3d1f958c3a580e90\n");
-  s = s.write("    .quad 0x3ff21579804855e6\n    .quad 0xbfbf57bc7d900000\n    .quad 0xbd176a6c9ea8b04e\n");
-  s = s.write("    .quad 0x3ff2012012012012\n    .quad 0xbfbe3707ee304000\n    .quad 0xbd20f684e6766abd\n");
-  s = s.write("    .quad 0x3ff1ecf43c7fb84c\n    .quad 0xbfbd17978821a000\n    .quad 0x3d29379894208225\n");
-  s = s.write("    .quad 0x3ff1d8f5672e4abd\n    .quad 0xbfbbf968769fc000\n    .quad 0xbd24218c8d824283\n");
-  s = s.write("    .quad 0x3ff1c522fc1ce059\n    .quad 0xbfbadc77ee5ae000\n    .quad 0xbd25189bec79cdf7\n");
-  s = s.write("    .quad 0x3ff1b17c67f2bae3\n    .quad 0xbfb9c0c32d4d2000\n    .quad 0xbd1520fd85f1e661\n");
-  s = s.write("    .quad 0x3ff19e0119e0119e\n    .quad 0xbfb8a6477a91e000\n    .quad 0x3d0eb9fa83214905\n");
-  s = s.write("    .quad 0x3ff18ab083902bdb\n    .quad 0xbfb78d02263d8000\n    .quad 0xbd069b5794b69fb7\n");
-  s = s.write("    .quad 0x3ff1778a191bd684\n    .quad 0xbfb674f089366000\n    .quad 0x3d16199acd8b33f9\n");
-  s = s.write("    .quad 0x3ff1648d50fc3201\n    .quad 0xbfb55e10050e0000\n    .quad 0xbd0c1d740c53c72e\n");
-  s = s.write("    .quad 0x3ff151b9a3fdd5c9\n    .quad 0xbfb4485e03dbe000\n    .quad 0x3cd4ae45cb655244\n");
-  s = s.write("    .quad 0x3ff13f0e8d344724\n    .quad 0xbfb333d7f8184000\n    .quad 0x3ce692b6a81b8848\n");
-  s = s.write("    .quad 0x3ff12c8b89edc0ac\n    .quad 0xbfb2207b5c786000\n    .quad 0x3d26c4e607de7082\n");
-  s = s.write("    .quad 0x3ff11a3019a74826\n    .quad 0xbfb10e45b3cae000\n    .quad 0xbd20612daf6b9737\n");
-  s = s.write("    .quad 0x3ff107fbbe011080\n    .quad 0xbfaffa6911ab8000\n    .quad 0xbd23008c98381a8f\n");
-  s = s.write("    .quad 0x3ff0f5edfab325a2\n    .quad 0xbfadda8adc680000\n    .quad 0x3d21b1ac64d9e42f\n");
-  s = s.write("    .quad 0x3ff0e40655826011\n    .quad 0xbfabbcebfc690000\n    .quad 0x3d17bf868c317c2a\n");
-  s = s.write("    .quad 0x3ff0d24456359e3a\n    .quad 0xbfa9a187b573c000\n    .quad 0xbd2e7ba362764de5\n");
-  s = s.write("    .quad 0x3ff0c0a7868b4171\n    .quad 0xbfa788595a358000\n    .quad 0x3d108b0d083b3a4c\n");
-  s = s.write("    .quad 0x3ff0af2f722eecb5\n    .quad 0xbfa5715c4c03c000\n    .quad 0xbd1dddc880ee2760\n");
-  s = s.write("    .quad 0x3ff09ddba6af8360\n    .quad 0xbfa35c8bfaa14000\n    .quad 0x3d1f2a0a8418532b\n");
-  s = s.write("    .quad 0x3ff08cabb37565e2\n    .quad 0xbfa149e3e4004000\n    .quad 0xbd2a8ceacb7d2e06\n");
-  s = s.write("    .quad 0x3ff07b9f29b8eae2\n    .quad 0xbf9e72bf28140000\n    .quad 0x3d28d75149774d47\n");
-  s = s.write("    .quad 0x3ff06ab59c7912fb\n    .quad 0xbf9a55f548c60000\n    .quad 0x3d2de0709f2d03c9\n");
-  s = s.write("    .quad 0x3ff059eea0727586\n    .quad 0xbf963d6178690000\n    .quad 0xbd07abf389596542\n");
-  s = s.write("    .quad 0x3ff04949cc1664c5\n    .quad 0xbf9228fb1fea0000\n    .quad 0xbd2713e3284991fe\n");
-  s = s.write("    .quad 0x3ff038c6b78247fc\n    .quad 0xbf8c317384c70000\n    .quad 0xbd27c19806208c05\n");
-  s = s.write("    .quad 0x3ff02864fc7729e9\n    .quad 0xbf841929f9680000\n    .quad 0xbd1977c755d01368\n");
-  s = s.write("    .quad 0x3ff0182436517a37\n    .quad 0xbf78121214580000\n    .quad 0xbd1ad50382973f27\n");
-  s = s.write("    .quad 0x3ff0080402010080\n    .quad 0xbf60040155d40000\n    .quad 0xbd2889de70671eef\n");
-  s = s.write("    .quad 0x3fefe01fe01fe020\n    .quad 0x3f6ff00aa2b00000\n    .quad 0x3d20bc04a086b56a\n");
-  s = s.write("    .quad 0x3fefa11caa01fa12\n    .quad 0x3f87dc475f810000\n    .quad 0x3cf4edba4a25e0b1\n");
-  s = s.write("    .quad 0x3fef6310aca0dbb5\n    .quad 0x3f93cea443468000\n    .quad 0x3d22ba779a52b7ea\n");
-  s = s.write("    .quad 0x3fef25f644230ab5\n    .quad 0x3f9b9fc027af8000\n    .quad 0x3d1197fbd465b759\n");
-  s = s.write("    .quad 0x3feee9c7f8458e02\n    .quad 0x3fa1b0d98923c000\n    .quad 0x3d297fc2ca2eec8a\n");
-  s = s.write("    .quad 0x3feeae807aba01eb\n    .quad 0x3fa58a5bafc90000\n    .quad 0xbd2b2b739570ad39\n");
-  s = s.write("    .quad 0x3fee741aa59750e4\n    .quad 0x3fa95c830ec90000\n    .quad 0xbd2c148297c5feb8\n");
-  s = s.write("    .quad 0x3fee3a9179dc1a73\n    .quad 0x3fad276b8adb0000\n    .quad 0x3d16a423c78a64b0\n");
-  s = s.write("    .quad 0x3fee01e01e01e01e\n    .quad 0x3fb075983598e000\n    .quad 0x3d11c4c06d2999e2\n");
-  s = s.write("    .quad 0x3fedca01dca01dca\n    .quad 0x3fb253f62f0a2000\n    .quad 0xbd27d20e092cb1fe\n");
-  s = s.write("    .quad 0x3fed92f2231e7f8a\n    .quad 0x3fb42edcbea64000\n    .quad 0x3d1bc0eeea7c9acd\n");
-  s = s.write("    .quad 0x3fed5cac807572b2\n    .quad 0x3fb60658a9376000\n    .quad 0xbd2e789c422c7611\n");
-  s = s.write("    .quad 0x3fed272ca3fc5b1a\n    .quad 0x3fb7da766d7b2000\n    .quad 0xbd2a66f776fe6eca\n");
-  s = s.write("    .quad 0x3fecf26e5c44bfc6\n    .quad 0x3fb9ab4246204000\n    .quad 0xbd28a64826787061\n");
-  s = s.write("    .quad 0x3fecbe6d9601cbe7\n    .quad 0x3fbb78c82bb0e000\n    .quad 0x3d2b4210878cf032\n");
-  s = s.write("    .quad 0x3fec8b265afb8a42\n    .quad 0x3fbd4313d66cc000\n    .quad 0xbd29454379135713\n");
-  s = s.write("    .quad 0x3fec5894d10d4986\n    .quad 0x3fbf0a30c0116000\n    .quad 0x3d05330be64b8b77\n");
-  s = s.write("    .quad 0x3fec26b5392ea01c\n    .quad 0x3fc0671512ca6000\n    .quad 0xbd2a47579cdc0a3d\n");
-  s = s.write("    .quad 0x3febf583ee868d8b\n    .quad 0x3fc1478584674000\n    .quad 0x3d1563451027c750\n");
-  s = s.write("    .quad 0x3febc4fd65883e7b\n    .quad 0x3fc2266f190a6000\n    .quad 0xbd24d20ab840e7f6\n");
-  s = s.write("    .quad 0x3feb951e2b18ff23\n    .quad 0x3fc303d718e48000\n    .quad 0xbcd680b5ce3ecb05\n");
-  s = s.write("    .quad 0x3feb65e2e3beee05\n    .quad 0x3fc3dfc2b0ecc000\n    .quad 0x3d28a72a62b8c13f\n");
-  s = s.write("    .quad 0x3feb37484ad806ce\n    .quad 0x3fc4ba36f39a5000\n    .quad 0x3d279568981bcc36\n");
-  s = s.write("    .quad 0x3feb094b31d922a4\n    .quad 0x3fc59338d9982000\n    .quad 0x3cf0ba68b7555d4a\n");
-  s = s.write("    .quad 0x3feadbe87f94905e\n    .quad 0x3fc66acd4272b000\n    .quad 0xbd15790900e4e1eb\n");
-  s = s.write("    .quad 0x3feaaf1d2f87ebfd\n    .quad 0x3fc740f8f5403000\n    .quad 0x3d2e9326cdfceabe\n");
-  s = s.write("    .quad 0x3fea82e65130e159\n    .quad 0x3fc815c0a1435000\n    .quad 0x3d2fab5a0dbfc630\n");
-  s = s.write("    .quad 0x3fea574107688a4a\n    .quad 0x3fc8e928de887000\n    .quad 0xbd15faad3b0a34ad\n");
-  s = s.write("    .quad 0x3fea2c2a87c51ca0\n    .quad 0x3fc9bb362e7e0000\n    .quad 0xbd21f2a8a1ce0ffc\n");
-  s = s.write("    .quad 0x3fea01a01a01a01a\n    .quad 0x3fca8becfc883000\n    .quad 0xbcfce7a30de4630e\n");
-  s = s.write("    .quad 0x3fe9d79f176b682d\n    .quad 0x3fcb5b519e8fb000\n    .quad 0x3d2691ba27fdc19e\n");
-  s = s.write("    .quad 0x3fe9ae24ea5510da\n    .quad 0x3fcc2968558c2000\n    .quad 0xbd2cfd73dee38a40\n");
-  s = s.write("    .quad 0x3fe9852f0d8ec0ff\n    .quad 0x3fccf6354e09c000\n    .quad 0x3d2771239a07d55b\n");
-  s = s.write("    .quad 0x3fe95cbb0be377ae\n    .quad 0x3fcdc1bca0abf000\n    .quad 0xbd1c14f9675ccce9\n");
-  s = s.write("    .quad 0x3fe934c67f9b2ce6\n    .quad 0x3fce8c0252aa6000\n    .quad 0xbd26805b80e8e6ff\n");
-  s = s.write("    .quad 0x3fe90d4f120190d5\n    .quad 0x3fcf550a564b8000\n    .quad 0xbd2323e3a09202fe\n");
-  s = s.write("    .quad 0x3fe8e6527af1373f\n    .quad 0x3fd00e6c45ad5000\n    .quad 0x3cdcc68d52e01203\n");
-  s = s.write("    .quad 0x3fe8bfce8062ff3a\n    .quad 0x3fd071b85fcd5800\n    .quad 0x3d10d1d1707f97be\n");
-  s = s.write("    .quad 0x3fe899c0f601899c\n    .quad 0x3fd0d46b579ab800\n    .quad 0xbd069bf04df8f0d1\n");
-  s = s.write("    .quad 0x3fe87427bcc092b9\n    .quad 0x3fd136870293a800\n    .quad 0x3d060bdb314c76e9\n");
-  s = s.write("    .quad 0x3fe84f00c2780614\n    .quad 0x3fd1980d2dd42000\n    .quad 0x3d2b7b3a7a361c9a\n");
-  s = s.write("    .quad 0x3fe82a4a0182a4a0\n    .quad 0x3fd1f8ff9e48a000\n    .quad 0x3d27946c040cbe77\n");
-  s = s.write("    .quad 0x3fe8060180601806\n    .quad 0x3fd2596010df7800\n    .quad 0xbd1c610f76c57076\n");
-  s = s.write("    .quad 0x3fe7e225515a4f1d\n    .quad 0x3fd2b9303ab8a000\n    .quad 0xbd26db12d6bfb0a5\n");
-  s = s.write("    .quad 0x3fe7beb3922e017c\n    .quad 0x3fd31871c9544000\n    .quad 0x3d184fab94cecfd9\n");
-  s = s.write("    .quad 0x3fe79baa6bb6398b\n    .quad 0x3fd3772662bfd800\n    .quad 0x3cf6bc953ac4fdd0\n");
-  s = s.write("    .quad 0x3fe77908119ac60d\n    .quad 0x3fd3d54fa5c1f800\n    .quad 0xbd0e0f1932e350e5\n");
-  s = s.write("    .quad 0x3fe756cac201756d\n    .quad 0x3fd432ef2a04e800\n    .quad 0x3cd3b59b3a3a94dc\n");
-  // <<< generated
-  s = s.write("    .text\n");
-  // __fern_rem_pio2_large(d0 = x, |x| >= 2^20 and finite) -> x10 = k&3,
-  // d0 = r. Payne-Hanek: multiplies the significand by the window of 2/pi
-  // its exponent selects, keeping 128 bits about the binary point — the top
-  // two bits are the quadrant and the rest the fraction of x/(pi/2), which
-  // stays fully accurate however large x is. Kept in lockstep with the
-  // native arm64 backend's __fern_rem_pio2_large, register for register.
-  // Wide masks load through the literal pool: the self-host assembler's
-  // logical-immediate path parses 32-bit immediates, so a 52-bit bitmask
-  // spelled `and #imm` is refused there — same discipline as this file's
-  // other 64-bit constants.
-  s = s.write("__fern_rem_pio2_large:\n");
-  s = s.write("    fmov x1, d0\n");
-  s = s.write("    lsr x2, x1, #63\n");  // sign of x
-  s = s.write("    ubfx x3, x1, #52, #11\n");  // biased exponent
-  s = s.write("    ldr x0, =0x000fffffffffffff\n");
-  s = s.write("    and x4, x1, x0\n");
-  s = s.write("    ldr x0, =0x0010000000000000\n");
-  s = s.write("    orr x4, x4, x0\n");  // m, the 53-bit significand
-  // x = m*2^(e-1075), so the fraction of x*(2/pi) starts at bit
-  // (e-1075)+62 of the table once the product is read as a Q126.
-  s = s.write("    sub x3, x3, #1013\n");
-  s = s.write("    and x5, x3, #63\n");  // bit offset within the limb
-  s = s.write("    lsr x3, x3, #6\n");  // limb index
-  s = s.write("    adrp x17, .Lfc_2opi_bits\n");
-  s = s.write("    add x17, x17, :lo12:.Lfc_2opi_bits\n");
-  s = s.write("    add x17, x17, x3, lsl #3\n");
-  s = s.write("    ldr x6, [x17]\n");
-  s = s.write("    ldr x7, [x17, #8]\n");
-  s = s.write("    ldr x1, [x17, #16]\n");
-  s = s.write("    ldr x3, [x17, #24]\n");
-  // Each 64-bit window is (T[i] << off) | (T[i+1] >> (64-off)). aarch64
-  // has no variable EXTR, and lsrv masks its count mod 64, so the right
-  // half is spelled as two shifts — a plain >> (64-off) is wrong at off 0.
-  s = s.write("    mov x16, #63\n");
-  s = s.write("    sub x16, x16, x5\n");
-  s = s.write("    lsl x13, x6, x5\n    lsr x0, x7, #1\n    lsr x0, x0, x16\n    orr x13, x13, x0\n");  // w0
-  s = s.write("    lsl x14, x7, x5\n    lsr x0, x1, #1\n    lsr x0, x0, x16\n    orr x14, x14, x0\n");  // w1
-  s = s.write("    lsl x15, x1, x5\n    lsr x0, x3, #1\n    lsr x0, x0, x16\n    orr x15, x15, x0\n");  // w2
-  // acc(128) = lo(m*w0)<<64 + m*w1 + hi(m*w2), i.e. x*(2/pi) as a Q126.
-  s = s.write("    mul x7, x4, x13\n");
-  s = s.write("    mul x1, x4, x14\n");
-  s = s.write("    umulh x3, x4, x14\n");
-  s = s.write("    umulh x6, x4, x15\n");
-  s = s.write("    adds x1, x1, x6\n");
-  s = s.write("    adc x7, x7, x3\n");
-  s = s.write("    lsr x10, x7, #62\n");  // quadrant
-  s = s.write("    ldr x16, =0x3fffffffffffffff\n");
-  s = s.write("    and x7, x7, x16\n");
-  // A fraction at or above a half belongs to the next quadrant, as the
-  // negative remainder below it — which is what keeps |r| <= pi/4.
-  s = s.write("    mov x0, xzr\n");  // frac is negative iff this becomes 1
-  s = s.write("    ldr x16, =0x2000000000000000\n");
-  s = s.write("    cmp x7, x16\n");
-  s = s.write("    b.lo .Lph_pos\n");
-  s = s.write("    add x10, x10, #1\n");
-  s = s.write("    subs x1, xzr, x1\n");  // negs: sets the borrow sbc needs
-  s = s.write("    ldr x6, =0x4000000000000000\n");
-  s = s.write("    sbc x7, x6, x7\n");
-  s = s.write("    mov x0, #1\n");
-  s = s.write(".Lph_pos:\n");
-  // >> 11 keeps the low word inside 53 bits so the conversion is exact,
-  // matching the other backends bit for bit.
-  s = s.write("    lsr x1, x1, #11\n");
-  s = s.write("    scvtf d1, x7\n");
-  s = emit_ldc(s, "d3", ".Lfc_2m62");
-  s = s.write("    fmul d1, d1, d3\n");
-  s = s.write("    scvtf d2, x1\n");
-  s = emit_ldc(s, "d3", ".Lfc_2m115");
-  s = s.write("    fmul d2, d2, d3\n");
-  s = s.write("    fadd d1, d1, d2\n");
-  s = s.write("    cmp x0, #0\n");
-  s = s.write("    b.eq .Lph_nn\n");
-  s = s.write("    fneg d1, d1\n");
-  s = s.write(".Lph_nn:\n");
-  s = s.write("    cmp x2, #0\n");
-  s = s.write("    b.eq .Lph_sgn\n");
-  s = s.write("    fneg d1, d1\n");
-  s = s.write("    neg x10, x10\n");
-  s = s.write(".Lph_sgn:\n");
-  s = s.write("    and x10, x10, #3\n");
-  s = emit_ldc(s, "d3", ".Lfc_pio2hi");
-  s = s.write("    fmul d0, d1, d3\n");
-  s = emit_ldc(s, "d3", ".Lfc_pio2lo");
-  s = s.write("    fmul d1, d1, d3\n");
-  s = s.write("    fadd d0, d0, d1\n");
-  s = s.write("    ret\n");
-  // __fern_ksin(d0=r, |r| <= pi/4) -> sin r. Internal: sin and cos both
-  // reach it after reduction, so the kernel exists once.
-  s = s.write("__fern_ksin:\n");
-  s = s.write("    fmul d1, d0, d0\n");
-  s = s.write("    fmul d2, d1, d0\n");
-  s = emit_ldc(s, "d3", ".Lfc_s6");
-  s = emit_ldc(s, "d20", ".Lfc_s5");
-  s = s.write("    fmul d3, d3, d1\n");
-  s = s.write("    fadd d3, d3, d20\n");
-  s = emit_ldc(s, "d20", ".Lfc_s4");
-  s = s.write("    fmul d3, d3, d1\n");
-  s = s.write("    fadd d3, d3, d20\n");
-  s = emit_ldc(s, "d20", ".Lfc_s3");
-  s = s.write("    fmul d3, d3, d1\n");
-  s = s.write("    fadd d3, d3, d20\n");
-  s = emit_ldc(s, "d20", ".Lfc_s2");
-  s = s.write("    fmul d3, d3, d1\n");
-  s = s.write("    fadd d3, d3, d20\n");
-  s = emit_ldc(s, "d20", ".Lfc_s1");
-  s = s.write("    fmul d3, d3, d1\n");
-  s = s.write("    fadd d3, d3, d20\n");
-  s = s.write("    fmul d3, d3, d2\n");
-  s = s.write("    fadd d0, d0, d3\n");
-  s = s.write("    ret\n");
-  // __fern_kcos(d0=r, |r| <= pi/4) -> cos r. The (1-w)-hz rewrite recovers the
-  // bits 1-hz discards; computing 1 - hz + z*z*p directly costs ~2 ulp.
-  s = s.write("__fern_kcos:\n");
-  s = s.write("    fmul d1, d0, d0\n");
-  s = emit_ldc(s, "d3", ".Lfc_c6");
-  s = emit_ldc(s, "d20", ".Lfc_c5");
-  s = s.write("    fmul d3, d3, d1\n");
-  s = s.write("    fadd d3, d3, d20\n");
-  s = emit_ldc(s, "d20", ".Lfc_c4");
-  s = s.write("    fmul d3, d3, d1\n");
-  s = s.write("    fadd d3, d3, d20\n");
-  s = emit_ldc(s, "d20", ".Lfc_c3");
-  s = s.write("    fmul d3, d3, d1\n");
-  s = s.write("    fadd d3, d3, d20\n");
-  s = emit_ldc(s, "d20", ".Lfc_c2");
-  s = s.write("    fmul d3, d3, d1\n");
-  s = s.write("    fadd d3, d3, d20\n");
-  s = emit_ldc(s, "d20", ".Lfc_c1");
-  s = s.write("    fmul d3, d3, d1\n");
-  s = s.write("    fadd d3, d3, d20\n");
-  s = s.write("    fmul d3, d3, d1\n");
-  s = s.write("    fmul d3, d3, d1\n");
-  s = emit_ldc(s, "d5", ".Lfc_half");
-  s = s.write("    fmul d4, d1, d5\n");
-  s = emit_ldc(s, "d5", ".Lfc_one");
-  s = s.write("    fsub d6, d5, d4\n");
-  s = s.write("    fsub d7, d5, d6\n");
-  s = s.write("    fsub d7, d7, d4\n");
-  s = s.write("    fadd d7, d7, d3\n");
-  s = s.write("    fadd d0, d6, d7\n");
-  s = s.write("    ret\n");
-  // __fern_sin_f64: quadrant 0..3 -> sin r, cos r, -sin r, -cos r. Odd
-  // quadrant picks the cos kernel and quadrant >= 2 flips the sign, so exactly
-  // ONE kernel runs where the old code evaluated both and selected.
-  s = s.write("    .global __fern_sin_f64\n");
-  s = s.write("    .type __fern_sin_f64, %function\n");
-  s = s.write("__fern_sin_f64:\n");
-  // NaN returns itself; +-Inf becomes NaN. Before the frame, so these
-  // arms return without x29/x30 pushed behind them.
-  s = s.write("    fcmp d0, d0\n");
-  s = s.write("    b.vs .Lsin_gret\n");
-  s = s.write("    fmov x14, d0\n");
-  s = s.write("    lsl x14, x14, #1\n");
-  s = s.write("    ldr x15, =0xffe0000000000000\n");
-  s = s.write("    cmp x14, x15\n");
-  s = s.write("    b.eq .Lsin_gnan\n");
-  s = s.write("    b .Lsin_gok\n");
-  s = s.write(".Lsin_gret:\n");
-  s = s.write("    ret\n");
-  s = s.write(".Lsin_gnan:\n");
-  s = s.write("    ldr x14, =0x7ff8000000000000\n");
-  s = s.write("    fmov d0, x14\n");
-  s = s.write("    ret\n");
-  s = s.write(".Lsin_gok:\n");
-  s = s.write("    stp x29, x30, [sp, #-16]!\n");
-  s = s.write("    mov x29, sp\n");
-  s = fc_pio2_reduce(s, "sin");
-  s = s.write("    tbnz x10, #0, .Lsin_usecos\n");
-  s = s.write("    bl __fern_ksin\n");
-  s = s.write("    b .Lsin_neg\n");
-  s = s.write(".Lsin_usecos:\n");
-  s = s.write("    bl __fern_kcos\n");
-  s = s.write(".Lsin_neg:\n");
-  s = s.write("    cmp x10, #2\n");
-  s = s.write("    b.lt .Lsin_done\n");
-  s = s.write("    fneg d0, d0\n");
-  s = s.write(".Lsin_done:\n");
-  s = s.write("    ldp x29, x30, [sp], #16\n");
-  s = s.write("    ret\n");
-  s = s.write(".size __fern_sin_f64, .-__fern_sin_f64\n");
-  // __fern_cos_f64: quadrant 0..3 -> cos r, -sin r, -cos r, sin r.
-  s = s.write("    .global __fern_cos_f64\n");
-  s = s.write("    .type __fern_cos_f64, %function\n");
-  s = s.write("__fern_cos_f64:\n");
-  // NaN returns itself; +-Inf becomes NaN. Before the frame, so these
-  // arms return without x29/x30 pushed behind them.
-  s = s.write("    fcmp d0, d0\n");
-  s = s.write("    b.vs .Lcos_gret\n");
-  s = s.write("    fmov x14, d0\n");
-  s = s.write("    lsl x14, x14, #1\n");
-  s = s.write("    ldr x15, =0xffe0000000000000\n");
-  s = s.write("    cmp x14, x15\n");
-  s = s.write("    b.eq .Lcos_gnan\n");
-  s = s.write("    b .Lcos_gok\n");
-  s = s.write(".Lcos_gret:\n");
-  s = s.write("    ret\n");
-  s = s.write(".Lcos_gnan:\n");
-  s = s.write("    ldr x14, =0x7ff8000000000000\n");
-  s = s.write("    fmov d0, x14\n");
-  s = s.write("    ret\n");
-  s = s.write(".Lcos_gok:\n");
-  s = s.write("    stp x29, x30, [sp, #-16]!\n");
-  s = s.write("    mov x29, sp\n");
-  s = fc_pio2_reduce(s, "cos");
-  s = s.write("    tbnz x10, #0, .Lcos_usesin\n");
-  s = s.write("    bl __fern_kcos\n");
-  s = s.write("    b .Lcos_chk\n");
-  s = s.write(".Lcos_usesin:\n");
-  s = s.write("    bl __fern_ksin\n");
-  s = s.write(".Lcos_chk:\n");
-  s = s.write("    cmp x10, #1\n");
-  s = s.write("    b.lt .Lcos_done\n");
-  s = s.write("    cmp x10, #2\n");
-  s = s.write("    b.gt .Lcos_done\n");
-  s = s.write("    fneg d0, d0\n");
-  s = s.write(".Lcos_done:\n");
-  s = s.write("    ldp x29, x30, [sp], #16\n");
-  s = s.write("    ret\n");
-  s = s.write(".size __fern_cos_f64, .-__fern_cos_f64\n");
-  // __fern_exp_f64(d0=x) -> e^x. The division is deliberate: a division-free
-  // variant needs a degree-13 Taylor to reach 1 ulp, whose dependent chain is
-  // longer than the divide it avoids.
-  s = s.write("    .global __fern_exp_f64\n");
-  s = s.write("    .type __fern_exp_f64, %function\n");
-  s = s.write("__fern_exp_f64:\n");
-  s = s.write("    fcmp d0, d0\n");
-  s = s.write("    b.vs .Lexp_ret\n");
-  s = emit_ldc(s, "d1", ".Lfc_expovf");
-  s = s.write("    fcmp d0, d1\n");
-  s = s.write("    b.gt .Lexp_inf\n");
-  s = emit_ldc(s, "d1", ".Lfc_expunf");
-  s = s.write("    fcmp d0, d1\n");
-  s = s.write("    b.lt .Lexp_zero\n");
-  s = emit_ldc(s, "d1", ".Lfc_invln2");
-  s = s.write("    fmul d1, d1, d0\n");
-  s = s.write("    frintn d1, d1\n");
-  s = s.write("    fcvtzs x10, d1\n");
-  s = emit_ldc(s, "d2", ".Lfc_ln2hi");
-  s = s.write("    fmul d2, d1, d2\n");
-  s = s.write("    fsub d3, d0, d2\n");
-  s = emit_ldc(s, "d2", ".Lfc_ln2lo");
-  s = s.write("    fmul d1, d1, d2\n");
-  s = s.write("    fsub d0, d3, d1\n");
-  s = s.write("    fmul d4, d0, d0\n");
-  s = emit_ldc(s, "d5", ".Lfc_p5");
-  s = emit_ldc(s, "d20", ".Lfc_p4");
-  s = s.write("    fmul d5, d5, d4\n");
-  s = s.write("    fadd d5, d5, d20\n");
-  s = emit_ldc(s, "d20", ".Lfc_p3");
-  s = s.write("    fmul d5, d5, d4\n");
-  s = s.write("    fadd d5, d5, d20\n");
-  s = emit_ldc(s, "d20", ".Lfc_p2");
-  s = s.write("    fmul d5, d5, d4\n");
-  s = s.write("    fadd d5, d5, d20\n");
-  s = emit_ldc(s, "d20", ".Lfc_p1");
-  s = s.write("    fmul d5, d5, d4\n");
-  s = s.write("    fadd d5, d5, d20\n");
-  s = s.write("    fmul d5, d5, d4\n");
-  s = s.write("    fsub d6, d0, d5\n");
-  s = s.write("    fmul d7, d0, d6\n");
-  s = emit_ldc(s, "d2", ".Lfc_two");
-  s = s.write("    fsub d2, d2, d6\n");
-  s = s.write("    fdiv d7, d7, d2\n");
-  s = s.write("    fsub d2, d1, d7\n");
-  s = s.write("    fsub d2, d2, d3\n");
-  s = emit_ldc(s, "d0", ".Lfc_one");
-  s = s.write("    fsub d0, d0, d2\n");
-  // 2^k as two half-scales; see asm_ir.fern's exp for why one field
-  // cannot hold the subnormal band.
-  s = s.write("    asr x11, x10, #1\n");
-  s = s.write("    sub x10, x10, x11\n");
-  s = s.write("    add x11, x11, #1023\n");
-  s = s.write("    lsl x11, x11, #52\n");
-  s = s.write("    fmov d1, x11\n");
-  s = s.write("    add x10, x10, #1023\n");
-  s = s.write("    lsl x10, x10, #52\n");
-  s = s.write("    fmov d2, x10\n");
-  s = s.write("    fmul d0, d0, d1\n");
-  s = s.write("    fmul d0, d0, d2\n");
-  s = s.write(".Lexp_ret:\n");
-  s = s.write("    ret\n");
-  s = s.write(".Lexp_inf:\n");
-  s = s.write("    ldr x14, =0x7ff0000000000000\n");
-  s = s.write("    fmov d0, x14\n");
-  s = s.write("    ret\n");
-  s = s.write(".Lexp_zero:\n");
-  s = s.write("    fmov d0, xzr\n");
-  s = s.write("    ret\n");
-  s = s.write(".size __fern_exp_f64, .-__fern_exp_f64\n");
-  // __fern_log_f64(d0=x) -> ln x, the table-driven kernel
-  // internal/tables/fdlibm/logtab.go documents; instruction for instruction native
-  // arm64's. x9 holds .Lfc_logtab's address throughout.
-  s = s.write("    .global __fern_log_f64\n");
-  s = s.write("    .type __fern_log_f64, %function\n");
-  s = s.write("__fern_log_f64:\n");
-  s = s.write("    adrp x9, .Lfc_logtab\n    add x9, x9, :lo12:.Lfc_logtab\n");
-  s = s.write("    fmov x10, d0\n");
-  s = s.write("    ldr x11, =0x3fee000000000000\n    sub x11, x10, x11\n");
-  s = s.write("    ldr x13, =0x0003090000000000\n    cmp x11, x13\n    b.lo .Llog_near1\n");
-  s = s.write("    lsr x11, x10, #52\n    sub x11, x11, #1\n");
-  s = s.write("    cmp x11, #0x7fe\n    b.hs .Llog_special\n");  // zero, subnormal, negative, Inf or NaN
-  s = s.write(".Llog_main:\n");
-  s = s.write("    ldr x13, =0x3fe6000000000000\n    sub x13, x10, x13\n");  // tmp
-  s = s.write("    asr x15, x13, #52\n    scvtf d4, x15\n");  // k
-  s = s.write("    sub x10, x10, x15, lsl #52\n");  // bits(z)
-  s = s.write("    lsr x14, x13, #45\n    and x14, x14, #127\n");
-  s = s.write("    add x14, x14, x14, lsl #1\n    add x14, x9, x14, lsl #3\n");  // the row, less 112
-  s = s.write("    fmov d0, x10\n");  // z
-  s = s.write("    lsr x10, x10, #44\n    orr x10, x10, #1\n    lsl x10, x10, #44\n    fmov d1, x10\n");  // c
-  s = s.write("    fsub d0, d0, d1\n    ldr d1, [x14, #112]\n    fmul d0, d0, d1\n");  // r
-  s = emit_ldc(s, "d2", ".Lfc_ln2hi");
-  s = s.write("    fmul d2, d4, d2\n    ldr d3, [x14, #120]\n    fadd d2, d2, d3\n");  // w
-  s = s.write("    fadd d3, d2, d0\n");  // hi
-  s = s.write("    fsub d2, d2, d3\n    fadd d2, d2, d0\n");
-  s = emit_ldc(s, "d5", ".Lfc_ln2lo");
-  s = s.write("    fmul d4, d4, d5\n    ldr d5, [x14, #128]\n    fadd d4, d4, d5\n    fadd d2, d2, d4\n");  // lo
-  s = s.write("    fmul d5, d0, d0\n");  // r2
-  s = s.write("    ldp d16, d17, [x9]\n    ldp d18, d19, [x9, #16]\n");
-  s = s.write("    fmul d6, d0, d17\n    fadd d6, d6, d16\n");
-  s = s.write("    fmul d7, d0, d19\n    fadd d7, d7, d18\n");
-  s = s.write("    fmul d7, d7, d5\n    fadd d6, d6, d7\n");  // p
-  s = emit_ldc(s, "d16", ".Lfc_half");
-  s = s.write("    fmul d7, d5, d16\n    fsub d2, d2, d7\n");
-  s = s.write("    fmul d5, d0, d5\n    fmul d5, d5, d6\n    fadd d2, d2, d5\n");
-  s = s.write("    fadd d0, d2, d3\n    ret\n");
-  // log1p(r) for r = x - 1, which is exact here. p = ((B[a] + r*B[a+1]) +
-  // r2*B[a+2]) + r3*tail, innermost first.
-  s = s.write(".Llog_near1:\n");
-  s = emit_ldc(s, "d1", ".Lfc_one");
-  s = s.write("    fsub d0, d0, d1\n");  // r
-  s = s.write("    fmul d1, d0, d0\n    fmul d2, d0, d1\n");  // r2, r3
-  s = s.write("    add x11, x9, #32\n");
-  let a: i32 = 6;
-  while (a >= 0) {
-    s = s.write("    ldp d16, d17, [x11, #" + util.i32_to_string(8 * a) + "]\n");
-    s = s.write("    ldr d18, [x11, #" + util.i32_to_string(8 * (a + 2)) + "]\n");
-    s = s.write("    fmul d4, d0, d17\n    fadd d4, d4, d16\n");
-    s = s.write("    fmul d5, d1, d18\n    fadd d4, d4, d5\n");
-    if (a == 6) {
-      s = s.write("    ldr d19, [x11, #72]\n    fmul d3, d2, d19\n");
-    } else {
-      s = s.write("    fmul d3, d3, d2\n");
-    }
-    s = s.write("    fadd d3, d3, d4\n");
-    a = a - 3;
-  }
-  s = s.write("    fmul d3, d3, d2\n");  // y
-  s = s.write("    ldr x13, =0x41a0000000000000\n    fmov d1, x13\n    fmul d1, d1, d0\n");  // r*2^27
-  s = s.write("    fadd d4, d0, d1\n    fsub d4, d4, d1\n");  // rhi
-  s = s.write("    fsub d5, d0, d4\n");  // rlo
-  s = emit_ldc(s, "d16", ".Lfc_half");
-  s = s.write("    fmul d6, d4, d4\n    fmul d6, d6, d16\n");  // h
-  s = s.write("    fsub d7, d0, d6\n");  // hi
-  s = s.write("    fsub d1, d0, d7\n    fsub d1, d1, d6\n");  // lo
-  s = s.write("    fadd d4, d4, d0\n    fmul d5, d5, d16\n    fmul d5, d5, d4\n    fsub d1, d1, d5\n");
-  s = s.write("    fadd d3, d3, d1\n    fadd d0, d3, d7\n    ret\n");
-  // x10 = bits(x), x11 = top-1 with top the sign and exponent.
-  s = s.write(".Llog_special:\n");
-  s = s.write("    lsl x13, x10, #1\n    cbz x13, .Llog_neginf\n");  // ±0
-  s = s.write("    fcmp d0, d0\n    b.vs .Llog_ret\n");
-  s = s.write("    cmp x10, #0\n    b.lt .Llog_nan\n");
-  s = s.write("    cmp x11, #0x7fe\n    b.eq .Llog_ret\n");  // +Inf
-  // Subnormal: scale into the normal range, then take the 52 back off the
-  // exponent field so the reduction's k comes out right.
-  s = s.write("    ldr x13, =0x4330000000000000\n    fmov d1, x13\n    fmul d0, d0, d1\n");
-  s = s.write("    fmov x10, d0\n    ldr x13, =0x0340000000000000\n    sub x10, x10, x13\n");
-  s = s.write("    b .Llog_main\n");
-  s = s.write(".Llog_ret:\n");
-  s = s.write("    ret\n");
-  s = s.write(".Llog_nan:\n");
-  s = s.write("    ldr x14, =0x7ff8000000000000\n");
-  s = s.write("    fmov d0, x14\n");
-  s = s.write("    ret\n");
-  s = s.write(".Llog_neginf:\n");
-  s = s.write("    ldr x14, =0xfff0000000000000\n");
-  s = s.write("    fmov d0, x14\n");
-  s = s.write("    ret\n");
-  s = s.write(".size __fern_log_f64, .-__fern_log_f64\n");
-  // __fern_pow_f64(d0=x, d1=y). Integer-exponent fast path: exp(y*ln x)
-  // CANNOT return exactly 9 for pow(3,2) — a 1-ulp error in ln 3, amplified by
-  // the exponential, lands just under, so `as i32` truncated to 8. Repeated
-  // squaring is exact wherever the result is representable. Integrality is an
-  // i64 round-trip, so a NaN or out-of-range y falls out as a huge |n| the range
-  // check rejects.
-  s = s.write("    .global __fern_pow_f64\n");
-  s = s.write("    .type __fern_pow_f64, %function\n");
-  s = s.write("__fern_pow_f64:\n");
-  s = s.write("    fcvtzs x10, d1\n");
-  s = s.write("    scvtf d2, x10\n");
-  s = s.write("    fcmp d2, d1\n");
-  s = s.write("    b.ne .Lpow_general\n");
-  // Re-entered once with a reciprocated base and a negated n; see
-  // asm_ir.fern's pow for the overflow retry.
-  s = s.write(".Lpow_retry:\n");
-  s = s.write("    mov x11, x10\n");
-  s = s.write("    cmp x11, #0\n");
-  s = s.write("    b.ge .Lpow_abs\n");
-  s = s.write("    neg x11, x11\n");
-  s = s.write(".Lpow_abs:\n");
-  s = s.write("    cmp x11, #1074\n");
-  s = s.write("    b.gt .Lpow_general\n");
-  s = emit_ldc(s, "d3", ".Lfc_one");
-  s = s.write("    fmov d4, d0\n");
-  s = s.write(".Lpow_loop:\n");
-  s = s.write("    tbz x11, #0, .Lpow_skip\n");
-  s = s.write("    fmul d3, d3, d4\n");
-  s = s.write(".Lpow_skip:\n");
-  s = s.write("    fmul d4, d4, d4\n");
-  s = s.write("    lsr x11, x11, #1\n");
-  s = s.write("    cmp x11, #0\n");
-  s = s.write("    b.ne .Lpow_loop\n");
-  s = s.write("    cmp x10, #0\n");
-  s = s.write("    b.ge .Lpow_done\n");
-  s = emit_ldc(s, "d5", ".Lfc_one");
-  s = s.write("    fdiv d5, d5, d3\n");
-  s = s.write("    fcmp d5, #0.0\n");
-  s = s.write("    b.ne .Lpow_recip\n");
-  s = emit_ldc(s, "d5", ".Lfc_one");
-  s = s.write("    fdiv d0, d5, d0\n");
-  s = s.write("    neg x10, x10\n");
-  s = s.write("    b .Lpow_retry\n");
-  s = s.write(".Lpow_recip:\n");
-  s = s.write("    fmov d3, d5\n");
-  s = s.write(".Lpow_done:\n");
-  s = s.write("    fmov d0, d3\n");
-  s = s.write("    ret\n");
-  // General case: x^y = sign * exp(y*ln|x|). ln is defined only for x > 0, so a
-  // negative base is split into a sign and |x| first: for an integral y the sign
-  // is (-1)^y, and a non-integral y makes the result NaN. Every |y| >= 2^53 is an
-  // even integer, which is what leaves pow(x<0, +-Inf) a magnitude rather than a
-  // NaN. Stashes y in callee-saved d8 and the sign in d9 across the log call.
-  s = s.write(".Lpow_general:\n");
-  s = s.write("    stp x29, x30, [sp, #-16]!\n");
-  s = s.write("    mov x29, sp\n");
-  s = s.write("    str d8, [sp, #-16]!\n");
-  s = s.write("    str d9, [sp, #-16]!\n");
-  s = s.write("    fmov d8, d1\n");
-  s = emit_ldc(s, "d9", ".Lfc_one");  // sign of the result
-  s = s.write("    fmov x14, d0\n");
-  s = s.write("    tbz x14, #63, .Lpow_mag\n");  // +0 or a positive base
-  s = s.write("    lsl x14, x14, #1\n");
-  s = s.write("    lsr x14, x14, #1\n");
-  s = s.write("    fmov d0, x14\n");  // |x|
-  s = s.write("    fmov x15, d1\n");
-  s = s.write("    lsl x15, x15, #1\n");
-  s = s.write("    lsr x15, x15, #1\n");  // |y|
-  s = s.write("    ldr x16, =0x4340000000000000\n");
-  s = s.write("    cmp x15, x16\n");
-  s = s.write("    b.lo .Lpow_parity\n");
-  s = s.write("    ldr x16, =0x7ff0000000000000\n");
-  s = s.write("    cmp x15, x16\n");
-  s = s.write("    b.ls .Lpow_mag\n");  // |y| >= 2^53, finite or +-Inf: an even integer
-  s = s.write("    b .Lpow_nan\n");  // y is NaN
-  s = s.write(".Lpow_parity:\n");
-  s = s.write("    fcvtzs x15, d1\n");
-  s = s.write("    scvtf d2, x15\n");
-  s = s.write("    fcmp d2, d1\n");
-  s = s.write("    b.ne .Lpow_nan\n");  // y is not an integer
-  s = s.write("    tbz x15, #0, .Lpow_mag\n");  // even exponent
-  s = s.write("    fneg d9, d9\n");
-  // |x| == 1 is 1 for every y, including the NaN and +-Inf that exp(y*ln|x|)
-  // would turn into NaN through y*0.
-  s = s.write(".Lpow_mag:\n");
-  s = s.write("    fmov x14, d0\n");
-  s = s.write("    ldr x16, =0x3ff0000000000000\n");
-  s = s.write("    cmp x14, x16\n");
-  s = s.write("    b.eq .Lpow_sign\n");
-  s = s.write("    bl __fern_log_f64\n");
-  s = s.write("    fmul d0, d8, d0\n");
-  s = s.write("    bl __fern_exp_f64\n");
-  s = s.write(".Lpow_sign:\n");
-  s = s.write("    fmul d0, d0, d9\n");
-  s = s.write("    ldr d9, [sp], #16\n");
-  s = s.write("    ldr d8, [sp], #16\n");
-  s = s.write("    ldp x29, x30, [sp], #16\n");
-  s = s.write("    ret\n");
-  s = s.write(".Lpow_nan:\n");
-  s = s.write("    ldr d9, [sp], #16\n");
-  s = s.write("    ldr d8, [sp], #16\n");
-  s = s.write("    ldp x29, x30, [sp], #16\n");
-  s = s.write("    ldr x14, =0x7ff8000000000000\n");
-  s = s.write("    fmov d0, x14\n");
-  s = s.write("    ret\n");
-  s = s.write(".size __fern_pow_f64, .-__fern_pow_f64\n");
-  return s;
-}
-
 // needs_fs_runtime is the gate on the io_error call-graph bundle: every
 // need whose generated Fern body is emitted from that block, __fern_io_error
 // included — they share one call graph, so they are emitted together. The
@@ -12090,6 +11773,8 @@ pub function emit_module_ir_unit_arm64_prepared(mod: parser.Module, is_entry: bo
   // symbol list — reused from asm_ir.
   if (is_entry && globl_defs) {
     s = asmcore.emit_runtime_globls(s);
+    // The frameless functions' bounds trap, arm64's alone.
+    s = s.write(".globl __fern_oob_abort_leaf\n");
   }
   // [lo, hi) function-index window (function-sharding, #3425 — the arm64
   // mirror of asm_ir.emit_module_funcs' windowing). A full window (lo=0,
@@ -12105,6 +11790,8 @@ pub function emit_module_ir_unit_arm64_prepared(mod: parser.Module, is_entry: bo
   // declaration-less bodies on its tail (asm_ir.emit_module_funcs).
   ircore.check_fip_claims(mod.funcs, lo, hh, cache);
   s = asmcore.EmitState { ...s, reg_entries: irtables.sig_reg_of(asmcore.unit_labels(mod, lo, hh, cache)), leaves: asmcore.unit_leaves(mod, lo, hh, cache) };
+  let fabi: asmcore.FloatAbi = asmcore.unit_float_abi(mod, lo, hh, cache);
+  s = asmcore.EmitState { ...s, float_abi: fabi.names, float_abi_masks: fabi.masks };
   let fi: i32 = lo;
   while (fi < hh) {
     let r: irtables.LowerResult = ircore.produced(cache, fi, mod.funcs[fi]);

@@ -1827,6 +1827,12 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 			Result: ast.NumberType{Width: 32, Signed: true},
 		}
 	}
+	// __mulhi_u64(a, b): the high 64 bits of the 128-bit product a * b, the
+	// half a wrapping `*` drops.
+	c.info.FuncSigs["__mulhi_u64"] = &ast.FuncType{
+		Params: []ast.Type{ast.NumberType{Width: 64, Signed: false}, ast.NumberType{Width: 64, Signed: false}},
+		Result: ast.NumberType{Width: 64, Signed: false},
+	}
 	// __memchr(s, byte, from): index of the first occurrence of `byte` in
 	// `s` at or after `from`, or -1. The first SIMD kernel — see
 	// docs/ATLAS-PLATFORM-PLAN.md §3.
@@ -2151,15 +2157,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Result: ast.FloatType{Width: 32},
 	}
 	// Float math primitives. These are checker builtins because
-	// the interp / native / wasm backends all have access to
-	// hardware-precise implementations (Go's `math` package
-	// for the interp; wasm's f64.{sqrt,floor,…} ops for the
-	// wasm backend; libm-style sequences on arm64 / x86 for
-	// the native backends). Wrapping each in Lang code (eg
-	// Newton iteration for sqrt) would be slower AND less
-	// precise, which is bad both for performance and for
-	// property-based tests that compare against an external
-	// reference.
+	// every target has an exact instruction for each (Go's `math`
+	// package for the interp; wasm's f64.{sqrt,floor,…} ops; the
+	// native ISAs' own). The transcendentals are not among them:
+	// std/float computes those in Fern.
 	//
 	// The user-facing surface is the receiver methods in
 	// `std/float` (`(x: f64).sqrt()`, `(x: f64).floor()`, …)
@@ -2175,17 +2176,6 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 	c.info.FuncSigs["__round_f64"] = f64ToF64Builtin
 	c.info.FuncSigs["__trunc_f64"] = f64ToF64Builtin
 	c.info.FuncSigs["__abs_f64"] = f64ToF64Builtin
-	c.info.FuncSigs["__log_f64"] = f64ToF64Builtin
-	c.info.FuncSigs["__exp_f64"] = f64ToF64Builtin
-	c.info.FuncSigs["__sin_f64"] = f64ToF64Builtin
-	c.info.FuncSigs["__cos_f64"] = f64ToF64Builtin
-	c.info.FuncSigs["__pow_f64"] = &ast.FuncType{
-		Params: []ast.Type{
-			ast.FloatType{Width: 64},
-			ast.FloatType{Width: 64},
-		},
-		Result: ast.FloatType{Width: 64},
-	}
 	// f64_bits / f64_from_bits — same idea for 64-bit floats.
 	// The interp owns the only implementation today; the native
 	// + wasm backends route f64 / i64 through their own
@@ -11962,7 +11952,7 @@ var fipNonAllocBuiltins = map[string]bool{
 	"__sum_bytes": true, "__scan_set": true, "__scan_set_bytes": true, "__bsd_sum": true, "__str_hash": true, "__count_runs": true, "__count_runs_bytes": true,
 	"__crc32_cksum": true, "__crc32_cksum_array": true,
 	"__clz32": true, "__ctz32": true, "__popcount32": true,
-	"__clz64": true, "__ctz64": true, "__popcount64": true,
+	"__clz64": true, "__ctz64": true, "__popcount64": true, "__mulhi_u64": true,
 	"__ptr_width": true, "__heap_bump_bytes": true, "__heap_alloc_count": true,
 	"monotonic_ns": true,
 }

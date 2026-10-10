@@ -7809,22 +7809,18 @@ function rc_contracts(): ssasem.Contract[] {
   ];
 }
 
-// The ten f64 primitives `std/float` dispatches to, and the one two-operand
-// member.
+// The six f64 primitives `std/float` dispatches to.
 function float_primitive_contracts(): ssasem.Contract[] {
   let names: string[] = [
     "__sqrt_f64", "__floor_f64", "__ceil_f64", "__round_f64", "__trunc_f64",
-    "__abs_f64", "__log_f64", "__exp_f64", "__sin_f64", "__cos_f64",
+    "__abs_f64",
   ];
   let value: i32[] = [ssaunits.value_mode()];
   let out: ssasem.Contract[] = [];
   for n in names {
     out = out.append(ssasem.Contract { name: n, params: [t_f64()], modes: value, result: t_f64() });
   }
-  return out.append(ssasem.Contract {
-    name: "__pow_f64", params: [t_f64(), t_f64()],
-    modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_f64(),
-  });
+  return out;
 }
 
 // One name per operand width, each answering an i32 count.
@@ -7839,7 +7835,7 @@ function bit_count_contracts(): ssasem.Contract[] {
   for n in wide {
     out = out.append(ssasem.Contract { name: n, params: [t_u64()], modes: value, result: t_i32() });
   }
-  return out;
+  return out.append(ssasem.Contract { name: "__mulhi_u64", params: [t_u64(), t_u64()], modes: [ssaunits.value_mode(), ssaunits.value_mode()], result: t_u64() });
 }
 
 // The raw-memory escape hatches. An address is a `usize`, a value with no unit
@@ -8793,7 +8789,9 @@ function inline_leaves(all: Produced[], names: string[], mod: parser.Module): Sp
   while (i < all.len()) {
     let p: Produced = Produced { ...all[i], func: out.funcs[i] };
     if (out.rewritten[i]) {
-      p = Produced { ...p, analysis: None };
+      // A splice can hand an index read the array literal it reads, which
+      // proves more of them in range.
+      p = Produced { ...p, func: ssabounds.proven_indices(p.func), analysis: None };
     }
     result = result.append(p);
     i = i + 1;

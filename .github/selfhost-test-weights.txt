@@ -512,7 +512,6 @@ TestSelfHostFloatMathIRWasm 2
 TestSelfHostFloatMathIRX86_64 3
 TestSelfHostFloatNanIR 2
 TestSelfHostFloatToU8Saturates 2
-TestSelfHostFloatTranscendentalsIRX86_64 2
 TestSelfHostFloatTypeContracts 7
 TestSelfHostFloatUsizeCastIRArm64 2
 TestSelfHostFloatUsizeCastIRX86_64 2

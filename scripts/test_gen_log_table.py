@@ -1,7 +1,6 @@
 """Exercise the log table generator: its region splicing, refusal paths, and
 the properties of the data it computes."""
 import math
-import struct
 import unittest
 
 import gen_log_table as g
@@ -13,7 +12,7 @@ class LogTableGenerationTest(unittest.TestCase):
         cls.data = g.generate()
 
     def render(self, indent):
-        return g.render_asm_region(self.data, indent)
+        return g.render_fern_region(self.data, indent)
 
     def test_regeneration_preserves_surrounding_bytes(self):
         text = "  s = prefix;\r\n  " + g.BEGIN + "\n  stale\n  " + g.END + "\r\n  s = suffix;"
@@ -46,12 +45,15 @@ class LogTableGenerationTest(unittest.TestCase):
         self.assertLess(self.data["main_err"], g.D(2) ** -62)
         self.assertLess(self.data["near_err"], g.D(2) ** -60)
 
-    def test_wasm_payload_is_the_rows_little_endian(self):
-        region = g.render_wasm_region(self.data, "")
-        first = self.data["rows"][0]
-        want = "".join("\\\\%02x" % b for v in first for b in struct.pack("<d", v))
-        self.assertIn('"' + want + '",', region)
-
+    def test_literals_read_back_exactly(self):
+        # Every constant the region declares is the double the generator
+        # computed, so the kernel reads the table it was fitted against.
+        region = g.render_fern_region(self.data, "")
+        first = [row[0] for row in self.data["rows"][:4]]
+        self.assertIn("function _log_invc(): f64[] {\n  return [\n    " + " ".join(g.literal(v) + "," for v in first), region)
+        for v in [v for row in self.data["rows"] for v in row] + self.data["main"] + self.data["near"]:
+            self.assertEqual(float(g.literal(v)), v)
+            self.assertIn(".", g.literal(v))
 
 if __name__ == "__main__":
     unittest.main()

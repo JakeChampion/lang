@@ -585,7 +585,7 @@ function constructor_body(f: ssasem.Func): boolean {
       return false;
     }
     for ins in b.insts {
-      if (!constructor_kind(ins.kind_tag)) {
+      if (!constructor_kind(ins.kind_tag) && !negation(ins)) {
         return false;
       }
       if (ins.kind_tag != ssasem.param() && !line_mark(ins.kind_tag)) {
@@ -593,12 +593,19 @@ function constructor_body(f: ssasem.Func): boolean {
       }
     }
   }
-  return returned >= 0 && n <= max_leaf_insts() && construction_kind(defs_of(f.graph).insts[returned].kind_tag);
+  // One taking no parameters (a module const) is a constant wherever it is
+  // spliced, a static box rather than code, so no size makes it too large.
+  return returned >= 0 && (n <= max_leaf_insts() || f.params.len() == 0) && construction_kind(defs_of(f.graph).insts[returned].kind_tag);
 }
 
 // A literal, a parameter, a copy, a construction, a direct call or a line mark.
 function constructor_kind(k: i32): boolean {
   return literal_kind(k) || k == ssasem.param() || k == 7 || line_mark(k) || k == ssasem.call() || construction_kind(k);
+}
+
+// A negation, which is how a negative literal arrives.
+function negation(ins: ssa.SInst): boolean {
+  return ins.kind_tag == 10 && ins.str == "-";
 }
 
 // A `-g` build's source-position marker (ssa kind 35): a void statement that
@@ -763,8 +770,10 @@ function splice_calls(f0: ssasem.Func, funcs: ssasem.Func[], ix: util.NameIndex,
       if (at >= 0 && shared[at] && whole_at(sempair.whole_values(f, ix, shared, false), f.graph.blocks[bi].insts[k].result)) {
         at = 0 - 1;
       }
+      // A module const's body becomes one static box wherever it lands, so
+      // it costs the caller nothing the budget measures.
       if (at >= 0 && funcs[at].graph.name != f.graph.name
-        && count_insts(f.graph) + count_insts(funcs[at].graph) <= max_caller_insts()) {
+        && (count_insts(f.graph) + count_insts(funcs[at].graph) <= max_caller_insts() || ctors[at] && funcs[at].params.len() == 0)) {
         f = splice(f, bi, k, funcs[at]);
         done = done + 1;
         spliced = true;

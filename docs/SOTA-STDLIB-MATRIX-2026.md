@@ -173,14 +173,14 @@ is waiting on a caller.
 | --- | --- | --- | --- | --- | --- | --- |
 | 21 | sqrt | `std/float` | `__sqrt_f64` builtin | Hardware sqrt | **SHIPPED** | — |
 | 22 | fma | — | Absent | Hardware FMA | GAP | 4 |
-| 23 | sin | `std/float` | libm native, polynomial on wasm | RLibm | DECIDE:accuracy-contract | 4 |
+| 23 | sin | `std/float` | fdlibm in Fern, one source for every lane | RLibm | DECIDE:accuracy-contract | 4 |
 | 24 | cos | `std/float` | same | RLibm | DECIDE:accuracy-contract | 4 |
 | 25 | tan | `std/float` | **`sin(x)/cos(x)`** | Direct approximation | **GAP — accuracy bug, not a speed row** | 4 |
-| 26 | exp | `std/float` | libm native, polynomial on wasm | RLibm | DECIDE:accuracy-contract | 4 |
+| 26 | exp | `std/float` | fdlibm in Fern, one source for every lane | RLibm | DECIDE:accuracy-contract | 4 |
 | 27 | log | `std/float` | same | RLibm | DECIDE:accuracy-contract | 4 |
 | 28 | log2 | `std/float` | **`log(x) / ln2`** | Direct range reduction | **GAP — accuracy bug** | 4 |
 | 29 | log10 | `std/float` | **`log(x) / ln10`** | Direct | **GAP — accuracy bug** | 4 |
-| 30 | pow | `std/float` | `__pow_f64` builtin | Specialised exp/log | DECIDE:accuracy-contract | 4 |
+| 30 | pow | `std/float` | Fern: exact squaring for an integral exponent, exp/log otherwise | Specialised exp/log | DECIDE:accuracy-contract | 4 |
 | 31 | cbrt | `std/float` | Fern-level implementation | Correctly rounded | GAP | 4 |
 | 32 | hypot | `std/float` | Fern-level, plus `hypot3` | Scaled, overflow-safe | Audit for overflow | 4 |
 | — | f32 transcendentals | `std/float` | **Every one widens to f64, computes, narrows** | Direct f32 | **GAP — double rounding** | 4 |
@@ -197,11 +197,11 @@ obvious:
 2. Every `f32` transcendental computes in f64 and narrows. That is
    double rounding: a value that should round one way at f32 can round the
    other because it passed through f64 first.
-3. **f64 transcendentals agree across backends and are gated on it.** Every
-   backend emits the same fdlibm kernels over the same reduction, from one
-   coefficient table (`internal/tables/fdlibm`), and
-   `TestF64TranscendentalBackendsAgree` pins interp / x86-64 / arm64 / wasm
-   bit for bit. What is still open is the *contract*: Fern has not said
+3. **f64 transcendentals agree across backends and are gated on it.** They are
+   std/float's own Fern, so every backend compiles one definition and the
+   interpreter runs it; `TestF64TranscendentalBackendsAgree` and
+   `TestF64TranscendentalLanesAgree` pin interp / x86-64 / arm64 / wasm bit
+   for bit. What is still open is the *contract*: Fern has not said
    whether it promises correct rounding, a stated ULP bound, or agreement
    alone. Agreement is not accuracy — five backends can be wrong together.
 

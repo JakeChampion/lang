@@ -718,8 +718,7 @@ function map_value(m: Map[string, string], k: string): i32 { return m.get_or(k, 
 // buffer the caller owns — so it is the one whose unit this frame drops.
 function measured(x: f64, k: u32): i32 {
     let root: f64 = __sqrt_f64(x);
-    let raised: f64 = __pow_f64(root, 2.0);
-    return (__floor_f64(raised) as i32) + __popcount32(k) + __clz64(1u64);
+    return (__floor_f64(root * root) as i32) + __popcount32(k) + __clz64(1u64);
 }
 function scanned(text: string, byte: i32): i32 {
     return __count_byte(text, byte) + __memchr(text, byte, 0) + __ascii_run(text, 0) + __sum_bytes(text);
