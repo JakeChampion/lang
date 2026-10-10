@@ -8,6 +8,7 @@ import "./ssacredithelper" as helper;
 import "./ssainlineuniqueisa" as isa;
 import "./ssainlineuniqueflow" as flow;
 import "./util";
+import "./ssaproofnames" as names;
 import "std/string";
 
 struct Program { lines: string[], labels: string[], ops: isa.Op[], targets: i32[], entry: i32, register_entry: i32, ok: boolean }
@@ -53,7 +54,7 @@ function program(input: string[], name: string, arm: boolean): Program {
       let label = "";
       if (line.ends_with(":")) {
         label = slice_unchecked(line, 0, line.len() - 1) + "";
-        if (!symbol(label) || util.has_str(labels, label)) {
+        if (!symbol(label)) {
           ok = false;
         }
         if (label == "__fn_" + name) {
@@ -79,11 +80,12 @@ function program(input: string[], name: string, arm: boolean): Program {
 // the same checked instruction and target, without repeated symbol scans.
 function destinations(ops: isa.Op[], labels: string[]): Destinations {
   let targets: i32[] = [];
-  let ok = true;
+  let ix = names.index(labels);
+  let ok = ix.duplicate < 0;
   for op in ops {
     let dest = -1;
     if (op.kind >= 20 && op.kind < 30) {
-      dest = util.index_of_str(labels, op.target);
+      dest = names.position(ix, op.target);
       if (!op.target.starts_with(".L") || dest < 0) {
         ok = false;
       }
