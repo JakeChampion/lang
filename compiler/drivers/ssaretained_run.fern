@@ -30,6 +30,7 @@ import "./ssacapacityisas" as capacityisas;
 import "./ssacapacityvalues" as capacityvalues;
 import "./ssacapacitymachines" as capacitymachines;
 import "./ssalargepushisas" as largepushisas;
+import "./ssalargepushpartitions" as largepushpartitions;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -240,6 +241,7 @@ function main(): i32 {
   decrementcounts.run();
   decrementmemories.run();
   capacityvalues.run();
+  largepushpartitions.run();
   print("retained native body controls passed");
   return 0;
 }

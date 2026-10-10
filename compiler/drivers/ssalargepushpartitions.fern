@@ -1,0 +1,113 @@
+import "../ssalargepushranges" as ranges;
+
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("large-push partition controls failed: " + group);
+    // Every nonzero native status is already used in the composed driver.
+    // The printed module and case identify this deliberately shared status.
+    exit(180);
+  }
+}
+
+function invalid(): void {
+  let bad: ranges.Interval[] = [ranges.Interval { low: -1, high: 0 }, ranges.Interval { low: 2, high: 1 }, ranges.Interval { low: 0, high: 1073741825 }, ranges.Interval { low: -2147483648, high: 2147483647 }];
+  for r in bad {
+    require(!ranges.valid(r), "invalid interval");
+    require(ranges.expected_class(r) == -1 && ranges.rounded(r) == -(1 as i64), "invalid results");
+  }
+  let all = ranges.Interval { low: 0, high: 1073741824 };
+  require(ranges.valid(all) && ranges.expected_class(all) == -1 && ranges.rounded(all) == -(1 as i64), "crossing domain");
+  let clamp = ranges.Interval { low: 0, high: 524288 };
+  require(ranges.expected_class(clamp) == 0 && ranges.rounded(clamp) == 524288 as i64, "constant clamped range");
+  let cross = ranges.Interval { low: 524288, high: 524289 };
+  require(ranges.expected_class(cross) == -1 && ranges.rounded(cross) == -(1 as i64), "first bin boundary");
+  cross = ranges.Interval { low: 1048575, high: 1048576 };
+  require(ranges.expected_class(cross) == 4 && ranges.rounded(cross) == -(1 as i64), "same bin crossing highest bit");
+}
+
+// Scalar oracle grows consecutive bins without the index-modulo formula used
+// by capacities(). This is deliberately independent of the instruction ISA.
+function scalar_class(n: i32): i32 {
+  let cap = 524288;
+  let step = 131072;
+  let boundary = 1048576;
+  let index = 0;
+  while (n > cap) {
+    cap = cap + step;
+    index = index + 1;
+    if (cap == boundary) {
+      step = step * 2;
+      // No next boundary is needed after the final representable bin.
+      if (boundary < 1073741824) {
+        boundary = boundary * 2;
+      }
+    }
+  }
+  return index;
+}
+
+function bins(): void {
+  let caps = ranges.capacities();
+  require(caps.len() == 45 && caps[0] == 524288 && caps[44] == 1073741824, "ordered capacity bounds");
+  let index = 0;
+  let low = 0;
+  for cap in caps {
+    require(cap >= low && scalar_class(cap) == index && scalar_class(low) == index, "independent bin oracle");
+    let whole = ranges.Interval { low: low, high: cap };
+    require(ranges.expected_class(whole) == index, "whole bin specification");
+    if (index < 44) {
+      let cross = ranges.Interval { low: cap, high: cap + 1 };
+      require(ranges.expected_class(cross) == -1 && scalar_class(cap + 1) == index + 1, "adjacent bin refusal");
+    }
+    low = cap + 1;
+    index = index + 1;
+  }
+}
+
+// This arithmetic replay derives the bit-mask result without using rounded()
+// or its expected bin as an input. Bounds keep every operation mathematical.
+function arithmetic(n: i32): i64 {
+  let x = if (n < 524288) { 524288 as i64 } else { n as i64 };
+  let quantum = 1 as i64;
+  while (quantum * (8 as i64) <= x) {
+    quantum = quantum * (2 as i64);
+  }
+  let sum = x + quantum - 1 as i64;
+  require(sum >= 0 as i64 && sum <= 2147483647 as i64, "bounded rounding numerator");
+  return sum / quantum * quantum;
+}
+
+// The limit changes only how many partition rows are checked. Full input
+// coverage is symbolic through the monotone interval calculation, not a claim
+// of enumerating every byte size or executing the supplied helper.
+pub function audit(limit: i32): void {
+  let rows = ranges.intervals();
+  require(rows.len() == 57 && limit >= 1 && limit <= rows.len(), "partition count and audit bound");
+  let next = 0;
+  let at = 0;
+  for r in rows {
+    require(ranges.valid(r) && r.low == next, "disjoint adjacent coverage");
+    if (at < limit) {
+      row(r);
+    }
+    next = r.high + 1;
+    at = at + 1;
+  }
+  require(next == 1073741825, "complete recycled input domain");
+}
+
+function row(r: ranges.Interval): void {
+  let index = ranges.expected_class(r);
+  let rounded = ranges.rounded(r);
+  require(index >= 0 && index < 45 && rounded == ranges.capacities()[index] as i64, "constant independent capacity");
+  let mid = r.low + (r.high - r.low) / 2;
+  for n in [r.low, mid, r.high] {
+    require(scalar_class(n) == index && arithmetic(n) == rounded, "scalar boundary and midpoint controls");
+  }
+}
+
+pub function run(): void {
+  invalid();
+  bins();
+  audit(57);
+}
