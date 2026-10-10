@@ -1,0 +1,209 @@
+import "../asmcore";
+import "../asm_ir";
+import "../lexer";
+import "../parser";
+import "../semlower";
+import "../ssa";
+import "../ssaprepare";
+import "../ssacredittext" as retained;
+import "../ssasmallcallerflow" as flow;
+import "./ssasmallcallerisas" as instructions;
+import "./ssasmallcallermachines" as machines;
+import "../util";
+import "std/string";
+
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("small caller flow controls failed: " + group);
+    exit(180);
+  }
+}
+
+function emit(single: boolean): ssaprepare.Output {
+  let record = if (single) { "struct Parent { only: i32 } @noinline function parent(value: i32): Parent { return Parent { only: value }; } @noinline function caller(value: i32): i32 { let p = parent(value); let a = p.only; let q = parent(a); return q.only; }" } else { "struct Parent { left: i32, right: i32 } @noinline function parent(left: i32, right: i32): Parent { return Parent { left: left, right: right }; } @noinline function caller(value: i32, other: i32): i32 { let p = parent(value, other); let a = p.left; let q = parent(other, a); return q.right; }" };
+  let m = parser.parse_module(lexer.tokenize(record + " function main(): i32 { return 0; }"));
+  let g = semlower.program(semlower.driven(m, "x86-64-linux"));
+  require(g.ok, "lowered");
+  let sw = asmcore.Switches { backtrace: false, sanitize: false, var_rows: false };
+  return asm_ir.emit_module_ir_unit_prepared(g.im, true, false, "", [], g.im.funcs, g.stab, 0, -1, g.cache, g.physical, semlower.runtime_lowering, 0 as usize, sw, true);
+}
+
+function replaced(output: ssaprepare.Output, f: ssa.SFunc): ssaprepare.Output {
+  let rows: ssaprepare.Emitted[] = [];
+  for row in output.bodies {
+    rows = rows.append(if (row.label_name == "caller") { ssaprepare.Emitted { ...row, body: ssaprepare.Body { ...row.body, formed: ssa.Formed { ...row.body.formed, f: f } } } } else { row });
+  }
+  return ssaprepare.Output { ...output, bodies: rows };
+}
+
+function checked(output: ssaprepare.Output, f: ssa.SFunc, expected: boolean, group: string): void {
+  require(flow.derive(replaced(output, f), "caller", "parent").error == "" == expected, group);
+}
+
+function with_ops(f: ssa.SFunc, ops: ssa.SInst[]): ssa.SFunc {
+  return ssa.SFunc { ...f, blocks: [ssa.SBlock { ...f.blocks[0], insts: ops }] };
+}
+
+function position(ops: ssa.SInst[], kind: i32, name: string, occurrence: i32): i32 {
+  let at = 0;
+  let count = 0;
+  for op in ops {
+    if (op.kind_tag == kind && op.str == name) {
+      if (count == occurrence) {
+        return at;
+      }
+      count = count + 1;
+    }
+    at = at + 1;
+  }
+  require(false, "operation present");
+  return -1;
+}
+
+function mutations(output: ssaprepare.Output, f: ssa.SFunc): void {
+  let ops = f.blocks[0].insts;
+  let call = position(ops, 11, "parent", 0);
+  let release = position(ops, 11, "__fern_rc_dec", 0);
+  let second = position(ops, 11, "__fern_rc_dec", 1);
+  let load = position(ops, 40, "", 0);
+  let bad = ssa.SInst { ...ops[release], str: "__fern_rc_inc" };
+  checked(output, with_ops(f, ops.with(release, bad)), false, "unknown retain");
+  checked(output, with_ops(f, ops.with(release, ssa.SInst { ...ops[release], kind_tag: 1, args: [], imm: 0, str: "" })), false, "leak");
+  checked(output, with_ops(f, ops.with(second, ssa.SInst { ...ops[second], args: ops[release].args })), false, "double release");
+  checked(output, with_ops(f, ops.with(call, ssa.SInst { ...ops[call], args: [ops[call].result] })), false, "self use");
+  for offset in [-2147483647 - 1, -8, 0, 4, 24, 2147483647] {
+    checked(output, with_ops(f, ops.with(load, ssa.SInst { ...ops[load], imm: offset })), false, "field bounds");
+  }
+  checked(output, with_ops(f, ops.with(load, ssa.SInst { ...ops[load], args: [ops[0].result] })), false, "scalar pointer");
+  checked(output, with_ops(f, ops.with(load, ssa.SInst { ...ops[load], kind_tag: 41 })), false, "store refused");
+  let reordered = ops.with(load, ops[release]).with(release, ops[load]);
+  checked(output, with_ops(f, reordered), false, "load after release");
+}
+
+function aliases(output: ssaprepare.Output, f: ssa.SFunc): void {
+  let original = f.blocks[0].insts;
+  let call = position(original, 11, "parent", 0);
+  let root = original[call].result;
+  let ops: ssa.SInst[] = [];
+  for op in original {
+    let args: i32[] = [];
+    for arg in op.args {
+      args = args.append(if (arg == root) { f.nvals } else { arg });
+    }
+    ops = ops.append(ssa.SInst { ...op, args: args });
+    if (op.result == root) {
+      ops = ops.append(ssa.SInst { kind_tag: 7, result: f.nvals, args: [root], imm: 0, str: "" });
+    }
+  }
+  let copied = ssa.SFunc { ...with_ops(f, ops), nvals: f.nvals + 1 };
+  checked(output, copied, true, "alias preserves one credit");
+  let second = position(ops, 11, "__fern_rc_dec", 1);
+  checked(output, with_ops(copied, ops.with(second, ssa.SInst { ...ops[second], args: [root] })), false, "copy cannot create credit");
+}
+
+function sparse(output: ssaprepare.Output, f: ssa.SFunc): void {
+  let ids: i32[] = [];
+  let replacements: i32[] = [];
+  for op in f.blocks[0].insts {
+    ids = ids.append(op.result);
+    replacements = replacements.append(100 + replacements.len());
+  }
+  replacements = replacements.with(replacements.len() - 1, 2147483646);
+  let ops: ssa.SInst[] = [];
+  for op in f.blocks[0].insts {
+    let args: i32[] = [];
+    for arg in op.args {
+      args = args.append(replacements[util.index_of_i32(ids, arg)]);
+    }
+    ops = ops.append(ssa.SInst { ...op, result: replacements[util.index_of_i32(ids, op.result)], args: args });
+  }
+  let b = f.blocks[0];
+  let term = ssa.STerm { ...b.term, value: replacements[util.index_of_i32(ids, b.term.value)] };
+  checked(output, ssa.SFunc { ...f, nvals: 2147483647, blocks: [ssa.SBlock { ...b, insts: ops, term: term }] }, true, "bounded sparse identities");
+}
+
+function graph_controls(output: ssaprepare.Output, f: ssa.SFunc): void {
+  let b = f.blocks[0];
+  checked(output, ssa.SFunc { ...f, blocks: [] }, false, "missing graph");
+  checked(output, ssa.SFunc { ...f, blocks: [b, b] }, false, "extra block");
+  checked(output, ssa.SFunc { ...f, entry: -1 }, false, "bad entry");
+  checked(output, ssa.SFunc { ...f, blocks: [ssa.SBlock { ...b, preds: [b.id] }] }, false, "cycle");
+  checked(output, ssa.SFunc { ...f, nvals: f.nvals + 1 }, false, "unused extent");
+  checked(output, with_ops(f, b.insts.append(b.insts[0])), false, "duplicate definition");
+  checked(output, with_ops(f, b.insts.with(0, ssa.SInst { ...b.insts[0], result: -1 })), false, "negative definition");
+  let call = position(b.insts, 11, "parent", 0);
+  checked(output, ssa.SFunc { ...f, blocks: [ssa.SBlock { ...b, term: ssa.STerm { ...b.term, value: b.insts[call].result } }] }, false, "reference return");
+}
+
+function relations(output: ssaprepare.Output, f: ssa.SFunc, single: boolean): void {
+  let ops = f.blocks[0].insts;
+  let release = position(ops, 11, "__fern_rc_dec", 0);
+  let second = position(ops, 11, "parent", 1);
+  let reordered = ops.with(release, ops[second]).with(second, ops[release]);
+  let relation = flow.derive(replaced(output, with_ops(f, reordered)), "caller", "parent");
+  require(relation.error == "" && relation.events[1].kind == 0 && relation.events[2].kind == 1, "overlapping live allocations");
+  let b = f.blocks[0];
+  let literal = ssa.SInst { kind_tag: 1, result: f.nvals, args: [], imm: -2147483647 - 1, str: "" };
+  let constant = ssa.SFunc { ...f, nvals: f.nvals + 1, blocks: [ssa.SBlock { ...b, insts: ops.append(literal), term: ssa.STerm { ...b.term, value: f.nvals } }] };
+  relation = flow.derive(replaced(output, constant), "caller", "parent");
+  require(relation.error == "" && relation.result.kind == 0 && relation.result.identity == -2147483647 - 1, "literal result");
+  if (!single) {
+    let load = position(ops, 40, "", 1);
+    relation = flow.derive(replaced(output, with_ops(f, ops.with(load, ssa.SInst { ...ops[load], imm: 8 }))), "caller", "parent");
+    require(relation.error == "" && relation.result.kind == 1 && relation.result.identity == 1, "other selected field identity");
+  }
+}
+
+function modes(output: ssaprepare.Output): void {
+  let row = retained.resolve(output, "caller").rows[0];
+  let contexts = [ssaprepare.Context { ...row.context, sanitize: true }, ssaprepare.Context { ...row.context, leak_check: true }, ssaprepare.Context { ...row.context, rc_free_debug: true }, ssaprepare.Context { ...row.context, architecture: "arm64" }, ssaprepare.Context { ...row.context, records: true }];
+  for context in contexts {
+    let rows: ssaprepare.Emitted[] = [];
+    for r in output.bodies {
+      rows = rows.append(if (r.label_name == "caller") { ssaprepare.Emitted { ...r, context: context } } else { r });
+    }
+    require(flow.derive(ssaprepare.Output { ...output, bodies: rows }, "caller", "parent").error != "", "runtime or target mode");
+  }
+}
+
+function correspondence(output: ssaprepare.Output): void {
+  let bound = retained.resolve(output, "caller");
+  let row = bound.rows[0];
+  let assembly = row.assembly.split("ret\n").join("unknown_instruction\nret\n");
+  require(assembly != row.assembly, "text mutation present");
+  let rows: ssaprepare.Emitted[] = [];
+  for r in output.bodies {
+    rows = rows.append(if (r.label_name == "caller") { ssaprepare.Emitted { ...r, assembly: assembly } } else { r });
+  }
+  let coherent = ssaprepare.Output { bodies: rows, text: output.text.split(row.assembly).join(assembly) };
+  require(flow.derive(coherent, "caller", "parent").error == "", "relation does not certify instructions");
+  require(flow.derive(ssaprepare.Output { ...output, bodies: rows }, "caller", "parent").error != "", "stale captured text");
+  require(flow.derive(ssaprepare.Output { ...output, bodies: output.bodies.append(row) }, "caller", "parent").error != "", "ambiguous binding");
+  require(flow.derive(output, "missing", "parent").error != "", "missing caller");
+  require(flow.derive(output, "caller", "missing").error != "", "missing constructor");
+}
+
+pub function run(): void {
+  for single in [true, false] {
+    let output = emit(single);
+    instructions.run(output);
+    machines.run(output, single);
+    let relation = flow.derive(output, "caller", "parent");
+    require(relation.error == "", "actual caller " + relation.error);
+    require(relation.words == (if (single) { 2 } else { 3 }) && relation.events.len() == 4, "actual shape and events");
+    require(relation.result.kind == 1 && relation.result.identity == 0, "actual scalar return identity");
+    let i = 0;
+    for event in relation.events {
+      require(event.kind == i % 2 && event.allocation == i / 2, "actual event identity and order");
+      i = i + 1;
+    }
+    let f = retained.resolve(output, "caller").rows[0].body.formed.f;
+    mutations(output, f);
+    aliases(output, f);
+    sparse(output, f);
+    graph_controls(output, f);
+    relations(output, f, single);
+    modes(output);
+    correspondence(output);
+  }
+}

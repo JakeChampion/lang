@@ -553,6 +553,26 @@ pub function allocator(text: string): Body {
   return native_dependency(text, "__fern_alloc");
 }
 
+// Array release in complete native output with static constructor pools.
+// This is declaration/entry data only; the older select API stays isolated.
+pub function native_array_release(text: string): Body {
+  let s = scan_mode(text, true);
+  if (s.error != "") {
+    return failure(s.error);
+  }
+  let ix = definition_index(s.lines);
+  let entry = "__fn___fern_arr_dec";
+  let start = names.unique_position(ix, entry);
+  let register = names.unique_position(ix, entry + ".r");
+  if (ix.duplicate >= 0 || start < 0 || register < 0) {
+    return failure("missing or ambiguous native array release");
+  }
+  if (!exact_entry(s, start, entry) || !exact_entry(s, register, entry + ".r")) {
+    return failure("native array release is not executable");
+  }
+  return body(s, ix, start, register, entry);
+}
+
 function native_dependency(text: string, entry: string): Body {
   let s = scan_mode(text, true);
   if (s.error != "") {

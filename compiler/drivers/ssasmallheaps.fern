@@ -1,0 +1,139 @@
+import "../ssasmallheap" as heap;
+import "../ssaconstructorbound" as boundary;
+import "../ssaallocationchain" as chain;
+import "../ssaprepare";
+import "../ssacapacityisa" as isa;
+import "../ssasmallarraymachine" as release;
+import "std/string";
+
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("small heap controls failed: " + group);
+    exit(180);
+  }
+}
+
+function empty(): heap.Heap {
+  return heap.Heap { base: 65536 as i64, cursor: 65536 as i64, end: 17179934720 as i64, head: 0 as i64, blocks: [] };
+}
+
+function action(kind: i32, address: i64, generation: i32): heap.Action {
+  return heap.Action { kind: kind, address: address, generation: generation };
+}
+
+function block(address: i64, header: i64, live: boolean): heap.Block {
+  return heap.Block { address: address, header: header, rc: if (live) { 1 } else { 0 }, generation: 1, live: live };
+}
+
+function bounds(c: i32): void {
+  let h = empty();
+  require(heap.valid(c, h) && heap.trace(c, h, []), "empty initialized mapping");
+  for invalid in [0, 1, 4, -1, 2147483647] {
+    require(!heap.valid(invalid, h), "unsupported capacity");
+  }
+  for b in [0 as i64, 65528 as i64, 65537 as i64, -(1 as i64), 9223372036854775807 as i64] {
+    require(!heap.valid(c, heap.Heap { ...h, base: b }), "base bounds");
+  }
+  for end in [0 as i64, -(1 as i64), h.base, h.end - 8, h.end + 8, 140737488355328 as i64, 9223372036854775807 as i64] {
+    require(!heap.valid(c, heap.Heap { ...h, end: end }), "mapping extent");
+  }
+  for cursor in [h.base - 8, h.base + 1, h.end + 8, -(1 as i64), 9223372036854775807 as i64] {
+    require(!heap.valid(c, heap.Heap { ...h, cursor: cursor }), "cursor bounds");
+  }
+  let full = heap.Heap { ...h, cursor: h.end };
+  require(heap.valid(c, full) && !heap.trace(c, full, [action(0, h.end, 1)]), "opaque prefix and exhausted bump");
+  let last = heap.Heap { ...h, cursor: h.end - 8 as i64 * ((c + 3) as i64) };
+  require(heap.trace(c, last, [action(0, last.cursor, 1), action(1, last.cursor, 1), action(0, last.cursor, 2)]), "last exact interval then recycle");
+  let high = 140720308486136 as i64;
+  let canonical = heap.Heap { ...h, base: high, cursor: high, end: high + 17179869184 as i64 };
+  require(heap.trace(c, canonical, [action(0, high, 1), action(1, high, 1)]), "upper low-canonical mapping");
+}
+
+function sequences(c: i32): void {
+  let h = empty();
+  let p = h.base;
+  let q = p + 8 as i64 * ((c + 3) as i64);
+  let alloc = action(0, p, 1);
+  let free = action(1, p, 1);
+  require(heap.trace(c, h, [alloc, free, action(0, p, 2), action(1, p, 2)]), "capacity restored after link overwrite");
+  require(heap.trace(c, h, [alloc, action(0, q, 1), free, action(1, q, 1), action(0, q, 2), action(0, p, 2)]), "current LIFO heads with live neighbors");
+  require(!heap.trace(c, h, [alloc, action(0, q, 1), free, action(1, q, 1), action(0, p, 2)]), "stale head");
+  require(!heap.trace(c, h, [free]), "unowned release");
+  require(!heap.trace(c, h, [alloc, free, free]), "copied handle cannot duplicate credit");
+  require(!heap.trace(c, h, [alloc, free, action(0, p, 2), free]), "old generation after reuse");
+  require(!heap.trace(c, h, [alloc, free, action(0, p, 1)]), "generation must advance");
+  require(!heap.trace(c, h, [action(0, p, 2)]), "fresh generation");
+  require(!heap.trace(c, h, [action(0, p + 8, 1)]), "fresh address");
+  require(!heap.trace(c, h, [alloc, action(1, p + 8, 1)]), "interior alias");
+  require(!heap.trace(c, h, [action(2, p, 1)]), "unknown action");
+}
+
+function lists(c: i32): void {
+  let h = empty();
+  let size = 8 as i64 * ((c + 3) as i64);
+  let p = h.base;
+  let q = p + size;
+  let a = block(p, q, false);
+  let b = block(q, 0 as i64, false);
+  let list = heap.Heap { ...h, cursor: q + size, head: p, blocks: [a, b] };
+  require(heap.valid(c, list) && heap.trace(c, list, [action(0, p, 2), action(0, q, 2), action(1, p, 2)]), "initial free list");
+  require(heap.valid(c, heap.Heap { ...list, blocks: [b, a] }), "unordered representation");
+  require(!heap.valid(c, heap.Heap { ...list, blocks: [a, b, a] }), "duplicate membership extent");
+  require(!heap.valid(c, heap.Heap { ...list, head: q }), "unreachable free member");
+  require(!heap.valid(c, heap.Heap { ...list, head: 0 as i64 }), "missing head");
+  require(!heap.valid(c, heap.Heap { ...list, blocks: [a, heap.Block { ...b, header: p }] }), "cycle");
+  require(!heap.valid(c, heap.Heap { ...list, blocks: [heap.Block { ...a, header: p }, b] }), "self cycle");
+  require(!heap.valid(c, heap.Heap { ...list, blocks: [heap.Block { ...a, header: q + 8 }, b] }), "interior link");
+  require(!heap.valid(c, heap.Heap { ...list, blocks: [heap.Block { ...a, rc: 1 }, b] }), "free count");
+  require(!heap.valid(c, heap.Heap { ...list, blocks: [heap.Block { ...a, generation: 0 }, b] }), "invalid generation");
+  let exhausted = heap.Heap { ...list, blocks: [heap.Block { ...a, generation: 2147483647 }, b] };
+  require(heap.valid(c, exhausted) && !heap.trace(c, exhausted, [action(0, p, -2147483648)]), "generation overflow refuses");
+}
+
+function live_blocks(c: i32): void {
+  let h = empty();
+  let size = 8 as i64 * ((c + 3) as i64);
+  let b = block(h.base, c as i64, true);
+  let live = heap.Heap { ...h, cursor: h.base + size, blocks: [b] };
+  require(heap.valid(c, live) && heap.trace(c, live, [action(1, b.address, 1), action(0, b.address, 2)]), "initial live credit");
+  require(!heap.valid(c, heap.Heap { ...live, head: b.address }), "live list member");
+  for count in [-1, 0, 2, 2147483647] {
+    require(!heap.valid(c, heap.Heap { ...live, blocks: [heap.Block { ...b, rc: count }] }), "unsupported live credit count");
+  }
+  require(!heap.valid(c, heap.Heap { ...live, blocks: [heap.Block { ...b, header: 0 as i64 }] }), "overwritten capacity");
+  for address in [b.address - 8, b.address + 1, b.address + 8, live.cursor, 9223372036854775807 as i64] {
+    require(!heap.valid(c, heap.Heap { ...live, blocks: [heap.Block { ...b, address: address }] }), "block extent");
+  }
+  let overlap = heap.Heap { ...live, cursor: live.cursor + size, blocks: [b, heap.Block { ...b, address: b.address + 8 }] };
+  require(!heap.valid(c, overlap), "overlapping live extents");
+  let mixed = heap.Heap { ...overlap, head: b.address + 8, blocks: [b, block(b.address + 8, 0 as i64, false)] };
+  require(!heap.valid(c, mixed), "free extent aliases live object");
+}
+
+function native_release(s: string): void {
+  require(release.check_native_record(s), "native scalar release paths");
+  for from in ["movl $0, -8(%rax)", "movq %rdi, (%rdx)", "movq %rdx, (%r8,%rcx,8)"] {
+    require(s.contains(from) && !release.check_native_record(s.split(from).join("unknown_instruction")), "release effect required " + from);
+  }
+  require(!release.check_native_record(s.split("movl $0, -8(%rax)").join("call __fern_capw\nmovl $0, -8(%rax)")), "restricted path cannot assume a dependency call");
+  require(!release.check_native_record(s + "\n.text\n__fn___fern_arr_dec:\nret\n"), "duplicate native release");
+  require(!release.check_native_record(s.split("__fn___fern_arr_dec.r:").join("__missing_release_entry:")), "both native entries");
+  require(release.check_native_record(s.split("\n").join("\r\n")), "native release CRLF");
+}
+
+pub function run(output: ssaprepare.Output): void {
+  let c = boundary.resolve(output, "parent").words;
+  bounds(c);
+  sequences(c);
+  lists(c);
+  live_blocks(c);
+  let h = empty();
+  let actions = [action(0, h.base, 1), action(1, h.base, 1), action(0, h.base, 2), action(1, h.base, 2)];
+  require(isa.array_program(output.text).error != "" && isa.program(output.text).error != "", "legacy declaration policy unchanged");
+  native_release(output.text);
+  require(heap.check(output, "parent", h, actions), "same-output conditional sequence");
+  let damaged = output.text.split("movq %rdx, (%r8,%rcx,8)").join("movq %rax, (%r8,%rcx,8)");
+  require(damaged != output.text && chain.record(ssaprepare.Output { ...output, text: damaged }, "parent"), "constructor alone survives release corruption");
+  require(!heap.check(ssaprepare.Output { ...output, text: damaged }, "parent", h, actions), "release dependency binds same output");
+  require(!heap.check(output, "parent", h, actions.append(action(1, h.base, 2))), "instruction proof cannot rescue reused credit");
+}

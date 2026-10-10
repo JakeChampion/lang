@@ -1,0 +1,205 @@
+// Finite initialized heap interpretation for one selected scalar record class.
+import "./ssaallocationchain" as allocation;
+import "./ssaconstructorbound" as constructor;
+import "./ssaprepare";
+import "./ssasmallarraymachine" as release;
+
+// These records are input data, not ownership or instruction certificates.
+// The header is the SAME word: capacity while live, next address while free.
+// Generation is ghost state for this trace, not an emitted runtime tag.
+pub struct Block { address: i64, header: i64, rc: i32, generation: i32, live: boolean }
+
+pub struct Heap { base: i64, cursor: i64, end: i64, head: i64, blocks: Block[] }
+
+// kind0 constructs and kind1 releases. Address/generation identify the expected
+// result or consumed credit. Copies of this data never create another credit.
+pub struct Action { kind: i32, address: i64, generation: i32 }
+
+struct Next { heap: Heap, ok: boolean }
+
+// Transition data, never an accepted instruction or ownership certificate.
+pub struct Transition { heap: Heap, address: i64, generation: i32, ok: boolean }
+
+pub function construct(capacity: i32, h: Heap): Transition {
+  let bad = Transition { heap: h, address: 0, generation: 0, ok: false };
+  if (!valid(capacity, h)) {
+    return bad;
+  }
+  let address = if (h.head == 0) { h.cursor } else { h.head };
+  let generation = 1;
+  if (h.head != 0) {
+    let i = find(h.blocks, h.head);
+    if (i < 0 || h.blocks[i].generation == 2147483647) {
+      return bad;
+    }
+    generation = h.blocks[i].generation + 1;
+  }
+  let n = step(capacity, h, Action { kind: 0, address: address, generation: generation });
+  return Transition { heap: n.heap, address: address, generation: generation, ok: n.ok && valid(capacity, n.heap) };
+}
+
+pub function consume(capacity: i32, h: Heap, address: i64, generation: i32): Transition {
+  if (!valid(capacity, h)) {
+    return Transition { heap: h, address: address, generation: generation, ok: false };
+  }
+  let n = step(capacity, h, Action { kind: 1, address: address, generation: generation });
+  return Transition { heap: n.heap, address: address, generation: generation, ok: n.ok && valid(capacity, n.heap) };
+}
+
+function find(blocks: Block[], address: i64): i32 {
+  let i = 0;
+  while (i < blocks.len()) {
+    if (blocks[i].address == address) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return -1;
+}
+
+function bounds(capacity: i32, h: Heap): boolean {
+  if (capacity != 2 && capacity != 3 || h.base < 65536 || h.base % 8 != 0) {
+    return false;
+  }
+  // Positive low canonical addresses; subtraction is safe after these bounds.
+  if (h.end <= h.base || h.end >= 140737488355328 as i64) {
+    return false;
+  }
+  return h.end - h.base == 17179869184 as i64 && h.cursor >= h.base && h.cursor <= h.end && h.cursor % 8 == 0;
+}
+
+function block_valid(b: Block, capacity: i32, h: Heap): boolean {
+  let size = 8 as i64 * ((capacity + 3) as i64);
+  if (b.address < h.base || b.address > h.cursor - size || b.address % 8 != 0 || b.generation <= 0) {
+    return false;
+  }
+  return if (b.live) { b.header == capacity as i64 && b.rc == 1 } else { b.rc == 0 };
+}
+
+function separated(capacity: i32, h: Heap): boolean {
+  let size = 8 as i64 * ((capacity + 3) as i64);
+  let i = 0;
+  while (i < h.blocks.len()) {
+    let b = h.blocks[i];
+    if (!block_valid(b, capacity, h)) {
+      return false;
+    }
+    let j = 0;
+    while (j < i) {
+      let other = h.blocks[j];
+      if (b.address < other.address + size && other.address < b.address + size) {
+        return false;
+      }
+      j = j + 1;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function members(h: Heap): boolean {
+  let seen: boolean[] = [];
+  for b in h.blocks {
+    seen = seen.append(false);
+  }
+  let next = h.head;
+  while (next != 0) {
+    let i = find(h.blocks, next);
+    if (i < 0 || seen[i] || h.blocks[i].live) {
+      return false;
+    }
+    seen = seen.with(i, true);
+    next = h.blocks[i].header;
+  }
+  let i = 0;
+  while (i < h.blocks.len()) {
+    if (seen[i] == h.blocks[i].live) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+// Checks the finite representation only. Linked storage, mapping permissions
+// and exclusive ownership of each represented credit remain external premises.
+// Unrepresented prefix gaps are opaque and are never allocated by this model.
+pub function valid(capacity: i32, heap: Heap): boolean {
+  return bounds(capacity, heap) && separated(capacity, heap) && members(heap);
+}
+
+function pop(capacity: i32, h: Heap, a: Action): Next {
+  let i = find(h.blocks, h.head);
+  if (i < 0 || a.address != h.head) {
+    return Next { heap: h, ok: false };
+  }
+  let b = h.blocks[i];
+  if (b.generation == 2147483647 || a.generation != b.generation + 1) {
+    return Next { heap: h, ok: false };
+  }
+  let live = Block { ...b, header: capacity as i64, rc: 1, generation: a.generation, live: true };
+  return Next { heap: Heap { ...h, head: b.header, blocks: h.blocks.with(i, live) }, ok: true };
+}
+
+function bump(capacity: i32, h: Heap, a: Action): Next {
+  let size = 8 as i64 * ((capacity + 3) as i64);
+  if (a.address != h.cursor || a.generation != 1 || h.cursor > h.end - size) {
+    return Next { heap: h, ok: false };
+  }
+  let b = Block { address: h.cursor, header: capacity as i64, rc: 1, generation: 1, live: true };
+  return Next { heap: Heap { ...h, cursor: h.cursor + size, blocks: h.blocks.append(b) }, ok: true };
+}
+
+function push(h: Heap, a: Action): Next {
+  let i = find(h.blocks, a.address);
+  if (i < 0) {
+    return Next { heap: h, ok: false };
+  }
+  let b = h.blocks[i];
+  if (!b.live || a.generation != b.generation) {
+    return Next { heap: h, ok: false };
+  }
+  let free = Block { ...b, header: h.head, rc: 0, live: false };
+  return Next { heap: Heap { ...h, head: b.address, blocks: h.blocks.with(i, free) }, ok: true };
+}
+
+function step(capacity: i32, h: Heap, a: Action): Next {
+  if (a.kind == 0) {
+    return if (h.head == 0) { bump(capacity, h, a) } else { pop(capacity, h, a) };
+  }
+  if (a.kind == 1) {
+    return push(h, a);
+  }
+  return Next { heap: h, ok: false };
+}
+
+// Computes every successor privately. Invariant checking cannot authenticate
+// that an actual caller executes this supplied trace or owns its initial data.
+pub function trace(capacity: i32, initial: Heap, actions: Action[]): boolean {
+  if (!valid(capacity, initial)) {
+    return false;
+  }
+  let h = initial;
+  for a in actions {
+    let next = step(capacity, h, a);
+    if (!next.ok || !valid(capacity, next.heap)) {
+      return false;
+    }
+    h = next.heap;
+  }
+  return true;
+}
+
+// Conditional finite trace: derive the selected C, constructor/allocator and
+// count-one release effects from this SAME output. P=B+16 and class=C+3 bind
+// the allocator block/link to the release's P-16 word. A pop consumes the
+// current link; construction restores C/RC1 before a later release reads them.
+// Scalar fields require no child credits. The initial mapping, linked globals,
+// disjoint writable stack/shape storage and exclusive initial credits are
+// premises. The mapping and other classes are not established by this data.
+// No shared counts, caller-to-trace binding, initialization invariant, general
+// sizes, terminal/debug/other-target or default admission is claimed here.
+pub function check(output: ssaprepare.Output, name: string, initial: Heap, actions: Action[]): boolean {
+  let bound = constructor.resolve(output, name);
+  return bound.error == "" && allocation.record(output, name) && release.check_native_record(output.text) && trace(bound.words, initial, actions);
+}
