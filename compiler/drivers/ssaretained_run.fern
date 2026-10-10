@@ -27,6 +27,7 @@ import "./ssadecrementdata" as decrementdata;
 import "./ssadecrementzeros" as decrementzeros;
 import "./ssadecrementdependencies" as decrementdependencies;
 import "./ssacapacityisas" as capacityisas;
+import "./ssacapacityvalues" as capacityvalues;
 
 function require(ok: boolean, code: i32): void {
   if (!ok) {
@@ -234,6 +235,7 @@ function main(): i32 {
   recursive.run(true);
   decrementcounts.run();
   decrementmemories.run();
+  capacityvalues.run();
   print("retained native body controls passed");
   return 0;
 }

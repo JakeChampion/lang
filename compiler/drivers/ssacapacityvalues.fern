@@ -1,0 +1,164 @@
+import "../ssacapacityvalue" as value;
+
+function require(ok: boolean, group: string): void {
+  if (!ok) {
+    print("capacity arithmetic controls failed: " + group);
+    exit(179);
+  }
+}
+
+function is_number(r: value.Interval, v: value.Value, n: i64): boolean {
+  return value.valid(r, v) && v.factor == 0 && v.offset == n;
+}
+
+function malformed(): void {
+  let r = value.Interval { low: 257, high: 320 };
+  let bad: value.Value[] = [value.unknown(), value.Value { factor: -1, offset: 0 as i64 }, value.Value { factor: 2, offset: 0 as i64 }, value.Value { factor: 0, offset: 4294967296 as i64 }, value.Value { factor: 0, offset: -(4294967296 as i64) }, value.Value { factor: 1, offset: 4294967295 as i64 }];
+  for v in bad {
+    require(!value.valid(r, v), "invalid expression");
+    require(!value.valid(r, value.add(r, v, 0 as i64)), "invalid addition");
+    require(!value.valid(r, value.negate(r, v)) && !value.valid(r, value.zero32(r, v)), "invalid unary");
+    require(value.bit_scan(r, v) == -1 && !value.valid(r, value.mask(r, v, value.number(r, -(64 as i64)))), "invalid bit operations");
+    let c = value.compare(r, v, 1 as i64);
+    require(c.less == -1 && c.equal == -1 && c.less_equal == -1, "invalid comparison");
+  }
+}
+
+function invalid_intervals(): void {
+  let bad: value.Interval[] = [value.Interval { low: 0, high: 1 }, value.Interval { low: 2, high: 1 }, value.Interval { low: 1, high: 65536 }, value.Interval { low: -2147483648, high: 2147483647 }];
+  for r in bad {
+    require(!value.valid_interval(r) && !value.valid(r, value.original(r)) && !value.valid(r, value.expected(r)), "invalid interval");
+    require(!value.valid(r, value.number(r, 1 as i64)), "invalid constant interval");
+  }
+  let cross = value.Interval { low: 256, high: 257 };
+  require(!value.valid(cross, value.expected(cross)), "identity boundary");
+  cross = value.Interval { low: 511, high: 512 };
+  require(!value.valid(cross, value.expected(cross)), "highest-bit boundary");
+  cross = value.Interval { low: 319, high: 321 };
+  require(!value.valid(cross, value.expected(cross)), "rounding boundary");
+}
+
+function arithmetic(): void {
+  let r = value.Interval { low: 1, high: 256 };
+  let n = value.original(r);
+  require(value.valid(r, n) && n.factor == 1 && n.offset == 0 as i64, "original identity");
+  require(!value.valid(r, value.negate(r, n)), "unsupported negative affine");
+  require(is_number(r, value.negate(r, value.number(r, 64 as i64)), -(64 as i64)), "constant negation");
+  require(!value.valid(r, value.add(r, n, 4294967295 as i64)), "upper domain overflow");
+  require(!value.valid(r, value.add(r, n, -(9223372036854775807 as i64))), "extreme delta");
+  require(!value.valid(r, value.add(r, value.number(r, -(4294967295 as i64)), -(1 as i64))), "lower domain overflow");
+  require(value.bit_scan(r, n) == -1 && value.bit_scan(r, value.number(r, 0 as i64)) == -1, "unknown BSR");
+  require(value.bit_scan(r, value.number(r, -(1 as i64))) == -1, "negative BSR refused");
+  require(value.bit_scan(r, value.number(r, 4294967295 as i64)) == 31, "highest represented bit");
+  require(value.power(-1) == 0 as i64 && value.power(32) == 0 as i64 && value.power(31) == 2147483648 as i64, "power bounds");
+}
+
+function partial_width(): void {
+  let r = value.Interval { low: 1, high: 256 };
+  require(is_number(r, value.zero32(r, value.number(r, -(1 as i64))), 4294967295 as i64), "negative MOV32");
+  require(is_number(r, value.zero32(r, value.number(r, -(4294967295 as i64))), 1 as i64), "low word wrap");
+  let n = value.original(r);
+  let positive = value.zero32(r, n);
+  require(positive.factor == 1 && positive.offset == 0 as i64, "bounded MOV32 identity");
+  let negative = value.zero32(r, value.add(r, n, -(257 as i64)));
+  require(negative.factor == 1 && negative.offset == 4294967039 as i64, "negative affine MOV32");
+  require(!value.valid(r, value.zero32(r, value.add(r, n, -(128 as i64)))), "wrap-crossing refusal");
+}
+
+function comparisons(): void {
+  let r = value.Interval { low: 1, high: 256 };
+  let n = value.original(r);
+  let c = value.compare(r, n, 256 as i64);
+  require(c.less == -1 && c.equal == -1 && c.less_equal == 1, "correlated upper boundary");
+  c = value.compare(r, n, 1 as i64);
+  require(c.less == 0 && c.equal == -1 && c.less_equal == -1, "correlated lower boundary");
+  constant_comparisons(r, n);
+}
+
+function constant_comparisons(r: value.Interval, n: value.Value): void {
+  let c = value.compare(r, n, 0 as i64);
+  require(c.less == 0 && c.equal == 0 && c.less_equal == 0, "strict greater");
+  c = value.compare(r, n, 257 as i64);
+  require(c.less == 1 && c.equal == 0 && c.less_equal == 1, "strict less");
+  c = value.compare(r, value.number(r, 256 as i64), 256 as i64);
+  require(c.less == 0 && c.equal == 1 && c.less_equal == 1, "constant equality");
+}
+
+function masks(): void {
+  let r = value.Interval { low: 257, high: 320 };
+  let sum = value.add(r, value.original(r), 63 as i64);
+  require(is_number(r, value.mask(r, sum, value.number(r, -(64 as i64))), 320 as i64), "rounding mask");
+  for m in [0, 1, -3, -63, -65] {
+    require(!value.valid(r, value.mask(r, sum, value.number(r, m as i64))), "invalid power mask");
+  }
+  require(!value.valid(r, value.mask(r, value.original(r), value.number(r, -(64 as i64)))), "varying quotient");
+  require(!value.valid(r, value.mask(r, value.number(r, -(1 as i64)), value.number(r, -(64 as i64)))), "negative mask operand");
+  require(!value.valid(r, value.mask(r, sum, value.original(r))), "nonconstant mask");
+}
+
+function evaluate(v: value.Value, n: i32): i64 {
+  return v.factor as i64 * (n as i64) + v.offset;
+}
+
+// Exhaustive independent specification: grow the quarter-power quantum by
+// comparing against its next four-quarter boundary, then use ceiling division.
+function scalar_expected(n: i32): i64 {
+  if (n <= 256) {
+    return n as i64;
+  }
+  let step = 64;
+  while (step * 8 <= n) {
+    step = step * 2;
+  }
+  let rounded = ((n - 1) / step + 1) * step;
+  return if (rounded > 65535) { 65535 as i64 } else { rounded as i64 };
+}
+
+// The limit changes only the number of independently checked input values.
+// The complete partition and every symbolic rounding step are always checked.
+pub function audit(limit: i32): void {
+  require(limit >= 1 && limit <= 65535, "audit input bound");
+  let rows = value.intervals();
+  require(rows.len() == 40, "partition size");
+  let next = 1;
+  for r in rows {
+    require(value.valid_interval(r) && r.low == next, "partition coverage");
+    let expected = value.expected(r);
+    require(value.valid(r, expected), "expected interval");
+    rounding(r, expected);
+    let n = r.low;
+    while (n <= r.high && n <= limit) {
+      require(evaluate(expected, n) == scalar_expected(n), "exhaustive rounding");
+      n = n + 1;
+    }
+    next = r.high + 1;
+  }
+  require(next == 65536, "complete domain");
+}
+
+function rounding(r: value.Interval, expected: value.Value): void {
+  if (r.high <= 256) {
+    require(expected.factor == 1 && expected.offset == 0 as i64, "identity result");
+    return;
+  }
+  let bit = value.bit_scan(r, value.original(r));
+  require(bit >= 8 && bit <= 15, "rounding BSR");
+  let step = value.number(r, value.power(bit - 2));
+  let sum = value.add(r, value.original(r), step.offset - 1 as i64);
+  let rounded = value.mask(r, sum, value.negate(r, step));
+  require(value.valid(r, rounded) && rounded.factor == 0, "constant rounding");
+  let c = value.compare(r, rounded, 65536 as i64);
+  require(c.less == 0 || c.less == 1, "cap predicate");
+  let actual = if (c.less == 1) { rounded } else { value.number(r, 65535 as i64) };
+  require(actual.factor == expected.factor && actual.offset == expected.offset, "independent specification");
+}
+
+pub function run(): void {
+  malformed();
+  invalid_intervals();
+  arithmetic();
+  partial_width();
+  comparisons();
+  masks();
+  audit(65535);
+}
