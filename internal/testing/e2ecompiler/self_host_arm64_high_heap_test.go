@@ -193,27 +193,44 @@ func TestSelfHostArm64HighHeapRoundTripControl(t *testing.T) {
 // it the two runs above would be the same run twice and the gate vacuous.
 func TestSelfHostArm64HighHeapProbeRaisesTheHint(t *testing.T) {
 	cli := buildSelfHostCLI(t)
-	src := writeTempFern(t, t.TempDir(), "main.fern", `function main(): i32 { let a: i32[] = [1, 2, 3]; return a[0] - 1; }`)
 	const shift = "    lsl x0, x0, #28\n"
-	read := func(env ...string) string {
+	read := func(t *testing.T, src string, env ...string) string {
+		t.Helper()
 		asm, err := os.ReadFile(cli.emit(t, src, "arm64-linux", env...))
 		if err != nil {
 			t.Fatal(err)
 		}
 		return string(asm)
 	}
-	low := read()
-	high := read("FERN_HIGH_HEAP=1")
-	if !strings.Contains(low, "    mov x0, #1\n"+shift) {
-		t.Errorf("the default emit does not carry the 256 MiB arena hint (mov x0, #1; lsl #28)")
+	for _, c := range selfHostHighHeapRoundTrips {
+		t.Run(c.name, func(t *testing.T) {
+			src := writeTempFern(t, t.TempDir(), "main.fern", c.src)
+			low := read(t, src)
+			high := read(t, src, "FERN_HIGH_HEAP=1")
+			if !strings.Contains(low, "    mov x0, #1\n"+shift) {
+				t.Errorf("the default emit does not carry the 256 MiB arena hint (mov x0, #1; lsl #28)")
+			}
+			if strings.Contains(low, "    mov x0, #32\n"+shift) {
+				t.Errorf("the default emit carries the 8 GiB arena hint: FERN_HIGH_HEAP leaked into the shipped value")
+			}
+			if !strings.Contains(high, "    mov x0, #32\n"+shift) {
+				t.Errorf("FERN_HIGH_HEAP=1 emit does not carry the 8 GiB arena hint (mov x0, #32; lsl #28)")
+			}
+			if strings.Contains(high, "    mov x0, #1\n"+shift) {
+				t.Errorf("FERN_HIGH_HEAP=1 emit still carries the 256 MiB hint")
+			}
+		})
 	}
-	if strings.Contains(low, "    mov x0, #32\n"+shift) {
-		t.Errorf("the default emit carries the 8 GiB arena hint: FERN_HIGH_HEAP leaked into the shipped value")
-	}
-	if !strings.Contains(high, "    mov x0, #32\n"+shift) {
-		t.Errorf("FERN_HIGH_HEAP=1 emit does not carry the 8 GiB arena hint (mov x0, #32; lsl #28)")
-	}
-	if strings.Contains(high, "    mov x0, #1\n"+shift) {
-		t.Errorf("FERN_HIGH_HEAP=1 emit still carries the 256 MiB hint")
-	}
+	// The original probe is a static aggregate and does not need an arena.
+	t.Run("constant-array-needs-no-heap", func(t *testing.T) {
+		src := writeTempFern(t, t.TempDir(), "main.fern", `function main(): i32 { let a: i32[] = [1, 2, 3]; return a[0] - 1; }`)
+		low := read(t, src)
+		high := read(t, src, "FERN_HIGH_HEAP=1")
+		if low != high {
+			t.Error("heap-free output changed with FERN_HIGH_HEAP")
+		}
+		if strings.Contains(low, "__fern_heap_ptr") || strings.Contains(low, shift) {
+			t.Error("constant array unexpectedly includes the heap arena")
+		}
+	})
 }
