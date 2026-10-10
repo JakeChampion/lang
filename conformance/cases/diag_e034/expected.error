@@ -1,1 +1,1 @@
-array element type string, expected i32
+array element: expected i32, got string

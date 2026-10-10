@@ -11,9 +11,9 @@ func TestFloatLiteralBinaryIsNotSettledToInt(t *testing.T) {
 	cases := []struct {
 		name, src, want string
 	}{
-		{"return-i64", `function f(): i64 { return 3.0 * 2.0; }`, "return type mismatch"},
-		{"return-i32", `function f(): i32 { return 1.5 + 2.5; }`, "return type mismatch"},
-		{"var-i64", `function f(): i64 { let y: i64 = 3.0 * 2.0; return y; }`, "cannot assign f64 to variable of type i64"},
+		{"return-i64", `function f(): i64 { return 3.0 * 2.0; }`, "return value: expected"},
+		{"return-i32", `function f(): i32 { return 1.5 + 2.5; }`, "return value: expected"},
+		{"var-i64", `function f(): i64 { let y: i64 = 3.0 * 2.0; return y; }`, "expected i64, got f64"},
 		{"cast-ok", `function f(): i64 { return (3.0 * 2.0) as i64; }`, ""},
 		{"return-f64-ok", `function f(): f64 { return 3.0 * 2.0; }`, ""},
 		{"int-literals-ok", `function f(): i64 { return 3 * 2; }`, ""},

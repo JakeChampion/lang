@@ -87,7 +87,7 @@ func TestSelfHostDeclNamesGate(t *testing.T) {
 		{"pathless-reexport-list", "pub use x.{a};\nfunction main(): i32 { return 0; }", true, "malformed re-export: its path could not be read"},
 		{"primitive-impl-type", "trait T { function f(self: Self): i32; }\nimpl T for i32 { function f(self: i32): i32 { return self; } }\nfunction main(): i32 { return 0; }", false, ""},
 		// A parser sentinel: wasm_run has no checked prologue to report it.
-		{"sentinel", "function main(): i32 { return @; }", true, "parser-side unknown"},
+		{"sentinel", "function main(): i32 { return @; }", true, "expected an expression, got"},
 
 		// Controls: ordinary names, a name that merely CONTAINS a keyword, and a
 		// receiver method — the gate must not fire on any of them.
@@ -185,8 +185,8 @@ func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 	const both = "function f(x): i32 { return @; }\nfunction main(): i32 { return f(1); }\n"
 	for _, tc := range []struct{ name, src, cause string }{
 		{"untyped", untyped, "has no type"},
-		{"sentinel", sentinel, "parser-side unknown"},
-		{"sentinel-and-untyped", both, "parser-side unknown"},
+		{"sentinel", sentinel, "expected an expression, got"},
+		{"sentinel-and-untyped", both, "expected an expression, got"},
 	} {
 		t.Run("asm_ir_run/"+tc.name, func(t *testing.T) {
 			out, stderr, code := runDeclGate(t, runner, irBin, []byte(tc.src))
@@ -232,14 +232,14 @@ func TestSelfHostDeclNamesGateRawPathsX86_64(t *testing.T) {
 			if cmd.ProcessState.ExitCode() == 0 {
 				t.Fatalf("driver emitted %d bytes for an over-budget module holding a sentinel", len(combined))
 			}
-			if !strings.Contains(string(combined), "parser-side unknown") {
+			if !strings.Contains(string(combined), "expected an expression, got") {
 				t.Errorf("refusal did not name the cause:\n%.2000s", combined)
 			}
 		})
 		for _, tc := range []struct{ name, src, cause string }{
 			{"untyped", untyped, "has no type"},
 			{"sentinel-and-untyped", both, "has no type"},
-			{"sentinel", sentinel, "parser-side unknown"},
+			{"sentinel", sentinel, "expected an expression, got"},
 			// A nameless declaration derails the parse, so a stdin driver
 			// reports the parser's sentinels first; the loaders run the
 			// declaration gate first, which is where its text and position show.
@@ -297,7 +297,7 @@ func TestSelfHostDeclNamesGateWasmStdinX86_64(t *testing.T) {
 	cases := []struct{ name, src, cause string }{
 		{"untyped-param", "function f(x): i32 { return 0; }\nfunction main(): i32 { return f(1); }\n", "has no type"},
 		{"untyped-trait-requirement", "trait Conv { function conv(self): i32; }\nfunction main(): i32 { return 0; }\n", "has no type"},
-		{"sentinel", "function main(): i32 { return @; }\n", "parser-side unknown"},
+		{"sentinel", "function main(): i32 { return @; }\n", "expected an expression, got"},
 		{"untyped-local-fn", "function outer(): i32 {\n    function g(y): i32 { return 0; }\n    return g(1);\n}\nfunction main(): i32 { return outer(); }\n", "has no type"},
 	}
 	for _, d := range drivers {

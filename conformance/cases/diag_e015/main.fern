@@ -10,6 +10,6 @@ enum Shape {
 function area(s: Shape): f64 {
     match (s) {
         Circle(r) => { return r * r; },
-        Rect(w) => { return w; },   // error[E015]: variant Rect has 2 payload(s), got 1 binding(s)
+        Rect(w) => { return w; },   // error[E015]: variant Rect carries 2 values, but the pattern binds 1
     }
 }

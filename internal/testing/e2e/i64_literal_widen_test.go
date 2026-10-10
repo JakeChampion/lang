@@ -198,7 +198,7 @@ function main(): i32 {
 // binds a generic call's type parameter through its `T[]` result the way a
 // tuple or scalar destination does. Before, the still-polymorphic element
 // compared unequal to the concrete one and the binding was refused as E003
-// (`cannot assign i32[] to variable of type i64[]`). A correct run exits 15.
+// (`expected i64[], got i32[]`). A correct run exits 15.
 const arrayDestinationGenericProgram = `
 function wrap[T](x: T): T[] { return [x]; }
 function two[T](a: T, b: T): T[] { return [a, b]; }

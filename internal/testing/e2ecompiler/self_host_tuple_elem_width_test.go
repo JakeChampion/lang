@@ -313,11 +313,11 @@ var tupleFieldTypeLabelCases = []struct {
 	field string
 	want  string
 }{
-	{"tuple-array", "(i32, f64)[]", "cannot assign (i32, f64)[] to variable of type i32"},
-	{"generic-array", "Option[i32][]", "cannot assign Option[i32][] to variable of type i32"},
-	{"nested-tuple-array", "(i32, (f64, i32))[]", "cannot assign (i32, (f64, i32))[] to variable of type i32"},
-	{"map", "Map[string, i32]", "cannot assign Map[string, i32] to variable of type i32"},
-	{"tuple", "(i32, f64)", "cannot assign (i32, f64) to variable of type i32"},
+	{"tuple-array", "(i32, f64)[]", "expected i32, got (i32, f64)[]"},
+	{"generic-array", "Option[i32][]", "expected i32, got Option[i32][]"},
+	{"nested-tuple-array", "(i32, (f64, i32))[]", "expected i32, got (i32, (f64, i32))[]"},
+	{"map", "Map[string, i32]", "expected i32, got Map[string, i32]"},
+	{"tuple", "(i32, f64)", "expected i32, got (i32, f64)"},
 }
 
 func TestSelfHostTupleFieldTypeLabelParity(t *testing.T) {

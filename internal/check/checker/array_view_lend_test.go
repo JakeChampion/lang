@@ -56,7 +56,7 @@ function main(): i32 { let owned: u8[] = [1, 2]; let v: [u8] = owned[:]; return 
 function main(): i32 { let owned: u8[] = [1, 2]; return consume(owned); }`,
 			"expected [u8], got u8[]"},
 		{"let initialiser is an owning sink", `function main(): i32 { let owned: u8[] = [1, 2]; let v: [u8] = owned; return v.len(); }`,
-			"cannot assign u8[] to variable of type [u8]"},
+			"expected [u8], got u8[]"},
 		{"element types must match exactly", `function total(bs: [i64]): i32 { return bs.len(); }
 function main(): i32 { let owned: i32[] = [1, 2]; return total(owned); }`,
 			"expected [i64], got i32[]"},

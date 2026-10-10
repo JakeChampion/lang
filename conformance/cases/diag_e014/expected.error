@@ -1,2 +1,2 @@
 variant "Purple" is not part of enum Color
-match is not exhaustive — variant Blue of enum Color is not covered (add an arm or use `_`)
+match does not cover variant Blue of enum Color — add an arm for it, or a `_` arm

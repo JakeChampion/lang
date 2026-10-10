@@ -1,2 +1,2 @@
 tuple pattern has 3 elements, but scrutinee tuple has 2
-undefined identifier "a"
+cannot find "a" in this scope

@@ -2,7 +2,7 @@
 // turns a position+message pair (which lexer, parser and checker errors
 // already carry) into output like:
 //
-//	path/foo.fern:3:9: error: undefined identifier "x"
+//	path/foo.fern:3:9: error: cannot find "x" in this scope
 //	    return x + 1;
 //	           ^
 //	    note: did you mean "y"?

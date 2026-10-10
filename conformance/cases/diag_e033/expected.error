@@ -1,1 +1,1 @@
-cannot cast Point to Vec2; only numeric casts (and [u8]/u8[]/string ↔ i32 data-pointer hops, plus i32 → T[]) are supported
+cannot cast Point to Vec2: `as` converts only between numeric types

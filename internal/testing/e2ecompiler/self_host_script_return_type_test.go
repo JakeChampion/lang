@@ -15,8 +15,8 @@ import (
 func TestSelfHostScriptReturnType(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	cases := []struct{ name, src, want string }{
-		{"boolean", "let x: i32 = 3;\nreturn x > 2;\n", "function returns i32 but expression is boolean"},
-		{"string", "return \"s\";\n", "function returns i32 but expression is string"},
+		{"boolean", "let x: i32 = 3;\nreturn x > 2;\n", "return value: expected i32, got boolean"},
+		{"string", "return \"s\";\n", "return value: expected i32, got string"},
 		{"i32", "let x: i32 = 3;\nreturn x;\n", ""},
 		{"no-return", "let x: i32 = 3;\n", ""},
 	}

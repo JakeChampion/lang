@@ -56,7 +56,7 @@ func TestStructPatternFieldLiteralIsRefutable(t *testing.T) {
 	if err == nil {
 		t.Fatal("a field literal makes the slot refutable, so S is not covered")
 	}
-	if !strings.Contains(err.Error(), "not exhaustive") {
+	if !strings.Contains(err.Error(), "does not cover") {
 		t.Errorf("want the exhaustiveness diagnostic, got %v", err)
 	}
 }

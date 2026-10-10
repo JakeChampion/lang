@@ -134,7 +134,7 @@ func TestBareVariantResolvesWithinTheReferringModule(t *testing.T) {
 		if err == nil {
 			t.Fatal("lib does not import other, so Text names nothing there")
 		}
-		if !strings.Contains(err.Error(), `undefined identifier "Text"`) {
+		if !strings.Contains(err.Error(), `cannot find "Text" in this scope`) {
 			t.Errorf("want an undefined-identifier diagnostic, got:\n%v", err)
 		}
 	})

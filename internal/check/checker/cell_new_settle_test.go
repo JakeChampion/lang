@@ -27,11 +27,11 @@ function main(): i32 { return mk().get() as i32; }`},
 	}
 	bad := []struct{ name, src, want string }{
 		{"typed local", `function main(): i32 { let x: i32 = 4; let c: Cell[i64] = cell_new(x); return 0; }`,
-			"cannot assign Cell[i32] to variable of type Cell[i64]"},
+			"expected Cell[i64], got Cell[i32]"},
 		{"not a number", `function main(): i32 { let c: Cell[string] = cell_new(1); return 0; }`,
-			"cannot assign Cell[i32] to variable of type Cell[string]"},
+			"expected Cell[string], got Cell[i32]"},
 		{"float into int", `function main(): i32 { let c: Cell[i64] = cell_new(1.5); return 0; }`,
-			"cannot assign Cell[f64] to variable of type Cell[i64]"},
+			"expected Cell[i64], got Cell[f64]"},
 		{"out of range", `function main(): i32 { let c: Cell[u8] = cell_new(300); return 0; }`,
 			"literal 300 does not fit in u8"},
 	}
