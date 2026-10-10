@@ -1,16 +1,13 @@
 import "std/test";
-import "std/array" as array;
+import "std/array";
 
 // tests/stdlib/array_product_cumsum_test.fern — pure-Fern coverage of
 // std/array's `product` at an f64 element (product of all elements, empty = 1)
-// and cumsum_f64 (running prefix sum, same length as input). product returns a
-// plain f64, cumsum an f64[] — both scalar payload, so this runs on all four
-// native backends and both self-host gates. The Go-side TestArrayProductCumsum
-// pins the native backends; this is the migration-shaped companion.
-//
-// `product` is the bounded generic `[T: Mul + One]` since #2663, so these
-// exercise the f64 instantiation of one verb rather than a `product_f64`
-// sibling — which is why the empty case has to name its element type.
+// and `cumsum` (running prefix sum, same length as input). Both are bounded
+// generics (`[T: Mul + One]`, `[T: Add + Zero]`), so these exercise the f64
+// instantiation of one verb rather than an `_f64` sibling — which is why the
+// empty cases have to name their element type. The Go-side
+// TestArrayProductCumsum pins the same behaviour.
 
 function near(a: f64, b: f64): boolean {
   let d: f64 = a - b;
@@ -38,7 +35,7 @@ function test_product_empty(): test.TestOutcome {
 }
 
 function test_cumsum(): test.TestOutcome {
-  let cs: f64[] = array.cumsum_f64([1.0, 2.0, 3.0, 4.0]);
+  let cs: f64[] = [1.0, 2.0, 3.0, 4.0].cumsum();
   if (!near(cs[0], 1.0)) {
     return test.fail("prefix 0");
   }
@@ -50,7 +47,7 @@ function test_cumsum(): test.TestOutcome {
 }
 
 function test_cumsum_negatives(): test.TestOutcome {
-  let d: f64[] = array.cumsum_f64([5.0, 0.0 - 2.0, 1.0]);
+  let d: f64[] = [5.0, 0.0 - 2.0, 1.0].cumsum();
   if (!near(d[1], 3.0)) {
     return test.fail("5-2");
   }
@@ -58,7 +55,8 @@ function test_cumsum_negatives(): test.TestOutcome {
 }
 
 function test_cumsum_empty(): test.TestOutcome {
-  return test.assert_true(array.cumsum_f64([]).len() == 0);
+  let empty: f64[] = [];
+  return test.assert_true(empty.cumsum().len() == 0);
 }
 
 function main(): i32 {

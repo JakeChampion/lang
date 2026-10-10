@@ -2,17 +2,17 @@ package e2e
 
 import "testing"
 
-// Differential coverage for std/array's `product` at an f64 element and
-// cumsum_f64 — the product of all elements (empty product = 1) and the running
+// Differential coverage for std/array's `product` and `cumsum` at an f64
+// element — the product of all elements (empty product = 1) and the running
 // prefix sum (same length as the input). product returns a plain f64; cumsum
 // returns an f64[] (scalar payload). Since #2663 `product` is the bounded
-// generic `[T: Mul + One]`, so these pin its f64 instantiation rather than a
-// `product_f64` sibling; the empty case names its element type for that
-// reason. Both lower on all four backends including wasmbin. Returns 42 iff
+// generic `[T: Mul + One]` and `cumsum` is `[T: Add + Zero]`, so these pin
+// their f64 instantiations rather than `_f64` siblings; the empty cases name
+// their element type for that reason. Both lower on all four backends including wasmbin. Returns 42 iff
 // every check holds across interp / x86-64 / wasm / arm64; each leg skips itself
 // when its toolchain is absent.
 const arrayProductCumsumProg = `
-import "std/array" as array;
+import "std/array";
 import "std/num" as num;
 function approx(a: f64, b: f64): boolean { let d: f64 = a - b; if (d < 0.0) { d = 0.0 - d; } return d < 0.0001; }
 function main(): i32 {
@@ -22,7 +22,7 @@ function main(): i32 {
     if (!approx(mt.product(), 1.0)) { return 2; }                       // empty product = 1
     let neg: f64[] = [2.0, 0.0 - 3.0];
     if (!approx(neg.product(), 0.0 - 6.0)) { return 3; }                // negatives
-    let cs: f64[] = array.cumsum_f64(xs);
+    let cs: f64[] = xs.cumsum();
     if (!approx(cs[0], 1.0)) { return 4; }
     if (!approx(cs[1], 3.0)) { return 5; }
     if (!approx(cs[2], 6.0)) { return 6; }
@@ -31,9 +31,9 @@ function main(): i32 {
     // last prefix sum equals the total
     if (!approx(cs[3], num.sum(xs))) { return 9; }
     // empty in -> empty out
-    if (array.cumsum_f64([]).len() != 0) { return 10; }
+    if (mt.cumsum().len() != 0) { return 10; }
     // running total with a negative step
-    let d: f64[] = array.cumsum_f64([5.0, 0.0 - 2.0, 1.0]);
+    let d: f64[] = [5.0, 0.0 - 2.0, 1.0].cumsum();
     if (!approx(d[1], 3.0)) { return 11; }
     if (!approx(d[2], 4.0)) { return 12; }
     return 42;

@@ -6,8 +6,9 @@
 // self-host (#3558) and the native checker recovers a bound-only type parameter
 // by bound-driven inference (#3596), so a fully-generic collector
 // `count[T, I: Iterator[T]]` / `to_array[T, I: Iterator[T]]: T[]` works on
-// every backend. (`sum` stays `i32`-specialised — summing needs `+` on the
-// element type, which awaits a numeric trait bound.)
+// every backend. The numeric reducers are bounded on std/num's operator
+// traits (`sum[T: Add + Zero]`, `product[T: Mul + One]`) and the comparing ones
+// on core/cmp's `Ord` / `Eq`, so they work for every element type.
 //
 // Two iterators ship: `Range` over `[lo, hi)`, and `ArrayIter` over a `T[]`
 // (`iter.of(xs)`), the latter being the stdlib's first PARAMETRIC impl of a
@@ -16,7 +17,7 @@
 // params so a substituted `StructType("T")` matches the hoisted method's
 // `ParamType("T")`) and a monomorphiser fix (clone a parametric-impl method
 // per concrete `for`-type instantiation even when it is reached ONLY through a
-// trait bound, e.g. `it.next()` inside `sum[I: Iterator[i32]]`). With it,
+// trait bound, e.g. `it.next()` inside `sum[T, I: Iterator[T]]`). With it,
 // EVERY combinator below works on a plain array — and, via a map's `.keys()` /
 // `.values()` snapshot, on map keys and values too.
 //
@@ -25,6 +26,9 @@
 // the end. There is no interior mutation — advancing yields a new iterator —
 // which is the functional shape the self-host IR path already lowers (a
 // Cell-backed mutable cursor would be a later optimisation).
+
+import "core/cmp";
+import "std/num";
 
 // Iterator is the iteration protocol: a type yields `T` values one at a time
 // via `next`. `Some((v, it2))` produces the next value `v` and the iterator
@@ -86,17 +90,16 @@ impl[T] Iterator[T] for ArrayIter[T] {
   }
 }
 
-// sum consumes an i32 iterator, returning the sum of every value it yields (0
-// for an empty iterator). Specialised to i32 — summing needs `+` on the element
-// type, which a numeric trait bound will later generalise.
-pub function sum[I: Iterator[i32]](it: I): i32 {
-  let total = 0;
+// sum consumes an iterator, returning the sum of every value it yields
+// (`T.zero()` for an empty iterator).
+pub function sum[T: num.Add + num.Zero, I: Iterator[T]](it: I): T {
+  let total: T = T.zero();
   let cur = it;
   let go = true;
   while (go) {
     match (cur.next()) {
       Some(t) => {
-        total = total + t.0;
+        total = total.add(t.0);
         cur = t.1;
       },
       None => {
@@ -270,8 +273,8 @@ pub function find[T, I: Iterator[T]](it: I, pred: (T) => boolean): Option[T] {
 }
 
 // position_by returns the 0-based index of the first value for which `pred` is
-// true, or -1 if none matches. The closure-taking, element-type-generic
-// counterpart to the i32-only `position` (which matches on `==` a target).
+// true, or -1 if none matches. The closure-taking counterpart to `position`
+// (which matches on `Eq` against a target).
 pub function position_by[T, I: Iterator[T]](it: I, pred: (T) => boolean): i32 {
   let cur = it;
   let i = 0;
@@ -294,8 +297,8 @@ pub function position_by[T, I: Iterator[T]](it: I, pred: (T) => boolean): i32 {
 }
 
 // count_by returns how many of the iterator's values satisfy `pred`. The
-// closure-taking, element-type-generic counterpart to the i32-only
-// `count_value` (which counts values `==` a target).
+// closure-taking counterpart to `count_value` (which counts values `Eq` to a
+// target).
 pub function count_by[T, I: Iterator[T]](it: I, pred: (T) => boolean): i32 {
   let cur = it;
   let n = 0;
@@ -517,56 +520,62 @@ pub function nth[T, I: Iterator[T]](it: I, n: i32): Option[T] {
   return None;
 }
 
-// min returns the smallest value an i32 iterator yields, or `None` if empty.
-pub function min[I: Iterator[i32]](it: I): Option[i32] {
-  let cur = it;
-  let best = 0;
-  let seen = false;
-  let go = true;
-  while (go) {
-    match (cur.next()) {
-      Some(t) => {
-        if (!seen || t.0 < best) {
-          best = t.0;
-          seen = true;
+// min returns the smallest value an iterator yields by `Ord`, or `None` if
+// empty. Ties keep the first.
+pub function min[T: cmp.Ord, I: Iterator[T]](it: I): Option[T] {
+  match (it.next()) {
+    Some(first) => {
+      let best: T = first.0;
+      let cur = first.1;
+      let go = true;
+      while (go) {
+        match (cur.next()) {
+          Some(t) => {
+            if (t.0.cmp(best) < 0) {
+              best = t.0;
+            }
+            cur = t.1;
+          },
+          None => {
+            go = false;
+          }
         }
-        cur = t.1;
-      },
-      None => {
-        go = false;
       }
+      return Some(best);
+    },
+    None => {
+      return None;
     }
   }
-  if (seen) {
-    return Some(best);
-  }
-  return None;
 }
 
-// max returns the largest value an i32 iterator yields, or `None` if empty.
-pub function max[I: Iterator[i32]](it: I): Option[i32] {
-  let cur = it;
-  let best = 0;
-  let seen = false;
-  let go = true;
-  while (go) {
-    match (cur.next()) {
-      Some(t) => {
-        if (!seen || t.0 > best) {
-          best = t.0;
-          seen = true;
+// max returns the largest value an iterator yields by `Ord`, or `None` if
+// empty. Ties keep the first.
+pub function max[T: cmp.Ord, I: Iterator[T]](it: I): Option[T] {
+  match (it.next()) {
+    Some(first) => {
+      let best: T = first.0;
+      let cur = first.1;
+      let go = true;
+      while (go) {
+        match (cur.next()) {
+          Some(t) => {
+            if (t.0.cmp(best) > 0) {
+              best = t.0;
+            }
+            cur = t.1;
+          },
+          None => {
+            go = false;
+          }
         }
-        cur = t.1;
-      },
-      None => {
-        go = false;
       }
+      return Some(best);
+    },
+    None => {
+      return None;
     }
   }
-  if (seen) {
-    return Some(best);
-  }
-  return None;
 }
 
 // last returns the final value an iterator yields, or `None` if it is empty.
@@ -589,16 +598,16 @@ pub function last[T, I: Iterator[T]](it: I): Option[T] {
   return acc;
 }
 
-// product returns the product of every value an i32 iterator yields (1 for an
-// empty iterator). i32-specialised — multiplication needs `*` on the element.
-pub function product[I: Iterator[i32]](it: I): i32 {
-  let p = 1;
+// product returns the product of every value an iterator yields (`T.one()`
+// for an empty iterator).
+pub function product[T: num.Mul + num.One, I: Iterator[T]](it: I): T {
+  let p: T = T.one();
   let cur = it;
   let go = true;
   while (go) {
     match (cur.next()) {
       Some(t) => {
-        p = p * t.0;
+        p = p.mul(t.0);
         cur = t.1;
       },
       None => {
@@ -610,16 +619,15 @@ pub function product[I: Iterator[i32]](it: I): i32 {
 }
 
 // position returns the 0-based index of the first value equal to `target`, or
-// `None` if no value matches. i32-specialised (uses `==`); the closure-taking
-// `find` is the generic counterpart above.
-pub function position[I: Iterator[i32]](it: I, target: i32): Option[i32] {
+// `None` if no value matches. `position_by` is the closure-taking form.
+pub function position[T: cmp.Eq, I: Iterator[T]](it: I, target: T): Option[i32] {
   let cur = it;
   let i = 0;
   let go = true;
   while (go) {
     match (cur.next()) {
       Some(t) => {
-        if (t.0 == target) {
+        if (t.0.eq(target)) {
           return Some(i);
         }
         i = i + 1;
@@ -634,15 +642,14 @@ pub function position[I: Iterator[i32]](it: I, target: i32): Option[i32] {
 }
 
 // contains reports whether the iterator yields a value equal to `target`.
-// i32-specialised (uses `==`); the closure-taking `any` is the generic
-// counterpart above.
-pub function contains[I: Iterator[i32]](it: I, target: i32): boolean {
+// `any` is the closure-taking form.
+pub function contains[T: cmp.Eq, I: Iterator[T]](it: I, target: T): boolean {
   let cur = it;
   let go = true;
   while (go) {
     match (cur.next()) {
       Some(t) => {
-        if (t.0 == target) {
+        if (t.0.eq(target)) {
           return true;
         }
         cur = t.1;
@@ -656,15 +663,15 @@ pub function contains[I: Iterator[i32]](it: I, target: i32): boolean {
 }
 
 // count_value returns how many of the iterator's values equal `target`.
-// i32-specialised (uses `==`).
-pub function count_value[I: Iterator[i32]](it: I, target: i32): i32 {
+// `count_by` is the closure-taking form.
+pub function count_value[T: cmp.Eq, I: Iterator[T]](it: I, target: T): i32 {
   let n = 0;
   let cur = it;
   let go = true;
   while (go) {
     match (cur.next()) {
       Some(t) => {
-        if (t.0 == target) {
+        if (t.0.eq(target)) {
           n = n + 1;
         }
         cur = t.1;

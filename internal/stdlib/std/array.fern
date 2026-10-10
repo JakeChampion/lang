@@ -38,8 +38,7 @@ import "std/num";
 // === i32 array math ===
 //
 // What is left here is genuinely i32-shaped — `gcd_all` / `median` /
-// `cumsum` and friends, whose bodies need integer division or an i32
-// identity element. The element-polymorphic reductions (`sum` / `max` /
+// `avg` and friends, whose bodies need integer division. The element-polymorphic reductions (`sum` / `max` /
 // `min` / `product` / `count` / `sorted_asc` / …) live at the bottom of
 // the file as bounded generic methods.
 
@@ -60,29 +59,6 @@ pub function __method_Array_avg(arr: i32[]): Option[i32] {
     i = i + 1;
   }
   return Some((s / (n as i64)) as i32);
-}
-
-// `(arr: i32[]) range()` — max - min, the spread of the
-// data. Option[i32] None when empty. Single-element arrays
-// return Some(0). Useful as a quick variance proxy.
-pub function __method_Array_range(arr: i32[]): Option[i32] {
-  let n: i32 = arr.len();
-  if (n == 0) {
-    return None;
-  }
-  let lo: i32 = arr[0];
-  let hi: i32 = arr[0];
-  let i: i32 = 1;
-  while (i < n) {
-    if (arr[i] < lo) {
-      lo = arr[i];
-    }
-    if (arr[i] > hi) {
-      hi = arr[i];
-    }
-    i = i + 1;
-  }
-  return Some(hi - lo);
 }
 
 // `(arr: i32[]) gcd_all()` — fold gcd across the array.
@@ -136,24 +112,6 @@ pub function __method_Array_abs_each(arr: i32[]): i32[] {
   return out;
 }
 
-// `(arr: i32[]) pairwise_diffs()` — array of consecutive
-// differences: out[i] = arr[i+1] - arr[i]. Length is
-// max(len(arr) - 1, 0). Empty / singleton inputs return
-// empty. Useful for slope / delta computations on samples.
-pub function __method_Array_pairwise_diffs(arr: i32[]): i32[] {
-  let n: i32 = arr.len();
-  let out: i32[] = [];
-  if (n < 2) {
-    return out;
-  }
-  let i: i32 = 1;
-  while (i < n) {
-    out = out.append(arr[i] - arr[i - 1]);
-    i = i + 1;
-  }
-  return out;
-}
-
 // `(arr: i32[]) min_max()` — Option[(min, max)] in a single
 // pass. Empty → None. Saves a second iteration when callers
 // need both bounds.
@@ -190,22 +148,6 @@ pub function __method_Array_every_positive(arr: i32[]): boolean {
     i = i + 1;
   }
   return true;
-}
-
-// `(arr: i32[]) cumsum()` — running sum: out[i] is the sum
-// of arr[0..=i]. Empty → empty. Overflow wraps silently.
-// Common shape for prefix-sum optimisations.
-pub function __method_Array_cumsum(arr: i32[]): i32[] {
-  let n: i32 = arr.len();
-  let out: i32[] = [];
-  let s: i32 = 0;
-  let i: i32 = 0;
-  while (i < n) {
-    s = s + arr[i];
-    out = out.append(s);
-    i = i + 1;
-  }
-  return out;
 }
 
 // `(arr: i32[]) sum_squared()` — sum of squares (x*x for
@@ -569,16 +511,16 @@ pub function __method_Array_all_eq_str(arr: string[], target: string): boolean {
 
 // =================== WIDER-INT / FLOAT REDUCTIONS ===================
 //
-// `avg_i64` / `avg_f64` and the running / statistical reductions
-// (`cumsum_f64`, `cumprod_f64`, `diff_f64`, `variance_f64`,
-// `stddev_f64`, …) that have no generic bounded equivalent. The
-// per-width `sum_*` / `max_*` / `min_*` family that once lived here was
-// retired in favour of the generic bounded verbs
-// (`num.sum[T: Add + Zero]`, `cmp.max_of` / `cmp.min_of[T: Ord]`, #4387
-// item 2 / #5349); those cover i64 / u32 / u64 / f64 with the same
-// wrapping-add, unsigned-compare, and NaN-skip-by-comparison semantics.
-// `product_f64` left with them once `product` became
-// `[T: Mul + One]` (#2663) — `xs.product()` is the f64 spelling now.
+// What stays width-specific here has no exact bounded equivalent: `avg_*`
+// divides by the element count, which needs a count-to-`T` conversion the
+// numeric traits do not provide; `variance_f64` / `stddev_f64` / `norm_f64` /
+// `distance_f64` / `normalize_f64` need float division and `sqrt`;
+// `median_f64` averages the middle pair; and `dot_f64` / `add_f64` /
+// `scale_f64` / `outer_mul_f64` / `inner_mul_add_f64` are the f64 vector
+// surface docs/ARRAY-ALGEBRA.md specifies. Everything with an exact generic
+// form is a bounded generic: `xs.sum()` / `xs.product()` / `xs.cumsum()` /
+// `xs.cumproduct()` / `xs.adjacent_diff()` / `xs.range()` / `xs.max()` /
+// `xs.min()` below.
 //
 // Empty-input semantics: `avg_*` returns None (no sensible default).
 
@@ -597,54 +539,6 @@ pub function avg_i64(arr: i64[]): Option[i64] {
     i = i + 1;
   }
   return Some(total / (n as i64));
-}
-
-// `cumsum_f64(arr)` — the running (prefix) sum: element `i` of the result is
-// `sum(arr[0..=i])`. Same length as the input; empty in, empty out. The f64
-// sibling of the i32 `cumsum`, handy for numeric integration and running
-// totals.
-pub function cumsum_f64(arr: f64[]): f64[] {
-  let n: i32 = arr.len();
-  let out: f64[] = [];
-  let s: f64 = 0.0;
-  let i: i32 = 0;
-  while (i < n) {
-    s = s + arr[i];
-    out = out.append(s);
-    i = i + 1;
-  }
-  return out;
-}
-
-// `cumprod_f64(arr)` — the running (prefix) product: element `i` of the result
-// is `product(arr[0..=i])`. Same length as the input, the multiplicative
-// counterpart to `cumsum`; empty in, empty out.
-pub function cumprod_f64(arr: f64[]): f64[] {
-  let n: i32 = arr.len();
-  let out: f64[] = [];
-  let p: f64 = 1.0;
-  let i: i32 = 0;
-  while (i < n) {
-    p = p * arr[i];
-    out = out.append(p);
-    i = i + 1;
-  }
-  return out;
-}
-
-// `diff_f64(arr)` — the successive differences `arr[i+1] - arr[i]`, so the
-// result is one shorter than the input (empty for fewer than 2 elements). The
-// discrete counterpart to differentiation and the left-inverse of `cumsum`:
-// `diff(cumsum(xs))` recovers `xs` (minus its first element).
-pub function diff_f64(arr: f64[]): f64[] {
-  let n: i32 = arr.len();
-  let out: f64[] = [];
-  let i: i32 = 1;
-  while (i < n) {
-    out = out.append(arr[i] - arr[i - 1]);
-    i = i + 1;
-  }
-  return out;
 }
 
 pub function avg_f64(arr: f64[]): Option[f64] {
@@ -716,28 +610,6 @@ pub function median_f64(arr: f64[]): Option[f64] {
   }
   let hi: i32 = n / 2;
   return Some((sorted[hi - 1] + sorted[hi]) * 0.5);
-}
-
-// `range_f64(arr)` — the spread `max - min` (always `>= 0`). A single element
-// has range 0. `None` for empty. Computed in one pass, so it needs no sort.
-pub function range_f64(arr: f64[]): Option[f64] {
-  let n: i32 = arr.len();
-  if (n == 0) {
-    return None;
-  }
-  let lo: f64 = arr[0];
-  let hi: f64 = arr[0];
-  let i: i32 = 1;
-  while (i < n) {
-    if (arr[i] < lo) {
-      lo = arr[i];
-    }
-    if (arr[i] > hi) {
-      hi = arr[i];
-    }
-    i = i + 1;
-  }
-  return Some(hi - lo);
 }
 
 // `dot_f64(a, b)` — the dot product `sum(a[i] * b[i])`. When the two arrays
@@ -2169,6 +2041,20 @@ pub function (xs: T[]) product[T: num.Mul + num.One](): T {
   return num.product(xs);
 }
 
+// `xs.cumsum()` / `xs.cumproduct()` — the running sums / products;
+// `xs.adjacent_diff()` — the differences between neighbours, one shorter.
+pub function (xs: T[]) cumsum[T: num.Add + num.Zero](): T[] {
+  return num.cumsum(xs);
+}
+
+pub function (xs: T[]) cumproduct[T: num.Mul + num.One](): T[] {
+  return num.cumproduct(xs);
+}
+
+pub function (xs: T[]) adjacent_diff[T: num.Sub](): T[] {
+  return num.adjacent_diff(xs);
+}
+
 // `xs.max()` / `xs.min()` — extremal element by `Ord`, `None` when empty.
 // The Option arm is necessary: no sentinel is safe across a full numeric range.
 pub function (xs: T[]) max[T: cmp.Ord](): Option[T] {
@@ -2177,6 +2063,25 @@ pub function (xs: T[]) max[T: cmp.Ord](): Option[T] {
 
 pub function (xs: T[]) min[T: cmp.Ord](): Option[T] {
   return cmp.min_of(xs);
+}
+
+// `xs.range()` — the spread `max - min` by `Ord`, `None` when empty. A single
+// element has range zero.
+pub function (xs: T[]) range[T: cmp.Ord + num.Sub](): Option[T] {
+  if (xs.len() == 0) {
+    return None;
+  }
+  let lo: T = xs[0];
+  let hi: T = xs[0];
+  for x in xs {
+    if (x.cmp(lo) < 0) {
+      lo = x;
+    }
+    if (x.cmp(hi) > 0) {
+      hi = x;
+    }
+  }
+  return Some(hi.sub(lo));
 }
 
 // `xs.count(target)` — how many elements equal `target`.
