@@ -1,0 +1,395 @@
+#!/usr/bin/env bash
+# net-tls-interop — run Fern's TLS 1.3 client and server against other
+# implementations, and record handshakes per second and bulk throughput:
+# slice 12 of docs/NET-P4-TLS-PLAN.md, #9858's interop criterion.
+#
+# Usage: net-tls-interop [REPORT]
+#
+#   REPORT  where to write the `metric<TAB>value` report (default: stdout),
+#           the format scripts/perf-history records. The cases pass or
+#           fail on their own; the report is what they measured on the way.
+#
+# THE CERTIFICATES are made here by openssl, for two days: a P-384 root
+# with a P-256 leaf for localhost, and an Ed25519 client root with a P-256
+# client leaf.
+#
+# THE CLIENT. scripts/net-tls-interop.d/client.fern prints one line per
+# case, and its output must match EXPECTED_CLIENT below against each of
+# two servers, each run twice: on one port as it is, on another requiring
+# a client certificate under the client root. The servers are OpenSSL's
+# `s_server -WWW` serving files from a directory, and
+# scripts/net-tls-interop.d/gotls, Go's crypto/tls under net/http. The
+# cases: a GET over std/fetch with the roots from SSL_CERT_FILE; a
+# std/tls/client session on a socket with ALPN; another resumed from the
+# ticket the first was issued; the client-certificate port with the
+# certificate and without; the 16 MiB body of /bulk, timed; and twenty
+# handshakes, timed. OpenSSL 3.0 does not know X25519MLKEM768, the
+# client's one key share, so against it every handshake goes through
+# HelloRetryRequest to X25519; Go takes the hybrid directly.
+#
+# THE SERVER. scripts/net-bench.d/hello.fern with TLS_CERT and TLS_KEY,
+# and a second one with TLS_CLIENT_CA requiring a client certificate.
+# `gotls client` reads a GET, a second request on the kept connection, a
+# resumed session on a fresh connection, /bulk timed, and the
+# client-certificate port with the certificate and without. curl checks
+# two requests on one connection, an upload behind `Expect: 100-continue`
+# answered with `100 Continue`, and /bulk's download speed. `openssl
+# s_client` checks a handshake that is issued a ticket, a session resumed
+# from it, the client-certificate port with the certificate and, without
+# one, the certificate_required alert. `openssl s_time` counts full and
+# resumed handshakes for five seconds each.
+#
+# A tool that is missing fails the run rather than skipping a case:
+# net-nightly.yml's runner has every one of them.
+#
+#   tls/client/<server>.bulk_mbytes_per_s      <server> openssl or go
+#   tls/client/<server>.handshakes_per_s
+#   tls/server/go.bulk_mbytes_per_s            gotls client's download
+#   tls/server/curl.bulk_mbytes_per_s
+#   tls/server/handshakes_per_s                openssl s_time -new
+#   tls/server/resumed_handshakes_per_s        openssl s_time -reuse
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+. scripts/net-lib
+
+REPORT="${1:-/dev/stdout}"
+
+for tool in openssl curl go python3 cargo cmake ninja c++; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "net-tls-interop: $tool not found" >&2
+    exit 2
+  fi
+done
+
+# The peers built from source, at these pins, kept under $tools so a run
+# builds each once; a new pin is a new build. net-nightly.yml caches the
+# directory on this file's hash.
+RUSTLS_TAG=v/0.23.45
+BORINGSSL_COMMIT=3fed4f207543470b3d639db6ed40737e30308b51
+tools="${FERN_TLS_INTEROP_TOOLS:-$HOME/.cache/fern-tls-interop}"
+
+rustls_bin="$tools/rustls-${RUSTLS_TAG//\//-}/bin"
+if [ ! -x "$rustls_bin/tlsserver-mio" ] || [ ! -x "$rustls_bin/tlsclient-mio" ]; then
+  echo "net-tls-interop: building rustls' mio examples at $RUSTLS_TAG" >&2
+  cargo install --locked --quiet --git https://github.com/rustls/rustls --tag "$RUSTLS_TAG" rustls-examples --bin tlsclient-mio --bin tlsserver-mio --root "$(dirname "$rustls_bin")"
+fi
+
+bssl="$tools/boringssl-$BORINGSSL_COMMIT/bssl"
+if [ ! -x "$bssl" ]; then
+  echo "net-tls-interop: building BoringSSL's bssl at $BORINGSSL_COMMIT" >&2
+  git init -q "$work/boringssl"
+  git -C "$work/boringssl" fetch -q --depth 1 https://github.com/google/boringssl "$BORINGSSL_COMMIT"
+  git -C "$work/boringssl" checkout -q FETCH_HEAD
+  cmake -GNinja -S "$work/boringssl" -B "$work/boringssl/build" -DCMAKE_BUILD_TYPE=Release > "$work/boringssl-cmake.log"
+  ninja -C "$work/boringssl/build" bssl > "$work/boringssl-ninja.log"
+  mkdir -p "$(dirname "$bssl")"
+  cp "$work/boringssl/build/bssl" "$bssl"
+fi
+
+certs="$work/certs"
+mkdir -p "$certs"
+
+# certificate NAME KEY SUBJECT ISSUER EXT... — a certificate and its key
+# under $certs, self-signed when ISSUER is empty. KEY is a curve name or
+# ed25519.
+certificate() {
+  local name="$1" key="$2" subject="$3" issuer="$4"
+  shift 4
+  local args=()
+  if [ "$key" = ed25519 ]; then
+    args+=(-newkey ed25519)
+  else
+    args+=(-newkey ec -pkeyopt "ec_paramgen_curve:$key")
+  fi
+  if [ -n "$issuer" ]; then
+    args+=(-CA "$certs/$issuer.pem" -CAkey "$certs/$issuer.key")
+  fi
+  local ext
+  for ext in "$@"; do
+    args+=(-addext "$ext")
+  done
+  openssl req -x509 -nodes -days 2 -subj "$subject" -keyout "$certs/$name.key" -out "$certs/$name.pem" "${args[@]}" 2> "$work/openssl-req.log" || {
+    cat "$work/openssl-req.log" >&2
+    exit 1
+  }
+}
+
+certificate ca P-384 '/CN=Fern interop CA' ''
+certificate leaf P-256 '/CN=localhost' ca 'subjectAltName=DNS:localhost,IP:127.0.0.1' 'extendedKeyUsage=serverAuth' 'keyUsage=digitalSignature' 'basicConstraints=CA:FALSE'
+certificate clientca ed25519 '/CN=Fern interop client CA' ''
+certificate client P-256 '/CN=fern client' clientca 'extendedKeyUsage=clientAuth' 'keyUsage=digitalSignature' 'basicConstraints=CA:FALSE'
+cat "$certs/leaf.pem" "$certs/ca.pem" > "$certs/chain.pem"
+
+bin/fern -target "$TARGET" -o "$work/client" scripts/net-tls-interop.d/client.fern
+bin/fern -target "$TARGET" -o "$work/hello" scripts/net-bench.d/hello.fern
+go build -o "$work/gotls" ./scripts/net-tls-interop.d/gotls
+
+# The files s_server -WWW serves.
+mkdir -p "$work/www"
+printf 'hello' > "$work/www/hello"
+head -c 16777216 /dev/zero | tr '\0' x > "$work/www/bulk"
+
+# start_tls NAME PORT MTLS_PORT — NAME's TLS server on PORT, and the same
+# requiring a client certificate on MTLS_PORT, both answering before this
+# returns.
+start_tls() {
+  case "$1" in
+    openssl)
+      start_server "$work/$1-mtls.log" env -C "$work/www" openssl s_server -accept "127.0.0.1:$3" -cert "$certs/leaf.pem" -key "$certs/leaf.key" -WWW -alpn http/1.1 -Verify 2 -CAfile "$certs/clientca.pem"
+      keep_as_upstream
+      start_server "$work/$1.log" env -C "$work/www" openssl s_server -accept "127.0.0.1:$2" -cert "$certs/leaf.pem" -key "$certs/leaf.key" -WWW -alpn http/1.1
+      ;;
+    go)
+      CERT="$certs/leaf.pem" KEY="$certs/leaf.key" CLIENT_CA="$certs/clientca.pem" PORT="$2" MTLS_PORT="$3" start_server "$work/$1.log" "$work/gotls" server
+      ;;
+    rustls)
+      start_server "$work/$1-mtls.log" "$rustls_bin/tlsserver-mio" --port "$3" --certs "$certs/chain.pem" --key "$certs/leaf.key" --proto http/1.1 --tickets --auth "$certs/clientca.pem" --require-auth http
+      keep_as_upstream
+      start_server "$work/$1.log" "$rustls_bin/tlsserver-mio" --port "$2" --certs "$certs/chain.pem" --key "$certs/leaf.key" --proto http/1.1 --tickets http
+      ;;
+    bssl)
+      start_server "$work/$1-mtls.log" "$bssl" server -accept "$3" -cert "$certs/leaf.pem" -key "$certs/leaf.key" -www -loop -require-any-client-cert
+      keep_as_upstream
+      start_server "$work/$1.log" "$bssl" server -accept "$2" -cert "$certs/leaf.pem" -key "$certs/leaf.key" -www -loop
+      ;;
+    fern)
+      TLS_CERT="$certs/leaf.pem" TLS_KEY="$certs/leaf.key" TLS_CLIENT_CA="$certs/clientca.pem" PORT="$3" start_server "$work/$1-mtls.log" "$work/hello"
+      keep_as_upstream
+      TLS_CERT="$certs/leaf.pem" TLS_KEY="$certs/leaf.key" PORT="$2" start_server "$work/$1.log" "$work/hello"
+      ;;
+  esac
+  await_port "$1" "$2" "$work/$1.log"
+  local mtls_log="$work/$1-mtls.log"
+  if [ "$1" = go ]; then
+    mtls_log="$work/$1.log"
+  fi
+  await_port "$1" "$3" "$mtls_log"
+}
+
+stop_tls() {
+  stop_server
+  stop_upstream
+}
+
+failed=0
+fail() {
+  echo "FAIL: $*" >&2
+  failed=1
+}
+
+# compare WHAT EXPECTED GOT — a case line, or the diff.
+compare() {
+  if [ "$2" = "$3" ]; then
+    echo "$1: ok"
+  else
+    fail "$1"
+    diff <(echo "$2") <(echo "$3") >&2 || true
+  fi
+}
+
+metrics=()
+metric() {
+  metrics+=("$(printf '%s\t%s' "$1" "$2")")
+}
+
+# ms_of LABEL TEXT — the milliseconds on TEXT's LABEL line, 0 when absent.
+ms_of() {
+  sed -n "s/^$1: .* \([0-9][0-9]*\) ms\$/\1/p" <<< "$2" | head -1 | grep . || echo 0
+}
+
+# per_second COUNT MS — COUNT per second at MS milliseconds, one decimal.
+per_second() {
+  python3 -c 'import sys
+count, ms = float(sys.argv[1]), max(float(sys.argv[2]), 1.0)
+print(f"{count / ms * 1000:.1f}")' "$1" "$2"
+}
+
+# mbytes_per_second BYTES MS — the same in MB/s.
+mbytes_per_second() {
+  per_second "$(python3 -c "print($1 / 1e6)")" "$2"
+}
+
+# expected_client SERVER — the lines the Fern client prints against
+# SERVER: the body is the first line of what each answers GET /hello
+# with, the protocol what each agrees to by ALPN (bssl has no flag for
+# it), and only the servers with a /bulk to give are asked for one.
+expected_client() {
+  local body alpn=" http/1.1" bulk="bulk: 16777216 bytes
+"
+  case "$1" in
+    openssl | go) body=hello ;;
+    rustls) body="Hello world from rustls tlsserver"; bulk="" ;;
+    bssl) body="Version: TLSv1.3"; alpn=""; bulk="" ;;
+  esac
+  printf 'get: 200 %s\nsocket: 200 %s%s\nresume: resumed 200 %s%s\nmtls: 200 %s%s\nnocert: refused\n%shandshakes: 20\n' "$body" "$body" "$alpn" "$body" "$alpn" "$body" "$alpn" "$bulk"
+}
+
+for server in openssl go rustls bssl; do
+  port="$(free_port)"
+  mtls="$(free_port)"
+  start_tls "$server" "$port" "$mtls"
+  # BULK is set, not just non-empty, for the servers with a /bulk to give.
+  bulk=()
+  case "$server" in openssl | go) bulk=(BULK=1) ;; esac
+  got="$(env "${bulk[@]}" SSL_CERT_FILE="$certs/ca.pem" CA="$certs/ca.pem" BASE="https://localhost:$port" PORT="$port" MTLS_PORT="$mtls" CLIENT_CERT="$certs/client.pem" CLIENT_KEY="$certs/client.key" "$work/client" 2>&1 || true)"
+  stop_tls
+  compare "client against $server" "$(expected_client "$server")" "$(sed -E 's/^(bulk: [0-9]+ bytes).*/\1/; s/^(handshakes: [0-9]+).*/\1/' <<< "$got")"
+  if [ "${#bulk[@]}" -gt 0 ]; then
+    metric "tls/client/$server.bulk_mbytes_per_s" "$(mbytes_per_second 16777216 "$(ms_of bulk "$got")")"
+  fi
+  metric "tls/client/$server.handshakes_per_s" "$(per_second 20 "$(ms_of handshakes "$got")")"
+done
+
+EXPECTED_GO="get: 200 hello
+keepalive: reused
+resume: resumed 200 hello
+bulk: 16777216 bytes
+mtls: 200 hello
+nocert: refused"
+
+port="$(free_port)"
+mtls="$(free_port)"
+start_tls fern "$port" "$mtls"
+url="https://localhost:$port"
+got="$(CA="$certs/ca.pem" PORT="$port" MTLS_PORT="$mtls" CLIENT_CERT="$certs/client.pem" CLIENT_KEY="$certs/client.key" "$work/gotls" client 2>&1 || true)"
+compare "server under go" "$EXPECTED_GO" "$(sed -E 's/^(bulk: [0-9]+ bytes).*/\1/' <<< "$got")"
+metric tls/server/go.bulk_mbytes_per_s "$(mbytes_per_second 16777216 "$(ms_of bulk "$got")")"
+
+connects="$(curl -s --cacert "$certs/ca.pem" -o /dev/null -o /dev/null -w '%{num_connects}\n' "$url/a" "$url/b" | tr '\n' ' ')"
+if [ "$connects" = "1 0 " ]; then
+  echo "server under curl, keep-alive: ok"
+else
+  fail "curl keep-alive: connections per request '$connects', want '1 0 '"
+fi
+
+python3 -c 'print("x" * 2000, end="")' > "$work/upload"
+continued="$(curl -s -v --cacert "$certs/ca.pem" -H 'Expect: 100-continue' --data-binary @"$work/upload" "$url/echo" 2> "$work/continue.err" | cut -c1-9)"
+if grep -q '^< HTTP/1.1 100 Continue' "$work/continue.err" && [ "$continued" = "len=2000 " ]; then
+  echo "server under curl, Expect: 100-continue: ok"
+else
+  fail "curl Expect: 100-continue: body '$continued'"
+  cat "$work/continue.err" >&2
+fi
+
+speed="$(curl -s --cacert "$certs/ca.pem" -o "$work/bulk" -w '%{speed_download}' "$url/bulk")"
+if [ "$(wc -c < "$work/bulk")" = 16777216 ]; then
+  echo "server under curl, bulk: ok"
+else
+  fail "curl bulk: $(wc -c < "$work/bulk") bytes"
+fi
+metric tls/server/curl.bulk_mbytes_per_s "$(python3 -c "print(f'{${speed%%.*} / 1e6:.1f}')")"
+
+# s_client PORT ARGS... — one GET through s_client, waiting for the
+# server's close; its whole output.
+s_client() {
+  local port="$1"
+  shift
+  printf 'GET /hello HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' | timeout 30 openssl s_client -connect "localhost:$port" -CAfile "$certs/ca.pem" -ign_eof "$@" 2>&1 || true
+}
+
+out="$(s_client "$port" -alpn http/1.1 -sess_out "$work/session.pem")"
+if grep -q '^HTTP/1.1 200' <<< "$out" && grep -q '^Post-Handshake New Session Ticket arrived' <<< "$out" && grep -q '^ALPN protocol: http/1.1' <<< "$out"; then
+  echo "server under s_client, fresh: ok"
+else
+  fail "s_client fresh"
+  echo "$out" >&2
+fi
+out="$(s_client "$port" -sess_in "$work/session.pem")"
+if grep -q '^HTTP/1.1 200' <<< "$out" && grep -q '^Reused, TLSv1.3' <<< "$out"; then
+  echo "server under s_client, resumed: ok"
+else
+  fail "s_client resumed"
+  echo "$out" >&2
+fi
+out="$(s_client "$mtls" -cert "$certs/client.pem" -key "$certs/client.key")"
+if grep -q '^HTTP/1.1 200' <<< "$out"; then
+  echo "server under s_client, client certificate: ok"
+else
+  fail "s_client client certificate"
+  echo "$out" >&2
+fi
+out="$(s_client "$mtls")"
+if grep -q 'alert number 116' <<< "$out" && ! grep -q '^HTTP/1.1 200' <<< "$out"; then
+  echo "server under s_client, no client certificate: ok"
+else
+  fail "s_client no client certificate"
+  echo "$out" >&2
+fi
+
+# rustls_client ARGS... — one GET through tlsclient-mio, which exits 0
+# only on a close_notify from the server; its whole output.
+rustls_client() {
+  timeout 30 "$rustls_bin/tlsclient-mio" --cafile "$certs/ca.pem" --http --proto http/1.1 "$@" localhost 2>&1
+}
+
+if out="$(rustls_client --port "$port")" && grep -q '^HTTP/1.1 200' <<< "$out" && grep -q '^hello' <<< "$out"; then
+  echo "server under rustls, fresh: ok"
+else
+  fail "rustls fresh"
+  echo "$out" >&2
+fi
+if out="$(rustls_client --port "$mtls" --auth-key "$certs/client.key" --auth-certs "$certs/client.pem")" && grep -q '^HTTP/1.1 200' <<< "$out"; then
+  echo "server under rustls, client certificate: ok"
+else
+  fail "rustls client certificate"
+  echo "$out" >&2
+fi
+if ! out="$(rustls_client --port "$mtls")" && grep -q 'CertificateRequired' <<< "$out"; then
+  echo "server under rustls, no client certificate: ok"
+else
+  fail "rustls no client certificate"
+  echo "$out" >&2
+fi
+
+# bssl_client PORT ARGS... — one GET through bssl's client, which prints
+# the connection's details to stderr; its whole output.
+bssl_client() {
+  local port="$1"
+  shift
+  printf 'GET /hello HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n' | timeout 30 "$bssl" client -connect "localhost:$port" -root-certs "$certs/ca.pem" -server-name localhost -alpn-protos http/1.1 "$@" 2>&1 || true
+}
+
+out="$(bssl_client "$port" -test-resumption)"
+if grep -q '^HTTP/1.1 200' <<< "$out" && grep -q 'Resumed session: no' <<< "$out" && grep -q 'Resumed session: yes' <<< "$out" && grep -q 'ALPN protocol: http/1.1' <<< "$out"; then
+  echo "server under bssl, fresh then resumed: ok"
+else
+  fail "bssl fresh then resumed"
+  echo "$out" >&2
+fi
+out="$(bssl_client "$mtls" -cert "$certs/client.pem" -key "$certs/client.key")"
+if grep -q '^HTTP/1.1 200' <<< "$out"; then
+  echo "server under bssl, client certificate: ok"
+else
+  fail "bssl client certificate"
+  echo "$out" >&2
+fi
+out="$(bssl_client "$mtls")"
+if grep -q 'CERTIFICATE_REQUIRED' <<< "$out" && ! grep -q '^HTTP/1.1 200' <<< "$out"; then
+  echo "server under bssl, no client certificate: ok"
+else
+  fail "bssl no client certificate"
+  echo "$out" >&2
+fi
+
+# handshake_rate ARGS... — connections per real second from s_time.
+handshake_rate() {
+  openssl s_time -connect "localhost:$port" -CAfile "$certs/ca.pem" -time 5 "$@" 2>&1 | sed -n 's/^\([0-9][0-9]*\) connections in \([0-9][0-9]*\) real seconds.*/\1 \2/p' | tail -1 | {
+    read -r n s || { echo 0; exit 0; }
+    python3 -c "print(f'{$n / max($s, 1):.1f}')"
+  }
+}
+metric tls/server/handshakes_per_s "$(handshake_rate -new)"
+metric tls/server/resumed_handshakes_per_s "$(handshake_rate -reuse)"
+stop_tls
+
+{
+  echo "# scripts/net-tls-interop report — arch $ARCH, target $TARGET, $(nproc) cpus"
+  echo "# $(openssl version | cut -d' ' -f1-2), $(go version | cut -d' ' -f3), $(curl --version | head -1 | cut -d' ' -f1-2), rustls $RUSTLS_TAG ($(rustc --version | cut -d' ' -f2)), boringssl ${BORINGSSL_COMMIT:0:12}"
+  printf '%s\n' "${metrics[@]}"
+} > "$work/report"
+cp "$work/report" "$REPORT"
+
+exit "$failed"

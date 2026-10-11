@@ -1,8 +1,9 @@
-# net-lib — the harness scripts/net-bench and scripts/net-interop share,
-# sourced (`. scripts/net-lib`) from the repository root: the target the
-# host builds for, bin/fern built, a work directory removed on exit, servers run in a
-# session of their own and stopped with their whole process group, a free
-# loopback port, and the lane's h2o configuration.
+# net-lib — the harness scripts/net-bench, scripts/net-interop and
+# scripts/net-tls-interop share, sourced (`. scripts/net-lib`) from the
+# repository root: the target the host builds for, bin/fern built, a work
+# directory removed on exit, servers run in a session of their own and
+# stopped with their whole process group, a free loopback port, and the
+# lane's h2o configuration.
 # shellcheck shell=bash
 
 case "$(uname -m)" in
@@ -84,6 +85,24 @@ await_server() {
     tries=$((tries + 1))
     if [ "$tries" -ge 50 ]; then
       echo "$(basename "$0"): $1 did not answer on port $2" >&2
+      cat "$3" >&2
+      exit 1
+    fi
+    sleep 0.2
+  done
+}
+
+# await_port NAME PORT LOG — once PORT accepts a connection, or the run
+# fails with LOG: the readiness of a server that is not HTTP in the clear.
+await_port() {
+  local tries=0
+  until python3 -c 'import socket, sys
+s = socket.socket()
+s.settimeout(1)
+s.connect(("127.0.0.1", int(sys.argv[1])))' "$2" 2>/dev/null; do
+    tries=$((tries + 1))
+    if [ "$tries" -ge 50 ]; then
+      echo "$(basename "$0"): $1 did not listen on port $2" >&2
       cat "$3" >&2
       exit 1
     fi

@@ -210,6 +210,26 @@ TLS itself is `std/tls/keyschedule`, `keyshare`, `message`, `record`,
     Handshakes per second and bulk throughput are recorded on the fixed
     host.
 
+    Landed, the matrix: `scripts/net-tls-interop` and the
+    `net-tls-interop-x86_64` job in `net-nightly.yml`. The Fern client
+    runs against OpenSSL's `s_server`, Go's crypto/tls, rustls'
+    `tlsserver-mio` at the tag the script pins and BoringSSL's `bssl
+    server` at the commit it pins; the Fern server
+    (`scripts/net-bench.d/hello.fern` under `TLS_CERT`, `TLS_KEY` and
+    `TLS_CLIENT_CA`) under Go's client, curl, `openssl s_client`,
+    `tlsclient-mio` and `bssl client`: a GET, a kept connection, a
+    session resumed from its ticket, a client certificate shown and
+    withheld, each way where the peer's tool can. The runner's OpenSSL
+    is the image's package (3.0 today), which does not know
+    X25519MLKEM768, so against it every Fern-client handshake takes
+    HelloRetryRequest; the other three take the hybrid share directly,
+    so both paths run every night. rustls' examples and bssl are built
+    from source once per pin and cached. The report records handshakes
+    per second (`openssl s_time`, full and resumed, and the client's own
+    twenty against each server) and bulk throughput (a 16 MiB body each
+    way with OpenSSL, Go and curl) under lane `net-tls-interop` in
+    `refs/notes/perf`. Remaining: the tlsfuzzer set.
+
 kTLS and the QUIC secret hooks come after slice 11. The handshake
 interface in slice 8 keeps the secrets and handshake messages separable,
 so HTTP/3 can be a package.
