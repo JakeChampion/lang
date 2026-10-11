@@ -102,6 +102,11 @@ var f64UlpPosInputs = []float64{
 // both within one ulp of the correctly rounded result on either path.
 const sinCosULP = 1
 
+// powULP is pow's bound: log|x| and y log|x| are carried as hi + lo into an
+// exp that takes lo as a correction, so the result is rounded once from a
+// value within about 0.02 ulp of x^y.
+const powULP = 1
+
 // logULP is log's bound against the correctly rounded result: the table
 // kernel measures 0.53 ulp from the true value, so it rounds to within one of
 // the correctly rounded double everywhere.
@@ -134,32 +139,80 @@ func f64LogInputs() []float64 {
 	return xs
 }
 
-// refLog computes ln x past double precision and rounds once. x = 2^e*m with
-// m in [1, 2), ln m = 2*atanh((m-1)/(m+1)), and the series converges by at
-// least a factor of 9 per term; 256 bits outlasts the 53 that ln m + e*ln2
-// can cancel for x just above 1.
+// refLog computes ln x past double precision and rounds once.
 func refLog(x float64) float64 {
-	const prec = 256
-	nf := func() *big.Float { return new(big.Float).SetPrec(prec) }
-	frac, e := math.Frexp(x)
-	m := nf().SetFloat64(2 * frac)
-	t := nf().Quo(nf().Sub(m, nf().SetInt64(1)), nf().Add(m, nf().SetInt64(1)))
-	atanh := func(t *big.Float) *big.Float {
-		t2 := nf().Mul(t, t)
-		term, sum := nf().Set(t), nf().Set(t)
-		for n := int64(3); t.Sign() != 0; n += 2 {
-			term.Mul(term, t2)
-			q := nf().Quo(term, nf().SetInt64(n))
-			if q.MantExp(nil) < sum.MantExp(nil)-prec-8 {
-				break
-			}
-			sum.Add(sum, q)
-		}
-		return sum.Mul(sum, nf().SetInt64(2))
-	}
-	ln2 := atanh(nf().Quo(nf().SetInt64(1), nf().SetInt64(3)))
-	out, _ := nf().Add(atanh(t), nf().Mul(ln2, nf().SetInt64(int64(e-1)))).Float64()
+	out, _ := bigLn(x).Float64()
 	return out
+}
+
+// refPrecLnExp is the working precision of bigLn and bigExp: 256 bits
+// outlasts both the 53 that ln m + e*ln2 can cancel for x just above 1 and the
+// 11 that exp's argument spends on its integer part.
+const refPrecLnExp = 256
+
+func newRef() *big.Float { return new(big.Float).SetPrec(refPrecLnExp) }
+
+// bigLn is ln x for a positive finite x. x = 2^e*m with m in [1, 2),
+// ln m = 2*atanh((m-1)/(m+1)), and the series converges by at least a factor
+// of 9 per term.
+func bigLn(x float64) *big.Float {
+	frac, e := math.Frexp(x)
+	m := newRef().SetFloat64(2 * frac)
+	t := newRef().Quo(newRef().Sub(m, newRef().SetInt64(1)), newRef().Add(m, newRef().SetInt64(1)))
+	return newRef().Add(bigAtanh2(t), newRef().Mul(bigLn2(), newRef().SetInt64(int64(e-1))))
+}
+
+// bigAtanh2 is 2*atanh(t) for |t| <= 1/3.
+func bigAtanh2(t *big.Float) *big.Float {
+	t2 := newRef().Mul(t, t)
+	term, sum := newRef().Set(t), newRef().Set(t)
+	for n := int64(3); t.Sign() != 0; n += 2 {
+		term.Mul(term, t2)
+		q := newRef().Quo(term, newRef().SetInt64(n))
+		if q.MantExp(nil) < sum.MantExp(nil)-refPrecLnExp-8 {
+			break
+		}
+		sum.Add(sum, q)
+	}
+	return sum.Mul(sum, newRef().SetInt64(2))
+}
+
+func bigLn2() *big.Float {
+	return bigAtanh2(newRef().Quo(newRef().SetInt64(1), newRef().SetInt64(3)))
+}
+
+// bigExp is e^v for |v| < 2^20: v = k*ln2 + r with |r| <= ln2/2, and the
+// Taylor series of e^r.
+func bigExp(v *big.Float) *big.Float {
+	ln2 := bigLn2()
+	q, _ := newRef().Quo(v, ln2).Float64()
+	k := math.Round(q)
+	r := newRef().Sub(v, newRef().Mul(ln2, newRef().SetFloat64(k)))
+	term, sum := newRef().SetInt64(1), newRef().SetInt64(1)
+	for n := int64(1); term.Sign() != 0; n++ {
+		term.Mul(term, r)
+		term.Quo(term, newRef().SetInt64(n))
+		if term.MantExp(nil) < sum.MantExp(nil)-refPrecLnExp-8 {
+			break
+		}
+		sum.Add(sum, term)
+	}
+	return sum.SetMantExp(sum, int(k))
+}
+
+// refPow is x^y rounded once, for a finite x != 0 whose sign an integral y
+// carries, and |y ln|x|| below the 2^20 bigExp takes. Go's math.Pow is not a
+// usable oracle once |y log x| is large: its own error grows with it.
+func refPow(x, y float64) float64 {
+	sign := 1.0
+	if x < 0 {
+		x = -x
+		if math.Mod(y, 2) != 0 {
+			sign = -1
+		}
+	}
+	out, _ := bigExp(newRef().Mul(bigLn(x), newRef().SetFloat64(y))).Float64()
+	return sign * out
 }
 
 // ---- the reference ----
@@ -176,7 +229,8 @@ func refLog(x float64) float64 {
 // working precision runs out. exp and log keep Go's math over the range where
 // it is accurate to within the bound, and fall back to a literal bit pattern
 // per row where it is not — exp's two overflow/underflow bands, log's
-// subnormals. pow keeps Go's math throughout.
+// subnormals. pow is referenced against refPow, a 256-bit big.Float log and
+// exp, since math.Pow's own error grows with |y log x|.
 
 // piDigits is 420 significant digits (~1395 bits) and refPrec is sized to
 // match. Both are set by the LARGEST argument the sweep reduces, not by the
@@ -353,20 +407,12 @@ func f64UlpCases() []f64Case {
 	} {
 		cs = append(cs, f64Case{fmt.Sprintf("flog(%s)", lit(r.x)), math.Float64frombits(r.bits)})
 	}
-	// pow: the integer-exponent path must be EXACT, not merely close —
-	// pow(3,2) truncating to 8 through `as i32` is what forced it to exist.
-	// The negative bases stay on that same path: off it, ln|x| is only
-	// approximate, so those go in f64SpecialCases where the answer is
-	// exactly representable whatever the kernel does.
-	//
-	// The large-|y| rows are the ones that gate the fast path's BOUND. Every
-	// row above answers correctly whatever the bound is — a small exponent is
-	// on the exact path either way, and the |x| == 1 and special rows are
-	// exactly representable however they are computed. So for as long as the
-	// corpus stopped at |y| <= 10, a bound sending representable results down
-	// exp(y*log|x|) was invisible here: #6405 measured 162 ulp on pow(2,280)
-	// while this suite was green at 2. These rows are inexact AND large, so
-	// they can only pass on the squaring path.
+	// pow: integral and non-integral exponents alike, over both signs of
+	// base where the exponent is integral. The large rows are where the bound
+	// is earned: the rounding error of log|x| is multiplied by y, so plain
+	// exp(y*log|x|) was 162 ulp out on pow(2,280) (#6405) and 193 on the
+	// non-integral row below (#12041), while rows with |y log x| small passed
+	// at any bound.
 	for _, p := range []struct{ x, y float64 }{
 		{3, 2}, {2, 10}, {10, 3}, {5, 4}, {2, -2}, {7, 0}, {2, 0.5}, {9, 0.5},
 		{-2, 3}, {-2, 4}, {-3, 3}, {-2, -2}, {-2, -3}, {-0.5, 3}, {-1, 2},
@@ -386,10 +432,16 @@ func f64UlpCases() []f64Case {
 		// the unfixed emitter, 3 of these 5 report, at 17592186044416 and
 		// 2024 ulp.
 		{2, -1074}, {2, -1030}, {10, -320}, {-2, -1073}, {-10, -320},
+		// Non-integral exponents with |y log x| large: near overflow, near
+		// and into the subnormal range, a base within 2^-23 of 1 under a huge
+		// exponent, and a subnormal base.
+		{85.23944470508046, -29.321248316038552}, {2.5, 700.3}, {123.456, 147.3},
+		{0.9999999, 7.1e9}, {1.0000001, 7.0e9}, {3.3e-5, 71.2}, {50.5, -189.5},
+		{1e-310, -0.98}, {1e-310, 0.37}, {0.75, -2400.5}, {1.5, 1749.25},
 	} {
 		cs = append(cs, f64Case{
 			fmt.Sprintf("fpow(%s, %s)", lit(p.x), lit(p.y)),
-			math.Pow(p.x, p.y),
+			refPow(p.x, p.y),
 		})
 	}
 	return cs
@@ -418,16 +470,11 @@ func f64SpecialCases() []f64Case {
 		{fmt.Sprintf("fsin(%s)", fromBits(math.NaN())), math.NaN()},
 		{fmt.Sprintf("fcos(%s)", fromBits(inf)), math.Cos(inf)},
 		{fmt.Sprintf("fcos(%s)", fromBits(math.NaN())), math.NaN()},
-		// pow over a negative base. Off the repeated-squaring path the
-		// general case is exp(y*ln|x|), and ln of a negative base is NaN —
-		// so before the sign/magnitude split these returned NaN for an
-		// ordinary finite answer (#7879). |x| == 1 gives an exactly
-		// representable result at every exponent, which is what lets these
-		// sit here rather than under a ulp bound.
-		// An integral exponent is exact: exp(2 * log 3) lands a hair under 9,
-		// which `as i32` truncated to 8 before pow squared instead.
-		{"fpow(3.0, 2.0)", 9},
-		{"fpow(10.0, 3.0)", 1000},
+		// pow over a negative base. ln of a negative base is NaN, so before
+		// the sign/magnitude split these returned NaN for an ordinary finite
+		// answer (#7879). |x| == 1 gives an exactly representable result at
+		// every exponent, which is what lets these sit here rather than under
+		// a ulp bound.
 		{"fpow((0.0 - 1.0), 65.0)", math.Pow(-1, 65)},
 		{"fpow((0.0 - 1.0), 100.0)", math.Pow(-1, 100)},
 		{"fpow((0.0 - 1.0), 1023.0)", math.Pow(-1, 1023)},
@@ -568,6 +615,9 @@ func checkF64Output(t *testing.T, backend, out string, cs []f64Case, bound int64
 			if strings.HasPrefix(c.call, "fsin(") || strings.HasPrefix(c.call, "fcos(") {
 				b = min(b, sinCosULP)
 			}
+			if strings.HasPrefix(c.call, "fpow(") {
+				b = min(b, powULP)
+			}
 			if d := ulpDist(got, c.want); d > b {
 				t.Errorf("%s: %s = %v, want %v (%d ulp, bound %d)",
 					backend, c.call, got, c.want, d, b)
@@ -685,6 +735,72 @@ func TestF64SinCosLargeArgument(t *testing.T) {
 		checkF64Output(t, "wasm32-wasi", out, cs, maxULP)
 	})
 	t.Logf("swept %d arguments (%d cases) over the Payne-Hanek path", len(xs), len(cs))
+}
+
+// TestF64PowExactIntegralPowers holds pow to the exact answer wherever x^n is
+// a double: every integral power of a spread of bases, both signs, whose
+// result is exactly representable, subnormal results included. No path of
+// pow special-cases an integral exponent, so this is the error bound doing
+// the work: the value pow rounds is within about 0.02 ulp of x^n, which
+// rounds to x^n itself when x^n is a double. A 1-ulp miss passes the ulp
+// gate's bound, so only this test can see one.
+func TestF64PowExactIntegralPowers(t *testing.T) {
+	var bases []float64
+	for b := 2.0; b <= 24; b++ {
+		bases = append(bases, b, -b)
+	}
+	bases = append(bases, 0.5, -0.5, 0.25, 1.5, -1.5, 0.75, 2.5, 1.0625, 1023, 1025, 9007199254740991)
+	var cs []f64Case
+	for _, b := range bases {
+		rb := new(big.Rat).SetFloat64(b)
+		for _, sign := range []int64{1, -1} {
+			r := big.NewRat(1, 1)
+			for n := int64(1); n <= 1074; n++ {
+				r.Mul(r, rb)
+				v := r
+				if sign < 0 {
+					v = new(big.Rat).Inv(r)
+				}
+				want, exact := v.Float64()
+				if math.IsInf(want, 0) || want == 0 {
+					break
+				}
+				if exact {
+					cs = append(cs, f64Case{fmt.Sprintf("fpow(f64_from_bits(%d), %d.0)", int64(math.Float64bits(b)), sign*n), want})
+				}
+			}
+		}
+	}
+	prog := f64UlpProg(cs)
+	t.Run("interp", func(t *testing.T) {
+		path := filepath.Join(t.TempDir(), "pow_exact.fern")
+		if err := os.WriteFile(path, []byte(prog), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		code, out, errOut := runLangInterp(t, buildLangBinForInterp(t), path)
+		if code != 0 {
+			t.Fatalf("interp exited %d\nstdout: %s\nstderr: %s", code, out, errOut)
+		}
+		checkF64Output(t, "interp", out, cs, 0)
+	})
+	t.Run("x86-64", func(t *testing.T) {
+		out, code := compileAndRunX86_64(t, prog)
+		if code != 0 {
+			t.Fatalf("x86-64 exited %d\n%s", code, out)
+		}
+		checkF64Output(t, "x86-64-linux", out, cs, 0)
+	})
+	t.Run("arm64", func(t *testing.T) {
+		out, code := compileAndRunArm64(t, prog)
+		if code != 0 {
+			t.Fatalf("arm64 exited %d\n%s", code, out)
+		}
+		checkF64Output(t, "arm64-linux", out, cs, 0)
+	})
+	t.Run("wasm32-wasi", func(t *testing.T) {
+		checkF64Output(t, "wasm32-wasi", compileAndRunWasmCapture(t, prog), cs, 0)
+	})
+	t.Logf("%d exactly representable integral powers", len(cs))
 }
 
 // compileAndRunWasmCapture compiles src to a raw wasm32-wasi module via the

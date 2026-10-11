@@ -180,7 +180,7 @@ is waiting on a caller.
 | 27 | log | `std/float` | same | RLibm | DECIDE:accuracy-contract | 4 |
 | 28 | log2 | `std/float` | **`log(x) / ln2`** | Direct range reduction | **GAP — accuracy bug** | 4 |
 | 29 | log10 | `std/float` | **`log(x) / ln10`** | Direct | **GAP — accuracy bug** | 4 |
-| 30 | pow | `std/float` | Fern: exact squaring for an integral exponent, exp/log otherwise | Specialised exp/log | DECIDE:accuracy-contract | 4 |
+| 30 | pow | `std/float` | glibc / ARM double-double log and exp in Fern, within 1 ulp, exact when x^y is a double | Specialised exp/log | DECIDE:accuracy-contract | 4 |
 | 31 | cbrt | `std/float` | Fern-level implementation | Correctly rounded | GAP | 4 |
 | 32 | hypot | `std/float` | Fern-level, plus `hypot3` | Scaled, overflow-safe | Audit for overflow | 4 |
 | — | f32 transcendentals | `std/float` | **Every one widens to f64, computes, narrows** | Direct f32 | **GAP — double rounding** | 4 |
