@@ -12767,6 +12767,9 @@ function recv_method_ret_of(cfa: ast.ExprFieldAccess, args: ast.Expr[], env: MEn
   if (mrt.len() == 0) {
     mrt = generic_recv_ret_of(funcs.decls, rvt, cfa.field);
   }
+  if (mrt.len() == 0) {
+    mrt = clone_recv_ret_of(funcs, rvt, cfa.field);
+  }
   if (looks_type_var(mrt)) {
     return "";
   }
@@ -12802,6 +12805,43 @@ function generic_recv_ret_of(funcs: FuncDecl[], tyname: string, method: string):
       return subst_ty(funcs[i].ret_type, n2, t2);
     }
     i = i + 1;
+  }
+  return "";
+}
+
+// The same return, for a receiver already spelled as a struct clone
+// (`ArrIt__i64`) while monomorphize_structs is still generating that clone's
+// methods: the template's return read through the clone's type arguments, in
+// the clone spelling the rest of that pass's types carry.
+function clone_recv_ret_of(funcs: MFns, tyname: string, method: string): string {
+  let generic: StructDecl[] = [];
+  for sd in funcs.structs {
+    if (sd.type_params.len() > 0) {
+      generic = generic.append(sd);
+    }
+  }
+  for sd in generic {
+    if (is_clone_of(tyname, sd.name)) {
+      let key: string = slice_unchecked(tyname, sd.name.len() + 2, tyname.len()) + "";
+      let args: string[] = split_key(key, sd.type_params.len(), funcs.structs, funcs.enums);
+      if (args.len() != sd.type_params.len()) {
+        return "";
+      }
+      let spelled: string = sd.name + "[";
+      let k: i32 = 0;
+      while (k < args.len()) {
+        if (k > 0) {
+          spelled = spelled + ", ";
+        }
+        spelled = spelled + args[k];
+        k = k + 1;
+      }
+      let ret: string = generic_recv_ret_of(funcs.decls, spelled + "]", method);
+      if (ret.len() == 0) {
+        return "";
+      }
+      return mg_ty(ret, generic, Insts { inames: [], itypes: [], iargs: [] }).ty;
+    }
   }
   return "";
 }
@@ -13762,10 +13802,19 @@ function struct_field_ty_inst(ot: string, fname: string, structs: StructDecl[], 
   }
   for f in structs[owner.at].fields {
     if (f.name == fname) {
-      return subst_ty(f.type_name, structs[owner.at].type_params, owner.cts);
+      return subst_ty(field_spelling(f), structs[owner.at].type_params, owner.cts);
     }
   }
   return "";
+}
+
+// field_spelling is a field's full type spelling: a function-typed one's `fn`
+// tag expanded from its sidecars, as param_spelling does for a parameter.
+function field_spelling(f: StructFieldDecl): string {
+  if (f.type_name == "fn") {
+    return "(" + f.fn_param_types + ") => " + f.fn_ret;
+  }
+  return f.type_name;
 }
 
 // The declaration an instantiated struct spelling names (`Box[i32]`, or the
@@ -15923,7 +15972,7 @@ function infer_lit_key(gd: StructDecl, fnames: string[], fvals: ast.Expr[], env:
       if (fnames[vi] == fname) {
         let ct: string = mono_infer(fvals[vi], env, funcs);
         if (ct.len() > 0) {
-          binds = bind_unify(gd.fields[fi].type_name, ct, gd.type_params, binds, funcs);
+          binds = bind_unify(field_spelling(gd.fields[fi]), ct, gd.type_params, binds, funcs);
         }
       }
       vi = vi + 1;
@@ -17530,7 +17579,7 @@ function struct_lit_spelling(sl: ast.ExprStructLit, env: MEnv, funcs: MFns): str
       if (f.name == sl.field_names[k]) {
         let at: string = mono_infer(sl.field_values[k], env, funcs);
         if (at.len() > 0) {
-          binds = bind_unify(f.type_name, at, sd.type_params, binds, funcs);
+          binds = bind_unify(field_spelling(f), at, sd.type_params, binds, funcs);
         }
       }
     }
