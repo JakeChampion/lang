@@ -92,35 +92,11 @@ fi
 certs="$work/certs"
 mkdir -p "$certs"
 
-# certificate NAME KEY SUBJECT ISSUER EXT... — a certificate and its key
-# under $certs, self-signed when ISSUER is empty. KEY is a curve name or
-# ed25519.
-certificate() {
-  local name="$1" key="$2" subject="$3" issuer="$4"
-  shift 4
-  local args=()
-  if [ "$key" = ed25519 ]; then
-    args+=(-newkey ed25519)
-  else
-    args+=(-newkey ec -pkeyopt "ec_paramgen_curve:$key")
-  fi
-  if [ -n "$issuer" ]; then
-    args+=(-CA "$certs/$issuer.pem" -CAkey "$certs/$issuer.key")
-  fi
-  local ext
-  for ext in "$@"; do
-    args+=(-addext "$ext")
-  done
-  openssl req -x509 -nodes -days 2 -subj "$subject" -keyout "$certs/$name.key" -out "$certs/$name.pem" "${args[@]}" 2> "$work/openssl-req.log" || {
-    cat "$work/openssl-req.log" >&2
-    exit 1
-  }
-}
 
-certificate ca P-384 '/CN=Fern interop CA' ''
-certificate leaf P-256 '/CN=localhost' ca 'subjectAltName=DNS:localhost,IP:127.0.0.1' 'extendedKeyUsage=serverAuth' 'keyUsage=digitalSignature' 'basicConstraints=CA:FALSE'
-certificate clientca ed25519 '/CN=Fern interop client CA' ''
-certificate client P-256 '/CN=fern client' clientca 'extendedKeyUsage=clientAuth' 'keyUsage=digitalSignature' 'basicConstraints=CA:FALSE'
+tls_certificate ca P-384 '/CN=Fern interop CA' ''
+tls_certificate leaf P-256 '/CN=localhost' ca 'subjectAltName=DNS:localhost,IP:127.0.0.1' 'extendedKeyUsage=serverAuth' 'keyUsage=digitalSignature' 'basicConstraints=CA:FALSE'
+tls_certificate clientca ed25519 '/CN=Fern interop client CA' ''
+tls_certificate client P-256 '/CN=fern client' clientca 'extendedKeyUsage=clientAuth' 'keyUsage=digitalSignature' 'basicConstraints=CA:FALSE'
 cat "$certs/leaf.pem" "$certs/ca.pem" > "$certs/chain.pem"
 
 bin/fern -target "$TARGET" -o "$work/client" scripts/net-tls-interop.d/client.fern

@@ -1,0 +1,166 @@
+#!/usr/bin/env bash
+# net-tls-fuzz — run tlsfuzzer's TLS 1.3 scripts against the Fern TLS
+# server: the smoke set of slice 12 (docs/NET-P4-TLS-PLAN.md, #9858).
+#
+# Usage: net-tls-fuzz [NAME...]
+#
+#   NAME  a script's name as the first field of net-tls-fuzz.d/cases spells
+#         it (conversation, mlkem, ...); the default is every case there.
+#
+# WHAT RUNS. tlsfuzzer at the commit TLSFUZZER_COMMIT pins, with tlslite-ng
+# and the rest of net-tls-fuzz.d/requirements.txt in a venv, both built
+# once under $tools (net-nightly.yml caches it on this file's hash). The
+# server is scripts/net-tls-fuzz.d/server.fern, built by bin/fern for the
+# host, in four instances on loopback ports: `plain` with a P-256 leaf,
+# `mtls` the same requiring a client certificate under the client root,
+# `ed` with an Ed25519 leaf, and `echo`, plain but echoing what it reads.
+# The certificates are made by openssl at run time (net-lib's
+# tls_certificate, as scripts/net-tls-interop makes its own).
+#
+# THE SET. net-tls-fuzz.d/cases says which scripts run against which
+# instance with which arguments, and why each excluded probe is excluded
+# or expected to fail: one presupposes something the stack does not have,
+# the other a behaviour where the stack's is the right one. Every other
+# probe must pass, and a probe expected to fail that passes fails the
+# script too, so the set says exactly what the server does. A tool that is
+# missing fails the run rather than skipping a case.
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+. scripts/net-lib
+
+for tool in openssl python3 git; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "net-tls-fuzz: $tool not found" >&2
+    exit 2
+  fi
+done
+
+TLSFUZZER_COMMIT=5eebc4464e5197a7f7392fb9acda99cfc32441f7
+tools="${FERN_TLS_FUZZ_TOOLS:-$HOME/.cache/fern-tls-fuzz}"
+fuzz="$tools/tlsfuzzer-$TLSFUZZER_COMMIT"
+venv="$tools/venv-$(sha256sum scripts/net-tls-fuzz.d/requirements.txt | cut -c1-16)"
+
+if [ ! -f "$fuzz/scripts/test-tls13-conversation.py" ]; then
+  echo "net-tls-fuzz: fetching tlsfuzzer at $TLSFUZZER_COMMIT" >&2
+  rm -rf "$fuzz"
+  git init -q "$fuzz"
+  git -C "$fuzz" fetch -q --depth 1 https://github.com/tlsfuzzer/tlsfuzzer "$TLSFUZZER_COMMIT"
+  git -C "$fuzz" checkout -q FETCH_HEAD
+fi
+if [ ! -x "$venv/bin/python" ]; then
+  echo "net-tls-fuzz: installing tlslite-ng and its dependencies" >&2
+  python3 -m venv "$venv"
+  "$venv/bin/pip" install --quiet --require-virtualenv -r scripts/net-tls-fuzz.d/requirements.txt
+fi
+
+# The schemes the server's CertificateRequest names, for the probes that
+# check them.
+SIGALGS="ecdsa_secp256r1_sha256 ecdsa_secp384r1_sha384 ed25519 rsa_pss_rsae_sha256 rsa_pss_rsae_sha384 rsa_pss_rsae_sha512"
+
+certs="$work/certs"
+mkdir -p "$certs"
+
+
+tls_certificate ca P-384 '/CN=Fern fuzz CA' ''
+tls_certificate leaf P-256 '/CN=localhost' ca 'subjectAltName=DNS:localhost,IP:127.0.0.1' 'extendedKeyUsage=serverAuth' 'keyUsage=digitalSignature' 'basicConstraints=CA:FALSE'
+tls_certificate ed ed25519 '/CN=localhost' ca 'subjectAltName=DNS:localhost,IP:127.0.0.1' 'extendedKeyUsage=serverAuth' 'keyUsage=digitalSignature' 'basicConstraints=CA:FALSE'
+tls_certificate clientca ed25519 '/CN=Fern fuzz client CA' ''
+tls_certificate client P-256 '/CN=fern client' clientca 'extendedKeyUsage=clientAuth' 'keyUsage=digitalSignature' 'basicConstraints=CA:FALSE'
+tls_certificate client-ed ed25519 '/CN=fern ed client' clientca 'extendedKeyUsage=clientAuth' 'keyUsage=digitalSignature' 'basicConstraints=CA:FALSE'
+
+bin/fern -target "$TARGET" -o "$work/server" scripts/net-tls-fuzz.d/server.fern
+
+# The four instances, each started in a session of its own and stopped at
+# exit with its group.
+pgids=()
+stop_instances() {
+  local g
+  for g in "${pgids[@]}"; do
+    stop_group "$g"
+  done
+}
+trap 'stop_instances; stop_server; stop_upstream; rm -rf "$work"' EXIT
+
+# instance NAME ENV... — the server named NAME on a free port, which
+# port_NAME then holds.
+instance() {
+  local name="$1"
+  shift
+  local port
+  port="$(free_port)"
+  start_server "$work/$name.log" env TLS_CERT="$certs/leaf.pem" TLS_KEY="$certs/leaf.key" PORT="$port" "$@" "$work/server"
+  pgids+=("$server_pgid")
+  server_pgid=""
+  await_port "$name" "$port" "$work/$name.log"
+  printf -v "port_$name" '%s' "$port"
+}
+
+instance plain
+instance mtls TLS_CLIENT_CA="$certs/clientca.pem"
+instance ed TLS_CERT="$certs/ed.pem" TLS_KEY="$certs/ed.key"
+instance echo MODE=echo
+
+# argv_for ARGS — the case's arguments as the array `argv`: placeholders
+# filled in, @name expanded to -e per line of net-tls-fuzz.d/name.
+argv_for() {
+  local text="$1"
+  text="${text//\{certs\}/$certs}"
+  text="${text//\{sigalgs\}/$SIGALGS}"
+  eval "set -- $text"
+  argv=()
+  local a line
+  for a in "$@"; do
+    case "$a" in
+      @*)
+        while IFS= read -r line; do
+          case "$line" in '' | '#'*) continue ;; esac
+          argv+=(-e "$line")
+        done < "scripts/net-tls-fuzz.d/${a#@}"
+        ;;
+      *) argv+=("$a") ;;
+    esac
+  done
+}
+
+only=("$@")
+wanted() {
+  if [ "${#only[@]}" -eq 0 ]; then
+    return 0
+  fi
+  local n
+  for n in "${only[@]}"; do
+    if [ "$n" = "$1" ]; then
+      return 0
+    fi
+  done
+  return 1
+}
+
+failed=0
+ran=0
+while IFS= read -r line; do
+  case "$line" in '' | '#'*) continue ;; esac
+  read -r name server args <<< "$line"
+  wanted "$name" || continue
+  argv_for "$args"
+  portvar="port_$server"
+  ran=$((ran + 1))
+  if PYTHONPATH="$fuzz" timeout 1200 "$venv/bin/python" "$fuzz/scripts/test-tls13-$name.py" -h localhost -p "${!portvar}" "${argv[@]}" > "$work/$name.out" 2>&1; then
+    echo "$name: ok ($(grep -m1 '^PASS:' "$work/$name.out" | cut -d' ' -f2) passed, $(grep -m1 '^XFAIL:' "$work/$name.out" | cut -d' ' -f2) expected to fail)"
+  else
+    failed=1
+    echo "FAIL: $name" >&2
+    grep -A 40 '^FAILED:' "$work/$name.out" >&2 || tail -n 30 "$work/$name.out" >&2
+    echo "server log for $name's instance ($server):" >&2
+    tail -n 5 "$work/$server.log" >&2
+  fi
+done < scripts/net-tls-fuzz.d/cases
+
+if [ "$ran" -eq 0 ]; then
+  echo "net-tls-fuzz: no case named ${only[*]}" >&2
+  exit 2
+fi
+exit "$failed"

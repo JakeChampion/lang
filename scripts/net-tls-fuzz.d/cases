@@ -1,0 +1,55 @@
+# The tlsfuzzer TLS 1.3 scripts scripts/net-tls-fuzz runs, one per line:
+# the script's name without its test-tls13- prefix, the server instance
+# it runs against (plain, mtls, ed or echo) and its arguments. {certs} is
+# the certificate directory, {sigalgs} the schemes the server's
+# CertificateRequest names, and @name the lines of net-tls-fuzz.d/name
+# each passed with -e. Every probe not excluded or expected to fail must
+# pass.
+#
+# Outside the set, because their handshakes offer only RSA signature
+# schemes and std/tls has no RSA identity to sign with (slice 7 verifies
+# RSA only): 0rtt-garbage, ccs, certificate-request, certificate-verify
+# (an RSA client certificate too), count-tickets, crfg-curves,
+# dhe-shared-secret-padding, ecdhe-brainpool-curves,
+# ecdsa-brainpool-in-certificate-verify, empty-alert, ffdhe-groups,
+# ffdhe-sanity, finished, finished-plaintext, hrr, invalid-ciphers,
+# keyshare-omitted, keyupdate, keyupdate-from-server,
+# large-number-of-extensions, legacy-version, mldsa-in-certificate-verify,
+# nociphers, non-support, pkcs-signature, post-handshake-auth, psk_dhe_ke,
+# psk_ke, record-layer-limits, record-padding, rsa-signatures,
+# rsapss-signatures, serverhello-random, session-resumption,
+# shuffled-extentions, signature-algorithms, symetric-ciphers,
+# unrecognised-groups, version-negotiation. Outside it for a feature
+# std/tls does not have: certificate-compression and
+# client-certificate-compression (RFC 8879).
+
+conversation plain
+connection-abort plain
+minerva plain
+# lengths expects what it sent back, so it runs against the echo instance.
+lengths echo
+# The server answers a request as soon as it arrives; the alert for the
+# malformed record that follows comes after the answer, which the probe
+# does not wait for.
+zero-content-type plain -x "zero content type during application data" -x "zero content type and padding during application data"
+# An unexpected record type is answered with unexpected_message (RFC 8446
+# §5.1); the probe expects the socket closed with nothing said.
+unencrypted-alert plain -x "unencrypted Alert"
+# A server drops compatibility change_cipher_spec records until the
+# client's Finished (RFC 8446 §5); the probes ask for an abort on the
+# second one.
+multiple-ccs-messages plain -e "CH and multiple CCS Messages in one TCP packet" -e "multiple CCS Messages in one TCP packet" -e "second CCS before client finished"
+no-unknown-groups plain --groups x25519mlkem768,x25519,secp256r1,secp256r1mlkem768
+# ML-KEM-1024 is not implemented.
+mlkem plain --kems x25519mlkem768,secp256r1mlkem768
+ecdhe-curves plain @ecdhe-curves.exclude
+# The server has one key, P-256: the schemes of other curves cannot be
+# signed with, which the probes expect to succeed.
+ecdsa-support plain -e "Test with ecdsa_brainpoolP256r1tls13_sha256" -e "Test with ecdsa_brainpoolP384r1tls13_sha384" -e "Test with ecdsa_brainpoolP512r1tls13_sha512" -e "Test with ecdsa_secp384r1_sha384" -e "Test with ecdsa_secp521r1_sha512"
+# No Ed448.
+eddsa ed -e "ed448 only"
+# The probe sends no certificate and expects the handshake to go on; the
+# server with client roots requires one.
+ecdsa-in-certificate-verify mtls -k {certs}/client.key -c {certs}/client.pem -s "{sigalgs}" -e "check sigalgs in cert request"
+eddsa-in-certificate-verify mtls -k {certs}/client-ed.key -c {certs}/client-ed.pem -s "{sigalgs}"
+obsolete-curves plain --relaxed @obsolete-curves.exclude

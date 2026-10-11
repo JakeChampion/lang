@@ -1,0 +1,23 @@
+# ecdhe-curves probes for secp384r1, secp521r1 and x448, which std/tls
+# does not exchange keys on: the sanity handshake on each, and the
+# malformed shares that expect illegal_parameter from a server that takes
+# the curve.
+sanity - secp384r1
+sanity - secp521r1
+sanity - x448
+secp384r1 - key share from other curve
+secp384r1 - point at infinity
+secp384r1 - point outside curve
+secp384r1 - right 0-padded key_share
+secp384r1 - right-truncated key_share
+secp384r1 - x=0, y=0
+secp521r1 - key share from other curve
+secp521r1 - point at infinity
+secp521r1 - point outside curve
+secp521r1 - right 0-padded key_share
+secp521r1 - right-truncated key_share
+secp521r1 - x=0, y=0
+x448 - key share from other curve
+x448 - point at infinity
+x448 - right 0-padded key_share
+x448 - right-truncated key_share

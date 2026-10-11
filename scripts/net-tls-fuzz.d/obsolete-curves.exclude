@@ -1,0 +1,61 @@
+# obsolete-curves probes that offer only a curve TLS 1.3 never had (the
+# binary sect curves, or an unknown code) with a key share for it and
+# expect illegal_parameter; a client that names no group the server has
+# gets handshake_failure here, as from Go and OpenSSL.
+brainpoolP256r1 in supported_groups and empty key_share
+brainpoolP256r1 in supported_groups and key_share
+brainpoolP384r1 in supported_groups and empty key_share
+brainpoolP384r1 in supported_groups and key_share
+brainpoolP512r1 in supported_groups and empty key_share
+brainpoolP512r1 in supported_groups and key_share
+secp160k1 in supported_groups and empty key_share
+secp160k1 in supported_groups and key_share
+secp160r1 in supported_groups and empty key_share
+secp160r1 in supported_groups and key_share
+secp160r2 in supported_groups and empty key_share
+secp160r2 in supported_groups and key_share
+secp192k1 in supported_groups and empty key_share
+secp192k1 in supported_groups and key_share
+secp192r1 in supported_groups and empty key_share
+secp192r1 in supported_groups and key_share
+secp224k1 in supported_groups and empty key_share
+secp224k1 in supported_groups and key_share
+secp224r1 in supported_groups and empty key_share
+secp224r1 in supported_groups and key_share
+secp256k1 in supported_groups and empty key_share
+secp256k1 in supported_groups and key_share
+secp384r1 in supported_groups and key_share
+secp521r1 in supported_groups and key_share
+sect163k1 in supported_groups and empty key_share
+sect163k1 in supported_groups and key_share
+sect163r1 in supported_groups and empty key_share
+sect163r1 in supported_groups and key_share
+sect163r2 in supported_groups and empty key_share
+sect163r2 in supported_groups and key_share
+sect193r1 in supported_groups and empty key_share
+sect193r1 in supported_groups and key_share
+sect193r2 in supported_groups and empty key_share
+sect193r2 in supported_groups and key_share
+sect233k1 in supported_groups and empty key_share
+sect233k1 in supported_groups and key_share
+sect233r1 in supported_groups and empty key_share
+sect233r1 in supported_groups and key_share
+sect239k1 in supported_groups and empty key_share
+sect239k1 in supported_groups and key_share
+sect283k1 in supported_groups and empty key_share
+sect283k1 in supported_groups and key_share
+sect283r1 in supported_groups and empty key_share
+sect283r1 in supported_groups and key_share
+sect409k1 in supported_groups and empty key_share
+sect409k1 in supported_groups and key_share
+sect409r1 in supported_groups and empty key_share
+sect409r1 in supported_groups and key_share
+sect571k1 in supported_groups and empty key_share
+sect571k1 in supported_groups and key_share
+sect571r1 in supported_groups and empty key_share
+sect571r1 in supported_groups and key_share
+unknown (65281) in supported_groups and empty key_share
+unknown (65281) in supported_groups and key_share
+unknown (65282) in supported_groups and empty key_share
+unknown (65282) in supported_groups and key_share
+x448 in supported_groups and key_share

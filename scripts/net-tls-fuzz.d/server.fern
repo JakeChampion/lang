@@ -1,0 +1,180 @@
+// The TLS server scripts/net-tls-fuzz runs tlsfuzzer against: everything a
+// connection sends is answered with one HTTP response, or echoed under
+// MODE=echo, until it ends. TLS_CERT and TLS_KEY are its identity,
+// TLS_CLIENT_CA the roots a client certificate must reach, when it is to
+// require one, and PORT where it listens on the loopback.
+import "std/net";
+import "std/time";
+import "std/tls/identity";
+import "std/tls/server";
+import "std/tls/verify";
+import "core/int";
+
+function identity_of(cert_path: string, key_path: string): Result[identity.Identity, string] {
+  let cert: string = "";
+  match (read_file(cert_path)) {
+    Ok(text) => {
+      cert = text;
+    },
+    Err(_) => {
+      return Err("cannot read " + cert_path);
+    }
+  }
+  let key: string = "";
+  match (read_file(key_path)) {
+    Ok(text) => {
+      key = text;
+    },
+    Err(_) => {
+      return Err("cannot read " + key_path);
+    }
+  }
+  match (identity.from_pem(cert, key)) {
+    Ok(id) => {
+      return Ok(id);
+    },
+    Err(e) => {
+      return Err(e.message());
+    }
+  }
+  return Err("identity");
+}
+
+// serve_one answers every request on one connection until the client
+// ends it: with the HTTP response, or, under MODE=echo, with the bytes
+// it sent.
+function serve_one(fd: i32, cfg: server.Config, echo: boolean): string {
+  match (server.accept(fd, cfg, time.duration_seconds(5 as i64))) {
+    Ok(c) => {
+      return answer(c, echo, 0);
+    },
+    Err(e) => {
+      return "accept: " + e.message();
+    }
+  }
+  return "";
+}
+
+function answer(c: server.Connection, echo: boolean, answered: i32): string {
+  match (c.recv(time.duration_seconds(5 as i64))) {
+    Ok(got) => {
+      if (got.ended && got.data.len() == 0) {
+        got.conn.close();
+        return "answered " + answered.to_string() + " then closed";
+      }
+      let reply: u8[] = "HTTP/1.0 200 OK\r\nContent-Length: 5\r\n\r\nhello".bytes();
+      if (echo) {
+        reply = got.data;
+      }
+      match (got.conn.send(reply)) {
+        Ok(sent) => {
+          if (got.ended) {
+            sent.close();
+            return "answered " + (answered + 1).to_string() + " then closed";
+          }
+          return answer(sent, echo, answered + 1);
+        },
+        Err(e) => {
+          return "send: " + e.message();
+        }
+      }
+    },
+    Err(e) => {
+      c.close();
+      return "recv: " + e.message();
+    }
+  }
+  return "";
+}
+
+function setting(name: string, fallback: string): string {
+  match (env(name)) {
+    Some(v) => {
+      return v;
+    },
+    None => {
+      return fallback;
+    }
+  }
+  return fallback;
+}
+
+// configured is the server config the environment names: TLS_CERT and
+// TLS_KEY's identity, requiring a client certificate under TLS_CLIENT_CA
+// when that is set.
+function configured(): Result[server.Config, string] {
+  let id: identity.Identity = identity_of(setting("TLS_CERT", "leaf.pem"), setting("TLS_KEY", "leaf.key"))?;
+  let cfg: server.Config = server.config(id).with_alpn(["http/1.1"]);
+  match (env("TLS_CLIENT_CA")) {
+    Some(path) => {
+      match (verify.roots_from_file(path)) {
+        Ok(roots) => {
+          return Ok(cfg.with_client_roots(roots));
+        },
+        Err(e) => {
+          return Err("roots: " + e.message());
+        }
+      }
+    },
+    None => {
+      return Ok(cfg);
+    }
+  }
+  return Ok(cfg);
+}
+
+function listening(): Result[i32, string] {
+  let port: i32 = 0;
+  match (int.parse_int_radix(setting("PORT", "8443"), 10)) {
+    Some(n) => {
+      port = n;
+    },
+    None => {
+      return Err("PORT is not a number");
+    }
+  }
+  match (net.listen_at(net.socket_addr(net.ipv4_loopback(), port), net.listen_options())) {
+    Ok(fd) => {
+      return Ok(fd);
+    },
+    Err(e) => {
+      return Err("listen: " + e.message());
+    }
+  }
+  return Err("listen");
+}
+
+function main(): i32 {
+  let cfg: server.Config = server.config(identity.Identity { chain: [], key: identity.Ed25519Seed([]) });
+  match (configured()) {
+    Ok(c) => {
+      cfg = c;
+    },
+    Err(e) => {
+      print(e);
+      return 2;
+    }
+  }
+  let l: i32 = 0;
+  match (listening()) {
+    Ok(fd) => {
+      l = fd;
+    },
+    Err(e) => {
+      print(e);
+      return 3;
+    }
+  }
+  let echo: boolean = setting("MODE", "http") == "echo";
+  while (true) {
+    match (net.accept(l)) {
+      Ok(fd) => {
+        print(serve_one(fd, cfg, echo));
+      },
+      Err(e) => {
+        print("accept " + e.message());
+      }
+    }
+  }
+  return 0;
+}
