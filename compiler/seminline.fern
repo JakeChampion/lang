@@ -213,6 +213,7 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], sp: Spliceable
   }
   let once: boolean[] = alone;
   let sizes: i32[] = sizes_of(funcs0);
+  let callees: i32[][] = callees_of_all(funcs0, sp.ix);
   let folded: boolean = false;
   let round: i32 = 0;
   let more: boolean = true;
@@ -226,9 +227,10 @@ function splice_rounds(funcs0: ssasem.Func[], rewrite: boolean[], sp: Spliceable
       ready = ready.append(s.leaves[j] || ctors[j] || once[j] && !awaits(out.funcs[j], s.ix, once, s.shared, j));
       j = j + 1;
     }
-    let next: Round = splice_round(out, sizes, rewrite, s.ix, ready, ctors, if (folded) { s.shared } else { none_of(s.shared.len()) });
+    let next: Round = splice_round(out, sizes, callees, rewrite, s.ix, ready, ctors, if (folded) { s.shared } else { none_of(s.shared.len()) });
     more = next.changed;
     sizes = next.sizes;
+    callees = next.callees;
     if (!more && !folded) {
       folded = true;
       once = s.once;
@@ -255,21 +257,24 @@ function grown_leaves(sofar: Inlined, sp: Spliceable): Spliceable {
   return Spliceable { ...sp, leaves: leaves };
 }
 
-// `sizes` is each body's count_insts, kept beside the bodies it counts.
-struct Round { out: Inlined, changed: boolean, sizes: i32[] }
+// `sizes` is each body's count_insts and `callees` the functions it calls
+// directly, kept beside the bodies they describe.
+struct Round { out: Inlined, changed: boolean, sizes: i32[], callees: i32[][] }
 
 // splice_round and split_all keep the arrays they rewrite in locals, so each
 // `.with` after the first writes in place rather than copying every body.
-function splice_round(prev: Inlined, own sizes: i32[], rewrite: boolean[], ix: util.NameIndex, ready: boolean[], ctors: boolean[], shared: boolean[]): Round {
+function splice_round(prev: Inlined, own sizes: i32[], own callees: i32[][], rewrite: boolean[], ix: util.NameIndex, ready: boolean[], ctors: boolean[], shared: boolean[]): Round {
   let funcs: ssasem.Func[] = prev.funcs;
   let rewritten: boolean[] = prev.rewritten;
   let changed: boolean = false;
   let i: i32 = 0;
   while (i < funcs.len()) {
-    if (rewrite[i] && sizes[i] <= max_caller_insts()) {
+    // A body that calls no ready function has nothing to splice.
+    if (rewrite[i] && sizes[i] <= max_caller_insts() && any_ready(callees[i], ready)) {
       let spliced: Rewrite = splice_calls(funcs[i], sizes[i], funcs, sizes, ix, ready, ctors, shared, false);
       if (spliced.changed) {
         sizes = sizes.with(i, count_insts(spliced.f.graph));
+        callees = callees.with(i, callees_of(spliced.f, ix));
         funcs = funcs.with(i, spliced.f);
         rewritten = rewritten.with(i, true);
         changed = true;
@@ -277,7 +282,7 @@ function splice_round(prev: Inlined, own sizes: i32[], rewrite: boolean[], ix: u
     }
     i = i + 1;
   }
-  return Round { out: Inlined { ...prev, funcs: funcs, rewritten: rewritten }, changed: changed, sizes: sizes };
+  return Round { out: Inlined { ...prev, funcs: funcs, rewritten: rewritten }, changed: changed, sizes: sizes, callees: callees };
 }
 
 // Variant returns paired (sempair) once nothing more is spliced, so split
@@ -1567,6 +1572,37 @@ function swapped_all(swap: i32[], args: i32[]): i32[] {
 function built_type(f: ssasem.Func, built: typeinfo.Type[], t: typeinfo.Type): boolean {
   for b in built {
     if (semtypes.equal(b, t)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+// The functions `f` calls directly, by index, as `called` finds them.
+function callees_of(f: ssasem.Func, ix: util.NameIndex): i32[] {
+  let out: i32[] = [];
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      let j: i32 = called(ins, ix);
+      if (j >= 0) {
+        out = out.append(j);
+      }
+    }
+  }
+  return out;
+}
+
+function callees_of_all(funcs: ssasem.Func[], ix: util.NameIndex): i32[][] {
+  let out: i32[][] = [];
+  for f in funcs {
+    out = out.append(callees_of(f, ix));
+  }
+  return out;
+}
+
+function any_ready(callees: i32[], ready: boolean[]): boolean {
+  for j in callees {
+    if (ready[j]) {
       return true;
     }
   }
