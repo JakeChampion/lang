@@ -135,6 +135,33 @@ and folded into the ownership table the walk reads (`units_of`):
 - **Kept fields** (`Plan.kept`): the fields a record update keeps, so the
   construction that reuses the record's box leaves them in place.
 
+Once a plan is final, it decides where a construction builds in a dying
+box, and those decisions are tables of its own (`Plan.reuse`, `Plan.links`,
+made by `with_reuse` at the lowering's entry, once per function rather than
+for every plan ownership inference tries):
+
+- **Links** (`links_of`, `Plan.links`): an append threaded through a borrowed
+  array parameter, `b = b.append(x); return b.append(y)` or the same in a
+  loop, keeps the plan's unit but encodes it at run time: while the result
+  is still the parameter's box no unit is owed, and once it is a box of the
+  frame's own the push grows it in place. A link is never a reuse donor,
+  since its box may be the caller's.
+- **Reuse tokens** (`reuse_pairs`, `carried_pairs`, `block_keeps`,
+  `Plan.reuse`): a value dying in a block, of the slot count a later
+  construction in the block claims, has its drop turned into a **token**
+  the construction spends (`ReusePairs.tokens` where it is taken,
+  `.builds` where it is spent, `.selfs` for a value dying at the
+  construction itself). A value dying after its block's last construction
+  may be **carried** to a construction in a later block (`Carry`): the
+  blocks holding it, the constructions it is handed to, the edges leaving
+  its ways that free it, and the edges on which it arrives null because the
+  donor died there as a box of another count. A record update that reads a
+  field back from its donor **keeps** the field in place (`Keeps`). The
+  routes and the one-token-slot discipline are decided here, once; the
+  lowering only emits what the tables say. `FERN_SELFHOST_NO_REUSE=1`
+  (`reuse_layer_disabled`) plans no token, and the program's behaviour is
+  unchanged.
+
 The plan is planned once per function and modes. `plan_analyzed` is the
 entry with an analysis the caller already holds; `plan` derives it.
 
@@ -143,8 +170,14 @@ entry with an analysis the caller already holds; `plan` derives it.
 `ssaunits.verify` re-derives the units from the graph, the modes and the
 plan's own tables (takes, holds, payloads) and replays every step: a unit must
 be moved, dropped or returned exactly once, a borrow never spent, a take or
-hold agreeing with what the replay derives. It is independent of the walk that
-planned: a disagreement names the step. It runs under `FERN_IR_VERIFY=1` (the
+hold agreeing with what the replay derives. It then replays the tokens
+(`verify_reuse`): a token is taken from a value the step drops and never
+while the block's one slot is held, spent by the construction it was handed
+to, which reads nothing of the box it builds in, a kept donor is its
+construction's token, and a carried token is held on every path into a block
+or on none, spent where the carry says, freed where its way leaves, and held
+at no return. It is independent of the walk that planned: a disagreement
+names the step. It runs under `FERN_IR_VERIFY=1` (the
 test harness sets `quiet` for every self-host compile), not in a plain
 compile.
 
@@ -160,20 +193,18 @@ locals sit above `nvals`. It emits:
   `__sem_release_<T>` helpers, and `__sem_drop_<T>` for children only);
 - **takes and steals** as a uniqueness test, a slot store of zero and the
   value in its local (`steal`);
-- **reuse**: a construction whose block holds a value of the same slot count
-  dying at it takes that value as a **token** (`reuse_pairs`, `reuse_token`):
-  `__fern_rc_is_unique(d)` selects the box or null, `__fern_alloc_reuse(token,
-  slots)` hands back the box or a fresh one, the replaced children are
-  released under the token's non-null arm and the kept fields are left in
-  place (`reuse_construct`, `block_keeps`). A donor dying after its block's
-  last construction can be **carried** to a construction in a later block
-  (`carried_pairs`, `Carry`): the holding block takes the token where the
-  donor dies (`hold_token`), the way's blocks pass it in the donor's own
-  local, a construction spends it (`self_token`) and an exit edge frees it
-  (`free_token`). A donor dying as a box of another count on one predecessor
-  reaches the construction as a null token on that path. Pinned by
-  `TestSelfHostCrossBlockReuse`, `TestSelfHostLoopReuseIR*`,
-  `TestSelfHostSemanticReuseDifferential` and the enum reuse suites;
+- **reuse**, as the plan's tables say (`Plan.reuse`): where a token is taken,
+  `__fern_rc_is_unique(d)` selects the box or null (`reuse_token`); where it
+  is spent, `__fern_alloc_reuse(token, slots)` hands back the box or a fresh
+  one, the replaced children are released under the token's non-null arm and
+  the kept fields are left in place (`reuse_construct`). A carried token is
+  taken where the donor dies (`hold_token`), passed through its way in the
+  donor's own local, spent by the construction (`self_token`) and freed on
+  an exit edge (`free_token`); a null edge zeroes the local. The lowering
+  makes no pairing of its own. Pinned by `TestSelfHostCrossBlockReuse`,
+  `TestSelfHostLoopReuseIR*`, `TestSelfHostSemanticReuseDifferential`, the
+  enum reuse suites, and the token rows of `TestSelfHostSSAPhysicalRCRejects`
+  (a planted table the replay refuses);
 - **grow brackets** around calls the plan marked (`bracketed`);
 - **string and view** handling: a view is lent, never counted, and released
   through the view's own release where a container holds it.
