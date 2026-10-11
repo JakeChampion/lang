@@ -2971,8 +2971,9 @@ pub function repeated_block_id(f: SFunc): i32 {
 // once nothing reaches it, it is dropped. prune_dead and prune_trivial_phis
 // leave such blocks behind wherever a branch's arms or a loop's exits
 // carried only values nothing read. A block with phis keeps every edge into
-// it, since the phis' operands are per predecessor.
-pub function thread_forwarding(f: SFunc): SFunc {
+// it, since the phis' operands are per predecessor. `changed` says an edge
+// moved or a block was dropped.
+pub function thread_forwarding(f: SFunc): Threading {
   let at: i32[] = block_positions(f);
   // `nblocks` is written from the first block whose branch moves on.
   let nblocks: SBlock[] = [];
@@ -3050,7 +3051,7 @@ pub function thread_forwarding(f: SFunc): SFunc {
   if (dropping) {
     out = SFunc { ...g, blocks: kept };
   }
-  return SFunc { ...out, blocks: refreshed_preds(out) };
+  return Threading { f: SFunc { ...out, blocks: refreshed_preds(out) }, changed: copying || dropping };
 }
 
 // forwarded follows a chain of empty forwarding blocks from `id` to the
@@ -3453,12 +3454,22 @@ pub function register_form(f: SFunc): Formed {
   let folded: Formed = prune_trivial_phis(f);
   let merged: Formed = merge_duplicates(folded.f);
   let unwrapped: Formed = drop_low_wraps(prune_dead(fuse_rotates(merged.f)));
-  let g: SFunc = prune_dead(unwrapped.f);
+  // prune_dead is idempotent, so a pass that changed nothing needs no prune
+  // after it.
+  let g: SFunc = unwrapped.f;
+  if (unwrapped.repl.len() > 0) {
+    g = prune_dead(g);
+  }
   let t: Threading = thread_bool_joins(g);
   if (t.changed) {
     g = prune_dead(t.f);
   }
-  return Formed { f: prune_dead(thread_forwarding(g)), repl: compose_repl(compose_repl(folded.repl, merged.repl), unwrapped.repl) };
+  let fw: Threading = thread_forwarding(g);
+  g = fw.f;
+  if (fw.changed) {
+    g = prune_dead(g);
+  }
+  return Formed { f: g, repl: compose_repl(compose_repl(folded.repl, merged.repl), unwrapped.repl) };
 }
 
 // drop_low_wraps replaces a 32-bit wrap, extend or cast, signed or unsigned, by

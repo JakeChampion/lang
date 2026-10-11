@@ -6198,14 +6198,7 @@ pub function match_payload_type(scrut: ast.Expr, s: EmitState): Ty {
 }
 
 pub function is_struct_decl_name(name: string, s: EmitState): boolean {
-  let di: i32 = 0;
-  while (di < s.struct_decls.decls.len()) {
-    if (s.struct_decls.decls[di].name == name) {
-      return true;
-    }
-    di = di + 1;
-  }
-  return false;
+  return irtables.stab_first(s.struct_decls, name) >= 0;
 }
 
 // is_prim_recv_name reports whether a method-receiver type spelling names a
@@ -6258,20 +6251,16 @@ pub function recv_is_array(rt: string): boolean {
 // does, so a read through it resolves within that struct rather than by
 // the first-match field scan.
 pub function field_type_tag_in(struct_name: string, field: string, s: EmitState): Ty {
-  let di: i32 = 0;
-  while (di < s.struct_decls.decls.len()) {
-    if (s.struct_decls.decls[di].name == struct_name) {
-      let sd: parser.StructDecl = s.struct_decls.decls[di];
-      let fi: i32 = 0;
-      while (fi < sd.fields.len()) {
-        if (sd.fields[fi].name == field) {
-          return struct_local_tag(sd.fields[fi].type_name, s);
-        }
-        fi = fi + 1;
+  let di: i32 = irtables.stab_first(s.struct_decls, struct_name);
+  if (di >= 0) {
+    let sd: parser.StructDecl = s.struct_decls.decls[di];
+    let fi: i32 = 0;
+    while (fi < sd.fields.len()) {
+      if (sd.fields[fi].name == field) {
+        return struct_local_tag(sd.fields[fi].type_name, s);
       }
-      return ty_unknown();
+      fi = fi + 1;
     }
-    di = di + 1;
   }
   return ty_unknown();
 }
@@ -6284,12 +6273,8 @@ pub function struct_local_tag(type_name: string, s: EmitState): Ty {
     }
     bi = bi + 1;
   }
-  let di: i32 = 0;
-  while (di < s.struct_decls.decls.len()) {
-    if (s.struct_decls.decls[di].name == type_name) {
-      return ty_named(type_name);
-    }
-    di = di + 1;
+  if (is_struct_decl_name(type_name, s)) {
+    return ty_named(type_name);
   }
   return ty_from_name(type_name);
 }
@@ -8386,14 +8371,7 @@ pub function infer_expr_type(e: ast.Expr, s: EmitState): Ty {
       // struct name; an object the gate cannot type reads as unknown, never
       // as the first struct that happens to spell the field (#11066).
       let frt: Ty = infer_expr_type(fa.obj, s);
-      let di: i32 = 0;
-      while (di < s.struct_decls.decls.len()) {
-        if (s.struct_decls.decls[di].name == ty_struct_name(frt)) {
-          return field_type_tag_in(ty_struct_name(frt), fa.field, s);
-        }
-        di = di + 1;
-      }
-      return ty_unknown();
+      return field_type_tag_in(ty_struct_name(frt), fa.field, s);
     },
     ast.ExprUnknown(_) => {
       return ty_unknown();

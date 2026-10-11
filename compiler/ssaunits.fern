@@ -2035,35 +2035,47 @@ function hold_pass(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], anchor
     while (pos < b.insts.len()) {
       let ins: ssa.SInst = b.insts[pos];
       if (ins.kind_tag != 6 && ins.kind_tag != 8) {
-        let supplies: Supply[] = operation_supplies(f, ins);
-        for got in supplies {
-          if (owned[got.value] || out[got.value]) {
-            let past: i32[] = outliving(f, a, defs, anchored, owned, out, got.value, bi, pos, 0 - 1, ins.args);
-            out = mark_all(out, past);
-          }
-        }
-        for v in dying_reads(f, a, direct, owned, out, supplies, bi, pos) {
-          for w in outliving(f, a, defs, anchored, owned, out, v, bi, pos, 0 - 1, []) {
-            if (wanted(anchored, consumed, w)) {
-              out = out.with(w, true);
-            }
-          }
-        }
+        out = hold_at(f, a, defs, anchored, direct, consumed, owned, out, ins, bi, pos);
       }
       pos = pos + 1;
     }
-    let targets: i32[] = successors(b);
-    for target in targets {
-      let si: i32 = ssalive.position(a.flow, target);
-      let along: Supply[] = edge_supplies(f, b, si, owned);
-      for got in along {
-        if (owned[got.value] || out[got.value]) {
-          let past: i32[] = outliving(f, a, defs, anchored, owned, out, got.value, bi, 0, si, []);
-          out = mark_all(out, past);
-        }
+    out = hold_along(f, a, defs, anchored, owned, out, b, bi);
+    bi = bi + 1;
+  }
+  return out;
+}
+
+// hold_pass at the instruction `ins`, `pos` in block `bi`.
+function hold_at(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], anchored: Anchored, direct: ssalive.Flow, consumed: boolean[], owned: boolean[], own out: boolean[], ins: ssa.SInst, bi: i32, pos: i32): boolean[] {
+  let supplies: Supply[] = operation_supplies(f, ins);
+  for got in supplies {
+    if (owned[got.value] || out[got.value]) {
+      let past: i32[] = outliving(f, a, defs, anchored, owned, out, got.value, bi, pos, 0 - 1, ins.args);
+      out = mark_all(out, past);
+    }
+  }
+  for v in dying_reads(f, a, direct, owned, out, supplies, bi, pos) {
+    for w in outliving(f, a, defs, anchored, owned, out, v, bi, pos, 0 - 1, []) {
+      if (wanted(anchored, consumed, w)) {
+        out = out.with(w, true);
       }
     }
-    bi = bi + 1;
+  }
+  return out;
+}
+
+// hold_pass along the edges out of block `b`, `bi`.
+function hold_along(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], anchored: Anchored, owned: boolean[], own out: boolean[], b: ssa.SBlock, bi: i32): boolean[] {
+  let targets: i32[] = successors(b);
+  for target in targets {
+    let si: i32 = ssalive.position(a.flow, target);
+    let along: Supply[] = edge_supplies(f, b, si, owned);
+    for got in along {
+      if (owned[got.value] || out[got.value]) {
+        let past: i32[] = outliving(f, a, defs, anchored, owned, out, got.value, bi, 0, si, []);
+        out = mark_all(out, past);
+      }
+    }
   }
   return out;
 }
