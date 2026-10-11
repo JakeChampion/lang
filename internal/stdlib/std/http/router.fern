@@ -1,0 +1,566 @@
+// std/http/router — a request routed to a handler by method and path, in
+// Go 1.22's shape: `"GET /users/{id}"`, `{name...}` for the rest of the
+// path, `{$}` for the end, no method for any, a trailing `/` for every path
+// below it. The most specific pattern takes precedence; a path some pattern
+// knows under another method is 405 with `Allow`, any other path 404; a GET
+// route answers HEAD. Two patterns that could both match a request with
+// neither more specific are refused when the second is registered. The
+// parameters a pattern binds reach the handler as `Params`, beside the
+// request (docs/NET-P5-FRAMEWORK-PLAN.md).
+//
+//     let r: router.Router[platform.Host] = router.new();
+//     r = r.get("/users/{id}", users_show)?;
+//     r = r.post("/users", users_create)?;
+//     serve.run(8080, serve.config(), r.handler());
+//
+// Routes are tried in a scan, which fits the tables programs write by
+// hand.
+
+import "std/http";
+import "std/url";
+import "std/string";
+import "core/int";
+
+// Params — the path parameters a pattern bound, percent-decoded, in the
+// pattern's order.
+pub struct Params { names: string[], values: string[] }
+
+// no_params is what a handler called outside the router gets.
+pub function no_params(): Params {
+  return Params { names: [], values: [] };
+}
+
+// (p).get(name) — the parameter, when the pattern binds the name.
+pub function (p: Params) get(name: string): Option[string] {
+  let i: i32 = 0;
+  while (i < p.names.len()) {
+    if (p.names[i] == name) {
+      return Some(p.values[i]);
+    }
+    i = i + 1;
+  }
+  return None;
+}
+
+// (p).param(name) — the parameter, or a 500: a name the pattern does not
+// bind is the program's mistake, not the client's.
+pub function (p: Params) param(name: string): Result[string, http.HttpError] {
+  match (p.get(name)) {
+    Some(v) => {
+      return Ok(v);
+    },
+    None => {
+      return Err(http.fail(500, "the route binds no path parameter " + name));
+    }
+  }
+  return Err(http.fail(500, "the route binds no path parameter " + name));
+}
+
+// (p).int(name) — the parameter as an integer, or a 400 naming it.
+pub function (p: Params) int(name: string): Result[i32, http.HttpError] {
+  let v: string = p.param(name)?;
+  match (int.parse_int_radix(v, 10)) {
+    Some(n) => {
+      return Ok(n);
+    },
+    None => {
+      return Err(http.fail(400, "path parameter " + name + " is not an integer: " + v));
+    }
+  }
+  return Err(http.fail(400, "path parameter " + name + " is not an integer: " + v));
+}
+
+// Segment — one segment of a pattern: a literal (`{$}` is the empty one),
+// a parameter matching one non-empty segment, or the rest of the path from
+// here, named or (a trailing `/`) not.
+pub enum Segment {
+  PathLiteral(string),
+  PathParam(string),
+  PathRest(string),
+}
+
+// Route — a pattern as registered: its method ("" for any), its segments
+// and the handler it dispatches to.
+pub struct Route[P] { method: string, pattern: string, segments: Segment[], handler: (HttpRequest, Params, P) => HttpResponse }
+
+// Router — the routes, in registration order.
+pub struct Router[P] { routes: Route[P][] }
+
+// RouteError — a pattern refused: malformed, or one a registered pattern
+// could tie with on some request.
+pub enum RouteError {
+  BadPattern(string, string),
+  PatternConflict(string, string),
+}
+
+pub function (e: RouteError) message(): string {
+  match (e) {
+    BadPattern(p, why) => {
+      return "http router: pattern " + p + ": " + why;
+    },
+    PatternConflict(p, other) => {
+      return "http router: pattern " + p + " conflicts with " + other;
+    }
+  }
+  return "";
+}
+
+// new() — a router with no routes.
+pub function new[P](): Router[P] {
+  return Router { routes: [] };
+}
+
+// (r).route(pattern, handler) — the router with the pattern added, or the
+// error that refuses it.
+pub function (r: Router[P]) route(pattern: string, handler: (HttpRequest, Params, P) => HttpResponse): Result[Router[P], RouteError] {
+  let parsed: (string, Segment[]) = __parse(pattern)?;
+  let route: Route[P] = Route { method: parsed.0, pattern: pattern, segments: parsed.1, handler: handler };
+  for other in r.routes {
+    if (__conflicts(__relation(route.method, route.segments, other.method, other.segments))) {
+      return Err(PatternConflict(pattern, other.pattern));
+    }
+  }
+  return Ok(Router { routes: r.routes.append(route) });
+}
+
+// (r).get(path, handler) and the rest — `route` under one method.
+pub function (r: Router[P]) get(path: string, handler: (HttpRequest, Params, P) => HttpResponse): Result[Router[P], RouteError] {
+  return r.route("GET " + path, handler);
+}
+
+pub function (r: Router[P]) post(path: string, handler: (HttpRequest, Params, P) => HttpResponse): Result[Router[P], RouteError] {
+  return r.route("POST " + path, handler);
+}
+
+pub function (r: Router[P]) put(path: string, handler: (HttpRequest, Params, P) => HttpResponse): Result[Router[P], RouteError] {
+  return r.route("PUT " + path, handler);
+}
+
+pub function (r: Router[P]) patch(path: string, handler: (HttpRequest, Params, P) => HttpResponse): Result[Router[P], RouteError] {
+  return r.route("PATCH " + path, handler);
+}
+
+pub function (r: Router[P]) delete(path: string, handler: (HttpRequest, Params, P) => HttpResponse): Result[Router[P], RouteError] {
+  return r.route("DELETE " + path, handler);
+}
+
+// (r).handle(req, plat) — the request answered by the most specific route
+// matching its path and method, by 405 when routes match the path alone,
+// by 404 when none matches it.
+pub function (r: Router[P]) handle(req: HttpRequest, plat: P): HttpResponse {
+  let segs: string[] = __request_segments(req.path);
+  let picked: (i32, string[]) = __pick(r, segs, req.method);
+  if (picked.0 >= 0) {
+    let route: Route[P] = r.routes[picked.0];
+    let h: (HttpRequest, Params, P) => HttpResponse = route.handler;
+    return h(req, __bind(route.segments, segs), plat);
+  }
+  if (picked.1.len() > 0) {
+    return http.problem(405, "", "").with_header("allow", picked.1.join(", "));
+  }
+  return http.not_found();
+}
+
+// (r).handler() — `handle` as the handler `serve.run` takes.
+pub function (r: Router[P]) handler(): (HttpRequest, P) => HttpResponse {
+  return (req: HttpRequest, plat: P): HttpResponse => r.handle(req, plat);
+}
+
+// __pick is the index of the most specific route matching the path and
+// method, -1 when none, beside the methods the routes matching the path
+// alone allow.
+function __pick[P](r: Router[P], segs: string[], method: string): (i32, string[]) {
+  let best: i32 = -1;
+  let allowed: string[] = [];
+  let i: i32 = 0;
+  while (i < r.routes.len()) {
+    let route: Route[P] = r.routes[i];
+    if (__matches(route.segments, segs)) {
+      if (!__method_allows(route.method, method)) {
+        allowed = __allow(allowed, route.method);
+      } else if (best < 0 || __relation(route.method, route.segments, r.routes[best].method, r.routes[best].segments) == REL_NARROWER) {
+        best = i;
+      }
+    }
+    i = i + 1;
+  }
+  return (best, allowed);
+}
+
+// __allow adds a route's method to an Allow list, HEAD beside GET.
+function __allow(allowed: string[], method: string): string[] {
+  let out: string[] = __add_once(allowed, method);
+  if (method == "GET") {
+    out = __add_once(out, "HEAD");
+  }
+  return out;
+}
+
+function __add_once(xs: string[], x: string): string[] {
+  for y in xs {
+    if (y == x) {
+      return xs;
+    }
+  }
+  return xs.append(x);
+}
+
+// __method_allows: a route's method admits the request's; a GET route
+// admits HEAD, no method admits all.
+function __method_allows(route: string, method: string): boolean {
+  return route == "" || route == method || route == "GET" && method == "HEAD";
+}
+
+// __request_segments splits the request's path, its query dropped: "/" is
+// [""], "/a/b" is ["a", "b"], "/a/" is ["a", ""].
+function __request_segments(path: string): string[] {
+  let raw: string[] = http.http_url_path_only(path).split("/");
+  let out: string[] = [];
+  let i: i32 = 1;
+  while (i < raw.len()) {
+    out = out.append(raw[i]);
+    i = i + 1;
+  }
+  return out;
+}
+
+// __matches: the pattern's segments match the request's: a literal its
+// equal, a parameter any non-empty segment, the rest everything from its
+// position, which must exist.
+function __matches(segs: Segment[], req: string[]): boolean {
+  let i: i32 = 0;
+  while (i < segs.len()) {
+    match (segs[i]) {
+      PathRest(_) => {
+        return req.len() > i;
+      },
+      PathLiteral(s) => {
+        if (i >= req.len() || req[i] != s) {
+          return false;
+        }
+      },
+      PathParam(_) => {
+        if (i >= req.len() || req[i] == "") {
+          return false;
+        }
+      }
+    }
+    i = i + 1;
+  }
+  return req.len() == segs.len();
+}
+
+// __bind is the parameters a matching pattern takes from the request.
+function __bind(segs: Segment[], req: string[]): Params {
+  let names: string[] = [];
+  let values: string[] = [];
+  let i: i32 = 0;
+  while (i < segs.len()) {
+    match (segs[i]) {
+      PathParam(n) => {
+        names = names.append(n);
+        values = values.append(url.url_decode(req[i]));
+      },
+      PathRest(n) => {
+        if (n != "") {
+          names = names.append(n);
+          values = values.append(__rest(req, i));
+        }
+      },
+      PathLiteral(_) => {}
+    }
+    i = i + 1;
+  }
+  return Params { names: names, values: values };
+}
+
+// __rest joins the request's segments from `from`, each decoded.
+function __rest(req: string[], from: i32): string {
+  let parts: string[] = [];
+  let i: i32 = from;
+  while (i < req.len()) {
+    parts = parts.append(url.url_decode(req[i]));
+    i = i + 1;
+  }
+  return parts.join("/");
+}
+
+// __parse reads `[METHOD ]/path` into the method and the segments.
+function __parse(pattern: string): Result[(string, Segment[]), RouteError] {
+  let method: string = "";
+  let path: string = pattern;
+  if (!pattern.starts_with("/")) {
+    let parts: string[] = pattern.splitn(" ", 2);
+    if (parts.len() != 2 || !__is_method(parts[0]) || !parts[1].starts_with("/")) {
+      return Err(BadPattern(pattern, "expected [METHOD ]/path"));
+    }
+    method = parts[0];
+    path = parts[1];
+  }
+  let segs: Segment[] = __segments(pattern, path)?;
+  return Ok((method, segs));
+}
+
+// __is_method: one or more capital letters.
+function __is_method(s: string): boolean {
+  if (s.len() == 0) {
+    return false;
+  }
+  for b in s.bytes() {
+    if (b as i32 < 65 || b as i32 > 90) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// __segments reads the path's segments, refusing a name bound twice.
+function __segments(pattern: string, path: string): Result[Segment[], RouteError] {
+  let raw: string[] = path.split("/");
+  let out: Segment[] = [];
+  let names: string[] = [];
+  let i: i32 = 1;
+  while (i < raw.len()) {
+    let seg: Segment = __segment(pattern, raw[i], i == raw.len() - 1)?;
+    let name: string = __bound_name(seg);
+    if (name != "") {
+      if (__add_once(names, name).len() == names.len()) {
+        return Err(BadPattern(pattern, "parameter " + name + " is bound twice"));
+      }
+      names = names.append(name);
+    }
+    out = out.append(seg);
+    i = i + 1;
+  }
+  return Ok(out);
+}
+
+function __bound_name(seg: Segment): string {
+  match (seg) {
+    PathParam(n) => {
+      return n;
+    },
+    PathRest(n) => {
+      return n;
+    },
+    PathLiteral(_) => {
+      return "";
+    }
+  }
+  return "";
+}
+
+// __segment reads one segment of a pattern; `last` says it is the final
+// one, where alone `{$}`, `{name...}` and the trailing `/` may stand.
+function __segment(pattern: string, s: string, last: boolean): Result[Segment, RouteError] {
+  if (s == "") {
+    if (!last) {
+      return Err(BadPattern(pattern, "empty segment"));
+    }
+    return Ok(PathRest(""));
+  }
+  if (s == "{$}") {
+    if (!last) {
+      return Err(BadPattern(pattern, "{$} must be the last segment"));
+    }
+    return Ok(PathLiteral(""));
+  }
+  if (s.starts_with("{") && s.ends_with("}")) {
+    return __wildcard(pattern, s.slice_snap(1, s.len() - 1), last);
+  }
+  if (s.index_of("{") >= 0 || s.index_of("}") >= 0) {
+    return Err(BadPattern(pattern, "a brace inside the segment " + s));
+  }
+  return Ok(PathLiteral(s));
+}
+
+// __wildcard reads the inside of `{...}`: a name, or a name and `...`.
+function __wildcard(pattern: string, inner: string, last: boolean): Result[Segment, RouteError] {
+  if (inner.ends_with("...")) {
+    if (!last) {
+      return Err(BadPattern(pattern, "{name...} must be the last segment"));
+    }
+    let name: string = inner.slice_snap(0, inner.len() - 3);
+    if (!__is_name(name)) {
+      return Err(BadPattern(pattern, "bad parameter name " + name));
+    }
+    return Ok(PathRest(name));
+  }
+  if (!__is_name(inner)) {
+    return Err(BadPattern(pattern, "bad parameter name " + inner));
+  }
+  return Ok(PathParam(inner));
+}
+
+// __is_name: a letter or underscore, then letters, digits and underscores.
+function __is_name(s: string): boolean {
+  if (s.len() == 0) {
+    return false;
+  }
+  let i: i32 = 0;
+  for b in s.bytes() {
+    if (!__name_byte(b as i32, i == 0)) {
+      return false;
+    }
+    i = i + 1;
+  }
+  return true;
+}
+
+function __name_byte(c: i32, first: boolean): boolean {
+  if (c >= 65 && c <= 90 || c >= 97 && c <= 122 || c == 95) {
+    return true;
+  }
+  return !first && c >= 48 && c <= 57;
+}
+
+// How two patterns relate over the requests they match: the same set, the
+// first a strict subset (narrower) or superset (wider), none in common, or
+// some in common with neither containing the other, which is the conflict.
+const REL_SAME: i32 = 0;
+
+const REL_NARROWER: i32 = 1;
+
+const REL_WIDER: i32 = 2;
+
+const REL_APART: i32 = 3;
+
+const REL_CROSSED: i32 = 4;
+
+function __conflicts(rel: i32): boolean {
+  return rel == REL_SAME || rel == REL_CROSSED;
+}
+
+// __combine folds the relation of one dimension into the whole: apart
+// anywhere is apart, the same anywhere changes nothing, and narrower one
+// way with wider the other is crossed.
+function __combine(acc: i32, r: i32): i32 {
+  if (acc == REL_APART || r == REL_APART) {
+    return REL_APART;
+  }
+  if (acc == REL_SAME) {
+    return r;
+  }
+  if (r == REL_SAME || r == acc) {
+    return acc;
+  }
+  return REL_CROSSED;
+}
+
+function __relation(method_a: string, a: Segment[], method_b: string, b: Segment[]): i32 {
+  return __combine(__method_relation(method_a, method_b), __path_relation(a, b));
+}
+
+// __method_relation: no method admits every method, GET admits HEAD too.
+function __method_relation(a: string, b: string): i32 {
+  if (a == b) {
+    return REL_SAME;
+  }
+  if (a == "") {
+    return REL_WIDER;
+  }
+  if (b == "") {
+    return REL_NARROWER;
+  }
+  if (a == "GET" && b == "HEAD") {
+    return REL_WIDER;
+  }
+  if (a == "HEAD" && b == "GET") {
+    return REL_NARROWER;
+  }
+  return REL_APART;
+}
+
+// __path_relation walks the two patterns segment by segment; the rest of
+// the path, where either has it, settles everything after.
+function __path_relation(a: Segment[], b: Segment[]): i32 {
+  let acc: i32 = REL_SAME;
+  let i: i32 = 0;
+  while (i < a.len() && i < b.len()) {
+    let step: i32 = __segment_relation(a[i], b[i]);
+    if (__is_rest(a[i]) || __is_rest(b[i])) {
+      return __combine(acc, step);
+    }
+    acc = __combine(acc, step);
+    if (acc == REL_APART) {
+      return REL_APART;
+    }
+    i = i + 1;
+  }
+  if (i < a.len() || i < b.len()) {
+    return REL_APART;
+  }
+  return acc;
+}
+
+function __is_rest(s: Segment): boolean {
+  match (s) {
+    PathRest(_) => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
+}
+
+// __segment_relation compares one position: a literal is narrower than a
+// parameter (the empty literal of `{$}` apart from it, since a parameter
+// needs a non-empty segment), and the rest is wider than anything.
+function __segment_relation(a: Segment, b: Segment): i32 {
+  match (a) {
+    PathRest(_) => {
+      if (__is_rest(b)) {
+        return REL_SAME;
+      }
+      return REL_WIDER;
+    },
+    PathLiteral(x) => {
+      return __literal_relation(x, b);
+    },
+    PathParam(_) => {
+      return __param_relation(b);
+    }
+  }
+  return REL_APART;
+}
+
+function __literal_relation(x: string, b: Segment): i32 {
+  match (b) {
+    PathLiteral(y) => {
+      if (x == y) {
+        return REL_SAME;
+      }
+      return REL_APART;
+    },
+    PathParam(_) => {
+      if (x == "") {
+        return REL_APART;
+      }
+      return REL_NARROWER;
+    },
+    PathRest(_) => {
+      return REL_NARROWER;
+    }
+  }
+  return REL_APART;
+}
+
+function __param_relation(b: Segment): i32 {
+  match (b) {
+    PathLiteral(y) => {
+      if (y == "") {
+        return REL_APART;
+      }
+      return REL_WIDER;
+    },
+    PathParam(_) => {
+      return REL_SAME;
+    },
+    PathRest(_) => {
+      return REL_NARROWER;
+    }
+  }
+  return REL_APART;
+}

@@ -1150,6 +1150,13 @@ func TestRunnerTLSMozillaExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "tls_mozilla", "std/tls/mozilla", 3)
 }
 
+// `tests/stdlib/http_router_test.fern` refuses malformed and conflicting
+// patterns, dispatches by precedence with 404 and 405, binds parameters and
+// runs a `use` chain of middleware over a route.
+func TestRunnerHTTPRouterExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "http_router", "std/http/router", 8)
+}
+
 // `tests/stdlib/tls_client_test.fern` runs std/tls/client's session against
 // std/tls/handshake's server: a trusted chain, the name and root refusals,
 // a forged CertificateVerify, a saved and restored session, close_notify,
