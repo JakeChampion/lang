@@ -37,6 +37,15 @@ function func(nparams: i32, nvals: i32, blocks: ssa.SBlock[]): ssa.SFunc {
 
 struct Case { f: ssa.SFunc, modes: i32[], returns_unit: boolean }
 
+function pair_word_case(callee: string): ssa.SFunc {
+    let b0: ssa.SBlock = block(0, [], [call(0, callee, []), inst(59, 1, [], 0, "call_word"), const_int(2, 0), inst(9, 3, [0, 2], 0, "eq")], brif(3, 1, 2));
+    let b1: ssa.SBlock = block(1, [0], [call(4, "__fern_rc_dec", [1])], br(4));
+    let b2: ssa.SBlock = block(2, [0], [const_int(5, 1), inst(9, 6, [0, 5], 0, "eq")], brif(6, 3, 4));
+    let b3: ssa.SBlock = block(3, [2], [call(7, "__fern_rc_dec", [1])], br(4));
+    let b4: ssa.SBlock = block(4, [1, 2, 3], [const_int(8, 0)], ret(8));
+    return func(0, 9, [b0, b1, b2, b3, b4]);
+}
+
 function one_block(nparams: i32, nvals: i32, insts: ssa.SInst[], term: ssa.STerm): ssa.SFunc {
     return func(nparams, nvals, [block(0, [], insts, term)]);
 }
@@ -116,6 +125,15 @@ function pick(name: string): Case {
         let b4: ssa.SBlock = block(4, [2, 3], [const_int(4, 0)], ret(4));
         return Case { f: func(1, 5, [b0, b1, b2, b3, b4]), modes: [borrow], returns_unit: false };
     }
+    if (name == "pair-word-released-on-each-payload-tag") {
+        // A paired callee whose payload is a reference under tags 0 and 1:
+        // the word is released on each, and the arm the two compares leave
+        // (tag 2) owes nothing.
+        return Case { f: pair_word_case("pair3"), modes: [], returns_unit: false };
+    }
+    if (name == "pair-word-unreleased-on-a-payload-tag") {
+        return Case { f: pair_word_case("pair7"), modes: [], returns_unit: false };
+    }
     eprint("rccertify_cases: no case named " + name);
     exit(2);
     return Case { f: one_block(0, 0, [], ret(0 - 1)), modes: [], returns_unit: false };
@@ -124,7 +142,9 @@ function pick(name: string): Case {
 function main(): i32 {
     let av: string[] = args();
     let c: Case = pick(av[1]);
-    let abis: rccertify.Abis = rccertify.abis_of(["case"], [c.modes], [c.returns_unit], [false], [0], [false]);
+    // pair3 and pair7 return a variant in two words whose payload is a
+    // reference under tags 0 and 1, and under every tag of 0..2.
+    let abis: rccertify.Abis = rccertify.abis_of(["case", "pair3", "pair7"], [c.modes, [], []], [c.returns_unit, false, false], [false, false, false], [0, 3, 7], [false, false, false]);
     let irops: ir.Op[] = [];
     let r: rccertify.Report = rccertify.certify(c.f, irops, abis.lookup("case"), abis, rcsigs.table(), rcsigs.op_table());
     for x in r.findings {
@@ -174,6 +194,8 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"released-on-one-arm", []string{"leaked where it dies of v1"}, 0, ""},
 		{"retained-on-one-arm-released-on-another", nil, 1, ""},
 		{"resumed-frame-not-certified", nil, 0, "resumes from a task frame"},
+		{"pair-word-released-on-each-payload-tag", nil, 0, ""},
+		{"pair-word-unreleased-on-a-payload-tag", []string{"leaked where it dies of v1"}, 0, ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

@@ -395,6 +395,7 @@ struct Walk {
   pair_words: i32[],
   // How many instructions and terminators read each value.
   uses: i32[],
+  dom: ssadeps.Dom,
 }
 
 // returns_pair: the body sets a second return word, so it is a paired
@@ -2351,13 +2352,15 @@ function settle_edge(own p: Progress, w: Walk, bi: i32, sid: i32): Progress {
 
 // settle_pair_words clears a paired call's second word on the edge where the
 // first word is settled to a tag whose payload is no reference, or away from
-// the one tag whose payload is.
+// the last tag whose payload is, counting the tags the branches dominating
+// this one already settled it away from.
 function settle_pair_words(own p: Progress, w: Walk, bi: i32, sid: i32): Progress {
   let tg: Tag = tag_on_edge(w, bi, sid);
   if (tg.word < 0 || tg.c < 0 || tg.c >= 31) {
     return p;
   }
   let bit: i32 = 1 << tg.c;
+  let away: i32 = -1;
   for v in w.pair_words {
     if (w.root[w.pair_tag[v]] != w.root[tg.word]) {
       continue;
@@ -2367,7 +2370,10 @@ function settle_pair_words(own p: Progress, w: Walk, bi: i32, sid: i32): Progres
     if (tg.equal) {
       empty = (mask & bit) == 0;
     } else {
-      empty = mask == bit;
+      if (away < 0) {
+        away = bit | excluded_tags(w, bi, tg.word);
+      }
+      empty = (mask & away) == mask;
     }
     let k: i32 = w.idx[w.root[v]];
     if (empty && k >= 0) {
@@ -2375,6 +2381,34 @@ function settle_pair_words(own p: Progress, w: Walk, bi: i32, sid: i32): Progres
     }
   }
   return p;
+}
+
+// excluded_tags is the set of tags the branches dominating `bi` have settled
+// `word` away from: each a compare whose unequal successor has that branch
+// as its only predecessor and dominates `bi`.
+function excluded_tags(w: Walk, bi: i32, word: i32): i32 {
+  let out: i32 = 0;
+  let d: i32 = 0;
+  while (d < w.f.blocks.len()) {
+    let t: ssa.STerm = w.f.blocks[d].term;
+    if (d != bi && t.kind_tag == 3 && t.t != t.f && ssadeps.dom_holds(w.dom, bi, d)) {
+      out = out | excluded_on(w, bi, d, t.t, word) | excluded_on(w, bi, d, t.f, word);
+    }
+    d = d + 1;
+  }
+  return out;
+}
+
+function excluded_on(w: Walk, bi: i32, d: i32, sid: i32, word: i32): i32 {
+  let tg: Tag = tag_on_edge(w, d, sid);
+  if (tg.word < 0 || tg.equal || tg.c < 0 || tg.c >= 31 || w.root[tg.word] != w.root[word]) {
+    return 0;
+  }
+  let si: i32 = w.at[sid];
+  if (si < 0 || w.f.blocks[si].preds.len() != 1 || !ssadeps.dom_holds(w.dom, bi, si)) {
+    return 0;
+  }
+  return 1 << tg.c;
 }
 
 // feed hands each tracked phi of successor `sid` its input on the edge from
@@ -2692,7 +2726,7 @@ function resumes(f: ssa.SFunc): boolean {
 function walk_of(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: rcsigs.Table, ops: rcsigs.OpTable, at: i32[], dom: ssadeps.Dom, reach: boolean[]): Walk {
   let defs: Defs = definitions(f);
   let rt: Roots = roots(f, defs, sigs);
-  let w: Walk = Walk { f: f, defs: defs, at: at, root: rt.root, origin: [], idx: [], tracked: 0, self_abi: self_abi, abis: abis, sigs: sigs, ops: ops, paired: returns_pair(f), why: [], opened: [], irops: irops, derived: rt.derived, pair_tag: [], pair_mask: [], pair_words: [], uses: use_counts(f) };
+  let w: Walk = Walk { f: f, defs: defs, at: at, root: rt.root, origin: [], idx: [], tracked: 0, self_abi: self_abi, abis: abis, sigs: sigs, ops: ops, paired: returns_pair(f), why: [], opened: [], irops: irops, derived: rt.derived, pair_tag: [], pair_mask: [], pair_words: [], uses: use_counts(f), dom: dom };
   let rg: Regions = unique_regions(w, dom, reach);
   let o: Origins = origins(w, rg.roots, rg.openers, children_boxes(w, rg.roots), dom);
   w = Walk { ...w, origin: o.origin, why: o.why, opened: o.opened, pair_tag: o.pair_tag, pair_mask: o.pair_mask, pair_words: o.pair_words };

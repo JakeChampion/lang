@@ -40,7 +40,10 @@ line under `FERN_RC_CERTIFY=report`.
 - A branch settles a word on its edges: `x == 0` makes `x` absent on that
   arm, and a paired call's second word (sempair) holds a unit only where the
   first word is settled to a variant whose payload is a reference
-  (`Abi.pair_second`, one bit per tag).
+  (`Abi.pair_second`, one bit per tag). The edge away from the last such
+  variant counts the tags the dominating branches already excluded, so a
+  three-way match that releases the word under two payload tags owes
+  nothing on the third arm.
 - `p + c` names the object `p` does for a spend, and carries nothing into a
   phi: a cursor over a box is not a second unit of it.
 - Rows meet with a three-point lattice: a count, absent, unproved. A count
