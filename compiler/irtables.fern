@@ -1065,29 +1065,6 @@ pub function f64_math_builtin_kind(name: string): string {
   return "";
 }
 
-// reuse_layer_disabled: the #4350 §6.5 differential switch. When the
-// FERN_SELFHOST_NO_REUSE env let is "1" in the COMPILER's environment, every
-// donor-based box-reuse pairing (self-overwrite / cross-struct / cross-tuple /
-// enum-donor / enum-cross / in-arm) and the ENUMRE in-place reassign upgrade
-// are suppressed: constructions allocate fresh boxes, donors take their normal
-// frees (nothing is suppressed on their behalf), and the ENUMRE reassign falls
-// back to emit_enum_reclaim_store's free+alloc — mirroring native
-// ast.RcReuseEnabled=false. Reuse-on vs reuse-off must be OBSERVATIONALLY
-// IDENTICAL (the differential gate in self_host_reuse_differential_test.go
-// asserts it); OFF trades only alloc count / peak heap. Read per ssarc.lower
-// entry (an env scan — no allocation on the None path).
-pub function reuse_layer_disabled(): boolean {
-  match (env("FERN_SELFHOST_NO_REUSE")) {
-    Some(v) => {
-      return v == "1";
-    },
-    None => {
-      return false;
-    }
-  }
-  return false;
-}
-
 // LowerResult is one function's lowered body (ssarc.lower, or the entry
 // semlower records for a declined or bodyless one): the lowered op stream,
 // the local-slot count (operand-frame size for the interpreter / a backend —

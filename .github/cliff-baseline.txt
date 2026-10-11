@@ -117,5 +117,5 @@
 # docs/rc-log/2026-10-11-c-the-state-is-not-held-past-an-attempt.md attributes
 # what is left: semsource.define 4.7 MB, seminline.part_of 2.6 MB.
 
-x86_64/checker.cliff_bytes	30008120
-x86_64/checker.cliff_count	198714
+x86_64/checker.cliff_bytes	22945424
+x86_64/checker.cliff_count	192943
