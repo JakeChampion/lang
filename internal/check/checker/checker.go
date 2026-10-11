@@ -5322,9 +5322,10 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 				mangled = got
 			}
 			sig, ok := c.info.FuncSigs[mangled]
-			// A default generic in its own parameters is inherited by every
-			// impl; a concrete clone carries only the instances it calls.
-			if !ok && len(m.TypeParams) > 0 && m.Body != nil {
+			// A default generic in its own parameters, or one whose result
+			// holds Self inside another instance, is inherited by every impl;
+			// a concrete clone carries only the instances it calls.
+			if !ok && m.Body != nil && (len(m.TypeParams) > 0 || wrapsSelf(m.Result)) {
 				continue
 			}
 			if !ok {
@@ -5401,6 +5402,12 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 				}
 				gotSig.Result = substByName(gotSig.Result, paramSub)
 			}
+			// After monomorphisation a generic instance a result names is a
+			// clone; the trait's signature still spells it generically.
+			for i := range want {
+				want[i] = c.cloneSpelling(want[i])
+			}
+			wantRet = c.cloneSpelling(wantRet)
 			if !sigMatches(gotSig, want, wantRet) {
 				c.errfCode(impl.P, "E021",
 					"%s.%s has the wrong signature for trait %s: expected %s, got %s",
@@ -7350,17 +7357,11 @@ func (c *checker) synthesizeTraitDefaults(prog *ast.Program) {
 			// impl's first, so the trait's arguments substituted next cannot
 			// be taken for them.
 			own, renamed := renameApart(m.TypeParams, impl.TypeParams, impl.TraitArgs)
-			if len(renamed) > 0 {
-				from := make([]string, 0, len(renamed))
-				to := make([]ast.Type, 0, len(renamed))
-				for _, v := range m.TypeParams {
-					if r, ok := renamed[v]; ok {
-						from = append(from, v)
-						to = append(to, ast.ParamType{Name: r})
-					}
-				}
-				substTraitArgs(method, from, to)
+			ownTo := make([]ast.Type, len(own))
+			for i, v := range own {
+				ownTo[i] = ast.ParamType{Name: v}
 			}
+			substTraitArgs(method, m.TypeParams, ownTo)
 			substTraitArgs(method, td.TypeParams, implTraitArgs(impl))
 			// `Self` expands last: the impl type names the impl's own
 			// parameters, which neither substitution above may touch.
@@ -7386,6 +7387,60 @@ func (c *checker) synthesizeTraitDefaults(prog *ast.Program) {
 			impl.MethodNames = append(impl.MethodNames, m.Name)
 		}
 	}
+}
+
+// cloneSpelling respells each generic struct instance in `t` as the clone
+// monomorphisation made of it, where that clone is declared.
+func (c *checker) cloneSpelling(t ast.Type) ast.Type {
+	switch x := t.(type) {
+	case ast.StructType:
+		if len(x.Args) == 0 {
+			return x
+		}
+		args := make([]ast.Type, len(x.Args))
+		for i, a := range x.Args {
+			args[i] = c.cloneSpelling(a)
+		}
+		if name := ast.MangleInst(x.Name, args); c.info.Structs[name] != nil {
+			return ast.StructType{Name: name}
+		}
+		return ast.StructType{Name: x.Name, Args: args}
+	case ast.EnumType:
+		args := make([]ast.Type, len(x.Args))
+		for i, a := range x.Args {
+			args[i] = c.cloneSpelling(a)
+		}
+		return ast.EnumType{Name: x.Name, Args: args}
+	case ast.TupleType:
+		out := ast.TupleType{Elems: make([]ast.Type, len(x.Elems))}
+		for i, e := range x.Elems {
+			out.Elems[i] = c.cloneSpelling(e)
+		}
+		return out
+	case ast.ArrayType:
+		return ast.ArrayType{Elem: c.cloneSpelling(x.Elem)}
+	}
+	return t
+}
+
+// wrapsSelf says `t` holds Self as an argument of a generic struct instance,
+// the result the monomorphiser clones per call (wrapsReceiver).
+func wrapsSelf(t ast.Type) bool {
+	switch x := t.(type) {
+	case ast.StructType:
+		for _, a := range x.Args {
+			if mentionsSelf(a) || wrapsSelf(a) {
+				return true
+			}
+		}
+	case ast.EnumType:
+		return slices.ContainsFunc(x.Args, wrapsSelf)
+	case ast.TupleType:
+		return slices.ContainsFunc(x.Elems, wrapsSelf)
+	case ast.ArrayType:
+		return wrapsSelf(x.Elem)
+	}
+	return false
 }
 
 // renameApart gives each of a default's own type parameters a name no impl

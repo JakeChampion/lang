@@ -10774,6 +10774,9 @@ pub struct MFns {
   // rather than "", for the bound-comparison rewrite, which reads a template.
   // Instantiation leaves it off: a clone keyed on a variable names nothing.
   keep_vars: boolean,
+  // The generic-struct methods monomorphize_structs clones only for a call,
+  // as `Base.method`: see wraps_receiver.
+  on_call: string[],
 }
 
 // mfns_buckets is the bucket count of the generic index. Prime, and far larger
@@ -10830,7 +10833,7 @@ pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]
     ghead = ghead.with(bk, k);
     k = k - 1;
   }
-  return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, smm: smm, array_concrete: array_concrete, structs: structs, enums: enums, impls: impls, keep_vars: false };
+  return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, smm: smm, array_concrete: array_concrete, structs: structs, enums: enums, impls: impls, keep_vars: false, on_call: [] };
 }
 
 // bg_find returns the position in `fns.decls` of the bounded-generic function
@@ -15995,6 +15998,25 @@ function infer_lit_key(gd: StructDecl, fnames: string[], fvals: ast.Expr[], env:
   return key;
 }
 
+// on_call_request records a call to (or a value of) a method cloned only for
+// a call, under the clone its receiver names.
+function on_call_request(fa: ast.ExprFieldAccess, env: MEnv, gstructs: StructDecl[], funcs: MFns, ins: Insts): Insts {
+  if (funcs.on_call.len() == 0) {
+    return ins;
+  }
+  let sfx: string = "." + fa.field;
+  for name in funcs.on_call {
+    if (util.str_has_suffix(name, sfx)) {
+      let base: string = slice_unchecked(name, 0, name.len() - sfx.len()) + "";
+      let rt: TyIns = mg_ty(mono_infer(fa.obj, env, funcs), gstructs, ins);
+      if (is_clone_of(rt.ty, base)) {
+        return rt.mins.iadd(name, slice_unchecked(rt.ty, base.len() + 2, rt.ty.len()) + "");
+      }
+    }
+  }
+  return ins;
+}
+
 // ms_expr rewrites a struct literal of a generic struct to its mangled
 // clone name (inferring the key from field values) and recurses through
 // every sub-expression, threading the instantiation accumulator.
@@ -16058,7 +16080,7 @@ function ms_expr(e: ast.Expr, env: MEnv, gstructs: StructDecl[], funcs: MFns, in
     },
     ast.ExprFieldAccess(fa) => {
       let o: RExpr = ms_expr(fa.obj, env, gstructs, funcs, ins);
-      return RExpr { rexpr: ast.ExprFieldAccess { obj: o.rexpr, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, rins: o.rins };
+      return RExpr { rexpr: ast.ExprFieldAccess { obj: o.rexpr, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, rins: on_call_request(fa, env, gstructs, funcs, o.rins) };
     },
     ast.ExprIdent(id) => {
       // A type parameter substituted into an associated call's object
@@ -16884,6 +16906,66 @@ function struct_named(structs: StructDecl[], name: string): boolean {
   return false;
 }
 
+// A method of a generic struct clone, its body rewritten against the clone.
+function ms_clone_method(mm: FuncDecl, key: string, gstructs: StructDecl[], mod: Module, sfns: MFns, ins: Insts): FRes {
+  let cr: FRes = clone_struct_method(mm, strip_struct_base(mm.receiver_type), key, gstructs, mod.structs, mod.enums, ins);
+  let clm: FuncDecl = cr.ffn;
+  let menv: MEnv = env_from_decl(clm);
+  let mr: RStmts = mono_stmts(clm.body, menv, sfns, cr.fins, fn_tag_spelling(clm.ret_type, clm.ret_fn_ret, clm.ret_fn_param_types));
+  let br2: RStmts = ms_stmts(mr.rstmts, menv, gstructs, sfns, mr.rins3, clm.ret_type);
+  return FRes { ffn: FuncDecl { ...clm, body: br2.rstmts }, fins: br2.rins3 };
+}
+
+// wrapping_methods names, as `Base.method`, each generic-struct method whose
+// result holds its own receiver inside another instance, as a lazy adapter
+// does (`filter` on `FilterIt[I, T]` answering `FilterIt[FilterIt[I, T], T]`).
+// Cloning one for every instance would make each clone's result a new,
+// larger instance with the same method, so it is cloned only for a call.
+function wrapping_methods(funcs: FuncDecl[], gstructs: StructDecl[]): string[] {
+  let out: string[] = [];
+  for fd in funcs {
+    let base: string = strip_struct_base(fd.receiver_type);
+    if (fd.receiver_type.len() > 0 && gstruct_index(gstructs, base) >= 0 && wraps(parse_type_ref(fd.ret_type), fd.receiver_type, gstructs)) {
+      out = out.append(base + "." + fd.name);
+    }
+  }
+  return out;
+}
+
+// wraps says `t` holds `recv` as an argument of a generic struct instance.
+function wraps(t: TypeRef, recv: string, gstructs: StructDecl[]): boolean {
+  let generic: boolean = !t.is_tuple && !t.is_fn && gstruct_index(gstructs, t.base) >= 0;
+  for a in t.args {
+    if (generic && util.contains(render_type_ref(a), recv) || wraps(a, recv, gstructs)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function on_call_template(funcs: FuncDecl[], name: string): FuncDecl {
+  let at: i32 = 0;
+  while (strip_struct_base(funcs[at].receiver_type) + "." + funcs[at].name != name) {
+    at = at + 1;
+  }
+  return funcs[at];
+}
+
+// ms_clone_methods appends to `fns` a clone of every method of the generic
+// struct `base` at `key`, except those cloned only when a call reaches them.
+struct MsClones { fns: FuncDecl[], ins: Insts }
+
+function ms_clone_methods(fns: FuncDecl[], mod: Module, base: string, key: string, gstructs: StructDecl[], sfns: MFns, ins: Insts): MsClones {
+  let out: MsClones = MsClones { fns: fns, ins: ins };
+  for mm in mod.funcs {
+    if (mm.receiver_type.len() > 0 && strip_struct_base(mm.receiver_type) == base && util.index_of_str(sfns.on_call, base + "." + mm.name) < 0) {
+      let cm: FRes = ms_clone_method(mm, key, gstructs, mod, sfns, out.ins);
+      out = MsClones { fns: out.fns.append(cm.ffn), ins: cm.fins };
+    }
+  }
+  return out;
+}
+
 function ms_module(mod: Module): Module {
   let gstructs: StructDecl[] = [];
   let gi: i32 = 0;
@@ -16903,7 +16985,7 @@ function ms_module(mod: Module): Module {
   let keep: boolean = deferred.len() > 0;
 
   let ins: Insts = Insts { inames: [], itypes: [], iargs: [] };
-  let sfns: MFns = mfns_of(mod.funcs, mod.structs, mod.enums, mod.impls);
+  let sfns: MFns = MFns { ...mfns_of(mod.funcs, mod.structs, mod.enums, mod.impls), on_call: wrapping_methods(mod.funcs, gstructs) };
 
   // Phase 1: rewrite all references; drop the generic decls unless a
   // deferred enum's templates still name them.
@@ -16968,6 +17050,13 @@ function ms_module(mod: Module): Module {
       continue;
     }
     done = done.iadd(base, key);
+    if (util.index_of_str(sfns.on_call, base) >= 0) {
+      let cm: FRes = ms_clone_method(on_call_template(mod.funcs, base), key, gstructs, mod, sfns, ins);
+      ins = cm.fins;
+      nfuncs = nfuncs.append(cm.ffn);
+      wi = wi + 1;
+      continue;
+    }
     let idx: i32 = gstruct_index(gstructs, base);
     if (idx < 0) {
       let bgi: i32 = bg_find(sfns, base);
@@ -17000,22 +17089,9 @@ function ms_module(mod: Module): Module {
         cfi = cfi + 1;
       }
       nstructs = nstructs.append(StructDecl { name: mang, fields: cf, type_params: [], derives: gd.derives, line: gd.line, col: gd.col, enum_owner: gd.enum_owner, must_consume: gd.must_consume, variant_field_names: gd.variant_field_names, is_pub: true, is_package: false });
-      let mi: i32 = 0;
-      while (mi < mod.funcs.len()) {
-        let mm: FuncDecl = mod.funcs[mi];
-        if (mm.receiver_type.len() > 0 && strip_struct_base(mm.receiver_type) == base) {
-          let cr: FRes = clone_struct_method(mm, base, key, gstructs, mod.structs, mod.enums, ins);
-          ins = cr.fins;
-          let clm: FuncDecl = cr.ffn;
-          let menv: MEnv = env_from_decl(clm);
-          let mr: RStmts = mono_stmts(clm.body, menv, sfns, ins, fn_tag_spelling(clm.ret_type, clm.ret_fn_ret, clm.ret_fn_param_types));
-          ins = mr.rins3;
-          let br2: RStmts = ms_stmts(mr.rstmts, menv, gstructs, sfns, ins, clm.ret_type);
-          ins = br2.rins3;
-          nfuncs = nfuncs.append(FuncDecl { ...clm, body: br2.rstmts });
-        }
-        mi = mi + 1;
-      }
+      let cms: MsClones = ms_clone_methods(nfuncs, mod, base, key, gstructs, sfns, ins);
+      ins = cms.ins;
+      nfuncs = cms.fns;
     }
     wi = wi + 1;
   }
@@ -27716,14 +27792,15 @@ pub function inherit_default(m: FuncDecl, trait_params: string[], im: ImplInfo):
     from = util.append_all(from, trait_params);
     to = util.append_all(to, args);
   }
-  let sub: FuncDecl = m;
-  if (from.len() > 0) {
-    let params: ast.ParamDecl[] = [];
-    for pd in m.params {
-      params = params.append(ast.ParamDecl { ...pd, type_name: subst_ty(pd.type_name, from, to), fn_ret: subst_ty(pd.fn_ret, from, to), fn_param_types: subst_ty_list(pd.fn_param_types, from, to) });
-    }
-    sub = FuncDecl { ...m, type_params: renamed_list(m.type_params, from, to), all_type_params: renamed_list(m.all_type_params, from, to), params: params, ret_type: subst_ty(m.ret_type, from, to), ret_fn_ret: subst_ty(m.ret_fn_ret, from, to), ret_fn_param_types: subst_ty_list(m.ret_fn_param_types, from, to), body: subst_stmts(m.body, from, to) };
+  // `Self` in the body is the impl type too: a default with type parameters
+  // of its own is hoisted to a free generic, where no receiver supplies it.
+  from = from.append("Self");
+  to = to.append(im.impl_type);
+  let params: ast.ParamDecl[] = [];
+  for pd in m.params {
+    params = params.append(ast.ParamDecl { ...pd, type_name: subst_ty(pd.type_name, from, to), fn_ret: subst_ty(pd.fn_ret, from, to), fn_param_types: subst_ty_list(pd.fn_param_types, from, to) });
   }
+  let sub: FuncDecl = FuncDecl { ...m, type_params: renamed_list(m.type_params, from, to), all_type_params: renamed_list(m.all_type_params, from, to), params: params, ret_type: subst_ty(m.ret_type, from, to), ret_fn_ret: subst_ty(m.ret_fn_ret, from, to), ret_fn_param_types: subst_ty_list(m.ret_fn_param_types, from, to), body: subst_stmts(m.body, from, to) };
   return finalize_impl_method(sub, im.impl_type, im.type_params, im.bounds);
 }
 
