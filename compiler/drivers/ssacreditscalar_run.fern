@@ -137,6 +137,78 @@ function changed(f: ssa.SFunc, mode: i32): ssa.SFunc {
   return ssa.SFunc { ...f, blocks: blocks };
 }
 
+// with_join_phi gives the join after `require`'s branch a phi for the phi
+// controls to corrupt: zero from the path that returns, and the exit's result
+// from the path that exits. The lowering leaves no phi there of its own.
+function with_join_phi(f: ssa.SFunc): ssa.SFunc {
+  let ex: Exits = exits_of(f);
+  let blocks: ssa.SBlock[] = [];
+  let added: i32 = 0;
+  for b in f.blocks {
+    if (b.preds.len() == 2) {
+      let phi = ssa.SInst { kind_tag: 8, result: f.nvals, args: join_phi_args(b.preds, ex), imm: 0, str: "" };
+      blocks = blocks.append(ssa.SBlock { ...b, insts: prepended(phi, b.insts) });
+      added = added + 1;
+    } else {
+      blocks = blocks.append(b);
+    }
+  }
+  require(added == 1 && ex.zero >= 0 && ex.results.len() == 1, 53);
+  return ssa.SFunc { ...f, blocks: blocks, nvals: f.nvals + 1 };
+}
+
+// Exits holds the entry's zero constant and each exit with the block it is in.
+struct Exits { zero: i32, blocks: i32[], results: i32[] }
+
+function exits_of(f: ssa.SFunc): Exits {
+  let ex: Exits = Exits { zero: 0 - 1, blocks: [], results: [] };
+  for b in f.blocks {
+    for op in b.insts {
+      if (b.id == f.entry && op.kind_tag == 1 && op.imm == 0) {
+        ex = Exits { ...ex, zero: op.result };
+      }
+      if (op.kind_tag == 50) {
+        ex = Exits { ...ex, blocks: ex.blocks.append(b.id), results: ex.results.append(op.result) };
+      }
+    }
+  }
+  return ex;
+}
+
+// join_phi_args takes each predecessor's exit result, or zero from one that
+// does not exit.
+function join_phi_args(preds: i32[], ex: Exits): i32[] {
+  let args: i32[] = [];
+  for p in preds {
+    let at: i32 = 0;
+    while (at < ex.blocks.len() && ex.blocks[at] != p) {
+      at = at + 1;
+    }
+    if (at < ex.results.len()) {
+      args = args.append(ex.results[at]);
+    } else {
+      args = args.append(ex.zero);
+    }
+  }
+  return args;
+}
+
+function prepended(first: ssa.SInst, rest: ssa.SInst[]): ssa.SInst[] {
+  let out: ssa.SInst[] = [first];
+  for op in rest {
+    out = out.append(op);
+  }
+  return out;
+}
+
+// control_form is the form control `i` corrupts: the phi controls need a phi.
+function control_form(f: ssa.SFunc, phi_form: ssa.SFunc, i: i32): ssa.SFunc {
+  if (i == 7 || i == 9 || i == 10) {
+    return phi_form;
+  }
+  return f;
+}
+
 function target_checks(target: string): void {
   let source = "@noinline\nfunction require(ok: boolean, id: i32): void { if (!ok) { exit(id); } }\nfunction main(): i32 { require(true, 9); return 0; }\n";
   let sub = semlower.driven(parser.parse_module(lexer.tokenize(source)), target).sub;
@@ -154,9 +226,11 @@ function target_checks(target: string): void {
   outcome_controls(f);
   expect(f, true, "proved scalar zero-or-exit effects", 6);
   let reasons = ["unsupported scalar helper effect", "unsupported scalar helper effect", "unsupported scalar helper effect", "unavailable scalar helper operand", "unsupported scalar helper effect", "unsupported scalar helper effect", "scalar helper return not proven zero", "unavailable scalar phi operand", "invalid scalar helper parameter", "invalid scalar helper phi", "unavailable scalar phi operand", "invalid scalar helper definition", "scalar helper return not proven zero", "unavailable scalar helper operand"];
+  let phi_form = with_join_phi(f);
+  expect(phi_form, true, "proved scalar zero-or-exit effects", 52);
   let i: i32 = 0;
   while (i < reasons.len()) {
-    expect(changed(f, i), false, reasons[i], 10 + i);
+    expect(changed(control_form(f, phi_form, i), i), false, reasons[i], 10 + i);
     i = i + 1;
   }
   let reverse: ssa.SBlock[] = [];

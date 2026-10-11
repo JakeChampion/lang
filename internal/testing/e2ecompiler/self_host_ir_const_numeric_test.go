@@ -51,7 +51,9 @@ func irConstNumericEmit(t *testing.T, runner []string, bin, target string) strin
 	// Folding -0.0 flips its sign bit into a value-form constant before the
 	// driver runs. Account for it alongside all nine rebuilt text floats;
 	// the original program below still checks its exact negative-zero bits.
-	if !strings.Contains(errb.String(), "rebuilt i64=29 f64=9 value-f64=1") {
+	// The i64 count is what is left once the optimiser has dropped the stores
+	// of the locals whose every load it propagated (ir.eliminate_dead_stores).
+	if !strings.Contains(errb.String(), "rebuilt i64=10 f64=9 value-f64=1") {
 		t.Fatalf("-target %s: the driver rebuilt a different set of constants: %q", target, errb.String())
 	}
 	return out.String()
