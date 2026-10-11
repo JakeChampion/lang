@@ -1227,8 +1227,9 @@ sections below that carry a `fern` and a `fern-sh` column predate that: there
 A compiler regression can be slower by a factor that turns a benchmark into
 a hang — #8688 had `seq` roughly 400x slower and growing to 11 GB — so the
 Fern build runs one trial of a workload under `timeout` (60 s,
-`FERN_BENCH_PROBE_TIMEOUT`) before hyperfine sees it, and a build that does not finish gets `did not finish` in
-its cell rather than being dropped from the table. The bound is on time and
+`FERN_BENCH_PROBE_TIMEOUT`) before hyperfine sees it, and a build that does
+not finish gets `did not finish` in its cell rather than being dropped from
+the table. The bound is on time and
 not on memory because the arena is a 16 GiB `MAP_NORESERVE` reservation, so
 `ulimit -v` and `ulimit -d` refuse every Fern binary at startup.
 

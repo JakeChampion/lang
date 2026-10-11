@@ -27,9 +27,9 @@
 #
 # A BOUND ON ONE TRIAL, because a compiler regression can be slower by a
 # factor that turns a benchmark into a hang: #8688 had `seq` ~400x slower and
-# growing to 11 GB. Each Fern build therefore runs the workload once under `timeout`
-# before hyperfine sees it, and a build that does not finish is REPORTED in
-# its cell rather than dropped. The bound is time and not memory on purpose:
+# growing to 11 GB. Each Fern build therefore runs the workload once under
+# `timeout` before hyperfine sees it, and a build that does not finish is
+# REPORTED in its cell rather than dropped. The bound is time and not memory on purpose:
 # the arena is a 16 GiB MAP_NORESERVE reservation (docs/LOCAL-DEV-LOOP.md), so
 # `ulimit -v` and `ulimit -d` would refuse every Fern binary at startup.
 #
@@ -252,18 +252,12 @@ else
     echo "coreutils-bench: no timeout(1) on PATH or in $gnu_dirs" >&2; exit 1; }
 fi
 
-go build -o bin/fern ./cmd/fern
-
 # bin/fern-selfhost is rebuilt when MISSING OR STALE. A binary left over from
 # an earlier commit compiles the same sources into different code, and the
 # column would then name a compiler nobody can identify. It is built for the
 # HOST, because it has to run here; the utilities it emits are built for
-# $target.
-#
-# Staleness is judged against the SOURCES, never against bin/fern: `go build
-# -o` rewrites its output whether or not anything changed, so `bin/fern -nt
-# bin/fern-selfhost` is true on every run after the build above and would
-# rebuild the self-host CLI every time.
+# $target. Staleness is judged against the compiler's and the launcher's
+# sources.
 if [ ! -x bin/fern-selfhost ] || [ -n "$(find compiler cmd internal \
      \( -name '*.fern' -o -name '*.go' \) -newer bin/fern-selfhost -print -quit 2>/dev/null)" ]; then
   echo "coreutils-bench: building bin/fern-selfhost (missing or stale)" >&2
