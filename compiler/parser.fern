@@ -13000,10 +13000,13 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
           // receiver's type (`append`, `with`) has that type: the stamp
           // alone is dropped for an element that is not a primitive, so
           // without this a chained `xs.append(x).concat(ys)` on a record
-          // array never folds its outer call.
+          // array never folds its outer call. An element that is a bare
+          // type variable is not answered, as the index arm below does
+          // not answer one, so a template body keys no clone after it.
           if (cfa.field == "append" && c.args.len() == 1 || cfa.field == "with" && c.args.len() == 2) {
             let brt: string = mono_infer(cfa.obj, env, funcs);
-            if (array_method_element(brt).len() > 0) {
+            let bel: string = array_method_element(brt);
+            if (bel.len() > 0 && !hides_bare_var(bel, funcs)) {
               return brt;
             }
           }
