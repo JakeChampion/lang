@@ -133,10 +133,12 @@ TLS itself is `std/tls/keyschedule`, `keyshare`, `message`, `record`,
    list reaches programs as that file): its own module, so only a program
    that imports it carries the 220 KB, handed to `fetch` as
    `Policy.roots`. A root Mozilla distrusts for server certificates issued
-   after a date is left out once no such certificate can still be valid,
-   and the generator refuses to run while one can, since `verify.Roots`
-   carries no per-root constraint. Gate: every bundled root parses, and
-   raw.githubusercontent.com's chain verifies against them.
+   after a date is bundled with the date (`verify.Roots.distrust_after`,
+   which `verify_server` enforces against the leaf's notBefore) while a
+   certificate issued before it can still be valid, and left out once none
+   can; the refresh-data workflow regenerates the list weekly. Gate: every
+   bundled root parses, and raw.githubusercontent.com's chain verifies
+   against them.
 10. **`std/tls/client`.** X25519MLKEM768 by default, ALPN and
     HelloRetryRequest, wired into `fetch`'s `https`.
 

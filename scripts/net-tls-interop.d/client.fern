@@ -216,7 +216,7 @@ function handshakes(cfg: client.Config, port: i32): string {
 function main(): i32 {
   let base: string = setting("BASE", "https://localhost:8443");
   print("get: " + line(fetch.send(fetch.get(base + "/hello"))));
-  let roots: verify.Roots = verify.Roots { certs: [] };
+  let roots: verify.Roots = verify.roots([]);
   match (verify.roots_from_file(setting("CA", "ca.pem"))) {
     Ok(r) => {
       roots = r;
