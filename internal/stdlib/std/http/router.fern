@@ -368,8 +368,18 @@ function __segment(pattern: string, s: string, last: boolean): Result[Segment, R
   if (s.starts_with("{") && s.ends_with("}")) {
     return __wildcard(pattern, s.slice_snap(1, s.len() - 1), last);
   }
+  return __literal(pattern, s);
+}
+
+// __literal reads a literal segment, refusing a brace, which belongs to a
+// wildcard, and `?` or `#`, which end a request's path before it is
+// matched and so could never be met.
+function __literal(pattern: string, s: string): Result[Segment, RouteError] {
   if (s.index_of("{") >= 0 || s.index_of("}") >= 0) {
     return Err(BadPattern(pattern, "a brace inside the segment " + s));
+  }
+  if (s.index_of("?") >= 0 || s.index_of("#") >= 0) {
+    return Err(BadPattern(pattern, "a query or fragment in the segment " + s));
   }
   return Ok(PathLiteral(s));
 }

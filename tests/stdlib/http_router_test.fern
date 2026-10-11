@@ -86,12 +86,12 @@ function refused(pattern: string): string {
 }
 
 function test_patterns_refused(): test.TestOutcome {
-  let cases: string[] = ["users", "get /users", "GET users", "/a//b", "/a/{x...}/b", "/a/{$}/b", "/a/{}", "/a/{1x}", "/a/{x}/{x}", "/a/b{c}"];
+  let cases: string[] = ["users", "get /users", "GET users", "/a//b", "/a/{x...}/b", "/a/{$}/b", "/a/{}", "/a/{1x}", "/a/{x}/{x}", "/a/b{c}", "/a?x=1", "/a/b#top"];
   let got: string = "";
   for c in cases {
     got = got + refused(c) + "\n";
   }
-  return test.assert_eq(got, "http router: pattern users: expected [METHOD ]/path\nhttp router: pattern get /users: expected [METHOD ]/path\nhttp router: pattern GET users: expected [METHOD ]/path\nhttp router: pattern /a//b: empty segment\nhttp router: pattern /a/{x...}/b: {name...} must be the last segment\nhttp router: pattern /a/{$}/b: {$} must be the last segment\nhttp router: pattern /a/{}: bad parameter name \nhttp router: pattern /a/{1x}: bad parameter name 1x\nhttp router: pattern /a/{x}/{x}: parameter x is bound twice\nhttp router: pattern /a/b{c}: a brace inside the segment b{c}\n");
+  return test.assert_eq(got, "http router: pattern users: expected [METHOD ]/path\nhttp router: pattern get /users: expected [METHOD ]/path\nhttp router: pattern GET users: expected [METHOD ]/path\nhttp router: pattern /a//b: empty segment\nhttp router: pattern /a/{x...}/b: {name...} must be the last segment\nhttp router: pattern /a/{$}/b: {$} must be the last segment\nhttp router: pattern /a/{}: bad parameter name \nhttp router: pattern /a/{1x}: bad parameter name 1x\nhttp router: pattern /a/{x}/{x}: parameter x is bound twice\nhttp router: pattern /a/b{c}: a brace inside the segment b{c}\nhttp router: pattern /a?x=1: a query or fragment in the segment a?x=1\nhttp router: pattern /a/b#top: a query or fragment in the segment b#top\n");
 }
 
 function conflict(first: string, second: string): string {
@@ -151,9 +151,10 @@ function test_typed_params(): test.TestOutcome {
   match (r.get("/users/{id}", user_by_id)) {
     Ok(r1) => {
       let bad: HttpResponse = r1.handle(http.request("GET", "/users/x1"), platform.host());
+      let wide: HttpResponse = r1.handle(http.request("GET", "/users/99999999999999999999"), platform.host());
       let unbound: HttpResponse = r1.handle(http.request("GET", "/users/7"), platform.host());
-      let got: string = bad.status.to_string() + " " + bad.body_string() + "|" + unbound.status.to_string() + " " + unbound.body_string();
-      return test.assert_eq(got, "400 {\"type\":\"about:blank\",\"title\":\"Bad Request\",\"status\":400,\"detail\":\"path parameter id is not an integer: x1\"}|500 {\"type\":\"about:blank\",\"title\":\"Internal Server Error\",\"status\":500,\"detail\":\"the route binds no path parameter nope\"}");
+      let got: string = bad.status.to_string() + " " + bad.body_string() + "|" + wide.status.to_string() + "|" + unbound.status.to_string() + " " + unbound.body_string();
+      return test.assert_eq(got, "400 {\"type\":\"about:blank\",\"title\":\"Bad Request\",\"status\":400,\"detail\":\"path parameter id is not an integer: x1\"}|400|500 {\"type\":\"about:blank\",\"title\":\"Internal Server Error\",\"status\":500,\"detail\":\"the route binds no path parameter nope\"}");
     },
     Err(e) => {
       return test.fail(e.message());
