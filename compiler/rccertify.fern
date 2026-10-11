@@ -46,6 +46,7 @@
 import "./ir";
 import "./ssa";
 import "./ssadeps";
+import "./ssalive";
 import "./rcsigs";
 import "./util";
 
@@ -1657,35 +1658,220 @@ function indexes(w: Walk, touched: boolean[]): i32[] {
   return idx;
 }
 
+// ---- the rows, by liveness --------------------------------------------------
+
+// Live lays the rows out by liveness. A block's row is the tracked slots
+// live at its entry, the slots it defines and the slots its null stores
+// credit; the row it hands a successor holds the slots live at that
+// successor's entry, in the successor's order, so the entry meet is
+// elementwise. A slot in a block's row and not in a successor's entry dies
+// on that edge. Every list is a span of `slots`; a block's edge `e` is entry
+// `bi * 2 + e` of the per-edge tables, `out_at` -1 for an edge that leads
+// nowhere.
+struct Live {
+  ok: boolean,
+  why: string,
+  slots: i32[],
+  in_at: i32[],
+  in_n: i32[],
+  row_at: i32[],
+  row_n: i32[],
+  die_at: i32[],
+  die_n: i32[],
+  out_at: i32[],
+  nout: i32,
+}
+
+// alias_deps makes a value's root live wherever the value is: a derived
+// pointer or a copy reads the object its root names.
+function alias_deps(w: Walk): i32[][] {
+  let deps: i32[][] = [];
+  let v: i32 = 0;
+  while (v < w.f.nvals) {
+    if (w.root[v] != v) {
+      deps = deps.append([w.root[v]]);
+    } else {
+      deps = deps.append([]);
+    }
+    v = v + 1;
+  }
+  return deps;
+}
+
+// Marked is a slot list under construction with the membership marks that
+// keep it free of repeats.
+struct Marked { mark: boolean[], list: i32[] }
+
+function add_slot(own m: Marked, k: i32): Marked {
+  if (k < 0 || m.mark[k]) {
+    return m;
+  }
+  return Marked { mark: m.mark.with(k, true), list: m.list.append(k) };
+}
+
+function add_value(own m: Marked, w: Walk, v: i32): Marked {
+  if (v < 0) {
+    return m;
+  }
+  return add_slot(m, w.idx[w.root[v]]);
+}
+
+function clear_marks(own m: Marked): Marked {
+  for k in m.list {
+    m = Marked { ...m, mark: m.mark.with(k, false) };
+  }
+  return Marked { mark: m.mark, list: [] };
+}
+
+// in_slots lists the slots of the values live at block bi's entry.
+function in_slots(w: Walk, fl: ssalive.Flow, own m: Marked, bi: i32): Marked {
+  let ids: i32[] = ssalive.live_in_ids(fl, bi);
+  for v in ids {
+    m = add_value(m, w, v);
+  }
+  return m;
+}
+
+// row_slots extends a block's live-in slots with the slots the block
+// defines and the slots its null stores credit.
+function row_slots(w: Walk, takes: Takes, own m: Marked, bi: i32): Marked {
+  let b: ssa.SBlock = w.f.blocks[bi];
+  if (bi == w.at[w.f.entry]) {
+    let v: i32 = 0;
+    while (v < w.f.nparams) {
+      m = add_value(m, w, v);
+      v = v + 1;
+    }
+  }
+  for ins in b.insts {
+    m = add_value(m, w, ins.result);
+  }
+  let i: i32 = 0;
+  while (i < takes.block.len()) {
+    if (takes.block[i] == bi) {
+      for r in takes.roots[i] {
+        m = add_slot(m, w.idx[r]);
+      }
+    }
+    i = i + 1;
+  }
+  return m;
+}
+
+// Spans is the slot pool with one list's span appended at a time.
+struct Spans { slots: i32[], at: i32[], n: i32[] }
+
+function push_span(own sp: Spans, list: i32[]): Spans {
+  let at: i32 = sp.slots.len();
+  let slots: i32[] = sp.slots;
+  for k in list {
+    slots = slots.append(k);
+  }
+  return Spans { slots: slots, at: sp.at.append(at), n: sp.n.append(list.len()) };
+}
+
+// die_slots lists the slots of block bi's row that are not live at the
+// entry of its successor `si`.
+function die_slots(lv: Live, own m: Marked, bi: i32, si: i32): Marked {
+  let j: i32 = 0;
+  while (j < lv.in_n[si]) {
+    m = Marked { ...m, mark: m.mark.with(lv.slots[lv.in_at[si] + j], true) };
+    j = j + 1;
+  }
+  let dies: i32[] = [];
+  j = 0;
+  while (j < lv.row_n[bi]) {
+    let k: i32 = lv.slots[lv.row_at[bi] + j];
+    if (!m.mark[k]) {
+      dies = dies.append(k);
+    }
+    j = j + 1;
+  }
+  j = 0;
+  while (j < lv.in_n[si]) {
+    m = Marked { ...m, mark: m.mark.with(lv.slots[lv.in_at[si] + j], false) };
+    j = j + 1;
+  }
+  return Marked { mark: m.mark, list: dies };
+}
+
+function no_live(why: string): Live {
+  return Live { ok: false, why: why, slots: [], in_at: [], in_n: [], row_at: [], row_n: [], die_at: [], die_n: [], out_at: [], nout: 0 };
+}
+
+// live_rows lays out each block's entry and row lists.
+function live_rows(w: Walk, fl: ssalive.Flow, takes: Takes): Live {
+  let m: Marked = Marked { mark: __alloc_bool(w.tracked), list: [] };
+  let ins: Spans = Spans { slots: [], at: [], n: [] };
+  let rows: Spans = Spans { slots: [], at: [], n: [] };
+  let bi: i32 = 0;
+  while (bi < w.f.blocks.len()) {
+    m = in_slots(w, fl, m, bi);
+    ins = push_span(ins, m.list);
+    m = row_slots(w, takes, m, bi);
+    rows = push_span(rows, m.list);
+    m = clear_marks(m);
+    bi = bi + 1;
+  }
+  let slots: i32[] = ins.slots;
+  let shift: i32 = slots.len();
+  for k in rows.slots {
+    slots = slots.append(k);
+  }
+  let row_at: i32[] = [];
+  for at in rows.at {
+    row_at = row_at.append(at + shift);
+  }
+  return Live { ok: true, why: "", slots: slots, in_at: ins.at, in_n: ins.n, row_at: row_at, row_n: rows.n, die_at: [], die_n: [], out_at: [], nout: 0 };
+}
+
+// live_edges lays out each edge's death list and the span of its out row.
+function live_edges(w: Walk, own lv: Live): Live {
+  let m: Marked = Marked { mark: __alloc_bool(w.tracked), list: [] };
+  let dies: Spans = Spans { slots: lv.slots, at: [], n: [] };
+  let out_at: i32[] = [];
+  let nout: i32 = 0;
+  let bi: i32 = 0;
+  while (bi < w.f.blocks.len()) {
+    let e: i32 = 0;
+    while (e < 2) {
+      let sid: i32 = ssa.successor_id(w.f.blocks[bi].term, e);
+      let si: i32 = -1;
+      if (sid >= 0) {
+        si = w.at[sid];
+      }
+      if (si >= 0) {
+        m = die_slots(lv, m, bi, si);
+        dies = push_span(dies, m.list);
+        out_at = out_at.append(nout);
+        nout = nout + lv.in_n[si];
+      } else {
+        dies = push_span(dies, []);
+        out_at = out_at.append(-1);
+      }
+      e = e + 1;
+    }
+    bi = bi + 1;
+  }
+  return Live { ...lv, slots: dies.slots, die_at: dies.at, die_n: dies.n, out_at: out_at, nout: nout };
+}
+
+function live_of(w: Walk, takes: Takes): Live {
+  let fl: ssalive.Flow = ssalive.compute(w.f, alias_deps(w));
+  if (!fl.ok) {
+    return no_live(fl.why);
+  }
+  return live_edges(w, live_rows(w, fl, takes));
+}
+
 // ---- the dataflow -----------------------------------------------------------
 
-// Progress is the dataflow's state: `out0` and `out1` hold each block's
-// out row per edge, flat, row `bi` at `bi * tracked`; `phin` holds each
-// tracked phi's inputs, those of phi `v` from `phi_at[v]`; `state` is the
-// row of the block being walked. Flat rather than nested so a write is one
-// element of one array the walk owns, not a copy of a row of rows.
-struct Progress { out0: i32[], out1: i32[], done: boolean[], phi_at: i32[], phin: i32[], state: i32[], findings: Finding[], opaque: string[], unproved: boolean[] }
-
-// row_equal: the row at `base` in `rows` is `state`.
-function row_equal(rows: i32[], base: i32, state: i32[]): boolean {
-  let k: i32 = 0;
-  while (k < state.len()) {
-    if (rows[base + k] != state[k]) {
-      return false;
-    }
-    k = k + 1;
-  }
-  return true;
-}
-
-function put_row(own rows: i32[], base: i32, state: i32[]): i32[] {
-  let k: i32 = 0;
-  while (k < state.len()) {
-    rows = rows.with(base + k, state[k]);
-    k = k + 1;
-  }
-  return rows;
-}
+// Progress is the dataflow's state: `out` holds the row each block hands
+// each successor, laid out by `Live`; `phin` holds each tracked phi's
+// inputs, those of phi `v` from `phi_at[v]`; `state` is one row of every
+// tracked slot, reused block by block and cleared of a block's slots when
+// its round ends, so only the slots in the block's row are ever read.
+struct Progress { out: i32[], done: boolean[], phi_at: i32[], phin: i32[], state: i32[], findings: Finding[], opaque: string[], unproved: boolean[] }
 
 function filled(n: i32, v: i32): i32[] {
   let out: i32[] = __alloc_i32(n);
@@ -2032,34 +2218,40 @@ function exits(b: ssa.SBlock): boolean {
   return false;
 }
 
-// entry_row meets the predecessors' rows into the block's entry state, then
-// the tracked phis read their edges.
-// entry_row meets the predecessors' edge rows. A count the paths disagree
-// on becomes unproved rather than a finding: the lowering pairs a retain on
-// one arm of a test with a consume on a later arm of the same test, so
-// disagreement at a join is routine, and the frame's balance shows at the
-// return instead.
-function entry_row(w: Walk, p: Progress, bi: i32): i32[] {
+// entry_row meets the predecessors' rows for the slots live at block bi's
+// entry. A count the paths disagree on becomes unproved rather than a
+// finding: the lowering pairs a retain on one arm of a test with a consume
+// on a later arm of the same test, so disagreement at a join is routine,
+// and a unit still held shows where the value dies instead.
+function entry_row(own p: Progress, w: Walk, lv: Live, bi: i32): Progress {
   let b: ssa.SBlock = w.f.blocks[bi];
-  let state: i32[] = filled(w.tracked, absent());
-  let pi: i32 = 0;
-  while (pi < b.preds.len()) {
-    let pb: i32 = w.at[b.preds[pi]];
+  let bases: i32[] = [];
+  for pid in b.preds {
+    let pb: i32 = w.at[pid];
     if (pb >= 0 && p.done[pb]) {
-      let rows: i32[] = p.out0;
-      if (ssa.successor_id(w.f.blocks[pb].term, 1) == b.id && ssa.successor_id(w.f.blocks[pb].term, 0) != b.id) {
-        rows = p.out1;
-      }
-      let base: i32 = pb * w.tracked;
-      let k: i32 = 0;
-      while (k < w.tracked) {
-        state = state.with(k, meet(state[k], rows[base + k]));
-        k = k + 1;
-      }
+      bases = bases.append(edge_base(w, lv, pb, b.id));
     }
-    pi = pi + 1;
   }
-  return state;
+  let j: i32 = 0;
+  while (j < lv.in_n[bi]) {
+    let s: i32 = absent();
+    for base in bases {
+      s = meet(s, p.out[base + j]);
+    }
+    p = Progress { ...p, state: p.state.with(lv.slots[lv.in_at[bi] + j], s) };
+    j = j + 1;
+  }
+  return p;
+}
+
+// edge_base is where block pb's row for the edge into block `id` starts.
+function edge_base(w: Walk, lv: Live, pb: i32, id: i32): i32 {
+  let t: ssa.STerm = w.f.blocks[pb].term;
+  let e: i32 = 0;
+  if (ssa.successor_id(t, 1) == id && ssa.successor_id(t, 0) != id) {
+    e = 1;
+  }
+  return lv.out_at[pb * 2 + e];
 }
 
 function enter_phis(own p: Progress, w: Walk, bi: i32): Progress {
@@ -2229,9 +2421,10 @@ function feed(own p: Progress, w: Walk, bi: i32, sid: i32): Progress {
 // whether a row changed.
 struct RoundResult { p: Progress, changed: boolean }
 
-// apply_return spends what the return hands out and reports what the frame
-// still holds.
-function apply_return(own p: Progress, w: Walk, b: ssa.SBlock): Progress {
+// apply_return spends what the return hands out and retires the block's
+// row: every value dies here.
+function apply_return(own p: Progress, w: Walk, lv: Live, bi: i32): Progress {
+  let b: ssa.SBlock = w.f.blocks[bi];
   let t: ssa.STerm = b.term;
   if (t.value >= 0) {
     let unit: boolean = w.self_abi.result_unit;
@@ -2246,47 +2439,126 @@ function apply_return(own p: Progress, w: Walk, b: ssa.SBlock): Progress {
       p = spend_if_held(p, w, t.value);
     }
   }
-  let k: i32 = 0;
-  while (k < w.tracked) {
-    if (p.state[k] > 0) {
-      let held: string = util.i32_to_string(p.state[k]) + " unit(s) still held";
-      p = found(p, w, "leaked at return", root_at(w, k), b.id, held);
-    } else if (p.state[k] == maybe()) {
+  return retire(p, w, lv, lv.row_at[bi], lv.row_n[bi], b.id, "leaked at return");
+}
+
+// retire reports a unit still held on a slot whose value has no further
+// read, and marks a count it could not settle unproved.
+function retire(own p: Progress, w: Walk, lv: Live, at: i32, n: i32, block: i32, kind: string): Progress {
+  let j: i32 = 0;
+  while (j < n) {
+    let k: i32 = lv.slots[at + j];
+    let held: i32 = p.state[k];
+    if (held > 0) {
+      p = found(p, w, kind, root_at(w, k), block, util.i32_to_string(held) + " unit(s) still held");
+    } else if (held == maybe()) {
       p = Progress { ...p, unproved: p.unproved.with(k, true) };
     }
-    k = k + 1;
+    j = j + 1;
   }
   return p;
 }
 
-// feed_successors stores the block's out row per edge, each fed its phis.
-function feed_successors(own p: Progress, w: Walk, bi: i32): RoundResult {
+// hand_edges hands the block's row to each successor, the second from the
+// same state as the first.
+function hand_edges(own p: Progress, w: Walk, lv: Live, bi: i32): RoundResult {
   let t: ssa.STerm = w.f.blocks[bi].term;
+  let saved: i32[] = row_values(p, lv, bi);
   let changed: boolean = false;
-  let base: i32 = bi * w.tracked;
-  let entry: i32[] = p.state;
-  let s0: i32 = ssa.successor_id(t, 0);
-  p = feed(p, w, bi, s0);
-  if (!row_equal(p.out0, base, p.state)) {
-    changed = true;
-    p = Progress { ...p, out0: put_row(p.out0, base, p.state) };
-  }
-  let s1: i32 = ssa.successor_id(t, 1);
-  if (s1 >= 0 && s1 != s0) {
-    p = Progress { ...p, state: entry };
-    p = feed(p, w, bi, s1);
-    if (!row_equal(p.out1, base, p.state)) {
-      changed = true;
-      p = Progress { ...p, out1: put_row(p.out1, base, p.state) };
+  let e: i32 = 0;
+  while (e < 2) {
+    if (lv.out_at[bi * 2 + e] >= 0 && (e == 0 || ssa.successor_id(t, 1) != ssa.successor_id(t, 0))) {
+      if (e == 1) {
+        p = restore_row(p, lv, bi, saved);
+      }
+      let r: RoundResult = hand_edge(p, w, lv, bi, e);
+      p = r.p;
+      changed = changed || r.changed;
     }
+    e = e + 1;
   }
   return RoundResult { p: p, changed: changed };
 }
 
-function block_round(own p: Progress, w: Walk, bi: i32, takes: Takes): RoundResult {
+// hand_edge settles what the branch proves on edge `e`, feeds the
+// successor's phis, retires what dies on the edge, and stores the row the
+// successor reads. Returns whether that row changed.
+function hand_edge(own p: Progress, w: Walk, lv: Live, bi: i32, e: i32): RoundResult {
+  let sid: i32 = ssa.successor_id(w.f.blocks[bi].term, e);
+  let si: i32 = w.at[sid];
+  p = settle_edge(p, w, bi, sid);
+  p = feed(p, w, bi, sid);
+  p = retire(p, w, lv, lv.die_at[bi * 2 + e], lv.die_n[bi * 2 + e], w.f.blocks[bi].id, "leaked where it dies");
+  let base: i32 = lv.out_at[bi * 2 + e];
+  let changed: boolean = false;
+  let j: i32 = 0;
+  while (j < lv.in_n[si]) {
+    let v: i32 = p.state[lv.slots[lv.in_at[si] + j]];
+    if (p.out[base + j] != v) {
+      changed = true;
+      p = Progress { ...p, out: p.out.with(base + j, v) };
+    }
+    j = j + 1;
+  }
+  return RoundResult { p: p, changed: changed };
+}
+
+// row_values copies the block's row out of the state; restore_row puts it
+// back; clear_row returns the row's slots to absent for the next block.
+function row_values(p: Progress, lv: Live, bi: i32): i32[] {
+  let out: i32[] = [];
+  let j: i32 = 0;
+  while (j < lv.row_n[bi]) {
+    out = out.append(p.state[lv.slots[lv.row_at[bi] + j]]);
+    j = j + 1;
+  }
+  return out;
+}
+
+function restore_row(own p: Progress, lv: Live, bi: i32, saved: i32[]): Progress {
+  let j: i32 = 0;
+  while (j < lv.row_n[bi]) {
+    p = Progress { ...p, state: p.state.with(lv.slots[lv.row_at[bi] + j], saved[j]) };
+    j = j + 1;
+  }
+  return p;
+}
+
+function clear_row(own p: Progress, lv: Live, bi: i32): Progress {
+  let j: i32 = 0;
+  while (j < lv.row_n[bi]) {
+    p = Progress { ...p, state: p.state.with(lv.slots[lv.row_at[bi] + j], absent()) };
+    j = j + 1;
+  }
+  return p;
+}
+
+function block_round(own p: Progress, w: Walk, lv: Live, bi: i32, takes: Takes): RoundResult {
+  let b: ssa.SBlock = w.f.blocks[bi];
+  p = entry_row(p, w, lv, bi);
+  p = apply_block(p, w, bi, takes);
+  let changed: boolean = false;
+  if (exits(b)) {} else if (b.term.kind_tag == 1) {
+    // The process ends here: nothing flows on to a successor or a return.
+    p = apply_return(p, w, lv, bi);
+  } else {
+    let r: RoundResult = hand_edges(p, w, lv, bi);
+    p = r.p;
+    changed = r.changed;
+  }
+  p = clear_row(p, lv, bi);
+  if (!p.done[bi]) {
+    changed = true;
+    p = Progress { ...p, done: p.done.with(bi, true) };
+  }
+  return RoundResult { p: p, changed: changed };
+}
+
+// apply_block defines the parameters at the entry, reads the phis, and
+// applies each instruction.
+function apply_block(own p: Progress, w: Walk, bi: i32, takes: Takes): Progress {
   let f: ssa.SFunc = w.f;
   let b: ssa.SBlock = f.blocks[bi];
-  p = Progress { ...p, state: entry_row(w, p, bi) };
   if (bi == w.at[f.entry]) {
     let v: i32 = 0;
     while (v < f.nparams) {
@@ -2303,27 +2575,7 @@ function block_round(own p: Progress, w: Walk, bi: i32, takes: Takes): RoundResu
     }
     i = i + 1;
   }
-  let changed: boolean = false;
-  if (exits(b)) {
-    // The process ends here: nothing flows on to a successor or a return.
-    let none: i32[] = filled(w.tracked, absent());
-    let base: i32 = bi * w.tracked;
-    if (!row_equal(p.out0, base, none)) {
-      changed = true;
-      p = Progress { ...p, out0: put_row(p.out0, base, none), out1: put_row(p.out1, base, none) };
-    }
-  } else if (b.term.kind_tag == 1) {
-    p = apply_return(p, w, b);
-  } else {
-    let r: RoundResult = feed_successors(p, w, bi);
-    p = r.p;
-    changed = r.changed;
-  }
-  if (!p.done[bi]) {
-    changed = true;
-    p = Progress { ...p, done: p.done.with(bi, true) };
-  }
-  return RoundResult { p: p, changed: changed };
+  return p;
 }
 
 // root_at is the root value at tracked index k.
@@ -2449,8 +2701,8 @@ function walk_of(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: 
   return Walk { ...w, tracked: tracked };
 }
 
-// progress_of lays out the edge rows and the phi input rows, all absent.
-function progress_of(w: Walk): Progress {
+// progress_of lays out the out rows and the phi input rows, all absent.
+function progress_of(w: Walk, lv: Live): Progress {
   let f: ssa.SFunc = w.f;
   let phi_at: i32[] = util.minus_ones(f.nvals);
   let nphin: i32 = 0;
@@ -2462,15 +2714,14 @@ function progress_of(w: Walk): Progress {
       }
     }
   }
-  let n: i32 = f.blocks.len() * w.tracked;
-  return Progress { out0: filled(n, absent()), out1: filled(n, absent()), done: __alloc_bool(f.blocks.len()), phi_at: phi_at, phin: filled(nphin, absent()), state: [], findings: [], opaque: [], unproved: __alloc_bool(w.tracked) };
+  return Progress { out: filled(lv.nout, absent()), done: __alloc_bool(f.blocks.len()), phi_at: phi_at, phin: filled(nphin, absent()), state: filled(w.tracked, absent()), findings: [], opaque: [], unproved: __alloc_bool(w.tracked) };
 }
 
 // Settled is the walk's progress once no row changes, or `changed` still
 // true at the round limit.
 struct Settled { p: Progress, changed: boolean }
 
-function settle(own p: Progress, w: Walk, order: i32[], reach: boolean[], takes: Takes): Settled {
+function settle(own p: Progress, w: Walk, lv: Live, order: i32[], reach: boolean[], takes: Takes): Settled {
   let rounds: i32 = 0;
   let changed: boolean = true;
   let once: boolean = acyclic(w, order);
@@ -2481,7 +2732,7 @@ function settle(own p: Progress, w: Walk, order: i32[], reach: boolean[], takes:
     p = Progress { ...p, findings: [], opaque: [], unproved: __alloc_bool(w.tracked) };
     for bi in order {
       if (reach[bi]) {
-        let r: RoundResult = block_round(p, w, bi, takes);
+        let r: RoundResult = block_round(p, w, lv, bi, takes);
         p = r.p;
         if (r.changed) {
           changed = true;
@@ -2535,7 +2786,12 @@ pub function certify(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, si
   let reach: boolean[] = ssadeps.reachable_blocks(f);
   let dom: ssadeps.Dom = ssadeps.dominates(f);
   let w: Walk = walk_of(f, irops, self_abi, abis, sigs, ops, at, dom, reach);
-  let done: Settled = settle(progress_of(w), w, rpo(f, at), reach, takes_of(w, dom));
+  let takes: Takes = takes_of(w, dom);
+  let lv: Live = live_of(w, takes);
+  if (!lv.ok) {
+    return skipped("liveness: " + lv.why);
+  }
+  let done: Settled = settle(progress_of(w, lv), w, lv, rpo(f, at), reach, takes);
   if (done.changed) {
     return skipped("did not settle in " + util.i32_to_string(round_limit()) + " rounds");
   }

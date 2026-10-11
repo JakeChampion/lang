@@ -108,6 +108,14 @@ function pick(name: string): Case {
         let b2: ssa.SBlock = block(2, [0, 1], [const_int(4, 0)], ret(4));
         return Case { f: func(1, 5, [b0, b1, b2]), modes: [borrow], returns_unit: false };
     }
+    if (name == "retained-on-one-arm-released-on-another") {
+        let b0: ssa.SBlock = block(0, [], [param(0), const_int(1, 1)], brif(1, 1, 2));
+        let b1: ssa.SBlock = block(1, [0], [call(2, "__fern_rc_inc", [0])], br(2));
+        let b2: ssa.SBlock = block(2, [0, 1], [], brif(1, 3, 4));
+        let b3: ssa.SBlock = block(3, [2], [call(3, "__fern_rc_dec", [0])], br(4));
+        let b4: ssa.SBlock = block(4, [2, 3], [const_int(4, 0)], ret(4));
+        return Case { f: func(1, 5, [b0, b1, b2, b3, b4]), modes: [borrow], returns_unit: false };
+    }
     eprint("rccertify_cases: no case named " + name);
     exit(2);
     return Case { f: one_block(0, 0, [], ret(0 - 1)), modes: [], returns_unit: false };
@@ -163,7 +171,8 @@ func TestSelfHostRcCertifyCases(t *testing.T) {
 		{"unique-child-released", nil, 0, ""},
 		{"shared-child-released", []string{"spent without a unit of v1"}, 0, ""},
 		{"null-guarded-release", nil, 0, ""},
-		{"released-on-one-arm", nil, 1, ""},
+		{"released-on-one-arm", []string{"leaked where it dies of v1"}, 0, ""},
+		{"retained-on-one-arm-released-on-another", nil, 1, ""},
 		{"resumed-frame-not-certified", nil, 0, "resumes from a task frame"},
 	}
 	for _, tc := range cases {
