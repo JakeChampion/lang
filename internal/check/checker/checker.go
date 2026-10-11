@@ -7137,13 +7137,8 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 				types[i] = f.Type
 			}
 			if kind == "FromJson" {
-				if !hasStdJson(prog) {
-					c.errfCode(sd.P, "E021", "cannot @derive(%s): the decoder is std/json's; import \"std/json\"", demangle(dn))
-					continue
-				}
-				elems, bad, ok := fromJsonFieldTypes(types)
+				elems, ok := c.fromJsonDeriveTypes(prog, sd.P, dn, sd.Name, labels, types)
 				if !ok {
-					c.errfCode(sd.P, "E021", "cannot @derive(%s) for %s: %s has type %s; FromJson decodes a field of a FromJson type, an array of one or an Option of one", demangle(dn), demangle(sd.Name), labels[bad], types[bad])
 					continue
 				}
 				types = elems
@@ -7169,7 +7164,7 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 				method = synthFromJsonValue(sd, recvType)
 				// The text-taking companion `from_json(s)` is an associated
 				// function beside the impl, not a requirement of the trait.
-				text := synthFromJsonText(sd, recvType)
+				text := synthFromJsonText(recvType.Name, recvType)
 				text.SourceModule = sd.SourceModule
 				text.ImplTrait = dn
 				bindDeriveTypeParams(text, implTypeParams, dn)
@@ -7218,6 +7213,13 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 					types = append(types, pt)
 				}
 			}
+			if deriveKind(dn) == "FromJson" {
+				elems, ok := c.fromJsonDeriveTypes(prog, ed.P, dn, ed.Name, labels, types)
+				if !ok {
+					continue
+				}
+				types = elems
+			}
 			if c.preCheckDeriveFields(dc, td, dn, deriveKind(dn), ed.Name, ed.P, labels, types, ed.TypeParams) {
 				continue
 			}
@@ -7235,6 +7237,13 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 				method = synthEnumHash(ed, recvType)
 			case "Json":
 				method = synthEnumJson(ed, recvType)
+			case "FromJson":
+				method = synthEnumFromJsonValue(ed, recvType)
+				text := synthFromJsonText(recvType.Name, recvType)
+				text.SourceModule = ed.SourceModule
+				text.ImplTrait = dn
+				bindDeriveTypeParams(text, implTypeParams, dn)
+				prog.Funcs = append(prog.Funcs, text)
 			case "Default":
 				m, badType := synthEnumDefault(ed, recvType)
 				if m == nil {
@@ -7243,7 +7252,7 @@ func (c *checker) synthesizeDerives(prog *ast.Program) {
 				}
 				method = m
 			default:
-				c.errfCode(ed.P, "E021", "cannot @derive(%s): only Eq, Display, Debug, Ord, Hash, Json, and Default are derivable for enums", demangle(dn))
+				c.errfCode(ed.P, "E021", "cannot @derive(%s): only Eq, Display, Debug, Ord, Hash, Json, FromJson, and Default are derivable", demangle(dn))
 				continue
 			}
 			method.SourceModule = ed.SourceModule
@@ -7995,15 +8004,7 @@ func synthJson(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
 // their flat `json__` names, as the `@derive(json.FromJson)` site's own
 // `import "std/json"` would mangle them.
 func synthFromJsonValue(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
-	jcall := func(fn string, args ...ast.Expr) ast.Expr {
-		return &ast.Call{Callee: &ast.Ident{Name: "json__" + fn}, Args: args}
-	}
-	variant := func(name string, arg ast.Expr) ast.Expr {
-		return &ast.Call{Callee: &ast.Ident{Name: name}, Args: []ast.Expr{arg}}
-	}
-	ret := func(e ast.Expr) *ast.Block {
-		return &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: e}}}
-	}
+	jcall, variant, ret := fjCall, fjVariant, fjReturn
 	fis := make([]ast.FieldInit, len(sd.Fields))
 	for i, f := range sd.Fields {
 		fis[i] = ast.FieldInit{Name: f.Name, Value: &ast.Ident{Name: "__fj_" + f.Name}}
@@ -8014,19 +8015,10 @@ func synthFromJsonValue(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
 		value := "__fj_v_" + f.Name
 		errBind := "__fj_e_" + f.Name
 		getter := "from_json_field"
-		var decode ast.Expr
-		switch container, _ := fromJsonContainer(f.Type); container {
-		case "array":
-			decode = &ast.Call{Callee: &ast.Ident{Name: "json__from_json_array"}, Args: []ast.Expr{&ast.Ident{Name: value}},
-				TypeArgs: []ast.Type{fromJsonElem(f.Type)}, TypeArgsWritten: true}
-		case "option":
+		if container, _ := fromJsonContainer(f.Type); container == "option" {
 			getter = "from_json_optional_field"
-			decode = &ast.Call{Callee: &ast.Ident{Name: "json__from_json_option"}, Args: []ast.Expr{&ast.Ident{Name: value}},
-				TypeArgs: []ast.Type{fromJsonElem(f.Type)}, TypeArgsWritten: true}
-		default:
-			decode = &ast.Call{Callee: &ast.FieldAccess{Target: &ast.Ident{Name: fromJsonTypeName(f.Type)}, Field: "from_json_value"},
-				Args: []ast.Expr{&ast.Ident{Name: value}}}
 		}
+		decode := fromJsonDecode(f.Type, value)
 		inner := &ast.Match{
 			Tag: decode,
 			Arms: []*ast.MatchArm{
@@ -8053,6 +8045,154 @@ func synthFromJsonValue(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
 	}
 }
 
+// fromJsonDeriveTypes checks a FromJson derive's preconditions, the std/json
+// import and each field or payload type's shape, and answers the types that
+// must conform: an array's or Option's element in place of the container.
+func (c *checker) fromJsonDeriveTypes(prog *ast.Program, p ast.Position, dn, name string, labels []string, types []ast.Type) ([]ast.Type, bool) {
+	if !hasStdJson(prog) {
+		c.errfCode(p, "E021", "cannot @derive(%s): the decoder is std/json's; import \"std/json\"", demangle(dn))
+		return nil, false
+	}
+	elems, bad, ok := fromJsonFieldTypes(types)
+	if !ok {
+		c.errfCode(p, "E021", "cannot @derive(%s) for %s: %s has type %s; FromJson decodes a field of a FromJson type, an array of one or an Option of one", demangle(dn), demangle(name), labels[bad], types[bad])
+		return nil, false
+	}
+	return elems, true
+}
+
+// synthEnumFromJsonValue builds an enum's derived `from_json_value`, the
+// inverse of synthEnumJson: std/json's `from_json_variant` reads the
+// variant's name, and the arm for that name decodes each payload out of
+// `from_json_payload(v)` as synthFromJsonValue decodes a field, a record
+// variant's by name and a positional one's with `from_json_item`. A
+// payload's shape error comes back prefixed with the variant.
+func synthEnumFromJsonValue(ed *ast.EnumDecl, recv ast.EnumType) *ast.FuncDecl {
+	var stmts []ast.Stmt
+	for _, v := range ed.Variants {
+		stmts = append(stmts, &ast.If{
+			Cond: &ast.Binary{Op: "==", Left: &ast.Ident{Name: "__fj_tag"}, Right: &ast.StringLit{Value: v.Name}},
+			Then: enumFromJsonVariant(v, recv),
+		})
+	}
+	stmts = append(stmts, fjReturn(fjVariant("Err", fjCall("from_json_unknown_variant", &ast.Ident{Name: "__fj_tag"}))))
+	body := &ast.Block{Stmts: []ast.Stmt{
+		&ast.Match{
+			Tag: fjCall("from_json_variant", &ast.Ident{Name: "v"}),
+			Arms: []*ast.MatchArm{
+				{VariantName: "Ok", Bindings: []string{"__fj_tag"}, Body: &ast.Block{Stmts: stmts}},
+				{VariantName: "Err", Bindings: []string{"__fj_e"}, Body: fjReturn(fjVariant("Err", &ast.Ident{Name: "__fj_e"}))},
+			},
+		},
+		&ast.Return{Value: fjVariant("Err", &ast.StringLit{Value: ""})},
+	}}
+	return &ast.FuncDecl{
+		Name:       "from_json_value",
+		AssocType:  recv.Name,
+		Params:     []ast.Param{{Name: "v", Type: ast.EnumType{Name: "JsonValue"}}},
+		ReturnType: ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StringType{}}},
+		Body:       body,
+	}
+}
+
+// enumFromJsonVariant decodes variant v's payloads, innermost first, around
+// `let __fj_r: Recv = V(…); return Ok(__fj_r);`, the annotation carrying a
+// generic enum's arguments.
+func enumFromJsonVariant(v ast.EnumVariant, recv ast.EnumType) *ast.Block {
+	n := len(v.Payloads)
+	args := make([]ast.Expr, n)
+	for k := range v.Payloads {
+		args[k] = &ast.Ident{Name: fmt.Sprintf("__fj_%s_%d", v.Name, k)}
+	}
+	var value ast.Expr = &ast.Ident{Name: v.Name}
+	if n > 0 {
+		value = &ast.Call{Callee: &ast.Ident{Name: v.Name}, Args: args}
+	}
+	body := &ast.Block{Stmts: []ast.Stmt{
+		&ast.Var{Name: "__fj_r", Type: recv, Init: value, WasAnnotated: true},
+		&ast.Return{Value: fjVariant("Ok", &ast.Ident{Name: "__fj_r"})},
+	}}
+	for k := n - 1; k >= 0; k-- {
+		body = enumFromJsonPayload(v, k, body)
+	}
+	return body
+}
+
+// enumFromJsonPayload wraps body in the reading and decoding of payload k.
+func enumFromJsonPayload(v ast.EnumVariant, k int, body *ast.Block) *ast.Block {
+	n := len(v.Payloads)
+	pt := v.Payloads[k]
+	value := fmt.Sprintf("__fj_v_%s_%d", v.Name, k)
+	errBind := fmt.Sprintf("__fj_e_%s_%d", v.Name, k)
+	container, _ := fromJsonContainer(pt)
+	payload := fjCall("from_json_payload", &ast.Ident{Name: "v"})
+	var get ast.Expr
+	var why ast.Expr = &ast.Ident{Name: errBind}
+	switch {
+	case len(v.FieldNames) > 0:
+		getter := "from_json_field"
+		if container == "option" {
+			getter = "from_json_optional_field"
+		}
+		get = fjCall(getter, payload, &ast.StringLit{Value: v.FieldNames[k]})
+		why = fjCall("from_json_at", &ast.StringLit{Value: v.FieldNames[k]}, why)
+	default:
+		getter := "from_json_item"
+		if container == "option" {
+			getter = "from_json_optional_item"
+		}
+		get = fjCall(getter, payload, &ast.NumberLit{Value: int64(k)}, &ast.NumberLit{Value: int64(n)})
+		if n > 1 {
+			why = fjCall("from_json_index", &ast.NumberLit{Value: int64(k)}, why)
+		}
+	}
+	inVariant := func(e ast.Expr) *ast.Block {
+		return fjReturn(fjVariant("Err", fjCall("from_json_in", &ast.StringLit{Value: v.Name}, e)))
+	}
+	inner := &ast.Match{
+		Tag: fromJsonDecode(pt, value),
+		Arms: []*ast.MatchArm{
+			{VariantName: "Ok", Bindings: []string{fmt.Sprintf("__fj_%s_%d", v.Name, k)}, Body: body},
+			{VariantName: "Err", Bindings: []string{errBind}, Body: inVariant(why)},
+		},
+	}
+	return &ast.Block{Stmts: []ast.Stmt{&ast.Match{
+		Tag: get,
+		Arms: []*ast.MatchArm{
+			{VariantName: "Ok", Bindings: []string{value}, Body: &ast.Block{Stmts: []ast.Stmt{inner}}},
+			{VariantName: "Err", Bindings: []string{errBind}, Body: inVariant(&ast.Ident{Name: errBind})},
+		},
+	}}}
+}
+
+func fjCall(fn string, args ...ast.Expr) ast.Expr {
+	return &ast.Call{Callee: &ast.Ident{Name: "json__" + fn}, Args: args}
+}
+
+func fjVariant(name string, arg ast.Expr) ast.Expr {
+	return &ast.Call{Callee: &ast.Ident{Name: name}, Args: []ast.Expr{arg}}
+}
+
+func fjReturn(e ast.Expr) *ast.Block {
+	return &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: e}}}
+}
+
+// fromJsonDecode decodes the JsonValue bound to value as type t: an array
+// through `from_json_array[E]`, an Option through `from_json_option[E]`,
+// anything else through t's own `from_json_value`.
+func fromJsonDecode(t ast.Type, value string) ast.Expr {
+	arg := []ast.Expr{&ast.Ident{Name: value}}
+	switch container, _ := fromJsonContainer(t); container {
+	case "array":
+		return &ast.Call{Callee: &ast.Ident{Name: "json__from_json_array"}, Args: arg,
+			TypeArgs: []ast.Type{fromJsonElem(t)}, TypeArgsWritten: true}
+	case "option":
+		return &ast.Call{Callee: &ast.Ident{Name: "json__from_json_option"}, Args: arg,
+			TypeArgs: []ast.Type{fromJsonElem(t)}, TypeArgsWritten: true}
+	}
+	return &ast.Call{Callee: &ast.FieldAccess{Target: &ast.Ident{Name: fromJsonTypeName(t)}, Field: "from_json_value"}, Args: arg}
+}
+
 // fromJsonTypeName spells the type a derived decoder calls
 // `from_json_value` on: a nominal or primitive by its method-receiver
 // name, a type parameter by its own.
@@ -8068,12 +8208,12 @@ func fromJsonTypeName(t ast.Type) string {
 
 // synthFromJsonText builds the derived `from_json(s: string): Result[Self,
 // string]`, `json.decode[Self](s)` under the type's own name.
-func synthFromJsonText(sd *ast.StructDecl, recv ast.StructType) *ast.FuncDecl {
+func synthFromJsonText(name string, recv ast.Type) *ast.FuncDecl {
 	call := &ast.Call{Callee: &ast.Ident{Name: "json__decode"}, Args: []ast.Expr{&ast.Ident{Name: "s"}},
 		TypeArgs: []ast.Type{recv}, TypeArgsWritten: true}
 	return &ast.FuncDecl{
 		Name:       "from_json",
-		AssocType:  recv.Name,
+		AssocType:  name,
 		Params:     []ast.Param{{Name: "s", Type: ast.StringType{}}},
 		ReturnType: ast.EnumType{Name: "Result", Args: []ast.Type{recv, ast.StringType{}}},
 		Body:       &ast.Block{Stmts: []ast.Stmt{&ast.Return{Value: call}}},

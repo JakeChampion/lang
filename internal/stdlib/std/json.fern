@@ -1767,7 +1767,7 @@ pub function from_json_array[T: FromJson](v: JsonValue): Result[T[], string] {
             out = out.append(x);
           },
           Err(why) => {
-            return Err("[" + i.to_string() + "]: " + why);
+            return Err(from_json_index(i, why));
           }
         }
         i = i + 1;
@@ -1854,4 +1854,94 @@ pub function from_json_optional_field(v: JsonValue, name: string): Result[Option
 
 pub function from_json_at(name: string, why: string): string {
   return "field \"" + name + "\": " + why;
+}
+
+// `from_json_index(i, why)` prefixes element i's shape error with its index.
+pub function from_json_index(i: i32, why: string): string {
+  return "[" + i.to_string() + "]: " + why;
+}
+
+// The enum derive's readers. A derived enum's JSON is its variant's name: a
+// string for a unit variant, else an object whose one key is the name and
+// whose value is the payload. `from_json_variant(v)` is that name,
+// `from_json_payload(v)` the payload (null for the string form), and
+// `from_json_in(name, why)` prefixes a payload's shape error with the variant.
+pub function from_json_variant(v: JsonValue): Result[string, string] {
+  match (v) {
+    JString(s) => {
+      return Ok(s);
+    },
+    JObject(m) => {
+      if (m.len() != 1) {
+        return Err("expected an object with one key, got " + m.len().to_string());
+      }
+      let it: MapIter[string, JsonValue] = m.iter();
+      return Ok(it.key());
+    },
+    _ => {
+      return Err("expected a variant name or a one-key object, got " + json_kind(v));
+    }
+  }
+  return Err("");
+}
+
+pub function from_json_payload(v: JsonValue): JsonValue {
+  match (v) {
+    JObject(m) => {
+      if (m.len() == 1) {
+        let it: MapIter[string, JsonValue] = m.iter();
+        return it.value();
+      }
+    },
+    _ => {}
+  }
+  return JNull;
+}
+
+pub function from_json_in(variant: string, why: string): string {
+  return "variant \"" + variant + "\": " + why;
+}
+
+pub function from_json_unknown_variant(name: string): string {
+  return "unknown variant \"" + name + "\"";
+}
+
+// `from_json_item(p, i, n)` is payload i of a variant with n positional
+// payloads: p itself when n is 1, else element i of p, an array of n.
+// `from_json_optional_item` answers `Ok(None)` for a null one instead.
+pub function from_json_item(p: JsonValue, i: i32, n: i32): Result[JsonValue, string] {
+  if (n == 1) {
+    return Ok(p);
+  }
+  match (p) {
+    JArray(xs) => {
+      if (xs.len() != n) {
+        return Err("expected an array of " + n.to_string() + ", got " + xs.len().to_string());
+      }
+      return Ok(xs[i]);
+    },
+    _ => {
+      return Err("expected an array, got " + json_kind(p));
+    }
+  }
+  return Err("");
+}
+
+pub function from_json_optional_item(p: JsonValue, i: i32, n: i32): Result[Option[JsonValue], string] {
+  match (from_json_item(p, i, n)) {
+    Ok(x) => {
+      match (x) {
+        JNull => {
+          return Ok(None);
+        },
+        _ => {
+          return Ok(Some(x));
+        }
+      }
+    },
+    Err(why) => {
+      return Err(why);
+    }
+  }
+  return Err("");
 }

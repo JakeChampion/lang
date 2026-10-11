@@ -25576,28 +25576,14 @@ function synth_from_json_value(sd: StructDecl): FuncDecl {
     let fty: string = sd.fields[fi].type_name;
     let value: string = "__fj_v_" + fname;
     let ebind: string = "__fj_e_" + fname;
-    let cont: string = fromjson_container(fty);
-    let elem: string = fromjson_elem(fty);
     let getter: string = "from_json_field";
-    if (cont == "option") {
+    if (fromjson_container(fty) == "option") {
       getter = "from_json_optional_field";
     }
-    let decode: ast.Expr = ast.ExprCall { callee: e_field_access(e_ident("json"), "from_json_elem"), args: [e_ident(value)], line: 0, col: 0, type_args: [elem], ty: "" };
-    if (cont == "array") {
-      decode = ast.ExprCall { callee: e_field_access(e_ident("json"), "from_json_array"), args: [e_ident(value)], line: 0, col: 0, type_args: [elem], ty: "" };
-    }
-    if (cont == "option") {
-      decode = ast.ExprCall { callee: e_field_access(e_ident("json"), "from_json_option"), args: [e_ident(value)], line: 0, col: 0, type_args: [elem], ty: "" };
-    }
-    let at_err: ast.Expr = e_call(e_ident("Err"), [e_call(e_field_access(e_ident("json"), "from_json_at"), [e_string(fname), e_ident(ebind)])]);
-    let inner_arms: ast.MatchArm[] = [];
-    inner_arms = inner_arms.append(ast.MatchArm { pattern: p_variant("Ok", "__fj_" + fname), body: body, line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
-    inner_arms = inner_arms.append(ast.MatchArm { pattern: p_variant("Err", ebind), body: [s_return(at_err)], line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
-    let inner: ast.Stmt = s_match(decode, inner_arms);
-    let outer_arms: ast.MatchArm[] = [];
-    outer_arms = outer_arms.append(ast.MatchArm { pattern: p_variant("Ok", value), body: [inner], line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
-    outer_arms = outer_arms.append(ast.MatchArm { pattern: p_variant("Err", ebind), body: [s_return(e_call(e_ident("Err"), [e_ident(ebind)]))], line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
-    body = [s_match(e_call(e_field_access(e_ident("json"), getter), [e_ident("v"), e_string(fname)]), outer_arms)];
+    let at_err: ast.Expr = e_call(e_ident("Err"), [fj_call("from_json_at", [e_string(fname), e_ident(ebind)])]);
+    let inner: ast.Stmt = s_match(fromjson_decode(fty, value), [fj_arm("Ok", "__fj_" + fname, body), fj_arm("Err", ebind, [s_return(at_err)])]);
+    let outer_arms: ast.MatchArm[] = [fj_arm("Ok", value, [inner]), fj_arm("Err", ebind, [s_return(e_call(e_ident("Err"), [e_ident(ebind)]))])];
+    body = [s_match(fj_call(getter, [e_ident("v"), e_string(fname)]), outer_arms)];
     fi = fi - 1;
   }
   let params: ast.ParamDecl[] = [ast.ParamDecl { name: "v", type_name: "JsonValue", own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
@@ -25606,29 +25592,128 @@ function synth_from_json_value(sd: StructDecl): FuncDecl {
 }
 
 function derived_self_type(sd: StructDecl): string {
-  let self_ty: string = sd.name;
-  if (sd.type_params.len() > 0) {
-    let tps: string = "";
-    let ti: i32 = 0;
-    while (ti < sd.type_params.len()) {
-      if (ti > 0) {
-        tps = tps + ", ";
-      }
-      tps = tps + sd.type_params[ti];
-      ti = ti + 1;
-    }
-    self_ty = sd.name + "[" + tps + "]";
+  return applied_type(sd.name, sd.type_params);
+}
+
+// applied_type spells a type applied to its own parameters: `Pair[A, B]`.
+function applied_type(name: string, type_params: string[]): string {
+  if (type_params.len() == 0) {
+    return name;
   }
-  return self_ty;
+  let tps: string = "";
+  let ti: i32 = 0;
+  while (ti < type_params.len()) {
+    if (ti > 0) {
+      tps = tps + ", ";
+    }
+    tps = tps + type_params[ti];
+    ti = ti + 1;
+  }
+  return name + "[" + tps + "]";
 }
 
 // synth_from_json_text builds the derived `from_json(s: string):
 // Result[Self, string]`: `json.decode[Self](s)` under the type's own name.
-function synth_from_json_text(sd: StructDecl): FuncDecl {
-  let call: ast.Expr = ast.ExprCall { callee: e_field_access(e_ident("json"), "decode"), args: [e_ident("s")], line: 0, col: 0, type_args: [derived_self_type(sd)], ty: "" };
+function synth_from_json_text(name: string, self_ty: string): FuncDecl {
+  let call: ast.Expr = ast.ExprCall { callee: e_field_access(e_ident("json"), "decode"), args: [e_ident("s")], line: 0, col: 0, type_args: [self_ty], ty: "" };
   let params: ast.ParamDecl[] = [ast.ParamDecl { name: "s", type_name: "string", own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
   let notp: string[] = [];
-  return FuncDecl { stdlib: "", no_inline: false, name: "from_json", receiver_name: "", receiver_type: sd.name, receiver_own: false, type_params: notp, params: params, ret_type: "Result[" + sd.name + ", string]", body: [s_return(call)], line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "FromJson", dyn_traits: [], streams: [] };
+  return FuncDecl { stdlib: "", no_inline: false, name: "from_json", receiver_name: "", receiver_type: name, receiver_own: false, type_params: notp, params: params, ret_type: "Result[" + name + ", string]", body: [s_return(call)], line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "FromJson", dyn_traits: [], streams: [] };
+}
+
+// fromjson_decode decodes the JsonValue bound to `value` as type t: an array
+// through `json.from_json_array[E]`, an Option through
+// `json.from_json_option[E]`, anything else through `json.from_json_elem[t]`.
+function fromjson_decode(t: string, value: string): ast.Expr {
+  let c: string = fromjson_container(t);
+  let reader: string = "from_json_elem";
+  if (c == "array") {
+    reader = "from_json_array";
+  }
+  if (c == "option") {
+    reader = "from_json_option";
+  }
+  return ast.ExprCall { callee: e_field_access(e_ident("json"), reader), args: [e_ident(value)], line: 0, col: 0, type_args: [fromjson_elem(t)], ty: "" };
+}
+
+function fj_call(f: string, args: ast.Expr[]): ast.Expr {
+  return e_call(e_field_access(e_ident("json"), f), args);
+}
+
+function fj_arm(variant: string, bind: string, body: ast.Stmt[]): ast.MatchArm {
+  return ast.MatchArm { pattern: p_variant(variant, bind), body: body, line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false };
+}
+
+// fj_in returns a payload's shape error prefixed with its variant.
+function fj_in(variant: string, why: ast.Expr): ast.Stmt[] {
+  return [s_return(e_call(e_ident("Err"), [fj_call("from_json_in", [e_string(variant), why])]))];
+}
+
+// synth_enum_from_json_value builds an enum's derived `from_json_value`, the
+// inverse of synth_enum_json: std/json's `from_json_variant` reads the
+// variant's name, and the arm for that name decodes each payload out of
+// `from_json_payload(v)` as a struct's field is decoded, a record variant's
+// by name and a positional one's with `from_json_item`. Mirrors the native
+// synthEnumFromJsonValue.
+function synth_enum_from_json_value(ename: string, self_ty: string, variants: StructDecl[]): FuncDecl {
+  let stmts: ast.Stmt[] = [];
+  for v in variants {
+    stmts = stmts.append(s_if(e_binary("==", e_ident("__fj_tag"), e_string(v.name)), enum_from_json_variant(v, self_ty), []));
+  }
+  stmts = stmts.append(s_return(e_call(e_ident("Err"), [fj_call("from_json_unknown_variant", [e_ident("__fj_tag")])])));
+  let arms: ast.MatchArm[] = [fj_arm("Ok", "__fj_tag", stmts), fj_arm("Err", "__fj_e", [s_return(e_call(e_ident("Err"), [e_ident("__fj_e")]))])];
+  let body: ast.Stmt[] = [s_match(fj_call("from_json_variant", [e_ident("v")]), arms), s_return(e_call(e_ident("Err"), [e_string("")]))];
+  let params: ast.ParamDecl[] = [ast.ParamDecl { name: "v", type_name: "JsonValue", own: false, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
+  let notp: string[] = [];
+  return FuncDecl { stdlib: "", no_inline: false, name: "from_json_value", receiver_name: "", receiver_type: ename, receiver_own: false, type_params: notp, params: params, ret_type: "Result[" + ename + ", string]", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "FromJson", dyn_traits: [], streams: [] };
+}
+
+// enum_from_json_variant decodes variant v's payloads, innermost first,
+// around `let __fj_r: Self = V(…); return Ok(__fj_r);`, the annotation
+// carrying a generic enum's parameters.
+function enum_from_json_variant(v: StructDecl, self_ty: string): ast.Stmt[] {
+  let value: ast.Expr = e_ident(v.name);
+  if (v.fields.len() > 0) {
+    let args: ast.Expr[] = [];
+    let a: i32 = 0;
+    while (a < v.fields.len()) {
+      args = args.append(e_ident("__fj_" + v.name + "_" + dl_itoa(a)));
+      a = a + 1;
+    }
+    value = e_call(e_ident(v.name), args);
+  }
+  let body: ast.Stmt[] = [s_var("__fj_r", self_ty, value), s_return(e_call(e_ident("Ok"), [e_ident("__fj_r")]))];
+  let k: i32 = v.fields.len() - 1;
+  while (k >= 0) {
+    body = enum_from_json_payload(v, k, body);
+    k = k - 1;
+  }
+  return body;
+}
+
+// enum_from_json_payload wraps body in the reading and decoding of payload k.
+function enum_from_json_payload(v: StructDecl, k: i32, body: ast.Stmt[]): ast.Stmt[] {
+  let n: i32 = v.fields.len();
+  let pt: string = v.fields[k].type_name;
+  let tag: string = v.name + "_" + dl_itoa(k);
+  let value: string = "__fj_v_" + tag;
+  let ebind: string = "__fj_e_" + tag;
+  let optional: string = "";
+  if (fromjson_container(pt) == "option") {
+    optional = "optional_";
+  }
+  let payload: ast.Expr = fj_call("from_json_payload", [e_ident("v")]);
+  let why: ast.Expr = e_ident(ebind);
+  let get: ast.Expr = fj_call("from_json_" + optional + "item", [payload, e_number(dl_itoa(k), "", false), e_number(dl_itoa(n), "", false)]);
+  if (v.variant_field_names.len() == n) {
+    let fname: string = v.variant_field_names[k];
+    get = fj_call("from_json_" + optional + "field", [payload, e_string(fname)]);
+    why = fj_call("from_json_at", [e_string(fname), why]);
+  } else if (n > 1) {
+    why = fj_call("from_json_index", [e_number(dl_itoa(k), "", false), why]);
+  }
+  let inner: ast.Stmt = s_match(fromjson_decode(pt, value), [fj_arm("Ok", "__fj_" + tag, body), fj_arm("Err", ebind, fj_in(v.name, why))]);
+  return [s_match(get, [fj_arm("Ok", value, [inner]), fj_arm("Err", ebind, fj_in(v.name, e_ident(ebind)))])];
 }
 
 // synth_enum_display: variant-wise `to_string` rendering `Variant(p, …)`,
@@ -25835,8 +25920,9 @@ function synth_enum_hash(ename: string, variants: StructDecl[]): FuncDecl {
 
 // synth_enum_json: variant-wise `to_json` — a unit variant renders as
 // its name as a JSON string (`"Empty"`); a payload variant as a single-
-// key object (`{"Circle":<__p0.to_json()>}`), and a MULTI-payload variant as
-// a JSON array under that key (`{"Rect":[2,3]}`). Externally-tagged, matching
+// key object (`{"Circle":<__p0.to_json()>}`), a MULTI-payload variant as
+// a JSON array under that key (`{"Pair":[2,3]}`), and a record variant as an
+// object under it (`{"Rect":{"w":2,"h":3}}`). Externally-tagged, matching
 // the Go synthEnumJson.
 function synth_enum_json(ename: string, variants: StructDecl[]): FuncDecl {
   let arms: ast.MatchArm[] = [];
@@ -25844,23 +25930,7 @@ function synth_enum_json(ename: string, variants: StructDecl[]): FuncDecl {
   while (i < variants.len()) {
     let v: StructDecl = variants[i];
     if (v.fields.len() > 0) {
-      // One payload renders bare (`{"Circle":5}`); two or more render as a
-      // JSON ARRAY (`{"Rect":[2,3]}`), matching the Go synthEnumJson.
-      let e: ast.Expr = e_string("{\"" + v.name + "\":");
-      if (v.fields.len() > 1) {
-        e = e_binary("+", e, e_string("["));
-      }
-      let pj: i32 = 0;
-      while (pj < v.fields.len()) {
-        if (pj > 0) {
-          e = e_binary("+", e, e_string(","));
-        }
-        e = e_binary("+", e, dv_call0(e_ident("__p" + dl_itoa(pj)), "to_json"));
-        pj = pj + 1;
-      }
-      if (v.fields.len() > 1) {
-        e = e_binary("+", e, e_string("]"));
-      }
+      let e: ast.Expr = e_binary("+", e_string("{\"" + v.name + "\":"), enum_json_payloads(v));
       e = e_binary("+", e, e_string("}"));
       arms = arms.append(ast.MatchArm { pattern: p_variant_n(v.name, "__p", v.fields.len()), body: [s_return(e)], line: 0, col: 0, guard: e_bool(true), has_guard: false, alt_cont: false });
     } else {
@@ -25872,6 +25942,36 @@ function synth_enum_json(ename: string, variants: StructDecl[]): FuncDecl {
   let notp: string[] = [];
   let noparams: ast.ParamDecl[] = [];
   return FuncDecl { stdlib: "", no_inline: false, name: "to_json", receiver_name: "self", receiver_type: ename, receiver_own: false, type_params: notp, params: noparams, ret_type: "string", body: body, line: 0, col: 0, import_iface: "", import_wit: "", all_type_params: [], bound_traits: [], fip: false, fbip: false, fip_allowance: 0, async: false, is_const: false, is_pub: true, ret_fn_ret: "", ret_fn_param_types: "", is_package: false, module: "", impl_trait: "Json", dyn_traits: [], streams: [] };
+}
+
+// enum_json_payloads renders a payload variant's value: one payload bare,
+// a record variant's as an object, two or more positional ones as an array.
+function enum_json_payloads(v: StructDecl): ast.Expr {
+  let named: boolean = v.variant_field_names.len() == v.fields.len();
+  let open: string = "[";
+  let close: string = "]";
+  if (named) {
+    open = "{";
+    close = "}";
+  } else if (v.fields.len() == 1) {
+    open = "";
+    close = "";
+  }
+  let e: ast.Expr = e_string(open);
+  let pj: i32 = 0;
+  while (pj < v.fields.len()) {
+    let sep: string = "";
+    if (pj > 0) {
+      sep = ",";
+    }
+    if (named) {
+      sep = sep + "\"" + v.variant_field_names[pj] + "\":";
+    }
+    e = e_binary("+", e, e_string(sep));
+    e = e_binary("+", e, dv_call0(e_ident("__p" + dl_itoa(pj)), "to_json"));
+    pj = pj + 1;
+  }
+  return e_binary("+", e, e_string(close));
 }
 
 // enum_default_derivable reports whether an enum has a derivable default: it
@@ -25917,11 +26017,12 @@ function synth_enum_default(ename: string, variants: StructDecl[]): FuncDecl {
 }
 
 // synth_enum_derives appends the derivable enum methods. Display, Eq,
-// Ord, Hash, Json, and Default are supported (Ord uses variant-declaration
-// order then a lexicographic payload compare; Hash seeds with the variant
-// tag; Json is externally tagged; Default is the first variant defaulted —
-// the only associated/receiver-less one).
-function synth_enum_derives(ename: string, declared: StructDecl[], derives: string[], funcs: FuncDecl[]): FuncDecl[] {
+// Ord, Hash, Json, FromJson, and Default are supported (Ord uses
+// variant-declaration order then a lexicographic payload compare; Hash seeds
+// with the variant tag; Json is externally tagged and FromJson reads it back;
+// Default is the first variant defaulted. Default and FromJson are the
+// associated/receiver-less ones).
+function synth_enum_derives(ename: string, type_params: string[], declared: StructDecl[], derives: string[], funcs: FuncDecl[], has_json_import: boolean): FuncDecl[] {
   // A derive reads each field by the box it lowers to: a `str` payload
   // derives exactly as a `string` one.
   let variants: StructDecl[] = [];
@@ -25946,15 +26047,27 @@ function synth_enum_derives(ename: string, declared: StructDecl[], derives: stri
     if (kind == "Hash") {
       funcs = funcs.append(synth_enum_hash(ename, variants));
     }
-    if (kind == "Json") {
-      funcs = funcs.append(synth_enum_json(ename, variants));
-    }
+    funcs = synth_enum_json_derive(kind, ename, type_params, variants, funcs, has_json_import);
     if (kind == "Default") {
       if (enum_default_derivable(declared)) {
         funcs = funcs.append(synth_enum_default(ename, variants));
       }
     }
     di = di + 1;
+  }
+  return funcs;
+}
+
+// synth_enum_json_derive appends std/json's derives: the encoder for Json,
+// the decoder and its text-taking companion for FromJson, which are only
+// synthesised when std/json is imported (the checker reports it missing).
+function synth_enum_json_derive(kind: string, ename: string, type_params: string[], variants: StructDecl[], funcs: FuncDecl[], has_json_import: boolean): FuncDecl[] {
+  if (kind == "Json") {
+    return funcs.append(synth_enum_json(ename, variants));
+  }
+  if (kind == "FromJson" && has_json_import) {
+    let self_ty: string = applied_type(ename, type_params);
+    return funcs.append(synth_enum_from_json_value(ename, self_ty, variants)).append(synth_from_json_text(ename, self_ty));
   }
   return funcs;
 }
@@ -26211,7 +26324,7 @@ function synth_derives(declared: StructDecl, derives: string[], funcs: FuncDecl[
     // in prog.Funcs` gate); the checker reports the missing import.
     if (kind == "FromJson" && has_json_import) {
       funcs = funcs.append(synth_from_json_value(sd));
-      funcs = funcs.append(synth_from_json_text(sd));
+      funcs = funcs.append(synth_from_json_text(sd.name, derived_self_type(sd)));
     }
     if (kind == "Default") {
       if (struct_default_derivable(declared)) {
@@ -28527,7 +28640,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
         }
         // Synthesise variant-wise Display / Eq methods on the
         // enum type; they dispatch via the enum-method fallback.
-        funcs = synth_enum_derives(denr_name, denr_variants, dr_derives, funcs);
+        funcs = synth_enum_derives(denr_name, denr_type_params, denr_variants, dr_derives, funcs, imports_have_std_json(imports));
         continue;
       }
       continue;

@@ -499,6 +499,19 @@ func TestSelfHostBuildGateX86_64(t *testing.T) {
 			wantDiag: "",
 		},
 		{
+			// An enum derives FromJson (#6792): the decoder and its
+			// `from_json` companion, and payloads held to a struct field's
+			// rule, where a container nested in another has no decoder.
+			name:     "derived-enum-from-json-compiles",
+			src:      "import \"std/json\";\n@derive(json.FromJson)\nenum Shape { Empty, Circle(f64), Rect { w: i32, h: i32 }, Tags(string[]), Maybe(Option[i32]) }\nfunction main(): i32 { match (Shape.from_json(\"{\\\"Rect\\\":{\\\"w\\\":2,\\\"h\\\":3}}\")) { Ok(_) => { return 0; }, Err(_) => { return 1; } } }\n",
+			wantDiag: "",
+		},
+		{
+			name:     "derived-enum-from-json-nested-array-E021",
+			src:      "import \"std/json\";\n@derive(json.FromJson)\nenum Grid { Rows(i32[][]) }\nfunction main(): i32 { return 0; }\n",
+			wantDiag: "error[E021]",
+		},
+		{
 			// The uncoded #9053 hint (`error[type]`) is a statement about what
 			// this checker can model, not about the program, so it must never
 			// reject a build. `is_diagnostic_code` is what keeps it out.
