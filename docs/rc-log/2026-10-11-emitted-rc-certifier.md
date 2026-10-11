@@ -232,11 +232,17 @@ instructions under callgrind:
 | cold memo, 1693 functions certified | 4.63 s | 18.89 G | 18% |
 | warm memo, 1693 hits | 4.1 s | 16.52 G | 3.6% |
 
-The warm compile still pays the gate's own lift of every function and the
-key's digest before the memo answers; the backend lifts the same function
-again for its register allocation. Handing the backend's lift to the gate
-is the next cost step, and takes the warm compile's share down to the
-digest.
+The warm compile's 0.57 G over the certifier off is the key: a profile of
+the uninlined compiler puts 0.55 G of it in `rcmemo.key` and the
+`util.roll` family it calls, which rolls every op's words and every byte of
+its string through two polynomial rolls, and nothing else in the gate's
+hit path registers (the native backends hand the gate their own lift, so
+no function is lifted twice). Rolling the text through scalar accumulators
+instead of a `Digest` per step changed nothing in the inlined build
+(16.51 G against 16.52 G), so the cost is the arithmetic over the op
+stream, not allocation. A cheaper key, one the lowering produces once per
+function and the incremental cache's `lowered_digest` shares, is the next
+cost step.
 
 The replay (`ssaunits.verify_planned`) stays under `FERN_IR_VERIFY`: the
 certifier checks what the lowering emitted, which is what a plan error would
