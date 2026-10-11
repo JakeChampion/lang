@@ -3712,6 +3712,8 @@ function invoke_rest(ids: i32[], bound: ssasem.Binding, args: ast.Expr[], base: 
   }
   let callee: ssasem.Contract = contract;
   let vars: string[] = ssasem.contract_variables(contract);
+  // A variable no argument spells takes what the destination binds.
+  bound = ssasem.filled(bound, seed);
   if (vars.len() > 0) {
     if (!ssasem.binds_all(bound, vars)) {
       return refused(s, "unbound type variable");
