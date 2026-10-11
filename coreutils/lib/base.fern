@@ -215,6 +215,86 @@ function enc_tail(c: Codec, acc0: i64, nb: i32): Chars {
   return Chars { v: out, n: w };
 }
 
+// `pack_bytes(c)` — the input bytes that encode to exactly eight
+// characters, a whole number of blocks: 6 for base64, 5 for base32, 4 for
+// base16 and 1 for base2. 0 for z85, whose four bytes make five.
+function pack_bytes(c: Codec): i32 {
+  if (c.bits == 0) {
+    return 0;
+  }
+  return c.bits;
+}
+
+// `pack_value(bs, i, p)` — the `p` bytes at `bs[i]`, big-endian.
+function pack_value(bs: u8[], i: i32, p: i32): i64 {
+  if (p == 6) {
+    return bs[i] as i64 << 40 | bs[i + 1] as i64 << 32 | bs[i + 2] as i64 << 24 | bs[i + 3] as i64 << 16 | bs[i + 4] as i64 << 8 | bs[i + 5] as i64;
+  }
+  if (p == 5) {
+    return bs[i] as i64 << 32 | bs[i + 1] as i64 << 24 | bs[i + 2] as i64 << 16 | bs[i + 3] as i64 << 8 | bs[i + 4] as i64;
+  }
+  if (p == 4) {
+    return bs[i] as i64 << 24 | bs[i + 1] as i64 << 16 | bs[i + 2] as i64 << 8 | bs[i + 3] as i64;
+  }
+  return bs[i] as i64;
+}
+
+// `pack_chars(alpha, v, bits)` — the eight characters of the
+// `8 * bits`-bit value `v`, the first in the low byte, ready for one
+// eight-byte push. Each width is spelled out so every shift is a constant.
+function pack_chars(alpha: usize, v: i64, bits: i32): i64 {
+  if (bits == 6) {
+    return __load_u8(alpha + (v >> 42 & 63 as i64) as usize) as i64
+      | __load_u8(alpha + (v >> 36 & 63 as i64) as usize) as i64 << 8
+      | __load_u8(alpha + (v >> 30 & 63 as i64) as usize) as i64 << 16
+      | __load_u8(alpha + (v >> 24 & 63 as i64) as usize) as i64 << 24
+      | __load_u8(alpha + (v >> 18 & 63 as i64) as usize) as i64 << 32
+      | __load_u8(alpha + (v >> 12 & 63 as i64) as usize) as i64 << 40
+      | __load_u8(alpha + (v >> 6 & 63 as i64) as usize) as i64 << 48
+      | __load_u8(alpha + (v & 63 as i64) as usize) as i64 << 56;
+  }
+  if (bits == 5) {
+    return __load_u8(alpha + (v >> 35 & 31 as i64) as usize) as i64
+      | __load_u8(alpha + (v >> 30 & 31 as i64) as usize) as i64 << 8
+      | __load_u8(alpha + (v >> 25 & 31 as i64) as usize) as i64 << 16
+      | __load_u8(alpha + (v >> 20 & 31 as i64) as usize) as i64 << 24
+      | __load_u8(alpha + (v >> 15 & 31 as i64) as usize) as i64 << 32
+      | __load_u8(alpha + (v >> 10 & 31 as i64) as usize) as i64 << 40
+      | __load_u8(alpha + (v >> 5 & 31 as i64) as usize) as i64 << 48
+      | __load_u8(alpha + (v & 31 as i64) as usize) as i64 << 56;
+  }
+  return __load_u8(alpha + (v >> 28 & 15 as i64) as usize) as i64
+    | __load_u8(alpha + (v >> 24 & 15 as i64) as usize) as i64 << 8
+    | __load_u8(alpha + (v >> 20 & 15 as i64) as usize) as i64 << 16
+    | __load_u8(alpha + (v >> 16 & 15 as i64) as usize) as i64 << 24
+    | __load_u8(alpha + (v >> 12 & 15 as i64) as usize) as i64 << 32
+    | __load_u8(alpha + (v >> 8 & 15 as i64) as usize) as i64 << 40
+    | __load_u8(alpha + (v >> 4 & 15 as i64) as usize) as i64 << 48
+    | __load_u8(alpha + (v & 15 as i64) as usize) as i64 << 56;
+}
+
+// `bit_table(c)` — base2's eight characters for each byte value, rev
+// applied, as 256 eight-byte words.
+function bit_table(c: Codec): usize {
+  let t: usize = __alloc(256 * 8);
+  let b: i32 = 0;
+  while (b < 256) {
+    let v: i64 = b as i64;
+    if (c.rev) {
+      v = rev8(v);
+    }
+    let w: i64 = 0;
+    let k: i32 = 0;
+    while (k < 8) {
+      w = w | __load_u8(c.alpha + (v >> 7 - k & 1 as i64) as usize) as i64 << k * 8;
+      k = k + 1;
+    }
+    __store_i64(t + (b * 8) as usize, w);
+    b = b + 1;
+  }
+  return t;
+}
+
 // Four bytes as five base-85 digits, most significant first.
 function z85_digits(alpha: usize, value: i64): i64 {
   let v: i64 = value;
@@ -493,6 +573,10 @@ function encode(r: Reader, c: Codec, wrap: i64, o: io_buffered.BufWriter): void 
   }
   let wrapping: boolean = wrap > 0 as i64;
   let col: i64 = 0;
+  let table: usize = 0 as usize;
+  if (bits == 1) {
+    table = bit_table(c);
+  }
   while (true) {
     let chunk: u8[] = read_block(r, out, cap);
     let n: i32 = chunk.len();
@@ -503,13 +587,51 @@ function encode(r: Reader, c: Codec, wrap: i64, o: io_buffered.BufWriter): void 
       fail(out, "invalid input (length must be multiple of 4 characters)");
     }
     let bs: u8[] = chunk;
-    let chars: i32 = enc_chars(c, n);
+    let i: i32 = 0;
+    // Every whole pack goes straight into the writer as one eight-byte
+    // push; only a line break takes the characters one at a time.
+    let p: i32 = pack_bytes(c);
+    if (p > 0) {
+      let h: usize = out.handle();
+      let whole: i32 = n - n % p;
+      while (i < whole) {
+        let w: i64 = 0;
+        if (p == 1) {
+          w = __load_i64(table + (bs[i] as i32 * 8) as usize);
+        } else {
+          w = pack_chars(alpha, pack_value(bs, i, p), bits);
+        }
+        if (!wrapping) {
+          buf_push_u64(h, w as u64);
+        } else if (col + 8 as i64 <= wrap) {
+          buf_push_u64(h, w as u64);
+          col = col + 8 as i64;
+          if (col == wrap) {
+            buf_push_byte(h, 10);
+            col = 0 as i64;
+          }
+        } else {
+          let k: i32 = 0;
+          while (k < 8) {
+            buf_push_byte(h, (w >> k * 8 & 255 as i64) as i32);
+            col = col + 1 as i64;
+            if (col == wrap) {
+              buf_push_byte(h, 10);
+              col = 0 as i64;
+            }
+            k = k + 1;
+          }
+        }
+        i = i + p;
+      }
+      out = gnu.settle(out);
+    }
+    let chars: i32 = enc_chars(c, n - i);
     let nl: i32 = 0;
     if (wrapping) {
       nl = ((col + chars as i64) / wrap) as i32;
     }
     let buf: u8[] = __alloc_u8(chars + nl);
-    let i: i32 = 0;
     let j: i32 = 0;
     while (i < n) {
       let nb: i32 = inb;
@@ -576,6 +698,9 @@ function encode(r: Reader, c: Codec, wrap: i64, o: io_buffered.BufWriter): void 
   }
   if (wrapping && col > 0 as i64) {
     out = gnu.put(out, "\n");
+  }
+  if (table != 0 as usize) {
+    __free(table, 256 * 8);
   }
   gnu.finish(out);
 }
