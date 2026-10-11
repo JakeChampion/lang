@@ -16262,27 +16262,49 @@ function method_decl_at(callee: ast.Expr, env: MEnv, funcs: MFns): i32 {
 // `<concrete>.<method>`. The generic-struct guard keeps a plain `mod.func()`
 // untouched. Other inits pass through.
 function retype_assoc_ctor(init: ast.Expr, dest: string, gstructs: StructDecl[], funcs: MFns): ast.Expr {
-  match (init) {
-    ast.ExprCall(c) => {
-      match (c.callee) {
-        ast.ExprFieldAccess(fa) => {
-          match (fa.obj) {
-            ast.ExprIdent(oid) => {
-              if (gstruct_index(gstructs, oid.name) >= 0) {
-                let concrete: string = assoc_ctor_concrete(oid.name, fa.field, dest, funcs);
-                let pfx: string = oid.name + "__";
-                if (concrete.len() > pfx.len() && util.str_has_prefix(concrete, pfx)) {
-                  return ast.ExprCall { callee: ast.ExprFieldAccess { obj: ast.ExprIdent { name: concrete, line: oid.line, col: oid.col, ty: "" }, field: fa.field, line: fa.line, col: fa.col, ty: fa.ty }, args: c.args, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty };
-                }
-              }
-            },
-            _ => {}
-          }
-        },
-        _ => {}
+  let base: string = assoc_call_base(init);
+  if (base.len() > 0 && gstruct_index(gstructs, base) >= 0) {
+    return retype_assoc_call(init, base, dest, funcs);
+  }
+  return init;
+}
+
+// retype_enum_assoc is retype_assoc_ctor for a generic enum base, `let e:
+// E[i32] = E.default()` naming the clone `E__i32`.
+function retype_enum_assoc(init: ast.Expr, dest: string, enums: EnumDecl[], funcs: MFns): ast.Expr {
+  let base: string = assoc_call_base(init);
+  if (base.len() > 0 && genum_index(enums, base) >= 0) {
+    return retype_assoc_call(init, base, dest, funcs);
+  }
+  return init;
+}
+
+// assoc_call_base is the type an associated call `Base.f(args)` is made on,
+// or "" for any other expression.
+function assoc_call_base(e: ast.Expr): string {
+  if let ast.ExprCall(c) = e {
+    if let ast.ExprFieldAccess(fa) = c.callee {
+      if let ast.ExprIdent(oid) = fa.obj {
+        return oid.name;
       }
-    },
-    _ => {}
+    }
+  }
+  return "";
+}
+
+// retype_assoc_call points the associated call `init`, made on `base`, at the
+// clone the destination pins, when there is one.
+function retype_assoc_call(init: ast.Expr, base: string, dest: string, funcs: MFns): ast.Expr {
+  if let ast.ExprCall(c) = init {
+    if let ast.ExprFieldAccess(fa) = c.callee {
+      let concrete: string = assoc_ctor_concrete(base, fa.field, dest, funcs);
+      if let ast.ExprIdent(oid) = fa.obj {
+        if (concrete.len() > base.len() + 2 && util.str_has_prefix(concrete, base + "__")) {
+          let obj: ast.Expr = ast.ExprIdent { ...oid, name: concrete, ty: "" };
+          return ast.ExprCall { ...c, callee: ast.ExprFieldAccess { ...fa, obj: obj } };
+        }
+      }
+    }
   }
   return init;
 }
@@ -17531,6 +17553,26 @@ function me_env_from_params(params: ast.ParamDecl[]): MEnv {
   return e;
 }
 
+// me_ident rewrites an identifier the enum pass can key. A type parameter
+// substituted into an associated call's object (subst_expr) can be an applied
+// generic enum, `E[i32].f()`, which names its clone. A bare unit-variant
+// construction `Nn` needs the expected annotation to pin its instantiation
+// (no payload to infer from).
+function me_ident(id: ast.ExprIdent, expected: string, env: MEnv, enums: EnumDecl[], funcs: MFns, ins: Insts): RExpr {
+  if (first_bracket(id.name) > 0 && genum_index(enums, strip_struct_base(id.name)) >= 0) {
+    return RExpr { rexpr: ast.ExprIdent { ...id, name: me_rewrite_ty(id.name, enums) }, rins: me_collect_anno(id.name, enums, ins) };
+  }
+  let owner: i32 = genum_owner_of_variant(enums, id.name);
+  if (owner >= 0 && !str_list_contains(env.mnames, id.name) && !fda_known_func(id.name, funcs.decls)) {
+    let key: string = genum_key_from_anno(expected, enums[owner].name, enums);
+    if (key.len() > 0) {
+      let nins: Insts = ins.iadd_arg(enums[owner].name, key, genum_single_arg(expected));
+      return RExpr { rexpr: ast.ExprIdent { name: id.name + "__" + key, line: id.line, col: id.col, ty: id.ty }, rins: nins };
+    }
+  }
+  return RExpr { rexpr: ast.ExprIdent { ...id }, rins: ins };
+}
+
 // me_expr rewrites generic-enum variant constructions to their mangled
 // clone names and recurses through every sub-expression. `expected` is the
 // type the expression flows into (a let annotation / return type), used to
@@ -17633,17 +17675,7 @@ function me_expr(e: ast.Expr, expected: string, env: MEnv, enums: EnumDecl[], st
       return RExpr { rexpr: ast.ExprCall { callee: rc.rexpr, args: nargs, line: c.line, col: c.col, type_args: c.type_args, ty: c.ty }, rins: rc.rins };
     },
     ast.ExprIdent(id) => {
-      // A bare unit-variant construction `Nn` — needs the expected
-      // annotation to pin its instantiation (no payload to infer from).
-      let owner: i32 = genum_owner_of_variant(enums, id.name);
-      if (owner >= 0 && !str_list_contains(env.mnames, id.name) && !fda_known_func(id.name, funcs.decls)) {
-        let key: string = genum_key_from_anno(expected, enums[owner].name, enums);
-        if (key.len() > 0) {
-          let nins: Insts = ins.iadd_arg(enums[owner].name, key, genum_single_arg(expected));
-          return RExpr { rexpr: ast.ExprIdent { name: id.name + "__" + key, line: id.line, col: id.col, ty: id.ty }, rins: nins };
-        }
-      }
-      return RExpr { rexpr: e, rins: ins };
+      return me_ident(id, expected, env, enums, funcs, ins);
     },
     ast.ExprArray(a) => {
       // An array literal flowing into `Opt[i32][]` propagates the ELEMENT
@@ -18116,19 +18148,23 @@ function me_stmt(st: ast.Stmt, env: MEnv, ret_ty: string, enums: EnumDecl[], str
       if (vty.len() == 0) {
         vty = me_scrutinee_type(v.init, env, enums, structs, funcs);
       }
-      return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: nslot.ty, init: iv.rexpr, line: v.line, col: v.col, fn_ret: nslot.fn_ret, fn_param_types: nslot.fn_params }, renv: me_bind_var(env, v, vty, enums, structs, funcs), rins2: cins };
+      let ninit: ast.Expr = retype_enum_assoc(iv.rexpr, nslot.ty, enums, funcs);
+      return RStmtOne { rstmt: ast.StmtVar { name: v.name, type_name: nslot.ty, init: ninit, line: v.line, col: v.col, fn_ret: nslot.fn_ret, fn_param_types: nslot.fn_params }, renv: me_bind_var(env, v, vty, enums, structs, funcs), rins2: cins };
     },
     ast.StmtReturn(r) => {
       let rv: RExpr = me_expr(r.value, ret_ty, env, enums, structs, funcs, ins);
-      return RStmtOne { rstmt: ast.StmtReturn { value: rv.rexpr, line: r.line, col: r.col }, renv: env, rins2: rv.rins };
+      let rval: ast.Expr = retype_enum_assoc(rv.rexpr, me_rewrite_ty(ret_ty, enums), enums, funcs);
+      return RStmtOne { rstmt: ast.StmtReturn { value: rval, line: r.line, col: r.col }, renv: env, rins2: rv.rins };
     },
     ast.StmtExpr(x) => {
       let xv: RExpr = me_expr(x.value, "", env, enums, structs, funcs, ins);
       return RStmtOne { rstmt: ast.StmtExpr { value: xv.rexpr, line: 0 }, renv: env, rins2: xv.rins };
     },
     ast.StmtAssign(a) => {
-      let av: RExpr = me_expr(a.value, env.elook(a.target), env, enums, structs, funcs, ins);
-      return RStmtOne { rstmt: ast.StmtAssign { target: a.target, value: av.rexpr, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }, renv: env, rins2: av.rins };
+      let dest: string = env.elook(a.target);
+      let av: RExpr = me_expr(a.value, dest, env, enums, structs, funcs, ins);
+      let aval: ast.Expr = retype_enum_assoc(av.rexpr, me_rewrite_ty(dest, enums), enums, funcs);
+      return RStmtOne { rstmt: ast.StmtAssign { target: a.target, value: aval, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }, renv: env, rins2: av.rins };
     },
     ast.StmtIf(f) => {
       let cv: RExpr = me_expr(f.cond, "", env, enums, structs, funcs, ins);

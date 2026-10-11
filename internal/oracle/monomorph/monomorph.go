@@ -30,6 +30,7 @@ package monomorph
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/jakechampion/lang/internal/check/checker"
@@ -107,6 +108,11 @@ func Run(prog *ast.Program, info *checker.Info) error {
 		ast.Walk(body, func(n ast.Node) bool {
 			switch x := n.(type) {
 			case *ast.Call:
+				if name, margs, ok := enumAssocCallee(prog, info, x); ok {
+					x.Callee = &ast.Ident{P: x.P, Name: name}
+					x.TypeArgs = margs
+					x.Method = nil
+				}
 				id, ok := x.Callee.(*ast.Ident)
 				if !ok {
 					return true
@@ -847,45 +853,93 @@ func boundEnumImplMethods(prog *ast.Program, info *checker.Info, gen *ast.FuncDe
 		}
 		for _, trait := range gen.Bounds[tp] {
 			for _, impl := range prog.Impls {
-				if impl.Trait != trait || len(impl.TypeParams) == 0 {
-					continue
-				}
-				pset := map[string]bool{}
-				for _, itp := range impl.TypeParams {
-					pset[itp] = true
-				}
-				psub := map[string]ast.Type{}
-				if !unifyImplType(impl.Type, et, pset, psub) {
+				if impl.Trait != trait {
 					continue
 				}
 				for _, mn := range impl.MethodNames {
-					genName, _, _ := info.ResolveMethod(et.Name, mn, []string{trait})
-					mgen, isGen := info.GenericFuncs[genName]
-					if !isGen {
-						genName = "__method_" + et.Name + "_" + mn
-						if mgen, isGen = info.GenericFuncs[genName]; !isGen {
-							continue
-						}
+					if k, margs, ok := enumImplMethod(info, impl, et, mn); ok {
+						out[k] = margs
 					}
-					margs := make([]ast.Type, len(mgen.TypeParams))
-					complete := true
-					for k, mtp := range mgen.TypeParams {
-						v, found := psub[mtp]
-						if !found {
-							complete = false
-							break
-						}
-						margs[k] = v
-					}
-					if !complete || hasParamType(margs) {
-						continue
-					}
-					out[instKey{name: genName, mang: mangle(genName, margs)}] = margs
 				}
 			}
 		}
 	}
 	return out
+}
+
+// enumImplMethod keys method mn of a parametric impl at the applied enum et:
+// the generic function implementing it, `__method_` or `__assoc_`, and its
+// type arguments, read off unifying the impl's `for` type with et.
+func enumImplMethod(info *checker.Info, impl *ast.ImplDecl, et ast.EnumType, mn string) (instKey, []ast.Type, bool) {
+	if len(impl.TypeParams) == 0 {
+		return instKey{}, nil, false
+	}
+	pset := map[string]bool{}
+	for _, itp := range impl.TypeParams {
+		pset[itp] = true
+	}
+	psub := map[string]ast.Type{}
+	if !unifyImplType(impl.Type, et, pset, psub) {
+		return instKey{}, nil, false
+	}
+	genName, _, _ := info.ResolveMethod(et.Name, mn, []string{impl.Trait})
+	mgen, isGen := info.GenericFuncs[genName]
+	for _, pre := range []string{"__method_", "__assoc_"} {
+		if isGen {
+			break
+		}
+		genName = pre + et.Name + "_" + mn
+		mgen, isGen = info.GenericFuncs[genName]
+	}
+	if !isGen {
+		return instKey{}, nil, false
+	}
+	margs := make([]ast.Type, len(mgen.TypeParams))
+	for k, mtp := range mgen.TypeParams {
+		v, found := psub[mtp]
+		if !found {
+			return instKey{}, nil, false
+		}
+		margs[k] = v
+	}
+	if hasParamType(margs) {
+		return instKey{}, nil, false
+	}
+	return instKey{name: genName, mang: mangle(genName, margs)}, margs, true
+}
+
+// enumAssocCallee resolves a generic associated dispatch `T.f(args)` that
+// substitution pointed at an applied, uncloned generic enum to the generic
+// function implementing f and its type arguments, so the call can be
+// instantiated like any direct one.
+func enumAssocCallee(prog *ast.Program, info *checker.Info, c *ast.Call) (string, []ast.Type, bool) {
+	if c.Method == nil || !c.Method.Assoc {
+		return "", nil, false
+	}
+	et, ok := c.Method.Receiver.(ast.EnumType)
+	if !ok || len(et.Args) == 0 || hasParamType(et.Args) {
+		return "", nil, false
+	}
+	fa, ok := c.Callee.(*ast.FieldAccess)
+	if !ok {
+		return "", nil, false
+	}
+	ed, ok := info.Enums[et.Name]
+	if !ok || len(ed.TypeParams) == 0 || enumNeedsClone(ed, info) {
+		return "", nil, false
+	}
+	for _, impl := range prog.Impls {
+		if c.Method.OwnerTrait != "" && impl.Trait != c.Method.OwnerTrait {
+			continue
+		}
+		if !slices.Contains(impl.MethodNames, fa.Field) {
+			continue
+		}
+		if k, margs, ok := enumImplMethod(info, impl, et, fa.Field); ok {
+			return k.name, margs, true
+		}
+	}
+	return "", nil, false
 }
 
 // hasDiagnosticCode reports whether err carries a checker diagnostic code —
@@ -1354,6 +1408,14 @@ func substituteAssocReceiver(c *ast.Call, sub map[string]ast.Type) {
 	}
 	if name, ok := concreteTypeNameOf(ct); ok {
 		fa.Target = &ast.Ident{P: tid.P, Name: name}
+	}
+	// An applied enum is not cloned, so its name does not say which
+	// instance: the site records the concrete receiver for enumAssocCallee.
+	// Clones share the site, so it is replaced rather than written.
+	if et, ok := ct.(ast.EnumType); ok && len(et.Args) > 0 {
+		site := *c.Method
+		site.Receiver = et
+		c.Method = &site
 	}
 }
 
