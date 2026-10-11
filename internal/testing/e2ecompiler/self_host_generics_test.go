@@ -34,6 +34,11 @@ var genericsCases = []struct {
 	// `let` does: `Ok(Boxes { … })` under a `Result[Boxes[T], string]`
 	// return, `Some(Box { … })` under an `Option[Box[T]]` one.
 	{"variant-payload-struct-result", "struct Box[T] { n: i32, f: (i32, T) => i32 } struct Boxes[T] { items: Box[T][] } function add_i(a: i32, b: i32): i32 { return a + b; } function (b: Boxes[T]) add(n: i32, f: (i32, T) => i32): Result[Boxes[T], string] { return Ok(Boxes { items: b.items.append(Box { n: n, f: f }) }); } function main(): i32 { let b: Boxes[i32] = Boxes { items: [] }; match (b.add(40, add_i)) { Ok(b2) => { let g: (i32, i32) => i32 = b2.items[0].f; return g(b2.items[0].n, 2); }, Err(e) => { return 1; } } return 1; }", 42},
+	// A chained call whose receiver is the builtin `append` on a record
+	// array still folds its generic array method (#12108): the stamp of
+	// `a.append(…)` is an array of a record, which the monomorphiser's
+	// stamp filter alone drops.
+	{"append-chain-record-array-method", "struct P { x: i32 } function (xs: T[]) count(): i32 { return xs.len(); } function main(): i32 { let a: P[] = [P { x: 1 }]; return a.append(P { x: 2 }).count() * 21; }", 42},
 	{"variant-payload-struct-option", "struct Box[T] { n: i32, f: (i32, T) => i32 } function add_i(a: i32, b: i32): i32 { return a + b; } function boxed[T](n: i32, f: (i32, T) => i32): Option[Box[T]] { if (n < 0) { return None; } return Some(Box { n: n, f: f }); } function main(): i32 { match (boxed(40, add_i)) { Some(b) => { let g: (i32, i32) => i32 = b.f; return g(b.n, 2); }, None => { return 1; } } return 1; }", 42},
 }
 
