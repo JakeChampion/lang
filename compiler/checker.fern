@@ -10160,26 +10160,29 @@ function lambda_body_diags(lm: ast.ExprLambda, lsc: Scope, rt: typeinfo.Type, un
   return lambda_exit_diags(lm, lsc);
 }
 
+function lret_lambda(lm: ast.ExprLambda, cur: Scope, unions: UnionSig[], self_name: string): util.Diag[] {
+  let pts: typeinfo.Type[] = [];
+  for param in lm.params {
+    pts = pts.append(cur.resolve_param(param));
+  }
+  let rt: typeinfo.Type = lambda_ret_type(lm, cur);
+  let lsc: Scope = cur;
+  if (self_name.len() > 0) {
+    lsc = lsc.bind(self_name, t_func_own(pts, lambda_owns(lm), rt));
+  }
+  let bi: i32 = 0;
+  while (bi < lm.params.len()) {
+    lsc = lsc.bind(lm.params[bi].name, pts[bi]);
+    bi = bi + 1;
+  }
+  return util.append_diags(lambda_body_diags(lm, lsc, rt, unions), lret_stmts(lm.body, lsc, unions));
+}
+
 function lret_expr(e: ast.Expr, cur: Scope, unions: UnionSig[], self_name: string): util.Diag[] {
   let out: util.Diag[] = [];
   match (e) {
     ast.ExprLambda(lm) => {
-      let pts: typeinfo.Type[] = [];
-      for param in lm.params {
-        pts = pts.append(cur.resolve_param(param));
-      }
-      let rt: typeinfo.Type = lambda_ret_type(lm, cur);
-      let lsc: Scope = cur;
-      if (self_name.len() > 0) {
-        lsc = lsc.bind(self_name, t_func_own(pts, lambda_owns(lm), rt));
-      }
-      let bi: i32 = 0;
-      while (bi < lm.params.len()) {
-        lsc = lsc.bind(lm.params[bi].name, pts[bi]);
-        bi = bi + 1;
-      }
-      out = util.append_diags(out, lambda_body_diags(lm, lsc, rt, unions));
-      out = util.append_diags(out, lret_stmts(lm.body, lsc, unions));
+      out = util.append_diags(out, lret_lambda(lm, cur, unions, self_name));
     },
     ast.ExprBinary(b) => {
       out = util.append_diags(lret_expr(b.left, cur, unions, ""), lret_expr(b.right, cur, unions, ""));
