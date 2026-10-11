@@ -6,7 +6,8 @@
 # .claude/hooks/session-start.sh run `mise install` against it; so does a
 # laptop (docs/LOCAL-DEV-LOOP.md). mise.lock pins every entry to an exact
 # release and checksum. To bump a version: edit it here, run `mise lock`,
-# commit both files.
+# commit both files; the refresh-data workflow does that for every tool
+# weekly (`scripts/refresh-data toolchain`).
 #
 # The mise release this repo runs lives in [env] below, NOT in a top-level
 # `min_version`. min_version is a floor every mise that reads this file
