@@ -10527,7 +10527,7 @@ function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore.Emi
   let lowered: physicalbody.Lowered = s.rt_lower(src);
   let bodies: irtables.LowerResult[] = lowered.bodies;
   let physical = physicalbody.collection(lowered);
-  let vgate: irverifygate.Gate = irverifygate.gate_unreported(irtables.fn_sig_index(fns), s.kinds.pops, physicalbody.abis(physical));
+  let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate_unreported(irtables.fn_sig_index(fns), s.kinds.pops, physicalbody.abis(physical)), s.memo);
   let i: i32 = 0;
   while (i < fns.len()) {
     s = emit_function_via_ir_pre(bodies[i], physicalbody.select(physical, i), fns[i], s, vgate);
@@ -10578,7 +10578,7 @@ function emit_module_funcs(mod: parser.Module, all_funcs: parser.FuncDecl[], s: 
   // The IR verify gate's callee-arity index, derived ONCE over the
   // whole-program all_funcs for the reason the registries above are: a
   // per-function rebuild would be O(n^2) on the compiler's own sources.
-  let vgate: irverifygate.Gate = irverifygate.gate(irtables.fn_sig_index(all_funcs), s.kinds.pops, physicalbody.abis(physical));
+  let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate(irtables.fn_sig_index(all_funcs), s.kinds.pops, physicalbody.abis(physical)), s.memo);
   // hi<0 is the "to the end" sentinel; an over-large hi is clamped so a shard
   // window that overshoots the module length can't index past mod.funcs.
   let hh: i32 = hi;
@@ -10642,9 +10642,10 @@ function emit_named_bodies(cache: irtables.LowerResult[], physical: physicalbody
 pub function module_runtime_needs(mod: parser.Module, all_funcs: parser.FuncDecl[], all_structs: irtables.StructTab, cache: irtables.LowerResult[], physical: physicalbody.Collection): string[] {
   strbuf_reset();
   let s: asmcore.EmitState = asmcore.new_state();
-  s = asmcore.with_funcs(asmcore.EmitState { ...s, struct_decls: all_structs, retain_prepared: false }, all_funcs);
+  s = asmcore.with_funcs(asmcore.EmitState { ...s, struct_decls: all_structs, retain_prepared: false, memo: irverifygate.open_memo("x86-64") }, all_funcs);
   s = emit_module_funcs(mod, all_funcs, s, false, 0, 0 - 1, cache, physical, false);
   s = s.close_needs();
+  irverifygate.close_memo(s.memo);
   strbuf_reset();
   return s.needed;
 }
@@ -10721,7 +10722,7 @@ pub function emit_module_ir_unit_prepared(mod: parser.Module, is_entry: boolean,
   // re-infer is a no-op there and the cache indices stay aligned.)
   strbuf_reset();
   let s: asmcore.EmitState = asmcore.new_state();
-  s = asmcore.EmitState { ...s, retain_prepared: retain };
+  s = asmcore.EmitState { ...s, retain_prepared: retain, memo: irverifygate.open_memo("x86-64") };
   // struct_decls and funcs are the WHOLE-PROGRAM sets, so an imported struct's
   // layout resolves and a `dyn` dispatch has an arm for every impl (#10891).
   s = asmcore.with_funcs(asmcore.with_switches(asmcore.EmitState { ...s, struct_decls: all_structs, str_ns: str_ns, rt_lower: rt, recs: recs }, sw), all_funcs);
@@ -10911,6 +10912,7 @@ pub function emit_module_ir_unit_prepared(mod: parser.Module, is_entry: boolean,
       s = emit_seccomp_install(s);
     }
   }
+  irverifygate.close_memo(s.memo);
   return ssaprepare.Output { text: strbuf_take(), bodies: s.prepared };
 }
 

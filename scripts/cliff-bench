@@ -63,7 +63,9 @@ trap 'rm -rf "$work"' EXIT
 # and would have been annotated as a 94% improvement. The status is the only
 # thing that separates the two, so the run is not allowed to fail.
 set +e
-FERN_CLIFF_REPORT=1 ./bin/fern-selfhost -target "$TARGET" "$SUBJECT" \
+# FERN_RC_CERTIFY=0: the count is the lowering's; the emitted-RC certifier
+# runs by default and its own appends are not the subject.
+FERN_CLIFF_REPORT=1 FERN_RC_CERTIFY=0 ./bin/fern-selfhost -target "$TARGET" "$SUBJECT" \
   > /dev/null 2> "$work/cliff"
 status=$?
 set -e

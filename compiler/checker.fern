@@ -15370,7 +15370,7 @@ function stmts_call_diags(stmts: ast.Stmt[], s: Scope): util.Diag[] {
         out = util.append_diags(out, e055_diag(x.value, cur));
       },
       ast.StmtAssign(a) => {
-        out = util.append_diags(out, call_diags(a.value, cur));
+        out = util.append_diags(out, dest_call_diags(a.value, cur.lookup(a.target), cur));
         // E034: reassigning a composite-array literal — its elements
         // checked against the target variable's declared element type.
         out = util.append_diags(out, array_elem_check(array_elem_type_of(cur.lookup(a.target)), a.value, cur));
@@ -15757,6 +15757,39 @@ function vref_stmts(stmts: ast.Stmt[], s: Scope, ambig: string[]): util.Diag[] {
   return out;
 }
 
+// assign_diags checks one assignment `target = value`: the target is
+// declared, and the value fits it.
+function assign_diags(a: ast.StmtAssign, cur: Scope, unions: UnionSig[]): util.Diag[] {
+  let out: util.Diag[] = [];
+  if (!cur.defines(a.target)) {
+    // E001: assignment to an undeclared name. An assignment
+    // LHS can only be a local / param / loop / match binding
+    // (field & index assignments are desugared to
+    // __set_field / __set_index calls elsewhere), so a target
+    // not in scope is unambiguously undefined — no function /
+    // variant / builtin to confuse it with, hence no
+    // allowlist needed. Reported at the `=` token (the
+    // assignment position the parser captured).
+    out = out.append(dg_at("E001", "cannot find \"" + a.target + "\" in this scope", a.target_line, a.target_col));
+  } else {
+    let tt: typeinfo.Type = cur.lookup(a.target);
+    let vt: typeinfo.Type = check_expr(a.value, cur);
+    out = util.append_diags(out, int_dest_range_diags(a.value, tt));
+    out = util.append_diags(out, ctor_payload_diags(a.value, tt, cur));
+    // The target's type is a generic call's destination, as a `let`
+    // annotation's is.
+    let abound: util.Diag[] = dest_bound_diags(a.value, tt, cur);
+    out = util.append_diags(out, abound);
+    if (abound.len() == 0 && !is_unknown(tt) && !is_unknown(vt) && !settles_to(a.value, tt, cur) && !(type_assignable(vt, tt, unions) && dyn_conforms(vt, tt, cur))) {
+      out = out.append(dg_at("E003", "variable \"" + a.target + "\": expected " + type_label(tt) + ", got " + type_label(vt) + str_copy_hint(vt, tt), a.line, a.col));
+    }
+    if (tvar_meets_concrete(vt, tt, cur)) {
+      out = out.append(dg_at("E003", "variable \"" + a.target + "\": expected " + type_label(tt) + ", got " + tvar_name(vt), a.line, a.col));
+    }
+  }
+  return out;
+}
+
 // stmts_assign_diags walks a statement list (scope-threaded, recursing
 // into nested blocks) emitting statement-level type diagnostics: E003
 // when a value isn't assignable to its target (an annotated `let x: T = v`
@@ -15864,28 +15897,7 @@ function stmts_assign_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): ut
         }
       },
       ast.StmtAssign(a) => {
-        if (!cur.defines(a.target)) {
-          // E001: assignment to an undeclared name. An assignment
-          // LHS can only be a local / param / loop / match binding
-          // (field & index assignments are desugared to
-          // __set_field / __set_index calls elsewhere), so a target
-          // not in scope is unambiguously undefined — no function /
-          // variant / builtin to confuse it with, hence no
-          // allowlist needed. Reported at the `=` token (the
-          // assignment position the parser captured).
-          out = out.append(dg_at("E001", "cannot find \"" + a.target + "\" in this scope", a.target_line, a.target_col));
-        } else {
-          let tt: typeinfo.Type = cur.lookup(a.target);
-          let vt: typeinfo.Type = check_expr(a.value, cur);
-          out = util.append_diags(out, int_dest_range_diags(a.value, tt));
-          out = util.append_diags(out, ctor_payload_diags(a.value, tt, cur));
-          if (!is_unknown(tt) && !is_unknown(vt) && !settles_to(a.value, tt, cur) && !(type_assignable(vt, tt, unions) && dyn_conforms(vt, tt, cur))) {
-            out = out.append(dg_at("E003", "variable \"" + a.target + "\": expected " + type_label(tt) + ", got " + type_label(vt) + str_copy_hint(vt, tt), a.line, a.col));
-          }
-          if (tvar_meets_concrete(vt, tt, cur)) {
-            out = out.append(dg_at("E003", "variable \"" + a.target + "\": expected " + type_label(tt) + ", got " + tvar_name(vt), a.line, a.col));
-          }
-        }
+        out = util.append_diags(out, assign_diags(a, cur, unions));
       },
       ast.StmtIf(f) => {
         let ic: typeinfo.Type = check_expr(f.cond, cur);

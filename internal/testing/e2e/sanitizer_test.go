@@ -46,8 +46,8 @@ func runSanitizeX86_64(t *testing.T, src string) (string, string, int) {
 
 // uncertified compiles a program the emitted-RC certifier would refuse: one
 // that plants the over-release or double free the runtime detector under
-// test is meant to catch. The certifier runs in every verifying compile
-// (FERN_IR_VERIFY), so a planted bug has to opt out to reach the runtime.
+// test is meant to catch. The certifier runs in every compile, so a planted
+// bug has to opt out to reach the runtime.
 const uncertified = "FERN_RC_CERTIFY=0"
 
 func runSanitizeX86_64With(t *testing.T, src string, extra ...string) (string, string, int) {

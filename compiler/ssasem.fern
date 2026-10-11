@@ -2413,6 +2413,19 @@ function variables_of(ts: typeinfo.Type[], out: string[]): string[] {
   return out;
 }
 
+// filled is `b` with each variable it leaves open taken from `from`.
+pub function filled(b: Binding, from: Binding): Binding {
+  let out: Binding = b;
+  let i: i32 = 0;
+  while (i < from.names.len()) {
+    if (bound_at(out, from.names[i]) < 0) {
+      out = Binding { ...out, names: out.names.append(from.names[i]), types: out.types.append(from.types[i]) };
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
 pub function binds_all(b: Binding, vars: string[]): boolean {
   for v in vars {
     if (bound_at(b, v) < 0) {

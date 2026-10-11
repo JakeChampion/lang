@@ -9,6 +9,7 @@ import "./ssa";
 import "./ssa_lift";
 import "./physicalbody";
 import "./ssaprepare";
+import "./rcmemo";
 
 // asmcore — the emitter-side layer the three IR backends (asm_ir,
 // asm_arm64_ir, wasm_ir) share: the Ty type system, EmitState + its
@@ -152,6 +153,9 @@ pub struct EmitState {
   // Opt-in evidence follows immutable state, including runtime trial rollback.
   retain_prepared: boolean,
   prepared: ssaprepare.Emitted[],
+  // The emitted-RC certifier's memo for this compile (rcmemo), opened by the
+  // unit emit and shared by every gate it builds; off in a fresh state.
+  memo: rcmemo.Memo,
   retain_sites: boolean,
   native_sites: ssaprepare.UniqueSite[],
   // capture is a builder handle that write() appends to instead of the
@@ -468,6 +472,7 @@ pub function new_state(): EmitState {
     leaves: [],
     retain_prepared: false,
     prepared: [],
+    memo: rcmemo.off(),
     retain_sites: false,
     native_sites: [],
     capture: 0 as usize,

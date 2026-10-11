@@ -7095,7 +7095,7 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irtables
   // The IR verify gate's callee-arity index: built once for the whole
   // program, not per function, which is what keeps a ~3000-declaration
   // lookup out of the emit loop's inner cost.
-  let vgate: irverifygate.Gate = irverifygate.gate(irtables.fn_sig_index(all_funcs), ir.pops_by_kind(), physicalbody.abis(physical));
+  let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate(irtables.fn_sig_index(all_funcs), ir.pops_by_kind(), physicalbody.abis(physical)), irverifygate.open_memo("wasm32"));
   let parts: string[] = [];
   let fi: i32 = 0;
   while (fi < mod.funcs.len()) {
@@ -7124,6 +7124,7 @@ pub function emit_functions_view(ns: string, mod: parser.Module, cache: irtables
     xi = xi + 1;
   }
   irverifygate.report(vgate);
+  irverifygate.close_memo(vgate.memo);
   return util.str_join_chunks(parts);
 }
 

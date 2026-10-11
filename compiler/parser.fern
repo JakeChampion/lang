@@ -13841,7 +13841,7 @@ function mono_stmt(st: ast.Stmt, env: MEnv, funcs: MFns, ins: Insts, ret_ty: str
       return RStmtOne { rstmt: ast.StmtExpr { value: xv.rexpr, line: 0 }, renv: env, rins2: xv.rins };
     },
     ast.StmtAssign(a) => {
-      let av: RExpr = mono_expr(a.value, env, funcs, ins);
+      let av: RExpr = mono_call_expected(a.value, env.elook(a.target), env, funcs, ins);
       return RStmtOne { rstmt: ast.StmtAssign { target: a.target, value: av.rexpr, line: a.line, col: a.col, target_line: a.target_line, target_col: a.target_col }, renv: env, rins2: av.rins };
     },
     ast.StmtIf(f) => {

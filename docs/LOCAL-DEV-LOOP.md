@@ -691,3 +691,18 @@ no Go); the readout above is how to measure it by hand if it regresses:
 ```
 FERN_CLIFF_REPORT=1 /usr/bin/time -l $B/fern-s2 -target arm64-darwin -o $B/fern-s3 $W/compiler/fern.fern $W/internal/stdlib
 ```
+
+## The certifier's memo
+
+Every compile certifies the reference counting it emits (`rccertify.fern`,
+the row in `docs/TEST-GATES.md`), through a memo of the functions each target
+has certified clean: `~/.cache/fern/certified/<version>-<target>.txt`, or
+under `$FERN_CACHE_DIR` or `$XDG_CACHE_HOME/fern` when set. A cold compile of
+the compiler pays about 15% for it; a warm one pays a digest per function.
+`FERN_IR_VERIFY=1` prints `FERN_RC_CERTIFY: memo hits=… misses=…` at the end
+of a compile. To certify everything again, delete the directory or set
+`FERN_RC_CERTIFY_MEMO=0`; to keep a test's memo apart, point
+`FERN_RC_CERTIFY_MEMO` at a directory. `FERN_RC_CERTIFY=0` turns the
+certifier off for a bisect that suspects it. The benches under `scripts/`
+that measure what the lowering allocates or copies set it off themselves.
+

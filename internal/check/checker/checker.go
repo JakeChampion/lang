@@ -19766,7 +19766,11 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 		return nil
 	case *ast.Assign:
 		lt := c.checkExpr(n.Target, s)
+		c.setElemHintFor(n.Value, lt)
+		c.expectedType = lt
 		rt := c.checkExpr(n.Value, s)
+		c.expectedType = nil
+		c.elemHint = nil
 		// A literal local assigned a typed integer takes that type.
 		if id, ok := n.Target.(*ast.Ident); ok && c.litIdents[id] != nil {
 			if rn, ok := rt.(ast.NumberType); ok && !rn.Polymorphic {
@@ -19778,6 +19782,8 @@ func (c *checker) checkExpr(e ast.Expr, s *scope) ast.Type {
 			c.settleNumeric(n.Value, lt)
 			rt = c.postSettleType(n.Value, rt)
 			rt = c.maybeWrapForUnion(lt, &n.Value, rt, s)
+			c.stampStructTypeArgs(n.Value, lt)
+			c.refineCallTypeArgsFromDest(n.Value, lt)
 		}
 		if lt != nil && rt != nil && !ast.Equal(lt, rt) && !c.assignable(lt, rt) {
 			what := "assignment"

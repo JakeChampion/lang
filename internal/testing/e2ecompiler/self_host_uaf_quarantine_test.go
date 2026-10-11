@@ -42,7 +42,7 @@ const uafSelfHostIncSrc = `function main(): i32 {
 }`
 
 func TestSelfHostUafIncAfterFreeReportedX86_64(t *testing.T) {
-	bin, runner := sanSelfHostBuild(t, "uaf_inc", uafSelfHostIncSrc, []string{"FERN_SANITIZE=1"})
+	bin, runner := sanSelfHostBuild(t, "uaf_inc", uafSelfHostIncSrc, []string{"FERN_SANITIZE=1", uncertified})
 	stderr, code := hevRun(t, runner, bin)
 	if code != e2eharness.ExitSanitizer {
 		t.Errorf("exit=%d, want %d (a quarantine finding is fatal)", code, e2eharness.ExitSanitizer)
@@ -55,7 +55,7 @@ func TestSelfHostUafIncAfterFreeReportedX86_64(t *testing.T) {
 // The flag stands alone, without the rest of the sanitizer — the
 // FERN_RC_FREE_DEBUG=1 probe-binary path native documents on RcFreeDebug.
 func TestSelfHostUafStandaloneFlagX86_64(t *testing.T) {
-	bin, runner := sanSelfHostBuild(t, "uaf_alone", uafSelfHostIncSrc, []string{"FERN_RC_FREE_DEBUG=1"})
+	bin, runner := sanSelfHostBuild(t, "uaf_alone", uafSelfHostIncSrc, []string{"FERN_RC_FREE_DEBUG=1", uncertified})
 	stderr, code := hevRun(t, runner, bin)
 	if code != e2eharness.ExitSanitizer {
 		t.Errorf("exit=%d, want %d", code, e2eharness.ExitSanitizer)
@@ -73,7 +73,7 @@ func TestSelfHostUafStandaloneFlagX86_64(t *testing.T) {
 // Without any flag the same program runs to completion silently — the
 // detector is opt-in, not a change to what the compiler emits by default.
 func TestSelfHostUafSilentWithoutFlagX86_64(t *testing.T) {
-	bin, runner := sanSelfHostBuild(t, "uaf_off", uafSelfHostIncSrc, nil)
+	bin, runner := sanSelfHostBuild(t, "uaf_off", uafSelfHostIncSrc, []string{uncertified})
 	stderr, code := hevRun(t, runner, bin)
 	if code != 0 {
 		t.Errorf("exit=%d, want 0 (an unsanitized build must not abort)", code)

@@ -252,6 +252,16 @@ pub function admits(op: ir.Op): boolean {
 // reads no frame slot. dyn_dispatch's arm reads its arguments from the
 // locals the lowering spilled them to, which the register path keeps no
 // slots for; the lift has an instruction of its own for it (60).
+// flat_name is the name a flat op is lifted under: its own, except the
+// in-place scale, which ir carries as a flag on scale_f64 and rcsigs reads
+// as the move it is.
+function flat_name(k: string, op: ir.Op): string {
+  if (k == "scale_f64" && op.i32_imm == 1) {
+    return "scale_f64_in_place";
+  }
+  return k;
+}
+
 function flat_arm_op(op: ir.Op): boolean {
   if (op.kind_tag == ir.kind_id("dyn_dispatch")) {
     return false;
@@ -1244,7 +1254,7 @@ function lift_impl(kt: KindTable, name: string, nparams: i32, nslots: i32, ops: 
       cur_insts = cur_insts.append(ssa.SInst { kind_tag: 1, result: pv, args: [], imm: 8, str: "" });
       stack = stack.append(pv);
     } else if ((cls & 1) == 0 && flat_arm_op(op)) {
-      let lv: LiftVals = lift_pop_push(LiftVals { nvals: nvals, stack: stack, insts: [], ok: true }, ir.op_pops_by(kt.pops, op), 59, i, k);
+      let lv: LiftVals = lift_pop_push(LiftVals { nvals: nvals, stack: stack, insts: [], ok: true }, ir.op_pops_by(kt.pops, op), 59, i, flat_name(k, op));
       nvals = lv.nvals;
       stack = lv.stack;
       cur_insts = splice(cur_insts, lv.insts);

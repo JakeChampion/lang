@@ -40,7 +40,10 @@ line under `FERN_RC_CERTIFY=report`.
 - A branch settles a word on its edges: `x == 0` makes `x` absent on that
   arm, and a paired call's second word (sempair) holds a unit only where the
   first word is settled to a variant whose payload is a reference
-  (`Abi.pair_second`, one bit per tag).
+  (`Abi.pair_second`, one bit per tag). The edge away from the last such
+  variant counts the tags the dominating branches already excluded, so a
+  three-way match that releases the word under two payload tags owes
+  nothing on the third arm.
 - `p + c` names the object `p` does for a spend, and carries nothing into a
   phi: a cursor over a box is not a second unit of it.
 - Rows meet with a three-point lattice: a count, absent, unproved. A count
@@ -136,20 +139,17 @@ dense rows themselves — the entry meet, `put_row`, `row_equal`, the per-block
 per-instruction scans (`taken_at`, `reloaded`, `mark_taken_loads`).
 
 The four variants after that are the shapes tried against the dense rows
-and the numbers they measured; none is kept. Keeping a block's own slots
-out of the rows saves little because most slots are read across blocks. A
-sparse row costs more than it saves: the per-slot writes rebuild the state
-struct and the rows are not sparse in a long function, where a value is
-live across most of it. Liveness-driven rows (only the live-in slots read,
-only the live-out written, a slot retired on the edge where it dies, which
-also reports a leak where the value dies rather than at the return) cost
-their fixpoint — several passes over `blocks × tracked` bits — more than the
-rows they save. A second round on an acyclic graph is nearly free, since it
-only compares. What would move this is a representation whose cost is the
-live set at a block rather than the tracked set, computed in one pass, and
-that is a different walk, not a tuning of this one. The fixpoint's share of
-a verifying compile is accepted for now; the budget question for the
-default compile is open.
+and the numbers they measured. Keeping a block's own slots out of the rows
+saves little because most slots are read across blocks. A sparse row costs
+more than it saves: the per-slot writes rebuild the state struct and the
+rows are not sparse in a long function, where a value is live across most
+of it. Liveness-driven rows (only the live-in slots read, only the live-out
+written, a slot retired on the edge where it dies, which also reports a
+leak where the value dies rather than at the return) cost their fixpoint —
+several passes over `blocks × tracked` bits, computed by the certifier
+itself — more than the rows they saved; that shape is the one taken below,
+once the liveness came from `ssalive` instead. A second round on an acyclic
+graph is nearly free, since it only compares.
 
 A profile of a compiler built without semantic inlining (`FERN_SEM_INLINE=`),
 so that callgrind attributes cost per function, puts the 4.64 G of the
@@ -163,8 +163,93 @@ certifier as:
 | of which `apply`, the accounting itself | 0.22 G | 5% |
 | `walk_of` (regions, origins, touches, takes) | 0.67 G | 14% |
 
-The accounting is 5% of the certifier; the rows are three quarters. A row
-restricted to the values live at the block, with liveness taken from
-`ssalive` (the register allocator computes it for the same SSA and the
-liveness variant above paid for computing it again), takes the rows'
-share down to the size of the live sets. That is the next step.
+The accounting is 5% of the certifier; the rows are three quarters.
+
+## Rows by liveness
+
+The rows are now laid out by liveness (`Live` in rccertify.fern). A
+block's row is the slots live at its entry, the slots it defines and the
+slots its null stores credit; the row it hands a successor holds the slots
+live at that successor's entry, in the successor's order, so the entry meet
+is elementwise over the live set and one state row of every tracked slot
+is reused block by block. Liveness comes from `ssalive.compute`, with each
+alias depending on its root so the root stays live wherever a copy or a
+derived pointer of it is read. A slot in a block's row and not in a
+successor's entry dies on that edge, and a unit still held there is
+reported where the value dies rather than carried to the return; a count
+the paths disagree on is unproved only while the value stays live, so the
+arm that never releases a value that dies at the join is a finding, and the
+retain on one arm of a test paired with a release on the same arm of a
+later test stays unproved (`TestSelfHostRcCertifyCases` pins both).
+
+The census is unchanged at zero findings on all three targets (6836
+functions, 153,260 tracked, 28,540 unproved on x86-64 and arm64; the wasm
+checker driver 1684, 32,762, 6,144). Callgrind over `checker_run`:
+
+| Configuration | Instructions | Certifier's share of the plain compile |
+|---|---:|---:|
+| plain compile | 15.95 G | |
+| certifier, dense rows | 20.45 G | 29% |
+| certifier, rows by liveness | 18.38 G | 15% |
+
+Per function, of the certifier's 2.49 G in the uninlined build:
+
+| Function | Instructions |
+|---|---:|
+| `settle` | 0.90 G |
+| of which `hand_edges` (settle, feed, retire, store the row) | 0.34 G |
+| of which `apply_block`, the accounting | 0.29 G |
+| `walk_of` (regions, origins, touches, takes) | 0.68 G |
+| of which `unique_regions` | 0.30 G |
+| `live_of` | 0.63 G |
+| of which `ssalive.compute` | 0.48 G |
+
+The budget was settled on 2026-10-11 as default-on with caching rather
+than a 1% cold compile: the accounting pass alone is 1.4% of a compile, so
+the floor for the replay and the certifier together is well above 1%, and
+a steady-state compile pays nothing for a function whose lowering it has
+certified before. The memo is the next step; the remaining cold cost is
+`ssalive.compute` over every value rather than the tracked ones, the
+region passes, and the allocation the slot lists do.
+
+## The memo, and the default compile
+
+The budget question was settled as default-on with caching. `rcmemo.fern`
+keeps, per target, the digests of the functions certified clean: a digest
+of the function's name (a generated helper's contract is read off it), its
+own contract, the shape of its lifted SSA, its lowered ops, and the contract
+of every callee the ops name; everything the certifier reads. The file lives
+under the package store's root (`$FERN_CACHE_DIR`, `$XDG_CACHE_HOME/fern`,
+`~/.cache/fern`) in `certified/`, is read when a backend opens its gate and
+rewritten whole when the gate reports, and keeps its newest 200,000 lines.
+A refusing compile consults it before certifying and records what it
+certified; a report compile reads it not at all. `util.certify_mode` is 2
+unless `FERN_RC_CERTIFY` says otherwise, so the plain compile certifies.
+
+Compiling `checker_run` on x86-64, wall time on the 4-core container and
+instructions under callgrind:
+
+| | wall | instructions | over the certifier off |
+|---|---:|---:|---:|
+| certifier off (`FERN_RC_CERTIFY=0`) | 4.06 s | 15.95 G | |
+| cold memo, 1693 functions certified | 4.63 s | 18.89 G | 18% |
+| warm memo, 1693 hits | 4.1 s | 16.52 G | 3.6% |
+
+The warm compile's 0.57 G over the certifier off is the key: a profile of
+the uninlined compiler puts 0.55 G of it in `rcmemo.key` and the
+`util.roll` family it calls, which rolls every op's words and every byte of
+its string through two polynomial rolls, and nothing else in the gate's
+hit path registers (the native backends hand the gate their own lift, so
+no function is lifted twice). Rolling the text through scalar accumulators
+instead of a `Digest` per step changed nothing in the inlined build
+(16.51 G against 16.52 G), so the cost is the arithmetic over the op
+stream, not allocation. A cheaper key, one the lowering produces once per
+function and the incremental cache's `lowered_digest` shares, is the next
+cost step.
+
+The replay (`ssaunits.verify_planned`) stays under `FERN_IR_VERIFY`: the
+certifier checks what the lowering emitted, which is what a plan error would
+have to reach to matter, and the replay's own cost has not been attributed
+yet. The perf lane's allocation and cliff benches set `FERN_RC_CERTIFY=0`,
+since they measure the lowering.
+
