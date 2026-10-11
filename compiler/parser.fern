@@ -10605,12 +10605,13 @@ pub function inject_builtin_enums(structs: StructDecl[]): StructDecl[] {
 // add_builtin_stream declares Stream and the BodySource a lazy one pulls
 // from, as checker.go's builtinStructDecls does: `Stream { data: u8[], pos:
 // i32, source: Option[BodySource] }` and `BodySource { next: () =>
-// Option[u8[]], fault: Cell[i32] }`.
+// Option[u8[]], fault: Cell[i32], send: (u8[]) => i32 }`.
 function add_builtin_stream(structs: StructDecl[]): StructDecl[] {
   if (!name_declared(structs, "BodySource")) {
     let bsf: StructFieldDecl[] = [];
     bsf = bsf.append(StructFieldDecl { name: "next", type_name: "fn", fn_ret: "Option[u8[]]", fn_param_types: "" });
     bsf = bsf.append(StructFieldDecl { name: "fault", type_name: "Cell[i32]", fn_ret: "", fn_param_types: "" });
+    bsf = bsf.append(StructFieldDecl { name: "send", type_name: "fn", fn_ret: "i32", fn_param_types: "u8[]" });
     structs = structs.append(StructDecl { name: "BodySource", fields: bsf, type_params: [], derives: [], line: 0, col: 0, enum_owner: "", must_consume: false, variant_field_names: [], is_pub: true, is_package: false });
   }
   if (!name_declared(structs, "Stream")) {

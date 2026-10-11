@@ -93,7 +93,7 @@ struct HeaderMap { names: string[], values: string[] }
 // chunk, None at the end and on every call after; `fault` is why the
 // stream ended early (an HTTP status, or async.cancelled()), 0 for one
 // that reached its end.
-struct BodySource { next: () => Option[u8[]], fault: Cell[i32] }
+struct BodySource { next: () => Option[u8[]], fault: Cell[i32], send: (u8[]) => i32 }
 
 // Stream — std/stream's byte-stream value, and the type of
 // HttpRequest.body (docs/PLATFORM-RESEARCH.md Rec §4): a buffer and a

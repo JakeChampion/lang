@@ -2460,10 +2460,15 @@ pub function http_serialize_fields(fields: HeaderMap): string {
 // `Content-Length`, `Transfer-Encoding` and `Connection`, which the
 // caller's `fields` (its own field lines, the framing line among them, or
 // none for a close-delimited or bodiless response) and `keep_alive`
-// decide. The serve loop writes a streamed body behind this head.
+// decide; a 101's `Connection` names the upgrade, whatever `keep_alive`
+// says. The serve loop writes a streamed body behind this head.
 pub function http_serialize_response_head_into(b: usize, resp: HttpResponse, keep_alive: boolean, fields: string): void {
   __push_head(b, resp);
   buf_push(b, fields);
+  if (resp.status == 101) {
+    buf_push(b, "Connection: Upgrade\r\n\r\n");
+    return;
+  }
   __push_close(b, keep_alive);
 }
 

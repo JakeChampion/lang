@@ -656,7 +656,10 @@ func builtinStructDecls() []*ast.StructDecl {
 		// BodySource — what a lazy Stream pulls from: `next` answers the
 		// next chunk, None at the end and on every call after; `fault`
 		// is why the stream ended early (an HTTP status, or
-		// async.cancelled()), 0 for a stream that reached its end.
+		// async.cancelled()), 0 for a stream that reached its end; `send`
+		// writes to the peer behind the body, where there is one (an
+		// upgraded connection's), answering the bytes written or a
+		// negative errno, -ENOTSUP for a body with no peer.
 		{
 			Name: "BodySource",
 			Fields: []ast.Param{
@@ -664,6 +667,10 @@ func builtinStructDecls() []*ast.StructDecl {
 					Result: ast.EnumType{Name: "Option", Args: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}}},
 				}},
 				{Name: "fault", Type: ast.StructType{Name: "Cell", Args: []ast.Type{ast.NumberType{}}}},
+				{Name: "send", Type: &ast.FuncType{
+					Params: []ast.Type{ast.ArrayType{Elem: ast.NumberType{Width: 8, Signed: false}}},
+					Result: ast.NumberType{},
+				}},
 			},
 		},
 		// ChunkProducer — the producer a `BodyChunks` carries: asked for
