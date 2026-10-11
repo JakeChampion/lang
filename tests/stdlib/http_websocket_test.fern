@@ -7,6 +7,7 @@ import "std/string";
 import "std/array";
 import "std/option";
 import "std/deflate";
+import "std/utf8";
 
 // tests/stdlib/http_websocket_test.fern — std/http/websocket: the
 // handshake (the RFC's accept key, the refusals, the subprotocol choice,
@@ -335,7 +336,11 @@ function test_deflate_negotiation(): test.TestOutcome {
   got = got + "|" + negotiated("x-webkit-deflate-frame, permessage-deflate; server_max_window_bits=10", compressing());
   got = got + "|" + negotiated("permessage-deflate; server_max_window_bits=\"7\"", compressing());
   got = got + "|" + negotiated("permessage-deflate; sticky", compressing());
-  return test.assert_eq(got, taken + "15|-|-|" + taken + "10|-|-");
+  got = got + "|" + negotiated("permessage-deflate; client_max_window_bits=99", compressing());
+  got = got + "|" + negotiated("permessage-deflate; server_no_context_takeover=1", compressing());
+  got = got + "|" + negotiated("permessage-deflate; server_max_window_bits=10; server_max_window_bits=12", compressing());
+  got = got + "|" + negotiated("permessage-deflate; client_max_window_bits=12", compressing());
+  return test.assert_eq(got, taken + "15|-|-|" + taken + "10|-|-|-|-|-|" + taken + "15");
 }
 
 // The session over a compressed connection: a compressed text message
@@ -388,6 +393,59 @@ function test_deflate_refusals(): test.TestOutcome {
   return test.assert_eq(got, "880203ea|880203ef|880203ef|880203ea");
 }
 
+// A close reason of a multibyte code point straddling byte 123 is cut back
+// to the last whole code point, so the echoed close stays valid UTF-8
+// (RFC 6455 §5.5.1). The reason here is 61 two-byte code points (122
+// bytes) then one more whose lead byte would land at 123; the server must
+// drop that last one, echoing 122 bytes of reason.
+function test_close_reason_boundary(): test.TestOutcome {
+  let rb: u8[] = [];
+  let k: i32 = 0;
+  while (k < 62) {
+    rb = rb.append(195 as u8).append(169 as u8);
+    k = k + 1;
+  }
+  let reason: string = utf8.from_bytes_lossy(rb);
+  let h: websocket.Handlers = websocket.handlers((c: websocket.Conn, m: websocket.Message): void => { c.close(1000, reason); });
+  let bytes: u8[] = masked(true, 1, "go".bytes());
+  let out: string = hex(session(bytes, 9, websocket.options(), h));
+  let body: u8[] = [(1000 >> 8) as u8, (1000 & 255) as u8].concat(array.take(rb, 122));
+  return test.assert_eq(out, "88" + __len_byte(body.len()) + hex(body));
+}
+
+function __len_byte(n: i32): string {
+  let digits: string = "0123456789abcdef";
+  return digits.slice_snap(n >> 4, (n >> 4) + 1) + digits.slice_snap(n & 15, (n & 15) + 1);
+}
+
+// A frame whose length is not encoded in the minimal number of bytes, or
+// whose 8-byte form has the most significant bit set, is a protocol error
+// (RFC 6455 §5.2), closed 1002: a 2-byte length of 1, an 8-byte length of
+// 1, an 8-byte length of 200, and an 8-byte length with bit 63 set.
+function test_length_framing(): test.TestOutcome {
+  let m: u8[] = mask();
+  let nonmin16: u8[] = [(1 as i32 | 128) as u8, (126 | 128) as u8, 0 as u8, 1 as u8].concat(m).concat(xormask("a".bytes(), m));
+  let nonmin64: u8[] = [(1 as i32 | 128) as u8, (127 | 128) as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 1 as u8].concat(m).concat(xormask("a".bytes(), m));
+  let small64: u8[] = [(1 as i32 | 128) as u8, (127 | 128) as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 200 as u8].concat(m);
+  let msb64: u8[] = [(1 as i32 | 128) as u8, (127 | 128) as u8, 128 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 0 as u8, 1 as u8].concat(m);
+  let got: string = framing(nonmin16) + "|" + framing(nonmin64) + "|" + framing(small64) + "|" + framing(msb64);
+  return test.assert_eq(got, "880203ea|880203ea|880203ea|880203ea");
+}
+
+function xormask(payload: u8[], m: u8[]): u8[] {
+  let out: u8[] = [];
+  let i: i32 = 0;
+  while (i < payload.len()) {
+    out = out.append((payload[i] as i32 ^ m[i & 3] as i32) as u8);
+    i = i + 1;
+  }
+  return out;
+}
+
+function framing(bytes: u8[]): string {
+  return hex(session(bytes, 7, websocket.options(), websocket.handlers(echo)));
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/http/websocket");
   r = r.it("computes the accept key", test_accept_key);
@@ -407,5 +465,7 @@ function main(): i32 {
   r = r.it("takes a permessage-deflate offer it can serve", test_deflate_negotiation);
   r = r.it("decodes compressed messages and compresses the echo", test_deflate_session);
   r = r.it("refuses what a compressed connection cannot take", test_deflate_refusals);
+  r = r.it("cuts a close reason to a whole code point", test_close_reason_boundary);
+  r = r.it("closes 1002 on a non-minimal or MSB-set length", test_length_framing);
   return r.finish();
 }

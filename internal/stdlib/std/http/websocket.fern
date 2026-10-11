@@ -228,9 +228,16 @@ function __deflate_offer(offer: string): i32 {
     return 0;
   }
   let bits: i32 = 15;
+  let seen: string[] = [];
   let i: i32 = 1;
   while (i < parts.len()) {
-    bits = __deflate_param(parts[i], bits);
+    let kv: string[] = parts[i].trim().split("=");
+    let name: string = kv[0].trim();
+    if (name.len() == 0 || __seen(seen, name)) {
+      return 0;
+    }
+    seen = seen.append(name);
+    bits = __deflate_param(name, kv, bits);
     if (bits == 0) {
       return 0;
     }
@@ -239,20 +246,19 @@ function __deflate_offer(offer: string): i32 {
   return bits;
 }
 
-// __deflate_param(param, bits) — the window bits after one parameter of
-// the offer: `server_max_window_bits` sets them (8 to 15, quoted or
-// not), the takeover parameters and `client_max_window_bits` leave
-// them, and anything else is 0, a parameter the server cannot take.
-function __deflate_param(param: string, bits: i32): i32 {
-  let kv: string[] = param.trim().split("=");
-  let name: string = kv[0].trim();
-  if (name == "server_no_context_takeover" || name == "client_no_context_takeover" || name == "client_max_window_bits") {
-    return bits;
+function __seen(names: string[], name: string): boolean {
+  for n in names {
+    if (n == name) {
+      return true;
+    }
   }
-  if (name != "server_max_window_bits" || kv.len() < 2) {
-    return 0;
-  }
-  match (kv[1].trim().trim_chars("\"").parse_int()) {
+  return false;
+}
+
+// __window_value(v) — a window-bits value 8 to 15 (quoted or not), or 0
+// for one outside that range or not a number.
+function __window_value(v: string): i32 {
+  match (v.trim().trim_chars("\"").parse_int()) {
     Some(n) => {
       if (n < 8 || n > 15) {
         return 0;
@@ -262,6 +268,37 @@ function __deflate_param(param: string, bits: i32): i32 {
     None => {
       return 0;
     }
+  }
+  return 0;
+}
+
+// __deflate_param(name, kv, bits) — the window bits after one parameter of
+// the offer, 0 to decline the whole offer (RFC 7692 §7: an invalid value,
+// a value on a value-less parameter, a duplicate, or a parameter this
+// server does not define). `server_max_window_bits` sets the bits the
+// server compresses with; the takeover parameters and
+// `client_max_window_bits` leave them, the last two value-less or, for
+// `client_max_window_bits`, carrying an advisory value the server need
+// not honour but must still find valid.
+function __deflate_param(name: string, kv: string[], bits: i32): i32 {
+  if (kv.len() > 2) {
+    return 0;
+  }
+  let has_value: boolean = kv.len() == 2;
+  if (name == "server_no_context_takeover" || name == "client_no_context_takeover") {
+    if (has_value) {
+      return 0;
+    }
+    return bits;
+  }
+  if (name == "client_max_window_bits") {
+    if (has_value && __window_value(kv[1]) == 0) {
+      return 0;
+    }
+    return bits;
+  }
+  if (name == "server_max_window_bits" && has_value) {
+    return __window_value(kv[1]);
   }
   return 0;
 }
@@ -596,7 +633,8 @@ function __close_payload(code: i32, reason: string): u8[] {
   if (code == 1005) {
     return none;
   }
-  return [(code >> 8) as u8, (code & 255) as u8].concat(array.take(reason.bytes(), 123));
+  let cut: i32 = utf8.floor_char_boundary(reason, 123);
+  return [(code >> 8) as u8, (code & 255) as u8].concat(array.take(reason.bytes(), cut));
 }
 
 // A data frame: the start of a message, a fragment of one, or its end,
@@ -838,8 +876,10 @@ function __head_ok(b0: i32, b1: i32, compressing: boolean): boolean {
 }
 
 // __read_length(s, len7, max) — the payload length past the 7-bit one:
-// `(length, stream, violation)`, -1 for bytes that ended, 1009 for a
-// length past `max` or past what fits.
+// `(length, stream, violation)`, -1 for bytes that ended, 1002 for a
+// length not encoded in the minimal number of bytes or an 8-byte form
+// with the most significant bit set (RFC 6455 §5.2), and 1009 for a
+// length past `max`.
 function __read_length(s: Stream, len7: i32, max: i32): (i32, Stream, i32) {
   if (len7 < 126) {
     return (len7, s, 0);
@@ -852,9 +892,19 @@ function __read_length(s: Stream, len7: i32, max: i32): (i32, Stream, i32) {
   if (ext.0.len() < width) {
     return (0 - 1, ext.1, 0);
   }
+  if (width == 8 && (ext.0[0] as i32 & 128) != 0) {
+    return (0, ext.1, 1002);
+  }
   let n: i64 = 0 as i64;
   for b in ext.0 {
     n = n * 256 + b as i64;
+  }
+  let floor: i64 = 126 as i64;
+  if (width == 8) {
+    floor = 65536 as i64;
+  }
+  if (n < floor) {
+    return (0, ext.1, 1002);
   }
   if (n > max as i64) {
     return (0, ext.1, 1009);

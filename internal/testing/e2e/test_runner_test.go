@@ -1176,7 +1176,7 @@ func TestRunnerHTTPSSEExamplePasses(t *testing.T) {
 // `tests/stdlib/http_websocket_test.fern` runs the WebSocket handshake
 // and a session over a scripted connection.
 func TestRunnerHTTPWebSocketExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_websocket", "std/http/websocket", 17)
+	runnerSuitePasses(t, "http_websocket", "std/http/websocket", 19)
 }
 
 func TestRunnerPublicSuffixExamplePasses(t *testing.T) {
