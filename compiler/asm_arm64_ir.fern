@@ -5983,7 +5983,7 @@ pub function emit_body(mod: parser.Module, s: asmcore.EmitState, darwin: boolean
   s = asmcore.with_funcs(s, mod.funcs);
   s = s.write("    .globl _start\n");
   s = s.write("    .text\n");
-  let vgate: irverifygate.Gate = irverifygate.gate(irtables.fn_sig_index(mod.funcs), s.kinds.pops, physicalbody.abis(physical));
+  let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate(irtables.fn_sig_index(mod.funcs), s.kinds.pops, physicalbody.abis(physical)), s.memo);
   ircore.check_fip_claims(mod.funcs, 0, mod.funcs.len(), cache);
   s = asmcore.EmitState { ...s, reg_entries: irtables.sig_reg_of(asmcore.unit_labels(mod, 0, mod.funcs.len(), cache)), leaves: asmcore.unit_leaves(mod, 0, mod.funcs.len(), cache) };
   let fabi: asmcore.FloatAbi = asmcore.unit_float_abi(mod, 0, mod.funcs.len(), cache);
@@ -6089,14 +6089,15 @@ pub function emit_ir_runtime_fern_fn(src: string, s: asmcore.EmitState): asmcore
   let lowered: physicalbody.Lowered = s.rt_lower(src);
   let bodies: irtables.LowerResult[] = lowered.bodies;
   let physical = physicalbody.collection(lowered);
-  let vgate: irverifygate.Gate = irverifygate.gate_unreported(irtables.fn_sig_index(fns), s.kinds.pops, physicalbody.abis(physical));
+  let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate_unreported(irtables.fn_sig_index(fns), s.kinds.pops, physicalbody.abis(physical)), s.memo);
   let i: i32 = 0;
   while (i < fns.len()) {
     s = emit_function_via_ir_pre(bodies[i], physicalbody.select(physical, i), fns[i], s, vgate);
     i = i + 1;
   }
   // Past the declarations: the drop helpers the typed lowering defines.
-  return emit_named_bodies(bodies, physical, fns.len(), s, vgate);
+  s = emit_named_bodies(bodies, physical, fns.len(), s, vgate);
+  return s;
 }
 
 // ======================= IR-PATH RUNTIME =======================
@@ -11738,11 +11739,12 @@ pub function emit_module_ir_gated_sub(mod: parser.Module, darwin: boolean, sub: 
 function emit_module_ir_flat(mod: parser.Module, stab: irtables.StructTab, darwin: boolean, cache: irtables.LowerResult[], physical: physicalbody.Collection, rt: (string) => physicalbody.Lowered, recs: usize, sw: asmcore.Switches): string {
   strbuf_reset();
   let s: asmcore.EmitState = asmcore.new_state();
-  s = asmcore.with_funcs(asmcore.with_switches(asmcore.EmitState { ...s, struct_decls: stab, rt_lower: rt, recs: recs }, sw), mod.funcs);
+  s = asmcore.with_funcs(asmcore.with_switches(asmcore.EmitState { ...s, struct_decls: stab, rt_lower: rt, recs: recs, memo: irverifygate.open_memo("arm64") }, sw), mod.funcs);
   // emit_body takes the runtime-dependency closure itself, ahead of the _start
   // it ends with.
   s = emit_body(mod, s, darwin, cache, physical);
   s = emit_ir_runtime_settled(s, darwin);
+  irverifygate.close_memo(s.memo);
   return strbuf_take();
 }
 
@@ -11769,7 +11771,7 @@ pub function emit_module_ir_unit_arm64_prepared(mod: parser.Module, is_entry: bo
   mod = parser.infer_ret_types_module(mod);
   strbuf_reset();
   let s: asmcore.EmitState = asmcore.new_state();
-  s = asmcore.EmitState { ...s, retain_prepared: retain };
+  s = asmcore.EmitState { ...s, retain_prepared: retain, memo: irverifygate.open_memo("arm64") };
   // struct_decls and funcs are the WHOLE-PROGRAM sets, so an imported struct's
   // layout resolves and a `dyn` dispatch has an arm for every impl (#10891);
   // str_ns namespaces this unit's pools.
@@ -11799,7 +11801,7 @@ pub function emit_module_ir_unit_arm64_prepared(mod: parser.Module, is_entry: bo
   // hi<0 "to the end") is byte-identical to the unsharded emit; a partial
   // window lets an oversized module emit across separate processes without
   // any single emit's leak-mode heap crossing the arena ceiling.
-  let vgate: irverifygate.Gate = irverifygate.gate(irtables.fn_sig_index(all_funcs), s.kinds.pops, physicalbody.abis(physical));
+  let vgate: irverifygate.Gate = irverifygate.with_memo(irverifygate.gate(irtables.fn_sig_index(all_funcs), s.kinds.pops, physicalbody.abis(physical)), s.memo);
   let hh: i32 = hi;
   if (hh < 0 || hh > mod.funcs.len()) {
     hh = mod.funcs.len();
@@ -11853,6 +11855,7 @@ pub function emit_module_ir_unit_arm64_prepared(mod: parser.Module, is_entry: bo
   } else {
     s = emit_rodata_pools_arm64(s, false);
   }
+  irverifygate.close_memo(s.memo);
   return ssaprepare.Output { text: strbuf_take(), bodies: s.prepared };
 }
 

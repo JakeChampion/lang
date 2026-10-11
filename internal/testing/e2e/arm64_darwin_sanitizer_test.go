@@ -29,6 +29,9 @@ func TestArm64DarwinSanitize(t *testing.T) {
 		// census: stderr is exactly one balanced leakcheck line and
 		// nothing else, which is what a clean sanitized run prints.
 		census bool
+		// env: what the compile needs beyond the harness's child
+		// environment; a planted double free opts out of the certifier.
+		env []string
 	}{
 		{name: "clean_run_is_silent", src: sanCleanSrc, sanitize: true, wantExit: 0, census: true},
 		{
@@ -42,7 +45,7 @@ func TestArm64DarwinSanitize(t *testing.T) {
 		// touch it is (TestSelfHostOverReleaseReportArm64 pins the
 		// over-release report itself).
 		{
-			name: "double_free_reported", src: sanDoubleFreeSrc, sanitize: true,
+			name: "double_free_reported", src: sanDoubleFreeSrc, sanitize: true, env: []string{uncertified},
 			wantExit:   e2eharness.ExitSanitizer,
 			wantStderr: []string{"fern-sanitizer: use-after-free (touched a quarantined block)", "backtrace:"},
 		},
@@ -66,7 +69,7 @@ func TestArm64DarwinSanitize(t *testing.T) {
 			// The compiler reads FERN_SANITIZE / FERN_LEAKCHECK at init,
 			// so an ambient setting would turn the flag-off leg on.
 			build := exec.Command(bin, args...)
-			build.Env = e2eharness.ChildEnv()
+			build.Env = e2eharness.ChildEnv(c.env...)
 			if o, err := build.CombinedOutput(); err != nil {
 				t.Fatalf("arm64-darwin build failed: %v\n%s", err, o)
 			}

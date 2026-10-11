@@ -1198,55 +1198,17 @@ function list_text(xs: string[]): string {
 // per-module cache keyed on it moves whenever a unit's lowering does, including
 // when that lowering depends on another module's body.
 pub function lowered_digest(cache: irtables.LowerResult[]): string {
-  let d: Digest = Digest { a: 208357, b: 5381 };
+  let d: util.Digest = util.digest_start();
   for r in cache {
-    d = roll(roll(roll(roll(d, r.n_locals), r.n_params), r.result_kind), r.ops.len());
-    d = roll_text(roll(roll(d, digest_flags(r.superseded, r.erased_wide)), digest_flags(r.ok, false)), r.name);
+    d = util.roll(util.roll(util.roll(util.roll(d, r.n_locals), r.n_params), r.result_kind), r.ops.len());
+    d = util.roll_text(util.roll(util.roll(d, digest_flags(r.superseded, r.erased_wide)), digest_flags(r.ok, false)), r.name);
     for o in r.ops {
-      d = roll(roll(roll(roll(roll(d, o.kind_tag), o.i32_imm), o.width), o.decl), digest_flags(o.unsigned, false));
-      d = roll_text(roll_wide(roll_wide(d, o.i64_imm), f64_bits(o.f64_imm)), o.str);
+      d = util.roll(util.roll(util.roll(util.roll(util.roll(d, o.kind_tag), o.i32_imm), o.width), o.decl), digest_flags(o.unsigned, false));
+      d = util.roll_text(util.roll_wide(util.roll_wide(d, o.i64_imm), f64_bits(o.f64_imm)), o.str);
     }
-    d = roll_slots(roll_slots(roll_slots(roll_slots(d, r.arr_slots), r.i64_slots), r.f64_slots), r.str_slots);
+    d = util.roll_words(util.roll_words(util.roll_words(util.roll_words(d, r.arr_slots), r.i64_slots), r.f64_slots), r.str_slots);
   }
-  return util.i32_to_string(d.a) + "_" + util.i32_to_string(d.b);
-}
-
-// Digest is two independent 30-bit polynomial rolls, util.hash_key's.
-struct Digest { a: i32, b: i32 }
-
-// Each word rolls its low 30 bits and then its top two.
-function roll(d: Digest, w: i32): Digest {
-  let a: i32 = d.a * 31 + (w & 1073741823) + 1 & 1073741823;
-  let b: i32 = d.b * 131 + (w & 1073741823) + 7 & 1073741823;
-  a = a * 31 + (w >> 30 & 3) + 1 & 1073741823;
-  b = b * 131 + (w >> 30 & 3) + 7 & 1073741823;
-  return Digest { a: a, b: b };
-}
-
-function roll_wide(d: Digest, v: i64): Digest {
-  return roll(roll(roll(d, (v & 1073741823i64) as i32), (v >> 30 & 1073741823i64) as i32), (v >> 60) as i32);
-}
-
-// A string rolls its length and then its bytes, so adjacent strings cannot
-// trade bytes and roll the same.
-function roll_text(d: Digest, s: string): Digest {
-  let out: Digest = roll(d, s.len());
-  let i: i32 = 0;
-  while (i < s.len()) {
-    out = roll(out, s[i] as i32);
-    i = i + 1;
-  }
-  return out;
-}
-
-function roll_slots(d: Digest, xs: i32[]): Digest {
-  let out: Digest = roll(d, xs.len());
-  let i: i32 = 0;
-  while (i < xs.len()) {
-    out = roll(out, xs[i]);
-    i = i + 1;
-  }
-  return out;
+  return util.digest_text(d);
 }
 
 function digest_flags(x: boolean, y: boolean): i32 {
