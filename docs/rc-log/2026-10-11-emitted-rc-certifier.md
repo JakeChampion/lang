@@ -223,13 +223,20 @@ A refusing compile consults it before certifying and records what it
 certified; a report compile reads it not at all. `util.certify_mode` is 2
 unless `FERN_RC_CERTIFY` says otherwise, so the plain compile certifies.
 
-Compiling `checker_run` on x86-64, wall time on the 4-core container:
+Compiling `checker_run` on x86-64, wall time on the 4-core container and
+instructions under callgrind:
 
-| | wall |
-|---|---:|
-| certifier off (`FERN_RC_CERTIFY=0`) | 4.06 s |
-| cold memo, 1661 functions certified | 4.63 s |
-| warm memo, 1661 hits | 4.1 s |
+| | wall | instructions | over the certifier off |
+|---|---:|---:|---:|
+| certifier off (`FERN_RC_CERTIFY=0`) | 4.06 s | 15.95 G | |
+| cold memo, 1693 functions certified | 4.63 s | 18.89 G | 18% |
+| warm memo, 1693 hits | 4.1 s | 16.52 G | 3.6% |
+
+The warm compile still pays the gate's own lift of every function and the
+key's digest before the memo answers; the backend lifts the same function
+again for its register allocation. Handing the backend's lift to the gate
+is the next cost step, and takes the warm compile's share down to the
+digest.
 
 The replay (`ssaunits.verify_planned`) stays under `FERN_IR_VERIFY`: the
 certifier checks what the lowering emitted, which is what a plan error would
