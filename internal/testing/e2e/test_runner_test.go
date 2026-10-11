@@ -1135,7 +1135,7 @@ func TestRunnerTLSX509ExamplePasses(t *testing.T) {
 // `tests/stdlib/tls_verify_test.fern` validates chains, names, name
 // constraints and RFC 8448's CertificateVerify, with every refusal.
 func TestRunnerTLSVerifyExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "tls_verify", "std/tls/verify", 9)
+	runnerSuitePasses(t, "tls_verify", "std/tls/verify", 10)
 }
 
 // `tests/stdlib/tls_roots_test.fern` reads roots from a bundle on disk and

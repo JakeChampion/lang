@@ -53,6 +53,8 @@ pub enum VerifyError {
   RootsUnreadable(string),
   // A signature algorithm or key this module cannot check, by name.
   UnsupportedAlgorithm(string),
+  // The leaf was issued after the date its root is distrusted from.
+  Distrusted(i32),
 }
 
 // One arm per variant.
@@ -73,6 +75,9 @@ pub function (e: VerifyError) message(): string {
     },
     NotYetValid(i) => {
       return "tls verify: certificate " + int.int_to_string(i) + " is not yet valid";
+    },
+    Distrusted(i) => {
+      return "tls verify: the leaf was issued after the date root " + int.int_to_string(i) + " is distrusted from";
     },
     UnknownCritical(i, oid) => {
       return "tls verify: certificate " + int.int_to_string(i) + " has an unknown critical extension " + oid;
@@ -115,7 +120,16 @@ pub function (e: VerifyError) message(): string {
 }
 
 // Roots — the trusted certificates.
-pub struct Roots { certs: x509.Certificate[] }
+// Roots — the certificates a chain may end at, and for each the Unix
+// second after which a server certificate issued under it is refused
+// (Mozilla's CKA_NSS_SERVER_DISTRUST_AFTER; 0 for none).
+pub struct Roots { certs: x509.Certificate[], distrust_after: i64[] }
+
+// (r).distrusting(i, after) — `r` with certs[i] distrusted for server
+// certificates issued after `after`.
+pub function (r: Roots) distrusting(i: i32, after: i64): Roots {
+  return Roots { ...r, distrust_after: r.distrust_after.with(i, after) };
+}
 
 // roots trusts the DER certificates given, skipping any that do not parse,
 // as a system bundle may hold one this module cannot read.
@@ -126,7 +140,11 @@ pub function roots(ders: u8[][]): Roots {
       out = out.append(c);
     }
   }
-  return Roots { certs: out };
+  let dates: i64[] = [];
+  for c in out {
+    dates = dates.append(0 as i64);
+  }
+  return Roots { certs: out, distrust_after: dates };
 }
 
 // roots_from_pem trusts every CERTIFICATE block in a PEM bundle.
@@ -139,7 +157,7 @@ pub function roots_from_pem(text: string): Result[Roots, VerifyError] {
       return Err(Pem(e));
     }
   }
-  return Ok(Roots { certs: [] });
+  return Ok(roots([]));
 }
 
 // The bundles distributions keep their trusted roots in, in the order Go's
@@ -367,25 +385,29 @@ struct Search { found: boolean, err: VerifyError }
 
 // __extend tries each certificate that could have issued the last of
 // `below`, at position `at`, roots first: a root ends the path, an
-// intermediate continues it.
-function __extend(below: x509.Certificate[], at: i32, inter: x509.Certificate[], roots: Roots, now: i64, s: Search): Search {
+// intermediate continues it. For a server a root distrusted from a date
+// before the leaf was issued does not end it.
+function __extend(below: x509.Certificate[], at: i32, inter: x509.Certificate[], roots: Roots, now: i64, server: boolean, s: Search): Search {
   if (at >= MAX_PATH) {
     return Search { found: false, err: PathTooLong(at) };
   }
   let i: i32 = 0;
   while (i < roots.certs.len()) {
     let r: Search = __try(below, roots.certs[i], at, now, s);
-    if (r.found) {
+    if (r.found && !(server && __distrusted(roots, i, below[0]))) {
       return r;
     }
-    s = r;
+    s = Search { found: false, err: r.err };
+    if (r.found) {
+      s = Search { found: false, err: Distrusted(at) };
+    }
     i = i + 1;
   }
   i = 0;
   while (i < inter.len()) {
     let r: Search = __try(below, inter[i], at, now, s);
     if (r.found) {
-      let up: Search = __extend(below.append(inter[i]), at + 1, inter, roots, now, Search { found: false, err: r.err });
+      let up: Search = __extend(below.append(inter[i]), at + 1, inter, roots, now, server, Search { found: false, err: r.err });
       if (up.found) {
         return up;
       }
@@ -395,6 +417,13 @@ function __extend(below: x509.Certificate[], at: i32, inter: x509.Certificate[],
     i = i + 1;
   }
   return s;
+}
+
+// __distrusted: whether root `i` is distrusted for server certificates
+// issued after a date the leaf was issued after.
+function __distrusted(roots: Roots, i: i32, leaf: x509.Certificate): boolean {
+  let after: i64 = roots.distrust_after[i];
+  return after > 0 as i64 && leaf.not_before > after;
 }
 
 // __try checks candidate as the issuer of the last of `below`: names, its
@@ -533,7 +562,7 @@ function __has(v: string[], x: string): boolean {
 pub function verify_server(chain: u8[][], roots: Roots, name: string, now: i64): Result[x509.Certificate, VerifyError] {
   let certs: x509.Certificate[] = __parsed(chain)?;
   __leaf_ok(certs[0], name, now)?;
-  return __rooted(certs, roots, now);
+  return __rooted(certs, roots, now, true);
 }
 
 // verify_client validates a client's chain at time `now`, with no name to
@@ -544,7 +573,7 @@ pub function verify_client(chain: u8[][], roots: Roots, now: i64): Result[x509.C
   if (certs[0].has_ext_key_usage && !__has(certs[0].ext_key_usage, x509.EKU_CLIENT_AUTH) && !__has(certs[0].ext_key_usage, x509.EKU_ANY)) {
     return Err(NotForClients);
   }
-  return __rooted(certs, roots, now);
+  return __rooted(certs, roots, now, false);
 }
 
 // __parsed is the chain's certificates, which must not be empty.
@@ -569,9 +598,9 @@ function __parsed(chain: u8[][]): Result[x509.Certificate[], VerifyError] {
 }
 
 // __rooted answers the leaf when a path from it reaches a root.
-function __rooted(certs: x509.Certificate[], roots: Roots, now: i64): Result[x509.Certificate, VerifyError] {
+function __rooted(certs: x509.Certificate[], roots: Roots, now: i64, server: boolean): Result[x509.Certificate, VerifyError] {
   let leaf: x509.Certificate = certs[0];
-  let s: Search = __extend([leaf], 1, certs.drop(1), roots, now, Search { found: false, err: UnknownIssuer });
+  let s: Search = __extend([leaf], 1, certs.drop(1), roots, now, server, Search { found: false, err: UnknownIssuer });
   if (!s.found) {
     return Err(s.err);
   }

@@ -18,6 +18,29 @@ func certdata(t *testing.T) []byte {
 	return data
 }
 
+// nssVersion is the builtins version the committed nssckbi.h names.
+func nssVersion(t *testing.T) string {
+	t.Helper()
+	hdr, err := os.ReadFile("nssckbi.h")
+	if err != nil {
+		t.Fatal(err)
+	}
+	v, err := builtinsVersion(hdr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return v
+}
+
+func TestBuiltinsVersion(t *testing.T) {
+	if v := nssVersion(t); !regexp.MustCompile(`^[0-9]+\.[0-9]+$`).MatchString(v) {
+		t.Fatalf("nssckbi.h names builtins version %q", v)
+	}
+	if _, err := builtinsVersion([]byte("#define NSS_BUILTINS_LIBRARY_MAJOR_VERSION 2\n")); err == nil {
+		t.Fatal("a header without the version define was accepted")
+	}
+}
+
 // The committed module must be what the generator produces from the
 // committed certdata.txt as of the date it records: generated code, where
 // a hand edit or a stale regeneration would otherwise go unseen.
@@ -35,7 +58,7 @@ func TestCommittedFileIsUpToDate(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	got, _, err := generate(certdata(t), asOf)
+	got, _, err := generate(certdata(t), nssVersion(t), asOf)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -45,8 +68,9 @@ func TestCommittedFileIsUpToDate(t *testing.T) {
 }
 
 // Every certificate has a trust object, the trust bits are read as NSS
-// reads them, and a distrust date is honoured: left out once it is spent,
-// refused while it is live.
+// reads them, and a distrust date is honoured: bundled with the root while
+// a certificate issued before it can still be valid, left out once none
+// can.
 func TestTrustAndDistrust(t *testing.T) {
 	objects, err := parseCertdata(certdata(t))
 	if err != nil {
@@ -56,40 +80,66 @@ func TestTrustAndDistrust(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var trusted, dated int
+	asOf := time.Date(2026, 10, 11, 0, 0, 0, 0, time.UTC)
+	var trusted, live, spent int
 	for _, r := range all {
-		if r.trusted {
-			trusted++
-			if !r.distrust.IsZero() {
-				dated++
-			}
+		if !r.trusted {
+			continue
+		}
+		trusted++
+		switch {
+		case r.distrust.IsZero():
+		case asOf.Before(r.distrust.Add(leafLifetime)):
+			live++
+		default:
+			spent++
 		}
 	}
 	if trusted < 100 || trusted == len(all) {
 		t.Errorf("%d of %d roots trusted for server authentication", trusted, len(all))
 	}
-	if dated == 0 {
+	if live+spent == 0 {
 		t.Error("no root carries a distrust date; the attribute was not read")
 	}
-	src, st, err := generate(certdata(t), time.Date(2026, 10, 11, 0, 0, 0, 0, time.UTC))
+	src, st, err := generate(certdata(t), nssVersion(t), asOf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if st.taken+st.leftOut != trusted || st.leftOut != dated {
-		t.Errorf("taken %d + left out %d, want %d trusted with %d dated", st.taken, st.leftOut, trusted, dated)
+	if st.taken+st.leftOut != trusted || st.leftOut != spent || st.dated != live {
+		t.Errorf("taken %d (%d dated) + left out %d, want %d trusted with %d live and %d spent dates", st.taken, st.dated, st.leftOut, trusted, live, spent)
 	}
 	if !strings.Contains(src, "//   ISRG Root X1\n") {
 		t.Error("ISRG Root X1 is not listed")
 	}
-	if strings.Contains(src, "//   Entrust Root Certification Authority - G2\n") {
-		t.Error("a distrusted root is listed as taken")
-	}
 	if strings.Count(src, "-----BEGIN CERTIFICATE-----") != st.taken {
 		t.Error("the PEM bundle does not hold one block per root taken")
 	}
-	_, _, err = generate(certdata(t), time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
-	if err == nil || !strings.Contains(err.Error(), "distrusted for server certificates issued after") {
-		t.Errorf("a live distrust date was not refused: %v", err)
+	if strings.Count(src, " as i64") != st.taken || strings.Count(src, "0 as i64") != st.taken-st.dated {
+		t.Error("__distrust does not hold one date per root taken, zero for the undated")
+	}
+	// One dated root, generated the day before its date and the day its
+	// date is spent: bundled with the date, then left out.
+	var dated root
+	for _, r := range all {
+		if r.trusted && !r.distrust.IsZero() {
+			dated = r
+			break
+		}
+	}
+	before, bst, err := generate(certdata(t), nssVersion(t), dated.distrust.Add(-24*time.Hour))
+	if err != nil {
+		t.Fatal(err)
+	}
+	line := fmt.Sprintf("//   %s (%s)\n", dated.label, dated.distrust.Format("2006-01-02"))
+	if bst.dated == 0 || !strings.Contains(before, "enforces:\n"+line) || !strings.Contains(before, fmt.Sprintf("%d as i64", dated.distrust.Unix())) {
+		t.Errorf("%q is not bundled with its live date", dated.label)
+	}
+	after, ast, err := generate(certdata(t), nssVersion(t), dated.distrust.Add(leafLifetime))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ast.leftOut == 0 || strings.Contains(after, "//   "+dated.label+"\n") || !strings.Contains(after, "from:\n"+line) {
+		t.Errorf("%q is not left out once its date is spent", dated.label)
 	}
 }
 
@@ -140,11 +190,11 @@ CKA_TRUST_SERVER_AUTH CK_TRUST CKT_NSS_TRUSTED_DELEGATOR
 // Deterministic output is what makes TestCommittedFileIsUpToDate usable.
 func TestGenerateIsDeterministic(t *testing.T) {
 	asOf := time.Date(2026, 10, 11, 0, 0, 0, 0, time.UTC)
-	a, _, err := generate(certdata(t), asOf)
+	a, _, err := generate(certdata(t), nssVersion(t), asOf)
 	if err != nil {
 		t.Fatal(err)
 	}
-	b, _, err := generate(certdata(t), asOf)
+	b, _, err := generate(certdata(t), nssVersion(t), asOf)
 	if err != nil {
 		t.Fatal(err)
 	}
