@@ -21,7 +21,8 @@ import (
 //
 //	leakcheck: allocs=<N> frees=<M> live_bytes=<K>
 //
-// on stderr, once, with stdout and the exit status untouched — plus the
+// on stderr, once, ending ` from=exit` when exit() printed it, with stdout
+// and the exit status untouched — plus the
 // sanitizer's `fern-sanitizer: leak <K> bytes in <N> blocks` verdict
 // under FERN_SANITIZE. Every allocation in this runtime reaches
 // $__fern_alloc and every reclamation a free path that counts, so the

@@ -571,7 +571,8 @@ pub function backtrace_on(): boolean {
 //
 //	leakcheck: allocs=<N> frees=<M> live_bytes=<K>
 //
-// The sanitizer folds it in (with_switches).
+// ending ` from=exit` when the exit() builtin printed it rather than a
+// return from main. The sanitizer folds it in (with_switches).
 pub function leak_check_on(): boolean {
   match (env("FERN_LEAKCHECK")) {
     Some(_) => {

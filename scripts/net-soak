@@ -1,0 +1,171 @@
+#!/usr/bin/env bash
+# net-soak — hold the soak servers under load, watch their memory, read
+# their leak census, and write a metrics report.
+#
+# Usage: net-soak [REPORT]
+#
+#   REPORT  where to write the `metric<TAB>value` report (default: stdout),
+#           the format scripts/perf-history records.
+#
+# Environment:
+#
+#   FERN_NET_SOAK_SECONDS      how long each server is loaded after its
+#                              warm-up. Default: 300.
+#   FERN_NET_SOAK_WARMUP       the warm-up, seconds of load before the
+#                              resident size is read as the plateau.
+#                              Default: 20.
+#   FERN_NET_SOAK_CONNECTIONS  the connections oha holds. Default: 256.
+#   FERN_NET_SOAK_ALLOWANCE_KB how far past the plateau the resident
+#                              size may end. Default: 512.
+#   FERN_OHA                   the oha binary. Default: `oha` on PATH.
+#
+# WHAT IS CHECKED. Three std/serve programs under scripts/net-soak.d, each
+# one loop built by bin/fern for the host with FERN_LEAKCHECK, so the
+# runtime counts every allocation and free and prints the census when the
+# loop stops: static.fern answers a five-byte body; echo.fern parses each
+# request's JSON body and encodes it back, a tree allocated and freed per
+# request; recent.fern keeps a bounded map of the paths it has seen under
+# a random path per request, so its state is rewritten every request and
+# evicted past the bound. oha holds the connections closed-loop for the
+# warm-up and the soak; every two seconds the server's VmRSS is read from
+# /proc. The run FAILS when a server's resident size at the end of the
+# soak is more than the allowance past its size at the end of the warm-up,
+# when oha saw a response that was not a 200, or when the census the
+# server prints on SIGTERM counts a free short of an alloc or a live byte:
+# a per-request leak of one word grows VmRSS by megabytes over the soak
+# and leaves the census unbalanced, so the two readings check each other
+# (the census sees a leak too small to move VmRSS; VmRSS sees growth in
+# what the census does not count, a kernel buffer or a bump arena).
+#
+# The report is appended to the commit's note by net-nightly.yml, so
+# `scripts/perf-history show soak/echo.rss_end_kb` is the trend:
+#
+#   soak/<server>.requests       requests oha completed over the soak
+#   soak/<server>.failed         responses that were not 200, plus errors
+#                                other than the requests cut off by the end
+#   soak/<server>.rss_warm_kb    VmRSS at the end of the warm-up
+#   soak/<server>.rss_end_kb     VmRSS at the end of the soak
+#   soak/<server>.rss_growth_kb  the difference
+#   soak/<server>.allocs         the census's allocation count
+#   soak/<server>.live_bytes     the census's live bytes, 0 when balanced
+
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+REPORT="${1:-/dev/stdout}"
+SOAK_SECONDS="${FERN_NET_SOAK_SECONDS:-300}"
+WARMUP_SECONDS="${FERN_NET_SOAK_WARMUP:-20}"
+CONNECTIONS="${FERN_NET_SOAK_CONNECTIONS:-256}"
+ALLOWANCE_KB="${FERN_NET_SOAK_ALLOWANCE_KB:-512}"
+OHA="${FERN_OHA:-oha}"
+
+. scripts/net-lib
+
+if ! command -v "$OHA" >/dev/null 2>&1; then
+  echo "net-soak: $OHA not found; mise.toml pins it (mise install oha)" >&2
+  exit 2
+fi
+
+ulimit -n "$(ulimit -Hn)" 2>/dev/null || true
+
+for server in static echo recent; do
+  FERN_LEAKCHECK=1 bin/fern -target "$TARGET" -o "$work/$server" "scripts/net-soak.d/$server.fern"
+done
+
+failures=0
+fail() {
+  echo "net-soak: $*" >&2
+  failures=$((failures + 1))
+}
+
+# load SERVER PORT SECONDS JSON — oha against SERVER on PORT for SECONDS,
+# its JSON to JSON: a POST of a small document to the echo, a random
+# three-letter path to recent (17,576 paths against a bound of 256), the
+# root to static.
+load() {
+  case "$1" in
+    echo)   "$OHA" -z "$3s" -c "$CONNECTIONS" --no-tui --output-format json -m POST -d '{"id":7,"tags":["a","b"],"nested":{"ok":true,"n":null}}' "http://127.0.0.1:$2/" > "$4" ;;
+    recent) "$OHA" -z "$3s" -c "$CONNECTIONS" --no-tui --output-format json --rand-regex-url "http://127.0.0.1:$2/[a-z]{3}" > "$4" ;;
+    *)      "$OHA" -z "$3s" -c "$CONNECTIONS" --no-tui --output-format json "http://127.0.0.1:$2/" > "$4" ;;
+  esac
+}
+
+# rss PID — the resident size of PID in kB, or empty once it is gone.
+rss() {
+  sed -n 's/^VmRSS:[[:space:]]*\([0-9]*\) kB/\1/p' "/proc/$1/status" 2>/dev/null || true
+}
+
+# oha_rows NAME JSON — the requests and failed rows from oha's JSON.
+oha_rows() {
+  python3 - "$1" "$2" <<'PY'
+import json, sys
+name, path = sys.argv[1], sys.argv[2]
+j = json.load(open(path))
+codes = j.get("statusCodeDistribution", {})
+failed = sum(v for k, v in codes.items() if k != "200")
+failed += sum(v for k, v in j.get("errorDistribution", {}).items() if "deadline" not in k)
+print(f"soak/{name}.requests\t{sum(codes.values())}")
+print(f"soak/{name}.failed\t{failed}")
+PY
+}
+
+{
+  echo "# scripts/net-soak report — arch $ARCH, target $TARGET, $(nproc) cpus"
+  echo "# ${WARMUP_SECONDS}s warm-up then ${SOAK_SECONDS}s of load at $CONNECTIONS connections, allowance ${ALLOWANCE_KB} kB, $("$OHA" --version)"
+  for server in static echo recent; do
+    port="$(free_port)"
+    PORT="$port" start_server "$work/$server.log" "$work/$server"
+    await_server "$server" "$port" "$work/$server.log"
+    pid="$server_pgid"
+    load "$server" "$port" "$WARMUP_SECONDS" "$work/$server-warm.json"
+    warm="$(rss "$pid")"
+    load "$server" "$port" "$SOAK_SECONDS" "$work/$server-soak.json" &
+    loader=$!
+    : > "$work/$server.rss"
+    while kill -0 "$loader" 2>/dev/null; do
+      rss "$pid" >> "$work/$server.rss"
+      sleep 2
+    done
+    wait "$loader" || fail "$server: oha failed over the soak"
+    end="$(rss "$pid")"
+    stop_server
+    if [ -z "$warm" ] || [ -z "$end" ]; then
+      fail "$server: the server was gone before the soak ended:"
+      cat "$work/$server.log" >&2
+      warm="${warm:-0}"
+      end="${end:-0}"
+    fi
+    growth=$((end - warm))
+    if [ "$growth" -gt "$ALLOWANCE_KB" ]; then
+      fail "$server: VmRSS grew $growth kB over the soak (${warm} kB after warm-up, ${end} kB at the end; allowance ${ALLOWANCE_KB} kB); the samples:"
+      cat "$work/$server.rss" >&2
+    fi
+    census="$(sed -n 's/^leakcheck: allocs=\([0-9]*\) frees=\([0-9]*\) live_bytes=\([0-9]*\)$/\1 \2 \3/p' "$work/$server.log" | tail -1)"
+    if [ -z "$census" ]; then
+      fail "$server: no leakcheck census in the server's log:"
+      cat "$work/$server.log" >&2
+      census="0 0 0"
+    fi
+    read -r allocs frees live <<< "$census"
+    if [ "$allocs" != "$frees" ] || [ "$live" != 0 ]; then
+      fail "$server: the census is unbalanced: allocs=$allocs frees=$frees live_bytes=$live"
+    fi
+    oha_rows "$server" "$work/$server-soak.json" | tee "$work/$server.rows"
+    if [ "$(sed -n "s|^soak/$server.failed\t||p" "$work/$server.rows")" != 0 ]; then
+      fail "$server: oha saw failed requests over the soak"
+    fi
+    printf 'soak/%s.rss_warm_kb\t%s\n' "$server" "$warm"
+    printf 'soak/%s.rss_end_kb\t%s\n' "$server" "$end"
+    printf 'soak/%s.rss_growth_kb\t%s\n' "$server" "$growth"
+    printf 'soak/%s.allocs\t%s\n' "$server" "$allocs"
+    printf 'soak/%s.live_bytes\t%s\n' "$server" "$live"
+  done
+} > "$work/report"
+
+cp "$work/report" "$REPORT"
+if [ "$failures" -gt 0 ]; then
+  echo "net-soak: $failures failure(s); the report:" >&2
+  cat "$work/report" >&2
+  exit 1
+fi

@@ -775,6 +775,8 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
   s = s.write("    .align 8\n");
   s = s.write("__fern_lc_free_bytes: .quad 0\n");
   s = s.write("    .align 8\n");
+  s = s.write("__fern_lc_exited: .quad 0\n");
+  s = s.write("    .align 8\n");
   // Site override, set by the box shims (hev_shim_site) and consumed by the
   // next __fern_hev_a. 0 = no claim, so __fern_alloc's own caller is used.
   s = s.write("__fern_hev_site: .quad 0\n");
@@ -793,6 +795,7 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write(".Llc_a:\n    .ascii \"leakcheck: allocs=\"\n");
     s = s.write(".Llc_f:\n    .ascii \" frees=\"\n");
     s = s.write(".Llc_l:\n    .ascii \" live_bytes=\"\n");
+    s = s.write(".Llc_x:\n    .ascii \" from=exit\"\n");
   }
   if (s.sanitize) {
     // Sanitizer diagnostics (#5545). The texts must match the native
@@ -988,10 +991,16 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
   }
   if (s.leak_check) {
     // __fern_lc_report() — the exit-time summary, called from `_start`'s
-    // epilogue and from the `exit` builtin (which bypasses it). Both call
-    // sites protect their live exit code with a push/pop across the call,
-    // so this helper is free to clobber. .globl: the `exit` builtin is
-    // lowered in ANY module, this block only in the entry.
+    // epilogue, and through __fern_lc_report_exit from the `exit` builtin
+    // (which bypasses it), whose line ends ` from=exit`: the frames above
+    // the call are never unwound, so what they hold is not a leak the
+    // program could have freed. Both call sites protect their live exit
+    // code with a push/pop across the call, so this helper is free to
+    // clobber. .globl: the `exit` builtin is lowered in ANY module, this
+    // block only in the entry.
+    s = s.write("    .globl __fern_lc_report_exit\n");
+    s = s.write("__fern_lc_report_exit:\n");
+    s = s.write("    movq $1, __fern_lc_exited(%rip)\n");
     s = s.write("    .globl __fern_lc_report\n");
     s = s.write("__fern_lc_report:\n");
     if (s.has_need("set_args")) {
@@ -1025,6 +1034,12 @@ function emit_hev_runtime(s: asmcore.EmitState): asmcore.EmitState {
     s = s.write("    movq __fern_lc_free_bytes(%rip), %rax\n");
     s = s.write("    subq %rax, %rdi\n");
     s = s.write("    call .Llc_num\n");
+    s = s.write("    cmpq $0, __fern_lc_exited(%rip)\n");
+    s = s.write("    je .Llc_from_done\n");
+    s = s.write("    leaq .Llc_x(%rip), %rsi\n");
+    s = s.write("    movq $10, %rdx\n");
+    s = s.write("    call .Lhev_w\n");
+    s = s.write(".Llc_from_done:\n");
     s = s.write("    leaq .Lhev_nl(%rip), %rsi\n");
     s = s.write("    movq $1, %rdx\n");
     s = s.write("    call .Lhev_w\n");
@@ -7731,7 +7746,7 @@ function ssa_host_call(ins: ssa.SInst, reg_of: i32[], imm: ssa.Imms, s: asmcore.
   if (ins.str == "exit") {
     s = ssa_load(reg_of, ins.args[0], "%r11", s);
     if (s.leak_check) {
-      s = s.write("    pushq %r11\n    call __fern_lc_report\n    popq %r11\n");
+      s = s.write("    pushq %r11\n    call __fern_lc_report_exit\n    popq %r11\n");
     }
     s = s.write("    movq %r11, %rdi\n    movq $60, %rax\n").syscall(60).write("    xorl %eax, %eax\n");
     return ssa_store(reg_of, ins.result, "%rax", ssa_x0_forget(s));

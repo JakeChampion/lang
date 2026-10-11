@@ -258,6 +258,125 @@ function via_param_fn(xs: i64[], f: (i64) => i64): i64 {
 	return xs.map(f).fold(0 as i64, (a: i64, b: i64): i64 => a + b);
 }
 
+// take and take_while: the loop stops once the count is reached or the
+// predicate fails. Counts below zero, zero,
+// inside the array and past its end, ahead of and behind a filter, into each
+// sink, and two takes in one chain.
+function via_map_take_fold(xs: i64[], k: i32): i64 {
+	return xs.map((x: i64): i64 => x * (3 as i64))
+	         .take(k)
+	         .fold(0 as i64, (a: i64, b: i64): i64 => a * (2 as i64) + b);
+}
+function loop_map_take_fold(xs: i64[], k: i32): i64 {
+	let acc: i64 = 0 as i64;
+	let i: i32 = 0;
+	while (i < xs.len() && i < k) { acc = acc * (2 as i64) + xs[i] * (3 as i64); i = i + 1; }
+	return acc;
+}
+
+function via_filter_take_reduce(xs: i64[], k: i32): i64 {
+	let out: Option[i64] = xs
+		.filter((x: i64): boolean => x % (2 as i64) == (0 as i64))
+		.take(k)
+		.reduce((a: i64, b: i64): i64 => a * (2 as i64) - b);
+	match (out) { Some(v) => { return v; }, None => { return 0 as i64 - (1 as i64); } }
+}
+function loop_filter_take_reduce(xs: i64[], k: i32): i64 {
+	let seen: boolean = false;
+	let acc: i64 = 0 as i64;
+	let taken: i32 = 0;
+	let i: i32 = 0;
+	while (i < xs.len() && taken < k) {
+		if (xs[i] % (2 as i64) == (0 as i64)) {
+			if (seen) { acc = acc * (2 as i64) - xs[i]; } else { acc = xs[i]; seen = true; }
+			taken = taken + 1;
+		}
+		i = i + 1;
+	}
+	if (!seen) { return 0 as i64 - (1 as i64); }
+	return acc;
+}
+
+function via_take_filter_scan(xs: i64[], k: i32): i64[] {
+	return xs.take(k)
+	         .filter((x: i64): boolean => x > (2 as i64))
+	         .scan(1 as i64, (a: i64, b: i64): i64 => a * (3 as i64) - b);
+}
+function loop_take_filter_scan(xs: i64[], k: i32): i64[] {
+	let out: i64[] = [];
+	let acc: i64 = 1 as i64;
+	let i: i32 = 0;
+	while (i < xs.len() && i < k) {
+		if (xs[i] > (2 as i64)) { acc = acc * (3 as i64) - xs[i]; out = out.append(acc); }
+		i = i + 1;
+	}
+	return out;
+}
+
+function via_two_takes(xs: i64[], k: i32): i64 {
+	return xs.take(5)
+	         .map((x: i64): i64 => x + (1 as i64))
+	         .take(k)
+	         .fold(0 as i64, (a: i64, b: i64): i64 => a * (2 as i64) + b);
+}
+function loop_two_takes(xs: i64[], k: i32): i64 {
+	let acc: i64 = 0 as i64;
+	let i: i32 = 0;
+	while (i < xs.len() && i < 5 && i < k) { acc = acc * (2 as i64) + xs[i] + (1 as i64); i = i + 1; }
+	return acc;
+}
+
+function via_map_take_while_fold(xs: i64[], k: i32): i64 {
+	let limit: i64 = (k as i64) * (3 as i64);
+	return array.take_while(xs.map((x: i64): i64 => x * (3 as i64)), (x: i64): boolean => x <= limit)
+	         .filter((x: i64): boolean => x % (2 as i64) == (0 as i64))
+	         .fold(0 as i64, (a: i64, b: i64): i64 => a * (2 as i64) + b);
+}
+function loop_map_take_while_fold(xs: i64[], k: i32): i64 {
+	let limit: i64 = (k as i64) * (3 as i64);
+	let acc: i64 = 0 as i64;
+	let i: i32 = 0;
+	while (i < xs.len() && xs[i] * (3 as i64) <= limit) {
+		let y: i64 = xs[i] * (3 as i64);
+		if (y % (2 as i64) == (0 as i64)) { acc = acc * (2 as i64) + y; }
+		i = i + 1;
+	}
+	return acc;
+}
+
+function via_take_while_reduce(xs: i64[], k: i32): i64 {
+	let out: Option[i64] = array.take_while(xs, (x: i64): boolean => x < (k as i64))
+		.reduce((a: i64, b: i64): i64 => a * (2 as i64) - b);
+	match (out) { Some(v) => { return v; }, None => { return 0 as i64 - (1 as i64); } }
+}
+function loop_take_while_reduce(xs: i64[], k: i32): i64 {
+	if (xs.len() == 0 || xs[0] >= (k as i64)) { return 0 as i64 - (1 as i64); }
+	let acc: i64 = xs[0];
+	let i: i32 = 1;
+	while (i < xs.len() && xs[i] < (k as i64)) { acc = acc * (2 as i64) - xs[i]; i = i + 1; }
+	return acc;
+}
+
+function same(a: i64[], b: i64[]): boolean {
+	if (a.len() != b.len()) { return false; }
+	let i: i32 = 0;
+	while (i < a.len()) { if (a[i] != b[i]) { return false; } i = i + 1; }
+	return true;
+}
+
+function check_take(xs: i64[]): i32 {
+	let counts: i32[] = [0 - 1, 0, 1, 2, 9, 100];
+	for k in counts {
+		if (via_map_take_fold(xs, k) != loop_map_take_fold(xs, k)) { return 27; }
+		if (via_filter_take_reduce(xs, k) != loop_filter_take_reduce(xs, k)) { return 28; }
+		if (!same(via_take_filter_scan(xs, k), loop_take_filter_scan(xs, k))) { return 29; }
+		if (via_two_takes(xs, k) != loop_two_takes(xs, k)) { return 30; }
+		if (via_map_take_while_fold(xs, k) != loop_map_take_while_fold(xs, k)) { return 31; }
+		if (via_take_while_reduce(xs, k) != loop_take_while_reduce(xs, k)) { return 32; }
+	}
+	return 0;
+}
+
 function check(n: i32): i32 {
 	let xs: i64[] = build(n);
 	if (via_map_fold(xs) != loop_map_fold(xs)) { return 10; }
@@ -277,7 +396,7 @@ function check(n: i32): i32 {
 	if (via_narrowing(xs) != loop_narrowing(xs)) { return 24; }
 	if (via_shared(xs) != loop_shared(xs)) { return 25; }
 	if (via_param_fn(xs, (x: i64): i64 => x * (3 as i64)) != loop_map_fold(xs)) { return 26; }
-	return 0;
+	return check_take(xs);
 }
 
 function main(): i32 {
@@ -342,6 +461,32 @@ function param_fn(xs: i64[], f: (i64) => i64): i64 {
 	return xs.map(f).fold(0 as i64, (a: i64, b: i64): i64 => a + b);
 }
 
+function taken(xs: i64[]): i64 {
+	return xs.map((x: i64): i64 => x + (1 as i64)).take(1500).fold(0 as i64, (a: i64, b: i64): i64 => a + b);
+}
+
+function taken_while(xs: i64[]): i64 {
+	return array.take_while(xs, (x: i64): boolean => x < (1500 as i64)).fold(0 as i64, (a: i64, b: i64): i64 => a + b);
+}
+
+function flattened(xs: i64[]): i64 {
+	return xs.flat_map((x: i64): i64[] => [x, x]).fold(0 as i64, (a: i64, b: i64): i64 => a + b);
+}
+
+// What the fused flat_map should cost: the element function's array per
+// element, and nothing else.
+function flattened_by_hand(xs: i64[]): i64 {
+	let acc: i64 = 0 as i64;
+	let i: i32 = 0;
+	while (i < xs.len()) {
+		let ys: i64[] = [xs[i], xs[i]];
+		let j: i32 = 0;
+		while (j < ys.len()) { acc = acc + ys[j]; j = j + 1; }
+		i = i + 1;
+	}
+	return acc;
+}
+
 function rounds(): i32 { return 20; }
 
 // The blocks one call of the chain numbered 'which' allocates, over every round.
@@ -357,6 +502,10 @@ function measure(xs: i64[], which: i32): i64 {
 		if (which == 4) { sink = sink + capture(xs, (r as i64) + (2 as i64)); }
 		if (which == 5) { sink = sink + shared(xs); }
 		if (which == 6) { sink = sink + param_fn(xs, (x: i64): i64 => x + (3 as i64)); }
+		if (which == 7) { sink = sink + taken(xs); }
+		if (which == 8) { sink = sink + taken_while(xs); }
+		if (which == 9) { sink = sink + flattened(xs); }
+		if (which == 10) { sink = sink + flattened_by_hand(xs); }
 		r = r + 1;
 	}
 	let used: i64 = __heap_alloc_count() - before;
@@ -379,14 +528,18 @@ function main(): i32 {
 	// each call. Unfused, each intermediate is a buffer per round plus a
 	// regrow per doubling, which is several times either.
 	let w: i32 = 0;
-	while (w < 5) {
+	while (w < 9) {
 		let used: i64 = measure(big, w);
 		let allowed: i64 = n;
 		if (w == 4) { allowed = n * (2 as i64); }
 		if (used < 0 as i64) { return 70 + w; }
 		if (used > allowed) { return 80 + w; }
 		w = w + 1;
+		if (w == 5) { w = 7; }
 	}
+	// A fused flat_map allocates what its element function returns, as the
+	// hand-written loop does, and no concatenated array.
+	if (measure(big, 9) > measure(big, 10) + n) { return 92; }
 	// Not fused: an intermediate read twice, and an element function the
 	// chain was handed. Each builds its intermediate every round.
 	if (measure(big, 5) < n) { return 90; }
@@ -417,12 +570,17 @@ function main(): i32 {
 	                       .reduce((p: i64, q: i64): i64 => { print("r"); return p + q; });
 	let c: i64 = 0 as i64;
 	match (o) { Some(v) => { c = v; }, None => { c = 0 as i64; } }
-	if (a != 6 as i64 || b != 6 as i64 || c != 6 as i64) { return 1; }
+	let d: i64 = xs.map((x: i64): i64 => { print("t"); return x; })
+	               .take(1)
+	               .fold(0 as i64, (p: i64, q: i64): i64 => p + q);
+	let e: i64 = array.take_while(xs, (x: i64): boolean => { print("w"); return x < (2 as i64); })
+	               .fold(0 as i64, (p: i64, q: i64): i64 => p + q);
+	if (a != 6 as i64 || b != 6 as i64 || c != 6 as i64 || d != 1 as i64 || e != 1 as i64) { return 1; }
 	return 0;
 }
 `
 
-const selfHostArrayFusionEffectWant = "mmmfffpppmmmnnnrr"
+const selfHostArrayFusionEffectWant = "mmmfffpppmmmnnnrrtttww"
 
 // runSelfHostFusionProgram compiles src with the self-host compiler for target
 // and runs it, returning its stdout and exit code.
@@ -449,7 +607,7 @@ func runSelfHostFusionProgram(t *testing.T, target, src string) (string, int) {
 
 var selfHostFusionTargets = []string{e2eharness.TargetX86_64Linux, e2eharness.TargetArm64Linux, e2eharness.TargetWasm32Wasi}
 
-// Exit 10..26 names the case that disagreed with its loop (see check), and the
+// Exit 10..32 names the case that disagreed with its loop (see check), and the
 // size it disagreed at: (case * 5 + size index) - 40.
 func TestSelfHostArrayFusionMatchesHandWrittenLoops(t *testing.T) {
 	for _, target := range selfHostFusionTargets {
@@ -463,7 +621,8 @@ func TestSelfHostArrayFusionMatchesHandWrittenLoops(t *testing.T) {
 
 // 70+w: chain w computed nothing; 80+w: chain w still allocates its
 // intermediates; 90 / 91: a chain that must not fuse stopped building its
-// intermediate; 98 / 99: the counter itself stopped working.
+// intermediate; 92: a flat_map allocates more than its hand-written loop;
+// 98 / 99: the counter itself stopped working.
 func TestSelfHostArrayFusionStopsAllocatingIntermediates(t *testing.T) {
 	for _, target := range selfHostFusionTargets {
 		t.Run(target, func(t *testing.T) {

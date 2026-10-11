@@ -1398,7 +1398,8 @@ func init() { ApplySanitize() }
 //
 //	leakcheck: allocs=<N> frees=<M> live_bytes=<K>
 //
-// where K = alloc_bytes − free_bytes. Both sides count the SAME
+// ending ` from=exit` when the exit() builtin printed it, where K =
+// alloc_bytes − free_bytes. Both sides count the SAME
 // (size+15)&-16 rounding, so a block's alloc and eventual free always
 // cancel exactly and live_bytes is exact, not approximate.
 // __fern_alloc_reuse's in-place path counts as NEITHER an alloc nor a

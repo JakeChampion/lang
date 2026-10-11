@@ -145,6 +145,10 @@ jobs:
       # top-level test holding all 106 utilities, 5m44s of the package's
       # 13m45s. Partitioning top-level names alone would pin it whole to one
       # bucket and make it the floor; no shard count below it would help.
+      # TestCorpusFreesWhatItAllocates, the leak gate over the same corpus
+      # (one process per case to the parity leg's two), is sharded the same
+      # way, by the same utility partition: a utility's leak cases ride with
+      # its parity cases, weighted by the parity row.
       #
       # BOTH LISTS ARE DERIVED. The top-level list comes from `go test -list`
       # and the utility list from coreutils/*.fern — the same set
@@ -162,11 +166,12 @@ jobs:
         run: |
           set -euo pipefail
           GIANT=TestSelfHostCoreutilsParity
+          LEAK=TestCorpusFreesWhatItAllocates
           W=.github/coreutils-test-weights.txt
 
           mapfile -t TOPS < <(
             go test -list '.' ./internal/testing/coreutils/ |
-              grep -E '^Test' | grep -v "^$GIANT\$" | sort |
+              grep -E '^Test' | grep -v -e "^$GIANT\$" -e "^$LEAK\$" | sort |
               scripts/shard-tests "${{ matrix.shard }}" "$NSHARD" "$W"
           )
           mapfile -t UTILS < <(
@@ -207,7 +212,7 @@ jobs:
           mapfile -t TOPS_RE < <(printf '%s\n' "${TOPS[@]}" | re_escape)
           mapfile -t UTILS_RE < <(printf '%s\n' "${UTILS[@]}" | re_escape)
           TOP_PAT="^($(join_alt "${TOPS_RE[@]}"))\$"
-          UTIL_PAT="^$GIANT\$/^($(join_alt "${UTILS_RE[@]}"))\$"
+          UTIL_PAT="^($GIANT|$LEAK)\$/^($(join_alt "${UTILS_RE[@]}"))\$"
 
           # Compile both before running either. `go test -list` parses the
           # pattern and lists rather than runs, so a metacharacter added to
