@@ -489,14 +489,14 @@
 # (docs/NET-P0-MESSAGE-LAYER-PLAN.md §6.2, slice 10). Measured with the
 # self-built compiler compiling its own source, the stage2 method.
 
-fern.fern/stage2 11166752
-fern.fern 10903144
-drivers/asm_load_run.fern 8920280
-drivers/asm_modload_run.fern 7551872
-drivers/asm_ir_run.fern 7280856
-drivers/asm_run.fern 6634088
-drivers/wasm_ir_run.fern 6844048
-drivers/wasm_run.fern 6845912
-drivers/wasm_runio_run.fern 6846256
-drivers/asm_pathprobe_run.fern 4407312
-drivers/checker_modload_run.fern 2531136
+fern.fern/stage2 11181568
+fern.fern 11289824
+drivers/asm_load_run.fern 9225920
+drivers/asm_modload_run.fern 7865840
+drivers/asm_ir_run.fern 7574936
+drivers/asm_run.fern 6845880
+drivers/wasm_ir_run.fern 7159672
+drivers/wasm_run.fern 7161448
+drivers/wasm_runio_run.fern 7190992
+drivers/asm_pathprobe_run.fern 4460528
+drivers/checker_modload_run.fern 2544640
