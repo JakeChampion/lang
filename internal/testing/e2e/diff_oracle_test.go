@@ -196,18 +196,17 @@ func runInterpByteOrSkip(t *testing.T, src string) int {
 	return interpByte(t, src, true)
 }
 
-// interpByte is the shared body. Parser / checker / monomorph
-// errors always Fatal: for a generated program those would mean
-// fernsmith produced something the front end shouldn't have
-// accepted, and for a hand-written one they are the bug.
-func interpByte(t *testing.T, src string, skipGaps bool) int {
+// interpLoaded runs the CLI's front end over src (load, constant fold, check,
+// monomorphise) and returns an interpreter holding every enum and function. An
+// imported module's `const` reaches the checker only through the fold, and a
+// generic body needs monomorph before the interpreter can dispatch through its
+// bounds. Any front-end error is fatal.
+func interpLoaded(t *testing.T, src string) *interp.Interp {
 	t.Helper()
 	prog, _, err := modload.LoadSource(src)
 	if err != nil {
 		t.Fatalf("load: %v\nsrc:\n%s", err, src)
 	}
-	// The CLI folds constants before checking, and an imported module's
-	// `const` is visible to the checker only through that fold.
 	if err := constfold.Fold(prog, nil); err != nil {
 		t.Fatalf("constfold: %v\nsrc:\n%s", err, src)
 	}
@@ -215,9 +214,6 @@ func interpByte(t *testing.T, src string, skipGaps bool) int {
 	if err != nil {
 		t.Fatalf("check: %v\nsrc:\n%s", err, src)
 	}
-	// Without monomorph a generic body reaches the interpreter with an
-	// unsubstituted bound, so a `T: cmp.Eq` call like `x.eq(y)` looks like a
-	// field access on a number. Every compiled backend runs this pass.
 	if err := monomorph.Run(prog, info); err != nil {
 		t.Fatalf("monomorph: %v\nsrc:\n%s", err, src)
 	}
@@ -229,6 +225,16 @@ func interpByte(t *testing.T, src string, skipGaps bool) int {
 	for _, fn := range prog.Funcs {
 		i.Register(fn)
 	}
+	return i
+}
+
+// interpByte is the shared body. Parser / checker / monomorph
+// errors always Fatal: for a generated program those would mean
+// fernsmith produced something the front end shouldn't have
+// accepted, and for a hand-written one they are the bug.
+func interpByte(t *testing.T, src string, skipGaps bool) int {
+	t.Helper()
+	i := interpLoaded(t, src)
 	// `exit(code)` must be captured, not run as a real os.Exit (which would
 	// kill the whole test binary). The interp expects a non-returning Exiter
 	// substitute, so panic with the code and recover it here — the captured
@@ -236,6 +242,7 @@ func interpByte(t *testing.T, src string, skipGaps bool) int {
 	type interpExit struct{ code int }
 	i.Exiter = func(code int) { panic(interpExit{code}) }
 	var v interp.Value
+	var err error
 	exitCode := -1
 	func() {
 		defer func() {

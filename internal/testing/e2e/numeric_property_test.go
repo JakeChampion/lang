@@ -27,11 +27,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/jakechampion/lang/internal/check/checker"
-	"github.com/jakechampion/lang/internal/check/constfold"
-	"github.com/jakechampion/lang/internal/oracle/interp"
-	"github.com/jakechampion/lang/internal/oracle/monomorph"
-	"github.com/jakechampion/lang/internal/pkg/modload"
 	e2eharness "github.com/jakechampion/lang/internal/testing/e2eharness"
 )
 
@@ -284,32 +279,9 @@ func interpStdoutOrSkip(t *testing.T, src string) string {
 
 func interpStdoutGap(t *testing.T, src string, skipOnGap bool) string {
 	t.Helper()
-	prog, _, err := modload.LoadSource(src)
-	if err != nil {
-		t.Fatalf("load: %v\nsrc:\n%s", err, src)
-	}
-	// The CLI folds constants before checking, and an imported module's
-	// `const` is visible to the checker only through that fold.
-	if err := constfold.Fold(prog, nil); err != nil {
-		t.Fatalf("constfold: %v\nsrc:\n%s", err, src)
-	}
-	info, err := checker.Check(prog)
-	if err != nil {
-		t.Fatalf("check: %v\nsrc:\n%s", err, src)
-	}
-	if err := monomorph.Run(prog, info); err != nil {
-		t.Fatalf("monomorph: %v\nsrc:\n%s", err, src)
-	}
-	i := interp.New()
-	i.SetDynCoercions(info.DynCoercions)
+	i := interpLoaded(t, src)
 	var buf bytes.Buffer
 	i.Stdout = &buf
-	for _, ed := range prog.Enums {
-		i.RegisterEnum(ed)
-	}
-	for _, fn := range prog.Funcs {
-		i.Register(fn)
-	}
 	if _, err := i.CallByName("main", nil); err != nil {
 		if skipOnGap {
 			t.Skipf("interp coverage gap: %v\nsrc:\n%s", err, src)
