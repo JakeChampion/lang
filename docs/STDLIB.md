@@ -1819,10 +1819,15 @@ serializer.
 - **Bodies:** `HttpResponse.body` is a `Body`: `BodyText(string)`,
   `BodyBytes(u8[])`, `BodyStream(Stream)` (the stream's remainder),
   `BodyFile(string)` (a path) or `BodyChunks((i32) => Option[u8[]])` (a
-  producer asked for chunk 0, 1, 2, … until it answers None).
+  producer asked for chunk 0, 1, 2, … until it answers None; the serve
+  loop asks as a task, so a producer that waits for its next chunk parks
+  the connection and the worker serves its other connections meanwhile).
   `http.bytes(status, bytes)`, `http.stream(status, stream)`,
   `http.file(path)` and `http.chunks(status, next)` build
-  the last four. `(resp).body_string()` (an ill-formed sequence in a
+  the last four; `http.chunks_idle(status, next, idle, filler)` is
+  `chunks` with `filler` written as a chunk whenever the producer has
+  been waiting `idle` for its next chunk, the keep-alive of a quiet
+  stream. `(resp).body_string()` (an ill-formed sequence in a
   byte-domain body reads as U+FFFD: unlike `(req).body_string()` it has no
   error arm, a response being the handler's own), `(resp).body_bytes()` and
   `(resp).body_len()` read whichever a response carries (`(body).bytes()`
@@ -2226,6 +2231,55 @@ function routes(): Result[router.Router[platform.Host], router.RouteError] {
   that produces a value gives it to `next`, and the handler behind it takes
   it as a parameter (`tests/stdlib/http_router_test.fern`).
 
+### `std/http/sse`
+
+Server-sent events, the `text/event-stream` of the WHATWG HTML standard:
+the events a server streams down one response, and the decoder a client
+reads them back with.
+
+```fern
+import "std/http/sse";
+
+function ticks(i: i32): Option[sse.Event] {
+  if (i == 3) {
+    return None;
+  }
+  return Some(sse.event("tick " + i.to_string()).with_id(i.to_string()));
+}
+
+function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
+  return sse.respond_with(time.duration_seconds(15 as i64), ticks);
+}
+```
+
+- `Event { data, name, id, retry }`: `event(data)` with `with_name`,
+  `with_id` and `with_retry(ms)`; `(e).encode()` is the event on the
+  wire, one `data` line per line of the payload (CR, LF or CRLF ends
+  one), the `event`, `id` and `retry` lines where set, the blank line
+  that dispatches it; `comment(text)` is a comment line and the blank
+  line.
+- `respond(next)` is `http.chunks(200, …)` under `Content-Type:
+  text/event-stream` and `Cache-Control: no-cache`, each event `next`
+  answers for 0, 1, 2, … encoded as the socket takes the one before; the
+  serve loop runs the producer as a task, so one that waits for its next
+  event (`plat.sleep`, a `plat.http`) parks the connection and not the
+  worker. `respond_with(keep_alive, next)` is `http.chunks_idle`: the
+  loop writes `: keep-alive` whenever `next` has been waiting that long
+  since the last byte went out, so an idle timeout in a proxy or the
+  client does not cut a quiet stream. `last_event_id(req)` is the
+  `Last-Event-ID` a reconnecting client sent.
+- `Decoder`: `decoder()`, `(d).feed(bytes): (Decoder, Event[])` the events
+  the bytes completed under the standard's parsing (a line open at the
+  end waits for the next feed, a byte order mark is skipped, an `id`
+  holding NUL and a `retry` that is not digits are ignored); `d.retry` is
+  the reconnection time the stream last set, `d.last_id` the id every
+  later event carries (`tests/stdlib/http_sse_test.fern`).
+- Gate: `TestSelfHostServeSSE` (x86-64, arm64) streams events whose
+  producer sleeps through the platform while the worker answers another
+  connection, the keep-alive written between them;
+  `TestServeSSESequentialInterp` is the Go compiler's twin, where the
+  blocking fallback naps the worker through the producer's sleep.
+
 ### `std/net`
 
 IP addresses, socket addresses, and the typed error every networking
@@ -2506,10 +2560,11 @@ points that run a handler under it.
   behaves as 1; at the cap the
   listener is not read, so further connections wait in its accept queue,
   `backlog` deep, the kernel refusing past it, until one closes), how
-  many handlers the loop keeps parked on their waits at once
-  (`max_in_flight`: a handler whose `plat.http` waits on its upstream parks
-  and the loop serves other connections meanwhile; at the cap the listener
-  is not read until one finishes), how
+  many handlers and chunk producers the loop keeps parked on their waits
+  at once (`max_in_flight`: a handler whose `plat.http` waits on its
+  upstream parks, as does a `BodyChunks` producer waiting for its next
+  chunk, and the loop serves other connections meanwhile; at the cap the
+  listener is not read until one finishes), how
   many of them one client may hold (`max_connections_per_ip`, counted by
   the peer's address key, `net.peer_key`, and by each worker's loop
   alone: a connection past it is closed as it is accepted, without a
@@ -3140,6 +3195,10 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 - `(plat).secret(name)` — `config` for a value that must not be logged:
   the same lookup, and a mock records only the name.
 - `(plat).random_i32()` — one draw from the platform CSPRNG
+- `(plat).sleep(d)` — nothing for `d` (`now`): under std/serve's loop the
+  handler parks and the worker serves its other connections meanwhile; in
+  a plain program it naps. The mock records `sleep MS` and returns; the
+  sim spends the time on its own clock.
   (`random`).
 - `(plat).http(req)` — `req` sent and its response read (`fetch`); the
   host sends it with `fetch.send_public_on` over the platform's own pool,

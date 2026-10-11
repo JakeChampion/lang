@@ -974,18 +974,38 @@ function literal_payloads(s: State, whole: typeinfo.Type, name: string, layout: 
 }
 
 // The union a variant literal builds. The checker types a declared enum's
-// literal outright, but it types `Some(x)` by the enum alone — no
-// instantiation — so a builtin union's literal takes its type arguments from
-// the destination it is written against, which is where they are known.
+// literal by what its payload fixes, and it types `Some(x)` by the enum
+// alone — no instantiation — so a literal the checker left unsettled takes
+// its type arguments from the destination it is written against, which is
+// where they are known: a builtin union's, a bare unit variant's (`Empty`
+// under `Box[T]`, typed with no arguments), and a payload's that leaves an
+// argument unbound (`Tagged(Tag { … })` under `Box[T]`, the argument
+// settled to never).
 function literal_union(e: ast.Expr, s: State, expected: typeinfo.Type): typeinfo.Type {
   let ty: typeinfo.Type = checked(e, s);
-  if (builtin_union_layout(union_name(ty)) == 0) {
+  if (union_name(expected) != union_name(ty)) {
     return ty;
   }
-  if (union_name(expected) == union_name(ty)) {
+  if (builtin_union_layout(union_name(ty)) != 0 || union_unsettled(ty)) {
     return expected;
   }
   return ty;
+}
+
+// A declared union's type the checker left for the destination to settle:
+// no arguments, or one its payload left unbound.
+function union_unsettled(t: typeinfo.Type): boolean {
+  if let typeinfo.TypeUnion(u) = t {
+    if (u.args.len() == 0) {
+      return true;
+    }
+    for a in u.args {
+      if let typeinfo.TypeNever(_) = a {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 // A name is a variant literal when the union it is written against has a

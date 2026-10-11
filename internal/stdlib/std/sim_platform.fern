@@ -21,6 +21,7 @@ import "std/platform";
 import "std/sim";
 import "std/sim_fetch";
 import "std/fetch";
+import "std/time";
 import "std/mock_platform";
 import "std/http/cookie";
 
@@ -73,6 +74,11 @@ impl platform.Platform for SimPlatform {
   function random_i32(self: SimPlatform): i32 {
     self.mock.record("random_i32", "");
     return self.drv.random_i32();
+  }
+
+  function sleep(self: SimPlatform, d: Duration): void {
+    self.mock.record("sleep", d.as_millis().to_string());
+    let moved: boolean = self.drv.advance_to(self.drv.now_ns() + d.as_nanos());
   }
 
   // The route the host platform takes, over the scripted network: global

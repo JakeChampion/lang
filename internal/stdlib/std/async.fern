@@ -1005,14 +1005,18 @@ pub function with_deadline_tasks[T](deadline: Duration, entries: (() => T)[]): O
 // the index of the first pair that became ready, -1 once `timeout_ms`
 // passed (-1 waits without a bound), and `cancelled()` in a cancelled
 // task. Under a scheduler the task parks and the scheduler's word is the
-// answer; with no task current the wait blocks here. On wasm an fd is a
-// socket handle, subscribed for the wait.
+// answer; with no task current the wait blocks here, an empty set under a
+// bound napping for it. On wasm an fd is a socket handle, subscribed for
+// the wait.
 pub function wait_any(set: i32[], timeout_ms: i32): i32 {
   if (__task_cur() != 0) {
     return __task_park(set, timeout_ms);
   }
   let n: i32 = set.len() / 2;
   if (n <= 0) {
+    if (timeout_ms > 0) {
+      sleep_ms(timeout_ms as i64);
+    }
     return 0 - 1;
   }
   let reads: boolean = true;

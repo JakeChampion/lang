@@ -1,6 +1,7 @@
 package sourcelint
 
 import (
+	"io/fs"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -47,25 +48,35 @@ func TestEveryStdlibModuleHasASidebarGroup(t *testing.T) {
 	// since a module slug is a filename — so the set is only ever consulted
 	// for membership, never enumerated.
 
-	ents, err := os.ReadDir(filepath.Join("..", "..", "stdlib", "std"))
-	if err != nil {
-		t.Fatalf("read internal/stdlib/std: %v", err)
-	}
+	root := filepath.Join("..", "..", "stdlib", "std")
 	var missing []string
-	for _, e := range ents {
-		name := e.Name()
-		if e.IsDir() || !strings.HasSuffix(name, ".fern") {
-			continue
+	// A module in a directory (`std/http/cookie`) is the page `http_cookie`,
+	// the path's separators joined by `_`, as ferndoc names it.
+	err = filepath.WalkDir(root, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
 		}
-		slug := strings.TrimSuffix(name, ".fern")
+		name := d.Name()
+		if d.IsDir() || !strings.HasSuffix(name, ".fern") {
+			return nil
+		}
+		rel, err := filepath.Rel(root, path)
+		if err != nil {
+			return err
+		}
+		slug := strings.ReplaceAll(strings.TrimSuffix(rel, ".fern"), string(filepath.Separator), "_")
 		// `_test_empty` is a fixture, not a module anyone imports, and
 		// ferndoc emits no page for it.
 		if strings.HasPrefix(slug, "_") {
-			continue
+			return nil
 		}
 		if !grouped[slug] {
 			missing = append(missing, slug)
 		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("walk internal/stdlib/std: %v", err)
 	}
 	if len(missing) != 0 {
 		sort.Strings(missing)

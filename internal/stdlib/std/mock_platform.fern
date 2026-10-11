@@ -31,6 +31,7 @@
 import "std/string";
 import "std/platform";
 import "std/fetch";
+import "std/time";
 import "std/net";
 import "std/http";
 import "core/int";
@@ -81,6 +82,10 @@ impl platform.Platform for MockPlatform {
   function random_i32(self: MockPlatform): i32 {
     self.record("random_i32", "");
     return __canned_i64(self, "random_i32", 0 as i64) as i32;
+  }
+
+  function sleep(self: MockPlatform, d: Duration): void {
+    self.record("sleep", d.as_millis().to_string());
   }
 
   // A mock reaches no socket: the call is logged as `http` with `METHOD url`
