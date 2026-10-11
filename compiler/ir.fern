@@ -922,8 +922,18 @@ pub function op_sum_bytes(): Op {
 // nothing and reads only the string and the set. The byte-set scan behind
 // cat -A's spelling; the miss value is the LENGTH,
 // as ascii_run's is, so a caller's run walk needs no branch.
+//
+// When the set is a constant the lowering knows, `str` spells its membership,
+// 256 characters of `0` / `1` by byte value (ssarc.scan_set_members), and a
+// backend may classify whole blocks from it; the set operand is still popped.
 pub function op_scan_set(): Op {
   return op0(324);
+}
+
+// is_block_scan_set reports whether a scan_set spells its constant set's
+// membership in `str`, so a backend can classify a block of bytes at once.
+pub function is_block_scan_set(o: Op): boolean {
+  return (o.kind_tag == 324 || o.kind_tag == 361 && is_packed(o)) && o.str.len() == 256;
 }
 
 // count_runs: pops [str, inside, set] → the i32 count of runs of bytes whose

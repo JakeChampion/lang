@@ -4798,6 +4798,66 @@ function ir_f2u_sat_rax(width: i32, lb: string, d: string): string {
   return u;
 }
 
+// emit_scan_set_blocks is scan_set over a constant set, sixteen bytes a turn
+// with SSSE3 (asmcore.scan_set_tables for the layout). A byte x is a member
+// when bit (x >> 4) & 7 of its row is set, the row being the low-nibble table
+// for x < 0x80 and the high one otherwise: pshufb zeroes a lane whose index
+// has bit 7 set, so `x & 0x8f` reads the first table only for a low byte and
+// `(x ^ 0x80) & 0x8f` the second only for a high one, and or-ing the two rows
+// gives the right row everywhere. The set operand is popped and not read.
+// %r11 holds the tables, %r9 the block cursor against %r10, the last address
+// a whole block can start at.
+function emit_scan_set_blocks(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+  let names: string[] = [];
+  while (names.len() < 7) {
+    let lo: asmcore.LabelOut = asmcore.fresh_label(s);
+    names = names.append(lo.name);
+    s = lo.state;
+  }
+  let lit: asmcore.StringLitOut = asmcore.add_string_lit(asmcore.EmitState { ...s }, asmcore.scan_set_tables(o.str));
+  s = lit.state;
+  let tables: string = asmcore.str_lit_label(s, lit.idx);
+  let l_from_ok: string = names[0];
+  let l_loop: string = names[1];
+  let l_hit16: string = names[2];
+  let l_tail: string = names[3];
+  let l_hit: string = names[4];
+  let l_end: string = names[5];
+  let l_done: string = names[6];
+  s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
+  if (o.kind_tag == 361) {
+    s = s.write("    movq (%rax), %r8\n    addq $8, %rax\n");
+  } else {
+    s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+  }
+  s = s.write("    testq %rcx, %rcx\n    jns " + l_from_ok + "\n    xorq %rcx, %rcx\n");
+  s = s.write(l_from_ok + ":\n    leaq " + tables + "(%rip), %r11\n");
+  s = s.write("    leaq (%rax,%rcx), %r9\n    leaq -16(%rax,%r8), %r10\n");
+  s = s.write("    cmpq %r10, %r9\n    jg " + l_tail + "\n");
+  s = s.write("    movdqu (%r11), %xmm2\n    movdqu 16(%r11), %xmm3\n    movdqu 32(%r11), %xmm4\n");
+  s = s.write("    movdqu 48(%r11), %xmm5\n    movdqu 64(%r11), %xmm6\n    movdqu 80(%r11), %xmm7\n");
+  s = s.write(l_loop + ":\n    movdqu (%r9), %xmm0\n");
+  s = s.write("    movdqa %xmm0, %xmm1\n    pand %xmm5, %xmm1\n");
+  s = s.write("    movdqa %xmm0, %xmm8\n    pxor %xmm6, %xmm8\n    pand %xmm5, %xmm8\n");
+  s = s.write("    movdqa %xmm2, %xmm9\n    pshufb %xmm1, %xmm9\n");
+  s = s.write("    movdqa %xmm3, %xmm1\n    pshufb %xmm8, %xmm1\n    por %xmm9, %xmm1\n");
+  s = s.write("    psrlw $4, %xmm0\n    pand %xmm7, %xmm0\n");
+  s = s.write("    movdqa %xmm4, %xmm8\n    pshufb %xmm0, %xmm8\n");
+  s = s.write("    pand %xmm8, %xmm1\n    pcmpeqb %xmm8, %xmm1\n    pmovmskb %xmm1, %edx\n");
+  s = s.write("    testl %edx, %edx\n    jnz " + l_hit16 + "\n");
+  s = s.write("    addq $16, %r9\n    cmpq %r10, %r9\n    jle " + l_loop + "\n");
+  s = s.write("    movq %r9, %rcx\n    subq %rax, %rcx\n    jmp " + l_tail + "\n");
+  s = s.write(l_hit16 + ":\n    bsfl %edx, %edx\n    subq %rax, %r9\n    addq %rdx, %r9\n");
+  s = s.write("    pushq %r9\n    jmp " + l_done + "\n");
+  // Under sixteen bytes left: the membership bytes at 96, one at a time.
+  s = s.write(l_tail + ":\n    cmpq %r8, %rcx\n    jge " + l_end + "\n");
+  s = s.write("    movzbq (%rax,%rcx), %r9\n    cmpb $0, 96(%r11,%r9)\n    jne " + l_hit + "\n");
+  s = s.write("    addq $1, %rcx\n    jmp " + l_tail + "\n");
+  s = s.write(l_hit + ":\n    pushq %rcx\n    jmp " + l_done + "\n");
+  s = s.write(l_end + ":\n    pushq %r8\n");
+  return s.write(l_done + ":\n");
+}
+
 // set_entry_test tests entry `idx` of the set on %rdx for zero: the low byte
 // of the 8-byte slot 8 + idx*8, or byte 8 + idx of a packed u8[] (ir.packed).
 function set_entry_test(o: ir.Op, idx: string): string {
@@ -5320,81 +5380,7 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
     return s;
   }
   if (o.kind_tag == 324 || o.kind_tag == 361) {  // scan_set / scan_set_bytes
-    // operand stack [box, from, set] (set on top) -> the index of the
-    // first byte at or after `from` whose set entry is nonzero, or the
-    // LENGTH. Scalar: the table read per byte is the kernel. The set's
-    // length is at (set) and its byte i in the 8-byte slot 8 + i*8;
-    // a byte past that length is not in the set, and a set with an
-    // entry for every byte value takes the loop with no length check.
-    let slo: asmcore.LabelOut = asmcore.fresh_label(s);
-    let s_loop: string = slo.name;
-    let slo2: asmcore.LabelOut = asmcore.fresh_label(slo.state);
-    let s_short: string = slo2.name;
-    let slo3: asmcore.LabelOut = asmcore.fresh_label(slo2.state);
-    let s_short_next: string = slo3.name;
-    let slo4: asmcore.LabelOut = asmcore.fresh_label(slo3.state);
-    let s_hit: string = slo4.name;
-    let slo5: asmcore.LabelOut = asmcore.fresh_label(slo4.state);
-    let s_end: string = slo5.name;
-    let slo6: asmcore.LabelOut = asmcore.fresh_label(slo5.state);
-    let s_done: string = slo6.name;
-    let slo7: asmcore.LabelOut = asmcore.fresh_label(slo6.state);
-    let s_from_ok: string = slo7.name;
-    let slo8: asmcore.LabelOut = asmcore.fresh_label(slo7.state);
-    let s_one: string = slo8.name;
-    let hits: string[] = [];
-    s = slo8.state;
-    while (hits.len() < 4) {
-      let hl: asmcore.LabelOut = asmcore.fresh_label(s);
-      hits = hits.append(hl.name);
-      s = hl.state;
-    }
-    s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
-    if (o.kind_tag == 361) {
-      s = s.write("    movq (%rax), %r8\n    addq $8, %rax\n");
-    } else {
-      s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
-    }
-    s = s.write("    testq %rcx, %rcx\n    jns " + s_from_ok + "\n    xorq %rcx, %rcx\n");
-    s = s.write(s_from_ok + ":\n    movq (%rdx), %r9\n");
-    if (o.kind_tag != 361 || ir.is_packed(o)) {
-      s = s.write("    cmpq $256, %r9\n    jb " + s_short + "\n");
-      // Full set: four bytes a turn on a cursor (r10, the end r11), then
-      // one at a time. A hit at byte k of the four steps the cursor k times
-      // before its offset is read.
-      s = s.write("    cmpq %r8, %rcx\n    jge " + s_end + "\n");
-      s = s.write("    leaq (%rax,%rcx), %r10\n    leaq (%rax,%r8), %r11\n    leaq -4(%r11), %rcx\n");
-      s = s.write(s_loop + ":\n    cmpq %rcx, %r10\n    ja " + s_one + "\n");
-      let k: i32 = 0;
-      while (k < 4) {
-        s = s.write("    movzbq " + util.i32_to_string(k) + "(%r10), %r9\n");
-        s = s.write("    " + set_entry_test(o, "%r9") + "\n    jne " + hits[k] + "\n");
-        k = k + 1;
-      }
-      s = s.write("    addq $4, %r10\n    jmp " + s_loop + "\n");
-      s = s.write(s_one + ":\n    cmpq %r11, %r10\n    jae " + s_end + "\n");
-      s = s.write("    movzbq (%r10), %r9\n");
-      s = s.write("    " + set_entry_test(o, "%r9") + "\n    jne " + hits[0] + "\n");
-      s = s.write("    addq $1, %r10\n    jmp " + s_one + "\n");
-      s = s.write(hits[3] + ":\n    addq $1, %r10\n");
-      s = s.write(hits[2] + ":\n    addq $1, %r10\n");
-      s = s.write(hits[1] + ":\n    addq $1, %r10\n");
-      s = s.write(hits[0] + ":\n    subq %rax, %r10\n    pushq %r10\n    jmp " + s_done + "\n");
-    }
-    s = s.write(s_short + ":\n");
-    s = s.write("    cmpq %r8, %rcx\n    jge " + s_end + "\n");
-    if (o.kind_tag == 361 && !ir.is_packed(o)) {
-      s = s.write("    movzbq (%rax,%rcx,8), %r10\n");
-    } else {
-      s = s.write("    movzbq (%rax,%rcx), %r10\n");
-    }
-    s = s.write("    cmpq %r9, %r10\n    jae " + s_short_next + "\n");
-    s = s.write("    " + set_entry_test(o, "%r10") + "\n    jne " + s_hit + "\n");
-    s = s.write(s_short_next + ":\n    addq $1, %rcx\n    jmp " + s_short + "\n");
-    s = s.write(s_hit + ":\n    pushq %rcx\n    jmp " + s_done + "\n");
-    s = s.write(s_end + ":\n    pushq %r8\n");
-    s = s.write(s_done + ":\n");
-    return s;
+    return emit_scan_set(o, s);
   }
   if (o.kind_tag == 390) {  // str_hash
     // operand stack [box, seed] (seed on top) -> ir.op_str_hash's hash of
@@ -5709,6 +5695,89 @@ function emit_str_op(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
   // it — wrong code that looks plausible, the same failure class as the
   // comment fallback in ir_bin_asm.
   ircore.unsupported_op_refuse(o.kind_tag, "x86-64");
+  return s;
+}
+
+// emit_scan_set is scan_set / scan_set_bytes: a whole-block kernel when the
+// set is a constant the op spells, else the scalar loop.
+function emit_scan_set(o: ir.Op, s: asmcore.EmitState): asmcore.EmitState {
+  if (ir.is_block_scan_set(o)) {
+    return emit_scan_set_blocks(o, s);
+  }
+  // operand stack [box, from, set] (set on top) -> the index of the
+  // first byte at or after `from` whose set entry is nonzero, or the
+  // LENGTH. Scalar: the table read per byte is the kernel. The set's
+  // length is at (set) and its byte i in the 8-byte slot 8 + i*8;
+  // a byte past that length is not in the set, and a set with an
+  // entry for every byte value takes the loop with no length check.
+  let slo: asmcore.LabelOut = asmcore.fresh_label(s);
+  let s_loop: string = slo.name;
+  let slo2: asmcore.LabelOut = asmcore.fresh_label(slo.state);
+  let s_short: string = slo2.name;
+  let slo3: asmcore.LabelOut = asmcore.fresh_label(slo2.state);
+  let s_short_next: string = slo3.name;
+  let slo4: asmcore.LabelOut = asmcore.fresh_label(slo3.state);
+  let s_hit: string = slo4.name;
+  let slo5: asmcore.LabelOut = asmcore.fresh_label(slo4.state);
+  let s_end: string = slo5.name;
+  let slo6: asmcore.LabelOut = asmcore.fresh_label(slo5.state);
+  let s_done: string = slo6.name;
+  let slo7: asmcore.LabelOut = asmcore.fresh_label(slo6.state);
+  let s_from_ok: string = slo7.name;
+  let slo8: asmcore.LabelOut = asmcore.fresh_label(slo7.state);
+  let s_one: string = slo8.name;
+  let hits: string[] = [];
+  s = slo8.state;
+  while (hits.len() < 4) {
+    let hl: asmcore.LabelOut = asmcore.fresh_label(s);
+    hits = hits.append(hl.name);
+    s = hl.state;
+  }
+  s = s.write("    popq %rdx\n    popq %rcx\n    popq %rax\n");
+  if (o.kind_tag == 361) {
+    s = s.write("    movq (%rax), %r8\n    addq $8, %rax\n");
+  } else {
+    s = s.write("    movq 8(%rax), %r8\n    movq (%rax), %rax\n");
+  }
+  s = s.write("    testq %rcx, %rcx\n    jns " + s_from_ok + "\n    xorq %rcx, %rcx\n");
+  s = s.write(s_from_ok + ":\n    movq (%rdx), %r9\n");
+  if (o.kind_tag != 361 || ir.is_packed(o)) {
+    s = s.write("    cmpq $256, %r9\n    jb " + s_short + "\n");
+    // Full set: four bytes a turn on a cursor (r10, the end r11), then
+    // one at a time. A hit at byte k of the four steps the cursor k times
+    // before its offset is read.
+    s = s.write("    cmpq %r8, %rcx\n    jge " + s_end + "\n");
+    s = s.write("    leaq (%rax,%rcx), %r10\n    leaq (%rax,%r8), %r11\n    leaq -4(%r11), %rcx\n");
+    s = s.write(s_loop + ":\n    cmpq %rcx, %r10\n    ja " + s_one + "\n");
+    let k: i32 = 0;
+    while (k < 4) {
+      s = s.write("    movzbq " + util.i32_to_string(k) + "(%r10), %r9\n");
+      s = s.write("    " + set_entry_test(o, "%r9") + "\n    jne " + hits[k] + "\n");
+      k = k + 1;
+    }
+    s = s.write("    addq $4, %r10\n    jmp " + s_loop + "\n");
+    s = s.write(s_one + ":\n    cmpq %r11, %r10\n    jae " + s_end + "\n");
+    s = s.write("    movzbq (%r10), %r9\n");
+    s = s.write("    " + set_entry_test(o, "%r9") + "\n    jne " + hits[0] + "\n");
+    s = s.write("    addq $1, %r10\n    jmp " + s_one + "\n");
+    s = s.write(hits[3] + ":\n    addq $1, %r10\n");
+    s = s.write(hits[2] + ":\n    addq $1, %r10\n");
+    s = s.write(hits[1] + ":\n    addq $1, %r10\n");
+    s = s.write(hits[0] + ":\n    subq %rax, %r10\n    pushq %r10\n    jmp " + s_done + "\n");
+  }
+  s = s.write(s_short + ":\n");
+  s = s.write("    cmpq %r8, %rcx\n    jge " + s_end + "\n");
+  if (o.kind_tag == 361 && !ir.is_packed(o)) {
+    s = s.write("    movzbq (%rax,%rcx,8), %r10\n");
+  } else {
+    s = s.write("    movzbq (%rax,%rcx), %r10\n");
+  }
+  s = s.write("    cmpq %r9, %r10\n    jae " + s_short_next + "\n");
+  s = s.write("    " + set_entry_test(o, "%r10") + "\n    jne " + s_hit + "\n");
+  s = s.write(s_short_next + ":\n    addq $1, %rcx\n    jmp " + s_short + "\n");
+  s = s.write(s_hit + ":\n    pushq %rcx\n    jmp " + s_done + "\n");
+  s = s.write(s_end + ":\n    pushq %r8\n");
+  s = s.write(s_done + ":\n");
   return s;
 }
 
