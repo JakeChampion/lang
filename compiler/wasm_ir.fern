@@ -11547,9 +11547,8 @@ function lc_label(text: string): string {
 // ` from=exit` when the exit() op reached it (the frames above the call are
 // never unwound, so what they hold is not a leak the program could have
 // freed), and under FERN_SANITIZE the leak verdict after it — plus the
-// `$__fern_proc_exit` wrapper that reports before exiting, so BOTH exit
-// paths (the exit() op and $__fern_start) report through the one flag-gated
-// definition;
+// `$__fern_proc_exit` wrapper the exit() op reaches, which reports before
+// exiting ($__fern_start reports on main's return and exits raw);
 // preview1_imports renames the raw import to $__fern_proc_exit_raw under the
 // same flag. Mode 0's; a component reports from its run entry and its exit
 // shim instead. The line is built in fixed scratch below the data pool (the
@@ -12473,7 +12472,7 @@ function preview1_imports(needs: string[], lc: boolean): string {
   if (lc) {
     // Census (#5362): the raw import is renamed so the flag-gated
     // reporting $__fern_proc_exit (lc_report_and_exit_wrapper) can define the
-    // name every existing call site — the exit op and $__fern_start — uses.
+    // name the exit op calls; $__fern_start calls the raw import.
     parts = parts.append("  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $__fern_proc_exit_raw (param i32)))\n");
   } else {
     parts = parts.append("  (import \"wasi_snapshot_preview1\" \"proc_exit\" (func $__fern_proc_exit (param i32)))\n");
@@ -13632,17 +13631,19 @@ pub function emit_ir_module_units(units: WasmUnit[], mod: parser.Module, needs: 
     // component modes have no preview1 proc_exit to wrap. Empty when the
     // flag is off.
     parts = parts.append(lc_report_and_exit_wrapper(lc, sw.sanitize, need(needs, "@calls_set_args"), need(needs, "reader_seek")));
-    parts = parts.append("  (func $__fern_start (call $__fern_proc_exit (call $main)))\n");
     parts = parts.append(xps);
     // `main` is exported beside `_start` so a host can read its result
     // directly (`wasmtime run --invoke main`): proc_exit refuses a status
     // outside [0..126), so through `_start` alone a result of 126 or more
-    // is unreadable. That call never reaches $__fern_proc_exit, so under the census
-    // the export reports on its way out.
+    // is unreadable. Under the census both report on main's return, and
+    // `_start` exits through the raw import: the reporting $__fern_proc_exit
+    // marks its line ` from=exit`, which is the exit() op's alone.
     if (lc) {
       parts = parts.append("  (func $__fern_main_reporting (result i32) (local $r i32)\n    (local.set $r (call $main))\n    (call $__fern_lc_report)\n    (local.get $r))\n");
+      parts = parts.append("  (func $__fern_start (call $__fern_proc_exit_raw (call $__fern_main_reporting)))\n");
       parts = parts.append("  (export \"main\" (func $__fern_main_reporting))\n");
     } else {
+      parts = parts.append("  (func $__fern_start (call $__fern_proc_exit (call $main)))\n");
       parts = parts.append("  (export \"main\" (func $main))\n");
     }
     parts = parts.append("  (export \"_start\" (func $__fern_start)))\n");
