@@ -671,8 +671,8 @@ function __json_p_string(p0: __JsonParser): (string, __JsonParser) {
   return ("", p);  // unreachable
 }
 
-// JSON_STRING_STOPS marks where a string's plain run ends: `"`, `\`, and the
-// NUL __json_p_byte reads at the end of the input.
+// JSON_STRING_STOPS marks where a string's plain run ends: `"`, `\`, and a NUL
+// byte, so an embedded NUL falls through to the loop that rejects it.
 const JSON_STRING_STOPS: u8[] = [
   1u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
   0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8, 0u8,
