@@ -127,10 +127,12 @@ func census(stderr []byte) (allocs, frees, live int64, exited, ok bool) {
 // chroot) left no census at all, its frames abandoned the same way. A run a
 // signal ended has no exit to report at: a `tail -f` the harness stops with
 // SIGTERM, a writer killed by SIGPIPE on a closed pipe, a case that overran
-// its bound. All three are counted, not checked, and a utility whose every
-// case left through exit() fails rather than passing on nothing — its
-// success path leaves that way too, and the census can say nothing about it
-// until it returns.
+// its bound. All three are counted, not checked, and a utility none of whose
+// cases returned fails when one of them left through exit() with status 0
+// rather than passing on nothing: its success path leaves that way, and the
+// census can say nothing about it until it returns. A utility whose every
+// case failed has no success path to judge here, as chroot unprivileged,
+// where chroot(2) is EPERM before anything runs.
 func TestCorpusFreesWhatItAllocates(t *testing.T) {
 	for _, util := range utilNames(t) {
 		cases, ok := corpusRegistry[util]
@@ -139,7 +141,7 @@ func TestCorpusFreesWhatItAllocates(t *testing.T) {
 		}
 		t.Run(util, func(t *testing.T) {
 			bin := leakcheckBin(t, util)
-			var checked, exited, execd, unended int64
+			var checked, exited, exitedOK, execd, unended int64
 			for _, inv := range cases(t) {
 				t.Run(inv.name, func(t *testing.T) {
 					// One process per case and the cost in spawning it, so the
@@ -166,6 +168,9 @@ func TestCorpusFreesWhatItAllocates(t *testing.T) {
 					}
 					if viaExit {
 						atomic.AddInt64(&exited, 1)
+						if got.exit == 0 {
+							atomic.AddInt64(&exitedOK, 1)
+						}
 						return
 					}
 					atomic.AddInt64(&checked, 1)
@@ -176,8 +181,8 @@ func TestCorpusFreesWhatItAllocates(t *testing.T) {
 			}
 			t.Cleanup(func() {
 				t.Logf("%s: %d runs returned from main and balanced, %d left through exit(), %d exec'd, %d ended in a signal", util, checked, exited, execd, unended)
-				if checked == 0 && execd == 0 && unended == 0 {
-					t.Errorf("every one of %s's %d cases left through exit(), so none was checked: its success path must return from main for the census to say anything", util, exited)
+				if checked == 0 && execd == 0 && unended == 0 && exitedOK > 0 {
+					t.Errorf("none of %s's cases returned from main, and %d of the %d that left through exit() succeeded: its success path must return from main for the census to say anything", util, exitedOK, exited)
 				}
 			})
 		})

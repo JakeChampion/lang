@@ -34,6 +34,7 @@ function main(): i32 {
         ir.Op { ...base(), f64_imm: 2.5 },
         ir.Op { ...base(), i32_imm: 4 },
         ir.Op { ...base(), i64_imm: 10i64 },
+        ir.Op { ...base(), i64_imm: 9i64 + 4611686018427387904i64 },
         ir.Op { ...base(), str: "y" },
         ir.Op { ...base(), kind_tag: 8 },
     ];

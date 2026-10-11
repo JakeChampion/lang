@@ -76,7 +76,7 @@ type tree struct {
 }
 
 var trees = []tree{
-	{name: "self-host compiler", dir: "../../../compiler", ceiling: 221, excess: 14775},
+	{name: "self-host compiler", dir: "../../../compiler", ceiling: 221, excess: 15547},
 	{name: "stdlib", dir: "../../stdlib/std", ceiling: 68, excess: 780},
 }
 

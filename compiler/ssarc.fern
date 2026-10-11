@@ -465,69 +465,6 @@ function steal(own r: irtables.LowerResult, f: ssasem.Func, v: i32, unique: i32)
   return unless_unique(r, unique, v, "__fern_rc_inc");
 }
 
-// An in-place update whose receiver this frame does not own: its unit arrives
-// as a RETAIN because the frame has to hold one while the operation runs, and
-// emitting that retain BEFORE `__fern_rc_is_unique` makes the test answer for
-// its own supply rather than for the box. It then says "shared" about a box
-// nobody else holds, every push takes the un-share copy, and a loop appending
-// through a borrowed parameter copies the whole buffer per element — 23 s and
-// 8.9 GB for 40,000 pushes where the AST lowering takes 2 ms (#9365).
-//
-// A receiver the frame DOES own keeps its retain up front: there it is the
-// same-frame bracket, held because the binding outlives the update and the
-// copy is what keeps the old value whole.
-//
-// The cross-frame bracket is `bracketed`, and it is what makes deferring safe
-// — so the deferral reaches exactly as far as that bracket does: a PARAMETER
-// this frame borrows, which its caller either bracketed or is done reading,
-// and a record FIELD the plan admitted (ssaunits.field_grow_root), where the
-// bracket is on the field and the record's own count answers for any holder
-// no caller names. The frame itself must be done reading the parameter too
-// (`kept`): growing its box in place would change the value it reads next.
-// Declining is enough because a borrowed parameter's unit is never moved:
-// its retain stands through the push, which the rc test then reads as shared.
-// An array reached any other way the frame does not own —
-// an element of a borrowed array of arrays, say — has no bracket standing
-// behind it, and growing it in place would rewrite what the container still
-// holds. A with has no non-consuming helper to fall back on, so it defers
-// only where the plan admitted the field.
-//
-// A map mutation never defers. Its receiver's retain is what makes a map
-// the frame still reads count as shared, and core/map's copy-on-write then
-// copies: `let n = m.insert(k, v)` leaves `m` as it was, which is the value
-// the checker's E055 promises for every collection operation.
-//
-// A string append defers every retain of its left operand: a string the
-// frame still reads cannot grow in place, so it is lent to a plain
-// concatenation, which takes nothing (`grow_or_concat`).
-function deferred_retain(f: ssasem.Func, p: ssaunits.Plan, step: ssaunits.Step, ins: ssa.SInst): boolean {
-  if (ssaunits.string_append(f, ins)) {
-    return receiver_retained(step);
-  }
-  if (ins.kind_tag != ssasem.append() && ins.kind_tag != ssasem.with()) {
-    return false;
-  }
-  if (p.grows[ins.result] < 0 && (ins.kind_tag == ssasem.with() || ins.args[0] >= f.graph.nparams)) {
-    return false;
-  }
-  if (ins.args[0] < p.owned.len() && p.owned[ins.args[0]]) {
-    return false;
-  }
-  if (p.grows[ins.result] < 0 && p.kept[ins.result]) {
-    return false;
-  }
-  return receiver_retained(step);
-}
-
-function receiver_retained(step: ssaunits.Step): boolean {
-  for supply in step.supplies {
-    if (supply.slot == 0 && supply.mode == ssaunits.retain_unit()) {
-      return true;
-    }
-  }
-  return false;
-}
-
 // The arguments of a direct call this frame has to hold a second count on
 // across it. A callee handed a BORROWED array may grow or overwrite it in
 // place when it is the box's only reader, and it cannot see the caller's
@@ -1214,693 +1151,6 @@ function drops_less(own r: irtables.LowerResult, step: ssaunits.Step, f: ssasem.
   return r;
 }
 
-// Where a block's constructions can build in a box already dying in it.
-//
-// Perceus places a drop at a value's last use, so the record a `with`-style
-// update supersedes dies BEFORE the record replacing it is built. Reuse is the
-// pairing of that drop with that later construction: instead of returning the
-// box to the allocator and taking another of the same shape, the drop keeps it
-// as a token and the construction builds in it. This is Koka's ParcReuse
-// applied to the plan's dying set rather than to syntax.
-//
-// `tokens[i]` is the value whose drop at instruction i becomes a token, and
-// `builds[i]` the token an instruction i construction builds in; -1 for
-// neither. One pairing is live at a time, so one token slot serves the block —
-// a second candidate while one is pending is simply left to drop normally.
-//
-// The donor and the recipient need not share a TYPE, and the pairing does not
-// ask: a box is storage, and what separates two of them is the number of
-// SLOTS. `reuse_slots` is that number, matched against what the construction
-// claims. Measured over the compiler's own sources, pairing on shape alone —
-// any dying record, union or tuple to any construction — admits 839 sites of
-// which only 229 have counts the runtime can honour; pairing on the count
-// admits 390, all of them spendable, once the donor is held for whichever
-// construction claims it (`block_claims`, below) rather than taken first-come.
-// `selfs[i]` is a value dying AT instruction i whose box that same
-// instruction's construction builds in — the update chain's shape, where the
-// box a `T { ...a, f: v }` supersedes dies as the update consumes it rather
-// than at some earlier instruction. Its token is taken before the construction
-// instead of after, which is the only thing that separates it from the pairing
-// above; it is the same donor, the same runtime test and the same box.
-//
-// Measured over the compiler's own sources, 795 constructions have a
-// matching-slot value dying at their own instruction, against 390 pairings
-// from earlier drops. Most of them are the two native assemblers, which are
-// nothing but update chains.
-struct ReusePairs { tokens: i32[], builds: i32[], selfs: i32[] }
-
-// The slots a value's box has, or -1 where this frame cannot say. This is the
-// number `__fern_alloc_reuse` compares, and comparing it HERE is what makes a
-// pairing worth emitting: the runtime's own test is sound either way, but the
-// arm it takes when the counts disagree returns the donor block to its
-// freelist and allocates anyway, so the pairing has bought a uniqueness test
-// and a branch and changed nothing, at 25 lines of emitted text apiece.
-// Measured over the compiler's own sources, 610 of 839 pairings admitted on
-// shape alone were of that kind.
-//
-// A record's box is its shape word and one word per field, a tuple's one word
-// per element and no shape word. An environment is excluded: its fields are
-// addressed as array slots rather than struct ones, and its box is the
-// closure's. So is an array: its cap is a CAPACITY rather than its length, so
-// the slots the block has are not the slots its type names.
-function reuse_slots(t: typeinfo.Type, f: ssasem.Func): i32 {
-  if (semtypes.is_env(t) || semtypes.is_cell(t)) {
-    return 0 - 1;
-  }
-  // A box handed on is not freed, and a finalizer is owed at the free.
-  if (ssasem.has_finalizer(f, t)) {
-    return 0 - 1;
-  }
-  if let typeinfo.TypeTuple(tup) = t {
-    return tup.elements.len();
-  }
-  if let typeinfo.TypeStruct(_) = t {
-    if (semrecords.find(f.records, t) < 0) {
-      return 0 - 1;
-    }
-    return record_fields(t, f).len() + 1;
-  }
-  if let typeinfo.TypeUnion(_) = t {
-    return union_slots(t, f);
-  }
-  return 0 - 1;
-}
-
-// A declared enum's box is the LIVE variant's, so its count is this frame's to
-// know only where every variant agrees — native's own enum reuse asks the same
-// question (`enum_all_variants_same_field_count`).
-//
-// A BUILTIN union's box has no count this boundary can state, and that is a
-// target fact rather than a conservatism. One lowering feeds all three
-// backends: the register ones build every Option/Result as `__fern_arr_box(2)`,
-// while wasm sizes the box by the payload AT THE SITE — eight bytes for a
-// narrow one and sixteen for an i64 or an f64 — so a `Result[i64, string]`
-// box is two slots built as Ok and one built as Err. There is no single answer
-// to give, and a wrong one is the pairing that emits its machinery and then
-// declines.
-function union_slots(t: typeinfo.Type, f: ssasem.Func): i32 {
-  let at: i32 = semrecords.find_enum(f.enums, t);
-  if (at < 0) {
-    return 0 - 1;
-  }
-  if (f.enums[at].layout == semrecords.layout_option()) {
-    return 0 - 1;
-  }
-  let n: i32 = 0 - 1;
-  for v in f.enums[at].variants {
-    if (n < 0) {
-      n = v.fields.len();
-    } else if (n != v.fields.len()) {
-      return 0 - 1;
-    }
-  }
-  if (n < 0) {
-    return 0 - 1;
-  }
-  return n + 1;
-}
-
-// The slots one variant of a declared enum builds: its shape word and one per
-// field, as `struct_make` allocates them. -1 for any other layout.
-function variant_slots(t: typeinfo.Type, name: string, f: ssasem.Func): i32 {
-  let at: i32 = semrecords.find_enum(f.enums, t);
-  if (at < 0 || f.enums[at].layout != semrecords.layout_variant()) {
-    return 0 - 1;
-  }
-  let v: i32 = semrecords.find_variant(f.enums[at], name);
-  if (v < 0) {
-    return 0 - 1;
-  }
-  return f.enums[at].variants[v].fields.len() + 1;
-}
-
-// The slots a dying value's box has in block `b`. A declared enum whose
-// variants disagree has no count of its own, but a payload read executes only
-// where the tag test chose its variant, so a block reading one holds a box of
-// that variant's count. That is the consuming match's shape: the arm takes the
-// payloads, the scrutinee dies, and the arm's construction builds in its box.
-function donor_slots(f: ssasem.Func, b: ssa.SBlock, d: i32): i32 {
-  let t: typeinfo.Type = f.values[d];
-  let n: i32 = reuse_slots(t, f);
-  if (n >= 0 || ssasem.has_finalizer(f, t)) {
-    return n;
-  }
-  for ins in b.insts {
-    if (ins.kind_tag == ssasem.variant_get() && ins.args[0] == d) {
-      return variant_slots(t, ins.str, f);
-    }
-  }
-  return 0 - 1;
-}
-
-// The slots a construction claims, or -1 where it is not one a token can be
-// spent at. An array construction is excluded for the reason a dying array is:
-// what it asks the allocator for is a capacity.
-function recipient_slots(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): i32 {
-  if (p.constants[ins.result] != "") {
-    return 0 - 1;
-  }
-  if (ins.kind_tag == ssasem.tuple_new()) {
-    return tuple_elements(f.values[ins.result]).len();
-  }
-  if (ins.kind_tag == ssasem.record_new()) {
-    return reuse_slots(f.values[ins.result], f);
-  }
-  if (ins.kind_tag == ssasem.variant_new()) {
-    let n: i32 = union_slots(f.values[ins.result], f);
-    if (n < 0) {
-      n = variant_slots(f.values[ins.result], ins.str, f);
-    }
-    return n;
-  }
-  return 0 - 1;
-}
-
-// The last position in the block at which a construction claims each slot
-// count. A donor is worth holding while some construction still ahead of it
-// claims the count its box has, which this answers in one lookup where a scan
-// forward would cost a pass per candidate.
-//
-// Holding it for the NEXT construction alone is the version that looks right
-// and is not: a donor the next one cannot take is dropped, and the one two
-// instructions further down that could have taken it allocates. Measured over
-// the compiler's own sources, that reading pairs 287 where this one pairs 390.
-struct Claims { counts: i32[], last: i32[] }
-
-function block_claims(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock): Claims {
-  let counts: i32[] = [];
-  let last: i32[] = [];
-  let pos: i32 = 0;
-  while (pos < b.insts.len()) {
-    let c: i32 = recipient_slots(f, p, b.insts[pos]);
-    if (c >= 0) {
-      let at: i32 = util.index_of_i32(counts, c);
-      if (at < 0) {
-        counts = counts.append(c);
-        last = last.append(pos);
-      } else {
-        last = last.with(at, pos);
-      }
-    }
-    pos = pos + 1;
-  }
-  return Claims { counts: counts, last: last };
-}
-
-function claimed_after(c: Claims, slots: i32, pos: i32): boolean {
-  let at: i32 = util.index_of_i32(c.counts, slots);
-  return at >= 0 && c.last[at] > pos;
-}
-
-// Donors handed to constructions in later blocks. A value dying in a block
-// after the block's last construction may be held there instead of dropped,
-// and become the token of the first construction claiming its slot count in a
-// later block, as a value dying at a construction does. A carry is a donor
-// value, the blocks holding it (`from`, at `drop_at`), the constructions it is
-// handed to (`to`, at `build_at`), and the edges where it goes back instead
-// (`exit_from` to `exit_to`, freeing `dropped`).
-//
-// The blocks between the holding blocks and a construction, its way, claim
-// that count nowhere and are entered only from a holding block or a way, so
-// a path entering a way carries the token a holding block took. A path
-// leaves the ways at a construction, which spends the token, or at an edge to
-// any other block, which frees it, and can enter them again only through a
-// holding block. So one donor serves a construction in each arm of a branch,
-// and a donor dying in each arm of a match serves one construction past
-// their join.
-//
-// A holding block takes the donor's token where the donor dies
-// (`hold_token`): the box with its children released when it is unique
-// there, else null once the donor's unit is released. The token stays in the
-// donor's own local until `build_at` moves it to the token slot or an exit
-// edge frees it, so a pairing on the way, whose token is written and spent
-// within its block, is unaffected. Taking the token at the death rather than
-// at the construction is what keeps a shared donor from being held across
-// the blocks between: its other holder's box would stay shared through them.
-//
-// A predecessor of the construction's block in which the donor dies as a box
-// of another count is a null edge (`null_from` to `null_to`, for `nulled`):
-// that block drops the donor where it dies and the edge zeroes its local, so
-// the construction reads a null token on that path and the holding blocks'
-// token on the others. So a donor dying in match arms of different counts
-// still serves a construction past their join on the paths whose box fits.
-struct Carry { from: i32[], drop_at: i32[], held: i32[], to: i32[], build_at: i32[], donor: i32[], exit_from: i32[], exit_to: i32[], dropped: i32[], null_from: i32[], null_to: i32[], nulled: i32[] }
-
-function no_carry(): Carry {
-  return Carry { from: [], drop_at: [], held: [], to: [], build_at: [], donor: [], exit_from: [], exit_to: [], dropped: [], null_from: [], null_to: [], nulled: [] };
-}
-
-// The first construction in `b` claiming `slots`, or -1.
-function first_claim_of(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock, slots: i32): i32 {
-  let pos: i32 = 0;
-  while (pos < b.insts.len()) {
-    let ins: ssa.SInst = b.insts[pos];
-    if (ins.kind_tag != 6 && ins.kind_tag != 8 && recipient_slots(f, p, ins) == slots) {
-      return pos;
-    }
-    pos = pos + 1;
-  }
-  return 0 - 1;
-}
-
-function last_claim(f: ssasem.Func, p: ssaunits.Plan, b: ssa.SBlock): i32 {
-  let pos: i32 = b.insts.len() - 1;
-  while (pos >= 0) {
-    let ins: ssa.SInst = b.insts[pos];
-    if (ins.kind_tag != 6 && ins.kind_tag != 8 && recipient_slots(f, p, ins) >= 0) {
-      return pos;
-    }
-    pos = pos - 1;
-  }
-  return 0 - 1;
-}
-
-// The constructions a box can be carried to from a set of holding blocks, by
-// block id, the way to each, and the null edges into each: the predecessors
-// of the construction's block in which the donor dies as a box of another
-// count, so arrive with it dropped.
-struct Routes { targets: i32[], ways: i32[][], nulls: i32[][] }
-
-// The per-function facts every route search reads: each block's position by
-// id, the slot counts its constructions claim, and the values dying in it
-// after its last construction.
-struct RouteGraph { at: i32[], claims: i32[][], dies: i32[][] }
-
-function route_graph(f: ssasem.Func, p: ssaunits.Plan, dying: Dying[]): RouteGraph {
-  let claims: i32[][] = [];
-  let dies: i32[][] = [];
-  let k: i32 = 0;
-  while (k < f.graph.blocks.len()) {
-    claims = claims.append(block_claims(f, p, f.graph.blocks[k]).counts);
-    dies = dies.append(dying[k].values);
-    k = k + 1;
-  }
-  return RouteGraph { at: ssa.block_positions(f.graph), claims: claims, dies: dies };
-}
-
-// Whether the block at position `k` builds something claiming `slots`.
-function claims_slots(g: RouteGraph, k: i32, slots: i32): boolean {
-  return util.index_of_i32(g.claims[k], slots) >= 0;
-}
-
-// What the route searches of one function mark, by block position: `seen` the
-// blocks ahead of a search's start, `way` the blocks between it and a target.
-// A mark holds the stamp of the search that made it, and each search takes a
-// fresh stamp, so none is cleared between searches.
-struct RouteMarks { seen: i32[], way: i32[], stamp: i32 }
-
-struct Searched { routes: Routes, marks: RouteMarks }
-
-struct Way { ok: boolean, blocks: i32[], nulls: i32[], marks: RouteMarks }
-
-function route_marks(n: i32): RouteMarks {
-  let seen: i32[] = [];
-  let way: i32[] = [];
-  while (seen.len() < n) {
-    seen = seen.append(0);
-    way = way.append(0);
-  }
-  return RouteMarks { seen: seen, way: way, stamp: 0 };
-}
-
-// Where a box of `slots` held in `sources` can be carried: each block claiming
-// that count first on some path out of the sources whose way is entered from
-// nowhere else.
-function carry_routes(f: ssasem.Func, g: RouteGraph, sources: i32[], own m: RouteMarks, slots: i32, d: i32): Searched {
-  let ahead: i32 = m.stamp + 1;
-  let seen: i32[] = m.seen;
-  let way: i32[] = m.way;
-  let builds: i32[] = [];
-  let work: i32[] = [];
-  for id in sources {
-    for s in successors(f.graph.blocks[g.at[id]].term) {
-      work = work.append(s);
-    }
-  }
-  let next: i32 = 0;
-  while (next < work.len()) {
-    let id: i32 = work[next];
-    next = next + 1;
-    let k: i32 = g.at[id];
-    if (util.index_of_i32(sources, id) >= 0 || seen[k] == ahead) {
-      continue;
-    }
-    seen = seen.with(k, ahead);
-    if (claims_slots(g, k, slots)) {
-      builds = builds.append(id);
-    } else {
-      for s in successors(f.graph.blocks[k].term) {
-        work = work.append(s);
-      }
-    }
-  }
-  m = RouteMarks { seen: seen, way: way, stamp: ahead };
-  let found: Routes = Routes { targets: [], ways: [], nulls: [] };
-  for target in builds {
-    let w: Way = way_to(f, g, sources, m, ahead, target, slots, d);
-    m = w.marks;
-    if (w.ok) {
-      found = Routes { targets: found.targets.append(target), ways: found.ways.append(w.blocks), nulls: found.nulls.append(w.nulls) };
-    }
-  }
-  return Searched { routes: found, marks: m };
-}
-
-// The way to `target`, `ahead` being the stamp of the `seen` marks of the
-// search from `sources`. The walk takes the predecessors of the target and of
-// each block on the way, marked `way` at a fresh stamp. Each must be a source,
-// on the way, or a block ahead claiming nothing of the count, which joins the
-// way; any other enters the way from elsewhere. A predecessor of the target
-// itself may instead be a null edge: a block where the donor dies as a box
-// of another count, which drops it and arrives with its local null.
-function way_to(f: ssasem.Func, g: RouteGraph, sources: i32[], own m: RouteMarks, ahead: i32, target: i32, slots: i32, d: i32): Way {
-  let stamp: i32 = m.stamp + 1;
-  let seen: i32[] = m.seen;
-  let way: i32[] = m.way;
-  let between: i32[] = [];
-  let entry: Preds = split_preds(f, g, sources, target, slots, d);
-  let work: i32[] = entry.carrying;
-  let next: i32 = 0;
-  while (next < work.len()) {
-    let id: i32 = work[next];
-    next = next + 1;
-    let k: i32 = g.at[id];
-    if (util.index_of_i32(sources, id) >= 0 || way[k] == stamp) {
-      continue;
-    }
-    if (seen[k] != ahead || claims_slots(g, k, slots)) {
-      return Way { ok: false, blocks: [], nulls: [], marks: RouteMarks { seen: seen, way: way, stamp: stamp } };
-    }
-    between = between.append(id);
-    way = way.with(k, stamp);
-    for pr in f.graph.blocks[k].preds {
-      work = work.append(pr);
-    }
-  }
-  return Way { ok: true, blocks: between, nulls: entry.nulls, marks: RouteMarks { seen: seen, way: way, stamp: stamp } };
-}
-
-// The target's predecessors, split into the null edges and the rest.
-struct Preds { carrying: i32[], nulls: i32[] }
-
-function split_preds(f: ssasem.Func, g: RouteGraph, sources: i32[], target: i32, slots: i32, d: i32): Preds {
-  let out: Preds = Preds { carrying: [], nulls: [] };
-  for pr in f.graph.blocks[g.at[target]].preds {
-    if (null_edge(f, g, sources, pr, slots, d)) {
-      out = Preds { ...out, nulls: out.nulls.append(pr) };
-    } else {
-      out = Preds { ...out, carrying: out.carrying.append(pr) };
-    }
-  }
-  return out;
-}
-
-// Whether block `id` drops donor `d` as a box of a count other than `slots`
-// after its last construction: not a holding block, and one whose edge into
-// the construction's block brings no box.
-function null_edge(f: ssasem.Func, g: RouteGraph, sources: i32[], id: i32, slots: i32, d: i32): boolean {
-  let k: i32 = g.at[id];
-  return util.index_of_i32(sources, id) < 0 && util.index_of_i32(g.dies[k], d) >= 0
-    && donor_slots(f, f.graph.blocks[k], d) != slots;
-}
-
-// The values that die after position `claim` of `b`, and where each dies, in
-// order, leaving out the value the instruction there defines and one a link
-// keeps: the donors a later block's construction could take.
-struct Dying { at: i32[], values: i32[] }
-
-function dying_after_claims(p: ssaunits.Plan, idx: i32[][], links: i32[], b: ssa.SBlock, claim: i32): Dying {
-  let out: Dying = Dying { at: [], values: [] };
-  let pos: i32 = claim + 1;
-  while (pos < b.insts.len()) {
-    if (b.insts[pos].kind_tag != 6 && b.insts[pos].kind_tag != 8) {
-      for d in at(p, idx, b.id, pos, 0 - 1).drops {
-        if (d != b.insts[pos].result && (d >= links.len() || links[d] < 0)) {
-          out = Dying { at: out.at.append(pos), values: out.values.append(d) };
-        }
-      }
-    }
-    pos = pos + 1;
-  }
-  return out;
-}
-
-// The holding blocks of one carry: block `first` and every later block not yet
-// holding a donor in which `d` dies after the last construction, as a box of
-// the same count. A block that returns holds nothing: it has no edge to drop
-// the box on.
-struct Holds { blocks: i32[], at: i32[], slots: i32 }
-
-function holds_of(f: ssasem.Func, dying: Dying[], holding: boolean[], first: i32, d: i32, at0: i32, slots: i32): Holds {
-  let h: Holds = Holds { blocks: [f.graph.blocks[first].id], at: [at0], slots: slots };
-  let bj: i32 = first + 1;
-  while (bj < dying.len()) {
-    let j: i32 = util.index_of_i32(dying[bj].values, d);
-    if (!holding[bj] && j >= 0 && can_hold(f.graph.blocks[bj]) && donor_slots(f, f.graph.blocks[bj], d) == slots) {
-      h = Holds { ...h, blocks: h.blocks.append(f.graph.blocks[bj].id), at: h.at.append(dying[bj].at[j]) };
-    }
-    bj = bj + 1;
-  }
-  return h;
-}
-
-function can_hold(b: ssa.SBlock): boolean {
-  return successors(b.term).len() > 0;
-}
-
-function carried_pairs(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i32[], off: boolean): Carry {
-  let c: Carry = no_carry();
-  if (off) {
-    return c;
-  }
-  let dying: Dying[] = [];
-  let holding: boolean[] = [];
-  for b in f.graph.blocks {
-    dying = dying.append(dying_after_claims(p, idx, links, b, last_claim(f, p, b)));
-    holding = holding.append(false);
-  }
-  let g: RouteGraph = route_graph(f, p, dying);
-  let marks: RouteMarks = route_marks(f.graph.blocks.len());
-  let bi: i32 = 0;
-  while (bi < dying.len()) {
-    // One donor leaves a block. The first dying value whose count some
-    // construction ahead claims goes; a count held in this block alone and
-    // without a route is tried once.
-    let b: ssa.SBlock = f.graph.blocks[bi];
-    let tried: i32[] = [];
-    let i: i32 = 0;
-    while (!holding[bi] && can_hold(b) && i < dying[bi].values.len()) {
-      let d: i32 = dying[bi].values[i];
-      let slots: i32 = donor_slots(f, b, d);
-      if (slots >= 0) {
-        let h: Holds = holds_of(f, dying, holding, bi, d, dying[bi].at[i], slots);
-        if (h.blocks.len() > 1 || util.index_of_i32(tried, slots) < 0) {
-          tried = tried.append(slots);
-          let found: Searched = carry_routes(f, g, h.blocks, marks, slots, d);
-          marks = found.marks;
-          let before: i32 = c.to.len();
-          c = served_by(f, p, g, c, h, found.routes, d);
-          if (c.to.len() > before) {
-            for id in h.blocks {
-              holding = holding.with(g.at[id], true);
-            }
-          }
-        }
-      }
-      i = i + 1;
-    }
-    bi = bi + 1;
-  }
-  return c;
-}
-
-// `c` with donor `d` held in `h` and handed to each construction of `r` that
-// does not read it and that no earlier carry serves; the rest are left, and
-// any edge into one drops the donor. Nothing is added when no construction is.
-function served_by(f: ssasem.Func, p: ssaunits.Plan, g: RouteGraph, own c: Carry, h: Holds, r: Routes, d: i32): Carry {
-  let targets: i32[] = [];
-  let builds: i32[] = [];
-  let inside: i32[] = [];
-  let k: i32 = 0;
-  while (k < r.targets.len()) {
-    let to: ssa.SBlock = f.graph.blocks[g.at[r.targets[k]]];
-    let at_build: i32 = first_claim_of(f, p, to, h.slots);
-    if (util.index_of_i32(c.to, to.id) < 0 && util.index_of_i32(to.insts[at_build].args, d) < 0) {
-      targets = targets.append(to.id);
-      builds = builds.append(at_build);
-      c = with_null_edges(c, r.nulls[k], to.id, d);
-      for id in r.ways[k] {
-        inside = inside.append(id);
-      }
-    }
-    k = k + 1;
-  }
-  if (targets.len() == 0) {
-    return c;
-  }
-  k = 0;
-  while (k < targets.len()) {
-    c = Carry { ...c, to: c.to.append(targets[k]), build_at: c.build_at.append(builds[k]), donor: c.donor.append(d) };
-    k = k + 1;
-  }
-  k = 0;
-  while (k < h.blocks.len()) {
-    c = Carry { ...c, from: c.from.append(h.blocks[k]), drop_at: c.drop_at.append(h.at[k]), held: c.held.append(d) };
-    k = k + 1;
-  }
-  let leaving: i32[] = h.blocks;
-  for id in inside {
-    if (util.index_of_i32(leaving, id) < 0) {
-      leaving = leaving.append(id);
-    }
-  }
-  for id in leaving {
-    for s in successors(f.graph.blocks[g.at[id]].term) {
-      if (util.index_of_i32(targets, s) < 0 && util.index_of_i32(inside, s) < 0) {
-        c = Carry { ...c, exit_from: c.exit_from.append(id), exit_to: c.exit_to.append(s), dropped: c.dropped.append(d) };
-      }
-    }
-  }
-  return c;
-}
-
-function with_null_edges(own c: Carry, from: i32[], to: i32, d: i32): Carry {
-  for id in from {
-    c = Carry { ...c, null_from: c.null_from.append(id), null_to: c.null_to.append(to), nulled: c.nulled.append(d) };
-  }
-  return c;
-}
-
-// The donors arriving null over the edge from `from` to `to`: dropped in
-// `from` as boxes of another count, their locals are zeroed on the edge so
-// the construction's token test reads null rather than a freed box.
-function carry_nulls(c: Carry, from: i32, to: i32): i32[] {
-  let out: i32[] = [];
-  let e: i32 = 0;
-  while (e < c.null_from.len()) {
-    if (c.null_from[e] == from && c.null_to[e] == to) {
-      out = out.append(c.nulled[e]);
-    }
-    e = e + 1;
-  }
-  return out;
-}
-
-// The donors whose ways the edge from `from` to `to` leaves, their tokens
-// freed there.
-function carry_exits(c: Carry, from: i32, to: i32): i32[] {
-  let out: i32[] = [];
-  let e: i32 = 0;
-  while (e < c.exit_from.len()) {
-    if (c.exit_from[e] == from && c.exit_to[e] == to) {
-      out = out.append(c.dropped[e]);
-    }
-    e = e + 1;
-  }
-  return out;
-}
-
-// Whether the construction at position `pos` of block `b` is one a carry
-// hands its donor to.
-function carry_held_for(c: Carry, b: i32, pos: i32): boolean {
-  let into: i32 = util.index_of_i32(c.to, b);
-  return into >= 0 && c.build_at[into] == pos;
-}
-
-// The donor held rather than dropped at position `pos` of block `b`, or -1.
-function carry_held(c: Carry, b: i32, pos: i32): i32 {
-  let i: i32 = 0;
-  while (i < c.from.len()) {
-    if (c.from[i] == b && c.drop_at[i] == pos) {
-      return c.held[i];
-    }
-    i = i + 1;
-  }
-  return 0 - 1;
-}
-
-function reuse_pairs(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlock, off: boolean, carry: Carry): ReusePairs {
-  let into: i32 = util.index_of_i32(carry.to, b.id);
-  let tokens: i32[] = [];
-  let builds: i32[] = [];
-  let selfs: i32[] = [];
-  let claims_tab: Claims = block_claims(f, p, b);
-  let pending: i32 = 0 - 1;
-  let pending_at: i32 = 0 - 1;
-  let pos: i32 = 0;
-  while (pos < b.insts.len()) {
-    tokens = tokens.append(0 - 1);
-    builds = builds.append(0 - 1);
-    selfs = selfs.append(0 - 1);
-    let ins: ssa.SInst = b.insts[pos];
-    if (into >= 0 && carry.build_at[into] == pos) {
-      selfs = selfs.with(pos, carry.donor[into]);
-    } else if (ins.kind_tag != 6 && ins.kind_tag != 8) {
-      let step: ssaunits.Step = at(p, idx, b.id, pos, 0 - 1);
-      let claims: i32 = recipient_slots(f, p, ins);
-      if (off || into >= 0 && pos < carry.build_at[into]) {
-        pending = 0 - 1;
-      } else {
-        if (claims >= 0 && pending >= 0
-          && claims == donor_slots(f, b, pending)
-          && util.index_of_i32(ins.args, pending) < 0) {
-          builds = builds.with(pos, pending);
-          tokens = tokens.with(pending_at, pending);
-          pending = 0 - 1;
-          pending_at = 0 - 1;
-        } else if (pending < 0 && claims >= 0) {
-          // Nothing earlier serves this construction, so the box it
-          // supersedes may: a value dying HERE, of the count this
-          // construction claims, that the construction does not read.
-          // Not reading it is what makes it safe to hand on — the
-          // projections that carried its fields over are earlier
-          // instructions, and the plan has already proved it dead.
-          //
-          // `d != ins.result` excludes the degenerate donor: a
-          // construction whose value is never read has its drop at its
-          // own step, so the value dying here IS the result. Pairing it
-          // with itself reads a token slot for a value that does not
-          // exist yet, which always declines — and it costs the
-          // module its last allocating op, so the heap runtime block
-          // stopped being emitted and the link broke on an undefined
-          // `__fn___fern_arr_dec`.
-          //
-          // `pending < 0` is a soundness condition, not a preference:
-          // the frame has ONE token slot, so a self pairing emitted
-          // while a donor is held for a later construction overwrites
-          // that donor's box with its own — which this construction
-          // has already built into and is returning live.
-          for d in step.drops {
-            if (selfs[pos] < 0 && d != ins.result
-              && donor_slots(f, b, d) == claims
-              && util.index_of_i32(ins.args, d) < 0) {
-              selfs = selfs.with(pos, d);
-            }
-          }
-        }
-        // A construction this pending cannot serve leaves it HELD
-        // rather than dropped, the one it is waiting for being further
-        // down the block. A value dying AT a construction was offered
-        // to that construction above and is not taken as a pending
-        // here: the shape that reading was worth — a dying box refilling
-        // the slot the construction just emptied — is the same-instruction
-        // pairing, which spends it on the spot rather than saving it.
-        if (pending < 0 && claims < 0) {
-          for d in step.drops {
-            let sl: i32 = donor_slots(f, b, d);
-            if (pending < 0 && sl >= 0 && claimed_after(claims_tab, sl, pos)) {
-              pending = d;
-              pending_at = pos;
-            }
-          }
-        }
-      }
-    }
-    pos = pos + 1;
-  }
-  return ReusePairs { tokens: tokens, builds: builds, selfs: selfs };
-}
-
 // The donor's box when this frame holds its only count, and null otherwise —
 // the token recipe of docs/SELFHOST-PERCEUS-REUSE.md §6.2, emitted in place of
 // the drop. The runtime helper is pure: it hands a token back when the size
@@ -1984,192 +1234,6 @@ function reuse_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32): i
   return emit(r, ir.op_store_local(donor));
 }
 
-// A construction that rebuilds its own donor keeps in place every field it
-// reads from the donor's slot of the same index and takes a unit of, whether
-// by a take at the read (took_payload) or a retain at the construction: when
-// the donor is unique the field is already where the construction stores it,
-// so the unit the donor holds is the construction's, and neither the take's
-// null nor the retain nor the donor's release of that field is emitted. The
-// donor's uniqueness is read ONCE, at the first such read, into the token slot,
-// and the reads, the retains, the donor's release and the construction all
-// follow that one answer: a donor read as shared there has its kept fields
-// retained and is released whole, whatever its count says by the time it dies.
-// A scalar field read from the same slot is kept too: it holds no unit, so
-// only its store is skipped, and the uniqueness read waits for the donor's drop.
-//
-// The token slot is held from that first read to the construction, so a donor
-// is kept only where no other pairing's token is live in between. `start` is
-// the position of the first counted kept read, else the donor's drop, and
-// `taken` the donor's drop.
-//
-// A kept field the construction alone reads is not read at all while the
-// donor is unique: its slot is already the construction's. `late` holds those
-// values; the construction copies them from the donor, a counted one retained,
-// under the token's null arm, where its box is fresh (reuse_construct).
-struct Keeps { donors: i32[], slots: boolean[][], values: i32[][], late: i32[][], start: i32[], taken: i32[], built: i32[] }
-
-function keep_slots(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlock, ins: ssa.SInst, built: i32, donor: i32, taken: i32, uses: i32[]): Keeps {
-  let none: Keeps = Keeps { donors: [], slots: [], values: [], late: [], start: [], taken: [], built: [] };
-  if (ins.kind_tag != ssasem.record_new() || !semtypes.equal(f.values[ins.result], f.values[donor])) {
-    return none;
-  }
-  let slots: boolean[] = [];
-  while (slots.len() < ins.args.len()) {
-    slots = slots.append(false);
-  }
-  let values: i32[] = [];
-  let late: i32[] = [];
-  let start: i32 = 0 - 1;
-  let retained: i32[] = [];
-  for supply in at(p, idx, b.id, built, 0 - 1).supplies {
-    if (supply.mode == ssaunits.retain_unit()) {
-      retained = retained.append(supply.value);
-    }
-  }
-  let scalars: boolean = false;
-  let pos: i32 = 0;
-  while (pos <= taken) {
-    let get: ssa.SInst = b.insts[pos];
-    // A counted read keeps exactly one unit: one taken AND retained at the
-    // construction holds two, and keeping in place stands in for one. A
-    // scalar read has no unit and is kept as it stands.
-    let counted: boolean = get.kind_tag == ssasem.record_get() && walked(f.values[get.result]);
-    if (get.kind_tag == ssasem.record_get() && get.args[0] == donor
-      && (!counted || payload_taken(f, p, get) != util.index_of_i32(retained, get.result) >= 0)) {
-      let i: i32 = util.index_of_i32(ins.args, get.result);
-      // Once: the donor's slot holds one unit, which a second operand
-      // naming the same value would need a retain of its own for.
-      if (i == get.imm && !slots[i] && ssaunits.occurrences(ins.args, get.result) == 1) {
-        values = values.append(get.result);
-        slots = slots.with(i, true);
-        if (uses[get.result] == 1 && !held_read(p, get)) {
-          late = late.append(get.result);
-        }
-        // Only a counted read needs the donor's uniqueness at the read.
-        if (!counted) {
-          scalars = true;
-        } else if (start < 0) {
-          start = pos;
-        }
-      }
-    }
-    pos = pos + 1;
-  }
-  if (start < 0 && scalars) {
-    start = taken;
-  }
-  if (start < 0) {
-    return none;
-  }
-  return Keeps { donors: [donor], slots: [slots], values: [values], late: [late], start: [start], taken: [taken], built: [] };
-}
-
-// A read the plan gives an effect of its own at its position: a take that
-// nulls a tuple slot, or a hold that retains the element.
-function held_read(p: ssaunits.Plan, ins: ssa.SInst): boolean {
-  return ins.result < p.takes.len() && p.takes[ins.result] >= 0
-    || ins.result < p.held.len() && p.held[ins.result];
-}
-
-// How many operands name each value, over every instruction and terminator
-// of the function.
-function use_counts(f: ssasem.Func): i32[] {
-  let out: i32[] = __alloc_i32(f.graph.nvals);
-  for b in f.graph.blocks {
-    for ins in b.insts {
-      for a in ins.args {
-        out = out.with(a, out[a] + 1);
-      }
-    }
-    if (b.term.kind_tag == 1 && b.term.value >= 0) {
-      out = out.with(b.term.value, out[b.term.value] + 1);
-    }
-    if (b.term.kind_tag == 3) {
-      out = out.with(b.term.cond, out[b.term.cond] + 1);
-    }
-  }
-  return out;
-}
-
-// Every pairing's token interval in the block: `from` where the token is taken,
-// `to` where it is spent.
-function token_busy(pairs: ReusePairs, from: i32, to: i32, own_build: i32): boolean {
-  let pos: i32 = 0;
-  while (pos < pairs.builds.len()) {
-    if (pos != own_build) {
-      if (pairs.selfs[pos] >= 0 && pos >= from && pos <= to) {
-        return true;
-      }
-      if (pairs.builds[pos] >= 0 && pos >= from) {
-        let t: i32 = util.index_of_i32(pairs.tokens, pairs.builds[pos]);
-        if (t <= to) {
-          return true;
-        }
-      }
-    }
-    pos = pos + 1;
-  }
-  return false;
-}
-
-function block_keeps(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], b: ssa.SBlock, pairs: ReusePairs, uses: i32[]): Keeps {
-  let out: Keeps = Keeps { donors: [], slots: [], values: [], late: [], start: [], taken: [], built: [] };
-  let pos: i32 = 0;
-  while (pos < b.insts.len()) {
-    let donor: i32 = pairs.selfs[pos];
-    let taken: i32 = pos;
-    if (donor < 0 && pairs.builds[pos] >= 0) {
-      donor = pairs.builds[pos];
-      taken = util.index_of_i32(pairs.tokens, donor);
-    }
-    if (donor >= 0 && taken >= 0) {
-      let k: Keeps = keep_slots(f, p, idx, b, b.insts[pos], pos, donor, taken, uses);
-      if (k.donors.len() > 0 && !token_busy(pairs, k.start[0], pos, pos)) {
-        out = Keeps {
-          donors: out.donors.append(donor), slots: out.slots.append(k.slots[0]),
-          values: out.values.append(k.values[0]), late: out.late.append(k.late[0]),
-          start: out.start.append(k.start[0]), taken: out.taken.append(taken), built: out.built.append(pos),
-        };
-      }
-    }
-    pos = pos + 1;
-  }
-  return out;
-}
-
-function kept_values(k: Keeps): i32[] {
-  let out: i32[] = [];
-  for vs in k.values {
-    for v in vs {
-      out = out.append(v);
-    }
-  }
-  return out;
-}
-
-// Whether a keep's donor dies at `pos` for a construction later in the block:
-// its box is released at that construction, not here.
-function token_kept(k: Keeps, pos: i32): boolean {
-  let i: i32 = 0;
-  while (i < k.taken.len()) {
-    if (k.taken[i] == pos && k.built[i] != pos) {
-      return true;
-    }
-    i = i + 1;
-  }
-  return false;
-}
-
-function late_values(k: Keeps): i32[] {
-  let out: i32[] = [];
-  for vs in k.late {
-    for v in vs {
-      out = out.append(v);
-    }
-  }
-  return out;
-}
-
 // The token as the kept steals read it: the donor's box when it is unique,
 // null when it is shared.
 function keep_token(own r: irtables.LowerResult, f: ssasem.Func, donor: i32): irtables.LowerResult {
@@ -2225,7 +1289,7 @@ function drop_fields_except(own r: irtables.LowerResult, slot: i32, fields: semr
 // construction: a unique donor gives up the children the construction
 // replaces before their slots are overwritten, and a shared one is released
 // once its kept fields are copied. The replaced slots are stored last.
-function reuse_construct(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, k: Keeps, at: i32): irtables.LowerResult {
+function reuse_construct(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst, k: ssaunits.Keeps, at: i32): irtables.LowerResult {
   if (ins.kind_tag == ssasem.tuple_new()) {
     return reuse_tuple(r, f, ins);
   }
@@ -4692,7 +3756,7 @@ function instruction(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pl
     r = emit(r, ir.op_store_local(ins.imm - 1));
   }
   r = took(r, p, ins);
-  if (kept && payload_taken(f, p, ins)) {
+  if (kept && ssaunits.payload_taken(f, p, ins)) {
     r = unless_unique(r, token_slot(f), ins.result, "__fern_rc_inc");
   } else {
     r = took_payload(r, f, p, ins);
@@ -4741,14 +3805,10 @@ function took(own r: irtables.LowerResult, p: ssaunits.Plan, ins: ssa.SInst): ir
 // the slot the take emptied, then releasing the box itself
 // (ssaunits.payload_root).
 function took_payload(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): irtables.LowerResult {
-  if (!payload_taken(f, p, ins)) {
+  if (!ssaunits.payload_taken(f, p, ins)) {
     return r;
   }
   return steal(r, f, ins.result, scratch_base(f));
-}
-
-function payload_taken(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): boolean {
-  return ins.result < p.payloads.len() && p.payloads[ins.result] && ssaunits.shell_root(f, p, ins) < 0;
 }
 
 // The received unit's box when it is the only one and a fresh sole-owned copy
@@ -4923,236 +3983,6 @@ function append_linked(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SIn
   r = emit(r, ir.op_store_local(scratch));
   r = emit(r, ir.op_end());
   return emit(r, ir.op_load_local(scratch));
-}
-
-// The links of a function, by value: the parameter each link's unit is owed
-// on, -1 for a value that is not one. A link is an append onto the parameter
-// whose retain was deferred, an append onto a link, a phi whose every input is
-// the parameter or a link of it, which is how a loop carries one, or the
-// result of a direct call lent the parameter or a link as the last reader of
-// its box (`call_root`), `b = f(b, v)`.
-//
-// Every use of a link has to understand the encoding, so a candidate stays
-// only while each supply naming it MOVES it into one of three places: the
-// receiver of an append, a link phi, or the return, which takes the unit that
-// is owed. A read that takes no unit is fine, since the box is live either
-// way, and so is a drop, which releases only a box of the frame's own
-// (`drop_linked`). A loop's link reaches its phi by move only because
-// `ssalive` counts a phi's inputs on the incoming edge rather than as uses in
-// its block. A retain or a steal is not, and neither is a parameter the frame
-// reads anywhere else: it is removed, and whatever depended on it goes with it
-// on the next round.
-function links_of(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][]): i32[] {
-  let top: i32 = 0 - 2;
-  let state: i32[] = [];
-  let v: i32 = 0;
-  while (v < f.graph.nvals) {
-    state = state.append(0 - 1);
-    v = v + 1;
-  }
-  let bi: i32 = 0;
-  while (bi < f.graph.blocks.len()) {
-    for ins in f.graph.blocks[bi].insts {
-      if (link_kind(f, p, ins)) {
-        state = state.with(ins.result, top);
-      }
-    }
-    bi = bi + 1;
-  }
-  let roots: boolean[] = link_roots(f, p);
-  let changed: boolean = true;
-  while (changed) {
-    changed = false;
-    let next: i32[] = propagate(f, p, idx, state, roots);
-    next = prune(f, p, next);
-    v = 0;
-    while (v < next.len()) {
-      if (next[v] != state[v]) {
-        changed = true;
-      }
-      v = v + 1;
-    }
-    state = next;
-  }
-  v = 0;
-  while (v < state.len()) {
-    if (state[v] == top) {
-      state = state.with(v, 0 - 1);
-    }
-    v = v + 1;
-  }
-  return state;
-}
-
-function link_kind(f: ssasem.Func, p: ssaunits.Plan, ins: ssa.SInst): boolean {
-  if (ins.kind_tag == ssasem.append()) {
-    return p.grows[ins.result] < 0;
-  }
-  if (ins.kind_tag == ssasem.call()) {
-    return is_array_type(f.values[ins.result]) && !dyn_call(ins);
-  }
-  return ins.kind_tag == 8 && is_array_type(f.values[ins.result]);
-}
-
-function is_array_type(t: typeinfo.Type): boolean {
-  if let typeinfo.TypeArray(_) = t {
-    return true;
-  }
-  return false;
-}
-
-// The parameters a link may be owed on: borrowed arrays the frame is done
-// with wherever a link of theirs may grow the box. A deferred append already
-// requires the parameter dead after it (`deferred_retain`), and a phi edge
-// requires it dead in the loop it enters (`Plan.entry_kept`), so any read of
-// it, a return of it included, happens before the box can grow.
-function link_roots(f: ssasem.Func, p: ssaunits.Plan): boolean[] {
-  let ok: boolean[] = [];
-  let v: i32 = 0;
-  while (v < f.graph.nparams) {
-    ok = ok.append(is_array_type(f.values[v]) && !(v < p.owned.len() && p.owned[v]) && !p.entry_kept[v]);
-    v = v + 1;
-  }
-  return ok;
-}
-
-// One round of the candidates' roots, read off their inputs. A root only
-// descends: unknown, then a parameter, then none.
-function propagate(f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], state: i32[], roots: boolean[]): i32[] {
-  let top: i32 = 0 - 2;
-  let out: i32[] = state;
-  for b in f.graph.blocks {
-    let pos: i32 = 0 - 1;
-    for ins in b.insts {
-      pos = pos + 1;
-      if (state[ins.result] == 0 - 1) {
-        continue;
-      }
-      let root: i32 = top;
-      if (ins.kind_tag == ssasem.append()) {
-        root = input_root(f, state, roots, ins.args[0]);
-        // Straight onto the parameter, the push must be the deferred one.
-        if (ins.args[0] < f.graph.nparams && !deferred_retain(f, p, at(p, idx, b.id, pos, 0 - 1), ins)) {
-          root = 0 - 1;
-        }
-      } else if (ins.kind_tag == ssasem.call()) {
-        root = call_root(f, at(p, idx, b.id, pos, 0 - 1), state, roots, ins);
-      } else {
-        for a in ins.args {
-          let r0: i32 = input_root(f, state, roots, a);
-          if (r0 == 0 - 1 || root >= 0 && r0 >= 0 && r0 != root) {
-            root = 0 - 1;
-          } else if (r0 >= 0 && root == top) {
-            root = r0;
-          }
-        }
-      }
-      if (root != top || state[ins.result] == top) {
-        out = out.with(ins.result, root);
-      }
-    }
-  }
-  return out;
-}
-
-// A call's result is a link of the one root among its operands, lent as the
-// last reader of the box: the parameter handed on (ssaunits.hands) or a link
-// dying at the call. The callee may grow that box in place, since nothing in
-// this frame reads it again, and what comes back is either the same box, at
-// the callee's retain, or one the frame holds a unit of.
-function call_root(f: ssasem.Func, step: ssaunits.Step, state: i32[], roots: boolean[], ins: ssa.SInst): i32 {
-  let modes: i32[] = ssaunits.callee_modes(f, ins);
-  let root: i32 = 0 - 1;
-  let i: i32 = 0;
-  while (i < ins.args.len()) {
-    let r0: i32 = input_root(f, state, roots, ins.args[i]);
-    if (r0 != 0 - 1) {
-      if (root != 0 - 1 || !lent_last(f, step, modes, ins, i)) {
-        return 0 - 1;
-      }
-      root = r0;
-    }
-    i = i + 1;
-  }
-  return root;
-}
-
-function lent_last(f: ssasem.Func, step: ssaunits.Step, modes: i32[], ins: ssa.SInst, i: i32): boolean {
-  let a: i32 = ins.args[i];
-  if (i >= modes.len() || modes[i] != ssaunits.borrow_mode() || ssaunits.occurrences(ins.args, a) != 1) {
-    return false;
-  }
-  if (a < f.graph.nparams) {
-    return i < step.hand_roots.len() && step.hand_roots[i] == a;
-  }
-  return util.index_of_i32(step.drops, a) >= 0;
-}
-
-function input_root(f: ssasem.Func, state: i32[], roots: boolean[], a: i32): i32 {
-  if (a < 0) {
-    return 0 - 1;
-  }
-  if (a < f.graph.nparams) {
-    if (roots[a]) {
-      return a;
-    }
-    return 0 - 1;
-  }
-  return state[a];
-}
-
-// Candidates with a use the encoding cannot reach, removed.
-function prune(f: ssasem.Func, p: ssaunits.Plan, state: i32[]): i32[] {
-  let out: i32[] = state;
-  let at: i32[] = ssa.block_positions(f.graph);
-  for step in p.steps {
-    for h in step.hand_roots {
-      out = unlink(out, h);
-    }
-    for supply in step.supplies {
-      if (supply.value >= 0 && supply.value < state.len() && state[supply.value] != 0 - 1 && !linked_supply(f, p, at, state, step, supply)) {
-        out = unlink(out, supply.value);
-      }
-    }
-  }
-  return out;
-}
-
-function unlink(own state: i32[], v: i32): i32[] {
-  if (v < 0 || v >= state.len()) {
-    return state;
-  }
-  return state.with(v, 0 - 1);
-}
-
-function linked_supply(f: ssasem.Func, p: ssaunits.Plan, at: i32[], state: i32[], step: ssaunits.Step, supply: ssaunits.Supply): boolean {
-  if (supply.mode != ssaunits.move_unit()) {
-    return false;
-  }
-  let b: ssa.SBlock = f.graph.blocks[at[step.block]];
-  if (step.point == ssaunits.return_point()) {
-    return b.term.kind_tag == 1 && b.term.value == supply.value;
-  }
-  if (step.point == ssaunits.edge_point()) {
-    let dest: ssa.SBlock = f.graph.blocks[at[step.target]];
-    if (supply.slot < 0 || supply.slot >= dest.insts.len()) {
-      return false;
-    }
-    let phi: ssa.SInst = dest.insts[supply.slot];
-    return phi.kind_tag == 8 && same_root(state[phi.result], state[supply.value]);
-  }
-  if (step.point < 0) {
-    return false;
-  }
-  let ins: ssa.SInst = b.insts[step.point];
-  return ins.kind_tag == ssasem.append() && supply.slot == 0 && ins.args[0] == supply.value && p.grows[ins.result] < 0;
-}
-
-function same_root(a: i32, b: i32): boolean {
-  if (a == 0 - 1 || b == 0 - 1) {
-    return false;
-  }
-  return a == b || a == 0 - 2 || b == 0 - 2;
 }
 
 // The append's view of the links: the root its receiver is a link of, and
@@ -5492,8 +4322,8 @@ function map_element_reason(f: ssasem.Func, value: i32, pure: util.NameIndex): i
 pub function map_report(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, pure: util.NameIndex): semarrayreport.Site[] {
   let out: semarrayreport.Site[] = [];
   let idx: i32[][] = ssaunits.step_index(p);
-  let links: i32[] = links_of(f, p, idx);
-  let disabled: boolean = irtables.reuse_layer_disabled();
+  let links: i32[] = ssaunits.with_reuse(f, p).links;
+  let disabled: boolean = ssaunits.reuse_layer_disabled();
   for b in f.graph.blocks {
     let pos: i32 = 0;
     for ins in b.insts {
@@ -5517,8 +4347,8 @@ pub function map_report(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, pure: ut
 pub function scale_report(f: ssasem.Func, p: ssaunits.Plan): semarrayreport.Site[] {
   let out: semarrayreport.Site[] = [];
   let idx: i32[][] = ssaunits.step_index(p);
-  let links: i32[] = links_of(f, p, idx);
-  let disabled: boolean = irtables.reuse_layer_disabled();
+  let links: i32[] = ssaunits.with_reuse(f, p).links;
+  let disabled: boolean = ssaunits.reuse_layer_disabled();
   for b in f.graph.blocks {
     let pos: i32 = 0;
     for ins in b.insts {
@@ -7072,13 +5902,13 @@ function builtin_site(own r: irtables.LowerResult, ins: ssa.SInst): irtables.Low
   return emit(r, ir.op_call_direct(ins.str, ins.args.len()));
 }
 
-function block_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i32[], b: ssa.SBlock, structs: irtables.StructTab, grows: ssaunits.GrowTable, no_reuse: boolean, uses: i32[], maps: boolean[], carry: Carry): irtables.LowerResult {
+function block_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Plan, idx: i32[][], links: i32[], b: ssa.SBlock, structs: irtables.StructTab, grows: ssaunits.GrowTable, maps: boolean[], carry: ssaunits.Carry, bpos: i32): irtables.LowerResult {
   r = drops(r, at(p, idx, b.id, ssaunits.entry_point(), 0 - 1), f, links);
   let pos: i32 = 0;
-  let pairs: ReusePairs = reuse_pairs(f, p, idx, b, no_reuse, carry);
-  let keeps: Keeps = block_keeps(f, p, idx, b, pairs, uses);
-  let kept: i32[] = kept_values(keeps);
-  let late: i32[] = late_values(keeps);
+  let pairs: ssaunits.ReusePairs = p.reuse.pairs[bpos];
+  let keeps: ssaunits.Keeps = p.reuse.keeps[bpos];
+  let kept: i32[] = ssaunits.kept_values(keeps);
+  let late: i32[] = ssaunits.late_values(keeps);
   for ins in b.insts {
     if (ins.kind_tag != 6 && ins.kind_tag != 8) {
       let step: ssaunits.Step = at(p, idx, b.id, pos, 0 - 1);
@@ -7086,7 +5916,7 @@ function block_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
       // One answer for both: the retain `supplies` holds back is the one
       // `instruction` then takes, and two calls could drift apart with
       // nothing to catch it.
-      let defer0: boolean = deferred_retain(f, p, step, ins);
+      let defer0: boolean = ssaunits.deferred_retain(f, p, step, ins);
       let k: i32 = util.index_of_i32(keeps.start, pos);
       if (k >= 0) {
         r = keep_token(r, f, keeps.donors[k]);
@@ -7101,7 +5931,7 @@ function block_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
       // construction's.
       let kb: i32 = util.index_of_i32(keeps.built, pos);
       if (pairs.selfs[pos] >= 0 && kb < 0) {
-        r = self_token(r, f, pairs.selfs[pos], carry_held_for(carry, b.id, pos));
+        r = self_token(r, f, pairs.selfs[pos], ssaunits.carry_held_for(carry, b.id, pos));
       }
       if (pairs.builds[pos] >= 0 || pairs.selfs[pos] >= 0) {
         r = reuse_construct(r, f, ins, keeps, kb);
@@ -7113,10 +5943,10 @@ function block_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
         r = settle_call_link(r, f, links, ins);
       }
       r = bracket_give(r, f, held);
-      if (pairs.tokens[pos] >= 0 && !token_kept(keeps, pos)) {
+      if (pairs.tokens[pos] >= 0 && !ssaunits.token_kept(keeps, pos)) {
         r = reuse_token(r, f, pairs.tokens[pos]);
       }
-      let held_on: i32 = carry_held(carry, b.id, pos);
+      let held_on: i32 = ssaunits.carry_held(carry, b.id, pos);
       r = drops_less(r, step, f, links, pairs.tokens[pos], pairs.selfs[pos], held_on, ssaunits.shell_root(f, p, ins));
       if (held_on >= 0) {
         r = hold_token(r, f, held_on);
@@ -7138,7 +5968,7 @@ function block_body(own r: irtables.LowerResult, f: ssasem.Func, p: ssaunits.Pla
 // observable behaviour can be compared against its own reusing build.
 // `at` is each block's position in the block list and `ranks` its position in
 // the layout order, both by id.
-struct Emit { r: irtables.LowerResult, labels: i32[], depth: i32, why: string, steps: i32[][], links: i32[], no_reuse: boolean, uses: i32[], maps: boolean[], carry: Carry, at: i32[], ranks: i32[] }
+struct Emit { r: irtables.LowerResult, labels: i32[], depth: i32, why: string, steps: i32[][], links: i32[], no_reuse: boolean, maps: boolean[], carry: ssaunits.Carry, at: i32[], ranks: i32[] }
 
 function label_if(): i32 {
   return 0 - 1;
@@ -7185,10 +6015,10 @@ function order_ranks(f: ssa.SFunc, order: i32[], ids: i32): i32[] {
 function jump(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, order: i32[], position: i32, target: i32): Emit {
   let from: i32 = f.graph.blocks[order[position]].id;
   // A token freed here may be the target's phi, which the edge overwrites.
-  for left in carry_exits(e.carry, from, target) {
+  for left in ssaunits.carry_exits(e.carry, from, target) {
     e = Emit { ...e, r: free_token(e.r, left) };
   }
-  for gone in carry_nulls(e.carry, from, target) {
+  for gone in ssaunits.carry_nulls(e.carry, from, target) {
     e = Emit { ...e, r: zero_local(e.r, gone) };
   }
   e = Emit { ...e, r: edge(e.r, f, p, e.steps, e.links, from, target, e.at[target]) };
@@ -7291,7 +6121,7 @@ function region(own e: Emit, f: ssasem.Func, p: ssaunits.Plan, l: ssalayout.Layo
       e = region(e, f, p, l, position, l.loop_end[position], true, structs, grows);
       position = l.loop_end[position] + 1;
     } else {
-      e = Emit { ...e, r: block_body(e.r, f, p, e.steps, e.links, f.graph.blocks[l.order[position]], structs, grows, e.no_reuse, e.uses, e.maps, e.carry) };
+      e = Emit { ...e, r: block_body(e.r, f, p, e.steps, e.links, f.graph.blocks[l.order[position]], structs, grows, e.maps, e.carry, l.order[position]) };
       e = terminator(e, f, p, l.order, position);
       position = position + 1;
     }
@@ -7431,6 +6261,7 @@ function place_views(own r: irtables.LowerResult): irtables.LowerResult {
 // `susp` names the module's suspendable rows (suspend.classify); one of them
 // is rewritten to its resumable form before the peepholes.
 pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irtables.StructTab, grows: ssaunits.GrowTable, pure: util.NameIndex, view: ssaunits.SchemaView, susp: suspend.Set): irtables.LowerResult {
+  p = ssaunits.with_reuse(f, p);
   let why: string = validate(f, modes, p, structs, view);
   if (why != "") {
     return empty(why);
@@ -7441,12 +6272,12 @@ pub function lower(f: ssasem.Func, modes: i32[], p: ssaunits.Plan, structs: irta
     return empty("physical RC needs reducible graph");
   }
   let steps: i32[][] = ssaunits.step_index(p);
-  let links: i32[] = links_of(f, p, steps);
-  let no_reuse: boolean = irtables.reuse_layer_disabled();
+  let links: i32[] = p.links;
+  let no_reuse: boolean = ssaunits.reuse_layer_disabled();
   let maps: boolean[] = in_place_maps(f, modes, p, steps, links, pure, no_reuse);
   let at: i32[] = ssa.block_positions(f.graph);
   let ranks: i32[] = order_ranks(f.graph, layout.order, at.len());
-  let e: Emit = region(Emit { r: frame(f), labels: [], depth: 0, why: "", steps: steps, links: links, no_reuse: no_reuse, uses: use_counts(f), maps: maps, carry: carried_pairs(f, p, steps, links, no_reuse), at: at, ranks: ranks }, f, p, layout, 0, layout.order.len() - 1, false, structs, grows);
+  let e: Emit = region(Emit { r: frame(f), labels: [], depth: 0, why: "", steps: steps, links: links, no_reuse: no_reuse, maps: maps, carry: p.reuse.carry, at: at, ranks: ranks }, f, p, layout, 0, layout.order.len() - 1, false, structs, grows);
   if (e.why != "") {
     return empty(e.why);
   }

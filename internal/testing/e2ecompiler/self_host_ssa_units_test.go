@@ -158,13 +158,16 @@ func unitCases() []unitCase {
 		// The counted tuple's array element is taken at its read (#11203), so
 		// the tuple is released after its other element's read; the array's
 		// own element is taken at ITS read, since nothing reads the array
-		// again, so the array is released there and the element at the
-		// return, where the string chain borrowing it ends.
+		// again, so the array is released there. The string read off that
+		// element is held, a unit of its own, since the chain borrowing it
+		// is consumed after the element's last read: the element is released
+		// at that read and the string at the return, where the chain ends.
 		{"nested-projections", "", `
 if (!p.payloads[2] || !drops(find(p, 7, 7, 0 - 1), [0])) { return 10; }
 if (!p.payloads[3] || !drops(find(p, 7, 3, 0 - 1), [2])) { return 16; }
+if (!p.held[4] || !drops(find(p, 7, 4, 0 - 1), [3])) { return 66; }
 let r = find(p, 7, ssaunits.return_point(), 0 - 1);
-if (!supply(r, 0, 5, 0, ssaunits.retain_unit()) || !drops(r, [3])) { return 11; }
+if (!supply(r, 0, 5, 0, ssaunits.retain_unit()) || !drops(r, [4])) { return 11; }
 let created = find(p, 7, 6, 0 - 1);
 if (!supply(created, 0, 5, 0, ssaunits.retain_unit()) || !drops(created, [6])) { return 12; }
 if (!drops(find(p, 7, 9, 0 - 1), [8])) { return 13; }
@@ -210,7 +213,7 @@ if (!supply(find(p, 27, ssaunits.edge_point(), 17), 0, 4, 0, ssaunits.retain_uni
 		{"double-move", unitDuplicate, "", `let s = find(p, 7, 1, 0 - 1); let a = s.supplies[0]; p = replace(p, ssaunits.Step { ...s, supplies: [ssaunits.Supply { ...a, mode: 2 }, s.supplies[1]] });`, "move without counted unit"},
 		{"borrowed-move", unitDuplicate + "modes = [2];", "", `let s = find(p, 7, 1, 0 - 1); let a = s.supplies[0]; p = replace(p, ssaunits.Step { ...s, supplies: [ssaunits.Supply { ...a, mode: 2 }, s.supplies[1]] });`, "move without counted unit"},
 		{"invalid-mode", unitDuplicate, "", `let s = find(p, 7, 1, 0 - 1); let a = s.supplies[0]; p = replace(p, ssaunits.Step { ...s, supplies: [ssaunits.Supply { ...a, mode: 0 }, s.supplies[1]] });`, "invalid unit supply mode"},
-		{"premature-parent-drop", "", "", `let s = find(p, 7, 4, 0 - 1); p = replace(p, ssaunits.Step { ...s, drops: [3] });`, "borrow outlives container unit"},
+		{"premature-parent-drop", "", "", `let s = find(p, 7, 5, 0 - 1); p = replace(p, ssaunits.Step { ...s, drops: [4] }); let r = find(p, 7, ssaunits.return_point(), 0 - 1); p = replace(p, ssaunits.Step { ...r, drops: [] });`, "borrow outlives container unit"},
 		{"leaked-parent", "", "", `let s = find(p, 7, ssaunits.return_point(), 0 - 1); p = replace(p, ssaunits.Step { ...s, drops: [] });`, "counted unit leaks at return"},
 		{"drop-moved-value", unitDuplicate, "", `let s = find(p, 7, 1, 0 - 1); p = replace(p, ssaunits.Step { ...s, drops: [0] });`, "drop without counted unit"},
 		{"missing-return", unitDuplicate, "", `let steps: ssaunits.Step[] = []; for s in p.steps { if (s.point != ssaunits.return_point()) { steps = steps.append(s); } } p = ssaunits.Plan { ...p, steps: steps };`, "missing or duplicate return step"},

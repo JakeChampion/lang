@@ -1286,7 +1286,70 @@ function main(): i32 {
     let wrongResult: ir.Op[] = keepLowered.ops.with(keepElse + 2, ir.op_store_local(1));
     let resultVerified: irverifyrc.RcResult = irverifyrc.verify_rc_fn("wrong_result", wrongResult);
     if (resultVerified.checked != 0 || resultVerified.skips.len() != 1) { return 247; }
+    // The reuse tokens are units of the plan, made once it is final
+    // (with_reuse), and the replay holds the plan's tables to the token
+    // discipline: a token is taken from a value
+    // dying at that step, spent by the one construction it was handed to, and
+    // a carried one is held on every path into a block and spent or freed
+    // before the function leaves.
+    let tok = token_func(false);
+    let tp = ssaunits.with_reuse(tok, ssaunits.plan(tok, [1], ssaunits.no_view()));
+    if (!tp.ok) { eprint(tp.why); return 250; }
+    let tpr: ssaunits.ReusePairs = tp.reuse.pairs[0];
+    if (tpr.tokens[2] != 1 || tpr.builds[4] != 1) { eprint("no in-block pairing planned"); return 251; }
+    if (!ssarc.lower(tok, [1], tp, irtables.struct_tab_empty(), ssaunits.no_grows(), util.name_index([]), ssaunits.no_view(), suspend.none()).ok) { return 252; }
+    if (!token_refused(tok, tp, ssaunits.ReusePairs { ...tpr, builds: tpr.builds.with(5, 1) }, "a construction spends a token it was not handed")) { return 253; }
+    if (!token_refused(tok, tp, ssaunits.ReusePairs { ...tpr, tokens: tpr.tokens.with(2, 0 - 1).with(1, 1) }, "a token is taken from a value not dying here")) { return 254; }
+    if (!token_refused(tok, tp, ssaunits.ReusePairs { ...tpr, tokens: tpr.tokens.with(3, 3) }, "a token is taken while another is held")) { return 255; }
+    if (!token_refused(tok, tp, ssaunits.ReusePairs { ...tpr, selfs: tpr.selfs.with(5, 3) }, "a construction reads the box it builds in")) { return 256; }
+    if (!token_refused(tok, tp, ssaunits.ReusePairs { ...tpr, builds: tpr.builds.with(4, 0 - 1) }, "a token taken in a block is spent by no construction in it")) { return 257; }
+    let split = token_func(true);
+    let sp = ssaunits.with_reuse(split, ssaunits.plan(split, [1], ssaunits.no_view()));
+    if (!sp.ok) { eprint(sp.why); return 258; }
+    let sc: ssaunits.Carry = sp.reuse.carry;
+    if (sc.to.len() != 1 || sc.from.len() != 1 || sc.held[0] != 1 || sp.reuse.pairs[1].selfs[0] != 1) { eprint("no carry planned"); return 259; }
+    if (!ssarc.lower(split, [1], sp, irtables.struct_tab_empty(), ssaunits.no_grows(), util.name_index([]), ssaunits.no_view(), suspend.none()).ok) { return 260; }
+    let unspent = ssaunits.Reuse { ...sp.reuse, carry: ssaunits.Carry { ...sc, to: [], build_at: [], donor: [] }, pairs: sp.reuse.pairs.with(1, ssaunits.ReusePairs { ...sp.reuse.pairs[1], selfs: sp.reuse.pairs[1].selfs.with(0, 0 - 1) }) };
+    if (!carry_refused(split, sp, unspent, "a carried token is held where the function leaves")) { return 261; }
+    let unheld = ssaunits.Reuse { ...sp.reuse, carry: ssaunits.Carry { ...sc, from: [], drop_at: [], held: [] } };
+    if (!carry_refused(split, sp, unheld, "a construction spends a carried token no path holds")) { return 262; }
+    let elsewhere = ssaunits.Reuse { ...sp.reuse, carry: ssaunits.Carry { ...sc, drop_at: [3] } };
+    if (!carry_refused(split, sp, elsewhere, "a carried token is taken from a value not dying there")) { return 263; }
     return 0;
+}
+function rec_type(): typeinfo.Type { return typeinfo.TypeStruct { name: "Tok", args: [] }; }
+// v0 a parameter; v1 = Tok { a: v0 }; v2 = v1.a; v3 = v2 + v0; v4 = Tok { a: v3 }; v5 = Tok { a: v3 }; return v5.
+// v1 dies at v2, a scalar read claiming nothing, and v4 claims its count: in
+// one block the plan takes v1's token at v2 and spends it at v4; split before
+// v4, block 7 holds the token and carries it to block 17's construction.
+function token_func(split: boolean): ssasem.Func {
+    let i: typeinfo.Type = typeinfo.TypeI32 { width: 32, unsigned: false, is_char: false, polymorphic: false };
+    let t: typeinfo.Type = rec_type();
+    let schema = semrecords.Record { views: false, nests_func: false, ty: t, fields: [semrecords.Field { name: "a", ty: i }] };
+    let p0 = inst(6, 0, [], 0);
+    let mk1 = inst(ssasem.record_new(), 1, [0], 0);
+    let get = ssa.SInst { kind_tag: ssasem.record_get(), result: 2, args: [1], imm: 0, str: "a" };
+    let add = ssa.SInst { kind_tag: 9, result: 3, args: [2, 0], imm: 0, str: "+" };
+    let mk4 = inst(ssasem.record_new(), 4, [3], 0);
+    let mk5 = inst(ssasem.record_new(), 5, [3], 0);
+    let blocks: ssa.SBlock[] = [ssa.SBlock { id: 7, preds: [], insts: [p0, mk1, get, add, mk4, mk5], term: ret(5) }];
+    if (split) {
+        blocks = [ssa.SBlock { id: 7, preds: [], insts: [p0, mk1, get, add], term: ssa.STerm { kind_tag: 2, target: 17, value: 0, cond: 0, t: 0, f: 0 } },
+            ssa.SBlock { id: 17, preds: [7], insts: [mk4, mk5], term: ret(5) }];
+    }
+    let g = ssa.SFunc { name: "tok", nparams: 1, nvals: 6, entry: 7, takes_env: false, blocks: blocks };
+    return ssasem.Func { envs: [], anchors: [], dyns: [], shadows: [], finalizers: [], map_module: true, dbg_vals: [], dbg_names: [], graph: g, values: [i, t, i, i, t, t], params: [i], result: t, records: semrecords.records_of([schema]), enums: [], calls: [] };
+}
+function token_refused(f: ssasem.Func, p: ssaunits.Plan, pairs: ssaunits.ReusePairs, why: string): boolean {
+    let planted = ssaunits.Plan { ...p, reuse: ssaunits.Reuse { ...p.reuse, pairs: p.reuse.pairs.with(0, pairs) } };
+    let r = ssarc.lower(f, [1], planted, irtables.struct_tab_empty(), ssaunits.no_grows(), util.name_index([]), ssaunits.no_view(), suspend.none());
+    if (!refused(r, why)) { eprint("planted pairing: " + r.why); return false; }
+    return true;
+}
+function carry_refused(f: ssasem.Func, p: ssaunits.Plan, reuse: ssaunits.Reuse, why: string): boolean {
+    let r = ssarc.lower(f, [1], ssaunits.Plan { ...p, reuse: reuse }, irtables.struct_tab_empty(), ssaunits.no_grows(), util.name_index([]), ssaunits.no_view(), suspend.none());
+    if (!refused(r, why)) { eprint("planted carry: " + r.why); return false; }
+    return true;
 }
 `
 }

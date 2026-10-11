@@ -28,7 +28,7 @@ import "./util";
 pub struct Memo { on: boolean, path: string, known: util.NameIndex, adds: usize, hits: usize, misses: usize, call_kind: i32 }
 
 function version(): string {
-  return "2";
+  return "3";
 }
 
 // keep is how many digests the file keeps when it is rewritten: the newest.
@@ -135,7 +135,7 @@ function newest(lines: string[]): string[] {
 // shape of its lifted SSA, every field of its ops the lift reads, and the
 // contract of every callee its ops name.
 pub function key(m: Memo, fn_name: string, f: ssa.SFunc, ops: ir.Op[], abis: rccertify.Abis): string {
-  let d: util.Digest = util.roll_text(util.digest_start(), fn_name);
+  let d: i64 = util.roll_text(util.digest_start(), fn_name);
   d = roll_abi(d, abis.lookup(fn_name));
   d = util.roll(util.roll(util.roll_flag(util.roll(d, f.nparams), f.takes_env), f.nvals), f.blocks.len());
   for o in ops {
@@ -148,8 +148,8 @@ pub function key(m: Memo, fn_name: string, f: ssa.SFunc, ops: ir.Op[], abis: rcc
   return util.digest_text(d);
 }
 
-function roll_abi(d: util.Digest, a: rccertify.Abi): util.Digest {
-  let out: util.Digest = util.roll_words(util.roll_flag(d, a.known), a.modes);
+function roll_abi(d: i64, a: rccertify.Abi): i64 {
+  let out: i64 = util.roll_words(util.roll_flag(d, a.known), a.modes);
   out = util.roll_flag(util.roll_flag(out, a.result_unit), a.pair_first);
   return util.roll_flag(util.roll(out, a.pair_second), a.result_word);
 }

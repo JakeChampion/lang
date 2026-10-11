@@ -21,9 +21,9 @@ import (
 // pop — a pop is an alloc too), in $__fern_arr_dec's rc==1 free and
 // $__fern_alloc_reuse's mispaired-donor free (each before the bsz slot is
 // overwritten by the freelist next-pointer), and a $__fern_lc_report on
-// stderr wired through a flag-gated reporting $__fern_proc_exit — so the exit() op
-// and $__fern_start both report through one definition, with the raw preview1
-// import renamed underneath it.
+// stderr: the exit() op reaches it through a flag-gated reporting
+// $__fern_proc_exit, whose line ends ` from=exit`, and $__fern_start on
+// main's return before it exits through the raw preview1 import.
 //
 // Counts are asserted as properties (balanced / unbalanced / zero), matching
 // the arm64 suite: the x86 legs pin exact counts per shape, and this suite
@@ -107,15 +107,15 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			want: 53, verdict: "leaky",
 		},
 		{
-			// HEAP-FREE, returning main: the report goes through $__fern_start's
-			// $__fern_proc_exit and must link with no allocator emitted.
+			// HEAP-FREE, returning main: $__fern_start reports, with no
+			// ` from=exit`, and must link with no allocator emitted.
 			name: "heapfree_return",
 			src:  `function main(): i32 { return 7; }`,
 			want: 7, verdict: "zero",
 		},
 		{
-			// HEAP-FREE through the exit() op — the other path into the
-			// reporting $__fern_proc_exit.
+			// HEAP-FREE through the exit() op and the reporting
+			// $__fern_proc_exit, whose line ends ` from=exit`.
 			name: "heapfree_exit_builtin",
 			src:  `function main(): i32 { exit(9); return 0; }`,
 			want: 9, verdict: "zero",
@@ -136,6 +136,9 @@ function main(): i32 { let x: i32 = 0; let r: i32 = 0; while (r < 100) { x = x +
 			var allocs, frees, live int64
 			if _, err := fmtSscan(summary, &allocs, &frees, &live); err != nil {
 				t.Fatalf("%s: parse %q: %v", tc.name, summary, err)
+			}
+			if got, want := strings.HasSuffix(summary, " from=exit"), tc.name == "heapfree_exit_builtin"; got != want {
+				t.Errorf("%s: census %q says from=exit %v, want %v", tc.name, summary, got, want)
 			}
 			switch tc.verdict {
 			case "balanced":

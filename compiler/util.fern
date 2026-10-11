@@ -105,31 +105,28 @@ pub function i64_to_string(n: i64): string {
   return string_from_bytes_unchecked(buf);
 }
 
-// Digest is two independent 30-bit polynomial rolls, hash_key's, folded a
-// word, a wide word, a string or a list at a time; `digest_text` renders it.
-pub struct Digest { a: i32, b: i32 }
-
-pub function digest_start(): Digest {
-  return Digest { a: 208357, b: 5381 };
+// A digest is a 64-bit state words are rolled into one at a time: the word
+// is xored in, the state multiplied by an odd constant and its high half
+// folded into its low half. Each step is a bijection of the state, so two
+// sequences of one length that differ in one word never roll the same, and
+// every bit of a word reaches every bit of the state. `digest_text` renders it.
+pub function digest_start(): i64 {
+  return 0 - 3750763034362895579i64;
 }
 
-// Each word rolls its low 30 bits and then its top two.
-pub function roll(d: Digest, w: i32): Digest {
-  let a: i32 = d.a * 31 + (w & 1073741823) + 1 & 1073741823;
-  let b: i32 = d.b * 131 + (w & 1073741823) + 7 & 1073741823;
-  a = a * 31 + (w >> 30 & 3) + 1 & 1073741823;
-  b = b * 131 + (w >> 30 & 3) + 7 & 1073741823;
-  return Digest { a: a, b: b };
+pub function roll_wide(d: i64, v: i64): i64 {
+  let h: i64 = (d ^ v) * (0 - 7046029254386353131i64);
+  return h ^ h >> 32 & 4294967295i64;
 }
 
-pub function roll_wide(d: Digest, v: i64): Digest {
-  return roll(roll(roll(d, (v & 1073741823i64) as i32), (v >> 30 & 1073741823i64) as i32), (v >> 60) as i32);
+pub function roll(d: i64, w: i32): i64 {
+  return roll_wide(d, w as i64);
 }
 
 // A string rolls its length and then its bytes, so adjacent strings cannot
 // trade bytes and roll the same.
-pub function roll_text(d: Digest, s: string): Digest {
-  let out: Digest = roll(d, s.len());
+pub function roll_text(d: i64, s: string): i64 {
+  let out: i64 = roll(d, s.len());
   let i: i32 = 0;
   while (i < s.len()) {
     out = roll(out, s[i] as i32);
@@ -138,8 +135,8 @@ pub function roll_text(d: Digest, s: string): Digest {
   return out;
 }
 
-pub function roll_words(d: Digest, xs: i32[]): Digest {
-  let out: Digest = roll(d, xs.len());
+pub function roll_words(d: i64, xs: i32[]): i64 {
+  let out: i64 = roll(d, xs.len());
   let i: i32 = 0;
   while (i < xs.len()) {
     out = roll(out, xs[i]);
@@ -148,15 +145,15 @@ pub function roll_words(d: Digest, xs: i32[]): Digest {
   return out;
 }
 
-pub function roll_flag(d: Digest, x: boolean): Digest {
+pub function roll_flag(d: i64, x: boolean): i64 {
   if (x) {
     return roll(d, 1);
   }
   return roll(d, 0);
 }
 
-pub function digest_text(d: Digest): string {
-  return i32_to_string(d.a) + "_" + i32_to_string(d.b);
+pub function digest_text(d: i64): string {
+  return i32_to_string((d >> 32) as i32) + "_" + i32_to_string(d as i32);
 }
 
 // hash_key maps a string to a content-addressed key string, used by the
