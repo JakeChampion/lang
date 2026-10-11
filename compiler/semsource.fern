@@ -4673,8 +4673,11 @@ function variant_arm(a: ast.MatchArm, pv: ast.PatVariant, scrut: i32, owner: str
   if (!gate.s.ok) {
     return gathered(gate.s, g);
   }
+  // The edge is read before the body takes the state, or the gate would
+  // hold the state across the body.
+  let from: i32 = gate.from;
   let done: Arm = arm_body(a.body, gate.s, join, count, scope, ty);
-  done = Arm { ...done, s: open(State { ...done.s, vals: entry }, next, next_preds(pred, gate.from)) };
+  done = Arm { ...done, s: open(State { ...done.s, vals: entry }, next, next_preds(pred, from)) };
   return collect(g, done);
 }
 
@@ -4711,8 +4714,9 @@ function wildcard_arm(a: ast.MatchArm, arms: Arms, entry: i32[], join: i32, coun
   if (!gate.s.ok) {
     return gathered(gate.s, g);
   }
+  let from: i32 = gate.from;
   let done: Arm = arm_body(a.body, gate.s, join, count, scope, ty);
-  done = Arm { ...done, s: open(State { ...done.s, vals: entry }, next, [gate.from]) };
+  done = Arm { ...done, s: open(State { ...done.s, vals: entry }, next, [from]) };
   return collect(g, done);
 }
 
