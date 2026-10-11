@@ -1163,6 +1163,10 @@ func TestRunnerHTTPFormExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "http_form", "std/http/form", 4)
 }
 
+func TestRunnerPublicSuffixExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "publicsuffix", "std/publicsuffix", 8)
+}
+
 // `tests/stdlib/http_multipart_test.fern` reads a multipart body part by
 // part, whole and in pieces, from a buffer and from a chunked stream, with
 // every refusal and cap, and checks the builder's output.
