@@ -10784,22 +10784,22 @@ function mx_stmts(stmts: ast.Stmt[], s: Scope, unions: UnionSig[], enums: parser
 // sentinel when there's no such struct.
 // find_struct_sig is lookup_struct over the flat list: the plain struct first,
 // a variant only when no plain struct carries the name (#9968).
-function find_struct_sig(structs: StructSig[], name: string): StructSig {
+function find_struct_sig(structs: StructTable, name: string): StructSig {
   let first: i32 = 0 - 1;
-  let k: i32 = 0;
-  while (k < structs.len()) {
-    if (structs[k].name == name) {
-      if (structs[k].enum_owner.len() == 0) {
-        return structs[k];
+  let k: i32 = structs.index.chain(name);
+  while (k >= 0) {
+    if (structs.structs[k].name == name) {
+      if (structs.structs[k].enum_owner.len() == 0) {
+        return structs.structs[k];
       }
       if (first < 0) {
         first = k;
       }
     }
-    k = k + 1;
+    k = structs.index.next[k];
   }
   if (first >= 0) {
-    return structs[first];
+    return structs.structs[first];
   }
   let none: string[] = [];
   let nonet: typeinfo.Type[] = [];
@@ -10815,20 +10815,24 @@ function find_struct_sig(structs: StructSig[], name: string): StructSig {
 // variant name each answer for their own decl. A qualifier nothing claims,
 // and an unqualified spelling, take the first VARIANT of that name, and the
 // plain struct only when no enum declares one (#9968).
-function find_variant_sig(structs: StructSig[], name: string): StructSig {
+function find_variant_sig(structs: StructTable, name: string): StructSig {
   let bare: string = variant_pattern_name(name);
   let owner: string = variant_pattern_owner(name);
   if (owner.len() > 0) {
-    for sd in structs {
-      if (sd.name == bare && sd.enum_owner == owner) {
-        return sd;
+    let k: i32 = structs.index.chain(bare);
+    while (k >= 0) {
+      if (structs.structs[k].name == bare && structs.structs[k].enum_owner == owner) {
+        return structs.structs[k];
       }
+      k = structs.index.next[k];
     }
   }
-  for sd in structs {
-    if (sd.name == bare && sd.enum_owner.len() > 0) {
-      return sd;
+  let k2: i32 = structs.index.chain(bare);
+  while (k2 >= 0) {
+    if (structs.structs[k2].name == bare && structs.structs[k2].enum_owner.len() > 0) {
+      return structs.structs[k2];
     }
+    k2 = structs.index.next[k2];
   }
   return find_struct_sig(structs, bare);
 }
@@ -10836,7 +10840,7 @@ function find_variant_sig(structs: StructSig[], name: string): StructSig {
 // slit_names_no_struct reports whether a struct literal's type names no struct
 // at all: not a declared one (an instantiation names its base), and not a
 // built-in.
-function slit_names_no_struct(structs: StructSig[], type_name: string): boolean {
+function slit_names_no_struct(structs: StructTable, type_name: string): boolean {
   let base: string = util.base_type_name(type_name);
   return find_struct_sig(structs, base).name.len() == 0 && !parser.is_reserved_struct_name(base);
 }
@@ -10848,7 +10852,7 @@ function slit_names_no_struct(structs: StructSig[], type_name: string): boolean 
 // isn't a known struct is skipped (a separate error / a variant
 // constructor), as is a struct-update `Name { ...base, … }` (partial
 // overrides are legal).
-function slit_diags(e: ast.Expr, structs: StructSig[]): util.Diag[] {
+function slit_diags(e: ast.Expr, structs: StructTable): util.Diag[] {
   let out: util.Diag[] = [];
   match (e) {
     ast.ExprStructLit(sl) => {
@@ -10935,14 +10939,14 @@ function slit_diags(e: ast.Expr, structs: StructSig[]): util.Diag[] {
 // lit_names_no_struct reports whether a struct literal's type name is a
 // plain identifier that no struct or variant declares: `Self` is the impl's
 // type and a dotted or bracketed spelling resolves elsewhere.
-function lit_names_no_struct(name: string, structs: StructSig[]): boolean {
+function lit_names_no_struct(name: string, structs: StructTable): boolean {
   if (name == "Self" || parser.is_reserved_struct_name(name) || !plain_ident(name)) {
     return false;
   }
   return find_variant_sig(structs, name).name.len() == 0;
 }
 
-function stmts_slit_diags(stmts: ast.Stmt[], structs: StructSig[]): util.Diag[] {
+function stmts_slit_diags(stmts: ast.Stmt[], structs: StructTable): util.Diag[] {
   let out: util.Diag[] = [];
   for stmt in stmts {
     match (stmt) {
@@ -11501,7 +11505,7 @@ function type_arity_diag(t: string, structs: parser.StructDecl[], enums: parser.
 // (`type U = A | B`, where `A(a)` binds the whole struct, not a payload), and
 // the two aren't distinguishable here, so we conservatively skip rather than
 // risk a false E015.
-function variant_payload_count(name: string, structs: StructSig[]): i32 {
+function variant_payload_count(name: string, structs: StructTable): i32 {
   let sd: StructSig = find_variant_sig(structs, name);
   if (sd.name.len() == 0 || !util.has_str(sd.field_names, "__ev")) {
     return 0 - 1;
@@ -11524,7 +11528,7 @@ function variant_payload_count(name: string, structs: StructSig[]): i32 {
 // does not declare, named one twice, or missed one — or the variant carries
 // positional payloads and cannot be matched by name at all. Mirrors native's
 // resolveVariantBindings (checker.go:9363-9397).
-function record_pattern_diags(pvin: ast.PatVariant, structs: StructSig[], line: i32, col: i32): util.Diag[] {
+function record_pattern_diags(pvin: ast.PatVariant, structs: StructTable, line: i32, col: i32): util.Diag[] {
   // Native's wording uses the BARE variant name, so the pattern is stripped at
   // entry and every message below reads off `pv`. The SIG is still resolved
   // from the original spelling, whose qualifier names the owning enum — the
@@ -11595,7 +11599,7 @@ function payload_slot_type_name(ss: StructSig, idx: i32): string {
 // shape (resolveVariantBindings); this is that rule, scoped the same way — the
 // name must be a variant of the enum THIS slot holds, so an unrelated binder
 // that happens to share a variant's name elsewhere is untouched.
-function payloadless_binder_diags(pv: ast.PatVariant, structs: StructSig[], unions: UnionTable, line: i32, col: i32): util.Diag[] {
+function payloadless_binder_diags(pv: ast.PatVariant, structs: StructTable, unions: UnionTable, line: i32, col: i32): util.Diag[] {
   let out: util.Diag[] = [];
   let ss: StructSig = find_variant_sig(structs, pv.type_name);
   if (ss.name.len() == 0) {
@@ -11625,7 +11629,7 @@ function payloadless_binder_diags(pv: ast.PatVariant, structs: StructSig[], unio
 // payloadless_binder_diags' and is skipped here.
 function generic_binder_diags(pv: ast.PatVariant, s: Scope, whole: typeinfo.Type, line: i32, col: i32): util.Diag[] {
   let out: util.Diag[] = [];
-  let ss: StructSig = find_variant_sig(s.structs.structs, pv.type_name);
+  let ss: StructSig = find_variant_sig(s.structs, pv.type_name);
   let slot: i32 = 0;
   while (slot < pv.extra_bindings.len() + 1) {
     let nm: string = pv.binding;
@@ -11641,7 +11645,7 @@ function generic_binder_diags(pv: ast.PatVariant, s: Scope, whole: typeinfo.Type
       if (owner.len() == 0) {
         owner = mx_builtin_enum_of(nm);
       }
-      if (nm.len() > 0 && nm != "_" && declared != u.name && owner == u.name && variant_payload_count(nm, s.structs.structs) < 0) {
+      if (nm.len() > 0 && nm != "_" && declared != u.name && owner == u.name && variant_payload_count(nm, s.structs) < 0) {
         out = out.append(dg_at("E015", nm + " is a payload-less variant of enum " + u.name + ", but a bare name in a payload slot is a binder that matches every value — write `" + nm + "()` to match the variant, or rename the binder", line, col));
       }
     }
@@ -11659,7 +11663,7 @@ function generic_binder_diags(pv: ast.PatVariant, s: Scope, whole: typeinfo.Type
 // Pruned at ExprLambda for the reason e049_stmt_own_lambdas is: the recursive
 // match_diags call already covers the whole body, nested lambdas included, so
 // descending would report each inner one once per enclosing lambda.
-function match_stmt_own_lambdas(st: ast.Stmt, structs: StructSig[], unions: UnionTable): util.Diag[] {
+function match_stmt_own_lambdas(st: ast.Stmt, structs: StructTable, unions: UnionTable): util.Diag[] {
   function at_lambda(n: ast.Expr, own acc: util.Diag[]): util.Diag[] {
     match (n) {
       ast.ExprLambda(lm) => {
@@ -11688,7 +11692,7 @@ function match_stmt_own_lambdas(st: ast.Stmt, structs: StructSig[], unions: Unio
 // every outer arm's diagnostics would precede a nested match's — measured
 // against the Go checker, which interleaves them per arm as this does. The fold
 // is used for the one thing it is right for here: reaching the lambdas.
-function match_diags(stmts: ast.Stmt[], structs: StructSig[], unions: UnionTable): util.Diag[] {
+function match_diags(stmts: ast.Stmt[], structs: StructTable, unions: UnionTable): util.Diag[] {
   let out: util.Diag[] = [];
   for stmt in stmts {
     match (stmt) {
@@ -12648,13 +12652,13 @@ function variant_ctor_diags(qname: string, c: ast.ExprCall, s: Scope): util.Diag
   let out: util.Diag[] = [];
   // An injected enum (JsonValue, IoError) has no union declaration; its
   // variants are known by their owner in the struct table.
-  if (union_of_variant(vname, s.unions).len() == 0 && find_variant_sig(s.structs.structs, qname).enum_owner.len() == 0) {
+  if (union_of_variant(vname, s.unions).len() == 0 && find_variant_sig(s.structs, qname).enum_owner.len() == 0) {
     return out;
   }
   if (dot_index(qname) < 0 && s.variant_ambiguous(vname)) {
     return out;
   }
-  let want: i32 = variant_payload_count(qname, s.structs.structs);
+  let want: i32 = variant_payload_count(qname, s.structs);
   if (want < 0) {
     return out;
   }
@@ -23102,7 +23106,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     body_diags = util.append_diags(body_diags, mx_stmts(dbody, fsc, unions, mod.enums));
     // E005: struct literal missing a declared field (any expression in
     // the body, struct table is module-global so no scope needed).
-    body_diags = util.append_diags(body_diags, stmts_slit_diags(dbody, structs));
+    body_diags = util.append_diags(body_diags, stmts_slit_diags(dbody, stt));
     // E004: free-function call arity (scope-threaded so a shadowing
     // local isn't mistaken for the function).
     body_diags = util.append_diags(body_diags, stmts_call_diags(dbody, fsc));
@@ -23117,7 +23121,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
     body_diags = util.append_diags(body_diags, suffix_range_stmts(dbody));
     // E026 / E028: structural match-arm errors (wildcard order, dup
     // variant).
-    body_diags = util.append_diags(body_diags, match_diags(dbody, structs, ut));
+    body_diags = util.append_diags(body_diags, match_diags(dbody, stt, ut));
     // P002 in a parameter's DEFAULT value. Nothing evaluates a default
     // until a call site omits the argument, so it sits outside the body
     // walk above — but native rejects the literal at parse time whether
@@ -23164,7 +23168,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   let tsc: Scope = new_scope_full(st, stt, ut, methods, import_paths, call_impls, mod.trait_reqs);
   body_diags = util.append_diags(body_diags, lret_stmts(dtop, tsc, unions));
   body_diags = util.append_diags(body_diags, mx_stmts(dtop, tsc, unions, mod.enums));
-  body_diags = util.append_diags(body_diags, stmts_slit_diags(dtop, structs));
+  body_diags = util.append_diags(body_diags, stmts_slit_diags(dtop, stt));
   body_diags = util.append_diags(body_diags, stmts_call_diags(dtop, tsc));
   body_diags = util.append_diags(body_diags, stmts_assign_diags(dtop, tsc, unions));
   if (ambig.len() > 0) {
@@ -23173,7 +23177,7 @@ function check_module_pass(mod: parser.Module, env: ModuleEnv, fda_diags: util.D
   body_diags = util.append_diags(body_diags, loop_diags(dtop, false, []));
   body_diags = util.append_diags(body_diags, dupvar_diags(dtop));
   body_diags = util.append_diags(body_diags, suffix_range_stmts(dtop));
-  body_diags = util.append_diags(body_diags, match_diags(dtop, structs, ut));
+  body_diags = util.append_diags(body_diags, match_diags(dtop, stt, ut));
   if (is_script(mod)) {
     body_diags = util.append_diags(body_diags, ret_diags(dtop, tsc, t_i32(), unions));
   }
