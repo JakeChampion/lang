@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"regexp"
 	"strings"
@@ -89,6 +90,50 @@ func TestTrustAndDistrust(t *testing.T) {
 	_, _, err = generate(certdata(t), time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC))
 	if err == nil || !strings.Contains(err.Error(), "distrusted for server certificates issued after") {
 		t.Errorf("a live distrust date was not refused: %v", err)
+	}
+}
+
+// A distrust date the generator cannot read fails the run rather than
+// bundling the root undated.
+func TestUnreadDistrustDateRefused(t *testing.T) {
+	const object = `CKA_CLASS CK_OBJECT_CLASS CKO_CERTIFICATE
+CKA_LABEL UTF8 "Example Root"
+CKA_ISSUER MULTILINE_OCTAL
+\060\001
+END
+CKA_SERIAL_NUMBER MULTILINE_OCTAL
+\002\001
+END
+CKA_VALUE MULTILINE_OCTAL
+\060\000
+END
+CKA_NSS_SERVER_DISTRUST_AFTER %s
+CKA_CLASS CK_OBJECT_CLASS CKO_NSS_TRUST
+CKA_ISSUER MULTILINE_OCTAL
+\060\001
+END
+CKA_SERIAL_NUMBER MULTILINE_OCTAL
+\002\001
+END
+CKA_TRUST_SERVER_AUTH CK_TRUST CKT_NSS_TRUSTED_DELEGATOR
+`
+	for _, tc := range []struct {
+		attr string
+		ok   bool
+	}{
+		{"CK_BBOOL CK_FALSE", true},
+		{"MULTILINE_OCTAL\n\\062\\064\\061\\061\\063\\060\\062\\063\\065\\071\\065\\071\\132\nEND", true},
+		{"UTF8 \"241130235959Z\"", false},
+		{"CK_BBOOL CK_TRUE", false},
+	} {
+		objects, err := parseCertdata([]byte(fmt.Sprintf(object, tc.attr)))
+		if err != nil {
+			t.Fatalf("%s: parse: %v", tc.attr, err)
+		}
+		_, err = roots(objects)
+		if (err == nil) != tc.ok {
+			t.Errorf("%s: roots() error %v, want ok=%v", tc.attr, err, tc.ok)
+		}
 	}
 }
 

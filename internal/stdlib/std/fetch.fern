@@ -87,6 +87,7 @@ import "std/deflate";
 import "std/wasi_http";
 import "std/tls/client";
 import "std/tls/verify";
+import "std/crypto";
 import "std/hex";
 import "core/int";
 
@@ -607,21 +608,40 @@ pub function close_idle[T: Transport](tr: T): void {
   pool.rows.set("");
 }
 
-// `__pool_key(t, guard)` — where a connection reaches: the host and port
-// dialled, the origin a TLS connection reaches through it, and whether
-// the block list judged the
-// addresses, so a connection the open route made is never handed to the
-// guarded one.
-function __pool_key(t: __Target, guard: boolean): string {
+// `__pool_key(t, guard, roots)` — where a connection reaches: the host and
+// port dialled, the origin a TLS connection reaches through it and the
+// roots its chain was checked against, and whether the block list judged
+// the addresses, so a connection the open route made is never handed to
+// the guarded one, nor one trusted under one store to a request naming
+// another.
+function __pool_key(t: __Target, guard: boolean, roots: Option[verify.Roots]): string {
   let route: string = "open ";
   if (guard) {
     route = "global ";
   }
   let key: string = route + t.host + " " + int.int_to_string(t.port);
   if (t.tls) {
-    key = key + " tls " + t.authority;
+    key = key + " tls " + t.authority + " " + __roots_key(roots);
   }
   return key;
+}
+
+// `__roots_key(roots)` — the store named, as a digest of its certificates
+// in order, or "system" for the machine's.
+function __roots_key(roots: Option[verify.Roots]): string {
+  match (roots) {
+    Some(r) => {
+      let h: crypto.Sha256 = crypto.sha256_new();
+      for c in r.certs {
+        h = h.update_array(c.raw);
+      }
+      return h.final_hex();
+    },
+    None => {
+      return "system";
+    }
+  }
+  return "system";
 }
 
 // `__take_idle(tr, key)` — the connection to `key` kept last, taken out
@@ -1112,7 +1132,7 @@ function __reset(e: FetchError): boolean {
 // the response read, and the connection kept when the response left it
 // reusable, closed otherwise.
 function __attempt[T: Transport](tr: T, req: Request, t: __Target, started: i64, guard: boolean, roots: Option[verify.Roots], reuse: boolean): Result[HttpResponse, FetchError] {
-  let key: string = __pool_key(t, guard);
+  let key: string = __pool_key(t, guard, roots);
   let conn: __Conn = __no_conn();
   if (reuse && http.http_method_idempotent(req.method)) {
     conn = __take_idle(tr, key);
