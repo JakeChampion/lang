@@ -50,6 +50,7 @@ func selfHostFixtureSources(t *testing.T) []fixtureSource {
 	out := []fixtureSource{
 		{"physical_rc", "physicalRCBundle in self_host_ssa_rc_test.go", physicalRCBundle(physicalRCCases())},
 		{"physical_rc_reject", "TestSelfHostSSAPhysicalRCRejects in self_host_ssa_rc_test.go", physicalRCRejectSource()},
+		{"rccertify_cases", "rccertifyCasesSource in self_host_rccertify_test.go", rccertifyCasesSource()},
 	}
 
 	unitIdx := make([]int, len(unitCases()))

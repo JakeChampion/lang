@@ -50,7 +50,10 @@ function main(): i32 {
         last = h;
         i = i + 1;
     }
-    if (map_new_impl(4, 1, 0) == last) { return 0; }
+    let again: usize = map_new_impl(4, 1, 0);
+    let same: boolean = again == last;
+    __map_drop_impl(again);
+    if (same) { return 0; }
     return 3;
 }
 `

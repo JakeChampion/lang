@@ -37,6 +37,7 @@ import "../lexer";
 import "../parser";
 import "../flatten";
 import "../wasm_ir";
+import "../physicalbody";
 import "../asmcore";
 import "../irtables";
 import "../ircore";
@@ -139,7 +140,7 @@ function unit_obj(ns: string, unit: parser.Module, cache: irtables.LowerResult[]
     fns: wasm_ir.fn_value_table(cache),
     needs: wasm_ir.needs_of(cache),
     fn_sigs: wasm_ir.indirect_fn_sigs(cache),
-    text: wasm_ir.emit_functions_view(ns, unit, cache, all_funcs, all_stab),
+    text: wasm_ir.emit_functions_view(ns, unit, cache, all_funcs, all_stab, physicalbody.no_collection()),
   };
 }
 

@@ -43,6 +43,15 @@ function caller(template: irtables.LowerResult, mode: i32): irtables.LowerResult
         ops = ops.append(ir.op_const_i32(7));
         ops = ops.append(ir.op_bin("ne", 0, false));
         ops = ops.append(ir.op_if(0));
+        // The mismatch exit releases both values first: the certifier
+        // reads this frame too, and a path that leaks is a finding.
+        let held: i32 = 0;
+        while (held < 2) {
+            ops = ops.append(ir.op_load_local(held));
+            ops = ops.append(ir.op_call_direct("__fern_rc_dec", 1));
+            ops = ops.append(ir.op_drop());
+            held = held + 1;
+        }
         ops = ops.append(ir.op_const_i32(2));
         ops = ops.append(ir.op_return());
         ops = ops.append(ir.op_end());
@@ -139,7 +148,7 @@ function main(): i32 {
         state = asm_arm64_ir.emit_body(g.im, state, false, cache, g.physical);
         state = asm_arm64_ir.emit_ir_runtime(state, false);
         print(strbuf_take());
-    } else { print(wasm_ir.emit_ir_module_mode(g.im, cache, 0, asmcore.env_switches())); }
+    } else { print(wasm_ir.emit_ir_module_mode(g.im, cache, 0, asmcore.env_switches(), g.physical)); }
     return 0;
 }
 `
@@ -1381,7 +1390,10 @@ func testPhysicalRC(t *testing.T, selfhost bool) {
 					if target == "x86-64-sanitize" {
 						emitTarget, mode = "x86-64-linux", "FERN_SANITIZE=1"
 					}
-					compile := func(t *testing.T, omitRetains bool) []byte {
+					// Every compile runs the emitted-RC certifier (#11908) in its
+					// refusing mode: the lowering under test must certify, and
+					// the planted mutation must be refused naming produce.
+					compile := func(t *testing.T, omitRetains bool, certify string) []byte {
 						t.Helper()
 						args := []string{emitTarget, tc.name}
 						if omitRetains {
@@ -1391,10 +1403,19 @@ func testPhysicalRC(t *testing.T, selfhost bool) {
 						if selfhost {
 							cmd = runArm64Bin(armDriverRunner, driver, args...)
 						}
-						cmd.Env = append(os.Environ(), mode)
+						cmd.Env = append(os.Environ(), mode, "FERN_RC_CERTIFY="+certify)
 						var diagnostics bytes.Buffer
 						cmd.Stderr = &diagnostics
 						output, err := cmd.Output()
+						if omitRetains && certify == "1" {
+							if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 5 {
+								t.Fatalf("certifier did not refuse the omitted retain: %v\n%s", err, diagnostics.String())
+							}
+							if !strings.Contains(diagnostics.String(), "produce emits unbalanced reference counting") {
+								t.Fatalf("refusal does not name produce:\n%s", diagnostics.String())
+							}
+							return nil
+						}
 						if err != nil {
 							t.Fatalf("physical lowering: %v\n%s", err, diagnostics.String())
 						}
@@ -1403,7 +1424,7 @@ func testPhysicalRC(t *testing.T, selfhost bool) {
 						}
 						return output
 					}
-					run := physicalRCRun(t, gcc, runner, dir, tc.name, target, compile(t, false))
+					run := physicalRCRun(t, gcc, runner, dir, tc.name, target, compile(t, false, "1"))
 					got, err := run.CombinedOutput()
 					if err != nil {
 						t.Fatalf("physical runtime: %v\n%s", err, got)
@@ -1419,8 +1440,11 @@ func testPhysicalRC(t *testing.T, selfhost bool) {
 						}
 					}
 					if tc.name == "edge-parent-drop" {
+						t.Run("certifier-refuses-missing-retain", func(t *testing.T) {
+							compile(t, true, "1")
+						})
 						t.Run("missing-edge-retain", func(t *testing.T) {
-							bad := physicalRCRun(t, gcc, runner, dir, tc.name+"-broken", target, compile(t, true))
+							bad := physicalRCRun(t, gcc, runner, dir, tc.name+"-broken", target, compile(t, true, "0"))
 							output, err := bad.CombinedOutput()
 							want := 99 // The post-frame underflow guard.
 							if target == "x86-64-sanitize" {

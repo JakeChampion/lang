@@ -356,6 +356,42 @@ pub function in_bounds(op: Op): Op {
   return Op { ...op, i32_imm: 1 };
 }
 
+// counted marks a load — a field, element, tuple-element or Option-payload
+// read — as reading a counted reference rather than a scalar word, in the
+// op's otherwise unused wide immediate. The lowering marks the loads it
+// knows the type of; the lift carries the mark into the SSA (`rc`), and the
+// emitted-RC certifier (rccertify.fern) reads only marked loads as values
+// that can hold a unit. No backend reads it.
+pub function counted(op: Op): Op {
+  return Op { ...op, i64_imm: 1 };
+}
+
+pub function is_counted(op: Op): boolean {
+  return op.i64_imm == 1;
+}
+
+// shell marks a release call of a box whose counted payload the frame has
+// already taken out without emptying the slot: the box is freed shallowly
+// and the payload is the frame's to release. The certifier reads the mark;
+// no backend does. Distinct from the alignment proof (4) the rc calls carry.
+pub function shell(op: Op): Op {
+  return Op { ...op, i64_imm: 2 };
+}
+
+pub function is_shell(op: Op): boolean {
+  return op.i64_imm == 2;
+}
+
+// lent marks a call whose result is a reference the callee did not retain:
+// the lowering retains it itself where it keeps it.
+pub function lent(op: Op): Op {
+  return Op { ...op, i64_imm: 3 };
+}
+
+pub function is_lent(op: Op): boolean {
+  return op.i64_imm == 3;
+}
+
 pub function op_arr_set(width: i32): Op {
   return Op { decl: 0 - 1, kind_tag: 89, i32_imm: 0, i64_imm: 0, f64_imm: 0.0, width: width, unsigned: false, str: "" };
 }

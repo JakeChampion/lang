@@ -189,7 +189,7 @@ function declarations(f: ssa.SFunc, producers: ssa.SFunc[], parameter_count: i32
             return "invalid caller origin parameter";
           }
           params = params.append(op.imm);
-        } else if (op.kind_tag == 1 && op.args.len() == 0 && op.str == "") {} else if (op.kind_tag == 7 && op.args.len() == 1 && op.imm == 0 && op.str == "") {} else if (op.kind_tag == 11 && op.args.len() == 2 && op.imm == 0) {
+        } else if (op.kind_tag == 1 && op.args.len() == 0 && op.str == "") {} else if (op.kind_tag == 7 && op.args.len() == 1 && op.imm == 0 && op.str == "") {} else if (op.kind_tag == 11 && op.args.len() == 2 && ssa.plain_imm(op) == 0) {
           let matches: i32 = 0;
           for p in producers {
             if (p.name == op.str) {

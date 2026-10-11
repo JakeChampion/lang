@@ -223,6 +223,11 @@ function main(): i32 {
     return __rc_underflow_count();
 }`
 
+// uncertified opts a compile out of the emitted-RC certifier: the programs
+// below drop a handle twice or corrupt its count on purpose, for the runtime
+// to catch, and the certifier would refuse them at compile time.
+const uncertified = "FERN_RC_CERTIFY=0"
+
 func TestSelfHostSanitizeBoxFreeIsQuarantined(t *testing.T) {
 	cli := buildSelfHostCLI(t)
 	cases := []struct{ name, src, finding string }{
@@ -232,7 +237,7 @@ func TestSelfHostSanitizeBoxFreeIsQuarantined(t *testing.T) {
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		for _, tc := range cases {
 			t.Run(target+"/"+tc.name, func(t *testing.T) {
-				stderr, code := cli.exitOf(t, tc.src, target, "FERN_SANITIZE=1")
+				stderr, code := cli.exitOf(t, tc.src, target, "FERN_SANITIZE=1", uncertified)
 				if code != e2eharness.ExitSanitizer || !strings.Contains(stderr, tc.finding) {
 					t.Errorf("exit=%d stderr=%q, want exit %d naming %q", code, stderr, e2eharness.ExitSanitizer, tc.finding)
 				}
@@ -256,7 +261,7 @@ func TestSelfHostSanitizeReportCarriesBacktrace(t *testing.T) {
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		for _, tc := range cases {
 			t.Run(target+"/"+tc.name, func(t *testing.T) {
-				stderr, code := cli.exitOf(t, tc.src, target, "FERN_SANITIZE=1")
+				stderr, code := cli.exitOf(t, tc.src, target, "FERN_SANITIZE=1", uncertified)
 				if code != e2eharness.ExitSanitizer || !strings.Contains(stderr, tc.finding) {
 					t.Fatalf("exit=%d stderr=%q, want exit %d naming %q", code, stderr, e2eharness.ExitSanitizer, tc.finding)
 				}
@@ -265,7 +270,7 @@ func TestSelfHostSanitizeReportCarriesBacktrace(t *testing.T) {
 				}
 			})
 			t.Run(target+"/"+tc.name+"/FERN_BACKTRACE=0", func(t *testing.T) {
-				stderr, code := cli.exitOf(t, tc.src, target, "FERN_SANITIZE=1", "FERN_BACKTRACE=0")
+				stderr, code := cli.exitOf(t, tc.src, target, "FERN_SANITIZE=1", "FERN_BACKTRACE=0", uncertified)
 				if code != e2eharness.ExitSanitizer || !strings.Contains(stderr, tc.finding) {
 					t.Fatalf("exit=%d stderr=%q, want exit %d naming %q", code, stderr, e2eharness.ExitSanitizer, tc.finding)
 				}

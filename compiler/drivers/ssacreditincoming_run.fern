@@ -51,7 +51,7 @@ function changed_call(op: ssa.SInst, mode: i32): ssa.SInst {
       return ssa.SInst { ...op, str: "unknown" };
     }
     if (mode == 11) {
-      return ssa.SInst { ...op, kind_tag: 7, str: "", args: [op.args[0]] };
+      return ssa.SInst { ...op, kind_tag: 7, str: "", imm: 0, args: [op.args[0]] };
     }
   } else {
     if (mode == 3) {
@@ -67,10 +67,10 @@ function changed_call(op: ssa.SInst, mode: i32): ssa.SInst {
       return ssa.SInst { ...op, args: [op.args[0]] };
     }
     if (mode == 7) {
-      return ssa.SInst { ...op, imm: 1 };
+      return ssa.SInst { ...op, imm: 8 };
     }
     if (mode == 8) {
-      return ssa.SInst { ...op, kind_tag: 7, str: "", args: [op.args[0]] };
+      return ssa.SInst { ...op, kind_tag: 7, str: "", imm: 0, args: [op.args[0]] };
     }
     if (mode == 12) {
       return ssa.SInst { ...op, args: [op.result, op.args[1]] };
@@ -117,8 +117,8 @@ function copies(f: ssa.SFunc): ssa.SFunc {
     let insts: ssa.SInst[] = [];
     for op in b.insts {
       if (op.kind_tag == 11 && op.str == "replace") {
-        insts = insts.append(ssa.SInst { ...op, result: f.nvals, kind_tag: 7, str: "", args: [op.args[0]] });
-        insts = insts.append(ssa.SInst { ...op, result: f.nvals + 1, kind_tag: 7, str: "", args: [op.args[1]] });
+        insts = insts.append(ssa.SInst { ...op, result: f.nvals, kind_tag: 7, str: "", imm: 0, args: [op.args[0]] });
+        insts = insts.append(ssa.SInst { ...op, result: f.nvals + 1, kind_tag: 7, str: "", imm: 0, args: [op.args[1]] });
         insts = insts.append(ssa.SInst { ...op, args: [f.nvals, f.nvals + 1] });
       } else {
         insts = insts.append(op);
