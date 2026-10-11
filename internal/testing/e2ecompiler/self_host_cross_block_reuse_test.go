@@ -68,6 +68,37 @@ function main(): i32 { let sum: i32 = 0; let i: i32 = 0; while (i < 5000000) { l
 		// iteration.
 		{"if-arm-escaping-recipient", `struct P { x: i32, y: i32 }
 function main(): i32 { let acc: P[] = []; let i: i32 = 0; while (i < 4) { let a: P = P { x: i, y: i + 1 }; let s: i32 = a.x + a.y; if (i > 0) { acc = acc.append(P { x: s, y: 1 }); } i = i + 1; } let sum: i32 = 0; for p in acc { sum = sum + p.x + p.y; } return sum; }`, 18, 5},
+		// A read out of a record that dies unconsumed, held past the attempt
+		// the record's field is handed to: `produced` is used whole on the
+		// failure path, so `s` cannot be taken out of it, and `contract`, read
+		// through `s`, is consumed after the attempt. As borrows both kept
+		// `produced` alive to `contract`'s death, so the `Val` built from `s`
+		// retained the state instead of moving it, and `grow`'s append copied.
+		// At `produced`'s last read `s` takes its unit and `produced` dies;
+		// `contract` takes its own where `s` is consumed (#11913).
+		{"read-outliving-the-attempt-takes-its-unit", `struct C { k: i32 }
+struct St { xs: i32[], list: C[], n: i32 }
+struct Val { s: St, id: i32 }
+@noinline function room(k: i32): i32[] { return [k, k, k, k, k, k, k, k].append(k); }
+@noinline function produce(k: i32): Val { return Val { s: St { xs: room(k), list: [C { k: 1 }], n: k }, id: k }; }
+@noinline function lend(v: Val): Val { if (v.id > 1000) { return Val { s: v.s, id: 0 }; } return v; }
+@noinline function hold(v: Val): i32 { return v.id; }
+@noinline function grow(s: St, m: i32): St { return St { ...s, xs: s.xs.append(m) }; }
+@noinline function f(k: i32): i32 {
+  let produced: Val = produce(k);
+  let s: St = produced.s;
+  if (s.n < 0) { return hold(produced); }
+  let recv: i32 = produced.id;
+  let contract: C = s.list[0];
+  let lent: Val = lend(Val { s: s, id: recv });
+  s = lent.s;
+  recv = lent.id;
+  let r: St = grow(s, recv);
+  let cs: C[] = [];
+  cs = cs.append(contract);
+  return r.xs.len() + r.n + cs.len();
+}
+function main(): i32 { return f(1) * 10 + __arr_push_shared_count(); }`, 120, 5},
 		// `s` is shared with `keep` when it dies in the arms, and `w` after the
 		// join claims its count. The token is taken where `s` dies, so the
 		// shared box is released there, the record taken out of `keep` is

@@ -1811,13 +1811,13 @@ function units_of(f: ssasem.Func, base: boolean[], a: ssasem.Analysis, defs: ssa
   }
   let takes: i32[] = tuple_takes(f, a, owned, defs);
   let held: boolean[] = held_elements(f, a, owned, defs);
-  // A taken payload is a unit of its own at the read already, moved out of
-  // the box or retained there by the lowering's uniqueness test
-  // (ssarc.steal); the hold read it as still anchored to its array, and
-  // would retain it a second time.
+  // A taken payload or tuple element is a unit of its own at the read
+  // already, moved out of the box or retained there by the lowering's
+  // uniqueness test (ssarc.steal); the hold read it as still anchored to its
+  // source, and would retain it a second time.
   i = 0;
   while (i < held.len()) {
-    if (held[i] && payloads[i]) {
+    if (held[i] && (payloads[i] || takes[i] >= 0)) {
       held = held.with(i, false);
     }
     i = i + 1;
@@ -1973,12 +1973,12 @@ function anchored_to(a: ssasem.Analysis, nvals: i32): Anchored {
 // array was retained for the call instead of moved into it, and every
 // append the callee made copied the buffer. A read already `owned` took its
 // slot (payload_root) and has its unit.
-function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], anchored: Anchored, owned: boolean[], held: boolean[], s: i32, bi: i32, pos: i32, si: i32, args: i32[]): boolean[] {
-  let out: boolean[] = held;
+function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], anchored: Anchored, owned: boolean[], held: boolean[], s: i32, bi: i32, pos: i32, si: i32, args: i32[]): i32[] {
+  let out: i32[] = [];
   let k: i32 = anchored.start[s];
   while (k < anchored.start[s + 1]) {
     let w: i32 = anchored.at[k];
-    if (w != s && !out[w] && !owned[w] && retainable_read(f, defs, w)) {
+    if (w != s && !held[w] && !owned[w] && retainable_read(f, defs, w)) {
       let live: boolean = false;
       if (si >= 0) {
         live = ssalive.live_in_has(a.flow, si, w);
@@ -1986,7 +1986,7 @@ function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], anchor
         live = used_after(f, a, bi, pos, w) || has_id(args, w) && !used_after(f, a, bi, pos, s);
       }
       if (live) {
-        out = out.with(w, true);
+        out = out.append(w);
       }
     }
     k = k + 1;
@@ -2002,9 +2002,32 @@ function outliving(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], anchor
 // or a call there retained the source instead of moving it, and the write
 // copied the whole buffer (#9849, #11834). A read that dies before any such
 // use stays a borrow and costs nothing.
+//
+// A read still in hand at its source's last read, where the source dies
+// unconsumed, takes a unit there too when it, or a read anchored to it, is
+// consumed later: as a borrow it kept the source alive to that use, so the
+// use retained it instead of moving it, and every write past it copied
+// (#11913). The source's last read is its own or one of its direct
+// projections', so a field an update keeps, consumed by the construction the
+// source donates its box to, is not in hand past it. A read only borrowed to
+// its death leaves the source to die with it. A held read is a unit of its
+// own, so what it is consumed beside is asked again until no read is added.
 function held_elements(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], defs: ssa.SInst[]): boolean[] {
   let out: boolean[] = __alloc_bool(f.graph.nvals);
   let anchored: Anchored = anchored_to(a, f.graph.nvals);
+  let direct: ssalive.Flow = ssalive.compute_checked(f.graph, a.parents);
+  let consumed: boolean[] = consumed_values(f, owned);
+  let before: i32 = 0 - 1;
+  let count: i32 = 0;
+  while (count != before) {
+    before = count;
+    out = hold_pass(f, a, defs, anchored, direct, consumed, owned, out);
+    count = count_true(out);
+  }
+  return out;
+}
+
+function hold_pass(f: ssasem.Func, a: ssasem.Analysis, defs: ssa.SInst[], anchored: Anchored, direct: ssalive.Flow, consumed: boolean[], owned: boolean[], own out: boolean[]): boolean[] {
   let bi: i32 = 0;
   while (bi < f.graph.blocks.len()) {
     let b: ssa.SBlock = f.graph.blocks[bi];
@@ -2014,8 +2037,16 @@ function held_elements(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], def
       if (ins.kind_tag != 6 && ins.kind_tag != 8) {
         let supplies: Supply[] = operation_supplies(f, ins);
         for got in supplies {
-          if (owned[got.value]) {
-            out = outliving(f, a, defs, anchored, owned, out, got.value, bi, pos, 0 - 1, ins.args);
+          if (owned[got.value] || out[got.value]) {
+            let past: i32[] = outliving(f, a, defs, anchored, owned, out, got.value, bi, pos, 0 - 1, ins.args);
+            out = mark_all(out, past);
+          }
+        }
+        for v in dying_reads(f, a, direct, owned, out, supplies, bi, pos) {
+          for w in outliving(f, a, defs, anchored, owned, out, v, bi, pos, 0 - 1, []) {
+            if (wanted(anchored, consumed, w)) {
+              out = out.with(w, true);
+            }
           }
         }
       }
@@ -2026,14 +2057,121 @@ function held_elements(f: ssasem.Func, a: ssasem.Analysis, owned: boolean[], def
       let si: i32 = ssalive.position(a.flow, target);
       let along: Supply[] = edge_supplies(f, b, si, owned);
       for got in along {
-        if (owned[got.value]) {
-          out = outliving(f, a, defs, anchored, owned, out, got.value, bi, 0, si, []);
+        if (owned[got.value] || out[got.value]) {
+          let past: i32[] = outliving(f, a, defs, anchored, owned, out, got.value, bi, 0, si, []);
+          out = mark_all(out, past);
         }
       }
     }
     bi = bi + 1;
   }
   return out;
+}
+
+function mark_all(own flags: boolean[], ids: i32[]): boolean[] {
+  for id in ids {
+    flags = flags.with(id, true);
+  }
+  return flags;
+}
+
+function count_true(flags: boolean[]): i32 {
+  let n: i32 = 0;
+  for flag in flags {
+    if (flag) {
+      n = n + 1;
+    }
+  }
+  return n;
+}
+
+// The owned sources the operation at (`bi`, `pos`) reads for the last time
+// without consuming, itself or through a direct projection: no later
+// operation of the block, no terminator and no successor reads them or a
+// direct projection of them, whatever else still depends on them.
+function dying_reads(f: ssasem.Func, a: ssasem.Analysis, direct: ssalive.Flow, owned: boolean[], held: boolean[], supplies: Supply[], bi: i32, pos: i32): i32[] {
+  let out: i32[] = [];
+  let b: ssa.SBlock = f.graph.blocks[bi];
+  for u in b.insts[pos].args {
+    if (u < 0) {
+      continue;
+    }
+    for v in a.parents[u].append(u) {
+      if (!(owned[v] || held[v]) || has_id(out, v) || supplied(supplies, v)) {
+        continue;
+      }
+      if (!ssalive.live_out_has(direct, bi, v) && !read_later(a, b, pos, v)) {
+        out = out.append(v);
+      }
+    }
+  }
+  return out;
+}
+
+// Whether `v`, or a direct projection of it, is an operand of a later
+// operation of `b` or of its terminator.
+function reads_source(a: ssasem.Analysis, u: i32, v: i32): boolean {
+  return u == v || u >= 0 && has_id(a.parents[u], v);
+}
+
+function supplied(supplies: Supply[], v: i32): boolean {
+  for got in supplies {
+    if (got.value == v) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function read_later(a: ssasem.Analysis, b: ssa.SBlock, pos: i32, v: i32): boolean {
+  let i: i32 = pos + 1;
+  while (i < b.insts.len()) {
+    for u in b.insts[i].args {
+      if (reads_source(a, u, v)) {
+        return true;
+      }
+    }
+    i = i + 1;
+  }
+  return b.term.kind_tag == 1 && reads_source(a, b.term.value, v) || b.term.kind_tag == 3 && reads_source(a, b.term.cond, v);
+}
+
+// The values some operation consumes: a supply of an operation, of an owned
+// phi along an edge, or of a return.
+function consumed_values(f: ssasem.Func, owned: boolean[]): boolean[] {
+  let out: boolean[] = __alloc_bool(f.graph.nvals);
+  for b in f.graph.blocks {
+    for ins in b.insts {
+      if (ins.kind_tag == 8) {
+        if (owned[ins.result]) {
+          out = mark_all(out, ins.args);
+        }
+      } else if (ins.kind_tag != 6) {
+        for got in operation_supplies(f, ins) {
+          out = out.with(got.value, true);
+        }
+      }
+    }
+    if (b.term.kind_tag == 1 && b.term.value >= 0) {
+      out = out.with(b.term.value, true);
+    }
+  }
+  return out;
+}
+
+// Whether `w` or a read anchored to it is consumed somewhere.
+function wanted(anchored: Anchored, consumed: boolean[], w: i32): boolean {
+  if (consumed[w]) {
+    return true;
+  }
+  let k: i32 = anchored.start[w];
+  while (k < anchored.start[w + 1]) {
+    if (consumed[anchored.at[k]]) {
+      return true;
+    }
+    k = k + 1;
+  }
+  return false;
 }
 
 // A later read of a DIFFERENT payload slot of the same box: the box is
