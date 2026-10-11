@@ -4073,7 +4073,7 @@ func TestSelfHostCheckerBundleDifferentialX86_64(t *testing.T) {
 		{"bound-infers-option-result", "import \"core/iter\";\nfunction main(): i32 { let r = iter.nth(iter.range(0, 5), 2); let x: string = r; return 0; }\n"},
 		{"bound-infers-generic-impl-ok", "import \"core/iter\";\nfunction main(): i32 { let xs: f64[] = [1.5]; let ys = iter.to_array(iter.of(xs)); let z: f64 = ys[0]; let n: i32 = iter.to_array(iter.range(0, 3))[0]; return n; }\n"},
 		{"bound-infers-argument-e038", "import \"core/iter\";\nfunction take(xs: string[]): i32 { return 0; }\nfunction main(): i32 { return take(iter.to_array(iter.range(0, 5))); }\n"},
-		{"bound-infers-assignment-e003", "import \"core/iter\";\nfunction main(): i32 { let xs: string[] = []; xs = iter.to_array(iter.range(0, 5)); return 0; }\n"},
+		{"bound-infers-assignment-target", "import \"core/iter\";\nfunction main(): i32 { let xs: string[] = []; xs = iter.to_array(iter.range(0, 5)); return 0; }\n"},
 		{"bound-dest-var-e021", "import \"core/iter\";\nfunction main(): i32 { let xs: string[] = iter.to_array(iter.range(0, 5)); return 0; }\n"},
 		{"bound-dest-return-e021", "import \"core/iter\";\nfunction f(): string[] { return iter.to_array(iter.range(0, 5)); }\nfunction main(): i32 { return 0; }\n"},
 		{"bound-dest-option-e021", "import \"core/iter\";\nfunction main(): i32 { let m: Option[string] = iter.nth(iter.range(0, 5), 1); return 0; }\n"},

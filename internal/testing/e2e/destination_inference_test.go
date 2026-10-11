@@ -87,3 +87,28 @@ func TestWasmDestinationInference(t *testing.T) {
 		t.Fatalf("printed\n%s\nwant\n%s", out, destinationInferenceWant)
 	}
 }
+
+// An assignment's target types an array literal as a `let` annotation does:
+// `[2, "ab"]` is a valid `dyn Show[]` value however its first element reads.
+const assignedDynArraySrc = `trait Show { function show(self: Self): i32; }
+impl Show for i32 { function show(self: Self): i32 { return self; } }
+impl Show for string { function show(self: Self): i32 { return self.len(); } }
+function main(): i32 {
+  let xs: dyn Show[] = [1];
+  xs = [2, "ab"];
+  return xs[0].show() + xs[1].show();
+}
+`
+
+func TestAssignedDynArray(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "prog.fern")
+	if err := os.WriteFile(path, []byte(assignedDynArraySrc), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if code, _, errOut := runLangInterp(t, buildLangBinForInterp(t), path); code != 4 {
+		t.Fatalf("interp exit %d, want 4\nstderr: %s", code, errOut)
+	}
+	if _, code := compileAndRunX86_64(t, assignedDynArraySrc); code != 4 {
+		t.Fatalf("x86-64 exit %d, want 4", code)
+	}
+}
