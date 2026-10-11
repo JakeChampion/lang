@@ -35,6 +35,200 @@ import "std/num";
 // state `it2` to continue from; `None` signals exhaustion.
 pub trait Iterator[T] {
   function next(self: Self): Option[(T, Self)];
+
+  // The lazy adapters: each wraps the iterator and does its work as values
+  // are pulled, so `xs.iter().filter(p).map(f).fold(z, g)` reads left to
+  // right and builds no intermediate array.
+  function map[U](self: Self, f: (T) => U): Mapped[Self, T, U] {
+    return Mapped { it: self, f: f };
+  }
+  function filter(self: Self, keep: (T) => boolean): Filtered[Self, T] {
+    return Filtered { it: self, keep: keep };
+  }
+  function take(self: Self, n: i32): Taken[Self, T] {
+    return Taken[Self, T] { it: self, left: n };
+  }
+  function enumerate(self: Self): Enumerated[Self, T] {
+    return Enumerated[Self, T] { it: self, at: 0 };
+  }
+  function zip[U, J: Iterator[U]](self: Self, other: J): Zipped[Self, T, J, U] {
+    return Zipped[Self, T, J, U] { a: self, b: other };
+  }
+
+  // The sinks, which drain the iterator.
+  function fold[A](self: Self, init: A, f: (A, T) => A): A {
+    let acc: A = init;
+    let cur: Self = self;
+    let go: boolean = true;
+    while (go) {
+      match (cur.next()) {
+        Some(t) => {
+          acc = f(acc, t.0);
+          cur = t.1;
+        },
+        None => {
+          go = false;
+        }
+      }
+    }
+    return acc;
+  }
+  function count(self: Self): i32 {
+    return self.fold(0, (n: i32, v: T): i32 => n + 1);
+  }
+  function collect(self: Self): T[] {
+    let out: T[] = [];
+    let cur: Self = self;
+    let go: boolean = true;
+    while (go) {
+      match (cur.next()) {
+        Some(t) => {
+          out = out.append(t.0);
+          cur = t.1;
+        },
+        None => {
+          go = false;
+        }
+      }
+    }
+    return out;
+  }
+  function find(self: Self, pred: (T) => boolean): Option[T] {
+    let cur: Self = self;
+    let go: boolean = true;
+    while (go) {
+      match (cur.next()) {
+        Some(t) => {
+          if (pred(t.0)) {
+            return Some(t.0);
+          }
+          cur = t.1;
+        },
+        None => {
+          go = false;
+        }
+      }
+    }
+    return None;
+  }
+  function any(self: Self, pred: (T) => boolean): boolean {
+    match (self.find(pred)) {
+      Some(_) => {
+        return true;
+      },
+      None => {
+        return false;
+      }
+    }
+  }
+  function all(self: Self, pred: (T) => boolean): boolean {
+    match (self.find((v: T): boolean => !pred(v))) {
+      Some(_) => {
+        return false;
+      },
+      None => {
+        return true;
+      }
+    }
+  }
+}
+
+// Mapped yields `f(v)` for each `v` of `it`.
+pub struct Mapped[I, T, U] { it: I, f: (T) => U }
+
+impl[I: Iterator[T], T, U] Iterator[U] for Mapped[I, T, U] {
+  function next(self: Mapped[I, T, U]): Option[(U, Mapped[I, T, U])] {
+    match (self.it.next()) {
+      Some(t) => {
+        return Some((self.f(t.0), Mapped { it: t.1, f: self.f }));
+      },
+      None => {
+        return None;
+      }
+    }
+  }
+}
+
+// Filtered yields the values of `it` that `keep` accepts.
+pub struct Filtered[I, T] { it: I, keep: (T) => boolean }
+
+impl[I: Iterator[T], T] Iterator[T] for Filtered[I, T] {
+  function next(self: Filtered[I, T]): Option[(T, Filtered[I, T])] {
+    let cur: I = self.it;
+    while (true) {
+      match (cur.next()) {
+        Some(t) => {
+          if (self.keep(t.0)) {
+            return Some((t.0, Filtered { it: t.1, keep: self.keep }));
+          }
+          cur = t.1;
+        },
+        None => {
+          return None;
+        }
+      }
+    }
+    return None;
+  }
+}
+
+// Taken yields at most `left` more values of `it`; none once `left` is at or
+// below zero.
+pub struct Taken[I, T] { it: I, left: i32 }
+
+impl[I: Iterator[T], T] Iterator[T] for Taken[I, T] {
+  function next(self: Taken[I, T]): Option[(T, Taken[I, T])] {
+    if (self.left <= 0) {
+      return None;
+    }
+    match (self.it.next()) {
+      Some(t) => {
+        return Some((t.0, Taken[I, T] { it: t.1, left: self.left - 1 }));
+      },
+      None => {
+        return None;
+      }
+    }
+  }
+}
+
+// Enumerated yields each value of `it` with its 0-based position.
+pub struct Enumerated[I, T] { it: I, at: i32 }
+
+impl[I: Iterator[T], T] Iterator[(i32, T)] for Enumerated[I, T] {
+  function next(self: Enumerated[I, T]): Option[((i32, T), Enumerated[I, T])] {
+    match (self.it.next()) {
+      Some(t) => {
+        return Some(((self.at, t.0), Enumerated[I, T] { it: t.1, at: self.at + 1 }));
+      },
+      None => {
+        return None;
+      }
+    }
+  }
+}
+
+// Zipped yields a value of `a` beside one of `b` until either runs out.
+pub struct Zipped[I, T, J, U] { a: I, b: J }
+
+impl[I: Iterator[T], T, J: Iterator[U], U] Iterator[(T, U)] for Zipped[I, T, J, U] {
+  function next(self: Zipped[I, T, J, U]): Option[((T, U), Zipped[I, T, J, U])] {
+    match (self.a.next()) {
+      Some(x) => {
+        match (self.b.next()) {
+          Some(y) => {
+            return Some(((x.0, y.0), Zipped[I, T, J, U] { a: x.1, b: y.1 }));
+          },
+          None => {
+            return None;
+          }
+        }
+      },
+      None => {
+        return None;
+      }
+    }
+  }
 }
 
 // Range is the half-open integer interval [lo, hi) as an Iterator[i32]: it
