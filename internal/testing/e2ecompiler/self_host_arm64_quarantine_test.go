@@ -92,13 +92,19 @@ func runCapturingStderr(t *testing.T, tg ssaBackendTarget, bin string) (string, 
 	return stderr.String(), cmd.ProcessState.ExitCode()
 }
 
+// uncertifiedArm64 opts a compile out of the emitted-RC certifier: the
+// programs here release a block twice or retain one after its release on
+// purpose, for the runtime's detectors to catch, and the certifier would
+// refuse them at compile time.
+const uncertifiedArm64 = "FERN_RC_CERTIFY=0"
+
 // emitArm64Asm compiles src for arm64-linux with the given environment and
 // returns the emitted assembly.
 func emitArm64Asm(t *testing.T, h ssaBackendHost, dir, src, name string, env []string) string {
 	t.Helper()
 	out := filepath.Join(dir, name+".s")
 	cmd := exec.Command(h.cli, "-target", "arm64-linux", "-emit", "asm", "-o", out, src, h.stdlib)
-	cmd.Env = append(os.Environ(), env...)
+	cmd.Env = append(append(os.Environ(), uncertifiedArm64), env...)
 	if combined, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("emitting %s: %v\n%s", name, err, combined)
 	}
@@ -187,7 +193,7 @@ func TestSelfHostUafIncAfterFreeReportedArm64(t *testing.T) {
 	for _, flag := range []string{"FERN_SANITIZE=1", "FERN_RC_FREE_DEBUG=1"} {
 		bin := filepath.Join(dir, "uaf-"+strings.Split(flag, "=")[0])
 		cmd := exec.Command(h.cli, "-target", tg.target, "-o", bin, src, h.stdlib)
-		cmd.Env = append(os.Environ(), flag)
+		cmd.Env = append(os.Environ(), flag, uncertifiedArm64)
 		if out, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("%s: %v\n%s", flag, err, out)
 		}
@@ -218,6 +224,7 @@ func TestSelfHostUafSilentWithoutFlagArm64(t *testing.T) {
 	}
 	bin := filepath.Join(dir, "uaf-off")
 	cmd := exec.Command(h.cli, "-target", tg.target, "-o", bin, src, h.stdlib)
+	cmd.Env = append(os.Environ(), uncertifiedArm64)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("%v\n%s", err, out)
 	}
