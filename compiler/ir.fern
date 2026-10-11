@@ -7251,6 +7251,122 @@ pub function eliminate_dead_code(ops: Op[]): Op[] {
   return ops;
 }
 
+// ---- dead stores -----------------------------------------------------------
+//
+// A slot nothing loads is written for nothing. The lowering leaves such stores
+// wherever it computes a value and then reaches for another form of it: a
+// constant array's elements are each stored, then loaded and dropped, when the
+// construction becomes a static box that never reads them. The register
+// backends prune the values when they lift to SSA; wasm emitted every one.
+// A slot is read by load_local, by str_slice's frame form and by dyn_dispatch,
+// which name slots in their immediates. A slot none of them reads is dead: its
+// tee goes and its store becomes a drop.
+// A drop then cancels the constant or load just before it, which can leave
+// another slot unloaded, so the pass repeats until nothing changes.
+pub function eliminate_dead_stores(ops: Op[]): Op[] {
+  let cur: Op[] = ops;
+  while (true) {
+    let next: Op[] = cancel_dropped_pushes(drop_dead_stores(cur));
+    if (next.len() == cur.len()) {
+      return next;
+    }
+    cur = next;
+  }
+  return cur;
+}
+
+// drop_dead_stores turns each store to a slot nothing loads into a drop, and
+// removes each tee of one.
+function drop_dead_stores(ops: Op[]): Op[] {
+  let k_store: i32 = kind_id("store_local");
+  let k_tee: i32 = kind_id("tee_local");
+  let loads: i32[] = slot_reads(ops);
+  let out: Op[] = [];
+  for o in ops {
+    if (o.kind_tag == k_tee && loads[o.i32_imm] == 0) {
+      continue;
+    }
+    if (o.kind_tag == k_store && loads[o.i32_imm] == 0) {
+      out = out.append(op_drop());
+    } else {
+      out = out.append(o);
+    }
+  }
+  return out;
+}
+
+// slot_reads counts the reads of each slot.
+function slot_reads(ops: Op[]): i32[] {
+  let k_load: i32 = kind_id("load_local");
+  let k_str_slice: i32 = kind_id("str_slice");
+  let k_dyn: i32 = kind_id("dyn_dispatch");
+  let loads: i32[] = __alloc_i32(cp_max_slot(ops) + 1);
+  for o in ops {
+    if (o.kind_tag == k_load) {
+      loads = loads.with(o.i32_imm, loads[o.i32_imm] + 1);
+    }
+    // Two ops read slots without a load: the frame form of str_slice builds
+    // its box in three slots at `i32_imm - 1`, read through the box's address,
+    // and dyn_dispatch reloads its `width` spilled operands from `i32_imm` on.
+    if (o.kind_tag == k_str_slice && o.i32_imm > 0) {
+      loads = slots_read(loads, o.i32_imm - 1, 3);
+    }
+    if (o.kind_tag == k_dyn) {
+      loads = slots_read(loads, o.i32_imm, o.width);
+    }
+  }
+  return loads;
+}
+
+// slots_read counts the `n` slots from `first` as read.
+function slots_read(own loads: i32[], first: i32, n: i32): i32[] {
+  let s: i32 = first;
+  while (s < first + n) {
+    if (s >= 0 && s < loads.len()) {
+      loads = loads.with(s, loads[s] + 1);
+    }
+    s = s + 1;
+  }
+  return loads;
+}
+
+// cancel_dropped_pushes removes each drop together with the op that pushed
+// what it drops, when that op is the nearest one still kept and only pushes a
+// constant or a slot's value. Runs of pushes then drops unwind pairwise.
+function cancel_dropped_pushes(ops: Op[]): Op[] {
+  let pushes: i32[] = [kind_id("const_i32"), kind_id("const_i32_text"), kind_id("const_i64"), kind_id("const_f64"), kind_id("const_str"), kind_id("load_local")];
+  let k_drop: i32 = kind_id("drop");
+  let gone: boolean[] = __alloc_bool(ops.len());
+  let kept: i32[] = __alloc_i32(ops.len());
+  let top: i32 = 0;
+  let any: boolean = false;
+  let i: i32 = 0;
+  while (i < ops.len()) {
+    let t: i32 = ops[i].kind_tag;
+    if (t == k_drop && top > 0 && util.index_of_i32(pushes, ops[kept[top - 1]].kind_tag) >= 0) {
+      top = top - 1;
+      gone = gone.with(kept[top], true).with(i, true);
+      any = true;
+    } else {
+      kept = kept.with(top, i);
+      top = top + 1;
+    }
+    i = i + 1;
+  }
+  if (!any) {
+    return ops;
+  }
+  let out: Op[] = [];
+  i = 0;
+  while (i < ops.len()) {
+    if (!gone[i]) {
+      out = out.append(ops[i]);
+    }
+    i = i + 1;
+  }
+  return out;
+}
+
 // ---- zero-slot uniqueness guards (native internal/oracle/ir/zeroslot.go) -------
 //
 // Lowering emits an `__fern_rc_is_unique`-gated drop for every droppable local
@@ -7459,12 +7575,18 @@ pub struct OptimizedOps {
 // the lowering routes every value through a slot (the typed path's `ssarc`
 // does), so strength reduction gets one more pass over its output.
 function finish_ops(cur: Op[], n_locals: i32): OptimizedOps {
-  let done: Op[] = eliminate_dead_code(propagate_fold(fuse_tee(eliminate_dead_code(cur))));
+  let done: Op[] = cleanup(fuse_tee(eliminate_dead_code(cur)));
   let again: StrengthResult = reduce_strength_ex(done);
   if (again.changed) {
-    done = eliminate_dead_code(propagate_fold(strength_fixpoint(fold_const_binaries(again.ops))));
+    done = cleanup(strength_fixpoint(fold_const_binaries(again.ops)));
   }
   return hoist_loop_invariants(done, n_locals);
+}
+
+// cleanup propagates and folds constants, then removes the stores and the
+// code that leaves dead.
+function cleanup(ops: Op[]): Op[] {
+  return eliminate_dead_code(eliminate_dead_stores(propagate_fold(ops)));
 }
 
 // propagate_fold alternates propagation and folding until a fold rewrites

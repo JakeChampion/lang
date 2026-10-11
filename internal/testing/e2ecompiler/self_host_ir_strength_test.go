@@ -62,7 +62,7 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 		"mul_text_hex: load_local 0 ; const_i32_text 0x10 ; mul\n" +
 		"chain: load_local 0 ; const_i32 2 ; shl ; const_i32 1 ; shl\n" +
 		"fold_then_strength: load_local 0 ; const_i32 2 ; shl\n" +
-		"strength_then_fold: load_local 0 ; drop ; const_i32 5\n" +
+		"strength_then_fold: const_i32 5\n" +
 		"idempotent=1\n" +
 		"dce_arm: block ; const_i32 1 ; return ; end\n" +
 		"dce_after_br: block ; br 0 ; end ; const_i32 2 ; drop\n" +
@@ -143,8 +143,9 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 		// composing: pruning the decided `if` leaves the store and load ADJACENT, so
 		// fuse_tee fires where it previously could not reach, propagate_copies then
 		// drops the tee as dead, and the fold collapses what is left. Nine ops to
-		// three, none of which any single pass could have done alone.
-		"kp_in_optimize: const_i32 10 ; drop ; return\n" +
+		// three, none of which any single pass could have done alone, and the dropped
+		// constant left over cancels with its drop.
+		"kp_in_optimize: return\n" +
 		// #6638 the unary fold. `not` is LOGICAL in this IR — i32.eqz on wasm, setz on
 		// x86, cset eq on arm64, bool_not in eval_ops — so zero folds to 1 and
 		// anything else to 0. There is no bitwise complement in the vocabulary.
@@ -187,7 +188,7 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 		"pi_nested_cascade: const_i32 5 ; drop ; return\n" +
 		"pi_idempotent=1\n" +
 		// End to end: `while (true)` keeps its body and loses its exit test.
-		"pw_while_true_in_optimize: loop ; const_i32 7 ; drop ; br 0 ; end ; return\n" +
+		"pw_while_true_in_optimize: loop ; br 0 ; end ; return\n" +
 		// Folding through the width normalise the lowering emits after every
 		// i32 / u32 / sub-word arithmetic op. wc_nested is `1 + 2 * 3`: the
 		// int_cast between the folded `mul` and the `add` is what used to
@@ -268,7 +269,22 @@ func TestSelfHostIRStrengthPeephole(t *testing.T) {
 		"readable 9223372036854775808: i32=false i64=false agree=true\n" +
 		"readable -9223372036854775808: i32=false i64=true agree=true\n" +
 		"readable -9223372036854775809: i32=false i64=false agree=true\n" +
-		"readable 99999999999999999999: i32=false i64=false agree=true\n"
+		"readable 99999999999999999999: i32=false i64=false agree=true\n" +
+		// Dead stores. ds_loaded, ds_effect, ds_not_top and ds_scope are the
+		// refusals: a slot that is loaded, a store fed by a call (it becomes a
+		// drop, the call stays), a drop whose push is not the op before it, and a
+		// drop across a scope boundary. ds_frame and ds_dyn keep stores into
+		// slots read without a load: the three str_slice's frame form builds its
+		// box in, and the operands dyn_dispatch reloads from its base slot.
+		"ds_const: const_i32 0 ; return\n" +
+		"ds_loaded: const_i32 7 ; store_local 1 ; load_local 1 ; return\n" +
+		"ds_effect: call_direct side/0 ; drop ; const_i32 0 ; return\n" +
+		"ds_tee: load_local 0 ; return\n" +
+		"ds_chain: const_i32 0 ; return\n" +
+		"ds_not_top: load_local 0 ; const_i32 1 ; add ; drop ; const_i32 0 ; return\n" +
+		"ds_scope: const_i32 1 ; block ; drop ; end ; const_i32 0 ; return\n" +
+		"ds_frame: const_i32 5 ; store_local 2 ; load_local 0 ; const_i32 0 ; const_i32 1 ; str_slice frame:2 ; return\n" +
+		"ds_dyn: load_local 0 ; store_local 2 ; const_i32 9 ; store_local 3 ; dyn_dispatch ; return\n"
 
 	cmd := exec.Command(bin)
 	out, _ := cmd.Output()
