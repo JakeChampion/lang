@@ -3445,7 +3445,8 @@ function compose_repl(a: i32[], b: i32[]): i32[] {
 // register_form is a lifted function as the register backends allocate it:
 // trivial phis folded, repeated pure operations merged, rotates fused, wraps
 // nothing reads dropped, dead values pruned, branches on boolean joins
-// threaded and forwarding blocks threaded.
+// threaded and forwarding blocks threaded. Threading drops the blocks it
+// leaves unreachable, so what only they read is pruned after it.
 // Dead values are pruned before the wraps too: a fused rotate's right shift
 // would otherwise still read its operand's high half.
 pub function register_form(f: SFunc): Formed {
@@ -3457,7 +3458,7 @@ pub function register_form(f: SFunc): Formed {
   if (t.changed) {
     g = prune_dead(t.f);
   }
-  return Formed { f: thread_forwarding(g), repl: compose_repl(compose_repl(folded.repl, merged.repl), unwrapped.repl) };
+  return Formed { f: prune_dead(thread_forwarding(g)), repl: compose_repl(compose_repl(folded.repl, merged.repl), unwrapped.repl) };
 }
 
 // drop_low_wraps replaces a 32-bit wrap, extend or cast, signed or unsigned, by
