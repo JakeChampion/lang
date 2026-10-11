@@ -1151,6 +1151,13 @@ func TestRunnerTLSClientExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "tls_client", "std/tls/client", 6)
 }
 
+// `tests/stdlib/tls_server_test.fern` reads keys from PKCS #8 and SEC 1,
+// checks an identity against its leaf, and runs std/tls/server's session
+// against std/tls/client over P-256, P-384 and Ed25519 leaves.
+func TestRunnerTLSServerExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "tls_server", "std/tls/server", 8)
+}
+
 // `tests/stdlib/tls_handshake_test.fern` runs the client through RFC 8448 §3
 // byte for byte, the server to the trace's ServerHello, and the two against
 // each other across suites and groups.

@@ -158,6 +158,18 @@ TLS itself is `std/tls/keyschedule`, `keyshare`, `message`, `record`,
     interpreter.
 11. **`std/tls/server`.** Resumption and client certificates, wired into
     `std/serve`.
+
+    Landed: `std/tls/server`, a sans-IO `Session` over the handshake's
+    server that reads a P-256, P-384 or Ed25519 key from PKCS #8 or SEC 1,
+    checks it against the leaf, and signs the CertificateVerify; and a
+    `Connection` over an accepted socket. RSA keys are refused until
+    std/crypto/rsa can sign in constant time. Gate: the session against
+    std/tls/client over all three key types in the stdtest differential and
+    on wasm, and `TestTLSServerAgainstGo`, Go's crypto/tls client against a
+    Fern echo server with each leaf (default shares, a P-256-only share
+    drawing a HelloRetryRequest, an address with no SNI, an untrusted CA
+    and a TLS 1.2 client) on both native ISAs and in the interpreter.
+    Remaining: resumption, client certificates, `std/serve`.
 12. **Interop and fuzzing on `net-nightly`.** OpenSSL 3.5, Go, rustls'
     mio examples at a pinned tag, and BoringSSL's `bssl` at a pinned
     commit, plus the tlsfuzzer smoke set. A missing tool fails the lane.

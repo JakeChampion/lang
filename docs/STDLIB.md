@@ -1490,6 +1490,46 @@ read = o.next;
   `BadKeys(i32, i32)`, with `message()`; each variant's comment names the
   alert RFC 8446 sends for it.
 
+### `std/tls/server`
+
+A TLS 1.3 server: `std/tls/handshake`'s server signing its CertificateVerify
+with the certificate's private key, as a sans-IO `Session` any transport can
+carry and as a `Connection` over an accepted TCP socket. It takes every suite
+and X25519MLKEM768 or X25519, asking for a share by HelloRetryRequest when the
+client sent neither, and chooses the first of its own protocols the client
+offers by ALPN (`tests/stdlib/tls_server_test.fern` against `std/tls/client`,
+and Go's crypto/tls client in `TestTLSServerAgainstGo`).
+
+- `private_key_from_pem(text)` reads the first `PRIVATE KEY` (PKCS #8, RFC
+  5958) or `EC PRIVATE KEY` (SEC 1, RFC 5915) block; `pkcs8(der)` and
+  `sec1(der)` read the bytes. A `PrivateKey` is `EcdsaKey(ecdsa.PrivateKey)`
+  on P-256 or P-384, or `Ed25519Seed(seed)`. An RSA key is refused, since
+  `std/crypto/rsa` verifies only; the scheme offered is the key's (0x0403,
+  0x0503 or 0x0807), so a client that does not accept it gets
+  handshake_failure.
+- `identity(chain, key)` pairs a DER chain, leaf first, with the leaf's key,
+  refusing one that is not the leaf's; `identity_from_pem(chain_text,
+  key_text)` reads both from PEM. `config(identity)` and `(c).with_alpn
+  (protocols)` make a `Config`.
+- `Session`: `start(config)` draws its entropy from `random_bytes` and
+  returns a session with nothing to send until `(s).read(input)` has taken a
+  ClientHello; `read` signs the CertificateVerify when the handshake reaches
+  it and returns a `Step { session, output, data, closed }`, or on failure a
+  `Failure { error, alert }` whose alert is sealed under the keys in force
+  when it failed. `(s).write(data)`, `(s).close()`, `(s).connected()`,
+  `(s).alpn()` (the protocol chosen) and `(s).server_name()` (the SNI the
+  client sent, empty for none).
+- `Connection`: `accept(fd, config, timeout)` completes the handshake on a
+  socket just accepted, closing it on failure; `(c).send(data)`,
+  `(c).recv(wait)` giving a `Received { conn, data, ended }` (application
+  data the client sent in the same read as its Finished comes back first),
+  and `(c).close()`.
+- `KeyError` is `Pem`, `BadDer`, `Certificate`, `Scalar`, `Seed`, `NoKey`,
+  `NoCertificate`, `UnsupportedKey(what)`, `BadKey(part)` or `Mismatch`;
+  `TlsError` is `HandshakeFailed(HandshakeError)`, `SigningFailed`,
+  `NetFailed(NetError)`, `HandshakeTimeout`, `ClosedEarly` or `RecordCut`;
+  both with `message()`.
+
 ### `std/tls/verify`
 
 Certificate path validation as the Web PKI does it (RFC 5280 §6, with RFC

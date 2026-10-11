@@ -1,0 +1,501 @@
+import "std/test";
+import "std/hex";
+import "std/tls/client";
+import "std/tls/handshake";
+import "std/tls/server";
+import "std/tls/verify";
+
+// tests/stdlib/tls_server_test.fern — std/tls/server: keys read from PKCS #8
+// and SEC 1, an identity checked against its leaf, and the session against
+// std/tls/client over P-256, P-384 and Ed25519 leaves: ALPN, the name the
+// client asked for, data both ways, close_notify, and the refusals. The
+// certificates are under an Ed25519 root, valid from 2020 to 2100, made
+// with Python's `cryptography`; the keys are the fixed scalars 0x33, 0x44
+// and 0x22 repeated.
+
+const ROOT: string = "3082011c3081cfa00302010202020201300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30243122302006035504030c194665726e20544c5320536572766572205465737420526f6f74302a300506032b6570032100d04ab232742bb4ab3a1368bd4615e4e6d0224ab71a016baf8520a332c9778737a3233021300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106300506032b65700341007353a91b5ad2e713d51d2fa08f3e800b99afa9e5725cfd746269d03210b1faadccfc942258bb8151da41be07943a4e8a14bd615e96692c8b896872460e827c0a";
+
+const P256_LEAF: string = "3082016e30820120a00302010202020202300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30163114301206035504030c0b746c732e6578616d706c653059301306072a8648ce3d020106082a8648ce3d0301070342000451a7580833898ea1b183cbd7350a4099078c6ef1c1e18e970cd7683035f25e7d0110522712b0b5a7cff081685486984a94e6831edac46e7360fa9d834a7a81a1a3533051300c0603551d130101ff04023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070301301c0603551d1104153013820b746c732e6578616d706c658704c0000207300506032b65700341002aa51d9e7ebbabda2407971bedb6799f3b6e56cc126dc876310e47342f19f0d0902e1173373fdb0ba17ebc39f3324667b06162300c7b9873eb31123c89ca500c";
+
+const P384_LEAF: string = "3082018b3082013da00302010202020203300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30163114301206035504030c0b746c732e6578616d706c653076301006072a8648ce3d020106052b8104002203620004b01380bb42d55e316eed81928efebef108186c6d6c88cdad320ca9c4320cad6a603be8d80e57dd2782b8b1a4cdbe6e82f596d07d1c2f16249a6ce4cf99b192f0c486b5a37096fc91a6c0c354546abe352a99cdf1ad679eaeb03b7864e790c15fa3533051300c0603551d130101ff04023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070301301c0603551d1104153013820b746c732e6578616d706c658704c0000207300506032b657003410095ed6547c1f51e59c662dba80c19af7dc05c1a0b524d7f4f8273adec2aa84b9ec040a5dbf4a758dc2d8a79b369caf162dee37dac6d051af322dd3bfb9840bf09";
+
+const ED_LEAF: string = "3082013e3081f1a00302010202020204300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30163114301206035504030c0b746c732e6578616d706c65302a300506032b6570032100a09aa5f47a6759802ff955f8dc2d2a14a5c99d23be97f864127ff9383455a4f0a3533051300c0603551d130101ff04023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070301301c0603551d1104153013820b746c732e6578616d706c658704c0000207300506032b6570034100bdd423797a497344c22bf704b418f31b7b6d0d884b517a57d1421c064fa68de8266518e0ddedfbdf189a71a2bb5bd2ffb7ca885f2a7f9ac0e96cb6d07d83e802";
+
+const P256_PKCS8: string = "-----BEGIN PRIVATE KEY-----\n"
+  + "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgMzMzMzMzMzMzMzMz\n"
+  + "MzMzMzMzMzMzMzMzMzMzMzMzMzOhRANCAARRp1gIM4mOobGDy9c1CkCZB4xu8cHh\n"
+  + "jpcM12gwNfJefQEQUicSsLWnz/CBaFSGmEqU5oMe2sRuc2D6nYNKeoGh\n"
+  + "-----END PRIVATE KEY-----\n";
+
+const P256_SEC1: string = "-----BEGIN EC PRIVATE KEY-----\n"
+  + "MHcCAQEEIDMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzoAoGCCqGSM49\n"
+  + "AwEHoUQDQgAEUadYCDOJjqGxg8vXNQpAmQeMbvHB4Y6XDNdoMDXyXn0BEFInErC1\n"
+  + "p8/wgWhUhphKlOaDHtrEbnNg+p2DSnqBoQ==\n"
+  + "-----END EC PRIVATE KEY-----\n";
+
+const P384_PKCS8: string = "-----BEGIN PRIVATE KEY-----\n"
+  + "MIG2AgEAMBAGByqGSM49AgEGBSuBBAAiBIGeMIGbAgEBBDBERERERERERERERERE\n"
+  + "REREREREREREREREREREREREREREREREREREREREREREREShZANiAASwE4C7QtVe\n"
+  + "MW7tgZKO/r7xCBhsbWyIza0yDKnEMgytamA76NgOV90ngrixpM2+boL1ltB9HC8W\n"
+  + "JJps5M+ZsZLwxIa1o3CW/JGmwMNUVGq+NSqZzfGtZ56usDt4ZOeQwV8=\n"
+  + "-----END PRIVATE KEY-----\n";
+
+const ED_PKCS8: string = "-----BEGIN PRIVATE KEY-----\n"
+  + "MC4CAQAwBQYDK2VwBCIEICIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIiIi\n"
+  + "-----END PRIVATE KEY-----\n";
+
+const RSA_PKCS8: string = "-----BEGIN PRIVATE KEY-----\n"
+  + "MIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQD7VYmeGxUtiKq2\n"
+  + "2qXFM4NSrPMB2EP6GzWJkWE6n4kQFrAQa8ws46K3xOnIrsAJZPQBLz41jwJlWq8r\n"
+  + "7o2aMs2YTR14TW46zDE8LMP9UyaPNfEq1Zjrabuyx7UpmTp54ukzOqoN3lgLZ7FS\n"
+  + "eSEq7RMeQoU2Aq5hOZ74J+1bG7PNg1mcH8us9GfYWy/lQWdpK6J9b3KhnUXpArxo\n"
+  + "RNLOSC/kzQR6bR7Ocbjh4xJXE8QMMZl9jcn0nq0xcnEkMTWjC3xlM51x/hbYSJEI\n"
+  + "9ByN7/M4H5sWxH7QXqTbL3oEqICBJ/ra5UXvyXgAWNn0OAepJwTF11n8AB9KBolu\n"
+  + "2THfw9f/AgMBAAECggEAI1Dazwa9hudAHFnZ1ugM87uN7pGYb6w4wsqqT7CmHkbJ\n"
+  + "2OzaGj6m7nfyumUPt+I3GnQseMh5DOEytxNvU0kAiajgU2IHSKdzjaHkAj8XrneP\n"
+  + "xTXmpcGhgxa7y+DA45VGW7v1CZDXbKGBPEun+kj+GY+S+fVjfRGPLGMpNNb41g9v\n"
+  + "vk3tVHYvHx3v+5ltv0Fa3dqdMTFMeu3B7HyGOWtCFFF9oJe+RxJ0TpIuWalcDu9o\n"
+  + "R51sEmKCEwMvNRgONbAVlnS8FBhWflftqPL6E6GEn+8WvcJ+1s58zOxcLEsddeMJ\n"
+  + "tmjkQQPnx+WAQfB0KXJN9F5lKZa7zkWM3U7Z4H0lCQKBgQD/gvrcrAjLtZAxhbQK\n"
+  + "ZmuSZH0aWEjv9kCV+98thMorgGtQXqMpaPRF4mYJkl711QbNDFrKQQQx5uTjwo6M\n"
+  + "aNY8r4NxIXS12IZV4JStUghEhHWOvre7qWAHY9ZNMM8P8bOORK82lT9znY971tLB\n"
+  + "PVyWhLd9e7al2pYgyOr2GGDZaQKBgQD70IN8IVyioyHAtpJHYLDabMa58Ru6Cv4s\n"
+  + "T2PLt3jG6pAQr/7myKJ/+ZhkG5B00q6+EbwwM/cFtV6bXINTywaBe2JGCwRuMt/s\n"
+  + "5YQddrZFauXlPAHw40jjMbc1YX9w/JAU8Py5S0EZsLufBgBM3AECHoOFc9AGv65x\n"
+  + "qLt7BuTRJwKBgApa5I/M6Q5YbV+Ua5eATxu/ttI6gbo34KYzbvgJSag5rB+1ticX\n"
+  + "ec7bPgdlRzPvTjdBKOzJdcIP+XbBi8Vk+km7Uzhigrhb7hXM5Dmh+XPNanY+hHO2\n"
+  + "iY3DHgxCziF3Si+Z2P/9THUDDa2XJzNtqTLwbf9H5D8UfMEXY25VzpcBAoGBAIPJ\n"
+  + "tfayEyQ/EjwkkNvwW76E7WCFMkik1i9kgUstw3T/b9R794DbAkjN3RaPYoPxe2iY\n"
+  + "KZBkseR37oKK4WRqPgZoB5+2xmPSFmWKHSG6blxYPOdDB5UFrrDQ5Rx34VXFqLZ9\n"
+  + "BRcIrpJ+b0MjxeZzwcdVJuoiGX5etTJg53XUvs5DAoGBAIVz5aSNARzhJXwEG6sK\n"
+  + "/wc3tgZvbPU33e72ClUT70PaY+0HAzmWgspeZch6Bb67rauNVutVhiEOMUEjhkqw\n"
+  + "wk2+qYf5Q0pf4qd3um6bfyHh7Ifi81nkJlo/5P5hfzOaFCL42D6WlB3zyPTctuSL\n"
+  + "UB602t081TDHp0ZkNLSvXvXq\n"
+  + "-----END PRIVATE KEY-----\n";
+
+const ED_LEAF_PEM: string = "-----BEGIN CERTIFICATE-----\n"
+  + "MIIBPjCB8aADAgECAgICBDAFBgMrZXAwJDEiMCAGA1UEAwwZRmVybiBUTFMgU2Vy\n"
+  + "dmVyIFRlc3QgUm9vdDAgFw0yMDAxMDEwMDAwMDBaGA8yMTAwMDEwMTAwMDAwMFow\n"
+  + "FjEUMBIGA1UEAwwLdGxzLmV4YW1wbGUwKjAFBgMrZXADIQCgmqX0emdZgC/5Vfjc\n"
+  + "LSoUpcmdI76X+GQSf/k4NFWk8KNTMFEwDAYDVR0TAQH/BAIwADAOBgNVHQ8BAf8E\n"
+  + "BAMCB4AwEwYDVR0lBAwwCgYIKwYBBQUHAwEwHAYDVR0RBBUwE4ILdGxzLmV4YW1w\n"
+  + "bGWHBMAAAgcwBQYDK2VwA0EAvdQjeXpJc0TCK/cEtBjzG3ttDYhLUXpX0UIcBk+m\n"
+  + "jegmZRjg3e373xiacaK7W9L/t8qIXyp/msDpbLbQfYPoAg==\n"
+  + "-----END CERTIFICATE-----\n";
+
+const ROOT_PEM: string = "-----BEGIN CERTIFICATE-----\n"
+  + "MIIBHDCBz6ADAgECAgICATAFBgMrZXAwJDEiMCAGA1UEAwwZRmVybiBUTFMgU2Vy\n"
+  + "dmVyIFRlc3QgUm9vdDAgFw0yMDAxMDEwMDAwMDBaGA8yMTAwMDEwMTAwMDAwMFow\n"
+  + "JDEiMCAGA1UEAwwZRmVybiBUTFMgU2VydmVyIFRlc3QgUm9vdDAqMAUGAytlcAMh\n"
+  + "ANBKsjJ0K7SrOhNovUYV5ObQIkq3GgFrr4UgozLJd4c3oyMwITAPBgNVHRMBAf8E\n"
+  + "BTADAQH/MA4GA1UdDwEB/wQEAwIBBjAFBgMrZXADQQBzU6kbWtLnE9UdL6CPPoAL\n"
+  + "ma+p5XJc/XRiadAyELH6rcz8lCJYu4FR2kG+B5Q6TooUvWFelmksi4lockYOgnwK\n"
+  + "-----END CERTIFICATE-----\n";
+
+function roots(): verify.Roots {
+  return verify.roots([hex.hex_decode(ROOT)]);
+}
+
+function key_outcome(r: Result[server.PrivateKey, server.KeyError]): string {
+  match (r) {
+    Ok(k) => {
+      match (k) {
+        server.EcdsaKey(e) => {
+          return "ec " + hex.hex_encode(e.public_point()).take(20);
+        },
+        server.Ed25519Seed(seed) => {
+          return "ed25519 " + hex.hex_encode(seed).take(8);
+        }
+      }
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function test_keys(): test.TestOutcome {
+  let pkcs8: string = key_outcome(server.private_key_from_pem(P256_PKCS8));
+  if (pkcs8 != "ec 0451a7580833898ea1b1") {
+    return test.fail("P-256 PKCS #8: " + pkcs8);
+  }
+  if (key_outcome(server.private_key_from_pem(P256_SEC1)) != pkcs8) {
+    return test.fail("P-256 SEC 1: " + key_outcome(server.private_key_from_pem(P256_SEC1)));
+  }
+  if (key_outcome(server.private_key_from_pem(P384_PKCS8)) != "ec 04b01380bb42d55e316e") {
+    return test.fail("P-384: " + key_outcome(server.private_key_from_pem(P384_PKCS8)));
+  }
+  if (key_outcome(server.private_key_from_pem(ED_PKCS8)) != "ed25519 22222222") {
+    return test.fail("Ed25519: " + key_outcome(server.private_key_from_pem(ED_PKCS8)));
+  }
+  return test.pass();
+}
+
+function test_key_refusals(): test.TestOutcome {
+  if (key_outcome(server.private_key_from_pem(RSA_PKCS8)) != "tls server key: cannot sign with RSA") {
+    return test.fail("RSA: " + key_outcome(server.private_key_from_pem(RSA_PKCS8)));
+  }
+  if (key_outcome(server.private_key_from_pem(ROOT_PEM)) != "tls server key: no PRIVATE KEY or EC PRIVATE KEY block") {
+    return test.fail("a certificate: " + key_outcome(server.private_key_from_pem(ROOT_PEM)));
+  }
+  if (key_outcome(server.private_key_from_pem("-----BEGIN PRIVATE KEY-----\nAAAA\n")) != "pem: the PRIVATE KEY block has no END line") {
+    return test.fail("pem: " + key_outcome(server.private_key_from_pem("-----BEGIN PRIVATE KEY-----\nAAAA\n")));
+  }
+  if (key_outcome(server.pkcs8([0x30 as u8, 0 as u8])) != "tls server key: malformed PrivateKeyInfo") {
+    return test.fail("empty: " + key_outcome(server.pkcs8([0x30 as u8, 0 as u8])));
+  }
+  if (key_outcome(server.sec1([0x30 as u8, 3 as u8, 2 as u8, 1 as u8, 1 as u8])) != "tls server key: malformed ECPrivateKey") {
+    return test.fail("sec1: " + key_outcome(server.sec1([0x30 as u8, 3 as u8, 2 as u8, 1 as u8, 1 as u8])));
+  }
+  // A scalar of zeros is out of range.
+  let zero_scalar: u8[] = hex.hex_decode("303102010104200000000000000000000000000000000000000000000000000000000000000000a00a06082a8648ce3d030107");
+  return test.assert_eq(key_outcome(server.sec1(zero_scalar)), "tls server key: ecdsa: the private scalar is not in [1, n) at the curve's size");
+}
+
+function identity_outcome(r: Result[server.Identity, server.KeyError]): string {
+  match (r) {
+    Ok(id) => {
+      return "ok";
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function test_identity(): test.TestOutcome {
+  if (identity_outcome(server.identity_from_pem(ED_LEAF_PEM + ROOT_PEM, ED_PKCS8)) != "ok") {
+    return test.fail(identity_outcome(server.identity_from_pem(ED_LEAF_PEM + ROOT_PEM, ED_PKCS8)));
+  }
+  if (identity_outcome(server.identity_from_pem(ED_LEAF_PEM, P256_PKCS8)) != "tls server: the key is not the leaf certificate's") {
+    return test.fail("another key: " + identity_outcome(server.identity_from_pem(ED_LEAF_PEM, P256_PKCS8)));
+  }
+  if (identity_outcome(server.identity_from_pem("", ED_PKCS8)) != "tls server: no certificate") {
+    return test.fail("no certificate: " + identity_outcome(server.identity_from_pem("", ED_PKCS8)));
+  }
+  return test.assert_eq(identity_outcome(server.identity_from_pem(ED_LEAF_PEM, "")), "tls server key: no PRIVATE KEY or EC PRIVATE KEY block");
+}
+
+// identity_of is the test identity for a leaf and its key; the test fails
+// loudly through the handshake if it cannot be made.
+function identity_of(leaf: string, key_pem: string): server.Identity {
+  match (server.private_key_from_pem(key_pem)) {
+    Ok(k) => {
+      match (server.identity([hex.hex_decode(leaf)], k)) {
+        Ok(id) => {
+          return id;
+        },
+        Err(e) => {
+          return server.Identity { chain: [], key: k };
+        }
+      }
+    },
+    Err(e) => {
+      return server.Identity { chain: [], key: server.Ed25519Seed([]) };
+    }
+  }
+  return server.Identity { chain: [], key: server.Ed25519Seed([]) };
+}
+
+struct Pair { client: client.Session, server: server.Session }
+
+function crd(s: client.Session, input: u8[]): Result[client.Step, string] {
+  match (s.read(input)) {
+    Ok(step) => {
+      return Ok(step);
+    },
+    Err(f) => {
+      return Err("client: " + f.message());
+    }
+  }
+  return Err("client");
+}
+
+function srd(s: server.Session, input: u8[]): Result[server.Step, string] {
+  match (s.read(input)) {
+    Ok(step) => {
+      return Ok(step);
+    },
+    Err(f) => {
+      return Err("server: " + f.message());
+    }
+  }
+  return Err("server");
+}
+
+function started(cfg: client.Config): Result[client.Step, string] {
+  match (client.start(cfg)) {
+    Ok(step) => {
+      return Ok(step);
+    },
+    Err(e) => {
+      return Err("client: " + e.message());
+    }
+  }
+  return Err("client");
+}
+
+function listening(cfg: server.Config): Result[server.Session, string] {
+  match (server.start(cfg)) {
+    Ok(s) => {
+      return Ok(s);
+    },
+    Err(e) => {
+      return Err("server: " + e.message());
+    }
+  }
+  return Err("server");
+}
+
+// connect runs a handshake between a client session and a server session.
+function connect(cc: client.Config, sc: server.Config): Result[Pair, string] {
+  let c0: client.Step = started(cc)?;
+  let s0: server.Session = listening(sc)?;
+  let s1: server.Step = srd(s0, c0.output)?;
+  let c1: client.Step = crd(c0.session, s1.output)?;
+  let s2: server.Step = srd(s1.session, c1.output)?;
+  if (!c1.session.connected() || !s2.session.connected()) {
+    return Err("not connected");
+  }
+  return Ok(Pair { client: c1.session, server: s2.session });
+}
+
+function exchange(p: Pair): Result[string, string] {
+  let cw: client.Step = cwrite(p.client, "ping")?;
+  let sr: server.Step = srd(p.server, cw.output)?;
+  let sw: server.Step = swrite(sr.session, "pong")?;
+  let cr: client.Step = crd(cw.session, sw.output)?;
+  return Ok(string_from_bytes_unchecked(sr.data) + " " + string_from_bytes_unchecked(cr.data));
+}
+
+function cwrite(s: client.Session, text: string): Result[client.Step, string] {
+  match (s.write(text.bytes())) {
+    Ok(step) => {
+      return Ok(step);
+    },
+    Err(e) => {
+      return Err("client: " + e.message());
+    }
+  }
+  return Err("client");
+}
+
+function swrite(s: server.Session, text: string): Result[server.Step, string] {
+  match (s.write(text.bytes())) {
+    Ok(step) => {
+      return Ok(step);
+    },
+    Err(e) => {
+      return Err("server: " + e.message());
+    }
+  }
+  return Err("server");
+}
+
+// served connects with the given leaf and key and reports what both sides
+// saw: the name and protocol the server has, the protocol the client has,
+// and the data exchanged.
+function served(leaf: string, key_pem: string): string {
+  let cc: client.Config = client.config("tls.example", roots()).with_alpn(["h2", "http/1.1"]);
+  let sc: server.Config = server.config(identity_of(leaf, key_pem)).with_alpn(["http/1.1"]);
+  match (connect(cc, sc)) {
+    Ok(p) => {
+      match (exchange(p)) {
+        Ok(t) => {
+          return p.server.server_name() + " " + p.server.alpn() + " " + p.client.alpn() + " " + t;
+        },
+        Err(e) => {
+          return e;
+        }
+      }
+    },
+    Err(e) => {
+      return e;
+    }
+  }
+  return "";
+}
+
+function test_leaves(): test.TestOutcome {
+  let want: string = "tls.example http/1.1 http/1.1 ping pong";
+  if (served(ED_LEAF, ED_PKCS8) != want) {
+    return test.fail("Ed25519: " + served(ED_LEAF, ED_PKCS8));
+  }
+  if (served(P256_LEAF, P256_PKCS8) != want) {
+    return test.fail("P-256: " + served(P256_LEAF, P256_PKCS8));
+  }
+  return test.assert_eq(served(P384_LEAF, P384_PKCS8), want);
+}
+
+function outcome(r: Result[Pair, string]): string {
+  match (r) {
+    Ok(p) => {
+      return "connected [" + p.server.server_name() + "] [" + p.server.alpn() + "]";
+    },
+    Err(e) => {
+      return e;
+    }
+  }
+  return "";
+}
+
+// An address is checked against the certificate and sent as no SNI; a
+// client offering no protocol gets none; a client naming another host
+// refuses the certificate, and the server reads its bad_certificate alert.
+function test_names_and_protocols(): test.TestOutcome {
+  let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8));
+  if (outcome(connect(client.config("192.0.2.7", roots()), sc)) != "connected [] []") {
+    return test.fail("an address: " + outcome(connect(client.config("192.0.2.7", roots()), sc)));
+  }
+  if (outcome(connect(client.config("tls.example", roots()).with_alpn(["h2"]), sc.with_alpn(["http/1.1"]))) != "server: tls handshake: no application protocol in common") {
+    return test.fail("no protocol: " + outcome(connect(client.config("tls.example", roots()).with_alpn(["h2"]), sc.with_alpn(["http/1.1"]))));
+  }
+  match (refusal_alert(client.config("other.example", roots()), sc)) {
+    Ok(t) => {
+      return test.assert_eq(t, "client: the server's certificate is not trusted: tls verify: the certificate is not valid for other.example / server: tls handshake: the peer sent alert 42");
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  return test.fail("unreachable");
+}
+
+// refusal_alert is what the client makes of the server's flight and what
+// the server then makes of the client's alert.
+function refusal_alert(cc: client.Config, sc: server.Config): Result[string, string] {
+  let c0: client.Step = started(cc)?;
+  let s0: server.Session = listening(sc)?;
+  let s1: server.Step = srd(s0, c0.output)?;
+  match (c0.session.read(s1.output)) {
+    Ok(step) => {
+      return Ok("client: accepted");
+    },
+    Err(f) => {
+      match (s1.session.read(f.alert)) {
+        Ok(_) => {
+          return Ok("client: " + f.message() + " / server: read on");
+        },
+        Err(g) => {
+          return Ok("client: " + f.message() + " / server: " + g.message());
+        }
+      }
+    }
+  }
+  return Ok("");
+}
+
+// A client that accepts only RSA signatures gets handshake_failure in the
+// clear, before any key is in force.
+function test_no_common_scheme(): test.TestOutcome {
+  let cc: handshake.ClientConfig = handshake.ClientConfig { ...handshake.client_config("tls.example"), schemes: [0x0804] };
+  match (handshake.client_start(cc, random_bytes(handshake.client_entropy(cc)))) {
+    Ok(c0) => {
+      match (server.start(server.config(identity_of(P256_LEAF, P256_PKCS8)))) {
+        Ok(s0) => {
+          match (s0.read(c0.output)) {
+            Ok(_) => {
+              return test.fail("accepted");
+            },
+            Err(f) => {
+              return test.assert_eq(f.message() + " " + hex.hex_encode(f.alert), "tls handshake: no signature scheme in common 15030300020228");
+            }
+          }
+        },
+        Err(e) => {
+          return test.fail(e.message());
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+// A key that is not the chain's is refused by `identity`; a chain handed
+// to `start` without that check fails when the client checks the
+// CertificateVerify.
+function test_wrong_key(): test.TestOutcome {
+  let id: server.Identity = server.Identity { chain: [hex.hex_decode(P256_LEAF)], key: identity_of(P384_LEAF, P384_PKCS8).key };
+  let cc: client.Config = client.config("tls.example", roots());
+  match (connect(cc, server.config(id))) {
+    Ok(p) => {
+      return test.fail("connected");
+    },
+    Err(e) => {
+      return test.assert_eq(e, "client: the server's CertificateVerify does not verify");
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function test_close(): test.TestOutcome {
+  match (connect(client.config("tls.example", roots()), server.config(identity_of(ED_LEAF, ED_PKCS8)))) {
+    Ok(p) => {
+      match (close_both(p)) {
+        Ok(t) => {
+          return test.assert_eq(t, "both");
+        },
+        Err(e) => {
+          return test.fail(e);
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function close_both(p: Pair): Result[string, string] {
+  let sc: server.Step = sclose(p.server)?;
+  let seen: client.Step = crd(p.client, sc.output)?;
+  let cc: client.Step = cclose(p.client)?;
+  let sr: server.Step = srd(p.server, cc.output)?;
+  if (seen.closed && sr.closed) {
+    return Ok("both");
+  }
+  return Ok("missed");
+}
+
+function sclose(s: server.Session): Result[server.Step, string] {
+  match (s.close()) {
+    Ok(step) => {
+      return Ok(step);
+    },
+    Err(e) => {
+      return Err("server: " + e.message());
+    }
+  }
+  return Err("server");
+}
+
+function cclose(s: client.Session): Result[client.Step, string] {
+  match (s.close()) {
+    Ok(step) => {
+      return Ok(step);
+    },
+    Err(e) => {
+      return Err("client: " + e.message());
+    }
+  }
+  return Err("client");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/tls/server");
+  r = r.it("keys from PKCS #8 and SEC 1", test_keys);
+  r = r.it("key refusals", test_key_refusals);
+  r = r.it("an identity and its leaf", test_identity);
+  r = r.it("P-256, P-384 and Ed25519 leaves", test_leaves);
+  r = r.it("names and protocols", test_names_and_protocols);
+  r = r.it("no signature scheme in common", test_no_common_scheme);
+  r = r.it("a key that is not the chain's", test_wrong_key);
+  r = r.it("close_notify", test_close);
+  return r.finish();
+}

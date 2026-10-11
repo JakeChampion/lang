@@ -385,12 +385,8 @@ function __handshake_on(fd: i32, config: Config, deadline: i64): Result[Connecti
   __send_fd(fd, step.output)?;
   let s: Session = step.session;
   while (!s.connected()) {
-    let left: i64 = deadline - monotonic_ns();
-    if (left <= 0) {
-      return Err(HandshakeTimeout);
-    }
     let input: u8[] = [];
-    match (__recv_fd(fd, time.duration_nanos(left))?) {
+    match (__await(fd, deadline)?) {
       Some(b) => {
         input = b;
       },
@@ -401,16 +397,8 @@ function __handshake_on(fd: i32, config: Config, deadline: i64): Result[Connecti
     if (input.len() == 0) {
       return Err(ClosedEarly);
     }
-    match (s.read(input)) {
-      Ok(next) => {
-        __send_fd(fd, next.output)?;
-        s = next.session;
-      },
-      Err(f) => {
-        __send_fd(fd, f.alert);
-        return Err(f.error);
-      }
-    }
+    let step: Step = __exchange(fd, s, input)?;
+    s = step.session;
   }
   return Ok(Connection { fd: fd, session: s });
 }
@@ -427,38 +415,46 @@ pub function (c: Connection) recv(wait: Duration): Result[Received, TlsError] {
   let deadline: i64 = monotonic_ns() + wait.as_nanos();
   let s: Session = c.session;
   while (true) {
-    let left: i64 = deadline - monotonic_ns();
-    if (left <= 0) {
-      return Ok(Received { conn: Connection { ...c, session: s }, data: [], ended: false });
-    }
     let input: u8[] = [];
-    match (__recv_fd(c.fd, time.duration_nanos(left))?) {
+    match (__await(c.fd, deadline)?) {
       Some(b) => {
         input = b;
       },
       None => {
-        return Ok(Received { conn: Connection { ...c, session: s }, data: [], ended: false });
+        return Ok(__received(c, s, [], false));
       }
     }
     if (input.len() == 0) {
-      if (s.held.len() > 0) {
-        return Err(RecordCut);
-      }
-      return Ok(Received { conn: Connection { ...c, session: s }, data: [], ended: true });
+      return __stream_ended(c, s);
     }
-    let step: Step = __read_or_alert(c.fd, s, input)?;
-    __send_fd(c.fd, step.output)?;
+    let step: Step = __exchange(c.fd, s, input)?;
     s = step.session;
     if (step.data.len() > 0 || step.closed) {
-      return Ok(Received { conn: Connection { ...c, session: s }, data: step.data, ended: step.closed });
+      return Ok(__received(c, s, step.data, step.closed));
     }
   }
-  return Ok(Received { conn: c, data: [], ended: true });
+  return Ok(__received(c, c.session, [], true));
 }
 
-function __read_or_alert(fd: i32, s: Session, input: [u8]): Result[Step, TlsError] {
+function __received(c: Connection, s: Session, data: u8[], ended: boolean): Received {
+  return Received { conn: Connection { ...c, session: s }, data: data, ended: ended };
+}
+
+// __stream_ended is the socket's end of stream: the peer has gone, which
+// inside a record is a cut.
+function __stream_ended(c: Connection, s: Session): Result[Received, TlsError] {
+  if (s.held.len() > 0) {
+    return Err(RecordCut);
+  }
+  return Ok(__received(c, s, [], true));
+}
+
+// __exchange reads input and sends what the session answers, or the alert a
+// failure calls for.
+function __exchange(fd: i32, s: Session, input: [u8]): Result[Step, TlsError] {
   match (s.read(input)) {
     Ok(step) => {
+      __send_fd(fd, step.output)?;
       return Ok(step);
     },
     Err(f) => {
@@ -490,6 +486,16 @@ function __send_fd(fd: i32, data: [u8]): Result[void, TlsError] {
     at = at + n;
   }
   return Ok(());
+}
+
+// __await is the next bytes off the socket before `deadline`, empty at the
+// end of the stream, or None once the deadline has passed.
+function __await(fd: i32, deadline: i64): Result[Option[u8[]], TlsError] {
+  let left: i64 = deadline - monotonic_ns();
+  if (left <= 0) {
+    return Ok(None);
+  }
+  return __recv_fd(fd, time.duration_nanos(left));
 }
 
 // __recv_fd is the next bytes off the socket within `wait`, empty at the
