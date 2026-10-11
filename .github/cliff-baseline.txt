@@ -109,5 +109,13 @@
 # trade is one whole-buffer copy for a later small one, which is why
 # `Scope.bind`'s mean copy fell from 92 to 77 bytes while it crossed more often.
 
-x86_64/checker.cliff_bytes	75047896
-x86_64/checker.cliff_count	238346
+# Re-pinned 2026-10-11 (#12117): 75,047,896 / 238,346 to 30,008,120 / 198,714.
+# seminline.resolve decides a read's resolution before it writes the edits, so
+# its appends no longer copy the edits held for the rollback (32.4 MB of it);
+# the rest is semsource's state threaded past attempts, a part phi per read of
+# a split construction, and a carried reuse donor held past an arm's body.
+# docs/rc-log/2026-10-11-c-the-state-is-not-held-past-an-attempt.md attributes
+# what is left: semsource.define 4.7 MB, seminline.part_of 2.6 MB.
+
+x86_64/checker.cliff_bytes	30008120
+x86_64/checker.cliff_count	198714

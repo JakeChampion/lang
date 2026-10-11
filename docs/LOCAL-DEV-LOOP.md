@@ -561,8 +561,9 @@ The compile is deterministic under gdb, so pick one crossing in a first run
 a second run arm `watch *(int*)(box-8)` shortly before that hit number,
 logging each write's value and the `%rbp` chain. The log is the box's life:
 who took each count and who gave it back, by exact pc. This is what found the
-two retains of one join phi behind `docs/rc-log/2026-10-11-c-*.md`; a link to
-a symbolised build is `-emit asm` plus `gcc -nostdlib -static`.
+two retains of one join phi behind
+`docs/rc-log/2026-10-11-c-the-state-is-not-held-past-an-attempt.md`; a
+symbolised build is `-emit asm` plus `gcc -nostdlib -static`.
 
 ## arm64 / qemu locally: debug only, never a gate
 
