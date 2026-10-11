@@ -17,10 +17,11 @@
 #                     UCD files of that release (cmd/unicodegen -> std/unicode)
 #   toolchain         the pinned toolchain itself: every tool in mise.toml to
 #                     its latest release (mise.lock with it), the WASI adapter
-#                     kept at wasmtime's version, the mise release the repo
-#                     runs (FERN_MISE_VERSION and every workflow's pin), then
-#                     the tables above regenerated under the new Go
-#   all               every source above, in that order
+#                     and the wasm e2e suite's wasmtimePin kept at wasmtime's
+#                     version, the mise release the repo runs
+#                     (FERN_MISE_VERSION and every workflow's pin), then the
+#                     tables above regenerated under the new Go
+#   all               every source above, the tables once, under the new Go
 #
 # Each source leaves its committed inputs and its generated output changed
 # in the working tree, or unchanged when upstream has not moved; what to
@@ -69,10 +70,12 @@ toolchain() {
   echo "== toolchain"
   mise upgrade --bump
   # The adapter is an http: tool mise cannot look up; it ships from the
-  # wasmtime release and must stay at its version.
+  # wasmtime release and must stay at its version, as must the wasm e2e
+  # suite's own pin, which TestWasmtimePinMatchesCI holds to mise.toml.
   local wasmtime
   wasmtime="$(sed -nE 's/^wasmtime = "([^"]+)"$/\1/p' mise.toml)"
   sed -i -E "s|^(\"http:wasi-adapter\" = \{ version = \")[^\"]+|\1$wasmtime|" mise.toml
+  sed -i -E "s|^(const wasmtimePin = \")[^\"]+|\1$wasmtime|" internal/testing/e2e/wasm_e2e_test.go
   mise lock
   pin_mise_release "$(curl -fsSL --max-time 60 https://mise.jdx.dev/VERSION)"
   mise install
@@ -115,7 +118,7 @@ case "${1:-}" in
   roots) roots ;;
   toolchain-tables) toolchain_tables ;;
   toolchain) toolchain ;;
-  all) publicsuffix; roots; toolchain_tables; toolchain ;;
+  all) publicsuffix; roots; toolchain ;;
   *)
     echo "usage: scripts/refresh-data publicsuffix|roots|toolchain-tables|toolchain|all" >&2
     exit 2
