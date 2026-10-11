@@ -71,6 +71,11 @@ func HTTPByteSerializationOutput() []byte {
 		if keepAlive {
 			connection = "keep-alive"
 		}
+		if status == 101 {
+			// A 101's Connection names the upgrade, whatever keep_alive says
+			// (http_serialize_response_head_into).
+			connection = "Upgrade"
+		}
 		header += "Connection: " + connection + "\r\n\r\n"
 		out = append(out, header...)
 		if !bodiless && !headOnly {

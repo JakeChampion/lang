@@ -2410,7 +2410,7 @@ pub function http_serialize_response_into(b: usize, method: string, resp: HttpRe
   __push_head(b, resp);
   buf_push(b, fields);
   if (http_bodiless(resp.status)) {
-    __push_close(b, keep_alive);
+    __push_conn(b, resp, keep_alive);
     return;
   }
   if (method == "HEAD") {
@@ -2465,11 +2465,7 @@ pub function http_serialize_fields(fields: HeaderMap): string {
 pub function http_serialize_response_head_into(b: usize, resp: HttpResponse, keep_alive: boolean, fields: string): void {
   __push_head(b, resp);
   buf_push(b, fields);
-  if (resp.status == 101) {
-    buf_push(b, "Connection: Upgrade\r\n\r\n");
-    return;
-  }
-  __push_close(b, keep_alive);
+  __push_conn(b, resp, keep_alive);
 }
 
 // `__push_head(b, resp)` — the status line and the handler's fields into
@@ -2498,6 +2494,17 @@ function __push_length(b: usize, len: i32): void {
   buf_push(b, "Content-Length: ");
   io_buffered.buf_push_i64(b, len as i64);
   buf_push(b, "\r\n");
+}
+
+// `__push_conn(b, resp, keep_alive)` — the `Connection` field for a
+// response: a 101 names the upgrade whatever `keep_alive` says, every
+// other status takes `keep_alive`.
+function __push_conn(b: usize, resp: HttpResponse, keep_alive: boolean): void {
+  if (resp.status == 101) {
+    buf_push(b, "Connection: Upgrade\r\n\r\n");
+    return;
+  }
+  __push_close(b, keep_alive);
 }
 
 // `__push_close(b, keep_alive)` — the `Connection` field and the blank
