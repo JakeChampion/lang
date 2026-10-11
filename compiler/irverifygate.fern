@@ -202,6 +202,9 @@ pub function verify_or_refuse(fn_name: string, ops: ir.Op[], n_params: i32, n_lo
 // FERN_RC_CERTIFY: a finding is a lowering refusal, naming the function and
 // the value, under `1`; under `report` every finding is printed and the
 // function's census appended to the gate's, and the compile continues.
+// Refusal is on findings alone: a value the paths disagree on and a body
+// the certifier does not read (an async frame) are counted in the report
+// census, never refused, since neither is a shown imbalance.
 pub function certify_or_refuse(fn_name: string, f: ssa.SFunc, ops: ir.Op[], g: Gate): i32 {
   let mode: i32 = util.certify_mode();
   if (mode == 0) {
