@@ -329,6 +329,67 @@ function empty[T](): T[] { return []; }
 	}
 }
 
+// An assignment's target pins a generic call's result the way a `let`
+// annotation or a `return` does (#12093): a free function, a method, and
+// an associated function, each with nothing else to infer from.
+func TestAssignmentTargetPinsTypeArgs(t *testing.T) {
+	const decls = `struct Holder { n: i32 }
+struct Box[T] { items: T[] }
+trait Make { function make(): Self; }
+impl[T] Make for Box[T] { function make(): Self { return Box { items: [] }; } }
+function (h: Holder) fresh[T](): T[] { return []; }
+function empty[T](): T[] { return []; }
+`
+	ok := []string{
+		`function main(): i32 { let xs: i32[] = [1]; xs = empty(); return xs.len(); }`,
+		`function main(): i32 { let h = Holder { n: 1 }; let xs: i32[] = [1]; xs = h.fresh(); return xs.len(); }`,
+		`function main(): i32 { let b: Box[i32] = Box { items: [1] }; b = Box.make(); return b.items.len(); }`,
+	}
+	for _, body := range ok {
+		if err := checkSource(t, decls+body); err != nil {
+			t.Errorf("should type-check, got: %v\nsrc: %s", err, body)
+		}
+	}
+	// The target's type is an expectation, not a cast: a call whose result
+	// cannot be the target's type is still refused.
+	bad := `function main(): i32 { let n: i32 = 1; n = empty(); return n; }`
+	if err := checkSource(t, decls+bad); err == nil {
+		t.Errorf("expected an error assigning an array to an i32, got none")
+	}
+}
+
+// An assignment target stamps a call's type arguments as a `let` annotation
+// does: map_new's bare `Map` result takes the key and value types the lowering
+// reads for the key kind.
+func TestAssignmentTargetStampsMapNewTypeArgs(t *testing.T) {
+	prog, err := parser.Parse(`function main(): i32 { let m: Map[string, i32] = map_new(4); m = map_new(8); return 0; }`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if _, err := Check(prog); err != nil {
+		t.Fatalf("want no diagnostic, got %v", err)
+	}
+	var calls []*ast.Call
+	ast.Walk(prog.Funcs[0].Body, func(n ast.Node) bool {
+		if c, ok := n.(*ast.Call); ok {
+			if id, ok := c.Callee.(*ast.Ident); ok && id.Name == "map_new" {
+				calls = append(calls, c)
+			}
+		}
+		return true
+	})
+	if len(calls) != 2 {
+		t.Fatalf("found %d map_new calls, want 2", len(calls))
+	}
+	assigned := calls[1]
+	if len(assigned.TypeArgs) != 2 {
+		t.Fatalf("the assigned map_new's type arguments were not stamped: %v", assigned.TypeArgs)
+	}
+	if _, isStr := assigned.TypeArgs[0].(ast.StringType); !isStr {
+		t.Errorf("key type argument = %v, want string", assigned.TypeArgs[0])
+	}
+}
+
 // Construction-site type arguments on a struct literal (#6812): the
 // written instantiation seeds the field checks and outranks any
 // destination annotation, and its arity is validated against the decl.
