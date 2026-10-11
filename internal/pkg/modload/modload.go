@@ -1655,6 +1655,7 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 				r.rewriteType(&td.Methods[i].Params[j].Type)
 			}
 			r.rewriteType(&td.Methods[i].Result)
+			r.rewriteBounds(td.Methods[i].Bounds, td.Methods[i].BoundArgs, td.Methods[i].P)
 			r.rewriteTraitDefaultBody(&td.Methods[i])
 		}
 		// Supertrait references mangle the same way a `[T: mod.Trait]`
@@ -1672,27 +1673,34 @@ func (m *module) rewriteAllOpts(selfPrefix string, flatNamespace bool, skipPaths
 		for i := range impl.TraitArgs {
 			r.rewriteType(&impl.TraitArgs[i])
 		}
+		r.rewriteBounds(impl.Bounds, impl.BoundArgs, impl.P)
 	}
 	for _, fn := range m.prog.Funcs {
 		// The impl method's own record of which trait provided it,
 		// mangled to line up with the ImplDecl.Trait rewritten above.
 		fn.ImplTrait = r.resolveTraitName(fn.ImplTrait)
-		for tp, traits := range fn.Bounds {
-			for k, tn := range traits {
-				fn.Bounds[tp][k] = r.rewriteTraitNameAt(tn, fn.P)
-			}
+		r.rewriteBounds(fn.Bounds, fn.BoundArgs, fn.P)
+	}
+	return r.errs
+}
+
+// rewriteBounds mangles the traits a type-parameter list bounds by, and the
+// types they take as arguments (`T: From[mod.Foo]`), so they line up with
+// the trait's signature. The maps are rewritten in place: an impl's methods
+// share the impl's.
+func (r *rewriter) rewriteBounds(bounds map[string][]string, boundArgs map[string][][]ast.Type, p ast.Position) {
+	for tp, traits := range bounds {
+		for k, tn := range traits {
+			bounds[tp][k] = r.rewriteTraitNameAt(tn, p)
 		}
-		// Generic-trait bound args (`T: From[mod.Foo]`) are types — mangle
-		// any struct/enum names so they line up with the trait signature.
-		for _, perBound := range fn.BoundArgs {
-			for _, args := range perBound {
-				for i := range args {
-					r.rewriteType(&args[i])
-				}
+	}
+	for _, perBound := range boundArgs {
+		for _, args := range perBound {
+			for i := range args {
+				r.rewriteType(&args[i])
 			}
 		}
 	}
-	return r.errs
 }
 
 // rewriter holds the per-module state the AST walk needs.

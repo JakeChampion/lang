@@ -10115,3 +10115,123 @@ func TestPayloadlessVariantCallIsE038(t *testing.T) {
 		}
 	}
 }
+
+// A generic trait's default reads the trait's parameter as the impl's trait
+// argument once inherited: a concrete one, the impl's own parameter, and the
+// second of two (#12109). A body annotation names the parameter too.
+func TestGenericTraitDefaultTakesImplArgs(t *testing.T) {
+	src := `trait Holder[T] {
+  function get(self: Self): T;
+  function get_or(self: Self, d: T): T { let v: T = self.get(); return v; }
+}
+struct IntBox { v: i32 }
+impl Holder[i32] for IntBox { function get(self: IntBox): i32 { return self.v; } }
+struct Wrap[S] { v: S }
+impl[S] Holder[S] for Wrap[S] { function get(self: Wrap[S]): S { return self.v; } }
+struct Pair[A, B] { a: A, b: B }
+impl[A, B] Holder[B] for Pair[A, B] { function get(self: Pair[A, B]): B { return self.b; } }
+function main(): i32 {
+  let b: i32 = IntBox { v: 7 }.get_or(0);
+  let w: string = Wrap { v: "w" }.get_or("x");
+  let p: boolean = Pair { a: 1, b: true }.get_or(false);
+  return 0;
+}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("inherited generic-trait default should typecheck: %v", err)
+	}
+}
+
+// A default with its own type parameter, inherited by an impl that declares a
+// parameter of the same name, keeps the two apart.
+func TestTraitDefaultOwnTypeParamRenamedApart(t *testing.T) {
+	src := `trait Iter[T] {
+  function next(self: Self): Option[(T, Self)];
+  function fold[U](self: Self, init: U, f: (U, T) => U): U {
+    let acc: U = init;
+    let cur: Self = self;
+    let go: boolean = true;
+    while (go) {
+      match (cur.next()) {
+        Some(t) => { acc = f(acc, t.0); cur = t.1; },
+        None => { go = false; }
+      }
+    }
+    return acc;
+  }
+}
+struct Pair[T, U] { a: T, b: U, done: boolean }
+impl[T, U] Iter[U] for Pair[T, U] {
+  function next(self: Pair[T, U]): Option[(U, Pair[T, U])] {
+    if (self.done) { return None; }
+    return Some((self.b, Pair { a: self.a, b: self.b, done: true }));
+  }
+}
+function main(): i32 {
+  let p: Pair[string, i32] = Pair { a: "x", b: 4, done: false };
+  let n: boolean = p.fold(false, (acc: boolean, v: i32): boolean => acc || v == 4);
+  return 0;
+}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("own type parameter of an inherited default should typecheck: %v", err)
+	}
+}
+
+// `Self` written in a default's body is the impl type, as in a hand-written
+// impl method (#12114).
+func TestTraitDefaultBodySelfIsImplType(t *testing.T) {
+	src := `trait Count {
+  function step(self: Self): Self;
+  function twice(self: Self): Self {
+    let a: Self = self.step();
+    return a.step();
+  }
+}
+struct C { n: i32 }
+impl Count for C { function step(self: C): C { return C { n: self.n + 1 }; } }
+function main(): i32 {
+  let c: C = C { n: 0 };
+  return c.twice().n;
+}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("Self in a default's body should be the impl type: %v", err)
+	}
+}
+
+// A parametric impl at a tuple trait argument (`It[(i32, T)]`) reads the
+// impl's own parameter inside the tuple as a parameter, in its inherited
+// defaults as in its written methods.
+func TestTupleTraitArgumentReadsImplParams(t *testing.T) {
+	src := `trait It[T] {
+  function next(self: Self): Option[(T, Self)];
+  function first_or(self: Self, d: T): T {
+    match (self.next()) {
+      Some(t) => { return t.0; },
+      None => { return d; }
+    }
+  }
+}
+struct Arr[T] { xs: T[], idx: i32 }
+impl[T] It[T] for Arr[T] {
+  function next(self: Arr[T]): Option[(T, Arr[T])] {
+    if (self.idx >= self.xs.len()) { return None; }
+    return Some((self.xs[self.idx], Arr { xs: self.xs, idx: self.idx + 1 }));
+  }
+}
+struct Numbered[I, T] { it: I, at: i32 }
+impl[I: It[T], T] It[(i32, T)] for Numbered[I, T] {
+  function next(self: Numbered[I, T]): Option[((i32, T), Numbered[I, T])] {
+    match (self.it.next()) {
+      Some(t) => { return Some(((self.at, t.0), Numbered[I, T] { it: t.1, at: self.at + 1 })); },
+      None => { return None; }
+    }
+  }
+}
+function main(): i32 {
+  let n: Numbered[Arr[string], string] = Numbered[Arr[string], string] { it: Arr { xs: ["a"], idx: 0 }, at: 0 };
+  let p: (i32, string) = n.first_or((9, "none"));
+  return p.0;
+}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("a tuple trait argument should read the impl's parameters: %v", err)
+	}
+}

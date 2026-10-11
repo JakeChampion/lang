@@ -96,7 +96,7 @@ func Run(prog *ast.Program, info *checker.Info) error {
 		// below, so an unsatisfied bound surfaced as whatever the
 		// missing impl was needed for, under a compiler-bug banner.
 		boundErrs = append(boundErrs, checker.BoundErrors(info, gen, typeArgs, pos)...)
-		mang := mangle(id.Name, typeArgs)
+		mang := ast.MangleInst(id.Name, typeArgs)
 		instantiations[instKey{name: id.Name, mang: mang}] = typeArgs
 		id.Name = mang
 		return true
@@ -180,7 +180,7 @@ func Run(prog *ast.Program, info *checker.Info) error {
 			if !isGen || len(sl.TypeArgs) != len(gen.TypeParams) {
 				return
 			}
-			mang := mangle(sl.TypeName, sl.TypeArgs)
+			mang := ast.MangleInst(sl.TypeName, sl.TypeArgs)
 			structInsts[instKey{name: sl.TypeName, mang: mang}] = sl.TypeArgs
 			sl.TypeName = mang
 			sl.TypeArgs = nil
@@ -276,7 +276,7 @@ func Run(prog *ast.Program, info *checker.Info) error {
 			if !isGen || len(sl.TypeArgs) != len(gen.TypeParams) {
 				return
 			}
-			mang := mangle(sl.TypeName, sl.TypeArgs)
+			mang := ast.MangleInst(sl.TypeName, sl.TypeArgs)
 			structInsts[instKey{name: sl.TypeName, mang: mang}] = sl.TypeArgs
 			sl.TypeName = mang
 			sl.TypeArgs = nil
@@ -501,7 +501,7 @@ func Run(prog *ast.Program, info *checker.Info) error {
 			if !isGen || len(sl.TypeArgs) != len(gen.TypeParams) {
 				return
 			}
-			mang := mangle(sl.TypeName, sl.TypeArgs)
+			mang := ast.MangleInst(sl.TypeName, sl.TypeArgs)
 			structInsts[instKey{name: sl.TypeName, mang: mang}] = sl.TypeArgs
 			sl.TypeName = mang
 			sl.TypeArgs = nil
@@ -518,6 +518,7 @@ func Run(prog *ast.Program, info *checker.Info) error {
 		methodRecv := map[instKey]string{}
 		methodSimple := map[instKey]string{}
 		var newImpls []*ast.ImplDecl
+		called := methodCallsOn(prog)
 		for _, impl := range prog.Impls {
 			if len(impl.TypeParams) == 0 {
 				continue
@@ -550,6 +551,7 @@ func Run(prog *ast.Program, info *checker.Info) error {
 					ci := *impl
 					ci.TypeParams = nil
 					ci.Bounds = nil
+					ci.BoundArgs = nil
 					if _, isEnum := impl.Type.(ast.EnumType); isEnum {
 						ci.Type = ast.EnumType{Name: sk.mang}
 					} else {
@@ -603,6 +605,13 @@ func Run(prog *ast.Program, info *checker.Info) error {
 						}
 					}
 					if !complete || hasParamType(margs) {
+						continue
+					}
+					// A method whose result holds its receiver inside another
+					// instance is cloned for an instance only once something
+					// calls it there: each clone's result would be a new, larger
+					// instance with the same method.
+					if wrapsReceiver(gen.ReturnType, impl.Type) && !called[sk.mang+"."+mn] {
 						continue
 					}
 					mk := instKey{name: genName, mang: prefix + sk.mang + "_" + mn}
@@ -941,7 +950,7 @@ func enumImplMethod(info *checker.Info, impl *ast.ImplDecl, et ast.EnumType, mn 
 	if hasParamType(margs) {
 		return instKey{}, nil, false
 	}
-	return instKey{name: genName, mang: mangle(genName, margs)}, margs, true
+	return instKey{name: genName, mang: ast.MangleInst(genName, margs)}, margs, true
 }
 
 // enumAssocCallee resolves a generic associated dispatch `T.f(args)` that
@@ -1119,87 +1128,6 @@ func enumNeedsClone(ed *ast.EnumDecl, info *checker.Info) bool {
 	return false
 }
 
-// mangle generates a unique function name for a given
-// instantiation. Format: `<base>__<arg1>__<arg2>…`. Type names
-// come from ast.Type.String() which is already
-// `i32` / `f32` / `Foo` / `Foo[i32]` style. Brackets and commas
-// are stripped to keep the result a single identifier the rest
-// of the pipeline accepts.
-func mangle(base string, args []ast.Type) string {
-	var b strings.Builder
-	b.WriteString(base)
-	for _, a := range args {
-		b.WriteString("__")
-		b.WriteString(mangleArg(a))
-	}
-	return b.String()
-}
-
-// mangleArg renders one type argument into a symbol token.
-//
-// The subtlety it solves: a nested generic instantiation like
-// `Box[Box[i32]]` reaches `mangle` from two directions. The
-// type-slot rewriter (rewriteType) recurses inner-first, so the
-// outer call sees its arg ALREADY rewritten to a flat
-// `StructType{Name:"Box__i32"}` (no Args). The struct-literal path
-// instead passes the arg RAW as `StructType{Name:"Box", Args:[i32]}`.
-// If we mangled via `sanitize(a.String())` those two render
-// differently ("Box__i32" vs "Box_i32_"), the clone names diverge,
-// and the trailing re-check fails with "cannot assign Box__Box_i32_
-// to Box__Box__i32".
-//
-// Recursing through generic nominal types (and the composite shapes
-// that can contain them) makes both directions converge: a raw
-// `Box[i32]` arg mangles via `mangle("Box", [i32])` → "Box__i32",
-// matching the pre-flattened form's `sanitize("Box__i32")`.
-func mangleArg(t ast.Type) string {
-	switch x := t.(type) {
-	case ast.StructType:
-		if len(x.Args) > 0 {
-			return mangle(x.Name, x.Args)
-		}
-	case ast.EnumType:
-		if len(x.Args) > 0 {
-			return mangle(x.Name, x.Args)
-		}
-	case ast.ArrayType:
-		return mangleArg(x.Elem) + "_arr"
-	case ast.SliceType:
-		return mangleArg(x.Elem) + "_slice"
-	case ast.TupleType:
-		var b strings.Builder
-		b.WriteString("tup")
-		for _, e := range x.Elems {
-			b.WriteString("_")
-			b.WriteString(mangleArg(e))
-		}
-		return b.String()
-	}
-	return sanitize(t.String())
-}
-
-// sanitize maps a type's String() form into a token safe to embed
-// in a backend symbol name. Any character outside [A-Za-z0-9_] is
-// replaced with '_' — this covers the bracket/comma/space of
-// generic + slice forms (`Foo[Bar]`, `i32[]`) AND the parentheses
-// of a tuple type (`(i32, i32)`), whose literal `(`/`)` would
-// otherwise survive into the assembler symbol and fail to
-// assemble on the native backends (wasm tolerated them).
-func sanitize(s string) string {
-	out := make([]byte, 0, len(s))
-	for i := 0; i < len(s); i++ {
-		c := s[i]
-		isAlnum := (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
-			(c >= '0' && c <= '9') || c == '_'
-		if !isAlnum {
-			out = append(out, '_')
-			continue
-		}
-		out = append(out, c)
-	}
-	return string(out)
-}
-
 func sortKeys(ks []instKey) {
 	// Insertion sort — list lengths are tiny in practice (one
 	// per unique generic instantiation in the program).
@@ -1363,6 +1291,13 @@ func substituteNode(n ast.Node, sub map[string]ast.Type) {
 				x.TypeArgs[i] = substituteType(x.TypeArgs[i], sub)
 			}
 			substituteAssocReceiver(x, sub)
+			// A clone records the receiver it calls on, for methodCallsOn.
+			// Clones share the site, so it is replaced rather than written.
+			if x.Method != nil && !x.Method.Assoc && containsParamType(x.Method.Receiver) {
+				site := *x.Method
+				site.Receiver = substituteType(site.Receiver, sub)
+				x.Method = &site
+			}
 		case *ast.Ident:
 			for i := range x.TypeArgs {
 				x.TypeArgs[i] = substituteType(x.TypeArgs[i], sub)
@@ -1439,7 +1374,7 @@ func substituteAssocReceiver(c *ast.Call, sub map[string]ast.Type) {
 	// An applied generic struct is cloned per instantiation, so the call
 	// names the clone (`Box[string]` -> `Box__string`).
 	if st, ok := ct.(ast.StructType); ok && len(st.Args) > 0 {
-		fa.Target = &ast.Ident{P: tid.P, Name: mangle(st.Name, st.Args)}
+		fa.Target = &ast.Ident{P: tid.P, Name: ast.MangleInst(st.Name, st.Args)}
 		return
 	}
 	if name, ok := concreteTypeNameOf(ct); ok {
@@ -1459,6 +1394,84 @@ func substituteAssocReceiver(c *ast.Call, sub map[string]ast.Type) {
 // (or recursively contains one). Used by the monomorpher to defer
 // rewriting StructLit TypeArgs that still hold a ParamType — those
 // only become concrete after substituteBlock runs over a clone.
+// methodCallsOn names, as `<receiver>.<method>`, every method call in the
+// program's bodies, the receiver spelled as its clone.
+func methodCallsOn(prog *ast.Program) map[string]bool {
+	out := map[string]bool{}
+	for _, fn := range prog.Funcs {
+		if fn.Body == nil {
+			continue
+		}
+		ast.Walk(fn.Body, func(n ast.Node) bool {
+			if c, ok := n.(*ast.Call); ok && c.Method != nil {
+				switch r := c.Method.Receiver.(type) {
+				case ast.StructType:
+					out[ast.MangleInst(r.Name, r.Args)+"."+c.Method.Field] = true
+				}
+			}
+			return true
+		})
+	}
+	return out
+}
+
+// wrapsReceiver says `t` holds `recv` as an argument of a generic struct
+// instance, as a lazy adapter's result does (`FilterIt[Self, T]`).
+func wrapsReceiver(t ast.Type, recv ast.Type) bool {
+	switch x := t.(type) {
+	case ast.StructType:
+		for _, a := range x.Args {
+			if mentionsType(a, recv) || wrapsReceiver(a, recv) {
+				return true
+			}
+		}
+	case ast.EnumType:
+		for _, a := range x.Args {
+			if wrapsReceiver(a, recv) {
+				return true
+			}
+		}
+	case ast.TupleType:
+		for _, e := range x.Elems {
+			if wrapsReceiver(e, recv) {
+				return true
+			}
+		}
+	case ast.ArrayType:
+		return wrapsReceiver(x.Elem, recv)
+	}
+	return false
+}
+
+func mentionsType(t, want ast.Type) bool {
+	if ast.Equal(t, want) {
+		return true
+	}
+	switch x := t.(type) {
+	case ast.StructType:
+		for _, a := range x.Args {
+			if mentionsType(a, want) {
+				return true
+			}
+		}
+	case ast.EnumType:
+		for _, a := range x.Args {
+			if mentionsType(a, want) {
+				return true
+			}
+		}
+	case ast.TupleType:
+		for _, e := range x.Elems {
+			if mentionsType(e, want) {
+				return true
+			}
+		}
+	case ast.ArrayType:
+		return mentionsType(x.Elem, want)
+	}
+	return false
+}
+
 func hasParamType(types []ast.Type) bool {
 	for _, t := range types {
 		if containsParamType(t) {
@@ -1696,7 +1709,7 @@ func rewriteType(t ast.Type, info *checker.Info, into map[instKey][]ast.Type) as
 		if _, isGen := info.GenericStructs[x.Name]; !isGen {
 			return ast.StructType{Name: x.Name, Args: args}
 		}
-		mang := mangle(x.Name, args)
+		mang := ast.MangleInst(x.Name, args)
 		into[instKey{name: x.Name, mang: mang}] = args
 		return ast.StructType{Name: mang}
 	case ast.EnumType:
@@ -1715,7 +1728,7 @@ func rewriteType(t ast.Type, info *checker.Info, into map[instKey][]ast.Type) as
 		// generic — it re-checks fine and must keep its single decl so its
 		// variant names don't collide across instantiations.
 		if ed := genericEnum(info, x.Name); ed != nil && enumNeedsClone(ed, info) {
-			mang := mangle(x.Name, args)
+			mang := ast.MangleInst(x.Name, args)
 			into[instKey{name: x.Name, mang: mang}] = args
 			return ast.EnumType{Name: mang}
 		}

@@ -742,6 +742,7 @@ func (f *formatter) formatTraitMethod(m ast.TraitMethod) {
 	f.indent(1)
 	f.b.WriteString("function ")
 	f.b.WriteString(m.Name)
+	f.writeTypeParams(m.TypeParams, m.Bounds, m.BoundArgs)
 	f.b.WriteByte('(')
 	for i, p := range m.Params {
 		if i > 0 {
@@ -778,7 +779,7 @@ func (f *formatter) formatTraitMethod(m ast.TraitMethod) {
 // re-inserted as its first parameter (the shape an impl block requires).
 func (f *formatter) formatImplDecl(id *ast.ImplDecl) {
 	f.b.WriteString("impl")
-	f.writeTypeParams(id.TypeParams, id.Bounds, nil)
+	f.writeTypeParams(id.TypeParams, id.Bounds, id.BoundArgs)
 	f.b.WriteByte(' ')
 	if id.Trait != "" {
 		f.b.WriteString(id.Trait)

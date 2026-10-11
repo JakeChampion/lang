@@ -1076,6 +1076,15 @@ func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
 		if err != nil {
 			return nil, err
 		}
+		var mtps []string
+		var mbounds map[string][]string
+		var mbargs map[string][][]ast.Type
+		if p.match(lexer.Punct, "[") {
+			mtps, mbounds, mbargs, err = p.parseTypeParamListWithArgs()
+			if err != nil {
+				return nil, err
+			}
+		}
 		if _, err := p.expect(lexer.Punct, "("); err != nil {
 			return nil, err
 		}
@@ -1136,8 +1145,14 @@ func (p *parser) parseTraitDecl() (*ast.TraitDecl, error) {
 		} else if _, err := p.expect(lexer.Punct, ";"); err != nil {
 			return nil, err
 		}
+		// An impl method cannot declare type parameters of its own, so a
+		// required method with them could never be provided.
+		if body == nil && len(mtps) > 0 {
+			return nil, p.errorf(mkw.Pos, "trait method %q declares its own type parameters, so it must have a default body", mname.Text)
+		}
 		td.Methods = append(td.Methods, ast.TraitMethod{
 			P: mkw.Pos, Name: mname.Text, Params: params, Result: ret, Assoc: assoc, Body: body,
+			TypeParams: mtps, Bounds: mbounds, BoundArgs: mbargs,
 		})
 	}
 	if _, err := p.expect(lexer.Punct, "}"); err != nil {
@@ -1165,8 +1180,9 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 	// docs/TRAITS.md.
 	var implTypeParams []string
 	var implBounds map[string][]string
+	var implBoundArgs map[string][][]ast.Type
 	if p.match(lexer.Punct, "[") {
-		implTypeParams, implBounds, err = p.parseTypeParamList()
+		implTypeParams, implBounds, implBoundArgs, err = p.parseTypeParamListWithArgs()
 		if err != nil {
 			return nil, nil, err
 		}
@@ -1233,7 +1249,7 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 	if _, err := p.expect(lexer.Punct, "{"); err != nil {
 		return nil, nil, err
 	}
-	id := &ast.ImplDecl{P: kw.Pos, Trait: trait, TraitPos: tnameTok.Pos, Type: implType, TypePos: typePos, TypeParams: implTypeParams, Bounds: implBounds, TraitArgs: traitArgs}
+	id := &ast.ImplDecl{P: kw.Pos, Trait: trait, TraitPos: tnameTok.Pos, Type: implType, TypePos: typePos, TypeParams: implTypeParams, Bounds: implBounds, BoundArgs: implBoundArgs, TraitArgs: traitArgs}
 	var methods []*ast.FuncDecl
 	for !p.match(lexer.Punct, "}") && !p.match(lexer.EOF, "") {
 		// Associated-type binding: `type Item = T;`. Records the concrete
@@ -1327,6 +1343,7 @@ func (p *parser) parseImplDecl() (*ast.ImplDecl, []*ast.FuncDecl, error) {
 			}
 			fn.TypeParams = implTypeParams
 			fn.Bounds = implBounds
+			fn.BoundArgs = implBoundArgs
 		}
 		methods = append(methods, fn)
 		id.MethodNames = append(id.MethodNames, fn.Name)

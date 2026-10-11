@@ -4343,3 +4343,54 @@ func TestQualifiedStructLitTakesPostfix(t *testing.T) {
 		}
 	}
 }
+
+// A parametric impl's bound keeps its trait arguments (`I: Iter[T]`), on
+// the ImplDecl and on each method the block desugars to, as a function's
+// type-parameter list does.
+func TestParametricImplKeepsBoundArgs(t *testing.T) {
+	prog, err := Parse(`trait Iter[T] { function next(self: Self): Option[(T, Self)]; }
+struct W[I, T] { it: I, k: T }
+impl[I: Iter[T], T] Iter[T] for W[I, T] {
+  function next(self: W[I, T]): Option[(T, W[I, T])] { return None; }
+}`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(prog.Impls) != 1 {
+		t.Fatalf("impls = %d, want 1", len(prog.Impls))
+	}
+	check := func(what string, args map[string][][]ast.Type) {
+		t.Helper()
+		ba := args["I"]
+		if len(ba) != 1 || len(ba[0]) != 1 || ba[0][0].String() != "T" {
+			t.Errorf("%s BoundArgs[I] = %v, want [[T]]", what, ba)
+		}
+	}
+	check("impl", prog.Impls[0].BoundArgs)
+	for _, fn := range prog.Funcs {
+		if fn.Name == "next" {
+			check("method", fn.BoundArgs)
+			return
+		}
+	}
+	t.Fatal("method next not desugared")
+}
+
+// A trait's default method may declare its own type parameters, with bounds;
+// a required one may not, since no impl method could provide it.
+func TestTraitDefaultOwnTypeParams(t *testing.T) {
+	prog, err := Parse(`trait Iter[T] {
+  function next(self: Self): Option[(T, Self)];
+  function fold[A: Copy](self: Self, init: A, f: (A, T) => A): A { return init; }
+}`)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	m := prog.Traits[0].Methods[1]
+	if len(m.TypeParams) != 1 || m.TypeParams[0] != "A" || len(m.Bounds["A"]) != 1 || m.Bounds["A"][0] != "Copy" {
+		t.Errorf("fold type params = %v bounds = %v, want [A] with A: Copy", m.TypeParams, m.Bounds)
+	}
+	if _, err := Parse(`trait Iter[T] { function map[U](self: Self, f: (T) => U): U; }`); err == nil || !strings.Contains(err.Error(), "must have a default body") {
+		t.Errorf("required method with its own type parameters: got %v", err)
+	}
+}
