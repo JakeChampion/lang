@@ -334,6 +334,9 @@ pub function op_table(): OpTable {
   // The argument vector is built once and cached: fresh on the first call
   // and a borrow after, so no single answer.
   rows = add(rows, ["args", "environ"], inert(result_unknown()));
+  // A raw block's count is whatever the program stores in it: core/map
+  // builds its handles this way, so a release of one is unproved.
+  rows = add(rows, ["alloc", "raw_alloc"], inert(result_unknown()));
   return OpTable { names: util.name_index(rows.names), sigs: rows.sigs };
 }
 
