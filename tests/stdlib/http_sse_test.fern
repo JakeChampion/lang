@@ -1,0 +1,134 @@
+import "std/test";
+import "std/http";
+import "std/http/sse";
+import "std/time";
+import "std/array";
+import "std/option";
+
+// tests/stdlib/http_sse_test.fern — std/http/sse: an event encoded as the
+// standard writes it (one data line per line of the payload, the name,
+// id and retry lines where set, a line break in a name or id left out),
+// the comment line, the standard's own decoding examples read back, a
+// stream fed in pieces that cut lines and a multi-byte character, the
+// reconnection time and an id holding NUL, and the response: its
+// headers, its body the events joined, with and without the keep-alive
+// wrapper, read back by the decoder.
+
+function test_encode_simple(): test.TestOutcome {
+  return test.assert_eq(sse.event("hi").encode(), "data: hi\n\n");
+}
+
+function test_encode_lines(): test.TestOutcome {
+  return test.assert_eq(sse.event("a\r\nb\rc\nd").encode(), "data: a\ndata: b\ndata: c\ndata: d\n\n");
+}
+
+function test_encode_fields(): test.TestOutcome {
+  let e: sse.Event = sse.event("x").with_name("tick\nbreak").with_id("7\r\n").with_retry(2500);
+  return test.assert_eq(e.encode(), "event: tickbreak\nid: 7\nretry: 2500\ndata: x\n\n");
+}
+
+function test_encode_empty(): test.TestOutcome {
+  return test.assert_eq(sse.event("").encode() + "|" + sse.comment("keep-alive"), "data: \n\n|: keep-alive\n\n");
+}
+
+function shown(evs: sse.Event[]): string {
+  let out: string = "";
+  for e in evs {
+    out = out + "[" + e.name + "|" + e.id + "|" + e.data + "]";
+  }
+  return out;
+}
+
+function decoded(s: string): string {
+  let fed: (sse.Decoder, sse.Event[]) = sse.decoder().feed(s.bytes());
+  return shown(fed.1);
+}
+
+function test_decode_joined_data(): test.TestOutcome {
+  return test.assert_eq(decoded("data: YHOO\ndata: +2\ndata: 10\n\n"), "[||YHOO\n+2\n10]");
+}
+
+function test_decode_standard_example(): test.TestOutcome {
+  let s: string = ": test stream\n\ndata: first event\nid: 1\n\ndata:second event\nid\n\ndata:  third event\n\n";
+  return test.assert_eq(decoded(s), "[|1|first event][||second event][|| third event]");
+}
+
+function test_decode_blank_data(): test.TestOutcome {
+  return test.assert_eq(decoded("data\n\ndata\ndata\n\ndata:"), "[||][||\n]");
+}
+
+function test_decode_pieces(): test.TestOutcome {
+  let bom: u8[] = [239 as u8, 187 as u8, 191 as u8];
+  let bs: u8[] = bom.concat("event: add\r\nid: 3\r\ndata: café\r\ndata: two\r\n\r\n: comment\nretry: 1500\ndata: last\n\n".bytes());
+  let want: string = "[add|3|café\ntwo][|3|last]";
+  let cut: i32 = 1;
+  while (cut < bs.len()) {
+    let d: sse.Decoder = sse.decoder();
+    let evs: sse.Event[] = [];
+    let at: i32 = 0;
+    while (at < bs.len()) {
+      let end: i32 = at + cut;
+      if (end > bs.len()) {
+        end = bs.len();
+      }
+      let fed: (sse.Decoder, sse.Event[]) = d.feed(array.slice(bs, at, end));
+      d = fed.0;
+      evs = evs.concat(fed.1);
+      at = end;
+    }
+    if (shown(evs) != want || d.retry != 1500) {
+      return test.fail("pieces of " + cut.to_string() + " bytes: " + shown(evs) + " retry " + d.retry.to_string());
+    }
+    cut = cut + 1;
+  }
+  return test.assert_true(true);
+}
+
+function test_decode_ignored_fields(): test.TestOutcome {
+  let bs: u8[] = "id: a".bytes().append(0 as u8).concat("b\nretry: 3x\nretry:\nother: x\ndata: v\n\n".bytes());
+  let fed: (sse.Decoder, sse.Event[]) = sse.decoder().feed(bs);
+  return test.assert_eq(shown(fed.1) + " retry " + fed.0.retry.to_string(), "[||v] retry -1");
+}
+
+function ticks(i: i32): Option[sse.Event] {
+  if (i >= 3) {
+    return None;
+  }
+  return Some(sse.event("tick " + i.to_string()).with_id(i.to_string()));
+}
+
+function test_respond(): test.TestOutcome {
+  let r: HttpResponse = sse.respond(ticks);
+  let fed: (sse.Decoder, sse.Event[]) = sse.decoder().feed(r.body_bytes());
+  let ct: string = r.headers.get("content-type").unwrap_or("");
+  let cc: string = r.headers.get("cache-control").unwrap_or("");
+  return test.assert_eq(r.status.to_string() + " " + ct + " " + cc + " " + shown(fed.1), "200 text/event-stream no-cache [|0|tick 0][|1|tick 1][|2|tick 2]");
+}
+
+function test_respond_with(): test.TestOutcome {
+  let r: HttpResponse = sse.respond_with(time.duration_seconds(1 as i64), ticks);
+  return test.assert_eq(r.body_string(), "id: 0\ndata: tick 0\n\nid: 1\ndata: tick 1\n\nid: 2\ndata: tick 2\n\n");
+}
+
+function test_last_event_id(): test.TestOutcome {
+  let req: HttpRequest = http.request("GET", "/events").with_header("Last-Event-ID", "41");
+  let none: HttpRequest = http.request("GET", "/events");
+  return test.assert_eq(sse.last_event_id(req).unwrap_or("-") + sse.last_event_id(none).unwrap_or("-"), "41-");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/http/sse");
+  r = r.it("encodes an event", test_encode_simple);
+  r = r.it("encodes each line of the data", test_encode_lines);
+  r = r.it("encodes the name, id and retry", test_encode_fields);
+  r = r.it("encodes empty data and a comment", test_encode_empty);
+  r = r.it("decodes joined data lines", test_decode_joined_data);
+  r = r.it("decodes the standard's example", test_decode_standard_example);
+  r = r.it("decodes blank data", test_decode_blank_data);
+  r = r.it("decodes a stream fed in pieces", test_decode_pieces);
+  r = r.it("ignores what the standard ignores", test_decode_ignored_fields);
+  r = r.it("responds with the events", test_respond);
+  r = r.it("responds under a keep-alive", test_respond_with);
+  r = r.it("reads Last-Event-ID", test_last_event_id);
+  return r.finish();
+}

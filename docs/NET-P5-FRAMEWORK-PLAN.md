@@ -115,10 +115,26 @@ decides what wraps it.
    Gate: `tests/stdlib/http_cookie_test.fern` in the stdtest differential,
    its last case the client's route over the scripted network;
    `conformance/cases/http_cookies`.
-4. **SSE and WebSocket.** SSE over `Body::Chunks` with the keep-alive
-   comment; WebSocket (RFC 6455) with cork, the `Sent` / `Backpressure` /
+4. **SSE and WebSocket.** `std/http/sse` (landed): `Event` and its
+   encoding, `respond` over `Body::Chunks`, `respond_with` writing the
+   keep-alive comment while the producer waits, and the client's
+   `Decoder`. For a producer to wait at all, the serve loop runs a chunk
+   producer as a task: one that parks becomes a flight on its connection
+   (`ParkedTail`, a `Producer` job beside the handler's), woken by what it
+   waits on, so an event stream costs the worker nothing between events;
+   the keep-alive comment is the loop's too (`http.chunks_idle`, a
+   filler the producer carries and the loop writes while it is parked
+   past the interval), since a handler reaches no clock and no wait
+   around its platform (E080). The wait a producer makes between events
+   is the platform's: `Platform.sleep(d)`, which parks under the loop,
+   naps in a plain program, and spends the simulation's clock in the sim.
+   Gate:
+   `tests/stdlib/http_sse_test.fern` in the stdtest differential;
+   `TestSelfHostServeSSE` (x86-64, arm64) streaming while another
+   connection is answered, `TestServeSSESequentialInterp` its twin.
+   WebSocket (RFC 6455) with cork, the `Sent` / `Backpressure` /
    `Dropped` send result and drain event from P1, and the shared compressor
-   mode. Gate: the Autobahn suite on the `net-nightly` lane.
+   mode, next. Gate: the Autobahn suite on the `net-nightly` lane.
 5. **Static files, compression, proxies, caching.** ETag, `Range` and
    precompressed variants; response compression (gzip and zstd; brotli
    decode only) off by default as every 2026 server has it; PROXY protocol

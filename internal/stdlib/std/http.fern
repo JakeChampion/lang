@@ -2808,7 +2808,22 @@ pub function file(path: string): HttpResponse {
 // up front; a `Content-Length` the handler set is dropped. The
 // `Content-Type` is the caller's to set.
 pub function chunks(status: i32, next: (i32) => Option[u8[]]): HttpResponse {
-  return HttpResponse { status: status, body: BodyChunks(ChunkProducer { next: next }), headers: headers.header_map_new(), trailers: headers.header_map_new() };
+  let none: u8[] = [];
+  return HttpResponse { status: status, body: BodyChunks(ChunkProducer { next: next, idle_ms: 0, filler: none }), headers: headers.header_map_new(), trailers: headers.header_map_new() };
+}
+
+// `chunks_idle(status, next, idle, filler)` — `chunks`, with `filler`
+// written as a chunk of its own whenever `next` has been waiting `idle`
+// for its next chunk since the last byte went out: what keeps a quiet
+// stream (std/http/sse) open through an idle timeout in a proxy or the
+// client. The serve loop asks `next` as a task, so its wait parks the
+// connection, and writes the filler while it is parked.
+pub function chunks_idle(status: i32, next: (i32) => Option[u8[]], idle: Duration, filler: u8[]): HttpResponse {
+  let ms: i64 = idle.as_millis();
+  if (ms > 2147483647 as i64) {
+    ms = 2147483647 as i64;
+  }
+  return HttpResponse { status: status, body: BodyChunks(ChunkProducer { next: next, idle_ms: ms as i32, filler: filler }), headers: headers.header_map_new(), trailers: headers.header_map_new() };
 }
 
 // ============================================================

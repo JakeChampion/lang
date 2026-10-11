@@ -1167,6 +1167,12 @@ func TestRunnerHTTPFormExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "http_form", "std/http/form", 4)
 }
 
+// `tests/stdlib/http_sse_test.fern` encodes and decodes server-sent
+// events and streams them as a response.
+func TestRunnerHTTPSSEExamplePasses(t *testing.T) {
+	runnerSuitePasses(t, "http_sse", "std/http/sse", 12)
+}
+
 func TestRunnerPublicSuffixExamplePasses(t *testing.T) {
 	runnerSuitePasses(t, "publicsuffix", "std/publicsuffix", 8)
 }

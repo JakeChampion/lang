@@ -37,7 +37,7 @@ function main(): i32 {
         if (i == 0) { return Some("ab".bytes()); }
         if (i == 1) { return Some("cde".bytes()); }
         return None;
-    } };
+    }, idle_ms: 0, filler: [] };
     return total(p);
 }
 `
