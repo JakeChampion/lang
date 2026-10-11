@@ -249,13 +249,7 @@ pub function certify_or_refuse(fn_name: string, f: ssa.SFunc, ops: ir.Op[], g: G
   }
   let r: rccertify.Report = rccertify.certify(f, ops, g.abis.lookup(fn_name), g.abis, g.rc, g.rcops);
   if (mode == 1) {
-    // A finding goes out at once: the census rides a buffer not every
-    // gate flushes, and a finding is what the mode exists to show.
-    for x in r.findings {
-      eprint("FERN_RC_CERTIFY: finding " + rccertify.render(fn_name, x));
-    }
-    census_line(fn_name, r, g);
-    dump_if_asked(fn_name, f);
+    report_one(fn_name, f, r, g);
     return 0;
   }
   if (r.findings.len() == 0) {
@@ -274,6 +268,17 @@ pub function certify_or_refuse(fn_name: string, f: ssa.SFunc, ops: ir.Op[], g: G
   eprint(out);
   exit(5);
   return 0;
+}
+
+// report_one is the report mode's answer for one function. A finding goes
+// out at once: the census rides a buffer not every gate flushes, and a
+// finding is what the mode exists to show.
+function report_one(fn_name: string, f: ssa.SFunc, r: rccertify.Report, g: Gate): void {
+  for x in r.findings {
+    eprint("FERN_RC_CERTIFY: finding " + rccertify.render(fn_name, x));
+  }
+  census_line(fn_name, r, g);
+  dump_if_asked(fn_name, f);
 }
 
 // certify_ops_or_refuse is certify_or_refuse for a backend that does not
