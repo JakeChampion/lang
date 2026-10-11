@@ -37,8 +37,9 @@ Unsupported constructs refuse the whole function with a reason.
 - A record, tuple or variant construction nothing reads is removed before
   the unit plan sees it (`semdead`, last in the pipeline after the splices
   that leave such constructions behind): its operands lose a reader and are
-  released where they die. A record update, a type with a finalizer, and
-  under `-g` a value a source variable is bound to are kept.
+  released where they die. A type with a finalizer, and under `-g` a value a
+  source variable is bound to, are kept; a record update names its base in
+  `imm`, which counts as a read, so a kept update keeps its base built.
 - Record literals as `record_new` and named-field projections as
   `record_get`. A record is a declared struct with no type parameters and no
   enum owner; its schema (`semrecords.Record`) is the declaration's field
