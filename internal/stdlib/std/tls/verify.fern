@@ -43,6 +43,8 @@ pub enum VerifyError {
   KeyUsage(i32),
   // The leaf's extended key usage does not allow a TLS server.
   NotForServers,
+  // The leaf's extended key usage does not allow a TLS client.
+  NotForClients,
   NameMismatch(string),
   BadSignature(i32),
   // A CA's name constraints exclude a name of a certificate below it.
@@ -89,6 +91,9 @@ pub function (e: VerifyError) message(): string {
     },
     NotForServers => {
       return "tls verify: the certificate is not for TLS servers";
+    },
+    NotForClients => {
+      return "tls verify: the certificate is not for TLS clients";
     },
     NameMismatch(name) => {
       return "tls verify: the certificate is not valid for " + name;
@@ -474,15 +479,21 @@ function __same_bytes(a: u8[], b: u8[]): boolean {
 // __leaf_ok checks what only the leaf must satisfy: usable for a TLS
 // server, by key usage and extended key usage, under the name asked for.
 function __leaf_ok(leaf: x509.Certificate, name: string, now: i64): Result[boolean, VerifyError] {
-  __usable(leaf, 0, now)?;
-  if (leaf.key_usage >= 0 && (leaf.key_usage & x509.KU_DIGITAL_SIGNATURE) == 0) {
-    return Err(KeyUsage(0));
-  }
+  __signing_leaf(leaf, now)?;
   if (leaf.has_ext_key_usage && !__has(leaf.ext_key_usage, x509.EKU_SERVER_AUTH) && !__has(leaf.ext_key_usage, x509.EKU_ANY)) {
     return Err(NotForServers);
   }
   if (!matches_name(leaf, name)) {
     return Err(NameMismatch(name));
+  }
+  return Ok(true);
+}
+
+// __signing_leaf checks a leaf is usable now and may sign.
+function __signing_leaf(leaf: x509.Certificate, now: i64): Result[boolean, VerifyError] {
+  __usable(leaf, 0, now)?;
+  if (leaf.key_usage >= 0 && (leaf.key_usage & x509.KU_DIGITAL_SIGNATURE) == 0) {
+    return Err(KeyUsage(0));
   }
   return Ok(true);
 }
@@ -499,6 +510,24 @@ function __has(v: string[], x: string): boolean {
 // verify_server validates a server's chain for `name` at time `now` and
 // answers the leaf.
 pub function verify_server(chain: u8[][], roots: Roots, name: string, now: i64): Result[x509.Certificate, VerifyError] {
+  let certs: x509.Certificate[] = __parsed(chain)?;
+  __leaf_ok(certs[0], name, now)?;
+  return __rooted(certs, roots, now);
+}
+
+// verify_client validates a client's chain at time `now`, with no name to
+// check and the leaf allowed a TLS client, and answers the leaf.
+pub function verify_client(chain: u8[][], roots: Roots, now: i64): Result[x509.Certificate, VerifyError] {
+  let certs: x509.Certificate[] = __parsed(chain)?;
+  __signing_leaf(certs[0], now)?;
+  if (certs[0].has_ext_key_usage && !__has(certs[0].ext_key_usage, x509.EKU_CLIENT_AUTH) && !__has(certs[0].ext_key_usage, x509.EKU_ANY)) {
+    return Err(NotForClients);
+  }
+  return __rooted(certs, roots, now);
+}
+
+// __parsed is the chain's certificates, which must not be empty.
+function __parsed(chain: u8[][]): Result[x509.Certificate[], VerifyError] {
   if (chain.len() == 0) {
     return Err(EmptyChain);
   }
@@ -515,8 +544,12 @@ pub function verify_server(chain: u8[][], roots: Roots, name: string, now: i64):
     }
     i = i + 1;
   }
+  return Ok(certs);
+}
+
+// __rooted answers the leaf when a path from it reaches a root.
+function __rooted(certs: x509.Certificate[], roots: Roots, now: i64): Result[x509.Certificate, VerifyError] {
   let leaf: x509.Certificate = certs[0];
-  __leaf_ok(leaf, name, now)?;
   let s: Search = __extend([leaf], 1, certs.drop(1), roots, now, Search { found: false, err: UnknownIssuer });
   if (!s.found) {
     return Err(s.err);

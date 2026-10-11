@@ -3,6 +3,7 @@ import "std/hex";
 import "std/i32";
 import "std/tls/client";
 import "std/tls/handshake";
+import "std/tls/identity";
 import "std/tls/server";
 import "std/tls/verify";
 import "std/time";
@@ -94,18 +95,30 @@ const ROOT_PEM: string = "-----BEGIN CERTIFICATE-----\n"
   + "ma+p5XJc/XRiadAyELH6rcz8lCJYu4FR2kG+B5Q6TooUvWFelmksi4lockYOgnwK\n"
   + "-----END CERTIFICATE-----\n";
 
+const CLIENT_LEAF: string = "308201203081d3a00302010202020301300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30163114301206035504030c0b6665726e2d636c69656e74302a300506032b6570032100c6822637c7d310ec57627be00ba259d253749f4aaf644470cffbe53a35f73242a3353033300c0603551d130101ff04023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070302300506032b6570034100161c1f81f20e2ac01097ac7bf062898a3fa631c14e14d69861e37755887101605670ad0a5cafeab706169f96d64df8635f7f88b247d8d524612892d543765a0c";
+
+const OTHER_CLIENT_ROOT: string = "308201283081dba00302010202020302300506032b6570302a3128302606035504030c1f4665726e20544c5320436c69656e742054657374204f7468657220526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a302a3128302606035504030c1f4665726e20544c5320436c69656e742054657374204f7468657220526f6f74302a300506032b657003210034b4d9043156cb6dcf0beb0a2949b7559c940d2bcb6dbe8c53a9b30278e3a746a3233021300f0603551d130101ff040530030101ff300e0603551d0f0101ff040403020106300506032b65700341003a9145105498d4b7f16339977c40c22565b660417d00851e484090c2531bf2359bfb98f805dd451467aa03170ec6a0822acdf0af5580b6108161de725fc4c008";
+
+const OTHER_CLIENT_LEAF: string = "308201263081d9a00302010202020303300506032b6570302a3128302606035504030c1f4665726e20544c5320436c69656e742054657374204f7468657220526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30163114301206035504030c0b6665726e2d636c69656e74302a300506032b6570032100c6822637c7d310ec57627be00ba259d253749f4aaf644470cffbe53a35f73242a3353033300c0603551d130101ff04023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070302300506032b6570034100c70407db26c5dea19ef3245364903fd154091d4779028386bb90e5e6dac508c9cddbaf1fb42768ae02e5c544cd7af31f965e23a452c3794257d50f2bed96f209";
+
+const SERVER_ONLY_CLIENT_LEAF: string = "308201203081d3a00302010202020304300506032b657030243122302006035504030c194665726e20544c5320536572766572205465737420526f6f743020170d3230303130313030303030305a180f32313030303130313030303030305a30163114301206035504030c0b6665726e2d636c69656e74302a300506032b6570032100c6822637c7d310ec57627be00ba259d253749f4aaf644470cffbe53a35f73242a3353033300c0603551d130101ff04023000300e0603551d0f0101ff04040302078030130603551d25040c300a06082b06010505070301300506032b6570034100b822bc2cc06272e0b6fa9c5bbeeec6597cc9c5061653b88a12414a2570e4408b569fce2c5555d611bbaf7fa5c7def9f85eb73ef86c0e5b1422256a473ca1a00d";
+
+const CLIENT_PKCS8: string = "-----BEGIN PRIVATE KEY-----\n"
+  + "MC4CAQAwBQYDK2VwBCIEIFVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV\n"
+  + "-----END PRIVATE KEY-----\n";
+
 function roots(): verify.Roots {
   return verify.roots([hex.hex_decode(ROOT)]);
 }
 
-function key_outcome(r: Result[server.PrivateKey, server.KeyError]): string {
+function key_outcome(r: Result[identity.PrivateKey, identity.KeyError]): string {
   match (r) {
     Ok(k) => {
       match (k) {
-        server.EcdsaKey(e) => {
+        identity.EcdsaKey(e) => {
           return "ec " + hex.hex_encode(e.public_point()).take(20);
         },
-        server.Ed25519Seed(seed) => {
+        identity.Ed25519Seed(seed) => {
           return "ed25519 " + hex.hex_encode(seed).take(8);
         }
       }
@@ -118,44 +131,44 @@ function key_outcome(r: Result[server.PrivateKey, server.KeyError]): string {
 }
 
 function test_keys(): test.TestOutcome {
-  let pkcs8: string = key_outcome(server.private_key_from_pem(P256_PKCS8));
+  let pkcs8: string = key_outcome(identity.private_key_from_pem(P256_PKCS8));
   if (pkcs8 != "ec 0451a7580833898ea1b1") {
     return test.fail("P-256 PKCS #8: " + pkcs8);
   }
-  if (key_outcome(server.private_key_from_pem(P256_SEC1)) != pkcs8) {
-    return test.fail("P-256 SEC 1: " + key_outcome(server.private_key_from_pem(P256_SEC1)));
+  if (key_outcome(identity.private_key_from_pem(P256_SEC1)) != pkcs8) {
+    return test.fail("P-256 SEC 1: " + key_outcome(identity.private_key_from_pem(P256_SEC1)));
   }
-  if (key_outcome(server.private_key_from_pem(P384_PKCS8)) != "ec 04b01380bb42d55e316e") {
-    return test.fail("P-384: " + key_outcome(server.private_key_from_pem(P384_PKCS8)));
+  if (key_outcome(identity.private_key_from_pem(P384_PKCS8)) != "ec 04b01380bb42d55e316e") {
+    return test.fail("P-384: " + key_outcome(identity.private_key_from_pem(P384_PKCS8)));
   }
-  if (key_outcome(server.private_key_from_pem(ED_PKCS8)) != "ed25519 22222222") {
-    return test.fail("Ed25519: " + key_outcome(server.private_key_from_pem(ED_PKCS8)));
+  if (key_outcome(identity.private_key_from_pem(ED_PKCS8)) != "ed25519 22222222") {
+    return test.fail("Ed25519: " + key_outcome(identity.private_key_from_pem(ED_PKCS8)));
   }
   return test.pass();
 }
 
 function test_key_refusals(): test.TestOutcome {
-  if (key_outcome(server.private_key_from_pem(RSA_PKCS8)) != "tls server key: cannot sign with RSA") {
-    return test.fail("RSA: " + key_outcome(server.private_key_from_pem(RSA_PKCS8)));
+  if (key_outcome(identity.private_key_from_pem(RSA_PKCS8)) != "tls identity: cannot sign with RSA") {
+    return test.fail("RSA: " + key_outcome(identity.private_key_from_pem(RSA_PKCS8)));
   }
-  if (key_outcome(server.private_key_from_pem(ROOT_PEM)) != "tls server key: no PRIVATE KEY or EC PRIVATE KEY block") {
-    return test.fail("a certificate: " + key_outcome(server.private_key_from_pem(ROOT_PEM)));
+  if (key_outcome(identity.private_key_from_pem(ROOT_PEM)) != "tls identity: no PRIVATE KEY or EC PRIVATE KEY block") {
+    return test.fail("a certificate: " + key_outcome(identity.private_key_from_pem(ROOT_PEM)));
   }
-  if (key_outcome(server.private_key_from_pem("-----BEGIN PRIVATE KEY-----\nAAAA\n")) != "pem: the PRIVATE KEY block has no END line") {
-    return test.fail("pem: " + key_outcome(server.private_key_from_pem("-----BEGIN PRIVATE KEY-----\nAAAA\n")));
+  if (key_outcome(identity.private_key_from_pem("-----BEGIN PRIVATE KEY-----\nAAAA\n")) != "pem: the PRIVATE KEY block has no END line") {
+    return test.fail("pem: " + key_outcome(identity.private_key_from_pem("-----BEGIN PRIVATE KEY-----\nAAAA\n")));
   }
-  if (key_outcome(server.pkcs8([0x30 as u8, 0 as u8])) != "tls server key: malformed PrivateKeyInfo") {
-    return test.fail("empty: " + key_outcome(server.pkcs8([0x30 as u8, 0 as u8])));
+  if (key_outcome(identity.pkcs8([0x30 as u8, 0 as u8])) != "tls identity: malformed PrivateKeyInfo") {
+    return test.fail("empty: " + key_outcome(identity.pkcs8([0x30 as u8, 0 as u8])));
   }
-  if (key_outcome(server.sec1([0x30 as u8, 3 as u8, 2 as u8, 1 as u8, 1 as u8])) != "tls server key: malformed ECPrivateKey") {
-    return test.fail("sec1: " + key_outcome(server.sec1([0x30 as u8, 3 as u8, 2 as u8, 1 as u8, 1 as u8])));
+  if (key_outcome(identity.sec1([0x30 as u8, 3 as u8, 2 as u8, 1 as u8, 1 as u8])) != "tls identity: malformed ECPrivateKey") {
+    return test.fail("sec1: " + key_outcome(identity.sec1([0x30 as u8, 3 as u8, 2 as u8, 1 as u8, 1 as u8])));
   }
   // A scalar of zeros is out of range.
   let zero_scalar: u8[] = hex.hex_decode("303102010104200000000000000000000000000000000000000000000000000000000000000000a00a06082a8648ce3d030107");
-  return test.assert_eq(key_outcome(server.sec1(zero_scalar)), "tls server key: ecdsa: the private scalar is not in [1, n) at the curve's size");
+  return test.assert_eq(key_outcome(identity.sec1(zero_scalar)), "tls identity: ecdsa: the private scalar is not in [1, n) at the curve's size");
 }
 
-function identity_outcome(r: Result[server.Identity, server.KeyError]): string {
+function identity_outcome(r: Result[identity.Identity, identity.KeyError]): string {
   match (r) {
     Ok(id) => {
       return "ok";
@@ -168,37 +181,37 @@ function identity_outcome(r: Result[server.Identity, server.KeyError]): string {
 }
 
 function test_identity(): test.TestOutcome {
-  if (identity_outcome(server.identity_from_pem(ED_LEAF_PEM + ROOT_PEM, ED_PKCS8)) != "ok") {
-    return test.fail(identity_outcome(server.identity_from_pem(ED_LEAF_PEM + ROOT_PEM, ED_PKCS8)));
+  if (identity_outcome(identity.from_pem(ED_LEAF_PEM + ROOT_PEM, ED_PKCS8)) != "ok") {
+    return test.fail(identity_outcome(identity.from_pem(ED_LEAF_PEM + ROOT_PEM, ED_PKCS8)));
   }
-  if (identity_outcome(server.identity_from_pem(ED_LEAF_PEM, P256_PKCS8)) != "tls server: the key is not the leaf certificate's") {
-    return test.fail("another key: " + identity_outcome(server.identity_from_pem(ED_LEAF_PEM, P256_PKCS8)));
+  if (identity_outcome(identity.from_pem(ED_LEAF_PEM, P256_PKCS8)) != "tls identity: the key is not the leaf certificate's") {
+    return test.fail("another key: " + identity_outcome(identity.from_pem(ED_LEAF_PEM, P256_PKCS8)));
   }
-  if (identity_outcome(server.identity_from_pem("", ED_PKCS8)) != "tls server: no certificate") {
-    return test.fail("no certificate: " + identity_outcome(server.identity_from_pem("", ED_PKCS8)));
+  if (identity_outcome(identity.from_pem("", ED_PKCS8)) != "tls identity: no certificate") {
+    return test.fail("no certificate: " + identity_outcome(identity.from_pem("", ED_PKCS8)));
   }
-  return test.assert_eq(identity_outcome(server.identity_from_pem(ED_LEAF_PEM, "")), "tls server key: no PRIVATE KEY or EC PRIVATE KEY block");
+  return test.assert_eq(identity_outcome(identity.from_pem(ED_LEAF_PEM, "")), "tls identity: no PRIVATE KEY or EC PRIVATE KEY block");
 }
 
 // identity_of is the test identity for a leaf and its key; the test fails
 // loudly through the handshake if it cannot be made.
-function identity_of(leaf: string, key_pem: string): server.Identity {
-  match (server.private_key_from_pem(key_pem)) {
+function identity_of(leaf: string, key_pem: string): identity.Identity {
+  match (identity.private_key_from_pem(key_pem)) {
     Ok(k) => {
-      match (server.identity([hex.hex_decode(leaf)], k)) {
+      match (identity.pair([hex.hex_decode(leaf)], k)) {
         Ok(id) => {
           return id;
         },
         Err(e) => {
-          return server.Identity { chain: [], key: k };
+          return identity.Identity { chain: [], key: k };
         }
       }
     },
     Err(e) => {
-      return server.Identity { chain: [], key: server.Ed25519Seed([]) };
+      return identity.Identity { chain: [], key: identity.Ed25519Seed([]) };
     }
   }
-  return server.Identity { chain: [], key: server.Ed25519Seed([]) };
+  return identity.Identity { chain: [], key: identity.Ed25519Seed([]) };
 }
 
 struct Pair { client: client.Session, server: server.Session, tickets: client.Ticket[] }
@@ -424,7 +437,7 @@ function test_no_common_scheme(): test.TestOutcome {
 // to `start` without that check fails when the client checks the
 // CertificateVerify.
 function test_wrong_key(): test.TestOutcome {
-  let id: server.Identity = server.Identity { chain: [hex.hex_decode(P256_LEAF)], key: identity_of(P384_LEAF, P384_PKCS8).key };
+  let id: identity.Identity = identity.Identity { chain: [hex.hex_decode(P256_LEAF)], key: identity_of(P384_LEAF, P384_PKCS8).key };
   let cc: client.Config = client.config("tls.example", roots());
   match (connect(cc, server.config(id))) {
     Ok(p) => {
@@ -561,6 +574,123 @@ function test_resumption(): test.TestOutcome {
   return test.fail("unreachable");
 }
 
+function client_identity(leaf: string): identity.Identity {
+  return identity_of(leaf, CLIENT_PKCS8);
+}
+
+// presented is how a server requiring a client certificate takes a client:
+// what each side ends with, and the client's chain length the server kept.
+function presented(cc: client.Config, sc: server.Config): string {
+  match (connect(cc, sc)) {
+    Ok(p) => {
+      match (exchange(p)) {
+        Ok(t) => {
+          return t + " chain " + p.server.client_chain().len().to_string();
+        },
+        Err(e) => {
+          return e;
+        }
+      }
+    },
+    Err(e) => {
+      return e;
+    }
+  }
+  return "";
+}
+
+// A server with client roots takes a client whose chain reaches them and
+// whose CertificateVerify verifies, and refuses one sending nothing (the
+// client reads certificate_required), one under another root, and one
+// whose leaf is not for TLS clients; a server without roots asks nothing.
+function test_client_certificate(): test.TestOutcome {
+  let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8)).with_client_roots(roots());
+  let cc: client.Config = client.config("tls.example", roots());
+  if (presented(cc.with_identity(client_identity(CLIENT_LEAF)), sc) != "ping pong chain 1") {
+    return test.fail("trusted: " + presented(cc.with_identity(client_identity(CLIENT_LEAF)), sc));
+  }
+  if (presented(cc, sc) != "server: the client sent no certificate") {
+    return test.fail("none: " + presented(cc, sc));
+  }
+  if (presented(cc.with_identity(client_identity(OTHER_CLIENT_LEAF)), sc) != "server: the client's certificate is not trusted: tls verify: no path from the certificate reaches a trusted root") {
+    return test.fail("another root: " + presented(cc.with_identity(client_identity(OTHER_CLIENT_LEAF)), sc));
+  }
+  if (presented(cc.with_identity(client_identity(SERVER_ONLY_CLIENT_LEAF)), sc) != "server: the client's certificate is not trusted: tls verify: the certificate is not for TLS clients") {
+    return test.fail("server-only: " + presented(cc.with_identity(client_identity(SERVER_ONLY_CLIENT_LEAF)), sc));
+  }
+  if (presented(cc.with_identity(client_identity(CLIENT_LEAF)), server.config(identity_of(ED_LEAF, ED_PKCS8))) != "ping pong chain 0") {
+    return test.fail("not asked: " + presented(cc.with_identity(client_identity(CLIENT_LEAF)), server.config(identity_of(ED_LEAF, ED_PKCS8))));
+  }
+  return test.assert_eq(client_refusal(cc, sc), "client: tls handshake: the peer sent alert 116");
+}
+
+// client_refusal is what the client reads of the server's refusal.
+function client_refusal(cc: client.Config, sc: server.Config): string {
+  match (started(cc)) {
+    Ok(c0) => {
+      match (listening(sc)) {
+        Ok(s0) => {
+          match (s0.read(c0.output)) {
+            Ok(s1) => {
+              match (c0.session.read(s1.output)) {
+                Ok(c1) => {
+                  match (s1.session.read(c1.output)) {
+                    Ok(_) => {
+                      return "accepted";
+                    },
+                    Err(f) => {
+                      match (c1.session.read(f.alert)) {
+                        Ok(_) => {
+                          return "client: read on";
+                        },
+                        Err(g) => {
+                          return "client: " + g.message();
+                        }
+                      }
+                    }
+                  }
+                },
+                Err(f) => {
+                  return "client: " + f.message();
+                }
+              }
+            },
+            Err(f) => {
+              return "server: " + f.message();
+            }
+          }
+        },
+        Err(e) => {
+          return e;
+        }
+      }
+    },
+    Err(e) => {
+      return e;
+    }
+  }
+  return "";
+}
+
+// A session resumed at a server with client roots shows no certificate
+// again: the ticket stands for the one shown when it was issued.
+function test_client_certificate_resumed(): test.TestOutcome {
+  let sc: server.Config = server.config(identity_of(ED_LEAF, ED_PKCS8)).with_client_roots(roots());
+  let cc: client.Config = client.config("tls.example", roots()).with_identity(client_identity(CLIENT_LEAF));
+  match (connect(cc, sc)) {
+    Ok(p) => {
+      if (p.tickets.len() != 1) {
+        return test.fail("no ticket");
+      }
+      return test.assert_eq(how(connect(cc.with_ticket(p.tickets[0]), sc)), "resumed ping pong 1");
+    },
+    Err(e) => {
+      return test.fail(e);
+    }
+  }
+  return test.fail("unreachable");
+}
+
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/tls/server");
   r = r.it("keys from PKCS #8 and SEC 1", test_keys);
@@ -572,5 +702,7 @@ function main(): i32 {
   r = r.it("a key that is not the chain's", test_wrong_key);
   r = r.it("close_notify", test_close);
   r = r.it("resumption", test_resumption);
+  r = r.it("client certificate", test_client_certificate);
+  r = r.it("client certificate and resumption", test_client_certificate_resumed);
   return r.finish();
 }

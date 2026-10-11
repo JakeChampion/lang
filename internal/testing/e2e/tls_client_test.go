@@ -79,8 +79,9 @@ func TestTLSClientAgainstGoInterp(t *testing.T) {
 }
 
 type tlsWorld struct {
-	caFile                              string
+	caFile, clientCert, clientKey       string
 	main, retry, rsa, ed, bad, echo, px int
+	mtls                                int
 	mainConns                           atomic.Int64
 	mu                                  sync.Mutex
 	tunnels                             []string
@@ -106,7 +107,19 @@ func startTLSWorld(t *testing.T) *tlsWorld {
 	w.rsa = serveTLS(t, ca.leaf(t, mustKey(t, "rsa"), []string{"localhost"}, false), nil, nil)
 	w.ed = serveTLS(t, ca.leaf(t, mustKey(t, "ed25519"), []string{"localhost"}, false), nil, nil)
 	w.bad = serveTLS(t, other.leaf(t, mustKey(t, "p256"), names, true), nil, nil)
-	w.echo = serveEcho(t, ecLeaf)
+	w.echo = serveEcho(t, ecLeaf, nil)
+	clientLeaf := ca.clientLeaf(t, mustKey(t, "ed25519"), "fern-client")
+	w.clientCert = filepath.Join(t.TempDir(), "client.pem")
+	if err := os.WriteFile(w.clientCert, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: clientLeaf.Certificate[0]}), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	w.clientKey = filepath.Join(t.TempDir(), "client-key.pem")
+	if err := os.WriteFile(w.clientKey, keyPEM(t, clientLeaf.PrivateKey.(crypto.Signer), false), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	clients := x509.NewCertPool()
+	clients.AddCert(ca.cert)
+	w.mtls = serveEcho(t, ecLeaf, clients)
 	w.px = w.serveProxy(t)
 	return w
 }
@@ -129,6 +142,7 @@ func (w *tlsWorld) source() string {
 	return strings.NewReplacer(
 		"@MAIN@", strconv.Itoa(w.main), "@RETRY@", strconv.Itoa(w.retry), "@RSA@", strconv.Itoa(w.rsa),
 		"@ED@", strconv.Itoa(w.ed), "@BAD@", strconv.Itoa(w.bad), "@ECHO@", strconv.Itoa(w.echo), "@PROXY@", strconv.Itoa(w.px),
+		"@MTLS@", strconv.Itoa(w.mtls), "@CLIENT_CERT@", w.clientCert, "@CLIENT_KEY@", w.clientKey,
 	).Replace(tlsClientSource)
 }
 
@@ -137,6 +151,7 @@ import "std/http";
 import "std/string";
 import "std/time";
 import "std/tls/client";
+import "std/tls/identity";
 import "std/tls/verify";
 
 function show(label: string, r: Result[HttpResponse, fetch.FetchError]): void {
@@ -190,6 +205,66 @@ function connected(cfg: client.Config): Result[client.Connection, client.TlsErro
   return client.connect("localhost", @ECHO@, cfg, time.duration_seconds(10 as i64));
 }
 
+// mtls echoes a line at the server requiring a client certificate, with
+// the identity read from the files, and without one.
+function mtls(roots: verify.Roots): string {
+  let cfg: client.Config = client.config("localhost", roots).with_alpn(["fern-echo"]);
+  let cert: string = "";
+  let key: string = "";
+  match (read_file("@CLIENT_CERT@")) {
+    Ok(t) => {
+      cert = t;
+    },
+    Err(_) => {
+      return "no cert file";
+    }
+  }
+  match (read_file("@CLIENT_KEY@")) {
+    Ok(t) => {
+      key = t;
+    },
+    Err(_) => {
+      return "no key file";
+    }
+  }
+  match (identity.from_pem(cert, key)) {
+    Ok(id) => {
+      return echoed(cfg.with_identity(id)) + " / " + echoed(cfg);
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
+function echoed(cfg: client.Config): string {
+  match (client.connect("localhost", @MTLS@, cfg, time.duration_seconds(10 as i64))) {
+    Ok(c) => {
+      match (c.send("hello\n".bytes())) {
+        Ok(sent) => {
+          match (sent.recv(time.duration_seconds(10 as i64))) {
+            Ok(got) => {
+              got.conn.close();
+              return string_from_bytes_unchecked(got.data).trim();
+            },
+            Err(e) => {
+              return "recv " + e.message();
+            }
+          }
+        },
+        Err(e) => {
+          return "send " + e.message();
+        }
+      }
+    },
+    Err(e) => {
+      return e.message();
+    }
+  }
+  return "";
+}
+
 // resumed_line echoes a line on a session resumed from the first ticket.
 function resumed_line(cfg: client.Config, tickets: client.Ticket[]): string {
   if (tickets.len() == 0) {
@@ -240,6 +315,7 @@ function main(): i32 {
   match (verify.system_roots()) {
     Some(roots) => {
       print("socket: " + socket(roots));
+      print("mtls: " + mtls(roots));
     },
     None => {
       print("socket: no roots");
@@ -265,6 +341,7 @@ func (w *tlsWorld) check(t *testing.T, got string, mainConns int64) {
 		"wrongname: error TLS: the server's certificate is not trusted: tls verify: the certificate is not valid for 127.0.0.1",
 		"tunnel: " + ok("/g", "X25519MLKEM768"),
 		"socket: fern-echo echo ping / resumed resumed-echo again",
+		"mtls: echo fern-client hello / recv tls handshake: the peer sent alert 116",
 	}, "\n") + "\n"
 	if got != want {
 		t.Errorf("output:\n%s\nwant:\n%s", got, want)
@@ -293,10 +370,17 @@ func serveTLS(t *testing.T, cert tls.Certificate, curves []tls.CurveID, state fu
 	return s.Listener.Addr().(*net.TCPAddr).Port
 }
 
-// serveEcho answers each line on a TLS connection with "echo " and the line.
-func serveEcho(t *testing.T, cert tls.Certificate) int {
+// serveEcho answers each line on a TLS connection with "echo " and the
+// line, "resumed-echo " on a resumed session; with clients set it requires
+// a client certificate under them and names its subject.
+func serveEcho(t *testing.T, cert tls.Certificate, clients *x509.CertPool) int {
 	t.Helper()
-	ln, err := tls.Listen("tcp", "127.0.0.1:0", &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13, NextProtos: []string{"fern-echo"}})
+	cfg := &tls.Config{Certificates: []tls.Certificate{cert}, MinVersion: tls.VersionTLS13, NextProtos: []string{"fern-echo"}}
+	if clients != nil {
+		cfg.ClientAuth = tls.RequireAndVerifyClientCert
+		cfg.ClientCAs = clients
+	}
+	ln, err := tls.Listen("tcp", "127.0.0.1:0", cfg)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -316,9 +400,13 @@ func serveEcho(t *testing.T, cert tls.Certificate) int {
 					if err != nil {
 						return
 					}
+					st := c.(*tls.Conn).ConnectionState()
 					echo := "echo "
-					if c.(*tls.Conn).ConnectionState().DidResume {
+					if st.DidResume {
 						echo = "resumed-echo "
+					}
+					if len(st.PeerCertificates) > 0 {
+						echo += st.PeerCertificates[0].Subject.CommonName + " "
 					}
 					_, _ = io.WriteString(c, echo+line)
 				}
@@ -432,6 +520,25 @@ func newTestCA(t *testing.T, key crypto.Signer, name string) *testCA {
 		t.Fatal(err)
 	}
 	return &testCA{cert: cert, key: key, pem: pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})}
+}
+
+// clientLeaf is a client certificate with the common name given.
+func (ca *testCA) clientLeaf(t *testing.T, key crypto.Signer, name string) tls.Certificate {
+	t.Helper()
+	serial, _ := rand.Int(rand.Reader, big.NewInt(1<<62))
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      pkix.Name{CommonName: name},
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+		KeyUsage:     x509.KeyUsageDigitalSignature,
+		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth},
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, ca.cert, key.Public(), ca.key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tls.Certificate{Certificate: [][]byte{der}, PrivateKey: key}
 }
 
 // leaf is a server certificate for names, and for 127.0.0.1 when withIP.

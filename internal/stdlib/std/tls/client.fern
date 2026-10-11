@@ -20,14 +20,16 @@ import "std/net";
 import "std/tcp";
 import "std/time";
 import "std/tls/handshake";
+import "std/tls/identity";
 import "std/tls/keyschedule";
+import "std/tls/message";
 import "std/tls/verify";
 import "std/tls/x509";
 
 // Config — the name the certificate must carry, the protocols to offer by
-// ALPN in preference order, the roots to trust, and a ticket to resume
-// from.
-pub struct Config { server_name: string, alpn: string[], roots: verify.Roots, resume: Option[Ticket] }
+// ALPN in preference order, the roots to trust, a ticket to resume from,
+// and an identity to present when the server asks for one.
+pub struct Config { server_name: string, alpn: string[], roots: verify.Roots, resume: Option[Ticket], identity: Option[identity.Identity] }
 
 // Ticket — a session ticket a server issued, as `Step.tickets` hands it
 // over: what to offer, the PSK it stands for, the suite it was issued
@@ -37,7 +39,7 @@ pub struct Ticket { identity: u8[], psk: u8[], suite: i32, lifetime: u32, age_ad
 
 // config offers no application protocol and no ticket.
 pub function config(server_name: string, roots: verify.Roots): Config {
-  return Config { server_name: server_name, alpn: [], roots: roots, resume: None };
+  return Config { server_name: server_name, alpn: [], roots: roots, resume: None, identity: None };
 }
 
 pub function (c: Config) with_alpn(protocols: string[]): Config {
@@ -50,6 +52,13 @@ pub function (c: Config) with_ticket(t: Ticket): Config {
   return Config { ...c, resume: Some(t) };
 }
 
+// with_identity presents the chain, signed with its key, when the server
+// asks for a client certificate; without one the client answers with an
+// empty Certificate and the server decides.
+pub function (c: Config) with_identity(id: identity.Identity): Config {
+  return Config { ...c, identity: Some(id) };
+}
+
 // TlsError — why a connection failed: the handshake's own refusal, a chain
 // the roots do not vouch for, a CertificateVerify that does not verify, the
 // name not resolving, the socket's error, the handshake outlasting its
@@ -59,6 +68,8 @@ pub enum TlsError {
   HandshakeFailed(handshake.HandshakeError),
   Untrusted(verify.VerifyError),
   SignatureInvalid,
+  // The identity's key could not sign the CertificateVerify.
+  SigningFailed,
   Unresolved(dns.DnsError),
   NetFailed(net.NetError),
   HandshakeTimeout,
@@ -76,6 +87,9 @@ pub function (e: TlsError) message(): string {
     },
     SignatureInvalid => {
       return "the server's CertificateVerify does not verify";
+    },
+    SigningFailed => {
+      return "the identity's key could not sign the CertificateVerify";
     },
     Unresolved(d) => {
       return d.message();
@@ -99,7 +113,7 @@ pub function (e: TlsError) message(): string {
 // Session — one connection's TLS, bytes in and bytes out: the handshake's
 // client, the name and roots it is judged by, and the bytes of a record
 // still arriving.
-pub struct Session { client: handshake.Client, name: string, roots: verify.Roots, held: u8[] }
+pub struct Session { client: handshake.Client, name: string, roots: verify.Roots, identity: Option[identity.Identity], held: u8[] }
 
 // Failure — why `read` failed, and the alert record to send the server
 // before closing, sealed under the keys in force when it failed.
@@ -121,9 +135,15 @@ pub function start(config: Config): Result[Step, TlsError] {
     sni = "";
   }
   let hc: handshake.ClientConfig = handshake.ClientConfig { ...handshake.client_config(sni), alpn: config.alpn, resume: __offer(config, now_unix_ms()) };
+  match (config.identity) {
+    Some(id) => {
+      hc = handshake.ClientConfig { ...hc, chain: id.chain, sign_schemes: [id.key.scheme()] };
+    },
+    None => {}
+  }
   match (handshake.client_start(hc, random_bytes(handshake.client_entropy(hc)))) {
     Ok(step) => {
-      let s: Session = Session { client: step.client, name: config.server_name, roots: config.roots, held: [] };
+      let s: Session = Session { client: step.client, name: config.server_name, roots: config.roots, identity: config.identity, held: [] };
       return Ok(Step { session: s, output: step.output, data: [], closed: false, tickets: [] });
     },
     Err(e) => {
@@ -261,7 +281,7 @@ pub function restore(saved: [u8]): Result[Session, TlsError] {
   }
   match (handshake.client_restore(saved[4:4 + n])) {
     Ok(c) => {
-      return Ok(Session { client: c, name: "", roots: verify.roots([]), held: __copy(saved[4 + n:saved.len()]) });
+      return Ok(Session { client: c, name: "", roots: verify.roots([]), identity: None, held: __copy(saved[4 + n:saved.len()]) });
     },
     Err(e) => {
       return Err(HandshakeFailed(e));
@@ -306,8 +326,9 @@ function __handshake_ok(r: Result[u8[], handshake.HandshakeError]): Result[u8[],
   return Err(ClosedEarly);
 }
 
-// __judged answers each VerifyServer in a step and gathers what the
-// handshake goes on to produce.
+// __judged answers each event in a step that asks something of the client
+// (a verdict on the server's chain, a signature) and gathers what the
+// handshake goes on to produce, and the tickets issued.
 function __judged(s: Session, first: handshake.ClientStep): Result[Step, Failure] {
   let c: handshake.Client = first.client;
   let output: u8[] = first.output;
@@ -319,34 +340,86 @@ function __judged(s: Session, first: handshake.ClientStep): Result[Step, Failure
   while (i < events.len()) {
     match (events[i]) {
       handshake.Ticket(t) => {
-        match (c.resumption_psk(t.nonce)) {
-          Ok(psk) => {
-            tickets = tickets.append(Ticket { identity: t.ticket, psk: psk, suite: c.cipher_suite().code(), lifetime: t.lifetime, age_add: t.age_add, received_ms: now_unix_ms(), server_name: s.name });
-          },
-          Err(_) => {}
-        }
-      },
-      handshake.VerifyServer(v) => {
-        match (__trusted(s, v)) {
-          Ok(_) => {},
-          Err(e) => {
-            return Err(Failure { error: e, alert: c.alert(handshake.BadCertificate) });
-          }
-        }
-        let next: handshake.ClientStep = __verdict(c)?;
-        c = next.client;
-        output = __cat(output, next.output);
-        data = __cat(data, next.data);
-        events = __more(events, next.events);
+        tickets = __kept(tickets, s, c, t);
       },
       handshake.PeerClosed => {
         closed = true;
       },
-      _ => {}
+      _ => {
+        let next: handshake.ClientStep = __answered(s, c, events[i])?;
+        c = next.client;
+        output = __cat(output, next.output);
+        data = __cat(data, next.data);
+        events = __more(events, next.events);
+      }
     }
     i = i + 1;
   }
   return Ok(Step { session: Session { ...s, client: c }, output: output, data: data, closed: closed, tickets: tickets });
+}
+
+// __kept is the tickets with a new one the server issued, as the caller
+// keeps it.
+function __kept(own tickets: Ticket[], s: Session, c: handshake.Client, t: message.NewSessionTicket): Ticket[] {
+  match (c.resumption_psk(t.nonce)) {
+    Ok(psk) => {
+      return tickets.append(Ticket { identity: t.ticket, psk: psk, suite: c.cipher_suite().code(), lifetime: t.lifetime, age_add: t.age_add, received_ms: now_unix_ms(), server_name: s.name });
+    },
+    Err(_) => {
+      return tickets;
+    }
+  }
+  return tickets;
+}
+
+// __answered is what the client does about one event: nothing, for most.
+function __answered(s: Session, c: handshake.Client, e: handshake.Event): Result[handshake.ClientStep, Failure] {
+  match (e) {
+    handshake.VerifyServer(v) => {
+      match (__trusted(s, v)) {
+        Ok(_) => {
+          return __verdict(c);
+        },
+        Err(err) => {
+          return Err(Failure { error: err, alert: c.alert(handshake.BadCertificate) });
+        }
+      }
+    },
+    handshake.SignNeeded(sg) => {
+      return __signature(s, c, sg);
+    },
+    _ => {}
+  }
+  return Ok(handshake.ClientStep { client: c, output: [], data: [], events: [] });
+}
+
+// __signature signs the client's CertificateVerify with the identity's key.
+function __signature(s: Session, c: handshake.Client, sg: handshake.Signing): Result[handshake.ClientStep, Failure] {
+  let sig: u8[] = [];
+  match (s.identity) {
+    Some(id) => {
+      match (id.key.sign(sg.scheme, sg.signed)) {
+        Ok(b) => {
+          sig = b;
+        },
+        Err(_) => {
+          return Err(Failure { error: SigningFailed, alert: c.alert(handshake.HandshakeFailure("signing")) });
+        }
+      }
+    },
+    None => {
+      return Err(Failure { error: SigningFailed, alert: c.alert(handshake.HandshakeFailure("signing")) });
+    }
+  }
+  match (c.signature(sig)) {
+    Ok(step) => {
+      return Ok(step);
+    },
+    Err(e) => {
+      return Err(Failure { error: HandshakeFailed(e), alert: c.alert(e) });
+    }
+  }
+  return Err(Failure { error: ClosedEarly, alert: [] });
 }
 
 // __trusted checks the chain against the roots for the session's name now,

@@ -41,6 +41,7 @@ func TestTLSServerAgainstGo(t *testing.T) {
 						t.Fatalf("build failed: %v\n%s", err, o)
 					}
 					w.drive(t, be.run(qemu, out))
+					w.driveClientAuth(t, be.run(qemu, out, "client-auth"))
 				})
 			}
 		})
@@ -54,6 +55,7 @@ func TestTLSServerAgainstGoInterp(t *testing.T) {
 		t.Run(kind, func(t *testing.T) {
 			w := newTLSServerWorld(t, kind)
 			w.drive(t, exec.Command(bin, "-interp", w.src))
+			w.driveClientAuth(t, exec.Command(bin, "-interp", w.src, "--", "client-auth"))
 		})
 	}
 }
@@ -64,6 +66,9 @@ type tlsServerWorld struct {
 	pool     *x509.CertPool
 	other    *x509.CertPool
 	cache    tls.ClientSessionCache
+	// client and otherClient are client certificates under the CA and under
+	// the other CA, for the client-auth run.
+	client, otherClient tls.Certificate
 }
 
 // newTLSServerWorld writes the server's certificate, key and source. The
@@ -80,6 +85,11 @@ func newTLSServerWorld(t *testing.T, kind string) *tlsServerWorld {
 	w.other.AddCert(other.cert)
 	key := mustKey(t, kind)
 	leaf := ca.leaf(t, key, []string{"localhost"}, true)
+	w.client = ca.clientLeaf(t, mustKey(t, "ed25519"), "fern-go-client")
+	w.otherClient = other.clientLeaf(t, mustKey(t, "p256"), "fern-go-other")
+	if err := os.WriteFile(filepath.Join(w.dir, "ca.pem"), ca.pem, 0o644); err != nil {
+		t.Fatal(err)
+	}
 	certPath := filepath.Join(w.dir, "cert.pem")
 	if err := os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: leaf.Certificate[0]}), 0o644); err != nil {
 		t.Fatal(err)
@@ -89,7 +99,7 @@ func newTLSServerWorld(t *testing.T, kind string) *tlsServerWorld {
 		t.Fatal(err)
 	}
 	w.src = filepath.Join(w.dir, "tls_server.fern")
-	src := strings.NewReplacer("@CERT@", certPath, "@KEY@", keyPath, "@N@", strconv.Itoa(len(w.cases()))).Replace(tlsServerSource)
+	src := strings.NewReplacer("@CERT@", certPath, "@KEY@", keyPath, "@CA@", filepath.Join(w.dir, "ca.pem"), "@N@", strconv.Itoa(len(w.cases())), "@M@", strconv.Itoa(len(w.clientAuthCases()))).Replace(tlsServerSource)
 	if err := os.WriteFile(w.src, []byte(src), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -113,14 +123,17 @@ func keyPEM(t *testing.T, key crypto.Signer, sec1 bool) []byte {
 }
 
 // The server: a listener on a port the host picks, printed first, then one
-// connection at a time, each reported on a line of its own.
+// connection at a time, each reported on a line of its own. With the
+// argument "client-auth" it requires a client certificate under the CA.
 const tlsServerSource = `import "std/i32";
 import "std/net";
 import "std/string";
 import "std/time";
+import "std/tls/identity";
 import "std/tls/server";
+import "std/tls/verify";
 
-function identity(): Result[server.Identity, string] {
+function identity_of(): Result[identity.Identity, string] {
   let cert: string = "";
   let key: string = "";
   match (read_file("@CERT@")) {
@@ -139,7 +152,7 @@ function identity(): Result[server.Identity, string] {
       return Err("cannot read the key");
     }
   }
-  match (server.identity_from_pem(cert, key)) {
+  match (identity.from_pem(cert, key)) {
     Ok(id) => {
       return Ok(id);
     },
@@ -182,6 +195,9 @@ function echo(c: server.Connection): string {
               if (c.session.resumed()) {
                 mode = "resumed";
               }
+              if (c.session.client_chain().len() > 0) {
+                mode = mode + " client " + c.session.client_chain().len().to_string();
+              }
               end.conn.close();
               return head + " " + line + " " + how + " " + mode;
             },
@@ -203,14 +219,28 @@ function echo(c: server.Connection): string {
 }
 
 function main(): i32 {
-  let cfg: server.Config = server.config(server.Identity { chain: [], key: server.Ed25519Seed([]) });
-  match (identity()) {
+  let cfg: server.Config = server.config(identity.Identity { chain: [], key: identity.Ed25519Seed([]) });
+  match (identity_of()) {
     Ok(id) => {
       cfg = server.config(id).with_alpn(["fern-echo", "h2"]);
     },
     Err(e) => {
       print("identity: " + e);
       return 2;
+    }
+  }
+  let count: i32 = @N@;
+  let argv: string[] = args();
+  if (argv.len() > 0 && argv[argv.len() - 1] == "client-auth") {
+    count = @M@;
+    match (verify.roots_from_file("@CA@")) {
+      Ok(r) => {
+        cfg = cfg.with_client_roots(r);
+      },
+      Err(e) => {
+        print("roots: " + e.message());
+        return 5;
+      }
     }
   }
   let l: i32 = 0;
@@ -233,7 +263,7 @@ function main(): i32 {
     }
   }
   let n: i32 = 0;
-  while (n < @N@) {
+  while (n < count) {
     n = n + 1;
     match (net.accept(l)) {
       Ok(fd) => {
@@ -279,9 +309,40 @@ func (w *tlsServerWorld) cases() []tlsServerCase {
 	}
 }
 
+// clientAuthCases run against the server requiring a client certificate: a
+// client under the CA, one sending none (the server's certificate_required
+// alert), one under the other CA, and one under the CA resuming, which
+// shows no certificate again.
+func (w *tlsServerWorld) clientAuthCases() []tlsServerCase {
+	cache := tls.NewLRUClientSessionCache(4)
+	with := func(certs []tls.Certificate, cached bool) *tls.Config {
+		c := &tls.Config{RootCAs: w.pool, ServerName: "localhost", NextProtos: []string{"fern-echo"}, MinVersion: tls.VersionTLS13, Certificates: certs}
+		if cached {
+			c.ClientSessionCache = cache
+		}
+		return c
+	}
+	return []tlsServerCase{
+		{"mtls", with([]tls.Certificate{w.client}, true), "[localhost] [fern-echo] mtls closed fresh client 1", "", false},
+		{"nocert", with(nil, false), "refused the client sent no certificate", "certificate required", false},
+		{"othercert", with([]tls.Certificate{w.otherClient}, false), "refused the client's certificate is not trusted: tls verify: no path from the certificate reaches a trusted root", "bad certificate", false},
+		{"mtls-resume", with([]tls.Certificate{w.client}, true), "[localhost] [fern-echo] mtls-resume closed resumed", "", true},
+	}
+}
+
+func (w *tlsServerWorld) driveClientAuth(t *testing.T, cmd *exec.Cmd) {
+	t.Helper()
+	w.run(t, cmd, w.clientAuthCases())
+}
+
 // drive starts the server, runs every case against it in order and checks
 // its report.
 func (w *tlsServerWorld) drive(t *testing.T, cmd *exec.Cmd) {
+	t.Helper()
+	w.run(t, cmd, w.cases())
+}
+
+func (w *tlsServerWorld) run(t *testing.T, cmd *exec.Cmd, cases []tlsServerCase) {
 	t.Helper()
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -300,7 +361,7 @@ func (w *tlsServerWorld) drive(t *testing.T, cmd *exec.Cmd) {
 	}
 	port := strings.TrimSpace(strings.TrimPrefix(first, "port "))
 	var want []string
-	for i, c := range w.cases() {
+	for i, c := range cases {
 		want = append(want, fmt.Sprintf("conn %d: %s", i+1, c.want))
 		w.connect(t, port, c)
 	}
@@ -319,8 +380,16 @@ func (w *tlsServerWorld) connect(t *testing.T, port string, c tlsServerCase) {
 	d := &net.Dialer{Timeout: 60 * time.Second}
 	conn, err := tls.DialWithDialer(d, "tcp", "127.0.0.1:"+port, c.config)
 	if c.wantErr != "" {
+		// A server refusing the client's certificate does so after the
+		// client's Finished, so the alert reaches Go on its first read.
 		if err == nil {
+			_ = conn.SetDeadline(time.Now().Add(60 * time.Second))
+			if _, err = io.WriteString(conn, c.name+"\n"); err == nil {
+				_, err = bufio.NewReader(conn).ReadString('\n')
+			}
 			conn.Close()
+		}
+		if err == nil {
 			t.Errorf("%s: connected, want an error containing %q", c.name, c.wantErr)
 		} else if !strings.Contains(err.Error(), c.wantErr) {
 			t.Errorf("%s: error %q, want it to contain %q", c.name, err, c.wantErr)
@@ -332,7 +401,8 @@ func (w *tlsServerWorld) connect(t *testing.T, port string, c tlsServerCase) {
 		return
 	}
 	defer conn.Close()
-	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
+	// The interpreter takes seconds to verify a client's chain.
+	_ = conn.SetDeadline(time.Now().Add(60 * time.Second))
 	st := conn.ConnectionState()
 	if st.Version != tls.VersionTLS13 {
 		t.Errorf("%s: version %x, want TLS 1.3", c.name, st.Version)

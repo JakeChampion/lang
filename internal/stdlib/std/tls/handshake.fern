@@ -42,8 +42,10 @@ pub enum HandshakeError {
   NotTls13,
   HandshakeFailure(string),
   NoApplicationProtocol,
-  // The caller's verdict on the server's certificate was no.
+  // The caller's verdict on the peer's certificate was no.
   BadCertificate,
+  // The server's caller requires a client certificate and none was sent.
+  CertificateRequired,
   // A Finished that does not verify.
   DecryptError,
   // The peer's fatal alert, which is answered with nothing.
@@ -136,6 +138,9 @@ pub function (e: HandshakeError) alert(): i32 {
     BadCertificate => {
       return 42;
     },
+    CertificateRequired => {
+      return 116;
+    },
     DecryptError => {
       return 51;
     },
@@ -193,7 +198,10 @@ pub function (e: HandshakeError) message(): string {
       return "tls handshake: no application protocol in common";
     },
     BadCertificate => {
-      return "tls handshake: the server's certificate was refused";
+      return "tls handshake: the peer's certificate was refused";
+    },
+    CertificateRequired => {
+      return "tls handshake: a client certificate is required";
     },
     DecryptError => {
       return "tls handshake: the peer's Finished does not verify";
@@ -219,9 +227,13 @@ pub enum Event {
   // The client has the server's certificate chain and its signature over
   // the transcript: judge them, then call `verdict`.
   VerifyServer(Verification),
-  // The server needs `signed` signed with the chain's key under `scheme`:
-  // sign it, then call `signature`.
+  // The server, or a client asked for a certificate, needs `signed` signed
+  // with its chain's key under `scheme`: sign it, then call `signature`.
   SignNeeded(Signing),
+  // The server has the client's certificate chain and its signature over
+  // the transcript, or an empty chain when the client sent none: judge
+  // them, then call `verdict`.
+  VerifyClient(Verification),
   // The handshake is complete; application data may flow both ways.
   Connected,
   // The peer sent close_notify.
@@ -561,12 +573,14 @@ function __has_string(v: string[], x: string): boolean {
 
 // ClientConfig — what the client offers. The first group gets a key share;
 // the rest are named as supported.
-pub struct ClientConfig { server_name: string, alpn: string[], suites: keyschedule.CipherSuite[], groups: keyshare.Group[], schemes: i32[], resume: Option[Resumption] }
+pub struct ClientConfig { server_name: string, alpn: string[], suites: keyschedule.CipherSuite[], groups: keyshare.Group[], schemes: i32[], resume: Option[Resumption], chain: u8[][], sign_schemes: i32[] }
 
 // client_config offers every suite, X25519MLKEM768 with X25519 named as a
-// fallback, the signature schemes std/crypto verifies, and no ticket.
+// fallback, the signature schemes std/crypto verifies, no ticket, and no
+// certificate of its own: `chain` (leaf first) and `sign_schemes` (what
+// its key can make, in preference order) are sent when a server asks.
 pub function client_config(server_name: string): ClientConfig {
-  return ClientConfig { server_name: server_name, alpn: [], suites: [keyschedule.Aes128GcmSha256, keyschedule.Aes256GcmSha384, keyschedule.ChaCha20Poly1305Sha256], groups: [keyshare.X25519MlKem768, keyshare.X25519], schemes: [0x0403, 0x0503, 0x0807, 0x0804, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601], resume: None };
+  return ClientConfig { server_name: server_name, alpn: [], suites: [keyschedule.Aes128GcmSha256, keyschedule.Aes256GcmSha384, keyschedule.ChaCha20Poly1305Sha256], groups: [keyshare.X25519MlKem768, keyshare.X25519], schemes: [0x0403, 0x0503, 0x0807, 0x0804, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601], resume: None, chain: [], sign_schemes: [] };
 }
 
 const C_WAIT_SERVER_HELLO: i32 = 0;
@@ -586,6 +600,8 @@ const C_WAIT_FINISHED: i32 = 6;
 const C_CONNECTED: i32 = 7;
 
 const C_CLOSED: i32 = 8;
+
+const C_WAIT_SIGNATURE: i32 = 9;
 
 // Client — one client connection. `alpn` is the protocol the server chose,
 // empty when none was. `spare` is the entropy a share for a
@@ -609,6 +625,13 @@ pub struct Client {
   resume: Option[Resumption],
   resumed: boolean,
   res_master: u8[],
+  own_chain: u8[][],
+  sign_schemes: i32[],
+  request_schemes: i32[],
+  own_scheme: i32,
+  flight: u8[],
+  client_ap: u8[],
+  server_ap: u8[],
 }
 
 // ClientStep — the client after a call, the bytes to send, the application
@@ -673,7 +696,7 @@ pub function client_start(config: ClientConfig, entropy: [u8]): Result[ClientSte
       }
       exts = exts.append(message.ext_psk_modes([1]));
       let hello: message.ClientHello = message.ClientHello { random: __copy(entropy[0:32]), session_id: [], cipher_suites: __offers(config), extensions: exts };
-      return __client_from_hello(__offering(hello, config.resume)?, share, entropy[first:entropy.len()], config.resume);
+      return __client_from_hello(__offering(hello, config.resume)?, share, entropy[first:entropy.len()], config);
     },
     Err(e) => {
       return Err(KeyShare(e));
@@ -687,7 +710,7 @@ pub function client_start(config: ClientConfig, entropy: [u8]): Result[ClientSte
 // HelloRetryRequest may ask for. What the server answers is checked against
 // what this hello offers.
 pub function client_from_hello(hello: message.ClientHello, share: keyshare.ClientShare, spare: [u8]): Result[ClientStep, HandshakeError] {
-  return __client_from_hello(hello, share, spare, None);
+  return __client_from_hello(hello, share, spare, client_config(""));
 }
 
 // __offering is the hello offering the ticket, if there is one; its suite
@@ -719,7 +742,7 @@ function __bound(hello: message.ClientHello, r: Resumption, before: [u8]): messa
   return message.ClientHello { ...draft, extensions: __without(draft.extensions, message.EXT_PRE_SHARED_KEY).append(message.ext_pre_shared_key(message.OfferedPsks { identities: [id], binders: [binder] })) };
 }
 
-function __client_from_hello(hello: message.ClientHello, share: keyshare.ClientShare, spare: [u8], resume: Option[Resumption]): Result[ClientStep, HandshakeError] {
+function __client_from_hello(hello: message.ClientHello, share: keyshare.ClientShare, spare: [u8], config: ClientConfig): Result[ClientStep, HandshakeError] {
   let alpn: string[] = [];
   match (message.find(hello.extensions, message.EXT_ALPN)) {
     Some(d) => {
@@ -739,7 +762,7 @@ function __client_from_hello(hello: message.ClientHello, share: keyshare.ClientS
   let bytes: u8[] = message.encode(message.ClientHelloMsg(hello));
   let conn: Conn = Conn { ...__conn(), transcript: bytes };
   let hs: keyschedule.HandshakeSecret = keyschedule.HandshakeSecret { hash: keyschedule.Sha256, secret: [] };
-  let c: Client = Client { conn: conn, state: C_WAIT_SERVER_HELLO, hello: hello, alpn_offered: alpn, share: share, spare: __copy(spare), retry_suite: 0, hs: hs, client_hs: [], server_hs: [], chain: [], alpn: "", requested: false, request_context: [], resume: resume, resumed: false, res_master: [] };
+  let c: Client = Client { conn: conn, state: C_WAIT_SERVER_HELLO, hello: hello, alpn_offered: alpn, share: share, spare: __copy(spare), retry_suite: 0, hs: hs, client_hs: [], server_hs: [], chain: [], alpn: "", requested: false, request_context: [], resume: config.resume, resumed: false, res_master: [], own_chain: config.chain, sign_schemes: config.sign_schemes, request_schemes: [], own_scheme: 0, flight: [], client_ap: [], server_ap: [] };
   return Ok(ClientStep { client: c, output: record.frame(record.Handshake, 0x0301, bytes), data: [], events: [] });
 }
 
@@ -1063,9 +1086,9 @@ function __offered_schemes(c: Client): i32[] {
   return [];
 }
 
-// __client_finished checks the server's Finished, sends the client's (after
-// an empty Certificate if one was requested) and moves both directions to
-// the application secrets.
+// __server_finished checks the server's Finished and answers it: with the
+// client's Finished, after its Certificate when one was asked for, which
+// waits for the caller's signature when the chain is not empty.
 function __server_finished(c: Client, raw: message.Raw, verify_data: u8[], out: Out): Result[ClientRun, HandshakeError] {
   let h: keyschedule.Hash = c.conn.suite.hash();
   if (!keyschedule.verify_finished(h, c.server_hs, __hash(c.conn), verify_data)) {
@@ -1075,21 +1098,51 @@ function __server_finished(c: Client, raw: message.Raw, verify_data: u8[], out: 
   __at_key_change(conn)?;
   let master: keyschedule.MasterSecret = c.hs.master_secret();
   let th: u8[] = __hash(conn);
-  let server_ap: u8[] = master.server_traffic(th);
-  let client_ap: u8[] = master.client_traffic(th);
-  let flight: u8[] = [];
-  if (c.requested) {
-    let cert: u8[] = message.encode(message.CertificateMsg(message.Certificate { context: c.request_context, entries: [] }));
-    conn = Conn { ...conn, transcript: __join(conn.transcript, cert) };
-    flight = cert;
+  let keyed: Client = Client { ...c, server_ap: master.server_traffic(th), client_ap: master.client_traffic(th) };
+  if (!c.requested) {
+    return __client_finish(keyed, conn, [], out);
   }
+  let scheme: i32 = __own_scheme(c);
+  let entries: message.CertificateEntry[] = [];
+  if (scheme != 0) {
+    for d in c.own_chain {
+      entries = entries.append(message.CertificateEntry { data: d, extensions: [] });
+    }
+  }
+  let cert: u8[] = message.encode(message.CertificateMsg(message.Certificate { context: c.request_context, entries: entries }));
+  conn = Conn { ...conn, transcript: __join(conn.transcript, cert) };
+  if (entries.len() == 0) {
+    return __client_finish(keyed, conn, cert, out);
+  }
+  let ev: Event = SignNeeded(Signing { scheme: scheme, signed: certificate_verify_content(false, __hash(conn)) });
+  return Ok(ClientRun { client: Client { ...keyed, conn: conn, state: C_WAIT_SIGNATURE, own_scheme: scheme, flight: cert }, out: Out { ...out, events: out.events.append(ev) } });
+}
+
+// __own_scheme is the first scheme the client's key makes that the server
+// accepts, or 0 when it has no chain or none is accepted.
+function __own_scheme(c: Client): i32 {
+  if (c.own_chain.len() == 0) {
+    return 0;
+  }
+  for scheme in c.sign_schemes {
+    if (__has(c.request_schemes, scheme)) {
+      return scheme;
+    }
+  }
+  return 0;
+}
+
+// __client_finish sends `flight` and the client's Finished, moves both
+// directions to the application secrets and connects.
+function __client_finish(c: Client, conn: Conn, flight: u8[], out: Out): Result[ClientRun, HandshakeError] {
+  let h: keyschedule.Hash = conn.suite.hash();
   let fin: u8[] = message.encode(message.Finished(keyschedule.finished_verify_data(h, c.client_hs, __hash(conn))));
-  conn = Conn { ...conn, transcript: __join(conn.transcript, fin) };
-  let res_master: u8[] = master.resumption(__hash(conn));
-  let w: Wrote = __write(conn, record.Handshake, __cat(flight, fin))?;
-  conn = __with_read(__with_write(w.conn, client_ap, 2), server_ap, 2);
-  let next: Out = Out { ...out, output: __join(out.output, w.bytes), events: out.events.append(Connected) };
-  return Ok(ClientRun { client: Client { ...c, conn: conn, state: C_CONNECTED, res_master: res_master }, out: next });
+  let next: Conn = Conn { ...conn, transcript: __join(conn.transcript, fin) };
+  let res_master: u8[] = c.hs.master_secret().resumption(__hash(next));
+  let w: Wrote = __write(next, record.Handshake, __cat(__copy(flight), fin))?;
+  next = __with_read(__with_write(w.conn, c.client_ap, 2), c.server_ap, 2);
+  let done: Out = Out { ...out, output: __join(out.output, w.bytes), events: out.events.append(Connected) };
+  return Ok(ClientRun { client: Client { ...c, conn: next, state: C_CONNECTED, res_master: res_master, flight: [], client_ap: [], server_ap: [] }, out: done });
 }
 
 // __client_message hands a message to the handler for the client's state.
@@ -1142,7 +1195,8 @@ function __on_certificate(c: Client, kind: i32, m: message.Message, out: Out): R
   match (m) {
     message.CertificateRequestMsg(r) => {
       if (c.state == C_WAIT_CERTIFICATE_OR_REQUEST) {
-        return Ok(ClientRun { client: Client { ...c, requested: true, request_context: r.context, state: C_WAIT_CERTIFICATE }, out: out });
+        let schemes: i32[] = __codes(message.signature_algorithms(__ext(r.extensions, message.EXT_SIGNATURE_ALGORITHMS, "signature_algorithms")?))?;
+        return Ok(ClientRun { client: Client { ...c, requested: true, request_context: r.context, request_schemes: schemes, state: C_WAIT_CERTIFICATE }, out: out });
       }
     },
     message.CertificateMsg(cert) => {
@@ -1207,11 +1261,16 @@ function __client_after(c: Client, kind: i32, m: message.Message, out: Out): Res
   return Err(OutOfOrder(kind));
 }
 
-// __client_drain handles the whole messages pending, until a verdict is
-// awaited.
+// A client waiting on the caller, or closed, takes no more records.
+function __client_parked(state: i32): boolean {
+  return state == C_WAIT_VERDICT || state == C_WAIT_SIGNATURE || state == C_CLOSED;
+}
+
+// __client_drain handles the whole messages pending, until a verdict or a
+// signature is awaited.
 function __client_drain(c: Client, out: Out): Result[ClientRun, HandshakeError] {
   let client: Client = c;
-  while (client.state != C_WAIT_VERDICT && client.state != C_CLOSED) {
+  while (!__client_parked(client.state)) {
     let n: Next = __next(client.conn)?;
     if (!n.has) {
       break;
@@ -1230,7 +1289,7 @@ function __client_run(c: Client, out: Out): Result[ClientStep, HandshakeError] {
   let records: record.Record[] = c.conn.held;
   let r: ClientRun = __client_drain(c, out)?;
   let i: i32 = 0;
-  while (r.client.state != C_WAIT_VERDICT && r.client.state != C_CLOSED && i < records.len()) {
+  while (!__client_parked(r.client.state) && i < records.len()) {
     let a: Absorbed = __absorb(r.client.conn, records[i], r.client.state < C_CONNECTED, r.client.state == C_CONNECTED, r.out)?;
     let state: i32 = r.client.state;
     if (a.out.closed) {
@@ -1289,6 +1348,18 @@ pub function (c: Client) verdict(ok: boolean): Result[ClientStep, HandshakeError
     return Err(BadCertificate);
   }
   return __client_run(Client { ...c, state: C_WAIT_FINISHED }, __out());
+}
+
+// signature answers a SignNeeded event with the signature over its content,
+// and sends the Certificate, CertificateVerify and Finished.
+pub function (c: Client) signature(sig: [u8]): Result[ClientStep, HandshakeError] {
+  if (c.state != C_WAIT_SIGNATURE) {
+    return Err(Misuse("signature"));
+  }
+  let cv: u8[] = message.encode(message.CertificateVerifyMsg(message.CertificateVerify { scheme: c.own_scheme, signature: __copy(sig) }));
+  let conn: Conn = Conn { ...c.conn, transcript: __join(c.conn.transcript, cv) };
+  let r: ClientRun = __client_finish(c, conn, __cat(__copy(c.flight), cv), __out())?;
+  return __client_run(r.client, r.out);
 }
 
 // write seals application data once connected.
@@ -1386,7 +1457,7 @@ pub function client_restore(saved: [u8]): Result[Client, HandshakeError] {
       return Err(Misuse("client_restore"));
     }
   }
-  return Ok(Client { conn: conn, state: C_CONNECTED, hello: none, alpn_offered: [], share: share, spare: [], retry_suite: 0, hs: hs, client_hs: [], server_hs: [], chain: [], alpn: alpn, requested: false, request_context: [], resume: None, resumed: false, res_master: [] });
+  return Ok(Client { conn: conn, state: C_CONNECTED, hello: none, alpn_offered: [], share: share, spare: [], retry_suite: 0, hs: hs, client_hs: [], server_hs: [], chain: [], alpn: alpn, requested: false, request_context: [], resume: None, resumed: false, res_master: [], own_chain: [], sign_schemes: [], request_schemes: [], own_scheme: 0, flight: [], client_ap: [], server_ap: [] });
 }
 
 function __u32_to(own out: u8[], v: i32): u8[] {
@@ -1447,11 +1518,16 @@ function __saved_fields(saved: [u8], from: i32): Result[u8[][], HandshakeError] 
 // ServerConfig — the certificate chain, leaf first; the signature schemes its
 // key can make, in preference order; and what the server accepts, in
 // preference order.
-pub struct ServerConfig { chain: u8[][], schemes: i32[], suites: keyschedule.CipherSuite[], groups: keyshare.Group[], alpn: string[] }
+pub struct ServerConfig { chain: u8[][], schemes: i32[], suites: keyschedule.CipherSuite[], groups: keyshare.Group[], alpn: string[], request_client_certificate: boolean }
 
+// server_config takes every suite and group, no protocol, and asks the
+// client for no certificate.
 pub function server_config(chain: u8[][], schemes: i32[]): ServerConfig {
-  return ServerConfig { chain: chain, schemes: schemes, suites: [keyschedule.Aes128GcmSha256, keyschedule.Aes256GcmSha384, keyschedule.ChaCha20Poly1305Sha256], groups: [keyshare.X25519MlKem768, keyshare.X25519], alpn: [] };
+  return ServerConfig { chain: chain, schemes: schemes, suites: [keyschedule.Aes128GcmSha256, keyschedule.Aes256GcmSha384, keyschedule.ChaCha20Poly1305Sha256], groups: [keyshare.X25519MlKem768, keyshare.X25519], alpn: [], request_client_certificate: false };
 }
+
+// The schemes a CertificateRequest names: those std/tls/verify checks.
+const VERIFY_SCHEMES: i32[] = [0x0403, 0x0503, 0x0807, 0x0804, 0x0805, 0x0806];
 
 const S_WAIT_CLIENT_HELLO: i32 = 0;
 
@@ -1464,6 +1540,12 @@ const S_CONNECTED: i32 = 3;
 const S_CLOSED: i32 = 4;
 
 const S_WAIT_RESUME: i32 = 5;
+
+const S_WAIT_CLIENT_CERTIFICATE: i32 = 6;
+
+const S_WAIT_CLIENT_VERIFY: i32 = 7;
+
+const S_WAIT_CLIENT_VERDICT: i32 = 8;
 
 // The entropy a server takes: 32 random bytes, then up to 64 for its share.
 const SERVER_ENTROPY: i32 = 96;
@@ -1488,6 +1570,8 @@ pub struct Server {
   parked: message.Raw,
   resumed: boolean,
   res_master: u8[],
+  finished_hash: u8[],
+  client_chain: u8[][],
 }
 
 pub struct ServerStep { server: Server, output: u8[], data: u8[], events: Event[] }
@@ -1502,7 +1586,7 @@ pub function server_new(config: ServerConfig, entropy: [u8]): Result[Server, Han
     return Err(Entropy(entropy.len(), SERVER_ENTROPY));
   }
   let hs: keyschedule.HandshakeSecret = keyschedule.HandshakeSecret { hash: keyschedule.Sha256, secret: [] };
-  return Ok(Server { conn: __conn(), state: S_WAIT_CLIENT_HELLO, config: config, entropy: __copy(entropy), retry_group: 0, retry_suite: 0, scheme: 0, hs: hs, client_hs: [], server_hs: [], flight: [], server_name: "", alpn: "", parked: message.Raw { kind: 0, bytes: [] }, resumed: false, res_master: [] });
+  return Ok(Server { conn: __conn(), state: S_WAIT_CLIENT_HELLO, config: config, entropy: __copy(entropy), retry_group: 0, retry_suite: 0, scheme: 0, hs: hs, client_hs: [], server_hs: [], flight: [], server_name: "", alpn: "", parked: message.Raw { kind: 0, bytes: [] }, resumed: false, res_master: [], finished_hash: [], client_chain: [] });
 }
 
 struct ServerRun { server: Server, out: Out }
@@ -1704,16 +1788,21 @@ function __encrypted_extensions_msg(alpn: string): u8[] {
   return message.encode(message.EncryptedExtensions(ee));
 }
 
-// __server_flight is EncryptedExtensions and Certificate, which the
-// CertificateVerify and Finished follow once the signature is made.
+// __server_flight is EncryptedExtensions, a CertificateRequest when the
+// config asks for one, and Certificate, which the CertificateVerify and
+// Finished follow once the signature is made.
 function __server_flight(s: Server, alpn: string): u8[] {
+  let out: u8[] = __encrypted_extensions_msg(alpn);
+  if (s.config.request_client_certificate) {
+    out = __cat(out, message.encode(message.CertificateRequestMsg(message.CertificateRequest { context: [], extensions: [message.ext_signature_algorithms(VERIFY_SCHEMES)] })));
+  }
   let entries: message.CertificateEntry[] = [];
   let i: i32 = 0;
   while (i < s.config.chain.len()) {
     entries = entries.append(message.CertificateEntry { data: s.config.chain[i], extensions: [] });
     i = i + 1;
   }
-  return __cat(__encrypted_extensions_msg(alpn), message.encode(message.CertificateMsg(message.Certificate { context: [], entries: entries })));
+  return __cat(out, message.encode(message.CertificateMsg(message.Certificate { context: [], entries: entries })));
 }
 
 // Negotiated — what the server chose from a ClientHello.
@@ -1817,8 +1906,13 @@ function __send_finished(s: Server, before: [u8], tail: [u8], out: Out): Result[
   conn = Conn { ...conn, transcript: __join(conn.transcript, fin) };
   let w: Wrote = __write(conn, record.Handshake, __cat(__cat(__copy(before), tail), fin))?;
   let master: keyschedule.MasterSecret = s.hs.master_secret();
-  let next: Conn = __with_write(w.conn, master.server_traffic(__hash(w.conn)), 2);
-  return Ok(ServerRun { server: Server { ...s, conn: next, state: S_WAIT_FINISHED, flight: [] }, out: Out { ...out, output: __join(out.output, w.bytes) } });
+  let finished_hash: u8[] = __hash(w.conn);
+  let next: Conn = __with_write(w.conn, master.server_traffic(finished_hash), 2);
+  let state: i32 = S_WAIT_FINISHED;
+  if (s.config.request_client_certificate && !s.resumed) {
+    state = S_WAIT_CLIENT_CERTIFICATE;
+  }
+  return Ok(ServerRun { server: Server { ...s, conn: next, state: state, flight: [], finished_hash: finished_hash }, out: Out { ...out, output: __join(out.output, w.bytes) } });
 }
 
 // __check_binder verifies the binder of the identity taken (§4.2.11.2).
@@ -1885,17 +1979,50 @@ function __client_finished(s: Server, raw: message.Raw, verify_data: u8[], out: 
   __at_key_change(conn)?;
   let master: keyschedule.MasterSecret = s.hs.master_secret();
   // The application secrets hash the transcript through the server's
-  // Finished, which `flight` ends.
-  let th: u8[] = h.digest(conn.transcript[0:conn.transcript.len() - raw.bytes.len()]);
-  conn = __with_read(conn, master.client_traffic(th), 2);
+  // Finished; the resumption secret through the client's.
+  conn = __with_read(conn, master.client_traffic(s.finished_hash), 2);
   return Ok(ServerRun { server: Server { ...s, conn: conn, state: S_CONNECTED, res_master: master.resumption(__hash(conn)) }, out: Out { ...out, events: out.events.append(Connected) } });
+}
+
+// __client_certificate takes the client's chain: an empty one is put to
+// the caller at once, a chain waits for its CertificateVerify.
+function __client_certificate(s: Server, raw: message.Raw, cert: message.Certificate, out: Out): Result[ServerRun, HandshakeError] {
+  if (cert.context.len() != 0) {
+    return Err(Illegal("certificate_request_context"));
+  }
+  let conn: Conn = Conn { ...s.conn, transcript: __join(s.conn.transcript, raw.bytes) };
+  if (cert.entries.len() == 0) {
+    let ev: Event = VerifyClient(Verification { chain: [], scheme: 0, signed: [], signature: [] });
+    return Ok(ServerRun { server: Server { ...s, conn: conn, state: S_WAIT_CLIENT_VERDICT }, out: Out { ...out, events: out.events.append(ev) } });
+  }
+  let chain: u8[][] = [];
+  for e in cert.entries {
+    chain = chain.append(e.data);
+  }
+  return Ok(ServerRun { server: Server { ...s, conn: conn, state: S_WAIT_CLIENT_VERIFY, client_chain: chain }, out: out });
+}
+
+// __client_verify puts the client's chain and its signature over the
+// transcript before the CertificateVerify to the caller.
+function __client_verify(s: Server, raw: message.Raw, v: message.CertificateVerify, out: Out): Result[ServerRun, HandshakeError] {
+  if (!__has(VERIFY_SCHEMES, v.scheme)) {
+    return Err(Illegal("signature scheme"));
+  }
+  let signed: u8[] = certificate_verify_content(false, __hash(s.conn));
+  let conn: Conn = Conn { ...s.conn, transcript: __join(s.conn.transcript, raw.bytes) };
+  let ev: Event = VerifyClient(Verification { chain: s.client_chain, scheme: v.scheme, signed: signed, signature: v.signature });
+  return Ok(ServerRun { server: Server { ...s, conn: conn, state: S_WAIT_CLIENT_VERDICT }, out: Out { ...out, events: out.events.append(ev) } });
 }
 
 function __server_message(s: Server, raw: message.Raw, out: Out): Result[ServerRun, HandshakeError] {
   if (s.state == S_WAIT_CLIENT_HELLO) {
     return __client_hello(s, raw, out);
   }
-  match (__decode(raw)?) {
+  let m: message.Message = __decode(raw)?;
+  if (s.state == S_WAIT_CLIENT_CERTIFICATE || s.state == S_WAIT_CLIENT_VERIFY) {
+    return __client_auth_message(s, raw, m, out);
+  }
+  match (m) {
     message.Finished(verify_data) => {
       if (s.state == S_WAIT_FINISHED) {
         return __client_finished(s, raw, verify_data, out);
@@ -1914,9 +2041,34 @@ function __server_message(s: Server, raw: message.Raw, out: Out): Result[ServerR
   return Err(OutOfOrder(raw.kind));
 }
 
+// __client_auth_message takes the client's Certificate, then its
+// CertificateVerify.
+function __client_auth_message(s: Server, raw: message.Raw, m: message.Message, out: Out): Result[ServerRun, HandshakeError] {
+  match (m) {
+    message.CertificateMsg(cert) => {
+      if (s.state == S_WAIT_CLIENT_CERTIFICATE) {
+        return __client_certificate(s, raw, cert, out);
+      }
+    },
+    message.CertificateVerifyMsg(v) => {
+      if (s.state == S_WAIT_CLIENT_VERIFY) {
+        return __client_verify(s, raw, v, out);
+      }
+    },
+    _ => {}
+  }
+  return Err(OutOfOrder(raw.kind));
+}
+
 // A server waiting on the caller, or closed, takes no more records.
 function __server_parked(state: i32): boolean {
-  return state == S_WAIT_SIGNATURE || state == S_WAIT_RESUME || state == S_CLOSED;
+  return state == S_WAIT_SIGNATURE || state == S_WAIT_RESUME || state == S_WAIT_CLIENT_VERDICT || state == S_CLOSED;
+}
+
+// Whether the client's first encrypted flight is awaited, when its
+// compatibility change_cipher_spec may arrive.
+function __client_flight_due(state: i32): boolean {
+  return state == S_WAIT_FINISHED || state == S_WAIT_CLIENT_CERTIFICATE || state == S_WAIT_CLIENT_VERIFY;
 }
 
 function __server_drain(s: Server, out: Out): Result[ServerRun, HandshakeError] {
@@ -1938,7 +2090,7 @@ function __server_run(s: Server, out: Out): Result[ServerStep, HandshakeError] {
   let r: ServerRun = __server_drain(s, out)?;
   let i: i32 = 0;
   while (!__server_parked(r.server.state) && i < records.len()) {
-    let ccs: boolean = r.server.state == S_WAIT_FINISHED || r.server.state == S_WAIT_CLIENT_HELLO && r.server.retry_group != 0;
+    let ccs: boolean = __client_flight_due(r.server.state) || r.server.state == S_WAIT_CLIENT_HELLO && r.server.retry_group != 0;
     let a: Absorbed = __absorb(r.server.conn, records[i], ccs, r.server.state == S_CONNECTED, r.out)?;
     let state: i32 = r.server.state;
     if (a.out.closed) {
@@ -1993,6 +2145,23 @@ pub function (s: Server) resume(choice: Option[Resumed]): Result[ServerStep, Han
     }
   }
   return Err(Misuse("resume"));
+}
+
+// verdict answers a VerifyClient event: whether the client's chain, or its
+// absence, is accepted and its signature verifies.
+pub function (s: Server) verdict(ok: boolean): Result[ServerStep, HandshakeError] {
+  if (s.state != S_WAIT_CLIENT_VERDICT) {
+    return Err(Misuse("verdict"));
+  }
+  if (!ok) {
+    return Err(BadCertificate);
+  }
+  return __server_run(Server { ...s, state: S_WAIT_FINISHED }, __out());
+}
+
+// The chain the client sent, empty when it sent none or was not asked.
+pub function (s: Server) client_chain(): u8[][] {
+  return s.client_chain;
 }
 
 // ticket sends a NewSessionTicket; the handshake must be complete.
