@@ -1,0 +1,285 @@
+# Reference counting in the self-host compiler
+
+How a Fern function's reference counting is decided and emitted, written for
+a reader who knows Perceus but not this code. Each section names the module,
+its one job, what it may assume of the stage before it, and the tests that pin
+it. History lives in `docs/rc-log/` (one entry per change) and in
+`docs/RC-PERCEUS-SELF-HOST-PORT.md`; this page states what is true now, and a
+change that makes a section wrong rewrites it in the same diff.
+
+## 1. The pipeline
+
+A function body passes through five stages. Each reads only what the previous
+one produced, and nothing lifts an ownership fact from a later stage back into
+an earlier one.
+
+| stage | module | in | out |
+|---|---|---|---|
+| semantic graph | `semsource.fern` (produces), `ssasem.fern` (checks) | typed AST | `ssasem.Func`: an SSA graph of typed semantic operations, no counts |
+| ownership inference | `ownership.fern` | every produced graph of the module | per function, which reference parameters it consumes |
+| unit plan | `ssaunits.fern` | the graph, the parameter modes | `ssaunits.Plan`: per step, the units acquired, moved and dropped, and the takes, holds, steals, sole boxes and grow rows |
+| plan replay | `ssaunits.verify` | the graph and the plan | accepts the plan or names the step that spends a unit it does not hold |
+| physical lowering | `ssarc.fern` | the graph, the modes, the plan | stack IR with retains, releases, reuse tokens, takes, steals and grow brackets |
+| certifier | `rccertify.fern` (through `irverifygate.fern`, memo in `rcmemo.fern`) | the lowered ops, lifted back to SSA | a clean report, or a refusal naming the unit that is leaked or over-spent |
+
+The seminline pass (`seminline.fern`) rewrites graphs before the plan: it
+inlines leaves, splits reads of known constructions into their parts, and
+runs tail recursion modulo cons. It is a graph-to-graph pass; the stages
+below never see what it removed.
+
+### 1.1 The semantic graph
+
+`semsource` lowers each function to `ssasem.Func`: blocks of `ssa.SInst`
+whose kinds are semantic (`record_get`, `tuple_new`, `append`, `with`,
+`map_insert`, `call`, phis, …), one type per value, parameters as values
+`0..nparams-1`. There is no retain or release in it. A value is immutable:
+`append` and `with` answer a new container, and the physical question of
+whether that container is the old buffer written in place is the plan's.
+
+`ssasem.analyze` derives from the graph, and never accepts as a sidecar, the
+**dependencies** between values: a projection (`record_get`, `tuple_get`,
+`array_get`) is anchored to the container it reads, a value that gathers views
+to the storage those views read, and a call result to the arguments its
+contract says it may keep (`borrow_parents`). The closure of those chains
+(`Closure.dependencies`) is what liveness is computed over (`ssalive`,
+validated by `ssadeps`): a container is live wherever a value anchored to it
+is. The analysis refuses a cyclic chain and a graph `ssadeps` cannot place.
+
+What later stages may assume: the graph is well formed SSA over a reducible
+control-flow graph, every value has a type, and the dependency chains are
+transitive and acyclic.
+
+### 1.2 Ownership inference
+
+`ownership.escaping` answers, per function, which reference parameters the
+frame **consumes**: a parameter whose unit leaves the frame (returned, built
+into a container or box, stored into a cell or map, handed to a callee's
+counted slot, or used as the base of a record update, which reuses its box)
+is counted, and the caller hands over a unit the callee releases. A parameter
+the frame only reads stays borrowed, because a retain and a release on a value
+that cannot outlive the call would cancel. It is a greatest fixpoint over the
+module's produced graphs: every parameter starts consumed and is demoted when
+a round finds no escaping use, so a recursive traversal that rebuilds keeps
+its parameter counted and a quiet cycle (functions returning no reference)
+does not. A declared `own` stays counted whatever the analysis says, since
+the checker's affine discipline (E050) and call sites rely on it; a bare
+string or array parameter is deliberately not promoted (`owned_shape`): a
+byte kernel reads its argument and hands back an index.
+
+`semsource.with_inferred_modes` rewrites the modes of every produced body and
+every callee contract it carries from the same rows, so definition and call
+site read one answer. What later stages may assume: a parameter's mode is
+final, and a callee contract's modes match the callee's own.
+
+Pinned by `TestSelfHostOwnershipInference`; the measurement that keeps both
+halves (`docs/rc-log/2026-09-21-owned-by-default-alone-is-a-regression.md`).
+
+### 1.3 The unit plan
+
+`ssaunits.plan` walks the graph backwards and writes, per **step** (an
+instruction, an edge, the entry, a return), which values are **supplied**
+(moved into a construction, a callee's counted slot, a store, a return),
+which are **dropped** there (their last use), and which supplies were
+acquired by a retain because the value is still used after. The step walk
+runs over the flow with dependencies, so a borrowed projection keeps its
+container alive and a container is dropped where its last anchored read ends.
+
+Before the walk, a family of analyses decides which reads are **units of
+their own** rather than borrows. Each is a query answered once over the graph
+and folded into the ownership table the walk reads (`units_of`):
+
+- **Payload take** (`payload_takes`, `slot_takeable`, `needed_past`): a read
+  of a reference payload out of an enum, or of a buffer, record or map out of
+  a record field, a tuple element or an owned array element, when the box is
+  the frame's unit and the frame reads it no further through that slot.
+  The lowering tests the box's uniqueness at the read (`ssarc.steal`): unique,
+  the slot is nulled and the read owns the unit; shared, the read is retained
+  as a borrow would be. Pinned by `TestSelfHostPayloadTakeIR` and the
+  payload rows of `TestSelfHostSSAPhysicalRC`.
+- **Tuple take** (`tuple_takes`, `takeable_root`): the untested form, for a
+  tuple this frame allocated (`tuple_new`, `map_delete`'s pair) whose other
+  elements are only read: the slot is nulled with no runtime test, since no
+  one else can see the box. Pinned by `TestSelfHostMapTupleElemReclaim*`.
+- **Hold** (`held_elements`): a projection of a counted type that is still in
+  hand where its source is consumed, or where its source dies unconsumed and
+  the read (or a read anchored to it) is consumed later, is retained at the
+  read and released at its own death, and its chain to the source is cut, so
+  the source moves instead of being retained. A read only borrowed to its
+  death stays a borrow. A read that is a take already has its unit and is
+  not held as well. Pinned by `TestSelfHostCrossBlockReuse`'s
+  `read-outliving-the-attempt-takes-its-unit`, the `field-read-outlives-the-record`
+  rows of `TestSelfHostSemanticAllocationCounts`, and the `update-keeps-fields`
+  rows of `TestSelfHostSemanticReuseDifferential`, which pin that a field an
+  update keeps is not held.
+- **Steal** (`steals`): a direct call's counted slot fed by a field of a
+  record this frame owns and reads no further through that field takes the
+  field's unit (`steal_unit`) rather than a retained one, so the callee holds
+  the buffer's only count and grows it in place. Pinned by
+  `TestSelfHostTrmcConsumeIR*` and the `Emit { ...e, r: emit(e.r, op) }` rows
+  in `TestSelfHostSemanticAllocationCounts`.
+- **Sole box** (`sole_boxes`, `sole_result`): a buffer no unit but the
+  frame's own ever holds, from a fresh array, a `with`, or a fresh row, kept
+  sole through passes and phis that preserve it, so a `with` on it writes in
+  place without a copy guard. Pinned by `TestSelfHostSoleLoopWithX86_64` and
+  `TestSelfHostGrowSoleOccurrenceX86_64`.
+- **Grow rows and brackets** (`grow_rows`, `grow_table`, `Plan.grows`): per
+  callee, the borrowed parameter positions whose buffer the callee may grow or
+  write in place; a caller that hands such a buffer on while it still reads it
+  brackets the call (`ssarc.bracket_take` / `bracket_give`): it takes the
+  buffer's unit before the call and gives it back after, so the callee's
+  append finds a unique buffer. A caller whose read ends at the call hands the
+  buffer unbracketed (`Step.hand_roots`). The table is a fixpoint over the
+  module. Pinned by `TestSelfHostFieldAppendInPlace*`,
+  `TestSelfHostGrowFieldBracketReleasesRetainedX86_64` and
+  `TestSelfHostLentArrayBracket`.
+- **Kept fields** (`Plan.kept`): the fields a record update keeps, so the
+  construction that reuses the record's box leaves them in place.
+
+The plan is planned once per function and modes. `plan_analyzed` is the
+entry with an analysis the caller already holds; `plan` derives it.
+
+### 1.4 The replay
+
+`ssaunits.verify` re-derives the units from the graph, the modes and the
+plan's own tables (takes, holds, payloads) and replays every step: a unit must
+be moved, dropped or returned exactly once, a borrow never spent, a take or
+hold agreeing with what the replay derives. It is independent of the walk that
+planned: a disagreement names the step. It runs under `FERN_IR_VERIFY=1` (the
+test harness sets `quiet` for every self-host compile), not in a plain
+compile.
+
+### 1.5 The physical lowering
+
+`ssarc.lower` turns the graph and its plan into the stack IR the backends
+emit: SSA value ids become locals, parameter ids the ABI's positions, scratch
+locals sit above `nvals`. It emits:
+
+- **retains** before a construction or return for every acquired supply, and
+  **releases** at a drop: a parent releases its children only under
+  `__fern_rc_is_unique`, then its own box (`drop_value`, the per-type
+  `__sem_release_<T>` helpers, and `__sem_drop_<T>` for children only);
+- **takes and steals** as a uniqueness test, a slot store of zero and the
+  value in its local (`steal`);
+- **reuse**: a construction whose block holds a value of the same slot count
+  dying at it takes that value as a **token** (`reuse_pairs`, `reuse_token`):
+  `__fern_rc_is_unique(d)` selects the box or null, `__fern_alloc_reuse(token,
+  slots)` hands back the box or a fresh one, the replaced children are
+  released under the token's non-null arm and the kept fields are left in
+  place (`reuse_construct`, `block_keeps`). A donor dying after its block's
+  last construction can be **carried** to a construction in a later block
+  (`carried_pairs`, `Carry`): the holding block takes the token where the
+  donor dies (`hold_token`), the way's blocks pass it in the donor's own
+  local, a construction spends it (`self_token`) and an exit edge frees it
+  (`free_token`). A donor dying as a box of another count on one predecessor
+  reaches the construction as a null token on that path. Pinned by
+  `TestSelfHostCrossBlockReuse`, `TestSelfHostLoopReuseIR*`,
+  `TestSelfHostSemanticReuseDifferential` and the enum reuse suites;
+- **grow brackets** around calls the plan marked (`bracketed`);
+- **string and view** handling: a view is lent, never counted, and released
+  through the view's own release where a container holds it.
+
+What the lowering may assume: the plan verified; it re-derives the semantic
+facts it needs from the graph rather than trusting a sidecar. It refuses the
+shapes its vocabulary does not cover (a 32-bit float, a record with no schema
+or with type arguments) rather than falling through.
+
+### 1.6 The certifier
+
+`rccertify.certify` reads the lowered ops back as SSA (`ssa_lift`) and
+nothing of the plan, and accounts per path the units the frame holds: an
+allocation or owned call result is a fresh unit, a counted parameter a unit
+handed in, a load or a borrowed parameter nothing; a retain adds one; a
+release, a move into a callee or container and a return each spend one; at a
+join the counts are met per value, and a disagreement is unproved rather than
+a finding. A load inside the arm a box was proved unique in (the children
+release, a reuse token's non-null arm, a `__sem_drop_<T>` body) is the frame's
+to release. A finding is a definite violation: a unit spent that the frame
+does not hold, or a unit it holds when it returns. Every compile certifies
+every function it emits, through a memo keyed by the function's ops, contract
+and callee contracts (`rcmemo`, under the user's cache root), so a steady
+compile pays only for lowerings it has not seen. `FERN_RC_CERTIFY=0` leaves it
+out, `FERN_RC_CERTIFY=report` turns refusals into a census, and a refusal
+exits 5 naming the function and the unit. Pinned by `TestSelfHostRcCertify*`
+and the `certifier-refuses-missing-retain` row of the physical-RC driver.
+
+## 2. The runtime contract
+
+Every counted value is a heap box with its count word at `data-8`; the data
+pointer that flows through the program points past the header.
+
+- An **array** box has its capacity at `data-16`, its count at `data-8`, its
+  length at `data+0` and element `i` at `data+(i+1)*8`
+  (`__fern_arr_box`). A **record** is an array-shaped box whose first word is
+  its `shape_addr` and the rest one word per field; a **tuple** has one word
+  per element and no shape word; a declared **enum variant** is laid out as a
+  record, its shape word naming the variant. A **string** box is a data
+  pointer and a length, released through `__fern_str_free`; a fused string
+  carries its bytes behind the same block.
+- The count word is a signed 32-bit integer. A count below zero marks an
+  **immortal** box (a literal, a static empty array, a `.rodata` closure
+  cell): every retain, release and uniqueness test skips it, so a reuse never
+  hands back read-only memory. `__fern_rc_is_unique(p)` is 1 only for a live
+  heap box with count exactly 1; null and anything below the low-address
+  guard answer 0, so it is safe on a slot that may hold a scalar.
+- Releases free at the last count through a size-classed freelist
+  (`__fern_arr_dec`, `__fern_rc_dec`); `__fern_alloc_reuse(token, slots)`
+  hands a dead box of the right class back as the new allocation and files a
+  mispaired one on its freelist.
+- Under `FERN_SANITIZE=1` (or `-sanitize`) a freed block is poisoned with a
+  marker in its count word and never recycled, an over-release and a touch of
+  a poisoned block are fatal with a backtrace, and a leak census prints at
+  exit; `FERN_LEAKCHECK=1` is the census alone.
+
+The drop helpers the lowering emits per type (`__sem_release_<T>`,
+`__sem_drop_<T>`) are the same code a map's column release calls on the
+entries it supersedes or walks (`release_helper_name`), so one release
+discipline covers values the frame holds and values a container holds.
+
+## 3. Debugging
+
+In the order they are usually reached for:
+
+1. `FERN_SANITIZE=1` on the compile of the failing program: one flag over the
+   over-release trap, the use-after-free quarantine and the leak census. A
+   clean run prints nothing. `docs/SANITIZER.md` has the contract.
+2. `FERN_IR_VERIFY=1` on the compile: the plan replay, the SSA and schema
+   checks and the IR verifiers, exiting 4 at the op the lowering produced
+   rather than where the machine code falls over.
+3. `FERN_RC_CERTIFY=report` with `FERN_RC_CERTIFY_MEMO=0`: the certifier's
+   census over every function, and `FERN_RC_CERTIFY_DUMP=<name>` (or a
+   `<prefix>*`) to print the lifted SSA it read, under the report mode and at
+   a refusal.
+4. `FERN_SEM_DUMP=<function>`: the semantic graph as the inliner leaves it,
+   before the plan.
+5. `FERN_CLIFF_REPORT=1` on a run of the compiled program: how many appends
+   found their array shared with room to spare and how many bytes they copied
+   (`__arr_push_shared_count` / `__arr_push_shared_bytes` from Fern;
+   `scripts/cliff-bench` for the compiler compiling `checker.fern`). A copy at
+   a site means a second holder; `docs/LOCAL-DEV-LOOP.md` gives the gdb
+   methods that name it: a breakpoint on the copy sites with the caller
+   chain for an attribution by function, and a watchpoint on the box's count
+   word for the holder's exact retain and release.
+6. `__rc_underflow_count()` from Fern, `FERN_RC_UNDERFLOW_TRAP=1` to make the
+   first over-release fatal at its dec, and `FERN_RC_FREE_DEBUG=1` for the
+   quarantine alone.
+
+Which suite proves what, and which look authoritative and are not:
+`docs/TEST-GATES.md`. The fixpoint is self-referential and blind to a stable
+miscompile; `internal/testing/e2ecompiler` is primary on a lowering change.
+
+## 4. What is not here
+
+- The reuse pairing is decided in the lowering, not the plan, so the replay
+  does not see it and the certifier is the only check on it (#11909 proposes
+  tokens as plan units).
+- The analyses in section 1.3 are separate walks with separate soundness
+  arguments; their seams are where the imprecisions sit (#11910 proposes one
+  forward model they all query).
+- The planner's take through a record whose slot is read once, into a field
+  of the record it holds, let the compiler's own build free a shared array
+  early when a local reuse of identical reads made such shapes common
+  (#12135).
+- Each shape the native compiler's reuse promised and the self-host port
+  preserves is listed in `docs/REUSE-CONTRACT.md` and
+  `docs/SELFHOST-PERCEUS-REUSE.md`; the Koka and Lean comparison is
+  `docs/PERCEUS-COMPARISON.md`.

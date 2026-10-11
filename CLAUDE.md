@@ -416,6 +416,10 @@ it.
 - **Module loading** — there is no prelude injector; a program sees only what it
   `import`s. `docs/PRELUDE-TO-MODULES.md` covers mangling, the transitive-import
   dedupe, `pub use` re-exports, and the in-memory (`modload.LoadSource`) path.
+- **Reference counting** (the semantic graph, ownership inference, the unit
+  plan and its replay, the physical lowering, the certifier, the runtime box
+  contract, and how to debug a leak or a copy) — `docs/RC-DESIGN.md`. The
+  design as it stands; `docs/rc-log/` is its history.
 - **SSA backend** (`-backend ssa`, per-function register allocation,
   the only emitter on the native ISAs, the compiler half of #4112) —
   `docs/SELFHOST-SSA-BACKEND.md`. A function the lift cannot take is a
