@@ -783,17 +783,9 @@ pub function op_syscall6(): Op {
   return op0(323);
 }
 
-// raw_addr (#2649 raw-memory floor): pops [ptr, off] → ptr + off, computed at
-// the machine's FULL pointer width. It exists because `p + off` written in the
-// helper source does not survive: the surface type of a raw pointer is i32, so
-// the arm64 backend sign-extends the sum back to 32 bits (`sxtw x0, w0`) and a
-// high heap address comes out truncated. The TWO-ARGUMENT raw load/stores
-// (raw_load8 / raw_store8 / raw_load_ptr / raw_store_ptr) dodge this by folding
-// their `off` operand into the addressing mode. Everything else needs this op:
-// a pointer PASSED somewhere (a syscall buffer arg), and — the trap #6386 fell
-// into — the ONE-argument loads, `__load_i32(a)` / `__load_i64(a)` /
-// `__load_ptr(a)`, which have no offset operand to fold, so their caller must
-// not reach for a bare `a + off`.
+// raw_addr: pops [ptr, off] → ptr + off at the machine's full pointer width,
+// the i32 offset sign-extended. The lowering's own pointer adjustments (a byte
+// view's data pointer, a string's header) are made of it.
 pub function op_raw_addr(): Op {
   return op0(223);
 }
@@ -6359,9 +6351,9 @@ pub function is_foldable_binary_kind(id: i32): boolean {
 //
 // is_foldable_binary_kind has existed since the registry landed and had no
 // consumer but its own registry test — this is that consumer. Without it the
-// stack-machine lowering emits the whole sequence for a literal: `0 - 8` in a
-// helper's `__raw_addr(p, 0 - 8)` costs a const, a const, two pops, a sub and
-// a push, none of which survive folding.
+// stack-machine lowering emits the whole sequence for a literal: `0 - 8`
+// costs a const, a const, two pops, a sub and a push, none of which survive
+// folding.
 //
 // It runs on every build, beside constfold.fold_module, its AST-level sibling.
 //

@@ -5760,7 +5760,6 @@ function raw_floor_ops(): RawOps[] {
     RawOps { name: "__raw_array", ops: [] },
     RawOps { name: "__raw_arr_ptr", ops: [] },
     RawOps { name: "__raw_data", ops: [ir.op_str_data()] },
-    RawOps { name: "__raw_addr", ops: [ir.op_raw_addr()] },
     RawOps { name: "__raw_arr_box", ops: [ir.op_raw_arr_box()] },
     RawOps { name: "__raw_scratch", ops: [ir.op_raw_scratch()] },
     RawOps { name: "__raw_environ", ops: [ir.op_raw_environ()] },

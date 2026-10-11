@@ -22,8 +22,8 @@ import (
 //     there is no __c_call runtime on any wasm path.
 //   - the raw-memory / syscall floor (#6946) — __raw_alloc,
 //     __raw_string, __raw_scratch, __raw_environ,
-//     __raw_splice_pipe, __raw_cover, __raw_addr,
-//     __raw_arr_box, __raw_vg_request, __syscall3, __syscall4, __syscall5.
+//     __raw_splice_pipe, __raw_cover, __raw_arr_box,
+//     __raw_vg_request, __syscall3, __syscall4, __syscall5.
 //     They exist so the register backends' runtime helpers can be written in
 //     Fern; wasm has neither a raw address space nor syscalls. Unclassified,
 //     they would reach instruction selection, which has no op for them.

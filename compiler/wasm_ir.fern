@@ -1800,7 +1800,7 @@ function is_raw_floor_builtin(name: string): boolean {
   if (name == "__raw_string" || name == "__raw_scratch" || name == "__raw_environ" || name == "__raw_splice_pipe" || name == "__raw_cover" || name == "__raw_task_state") {
     return true;
   }
-  if (name == "__raw_addr" || name == "__raw_arr_box" || name == "__raw_vg_request") {
+  if (name == "__raw_arr_box" || name == "__raw_vg_request") {
     return true;
   }
   return name == "__syscall3" || name == "__syscall4" || name == "__syscall5" || name == "__syscall6";
