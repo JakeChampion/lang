@@ -1,0 +1,287 @@
+import "std/test";
+import "std/http";
+import "std/http/cookie";
+import "std/headers";
+import "std/stream";
+import "std/string";
+import "std/fetch";
+import "std/sim";
+import "std/sim_fetch";
+import "std/utf8";
+import "std/i64";
+
+// tests/stdlib/http_cookie_test.fern — std/http/cookie: a SetCookie
+// written with every attribute and each one a browser would refuse
+// refused; a request's Cookie header read; a jar storing what a response
+// set under rfc6265bis's domain, path, scheme, prefix, lifetime and
+// eviction rules and writing the Cookie header a request carries in its
+// order; the cookie-date formats servers send; and the jar on the
+// client's route over the scripted network, through a redirect.
+
+function serialized(c: cookie.SetCookie): string {
+  match (c.serialize()) {
+    Ok(s) => {
+      return s;
+    },
+    Err(e) => {
+      return "error: " + e.message();
+    }
+  }
+  return "";
+}
+
+// refused is the error's kind for a cookie `serialize` refuses, or "ok".
+function refused(c: cookie.SetCookie): string {
+  match (c.serialize()) {
+    Ok(s) => {
+      return "ok";
+    },
+    Err(e) => {
+      match (e) {
+        BadName(_) => {
+          return "name";
+        },
+        BadValueByte(_) => {
+          return "value";
+        },
+        BadAttribute(a) => {
+          return a;
+        },
+        TooLong(_) => {
+          return "long";
+        },
+        Lifetime(_) => {
+          return "lifetime";
+        },
+        Prefix(_) => {
+          return "prefix";
+        }
+      }
+    }
+  }
+  return "";
+}
+
+function test_serialize(): test.TestOutcome {
+  let c: cookie.SetCookie = cookie.SetCookie { ...cookie.new("sid", "abc"), domain: "example.com", expires: 784111777 as i64, max_age: 3600, secure: true, same_site: cookie.Strict, partitioned: true };
+  let none: cookie.SetCookie = cookie.SetCookie { ...cookie.new("a", "\"quoted\""), path: "", http_only: false, same_site: cookie.CrossSite, secure: true };
+  return test.assert_eq(serialized(c) + "|" + serialized(none) + "|" + serialized(cookie.delete("sid")), "sid=abc; Path=/; Domain=example.com; Expires=Sun, 06 Nov 1994 08:49:37 GMT; Max-Age=3600; Secure; HttpOnly; SameSite=Strict; Partitioned|a=\"quoted\"; Secure; SameSite=None|sid=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax");
+}
+
+function test_refused(): test.TestOutcome {
+  let base: cookie.SetCookie = cookie.new("sid", "abc");
+  let long: string = "x".repeat(4093);
+  let got: string = refused(cookie.SetCookie { ...base, name: "" }) + " " + refused(cookie.SetCookie { ...base, name: "s d" }) + " " + refused(cookie.SetCookie { ...base, name: "s=d" }) + " " + refused(cookie.SetCookie { ...base, value: "a b" }) + " " + refused(cookie.SetCookie { ...base, value: "a;b" }) + " " + refused(cookie.SetCookie { ...base, value: "a,b" }) + " " + refused(cookie.SetCookie { ...base, value: "a\"b" }) + " " + refused(cookie.SetCookie { ...base, value: "a\\b" }) + " " + refused(cookie.SetCookie { ...base, value: "é" }) + " " + refused(cookie.SetCookie { ...base, value: "a\r\nb" }) + " " + refused(cookie.SetCookie { ...base, value: long }) + " " + refused(cookie.SetCookie { ...base, value: long + "x" }) + " " + refused(cookie.SetCookie { ...base, path: "/a;b" }) + " " + refused(cookie.SetCookie { ...base, domain: "ex\tample.com" }) + " " + refused(cookie.SetCookie { ...base, domain: "x".repeat(1025) }) + " " + refused(cookie.SetCookie { ...base, max_age: cookie.MAX_AGE_CAP }) + " " + refused(cookie.SetCookie { ...base, max_age: cookie.MAX_AGE_CAP + 1 }) + " " + refused(cookie.SetCookie { ...base, partitioned: true }) + " " + refused(cookie.SetCookie { ...base, same_site: cookie.CrossSite });
+  let prefixes: string = refused(cookie.SetCookie { ...base, name: "__Host-sid" }) + " " + refused(cookie.SetCookie { ...base, name: "__Host-sid", secure: true }) + " " + refused(cookie.SetCookie { ...base, name: "__Host-sid", secure: true, domain: "example.com" }) + " " + refused(cookie.SetCookie { ...base, name: "__Host-sid", secure: true, path: "/a" }) + " " + refused(cookie.SetCookie { ...base, name: "__Secure-sid" }) + " " + refused(cookie.SetCookie { ...base, name: "__Secure-sid", secure: true, domain: "example.com" });
+  return test.assert_eq(got + "|" + prefixes, "name name name value value value value value value value ok long Path Domain Domain ok lifetime Partitioned SameSite|prefix ok prefix prefix prefix ok");
+}
+
+function request(cookies: string[]): HttpRequest {
+  let h: HeaderMap = headers.header_map_new();
+  for c in cookies {
+    h = h.append("Cookie", c);
+  }
+  return HttpRequest { method: "GET", path: "/", body: stream.stream_from_string(""), headers: h, trailers: headers.header_map_new() };
+}
+
+function read(req: HttpRequest, name: string): string {
+  match (req.cookie(name)) {
+    Some(v) => {
+      return v;
+    },
+    None => {
+      return "none";
+    }
+  }
+  return "";
+}
+
+function test_request_cookie(): test.TestOutcome {
+  let req: HttpRequest = request(["a=1; sid=\"abc\"; b=2", "c=3;a=4"]);
+  return test.assert_eq(read(req, "sid") + " " + read(req, "a") + " " + read(req, "b") + " " + read(req, "c") + " " + read(req, "Sid") + " " + read(req, "d"), "\"abc\" 1 2 3 none none");
+}
+
+// set stores one Set-Cookie at `now`, as the kept cookie's name, domain,
+// path and flags, or why it was ignored.
+function set(j: cookie.Jar, u: string, v: string, now: i64): string {
+  match (j.set(u, v, now)) {
+    Ok(c) => {
+      let flags: string = "";
+      if (c.host_only) {
+        flags = flags + "h";
+      }
+      if (c.secure) {
+        flags = flags + "s";
+      }
+      return c.name + "@" + c.domain + c.path + " " + flags;
+    },
+    Err(why) => {
+      return why.message();
+    }
+  }
+  return "";
+}
+
+function header(j: cookie.Jar, u: string, now: i64): string {
+  match (j.header(u, now)) {
+    Some(v) => {
+      return v;
+    },
+    None => {
+      return "-";
+    }
+  }
+  return "";
+}
+
+function names(j: cookie.Jar, now: i64): string {
+  let out: string = "";
+  for c in j.all(now) {
+    out = out + c.name + " ";
+  }
+  return out.trim();
+}
+
+const T0: i64 = 1000000;
+
+function test_jar_paths(): test.TestOutcome {
+  let j: cookie.Jar = cookie.jar();
+  let stored: string = set(j, "http://example.com/a/b", "sid=1", T0) + "|" + set(j, "http://example.com/", "root=2; Path=/", T0) + "|" + set(j, "http://example.com/x", "rel=3; Path=rel", T0);
+  let sent: string = header(j, "http://example.com/a/x", T0) + "|" + header(j, "http://example.com/a", T0) + "|" + header(j, "http://example.com/ab", T0) + "|" + header(j, "http://example.com/", T0) + "|" + header(j, "http://sub.example.com/a/x", T0) + "|" + header(j, "http://other.com/a/x", T0);
+  return test.assert_eq(stored + "#" + sent, "sid@example.com/a h|root@example.com/ h|rel@example.com/ h#sid=1; root=2; rel=3|sid=1; root=2; rel=3|root=2; rel=3|root=2; rel=3|-|-");
+}
+
+function test_jar_domains(): test.TestOutcome {
+  let j: cookie.Jar = cookie.jar();
+  let stored: string = set(j, "http://www.example.com/", "wide=1; Domain=.Example.com", T0) + "|" + set(j, "http://www.example.com/", "foreign=1; Domain=other.com", T0) + "|" + set(j, "http://www.example.co.uk/", "suffix=1; Domain=co.uk", T0) + "|" + set(j, "http://co.uk/", "self=1; Domain=co.uk", T0) + "|" + set(j, "http://www.example.com/", "up=1; Domain=wwww.example.com", T0);
+  let sent: string = header(j, "http://example.com/", T0) + "|" + header(j, "http://deep.www.example.com/", T0) + "|" + header(j, "http://notexample.com/", T0) + "|" + header(j, "http://co.uk/", T0) + "|" + header(j, "http://www.co.uk/", T0);
+  return test.assert_eq(stored + "#" + sent, "wide@example.com/ |a Domain the host is not under|a Domain that is a public suffix|self@co.uk/ h|a Domain the host is not under#wide=1|wide=1|-|self=1|-");
+}
+
+function test_jar_secure(): test.TestOutcome {
+  let j: cookie.Jar = cookie.jar();
+  let stored: string = set(j, "http://example.com/", "s=1; Secure", T0) + "|" + set(j, "https://example.com/", "s=2; Secure", T0) + "|" + set(j, "http://example.com/", "s=3", T0) + "|" + set(j, "http://example.com/other", "s=4; Path=/other", T0) + "|" + set(j, "https://example.com/", "s=5", T0);
+  let sent: string = header(j, "http://example.com/", T0) + "|" + header(j, "https://example.com/", T0) + "|" + header(j, "https://example.com/other/x", T0);
+  return test.assert_eq(stored + "#" + sent, "Secure over plain http|s@example.com/ hs|a Secure cookie is not replaced over plain http|a Secure cookie is not replaced over plain http|s@example.com/ h#s=5|s=5|s=5");
+}
+
+function test_jar_prefixes(): test.TestOutcome {
+  let j: cookie.Jar = cookie.jar();
+  let got: string = set(j, "https://example.com/a", "__Host-a=1; Secure; Path=/", T0) + "|" + set(j, "https://example.com/a", "__Host-b=1; Secure", T0) + "|" + set(j, "https://example.com/", "__Host-c=1; Secure; Domain=example.com", T0) + "|" + set(j, "https://example.com/", "__Host-d=1; Path=/", T0) + "|" + set(j, "https://example.com/", "__Secure-e=1", T0) + "|" + set(j, "https://example.com/", "__Secure-f=1; Secure", T0) + "|" + set(j, "https://example.com/", "p=1; Partitioned", T0) + "|" + set(j, "https://example.com/", "p=2; Partitioned; Secure", T0);
+  return test.assert_eq(got, "__Host-a@example.com/ hs|lacks what its prefix requires|lacks what its prefix requires|lacks what its prefix requires|lacks what its prefix requires|__Secure-f@example.com/ hs|Partitioned without Secure|p@example.com/ hs");
+}
+
+function test_jar_malformed(): test.TestOutcome {
+  let j: cookie.Jar = cookie.jar();
+  let got: string = set(j, "http://example.com/", "", T0) + "|" + set(j, "http://example.com/", "=", T0) + "|" + set(j, "http://example.com/", "a=1" + string_from_bytes_unchecked([1 as u8]), T0) + "|" + set(j, "http://example.com/", "x".repeat(4097), T0) + "|" + set(j, "not a url", "a=1", T0) + "|" + set(j, "http://example.com/", "bare", T0) + "|" + set(j, "http://example.com/", " b = 2 ; Path=/p; Domain=", T0) + "|" + set(j, "http://example.com/", "long=1; Path=/" + "x".repeat(1024), T0);
+  return test.assert_eq(got + "#" + header(j, "http://example.com/p/q", T0), "not a cookie|not a cookie|not a cookie|not a cookie|not a cookie|@example.com/ h|b@example.com/p h|long@example.com/ h#b=2; bare; long=1");
+}
+
+function test_jar_lifetime(): test.TestOutcome {
+  let j: cookie.Jar = cookie.jar();
+  let a: string = set(j, "http://example.com/", "a=1; Max-Age=5", T0) + "|" + set(j, "http://example.com/", "b=1; Expires=Wed, 09 Jun 2021 10:18:14 GMT", T0) + "|" + set(j, "http://example.com/", "c=1; Expires=Sun, 06 Nov 2094 08:49:37 GMT; Max-Age=1", T0) + "|" + set(j, "http://example.com/", "d=1; Max-Age=0", T0) + "|" + set(j, "http://example.com/", "e=1; Max-Age=-3", T0) + "|" + set(j, "http://example.com/", "f=1; Max-Age=99999999", T0) + "|" + set(j, "http://example.com/", "g=1; Max-Age=soon", T0);
+  let b: string = names(j, T0) + "|" + names(j, T0 + 1000 as i64) + "|" + names(j, T0 + 5000 as i64) + "|" + names(j, 1623233894000 as i64) + "|" + names(j, T0 + cookie.MAX_AGE_CAP as i64 * (1000 as i64));
+  let gone: string = set(j, "http://example.com/", "g=2; Max-Age=0", T0) + " " + names(j, T0);
+  return test.assert_eq(a + "#" + b + "#" + gone, "a@example.com/ h|b@example.com/ h|c@example.com/ h|d@example.com/ h|e@example.com/ h|f@example.com/ h|g@example.com/ h#a b c f g|a b f g|b f g|g|g#g@example.com/ h a b c f");
+}
+
+function date(s: string): string {
+  match (cookie.parse_date(s)) {
+    Some(sec) => {
+      return sec.to_string();
+    },
+    None => {
+      return "none";
+    }
+  }
+  return "";
+}
+
+function test_parse_date(): test.TestOutcome {
+  let got: string = date("Wed, 09 Jun 2021 10:18:14 GMT") + " " + date("Wednesday, 09-Jun-21 10:18:14 GMT") + " " + date("Wed Jun  9 10:18:14 2021") + " " + date("Sun, 06 Nov 1994 08:49:37 GMT") + " " + date("6 nov 94 8:49:37") + " " + date("1 Jan 1970 00:00:00 GMT") + " " + date("1 Jan 2069 00:00:00") + " " + date("1 Jan 69 00:00:00") + " " + date("1 Jan 70 00:00:00");
+  let bad: string = date("") + " " + date("Wed, 09 Jun 2021") + " " + date("2021-06-09T10:18:14") + " " + date("32 Jan 2020 00:00:00") + " " + date("1 Jan 1600 00:00:00") + " " + date("1 Jan 2020 24:00:00") + " " + date("30 Feb 2020 00:00:00") + " " + date("1 Jan 2020 00:60:00");
+  return test.assert_eq(got + "|" + bad, "1623233894 1623233894 1623233894 784111777 784111777 0 3124224000 3124224000 0|none none none none none none none none");
+}
+
+function test_jar_order(): test.TestOutcome {
+  let j: cookie.Jar = cookie.jar();
+  set(j, "http://example.com/", "a=1; Path=/", T0);
+  set(j, "http://example.com/", "b=1; Path=/a/b", T0 + 1 as i64);
+  set(j, "http://example.com/", "c=1; Path=/a", T0 + 2 as i64);
+  set(j, "http://example.com/", "d=1; Path=/", T0 + 3 as i64);
+  let first: string = header(j, "http://example.com/a/b/c", T0 + 10 as i64);
+  set(j, "http://example.com/", "a=2; Path=/", T0 + 20 as i64);
+  let again: string = header(j, "http://example.com/a/b/c", T0 + 30 as i64);
+  return test.assert_eq(first + "|" + again, "b=1; c=1; a=1; d=1|b=1; c=1; a=2; d=1");
+}
+
+function test_jar_eviction(): test.TestOutcome {
+  let j: cookie.Jar = cookie.jar_with((host: string): boolean => false, 2, 3);
+  set(j, "http://a.test/", "a1=1", T0);
+  set(j, "http://a.test/", "a2=1", T0 + 1 as i64);
+  header(j, "http://a.test/", T0 + 5 as i64);
+  set(j, "http://a.test/", "a3=1", T0 + 6 as i64);
+  let per_domain: string = names(j, T0 + 10 as i64);
+  set(j, "http://b.test/", "b1=1", T0 + 11 as i64);
+  set(j, "http://c.test/", "c1=1", T0 + 12 as i64);
+  let total: string = names(j, T0 + 20 as i64);
+  j.clear();
+  return test.assert_eq(per_domain + "|" + total + "|" + names(j, T0), "a2 a3|a3 b1 c1|");
+}
+
+const ORIGIN: string = "93.184.216.34";
+
+function sent_text(n: sim_fetch.Net, i: i32): string {
+  match (utf8.from_bytes(n.sent(i))) {
+    Some(text) => {
+      return text;
+    },
+    None => {
+      return "<not utf-8>";
+    }
+  }
+}
+
+function header_line(request: string, name: string): string {
+  for line in request.split("\r\n") {
+    if (line.to_lower().starts_with(name.to_lower() + ":")) {
+      return line;
+    }
+  }
+  return "-";
+}
+
+// The client's route with a jar: a login's Set-Cookie is carried by the
+// next request to the site and not by one to another, a redirect's is
+// stored and carried by the hop that follows it, and the jar reads back.
+function test_fetch_with_jar(): test.TestOutcome {
+  let d: sim.Sim = sim.new(1);
+  let login: string = "HTTP/1.1 200 Status\r\nSet-Cookie: sid=1; Path=/; HttpOnly\r\nSet-Cookie: theme=dark; Path=/ui\r\nContent-Length: 2\r\nConnection: close\r\n\r\nok";
+  let go: string = "HTTP/1.1 302 Status\r\nLocation: /ui/home\r\nSet-Cookie: hop=1; Path=/\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+  let n: sim_fetch.Net = sim_fetch.net(d).host("example.test", [ORIGIN]).host("other.test", ["93.184.216.35"]).listen(ORIGIN, 80, 5).listen("93.184.216.35", 80, 5).route(ORIGIN, 80, "/login", [sim_fetch.raw(login)]).route(ORIGIN, 80, "/go", [sim_fetch.raw(go)]).route(ORIGIN, 80, "/ui/home", [sim_fetch.reply(200, "home")]).route("93.184.216.35", 80, "/", [sim_fetch.reply(200, "other")]);
+  let j: cookie.Jar = cookie.jar();
+  let policy: fetch.Policy = fetch.Policy { public_only: false, proxies: fetch.ProxyEnv { http_proxy: "", https_proxy: "", no_proxy: "" }, roots: None, jar: Some(j) };
+  let r1: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/login"), policy);
+  let r2: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://other.test/"), policy);
+  let r3: Result[HttpResponse, fetch.FetchError] = fetch.send_on(n, fetch.get("http://example.test/go").with_header("Cookie", "given=1"), policy);
+  let lines: string = header_line(sent_text(n, 0), "cookie") + "|" + header_line(sent_text(n, 1), "cookie") + "|" + header_line(sent_text(n, 2), "cookie") + "|" + header_line(sent_text(n, 3), "cookie");
+  return test.assert_eq(lines + "#" + names(j, d.now_ns() / 1000000), "-|-|Cookie: given=1; sid=1|Cookie: given=1; theme=dark; sid=1; hop=1#sid theme hop");
+}
+
+function main(): i32 {
+  let r: test.TestRunner = test.test_new("std/http/cookie");
+  r = r.it("a SetCookie written", test_serialize);
+  r = r.it("a SetCookie refused", test_refused);
+  r = r.it("a request's cookies", test_request_cookie);
+  r = r.it("the jar by path", test_jar_paths);
+  r = r.it("the jar by domain", test_jar_domains);
+  r = r.it("the jar and Secure", test_jar_secure);
+  r = r.it("the jar and prefixes", test_jar_prefixes);
+  r = r.it("the jar and a malformed cookie", test_jar_malformed);
+  r = r.it("the jar's lifetimes", test_jar_lifetime);
+  r = r.it("cookie-date formats", test_parse_date);
+  r = r.it("the header's order", test_jar_order);
+  r = r.it("eviction", test_jar_eviction);
+  r = r.it("the client's route with a jar", test_fetch_with_jar);
+  return r.finish();
+}

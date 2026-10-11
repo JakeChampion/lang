@@ -1536,7 +1536,7 @@ module carries the list, about 220 KB.
 import "std/fetch";
 import "std/tls/mozilla";
 
-let policy: fetch.Policy = fetch.Policy { public_only: false, proxies: fetch.proxy_env(), roots: Some(mozilla.roots()) };
+let policy: fetch.Policy = fetch.Policy { public_only: false, proxies: fetch.proxy_env(), roots: Some(mozilla.roots()), jar: None };
 let r: Result[HttpResponse, fetch.FetchError] = fetch.send_on(fetch.sockets(), fetch.get("https://example.com/"), policy);
 ```
 
@@ -1934,12 +1934,8 @@ serializer.
   `respond_error(result, plat)` instead: the error's `message()` is
   written to `plat.log` and the reply is the bare 500 problem
   (`respond_error_with(pair, plat)` for the state-threading pair).
-- **Cookies (RFC 6265):** `(req).cookie(name): Option[string]`;
-  `SetCookie` built via `cookie_new(name, value)` (hardened
-  defaults: `Path=/`, `HttpOnly`, `SameSite=Lax`) or
-  `cookie_delete(name)`, serialized with `(c).serialize()` and
-  attached with `(resp).with_set_cookie(c)` (append semantics —
-  one `Set-Cookie` header per cookie)
+- **Cookies:** `std/http/cookie` — `(req).cookie(name)`, `SetCookie` and
+  `(resp).with_cookie(c)`, and the client's jar.
 - **Status / classifiers:** `http_status_text`,
   `is_valid_http_status`, and the RFC 9110 status-class predicates
   `http_is_informational` / `http_is_success` / `http_is_redirect` /
@@ -2051,6 +2047,58 @@ serializer.
   it with `tcp_send_buf(fd, b, from)` and empties it with `buf_clear(b)`,
   so a reply allocates nothing once the builder has grown. The loop adds
   a `Date`, formatted once per second, unless the handler set one.
+
+### `std/http/cookie`
+
+Cookies as draft-ietf-httpbis-rfc6265bis has them: the `Set-Cookie` a
+server writes, checked before it reaches the wire; the `Cookie` header a
+handler reads; and the jar a client keeps.
+
+```fern
+import "std/http/cookie";
+
+let c: cookie.SetCookie = cookie.SetCookie { ...cookie.new("session", sid), secure: true, same_site: cookie.Strict };
+resp = resp.with_cookie(c)?;                       // Err(CookieError) for one no browser would keep
+let sid: Option[string] = req.cookie("session");   // the first value of that name, as sent
+```
+
+- `SetCookie { name, value, path, domain, max_age, expires, secure,
+  http_only, same_site, partitioned }`: `new(name, value)` is `Path=/`, a
+  session lifetime, `HttpOnly`, `SameSite=Lax` and not `Secure`;
+  `delete(name)` expires the cookie now. An empty `path` or `domain` leaves
+  the attribute out, a negative `max_age` likewise, `expires` is Unix
+  seconds with 0 left out, `same_site` is `Unset`, `Strict`, `Lax` or
+  `CrossSite` (`SameSite=None` on the wire).
+- `(c).serialize(): Result[string, CookieError]` and
+  `(resp).with_cookie(c): Result[HttpResponse, CookieError]` (one
+  `Set-Cookie` header per cookie) refuse what a browser would not keep: a
+  name that is not a token, a value byte outside the cookie-octets, a
+  control byte or `;` in Path or Domain, the pair past 4096 bytes
+  (`PAIR_CAP`), an attribute past 1024 (`ATTRIBUTE_CAP`), a Max-Age past
+  400 days (`MAX_AGE_CAP`), `__Host-` without `Secure`, `Path=/` and no
+  Domain, `__Secure-` without `Secure`, `Partitioned` or `SameSite=None`
+  without `Secure`. `CookieError` is `ToResponse` (500) with `message()`.
+- `Jar`: `jar()` (the public suffix list, 50 cookies per domain, 3000 in
+  all) or `jar_with(suffix, per_domain, total)`; `(j).store(url, headers,
+  now)` every `Set-Cookie` of a response, `(j).set(url, value, now):
+  Result[Cookie, Ignored]` one, under rfc6265bis §5.7: a Domain the host is
+  not under or that is a public suffix, a Secure cookie over plain http,
+  one that would replace a Secure cookie over plain http, a broken
+  `__Host-` or `__Secure-` prefix and `Partitioned` without `Secure` are
+  `Ignored` with `message()`; the lifetime is Max-Age over Expires, capped
+  at 400 days; the least recently sent is evicted past the bounds.
+  `(j).header(url, now)` is the `Cookie` value a request carries, by
+  domain, path and scheme, the longer path first and the earlier created
+  before the later; `(j).all(now)` and `(j).clear()`. `now` is Unix
+  milliseconds, the transport's clock on the client's route.
+- A jar is reached through the platform: `platform.host().with_jar(cookie.jar())`
+  or `serve.Config { cookie_jar: true }` for one per worker, and
+  `fetch.Policy.jar` on the client's route, where every hop of a redirect
+  carries and stores cookies. `parse_date(s)` reads rfc6265bis §5.1.1's
+  cookie-date, every format servers have sent; `domain_matches` and
+  `path_matches` are §5.1.3 and §5.1.4.
+- Tests: `tests/stdlib/http_cookie_test.fern`,
+  `conformance/cases/http_cookies`.
 
 ### `std/http/form`
 
@@ -2418,7 +2466,7 @@ points that run a handler under it.
   data_rate_grace, response_min_data_rate, response_data_rate_grace,
   keep_alive_idle, keep_alive_requests, max_connections,
   max_connections_per_ip, max_in_flight, workers, shutdown_grace,
-  readiness_path, drain_deadline, limits, stop_with_parent, stream_bodies,
+  readiness_path, drain_deadline, limits, stop_with_parent, stream_bodies, cookie_jar,
   tls }`
   (`config()` is
   128, one listener per port, the 10 s deadline, 240 bytes per second after
@@ -2487,7 +2535,9 @@ points that run a handler under it.
   invites the body, and a connection whose body the handler did not read
   whole closes after the response. A `Stream` that ended early faults
   (`(s).fault()`); `body_string()` reports it as `EndedEarly`. The stateful
-  loop (`run_with`) reads bodies whole either way.
+  loop (`run_with`) reads bodies whole either way. `cookie_jar` (false)
+  gives each worker's platform a cookie jar (std/http/cookie), so its
+  `plat.http` sends and stores cookies as a browser would.
   A listener it cannot bind is `serve: cannot listen on ADDR:PORT:` —
   `[::]` where the host has IPv6, `0.0.0.0` where it has not and on
   wasm — and the error's text on stderr, and the entry returns 98 (every
@@ -2745,8 +2795,10 @@ answer is `Result[HttpResponse, FetchError]`.
   `trait Transport` (`now_ns`, `lookup`, `connect`, `write`, `read` under
   a wait answering `tcp.Recv`, `close`, and `idle`, its pool), and
   `send_on(tr, req, policy)` is
-  `send` over any transport under a `Policy { public_only, proxies, roots }`,
-  `roots` the store a server's chain must reach, the machine's when None.
+  `send` over any transport under a `Policy { public_only, proxies, roots, jar }`,
+  `roots` the store a server's chain must reach, the machine's when None,
+  `jar` the cookie jar every hop carries and stores cookies through
+  (std/http/cookie), none when None; `public_policy()` is `plat.http`'s.
   `sockets()` is the machine's (the system resolver, `dns.connect_race`,
   `tcp_recv_deadline`), which `send` and `plat.http` use; `std/sim_fetch`
   scripts one in virtual time.
@@ -3061,7 +3113,8 @@ function handle(req: HttpRequest, plat: platform.Platform): HttpResponse {
 - `host()` — the host platform with no reactor, for a test driving a
   handler directly or a caller of `serve.run` handing its own handler
   what the accept loop would; `host_on(reactor)` is the one std/serve
-  builds per worker loop.
+  builds per worker loop; `(h).with_jar(jar)` gives it a cookie jar
+  (std/http/cookie) its `http` carries and stores cookies through.
 - `(plat).log(msg)` — one line to the platform's log sink (`log`).
 - `(plat).now_ms()` — wall-clock ms since the epoch (`now`).
 - `(plat).elapsed_ns()` — monotonic ns, for measuring (`now`).
@@ -3141,7 +3194,8 @@ host's public-only route with the network's pool keeping the connection
 and answers `env`, `config` and `secret` with what the test set
 (`env_set`, `config_set`, `secret_set`). Every call is recorded as a
 mock's: `calls()` and `reset()` read and clear the log, a secret logged by
-its name alone.
+its name alone. `(p).with_jar(jar)` gives it a cookie jar as
+`platform.Host.with_jar` does.
 
 ```fern
 let d: sim.Sim = sim.new(1);

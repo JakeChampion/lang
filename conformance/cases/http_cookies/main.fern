@@ -1,10 +1,20 @@
 import "std/http";
+import "std/http/cookie";
 import "std/string";
 
-// Cookie helpers (RFC 6265): request-side `req.cookie(name)` parse,
-// response-side `SetCookie` serialization + `with_set_cookie` append
-// semantics, and the header-injection cleaning in serialize. Returns
-// 42 only if every check holds.
+// Cookies (std/http/cookie): request-side `req.cookie(name)` parse,
+// response-side `SetCookie` serialization and `with_cookie` append
+// semantics, and the refusals that keep a header injection off the wire.
+// Returns 42 only if every check holds.
+
+function serialized(c: cookie.SetCookie): string {
+    match (c.serialize()) {
+        Ok(s) => { return s; },
+        Err(e) => { return "error: " + e.message(); }
+    }
+    return "";
+}
+
 function main(): i32 {
     // ---- request side: parse out of the Cookie header ----
     let wire: string = "GET / HTTP/1.1\r\nHost: x\r\nCookie: a=1; session=abc; b=2\r\n\r\n";
@@ -37,33 +47,41 @@ function main(): i32 {
     }
 
     // ---- response side: SetCookie serialization ----
-    let c: http.SetCookie = http.cookie_new("session", "abc");
-    if (c.serialize() != "session=abc; Path=/; HttpOnly; SameSite=Lax") { return 10; }
+    let c: cookie.SetCookie = cookie.new("session", "abc");
+    if (serialized(c) != "session=abc; Path=/; HttpOnly; SameSite=Lax") { return 10; }
 
     // Struct-update spread adjusts attributes; Max-Age and Secure
     // serialize in their fixed positions.
-    let hard: http.SetCookie = http.SetCookie { ...c, secure: true, max_age: 3600 };
-    if (hard.serialize() != "session=abc; Path=/; Max-Age=3600; Secure; HttpOnly; SameSite=Lax") { return 11; }
+    let hard: cookie.SetCookie = cookie.SetCookie { ...c, secure: true, max_age: 3600 };
+    if (serialized(hard) != "session=abc; Path=/; Max-Age=3600; Secure; HttpOnly; SameSite=Lax") { return 11; }
 
     // Deletion: empty value, Max-Age=0.
-    if (http.cookie_delete("session").serialize() != "session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax") { return 12; }
+    if (serialized(cookie.delete("session")) != "session=; Path=/; Max-Age=0; HttpOnly; SameSite=Lax") { return 12; }
 
-    // Attribute omission: empty path/same_site drop their attributes.
-    let bare: http.SetCookie = http.SetCookie { ...c, path: "", same_site: "", http_only: false };
-    if (bare.serialize() != "session=abc") { return 13; }
+    // Attribute omission: an empty path and an unset SameSite drop their attributes.
+    let bare: cookie.SetCookie = cookie.SetCookie { ...c, path: "", same_site: cookie.Unset, http_only: false };
+    if (serialized(bare) != "session=abc") { return 13; }
 
-    // Header-injection defence: CR/LF and `;` are stripped from the
-    // value, `=` additionally from the name.
-    let evil: http.SetCookie = http.SetCookie { ...bare, name: "na=me", value: "v\r\nSet-Cookie: hax=1;x" };
-    if (evil.serialize() != "name=vSet-Cookie: hax=1x") { return 14; }
+    // Header-injection defence: a `=` in the name and a CR LF in the
+    // value are refused rather than written.
+    let evil_name: cookie.SetCookie = cookie.SetCookie { ...bare, name: "na=me" };
+    if (!serialized(evil_name).starts_with("error: a cookie name")) { return 14; }
+    let evil_value: cookie.SetCookie = cookie.SetCookie { ...bare, value: "v\r\nSet-Cookie: hax=1;x" };
+    if (!serialized(evil_value).starts_with("error: the value of cookie")) { return 15; }
 
-    // ---- with_set_cookie: append semantics on the wire ----
+    // ---- with_cookie: append semantics on the wire ----
     let resp: HttpResponse = http.ok("hi");
-    resp = resp.with_set_cookie(http.cookie_new("a", "1"));
-    resp = resp.with_set_cookie(http.cookie_new("b", "2"));
+    match (resp.with_cookie(cookie.new("a", "1"))) {
+        Ok(r) => { resp = r; },
+        Err(e) => { return 16; }
+    }
+    match (resp.with_cookie(cookie.new("b", "2"))) {
+        Ok(r) => { resp = r; },
+        Err(e) => { return 17; }
+    }
     let out: string = http.http_serialize_response(resp);
-    if (!out.contains("Set-Cookie: a=1; Path=/; HttpOnly; SameSite=Lax")) { return 15; }
-    if (!out.contains("Set-Cookie: b=2; Path=/; HttpOnly; SameSite=Lax")) { return 16; }
+    if (!out.contains("Set-Cookie: a=1; Path=/; HttpOnly; SameSite=Lax")) { return 18; }
+    if (!out.contains("Set-Cookie: b=2; Path=/; HttpOnly; SameSite=Lax")) { return 19; }
 
     return 42;
 }

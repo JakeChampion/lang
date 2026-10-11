@@ -27,6 +27,7 @@
 // there and deploy-time configuration arrives through `.config`.
 
 import "std/fetch";
+import "std/http/cookie";
 
 pub trait Platform {
   // `.log(msg)` — write one diagnostic line to the platform's log sink.
@@ -83,8 +84,9 @@ pub trait Platform {
 // with no reactor (0). `pool` is the connections its `http` keeps for the
 // next request to the same place (`fetch.Idle`), shared by every copy of
 // the platform and kept for as long as it lives: a worker loop's, in
-// std/serve.
-pub struct Host { reactor: i32, pool: fetch.Idle }
+// std/serve. `jar` is the cookies its `http` carries and stores, as a
+// browser's would, once `with_jar` gave it one; None sends and keeps none.
+pub struct Host { reactor: i32, pool: fetch.Idle, jar: Option[cookie.Jar] }
 
 // `host()` — a host platform with no reactor and an empty pool, for code
 // that has to build one: a test driving a handler directly, or a caller of
@@ -98,7 +100,15 @@ pub function host(): Host {
 // `host_on(reactor)` — the host platform of the worker whose reactor is
 // `reactor`; std/serve builds one per worker loop.
 pub function host_on(reactor: i32): Host {
-  return Host { reactor: reactor, pool: fetch.idle() };
+  return Host { reactor: reactor, pool: fetch.idle(), jar: None };
+}
+
+// `(h).with_jar(jar)` — the host with `jar` (std/http/cookie): every
+// `http` request carries the cookies the jar holds for its URL and stores
+// what the response sets. `serve.Config { cookie_jar: true }` gives each
+// worker's host one.
+pub function (h: Host) with_jar(jar: cookie.Jar): Host {
+  return Host { ...h, jar: Some(jar) };
 }
 
 impl Platform for Host {
@@ -131,6 +141,6 @@ impl Platform for Host {
   }
 
   function http(self: Host, req: fetch.Request): Result[HttpResponse, fetch.FetchError] {
-    return fetch.send_public_on(fetch.sockets_with(self.pool), req);
+    return fetch.send_on(fetch.sockets_with(self.pool), req, fetch.Policy { ...fetch.public_policy(), jar: self.jar });
   }
 }

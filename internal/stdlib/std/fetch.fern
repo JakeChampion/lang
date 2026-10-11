@@ -77,6 +77,7 @@ import "std/time";
 import "std/tcp";
 import "std/http";
 import "std/headers";
+import "std/http/cookie";
 import "std/url";
 import "std/dns";
 import "std/net";
@@ -573,6 +574,7 @@ function __asks_gzip(req: Request): boolean {
 // out of it.
 pub trait Transport {
   function now_ns(self: Self): i64;
+  function wall_ms(self: Self): i64;
   function lookup(self: Self, host: string, checked: boolean): Result[Lookup, dns.DnsError];
   function connect(self: Self, addrs: net.IpAddr[], port: i32, timeout_ms: i32): Result[i32, net.NetError];
   function write(self: Self, conn: i32, data: u8[]): i32;
@@ -823,6 +825,9 @@ impl Transport for Sockets {
   function now_ns(self: Sockets): i64 {
     return monotonic_ns();
   }
+  function wall_ms(self: Sockets): i64 {
+    return now_unix_ms();
+  }
   function lookup(self: Sockets, host: string, checked: boolean): Result[Lookup, dns.DnsError] {
     let none: net.IpAddr[] = [];
     if (!checked) {
@@ -866,7 +871,7 @@ impl Transport for Sockets {
 // `req.redirects` hops, all under the one total bound. Blocking: every
 // connection is closed before it answers.
 pub function send(req: Request): Result[HttpResponse, FetchError] {
-  return __send_closing(Policy { public_only: false, proxies: __proxies(), roots: None }, req);
+  return __send_closing(Policy { ...public_policy(), public_only: false }, req);
 }
 
 // `send_public(req)` — `send`, refusing a host that resolves to an address
@@ -874,14 +879,14 @@ pub function send(req: Request): Result[HttpResponse, FetchError] {
 // deployment exposes publicly. A proxy the environment names is dialled
 // wherever it is.
 pub function send_public(req: Request): Result[HttpResponse, FetchError] {
-  return __send_closing(Policy { public_only: true, proxies: __proxies(), roots: None }, req);
+  return __send_closing(public_policy(), req);
 }
 
 // `send_public_on(tr, req)` — `send_public` over the transport `tr`, whose
 // pool keeps the connection for the next request: the route a handler's
 // platform fetches through (std/platform), the pool the platform's own.
 pub function send_public_on[T: Transport](tr: T, req: Request): Result[HttpResponse, FetchError] {
-  return send_on(tr, req, Policy { public_only: true, proxies: __proxies(), roots: None });
+  return send_on(tr, req, public_policy());
 }
 
 // `__send_closing(policy, req)` — `req` sent over the machine's transport
@@ -915,8 +920,16 @@ function __proxies(): ProxyEnv {
 // resolves to an address `net.is_global` does not admit; `proxies` is the
 // proxy configuration, which `send` and `plat.http` read from the
 // environment once per request; `roots` are the roots a server's chain
-// must reach, the machine's (`verify.system_roots()`) when None.
-pub struct Policy { public_only: boolean, proxies: ProxyEnv, roots: Option[verify.Roots] }
+// must reach, the machine's (`verify.system_roots()`) when None; `jar` is
+// the cookie jar (std/http/cookie) every hop reads its `Cookie` header
+// from and stores its `Set-Cookie` into, none when None.
+pub struct Policy { public_only: boolean, proxies: ProxyEnv, roots: Option[verify.Roots], jar: Option[cookie.Jar] }
+
+// `public_policy()` — the route `plat.http` takes: global addresses only,
+// the environment's proxies, the machine's roots, no jar.
+pub function public_policy(): Policy {
+  return Policy { public_only: true, proxies: __proxies(), roots: None, jar: None };
+}
 
 // `send_on(tr, req, policy)` — `send` over the transport `tr` under
 // `policy`: every connection, read and clock reading of the dialled route
@@ -928,7 +941,9 @@ pub function send_on[T: Transport](tr: T, req: Request, policy: Policy): Result[
   let cur: Request = req;
   let hops: i32 = 0;
   while (true) {
-    let resp: HttpResponse = __send_once(tr, cur, started, policy)?;
+    let hop: Request = __with_jar(cur, policy.jar, tr.wall_ms());
+    let resp: HttpResponse = __send_once(tr, hop, started, policy)?;
+    __stored(policy.jar, hop.url, resp.headers, tr.wall_ms());
     if (!__redirects(resp.status) || req.redirects == 0) {
       return Ok(resp);
     }
@@ -939,6 +954,45 @@ pub function send_on[T: Transport](tr: T, req: Request, policy: Policy): Result[
     cur = __next_hop(cur, resp)?;
   }
   return Err(Redirect("unreachable"));
+}
+
+// `__with_jar(req, jar, now)` — the request with the jar's cookies for
+// its URL after any `Cookie` header it already carries.
+function __with_jar(req: Request, jar: Option[cookie.Jar], now: i64): Request {
+  match (jar) {
+    Some(j) => {
+      match (j.header(req.url, now)) {
+        Some(v) => {
+          let all: string = v;
+          match (req.headers.get("cookie")) {
+            Some(given) => {
+              all = given + "; " + v;
+            },
+            None => {}
+          }
+          return Request { ...req, headers: req.headers.set("Cookie", all) };
+        },
+        None => {
+          return req;
+        }
+      }
+    },
+    None => {
+      return req;
+    }
+  }
+  return req;
+}
+
+// `__stored(jar, url, headers, now)` — what the response to `url` set,
+// stored in the jar when there is one.
+function __stored(jar: Option[cookie.Jar], request_url: string, h: HeaderMap, now: i64): void {
+  match (jar) {
+    Some(j) => {
+      j.store(request_url, h, now);
+    },
+    None => {}
+  }
 }
 
 // `__redirects(status)` — whether a status sends the client elsewhere:
