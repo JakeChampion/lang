@@ -61,6 +61,8 @@ var bagMethods = map[string]string{
 	"env":          "env",
 	"config_get":   "config",
 	"random_i32":   "random_i32",
+	"sleep_ms":     "sleep",
+	"sleep_ns":     "sleep",
 }
 
 // BagMethods returns the builtin-to-method table the rule suggests

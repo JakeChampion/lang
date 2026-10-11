@@ -28,6 +28,8 @@
 
 import "std/fetch";
 import "std/http/cookie";
+import "std/async";
+import "std/time";
 
 pub trait Platform {
   // `.log(msg)` — write one diagnostic line to the platform's log sink.
@@ -68,6 +70,14 @@ pub trait Platform {
   // `.random_i32()` — one uniformly random i32 from the platform CSPRNG.
   // Needs the `random` capability.
   function random_i32(self: Self): i32;
+
+  // `.sleep(d)` — nothing for `d`. Needs the `now` capability. Under
+  // std/serve's loop the handler parks and the worker serves its other
+  // connections meanwhile; in a plain program it naps. What a producer
+  // that waits for its next chunk (std/http/sse) or a retry that backs
+  // off reaches for, so a simulated platform spends the time on its own
+  // clock instead.
+  function sleep(self: Self, d: Duration): void;
 
   // `.http(req)` — `req` sent and its response read. Needs the `fetch`
   // capability. The host sends it with `fetch.send_public_on` over its own
@@ -138,6 +148,11 @@ impl Platform for Host {
 
   function random_i32(self: Host): i32 {
     return random_i32();
+  }
+
+  function sleep(self: Host, d: Duration): void {
+    let none: i32[] = [];
+    let woke: i32 = async.wait_any(none, d.as_millis() as i32);
   }
 
   function http(self: Host, req: fetch.Request): Result[HttpResponse, fetch.FetchError] {
