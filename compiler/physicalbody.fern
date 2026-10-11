@@ -151,7 +151,7 @@ function pair_second(enums: semrecords.Enum[], t: typeinfo.Type): i32 {
       if (tag >= 31) {
         return -2;
       }
-      mask = mask | (1 << tag);
+      mask = mask | 1 << tag;
     }
     tag = tag + 1;
   }

@@ -289,7 +289,6 @@ function dump_if_asked(fn_name: string, f: ssa.SFunc): void {
         eprint("FERN_RC_CERTIFY: lifted " + fn_name + "\n" + ssa.print_func(f));
       }
     },
-    None => {
-    }
+    None => {}
   }
 }

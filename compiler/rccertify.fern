@@ -451,7 +451,7 @@ struct Alias { of: i32, derived: boolean }
 // view box, a cursor's word, an interior address. A scalar's sum aliases
 // its scalar, which holds nothing either way.
 function arith_alias(f: ssa.SFunc, defs: Defs, ins: ssa.SInst): Alias {
-  if (ins.args.len() != 2 || (ins.str != "add" && ins.str != "sub")) {
+  if (ins.args.len() != 2 || ins.str != "add" && ins.str != "sub") {
     return Alias { of: -1, derived: false };
   }
   if (def_of(f, defs, ins.args[1]).kind_tag == 1) {
@@ -1990,7 +1990,6 @@ function feed(own p: Progress, w: Walk, bi: i32, sid: i32): Progress {
   }
   return p;
 }
-
 
 // block_round runs one block's transfer and stores its edge rows. Returns
 // whether a row changed.
