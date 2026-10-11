@@ -2547,10 +2547,13 @@ function __serve_unframed[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], 
 
 // __upgrade_head(f) — the framed upgrade request as a head whose body is
 // the connection's bytes after it, until the session ends (`length` -2,
-// `__body_source`'s raw framing), and whose connection does not persist
-// past the response.
+// `__body_source`'s raw framing). Its keep-alive is the request's, so an
+// upgrade the handler declines (a response that is not a 101) is answered
+// and the connection persists as any HTTP/1.1 request's would (RFC 9110
+// §7.8 lets a server ignore an Upgrade it cannot honour); the 101 path
+// passes keep-alive false itself, taking the connection for the session.
 function __upgrade_head(f: http.HttpFramed): http.HttpHead {
-  return http.HttpHead { request: f.request, len: f.len, keep_alive: false, version: f.version, length: 0 - 2, expects_continue: false };
+  return http.HttpHead { request: f.request, len: f.len, keep_alive: f.keep_alive, version: f.version, length: 0 - 2, expects_continue: false };
 }
 
 // __serve_stream(drv, c, fls, at, h, start, …) — the handler started on
@@ -2586,6 +2589,9 @@ function __serve_stream[D: async.Driver](drv: D, c: __Conns, fls: __Flight[], at
         return (upgraded.0, fls, false, Idle, c.last);
       }
       c = __body_settled(drv, c, at, body);
+      if (h.length == 0 - 2) {
+        c = __Conns { ...c, keep: c.keep.with(at, keep) };
+      }
       let parsed: (__Behind, http.HttpFramed) = __serve_behind(http.http_parse_request_framed_from(c.bufs[at], c.offs[at], opts.limits, c.last), c.last);
       let answered: (__Conns, boolean) = __serve_respond(drv, c, at, h.request.method, h.version, resp, c.keep[at], opts, count + 1, parsed.0, clk);
       return (answered.0, fls, answered.1, parsed.0, parsed.1);
@@ -2827,14 +2833,18 @@ function __upgrading(resp: HttpResponse): boolean {
   return false;
 }
 
-// __upgrade_request(req) — whether the request asks for the connection
-// to change protocol: `Connection: upgrade` naming an `Upgrade`. Its
-// body is the connection's bytes after the head, the session's once the
-// handler answers 101, so it is streamed to the handler whatever
-// `stream_bodies` says; a handler that answers anything else ends the
-// connection after the response.
+// __upgrade_request(req) — whether the request is a WebSocket handshake
+// (RFC 6455 §4.1: `Sec-WebSocket-Key`, `Upgrade`, and `upgrade` among the
+// `Connection` tokens), the one upgrade the loop lends the connection for.
+// Its body is the connection's bytes after the head, the session's once
+// the handler answers 101, so it is streamed to the handler whatever
+// `stream_bodies` says. An upgrade the loop cannot serve — no
+// `Sec-WebSocket-Key` — is not matched here, so it reaches the handler as
+// an ordinary request and the connection persists as any request's would;
+// a handshake whose handler answers anything but 101 ends after the
+// response.
 function __upgrade_request(req: HttpRequest): boolean {
-  if (!req.headers.has("upgrade")) {
+  if (!req.headers.has("sec-websocket-key") || !req.headers.has("upgrade")) {
     return false;
   }
   for v in req.headers.get_all("connection") {
