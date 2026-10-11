@@ -1,0 +1,64 @@
+// The stateful server the soak lane holds under load: a bounded map of the
+// paths seen most recently, the oldest evicted past the bound, so the
+// state churns without growing.
+import "std/http";
+import "std/serve";
+import "std/platform";
+import "core/int";
+import "core/map";
+
+struct Recent { hits: Map[string, i32], order: string[] }
+
+function bound(): i32 {
+  return 256;
+}
+
+function evict_oldest(r: Recent): Recent {
+  let dropped: (Map[string, i32], boolean) = r.hits.without(r.order[0]);
+  let rest: string[] = [];
+  let i: i32 = 1;
+  while (i < r.order.len()) {
+    rest = rest.append(r.order[i]);
+    i = i + 1;
+  }
+  return Recent { hits: dropped.0, order: rest };
+}
+
+function handle(r: Recent, req: HttpRequest, plat: platform.Platform): (Recent, HttpResponse) {
+  let key: string = req.path + "";
+  let seen: i32 = r.hits.get_or(key, 0);
+  let next: Recent = r;
+  if (seen == 0) {
+    next = Recent { hits: next.hits.insert(key, 1), order: next.order.append(key) };
+    if (next.order.len() > bound()) {
+      next = evict_oldest(next);
+    }
+  } else {
+    next = Recent { ...next, hits: next.hits.insert(key, seen + 1) };
+  }
+  return (next, http.ok(int.int_to_string(seen + 1) + " of " + int.int_to_string(next.order.len())));
+}
+
+function port(): i32 {
+  match (env("PORT")) {
+    Some(p) => {
+      match (int.parse_int_radix(p, 10)) {
+        Some(n) => {
+          return n;
+        },
+        None => {
+          return 8080;
+        }
+      }
+    },
+    None => {
+      return 8080;
+    }
+  }
+  return 8080;
+}
+
+function main(): i32 {
+  let opts: serve.Config = serve.Config { ...serve.config(), max_connections: 16384, max_connections_per_ip: 0 };
+  return serve.run_with(port(), opts, Recent { hits: map_new(512), order: [] }, handle);
+}

@@ -22,7 +22,7 @@ import (
 //
 //	leakcheck: allocs=<N> frees=<M> live_bytes=<K>
 //
-// __fern_alloc_reuse's in-place path counts as neither an alloc nor a
+// ending ` from=exit` from the builtin. __fern_alloc_reuse's in-place path counts as neither an alloc nor a
 // free. These tests pin the report's numbers on deterministic
 // __alloc/__free shapes and on an rc-driven drop-everything loop (the
 // heap-bump flat-heap shape, which rc_heap_bump_test.go already proves
@@ -66,11 +66,31 @@ func runSplit(t *testing.T, cmd *exec.Cmd) (string, string, int) {
 	return stdout.String(), stderr.String(), cmd.ProcessState.ExitCode()
 }
 
-var leakCheckLineRe = regexp.MustCompile(`^leakcheck: allocs=(-?\d+) frees=(-?\d+) live_bytes=(-?\d+)\n$`)
+var leakCheckLineRe = regexp.MustCompile(`^leakcheck: allocs=(-?\d+) frees=(-?\d+) live_bytes=(-?\d+)( from=exit)?\n$`)
 
 // parseLeakCheckLine asserts stderr is exactly one well-formed report
-// line and returns its three numbers.
+// line from a return from main and returns its three numbers.
 func parseLeakCheckLine(t *testing.T, stderr string) (allocs, frees, live int64) {
+	t.Helper()
+	allocs, frees, live, exited := parseLeakCheckLineFrom(t, stderr)
+	if exited {
+		t.Fatalf("the report says exit() printed it, but main returned: %q", stderr)
+	}
+	return allocs, frees, live
+}
+
+// parseLeakCheckLineExit is parseLeakCheckLine for a program the exit()
+// builtin ended, whose line must say so.
+func parseLeakCheckLineExit(t *testing.T, stderr string) (allocs, frees, live int64) {
+	t.Helper()
+	allocs, frees, live, exited := parseLeakCheckLineFrom(t, stderr)
+	if !exited {
+		t.Fatalf("the report does not end ` from=exit`, but exit() printed it: %q", stderr)
+	}
+	return allocs, frees, live
+}
+
+func parseLeakCheckLineFrom(t *testing.T, stderr string) (allocs, frees, live int64, exited bool) {
 	t.Helper()
 	m := leakCheckLineRe.FindStringSubmatch(stderr)
 	if m == nil {
@@ -79,7 +99,7 @@ func parseLeakCheckLine(t *testing.T, stderr string) (allocs, frees, live int64)
 	allocs, _ = strconv.ParseInt(m[1], 10, 64)
 	frees, _ = strconv.ParseInt(m[2], 10, 64)
 	live, _ = strconv.ParseInt(m[3], 10, 64)
-	return allocs, frees, live
+	return allocs, frees, live, m[4] != ""
 }
 
 // leakCheckBalancedSrc: 100 paired __alloc/__free of one class. Fully
@@ -185,7 +205,7 @@ func TestX86_64LeakCheckExitBuiltinReports(t *testing.T) {
 	if stdout != "hello\n" {
 		t.Errorf("stdout=%q, want %q", stdout, "hello\n")
 	}
-	allocs, frees, live := parseLeakCheckLine(t, stderr)
+	allocs, frees, live := parseLeakCheckLineExit(t, stderr)
 	if allocs != 1 || frees != 0 || live != 104 {
 		t.Errorf("got allocs=%d frees=%d live=%d, want 1/0/104", allocs, frees, live)
 	}
@@ -225,7 +245,7 @@ func TestArm64LeakCheckExitBuiltinReports(t *testing.T) {
 	if stdout != "hello\n" {
 		t.Errorf("stdout=%q, want %q", stdout, "hello\n")
 	}
-	allocs, frees, live := parseLeakCheckLine(t, stderr)
+	allocs, frees, live := parseLeakCheckLineExit(t, stderr)
 	if allocs != 1 || frees != 0 || live != 104 {
 		t.Errorf("got allocs=%d frees=%d live=%d, want 1/0/104", allocs, frees, live)
 	}
