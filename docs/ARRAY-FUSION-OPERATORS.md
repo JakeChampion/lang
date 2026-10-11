@@ -220,6 +220,17 @@ finish:  result is acc
 The accumulator is one value, so `init` is O(1) and `step` allocates
 nothing. Reductions end a pipeline: a scalar has no next stage.
 
+### `count()` — a tally, a sink
+
+```
+init:    acc = 0
+step:    acc = acc + 1
+finish:  result is acc
+```
+
+`fold(0, (n, _) => n + 1)` with no function to call. core/iter's lazy
+surface has it, std/array does not.
+
 ### `reduce(h)` — reduction with no seed, a sink
 
 ```
@@ -323,6 +334,16 @@ Zero fresh bytes in the filtered control reflects freelist reuse, not zero
 allocations. The fused output's larger reserved capacity remains a cost even
 though it avoids growth calls. Empty, singleton, short and 257-element inputs
 also pass the benchmark's prefix checks with both variants and fusion settings.
+
+### The lazy surface's roots
+
+A core/iter chain reaches the same fragments through its adapters:
+`it.map(f)`, `it.filter(p)` and `it.take(n)` are the stages above, and
+`it.fold(z, h)` and `it.count()` the sinks. What it starts from sets the
+loop. `iter.of(xs)` is an array cursor exactly as the eager surface's
+input is. `iter.range(lo, hi)` runs the cursor from `lo` while it is below
+`hi` and hands the cursor itself to the first stage, with no fetch. Either
+way, the root and every adapter value are never built.
 
 ## Deliberately not in the first slice
 
