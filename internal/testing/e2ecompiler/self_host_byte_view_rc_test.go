@@ -24,9 +24,16 @@ import "./asm_ir";
 import "./asm_arm64_ir";
 import "./wasm_ir";
 
-function check(own ops: ir.Op[], expected: i32, error: i32): ir.Op[] {
-  return ops.append(ir.op_const_i32(expected)).append(ir.op_bin("ne", 0, false))
-    .append(ir.op_if(0)).append(ir.op_const_i32(error)).append(ir.op_return()).append(ir.op_end());
+// The error exit releases the units the frame holds first: the compile
+// runs the emitted-RC certifier, and a path that leaks is a finding.
+function check(own ops: ir.Op[], expected: i32, error: i32, held: i32): ir.Op[] {
+  ops = ops.append(ir.op_const_i32(expected)).append(ir.op_bin("ne", 0, false)).append(ir.op_if(0));
+  let i: i32 = 0;
+  while (i < held) {
+    ops = ops.append(ir.op_load_local(0)).append(ir.op_call_direct("__fern_rc_dec", 1)).append(ir.op_drop());
+    i = i + 1;
+  }
+  return ops.append(ir.op_const_i32(error)).append(ir.op_return()).append(ir.op_end());
 }
 function main(): i32 {
   let av = args();
@@ -45,10 +52,10 @@ function main(): i32 {
   let main: ir.Op[] = [ir.op_const_i32(9), ir.op_arr_make(1, 32), ir.op_store_local(0),
     ir.op_load_local(0), ir.op_const_i32(tag), ir.op_raw_addr(), ir.op_store_local(1),
     ir.op_load_local(1), ir.op_call_direct("probe", 1)];
-  main = check(main, 1, 71);
+  main = check(main, 1, 71, 1);
   main = main.append(ir.op_load_local(1)).append(ir.op_call_direct("__fern_rc_inc", 1)).append(ir.op_drop());
   main = main.append(ir.op_load_local(1)).append(ir.op_call_direct("probe", 1));
-  main = check(main, 0, 72);
+  main = check(main, 0, 72, 2);
   main = main.append(ir.op_load_local(0)).append(ir.op_call_direct("__fern_rc_dec", 1)).append(ir.op_drop());
   main = main.append(ir.op_load_local(0)).append(ir.op_call_direct("__fern_rc_dec", 1)).append(ir.op_drop());
   main = main.append(ir.op_call_direct("__fern_rc_underflow_get", 0)).append(ir.op_return());
@@ -83,7 +90,7 @@ function main(): i32 {
     state = asm_arm64_ir.emit_body(g.im, state, false, cache, g.physical);
     state = asm_arm64_ir.emit_ir_runtime(state, false);
     print(strbuf_take());
-  } else { print(wasm_ir.emit_ir_module_mode(g.im, cache, 0, asmcore.env_switches())); }
+  } else { print(wasm_ir.emit_ir_module_mode(g.im, cache, 0, asmcore.env_switches(), g.physical)); }
   return 0;
 }
 `
