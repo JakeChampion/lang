@@ -108,6 +108,9 @@ if [ -n "$path_gnu" ]; then
     *":$path_gnu:"*) ;;
     *) gnu_dirs="${gnu_dirs:+$gnu_dirs:}$path_gnu" ;;
   esac
+  # Distributions install chroot in the sibling sbin.
+  path_sbin="$(dirname "$path_gnu")/sbin"
+  [ -d "$path_sbin" ] && gnu_dirs="$gnu_dirs:$path_sbin"
   [ -n "$gnu" ] || gnu="$path_gnu"
 fi
 [ -n "$gnu" ] && is_gnu "$gnu" || {
@@ -329,8 +332,12 @@ workloads() {
 
 # --- measure ----------------------------------------------------------------
 
+# A utility with no GNU reference is skipped and named in the header rather
+# than ending the run, which would discard every row measured before it.
 jsons=()
+no_gnu=()
 for u in "$@"; do
+  gnub=$(gnu_bin "$u") || { no_gnu+=("$u"); continue; }
   uub=$(uutils_bin "$u")
   while IFS=$'\t' read -r label shell template; do
     cmds=()
@@ -339,7 +346,7 @@ for u in "$@"; do
     for impl in fern gnu uutils; do
       case "$impl" in
         fern)   bin="$out/fern/$u" ;;
-        gnu)    bin=$(gnu_bin "$u") || exit 1 ;;
+        gnu)    bin=$gnub ;;
         uutils) bin="$uub"; [ -n "$bin" ] || continue ;;
       esac
       cmd=${template//\{gnu\}/$gnu}
@@ -461,6 +468,7 @@ header="coreutils-bench: $(date -u +%Y-%m-%d) $(uname -s)/$(uname -m), fern $(gi
 [ -n "$uu" ] && header="$header, uutils $("$(uutils_bin yes)" --version | head -1 | awk '{print $NF}')"
 header="$header. mean ± σ over ≥20 runs, except where a cell names a smaller count because one trial of that row took over 3 s."
 header="$header A ratio is mean(first) / mean(second), so above 1 Fern is faster."
+[ ${#no_gnu[@]} -eq 0 ] || header="$header Not measured, no GNU reference found: ${no_gnu[*]}."
 
 printf '%s\n\n%s\n' "$header" "$table"
 if [ -n "$report" ]; then
