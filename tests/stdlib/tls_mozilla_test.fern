@@ -51,10 +51,31 @@ function test_every_root_parses(): test.TestOutcome {
   return test.assert_eq(mozilla.roots().certs.len(), mozilla.COUNT);
 }
 
+function index_of(r: verify.Roots, common_name: string): i32 {
+  let i: i32 = 0;
+  while (i < r.certs.len()) {
+    if (r.certs[i].subject.common_name == common_name) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return 0 - 1;
+}
+
+// Mozilla's list: ISRG Root X1 in it, a root whose distrust date is spent
+// not, and one whose date is live with the date (Izenpe.com, distrusted
+// for server certificates issued after the last second of 2026-04-15).
 function test_mozillas_list(): test.TestOutcome {
   let r: verify.Roots = mozilla.roots();
   if (has(r, "Entrust Root Certification Authority - G2")) {
-    return test.fail("a root Mozilla distrusts for server certificates is bundled");
+    return test.fail("a root whose distrust date is spent is bundled");
+  }
+  if (r.distrust_after.len() != r.certs.len()) {
+    return test.fail("the dates do not pair with the roots");
+  }
+  let izenpe: i32 = index_of(r, "Izenpe.com");
+  if (izenpe < 0 || r.distrust_after[izenpe] != 1776297599 as i64) {
+    return test.fail("Izenpe.com is not bundled with its distrust date");
   }
   return test.assert_eq(has(r, "ISRG Root X1"), true);
 }
@@ -68,6 +89,13 @@ function test_public_chain(): test.TestOutcome {
   }
   if (outcome(verify.verify_server(chain, r, "example.com", now)) == "ok *.github.io") {
     return test.fail("verified for a name the leaf does not cover");
+  }
+  let x1: i32 = index_of(r, "ISRG Root X1");
+  if (outcome(verify.verify_server(chain, r.distrusting(x1, 1 as i64), "raw.githubusercontent.com", now)) != "tls verify: the leaf was issued after the date root 3 is distrusted from") {
+    return test.fail("verified under a root distrusted before the leaf was issued");
+  }
+  if (outcome(verify.verify_server(chain, r.distrusting(x1, now), "raw.githubusercontent.com", now)) != "ok *.github.io") {
+    return test.fail("refused under a root distrusted after the leaf was issued");
   }
   return test.assert_eq(outcome(verify.verify_server(chain, r, "raw.githubusercontent.com", now)), "ok *.github.io");
 }

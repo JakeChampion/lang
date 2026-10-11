@@ -1,0 +1,124 @@
+#!/usr/bin/env bash
+# refresh-data — bring a table the standard library bundles from an
+# upstream source up to date, by fetching the source, re-running its
+# generator and running the generator's tests. The refresh-data workflow
+# runs every source weekly and opens a pull request when the output
+# changed; run one by hand to refresh it now.
+#
+# Usage: scripts/refresh-data SOURCE
+#
+#   publicsuffix      the public suffix list (cmd/pslgen -> std/publicsuffix)
+#                     from publicsuffix.org
+#   roots             Mozilla's root store (cmd/rootsgen -> std/tls/mozilla)
+#                     from mozilla-central's certdata.txt and nssckbi.h
+#   toolchain-tables  the tables that follow the pinned Go toolchain: the IANA
+#                     zones its zoneinfo.zip holds (cmd/tzdatagen -> std/tz)
+#                     and the Unicode tables of its unicode package plus the
+#                     UCD files of that release (cmd/unicodegen -> std/unicode)
+#   toolchain         the pinned toolchain itself: every tool in mise.toml to
+#                     its latest release (mise.lock with it), the WASI adapter
+#                     kept at wasmtime's version, the mise release the repo
+#                     runs (FERN_MISE_VERSION and every workflow's pin), then
+#                     the tables above regenerated under the new Go
+#   all               every source above, in that order
+#
+# Each source leaves its committed inputs and its generated output changed
+# in the working tree, or unchanged when upstream has not moved; what to
+# commit is `git status`. Nothing here commits.
+set -euo pipefail
+
+cd "$(dirname "$0")/.."
+
+fetch() {
+  # fetch URL DEST — DEST replaced by URL's body, never by a partial one.
+  local tmp
+  tmp="$(mktemp)"
+  curl -fsSL --retry 3 --retry-delay 5 --max-time 300 -o "$tmp" "$1"
+  mv "$tmp" "$2"
+}
+
+publicsuffix() {
+  echo "== publicsuffix"
+  fetch https://publicsuffix.org/list/public_suffix_list.dat cmd/pslgen/public_suffix_list.dat
+  go run ./cmd/pslgen
+  go test ./cmd/pslgen
+}
+
+roots() {
+  echo "== roots"
+  local base=https://hg.mozilla.org/mozilla-central/raw-file/tip/security/nss/lib/ckfw/builtins
+  fetch "$base/certdata.txt" cmd/rootsgen/certdata.txt
+  fetch "$base/nssckbi.h" cmd/rootsgen/nssckbi.h
+  go run ./cmd/rootsgen
+  # The output records the date it was generated. When that is all that
+  # changed, nothing was refreshed: keep the committed file.
+  if same_but_date internal/stdlib/std/tls/mozilla.fern; then
+    git checkout -- internal/stdlib/std/tls/mozilla.fern
+  fi
+  go test ./cmd/rootsgen
+}
+
+same_but_date() {
+  # same_but_date FILE — whether FILE differs from its committed version
+  # only in the generation date its header records.
+  local undated='s/as of [0-9]{4}-[0-9]{2}-[0-9]{2}\./as of DATE./'
+  cmp -s <(git show "HEAD:$1" | sed -E "$undated") <(sed -E "$undated" "$1")
+}
+
+toolchain() {
+  echo "== toolchain"
+  mise upgrade --bump
+  # The adapter is an http: tool mise cannot look up; it ships from the
+  # wasmtime release and must stay at its version.
+  local wasmtime
+  wasmtime="$(sed -nE 's/^wasmtime = "([^"]+)"$/\1/p' mise.toml)"
+  sed -i -E "s|^(\"http:wasi-adapter\" = \{ version = \")[^\"]+|\1$wasmtime|" mise.toml
+  mise lock
+  pin_mise_release "$(curl -fsSL --max-time 60 https://mise.jdx.dev/VERSION)"
+  mise install
+  eval "$(scripts/toolchain-env)"
+  toolchain_tables
+  git status --short
+}
+
+pin_mise_release() {
+  # pin_mise_release VERSION — mise.toml's FERN_MISE_VERSION and every
+  # jdx/mise-action `version:` under .github, which sourcelint keeps equal.
+  local current
+  current="$(sed -nE 's/^FERN_MISE_VERSION = "([^"]+)"$/\1/p' mise.toml)"
+  if [ -z "$current" ] || [ "$current" = "$1" ]; then
+    return 0
+  fi
+  echo "mise $current -> $1"
+  sed -i "s/^FERN_MISE_VERSION = \"$current\"$/FERN_MISE_VERSION = \"$1\"/" mise.toml
+  grep -rl "version: $current" .github | xargs -r sed -i "s/version: $current$/version: $1/"
+}
+
+toolchain_tables() {
+  echo "== toolchain-tables"
+  go run ./cmd/tzdatagen
+  local ucd tmp
+  tmp="$(mktemp -d)"
+  printf 'package main\n\nimport (\n\t"fmt"\n\t"unicode"\n)\n\nfunc main() { fmt.Print(unicode.Version) }\n' > "$tmp/version.go"
+  ucd="$(go run "$tmp/version.go")"
+  rm -r "$tmp"
+  echo "the toolchain's unicode package is Unicode $ucd"
+  python3 cmd/unicodegen/gen_gcbdata.py "$ucd" > cmd/unicodegen/gcbdata.txt
+  python3 cmd/unicodegen/gen_wbdata.py "$ucd" > cmd/unicodegen/wbdata.txt
+  python3 cmd/unicodegen/gen_normdata.py "$ucd" > cmd/unicodegen/normdata.txt
+  go run ./cmd/unicodegen internal/stdlib/std/unicode.fern
+  go test ./cmd/unicodegen ./internal/tables/tzdata
+}
+
+case "${1:-}" in
+  publicsuffix) publicsuffix ;;
+  roots) roots ;;
+  toolchain-tables) toolchain_tables ;;
+  toolchain) toolchain ;;
+  all) publicsuffix; roots; toolchain_tables; toolchain ;;
+  *)
+    echo "usage: scripts/refresh-data publicsuffix|roots|toolchain-tables|toolchain|all" >&2
+    exit 2
+    ;;
+esac
+git status --short

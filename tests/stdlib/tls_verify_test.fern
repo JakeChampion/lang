@@ -189,6 +189,29 @@ function test_time(): test.TestOutcome {
   return test.assert_eq(outcome(verify.verify_server([ec_leaf(), ec_int()], ec_roots(), "example.com", 1700000000 as i64)), "tls verify: certificate 0 is not yet valid");
 }
 
+// A root distrusted for server certificates issued after a date ends no
+// path for a leaf issued after it, and every path for one issued on or
+// before it; a client's chain is not held to it.
+function test_distrust_after(): test.TestOutcome {
+  let issued: i64 = 0 as i64;
+  match (x509.parse(ec_leaf())) {
+    Ok(c) => {
+      issued = c.not_before;
+    },
+    Err(e) => {
+      return test.fail("the leaf does not parse");
+    }
+  }
+  let before: verify.Roots = ec_roots().distrusting(0, issued - 1 as i64);
+  if (outcome(verify.verify_server([ec_leaf(), ec_int()], before, "example.com", now())) != "tls verify: the leaf was issued after the date root 2 is distrusted from") {
+    return test.fail("a leaf issued after the date: " + outcome(verify.verify_server([ec_leaf(), ec_int()], before, "example.com", now())));
+  }
+  if (outcome(verify.verify_server([ec_leaf(), ec_int()], ec_roots().distrusting(0, issued), "example.com", now())) != "ok example.com") {
+    return test.fail("a leaf issued on the date");
+  }
+  return test.assert_eq(outcome(verify.verify_client([ec_leaf_client(), ec_int()], before, now())).starts_with("ok "), true);
+}
+
 function test_refusals(): test.TestOutcome {
   if (outcome(verify.verify_server([ec_leaf(), ec_int()], verify.roots([rsa_root()]), "example.com", now())) != "tls verify: no path from the certificate reaches a trusted root") {
     return test.fail("unknown root");
@@ -344,6 +367,7 @@ function main(): i32 {
   r = r.it("P-384", test_p384);
   r = r.it("names", test_names);
   r = r.it("validity periods", test_time);
+  r = r.it("a distrust date", test_distrust_after);
   r = r.it("refusals", test_refusals);
   r = r.it("a bad signature", test_bad_signature);
   r = r.it("roots from PEM", test_roots_from_pem);
