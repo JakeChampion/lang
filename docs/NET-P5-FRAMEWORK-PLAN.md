@@ -80,11 +80,20 @@ decides what wraps it.
    parameters decoded and typed, a `use` chain over a route) in the stdtest
    differential; `TestRouterServeInterp` and `TestRouterServeX86_64`
    against the real loop.
-2. **Bodies and uploads.** `req.form()` over `std/url`;
-   `std/http/multipart`, an RFC 7578 streaming parser over the bounded body
-   yielding parts as headers plus `Body`, with caps on part count, per-part
-   bytes, total bytes and header bytes from `serve.Config`, never buffering
-   a file part; the client's multipart builder; an upload example.
+2. **Bodies and uploads.** `std/http/form` reads a urlencoded body as its
+   fields over `std/url`'s query decoder. `std/http/multipart` is an RFC
+   7578 reader over the body stream: `next` gives a part's head, `read`
+   hands its content over a piece at a time and `content` the rest of it,
+   so the parser never holds a file part whole, and a handler writing one
+   to disk never does either. Caps on the part count, the bytes of one
+   part, the bytes of the body and the bytes of a part's headers come from
+   `http.http_limits()` by default; a handler names its own, since the
+   serve loop's `Config` does not reach it. The builder makes such a body
+   for a client, and `examples/upload.fern` drives a handler with one.
+   Gate: both suites in the stdtest differential; `TestUploadServeInterp`
+   and `TestUploadServeX86_64`, a form with a file as Go's `mime/multipart`
+   sends it, read piece by piece under the loop with bodies whole and
+   streamed, the caps and the refusals answered over HTTP.
 3. **Cookies.** `SetCookie` gains `domain`, `expires`, `partitioned` and a
    `SameSite` enum; serialisation enforces rfc6265bis (`__Host-` and
    `__Secure-` invariants, the 4096-byte pair, the 400-day cap, control and

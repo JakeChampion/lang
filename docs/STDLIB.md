@@ -2052,6 +2052,64 @@ serializer.
   so a reply allocates nothing once the builder has grown. The loop adds
   a `Date`, formatted once per second, unless the handler set one.
 
+### `std/http/form`
+
+An `application/x-www-form-urlencoded` body as its fields.
+
+- `parse(req): Result[Form, FormError]` — 415 (`NotAForm`) for another
+  media type (parameters such as a charset may follow the type), and a body
+  that is not UTF-8 or ended early as `body_string` reports it
+  (`FormBody`); `FormError` is `ToResponse`, so a handler writes
+  `form.parse(req)?`.
+- `Form` holds every name to its values in order, decoded as a query string
+  is (`+` a space, `%XX` a byte): `get(name)` is the first value,
+  `get_all(name)` every one, `has(name)` whether any was sent
+  (`tests/stdlib/http_form_test.fern`).
+
+### `std/http/multipart`
+
+A `multipart/form-data` body (RFC 7578) read part by part from the body
+stream, so a file part is held whole only when the handler asks for it;
+and the builder a client makes such a body with.
+
+```fern
+let r: multipart.Reader = multipart.open(req, multipart.limits())?;
+match (r.next()?) {
+  NextPart(part, r1) => {
+    let (piece, done, r2) = r1.read(65536)?;   // the content a piece at a time
+    let (rest, r3) = r2.content()?;             // or the rest of it, under the part cap
+  },
+  NoMoreParts => {}
+}
+```
+
+- `open(req, limits)` — 415 (`NotMultipart`) unless the Content-Type is
+  multipart/form-data, 400 (`NoBoundary`) when it names no boundary. A
+  preamble before the first boundary and transport padding after one are
+  skipped.
+- `Reader.next()` — the next part's head (`Part { name, filename,
+  content_type, headers }`, the names as the sender wrote them) with the
+  rest of the current part skipped, or `NoMoreParts` past the closing
+  boundary. `read(n)` is up to `n` bytes of the current part's content and
+  whether that was the last of it; `content()` the rest of it under the
+  part cap. `fields(req, limits)` is every part without a filename as text,
+  each name to its values.
+- `Limits { parts, part_bytes, total_bytes, header_bytes }`: `limits()`
+  takes them from `http.http_limits()` (as many parts as header fields, a
+  part and the body each a body's size, a part's headers a header block's);
+  `limits_from(l)` from any `HttpLimits`. Past one: 413 (`TooManyParts`,
+  `PartTooLarge`, `MultipartTooLarge`), 431 (`PartHeadersTooLarge`). A body
+  this module cannot read is 400 (`MalformedMultipart`), and a body that
+  ended early its own status (`MultipartBody`). `MultipartError` is
+  `ToResponse` with `message()`.
+- `builder()` (a random boundary) or `builder_with(boundary)`, then
+  `field(name, value)` and `file(name, filename, content_type, content)`;
+  `bytes()` is the closed body, `content_type()` the header naming the
+  boundary, `request(method, path)` a request carrying both for a handler
+  driven directly, as `examples/upload.fern` does. A client sends
+  `fetch.get(url).with_bytes(b.bytes()).with_header("Content-Type", b.content_type())`
+  (`tests/stdlib/http_multipart_test.fern`, `TestUploadServe*`).
+
 ### `std/http/router`
 
 A request routed to a handler by method and path, in Go 1.22's shape, for

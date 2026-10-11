@@ -1,0 +1,72 @@
+// upload.fern — a multipart/form-data upload read part by part.
+//
+// The handler is what `serve.run` would call: it opens the request's body
+// as multipart, reads the text fields whole and the file a piece at a
+// time, and answers with what it saw. This program drives the handler
+// directly with a request the builder made, so it runs without a socket;
+// `serve.run(8080, serve.config(), handle)` would serve the same handler.
+//
+//   $ ./upload
+//   title = holiday
+//   photo = beach.png (image/png, 9 bytes in 3 pieces)
+//   tags = sea, sand
+import "std/http";
+import "std/http/multipart";
+import "std/platform";
+import "core/int";
+
+function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
+  return http.respond(describe(req));
+}
+
+function describe(req: HttpRequest): Result[HttpResponse, multipart.MultipartError] {
+  let out: string = "";
+  let r: multipart.Reader = multipart.open(req, multipart.limits())?;
+  let going: boolean = true;
+  while (going) {
+    match (r.next()?) {
+      NextPart(part, r1) => {
+        if (part.filename.len() > 0) {
+          let got: (string, multipart.Reader) = sized(part, r1)?;
+          out = out + got.0;
+          r = got.1;
+        } else {
+          let got: (u8[], multipart.Reader) = r1.content()?;
+          out = out + part.name + " = " + string_from_bytes_unchecked(got.0) + "\n";
+          r = got.1;
+        }
+      },
+      NoMoreParts => {
+        going = false;
+      }
+    }
+  }
+  return Ok(http.ok(out));
+}
+
+// sized reads a file part four bytes at a time, counting rather than
+// keeping the bytes: what a handler writing a file to disk does.
+function sized(part: multipart.Part, r: multipart.Reader): Result[(string, multipart.Reader), multipart.MultipartError] {
+  let bytes: i32 = 0;
+  let pieces: i32 = 0;
+  let cur: multipart.Reader = r;
+  let done: boolean = false;
+  while (!done) {
+    let piece: (u8[], boolean, multipart.Reader) = cur.read(4)?;
+    bytes = bytes + piece.0.len();
+    pieces = pieces + 1;
+    done = piece.1;
+    cur = piece.2;
+  }
+  return Ok((part.name + " = " + part.filename + " (" + part.content_type + ", " + int.int_to_string(bytes) + " bytes in " + int.int_to_string(pieces) + " pieces)\n", cur));
+}
+
+function main(): i32 {
+  let body: multipart.Builder = multipart.builder_with("example").field("title", "holiday").file("photo", "beach.png", "image/png", "PNG image".bytes()).field("tags", "sea, sand");
+  let resp: HttpResponse = handle(body.request("POST", "/upload"), platform.host());
+  print(resp.body_string());
+  if (resp.status != 200) {
+    return 1;
+  }
+  return 0;
+}
