@@ -791,6 +791,31 @@ function main(): i32 {
     ti = ti + 1;
   }
 
+  // Dead stores: a slot nothing loads. Its store becomes a drop, which then
+  // cancels the push before it; a tee simply goes. The kept rows are the gate:
+  // a slot that is loaded, a store fed by an op with an effect, and a drop
+  // whose push is not the op just before it.
+  let ds_const: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(1), ir.op_const_i32(0), ir.op_return()];
+  out = out + "ds_const: " + render(ir.eliminate_dead_stores(ds_const)) + "\n";
+  let ds_loaded: ir.Op[] = [ir.op_const_i32(7), ir.op_store_local(1), ir.op_load_local(1), ir.op_return()];
+  out = out + "ds_loaded: " + render(ir.eliminate_dead_stores(ds_loaded)) + "\n";
+  let ds_effect: ir.Op[] = [ir.op_call_direct("side", 0), ir.op_store_local(1), ir.op_const_i32(0), ir.op_return()];
+  out = out + "ds_effect: " + render(ir.eliminate_dead_stores(ds_effect)) + "\n";
+  let ds_tee: ir.Op[] = [ir.op_load_local(0), ir.op_tee_local(1), ir.op_return()];
+  out = out + "ds_tee: " + render(ir.eliminate_dead_stores(ds_tee)) + "\n";
+  // A constant array's elements, stored and then loaded only to be dropped: the
+  // dropped loads go, which leaves the stores dead, which leaves the constants.
+  let ds_chain: ir.Op[] = [ir.op_const_i32(1), ir.op_store_local(1), ir.op_const_i32(2), ir.op_store_local(2), ir.op_load_local(1), ir.op_load_local(2), ir.op_drop(), ir.op_drop(), ir.op_const_i32(0), ir.op_return()];
+  out = out + "ds_chain: " + render(ir.eliminate_dead_stores(ds_chain)) + "\n";
+  let ds_not_top: ir.Op[] = [ir.op_load_local(0), ir.op_const_i32(1), ir.op_bin("add", 0, false), ir.op_drop(), ir.op_const_i32(0), ir.op_return()];
+  out = out + "ds_not_top: " + render(ir.eliminate_dead_stores(ds_not_top)) + "\n";
+  let ds_scope: ir.Op[] = [ir.op_const_i32(1), ir.op_block(0), ir.op_drop(), ir.op_end(), ir.op_const_i32(0), ir.op_return()];
+  out = out + "ds_scope: " + render(ir.eliminate_dead_stores(ds_scope)) + "\n";
+  let ds_frame: ir.Op[] = [ir.op_const_i32(5), ir.op_store_local(2), ir.op_load_local(0), ir.op_const_i32(0), ir.op_const_i32(1), ir.op_str_slice_frame(2), ir.op_return()];
+  out = out + "ds_frame: " + render(ir.eliminate_dead_stores(ds_frame)) + "\n";
+  let ds_dyn: ir.Op[] = [ir.op_load_local(0), ir.op_store_local(2), ir.op_const_i32(9), ir.op_store_local(3), ir.op_dyn_dispatch(["A.f"], 2, 2), ir.op_return()];
+  out = out + "ds_dyn: " + render(ir.eliminate_dead_stores(ds_dyn)) + "\n";
+
   write(out);
 
   // Exit code: 0 when the fixpoint held.
