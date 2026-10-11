@@ -10766,6 +10766,10 @@ pub struct MFns {
   // The module's impls, so a generic's return type spelled through a
   // projection on a type parameter (`H::Item`) resolves once substituted.
   impls: ImplInfo[],
+  // keep_vars has mono_infer answer a type spelled with a type variable
+  // rather than "", for the bound-comparison rewrite, which reads a template.
+  // Instantiation leaves it off: a clone keyed on a variable names nothing.
+  keep_vars: boolean,
 }
 
 // mfns_buckets is the bucket count of the generic index. Prime, and far larger
@@ -10822,7 +10826,7 @@ pub function mfns_of(decls: FuncDecl[], structs: StructDecl[], enums: EnumDecl[]
     ghead = ghead.with(bk, k);
     k = k - 1;
   }
-  return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, smm: smm, array_concrete: array_concrete, structs: structs, enums: enums, impls: impls };
+  return MFns { decls: decls, ghead: ghead, gnext: gnext, gname: gname, gat: gat, smm: smm, array_concrete: array_concrete, structs: structs, enums: enums, impls: impls, keep_vars: false };
 }
 
 // bg_find returns the position in `fns.decls` of the bounded-generic function
@@ -12969,7 +12973,7 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
           // bare type variable is never a usable concrete type, so
           // report "unknown" (the other, concrete-literal arg still
           // binds the call at `i32`).
-          if (looks_type_var(crt) || crt.len() == 0) {
+          if (crt.len() == 0 || hides_bare_var(crt, funcs)) {
             return stamped_type(c.ty);
           }
           return crt;
@@ -13108,7 +13112,7 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
       let at: string = mono_infer(ix.array, env, funcs);
       let el: string = array_method_element(at);
       if (el.len() > 0) {
-        if (looks_type_var(el)) {
+        if (hides_bare_var(el, funcs)) {
           return "";
         }
         return el;
@@ -13131,16 +13135,16 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
       if (util.is_all_digits(fa.field) && util.is_tuple_type_name(ot)) {
         let elems: string[] = split_top_commas(slice_unchecked(ot, 1, ot.len() - 1) + "");
         let k: i32 = util.digits_to_i32(fa.field);
-        if (k >= elems.len() || mono_ty_mentions_var(elems[k])) {
+        if (k >= elems.len() || hides_var(elems[k], funcs)) {
           return "";
         }
         return elems[k];
       }
-      if (mono_ty_mentions_var(ot)) {
+      if (hides_var(ot, funcs)) {
         return "";
       }
       let ft: string = struct_field_ty_inst(ot, fa.field, funcs.structs, funcs.enums);
-      if (mono_ty_mentions_var(ft)) {
+      if (hides_var(ft, funcs)) {
         return "";
       }
       return ft;
@@ -13150,6 +13154,17 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
     }
   }
   return "";
+}
+
+// hides_var reports whether mono_infer answers "" for a type that mentions a
+// type variable, and hides_bare_var for one that is a bare variable: always,
+// unless funcs.keep_vars asks for the variable.
+function hides_var(t: string, funcs: MFns): boolean {
+  return !funcs.keep_vars && mono_ty_mentions_var(t);
+}
+
+function hides_bare_var(t: string, funcs: MFns): boolean {
+  return !funcs.keep_vars && looks_type_var(t);
 }
 
 // mono_expr rebuilds `e`, rewriting any call to a bounded generic into
@@ -14358,7 +14373,7 @@ pub function split_plus_bounds(bound: string): string[] {
 // return + body annotations. A projection through a type parameter
 // (`H::Item`) names a concrete base only once substituted, so the
 // signature's projections resolve here rather than at parse time.
-function clone_bg(fd: FuncDecl, key: string, impls: ImplInfo[]): FuncDecl {
+function clone_bg(fd: FuncDecl, key: string, impls: ImplInfo[], reqs: TraitReq[], funcs: MFns): FuncDecl {
   let tparams: string[] = fd.type_params;
   // A single type parameter's key IS the one concrete type, verbatim —
   // never split it. A multi-param key is joined by infer_inst with ';'
@@ -14378,7 +14393,169 @@ function clone_bg(fd: FuncDecl, key: string, impls: ImplInfo[]): FuncDecl {
   // Without it the clone keeps a `T` naming nothing, so its return resolves
   // to `Option[unknown]` and every reader downstream is left guessing.
   let (btp, bct) = bound_substitutions(fd, tparams, cts, impls);
-  return instantiate_func(fd, fd.name + "__" + sanitize_key(key), btp, bct, impls);
+  let compared: FuncDecl = FuncDecl { ...fd, body: bound_compared(fd, cts, reqs, funcs) };
+  return instantiate_func(compared, fd.name + "__" + sanitize_key(key), btp, bct, impls);
+}
+
+// ---- comparisons through a bound ----------------------------------------
+// `a < b` on two values of a type variable whose bound supplies `cmp` means
+// `a.cmp(b) < 0`, and `a == b` where it supplies `eq` means `a.eq(b)`, in every
+// instance: f64's total order and NaN-equal `eq` included, as the Go checker
+// desugars them. The rewrite is made on the template, where the operands still
+// read as the variable. A variable taken at a type whose native operators
+// agree with its impl keeps the native comparison, which is one instruction.
+
+struct BoundCmp { env: MEnv, funcs: MFns, ord: string[], eq: string[] }
+
+function bound_compared(fd: FuncDecl, cts: string[], reqs: TraitReq[], funcs: MFns): ast.Stmt[] {
+  let ord: string[] = [];
+  let eq: string[] = [];
+  let k: i32 = 0;
+  while (k < fd.type_params.len() && k < fd.bound_traits.len() && k < cts.len()) {
+    if (bound_supplies(reqs, fd.bound_traits[k], "cmp") && !native_order_agrees(cts[k])) {
+      ord = ord.append(fd.type_params[k]);
+    }
+    if (bound_supplies(reqs, fd.bound_traits[k], "eq") && !native_eq_agrees(cts[k])) {
+      eq = eq.append(fd.type_params[k]);
+    }
+    k = k + 1;
+  }
+  if (ord.len() == 0 && eq.len() == 0) {
+    return fd.body;
+  }
+  let (out, ctx) = bc_body(fd.body, BoundCmp { env: env_from_decl(fd), funcs: MFns { ...funcs, keep_vars: true }, ord: ord, eq: eq });
+  return out;
+}
+
+// bound_supplies reports whether a `+`-joined bound, its supertraits
+// included, declares or provides `method`.
+function bound_supplies(reqs: TraitReq[], bound: string, method: string): boolean {
+  for entry in split_plus_bounds(bound) {
+    for ri in trait_closure(reqs, derive_simple_name(util.base_type_name(entry)), "") {
+      if (str_list_contains(reqs[ri].methods, method) || str_list_contains(reqs[ri].provided, method)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+// The integers' and string's `cmp` are their native order.
+function native_order_agrees(t: string): boolean {
+  return t == "i32" || t == "i64" || t == "u32" || t == "u64" || t == "u8" || t == "string";
+}
+
+// So are those types' `eq` and boolean's.
+function native_eq_agrees(t: string): boolean {
+  return native_order_agrees(t) || t == "boolean";
+}
+
+// Each statement list owns its scope: a binding it makes is gone after it.
+function bc_body(stmts: ast.Stmt[], ctx: BoundCmp): (ast.Stmt[], BoundCmp) {
+  let out: ast.Stmt[] = [];
+  let cur: BoundCmp = ctx;
+  for stmt in stmts {
+    let (ns, na, nh) = astwalk.map_stmt_acc(stmt, cur, bc_stmt, bc_expr);
+    out = out.append(ns);
+    cur = na;
+  }
+  return (out, ctx);
+}
+
+function bc_rewrite(e: ast.Expr, ctx: BoundCmp): ast.Expr {
+  let (out, a, h) = astwalk.map_expr_acc(e, ctx, bc_stmt, bc_expr);
+  return out;
+}
+
+// bc_stmt binds what a statement declares the way mono_stmt does, with the
+// variable still spelled, and walks the blocks it opens in scopes of their own.
+function bc_stmt(st: ast.Stmt, ctx: BoundCmp): (ast.Stmt, BoundCmp, boolean) {
+  match (st) {
+    ast.StmtVar(v) => {
+      let ty: string = fn_tag_spelling(v.type_name, v.fn_ret, v.fn_param_types);
+      if (ty.len() == 0) {
+        ty = mono_infer(v.init, ctx.env, ctx.funcs);
+      }
+      let bound: MEnv = menv_bind_destructure(ctx.env.ebind(v.name, ty), v.name, ty);
+      return (ast.StmtVar { ...v, init: bc_rewrite(v.init, ctx) }, BoundCmp { ...ctx, env: bound }, true);
+    },
+    ast.StmtIf(f) => {
+      let (tb, ta) = bc_body(f.then_body, ctx);
+      let (eb, ea) = bc_body(f.else_body, ctx);
+      return (ast.StmtIf { ...f, cond: bc_rewrite(f.cond, ctx), then_body: tb, else_body: eb }, ctx, true);
+    },
+    ast.StmtWhile(w) => {
+      let (wb, wa) = bc_body(w.body, ctx);
+      return (ast.StmtWhile { ...w, cond: bc_rewrite(w.cond, ctx), body: wb }, ctx, true);
+    },
+    ast.StmtFor(fr) => {
+      let ety: string = "";
+      let ity: string = mono_infer(fr.iter, ctx.env, ctx.funcs);
+      if (type_ends_arr(ity)) {
+        ety = elem_spelling(ity);
+      }
+      let (fb, fa) = bc_body(fr.body, BoundCmp { ...ctx, env: ctx.env.ebind(fr.var_name, ety) });
+      return (ast.StmtFor { ...fr, iter: bc_rewrite(fr.iter, ctx), body: fb }, ctx, true);
+    },
+    ast.StmtMatch(m) => {
+      let sty: string = mono_infer(m.scrutinee, ctx.env, ctx.funcs);
+      let arms: ast.MatchArm[] = [];
+      for arm in m.arms {
+        let actx: BoundCmp = BoundCmp { ...ctx, env: mono_arm_env(ctx.env, arm.pattern, sty, ctx.funcs) };
+        let (ab, aa) = bc_body(arm.body, actx);
+        let g: ast.Expr = arm.guard;
+        if (arm.has_guard) {
+          g = bc_rewrite(arm.guard, actx);
+        }
+        arms = arms.append(ast.MatchArm { ...arm, body: ab, guard: g });
+      }
+      return (ast.StmtMatch { ...m, scrutinee: bc_rewrite(m.scrutinee, ctx), arms: arms }, ctx, true);
+    },
+    _ => {
+      return (st, ctx, false);
+    }
+  }
+  return (st, ctx, false);
+}
+
+// bc_expr spells a comparison of two values of a rewritten variable as the
+// bound's method, after its operands, and walks a lambda with its parameters
+// bound.
+function bc_expr(e: ast.Expr, ctx: BoundCmp): (ast.Expr, BoundCmp, boolean) {
+  match (e) {
+    ast.ExprLambda(lm) => {
+      let (lb, la) = bc_body(lm.body, BoundCmp { ...ctx, env: bind_params(ctx.env, lm.params) });
+      return (ast.ExprLambda { ...lm, body: lb }, ctx, true);
+    },
+    ast.ExprBinary(b) => {
+      return (bc_binary(b, ctx), ctx, true);
+    },
+    _ => {
+      return (e, ctx, false);
+    }
+  }
+  return (e, ctx, false);
+}
+
+function bc_binary(b: ast.ExprBinary, ctx: BoundCmp): ast.Expr {
+  let left: ast.Expr = bc_rewrite(b.left, ctx);
+  let right: ast.Expr = bc_rewrite(b.right, ctx);
+  // Both operands of a comparison have one type, so either side names it.
+  let lt: string = mono_infer(b.left, ctx.env, ctx.funcs);
+  if (lt.len() == 0) {
+    lt = mono_infer(b.right, ctx.env, ctx.funcs);
+  }
+  if (util.has_str(["<", "<=", ">", ">="], b.op) && str_list_contains(ctx.ord, lt)) {
+    let zero: ast.Expr = ast.ExprNumber { text: "0", suffix: "", raw: "", is_float: false, line: b.line, col: b.col };
+    return ast.ExprBinary { ...b, left: dv_call1(left, "cmp", right), right: zero };
+  }
+  if (b.op == "==" && str_list_contains(ctx.eq, lt)) {
+    return dv_call1(left, "eq", right);
+  }
+  if (b.op == "!=" && str_list_contains(ctx.eq, lt)) {
+    return ast.ExprUnary { op: "!", operand: dv_call1(left, "eq", right), line: b.line, col: b.col, ty: "" };
+  }
+  return ast.ExprBinary { ...b, left: left, right: right };
 }
 
 // instantiate_func is `fd` renamed to `name` with each of `tparams` replaced by
@@ -14948,11 +15125,12 @@ pub function register_struct_method_generics(mod: Module): Module {
         bnames = bnames.append("");
         bi2 = bi2 + 1;
       }
+      // A variable of the method's own keeps the bound the method declared it with.
       let own: string[] = smm_own_typevars(fd, recv_vars);
       let oi: i32 = 0;
       while (oi < own.len()) {
         tps = tps.append(own[oi]);
-        bnames = bnames.append("");
+        bnames = bnames.append(declared_bound(fd, own[oi]));
         oi = oi + 1;
       }
       let nparams: ast.ParamDecl[] = [ast.ParamDecl { name: fd.receiver_name, type_name: fd.receiver_type, own: fd.receiver_own, has_default: false, default_value: e_unknown(""), fn_ret: "", fn_param_types: "" }];
@@ -14979,6 +15157,15 @@ pub function register_struct_method_generics(mod: Module): Module {
     i = i + 1;
   }
   return Module { ...mod, funcs: out };
+}
+
+// declared_bound is the bound `fd` declares type variable `name` with, "" for none.
+function declared_bound(fd: FuncDecl, name: string): string {
+  let at: i32 = util.index_of_str(fd.type_params, name);
+  if (at < 0 || at >= fd.bound_traits.len()) {
+    return "";
+  }
+  return fd.bound_traits[at];
 }
 
 // monomorphize_module expands trait-bounded generics. Non-generic
@@ -15381,7 +15568,7 @@ function monomorphize_module(mod: Module, erased: string[]): Module {
     done = done.iadd(nm, ct);
     let gi: i32 = bg_find(fns, nm);
     if (gi >= 0) {
-      let cl: FuncDecl = clone_bg(funcs[gi], ct, mod.impls);
+      let cl: FuncDecl = clone_bg(funcs[gi], ct, mod.impls, mod.trait_reqs, fns);
       // Rewrite the clone's body so any bounded-generic calls it
       // makes resolve too (and enqueue their instantiations).
       let cenv: MEnv = env_from_params(cl.params);
@@ -16598,7 +16785,7 @@ function ms_module(mod: Module): Module {
     if (idx < 0) {
       let bgi: i32 = bg_find(sfns, base);
       if (bgi >= 0 && !has_func_named(mod.funcs, nfuncs, base + "__" + sanitize_key(key))) {
-        let bcl: FuncDecl = clone_bg(sfns.decls[bgi], key, mod.impls);
+        let bcl: FuncDecl = clone_bg(sfns.decls[bgi], key, mod.impls, mod.trait_reqs, sfns);
         let bcr: RStmts = mono_stmts(bcl.body, env_from_params(bcl.params), sfns, ins, fn_tag_spelling(bcl.ret_type, bcl.ret_fn_ret, bcl.ret_fn_param_types));
         ins = bcr.rins3;
         let bfr: FRes = ms_func(FuncDecl { ...bcl, body: bcr.rstmts }, gstructs, sfns, ins);

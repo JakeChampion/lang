@@ -531,7 +531,7 @@ pub function min[T: cmp.Ord, I: Iterator[T]](it: I): Option[T] {
       while (go) {
         match (cur.next()) {
           Some(t) => {
-            if (t.0.cmp(best) < 0) {
+            if (t.0 < best) {
               best = t.0;
             }
             cur = t.1;
@@ -560,7 +560,7 @@ pub function max[T: cmp.Ord, I: Iterator[T]](it: I): Option[T] {
       while (go) {
         match (cur.next()) {
           Some(t) => {
-            if (t.0.cmp(best) > 0) {
+            if (t.0 > best) {
               best = t.0;
             }
             cur = t.1;

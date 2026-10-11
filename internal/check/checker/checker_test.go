@@ -1663,6 +1663,36 @@ function main(): i32 { return 0; }`)
 	}
 }
 
+// Comparisons on a bounded TYPE PARAMETER mean the bound's method (#12034):
+// an ordering on a `T` whose bound supplies `cmp` is `a.cmp(b) <op> 0`, an
+// equality on one whose bound supplies `eq` is `a.eq(b)`. An ordering on a `T`
+// whose bound supplies no `cmp` stays E009; equality needs no bound.
+func TestComparisonOverTypeParam(t *testing.T) {
+	const traits = `trait Ord { function cmp(self: Self, o: Self): i32; }
+trait Eq { function eq(self: Self, o: Self): boolean; }
+trait Total: Ord {}
+`
+	for _, src := range []string{
+		`function gt[T: Ord](a: T, b: T): boolean { return a > b && b <= a; }`,
+		`function gt[T: Total](a: T, b: T): boolean { return a >= b; }`,
+		`function same[T: Eq](a: T, b: T): boolean { return a == b || a != b; }`,
+		`function same[T](a: T, b: T): boolean { return a == b; }`,
+	} {
+		if err := checkSource(t, traits+src+"\nfunction main(): i32 { return 0; }"); err != nil {
+			t.Errorf("%s: should type-check, got: %v", src, err)
+		}
+	}
+	for _, src := range []string{
+		`function gt[T](a: T, b: T): boolean { return a > b; }`,
+		`function gt[T: Eq](a: T, b: T): boolean { return a < b; }`,
+	} {
+		err := checkSource(t, traits+src+"\nfunction main(): i32 { return 0; }")
+		if err == nil || !strings.Contains(err.Error(), "requires an integer type") {
+			t.Errorf("%s: should be rejected (E009), got: %v", src, err)
+		}
+	}
+}
+
 func TestCompositeEqualityRoutesToEq(t *testing.T) {
 	const eqI32 = `trait Eq { function eq(self: Self, other: Self): boolean; }
 impl Eq for i32 { function eq(self: Self, other: Self): boolean { return self == other; } }
