@@ -21938,10 +21938,6 @@ function e021_derive_field_diags(mod: parser.Module): (util.Diag[], string[]) {
       }
     }
     for ederive in ederives {
-      if (parser.derive_simple_name(ederive) == "FromJson") {
-        out = out.append(dg_at("E021", "cannot @derive(" + ederive + "): only Eq, Display, Debug, Ord, Hash, Json, and Default are derivable for enums", ed.line, ed.col));
-        continue;
-      }
       let edd: util.Diag[] = e021_derive_one_diag(mod, ederive, ed.name, elabels, eftys, ed.type_params, ed.line, ed.col);
       if (edd.len() > 0) {
         let emn: string = derive_method_name(parser.derive_simple_name(ederive));

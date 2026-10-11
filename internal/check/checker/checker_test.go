@@ -6310,7 +6310,7 @@ func TestDeriveEnumErrors(t *testing.T) {
 		{`trait Foo { function foo(self: Self): boolean; }
 @derive(Foo)
 enum E { A, B }
-function main(): i32 { return 0; }`, "only Eq, Display, Debug, Ord, Hash, Json, and Default are derivable"},
+function main(): i32 { return 0; }`, "only Eq, Display, Debug, Ord, Hash, Json, FromJson, and Default are derivable"},
 	}
 	for _, c := range cases {
 		err := checkSource(t, c.src)
@@ -6468,14 +6468,14 @@ function main(): i32 { return 0; }`
 	}
 }
 
-// @derive(FromJson) is a struct's derive whose decoder is std/json's: the
-// checker refuses it on an enum, and without std/json in the program.
+// @derive(FromJson)'s decoder is std/json's: the checker refuses it, on a
+// struct or an enum, without std/json in the program.
 func TestDeriveFromJson(t *testing.T) {
 	const fromJsonTrait = `trait FromJson { function from_json_value(v: JsonValue): Result[Self, string]; }
 `
 	cases := []struct{ src, want string }{
 		{fromJsonTrait + `@derive(FromJson) enum E { A, B }
-function main(): i32 { return 0; }`, "only Eq, Display, Debug, Ord, Hash, Json, and Default are derivable for enums"},
+function main(): i32 { return 0; }`, "the decoder is std/json's"},
 		{fromJsonTrait + `@derive(FromJson) struct P { x: i32 }
 function main(): i32 { return 0; }`, "the decoder is std/json's"},
 	}
