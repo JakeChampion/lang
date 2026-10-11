@@ -7330,6 +7330,7 @@ func (c *checker) synthesizeTraitDefaults(prog *ast.Program) {
 				method.Receiver = &ast.Param{Name: recv.Name, Type: impl.Type, Own: recv.Own}
 				method.Params = substSelfParams(m.Params[1:], impl.Type)
 			}
+			substTraitArgs(method, td.TypeParams, implTraitArgs(impl))
 			// A parametric impl (`impl[T: Bound] Trait for Box[T]`) makes
 			// every method generic over the impl's type params — a default
 			// body may reference T — so carry the params + bounds exactly as
@@ -7342,6 +7343,50 @@ func (c *checker) synthesizeTraitDefaults(prog *ast.Program) {
 			prog.Funcs = append(prog.Funcs, method)
 			impl.MethodNames = append(impl.MethodNames, m.Name)
 		}
+	}
+}
+
+// implTraitArgs is an impl's trait arguments with its own type parameters
+// read as ParamType, as resolveTypeNames reads them in a written method.
+func implTraitArgs(impl *ast.ImplDecl) []ast.Type {
+	if len(impl.TypeParams) == 0 {
+		return impl.TraitArgs
+	}
+	tps := make(map[string]bool, len(impl.TypeParams))
+	for _, tp := range impl.TypeParams {
+		tps[tp] = true
+	}
+	out := make([]ast.Type, len(impl.TraitArgs))
+	for i, a := range impl.TraitArgs {
+		out[i] = normalizeParamRefs(a, tps)
+	}
+	return out
+}
+
+// substTraitArgs gives an inherited default the impl's trait arguments in
+// place of the trait's type parameters (`T` → `i32` for `impl Holder[i32]`),
+// across its signature and every type its body declares. A parameter may
+// still read as the parser's provisional StructType{T} here, or already as
+// ParamType{T}.
+func substTraitArgs(method *ast.FuncDecl, params []string, args []ast.Type) {
+	if len(params) == 0 || len(params) != len(args) {
+		return
+	}
+	sub := make(map[string]ast.Type, len(params))
+	for i, p := range params {
+		sub[p] = args[i]
+	}
+	method.ReturnType = substByName(method.ReturnType, sub)
+	for i := range method.Params {
+		method.Params[i].Type = substByName(method.Params[i].Type, sub)
+	}
+	if method.Body != nil {
+		ast.Walk(method.Body, func(n ast.Node) bool {
+			forEachDeclaredType(n, func(t *ast.Type, _ ast.Position) {
+				*t = substByName(*t, sub)
+			})
+			return true
+		})
 	}
 }
 

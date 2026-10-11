@@ -1716,7 +1716,7 @@ function module_ctx(mod: parser.Module, prefix: string, ids: string[], pfxs: str
 // TraitDefaultIn is a trait's default method with its body already renamed
 // in the trait's own module, keyed `<prefix>.<Trait>` the way
 // parser.impl_trait_key spells the trait an impl implements.
-struct TraitDefaultIn { key: string, method: parser.FuncDecl }
+struct TraitDefaultIn { key: string, params: string[], method: parser.FuncDecl }
 
 // module_trait_defaults renames every default method of `mod`'s traits under
 // the module's own context, so the body calls the functions its own module
@@ -1727,7 +1727,7 @@ function module_trait_defaults(mod: parser.Module, ctx: RewriteCtx, acc: TraitDe
       if (m.body.len() > 0) {
         let bctx: RewriteCtx = RewriteCtx { ...ctx, locals: collect_local_names(m) };
         let rm: parser.FuncDecl = parser.FuncDecl { ...m, params: rewrite_params(m.params, bctx), ret_type: rewrite_type_name(m.ret_type, ctx), ret_fn_ret: rewrite_type_name(m.ret_fn_ret, ctx), ret_fn_param_types: rewrite_type_name_list(m.ret_fn_param_types, ctx), body: rewrite_block(m.body, bctx), module: ctx.prefix };
-        acc = acc.append(TraitDefaultIn { key: ctx.prefix + "." + td.name, method: rm });
+        acc = acc.append(TraitDefaultIn { key: ctx.prefix + "." + td.name, params: td.type_params, method: rm });
       }
     }
   }
@@ -1744,7 +1744,7 @@ function inherit_trait_defaults(mod: parser.Module, own: string, defaults: Trait
       let key: string = parser.impl_trait_key(im);
       for d in defaults {
         if (d.key == key && index_of_str(d.method.name, im.method_names) < 0) {
-          funcs = funcs.append(parser.FuncDecl { ...parser.finalize_impl_method(d.method, im.impl_type, im.type_params, im.bounds), module: d.method.module, impl_trait: im.trait_name });
+          funcs = funcs.append(parser.FuncDecl { ...parser.inherit_default(d.method, d.params, im), module: d.method.module, impl_trait: im.trait_name });
         }
       }
     }

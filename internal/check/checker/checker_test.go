@@ -10115,3 +10115,28 @@ func TestPayloadlessVariantCallIsE038(t *testing.T) {
 		}
 	}
 }
+
+// A generic trait's default reads the trait's parameter as the impl's trait
+// argument once inherited: a concrete one, the impl's own parameter, and the
+// second of two (#12109). A body annotation names the parameter too.
+func TestGenericTraitDefaultTakesImplArgs(t *testing.T) {
+	src := `trait Holder[T] {
+  function get(self: Self): T;
+  function get_or(self: Self, d: T): T { let v: T = self.get(); return v; }
+}
+struct IntBox { v: i32 }
+impl Holder[i32] for IntBox { function get(self: IntBox): i32 { return self.v; } }
+struct Wrap[S] { v: S }
+impl[S] Holder[S] for Wrap[S] { function get(self: Wrap[S]): S { return self.v; } }
+struct Pair[A, B] { a: A, b: B }
+impl[A, B] Holder[B] for Pair[A, B] { function get(self: Pair[A, B]): B { return self.b; } }
+function main(): i32 {
+  let b: i32 = IntBox { v: 7 }.get_or(0);
+  let w: string = Wrap { v: "w" }.get_or("x");
+  let p: boolean = Pair { a: 1, b: true }.get_or(false);
+  return 0;
+}`
+	if err := checkSource(t, src); err != nil {
+		t.Errorf("inherited generic-trait default should typecheck: %v", err)
+	}
+}

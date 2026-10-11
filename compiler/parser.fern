@@ -25381,7 +25381,7 @@ function rename_tv_annot(st: ast.Stmt, vars: string[], cts: string[]): ast.Stmt 
 // name; `method` is the parsed method (params[0] = self for a receiver
 // method, `Self` still spelled in its types). An impl of the trait that
 // omits the method inherits a copy via finalize_impl_method.
-pub struct TraitDefault { trait_name: string, method: FuncDecl }
+pub struct TraitDefault { trait_name: string, trait_params: string[], method: FuncDecl }
 
 // ImplInfo is the per-impl metadata parse_module retains so it can
 // synthesise inherited defaults after the full module is parsed (a trait
@@ -27678,7 +27678,56 @@ pub function subst_self(ty: string, impl_type: string): string {
   return out;
 }
 
-pub function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[], impl_tbs: string[]): FuncDecl {
+// inherit_default is the copy of a trait's default method an impl that omits
+// it receives: the trait's type parameters read as the impl's trait
+// arguments (`T` is `i32` for `impl Holder[i32]`), and the method's own type
+// parameters renamed apart from the impl's, so `map[U]` inherited by an
+// `impl[I, T, U]` does not take the impl's `U` for its own.
+function renamed_list(xs: string[], from: string[], to: string[]): string[] {
+  let out: string[] = [];
+  for x in xs {
+    let at: i32 = util.index_of_str(from, x);
+    if (at >= 0) {
+      out = out.append(to[at]);
+    } else {
+      out = out.append(x);
+    }
+  }
+  return out;
+}
+
+pub function inherit_default(m: FuncDecl, trait_params: string[], im: ImplInfo): FuncDecl {
+  let args: string[] = type_args_of(im.trait_ref);
+  let from: string[] = [];
+  let to: string[] = [];
+  for v in m.all_type_params {
+    let fresh: string = v;
+    let n: i32 = 1;
+    while (str_in(im.all_type_params, fresh) || str_in(args, fresh) || fresh != v && str_in(m.all_type_params, fresh)) {
+      fresh = v + util.i32_to_string(n);
+      n = n + 1;
+    }
+    if (fresh != v) {
+      from = from.append(v);
+      to = to.append(fresh);
+    }
+  }
+  if (args.len() == trait_params.len()) {
+    from = util.append_all(from, trait_params);
+    to = util.append_all(to, args);
+  }
+  let sub: FuncDecl = m;
+  if (from.len() > 0) {
+    let params: ast.ParamDecl[] = [];
+    for pd in m.params {
+      params = params.append(ast.ParamDecl { ...pd, type_name: subst_ty(pd.type_name, from, to), fn_ret: subst_ty(pd.fn_ret, from, to), fn_param_types: subst_ty_list(pd.fn_param_types, from, to) });
+    }
+    sub = FuncDecl { ...m, type_params: renamed_list(m.type_params, from, to), all_type_params: renamed_list(m.all_type_params, from, to), params: params, ret_type: subst_ty(m.ret_type, from, to), ret_fn_ret: subst_ty(m.ret_fn_ret, from, to), ret_fn_param_types: subst_ty_list(m.ret_fn_param_types, from, to), body: subst_stmts(m.body, from, to) };
+  }
+  return finalize_impl_method(sub, im.impl_type, im.type_params, im.bounds);
+}
+
+function finalize_impl_method(m: FuncDecl, impl_type: string, impl_tps: string[], impl_tbs: string[]): FuncDecl {
   let rt: string = subst_self(m.ret_type, impl_type);
   let mtps: string[] = m.type_params;
   // bound_traits is allowed to run short of type_params — a promoted unbounded
@@ -27849,7 +27898,7 @@ function parse_trait_decl(p: Par): (TraitDefault[], TraitReq, TraitDecl, ast.Stm
         // body is indistinguishable from an abstract `;` here and
         // is treated as abstract — it would synthesise a no-op.)
         if (fr_func.body.len() > 0) {
-          defaults = defaults.append(TraitDefault { trait_name: simple, method: fr_func });
+          defaults = defaults.append(TraitDefault { trait_name: simple, trait_params: trait_tps.tnames, method: fr_func });
           default_sigs = default_sigs.append(FuncDecl { ...fr_func, body: [] });
         } else {
           // Abstract (body-less) signature: a REQUIRED method every
@@ -29243,7 +29292,7 @@ function parse_module_flagged(toks: lexer.Token[], verbatim: boolean): (Module, 
       let td: TraitDefault = trait_defaults[ddi];
       if (td.trait_name == info.trait_name) {
         if (!str_list_contains(info.method_names, td.method.name)) {
-          let td_cl: MethodClaim = claim_method_name(finalize_impl_method(td.method, info.impl_type, info.type_params, info.bounds), info.trait_name, mth_keys, mth_traits);
+          let td_cl: MethodClaim = claim_method_name(inherit_default(td.method, td.trait_params, info), info.trait_name, mth_keys, mth_traits);
           mth_keys = td_cl.keys;
           mth_traits = td_cl.traits;
           funcs = funcs.append(td_cl.fn);
