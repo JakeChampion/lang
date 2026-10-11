@@ -1696,11 +1696,8 @@ function __serve_produce[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Con
   if (!__in_flight(c, at)) {
     return (c, Whole);
   }
-  match (c.tails[at]) {
-    ParkedTail(_, _, _) => {
-      return (c, Partial);
-    },
-    _ => {}
+  if (__tail_parked(c, at)) {
+    return (c, Partial);
   }
   let moved: (__Conns, __Sent, boolean) = __file_tail_send(drv, c, at, opts);
   c = moved.0;
@@ -1711,6 +1708,9 @@ function __serve_produce[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Con
   c = produced.0;
   if (!produced.2) {
     return (c, Failed);
+  }
+  if (__tail_parked(c, at)) {
+    return (c, Partial);
   }
   let sent: (__Conns, __Sent) = __serve_send(drv, c, at, produced.1, opts);
   c = sent.0;
@@ -1725,6 +1725,22 @@ function __serve_produce[D: async.Driver](drv: D, c: __Conns, at: i32, opts: Con
   }
   drv.watch(c.fds[at], 2);
   return (c, Partial);
+}
+
+// __tail_parked(c, at) — whether the connection's producer is parked,
+// its flight to wake it: the tail then owes nothing until it does, and
+// the connection is watched for reads, not writes, which a level-
+// triggered reactor would report on every wait.
+function __tail_parked(c: __Conns, at: i32): boolean {
+  match (c.tails[at]) {
+    ParkedTail(_, _, _) => {
+      return true;
+    },
+    _ => {
+      return false;
+    }
+  }
+  return false;
 }
 
 // __file_tail_send(drv, c, at, opts) — the next piece of a file tail

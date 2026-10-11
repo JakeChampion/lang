@@ -234,6 +234,9 @@ pub function bag_method(builtin: string): string {
   if (builtin == "random_i32") {
     return "random_i32";
   }
+  if (builtin == "sleep_ms" || builtin == "sleep_ns") {
+    return "sleep";
+  }
   return "";
 }
 
