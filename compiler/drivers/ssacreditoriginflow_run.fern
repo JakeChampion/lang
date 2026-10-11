@@ -45,13 +45,13 @@ function changed(f: ssa.SFunc, mode: i32): ssa.SFunc {
           op = ssa.SInst { ...op, args: [op.result, op.args[1]] };
         }
         if (mode == 5) {
-          op = ssa.SInst { ...op, imm: 1 };
+          op = ssa.SInst { ...op, imm: 8 };
         }
         if (mode == 10) {
           op = ssa.SInst { ...op, result: 0 };
         }
         if (mode == 12) {
-          op = ssa.SInst { ...op, kind_tag: 7, args: [op.args[0]], str: "" };
+          op = ssa.SInst { ...op, kind_tag: 7, args: [op.args[0]], imm: 0, str: "" };
         }
         if (mode == 20) {
           op = ssa.SInst { ...op, str: "renamed_producer" };
