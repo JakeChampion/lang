@@ -23,6 +23,11 @@ var genericsCases = []struct {
 }{
 	// The two upstream parity cases (conformance/cases).
 	{"generic-id", "function id[T](x: T): T { return x; } function main(): i32 { let a = id(42); let s = id(\"hi\"); if (s == \"hi\") { return a; } return 0; }", 42},
+	// A variant literal the checker leaves unsettled takes its arguments
+	// from the destination: a bare `Empty` is typed by the enum alone, and
+	// `Tagged(Tag { … })` leaves `T` unbound, and under `Box[Option[i32]]`
+	// each is the whole instantiation, not `Box` or `Box[never]`.
+	{"unit-variant-nested-argument", "struct Tag { id: i32 } enum Box[T] { Full(T), Tagged(Tag), Empty } function wrap[T](f: () => T, mode: i32): Box[T] { let v: T = f(); if (mode == 1) { return Tagged(Tag { id: 7 }); } if (mode == 2) { return Empty; } return Full(v); } function pick(f: () => Option[i32], mode: i32): i32 { match (wrap(f, mode)) { Full(v) => { return 40; }, Tagged(t) => { return t.id; }, Empty => { return 8; } } return 9; } function main(): i32 { let f: () => Option[i32] = (): Option[i32] => Some(40); return pick(f, 0) + pick(f, 1) - pick(f, 2) + 3; }", 42},
 	{"generic-box", "struct Box[T] { value: T } function unbox[T](b: Box[T]): T { return b.value; } function main(): i32 { let b: Box[i32] = Box { value: 42 }; return unbox(b); }", 42},
 	// Multiple type params on a function and a struct.
 	{"two-type-params-fn", "function fst[A, B](a: A, b: B): A { return a; } function main(): i32 { return fst(42, 99); }", 42},
