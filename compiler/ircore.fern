@@ -673,7 +673,7 @@ pub function all_runtime_need_roots(): string[] {
     "sleep_ms", "sleep_ns", "str_bytes", "str_case", "str_cmp", "task",
     "str_concat", "str_eq", "str_from_bytes", "str_lines", "str_print",
     "str_read_line", "str_repeat", "str_replace",
-    "optarrarr_free", "str_split", "str_trim", "strarrarr_free", "strbuf", "buf",
+    "optarrarr_free", "str_split", "str_trim", "strarrarr_free", "buf",
     // The platform helpers. These were absent for as long as the list
     // existed, which made the "closed set" claim above false: the
     // bootstrap compiler marks none of them, so nothing noticed until a

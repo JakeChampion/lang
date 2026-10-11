@@ -140,9 +140,6 @@ var rcResultOwned = map[string]bool{
 	"__fern_str_append_range": true,
 	// Copies through __fern_str_copy — unlike __fern_arg_at beside it.
 	"__fern_env_at": true,
-	// Snapshots the string builder into a fresh rc=1 string and rewinds
-	// it, so the result aliases nothing the builder goes on to overwrite.
-	"strbuf_take": true,
 	// Hands the capacity-carrying builder's own buffer over as a string
 	// (#8773). No copy: the buffer was allocated string-shaped, so the
 	// take stamps the length and releases it. The builder drops the
@@ -601,8 +598,7 @@ var rcResultNonPointer = map[string]bool{
 	"__str_bytes": true, "__arr_set_len": true,
 	"__fern_reader_close": true, "__fern_sleep_ms": true,
 	"__fern_sleep_ns": true,
-	"strbuf_reset":    true, "strbuf_append": true,
-	"buf_push": true, "buf_push_range": true, "buf_push_bytes_range": true, "buf_push_mapped": true, "buf_push_bytes_mapped": true, "buf_push_filtered": true, "buf_push_bytes_filtered": true, "buf_push_expanded": true, "buf_push_bytes_expanded": true, "buf_push_byte": true,
+	"buf_push":        true, "buf_push_range": true, "buf_push_bytes_range": true, "buf_push_mapped": true, "buf_push_bytes_mapped": true, "buf_push_filtered": true, "buf_push_bytes_filtered": true, "buf_push_expanded": true, "buf_push_bytes_expanded": true, "buf_push_byte": true,
 	"buf_push_u64": true,
 	"buf_free":     true, "__fern_buf_reserve": true,
 	"__ct_secret": true, "__ct_public": true,

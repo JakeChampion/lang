@@ -534,9 +534,10 @@ function emit_per_module_spawned(entry_path: string, entry: parser.Module, loade
     let read_ok: boolean = false;
     match (read_file(rpath)) {
       Ok(text) => {
-        strbuf_reset();
-        seen = asmcore.dedupe_weak_into(text, seen);
-        write(strbuf_take());
+        let h: usize = buf_new(text.len());
+        seen = asmcore.dedupe_weak_into(text, seen, h);
+        write(buf_take(h));
+        buf_free(h);
         read_ok = true;
       },
       Err(e_ru) => {}
@@ -565,8 +566,8 @@ function emit_per_module_spawned(entry_path: string, entry: parser.Module, loade
 }
 
 // run_per_module drives the per-module build of the loaded program (#3451 step 4
-// / #3456), the twin of asm_load_run's per-module driver. One emit per process
-// (the native strbuf holds one emit), so the build is driven across invocations:
+// / #3456), the twin of asm_load_run's per-module driver. One emit per process,
+// so the build is driven across invocations:
 //   -per-module-count   → print the module count N
 //   -per-module-needs   → print the whole-program runtime-need union (one/line)
 //   -per-module-emit N [-extra-need X...]

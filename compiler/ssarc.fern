@@ -4690,15 +4690,6 @@ function call_site(own r: irtables.LowerResult, f: ssasem.Func, ins: ssa.SInst):
   if (ins.str == "eprint") {
     return emit(r, ir.op_eprint_str());
   }
-  if (ins.str == "strbuf_append") {
-    return emit(r, ir.op_strbuf_append());
-  }
-  if (ins.str == "strbuf_reset") {
-    return emit(r, ir.op_strbuf_reset());
-  }
-  if (ins.str == "strbuf_take") {
-    return emit(r, ir.op_strbuf_take());
-  }
   if (ins.str == "__memchr") {
     return emit(r, ir.op_memchr());
   }

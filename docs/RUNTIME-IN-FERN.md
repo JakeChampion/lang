@@ -754,7 +754,9 @@ remainder splits three ways:
   op with no builtin name to report.
 
 - **Composites, not leaves**: `map_delete` and the strbuf family. `map_delete`
-  **has since moved**; strbuf is blocked, and on storage rather than length.
+  **has since moved**; the strbuf family is **retired** (#8773): the compiler
+  writes its output through a `buf_*` builder handle held in `EmitState`, so
+  the static-storage question below no longer has a caller.
 
   **`map_delete` was the one that looked impossible and was not**, twice over,
   so both traps are worth keeping. (The whole map runtime has since been
@@ -795,7 +797,7 @@ remainder splits three ways:
   always done — the same program now emits 24315 bytes, smaller than before the
   migration.
 
-  **strbuf is deferred, and the reason is storage, not length.** Its three
+  **strbuf was deferred, and the reason was storage, not length.** Its three
   helpers are trivial — set a word, copy bytes and bump a word, drain into a
   fresh box — but all three operate on three NAMED `.bss` words (length, heap
   buffer pointer, capacity) that persist across calls, and the floor has no

@@ -401,10 +401,9 @@ var gatedBuiltins = map[string]string{
 // them (#6506). Three groups, and the reason each is core differs:
 //
 //   - Allocation. map_new / cell_new / string_from_bytes_unchecked and
-//     the strbuf scratch surface need an ALLOCATOR, not an OS. Whoever
-//     seeds the heap region decides where the bytes come from; the
-//     builtin does not care. The buf_* builder family (#8773) is the
-//     same argument: bytes into a block this process allocated.
+//     the buf_* builder family (#8773) need an ALLOCATOR, not an OS.
+//     Whoever seeds the heap region decides where the bytes come from;
+//     the builtin does not care.
 //   - Pure computation. The float bit casts compile to a register move.
 //   - Readiness. poll / wasm_block / wasm_poll / wasm_pollable_drop WAIT
 //     on a pollable someone else constructed, and every constructor is
@@ -453,9 +452,6 @@ var coreBuiltins = map[string]bool{
 	"cell_new":                    true,
 	"string_from_bytes_unchecked": true,
 	"slice_unchecked":             true,
-	"strbuf_reset":                true,
-	"strbuf_append":               true,
-	"strbuf_take":                 true,
 
 	"buf_new":                 true,
 	"buf_push":                true,

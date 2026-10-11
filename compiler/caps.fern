@@ -188,7 +188,6 @@ pub function builtin_caps(): BuiltinCap[] {
 // already handed the process), argv, process exit, the compile target's
 // name (`target_os` / `target_arch`, literals once compiled), pure math /
 // bit casts,
-// the strbuf scratch buffer,
 // the in-heap constructors, and the readiness helpers whose authority lives on
 // the pollable constructors instead. The id builtins join them: reading the
 // process's own ids reaches nothing, since the identity was chosen by whoever
@@ -226,7 +225,6 @@ pub function ungated(): string[] {
     "__ct_secret", "__ct_public",
     // The AES-GCM and SHA-256 kernels compute over bytes in memory and reach nothing.
     "__aes_expand_key", "__aes_ctr32", "__ghash", "__sha256_hw", "__sha256_hw_blocks",
-    "strbuf_reset", "strbuf_append", "strbuf_take",
     "buf_new", "buf_push", "buf_push_range", "buf_push_bytes_range", "buf_push_mapped", "buf_push_filtered", "buf_push_expanded", "buf_push_bytes_mapped", "buf_push_bytes_filtered", "buf_push_bytes_expanded", "buf_push_byte", "buf_push_u64",
     "buf_len", "buf_take", "buf_take_bytes", "buf_clear", "buf_free",
     "f32_bits", "f32_from_bits", "f64_bits", "f64_from_bits",

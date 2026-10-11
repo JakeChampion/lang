@@ -12,8 +12,8 @@ import (
 // size-classed __fern_memcpy on x86-64, and on arm64 through the word loop the
 // memcpy op uses, whose last word overlaps the one before it. The program
 // pushes every length from 0 to 40, which reaches every size class, through a
-// builder that starts at one byte, so each reserve copies too. It appends past
-// the string builder's first 64 KiB, then checks every byte it gets back.
+// builder that starts at one byte, so each reserve copies too. A second builder
+// is appended past its first 64 KiB, then every byte it gives back is checked.
 const bufCopyProg = `function matches(out: string, at: i32, alpha: string, lo: i32, n: i32): boolean {
     let i: i32 = 0;
     while (i < n) {
@@ -42,12 +42,13 @@ function main(): i32 {
         k = k + 1;
     }
     if (at != out.len()) { return 3; }
+    let g: usize = buf_new(65536);
     let r: i32 = 0;
     while (r < 5000) {
-        strbuf_append(slice_unchecked(alpha, r % 11, r % 11 + r % 41) + "");
+        buf_push(g, slice_unchecked(alpha, r % 11, r % 11 + r % 41) + "");
         r = r + 1;
     }
-    let big: string = strbuf_take();
+    let big: string = buf_take(g);
     at = 0;
     r = 0;
     while (r < 5000) {
@@ -71,8 +72,7 @@ func TestSelfHostBufCopy(t *testing.T) {
 		"x86-64-linux": regexp.MustCompile(`\n\s+(call|jmp) __fern_memcpy\n`),
 		"arm64-linux":  regexp.MustCompile(`\n\s+ldr x9, \[x1\], #8\n`),
 	}
-	helpers := []string{"__fern_buf_reserve", "__fern_buf_push", "__fern_buf_push_range", "__fern_buf_take",
-		"__fern_strbuf_grow", "__fern_strbuf_append", "__fern_strbuf_take"}
+	helpers := []string{"__fern_buf_reserve", "__fern_buf_push", "__fern_buf_push_range", "__fern_buf_take"}
 	for _, target := range []string{"x86-64-linux", "arm64-linux"} {
 		out := filepath.Join(dir, target+".s")
 		if combined, err := exec.Command(h.cli, "-O", "-target", target, "-emit", "asm", "-o", out, src, h.stdlib).CombinedOutput(); err != nil {

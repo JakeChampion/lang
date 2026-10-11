@@ -22,8 +22,8 @@ import (
 // time, and three harness sites had defaulted to treating any 137 as
 // infra — which silently hid genuine compiler regressions.
 //
-// The value has to agree across the emitters (the two register backends and
-// the strbuf bounds trap), and nothing else would notice if one drifted: a
+// The value has to agree across the emitters (the two register backends),
+// and nothing else would notice if one drifted: a
 // wrong status still aborts the program, still prints the same stderr message,
 // and only misleads the human reading the exit code weeks later. Hence this
 // test.

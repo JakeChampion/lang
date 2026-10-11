@@ -81,8 +81,7 @@ costs a silent failure on the first target that lacks it.
 ### Core
 
 - **Allocation** — `map_new`, `cell_new`, `string_from_bytes_unchecked`,
-  `string_from_bytes_range_unchecked`, `strbuf_reset` / `strbuf_append` /
-  `strbuf_take`.
+  `string_from_bytes_range_unchecked`, and the `buf_*` builder family.
 - **Pure computation** — `f32_bits`, `f32_from_bits`, `f64_bits`, `f64_from_bits`, and
   the whole math / string / array runtime that was never in either table.
   `target_os` and `target_arch` are purer still: each is a string literal by the

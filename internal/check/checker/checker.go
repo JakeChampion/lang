@@ -1551,29 +1551,9 @@ func checkImpl(ctx context.Context, prog *ast.Program, target string) (*Info, er
 		Params: []ast.Type{ast.NumberType{}},
 		Result: ast.VoidType{},
 	}
-	// strbuf_reset() / strbuf_append(s) / strbuf_take() — global
-	// mutable string-builder primitive. There's a single growable
-	// scratch buffer; reset zeroes its length, append memcpys bytes
-	// past the current tail, take allocates a fresh string of the
-	// accumulated bytes and resets. Built for the asm self-host
-	// backend's emit_module — `s = s.out + text` per write
-	// allocates O(N²) bytes through the bump heap (~60 GB to compile
-	// asm.fern through itself). With strbuf the same loop is O(N).
-	c.info.FuncSigs["strbuf_reset"] = &ast.FuncType{
-		Params: []ast.Type{},
-		Result: ast.VoidType{},
-	}
-	c.info.FuncSigs["strbuf_append"] = &ast.FuncType{
-		Params: []ast.Type{ast.StringType{}},
-		Result: ast.VoidType{},
-	}
-	c.info.FuncSigs["strbuf_take"] = &ast.FuncType{
-		Params: []ast.Type{},
-		Result: ast.StringType{},
-	}
 	// buf_new / buf_push / buf_push_range / buf_push_byte / buf_push_u64 /
 	// buf_len / buf_take / buf_free (#8773) — the capacity-carrying string
-	// builder, the strbuf above without the singleton. A builder is a
+	// builder. A builder is a
 	// NUMBER, the address of its own control block, the way an open
 	// file is a descriptor: any number of them may be live at once and
 	// they nest. The capacity travels with the buffer, so an append is
@@ -13819,7 +13799,7 @@ func viewedSource(e ast.Expr, env *escapeEnv, visiting map[string]bool) ast.Expr
 // BUILDS a string — a concat, a format, an interpolation — is this frame's.
 // So is a call the summary does not cover: the only string-returning
 // callees without a FuncDecl are the builtins, and every one of them
-// (`strbuf_take`, `string_from_bytes_unchecked`) allocates fresh.
+// (`buf_take`, `string_from_bytes_unchecked`) allocates fresh.
 func (c *checker) stringSourceRoots(expr ast.Expr, env *escapeEnv, sums map[string]viewSummary) viewRoots {
 	out := viewRoots{params: map[int]bool{}}
 	switch e := expr.(type) {

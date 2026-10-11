@@ -174,15 +174,6 @@ pub function kind_name(id: i32): string {
   if (id == 22) {
     return "args";
   }
-  if (id == 23) {
-    return "strbuf_reset";
-  }
-  if (id == 24) {
-    return "strbuf_append";
-  }
-  if (id == 25) {
-    return "strbuf_take";
-  }
   if (id == 26) {
     return "read_file";
   }
@@ -375,6 +366,12 @@ pub function kind_count(): i32 {
   return 35;
 }
 
+// kind_retired is an id in 1..kind_count() whose kind is gone: 23..25 (the
+// strbuf singleton). The number is not reused.
+pub function kind_retired(id: i32): boolean {
+  return id >= 23 && id <= 25;
+}
+
 pub function kind_id(name: string): i32 {
   if (name == "const_int") {
     return 1;
@@ -444,15 +441,6 @@ pub function kind_id(name: string): i32 {
   }
   if (name == "args") {
     return 22;
-  }
-  if (name == "strbuf_reset") {
-    return 23;
-  }
-  if (name == "strbuf_append") {
-    return 24;
-  }
-  if (name == "strbuf_take") {
-    return 25;
   }
   if (name == "read_file") {
     return 26;

@@ -67,7 +67,9 @@ pub function lambda_captures(lm: ast.ExprLambda, outer: EmitState): string[] {
 }
 
 pub struct EmitState {
-  out: string,
+  // The builder the module's text accumulates in. new_state opens it and the
+  // emit entry point drains it with take_text, or frees it with release.
+  out: usize,
   label_n: i32,
   // builtin_i32 / builtin_string: the builtins whose call result is an i32 or
   // a string (builtin_i32_names / builtin_string_names), indexed once.
@@ -442,7 +444,7 @@ pub function new_state(): EmitState {
   let lts: Ty[] = [];
   let nd: string[] = [];
   let s: EmitState = EmitState {
-    out: "",
+    out: buf_new(65536),
     label_n: 0,
     builtin_i32: util.name_index(builtin_i32_names()),
     builtin_string: util.name_index(builtin_string_names()),
@@ -704,14 +706,14 @@ pub function emit_shape_lits_from(s: EmitState, from: i32): EmitState {
 // untouched). Hence the "indented AND not a directive" test below.
 
 // dedupe_weak_into is the incremental core: it appends the deduped form of ONE
-// already-emitted chunk to the (caller-reset) global strbuf and returns the
-// updated `seen` symbol set, so a caller streaming unit-at-a-time carries the
+// already-emitted chunk to the builder `h` and returns the updated `seen`
+// symbol set, so a caller streaming unit-at-a-time carries the
 // set across chunks without ever holding the whole program's asm in memory.
 //
 // Splitting on a chunk boundary is sound because a chunk is a COMPLETE emit: a
 // `.weak SYM` definition never straddles two units, so the drop state machine
 // always returns to 0 before a chunk ends and has nothing to carry.
-pub function dedupe_weak_into(asm_text: string, seen_in: string[]): string[] {
+pub function dedupe_weak_into(asm_text: string, seen_in: string[], h: usize): string[] {
   let seen: string[] = seen_in;
   let i: i32 = 0;
   let n: i32 = asm_text.len();
@@ -755,8 +757,8 @@ pub function dedupe_weak_into(asm_text: string, seen_in: string[]): string[] {
       }
     }
     if (!drop) {
-      strbuf_append(line);
-      strbuf_append("\n");
+      buf_push(h, line);
+      buf_push(h, "\n");
     }
     i = j + 1;
   }
@@ -764,14 +766,13 @@ pub function dedupe_weak_into(asm_text: string, seen_in: string[]): string[] {
 }
 
 // dedupe_weak_defs dedupes a whole in-memory concat in one pass — the
-// single-process concat path's entry point. Accumulates through the global
-// strbuf (O(1) amortised per append): every unit has already been emitted into
-// `asm_text`, so no emitter is using it, and `out = out + line` would be O(N²)
-// over a ~400 KB stream.
+// single-process concat path's entry point.
 pub function dedupe_weak_defs(asm_text: string): string {
-  strbuf_reset();
-  let ignored: string[] = dedupe_weak_into(asm_text, []);
-  return strbuf_take();
+  let h: usize = buf_new(asm_text.len());
+  let ignored: string[] = dedupe_weak_into(asm_text, [], h);
+  let text: string = buf_take(h);
+  buf_free(h);
+  return text;
 }
 
 // shape_sym is the deterministic global symbol for a shape name (the linker-merged
@@ -869,17 +870,11 @@ pub function shape_sym(name: string): string {
 }
 
 pub function (s: EmitState) write(text: string): EmitState {
-  // O(N) amortised: route through the global strbuf primitive
-  // instead of `s.out + text` (which is O(N²) — fatal for self-
-  // hosting). The .out field stays "" through the build; the
-  // accumulated bytes live in the strbuf until emit_module's
-  // tail calls strbuf_take to materialise the final string.
-  // Mirrors the x86-64 backend (asm.fern).
   if (s.capture != 0 as usize) {
     buf_push(s.capture, text);
     return s;
   }
-  strbuf_append(text);
+  buf_push(s.out, text);
   // Return the receiver, not a copy of it. `EmitState { ...s }` overrides no
   // field, so the copy was observationally identical to `s` — and it
   // allocated a fresh 30-field box on every write. Attributed with
@@ -892,6 +887,19 @@ pub function (s: EmitState) write(text: string): EmitState {
   return s;
 }
 
+// take_text hands back the module's text and frees its builder; the state is
+// spent afterwards.
+pub function (s: EmitState) take_text(): string {
+  let text: string = buf_take(s.out);
+  buf_free(s.out);
+  return text;
+}
+
+// release frees the module's builder for an emit whose text is discarded.
+pub function (s: EmitState) release(): void {
+  buf_free(s.out);
+}
+
 // records reports whether an instruction may go to the assembler as an
 // encoded word: a binary is being built and no arm is being captured as text.
 pub function (s: EmitState) records(): boolean {
@@ -902,15 +910,15 @@ pub function (s: EmitState) records(): boolean {
 // the marker line it leaves in the text.
 pub function (s: EmitState) word(w: i64): EmitState {
   buf_push_u64(s.recs, w as u64);
-  strbuf_append("\x01\n");
+  buf_push(s.out, "\x01\n");
   return s;
 }
 
 // mark writes a record line: the marker `m`, then `text`.
 pub function (s: EmitState) mark(m: string, text: string): EmitState {
-  strbuf_append(m);
-  strbuf_append(text);
-  strbuf_append("\n");
+  buf_push(s.out, m);
+  buf_push(s.out, text);
+  buf_push(s.out, "\n");
   return s;
 }
 
@@ -920,7 +928,7 @@ pub function (s: EmitState) bytes(b: i32[]): EmitState {
   for x in b {
     buf_push_byte(s.recs, x);
   }
-  strbuf_append("\x01\n");
+  buf_push(s.out, "\x01\n");
   return s;
 }
 
@@ -8649,10 +8657,6 @@ pub function runtime_need_deps(name: string): string[] {
   }
   // Heap-only deps: the helper's body `call __fern_alloc`s (directly or via
   // __fern_arr_box / a result-box alloc), so marking it pulls in "heap".
-  // Note strbuf: the strbuf bundle is emitted as a unit gated on the single
-  // "strbuf" need, and __fern_strbuf_take in it allocates the drained string's
-  // box via __fern_alloc — so ANY strbuf use (even reset/append-only) needs the
-  // heap, even though only take allocates.
   //
   // The array deep-free family allocates nothing; it is here because its
   // callees (__fern_arr_dec, __fern_str_arr_free, __fern_large_push) are
@@ -8664,7 +8668,7 @@ pub function runtime_need_deps(name: string): string[] {
     || name == "u32_to_string" || name == "i64_to_string" || name == "u64_to_string"
     || name == "args" || name == "read_file" || name == "read_file_bytes"
     || name == "random_bytes" || name == "write_file_bytes" || name == "write_file_bytes_u8"
-    || name == "str_from_bytes" || name == "alloc_u8" || name == "strbuf" || name == "buf"
+    || name == "str_from_bytes" || name == "alloc_u8" || name == "buf"
     || name == "read_file_bytes_u8" || name == "random_bytes_u8" || name == "tcp_recv_u8"
     || name == "str_bytes_u8" || name == "str_from_bytes_u8" || name == "str_from_bytes_range_u8" || name == "arr_slice_u8" || name == "alloc_bytes"
     || name == "arr_push" || name == "arr_slice" || name == "str_own" || name == "str_borrow" || name == "str_grow"
@@ -9661,7 +9665,9 @@ pub function entry_check_errors(tm: parser.Module): util.Diag[] {
   }
   let s: EmitState = new_state();
   s = with_funcs(EmitState { ...s, struct_decls: irtables.struct_tab(tm.structs) }, tm.funcs);
-  return check_module(tm, s);
+  let errs: util.Diag[] = check_module(tm, s);
+  s.release();
+  return errs;
 }
 
 pub function check_module(mod: parser.Module, s: EmitState): util.Diag[] {
@@ -10760,13 +10766,12 @@ pub function emit_runtime_globls(s: EmitState): EmitState {
     "__fn___fern_open_dir", "__fn___fern_dir_open", "__fn___fern_dir_entries", "__fn___fern_dir_stat",
     "__fn___fern_dir_access", "__fn___fern_dir_unlink", "__fn___fern_dir_chmod", "__fn___fern_dir_chown",
     "__fn___fern_env", "__fern_stat", "__fn___fern_stat", "__fn___fern_statfs", "__fn___fern_mounts", "__fn___fern_subprocess",
-    "__fern_args", "__fern_arg_at", "__fern_strbuf_append",
+    "__fern_args", "__fern_arg_at",
     "__fn___fern_hostname",
     "__fn___fern_signal_ignore", "__fn___fern_signal_default",
     "__fn___fern_signal_mask", "__fn___fern_signal_disposition",
     "__fn___fern_signal_catch", "__fn___fern_signal_raise",
     "__fn___fern_chdir",
-    "__fern_strbuf_reset", "__fern_strbuf_take",
     // The capacity-carrying string builder (#8773). __fern_buf_reserve is
     // internal to the bundle — no call crosses a unit boundary to it.
     "__fern_buf_new", "__fern_buf_push", "__fern_buf_push_range", "__fern_buf_push_mapped", "__fern_buf_push_bytes_mapped", "__fern_buf_push_bytes_filtered", "__fern_buf_push_filtered", "__fern_buf_push_expanded", "__fern_buf_push_bytes_expanded",

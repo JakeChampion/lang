@@ -423,6 +423,13 @@ first binary's addresses through it does not work — the two do not share a
 layout, and the result is plausible-looking symbol names with offsets tens of
 thousands of bytes into the wrong function. Build with `-g` and profile that.
 
+**A `-g` build is not the `-O` build's code.** Under `-g` every value a source
+variable names stays materialised for the debugger (`seminline`'s `dbg_vals`),
+so a struct `-O` scalar-replaces is built and freed for real: a loop over a
+three-field all-scalar struct retired 187 M instructions under `-O -g` and
+30 M with no allocation under `-O`. Attribute with `-g`; take the totals, and
+any conclusion about allocation, from the `-O` binary.
+
 `callgrind_annotate` is the tool for self cost; a hand-rolled parse of the
 `fn=(id)` lines will double-count, because callgrind's name compression means a
 bare `fn=(id)` refers back to an earlier definition and the cost lines under a
@@ -663,8 +670,8 @@ inside the compiler's own string literals). Stage 3 did not hold on
 36 s at 1.4-1.7 GB (#8479); it holds since 2026-09-29, below. The same chain
 for `-target arm64-linux` in the linux/arm64
 container is a full fixpoint: stage 2 builds in 174 s at 1.8 GB RSS, emits
-byte-identical asm to stage 1, and compiles and runs a strbuf program
-correctly.
+byte-identical asm to stage 1, and compiles and runs a string-builder
+program correctly.
 
 The heap's address regime is not what breaks the darwin stage 3. XNU ignores
 the arena's mmap hint and maps it above the 4 GiB `__PAGEZERO`, so on darwin

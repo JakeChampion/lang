@@ -299,7 +299,7 @@ pub function (t: Table) lookup(name: string): Sig {
 function fresh_ops(): string[] {
   return [
     "alloc_u8", "raw_arr_box", "tuple_make_k", "dyn_box", "str_concat", "str_from_bytes", "str_from_bytes_range",
-    "strbuf_take", "buf_take", "buf_take_bytes", "arr_slice", "raw_string",
+    "buf_take", "buf_take_bytes", "arr_slice", "raw_string",
   ];
 }
 

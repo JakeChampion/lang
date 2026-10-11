@@ -138,8 +138,8 @@ function main(): i32 {
   // sees the WHOLE program with its stdlib imports flattened in.
   let root: string = "";
   let probe: boolean = false;
-  // Per-module compilation modes (#3451 step 4 / #3456). One emit per process
-  // (native strbuf limit), so the build is driven across invocations:
+  // Per-module compilation modes (#3451 step 4 / #3456). One emit per process,
+  // so the build is driven across invocations:
   //   -per-module-count / -per-module-needs / -per-module-emit <N>
   // with -extra-need <name> supplying the entry's whole-program need union.
   let pm_mode: string = "";
@@ -274,10 +274,8 @@ function main(): i32 {
 
   // Per-module compilation (#3451 step 4 / #3456). Run BEFORE flatten.bundle
   // (which mangles entry_mod / loaded in place) so bundle_per_module sees the
-  // un-mangled modules. The native runtime's global string buffer can hold
-  // only ONE emit per process (its len is reset by process start, not by an
-  // in-process strbuf_reset/take), so — exactly like a real build system —
-  // per-module compilation is driven across SEPARATE invocations:
+  // un-mangled modules. Exactly like a real build system, per-module
+  // compilation is driven across SEPARATE invocations:
   //   -per-module-count        → print the module count N
   //   -per-module-needs        → print the whole-program runtime-need union
   //   -per-module-emit N [-extra-need X...]
@@ -309,8 +307,7 @@ function main(): i32 {
       }
       return 0;
     }
-    // pm_mode == "emit": emit exactly module pm_index (the ONLY strbuf-emit
-    // in this process, so the buffer is clean).
+    // pm_mode == "emit": emit exactly module pm_index.
     if (pm_index < 0 || pm_index >= parts.len()) {
       eprint("per-module: emit index out of range");
       return 1;

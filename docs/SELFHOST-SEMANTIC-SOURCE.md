@@ -283,11 +283,10 @@ Unsupported constructs refuse the whole function with a reason.
   name binds it, and the physical call stores the dummy every void callee
   pushes for a statement-level drop. In expression position a void result
   is refused, since the checker types nothing by it.
-- The runtime builtins `print`, `eprint`, `strbuf_append`, `strbuf_reset`,
-  `strbuf_take` and `__memchr`, each with a contract of its own in the table
-  a module's declarations fill: the writers and the builder's append read
-  the string they are lent and copy its bytes, reset and take own no
-  argument, and the byte search reads its string. Physically each is its
+- The runtime builtins `print`, `eprint` and `__memchr`, each with a
+  contract of its own in the table a module's declarations fill: the
+  writers read the string they are lent and copy its bytes, and the byte
+  search reads its string. Physically each is its
   own stack IR op rather than a call, `print` the payload then the newline
   as the AST lowering writes it.
 - The builtins whose RESULT is one of the front end's own generic unions:

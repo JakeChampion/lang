@@ -53,7 +53,7 @@ func TestSelfHostWholeCompilerArm64SingleProcessEmit(t *testing.T) {
 	if len(asm) < floor {
 		t.Errorf("emitted %d bytes; the whole compiler is far larger than %d", len(asm), floor)
 	}
-	if !strings.Contains(string(asm), "__fern_strbuf_grow:") {
-		t.Error("the emitted compiler has no __fern_strbuf_grow; its own output accumulator would be a fixed buffer again")
+	if !strings.Contains(string(asm), "__fern_buf_reserve:") {
+		t.Error("the emitted compiler has no __fern_buf_reserve; its own output accumulator would be a fixed buffer again")
 	}
 }

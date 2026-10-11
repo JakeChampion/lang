@@ -86,19 +86,19 @@ func TestSelfHostArm64DarwinBuilds(t *testing.T) {
 		// String concat — exercises the heap (.bss bump allocator) +
 		// the @PAGE/@PAGEOFF addressing of a runtime-built string.
 		{"concat", `function main(): i32 { let s: string = "hello, " + "world!"; return s.len(); }`, 13},
-		// The string builder assembled IN-PROCESS: __fern_strbuf_grow's
-		// mov-with-hw-select / lsl / b.hs / cbnz must encode, and a 108,000-byte
-		// build grows the 64 KiB buffer twice before the take.
-		{"strbuf_grow", `function main(): i32 {
-    strbuf_reset();
+		// The string builder assembled IN-PROCESS: __fern_buf_reserve must
+		// encode, and a 108,000-byte build grows the 64 KiB buffer twice
+		// before the take.
+		{"buf_grow", `function main(): i32 {
+    let h: usize = buf_new(65536);
     let i: i32 = 0;
-    while (i < 3000) { strbuf_append("0123456789abcdefghijklmnopqrstuvwxyz"); i = i + 1; }
-    let s: string = strbuf_take();
+    while (i < 3000) { buf_push(h, "0123456789abcdefghijklmnopqrstuvwxyz"); i = i + 1; }
+    let s: string = buf_take(h);
     if (s.len() != 108000) { return 1; }
     if ((s[65536] as i32) != (s[16] as i32)) { return 2; }
     if ((s[107999] as i32) != (s[35] as i32)) { return 3; }
-    strbuf_append("ok");
-    let t: string = strbuf_take();
+    buf_push(h, "ok");
+    let t: string = buf_take(h);
     if (t.len() != 2) { return 4; }
     return 42;
 }`, 42},

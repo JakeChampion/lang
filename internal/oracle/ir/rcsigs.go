@@ -164,7 +164,7 @@ var rcRuntimeSigs = map[string]RcSig{
 // `providedSigs` in verifyprovided.go records every callee the IR does
 // not define, and that is builtins as well as runtime helpers. The
 // native backends RENAME most builtins to a runtime symbol at emit time
-// — `strbuf_append` becomes `__fern_strbuf_append`, `now_ns` becomes
+// — `buf_push` becomes `__fern_buf_push`, `now_ns` becomes
 // `__fern_now_ns` — so a builtin is usually a helper already classified
 // above under a second spelling. builtinRuntimeAlias is that rule.
 //
@@ -234,8 +234,6 @@ var rcBuiltinSigs = map[string]RcSig{
 // and returns fresh values, plus the scalar intrinsics. The ones worth
 // naming a reason for:
 //
-//   - `strbuf_append` memcpys the string's bytes past the buffer tail
-//     (its own runtime doc), so it retains nothing.
 //   - `string_from_bytes_unchecked` copies the payload into a fresh
 //     string; the argument is borrowed.
 //   - `cell_new` / `__method_Cell_set` lower inline. Their type-aware
@@ -306,7 +304,6 @@ var rcInertBuiltins = map[string]bool{
 	"__method_Writer_write_bytes":      true,
 	"__method_Writer_write_some_bytes": true,
 
-	"strbuf_append": true, "strbuf_reset": true, "strbuf_take": true,
 	"string_from_bytes_unchecked": true,
 
 	// The capacity-carrying builder (#8773). `buf_push` / `buf_push_range`

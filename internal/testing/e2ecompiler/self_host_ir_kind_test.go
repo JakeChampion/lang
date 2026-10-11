@@ -51,9 +51,9 @@ func TestSelfHostIRKindRegistry(t *testing.T) {
 	// point of the golden is that adding a kind_id without registering it in
 	// BOTH shows up here rather than as an "invalid" name at some call site.
 	const want = "kind_count=188\n" +
-		"bijection_ok=168\n" +
+		"bijection_ok=165\n" +
 		"bijection_failures=0\n" +
-		"retired=20\n" +
+		"retired=23\n" +
 		"ext_ok=211\n" +
 		"ext_failures=0\n" +
 		"neg_ok=14\n" +

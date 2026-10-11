@@ -11,7 +11,7 @@ import (
 // calls. The self-host's __fern_alloc bounds check must trap with a clean,
 // recognisable exit code (125, ExitArenaExhausted) rather than silently running
 // past the heap into
-// adjacent .bss (the strbuf output accumulator) and corrupting it.
+// adjacent .bss and corrupting it.
 //
 // Why raw `__alloc` and not cumulative string growth: `__alloc(n)` returns a
 // fresh n-byte block and NEVER writes it (no zero-init, and its `usize` result

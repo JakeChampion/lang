@@ -520,7 +520,7 @@ func (b *builder) ownedCallResultType(e ast.Expr) (ast.Type, bool) {
 	}
 	// Only USER-DECLARED functions qualify (the oracle map keys every decl in
 	// prog.Funcs, true or false). Source-level BUILTINS live in FuncSigs too
-	// without a `__` prefix — e.g. `strbuf_take`, whose result may alias
+	// without a `__` prefix — e.g. `buf_take`, whose result may alias
 	// runtime-owned storage. A builtin's allocation contract is per-helper,
 	// not the user-fn return-transfer model this reclaim's safety argument
 	// rests on — so a builtin qualifies only where that contract was read

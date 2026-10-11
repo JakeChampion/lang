@@ -6720,35 +6720,33 @@ function main(): i32 {
 `,
 	},
 	{
-		// The literal motivating builtin. strbuf_append memcpys the
-		// bytes past the buffer tail (its own runtime doc, both native
-		// implementations) and returns void, so the fresh concat
+		// The literal motivating builtin. buf_push memcpys the bytes
+		// past the builder's tail and returns void, so the fresh concat
 		// argument nets to zero owners after the caller's dec
 		// (measured 101/1 before, 101/101 after).
-		name: "strbuf_append_arg_temp_is_reclaimed",
+		name: "buf_push_arg_temp_is_reclaimed",
 		src: `
-struct St { n: i32 }
+struct St { h: usize }
 
 @noinline
 function mk(pad: string, i: i32): string { return pad + "0123456789abcdef"; }
 
 @noinline
-function wr(s: St, text: string): St { strbuf_append(text); return s; }
+function wr(s: St, text: string): St { buf_push(s.h, text); return s; }
 
 function main(): i32 {
-    strbuf_reset();
     let pad: string = "xyzw";
-    let st: St = St { n: 0 };
+    let st: St = St { h: buf_new(16) };
     let i: i32 = 0;
     while (i < 4) {
         st = wr(st, mk(pad, i));
         i = i + 1;
     }
-    let got: string = strbuf_take();
+    let got: string = buf_take(st.h);
+    buf_free(st.h);
     return (got.len() - 80) + __rc_underflow_count();
 }
 `,
-		skipWasm: "#7867 — strbuf has no wasm implementation",
 	},
 	{
 		// The refusal that keeps the credit sound: one copying use

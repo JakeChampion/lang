@@ -55,8 +55,7 @@ const bufBuilderProbe = `function main(): i32 {
 }
 `
 
-// bufTwoBuildersProbe is the property the singleton strbuf cannot have: two
-// builders accumulating at once, interleaved, each keeping its own bytes.
+// bufTwoBuildersProbe is two builders accumulating at once, interleaved, each keeping its own bytes.
 const bufTwoBuildersProbe = `function main(): i32 {
     let a: usize = buf_new(16);
     let c: usize = buf_new(16);
