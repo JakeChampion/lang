@@ -153,22 +153,24 @@ function test_jar_paths(): test.TestOutcome {
 
 function test_jar_domains(): test.TestOutcome {
   let j: cookie.Jar = cookie.jar();
-  let stored: string = set(j, "http://www.example.com/", "wide=1; Domain=.Example.com", T0) + "|" + set(j, "http://www.example.com/", "foreign=1; Domain=other.com", T0) + "|" + set(j, "http://www.example.co.uk/", "suffix=1; Domain=co.uk", T0) + "|" + set(j, "http://co.uk/", "self=1; Domain=co.uk", T0) + "|" + set(j, "http://www.example.com/", "up=1; Domain=wwww.example.com", T0);
+  let stored: string = set(j, "http://www.example.com/", "wide=1; Domain=.Example.com", T0) + "|" + set(j, "http://www.example.com/", "foreign=1; Domain=other.com", T0) + "|" + set(j, "http://www.example.co.uk/", "suffix=1; Domain=co.uk", T0) + "|" + set(j, "http://co.uk/", "self=1; Domain=co.uk", T0) + "|" + set(j, "http://www.example.com/", "up=1; Domain=wwww.example.com", T0) + "|" + set(j, "http://www.example.com/", "own=1; Domain=www.example.com", T0);
   let sent: string = header(j, "http://example.com/", T0) + "|" + header(j, "http://deep.www.example.com/", T0) + "|" + header(j, "http://notexample.com/", T0) + "|" + header(j, "http://co.uk/", T0) + "|" + header(j, "http://www.co.uk/", T0);
-  return test.assert_eq(stored + "#" + sent, "wide@example.com/ |a Domain the host is not under|a Domain that is a public suffix|self@co.uk/ h|a Domain the host is not under#wide=1|wide=1|-|self=1|-");
+  return test.assert_eq(stored + "#" + sent, "wide@example.com/ |a Domain the host is not under|a Domain that is a public suffix|self@co.uk/ h|a Domain the host is not under|own@www.example.com/ #wide=1|wide=1; own=1|-|self=1|-");
 }
 
 function test_jar_secure(): test.TestOutcome {
   let j: cookie.Jar = cookie.jar();
   let stored: string = set(j, "http://example.com/", "s=1; Secure", T0) + "|" + set(j, "https://example.com/", "s=2; Secure", T0) + "|" + set(j, "http://example.com/", "s=3", T0) + "|" + set(j, "http://example.com/other", "s=4; Path=/other", T0) + "|" + set(j, "https://example.com/", "s=5", T0);
+  let under: string = set(j, "https://sub.example.com/login/", "t=1; Secure; Path=/login", T0) + "|" + set(j, "http://www.example.com/login/", "t=2; Domain=example.com; Path=/login", T0) + "|" + set(j, "http://www.example.com/login/", "t=3; Domain=example.com; Path=/other", T0);
   let sent: string = header(j, "http://example.com/", T0) + "|" + header(j, "https://example.com/", T0) + "|" + header(j, "https://example.com/other/x", T0);
-  return test.assert_eq(stored + "#" + sent, "Secure over plain http|s@example.com/ hs|a Secure cookie is not replaced over plain http|a Secure cookie is not replaced over plain http|s@example.com/ h#s=5|s=5|s=5");
+  return test.assert_eq(stored + "#" + under + "#" + sent, "Secure over plain http|s@example.com/ hs|a Secure cookie is not replaced over plain http|a Secure cookie is not replaced over plain http|s@example.com/ h#t@sub.example.com/login hs|a Secure cookie is not replaced over plain http|t@example.com/other #s=5|s=5|t=3; s=5");
 }
 
 function test_jar_prefixes(): test.TestOutcome {
   let j: cookie.Jar = cookie.jar();
-  let got: string = set(j, "https://example.com/a", "__Host-a=1; Secure; Path=/", T0) + "|" + set(j, "https://example.com/a", "__Host-b=1; Secure", T0) + "|" + set(j, "https://example.com/", "__Host-c=1; Secure; Domain=example.com", T0) + "|" + set(j, "https://example.com/", "__Host-d=1; Path=/", T0) + "|" + set(j, "https://example.com/", "__Secure-e=1", T0) + "|" + set(j, "https://example.com/", "__Secure-f=1; Secure", T0) + "|" + set(j, "https://example.com/", "p=1; Partitioned", T0) + "|" + set(j, "https://example.com/", "p=2; Partitioned; Secure", T0);
-  return test.assert_eq(got, "__Host-a@example.com/ hs|lacks what its prefix requires|lacks what its prefix requires|lacks what its prefix requires|lacks what its prefix requires|__Secure-f@example.com/ hs|Partitioned without Secure|p@example.com/ hs");
+  let got: string = set(j, "https://example.com/a", "__Host-a=1; Secure; Path=/", T0) + "|" + set(j, "https://example.com/a", "__Host-b=1; Secure", T0) + "|" + set(j, "https://example.com/", "__Host-c=1; Secure; Domain=example.com; Path=/", T0) + "|" + set(j, "https://example.com/", "__Host-d=1; Path=/", T0) + "|" + set(j, "https://example.com/", "__Secure-e=1", T0) + "|" + set(j, "https://example.com/", "__Secure-f=1; Secure", T0) + "|" + set(j, "https://example.com/", "p=1; Partitioned", T0) + "|" + set(j, "https://example.com/", "p=2; Partitioned; Secure", T0);
+  let cased: string = set(j, "https://example.com/", "__host-g=1; Path=/", T0) + "|" + set(j, "https://example.com/", "__SECURE-h=1", T0) + "|" + set(j, "https://example.com/", "__HOST-i=1; Secure; Path=/", T0);
+  return test.assert_eq(got + "#" + cased, "__Host-a@example.com/ hs|lacks what its prefix requires|lacks what its prefix requires|lacks what its prefix requires|lacks what its prefix requires|__Secure-f@example.com/ hs|Partitioned without Secure|p@example.com/ hs#lacks what its prefix requires|lacks what its prefix requires|__HOST-i@example.com/ hs");
 }
 
 function test_jar_malformed(): test.TestOutcome {
