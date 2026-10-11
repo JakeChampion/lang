@@ -163,8 +163,51 @@ certifier as:
 | of which `apply`, the accounting itself | 0.22 G | 5% |
 | `walk_of` (regions, origins, touches, takes) | 0.67 G | 14% |
 
-The accounting is 5% of the certifier; the rows are three quarters. A row
-restricted to the values live at the block, with liveness taken from
-`ssalive` (the register allocator computes it for the same SSA and the
-liveness variant above paid for computing it again), takes the rows'
-share down to the size of the live sets. That is the next step.
+The accounting is 5% of the certifier; the rows are three quarters.
+
+## Rows by liveness
+
+The rows are now laid out by liveness (`Live` in rccertify.fern). A
+block's row is the slots live at its entry, the slots it defines and the
+slots its null stores credit; the row it hands a successor holds the slots
+live at that successor's entry, in the successor's order, so the entry meet
+is elementwise over the live set and one state row of every tracked slot
+is reused block by block. Liveness comes from `ssalive.compute`, with each
+alias depending on its root so the root stays live wherever a copy or a
+derived pointer of it is read. A slot in a block's row and not in a
+successor's entry dies on that edge, and a unit still held there is
+reported where the value dies rather than carried to the return; a count
+the paths disagree on is unproved only while the value stays live, so the
+arm that never releases a value that dies at the join is a finding, and the
+retain on one arm of a test paired with a release on the same arm of a
+later test stays unproved (`TestSelfHostRcCertifyCases` pins both).
+
+The census is unchanged at zero findings on all three targets (6836
+functions, 153,260 tracked, 28,540 unproved on x86-64 and arm64; the wasm
+checker driver 1684, 32,762, 6,144). Callgrind over `checker_run`:
+
+| Configuration | Instructions | Certifier's share of the plain compile |
+|---|---:|---:|
+| plain compile | 15.95 G | |
+| certifier, dense rows | 20.45 G | 29% |
+| certifier, rows by liveness | 18.38 G | 15% |
+
+Per function, of the certifier's 2.49 G in the uninlined build:
+
+| Function | Instructions |
+|---|---:|
+| `settle` | 0.90 G |
+| of which `hand_edges` (settle, feed, retire, store the row) | 0.34 G |
+| of which `apply_block`, the accounting | 0.29 G |
+| `walk_of` (regions, origins, touches, takes) | 0.68 G |
+| of which `unique_regions` | 0.30 G |
+| `live_of` | 0.63 G |
+| of which `ssalive.compute` | 0.48 G |
+
+The budget was settled on 2026-10-11 as default-on with caching rather
+than a 1% cold compile: the accounting pass alone is 1.4% of a compile, so
+the floor for the replay and the certifier together is well above 1%, and
+a steady-state compile pays nothing for a function whose lowering it has
+certified before. The memo is the next step; the remaining cold cost is
+`ssalive.compute` over every value rather than the tracked ones, the
+region passes, and the allocation the slot lists do.

@@ -2167,11 +2167,11 @@ function apply(own p: Progress, w: Walk, ins: ssa.SInst, block: i32, taken: i32[
 
 // taken_by lists, for a null store, the load roots it empties the slot of.
 // Computed once per store position rather than per round.
-struct Takes { block: i32[], at: i32[], roots: i32[][] }
+struct Takes { block: i32[], at: i32[], roots: i32[][], first: i32[] }
 
 function takes_of(w: Walk, dom: ssadeps.Dom): Takes {
   let f: ssa.SFunc = w.f;
-  let out: Takes = Takes { block: [], at: [], roots: [] };
+  let out: Takes = Takes { block: [], at: [], roots: [], first: util.minus_ones(f.blocks.len()) };
   let sb: i32 = 0;
   while (sb < f.blocks.len()) {
     let insts: ssa.SInst[] = f.blocks[sb].insts;
@@ -2188,7 +2188,11 @@ function takes_of(w: Walk, dom: ssadeps.Dom): Takes {
           }
           v = v + 1;
         }
-        out = Takes { block: out.block.append(sb), at: out.at.append(si), roots: out.roots.append(rs) };
+        let first: i32[] = out.first;
+        if (first[sb] < 0) {
+          first = first.with(sb, out.block.len());
+        }
+        out = Takes { block: out.block.append(sb), at: out.at.append(si), roots: out.roots.append(rs), first: first };
       }
       si = si + 1;
     }
@@ -2197,10 +2201,13 @@ function takes_of(w: Walk, dom: ssadeps.Dom): Takes {
   return out;
 }
 
+// taken_at is the take at instruction `at` of block `block`, found through
+// `t.first`: the index of the block's first take, its takes being listed in
+// block order and position order.
 function taken_at(t: Takes, block: i32, at: i32): i32[] {
-  let i: i32 = 0;
-  while (i < t.block.len()) {
-    if (t.block[i] == block && t.at[i] == at) {
+  let i: i32 = t.first[block];
+  while (i >= 0 && i < t.block.len() && t.block[i] == block) {
+    if (t.at[i] == at) {
       return t.roots[i];
     }
     i = i + 1;
