@@ -575,12 +575,13 @@ function __has_string(v: string[], x: string): boolean {
 // the rest are named as supported.
 pub struct ClientConfig { server_name: string, alpn: string[], suites: keyschedule.CipherSuite[], groups: keyshare.Group[], schemes: i32[], resume: Option[Resumption], chain: u8[][], sign_schemes: i32[] }
 
-// client_config offers every suite, X25519MLKEM768 with X25519 named as a
-// fallback, the signature schemes std/crypto verifies, no ticket, and no
+// client_config offers every suite, X25519MLKEM768 with X25519, secp256r1
+// and SecP256r1MLKEM768 named as fallbacks, the signature schemes
+// std/crypto verifies, no ticket, and no
 // certificate of its own: `chain` (leaf first) and `sign_schemes` (what
 // its key can make, in preference order) are sent when a server asks.
 pub function client_config(server_name: string): ClientConfig {
-  return ClientConfig { server_name: server_name, alpn: [], suites: [keyschedule.Aes128GcmSha256, keyschedule.Aes256GcmSha384, keyschedule.ChaCha20Poly1305Sha256], groups: [keyshare.X25519MlKem768, keyshare.X25519], schemes: [0x0403, 0x0503, 0x0807, 0x0804, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601], resume: None, chain: [], sign_schemes: [] };
+  return ClientConfig { server_name: server_name, alpn: [], suites: [keyschedule.Aes128GcmSha256, keyschedule.Aes256GcmSha384, keyschedule.ChaCha20Poly1305Sha256], groups: [keyshare.X25519MlKem768, keyshare.X25519, keyshare.Secp256r1, keyshare.Secp256r1MlKem768], schemes: [0x0403, 0x0503, 0x0807, 0x0804, 0x0805, 0x0806, 0x0401, 0x0501, 0x0601], resume: None, chain: [], sign_schemes: [] };
 }
 
 const C_WAIT_SERVER_HELLO: i32 = 0;
@@ -1523,7 +1524,7 @@ pub struct ServerConfig { chain: u8[][], schemes: i32[], suites: keyschedule.Cip
 // server_config takes every suite and group, no protocol, and asks the
 // client for no certificate.
 pub function server_config(chain: u8[][], schemes: i32[]): ServerConfig {
-  return ServerConfig { chain: chain, schemes: schemes, suites: [keyschedule.Aes128GcmSha256, keyschedule.Aes256GcmSha384, keyschedule.ChaCha20Poly1305Sha256], groups: [keyshare.X25519MlKem768, keyshare.X25519], alpn: [], request_client_certificate: false };
+  return ServerConfig { chain: chain, schemes: schemes, suites: [keyschedule.Aes128GcmSha256, keyschedule.Aes256GcmSha384, keyschedule.ChaCha20Poly1305Sha256], groups: [keyshare.X25519MlKem768, keyshare.X25519, keyshare.Secp256r1, keyshare.Secp256r1MlKem768], alpn: [], request_client_certificate: false };
 }
 
 // The schemes a CertificateRequest names: those std/tls/verify checks.
@@ -1548,7 +1549,17 @@ const S_WAIT_CLIENT_VERIFY: i32 = 7;
 const S_WAIT_CLIENT_VERDICT: i32 = 8;
 
 // The entropy a server takes: 32 random bytes, then up to 64 for its share.
-const SERVER_ENTROPY: i32 = 96;
+// server_entropy is how many random bytes server_new takes for config: 32
+// for the random and enough for a share in any of its groups.
+pub function server_entropy(config: ServerConfig): i32 {
+  let most: i32 = 0;
+  for g in config.groups {
+    if (g.server_entropy() > most) {
+      most = g.server_entropy();
+    }
+  }
+  return 32 + most;
+}
 
 // Server — one server connection. `server_name` and `alpn` are what the
 // client asked for and what was chosen, empty when absent. `retry_group` and
@@ -1582,8 +1593,8 @@ pub function server_new(config: ServerConfig, entropy: [u8]): Result[Server, Han
   if (config.chain.len() == 0 || config.schemes.len() == 0 || config.suites.len() == 0 || config.groups.len() == 0) {
     return Err(BadConfig("a server needs a certificate, a signature scheme, a suite and a group"));
   }
-  if (entropy.len() != SERVER_ENTROPY) {
-    return Err(Entropy(entropy.len(), SERVER_ENTROPY));
+  if (entropy.len() != server_entropy(config)) {
+    return Err(Entropy(entropy.len(), server_entropy(config)));
   }
   let hs: keyschedule.HandshakeSecret = keyschedule.HandshakeSecret { hash: keyschedule.Sha256, secret: [] };
   return Ok(Server { conn: __conn(), state: S_WAIT_CLIENT_HELLO, config: config, entropy: __copy(entropy), retry_group: 0, retry_suite: 0, scheme: 0, hs: hs, client_hs: [], server_hs: [], flight: [], server_name: "", alpn: "", parked: message.Raw { kind: 0, bytes: [] }, resumed: false, res_master: [], finished_hash: [], client_chain: [] });

@@ -336,7 +336,7 @@ function test_client_trace_dribbled(): test.TestOutcome {
 // ClientHello with the trace's ServerHello.
 function test_server_trace(): test.TestOutcome {
   let config: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config([server_certificate()], [0x0804]), suites: [keyschedule.Aes128GcmSha256], groups: [keyshare.X25519] };
-  let entropy: u8[] = cat(cat(hex.hex_decode("a6af06a4121860dc5e6e60249cd34c95930c8ac5cb1434dac155772ed3e26928"), hex.hex_decode("b1580eeadf6dd589b8ef4f2d5652578cc810e9980191ec8d058308cea216a21e")), zeros(32));
+  let entropy: u8[] = cat(hex.hex_decode("a6af06a4121860dc5e6e60249cd34c95930c8ac5cb1434dac155772ed3e26928"), hex.hex_decode("b1580eeadf6dd589b8ef4f2d5652578cc810e9980191ec8d058308cea216a21e"));
   match (handshake.server_new(config, entropy)) {
     Ok(s) => {
       match (s.read(client_hello_record())) {
@@ -388,7 +388,7 @@ function ed_public(): u8[] {
 // the signature.
 function handshake_between(cc: handshake.ClientConfig, sc: handshake.ServerConfig): Result[Pair, handshake.HandshakeError] {
   let start: handshake.ClientStep = handshake.client_start(cc, pattern(1, handshake.client_entropy(cc)))?;
-  let server: handshake.Server = handshake.server_new(sc, pattern(2, 96))?;
+  let server: handshake.Server = handshake.server_new(sc, pattern(2, handshake.server_entropy(sc)))?;
   let s1: handshake.ServerStep = server.read(start.output)?;
   if (s1.events.len() == 0) {
     start = start.client.read(s1.output)?;
@@ -617,7 +617,7 @@ function test_retry_refusals(): test.TestOutcome {
       if (client_outcome(start.client.read(retry_record(0x11ec, []))) != "47 tls handshake: illegal HelloRetryRequest group") {
         return test.fail("the group already shared");
       }
-      if (client_outcome(start.client.read(retry_record(0x0017, []))) != "47 tls handshake: illegal HelloRetryRequest group") {
+      if (client_outcome(start.client.read(retry_record(0x0018, []))) != "47 tls handshake: illegal HelloRetryRequest group") {
         return test.fail("a group not offered");
       }
     },
@@ -625,8 +625,8 @@ function test_retry_refusals(): test.TestOutcome {
       return test.fail(e.message());
     }
   }
-  // The trace's ClientHello names secp256r1, which this client cannot make.
-  if (client_refusal(retry_record(0x0017, [])) != "40 tls handshake: the server asks for a group this client cannot make") {
+  // The trace's ClientHello names secp384r1, which this client cannot make.
+  if (client_refusal(retry_record(0x0018, [])) != "40 tls handshake: the server asks for a group this client cannot make") {
     return test.fail("an unimplemented group");
   }
   // A server that asked for an X25519 share is sent the first ClientHello
@@ -635,7 +635,7 @@ function test_retry_refusals(): test.TestOutcome {
   let sc: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config([ed_public()], [0x0807]), groups: [keyshare.X25519] };
   match (default_client()) {
     Ok(start) => {
-      match (handshake.server_new(sc, pattern(2, 96))) {
+      match (handshake.server_new(sc, pattern(2, handshake.server_entropy(sc)))) {
         Ok(s) => {
           match (s.read(start.output)) {
             Ok(s1) => {
@@ -759,7 +759,7 @@ function hello_without(kind: i32, add: message.Extension[]): u8[] {
 }
 
 function server_refusal(input: u8[]): string {
-  match (handshake.server_new(handshake.server_config([server_certificate()], [0x0804]), zeros(96))) {
+  match (handshake.server_new(handshake.server_config([server_certificate()], [0x0804]), zeros(handshake.server_entropy(handshake.server_config([server_certificate()], [0x0804]))))) {
     Ok(s) => {
       match (s.read(input)) {
         Ok(step) => {
@@ -791,7 +791,7 @@ function test_server_refusals(): test.TestOutcome {
   if (server_refusal(hello_without(message.EXT_KEY_SHARE, [stray])) != "47 tls handshake: illegal key share for a group not in supported_groups") {
     return test.fail("a share outside supported_groups");
   }
-  match (handshake.server_new(handshake.server_config([], [0x0804]), zeros(96))) {
+  match (handshake.server_new(handshake.server_config([], [0x0804]), zeros(104))) {
     Ok(s) => {
       return test.fail("no chain accepted");
     },
@@ -864,7 +864,7 @@ function ticketed(p: Pair): Result[handshake.Resumption, handshake.HandshakeErro
 // full handshake of it.
 function resume_with(cc: handshake.ClientConfig, sc: handshake.ServerConfig, answer: Option[handshake.Resumed]): Result[Pair, handshake.HandshakeError] {
   let start: handshake.ClientStep = handshake.client_start(cc, pattern(3, handshake.client_entropy(cc)))?;
-  let server: handshake.Server = handshake.server_new(sc, pattern(4, 96))?;
+  let server: handshake.Server = handshake.server_new(sc, pattern(4, handshake.server_entropy(sc)))?;
   let s1: handshake.ServerStep = server.read(start.output)?;
   if (s1.events.len() == 0) {
     start = start.client.read(s1.output)?;
@@ -978,7 +978,7 @@ function test_resumption_refusals(): test.TestOutcome {
 // extensions.
 function hello_refusal(exts: message.Extension[]): string {
   let h: message.ClientHello = message.ClientHello { random: pattern(8, 32), session_id: [], cipher_suites: [0x1301], extensions: exts };
-  match (handshake.server_new(handshake.server_config([ed_public()], [0x0807]), pattern(2, 96))) {
+  match (handshake.server_new(handshake.server_config([ed_public()], [0x0807]), pattern(2, handshake.server_entropy(handshake.server_config([ed_public()], [0x0807]))))) {
     Ok(s) => {
       match (s.read(record.frame(record.Handshake, 0x0301, message.encode(message.ClientHelloMsg(h))))) {
         Ok(step) => {
@@ -1018,7 +1018,7 @@ struct Shown { pair: Pair, report: string }
 // `accept`.
 function client_auth(cc: handshake.ClientConfig, sc: handshake.ServerConfig, accept: boolean): Result[Shown, handshake.HandshakeError] {
   let start: handshake.ClientStep = handshake.client_start(cc, pattern(1, handshake.client_entropy(cc)))?;
-  let s1: handshake.ServerStep = handshake.server_new(sc, pattern(2, 96))?.read(start.output)?;
+  let s1: handshake.ServerStep = handshake.server_new(sc, pattern(2, handshake.server_entropy(sc)))?.read(start.output)?;
   let s2: handshake.ServerStep = s1.server.signature(signed(signing(s1.events).signed))?;
   let c1: handshake.ClientStep = start.client.read(cat(s1.output, s2.output))?;
   let c2: handshake.ClientStep = c1.client.verdict(true)?;

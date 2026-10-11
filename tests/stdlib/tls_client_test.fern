@@ -50,7 +50,7 @@ struct Pair { session: client.Session, server: handshake.Server }
 function connect(cfg: client.Config, alpn: string[], forge: boolean): Result[Pair, client.TlsError] {
   let start: client.Step = client.start(cfg)?;
   let sc: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config([hex.hex_decode(LEAF)], [0x0807]), alpn: alpn };
-  let server: handshake.Server = srv(handshake.server_new(sc, random_bytes(96)))?;
+  let server: handshake.Server = srv(handshake.server_new(sc, random_bytes(handshake.server_entropy(sc))))?;
   let s1: handshake.ServerStep = srv(server.read(start.output))?;
   if (s1.events.len() == 0) {
     start = rd(start.session, s1.output)?;
@@ -248,7 +248,7 @@ function test_untrusted(): test.TestOutcome {
 function refusal_alert(): Result[string, client.TlsError] {
   let start: client.Step = client.start(client.config("tls.example", roots(OTHER_ROOT)))?;
   let sc: handshake.ServerConfig = handshake.server_config([hex.hex_decode(LEAF)], [0x0807]);
-  let s1: handshake.ServerStep = srv(srv(handshake.server_new(sc, random_bytes(96)))?.read(start.output))?;
+  let s1: handshake.ServerStep = srv(srv(handshake.server_new(sc, random_bytes(handshake.server_entropy(sc))))?.read(start.output))?;
   let sig: u8[] = [];
   match (ed25519.sign(leaf_seed(), signing(s1.events))) {
     Ok(b) => {
@@ -389,7 +389,7 @@ function issued(p: Pair): Result[(client.Ticket, u8[]), client.TlsError] {
 // that takes it up with `psk`; a server never asked is a refusal.
 function connect_resumed(cfg: client.Config, psk: u8[]): Result[Pair, client.TlsError] {
   let start: client.Step = client.start(cfg)?;
-  let server: handshake.Server = srv(handshake.server_new(handshake.server_config([hex.hex_decode(LEAF)], [0x0807]), random_bytes(96)))?;
+  let server: handshake.Server = srv(handshake.server_new(handshake.server_config([hex.hex_decode(LEAF)], [0x0807]), random_bytes(handshake.server_entropy(handshake.server_config([hex.hex_decode(LEAF)], [0x0807])))))?;
   let s1: handshake.ServerStep = srv(server.read(start.output))?;
   if (!has_resume(s1.events)) {
     return Err(client.HandshakeFailed(handshake.Misuse("no ticket offered")));
@@ -460,7 +460,7 @@ function client_shown(events: handshake.Event[]): Option[handshake.Verification]
 function connect_asked(cfg: client.Config): Result[string, client.TlsError] {
   let start: client.Step = client.start(cfg)?;
   let sc: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config([hex.hex_decode(LEAF)], [0x0807]), request_client_certificate: true };
-  let s1: handshake.ServerStep = srv(srv(handshake.server_new(sc, random_bytes(96)))?.read(start.output))?;
+  let s1: handshake.ServerStep = srv(srv(handshake.server_new(sc, random_bytes(handshake.server_entropy(sc))))?.read(start.output))?;
   let sig: u8[] = [];
   match (ed25519.sign(leaf_seed(), signing(s1.events))) {
     Ok(b) => {

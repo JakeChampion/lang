@@ -4,11 +4,13 @@ import "std/crypto";
 import "std/tls/keyshare";
 
 // tests/stdlib/tls_keyshare_test.fern — std/tls/keyshare: X25519 against
-// RFC 8448 §3's key shares and shared secret, and X25519MLKEM768 against
+// RFC 8448 §3's key shares and shared secret, X25519MLKEM768 against
 // answers from Go's crypto/mlkem (mlkemtest.Encapsulate768 for the
 // server's deterministic encapsulation) and crypto/ecdh, composed in the
-// order Go's crypto/tls uses. The client's entropy is the bytes 0x00..0x1f
-// then 0x40..0x7f, the server's 0x80..0x9f then 0xa0..0xbf.
+// order Go's crypto/tls uses, and secp256r1 against RFC 5903 §8.1's
+// exchange and points Python's cryptography derives. The client's hybrid
+// entropy is the bytes 0x00..0x1f then 0x40..0x7f, the server's 0x80..0x9f
+// then 0xa0..0xbf.
 
 function pattern(start: i32, n: i32): u8[] {
   let out: u8[] = __alloc_u8(n);
@@ -103,10 +105,196 @@ function test_groups(): test.TestOutcome {
   }
   match (keyshare.group(0x0017)) {
     Some(g) => {
-      return test.fail("secp256r1 is not implemented");
+      if (g.code() != 0x0017 || g.client_entropy() != 40 || g.server_entropy() != 40 || g.client_share_len() != 65 || g.server_share_len() != 65) {
+        return test.fail("secp256r1");
+      }
+    },
+    None => {
+      return test.fail("secp256r1 unknown");
+    }
+  }
+  match (keyshare.group(0x11eb)) {
+    Some(g) => {
+      if (g.code() != 0x11eb || g.client_entropy() != 104 || g.server_entropy() != 72 || g.client_share_len() != 1249 || g.server_share_len() != 1153) {
+        return test.fail("secp256r1mlkem768");
+      }
+    },
+    None => {
+      return test.fail("secp256r1mlkem768 unknown");
+    }
+  }
+  match (keyshare.group(0x0018)) {
+    Some(g) => {
+      return test.fail("secp384r1 is not implemented");
     },
     None => {
       return test.pass();
+    }
+  }
+  return test.fail("unreachable");
+}
+
+// SecP256r1MLKEM768 with RFC 5903's P-256 keys and the X25519MLKEM768
+// vectors' ML-KEM seeds: the P-256 part comes first in both shares and the
+// secret, the ML-KEM part is byte for byte the other hybrid's, and the
+// secret is RFC 5903's x then ML-KEM's.
+function test_p256_mlkem_exchange(): test.TestOutcome {
+  let client_draw: u8[] = cat(p256_draw("c88f01f510d9ac3f70a292daa2316de544e9aab8afe84049c62a9c57862d1433"), pattern(0x40, 64));
+  let server_draw: u8[] = cat(p256_draw("c6ef9c5d78ae012a011164acb397ce2088685d8f06bf9be0b283ab46476bee53"), pattern(0xa0, 32));
+  let other: u8[] = [];
+  match (keyshare.server_share(keyshare.X25519MlKem768, p256_hybrid_client_public(), hybrid_server_entropy())) {
+    Ok(x) => {
+      other = x.public;
+    },
+    Err(e) => {
+      return test.fail("the X25519 hybrid: " + e.message());
+    }
+  }
+  match (keyshare.client_share(keyshare.Secp256r1MlKem768, client_draw)) {
+    Ok(c) => {
+      if (c.public.len() != 1249 || hex.hex_encode(cat(c.public[0:65], [])) != rfc5903_gi()) {
+        return test.fail("the client's share");
+      }
+      match (keyshare.server_share(keyshare.Secp256r1MlKem768, c.public, server_draw)) {
+        Ok(s) => {
+          if (s.public.len() != 1153 || hex.hex_encode(cat(s.public[0:65], [])) != rfc5903_gr()) {
+            return test.fail("the server's share");
+          }
+          if (sha256(cat(s.public[65:1153], [])) != sha256(cat(other[0:1088], []))) {
+            return test.fail("the ciphertext is not the X25519 hybrid's");
+          }
+          let want: string = rfc5903_shared() + hybrid_shared().slice_snap(0, 64);
+          if (hex.hex_encode(s.shared_secret) != want) {
+            return test.fail("the server's secret: " + hex.hex_encode(s.shared_secret));
+          }
+          return test.assert_eq(shown(c.shared_secret(s.public)), want);
+        },
+        Err(e) => {
+          return test.fail(e.message());
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+// The X25519MLKEM768 client share made from the same ML-KEM seeds, for the
+// ciphertext comparison.
+function p256_hybrid_client_public(): u8[] {
+  match (keyshare.client_share(keyshare.X25519MlKem768, hybrid_client_entropy())) {
+    Ok(c) => {
+      return c.public;
+    },
+    Err(e) => {
+      return [];
+    }
+  }
+  return [];
+}
+
+// A 40-byte draw whose high eight bytes are zero: the scalar itself.
+function p256_draw(scalar: string): u8[] {
+  return cat(__alloc_u8(8), hex.hex_decode(scalar));
+}
+
+function p256_client(draw: u8[]): Result[keyshare.ClientShare, keyshare.KeyShareError] {
+  return keyshare.client_share(keyshare.Secp256r1, draw);
+}
+
+// RFC 5903 §8.1: the initiator's and responder's keys and the shared x.
+function rfc5903_gi(): string {
+  return "04dad0b65394221cf9b051e1feca5787d098dfe637fc90b9ef945d0c37725811805271a0461cdb8252d61f1c456fa3e59ab1f45b33accf5f58389e0577b8990bb3";
+}
+
+function rfc5903_gr(): string {
+  return "04d12dfb5289c8d4f81208b70270398c342296970a0bccb74c736fc7554494bf6356fbf3ca366cc23e8157854c13c58d6aac23f046ada30f8353e74f33039872ab";
+}
+
+function rfc5903_shared(): string {
+  return "d6840f6b42f6edafd13116e0e12565202fef8e9ece7dce03812464d04b9442de";
+}
+
+function test_p256_rfc5903(): test.TestOutcome {
+  match (p256_client(p256_draw("c88f01f510d9ac3f70a292daa2316de544e9aab8afe84049c62a9c57862d1433"))) {
+    Ok(c) => {
+      if (hex.hex_encode(c.public) != rfc5903_gi()) {
+        return test.fail("the initiator's point: " + hex.hex_encode(c.public));
+      }
+      match (keyshare.server_share(keyshare.Secp256r1, c.public, p256_draw("c6ef9c5d78ae012a011164acb397ce2088685d8f06bf9be0b283ab46476bee53"))) {
+        Ok(s) => {
+          if (hex.hex_encode(s.public) != rfc5903_gr()) {
+            return test.fail("the responder's point: " + hex.hex_encode(s.public));
+          }
+          if (hex.hex_encode(s.shared_secret) != rfc5903_shared()) {
+            return test.fail("the responder's secret: " + hex.hex_encode(s.shared_secret));
+          }
+          return test.assert_eq(shown(c.shared_secret(s.public)), rfc5903_shared());
+        },
+        Err(e) => {
+          return test.fail(e.message());
+        }
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+// The draw is reduced modulo the order: forty 0xff bytes and a draw with
+// a nonzero high part, against cryptography's points for the reduced
+// scalars.
+function test_p256_reduction(): test.TestOutcome {
+  let ff: u8[] = [];
+  let i: i32 = 0;
+  while (i < 40) {
+    ff = ff.append(255 as u8);
+    i = i + 1;
+  }
+  match (p256_client(ff)) {
+    Ok(c) => {
+      if (hex.hex_encode(c.public) != "04308c2fb68f6e65f14ee1df366524bfc8df178610bc047fde25e8fc6b1ed3e38c1d63c2f55110ef43a518689849130e469f5545bacca33538b7bc1a35ed95579a") {
+        return test.fail("forty 0xff: " + hex.hex_encode(c.public));
+      }
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  match (p256_client(cat(hex.hex_decode("0102030405060708"), hex.hex_decode("1111111111111111111111111111111111111111111111111111111111111111")))) {
+    Ok(c) => {
+      return test.assert_eq(hex.hex_encode(c.public), "0448ab0fd6aa263aaae5b3ff39220089e5708ec088e8bd253878e260c6bce83c575d117b9635dadca3ff2f31262580308ba6453264d4a109dd8d9fa0505b72c802");
+    },
+    Err(e) => {
+      return test.fail(e.message());
+    }
+  }
+  return test.fail("unreachable");
+}
+
+function test_p256_refusals(): test.TestOutcome {
+  let draw: u8[] = p256_draw("c88f01f510d9ac3f70a292daa2316de544e9aab8afe84049c62a9c57862d1433");
+  let off: u8[] = hex.hex_decode(rfc5903_gr());
+  off = off.with(64, off[64] ^ 1 as u8);
+  if (server_refusal(keyshare.server_share(keyshare.Secp256r1, off, draw)) != "tls keyshare: the peer's secp256r1 point is not an uncompressed point on the curve") {
+    return test.fail("a point off the curve");
+  }
+  if (server_refusal(keyshare.server_share(keyshare.Secp256r1, off[0:64], draw)) != "tls keyshare: the peer's share is 64 bytes, want 65") {
+    return test.fail("a short point");
+  }
+  if (client_refusal(p256_client(cat(draw[8:40], []))) != "tls keyshare: 32 bytes of entropy, want 40") {
+    return test.fail("a short draw");
+  }
+  match (p256_client(draw)) {
+    Ok(c) => {
+      return test.assert_eq(shown(c.shared_secret(off)), "tls keyshare: the peer's secp256r1 point is not an uncompressed point on the curve");
+    },
+    Err(e) => {
+      return test.fail(e.message());
     }
   }
   return test.fail("unreachable");
@@ -284,5 +472,9 @@ function main(): i32 {
   r = r.it("lengths", test_lengths);
   r = r.it("low-order X25519 keys", test_low_order);
   r = r.it("unreduced encapsulation key", test_bad_encapsulation_key);
+  r = r.it("secp256r1 exchange of RFC 5903", test_p256_rfc5903);
+  r = r.it("secp256r1 draws reduced", test_p256_reduction);
+  r = r.it("secp256r1 refusals", test_p256_refusals);
+  r = r.it("SecP256r1MLKEM768 exchange", test_p256_mlkem_exchange);
   return r.finish();
 }

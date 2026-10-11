@@ -12,9 +12,9 @@
 // The identity is std/tls/identity's: a P-256, P-384 or Ed25519 key with
 // its chain. The signature scheme offered is the key's, so a client that
 // does not accept it gets handshake_failure. The server takes every
-// suite, X25519MLKEM768 and X25519, asking for a share by HelloRetryRequest
-// when the client sent neither, and chooses the first of its own protocols
-// the client offers by ALPN.
+// suite, X25519MLKEM768, X25519, secp256r1 and SecP256r1MLKEM768, asking
+// for a share by HelloRetryRequest when the client sent none of them, and
+// chooses the first of its own protocols the client offers by ALPN.
 
 import "std/crypto";
 import "std/crypto/chacha20poly1305";
@@ -79,12 +79,15 @@ pub enum TlsError {
   ClientCertificateMissing,
   ClientUntrusted(verify.VerifyError),
   ClientSignatureInvalid,
+  ClientSchemeMismatch,
   NetFailed(net.NetError),
   HandshakeTimeout,
   ClosedEarly,
   RecordCut,
 }
 
+// One arm per variant.
+// fern-lint: allow cyclomatic-complexity
 pub function (e: TlsError) message(): string {
   match (e) {
     HandshakeFailed(h) => {
@@ -101,6 +104,9 @@ pub function (e: TlsError) message(): string {
     },
     ClientSignatureInvalid => {
       return "the client's CertificateVerify does not verify";
+    },
+    ClientSchemeMismatch => {
+      return "the client's CertificateVerify names a scheme its key cannot make";
     },
     NetFailed(n) => {
       return n.message();
@@ -146,7 +152,7 @@ pub function start(config: Config): Result[Session, TlsError] {
     None => {}
   }
   let sc: handshake.ServerConfig = handshake.ServerConfig { ...handshake.server_config(config.identity.chain, [config.identity.key.scheme()]), alpn: config.alpn, request_client_certificate: asks };
-  match (handshake.server_new(sc, random_bytes(96))) {
+  match (handshake.server_new(sc, random_bytes(handshake.server_entropy(sc)))) {
     Ok(s) => {
       return Ok(Session { server: s, config: config, held: [] });
     },
@@ -345,6 +351,9 @@ function __client_trusted(config: Config, v: handshake.Verification): Result[voi
   }
   match (verify.verify_client(v.chain, roots, now_unix_ms() / 1000)) {
     Ok(leaf) => {
+      if (!verify.scheme_fits(leaf, v.scheme)) {
+        return Err(ClientSchemeMismatch);
+      }
       if (!verify.verify_signed(leaf, v.scheme, v.signed, v.signature)) {
         return Err(ClientSignatureInvalid);
       }
@@ -357,11 +366,20 @@ function __client_trusted(config: Config, v: handshake.Verification): Result[voi
   return Err(ClientSignatureInvalid);
 }
 
-// The alert a refused client certificate draws.
+// The alert a refused client certificate draws: certificate_required for
+// none, bad_certificate for an untrusted chain, decrypt_error for a
+// CertificateVerify that does not verify and illegal_parameter for one
+// under a scheme the key cannot make (§4.4.3, §4.2.3).
 function __client_alert(e: TlsError): handshake.HandshakeError {
   match (e) {
     ClientCertificateMissing => {
       return handshake.CertificateRequired;
+    },
+    ClientSignatureInvalid => {
+      return handshake.DecryptError;
+    },
+    ClientSchemeMismatch => {
+      return handshake.Illegal("signature scheme for the client's key");
     },
     _ => {
       return handshake.BadCertificate;
@@ -535,7 +553,10 @@ function __more(own a: handshake.Event[], b: handshake.Event[]): handshake.Event
 // Connection — a session over an accepted TCP socket, with the application
 // data the client sent in the same read as the end of the handshake, and
 // whether it has already closed.
-pub struct Connection { fd: i32, session: Session, pending: u8[], ended: boolean }
+// `open` is whether the socket is still the connection's: a failure in
+// `recv` or `send` sends the alert and closes it, and `close` after that
+// does nothing.
+pub struct Connection { fd: i32, session: Session, pending: u8[], ended: boolean, open: Cell[boolean] }
 
 // Received — what `recv` read: application data, empty when the wait
 // passed first, and whether the peer has ended the stream, by close_notify
@@ -574,7 +595,7 @@ function __handshake_on(fd: i32, config: Config, deadline: i64): Result[Connecti
     if (input.len() == 0) {
       return Err(ClosedEarly);
     }
-    let step: Step = __exchange(fd, s, input)?;
+    let step: Step = __exchange_fd(fd, s, input)?;
     s = step.session;
     pending = __cat(pending, step.data);
     ended = step.closed;
@@ -582,7 +603,7 @@ function __handshake_on(fd: i32, config: Config, deadline: i64): Result[Connecti
   if (!s.connected()) {
     return Err(ClosedEarly);
   }
-  return Ok(Connection { fd: fd, session: s, pending: pending, ended: ended });
+  return Ok(Connection { fd: fd, session: s, pending: pending, ended: ended, open: cell_new(true) });
 }
 
 // send writes data to the client.
@@ -618,7 +639,7 @@ function __recv_until(c: Connection, deadline: i64): Result[Received, TlsError] 
     if (input.len() == 0) {
       return __stream_ended(c, s);
     }
-    let step: Step = __exchange(c.fd, s, input)?;
+    let step: Step = __exchange(c, s, input)?;
     s = step.session;
     if (step.data.len() > 0 || step.closed) {
       return Ok(__received(c, s, step.data, step.closed));
@@ -640,9 +661,25 @@ function __stream_ended(c: Connection, s: Session): Result[Received, TlsError] {
   return Ok(__received(c, s, [], true));
 }
 
-// __exchange reads input and sends what the session answers, or the alert a
-// failure calls for.
-function __exchange(fd: i32, s: Session, input: [u8]): Result[Step, TlsError] {
+// __exchange reads input on an open connection and sends what the session
+// answers; a failure sends its alert and closes the socket.
+function __exchange(c: Connection, s: Session, input: [u8]): Result[Step, TlsError] {
+  match (__exchange_fd(c.fd, s, input)) {
+    Ok(step) => {
+      return Ok(step);
+    },
+    Err(e) => {
+      tcp_close(c.fd);
+      c.open.set(false);
+      return Err(e);
+    }
+  }
+  return Err(ClosedEarly);
+}
+
+// __exchange_fd reads input and sends what the session answers, or the
+// alert a failure calls for.
+function __exchange_fd(fd: i32, s: Session, input: [u8]): Result[Step, TlsError] {
   match (s.read(input)) {
     Ok(step) => {
       __send_fd(fd, step.output)?;
@@ -656,8 +693,12 @@ function __exchange(fd: i32, s: Session, input: [u8]): Result[Step, TlsError] {
   return Err(ClosedEarly);
 }
 
-// close sends close_notify and closes the socket.
+// close sends close_notify and closes the socket, once.
 pub function (c: Connection) close(): void {
+  if (!c.open.get()) {
+    return;
+  }
+  c.open.set(false);
   if let Ok(step) = c.session.close() {
     __send_fd(c.fd, step.output);
   }

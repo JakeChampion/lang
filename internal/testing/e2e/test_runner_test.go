@@ -1157,7 +1157,7 @@ func TestRunnerTLSClientExamplePasses(t *testing.T) {
 // against std/tls/client over P-256, P-384 and Ed25519 leaves, resumes
 // from the tickets it issues, and requires client certificates.
 func TestRunnerTLSServerExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "tls_server", "std/tls/server", 11)
+	runnerSuitePasses(t, "tls_server", "std/tls/server", 12)
 }
 
 // `tests/stdlib/tls_handshake_test.fern` runs the client through RFC 8448 §3
@@ -1170,7 +1170,7 @@ func TestRunnerTLSHandshakeExamplePasses(t *testing.T) {
 // `tests/stdlib/tls_keyshare_test.fern` checks X25519 against RFC 8448's key
 // shares and X25519MLKEM768 against Go's crypto/mlkem and crypto/ecdh.
 func TestRunnerTLSKeyshareExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "tls_keyshare", "std/tls/keyshare", 8)
+	runnerSuitePasses(t, "tls_keyshare", "std/tls/keyshare", 12)
 }
 
 // `tests/stdlib/tls_message_test.fern` round-trips every handshake message
