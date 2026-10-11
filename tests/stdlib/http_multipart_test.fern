@@ -8,12 +8,16 @@ import "core/int";
 
 // tests/stdlib/http_multipart_test.fern — std/http/multipart: a body the
 // builder made read back part by part, whole and in pieces, from a buffer
-// and from a stream handing it over in small chunks that split the
-// delimiter; a preamble and transport padding; the media type and the
-// boundary refused; every cap; `fields`; and the builder's own output.
+// and from a stream whose pieces split the delimiter; a preamble and
+// transport padding; the media type and the boundary refused; every cap;
+// `fields`; quoted parameters; and the builder's own output.
 
 function sample(): multipart.Builder {
-  return multipart.builder_with("xYzBoundary").field("name", "ann").field("note", "a\r\n--not a boundary\r\nb").file("photo", "me \"1\".png", "image/png", [0 as u8, 1 as u8, 2 as u8, 13 as u8, 10 as u8, 45 as u8, 45 as u8]).field("name", "bob");
+  return sample_after(multipart.builder_with("xYzBoundary"));
+}
+
+function sample_after(b: multipart.Builder): multipart.Builder {
+  return b.field("name", "ann").field("note", "a\r\n--not a boundary\r\nb").file("photo", "me \"1\".png", "image/png", [0 as u8, 1 as u8, 2 as u8, 13 as u8, 10 as u8, 45 as u8, 45 as u8]).field("name", "bob");
 }
 
 // scripted hands bytes over `k` at a time, as a streamed body would.
@@ -101,17 +105,48 @@ function test_whole_parts(): test.TestOutcome {
   return test.assert_eq(dump(sample().request("POST", "/upload"), multipart.limits()), EXPECTED);
 }
 
-function test_chunked_stream(): test.TestOutcome {
-  let b: multipart.Builder = sample();
+// The reader pulls the stream 4096 bytes at a time, so a delimiter is
+// split between two pulls when a part's content ends `j` bytes before a
+// multiple of 4096. A file part padded to end there precedes the sample,
+// for every `j` shorter than the delimiter, from a stream handing it over
+// `j` bytes at a time; the parts are read whole, then the file is skipped
+// by `fields`.
+function test_split_delimiter(): test.TestOutcome {
   let got: string = "";
-  let k: i32 = 1;
-  while (k <= 9) {
-    if (dump(streamed(b.content_type(), b.bytes(), k), multipart.limits()) != EXPECTED) {
-      got = got + int.int_to_string(k) + " ";
+  let j: i32 = 1;
+  while (j < 15) {
+    let n: i32 = 4096 - j - head_len();
+    let pad: u8[] = array_fill(n, 120 as u8);
+    let b: multipart.Builder = sample_after(multipart.builder_with("xYzBoundary").file("pad", "pad.bin", "application/octet-stream", pad));
+    if (b.body.len() < 4096 - j + 2 + 2) {
+      return test.fail("the padded body is too short to split the delimiter");
     }
-    k = k + 1;
+    let want: string = "pad|pad.bin|application/octet-stream|" + show(pad) + "\n" + EXPECTED;
+    if (dump(streamed(b.content_type(), b.bytes(), j), multipart.limits()) != want) {
+      got = got + "read " + int.int_to_string(j) + " ";
+    }
+    if (field_names(streamed(b.content_type(), b.bytes(), j)) != "ann,bob absent") {
+      got = got + "skip " + int.int_to_string(j) + " ";
+    }
+    j = j + 1;
   }
   return test.assert_eq(got, "");
+}
+
+// head_len is the bytes before the content of the padded file part.
+function head_len(): i32 {
+  let empty: u8[] = [];
+  return multipart.builder_with("xYzBoundary").file("pad", "pad.bin", "application/octet-stream", empty).body.len() - 2;
+}
+
+function array_fill(n: i32, b: u8): u8[] {
+  let out: u8[] = [];
+  let i: i32 = 0;
+  while (i < n) {
+    out = out.append(b);
+    i = i + 1;
+  }
+  return out;
 }
 
 function test_pieces(): test.TestOutcome {
@@ -218,7 +253,13 @@ function test_caps(): test.TestOutcome {
 }
 
 function test_fields(): test.TestOutcome {
-  match (multipart.fields(sample().request("POST", "/upload"), multipart.limits())) {
+  return test.assert_eq(field_names(sample().request("POST", "/upload")), "ann,bob absent");
+}
+
+// field_names is `fields` on the request as the "name" values joined and
+// whether "photo" is among them, or the error.
+function field_names(req: HttpRequest): string {
+  match (multipart.fields(req, multipart.limits())) {
     Ok(m) => {
       let names: string = "";
       match (m.get("name")) {
@@ -234,13 +275,24 @@ function test_fields(): test.TestOutcome {
         },
         None => {}
       }
-      return test.assert_eq(names + " " + photo, "ann,bob absent");
+      return names + " " + photo;
     },
     Err(e) => {
-      return test.fail(e.message());
+      return e.message();
     }
   }
-  return test.fail("unreachable");
+  return "unreachable";
+}
+
+// A `;` inside a quoted parameter is part of the value, and a backslash
+// escapes the quote: in the boundary, the name and the filename, raw and
+// as the builder writes them.
+function test_quoted_params(): test.TestOutcome {
+  let body: string = "--B;1\r\nContent-Disposition: form-data; filename=\"c;\\\"d\\\\e.txt\"; name=\"a;b\"\r\n\r\n1\r\n--B;1--\r\n";
+  let raw: string = dump(buffered("multipart/form-data; charset=utf-8; boundary=\"B;1\"", body), multipart.limits());
+  let b: multipart.Builder = multipart.builder_with("B").file("x;y", "a;b\\c.txt", "text/plain", "1".bytes());
+  let built: string = dump(b.request("POST", "/upload"), multipart.limits());
+  return test.assert_eq(raw + "|" + built, "a;b|c;\"d\\e.txt||49.\n|x;y|a;b\\c.txt|text/plain|49.\n");
 }
 
 function test_builder_output(): test.TestOutcome {
@@ -254,12 +306,13 @@ function test_builder_output(): test.TestOutcome {
 function main(): i32 {
   let r: test.TestRunner = test.test_new("std/http/multipart");
   r = r.it("whole parts", test_whole_parts);
-  r = r.it("a stream in small chunks", test_chunked_stream);
+  r = r.it("a delimiter split between two pulls", test_split_delimiter);
   r = r.it("pieces of a part", test_pieces);
   r = r.it("a preamble and padding", test_preamble_and_padding);
   r = r.it("refused bodies", test_refused);
   r = r.it("the caps", test_caps);
   r = r.it("fields", test_fields);
+  r = r.it("quoted parameters", test_quoted_params);
   r = r.it("the builder's output", test_builder_output);
   return r.finish();
 }

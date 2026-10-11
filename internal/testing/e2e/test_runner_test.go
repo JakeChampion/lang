@@ -1167,7 +1167,7 @@ func TestRunnerHTTPFormExamplePasses(t *testing.T) {
 // part, whole and in pieces, from a buffer and from a chunked stream, with
 // every refusal and cap, and checks the builder's output.
 func TestRunnerHTTPMultipartExamplePasses(t *testing.T) {
-	runnerSuitePasses(t, "http_multipart", "std/http/multipart", 8)
+	runnerSuitePasses(t, "http_multipart", "std/http/multipart", 9)
 }
 
 // `tests/stdlib/tls_client_test.fern` runs std/tls/client's session against

@@ -130,8 +130,8 @@ pub struct Part { name: string, filename: string, content_type: string, headers:
 // Reader — the body's cursor: the stream, the delimiter (CRLF, two
 // hyphens, the boundary), the bytes pulled and not yet placed, whether the
 // stream is spent, the caps and the counts against them, and where the
-// cursor stands: inside a part, just past a delimiter, or at the end.
-pub struct Reader { s: Stream, delim: u8[], carry: u8[], eof: boolean, limits: Limits, parts: i32, total: i32, part_total: i32, in_part: boolean, after_delim: boolean, finished: boolean }
+// cursor stands: inside a part or just past a delimiter.
+pub struct Reader { s: Stream, delim: u8[], carry: u8[], eof: boolean, limits: Limits, parts: i32, total: i32, part_total: i32, in_part: boolean, after_delim: boolean }
 
 pub enum Step {
   NextPart(Part, Reader),
@@ -157,15 +157,12 @@ pub function open(req: HttpRequest, limits: Limits): Result[Reader, MultipartErr
   if (boundary.len() == 0 || boundary.len() > 70) {
     return Err(NoBoundary);
   }
-  return Ok(Reader { s: req.body_stream(), delim: ("\r\n--" + boundary).bytes(), carry: [13 as u8, 10 as u8], eof: false, limits: limits, parts: 0, total: 0, part_total: 0, in_part: false, after_delim: false, finished: false });
+  return Ok(Reader { s: req.body_stream(), delim: ("\r\n--" + boundary).bytes(), carry: [13 as u8, 10 as u8], eof: false, limits: limits, parts: 0, total: 0, part_total: 0, in_part: false, after_delim: false });
 }
 
 // (r).next() — the next part's head, the rest of the current part
 // skipped; `NoMoreParts` past the closing boundary.
 pub function (r: Reader) next(): Result[Step, MultipartError] {
-  if (r.finished) {
-    return Ok(NoMoreParts);
-  }
   let cur: Reader = r;
   if (!cur.after_delim) {
     cur = __to_delim(cur)?;
@@ -419,19 +416,41 @@ function __media_type(ct: string): string {
 }
 
 // __param is a header value's parameter by name, its quotes removed and
-// a backslash escape inside them undone; "" when absent.
+// a backslash escape inside them undone; "" when absent. A `;` inside
+// the quotes is part of the value.
 function __param(value: string, name: string): string {
-  let parts: string[] = value.split(";");
-  let i: i32 = 1;
-  while (i < parts.len()) {
-    let p: string = parts[i].trim();
+  let bs: u8[] = value.bytes();
+  let i: i32 = __param_end(bs, 0) + 1;
+  while (i < bs.len()) {
+    let end: i32 = __param_end(bs, i);
+    let p: string = string_from_bytes_unchecked(array.slice(bs, i, end)).trim();
     let eq: i32 = p.index_of("=");
     if (eq > 0 && p.slice_snap(0, eq).trim().to_lower() == name) {
       return __unquote(p.slice_snap(eq + 1, p.len()).trim());
     }
-    i = i + 1;
+    i = end + 1;
   }
   return "";
+}
+
+// __param_end is the index of the `;` ending the parameter at `from`,
+// skipping quoted strings and the pairs escaped inside them; the length
+// when it is the last.
+function __param_end(bs: u8[], from: i32): i32 {
+  let i: i32 = from;
+  let quoted: boolean = false;
+  while (i < bs.len()) {
+    let b: u8 = bs[i];
+    if (b == 34 as u8) {
+      quoted = !quoted;
+    } else if (quoted && b == 92 as u8) {
+      i = i + 1;
+    } else if (!quoted && b == 59 as u8) {
+      return i;
+    }
+    i = i + 1;
+  }
+  return bs.len();
 }
 
 function __unquote(v: string): string {
@@ -542,7 +561,8 @@ pub function (b: Builder) request(method: string, path: string): HttpRequest {
 }
 
 // __escape writes a name as a browser does inside the quotes: a quote,
-// CR and LF percent-encoded.
+// CR and LF percent-encoded, a backslash doubled so the reader's unescape
+// gives it back.
 function __escape(s: string): string {
-  return s.replace("\"", "%22").replace("\r", "%0D").replace("\n", "%0A");
+  return s.replace("\\", "\\\\").replace("\"", "%22").replace("\r", "%0D").replace("\n", "%0A");
 }
