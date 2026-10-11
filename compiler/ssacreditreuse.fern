@@ -334,7 +334,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
       out = calc(out, 1, 1, identity);
       identity = out.temp;
     }
-  } else if (op.kind_tag == 40 && op.args.len() == 1 && !old_parent_on_path(out, out.values[op.args[0]]) && fields.len() > 0 && op.str == "") {
+  } else if (op.kind_tag == 40 && op.args.len() == 1 && !old_parent_on_path(out, out.values[op.args[0]]) && fields.len() > 0 && ssa.plain_str(op) == "") {
     let base = out.values[op.args[0]];
     out = child(out, base);
     let covered: i32 = 0;
@@ -350,7 +350,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
     // Only the explicit numeric rules above may consume it. Unknown numeric
     // values cannot supply pointer identities, Boolean masks or phi references.
     kind = 3;
-  } else if (op.kind_tag == 40 && op.args.len() == 1 && (op.imm == 8 || op.imm == 16) && op.str == "") {
+  } else if (op.kind_tag == 40 && op.args.len() == 1 && (op.imm == 8 || op.imm == 16) && ssa.plain_str(op) == "") {
     let base = out.values[op.args[0]];
     out = parent(out, base);
     kind = 1;
@@ -437,7 +437,7 @@ function transfer(c: Context, physical: ssa.SInst, shape: string, drop: string, 
   } else if (op.kind_tag == 11 && call_index(calls, op.str) >= 0) {
     out = scalar_call(out, op, calls[call_index(calls, op.str)]);
     kind = 0;  // Checked normal-return value is zero; no credit is created.
-  } else if (op.kind_tag == 11 && op.str == "__fern_alloc_reuse" && op.args.len() == 2 && op.imm == 0) {
+  } else if (op.kind_tag == 11 && op.str == "__fern_alloc_reuse" && op.args.len() == 2 && ssa.plain_imm(op) == 0) {
     let donor = out.values[op.args[0]];
     let words = out.values[op.args[1]];
     if (donor.kind != 1 || words.kind != 0) {

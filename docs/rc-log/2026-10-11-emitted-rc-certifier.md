@@ -119,15 +119,34 @@ Callgrind over `compiler/drivers/checker_run.fern` on x86-64, instructions:
 |---|---:|
 | plain compile | 15.76 G |
 | `FERN_RC_CERTIFY=1`, nested row matrices | 22.31 G |
-| `FERN_RC_CERTIFY=1`, flat rows | 20.45 G |
+| `FERN_RC_CERTIFY=1`, flat dense rows | 20.45 G |
+| flat rows, one round on an acyclic graph | 20.57 G |
+| flat rows, block-local slots kept out of the rows | 19.58 G |
+| sparse rows (slot, count) with a key list | 27.25 G |
+| rows and retirement by per-block liveness | 22.66 G |
 
 The budget is 1% of the plain compile for the replay and the certifier
 together, so this runs under `FERN_IR_VERIFY` for now and the default compile
 pays nothing. The profile of the nested form spent a third of the certifier
 in `__sem_drop_rccertify__Rows` and `__fern_arr_inc_elems`: a row-of-rows
 update copied and retained the outer array on every edge. Flattening took
-that out; what remains is the dense state itself, `blocks × tracked` per
-round with a round that only confirms the first on an acyclic graph, and the
-per-instruction scans (`taken_at`, `reloaded`, `mark_taken_loads`). The next
-step is a sparse row (only the values live at a block) and one round for a
-graph with no back edge.
+that out. The profile of the flat form puts 60% of the certifier in the
+dense rows themselves — the entry meet, `put_row`, `row_equal`, the per-block
+`filled` — and the rest in `walk_of` (regions, origins, touches) and the
+per-instruction scans (`taken_at`, `reloaded`, `mark_taken_loads`).
+
+The four variants after that are the shapes tried against the dense rows
+and the numbers they measured; none is kept. Keeping a block's own slots
+out of the rows saves little because most slots are read across blocks. A
+sparse row costs more than it saves: the per-slot writes rebuild the state
+struct and the rows are not sparse in a long function, where a value is
+live across most of it. Liveness-driven rows (only the live-in slots read,
+only the live-out written, a slot retired on the edge where it dies, which
+also reports a leak where the value dies rather than at the return) cost
+their fixpoint — several passes over `blocks × tracked` bits — more than the
+rows they save. A second round on an acyclic graph is nearly free, since it
+only compares. What would move this is a representation whose cost is the
+live set at a block rather than the tracked set, computed in one pass, and
+that is a different walk, not a tuning of this one. The fixpoint's share of
+a verifying compile is accepted for now; the budget question for the
+default compile is open.

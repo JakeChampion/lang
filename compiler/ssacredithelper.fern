@@ -20,7 +20,7 @@ function refused(f: ssa.SFunc, why: string): Proof {
 }
 
 function unary(op: ssa.SInst, kind: i32, value: i32, name: string): boolean {
-  return op.kind_tag == kind && op.args.len() == 1 && op.args[0] == value && op.str == name;
+  return op.kind_tag == kind && op.args.len() == 1 && op.args[0] == value && ssa.plain_str(op) == name;
 }
 
 function zero(op: ssa.SInst): boolean {

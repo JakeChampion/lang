@@ -449,20 +449,30 @@ struct Roots { root: i32[], derived: boolean[] }
 // the object itself.
 struct Alias { of: i32, derived: boolean }
 
-// arith_alias: `p + c` and `p - c` name the object `p` does — a tag on a
-// view box, a cursor's word, an interior address. A scalar's sum aliases
-// its scalar, which holds nothing either way.
+// arith_alias: `p + c` and `p - c` name the object `p` does — a tag in the
+// pointer's low bits, a cursor's word, an interior address. A scalar's sum
+// aliases its scalar, which holds nothing either way.
 function arith_alias(f: ssa.SFunc, defs: Defs, ins: ssa.SInst): Alias {
   if (ins.args.len() != 2 || ins.str != "add" && ins.str != "sub") {
     return Alias { of: -1, derived: false };
   }
-  if (def_of(f, defs, ins.args[1]).kind_tag == 1) {
-    return Alias { of: 0, derived: true };
+  let a: ssa.SInst = def_of(f, defs, ins.args[1]);
+  if (a.kind_tag == 1) {
+    return Alias { of: 0, derived: cursor_step(a.imm) };
   }
-  if (ins.str == "add" && def_of(f, defs, ins.args[0]).kind_tag == 1) {
-    return Alias { of: 1, derived: true };
+  let b: ssa.SInst = def_of(f, defs, ins.args[0]);
+  if (ins.str == "add" && b.kind_tag == 1) {
+    return Alias { of: 1, derived: cursor_step(b.imm) };
   }
   return Alias { of: -1, derived: false };
+}
+
+// cursor_step: a step of whole words is an address inside the object, a
+// cursor that carries no unit into a phi; a step below the word is a tag in
+// the pointer's low bits (a byte view over a string or an array), which is
+// the object's handle and carries its unit wherever it goes.
+function cursor_step(c: i32): boolean {
+  return c % 8 == 0;
 }
 
 function alias_of(f: ssa.SFunc, defs: Defs, sigs: rcsigs.Table, ins: ssa.SInst): Alias {
@@ -1453,32 +1463,132 @@ function matches_store(w: Walk, ld: ssa.SInst, st: ssa.SInst): boolean {
   return ld.kind_tag == 42 && ld.args.len() >= 2 && st.args.len() >= 3 && w.root[ld.args[1]] == w.root[st.args[1]];
 }
 
-// mark_loads_in marks the loads of block `lb` before position `stop` that
-// read the slot `st` empties.
-function mark_loads_in(w: Walk, own out: boolean[], lb: i32, stop: i32, st: ssa.SInst): boolean[] {
-  let insts: ssa.SInst[] = w.f.blocks[lb].insts;
-  let li: i32 = 0;
-  while (li < insts.len() && li < stop) {
-    let ld: ssa.SInst = insts[li];
-    if (is_load(ld) && ld.result >= 0 && ld.result < w.f.nvals && matches_store(w, ld, st)) {
-      out = out.with(w.root[ld.result], true);
+// mark_taken_loads marks the load the null store at (sb, si) gives the
+// slot's unit to: the nearest load of that slot before it on every path
+// that the body goes on to read after it — the value the lowering took the
+// unit for. An older load read after it names the same object but the unit
+// is taken once, by the latest; a load read only before the store takes
+// nothing. With no load read after, the nearest one is marked, so a take
+// the lowering emits and never uses still shows as held.
+function mark_taken_loads(w: Walk, dom: ssadeps.Dom, own out: boolean[], sb: i32, si: i32, st: ssa.SInst): boolean[] {
+  let pick: Picked = Picked { used: -1, any: -1 };
+  let lb: i32 = 0;
+  while (lb < w.f.blocks.len()) {
+    if (lb == sb || ssadeps.dom_holds(dom, sb, lb)) {
+      let stop: i32 = w.f.blocks[lb].insts.len();
+      if (lb == sb) {
+        stop = si;
+      }
+      pick = pick_loads(w, dom, pick, lb, stop, sb, si, st);
     }
-    li = li + 1;
+    lb = lb + 1;
+  }
+  if (pick.used >= 0) {
+    return out.with(w.root[pick.used], true);
+  }
+  if (pick.any >= 0) {
+    return out.with(w.root[pick.any], true);
   }
   return out;
 }
 
-function mark_taken_loads(w: Walk, dom: ssadeps.Dom, own out: boolean[], sb: i32, si: i32, st: ssa.SInst): boolean[] {
-  let lb: i32 = 0;
-  while (lb < w.f.blocks.len()) {
-    if (lb == sb) {
-      out = mark_loads_in(w, out, lb, si, st);
-    } else if (ssadeps.dom_holds(dom, sb, lb)) {
-      out = mark_loads_in(w, out, lb, w.f.blocks[lb].insts.len(), st);
+// Picked is the nearest load of the slot read after the store, and the
+// nearest at all, -1 for none yet.
+struct Picked { used: i32, any: i32 }
+
+function pick_loads(w: Walk, dom: ssadeps.Dom, own pick: Picked, lb: i32, stop: i32, sb: i32, si: i32, st: ssa.SInst): Picked {
+  let li: i32 = 0;
+  while (li < stop) {
+    let ld: ssa.SInst = w.f.blocks[lb].insts[li];
+    if (is_load(ld) && ld.result >= 0 && ld.result < w.f.nvals && matches_store(w, ld, st)) {
+      pick = Picked { ...pick, any: nearer(w, dom, sb, pick.any, ld.result) };
+      if (used_after(w, dom, w.root[ld.result], sb, si)) {
+        pick = Picked { ...pick, used: nearer(w, dom, sb, pick.used, ld.result) };
+      }
     }
-    lb = lb + 1;
+    li = li + 1;
   }
-  return out;
+  return pick;
+}
+
+// nearer picks, of two loads before the store in block `sb`, the one the
+// store sees last: the later in the store's own block, else the one in the
+// deeper dominating block.
+function nearer(w: Walk, dom: ssadeps.Dom, sb: i32, a: i32, b: i32): i32 {
+  if (a < 0) {
+    return b;
+  }
+  let ba: i32 = w.defs.block[a];
+  let bb: i32 = w.defs.block[b];
+  if (ba == bb) {
+    if (w.defs.at[b] > w.defs.at[a]) {
+      return b;
+    }
+    return a;
+  }
+  if (bb == sb || ba != sb && dom.pre[bb] > dom.pre[ba]) {
+    return b;
+  }
+  return a;
+}
+
+// used_after: some value of `root` is read after position (sb, si): later
+// in that block, or in a block that does not dominate it.
+function used_after(w: Walk, dom: ssadeps.Dom, root: i32, sb: i32, si: i32): boolean {
+  let after: boolean[] = reached_from(w, sb);
+  let bi: i32 = 0;
+  while (bi < w.f.blocks.len()) {
+    if (bi == sb || after[bi]) {
+      let from: i32 = 0;
+      if (bi == sb && !after[bi]) {
+        from = si + 1;
+      }
+      if (reads_root(w, bi, from, root)) {
+        return true;
+      }
+    }
+    bi = bi + 1;
+  }
+  return false;
+}
+
+// reads_root: block `bi` reads a value of `root` at or after position `from`.
+function reads_root(w: Walk, bi: i32, from: i32, root: i32): boolean {
+  let insts: ssa.SInst[] = w.f.blocks[bi].insts;
+  let i: i32 = from;
+  while (i < insts.len()) {
+    for a in insts[i].args {
+      if (a >= 0 && w.root[a] == root) {
+        return true;
+      }
+    }
+    i = i + 1;
+  }
+  let t: ssa.STerm = w.f.blocks[bi].term;
+  return t.value >= 0 && w.root[t.value] == root;
+}
+
+// reached_from marks the blocks a path leaves block `sb` into, `sb` itself
+// only round a loop.
+function reached_from(w: Walk, sb: i32): boolean[] {
+  let n: i32 = w.f.blocks.len();
+  let seen: boolean[] = __alloc_bool(n);
+  let work: i32[] = [sb];
+  let i: i32 = 0;
+  while (i < work.len()) {
+    let t: ssa.STerm = w.f.blocks[work[i]].term;
+    let e: i32 = 0;
+    while (e < 2) {
+      let sid: i32 = ssa.successor_id(t, e);
+      if (sid >= 0 && w.at[sid] >= 0 && !seen[w.at[sid]]) {
+        seen = seen.with(w.at[sid], true);
+        work = work.append(w.at[sid]);
+      }
+      e = e + 1;
+    }
+    i = i + 1;
+  }
+  return seen;
 }
 
 // indexes assigns each tracked root a slot in the rows: every fresh,
@@ -2363,6 +2473,7 @@ struct Settled { p: Progress, changed: boolean }
 function settle(own p: Progress, w: Walk, order: i32[], reach: boolean[], takes: Takes): Settled {
   let rounds: i32 = 0;
   let changed: boolean = true;
+  let once: boolean = acyclic(w, order);
   while (changed && rounds < round_limit()) {
     changed = false;
     // Findings and the census accumulate across rounds; only the final
@@ -2378,8 +2489,36 @@ function settle(own p: Progress, w: Walk, order: i32[], reach: boolean[], takes:
       }
     }
     rounds = rounds + 1;
+    // Without a back edge every predecessor's row is final when its
+    // successor reads it, so the first round in reverse postorder is the
+    // fixpoint.
+    if (once) {
+      changed = false;
+    }
   }
   return Settled { p: p, changed: changed };
+}
+
+// acyclic: no edge leads to a block at or before its source in `order`.
+function acyclic(w: Walk, order: i32[]): boolean {
+  let rank: i32[] = util.minus_ones(w.f.blocks.len());
+  let i: i32 = 0;
+  while (i < order.len()) {
+    rank = rank.with(order[i], i);
+    i = i + 1;
+  }
+  for bi in order {
+    let t: ssa.STerm = w.f.blocks[bi].term;
+    let e: i32 = 0;
+    while (e < 2) {
+      let sid: i32 = ssa.successor_id(t, e);
+      if (sid >= 0 && w.at[sid] >= 0 && rank[w.at[sid]] <= rank[bi]) {
+        return false;
+      }
+      e = e + 1;
+    }
+  }
+  return true;
 }
 
 pub function certify(f: ssa.SFunc, irops: ir.Op[], self_abi: Abi, abis: Abis, sigs: rcsigs.Table, ops: rcsigs.OpTable): Report {
