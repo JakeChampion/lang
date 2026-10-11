@@ -251,14 +251,15 @@ function main(): i32 {
 	})
 
 	t.Run("no_match_never_read", func(t *testing.T) {
-		// The degenerate shape: constructed, never used at all. Nothing but a
-		// sweep can reclaim it.
+		// The degenerate shape: constructed and never matched. The out-of-line
+		// read keeps it built; nothing but a sweep can reclaim it.
 		src := `enum M { A(i32), B(i32) }
+@noinline function keep(m: M): i32 { return 0; }
 function round(n: i32): i32 {
     let k: i32 = 0;
     while (k < 4) {
         let m: M = A(k + n);
-        k = k + 1;
+        k = k + 1 + keep(m);
     }
     return k;
 }
