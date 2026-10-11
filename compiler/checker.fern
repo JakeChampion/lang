@@ -8948,6 +8948,26 @@ function stmt_ret_diags(st: ast.Stmt, s: Scope, ret_ty: typeinfo.Type, unions: U
 // blocks the same way ret_diags does; the scope is threaded so a returned
 // expression sees earlier `let` bindings (it's still type-checked for the
 // message, though any concrete type is a mismatch against void).
+// void_return_diag checks one `return` in a void body: a bare `return;` is
+// its exit and a returned value of type void is fine, so only a return of a
+// non-void value is E002.
+function void_return_diag(r: ast.StmtReturn, cur: Scope): util.Diag[] {
+  let out: util.Diag[] = [];
+  match (r.value) {
+    ast.ExprUnknown(u) => {
+      if (u.kind == "punct:;") {
+        return out;
+      }
+    },
+    _ => {}
+  }
+  let t: typeinfo.Type = check_expr(r.value, cur);
+  if (!is_void(t)) {
+    out = out.append(dg_at("E002", "return value: expected void, got " + type_label(t), r.line, r.col));
+  }
+  return out;
+}
+
 function void_ret_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): util.Diag[] {
   let out: util.Diag[] = [];
   let cur: Scope = s;
@@ -8955,21 +8975,7 @@ function void_ret_diags(stmts: ast.Stmt[], s: Scope, unions: UnionSig[]): util.D
     out = util.append_diags(out, ret_diags_in_exprs(st, cur, t_void(), unions, true));
     match (st) {
       ast.StmtReturn(r) => {
-        let bare: boolean = false;
-        match (r.value) {
-          ast.ExprUnknown(u) => {
-            if (u.kind == "punct:;") {
-              bare = true;
-            }
-          },
-          _ => {}
-        }
-        if (!bare) {
-          let t: typeinfo.Type = check_expr(r.value, cur);
-          if (!is_void(t)) {
-            out = out.append(dg_at("E002", "return value: expected void, got " + type_label(t), r.line, r.col));
-          }
-        }
+        out = util.append_diags(out, void_return_diag(r, cur));
       },
       ast.StmtIf(f) => {
         out = util.append_diags(out, void_ret_diags(f.then_body, cur, unions));
@@ -10140,6 +10146,20 @@ function exits_unify(a: typeinfo.Type, b: typeinfo.Type): boolean {
 // its own name is pre-bound to its function type so a self-call inside the
 // body resolves rather than inferring unknown. After checking the lambda's
 // own returns it recurses into the body via lret_stmts for nested lambdas.
+// lambda_body_diags checks a lambda's body against its return type: a body
+// declared void takes the void route (a bare `return;` or a void call is its
+// exit), a declared non-void body is checked against that type, and an
+// undeclared body has its exits reconciled by lambda_exit_diags.
+function lambda_body_diags(lm: ast.ExprLambda, lsc: Scope, rt: typeinfo.Type, unions: UnionSig[]): util.Diag[] {
+  if (lm.ret_type.len() > 0 && is_void(rt)) {
+    return void_ret_diags(lm.body, lsc, unions);
+  }
+  if (lm.ret_type.len() > 0) {
+    return ret_diags(lm.body, lsc, rt, unions);
+  }
+  return lambda_exit_diags(lm, lsc);
+}
+
 function lret_expr(e: ast.Expr, cur: Scope, unions: UnionSig[], self_name: string): util.Diag[] {
   let out: util.Diag[] = [];
   match (e) {
@@ -10158,13 +10178,7 @@ function lret_expr(e: ast.Expr, cur: Scope, unions: UnionSig[], self_name: strin
         lsc = lsc.bind(lm.params[bi].name, pts[bi]);
         bi = bi + 1;
       }
-      if (lm.ret_type.len() > 0 && is_void(rt)) {
-        out = util.append_diags(out, void_ret_diags(lm.body, lsc, unions));
-      } else if (lm.ret_type.len() > 0) {
-        out = util.append_diags(out, ret_diags(lm.body, lsc, rt, unions));
-      } else {
-        out = util.append_diags(out, lambda_exit_diags(lm, lsc));
-      }
+      out = util.append_diags(out, lambda_body_diags(lm, lsc, rt, unions));
       out = util.append_diags(out, lret_stmts(lm.body, lsc, unions));
     },
     ast.ExprBinary(b) => {
