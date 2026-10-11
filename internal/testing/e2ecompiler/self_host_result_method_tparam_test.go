@@ -169,9 +169,10 @@ function main(): i32 {
     return n + o.unwrap_or(0) % 7;
 }
 `, 6},
-	{"mixed_unused", `function main(): i32 {
+	{"mixed_unused", `@noinline function keep(r: Result[i32, string]): i32 { return 0; }
+function main(): i32 {
     let r: Result[i32, string] = Ok(3);
-    return 7;
+    return 7 + keep(r);
 }
 `, 7},
 	{"mixed_borrowed_arg", `@noinline

@@ -35,9 +35,11 @@ var resultErrStringRows = []leakRow{
         if (q.unwrap_or(true)) { n = n + 1; }`), true},
 	{"scalar_ok_built_ok", resultErrLoopSrc(`        let q: Result[i32, string] = Ok(i);
         n = (n + q.unwrap_or(3)) % 101;`), true},
-	{"unused", `function main(): i32 {
+	// Never matched or unwrapped; the read keeps the construction built.
+	{"unused", `@noinline function keep(q: Result[i32, string]): i32 { return 0; }
+function main(): i32 {
     let q: Result[i32, string] = Err("a" + "b");
-    return 7;
+    return 7 + keep(q);
 }
 `, true},
 	{"lent", `import "std/i32";
