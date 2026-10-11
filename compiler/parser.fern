@@ -12886,6 +12886,20 @@ function clone_recv_ret_of(funcs: MFns, tyname: string, method: string): string 
   return "";
 }
 
+// fold_base names the struct a `__smm_` fold of `method` is keyed by for a
+// receiver of type `t`: the generic struct `t` instantiates, or a plain struct
+// whose `method` was folded. "" for none.
+function fold_base(t: string, method: string, funcs: MFns): string {
+  let g: string = generic_base(t, funcs);
+  if (g.len() > 0 || first_bracket(t) >= 0 || t.len() == 0) {
+    return g;
+  }
+  if (bg_find(funcs, smm_name(t, method)) >= 0) {
+    return t;
+  }
+  return "";
+}
+
 // generic_base names the generic struct an instantiated spelling (`Box[i32]`)
 // or its clone (`Box__i32`) is of, or "".
 function generic_base(t: string, funcs: MFns): string {
@@ -13155,8 +13169,8 @@ function mono_infer(e: ast.Expr, env: MEnv, funcs: MFns): string {
           if (smm_any(funcs, cfa.field)) {
             srt = mono_infer(cfa.obj, env, funcs);
           }
-          if (generic_base(srt, funcs).len() > 0) {
-            let sgi: i32 = bg_find(funcs, smm_name(generic_base(srt, funcs), cfa.field));
+          if (fold_base(srt, cfa.field, funcs).len() > 0) {
+            let sgi: i32 = bg_find(funcs, smm_name(fold_base(srt, cfa.field, funcs), cfa.field));
             if (sgi >= 0) {
               let sargs: ast.Expr[] = [cfa.obj];
               let sk: i32 = 0;
@@ -13463,8 +13477,8 @@ function mono_expr(e: ast.Expr, env: MEnv, funcs: MFns, ins: Insts): RExpr {
           if (smm_any(funcs, fac.field)) {
             srty = mono_infer(fac.obj, env, funcs);
           }
-          if (generic_base(srty, funcs).len() > 0) {
-            let smn: string = smm_name(generic_base(srty, funcs), fac.field);
+          if (fold_base(srty, fac.field, funcs).len() > 0) {
+            let smn: string = smm_name(fold_base(srty, fac.field, funcs), fac.field);
             let smg: i32 = bg_find(funcs, smn);
             if (smg >= 0) {
               let sraw: ast.Expr[] = [fac.obj];
@@ -15141,7 +15155,8 @@ function smm_own_typevars(fd: FuncDecl, recv_vars: string[]): string[] {
 
 // is_generic_method_own_tps gates the fold: a method whose receiver is
 // `Base[<vars>]` for a generic struct or enum declared in this module, which
-// introduces at least one type var of its own.
+// introduces at least one type var of its own, or a plain receiver's method
+// with a type parameter the parser keeps (is_plain_method_tps).
 //
 // Unlike the array fold, a type param the RECEIVER does not fix is allowed:
 // the fold binds it from the call's arguments, and the clone substitutes it
@@ -15156,7 +15171,7 @@ function is_generic_method_own_tps(fd: FuncDecl, structs: StructDecl[], enums: E
   }
   let recv_vars: string[] = struct_receiver_typevars(fd.receiver_type);
   if (recv_vars.len() == 0) {
-    return false;
+    return is_plain_method_tps(fd, structs, enums);
   }
   let base: string = strip_struct_base(fd.receiver_type);
   let si: i32 = 0;
@@ -15189,6 +15204,48 @@ function is_generic_method_own_tps(fd: FuncDecl, structs: StructDecl[], enums: E
   return own.len() > 0;
 }
 
+// is_plain_method_tps gates the fold for a method of a plain struct or enum
+// whose own type parameters the parser keeps, as it keeps a free function's: a
+// bounded one, or an unbounded one promoted because it is a type argument in
+// the signature (`wrap[U](u: U): Box[U]`). Its instances then come from the
+// bounded-generic worklist, as a free function's do. So the struct it returns
+// is the clone at the call's types (`Box__i32`), the one a binding or
+// parameter written `Box[i32]` names, and a variable only a bound pins (`U` of
+// `first_of[U, J: It[U]](j: J): Option[U]`) is read off the impl the bound
+// resolves to. A method whose parameters are all erased stays with the typed
+// lowering.
+function is_plain_method_tps(fd: FuncDecl, structs: StructDecl[], enums: EnumDecl[]): boolean {
+  if (fd.type_params.len() == 0 || first_bracket(fd.receiver_type) >= 0) {
+    return false;
+  }
+  if (!is_plain_decl(fd.receiver_type, structs, enums)) {
+    return false;
+  }
+  let own: string[] = smm_own_typevars(fd, []);
+  for tp in fd.type_params {
+    if (!str_in(own, tp)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// is_plain_decl reports whether `name` is a declared struct or enum with no
+// type parameters.
+function is_plain_decl(name: string, structs: StructDecl[], enums: EnumDecl[]): boolean {
+  for sd in structs {
+    if (sd.name == name && sd.type_params.len() == 0) {
+      return true;
+    }
+  }
+  for ed in enums {
+    if (ed.name == name && ed.type_params.len() == 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
 // smm_name is the folded free generic's name: `__smm_<Base>_<method>`. The
 // base is part of the name because two generic structs may both declare a
 // `map` — unlike the array / map folds, whose receiver is a single built-in.
@@ -15215,12 +15272,13 @@ function smm_any(fns: MFns, field: string): boolean {
   return false;
 }
 
-// register_struct_method_generics folds each generic-struct or generic-enum
-// method that has its own type params into a free generic (receiver as arg0,
-// receiver vars + own vars as the type params) and drops the original. A
+// register_struct_method_generics folds each method is_generic_method_own_tps
+// admits into a free generic (receiver as arg0, receiver vars + own vars as
+// the type params) and drops the original. A
 // no-op when none is present — the stdlib's only generic structs are `Set[T]`
 // and `iter.ArrayIter[T]`, neither of which declares a method var the
-// receiver does not fix, and its generic enums declare no methods, so the
+// receiver does not fix, its generic enums declare no methods, and no plain
+// receiver's method declares a type parameter of its own, so the
 // byte-identical bootstrap fixpoint is preserved. Runs before
 // monomorphize_module so the folded body's own generic calls rewrite too, and
 // before monomorphize_structs / monomorphize_enums so the clones it leaves

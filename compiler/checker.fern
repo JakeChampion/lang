@@ -1881,7 +1881,7 @@ pub struct StructSig { name: string, field_names: string[], field_types: typeinf
 // is implicit at the call site (`obj.name(a, b)`) so it's
 // stored separately from param_types. Plain functions live
 // in the FuncSig table; the two tables don't overlap.
-pub struct MethodSig { name: string, receiver_type: string, param_types: typeinfo.Type[], ret_type: typeinfo.Type, ret_type_name: string, param_type_names: string[], all_type_params: string[], type_bounds: string[] }
+pub struct MethodSig { name: string, receiver_type: string, param_types: typeinfo.Type[], ret_type: typeinfo.Type, ret_type_name: string, param_type_names: string[], all_type_params: string[], type_params: string[], type_bounds: string[], module: string }
 
 // UnionSig: nominal handle for a declared type alias —
 // `pub type Shape = Circle | Square`. Variants are captured
@@ -3222,7 +3222,7 @@ function (s: Scope) array_recv_method(field: string, view: boolean): MethodSig {
     i = s.methods.next[i];
   }
   let empty_pt: typeinfo.Type[] = [];
-  return MethodSig { name: "", receiver_type: "", param_types: empty_pt, ret_type: t_unknown("no such array method"), ret_type_name: "", param_type_names: [], all_type_params: [], type_bounds: [] };
+  return MethodSig { name: "", receiver_type: "", param_types: empty_pt, ret_type: t_unknown("no such array method"), ret_type_name: "", param_type_names: [], all_type_params: [], type_params: [], type_bounds: [], module: "" };
 }
 
 // has_array_method reports whether an auto-discovered std/array method
@@ -3707,7 +3707,7 @@ function (s: Scope) lookup_method(name: string, recv_type: string): MethodSig {
     i = s.methods.next[i];
   }
   let empty_pt: typeinfo.Type[] = [];
-  return MethodSig { name: "", receiver_type: "", param_types: empty_pt, ret_type: t_unknown("no such method"), ret_type_name: "", param_type_names: [], all_type_params: [], type_bounds: [] };
+  return MethodSig { name: "", receiver_type: "", param_types: empty_pt, ret_type: t_unknown("no such method"), ret_type_name: "", param_type_names: [], all_type_params: [], type_params: [], type_bounds: [], module: "" };
 }
 
 // has_method answers lookup_method's question without building the sentinel
@@ -6046,22 +6046,29 @@ function collect_arm_result(st: ast.Stmt, own acc: ast.Expr[]): ast.Expr[] {
 // A variable one bound binds can make another bound's subject known, so it
 // runs until nothing new binds.
 function bound_bindings(sig: FuncSig, s: Scope, names: string[], types: typeinfo.Type[]): (string[], typeinfo.Type[]) {
+  return bounds_bindings(sig.type_params, sig.type_bounds, sig.module, s, names, types);
+}
+
+// bounds_bindings is bound_bindings for type parameters `tparams` and the
+// bounds that run parallel to them, declared in `module`: a free function's or
+// a method's own.
+function bounds_bindings(tparams: string[], bounds: string[], module: string, s: Scope, names: string[], types: typeinfo.Type[]): (string[], typeinfo.Type[]) {
   let ns: string[] = names;
   let ts: typeinfo.Type[] = types;
   let before: i32 = 0 - 1;
   while (ns.len() > before) {
     before = ns.len();
     let i: i32 = 0;
-    while (i < sig.type_params.len() && i < sig.type_bounds.len()) {
-      let bi: i32 = util.index_of_str(ns, sig.type_params[i]);
-      if (sig.type_bounds[i].len() > 0 && bi >= 0) {
-        for entry in parser.split_plus_bounds(sig.type_bounds[i]) {
+    while (i < tparams.len() && i < bounds.len()) {
+      let bi: i32 = util.index_of_str(ns, tparams[i]);
+      if (bounds[i].len() > 0 && bi >= 0) {
+        for entry in parser.split_plus_bounds(bounds[i]) {
           let bref: parser.TypeRef = parser.parse_type_ref(entry);
-          let iargs: typeinfo.Type[] = impl_trait_args(bref, sig.module, ts[bi], s);
+          let iargs: typeinfo.Type[] = impl_trait_args(bref, module, ts[bi], s);
           if (iargs.len() == bref.args.len()) {
             let k: i32 = 0;
             while (k < iargs.len()) {
-              let (n2, t2) = gc_bind_param(bref.args[k], iargs[k], sig.type_params, s.type_names(), ns, ts);
+              let (n2, t2) = gc_bind_param(bref.args[k], iargs[k], tparams, s.type_names(), ns, ts);
               ns = n2;
               ts = t2;
               k = k + 1;
@@ -7663,8 +7670,8 @@ function method_type_arg_diags(c: ast.ExprCall, method: string, msig: MethodSig,
 
 // generic_method_ret is a method call's result with its type variables
 // substituted: the receiver's and the written ones as `mb` binds them, and the
-// method's own from its arguments (`r.and(Ok("vw"))` binds `U` to string). A
-// variable nothing binds stays unknown.
+// method's own from its arguments (`r.and(Ok("vw"))` binds `U` to string) and
+// then through its bounds. A variable nothing binds stays unknown.
 function generic_method_ret(c: ast.ExprCall, msig: MethodSig, mb: MethodBinding, s: Scope): typeinfo.Type {
   if (!type_contains_unknown(msig.ret_type) || msig.ret_type_name.len() == 0) {
     return msig.ret_type;
@@ -7678,6 +7685,9 @@ function generic_method_ret(c: ast.ExprCall, msig: MethodSig, mb: MethodBinding,
     bt = bt2;
     i = i + 1;
   }
+  let (bn3, bt3) = bounds_bindings(msig.type_params, msig.type_bounds, msig.module, s, bn, bt);
+  bn = bn3;
+  bt = bt3;
   for tp in mb.full {
     if (util.index_of_str(bn, tp) < 0) {
       bn = bn.append(tp);
@@ -7790,7 +7800,7 @@ function collect_method_sigs(funcs: parser.FuncDecl[], tn: TypeNames): MethodSig
         pts = pts.append(param_decl_type(param, fd.type_params, tn));
         ptn = ptn.append(param.type_name);
       }
-      out = out.append(MethodSig { name: fd.name, receiver_type: receiver_namespace(fd.receiver_type), param_types: pts, ret_type: func_ret_type(fd, tn), ret_type_name: fd.ret_type, param_type_names: ptn, all_type_params: fd.all_type_params, type_bounds: fd.bound_traits });
+      out = out.append(MethodSig { name: fd.name, receiver_type: receiver_namespace(fd.receiver_type), param_types: pts, ret_type: func_ret_type(fd, tn), ret_type_name: fd.ret_type, param_type_names: ptn, all_type_params: fd.all_type_params, type_params: fd.type_params, type_bounds: fd.bound_traits, module: fd.module });
     }
   }
   return out;
