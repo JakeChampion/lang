@@ -392,10 +392,12 @@ function main(): i32 {
 	{"update-keeps-no-field-held-twice", `struct P { f: string[], n: i32 }
 function w(a: string): string { return a + "-past-the-sso-inline-threshold"; }
 function mkv(): string[] { let o: string[] = []; o = o.append(w("a")); o = o.append(w("b")); return o; }
+@noinline function hold(p: P): i32 { return 0; }
 function grab(i: i32): string[] {
     let q: P = P { f: mkv(), n: i };
     let tt: string[] = q.f;
     let p: P = P { f: tt, n: i };
+    if (hold(p) != 0) { return mkv(); }
     return tt;
 }
 function main(): i32 {
@@ -481,10 +483,11 @@ function main(): i32 {
 }`, 69, 1, 1, 6, false, false},
 
 	{"degenerate-self-donor", `struct S0 { f0: i32, f1: i64, f2: boolean }
+@noinline function hold(v: S0): i32 { return 0; }
 function main(): i32 {
     let v0: S0 = S0 { f0: 687i32, f1: 942i64, f2: false };
     if (__rc_underflow_count() != 0) { return 99; }
-    return 326i32 & 255i32;
+    return (326i32 & 255i32) + hold(v0);
 }`, 70, 0, 1, 1, false, true},
 }
 

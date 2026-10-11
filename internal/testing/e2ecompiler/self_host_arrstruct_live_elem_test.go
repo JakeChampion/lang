@@ -140,14 +140,15 @@ function round(i: i32): i32 {
 			// allocated on the typed lowering, so the count covers only the
 			// P values.
 			name: "rebound_source_element_still_readable",
-			src: decl + `function round(i: i32): i32 {
+			src: decl + `@noinline function hold(p: P): i32 { return 0; }
+function round(i: i32): i32 {
     let p: P = P { xs: [7, 8], n: i };
     let ps: P[] = [];
     ps = ps.append(p);
     p = P { xs: [111, 222], n: i + 1 };
     let junk: i32[] = [333, 444];
     let junk2: i32[] = [555, 666];
-    return ps[0].xs[0] + ps[0].xs[1] + junk[0] - junk[0] + junk2[0] - junk2[0];
+    return ps[0].xs[0] + ps[0].xs[1] + junk[0] - junk[0] + junk2[0] - junk2[0] + hold(p);
 }
 ` + alelMain,
 			want: 45, allocs: 300, frees: 300,

@@ -64,12 +64,13 @@ function main(): i32 {
 			src: `struct Holder { xs: string[] }
 function w(pre: string): string { return pre + "-a-wide-payload-past-any-inline-threshold-0123456789"; }
 function (h: Holder) get(): string[] { return h.xs; }
+@noinline function hold(h: Holder): i32 { return 0; }
 function main(): i32 {
     let t: i32 = 0;
     let i: i32 = 0;
     while (i < 100) {
         let keep: Holder = Holder { xs: [w("a"), w("b"), w("c")] };
-        t = t + 3;
+        t = t + 3 + hold(keep);
         i = i + 1;
     }
     if (__rc_underflow_count() != 0) { return 99; }
