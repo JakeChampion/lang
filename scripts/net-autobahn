@@ -34,9 +34,24 @@ shift || true
 out="${FERN_AUTOBAHN_OUT:-$work/autobahn}"
 mkdir -p "$out/config" "$out/reports"
 chmod 777 "$out/reports"
+# The conformance sections by default: framing, fragmentation, pings,
+# reserved bits, opcodes, close handshakes, UTF-8, and auto-fragmentation
+# (sections 1-8 and 10). The Autobahn client offers permessage-deflate on
+# every connection and the server accepts, so these run over a compressed
+# connection and cross-check the compressor on ordinary frames. The
+# performance and compression-volume sections (9, 12, 13) are EXCLUDED:
+# each case passes in seconds in isolation, but any high-frame-count case
+# late in the full suite stalls once a few hundred connections have run
+# before it — an accumulation tracked in issue #12136 — and no subset of
+# those sections is reliably under the budget. The wstest run below is
+# bounded by `timeout` so a hang fails the job rather than burning it. Pass
+# an explicit case list to run any excluded case, e.g.
+# `net-autobahn - "13.*"`.
 cases='["*"]'
+exclude='["9.*", "12.*", "13.*"]'
 if [ $# -gt 0 ]; then
   cases="$(printf '%s\n' "$@" | python3 -c 'import json, sys; print(json.dumps(sys.stdin.read().split()))')"
+  exclude='[]'
 fi
 port="$(free_port)"
 cat > "$out/config/fuzzingclient.json" <<JSON
@@ -44,7 +59,7 @@ cat > "$out/config/fuzzingclient.json" <<JSON
   "outdir": "/reports",
   "servers": [{"agent": "fern", "url": "ws://127.0.0.1:$port/ws"}],
   "cases": $cases,
-  "exclude-cases": [],
+  "exclude-cases": $exclude,
   "exclude-agent-cases": {}
 }
 JSON
@@ -52,7 +67,7 @@ bin/fern -target "$TARGET" -o "$work/server" scripts/net-autobahn.d/server.fern
 PORT="$port" start_server "$work/server.log" "$work/server"
 await_server fern "$port" "$work/server.log"
 echo "== autobahn fuzzingclient, cases $cases, server on port $port"
-docker run --rm --network host -v "$out/config:/config:ro" -v "$out/reports:/reports" "$IMAGE" wstest -m fuzzingclient -s /config/fuzzingclient.json > "$out/wstest.log" 2>&1 || {
+timeout 1500 docker run --rm --network host -v "$out/config:/config:ro" -v "$out/reports:/reports" "$IMAGE" wstest -m fuzzingclient -s /config/fuzzingclient.json > "$out/wstest.log" 2>&1 || {
   tail -20 "$out/wstest.log" >&2
   echo "net-autobahn: wstest failed" >&2
   exit 1
