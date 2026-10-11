@@ -2353,11 +2353,12 @@ function handle(req: HttpRequest, plat: platform.Host): HttpResponse {
   pieces for a client or a test (`tests/stdlib/http_websocket_test.fern`,
   a session over a scripted connection). The Autobahn suite's
   conformance cases (sections 1-8, 10) run against the echo in
-  `scripts/net-autobahn.d/server.fern` on the `net-nightly` lane; the
-  client offers permessage-deflate throughout, so they cross-check the
-  compressor on ordinary frames. Its performance and compression-volume
-  sections (9, 12, 13) are deferred to #12136 and run on demand
-  (`net-autobahn - "13.*"`).
+  `scripts/net-autobahn.d/server.fern` on the `net-nightly` lane; they
+  gate framing, fragmentation, UTF-8 and close, not compression — the
+  client offers permessage-deflate only in the compression sections (12
+  and 13). Those, with the performance section (9), are deferred to #12136
+  and run on demand (`net-autobahn - "13.*"`), the only run that exercises
+  the compressor.
 - Under std/serve an upgrade request's body is the connection's bytes
   after the head, streamed as `stream_bodies` streams one whatever the
   setting says, and a handler that answers 101 with a producer keeps the

@@ -8,7 +8,8 @@
 #
 #   REPORT  where the summary goes ("-" or nothing for stdout).
 #   CASE    a case spec as the suite spells it ("1.*", "9.1.1"); the
-#           default is every case.
+#           default is the conformance sections (1-8, 10), excluding 9, 12
+#           and 13 (see below).
 #
 # The suite runs from its Docker image, pinned by digest below, on the
 # host's network so it reaches the server on loopback; docker is
@@ -36,9 +37,11 @@ mkdir -p "$out/config" "$out/reports"
 chmod 777 "$out/reports"
 # The conformance sections by default: framing, fragmentation, pings,
 # reserved bits, opcodes, close handshakes, UTF-8, and auto-fragmentation
-# (sections 1-8 and 10). The Autobahn client offers permessage-deflate on
-# every connection and the server accepts, so these run over a compressed
-# connection and cross-check the compressor on ordinary frames. The
+# (sections 1-8 and 10). These do not cover compression: the Autobahn
+# fuzzing client offers permessage-deflate only in the compression
+# sections (12 and 13), so the conformance run negotiates no extension and
+# the compressor is exercised only when a compression section is run on
+# demand (below). The
 # performance and compression-volume sections (9, 12, 13) are EXCLUDED:
 # each case passes in seconds in isolation, but any high-frame-count case
 # late in the full suite stalls once a few hundred connections have run

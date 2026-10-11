@@ -155,9 +155,11 @@ decides what wraps it.
    compressed. The Autobahn suite's fuzzing client runs the conformance
    sections (1-8, 10) against `scripts/net-autobahn.d/server.fern` on the
    `net-nightly` lane (`scripts/net-autobahn`, the image pinned by
-   digest), each case passing or the job failing; the client offers
-   permessage-deflate throughout, so they cross-check the compressor on
-   ordinary frames. The performance and compression-volume sections (9,
+   digest), each case passing or the job failing; these gate framing,
+   fragmentation, UTF-8 and close, not compression — the client offers
+   permessage-deflate only in the compression sections (12 and 13), so the
+   compressor is exercised only when one of those is run on demand. The
+   performance and compression-volume sections (9,
    12, 13) are left out of the default set: each case passes in seconds
    in isolation, but any high-frame-count case late in the full suite
    stalls once a few hundred connections precede it, an accumulation
